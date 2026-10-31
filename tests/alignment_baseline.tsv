@@ -39,8 +39,6 @@ gl.dist	baseline	6
 gl.dist	row	6
 gl.drawneq	baseline	1
 gl.drumkit	gap	6
-gl.edison	baseline	1
-gl.edison	overlap	6
 gl.effector	ctl-row	4
 gl.effector	row	6
 gl.emphasis	baseline	8
@@ -144,8 +142,6 @@ gl.scduck	label	2
 gl.scope	baseline	8
 gl.scope	ctl-row	2
 gl.scope	label	2
-gl.scratcher	label	4
-gl.scratcher	row	6
 gl.send	label	1
 gl.shaper	baseline	9
 gl.shaper	ctl-row	9

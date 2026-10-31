@@ -550,9 +550,12 @@ void Exporter::writeMixer() {
       if (e.id == 236 && !slotsDone) {
         slotsDone = true;
         for (int k = 0; k < kEffectSlots; ++k) {
-          if (t && static_cast<size_t>(k) < t->slots.size() && !t->slots[static_cast<size_t>(k)].plugin.empty()) {
-            PluginOut po = encodePlugin(t->slots[static_cast<size_t>(k)].plugin, t->id, k, false,
-                                        "insert " + std::to_string(i) + " slot " + std::to_string(k + 1));
+          const PluginState* sp = t && static_cast<size_t>(k) < t->slots.size() ? &t->slots[static_cast<size_t>(k)].plugin : nullptr;
+          if (sp && sp->empty())  // J-205: an instrument the import took out of this slot goes back in
+            for (const Channel& ch : s.channels)
+              if (movedSlot(ch) == std::make_pair(t->id, k)) sp = &ch.plugin;
+          if (sp && !sp->empty()) {
+            PluginOut po = encodePlugin(*sp, t->id, k, false, "insert " + std::to_string(i) + " slot " + std::to_string(k + 1));
             if (po.flPlugin) {
               w.text(201, po.flName);
               w.data(212, po.wrapper);

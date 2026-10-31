@@ -60,6 +60,37 @@ std::map<std::string, std::weak_ptr<const Aux>>& auxCache() {
   static std::map<std::string, std::weak_ptr<const Aux>> c;
   return c;
 }
+// Imported segment bend (LFO law): the bend control c (-1..1) picks one of 256 shapes; shape value
+// q = 1 - k / 255 sets s = 4 q^3 (q <= 0.5) or 1 - 4 (1 - q)^3, r = (s / (1 - s))^2 and
+// y(t) = (1 - r^t) / (1 - r). It bends much harder than Plasma's own law and the other way
+// round (fitted and verified against the hosted plugin's output: a 1 Hz triangle LFO on a level
+// with its rising segment at 75 % sits 31.7 dB under the straight one a quarter of the way up).
+double bankBend(double t, double c) {
+  t = std::clamp(t, 0.0, 1.0);
+  const double cs = 0.5 + 0.5 * std::clamp(c, -1.0, 1.0);
+  if (std::fabs(cs - 0.5) < 1e-6) return t;
+  const double k = std::clamp(std::floor(255.5 - 255.0 * cs + 0.5), 0.0, 255.0);
+  const double q = 1.0 - k / 255.0;
+  double s = q <= 0.5 ? 4.0 * q * q * q : 1.0 - 4.0 * (1.0 - q) * (1.0 - q) * (1.0 - q);
+  s = std::clamp(s, 1e-12, 1.0 - 2e-12);
+  const double lr = 2.0 * std::log(s / (1.0 - s));
+  if (std::fabs(lr) < 1e-9) return t;
+  return std::expm1(t * lr) / std::expm1(lr);
+}
+double curveAtLaw(const Curve& c, double x, bool bank) {
+  if (!bank || c.empty()) return curveAt(c, x);
+  if (x <= c.front().x) return c.front().y;
+  for (size_t i = 1; i < c.size(); ++i) {
+    const CurvePt& a = c[i - 1];
+    const CurvePt& b = c[i];
+    if (x <= b.x) {
+      const double w = b.x - a.x;
+      if (w <= 1e-9) return b.y;
+      return a.y + (b.y - a.y) * bankBend((x - a.x) / w, b.c);
+    }
+  }
+  return c.back().y;
+}
 void sampleCurve(const Curve& c, float* out, int n, bool identity) {
   for (int i = 0; i < n; ++i) {
     const double x = static_cast<double>(i) / (n - 1);
@@ -263,6 +294,7 @@ struct EnvState {
   int stage = 0;  // 0 idle, 1 attack, 2 hold, 3 decay, 4 sustain, 5 release
   double level = 0, from = 0, to = 0, t = 0, dt = 0, k = 0, ek = 1, mul = 1, norm = 1;
   double secs = 0;  // time in stage
+  double time = 0;  // the stage's length (s) its rate was set from
 };
 struct EnvSet {
   double a, h, d, s, r, ca, cd, cr, start, end;
@@ -273,10 +305,16 @@ struct EnvSet {
 // 10, fitted with the same exponential stage shape): k = 9.5 atanh(c) for all three stages (fitted
 // k at curve 60 / 70 / 80 / 90: 2.0 / 4.0 / 6.5 / 10.3; at 40 / 30 / 20 / 10: -2.2 / -4.2 / -6.7 / -10.9;
 // at the ends about +-40 to 50, nearly a step). Its knob default is 60, not Plasma's 66.6.
+// J-203m: the source's stage shape is the segment bend family: with q = curve / 100,
+// s = 4 q^3 (q <= 0.5) or 1 - 4 (1 - q)^3 and k = 2 ln(s / (1 - s)) (within 0.3 of the 9.5 atanh fit
+// over 60..90, steeper at the ends; verified against the hosted plugin's output).
 inline double stageK(double curve, bool steep) {
   const double c = (curve - 50) / 50.0;
   if (!steep) return c * 8.0;
-  return 9.5 * std::atanh(std::clamp(c, -0.9998, 0.9998));
+  const double q = std::clamp(curve / 100.0, 0.0, 1.0);
+  if (std::fabs(q - 0.5) < 2e-6) return 0;
+  const double s = std::clamp(q <= 0.5 ? 4.0 * q * q * q : 1.0 - 4.0 * (1.0 - q) * (1.0 - q) * (1.0 - q), 1e-12, 1.0 - 2e-12);
+  return 2.0 * std::log(s / (1.0 - s));
 }
 void envStage(EnvState& e, int stage, const EnvSet& p, double srv) {
   e.stage = stage;
@@ -292,6 +330,7 @@ void envStage(EnvState& e, int stage, const EnvSet& p, double srv) {
     case 5: time = p.r, k = stageK(p.cr, p.steep), e.to = p.end; break;
     default: e.to = 0, e.dt = 0; return;
   }
+  e.time = time;
   e.dt = time <= 1e-5 ? 1.0 : 1.0 / (time * srv);
   e.k = k;
   if (std::fabs(e.k) < 1e-4) {
@@ -304,6 +343,24 @@ void envStage(EnvState& e, int stage, const EnvSet& p, double srv) {
     e.mul = std::exp(-e.k * e.dt);
     e.norm = 1.0 / (1.0 - std::exp(-e.k));
   }
+}
+// A stage time that changes during the stage (modulation) keeps the level: the stage continues
+// from the same point of its curve at the new rate (fitted and verified against the hosted
+// plugin's output with a macro on the attack time).
+inline void envRetime(EnvState& e, const EnvSet& p, double srv) {
+  double time;
+  switch (e.stage) {
+    case 1: time = p.a; break;
+    case 2: time = p.h; break;
+    case 3: time = p.d; break;
+    case 5: time = p.r; break;
+    default: return;
+  }
+  if (e.stage == 3) e.to = p.s;  // the decay heads for the sustain level as it is now
+  if (std::fabs(time - e.time) <= 1e-9 * (1.0 + time)) return;
+  e.time = time;
+  e.dt = time <= 1e-5 ? 1.0 : 1.0 / (time * srv);
+  if (e.k != 0) e.mul = std::exp(-e.k * e.dt);
 }
 inline void envTick(EnvState& e, const EnvSet& p, double srv, bool held) {
   if (e.stage == 0 || e.stage == 4) {
@@ -343,6 +400,7 @@ struct Ctl {
   float lev[5] = {}, pl[5] = {}, pr[5] = {};
   bool subOn = false, noiseOn = false;
   int subShape = 0;
+  bool subLaw = false;
   double subInc = 0;
   const NoiseSrc* nsrc = nullptr;
   const Sample* nfile = nullptr;
@@ -352,6 +410,7 @@ struct Ctl {
   bool nTone = false;
   float nTk[5] = {};  // noise tone filter b0 b1 b2 a1 a2
   int dest[kRoutes] = {};
+  bool raw[kRoutes] = {};  // the route's output skips ENV 1 (filter feeds still pass the filter)
   float bal2[kRoutes] = {}, b1[kRoutes] = {}, b2[kRoutes] = {};
   bool fOn[kFilters] = {};
   float fMix[kFilters] = {}, fLev[kFilters] = {};
@@ -404,6 +463,7 @@ class PlasmaGen final : public Generator {
       n.f2 = std::make_unique<Filter>();
     }
     for (auto& b : vbuf_) b.assign(static_cast<size_t>(kCtl * kMaxOs), 0.f);
+    for (auto& g : gainRamp_) g.assign(static_cast<size_t>(kCtl * kMaxOs), 0.f);
     base_.assign(kParamCount, 0.f);
     destOf_.assign(kParamCount, -1);
     for (auto& g : goff_) g = 0;
@@ -449,10 +509,16 @@ class PlasmaGen final : public Generator {
       sig += "," + std::to_string(t);
       if (t == FxConvolve) {
         const int ki = fxParamIndex(FxConvolve, "kParamIr"), ks = fxParamIndex(FxConvolve, "kParamSize"), km = fxParamIndex(FxConvolve, "kParamMinPhase");
-        for (int q : {ki, ks, km}) {
+        // the imported law shapes the impulse itself, so its attack, decay and damping rebuild it too
+        const int ka = fxParamIndex(FxConvolve, "kParamAttack"), kd = fxParamIndex(FxConvolve, "kParamDecay");
+        const int kp = fxParamIndex(FxConvolve, "kParamDamping"), kl = fxParamIndex(FxConvolve, "glLaw");
+        auto val = [&](int q) {
           const int kk = fxP(s, X_P0 + q);
-          sig += ":" + std::to_string(kk < static_cast<int>(state.params.size()) ? state.params[static_cast<size_t>(kk)] : 0.f);
-        }
+          return kk < static_cast<int>(state.params.size()) ? state.params[static_cast<size_t>(kk)] : 0.f;
+        };
+        for (int q : {ki, ks, km, kl}) sig += ":" + std::to_string(val(q));
+        if (val(kl) >= 0.5f)
+          for (int q : {ka, kd, kp}) sig += ":" + std::to_string(val(q));
       }
     }
     if (sig == bankSig_) return;
@@ -636,6 +702,8 @@ class PlasmaGen final : public Generator {
       const float c = std::clamp(std::cbrt(std::max(0.f, toNorm(pm, b))) + off, 0.f, 1.f);
       return fromNorm(pm, c * c * c);
     }
+    if (cubeDest_[static_cast<size_t>(d)] == 3)  // time scaling on the source's knob: 0..400 %, a full route moves it by 400 %
+      return std::clamp(b + 4.f * off, 0.1f, 4.f);
     if (cubeDest_[static_cast<size_t>(d)] == 2) {  // compressor makeup on the source's knob: gain = 1 + 30.62 knob^2
       static const int mk = fxParamIndex(FxComp, "kParamMakeup");
       const double g = fxPlain(FxComp, mk, static_cast<double>(b));
@@ -691,7 +759,7 @@ class PlasmaGen final : public Generator {
         d = destCount_++;
         destOf_[static_cast<size_t>(dst)] = d;
         destParam_[d] = dst;
-        cubeDest_[static_cast<size_t>(d)] = static_cast<uint8_t>(!law ? 0 : cubeKnob(dst) ? 1 : squareKnob(dst) ? 2 : 0);
+        cubeDest_[static_cast<size_t>(d)] = static_cast<uint8_t>(!law ? 0 : cubeKnob(dst) ? 1 : squareKnob(dst) ? 2 : (dst == G_EnvScale || dst == G_LfoScale) ? 3 : 0);
       }
       Slot& sl = slots_[slotCount_++];
       sl.index = s;
@@ -881,7 +949,10 @@ class PlasmaGen final : public Generator {
     const int poly = std::clamp(static_cast<int>(std::lround(G(G_Poly))), 1, kMaxVoices);
     if (G(G_SameNote) >= 0.5f)
       for (auto& n : notes_)
-        if (n.active && !n.stealing && n.key == key) steal(n);
+        if (n.active && !n.stealing && n.key == key) {
+          steal(n);
+          if (modLaw_) n.fadeStep = static_cast<float>(1.0 / std::max(1.0, 0.02 * srv_));  // imported: a 20 ms release
+        }
     int count = activeCount();
     while (count >= poly) {
       Note* victim = nullptr;
@@ -908,6 +979,7 @@ class PlasmaGen final : public Generator {
       if (!victim) break;
       if (G(G_Priority) >= 0.5f && G(G_Priority) < 1.5f && victim->held) return nullptr;  // "oldest": the new note is dropped
       steal(*victim);
+      takeover_ = victim;
       --count;
     }
     (void)vel;
@@ -922,7 +994,7 @@ class PlasmaGen final : public Generator {
 
   EnvSet envSet(const Note* n, int e) const {
     EnvSet p;
-    const double scale = G(G_EnvScale) * (n ? (1.0 + n->rndEnv + n->vc.env * 0.5) : 1.0);
+    const double scale = V(n, G_EnvScale) * (n ? (1.0 + n->rndEnv + n->vc.env * 0.5) : 1.0);
     const double beat = 60.0 / tempo_;
     const bool bpm = V(n, envP(e, E_Bpm)) >= 0.5f;
     auto tm = [&](int k) {
@@ -941,6 +1013,7 @@ class PlasmaGen final : public Generator {
   void playNote(uint32_t id, double pitch, float vel, const NoteProps& props) {
     const int key = std::clamp(static_cast<int>(std::lround(pitch)), 0, 127);
     const double target = notePitch(pitch) + G(G_Transpose);
+    takeover_ = nullptr;
     if (mono()) {
       HeldKey h{id, key, target};
       held_.push_back(h);
@@ -962,10 +1035,14 @@ class PlasmaGen final : public Generator {
         lastPitch_ = target;
         return;
       }
-      if (n) steal(*n);
+      if (n) steal(*n), takeover_ = n;
     }
     Note* n = allocate(key, vel);
     if (!n) return;
+    // Imported voice law: a stolen voice is taken over in place, without a fade; its envelopes
+    // start their attack from the level they had (fitted and verified against the hosted
+    // plugin's output on a mono preset retriggered in its release)
+    Note* prev = modLaw_ && takeover_ && takeover_ != n ? takeover_ : nullptr;
     const double from = lastPitch_;
     n->active = true;
     n->hasCtl = false;
@@ -1014,6 +1091,23 @@ class PlasmaGen final : public Generator {
     n->ampPrev = 0;
     n->f1->reset();
     n->f2->reset();
+    // the note starts with its modulation in place: the matrix runs once on the note's own
+    // sources (LFOs at their start) before the envelopes and oscillators take their settings
+    // (measured on the hosted plugin: a macro on the amp attack time sets the first attack)
+    for (int l = 0; l < kLfos; ++l)
+      if (G(lfoP(l, L_Mono)) < 0.5f) startLfo(*n, l), stepLfo(n, n->lfo[l], l, 0.0, true, false);
+    for (auto& e : n->env)
+      if (e.stage == 0) e.level = 0;
+    if (prev) {
+      for (int e = 0; e < kEnvs; ++e) {
+        n->env[e].level = prev->env[e].level;
+        n->env[e].stage = prev->env[e].stage != 0 ? 5 : 0;
+      }
+      n->ampPrev = prev->ampPrev;
+      prev->active = false;
+      prev->stealing = false;
+    }
+    evalMatrix(n, n->off, 0.f);
     retrigger(*n, true);
   }
 
@@ -1113,8 +1207,12 @@ class PlasmaGen final : public Generator {
   float sourceValue(const Note* n, int s) const {
     switch (s) {
       case SrcNone: return 0;
-      case SrcVelo: return n ? curve129(aux_->velo, n->vel) : 0;
-      case SrcNote: return n ? curve129(aux_->note, static_cast<float>(std::clamp(n->pitch, 0.0, 127.0) / 127.0)) : 0;
+      case SrcVelo:
+        if (n && modLaw_ && aux_->model.velo.size() >= 2) return static_cast<float>(curveAtLaw(aux_->model.velo, std::clamp(static_cast<double>(n->vel), 0.0, 1.0), true));
+        return n ? curve129(aux_->velo, n->vel) : 0;
+      case SrcNote:
+        if (n && modLaw_ && aux_->model.note.size() >= 2) return static_cast<float>(curveAtLaw(aux_->model.note, std::clamp(n->pitch, 0.0, 127.0) / 127.0, true));
+        return n ? curve129(aux_->note, static_cast<float>(std::clamp(n->pitch, 0.0, 127.0) / 127.0)) : 0;
       case SrcActiveVoices: return std::min(1.f, static_cast<float>(activeCount()) / std::max(1.f, G(G_Poly)));
       case SrcAlt1: return n ? n->alt1 : 0;
       case SrcAlt2: return n ? n->alt2 : 0;
@@ -1182,6 +1280,10 @@ class PlasmaGen final : public Generator {
   }
   float shapeMod(int slot, float v, bool auxCurve) const {
     const auto& has = auxCurve ? aux_->hasAuxCurve : aux_->hasModCurve;
+    if (has[static_cast<size_t>(slot)] && modLaw_) {  // Imported matrix law: drawn curves bend on the imported segment law
+      const Curve& c = auxCurve ? aux_->model.auxCurve[static_cast<size_t>(slot)] : aux_->model.modCurve[static_cast<size_t>(slot)];
+      return static_cast<float>(curveAtLaw(c, std::clamp(static_cast<double>(v), 0.0, 1.0), true));
+    }
     if (has[static_cast<size_t>(slot)]) {
       const auto& c = auxCurve ? aux_->auxCurve[static_cast<size_t>(slot)] : aux_->modCurve[static_cast<size_t>(slot)];
       const float u = std::clamp(v, 0.f, 1.f) * 64.f;
@@ -1254,20 +1356,30 @@ class PlasmaGen final : public Generator {
       const int sh = std::clamp(static_cast<int>(G(lfoP(l, L_Shape))), 1, static_cast<int>(aux_->factoryShapes.size()) - 1);
       pts = &aux_->factoryShapes[static_cast<size_t>(sh)];
     }
-    if (aux_->busLinks.empty()) return static_cast<float>(curveAt(*pts, x));
-    // point modulation: copy, move, evaluate
+    const bool bank = G(tailP(T_LfoLaw)) >= 0.5f;
+    if (aux_->busLinks.empty()) return static_cast<float>(curveAtLaw(*pts, x, bank));
+    // point modulation: copy, move, evaluate. Each link offsets its point from the stored shape
+    // (two links on one point and axis do not add up; the later one wins); X moves stay between
+    // the neighbours as already moved, the first point's X moves twice as far, and the closing
+    // point shares the first point's Y. Fitted and verified against the hosted plugin's output.
     CurvePt tmp[128];
     const int cnt = std::min(128, static_cast<int>(pts->size()));
     for (int i = 0; i < cnt; ++i) tmp[i] = (*pts)[static_cast<size_t>(i)];
     for (const auto& b : aux_->busLinks) {
-      if (b.lfo != l || b.point >= cnt) continue;
+      if (b.lfo != l || b.point >= cnt || b.axis > 2) continue;
       const float bus = V(n, busP(b.bus)) * b.depth;
+      const CurvePt& base = (*pts)[static_cast<size_t>(b.point)];
       CurvePt& p = tmp[b.point];
       if (b.axis == 0) {
         const float lo = b.point > 0 ? tmp[b.point - 1].x : 0.f, hi = b.point + 1 < cnt ? tmp[b.point + 1].x : 1.f;
-        p.x = std::clamp(p.x + bus * 0.5f, lo, hi);
-      } else {
-        p.y = std::clamp(p.y + bus * 0.5f, 0.f, 1.f);
+        p.x = std::clamp((b.point + 1 == cnt ? 1.f : base.x) + bus * (b.point == 0 ? 1.f : 0.5f), lo, std::max(lo, hi));
+      } else if (b.axis == 1) {
+        const bool closing = b.point + 1 == cnt && cnt > 1;
+        p.y = std::clamp((closing ? (*pts)[0].y : base.y) + bus * 0.5f, 0.f, 1.f);
+        if (b.point == 0 && cnt > 1) tmp[cnt - 1].y = p.y;
+      } else if (b.point + 1 < cnt) {  // a point's curve bends the segment that leaves it
+        CurvePt& q = tmp[b.point + 1];
+        q.c = std::clamp((*pts)[static_cast<size_t>(b.point + 1)].c + bus, -1.f, 1.f);
       }
     }
     if (x <= tmp[0].x) return tmp[0].y;
@@ -1275,9 +1387,48 @@ class PlasmaGen final : public Generator {
       if (x <= tmp[i].x) {
         const double w = tmp[i].x - tmp[i - 1].x;
         if (w <= 1e-9) return tmp[i].y;
-        return static_cast<float>(tmp[i - 1].y + (tmp[i].y - tmp[i - 1].y) * bendCurve((x - tmp[i - 1].x) / w, tmp[i].c));
+        const double t = (x - tmp[i - 1].x) / w;
+        return static_cast<float>(tmp[i - 1].y + (tmp[i].y - tmp[i - 1].y) * (bank ? bankBend(t, tmp[i].c) : bendCurve(t, tmp[i].c)));
       }
     return tmp[cnt - 1].y;
+  }
+  bool hasPathLinks(int l) const {
+    for (const auto& b : aux_->busLinks)
+      if (b.lfo == l && b.axis >= 3) return true;
+    return false;
+  }
+  // a path LFO with point modulation (link axes 3 / 4 / 5): X output, Y output or curve of one
+  // point, offset from the stored path and kept in 0..1 (no neighbour limits)
+  void pathAt(const Note* n, int l, double x, double& y, double& y2) const {
+    const LfoAux& la = aux_->lfo[static_cast<size_t>(l)];
+    CurvePt tmp[128];
+    float px[128];
+    const int cnt = std::min(128, static_cast<int>(la.path.size()));
+    for (int i = 0; i < cnt; ++i) {
+      tmp[i] = la.path[static_cast<size_t>(i)];
+      px[i] = static_cast<size_t>(i) < la.pathX.size() ? la.pathX[static_cast<size_t>(i)] : tmp[i].x;
+    }
+    for (const auto& b : aux_->busLinks) {
+      if (b.lfo != l || b.axis < 3 || b.point >= cnt) continue;
+      const float bus = V(n, busP(b.bus)) * b.depth * 0.5f;
+      const size_t k = static_cast<size_t>(b.point);
+      if (b.axis == 3) px[k] = std::clamp((k < la.pathX.size() ? la.pathX[k] : la.path[k].x) + bus, 0.f, 1.f);
+      else if (b.axis == 4) tmp[k].y = std::clamp(la.path[k].y - bus, 0.f, 1.f);
+      else if (b.point + 1 < cnt) tmp[k + 1].c = std::clamp(la.path[k + 1].c + 2.f * bus, -1.f, 1.f);
+    }
+    y = tmp[cnt - 1].y;
+    if (x <= tmp[0].x) y = tmp[0].y;
+    else
+      for (int i = 1; i < cnt; ++i)
+        if (x <= tmp[i].x) {
+          const double w = tmp[i].x - tmp[i - 1].x;
+          const double t = w <= 1e-9 ? 1.0 : (x - tmp[i - 1].x) / w;
+          y = tmp[i - 1].y + (tmp[i].y - tmp[i - 1].y) * (G(tailP(T_LfoLaw)) >= 0.5f ? bankBend(t, tmp[i].c) : bendCurve(t, tmp[i].c));
+          break;
+        }
+    const double fi = std::clamp(x, 0.0, 1.0) * (cnt - 1);
+    const int i0 = std::min(cnt - 1, static_cast<int>(fi)), i1 = std::min(cnt - 1, i0 + 1);
+    y2 = px[i0] + (px[i1] - px[i0]) * (fi - i0);
   }
   double lfoRateHz(const Note* n, int l) const {
     double hz;
@@ -1290,7 +1441,7 @@ class PlasmaGen final : public Generator {
     } else {
       hz = lfoHz(V(n, lfoP(l, L_Rate)), V(n, lfoP(l, L_Rate10x)) >= 0.5f);
     }
-    const double sc = std::max(0.01f, G(G_LfoScale));
+    const double sc = std::max(0.01f, V(n, G_LfoScale));
     return G(G_LfoScaleRate) >= 0.5f ? hz * sc : hz / sc;
   }
   double divSeconds(double v) const {  // rise / delay: 0 = off, else a tempo division
@@ -1350,8 +1501,10 @@ class PlasmaGen final : public Generator {
       switch (type) {
         case LfoPath: {
           const LfoAux& la = aux_->lfo[static_cast<size_t>(l)];
-          if (!la.path.empty()) {
-            y = curveAt(la.path, x);
+          if (!la.path.empty() && hasPathLinks(l)) {
+            pathAt(n, l, x, y, y2);
+          } else if (!la.path.empty()) {
+            y = curveAtLaw(la.path, x, G(tailP(T_LfoLaw)) >= 0.5f);
             if (!la.pathX.empty()) {
               const double fi = x * (la.pathX.size() - 1);
               const size_t i0 = static_cast<size_t>(fi), i1 = std::min(la.pathX.size() - 1, i0 + 1);
@@ -1606,6 +1759,15 @@ class PlasmaGen final : public Generator {
                                               : grainLengthMs(lv));
     s.density = static_cast<float>(dm == 1 ? tempo_ / 60.0 / divisionBeats(static_cast<int>(std::lround((1 - dv) * 15)))
                                    : dm == 2 ? (1.0 + dv * 15.0) / (s.lengthMs * 0.001) : grainDensity(dv));
+    if (G(tailP(T_GranLaw)) >= 0.5f) {  // Imported granular law: free density 1000 v^4 / s, free length 10 v^4 s
+      if (dm == 0) s.density = static_cast<float>(std::max(0.05, grainDensityImp(dv)));
+      if (lm == 0) s.lengthMs = static_cast<float>(std::max(1.0, grainLengthMsImp(lv)));
+      if (lm == 2) {  // a share of the grain spacing: 5 + 795 v^2 % below the middle, 800 v^2 % above
+        const double pct = lv < 0.5f ? 5.0 + 795.0 * lv * lv : 800.0 * lv * lv;
+        s.lengthMs = static_cast<float>(std::max(1.0, pct * 10.0 / std::max(0.05f, s.density)));
+      }
+      if (dm == 2) s.density = static_cast<float>(std::max(0.05, 30.0 * dv / (s.lengthMs * 0.001)));
+    }
     s.grReverse = V(&n, oscP(o, O_GReverse));
     s.winShape = static_cast<int>(V(&n, oscP(o, O_GWinShape)));
     s.winSkew = V(&n, oscP(o, O_GWinSkew));
@@ -1644,7 +1806,9 @@ class PlasmaGen final : public Generator {
       n.glideLeft = std::max(0.0, n.glideLeft - dtSec);
       double t = n.glideTotal > 0 ? 1.0 - n.glideLeft / n.glideTotal : 1.0;
       const float c = G(G_PortaCurve);
-      if (std::fabs(c) > 1e-3f) t = bendCurve(t, c);
+      // imported curve law: the remaining distance follows the segment bend of the curve value
+      if (std::fabs(c) > 1e-3f && G(tailP(T_LfoLaw)) >= 0.5f) t = 1.0 - bankBend(1.0 - t, c);
+      else if (std::fabs(c) > 1e-3f) t = bendCurve(t, c);
       n.pitch = n.glideFrom + (n.glideTarget - n.glideFrom) * t;
     }
     // matrix
@@ -1674,6 +1838,7 @@ class PlasmaGen final : public Generator {
     panGains(V(&n, noiseP(N_Pan)) + (G(G_VcN) >= 0.5f ? n.vc.pan + n.rndPan : 0.f), pl[3], pr[3]);
     panGains(V(&n, subP(S_Pan)) + (G(G_VcS) >= 0.5f ? n.vc.pan + n.rndPan : 0.f), pl[4], pr[4]);
     c.subShape = static_cast<int>(V(&n, subP(S_Shape)));
+    c.subLaw = G(tailP(T_OscLaw)) >= 0.5f;
     const double subPitch = (V(&n, subP(S_PitchTrack)) >= 0.5f ? n.pitch : 60.0) + std::round(V(&n, subP(S_Octave))) * 12.0 + V(&n, subP(S_Coarse)) + bendSemis(n) +
                             G(G_MasterTune) / 100.0 + (G(G_VcS) >= 0.5f ? n.vc.detune * 0.5 + n.rndDet / 100.0 : 0.0);
     c.subInc = 440.0 * std::exp2((subPitch - 69.0) / 12.0) / srv_;
@@ -1710,6 +1875,7 @@ class PlasmaGen final : public Generator {
     float* b2 = c.b2;
     for (int r = 0; r < kRoutes; ++r) {
       dest[r] = static_cast<int>(V(&n, routeP(r, R_Dest)));
+      c.raw[r] = G(tailP(T_RawA + r)) >= 0.5f;
       bal2[r] = (V(&n, routeP(r, R_Balance)) + 1.f) * 0.5f;
       b1[r] = V(&n, routeP(r, R_Bus1));
       b2[r] = V(&n, routeP(r, R_Bus2));
@@ -1738,7 +1904,10 @@ class PlasmaGen final : public Generator {
     if (dest[RtF1] == 0) c.serial = 1;
     else if (dest[RtF2] == 0) c.serial = 2;
     c.amp = ampGain(&n);
-    for (int e = 0; e < kEnvs; ++e) c.es[e] = envSet(&n, e);
+    for (int e = 0; e < kEnvs; ++e) {
+      c.es[e] = envSet(&n, e);
+      envRetime(n.env[e], c.es[e], srv_);
+    }
     // multisample own envelope
     for (int o = 0; o < kOscs; ++o) c.menvOn[o] = V(&n, oscP(o, O_MEnvOn)) >= 0.5f;
   }
@@ -1753,6 +1922,7 @@ class PlasmaGen final : public Generator {
     const float* pr = c.pr;
     const bool subOn = c.subOn, noiseOn = c.noiseOn;
     const int subShape = c.subShape;
+    const bool subLaw = c.subLaw;
     const double subInc = c.subInc;
     const NoiseSrc* nsrc = c.nsrc;
     const Sample* nfile = c.nfile;
@@ -1806,21 +1976,24 @@ class PlasmaGen final : public Generator {
         n.last[3] = (a + b) * 0.5f;
       }
       if (subOn) {
-        const float x = n.sub.tick(subShape, subInc);
+        const float x = n.sub.tick(subShape, subInc, subLaw);
         sl[4] = x * lev[4] * pl[4], sr[4] = x * lev[4] * pr[4];
         n.last[4] = x;
       }
-      float f1l = 0, f1r = 0, f2l = 0, f2r = 0, ml = 0, mr = 0, dl = 0, dr = 0, b1l = 0, b1r = 0, b2l = 0, b2r = 0;
+      // acc[0]: through ENV 1, acc[1]: routes that skip it; main L/R, direct L/R, bus 1 L/R, bus 2 L/R
+      float f1l = 0, f1r = 0, f2l = 0, f2r = 0;
+      float acc[2][8] = {};
       for (int r = 0; r < 5; ++r) {
         const float xl = sl[r], xr = sr[r];
         if (xl == 0 && xr == 0) continue;
+        float* a = acc[c.raw[r] ? 1 : 0];
         switch (dest[r]) {
           case RouteFilter: f1l += xl * (1 - bal2[r]), f1r += xr * (1 - bal2[r]), f2l += xl * bal2[r], f2r += xr * bal2[r]; break;
-          case RouteMain: ml += xl, mr += xr; break;
-          case RouteDirect: dl += xl, dr += xr; break;
+          case RouteMain: a[0] += xl, a[1] += xr; break;
+          case RouteDirect: a[2] += xl, a[3] += xr; break;
           default: break;
         }
-        b1l += xl * b1[r], b1r += xr * b1[r], b2l += xl * b2[r], b2r += xr * b2[r];
+        a[4] += xl * b1[r], a[5] += xr * b1[r], a[6] += xl * b2[r], a[7] += xr * b2[r];
       }
       auto runF = [&](int f, float& l, float& r) {
         if (!fOn[f]) return;
@@ -1829,20 +2002,25 @@ class PlasmaGen final : public Generator {
         l = (l + (a - l) * fMix[f]) * fLev[f];
         r = (r + (b - r) * fMix[f]) * fLev[f];
       };
+      auto sendF = [&](int rt, float l, float r) {
+        float* a = acc[c.raw[rt] ? 1 : 0];
+        a[4] += l * b1[rt], a[5] += r * b1[rt], a[6] += l * b2[rt], a[7] += r * b2[rt];
+      };
       auto routeF = [&](int f, float l, float r) {
         const int rt = f == 0 ? RtF1 : RtF2;
+        float* a = acc[c.raw[rt] ? 1 : 0];
         switch (dest[rt]) {
-          case 1: ml += l, mr += r; break;
-          case 2: dl += l, dr += r; break;
+          case 1: a[0] += l, a[1] += r; break;
+          case 2: a[2] += l, a[3] += r; break;
           default: break;
         }
-        b1l += l * b1[rt], b1r += r * b1[rt], b2l += l * b2[rt], b2r += r * b2[rt];
+        sendF(rt, l, r);
       };
       if (serial == 1) {
         runF(0, f1l, f1r);
         n.last[5] = (f1l + f1r) * 0.5f;
         f2l += f1l, f2r += f1r;
-        b1l += f1l * b1[RtF1], b1r += f1r * b1[RtF1], b2l += f1l * b2[RtF1], b2r += f1r * b2[RtF1];
+        sendF(RtF1, f1l, f1r);
         runF(1, f2l, f2r);
         n.last[6] = (f2l + f2r) * 0.5f;
         routeF(1, f2l, f2r);
@@ -1850,7 +2028,7 @@ class PlasmaGen final : public Generator {
         runF(1, f2l, f2r);
         n.last[6] = (f2l + f2r) * 0.5f;
         f1l += f2l, f1r += f2r;
-        b1l += f2l * b1[RtF2], b1r += f2r * b1[RtF2], b2l += f2l * b2[RtF2], b2r += f2r * b2[RtF2];
+        sendF(RtF2, f2l, f2r);
         runF(0, f1l, f1r);
         n.last[5] = (f1l + f1r) * 0.5f;
         routeF(0, f1l, f1r);
@@ -1864,17 +2042,17 @@ class PlasmaGen final : public Generator {
       }
       // amp: ENV 1 x amp, steal fade, smoothed per sample
       n.ampPrev += (ampTarget - n.ampPrev) * ampSlew;
-      float g = static_cast<float>(n.env[0].level) * n.ampPrev;
+      float g0 = n.ampPrev;
       if (n.stealing) {
         n.fade -= n.fadeStep;
         if (n.fade <= 0) {
           n.fade = 0;
           n.active = false;
         }
-        g *= std::max(0.f, n.fade);
+        g0 *= std::max(0.f, n.fade);
       }
-      outs[0][i] += ml * g, outs[1][i] += mr * g, outs[2][i] += dl * g, outs[3][i] += dr * g;
-      outs[4][i] += b1l * g, outs[5][i] += b1r * g, outs[6][i] += b2l * g, outs[7][i] += b2r * g;
+      const float g = static_cast<float>(n.env[0].level) * g0;
+      for (int k = 0; k < 8; ++k) outs[k][i] += acc[0][k] * g + acc[1][k] * g0;
     }
     // a non-finite value (extreme settings) must not stay in the note's state
     float chk = 0;
@@ -2023,37 +2201,58 @@ class PlasmaGen final : public Generator {
     // effect racks
     FxContext fc;
     fc.sr = sr_, fc.tempo = tempo_, fc.beat = beat_, fc.playing = playing_, fc.driveBoost = G(tailP(T_DriveMode)) >= 0.5f;
-    float b1v = static_cast<float>(busGain(GV(G_Bus1Vol))), b2v = static_cast<float>(busGain(GV(G_Bus2Vol)));
+    // bus / direct / master gains: under the imported law they glide to their targets over about
+    // 113 ms and snap within 0.01, as the source's gain smoothing does
+    const float tgt[4] = {static_cast<float>(busGain(GV(G_Bus1Vol))), static_cast<float>(busGain(GV(G_Bus2Vol))),
+                          static_cast<float>(busGain(GV(G_DirectVol))), static_cast<float>(masterGain(GV(G_MasterVol)))};
+    const bool glide = modLaw_ && gainsSet_;
+    if (!glide)
+      for (int k = 0; k < 4; ++k) gainNow_[k] = tgt[k];
+    gainsSet_ = true;
+    const float gk = static_cast<float>(1.0 - std::exp(-1.0 / (0.1134 * sr_)));
+    auto glideTo = [&](int k) {
+      if (!glide) return;
+      gainNow_[k] += (tgt[k] - gainNow_[k]) * gk;
+      if (std::fabs(tgt[k] - gainNow_[k]) < 0.01f) gainNow_[k] = tgt[k];
+    };
+    const bool gliding = glide && (gainNow_[0] != tgt[0] || gainNow_[1] != tgt[1] || gainNow_[2] != tgt[2] || gainNow_[3] != tgt[3]);
+    std::array<float, 4> g0{gainNow_[0], gainNow_[1], gainNow_[2], gainNow_[3]};
+    if (gliding)  // per-sample gains for this chunk (bus 1, bus 2, direct, master)
+      for (int i = 0; i < m; ++i) {
+        for (int k = 0; k < 4; ++k) glideTo(k), gainRamp_[k][i] = gainNow_[k];
+      }
+    auto gain = [&](int k, int i) { return gliding ? gainRamp_[k][i] : g0[static_cast<size_t>(k)]; };
     // bus chain: one bus feeds the other's input (after its own rack and level) instead of going to
-    // its own output; one direction only, so there is no feedback
+    // its own output; one direction only, so there is no feedback. Both ways: bus 2 feeds bus 1 and
+    // bus 1's return is dropped (as the source plays it)
     const int chain = static_cast<int>(std::lround(G(tailP(T_BusChain))));
-    if (chain == 2) {
+    if (chain >= 2) {
       runRack(2, bus[6], bus[7], m, fc);
-      for (int i = 0; i < m; ++i) bus[4][i] += bus[6][i] * b2v, bus[5][i] += bus[7][i] * b2v;
+      for (int i = 0; i < m; ++i) bus[4][i] += bus[6][i] * gain(1, i), bus[5][i] += bus[7][i] * gain(1, i);
       runRack(1, bus[4], bus[5], m, fc);
     } else {
       runRack(1, bus[4], bus[5], m, fc);
       if (chain == 1)
-        for (int i = 0; i < m; ++i) bus[6][i] += bus[4][i] * b1v, bus[7][i] += bus[5][i] * b1v;
+        for (int i = 0; i < m; ++i) bus[6][i] += bus[4][i] * gain(0, i), bus[7][i] += bus[5][i] * gain(0, i);
       runRack(2, bus[6], bus[7], m, fc);
     }
     for (int i = 0; i < m; ++i) {
-      if (chain != 1) {
+      if (chain == 0 || chain == 2) {
         const int o = G(G_Bus1Dest) < 0.5f ? 0 : 2;
-        bus[o][i] += bus[4][i] * b1v, bus[o + 1][i] += bus[5][i] * b1v;
+        bus[o][i] += bus[4][i] * gain(0, i), bus[o + 1][i] += bus[5][i] * gain(0, i);
       }
-      if (chain != 2) {
+      if (chain <= 1) {
         const int o = G(G_Bus2Dest) < 0.5f ? 0 : 2;
-        bus[o][i] += bus[6][i] * b2v, bus[o + 1][i] += bus[7][i] * b2v;
+        bus[o][i] += bus[6][i] * gain(1, i), bus[o + 1][i] += bus[7][i] * gain(1, i);
       }
     }
     runRack(0, bus[0], bus[1], m, fc);
-    const float dv = static_cast<float>(busGain(GV(G_DirectVol)));
-    const float mv = static_cast<float>(masterGain(GV(G_MasterVol)));
     float pk = 0;
+    const float lim = modLaw_ ? 4.f : 1e30f;  // imported: the output is held within +-4 (+12 dBFS)
     for (int i = 0; i < m; ++i) {
-      float l = (bus[0][i] + bus[2][i] * dv) * mv;
-      float r = (bus[1][i] + bus[3][i] * dv) * mv;
+      const float dv = gain(2, i), mv = gain(3, i);
+      float l = std::clamp((bus[0][i] + bus[2][i] * dv) * mv, -lim, lim);
+      float r = std::clamp((bus[1][i] + bus[3][i] * dv) * mv, -lim, lim);
       if (!std::isfinite(l) || !std::isfinite(r)) l = r = 0;
       L[i] += l;
       R[i] += r;
@@ -2197,6 +2396,7 @@ class PlasmaGen final : public Generator {
   std::vector<int> destOf_;
   int destParam_[kModSlots] = {};
   std::array<uint8_t, kModSlots> cubeDest_ = {};  // imported knob law per destination: 0 plain, 1 cube, 2 makeup square
+  Note* takeover_ = nullptr;                      // the voice the current note-on steals (taken over in place)
   bool modLaw_ = false;  // T_ModLaw Imported
   Slot slots_[kModSlots];
   int slotCount_ = 0, destCount_ = 0;
@@ -2243,6 +2443,9 @@ class PlasmaGen final : public Generator {
   Lr4 split_[kFxSlots][2];
   int tailLeft_ = 0, ctlLeft_ = 0;
   float outPeak_ = 0;
+  float gainNow_[4] = {};  // gliding bus 1, bus 2, direct and master gains
+  bool gainsSet_ = false;
+  std::array<std::vector<float>, 4> gainRamp_;
   Live live_;
 };
 

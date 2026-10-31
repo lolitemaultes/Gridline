@@ -47,7 +47,11 @@ inline void testEncFx2Pitch() {
     }
     b.insert(b.end(), knobs.begin(), knobs.end());
   });
-  encCase("Scratcher", "Fruity Scratcher", "gl.scratcher", [](Bytes&) {});
+  // J-205: the Turntable instrument; a changed speed and sound switch encode back.
+  encCase("Scratcher", "Fruity Scratcher", "gl.turntable", [](Bytes& b) {
+    gl::flp::putF32(b, 12, 0.75f);
+    gl::flp::putF32(b, 8, 0.0f);
+  });
 }
 
 }  // namespace enctest

@@ -289,7 +289,7 @@ msgstr ""
 msgid "Normalize"
 msgstr ""
 
-#: src/app/AudioRecordUi.cpp src/app/MidiUi.cpp src/app/SamplerRenderUi.cpp
+#: src/app/AudioRecordUi.cpp src/app/MidiUi.cpp src/app/SamplerRenderUi.cpp src/packs/spectral/turntable_ui.cpp
 msgid "Notes"
 msgstr ""
 
@@ -18467,6 +18467,18 @@ msgstr ""
 
 #: src/packs/spacefx/spacefx_ui.cpp
 msgid "true stereo"
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "Ctrl+click the waveform to set the cue point."
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "Cue point"
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "Key track (C5 plays at Speed)"
 msgstr ""
 
 #: src/packs/synths/dcosynth_ui.cpp

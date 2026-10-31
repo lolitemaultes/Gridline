@@ -278,7 +278,7 @@ inline constexpr int kFxBase = kModBase + kModSlots * M_Count;
 // with their defaults (J-201: noise tone, unison mix, filter drive mode).
 // J-203a: filter key-track centre, multisample level law. J-203g: wavetable / warp law.
 // J-203i: LFO law (rise / delay as times, fixed-time smoothing).
-enum TailP : int { T_NoiseTone = 0, T_UniMix, T_DriveMode, T_KeyCentre, T_MsLaw, T_EnvLaw, T_OscLaw, T_ModLaw, T_Pad1, T_Pad2, T_LfoLaw, T_BusChain, T_Count };
+enum TailP : int { T_NoiseTone = 0, T_UniMix, T_DriveMode, T_KeyCentre, T_MsLaw, T_EnvLaw, T_OscLaw, T_ModLaw, T_Pad1, T_Pad2, T_LfoLaw, T_BusChain, T_GranLaw, T_RawA, T_RawB, T_RawC, T_RawN, T_RawS, T_RawF1, T_RawF2, T_Count };
 // LFO rise / delay on the imported LFO law: 16 v^2 (seconds on a free LFO, beats on a synced one).
 inline double lfoLawTime(double v) { return 16.0 * v * v; }
 inline constexpr int kTailBase = kFxBase + kFxSlots * X_Count;
@@ -345,6 +345,9 @@ inline double lfoHz(double v, bool x10) { return (x10 ? 1000.0 : 100.0) * std::p
 inline double lfoHzInv(double hz, bool x10) { return hz <= 0 ? 0 : std::pow(hz / (x10 ? 1000.0 : 100.0), 0.25); }
 inline double grainDensity(double v) { return std::exp(std::log(1.0) + v * (std::log(200.0) - std::log(1.0))); }  // grains / s
 inline double grainLengthMs(double v) { return std::exp(std::log(2.0) + v * (std::log(1000.0) - std::log(2.0))); }
+// Imported granular law (T_GranLaw): density 1000 v^4 grains / s, grain length 10 v^4 s
+inline double grainDensityImp(double v) { return 1000.0 * std::pow(v < 0 ? 0 : v > 1 ? 1 : v, 4.0); }
+inline double grainLengthMsImp(double v) { return 10000.0 * std::pow(v < 0 ? 0 : v > 1 ? 1 : v, 4.0); }
 
 // ------------------------------------------------------------------ data model (PluginState::data, JSON)
 struct CurvePt {
@@ -367,7 +370,7 @@ struct LfoData {
 };
 struct BusLink {       // LFO point modulation: a bus moves a point of an LFO
   int lfo = 0, point = 0;
-  int axis = 1;        // 0 = X (time), 1 = Y (value)
+  int axis = 1;        // 0 = X (time), 1 = Y (value), 2 = curve; path LFO: 3 = X out, 4 = Y out, 5 = curve
   int bus = 0;         // 0..15
   float depth = 1;     // -1..1
 };

@@ -50,6 +50,19 @@ struct Exporter {
     return originFingerprint(ev, f) && f == fp;
   }
   int channelType(const Channel& c) const;
+  // J-205: an instrument the import took out of a mixer slot (still routed to
+  // that insert): {insert id, slot}, else slot -1. It is written back into the slot.
+  std::pair<ObjectId, int> movedSlot(const Channel& c) const {
+    if (!o.useOrigin) return {kNoId, -1};
+    auto it = s.flOrigin.blobs.find(originKey("slotch", c.id));
+    if (it == s.flOrigin.blobs.end()) return {kNoId, -1};
+    const size_t sl = it->second.find('/');
+    if (sl == std::string::npos) return {kNoId, -1};
+    const ObjectId ins = static_cast<ObjectId>(std::strtoull(it->second.c_str(), nullptr, 10));
+    const int k = std::atoi(it->second.c_str() + sl + 1);
+    if (ins != c.mixerTrack || k < 0) return {kNoId, -1};
+    return {ins, k};
+  }
 
   // Sections (FlpExport*.cpp).
   void assignIndices();

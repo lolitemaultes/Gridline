@@ -408,7 +408,8 @@ int main() {
       for (int pos = 0; pos < 4800; pos += 240) pl::fxProcess(*bank->unit[0], pl::FxDistortion, slot0(st), L.data() + pos, R.data() + pos, 240, c, nullptr, 0);
       float pk = 0;
       for (float v : L) pk = std::max(pk, std::fabs(v));
-      expect(std::fabs(pk - 0.5f * 1.657f) < 0.02f, ("hard clip ceiling " + std::to_string(pk) + " (source 0.83)").c_str());
+      // (the 4x oversampling filters ring a few percent past the clip on the way down)
+      expect(std::fabs(pk - 0.5f * 1.657f) < 0.04f, ("hard clip ceiling " + std::to_string(pk) + " (source 0.83)").c_str());
     }
     // downsample at drive 100: a new value every 97 samples (495 Hz), level kept
     dist({{"kParamMode", str("kDownsample")}, {"kParamDrive", num(100)}});
@@ -621,7 +622,8 @@ int main() {
   // ---- X-Shaper (J-203k). Source, held saws through drawn curves: the drive crossfades from the first curve
   // (drive 0) to the second (drive 100, an empty one is the straight line); the symmetric mode reads the curve
   // over the input's magnitude as C(sqrt|x|)^2, so a straight rising line passes the input (times the module's
-  // 0.48) and a falling one keeps only the quiet part of the wave.
+  // wet gain: on the imported law the same 0.5 as the hard clip at drive 0) and a falling one keeps only the
+  // quiet part of the wave.
   {
     auto line = [&](double y0, double y1, double bend) {
       return obj({{"curveVals", arr({num(bend), num(0.5)})}, {"numPoints", num(1)}, {"xVals", arr({num(0), num(1)})}, {"yVals", arr({num(y0), num(y1)})}});
@@ -647,7 +649,7 @@ int main() {
     expect(xs(0, line(1, 0, 0.5), empty), "x-shaper preset imports");
     const double straight = gainDb(0.5);
     std::printf("# x-shaper straight line: %.2f dB\n", straight);
-    expect(std::fabs(straight - 20 * std::log10(0.48)) < 0.3, "x-shaper: a straight rising line passes the input");
+    expect(std::fabs(straight - 20 * std::log10(0.5)) < 0.2, "x-shaper: a straight rising line passes the input");
     expect(xs(0, line(0, 1, 0.5), empty), "x-shaper preset imports");
     const double falling = gainDb(0.5);
     expect(xs(100, line(0, 1, 0.5), empty), "x-shaper preset imports");
@@ -839,6 +841,232 @@ int main() {
     for (int d = 0; d < 3; ++d) {
       expect(import(obj({{"Global0", plain({{"kParamFXBus1Dest", num(d)}, {"kParamFXBus2Dest", num(d)}})}}), st, rep, cache), "bus output imports");
       expect(P(st, pl::G_Bus1Dest) == want[d] && P(st, pl::G_Bus2Dest) == want[d], ("bus output " + std::to_string(d) + " maps to " + std::to_string(want[d])).c_str());
+    }
+  }
+
+  // ---- J-203q: delay, compressor and reverb pre-delay on the imported law. Expected numbers were measured on
+  // the hosted source with deterministic white noise (impulse responses by cross-spectrum) and held sines.
+  auto runSlot = [&](const PluginState& s, int type, std::vector<float>& L, std::vector<float>& R, double tempo = 120) {
+    auto bank = pl::makeFxBank(s, nullptr, kSr);
+    pl::FxContext c;
+    c.sr = kSr, c.tempo = tempo;
+    const int n = static_cast<int>(L.size());
+    for (int pos = 0; pos < n; pos += 256) pl::fxProcess(*bank->unit[0], type, slot0(s), L.data() + pos, R.data() + pos, std::min(256, n - pos), c, nullptr, 0);
+  };
+  auto peakAt = [](const std::vector<float>& x, int from, int to) {
+    int best = from;
+    for (int i = from; i < to && i < static_cast<int>(x.size()); ++i)
+      if (std::fabs(x[static_cast<size_t>(i)]) > std::fabs(x[static_cast<size_t>(best)])) best = i;
+    return best;
+  };
+  auto dly = [&](std::initializer_list<std::pair<const char*, Json>> kv) {
+    Json pp = plain({{"kParamEnable", num(1)}, {"kParamWet", num(100)}, {"kParamBW", num(8.25)}, {"kParamBeatSync", num(0)}});
+    for (const auto& e : kv) pp.object["plainParams"].object[e.first] = e.second;
+    Json fx = arr({obj({{"FXDelay", pp}, {"type", num(pl::FxDelay - 1)}})});
+    expect(import(obj({{"FXRack0", obj({{"FX", fx}})}}), st, rep, cache), "delay imports");
+  };
+  {
+    // free times: TIME 0.021 s (stored) echoes after 958 samples at 48 kHz, 0.1 s after 4750 (the stored value is
+    // 0.001 + 0.5 t^4 and the echo comes 2 samples early)
+    dly({{"kParamTimeL", num(0.021)}, {"kParamTimeR", num(0.1)}, {"kParamFeedback", num(0)}});
+    expect(slot0Plain(st, "glLaw") == 1, "an imported delay plays on the imported law");
+    std::vector<float> L(12000, 0.f), R(12000, 0.f);
+    L[0] = R[0] = 1.f;
+    runSlot(st, pl::FxDelay, L, R);
+    const int eL = peakAt(L, 10, 12000), eR = peakAt(R, 10, 12000);
+    expect(std::abs(eL - 958) <= 1 && std::abs(eR - 4750) <= 1, ("delay free echoes " + std::to_string(eL) + " / " + std::to_string(eR) + " (source 958 / 4750)").c_str());
+    // synced: stored 0.12 is two beats (47998 at 120 BPM), 0.03 a quarter beat (5998)
+    dly({{"kParamBeatSync", num(1)}, {"kParamTimeL", num(0.12)}, {"kParamTimeR", num(0.03)}, {"kParamFeedback", num(0)}});
+    std::vector<float> L2(52000, 0.f), R2(52000, 0.f);
+    L2[0] = R2[0] = 1.f;
+    runSlot(st, pl::FxDelay, L2, R2);
+    const int sL = peakAt(L2, 10, 52000), sR = peakAt(R2, 10, 52000);
+    expect(std::abs(sL - 47998) <= 1 && std::abs(sR - 5998) <= 1, ("delay synced echoes " + std::to_string(sL) + " / " + std::to_string(sR) + " (source 47998 / 5998)").c_str());
+    // feedback 50 %, L 0.021 / R 0.041 s: the left repeats every 959 samples at 0.395 / 0.884 (-7.0 dB), the
+    // right (twice as long) at 0.197 / 0.883 (fb^2: the same decay per second)
+    dly({{"kParamTimeL", num(0.021)}, {"kParamTimeR", num(0.041)}, {"kParamFeedback", num(50)}});
+    std::vector<float> L3(8000, 0.f), R3(8000, 0.f);
+    L3[0] = R3[0] = 1.f;
+    runSlot(st, pl::FxDelay, L3, R3);
+    const int a1 = peakAt(L3, 900, 1000), a2 = peakAt(L3, 1850, 1980), b1 = peakAt(R3, 1850, 1980), b2 = peakAt(R3, 3780, 3900);
+    const double rl = std::fabs(L3[static_cast<size_t>(a2)] / L3[static_cast<size_t>(a1)]), rr = std::fabs(R3[static_cast<size_t>(b2)] / R3[static_cast<size_t>(b1)]);
+    expect(a2 - a1 == 959 && std::fabs(rl - 0.447) < 0.05 && std::fabs(rr - 0.223) < 0.04,
+           ("delay feedback: loop " + std::to_string(a2 - a1) + " samples, repeat ratios " + std::to_string(rl) + " / " + std::to_string(rr) + " (source 959, 0.447 / 0.223)").c_str());
+  }
+  {
+    // echo band-pass: FREQ 1000 Hz, BW 0.75: the source is -6.2 dB one octave below, -4.6 dB one octave above
+    // (the filter is designed for 44.1 kHz, so its centre sits at 1.09 kHz at 48 kHz) and -25.7 dB at 62.5 Hz
+    dly({{"kParamTimeL", num(0.011)}, {"kParamTimeR", num(0.011)}, {"kParamFeedback", num(0)}, {"kParamBW", num(0.75)}, {"kParamFreq", num(1000)}});
+    auto gainAt = [&](double hz) {
+      const int n = 24000;
+      std::vector<float> L(static_cast<size_t>(n)), R(static_cast<size_t>(n));
+      for (int i = 0; i < n; ++i) L[static_cast<size_t>(i)] = R[static_cast<size_t>(i)] = static_cast<float>(0.1 * std::sin(6.283185307179586 * hz * i / kSr));
+      runSlot(st, pl::FxDelay, L, R);
+      return rmsDb(L, 0.25, 0.5) - 20 * std::log10(0.1 / std::sqrt(2.0));
+    };
+    const double g500 = gainAt(500), g2k = gainAt(2000), g62 = gainAt(62.5);
+    expect(std::fabs(g500 + 6.2) < 0.5 && std::fabs(g2k + 4.6) < 0.5 && std::fabs(g62 + 25.7) < 1.0,
+           ("delay band-pass 500 Hz / 2 kHz / 62.5 Hz: " + std::to_string(g500) + " / " + std::to_string(g2k) + " / " + std::to_string(g62) + " dB (source -6.2 / -4.6 / -25.7)").c_str());
+  }
+  {
+    // compressor on the imported law: a held sine whose peak is -6.1 dB in Plasma's units (-18.2 dB RMS at the
+    // source's output), attack 0.1 ms, release 1000 ms: the source reduces it by 1.2 / 14.7 / 17.6 / 9.8 / 32.6 dB
+    // at threshold 0.5 ratio 4, 0.75 ratio 4, 0.75 ratio 10, 0.75 ratio 2, 0.9 ratio 4
+    auto red = [&](double t, double ratio, double makeup) {
+      Json pp = plain({{"kParamEnable", num(1)}, {"kParamThresh", num(t)}, {"kParamRatio", num(ratio)}, {"kParamAttack", num(0.1)},
+                       {"kParamRelease", num(1000)}, {"kParamMakeup", num(makeup)}});
+      Json fx = arr({obj({{"FXComp", pp}, {"type", num(pl::FxComp - 1)}})});
+      expect(import(obj({{"FXRack0", obj({{"FX", fx}})}}), st, rep, cache), "compressor imports");
+      const int n = 48000;
+      const double amp = std::pow(10.0, -6.1 / 20.0);
+      std::vector<float> L(static_cast<size_t>(n)), R(static_cast<size_t>(n));
+      for (int i = 0; i < n; ++i) L[static_cast<size_t>(i)] = R[static_cast<size_t>(i)] = static_cast<float>(amp * std::sin(6.283185307179586 * 65.4 * i / kSr));
+      runSlot(st, pl::FxComp, L, R);
+      return 20 * std::log10(amp / std::sqrt(2.0)) - rmsDb(L, 0.5, 0.95);
+    };
+    const double r1 = red(0.5, 4, 1), r2 = red(0.75, 4, 1), r3 = red(0.75, 10, 1), r4 = red(0.75, 2, 1), r6 = red(0.9, 4, 1);
+    expect(std::fabs(r1 - 1.2) < 0.4 && std::fabs(r2 - 14.7) < 0.4 && std::fabs(r3 - 17.6) < 0.4 && std::fabs(r4 - 9.8) < 0.4 && std::fabs(r6 - 32.6) < 0.5,
+           ("compressor reductions " + std::to_string(r1) + " / " + std::to_string(r2) + " / " + std::to_string(r3) + " / " + std::to_string(r4) + " / " +
+            std::to_string(r6) + " dB (source 1.2 / 14.7 / 17.6 / 9.8 / 32.6)").c_str());
+    // makeup 4 at threshold 0.25 ratio 4: the stored makeup is 1 + 30 M^2 and the gain 1 + 31 M^2 (+12.3 dB)
+    const double rm = red(0.25, 4, 4), r0 = red(0.25, 4, 1);
+    expect(std::fabs((r0 - rm) - 12.25) < 0.2, ("compressor makeup 4: +" + std::to_string(r0 - rm) + " dB (source +12.25)").c_str());
+  }
+  {
+    // reverb pre-delay: stored 0.078125 (knob 0.5) waits 78 ms free on every type, a quarter beat synced
+    auto onset = [&](const char* type, bool sync) {
+      Json pp = plain({{"kParamEnable", num(1)}, {"kParamWet", num(100)}, {"kParamType", str(type)}, {"kParamPreDelay", num(0.078125)},
+                       {"kParamPreDelayBeatSync", num(sync ? 1 : 0)}});
+      Json fx = arr({obj({{"FXReverb", pp}, {"type", num(pl::FxReverb - 1)}})});
+      expect(import(obj({{"FXRack0", obj({{"FX", fx}})}}), st, rep, cache), "reverb imports");
+      std::vector<float> L(24000, 0.f), R(24000, 0.f);
+      for (int i = 0; i < 48; ++i) L[static_cast<size_t>(i)] = R[static_cast<size_t>(i)] = 0.5f;
+      runSlot(st, pl::FxReverb, L, R);
+      for (int i = 0; i < 24000; ++i)
+        if (std::fabs(L[static_cast<size_t>(i)]) > 1e-5f || std::fabs(R[static_cast<size_t>(i)]) > 1e-5f) return i / kSr;
+      return 1.0;
+    };
+    const double h = onset("kHall", false), hs = onset("kHall", true);
+    expect(h > 0.074 && h < 0.085, ("hall free pre-delay " + std::to_string(h) + " s (source 0.078)").c_str());
+    expect(hs > 0.12 && hs < 0.135, ("hall synced pre-delay " + std::to_string(hs) + " s (source a quarter beat, 0.125)").c_str());
+  }
+  {
+    // distortion on the imported law: hard clip at drive 0 and the X-Shaper's straight line both give the wet 0.5
+    // (the source's wet 0.25 m' on its input doubled); downsample at drive 100 holds round(0.002 sr) + 1 samples
+    auto dist = [&](std::initializer_list<std::pair<const char*, Json>> kv) {
+      expect(import(fxBody("FXDistortion", pl::FxDistortion - 1, kv), st, rep, cache), "distortion imports");
+    };
+    dist({{"kParamEnable", num(1)}, {"kParamMode", str("kHardClip")}, {"kParamDrive", num(0)}});
+    expect(slot0Plain(st, "glLaw") == 1, "an imported distortion plays on the imported law");
+    std::vector<float> L(9600), R(9600);
+    for (size_t i = 0; i < L.size(); ++i) L[i] = R[i] = static_cast<float>(0.3 * std::sin(6.283185307179586 * 200 * static_cast<double>(i) / kSr));
+    const std::vector<float> in = L;
+    runSlot(st, pl::FxDistortion, L, R);
+    const double g = rmsDb(L, 0.05, 0.2) - rmsDb(in, 0.05, 0.2);
+    expect(std::fabs(g + 6.02) < 0.1, ("imported hard clip at drive 0: " + std::to_string(g) + " dB (source -6.02)").c_str());
+    dist({{"kParamEnable", num(1)}, {"kParamMode", str("kDownsample")}, {"kParamDrive", num(100)}});
+    std::vector<float> L2(4800), R2(4800);
+    for (size_t i = 0; i < L2.size(); ++i) L2[i] = R2[i] = static_cast<float>(0.3 * std::sin(6.283185307179586 * 50 * static_cast<double>(i) / kSr));
+    runSlot(st, pl::FxDistortion, L2, R2);
+    int changes = 0;
+    for (size_t i = 1001; i < 3001; ++i) changes += L2[i] != L2[i - 1];
+    expect(std::abs(changes - 2000 / 97) <= 1, ("imported downsample at drive 100: " + std::to_string(changes) + " steps in 2000 samples (source 20 or 21)").c_str());
+  }
+  {
+    // convolution on the imported law: the impulse is peak-normalised to 0.125 (a unit impulse comes out at -18 dB)
+    // and DECAY (stored 0.1 s) fades it by e^-6 over 0.1 s
+    auto conv = [&](double decay) {
+      Json body = fxBody("FXConv", pl::FxConvolve - 1, {{"kParamEnable", num(1)}, {"kParamWet", num(100)}, {"kParamIr", num(3)}, {"kParamDecay", num(decay)}});
+      expect(import(body, st, rep, cache), "convolution imports");
+      std::vector<float> L(24000, 0.f), R(24000, 0.f);
+      L[0] = R[0] = 1.f;
+      runSlot(st, pl::FxConvolve, L, R);
+      return L;
+    };
+    const auto off = conv(40), dec = conv(0.1);
+    expect(slot0Plain(st, "glLaw") == 1, "an imported convolution plays on the imported law");
+    float pk = 0;
+    for (float v : off) pk = std::max(pk, std::fabs(v));
+    expect(std::fabs(pk - 0.125f) < 0.01f, ("imported impulse peak " + std::to_string(pk) + " (source 0.125)").c_str());
+    auto win = [](const std::vector<float>& x, int a, int b) {
+      double e = 0;
+      for (int i = a; i < b; ++i) e += static_cast<double>(x[static_cast<size_t>(i)]) * x[static_cast<size_t>(i)];
+      return 10 * std::log10(e + 1e-30);
+    };
+    // the ratio of the late window to the early one drops by e^-12 (52 dB) in energy between 0.0 and 0.1 s
+    const double drop = (win(off, 4800, 5280) - win(off, 0, 480)) - (win(dec, 4800, 5280) - win(dec, 0, 480));
+    expect(std::fabs(drop - 52.1) < 2.0, ("imported convolution decay 0.1 s: " + std::to_string(drop) + " dB less at 0.1 s (source 52.1)").c_str());
+  }
+  {
+    // chorus on the imported law, LFO stopped: DELAY 5 / DELAY 2 10 ms give taps at 246.5 and 486.5 samples (48 kHz),
+    // half the input each; DEPTH 20 moves the right side's first tap a quarter of the swing (to 1400 samples)
+    auto ch = [&](double depth) {
+      Json pp = plain({{"kParamEnable", num(1)}, {"kParamWet", num(100)}, {"kParamRate", num(0)}, {"kParamDepth", num(depth)}, {"kParamDelay", num(5)},
+                       {"kParamDelay2", num(10)}, {"kParamFeedback", num(0)}, {"kParamFilt", num(15000)}});
+      Json fx = arr({obj({{"FXChorus", pp}, {"type", num(pl::FxChorus - 1)}})});
+      expect(import(obj({{"FXRack0", obj({{"FX", fx}})}}), st, rep, cache), "chorus imports");
+    };
+    ch(0);
+    expect(slot0Plain(st, "glLaw") == 1, "an imported chorus plays on the imported law");
+    std::vector<float> L(6000, 0.f), R(6000, 0.f);
+    L[0] = R[0] = 1.f;
+    runSlot(st, pl::FxChorus, L, R);
+    auto sum2 = [&](const std::vector<float>& x, int i) { return x[static_cast<size_t>(i)] + x[static_cast<size_t>(i + 1)]; };
+    const int t1 = peakAt(L, 200, 300), t2 = peakAt(L, 400, 600);
+    expect((t1 == 246 || t1 == 247) && (t2 == 486 || t2 == 487) && std::fabs(sum2(L, 246) - 0.5f) < 0.12f,
+           ("imported chorus taps " + std::to_string(t1) + " / " + std::to_string(t2) + " (source 246.5 / 486.5)").c_str());
+    ch(20);
+    std::vector<float> L2(6000, 0.f), R2(6000, 0.f);
+    L2[0] = R2[0] = 1.f;
+    runSlot(st, pl::FxChorus, L2, R2);
+    const int r1 = peakAt(R2, 1000, 1500), l2 = peakAt(L2, 2500, 3000);
+    expect(std::abs(r1 - 1400) <= 2 && std::abs(l2 - 2794) <= 2, ("imported chorus depth 20: taps " + std::to_string(r1) + " / " + std::to_string(l2) + " (source 1400 / 2794)").c_str());
+  }
+  {
+    // reverb models on the imported law: the space is mono (a hard-left click gives the same wet on both sides),
+    // the plate nearly vanishes at LO CUT 100 (its input high-pass removes almost everything), the hall's LO CUT
+    // 100 cuts the lows by about 20 dB, and every type rings out (finite, decaying)
+    auto rv = [&](const char* type, std::initializer_list<std::pair<const char*, Json>> kv) {
+      Json pp = plain({{"kParamEnable", num(1)}, {"kParamWet", num(100)}, {"kParamType", str(type)}});
+      for (const auto& e : kv) pp.object["plainParams"].object[e.first] = e.second;
+      Json fx = arr({obj({{"FXReverb", pp}, {"type", num(pl::FxReverb - 1)}})});
+      expect(import(obj({{"FXRack0", obj({{"FX", fx}})}}), st, rep, cache), "reverb imports");
+    };
+    rv("kSpace", {});
+    std::vector<float> L(48000, 0.f), R(48000, 0.f);
+    for (int i = 0; i < 48; ++i) L[static_cast<size_t>(i)] = 0.5f;
+    runSlot(st, pl::FxReverb, L, R);
+    double diff = 0, e = 0;
+    for (size_t i = 0; i < L.size(); ++i) diff += std::fabs(L[i] - R[i]), e += std::fabs(L[i]);
+    expect(e > 1.0 && diff < 1e-3 * e, ("imported space: mono wet (" + std::to_string(diff) + " of " + std::to_string(e) + ")").c_str());
+    auto noiseDb = [&](double lpHz) {
+      const int n = 96000;
+      std::vector<float> a(static_cast<size_t>(n)), b2(static_cast<size_t>(n));
+      uint32_t seed = 7;
+      double z = 0;
+      const double c1 = 1 - std::exp(-6.283185307179586 * lpHz / kSr);
+      for (auto& v : a) seed = seed * 1664525u + 1013904223u, z += c1 * ((static_cast<float>(seed >> 8) / 16777216.f - 0.5f) - z), v = static_cast<float>(z);
+      b2 = a;
+      const double in = rmsDb(a, 0.5, 2.0);
+      runSlot(st, pl::FxReverb, a, b2);
+      return rmsDb(a, 0.5, 2.0) - in;
+    };
+    rv("kPlate", {{"kParamFreq", num(100)}});
+    const double plate = noiseDb(2000);
+    expect(plate < -25, ("imported plate at LO CUT 100: " + std::to_string(plate) + " dB (source -44 dB at 1 kHz, -28 at 8 kHz)").c_str());
+    rv("kHall", {{"kParamFreq", num(0)}});
+    const double h0 = noiseDb(60);
+    rv("kHall", {{"kParamFreq", num(100)}});
+    const double h1 = noiseDb(60);
+    expect(h0 - h1 > 13 && h0 - h1 < 24, ("imported hall LO CUT 100 on lows: -" + std::to_string(h0 - h1) + " dB (source -20 at 60 Hz)").c_str());
+    for (const char* t : {"kPlate", "kHall", "kVintage", "kAbyss", "kSpace"}) {
+      rv(t, {});
+      std::vector<float> a(96000, 0.f), b2(96000, 0.f);
+      for (int i = 0; i < 480; ++i) a[static_cast<size_t>(i)] = b2[static_cast<size_t>(i)] = 0.5f * std::sin(0.1f * static_cast<float>(i));
+      runSlot(st, pl::FxReverb, a, b2);
+      bool fin = true;
+      for (float v : a) fin = fin && std::isfinite(v);
+      expect(fin && rmsDb(a, 0.05, 0.3) > rmsDb(a, 1.6, 2.0) + 10, (std::string("imported reverb rings out: ") + t).c_str());
     }
   }
 

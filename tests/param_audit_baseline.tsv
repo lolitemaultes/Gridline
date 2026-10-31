@@ -12597,6 +12597,14 @@ gl.plasma	2200	Filter 1 Pad	verified	0		VERIFIED: acts on a driven filter 1 on t
 gl.plasma	2201	Filter 2 Pad	verified	0		VERIFIED: acts on a driven filter 2 on the Boost drive mode (parameter coverage test)
 gl.plasma	2202	LFO Law	verified	0		VERIFIED: acts on a delayed, rising or smoothed LFO (parameter coverage test)
 gl.plasma	2203	Bus Chain	verified	0		VERIFIED: acts on signal sent to both effect buses (parameter coverage test)
+gl.plasma	2204	Granular Law	verified	0		VERIFIED: acts on a granular oscillator (parameter coverage test)
+gl.plasma	2205	A Skips Env 1	verified	0		VERIFIED: acts on a route under a decaying amp envelope (parameter coverage test)
+gl.plasma	2206	B Skips Env 1	verified	0		VERIFIED: acts on a route under a decaying amp envelope (parameter coverage test)
+gl.plasma	2207	C Skips Env 1	verified	0		VERIFIED: acts on a route under a decaying amp envelope (parameter coverage test)
+gl.plasma	2208	Noise Skips Env 1	verified	0		VERIFIED: acts on a route under a decaying amp envelope (parameter coverage test)
+gl.plasma	2209	Sub Skips Env 1	verified	0		VERIFIED: acts on a route under a decaying amp envelope (parameter coverage test)
+gl.plasma	2210	Filter 1 Skips Env 1	verified	0		VERIFIED: acts on a route under a decaying amp envelope (parameter coverage test)
+gl.plasma	2211	Filter 2 Skips Env 1	verified	0		VERIFIED: acts on a route under a decaying amp envelope (parameter coverage test)
 gl.platter	0	A channel fader	working	0	
 gl.platter	1	A trim	working	12	
 gl.platter	2	A EQ high	working	-26	
@@ -13145,6 +13153,23 @@ gl.scratcher	9	Crossfader	working	0
 gl.scratcher	10	Fader curve	combination	1	0=0.75;1=1;2=1;3=0.720843424;4=1.05737126;5=1.59054146;6=53.182959;9=0.75;11=3;12=0.5
 gl.scratcher	11	Volume	working	12	
 gl.scratcher	12	Pan	working	1	
+gl.turntable	0	Position	combination	1	6=1
+gl.turntable	1	Mute	working	1	
+gl.turntable	2	Speed	working	2	
+gl.turntable	3	Acceleration	working	1	
+gl.turntable	4	Pan	working	1	
+gl.turntable	5	Volume	working	0	
+gl.turntable	6	Hold	working	1	
+gl.turntable	7	Sensitivity	inert	0		mouse travel when scratching in the editor; the sound engine does not read it
+gl.turntable	8	Motor	working	2	
+gl.turntable	9	Smooth 1	combination	0	6=1
+gl.turntable	10	Smooth 2	combination	0	6=1
+gl.turntable	11	Smooth 3	combination	0	6=1
+gl.turntable	12	Smooth 4	combination	1	6=1
+gl.turntable	13	Turns	combination	-9	6=1
+gl.turntable	14	Notes	working	1	
+gl.turntable	15	Key track	working	0	
+gl.turntable	16	Cue	working	0.75	
 gl.send	0	Target track	inert	0	
 gl.send	1	Send level	working	0	
 gl.send	2	Send pan	working	1	

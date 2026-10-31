@@ -233,8 +233,8 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, float sc) {
       dl->AddRectFilled(ImVec2(x0, r0.y), ImVec2(x1, r1.y), C(col::SelBg, 0.8f));
     }
   }
-  // Time grid + labels.
-  {
+  // Time grid + labels (none while empty: there is no time to show).
+  if (s.frames() > 0) {
     const double secPerPx = g.len / s.rate() / std::max(1.f, g.W());
     double step;
     if (s.barsTime) {

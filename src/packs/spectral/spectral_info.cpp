@@ -1,6 +1,7 @@
 // Gridline — "spectral" pack: catalogue entries.
 #include "../Packs.h"
 #include "spectral.h"
+#include "turntable.h"
 
 namespace gl::packs::spectral {
 
@@ -205,7 +206,7 @@ PluginInfo pitcher() {
 }
 
 PluginInfo scratcher() {
-  PluginInfo p{"gl.scratcher", "Turntable", "Spectral", PluginKind::Effect, {}, false, {}};
+  PluginInfo p{"gl.scratcher", "Turntable FX", "Spectral", PluginKind::Effect, {}, false, {}};
   p.params.resize(ScCount);
   p.params[ScHand] = lin("Platter", "%", 0, 1, 0);
   p.params[ScGrab] = tog("Hold platter", 0);
@@ -334,6 +335,7 @@ void appendInfos(std::vector<PluginInfo>& v) {
   v.push_back(pitch());
   v.push_back(pitcher());
   v.push_back(scratcher());
+  v.push_back(turntableInfo());  // J-205: the sample instrument
   v.push_back(splitter());
   v.push_back(spreader());
 }

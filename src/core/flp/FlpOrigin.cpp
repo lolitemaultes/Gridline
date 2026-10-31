@@ -399,10 +399,29 @@ void captureOrigin(Context& c) {
     ev.push_back(pseudoIndex(fl));
     ev.push_back(pseudoFp(fingerprintInsert(*t, m)));
     put(originKey("mx", id), std::move(ev));
+    size_t movedNext = 0;  // J-205: instruments moved out of this insert's slots, in slot order
     for (size_t k = 0; k < in.slots.size() && k < t->slots.size(); ++k) {
       if (in.slots[k].events.empty()) continue;
       EventList pe = toRaw(in.slots[k].events);
-      const PluginState& ps = t->slots[k].plugin;
+      const PluginState* psp = &t->slots[k].plugin;
+      if (psp->empty()) {
+        // A slot plugin the import made a channel of (importPlugins): the
+        // channel routed here, not an FL channel; the exporter writes it back
+        // into this slot ("slotch/<channel>" = "<insert id>/<slot>").
+        bool scratcher = false;
+        for (const RawEvent& e : pe)
+          if (e.id == 201) scratcher = scratcher || e.view().text() == "Fruity Scratcher";
+        size_t n = 0;
+        for (const Channel& ch : s.channels) {
+          if (!scratcher || m.channel.count(ch.id) || ch.mixerTrack != id || ch.plugin.type != "gl.turntable") continue;
+          if (n++ != movedNext) continue;
+          ++movedNext;
+          s.flOrigin.blobs[originKey("slotch", ch.id)] = std::to_string(id) + "/" + std::to_string(k);
+          psp = &ch.plugin;
+          break;
+        }
+      }
+      const PluginState& ps = *psp;
       pe.push_back(pseudoType(ps.type));
       pe.push_back(pseudoFp(fingerprintPlugin(ps)));
       put(pluginKey(id, static_cast<int>(k)), std::move(pe));

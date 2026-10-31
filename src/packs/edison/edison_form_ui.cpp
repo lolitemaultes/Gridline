@@ -21,6 +21,17 @@ namespace fs = std::filesystem;
 namespace {
 
 constexpr float kFormW = 744, kHeadH = 122;
+// J-205: the head on one grid (form units). Every row shares the left edge kL
+// and the right edge kR (the meters sit beyond it); controls of a row share
+// its centre line.
+constexpr float kL = 6, kR = 722;
+constexpr float kRow1 = 8, kRow1H = 30;   // transport, record options | title, mute
+constexpr float kRow2 = 48, kRow2H = 32;  // menus (two rows of five) | tool buttons
+constexpr float kRow3 = 90, kRow3H = 20;  // info line
+constexpr float kBtn = 30, kBtnStep = 31;  // transport buttons
+constexpr float kMenuW = 46, kMenuStep = 48, kMenuH = 15, kMenuGap = 2;
+constexpr float kToolW = 24, kToolStep = 25, kToolGroupGap = 4;
+constexpr float kRow1Mid = kRow1 + kRow1H * 0.5f;
 
 enum Glyph {
   GUndo, GRedo, GCopy, GLoopSet, GMarker, GTrim, GSlice, GSave, GFadeIn, GFadeOut, GNormalize, GReverb, GBlur, GEq, GEnvelope,
@@ -106,10 +117,29 @@ void lcd(const skin::Form& F, ImDrawList* dl, ImFont* f, float x, float y, float
   dl->AddRectFilled(p0, p1, C(col::Lcd), F.d(2));
   const float fs = std::clamp(h * F.s * 0.72f, 9.f, 15.f);
   ImVec2 ts = f->CalcTextSizeA(fs, FLT_MAX, 0, s);
-  float tx = align == 0 ? p0.x + F.d(3) : align == 1 ? (p0.x + p1.x - ts.x) * 0.5f : p1.x - F.d(3) - ts.x;
+  float tx = align == 0 ? p0.x + F.d(4) : align == 1 ? (p0.x + p1.x - ts.x) * 0.5f : p1.x - F.d(4) - ts.x;
   dl->PushClipRect(p0, p1, true);
-  text(dl, f, fs, ImVec2(tx, (p0.y + p1.y - ts.y) * 0.5f), c, s);
+  text(dl, f, fs, ImVec2(std::round(tx), std::round((p0.y + p1.y - ts.y) * 0.5f)), c, s);
   dl->PopClipRect();
+}
+
+// LCD box with a dim caption on the left and the value on the right (one size, one baseline).
+void lcdField(const skin::Form& F, ImDrawList* dl, ImFont* f, float x, float y, float w, float h, const char* caption, const char* value) {
+  ImVec2 p0 = F.p(x, y), p1 = F.p(x + w, y + h);
+  dl->AddRectFilled(p0, p1, C(col::Lcd), F.d(2));
+  const float fs = std::clamp(h * F.s * 0.72f, 9.f, 15.f);
+  const ImVec2 vs = f->CalcTextSizeA(fs, FLT_MAX, 0, value);
+  const float ty = std::round((p0.y + p1.y - vs.y) * 0.5f);
+  dl->PushClipRect(p0, p1, true);
+  text(dl, f, fs, ImVec2(std::round(p0.x + F.d(4)), ty), C(col::TextDim), caption);
+  text(dl, f, fs, ImVec2(std::round(p1.x - F.d(4) - vs.x), ty), C(col::LcdText), value);
+  dl->PopClipRect();
+}
+
+// Text vertically centred on form y `cy`, starting at form x.
+void textMid(const skin::Form& F, ImDrawList* dl, ImFont* f, float fs, float x, float cy, ImU32 c, const char* s) {
+  const ImVec2 ts = f->CalcTextSizeA(fs, FLT_MAX, 0, s);
+  text(dl, f, fs, ImVec2(std::round(F.p(x, 0).x), std::round(F.p(0, cy).y - ts.y * 0.5f)), c, s);
 }
 
 // Combo over a choice parameter of the slot, drawn as an LCD box.
@@ -124,8 +154,8 @@ void paramCombo(App& a, Session& s, const skin::Form& F, ImDrawList* dl, ImFont*
   ImGui::SetCursorScreenPos(p0);
   ImGui::InvisibleButton(id, ImVec2(p1.x - p0.x, p1.y - p0.y));
   const bool en = s.slot;
-  lcd(F, dl, f, x, y, w - 9, h, cur.c_str(), en ? C(col::LcdText) : C(col::TextDim));
-  ui::drawIconFit(dl, ui::Icon::Down, F.p(x + w - 7.5f, y + h * 0.4f), F.p(x + w - 1.5f, y + h * 0.65f), C(col::Glyph));
+  lcd(F, dl, f, x, y, w, h, cur.c_str(), en ? C(col::LcdText) : C(col::TextDim));
+  ui::drawIconFit(dl, ui::Icon::Down, F.p(x + w - 10.5f, y + h * 0.5f - 2), F.p(x + w - 4.5f, y + h * 0.5f + 2), C(col::Glyph));
   if (ImGui::IsItemHovered()) app().setHint(hint), ImGui::SetTooltip("%s", hint);
   if (en && ImGui::IsItemClicked()) ImGui::OpenPopup(id);
   if (ImGui::BeginPopup(id)) {
@@ -175,36 +205,48 @@ void drawForm(App& a, Session& s, float width, float maxHeight) {
   dl->AddRectFilled(F.p(0, kHeadH), F.p(kFormW, kHeadH + editUnits), C(col::PanelLo));
   dl->AddLine(F.p(0, kHeadH - 0.5f), F.p(kFormW, kHeadH - 0.5f), C(col::BtnLo), 1.f);
 
-  // ---- transport row
+  // ---- row 1: transport (equal buttons, one step), record options on the same centre line
   const bool playing = isPlaying(a, s);
   const bool loopOn = param(a, s, EdLoop, 0) >= 0.5;
-  if (button(F, dl, "follow", 6, 9, 22, 25, GFollow, "Follow transport: playback starts and stops with the song", param(a, s, EdFollowHost, 0) >= 0.5) && s.slot)
+  const float by = kRow1;
+  if (button(F, dl, "follow", kL, by, kBtn, kBtn, GFollow, "Follow transport: playback starts and stops with the song", param(a, s, EdFollowHost, 0) >= 0.5) &&
+      s.slot)
     setParam(a, s, EdFollowHost, param(a, s, EdFollowHost, 0) >= 0.5 ? 0 : 1);
-  if (button(F, dl, "loop", 29, 5, 33, 33, GLoop, "Loop playback (L)", loopOn) && s.slot) setParam(a, s, EdLoop, loopOn ? 0 : 1);
-  if (button(F, dl, "play", 62, 5, 31, 33, playing ? GPause : GPlay, "Play / pause the selection or from the cursor (Space)", playing))
+  if (button(F, dl, "loop", kL + kBtnStep, by, kBtn, kBtn, GLoop, "Loop playback (L)", loopOn) && s.slot) setParam(a, s, EdLoop, loopOn ? 0 : 1);
+  if (button(F, dl, "play", kL + 2 * kBtnStep, by, kBtn, kBtn, playing ? GPause : GPlay, "Play / pause the selection or from the cursor (Space)", playing))
     playing ? stopPlay(a, s) : play(a, s);
-  if (button(F, dl, "scrub", 93, 5, 25, 33, GScrub, "Scrub: drag in the waveform to hear it (or hold Alt)", s.scrubMode)) s.scrubMode = !s.scrubMode;
-  if (button(F, dl, "stop", 118, 5, 33, 33, GStop, "Stop (cursor returns)", false)) stopPlay(a, s);
+  if (button(F, dl, "scrub", kL + 3 * kBtnStep, by, kBtn, kBtn, GScrub, "Scrub: drag in the waveform to hear it (or hold Alt)", s.scrubMode))
+    s.scrubMode = !s.scrubMode;
+  if (button(F, dl, "stop", kL + 4 * kBtnStep, by, kBtn, kBtn, GStop, "Stop (cursor returns)", false)) stopPlay(a, s);
   const bool armed = s.rec.armed() || s.rec.recording();
   const ImU32 recCol = s.rec.recording() ? C(col::Rec) : C(col::Rec, 0.5f + 0.5f * static_cast<float>(std::fabs(std::sin(ImGui::GetTime() * 4))));
-  if (button(F, dl, "rec", 154, 7, 29, 29, GRec, s.slot ? "Record from the slot input (R)" : "Recording needs the editor in a mixer slot", armed, nullptr, s.slot,
-             recCol))
+  if (button(F, dl, "rec", kL + 5 * kBtnStep, by, kBtn, kBtn, GRec, s.slot ? "Record from the slot input (R)" : "Recording needs the editor in a mixer slot", armed,
+             nullptr, s.slot, recCol))
     toggleRecord(a, s);
-  paramCombo(a, s, F, dl, fm, "##recmode", EdRecMode, 188, 11, 67, 21, "When to start recording");
-  text(dl, fm, F.font(7.5f), F.p(257, 15), C(col::TextDim), "MAX");
-  paramCombo(a, s, F, dl, fm, "##recmax", EdRecMax, 275, 11, 48, 21, "Maximum recording length");
-  {  // append check box
+  constexpr float kComboH = 22, kComboY = kRow1Mid - kComboH * 0.5f;
+  const float capFs = F.font(7.5f);
+  float rx = kL + 5 * kBtnStep + kBtn + 8;  // record options start after the transport group
+  paramCombo(a, s, F, dl, fm, "##recmode", EdRecMode, rx, kComboY, 84, kComboH, "When to start recording");
+  rx += 84 + 8;
+  textMid(F, dl, fm, capFs, rx, kRow1Mid, C(col::TextDim), "MAX");
+  rx += 22;
+  paramCombo(a, s, F, dl, fm, "##recmax", EdRecMax, rx, kComboY, 58, kComboH, "Maximum recording length");
+  rx += 58 + 10;
+  {  // append check box (LED square + label on the row's centre line)
     const bool on = param(a, s, EdAppend, 0) >= 0.5;
-    ImVec2 p0 = F.p(156, 41);
-    ImGui::SetCursorScreenPos(p0);
-    ImGui::InvisibleButton("append", F.sz(62, 13));
+    constexpr float kBox = 12;
+    ImGui::SetCursorScreenPos(F.p(rx, kComboY));
+    ImGui::InvisibleButton("append", F.sz(66, kComboH));
     if (ImGui::IsItemClicked() && s.slot) setParam(a, s, EdAppend, on ? 0 : 1);
     if (ImGui::IsItemHovered()) a.setHint("Append recordings after the existing audio (else a take replaces it)");
-    dl->AddRect(F.p(156, 42), F.p(166, 52), C(col::BtnLo), 1.5f, 0, 1.f);
-    if (on) dl->AddRectFilled(F.p(158, 44), F.p(164, 50), C(col::Led));
-    text(dl, fm, F.font(7.5f), F.p(170, 42), C(col::TextDim), "APPEND");
+    const float y0 = kRow1Mid - kBox * 0.5f;
+    dl->AddRectFilled(F.p(rx, y0), F.p(rx + kBox, y0 + kBox), C(col::Lcd), F.d(2));
+    dl->AddRect(F.p(rx, y0), F.p(rx + kBox, y0 + kBox), C(col::BtnLo), F.d(2), 0, 1.f);
+    if (on) dl->AddRectFilled(F.p(rx + 3, y0 + 3), F.p(rx + kBox - 3, y0 + kBox - 3), C(col::Led), F.d(1));
+    textMid(F, dl, fm, capFs, rx + kBox + 5, kRow1Mid, on ? C(col::Text) : C(col::TextDim), "APPEND");
   }
-  // Recording status / input level.
+  rx += 66 + 10;
+  // Recording status (same centre line).
   if (s.slot) {
     char b[64];
     if (s.rec.recording())
@@ -213,46 +255,44 @@ void drawForm(App& a, Session& s, float width, float maxHeight) {
       std::snprintf(b, sizeof b, "ARMED");
     else
       b[0] = 0;
-    if (b[0]) text(dl, fb, F.font(9), F.p(228, 41), C(col::Rec), b);
+    if (b[0]) textMid(F, dl, fb, F.font(9), rx, kRow1Mid, C(col::Rec), b);
   }
 
-  // ---- title, mute, meters
+  // ---- title, mute (row 1, right edge), meters beyond the right edge
+  constexpr float kMuteX = kR - kBtn;
   {
     std::string word = pluginDisplayName("gl.edison");  // J-94: the catalogue name, lower case
     for (char& ch : word) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
     const char* title = word.c_str();
     const float fs = F.d(17);
     ImVec2 ts = fr->CalcTextSizeA(fs, FLT_MAX, 0, title);
-    // J-136: the wordmark, right-aligned where the lower-case name sat
-    if (!pui::titleWordmarkIn(dl, "gl.edison", F.p(560, 3), F.p(698, 30), fs * 1.2f, 2, C(col::Text, 0.85f)))
-      text(dl, fr, fs, ImVec2(F.p(698, 0).x - ts.x, F.p(0, 6).y), C(col::Text, 0.85f), title);
+    const float tx1 = kMuteX - 8;
+    // J-136: the wordmark, right-aligned before the mute button
+    if (!pui::titleWordmarkIn(dl, "gl.edison", F.p(tx1 - 138, kRow1 - 4), F.p(tx1, kRow1 + 22), fs * 1.2f, 2, C(col::Text, 0.85f)))
+      text(dl, fr, fs, ImVec2(F.p(tx1, 0).x - ts.x, F.p(0, kRow1 - 2).y), C(col::Text, 0.85f), title);
     const std::string nm = s.slot ? "slot editor" : "sample editor";
     ImVec2 ns = fm->CalcTextSizeA(F.font(7), FLT_MAX, 0, nm.c_str());
-    text(dl, fm, F.font(7), ImVec2(F.p(698, 0).x - ns.x, F.p(0, 31).y), C(col::TextDim), nm.c_str());
+    text(dl, fm, F.font(7), ImVec2(std::round(F.p(tx1, 0).x - ns.x), std::round(F.p(0, kRow1 + 23).y)), C(col::TextDim), nm.c_str());
   }
   const bool muted = param(a, s, EdMuteInput, 0) >= 0.5;
-  if (button(F, dl, "mute", 702, 1, 25, 25, muted ? GSpeakerOff : GSpeaker, "Mute input (the slot outputs only the editor's playback)", muted, nullptr, s.slot,
-             C(col::Rec)))
+  if (button(F, dl, "mute", kMuteX, kRow1, kBtn, kBtn, muted ? GSpeakerOff : GSpeaker, "Mute input (the slot outputs only the editor's playback)", muted,
+             nullptr, s.slot, C(col::Rec)))
     setParam(a, s, EdMuteInput, muted ? 0 : 1);
-  meterBar(F, dl, 731, 2, 5, 116, s.inMeter);
-  meterBar(F, dl, 737, 2, 5, 116, s.outMeter);
+  meterBar(F, dl, 731, kRow1, 5, kRow3 + kRow3H - kRow1, s.inMeter);
+  meterBar(F, dl, 737, kRow1, 5, kRow3 + kRow3H - kRow1, s.outMeter);
 
-  // ---- menus + toolbar
+  // ---- row 2: menus + tool buttons (grouped: edit, markers, file, levels, processing, send)
   drawMenus(a, s, F, dl);
-  struct Tb {
-    float x;
-    int g;
-    const char* hint;
-  };
   const bool busy = s.job.active();
   const bool hasAudio = s.frames() > 0;
   bool r = false;
-  float x = 251;
+  float x = kR - (18 * kToolStep - 1 + 5 * kToolGroupGap);  // the row ends on the right edge
   auto tb = [&](const char* id, int g, const char* hint, bool lit = false, bool en = true) {
-    bool c = button(F, dl, id, x, 57, 24, 31, g, hint, lit, &r, en && !busy);
-    x += 24.9f;
+    bool c = button(F, dl, id, x, kRow2, kToolW, kRow2H, g, hint, lit, &r, en && !busy);
+    x += kToolStep;
     return c;
   };
+  auto gap = [&] { x += kToolGroupGap; };
   if (tb("t_undo", GUndo, "Undo / right-click: redo (Ctrl+Z / Ctrl+Y)", false, s.hist.canUndo() || s.hist.canRedo())) undo(a, s);
   if (r) redo(a, s);
   if (tb("t_redo", GRedo, "Redo", false, s.hist.canRedo())) redo(a, s);
@@ -263,6 +303,7 @@ void drawForm(App& a, Session& s, float width, float maxHeight) {
     int64_t at = s.cursor;
     runEdit(a, s, "Paste", [clip, sel, at](const Content& c) { return sel.empty() ? insertAudio(c, at, clip) : replaceRange(c, sel, clip); });
   }
+  gap();
   if (tb("t_loop", GLoopSet, "Set loop points from the selection / right-click: crossfade the loop seam", s.cur().hasLoop(), hasAudio))
     applyNow(a, s, s.sel.empty() ? "Clear loop" : "Set loop", setLoop(s.cur(), s.sel));
   if (r && s.cur().hasLoop()) {
@@ -282,8 +323,10 @@ void drawForm(App& a, Session& s, float width, float maxHeight) {
   if (r) openTool(s, Tool::Gate);
   if (tb("t_slice", GSlice, "Detect beats and place slice markers / right-click: slicing options...", false, hasAudio)) detectSlices(a, s, 0.5);
   if (r) openTool(s, Tool::Slice);
+  gap();
   if (tb("t_save", GSave, "Save as WAV... / right-click: save as FLAC...", false, hasAudio)) saveAs(a, s, FileFormat::Wav);
   if (r) saveAs(a, s, FileFormat::Flac);
+  gap();
   const Range tr = target(s);
   const Curve fc = static_cast<Curve>(s.fadeCurve);
   if (tb("t_fadein", GFadeIn, "Fade in the selection / right-click: declick in (5 ms)", false, hasAudio))
@@ -300,6 +343,7 @@ void drawForm(App& a, Session& s, float width, float maxHeight) {
       for (const auto& g : c.regions) o = normalize(o, {g.start, g.end}, 0);
       return o;
     });
+  gap();
   if (tb("t_reverb", GReverb, "Convolution reverb...", false, hasAudio)) openTool(s, Tool::Reverb);
   if (tb("t_blur", GBlur, "Blur...", false, hasAudio)) openTool(s, Tool::Blur);
   if (tb("t_eq", GEq, "Equalize (drawn curve)...", false, hasAudio)) openTool(s, Tool::Equalize);
@@ -312,24 +356,33 @@ void drawForm(App& a, Session& s, float width, float maxHeight) {
     s.noise = acquireNoise(s.cur().a(), target(s));
     say(s, s.noise.valid() ? "Noise profile taken from the selection" : "Select at least 50 ms of noise first");
   }
+  gap();
   if (tb("t_send", GSend, "Send to the playlist as an audio clip / right-click: send to a new sampler channel", false, hasAudio)) sendToPlaylist(a, s);
   if (r) sendToSampler(a, s, false);
 
-  // ---- info line
+  // ---- row 3: info line (equal height, captions inside the boxes)
   {
     char b[96];
-    std::snprintf(b, sizeof b, "%.0fHz", s.rate());
-    lcd(F, dl, fm, 7, 103, 58, 17, b, C(col::LcdText));
-    lcd(F, dl, fm, 68, 103, 17, 17, "32", C(col::LcdText), 1);
-    if (ImGui::IsMouseHoveringRect(F.p(68, 103), F.p(85, 120))) a.setHint("Edits are kept as 32-bit float; exports are 24-bit");
-    ImGui::SetCursorScreenPos(F.p(87, 103));
-    ImGui::InvisibleButton("chans", F.sz(19, 17));
+    float ix = kL;
+    auto next = [&](float w) {
+      const float x0 = ix;
+      ix += w + 4;
+      return x0;
+    };
+    std::snprintf(b, sizeof b, "%.0f Hz", s.rate());
+    lcd(F, dl, fm, next(62), kRow3, 62, kRow3H, b, C(col::LcdText), 1);
+    const float bitsX = next(26);
+    lcd(F, dl, fm, bitsX, kRow3, 26, kRow3H, "32", C(col::LcdText), 1);
+    if (ImGui::IsMouseHoveringRect(F.p(bitsX, kRow3), F.p(bitsX + 26, kRow3 + kRow3H))) a.setHint("Edits are kept as 32-bit float; exports are 24-bit");
+    const float chX = next(26);
+    ImGui::SetCursorScreenPos(F.p(chX, kRow3));
+    ImGui::InvisibleButton("chans", F.sz(26, kRow3H));
     const bool mono = s.cur().a().channels == 1;
-    lcd(F, dl, fm, 87, 103, 19, 17, mono ? "M" : "S", C(col::LcdText), 1);
+    lcd(F, dl, fm, chX, kRow3, 26, kRow3H, mono ? "M" : "S", C(col::LcdText), 1);
     if (ImGui::IsItemHovered()) a.setHint(mono ? "Mono: click to make stereo" : "Stereo: click to mix to mono");
     if (ImGui::IsItemClicked() && hasAudio && !busy) runEdit(a, s, mono ? "To stereo" : "To mono", [mono](const Content& c) { return mono ? toStereo(c) : toMono(c); });
-    std::snprintf(b, sizeof b, "%.0fBPM", a.doc.song().tempo);
-    lcd(F, dl, fm, 110, 103, 52, 17, b, C(col::LcdText));
+    std::snprintf(b, sizeof b, "%.0f BPM", a.doc.song().tempo);
+    lcd(F, dl, fm, next(66), kRow3, 66, kRow3H, b, C(col::LcdText), 1);
     std::string name;
     if (s.slot) {
       name = s.committed.empty() || s.committed[0] == '\x01' ? std::string(i18n::tr("(empty)")) : fs::path(s.committed).stem().string();
@@ -338,21 +391,22 @@ void drawForm(App& a, Session& s, float width, float maxHeight) {
     } else {
       name = a.doc.song().channel(s.channel) ? a.doc.song().channel(s.channel)->name : std::string("?");
     }
-    lcd(F, dl, fm, 166, 103, 230, 17, name.c_str(), C(col::Text));
-    // Selection / length readout (right).
+    // Position / length on the right, flush with the right edge; the name takes the rest.
+    constexpr float kLenW = 128, kPosW = 196;
+    const float posX = kR - kLenW - 4 - kPosW;
+    lcd(F, dl, fm, ix, kRow3, posX - 4 - ix, kRow3H, name.c_str(), s.frames() > 0 ? C(col::Text) : C(col::TextDim));
     const Range sr = s.sel;
-    std::string selTxt = sr.empty() ? timeText(a, s, s.cursor) : timeText(a, s, sr.a) + " to " + timeText(a, s, sr.b);
-    std::string lenTxt = timeText(a, s, sr.empty() ? s.frames() : sr.len());
-    text(dl, fm, F.font(6.5f), F.p(400, 93), C(col::TextDim), sr.empty() ? "CURSOR" : "SELECTION");
-    lcd(F, dl, fm, 400, 103, 210, 17, selTxt.c_str(), C(col::LcdText));
-    text(dl, fm, F.font(6.5f), F.p(614, 93), C(col::TextDim), sr.empty() ? "LENGTH" : "SEL. LENGTH");
-    lcd(F, dl, fm, 614, 103, 108, 17, lenTxt.c_str(), C(col::LcdText), 2);
+    const std::string selTxt = sr.empty() ? timeText(a, s, s.cursor) : timeText(a, s, sr.a) + " - " + timeText(a, s, sr.b);
+    const std::string lenTxt = timeText(a, s, sr.empty() ? s.frames() : sr.len());
+    lcdField(F, dl, fm, posX, kRow3, kPosW, kRow3H, sr.empty() ? "CURSOR" : "SEL", selTxt.c_str());
+    lcdField(F, dl, fm, kR - kLenW, kRow3, kLenW, kRow3H, sr.empty() ? "LENGTH" : "SEL LEN", lenTxt.c_str());
   }
 
   // ---- waveform editor (the rest of the form)
-  drawWaveArea(a, s, F.p(0, kHeadH), F.p(722, kHeadH + editUnits), F.s);
-  // Auto-scroll strip on the right edge.
-  if (button(F, dl, "autoscroll", 723, kHeadH, 19, editUnits, GScroll, "Auto-scroll: follow the playback position", s.autoScroll)) s.autoScroll = !s.autoScroll;
+  drawWaveArea(a, s, F.p(0, kHeadH), F.p(kR, kHeadH + editUnits), F.s);
+  // Auto-scroll strip on the right edge (under the meters).
+  if (button(F, dl, "autoscroll", kR + 1, kHeadH, kFormW - kR - 1, editUnits, GScroll, "Auto-scroll: follow the playback position", s.autoScroll))
+    s.autoScroll = !s.autoScroll;
 
   // Busy overlay.
   if (busy) {
@@ -377,19 +431,19 @@ void drawMenus(App& a, Session& s, const skin::Form& F, ImDrawList* dl) {
   const bool busy = s.job.active();
   const bool has = s.frames() > 0;
   for (int i = 0; i < 9; ++i) {
-    const int row = i < 5 ? 0 : 1, colI = row == 0 ? i : i - 5;
-    const float w = row == 0 ? 46.f : 57.5f;
-    const float x = 19 + colI * w, y = 53 + row * 19.5f;
-    ImVec2 p0 = F.p(x, y), p1 = F.p(x + w - 1.5f, y + 18);
+    const int row = i < 5 ? 0 : 1, colI = row == 0 ? i : i - 5;  // J-205: equal cells on one grid
+    const float x = kL + colI * kMenuStep, y = kRow2 + row * (kMenuH + kMenuGap);
+    ImVec2 p0 = F.p(x, y), p1 = F.p(x + kMenuW, y + kMenuH);
     ImGui::SetCursorScreenPos(p0);
     char id[16];
     std::snprintf(id, sizeof id, "##menu%d", i);
     ImGui::InvisibleButton(id, ImVec2(p1.x - p0.x, p1.y - p0.y));
     const bool hov = ImGui::IsItemHovered();
-    dl->AddRectFilled(p0, p1, hov ? C(col::BtnHi) : C(col::Btn, 0.55f), F.d(2));
+    const bool open = ImGui::IsPopupOpen(("edmenu" + std::to_string(i)).c_str());
+    dl->AddRectFilled(p0, p1, open ? C(col::BtnHi) : hov ? C(col::BtnHi) : C(col::Btn, 0.7f), F.d(2));
     const float fs = F.font(7.5f);
     ImVec2 ts = fm->CalcTextSizeA(fs, FLT_MAX, 0, kMenus[i]);
-    dl->AddText(fm, fs, ImVec2((p0.x + p1.x - ts.x) * 0.5f, (p0.y + p1.y - ts.y) * 0.5f), C(col::Text), kMenus[i]);
+    dl->AddText(fm, fs, ImVec2(std::round((p0.x + p1.x - ts.x) * 0.5f), std::round((p0.y + p1.y - ts.y) * 0.5f)), open ? C(col::Lit) : C(col::Text), kMenus[i]);
     char pid[24];
     std::snprintf(pid, sizeof pid, "edmenu%d", i);
     if (ImGui::IsItemClicked()) ImGui::OpenPopup(pid);

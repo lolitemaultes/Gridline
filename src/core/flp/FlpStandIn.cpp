@@ -74,6 +74,7 @@ StandInPolicy standInPolicy(const std::string& type) {
     neutral("gl.shaper", "step volume / filter shaper: no FL effect plays a tempo-synced 16-step volume, filter and pan pattern");
     neutral("gl.arp", "note processor: FL's channel arpeggiator carries one arpeggiator (rendered instruments include it)");
     neutral("gl.chord", "note processor: FL channels have no chord generator; a rendered instrument plays the chords as rendered");
+    neutral("gl.scratcher", "live-input scratch effect: FL's scratcher plays its own sample (it maps to the Turntable instrument), so the slot stays neutral");
     return m;
   }();
   if (auto it = table.find(type); it != table.end()) return it->second;

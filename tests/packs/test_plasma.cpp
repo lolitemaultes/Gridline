@@ -455,6 +455,24 @@ std::vector<Cand> candsFor(int k) {
     });
     return c;
   }
+  if (k == tailP(T_GranLaw)) {  // the granular law: a granular oscillator A (density and length read apart)
+    add([](Scene& s) { oscType(s, 0, OscGranular), P(s, oscP(0, O_GDensity), 0.5f), P(s, oscP(0, O_GLength), 0.4f); });
+    return c;
+  }
+  if (k >= tailP(T_RawA) && k <= tailP(T_RawF2)) {  // a route that skips ENV 1: its source, main out, ENV 1 decaying to zero
+    const int r = k - tailP(T_RawA);
+    add([r](Scene& s) {
+      P(s, envP(0, E_Sustain), 0.f), P(s, envP(0, E_Decay), envTimeInv(0.05));
+      if (r < 3) oscOn(s, r), P(s, routeP(r, R_Dest), RouteMain);
+      if (r == 3) P(s, noiseP(N_Enable), 1), P(s, noiseP(N_Level), 0.8f), P(s, routeP(RtNoise, R_Dest), RouteMain);
+      if (r == 4) P(s, subP(S_Enable), 1), P(s, subP(S_Level), 0.8f), P(s, routeP(RtSub, R_Dest), RouteMain);
+      if (r >= 5) {
+        oscOn(s, 0), P(s, routeP(RtA, R_Dest), RouteFilter), P(s, routeP(RtA, R_Balance), r == 5 ? 0.f : 1.f);
+        P(s, filtP(r - 5, F_Enable), 1), P(s, filtP(r - 5, F_Freq), 0.8f), P(s, routeP(r, R_Dest), 1);
+      }
+    });
+    return c;
+  }
   if (k == tailP(T_ModLaw)) {  // the matrix law: a bipolar route from macro 1 (at 0) to oscillator A's level
     add([](Scene& s) {
       oscOn(s, 0), P(s, macroP(0), 0.f), P(s, modP(0, M_Source), static_cast<float>(SrcMacro1)), P(s, modP(0, M_Amount), 0.4f);

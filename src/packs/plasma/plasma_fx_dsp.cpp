@@ -34,6 +34,12 @@ float fxDistTable(int mode, float drive, float x);  // plasma_fxdist_dsp.cpp
 
 namespace {
 double dbToGainF(double db) { return std::pow(10.0, db / 20.0); }
+// The source's full scale inside its effects, in Plasma's units: the source's main volume gives 4.683 n^2
+// where Plasma's gives 1.4125 n^2, so the same output means a 10.4 dB hotter signal inside Plasma
+// (verified: the hosted compressor reacts 10.4 dB later than its threshold law on Plasma's level, at any main volume)
+constexpr double kSrcUnit = 3.31535;
+// the imported convolution's level: the impulse peak-normalised to this
+constexpr double kIrLevel = 0.125;
 // compressor laws (J-203c, measured): threshold offset against the peak (dB), attack time scale
 constexpr double kCompThrOfs = 8.4, kCompAtkScale = 0.33;
 // multiband detector (J-203d): running-mean time constant (ms) and its reading offset (dB)
@@ -204,6 +210,7 @@ struct ShelfEq {
   }
 };
 #include "plasma_fx_reverb_tone.inc"
+#include "plasma_fx_reverb_law.inc"
 double lfoBeats(double norm) { return lfoRateDivisionBeats(static_cast<int>(std::lround(std::clamp(norm, 0.0, 1.0) * (lfoRateDivisionCount() - 1)))); }
 float triLfo(double ph) {
   ph -= std::floor(ph);
@@ -261,10 +268,37 @@ class FxUnit {
   Bq2 dbp;
   Op1 dhp[2];  // the echo filter's low cut (one pole)
   float dfb[2]{};
+  // delay, imported law: band-pass state per line, gliding read times (HQ)
+  double dsv1[2]{}, dsv2[2]{}, dTime[2]{-1, -1};
+  // reverb (imported law): its lines and state
+  Line rx[32];
+  RvState rvs;
+  // chorus (imported law): per-line delay smoothers, wet filter states
+  double chS1[4]{-1, -1, -1, -1}, chS2[4]{}, chLp[2]{}, chBp[2]{};
   // compressor
   Lr4 xo1, xo2;
   float env[3][2]{}, gr[3]{}, mbEnv[3][3]{};
   Line look[2];
+  // distortion, imported law: half-band oversampler states (per channel: up 2x, up 4x, down 4x, down 2x; two
+  // allpass branches of two sections each), dry delay ring, smoothed drive, filter states, overdrive stages
+  struct Aps {
+    double x1 = 0, y1 = 0;
+    double run(double x, double c) {
+      const double y = c * x + x1 - c * y1;
+      x1 = x, y1 = y;
+      return y;
+    }
+  };
+  Aps dHb[2][4][2][2];  // [ch][stage][branch][section]
+  double hbPrev[2][2]{};  // the decimators' delayed odd sample
+  float dRing[2][8]{}, wRing[2][8]{};
+  int dRingW = 0;
+  double dDrv = -1, dHold[2]{}, dsvLp[2]{}, dsvBp[2]{}, dsvHp[2]{}, odEnv[16]{};
+  int dHoldN = 0;
+  Bq2 odHp[16][2];
+  // compressor, imported law: over-threshold envelope (dB), makeup glide, output DC blocker, limiter peak hold
+  double cOver = 0, cMk = -1, cDc[2]{}, cHold = 0, cV = 0;
+  int cHoldN = 0, cLimMode = -1;
   // reverb
   Line rv[8], pre[2];
   ApD dif[4][2];
@@ -300,7 +334,7 @@ class FxUnit {
   Line cpre[2];
   Op1 cdamp[2];
   Bq2 ctone;
-  bool convReady = false;
+  bool convReady = false, convUnit = false;
 
   void clear() {
     std::fill(pool.begin(), pool.end(), 0.f);
@@ -310,10 +344,28 @@ class FxUnit {
     phFb[0] = phFb[1] = 0;
     for (auto& l : dl) l.w = 0;
     dfb[0] = dfb[1] = 0;
+    dsv1[0] = dsv1[1] = dsv2[0] = dsv2[1] = 0;
+    dTime[0] = dTime[1] = -1;
+    for (int k = 0; k < 4; ++k) chS1[k] = -1, chS2[k] = 0;
+    for (auto& l : rx) l.w = 0;
+    rvs = RvState{};
+    chLp[0] = chLp[1] = chBp[0] = chBp[1] = 0;
     dbp.clear(), dfl.clear(), eq1.clear(), eq2.clear(), uhp.clear(), uhp2.clear(), ulp.clear(), hyHp.clear();
     for (auto& b : rvBw) b.clear();
     hyInit = false;
     for (auto& e : env) e[0] = e[1] = 0;
+    for (auto& c : dHb)
+      for (auto& st : c)
+        for (auto& b : st)
+          for (auto& a : b) a = Aps{};
+    hbPrev[0][0] = hbPrev[0][1] = hbPrev[1][0] = hbPrev[1][1] = 0;
+    for (auto& r : dRing) std::fill(r, r + 8, 0.f);
+    for (auto& r : wRing) std::fill(r, r + 8, 0.f);
+    dRingW = 0, dDrv = -1, dHoldN = 0;
+    for (int c = 0; c < 2; ++c) dHold[c] = dsvLp[c] = dsvBp[c] = dsvHp[c] = 0;
+    for (auto& e : odEnv) e = 0;
+    for (auto& st : odHp) st[0].clear(), st[1].clear();
+    cOver = 0, cMk = -1, cDc[0] = cDc[1] = 0, cHold = 0, cV = 0, cHoldN = 0, cLimMode = -1;
     for (auto& e : mbEnv) e[0] = e[1] = e[2] = 0;
     xo1 = Lr4{}, xo2 = Lr4{}, ulf = Lr4{};
     for (auto& f : rvLs) f.z = 0;
@@ -335,18 +387,23 @@ class FxUnit {
     }
     cpos = fdlPos = 0;
   }
-  void bindLines() {
+  // the delay module keeps 32 s per channel (16 beats at 45 BPM with the x1.5 offset); other modules 2 s
+  static int delaySecs(int t) { return t == FxDelay ? 32 : 2; }
+  // the reverb's pre-delay: up to 2.5 s free or 6 beats synced (3 s at 120 BPM): 8 s; 0.6 s elsewhere
+  static int preTenths(int t) { return t == FxReverb ? 80 : 6; }
+  // the imported chorus reaches 20.1 ms + 62.5 ms
+  static int modMs(int t) { return t == FxChorus ? 90 : 60; }
+  void bindLines(int t) {
     float* p = pool.data();
     const int s = static_cast<int>(sr);
-    // modulation lines (chorus / flanger / hyper / dimension): 60 ms each
-    for (auto& l : ml) l.bind(p, s * 60 / 1000 + 8);
-    // delay: 2 s per channel
-    for (auto& l : dl) l.bind(p, s * 2 + 8);
+    // modulation lines (chorus / flanger / hyper / dimension): 60 ms each, 90 ms for the chorus
+    for (auto& l : ml) l.bind(p, s * modMs(t) / 1000 + 8);
+    for (auto& l : dl) l.bind(p, s * delaySecs(t) + 8);
     // compressor lookahead 6 ms
     for (auto& l : look) l.bind(p, s / 100 + 8);
     // reverb: 8 lines of up to 0.35 s (size up to 2x shrinks to fit), predelay 0.6 s
     for (auto& l : rv) l.bind(p, s * 35 / 100 + 8);
-    for (auto& l : pre) l.bind(p, s * 6 / 10 + 8);
+    for (auto& l : pre) l.bind(p, s * preTenths(t) / 10 + 8);
     for (auto& d : dif)
       for (auto& c : d) c.l.bind(p, s / 40 + 8);
     // bode feedback delay 2 s, blur allpasses 30 ms
@@ -354,11 +411,20 @@ class FxUnit {
     for (auto& c : blur)
       for (auto& a : c) a.l.bind(p, s * 3 / 100 + 8);
     for (auto& l : cpre) l.bind(p, s + 8);
+    // the imported reverb's models (reverb slots only): 8 lines of 1.05 s or more, 24 of 32768 samples
+    if (t == FxReverb)
+      for (int k = 0; k < 32; ++k) rx[k].bind(p, rxLen(sr, k));
   }
-  static size_t poolSize(double sr) {
+  static int rxLen(double sr, int k) { return k < 8 ? std::max(32776, static_cast<int>(sr * 1.05) + 64) : 32776; }
+  static size_t poolSize(double sr, int t) {
     const size_t s = static_cast<size_t>(sr);
-    return 4 * (s * 60 / 1000 + 8) + 2 * (s * 2 + 8) + 2 * (s / 100 + 8) + 8 * (s * 35 / 100 + 8) + 2 * (s * 6 / 10 + 8) +
-           8 * (s / 40 + 8) + 2 * (s * 2 + 8) + 4 * (s * 3 / 100 + 8) + 2 * (s + 8) + 64;
+    return 4 * (s * static_cast<size_t>(modMs(t)) / 1000 + 8) + 2 * (s * static_cast<size_t>(delaySecs(t)) + 8) + 2 * (s / 100 + 8) + 8 * (s * 35 / 100 + 8) + 2 * (s * static_cast<size_t>(preTenths(t)) / 10 + 8) +
+           8 * (s / 40 + 8) + 2 * (s * 2 + 8) + 4 * (s * 3 / 100 + 8) + 2 * (s + 8) + 64 + (t == FxReverb ? rxPool(sr) : 0);
+  }
+  static size_t rxPool(double sr) {
+    size_t z = 0;
+    for (int k = 0; k < 32; ++k) z += static_cast<size_t>(std::max(4, rxLen(sr, k)));
+    return z;
   }
 };
 
@@ -385,7 +451,15 @@ void buildConv(FxUnit& u, const Aux* aux, int slot, const PluginState& s) {
   const int ksz = fxParamIndex(FxConvolve, "kParamSize");
   const double size = ksz >= 0 && fxP(slot, X_P0 + ksz) < static_cast<int>(s.params.size())
                           ? fxPlain(FxConvolve, ksz, s.params[static_cast<size_t>(fxP(slot, X_P0 + ksz))]) / 100.0 : 1.0;
-  const double ratio = rate / u.sr / std::clamp(size, 0.1, 10.0);
+  auto norm = [&](const char* key) {
+    const int q = fxParamIndex(FxConvolve, key);
+    return q >= 0 && fxP(slot, X_P0 + q) < static_cast<int>(s.params.size()) ? std::clamp(static_cast<double>(s.params[static_cast<size_t>(fxP(slot, X_P0 + q))]), 0.0, 1.0) : 0.0;
+  };
+  // imported law: SIZE stretches the impulse by 5^(2 n - 1) (x0.2 .. x5, a tape-speed change); the knob
+  // positions of ATTACK, DECAY and DAMP shape the impulse here, which is then peak-normalised
+  const bool law = norm("glLaw") >= 0.5;
+  const double stretch = law ? std::pow(5.0, 2.0 * norm("kParamSize") - 1.0) : std::clamp(size, 0.1, 10.0);
+  const double ratio = rate / u.sr / stretch;
   const size_t maxLen = static_cast<size_t>(u.sr * 6);
   const size_t n = std::min(maxLen, static_cast<size_t>(static_cast<double>(L.size()) / ratio));
   std::vector<float> rl(n), rr(n);
@@ -416,6 +490,40 @@ void buildConv(FxUnit& u, const Aux* aux, int slot, const PluginState& s) {
       f.inverse(X.data());
       for (size_t i = 0; i < n; ++i) (*v)[i] = X[i].real();
     }
+  }
+  u.convUnit = law && n <= 1;  // an empty slot (a one-sample impulse) passes the input untouched
+  if (law && n > 1) {
+    // damping: a 2-pole low-pass along the impulse whose cutoff falls from Nyquist to (1 - 0.99 d) of it
+    const double dmp = norm("kParamDamping");
+    if (dmp > 0)
+      for (auto* v : {&rl, &rr}) {
+        double s1 = 0, s2 = 0;
+        const double k = std::sqrt(2.0);
+        for (size_t i = 0; i < n; ++i) {
+          const double fr = std::pow(1.0 - 0.99 * dmp, static_cast<double>(i) / static_cast<double>(n));
+          const double g = std::tan(1.5707963267948966 * std::min(0.999, fr)), h = 1.0 / (1.0 + g * (g + k));
+          const double x = (*v)[i], v1 = (s1 + g * (x - s2)) * h, v2 = s2 + g * v1;
+          s1 = 2 * v1 - s1, s2 = 2 * v2 - s2;
+          (*v)[i] = static_cast<float>(v2);
+        }
+      }
+    const double atk = norm("kParamAttack"), atkS = std::min(static_cast<double>(n), 3.0 * std::pow(atk, 5.0) * u.sr);
+    const double dc = norm("kParamDecay"), decS = 40.0 * std::pow(dc, 5.0);
+    const double q = dc < 1.0 && decS > 0 ? std::exp(-6.0 / (decS * u.sr)) : 1.0;
+    float peak = 0.001f;
+    for (auto* v : {&rl, &rr}) {
+      double gq = 1;
+      for (size_t i = 0; i < n; ++i) {
+        double y = (*v)[i];
+        if (static_cast<double>(i) < atkS) y *= static_cast<double>(i) / atkS;
+        if (i >= 1) gq *= q, y *= gq;
+        (*v)[i] = static_cast<float>(y);
+        peak = std::max(peak, std::fabs((*v)[i]));
+      }
+    }
+    const float lv = static_cast<float>(kIrLevel) / peak;
+    for (auto* v : {&rl, &rr})
+      for (auto& x : *v) x *= lv;
   }
   u.cfft.init(FxUnit::kFftN);
   u.parts = std::max(1, static_cast<int>((n + FxUnit::kPart - 1) / FxUnit::kPart));
@@ -454,8 +562,8 @@ std::unique_ptr<FxBank> makeFxBank(const PluginState& s, const Aux* aux, double 
     if (type == FxNone) continue;
     auto u = std::make_unique<FxUnit>();
     u->sr = sr;
-    u->pool.assign(FxUnit::poolSize(sr), 0.f);
-    u->bindLines();
+    u->pool.assign(FxUnit::poolSize(sr, type), 0.f);
+    u->bindLines(type);
     u->filterMem = std::make_unique<Filter>();
     u->filt = u->filterMem.get();
     if (type == FxConvolve) buildConv(*u, aux, slot, s);
@@ -482,7 +590,7 @@ bool fxSerumDefault(int type, int p, double& plain) {
       {FxDelay, "kParamFeedback", 40},    {FxDelay, "kParamMode", 0},            {FxDelay, "kParamOffsetL", 1},
       {FxDelay, "kParamOffsetR", 1},      {FxDelay, "kParamBeatSync", 1},
       {FxDistortion, "kParamWet", 100},   {FxDistortion, "kParamDrive", 25},     {FxDistortion, "kParamMode", 0},
-      {FxDistortion, "kParamPrePost", 0}, {FxDistortion, "kParamFreq", 0.5},     {FxDistortion, "kParamLPHP", 0},     {FxDistortion, "kParamBW", 1.95},
+      {FxDistortion, "kParamPrePost", 0}, {FxDistortion, "kParamFreq", 0.5},     {FxDistortion, "kParamLPHP", 0},     {FxDistortion, "kParamBW", 1.95}, {FxDistortion, "kParamNumStages", 1},
       {FxComp, "kParamWet", 100},         {FxComp, "kParamThresh", 0.5},         {FxComp, "kParamRatio", 4},
       {FxComp, "kParamAttack", 90.091},   {FxComp, "kParamRelease", 90.091},     {FxComp, "kParamMakeup", 1},
       {FxComp, "kParamMultiband", 0},     {FxComp, "kParamRatio0", 1},           {FxComp, "kParamRatio1", 1},
@@ -499,7 +607,7 @@ bool fxSerumDefault(int type, int p, double& plain) {
       {FxFlanger, "kParamWidth", 180},
       {FxBode, "kParamWet", 100},         {FxBode, "kParamShift", 0},            {FxBode, "kParamRange", 22.3607},
       {FxBode, "kParamDelayTime", 0},     {FxBode, "kParamFeedback", 0},         {FxBode, "kParamOutputWidth", 100},
-      {FxBode, "kParamOutputMix", 0},     {FxPhaser, "kParamFeedback", 80},      {FxConvolve, "kParamWet", 20},
+      {FxBode, "kParamOutputMix", 0},     {FxPhaser, "kParamFeedback", 80},      {FxConvolve, "kParamWet", 20},      {FxConvolve, "kParamDecay", 40},
       {FxChorus, "kParamRate", 0.078125}, {FxPhaser, "kParamRate", 0.078125},    {FxFlanger, "kParamRate", 0.078125},
       {FxUtility, "kParamHPF", 1},        {FxUtility, "kParamLPF", 20000},
   };
@@ -512,6 +620,466 @@ bool fxSerumDefault(int type, int p, double& plain) {
     }
   return false;
 }
+
+namespace {
+// The delay on the imported law (fitted and verified against the hosted plugin's output):
+// - free time 0.5 t^4 s (t = the TIME knob), synced 2^round(11 t) / 128 beats (1/128 beat .. 16 beats),
+//   either one times the MULT knob (x0.5 .. x1.5); LINK copies the left time to the right
+// - feedback equalised to the same decay per second on both sides (the longer side gets fb^(tR / tL))
+// - the echo filter is one state-variable band-pass, unity at FREQ, BW octaves wide (1.3 .. 14.3), in the loop
+// - Ping-Pong: mono in, left line (filtered) into the right line (unfiltered) back into the left;
+//   Tap>Delay: the summed input runs through the left line into the filtered right loop, mono out
+// - HQ: the read time glides (22.7 ms time constant), cubic read; otherwise linear and jumps
+// - mix: m' = 0.5 - 0.5 cos(pi mix), wet m', dry 1 - m'^2
+// The chorus on the imported law (fitted and verified against the hosted plugin's output). The knobs are stored
+// as their positions n:
+// - one triangle LFO (0 .. 0.5) read at four phases, 90 degrees apart: left pair 1, right pair 1, left pair 2,
+//   right pair 2; free at 20 n^4 Hz, synced locked to the song position (128 beats .. 1/8 beat per cycle)
+// - DELAY / DELAY 2: 0.1 + 20 n^2 ms (heard 1.7 samples later); DEPTH: 125 n^2 ms times the triangle
+// - each of the four lines feeds back only into itself (0.95 x FEEDBACK), its input softly limited
+// - the two lines of a side are summed and run through a resonant state-variable filter (low- or high-pass,
+//   50 Hz .. 15 kHz); mix: m' = 0.5 - 0.5 cos(pi mix), wet m', dry 1 - m'^2
+void chorusImported(FxUnit& u, const float* p, float* L, float* R, int n, const FxContext& c, float out) {
+  const int type = FxChorus;
+  const double sr = u.sr;
+  auto P = [&](const char* key) {
+    const int i = fxParamIndex(type, key);
+    return i < 0 ? 0.0 : fxPlain(type, i, p[i]);
+  };
+  auto N = [&](const char* key) {
+    const int i = fxParamIndex(type, key);
+    return i < 0 ? 0.0 : std::clamp(static_cast<double>(p[i]), 0.0, 1.0);
+  };
+  const bool sync = N("kParamBeatSync") >= 0.5;
+  const double rn = N("kParamRate"), inc = 20.0 * rn * rn * rn * rn / sr;
+  double cpb = 0;
+  if (sync) {
+    const int i = static_cast<int>(30.0 * rn + 0.5);
+    static const double kStep[3] = {1.0, 4.0 / 3.0, 0.75};
+    cpb = std::exp2(std::round(i / 3.0)) / 128.0 * kStep[i % 3];
+  }
+  const double d1n = N("kParamDelay"), d2n = N("kParamDelay2"), dpn = N("kParamDepth");
+  const double D1 = (0.0001 + 0.02 * d1n * d1n) * sr, D2 = (0.0001 + 0.02 * d2n * d2n) * sr, dep = 0.125 * dpn * dpn * sr;
+  const double fb = 0.95 * std::clamp(P("kParamFeedback") / 100.0, 0.0, 1.0);
+  // the filter cutoff, fitted on the low-pass and high-pass slopes at 150 Hz, 1 kHz and 4 kHz: 50 * 230^n
+  const double fhz = std::clamp(50.0 * std::pow(230.0, N("kParamFilt")), 20.0, 17154.0);
+  const double fs = std::sin(3.14159265358979 * std::min(0.25, fhz / (2 * sr))), fg = 2 * fs;
+  const double damp = std::min({1.0 / fs - fs, 2.0, 0.70643});
+  const bool hp = N("kParamFiltMode") >= 0.5;
+  const double m = std::clamp(P("kParamWet") / 100.0, 0.0, 1.0), mw = 0.5 - 0.5 * std::cos(3.14159265358979 * m);
+  const double gWet = mw * 32.0 * kSrcUnit, gDry = 1 - mw * mw;
+  const double k1 = 44100.0 / (30.0 * sr + 44100.0), k2 = 50.0 / sr;
+  const double maxD = static_cast<double>(u.ml[0].n - 6);
+  auto tri = [](double x) {
+    x -= std::floor(x);
+    return x <= 0.5 ? x : 1.0 - x;
+  };
+  const double bps = std::max(20.0, c.tempo) / 60.0 / sr;
+  for (int i = 0; i < n; ++i) {
+    double ph;
+    if (sync) {
+      ph = std::fabs(c.beat + i * bps) * cpb;
+      ph -= std::floor(ph);
+    } else {
+      u.lfoPh += inc;
+      u.lfoPh -= std::floor(u.lfoPh);
+      ph = u.lfoPh;
+    }
+    const double tgt[4] = {D1 + dep * tri(ph), D1 + dep * tri(ph + 0.25), D2 + dep * tri(ph + 0.5), D2 + dep * tri(ph + 0.75)};
+    double rd[4];
+    for (int k = 0; k < 4; ++k) {
+      if (u.chS1[k] < 0) u.chS1[k] = u.chS2[k] = tgt[k];
+      u.chS1[k] += (tgt[k] - u.chS1[k]) * k1;
+      u.chS2[k] += (u.chS1[k] - u.chS2[k]) * k2;
+      rd[k] = u.ml[k].tapCubic(static_cast<float>(std::clamp(u.chS2[k] + 0.7, 2.0, maxD)));
+    }
+    const float io[2] = {L[i], R[i]};
+    for (int ch = 0; ch < 2; ++ch) {
+      // the lines carry the input / 64 of the source's full scale, softly limited
+      const double a64 = io[ch] / kSrcUnit / 64.0, v = std::fabs(a64 + 1.5) - std::fabs(a64 - 1.5);
+      const double x = 0.5 * v - v * v * v / 54.0;
+      for (int k = ch; k < 4; k += 2) u.ml[k].push(static_cast<float>(std::clamp(x + fb * rd[k], -1.0, 1.0)));
+      double w = rd[ch] + rd[ch + 2];
+      double& lp = u.chLp[ch];
+      double& bp = u.chBp[ch];
+      double hpo = 0;
+      for (int h = 0; h < 2; ++h) {
+        lp += fg * bp;
+        hpo = w - damp * bp - lp;
+        bp = bp - 0.15 * bp * bp * bp + fg * hpo;
+      }
+      w = hp ? hpo : lp;
+      (ch ? R : L)[i] = static_cast<float>((io[ch] * gDry + w * gWet) * out);
+    }
+  }
+}
+
+#include "plasma_fx_reverb_law_run.inc"
+
+void delayImported(FxUnit& u, const float* p, float* L, float* R, int n, const FxContext& c, bool sync, bool link, int mode, float out) {
+  const int type = FxDelay;
+  const double sr = u.sr;
+  auto P = [&](const char* key) {
+    const int i = fxParamIndex(type, key);
+    return i < 0 ? 0.0 : fxPlain(type, i, p[i]);
+  };
+  auto N = [&](const char* key) {
+    const int i = fxParamIndex(type, key);
+    return i < 0 ? 0.0 : std::clamp(static_cast<double>(p[i]), 0.0, 1.0);
+  };
+  const double maxS = static_cast<double>(u.dl[0].n - 8);
+  auto samples = [&](double t, double mult) {
+    double sec;
+    if (sync) sec = std::exp2(std::round(11.0 * t)) / 128.0 * 60.0 / std::max(20.0, c.tempo);
+    else sec = 0.5 * t * t * t * t;
+    return std::clamp(sec * mult * sr - 3.0, 1.0, maxS);  // the source's echo comes 2 samples early
+  };
+  const double tgtL = samples(N("kParamTimeL"), P("kParamOffsetL"));
+  const double tgtR = link ? tgtL : samples(N("kParamTimeR"), P("kParamOffsetR"));
+  const bool hq = N("kParamHQ") >= 0.5;
+  if (u.dTime[0] < 0 || !hq) u.dTime[0] = tgtL, u.dTime[1] = tgtR;
+  const double fb = N("kParamFeedback");
+  double fbL = fb, fbR = fb;
+  if (mode != 2) {
+    const double r = tgtR / std::max(1.0, tgtL);
+    if (r >= 1) fbR = std::pow(fb, r);
+    else fbL = std::pow(fb, 1.0 / r);
+  }
+  // band-pass (TPT state-variable), centre gain 1
+  // the source designs this filter for a 44.1 kHz rate whatever the running rate (its centre moves up with
+  // the rate: 1 kHz plays at 1.09 kHz at 48 kHz); measured, the skirts fit to 0.2 dB this way
+  const double f0 = std::clamp(40.0 * std::pow(450.0, N("kParamFreq")), 10.0, 44100.0 * 0.49);
+  const double bwN = std::clamp((P("kParamBW") - 0.75) / 7.5, 0.0, 1.0);
+  const double g = std::tan(3.14159265358979 * f0 / 44100.0), k = 2.0 * std::sinh(0.5 * std::log(2.0) * (1.3 + 13.0 * bwN));
+  const double h = 1.0 / (1.0 + g * (g + k));
+  auto bp = [&](int ch, double x) {
+    const double v1 = (u.dsv1[ch] + g * (x - u.dsv2[ch])) * h;
+    const double v2 = u.dsv2[ch] + g * v1;
+    u.dsv1[ch] = 2 * v1 - u.dsv1[ch], u.dsv2[ch] = 2 * v2 - u.dsv2[ch];
+    return k * v1;
+  };
+  const double m = N("kParamWet"), mw = 0.5 - 0.5 * std::cos(3.14159265358979 * m);
+  const float gWet = static_cast<float>(mw), gDry = static_cast<float>(1.0 - mw * mw);
+  const double kg = 1.0 - std::exp2(-0.0014434 * 44100.0 / sr);
+  for (int i = 0; i < n; ++i) {
+    if (hq) u.dTime[0] += (tgtL - u.dTime[0]) * kg, u.dTime[1] += (tgtR - u.dTime[1]) * kg;
+    const float dL = static_cast<float>(u.dTime[0]), dR = static_cast<float>(u.dTime[1]);
+    const float a = hq ? u.dl[0].tapCubic(dL) : u.dl[0].tap(dL);
+    const float b = hq ? u.dl[1].tapCubic(dR) : u.dl[1].tap(dR);
+    float wl, wr;
+    // the feedback takes the previous sample's echo (one sample more around the loop than the first echo)
+    if (mode == 1) {  // ping-pong
+      const float eL = static_cast<float>(bp(0, a));
+      u.dl[0].push(0.5f * (L[i] + R[i]) + static_cast<float>(fbL) * u.dfb[1]);
+      u.dl[1].push(eL);
+      u.dfb[1] = b;
+      wl = eL, wr = b;
+    } else if (mode == 2) {  // tap > delay
+      const float eR = static_cast<float>(bp(1, b));
+      u.dl[0].push(L[i] + R[i]);
+      u.dl[1].push(a + static_cast<float>(fb) * u.dfb[1]);
+      u.dfb[1] = eR;
+      wl = wr = eR;
+    } else {
+      const float eL = static_cast<float>(bp(0, a)), eR = static_cast<float>(bp(1, b));
+      u.dl[0].push(L[i] + static_cast<float>(fbL) * u.dfb[0]);
+      u.dl[1].push(R[i] + static_cast<float>(fbR) * u.dfb[1]);
+      u.dfb[0] = eL, u.dfb[1] = eR;
+      wl = eL, wr = eR;
+    }
+    L[i] = (L[i] * gDry + wl * gWet) * out;
+    R[i] = (R[i] * gDry + wr * gWet) * out;
+  }
+}
+}  // namespace
+
+namespace {
+// The single-band compressor on the imported law (fitted and verified against the hosted plugin's output):
+// - peak detector max(|L|, |R|) in dB, threshold 20 log10((1 - t)^3) (t = THRESH)
+// - the level over the threshold is smoothed in dB: attack time constant half the ATTACK time, release the
+//   RELEASE time; the gain falls by (1 - 1 / ratio) dB per dB
+// - from 53:1 up a look-ahead limiter: ceiling at the threshold, hold and rise over 0.99 + ATTACK / 200 ms
+// - makeup glides to its target 1 + 31 M^2 (limiter 1 + 63 M^2; the stored makeup is 1 + 30 M^2); the compressed signal clips at 0 dBFS,
+//   then the linear MIX, a 12 Hz DC blocker and LEVEL
+void compImported(FxUnit& u, const float* p, float* L, float* R, int n) {
+  const int type = FxComp;
+  const double sr = u.sr;
+  auto P = [&](const char* key) {
+    const int i = fxParamIndex(type, key);
+    return i < 0 ? 0.0 : fxPlain(type, i, p[i]);
+  };
+  auto N = [&](const char* key) {
+    const int i = fxParamIndex(type, key);
+    return i < 0 ? 0.0 : std::clamp(static_cast<double>(p[i]), 0.0, 1.0);
+  };
+  const double t = N("kParamThresh");
+  const double tc = (1 - t) * (1 - t) * (1 - t) + 1e-6, thrDb = 20.0 * std::log10(tc * kSrcUnit);
+  const double ratio = std::max(1.0, P("kParamRatio"));
+  const double rn = std::min(1.0 - 1e-5, 1.0 - 1.0 / ratio);
+  const bool lim = rn >= 0.981176;
+  const double atkMs = std::max(0.0, P("kParamAttack")), relMs = std::max(0.1, P("kParamRelease"));
+  const double mk2 = std::max(0.0, P("kParamMakeup") - 1.0) / 30.0;  // M^2 of the makeup knob (stored 1 + 30 M^2)
+  const double mkT = lim ? 1.0 + 63.0 * mk2 : 1.0 + 31.0 * mk2;
+  if (u.cMk < 0) u.cMk = mkT;
+  const int limMode = lim ? 1 : 0;
+  if (limMode != u.cLimMode) u.cHold = 0, u.cV = 0, u.cHoldN = 0, u.cLimMode = limMode;
+  const float w = static_cast<float>(N("kParamWet"));
+  const float out = static_cast<float>(busGain(N("kParamLevelOut")));
+  const double dcC = 1.0 - std::exp(-75.398 / sr);
+  // look-ahead (limiter) and the fixed 6 ms latency when LATENCY COMP is on
+  const int nLook = lim ? static_cast<int>((0.99 + 0.5 * atkMs * 0.01) * sr / 1000.0) : 0;
+  const bool comp = N("kParamLimiterLatencyComp") >= 0.5;
+  const int dTot = comp ? std::max(nLook, static_cast<int>(std::floor(0.00599 * sr))) : nLook;
+  const int dDet = dTot - nLook;
+  auto tap = [&](int ch, int d) { return d <= 0 ? u.look[ch].tapInt(0) : u.look[ch].tapInt(d); };
+  const double a = 1.0 - std::exp(-1.0 / std::max(1e-9, 0.5 * atkMs * sr / 1000.0));
+  const double r = 1.0 - std::exp(-1.0 / (relMs * sr / 1000.0));
+  const double ceil = tc * kSrcUnit;
+  const double kUp = nLook > 0 ? 1.0 - std::pow(0.01, 1.0 / nLook) : 1.0;
+  const double kDn = 1.0 - std::pow(0.01, 1.0 / (relMs * sr / 1000.0));
+  for (int i = 0; i < n; ++i) {
+    u.look[0].push(L[i]), u.look[1].push(R[i]);
+    const float xl = dDet > 0 ? tap(0, dDet) : L[i], xr = dDet > 0 ? tap(1, dDet) : R[i];
+    const float sl = dTot > 0 ? tap(0, dTot) : L[i], sr2 = dTot > 0 ? tap(1, dTot) : R[i];
+    double g;
+    if (!lim) {
+      const double pk = std::max(std::fabs(xl), std::fabs(xr));
+      const double over = pk > 0 ? std::max(0.0, 20.0 * std::log10(pk) - thrDb) : 0.0;
+      u.cOver += (over - u.cOver) * (over > u.cOver ? a : r);
+      g = std::pow(10.0, -(rn - 1e-6) * u.cOver / 20.0);
+    } else {
+      const double pk = std::max({static_cast<double>(std::fabs(xl)), static_cast<double>(std::fabs(xr)), ceil});
+      if (pk >= u.cHold || u.cHoldN <= 0) u.cHold = pk, u.cHoldN = std::max(1, nLook);
+      --u.cHoldN;
+      if (u.cV <= 0) u.cV = ceil;
+      u.cV += (u.cHold - u.cV) * (u.cHold > u.cV ? kUp : kDn);
+      g = std::min(1.0, ceil / std::max(1e-12, u.cV));
+    }
+    u.cMk = std::fabs(mkT - u.cMk) < 1e-5 ? mkT : u.cMk + (mkT - u.cMk) * 0.01;
+    const float gm = static_cast<float>(g * u.cMk);
+    constexpr float kClip = static_cast<float>(kSrcUnit);  // the source's 0 dBFS
+    const float yl = std::clamp(sl * gm, -kClip, kClip), yr = std::clamp(sr2 * gm, -kClip, kClip);
+    double ol = yl * w + sl * (1 - w), orr = yr * w + sr2 * (1 - w);
+    ol -= u.cDc[0], u.cDc[0] += ol * dcC;
+    orr -= u.cDc[1], u.cDc[1] += orr * dcC;
+    L[i] = static_cast<float>(ol) * out, R[i] = static_cast<float>(orr) * out;
+    u.gr[0] = static_cast<float>(g);
+  }
+}
+}  // namespace
+
+namespace {
+// The distortion on the imported law (fitted and verified against the hosted plugin's output). Levels are in
+// the source's units (Plasma's divided by kSrcUnit). Every mode but Overdrive and Downsample doubles its input
+// and shapes it four times oversampled (two half-band stages up and down); the dry is 7 samples late to match.
+// Mix: wet 0.25 m', dry 1 - m'^2 (m' = 0.5 - 0.5 cos(pi mix)), then LEVEL. The filter (pre or post) is a
+// Chamberlin state-variable filter run twice per sample with a soft input and a saturating band state, its
+// TYPE fading low-pass -> band-pass -> high-pass.
+float distShape(int mode, double d, double x) {
+  const double a = std::fabs(x), sg = x < 0 ? -1.0 : 1.0;
+  switch (mode) {
+    case 0: return static_cast<float>(std::clamp(x / (1 + 0.989 * d * (a - 1)), -1.0, 1.0));
+    case 1: {
+      const double v = (1 + 2.94912 * d * d * d) * x, av = std::fabs(v);
+      return static_cast<float>(av > 0.5 ? sg * (0.5 + (av - 0.5) / (av + 0.5)) : v);
+    }
+    case 2: return static_cast<float>(std::clamp((1 + 4 * d * d * d) * x, -1.0, 1.0));
+    case 3: {
+      if (d > 0.125) {
+        const double e = (8 * d - 1) / 7, k = a + 21 + 100 * e * e * e;
+        return static_cast<float>(x * k / ((k + 1.4) * a + 1));
+      }
+      return static_cast<float>(x * (1 + 8 * d * ((a + 21) / ((a + 22.4) * a + 1) - 1)));
+    }
+    case 4: {
+      const double v = 21.7088 * d * x;
+      if (v > 2.5) return 0.57f;
+      if (v < -2.5) return -0.68f;
+      return static_cast<float>(std::sin(v + 0.0797065) - 0.0796221);
+    }
+    case 5:
+    case 6: {
+      double v = (1 + 2129.92 * d * d * d) * x;
+      const double k0 = mode == 5 ? 1.925 : 1.8, k1 = mode == 5 ? 0.925 : 0.8;
+      bool folded = false;
+      for (int it = 0; it < 64 && std::fabs(v) > 1; ++it) v = v > 1 ? k0 - k1 * v : -k0 - k1 * v, folded = true;
+      v = std::clamp(v, -1.0, 1.0);
+      return static_cast<float>(mode == 6 && folded ? std::sin(1.5707963267948966 * v) : v);
+    }
+    case 7: {
+      const double v = x + (a > 0.0001 ? sg : 0.0) * d;
+      const double y = 0.9 * std::pow(std::atan(std::pow(1.1 * std::fabs(v), 5.0)), 0.2);
+      return static_cast<float>(v < 0 ? -y : v > 0 ? y : 0.0);
+    }
+    case 9: {
+      const double v = (1 + 20 * d * d) * x, w = (0.0515 * v + 1.03899) * v;
+      return static_cast<float>(std::clamp(v / std::sqrt(w * w + 0.6211), -1.0, 1.0));
+    }
+    case 10: return static_cast<float>(std::clamp(-(1 + 20 * d * d) * a, -1.0, 1.0));
+    case 13: {
+      const double g = d * d + 0.05, y0 = -0.9671 * g * std::sin((0.5 + 14.45 * g) * x);
+      const double y1 = y0 * (2 * std::fabs(y0) - 4), y2 = y1 * (2 * std::fabs(y1) - 4);
+      return static_cast<float>(0.5 * y2 * (2 * std::fabs(y2) - 4));
+    }
+    case 14: {
+      const double g = 1 + 7 * d, v = g * x;
+      return static_cast<float>(std::fabs(v) > 0.8 ? sg + 0.2 * g * (x - sg) / (7 * d + 0.2) : v);
+    }
+    case 15: {
+      const double g = 1 + 3 * d;
+      if (g <= 1.0001) return static_cast<float>(x);
+      const double v = g * x;
+      return static_cast<float>(std::fabs(v) > 2.0 / 3.0 ? sg * std::cos(0.837758 * g * (x - sg) / (3 * d + 1.0 / 3.0)) : v);
+    }
+    case 17: {
+      const double v = std::clamp((1 + 16 * d * d) * x, -1.5, 1.5), av = std::fabs(v);
+      return static_cast<float>(av > 0.5 ? (v < 0 ? -1 : 1) * (1 - 0.5 * (1.5 - av) * (1.5 - av)) : v);
+    }
+    default: return static_cast<float>(x);
+  }
+}
+
+void distImported(FxUnit& u, const float* p, float* L, float* R, int n, const Aux* aux, int slot, float out) {
+  const int type = FxDistortion;
+  const double sr = u.sr;
+  auto P = [&](const char* key) {
+    const int i = fxParamIndex(type, key);
+    return i < 0 ? 0.0 : fxPlain(type, i, p[i]);
+  };
+  const int mode = std::clamp(static_cast<int>(std::lround(P("kParamMode"))), 0, 17);
+  const double dTgt = std::clamp(P("kParamDrive") / 100.0, 0.0, 1.0);
+  if (u.dDrv < 0) u.dDrv = dTgt;
+  const int pp = static_cast<int>(std::lround(P("kParamPrePost")));
+  // filter
+  const double fu = std::clamp(1.06875 * std::clamp(P("kParamFreq"), 0.0, 1.0), 0.0, 1.06875);
+  const double fhz = 440.0 * std::exp2(10.6667 * fu - 5.75);
+  const double g = 2.0 * std::sin(1.5707963267948966 * std::min(1.0, fhz / sr));
+  // the stored Q is 0.075 + 7.5 q^2 of the knob position q
+  const double bw = std::sqrt(std::clamp((P("kParamBW") - 0.075) / 7.5, 0.0, 1.0)), rr = std::min(0.99, bw * bw + 0.01);
+  const double damp = std::min(2.0 - 2.0 * std::pow(rr, 0.25), std::clamp(2.0 / g - g / 2.0, 0.0, 2.0));
+  const double bl = 2.0 * std::clamp(P("kParamLPHP") / 100.0, 0.0, 1.0);
+  const double wLp = std::max(0.0, 1 - bl), wBp = bl <= 1 ? bl : 2 - bl, wHp = std::max(0.0, bl - 1);
+  auto filt = [&](int ch, double x) {
+    x = std::clamp(x, -1.5, 1.5);
+    x -= (4.0 / 27.0) * x * x * x;
+    double& lp = u.dsvLp[ch];
+    double& bp = u.dsvBp[ch];
+    double& hp = u.dsvHp[ch];
+    double y = 0.25 * (wLp * lp + wBp * bp + wHp * hp);
+    for (int h = 0; h < 2; ++h) {
+      lp += g * bp;
+      hp = x - damp * bp - lp;
+      bp += std::clamp(g * hp, -0.8333, 0.8333);
+      bp -= 0.5 * g * bp * bp * bp;
+      y += (h == 0 ? 0.5 : 0.25) * (wLp * lp + wBp * bp + wHp * hp);
+    }
+    return y;
+  };
+  // X-Shaper curves
+  const float* ca = aux ? aux->shapeA[static_cast<size_t>(slot)].data() : nullptr;
+  const float* cb = aux ? aux->shapeB[static_cast<size_t>(slot)].data() : nullptr;
+  auto look = [](const float* c, double pos) {
+    const double sp = std::clamp(pos, 0.0, 1.0) * 256.0;
+    const int j = std::min(255, static_cast<int>(sp));
+    return c[j] + (c[j + 1] - c[j]) * (sp - j);
+  };
+  auto shape = [&](double x, double d) -> double {
+    if (mode == 11 || mode == 12) {
+      if (!ca) return std::clamp(x, -1.0, 1.0);
+      const float* b = cb ? cb : ca;
+      if (mode == 12) {
+        const double pos = (std::clamp(x, -1.0, 1.0) + 1.0) * 0.5, A = look(ca, pos);
+        return 2.0 * (A + (look(b, pos) - A) * d) - 1.0;
+      }
+      const double q = std::sqrt(std::min(1.0, std::fabs(x))), A = look(ca, q), Bv = look(b, q);
+      const double y = A * A + (Bv * Bv - A * A) * d;
+      return x > 0.0001 ? y : x < -0.0001 ? -y : 0.0;
+    }
+    return distShape(mode, d, x);
+  };
+  // half-band branches: {0.0388, 0.3747} direct, {0.1585, 0.7333} one sample late
+  static const double kA[2] = {0.0388, 0.3747}, kB[2] = {0.1585, 0.7333};
+  auto branch = [&](int ch, int st, int b, double x) {
+    const double* c = b ? kB : kA;
+    return u.dHb[ch][st][b][1].run(u.dHb[ch][st][b][0].run(x, c[0]), c[1]);
+  };
+  const double m = std::clamp(P("kParamWet") / 100.0, 0.0, 1.0), mw = 0.5 - 0.5 * std::cos(3.14159265358979 * m);
+  const float gWet = static_cast<float>(0.25 * mw * kSrcUnit), gDry = static_cast<float>(1 - mw * mw);
+  const double inv = 1.0 / kSrcUnit;
+  const int holdN = static_cast<int>(std::round(0.002 * sr) * dTgt * dTgt + 0.5);
+  const int stages = std::clamp(static_cast<int>(std::lround(P("kParamNumStages"))), 1, 16);
+  if (mode == 16)
+    for (int k = 0; k < stages; ++k) u.odHp[k][0].set(3, sr, 10, 0.70710678, 0), u.odHp[k][1].set(3, sr, 15, 0.70710678, 0);
+  const double odUp = 1 - std::exp(-100.0 / sr), odDn = 1 - std::exp(-3.333 / sr);
+  // X-Shaper / Sine Shaper: a 12 Hz DC blocker on the wet
+  const bool dc = mode == 11 || mode == 12 || mode == 13;
+  const double dcC = 1.0 - std::exp(-75.398 / sr);
+  for (int i = 0; i < n; ++i) {
+    double w[2] = {L[i] * inv, R[i] * inv};
+    // dry, 7 samples late
+    float dry[2];
+    for (int ch = 0; ch < 2; ++ch) {
+      dry[ch] = u.dRing[ch][(u.dRingW + 1) & 7];
+      u.dRing[ch][u.dRingW] = ch ? R[i] : L[i];
+    }
+    u.dRingW = (u.dRingW + 1) & 7;
+    if (pp == 1) w[0] = filt(0, w[0]), w[1] = filt(1, w[1]);
+    if (mode == 16) {
+      u.dDrv += (dTgt - u.dDrv) * (1.0 / 91.0);
+      const double d = u.dDrv, thr = std::pow(10.0, -1.7 * d - 0.05), G = std::pow(10.0, 1.95 * d + 0.05);
+      for (int k = 0; k < stages; ++k) {
+        double h[2];
+        for (int ch = 0; ch < 2; ++ch) h[ch] = u.odHp[k][1].run(ch, u.odHp[k][0].run(ch, static_cast<float>(w[ch])));
+        const double pk = std::max(std::fabs(h[0]), std::fabs(h[1]));
+        u.odEnv[k] += (pk - u.odEnv[k]) * (pk > u.odEnv[k] ? odUp : odDn);
+        const double c = u.odEnv[k] < thr ? 1.0 : std::pow(u.odEnv[k] / thr, -0.9);
+        for (int ch = 0; ch < 2; ++ch) {
+          double y = c * G * h[ch];
+          if (std::fabs(y) >= 0.9) y = (y < 0 ? -1 : 1) * (0.9 + 0.1 * std::tanh(10 * std::fabs(y) - 9));
+          w[ch] = y * 0.9886;
+        }
+      }
+      w[0] *= 1.33325, w[1] *= 1.33325;
+    } else if (mode == 8) {
+      u.dDrv = dTgt;
+      // the wet is 7 samples late like the dry (read from the dry ring unless the filter comes first)
+      const double s0 = pp == 1 ? w[0] : dry[0] * inv, s1 = pp == 1 ? w[1] : dry[1] * inv;
+      if (++u.dHoldN > holdN) u.dHoldN = 0, u.dHold[0] = std::clamp(s0, -64.0, 64.0), u.dHold[1] = std::clamp(s1, -64.0, 64.0);
+      w[0] = 4 * u.dHold[0], w[1] = 4 * u.dHold[1];
+    } else {
+      for (int ch = 0; ch < 2; ++ch) {
+        const double x = 2 * w[ch];
+        const double a1 = branch(ch, 0, 0, x), b1 = branch(ch, 0, 1, x);  // 2x
+        double y4[4];
+        const double up[2] = {a1, b1};
+        for (int k = 0; k < 2; ++k) y4[2 * k] = branch(ch, 1, 0, up[k]), y4[2 * k + 1] = branch(ch, 1, 1, up[k]);  // 4x
+        for (double& v : y4) {
+          if (ch == 0) u.dDrv += (dTgt - u.dDrv) * (1.0 / 91.0);
+          v = shape(v, u.dDrv);
+        }
+        double h[2];
+        for (int k = 0; k < 2; ++k) {
+          h[k] = 0.5 * (branch(ch, 2, 0, y4[2 * k]) + branch(ch, 2, 1, u.hbPrev[ch][0]));
+          u.hbPrev[ch][0] = y4[2 * k + 1];
+        }
+        const double y = 0.5 * (branch(ch, 3, 0, h[0]) + branch(ch, 3, 1, u.hbPrev[ch][1]));
+        u.hbPrev[ch][1] = h[1];
+        // the source's oversampled wet is 7 samples late, as its dry: this chain is 4.1 late, 3 more here
+        w[ch] = u.wRing[ch][(u.dRingW + 4) & 7];
+        u.wRing[ch][(u.dRingW + 7) & 7] = static_cast<float>(y);
+      }
+    }
+    if (dc)
+      for (int ch = 0; ch < 2; ++ch) {
+        w[ch] -= u.dHold[ch];
+        u.dHold[ch] += w[ch] * dcC;
+      }
+    if (pp == 2) w[0] = filt(0, w[0]), w[1] = filt(1, w[1]);
+    L[i] = (dry[0] * gDry + static_cast<float>(w[0]) * gWet) * out;
+    R[i] = (dry[1] * gDry + static_cast<float>(w[1]) * gWet) * out;
+  }
+}
+}  // namespace
 
 void fxReset(FxUnit& u) { u.clear(); }
 float fxMeter(const FxUnit& u) { return u.meter; }
@@ -541,6 +1109,10 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
   float peak = 0;
   switch (type) {
     case FxDistortion: {
+      if (N("glLaw") >= 0.5) {
+        distImported(u, p, L, R, n, aux, slot, out);
+        break;
+      }
       // J-203d, measured on the source with held sines and saws (see plasma_fxdist_dsp.cpp for the
       // shapers): the module halves its output; the filter is a state-variable filter whose TYPE
       // knob fades low-pass -> band-pass (at 50 %, peak gain = Q) -> high-pass, cutoff on the voice
@@ -624,6 +1196,10 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
     case FxFlanger:
     case FxPhaser:
     case FxChorus: {
+      if (type == FxChorus && N("glLaw") >= 0.5) {
+        chorusImported(u, p, L, R, n, c, out);
+        break;
+      }
       const bool sync = N("kParamBeatSync") >= 0.5;
       const double hz = rateHz(N("kParamRate"), sync);
       const double inc = hz / sr;
@@ -714,6 +1290,10 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
       const bool sync = N("kParamBeatSync") >= 0.5;
       const bool link = N("kParamLink") >= 0.5;
       const int mode = static_cast<int>(P("kParamMode"));
+      if (N("glLaw") >= 0.5) {
+        delayImported(u, p, L, R, n, c, sync, link, mode, out);
+        break;
+      }
       auto secs = [&](double v) {
         if (sync) {
           static const double beats[] = {0.0625, 0.125, 1.0 / 6, 0.1875, 0.25, 1.0 / 3, 0.375, 0.5, 2.0 / 3, 0.75, 1.0, 4.0 / 3, 1.5, 2.0, 3.0, 4.0};
@@ -763,6 +1343,10 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
     }
     case FxComp: {
       const bool multi = N("kParamMultiband") >= 0.5;
+      if (!multi && N("glLaw") >= 0.5) {
+        compImported(u, p, L, R, n);
+        break;
+      }
       // J-203c, measured on the source with a saw at -18.8 dB RMS: the limited level is 60 log10(1 - t)
       // - 2.1 dB RMS (-26.1 / -38.1 / -62.0 at t = 0.6 / 0.75 / 0.9) and bottoms out near -122 at t = 1.
       // Against this detector (peak, gain smoothed in dB) that is a threshold of 60 log10(1 - t) + 8.4.
@@ -905,6 +1489,11 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
       break;
     }
     case FxReverb: {
+      if (N("glLaw") >= 0.5 && !u.rx[0].b) break;  // no model lines (a bank made for another type)
+      if (N("glLaw") >= 0.5) {
+        reverbImported(u, p, L, R, n, c, out);
+        break;
+      }
       // J-203c: the decay of each type follows tables measured on the source (Schroeder RT60 in the
       // 125 Hz / 1 kHz / 8 kHz octaves of a held note's tail; wet 100, other values at their defaults).
       // Which knobs set the decay depends on the type: Plate = size (feedback darkens the tail), Hall =
@@ -1001,7 +1590,21 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
           break;
         }
       }
-      if (rtype == 0 && N("kParamPreDelayBeatSync") >= 0.5) preS += P("kParamPreDelay") * 60.0 / std::max(20.0, c.tempo);
+      if (N("glLaw") >= 0.5) {
+        // imported law (verified against the hosted plugin's output): every type has the pre-delay, free
+        // 2.5 p^5 s, synced 1/96 .. 6 beats in steps x1, x4/3, x3/2, x2 per octave (p = the PRE-DLY knob)
+        const double pd = std::clamp(N("kParamPreDelay"), 0.0, 1.0);
+        if (N("kParamPreDelayBeatSync") >= 0.5) {
+          const int i = static_cast<int>(std::lround(28.0 * pd)) + 13;
+          static const double kStep[3] = {1.0, 4.0 / 3.0, 0.75};
+          const double beats = std::exp2(std::round(i / 3.0) - 11.0) * kStep[i % 3];
+          preS += beats * 60.0 / std::max(20.0, c.tempo);
+        } else {
+          preS += 2.5 * pd * pd * pd * pd * pd;
+        }
+      } else if (rtype == 0 && N("kParamPreDelayBeatSync") >= 0.5) {
+        preS += P("kParamPreDelay") * 60.0 / std::max(20.0, c.tempo);
+      }
       const double size = rtype == 0 ? 0.6 + 0.8 * std::clamp(sz / 100.0, 0.0, 1.0) : 0.5;
       // J-203f: the wet tone (white noise through the source, 1/3-octave transfer of a held note at mix 100) as
       // a shelf curve per type: the curve at the unset cuts plus the LOW CUT and HIGH CUT changes, each
@@ -1235,10 +1838,23 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
     }
     case FxConvolve: {
       if (!u.convReady) break;
+      const bool claw = N("glLaw") >= 0.5;
       const float trim = static_cast<float>(dbToGainF(P("kParamIpTrim")));
       const double attack = P("kParamAttack"), dec = P("kParamDecay");
       const bool psync = N("kParamPredelayBeatSync") >= 0.5;
-      const double pre = psync ? P("kParamPredelay") * 4.0 * 60.0 / std::max(20.0, c.tempo) : P("kParamPredelay");
+      double pre = psync ? P("kParamPredelay") * 4.0 * 60.0 / std::max(20.0, c.tempo) : P("kParamPredelay");
+      if (claw && u.convUnit) {
+        pre = 0;
+      } else if (claw) {  // the reverb's pre-delay law: free 2.5 n^5 s, synced 1/96 .. 6 beats
+        const double pd = std::clamp(N("kParamPredelay"), 0.0, 1.0);
+        if (psync) {
+          const int i = static_cast<int>(std::lround(28.0 * pd)) + 13;
+          static const double kStep[3] = {1.0, 4.0 / 3.0, 0.75};
+          pre = std::exp2(std::round(i / 3.0) - 11.0) * kStep[i % 3] * 60.0 / std::max(20.0, c.tempo);
+        } else {
+          pre = 2.5 * std::pow(pd, 5.0);
+        }
+      }
       const float preD = static_cast<float>(std::clamp(pre * sr, 1.0, static_cast<double>(u.cpre[0].n - 8)));
       const double damp = P("kParamDamping") / 100.0;
       u.cdamp[0].lp(sr, 20000.0 * std::pow(0.05, damp)), u.cdamp[1].lp(sr, 20000.0 * std::pow(0.05, damp));
@@ -1247,12 +1863,23 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
       const size_t bins = FxUnit::kFftN / 2 + 1;
       // J-203d, measured with the identity impulse and a held sine: mix 25 / 50 / 75 gives +1.0 / +1.9 / +1.0 dB,
       // the chorus law: x = 3w^2 - 2w^3, (1 - x^2) * dry + x * wet
-      const double cx = static_cast<double>(wet) * wet * (3 - 2 * static_cast<double>(wet));
+      const double cx = claw ? 0.5 - 0.5 * std::cos(3.14159265358979 * static_cast<double>(wet)) : static_cast<double>(wet) * wet * (3 - 2 * static_cast<double>(wet));
       const float cDry = static_cast<float>(1 - cx * cx), cWet = static_cast<float>(cx);
+      // imported law: TONE is a band-pass (centre 40 * 450^n Hz, 13.65 octaves wide at the middle down to 1.3 at
+      // the ends) faded in within 2.6 % of the middle; the impulse already carries attack, decay and damping
+      const double tn = std::clamp(N("kParamTone"), 0.0, 1.0), ts = 0.95 - 1.9 * std::fabs(tn - 0.5);
+      const double tf = std::clamp(40.0 * std::pow(450.0, tn), 10.0, sr * 0.49), tg = std::tan(3.14159265358979 * tf / sr);
+      const double tk = 2.0 * std::sinh(0.5 * std::log(2.0) * (13.0 * ts + 1.3)), th = 1.0 / (1.0 + tg * (tg + tk));
+      const double tm = std::clamp(19.0 - 20.0 * ts, 0.0, 1.0);
+      auto toneBp = [&](int ch, double x) {
+        const double v1 = (u.dsv1[ch] + tg * (x - u.dsv2[ch])) * th, v2 = u.dsv2[ch] + tg * v1;
+        u.dsv1[ch] = 2 * v1 - u.dsv1[ch], u.dsv2[ch] = 2 * v2 - u.dsv2[ch];
+        return (1 - tm) * x + tm * tk * v1;
+      };
       // the source's wet path has no latency (identity impulse: in phase with the input), so the first partition
       // runs directly and the FFT partitions 1.. use the blocks already complete
       const bool noPre = pre * sr < 1.0;
-      const float headG = attack > 0 ? 0.f : 1.f;
+      const float headG = attack > 0 && !claw ? 0.f : 1.f;
       const int hn = static_cast<int>(u.irHead[0].size());
       for (int i = 0; i < n; ++i) {
         u.cpre[0].push(L[i]), u.cpre[1].push(R[i]);
@@ -1278,7 +1905,9 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
             for (int p2 = 1; p2 < u.parts; ++p2) {
               const double t = static_cast<double>(p2 * FxUnit::kPart) / sr;  // partition time
               float pg = 1;
-              if (attack > 0) pg *= static_cast<float>(std::min(1.0, t / std::max(1e-3, attack * 2.0)));
+              if (claw) {
+                // shaped in the impulse
+              } else if (attack > 0) pg *= static_cast<float>(std::min(1.0, t / std::max(1e-3, attack * 2.0)));
               if (dec < 40) pg *= static_cast<float>(std::exp(-t * 6.9 / std::max(0.05, dec)));
               if (pg < 1e-5f) continue;
               const cpx* X = u.fdl[ch].data() + static_cast<size_t>((u.fdlPos + p2 - 1) % u.parts) * bins;
@@ -1293,8 +1922,15 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
             }
           }
         }
-        yl = u.ctone.run(0, u.cdamp[0].run(yl * trim));
-        yr = u.ctone.run(1, u.cdamp[1].run(yr * trim));
+        if (claw && u.convUnit) {
+          // passes through
+        } else if (claw) {
+          yl = static_cast<float>(toneBp(0, yl * trim));
+          yr = static_cast<float>(toneBp(1, yr * trim));
+        } else {
+          yl = u.ctone.run(0, u.cdamp[0].run(yl * trim));
+          yr = u.ctone.run(1, u.cdamp[1].run(yr * trim));
+        }
         L[i] = (L[i] * cDry + yl * cWet) * out;
         R[i] = (R[i] * cDry + yr * cWet) * out;
       }

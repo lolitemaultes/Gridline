@@ -392,7 +392,8 @@ class OscVoice {
 // sub / noise
 struct SubVoice {
   double ph = 0;
-  float tick(int shape, double inc);
+  // law: the imported shapes (sign, level, pulse width and offset as the source plays them)
+  float tick(int shape, double inc, bool law = false);
 };
 struct NoiseVoice {
   double pos = 0;

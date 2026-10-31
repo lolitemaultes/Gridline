@@ -543,6 +543,204 @@ int main() {
                        std::to_string(half2 - mainOut) + " dB)").c_str());
     expect(import(obj({{"Global0", plain({{"kParamFXBus2Dest", num(2)}})}}), st, rep, cache) && std::lround(P(st, pl::tailP(pl::T_BusChain))) == 2,
            "bus 2 output 2 imports as the bus 2 into bus 1 chain");
+    // both buses naming each other: bus 2 feeds bus 1, whose return is dropped (a source on bus 1 alone is silent)
+    const bool both = import(obj({{"Oscillator0", plain({{"kParamEnable", num(1)}})},
+                                  {"RoutingSlot0", plain({{"kParamRoutingDest", str("kRoutingDestNone")}, {"kParamFXBus1Level", num(100)}})},
+                                  {"Global0", plain({{"kParamFXBus1Dest", num(2)}, {"kParamFXBus2Dest", num(2)}})}}),
+                             st, rep, cache) &&
+                      std::lround(P(st, pl::tailP(pl::T_BusChain))) == 3;
+    expect(both && rmsDb(render(st, 60, 0.6, 0.6), 0.2, 0.5) < -100, "buses feeding each other drop bus 1's return");
+  }
+
+  // ---- imported bus, direct and master gains glide over about 113 ms:
+  // a master step from 0 dB to -12 dB is about two thirds of the way there after 0.11 s
+  {
+    PluginState st;
+    pl::ImportReport rep;
+    expect(import(obj({{"Oscillator0", plain({{"kParamEnable", num(1)}})}}), st, rep, cache), "a glide test preset imports");
+    auto g = packs::createGenerator(st.type);
+    ChannelAux aux;
+    packs::prepareAux(st, aux);
+    g->prepareHost(st, kSr);
+    ProcessContext ctx;
+    ctx.sampleRate = kSr, ctx.tempo = 120, ctx.ppq = 96, ctx.offline = true;
+    PluginState q = st;
+    q.params[static_cast<size_t>(pl::G_MasterVol)] *= 0.5f;  // -12 dB
+    std::vector<float> L;
+    std::vector<float> l(256), r(256);
+    const int total = static_cast<int>(kSr);
+    for (int pos = 0; pos < total; pos += 256) {
+      if (pos == 0) g->noteOn(1, 60, 0.8f, 0);
+      std::fill(l.begin(), l.end(), 0.f);
+      std::fill(r.begin(), r.end(), 0.f);
+      g->process(pos < static_cast<int>(0.2 * kSr) ? st : q, aux, ctx, l.data(), r.data(), 256);
+      L.insert(L.end(), l.begin(), l.end());
+    }
+    const double before = rmsDb(L, 0.1, 0.2);
+    const double early = rmsDb(L, 0.2, 0.21) - before, mid = rmsDb(L, 0.30, 0.32) - before, late = rmsDb(L, 0.8, 1.0) - before;
+    expect(early > -3 && mid < -5 && mid > -10 && std::fabs(late + 12) < 0.5,
+           std::string("the master gain glides (" + std::to_string(early) + " / " + std::to_string(mid) + " / " + std::to_string(late) + " dB)").c_str());
+  }
+
+  // ---- a route on the amp attack time already sets the first attack of a note (J-203m, measured on
+  // the source: macro 1 at 50 -> Env 1 attack by 50 %, straight attack: the first 25 ms sit 24.6 dB under the held
+  // level, the level is reached after about 0.23 s)
+  {
+    auto atkBody = [](double amt) {
+      return obj({{"Oscillator0", plain({{"kParamEnable", num(1)}})},
+                  {"Env0", plain({{"kParamCurve1", num(50)}})},
+                  {"Macro0", plain({{"kParamValue", num(50)}})},
+                  {"ModSlot0", obj({{"destModuleTypeString", str("Env")}, {"destModuleID", num(0)}, {"destModuleParamName", str("kParamAttack")},
+                                    {"destModuleParamID", num(0)}, {"source", arr({num(25), num(0)})}, {"plainParams", obj({{"kParamAmount", num(amt)}})}})}});
+    };
+    PluginState st;
+    pl::ImportReport rep;
+    expect(import(atkBody(50), st, rep, cache), "attack route preset imports");
+    const auto r = render(st, 60, 0.6, 0.6);
+    const double dip = rmsDb(r, 0.0, 0.025) - rmsDb(r, 0.3, 0.5), mid = rmsDb(r, 0.1, 0.125) - rmsDb(r, 0.3, 0.5);
+    expect(std::fabs(dip + 24.6) < 2.0 && std::fabs(mid + 6.8) < 1.5,
+           std::string("a modulated attack time shapes the first attack (" + std::to_string(dip) + " / " + std::to_string(mid) + " dB)").c_str());
+  }
+
+  // ---- shape segments bend on the source's segment law (J-203m, measured on the source: a 1 Hz
+  // triangle LFO 1 on oscillator A's level with its rising segment bent 75 % sits 31.7 dB under the
+  // straight one at 0.25..0.30 s; macro 1 at 50 through a drawn route curve bent 75 % sits 36.1 dB
+  // under the straight curve; Env 1 with a 0.3 s attack at curve 80 and a 0.3 s decay to zero at
+  // curve 95 is 28.9 dB under its peak 0.35..0.40 s after the start)
+  {
+    auto lfoBody = [](double cv) {
+      return obj({{"Oscillator0", plain({{"kParamEnable", num(1)}, {"kParamVolume", num(0)}})},
+                  {"LFO0", obj({{"plainParams", obj({{"kParamBeatSync", num(0)}, {"kParamRate", num(1)}})},
+                                {"curveData", obj({{"curveVals", arr({num(cv), num(0.5), num(0.5)})}, {"numPoints", num(2)}, {"loopbackPointNum", num(481)},
+                                                   {"xVals", arr({num(0), num(0.5), num(1)})}, {"yVals", arr({num(1), num(0), num(1)})}})}})},
+                  {"ModSlot0", obj({{"destModuleTypeString", str("Oscillator")}, {"destModuleID", num(0)}, {"destModuleParamName", str("kParamVolume")},
+                                    {"destModuleParamID", num(1)}, {"source", arr({num(6), num(0)})}, {"plainParams", obj({{"kParamAmount", num(100)}})}})}});
+    };
+    PluginState st;
+    pl::ImportReport rep;
+    auto lfoLev = [&](double cv) { return import(lfoBody(cv), st, rep, cache) ? rmsDb(render(st, 60, 0.4, 0.4), 0.25, 0.30) : 99.0; };
+    const double lfoDrop = lfoLev(0.75) - lfoLev(0.5);
+    expect(std::fabs(lfoDrop + 31.7) < 1.5, std::string("a 75 % LFO segment bend follows the source's law (" + std::to_string(lfoDrop) + " dB)").c_str());
+    auto curveBody = [](double cv) {
+      return obj({{"Oscillator0", plain({{"kParamEnable", num(1)}, {"kParamVolume", num(0)}})},
+                  {"Macro0", plain({{"kParamValue", num(50)}})},
+                  {"ModSlot0", obj({{"destModuleTypeString", str("Oscillator")}, {"destModuleID", num(0)}, {"destModuleParamName", str("kParamVolume")},
+                                    {"destModuleParamID", num(1)}, {"source", arr({num(25), num(0)})},
+                                    {"plainParams", obj({{"kParamAmount", num(100)}, {"kParamMainCurveData", num(1)}})},
+                                    {"flex", arr({obj({{"curveVals", arr({num(cv), num(0.5)})}, {"numPoints", num(1)}, {"xVals", arr({num(0), num(1)})},
+                                                       {"yVals", arr({num(1), num(0)})}}),
+                                                  obj({})})}})}});
+    };
+    auto curveLev = [&](double cv) { return import(curveBody(cv), st, rep, cache) ? rmsDb(render(st, 60, 0.5, 0.5), 0.3, 0.45) : 99.0; };
+    const double curveDrop = curveLev(0.75) - curveLev(0.5);
+    expect(std::fabs(curveDrop + 36.1) < 1.5, std::string("a 75 % drawn route curve follows the source's law (" + std::to_string(curveDrop) + " dB)").c_str());
+    expect(import(obj({{"Oscillator0", plain({{"kParamEnable", num(1)}})},
+                       {"Env0", plain({{"kParamAttack", num(0.3)}, {"kParamDecay", num(0.3)}, {"kParamSustain", num(0)}, {"kParamCurve1", num(80)}, {"kParamCurve2", num(95)}})}}),
+                  st, rep, cache),
+           "curved envelope preset imports");
+    const auto e = render(st, 60, 0.6, 0.6);
+    const double envDrop = rmsDb(e, 0.35, 0.40) - rmsDb(e, 0.20, 0.25);
+    expect(std::fabs(envDrop + 28.9) < 1.0, std::string("a curve-95 decay follows the source's stage law (" + std::to_string(envDrop) + " dB)").c_str());
+  }
+
+  // ---- a route with "via Env 1" off keeps its level through a decaying amp envelope (J-203m, measured
+  // on the source: Env 1 decay 0.1 s to sustain 0; oscillator A to the main output holds -18.8 dBFS
+  // from 0 to 0.55 s with it off, and is silent after 0.15 s with it on)
+  {
+    auto viaBody = [](double via) {
+      return obj({{"Oscillator0", plain({{"kParamEnable", num(1)}})},
+                  {"Env0", plain({{"kParamSustain", num(0)}, {"kParamDecay", num(0.1)}})},
+                  {"RoutingSlot0", plain({{"kParamRoutingDest", str("kRoutingDestMaster")}, {"kParamViaEnv1", num(via)}})}});
+    };
+    PluginState st;
+    pl::ImportReport rep;
+    expect(import(viaBody(0), st, rep, cache) && P(st, pl::tailP(pl::T_RawA)) > 0.5f, "via Env 1 off imports as skipping Env 1");
+    const auto off = render(st, 60, 0.6, 0.6);
+    expect(import(viaBody(1), st, rep, cache) && P(st, pl::tailP(pl::T_RawA)) < 0.5f, "via Env 1 on imports as through Env 1");
+    const auto on = render(st, 60, 0.6, 0.6);
+    expect(std::fabs(rmsDb(off, 0.3, 0.5) - rmsDb(off, 0.05, 0.1)) < 1.0 && rmsDb(on, 0.3, 0.5) < rmsDb(off, 0.3, 0.5) - 40,
+           "a route that skips Env 1 holds its level, one through it decays");
+  }
+
+  // ---- granular density and length import on the source's knob laws (1000 v^4 grains / s, 10 v^4 s);
+  // unset values: density 0.25, length 0.5, window amount 100 %
+  {
+    PluginState st;
+    pl::ImportReport rep;
+    auto gran = [](Json sp) {
+      return obj({{"Oscillator0", obj({{"plainParams", obj({{"kParamEnable", num(1)}, {"kParamType", str("kOsc_Granular")}})},
+                                       {"GranularOsc0", obj({{"plainParams", std::move(sp)}})}})}});
+    };
+    const bool ok = import(gran(obj({{"kParamDensity", num(62.5)}, {"kParamGrainLength", num(0.16)}})), st, rep, cache) &&
+                    std::lround(P(st, pl::oscP(0, pl::O_Type))) == pl::OscGranular;
+    expect(ok, "a granular oscillator imports");
+    if (ok) {
+      expect(P(st, pl::tailP(pl::T_GranLaw)) > 0.5f && std::fabs(P(st, pl::oscP(0, pl::O_GDensity)) - 0.5f) < 1e-3 && std::fabs(P(st, pl::oscP(0, pl::O_GLength)) - 0.355656f) < 1e-3,
+             "granular density 62.5 / s and length 0.16 s import on the source's knob laws");
+      expect(import(gran(obj({{"kParamRandomPitch", num(0)}})), st, rep, cache) && std::fabs(P(st, pl::oscP(0, pl::O_GDensity)) - 0.25f) < 1e-4 &&
+                 std::fabs(P(st, pl::oscP(0, pl::O_GLength)) - 0.5f) < 1e-4 && P(st, pl::oscP(0, pl::O_GWinParam)) > 0.999f,
+             "unset granular density, length and window amount take the source's defaults");
+    }
+    expect(std::fabs(pl::grainDensityImp(0.25) - 3.90625) < 1e-6 && std::fabs(pl::grainLengthMsImp(0.5) - 625.0) < 1e-6, "imported granular laws");
+  }
+
+  // ---- the sub plays its shapes as the source does (J-203m, measured: the init saw one octave down
+  // plus the sine sub at the same pitch sums to -13.0 dBFS on the source; the sub's sine starts
+  // downward, in phase with the saw's fundamental, where an upward sine cancels it to -22 dBFS)
+  {
+    PluginState st;
+    pl::ImportReport rep;
+    auto subBody = [](const char* shape) {
+      return obj({{"Oscillator0", plain({{"kParamEnable", num(1)}, {"kParamOctave", num(-1)}})},
+                  {"Oscillator4", obj({{"plainParams", obj({{"kParamEnable", num(1)}, {"kParamOctave", num(-1)}})},
+                                       {"SubOsc4", obj({{"plainParams", obj({{"kParamShape", str(shape)}})}})}})}});
+    };
+    expect(import(subBody("kSine"), st, rep, cache), "a sub preset imports");
+    const double mix = rmsDb(render(st, 48, 0.6, 0.6), 0.2, 0.5);
+    expect(std::fabs(mix + 13.0) < 1.0, std::string("the sine sub sums in phase with the saw (" + std::to_string(mix) + " dB)").c_str());
+    // each shape at the source's loudness against its sine (RMS): square -0.35 dB, saw (with its offset) -0.5 dB
+    auto subOnly = [&](const char* shape) {
+      return import(obj({{"Oscillator0", plain({{"kParamEnable", num(0)}})},
+                         {"Oscillator4", obj({{"plainParams", obj({{"kParamEnable", num(1)}, {"kParamOctave", num(-1)}})},
+                                              {"SubOsc4", obj({{"plainParams", obj({{"kParamShape", str(shape)}})}})}})}}),
+                    st, rep, cache)
+                 ? rmsDb(render(st, 48, 0.6, 0.6), 0.2, 0.5)
+                 : 99.0;
+    };
+    const double sine = subOnly("kSine"), square = subOnly("kSquare"), saw = subOnly("kSaw");
+    expect(std::fabs(square - sine + 0.35) < 0.3 && std::fabs(saw - sine + 0.5) < 0.3,
+           std::string("sub shape levels follow the source (square " + std::to_string(square - sine) + ", saw " + std::to_string(saw - sine) + " dB)").c_str());
+  }
+
+  // ---- voice panel time scaling: 100 % is neutral, the times scale in proportion (measured: 50 %
+  // halves an envelope decay, 25 % quarters it); a newer file's named same-note mode imports as on
+  {
+    PluginState st;
+    pl::ImportReport rep;
+    expect(import(obj({{"Oscillator0", plain({{"kParamEnable", num(1)}})},
+                       {"VoicePanel0", plain({{"kParamGlobalScalingEnvTime", num(50)}, {"kParamGlobalScalingLfoTime", num(100)}})},
+                       {"Global0", plain({{"kParamLimitSameNotePolyphony", str("Sustain")}})}}),
+                  st, rep, cache),
+           "a time-scaled preset imports");
+    expect(std::fabs(P(st, pl::G_EnvScale) - 0.5f) < 1e-4 && std::fabs(P(st, pl::G_LfoScale) - 1.f) < 1e-4, "time scaling 50 % halves, 100 % is neutral");
+    expect(P(st, pl::G_SameNote) > 0.5f, "a named same-note mode imports as on");
+    // a spectral oscillator's stored base note sets where its sample plays at its own pitch
+    expect(import(obj({{"Oscillator0", obj({{"plainParams", obj({{"kParamEnable", num(1)}, {"kParamType", str("kOsc_Spectral")}})},
+                                            {"SpectralOsc0", obj({{"baseNote", num(72)}, {"plainParams", obj({})}})}})}}),
+                  st, rep, cache) &&
+               std::fabs(P(st, pl::oscP(0, pl::O_Coarse)) + 12.f) < 1e-4f,
+           "a spectral base note of 72 plays the sample an octave down at key 60");
+    // a synced LFO's stored rate picks its division the way the source does (120 BPM: 1.11 and
+    // 1.4 stay at 2 bars, 1.5 and 3 are 1 bar, 16 is 1/16)
+    auto syncBeats = [&](double rate) {
+      if (!import(obj({{"Oscillator0", plain({{"kParamEnable", num(1)}})}, {"LFO0", plain({{"kParamBeatSync", num(1)}, {"kParamRate", num(rate)}})}}), st, rep,
+                  cache))
+        return -1.0;
+      const int top = pl::lfoRateDivisionCount() - 1;
+      return pl::lfoRateDivisionBeats(static_cast<int>(std::lround(P(st, pl::lfoP(0, pl::L_Rate)) * top)));
+    };
+    expect(syncBeats(1.1097) == 8.0 && syncBeats(1.4) == 8.0 && syncBeats(1.5) == 4.0 && syncBeats(3.0) == 4.0 && syncBeats(16.0) == 0.25,
+           "synced LFO rates pick the source's divisions");
   }
 
   // ---- old states pad the new parameters with their defaults (noise tone off, even unison mix)

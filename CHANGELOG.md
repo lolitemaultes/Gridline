@@ -3,6 +3,34 @@
 All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLINE_VERSION_PRE` in
 `CMakeLists.txt`; the release workflow publishes the section of the tagged version as the release notes.
 
+## Unreleased
+
+### Added
+
+- Turntable, a new instrument: load a sample and scratch it on a platter. Drag the platter or the
+  waveform to scratch, with the platter's speed, acceleration, sensitivity and hold, four smoothing
+  controls and the transport (reverse, pause, forward). Notes can start the motor or jump to a cue
+  point, and key tracking sets the speed. Five factory presets. FL Studio projects with Fruity
+  Scratcher open with it, settings and sample included. The previous scratch effect is still there
+  as Turntable FX, so projects that use it sound as before.
+
+### Changed
+
+- Loupe's interface is laid out on one grid: the transport, recording controls, menus and the
+  tool buttons share their sizes and centre lines, the info boxes carry their captions inside them,
+  an empty editor no longer shows a stray time, and tool dialogs keep Accept and Cancel on the
+  right.
+- Plasma plays imported Serum 2 presets much closer to the original:
+  - Effects: the delay (times, synced range up to 16 beats, feedback, echo filter, Ping-Pong),
+    compressor and limiter, reverb (all five models, the pre-delay on every type), distortion,
+    convolution and chorus follow the original. Each gets a Law setting that imports switch on, so
+    Plasma's own projects keep their sound. The reverb knob labelled as a pre-delay now reads TAIL.
+  - Modulation: LFO point modulation, routes to envelope times, curves on LFO segments, routes and
+    envelopes, and tempo-synced LFO divisions follow the original.
+  - Voice: sub oscillator shapes, granular density and length, sources routed past Env 1,
+    envelope and LFO time scaling (100 % is neutral), the spectral oscillator's pitch and
+    frequency limits, notes that take over a voice, and effect buses that feed each other.
+
 ## 0.7.0
 
 Released 2026-10-31. Everything that changed since 0.6.1, including the four 0.7.0 betas. Projects

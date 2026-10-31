@@ -609,6 +609,11 @@ void devDemo(App& a, Session& s) {
     for (int k = 0; k < 14; ++k)
       s.brush.push_back({static_cast<int64_t>(rate * (1.6 + k * 0.05)), static_cast<int64_t>(rate * (1.65 + k * 0.05)), 380, 500});
   }
+  // J-205: GRIDLINE_EDISON_TOOL=<1..18> opens that tool dialog (Tool enum order) for screenshots.
+  if (const char* v = std::getenv("GRIDLINE_EDISON_TOOL"); v && *v) {
+    const int k = std::atoi(v);
+    if (k > 0 && k <= static_cast<int>(Tool::Script)) openTool(s, static_cast<Tool>(k));
+  }
 }
 }  // namespace
 

@@ -56,6 +56,7 @@ const std::vector<PluginBrand>& pluginBrands() {
       {"gl.stereo", F::None, "", "width, stereo, imager, widener"},
       {"gl.lowlift", F::None, "", "bass, low end, sub, lift"},
       {"gl.scratcher", F::None, "", "scratch, vinyl, dj"},
+      {"gl.turntable", F::None, "", "scratch, vinyl, dj, turntable, deck, sampler"},
       {"gl.spread", F::None, "", "spread, stereo, width, unison"},
       {"gl.hitloop", F::None, "", "hit looper, repeat, stutter, loop"},
       {"gl.amprack", F::None, "", "amp rack, amp, guitar, pedals, distortion"},

@@ -782,13 +782,13 @@ int sourceOf(int id) {
     case 16: return SrcVelo;
     case 17: return SrcNote;
     case 18: return SrcAftertouch;
-    case 19: return SrcPitchBend;
+    case 19: return SrcPolyAT;
     case 20: return SrcNoise;
     case 21: return SrcRand1;
     case 22: return SrcRand2;
     case 23: return SrcAlt1;
     case 24: return SrcAlt2;
-    case 33: return SrcPolyAT;
+    case 33: return SrcPitchBend;
     case 34: return SrcExprX;
     case 35: return SrcExprY;
     case 36: return SrcExprZ;
@@ -1253,6 +1253,11 @@ struct Importer {
       static const char* const subNames[] = {"WTOsc", "MultiSampleOsc", "SampleOsc", "GranularOsc", "SpectralOsc"};
       const Json* sub = osc->find(subNames[type] + std::to_string(i));
       const Json* sp = plain(sub);
+      // a spectral oscillator plays its sample's analysed pitch (the stored base note) at that key,
+      // where Plasma's spectral oscillator plays the sample's own pitch at key 60 (measured against
+      // the hosted plugin: a sample stored with base note 72 sounds an octave lower at key 60)
+      if (double bn = 0; type == OscSpectral && sub && num(sub, "baseNote", bn) && bn >= 0 && bn <= 127)
+        set(oscP(i, O_Coarse), static_cast<double>(st.params[static_cast<size_t>(oscP(i, O_Coarse))]) + 60.0 - bn);
       for (int k = 0; k < 5; ++k)  // the other source types' settings are not heard
         if (k != type)
           if (const Json* other = plain(osc->find(subNames[k] + std::to_string(i))))
@@ -1342,8 +1347,12 @@ struct Importer {
     else if (!rel.empty()) missing(rel);
     if (type == OscGranular) {
       double v;
-      if (num(sp, "kParamDensity", v)) set(oscP(i, O_GDensity), std::log(std::max(1.0, v)) / std::log(200.0));
-      if (num(sp, "kParamGrainLength", v)) set(oscP(i, O_GLength), std::clamp(std::log(std::max(2.0, v * 1000.0) / 2.0) / std::log(500.0), 0.0, 1.0));
+      // the source's granular law: density is stored in grains / s (1000 v^4), the grain length in
+      // seconds (10 v^4); unset values sit at v = 0.25 and 0.5, an unset window amount at 100 %
+      set(tailP(T_GranLaw), 1.0);
+      set(oscP(i, O_GDensity), num(sp, "kParamDensity", v) ? std::pow(std::clamp(v / 1000.0, 0.0, 1.0), 0.25) : 0.25);
+      set(oscP(i, O_GLength), num(sp, "kParamGrainLength", v) ? std::pow(std::clamp(v / 10.0, 0.0, 1.0), 0.25) : 0.5);
+      if (!num(sp, "kParamWindowParam", v)) set(oscP(i, O_GWinParam), 1.0);
       if (num(sp, "kParamRandomPitch", v)) set(oscP(i, O_GRndPitch), v / 12.0);
       if (text(sp, "kParamDensityMode", s)) {
         static const char* const k[] = {"kDensityFree", "kDensityBPM", "kDensityGrains"};
@@ -1513,6 +1522,10 @@ struct Importer {
         static const char* const k[] = {"kRoutingDestFilter", "kRoutingDestMaster", "kRoutingDestDirect", "kRoutingDestNone"};
         set(routeP(r, R_Dest), std::max(0, indexOf(k, 4, s)));
       }
+      // measured on the hosted source: a route with "via Env 1" off keeps a steady level through
+      // a decaying ENV 1 (direct and bus outputs), and still ends with the note
+      double v;
+      if (num(pp, "kParamViaEnv1", v)) set(tailP(T_RawA + r), v < 0.5 ? 1.0 : 0.0);
     }
   }
   void envLfoMacros(const Json& o) {
@@ -1534,6 +1547,15 @@ struct Importer {
       apply(pp, kLfoMap, sizeof(kLfoMap) / sizeof(kLfoMap[0]), lfoP(l, 0));
       double r10 = 0, rate = 0;
       if (num(pp, "kParamRate10x", r10) && r10 >= 0.5 && num(pp, "kParamRate", rate)) set(lfoP(l, L_Rate), lfoHzInv(std::clamp(rate, 0.0, 1000.0), true));
+      else if (st.params[lfoP(l, L_Bpm)] >= 0.5f && num(pp, "kParamRate", rate)) {
+        // Synced: the stored rate picks a division on the same knob curve, but where Plasma's knob
+        // rounds at half a step, the source moves to the next faster division only when it is
+        // within 0.16 of a step of it (measured at 120 BPM: 0.6 -> 2 bars, 1.5 -> 1 bar, 3.3 -> 1/2,
+        // 6 -> 1/4, 10 -> 1/8, 16 -> 1/16, 30 -> 1/32).
+        const int top = lfoRateDivisionCount() - 1;
+        const double x = lfoHzInv(std::clamp(rate, 0.0, 100.0), false) * top;
+        set(lfoP(l, L_Rate), std::clamp(std::floor(x + 0.16), 0.0, static_cast<double>(top)) / top);
+      }
       std::string s;
       if (text(pp, "kParamMode", s)) {
         static const char* const k[] = {"Free", "Retrig", "Envelope"};
@@ -1596,6 +1618,23 @@ struct Importer {
       double v;
       if (num(plain(o.find("LFOPointModBus" + std::to_string(b))), "kParamValue", v)) set(busP(b), v);
     }
+    // point modulation records: a bus moves the X, Y or curve of one point of an LFO's shape
+    // (or of a path LFO's point)
+    if (const Json* pa = o.find("lfoPointModAssignments"); pa && pa->type == Json::Type::Array)
+      for (const auto& r : pa->array) {
+        if (r.type != Json::Type::Object || m.busLinks.size() >= 256) continue;
+        const int bus = static_cast<int>(r.num("busID", -1)), lfo = static_cast<int>(r.num("lfoID", -1));
+        const int type = static_cast<int>(r.num("lfoType", 0)), pt = static_cast<int>(r.num("pointID", -1));
+        const int target = static_cast<int>(r.num("target", 1));
+        if (bus < 0 || bus >= kLfoBusses || lfo < 0 || lfo >= kLfos || pt < 0 || pt > 127 || target < 0 || target > 2 || type < 0 || type > 1) continue;
+        BusLink b;
+        b.bus = bus;
+        b.lfo = lfo;
+        b.point = pt;
+        b.axis = target + 3 * type;
+        b.depth = 1;
+        m.busLinks.push_back(b);
+      }
     if (const Json* sc = o.find("scalars")) {
       Curve v = curve(sc->find("velo")), n = curve(sc->find("note"));
       if (v.size() >= 2) m.velo = v;
@@ -1627,6 +1666,8 @@ struct Importer {
     if (num(pp, "kParamLegato", v)) set(G_Legato, v);
     if (num(pp, "kParamPolyCount", v)) set(G_Poly, v);
     if (num(pp, "kParamLimitSameNotePolyphony", v)) set(G_SameNote, v);
+    else if (std::string sn; text(pp, "kParamLimitSameNotePolyphony", sn))  // newer files name the mode
+      set(G_SameNote, sn == "Off" || sn == "kOff" || sn == "None" || sn.empty() ? 0.0 : 1.0);
     if (num(pp, "kParamSwing", v)) set(G_Swing, v / 100.0);
     if (num(pp, "kParamSwingDiv", v)) set(G_SwingDiv, std::clamp(v - 1.0, 0.0, 3.0));
     if (num(pp, "kParamTranspose", v)) set(G_Transpose, v);
@@ -1644,10 +1685,10 @@ struct Importer {
     if (num(pp, "kParamFXBus1Dest", v)) set(G_Bus1Dest, v >= 0.5 && v < 1.5 ? 1 : 0);
     if (num(pp, "kParamFXBus2Dest", v)) set(G_Bus2Dest, v >= 0.5 && v < 1.5 ? 1 : 0);
     // output 2 = the other bus: Plasma's bus chain (one direction; when both buses name each
-    // other, bus 1 feeds bus 2 and bus 2 goes to the main output)
+    // other, bus 2 feeds bus 1 and bus 1's return is dropped, as the hosted plugin plays it)
     double d1 = 0, d2 = 0;
     num(pp, "kParamFXBus1Dest", d1), num(pp, "kParamFXBus2Dest", d2);
-    set(tailP(T_BusChain), d1 >= 1.5 ? 1.0 : d2 >= 1.5 ? 2.0 : 0.0);
+    set(tailP(T_BusChain), d1 >= 1.5 && d2 >= 1.5 ? 3.0 : d1 >= 1.5 ? 1.0 : d2 >= 1.5 ? 2.0 : 0.0);
     if (num(pp, "kParamOversampling", v)) set(G_Quality, v);
     if (num(pp, "kParamS1Compatibility", v)) set(G_S1Mode, v);
     if (num(pp, "kParamGlobalTuning", v)) set(G_ConcertA, v);
@@ -1686,14 +1727,10 @@ struct Importer {
     }
     if (num(vp, "kParamGlobalRandomFilterCutoff", v)) set(G_RndCutoff, v / 100.0);
     if (num(vp, "kParamGlobalRandomEnvTime", v)) set(G_RndEnv, v / 100.0);
-    if (num(vp, "kParamGlobalScalingEnvTime", v)) {
-      set(G_EnvScale, std::pow(2.0, (v - 50.0) / 25.0));
-      note("Envelope time scaling: approximated");
-    }
-    if (num(vp, "kParamGlobalScalingLfoTime", v)) {
-      set(G_LfoScale, std::pow(2.0, (v - 50.0) / 25.0));
-      note("LFO time scaling: approximated");
-    }
+    // time scaling: 100 % is neutral and the times scale in proportion (measured against the hosted
+    // plugin: 50 % halves an envelope decay and doubles an LFO's rate, 25 % quarters the decay)
+    if (num(vp, "kParamGlobalScalingEnvTime", v)) set(G_EnvScale, std::max(0.1, v / 100.0));
+    if (num(vp, "kParamGlobalScalingLfoTime", v)) set(G_LfoScale, std::max(0.1, v / 100.0));
     const char* chips[] = {"kParamOscS", "kParamOscA", "kParamOscB", "kParamOscC", "kParamOscN"};
     for (int i = 0; i < 5; ++i)
       if (num(vp, chips[i], v)) set(G_VcS + i, v);
@@ -1770,10 +1807,9 @@ struct Importer {
       }
     }
   }
-  // J-201: the source's delay times, measured at 120 BPM. Free: TIME L / R are seconds
-  // (0.075 when not stored). Synced: the stored value picks a straight division, 1/32
-  // note to 4 bars, at these thresholds (1 beat when not stored). LINK uses TIME R for
-  // both sides. Plasma's knobs take the matching control value.
+  // The source's delay times (fitted against the hosted plugin's output): TIME L / R store 0.001 + 0.5 t^4 for
+  // the knob position t, free (seconds) and synced (2^round(11 t) / 128 beats) alike; unset 0.075 free / 0.08
+  // synced. LINK uses TIME R for both sides. The imported law (glLaw) reads the knob position.
   void delayTimes(int slot, const Json* pp) {
     auto raw = [&](const char* k, double d) {
       const Json* j = pp ? pp->find(k) : nullptr;
@@ -1784,20 +1820,11 @@ struct Importer {
     double tl = raw("kParamTimeL", def);
     const double tr = raw("kParamTimeR", def);
     if (raw("kParamLink", 0) >= 0.5) tl = tr;
-    auto control = [&](double x) {
-      if (!sync) return std::sqrt(std::max(0.0, (x - 0.001) / 1.999));
-      static const double kEdge[] = {0.006, 0.016, 0.031, 0.0615, 0.105, 0.175, 0.275, 0.415};
-      int k = 0;
-      while (k < 8 && x >= kEdge[k]) ++k;
-      const double beats = 0.0625 * std::exp2(k);  // 1/16 beat .. 16 beats
-      if (beats > 4.0) note("Delay: synced times longer than one bar play one bar long");
-      // Plasma's synced steps: 1/16, 1/8, 1/6, 3/16, 1/4, 1/3, 3/8, 1/2, 2/3, 3/4, 1, 4/3, 3/2, 2, 3, 4 beats
-      static const int kIdx[] = {0, 1, 4, 7, 10, 13, 15, 15, 15};
-      return kIdx[k] / 15.0;
-    };
-    const int qL = fxParamIndex(FxDelay, "kParamTimeL"), qR = fxParamIndex(FxDelay, "kParamTimeR");
+    auto control = [&](double x) { return std::clamp(std::pow(std::max(0.0, x - 0.001) / 0.5, 0.25), 0.0, 1.0); };
+    const int qL = fxParamIndex(FxDelay, "kParamTimeL"), qR = fxParamIndex(FxDelay, "kParamTimeR"), qLaw = fxParamIndex(FxDelay, "glLaw");
     if (qL >= 0) set(fxP(slot, X_P0 + qL), control(tl));
     if (qR >= 0) set(fxP(slot, X_P0 + qR), control(tr));
+    if (qLaw >= 0) set(fxP(slot, X_P0 + qLaw), 1.0);
   }
   void fxValues(int slot, int type, const Json& body) {
     const Json* pp = plain(&body);
@@ -1849,12 +1876,42 @@ struct Importer {
       }
     }
     if (type == FxDelay) delayTimes(slot, pp);
+    if (type == FxComp || type == FxDistortion) set(fxP(slot, X_P0 + fxParamIndex(type, "glLaw")), 1.0);  // the source's compressor law
+    if (type == FxReverb) {
+      // the source's pre-delay: the stored value is 2.5 p^5 (seconds when free) of the knob position p
+      set(fxP(slot, X_P0 + fxParamIndex(FxReverb, "glLaw")), 1.0);
+      double pdv = 0;
+      if (num(pp, "kParamPreDelay", pdv)) set(fxP(slot, X_P0 + fxParamIndex(FxReverb, "kParamPreDelay")), std::pow(std::clamp(pdv / 2.5, 0.0, 1.0), 0.2));
+      // TAIL: the stored value is 250 n^2 of the knob position n
+      double tv = 31.25;
+      (void)num(pp, "kParamDelay", tv);
+      set(fxP(slot, X_P0 + fxParamIndex(FxReverb, "kParamDelay")), std::sqrt(std::clamp(tv / 250.0, 0.0, 1.0)));
+    }
     FxExtra& ex = m.fxExtra[static_cast<size_t>(slot)];
     if (type == FxDistortion) {
       // X-Shaper curves live next to the module ("flex": A, B)
       (void)ex;
     }
+    if (type == FxChorus) {
+      // the source's chorus knobs as positions n: rate 20 n^4 Hz, delays 20 n^2 ms (past 0.1 ms), depth
+      // 26 n^2 (the swing reaches 62.5 ms at n = 1), filter 50 * 300^n Hz
+      set(fxP(slot, X_P0 + fxParamIndex(FxChorus, "glLaw")), 1.0);
+      auto put = [&](const char* key, double n) { set(fxP(slot, X_P0 + fxParamIndex(FxChorus, key)), std::clamp(n, 0.0, 1.0)); };
+      double v = 0;
+      put("kParamRate", std::pow(std::max(0.0, (num(pp, "kParamRate", v) ? v : 0.078125) / 20.0), 0.25));
+      put("kParamDelay", std::sqrt(std::max(0.0, (num(pp, "kParamDelay", v) ? v : 5.0) / 20.0)));
+      put("kParamDelay2", std::sqrt(std::max(0.0, (num(pp, "kParamDelay2", v) ? v : 0.0) / 20.0)));
+      put("kParamDepth", std::sqrt(std::max(0.0, (num(pp, "kParamDepth", v) ? v : 26.25) / 26.0)));
+      put("kParamFilt", std::log(std::max(50.0, num(pp, "kParamFilt", v) ? v : 1000.0) / 50.0) / std::log(300.0));
+    }
     if (type == FxConvolve) {
+      // the source's impulse shaping: attack 3 n^5 s, decay 40 n^5 s, pre-delay 2.5 n^5 s of the knob position n
+      set(fxP(slot, X_P0 + fxParamIndex(FxConvolve, "glLaw")), 1.0);
+      const struct { const char* key; double top; } kShape[] = {{"kParamAttack", 3.0}, {"kParamDecay", 40.0}, {"kParamPredelay", 2.5}};
+      for (const auto& e : kShape) {
+        double v = 0;
+        if (num(pp, e.key, v)) set(fxP(slot, X_P0 + fxParamIndex(FxConvolve, e.key)), std::pow(std::clamp(v / e.top, 0.0, 1.0), 0.2));
+      }
       const std::string rel = body.text("relativePathToIR");
       std::string path;
       if (const Json* e = body.find("embeddedIR"); e && files) {

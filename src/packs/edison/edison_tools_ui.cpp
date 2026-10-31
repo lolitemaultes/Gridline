@@ -43,6 +43,10 @@ const char* toolTitle(Tool t) {
 bool acceptRow(bool enabled = true) {
   ImGui::Spacing();
   ImGui::Separator();
+  // J-205: Accept / Cancel flush with the dialog's right edge.
+  const float bw = 110.0f * 2 + ImGui::GetStyle().ItemSpacing.x;
+  const float avail = ImGui::GetContentRegionAvail().x;
+  if (avail > bw) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + avail - bw);
   ImGui::BeginDisabled(!enabled);
   bool ok = ImGui::Button(i18n::tr("Accept"), ImVec2(110, 0));
   ImGui::EndDisabled();
@@ -176,6 +180,9 @@ void drawToolDialogs(App& a, Session& s) {
         for (int db : {-12, 0, 12}) {
           float y = (p0.y + p1.y) * 0.5f - db / 24.f * (p1.y - p0.y) * 0.5f;
           dl->AddLine(ImVec2(p0.x, y), ImVec2(p1.x, y), db == 0 ? C(col::WaveGridHi) : C(col::WaveGrid));
+          char b[12];  // J-205: the gain scale on the left
+          std::snprintf(b, sizeof b, "%+d dB", db);
+          dl->AddText(ImVec2(p0.x + 4, std::round(y - ImGui::GetFontSize() - 1)), C(col::TextDim), db == 0 ? "0 dB" : b);
         }
       });
       s.eq.clear();

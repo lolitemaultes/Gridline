@@ -724,7 +724,7 @@ bool modelFromData(const std::string& data, Model& m) {
       BusLink b;
       b.lfo = getInt(j, "lfo", 0, 0, kLfos - 1);
       b.point = getInt(j, "pt", 0, 0, 511);
-      b.axis = getInt(j, "axis", 1, 0, 1);
+      b.axis = getInt(j, "axis", 1, 0, 5);
       b.bus = getInt(j, "bus", 0, 0, kLfoBusses - 1);
       b.depth = getF(j, "depth", 1, -1, 1);
       m.busLinks.push_back(b);

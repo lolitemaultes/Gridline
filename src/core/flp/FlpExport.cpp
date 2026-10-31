@@ -101,6 +101,7 @@ void Exporter::assignIndices() {
   }
   double prev = -1;
   for (size_t i = 0; i < s.channels.size(); ++i) {
+    if (movedSlot(s.channels[i]).second >= 0) continue;  // J-205: written into its mixer slot instead
     double key;
     if (!rackOk) key = static_cast<double>(i);
     else if (orig[i] >= 0) key = orig[i];

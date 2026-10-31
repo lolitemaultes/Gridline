@@ -84,7 +84,7 @@ const std::vector<Rename>& renames() {
       {"gl.keyctl", "Keyboard Controller", "Keyboard Mod"}, {"gl.formulactl", "Formula Controller", "Formula Mod"},
       {"gl.surface", "Control Surface", "Control Deck"}, {"gl.clipper", "Soft Clipper", "Clipper"},
       {"gl.stereo", "Stereo Shaper", "Stereo Width"}, {"gl.lowlift", "Low Lifter", "Sub Focus"},
-      {"gl.scratcher", "Scratcher", "Turntable"},    {"gl.spread", "Spreader", "Stereo Spread"},
+      {"gl.scratcher", "Scratcher", "Turntable FX"}, {"gl.spread", "Spreader", "Stereo Spread"},
       {"gl.hitloop", "Hit Looper", "Hit Repeater"},  {"gl.amprack", "Amp Rack", "Pedal Rack"},
       {"gl.squeeze", "Squeeze", "Pinch"},            {"gl.pocketrack", "Pocket Rack", "Pocket FX"},
       {"gl.keymap", "Key Mapper", "Key Remap"},      {"gl.split", "Key Splitter", "Key Zones"},

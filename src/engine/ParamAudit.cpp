@@ -206,6 +206,7 @@ const InertDoc kInert[] = {
     {"gl.spectramorph", "Loop", "loop / one-shot / hold differ only after the analysis run (0.78 s), longer than the audit's notes"},
     {"gl.splinescratch", "Continuous output", "acts only when a note outlasts the 4-beat patch"},
     {"gl.scratcher", "Start time", "spin-up time: acts when the motor restarts during playback"},
+    {"gl.turntable", "Sensitivity", "mouse travel when scratching in the editor; the sound engine does not read it"},
     {"gl.stepbass", "Program", "selects a sequence from the bank in the data; the default bank's programs are identical"},
     {"gl.delay", "Filter follows the sample rate", "classic model only; no effect at 44.1 kHz by definition"},
     {"gl.eq", "Monitor", "graph source in the editor; the DSP does not use it"},

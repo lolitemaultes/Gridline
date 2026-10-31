@@ -755,6 +755,10 @@ void OscVoice::spectralHop(const OscSet& s) {
   const float lo = s.sLo <= 0.f ? 0.f : static_cast<float>(cutoffHz(s.sLo));
   const float hi = s.sHi >= 1.f ? static_cast<float>(s.srv) : std::max(lo + 1.f, static_cast<float>(cutoffHz(s.sHi)));
   const float cut = s.sCut;
+  // imported: the band limits apply to the sample's own frequencies, so they follow the key (measured
+  // against the hosted plugin: a 387 Hz low limit leaves a piano sample untouched at its base note and
+  // three octaves below, a 2 kHz limit takes the same 41 dB off at both)
+  const float bandScale = sp && s.law ? static_cast<float>(std::exp2((60.0 - s.pitch) / 12.0)) : 1.f;
   for (int u = 0; u < U; ++u) {
     const float r = std::exp2(s.det[u] / 12.f);
     float* ph = sphase_.get() + static_cast<size_t>(u) * B;
@@ -763,7 +767,7 @@ void OscVoice::spectralHop(const OscSet& s) {
       if (f <= 0 || f >= s.srv * 0.49) continue;
       float a = mag[i] * norm;
       // spectral filter: band edges shifted by CUT, mixed by MIX
-      const float fs = f * std::exp2(cut * -4.f);
+      const float fs = frq[i] * bandScale * (sp && s.law ? 1.f : r) * std::exp2(cut * -4.f);
       const float inBand = (fs >= lo && fs <= hi) ? 1.f : 0.f;
       a *= lerpf(1.f, inBand, s.sMix);
       if (a < 1e-7f) continue;
@@ -911,7 +915,7 @@ void OscVoice::tick(const OscSet& s, const float* fm, float& l, float& r, float&
 }
 
 // ------------------------------------------------------------------ sub / noise
-float SubVoice::tick(int shape, double inc) {
+float SubVoice::tick(int shape, double inc, bool law) {
   const double p = ph;
   ph += inc;
   if (ph >= 1) ph -= std::floor(ph);
@@ -927,6 +931,33 @@ float SubVoice::tick(int shape, double inc) {
     }
     return 0.0;
   };
+  if (law) {
+    // Imported shapes (fitted and verified against the hosted plugin's output, per harmonic):
+    // the sine and round rect start downward (the round rect plays as a sine), the triangle starts
+    // at zero going down at the sine's loudness, the saw is 1.14x with a -0.105 offset, the square
+    // is 0.68x starting low, the pulse is 0.743x, low for the first 27.2 % of the cycle.
+    switch (shape) {
+      case SubTriangle: {
+        const double q = frac(p + 0.75);
+        return static_cast<float>(1.22 * (q < 0.5 ? q * 4 - 1 : 3 - q * 4));
+      }
+      case SubSaw: return static_cast<float>(1.1436 * (2 * p - 1 - blep(p)) - 0.105);
+      case SubSquare: {
+        double v = p < 0.5 ? -1.0 : 1.0;
+        v -= blep(p);
+        v += blep(frac(p + 0.5));
+        return static_cast<float>(v * 0.6802);
+      }
+      case SubPulse: {
+        constexpr double w = 0.272;
+        double v = p < w ? -1.0 : 1.0;
+        v -= blep(p);
+        v += blep(frac(p + 1.0 - w));
+        return static_cast<float>(v * 0.743);
+      }
+      default: return static_cast<float>(-std::sin(kPi2 * p));
+    }
+  }
   switch (shape) {
     case SubRoundRect: return static_cast<float>(std::tanh(std::sin(kPi2 * p) * 3.0) / std::tanh(3.0));
     case SubTriangle: return static_cast<float>(p < 0.5 ? p * 4 - 1 : 3 - p * 4);

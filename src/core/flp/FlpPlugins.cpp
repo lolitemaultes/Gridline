@@ -109,6 +109,19 @@ void importPlugins(Context& c) {
       c.insert = -1;
       if (!ok || !t || k >= t->slots.size()) continue;
       if (m.state.type.empty()) m.state.type = m.glType;
+      // J-205: a slot plugin that plays its own sound (Fruity Scratcher → the
+      // Turntable instrument) becomes a channel routed to this insert; the
+      // slot stays empty, so the insert's input passes as before.
+      if (const PluginInfo* info = findPlugin(m.state.type); info && info->kind == PluginKind::Generator) {
+        Channel ch;
+        ch.id = s.allocateId();
+        ch.name = info->name;
+        ch.plugin = m.state;
+        ch.mixerTrack = t->id;
+        s.channels.push_back(ch);
+        c.report.counts["slot instruments moved to channels"]++;
+        continue;
+      }
       t->slots[k].plugin = m.state;
       c.slotPlugins[{static_cast<int>(i), static_cast<int>(k)}] = std::move(m);
     }

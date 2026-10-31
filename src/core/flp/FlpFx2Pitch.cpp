@@ -19,8 +19,9 @@
 //                      (5000 = none), stereo, range, start phase, 2 spare.
 //   Fruity Vocoder     version 2, band count, 2 words, band levels (one per
 //                      band), then the knob block.
-//   Fruity Scratcher   version 1001000 and float settings, sample path.
+//   Fruity Scratcher   version 1001000 and float settings, sample path (-> Turntable).
 #include "../../packs/spectral/spectral.h"
+#include "../../packs/spectral/turntable.h"
 #include "../PluginParams.h"
 #include "FlpFx2.h"
 
@@ -231,11 +232,37 @@ bool decodeFruityVocoder(Context&, const std::vector<Event>& evs, PluginMapping&
   return true;
 }
 
-// ------------------------------------------------------------------ Fruity Scratcher → Scratcher
-bool decodeScratcher(Context&, const std::vector<Event>& evs, PluginMapping& m) {
-  if (!pluginState(evs)) return false;
-  fx::begin(m, "gl.scratcher");
-  m.exact = false;  // turntable movement curves and the loaded sample are not imported
+// ------------------------------------------------------------------ Fruity Scratcher → Turntable
+// J-205: the plugin plays its own loaded sample on a platter, so it becomes the
+// Turntable instrument (in a mixer slot: a channel routed to that insert, see
+// importPlugins). State: u32 version, 14 f32 settings by control tag (internal
+// values: position 0..1, sound flag, speed 0..1 = 0..2x, acceleration, pan
+// 0..1, linear volume, hold, sensitivity, motor -1/0/1, smooth 1..4,
+// rotations 0..18), i32 length + path (ANSI); later versions add the zoom,
+// timecode and RIAA flags, not used here.
+bool decodeScratcher(Context& c, const std::vector<Event>& evs, PluginMapping& m) {
+  std::vector<uint8_t> b = stateBytes(evs);
+  if (b.size() < 4 + 14 * 4) return false;
+  Reader r(b.data(), b.size());
+  const uint32_t version = r.u32();
+  if (version < 1000000 || version > 1999999) return false;
+  float v[14];
+  for (float& f : v) f = r.f32();
+  std::string path;
+  const int32_t len = r.left() >= 4 ? r.i32() : 0;
+  if (len > 0 && len < 4096 && static_cast<size_t>(len) <= r.left()) {
+    path.assign(reinterpret_cast<const char*>(b.data() + r.pos), static_cast<size_t>(len));
+    r.skip(static_cast<size_t>(len));
+    while (!path.empty() && path.back() == '\0') path.pop_back();
+  }
+  fx::begin(m, "gl.turntable");
+  sp::turntableFromReference(v, 14, m.state.params);
+  if (!path.empty()) {
+    for (char& ch : path)
+      if (ch == '\\') ch = '/';
+    m.state.data = c.resolvePath(path);
+  }
+  m.exact = true;  // every setting maps 1:1 (the platter's automation is not converted)
   return true;
 }
 

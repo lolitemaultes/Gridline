@@ -19,6 +19,7 @@
 #include "../Packs.h"
 #include "spectral.h"
 #include "spectral_blocks.h"
+#include "turntable.h"
 #include "vxcarrier.h"
 #include "../dynamics/maximus_ref.h"
 
@@ -2947,7 +2948,7 @@ class SpreadFx final : public SpectralFx {
 }  // namespace
 
 std::unique_ptr<Generator> createGenerator(const std::string& type) {
-  (void)type;
+  if (type == "gl.turntable") return createTurntable();  // J-205
   return nullptr;
 }
 
@@ -2962,6 +2963,7 @@ std::unique_ptr<Effect> createEffect(const std::string& type) {
 }
 
 bool prepareAux(const PluginState& state, ChannelAux& aux) {
+  if (prepareTurntableAux(state, aux)) return true;  // J-205
   if (state.type == "gl.vocoder") {  // per-band curves + held keys (UI thread)
     if (state.data.empty()) return true;
     VxData d;

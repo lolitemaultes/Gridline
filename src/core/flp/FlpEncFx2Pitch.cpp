@@ -5,6 +5,7 @@
 #include <cmath>
 #include "FlpEncode.h"
 #include "../../packs/spectral/spectral.h"
+#include "../../packs/spectral/turntable.h"
 #include "../PluginParams.h"
 
 namespace gl::flp::enc {
@@ -223,32 +224,78 @@ Encoder vocoder() {
 }
 
 // ---------------------------------------------------------------- Fruity Scratcher
-// version 1001000, 14 f32 controls by tag (normalized; rotations raw), u32
-// length + sample path. Nothing is decoded: written with the defaults.
-Encoder scratcher() {
-  Encoder e;
-  e.flName = "Fruity Scratcher";
-  e.glType = "gl.scratcher";
-  e.nativeRank = 0;
-  e.defaults = [] {
-    ByteWriter w;
+// version 1001000, 14 f32 settings by control tag (internal values), u32
+// length + sample path, then the later versions' flags (kept as they are).
+// J-205: decoded as the Turntable instrument; every setting maps back.
+constexpr size_t kScrFloats = 4, kScrPath = kScrFloats + 14 * 4;
+Bytes scratcherState(const std::string& path, const Bytes& old) {
+  ByteWriter w;
+  if (old.size() >= kScrPath) {
+    w.bytes(old.data(), kScrPath);
+  } else {
     w.u32(1001000);       // version
     w.f32(0.0f);          // 0 wave position
-    w.f32(1.0f);          // 1 mute switch (FL's default position)
-    w.f32(50.0f / 100);   // 2 turntable speed
+    w.f32(1.0f);          // 1 sound on
+    w.f32(50.0f / 100);   // 2 turntable speed (1x)
     w.f32(25.0f / 100);   // 3 turntable acceleration
     w.f32(0.5f);          // 4 pan (centre)
     w.f32(199.0f / 255);  // 5 volume
     w.f32(0.0f);          // 6 turntable hold off
     w.f32(50.0f / 100);   // 7 turntable sensitivity
-    w.f32(0.0f);          // 8 transport
+    w.f32(0.0f);          // 8 transport (pause)
     w.f32(500.0f / 1000); // 9 smooth 1
     w.f32(908.0f / 1000); // 10 smooth 2
     w.f32(999.0f / 1000); // 11 smooth 3
     w.f32(400.0f / 1000); // 12 smooth 4
-    w.f32(9.0f);          // 13 rotations
-    w.u32(0);             // no sample
-    return w.b;
+    w.f32(9.0f);          // 13 rotations (none)
+  }
+  w.u32(static_cast<uint32_t>(path.size()));
+  w.bytes(reinterpret_cast<const uint8_t*>(path.data()), path.size());
+  // Whatever followed the old path (zoom, timecode flags) stays.
+  if (old.size() >= kScrPath + 4) {
+    const size_t len = getU32(old, kScrPath);
+    const size_t tail = kScrPath + 4 + len;
+    if (len < 4096 && tail <= old.size()) w.bytes(old.data() + tail, old.size() - tail);
+  }
+  return w.b;
+}
+Encoder scratcher() {
+  Encoder e;
+  e.flName = "Fruity Scratcher";
+  e.glType = "gl.turntable";
+  e.nativeRank = -1;  // FL hosts it in a mixer slot: only instances imported from it are written back
+  e.defaults = [] { return scratcherState("", {}); };
+  e.fields = [](const Bytes&) {
+    auto at = [](int tag) { return kScrFloats + 4 * static_cast<size_t>(tag); };
+    auto id = [](double g) { return g; };
+    return std::vector<Field>{
+        f32(sp::TtPosition, at(0), 0, 1, id),
+        f32(sp::TtMute, at(1), 0, 1, [](double g) { return g >= 0.5 ? 0.0 : 1.0; }),
+        f32(sp::TtSpeed, at(2), 0, 1, [](double g) { return g * 0.5; }),
+        f32(sp::TtAccel, at(3), 0, 1, id),
+        f32(sp::TtPan, at(4), 0, 1, [](double g) { return (g + 1.0) * 0.5; }),
+        f32(sp::TtVolume, at(5), 0, 1, id),
+        f32(sp::TtHold, at(6), 0, 1, id),
+        f32(sp::TtSense, at(7), 0, 1, id),
+        f32(sp::TtTransport, at(8), -1, 1, [](double g) { return std::round(g) - 1.0; }),
+        f32(sp::TtSmooth1, at(9), 0, 1, id),
+        f32(sp::TtSmooth2, at(10), 0, 1, id),
+        f32(sp::TtSmooth3, at(11), 0, 1, id),
+        f32(sp::TtSmooth4, at(12), 0, 1, id),
+        f32(sp::TtTurns, at(13), 0, 18, [](double g) { return std::round(g) + 9.0; }),
+    };
+  };
+  e.write = [](const PluginState& g, Bytes& b, const EncodeContext& c) {
+    PluginMapping cur;
+    if (decodeState("Fruity Scratcher", b, cur, c) && cur.state.data == g.data) return;
+    b = scratcherState(g.data, b);
+  };
+  // The note settings are Gridline's own: the FL plugin plays by its motor.
+  e.strip = [](PluginState& s) {
+    if (s.params.size() < static_cast<size_t>(sp::TtCount)) return;
+    s.params[sp::TtNotes] = static_cast<float>(sp::TnOff);
+    s.params[sp::TtKeyTrack] = 1.0f;
+    s.params[sp::TtCue] = 0.0f;
   };
   return e;
 }

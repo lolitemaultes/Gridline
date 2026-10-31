@@ -1193,12 +1193,13 @@ void editorScratcher(App& a, const PluginTarget& t, float width) {
     if (ImGui::IsItemHovered() && !ImGui::IsItemActive()) a.setHint("Drag around the platter to scratch");
   }
   // Right column: motor + hand.
-  text(dl, F, 470, 4, "MOTOR", K.textDim);
-  W(a, t, ScStart, F, 468, 18, 38, K, "START");
-  W(a, t, ScStop, F, 514, 18, 38, K, "STOP");
-  text(dl, F, 470, 92, "HAND", K.textDim);
-  W(a, t, ScRange, F, 468, 106, 38, K, "RANGE");
-  W(a, t, ScSmooth, F, 514, 106, 38, K, "SMOOTH");
+  // (J-205: on the Volume / Pan rows, captions centred over each pair)
+  cap(dl, F, 510, 6, "MOTOR", K.textDim);
+  W(a, t, ScStart, F, 468, 20, 38, K, "START");
+  W(a, t, ScStop, F, 514, 20, 38, K, "STOP");
+  cap(dl, F, 510, 80, "HAND", K.textDim);
+  W(a, t, ScRange, F, 468, 94, 38, K, "RANGE");
+  W(a, t, ScSmooth, F, 514, 94, 38, K, "SMOOTH");
   // Transport row: auto-scratch pattern / rate, crossfader + curve.
   {
     static const char* pats[6] = {"OFF", "BABY", "FWD", "CHIRP", "TRANS", "TEAR"};
@@ -1829,6 +1830,8 @@ void editorSpread(App& a, const PluginTarget& t, float width) {
 
 }  // namespace
 
+void editorTurntable(App& a, const PluginTarget& t, float width);  // turntable_ui.cpp
+
 bool drawEditor(App& a, const PluginTarget& t, float width) {
   const PluginState* st = t.state(a.doc.song());
   if (!st) return false;
@@ -1837,6 +1840,7 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
   else if (ty == "gl.pitch") editorPitch(a, t, width);
   else if (ty == "gl.pitcher") editorPitcher(a, t, width);
   else if (ty == "gl.scratcher") editorScratcher(a, t, width);
+  else if (ty == "gl.turntable") editorTurntable(a, t, width);
   else if (ty == "gl.splitter") editorSplitter(a, t, width);
   else if (ty == "gl.spread") editorSpread(a, t, width);
   else return false;

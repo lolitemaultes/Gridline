@@ -4,6 +4,7 @@
 // parameter display text.
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include "../Packs.h"
@@ -327,7 +328,8 @@ const std::vector<std::vector<FxParamDef>>& fxTable() {
                        {"kParamBW", "Q", 0.075, 7.575, 1.9, 0, 0, "", {}},
                        {"kParamPrePost", "FILTER", 0, 2, 0, 2, 0, "", {"Off", "Pre", "Post"}},
                        lvl,
-                       {"kParamNumStages", "STAGES", 1, 16, 4, 0, 3, "", {}}};
+                       {"kParamNumStages", "STAGES", 1, 16, 4, 0, 3, "", {}},
+                       {"glLaw", "LAW", 0, 1, 0, 2, 0, "", {"Classic", "Imported"}}};
     v[FxFlanger] = {wet,
                     sync,
                     {"kParamRate", "RATE", 0, 20, 0.15, 0, 5, "Hz", {}},
@@ -354,7 +356,8 @@ const std::vector<std::vector<FxParamDef>>& fxTable() {
                    {"kParamFeedback", "FEEDBACK", 0, 100, 0, 0, 0, "%", {}},
                    {"kParamFilt", "FILTER", 50, 20000, 20000, 0, 1, "Hz", {}},
                    lvl,
-                   {"kParamFiltMode", "FILTER TYPE", 0, 1, 0, 2, 0, "", {"Low-pass", "High-pass"}}};
+                   {"kParamFiltMode", "FILTER TYPE", 0, 1, 0, 2, 0, "", {"Low-pass", "High-pass"}},
+                   {"glLaw", "LAW", 0, 1, 0, 2, 0, "", {"Classic", "Imported"}}};
     v[FxDelay] = {{"kParamWet", "MIX", 0, 100, 30, 0, 0, "%", {}},
                   {"kParamFreq", "FREQ", 40, 18000, 2000, 0, 1, "Hz", {}},
                   {"kParamBW", "Q", 0.75, 8.25, 4, 0, 0, "", {}},
@@ -367,7 +370,8 @@ const std::vector<std::vector<FxParamDef>>& fxTable() {
                   {"kParamOffsetL", "MULT L", 0.5, 1.5, 1, 0, 0, "x", {}},
                   {"kParamOffsetR", "MULT R", 0.5, 1.5, 1, 0, 0, "x", {}},
                   lvl,
-                  {"kParamHQ", "HQ", 0, 1, 1, 1, 0, "", {}}};
+                  {"kParamHQ", "HQ", 0, 1, 1, 1, 0, "", {}},
+                  {"glLaw", "LAW", 0, 1, 0, 2, 0, "", {"Classic", "Imported"}}};
     v[FxComp] = {wet,
                  {"kParamThresh", "THRESH", 0, 1, 0.15, 0, 0, "thr", {}},
                  {"kParamRatio", "RATIO", 1, 1000000, 4, 0, 1, ":1", {}},
@@ -394,10 +398,11 @@ const std::vector<std::vector<FxParamDef>>& fxTable() {
                  {"kParamDeadband0", "DEADBAND L", 0, 24, 7, 0, 0, "dB", {}},
                  {"kParamDeadband1", "DEADBAND M", 0, 24, 11.6, 0, 0, "dB", {}},
                  {"kParamDeadband2", "DEADBAND H", 0, 24, 5.3, 0, 0, "dB", {}},
-                 {"kParamLimiterLatencyComp", "LATENCY COMP", 0, 1, 0, 1, 0, "", {}}};
+                 {"kParamLimiterLatencyComp", "LATENCY COMP", 0, 1, 0, 1, 0, "", {}},
+                 {"glLaw", "LAW", 0, 1, 0, 2, 0, "", {"Classic", "Imported"}}};
     v[FxReverb] = {{"kParamWet", "MIX", 0, 100, 25, 0, 0, "%", {}},
                    {"kParamSize", "SIZE", 0, 100, 50, 0, 0, "%", {}},
-                   {"kParamDelay", "PRE-DLY", 0, 250, 0, 0, 0, "ms", {}},
+                   {"kParamDelay", "TAIL", 0, 250, 0, 0, 0, "", {}},
                    {"kParamFreq", "LO CUT", 0, 100, 0, 0, 0, "%", {}},
                    {"kParamFeedback", "DECAY", 0, 100, 50, 0, 0, "%", {}},
                    {"kParamFreqB", "HI CUT", 0, 100, 35, 0, 0, "%", {}},
@@ -407,11 +412,12 @@ const std::vector<std::vector<FxParamDef>>& fxTable() {
                    lvl,
                    {"kParamVintageScale", "DIFF A", 0, 100, 50, 0, 0, "%", {}},
                    {"kParamVintageScaleB", "DIFF B", 0, 100, 50, 0, 0, "%", {}},
-                   {"kParamPreDelay", "PRE SYNC", 0, 2.5, 0, 0, 0, "beats", {}},
+                   {"kParamPreDelay", "PRE-DLY", 0, 2.5, 0, 0, 0, "beats", {}},
                    {"kParamPreDelayBeatSync", "BPM", 0, 1, 0, 1, 0, "", {}},
                    {"kParamType", "TYPE", 0, 4, 0, 2, 0, "", {"Plate", "Hall", "Vintage", "Abyss", "Space"}},
                    {"kParamSpinRate", "MOD RATE", 0, 100, 30, 0, 0, "%", {}},
-                   {"kParamSpinDepth", "MOD DEPTH", 0, 100, 20, 0, 0, "%", {}}};
+                   {"kParamSpinDepth", "MOD DEPTH", 0, 100, 20, 0, 0, "%", {}},
+                   {"glLaw", "LAW", 0, 1, 0, 2, 0, "", {"Classic", "Imported"}}};
     v[FxEq] = {{"kParamFreq1", "FREQ", 20, 20000, 210, 0, 1, "Hz", {}},
                {"kParamFreq2", "FREQ", 20, 20000, 2041, 0, 1, "Hz", {}},
                {"kParamReso1", "Q", 0, 100, 60, 0, 0, "%", {}},
@@ -469,7 +475,8 @@ const std::vector<std::vector<FxParamDef>>& fxTable() {
                      {"kParamDamping", "DAMP", 0, 100, 0, 0, 0, "%", {}},
                      {"kParamIr", "IMPULSE", 0, 11, 0, 2, 0, "",
                       {"File", "Small Room", "Medium Room", "Large Hall", "Plate", "Spring", "Cabinet 1x12",
-                       "Cabinet 4x12", "Telephone", "Lo-Fi Radio", "Reverse Swell", "Cathedral"}}};
+                       "Cabinet 4x12", "Telephone", "Lo-Fi Radio", "Reverse Swell", "Cathedral"}},
+                     {"glLaw", "LAW", 0, 1, 0, 2, 0, "", {"Classic", "Imported"}}};
     v[FxUtility] = {{"kParamWet", "MIX", 0, 100, 100, 0, 0, "%", {}},
                     lvl,
                     {"kParamWidth", "WIDTH", 0, 800, 100, 0, 0, "%", {}},
@@ -716,8 +723,8 @@ std::string paramText(int k, double v, const std::vector<float>* params) {
       case O_UniDetune: std::snprintf(b, sizeof b, "%.2f", v * v); return b;
       case O_Phase: std::snprintf(b, sizeof b, "%.0f°", v * 360); return b;
       case O_WtPos: std::snprintf(b, sizeof b, "%.0f%%", v * 100); return b;
-      case O_GDensity: std::snprintf(b, sizeof b, "%.1f /s", grainDensity(v)); return b;
-      case O_GLength: std::snprintf(b, sizeof b, "%.0f ms", grainLengthMs(v)); return b;
+      case O_GDensity: std::snprintf(b, sizeof b, "%.1f /s", pv(tailP(T_GranLaw), 0) >= 0.5 ? grainDensityImp(v) : grainDensity(v)); return b;
+      case O_GLength: std::snprintf(b, sizeof b, "%.0f ms", pv(tailP(T_GranLaw), 0) >= 0.5 ? grainLengthMsImp(v) : grainLengthMs(v)); return b;
       case O_MDelay: case O_MAttack: case O_MHold: case O_MDecay: case O_MRelease: return fmtTime(envTime(v));
       case O_MSustain: return fmtDb(levelGain(v));
       default: break;
@@ -772,7 +779,71 @@ std::string paramText(int k, double v, const std::vector<float>* params) {
     const int s = (k - kFxBase) / X_Count, p = (k - kFxBase) % X_Count;
     if (p >= X_P0) {
       const int type = static_cast<int>(pv(fxP(s, X_Type), 0));
-      return fxParamText(type, p - X_P0, v);
+      // the imported law's delay times and reverb pre-delay read the knob position on the source's laws
+      const int q = p - X_P0;
+      auto fxv = [&](const char* key, double def) {
+        const int i = fxParamIndex(type, key);
+        return i < 0 ? def : pv(fxP(s, X_P0 + i), def);
+      };
+      if (type == FxChorus && fxv("glLaw", 0) >= 0.5) {
+        const char* key = fxParams(type)[static_cast<size_t>(std::clamp(q, 0, static_cast<int>(fxParams(type).size()) - 1))].key;
+        const double t = std::clamp(v, 0.0, 1.0);
+        if (std::strcmp(key, "kParamRate") == 0) {
+          if (fxv("kParamBeatSync", 0) >= 0.5) {
+            const int i = static_cast<int>(30.0 * t + 0.5);
+            static const double kStep[3] = {1.0, 4.0 / 3.0, 0.75};
+            const double beats = 128.0 / (std::exp2(std::round(i / 3.0)) * kStep[i % 3]);
+            std::snprintf(b, sizeof b, beats >= 1 ? "%.3g beats" : "1/%.3g beat", beats >= 1 ? beats : 1.0 / beats);
+          } else {
+            std::snprintf(b, sizeof b, "%.3g Hz", 20.0 * t * t * t * t);
+          }
+          return b;
+        }
+        if (std::strcmp(key, "kParamDelay") == 0 || std::strcmp(key, "kParamDelay2") == 0 || std::strcmp(key, "kParamDepth") == 0) {
+          std::snprintf(b, sizeof b, "%.1f ms", key[7] == 'p' ? 62.5 * t * t : 0.1 + 20.0 * t * t);
+          return b;
+        }
+        if (std::strcmp(key, "kParamFilt") == 0) {
+          const double hz = 50.0 * std::pow(230.0, t);
+          std::snprintf(b, sizeof b, hz < 1000 ? "%.0f Hz" : "%.2f kHz", hz < 1000 ? hz : hz / 1000);
+          return b;
+        }
+      }
+      if ((type == FxDelay || type == FxReverb || type == FxConvolve) && fxv("glLaw", 0) >= 0.5) {
+        const char* key = fxParams(type)[static_cast<size_t>(std::clamp(q, 0, static_cast<int>(fxParams(type).size()) - 1))].key;
+        const bool time = type == FxDelay ? (std::strcmp(key, "kParamTimeL") == 0 || std::strcmp(key, "kParamTimeR") == 0)
+                          : type == FxReverb ? std::strcmp(key, "kParamPreDelay") == 0
+                                             : std::strcmp(key, "kParamPredelay") == 0;
+        if (type == FxReverb && std::strcmp(key, "kParamDelay") == 0) {  // the source's TAIL value, 250 n^2
+          std::snprintf(b, sizeof b, "%.1f", 250.0 * std::clamp(v, 0.0, 1.0) * std::clamp(v, 0.0, 1.0));
+          return b;
+        }
+        if (type == FxConvolve && (std::strcmp(key, "kParamAttack") == 0 || std::strcmp(key, "kParamDecay") == 0)) {
+          const double t = std::clamp(v, 0.0, 1.0), sec = (key[6] == 'A' ? 3.0 : 40.0) * t * t * t * t * t;
+          if (key[6] == 'D' && t >= 1.0) return "Off";
+          std::snprintf(b, sizeof b, sec < 1 ? "%.1f ms" : "%.2f s", sec < 1 ? sec * 1000 : sec);
+          return b;
+        }
+        if (time) {
+          const bool sync = fxv(type == FxDelay ? "kParamBeatSync" : type == FxReverb ? "kParamPreDelayBeatSync" : "kParamPredelayBeatSync", 0) >= 0.5;
+          const double t = std::clamp(v, 0.0, 1.0);
+          double beats = 0, sec = 0;
+          if (type == FxDelay) {
+            if (sync) beats = std::exp2(std::round(11.0 * t)) / 128.0;
+            else sec = 0.5 * t * t * t * t;
+          } else if (sync) {
+            const int i = static_cast<int>(std::lround(28.0 * t)) + 13;
+            static const double kStep[3] = {1.0, 4.0 / 3.0, 0.75};
+            beats = std::exp2(std::round(i / 3.0) - 11.0) * kStep[i % 3];
+          } else {
+            sec = 2.5 * t * t * t * t * t;
+          }
+          if (sync) std::snprintf(b, sizeof b, beats >= 1 ? "%.3g beats" : "1/%.3g beat", beats >= 1 ? beats : 1.0 / beats);
+          else std::snprintf(b, sizeof b, sec < 1 ? "%.1f ms" : "%.2f s", sec < 1 ? sec * 1000 : sec);
+          return b;
+        }
+      }
+      return fxParamText(type, q, v);
     }
   }
   const PluginInfo* info = selfInfo();
@@ -1016,12 +1087,23 @@ void appendInfos(std::vector<PluginInfo>& v) {
   // LFO law (all LFOs): Classic takes rise and delay as tempo divisions, fades the rise in
   // linearly and smooths over a share of the LFO cycle. Imported takes them as times (16 v^2:
   // seconds on a free LFO, beats on a synced one), fades the rise in linearly and smooths
-  // with a fixed time constant, 3.4 ms / (1 - smooth)^1.8. Preset import selects Imported (J-203i,
-  // measured).
+  // with a fixed time constant, 3.4 ms / (1 - smooth)^1.8, and bends shape segments and the glide
+  // curve on the imported segment law (J-203m). Preset import selects Imported (J-203i, measured).
   set(tailP(T_LfoLaw), ch("LFO Law", {"Classic", "Imported"}, 0));
   // Bus chain: one effect bus feeds the other's input (after its own rack and volume) instead of
   // its own output. Preset import selects it for a bus whose output is the other bus.
-  set(tailP(T_BusChain), ch("Bus Chain", {"Off", "Bus 1 into Bus 2", "Bus 2 into Bus 1"}, 0));
+  set(tailP(T_BusChain), ch("Bus Chain", {"Off", "Bus 1 into Bus 2", "Bus 2 into Bus 1", "Both Ways"}, 0));
+  // Granular law (all granular oscillators): Classic reads density 1..200 grains / s and length
+  // 2..1000 ms on log knobs. Imported reads density 1000 v^4 grains / s and length 10 v^4 s, the
+  // percent length mode as a share of the grain spacing and the grains mode as up to 30 grains
+  // per length. Preset import selects Imported.
+  set(tailP(T_GranLaw), ch("Granular Law", {"Classic", "Imported"}, 0));
+  // Per route: its output (to main, direct and the buses) leaves the voice without ENV 1's level
+  // (ENV 1 still ends the note). Preset import sets it for a source routed that way.
+  {
+    static const char* const rn[] = {"A", "B", "C", "Noise", "Sub", "Filter 1", "Filter 2"};
+    for (int r = 0; r < kRoutes; ++r) set(tailP(T_RawA + r), tog(std::string(rn[r]) + " Skips Env 1", 0));
+  }
 
   // ---- filters
   for (int f = 0; f < kFilters; ++f) {
