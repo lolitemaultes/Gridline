@@ -632,11 +632,37 @@ class PlasmaGen final : public Generator {
     const float off = nt ? nt->off[d] : goff_[d];
     if (off == 0) return b;
     const PMap& pm = pmaps()[static_cast<size_t>(k)];
+    if (cubeDest_[static_cast<size_t>(d)]) {  // Imported matrix law: the offset lands on the source's knob (value = knob^3)
+      const float c = std::clamp(std::cbrt(std::max(0.f, toNorm(pm, b))) + off, 0.f, 1.f);
+      return fromNorm(pm, c * c * c);
+    }
     return fromNorm(pm, toNorm(pm, b) + off);
   }
   float GV(int k) const { return V(lead_, k); }
+  // voice amp gain; Imported matrix law: the offset adds to the linear gain (2 per full amount), unclamped and signed
+  float ampGain(const Note* nt) const {
+    const int d = destOf_[static_cast<size_t>(G_Amp)];
+    if (!modLaw_ || d < 0) return static_cast<float>(busGain(V(nt, G_Amp)));
+    const float off = nt ? nt->off[d] : goff_[d];
+    return std::clamp(static_cast<float>(busGain(G(G_Amp))) + 2.f * off, -8.f, 8.f);
+  }
+
+  // destinations whose source knob is curved as value = knob^3 (Imported matrix law, J-203g)
+  bool cubeKnob(int dst) const {
+    if (dst >= kRouteBase && dst < kRouteBase + kRoutes * R_Count) {
+      const int p = (dst - kRouteBase) % R_Count;
+      return p == R_Bus1 || p == R_Bus2;
+    }
+    if (dst >= kFxBase && dst < kFxBase + kFxSlots * X_Count) {
+      const int s = (dst - kFxBase) / X_Count, p = (dst - kFxBase) % X_Count - X_P0;
+      static const int utilWidth = fxParamIndex(FxUtility, "kParamWidth");
+      return p >= 0 && p == utilWidth && std::lround(G(fxP(s, X_Type))) == FxUtility;
+    }
+    return false;
+  }
 
   void buildMatrix() {
+    const bool law = modLaw_ = G(tailP(T_ModLaw)) >= 0.5f;
     std::fill(destOf_.begin(), destOf_.end(), -1);
     slotCount_ = 0;
     destCount_ = 0;
@@ -651,6 +677,7 @@ class PlasmaGen final : public Generator {
         d = destCount_++;
         destOf_[static_cast<size_t>(dst)] = d;
         destParam_[d] = dst;
+        cubeDest_[static_cast<size_t>(d)] = law && cubeKnob(dst);
       }
       Slot& sl = slots_[slotCount_++];
       sl.index = s;
@@ -1095,7 +1122,9 @@ class PlasmaGen final : public Generator {
       if (G(lfoP(l, L_Mono)) >= 0.5f || !n) return static_cast<float>(globalLfo_[l].y);
       return static_cast<float>(n->lfo[l].y);
     }
-    if (s >= SrcMacro1 && s <= SrcMacro8) return G(macroP(s - SrcMacro1));
+    // Imported matrix law: a macro that is itself a destination passes its modulated value on
+    // (measured: macro 8 at 100 % -> macro 1 by 25 % -> a volume route of 50 % adds 0.125)
+    if (s >= SrcMacro1 && s <= SrcMacro8) return modLaw_ ? std::clamp(V(n, macroP(s - SrcMacro1)), 0.f, 1.f) : G(macroP(s - SrcMacro1));
     return 0;
   }
   // Per-note properties that stay meaningful after the note ends (velocity, key, ...).
@@ -1122,7 +1151,19 @@ class PlasmaGen final : public Generator {
     const float b = G(modP(slot, auxCurve ? M_AuxCurve : M_Curve));
     if (std::fabs(b) < 1e-4f) return v;
     const float sgn = v < 0 ? -1.f : 1.f;
+    if (modLaw_) return sgn * static_cast<float>(sourceCurve(std::fabs(v), b));
     return sgn * static_cast<float>(bendCurve(std::fabs(v), b));
+  }
+  // Imported matrix law (J-203g, measured on the source with a macro route to a level, curves
+  // -100..100 at inputs 0.1..0.9): an exponential bend, y = (e^(a x) - 1) / (e^a - 1) with
+  // a = 10 atanh(|c|) for c < 0 (c = -0.5: 0.013 at 0.25, 0.063 at 0.5, 0.255 at 0.75), mirrored
+  // (y = 1 - f(1 - x)) for c > 0
+  static double sourceCurve(double x, double c) {
+    x = std::clamp(x, 0.0, 1.0);
+    const double a = 10.0 * std::atanh(std::min(std::fabs(c), 0.9999));
+    if (a < 1e-6) return x;
+    const auto f = [a](double t) { return std::expm1(a * t) / std::expm1(a); };
+    return c < 0 ? f(x) : 1.0 - f(1.0 - x);
   }
   // Evaluates the matrix for a note (or the global context when n is null).
   void evalMatrix(Note* n, float* off, float dtSec) {
@@ -1135,7 +1176,10 @@ class PlasmaGen final : public Generator {
         v = shapeMod(s.index, v, false);
       } else {
         v = shapeMod(s.index, v, false);
-        if (bi) v = v * 2.f - 1.f;
+        // Imported matrix law: a bipolar route swings half its amount each way (measured: a macro
+        // at 0 / 0.25 / 0.75 / 1 moves the destination by -0.5 / -0.25 / 0.25 / 0.5 of the amount;
+        // an aux source scales the swing)
+        if (bi) v = modLaw_ ? v - 0.5f : v * 2.f - 1.f;
       }
       if (s.aux > SrcNone && s.aux < SourceCount) {
         float a = shapeMod(s.index, std::clamp(sourceValue(n, s.aux), 0.f, 1.f), true);
@@ -1488,6 +1532,7 @@ class PlasmaGen final : public Generator {
     s.v2 = V(&n, oscP(o, O_Warp2Var));
     s.smooth = V(&n, oscP(o, O_Smooth)) >= 0.5f;
     s.s1 = G(G_S1Mode) >= 0.5f;
+    s.law = G(tailP(T_OscLaw)) >= 0.5f;
     s.start = V(&n, oscP(o, O_Start));
     s.end = V(&n, oscP(o, O_End));
     s.reverse = V(&n, oscP(o, O_Reverse)) >= 0.5f;
@@ -1640,7 +1685,7 @@ class PlasmaGen final : public Generator {
       const double res = std::clamp(V(&n, filtP(f, F_Res)) + V(&n, filtP(f, F_Y)) * 0.25f, 0.f, 1.f);
       const double spread = (V(&n, filtP(f, F_Stereo)) - 0.5) * 48.0;
       Filter& flt = f == 0 ? *n.f1 : *n.f2;
-      if (fOn[f]) flt.set(type, srv_, hz, res, V(&n, filtP(f, F_Drive)), V(&n, filtP(f, F_Var)), spread, G(tailP(T_DriveMode)) >= 0.5f);
+      if (fOn[f]) flt.set(type, srv_, hz, res, V(&n, filtP(f, F_Drive)), V(&n, filtP(f, F_Var)), spread, G(tailP(T_DriveMode)) >= 0.5f, G(tailP(T_Pad1 + f)) >= 0.5f);
       fMix[f] = V(&n, filtP(f, F_Wet));
       fLev[f] = static_cast<float>(busGain(V(&n, filtP(f, F_Level))));
       if (&n == lead_) live_.cut[f].store(static_cast<float>(hz), std::memory_order_relaxed);
@@ -1648,7 +1693,7 @@ class PlasmaGen final : public Generator {
     c.serial = 0;  // 1: F1 -> F2, 2: F2 -> F1
     if (dest[RtF1] == 0) c.serial = 1;
     else if (dest[RtF2] == 0) c.serial = 2;
-    c.amp = static_cast<float>(busGain(V(&n, G_Amp)));
+    c.amp = ampGain(&n);
     for (int e = 0; e < kEnvs; ++e) c.es[e] = envSet(&n, e);
     // multisample own envelope
     for (int o = 0; o < kOscs; ++o) c.menvOn[o] = V(&n, oscP(o, O_MEnvOn)) >= 0.5f;
@@ -2092,6 +2137,8 @@ class PlasmaGen final : public Generator {
   std::vector<float> base_;
   std::vector<int> destOf_;
   int destParam_[kModSlots] = {};
+  std::array<bool, kModSlots> cubeDest_ = {};
+  bool modLaw_ = false;  // T_ModLaw Imported
   Slot slots_[kModSlots];
   int slotCount_ = 0, destCount_ = 0;
   bool audioSrc_ = false;

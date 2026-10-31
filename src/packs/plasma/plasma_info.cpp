@@ -991,6 +991,22 @@ void appendInfos(std::vector<PluginInfo>& v) {
   // bends it by 9.5 atanh(c), so the ends of the knob become nearly a step. Preset import selects
   // Steep (J-203a: measured).
   set(tailP(T_EnvLaw), ch("Envelope Curves", {"Gentle", "Steep"}, 0));
+  // wavetable oscillators (all three): Classic blends table frames over 0..1 of the position,
+  // takes out each frame's DC and runs FM / PD warps on Plasma's own depth curves; Imported
+  // spreads the frames evenly over the position (each frame owns an equal share, the last one
+  // holds), keeps the frames' DC and follows the measured warp depths (FM: a fixed deviation of
+  // 88.2 kHz * amount^4 at any pitch; PD: 8 * amount^4 cycles of phase). Preset import selects
+  // Imported (J-203g: measured).
+  set(tailP(T_OscLaw), ch("Wavetable Law", {"Classic", "Imported"}, 0));
+  // Matrix law: Classic adds each route's amount to the destination's own knob; Imported adds it
+  // to the source's knob where that one is curved differently (bus sends and the utility width are
+  // the cube of the source's knob, measured: width 0 + macro 25 % -> 12.5 %, 50 % -> 100 %,
+  // 100 % -> 800 %). Preset import selects Imported (J-203g).
+  set(tailP(T_ModLaw), ch("Matrix Law", {"Classic", "Imported"}, 0));
+  // Filter pad (Boost drive mode only): the drive raises the level without its clipping, as the
+  // source's PAD switch does (J-203f, measured on the filter effect; imports set it per filter)
+  set(tailP(T_Pad1), tog("Filter 1 Pad", 0));
+  set(tailP(T_Pad2), tog("Filter 2 Pad", 0));
 
   // ---- filters
   for (int f = 0; f < kFilters; ++f) {

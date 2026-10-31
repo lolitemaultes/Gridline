@@ -12591,6 +12591,10 @@ gl.plasma	2194	Filter Drive Mode	combination	1	367=1
 gl.plasma	2195	Filter Key Centre	verified	0		VERIFIED: acts on a key-tracked filter away from the centre key (parameter coverage test)
 gl.plasma	2196	Multisample Level	verified	0		VERIFIED: acts on a multisample oscillator (parameter coverage test)
 gl.plasma	2197	Envelope Curves	verified	0		VERIFIED: acts on a curved envelope stage (parameter coverage test)
+gl.plasma	2198	Wavetable Law	verified	0		VERIFIED: acts on a warped wavetable oscillator (parameter coverage test)
+gl.plasma	2199	Matrix Law	verified	0		VERIFIED: acts on a bipolar, curved or chained matrix route (parameter coverage test)
+gl.plasma	2200	Filter 1 Pad	verified	0		VERIFIED: acts on a driven filter 1 on the Boost drive mode (parameter coverage test)
+gl.plasma	2201	Filter 2 Pad	verified	0		VERIFIED: acts on a driven filter 2 on the Boost drive mode (parameter coverage test)
 gl.platter	0	A channel fader	working	0	
 gl.platter	1	A trim	working	12	
 gl.platter	2	A EQ high	working	-26	

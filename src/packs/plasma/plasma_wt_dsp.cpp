@@ -82,12 +82,14 @@ std::shared_ptr<const MipTable> buildMip(const std::shared_ptr<const Table>& t) 
   }
   m->mag.assign(static_cast<size_t>(t->frames) * MipTable::kHarm, 0.f);
   m->phs.assign(static_cast<size_t>(t->frames) * MipTable::kHarm, 0.f);
+  m->dc.assign(static_cast<size_t>(t->frames), 0.f);
   const Fft& big = fft2048();
   std::vector<cpx> spec(kFrameSize), buf(kFrameSize);
   for (int f = 0; f < t->frames; ++f) {
     const float* src = t->frame(f);
     for (int i = 0; i < kFrameSize; ++i) spec[static_cast<size_t>(i)] = cpx(src[i], 0.f);
     big.forward(spec.data());
+    m->dc[static_cast<size_t>(f)] = spec[0].real() / static_cast<float>(kFrameSize);
     for (int h = 1; h <= MipTable::kHarm; ++h) {
       const cpx c = h < kFrameSize / 2 ? spec[static_cast<size_t>(h)] : cpx(0, 0);
       m->mag[static_cast<size_t>(f) * MipTable::kHarm + static_cast<size_t>(h - 1)] = std::abs(c) * (2.0f / kFrameSize);
@@ -419,8 +421,11 @@ std::shared_ptr<const Table> tableFromFrames(const std::vector<std::vector<float
 }
 
 namespace {
-// Cycle length from a wavetable WAV's 'clm ' chunk ("<!>2048 ..."), else 0.
-int clmCycle(const std::string& path) {
+// Cycle length from a wavetable WAV's 'clm ' chunk ("<!>2048 ..."), else 0; morph is set when the
+// flags after it start with 1 (J-203g, measured: such tables blend frames between positions on the
+// source even with its frame crossfade off, tables flagged 0 step from frame to frame).
+int clmCycle(const std::string& path, bool& morph) {
+  morph = false;
   std::ifstream f(path, std::ios::binary);
   if (!f) return 0;
   char hdr[12];
@@ -437,7 +442,9 @@ int clmCycle(const std::string& path) {
       const size_t p = s.find("<!>");
       if (p == std::string::npos) return 0;
       int v = 0;
-      for (size_t i = p + 3; i < s.size() && s[i] >= '0' && s[i] <= '9' && v < 100000; ++i) v = v * 10 + (s[i] - '0');
+      size_t i = p + 3;
+      for (; i < s.size() && s[i] >= '0' && s[i] <= '9' && v < 100000; ++i) v = v * 10 + (s[i] - '0');
+      if (i + 1 < s.size() && s[i] == ' ') morph = s[i + 1] == '1';
       return v;
     }
     f.seekg(static_cast<std::streamoff>(n + (n & 1)), std::ios::cur);
@@ -452,7 +459,8 @@ std::shared_ptr<const Table> loadTableFile(const std::string& path, std::string*
   if (!s || s->frames() == 0) return nullptr;
   const std::vector<float>& src = channel == 1 && !s->mono() ? s->right.vec() : s->left;
   const size_t n = src.size();
-  int cyc = clmCycle(path);
+  bool morph = false;
+  int cyc = clmCycle(path, morph);
   if (cyc <= 0) {
     if (n <= 4096 && n % kFrameSize != 0) cyc = static_cast<int>(n);  // one single cycle
     else cyc = kFrameSize;
@@ -471,6 +479,11 @@ std::shared_ptr<const Table> loadTableFile(const std::string& path, std::string*
   const size_t dot = name.find_last_of('.');
   if (dot != std::string::npos) name = name.substr(0, dot);
   auto t = tableFromFrames(fr, name);
+  if (t && morph) {
+    auto m = std::make_shared<Table>(*t);
+    m->morph = true;
+    return m;
+  }
   return t;
 }
 

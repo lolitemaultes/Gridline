@@ -1204,6 +1204,8 @@ struct Importer {
   // ---------------------------------------------------------------- modules
   void oscillators(const Json& o) {
     set(tailP(T_UniMix), 1.0);  // the source's unison voice mix (J-201, measured)
+    set(tailP(T_OscLaw), 1.0);
+    set(tailP(T_ModLaw), 1.0);  // matrix amounts on the source's knob curves (J-203g, measured)  // frame spread, frame DC and warp depths as the source plays them (J-203g, measured)
     for (int i = 0; i < kOscs; ++i) {
       const Json* osc = o.find("Oscillator" + std::to_string(i));
       if (!osc) continue;
@@ -1255,6 +1257,7 @@ struct Importer {
         if (k != type)
           if (const Json* other = plain(osc->find(subNames[k] + std::to_string(i))))
             for (const auto& kv : other->object) used.insert(&kv.second);
+      set(oscP(i, O_Smooth), 0.0);  // frame blending is off unless the preset turns it on (J-203g, measured)
       apply(sp, kOscSub, sizeof(kOscSub) / sizeof(kOscSub[0]), oscP(i, 0));
       for (int w = 0; w < 2; ++w) {
         if (text(sp, w == 0 ? "kParamWarpMenu" : "kParamWarpMenu2", s)) {
@@ -1492,7 +1495,7 @@ struct Importer {
         set(filtP(f, F_Type), t < 0 ? 1 : t);
       }
       double v;
-      if (num(pp, "kParamPad", v) && v >= 0.5) note("Filter pad (clean input) is not modelled");
+      if (num(pp, "kParamPad", v)) set(tailP(T_Pad1 + f), v >= 0.5 ? 1.0 : 0.0);
       // Drive: the source's filter keeps the driven level (drive 0.5 is about +14 dB): the
       // Boost drive mode (set below) follows its measured gain and clip law.
     }
@@ -2025,8 +2028,8 @@ struct Importer {
       if (num(pp, "kParamCurveIn", v)) set(modP(out, M_Curve), v / 100.0);
       if (num(pp, "kParamAuxCurve", v)) set(modP(out, M_AuxCurve), v / 100.0);
       if (num(pp, "kParamAuxInverted", v)) set(modP(out, M_AuxInv), v);
-      if (num(pp, "kParamSmoothRise", v)) set(modP(out, M_Rise), v / 100.0);
-      if (num(pp, "kParamSmoothFall", v)) set(modP(out, M_Fall), v / 100.0);
+      // J-203g: the source's route smoothing (rise / fall, linked or not) left velocity, envelope
+      // and LFO routes unchanged at every setting measured (10..100 %), so it is not carried over
       if (num(pp, "kParamCurveOut", v) && std::fabs(v) > 1e-3) note("Matrix output curve: approximated by the input curve");
       if (num(pp, "kParamDelayOffset", v)) note("Matrix delay offset is not modelled");
       if (as > SrcNone) set(modP(out, M_Aux), as);

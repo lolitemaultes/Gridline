@@ -19,6 +19,8 @@ inline float remapAt(const std::array<float, 257>& c, double x) {
   const float f = static_cast<float>(u - i);
   return c[static_cast<size_t>(i)] + (c[static_cast<size_t>(i + 1)] - c[static_cast<size_t>(i)]) * f;
 }
+// FM deviation of the "Imported" wavetable law at amount 1 (Hz, any pitch; J-203g, measured).
+constexpr double kFmDevHz = 88200.0;
 inline double bendPow(double p, double a) { return std::pow(std::clamp(p, 0.0, 1.0), 1.0 - 0.85 * a); }
 inline int fmSourceOf(int m) {  // 33..69: index of the modulation source (0..5)
   if (m >= 33 && m <= 56) return (m - 33) % 6;
@@ -89,6 +91,7 @@ void OscVoice::start(const OscSet& s, float phase, float randPhase, float randSt
     }
   }
   postZ_[0][0] = postZ_[0][1] = postZ_[1][0] = postZ_[1][1] = 0;
+  for (auto& z : warpZ_) std::fill(std::begin(z), std::end(z), 0.f);
   // sample playheads
   const Sample* smp = s.src ? s.src->sample.get() : nullptr;
   zone_ = -1;
@@ -132,10 +135,16 @@ void OscVoice::savePhases(double* out) const {
 }
 
 // ------------------------------------------------------------------ wavetable
-float OscVoice::wavetableSample(const OscSet& s, int u, double& ph, double inc, const float* fm) {
+float OscVoice::wavetableSample(const OscSet& s, int u, double& ph, double inc, const float* fmIn) {
   const MipTable& t = *s.mip;
+  // Imported law (J-203g, measured with a sine carrier at key 60): the sub modulates FM / PD 3.5 dB
+  // less deeply than another oscillator does (first sidebands at FM 0.2 / PD 0.3)
+  float fmv[6];
+  for (int i = 0; i < 6; ++i) fmv[i] = fmIn[i];
+  if (s.law) fmv[3] *= 0.668f;
+  const float* fm = fmv;
   double p = ph;
-  double mul = 1, incMul = 1;
+  double mul = 1, incMul = 1, incAdd = 0;
   float gain = 1;
   bool flip = false;
   const int modes[2] = {s.w1, s.w2};
@@ -145,10 +154,32 @@ float OscVoice::wavetableSample(const OscSet& s, int u, double& ph, double inc, 
     amt[k] = std::clamp(amt[k], 0.f, 1.f);
     const int m = modes[k];
     const float a = amt[k];
-    if (m <= 0 || a <= 1e-6f) continue;
+    // Imported law: the bipolar warps (bend +/-, asym +/-, even/odd) are neutral at 0.5, not at 0
+    const bool bip = s.law && (m == 4 || m == 8 || m == 16);
+    if (m <= 0 || (a <= 1e-6f && !bip)) continue;
+    if (s.law && m >= 2 && m <= 8 && m != 5) {
+      // J-203g, read from single cycles of the source's saw at key 24 (phase recovered from the ramp)
+      // and checked on harmonic levels: bend maps u = 2p - 1 to u (1 - x) / ((1 + x) - 2 x |u|) and asym
+      // moves the half-cycle point to (1 + x) / 2, x = 0.8 b; b = -a (+), a (-), 2a - 1 (+/-)
+      const bool bend = m <= 4;
+      const int dir = bend ? m - 2 : m - 6;  // 0 +, 1 -, 2 +/-
+      const double b = dir == 0 ? -a : dir == 1 ? a : 2.0 * a - 1.0, x = 0.8 * b;
+      if (bend) {
+        const double uu = 2.0 * p - 1.0, au = std::fabs(uu);
+        const double w = au * (1.0 - x) / std::max(1e-9, (1.0 + x) - 2.0 * x * au);
+        p = 0.5 + 0.5 * (uu < 0 ? -w : w);
+      } else {
+        const double bp = 0.5 * (1.0 + x);
+        p = p < bp ? 0.5 * p / bp : 0.5 + 0.5 * (p - bp) / std::max(1e-9, 1.0 - bp);
+      }
+      // the source keeps the upper harmonics of steep bends (measured to H12 at a = 1): band-limit
+      // for at most twice the rate
+      mul *= std::min(2.0, (1.0 + std::fabs(x)) / (1.0 - std::fabs(x)));
+      continue;
+    }
     switch (m) {
-      case 1: {  // sync
-        const double M = 1.0 + a * a * 15.0;
+      case 1: {  // sync (Imported law, J-203g: ratio 1 + 15 a^3, fitted on saw harmonics at a = 0.3 .. 0.95)
+        const double M = 1.0 + (s.law ? static_cast<double>(a) * a * a : static_cast<double>(a) * a) * 15.0;
         if (var[k] > 0) gain *= static_cast<float>(1.0 - var[k] * std::pow(p, 3.0));
         p = frac(p * M);
         mul *= M;
@@ -172,7 +203,13 @@ float OscVoice::wavetableSample(const OscSet& s, int u, double& ph, double inc, 
       case 6: if (p < 0.5) p = 0.5 * bendPow(p * 2, a); mul *= 1 + a * 2; break;
       case 7: if (p >= 0.5) p = 0.5 + 0.5 * (1.0 - bendPow(2 - p * 2, a)); mul *= 1 + a * 2; break;
       case 8: p = p < 0.5 ? 0.5 * bendPow(p * 2, a) : 0.5 + 0.5 * (1.0 - bendPow(2 - p * 2, a)); mul *= 1 + a * 2; break;
-      case 9: flip = p >= 1.0 - a; break;
+      case 9: {
+        // Imported law (J-203g, measured on the saw): the flip point runs out and back over the knob
+        // (0.25 and 0.75 flip the second half, 0.5 and 1.0 sound like the plain wave)
+        const float f = s.law ? (a <= 0.5f ? 2.f * a : 2.f - 2.f * a) : a;
+        flip = p >= 1.0 - f;
+        break;
+      }
       case 10: p = p + ((p < 0.5 ? p * 2 : 2 - p * 2) - p) * a; mul *= 1 + a; break;
       case 11: if (s.src) p = frac(p + (remapAt(s.src->remap[0], p) - p) * a); mul *= 1 + a * 2; break;
       case 12:
@@ -187,12 +224,29 @@ float OscVoice::wavetableSample(const OscSet& s, int u, double& ph, double inc, 
         mul *= 1 + a * 7;
         break;
       case 15: {
-        const double steps = 2.0 + std::pow(1.0 - a, 3.0) * 1000.0;
+        // Imported law (J-203g, single cycles at key 24 and saw harmonics): 2 steps at 1.0, 3 at 0.75,
+        // about 25 at 0.5 (H12 3.7 dB under the plain saw)
+        const double steps = s.law ? std::round(2.0 + 620.0 * std::pow(1.0 - a, 4.64)) : 2.0 + std::pow(1.0 - a, 3.0) * 1000.0;
         p = std::floor(p * steps) / steps;
         break;
       }
       default:
-        if (m >= 33 && m <= 38) {
+        if (s.law && m >= 33 && m <= 50) {
+          // J-203g, measured on the source (sine carrier and modulator, harmonic levels fitted with a
+          // linear FM model, keys 60 / 72, modulator an octave up or down; drift of the carrier with
+          // pulse modulators of known mean): FM adds a deviation of 88.2 kHz * a^4 times the modulator's
+          // output (its DC included) at any pitch. The exponential and linear variants measured the
+          // same at small amounts and play by the same law here.
+          const double a2 = static_cast<double>(a) * a, dev = kFmDevHz * a2 * a2 / s.srv;
+          incAdd += dev * fm[fmSourceOf(m)];
+          mul *= 1.0 + dev / std::max(1e-9, std::fabs(inc));
+        } else if (s.law && m >= 51 && m <= 56) {
+          // PD: phase modulation of 8 a^4 cycles (fitted as for FM; the same at keys 60 / 72 and
+          // with the modulator an octave up)
+          const double a2 = static_cast<double>(a) * a, k = 8.0 * a2 * a2;
+          p = frac(p + k * fm[fmSourceOf(m)]);
+          mul *= 1.0 + kPi2 * k;
+        } else if (m >= 33 && m <= 38) {
           incMul *= 1.0 + a * a * 16.0 * fm[fmSourceOf(m)];
           mul *= 1 + a * a * 8;
         } else if (m >= 39 && m <= 44) {
@@ -212,27 +266,77 @@ float OscVoice::wavetableSample(const OscSet& s, int u, double& ph, double inc, 
     }
   }
   const int level = mipLevel(inc * mul);
-  const double fpos = std::clamp(static_cast<double>(s.wtPos + s.uniWt * s.uw[u] * 0.5f), 0.0, 1.0) * (t.frames - 1);
-  float x = mipRead(t, level, fpos, s.smooth, p);
+  const double wt = std::clamp(static_cast<double>(s.wtPos + s.uniWt * s.uw[u] * 0.5f), 0.0, 1.0);
+  double fpos = wt * (t.frames - 1);
+  // imported law: a table whose file asks for blending blends its frames (see loadTableFile)
+  const bool smooth = s.smooth || (s.law && t.raw && t.raw->morph);
+  float dc = 0;
+  if (s.law) {
+    // J-203g, measured: the position (1..256) spreads the frames evenly, frame = (pos - 1) * frames / 256
+    // (each frame owns an equal share of the knob, the last one holds); without frame blending the
+    // frame under the position plays (no rounding to the nearer one). The frames keep their DC.
+    fpos = std::min(static_cast<double>(t.frames - 1), wt * (255.0 / 256.0) * t.frames);
+    if (!smooth) fpos = std::floor(fpos);
+    if (!t.dc.empty()) {
+      const int f0 = static_cast<int>(fpos), f1 = std::min(t.frames - 1, f0 + 1);
+      dc = t.dc[static_cast<size_t>(f0)] + (t.dc[static_cast<size_t>(f1)] - t.dc[static_cast<size_t>(f0)]) * static_cast<float>(fpos - f0);
+    }
+  }
+  float x = mipRead(t, level, fpos, smooth, p) + dc;
   for (int k = 0; k < 2; ++k) {
     const int m = modes[k];
     const float a = amt[k];
-    if (m <= 0 || a <= 1e-6f) continue;
+    if (m <= 0 || (a <= 1e-6f && !(s.law && m == 16))) continue;
     if (m == 13 && s.src) {
       x = lerpf(x, remapAt(s.src->remap[2], (x + 1) * 0.5) * 2.f - 1.f, a);
+    } else if (m == 16 && s.law) {
+      // Imported law (J-203g, measured on the saw): a bipolar balance around 0.5; odd harmonics
+      // scale by 1 - b and even ones by 1 + b, b = 2 a - 1 (1.0: even only, 0: odd only)
+      const float x2 = mipRead(t, level, fpos, smooth, frac(p + 0.5)) + dc;
+      const float even = (x + x2) * 0.5f, odd = (x - x2) * 0.5f, b = 2.f * a - 1.f;
+      x = odd * (1.f - b) + even * (1.f + b);
     } else if (m == 16) {
-      const float x2 = mipRead(t, level, fpos, s.smooth, frac(p + 0.5));
+      const float x2 = mipRead(t, level, fpos, smooth, frac(p + 0.5));
       const float even = (x + x2) * 0.5f, odd = (x - x2) * 0.5f;
       x = var[k] >= 0.5f ? x - a * odd : x - a * even;
+    } else if ((m == 17 || m == 18) && s.law) {
+      // Imported law (J-203g, measured on the saw at keys 48 / 60): a one-pole low / high pass at a
+      // fixed frequency, 47.3 Hz * 2^(9.75 a) (92 Hz at 0.1, 256 Hz at 0.25, 1.39 kHz at 0.5, 7.5 kHz at 0.75)
+      const double fc = std::min(47.3 * std::exp2(9.75 * a), 0.45 * s.srv);
+      const float c = static_cast<float>(1.0 - std::exp(-kPi2 * fc / s.srv));
+      float& z = warpZ_[k][u];
+      z += (x - z) * c;
+      x = m == 17 ? z : x - z;
     } else if (m == 17) {
       const int l2 = std::max(level, harmLevel(std::pow(1024.0, 1.0 - a)));
-      if (l2 != level) x = mipRead(t, l2, fpos, s.smooth, p);
+      if (l2 != level) x = mipRead(t, l2, fpos, smooth, p);
     } else if (m == 18) {
       const double h = std::pow(1024.0, a) * 0.5;
-      if (h >= 1) x -= mipRead(t, std::max(level, harmLevel(h)), fpos, s.smooth, p);
+      if (h >= 1) x -= mipRead(t, std::max(level, harmLevel(h)), fpos, smooth, p);
     } else if (m >= 19 && m <= 32) {
       float st = 0;
-      x = lerpf(x, shapeSample(warpDistMode(m), x, a, (var[k] - 0.5f) * 2.f, nullptr, nullptr, st), std::min(1.f, a * 4.f));
+      float ad = a;
+      if (s.law && (m == 19 || m == 32)) {
+        // Imported law (J-203g, measured on the saw at key 60, matching H1..H6): the source's tube and
+        // soft saturation warps are gentler over most of the knob; amount -> Plasma's depth
+        static constexpr float kTube[8][2] = {{0, 0}, {0.1f, 0.065f}, {0.25f, 0.1f}, {0.5f, 0.15f}, {0.75f, 0.2f}, {0.875f, 0.25f}, {1, 0.7f}, {1, 0.7f}};
+        static constexpr float kSoft[8][2] = {{0, 0}, {0.1f, 0.1f}, {0.25f, 0.21f}, {0.375f, 0.3f}, {0.5f, 0.4f}, {0.625f, 0.48f}, {0.75f, 0.555f}, {1, 0.675f}};
+        const auto& tb = m == 19 ? kTube : kSoft;
+        for (int i = 0; i < 7; ++i)
+          if (a <= tb[i + 1][0]) {
+            const float w = tb[i + 1][0] > tb[i][0] ? (a - tb[i][0]) / (tb[i + 1][0] - tb[i][0]) : 1.f;
+            ad = tb[i][1] + (tb[i + 1][1] - tb[i][1]) * w;
+            break;
+          }
+      }
+      x = lerpf(x, shapeSample(warpDistMode(m), x, ad, (var[k] - 0.5f) * 2.f, nullptr, nullptr, st), std::min(1.f, ad * 4.f));
+    } else if (m >= 58 && m <= 63 && s.law) {
+      // Imported law (J-203g, measured: sine carrier, saw from oscillator B): AM keeps the carrier and
+      // adds sidebands of 2 a times the modulator; RM fades the carrier out (1 - a) under the same
+      // sidebands (6 dB over Plasma's own ring modulation at 0.5 and 1.0, 12 dB over its AM)
+      x *= 1.f + 2.f * a * fm[fmSourceOf(m)];
+    } else if (m >= 64 && m <= 69 && s.law) {
+      x *= 1.f - a + 2.f * a * fm[fmSourceOf(m)];
     } else if (m >= 58 && m <= 63) {
       x *= 1.f - a + a * (fm[fmSourceOf(m)] * 0.5f + 0.5f);
     } else if (m >= 64 && m <= 69) {
@@ -241,7 +345,7 @@ float OscVoice::wavetableSample(const OscSet& s, int u, double& ph, double inc, 
   }
   if (flip) x = -x;
   selfFb_[u] = x;
-  ph = frac(ph + inc * incMul);
+  ph = frac(ph + inc * incMul + incAdd);
   return x * gain;
 }
 

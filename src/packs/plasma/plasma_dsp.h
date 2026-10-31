@@ -41,6 +41,7 @@ struct MipTable {
   std::array<int, kLevels> len{};      // samples per frame (power of two)
   std::array<std::vector<float>, kLevels> data;  // frames * (len + 1) (one guard sample)
   std::vector<float> mag, phs;         // per frame harmonic magnitude / phase (frames * kHarm), for spectral mode & display
+  std::vector<float> dc;               // per frame mean (the mip levels are built without it)
   std::shared_ptr<const Table> raw;    // original frames (granular reads them as audio)
   std::string name;
   const float* frame(int level, int f) const {
@@ -326,6 +327,7 @@ struct OscSet {
   bool msOv = false;    // the oscillator's own envelope replaces the zones' (seconds below)
   float ovDelay = 0, ovAttack = 0, ovHold = 0, ovDecay = 0, ovSustain = 1, ovRelease = 0.5f;
   bool s1 = false;
+  bool law = false;     // T_OscLaw "Imported": frame spread / DC / warp depths as the source plays them
 };
 class OscVoice {
  public:
@@ -351,6 +353,7 @@ class OscVoice {
   int dirU_[kMaxUnison] = {};
   float selfFb_[kMaxUnison] = {};
   float postZ_[2][2] = {};          // LP / HP warp state for sample-based types
+  float warpZ_[2][kMaxUnison] = {};  // LP / HP warp state per unison voice (wavetable, Imported law)
   uint32_t rng_ = 1;
   bool released_ = false, finished_ = false;
   float lastMono_ = 0;

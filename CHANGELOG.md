@@ -160,6 +160,28 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
     the knob (at curve 90 a 0.3 s decay is now about 45 dB down halfway through, as in the original), and settings a
     preset leaves unset take the original's own defaults (attack curve 60 on the first envelope
     and 40 on the others, decay and release curves 60, and a 0.5 ms attack on envelopes 2 to 4).
+  - Wavetable oscillators in imported presets follow the original (new Wavetable Law setting;
+    Plasma's own projects keep the Classic law). The table position spreads the frames evenly and
+    keeps each frame's DC offset (pulse frames were up to 9 dB too quiet). Tables step from frame
+    to frame unless the table file asks for blended frames, as in the original. FM from another
+    oscillator is a fixed deviation in Hz at any pitch, as in the original, and phase distortion
+    has the original's depth. Sync, bend, asymmetry, flip, quantize, even/odd and the low-pass
+    and high-pass warps follow the original's curves within about 1 dB on the first twelve
+    harmonics, and the tube and soft saturation warps are as gentle as the original's (at half
+    way the tube warp was 4 dB too hot). Ring and amplitude modulation have the original's depth
+    (their sidebands were 6 to 12 dB too quiet), and FM and phase distortion from the sub
+    oscillator are as deep as the original's.
+  - The modulation matrix follows the original in imported presets (new Matrix Law setting;
+    Plasma's own projects keep the Classic law). Bipolar routes swing half their amount each way,
+    input curves bend as steeply as the original's (at curve -50 a route at half way gives 6 % of
+    its amount), a macro moved by another route passes that on, and routes to bus sends and the
+    utility width move them on the original's knob curve. Routes to the voice amp add to its gain
+    in a straight line and can push it past the knob's top or through zero, as the original's do
+    (velocity at full amount lifts a centred amp by 9.5 dB, where it used to hit the 12 dB top
+    already at half velocity). Route smoothing is no longer imported,
+    as it had no audible effect on the original.
+  - The voice filters' pad switch is imported (new Filter 1 Pad and Filter 2 Pad settings): a
+    fully driven filter with pad on now plays at the original's level, where it was 3 dB quiet.
   - The distortion effect follows the original's curves for every mode and drive, its filter
     (a fade from low-pass through band-pass to high-pass, with the original's resonance), its
     downsample rates, its mix law and the level knob after the mix. Presets that leave the filter

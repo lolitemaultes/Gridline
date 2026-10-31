@@ -276,8 +276,8 @@ inline constexpr int kModBase = kRetrigBase + kRetrigs;
 inline constexpr int kFxBase = kModBase + kModSlots * M_Count;
 // Parameters added after the first release go here, at the very end, so older states pad them
 // with their defaults (J-201: noise tone, unison mix, filter drive mode).
-// J-203a: filter key-track centre, multisample level law.
-enum TailP : int { T_NoiseTone = 0, T_UniMix, T_DriveMode, T_KeyCentre, T_MsLaw, T_EnvLaw, T_Count };
+// J-203a: filter key-track centre, multisample level law. J-203g: wavetable / warp law.
+enum TailP : int { T_NoiseTone = 0, T_UniMix, T_DriveMode, T_KeyCentre, T_MsLaw, T_EnvLaw, T_OscLaw, T_ModLaw, T_Pad1, T_Pad2, T_Count };
 inline constexpr int kTailBase = kFxBase + kFxSlots * X_Count;
 inline constexpr int kParamCount = kTailBase + T_Count;
 
@@ -501,6 +501,7 @@ struct Table {
   std::string name;
   int frames = 0;
   std::vector<float> data;  // frames * kFrameSize
+  bool morph = false;       // the file asks for frames blended by position (its 'clm ' flags start with 1)
   const float* frame(int i) const { return data.data() + static_cast<size_t>(i) * kFrameSize; }
 };
 const std::vector<std::string>& factoryTableNames();  // index = O_Table - 1

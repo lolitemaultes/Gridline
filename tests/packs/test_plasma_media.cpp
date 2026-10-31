@@ -243,6 +243,35 @@ std::vector<double> renderWindows(const PluginState& st, float vel, int offAt, i
   }
   return out;
 }
+// Key 60 held for 0.5 s: the stereo frames.
+void renderLR(const PluginState& st, std::vector<float>& L, std::vector<float>& R, int key = 60) {
+  const int total = 24000;
+  L.assign(static_cast<size_t>(total), 0.f), R.assign(static_cast<size_t>(total), 0.f);
+  auto g = packs::createGenerator(st.type);
+  if (!g) return;
+  ChannelAux aux;
+  packs::prepareAux(st, aux);
+  g->prepareHost(st, kSr);
+  ProcessContext ctx;
+  ctx.sampleRate = kSr, ctx.tempo = 120, ctx.ppq = 96;
+  for (int pos = 0; pos < total; pos += 480) {
+    if (pos == 0) g->noteOn(1, key, 1.f, 0);
+    g->process(st, aux, ctx, L.data() + pos, R.data() + pos, 480);
+  }
+}
+// Level (dB) of harmonic h of key 60 (times `up`) in the left channel over 0.2..0.5 s (Hann window).
+double harmDb(const std::vector<float>& x, int h, double up = 1.0) {
+  const double f = 440.0 * std::pow(2.0, -9.0 / 12.0) * h * up, pi = 3.14159265358979;
+  const size_t a = 9600, n = 14400;
+  double re = 0, im = 0, wsum = 0;
+  for (size_t i = 0; i < n && a + i < x.size(); ++i) {
+    const double w = 0.5 - 0.5 * std::cos(2 * pi * static_cast<double>(i) / static_cast<double>(n));
+    re += w * x[a + i] * std::cos(2 * pi * f * static_cast<double>(i) / kSr);
+    im -= w * x[a + i] * std::sin(2 * pi * f * static_cast<double>(i) / kSr);
+    wsum += w;
+  }
+  return 20.0 * std::log10(2.0 * std::sqrt(re * re + im * im) / wsum + 1e-12);
+}
 double meanDb(const std::vector<double>& w, size_t a, size_t b) {
   double e = 0;
   for (size_t i = a; i < b && i < w.size(); ++i) e += std::pow(10.0, w[i] / 10.0);
@@ -622,6 +651,193 @@ int main() {
     gentle.params[static_cast<size_t>(pl::tailP(pl::T_EnvLaw))] = 0.f;
     const auto wg = renderWindows(gentle, 1.f, 40000, 48000);
     expect(wg.size() > 16 && wg[15] - wg[0] > d90.second + 3, "Plasma's own curve law is gentler (existing projects unchanged)");
+  }
+
+  // ---- J-203g: wavetable warps on the imported law. Synthetic presets: oscillator A plays an embedded
+  // one-frame saw at key 60 with one warp; the saw rises from 0 at the cycle start and wraps at the
+  // half cycle, like the source's start-up table. The expected harmonic balances were measured on the
+  // source (harmonics 1..3 in dBFS); the plain saw has H1 - H2 = 6.0 dB.
+  {
+    std::vector<float> saw(2048);
+    for (size_t i = 0; i < saw.size(); ++i) {
+      const float p = static_cast<float>(i) / 2048.f;
+      saw[i] = p < 0.5f ? 2.f * p : 2.f * p - 2.f;
+    }
+    auto warped = [&](const char* warp, double amt, int law = -1) {
+      Json wt = obj({{"plainParams", obj({{"kParamWarpMenu", str(warp)}, {"kParamWarp", num(amt)}})}, {"embeddedWTData", floats(saw)}});
+      PluginState st;
+      pl::ImportReport rep;
+      pl::importSerumBytes(container(obj({{"Oscillator0", obj({{"plainParams", obj({{"kParamEnable", num(1)}})}, {"WTOsc0", wt}})}}), "Warp"), st, rep,
+                           {cache.string()});
+      if (law >= 0) st.params[static_cast<size_t>(pl::tailP(pl::T_OscLaw))] = static_cast<float>(law);
+      std::vector<float> L, R;
+      renderLR(st, L, R);
+      return std::vector<double>{harmDb(L, 1), harmDb(L, 2), harmDb(L, 3), st.params[static_cast<size_t>(pl::tailP(pl::T_OscLaw))]};
+    };
+    const auto plain = warped("kNone", 0);
+    const auto bend = warped("kBendPos", 1.0), bendOld = warped("kBendPos", 1.0, 0);
+    const auto sync = warped("kSync", 0.5), lpf = warped("kFilterLPF", 0.25), eo = warped("kEvenOdd", 0.75), q = warped("kQuantize", 0.75);
+    std::printf("# warps H1-H2: plain %.1f bend+ 1 %.1f (classic %.1f) lpf 0.25 %.1f even/odd 0.75 %.1f; sync 0.5 H3-H1 %.1f; quantize 0.75 H3-H1 %.1f\n",
+                plain[0] - plain[1], bend[0] - bend[1], bendOld[0] - bendOld[1], lpf[0] - lpf[1], eo[0] - eo[1], sync[2] - sync[0], q[2] - q[0]);
+    expect(bend[3] == 1.f && std::fabs(plain[0] - plain[1] - 6.0) < 1.0, "imports select the imported wavetable law; the plain saw");
+    // bend+ at 1: H1 -32.1, H2 -32.9 (11.2 dB under the plain saw's H1)
+    expect(std::fabs(bend[0] - bend[1] - 0.8) < 1.5 && std::fabs(bend[0] - plain[0] + 11.2) < 1.5, "bend+ follows the source");
+    expect(std::fabs(bendOld[0] - bendOld[1] - 0.8) > 2.0, "the classic law keeps Plasma's own bend (existing projects unchanged)");
+    expect(sync[2] - sync[0] > 22.0, "sync 0.5: the source's third harmonic leads by 29.4 dB");
+    expect(std::fabs(lpf[0] - lpf[1] - 10.0) < 1.5, "the low-pass warp at 0.25: H1 - H2 = 10.0 dB");
+    expect(std::fabs(eo[0] - eo[1] + 3.5) < 1.5, "even/odd at 0.75 lifts the even harmonics: H1 - H2 = -3.5 dB");
+    expect(q[2] - q[0] < -40.0, "quantize at 0.75 is a three-step staircase (no third harmonic)");
+    // tube at 0.5: H1 -18.9, H2 -27.6 (2.0 dB over the plain saw's H1); soft saturation at 0.5: H1 -15.3, H3 -27.4
+    const auto tube = warped("kDistTube", 0.5), soft = warped("kDistSoftSat", 0.5);
+    std::printf("# tube 0.5: H1-H2 %.1f, H1 %+.1f; soft sat 0.5: H1-H3 %.1f\n", tube[0] - tube[1], tube[0] - plain[0], soft[0] - soft[2]);
+    expect(std::fabs(tube[0] - tube[1] - 8.7) < 1.5 && std::fabs(tube[0] - plain[0] - 2.0) < 1.0, "the tube warp is as gentle as the source's");
+    expect(std::fabs(soft[0] - soft[2] - 12.1) < 1.5, "the soft saturation warp follows the source");
+
+    // FM from oscillator B (both sines, B at volume 0) at 0.2: the source's deviation is a fixed number
+    // of Hz, so the sidebands fall an octave up. Measured H2 - H1: -11.2 dB at key 60, -17.4 dB at key 72.
+    std::vector<float> sn(2048);
+    for (size_t i = 0; i < sn.size(); ++i) sn[i] = static_cast<float>(std::sin(2.0 * 3.14159265358979 * static_cast<double>(i) / 2048.0));
+    auto fm = [&](int key, const char* warp = "kFM_OSC", double amt = 0.2, const std::vector<float>* mod = nullptr, double* h1 = nullptr) {
+      Json a = obj({{"plainParams", obj({{"kParamEnable", num(1)}})},
+                    {"WTOsc0", obj({{"plainParams", obj({{"kParamWarpMenu", str(warp)}, {"kParamWarp", num(amt)}})}, {"embeddedWTData", floats(sn)}})}});
+      Json b = obj({{"plainParams", obj({{"kParamEnable", num(1)}, {"kParamVolume", num(0)}})}, {"WTOsc1", obj({{"embeddedWTData", floats(mod ? *mod : sn)}})}});
+      PluginState st;
+      pl::ImportReport rep;
+      pl::importSerumBytes(container(obj({{"Oscillator0", a}, {"Oscillator1", b}}), "FM"), st, rep, {cache.string()});
+      std::vector<float> L, R;
+      renderLR(st, L, R, key);
+      const double up = std::pow(2.0, (key - 60) / 12.0);
+      if (h1) *h1 = harmDb(L, 1, up);
+      return harmDb(L, 2, up) - harmDb(L, 1, up);
+    };
+    const double fm60 = fm(60), fm72 = fm(72);
+    std::printf("# FM 0.2 sine/sine H2-H1: key 60 %.1f dB, key 72 %.1f dB\n", fm60, fm72);
+    expect(std::fabs(fm60 + 11.2) < 1.5 && std::fabs(fm72 + 17.4) < 1.5, "oscillator FM is a fixed deviation in Hz, as on the source");
+    // ring / amplitude modulation of the sine by oscillator B's saw, measured: RM 1.0 H1 -26.9, H2 -24.4;
+    // AM 0.5 H1 -16.9, H2 -30.5 (the plain sine's H1 is -17.0)
+    double rmH1 = 0, amH1 = 0, sineH1 = 0;
+    const double rm = fm(60, "kRM_OSC", 1.0, &saw, &rmH1), am = fm(60, "kAM_OSC", 0.5, &saw, &amH1);
+    fm(60, "kNone", 0.0, &saw, &sineH1);
+    std::printf("# RM 1.0 H2-H1 %.1f, H1 %+.1f; AM 0.5 H2-H1 %.1f, H1 %+.1f\n", rm, rmH1 - sineH1, am, amH1 - sineH1);
+    expect(std::fabs(rm - 2.5) < 1.0 && std::fabs(rmH1 - sineH1 + 9.9) < 1.0, "ring modulation follows the source");
+    expect(std::fabs(am + 13.6) < 1.0 && std::fabs(amH1 - sineH1 - 0.1) < 1.0, "amplitude modulation keeps the carrier, as on the source");
+  }
+
+  // ---- J-203g: a wavetable file whose 'clm ' flags start with 1 blends its frames between positions on
+  // the source (measured: a two-frame step at 16 frames moves smoothly with the position), one flagged 0
+  // steps. Synthetic two-frame tables (sine, then a sine with its third harmonic).
+  {
+    auto writeTable = [&](const fs::path& p, const char* flags) {
+      std::vector<int16_t> pcm(4096);
+      for (size_t i = 0; i < pcm.size(); ++i) {
+        const double ph = 2.0 * 3.14159265358979 * static_cast<double>(i % 2048) / 2048.0;
+        pcm[i] = static_cast<int16_t>(std::lround((i < 2048 ? std::sin(ph) : 0.5 * std::sin(ph) + 0.5 * std::sin(3 * ph)) * 20000));
+      }
+      const std::string clm = std::string("<!>2048 ") + flags + " wavetable";
+      std::ofstream f(p, std::ios::binary);
+      auto u32 = [&](uint32_t v) { f.write(reinterpret_cast<const char*>(&v), 4); };
+      auto u16 = [&](uint16_t v) { f.write(reinterpret_cast<const char*>(&v), 2); };
+      const uint32_t clmLen = static_cast<uint32_t>(clm.size());
+      f.write("RIFF", 4), u32(4 + 24 + 8 + clmLen + (clmLen & 1) + 8 + 8192), f.write("WAVE", 4);
+      f.write("fmt ", 4), u32(16), u16(1), u16(1), u32(44100), u32(88200), u16(2), u16(16);
+      f.write("clm ", 4), u32(clmLen), f.write(clm.data(), static_cast<std::streamsize>(clm.size()));
+      if (clmLen & 1) f.put('\0');
+      f.write("data", 4), u32(8192), f.write(reinterpret_cast<const char*>(pcm.data()), 8192);
+    };
+    writeTable(cache / "blend.wav", "11000000");
+    writeTable(cache / "step.wav", "01000000");
+    const auto blend = pl::loadTableFile((cache / "blend.wav").string()), step = pl::loadTableFile((cache / "step.wav").string());
+    expect(blend && step && blend->frames == 2 && step->frames == 2 && blend->morph && !step->morph, "a table file's clm flags say whether its frames blend");
+  }
+
+  // ---- J-203g: the voice filter's pad. Measured on the source (saw into filter 1, MgL12, cutoff 0.5,
+  // resonance 30 %): drive 100 % with pad on plays 17.9 dB over drive 0 (-3.0 against -20.9 dB).
+  {
+    auto filtered = [&](double drive, double pad) {
+      Json f = obj({{"plainParams", obj({{"kParamEnable", num(1)}, {"kParamType", str("MgL12")}, {"kParamFreq", num(0.5)}, {"kParamReso", num(30)},
+                                           {"kParamDrive", num(drive)}, {"kParamPad", num(pad)}})}});
+      Json r = obj({{"plainParams", obj({{"kParamFilterBalance", num(0)}})}});
+      PluginState st;
+      pl::ImportReport rep;
+      pl::importSerumBytes(container(obj({{"VoiceFilter0", f}, {"RoutingSlot0", r}}), "Pad"), st, rep, {cache.string()});
+      return std::make_pair(st.params[static_cast<size_t>(pl::tailP(pl::T_Pad1))], meanDb(renderWindows(st, 1.f, 48000, 48000), 20, 45));
+    };
+    const auto clean = filtered(0, 0), padded = filtered(100, 1);
+    std::printf("# filter pad: drive 100 + pad %.1f dB over drive 0\n", padded.second - clean.second);
+    expect(padded.first == 1.f && clean.first == 0.f && std::fabs(padded.second - clean.second - 17.9) < 1.5, "the voice filter pad follows the source");
+  }
+
+  // ---- J-203g: the imported matrix law. Synthetic presets route a macro to oscillator A's volume; the
+  // expected levels were measured on the source against the oscillator at full volume.
+  {
+    auto level = [&](const Json& o0, std::vector<std::pair<const char*, Json>> extra, int law = -1) {
+      std::vector<std::pair<const char*, Json>> kv = {{"Oscillator0", o0}};
+      for (auto& e : extra) kv.push_back(e);
+      Json body = Json::makeObject();
+      for (auto& e : kv) body.object[e.first] = e.second;
+      PluginState st;
+      pl::ImportReport rep;
+      pl::importSerumBytes(container(body, "Matrix"), st, rep, {cache.string()});
+      if (law >= 0) st.params[static_cast<size_t>(pl::tailP(pl::T_ModLaw))] = static_cast<float>(law);
+      std::vector<float> L, R;
+      renderLR(st, L, R);
+      double e = 0, s = 0;
+      for (size_t i = 9600; i < L.size(); ++i) e += 0.5 * (L[i] + R[i]) * 0.5 * (L[i] + R[i]), s += 0.25 * (L[i] - R[i]) * (L[i] - R[i]);
+      return std::make_pair(harmDb(L, 1), 10.0 * std::log10(s / (e + 1e-30) + 1e-30));
+    };
+    auto osc = [&](double vol, std::vector<std::pair<const char*, Json>> more = {}) {
+      Json p = obj({{"kParamEnable", num(1)}, {"kParamVolume", num(vol)}});
+      for (auto& m : more) p.object[m.first] = m.second;
+      return obj({{"plainParams", p}});
+    };
+    auto route = [&](int src, int aux, const char* type, int id, int pid, const char* param, std::vector<std::pair<const char*, Json>> pp) {
+      Json p = Json::makeObject();
+      for (auto& m : pp) p.object[m.first] = m.second;
+      return obj({{"source", arr({num(src), num(aux)})}, {"destModuleTypeString", str(type)}, {"destModuleID", num(id)},
+                  {"destModuleParamID", num(pid)}, {"destModuleParamName", str(param)}, {"plainParams", p}});
+    };
+    auto macro = [&](double v) { return obj({{"plainParams", obj({{"kParamValue", num(v)}})}}); };
+    const double full = level(osc(1.0), {}).first;
+    // input curve -50 at macro 50 %, volume 0 + 100 %: 47.9 dB under full volume
+    const double curved = level(osc(0.0), {{"Macro7", macro(50)}, {"ModSlot0", route(32, 0, "Oscillator", 0, 1, "kParamVolume", {{"kParamAmount", num(100)}, {"kParamCurveIn", num(-50)}})}}).first;
+    // bipolar route at macro 0, volume 0.5 - 40 %: 11.8 dB under full volume
+    const auto bip = [&](int law) {
+      return level(osc(0.5), {{"Macro7", macro(0)}, {"ModSlot0", route(32, 0, "Oscillator", 0, 1, "kParamVolume", {{"kParamAmount", num(40)}, {"kParamBipolar", num(1)}})}}, law).first;
+    };
+    // macro 8 (100 %) drives macro 1 by 25 %, macro 1 drives volume 0.1 by 50 %: 5.9 dB over the bare 0.1
+    const double bare = level(osc(0.1), {}).first;
+    const double chained = level(osc(0.1), {{"Macro7", macro(100)},
+                                            {"Macro0", macro(0)},
+                                            {"ModSlot0", route(32, 0, "Macro", 0, 0, "kParamValue", {{"kParamAmount", num(25)}})},
+                                            {"ModSlot1", route(25, 0, "Oscillator", 0, 1, "kParamVolume", {{"kParamAmount", num(50)}})}})
+                                 .first;
+    const double bipNew = bip(-1), bipOld = bip(0);
+    std::printf("# matrix: curve -50 %.1f dB, bipolar %.1f dB (classic %.1f), macro chain %+.1f dB\n", curved - full, bipNew - full, bipOld - full, chained - bare);
+    expect(std::fabs(curved - full + 47.9) < 2.0, "matrix input curves follow the source");
+    expect(std::fabs(bipNew - full + 11.8) < 1.0 && bipOld < bipNew - 3.0, "a bipolar route swings half its amount each way (classic: the whole)");
+    expect(std::fabs(chained - bare - 5.9) < 1.0, "a modulated macro passes its modulation on");
+    // utility width: width 0 + macro 8 at 25 % by 100 % is 12.5 % (the knob cubed): 18 dB less side
+    // than the plain 100 % (measured)
+    auto widthOf = [&](double w, double m, int law) {
+      Json o = osc(0.5, {{"kParamUnison", num(2)}, {"kParamDetune", num(0.3)}, {"kParamUnisonStereo", num(100)}});
+      Json fx = obj({{"FX", arr({obj({{"type", num(12)}, {"FXUtils", obj({{"plainParams", obj({{"kParamWidth", num(w)}})}})}})})}});
+      std::vector<std::pair<const char*, Json>> ex = {{"FXRack0", fx}};
+      if (m > 0) ex.push_back({"Macro7", macro(m)}), ex.push_back({"ModSlot0", route(32, 0, "FXUtils", 0, 3, "kParamWidth", {{"kParamAmount", num(100)}})});
+      return level(o, ex, law).second;
+    };
+    const double w100 = widthOf(100, 0, -1), w25 = widthOf(0, 25, -1), w25old = widthOf(0, 25, 0);
+    std::printf("# utility width by macro 25 %%: %.1f dB side against width 100 %% (classic %.1f)\n", w25 - w100, w25old - w100);
+    expect(std::fabs(w25 - w100 + 18.0) < 2.0 && w25old > w25 + 10.0, "a matrix route moves the utility width on the source's cubed knob");
+    // voice amp (0.5): a route adds to the linear gain, 2 per full amount, past the knob's top and through zero.
+    // Measured: macro 50 % by 100 % is +6.0 dB; macro 75 % by -100 % is -6.0 dB (the gain flips sign)
+    auto ampOf = [&](double m, double amt, int law) {
+      return level(osc(1.0), {{"Global0", obj({{"plainParams", obj({{"kParamVoiceAmp", num(0.5)}})}})}, {"Macro7", macro(m)},
+                              {"ModSlot0", route(32, 0, "Global", 0, 2, "kParamVoiceAmp", {{"kParamAmount", num(amt)}})}}, law).first;
+    };
+    const double ampUp = ampOf(50, 100, -1), ampDown = ampOf(75, -100, -1), ampDownOld = ampOf(75, -100, 0);
+    std::printf("# voice amp by macro: +50 %% %+.1f dB, -75 %% %+.1f dB (classic %+.1f)\n", ampUp - full, ampDown - full, ampDownOld - full);
+    expect(std::fabs(ampUp - full - 6.0) < 0.5, "a matrix route adds to the voice amp's linear gain");
+    expect(std::fabs(ampDown - full + 6.0) < 0.5 && ampDownOld < ampDown - 20.0, "a matrix route takes the voice amp through zero (classic: clamped silent)");
   }
 
   std::error_code ec;

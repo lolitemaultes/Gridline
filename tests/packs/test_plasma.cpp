@@ -416,6 +416,14 @@ std::vector<Cand> candsFor(int k) {
     });
     return c;
   }
+  if (k == tailP(T_Pad1) || k == tailP(T_Pad2)) {  // the filter pad: a hard-driven filter on the Boost drive mode
+    const int f = k == tailP(T_Pad1) ? 0 : 1;
+    add([f](Scene& s) {
+      oscOn(s, 0), P(s, filtP(f, F_Enable), 1), P(s, filtP(f, F_Freq), 0.6f), P(s, filtP(f, F_Drive), 1.f), P(s, tailP(T_DriveMode), 1.f);
+      P(s, routeP(RtA, R_Dest), RouteFilter), P(s, routeP(RtA, R_Balance), f == 0 ? 0.f : 1.f);
+    });
+    return c;
+  }
   if (k == tailP(T_KeyCentre)) {  // the key-tracking centre: a key-tracked filter 1 on oscillator A
     add([](Scene& s) {
       oscOn(s, 0), P(s, filtP(0, F_Enable), 1), P(s, filtP(0, F_Freq), 0.3f), P(s, filtP(0, F_KeyTrack), 1);
@@ -429,6 +437,17 @@ std::vector<Cand> candsFor(int k) {
   }
   if (k == tailP(T_EnvLaw)) {  // the envelope curve law: a curved decay to zero on the amp envelope
     add([](Scene& s) { oscOn(s, 0), P(s, envP(0, E_Sustain), 0.f), P(s, envP(0, E_Decay), envTimeInv(0.2)), P(s, envP(0, E_CurveD), 85.f); });
+    return c;
+  }
+  if (k == tailP(T_OscLaw)) {  // the wavetable law: a full bend+ warp on oscillator A
+    add([](Scene& s) { oscOn(s, 0), P(s, oscP(0, O_Warp1Mode), 2.f), P(s, oscP(0, O_Warp1), 1.f); });
+    return c;
+  }
+  if (k == tailP(T_ModLaw)) {  // the matrix law: a bipolar route from macro 1 (at 0) to oscillator A's level
+    add([](Scene& s) {
+      oscOn(s, 0), P(s, macroP(0), 0.f), P(s, modP(0, M_Source), static_cast<float>(SrcMacro1)), P(s, modP(0, M_Amount), 0.4f);
+      P(s, modP(0, M_Dest), static_cast<float>(oscP(0, O_Level) + 1)), P(s, modP(0, M_Bipolar), 1.f);
+    });
     return c;
   }
   if (k < G_Count) {
