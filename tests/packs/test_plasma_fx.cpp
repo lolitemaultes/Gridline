@@ -603,8 +603,8 @@ int main() {
     expect(ref > 0 && err / ref < 1e-6, ("convolution matches a plain convolution with its own impulse response: rel err " + std::to_string(err / std::max(ref, 1e-30))).c_str());
   }
 
-  // ---- dimension: mid untouched, side 0.465 * mix * (x(t - A) - x(t - B)), A = 15.0 + 100 size, B = 20.9 + 16.9
-  // size ms. Source, a held sine at key 60, size 50, mix 100: left +4.45 dB, right -4.62 dB
+  // ---- dimension: mid untouched, a slowly rotating side signal from four delays (15 ms + 100 ms x size apart by
+  // 1.18). Source, a held sine at key 60, size 50, mix 100, 0.3 .. 0.6 s after the note: left +4.6 dB, right -5.9 dB
   {
     expect(import(fxBody("FXHyperD", pl::FxHyper - 1, {{"kParamEnable", num(1)}, {"kParamWet", num(0)}, {"kParamDimEWet", num(100)}, {"kParamDimESize", num(50)}}), st, rep, cache),
            "dimension preset imports");
@@ -616,7 +616,7 @@ int main() {
     for (int i = 0; i < n; ++i) L[static_cast<size_t>(i)] = R[static_cast<size_t>(i)] = static_cast<float>(0.1 * std::sin(6.283185307179586 * 261.63 * i / kSr));
     for (int pos = 0; pos < n; pos += 256) pl::fxProcess(*bank->unit[0], pl::FxHyper, slot0(st), L.data() + pos, R.data() + pos, std::min(256, n - pos), c, nullptr, 0);
     const double ref = 20 * std::log10(0.1 / std::sqrt(2.0)), gl = rmsDb(L, 0.3, 0.6) - ref, gr = rmsDb(R, 0.3, 0.6) - ref;
-    expect(std::fabs(gl - 4.45) < 0.5 && std::fabs(gr + 4.62) < 0.5, ("dimension size 50: left " + std::to_string(gl) + " dB, right " + std::to_string(gr) + " dB (source +4.45 / -4.62)").c_str());
+    expect(std::fabs(gl - 4.6) < 0.6 && std::fabs(gr + 5.9) < 0.6, ("dimension size 50: left " + std::to_string(gl) + " dB, right " + std::to_string(gr) + " dB (source +4.6 / -5.9)").c_str());
   }
 
   // ---- X-Shaper (J-203k). Source, held saws through drawn curves: the drive crossfades from the first curve

@@ -1839,6 +1839,10 @@ struct Importer {
           used.insert(&kv.second);
           continue;
         }
+        if (type == FxComp && (key.rfind("kParamBypass", 0) == 0 || key == "kParamCompensatedWetDry")) {
+          used.insert(&kv.second);  // packed into LAW below
+          continue;
+        }
         const int q = fxParamIndex(type, key.c_str());
         if (q < 0) {
           note(fxTypeNames()[static_cast<size_t>(type)] + ": " + key + " is not modelled");
@@ -1876,7 +1880,20 @@ struct Importer {
       }
     }
     if (type == FxDelay) delayTimes(slot, pp);
-    if (type == FxComp || type == FxDistortion) set(fxP(slot, X_P0 + fxParamIndex(type, "glLaw")), 1.0);  // the source's compressor law
+    // the source's laws (compressor, distortion, phaser, flanger, hyper / dimension, frequency shifter)
+    if (type == FxComp || type == FxDistortion || type == FxPhaser || type == FxFlanger || type == FxHyper || type == FxBode)
+      set(fxP(slot, X_P0 + fxParamIndex(type, "glLaw")), 1.0);
+    if (type == FxComp) {
+      // the multiband's per-band switches (downward / upward part off) and the plain-input dry, packed into LAW
+      int flags = 0;
+      double v = 0;
+      for (int b = 0; b < 3; ++b) {
+        if (num(pp, ("kParamBypassDown" + std::to_string(b + 1)).c_str(), v) && v >= 0.5) flags |= 1 << b;
+        if (num(pp, ("kParamBypassUp" + std::to_string(b + 1)).c_str(), v) && v >= 0.5) flags |= 8 << b;
+      }
+      if (num(pp, "kParamCompensatedWetDry", v) && v < 0.5) flags |= 64;
+      set(fxP(slot, X_P0 + fxParamIndex(FxComp, "glLaw")), static_cast<float>(1.0 - flags / 256.0));
+    }
     if (type == FxReverb) {
       // the source's pre-delay: the stored value is 2.5 p^5 (seconds when free) of the knob position p
       set(fxP(slot, X_P0 + fxParamIndex(FxReverb, "glLaw")), 1.0);
@@ -1907,6 +1924,11 @@ struct Importer {
     if (type == FxConvolve) {
       // the source's impulse shaping: attack 3 n^5 s, decay 40 n^5 s, pre-delay 2.5 n^5 s of the knob position n
       set(fxP(slot, X_P0 + fxParamIndex(FxConvolve, "glLaw")), 1.0);
+      // IR GAIN: the source's unset value is -18 dB (the imported law plays -18 dB as Plasma's 0 dB)
+      if (double g = 0; !num(pp, "kParamIpTrim", g)) {
+        const int qt = fxParamIndex(FxConvolve, "kParamIpTrim");
+        set(fxP(slot, X_P0 + qt), fxNorm(FxConvolve, qt, -18.0));
+      }
       const struct { const char* key; double top; } kShape[] = {{"kParamAttack", 3.0}, {"kParamDecay", 40.0}, {"kParamPredelay", 2.5}};
       for (const auto& e : kShape) {
         double v = 0;

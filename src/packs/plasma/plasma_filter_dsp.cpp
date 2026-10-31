@@ -266,6 +266,10 @@ inline double cubicClip(double x) {
   x = std::clamp(x, -1.5, 1.5);
   return x - (4.0 / 27.0) * x * x * x;
 }
+// the dirty ladder's first stage clips off centre as the drive rises (to half way): a driven note leaves a
+// small negative offset that a low cutoff lets through (source: -0.008 at the output, cutoff 0.2 .. 0.5,
+// drive 50 / 100 %; none at drive 0)
+constexpr double kDirtyBias = 0.035;
 // rational tanh (the dirty ladder's stages) and its slope
 inline double ratTanh(double x) {
   x = std::clamp(x, -3.0, 3.0);
@@ -339,7 +343,7 @@ struct Filter::Ch {
   double mA = 0, mB = 0, mC = 0;  // matched loop filters: high-pass coefficient, low-pass pole, low-pass gain
   // distorting types (J-203k): saturating cores, input gain, loop gain / coefficient, delays, quantiser
   SatC sc1, sc2;
-  double wg = 1, wa = 0, wG = 0, wL = 1, wfb = 0.2, wop = 0, wdc = 0, wh = 1, wk = 0, wOut = 1;
+  double wg = 1, wa = 0, wG = 0, wL = 1, wfb = 0.2, wop = 0, wdc = 0, wh = 1, wk = 0, wOut = 1, wb = 0;
   int wD = 1, wD2 = 1;
   // state (cleared by clear())
   SvfS ss1, ss2, ss3, fs[3];
@@ -568,7 +572,10 @@ void Filter::set(int type, double sr, double hz, double res, double drive, doubl
         // at resonance 0, cutoff 0.5: +1.2 / +5 / +20 dB below the cutoff at VAR 70 / 75 / 80 %, much less at
         // high cutoffs); once that outruns the stage's own decay (VAR above about 85 % at cutoff 0.5, earlier
         // at low cutoffs) the source runs off to a DC rail, here the stage states stop at +-2
-        h.wh = 1;
+        // the stages' clip ceiling rises with the cutoff, about f^0.3 (1 at 427 Hz): driven open, the source
+        // reaches 2.2 / 2.7 / 3 times the level of a fixed ceiling at cutoff 0.8 / 0.9 / 1
+        h.wh = std::clamp(std::pow(std::max(f, 1.0) / 427.0, 0.3), 1.0, 3.2);
+        h.wb = kDirtyBias * std::min(1.0, 2.0 * drive);
         h.wL = 1 + 0.55 * std::pow(var, 16.0) * 48000.0 / sr;
         h.wOut = 0.9;
         break;
@@ -1160,13 +1167,14 @@ void Filter::process(float& l, float& r) {
       case EngWDirty: {
         const double G = h.wa, k = h.wk, hg = h.wh, xin = static_cast<double>(x) * h.wg;
         double* st = h.ls;
-        for (int s = 0; s < 4; ++s) st[s] = std::clamp(st[s] * h.wL, -2.0, 2.0);
+        for (int s = 0; s < 4; ++s) st[s] = std::clamp(st[s] * h.wL, -2.0 * hg, 2.0 * hg);
         double u = h.wu, ys[4];
         for (int it = 0; it < 5; ++it) {
           double in = u, dp = 1;
           for (int s = 0; s < 4; ++s) {
-            const double yo = (hg * ratTanh(in) - st[s]) * G + st[s];
-            dp *= G * hg * ratTanhD(in);
+            const double bs = s == 0 ? h.wb : 0.0;
+            const double yo = (hg * (ratTanh(in / hg + bs) - ratTanh(bs)) - st[s]) * G + st[s];
+            dp *= G * ratTanhD(in / hg + bs);
             ys[s] = yo;
             in = yo;
           }
@@ -1178,7 +1186,8 @@ void Filter::process(float& l, float& r) {
         {
           double in = u;
           for (int s = 0; s < 4; ++s) {
-            const double v = (hg * ratTanh(in) - st[s]) * G;
+            const double bs = s == 0 ? h.wb : 0.0;
+            const double v = (hg * (ratTanh(in / hg + bs) - ratTanh(bs)) - st[s]) * G;
             const double yo = v + st[s];
             st[s] = yo + v;
             ys[s] = yo;

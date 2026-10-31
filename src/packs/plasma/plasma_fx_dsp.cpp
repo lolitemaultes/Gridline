@@ -240,6 +240,20 @@ struct Hilbert {  // two chains of allpasses in z^-2 whose outputs stay 90 degre
     q = prevB;
     prevB = v;
   }
+  // the same pair with the one-sample delay on the first chain: 90 degrees at every frequency (the imported
+  // frequency shifter; run() keeps Plasma's own shifter as it always sounded)
+  void runQuad(float x, float& i, float& q) {
+    static const float ca[4] = {0.6923878f, 0.9360654f, 0.9882295f, 0.9987488f};
+    static const float cb[4] = {0.4021921f, 0.8561711f, 0.9722910f, 0.9952885f};
+    float u = x, v = x;
+    for (int k = 0; k < 4; ++k) {
+      u = a[k].run(u, ca[k] * ca[k]);
+      v = b[k].run(v, cb[k] * cb[k]);
+    }
+    i = prevB;
+    prevB = u;
+    q = v;
+  }
 };
 }  // namespace
 
@@ -320,6 +334,17 @@ class FxUnit {
   double bodePh = 0;
   Line bd[2];
   ApD blur[2][2];
+  // imported laws (plasma_fx_mod_law.inc)
+  Ap1 phI[2][36];
+  double flTri[2]{-1, -1}, flD[2]{-1, -1}, flLp[2]{}, flBp[2]{};
+  Line bl[2][8];
+  float blY[2][8]{};
+  double blLen = -1, blC = 0;
+  float bDry[2][32]{};
+  int bDryW = 0;
+  double dimD[4]{-1, -1, -1, -1}, dimPh = 0;
+  Lr4 xo3;
+  double mbP[3]{}, mbE[3]{};
   // convolution (uniform partitions of kPart)
   static constexpr int kPart = 256, kFftN = 512;
   Fft cfft;
@@ -377,6 +402,17 @@ class FxUnit {
     shState[0] = shState[1] = dsHold[0] = dsHold[1] = 0;
     dsv[0][0] = dsv[0][1] = dsv[1][0] = dsv[1][1] = 0;
     hb[0] = Hilbert{}, hb[1] = Hilbert{};
+    for (auto& c : phI)
+      for (auto& a : c) a.z = 0;
+    for (int c = 0; c < 2; ++c) flTri[c] = flD[c] = -1, flLp[c] = flBp[c] = 0;
+    for (auto& c : blY) std::fill(c, c + 8, 0.f);
+    blLen = -1, blC = 0;
+    for (auto& c : bDry) std::fill(c, c + 32, 0.f);
+    bDryW = 0;
+    for (auto& d : dimD) d = -1;
+    dimPh = 0;
+    xo3 = Lr4{};
+    for (int b = 0; b < 3; ++b) mbP[b] = mbE[b] = 0;
     if (filterMem) filterMem->reset();
     for (int c = 0; c < 2; ++c) {
       if (!fdl[c].empty()) std::fill(fdl[c].begin(), fdl[c].end(), cpx(0, 0));
@@ -410,6 +446,8 @@ class FxUnit {
     for (auto& l : bd) l.bind(p, s * 2 + 8);
     for (auto& c : blur)
       for (auto& a : c) a.l.bind(p, s * 3 / 100 + 8);
+    for (auto& c : bl)
+      for (auto& l : c) l.bind(p, s / 50 + 8);
     for (auto& l : cpre) l.bind(p, s + 8);
     // the imported reverb's models (reverb slots only): 8 lines of 1.05 s or more, 24 of 32768 samples
     if (t == FxReverb)
@@ -419,7 +457,7 @@ class FxUnit {
   static size_t poolSize(double sr, int t) {
     const size_t s = static_cast<size_t>(sr);
     return 4 * (s * static_cast<size_t>(modMs(t)) / 1000 + 8) + 2 * (s * static_cast<size_t>(delaySecs(t)) + 8) + 2 * (s / 100 + 8) + 8 * (s * 35 / 100 + 8) + 2 * (s * static_cast<size_t>(preTenths(t)) / 10 + 8) +
-           8 * (s / 40 + 8) + 2 * (s * 2 + 8) + 4 * (s * 3 / 100 + 8) + 2 * (s + 8) + 64 + (t == FxReverb ? rxPool(sr) : 0);
+           8 * (s / 40 + 8) + 2 * (s * 2 + 8) + 4 * (s * 3 / 100 + 8) + 16 * (s / 50 + 8) + 2 * (s + 8) + 64 + (t == FxReverb ? rxPool(sr) : 0);
   }
   static size_t rxPool(double sr) {
     size_t z = 0;
@@ -715,6 +753,7 @@ void chorusImported(FxUnit& u, const float* p, float* L, float* R, int n, const 
 }
 
 #include "plasma_fx_reverb_law_run.inc"
+#include "plasma_fx_mod_law.inc"
 
 void delayImported(FxUnit& u, const float* p, float* L, float* R, int n, const FxContext& c, bool sync, bool link, int mode, float out) {
   const int type = FxDelay;
@@ -1196,8 +1235,10 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
     case FxFlanger:
     case FxPhaser:
     case FxChorus: {
-      if (type == FxChorus && N("glLaw") >= 0.5) {
-        chorusImported(u, p, L, R, n, c, out);
+      if (N("glLaw") >= 0.5) {
+        if (type == FxChorus) chorusImported(u, p, L, R, n, c, out);
+        else if (type == FxPhaser) phaserImported(u, p, L, R, n, c, out);
+        else flangerImported(u, p, L, R, n, c, out);
         break;
       }
       const bool sync = N("kParamBeatSync") >= 0.5;
@@ -1343,8 +1384,9 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
     }
     case FxComp: {
       const bool multi = N("kParamMultiband") >= 0.5;
-      if (!multi && N("glLaw") >= 0.5) {
-        compImported(u, p, L, R, n);
+      if (N("glLaw") >= 0.5) {
+        if (multi) mbImported(u, p, L, R, n, compLawFlags(N("glLaw")));
+        else compImported(u, p, L, R, n);
         break;
       }
       // J-203c, measured on the source with a saw at -18.8 dB RMS: the limited level is 60 log10(1 - t)
@@ -1761,6 +1803,7 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
       const float dimWet = static_cast<float>(P("kParamDimEWet") / 100.0);
       const double dimSize = P("kParamDimESize") / 100.0;
       const float dimOut = static_cast<float>(busGain(N("kParamDimELevelOut")));
+      const bool law = N("glLaw") >= 0.5;
       for (int i = 0; i < n; ++i) {
         u.ml[0].push(L[i]), u.ml[1].push(R[i]);
         float l = L[i], r = R[i];
@@ -1781,6 +1824,10 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
         // passes untouched and a side is added, 0.465 * mix * (x(t - A) - x(t - B)) on the left and its
         // negative on the right, with A = 15.0 + 100 * size and B = 20.9 + 16.9 * size ms (size 0 / 50 / 100:
         // A 15.0 / 65.0 / 115.0, B 20.9 / 29.4 / 37.8 ms). Sine at key 60, size 50: left +4.5, right -4.6 dB.
+        if (law) {
+          L[i] = l * out, R[i] = r * out;
+          continue;
+        }
         u.dl[0].push((l + r) * 0.5f);
         if (dimWet > 0) {
           const float a = u.dl[0].tap(static_cast<float>((0.015025 + 0.1 * dimSize) * sr));
@@ -1790,9 +1837,14 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
         }
         L[i] = l * out, R[i] = r * out;
       }
+      if (law) dimensionRun(u, L, R, n, dimSize, dimWet, dimOut);
       break;
     }
     case FxBode: {
+      if (N("glLaw") >= 0.5) {
+        bodeImported(u, p, L, R, n, c, out);
+        break;
+      }
       const bool sync = N("kParamBeatSync") >= 0.5;
       double shiftHz = P("kParamShift") / 100.0 * P("kParamRange");
       if (sync) shiftHz = (P("kParamShift") / 100.0) * c.tempo / 60.0 * 4.0;
@@ -1839,7 +1891,8 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
     case FxConvolve: {
       if (!u.convReady) break;
       const bool claw = N("glLaw") >= 0.5;
-      const float trim = static_cast<float>(dbToGainF(P("kParamIpTrim")));
+      // imported law: IR GAIN is 18 dB hotter (the source's -18 dB, its unset value, is Plasma's 0 dB)
+      const float trim = static_cast<float>(dbToGainF(P("kParamIpTrim") + (claw ? 18.0 : 0.0)));
       const double attack = P("kParamAttack"), dec = P("kParamDecay");
       const bool psync = N("kParamPredelayBeatSync") >= 0.5;
       double pre = psync ? P("kParamPredelay") * 4.0 * 60.0 / std::max(20.0, c.tempo) : P("kParamPredelay");

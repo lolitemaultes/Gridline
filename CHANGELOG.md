@@ -23,8 +23,12 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 - Plasma plays imported Serum 2 presets much closer to the original:
   - Effects: the delay (times, synced range up to 16 beats, feedback, echo filter, Ping-Pong),
     compressor and limiter, reverb (all five models, the pre-delay on every type), distortion,
-    convolution and chorus follow the original. Each gets a Law setting that imports switch on, so
-    Plasma's own projects keep their sound. The reverb knob labelled as a pre-delay now reads TAIL.
+    convolution (including the impulse gain), chorus, phaser, flanger, frequency shifter (shift
+    direction per side, delay, blur), the dimension stage of the hyper effect and the multiband compressor (per-band ratios, upward
+    compression, crossovers and switches) follow the original. Each gets a Law setting that imports
+    switch on, so Plasma's own projects keep their sound. The reverb knob labelled as a pre-delay now reads TAIL.
+  - Filters: the dirty ladder filter grows louder and brighter when driven with the cutoff open,
+    the way the original does, in the voice and in the filter effect.
   - Modulation: LFO point modulation, routes to envelope times, curves on LFO segments, routes and
     envelopes, and tempo-synced LFO divisions follow the original.
   - Voice: sub oscillator shapes, granular density and length, sources routed past Env 1,

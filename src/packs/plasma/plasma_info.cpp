@@ -336,7 +336,8 @@ const std::vector<std::vector<FxParamDef>>& fxTable() {
                     {"kParamDepth", "DEPTH", 0, 100, 50, 0, 0, "%", {}},
                     {"kParamFeedback", "FEEDBACK", 0, 100, 50, 0, 0, "%", {}},
                     {"kParamWidth", "PHASE", 0, 360, 180, 0, 0, "°", {}},
-                    lvl};
+                    lvl,
+                    {"glLaw", "LAW", 0, 1, 0, 2, 0, "", {"Classic", "Imported"}}};
     v[FxPhaser] = {wet,
                    sync,
                    {"kParamRate", "RATE", 0, 20, 0.3, 0, 5, "Hz", {}},
@@ -346,7 +347,8 @@ const std::vector<std::vector<FxParamDef>>& fxTable() {
                    {"kParamFeedback", "FEEDBACK", 0, 100, 50, 0, 0, "%", {}},
                    {"kParamWidth", "PHASE", 0, 360, 180, 0, 0, "°", {}},
                    lvl,
-                   {"kParamNumPoles", "POLES", 1, 18, 4, 0, 3, "", {}}};
+                   {"kParamNumPoles", "POLES", 1, 18, 4, 0, 3, "", {}},
+                   {"glLaw", "LAW", 0, 1, 0, 2, 0, "", {"Classic", "Imported"}}};
     v[FxChorus] = {wet,
                    sync,
                    {"kParamRate", "RATE", 0, 20, 0.2, 0, 5, "Hz", {}},
@@ -447,7 +449,8 @@ const std::vector<std::vector<FxParamDef>>& fxTable() {
                   lvl,
                   {"kParamDimESize", "SIZE", 0, 100, 50, 0, 0, "%", {}},
                   {"kParamDimEWet", "DIM MIX", 0, 100, 0, 0, 0, "%", {}},
-                  {"kParamDimELevelOut", "DIM LEVEL", 0, 1, 0.5, 0, 2, "dB", {}}};
+                  {"kParamDimELevelOut", "DIM LEVEL", 0, 1, 0.5, 0, 2, "dB", {}},
+                  {"glLaw", "LAW", 0, 1, 0, 2, 0, "", {"Classic", "Imported"}}};
     v[FxBode] = {{"kParamWet", "MIX", 0, 100, 50, 0, 0, "%", {}},
                  sync,
                  {"kParamShift", "SHIFT", -100, 100, 0, 0, 0, "%", {}},
@@ -461,7 +464,8 @@ const std::vector<std::vector<FxParamDef>>& fxTable() {
                  {"kParamOutputWidth", "WIDTH", 0, 100, 0, 0, 0, "%", {}},
                  {"kParamBlur", "BLUR", 0, 100, 0, 0, 0, "%", {}},
                  {"kParamRetrig", "RETRIG", 0, 1, 0, 1, 0, "", {}},
-                 {"kParamMonoInput", "MONO INPUT", 0, 1, 0, 1, 0, "", {}}};
+                 {"kParamMonoInput", "MONO INPUT", 0, 1, 0, 1, 0, "", {}},
+                 {"glLaw", "LAW", 0, 1, 0, 2, 0, "", {"Classic", "Imported"}}};
     v[FxConvolve] = {{"kParamWet", "MIX", 0, 100, 50, 0, 0, "%", {}},
                      {"kParamMinPhase", "MIN PHASE", 0, 1, 0, 1, 0, "", {}},
                      lvl,
