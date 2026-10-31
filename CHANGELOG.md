@@ -289,6 +289,14 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 
 ### Changed
 - Plasma: changes that also affect existing projects:
+  - Hyper follows the original's voices: 1, 2, 3, 5, 5 and 7 voices per side for unison 2 to 7,
+    each a short swept delay of 1 to 10 samples plus about 10 per detune percent, summed through a
+    low cut at 253 Hz; the dry part falls to 4/9 at full mix. Its sweep is slow at low rates (100
+    s per cycle at rate 10, 1 s at 100). Projects that use Hyper sound different.
+  - The phaser sweeps upward from its resting notches, linearly in frequency, as far as 14 kHz at
+    full depth (before: three octaves each way). The vintage reverb's tail ends at 16 kHz.
+  - Imported presets: the Mg ladder filters keep their resonance under drive (the input clips
+    before the resonance loop), and a bus output set to the direct out now skips the main effects.
   - The noise has a new Tone control: a filter that darkens or brightens the noise. It is off in
     older projects.
   - The delay effect's mix, feedback, echo filter and ping-pong now follow the measured laws.

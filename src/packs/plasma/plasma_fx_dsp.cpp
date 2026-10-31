@@ -38,7 +38,11 @@ double dbToGainF(double db) { return std::pow(10.0, db / 20.0); }
 constexpr double kCompThrOfs = 8.4, kCompAtkScale = 0.33;
 // multiband detector (J-203d): running-mean time constant (ms) and its reading offset (dB)
 constexpr double kMbRmsMs = 3.0, kMbOfsDb = 9.5;
-constexpr float kHyperGain = 1.6f;  // hyper voices: about unity power when detuned
+// hyper (J-203h, measured on the source with deterministic white noise, impulse responses per 21 ms window):
+// voices per side for UNISON 0..7, the voice gain, the wet path's 2-pole low cut, the LFO rate law
+constexpr int kHyperSide[8] = {0, 0, 1, 2, 3, 5, 5, 7};
+constexpr float kHyperVoice = 0.97f;
+constexpr double kHyperHpHz = 253.0, kHyperHpQ = 0.75;
 
 struct Line {  // fractional delay line inside the unit's pool
   float* b = nullptr;
@@ -265,7 +269,10 @@ class FxUnit {
   Bq2 eq1, eq2, uhp, uhp2, ulp;
   Lr4 ulf;
   // hyper / dimension
-  double hyPh[8]{};
+  double hyPh[16]{};
+  Bq2 hyHp;
+  bool hyInit = false;
+  Bq2 rvBw[4];  // vintage reverb: the wet band ends at 16 kHz
   // bode
   Hilbert hb[2];
   double bodePh = 0;
@@ -295,7 +302,9 @@ class FxUnit {
     phFb[0] = phFb[1] = 0;
     for (auto& l : dl) l.w = 0;
     dfb[0] = dfb[1] = 0;
-    dbp.clear(), dfl.clear(), eq1.clear(), eq2.clear(), uhp.clear(), uhp2.clear(), ulp.clear();
+    dbp.clear(), dfl.clear(), eq1.clear(), eq2.clear(), uhp.clear(), uhp2.clear(), ulp.clear(), hyHp.clear();
+    for (auto& b : rvBw) b.clear();
+    hyInit = false;
     for (auto& e : env) e[0] = e[1] = 0;
     for (auto& e : mbEnv) e[0] = e[1] = e[2] = 0;
     xo1 = Lr4{}, xo2 = Lr4{}, ulf = Lr4{};
@@ -660,7 +669,9 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
           float io[2] = {L[i], R[i]};
           for (int ch = 0; ch < 2; ++ch) {
             const double m = triLfo(u.lfoPh + ch * phOff);
-            const double f = fc * ctr * std::pow(2.0, m * depth * 3.0);
+            // J-203h, measured (lowest notch tracked over time, feedback 0, FREQ 600): the sweep is linear in Hz and
+            // only upward from the resting notches, by 15.2 x depth (depth 100: 0.87 -> 14 kHz, 50: -> 7.5 kHz)
+            const double f = fc * ctr * (1.0 + 15.2 * depth * (0.5 + 0.5 * m));
             float x = io[ch] + u.phFb[ch] * fb * 0.97f;
             double fs = f * std::pow(spr, -0.5 * (stages - 1));
             for (int s = 0; s < stages; ++s, fs *= spr) {
@@ -976,6 +987,13 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
         reverbTone(rtype, P("kParamFreq"), P("kParamFreqB"), db);
         u.rvEq.set(sr, db);
       }
+      if (rtype == 2) {
+        // J-203h, measured (1/3-octave transfer, mix 100): the vintage wet ends at 16 kHz like a reduced-rate
+        // design, -14.4 dB in the 16 kHz band and -43 dB at 20 kHz (the hall: -2.1 / -2.5 dB): an 8-pole
+        // Butterworth low-pass at 16 kHz
+        static const double kBwQ[4] = {0.5098, 0.6013, 0.9000, 2.5629};
+        for (int k = 0; k < 4; ++k) u.rvBw[k].set(4, sr, std::min(16000.0, sr * 0.45), kBwQ[k], 0);
+      }
       const double diffA = 0.7, diffB = 0.7;
       const double spinR = 0.05 + 3.0 * P("kParamSpinRate") / 100.0, spinD = P("kParamSpinDepth") / 100.0 * (rtype == 4 ? 2.5 : 1.0);
       static const double base[5][8] = {
@@ -1038,6 +1056,8 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
         for (int k = 0; k < 8; ++k) u.rv[k].push(std::clamp(h[k] * 0.35355339f + in[k & 1], -8.f, 8.f));
         float wl = (tap[0] + tap[2] + tap[4] + tap[6]) * 0.35f + in[0] * early, wr = (tap[1] + tap[3] + tap[5] + tap[7]) * 0.35f + in[1] * early;
         wl = u.rvEq.run(0, wl), wr = u.rvEq.run(1, wr);
+        if (rtype == 2)
+          for (auto& b : u.rvBw) wl = b.run(0, wl), wr = b.run(1, wr);
         const float mid = (wl + wr) * 0.5f, side = (wl - wr) * 0.5f * static_cast<float>(width);
         wl = mid + side, wr = mid - side;
         L[i] = (L[i] * dryF + wl * wetF) * out;
@@ -1088,30 +1108,46 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
       break;
     }
     case FxHyper: {
-      // J-203d, measured on the source: unison 1 passes the input untouched at any mix; more voices keep about
-      // the input's power when detuned (detune 50, unison 2..7: -2.5 .. +2 dB), so voices are scaled by 1/sqrt(n)
-      const int voices = std::max(1, static_cast<int>(P("kParamUnison")));
-      const double det = P("kParamDetune") / 100.0;
-      const double rate = 0.1 + 6.0 * P("kParamRate") / 100.0;
+      // J-203h, measured on the source (deterministic white noise in, impulse responses per 21 ms window):
+      // - each side carries its own voices (UNISON 1..7: 0 / 1 / 2 / 3 / 5 / 5 / 7 per side), each a plain
+      //   delay read with a linear tap at gain 0.97; the voices' sum passes a 2-pole low cut (253 Hz, Q 0.75:
+      //   the negative tail after every tap) and is not normalised (unison 4, detune 0: +10 dB near 500 Hz)
+      // - every voice's delay runs a triangle between 1 sample and 10 + 9.6 * DETUNE (%) samples at 48 kHz
+      //   (20 ms at 100 %), at 1e-4 * RATE^2 Hz (rate 10: 100 s per cycle, 40: 6.3 s, 100: 1.0 s; rate 0
+      //   holds the delays), so the voices hold small constant pitch offsets that reverse at the ends;
+      //   voices differ by about +-10 % in speed and start at free-running phases
+      // - MIX m: wet x = 3m^2 - 2m^3 (the chorus law), dry 1 - 5/9 x (0.444 at 100 %); unison 1 passes the
+      //   input untouched at any mix
+      const int nSide = kHyperSide[std::clamp(static_cast<int>(std::lround(P("kParamUnison"))), 0, 7)];
+      const double det = std::clamp(P("kParamDetune"), 0.0, 100.0), rt = std::clamp(P("kParamRate"), 0.0, 100.0);
+      const double k48 = sr / 48000.0, dLo = 1.0 * k48, dHi = (10.0 + 9.6 * det) * k48;
+      const double fHz = 1e-4 * rt * rt;
+      const double mv = std::clamp(static_cast<double>(wet), 0.0, 1.0), mx = mv * mv * (3 - 2 * mv);
+      const float gW = nSide > 0 ? static_cast<float>(mx) * kHyperVoice : 0.f, gD = nSide > 0 ? static_cast<float>(1 - mx * 5.0 / 9.0) : 1.f;
+      if (!u.hyInit) {  // spread start phases (the source's are free-running)
+        for (int v = 0; v < 16; ++v) u.hyPh[v] = std::fmod(0.6180339887 * (v + 1) + (v & 1) * 0.29, 1.0);
+        u.hyInit = true;
+      }
+      u.hyHp.set(3, sr, kHyperHpHz, kHyperHpQ, 0);
       const float dimWet = static_cast<float>(P("kParamDimEWet") / 100.0);
       const double dimSize = P("kParamDimESize") / 100.0;
       const float dimOut = static_cast<float>(busGain(N("kParamDimELevelOut")));
       for (int i = 0; i < n; ++i) {
         u.ml[0].push(L[i]), u.ml[1].push(R[i]);
-        float hl = 0, hr = 0;
-        for (int v = 0; v < voices; ++v) {
-          u.hyPh[v] += rate * (1.0 + v * 0.13) / sr;
-          if (u.hyPh[v] >= 1) u.hyPh[v] -= 1;
-          const double m = 0.5 + 0.5 * std::sin(kPi2 * u.hyPh[v]);
-          const float d = static_cast<float>((0.004 + det * 0.018 * m + v * 0.0011) * sr);
-          const float pan = voices > 1 ? static_cast<float>(v) / (voices - 1) : 0.5f;
-          const float s = (v & 1) ? u.ml[1].tap(d) : u.ml[0].tap(d);
-          hl += s * (1 - pan), hr += s * pan;
+        float l = L[i], r = R[i];
+        if (nSide > 0) {
+          float hs[2] = {0, 0};
+          for (int ch = 0; ch < 2; ++ch)
+            for (int v = 0; v < nSide; ++v) {
+              double& ph = u.hyPh[ch * 8 + v];
+              ph += fHz * (1.0 + 0.1 * std::sin(1.7 * (ch * 8 + v) + 0.4)) / sr;
+              if (ph >= 1) ph -= 1;
+              const double tri = ph < 0.5 ? ph * 2 : 2 - ph * 2;
+              hs[ch] += u.ml[ch].tap(static_cast<float>(dLo + (dHi - dLo) * tri));
+            }
+          l = L[i] * gD + u.hyHp.run(0, hs[0]) * gW;
+          r = R[i] * gD + u.hyHp.run(1, hs[1]) * gW;
         }
-        const float sc = kHyperGain / std::sqrt(static_cast<float>(voices));
-        hl *= sc, hr *= sc;
-        const float hw = voices > 1 ? wet : 0.f;
-        float l = L[i] + (hl - L[i]) * hw, r = R[i] + (hr - R[i]) * hw;
         // dimension, measured on the source (held saw, impulse response from the harmonic transfer): the mid
         // passes untouched and a side is added, 0.465 * mix * (x(t - A) - x(t - B)) on the left and its
         // negative on the right, with A = 15.0 + 100 * size and B = 20.9 + 16.9 * size ms (size 0 / 50 / 100:

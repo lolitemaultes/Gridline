@@ -107,6 +107,8 @@ const MLadDesc& mlad(int t) {
       acid{true, 0.87, 2, true, -0.8}, ems{true, 0.87, 3, true, 1.0}, dirty{false, 0.845, 4, false, -1.0};
   return t == 84 ? za : t == 100 ? acid : t == 101 ? ems : t == 102 ? dirty : mg;
 }
+// Mg ladder under drive (J-203h): input clip head and loop clip head, as multiples of the drive head
+constexpr double kMgHead = 1.4, kMgLoop = 3.2;
 double mladK(int table, double r) {
   static const double R[] = {0, 0.05, 0.1, 0.15, 0.2, 0.3, 0.45, 0.6, 0.75, 0.9, 1.0};
   static const double K[5][11] = {
@@ -995,10 +997,21 @@ void Filter::process(float& l, float& r) {
           S = (g3 * h.lad[0] + g2 * h.lad[1] + g1 * h.lad[2] + h.lad[3]) * b;
         }
         const float G4 = G * G * G * G;
-        float u = (x * h.drv - h.k * S) / (1.f + h.k * G4);
         const float hd = h.head > 0 ? h.head : 1.f;
-        if (t == 102) u = hd * (fastTanh(u / hd * 1.6f + 0.15f) - 0.15f);  // dirty: asymmetric
-        else u = hd * fastTanh(u / hd);
+        float u;
+        if (h.head > 0 && t <= 3) {
+          // J-203h, measured on the filter effect (saw, drive 30 / 60 / 100 %, res 0 / 60): the Mg ladders clip
+          // their driven input before the feedback, so the resonance keeps its level under drive and the
+          // ceiling sits higher; the loop itself only clips far above it. Source, 12 dB at cutoff 0.5, held
+          // saw / chord: drive 100 res 0 -0.6 / -5.9 dB, res 60 -8.4 / -2.6 dB, drive 60 res 60 -10.6 / -3.1 dB
+          const float hi = static_cast<float>(kMgHead) * hd, hl = static_cast<float>(kMgLoop) * hd;
+          u = (hi * fastTanh(x * h.drv / hi) - h.k * S) / (1.f + h.k * G4);
+          u = hl * fastTanh(u / hl);
+        } else {
+          u = (x * h.drv - h.k * S) / (1.f + h.k * G4);
+          if (t == 102) u = hd * (fastTanh(u / hd * 1.6f + 0.15f) - 0.15f);  // dirty: asymmetric
+          else u = hd * fastTanh(u / hd);
+        }
         float in = u, out[4];
         for (int s = 0; s < 4; ++s) {
           const float v = (in - h.lad[s]) * G;

@@ -282,6 +282,16 @@ int main() {
     const auto h = render(st, 60, 2.5, 0.3);
     const double slope = rmsDb(h, 0.8, 1.0) - rmsDb(h, 1.8, 2.0);
     expect(finite(h) && std::fabs(slope - 19.1) < 5.0, ("the default hall decays about 19 dB/s (" + std::to_string(slope) + ")").c_str());
+    // J-203h: the vintage wet ends at 16 kHz (source, 1/3-octave transfer at mix 100: 12.8 kHz -6.2 dB,
+    // 20 kHz -43 dB); the hall stays open (-1.9 / -2.5 dB)
+    {
+      expect(import(rvBody("kVintage", 100, 31.25), st, rep, cache), "vintage imports");
+      const double v12 = sineGainDb(st, 12000), v20 = sineGainDb(st, 20000);
+      expect(import(rvBody("kHall", 100, 31.25), st, rep, cache), "hall imports");
+      const double h12 = sineGainDb(st, 12000), h20 = sineGainDb(st, 20000);
+      std::printf("# vintage 12k %.1f 20k %.1f, hall 12k %.1f 20k %.1f\n", v12, v20, h12, h20);
+      expect(v12 - v20 > 25.0 && h12 - h20 < 6.0, ("the vintage reverb ends at 16 kHz, the hall does not (" + std::to_string(v12 - v20) + " / " + std::to_string(h12 - h20) + " dB)").c_str());
+    }
     expect(import(rvBody("kHall", 100, 0), st, rep, cache), "short hall imports");
     const auto h0 = render(st, 60, 2.5, 0.3);
     const double slope0 = (rmsDb(h0, 0.5, 0.6) - rmsDb(h0, 1.0, 1.1)) / 0.5;
@@ -584,14 +594,54 @@ int main() {
     expect(std::fabs(gl - 4.45) < 0.5 && std::fabs(gr + 4.62) < 0.5, ("dimension size 50: left " + std::to_string(gl) + " dB, right " + std::to_string(gr) + " dB (source +4.45 / -4.62)").c_str());
   }
 
-  // ---- hyper: unison 1 passes the input untouched; detuned voices keep about the input's power (source, a
-  // held sine at key 60, detune 50: unison 2..7 within -2.5 .. +2 dB of the input)
+  // ---- hyper (J-203h). Source, deterministic white noise through the module, impulse responses per 21 ms window:
+  // unison 1 passes the input untouched; the dry part is 1 - 5/9 x (0.444 at mix 100; 0.721 at mix 50, x = 0.5);
+  // each side carries 0 / 1 / 2 / 3 / 5 / 5 / 7 voices (unison 1..7) at gain 0.97 whose sum passes a 2-pole low cut
+  // (253 Hz, Q 0.75: the whole wet path has no DC); voice delays stay between 1 and 10 + 9.6 * detune samples
+  // (detune 0: under 10 samples; rate 0 holds them). Unison 4, detune 25: the source comes out 4 to 7 dB louder in the
+  // mids (3 incoherent voices per side + the dry part).
   {
-    for (int uni : {1, 4, 7}) {
-      expect(import(fxBody("FXHyperD", pl::FxHyper - 1, {{"kParamEnable", num(1)}, {"kParamWet", num(100)}, {"kParamUnison", num(uni)}, {"kParamDetune", num(50)}}), st, rep, cache),
-             "hyper preset imports");
-      const double g = sineGainDb(st, 261.6);
-      expect(uni == 1 ? std::fabs(g) < 0.05 : (g > -3.5 && g < 3), ("hyper unison " + std::to_string(uni) + ": " + std::to_string(g) + " dB").c_str());
+    auto hyper = [&](double uni, double det, double rate, double mix) {
+      return import(fxBody("FXHyperD", pl::FxHyper - 1, {{"kParamEnable", num(1)}, {"kParamWet", num(mix)}, {"kParamUnison", num(uni)},
+                                                         {"kParamDetune", num(det)}, {"kParamRate", num(rate)}}), st, rep, cache);
+    };
+    auto runIr = [&](int n) {
+      auto bank = pl::makeFxBank(st, nullptr, kSr);
+      pl::FxContext c;
+      c.sr = kSr;
+      std::vector<float> L(static_cast<size_t>(n), 0.f), R(static_cast<size_t>(n), 0.f);
+      L[0] = R[0] = 1.f;
+      for (int pos = 0; pos < n; pos += 256) pl::fxProcess(*bank->unit[0], pl::FxHyper, slot0(st), L.data() + pos, R.data() + pos, std::min(256, n - pos), c, nullptr, 0);
+      return std::make_pair(L, R);
+    };
+    expect(hyper(1, 50, 40, 100), "hyper preset imports");
+    expect(std::fabs(sineGainDb(st, 261.6)) < 0.05, "hyper unison 1 passes the input untouched");
+    for (double mix : {100.0, 50.0}) {
+      expect(hyper(2, 0, 0, mix), "hyper preset imports");
+      const auto ir = runIr(8000);
+      const double dry = mix > 75 ? 4.0 / 9.0 : 0.7222;
+      double sum = 0, early = 0, peak = 0;
+      for (int i = 0; i < 8000; ++i) sum += ir.first[static_cast<size_t>(i)];
+      for (int i = 1; i <= 11; ++i) early += ir.first[static_cast<size_t>(i)], peak = std::max(peak, static_cast<double>(ir.first[static_cast<size_t>(i)]));
+      expect(std::fabs(ir.first[0] - dry) < 0.01, ("hyper mix " + std::to_string(mix) + ": dry tap " + std::to_string(ir.first[0]) + " (source " + std::to_string(dry) + ")").c_str());
+      expect(std::fabs(sum - dry) < 0.01, ("hyper wet path has no DC (IR sum " + std::to_string(sum) + ")").c_str());
+      expect(early > 0.4 * (mix > 75 ? 1.0 : 0.5) && peak > 0.2, ("hyper detune 0: the voice sits within 11 samples (" + std::to_string(early) + ")").c_str());
+    }
+    expect(hyper(4, 25, 40, 100), "hyper preset imports");
+    {
+      auto bank = pl::makeFxBank(st, nullptr, kSr);
+      pl::FxContext c;
+      c.sr = kSr;
+      const int n = static_cast<int>(2 * kSr);
+      std::vector<float> L(static_cast<size_t>(n)), R(static_cast<size_t>(n));
+      uint32_t seed = 7;
+      for (int i = 0; i < n; ++i) seed = seed * 1664525u + 1013904223u, L[static_cast<size_t>(i)] = R[static_cast<size_t>(i)] = static_cast<float>(seed >> 8) / 16777216.f - 0.5f;
+      const std::vector<float> in = L;
+      for (int pos = 0; pos < n; pos += 256) pl::fxProcess(*bank->unit[0], pl::FxHyper, slot0(st), L.data() + pos, R.data() + pos, std::min(256, n - pos), c, nullptr, 0);
+      const double g = rmsDb(L, 0.5, 2.0) - rmsDb(in, 0.5, 2.0), gr = rmsDb(R, 0.5, 2.0) - rmsDb(in, 0.5, 2.0);
+      // broadband: the linear taps keep (1 - f)^2 + f^2 of white noise's power at fraction f (2/3 on average,
+      // as the source's taps do), so 0.198 + 3 * 0.94 * 2/3 = 2.08: +3.2 dB
+      expect(g > 2.5 && g < 3.9 && gr > 2.5 && gr < 3.9, ("hyper unison 4 detune 25 on noise: " + std::to_string(g) + " / " + std::to_string(gr) + " dB (expected +3.2)").c_str());
     }
   }
 
@@ -635,6 +685,28 @@ int main() {
     filt({{"kParamType", str("MgL12")}, {"kParamFreq", num(0.5)}, {"kParamReso", num(30)}, {"kParamDrive", num(60)}, {"kParamPad", num(1)}});
     const double p60 = boosted(100, 0.5);
     expect(std::fabs(p60 - p0 - 16.3) < 1.0, ("filter PAD, drive 60 over drive 0: " + std::to_string(p60 - p0) + " dB (source +16.3)").c_str());
+    // J-203h: the Mg ladders clip their driven input before the feedback (the loop clips far above), so the
+    // resonance keeps its level and the ceiling sits higher. Source, filter effect MgL12 at cutoff 0.5,
+    // drive 100, held saw at key 36: -0.6 dB RMS (1.9 dB above the loop-clipped ladder's -2.5) at res 0.
+    // Here: a loud sine below the cutoff peaks at the input clip, 1.4 x the drive head of 2.66 (+2.9 dB).
+    auto loudPeak = [&](double reso) {
+      filt({{"kParamType", str("MgL12")}, {"kParamFreq", num(0.5)}, {"kParamReso", num(reso)}, {"kParamDrive", num(100)}});
+      auto bank = pl::makeFxBank(st, nullptr, kSr);
+      pl::FxContext c;
+      c.sr = kSr, c.driveBoost = true;
+      const int n = static_cast<int>(kSr);
+      std::vector<float> L(static_cast<size_t>(n)), R(static_cast<size_t>(n));
+      for (int i = 0; i < n; ++i) L[static_cast<size_t>(i)] = R[static_cast<size_t>(i)] = static_cast<float>(std::sin(6.283185307179586 * 40.0 * i / kSr));
+      for (int pos = 0; pos < n; pos += 256) pl::fxProcess(*bank->unit[0], pl::FxFilter, slot0(st), L.data() + pos, R.data() + pos, std::min(256, n - pos), c, nullptr, 0);
+      float pk = 0;
+      for (int i = n / 2; i < n; ++i) pk = std::max(pk, std::fabs(L[static_cast<size_t>(i)]));
+      return static_cast<double>(pk);
+    };
+    {
+      const double p0 = loudPeak(0);
+      std::printf("# driven MgL12, loud 40 Hz sine: peak %.2f\n", p0);
+      expect(p0 > 3.3 && p0 < 4.3, ("driven Mg ladder clips its input at 1.4 x the head: peak " + std::to_string(p0) + " (3.72)").c_str());
+    }
     // comb: echoes every 1.0028 periods of the cutoff (source, cutoff 426.6 Hz at 48 kHz: 112.87 samples)
     filt({{"kParamType", str("CombP")}, {"kParamFreq", num(0.5)}, {"kParamReso", num(90)}});
     {
@@ -657,6 +729,40 @@ int main() {
     double worst = 0;
     for (double hz : {133.75, 600.0, 2480.8}) worst = std::max(worst, std::fabs(sineGainDb(st, hz)));
     expect(worst < 0.5, ("multiband ratio 1, mix 50: flat through the crossovers (worst " + std::to_string(worst) + " dB)").c_str());
+  }
+
+  // ---- phaser sweep (J-203h). Source, the lowest notch tracked over time (feedback 0, FREQ 600, 4 poles): the
+  // sweep is linear in Hz and only upward from the resting notches (about 870 Hz), up to 14 kHz at depth 100
+  // and 7.5 kHz at depth 50. So a tone below the resting notch keeps its level while the sweep runs, and a
+  // tone at 6 kHz is notched once per cycle at depth 100.
+  {
+    auto swing = [&](double hz) {
+      expect(import(fxBody("FXPhaser", pl::FxPhaser - 1, {{"kParamEnable", num(1)}, {"kParamDepth", num(100)}, {"kParamFeedback", num(0)}, {"kParamRate", num(0.25)}}), st, rep, cache),
+             "phaser imports");
+      auto bank = pl::makeFxBank(st, nullptr, kSr);
+      pl::FxContext c;
+      c.sr = kSr;
+      const int n = static_cast<int>(8 * kSr);
+      std::vector<float> L(static_cast<size_t>(n)), R(static_cast<size_t>(n));
+      for (int i = 0; i < n; ++i) L[static_cast<size_t>(i)] = R[static_cast<size_t>(i)] = static_cast<float>(0.1 * std::sin(6.283185307179586 * hz * i / kSr));
+      for (int pos = 0; pos < n; pos += 256) pl::fxProcess(*bank->unit[0], pl::FxPhaser, slot0(st), L.data() + pos, R.data() + pos, std::min(256, n - pos), c, nullptr, 0);
+      double lo = 1e9, hi = -1e9;
+      for (double t = 0.5; t < 7.9; t += 0.05) lo = std::min(lo, rmsDb(L, t, t + 0.05)), hi = std::max(hi, rmsDb(L, t, t + 0.05));
+      return hi - lo;
+    };
+    const double s300 = swing(100), s6k = swing(6000);
+    std::printf("# phaser depth 100 level swing: 100 Hz %.1f dB, 6 kHz %.1f dB\n", s300, s6k);
+    expect(s300 < 3.0 && s6k > 10.0, ("the phaser sweeps upward only (swing 100 Hz " + std::to_string(s300) + " dB, 6 kHz " + std::to_string(s6k) + " dB)").c_str());
+  }
+
+  // ---- bus outputs (J-203h). Source, a bus carrying the oscillator with a clipper on the main rack: output 0
+  // comes out clipped (-11.5 dB, through the main rack), 1 dry (-18.8 dB, direct), 2 clipped (into the other bus)
+  {
+    const double want[3] = {0, 1, 0};
+    for (int d = 0; d < 3; ++d) {
+      expect(import(obj({{"Global0", plain({{"kParamFXBus1Dest", num(d)}, {"kParamFXBus2Dest", num(d)}})}}), st, rep, cache), "bus output imports");
+      expect(P(st, pl::G_Bus1Dest) == want[d] && P(st, pl::G_Bus2Dest) == want[d], ("bus output " + std::to_string(d) + " maps to " + std::to_string(want[d])).c_str());
+    }
   }
 
   std::error_code ec;

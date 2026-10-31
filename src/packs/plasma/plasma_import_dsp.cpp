@@ -1635,8 +1635,10 @@ struct Importer {
     if (num(pp, "kParamDirectVol", v)) set(G_DirectVol, std::sqrt(std::max(0.0, v) / 2.0));
     if (num(pp, "kParamFXBus1Vol", v)) set(G_Bus1Vol, std::sqrt(std::max(0.0, v) / 2.0));
     if (num(pp, "kParamFXBus2Vol", v)) set(G_Bus2Vol, std::sqrt(std::max(0.0, v) / 2.0));
-    if (num(pp, "kParamFXBus1Dest", v)) set(G_Bus1Dest, v >= 1.5 ? 1 : 0);
-    if (num(pp, "kParamFXBus2Dest", v)) set(G_Bus2Dest, v >= 1.5 ? 1 : 0);
+    // J-203h, measured on the source (a bus with a clipper on the main rack): bus output 0 runs through the
+    // main rack, 1 is the direct out (skips it), 2 feeds the other bus (no counterpart yet: main, its usual way)
+    if (num(pp, "kParamFXBus1Dest", v)) set(G_Bus1Dest, v >= 0.5 && v < 1.5 ? 1 : 0);
+    if (num(pp, "kParamFXBus2Dest", v)) set(G_Bus2Dest, v >= 0.5 && v < 1.5 ? 1 : 0);
     if (num(pp, "kParamOversampling", v)) set(G_Quality, v);
     if (num(pp, "kParamS1Compatibility", v)) set(G_S1Mode, v);
     if (num(pp, "kParamGlobalTuning", v)) set(G_ConcertA, v);
