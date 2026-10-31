@@ -18,7 +18,8 @@ constexpr double kRefRate = 44100.0;
 struct Params {
   const PluginState* s;
   double operator[](int k) const {
-    if (s && k >= 0 && static_cast<size_t>(k) < s->params.size()) return s->params[static_cast<size_t>(k)];
+    if (s && k >= 0 && static_cast<size_t>(k) < s->params.size() && std::isfinite(s->params[static_cast<size_t>(k)]))
+      return s->params[static_cast<size_t>(k)];
     const PluginInfo* info = findPlugin("gl.turntable");
     return info && static_cast<size_t>(k) < info->params.size() ? info->params[static_cast<size_t>(k)].def : 0.0;
   }
@@ -179,8 +180,8 @@ class TurntableGen final : public Generator {
   // Linear interpolation at revolution `ph` (any value; wraps around the sample).
   static void read(const float* sl, const float* sr, size_t N, double ph, double& l, double& r) {
     double x = (ph - std::floor(ph)) * static_cast<double>(N);
-    size_t i0 = static_cast<size_t>(x);
-    if (i0 >= N) i0 = 0, x = 0;
+    if (!(x >= 0.0 && x < static_cast<double>(N))) x = 0;  // also a non-finite `ph`
+    const size_t i0 = static_cast<size_t>(x);
     const size_t i1 = i0 + 1 < N ? i0 + 1 : 0;
     const double f = x - static_cast<double>(i0);
     l = sl[i0] + (sl[i1] - sl[i0]) * f;
