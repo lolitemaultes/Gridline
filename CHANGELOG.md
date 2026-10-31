@@ -30,6 +30,9 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
   - Voice: sub oscillator shapes, granular density and length, sources routed past Env 1,
     envelope and LFO time scaling (100 % is neutral), the spectral oscillator's pitch and
     frequency limits, notes that take over a voice, and effect buses that feed each other.
+  - Oscillators: the waveshaper warps (tube, sine shaper, stomp box, tape and the others, on every
+    oscillator type), random start phase, routes to the main tuning, the spectral oscillator's
+    stereo image from stereo samples, and the loudness of multisample unison follow the original.
 
 ## 0.7.0
 

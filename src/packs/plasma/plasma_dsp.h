@@ -125,6 +125,9 @@ struct SpecSrc {           // STFT analysis of a sample for the spectral oscilla
   int frames = 0;
   double rate = 44100;     // sample rate of the analysed audio
   std::vector<float> mag;  // frames * kBins (magnitude, peak-normalised)
+  // stereo samples: per-channel magnitudes and the right channel's phase lead (frames * kBins each;
+  // empty for a mono sample)
+  std::vector<float> magL, magR, dph;
 };
 struct OscAux {
   std::shared_ptr<const MipTable> mip;  // custom / file table (null = factory from O_Table)
@@ -384,6 +387,7 @@ class OscVoice {
   std::unique_ptr<cpx[]> work_;      // 2 x 2048
   std::unique_ptr<float[]> fmRing_;  // 2048 (mask / vocode source)
   std::unique_ptr<float[]> smag_, sfrq_, stmp_;  // 1024 each (partials scratch)
+  std::unique_ptr<float[]> sgl_, sgr_, sdp_;     // 1024 each (stereo partials: L / R gains, R phase lead)
   std::unique_ptr<cpx[]> sy_;        // 2048 (mask / vocode analysis)
   int olaPos_ = 512, fmPos_ = 0;
   double specPos_ = 0;

@@ -872,6 +872,19 @@ int main() {
     expect(std::fabs(mir[1] - mir[0] - 6.0) < 1.5 && std::fabs(mirOld[1] - mirOld[0] - 6.0) > 3.0, "the mirror warp follows the source (classic law unchanged)");
     expect(spd[1] - spd[0] < -35.0 && std::fabs(spd[2] - spd[0] + 11.1) < 1.5, "self phase distortion follows the source");
     expect(std::fabs(q[3] - q[0] + 20.4) < 2.0 && std::fabs(q[5] - q[0] + 14.3) < 2.0, "quantize takes partial steps, as on the source");
+    // the waveshaper warps shape at every amount, 0 included (measured on the source's saw, dB re. the
+    // plain saw's H1): Sine Shaper 0 H1 +1.7; Sine Shaper 0.5 H5 - H1 = +11.1; Tube 1 H3 - H1 = -9.9;
+    // Stomp Box 0.5 H1 - H2 = 19.0; Soft Clip 0 H3 - H1 = -10.8 (plain -9.6)
+    const auto plainSaw = warped("kNone", 0), ss0 = warped("kDistSineShaper", 0), ss5 = warped("kDistSineShaper", 0.5);
+    const auto tube1 = warped("kDistTube", 1.0), stomp = warped("kDistStompBox", 0.5), soft0 = warped("kDistSoftClip", 0);
+    const auto ss0Old = warped("kDistSineShaper", 0, 0);
+    std::printf("# shapers: sine shaper 0 H1 %+.1f (classic %+.1f), 0.5 H5-H1 %.1f; tube 1 H3-H1 %.1f; stomp 0.5 H1-H2 %.1f; soft clip 0 H3-H1 %.1f\n",
+                ss0[0] - plainSaw[0], ss0Old[0] - plainSaw[0], ss5[4] - ss5[0], tube1[2] - tube1[0], stomp[0] - stomp[1], soft0[2] - soft0[0]);
+    expect(std::fabs(ss0[0] - plainSaw[0] - 1.7) < 0.5 && std::fabs(ss0Old[0] - plainSaw[0]) < 0.1, "the sine shaper shapes at 0 (classic law: off at 0)");
+    expect(std::fabs(ss5[4] - ss5[0] - 11.1) < 1.5, "the sine shaper folds as the source's at 0.5");
+    expect(std::fabs(tube1[2] - tube1[0] + 9.9) < 1.0, "the tube warp at 100 % follows the source");
+    expect(std::fabs(stomp[0] - stomp[1] - 19.0) < 1.5, "the stomp box warp keeps the source's even harmonics");
+    expect(std::fabs(soft0[2] - soft0[0] + 10.8) < 0.8, "the soft clip warp at 0 follows the source");
     // a wavetable starts at 180 degrees on the source unless the preset sets its phase
     expect(st.params[static_cast<size_t>(pl::oscP(0, pl::O_Phase))] == 0.5f, "an imported wavetable starts at the source's default phase");
 
@@ -889,6 +902,18 @@ int main() {
     const double old72 = meanDb(renderWindows(mkOld, 1.f, 24000, 24000, 72), 5, 40);
     std::printf("# zone 58..62: key 60 %.1f dB, key 72 %.1f dB (own law %.1f dB)\n", in, out72, old72);
     expect(okMk && in > -40 && out72 < -100 && old72 > -40, "keys outside every zone are silent on the mapped law (own law: nearest zone)");
+
+    // a mapped multisample's unison skips the stack's level drop: on the source two voices play
+    // 4.7 dB and four 6.3 dB over one voice (a wavetable stack: -2.0 and -0.9 dB)
+    auto uni = [&](int u, bool law) {
+      PluginState s = mk;
+      s.params[static_cast<size_t>(pl::oscP(0, pl::O_Unison))] = static_cast<float>(u);
+      if (!law) s.params[static_cast<size_t>(pl::tailP(pl::T_MsLaw))] = 0.f;
+      return meanDb(renderWindows(s, 1.f, 24000, 24000, 60), 5, 40);
+    };
+    const double u1 = uni(1, true), u2 = uni(2, true), u4 = uni(4, true), u2Old = uni(2, false);
+    std::printf("# multisample unison: 2 voices %+.1f dB, 4 voices %+.1f dB (own law, 2 voices %+.1f dB)\n", u2 - u1, u4 - u1, u2Old - u1);
+    expect(std::fabs(u2 - u1 - 4.7) < 1.5 && std::fabs(u4 - u1 - 6.3) < 1.5 && u2Old - u1 < 1.0, "a mapped multisample's unison keeps its voices' level (own law unchanged)");
   }
 
   std::error_code ec;

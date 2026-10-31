@@ -10,7 +10,29 @@
 
 namespace gl::packs::plasma {
 
+float fxDistTable(int mode, float drive, float x);  // plasma_fxdist_dsp.cpp
+
 namespace {
+// Imported law for the waveshaper warps (19..32): the distortion module's shaper with the warp
+// amount as its drive, on the oscillator's full scale and without the module's output halving.
+// The shaper runs at every amount, 0 included (fitted and verified against the hosted plugin's
+// output on the saw at key 48: Sine Shaper at 0 lifts H1 by 1.7 dB, Tube at 100 % gives H1 +5.8,
+// H3 -4.1, H5 -8.9 dB re. the clean H1).
+constexpr float kWarpFull = 1.657f;
+inline float warpShapeLaw(int m, float a, float x) {
+  if (m == 29) {
+    // Sine Shaper: a sine of the driven input, folded three times by y (2 |y| - 4) (the last fold
+    // halved); g = a^2 + 0.05 (H5 of the saw within 0.2 dB at 100 %, the S-curve within 0.2 dB at 0)
+    const float g = a * a + 0.05f;
+    float y = -0.9671f * g * std::sin(x * (0.5f + 14.45f * g));
+    y *= 2.f * std::fabs(y) - 4.f;
+    y *= 2.f * std::fabs(y) - 4.f;
+    return y * (std::fabs(y) - 2.f);
+  }
+  if (m == 23 && a < 0.1f)  // Diode 2 below 10 %: the 10 % curve, 3.9 dB down at 0 (H1..H5 within 0.5 dB at 0)
+    return (0.638f + 3.62f * a) * 2.f * fxDistTable(warpDistMode(m), 0.1f, x * kWarpFull) / kWarpFull;
+  return 2.f * fxDistTable(warpDistMode(m), std::clamp(a, 0.f, 1.f), x * kWarpFull) / kWarpFull;
+}
 inline double frac(double x) { return x - std::floor(x); }
 inline float lerpf(float a, float b, float t) { return a + (b - a) * t; }
 inline float remapAt(const std::array<float, 257>& c, double x) {
@@ -67,7 +89,8 @@ float window(int shape, double t, float skew, float param) {  // t 0..1 over the
 
 OscVoice::OscVoice()
     : ola_(new float[2 * 2048]()), sphase_(new float[8 * 1024]()), prevMag_(new float[1024]()), work_(new cpx[2 * 2048]),
-      fmRing_(new float[2048]()), smag_(new float[1024]()), sfrq_(new float[1024]()), stmp_(new float[1024]()), sy_(new cpx[2048]) {}
+      fmRing_(new float[2048]()), smag_(new float[1024]()), sfrq_(new float[1024]()), stmp_(new float[1024]()),
+      sgl_(new float[1024]()), sgr_(new float[1024]()), sdp_(new float[1024]()), sy_(new cpx[2048]) {}
 
 void OscVoice::start(const OscSet& s, float phase, float randPhase, float randStart, int phaseMode, const double* memory, uint32_t seed,
                      int key, float vel) {
@@ -77,7 +100,10 @@ void OscVoice::start(const OscSet& s, float phase, float randPhase, float randSt
   vel_ = vel;
   lastMono_ = 0;
   for (int u = 0; u < kMaxUnison; ++u) {
-    const float rp = randPhase * rngUni(rng_);
+    // imported law: the random phase spreads evenly around the start phase over the amount squared
+    // (fitted and verified against the hosted plugin's output: one note's offset grows 0.0032 /
+    // 0.0128 / 0.051 cycle at 25 / 50 / 100 %; offsets over 20 notes at 100 % cover -0.39..+0.49)
+    const float rp = s.law ? randPhase * randPhase * (rngUni(rng_) - 0.5f) : randPhase * rngUni(rng_);
     phase_[u] = (phaseMode > 0 && memory) ? memory[u] : frac(static_cast<double>(phase) + rp);
     selfFb_[u] = 0;
     dirU_[u] = 1;
@@ -316,8 +342,10 @@ float OscVoice::wavetableSample(const OscSet& s, int u, double& ph, double inc, 
   for (int k = 0; k < 2; ++k) {
     const int m = modes[k];
     const float a = amt[k];
-    if (m <= 0 || (a <= 1e-6f && !(s.law && m == 16))) continue;
-    if (m == 13 && s.src) {
+    if (m <= 0 || (a <= 1e-6f && !(s.law && (m == 16 || (m >= 19 && m <= 32))))) continue;
+    if (m >= 19 && m <= 32 && s.law) {
+      x = warpShapeLaw(m, a, x);
+    } else if (m == 13 && s.src) {
       x = lerpf(x, remapAt(s.src->remap[2], (x + 1) * 0.5) * 2.f - 1.f, a);
     } else if (m == 16 && s.law) {
       // Imported law (J-203g, measured on the saw): a bipolar balance around 0.5; odd harmonics
@@ -345,20 +373,7 @@ float OscVoice::wavetableSample(const OscSet& s, int u, double& ph, double inc, 
       if (h >= 1) x -= mipRead(t, std::max(level, harmLevel(h)), fpos, smooth, p);
     } else if (m >= 19 && m <= 32) {
       float st = 0;
-      float ad = a;
-      if (s.law && (m == 19 || m == 32)) {
-        // Imported law (J-203g, measured on the saw at key 60, matching H1..H6): the source's tube and
-        // soft saturation warps are gentler over most of the knob; amount -> Plasma's depth
-        static constexpr float kTube[8][2] = {{0, 0}, {0.1f, 0.065f}, {0.25f, 0.1f}, {0.5f, 0.15f}, {0.75f, 0.2f}, {0.875f, 0.25f}, {1, 0.7f}, {1, 0.7f}};
-        static constexpr float kSoft[8][2] = {{0, 0}, {0.1f, 0.1f}, {0.25f, 0.21f}, {0.375f, 0.3f}, {0.5f, 0.4f}, {0.625f, 0.48f}, {0.75f, 0.555f}, {1, 0.675f}};
-        const auto& tb = m == 19 ? kTube : kSoft;
-        for (int i = 0; i < 7; ++i)
-          if (a <= tb[i + 1][0]) {
-            const float w = tb[i + 1][0] > tb[i][0] ? (a - tb[i][0]) / (tb[i + 1][0] - tb[i][0]) : 1.f;
-            ad = tb[i][1] + (tb[i + 1][1] - tb[i][1]) * w;
-            break;
-          }
-      }
+      const float ad = a;
       x = lerpf(x, shapeSample(warpDistMode(m), x, ad, (var[k] - 0.5f) * 2.f, nullptr, nullptr, st), std::min(1.f, ad * 4.f));
     } else if (m >= 58 && m <= 63 && s.law) {
       // Imported law (J-203g, measured: sine carrier, saw from oscillator B): AM keeps the carrier and
@@ -605,6 +620,10 @@ void OscVoice::spectralHop(const OscSet& s) {
   float* tmp = stmp_.get();
   int count = 0;
   const SpecSrc* sp = s.src ? s.src->spec.get() : nullptr;
+  // imported law: a stereo sample resynthesises each channel from its own magnitudes, the right
+  // channel keeping its phase lead over the left (fitted and verified against the hosted plugin's
+  // output: a stereo piano sample plays 2..14 dB of side signal where the mono sum played none)
+  const bool stereo = s.law && sp && !sp->magL.empty();
   if (sp && sp->frames > 0) {
     const double fpos = std::clamp(specPos_, 0.0, 1.0) * (sp->frames - 1);
     const int f0 = static_cast<int>(fpos);
@@ -613,6 +632,13 @@ void OscVoice::spectralHop(const OscSet& s) {
     const double ratio = std::exp2((s.pitch - 60.0) / 12.0);
     for (int k = 1; k < B; ++k) {
       const float a = sp->mag[static_cast<size_t>(f0) * B + k], b = sp->mag[static_cast<size_t>(f1) * B + k];
+      if (stereo) {
+        const size_t q0 = static_cast<size_t>(f0) * B + k, q1 = static_cast<size_t>(f1) * B + k;
+        const float m = std::max(1e-9f, a + (b - a) * t);
+        sgl_[count] = (sp->magL[q0] + (sp->magL[q1] - sp->magL[q0]) * t) / m;
+        sgr_[count] = (sp->magR[q0] + (sp->magR[q1] - sp->magR[q0]) * t) / m;
+        sdp_[count] = sp->dph[t < 0.5f ? q0 : q1];
+      }
       mag[count] = a + (b - a) * t;
       frq[count] = static_cast<float>(k * sp->rate / SpecSrc::kN * ratio);
       ++count;
@@ -781,6 +807,16 @@ void OscVoice::spectralHop(const OscSet& s) {
       if (b0 < 1 || b0 + 1 >= N / 2) continue;
       const float fr = bin - static_cast<float>(b0);
       const cpx c = std::polar(a, ph[i]);
+      if (stereo && i < B) {
+        // the gains stay within 4x the mid magnitude (a channel with the mid near zero)
+        const cpx cr = std::polar(a * std::min(4.f, sgr_[i]), ph[i] + sdp_[i]);
+        const cpx cl = c * std::min(4.f, sgl_[i]);
+        XL[b0] += cl * (1 - fr) * s.pl[u];
+        XL[b0 + 1] += cl * fr * s.pl[u];
+        XR[b0] += cr * (1 - fr) * s.pr[u];
+        XR[b0 + 1] += cr * fr * s.pr[u];
+        continue;
+      }
       XL[b0] += c * (1 - fr) * s.pl[u];
       XL[b0 + 1] += c * fr * s.pl[u];
       XR[b0] += c * (1 - fr) * s.pr[u];
@@ -843,6 +879,10 @@ void OscVoice::spectral(const OscSet& s, const float* fm, float& l, float& r) {
   for (int k = 0; k < 2; ++k) {
     const int m = modes[k];
     const float a = std::clamp(amt[k], 0.f, 1.f);
+    if (m >= 19 && m <= 32 && s.law) {
+      xl = warpShapeLaw(m, a, xl), xr = warpShapeLaw(m, a, xr);
+      continue;
+    }
     if (a <= 1e-6f) continue;
     if (m >= 19 && m <= 32) {
       float st = 0;
@@ -890,6 +930,12 @@ void OscVoice::tick(const OscSet& s, const float* fm, float& l, float& r, float&
     for (int k = 0; k < 2 && s.type != OscSpectral; ++k) {
       const int m = modes[k];
       const float a = std::clamp(amt[k] + (s.type == OscGranular ? grainWarp_[k] : 0.f), 0.f, 1.f);  // + the grains' random warp
+      if (m >= 19 && m <= 32 && s.law) {
+        // a mapped multisample meets the shaper before its fixed zone gain
+        const float g = s.type == OscMultisample && s.msLaw ? kMsGain : 1.f;
+        l = warpShapeLaw(m, a, l / g) * g, r = warpShapeLaw(m, a, r / g) * g;
+        continue;
+      }
       if (m <= 0 || a <= 1e-6f) continue;
       if (m == 17 || m == 18) {
         const float c = static_cast<float>(1.0 - std::exp(-kPi2 * 20000.0 * std::pow(m == 17 ? 0.001 : 1.0, m == 17 ? a : 1.0 - a) / s.srv));

@@ -743,6 +743,45 @@ int main() {
            "synced LFO rates pick the source's divisions");
   }
 
+  // ---- routes to the main tuning move the source's -64..+64 semitone knob and stop at its ends
+  // (measured with the fixed source at key 60: -18.75 % -> 65.4 Hz, 9.375 % -> 523.3 Hz, bipolar
+  // 30 % -> 793.1 Hz, 30 % on a knob at +32 semitones -> 10.55 kHz)
+  {
+    PluginState st;
+    pl::ImportReport rep;
+    auto tuned = [&](double amt, bool bip, double knob) {
+      Json pp = bip ? obj({{"kParamAmount", num(amt)}, {"kParamBipolar", num(1)}}) : obj({{"kParamAmount", num(amt)}});
+      Json slot = obj({{"destModuleID", num(0)}, {"destModuleParamID", num(1)}, {"destModuleParamName", str("kParamMasterTuning")},
+                       {"destModuleTypeString", str("Global")}, {"plainParams", pp}, {"source", arr({num(38), num(0)})}});
+      if (!import(obj({{"Oscillator0", plain({{"kParamEnable", num(1)}})}, {"Global0", plain({{"kParamMasterTuning", num(knob)}})}, {"ModSlot0", slot}}), st,
+                  rep, cache))
+        return -1.0;
+      return frequency(render(st, 60, 0.5, 0.5), 0.1, 0.45);
+    };
+    const double down = tuned(-18.75, false, 0.5), up = tuned(9.375, false, 0.5), bip = tuned(30, true, 0.5), top = tuned(30, false, 0.75);
+    std::printf("# main tuning routes: %.1f %.1f %.1f %.1f Hz\n", down, up, bip, top);
+    expect(std::fabs(down / 65.41 - 1) < 0.01 && std::fabs(up / 523.25 - 1) < 0.01 && std::fabs(bip / 793.1 - 1) < 0.01,
+           "a route to the main tuning moves 128 semitones per 100 %");
+    expect(std::fabs(top / 10548 - 1) < 0.02, "the main tuning stops at +64 semitones");
+  }
+
+  // ---- random phase spreads around the start phase over the amount squared (two copies of one
+  // oscillator stay within 0.5 dB of in phase at 25 %: 1/32 cycle each way, where the classic law spreads a quarter cycle)
+  {
+    PluginState st;
+    pl::ImportReport rep;
+    auto pair = [&](double rnd) {
+      Json wt = obj({{"plainParams", obj({{"kParamRandomPhase", num(rnd)}})}});
+      if (!import(obj({{"Oscillator0", obj({{"plainParams", obj({{"kParamEnable", num(1)}})}, {"WTOsc0", wt}})},
+                       {"Oscillator1", obj({{"plainParams", obj({{"kParamEnable", num(1)}})}, {"WTOsc1", wt}})}}),
+                  st, rep, cache))
+        return 99.0;
+      return rmsDb(render(st, 48, 0.4, 0.4), 0.1, 0.35);
+    };
+    const double fixed = pair(0), spread = pair(25);
+    expect(std::fabs(spread - fixed) < 0.5, std::string("random phase 25 % keeps two copies close to in phase (" + std::to_string(spread - fixed) + " dB)").c_str());
+  }
+
   // ---- old states pad the new parameters with their defaults (noise tone off, even unison mix)
   {
     PluginState st = defaultPluginState(pl::kType);

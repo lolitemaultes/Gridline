@@ -156,7 +156,12 @@ std::shared_ptr<const Aux> buildAux(const PluginState& state) {
         sp->rate = s.sampleRate;
         sp->frames = n > SpecSrc::kN ? static_cast<int>((n - SpecSrc::kN) / SpecSrc::kHop) + 1 : 1;
         sp->mag.assign(static_cast<size_t>(sp->frames) * SpecSrc::kBins, 0.f);
-        std::vector<cpx> buf(SpecSrc::kN);
+        std::vector<cpx> buf(SpecSrc::kN), bl, br;
+        const bool st = !s.mono();
+        if (st) {
+          bl.resize(SpecSrc::kN), br.resize(SpecSrc::kN);
+          sp->magL.assign(sp->mag.size(), 0.f), sp->magR.assign(sp->mag.size(), 0.f), sp->dph.assign(sp->mag.size(), 0.f);
+        }
         float peak = 1e-9f;
         for (int f = 0; f < sp->frames; ++f) {
           for (int i = 0; i < SpecSrc::kN; ++i) {
@@ -164,12 +169,23 @@ std::shared_ptr<const Aux> buildAux(const PluginState& state) {
             const float v = j < n ? (s.mono() ? s.left[j] : 0.5f * (s.left[j] + s.right[j])) : 0.f;
             const float w = 0.5f - 0.5f * std::cos(static_cast<float>(kPi2) * i / SpecSrc::kN);
             buf[static_cast<size_t>(i)] = cpx(v * w, 0);
+            if (st) {
+              bl[static_cast<size_t>(i)] = cpx(j < n ? s.left[j] * w : 0.f, 0);
+              br[static_cast<size_t>(i)] = cpx(j < n ? s.right[j] * w : 0.f, 0);
+            }
           }
           fft2048().forward(buf.data());
+          if (st) fft2048().forward(bl.data()), fft2048().forward(br.data());
           for (int b = 0; b < SpecSrc::kBins; ++b) {
+            const size_t q = static_cast<size_t>(f) * SpecSrc::kBins + static_cast<size_t>(b);
             const float mg = std::abs(buf[static_cast<size_t>(b)]) * (4.0f / SpecSrc::kN);
-            sp->mag[static_cast<size_t>(f) * SpecSrc::kBins + static_cast<size_t>(b)] = mg;
+            sp->mag[q] = mg;
             peak = std::max(peak, mg);
+            if (st) {
+              sp->magL[q] = std::abs(bl[static_cast<size_t>(b)]) * (4.0f / SpecSrc::kN);
+              sp->magR[q] = std::abs(br[static_cast<size_t>(b)]) * (4.0f / SpecSrc::kN);
+              sp->dph[q] = std::arg(br[static_cast<size_t>(b)] * std::conj(bl[static_cast<size_t>(b)]));
+            }
           }
         }
         x.spec = sp;
@@ -1568,6 +1584,17 @@ class PlasmaGen final : public Generator {
   }
 
   // ---------------------------------------------------------------- oscillator settings
+  // main tuning in semitones (the cents knob; Transpose holds the whole semitones). Imported matrix
+  // law: a route moves the source's main tuning knob, which spans -64..+64 semitones, and the sum
+  // stops at the ends of that range (fitted and verified against the hosted plugin's output: a fixed
+  // source at -18.75 % plays two octaves down, 3 % plays 3.84 semitones up, 30 % on +32 stops at +64)
+  double tuneSemis(const Note& n) const {
+    const double cents = G(G_MasterTune) / 100.0;
+    const int d = destOf_[static_cast<size_t>(G_MasterTune)];
+    if (!modLaw_ || d < 0 || n.off[d] == 0) return cents;
+    const double base = 0.5 + (static_cast<double>(G(G_Transpose)) + cents) / 128.0;
+    return cents + 128.0 * (std::clamp(base + static_cast<double>(n.off[d]), 0.0, 1.0) - base);
+  }
   double oscPitch(const Note& n, int o) const {
     const bool track = V(&n, oscP(o, O_PitchTrack)) >= 0.5f;
     double p = track ? n.pitch : 60.0;
@@ -1581,7 +1608,7 @@ class PlasmaGen final : public Generator {
       semi = oct * 12 + scaleBuf_[static_cast<size_t>(idx)];
     }
     p += std::round(V(&n, oscP(o, O_Octave))) * 12.0 + semi + V(&n, oscP(o, O_Fine)) / 100.0 + V(&n, oscP(o, O_Coarse));
-    p += bendSemis(n) + G(G_MasterTune) / 100.0 + 12.0 * std::log2(std::max(1.f, G(G_ConcertA)) / 440.0);
+    p += bendSemis(n) + tuneSemis(n) + 12.0 * std::log2(std::max(1.f, G(G_ConcertA)) / 440.0);
     const bool vc = G(G_VcA + o) >= 0.5f;
     if (vc) p += n.vc.detune * 0.5 + n.rndDet / 100.0;
     return p;
@@ -1713,7 +1740,11 @@ class PlasmaGen final : public Generator {
       s.pr[u] = g * r * pr0;
       gsum += g * g;
     }
-    const float norm = altMix && U > 1 ? 1.f : gsum > 0 ? 1.f / std::sqrt(gsum) : 1.f;
+    float norm = altMix && U > 1 ? 1.f : gsum > 0 ? 1.f / std::sqrt(gsum) : 1.f;
+    // mapped law: a multisample's unison voices skip the stack's level drop, so two voices play
+    // 6.7 dB and sixteen 10.2 dB over a wavetable's stack (fitted and verified against the hosted
+    // plugin's output on three maps, any blend or velocity)
+    if (U > 1 && s.type == OscMultisample && G(tailP(T_MsLaw)) >= 0.5f) norm *= std::pow(10.f, (6.2f + 0.25f * static_cast<float>(U)) / 20.f);
     for (int u = 0; u < U; ++u) s.pl[u] *= norm, s.pr[u] *= norm;
     s.wtPos = V(&n, oscP(o, O_WtPos));
     s.uniWt = V(&n, oscP(o, O_UniWtPos));
@@ -1840,7 +1871,7 @@ class PlasmaGen final : public Generator {
     c.subShape = static_cast<int>(V(&n, subP(S_Shape)));
     c.subLaw = G(tailP(T_OscLaw)) >= 0.5f;
     const double subPitch = (V(&n, subP(S_PitchTrack)) >= 0.5f ? n.pitch : 60.0) + std::round(V(&n, subP(S_Octave))) * 12.0 + V(&n, subP(S_Coarse)) + bendSemis(n) +
-                            G(G_MasterTune) / 100.0 + (G(G_VcS) >= 0.5f ? n.vc.detune * 0.5 + n.rndDet / 100.0 : 0.0);
+                            tuneSemis(n) + (G(G_VcS) >= 0.5f ? n.vc.detune * 0.5 + n.rndDet / 100.0 : 0.0);
     c.subInc = 440.0 * std::exp2((subPitch - 69.0) / 12.0) / srv_;
     const int nType = static_cast<int>(V(&n, noiseP(N_Type)));
     const auto& fnz = factoryNoises();
