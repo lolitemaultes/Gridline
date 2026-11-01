@@ -154,8 +154,11 @@ std::vector<Place> layoutClips(const std::vector<Tick>& lengths, int track, Tick
 // J-97: whether a channel's name was given automatically, so replacing its
 // content renames it: empty, the instrument's name (`pluginName`, how new
 // channels are named), or the stem of its sample (`oldData`, a file path).
-// A name the user typed stays.
+// A name the user typed stays. J-213: a numbered instrument name ("Sampler #2",
+// as cloned channels are named) is automatic too.
 bool autoChannelName(const std::string& name, const std::string& pluginName, const std::string& oldData);
+// J-213: `name` is `base` or `base` followed by " #<number>".
+bool numberedName(const std::string& name, const std::string& base);
 
 // J-97: how a plugin's state data holds its sample, for dropped audio files:
 // Whole = the data is the file path (Sampler, Kerf, Granular, Tercet's custom

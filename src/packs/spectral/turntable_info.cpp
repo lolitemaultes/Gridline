@@ -1,5 +1,7 @@
 // Gridline — "spectral" pack: Turntable (gl.turntable) catalogue entry and
-// factory presets.
+// factory presets. Ranges and defaults follow the reference deck (its stored
+// internal values, linearly: Speed 1 = the sample's own speed, Turns 0 = no
+// extra revolution); the note settings are Gridline's own.
 #include "turntable.h"
 
 namespace gl::packs::spectral {
@@ -36,6 +38,10 @@ PluginInfo turntableInfo() {
   p.params[TtNotes] = ch("Notes", {"Off", "Motor", "Cue + motor"}, 2);
   p.params[TtKeyTrack] = tog("Key track", 1);
   p.params[TtCue] = lin("Cue", "%", 0, 1, 0);
+  p.params[TtTimecode] = ch("Timecode", {"Off", "Vinyl 1 A", "Vinyl 1 B", "CD 1", "Vinyl 2 A", "Vinyl 2 B", "Vinyl 3 A", "Vinyl 3 B", "CD 2"}, 0);
+  p.params[TtRiaa] = tog("Phono preamp", 0);
+  p.params[TtZoom] = tog("Large editor", 0);
+  p.params[TtEmpty] = tog("Empty deck", 0);
   p.presets = {
       {"Deck", {}},
       {"Spinning deck", V{{TtTransport, 2.f}, {TtNotes, 0.f}}},
@@ -43,7 +49,7 @@ PluginInfo turntableInfo() {
       {"Quick hand", V{{TtAccel, 0.8f}, {TtSmooth1, 0.1f}, {TtSmooth2, 0.6f}, {TtSense, 0.75f}}},
       {"Tape stop keys", V{{TtNotes, 1.f}, {TtAccel, 0.08f}, {TtKeyTrack, 0.f}}},
   };
-  p.editorWidth = 496;
+  p.editorWidth = 470;
   return p;
 }
 

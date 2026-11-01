@@ -1,0 +1,7 @@
+<!-- Gridline original (GPL-3.0), drawn on the Lucide 24-unit grid and stroke rules: track icon: one line splitting in three -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M3 12 L10.5 12" />
+  <path d="M10.5 12 C14 12 15 4.5 21 4.5" />
+  <path d="M10.5 12 L21 12" />
+  <path d="M10.5 12 C14 12 15 19.5 21 19.5" />
+</svg>

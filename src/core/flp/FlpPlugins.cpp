@@ -120,6 +120,8 @@ void importPlugins(Context& c) {
         ch.mixerTrack = t->id;
         s.channels.push_back(ch);
         c.report.counts["slot instruments moved to channels"]++;
+        c.slotChannels[{static_cast<int>(i), static_cast<int>(k)}] = ch.id;  // J-206: its automation follows it
+        c.slotPlugins[{static_cast<int>(i), static_cast<int>(k)}] = std::move(m);
         continue;
       }
       t->slots[k].plugin = m.state;

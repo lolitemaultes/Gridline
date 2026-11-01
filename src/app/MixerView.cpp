@@ -151,7 +151,7 @@ void effectList(App& a, ObjectId track, int slot, const std::string& current) {
       ui::Label(cat.c_str());
     }
     if (ImGui::Selectable(p.name.c_str(), p.type == current)) {
-      a.doc.setSlotPlugin(track, slot, p.type);
+      if (a.doc.setSlotPlugin(track, slot, p.type)) pui::pluginReplaced(PluginTarget{track, slot});  // J-213
       a.fxEditor = {track, slot};
     }
   }
@@ -537,20 +537,28 @@ void drawStrip(App& a, size_t i, ImVec2 p, float stripW, float stripH, const Str
   std::string num = i == 0 ? "M" : std::to_string(i);
   dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(p.x + 6, p.y + 6), isSel ? P.hot : P.textFaint, num.c_str());
   float numW = a.fontMono->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, num.c_str()).x;
-  if (t.icon > 0) trackicons::draw(dl, t.icon, ImVec2(std::round(p.x + 6 + numW + 9), p.y + 12), 11.0f, isSel ? P.hot : P.textDim);
+  // J-211: the icon sits in the plate's top right corner in a box of its own
+  // (never on the number, the name or the strip edge, whatever the width).
+  float rightX = p.x + stripW - 6;
+  if (t.icon > 0) {
+    const float box = 14.0f;
+    trackicons::draw(dl, t.icon, ImVec2(std::round(p.x + stripW - 5 - box * 0.5f), std::round(p.y + 4 + box * 0.5f)), box, isSel ? P.hot : P.textDim);
+    rightX = p.x + stripW - 5 - box - 3;
+  }
   int fxCount = 0;
   for (const auto& sl : t.slots) fxCount += !sl.plugin.empty();
-  // Right of the number: the track's own latency when it has some, else its effect count.
-  float rightX = p.x + stripW - 6;
-  if ((latOwn > 0 || fxCount) && (t.icon == 0 || stripW >= 60)) {
+  // Right of the number: the track's own latency when it has some, else its effect count (when it fits).
+  if (latOwn > 0 || fxCount) {
     std::string fx = latOwn > 0 ? latencyLabel(latOwn, a.engine.sampleRate()) : std::to_string(fxCount) + "fx";
     float fw = a.fontMono->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, fx.c_str()).x;
-    dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(p.x + stripW - fw - 6, p.y + 6), latOwn > 0 ? P.accent : P.textDim, fx.c_str());
-    rightX = p.x + stripW - fw - 10;
+    if (rightX - fw >= p.x + 6 + numW + 4) {
+      dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(rightX - fw, p.y + 6), latOwn > 0 ? P.accent : P.textDim, fx.c_str());
+      rightX -= fw + 4;
+    }
   }
   if (i > 0 && t.input >= 0) {  // J-8: the track's audio input, after the number (when it fits)
     std::string in = "in" + (t.inputStereo ? std::to_string(t.input + 1) + "-" + std::to_string(t.input + 2) : std::to_string(t.input + 1));
-    const float x0 = p.x + 6 + numW + 5 + (t.icon > 0 ? 16.0f : 0.0f);
+    const float x0 = p.x + 6 + numW + 5;
     const float w = a.fontMono->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, in.c_str()).x;
     if (x0 + w <= rightX) dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(x0, p.y + 6), t.armed ? P.danger : P.textDim, in.c_str());
   }
@@ -799,10 +807,11 @@ void drawRoutingOverview(App& a) {
     const bool selT = t.id == a.selMixer || v.sel.count(t.id);
     dl->AddRectFilled(q, ImVec2(q.x + nodeW, q.y + nodeH), selT ? P.surface600 : hov ? P.surface700 : P.surface800, theme::kRadius);
     dl->AddRectFilled(q, ImVec2(q.x + 4, q.y + nodeH), theme::rgb(t.color), theme::kRadius, ImDrawFlags_RoundCornersLeft);
-    if (t.icon) trackicons::draw(dl, t.icon, ImVec2(q.x + 14, q.y + nodeH * 0.5f), 11, P.textDim);
+    if (t.icon) trackicons::draw(dl, t.icon, ImVec2(q.x + 16, q.y + nodeH * 0.5f), 14, P.textDim);  // J-211: a 14 px box clear of the colour bar
     std::string label = (i == 0 ? std::string("M  ") : std::to_string(i) + "  ") + mixerTrackName(s, i);
-    theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption, ImVec2(q.x + (t.icon ? 24.0f : 10.0f), q.y + 5), nodeW - 30, t.muted || t.disabled ? P.textFaint : P.text,
-                        label.c_str());
+    const float lx = q.x + (t.icon ? 27.0f : 10.0f);
+    theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption, ImVec2(lx, q.y + 5), q.x + nodeW - (t.disabled ? 26.0f : 6.0f) - lx,
+                        t.muted || t.disabled ? P.textFaint : P.text, label.c_str());
     if (t.disabled) dl->AddText(a.fontMono, 9.0f, ImVec2(q.x + nodeW - 22, q.y + 7), P.danger, "OFF");
     ImGui::PopID();
   }
@@ -1376,8 +1385,8 @@ void drawMixer(App& a) {
         dl->AddRectFilled(ImVec2(p.x, p.y + 2), ImVec2(p.x + 4, p.y + 20), theme::rgb(sel->color), 2);
         float nx = p.x + 12;
         if (sel->icon) {
-          trackicons::draw(dl, sel->icon, ImVec2(p.x + 20, p.y + 11), 14, P.text);
-          nx += 20;
+          trackicons::draw(dl, sel->icon, ImVec2(p.x + 21, p.y + 11), 16, P.text);
+          nx += 22;
         }
         std::string role = si == 0 ? "Master" : "Insert " + std::to_string(si);
         if (role == mixerTrackName(s, si)) role.clear();  // don't repeat the default name

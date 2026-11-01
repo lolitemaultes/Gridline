@@ -63,6 +63,10 @@ struct PlaylistGeometry {
     float x, y;
   };
   std::vector<Curve> curves;
+  // J-208: the picker's "+" (new pattern) button centre (0 0 when not drawn) and the
+  // track a dragged plugin would land on (-1 = none this frame).
+  float plusX = 0, plusY = 0;
+  int dropTrack = -1;
   bool valid = false;
 };
 const PlaylistGeometry& playlistGeometry();

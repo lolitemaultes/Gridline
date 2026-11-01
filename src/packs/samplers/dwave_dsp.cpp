@@ -12,6 +12,7 @@
 #include "../synths/hex_fx.h"
 #include "dwave.h"
 #include "samplers.h"
+#include "../../engine/SampleTap.h"
 
 namespace gl::packs::samplers {
 
@@ -309,6 +310,7 @@ class WaveProgramGen final : public Generator {
     const SamplePtr& sp = a_->samples[static_cast<size_t>(zi)];
     *v = Voice{};
     v->on = true, v->id = id, v->zone = zi, v->note = note, v->vel = vel, v->flFine = flFine, v->age = ++clock_;
+    tap::play(sp.get());  // J-219: Track Receipt
     g_seed = g_seed * 1664525u + 1013904223u;
     v->rnd = (g_seed >> 8) / 16777216.0;
     v->glideTarget = note;
@@ -453,10 +455,13 @@ class WaveProgramGen final : public Generator {
     if (ls > le) std::swap(ls, le);
     const bool hasLoop = le > ls;
     const double s0 = v.dest[25], s1 = v.dest[26], s2 = v.dest[27], dry = v.dest[28];
+    tap::Run run;  // J-219: Track Receipt coverage
+    if (tap::active()) run.begin(sp.get());
     for (int i = 0; i < n && v.on; ++i) {
       const bool looping = hasLoop && (z.loopMode == 2 || z.loopMode == 4 || (z.loopMode == 3 && v.amp.st != 4));
       double x[2] = {0, 0};
       if (sp && !v.ended) {
+        run.at(v.pos);
         const int64_t ip = static_cast<int64_t>(std::floor(v.pos));
         const double fr = v.pos - static_cast<double>(ip);
         const bool lp = looping && z.loopMode != 4;

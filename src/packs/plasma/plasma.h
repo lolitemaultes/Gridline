@@ -278,7 +278,9 @@ inline constexpr int kFxBase = kModBase + kModSlots * M_Count;
 // with their defaults (J-201: noise tone, unison mix, filter drive mode).
 // J-203a: filter key-track centre, multisample level law. J-203g: wavetable / warp law.
 // J-203i: LFO law (rise / delay as times, fixed-time smoothing).
-enum TailP : int { T_NoiseTone = 0, T_UniMix, T_DriveMode, T_KeyCentre, T_MsLaw, T_EnvLaw, T_OscLaw, T_ModLaw, T_Pad1, T_Pad2, T_LfoLaw, T_BusChain, T_GranLaw, T_RawA, T_RawB, T_RawC, T_RawN, T_RawS, T_RawF1, T_RawF2, T_Count };
+// J-215: the noise oscillator's key range (and FOLD: keys outside it wrap into it), noise pitch law.
+enum TailP : int { T_NoiseTone = 0, T_UniMix, T_DriveMode, T_KeyCentre, T_MsLaw, T_EnvLaw, T_OscLaw, T_ModLaw, T_Pad1, T_Pad2, T_LfoLaw, T_BusChain, T_GranLaw, T_RawA, T_RawB, T_RawC, T_RawN, T_RawS, T_RawF1, T_RawF2,
+                 T_NKeyMin, T_NKeyMax, T_NKeyFold, T_NoiseLaw, T_Count };
 // LFO rise / delay on the imported LFO law: 16 v^2 (seconds on a free LFO, beats on a synced one).
 inline double lfoLawTime(double v) { return 16.0 * v * v; }
 inline constexpr int kTailBase = kFxBase + kFxSlots * X_Count;
@@ -404,6 +406,9 @@ struct ArpSlot {
   float gate = 1.0f, chance = 1.0f;
   bool chancePre = false;
   bool retrigLaunch = true, retrigRate = false, retrigNote = false, retrigFirst = false;
+  // imported sounds: a launch plays its first step at once and the later steps on the song grid
+  // (off: Plasma's own rule, the grid starts at the launch)
+  bool srcGrid = false;
   int retrigDiv = 6;
   bool velo = false, veloRetrig = false;
   float veloDecay = 0.5f, veloTarget = 0.5f;
@@ -415,7 +420,14 @@ struct ArpSlot {
   float patTime = 1;
   std::string name;
 };
-struct ClipNote { float start = 0, len = 0.25f; int key = 60; float vel = 0.8f; bool mute = false; };
+struct ClipNote {
+  float start = 0, len = 0.25f; int key = 60; float vel = 0.8f; bool mute = false;
+  // per-note chance and random variation (0..1 each): the note plays when a roll is under
+  // `chance`; with probability octCh it moves by trunc(16 oct - 8) octaves, with probability
+  // semiCh by trunc(24 semi - 12) semitones; velRand spreads the velocity by +-velRand
+  float chance = 1, octCh = 0, oct = 0.5f, semiCh = 0, semi = 0.5f, velRand = 0, relVel = 0.5f;
+  bool plain() const { return chance >= 1 && octCh <= 0 && semiCh <= 0 && velRand == 0 && relVel == 0.5f; }
+};
 struct ClipLane { int target = -1; std::vector<std::pair<float, float>> pts; };  // automation (parameter index; beat, value)
 struct ClipSlot {
   std::vector<ClipNote> notes;
@@ -430,6 +442,10 @@ struct ClipSlot {
   int launchQuant = 6;   // division index
   bool retrig = true, veloTrig = false, noteGate = false;
   float startOffset = 0; // beats
+  // keyboard play as in imported sounds: a Static clip holds the notes at its start for as
+  // long as the key is held, a Poly span clip plays one transposed copy per held key, and with
+  // velocity trigger a note's velocity is scaled by twice the key's (off: Plasma's own rules)
+  bool srcSpan = false;
   std::string name;
 };
 struct VoiceStep { float pan = 0, detune = 0, cutoff = 0, env = 0, mod1 = 0, mod2 = 0; };
@@ -464,6 +480,9 @@ struct Model {
   std::array<ClipSlot, kClipSlots> clip;
   int clipActive = 0;
   bool clipPoly = false;
+  // clips (bit per slot) that play along with the song position while the transport runs,
+  // the keys playing the sound as usual (imported sounds with launched clips; 0 = none)
+  uint32_t clipRun = 0;
   std::array<VoiceStep, 8> voiceSeq{};
   std::array<std::string, kMacros> macroName;
   std::string tuning;                    // .tun text (empty = 12-TET)

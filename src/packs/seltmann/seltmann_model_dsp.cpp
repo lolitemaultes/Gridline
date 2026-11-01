@@ -21,16 +21,32 @@ bool Chop::operator==(const Chop& o) const {
 }
 bool Step::operator==(const Step& o) const {
   return src == o.src && slot == o.slot && ties == o.ties && reverse == o.reverse && pitch == o.pitch && gain == o.gain &&
-         length == o.length && stutter == o.stutter && offset == o.offset;
+         length == o.length && stutter == o.stutter && offset == o.offset && beats == o.beats;
 }
 bool Pattern::operator==(const Pattern& o) const {
   return name == o.name && unitBeats == o.unitBeats && steps == o.steps && slots == o.slots;
 }
-double Pattern::beats() const {
-  double b = 0;
-  for (const auto& s : steps) b += (1 + s.ties) * unitBeats;
-  return b;
+bool Pattern::ownLengths() const {
+  for (const auto& s : steps)
+    if (s.beats > 0) return true;
+  return false;
 }
+double Pattern::stepsBeats() const {
+  // whole units and own lengths apart, so a sequence of default steps adds up exactly as before
+  double units = 0, own = 0;
+  for (const auto& s : steps) {
+    if (s.beats > 0) own += s.beats;
+    else units += 1 + s.ties;
+  }
+  return units * unitBeats + own;
+}
+double Pattern::beats(int beatsPerBar) const {
+  const double b = stepsBeats();
+  if (!ownLengths()) return b;
+  const double bar = std::max(1, beatsPerBar);
+  return std::max(1.0, std::ceil(b / bar - 1e-6)) * bar;
+}
+double cycleBeats(const Model& m) { return m.pattern.beats(m.grid.beatsPerBar); }
 
 // ------------------------------------------------------------------ divisions
 double divisionBeats(int div, int bpb) {
@@ -562,7 +578,7 @@ bool isNaturalOrder(const Model& m) {
   const int n = static_cast<int>(m.slices.size());
   int next = 0;
   for (const auto& st : m.pattern.steps) {
-    if (st.src == kRest) return false;
+    if (st.src == kRest || st.beats > 0) return false;
     if (stepSlice(m.pattern, st, n) != next) return false;
     ++next;
   }
@@ -616,7 +632,7 @@ bool splitRegion(Model& m, int x, int parts) {
   // the step grid: every step on x must divide into `parts` whole units
   int64_t f = 1;
   for (const auto& st : m.pattern.steps)
-    if (st.src == x) {
+    if (st.src == x && st.beats <= 0) {  // (a step with its own length shares out its beats)
       const int64_t L = 1 + st.ties;
       const int64_t need = parts / gcd64(L, parts);
       f = f / gcd64(f, need) * need;  // lcm
@@ -665,6 +681,7 @@ bool splitRegion(Model& m, int x, int parts) {
       // whole units shared out (exact when the grid was refined; else as even as possible, at least one)
       const int u0 = L * p / parts, u1 = L * (p + 1) / parts;
       s.ties = std::max(1, u1 - u0) - 1;
+      if (st.beats > 0) s.beats = std::max(kMinStepBeats, st.beats / parts);  // J-214: its own length, shared out
       s.offset = p == 0 ? std::min(0.9f, st.offset * static_cast<float>(parts)) : 0.0f;
       if (s.offset >= 0.9f) s.offset = 0;
       out.push_back(s);
@@ -691,7 +708,7 @@ bool mergeRegion(Model& m, int x) {
   merged.fadeOut = m.slices[static_cast<size_t>(hi)].fadeOut;
   m.slices[static_cast<size_t>(lo)] = merged;
   m.slices.erase(m.slices.begin() + hi);
-  auto plain = [](const Step& s) { return !s.reverse && s.stutter == 1 && s.length >= 0.999f && s.offset < 0.001f; };
+  auto plain = [](const Step& s) { return !s.reverse && s.stutter == 1 && s.length >= 0.999f && s.offset < 0.001f && s.beats <= 0; };
   std::vector<Step> out;
   out.reserve(m.pattern.steps.size());
   const auto& in = m.pattern.steps;
@@ -796,6 +813,29 @@ bool setSlicePitch(Model& m, int slice, float semis) {
   float& p = m.slices[static_cast<size_t>(slice)].pitch;
   if (v == p) return false;
   p = v;
+  return true;
+}
+
+bool setStepPitch(Model& m, int step, float semis) {
+  if (step < 0 || step >= static_cast<int>(m.pattern.steps.size()) || !std::isfinite(semis)) return false;
+  const float v = std::clamp(std::round(semis * 100.0f) / 100.0f, -kSlicePitchRange, kSlicePitchRange);
+  float& p = m.pattern.steps[static_cast<size_t>(step)].pitch;
+  if (v == p) return false;
+  p = v;
+  return true;
+}
+
+bool setStepBeats(Model& m, int step, double beats) {
+  if (step < 0 || step >= static_cast<int>(m.pattern.steps.size()) || !std::isfinite(beats)) return false;
+  Step& s = m.pattern.steps[static_cast<size_t>(step)];
+  double v = 0;
+  if (beats > 0) {
+    v = std::round(std::clamp(beats, kMinStepBeats, kMaxStepBeats) * 1e6) / 1e6;
+    if (std::fabs(v - (1 + s.ties) * m.pattern.unitBeats) < 1e-6) v = 0;  // its default length: no own length
+  }
+  if (v == s.beats) return false;
+  s.beats = v;
+  if (m.preset.empty() && m.pattern.name == "Straight") m.pattern.name = kEditedName;
   return true;
 }
 
@@ -944,7 +984,12 @@ std::string stepToText(const Step& s) {
   if (s.length < 0.999f) mods += (mods.empty() ? "" : ":") + std::string("l") + std::to_string(static_cast<int>(std::lround(s.length * 100)));
   if (s.stutter > 1) mods += (mods.empty() ? "" : ":") + std::string("x") + std::to_string(s.stutter);
   if (s.offset > 0.001f) mods += (mods.empty() ? "" : ":") + std::string("o") + std::to_string(static_cast<int>(std::lround(s.offset * 100)));
-  if (!mods.empty() && s.src != kRest) t += ":" + mods;
+  if (s.src == kRest) mods.clear();
+  if (s.beats > 0) {  // J-214: the step's own length in the sequence (rests too)
+    std::snprintf(b, sizeof b, "b%.10g", s.beats);
+    mods += (mods.empty() ? "" : ":") + std::string(b);
+  }
+  if (!mods.empty()) t += ":" + mods;
   for (int i = 0; i < s.ties; ++i) t += " ~";
   return t;
 }
@@ -1016,6 +1061,7 @@ bool patternFromText(const std::string& text, Pattern& p, std::string* err) {
         case 'l': s.length = static_cast<float>(std::clamp(v / 100.0, 0.05, 1.0)); break;
         case 'x': s.stutter = std::clamp(static_cast<int>(std::lround(v)), 1, 16); break;
         case 'o': s.offset = static_cast<float>(std::clamp(v / 100.0, 0.0, 0.9)); break;
+        case 'b': s.beats = v > 0 ? std::clamp(v, kMinStepBeats, kMaxStepBeats) : 0.0; break;  // J-214
         default:
           if (err) *err = std::string("unknown option '") + c + "' in " + tok;
           return false;
@@ -1042,23 +1088,28 @@ int stepSlice(const Pattern& p, const Step& s, int count) {
   return s.src % count;
 }
 
-namespace {
-double unitStart(const Pattern& p, int i) {
-  double u = 0;
-  for (int k = 0; k < i && k < static_cast<int>(p.steps.size()); ++k) u += 1 + p.steps[static_cast<size_t>(k)].ties;
-  return u;
+double swingDelay(const Pattern& p, double startBeats, double swing) {
+  if (swing <= 0 || p.unitBeats > 1.0 + 1e-9 || p.unitBeats <= 0) return 0;
+  const double q = startBeats / p.unitBeats, r = std::round(q);
+  if (std::fabs(q - r) > 1e-6 || static_cast<long long>(r) % 2 != 1) return 0;  // off the unit grid, or an even unit
+  return std::clamp(swing, 0.0, 1.0) * 0.5 * p.unitBeats;
 }
-}  // namespace
 
 double stepStart(const Pattern& p, int i, double swing) {
-  const double u = unitStart(p, i);
-  double t = u * p.unitBeats;
-  if (swing > 0 && p.unitBeats <= 1.0 + 1e-9 && static_cast<long long>(std::llround(u)) % 2 == 1) t += std::clamp(swing, 0.0, 1.0) * 0.5 * p.unitBeats;
-  return t;
+  // whole units and own lengths apart (default steps land exactly where they did before J-214)
+  double units = 0, own = 0;
+  for (int k = 0; k < i && k < static_cast<int>(p.steps.size()); ++k) {
+    const Step& s = p.steps[static_cast<size_t>(k)];
+    if (s.beats > 0) own += s.beats;
+    else units += 1 + s.ties;
+  }
+  const double t = units * p.unitBeats + own;
+  return t + swingDelay(p, t, swing);
 }
 
 double stepBeats(const Pattern& p, int i) {
-  return (1 + p.steps[static_cast<size_t>(i)].ties) * p.unitBeats;
+  const Step& s = p.steps[static_cast<size_t>(i)];
+  return s.beats > 0 ? s.beats : (1 + s.ties) * p.unitBeats;
 }
 
 // ------------------------------------------------------------------ text form

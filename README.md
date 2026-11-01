@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version 0.7.0" src="https://img.shields.io/badge/version-0.7.0-0B0B0B?style=flat-square&labelColor=1F1F1F">
+  <img alt="Version 0.7.1" src="https://img.shields.io/badge/version-0.7.1-0B0B0B?style=flat-square&labelColor=1F1F1F">
   <img alt="License: GPL-3.0" src="https://img.shields.io/badge/license-GPL--3.0-0B0B0B?style=flat-square&labelColor=1F1F1F">
   <img alt="C++17" src="https://img.shields.io/badge/C%2B%2B-17-0B0B0B?style=flat-square&labelColor=1F1F1F">
   <img alt="Plugins" src="https://img.shields.io/badge/plugins-VST3%20%7C%20CLAP%20%7C%20VST2%20%7C%20AU%20%7C%20LV2-0B0B0B?style=flat-square&labelColor=1F1F1F">
@@ -47,24 +47,26 @@ Every release lists SHA-256 checksums in `Gridline-<version>-SHA256SUMS`. The bu
 
 **Make music together.** Work on one project live with other people, on the same network or across the internet, peer to peer and end-to-end encrypted, with no server and no account. Invite someone with a one-time code; each collaborator gets a colour, a cursor and a picture, and everyone keeps their own windows, transport and sound. [More below](#work-together).
 
-**The Gridline Suite.** Gridline's own instruments and effects run in any DAW: 118 plugins as VST3, CLAP and, on macOS, Audio Unit, plus Gridline Suite Mini, 35 compact effects. Every download carries both. [More below](#the-gridline-suite).
+**The Gridline Suite.** Gridline's own instruments and effects run in any DAW: 119 plugins as VST3, CLAP and, on macOS, Audio Unit, plus Gridline Suite Mini, 35 compact effects. Every download carries both. [More below](#the-gridline-suite).
 
-**Platter and Seltmann.** Platter puts two DJ decks and a mixer on a channel, with scratching that feels like a record, DJ controller mappings and performances recorded as editable automation. Seltmann takes any audio you drop on it, finds the tempo, chops it and flips it with ready-made layouts.
+**Platter, Seltmann and Turntable.** Platter puts two DJ decks and a mixer on a channel, with scratching that feels like a record, DJ controller mappings and performances recorded as editable automation. Seltmann takes any audio you drop on it or record into it, finds the tempo, chops it and flips it with ready-made layouts. Turntable scratches a sample on a platter.
 
-**175 built-in instruments and effects.** A family of flagships with their own names: Plasma (wavetable hybrid), Platter (two DJ decks and a mixer), Lattice (six-operator FM), Isoline (wavetable), Facet (additive), Halftone (resynthesis), Tercet, Abacus (drum pads), Kerf (a region slicer that cuts on the beat grid), Pixel Tone (plays your own pictures), Folio (sampler), Loupe (audio editor), Shuttle (time and volume), Tracer (delay), Cloister (reverb), Crest (mastering), Cipher (vocoder), Plumb (pitch correction), Junction (patching), Graticule (scope), Tideline (tempo-synced ducking, triggered by a mixer track, a channel's notes and clips or MIDI) and Seltmann (drop in any audio and it finds the tempo, chops it and flips it with ready-made layouts). Around them, plain-named studio tools: EQs, dynamics, modulation, physical models and utilities, and Gridline Suite Mini, 35 compact single-purpose effects. Every one has its own editor with its own wordmark, and every gesture in it (a knob drag, a wheel turn, a drawn stroke, a preset load) is one undo step. Double-click any knob to reset it, or to type a value when it is already at its default.
+**Track Receipt.** Help > Track Receipt... measures which parts of which original recordings a project actually plays, merged per song across stems, samplers and plugins, and writes a spreadsheet and a PDF for filling in sample licenses, for example on Tracklib. A helper, not legal advice.
+
+**176 built-in instruments and effects.** A family of flagships with their own names: Plasma (wavetable hybrid), Platter (two DJ decks and a mixer), Lattice (six-operator FM), Isoline (wavetable), Facet (additive), Halftone (resynthesis), Tercet, Abacus (drum pads), Kerf (a region slicer that cuts on the beat grid), Pixel Tone (plays your own pictures), Turntable (scratch a sample on a platter), Folio (sampler), Loupe (audio editor), Shuttle (time and volume), Tracer (delay), Cloister (reverb), Crest (mastering), Cipher (vocoder), Plumb (pitch correction), Junction (patching), Graticule (scope), Tideline (tempo-synced ducking, triggered by a mixer track, a channel's notes and clips or MIDI) and Seltmann (drop in any audio and it finds the tempo, chops it and flips it with ready-made layouts). Around them, plain-named studio tools: EQs, dynamics, modulation, physical models and utilities, and Gridline Suite Mini, 35 compact single-purpose effects. Every one has its own editor with its own wordmark, and every gesture in it (a knob drag, a wheel turn, a drawn stroke, a preset load) is one undo step. Double-click any knob to reset it, or to type a value when it is already at its default.
 
 **Real plugins, real interfaces.** VST3, CLAP, VST2, AU and LV2 instruments and effects open with their own interface, can run sandboxed in a separate process, and are checked by a built-in compatibility sweep. Edits made in a plugin's own interface can be undone too.
 
 </td>
 <td width="50%" valign="top">
 
-**Pattern workflow.** Build loops in the channel rack, arrange them as clips in the playlist and mix them on inserts. Patterns, audio and automation all live on the same tracks.
+**Pattern workflow.** Build loops in the channel rack, arrange them as clips in the playlist and mix them on inserts. Patterns, audio and automation all live on the same tracks, and mixer tracks, playlist tracks and channels take icons from a searchable set of 139.
 
 **A welcome screen.** Gridline opens on your recent projects, each with a sketch of its arrangement, its tempo and its length. Mark favourites, start from a template or the demo song, and see in the Collaborative view who is working on a shared project right now. Big projects never freeze the window while they open: a loading window counts every sample and plugin as it loads, logs how long each took, and Cancel takes you back to the project you had open.
 
 **A mixer that keeps time.** Smooth swing for steps and notes alike, plugin delay compensation, parallel processing on several cores, sends, sidechains, groups, stems and a per-track EQ. Offline renders are bit-identical whatever the buffer size.
 
-**Recording and editing.** Audio input with latency compensation, takes and comping, Loupe (the audio editor) with spectral view, automation clips with curves and an LFO tool, on the playlist or inside patterns, MIDI learn on every control. Several selected audio clips change together: a level, fade or pitch change moves each of them by the same amount. Stretched clips follow the project tempo, and clips you never stretched keep their audio when the tempo changes.
+**Recording and editing.** Audio input with latency compensation, takes drawn with their waveform live as they record, comping, Loupe (the audio editor) with spectral view, automation clips with curves and an LFO tool, on the playlist or inside patterns, MIDI learn on every control. Several selected audio clips change together: a level, fade or pitch change moves each of them by the same amount. Stretched clips follow the project tempo, and clips you never stretched keep their audio when the tempo changes.
 
 **Split stems and Import from URL.** Separate any audio clip into vocals, drums, bass and other (or six stems with guitar and piano) on your own computer, right onto new tracks under the clip ([docs/stems.md](docs/stems.md)). Bring the audio of a web page into the project as a lossless WAV clip ([docs/import-url.md](docs/import-url.md)).
 
@@ -104,7 +106,7 @@ Collaborative projects let two or more people work on one project at the same ti
 
 ## The Gridline Suite
 
-Every Gridline download also carries the **Gridline Suite**: 118 of Gridline's own instruments and effects (50 instruments, 68 effects), each as a plugin of its own for any DAW (vendor "Gridline"), in one bundle per format: `Gridline Suite.vst3`, `Gridline Suite.clap` and, on macOS, `Gridline Suite.component`. Gridline Suite Mini, 35 compact effects, ships beside it in the same way (`Gridline Suite Mini.vst3`, `.clap`, `.component`). Each plugin is the same DSP and the same editor as inside Gridline:
+Every Gridline download also carries the **Gridline Suite**: 119 of Gridline's own instruments and effects (51 instruments, 68 effects), each as a plugin of its own for any DAW (vendor "Gridline"), in one bundle per format: `Gridline Suite.vst3`, `Gridline Suite.clap` and, on macOS, `Gridline Suite.component`. Gridline Suite Mini, 35 compact effects, ships beside it in the same way (`Gridline Suite Mini.vst3`, `.clap`, `.component`). Each plugin is the same DSP and the same editor as inside Gridline:
 
 - **Parameters:** every parameter of the plugin, named, with its range, steps and value text (`1.20 kHz`, `-6.0 dB`), automatable; effects add **Mix** and **Bypass**.
 - **Instruments** take MIDI; **effects** have a sidechain input where the effect uses one (Compressor, Limiter, Sidechain Ducker, Cipher, Cloister, Tideline, Transient Split, Hit Repeater); effects that play from notes (Cipher, Plumb, Tideline) also take MIDI.
@@ -146,6 +148,8 @@ Seltmann is an automatic sample chopper. Drop in any audio (a break, a melodic l
 - **The sequence lane** reorders, splits and joins regions; drag the cut between two regions right in the waveform to resize both.
 - **Pitch each region where it is**: drag the small readout on a pad or a region, or turn the mouse wheel over it.
 - **Start the sequence on any cell**, and the loop keeps its length.
+- **Steps with their own length and pitch**: drag a sequence block's right edge to shorten or lengthen that step without changing its region, and turn the wheel over it to pitch just that step. Once a step has its own length, the loop lasts whole bars.
+- **Record from an input**: Record, next to Load on the start screen, records a take from any audio input, with pause, a level meter and the take drawn as it records, then chops it like any file.
 - It plays as an instrument in time with the project, and the result drags out as a loop, MIDI or a pattern. See [docs/plugins/seltmann.md](docs/plugins/seltmann.md).
 
 ## A closer look
@@ -212,7 +216,7 @@ sudo apt install build-essential cmake pkg-config libsdl2-dev libgl-dev libasoun
 
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j4           # a fixed job count: a bare -j starts every compile at once and can run out of memory
-ctest --test-dir build          # 251 tests
+ctest --test-dir build          # 270 tests
 ./build/gridline-app            # start the app
 ```
 
@@ -242,6 +246,7 @@ build/gridline export-flp-zip song.json -o song.zip         # FL Studio zipped l
 build/gridline plugin-check --all --json report.json        # plugin compatibility sweep
 build/gridline bench   song.json                            # load, save and render timings
 build/gridline seltmann-analyse loop.wav                    # tempo, kind and slices Seltmann hears
+build/gridline track-receipt song.json --out receipt/       # which parts of which original recordings are used (spreadsheet + PDF)
 build/gridline mcp     song.json                            # MCP server for AI assistants (docs/mcp.md)
 build/gridline collab-run --test-connection                 # router type, port mapping and IPv6 for collaboration
 ```

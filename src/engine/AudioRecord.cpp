@@ -129,6 +129,46 @@ int recordTrackFor(const Song& song, ObjectId mixer) {
   return i;
 }
 
+TakePlacement takePlacement(const Song& song, const std::vector<RecordedTake>& takes, size_t i, const TakeCommitOptions& o) {
+  TakePlacement r;
+  if (i >= takes.size()) return r;
+  const RecordedTake& t = takes[i];
+  // Take group: the mixer track recorded in more than one pass.
+  int n = 0, firstPass = t.pass, lastPass = t.pass;
+  for (const auto& k : takes) {
+    if (k.frames() == 0 || k.mixer != t.mixer) continue;
+    ++n;
+    firstPass = std::min(firstPass, k.pass), lastPass = std::max(lastPass, k.pass);
+  }
+  r.grouped = n > 1;
+  const MixerTrack* mt = song.mixerTrack(t.mixer);
+  // Output taps (J-31) are always stereo; inputs follow the track's input pair.
+  r.stereo = mt ? (mt->inputStereo || mt->recPoint != 0) : true;
+  r.name = takeBaseName(song, t.mixer, o.naming) + (r.grouped ? " take " + std::to_string(t.pass - firstPass + 1) : std::string(" rec"));
+  r.color = mt && mt->color != 0x50565E ? mt->color : 0xC8724E;
+  // The track's lane (later passes stack below).
+  r.track = std::clamp(recordTrackFor(song, t.mixer) + (r.grouped ? t.pass - firstPass : 0), 0, kMaxPlaylistTracks - 1);
+  if (r.grouped) {
+    r.take = t.pass - firstPass;
+    r.muted = o.muteEarlierTakes && t.pass != lastPass;
+  }
+  return r;
+}
+
+TakeSpan takeSpan(const TempoMap& map, double startTick, int64_t frames, double sampleRate) {
+  const double sr = sampleRate > 0 ? sampleRate : 44100.0;
+  TakeSpan r;
+  // Clip on the tick at or before the take start; the gap becomes leading silence
+  // so the audio lands on the exact sample.
+  r.start = static_cast<Tick>(std::floor(startTick + 1e-9));
+  const double t0Sec = map.secondsAt(static_cast<double>(r.start));
+  r.pad = std::max<int64_t>(0, std::llround((map.secondsAt(startTick) - t0Sec) * sr));
+  const double durSec = static_cast<double>(r.pad + frames) / sr;
+  const double endTick = map.tickAtSeconds(t0Sec + durSec);
+  r.length = std::max<Tick>(1, static_cast<Tick>(std::ceil(endTick - static_cast<double>(r.start) - 1e-6)));
+  return r;
+}
+
 TakeCommitResult commitTakes(Song& song, const std::vector<RecordedTake>& takes, const TakeCommitOptions& o) {
   TakeCommitResult res;
   if (takes.empty()) return res;
@@ -137,37 +177,29 @@ TakeCommitResult commitTakes(Song& song, const std::vector<RecordedTake>& takes,
   TempoMap map;
   map.build(song);
   const double sr = o.sampleRate > 0 ? o.sampleRate : 44100.0;
-  // Take groups: tracks recorded in more than one pass.
-  std::map<ObjectId, int> passes, firstPass, lastPass;
-  for (const auto& t : takes) {
-    if (t.frames() == 0) continue;
-    if (!passes.count(t.mixer)) firstPass[t.mixer] = t.pass, lastPass[t.mixer] = t.pass;
-    ++passes[t.mixer];
-    firstPass[t.mixer] = std::min(firstPass[t.mixer], t.pass);
-    lastPass[t.mixer] = std::max(lastPass[t.mixer], t.pass);
-  }
+  // Placements first (from the song as it was before any take is placed).
+  std::vector<TakePlacement> place(takes.size());
+  for (size_t i = 0; i < takes.size(); ++i)
+    if (takes[i].frames() > 0) place[i] = takePlacement(song, takes, i, o);
+  // One take group id per grouped mixer track.
   std::map<ObjectId, ObjectId> group;
-  for (const auto& [m, n] : passes)
-    if (n > 1) group[m] = song.allocateId();
+  for (size_t i = 0; i < takes.size(); ++i)
+    if (takes[i].frames() > 0 && place[i].grouped && !group.count(takes[i].mixer)) group[takes[i].mixer] = song.allocateId();
 
-  for (const auto& t : takes) {
+  for (size_t ti = 0; ti < takes.size(); ++ti) {
+    const RecordedTake& t = takes[ti];
     if (t.frames() == 0) continue;
-    const MixerTrack* mt = song.mixerTrack(t.mixer);
-    const std::string trackName = takeBaseName(song, t.mixer, o.naming);
-    // Output taps (J-31) are always stereo; inputs follow the track's input pair.
-    const bool stereo = mt ? (mt->inputStereo || mt->recPoint != 0) : true;
-    // Clip on the tick at or before the take start; the gap becomes leading silence
-    // so the audio lands on the exact sample.
-    const Tick T = static_cast<Tick>(std::floor(t.startTick + 1e-9));
-    const double t0Sec = map.secondsAt(static_cast<double>(T));
-    const int64_t pad = std::max<int64_t>(0, std::llround((map.secondsAt(t.startTick) - t0Sec) * sr));
+    const TakePlacement& pl = place[ti];
+    const bool stereo = pl.stereo;
+    const TakeSpan span = takeSpan(map, t.startTick, t.frames(), sr);
+    const int64_t pad = span.pad;
     packs::edison::Audio a = packs::edison::makeAudio(sr, stereo ? 2 : 1, pad + t.frames());
     for (int64_t i = 0; i < t.frames(); ++i) {
       const size_t k = static_cast<size_t>(i);
       a.L[static_cast<size_t>(pad + i)] = t.L[k];
       a.R[static_cast<size_t>(pad + i)] = stereo ? t.R[k] : t.L[k];
     }
-    std::string name = trackName + (group.count(t.mixer) ? " take " + std::to_string(t.pass - firstPass[t.mixer] + 1) : std::string(" rec"));
+    const std::string& name = pl.name;
     const std::string path = packs::edison::renderPath(o.dir, cleanFileName(name), packs::edison::audioHash(a));
     std::string err;
     if (!packs::edison::writeWavFile(path, packs::edison::makeContent(a), o.bits == 24 || o.bits == 16 ? o.bits : 32, &err)) {
@@ -179,33 +211,31 @@ TakeCommitResult commitTakes(Song& song, const std::vector<RecordedTake>& takes,
     Channel ch;
     ch.id = song.allocateId();
     ch.name = name;
-    ch.color = mt && mt->color != 0x50565E ? mt->color : 0xC8724E;
+    ch.color = pl.color;
     ch.plugin = defaultPluginState("gl.sampler");
     ch.plugin.data = path;
     ch.mixerTrack = t.mixer != kNoId && song.mixerTrack(t.mixer) ? t.mixer : song.masterId();
     song.channels.push_back(ch);
     res.channels.push_back(ch.id);
     // Clip on the track's lane (later passes stack below).
-    int track = recordTrackFor(song, t.mixer) + (group.count(t.mixer) ? t.pass - firstPass[t.mixer] : 0);
-    track = std::clamp(track, 0, kMaxPlaylistTracks - 1);
+    const int track = pl.track;
     if (static_cast<int>(song.tracks.size()) <= track) song.tracks.resize(static_cast<size_t>(track) + 1);
     if (o.nameTracks && song.tracks[static_cast<size_t>(track)].name.empty()) song.tracks[static_cast<size_t>(track)].name = name;
-    const double durSec = static_cast<double>(a.frames()) / sr;
-    const double endTick = map.tickAtSeconds(t0Sec + durSec);
     Clip c;
     c.id = song.allocateId();
     c.kind = ClipKind::Audio;
     c.source = ch.id;
     c.track = track;
-    c.start = T;
-    c.length = std::max<Tick>(1, static_cast<Tick>(std::ceil(endTick - static_cast<double>(T) - 1e-6)));
+    c.start = span.start;
+    c.length = span.length;
     if (auto g = group.find(t.mixer); g != group.end()) {
       c.takeGroup = g->second;
-      c.take = t.pass - firstPass[t.mixer];
-      c.muted = o.muteEarlierTakes && t.pass != lastPass[t.mixer];
+      c.take = pl.take;
+      c.muted = pl.muted;
     }
     song.playlist.push_back(c);
     res.clips.push_back(c.id);
+    res.takeIndex.push_back(ti);
   }
   return res;
 }

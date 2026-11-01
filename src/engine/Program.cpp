@@ -1032,6 +1032,8 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     al.target.rt = linkRts.count(key) ? linkRts[key] : lr != links_.end() ? lr->second : std::make_shared<LinkRuntime>();
     linkRts[key] = al.target.rt;
     al.lane = std::move(lane);
+    al.events = al.lane.hasEvents();  // J-210
+    prog->hasEventLanes |= al.events;
     out.push_back(std::move(al));
     return true;
   };

@@ -11,6 +11,12 @@
 
 namespace gl {
 
+// J-213: whether a channel's name was given automatically, so replacing its
+// instrument renames it: empty, the instrument's name (numbered or not, as new
+// and cloned channels are named), one of the instrument's factory preset names,
+// or the stem of its sample. Anything else is a name the user typed.
+bool channelNameIsAutomatic(const Channel& c);
+
 class Document {
  public:
   Document() = default;
@@ -49,6 +55,9 @@ class Document {
   bool removeChannel(ObjectId id);
   bool moveChannel(ObjectId id, int newIndex);
   bool renameChannel(ObjectId id, const std::string& name);
+  // Replaces the instrument (its default state). J-213: a channel whose name was
+  // automatic (channelNameIsAutomatic) takes the new instrument's name in the
+  // same undo step; a name the user typed stays.
   bool setChannelPlugin(ObjectId id, const std::string& pluginType);
   ObjectId cloneChannel(ObjectId id);  // copy placed after the original, with its pattern data
   bool routeChannel(ObjectId id, ObjectId mixerTrack);

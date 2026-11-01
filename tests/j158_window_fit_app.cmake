@@ -30,6 +30,7 @@ function(run tag cfg size scale plugin script)
   endif()
   file(MAKE_DIRECTORY "${OUT}/cfg_${cfg}/home")
   set(ENV{GRIDLINE_CONFIG_HOME} "${OUT}/cfg_${cfg}")
+  set(ENV{GRIDLINE_SAVE_LAYOUT} "1")  # J-216: these runs save their layout (own config folder)
   set(ENV{HOME} "${OUT}/cfg_${cfg}/home")
   file(WRITE "${OUT}/${tag}.txt" "${script}")
   execute_process(COMMAND "${APP}" "${OUT}/fixture.gridline.json" --hidden --no-ui-sounds --size ${size} --ui-scale ${scale} --frames 44

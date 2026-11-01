@@ -1,0 +1,5 @@
+<!-- Gridline original (GPL-3.0), drawn on the Lucide 24-unit grid and stroke rules: track icon: a spanner -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M5 19 L12 12" />
+  <path d="M12 12 C10.5 8.5 12.5 4 17 4 C17.8 4 18.6 4.2 19.3 4.5 L15.8 8 L16.6 9.8 L18.4 10.6 L21.9 7.1 C22.2 7.8 22.4 8.6 22.4 9.4 C22.4 13.9 17.9 15.9 14.4 14.4 Z" transform="translate(-1.2 0.6)" />
+</svg>

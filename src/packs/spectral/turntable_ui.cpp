@@ -1,19 +1,33 @@
-// Gridline — "spectral" pack: Turntable (gl.turntable) editor. The platter is
-// the main surface: grab it and turn it to scratch (the hand holds the record,
-// Position follows the drag), the waveform below shows the play position and
-// scratches the same way when dragged sideways. Hand-spring controls on the
-// left, motor controls on the right, the motor switch under the platter, the
-// sample row and the waveform at the bottom. All controls sit on shared row
-// centrelines (form units, scaled by skin::Form).
+// Gridline — "spectral" pack: Turntable (gl.turntable) editor (J-206). Laid
+// out on the reference deck's panel (247 x 303 reference px, scaled to the
+// window): the four hand-spring wheels, pan and volume, Hold and Mute on the
+// left; the platter in the middle with the motor selector under it; Turns,
+// Speed, Acceleration and Sensitivity on the right; the load button, the
+// sample name, the options and zoom buttons; the waveform scope at the bottom.
+//
+// Scratching: grab the platter (inside the record) or the scope. The hand
+// takes the record (Hold on, Turns 0, Position = where it plays now) and the
+// mouse moves it by 0.25 % of the sample per reference pixel at full
+// Sensitivity (Ctrl: a quarter of that): up and down on the platter, sideways
+// on the scope. Passing the end of the sample adds a turn (up to 9 either
+// way). Letting go hands the record back to the motor (Hold off).
+//
+// Dropping an audio file anywhere on the editor (browser, desktop, a playlist
+// clip, a channel row) loads it onto the record, like the load button.
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <string>
+#include "../../third_party/imgui/imgui_internal.h"
 #include "../../app/App.h"
+#include "../../app/BrowserUi.h"
+#include "../../app/ExternalDragUi.h"
 #include "../../app/PluginSkin.h"
 #include "../../app/PluginUI.h"
 #include "../../app/Theme.h"
+#include "../../app/Widgets.h"
 #include "../../core/I18n.h"
 #include "../../engine/Program.h"
 #include "../models/metal_widgets.h"
@@ -25,33 +39,45 @@ namespace gl::packs::spectral {
 namespace {
 
 using models::metal::ui::openSampleDialog;
-using models::metal::ui::sampleOf;
 using models::metal::ui::waveform;
 
 constexpr float kTau = 6.2831853f;
-// Form (reference units).
-constexpr float kW = 496, kH = 508;
-constexpr float kLeftCx = 49, kRightCx = 447;       // column centres
-constexpr float kPlatterCx = 248, kPlatterCy = 150, kPlatterR = 128;
-constexpr float kRowA = 292, kRowB = 326, kRowH = 24;  // motor row, sample row
-constexpr float kWaveY = 360, kWaveH = 136;
-// Mouse travel: the reference moves 0.25 % of the sample per pixel at full
-// sensitivity on a form half this size, so 0.125 % per form unit here.
-constexpr double kPerUnit = 0.00125;
+// The reference panel (px) and its parts.
+constexpr float kW = 247, kH = 303;
+constexpr float kPlX = 51, kPlY = 12, kPlD = 150;  // platter box
+constexpr float kScX = 3, kScY = 229, kScW = 241, kScH = 71;
+constexpr float kZoomGrow = 50;  // the large editor: a taller scope (the reference's zoom grows it 1.7 x)
+// Mouse travel per reference px at full sensitivity (share of the sample).
+constexpr double kPerPx = 0.0025;
+
+// Colour roles of the reference panel.
+constexpr int kPanel = 0x31373B, kRail = 0x5F696D, kFill = 0xEDEFF1, kCap = 0x667279, kOrange = 0xFFA830, kLed = 0xF8895A,
+              kButton = 0x6A7579, kPathBg = 0x354651, kPathText = 0xB9BFC3, kOverlay = 0x404040, kWell = 0x22272A, kCaption = 0x9AA3A7;
 
 const skin::Skin& deckSkin() {
   static const skin::Skin k = [] {
-    skin::Skin s = skin::Skin::fl(0x31373B, 0x2A3033, 0x5F696D, 0xEDEFF1, 0x667279, 0xB9BFC3);
-    s.fillPressed = skin::hex(0xFFA830);
-    s.select = skin::hex(0xF8895A);
-    s.lcdBg = skin::hex(0x232829);
-    s.graphBg = skin::hex(0x232829);
+    skin::Skin s = skin::Skin::fl(kPanel, 0x2A3033, kRail, kFill, kCap, kPathText);
+    s.fillPressed = skin::hex(kOrange);
+    s.select = skin::hex(kLed);
+    s.lcdBg = skin::hex(kWell);
+    s.graphBg = skin::hex(kWell);
     s.graphGrid = skin::hex(0x30373A);
-    s.handle = skin::hex(0x6A7579);
-    s.accent2 = skin::hex(0xFFA830);
+    s.handle = skin::hex(kButton);
+    s.accent2 = skin::hex(kOrange);
     return s;
   }();
   return k;
+}
+
+skin::WheelLook wheelLook(bool centred) {
+  skin::WheelLook w;
+  w.rail = skin::hex(kRail);
+  w.fill = skin::hex(kFill);
+  w.fillPressed = skin::hex(kOrange);
+  w.cap = skin::hex(kCap);
+  w.pointer = skin::hex(0xE4ECEE);
+  w.centred = centred;
+  return w;
 }
 
 float prm(const PluginState& s, int k) {
@@ -61,296 +87,416 @@ float prm(const PluginState& s, int k) {
 }
 void setP(App& a, const PluginTarget& t, int k, double v, bool merge) { a.doc.setParam(t.pid(k), v, merge); }
 
-void commitPath(App& a, const PluginTarget& t, const std::string& p) {
+// Font size for a reference text height of `px` (readable at 100 %).
+float fontPx(const skin::Form& F, float px) { return std::max(9.0f, std::round(px * F.s)); }
+
+void text(ImDrawList* dl, const skin::Form& F, float x, float y, float w, float h, const char* s, ImU32 col, float px, int align = 0) {
+  skin::textAt(dl, F.p(x, y), F.p(x + w, y + h), col, s, fontPx(F, px), align);
+}
+
+// Loads a file onto the record (the load button, a drop): the file plays, the
+// "empty deck" mark of an FL import without a sample goes.
+void loadSample(App& a, const PluginTarget& t, const std::string& p) {
   const PluginState* now = t.state(a.doc.song());
-  if (!now) return;
+  if (!now || p.empty()) return;
   PluginState ns = *now;
   ns.data = p;
+  if (ns.params.size() < static_cast<size_t>(TtCount)) normalizePluginState(ns);
+  if (ns.params.size() > static_cast<size_t>(TtEmpty)) ns.params[TtEmpty] = 0.f;
   setPluginState(a, t, ns, "load sample");
 }
 
-// One hand gesture on the platter or the waveform (one at a time).
+// One hand gesture on the platter or the scope (one at a time).
 struct Hand {
-  int where = 0;  // 0 none, 1 platter, 2 waveform
-  float holdBefore = 0;
+  int where = 0;  // 0 none, 1 platter, 2 scope
   double pos = 0;
   int turns = 0;
-  float lastAngle = 0, lastX = 0;
 };
 Hand& hand() {
   static Hand h;
   return h;
 }
 
-void grab(App& a, const PluginTarget& t, const PluginState& st, int where, double livePos) {
+void grab(App& a, const PluginTarget& t, int where, double livePos) {
   Hand& h = hand();
   h.where = where;
-  h.holdBefore = prm(st, TtHold);
-  h.pos = std::clamp(livePos, 0.0, 1.0);
+  h.pos = std::isfinite(livePos) ? std::clamp(livePos, 0.0, 1.0) : 0.0;
   h.turns = 0;
   setP(a, t, TtPosition, h.pos, true);
   setP(a, t, TtTurns, 0, true);
   setP(a, t, TtHold, 1, true);
 }
-// Moves the hand by `units` form units of travel (positive = forward).
-void move(App& a, const PluginTarget& t, const PluginState& st, double units) {
+// Moves the hand by `px` reference pixels of mouse travel (positive = forward).
+void move(App& a, const PluginTarget& t, const PluginState& st, double px) {
   Hand& h = hand();
-  if (units == 0) return;
-  const double fine = ImGui::GetIO().KeyShift ? 0.25 : 1.0;
-  h.pos += units * kPerUnit * std::clamp(static_cast<double>(prm(st, TtSense)), 0.0, 1.0) * fine;
-  while (h.pos >= 1.0 && h.turns < 9) h.pos -= 1.0, ++h.turns;
+  if (px == 0 || !std::isfinite(px)) return;
+  const double fine = ImGui::GetIO().KeyCtrl ? 0.25 : 1.0;
+  const double sens = std::clamp(static_cast<double>(prm(st, TtSense)), 0.0, 1.0);
+  h.pos += px * kPerPx * sens * fine;
+  while (h.pos > 1.0 && h.turns < 9) h.pos -= 1.0, ++h.turns;
   while (h.pos < 0.0 && h.turns > -9) h.pos += 1.0, --h.turns;
   h.pos = std::clamp(h.pos, 0.0, 1.0);
   setP(a, t, TtPosition, h.pos, true);
   setP(a, t, TtTurns, h.turns, true);
 }
 void release(App& a, const PluginTarget& t) {
-  Hand& h = hand();
-  setP(a, t, TtHold, h.holdBefore >= 0.5f ? 1 : 0, true);
-  h.where = 0;
+  setP(a, t, TtHold, 0, true);
+  hand().where = 0;
   a.doc.endGesture();
 }
 
-void timeText(char* buf, size_t n, double sec) {
-  const int m = static_cast<int>(sec / 60.0);
-  std::snprintf(buf, n, "%d:%05.2f", m, sec - m * 60.0);
-}
-
-// File name for the sample row: built-in phrase, missing, or the file's name
-// (shortened from the front to fit `maxChars`).
-std::string sampleName(const PluginState& st, bool missing, size_t maxChars) {
-  if (st.data.empty()) return "Built-in phrase";
+// What the name field shows.
+std::string sampleName(const PluginState& st, bool missing) {
+  if (st.data.empty()) return prm(st, TtEmpty) >= 0.5f ? i18n::tr("Empty deck: load or drop a sample") : i18n::tr("Built-in sound");
   std::string n = std::filesystem::u8path(st.data).filename().u8string();
-  if (missing) n = "Missing: " + n;
-  if (n.size() > maxChars && maxChars > 3) n = n.substr(0, maxChars - 3) + "...";
+  if (missing) n = std::string(i18n::tr("Missing: ")) + n;
   return n;
 }
 
-void drawPlatter(ImDrawList* dl, const skin::Form& F, const skin::Skin& K, float pos, bool held, bool loaded) {
-  const ImU32 orange = skin::hex(0xFFA830);
-  const ImVec2 c = F.p(kPlatterCx, kPlatterCy);
-  const float R = F.u(kPlatterR);
-  // Plinth shadow, rim, vinyl.
-  dl->AddCircleFilled(ImVec2(c.x, c.y + F.u(2)), R + F.u(4), skin::darken(K.panel, 0.45f), 128);
-  dl->AddCircleFilled(c, R + F.u(3), skin::hex(0x4A5357), 128);
-  dl->AddCircleFilled(c, R, skin::hex(0x151819), 128);
-  // Grooves.
-  for (float r = R * 0.40f; r < R - F.u(6); r += F.u(4)) dl->AddCircle(c, r, theme::withAlpha(K.text, 0.05f), 128, 1.0f);
-  const float ang = pos * kTau - kTau * 0.25f;  // one turn = the whole sample, 0 at the top
-  // Strobe dots on the rim turn with the record.
-  for (int i = 0; i < 48; ++i) {
-    const float a = ang + kTau * static_cast<float>(i) / 48.0f;
-    const ImVec2 d(c.x + std::cos(a) * (R + F.u(1.5f)), c.y + std::sin(a) * (R + F.u(1.5f)));
-    dl->AddCircleFilled(d, F.u(1.1f), theme::withAlpha(K.text, i == 0 ? 0.9f : 0.28f), 8);
+// Text clipped from the right to fit `w` screen px (an ellipsis marks the cut).
+std::string fitText(const std::string& s, float w, float size) {
+  ImGui::PushFont(nullptr, size);
+  std::string out = s;
+  if (ImGui::CalcTextSize(out.c_str()).x > w) {
+    while (!out.empty() && ImGui::CalcTextSize((out + "...").c_str()).x > w) out.pop_back();
+    out += "...";
   }
-  // Centre label with its marker line (the platter angle at a glance).
-  const float rl = R * 0.33f;
-  dl->AddCircleFilled(c, rl, loaded ? orange : skin::darken(orange, 0.5f), 64);
-  dl->AddCircle(c, rl * 0.72f, theme::withAlpha(skin::hex(0x151819), 0.35f), 64, 1.0f);
-  const ImVec2 m0(c.x + std::cos(ang) * rl * 0.18f, c.y + std::sin(ang) * rl * 0.18f);
-  const ImVec2 m1(c.x + std::cos(ang) * (R - F.u(5)), c.y + std::sin(ang) * (R - F.u(5)));
-  dl->AddLine(m0, m1, theme::withAlpha(K.text, 0.85f), std::max(2.0f, F.u(2.5f)));
-  dl->AddCircleFilled(c, F.u(4), skin::hex(0xD8DCDE), 16);  // spindle
-  if (held) dl->AddCircle(c, R + F.u(6), theme::withAlpha(orange, 0.8f), 128, std::max(1.5f, F.u(2)));
+  ImGui::PopFont();
+  return out;
 }
 
-void drawWave(ImDrawList* dl, const skin::Form& F, const skin::Skin& K, const Sample* smp, bool missing, float pos, bool showCue, float cue,
-              float speed) {
-  const ImU32 orange = skin::hex(0xFFA830);
-  const ImVec2 w0 = F.p(12, kWaveY), w1 = F.p(12 + 472, kWaveY + kWaveH);
-  skin::graphWell(dl, w0, w1, K);
-  const ImVec2 q0(w0.x + F.u(4), w0.y + F.u(18)), q1(w1.x - F.u(4), w1.y - F.u(4));
-  const float fs = F.font(7.5f);
+void drawPlatter(ImDrawList* dl, const skin::Form& F, float pos, bool held, bool playing) {
+  const ImU32 orange = skin::hex(kOrange);
+  const ImVec2 c = F.p(kPlX + kPlD * 0.5f, kPlY + kPlD * 0.5f);
+  const float R = F.u(kPlD * 0.5f);
+  dl->AddCircleFilled(ImVec2(c.x, c.y + F.u(1)), R, skin::darken(skin::hex(kPanel), 0.45f), 128);
+  dl->AddCircleFilled(c, R, skin::hex(0x4A5357), 128);  // rim
+  const float Rv = R - F.u(3);
+  dl->AddCircleFilled(c, Rv, skin::hex(0x141718), 128);  // vinyl
+  for (float r = Rv * 0.42f; r < Rv - F.u(3); r += F.u(2.5f)) dl->AddCircle(c, r, IM_COL32(255, 255, 255, 12), 128, 1.0f);
+  const float ang = pos * kTau - kTau * 0.25f;  // one turn = the whole sample, the start at the top
+  // Strobe dots on the rim turn with the record.
+  for (int i = 0; i < 40; ++i) {
+    const float a = ang + kTau * static_cast<float>(i) / 40.0f;
+    const ImVec2 d(c.x + std::cos(a) * (R - F.u(1.5f)), c.y + std::sin(a) * (R - F.u(1.5f)));
+    dl->AddCircleFilled(d, std::max(1.0f, F.u(0.6f)), i == 0 ? orange : IM_COL32(220, 226, 228, 80), 8);
+  }
+  // Label with the marker line (the platter angle at a glance).
+  const float rl = Rv * 0.34f;
+  dl->AddCircleFilled(c, rl, playing ? orange : skin::darken(orange, 0.5f), 64);
+  dl->AddCircle(c, rl * 0.70f, IM_COL32(20, 23, 24, 90), 64, 1.0f);
+  const ImVec2 m0(c.x + std::cos(ang) * rl * 0.2f, c.y + std::sin(ang) * rl * 0.2f);
+  const ImVec2 m1(c.x + std::cos(ang) * (Rv - F.u(3)), c.y + std::sin(ang) * (Rv - F.u(3)));
+  dl->AddLine(m0, m1, IM_COL32(236, 239, 241, 220), std::max(2.0f, F.u(1.2f)));
+  dl->AddCircleFilled(c, std::max(2.0f, F.u(2.2f)), skin::hex(0xD8DCDE), 16);  // spindle
+  if (held) dl->AddCircle(c, R + F.u(1), orange, 128, std::max(1.5f, F.u(1)));
+}
+
+// A box with an LED strip and a caption, bound to a toggle.
+void ledBox(App& a, const PluginTarget& t, const PluginState& st, const skin::Form& F, int k, float x, float y, float w, float h,
+            const char* cap, const char* tip) {
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const bool on = prm(st, k) >= 0.5f;
+  ImGui::SetCursorScreenPos(F.p(x, y));
+  ImGui::PushID(k);
+  const bool click = ImGui::InvisibleButton("##led", F.sz(w, h));
+  const bool hov = ImGui::IsItemHovered();
+  ImGui::PopID();
+  if (click) setP(a, t, k, on ? 0 : 1, false);
+  if (hov) a.setHint(tip);
+  skin::insetField(dl, F.p(x, y), F.p(x + w, y + h), hov ? skin::hex(0x2A3134) : skin::hex(0x262C2F), F.u(1.5f));
+  const ImU32 led = on ? skin::hex(kLed) : skin::hex(0x4B5357);
+  dl->AddRectFilled(F.p(x + 4, y + 3), F.p(x + w - 4, y + 5.5f), led, F.u(1));
+  if (on) dl->AddRect(F.p(x + 3.5f, y + 2.5f), F.p(x + w - 3.5f, y + 6), theme::withAlpha(skin::hex(kLed), 0.35f), F.u(1), 0, 1.0f);
+  text(dl, F, x, y + 7, w, h - 8, cap, on ? skin::hex(0xE4ECEE) : skin::hex(kCaption), 5.5f);
+}
+
+void glyphTransport(ImDrawList* dl, int i, ImVec2 c, float r, ImU32 col) {
+  if (i == 0) {  // reverse
+    dl->AddTriangleFilled(ImVec2(c.x - r, c.y), ImVec2(c.x + r * 0.8f, c.y - r), ImVec2(c.x + r * 0.8f, c.y + r), col);
+  } else if (i == 1) {  // pause
+    dl->AddRectFilled(ImVec2(c.x - r * 0.8f, c.y - r), ImVec2(c.x - r * 0.25f, c.y + r), col);
+    dl->AddRectFilled(ImVec2(c.x + r * 0.25f, c.y - r), ImVec2(c.x + r * 0.8f, c.y + r), col);
+  } else {  // forward
+    dl->AddTriangleFilled(ImVec2(c.x + r, c.y), ImVec2(c.x - r * 0.8f, c.y - r), ImVec2(c.x - r * 0.8f, c.y + r), col);
+  }
+}
+
+void transportSelector(App& a, const PluginTarget& t, const PluginState& st, const skin::Form& F) {
+  constexpr float x = 46, y = 171, w = 156, h = 25;
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  skin::insetField(dl, F.p(x, y), F.p(x + w, y + h), skin::hex(0x262C2F), F.u(2));
+  const int cur = std::clamp(static_cast<int>(std::lround(prm(st, TtTransport))), 0, 2);
+  static const char* tips[3] = {i18n::N_("Motor: reverse"), i18n::N_("Motor: pause (the platter coasts to a stop)"), i18n::N_("Motor: forward")};
+  for (int i = 0; i < 3; ++i) {
+    const float cx0 = x + w * static_cast<float>(i) / 3.0f, cx1 = x + w * static_cast<float>(i + 1) / 3.0f;
+    ImGui::SetCursorScreenPos(F.p(cx0, y));
+    ImGui::PushID(i);
+    if (ImGui::InvisibleButton("##tr", F.sz(cx1 - cx0, h)) && i != cur) setP(a, t, TtTransport, i, false);
+    const bool hov = ImGui::IsItemHovered();
+    ImGui::PopID();
+    if (hov) a.setHint(i18n::tr(tips[i]));
+    if (i == cur) dl->AddRectFilled(F.p(cx0 + 2, y + 2), F.p(cx1 - 2, y + h - 2), skin::hex(0x3A4246), F.u(1.5f));
+    if (i > 0) dl->AddLine(F.p(cx0, y + 4), F.p(cx0, y + h - 4), skin::hex(0x1C2022), 1.0f);
+    const ImU32 col = i == cur ? skin::hex(kOrange) : hov ? skin::hex(0xC9CFD2) : skin::hex(0x7D878B);
+    glyphTransport(dl, i, F.p((cx0 + cx1) * 0.5f, y + h * 0.5f), F.u(5), col);
+  }
+}
+
+void drawScope(ImDrawList* dl, const skin::Form& F, float sh, const Sample* smp, const std::string& msg, float pos, bool showCue, float cue) {
+  const ImVec2 w0 = F.p(kScX, kScY), w1 = F.p(kScX + kScW, kScY + sh);
+  skin::insetField(dl, w0, w1, skin::hex(kWell), F.u(2));
+  const ImVec2 q0(w0.x + F.u(2), w0.y + F.u(3)), q1(w1.x - F.u(2), w1.y - F.u(3));
   if (!smp || smp->frames() < 2) {
-    const char* msg = missing ? "Sample not found: load it again" : "No sample";
-    ImGui::PushFont(nullptr, fs);
-    const ImVec2 ts = ImGui::CalcTextSize(msg);
-    ImGui::PopFont();
-    skin::text(dl, ImVec2(std::round((w0.x + w1.x - ts.x) * 0.5f), std::round((w0.y + w1.y - ts.y) * 0.5f)), K.textDim, msg, fs);
+    skin::textAt(dl, w0, w1, skin::hex(kCaption), msg.c_str(), fontPx(F, 6.0f));
     return;
   }
   for (int i = 1; i < 8; ++i) {
     const float x = q0.x + (q1.x - q0.x) * static_cast<float>(i) / 8.0f;
-    dl->AddLine(ImVec2(x, q0.y), ImVec2(x, q1.y), K.graphGrid, 1.0f);
+    dl->AddLine(ImVec2(x, q0.y), ImVec2(x, q1.y), skin::hex(0x2D3437), 1.0f);
   }
-  waveform(dl, smp, q0, q1, theme::withAlpha(K.fill, 0.55f));
+  dl->AddLine(ImVec2(q0.x, (q0.y + q1.y) * 0.5f), ImVec2(q1.x, (q0.y + q1.y) * 0.5f), skin::hex(0x2D3437), 1.0f);
+  waveform(dl, smp, q0, q1, theme::withAlpha(skin::hex(kFill), 0.55f));
   if (showCue) {
     const float x = q0.x + (q1.x - q0.x) * std::clamp(cue, 0.0f, 1.0f);
-    dl->AddLine(ImVec2(x, q0.y), ImVec2(x, q1.y), theme::withAlpha(K.select, 0.8f), 1.0f);
-    dl->AddTriangleFilled(ImVec2(x - F.u(4), q0.y), ImVec2(x + F.u(4), q0.y), ImVec2(x, q0.y + F.u(5)), K.select);
+    dl->AddLine(ImVec2(x, q0.y), ImVec2(x, q1.y), theme::withAlpha(skin::hex(kLed), 0.8f), 1.0f);
+    dl->AddTriangleFilled(ImVec2(x - F.u(2.5f), q0.y), ImVec2(x + F.u(2.5f), q0.y), ImVec2(x, q0.y + F.u(3)), skin::hex(kLed));
   }
-  const float x = q0.x + (q1.x - q0.x) * std::clamp(pos, 0.0f, 1.0f);
-  dl->AddLine(ImVec2(x, q0.y), ImVec2(x, q1.y), orange, std::max(1.5f, F.u(1.5f)));
-  // Readouts in the well's top strip: position / length left, platter speed right.
-  char a[24], b[24], line[64];
-  timeText(a, sizeof a, pos * smp->seconds());
-  timeText(b, sizeof b, smp->seconds());
-  std::snprintf(line, sizeof line, "%s / %s", a, b);
-  const float ty = w0.y + F.u(4);
-  skin::text(dl, ImVec2(std::round(w0.x + F.u(6)), std::round(ty)), K.graphText, line, fs);
-  std::snprintf(line, sizeof line, "PLATTER %+.0f%%", static_cast<double>(speed) * 100.0);
-  ImGui::PushFont(nullptr, fs);
-  const float lw = ImGui::CalcTextSize(line).x;
-  ImGui::PopFont();
-  skin::text(dl, ImVec2(std::round(w1.x - F.u(6) - lw), std::round(ty)), K.graphText, line, fs);
+  const float x = std::round(q0.x + (q1.x - q0.x) * std::clamp(pos, 0.0f, 1.0f));
+  dl->AddLine(ImVec2(x, w0.y + 1), ImVec2(x, w1.y - 1), skin::hex(kOrange), std::max(1.5f, F.u(0.8f)));
 }
 
-void optionsPopup(App& a, const PluginTarget& t, const PluginState& st) {
-  if (!ImGui::BeginPopup("##ttopts")) return;
-  ImGui::TextDisabled("%s", i18n::tr("Notes"));
-  const int notes = static_cast<int>(std::lround(prm(st, TtNotes)));
-  static const char* modes[3] = {"Off: the motor switch only", "Motor: a held key runs the motor", "Cue + motor: each note starts at the cue"};
-  for (int i = 0; i < 3; ++i)
-    if (ImGui::RadioButton(i18n::tr(modes[i]), notes == i)) setP(a, t, TtNotes, i, false);
-  bool kt = prm(st, TtKeyTrack) >= 0.5f;
-  if (ImGui::Checkbox(i18n::tr("Key track (C5 plays at Speed)"), &kt)) setP(a, t, TtKeyTrack, kt ? 1 : 0, false);
-  float cue = prm(st, TtCue) * 100.0f;
-  ImGui::SetNextItemWidth(220);
-  if (ImGui::SliderFloat(i18n::tr("Cue point"), &cue, 0.0f, 100.0f, "%.1f %%")) setP(a, t, TtCue, cue / 100.0f, true);
-  if (ImGui::IsItemDeactivatedAfterEdit()) a.doc.endGesture();
-  ImGui::Separator();
-  ImGui::TextDisabled("%s", i18n::tr("Ctrl+click the waveform to set the cue point."));
-  ImGui::EndPopup();
+// The options page (the reference's overlay over the controls): the timecode
+// input settings (kept for FL projects) and Gridline's note settings.
+void optionsPage(App& a, const PluginTarget& t, const PluginState& st, const skin::Form& F, const skin::Skin& K) {
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  dl->AddRectFilled(F.p(0, 0), F.p(kW, 204), skin::hex(kOverlay), F.u(2), ImDrawFlags_RoundCornersTop);
+  const ImU32 cap = skin::hex(kCaption), bright = skin::hex(0xE4ECEE);
+  text(dl, F, 4, 7, 150, 12, i18n::tr("TIMECODE INPUT"), cap, 5.5f, -1);
+  flskin::menu(a, t, TtTimecode, F, 3, 22, 155, 20, K);
+  if (ImGui::IsItemHovered()) a.setHint(i18n::tr("Timecode record format (kept with the project; the deck plays its own sample)"));
+  ledBox(a, t, st, F, TtRiaa, 192, 22, 50, 20, i18n::tr("PHONO"), i18n::tr("Phono preamp for the timecode input (kept with the project)"));
+
+  skin::insetField(dl, F.p(3, 50), F.p(244, 201), skin::hex(0x353B3E), F.u(2));
+  text(dl, F, 10, 54, 120, 12, i18n::tr("NOTES"), cap, 5.5f, -1);
+  {
+    static const char* labels[3] = {i18n::N_("Off"), i18n::N_("Motor"), i18n::N_("Cue + motor")};
+    static const char* tips[3] = {i18n::N_("Notes do nothing: the motor selector runs the platter"),
+                                  i18n::N_("A held key runs the motor forward"),
+                                  i18n::N_("Each note starts the record at the cue point at full speed")};
+    constexpr float x = 10, y = 68, w = 227, h = 20;
+    skin::insetField(dl, F.p(x, y), F.p(x + w, y + h), skin::hex(0x262C2F), F.u(2));
+    const int cur = std::clamp(static_cast<int>(std::lround(prm(st, TtNotes))), 0, 2);
+    for (int i = 0; i < 3; ++i) {
+      const float c0 = x + w * static_cast<float>(i) / 3.0f, c1 = x + w * static_cast<float>(i + 1) / 3.0f;
+      ImGui::SetCursorScreenPos(F.p(c0, y));
+      ImGui::PushID(100 + i);
+      if (ImGui::InvisibleButton("##nm", F.sz(c1 - c0, h)) && i != cur) setP(a, t, TtNotes, i, false);
+      const bool hov = ImGui::IsItemHovered();
+      ImGui::PopID();
+      if (hov) a.setHint(i18n::tr(tips[i]));
+      if (i == cur) dl->AddRectFilled(F.p(c0 + 2, y + 2), F.p(c1 - 2, y + h - 2), skin::hex(0x4A5357), F.u(1.5f));
+      text(dl, F, c0, y, c1 - c0, h, i18n::tr(labels[i]), i == cur ? skin::hex(kOrange) : hov ? bright : cap, 5.8f);
+    }
+  }
+  ledBox(a, t, st, F, TtKeyTrack, 10, 100, 64, 22, i18n::tr("KEY TRACK"), i18n::tr("The key sets the motor speed (C5 plays at Speed)"));
+  skin::wheel(a, t, TtCue, F, 92, 98, 26, 26, wheelLook(false));
+  if (ImGui::IsItemHovered()) a.setHint(i18n::tr("Cue point: where Cue + motor notes start (Shift+click the scope to set it)"));
+  text(dl, F, 82, 125, 46, 10, i18n::tr("CUE"), cap, 5.5f);
+  text(dl, F, 10, 146, 227, 12, i18n::tr("Timecode settings are kept for FL projects."), cap, 5.5f, -1);
+  text(dl, F, 10, 160, 227, 12, i18n::tr("The deck plays its sample; the timecode input is not read."), cap, 5.5f, -1);
+}
+
+struct EdState {
+  bool options = false;
+};
+EdState& edState(const PluginTarget& t) {
+  static std::vector<std::pair<std::pair<ObjectId, int>, EdState>> v;
+  for (auto& e : v)
+    if (e.first.first == t.owner && e.first.second == t.slot) return e.second;
+  v.push_back({{t.owner, t.slot}, EdState{}});
+  // dev hook (screenshots): GRIDLINE_TURNTABLE_OPTIONS=1 opens the options page
+  if (const char* o = std::getenv("GRIDLINE_TURNTABLE_OPTIONS"); o && *o == '1') v.back().second.options = true;
+  return v.back().second;
+}
+
+// The whole editor takes dragged audio files (it is smaller than the plugin
+// window's own drop zone, so it wins over it).
+void dropTarget(App& a, const PluginTarget& t, ImVec2 p0, ImVec2 p1) {
+  const ImGuiPayload* pl = ImGui::GetDragDropPayload();
+  if (!pl) return;
+  std::string why;
+  const std::string path = browserui::draggedAudioFile(a, pl, &why);
+  if (path.empty() && why.empty()) return;
+  if (!ImGui::BeginDragDropTargetCustom(ImRect(p0, p1), ImGui::GetID("##ttdrop"))) return;
+  if (path.empty()) {
+    ImGui::SetTooltip("%s", why.c_str());
+    a.setHint(why);
+    ImGui::SetMouseCursor(ImGuiMouseCursor_NotAllowed);
+  } else if (const ImGuiPayload* x =
+                 ImGui::AcceptDragDropPayload(pl->DataType, ImGuiDragDropFlags_AcceptNoDrawDefaultRect | ImGuiDragDropFlags_AcceptBeforeDelivery)) {
+    if (x->Delivery) {
+      xdragui::markConsumed();
+      loadSample(a, t, path);
+    } else {
+      ImDrawList* fg = ImGui::GetForegroundDrawList();
+      fg->AddRectFilled(p0, p1, theme::withAlpha(skin::hex(kOrange), 0.10f), 4);
+      fg->AddRect(p0, p1, skin::hex(kOrange), 4, 0, 2.5f);
+      char tip[512];
+      std::snprintf(tip, sizeof tip, i18n::tr("Load %s onto the record"), std::filesystem::u8path(path).filename().u8string().c_str());
+      ImGui::SetTooltip("%s", tip);
+      a.setHint(tip);
+      ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    }
+  }
+  ImGui::EndDragDropTarget();
 }
 
 }  // namespace
 
 void editorTurntable(App& a, const PluginTarget& t, float width) {
-  using namespace flskin;
   const PluginState* sp = t.state(a.doc.song());
   if (!sp) return;
   const PluginState st = *sp;
   const skin::Skin& K = deckSkin();
+  const bool zoom = prm(st, TtZoom) >= 0.5f;
+  const float grow = zoom ? kZoomGrow : 0.0f;
+  const float formH = kH + grow, scopeH = kScH + grow;
   skin::Form F = skin::Form::fit(width, kW);
   ImDrawList* dl = ImGui::GetWindowDrawList();
-  skin::panel(dl, F.o, F.p(kW, kH), K, 4);
-  skin::Scope scope(K);
-  const ImU32 led = skin::hex(0xF8895A);
+  skin::panel(dl, F.o, F.p(kW, formH), K, 4);
+  EdState& es = edState(t);
 
-  // Live platter (the runtime of this channel; the parameters when none runs).
+  // Live platter (this channel's runtime; the parameters when none runs).
   const TurntableTelemetry* tel = nullptr;
   std::shared_ptr<ChannelRuntime> rt;
   if (t.isChannel()) {
     rt = a.builder.channelRuntime(t.owner);
     if (rt && rt->gen) tel = turntableTelemetry(rt->gen.get());
   }
-  const SamplePtr smp = sampleOf(st.data);
+  const SamplePtr smp = turntableSample(st);
   const bool missing = !st.data.empty() && !smp;
-  const float pos = tel ? tel->pos.load(std::memory_order_relaxed) : prm(st, TtPosition);
-  const float speed = tel ? tel->speed.load(std::memory_order_relaxed) : 0.0f;
+  float pos = tel ? tel->pos.load(std::memory_order_relaxed) : prm(st, TtPosition);
+  if (!std::isfinite(pos)) pos = 0.0f;
   const bool held = tel ? tel->held.load(std::memory_order_relaxed) : prm(st, TtHold) >= 0.5f;
+  const float speed = tel ? tel->speed.load(std::memory_order_relaxed) : 0.0f;
+  const ImU32 cap = skin::hex(kCaption);
 
-  // ---- left column: hand spring (2 x 2), pan, volume
-  cap(dl, F, kLeftCx, 4, "SMOOTH", K.textDim);
-  {
-    static const char* nums[4] = {"1", "2", "3", "4"};
+  if (es.options) {
+    optionsPage(a, t, st, F, K);
+  } else {
+    // ---- left: hand spring 2 x 2, pan, volume, hold, mute
+    static const char* smoothTips[4] = {i18n::N_("Smooth 1: how long the hand takes to settle"), i18n::N_("Smooth 2: momentum of the hand"),
+                                        i18n::N_("Smooth 3: stiffness of the hand"), i18n::N_("Smooth 4: carry (momentum share of each step)")};
+    const float sx[4] = {6, 27, 6, 27}, sy[4] = {9, 9, 30, 30};
     for (int i = 0; i < 4; ++i) {
-      const float x = kLeftCx - 36 + 40 * static_cast<float>(i % 2), y = 18 + 50 * static_cast<float>(i / 2);
-      W(a, t, TtSmooth1 + i, F, x, y, 32, K, nums[i]);
+      skin::wheel(a, t, TtSmooth1 + i, F, sx[i], sy[i], 20, 20, wheelLook(false));
+      if (ImGui::IsItemHovered()) a.setHint(i18n::tr(smoothTips[i]));
     }
-  }
-  if (ImGui::IsItemHovered()) a.setHint("Hand spring: 1 settle time, 2 momentum, 3 stiffness, 4 carry");
-  W(a, t, TtPan, F, kLeftCx - 28, 134, 56, K, "PAN", skin::WheelBigLine | skin::WheelCentered);
-  W(a, t, TtVolume, F, kLeftCx - 28, 212, 56, K, "VOLUME");
+    text(dl, F, 2, 51, 49, 10, i18n::tr("SMOOTH"), cap, 5.5f);
+    skin::wheel(a, t, TtPan, F, 7, 67, 28, 28, wheelLook(true));
+    text(dl, F, 1, 96, 40, 9, i18n::tr("PAN"), cap, 5.5f);
+    skin::wheel(a, t, TtVolume, F, 7, 106, 28, 28, wheelLook(false));
+    text(dl, F, 1, 136, 40, 13, i18n::tr("VOLUME"), cap, 5.5f);
+    ledBox(a, t, st, F, TtHold, 8, 151, 28, 20, i18n::tr("HOLD"), i18n::tr("The hand holds the record: the platter follows Position"));
+    ledBox(a, t, st, F, TtMute, 8, 177, 28, 20, i18n::tr("MUTE"), i18n::tr("Cut the output (a crossfader cut)"));
 
-  // ---- right column: turns readout, speed, acceleration, sensitivity
-  cap(dl, F, kRightCx, 4, "TURNS", K.textDim);
-  {
-    char b[16];
-    std::snprintf(b, sizeof b, "%+d", static_cast<int>(std::lround(prm(st, TtTurns))));
-    skin::lcd(dl, F.p(kRightCx - 37, 16), F.p(kRightCx + 37, 38), K, b, F.font(8.0f));
-  }
-  W(a, t, TtSpeed, F, kRightCx - 28, 56, 56, K, "SPEED");
-  W(a, t, TtAccel, F, kRightCx - 28, 134, 56, K, "ACCEL");
-  if (ImGui::IsItemHovered()) a.setHint("How quickly the platter reaches the motor speed");
-  W(a, t, TtSense, F, kRightCx - 28, 212, 56, K, "SENSE");
-  if (ImGui::IsItemHovered()) a.setHint("Mouse travel per pixel when scratching the platter or the waveform");
-
-  // ---- platter
-  {
-    drawPlatter(dl, F, K, pos, held, smp != nullptr);
-    const ImVec2 c = F.p(kPlatterCx, kPlatterCy);
-    const float R = F.u(kPlatterR + 4);
-    ImGui::SetCursorScreenPos(ImVec2(c.x - R, c.y - R));
-    ImGui::InvisibleButton("##platter", ImVec2(2 * R, 2 * R));
-    const ImVec2 m = ImGui::GetIO().MousePos;
-    const float dx = m.x - c.x, dy = m.y - c.y;
-    const bool inside = dx * dx + dy * dy <= R * R;
-    const float ma = std::atan2(dy, dx);
-    Hand& h = hand();
-    if (ImGui::IsItemActivated() && inside) {
-      grab(a, t, st, 1, pos);
-      h.lastAngle = ma;
+    // ---- right: turns, speed, acceleration, sensitivity
+    text(dl, F, 203, 9, 36, 10, i18n::tr("TURNS"), cap, 5.5f);
+    {
+      char b[16];
+      std::snprintf(b, sizeof b, "%+d", static_cast<int>(std::lround(std::clamp(prm(st, TtTurns), -9.0f, 9.0f))));
+      skin::DigiLook dlook;
+      dlook.bg = skin::hex(kWell);
+      dlook.text = skin::hex(kOrange);
+      skin::digi(a, t, TtTurns, F, 207, 21, 28, 16, dlook, b);
+      if (ImGui::IsItemHovered()) a.setHint(i18n::tr("Whole turns added to Position while the hand holds the record"));
     }
-    if (ImGui::IsItemActive() && h.where == 1) {
-      float d = ma - h.lastAngle;
-      if (d > kTau * 0.5f) d -= kTau;
-      if (d < -kTau * 0.5f) d += kTau;
-      h.lastAngle = ma;
-      // Travel along the rim at the cursor's radius (clockwise = forward), in form units.
-      const float r = std::max(F.u(24), std::sqrt(dx * dx + dy * dy));
-      move(a, t, st, static_cast<double>(d * r / F.s));
-      a.setHint("Scratching: clockwise plays forward, anticlockwise pulls the record back (Shift: fine)");
+    skin::wheel(a, t, TtSpeed, F, 211, 84, 28, 28, wheelLook(false));
+    if (ImGui::IsItemHovered()) a.setHint(i18n::tr("Motor speed (100 % = the sample's own speed)"));
+    text(dl, F, 203, 113, 44, 9, i18n::tr("SPEED"), cap, 5.5f);
+    skin::wheel(a, t, TtAccel, F, 211, 123, 28, 28, wheelLook(false));
+    if (ImGui::IsItemHovered()) a.setHint(i18n::tr("How quickly the platter reaches the motor speed"));
+    text(dl, F, 203, 152, 44, 9, i18n::tr("ACCEL"), cap, 5.5f);
+    skin::wheel(a, t, TtSense, F, 211, 162, 28, 28, wheelLook(false));
+    if (ImGui::IsItemHovered()) a.setHint(i18n::tr("Mouse travel when scratching the platter or the scope"));
+    text(dl, F, 203, 191, 44, 12, i18n::tr("SENSE"), cap, 5.5f);
+
+    // ---- platter: grab inside the record, drag up / down
+    drawPlatter(dl, F, pos, held, smp != nullptr && std::fabs(speed) > 1e-4f);
+    {
+      const ImVec2 c = F.p(kPlX + kPlD * 0.5f, kPlY + kPlD * 0.5f);
+      const float R = F.u(kPlD * 0.5f);
+      ImGui::SetCursorScreenPos(F.p(kPlX, kPlY));
+      ImGui::InvisibleButton("##platter", F.sz(kPlD, kPlD));
+      const ImVec2 m = ImGui::GetIO().MousePos;
+      const float dx = m.x - c.x, dy = m.y - c.y;
+      const bool inside = dx * dx + dy * dy <= R * R;
+      Hand& h = hand();
+      if (ImGui::IsItemActivated() && inside) grab(a, t, 1, pos);
+      if (ImGui::IsItemActive() && h.where == 1) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_None);
+        move(a, t, st, static_cast<double>(ImGui::GetIO().MouseDelta.y / F.s));
+        a.setHint(i18n::tr("Scratching: down plays forward, up pulls the record back (Ctrl: fine)"));
+      }
+      if (ImGui::IsItemDeactivated() && h.where == 1) release(a, t);
+      if (ImGui::IsItemHovered() && !ImGui::IsItemActive() && inside) a.setHint(i18n::tr("Grab the record and move it up or down to scratch"));
     }
-    if (ImGui::IsItemDeactivated() && h.where == 1) release(a, t);
-    if (ImGui::IsItemHovered() && !ImGui::IsItemActive() && inside) a.setHint("Grab the record and turn it to scratch (Shift: fine)");
+    transportSelector(a, t, st, F);
   }
 
-  // ---- motor row: hold, motor switch, mute
-  chk(a, t, TtHold, F, kLeftCx - 37, kRowA, 74, kRowH, K, "HOLD", led);
-  if (ImGui::IsItemHovered()) a.setHint("The hand holds the record: the platter follows Position");
-  {
-    static const char* labels[3] = {"REVERSE", "PAUSE", "FORWARD"};
-    sel(a, t, TtTransport, F, kPlatterCx - 124, kRowA, 248, kRowH, K, true, labels);
-    if (ImGui::IsItemHovered()) a.setHint("Motor: the platter runs toward this direction at Speed");
-  }
-  chk(a, t, TtMute, F, kRightCx - 37, kRowA, 74, kRowH, K, "MUTE", led);
-  if (ImGui::IsItemHovered()) a.setHint("Cut the output (a crossfader cut)");
-
-  // ---- sample row: load, name, options
-  if (btn("##ttload", F, kLeftCx - 37, kRowB, 74, kRowH, K, "LOAD", false)) {
+  // ---- bottom row: load, sample name, options, zoom
+  if (skin::button(F, "##ttload", 2, 205, 34, 20, "", skin::hex(kButton), skin::hex(0xE4ECEE), i18n::tr("Load a sample (or drop one on the deck)"))) {
     const PluginTarget tt = t;
-    openSampleDialog(a, "Load sample", [&a, tt](const std::string& p) { commitPath(a, tt, p); });
+    openSampleDialog(a, i18n::tr("Load sample"), [&a, tt](const std::string& p) { loadSample(a, tt, p); });
   }
-  if (ImGui::IsItemHovered()) a.setHint("Load a sample onto the record (or drop one on the editor)");
+  ui::drawIconFitC(dl, ui::Icon::Folder, F.p(19, 215), F.sz(12, 9), skin::hex(0xE4ECEE));
   {
-    const float fs = F.font(8.0f);
-    const float lw = F.u(306);
-    const size_t maxChars = static_cast<size_t>(std::max(4.0f, lw / (fs * 0.56f)));
-    const std::string name = sampleName(st, missing, maxChars);
-    skin::lcd(dl, F.p(kPlatterCx - 153, kRowB), F.p(kPlatterCx + 153, kRowB + kRowH), K, name.c_str(), fs);
+    const ImVec2 p0 = F.p(39, 207), p1 = F.p(206, 223);
+    dl->AddRectFilled(p0, p1, skin::hex(kPathBg), F.u(1.5f));
+    const float fs = fontPx(F, 5.8f);
+    const std::string name = fitText(sampleName(st, missing), p1.x - p0.x - F.u(6), fs);
+    skin::textAt(dl, ImVec2(p0.x + F.u(2), p0.y), p1, missing ? skin::hex(kLed) : skin::hex(kPathText), name.c_str(), fs, -1);
+    ImGui::SetCursorScreenPos(p0);
+    ImGui::InvisibleButton("##ttname", ImVec2(p1.x - p0.x, p1.y - p0.y));
+    if (ImGui::IsItemHovered()) a.setHint(st.data.empty() ? sampleName(st, false) : st.data);
   }
-  if (btn("##ttopt", F, kRightCx - 37, kRowB, 74, kRowH, K, "NOTES", false)) ImGui::OpenPopup("##ttopts");
-  if (ImGui::IsItemHovered()) a.setHint("How notes play the record: motor, cue point and key tracking");
-  optionsPopup(a, t, st);
+  if (skin::menuButton(F, "##ttopt", 207, 205, 19, 20, es.options ? skin::hex(kOrange) : skin::hex(0xC9CFD2))) es.options = !es.options;
+  {
+    bool z = zoom;
+    ImGui::SetCursorScreenPos(F.p(226, 205));
+    if (ImGui::InvisibleButton("##ttzoom", F.sz(19, 20))) setP(a, t, TtZoom, z ? 0 : 1, false);
+    const bool hov = ImGui::IsItemHovered();
+    if (hov) a.setHint(i18n::tr("Large scope"));
+    ui::drawIconFitC(dl, ui::Icon::Zoom, F.p(235.5f, 215), F.sz(10, 10), z ? skin::hex(kOrange) : hov ? skin::hex(0xFFFFFF) : skin::hex(0xC9CFD2));
+  }
 
-  // ---- waveform: play position, cue, drag to scratch
+  // ---- scope: play position, cue, drag sideways to scratch
   {
     const bool showCue = std::lround(prm(st, TtNotes)) == TnCue;
-    drawWave(dl, F, K, smp.get(), missing, pos, showCue, prm(st, TtCue), speed);
-    const ImVec2 w0 = F.p(12, kWaveY), w1 = F.p(12 + 472, kWaveY + kWaveH);
+    const std::string msg = missing ? std::string(i18n::tr("Sample not found: load it again")) : sampleName(st, false);
+    drawScope(dl, F, scopeH, smp.get(), msg, pos, showCue, prm(st, TtCue));
+    const ImVec2 w0 = F.p(kScX, kScY), w1 = F.p(kScX + kScW, kScY + scopeH);
     ImGui::SetCursorScreenPos(w0);
-    ImGui::InvisibleButton("##ttwave", ImVec2(w1.x - w0.x, w1.y - w0.y));
+    ImGui::InvisibleButton("##ttscope", ImVec2(w1.x - w0.x, w1.y - w0.y));
     Hand& h = hand();
-    const float mx = ImGui::GetIO().MousePos.x;
     if (ImGui::IsItemActivated()) {
-      if (ImGui::GetIO().KeyCtrl) {
-        const float q0 = w0.x + F.u(4), q1 = w1.x - F.u(4);
-        setP(a, t, TtCue, std::clamp((mx - q0) / std::max(1.0f, q1 - q0), 0.0f, 1.0f), false);
+      if (ImGui::GetIO().KeyShift) {
+        const float q0 = w0.x + F.u(2), q1 = w1.x - F.u(2);
+        setP(a, t, TtCue, std::clamp((ImGui::GetIO().MousePos.x - q0) / std::max(1.0f, q1 - q0), 0.0f, 1.0f), false);
       } else if (smp) {
-        grab(a, t, st, 2, pos);
-        h.lastX = mx;
+        grab(a, t, 2, pos);
       }
     }
     if (ImGui::IsItemActive() && h.where == 2) {
-      move(a, t, st, static_cast<double>((mx - h.lastX) / F.s));
-      h.lastX = mx;
-      a.setHint("Scratching: drag right plays forward, left pulls back (Shift: fine)");
+      move(a, t, st, static_cast<double>(ImGui::GetIO().MouseDelta.x / F.s));
+      a.setHint(i18n::tr("Scratching: drag right plays forward, left pulls back (Ctrl: fine)"));
     }
     if (ImGui::IsItemDeactivated() && h.where == 2) release(a, t);
-    if (ImGui::IsItemHovered() && !ImGui::IsItemActive()) a.setHint("Drag sideways to scratch; Ctrl+click sets the cue point");
+    if (ImGui::IsItemHovered() && !ImGui::IsItemActive()) a.setHint(i18n::tr("Drag sideways to scratch; Shift+click sets the cue point"));
   }
-  F.end(kW, kH);
+  dropTarget(a, t, F.o, F.p(kW, formH));
+  F.end(kW, formH);
 }
 
 }  // namespace gl::packs::spectral

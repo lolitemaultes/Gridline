@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include "../../core/TrackReceipt.h"
 #include "../../core/Platform.h"
 #include "../../core/Sha256.h"
 #include "../Export.h"
@@ -282,6 +283,12 @@ bool extractStems(const ExtractRequest& req, const std::function<void(double)>& 
     AudioFileOptions o;
     o.bits = 32;
     if (!writeAudioFile(p.u8string(), res.stems[s], int(std::lround(rate)), o, err)) return false;
+    {  // J-219: a stem covers the whole input, second for second (Track Receipt)
+      receipt::Origin og;
+      og.source = req.input;
+      og.kind = "stem";
+      receipt::writeOrigin(p.u8string(), og);
+    }
     if (written) written->emplace_back(id, p.u8string());
   }
   return true;

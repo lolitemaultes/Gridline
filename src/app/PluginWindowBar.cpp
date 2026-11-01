@@ -92,7 +92,7 @@ void drawBar(pluginbar::Bar& w, host::HostedInstance* hi) {
 
   // Presets.
   const int np = hi ? hostedui::presetCount(hi) : 0;
-  int& cur = hostedui::presetIndex(t);
+  int& cur = hostedui::presetIndex(t, hi);
   R(lay::kBarPrev, p0, p1);
   if (barButton("##prev", B.items[lay::kBarPrev], 0) && np > 0) hostedui::selectPreset(a, t, hi, cur <= 0 ? np - 1 : cur - 1);
   ui::Hint("Previous preset of the plugin");

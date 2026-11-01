@@ -1401,7 +1401,14 @@ struct Importer {
       // half drops to near-silent rumble); with key tracking a plain 128 semitone
       // span, with the sample's original rate at MIDI key 72 for the usual
       // detuneFactor (0.4758...), shifting by 12 log2(detuneFactor / 0.4758...).
-      // Fine is +-1 semitone (+-0.96 untracked).
+      // Fine is +-1 semitone tracked; untracked +-0.96 up to the centre and +-0.6 above it
+      // (J-215, measured on a tonal noise sample at several knob positions).
+      // J-215: the source reads a noise file's frames at 44.1 kHz whatever the file's own rate (a
+      // 48 kHz file plays 1.47 semitones low untracked; tracked, the detuneFactor, which follows
+      // the file's rate, brings it back). The Imported noise law plays it that way, and on an
+      // untracked noise reads Pitch as the knob position with the curve and the fine law above, so
+      // matrix routes to the knob move it along the same curve.
+      set(tailP(T_NoiseLaw), 1.0);
       double x = 0.5, fine = 0;
       num(sp, "kParamColor", x);
       num(sp, "kParamFine", fine);
@@ -1409,14 +1416,17 @@ struct Importer {
       if (track >= 0.5) {
         const double df = sub ? sub->num("detuneFactor", kNoiseDetuneRef) : kNoiseDetuneRef;
         semis = 12.0 * std::log2(std::max(1e-3, df) / kNoiseDetuneRef) - 12.0 + 128.0 * (x - 0.5);
-        noisePitchModScale = 1.0;
       } else {
-        semis = (x >= 0.5 ? 96.0 : 384.0) * (x - 0.5);
-        noisePitchModScale = x >= 0.5 ? 0.75 : 3.0;
+        semis = 128.0 * (std::clamp(x, 0.0, 1.0) - 0.5);  // the knob position (see Noise Pitch Law)
       }
+      noisePitchModScale = 1.0;
       if (semis < -64.0) note("Noise pitch below -64 semitones: played at -64");
       set(noiseP(N_Pitch), semis);
-      set(noiseP(N_Fine), fine * (track >= 0.5 ? 1.0 : 0.96));
+      set(noiseP(N_Fine), fine);
+      // J-215: the noise's key range (outside it the noise is left out; FOLD wraps the key into it)
+      if (num(pp, "kParamKeyZoneMin", v)) set(tailP(T_NKeyMin), std::clamp(std::round(v), 0.0, 127.0));
+      if (num(pp, "kParamKeyZoneMax", v)) set(tailP(T_NKeyMax), std::clamp(std::round(v), 0.0, 127.0));
+      if (num(pp, "kParamKeyZoneFold", v)) set(tailP(T_NKeyFold), v >= 0.5 ? 1.0 : 0.0);
       set(noiseP(N_Color), 0.0);
       if (num(sp, "kParamInitialPhase", v)) set(noiseP(N_Phase), v / 100.0);
       if (num(sp, "kParamRandomPhase", v)) set(noiseP(N_RandPhase), v / 100.0);
@@ -2135,9 +2145,10 @@ struct Importer {
         double mainCd = 0, auxCd = 0;
         num(pp, "kParamMainCurveData", mainCd);
         num(pp, "kParamAuxCurveData", auxCd);
-        size_t k = 0;
-        if (mainCd >= 0.5 && k < fl->array.size()) m.modCurve[static_cast<size_t>(out)] = curve(&fl->array[k++]);
-        if (auxCd >= 0.5 && k < fl->array.size()) m.auxCurve[static_cast<size_t>(out)] = curve(&fl->array[k]);
+        // the entries are positional (main curve first, aux curve second; an unused one is an empty object)
+        const size_t ka = fl->array.size() >= 2 ? 1 : (mainCd >= 0.5 ? 1 : 0);
+        if (mainCd >= 0.5 && !fl->array.empty()) m.modCurve[static_cast<size_t>(out)] = curve(&fl->array[0]);
+        if (auxCd >= 0.5 && ka < fl->array.size()) m.auxCurve[static_cast<size_t>(out)] = curve(&fl->array[ka]);
       }
       ++out;
     }
@@ -2157,12 +2168,40 @@ struct Importer {
       c.key = std::clamp(static_cast<int>(n.num("noteNum", 60)), 0, 127);
       const Json* at = n.find("attributes");
       c.vel = at && at->type == Json::Type::Array && !at->array.empty() ? static_cast<float>(std::clamp(at->array[0].number, 0.0, 1.0)) : 0.8f;
+      if (at && at->type == Json::Type::Array && at->array.size() >= 8) {
+        // per-note chance, octave / semitone chance and amount, velocity spread, release velocity
+        auto a = [&](size_t k) { return static_cast<float>(std::clamp(std::isfinite(at->array[k].number) ? at->array[k].number : 0.0, 0.0, 1.0)); };
+        c.chance = a(1), c.octCh = a(2), c.oct = a(3), c.semiCh = a(4), c.semi = a(5), c.velRand = a(6), c.relVel = a(7);
+      }
       const Json* mu = n.find("muted");
       c.mute = mu && ((mu->type == Json::Type::Bool && mu->boolean) || (mu->type == Json::Type::Number && mu->number != 0));
       out.push_back(c);
       if (out.size() >= 4096) break;
     }
     return out;
+  }
+  // Clip speed factor (beats per beat when synced, Plasma's free speed otherwise: 2 beats per
+  // second times the factor). J-203t: synced, the rate knob steps through powers of two in thirds
+  // of its range around 1x at 0.5 (step i = int(42 r + 0.5), speed 2^floor(i/3) / 128), the
+  // middle and upper third of each step taking triplet (x4/3) and dotted (x1.5) when those are on
+  // (measured: 0.57 plays twice as fast). Free, one beat lasts 0.1 ms .. 1 s: 900 (1 - 2 r)^2 + 100
+  // ms for r up to 0.5 and 399.6 (1 - r)^2 + 0.1 ms above.
+  double clipRate(const Json* pp, bool bpm, bool trip, bool dot) {
+    double r = 0.5;
+    num(pp, "kParamRate", r);
+    r = std::clamp(r, 0.0, 1.0);
+    if (bpm) {
+      const int i = static_cast<int>(42.0 * r + 0.5);
+      double sp = std::ldexp(1.0, i / 3) / 128.0;
+      int k = i % 3;
+      if (k == 2 && dot) sp *= 1.5;
+      else if (k == 2) k = 1;
+      if (k == 1 && trip) sp *= 4.0 / 3.0;
+      return std::clamp(sp, 1.0 / 128, 128.0);
+    }
+    const double u = 1.0 - r;
+    const double ms = u < 0.5 ? 399.6 * u * u + 0.1 : 900.0 * (1.0 - 2.0 * r) * (1.0 - 2.0 * r) + 100.0;
+    return std::clamp(1000.0 / ms / 2.0, 1.0 / 128, 128.0);
   }
   void sequencers(const Json& o) {
     const Json* ap = plain(o.find("Arp0"));
@@ -2184,19 +2223,26 @@ struct Importer {
       }
       // J-201: the rate knob steps through straight divisions, one per ninth of its range around
       // 1/16 at 0.5 (measured at 120 BPM: 0.34..0.44 -> 1/8, 0.46..0.54 -> 1/16, 0.56..0.66 -> 1/32,
-      // 0.68.. -> 1/64 and faster); "dotted" plays the next faster division dotted (1/16 dotted =
-      // 0.1875 beats). Plasma's straight divisions run 8 bars (0) .. 1/64 (9), 1/16 = 7.
+      // 0.68.. -> 1/64 and faster). J-203t: each division's band splits in three steps
+      // (i = int(26 r + 0.5), division by floor(i / 3), 1/16 at 0.5): on the lower step dotted and
+      // triplet change nothing, on the middle one dotted plays the next faster division dotted
+      // (1/16 band: 0.1875 beats), on the upper one dotted does the same and triplet plays the
+      // division as a triplet (measured at 0.46 / 0.5 / 0.53: dotted 0.25 / 0.1875 / 0.1875 beats,
+      // triplet 0.25 / 0.25 / 0.167). Plasma's straight divisions run 8 bars (0) .. 1/64 (9), 1/16 = 7.
       double rv = 0.5;
       num(pp, "kParamRate", rv);
-      double dotted = 0;
+      double dotted = 0, trip = 0;
       num(pp, "kParamDotted", dotted);
+      num(pp, "kParamTriplets", trip);
       if (a.shape == ArpPattern) dotted = 0;  // measured: a pattern keeps straight steps when dotted is on
-      const int k = static_cast<int>(std::lround(9.0 * (rv - 0.5))) + (dotted >= 0.5 ? 1 : 0);
+      const int ri = static_cast<int>(26.0 * std::clamp(rv, 0.0, 1.0) + 0.5), step = ri % 3;
+      const bool dot = dotted >= 0.5 && step >= 1, tri = !dot && trip >= 0.5 && step == 2;
+      const int k = ri / 3 - 4 + (dot ? 1 : 0);
       if (7 + k > 9 || 7 + k < 0) note("Arp rate beyond Plasma's divisions: clamped");
       a.rate = std::clamp(7 + k, 0, 9);
-      a.dot = dotted >= 0.5;
+      a.dot = dot;
+      a.trip = tri;
       if (num(pp, "kParamBeatSync", v)) a.bpm = v >= 0.5;
-      if (num(pp, "kParamTriplets", v)) a.trip = v >= 0.5;
       if (num(pp, "kParamTransposeShift", v)) a.shift = static_cast<int>(v);
       if (num(pp, "kParamTransposeRange", v)) a.range = static_cast<int>(v);
       if (num(pp, "kParamThru", v)) a.thru = v >= 0.5;
@@ -2204,6 +2250,9 @@ struct Importer {
       if (num(pp, "kParamRepeats", v)) a.repeats = static_cast<int>(v);
       if (num(pp, "kParamGate", v)) a.gate = static_cast<float>(v / 100.0);
       if (num(pp, "kParamChance", v)) a.chance = static_cast<float>(v / 100.0);
+      // J-203t: measured, a launched arp plays its first step with the key and the later ones on the
+      // song's step grid (with launch retrigger off it waits for the grid)
+      a.srcGrid = true;
       if (num(pp, "kParamLaunchRetrig", v)) a.retrigLaunch = v >= 0.5;
       if (num(pp, "kParamBeatRetrig", v)) a.retrigRate = v >= 0.5;
       if (num(pp, "kParamNoteRetrig", v)) a.retrigNote = v >= 0.5;
@@ -2229,21 +2278,31 @@ struct Importer {
     if (num(cp, "kParamMonoClipTrigger", v)) m.clipPoly = v < 0.5;
     if (const Json* c = o.find("ClipPlayer0"); c) {
       if (const Json* act = c->find("activeClips"); act && act->type == Json::Type::Array && !act->array.empty()) {
-        m.clipActive = std::clamp(static_cast<int>(act->array[0].number), 0, kClipSlots - 1);
+        // J-203t: launched clips play along with the song position from the start of the song,
+        // whatever the keys do, and the keys play the sound as usual (measured with a clip of two
+        // notes: they sound at their song positions before, during and after a held key, the key
+        // sounds itself). With the mono clip trigger (the default) only the last launched clip
+        // plays; with the poly trigger all of them.
+        for (const auto& a : act->array) {
+          if (a.type != Json::Type::Number) continue;
+          const int k = std::clamp(static_cast<int>(a.number), 0, kClipSlots - 1);
+          m.clipActive = k;
+          if (!m.clipPoly) m.clipRun = 0;
+          m.clipRun |= 1u << k;
+        }
       } else if (clipOn) {
         // J-201: with no active clip the source passes the keys through (measured:
         // such presets play like the clip player is off), so nothing plays from clips.
-        // J-203i: unless the player names a keyboard-span clip in mono span mode that loops: then
-        // the keys play that clip, transposed (measured over the library: with that rule 2 more
-        // presets pass and 3 come within a few dB; the poly, one-shot and static span clips match
-        // far better played through, so they stay off)
+        // J-203i: unless the player names a keyboard-span clip: then the keys play that clip,
+        // transposed. J-203t: in mono and poly span mode, looped, one-shot and static clips alike
+        // (measured: a static clip holds the notes at its start while the key is held, a poly
+        // span plays one copy per key); the offset span mode stays off (not measured).
         double sc = -1;
-        std::string mode, pmode;
+        std::string mode;
         const Json* scp = num(cp, "kParamSpanKeyboardClip", sc) && sc >= 0 && sc < kClipSlots
                               ? plain(o.find("MidiClip" + std::to_string(static_cast<int>(sc))))
                               : nullptr;
-        text(scp, "kParamPlaybackMode", pmode);
-        const bool span = scp && text(scp, "kParamSpanKeyboardMode", mode) && mode == "Mono" && pmode != "Static" && pmode != "OneShot";
+        const bool span = scp && text(scp, "kParamSpanKeyboardMode", mode) && (mode == "Mono" || mode == "Poly");
         if (span) {
           m.clipActive = static_cast<int>(sc);
         } else {
@@ -2272,14 +2331,29 @@ struct Importer {
       }
       if (num(pp, "kParamTranspose", v)) c.transpose = static_cast<int>(v);
       if (num(pp, "kParamPlaybackModeTime", v)) c.modeTime = static_cast<float>(v);
-      if (num(pp, "kParamTriplets", v)) c.trip = v >= 0.5;
-      if (num(pp, "kParamDotted", v)) c.dot = v >= 0.5;
+      c.srcSpan = true;
+      bool trip = false, dot = false;
+      if (num(pp, "kParamTriplets", v)) trip = v >= 0.5;
+      if (num(pp, "kParamDotted", v)) dot = v >= 0.5;
       if (num(pp, "kParamBeatSync", v)) c.bpm = v >= 0.5;
-      if (num(pp, "kParamLaunchQuantize", v)) c.launchQuant = static_cast<int>(v);
+      c.rate = static_cast<float>(clipRate(pp, c.bpm, trip, dot));
+      c.trip = c.dot = false;  // folded into the rate
+      // J-203t: launch quantize, measured from the start of a key-started clip against the song
+      // grid: 0 starts at once, 3 waits two bars or more, 4 for the next bar, 5 / 7 / 9 / 11 / 13
+      // for the next 1/2 / 1/4 / 1/8 / 1/16 / 1/32 and the even steps from 6 on for the triplet of
+      // the step before (10 and 12 start on the next third / sixth of a beat); the default is 1/16.
+      // Plasma has no 1/2 and 1/32 triplets: the nearest straight steps stand in.
+      c.launchQuant = 7;
+      if (num(pp, "kParamLaunchQuantize", v)) {
+        static const int k[] = {-1, 0, 1, 2, 3, 4, 5, 5, 10, 6, 11, 7, 12, 8, 8, 9};
+        c.launchQuant = k[std::clamp(static_cast<int>(v), 0, 15)];
+      }
+      // J-203t: a clip without the retrigger setting starts at the song position (measured: a
+      // key-started loop then plays from the clip position of the song beat, not from its start)
+      c.retrig = false;
       if (num(pp, "kParamLaunchRetrig", v)) c.retrig = v >= 0.5;
       if (num(pp, "kParamVelocityTrigger", v)) c.veloTrig = v >= 0.5;
       if (num(pp, "kParamNoteGate", v)) c.noteGate = v >= 0.5;
-      if (num(pp, "kParamRate", v)) note("Clip rate: plays at the normal speed");
       // automation lanes to macros
       if (const Json* cl = mc->find("clip"))
         if (const Json* au = cl->find("automation"); au && au->type == Json::Type::Array)

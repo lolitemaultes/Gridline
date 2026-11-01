@@ -11,6 +11,11 @@
 // channel volume / pan / mixer level 0..12800, channel filter 0..256, on/off
 // 0..1, plugin parameters in the plugin's own range.
 //
+// J-210: the lanes of recorded control changes are events (AutomationClip::events):
+// FL sends each value on its tick and nothing before the first one, so the
+// control keeps its own value until then, and the last value of a pass until
+// the first event of the next.
+//
 // Notes placed on automation channels trigger that automation in FL; they
 // become pattern automation too (the curve copied at each note).
 #include <algorithm>
@@ -127,8 +132,12 @@ void importPatternEvents(Context& c) {
           continue;
         }
         size_t before = pat->automation.size();
-        addPoint(laneFor(*pat, id), pos, norm);
-        lanes += pat->automation.size() > before;
+        PatternAutomation& l = laneFor(*pat, id);
+        if (pat->automation.size() > before) {
+          ++lanes;
+          l.events = true;  // J-210: played as FL plays its event data (exact steps, no value before the first)
+        }
+        addPoint(l, pos, norm);
         ++mapped;
       }
     }
@@ -153,6 +162,7 @@ void importPatternEvents(Context& c) {
           l.name = a->name;
           l.color = a->color;
         }
+        l.events = false;  // a curve: plays as an ordinary clip
         for (const auto& p : a->points) {
           AutoPoint q = p;
           q.pos = start + p.pos;

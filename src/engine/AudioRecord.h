@@ -72,6 +72,7 @@ struct TakeCommitOptions {
 
 struct TakeCommitResult {
   std::vector<ObjectId> clips;      // new audio clips, in take order
+  std::vector<size_t> takeIndex;    // J-217: the take (index into `takes`) of each clip
   std::vector<ObjectId> channels;   // their channels
   std::vector<std::string> files;   // written WAV files
   std::string error;
@@ -89,6 +90,29 @@ AudioRecorder::Rings ringsOf(const Program& p);
 
 // Playlist track recorded audio of a mixer track goes to (insert N → track N).
 int recordTrackFor(const Song& song, ObjectId mixer);
+// J-217: where and how a take lands on the playlist, shared by commitTakes()
+// and the playlist's live drawing of takes still recording (so the growing
+// clip is the clip that will be placed). `takes`: the session's takes so far;
+// takes without frames are ignored, as commitTakes() does.
+struct TakePlacement {
+  int track = 0;          // playlist track
+  bool grouped = false;   // the mixer track recorded several passes (a take group)
+  int take = 0;           // take number within the group
+  bool muted = false;     // an earlier pass (with muteEarlierTakes)
+  bool stereo = true;     // the clip's file is stereo
+  std::string name;       // clip / channel name
+  Rgb color = 0xC8724E;   // channel colour
+};
+TakePlacement takePlacement(const Song& song, const std::vector<RecordedTake>& takes, size_t i, const TakeCommitOptions& o);
+// The clip of a take of `frames` frames starting at song tick `startTick`: it
+// starts on the tick at or before the take (the gap is `pad` frames of leading
+// silence in its file) and lasts `length` ticks (whole ticks covering the file).
+struct TakeSpan {
+  Tick start = 0, length = 1;
+  int64_t pad = 0;
+};
+TakeSpan takeSpan(const TempoMap& map, double startTick, int64_t frames, double sampleRate);
+
 // Writes the takes and places them: each take becomes a sampler channel
 // (routed to the recorded mixer track) and an audio clip at its position.
 // Several passes of one track form a take group on consecutive tracks.

@@ -79,6 +79,7 @@ struct Ed {
   // dev trace (GRIDLINE_SELTMANN_TRACE): the last state line printed, geometry for scripted input
   std::string lastTrace;
   ImVec2 zone0, zone1, playBtn;
+  ImVec2 recEntry{-1, -1};             // J-218: the start screen's Record button (trace)
   std::vector<std::pair<std::string, ImVec2>> cards;  // visible layout cards (name, centre)
   // J-149 sequence lane
   int seqDrag = -1;           // step being dragged to a new place (-1 none)
@@ -94,12 +95,19 @@ struct Ed {
   int pitchDrag = -1;                  // slice whose pitch chip is dragged
   float pitchFrom = 0, pitchAcc = 0;   // pitch at the press, pointer travel (coarse drags)
   float wheelAcc = 0;                  // wheel travel not yet turned into pitch steps
-  int cutDrag = -1;                    // cut (slice index) being dragged in the waveform or the lane
+  double wheelLast = -1;               // J-208: time of the last pitch notch (a pause starts a new undo step)
+  int wheelSlice = -1;                 // J-208: the slice the last notches pitched
+  int cutDrag = -1;                    // cut (slice index) being dragged in the waveform
   Model cutBase;                       // the model when the cut drag began
   bool startDrag = false;              // the START flag is being dragged
   ImVec2 startFlag{-1, -1};            // its centre (trace)
   std::vector<std::pair<std::string, ImVec2>> menuPts;  // items of the open region menu (trace)
-  std::vector<ImVec2> cutPts, laneCutPts, padChips;     // cut handles, lane edges, pad pitch chips (trace)
+  std::vector<ImVec2> cutPts, laneLenPts, padChips;     // cut handles, step length handles, pad pitch chips (trace)
+  // J-214 step lengths: the right edge of a block in the sequence sets that step's own length
+  int lenDrag = -1;                    // step whose length is dragged (-1 none)
+  double lenFrom = 0, lenStart = 0;    // its length and (unswung) start at the press (beats)
+  double lenShown = 0;                 // the lane's length at the press (the scale holds while shortening)
+  float lenPx = 1, lenX0 = 0;          // pixels per beat and the pointer at the press
 };
 Ed& ed(const PluginTarget& t);
 
@@ -158,6 +166,17 @@ int baseNote(App& a, const PluginTarget& t);
 void applyLayout(App& a, const PluginTarget& t, Ed& e, const Preset& p, bool play = true);
 // Opens the file dialog that loads audio into this instance.
 void openLoadDialog(App& a, const PluginTarget& t, Ed& e);
+// Loads an audio file into this instance (one undo step; the analysis follows) and names the
+// channel `name` (empty: after the file). The file dialog and the recorder both load this way.
+void loadAudio(App& a, const PluginTarget& t, const std::string& path, const std::string& name = "");
+
+// ---- J-218 the recorder on the start screen (seltmann_rec_ui.cpp)
+bool recorderOpenFor(const PluginTarget& t);  // this instance shows the recorder
+void openRecorder(App& a, const PluginTarget& t);
+// In place of the drop zone: input, meter, the take, Record / Pause / Resume, Finish, Clear, Load.
+void drawRecorder(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1);
+// Per frame (packs::drawWindows): drains the input tap into the take, watches the device.
+void tick(App& a);
 
 // ---- audition / renders / project
 void auditionStart(App& a, const PluginTarget& t, Ed& e, int slice);
@@ -201,6 +220,9 @@ void markEdited(Model& m);
 void slicePitchUi(App& a, const PluginTarget& t, Ed& e, int slice, float semis, uint64_t mergeKey = 0);
 // The mouse wheel over the last item steps the slice's pitch (1 semitone, Shift 0.1) and keeps the wheel from scrolling.
 void wheelPitch(App& a, const PluginTarget& t, Ed& e, int slice);
+// A step's own pitch (the sequence: only that step changes, other steps of its region keep theirs).
+void stepPitchUi(App& a, const PluginTarget& t, Ed& e, int step, float semis, uint64_t mergeKey = 0);
+void wheelStepPitch(App& a, const PluginTarget& t, Ed& e, int step);
 // "+3", "-12", "+0.5", "0".
 std::string pitchText(float semis);
 // A small pitch readout of a slice: drag up / down (semitones; Shift fine), wheel, double-click
@@ -208,7 +230,9 @@ std::string pitchText(float semis);
 float pitchChip(App& a, const PluginTarget& t, Ed& e, const char* id, ImVec2 p0, float h, float maxW, int slice, bool units);
 // The sequence starts at `step` (keepRest: the steps before move to the end; else they are left out).
 void startHereUi(App& a, const PluginTarget& t, Ed& e, int step, bool keepRest);
-// Cut drags (waveform, lane): begin stores the model; dragging moves cut `cut` (the start of that
+// J-214: a step's own length in the sequence (beats; <= 0: its default). mergeKey folds a drag.
+void stepBeatsUi(App& a, const PluginTarget& t, Ed& e, int step, double beats, uint64_t mergeKey = 0);
+// Cut drags (waveform): begin stores the model; dragging moves cut `cut` (the start of that
 // slice) to `frame` (the chop's snap, Alt: none), both neighbours resize; one undo step per drag.
 void cutDragBegin(Ed& e, int cut);
 void cutDragTo(App& a, const PluginTarget& t, Ed& e, int cut, double frame);

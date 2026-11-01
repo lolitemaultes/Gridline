@@ -240,29 +240,89 @@ bool decodeFruityVocoder(Context&, const std::vector<Event>& evs, PluginMapping&
 // 0..1, linear volume, hold, sensitivity, motor -1/0/1, smooth 1..4,
 // rotations 0..18), i32 length + path (ANSI); later versions add the zoom,
 // timecode and RIAA flags, not used here.
+// Fruity Scratcher (J-206): u32 version, then
+//  * 1001000 .. 1001002: 14 f32 internal values by control tag, i32 length +
+//    8-bit sample path, [> 1001000] u8 editor size (1 normal, 2 large),
+//    [>= 1001002] i32 timecode format (-1 = off) and u8 phono preamp;
+//  * older states: i32 length + an unused string, u8 sound on, i32 unused,
+//    i32 speed / accel (0..100), volume (0..255), pan (-128..128), u8 hold,
+//    i32 sensitivity (0..100), transport (-1..1), rotations (0..18), four
+//    smooth values (0..1000), then the i32 length + path.
+// No path: the scratcher has no sample and stays silent (Turntable's "Empty
+// deck"; Turntable's own built-in sound is for new instances only).
 bool decodeScratcher(Context& c, const std::vector<Event>& evs, PluginMapping& m) {
   std::vector<uint8_t> b = stateBytes(evs);
   if (b.size() < 4 + 14 * 4) return false;
   Reader r(b.data(), b.size());
   const uint32_t version = r.u32();
-  if (version < 1000000 || version > 1999999) return false;
   float v[14];
-  for (float& f : v) f = r.f32();
+  auto readPath = [&]() {
+    std::string path;
+    const int32_t len = r.left() >= 4 ? r.i32() : 0;
+    if (len > 0 && len < 4096 && static_cast<size_t>(len) <= r.left()) {
+      path.assign(reinterpret_cast<const char*>(b.data() + r.pos), static_cast<size_t>(len));
+      r.skip(static_cast<size_t>(len));
+      while (!path.empty() && path.back() == '\0') path.pop_back();
+    }
+    return path;
+  };
   std::string path;
-  const int32_t len = r.left() >= 4 ? r.i32() : 0;
-  if (len > 0 && len < 4096 && static_cast<size_t>(len) <= r.left()) {
-    path.assign(reinterpret_cast<const char*>(b.data() + r.pos), static_cast<size_t>(len));
-    r.skip(static_cast<size_t>(len));
-    while (!path.empty() && path.back() == '\0') path.pop_back();
+  int zoom = 1, timecode = -1, riaa = 0;
+  if (version < 1001000) {  // the integer layout
+    const int32_t skipLen = r.i32();
+    if (skipLen < 0 || static_cast<size_t>(skipLen) > r.left()) return false;
+    r.skip(static_cast<size_t>(skipLen));
+    const float sound = r.u8() != 0 ? 1.f : 0.f;
+    (void)r.i32();
+    const double speed = r.i32(), accel = r.i32(), vol = r.i32(), pan = r.i32();
+    const float hold = r.u8() != 0 ? 1.f : 0.f;
+    const double sens = r.i32(), transport = r.i32(), rot = r.i32();
+    double sm[4];
+    for (double& x : sm) x = r.i32();
+    if (r.left() < 4) return false;
+    v[0] = 0.f;
+    v[1] = sound;
+    v[2] = static_cast<float>(speed / 100.0);
+    v[3] = static_cast<float>(accel / 100.0);
+    v[4] = static_cast<float>((pan * 0.0078125 + 1.0) * 0.5);
+    v[5] = static_cast<float>(vol / 255.0);
+    v[6] = hold;
+    v[7] = static_cast<float>(sens / 100.0);
+    v[8] = static_cast<float>(transport);
+    for (int k = 0; k < 4; ++k) v[9 + k] = static_cast<float>(sm[k] / 1000.0);
+    v[13] = static_cast<float>(rot);
+    path = readPath();
+  } else if (version <= 1001002) {
+    for (float& f : v) f = r.f32();
+    path = readPath();
+    if (version > 1001000 && r.left() >= 1) zoom = r.u8();
+    if (version >= 1001002 && r.left() >= 5) {
+      timecode = r.i32();
+      riaa = r.u8();
+    }
+  } else if (version <= 1999999) {  // a newer layout: the 14 values
+    for (float& f : v) f = r.f32();
+  } else {
+    return false;
   }
   fx::begin(m, "gl.turntable");
   sp::turntableFromReference(v, 14, m.state.params);
+  m.state.params[sp::TtZoom] = zoom == 2 ? 1.f : 0.f;
+  m.state.params[sp::TtTimecode] = timecode >= 0 && timecode <= 7 ? static_cast<float>(timecode + 1) : 0.f;
+  m.state.params[sp::TtRiaa] = riaa != 0 ? 1.f : 0.f;
   if (!path.empty()) {
     for (char& ch : path)
       if (ch == '\\') ch = '/';
     m.state.data = c.resolvePath(path);
+  } else {
+    m.state.params[sp::TtEmpty] = 1.f;
   }
-  m.exact = true;  // every setting maps 1:1 (the platter's automation is not converted)
+  // Automation (clips, recorded events): FL's values span each control's range.
+  m.param = [](int fl) { return fl >= 0 && fl <= 13 ? sp::turntableParamOfReference(fl) : -1; };
+  m.value = [](int fl, double n) { return sp::turntableValueOfReference(fl, n); };
+  setRawRanges(m, {{0, 0, 30000}, {1, 0, 1}, {2, 0, 100}, {3, 0, 100}, {4, -128, 128}, {5, 0, 255}, {6, 0, 1}, {7, 0, 100},
+                   {8, -1, 1}, {9, 0, 1000}, {10, 0, 1000}, {11, 0, 1000}, {12, 0, 1000}, {13, 0, 18}});
+  m.exact = true;  // every setting maps 1:1
   return true;
 }
 

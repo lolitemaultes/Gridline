@@ -6,11 +6,14 @@
 // (1/2, 1/3, ... : the first piece keeps the letter, later letters move on) or
 // to delete it (it joins its neighbour, never past the chopped region). Every
 // edit is one undo step through the plugin state. J-185: the same menu pitches the
-// region and starts the sequence on a cell; in order, the edges between blocks are
-// the cuts (drag to resize); the pitch readouts on the pads and in the waveform.
+// region and starts the sequence on a cell; the pitch readouts on the pads and in the waveform.
+// J-214: the sequence is its own layer: a block's right edge sets that step's own length (the
+// region stays; the next step follows right after it; the loop fills up to the bar line with a
+// rest). The cuts between regions are resized in the waveform.
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <functional>
 #include "../../app/PluginSkin.h"
 #include "../../app/Theme.h"
 #include "../../app/Widgets.h"
@@ -60,21 +63,49 @@ void slicePitchUi(App& a, const PluginTarget& t, Ed& e, int slice, float semis, 
   commit(a, t, e, nm, i18n::N_("Slice pitch"), mergeKey);
 }
 
-void wheelPitch(App& a, const PluginTarget& t, Ed& e, int slice) {
-  if (!ImGui::IsItemHovered() || slice < 0 || slice >= static_cast<int>(e.m.slices.size())) return;
+void stepPitchUi(App& a, const PluginTarget& t, Ed& e, int step, float semis, uint64_t mergeKey) {
+  Model nm = e.m;
+  if (!setStepPitch(nm, step, semis)) return;
+  commit(a, t, e, nm, i18n::N_("Step pitch"), mergeKey);
+}
+
+namespace {
+// The wheel over the hovered item: the new pitch from `from` (whole semitones; Shift: 0.1), or NAN
+// when no notch landed. `who` tells one item from another (a run of notches on one is one undo step).
+float wheelNotches(Ed& e, int who, float from) {
+  if (!ImGui::IsItemHovered()) return NAN;
   ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
   ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelX);
   const ImGuiIO& io = ImGui::GetIO();
   float w = io.MouseWheel;
   if (w == 0 && io.KeyShift) w = io.MouseWheelH;  // (Shift turns the wheel sideways on some systems)
-  if (w == 0) return;
+  if (w == 0) return NAN;
   e.wheelAcc += w;
   const int notches = static_cast<int>(e.wheelAcc);
-  if (notches == 0) return;
+  if (notches == 0) return NAN;
   e.wheelAcc -= static_cast<float>(notches);
+  // J-208: a run of notches on one item is one undo step; a pause (or another item) starts the next
+  const double now = ImGui::GetTime();
+  if (e.wheelSlice != who || e.wheelLast < 0 || now - e.wheelLast > 0.6) ++e.gesture;
+  e.wheelSlice = who;
+  e.wheelLast = now;
   const float step = io.KeyShift ? 0.1f : 1.0f;
-  slicePitchUi(a, t, e, slice, e.m.slices[static_cast<size_t>(slice)].pitch + step * static_cast<float>(notches),
-               0x5E185A0000000000ull + static_cast<uint64_t>(slice));
+  float nv = from + step * static_cast<float>(notches);
+  if (!io.KeyShift) nv = std::round(nv);  // plain notches land on whole semitones
+  return std::clamp(nv, -kSlicePitchRange, kSlicePitchRange);
+}
+}  // namespace
+
+void wheelPitch(App& a, const PluginTarget& t, Ed& e, int slice) {
+  if (slice < 0 || slice >= static_cast<int>(e.m.slices.size())) return;
+  const float nv = wheelNotches(e, slice, e.m.slices[static_cast<size_t>(slice)].pitch);
+  if (std::isfinite(nv)) slicePitchUi(a, t, e, slice, nv, gestureKey(0x5E185A0000000000ull, e, slice));
+}
+
+void wheelStepPitch(App& a, const PluginTarget& t, Ed& e, int step) {
+  if (step < 0 || step >= static_cast<int>(e.m.pattern.steps.size())) return;
+  const float nv = wheelNotches(e, 0x100000 + step, e.m.pattern.steps[static_cast<size_t>(step)].pitch);
+  if (std::isfinite(nv)) stepPitchUi(a, t, e, step, nv, gestureKey(0x5E213A0000000000ull, e, step));
 }
 
 std::string pitchText(float v) {
@@ -142,6 +173,12 @@ float pitchChip(App& a, const PluginTarget& t, Ed& e, const char* id, ImVec2 p0,
   const ImU32 ink = zero ? P.textDim : theme::contrastText(accent());
   textC(dl, a.fontMono, fs, ImVec2((p0.x + q1.x) * 0.5f, (p0.y + q1.y) * 0.5f), ink, s.c_str());
   return w;
+}
+
+void stepBeatsUi(App& a, const PluginTarget& t, Ed& e, int step, double beats, uint64_t mergeKey) {
+  Model nm = e.m;
+  if (!setStepBeats(nm, step, beats)) return;
+  commit(a, t, e, nm, i18n::N_("Step length"), mergeKey);
 }
 
 void cutDragBegin(Ed& e, int cut) {
@@ -237,29 +274,46 @@ void drawRegionMenu(App& a, const PluginTarget& t, Ed& e) {
   }
   ImGui::Separator();
   regionMenuItems(a, t, e, region);
-  // J-185: the region's pitch
+  // J-185: the pitch: from a block of the sequence, that step's own pitch (the region's other steps
+  // keep theirs) and the region's (every step of it); from a pad or the waveform, the region's
   ImGui::Separator();
   {
-    const float pv = e.m.slices[static_cast<size_t>(region)].pitch;
-    char b[96];
-    std::snprintf(b, sizeof b, "%s   %s %s", i18n::tr("Pitch"), pitchText(pv).c_str(), i18n::tr("st"));
-    if (ImGui::BeginMenu(b)) {
-      struct Item {
-        const char* label;
-        float delta;
-      };
-      const Item items[4] = {{i18n::N_("Up a semitone"), 1}, {i18n::N_("Down a semitone"), -1}, {i18n::N_("Up an octave"), 12}, {i18n::N_("Down an octave"), -12}};
-      for (const auto& it : items) {
-        const float nv = std::clamp(pv + it.delta, -kSlicePitchRange, kSlicePitchRange);
-        if (ImGui::MenuItem(i18n::tr(it.label), nullptr, false, nv != pv)) slicePitchUi(a, t, e, region, nv);
+    const int nsP = static_cast<int>(e.m.pattern.steps.size());
+    const bool fromStep = e.menuStep >= 0 && e.menuStep < nsP;
+    const int stepI = e.menuStep;
+    auto pitchMenu = [&](const char* title, float pv, const std::function<void(float)>& set, const char* tip) {
+      char b[96];
+      std::snprintf(b, sizeof b, "%s   %s %s", i18n::tr(title), pitchText(pv).c_str(), i18n::tr("st"));
+      if (ImGui::BeginMenu(b)) {
+        struct Item {
+          const char* label;
+          float delta;
+        };
+        const Item items[4] = {{i18n::N_("Up a semitone"), 1}, {i18n::N_("Down a semitone"), -1}, {i18n::N_("Up an octave"), 12}, {i18n::N_("Down an octave"), -12}};
+        for (const auto& it : items) {
+          const float nv = std::clamp(pv + it.delta, -kSlicePitchRange, kSlicePitchRange);
+          if (ImGui::MenuItem(i18n::tr(it.label), nullptr, false, nv != pv)) set(nv);
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem(i18n::tr("Reset pitch"), nullptr, false, std::fabs(pv) >= 0.005f)) set(0);
+        ImGui::EndMenu();
       }
-      ImGui::Separator();
-      if (ImGui::MenuItem(i18n::tr("Reset pitch"), nullptr, false, std::fabs(pv) >= 0.005f)) slicePitchUi(a, t, e, region, 0);
-      ImGui::EndMenu();
+      if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && !ImGui::IsPopupOpen(b)) ui::Tooltip(i18n::tr(tip));
+    };
+    if (fromStep) {
+      pitchMenu(i18n::N_("Step pitch"), e.m.pattern.steps[static_cast<size_t>(stepI)].pitch,
+                [&](float v) { stepPitchUi(a, t, e, stepI, v); },
+                i18n::N_("This step only: the region's other steps in the sequence keep their pitch. Also: the wheel over the block."));
+      note("pitch");
+      pitchMenu(i18n::N_("Region pitch"), e.m.slices[static_cast<size_t>(region)].pitch,
+                [&](float v) { slicePitchUi(a, t, e, region, v); },
+                i18n::N_("Every step of this region, its pad and its key. Also: drag the pitch readout on its pad up or down."));
+      note("regionpitch");
+    } else {
+      pitchMenu(i18n::N_("Pitch"), e.m.slices[static_cast<size_t>(region)].pitch, [&](float v) { slicePitchUi(a, t, e, region, v); },
+                i18n::N_("Also: drag the pitch readout on a pad or a region up or down, or turn the wheel over it."));
+      note("pitch");
     }
-    note("pitch");
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && !ImGui::IsPopupOpen(b))
-      ui::Tooltip(i18n::tr("Also: drag the pitch readout on a pad or a region up or down, or turn the wheel over it."));
   }
   // J-185: the sequence starts here (from this step; from a pad or the waveform: the region's first step)
   ImGui::Separator();
@@ -294,6 +348,16 @@ void drawRegionMenu(App& a, const PluginTarget& t, Ed& e) {
       commit(a, t, e, nm, i18n::N_("Duplicate a step"));
       e.selStep = st + 1;
     }
+    note("dup");
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+      ui::Tooltip(i18n::tr("A copy of this step right after it, with its length and pitch. Each copy can then have its own length."));
+    // J-214: the step's own length in the sequence (its right edge in the lane)
+    const bool own = st < static_cast<int>(e.m.pattern.steps.size()) && e.m.pattern.steps[static_cast<size_t>(st)].beats > 0;
+    if (ImGui::MenuItem(i18n::tr("Reset length"), nullptr, false, own)) stepBeatsUi(a, t, e, st, 0);
+    note("resetlen");
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+      ui::Tooltip(own ? i18n::tr("The step lasts its default length in the sequence again.")
+                  : i18n::tr("Drag the block's right edge to give this step its own length in the sequence."));
     if (ImGui::MenuItem(i18n::tr("Remove from the sequence"), nullptr, false, ns > 1)) {
       nm.pattern.steps.erase(nm.pattern.steps.begin() + st);
       markEdited(nm);
@@ -322,11 +386,15 @@ void drawSequence(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, co
   const int ns = static_cast<int>(m.pattern.steps.size());
   const int nSl = static_cast<int>(m.slices.size());
   const int bpb = std::max(1, m.grid.beatsPerBar);
-  const double beats = std::max(1e-9, m.pattern.beats());
+  // J-214: one cycle (the rest up to the bar line included) and where the steps end. While a length
+  // drag shortens a step the lane keeps its scale, so the edge stays under the pointer.
+  const double cycle = std::max(1e-9, cycleBeats(m));
+  const double stepsEnd = m.pattern.stepsBeats();
+  const double beats = e.lenDrag >= 0 ? std::max(cycle, e.lenShown) : cycle;
   const bool natural = isNaturalOrder(m);
   char cap[160];
   {
-    const double bars = beats / bpb;
+    const double bars = cycle / bpb;
     char bb[24];
     std::snprintf(bb, sizeof bb, std::fabs(bars - std::round(bars)) < 1e-6 ? "%.0f" : "%.2f", bars);
     std::snprintf(cap, sizeof cap, "%s  \xC2\xB7  %d %s  \xC2\xB7  %s %s", natural ? i18n::tr("IN ORDER") : i18n::tr("YOUR ORDER"), ns,
@@ -363,7 +431,7 @@ void drawSequence(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, co
       e.selStep = -1;
     }
     textR(dl, a.fontRegular, theme::kFontLabel, ImVec2(bx - 12, cy - 7), P.textFaint,
-          i18n::tr("Drag a block to move it, an edge to resize. Right-click: more"));
+          i18n::tr("Drag a block to move it, its right edge to set its length. Right-click: more"));
   }
   // the well
   const float lx0 = p0.x, lx1 = p1.x, ly0 = p0.y + stripH, rulerH = 13, ly1 = p1.y - rulerH;
@@ -383,7 +451,7 @@ void drawSequence(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, co
       edge[static_cast<size_t>(i)] = X(u);
       u += stepBeats(m.pattern, i);
     }
-    edge[static_cast<size_t>(ns)] = bx1;
+    edge[static_cast<size_t>(ns)] = X(stepsEnd);
   }
   // ruler: bars and beats under the blocks
   {
@@ -410,7 +478,9 @@ void drawSequence(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, co
     const float x0 = edge[static_cast<size_t>(i)], x1 = edge[static_cast<size_t>(i) + 1];
     const ImVec2 q0(std::round(x0) + 1, by0), q1(std::max(std::round(x0) + 3, std::round(x1) - 1), by1);
     const int k = stepSlice(m.pattern, s, nSl);
-    const bool playing = i == lv.step && lv.patternRunning, sel = i == e.selStep, dragged = i == e.seqDrag;
+    // (J-214: in the rest after the last step no block lights)
+    const bool inRest = lv.patternPos >= 0 && lv.patternPos * cycle > stepsEnd + 1e-6;
+    const bool playing = i == lv.step && lv.patternRunning && !inRest, sel = i == e.selStep, dragged = i == e.seqDrag;
     ImGui::PushID(0x5E0000 + i);
     ImGui::SetCursorScreenPos(q0);
     ImGui::SetNextItemAllowOverlap();  // J-185: the edges between blocks resize the regions (in order)
@@ -429,15 +499,21 @@ void drawSequence(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, co
       auditionStop(a, t, e);
     }
     if (ImGui::IsItemDeactivated()) auditionStop(a, t, e);
+    // The wheel over a block steps that step's own pitch (Shift: 0.1), not its region's: the region's
+    // other steps keep theirs. The wheel elsewhere scrolls as before.
+    if (k >= 0 && e.seqDrag < 0) wheelStepPitch(a, t, e, i);
     if (hv && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && k >= 0) {
       e.selStep = i;
       e.selSlice = k;
       openRegionMenu(e, k, i);
     }
     if (hv && !ImGui::IsItemActive() && e.seqDrag < 0) {
-      char b[200];
-      std::snprintf(b, sizeof b, "%s %d: %s %s  \xC2\xB7  %.4g %s\n%s", i18n::tr("Step"), i + 1, i18n::tr("region"), k >= 0 ? regionName(k).c_str() : "-",
-                    stepBeats(m.pattern, i), i18n::tr("beats"), i18n::tr("Click to hear it. Drag to move it. Right-click: start here, pitch, split or delete the region."));
+      char b[320];
+      const std::string pt = k >= 0 ? pitchText(m.slices[static_cast<size_t>(k)].pitch + s.pitch) : std::string("0");
+      std::snprintf(b, sizeof b, "%s %d: %s %s  \xC2\xB7  %.4g %s%s  \xC2\xB7  %s %s %s\n%s", i18n::tr("Step"), i + 1, i18n::tr("region"),
+                    k >= 0 ? regionName(k).c_str() : "-", stepBeats(m.pattern, i), i18n::tr("beats"),
+                    s.beats > 0 ? (std::string(" (") + i18n::tr("its own length") + ")").c_str() : "", i18n::tr("pitch"), pt.c_str(), i18n::tr("st"),
+                    i18n::tr("Click to hear it. Drag to move it. Wheel: this step's pitch (Shift: finer). Right-click: start here, pitch, split or delete the region."));
       ui::Tooltip(b);
     }
     if (hv && e.seqDrag < 0) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
@@ -464,11 +540,9 @@ void drawSequence(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, co
       if (cw >= 30) {
         std::string marks;
         if (s.reverse) marks += "R ";
-        if (s.pitch != 0) {
-          char pb[16];
-          std::snprintf(pb, sizeof pb, "%+d ", static_cast<int>(std::lround(s.pitch)));
-          marks += pb;
-        }
+        // J-208: the pitch the block plays at (its region's pitch and the step's own)
+        const float bp = m.slices[static_cast<size_t>(k)].pitch + s.pitch;
+        if (std::fabs(bp) >= 0.005f) marks += pitchText(bp) + " ";
         if (s.stutter > 1) marks += "x" + std::to_string(s.stutter) + " ";
         if (!marks.empty()) {
           marks.pop_back();
@@ -476,46 +550,95 @@ void drawSequence(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, co
         }
       }
     }
+    // J-214: a step with its own length carries a small corner mark
+    if (s.beats > 0 && q1.x - q0.x >= 12 && !dragged)
+      dl->AddTriangleFilled(ImVec2(q1.x - 7, q0.y + 1), ImVec2(q1.x - 1, q0.y + 1), ImVec2(q1.x - 1, q0.y + 7), theme::withAlpha(accent(), 0.95f));
     if (playing && !dragged) dl->AddRect(ImVec2(q0.x - 1, q0.y - 1), ImVec2(q1.x + 1, q1.y + 1), P.paper, theme::kRadius + 1, 0, 2.0f);
     else if (sel && !dragged) dl->AddRect(ImVec2(q0.x - 1, q0.y - 1), ImVec2(q1.x + 1, q1.y + 1), accent(), theme::kRadius + 1, 0, 2.0f);
     e.seqCentres.push_back(ImVec2((q0.x + q1.x) * 0.5f, (q0.y + q1.y) * 0.5f));
   }
-  // J-185: in order (every region once), an edge between two blocks is the cut between their
-  // regions: drag it to resize both (snap as in the waveform, Alt: none); one undo step per drag
-  e.laneCutPts.clear();
-  if (natural && e.seqDrag < 0 && ns == nSl) {
-    const double beat0 = beatAt(m.grid, static_cast<double>(m.regionStart));
-    for (int i = 1; i < ns; ++i) {
-      const float x = std::round(edge[static_cast<size_t>(i)]);
-      const float wl = edge[static_cast<size_t>(i)] - edge[static_cast<size_t>(i) - 1], wr = edge[static_cast<size_t>(i) + 1] - edge[static_cast<size_t>(i)];
-      const float hw = std::min(4.0f, std::min(wl, wr) * 0.2f);
-      if (hw < 2 && e.cutDrag != i) continue;
-      ImGui::PushID(0x5E1850 + i);
-      ImGui::SetCursorScreenPos(ImVec2(x - std::max(2.0f, hw), by0));
-      ImGui::InvisibleButton("##lcut", ImVec2(2 * std::max(2.0f, hw), by1 - by0));
-      const bool h = ImGui::IsItemHovered(), ac = ImGui::IsItemActive();
-      if (ImGui::IsItemActivated()) cutDragBegin(e, i);
-      if (ac && e.cutDrag == i && ImGui::IsMouseDragging(0, 1)) {
-        const double bb = std::clamp(static_cast<double>((mp.x - bx0) / bw), 0.0, 1.0) * std::max(1e-9, e.cutBase.pattern.beats());
-        cutDragTo(a, t, e, i, frameAt(m.grid, beat0 + bb));
+  // J-214: the rest up to the bar line (once a step has its own length): the loop always restarts
+  // on a bar line; lengthen a step or add one to fill it
+  {
+    const float r0 = std::round(edge[static_cast<size_t>(ns)]) + 1, r1 = std::round(X(cycle)) - 1;
+    if (stepsEnd < cycle - 1e-6 && r1 - r0 >= 3) {
+      const ImVec2 q0(r0, by0), q1(r1, by1);
+      dl->PushClipRect(q0, q1, true);
+      for (float hx = q0.x - (q1.y - q0.y); hx < q1.x; hx += 7)
+        dl->AddLine(ImVec2(hx, q1.y), ImVec2(hx + (q1.y - q0.y), q0.y), theme::withAlpha(P.textDim, 0.16f), 1);
+      dl->PopClipRect();
+      dl->AddRect(q0, q1, theme::withAlpha(P.line, 1.0f), theme::kRadius);
+      const char* rl = i18n::tr("REST");
+      if (a.fontMono->CalcTextSizeA(theme::kFontLabel - 1, 1e9f, 0, rl).x + 8 <= q1.x - q0.x)
+        textC(dl, a.fontMono, theme::kFontLabel - 1, ImVec2((q0.x + q1.x) * 0.5f, (q0.y + q1.y) * 0.5f), P.textFaint, rl);
+      if (e.lenDrag < 0 && e.seqDrag < 0 && ImGui::IsMouseHoveringRect(q0, q1) && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows)) {
+        char b[240];
+        std::snprintf(b, sizeof b, "%s: %.4g %s\n%s", i18n::tr("Rest to the bar line"), cycle - stepsEnd, i18n::tr("beats"),
+                      i18n::tr("The sequence always lasts whole bars. Lengthen a step or add one to fill the rest."));
+        ui::Tooltip(b);
       }
-      if (ImGui::IsItemDeactivated()) e.cutDrag = -1;
-      if (h && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+    }
+  }
+  // J-214: the right edge of a block is that step's length in the sequence; its region stays (the cuts
+  // are resized in the waveform). Drag: snaps to the chop's grid (a sixteenth at most; Shift: a
+  // quarter of that; Alt: free). Double-click: its default length again. One undo step per drag.
+  e.laneLenPts.clear();
+  if (e.seqDrag < 0) {
+    const double cell = chopCellBeats(m.chop, bpb);
+    const double grid = m.chop.mode == ChopGrid && cell > 0 && cell <= 0.25 + 1e-9 ? cell : 0.25;
+    for (int i = 0; i < ns; ++i) {
+      const float x = std::round(edge[static_cast<size_t>(i) + 1]);
+      const float wl = edge[static_cast<size_t>(i) + 1] - edge[static_cast<size_t>(i)];
+      const float hw = std::min(4.0f, wl * 0.2f);
+      if (hw < 2 && e.lenDrag != i) continue;
+      ImGui::PushID(0x5E2140 + i);
+      ImGui::SetCursorScreenPos(ImVec2(x - std::max(2.0f, hw), by0));
+      ImGui::InvisibleButton("##slen", ImVec2(2 * std::max(2.0f, hw), by1 - by0));
+      const bool h = ImGui::IsItemHovered(), ac = ImGui::IsItemActive();
+      if (ImGui::IsItemActivated()) {
+        e.lenDrag = i;
+        e.lenFrom = stepBeats(m.pattern, i);
+        e.lenStart = stepStart(m.pattern, i, 0);
+        e.lenShown = beats;
+        e.lenPx = bw / static_cast<float>(beats);
+        e.lenX0 = mp.x;
         e.selStep = i;
-        e.selSlice = i;
-        openRegionMenu(e, i, i);
+        ++e.gesture;
+      }
+      if (ac && e.lenDrag == i && ImGui::IsMouseDragging(0, 1)) {
+        const double end = e.lenStart + e.lenFrom + static_cast<double>(mp.x - e.lenX0) / std::max(1e-3f, e.lenPx);
+        double len = end - e.lenStart;
+        if (!io.KeyAlt) {
+          const double g = io.KeyShift ? grid * 0.25 : grid;
+          len = std::max(g, std::round(end / g) * g - e.lenStart);
+        }
+        stepBeatsUi(a, t, e, i, std::clamp(len, kMinStepBeats, kMaxStepBeats), gestureKey(0x5E214B0000000000ull, e, i));
+      }
+      if (ImGui::IsItemDeactivated()) e.lenDrag = -1;
+      if (h && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) stepBeatsUi(a, t, e, i, 0);
+      if (h && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+        const int k = stepSlice(m.pattern, m.pattern.steps[static_cast<size_t>(i)], nSl);
+        if (k >= 0) {
+          e.selStep = i;
+          e.selSlice = k;
+          openRegionMenu(e, k, i);
+        }
       }
       if (h || ac) {
         ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
         dl->AddLine(ImVec2(x, by0 - 2), ImVec2(x, by1 + 2), P.paper, 2.0f);
         dl->AddTriangleFilled(ImVec2(x - 4, by0 - 3), ImVec2(x + 4, by0 - 3), ImVec2(x, by0 + 2), P.paper);
+        const bool own = m.pattern.steps[static_cast<size_t>(i)].beats > 0;
+        char b[320];
+        if (ac)
+          std::snprintf(b, sizeof b, "%s %d: %.4g %s", i18n::tr("Step"), i + 1, stepBeats(m.pattern, i), i18n::tr("beats"));
+        else
+          std::snprintf(b, sizeof b, "%s %d: %.4g %s (%s)\n%s", i18n::tr("Step"), i + 1, stepBeats(m.pattern, i), i18n::tr("beats"),
+                        own ? i18n::tr("its own length") : i18n::tr("default length"),
+                        i18n::tr("Drag: this step's length in the sequence; its region stays (Shift: finer, Alt: no snap). Double-click: default length."));
+        ui::Tooltip(b);
       }
-      if (h && !ac) {
-        const std::string tip = regionName(i - 1) + " | " + regionName(i) + "\n" +
-                                i18n::tr("Drag to resize both regions (Alt: no snap). Click a block to play it.");
-        ui::Tooltip(tip.c_str());
-      }
-      e.laneCutPts.push_back(ImVec2(x, (by0 + by1) * 0.5f));
+      e.laneLenPts.push_back(ImVec2(x, (by0 + by1) * 0.5f));
       ImGui::PopID();
     }
   }
@@ -558,7 +681,7 @@ void drawSequence(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, co
   }
   // playhead
   if (lv.patternPos >= 0 && lv.patternRunning) {
-    const float xx = bx0 + static_cast<float>(lv.patternPos) * bw;
+    const float xx = X(lv.patternPos * cycle);
     dl->AddLine(ImVec2(xx, by0 - 2), ImVec2(xx, by1 + 2), P.playhead, 1.5f);
   }
   // keys: Alt+Left / Alt+Right move the selected step, Delete deletes the region under the pointer (or the selected one)

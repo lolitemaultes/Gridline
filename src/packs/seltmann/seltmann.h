@@ -200,6 +200,17 @@ struct Chop {
 };
 // The grid cell of a chop in beats: chop.cellBeats when set, else its division in the meter.
 double chopCellBeats(const Chop& c, int beatsPerBar);
+// J-214: the sequence is its own layer. How long a step lasts in the sequence (its duration) is
+// separate from its region's start / end in the source: by default (1 + ties) units of the
+// pattern, or its own length in beats (`beats` > 0, which overrides the ties). Two steps of the
+// same region can have different lengths, and the region never changes. The next step starts
+// right after it. The slice sounds for duration x the Gate parameter x `length` (cut with the
+// usual declick), and never past its region's end: a step longer than its slice plays the slice
+// out, then silence until the next step. Once any step has its own length, the whole sequence
+// lasts a whole number of bars (of the grid's meter): steps that add up to less leave a rest at
+// the end up to the next bar line (steps are never stretched to fill it), so the loop always
+// restarts on a bar line. A sequence of default-length steps lasts exactly their sum, as layouts
+// and older projects expect.
 struct Step {
   int src = 0;        // >= 0 slot (0 = A) when slot, else slice index; rests: kRest
   bool slot = true;
@@ -210,16 +221,22 @@ struct Step {
   float length = 1;   // 0.05..1 share of the step that sounds
   int stutter = 1;    // 1..16 repeats inside the step
   float offset = 0;   // 0..0.9 share of the slice skipped
+  double beats = 0;   // J-214: > 0: the step's own duration in the sequence (beats), else (1 + ties) units
   bool operator==(const Step& o) const;
 };
 inline constexpr int kRest = -1;
+inline constexpr double kMinStepBeats = 1.0 / 64, kMaxStepBeats = 64;
 struct Pattern {
   std::string name = "Straight";
   double unitBeats = 4;      // length of one step (beats)
   std::vector<Step> steps;
   std::vector<int> slots;    // slot letter -> slice index (-1 = none)
   bool operator==(const Pattern& o) const;
-  double beats() const;      // whole pattern length in beats
+  bool ownLengths() const;   // J-214: a step has its own length
+  double stepsBeats() const; // the steps' durations added up (beats)
+  // One cycle of the sequence (beats): the steps and, with ownLengths(), the rest up to the next
+  // bar line of `beatsPerBar`.
+  double beats(int beatsPerBar) const;
 };
 struct Model {
   int64_t srcFrames = 0;
@@ -232,6 +249,9 @@ struct Model {
   Pattern pattern;
   std::string preset;        // last applied layout preset
 };
+
+// J-214: one cycle of the model's sequence (beats; the rest up to the bar line included).
+double cycleBeats(const Model& m);
 
 // "<path>\n<model>" <-> path + model. A bare path yields hasModel = false.
 std::string pathOf(const std::string& data);
@@ -293,7 +313,7 @@ bool moveCut(Model& m, int slice, int64_t frame);  // moves the start of `slice`
 inline constexpr int kMaxSplit = 16;
 inline constexpr const char* kEditedName = "Custom";  // pattern name once the sequence is edited by hand
 std::string regionName(int region);  // "A".."Z", "AA".. ("-" for none)
-// The steps play every region once, in order, with no rests.
+// The steps play every region once, in order, with no rests (J-214: and no step has its own length).
 bool isNaturalOrder(const Model& m);
 // Splits region `x` into `parts` equal pieces: the first keeps the letter, the
 // next ones take the following letters and every later letter moves on by
@@ -312,7 +332,8 @@ bool splitRegion(Model& m, int x, int parts);
 bool mergeRegion(Model& m, int x);
 // Moves step `from` to the insertion point `to` (0..steps, before removal).
 bool moveStep(Model& m, int from, int to);
-// The natural sequence again: every region once, in order (lengths follow the regions).
+// The natural sequence again: every region once, in order (lengths follow the regions; steps with
+// their own length are not in order: Reset order gives every step its default length back).
 void naturalPattern(Model& m);
 
 // J-185 the sequence's start, slice pitch and direct slice resizing.
@@ -327,11 +348,18 @@ bool startSequenceAt(Model& m, int step, bool keepRest);
 inline constexpr float kSlicePitchRange = 24;  // semitones either way
 // Slice pitch (semitones, clamped, 0.01 steps). False when nothing changed.
 bool setSlicePitch(Model& m, int slice, float semis);
+// One step's own pitch (semitones, on top of its region's; clamped, 0.01 steps): only that step
+// in the sequence plays it. False when nothing changed.
+bool setStepPitch(Model& m, int step, float semis);
 // Moves the cut at the start of `slice` (1..n-1) to `frame` (clamped to the minimum slice
 // length) so both neighbours resize; the chop keeps the cuts by hand. A sequence that
 // played every region once in order keeps doing so with the new lengths (the step
 // unit is refined when the new lengths need it). False when nothing changed.
 bool resizeCut(Model& m, int slice, int64_t frame);
+// J-214: step `step`'s own duration in the sequence (beats, clamped to kMinStepBeats..kMaxStepBeats,
+// in 1e-6 beat steps); <= 0 or its default length ((1 + ties) units) gives the default back. Its
+// region and every other step stay. False when nothing changed.
+bool setStepBeats(Model& m, int step, double beats);
 
 // Grid corrections. All keep the grid sorted and inside the file.
 void gridSetBpm(Analysis& g, double bpm, double anchorFrame);  // straight grid through the anchor
@@ -351,8 +379,12 @@ std::string stepToText(const Step& s);
 // Slice played by a step (-1 rest / unassigned).
 int stepSlice(const Pattern& p, const Step& s, int sliceCount);
 // Step start (beats from the pattern start, swing applied) and length (beats).
+// Swing delays a step that starts on an odd unit (units of a beat or shorter); a step that starts
+// off the unit grid (after a step with its own length) is not swung.
 double stepStart(const Pattern& p, int i, double swing);
 double stepBeats(const Pattern& p, int i);
+// The swing delay (beats) of a step that starts at `startBeats` (unswung).
+double swingDelay(const Pattern& p, double startBeats, double swing);
 const char* slotName(int slot);  // "A".."Z"
 
 enum Category { CatPhrase = 0, CatLoop, CatBreaks, CatMicro, CatFills, CatCreative, CatFlip, CatUser, CatCount };
@@ -445,6 +477,44 @@ struct LiveView {
   bool patternRunning = false;
 };
 bool liveView(const Generator* g, LiveView& out);
+
+// ------------------------------------------------------------------ J-218 recording a take
+// The audio recorded from an input on the start screen (seltmann_take_dsp.cpp), UI thread only:
+// the recorder drains the engine's input tap into it. Pausing and resuming joins the two parts
+// with a short crossfade over the end of the first (no click); the take never exceeds kMaxSeconds.
+class TakeBuffer {
+ public:
+  static constexpr double kMaxSeconds = 600;     // ten minutes
+  static constexpr size_t kJoinFrames = 256;     // crossfade at a resume (~6 ms)
+  static constexpr size_t kPeakBlock = 256;      // frames per overview peak
+  void reset(double rate, bool stereo);          // empty take
+  // Adds frames (R ignored for a mono take). Returns the frames taken (fewer at the limit).
+  size_t append(const float* L, const float* R, size_t n);
+  // The next append continues after a gap (resume, lost frames): it crossfades into the tail.
+  void join();
+  size_t frames() const { return L_.size(); }
+  double rate() const { return rate_; }
+  bool stereo() const { return stereo_; }
+  double seconds() const { return rate_ > 0 ? static_cast<double>(frames()) / rate_ : 0.0; }
+  bool full() const { return frames() >= maxFrames(); }
+  size_t maxFrames() const { return static_cast<size_t>(kMaxSeconds * rate_); }
+  const std::vector<float>& L() const { return L_; }
+  const std::vector<float>& R() const { return stereo_ ? R_ : L_; }
+  // Peak (both channels, absolute) of each kPeakBlock frames: the live waveform.
+  const std::vector<float>& peaks() const { return peaks_; }
+  // Writes the take as a WAV (16 / 24-bit PCM, else 32-bit float; mono takes as one channel).
+  bool writeWav(const std::string& path, int bits, std::string* err = nullptr) const;
+  // Writes it into `dir` as "Seltmann_rec-<hash>.wav" (the recordings' naming: a name and the
+  // audio's hash; the folder is made when missing). Returns the file, "" on failure.
+  std::string save(const std::string& dir, int bits, std::string* err = nullptr) const;
+
+ private:
+  void repeak(size_t from);  // recomputes the peaks from frame `from` on
+  double rate_ = 44100;
+  bool stereo_ = true;
+  std::vector<float> L_, R_, peaks_;
+  size_t xfAt_ = 0, xfLen_ = 0, xfDone_ = 0;  // the crossfade in progress (xfDone_ < xfLen_)
+};
 
 // ------------------------------------------------------------------ command line
 // `gridline seltmann-analyse ...` (seltmann_cli_dsp.cpp).

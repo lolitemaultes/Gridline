@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include "../../engine/Dsp.h"
+#include "../../engine/SampleTap.h"
 #include "../../engine/pitch/Kernel.h"
 #include "../Packs.h"
 #include "edison.h"
@@ -208,11 +209,13 @@ void EdisonFx::run(const PluginState& state, const Sample* src, const ProcessCon
   if (startReq_.exchange(false)) {
     rpos_ = static_cast<double>(from_.load());
     rplaying_ = true;
+    tap::play(src);  // J-219: Track Receipt
   }
   if (P(EdFollowHost, 0) >= 0.5f) {
     if (ctx.playing && !hostWasPlaying_) {
       rpos_ = static_cast<double>(from_.load());
       rplaying_ = true;
+      tap::play(src);
     } else if (!ctx.playing && hostWasPlaying_) {
       rplaying_ = false;
     }
@@ -239,12 +242,15 @@ void EdisonFx::run(const PluginState& state, const Sample* src, const ProcessCon
     vTarget = std::clamp((target - rpos_) / (0.04 * src->sampleRate), -4.0, 4.0) * step;
   }
   float op = 0;
+  tap::Run run;  // J-219: Track Receipt coverage
+  if (tap::active()) run.begin(src);
   for (int i = 0; i < n; ++i) {
     float l = mute ? 0.f : L[i], r = mute ? 0.f : R[i];
     if (scrub || rplaying_) {
       // J-140: band-limited read at the playback or scrub speed (was linear:
       // other-rate files and fast scrubs aliased); whole frames at 1:1 stay exact.
       if (rpos_ >= 0 && rpos_ < static_cast<double>(frames)) {
+        run.at(rpos_);
         const double rate = scrub ? std::fabs(scrubVel_) : step;
         float sl, sr;
         if (pitch::exactFrame(rpos_, rate)) {

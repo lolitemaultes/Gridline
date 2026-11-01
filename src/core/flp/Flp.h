@@ -156,6 +156,9 @@ struct Context {
   std::map<int, int> channelTypes;     // FL channel index → FL channel type (0 sampler, 2 native, 3 layer, 4 audio clip, 5 automation)
   std::map<int, PluginMapping> channelPlugins;                  // FL channel index → decoded generator
   std::map<std::pair<int, int>, PluginMapping> slotPlugins;     // (FL insert, slot) → decoded effect
+  // J-206: slot plugins moved to a channel (Fruity Scratcher → Turntable): (FL insert, slot) → that
+  // channel; their automation targets the channel's plugin (the mapping stays in slotPlugins).
+  std::map<std::pair<int, int>, ObjectId> slotChannels;
   std::map<int, ObjectId> automationIds;      // FL automation channel → AutomationClip
   std::map<int, uint32_t> automationTargets;  // FL automation channel → its first linked target (227)
   // FL origin capture (J-34, FlpOrigin.cpp): the playlist record each clip

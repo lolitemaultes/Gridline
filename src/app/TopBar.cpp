@@ -419,8 +419,11 @@ float drawTopBar(App& a) {
     cx += kBtn + kInner;
     ImGui::SetCursorScreenPos(ImVec2(cx, btnTop));
     menuparity::transportTick(a);  // J-27: where playback starts (stop can return there)
-    if (ui::IconButton("stop", ui::Icon::Stop, false, kBtn, "Stop and return to the set song position; press again to silence everything (right-click: options)", 0, 0, true))
-      menuparity::stopPressed(a);
+    if (ui::IconButton("stop", ui::Icon::Stop, false, kBtn,
+                       "Stop and return to the set song position; press again (or double-click) to go back to the beginning and silence "
+                       "everything (right-click: options)",
+                       0, 0, true))
+      menuparity::stopButtonPressed(a);
     noteRect("stop");
     if (ImGui::BeginPopupContextItem("##stopmenu")) {
       menuparity::stopMenuItems(a);

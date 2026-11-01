@@ -10,6 +10,7 @@
 #include <shellapi.h>  // CommandLineToArgvW
 #endif
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <cstdio>
@@ -30,6 +31,7 @@
 #include "McpUi.h"
 #include "ThemeSettings.h"
 #include "LiveResize.h"
+#include "LiveTakes.h"
 #include "Viewports.h"
 #include "../core/I18n.h"
 #include "../core/UiScale.h"
@@ -46,12 +48,14 @@
 #include <cfloat>
 #include <climits>
 #include "../core/ClipSources.h"
+#include "../core/TrackModes.h"
 #include "../core/Project.h"
 #include "../core/Workspace.h"
 #include "../packs/PacksUi.h"
 #include "DialogLayout.h"
 #include "ExportUi.h"
 #include "StemsUi.h"
+#include "TrackReceiptUi.h"
 #include "../core/MidiFile.h"
 #include "App.h"
 #include "CollabUi.h"
@@ -101,11 +105,59 @@ void initMidi(App& a) {
   a.publishMidi();
 }
 
+// J-217 dev checks: GRIDLINE_SYNTH_INPUT=1 replaces the capture device with a
+// generated stereo input (never a microphone), pushed from the output callback
+// so it runs in real time with the engine: a square wave (period 100 frames)
+// whose amplitude alternates every second between 0.2 and 0.7.
+std::atomic<bool> gSynthInput{false};
+void pushSynthInput(AudioEngine& eng, int frames) {
+  static int64_t pos = 0;
+  static float buf[2 * 1024];
+  const double sr = eng.sampleRate() > 0 ? eng.sampleRate() : 48000.0;
+  for (int done = 0; done < frames;) {
+    const int n = std::min(frames - done, 1024);
+    for (int i = 0; i < n; ++i, ++pos) {
+      const float amp = (static_cast<int64_t>(static_cast<double>(pos) / sr) % 2) == 0 ? 0.2f : 0.7f;
+      const float v = (pos % 100) < 50 ? amp : -amp;
+      buf[2 * i] = v, buf[2 * i + 1] = v;
+    }
+    eng.pushInput(buf, n);
+    done += n;
+  }
+}
+
+// J-218: development / tests: GRIDLINE_TEST_INPUT=<audio file> stands in for an input device
+// (never a microphone): the file loops into the engine's device input as stereo In 1 - In 2,
+// paced by the output callback. Only when no input device is chosen.
+struct TestInput {
+  std::vector<float> L, R;
+  size_t pos = 0;
+  float chunk[2 * 1024] = {};
+};
+std::atomic<TestInput*> gTestInput{nullptr};
+
+void feedTestInput(AudioEngine* eng, int frames) {
+  TestInput* ti = gTestInput.load(std::memory_order_acquire);
+  if (!ti || ti->L.empty()) return;
+  while (frames > 0) {
+    const int k = std::min(frames, 1024);
+    for (int i = 0; i < k; ++i) {
+      ti->chunk[2 * i] = ti->L[ti->pos];
+      ti->chunk[2 * i + 1] = ti->R[ti->pos];
+      if (++ti->pos >= ti->L.size()) ti->pos = 0;
+    }
+    eng->pushInput(ti->chunk, k);
+    frames -= k;
+  }
+}
+
 void audioCallback(void* user, Uint8* stream, int len) {
   auto* eng = static_cast<AudioEngine*>(user);
   const int frames = len / static_cast<int>(sizeof(float) * 2);
   const bool stats = fstats::enabled();
   const Uint64 t0 = stats ? SDL_GetPerformanceCounter() : 0;
+  if (gSynthInput) pushSynthInput(*eng, frames);
+  else feedTestInput(eng, frames);
   eng->processInterleaved(reinterpret_cast<float*>(stream), frames);
   // Interface sounds go on top of the finished output: outside the song mixer,
   // so they are never recorded, rendered or metered.
@@ -133,10 +185,48 @@ void openAudioInput(App& a, int rate, int outFrames) {
     if (const char* nm = SDL_GetAudioDeviceName(i, 1)) a.audioInputDevices.push_back(nm);
   a.audioInputLatency = 0;
   a.audioInputStatus.clear();
-  if (a.audioInputDevice.empty()) {
-    a.engine.setInputChannels(0);
+  gSynthInput = false;
+  if (const char* synth = std::getenv("GRIDLINE_SYNTH_INPUT"); synth && *synth && *synth != '0') {  // J-217 dev checks
+    a.audioInputDevice = "Synthetic input";
+    a.engine.setInputChannels(2);
+    a.audioInputChannels = 2;
+    a.audioInputLatency = outFrames;
+    a.audioInputStatus = "Recording from the synthetic input (development).";
+    gSynthInput = true;
     return;
   }
+  if (a.audioInputDevice.empty()) {
+    a.engine.setInputChannels(0);
+    if (const char* f = std::getenv("GRIDLINE_TEST_INPUT"); f && *f) {  // J-218 (see TestInput)
+      static TestInput ti;
+      gTestInput.store(nullptr, std::memory_order_release);
+      ti.L.clear();
+      ti.R.clear();
+      ti.pos = 0;
+      if (SamplePtr s = loadSample(f); s && s->frames() > 1 && rate > 0) {  // at the device's rate (linear)
+        const std::vector<float> sr = s->right.vec();
+        const double step = s->sampleRate / rate;
+        const auto n = static_cast<size_t>(static_cast<double>(s->frames() - 1) / step);
+        ti.L.resize(n);
+        ti.R.resize(n);
+        for (size_t i = 0; i < n; ++i) {
+          const double x = static_cast<double>(i) * step;
+          const auto k = static_cast<size_t>(x);
+          const auto u = static_cast<float>(x - static_cast<double>(k));
+          ti.L[i] = s->left[k] + (s->left[k + 1] - s->left[k]) * u;
+          ti.R[i] = sr[k] + (sr[k + 1] - sr[k]) * u;
+        }
+      }
+      if (!ti.L.empty()) {
+        a.engine.setInputChannels(2);
+        a.audioInputChannels = 2;
+        a.audioInputStatus = "Recording from the test signal (GRIDLINE_TEST_INPUT).";
+        gTestInput.store(&ti, std::memory_order_release);
+      }
+    }
+    return;
+  }
+  gTestInput.store(nullptr, std::memory_order_release);
   const int want = std::clamp(static_cast<int>(a.settings.getNumber("audio.inputChannels")), 1, kMaxInputChannels);
   a.engine.setInputChannels(want);  // the callback's frame size; fixed while the device runs
   SDL_AudioSpec spec{}, have{};
@@ -167,6 +257,7 @@ void openAudioInput(App& a, int rate, int outFrames) {
 }
 
 void openAudio(App& a) {
+  gTestInput.store(nullptr, std::memory_order_release);  // J-218: before the output callback stops
   if (gInDevice) {
     SDL_CloseAudioDevice(gInDevice);
     gInDevice = 0;
@@ -353,7 +444,8 @@ void releaseTypedNotes(App& app, std::map<SDL_Keycode, HeldNote>& held) {
 //   quit [discard] (J-103: an SDL_QUIT, the normal quit path: unsaved-changes guard, teardown, settings saved;
 //   "discard" drops unsaved changes first, as the prompt's "Don't save")
 //   J-109: sdlkey <key> down|up [ctrl|super] · focuslost · typing on|off · noteon|noteoff <channel index> <pitch> ·
-//   previewfile <wav> · sound (output peak since the last "sound", live notes held, preview, panics, playing)
+//   previewfile <wav> · sound (output peak since the last "sound", live notes held, preview, panics, playing);
+//   waitfor output-silent: the output stayed below 1e-5 for 0.2 s (forget output-silent to wait again)
 //   J-110: stopvia button|menu|remote (the Stop button's action, Tools > Stop all sound, a MIDI controller's /
 //   remote Stop) · epoch (the engine's stop epoch to stdout) · forget <name> (a later waitfor <name> waits for it anew)
 //   J-112: playvia remote (the Play / Pause remote / MIDI action) · startsong (a start that is not the Play command, as a
@@ -390,6 +482,7 @@ struct DevWait {
   Uint64 start = 0;
   bool on = false;
 } devWait;
+float devSoundPeak = 0;  // J-109: output peak since the last "sound" (also drained each frame for "output-silent")
 // J-108: true while a "waitfor" holds the script's frame count (checked once per frame).
 bool devWaitHolds() {
   if (!devWait.on) return false;
@@ -550,6 +643,7 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
     if (!fresh || l.frame != frame) continue;
     if (viewports::devCommand(app, l.cmd, l.args, frame)) continue;  // J-113
     if (pluginWindowDevCommand(app, l.cmd, l.args, frame)) continue;  // plugin windows, their channel strip
+    if (livetake::devCommand(app, l.cmd, l.args, frame)) continue;  // J-217: live recording checks
     if (l.cmd == "move") {
       pointer = ImVec2(std::strtof(l.a0.c_str(), nullptr), std::strtof(l.a1.c_str(), nullptr));
       io.AddMousePosEvent(pointer.x, pointer.y);
@@ -663,7 +757,8 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       std::fflush(stdout);
     }
     else if (l.cmd == "seekbeat") {  // J-91: the song position to a beat of the metronome ("2.5")
-      app.engine.setPosition(static_cast<Tick>(std::strtod(l.a0.c_str(), nullptr) * static_cast<double>(app.doc.song().beatTicks())), false);
+      // "seekbeat <beat> seek": also the set position (as a ruler click), where Stop returns
+      app.engine.setPosition(static_cast<Tick>(std::strtod(l.a0.c_str(), nullptr) * static_cast<double>(app.doc.song().beatTicks())), l.a1 == "seek");
     }
     else if (l.cmd == "metro") {  // J-91: metronome state and its glyph's pose (J-97: +1 / -1)
       std::printf("metro frame %d: on %d playing %d mirror %.3f beat %.3f\n", frame, app.metronome ? 1 : 0, app.engine.playing() ? 1 : 0,
@@ -754,6 +849,7 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
     } else if (l.cmd == "stopvia") {  // J-110: the other ways to stop
       if (l.a0 == "menu") menuparity::panicPressed(app);
       else if (l.a0 == "remote") app.runAction(RemoteAction::Stop);
+      else if (l.a0 == "button") menuparity::stopButtonPressed(app);
       else menuparity::stopPressed(app);
       std::printf("stopvia frame %d: %s epoch %u\n", frame, l.a0.c_str(), app.engine.stopEpoch());
       std::fflush(stdout);
@@ -778,9 +874,10 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
     } else if (l.cmd == "previewfile") {  // J-109: the browser's sample preview
       app.previewSample(l.args.empty() ? l.a0 : l.args[0]);  // (a quoted path may hold spaces)
     } else if (l.cmd == "sound") {  // J-109: what is sounding (output peak since the last "sound")
-      std::printf("sound frame %d: peak %.6f live %d previewing %d panics %u playing %d\n", frame,
-                  static_cast<double>(app.engine.takeOutputPeak()), app.engine.liveHeld(), app.engine.previewing() ? 1 : 0,
-                  app.engine.panicsDone(), app.engine.playing() ? 1 : 0);
+      const float peak = std::max(devSoundPeak, app.engine.takeOutputPeak());
+      devSoundPeak = 0;
+      std::printf("sound frame %d: peak %.6f live %d previewing %d panics %u playing %d\n", frame, static_cast<double>(peak),
+                  app.engine.liveHeld(), app.engine.previewing() ? 1 : 0, app.engine.panicsDone(), app.engine.playing() ? 1 : 0);
       std::fflush(stdout);
     } else if (l.cmd == "audio") {
       browserui::DropPlace place;
@@ -851,6 +948,32 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
     } else if (l.cmd == "undo") {
       app.doc.undo();
       app.syncEngine();
+    } else if (l.cmd == "redo") {  // J-213
+      app.doc.redo();
+      app.syncEngine();
+    } else if (l.cmd == "replace") {  // J-213: replace <type>: the open channel's instrument, as "Replace instrument" picks it
+      const ObjectId ch = app.settingsChannel != kNoId ? app.settingsChannel : app.selChannel;
+      if (app.doc.setChannelPlugin(ch, l.a0)) pui::pluginReplaced(PluginTarget{ch, -1});
+      app.syncEngine();
+    } else if (l.cmd == "pickpreset") {  // J-213: pickpreset <index>: the open plugin header loads that entry of its preset list
+      const bool slot = app.fxEditor.first != kNoId && app.fxEditor.second >= 0;
+      pui::devPickPreset(slot ? PluginTarget{app.fxEditor.first, app.fxEditor.second} : PluginTarget{app.settingsChannel, -1}, std::atoi(l.a0.c_str()));
+    } else if (l.cmd == "renamechannel") {  // J-213: renamechannel <name>: the open channel, as its name field does
+      app.doc.renameChannel(app.settingsChannel, l.args.empty() ? l.a0 : l.args[0]);
+    } else if (l.cmd == "pluginview") {  // J-213: what the open plugin window shows: title, plugin, preset selector
+      const bool slot = app.fxEditor.first != kNoId && app.fxEditor.second >= 0;
+      const PluginTarget t = slot ? PluginTarget{app.fxEditor.first, app.fxEditor.second} : PluginTarget{app.settingsChannel, -1};
+      const Song& s = app.doc.song();
+      const PluginState* st = t.state(s);
+      const PluginInfo* info = st ? findPlugin(st->type) : nullptr;
+      const Channel* c = slot ? nullptr : s.channel(t.owner);
+      std::string headerType;
+      bool onB = false;
+      const std::string preset = pui::devHeaderPreset(t, &headerType, &onB);
+      std::printf("pluginview frame %d: window \"%s\" plugin %s \"%s\" header %s preset \"%s\" ab %s undo %zu \"%s\"\n", frame,
+                  c ? c->name.c_str() : "-", st ? st->type.c_str() : "-", info ? info->name.c_str() : "-", headerType.empty() ? "-" : headerType.c_str(),
+                  preset.c_str(), onB ? "B" : "A", app.doc.history().position(), app.doc.history().undoLabel().c_str());
+      std::fflush(stdout);
     } else if (l.cmd == "atparam" || l.cmd == "plug") {
       // "atparam <k> [dx dy]": the scripted pointer to the centre of the last drawn control of
       // parameter k of the open plugin editor (the --plugin / --fx / --chan target), plus logical px.
@@ -963,8 +1086,20 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       std::printf("plgeom frame %d: valid %d x0 %.3f pxPerTick %.6f tabs %.1f %.1f %.1f tabY %.1f\n", frame, g.valid ? 1 : 0,
                   static_cast<double>(g.x0), static_cast<double>(g.pxPerTick), static_cast<double>(g.tabX[0]),
                   static_cast<double>(g.tabX[1]), static_cast<double>(g.tabX[2]), static_cast<double>(g.tabY));
-      for (size_t i = 0; i < g.trackTop.size(); ++i)
-        std::printf("  track %zu top %.1f h %.1f\n", i, static_cast<double>(g.trackTop[i]), static_cast<double>(g.trackH[i]));
+      std::printf("  plus %.1f %.1f droptrack %d patterns %zu current %u undo %zu \"%s\"\n", static_cast<double>(g.plusX),
+                  static_cast<double>(g.plusY), g.dropTrack, app.doc.song().patterns.size(), static_cast<unsigned>(app.curPattern),
+                  app.doc.history().position(), app.doc.history().undoLabel().c_str());  // J-208
+      for (size_t i = 0; i < g.trackTop.size(); ++i) {
+        const Song& s = app.doc.song();
+        const PlaylistTrack* t = i < s.tracks.size() ? &s.tracks[i] : nullptr;  // J-208: the mode, the linked channel, the name
+        int fx = 0;
+        if (const MixerTrack* mt = trackmodes::linkedMixer(s, static_cast<int>(i)))
+          for (const auto& sl : mt->slots) fx += sl.plugin.empty() ? 0 : 1;
+        const Channel* lc = trackmodes::linkedChannel(s, static_cast<int>(i));
+        std::printf("  track %zu top %.1f h %.1f mode %d channel %u type %s fx %d name \"%s\"\n", i, static_cast<double>(g.trackTop[i]),
+                    static_cast<double>(g.trackH[i]), t ? static_cast<int>(t->mode) : 0, t ? static_cast<unsigned>(t->channel) : 0u,
+                    lc ? lc->plugin.type.c_str() : "-", fx, t ? t->name.c_str() : "");
+      }
       for (const auto& r : g.rows)
         std::printf("  row %u x %.1f y %.1f\n", r.id, static_cast<double>(r.x), static_cast<double>(r.y));
       for (const auto& c : g.clips)  // J-142: clip, title strip, menu arrow and name box spans (0 0 when not drawn)
@@ -1026,6 +1161,10 @@ int main(int argc, char** argv) {
   // window is never shown on the user's desktop.
   bool startHidden = false;
   for (int i = 1; i < argc; ++i) startHidden = startHidden || std::string(argv[i]) == "--hidden";
+  // J-216: a run started with any "--" option (tests, screenshots, audits, the dev layout options)
+  // never writes the saved window layout; only a plain start (no options, or a project to open) does.
+  bool devOptions = false;
+  for (int i = 1; i < argc; ++i) devOptions = devOptions || std::string(argv[i]).rfind("--", 0) == 0;
   SDL_Window* window = SDL_CreateWindow("Gridline", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 640, 380,
                                         SDL_WINDOW_OPENGL | SDL_WINDOW_BORDERLESS | SDL_WINDOW_ALLOW_HIGHDPI |
                                             (startHidden ? SDL_WINDOW_HIDDEN : 0));
@@ -1626,7 +1765,12 @@ int main(int argc, char** argv) {
   // windows are saved relative to it), then saved there on exit.
   viewports::setVirtualMonitors(useOffscreen);
   ImGui::LoadIniSettingsFromDisk(iniPath.c_str());
-  io.IniFilename = iniPath.c_str();
+  // Automated runs and the dev options (--show mixer rebuilds the layout around one panel) read the
+  // saved layout but never write it back: a test run must not leave its layout in the user's own.
+  // (GRIDLINE_SAVE_LAYOUT=1: tests of the saved layout itself, in their own config folder.)
+  const bool keepSavedLayout = (devOptions || updateOpts.automated) && !std::getenv("GRIDLINE_SAVE_LAYOUT");
+  io.IniFilename = keepSavedLayout ? nullptr : iniPath.c_str();
+  if (keepSavedLayout) std::fprintf(stderr, "layout: %s is read, not saved (a run with options)\n", iniPath.c_str());
 
   std::map<SDL_Keycode, HeldNote> held;
   std::string lastTitle;
@@ -2015,6 +2159,15 @@ int main(int argc, char** argv) {
     if (!devInput.empty()) {  // J-112: for "waitfor"
       devsig::reach(app.engine.playing() ? "transport-playing" : "transport-stopped");
       if (app.engine.pluginPlaybackActive()) devsig::reach("plugin-playback");
+      {  // J-109: "output-silent" once the output stayed below 1e-5 for 0.2 s (the peak still counts for "sound")
+        static double quietSince = -1;
+        const float p = app.engine.takeOutputPeak();
+        devSoundPeak = std::max(devSoundPeak, p);
+        const double now = static_cast<double>(SDL_GetPerformanceCounter()) / static_cast<double>(SDL_GetPerformanceFrequency());
+        if (p >= 1e-5f) quietSince = -1;
+        else if (quietSince < 0) quietSince = now;
+        else if (now - quietSince >= 0.2) devsig::reach("output-silent");
+      }
       collabui::devFrame(app);  // J-111: collab-connected, collab-joined, collab-synced, ...
     }
     // J-108: "waitfor" keeps the script (and --frames) on this frame; J-167: so does a project load
@@ -2173,6 +2326,7 @@ int main(int argc, char** argv) {
   host::shutdownScan();        // the scanner child is killed; unscanned entries wait for the next start
   exportui::shutdown();        // a running audio export / render to sampler is cancelled and joined
   stemsui::shutdown();         // J-191: a running stem split / model download likewise
+  receiptui::shutdown();       // J-219: a running Track Receipt measurement likewise
   j59::shutdownRenderSampler();
   browserui::shutdownIndex();  // J-46: no worker left running into static teardown
   updui::shutdown();           // J-89: a running installer download is cancelled

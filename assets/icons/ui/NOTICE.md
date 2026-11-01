@@ -38,6 +38,9 @@ caret-up, caret-down, caret-left, caret-right (filled).
 - `curve-smooth`: a rounded curve through three points (Convolver smooth curve mode).
 - `curve-straight`: straight segments joining three points (Convolver straight curve mode).
 - `route-free`: an arrow running into a mixer strip that holds a plus (route a channel to a free mixer track).
+- `track-*` (J-211, the track icon set beyond the first sixteen listed below): 123 icons for mixer
+  tracks, playlist tracks and channels, from `track-acoustic` to `track-wrench`. Each file's first
+  line says what it shows; names and categories are in `src/core/TrackIconSet.cpp`.
 
 ### Replacing hand-drawn glyphs
 

@@ -19,6 +19,7 @@
 #include "flp_export/enc_Wrapper.h"
 #include "flp_export/enc_J39.h"
 #include "flp_export/enc_J44.h"
+#include "flp_export/enc_J211.h"
 #include "flp_export/j38_fades.h"
 #include "flp_export/j43_fades.h"
 #include "flp_export/j81_slots.h"
@@ -43,6 +44,7 @@ int main() {
   enctest::testEncJ39();
   enctest::testExportJ39();
   enctest::testEncJ44();
+  enctest::testTrackIconsJ211();
   testJ38Fades();
   testJ43Fades();
   j81::testJ81();

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(gridline VERSION 0.7.0 LANGUAGES C CXX)
+project(gridline VERSION 0.7.1 LANGUAGES C CXX)
 # Prerelease label: "beta.1" makes this Gridline 0.7.0-beta.1 (published as a GitHub pre-release);
 # empty ("") for a release. The version is set only here (cmake/GridlineVersion.cmake, docs/releasing.md).
 set(GRIDLINE_VERSION_PRE "")
@@ -888,6 +888,12 @@ target_link_libraries(gridline_tests_j77 PRIVATE gridline_core)
 target_include_directories(gridline_tests_j77 PRIVATE tests src)
 target_compile_options(gridline_tests_j77 PRIVATE ${GL_WARN})
 add_test(NAME j77 COMMAND gridline_tests_j77 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# J-217: the incremental waveform summary of takes being recorded; live placement equals the committed clips.
+add_executable(gridline_tests_j217 tests/test_j217.cpp)
+target_link_libraries(gridline_tests_j217 PRIVATE gridline_core)
+target_include_directories(gridline_tests_j217 PRIVATE tests src)
+target_compile_options(gridline_tests_j217 PRIVATE ${GL_WARN})
+add_test(NAME j217_live_take COMMAND gridline_tests_j217 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 # J-186: play lights: channel activity (note starts, held notes, output peak), the rack light model, Kerf's sounding regions.
 add_executable(gridline_tests_j186 tests/test_j186.cpp)
 target_link_libraries(gridline_tests_j186 PRIVATE gridline_core)
@@ -911,6 +917,18 @@ target_link_libraries(gridline_tests_j196 PRIVATE gridline_core)
 target_include_directories(gridline_tests_j196 PRIVATE tests src)
 target_compile_options(gridline_tests_j196 PRIVATE ${GL_WARN})
 add_test(NAME j196 COMMAND gridline_tests_j196 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# J-208: the playlist picker's "+" (New pattern naming) and instruments dropped on playlist tracks.
+add_executable(gridline_tests_j208 tests/test_j208.cpp)
+target_link_libraries(gridline_tests_j208 PRIVATE gridline_core)
+target_include_directories(gridline_tests_j208 PRIVATE tests src)
+target_compile_options(gridline_tests_j208 PRIVATE ${GL_WARN})
+add_test(NAME j208 COMMAND gridline_tests_j208 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# J-213: replacing a channel's instrument renames an automatically named channel (one undo step).
+add_executable(gridline_tests_j213 tests/test_j213.cpp)
+target_link_libraries(gridline_tests_j213 PRIVATE gridline_core)
+target_include_directories(gridline_tests_j213 PRIVATE tests src)
+target_compile_options(gridline_tests_j213 PRIVATE ${GL_WARN})
+add_test(NAME j213 COMMAND gridline_tests_j213 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 # J-85: one-step song loop markers; marker actions in the audio engine (sample-exact).
 add_executable(gridline_tests_j85 tests/test_j85.cpp)
 target_link_libraries(gridline_tests_j85 PRIVATE gridline_core)
@@ -1367,6 +1385,24 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -P ${CMAKE_SOURCE_DIR}/tests/j91_transport_click.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(j91_transport_click PROPERTIES TIMEOUT 300)
+    # J-216: automated and dev-layout runs never write the user's saved layout.
+    add_test(NAME j216_layout_untouched
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DOUT=${CMAKE_BINARY_DIR}/j216_layout_untouched
+                     -P ${CMAKE_SOURCE_DIR}/tests/j216_layout_untouched.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j216_layout_untouched PROPERTIES TIMEOUT 300)
+    # J-212: Stop clicked with the transport stopped (or a double-click) goes back to the beginning.
+    add_test(NAME j212_stop_to_start
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DOUT=${CMAKE_BINARY_DIR}/j212_stop_to_start
+                     -P ${CMAKE_SOURCE_DIR}/tests/j212_stop_to_start.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j212_stop_to_start PROPERTIES TIMEOUT 240)
+    # J-213: replacing the instrument of an open channel renames it and resets the plugin view's preset.
+    add_test(NAME j213_replace_instrument_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DOUT=${CMAKE_BINARY_DIR}/j213_replace_instrument
+                     -P ${CMAKE_SOURCE_DIR}/tests/j213_replace_instrument.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j213_replace_instrument_app PROPERTIES TIMEOUT 240)
 
     # J-109: Stop releases preview keys, typed keys (also on focus loss) and the browser preview; Stop twice = panic.
     add_test(NAME j109_stop_sound_app
@@ -1594,6 +1630,35 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(j185_seltmann_app PROPERTIES TIMEOUT 300)
 
+    # J-208: Seltmann: the wheel over a sequence block pitches its region (Shift: finer), one undo step a run.
+    add_test(NAME j208_seltmann_wheel
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DTESTBIN=$<TARGET_FILE:gridline_test_seltmann>
+                     -DOUT=${CMAKE_BINARY_DIR}/j208_seltmann_wheel -P ${CMAKE_SOURCE_DIR}/tests/j208_seltmann_wheel.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j208_seltmann_wheel PROPERTIES TIMEOUT 300)
+
+    # J-214: Seltmann: a sequence block's right edge sets that step's length (not its region), one undo step a drag.
+    add_test(NAME j214_seltmann_lengths
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DTESTBIN=$<TARGET_FILE:gridline_test_seltmann>
+                     -DOUT=${CMAKE_BINARY_DIR}/j214_seltmann_lengths -P ${CMAKE_SOURCE_DIR}/tests/j214_seltmann_lengths.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j214_seltmann_lengths PROPERTIES TIMEOUT 300)
+
+    # J-218: Seltmann records from an input on its start screen (a synthetic input signal, never a microphone).
+    add_test(NAME j218_seltmann_record
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DTESTBIN=$<TARGET_FILE:gridline_test_seltmann>
+                     -DRECBIN=$<TARGET_FILE:gridline_test_seltmann_rec>
+                     -DOUT=${CMAKE_BINARY_DIR}/j218_seltmann_record -P ${CMAKE_SOURCE_DIR}/tests/j218_seltmann_record.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j218_seltmann_record PROPERTIES TIMEOUT 400)
+
+    # J-208: the playlist picker's "+" (new pattern) and plugins dropped on playlist tracks (instrument tracks).
+    add_test(NAME j208_playlist_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/j208_playlist -P ${CMAKE_SOURCE_DIR}/tests/j208_playlist_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j208_playlist_app PROPERTIES TIMEOUT 400)
+
     # J-191: Split stems from the clip menu (a tiny model): four aligned clips on new tracks, one undo step.
     add_test(NAME j191_stems_app
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DTESTBIN=$<TARGET_FILE:gridline_tests_stems>
@@ -1639,6 +1704,14 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -DOUT=${CMAKE_BINARY_DIR}/j110_play_state -P ${CMAKE_SOURCE_DIR}/tests/j110_play_state.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(j110_play_state_app PROPERTIES TIMEOUT 300)
+
+    # J-217: audio recorded into the playlist (synthetic input) draws its clip and waveform live; the
+    # committed clip equals the last live frame (geometry, peaks), loop passes stack, at 100 % and 200 %.
+    add_test(NAME j217_live_take_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DOUT=${CMAKE_BINARY_DIR}/j217_live_take
+                     -P ${CMAKE_SOURCE_DIR}/tests/j217_live_take_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(j217_live_take_app PROPERTIES TIMEOUT 300)
 
     # J-181: Kerf's editor: drop zone, loading, tabs and display modes respond, fits at 1280 x 800, layout audit clean.
     add_test(NAME j181_kerf_ui_app

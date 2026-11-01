@@ -453,6 +453,16 @@ void stopPressed(App& a) {
   if (a.engine.stopPressed()) a.notify("All sound stopped");
 }
 
+// The transport's Stop button (a click, not Space or a remote): pressed while
+// already stopped (a second click, or a double-click), it also puts the song
+// and pattern position markers back at the beginning (the set position is
+// cleared, so the next Stop returns there too).
+void stopButtonPressed(App& a) {
+  const bool wasStopped = !a.engine.playing();
+  stopPressed(a);
+  if (wasStopped) a.engine.stopToStart();
+}
+
 // ---- J-112: Play while a plugin plays on its own -----------------------------
 //
 // The rule: Play pressed while the transport (pattern or song) is STOPPED and

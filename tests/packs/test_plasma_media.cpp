@@ -916,6 +916,43 @@ int main() {
     expect(std::fabs(u2 - u1 - 4.7) < 1.5 && std::fabs(u4 - u1 - 6.3) < 1.5 && u2Old - u1 < 1.0, "a mapped multisample's unison keeps its voices' level (own law unchanged)");
   }
 
+  // ---- J-203t: the imported spectral oscillator keeps its level across keys. Partials between two
+  // output bins used to cancel under the window; on the source the level of four library samples
+  // stayed within the take-to-take spread (about 3 dB) from three octaves below to two above, and
+  // Plasma's level came down 5.4 dB to match (4.9..5.6 dB above once the cancellation was gone).
+  {
+    pl::Model m = pl::defaultModel();
+    std::vector<float> tone(44100);
+    for (size_t i = 0; i < tone.size(); ++i) {
+      double v = 0;
+      for (int h = 1; h <= 12; ++h) v += std::sin(6.283185307179586 * 220.0 * h * static_cast<double>(i) / 44100.0) / h;
+      tone[i] = static_cast<float>(0.3 * v);
+    }
+    m.osc[0].sample = pl::addMedia(m, "tone.wav", 44100, {tone});
+    PluginState st = defaultPluginState(pl::kType);
+    st.data = pl::modelToData(m);
+    st.params[static_cast<size_t>(pl::oscP(0, pl::O_Type))] = static_cast<float>(pl::OscSpectral);
+    st.params[static_cast<size_t>(pl::tailP(pl::T_OscLaw))] = 1.f;
+    PluginState own = st;
+    own.params[static_cast<size_t>(pl::tailP(pl::T_OscLaw))] = 0.f;
+    double lo = 1e9, hi = -1e9, ownLo = 1e9, ownHi = -1e9;
+    for (int key : {41, 53, 60, 66, 79}) {
+      const double l = meanDb(renderWindows(st, 1.f, 24000, 24000, key), 10, 45);
+      const double o = meanDb(renderWindows(own, 1.f, 24000, 24000, key), 10, 45);
+      lo = std::min(lo, l), hi = std::max(hi, l), ownLo = std::min(ownLo, o), ownHi = std::max(ownHi, o);
+    }
+    std::printf("# spectral level over keys 41..79: imported %.1f..%.1f dB, own law %.1f..%.1f dB\n", lo, hi, ownLo, ownHi);
+    expect(lo > -60 && hi - lo < 3.0, "the imported spectral oscillator keeps its level across keys");
+    // a spectral oscillator without a sample is silent on the source; Plasma's own projects play its table
+    PluginState none = defaultPluginState(pl::kType);
+    none.params[static_cast<size_t>(pl::oscP(0, pl::O_Type))] = static_cast<float>(pl::OscSpectral);
+    PluginState noneImp = none;
+    noneImp.params[static_cast<size_t>(pl::tailP(pl::T_OscLaw))] = 1.f;
+    const float pkOwn = renderPeak(none), pkImp = renderPeak(noneImp);
+    std::printf("# spectral without a sample: own law peak %.3f, imported %.6f\n", pkOwn, pkImp);
+    expect(pkOwn > 0.01f && pkImp >= 0 && pkImp < 1e-6f, "an imported spectral oscillator without a sample is silent (own law plays the table)");
+  }
+
   std::error_code ec;
   fs::remove_all(cache, ec);
   return finish();

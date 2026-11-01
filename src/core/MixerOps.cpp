@@ -11,6 +11,7 @@
 #include "Json.h"
 #include "Params.h"
 #include "Project.h"
+#include "TrackIconSet.h"
 
 namespace gl::mixops {
 
@@ -318,7 +319,9 @@ bool setDock(Document& d, const std::vector<ObjectId>& tracks, MixerDock dock) {
 }
 
 bool setIcon(Document& d, const std::vector<ObjectId>& tracks, int icon) {
-  return editEach(d, tracks, "change mixer track icon", [icon](MixerTrack& m) { m.icon = std::clamp(icon, 0, 255); });
+  // J-211: the FL number follows the icon (exported as it is, see trackicon::exportFl).
+  const int ic = trackicon::info(icon) ? icon : 0;
+  return editEach(d, tracks, "change mixer track icon", [ic](MixerTrack& m) { m.icon = ic, m.flIcon = trackicon::toFl(ic); });
 }
 
 bool setColor(Document& d, const std::vector<ObjectId>& tracks, Rgb color) {

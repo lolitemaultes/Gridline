@@ -79,9 +79,10 @@ struct Channel {
   // J-39: the channel is a playlist audio-clip source (FL's audio-clip
   // channel), kept as such when no clip uses it.
   bool audioClip = false;
-  // J-39 (FL interop): FL's icon number for the channel (0 = none); kept
-  // for export, not drawn (Gridline's icons are its own).
+  // J-39 (FL interop): FL's icon number for the channel (0 = none), kept for
+  // export. J-211: `icon` is the Gridline icon (core/TrackIconSet.h) showing it.
   int flIcon = 0;
+  int icon = 0;
   bool fullKeyRange() const { return keyLo <= 0 && keyHi >= 127; }
 
   bool isLayer() const { return !layer.empty(); }
@@ -92,7 +93,7 @@ struct Channel {
            mono == o.mono && porta == o.porta && portaTime == o.portaTime && cutGroup == o.cutGroup &&
            cutBy == o.cutBy && echo == o.echo && layer == o.layer && layerMode == o.layerMode && group == o.group &&
            auxOuts == o.auxOuts && midiOutPort == o.midiOutPort && midiInPort == o.midiInPort && keyLo == o.keyLo &&
-           keyHi == o.keyHi && swingTruncate == o.swingTruncate && audioClip == o.audioClip && flIcon == o.flIcon;
+           keyHi == o.keyHi && swingTruncate == o.swingTruncate && audioClip == o.audioClip && flIcon == o.flIcon && icon == o.icon;
   }
 };
 
@@ -149,9 +150,13 @@ struct AutomationClip {
   // J-41: point shapes follow FL's exact laws (core/FlCurves). Clips of
   // projects saved before J-41 keep the earlier Gridline curves (false).
   bool flCurves = true;
+  // J-210: recorded events (FL's pattern events): every point steps the parameter
+  // on its exact sample, and before the first point of each pass the parameter
+  // keeps whatever value it has (nothing is sent), as FL plays its event data.
+  bool events = false;
   bool operator==(const AutomationClip& o) const {
     return id == o.id && name == o.name && color == o.color && owner == o.owner && index == o.index && min == o.min &&
-           max == o.max && points == o.points && loop == o.loop && flCurves == o.flCurves;
+           max == o.max && points == o.points && loop == o.loop && flCurves == o.flCurves && events == o.events;
   }
 };
 
@@ -270,6 +275,7 @@ struct PlaylistTrack {
   bool folded = false;    // group collapsed in the playlist
   bool locked = false;    // J-11: clips on the track cannot be edited
   int flIcon = 0;         // J-39 (FL interop): FL's icon number (0 = none), kept for export
+  int icon = 0;           // J-211: Gridline track icon (core/TrackIconSet.h, 0 = none)
   // PL-08: track mode and its links (kNoId = none; ids that no longer exist count as none).
   TrackMode mode = TrackMode::Unassigned;
   ObjectId mixer = kNoId;    // Audio: the linked mixer track (Instrument: optional, else the channel's)
@@ -277,7 +283,7 @@ struct PlaylistTrack {
   bool operator==(const PlaylistTrack& o) const {
     return name == o.name && color == o.color && muted == o.muted && height == o.height && launch == o.launch &&
            pad == o.pad && follow == o.follow && syncStart == o.syncStart && groupSize == o.groupSize && folded == o.folded &&
-           locked == o.locked && flIcon == o.flIcon && mode == o.mode && mixer == o.mixer && channel == o.channel;
+           locked == o.locked && flIcon == o.flIcon && icon == o.icon && mode == o.mode && mixer == o.mixer && channel == o.channel;
   }
   bool liveDefaults() const {
     return launch == LaunchGrid::FourBeats && pad == PadMode::Trigger && follow == FollowMode::Loop && syncStart == LaunchGrid::Now;
@@ -397,7 +403,7 @@ struct MixerTrack {
   std::array<float, 3> eqQ = {kStripEqDefQ, kStripEqDefQ, kStripEqDefQ};                     // 0.1..10 (shelf slope / peak Q)
   bool eqActive() const { return eqGain[0] != 0.0f || eqGain[1] != 0.0f || eqGain[2] != 0.0f; }
   // --- J-12 mixer parity ---
-  int icon = 0;               // in-house track icon (0 = none, see app/TrackIcons.h)
+  int icon = 0;               // in-house track icon (0 = none, see core/TrackIconSet.h)
   bool disabled = false;      // bypassed: input passes straight through (no effects, EQ or strip), no CPU
   int dock = 0;               // MixerDock: where the strip sits in the mixer
   int latencyOffset = 0;      // manual latency in samples, added to the effects' latency for compensation
@@ -590,6 +596,9 @@ struct Song {
   // J-38: overlapping audio clips on a track crossfade automatically (project
   // setting; core/Fades.h).
   bool autoCrossfades = true;
+  // J-219: what the user typed in Track Receipt (song categories, shares, release
+  // details, writers, ticked files; compact JSON, core/TrackReceipt.h). Empty = none.
+  std::string trackReceipt;
   FlOrigin flOrigin;  // FL Studio import data for the FL exporter (see FlOrigin)
 
   // J-111 (collaboration): object ids are partitioned between collaborators so
@@ -646,7 +655,7 @@ struct Song {
            mixer == o.mixer && links == o.links && modLinks == o.modLinks && automations == o.automations &&
            markers == o.markers && channelGroups == o.channelGroups && patternGroups == o.patternGroups && live == o.live &&
            arrangements == o.arrangements &&
-           currentArrangement == o.currentArrangement && flOrigin == o.flOrigin;
+           currentArrangement == o.currentArrangement && trackReceipt == o.trackReceipt && flOrigin == o.flOrigin;
   }
   bool operator!=(const Song& o) const { return !(*this == o); }
 };

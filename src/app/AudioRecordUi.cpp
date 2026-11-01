@@ -2,6 +2,7 @@
 #include "../engine/TimeStretch.h"
 #include "../core/I18n.h"
 #include "J31Ui.h"
+#include "LiveTakes.h"
 #include "AudioRecordUi.h"
 #include "ChopUi.h"
 #include "ClipMultiUi.h"
@@ -204,15 +205,21 @@ void App::processAudioRecording() {
   // Hosted plugins see "recording" whenever the record button is armed and the
   // transport rolls; armed tracks capture while it is set.
   engine.setRecording(recordArmed && rolling && !audioRecFinishing);
-  if (!audioRecSession) return;
+  if (!audioRecSession) {
+    livetake::reset();  // J-217
+    return;
+  }
   if (const auto& p = engine.program()) audioRec.pump(engine, ringsOf(*p));
+  livetake::update(*this);  // J-217: the takes drawn live on the playlist
   if (!want && !audioRecFinishing) {
     engine.setRecording(false);
     audioRecFinishing = true;
     audioRecStopTime = now;
   }
-  // Commit once the engine has closed every take (the latency tail), or after a second.
-  if (audioRecFinishing && (!audioRec.open() || now - audioRecStopTime > 1.0)) {
+  // Commit once the engine has closed every take (the latency tail) and the
+  // playlist has shown them complete for a frame (J-217: the committed clips
+  // look exactly like the last live frame), or after a second.
+  if (audioRecFinishing && ((!audioRec.open() && livetake::settled()) || now - audioRecStopTime > 1.0)) {
     if (const auto& p = engine.program()) audioRec.pump(engine, ringsOf(*p));
     std::vector<RecordedTake> takes = audioRec.release();
     takes.erase(std::remove_if(takes.begin(), takes.end(), [](const RecordedTake& t) { return t.frames() < 64; }), takes.end());
@@ -230,6 +237,7 @@ void App::processAudioRecording() {
       o.nameTracks = settings.getBool("record.nameTracks");
       TakeCommitResult r;
       doc.editSong("Record audio", [&](Song& x) { r = commitTakes(x, takes, o); });
+      livetake::handoff(takes, r);  // J-217: the clips draw from the live summaries
       if (!r.error.empty()) notify("Recording: " + r.error, true);
       char b[128];
       std::snprintf(b, sizeof b, "Recorded %zu audio clip%s into the playlist (%s)", r.clips.size(), r.clips.size() == 1 ? "" : "s",
@@ -244,6 +252,7 @@ void App::processAudioRecording() {
       doc.editSong("disarm tracks after recording", [](Song& x) {
         for (auto& m : x.mixer) m.armed = false;
       });
+    livetake::reset();
     audioRecSession = audioRecFinishing = false;  // (looping comes back on the next frame, above)
   }
 }

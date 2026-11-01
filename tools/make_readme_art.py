@@ -493,15 +493,19 @@ VIEWS += [
 ]
 
 # The release banner and screenshots of this version.
-RELEASE = "0.7.0"
+RELEASE = "0.7.1"
 # The banner: version as set, headline, subline; a prerelease adds its tag and label.
-RELEASE_BANNER = ("0.7.0", "Make music together",
-                  "Live collaboration, the Gridline Suite in any DAW, Platter and Seltmann")
+RELEASE_BANNER = ("0.7.1", "Know what you sample",
+                  "Track Receipt, Turntable, Seltmann recording, live takes and track icons")
 RELEASE_BANNER_OPTS = {}
 # Plugin editors on one sheet (none in this release).
 RELEASE_EDITORS = []
-# No release screenshots in this release.
-RELEASE_VIEWS = []
+# Release screenshots from 3200x2000 / 3200x2200 / 2880x1920 captures (UI scale 2), cropped to the window.
+RELEASE_VIEWS = [
+    ("receipt.png", "track-receipt.png", (850, 434, 2352, 1608)),
+    ("turntable.png", "turntable.png", (966, 120, 2234, 1830)),
+    ("recording_200.png", "seltmann-record.png", (292, 96, 2590, 1476)),
+]
 
 if __name__ == "__main__":
     main()

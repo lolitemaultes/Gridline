@@ -15,7 +15,9 @@ clear message.
 3. Choose where the audio goes:
    * **Clip on a new track at the playhead** (the default): a sampler channel plus an audio clip
      on the first free playlist track, at the playhead.
-   * **Browser only**: the file is saved and listed, nothing is placed.
+   * **Browser only**: the file is saved and listed, nothing is placed. In a collaborative project
+     each file also gets a channel (no clip), because collaborators receive only the files the
+     project uses: the file joins the shared project audio for everyone.
 4. **Only part** keeps a range (minutes:seconds, like `1:30` to `2:05`); the rest is never
    written.
 5. Playlists: the first item, or **chosen items** (with All / None).

@@ -144,9 +144,10 @@ check("dragging the cut resizes B and C (${cut2before} -> ${cut2after})" cut2aft
 check("... the cuts are kept by hand (chop mode ${chop})" chop EQUAL 5)
 check("... same number of regions, still in order" st MATCHES "slices ${slices} [^\n]*order \"A B C D [^\"]*\"")
 
-# ---- 3b. in order, the edge between two sequence blocks is the same cut: drag A|B to the right; and a
-# plain hover over a cut (the handle shows; screenshot)
-string(REGEX MATCH "seltmann: lanecut 1 ([0-9]+) ([0-9]+)" _ "${ready_out}")
+# ---- 3b. J-214: the sequence is its own layer: the edge between two blocks is step A's length in the
+# sequence, not the cut between the regions: drag it to the right, the cut stays (the regions are
+# resized in the waveform); and a plain hover over a cut (the handle shows; screenshot)
+string(REGEX MATCH "seltmann: steplen 0 ([0-9]+) ([0-9]+)" _ "${ready_out}")
 set(l1x "${CMAKE_MATCH_1}")
 set(l1y "${CMAKE_MATCH_2}")
 string(REGEX MATCH "cuts ([0-9]+)" _ "${st0}")
@@ -164,8 +165,9 @@ set(last_out "${lane_out}")
 last_state(st "${lane_out}")
 string(REGEX MATCH "cuts ([0-9]+)" _ "${st}")
 set(cut1after "${CMAKE_MATCH_1}")
-check("dragging the A|B edge in the sequence resizes A and B (${cut1before} -> ${cut1after})" cut1after GREATER cut1before)
-check("... the sequence still plays every region in order" st MATCHES "slices ${slices} [^\n]*order \"A B C D [^\"]*\"")
+check("dragging the A|B edge in the sequence leaves the cut between A and B (${cut1before} = ${cut1after})" cut1after EQUAL cut1before)
+check("... it gives step 1 its own length" st MATCHES "lens \"1:[0-9.]+\" ")
+check("... the regions and the order of the steps stay" st MATCHES "slices ${slices} [^\n]*order \"A B C D [^\"]*\"")
 
 foreach(f ready pitch menu start resize lane)
   check("screenshot ${f}.ppm written" EXISTS "${OUT}/${f}.ppm")

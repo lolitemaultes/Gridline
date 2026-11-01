@@ -24,6 +24,7 @@
 #include "../engine/Sample.h"
 #include "../host/net/Http.h"
 #include "App.h"
+#include "CollabUi.h"
 #include "DevSignal.h"
 #include "DialogLayout.h"
 #include "Theme.h"
@@ -397,7 +398,10 @@ void finishImport(App& a, const std::vector<ul::Result>& results) {
   fs::remove_all(fs::u8path(S().workDir) / "items", ec);
   if (placed.empty()) return;
   const bool clips = static_cast<int>(a.settings.getNumber("import.urlPlacement")) == 0;
-  if (clips) {
+  // A collaborative project shares only the files the project refers to: "browser only" still
+  // adds a channel for each file (no clip), so the file joins the project audio for everyone.
+  const bool channels = clips || collabui::active(a);
+  if (channels) {
     for (const auto& p : placed) sampleCache().get(p.path);  // decoded before the edit (clip lengths)
     const Tick at = static_cast<Tick>(std::max(0.0, a.engine.mode() == PlayMode::Song ? a.engine.position() : 0.0));
     a.doc.editSong(placed.size() == 1 ? "import from URL" : "import from URL (" + std::to_string(placed.size()) + " items)", [&](Song& x) {
@@ -411,6 +415,7 @@ void finishImport(App& a, const std::vector<ul::Result>& results) {
         c.plugin.data = p.path;
         c.mixerTrack = x.masterId();
         x.channels.push_back(c);
+        if (!clips) continue;
         Clip k;
         k.id = x.allocateId();
         k.kind = ClipKind::Audio;
@@ -423,15 +428,17 @@ void finishImport(App& a, const std::vector<ul::Result>& results) {
         x.playlist.back().length = audioClipNaturalLength(x, x.playlist.back());
       }
     });
-    a.showPlaylist = true;
+    if (clips) a.showPlaylist = true;
     a.syncEngine();
   }
   a.showBrowser = true;
   const std::string first = fs::u8path(placed.front().path).filename().u8string();
+  const char* where = clips ? " as an audio clip" : channels ? " into the project audio (a channel, no clip)" : " into the browser (Imported)";
+  const char* wheres = clips ? " as audio clips" : channels ? " into the project audio (channels, no clips)" : " into the browser (Imported)";
   if (placed.size() == 1)
-    a.notify(clips ? "Imported " + first + " as an audio clip" : "Imported " + first + " into the browser (Imported)", false, placed.front().path);
+    a.notify("Imported " + first + where, false, placed.front().path);
   else
-    a.notify("Imported " + std::to_string(placed.size()) + " files" + (clips ? " as audio clips" : " into the browser (Imported)"), false, dir);
+    a.notify("Imported " + std::to_string(placed.size()) + " files" + wheres, false, dir);
   a.uiSound(uisound::Event::Import);
 }
 
@@ -687,7 +694,8 @@ void drawPreview(App& a) {
   int place = std::clamp(static_cast<int>(a.settings.getNumber("import.urlPlacement")), 0, 1);
   const char* places[] = {i18n::N_("Clip on a new track"), i18n::N_("Browser only")};
   const char* placeHints[] = {i18n::N_("An audio clip on a new playlist track at the playhead, and the file in the browser"),
-                              i18n::N_("Only the file, in the browser's Imported folder")};
+                              collabui::active(a) ? i18n::N_("No clip: the file joins the shared project audio as a channel")
+                                                  : i18n::N_("Only the file, in the browser's Imported folder")};
   if (ui::Segmented("##place", places, 2, &place, 150, 0, placeHints)) a.settings.set("import.urlPlacement", place);
   if (s.info.playlist) {
     formLabel("Items", col);

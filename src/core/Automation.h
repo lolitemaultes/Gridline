@@ -44,6 +44,15 @@ struct AutomationLane {
   // Normalized parameter value (clip value through the clip's min/max) at a
   // song tick. Before the first clip: its start value; after a clip: its end value.
   double valueAt(double tick) const;
+  // J-210: recorded events (AutomationClip::events). False where the lane sends
+  // nothing: an events clip before its first point in this pass (or outside its
+  // instances); the parameter then keeps its value. Always true elsewhere.
+  bool sendsAt(double tick) const;
+  // J-210: whether some instance plays an events clip.
+  bool hasEvents() const;
+  // J-210: the first song tick after `tick` at which an events clip steps
+  // (one of its points; +infinity when none follows).
+  double nextEventStep(double tick) const;
   bool targets(ObjectId o, uint32_t i) const { return owner == o && index == i; }
 };
 // One lane per automated parameter. Muted clips, clips on muted tracks and

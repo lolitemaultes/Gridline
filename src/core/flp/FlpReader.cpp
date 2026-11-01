@@ -367,6 +367,13 @@ bool importFile(const flp::File& file, Song& out, flp::Report& report, const std
   flp::importPatternEvents(c);
   flp::settleImportedFades(c);
   ensureMixer(song);
+  // J-210: a song without playlist clips plays its patterns in pattern mode in FL;
+  // Gridline opens it in pattern mode too (no clips are invented).
+  if (song.playlist.empty()) {
+    int withContent = 0;
+    for (const Pattern& p : song.patterns) withContent += !p.notes.empty() || !p.automation.empty() || !p.steps.empty();
+    if (withContent) report.counts["patterns to play in pattern mode (the song is empty)"] = withContent;
+  }
   if (keepOrigin) flp::captureOrigin(c);  // original events for the FL exporter (J-34)
   out = std::move(song);
   return true;

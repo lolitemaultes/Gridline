@@ -31,10 +31,11 @@ set(script "5 toasts clear
 24 sdldown 0
 25 sdlup 0
 27 sound
-28 waitfor j109-none 0.15
-29 sound
-30 waitfor j109-none 5
-31 sound
+28 forget output-silent
+29 waitfor output-silent 20
+30 sound
+31 waitfor j109-none 1
+32 sound
 40 typing on
 42 sdlkey z down
 50 waitfor j109-none 0.4
@@ -42,7 +43,10 @@ set(script "5 toasts clear
 52 focuslost
 54 waitfor j109-none 0.2
 55 sound
-60 waitfor j109-none 5
+56 forget output-silent
+57 waitfor output-silent 20
+58 sound
+59 waitfor j109-none 1
 61 sound
 62 typing off
 70 previewfile \"${OUT}/preview.wav\"
@@ -52,8 +56,11 @@ set(script "5 toasts clear
 76 sdldown 0
 77 sdlup 0
 79 sound
-80 waitfor j109-none 0.3
-81 sound
+80 forget output-silent
+82 waitfor output-silent 10
+83 sound
+84 waitfor j109-none 0.3
+85 sound
 90 sdlat play
 92 sdldown 0
 93 sdlup 0
@@ -67,8 +74,11 @@ set(script "5 toasts clear
 105 sdlup 0
 107 waitfor j109-none 0.3
 108 sound
-110 waitfor j109-none 0.5
+109 forget output-silent
+110 waitfor output-silent 5
 111 sound
+112 waitfor j109-none 0.3
+113 sound
 120 quit discard
 ")
 file(WRITE "${OUT}/stop.txt" "${script}")
@@ -111,6 +121,9 @@ macro(micro var)
   math(EXPR ${var} "${${var}} + 0")
 endmacro()
 
+# Each "silent" check waits for the output to go quiet (output-silent; a stuck note never does and the
+# wait times out), then measures a fresh window: a loaded machine renders the dummy device late, so
+# fixed sleeps judged the tail too early.
 # 1. A preview key held, then Stop: released, and silent once its tail has died out.
 sound(21 a)
 micro(a_peak)
@@ -122,9 +135,9 @@ if(NOT b_panics EQUAL a_panics)
   message(FATAL_ERROR "FAIL: the first Stop should release, not panic. Output:\n${out}")
 endif()
 message(STATUS "ok - first Stop: a release, not a panic")
-sound(31 c)
+sound(32 c)
 micro(c_peak)
-lt(${c_peak} 1000 "first Stop: silent after the release tail (it used to ring forever)")
+lt(${c_peak} 1000 "first Stop: silent after the release tail (it used to ring forever: the wait for silence times out)")
 
 # 2. A typed key held when the window loses focus: released (the key-up never comes).
 sound(51 d)
@@ -142,7 +155,7 @@ sound(73 g)
 gt(${g_pv} 0 "browser preview: playing")
 sound(79 h)
 lt(${h_pv} 1 "Stop: the browser preview stops")
-sound(81 i)
+sound(85 i)
 micro(i_peak)
 lt(${i_peak} 1 "Stop: silent after the browser preview")
 
@@ -160,6 +173,6 @@ if(NOT l_panics EQUAL want)
   message(FATAL_ERROR "FAIL: the second Stop should run the panic (${l_panics} panics, want ${want}). Output:\n${out}")
 endif()
 message(STATUS "ok - Stop pressed again while stopped: the panic")
-sound(111 m)
+sound(113 m)
 micro(m_peak)
 lt(${m_peak} 1 "after the panic: silence, the mixer's delay / reverb tails included")

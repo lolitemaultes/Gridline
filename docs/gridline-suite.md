@@ -57,7 +57,7 @@ Identifiers come from the plugin type `gl.<name>` alone, never from the suite, s
 
 ## Members
 
-118 plugins: 50 instruments and 68 effects. The CLAP id is `org.gridline.suite.` followed by the type without `gl.`; the VST3 class id ends in the hash shown; the Audio Unit is `aumu` (instruments), `aufx` or `aumf` (effects that take MIDI) with the subtype shown and manufacturer `GrLn`. Effects also have Mix and Bypass besides the parameters counted here.
+119 plugins: 51 instruments and 68 effects. The CLAP id is `org.gridline.suite.` followed by the type without `gl.`; the VST3 class id ends in the hash shown; the Audio Unit is `aumu` (instruments), `aufx` or `aumf` (effects that take MIDI) with the subtype shown and manufacturer `GrLn`. Effects also have Mix and Bypass besides the parameters counted here.
 
 ### Instruments
 
@@ -74,7 +74,7 @@ Identifiers come from the plugin type `gl.<name>` alone, never from the suite, s
 | FM Synth | `gl.fm` | Synth | `B7737B3D` | `trgi` | 74 | 5 |  |
 | Acid Bass | `gl.acid` | Synth | `0C64F93D` | `bogp` | 105 | 4 |  |
 | Keys | `gl.keys` | Synth | `7D2CDE14` | `asyi` | 20 | 4 |  |
-| Kerf | `gl.slicer` | Sampler | `3FDD38A0` | `m86j` | 866 | 4 |  |
+| Kerf | `gl.slicer` | Sampler | `3FDD38A0` | `m86j` | 875 | 5 |  |
 | Granular | `gl.granular` | Sampler | `5209A718` | `yysw` | 21 | 4 |  |
 | Analog Synth | `gl.analog` | Synth | `9A8F41C8` | `qmex` | 107 | 12 |  |
 | Isoline | `gl.wavetable` | Synth | `D8849DCB` | `fxgu` | 131 | 11 |  |
@@ -111,8 +111,9 @@ Identifiers come from the plugin type `gl.<name>` alone, never from the suite, s
 | Grain Scanner | `gl.grainscan` | Sampler | `42FB5F62` | `ehjo` | 23 | 4 |  |
 | Spline Scratch | `gl.splinescratch` | Sampler | `10B6BE51` | `ng3f` | 8 | 3 |  |
 | Seltmann | `gl.seltmann` | Sampler | `A19C8FCA` | `mtkg` | 21 | 6 |  |
+| Turntable | `gl.turntable` | Sampler | `A2221311` | `xz8n` | 21 | 5 |  |
 | Platter | `gl.platter` | Sampler | `74A19BB4` | `q8wc` | 74 | 6 | Takes MIDI from DJ controllers |
-| Plasma | `gl.plasma` | Synth | `F95755DE` | `cw2s` | 2192 | 24 |  |
+| Plasma | `gl.plasma` | Synth | `F95755DE` | `cw2s` | 2216 | 24 |  |
 
 ### Effects
 
@@ -156,7 +157,7 @@ Identifiers come from the plugin type `gl.<name>` alone, never from the suite, s
 | Cipher | `gl.vocoder` | Spectral | `3E0875BC` | `oxh8` | 64 | 6 | sidechain, MIDI in |
 | Pitch Shifter | `gl.pitch` | Spectral | `CE5B40E6` | `y10a` | 23 | 6 |  |
 | Plumb | `gl.pitcher` | Spectral | `25320011` | `j2sp` | 61 | 6 | MIDI in |
-| Turntable | `gl.scratcher` | Spectral | `F6DC4F1D` | `v6zh` | 13 | 5 |  |
+| Turntable FX | `gl.scratcher` | Spectral | `F6DC4F1D` | `v6zh` | 13 | 5 |  |
 | Stereo Spread | `gl.spread` | Spectral | `5CA9EDFF` | `xuiv` | 18 | 6 |  |
 | Hit Repeater | `gl.hitloop` | Delay & reverb | `5E1CF78B` | `ft5w` | 28 | 4 | sidechain |
 | Crest | `gl.master` | Dynamics | `BD005956` | `ksx9` | 293 | 6 |  |

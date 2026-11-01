@@ -237,16 +237,12 @@ std::string payloadPath(const ImGuiPayload* pl) {
 // (`type`; FL "Replace"), optionally with a preset's state and / or a sample.
 // Routing, volume, pan, colour, steps and notes stay (they belong to the
 // channel, not its instrument). The channel takes `newName` only when its old
-// name was automatic (xdrop::autoChannelName).
+// name was automatic (channelNameIsAutomatic).
 bool replaceChannel(App& a, ObjectId ch, const std::string& type, const PluginState* preset, const std::string& sample, const std::string& newName,
                     const std::string& label) {
   const Channel* c = a.doc.song().channel(ch);
   if (!c || !findPlugin(type)) return false;
-  const PluginInfo* oldInfo = findPlugin(c->plugin.type);
-  const bool rename = !newName.empty() && newName != c->name &&
-                      xdrop::autoChannelName(c->name, oldInfo ? oldInfo->name : std::string(),
-                                             xdrop::sampleSlot(c->plugin.type) != xdrop::SampleSlot::None ? c->plugin.data.substr(0, c->plugin.data.find('\n'))
-                                                                                                         : std::string());
+  const bool rename = !newName.empty() && newName != c->name && channelNameIsAutomatic(*c);  // J-213: the rule the core replace uses
   const bool newType = c->plugin.type != type;
   a.doc.beginGroup(label);
   bool ok = !newType || a.doc.setChannelPlugin(ch, type);
@@ -573,6 +569,7 @@ bool runAction(App& a, const std::string& path, DropAction act, DropTarget targe
       return true;
     case DropAction::ReplaceFromPreset: {  // J-97: the row's instrument from a preset (FL "Replace")
       if (d.item.pluginType.empty() || !replaceChannel(a, place.channel, d.item.pluginType, &d.state, "", d.name, "replace instrument")) return false;
+      pui::presetLoaded(PluginTarget{place.channel, -1}, d.item.pluginType, d.name);  // J-213: the plugin view shows that preset
       a.selectChannel(place.channel);
       return true;
     }
@@ -653,6 +650,7 @@ bool runAction(App& a, const std::string& path, DropAction act, DropTarget targe
       PluginState ns = d.state;
       if (ns.data.empty()) ns.data = st->data;  // presets without their own data keep the sample
       setPluginState(a, t, ns, "load preset");
+      pui::presetLoaded(t, ns.type, d.name);  // J-213: the header shows the dropped preset
       a.notify("Loaded preset " + d.name);
       return true;
     }
@@ -665,6 +663,7 @@ bool runAction(App& a, const std::string& path, DropAction act, DropTarget targe
           c.plugin = ns;
           c.name = d.name;
         });
+        pui::presetLoaded(PluginTarget{id, -1}, ns.type, d.name);
       }
       a.doc.endGroup();
       a.settingsChannel = id;
@@ -852,12 +851,13 @@ bool performItems(App& a, const std::vector<xdrop::Item>& items, DropTarget targ
 
 namespace {
 
-enum class PlugAct { None, ReplaceChannel, NewChannel, InsertChannel, FreeSlot, Slot };
+enum class PlugAct { None, ReplaceChannel, NewChannel, InsertChannel, FreeSlot, Slot, NewTrackInstrument, ReplaceTrackInstrument };
 
 struct PlugPlan {
   PlugAct act = PlugAct::None;
-  ObjectId owner = kNoId;  // channel (ReplaceChannel) / mixer track (FreeSlot, Slot)
+  ObjectId owner = kNoId;  // channel (ReplaceChannel, ReplaceTrackInstrument) / mixer track (FreeSlot, Slot)
   int slot = -1;
+  int track = -1;          // J-208: the playlist track (NewTrackInstrument, ReplaceTrackInstrument, a track's FreeSlot)
   std::string label, why;
 };
 
@@ -880,6 +880,10 @@ PlugPlan planPlugin(App& a, const std::string& type, DropTarget target, const Dr
     return p;
   }
   const Song& s = a.doc.song();
+  if (!collabui::pluginAllowed(a, type)) {  // J-111 / J-208: installed plugins stay out of a collaborative project
+    p.why = i18n::tr("Installed plugins can't be used in a collaborative project");
+    return p;
+  }
   const bool gen = info->kind == PluginKind::Generator, fx = info->kind == PluginKind::Effect;
   const char* genOnly = i18n::tr("Effects go into mixer slots");
   const char* fxOnly = i18n::tr("Instruments go into the channel rack");
@@ -900,6 +904,63 @@ PlugPlan planPlugin(App& a, const std::string& type, DropTarget target, const Dr
     p.label = cur ? fmtSS(i18n::tr("Drop to replace %s with %s"), cur->name, info->name)
                   : fmtS(i18n::tr("Drop to insert %s into this slot"), info->name);
   };
+  // J-208: a playlist track takes the plugin as its own: an instrument makes the track an
+  // instrument track playing a new channel of it (an instrument track gets its instrument
+  // replaced); an effect goes into the first free slot of the track's mixer track.
+  if (target == DropTarget::Playlist && place.track >= 0) {
+    const int tr = place.track;
+    const PlaylistTrack* pt = tr < static_cast<int>(s.tracks.size()) ? &s.tracks[static_cast<size_t>(tr)] : nullptr;
+    const std::string tname = pt && !pt->name.empty() ? pt->name : fmtS(i18n::tr("Track %s"), std::to_string(tr + 1));
+    const TrackMode mode = trackmodes::modeOf(s, tr);
+    if (pt && pt->locked) {
+      p.why = i18n::tr("This track is locked");
+      return p;
+    }
+    if (fx) {
+      const MixerTrack* m = trackmodes::linkedMixer(s, tr);
+      if (!m) {
+        p.why = i18n::tr("Effects go onto instrument and audio tracks (their mixer track) or into mixer slots");
+        return p;
+      }
+      const int k = freeSlot(*m);
+      if (k < 0) {
+        p.why = i18n::tr("All effect slots of this track's mixer track are in use");
+        return p;
+      }
+      p.act = PlugAct::FreeSlot;
+      p.owner = m->id;
+      p.slot = k;
+      p.track = tr;
+      p.label = fmtSS(i18n::tr("Drop to insert %s on %s"), info->name, tname);
+      return p;
+    }
+    if (!gen) {
+      p.why = genOnly;
+      return p;
+    }
+    if (mode == TrackMode::Audio) {
+      p.why = i18n::tr("Audio tracks hold audio: drop the instrument on another track");
+      return p;
+    }
+    if (mode == TrackMode::Instrument) {
+      if (const Channel* c = trackmodes::linkedChannel(s, tr)) {
+        p.act = PlugAct::ReplaceTrackInstrument;
+        p.owner = c->id;
+        p.track = tr;
+        p.label = fmtSS(i18n::tr("Drop to replace %s with %s"), c->name, info->name);
+        return p;
+      }
+    }
+    for (const auto& c : s.playlist)
+      if (c.track == tr && c.kind != ClipKind::Pattern) {
+        p.why = i18n::tr("This track holds audio or automation clips: drop the instrument on another track");
+        return p;
+      }
+    p.act = PlugAct::NewTrackInstrument;
+    p.track = tr;
+    p.label = fmtSS(i18n::tr("Drop to play %s on %s"), info->name, tname);
+    return p;
+  }
   switch (target) {
     case DropTarget::Rack:
     case DropTarget::Playlist:
@@ -990,6 +1051,20 @@ bool performPluginDrop(App& a, const std::string& type, DropTarget target, const
     }
     case PlugAct::InsertChannel:
       return addChannelAt(a, type, "", place.insertAt) != kNoId;
+    case PlugAct::NewTrackInstrument: {  // J-208: one undo step (a new channel + the track's link)
+      std::string why;
+      const ObjectId ch = trackmodes::newInstrumentTrack(a.doc, p.track, type, &why);
+      if (ch == kNoId) {
+        a.notify(why.empty() ? std::string(i18n::tr("This instrument can't play on that track")) : why, true);
+        return false;
+      }
+      a.selectChannel(ch);
+      return true;
+    }
+    case PlugAct::ReplaceTrackInstrument:
+      if (!replaceChannel(a, p.owner, type, nullptr, "", info ? info->name : type, "replace instrument track")) return false;
+      a.selectChannel(p.owner);
+      return true;
     case PlugAct::FreeSlot:
     case PlugAct::Slot:
       if (!a.doc.setSlotPlugin(p.owner, p.slot, type)) return false;

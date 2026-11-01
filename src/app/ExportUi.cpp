@@ -6,6 +6,7 @@
 // effects, tempo info, markers). Rendering runs on a worker thread with a
 // progress window that can cancel; the summary lists the files written.
 #include "../core/I18n.h"
+#include "../core/TrackReceipt.h"
 #include "ExportUi.h"
 #include <algorithm>
 #include <atomic>
@@ -1132,7 +1133,12 @@ void exportChannelSample(App& a, ObjectId channel) {
     std::copy(s->right.begin(), s->right.end(), b.plane(1));
     AudioFileOptions o;
     o.bits = 24;
-    return writeAudioFile(path, b, static_cast<int>(std::lround(s->sampleRate)), o, &err);
+    if (!writeAudioFile(path, b, static_cast<int>(std::lround(s->sampleRate)), o, &err)) return false;
+    receipt::Origin og;  // J-219: a copy, second for second (Track Receipt)
+    og.source = src;
+    og.kind = "copy";
+    receipt::writeOrigin(path, og);
+    return true;
   });
 }
 
@@ -1166,7 +1172,21 @@ void exportClipAudio(App& a, ObjectId clip) {
     }
     AudioFileOptions o;
     o.bits = 24;
-    return writeAudioFile(path, r.audio, rate, o, &err);
+    if (!writeAudioFile(path, r.audio, rate, o, &err)) return false;
+    if (const Channel* ch = song.channel(k->source); ch && k->kind == ClipKind::Audio && r.audio.frames > 0) {
+      receipt::Origin og;  // J-219: the clip's part of its file (Track Receipt)
+      og.source = ch->plugin.data.substr(0, ch->plugin.data.find('\n'));
+      og.start = std::max(0.0, k->audioStart);
+      og.end = k->audioEnd > og.start ? k->audioEnd : -1;
+      if (og.end < 0)
+        if (SamplePtr sp = sampleCache().get(og.source)) og.end = sp->seconds();
+      if (og.end > 0) og.speed = (og.end - og.start) / (static_cast<double>(r.audio.frames) / rate);
+      else og.rangeKnown = false;
+      og.reverse = k->reverse;
+      og.kind = "clip";
+      receipt::writeOrigin(path, og);
+    }
+    return true;
   });
 }
 

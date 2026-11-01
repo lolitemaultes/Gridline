@@ -7,6 +7,7 @@
 #include <cstring>
 #include "../../engine/pitch/Kernel.h"
 #include "plasma_dsp.h"
+#include "../../engine/SampleTap.h"
 
 namespace gl::packs::plasma {
 
@@ -137,6 +138,11 @@ void OscVoice::start(const OscSet& s, float phase, float randPhase, float randSt
     if (best >= 0) smp = s.src->zones[static_cast<size_t>(best)].s.get();
   }
   const double len = smp ? static_cast<double>(smp->frames()) : 0.0;
+  if (tap::active() && smp && (s.type == OscSample || s.type == OscMultisample || s.type == OscGranular)) {  // J-219
+    cover_.flush(coverSmp_);
+    coverSmp_ = smp;
+    tap::play(smp);
+  }
   for (int u = 0; u < kMaxUnison; ++u) {
     double st = std::clamp(static_cast<double>(s.start), 0.0, 1.0) * len;
     if (s.type == OscSample && s.src && !s.src->slices.empty()) {
@@ -499,6 +505,10 @@ void OscVoice::samplePlay(const OscSet& s, float& l, float& r) {
     double& pos = play_[u];
     const double rate = std::exp2((s.pitch + s.det[u] - center) / 12.0) * rootRate * s.scan;
     const double step = (s.reverse ? -rate : rate) * dirU_[u];
+    if (tap::active()) {  // J-219: Track Receipt coverage (the first unison voice)
+      if (coverSmp_ != smp) cover_.flush(coverSmp_), coverSmp_ = smp;
+      if (u == 0 || !any) cover_.at(smp, pos);
+    }
     float xl = sampleAt(dl, n, pos, step), xr = dr == dl ? xl : sampleAt(dr, n, pos, step);
     // loop crossfade: near the loop end, blend towards the loop start
     if (loopMode == 1 && s.loopXfade > 0 && !s.reverse) {
@@ -572,6 +582,12 @@ void OscVoice::granular(const OscSet& s, float& l, float& r) {
       if (rev) inc = -inc;
       g.pos = pos;
       g.inc = inc;
+      if (smp && dl == smp->left.data() && tap::active()) {  // J-219: the frames this grain reads (wrapping)
+        const double nn = static_cast<double>(n), span = std::fabs(inc) * g.len;
+        const double a0 = inc < 0 ? std::max(0.0, pos - span) : pos, a1 = a0 + span;
+        tap::markFrames(smp, a0, std::min(a1, nn - 1));
+        if (a1 > nn - 1) tap::markFrames(smp, 0, std::min(nn - 1, a1 - nn));
+      }
       const float pan = std::clamp(rngBi(rng_) * rp, -1.f, 1.f);
       g.pl = s.pl[u] * (pan > 0 ? 1 - pan : 1);
       g.pr = s.pr[u] * (pan < 0 ? 1 + pan : 1);
@@ -649,7 +665,7 @@ void OscVoice::spectralHop(const OscSet& s) {
     const double lo = std::clamp(static_cast<double>(s.start), 0.0, 1.0), hi = std::clamp(static_cast<double>(s.end), lo + 1e-3, 1.0);
     if (specPos_ > hi) specPos_ = s.loopMode == 0 ? hi : lo + std::fmod(specPos_ - lo, hi - lo);
     if (specPos_ < lo) specPos_ = lo;
-  } else if (s.mip) {
+  } else if (s.mip && !s.law) {  // imported: a spectral oscillator without a sample stays silent
     const MipTable& t = *s.mip;
     const double fp = std::clamp(static_cast<double>(s.wtPos), 0.0, 1.0) * (t.frames - 1);
     const int f0 = static_cast<int>(fp);
@@ -775,7 +791,10 @@ void OscVoice::spectralHop(const OscSet& s) {
   // J-201: a sample resynthesised here plays 12.5 dB above the same sample in Sample mode, as the
   // source format's spectral oscillator does (measured on three library samples: +12.2..+12.6 dB);
   // it was 13.5 dB below it.
-  const float norm = 0.5f * N * 0.5f * (sp ? 0.6f * 18.8f : 1.f) / std::sqrt(static_cast<float>(U));
+  // J-203t: with the centre-referenced bins below (imported law) partials between bins no longer
+  // cancel; the level comes down 5.4 dB to match (measured on four library samples at five keys,
+  // Plasma was 4.9..5.6 dB above the original once the cancellation was gone)
+  const float norm = 0.5f * N * 0.5f * (sp ? 0.6f * 18.8f * (s.law ? 0.537f : 1.f) : 1.f) / std::sqrt(static_cast<float>(U));
   // J-201: the band limits use the filter cutoff scale (0 = 8 Hz .. 1 = 22 kHz, as the import writes
   // them); a linear fraction of the oversampled Nyquist silenced imported spectral oscillators.
   const float lo = s.sLo <= 0.f ? 0.f : static_cast<float>(cutoffHz(s.sLo));
@@ -806,21 +825,26 @@ void OscVoice::spectralHop(const OscSet& s) {
       const int b0 = static_cast<int>(bin);
       if (b0 < 1 || b0 + 1 >= N / 2) continue;
       const float fr = bin - static_cast<float>(b0);
-      const cpx c = std::polar(a, ph[i]);
+      // imported law: the frame is referenced to its centre, so neighbouring bins alternate in sign;
+      // a partial between two bins then keeps its level instead of cancelling under the window
+      // (fitted and verified against the hosted plugin's output: the level stays within 3 dB from
+      // three octaves below to two above the sample's own pitch, where same-sign bins moved it 9 dB)
+      const float sg0 = s.law && (b0 & 1) ? -1.f : 1.f, sg1 = s.law ? -sg0 : sg0;
+      const cpx c = std::polar(a, ph[i]) * sg0;
       if (stereo && i < B) {
         // the gains stay within 4x the mid magnitude (a channel with the mid near zero)
-        const cpx cr = std::polar(a * std::min(4.f, sgr_[i]), ph[i] + sdp_[i]);
+        const cpx cr = std::polar(a * std::min(4.f, sgr_[i]), ph[i] + sdp_[i]) * sg0;
         const cpx cl = c * std::min(4.f, sgl_[i]);
         XL[b0] += cl * (1 - fr) * s.pl[u];
-        XL[b0 + 1] += cl * fr * s.pl[u];
+        XL[b0 + 1] += cl * (fr * sg1 * sg0) * s.pl[u];
         XR[b0] += cr * (1 - fr) * s.pr[u];
-        XR[b0 + 1] += cr * fr * s.pr[u];
+        XR[b0 + 1] += cr * (fr * sg1 * sg0) * s.pr[u];
         continue;
       }
       XL[b0] += c * (1 - fr) * s.pl[u];
-      XL[b0 + 1] += c * fr * s.pl[u];
+      XL[b0 + 1] += c * (fr * sg1 * sg0) * s.pl[u];
       XR[b0] += c * (1 - fr) * s.pr[u];
-      XR[b0 + 1] += c * fr * s.pr[u];
+      XR[b0 + 1] += c * (fr * sg1 * sg0) * s.pr[u];
     }
   }
   // mask / vocode from another source (its recent output)
@@ -1029,6 +1053,7 @@ void NoiseVoice::start(const NoiseSrc* n, const Sample* file, float phase, float
   uint32_t s = seed ? seed : 7;
   pos = std::clamp(static_cast<double>(phase) + rnd * rngUni(s), 0.0, 1.0) * len;
   if (pos >= len) pos = 0;
+  if (file && tap::active()) cover.flush(file), tap::play(file);  // J-219
   lp = 0;
   tz[0][0] = tz[0][1] = tz[1][0] = tz[1][1] = 0;
   done = false;
@@ -1063,6 +1088,7 @@ void NoiseVoice::tick(const NoiseSrc* n, const Sample* file, double rate, bool o
         pos, std::fabs(rate), tab, &o);
     return o;
   };
+  if (file && dl == file->left.data()) cover.at(file, pos);  // J-219
   float xl = wrapRead(dl);
   float xr = dr == dl ? xl : wrapRead(dr);
   pos += rate;

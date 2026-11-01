@@ -79,6 +79,20 @@ float AudioEngine::takeInputPeak(int channel) {
   return inPeak_[channel].exchange(0.f, std::memory_order_relaxed);
 }
 
+const packs::edison::CaptureRing& AudioEngine::inputTap() {
+  if (!tapOwn_) {
+    tapOwn_ = std::make_shared<packs::edison::CaptureRing>();
+    tap_.store(tapOwn_.get(), std::memory_order_release);
+  }
+  return *tapOwn_;
+}
+
+void AudioEngine::setInputTap(int first, bool stereo) {
+  if (first >= 0) inputTap();
+  tapStereo_.store(stereo, std::memory_order_relaxed);
+  tapFirst_.store(first < 0 ? -1 : std::min(first, kMaxInputChannels - 1), std::memory_order_release);
+}
+
 void AudioEngine::setRecordLatency(int samples) {
   recLatency_.store(std::clamp(samples, 0, static_cast<int>(kTickHistory) - kMaxBlock - 1));
 }
@@ -128,6 +142,14 @@ void AudioEngine::readDeviceInput(int n) {
     storeMax(inPeak_[c], peakOf(dst, n));
   }
   inTail_.store(tail + take, std::memory_order_release);
+  // J-218: the input tap (an instrument recording from its own editor).
+  const int tf = tapFirst_.load(std::memory_order_acquire);
+  if (tf >= 0)
+    if (packs::edison::CaptureRing* ring = tap_.load(std::memory_order_acquire)) {
+      const float* L = tf < ch ? inBuf_[static_cast<size_t>(tf)].data() : silence_.data();
+      const float* R = tapStereo_.load(std::memory_order_relaxed) && tf + 1 < ch ? inBuf_[static_cast<size_t>(tf + 1)].data() : L;
+      ring->write(L, R, n, false);
+    }
 }
 
 const float* AudioEngine::inputL(const ProgMixer& m) const {
@@ -1295,7 +1317,15 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
   // result does not depend on how the host splits its buffers.
   const bool grid = p->controlGrid();
   const int gpos = grid ? static_cast<int>(absClock_ % kControlBlock) : 0;
-  if (grid && gpos == 0) evaluateLinks(p, kControlBlock, blockTick);
+  // J-210: lanes of recorded events read at the block's first frame (after a loop
+  // wrap that happened at its start, the new pass's).
+  const double eventTick = segCount_ > 0 && segs_[0].from == 0 ? tickAt(p, segs_[0].anchor, static_cast<double>(segs_[0].clock)) : blockTick;
+  if (grid && gpos == 0) {
+    evaluateLinks(p, kControlBlock, blockTick, eventTick);
+  } else if (p->hasEventLanes) {  // J-210: a block that starts on a step of recorded events
+    applyAutomation(p, blockTick, eventTick, true);
+    updateStripGains(p);
+  }
   routePluginMidi(p, n);
   runNoteFx(p, n);
 
@@ -1720,7 +1750,7 @@ void AudioEngine::dispatchLive(const Program* p, int from, int to) {
     }
 }
 
-void AudioEngine::evaluateLinks(const Program* p, int n, double blockTick) {
+void AudioEngine::evaluateLinks(const Program* p, int n, double blockTick, double eventTick) {
   double vars[4] = {0, 0, static_cast<double>(absClock_) / sr_, blockTick / std::max(1, p->ppq)};
   for (const ProgLink& l : p->links) {
     float src = 0;
@@ -1759,15 +1789,34 @@ void AudioEngine::evaluateLinks(const Program* p, int n, double blockTick) {
       const float v = macro_[k].load(std::memory_order_relaxed);
       if (p->macros[k].valid && v >= 0.f) applyLinkValue(p, p->macros[k].target, v > 1.f ? 1.0 : static_cast<double>(v));
     }
+  applyAutomation(p, blockTick, eventTick, false);
+  updateStripGains(p);
+}
+
+namespace {
+// J-210: a step of recorded events lands on the first sample at or after its
+// tick; the tick of that sample may fall a rounding error short of the step.
+constexpr double kEventTickEps = 1e-6;
+}  // namespace
+
+void AudioEngine::applyAutomation(const Program* p, double blockTick, double eventTick, bool eventsOnly) {
+  auto apply = [&](const ProgAutoLane& a, double t) {
+    if (!a.events) {
+      if (!eventsOnly) applyLinkValue(p, a.target, a.lane.valueAt(t));
+      return;
+    }
+    t += eventTick - blockTick + kEventTickEps;
+    if (a.lane.sendsAt(t)) applyLinkValue(p, a.target, a.lane.valueAt(t));  // else the parameter keeps its value
+  };
   // Automation clips (arrangement): the value at this control block's song
   // position; applied after the controller links, so automation wins.
   if (tMode_ == PlayMode::Song)
-    for (const ProgAutoLane& a : p->autos) applyLinkValue(p, a.target, a.lane.valueAt(blockTick));
+    for (const ProgAutoLane& a : p->autos) apply(a, blockTick);
   // Pattern automation: the selected pattern (pattern mode) or the launched
   // clips (live mode), at their content position.
   if (tMode_ == PlayMode::Pattern) {
     if (const ProgPattern* pat = p->pattern(tPattern_))
-      for (const ProgAutoLane& a : pat->autos) applyLinkValue(p, a.target, a.lane.valueAt(blockTick));
+      for (const ProgAutoLane& a : pat->autos) apply(a, blockTick);
   } else if (tMode_ == PlayMode::Live && tPlaying_) {
     for (const ProgLiveTrack& lt : p->liveTracks) {
       const LiveTrack& st = liveTracks_[lt.track];
@@ -1776,9 +1825,37 @@ void AudioEngine::evaluateLinks(const Program* p, int n, double blockTick) {
       if (li < 0) continue;
       const double rel = blockTick - static_cast<double>(st.origin);
       if (rel < 0) continue;
-      for (const ProgAutoLane& a : p->liveClips[static_cast<size_t>(li)].autos) applyLinkValue(p, a.target, a.lane.valueAt(rel));
+      for (const ProgAutoLane& a : p->liveClips[static_cast<size_t>(li)].autos) apply(a, rel);
     }
   }
+}
+
+int AudioEngine::untilEventStep(const Program* p, int n) const {
+  if (!tPlaying_ || countInLeft_ > 0 || (tMode_ != PlayMode::Song && tMode_ != PlayMode::Pattern)) return n;
+  double anchor = anchorTick_;
+  int64_t clock = clock_;
+  if (tLoop_ && sampleAt(p, anchor, transportEnd(p)) <= clock) {  // the block starts with the loop wrap
+    anchor = pendJump_ ? pendJumpTo_ : loopStart(p);
+    clock = 0;
+  }
+  const double t0 = tickAt(p, anchor, static_cast<double>(clock)) + kEventTickEps;
+  double next = std::numeric_limits<double>::infinity();
+  auto scan = [&](const std::vector<ProgAutoLane>& v) {
+    for (const ProgAutoLane& a : v)
+      if (a.events) next = std::min(next, a.lane.nextEventStep(t0));
+  };
+  if (tMode_ == PlayMode::Song) {
+    scan(p->autos);
+  } else if (const ProgPattern* pat = p->pattern(tPattern_)) {
+    scan(pat->autos);
+  }
+  if (tLoop_) next = std::min(next, transportEnd(p));  // the next pass starts on its own block
+  if (!std::isfinite(next)) return n;
+  const int64_t s = sampleAt(p, anchor, next) - clock;
+  return s >= 1 && s < n ? static_cast<int>(s) : n;
+}
+
+void AudioEngine::updateStripGains(const Program* p) {
   // Strip gains from the (possibly linked) volume / pan / mute.
   for (const auto& c : p->channels) {
     if (!c.stripLinked) continue;
@@ -2026,6 +2103,7 @@ void AudioEngine::processDirect(float* L, float* R, int frames) {
     drain(p);
     drainMidi(p);
     if (done == 0 && hostNew_) followHost(p);
+    if (p && p->hasEventLanes) n = untilEventStep(p, n);  // J-210: recorded events step on their samples
     processBlock(p, L + done, R + done, n);
     if (taps_) copyTaps(p, done, n);
     absClock_ += n;

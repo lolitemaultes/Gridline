@@ -46,6 +46,7 @@ function(run tag cfg frames script)
   endif()
   file(MAKE_DIRECTORY "${OUT}/cfg_${cfg}")
   set(ENV{GRIDLINE_CONFIG_HOME} "${OUT}/cfg_${cfg}")
+  set(ENV{GRIDLINE_SAVE_LAYOUT} "1")  # J-216: these runs save their layout (own config folder)
   file(WRITE "${OUT}/${tag}.txt" "${script}")
   execute_process(COMMAND "${APP}" "${OUT}/fixture.gridline.json" --hidden --no-ui-sounds --size 1440x900 --frames ${frames}
                           --screenshot "${OUT}/${tag}.ppm" --dev-input "${OUT}/${tag}.txt" ${extra}

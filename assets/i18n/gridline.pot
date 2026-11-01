@@ -69,7 +69,7 @@ msgstr ""
 msgid "Reverted to"
 msgstr ""
 
-#: src/app/App.cpp src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/ExportUi.cpp src/app/J31Ui.cpp src/app/MenuParityUi.cpp src/packs/edison/edison_ui.cpp
+#: src/app/App.cpp src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/ExportUi.cpp src/app/J31Ui.cpp src/app/MenuParityUi.cpp src/app/TrackReceiptUi.cpp src/packs/edison/edison_ui.cpp
 msgid "Saved"
 msgstr ""
 
@@ -237,7 +237,7 @@ msgstr ""
 msgid "Half as long"
 msgstr ""
 
-#: src/app/AudioRecordUi.cpp src/app/MidiUi.cpp
+#: src/app/AudioRecordUi.cpp src/app/MidiUi.cpp src/packs/seltmann/seltmann_rec_ui.cpp
 msgid "INPUT"
 msgstr ""
 
@@ -261,7 +261,7 @@ msgstr ""
 msgid "Input status"
 msgstr ""
 
-#: src/app/AudioRecordUi.cpp
+#: src/app/AudioRecordUi.cpp src/packs/edison/edison_tools_ui.cpp
 msgid "LEVEL"
 msgstr ""
 
@@ -281,7 +281,7 @@ msgstr ""
 msgid "No mixer track is armed for audio"
 msgstr ""
 
-#: src/app/AudioRecordUi.cpp src/app/ChannelSettings.cpp src/app/ContextMenus.cpp src/app/J31Ui.cpp src/app/MidiUi.cpp src/app/UrlImportUi.cpp src/packs/edison/edison_form_ui.cpp src/packs/plasma/plasma_ui.cpp
+#: src/app/AudioRecordUi.cpp src/app/ChannelSettings.cpp src/app/ContextMenus.cpp src/app/J31Ui.cpp src/app/MidiUi.cpp src/app/TrackIcons.cpp src/app/UrlImportUi.cpp src/packs/edison/edison_form_ui.cpp src/packs/plasma/plasma_ui.cpp
 msgid "None"
 msgstr ""
 
@@ -289,7 +289,7 @@ msgstr ""
 msgid "Normalize"
 msgstr ""
 
-#: src/app/AudioRecordUi.cpp src/app/MidiUi.cpp src/app/SamplerRenderUi.cpp src/packs/spectral/turntable_ui.cpp
+#: src/app/AudioRecordUi.cpp src/app/MidiUi.cpp src/app/SamplerRenderUi.cpp
 msgid "Notes"
 msgstr ""
 
@@ -321,7 +321,7 @@ msgstr ""
 msgid "Recorded files"
 msgstr ""
 
-#: src/app/AudioRecordUi.cpp src/packs/platter/platter_ui.cpp
+#: src/app/AudioRecordUi.cpp src/packs/platter/platter_ui.cpp src/packs/seltmann/seltmann_rec_ui.cpp
 msgid "Recording"
 msgstr ""
 
@@ -401,7 +401,7 @@ msgstr ""
 msgid "Automation clip for"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/ExportUi.cpp src/app/FlpExportUi.cpp src/app/MidiUi.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/ProjectLoadUi.cpp src/app/SamplerRenderUi.cpp src/app/ScriptUi.cpp src/app/SettingsKeysTheme.cpp src/app/StemsUi.cpp src/app/TemplateUi.cpp src/app/UpdateUi.cpp src/app/UrlImportUi.cpp src/packs/edison/edison_script_ui.cpp src/packs/edison/edison_tools_ui.cpp src/packs/flex/flex_ui.cpp src/packs/platter/platter_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/ExportUi.cpp src/app/FlpExportUi.cpp src/app/MidiUi.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/ProjectLoadUi.cpp src/app/SamplerRenderUi.cpp src/app/ScriptUi.cpp src/app/SettingsKeysTheme.cpp src/app/StemsUi.cpp src/app/TemplateUi.cpp src/app/TrackReceiptUi.cpp src/app/UpdateUi.cpp src/app/UrlImportUi.cpp src/packs/edison/edison_script_ui.cpp src/packs/edison/edison_tools_ui.cpp src/packs/flex/flex_ui.cpp src/packs/platter/platter_ui.cpp
 msgid "Cancel"
 msgstr ""
 
@@ -629,7 +629,7 @@ msgstr ""
 msgid "Repeat the points every loop length when the clip is longer"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/ChordEditorUi.cpp src/app/EditTools.cpp src/app/Menus.cpp src/app/MidiUi.cpp src/app/MixerView.cpp src/app/Playlist.cpp src/app/PluginEditorsEqRef.cpp src/app/PluginEditorsK3Gb.cpp src/app/PluginSkin.cpp src/app/ScriptUi.cpp src/app/SettingsKeysTheme.cpp src/packs/edison/edison_tools_ui.cpp src/packs/platter/platter_ui.cpp src/packs/samplers/samplers_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/ChordEditorUi.cpp src/app/EditTools.cpp src/app/Menus.cpp src/app/MidiUi.cpp src/app/MixerView.cpp src/app/Playlist.cpp src/app/PluginEditorsEqRef.cpp src/app/PluginEditorsK3Gb.cpp src/app/PluginSkin.cpp src/app/ScriptUi.cpp src/app/SettingsKeysTheme.cpp src/packs/platter/platter_ui.cpp src/packs/samplers/samplers_ui.cpp
 msgid "Reset"
 msgstr ""
 
@@ -653,7 +653,7 @@ msgstr ""
 msgid "SHAPE CONTROLS"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/packs/seltmann/seltmann_parts_ui.cpp
+#: src/app/AutomationEditor.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/spectral/turntable_ui.cpp
 msgid "SPEED"
 msgstr ""
 
@@ -1201,6 +1201,14 @@ msgstr ""
 msgid "All effect slots are in use"
 msgstr ""
 
+#: src/app/BrowserDrop.cpp
+msgid "All effect slots of this track's mixer track are in use"
+msgstr ""
+
+#: src/app/BrowserDrop.cpp
+msgid "Audio tracks hold audio: drop the instrument on another track"
+msgstr ""
+
 #: src/app/BrowserDrop.cpp src/core/ExternalDrop.cpp
 msgid "Drop to "
 msgstr ""
@@ -1218,7 +1226,15 @@ msgid "Drop to insert %s into this slot"
 msgstr ""
 
 #: src/app/BrowserDrop.cpp
+msgid "Drop to insert %s on %s"
+msgstr ""
+
+#: src/app/BrowserDrop.cpp
 msgid "Drop to insert a %s channel here"
+msgstr ""
+
+#: src/app/BrowserDrop.cpp
+msgid "Drop to play %s on %s"
 msgstr ""
 
 #: src/app/BrowserDrop.cpp
@@ -1227,6 +1243,14 @@ msgstr ""
 
 #: src/app/BrowserDrop.cpp
 msgid "Effects go into mixer slots"
+msgstr ""
+
+#: src/app/BrowserDrop.cpp
+msgid "Effects go onto instrument and audio tracks (their mixer track) or into mixer slots"
+msgstr ""
+
+#: src/app/BrowserDrop.cpp
+msgid "Installed plugins can't be used in a collaborative project"
 msgstr ""
 
 #: src/app/BrowserDrop.cpp
@@ -1270,6 +1294,10 @@ msgid "This file is still on its way: drop it again in a moment"
 msgstr ""
 
 #: src/app/BrowserDrop.cpp
+msgid "This instrument can't play on that track"
+msgstr ""
+
+#: src/app/BrowserDrop.cpp
 msgid "This plugin is not available"
 msgstr ""
 
@@ -1278,10 +1306,22 @@ msgid "This recording is still being written: drop it again in a moment"
 msgstr ""
 
 #: src/app/BrowserDrop.cpp
+msgid "This track holds audio or automation clips: drop the instrument on another track"
+msgstr ""
+
+#: src/app/BrowserDrop.cpp
+msgid "This track is locked"
+msgstr ""
+
+#: src/app/BrowserDrop.cpp
+msgid "Track %s"
+msgstr ""
+
+#: src/app/BrowserDrop.cpp
 msgid "Unsupported file type: "
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp src/packs/edison/edison_tools_ui.cpp
+#: src/app/ChannelEnvelopeUi.cpp
 msgid "Amount"
 msgstr ""
 
@@ -1289,7 +1329,7 @@ msgstr ""
 msgid "Att. curve"
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp src/packs/edison/edison_tools_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Attack"
 msgstr ""
 
@@ -1305,15 +1345,15 @@ msgstr ""
 msgid "Dec. curve"
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp src/app/ChopUi.cpp src/packs/edison/edison_tools_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/app/ChopUi.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Decay"
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp src/app/PluginManager.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/app/PluginManager.cpp src/core/TrackIconSet.cpp
 msgid "Delay"
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp src/packs/spacefx/spacefx_ui.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/packs/edison/edison_tools_ui.cpp src/packs/spacefx/spacefx_ui.cpp
 msgid "ENVELOPE"
 msgstr ""
 
@@ -1345,7 +1385,7 @@ msgstr ""
 msgid "HP"
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp src/app/MixerView.cpp src/packs/edison/edison_tools_ui.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/app/MixerView.cpp
 msgid "Hold"
 msgstr ""
 
@@ -1397,7 +1437,7 @@ msgstr ""
 msgid "Notch"
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/McpUi.cpp src/app/MixerView.cpp src/app/PluginEditorsEqRef.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/PluginEditorsK3Gb.cpp src/packs/plasma/plasma_osc_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/McpUi.cpp src/app/MixerView.cpp src/app/PluginEditorsEqRef.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/PluginEditorsK3Gb.cpp src/packs/plasma/plasma_osc_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp src/packs/spectral/turntable_ui.cpp
 msgid "Off"
 msgstr ""
 
@@ -1425,7 +1465,7 @@ msgstr ""
 msgid "Period"
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp src/app/CollabUi.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/app/PluginEditorsK3Gb.cpp src/app/PluginManager.cpp src/packs/edison/edison_tools_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_seq_ui.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/app/CollabUi.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/app/PluginEditorsK3Gb.cpp src/app/PluginManager.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_seq_ui.cpp
 msgid "Pitch"
 msgstr ""
 
@@ -1441,7 +1481,7 @@ msgstr ""
 msgid "Rel. curve"
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp src/packs/edison/edison_tools_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Release"
 msgstr ""
 
@@ -1481,7 +1521,7 @@ msgstr ""
 msgid "Tempo"
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/core/TrackIconSet.cpp
 msgid "Triangle"
 msgstr ""
 
@@ -1793,7 +1833,7 @@ msgstr ""
 msgid "This channel is cut by notes of channels in this group (same number in both = cuts itself)"
 msgstr ""
 
-#: src/app/ChannelSettings.cpp src/app/PluginManager.cpp src/plugin/PluginFrame.cpp
+#: src/app/ChannelSettings.cpp src/app/PluginManager.cpp src/app/TrackReceiptUi.cpp src/plugin/PluginFrame.cpp
 msgid "missing"
 msgstr ""
 
@@ -2053,7 +2093,7 @@ msgstr ""
 msgid "Select clips or a time selection to chop"
 msgstr ""
 
-#: src/app/ChopUi.cpp src/packs/edison/edison_tools_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp
+#: src/app/ChopUi.cpp src/packs/seltmann/seltmann_wave_ui.cpp
 msgid "Sensitivity"
 msgstr ""
 
@@ -2225,7 +2265,7 @@ msgstr ""
 msgid "Chords"
 msgstr ""
 
-#: src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/Dialogs.cpp src/app/FlpExportUi.cpp src/app/LoopStarterUi.cpp src/app/ProjectLoadUi.cpp src/app/ScriptUi.cpp src/app/StemsUi.cpp src/app/UrlImportUi.cpp src/packs/edison/edison_script_ui.cpp
+#: src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/Dialogs.cpp src/app/FlpExportUi.cpp src/app/LoopStarterUi.cpp src/app/ProjectLoadUi.cpp src/app/ScriptUi.cpp src/app/StemsUi.cpp src/app/TrackReceiptUi.cpp src/app/UrlImportUi.cpp src/packs/edison/edison_script_ui.cpp
 msgid "Close"
 msgstr ""
 
@@ -2305,7 +2345,7 @@ msgstr ""
 msgid "Length of one rhythm cycle (it restarts on every chord)"
 msgstr ""
 
-#: src/app/ChordEditorUi.cpp src/app/PluginEditorsK3Gb.cpp src/plugin/PluginFrame.cpp
+#: src/app/ChordEditorUi.cpp src/app/PluginEditorsK3Gb.cpp src/core/TrackIconSet.cpp src/plugin/PluginFrame.cpp
 msgid "Link"
 msgstr ""
 
@@ -3025,7 +3065,7 @@ msgstr ""
 msgid "Fingerprint"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/ExportUi.cpp src/app/SamplerRenderUi.cpp
+#: src/app/CollabUi.cpp src/app/ExportUi.cpp src/app/SamplerRenderUi.cpp src/core/TrackIconSet.cpp
 msgid "Folder"
 msgstr ""
 
@@ -3221,7 +3261,7 @@ msgstr ""
 msgid "Left the project"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/ExportUi.cpp src/app/LoopStarterUi.cpp src/app/Menus.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/PluginEditorsK3Gb.cpp src/packs/creative/creative_ui.cpp src/packs/edison/edison_tools_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/spacefx/spacefx_ui.cpp
+#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/ExportUi.cpp src/app/LoopStarterUi.cpp src/app/Menus.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/PluginEditorsK3Gb.cpp src/packs/creative/creative_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/spacefx/spacefx_ui.cpp
 msgid "Length"
 msgstr ""
 
@@ -3257,7 +3297,7 @@ msgstr ""
 msgid "Missing"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/packs/edison/edison_tools_ui.cpp
+#: src/app/CollabUi.cpp src/app/ContextMenus.cpp
 msgid "Mix"
 msgstr ""
 
@@ -3285,7 +3325,7 @@ msgstr ""
 msgid "NOTE TO THEM (OPTIONAL)"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/PluginManager.cpp src/app/SamplerRenderUi.cpp src/packs/plasma/plasma_seq_ui.cpp src/packs/plasma/plasma_wted_ui.cpp
+#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/PluginManager.cpp src/app/SamplerRenderUi.cpp src/app/TrackReceiptUi.cpp src/packs/plasma/plasma_seq_ui.cpp src/packs/plasma/plasma_wted_ui.cpp
 msgid "Name"
 msgstr ""
 
@@ -3529,7 +3569,7 @@ msgstr ""
 msgid "Relays the encrypted connection when both networks block direct connections. Only needed for strict networks"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/MasterPanel.cpp src/app/SuiteUi.cpp src/packs/edison/edison_wave_ui.cpp src/packs/modulation/modulation_notefx_ui.cpp src/packs/plasma/plasma_ui.cpp src/packs/tideline/tideline_ui.cpp
+#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/MasterPanel.cpp src/app/SuiteUi.cpp src/app/TrackReceiptUi.cpp src/packs/edison/edison_wave_ui.cpp src/packs/modulation/modulation_notefx_ui.cpp src/packs/plasma/plasma_ui.cpp src/packs/tideline/tideline_ui.cpp
 msgid "Remove"
 msgstr ""
 
@@ -4653,7 +4693,7 @@ msgstr ""
 msgid "Effect chain"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/PluginManager.cpp src/packs/edison/edison_form_ui.cpp src/packs/plasma/plasma_ui.cpp
+#: src/app/ContextMenus.cpp src/app/PluginManager.cpp src/core/TrackIconSet.cpp src/packs/edison/edison_form_ui.cpp src/packs/plasma/plasma_ui.cpp
 msgid "Effects"
 msgstr ""
 
@@ -4921,7 +4961,7 @@ msgstr ""
 msgid "Layout"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/packs/platter/platter_ui.cpp
+#: src/app/ContextMenus.cpp src/core/TrackIconSet.cpp src/packs/platter/platter_ui.cpp
 msgid "Left"
 msgstr ""
 
@@ -5121,7 +5161,7 @@ msgstr ""
 msgid "No saved chains"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/MixerView.cpp
+#: src/app/ContextMenus.cpp src/app/MixerView.cpp src/packs/edison/edison_tools_ui.cpp
 msgid "Normal"
 msgstr ""
 
@@ -5221,7 +5261,7 @@ msgstr ""
 msgid "Pattern colour"
 msgstr ""
 
-#: src/app/ContextMenus.cpp
+#: src/app/ContextMenus.cpp src/packs/seltmann/seltmann_rec_ui.cpp
 msgid "Pause"
 msgstr ""
 
@@ -5386,7 +5426,7 @@ msgid "Reset fades of selected audio clips"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
-msgid "Reset name and colour"
+msgid "Reset name, colour and icon"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
@@ -5429,7 +5469,7 @@ msgstr ""
 msgid "Riff generator..."
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/packs/platter/platter_ui.cpp
+#: src/app/ContextMenus.cpp src/core/TrackIconSet.cpp src/packs/platter/platter_ui.cpp
 msgid "Right"
 msgstr ""
 
@@ -5481,7 +5521,7 @@ msgstr ""
 msgid "Route to mixer track"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/MixerView.cpp
+#: src/app/ContextMenus.cpp src/app/MixerView.cpp src/core/TrackIconSet.cpp
 msgid "Routing"
 msgstr ""
 
@@ -5653,7 +5693,7 @@ msgstr ""
 msgid "Stamp"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/J31Ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp
+#: src/app/ContextMenus.cpp src/app/J31Ui.cpp src/core/TrackIconSet.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Steps"
 msgstr ""
 
@@ -5889,7 +5929,7 @@ msgstr ""
 msgid "Appearance (dark or light, colours, contrast), control style and sounds"
 msgstr ""
 
-#: src/app/Dialogs.cpp src/app/Menus.cpp src/app/Playlist.cpp src/packs/seltmann/seltmann_ui.cpp src/packs/tideline/tideline_ui.cpp
+#: src/app/Dialogs.cpp src/app/Menus.cpp src/app/Playlist.cpp src/core/TrackIconSet.cpp src/packs/seltmann/seltmann_ui.cpp src/packs/tideline/tideline_ui.cpp
 msgid "Audio"
 msgstr ""
 
@@ -6093,7 +6133,7 @@ msgstr ""
 msgid "Log and script console"
 msgstr ""
 
-#: src/app/Dialogs.cpp src/app/ExportUi.cpp src/app/Menus.cpp src/app/PluginManager.cpp src/packs/tideline/tideline_ui.cpp
+#: src/app/Dialogs.cpp src/app/ExportUi.cpp src/app/Menus.cpp src/app/PluginManager.cpp src/core/TrackIconSet.cpp src/packs/tideline/tideline_ui.cpp
 msgid "MIDI"
 msgstr ""
 
@@ -6129,7 +6169,7 @@ msgstr ""
 msgid "NO GRIDLINE EQUIVALENT YET"
 msgstr ""
 
-#: src/app/Dialogs.cpp src/app/SamplerRenderUi.cpp
+#: src/app/Dialogs.cpp src/app/SamplerRenderUi.cpp src/packs/spectral/turntable_ui.cpp
 msgid "NOTES"
 msgstr ""
 
@@ -6425,7 +6465,7 @@ msgstr ""
 msgid "Hairline"
 msgstr ""
 
-#: src/app/DisplayConfirmUi.cpp
+#: src/app/DisplayConfirmUi.cpp src/packs/seltmann/seltmann_rec_ui.cpp
 msgid "Keep"
 msgstr ""
 
@@ -6785,7 +6825,7 @@ msgstr ""
 msgid "Nothing is missing."
 msgstr ""
 
-#: src/app/ExportUi.cpp
+#: src/app/ExportUi.cpp src/packs/edison/edison_tools_ui.cpp
 msgid "OPTIONS"
 msgstr ""
 
@@ -8101,7 +8141,7 @@ msgstr ""
 msgid "Ambient"
 msgstr ""
 
-#: src/app/LoopStarterUi.cpp src/app/StemsUi.cpp
+#: src/app/LoopStarterUi.cpp src/app/StemsUi.cpp src/core/TrackIconSet.cpp
 msgid "Bass"
 msgstr ""
 
@@ -8125,7 +8165,7 @@ msgstr ""
 msgid "Drum and bass"
 msgstr ""
 
-#: src/app/LoopStarterUi.cpp src/app/PluginManager.cpp src/app/StemsUi.cpp
+#: src/app/LoopStarterUi.cpp src/app/PluginManager.cpp src/app/StemsUi.cpp src/core/TrackIconSet.cpp
 msgid "Drums"
 msgstr ""
 
@@ -8389,7 +8429,7 @@ msgstr ""
 msgid "Claude Desktop: add this server to claude_desktop_config.json. It starts a bridge that connects to the running Gridline."
 msgstr ""
 
-#: src/app/McpUi.cpp src/app/PluginEditorsK3Gb.cpp src/app/SettingsKeysTheme.cpp src/app/SettingsPages.cpp src/packs/plasma/plasma_mod_ui.cpp src/packs/plasma/plasma_osc_ui.cpp
+#: src/app/McpUi.cpp src/app/PluginEditorsK3Gb.cpp src/app/SettingsKeysTheme.cpp src/app/SettingsPages.cpp src/packs/plasma/plasma_mod_ui.cpp src/packs/plasma/plasma_osc_ui.cpp src/packs/seltmann/seltmann_rec_ui.cpp
 msgid "Clear"
 msgstr ""
 
@@ -8465,7 +8505,7 @@ msgstr ""
 msgid "Status"
 msgstr ""
 
-#: src/app/McpUi.cpp src/packs/edison/edison_tools_ui.cpp
+#: src/app/McpUi.cpp
 msgid "Time"
 msgstr ""
 
@@ -8857,7 +8897,7 @@ msgstr ""
 msgid "Audio file into a sampler..."
 msgstr ""
 
-#: src/app/Menus.cpp
+#: src/app/Menus.cpp src/packs/seltmann/seltmann_rec_ui.cpp
 msgid "Audio settings..."
 msgstr ""
 
@@ -9219,6 +9259,10 @@ msgstr ""
 
 #: src/app/Menus.cpp
 msgid "Time selection as MIDI file..."
+msgstr ""
+
+#: src/app/Menus.cpp
+msgid "Track Receipt..."
 msgstr ""
 
 #: src/app/Menus.cpp
@@ -9757,7 +9801,7 @@ msgstr ""
 msgid "Mixer routing"
 msgstr ""
 
-#: src/app/MixerView.cpp src/app/TrackModeUi.cpp src/packs/seltmann/seltmann_parts_ui.cpp
+#: src/app/MixerView.cpp src/app/TrackModeUi.cpp src/core/TrackIconSet.cpp src/packs/edison/edison_form_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Mono"
 msgstr ""
 
@@ -10233,7 +10277,7 @@ msgstr ""
 msgid "Automatic crossfades in this project"
 msgstr ""
 
-#: src/app/Playlist.cpp src/packs/platter/platter_ui.cpp
+#: src/app/Playlist.cpp src/core/TrackIconSet.cpp src/packs/platter/platter_ui.cpp
 msgid "Automation"
 msgstr ""
 
@@ -10345,7 +10389,7 @@ msgstr ""
 msgid "Follow the project tempo"
 msgstr ""
 
-#: src/app/Playlist.cpp src/packs/edison/edison_tools_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp
+#: src/app/Playlist.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Gain"
 msgstr ""
 
@@ -10383,6 +10427,10 @@ msgstr ""
 
 #: src/app/Playlist.cpp
 msgid "New instrument track"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "New pattern: adds one after the last and selects it"
 msgstr ""
 
 #: src/app/Playlist.cpp
@@ -11157,7 +11205,7 @@ msgstr ""
 msgid "long"
 msgstr ""
 
-#: src/app/PluginEditorsInstrSlicer.cpp
+#: src/app/PluginEditorsInstrSlicer.cpp src/packs/seltmann/seltmann_rec_ui.cpp
 msgid "mono"
 msgstr ""
 
@@ -11181,7 +11229,7 @@ msgstr ""
 msgid "slices"
 msgstr ""
 
-#: src/app/PluginEditorsInstrSlicer.cpp src/packs/spacefx/spacefx_ui.cpp
+#: src/app/PluginEditorsInstrSlicer.cpp src/packs/seltmann/seltmann_rec_ui.cpp src/packs/spacefx/spacefx_ui.cpp
 msgid "stereo"
 msgstr ""
 
@@ -11305,7 +11353,7 @@ msgstr ""
 msgid "Freeze: lock the envelope against edits"
 msgstr ""
 
-#: src/app/PluginEditorsK3Gb.cpp
+#: src/app/PluginEditorsK3Gb.cpp src/packs/spectral/turntable_ui.cpp
 msgid "HOLD"
 msgstr ""
 
@@ -11337,7 +11385,7 @@ msgstr ""
 msgid "Link: this time slot also picks the volume slot with the same number"
 msgstr ""
 
-#: src/app/PluginEditorsK3Gb.cpp
+#: src/app/PluginEditorsK3Gb.cpp src/packs/edison/edison_tools_ui.cpp
 msgid "MIX"
 msgstr ""
 
@@ -11493,7 +11541,7 @@ msgstr ""
 msgid "Unnamed slot"
 msgstr ""
 
-#: src/app/PluginEditorsK3Gb.cpp
+#: src/app/PluginEditorsK3Gb.cpp src/packs/spectral/turntable_ui.cpp
 msgid "VOLUME"
 msgstr ""
 
@@ -11613,7 +11661,7 @@ msgstr ""
 msgid "CATEGORY"
 msgstr ""
 
-#: src/app/PluginManager.cpp
+#: src/app/PluginManager.cpp src/app/TrackReceiptUi.cpp
 msgid "Category"
 msgstr ""
 
@@ -11745,7 +11793,7 @@ msgstr ""
 msgid "Instruments: a new channel. Effects: the next free slot of the selected mixer track (double-click a row does the same)"
 msgstr ""
 
-#: src/app/PluginManager.cpp
+#: src/app/PluginManager.cpp src/core/TrackIconSet.cpp
 msgid "Keys"
 msgstr ""
 
@@ -11869,7 +11917,7 @@ msgstr ""
 msgid "Retry"
 msgstr ""
 
-#: src/app/PluginManager.cpp
+#: src/app/PluginManager.cpp src/core/TrackIconSet.cpp
 msgid "Reverb"
 msgstr ""
 
@@ -11949,7 +11997,7 @@ msgstr ""
 msgid "Show the plugins that crashed, hung or failed to load"
 msgstr ""
 
-#: src/app/PluginManager.cpp
+#: src/app/PluginManager.cpp src/core/TrackIconSet.cpp
 msgid "Sidechain"
 msgstr ""
 
@@ -11965,11 +12013,11 @@ msgstr ""
 msgid "Spectral"
 msgstr ""
 
-#: src/app/PluginManager.cpp src/app/TrackModeUi.cpp src/packs/tideline/tideline_ui.cpp
+#: src/app/PluginManager.cpp src/app/TrackModeUi.cpp src/core/TrackIconSet.cpp src/packs/edison/edison_form_ui.cpp src/packs/tideline/tideline_ui.cpp
 msgid "Stereo"
 msgstr ""
 
-#: src/app/PluginManager.cpp
+#: src/app/PluginManager.cpp src/core/TrackIconSet.cpp
 msgid "Synth"
 msgstr ""
 
@@ -12105,7 +12153,7 @@ msgstr ""
 msgid "Keep the built-in plugin for good: the missing plugin and its saved settings are removed from the project"
 msgstr ""
 
-#: src/app/PluginUI.cpp
+#: src/app/PluginUI.cpp src/core/TrackIconSet.cpp
 msgid "Library"
 msgstr ""
 
@@ -12365,7 +12413,7 @@ msgstr ""
 msgid "Round robins"
 msgstr ""
 
-#: src/app/SamplerRenderUi.cpp
+#: src/app/SamplerRenderUi.cpp src/core/TrackIconSet.cpp
 msgid "Sample"
 msgstr ""
 
@@ -13209,7 +13257,7 @@ msgstr ""
 msgid "This clip has no audio file to split"
 msgstr ""
 
-#: src/app/StemsUi.cpp
+#: src/app/StemsUi.cpp src/core/TrackIconSet.cpp
 msgid "Vocals"
 msgstr ""
 
@@ -13486,7 +13534,7 @@ msgid "Song position (right-click: bars and beats, minutes and seconds, or timec
 msgstr ""
 
 #: src/app/TopBar.cpp
-msgid "Stop and return to the set song position; press again to silence everything (right-click: options)"
+msgid "Stop and return to the set song position; press again (or double-click) to go back to the beginning and silence everything (right-click: options)"
 msgstr ""
 
 #: src/app/TopBar.cpp
@@ -13503,6 +13551,22 @@ msgstr ""
 
 #: src/app/TopBar.cpp
 msgid "Typing keyboard to piano (Ctrl+T, right-click: options)"
+msgstr ""
+
+#: src/app/TrackIcons.cpp
+msgid "All icons"
+msgstr ""
+
+#: src/app/TrackIcons.cpp
+msgid "No icon"
+msgstr ""
+
+#: src/app/TrackIcons.cpp
+msgid "No icon matches"
+msgstr ""
+
+#: src/app/TrackIcons.cpp
+msgid "Search icons"
 msgstr ""
 
 #: src/app/TrackModeUi.cpp
@@ -13583,6 +13647,258 @@ msgstr ""
 
 #: src/app/TrackModeUi.cpp
 msgid "Track mode"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "%d original songs, %s s used in all"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "%d over 60 s"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "%d place"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "%d places"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "(not measured: whole file, type the parts below)"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "0:01.0-0:03.0, 0:10-0:12 (empty: the whole file)"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "1  Files"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "2  Calculate"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "3  Results"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "A helper, not legal advice. Check the figures against your license on Tracklib."
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "A spreadsheet for your license: Licenses, Usage, Release, Splits"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "Add writer"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "Artist"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "Artist unknown"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "Automatic (from the file name)"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp src/app/UrlImportUi.cpp src/packs/seltmann/seltmann_rec_ui.cpp
+msgid "Back"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "Calculate"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "Check artist and title: guessed from the file name."
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "Could not write"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "Derived files, part of the original unknown"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "Distributor"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "Every audio file this project uses. Tick the files that are licensed samples: files named like Tracklib downloads are ticked for you. Calculate then plays the project through and measures which parts of each original are used."
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "Fee"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "IPI"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "ISRC"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "Licensee"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "Link this file to an original song"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "Master and publishing owners, from the license"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "No ticked files: go back and tick the licensed samples."
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "Not counted (muted or silent)"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "Not played"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp src/packs/seltmann/seltmann_ui.cpp
+msgid "Original"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "Over 60 s: not licensable"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "PRO"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "Part"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "Parts used"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "Performer"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "Playing the project through to measure what each sample voice reads..."
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "Plays the project offline and measures the parts used"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "Release date"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "Rights holders"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "Role"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "Save Track Receipt"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "Saves the results as a PDF and opens it"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "Search files"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "Share %"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "Share of yours %"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "Song..."
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "This project uses no audio files."
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "Tick all"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "Tick none"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "Title"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "Track Receipt"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "Up to %d s"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "View results"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "Your release"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "Your writers and publishers"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "check artist and title"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "derived"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "e.g. 10"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "sample shares %s%%, yours %s%%"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "shares to fill in"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "used"
 msgstr ""
 
 #: src/app/UpdateUi.cpp
@@ -13762,10 +14078,6 @@ msgid "An audio clip on a new playlist track at the playhead, and the file in th
 msgstr ""
 
 #: src/app/UrlImportUi.cpp
-msgid "Back"
-msgstr ""
-
-#: src/app/UrlImportUi.cpp
 msgid "Browser only"
 msgstr ""
 
@@ -13839,6 +14151,10 @@ msgstr ""
 
 #: src/app/UrlImportUi.cpp
 msgid "Keep yt-dlp up to date automatically"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "No clip: the file joins the shared project audio as a channel"
 msgstr ""
 
 #: src/app/UrlImportUi.cpp
@@ -14205,7 +14521,7 @@ msgstr ""
 msgid "External plugins can't be used in a collaborative project"
 msgstr ""
 
-#: src/collab/Session.cpp
+#: src/collab/Session.cpp src/core/TrackIconSet.cpp
 msgid "Master"
 msgstr ""
 
@@ -14897,6 +15213,526 @@ msgstr ""
 msgid "Zipped project / FL Studio zipped loop package (.zip)"
 msgstr ""
 
+#: src/core/TrackIconSet.cpp
+msgid "5.1 centre"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "5.1 front"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "5.1 rear"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "7.1 centre"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "7.1 front"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "7.1 rear"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "7.1 side"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Acoustic guitar"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Additive"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Arpeggio"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Back layer"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Banjo"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Battery"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Bell"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Box"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Brass & wind"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Brick"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Bus"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Clap"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Clock"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Cloud"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Compressor"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Control link"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Cowbell"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Cymbal"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Disc"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Drum machine"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Drum pads"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Eight"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Electric guitar"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Equaliser"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Eye"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "FM"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Faces"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Film"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Finger snap"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Five"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Flame"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Flute"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Forbidden"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Four"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Front layer"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Gear"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Gear & control"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Gong"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Goofy"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Grand piano"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Guitars & strings"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Hand drums"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Happy"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Harp"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Headphones"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Hi-hats"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "High pass"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Info"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp src/packs/dynamics/dist_ui.cpp
+msgid "Input"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Jack plug"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Joystick"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Keys & mallets"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Kick"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Knob"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Low pass"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Magnet"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Magnifier"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Mallets"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Melody"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Microphone"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Mixing & routing"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Nature"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Nine"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Notes & patterns"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Numbers"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "One"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Organ"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp src/packs/dynamics/dist_ui.cpp
+msgid "Output"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Pad"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Padlock"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Pages"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Pan pipes"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Pencil"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Percussion"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Pixel figure"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Plaster"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Pluck"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Plugin"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Quad front"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Quad rear"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Question"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Resynthesis"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Sad"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Samples & audio"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Saxophone"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Scissors"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Score"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Send"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Seven"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Shaker"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Six"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Sliced loop"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Snare"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Snowflake"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Spanner"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Speaker"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Split in three"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Split in two"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Square synth"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Subtractive"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Surround"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Symbols"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Synths & bass"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Tambourine"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Three"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Thumbs down"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Thumbs up"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Touchscreen"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Treble clef"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Trumpet"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Tuning fork"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Two"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Vinyl"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Violin"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Vocoder"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Voice"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Voice (high)"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Voice (low)"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Warning"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Whistle"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Wind chimes"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp
+msgid "Wobble"
+msgstr ""
+
+#: src/core/TrackIconSet.cpp src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Zero"
+msgstr ""
+
 #: src/engine/Chop.cpp
 msgid "Beat repeat"
 msgstr ""
@@ -15029,14 +15865,6 @@ msgstr ""
 msgid "Set loop start here"
 msgstr ""
 
-#: src/packs/dynamics/dist_ui.cpp
-msgid "Input"
-msgstr ""
-
-#: src/packs/dynamics/dist_ui.cpp
-msgid "Output"
-msgstr ""
-
 #: src/packs/dynamics/masterfl_ui.cpp
 msgid "%s band"
 msgstr ""
@@ -15059,6 +15887,14 @@ msgstr ""
 
 #: src/packs/dynamics/masterfl_ui.cpp
 msgid "Show the bands' gain envelopes over time"
+msgstr ""
+
+#: src/packs/edison/edison_form_ui.cpp
+msgid "APPEND"
+msgstr ""
+
+#: src/packs/edison/edison_form_ui.cpp
+msgid "ARMED"
 msgstr ""
 
 #: src/packs/edison/edison_form_ui.cpp
@@ -15098,6 +15934,10 @@ msgid "Blur..."
 msgstr ""
 
 #: src/packs/edison/edison_form_ui.cpp
+msgid "CURSOR"
+msgstr ""
+
+#: src/packs/edison/edison_form_ui.cpp
 msgid "Clean up (denoise)..."
 msgstr ""
 
@@ -15118,6 +15958,10 @@ msgid "Detect beats (slice markers)..."
 msgstr ""
 
 #: src/packs/edison/edison_form_ui.cpp
+msgid "Edits are kept as 32-bit float; exports are 24-bit"
+msgstr ""
+
+#: src/packs/edison/edison_form_ui.cpp
 msgid "Equalize..."
 msgstr ""
 
@@ -15134,6 +15978,10 @@ msgid "History"
 msgstr ""
 
 #: src/packs/edison/edison_form_ui.cpp
+msgid "Input and output level"
+msgstr ""
+
+#: src/packs/edison/edison_form_ui.cpp
 msgid "Insert silence..."
 msgstr ""
 
@@ -15141,12 +15989,24 @@ msgstr ""
 msgid "Invert polarity"
 msgstr ""
 
+#: src/packs/edison/edison_form_ui.cpp src/packs/spacefx/spacefx_ui.cpp
+msgid "LENGTH"
+msgstr ""
+
 #: src/packs/edison/edison_form_ui.cpp src/packs/plasma/plasma_osc_ui.cpp
 msgid "Load audio file..."
 msgstr ""
 
 #: src/packs/edison/edison_form_ui.cpp
+msgid "MAX"
+msgstr ""
+
+#: src/packs/edison/edison_form_ui.cpp
 msgid "Mix to mono"
+msgstr ""
+
+#: src/packs/edison/edison_form_ui.cpp
+msgid "NAME"
 msgstr ""
 
 #: src/packs/edison/edison_form_ui.cpp
@@ -15165,12 +16025,24 @@ msgstr ""
 msgid "Normalize..."
 msgstr ""
 
+#: src/packs/edison/edison_form_ui.cpp src/packs/seltmann/seltmann_rec_ui.cpp
+msgid "RECORDING"
+msgstr ""
+
 #: src/packs/edison/edison_form_ui.cpp
 msgid "Remove all markers"
 msgstr ""
 
 #: src/packs/edison/edison_form_ui.cpp
 msgid "Resample..."
+msgstr ""
+
+#: src/packs/edison/edison_form_ui.cpp
+msgid "SEL LENGTH"
+msgstr ""
+
+#: src/packs/edison/edison_form_ui.cpp
+msgid "SELECTION"
 msgstr ""
 
 #: src/packs/edison/edison_form_ui.cpp
@@ -15266,15 +16138,47 @@ msgid "Play preview"
 msgstr ""
 
 #: src/packs/edison/edison_tools_ui.cpp
-msgid "%zu painted areas"
+msgid " (resample: pitch sets speed)"
 msgstr ""
 
 #: src/packs/edison/edison_tools_ui.cpp
-msgid "Applies to: %s (%s)"
+msgid "%.2f Hz = %s %+.0f cents (%.0f%%)"
+msgstr ""
+
+#: src/packs/edison/edison_tools_ui.cpp
+msgid "%zu painted areas"
+msgstr ""
+
+#: src/packs/edison/edison_tools_ui.cpp src/packs/tideline/tideline_ui.cpp
+msgid "AMOUNT"
+msgstr ""
+
+#: src/packs/edison/edison_tools_ui.cpp
+msgid "Applies to the %s (%s)"
 msgstr ""
 
 #: src/packs/edison/edison_tools_ui.cpp
 msgid "Attenuate (negative) or boost the painted time / frequency areas."
+msgstr ""
+
+#: src/packs/edison/edison_tools_ui.cpp
+msgid "BRUSH"
+msgstr ""
+
+#: src/packs/edison/edison_tools_ui.cpp
+msgid "Best"
+msgstr ""
+
+#: src/packs/edison/edison_tools_ui.cpp
+msgid "Best (192 taps)"
+msgstr ""
+
+#: src/packs/edison/edison_tools_ui.cpp
+msgid "CONVERSION"
+msgstr ""
+
+#: src/packs/edison/edison_tools_ui.cpp src/packs/platter/platter_mixer_ui.cpp src/packs/tideline/tideline_ui.cpp
+msgid "CURVE"
 msgstr ""
 
 #: src/packs/edison/edison_tools_ui.cpp
@@ -15285,12 +16189,16 @@ msgstr ""
 msgid "Current rate: %.0f Hz"
 msgstr ""
 
-#: src/packs/edison/edison_tools_ui.cpp src/packs/samplers/dwave_ui.cpp
-msgid "Damping"
+#: src/packs/edison/edison_tools_ui.cpp
+msgid "DETECTION"
 msgstr ""
 
 #: src/packs/edison/edison_tools_ui.cpp
-msgid "Detected: %.2f Hz = %s %+.0f cents (confidence %.0f%%)"
+msgid "Detected"
+msgstr ""
+
+#: src/packs/edison/edison_tools_ui.cpp
+msgid "Double-click to type a value"
 msgstr ""
 
 #: src/packs/edison/edison_tools_ui.cpp
@@ -15298,23 +16206,15 @@ msgid "Drag points; double-click adds, right-click removes. +-24 dB, 20 Hz - 20 
 msgstr ""
 
 #: src/packs/edison/edison_tools_ui.cpp
-msgid "Dry"
+msgid "Fast"
 msgstr ""
 
 #: src/packs/edison/edison_tools_ui.cpp
-msgid "Duck"
+msgid "Fast (16 taps)"
 msgstr ""
 
 #: src/packs/edison/edison_tools_ui.cpp
-msgid "Fit to song bar"
-msgstr ""
-
-#: src/packs/edison/edison_tools_ui.cpp src/packs/utility/utility_ui.cpp
-msgid "Flat"
-msgstr ""
-
-#: src/packs/edison/edison_tools_ui.cpp
-msgid "Floor"
+msgid "GATE"
 msgstr ""
 
 #: src/packs/edison/edison_tools_ui.cpp
@@ -15322,15 +16222,19 @@ msgid "Gain across the range (0 to +6 dB). Double-click adds a point, right-clic
 msgstr ""
 
 #: src/packs/edison/edison_tools_ui.cpp
-msgid "Inserted at the cursor (%s)."
-msgstr ""
-
-#: src/packs/edison/edison_tools_ui.cpp src/packs/tideline/tideline_ui.cpp
-msgid "Low cut"
+msgid "Inserted at the cursor (%s)"
 msgstr ""
 
 #: src/packs/edison/edison_tools_ui.cpp
-msgid "Method"
+msgid "MARKER"
+msgstr ""
+
+#: src/packs/edison/edison_tools_ui.cpp
+msgid "NOISE PROFILE"
+msgstr ""
+
+#: src/packs/edison/edison_tools_ui.cpp
+msgid "Nearest note"
 msgstr ""
 
 #: src/packs/edison/edison_tools_ui.cpp
@@ -15338,15 +16242,23 @@ msgid "New length %s%s"
 msgstr ""
 
 #: src/packs/edison/edison_tools_ui.cpp
-msgid "New rate (Hz)"
-msgstr ""
-
-#: src/packs/edison/edison_tools_ui.cpp
 msgid "No clear pitch found."
 msgstr ""
 
 #: src/packs/edison/edison_tools_ui.cpp
-msgid "Peak level"
+msgid "No profile yet: select a part with only noise first."
+msgstr ""
+
+#: src/packs/edison/edison_tools_ui.cpp
+msgid "Noise profile ready."
+msgstr ""
+
+#: src/packs/edison/edison_tools_ui.cpp
+msgid "Normal (64 taps)"
+msgstr ""
+
+#: src/packs/edison/edison_tools_ui.cpp
+msgid "PITCH"
 msgstr ""
 
 #: src/packs/edison/edison_tools_ui.cpp
@@ -15354,47 +16266,43 @@ msgid "Places a marker at every detected hit (replaces the markers)."
 msgstr ""
 
 #: src/packs/edison/edison_tools_ui.cpp
-msgid "Pre-delay"
+msgid "REDUCTION"
+msgstr ""
+
+#: src/packs/edison/edison_tools_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "REGION"
 msgstr ""
 
 #: src/packs/edison/edison_tools_ui.cpp
-msgid "Quality"
+msgid "ROOM"
 msgstr ""
 
 #: src/packs/edison/edison_tools_ui.cpp
-msgid "Reduction"
+msgid "SILENCE"
 msgstr ""
 
 #: src/packs/edison/edison_tools_ui.cpp
-msgid "Swell"
+msgid "Take again"
 msgstr ""
 
 #: src/packs/edison/edison_tools_ui.cpp
-msgid "Take noise profile from the selection"
-msgstr ""
-
-#: src/packs/edison/edison_tools_ui.cpp
-msgid "Take profile again (from selection)"
-msgstr ""
-
-#: src/packs/edison/edison_tools_ui.cpp
-msgid "Telephone"
+msgid "Take from selection"
 msgstr ""
 
 #: src/packs/edison/edison_tools_ui.cpp
 msgid "The tail rings into the following audio (and past the end)."
 msgstr ""
 
-#: src/packs/edison/edison_tools_ui.cpp src/packs/tideline/tideline_ui.cpp
-msgid "Threshold"
+#: src/packs/edison/edison_tools_ui.cpp
+msgid "selection"
 msgstr ""
 
 #: src/packs/edison/edison_tools_ui.cpp
-msgid "Wet"
+msgid "silence"
 msgstr ""
 
 #: src/packs/edison/edison_tools_ui.cpp
-msgid "Width"
+msgid "whole file"
 msgstr ""
 
 #: src/packs/edison/edison_wave_ui.cpp
@@ -15406,11 +16314,43 @@ msgid "Add region"
 msgstr ""
 
 #: src/packs/edison/edison_wave_ui.cpp
+msgid "Bar:beat"
+msgstr ""
+
+#: src/packs/edison/edison_wave_ui.cpp
 msgid "Clear brush"
 msgstr ""
 
 #: src/packs/edison/edison_wave_ui.cpp
+msgid "Computing the spectrogram..."
+msgstr ""
+
+#: src/packs/edison/edison_wave_ui.cpp
 msgid "Drop to load %s into Loupe"
+msgstr ""
+
+#: src/packs/edison/edison_wave_ui.cpp
+msgid "Levels of the selection (or the whole file): peak, RMS, integrated loudness, true peak, detected pitch"
+msgstr ""
+
+#: src/packs/edison/edison_wave_ui.cpp
+msgid "Load a file from the File menu, or drop one here"
+msgstr ""
+
+#: src/packs/edison/edison_wave_ui.cpp
+msgid "Min:sec"
+msgstr ""
+
+#: src/packs/edison/edison_wave_ui.cpp
+msgid "No audio yet"
+msgstr ""
+
+#: src/packs/edison/edison_wave_ui.cpp
+msgid "Overview: drag to scroll"
+msgstr ""
+
+#: src/packs/edison/edison_wave_ui.cpp
+msgid "Record from the mixer input (R), load a file from the File menu, or drop one here"
 msgstr ""
 
 #: src/packs/edison/edison_wave_ui.cpp
@@ -15419,6 +16359,10 @@ msgstr ""
 
 #: src/packs/edison/edison_wave_ui.cpp
 msgid "Snap to zero crossing"
+msgstr ""
+
+#: src/packs/edison/edison_wave_ui.cpp
+msgid "This sample is empty"
 msgstr ""
 
 #: src/packs/flex/flex_ui.cpp
@@ -15473,7 +16417,7 @@ msgstr ""
 msgid "out"
 msgstr ""
 
-#: src/packs/mini/mini_ui.cpp
+#: src/packs/mini/mini_ui.cpp src/packs/seltmann/seltmann_seq_ui.cpp
 msgid "pitch"
 msgstr ""
 
@@ -15757,7 +16701,7 @@ msgstr ""
 msgid "Load noise sample"
 msgstr ""
 
-#: src/packs/plasma/plasma_osc_ui.cpp
+#: src/packs/plasma/plasma_osc_ui.cpp src/packs/spectral/turntable_ui.cpp
 msgid "Load sample"
 msgstr ""
 
@@ -15989,7 +16933,7 @@ msgstr ""
 msgid "Brake"
 msgstr ""
 
-#: src/packs/platter/platter_deck_ui.cpp
+#: src/packs/platter/platter_deck_ui.cpp src/packs/spectral/turntable_ui.cpp
 msgid "CUE"
 msgstr ""
 
@@ -16219,10 +17163,6 @@ msgstr ""
 
 #: src/packs/platter/platter_mixer_ui.cpp
 msgid "A synced deck follows the other deck (when both are synced, B follows A and A the project)"
-msgstr ""
-
-#: src/packs/platter/platter_mixer_ui.cpp src/packs/tideline/tideline_ui.cpp
-msgid "CURVE"
 msgstr ""
 
 #: src/packs/platter/platter_mixer_ui.cpp
@@ -16894,6 +17834,10 @@ msgid "Cho fb"
 msgstr ""
 
 #: src/packs/samplers/dwave_ui.cpp
+msgid "Damping"
+msgstr ""
+
+#: src/packs/samplers/dwave_ui.cpp
 msgid "Diffusion"
 msgstr ""
 
@@ -17230,10 +18174,6 @@ msgid "Playback and the envelope, filter and mix"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_parts_ui.cpp
-msgid "REGION"
-msgstr ""
-
-#: src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "REGIONS"
 msgstr ""
 
@@ -17243,6 +18183,10 @@ msgstr ""
 
 #: src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Remove the last step"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "Reset length"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_parts_ui.cpp
@@ -17317,7 +18261,7 @@ msgstr ""
 msgid "Split the region in three"
 msgstr ""
 
-#: src/packs/seltmann/seltmann_parts_ui.cpp
+#: src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_seq_ui.cpp
 msgid "Step length"
 msgstr ""
 
@@ -17409,6 +18353,158 @@ msgstr ""
 msgid "slice"
 msgstr ""
 
+#: src/packs/seltmann/seltmann_rec_ui.cpp
+msgid "Another Seltmann is recording. Finish or clear that recording first."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_rec_ui.cpp
+msgid "Back to the start screen (an unloaded recording is discarded)"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_rec_ui.cpp
+msgid "Carry on recording at the end of the take"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_rec_ui.cpp
+msgid "Discard"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_rec_ui.cpp
+msgid "Discard the recording and start again"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_rec_ui.cpp
+msgid "Discard this recording and record a new one"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_rec_ui.cpp
+msgid "Discard this recording?"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_rec_ui.cpp
+msgid "FINISHED"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_rec_ui.cpp
+msgid "Finish"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_rec_ui.cpp
+msgid "Input level (peak)"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_rec_ui.cpp
+msgid "Listening..."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_rec_ui.cpp
+msgid "Load recording"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_rec_ui.cpp
+msgid "No audio input is set up. Choose an input device in the audio settings to record."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_rec_ui.cpp
+msgid "No audio is arriving from the audio device. Recording paused."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_rec_ui.cpp
+msgid "Open Settings > Audio to choose the input device"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_rec_ui.cpp
+msgid "PAUSED"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_rec_ui.cpp
+msgid "Pause; Resume carries on in the same recording"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_rec_ui.cpp
+msgid "Press Record and play. When you finish, load the recording and Seltmann analyses it like any file."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_rec_ui.cpp
+msgid "READY"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_rec_ui.cpp
+msgid "RECORD FROM AN INPUT"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_rec_ui.cpp
+msgid "Record"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_rec_ui.cpp
+msgid "Record again"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_rec_ui.cpp
+msgid "Resume"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_rec_ui.cpp
+msgid "Save the recording into the project's Recorded folder and analyse it"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_rec_ui.cpp
+msgid "Some input was lost while Gridline was busy; the gap is crossfaded."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_rec_ui.cpp
+msgid "Start recording the input"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_rec_ui.cpp
+msgid "Stay with the recording"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_rec_ui.cpp
+msgid "Stop recording; then load the recording into Seltmann"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_rec_ui.cpp
+msgid "The device input to record (stereo pairs or single inputs)"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_rec_ui.cpp
+msgid "The input device is gone. Recording paused: choose an input in Settings > Audio, then resume."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_rec_ui.cpp
+msgid "The input is fixed while a recording exists (Clear to change it)"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_rec_ui.cpp
+msgid "The recording could not be saved"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_rec_ui.cpp
+msgid "The recording reached its ten-minute limit and stopped."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_rec_ui.cpp
+msgid "The sample rate changed, so the recording stopped. What was recorded so far is kept."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_rec_ui.cpp
+msgid "The unloaded recording was discarded: a file was loaded into Seltmann."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_rec_ui.cpp
+msgid "Throw the recording away and go back"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_rec_ui.cpp
+msgid "of 10:00 at"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "A copy of this step right after it, with its length and pitch. Each copy can then have its own length."
+msgstr ""
+
 #: src/packs/seltmann/seltmann_seq_ui.cpp
 msgid "Also: drag the pitch readout on a pad or a region up or down, or turn the wheel over it."
 msgstr ""
@@ -17422,7 +18518,7 @@ msgid "BARS"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_seq_ui.cpp
-msgid "Click to hear it. Drag to move it. Right-click: start here, pitch, split or delete the region."
+msgid "Click to hear it. Drag to move it. Wheel: this step's pitch (Shift: finer). Right-click: start here, pitch, split or delete the region."
 msgstr ""
 
 #: src/packs/seltmann/seltmann_seq_ui.cpp
@@ -17438,11 +18534,11 @@ msgid "Down an octave"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_seq_ui.cpp
-msgid "Drag a block to move it, an edge to resize. Right-click: more"
+msgid "Drag a block to move it, its right edge to set its length. Right-click: more"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_seq_ui.cpp
-msgid "Drag to resize both regions (Alt: no snap). Click a block to play it."
+msgid "Drag the block's right edge to give this step its own length in the sequence."
 msgstr ""
 
 #: src/packs/seltmann/seltmann_seq_ui.cpp
@@ -17450,7 +18546,15 @@ msgid "Drag up or down: semitones (Shift: finer). Wheel: one semitone. Double-cl
 msgstr ""
 
 #: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "Drag: this step's length in the sequence; its region stays (Shift: finer, Alt: no snap). Double-click: default length."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
 msgid "Duplicate a step"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "Every step of this region, its pad and its key. Also: drag the pitch readout on its pad up or down."
 msgstr ""
 
 #: src/packs/seltmann/seltmann_seq_ui.cpp
@@ -17482,6 +18586,14 @@ msgid "Play every region once, in order (A B C D ...), each as long as its regio
 msgstr ""
 
 #: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "REST"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "Region pitch"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
 msgid "Remove from the sequence"
 msgstr ""
 
@@ -17503,6 +18615,10 @@ msgstr ""
 
 #: src/packs/seltmann/seltmann_seq_ui.cpp
 msgid "Resize a slice"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "Rest to the bar line"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_seq_ui.cpp
@@ -17534,6 +18650,10 @@ msgid "Start the sequence here"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "Step pitch"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
 msgid "The last region cannot be deleted."
 msgstr ""
 
@@ -17550,6 +18670,10 @@ msgid "The sequence already starts here."
 msgstr ""
 
 #: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "The sequence always lasts whole bars. Lengthen a step or add one to fill the rest."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
 msgid "The sequence plays from here on; the steps before move to the end, so the loop keeps its length."
 msgstr ""
 
@@ -17558,11 +18682,19 @@ msgid "The sequence plays from here to its end; the steps before are taken out (
 msgstr ""
 
 #: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "The step lasts its default length in the sequence again."
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
 msgid "This region is not in the sequence."
 msgstr ""
 
 #: src/packs/seltmann/seltmann_seq_ui.cpp
 msgid "This region is too short to split that many times"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "This step only: the region's other steps in the sequence keep their pitch. Also: the wheel over the block."
 msgstr ""
 
 #: src/packs/seltmann/seltmann_seq_ui.cpp
@@ -17581,12 +18713,20 @@ msgstr ""
 msgid "YOUR ORDER"
 msgstr ""
 
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "default length"
+msgstr ""
+
 #: src/packs/seltmann/seltmann_seq_ui.cpp src/packs/seltmann/seltmann_ui.cpp
 msgid "equal parts"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_seq_ui.cpp
 msgid "into"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "its own length"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_seq_ui.cpp
@@ -17886,10 +19026,6 @@ msgid "One slice per bar"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_ui.cpp
-msgid "Original"
-msgstr ""
-
-#: src/packs/seltmann/seltmann_ui.cpp
 msgid "PLAY AT"
 msgstr ""
 
@@ -17903,6 +19039,14 @@ msgstr ""
 
 #: src/packs/seltmann/seltmann_ui.cpp
 msgid "Reading the file"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Record from an audio input (a microphone, an instrument) and load the recording here"
+msgstr ""
+
+#: src/packs/seltmann/seltmann_ui.cpp
+msgid "Record..."
 msgstr ""
 
 #: src/packs/seltmann/seltmann_ui.cpp
@@ -18226,10 +19370,6 @@ msgid "Thirty-second notes"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_wave_ui.cpp
-msgid "Zero"
-msgstr ""
-
-#: src/packs/seltmann/seltmann_wave_ui.cpp
 msgid "Zero-crossing cuts"
 msgstr ""
 
@@ -18330,10 +19470,6 @@ msgid "Impulse view: waveform, trim handles and the amplitude envelope"
 msgstr ""
 
 #: src/packs/spacefx/spacefx_ui.cpp
-msgid "LENGTH"
-msgstr ""
-
-#: src/packs/spacefx/spacefx_ui.cpp
 msgid "LOAD..."
 msgstr ""
 
@@ -18373,7 +19509,7 @@ msgstr ""
 msgid "SELF"
 msgstr ""
 
-#: src/packs/spacefx/spacefx_ui.cpp
+#: src/packs/spacefx/spacefx_ui.cpp src/packs/spectral/turntable_ui.cpp
 msgid "SMOOTH"
 msgstr ""
 
@@ -18470,15 +19606,175 @@ msgid "true stereo"
 msgstr ""
 
 #: src/packs/spectral/turntable_ui.cpp
-msgid "Ctrl+click the waveform to set the cue point."
+msgid "A held key runs the motor forward"
 msgstr ""
 
 #: src/packs/spectral/turntable_ui.cpp
-msgid "Cue point"
+msgid "ACCEL"
 msgstr ""
 
 #: src/packs/spectral/turntable_ui.cpp
-msgid "Key track (C5 plays at Speed)"
+msgid "Built-in sound"
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "Cue + motor"
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "Cue point: where Cue + motor notes start (Shift+click the scope to set it)"
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "Cut the output (a crossfader cut)"
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "Drag sideways to scratch; Shift+click sets the cue point"
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "Each note starts the record at the cue point at full speed"
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "Empty deck: load or drop a sample"
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "Grab the record and move it up or down to scratch"
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "How quickly the platter reaches the motor speed"
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "KEY TRACK"
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "Large scope"
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "Load %s onto the record"
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "Load a sample (or drop one on the deck)"
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "MUTE"
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "Missing: "
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "Motor"
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "Motor speed (100 % = the sample's own speed)"
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "Motor: forward"
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "Motor: pause (the platter coasts to a stop)"
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "Motor: reverse"
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "Mouse travel when scratching the platter or the scope"
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "Notes do nothing: the motor selector runs the platter"
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "PAN"
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "PHONO"
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "Phono preamp for the timecode input (kept with the project)"
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "SENSE"
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "Sample not found: load it again"
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "Scratching: down plays forward, up pulls the record back (Ctrl: fine)"
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "Scratching: drag right plays forward, left pulls back (Ctrl: fine)"
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "Smooth 1: how long the hand takes to settle"
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "Smooth 2: momentum of the hand"
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "Smooth 3: stiffness of the hand"
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "Smooth 4: carry (momentum share of each step)"
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "TIMECODE INPUT"
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "TURNS"
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "The deck plays its sample; the timecode input is not read."
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "The hand holds the record: the platter follows Position"
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "The key sets the motor speed (C5 plays at Speed)"
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "Timecode record format (kept with the project; the deck plays its own sample)"
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "Timecode settings are kept for FL projects."
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "Whole turns added to Position while the hand holds the record"
 msgstr ""
 
 #: src/packs/synths/dcosynth_ui.cpp
@@ -18555,10 +19851,6 @@ msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp
 msgid "(missing track)"
-msgstr ""
-
-#: src/packs/tideline/tideline_ui.cpp
-msgid "AMOUNT"
 msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp
@@ -18667,6 +19959,10 @@ msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp
 msgid "Loop: repeat the curve until the next trigger (off = one shot with an end marker)"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
+msgid "Low cut"
 msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp
@@ -18790,6 +20086,10 @@ msgid "Tension"
 msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp
+msgid "Threshold"
+msgstr ""
+
+#: src/packs/tideline/tideline_ui.cpp
 msgid "Tight"
 msgstr ""
 
@@ -18839,6 +20139,10 @@ msgstr ""
 
 #: src/packs/utility/utility_ui.cpp
 msgid "Copy to all snapshots"
+msgstr ""
+
+#: src/packs/utility/utility_ui.cpp
+msgid "Flat"
 msgstr ""
 
 #: src/packs/utility/utility_ui.cpp

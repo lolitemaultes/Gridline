@@ -1,7 +1,8 @@
 // Gridline — "edison" pack: the waveform / spectrogram editor — time ruler with
 // markers, regions and loop points, stereo lanes drawn from the peak pyramid,
 // selection with snapping, scrubbing, spectral brush, overview scroller and
-// the bottom bar with view options and level / pitch readouts.
+// the bottom bar with view options and level / pitch readouts. J-207: every
+// size from edison_style.h (one row of equal-height controls in the bar).
 #include <SDL_opengl.h>
 #include <algorithm>
 #include <cmath>
@@ -10,6 +11,7 @@
 #include "../../core/I18n.h"
 #include "../../app/Theme.h"
 #include "../../app/Widgets.h"
+#include "edison_style.h"
 #include "edison_ui.h"
 #include "../../app/SmoothScrollUi.h"
 
@@ -171,23 +173,23 @@ void drawLanes(App& a, Session& s, ImDrawList* dl, const Geo& g, float scale) {
   (void)a;
 }
 
-void drawSpectral(Session& s, ImDrawList* dl, const Geo& g) {
+void drawSpectral(Session& s, ImDrawList* dl, const Geo& g, ImFont* fm, float fs) {
   updateSpectrogram(s);
   if (s.tex && s.spec.cols > 0) {
     const double total = static_cast<double>(s.spec.cols) * static_cast<double>(s.spec.hop);
     const double u0 = (g.start + s.spec.hop * 0.5) / total, u1 = (g.start + g.len + s.spec.hop * 0.5) / total;
     dl->AddImage(ImTextureRef(static_cast<ImTextureID>(s.tex)), g.p0, g.p1, ImVec2(static_cast<float>(u0), 0), ImVec2(static_cast<float>(u1), 1));
-  } else {
-    dl->AddText(ImVec2(g.p0.x + 10, g.p0.y + 10), C(col::TextDim), "computing spectrogram...");
+  } else if (s.frames() > 0) {
+    sty::textAt(dl, fm, fs, (g.p0.x + g.p1.x) * 0.5f, (g.p0.y + g.p1.y) * 0.5f, C(col::TextDim), i18n::tr("Computing the spectrogram..."), 1);
   }
-  // Frequency labels.
+  // Frequency labels (a tick and the value on its line).
   for (double hz : {100.0, 1000.0, 10000.0}) {
     if (hz >= s.rate() * 0.5) continue;
-    float y = yOfHz(s, hz, g.p0.y, g.p1.y);
+    const float y = std::round(yOfHz(s, hz, g.p0.y, g.p1.y)) + 0.5f;
     dl->AddLine(ImVec2(g.p0.x, y), ImVec2(g.p0.x + 8, y), C(col::Text, 0.6f));
     char b[16];
     std::snprintf(b, sizeof b, hz >= 1000 ? "%.0fk" : "%.0f", hz >= 1000 ? hz / 1000 : hz);
-    dl->AddText(ImVec2(g.p0.x + 10, y - 7), C(col::Text, 0.7f), b);
+    sty::textAt(dl, fm, fs, g.p0.x + 11, y, C(col::Text, 0.7f), b, 0);
   }
   // Brush strokes.
   for (const auto& q : s.brush) {
@@ -199,15 +201,21 @@ void drawSpectral(Session& s, ImDrawList* dl, const Geo& g) {
 
 }  // namespace
 
-void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, float sc) {
+void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, const sty::Metrics& M) {
   ImDrawList* dl = ImGui::GetWindowDrawList();
   ImFont* fm = a.fontMono ? a.fontMono : ImGui::GetFont();
-  const float rulerH = std::round(15 * sc * 0.8f), scrollH = std::round(9 * sc * 0.8f), barH = std::round(19 * sc * 0.85f);
-  const float fs = std::clamp(7.5f * sc, 9.f, 13.f);
-  const ImVec2 r0 = p0, r1(p1.x, p0.y + rulerH);
-  Geo g{ImVec2(p0.x, r1.y), ImVec2(p1.x, p1.y - scrollH - barH), 0, 0};
-  const ImVec2 sc0(p0.x, g.p1.y), sc1(p1.x, g.p1.y + scrollH);
-  const ImVec2 b0(p0.x, sc1.y), b1(p1.x, p1.y);
+  ImFont* fr = a.fontRegular ? a.fontRegular : ImGui::GetFont();
+  ImFont* fb = a.fontBold ? a.fontBold : ImGui::GetFont();
+  auto P = [&M](float v) { return M.px(v); };
+  const float rulerH = P(sty::kRulerH), scrollH = P(sty::kScrollH), barH = P(sty::kBarH), sideW = P(sty::kSideW);
+  const float fs = M.font(11), fsCap = M.font(sty::kFontCap), fsVal = M.font(sty::kFontValue);
+  // Columns: the lanes, ruler and overview end where the auto-scroll strip begins.
+  const float sideX = p1.x - sideW;
+  const float barY = p1.y - barH;
+  const ImVec2 r0 = p0, r1(sideX, p0.y + rulerH);
+  Geo g{ImVec2(p0.x, r1.y), ImVec2(sideX, barY - scrollH), 0, 0};
+  const ImVec2 sc0(p0.x, g.p1.y), sc1(sideX, barY);
+  const ImVec2 b0(p0.x, barY), b1(p1.x, p1.y);
 
   if (s.peaksSerial != s.hist.serial()) {
     s.peaks.build(s.cur().a());
@@ -225,39 +233,43 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, float sc) {
   // ---- backgrounds
   dl->AddRectFilled(r0, r1, C(col::RulerBg));
   dl->AddRectFilled(g.p0, g.p1, C(col::WaveBg));
+  dl->AddLine(ImVec2(r0.x, r1.y - 0.5f), ImVec2(r1.x, r1.y - 0.5f), C(col::BtnLo), 1.f);
   // Selection.
   if (!s.sel.empty()) {
     float x0 = std::max(g.p0.x, g.xOf(static_cast<double>(s.sel.a))), x1 = std::min(g.p1.x, g.xOf(static_cast<double>(s.sel.b)));
     if (x1 > x0) {
       dl->AddRectFilled(ImVec2(x0, g.p0.y), ImVec2(x1, g.p1.y), C(col::SelBg));
-      dl->AddRectFilled(ImVec2(x0, r0.y), ImVec2(x1, r1.y), C(col::SelBg, 0.8f));
+      dl->AddRectFilled(ImVec2(x0, r0.y), ImVec2(x1, r1.y - 1), C(col::SelBg, 0.8f));
+      for (float x : {x0, x1}) dl->AddLine(ImVec2(x + 0.5f, g.p0.y), ImVec2(x + 0.5f, g.p1.y), C(col::SelEdge, 0.55f), 1.f);
     }
   }
   // Time grid + labels (none while empty: there is no time to show).
   if (s.frames() > 0) {
     const double secPerPx = g.len / s.rate() / std::max(1.f, g.W());
+    const float minStep = P(80);
     double step;
     if (s.barsTime) {
       const double beat = 60.0 / std::max(10.0, a.doc.song().tempo);
       step = beat;
-      while (step / secPerPx < 70) step *= 2;
+      while (step / secPerPx < minStep) step *= 2;
     } else {
       static const double kSteps[] = {0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600};
       step = 600;
       for (double st : kSteps)
-        if (st / secPerPx >= 70) {
+        if (st / secPerPx >= minStep) {
           step = st;
           break;
         }
     }
     const double t0 = g.start / s.rate(), t1 = (g.start + g.len) / s.rate();
     dl->PushClipRect(r0, g.p1, true);
+    const float tickCy = r0.y + (rulerH - P(4)) * 0.5f;  // labels centred in the ruler above the region band
     for (double t = std::floor(t0 / step) * step; t <= t1; t += step) {
-      float x = g.xOf(t * s.rate());
-      dl->AddLine(ImVec2(x, r1.y - rulerH * 0.35f), ImVec2(x, r1.y), C(col::RulerText, 0.7f));
+      const float x = std::round(g.xOf(t * s.rate())) + 0.5f;
+      dl->AddLine(ImVec2(x, r1.y - P(6)), ImVec2(x, r1.y), C(col::RulerText, 0.7f));
       dl->AddLine(ImVec2(x, g.p0.y), ImVec2(x, g.p1.y), C(col::WaveGrid), 1.f);
       std::string lbl = timeText(a, s, static_cast<int64_t>(std::llround(t * s.rate())), step < 0.1);
-      dl->AddText(fm, fs, ImVec2(x + 3, r0.y + 1), C(col::RulerText), lbl.c_str());
+      sty::textAt(dl, fm, fs, x + P(4), tickCy, C(col::RulerText), lbl.c_str(), 0);
     }
     dl->PopClipRect();
   }
@@ -265,17 +277,21 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, float sc) {
   // ---- lanes
   dl->PushClipRect(g.p0, g.p1, true);
   if (s.spectral) {
-    drawSpectral(s, dl, g);
+    drawSpectral(s, dl, g, fm, fs);
     if (!s.sel.empty())
       dl->AddRectFilled(ImVec2(g.xOf(static_cast<double>(s.sel.a)), g.p0.y), ImVec2(g.xOf(static_cast<double>(s.sel.b)), g.p1.y), C(col::SelEdge, 0.18f));
   } else {
-    drawLanes(a, s, dl, g, sc);
+    drawLanes(a, s, dl, g, M.s);
   }
   if (s.frames() == 0 && !s.job.active()) {
-    const char* msg = s.slot ? "Empty. Record (R) from the mixer input, load a file (File menu) or paste audio."
-                             : "No audio in this channel's sample.";
-    ImVec2 ts = ImGui::CalcTextSize(msg);
-    dl->AddText(ImVec2((g.p0.x + g.p1.x - ts.x) * 0.5f, (g.p0.y + g.p1.y - ts.y) * 0.5f), C(col::TextDim), msg);
+    // Empty state: what Loupe is waiting for, centred in the lanes.
+    const char* head = s.slot ? i18n::tr("No audio yet") : i18n::tr("This sample is empty");
+    const char* sub = s.slot ? i18n::tr("Record from the mixer input (R), load a file from the File menu, or drop one here")
+                             : i18n::tr("Load a file from the File menu, or drop one here");
+    const float cy = std::round((g.p0.y + g.p1.y) * 0.5f), cx = std::round((g.p0.x + g.p1.x) * 0.5f);
+    ui::drawIcon(dl, ui::Icon::Wave, ImVec2(cx, cy - P(34)), P(28), C(col::TextDim, 0.55f));
+    sty::textAt(dl, fb, M.font(15), cx, cy, C(col::Text, 0.85f), head, 1);
+    sty::textAt(dl, fr, M.font(12.5f), cx, cy + P(24), C(col::TextDim), sub, 1);
   }
   // Regions (band in the ruler + tint), loop, markers, cursor, playhead.
   const Content& c = s.cur();
@@ -283,34 +299,35 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, float sc) {
   dl->PushClipRect(r0, g.p1, true);
   for (const auto& rg : c.regions) {
     float x0 = g.xOf(static_cast<double>(rg.start)), x1 = g.xOf(static_cast<double>(rg.end));
-    dl->AddRectFilled(ImVec2(x0, r1.y - 4), ImVec2(x1, r1.y), C(col::Region, 0.9f));
+    dl->AddRectFilled(ImVec2(x0, r1.y - P(4)), ImVec2(x1, r1.y), C(col::Region, 0.9f));
     dl->AddRectFilled(ImVec2(x0, g.p0.y), ImVec2(x1, g.p1.y), C(col::Region, 0.07f));
-    dl->AddText(fm, fs, ImVec2(x0 + 3, g.p1.y - fs - 3), C(col::Region), rg.name.c_str());
+    sty::textAt(dl, fm, fs, x0 + P(4), g.p1.y - P(4) - fs * 0.5f, C(col::Region), rg.name.c_str(), 0);
   }
   if (c.hasLoop()) {
     float x0 = g.xOf(static_cast<double>(c.loopStart)), x1 = g.xOf(static_cast<double>(c.loopEnd));
-    dl->AddRectFilled(ImVec2(x0, r0.y), ImVec2(x1, r0.y + 3), C(col::Loop));
+    dl->AddRectFilled(ImVec2(x0, r0.y), ImVec2(x1, r0.y + P(3)), C(col::Loop));
     for (float x : {x0, x1}) dl->AddLine(ImVec2(x, r0.y), ImVec2(x, g.p1.y), C(col::Loop, 0.8f), 1.f);
   }
   int hoverMarker = -1;
   const ImVec2 mouse = ImGui::GetIO().MousePos;
   for (size_t k = 0; k < c.markers.size(); ++k) {
     const auto& m = c.markers[k];
-    float x = g.xOf(static_cast<double>(m.pos));
+    const float x = std::round(g.xOf(static_cast<double>(m.pos))) + 0.5f;
     if (x < g.p0.x - 50 || x > g.p1.x) continue;
     const bool hot = std::fabs(mouse.x - x) < 5 && mouse.y >= r0.y && mouse.y < r1.y;
     if (hot) hoverMarker = static_cast<int>(k);
     dl->AddLine(ImVec2(x, r0.y), ImVec2(x, g.p1.y), C(col::Marker, hot || s.dragMarker == static_cast<int>(k) ? 1.f : 0.75f), 1.f);
-    dl->AddTriangleFilled(ImVec2(x, r0.y), ImVec2(x + rulerH * 0.55f, r0.y + rulerH * 0.3f), ImVec2(x, r0.y + rulerH * 0.6f), C(col::Marker));
-    dl->AddText(fm, fs, ImVec2(x + 3, g.p0.y + 2), C(col::Marker), m.name.c_str());
+    const float fh = std::round(rulerH * 0.55f);
+    dl->AddTriangleFilled(ImVec2(x, r0.y + 1), ImVec2(x + fh * 0.9f, r0.y + 1 + fh * 0.5f), ImVec2(x, r0.y + 1 + fh), C(col::Marker));
+    sty::textAt(dl, fm, fs, x + P(4), g.p0.y + P(4) + fs * 0.5f, C(col::Marker), m.name.c_str(), 0);
   }
-  if (s.cursor >= g.start && s.cursor <= g.start + g.len) {
-    float x = g.xOf(static_cast<double>(s.cursor));
+  if (s.cursor >= g.start && s.cursor <= g.start + g.len && s.frames() > 0) {
+    const float x = std::round(g.xOf(static_cast<double>(s.cursor))) + 0.5f;
     dl->AddLine(ImVec2(x, r0.y), ImVec2(x, g.p1.y), C(col::Cursor, 0.75f), 1.f);
   }
   if (pos >= 0) {
-    float x = g.xOf(pos);
-    dl->AddLine(ImVec2(x, r0.y), ImVec2(x, g.p1.y), C(col::Playhead), std::max(1.5f, sc));
+    const float x = g.xOf(pos);
+    dl->AddLine(ImVec2(x, r0.y), ImVec2(x, g.p1.y), C(col::Playhead), std::max(1.5f, P(2)));
   }
   dl->PopClipRect();
 
@@ -536,71 +553,169 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, float sc) {
 
   // ---- overview scroller
   dl->AddRectFilled(sc0, sc1, C(col::RulerBg));
+  dl->AddLine(ImVec2(sc0.x, sc0.y + 0.5f), ImVec2(sc1.x, sc0.y + 0.5f), C(col::BtnLo), 1.f);
   if (n > 0) {
-    float x0 = sc0.x + static_cast<float>(s.viewStart / n) * (sc1.x - sc0.x);
-    float x1 = sc0.x + static_cast<float>(std::min(1.0, (s.viewStart + s.viewLen) / n)) * (sc1.x - sc0.x);
-    dl->AddRectFilled(ImVec2(x0, sc0.y + 1), ImVec2(std::max(x0 + 4, x1), sc1.y - 1), C(col::BtnHi), 2);
+    const float x0 = sc0.x + static_cast<float>(s.viewStart / n) * (sc1.x - sc0.x);
+    const float x1 = sc0.x + static_cast<float>(std::min(1.0, (s.viewStart + s.viewLen) / n)) * (sc1.x - sc0.x);
+    const float in = std::max(2.0f, P(3));
+    dl->AddRectFilled(ImVec2(x0, sc0.y + in), ImVec2(std::max(x0 + P(6), x1), sc1.y - in + 1), C(col::BtnHi), (sc1.y - sc0.y) * 0.5f - in);
     if (pos >= 0) {
-      float px = sc0.x + static_cast<float>(pos / n) * (sc1.x - sc0.x);
+      const float px = sc0.x + static_cast<float>(pos / n) * (sc1.x - sc0.x);
       dl->AddLine(ImVec2(px, sc0.y), ImVec2(px, sc1.y), C(col::Playhead), 1.f);
     }
   }
   ImGui::SetCursorScreenPos(sc0);
   ImGui::InvisibleButton("overview", ImVec2(std::max(1.f, sc1.x - sc0.x), std::max(1.f, sc1.y - sc0.y)));
   if (ImGui::IsItemActive() && n > 0) {
-    double f = (mouse.x - sc0.x) / std::max(1.f, sc1.x - sc0.x) * n;
+    const double f = (mouse.x - sc0.x) / std::max(1.f, sc1.x - sc0.x) * n;
     s.viewStart = std::clamp(f - s.viewLen * 0.5, 0.0, std::max(0.0, n - s.viewLen));
   }
-  if (ImGui::IsItemHovered()) a.setHint("Overview: drag to scroll");
+  if (ImGui::IsItemHovered()) a.setHint(i18n::tr("Overview: drag to scroll"));
 
-  // ---- bottom bar
-  dl->AddRectFilled(b0, b1, C(col::Panel));
-  dl->AddLine(b0, ImVec2(b1.x, b0.y), C(col::BtnLo));
-  float x = b0.x + 4;
-  const float bh = b1.y - b0.y - 4, by = b0.y + 2;
-  auto chip = [&](const char* id, const char* label, bool on, const char* hint) {
-    ImVec2 ts = fm->CalcTextSizeA(fs, FLT_MAX, 0, ui::labelText(label));  // an icon label measures as its text
-    const float w = ts.x + 14;
-    ImGui::SetCursorScreenPos(ImVec2(x, by));
-    ImGui::InvisibleButton(id, ImVec2(w, bh));
-    const bool hv = ImGui::IsItemHovered();
-    dl->AddRectFilled(ImVec2(x, by), ImVec2(x + w, by + bh), on ? C(col::Lit, 0.85f) : hv ? C(col::BtnHi) : C(col::Btn), 3);
-    ui::drawLabel(dl, fm, fs, ImVec2(x + 7, by + (bh - ts.y) * 0.5f), on ? C(col::Lcd) : C(col::Text), label);
-    if (hv && hint) a.setHint(hint);
-    x += w + 4;
-    return ImGui::IsItemClicked();
-  };
-  if (chip("v_wave", "WAVE", !s.spectral, "Waveform view (W)")) s.spectral = false;
-  if (chip("v_spec", "SPECTRUM", s.spectral, "Spectrogram view (W)")) s.spectral = true;
-  if (s.spectral && chip("v_brush", "BRUSH", s.brushMode, "Spectral brush: paint time/frequency areas, then apply a gain to them (B)")) s.brushMode = !s.brushMode;
-  if (s.spectral && !s.brush.empty() && chip("v_apply", "APPLY...", false, "Apply a gain to the painted areas")) openTool(s, Tool::Spectral);
-  x += 6;
-  static const char* kSnap[] = {"SNAP OFF", "SNAP ZERO", "SNAP MARK", "SNAP BEAT"};
-  if (chip("v_snap", kSnap[s.snap], s.snap != 0, "Snap: off / zero crossings / markers / beats (Shift+Alt while dragging: no snap)")) s.snap = (s.snap + 1) % 4;
-  if (chip("v_time", s.barsTime ? "BAR:BEAT" : "MIN:SEC", false, "Time display")) s.barsTime = !s.barsTime;
-  x += 6;
-  if (chip("z_out", GL_ICON_LABEL("minus", "-"), false, "Zoom out (-)")) zoomBy(s, 2.0, s.viewStart + s.viewLen * 0.5);
-  if (chip("z_in", GL_ICON_LABEL("plus", "+"), false, "Zoom in (+)")) zoomBy(s, 0.5, s.viewStart + s.viewLen * 0.5);
-  if (chip("z_sel", "SEL", false, "Zoom to the selection")) zoomTo(s, s.sel);
-  if (chip("z_all", "ALL", false, "Show everything (0)")) zoomAll(s);
-  // Readouts (right).
-  updateLevels(s);
-  char rd[200];
-  if (!s.status.empty() && ImGui::GetTime() < s.statusUntil) {
-    std::snprintf(rd, sizeof rd, "%s", s.status.c_str());
-  } else if (s.frames() == 0) {
-    rd[0] = 0;
-  } else {
-    auto db = [](double v) { return v < -150 ? -INFINITY : v; };
-    std::string pitch = s.pitch.hz > 0 && s.pitch.confidence > 0.5 ? noteName(s.pitch.note) + (s.pitch.cents >= 0 ? " +" : " ") + std::to_string(static_cast<int>(std::lround(s.pitch.cents))) + "c" : "-";
-    std::snprintf(rd, sizeof rd, "%s  PEAK %.1f  RMS %.1f  LUFS %.1f  TP %.1f  PITCH %s", s.sel.empty() ? "ALL" : "SEL", db(s.levels.peakDb),
-                  db(s.levels.rmsDb), db(s.levels.lufs), db(s.levels.truePeakDb), pitch.c_str());
+  // ---- auto-scroll strip (right of the ruler, lanes and overview)
+  {
+    sty::Btn b;
+    b.lit = s.autoScroll;
+    b.mark = false;
+    b.flat = true;  // a quiet strip: the glyph says whether it follows
+    dl->AddRectFilled(ImVec2(sideX, p0.y), ImVec2(p1.x, barY), C(col::RulerBg));
+    b.hint = "Auto-scroll: follow the playback position";
+    if (sty::iconButton("autoscroll", ImVec2(sideX, p0.y), ImVec2(p1.x, barY), ui::Icon::ScrollTo, P(sty::kBarIcon), b))
+      s.autoScroll = !s.autoScroll;
   }
-  ImVec2 ts = fm->CalcTextSizeA(fs, FLT_MAX, 0, rd);
-  const float rx = std::max(x + 8, b1.x - ts.x - 8);
-  dl->PushClipRect(ImVec2(x, b0.y), b1, true);
-  dl->AddText(fm, fs, ImVec2(rx, b0.y + (b1.y - b0.y - ts.y) * 0.5f), C(col::LcdText), rd);
-  dl->PopClipRect();
+  dl->AddLine(ImVec2(sideX - 0.5f, p0.y), ImVec2(sideX - 0.5f, barY), C(col::BtnLo), 1.f);
+
+  // ---- bottom bar: view | snap, time | zoom | readouts (one row of equal-height controls)
+  dl->AddRectFilled(b0, b1, C(col::Panel));
+  dl->AddLine(ImVec2(b0.x, b0.y + 0.5f), ImVec2(b1.x, b0.y + 0.5f), C(col::BtnLo), 1.f);
+  const float ctl = P(sty::kBarCtl), cg = P(sty::kCellGap), gg = P(sty::kGroupGap), sg = P(sty::kSectionGap), ico = P(sty::kBarIcon);
+  const float by = b0.y + std::round((barH - ctl) * 0.5f);
+  float x = b0.x + std::round((barH - ctl) * 0.5f);
+  {
+    static const char* kViews[] = {"WAVE", "SPECTRUM"};
+    static const char* kViewHints[] = {"Waveform view (W)", "Spectrogram view (W)"};
+    const char* labels[] = {i18n::tr(kViews[0]), i18n::tr(kViews[1])};
+    const float w = P(160);
+    const int v = sty::segmented("view", ImVec2(x, by), ImVec2(x + w, by + ctl), labels, 2, s.spectral ? 1 : 0, fm, fsVal, kViewHints);
+    if (v >= 0) s.spectral = v == 1;
+    sty::note("bar.view", "view", ImVec2(x, by), ImVec2(x + w, by + ctl));
+    x += w + gg;
+    sty::Btn b;
+    b.lit = s.spectral && s.brushMode;
+    b.enabled = s.spectral;
+    b.hint = "Spectral brush: paint time / frequency areas, then apply a gain to them (B)";
+    if (sty::iconButton("v_brush", ImVec2(x, by), ImVec2(x + ctl, by + ctl), ui::Icon::Paint, ico, b)) s.brushMode = !s.brushMode;
+    sty::note("bar.brush", "brush", ImVec2(x, by), ImVec2(x + ctl, by + ctl));
+    x += ctl + cg;
+    b = sty::Btn{};
+    b.enabled = s.spectral && !s.brush.empty();
+    b.hint = "Apply a gain to the painted areas...";
+    if (sty::iconButton("v_apply", ImVec2(x, by), ImVec2(x + ctl, by + ctl), ui::Icon::Check, ico, b)) openTool(s, Tool::Spectral);
+    sty::note("bar.brush", "apply", ImVec2(x, by), ImVec2(x + ctl, by + ctl));
+    x += ctl + sg;
+  }
+  {
+    static const char* kSnap[] = {"No snap", "Zero crossings", "Markers", "Beats"};
+    const float w = P(144);
+    if (sty::dropField("##snapf", ImVec2(x, by), ImVec2(x + w, by + ctl), i18n::tr(kSnap[s.snap]), fm, fsVal, true,
+                       "Snap: off / zero crossings / markers / beats (Shift+Alt while dragging: no snap)", ui::Icon::Magnet))
+      ImGui::OpenPopup("##snap");
+    sty::note("bar.snap", "snap", ImVec2(x, by), ImVec2(x + w, by + ctl));
+    ImGui::SetNextWindowPos(ImVec2(x, by + ctl + 2));
+    if (ImGui::BeginPopup("##snap")) {
+      for (int k = 0; k < 4; ++k)
+        if (ImGui::MenuItem(i18n::tr(kSnap[k]), nullptr, s.snap == k)) s.snap = k;
+      ImGui::EndPopup();
+    }
+    x += w + gg;
+    const float tw = P(112);
+    if (sty::dropField("##timefmtf", ImVec2(x, by), ImVec2(x + tw, by + ctl), s.barsTime ? i18n::tr("Bar:beat") : i18n::tr("Min:sec"), fm, fsVal, true,
+                       "Time display: minutes and seconds, or bars and beats at the song tempo"))
+      ImGui::OpenPopup("##timefmt");
+    sty::note("bar.snap", "time", ImVec2(x, by), ImVec2(x + tw, by + ctl));
+    ImGui::SetNextWindowPos(ImVec2(x, by + ctl + 2));
+    if (ImGui::BeginPopup("##timefmt")) {
+      if (ImGui::MenuItem(i18n::tr("Min:sec"), nullptr, !s.barsTime)) s.barsTime = false;
+      if (ImGui::MenuItem(i18n::tr("Bar:beat"), nullptr, s.barsTime)) s.barsTime = true;
+      ImGui::EndPopup();
+    }
+    x += tw + sg;
+  }
+  {
+    auto zb = [&](const char* id, ui::Icon icon, const char* hint, bool en) {
+      sty::Btn b;
+      b.hint = hint;
+      b.enabled = en;
+      const bool c2 = sty::iconButton(id, ImVec2(x, by), ImVec2(x + ctl, by + ctl), icon, ico, b);
+      sty::note("bar.zoom", id, ImVec2(x, by), ImVec2(x + ctl, by + ctl));
+      x += ctl + cg;
+      return c2;
+    };
+    const bool has = s.frames() > 0;
+    if (zb("z_out", ui::Icon::Minus, "Zoom out (-)", has)) zoomBy(s, 2.0, s.viewStart + s.viewLen * 0.5);
+    if (zb("z_in", ui::Icon::Plus, "Zoom in (+)", has)) zoomBy(s, 0.5, s.viewStart + s.viewLen * 0.5);
+    if (zb("z_sel", ui::Icon::Zoom, "Zoom to the selection", has && !s.sel.empty())) zoomTo(s, s.sel);
+    if (zb("z_all", ui::Icon::StretchMode, "Show everything (0)", has)) zoomAll(s);
+    x += sg - cg;
+  }
+  // Readouts: one recessed field to the right edge; caption / value pairs on even stops.
+  updateLevels(s);
+  {
+    const ImVec2 f0(x, by), f1(b1.x - std::round((barH - ctl) * 0.5f), by + ctl);
+    if (f1.x - f0.x > P(60)) {
+      sty::note("bar.readout", "readout", f0, f1);
+      if (!s.status.empty() && ImGui::GetTime() < s.statusUntil) {
+        sty::field(dl, f0, f1, nullptr, s.status.c_str(), C(col::LcdText), fm, fsVal, fsCap, 2);
+      } else if (s.frames() == 0) {
+        sty::field(dl, f0, f1, nullptr, "", C(col::LcdText), fm, fsVal, fsCap, 2);
+      } else {
+        skin::insetField(dl, f0, f1, C(col::Lcd), sty::kRadius);
+        auto db = [](double v) {
+          char t[16];
+          if (v < -150)
+            std::snprintf(t, sizeof t, "-inf");
+          else
+            std::snprintf(t, sizeof t, "%.1f", v);
+          return std::string(t);
+        };
+        const std::string pitch =
+            s.pitch.hz > 0 && s.pitch.confidence > 0.5
+                ? noteName(s.pitch.note) + (s.pitch.cents >= 0 ? " +" : " ") + std::to_string(static_cast<int>(std::lround(s.pitch.cents))) + "c"
+                : "-";
+        const std::pair<const char*, std::string> kv[] = {{s.sel.empty() ? "FILE" : "SEL", ""},
+                                                          {"PEAK", db(s.levels.peakDb)},
+                                                          {"RMS", db(s.levels.rmsDb)},
+                                                          {"LUFS", db(s.levels.lufs)},
+                                                          {"TP", db(s.levels.truePeakDb)},
+                                                          {"PITCH", pitch}};
+        // Widths of the pairs; the ones that do not fit drop from the right.
+        const float in = std::round(std::max(6.0f, ctl * 0.3f)), sp = P(6);
+        float need[6] = {}, total = 0;
+        int count = 0;
+        for (int k = 0; k < 6; ++k) {
+          need[k] = sty::textW(fm, fsCap, i18n::tr(kv[k].first)) + (kv[k].second.empty() ? 0 : sp + sty::textW(fm, fsVal, kv[k].second.c_str()));
+          if (total + need[k] + (count ? P(12) : 0) > f1.x - f0.x - 2 * in) break;
+          total += need[k] + (count ? P(12) : 0);
+          ++count;
+        }
+        const float slack = count > 1 ? (f1.x - f0.x - 2 * in - total) / static_cast<float>(count - 1) : 0;
+        const float cy = (f0.y + f1.y) * 0.5f;
+        float tx = f0.x + in;
+        dl->PushClipRect(f0, f1, true);
+        for (int k = 0; k < count; ++k) {
+          sty::textAt(dl, fm, fsCap, tx, cy, k == 0 ? C(col::Text, 0.8f) : C(col::TextDim), i18n::tr(kv[k].first), 0);
+          if (!kv[k].second.empty())
+            sty::textAt(dl, fm, fsVal, tx + sty::textW(fm, fsCap, i18n::tr(kv[k].first)) + sp, cy, C(col::LcdText), kv[k].second.c_str(), 0);
+          tx += need[k] + P(12) + slack;
+        }
+        dl->PopClipRect();
+        if (ImGui::IsMouseHoveringRect(f0, f1))
+          a.setHint(i18n::tr("Levels of the selection (or the whole file): peak, RMS, integrated loudness, true peak, detected pitch"));
+      }
+    }
+  }
+  // Frame around the whole editor.
+  dl->AddRect(ImVec2(p0.x - 0.5f, p0.y - 0.5f), ImVec2(p1.x + 0.5f, p1.y + 0.5f), C(col::BtnLo), sty::kRadius, 0, 1.f);
 }
 
 }  // namespace gl::packs::edison

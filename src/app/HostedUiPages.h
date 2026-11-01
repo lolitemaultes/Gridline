@@ -18,8 +18,9 @@ namespace hostedui {
 int presetCount(host::HostedInstance* hi);
 std::string presetName(host::HostedInstance* hi, int index);
 bool selectPreset(App& a, const PluginTarget& t, host::HostedInstance* hi, int index);
-// Preset last picked for this target (-1: none yet).
-int& presetIndex(const PluginTarget& t);
+// Preset last picked for this target (-1: none yet, or picked on another plugin
+// the target held before: J-213).
+int& presetIndex(const PluginTarget& t, host::HostedInstance* hi);
 // Processing load (refreshed four times a second).
 void cpuLoad(App& a, const PluginTarget& t, host::HostedInstance* hi, float& average, float& peak);
 // Generic parameter editor instead of the plugin's interface, for every

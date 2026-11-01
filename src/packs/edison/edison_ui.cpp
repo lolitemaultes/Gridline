@@ -9,11 +9,13 @@
 #include <cstdio>
 #include <filesystem>
 #include <map>
+#include <thread>
 #include "../../app/StemsUi.h"
 #include "../../app/Theme.h"
 #include "../../app/Widgets.h"
 #include "../../core/Params.h"
 #include "../../core/PluginParams.h"
+#include "../../core/TrackReceipt.h"
 #include "edison_ui.h"
 
 namespace gl::packs::edison {
@@ -66,10 +68,30 @@ std::pair<std::string, std::string> saveVersion(const Content& c, const std::str
 
 uint64_t mergeKey(const Session& s) { return s.key ^ 0x0ED150ED150ull; }
 
+// J-219: an edited version names the file it was made from (Track Receipt maps
+// its uses back to the original; which part of it is not known after an edit).
+void noteOrigin(const std::string& from, const std::string& path) {
+  std::error_code ec;
+  if (from.empty() || path.empty() || from == path || !fs::is_regular_file(from, ec)) return;
+  receipt::Origin o;
+  if (receipt::readOrigin(path, o)) return;  // the first source it was made from stays (undo does not rewrite it)
+  o.source = from;
+  o.rangeKnown = false;
+  o.kind = "edit";
+  receipt::writeOrigin(path, o);
+}
+
 // UI thread: points the owner (slot state / channel sample) at the saved version.
 void applySaved(App& a, Session& s, const std::string& path, const std::string& hash, const std::string& label) {
   const Content& c = s.cur();
   s.committed = path;
+  if (!s.slot) {
+    if (const Channel* ch = a.doc.song().channel(s.channel)) noteOrigin(ch->plugin.data, path);
+  } else if (const PluginState* ps = slotState(a, s)) {
+    State old;
+    decodeState(ps->data, old);
+    noteOrigin(old.path, path);
+  }
   if (s.slot) {
     const PluginState* ps = slotState(a, s);
     if (!ps) return;
@@ -615,6 +637,40 @@ void devDemo(App& a, Session& s) {
     if (k > 0 && k <= static_cast<int>(Tool::Script)) openTool(s, static_cast<Tool>(k));
   }
 }
+
+// J-207: GRIDLINE_EDISON_STATE=armed|rec|play|busy|nosel|menu<N> puts the editor in
+// that state for screenshots (recording, playing, a running edit, no selection, menu N
+// open), once, after the demo audio (if any) has been stored.
+void devState(App& a, Session& s) {
+  static bool done = false;
+  const char* v = std::getenv("GRIDLINE_EDISON_STATE");
+  if (done || !v || !*v || !s.slot || s.job.active()) return;
+  const char* demo = std::getenv("GRIDLINE_EDISON_DEMO");
+  if (demo && *demo && s.frames() == 0) return;
+  done = true;
+  const double rate = a.engine.sampleRate();
+  {
+    const std::string st(v);
+    if (st == "armed" || st == "rec") {
+      Recorder::Config c;
+      c.mode = st == "rec" ? RecNow : RecOnInput;
+      c.rate = rate;
+      s.rec.arm(c);
+    } else if (st == "play") {
+      play(a, s);
+    } else if (st == "busy") {
+      runEdit(a, s, "Time stretch", [](const Content& c) {
+        std::this_thread::sleep_for(std::chrono::seconds(3));
+        return c;
+      });
+    } else if (st == "nosel") {
+      s.sel = {};
+      s.cursor = static_cast<int64_t>(rate * 1.25);
+    } else if (st.rfind("menu", 0) == 0) {
+      s.devMenu = std::atoi(st.c_str() + 4);
+    }
+  }
+}
 }  // namespace
 
 bool drawEditor(App& a, const PluginTarget& t, float width) {
@@ -623,8 +679,9 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
   Session& s = sessionFor(a, t);
   pump(a, s);
   devDemo(a, s);
+  devState(a, s);
   const float maxH = ImGui::GetMainViewport()->WorkSize.y - 170.0f;
-  drawForm(a, s, std::max(width, 640.0f), maxH);
+  drawForm(a, s, std::max(width, 660.0f), maxH);
   return true;
 }
 
@@ -709,7 +766,7 @@ void drawWindows(App& a) {
     bool open = true;
     if (ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking | fitFlags)) {
       ui::KeepWindowInViewport();
-      drawForm(a, s, 1100, vp->WorkSize.y - 120.0f);
+      drawForm(a, s, std::clamp(std::floor(vp->WorkSize.x - 48.0f), 660.0f, 1100.0f), vp->WorkSize.y - 120.0f);  // J-207: fits the work area
     }
     ImGui::End();
     if (!open) {

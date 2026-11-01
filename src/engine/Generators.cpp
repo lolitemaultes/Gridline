@@ -11,6 +11,7 @@
 #include "Dsp.h"
 #include "Resample.h"
 #include "TimeStretch.h"
+#include "SampleTap.h"
 
 namespace gl {
 
@@ -246,6 +247,10 @@ class SynthGen final : public Generator {
 
   void onNoteOn(uint32_t id, double pitch, float vel) override {
     if (ref_) return refNoteOn(id, pitch, vel, 0.f);
+    if (custom_ && tap::active() && (shapeI_[0] == kCustomShape || shapeI_[1] == kCustomShape || shapeI_[2] == kCustomShape)) {
+      tap::play(custom_.get());  // J-219: the custom wave plays the whole channel sample as one cycle
+      tap::markFrames(custom_.get(), 0, static_cast<double>(custom_->frames() - 1));
+    }
     ++clock_;
     if (maxVoices_ == 1) {  // mono / legato with glide
       Voice& v = voices_[0];
@@ -775,6 +780,14 @@ class SamplerGen final : public Generator {
 
   double regionLo() const { return start_ * static_cast<double>(sample_->frames() - 1); }
   double regionHi() const { return std::min(end_, 1.0) * static_cast<double>(sample_->frames() - 1); }
+  // J-220: the whole frame a stretch stream starts on: the nearest one, kept
+  // inside the frames readSource plays ([ceil(lo), floor(hi)]). Rounding alone
+  // could land just before a fractional start (or past a fractional end in
+  // reverse), and the stream then ended at once: a silent note.
+  int64_t streamFrame(double pos) const {
+    const double lo = regionLo(), hi = std::max(lo + 1, regionHi());
+    return std::clamp(static_cast<int64_t>(std::llround(pos)), static_cast<int64_t>(std::ceil(lo)), static_cast<int64_t>(std::floor(hi)));
+  }
 
   bool supportsGlide() const override { return true; }
   bool handlesNotePan() const override { return true; }
@@ -808,6 +821,7 @@ class SamplerGen final : public Generator {
 
   void onNoteOn(uint32_t id, double pitch, float vel) override {
     if (!sample_ || sample_->frames() < 4) return;
+    tap::play(sample_.get());  // J-219
     ++clock_;
     Voice* pick = nullptr;
     if (voices_n_ == 1) {
@@ -860,7 +874,7 @@ class SamplerGen final : public Generator {
     v.sbPos = 16;
     const auto slot = static_cast<size_t>(pick - voices_.data());
     if (!stretch_ || !active_ || active_->rate != sr_) return;
-    v.si = static_cast<int64_t>(std::llround(v.pos));
+    v.si = streamFrame(v.pos);
     v.sdir = reverse_ ? -1 : 1;
     if (active_->engine == stretch::Engine::RubberBand) {
       // J-170: Rubber Band voices go to any free pool voice; a note announced
@@ -986,8 +1000,11 @@ class SamplerGen final : public Generator {
     const double grainLen = 0.05 * sr_;
     static const double minEnd[5] = {0, 0.002, 0.005, 0.005, 0.02};
     const double endFade = minEnd[declick_] * sr_;
+    const bool tapOn = tap::active();  // J-219: Track Receipt coverage
     for (auto& v : voices_) {
       if (!v.on) continue;
+      tap::Run run;
+      if (tapOn) run.begin(sample_.get());
       for (int i = 0; i < n; ++i) {
         if (v.delayLeft > 0) {
           if (--v.delayLeft == 0) v.env.gate(v.held || oneShot_);
@@ -1051,6 +1068,7 @@ class SamplerGen final : public Generator {
             v.on = false;
             break;
           }
+          run.at(v.src);
           double prev = v.gph;
           v.gph += 1.0 / grainLen;
           v.gph -= std::floor(v.gph);
@@ -1093,6 +1111,7 @@ class SamplerGen final : public Generator {
             }
           }
           rate_ = std::fabs(v.rate);
+          run.at(v.pos);
           readLooped(v.pos, l, r);
           v.pos += v.dir * v.rate;
         }
@@ -1261,7 +1280,7 @@ class SamplerGen final : public Generator {
       if (k < 0) break;  // (later: a voice may free up)
       q.used = false;
       Voice& sh = shadow_[static_cast<size_t>(k)];
-      sh.si = static_cast<int64_t>(std::llround(reverse_ ? regionHi() : regionLo()));
+      sh.si = streamFrame(reverse_ ? regionHi() : regionLo());
       sh.sdir = reverse_ ? -1 : 1;
       sh.srcDone = false;
       sh.src = static_cast<double>(sh.si);
@@ -1321,6 +1340,8 @@ class SamplerGen final : public Generator {
     const auto le = std::max(ls + 1, static_cast<int64_t>(std::clamp(g.loopEnd_ * (len - 1), static_cast<double>(ls) + 1, hi)));
     const auto ilo = static_cast<int64_t>(std::ceil(lo)), ihi = static_cast<int64_t>(std::floor(hi));
     g.rate_ = 1.0;
+    tap::Run run;  // J-219: Track Receipt coverage
+    if (tap::active()) run.begin(g.sample_.get());
     for (int k = 0; k < frames; ++k) {
       if (v.srcDone) {
         d[0][k] = d[1][k] = 0.0f;
@@ -1345,6 +1366,7 @@ class SamplerGen final : public Generator {
         continue;
       }
       double l, r;
+      run.at(static_cast<double>(v.si));  // J-219
       g.readLooped(static_cast<double>(v.si), l, r);
       d[0][k] = static_cast<float>(l);
       d[1][k] = static_cast<float>(r);

@@ -1,6 +1,7 @@
 // Gridline — Slicex region engine (see SlicexEngine.h).
 #include "TimeStretch.h"
 #include "SlicexEngine.h"
+#include "SampleTap.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -791,6 +792,7 @@ void Engine::startVoice(int deck, int region, double layerGain, double tune, flo
       v.pos = v.start;
     }
     if (v.reverse) v.pos = v.end - 1 - (v.pos - v.start);
+    tap::play(smp.get());  // J-219
   }
   // Region filter (only with an active filter group).
   if (rec[RFiltGroup] >= 0 && rec[RFiltGroup] < kGroups) {
@@ -991,12 +993,15 @@ void Engine::render(float* L, float* R, int n) {
     const float* sl = smp->left.data();
     const float* sr = smp->right.data();
     const int64_t frames = static_cast<int64_t>(smp->frames());
+    tap::Run run;  // J-219: Track Receipt coverage
+    if (tap::active()) run.begin(smp.get());
     for (int i = 0; i < n && v.on; ++i) {
       if (v.delay > 0) {
         --v.delay;
         continue;
       }
       const double x = v.pos;
+      run.at(x);
       int64_t i0 = static_cast<int64_t>(std::floor(x));
       const double fr = x - static_cast<double>(i0);
       i0 = std::clamp<int64_t>(i0, 0, frames - 1);

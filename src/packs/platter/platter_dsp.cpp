@@ -53,6 +53,7 @@
 // (device MIDI, app), raw channel MIDI (plugin builds), notes, and editor
 // commands through a single-producer ring.
 #include "../Packs.h"
+#include "../../engine/SampleTap.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -193,9 +194,12 @@ struct Reader {
 void readFrames(void* ctx, float* const* dst, int frames) {
   auto* r = static_cast<Reader*>(ctx);
   const int64_t n = r->src ? static_cast<int64_t>(r->src->frames()) : 0;
+  tap::Run run;  // J-219: Track Receipt coverage (key lock reads)
+  if (tap::active()) run.begin(r->src);
   for (int i = 0; i < frames; ++i) {
     const int64_t k = r->cursor + i;
     const bool in = k >= 0 && k < n;
+    if (in) run.at(static_cast<double>(k));
     dst[0][i] = in ? r->src->left[static_cast<size_t>(k)] : 0.f;
     dst[1][i] = in ? r->src->right[static_cast<size_t>(k)] : 0.f;
   }
@@ -1592,6 +1596,8 @@ class Deck {
       pool->v[idx_][keyGhost_].render(out, count, Pl.ghostRate, ratio, readFrames, &pool->rd[idx_][keyGhost_]);
     }
     const bool eqFlat = Pl.eqH == 1.0 && Pl.eqM == 1.0 && Pl.eqL == 1.0 && eqGain_[0] == 1.0 && eqGain_[1] == 1.0 && eqGain_[2] == 1.0;
+    tap::Run run, ghostRun;  // J-219: Track Receipt coverage (vinyl path, crossfade ghost)
+    if (tap::active()) run.begin(&s), ghostRun.begin(&s);
     for (int c = 0; c < count; ++c) {
       const int j = from + c;
       const double u = static_cast<double>(j) / fLen;
@@ -1601,6 +1607,7 @@ class Deck {
       } else {
         double spd = Pl.rate;
         const double p = pathAt(Pl, u, spd);
+        if (spd != 0.0 && p >= 0 && p < static_cast<double>(n)) run.at(p);
         if (pitch::exactFrame(p, spd)) {  // on a whole frame (at most normal speed): the file itself
           const auto k = static_cast<int64_t>(std::floor(p + 0.5));
           const bool in = k >= 0 && k < n;
@@ -1620,6 +1627,7 @@ class Deck {
           gl = kg[0][c], gr = kg[1][c];
         } else {
           float o[2];
+          if (ghost_.pos >= 0 && ghost_.pos < static_cast<double>(n)) ghostRun.at(ghost_.pos);
           pitch::readArrays<2>(xs, n, ghost_.pos, std::max(std::fabs(ghost_.rate), 1e-6), tab, o);
           const double gsg = vinylGain(ghost_.rate * Pl.inv);
           gl = o[0] * gsg, gr = o[1] * gsg;
@@ -2031,6 +2039,7 @@ class PlatterGen final : public Generator {
         h.key = k;
         break;
       }
+    if (tap::active() && deck_[0].loaded()) tap::play(deck_[0].rs());  // J-219: Track Receipt (key presses)
     key(k, true);
   }
   void onNoteOff(uint32_t id) override {

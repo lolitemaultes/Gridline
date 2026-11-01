@@ -11,12 +11,18 @@
 #include <vector>
 #include "../../engine/Generators.h"
 #include "../../engine/Sample.h"
+#include "../../engine/SampleTap.h"
 #include "plasma.h"
 
 namespace gl::packs::plasma {
 
 using cpx = std::complex<float>;
 inline constexpr double kPi2 = 6.283185307179586;
+// The source's full scale in Plasma's units: the source's main volume gives 4.683 n^2 where Plasma's gives
+// 1.4125 n^2, so the same output means a 10.4 dB hotter signal inside Plasma (verified: the hosted compressor
+// reacts 10.4 dB later than its threshold law on Plasma's level, at any main volume; the voice filter's drive
+// stage clips at the same level). Every absolute-level law of the imported voicing scales with it.
+inline constexpr double kSrcUnit = 3.31535;
 
 // ------------------------------------------------------------------ FFT (radix 2, in place)
 class Fft {
@@ -177,6 +183,8 @@ class Filter {
   // pad (boost only): the source's PAD switch, the drive's gain without its clipping
   void set(int type, double sr, double hz, double res, double drive, double var, double spreadSt, bool boost = false, bool pad = false);
   void process(float& l, float& r);
+  // the last processed sample's dry path per channel (imports: the driven input for most types, else the input)
+  float dry(int c) const;
   int type() const { return type_; }
   // Display: magnitude response at n frequencies (UI thread; allocates).
   static void responseCurve(int type, double sr, double cutoffHz, double res, double var, const float* hz, float* out, int n);
@@ -263,6 +271,7 @@ class Arp {
   float veloCur_ = 1;
   uint32_t rng_ = 0x9e3779b9u;
   bool first_ = true;
+  bool launched_ = false;  // srcGrid: the first launch has played (later ones wait for the grid)
   bool newNote_ = false, chanceHold_ = true;
   int transDir_ = 1, cycles_ = 0;
   double retrigAcc_ = 0;
@@ -270,9 +279,14 @@ class Arp {
 class ClipPlayer {
  public:
   void reset();
-  void noteOn(int key, float vel);
+  void noteOn(int key, float vel, bool retrigger = false);
   void noteOff(int key);
+  // plays along with the song position (a launched clip): runs while the transport runs
+  void startSong() { reset(); song_ = true; }
+  void stop(SeqOut& out);  // ends its sounding notes and stops
   bool active() const { return running_; }
+  int key() const { return trigKey_; }
+  int held() const { return held_; }
   void run(const ClipSlot& c, const float* offsets, int n, double sr, double tempo, double beat, bool playing, double swing,
            int swingDiv, SeqOut& out, float* laneValues, int laneCount);
   double position() const { return pos_; }
@@ -286,6 +300,10 @@ class ClipPlayer {
   std::array<int8_t, 128> on_{};
   bool finishing_ = false;   // keys released without note gate: stop at the clip end
   double waitBeats_ = -1;    // launch quantize wait
+  bool song_ = false;        // startSong
+  bool holding_ = false;     // static hold: its notes are sounding
+  bool stopPending_ = false; // a retrigger: the sounding notes end at the next run
+  std::array<int8_t, 4096> shift_{};  // per clip note: pitch shift it started with (-128: skipped)
 };
 
 
@@ -392,6 +410,9 @@ class OscVoice {
   int olaPos_ = 512, fmPos_ = 0;
   double specPos_ = 0;
   bool specStarted_ = false;
+  // J-219: Track Receipt coverage of the sample / multisample zone this voice plays.
+  tap::Cover cover_;
+  const Sample* coverSmp_ = nullptr;
 };
 // sub / noise
 struct SubVoice {
@@ -401,6 +422,7 @@ struct SubVoice {
 };
 struct NoiseVoice {
   double pos = 0;
+  tap::Cover cover;  // J-219: Track Receipt coverage of a noise file
   float lp = 0;
   float tz[2][2] = {};  // tone filter state (L / R)
   bool done = false;

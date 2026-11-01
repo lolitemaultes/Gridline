@@ -1,5 +1,6 @@
 // Gridline — "plasma" pack: the oscillator mapping editor (key and velocity
-// zone of each main oscillator, with FOLD and WARP), opened from the strip.
+// zone of each main oscillator, with FOLD and WARP, and the noise oscillator's key
+// zone with FOLD), opened from the strip.
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -9,7 +10,7 @@
 namespace gl::packs::plasma::ui {
 
 namespace {
-constexpr float kPx = 300, kPy = 420, kPw = 740, kPh = kStripY - 6 - kPy;
+constexpr float kPx = 300, kPy = 380, kPw = 740, kPh = kStripY - 6 - kPy;
 constexpr float kLabelW = 150, kRowH = 52;
 
 std::string noteName(int k) {
@@ -82,21 +83,33 @@ void mappingBody(Ctx& c) {
       }
     }
   }
-  for (int o = 0; o < kOscs; ++o) {
+  for (int o = 0; o <= kOscs; ++o) {  // A, B, C and (J-215) the noise oscillator's key range
+    const bool noise = o == kOscs;
     const float ry = kPy + 52 + o * kRowH;
     ImGui::PushID(o + 9500);
     hline(c, kPx + 8, kPx + kPw - 8, ry - 3, c.P.line);
-    const char* nm[] = {"OSC A", "OSC B", "OSC C"};
-    const bool on = vali(c, oscP(o, O_Enable)) != 0;
+    const char* nm[] = {"OSC A", "OSC B", "OSC C", "NOISE"};
+    const bool on = vali(c, noise ? noiseP(N_Enable) : oscP(o, O_Enable)) != 0;
     text(c, kPx + 12, ry + 6, nm[o], on ? c.P.text : c.P.textFaint, ty::kTitle, true);
-    checkBox(c, oscP(o, O_MapFold), kPx + 12, ry + 26, "FOLD", ty::kCap);
-    if (ImGui::IsItemHovered()) c.a.setHint("Fold: keys outside the range move into it by octaves (otherwise they are left out)");
-    checkBox(c, oscP(o, O_MapWarp), kPx + 70, ry + 26, "WARP", ty::kCap);
-    if (ImGui::IsItemHovered()) c.a.setHint("Warp: outside its range the oscillator stays silent but still feeds FM / PD / AM / RM warps");
+    checkBox(c, noise ? tailP(T_NKeyFold) : oscP(o, O_MapFold), kPx + 12, ry + 26, "FOLD", ty::kCap);
+    if (ImGui::IsItemHovered())
+      c.a.setHint(noise ? "Fold: keys outside the range wrap into it, its width at a time (otherwise the noise is left out)"
+                        : "Fold: keys outside the range move into it by octaves (otherwise they are left out)");
+    if (!noise) {
+      checkBox(c, oscP(o, O_MapWarp), kPx + 70, ry + 26, "WARP", ty::kCap);
+      if (ImGui::IsItemHovered()) c.a.setHint("Warp: outside its range the oscillator stays silent but still feeds FM / PD / AM / RM warps");
+    }
+    const float y0 = ry + 4, h = kRowH - 14;
+    if (noise && u.mapVel) {  // the noise has a key range only
+      wellRect(c, bx0, y0, bw, h, 3);
+      textMid(c, bx0, bx1, y0 + h * 0.5f, "Key range only", c.P.textFaint, ty::kCap, false);
+      ImGui::PopID();
+      continue;
+    }
     // range bar
     const int kMin = u.mapVel ? O_VelMin : O_KeyMin, kMax = u.mapVel ? O_VelMax : O_KeyMax;
-    const float vmin = std::round(valf(c, oscP(o, kMin))), vmax = std::round(valf(c, oscP(o, kMax)));
-    const float y0 = ry + 4, h = kRowH - 14;
+    const int pMin = noise ? tailP(T_NKeyMin) : oscP(o, kMin), pMax = noise ? tailP(T_NKeyMax) : oscP(o, kMax);
+    const float vmin = std::round(valf(c, pMin)), vmax = std::round(valf(c, pMax));
     wellRect(c, bx0, y0, bw, h, 3);
     if (!u.mapVel) {
       for (int k = 0; k < 128; ++k) {
@@ -137,18 +150,18 @@ void mappingBody(Ctx& c) {
     }
     if (ImGui::IsItemActive()) {
       const float v = std::floor(val);
-      if (mode == 1) setv(c, oscP(o, kMin), std::min(v, vmax), true);
-      if (mode == 2) setv(c, oscP(o, kMax), std::max(v, vmin), true);
+      if (mode == 1) setv(c, pMin, std::min(v, vmax), true);
+      if (mode == 2) setv(c, pMax, std::max(v, vmin), true);
       if (mode == 3) {
         const float span = vmax - vmin;
         const float nmin = std::clamp(std::floor(val - grab), static_cast<float>(lo), static_cast<float>(hi) - span);
-        setv(c, oscP(o, kMin), nmin, true);
-        setv(c, oscP(o, kMax), nmin + span, true);
+        setv(c, pMin, nmin, true);
+        setv(c, pMax, nmin + span, true);
       }
     }
     if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
-      setv(c, oscP(o, kMin), lo);
-      setv(c, oscP(o, kMax), hi);
+      setv(c, pMin, lo);
+      setv(c, pMax, hi);
     }
     if (ImGui::IsItemHovered())
       c.a.setHint(std::string(u.mapVel ? "Velocity" : "Key") + " range of " + nm[o] + ": drag the ends or the range \xC2\xB7 double-click: full range");

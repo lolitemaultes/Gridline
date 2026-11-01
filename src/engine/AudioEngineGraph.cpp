@@ -10,6 +10,7 @@
 #include <cstring>
 #include <thread>
 #include "AudioEngine.h"
+#include "SampleTap.h"
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386__)
 #include <immintrin.h>
 #endif
@@ -120,6 +121,7 @@ void AudioEngine::runChannel(size_t ci, int worker) {
   const ProgChannel& ch = p->channels[ci];
   ChannelRuntime* rt = ch.rt.get();
   if (!rt || !rt->gen) return;
+  tap::OwnerScope tapOwner(ch.id, bc_.ctx.tick);  // J-219: Track Receipt passes (no-op otherwise)
   const uint64_t t0 = bc_.profile ? nowNs() : 0;
   Scratch& sc = scratch_[static_cast<size_t>(worker)];
   float* cL = sc.chL;
@@ -276,6 +278,7 @@ void AudioEngine::runMixer(size_t idx, int worker) {
   if (idx >= bc_.nb) return;
   const ProgMixer& m = p->mixer[idx];
   MixerRuntime* rt = m.rt.get();
+  tap::OwnerScope tapOwner(m.id, bc_.ctx.tick);  // J-219: Track Receipt passes (effects that play files)
   const uint64_t t0 = bc_.profile ? nowNs() : 0;
   uint64_t slotNs = 0;
   Scratch& scr = scratch_[worker];

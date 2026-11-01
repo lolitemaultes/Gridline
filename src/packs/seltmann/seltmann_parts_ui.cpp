@@ -472,14 +472,15 @@ void drawSteps(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const
   const float sy0 = p0.y + 54, sy1 = p1.y - 44;
   const float sx0 = p0.x, sw = W;
   const int ns = static_cast<int>(m.pattern.steps.size());
-  double units = 0;
-  for (const auto& s : m.pattern.steps) units += 1 + s.ties;
+  // J-214: blocks as long as the steps last (own lengths too), over one cycle (with the rest to the bar line)
+  const double units = std::max(1e-9, cycleBeats(m));
   const int nSl = static_cast<int>(m.slices.size());
   double u = 0;
   for (int i = 0; i < ns; ++i) {
     const Step& s = m.pattern.steps[static_cast<size_t>(i)];
-    const float x0 = sx0 + static_cast<float>(u / units) * sw, x1 = sx0 + static_cast<float>((u + 1 + s.ties) / units) * sw;
-    u += 1 + s.ties;
+    const double len = stepBeats(m.pattern, i);
+    const float x0 = sx0 + static_cast<float>(u / units) * sw, x1 = sx0 + static_cast<float>((u + len) / units) * sw;
+    u += len;
     const ImVec2 q0(x0 + 1.5f, sy0), q1(x1 - 1.5f, sy1);
     const int k = stepSlice(m.pattern, s, nSl);
     const int colorSlot = s.src == kRest ? -1 : k;
@@ -600,8 +601,15 @@ void drawSteps(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const
       ImGui::SetNextItemWidth(140);
       if (ImGui::SliderFloat(i18n::tr("Start"), &off, 0, 90, "%.0f%%")) st.offset = off / 100, ch = true;
       ImGui::Separator();
-      if (ImGui::MenuItem(i18n::tr("Longer (tie the next unit)"))) ++st.ties, ch = true;
-      if (st.ties > 0 && ImGui::MenuItem(i18n::tr("Shorter"))) --st.ties, ch = true;
+      if (st.beats > 0) {  // J-214: a step with its own length: a unit more or less of it
+        const double unit = std::max(kMinStepBeats, nm.pattern.unitBeats);
+        if (ImGui::MenuItem(i18n::tr("Longer (tie the next unit)"))) ch = setStepBeats(nm, i, st.beats + unit) || ch;
+        if (st.beats > unit + 1e-9 && ImGui::MenuItem(i18n::tr("Shorter"))) ch = setStepBeats(nm, i, st.beats - unit) || ch;
+        if (ImGui::MenuItem(i18n::tr("Reset length"))) ch = setStepBeats(nm, i, 0) || ch;
+      } else {
+        if (ImGui::MenuItem(i18n::tr("Longer (tie the next unit)"))) ++st.ties, ch = true;
+        if (st.ties > 0 && ImGui::MenuItem(i18n::tr("Shorter"))) --st.ties, ch = true;
+      }
       bool structural = false;
       if (ImGui::MenuItem(i18n::tr("Duplicate step"))) {
         nm.pattern.steps.insert(nm.pattern.steps.begin() + i + 1, st);

@@ -25,6 +25,7 @@
 #include "EditTools.h"
 #include "../core/NoteTools.h"
 #include "Theme.h"
+#include "TrackIcons.h"
 #include "Widgets.h"
 #include "SmoothScrollUi.h"
 #include "Windows.h"
@@ -629,7 +630,10 @@ void drawChannelRack(App& a) {
       }
       // J-84: a name cut short by a narrow rack shows in full in a tooltip.
       const float nameFont = theme::kFontCaption + 1;
-      const float nameTextW = nameW - 20;  // J-186: the play light takes the button's right end
+      // J-211: the channel's icon before its name, when the button has room for both.
+      const float iconBox = c.icon > 0 && nameW >= 96 ? trackicons::boxFor(cellH - 4, 14.0f) : 0.0f;
+      const float iconW = iconBox > 0 ? iconBox + 4 : 0.0f;
+      const float nameTextW = nameW - 20 - iconW;  // J-186: the play light takes the button's right end
       const bool truncated = a.fontRegular->CalcTextSizeA(nameFont, 1e9f, 0, c.name.c_str()).x > nameTextW;
       if (truncated) {
         ++shown.truncated;
@@ -654,7 +658,10 @@ void drawChannelRack(App& a) {
       dl->AddRectFilled(np, ImVec2(np.x + nameW, np.y + cellH - 1), bg, theme::kRadiusSm);
       dl->AddLine(ImVec2(np.x + 5, np.y + 0.5f), ImVec2(np.x + nameW - 2, np.y + 0.5f), theme::withAlpha(P.paper, P.dark ? 0.12f : 0.5f));
       dl->AddRectFilled(np, ImVec2(np.x + 4, np.y + cellH), theme::content(c.color), theme::kRadiusSm, ImDrawFlags_RoundCornersLeft);
-      theme::textEllipsis(dl, a.fontRegular, nameFont, ImVec2(np.x + 10, std::round(np.y + (cellH - 13) * 0.5f) - 1),
+      if (iconBox > 0)
+        trackicons::draw(dl, c.icon, ImVec2(std::round(np.x + 9 + iconBox * 0.5f), std::round(np.y + cellH * 0.5f)), iconBox,
+                         c.muted ? P.textFaint : P.textDim);
+      theme::textEllipsis(dl, a.fontRegular, nameFont, ImVec2(np.x + 10 + iconW, std::round(np.y + (cellH - 13) * 0.5f) - 1),
                           nameTextW, c.muted ? P.textFaint : selected && P.dark ? P.paper : P.text, c.name.c_str());
       // J-186: the play light (lit while the channel plays, fading after).
       drawPlayLight(dl, ImVec2(np.x + nameW - 8, np.y + 4), ImVec2(np.x + nameW - 4, np.y + cellH - 5), rackPlayLight(a, c, ci));

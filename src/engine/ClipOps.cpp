@@ -7,6 +7,7 @@
 #include "../core/ClipLoop.h"
 #include "../core/ClipRate.h"
 #include "../core/PluginParams.h"
+#include "../core/TrackReceipt.h"
 #include "../packs/edison/edison.h"
 #include "Render.h"
 #include "Sample.h"
@@ -387,6 +388,15 @@ std::string renderClipStretch(Song& song, ObjectId id, double timeFactor, double
   const Channel old = *song.channel(c->source);
   std::string path;
   if (!writeAudio(dir, old.name + " stretched", out, path)) return "";
+  {  // J-219: the stretched file is [a, b) of the original (Track Receipt)
+    receipt::Origin o;
+    o.source = old.plugin.data;
+    o.start = a, o.end = b;
+    o.speed = out.frames() > 0 ? (b - a) / (static_cast<double>(out.frames()) / out.rate) : 1.0;
+    o.reverse = c->reverse;
+    o.kind = "stretch";
+    receipt::writeOrigin(path, o);
+  }
   ObjectId ch = addSamplerChannel(song, old.name + " (stretched)", path, old.mixerTrack, old.color);
   c = song.clip(id);
   c->source = ch;
@@ -401,6 +411,30 @@ std::string renderClipStretch(Song& song, ObjectId id, double timeFactor, double
 }
 
 namespace {
+// J-219: a render names the files that went into it (Track Receipt maps its
+// uses back to them; which parts of them is not known).
+void noteRender(const Song& song, const std::set<ObjectId>& keep, const std::string& path) {
+  receipt::Origin o;
+  o.rangeKnown = false;
+  o.kind = "render";
+  std::set<std::string> seen;
+  for (const auto& c : song.playlist) {
+    if (!keep.count(c.id) || c.muted) continue;
+    std::vector<ObjectId> chans;
+    if (c.kind == ClipKind::Audio) chans.push_back(c.source);
+    else if (const Pattern* p = song.pattern(c.pattern)) {
+      for (const auto& [ch, st] : p->steps) chans.push_back(ch);
+      for (const auto& [ch, n] : p->notes) chans.push_back(ch);
+    }
+    for (ObjectId id : chans)
+      if (const Channel* ch = song.channel(id); ch && !ch->plugin.data.empty() && ch->plugin.data.front() == '/' && seen.insert(ch->plugin.data).second)
+        o.sources.push_back(ch->plugin.data);
+  }
+  if (o.sources.empty()) return;
+  o.source = o.sources.front();
+  receipt::writeOrigin(path, o);
+}
+
 // Renders `keep` clips over [a, b) with a neutral master. Empty on failure.
 bool renderSpan(const Song& song, const std::set<ObjectId>& keep, Tick a, Tick b, double sr, ed::Audio& out) {
   Song r = song;
@@ -445,7 +479,9 @@ std::string renderClipsToWav(const Song& song, const std::set<ObjectId>& keep, T
   ed::Audio au;
   if (b <= a || !renderSpan(song, keep, a, b, sr, au)) return "";
   std::string path;
-  return writeAudio(dir, name, au, path) ? path : std::string();
+  if (!writeAudio(dir, name, au, path)) return std::string();
+  noteRender(song, keep, path);
+  return path;
 }
 
 ObjectId consolidateClips(Song& song, const std::set<ObjectId>& clips, const std::string& dir, double sr, bool replace) {
@@ -471,6 +507,7 @@ ObjectId consolidateClips(Song& song, const std::set<ObjectId>& clips, const std
   if (!renderSpan(song, clips, a, b, sr, au)) return kNoId;
   std::string path;
   if (!writeAudio(dir, name + " consolidated", au, path)) return kNoId;
+  noteRender(song, clips, path);
   ObjectId ch = addSamplerChannel(song, name + " (rendered)", path, kNoId, 0x8A9BA8);
   if (replace) song.playlist.erase(std::remove_if(song.playlist.begin(), song.playlist.end(), [&](const Clip& c) {
                                      return clips.count(c.id) && c.kind != ClipKind::Automation;

@@ -168,7 +168,8 @@ void drawScriptDialog(App& a, Session& s) {
   auto it = runs.find(s.key);
   if (it == runs.end() || !it->second.script.loaded()) {
     ImGui::TextDisabled("No script");
-    if (ImGui::Button(i18n::tr("Close"), ImVec2(110, 0))) ImGui::CloseCurrentPopup();
+    ui::DialogFooter(ui::ButtonRowWidth(1, 96));
+    if (ui::TextButton("Close", false, 96)) ImGui::CloseCurrentPopup();
     return;
   }
   ScriptRun& r = it->second;
@@ -221,29 +222,28 @@ void drawScriptDialog(App& a, Session& s) {
   // Listen to the processed frames before accepting.
   const bool canPlay = r.have && r.last.ok && r.last.preview.frames() > 0;
   ImGui::BeginDisabled(!canPlay);
-  if (ImGui::Button(i18n::tr("Play preview"), ImVec2(110, 0))) {
+  if (ui::TextButton("Play preview", false, 120)) {
     stopPlay(a, s);
     r.pv = toSample(r.last.preview, "");
     a.engine.preview(r.pv, true);  // J-112: Loupe's own playback
   }
   ImGui::EndDisabled();
-  ImGui::SameLine();
-  if (ImGui::Button(i18n::tr("Stop"), ImVec2(70, 0)) && r.pv) {
+  ImGui::SameLine(0, theme::kS2);
+  if (ui::TextButton("Stop", false, 96) && r.pv) {
     a.engine.preview(nullptr);
     r.pv = nullptr;
   }
-  ImGui::SameLine();
-  if (ImGui::Button(i18n::tr("New variation"), ImVec2(110, 0))) {
+  ImGui::SameLine(0, theme::kS2);
+  if (ui::TextButton("New variation", false, 120)) {
     r.seed = r.seed * 1664525u + 1013904223u + 7u;
     r.sched.changed(wallNow(), false);
   }
-  ImGui::SameLine();
+  ImGui::SameLine(0, theme::kS2);
   ImGui::TextDisabled("%.1f ms", r.runMs);
-  ImGui::Spacing();
-  ImGui::Separator();
-  bool accept = ImGui::Button(i18n::tr("Accept"), ImVec2(110, 0));
-  ImGui::SameLine();
-  bool cancel = ImGui::Button(i18n::tr("Cancel"), ImVec2(110, 0));
+  ui::DialogFooter(ui::ButtonRowWidth(2, 96));
+  const bool cancel = ui::TextButton("Cancel", false, 96);
+  ImGui::SameLine(0, theme::kS2);
+  const bool accept = ui::TextButton("Accept", true, 96);
   if (accept && (r.sched.needsFull() || !r.have)) {
     runNow(a, s, r, true);
     r.sched.ran(script::PreviewScheduler::Run::Full, wallNow(), r.lastLimitHit);

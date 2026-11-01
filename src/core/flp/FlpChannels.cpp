@@ -14,6 +14,7 @@
 #include "../../engine/Sample.h"
 #include "../../engine/TimeStretch.h"
 #include "Flp.h"
+#include "../TrackIconSet.h"
 
 namespace gl::flp {
 
@@ -158,6 +159,7 @@ void importChannels(Context& c) {
     ch.name.clear();
     if (const Event* e = find(evs, 203)) ch.name = e->text();
     if (const Event* e = find(evs, 155)) ch.flIcon = static_cast<int>(std::min<uint32_t>(e->value(), 65535));  // J-39
+    ch.icon = trackicon::fromFl(ch.flIcon);  // J-211: shown with the matching Gridline icon
     if (ch.name.empty())
       if (const Event* e = find(evs, 192)) ch.name = e->text();
     if (ch.name.empty()) ch.name = "Channel " + std::to_string(idx + 1);

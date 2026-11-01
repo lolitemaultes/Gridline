@@ -1,0 +1,9 @@
+<!-- Gridline original (GPL-3.0), drawn on the Lucide 24-unit grid and stroke rules: track icon: a little pixel figure -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="9" y="2.5" width="6" height="5" fill="currentColor" stroke="none" />
+  <rect x="7.5" y="8.5" width="9" height="6.5" fill="currentColor" stroke="none" />
+  <rect x="4.5" y="8.5" width="2" height="5" fill="currentColor" stroke="none" />
+  <rect x="17.5" y="8.5" width="2" height="5" fill="currentColor" stroke="none" />
+  <rect x="8" y="16" width="3" height="5.5" fill="currentColor" stroke="none" />
+  <rect x="13" y="16" width="3" height="5.5" fill="currentColor" stroke="none" />
+</svg>

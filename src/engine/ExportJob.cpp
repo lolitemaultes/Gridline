@@ -7,6 +7,7 @@
 #include "../core/Automation.h"
 #include "../core/MidiFile.h"
 #include "Loudness.h"
+#include "TrackReceiptPass.h"
 
 namespace fs = std::filesystem;
 
@@ -72,10 +73,12 @@ struct Writer {
       if (f == ExportFormat::Wav) o.meta = meta;
       const std::string path = (fs::path(s.folder) / (stem + exportFormatExt(f))).string();
       std::string err;
-      if (writeAudioFile(path, buf, s.render.sampleRate, o, &err))
+      if (writeAudioFile(path, buf, s.render.sampleRate, o, &err)) {
         out.files.push_back(path);
-      else
+        receipt::writeRenderOrigin(song, path);  // J-219: a later use of this render maps back (Track Receipt)
+      } else {
         out.errors.push_back(fs::path(path).filename().string() + ": " + err);
+      }
     }
   }
 };

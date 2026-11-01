@@ -20,6 +20,7 @@
 #include "Params.h"
 #include "PluginParams.h"
 #include "PluginStandIn.h"
+#include "TrackIconSet.h"
 #include "TrackModes.h"
 
 namespace gl {
@@ -206,6 +207,15 @@ Json pluginToJson(const PluginState& p) {
   return j;
 }
 
+// J-211: a track / channel icon. Projects saved before Gridline showed FL's
+// icons have only the FL number: the matching Gridline icon is shown for it.
+int iconFromJson(const Json& j, int flIcon) {
+  if (!j.find("icon")) return trackicon::fromFl(flIcon);
+  const double v = j.num("icon", 0);  // an id out of range is no icon (not the nearest one)
+  const int ic = v >= 1 && v <= trackicon::maxId() ? jsonInt<int>(v) : 0;
+  return trackicon::info(ic) ? ic : 0;
+}
+
 // ---- Channel note settings, layers, display groups and per-note properties.
 // Every field is written only when it differs from its default, so projects
 // that do not use them are unchanged and older readers ignore the extra keys
@@ -247,6 +257,7 @@ void channelExtrasToJson(const Channel& c, Json& jc) {
   if (c.swingTruncate) jc.object["swingTruncate"] = boolean(true);
   if (c.audioClip) jc.object["audioClip"] = boolean(true);  // J-39
   if (c.flIcon) jc.object["flIcon"] = num(c.flIcon);
+  if (c.icon || c.flIcon) jc.object["icon"] = num(c.icon);  // J-211
 }
 
 void channelExtrasFromJson(const Json& jc, Channel& c) {
@@ -281,6 +292,7 @@ void channelExtrasFromJson(const Json& jc, Channel& c) {
   c.swingTruncate = flag(jc, "swingTruncate");
   c.audioClip = flag(jc, "audioClip");
   c.flIcon = jsonInt<int>(std::clamp(jc.num("flIcon", 0), 0.0, 65535.0));
+  c.icon = iconFromJson(jc, c.flIcon);  // J-211
 }
 
 void noteToJson(const Note& n, Json& jn) {
@@ -416,6 +428,7 @@ void arrangementToJson(const Song& s, Json& j) {
       if (a.max != 1.0f) ja.object["max"] = num(a.max);
       if (a.loop > 0) ja.object["loop"] = num(static_cast<double>(a.loop));
       if (a.flCurves) ja.object["flCurves"] = boolean(true);  // J-41 (absent: the pre-J-41 curves)
+      if (a.events) ja.object["events"] = boolean(true);      // J-210
       Json pts = Json::makeArray();
       for (const auto& p : a.points) {
         Json jp = Json::makeArray();  // [pos, value, tension, shape(, frac(, fine))]
@@ -589,6 +602,7 @@ void patternExtrasToJson(const Pattern& p, Json& jp) {
     if (lane.max != 1.0f) jl.object["max"] = num(lane.max);
     if (lane.loop > 0) jl.object["loop"] = num(static_cast<double>(lane.loop));
     if (lane.flCurves) jl.object["flCurves"] = boolean(true);
+    if (lane.events) jl.object["events"] = boolean(true);  // J-210
     arr.array.push_back(std::move(jl));
   }
   jp.object["automation"] = std::move(arr);
@@ -619,6 +633,7 @@ void patternExtrasFromJson(const Json& jp, Pattern& p, const Song& s) {
     lane.max = static_cast<float>(std::clamp(jl.num("max", 1), 0.0, 1.0));
     lane.loop = std::max<Tick>(0, jsonTick(jl.num("loop", 0)));
     lane.flCurves = flag(jl, "flCurves");
+    lane.events = flag(jl, "events");
     if (lane.points.empty() || !describeParam(s, {lane.owner, lane.index})) continue;
     bool dup = false;
     for (const auto& l : p.automation) dup = dup || (l.owner == lane.owner && l.index == lane.index);
@@ -635,6 +650,7 @@ void trackExtrasToJson(const PlaylistTrack& t, Json& jt) {
   if (t.folded) jt.object["folded"] = boolean(true);
   if (t.locked) jt.object["locked"] = boolean(true);
   if (t.flIcon) jt.object["flIcon"] = num(t.flIcon);  // J-39
+  if (t.icon || t.flIcon) jt.object["icon"] = num(t.icon);        // J-211
   // PL-08: track mode and links.
   if (t.mode != TrackMode::Unassigned) jt.object["mode"] = num(static_cast<int>(t.mode));
   if (t.mixer != kNoId) jt.object["mixer"] = num(t.mixer);
@@ -651,6 +667,7 @@ void trackExtrasFromJson(const Json& jt, PlaylistTrack& t) {
   t.folded = flag(jt, "folded");
   t.locked = flag(jt, "locked");
   t.flIcon = jsonInt<int>(std::clamp(jt.num("flIcon", 0), 0.0, 65535.0));  // J-39
+  t.icon = iconFromJson(jt, t.flIcon);                                         // J-211
   t.mode = static_cast<TrackMode>(e("mode", 0, static_cast<int>(TrackMode::Count)));  // PL-08 (stale links dropped after load)
   t.mixer = jsonInt<ObjectId>(std::max(0.0, jt.num("mixer", 0)));
   t.channel = jsonInt<ObjectId>(std::max(0.0, jt.num("channel", 0)));
@@ -846,7 +863,7 @@ Json mixerTrackToJson(const MixerTrack& m) {
     }
   }
   // --- J-12 mixer parity (additive, written only when non-default) ---
-  if (m.icon) jm.object["icon"] = num(m.icon);
+  if (m.icon || m.flIcon) jm.object["icon"] = num(m.icon);
   if (m.disabled) jm.object["disabled"] = boolean(true);
   if (m.dock) jm.object["dock"] = num(m.dock);
   if (m.latencyOffset) jm.object["latencyOffset"] = num(m.latencyOffset);
@@ -876,6 +893,10 @@ Json songToJson(const Song& s, bool withFlOrigin) {
   if (!s.swingNotes) j.object["swingNotes"] = boolean(false);  // J-138
   j.object["masterPitch"] = num(s.masterPitch);
   if (!s.autoCrossfades) j.object["autoCrossfades"] = boolean(false);  // J-38
+  if (!s.trackReceipt.empty()) {  // J-219: the Track Receipt's typed fields
+    Json tr;
+    if (jsonParse(s.trackReceipt, tr) && tr.type == Json::Type::Object) j.object["trackReceipt"] = std::move(tr);
+  }
   j.object["nextId"] = num(s.nextId);
 
   Json chans = Json::makeArray();
@@ -1167,7 +1188,7 @@ void mixerTrackFromJson(const Json& jm, MixerTrack& m) {
       m.eqFreq[b] = static_cast<float>(std::clamp(jb.num("freq", kStripEqDefFreq[b]), 20.0, 20000.0));
       m.eqQ[b] = static_cast<float>(std::clamp(jb.num("q", kStripEqDefQ), 0.1, 10.0));
     }
-  m.icon = jsonInt<int>(std::clamp(jm.num("icon", 0), 0.0, 255.0));
+  m.icon = iconFromJson(jm, m.flIcon);  // J-211 (flIcon is read above)
   m.disabled = flag(jm, "disabled");
   m.dock = jsonInt<int>(std::clamp(jm.num("dock", 0), -1.0, 1.0));
   m.latencyOffset = jsonInt<int>(std::clamp(jm.num("latencyOffset", 0), 0.0, static_cast<double>(kMaxManualLatency)));
@@ -1262,6 +1283,7 @@ void automationClipFromJson(const Json& ja, AutomationClip& a) {
   a.max = static_cast<float>(std::clamp(ja.num("max", 1), 0.0, 1.0));
   a.loop = std::max<Tick>(0, jsonTick(ja.num("loop", 0)));
   a.flCurves = flag(ja, "flCurves");
+  a.events = flag(ja, "events");
   if (const Json* pts = ja.find("points"); pts && pts->is(Json::Type::Array))
     for (const auto& jp : pts->array) {
       if (!jp.is(Json::Type::Array) || jp.array.size() < 2) continue;
@@ -1306,6 +1328,7 @@ bool songFromJson(const Json& src, Song& out, std::string* err) {
   s.swingNotes = flag(j, "swingNotes", true);  // J-138
   s.masterPitch = static_cast<float>(std::clamp(j.num("masterPitch", 0), -12.0, 12.0));
   s.autoCrossfades = flag(j, "autoCrossfades", true);  // J-38
+  if (const Json* tr = j.find("trackReceipt"); tr && tr->type == Json::Type::Object) s.trackReceipt = jsonCompact(*tr);  // J-219
 
   std::set<ObjectId> ids;
   ObjectId maxId = kSongId;

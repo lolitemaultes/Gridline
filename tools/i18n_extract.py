@@ -59,6 +59,7 @@ def source_files():
     files += glob.glob(os.path.join(ROOT, "src", "plugin", "*.cpp"))  # PH-09: the plugin build's own panel and messages
     files += glob.glob(os.path.join(ROOT, "src", "plugin", "*.mm"))  # J-64: Cocoa views, hosted plugins' windows, Audio Unit
     files += glob.glob(os.path.join(ROOT, "src", "collab", "*.cpp"))  # J-111: collaboration messages (codes, refusals, connection test)
+    files.append(os.path.join(ROOT, "src", "core", "TrackIconSet.cpp"))  # J-211: track icon and category names
     return sorted(files)
 
 

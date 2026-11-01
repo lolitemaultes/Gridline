@@ -251,8 +251,18 @@ std::vector<Place> layoutClips(const std::vector<Tick>& lengths, int track, Tick
 
 // --------------------------------------------------------------- planning
 
+// J-213: `name` is `base` itself or `base` numbered ("Base #2", "Base #12").
+bool numberedName(const std::string& name, const std::string& base) {
+  if (base.empty() || name.compare(0, base.size(), base) != 0) return false;
+  if (name.size() == base.size()) return true;
+  if (name.size() < base.size() + 3 || name.compare(base.size(), 2, " #") != 0) return false;
+  for (size_t i = base.size() + 2; i < name.size(); ++i)
+    if (name[i] < '0' || name[i] > '9') return false;
+  return true;
+}
+
 bool autoChannelName(const std::string& name, const std::string& pluginName, const std::string& oldData) {
-  if (name.empty() || name == pluginName) return true;
+  if (name.empty() || numberedName(name, pluginName)) return true;
   if (oldData.empty() || oldData.size() > 4096 || oldData.find('\n') != std::string::npos) return false;
   const std::string stem = fs::path(oldData).stem().string();
   return !stem.empty() && name == stem;

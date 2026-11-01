@@ -120,6 +120,35 @@ file(READ "${OUT}/Imported/Fake Song Take One.wav.source.json" src)
 check("the source keeps the link and uploader" "${src}" MATCHES "abc123.*Test Uploader|Test Uploader.*abc123")
 file(REMOVE_RECURSE "${OUT}/Imported")
 
+# ---- browser only in a collaborative project ----
+# Collaborators receive only the files the project uses: "Browser only" adds a channel (no clip), so
+# the file joins the project's shared Audio folder.
+set(ENV{GL_FAKE_SCENARIO} "ok")
+run(collab 80 "4 dump
+5 collab profile Alex
+8 collab new \"${OUT}/CollabSong\"
+12 urlimport placement browser
+13 urlimport open
+14 urlimport url ${link}
+15 urlimport fetch
+16 waitfor urlimport-preview 60
+20 urlimport import
+21 waitfor urlimport-done 60
+24 dump
+25 channels
+26 waitfor never 2
+30 quit
+")
+dump(4)
+dump(24)
+check("no clip is placed (${clips_4} -> ${clips_24})" clips_24 EQUAL clips_4)
+check("a channel named by the title is added" "${out}" MATCHES "Fake Song: Take/One")
+string(REGEX MATCH "channel [0-9]+ Fake Song: Take/One type gl\\.sampler data ([0-9a-f]+\\.wav)" m "${out}")
+set(sharedWav "${CMAKE_MATCH_1}")
+check("the channel plays the shared copy (${sharedWav})" sharedWav MATCHES "\\.wav$")
+check("that file is in the collaborative project's Audio folder" EXISTS "${OUT}/CollabSong/Audio/${sharedWav}")
+file(REMOVE_RECURSE "${OUT}/CollabSong" "${OUT}/Imported")
+
 # ---- playlist ----
 set(ENV{GL_FAKE_SCENARIO} "playlist")
 run(playlist 60 "4 dump

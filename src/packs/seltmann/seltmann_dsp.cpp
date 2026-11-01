@@ -9,6 +9,7 @@
 // aux data never changes once built; warp renders are retired with a grace
 // period long after the audio thread could still read them.
 #include "../Packs.h"
+#include "../../engine/SampleTap.h"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -181,8 +182,8 @@ struct RtSlice {
 };
 struct RtStep {
   int slice = -1;
-  double unitStart = 0;  // units from the pattern start
-  int units = 1;
+  double start = 0;      // beats from the pattern start (unswung)
+  bool swings = false;   // starts on an odd unit (swing delays it)
   float pitch = 0, gain = 1, length = 1, offset = 0;
   bool reverse = false;
   int stutter = 1;
@@ -195,7 +196,9 @@ struct SeltmannAux final : AuxData {
   std::vector<RtSlice> slices;
   std::vector<RtStep> steps;
   std::array<int, kSlotCount> slots{};
-  double unitBeats = 1, patUnits = 0;
+  double unitBeats = 1;
+  double stepsBeats = 0;  // J-214: where the last step ends (beats)
+  double patBeats = 0;    // one cycle (the rest up to the bar line included)
   std::shared_ptr<WarpSlot> warp;
 };
 
@@ -233,12 +236,15 @@ std::shared_ptr<SeltmannAux> buildAux(const Model& m, SamplePtr src, const std::
     x->slices.push_back(r);
   }
   const int n = static_cast<int>(x->slices.size());
-  double u = 0;
+  // J-214: every step at its own place in the sequence (own lengths, default lengths in units)
+  double units = 0, own = 0;
   for (const auto& st : m.pattern.steps) {
     RtStep r;
     r.slice = stepSlice(m.pattern, st, n);
-    r.unitStart = u;
-    r.units = 1 + st.ties;
+    r.start = units * m.pattern.unitBeats + own;
+    r.swings = swingDelay(m.pattern, r.start, 1.0) > 0;
+    if (st.beats > 0) own += st.beats;
+    else units += 1 + st.ties;
     r.pitch = st.pitch;
     r.gain = static_cast<float>(dbToGain(st.gain));
     r.length = st.length;
@@ -246,10 +252,10 @@ std::shared_ptr<SeltmannAux> buildAux(const Model& m, SamplePtr src, const std::
     r.reverse = st.reverse;
     r.stutter = std::clamp(st.stutter, 1, 16);
     x->steps.push_back(r);
-    u += r.units;
   }
-  x->patUnits = u;
   x->unitBeats = std::max(1.0 / 64, m.pattern.unitBeats);
+  x->stepsBeats = m.pattern.stepsBeats();
+  x->patBeats = cycleBeats(m);
   x->slots.fill(-1);
   for (int k = 0; k < kSlotCount; ++k) {
     const int v = k < static_cast<int>(m.pattern.slots.size()) ? m.pattern.slots[static_cast<size_t>(k)] : -1;
@@ -329,6 +335,7 @@ class SeltmannGen final : public Generator {
     double pos = 0, lo = 0, hi = 0, rate = 1;
     int dir = 1;
     bool warped = false;
+    double wTempo = 0, wRate = 0;  // J-219: the warped render this voice plays (tempo, source rate)
     double gain = 1;
     double played = 0;       // output samples since the start
     double left = -1;        // output samples until the gate closes (-1 = while held)
@@ -439,11 +446,16 @@ class SeltmannGen final : public Generator {
   }
 
   void render(float* L, float* R, int n) override {
+    // J-219: Track Receipt coverage, one run per voice (source frames of the file).
+    const bool tapOn = tap::active() && aux_ && aux_->src;
+    std::array<tap::Run, kMaxVoices> runs;
+    if (tapOn)
+      for (auto& rn : runs) rn.begin(aux_->src.get());
     for (int i = 0; i < n; ++i) {
       if (patOn_ && aux_ && !aux_->steps.empty()) patternTick(blockOff_ + i, i);
       double l = 0, r = 0;
       for (auto& v : voices_)
-        if (v.on) voiceSample(v, l, r);
+        if (v.on) voiceSample(v, l, r, tapOn ? &runs[static_cast<size_t>(&v - voices_.data())] : nullptr);
       if (filterOn_) {
         l = svf(l, ic1L_, ic2L_);
         r = svf(r, ic1R_, ic2R_);
@@ -549,6 +561,8 @@ class SeltmannGen final : public Generator {
     v.R = s.R;
     v.n = s.n;
     v.warped = s.warped;
+    if (s.warped && render_) v.wTempo = render_->tempo, v.wRate = render_->rate;  // J-219
+    if (aux_ && aux_->src) tap::play(aux_->src.get());
     v.lo = std::clamp(mapFrame(s, sl.beatA, static_cast<double>(sl.a)), 0.0, static_cast<double>(s.n - 1));
     v.hi = std::clamp(mapFrame(s, sl.beatB, static_cast<double>(sl.b)), v.lo + 1, static_cast<double>(s.n));
     if (stepOffset > 0) v.lo = std::min(v.hi - 1, v.lo + (v.hi - v.lo) * stepOffset);
@@ -574,7 +588,13 @@ class SeltmannGen final : public Generator {
     if (v.killStep <= 0) v.killStep = 1.0 / std::max(1.0, declick_ * sr_);
   }
 
-  void voiceSample(Voice& v, double& outL, double& outR) {
+  // The file frame a voice reads (warped renders map back through the beat grid).
+  double sourceFrame(const Voice& v) const {
+    if (!v.warped || !aux_ || !aux_->warp || v.wTempo <= 0 || v.wRate <= 0) return v.pos;
+    return frameAt(aux_->warp->grid, aux_->warp->beatA + v.pos / (60.0 / v.wTempo * v.wRate));
+  }
+
+  void voiceSample(Voice& v, double& outL, double& outR, tap::Run* run = nullptr) {
     // amplitude envelope
     switch (v.stage) {
       case 0:
@@ -619,6 +639,7 @@ class SeltmannGen final : public Generator {
     // declick the gate's own end too (the release may be shorter than the declick)
     const double a = v.env * fin * fout * v.kill * v.gain;
     float l, r;
+    if (run) run->at(sourceFrame(v));
     if (std::fabs(v.rate - 1.0) < 1e-9 && std::fabs(v.pos - std::floor(v.pos)) < 1e-9) {
       const auto i = static_cast<int64_t>(v.pos);
       l = i >= 0 && i < v.n ? v.L[i] : 0.f;
@@ -649,23 +670,16 @@ class SeltmannGen final : public Generator {
   }
   double eventBeat(int step, int sub) const {
     const RtStep& st = aux_->steps[static_cast<size_t>(step)];
-    const double u = aux_->unitBeats;
-    double t = st.unitStart * u;
-    if (swing_ > 0 && u <= 1.0 + 1e-9 && static_cast<long long>(std::llround(st.unitStart)) % 2 == 1) t += swing_ * 0.5 * u;
-    return t + stepLen(step) * sub / st.stutter;
+    return startOf(step) + stepLen(step) * sub / st.stutter;
   }
-  double stepLen(int step) const {
-    const double u = aux_->unitBeats;
-    const int n = static_cast<int>(aux_->steps.size());
-    auto startOf = [&](int k) {
-      if (k >= n) return aux_->patUnits * u;
-      const RtStep& s2 = aux_->steps[static_cast<size_t>(k)];
-      double t = s2.unitStart * u;
-      if (swing_ > 0 && u <= 1.0 + 1e-9 && static_cast<long long>(std::llround(s2.unitStart)) % 2 == 1) t += swing_ * 0.5 * u;
-      return t;
-    };
-    return std::max(1e-6, startOf(step + 1) - startOf(step));
+  // J-214: a step starts where the one before ends (own lengths included); the last one ends with
+  // the steps, not with the cycle (the rest up to the bar line stays silent)
+  double startOf(int k) const {
+    if (k >= static_cast<int>(aux_->steps.size())) return aux_->stepsBeats;
+    const RtStep& s2 = aux_->steps[static_cast<size_t>(k)];
+    return s2.start + (swing_ > 0 && s2.swings ? swing_ * 0.5 * aux_->unitBeats : 0.0);
   }
+  double stepLen(int step) const { return std::max(1e-6, startOf(step + 1) - startOf(step)); }
   void seek(double p) {
     // first event at or after p
     const int n = static_cast<int>(aux_->steps.size());
@@ -696,7 +710,7 @@ class SeltmannGen final : public Generator {
     startVoice(0x80000000u | static_cast<uint32_t>(step), st.slice, patSemis_ + st.pitch, patVel_, st.gain, st.reverse, st.offset, gateSamples, true);
   }
   void patternTick(int64_t off, int) {
-    const double patBeats = aux_->patUnits * aux_->unitBeats;
+    const double patBeats = aux_->patBeats;
     if (patBeats <= 0) return;
     const double bps = beatsPerSample();
     double p;
@@ -811,7 +825,7 @@ class SeltmannGen final : public Generator {
     }
     liveFrame_.store(f, std::memory_order_relaxed);
     double pp = -1;
-    if (patOn_ && aux_ && aux_->patUnits > 0) pp = lastP_ / (aux_->patUnits * aux_->unitBeats);
+    if (patOn_ && aux_ && aux_->patBeats > 0) pp = lastP_ / aux_->patBeats;
     livePat_.store(pp, std::memory_order_relaxed);
   }
 };
@@ -913,7 +927,7 @@ double patternSeconds(const Model& m, const RenderOpts& o) {
   const int sp = o.params.size() > SmSpeed ? std::clamp(static_cast<int>(std::lround(o.params[SmSpeed])), 0, 2) : SpeedNormal;
   const double speed = sp == SpeedHalf ? 0.5 : sp == SpeedDouble ? 2.0 : 1.0;
   const double bpm = o.sync == SyncOriginal ? (m.grid.bpm > 1 ? m.grid.bpm : 120.0) : o.tempo;
-  return m.pattern.beats() / speed * 60.0 / bpm;
+  return cycleBeats(m) / speed * 60.0 / bpm;
 }
 
 bool renderPatternLoop(const Model& m, SamplePtr src, const RenderOpts& o, std::vector<float>& L, std::vector<float>& R) {
@@ -1020,7 +1034,8 @@ std::vector<PatNote> patternNotes(const Model& m, int baseNote, float swing, flo
     const int k = stepSlice(m.pattern, st, n);
     if (k < 0 || baseNote + k > 127) continue;
     const double t0 = stepStart(m.pattern, i, swing);
-    const double t1 = i + 1 < static_cast<int>(m.pattern.steps.size()) ? stepStart(m.pattern, i + 1, swing) : m.pattern.beats();
+    // J-214: the last step ends with the steps (the rest up to the bar line stays silent)
+    const double t1 = i + 1 < static_cast<int>(m.pattern.steps.size()) ? stepStart(m.pattern, i + 1, swing) : m.pattern.stepsBeats();
     const int rep = std::clamp(st.stutter, 1, 16);
     const double sub = (t1 - t0) / rep;
     for (int r = 0; r < rep; ++r) {
@@ -1067,7 +1082,7 @@ bool writePatternMidi(const std::string& path, const std::vector<PatNote>& notes
 double patternBars(const Model& m, const std::vector<float>& params, int beatsPerBar) {
   const int sp = params.size() > SmSpeed ? std::clamp(static_cast<int>(std::lround(params[SmSpeed])), 0, 2) : SpeedNormal;
   const double speed = sp == SpeedHalf ? 0.5 : sp == SpeedDouble ? 2.0 : 1.0;
-  return m.pattern.beats() / speed / std::max(1, beatsPerBar);
+  return cycleBeats(m) / speed / std::max(1, beatsPerBar);
 }
 
 ObjectId sendPatternToSong(Song& s, ObjectId channel, const Model& m, const std::vector<float>& params, int cycles, int track, Tick at) {
@@ -1077,19 +1092,19 @@ ObjectId sendPatternToSong(Song& s, ObjectId channel, const Model& m, const std:
   const int sp = std::clamp(static_cast<int>(std::lround(prm(SmSpeed, SpeedNormal))), 0, 2);
   const double speed = sp == SpeedHalf ? 0.5 : sp == SpeedDouble ? 2.0 : 1.0;
   const auto notes = patternNotes(m, base, prm(SmSwing, 0), prm(SmGate, 1));
-  const double cycleBeats = m.pattern.beats() / speed;
+  const double cycleB = cycleBeats(m) / speed;
   cycles = std::clamp(cycles, 1, 64);
   gl::Pattern p;
   p.id = s.allocateId();
   p.name = "Seltmann " + m.pattern.name;
   p.color = 0xE0A04A;
   const double beatsPerBar = std::max<double>(1, static_cast<double>(s.barTicks()) / std::max(1, s.ppq));
-  p.bars = std::clamp(static_cast<int>(std::ceil(cycleBeats * cycles / beatsPerBar - 1e-9)), 1, kMaxPatternBars);
+  p.bars = std::clamp(static_cast<int>(std::ceil(cycleB * cycles / beatsPerBar - 1e-9)), 1, kMaxPatternBars);
   auto& row = p.notes[channel];
   for (int c = 0; c < cycles; ++c)
     for (const auto& n : notes) {
       Note nn;
-      nn.start = static_cast<Tick>(std::llround((c * cycleBeats + n.start / speed) * s.ppq));
+      nn.start = static_cast<Tick>(std::llround((c * cycleB + n.start / speed) * s.ppq));
       nn.length = std::max<Tick>(1, static_cast<Tick>(std::llround(n.length / speed * s.ppq)));
       nn.pitch = n.key;
       nn.velocity = n.velocity;
@@ -1104,7 +1119,7 @@ ObjectId sendPatternToSong(Song& s, ObjectId channel, const Model& m, const std:
     c.pattern = p.id;
     c.track = std::max(0, track);
     c.start = std::max<Tick>(0, at);
-    c.length = static_cast<Tick>(std::llround(cycleBeats * cycles * s.ppq));
+    c.length = static_cast<Tick>(std::llround(cycleB * cycles * s.ppq));
     s.playlist.push_back(c);
   }
   return p.id;

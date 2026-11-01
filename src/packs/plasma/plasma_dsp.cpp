@@ -507,6 +507,9 @@ class PlasmaGen final : public Generator {
   bool active() const override {
     for (const auto& n : notes_)
       if (n.active) return true;
+    if (runMask_ != 0 && playing_) return true;  // launched clips follow the song
+    for (const auto& sp : spanClip_)
+      if (sp.active()) return true;
     return tailLeft_ > 0 || arp_.held() || clip_.active();
   }
   bool supportsGlide() const override { return true; }
@@ -611,6 +614,8 @@ class PlasmaGen final : public Generator {
     held_.clear();
     arp_.allOff();
     clip_.reset();
+    for (auto& sp : spanClip_) sp.reset();
+    for (auto& rc : runClip_) rc.reset();
     for (auto& h : idKeys_) h.first = 0;
     heldExternal_ = 0;
     recIds_ = {};
@@ -620,6 +625,8 @@ class PlasmaGen final : public Generator {
     held_.clear();
     arp_.reset();
     clip_.reset();
+    for (auto& sp : spanClip_) sp.reset();
+    for (auto& rc : runClip_) rc.reset();
     for (auto& h : idKeys_) h.first = 0;
     heldExternal_ = 0;
     recIds_ = {};
@@ -862,10 +869,19 @@ class PlasmaGen final : public Generator {
             break;
           }
       }
-      if (G(G_ClipOn) >= 0.5f && aux_) {
-        clip_.noteOn(key, vel);
+      if (G(G_ClipOn) >= 0.5f && aux_ && aux_->model.clipRun == 0) {
+        const ClipSlot& cs = aux_->model.clip[static_cast<size_t>(activeClip())];
+        if (cs.srcSpan && cs.span == 2) {  // poly span: one copy of the clip per held key
+          ClipPlayer* p = nullptr;
+          for (auto& sp : spanClip_)
+            if (!sp.active() && sp.held() <= 0) p = &sp;
+          if (!p) p = &spanClip_[static_cast<size_t>(spanNext_++ % spanClip_.size())];
+          p->noteOn(key, vel, true);
+          return;
+        }
+        clip_.noteOn(key, vel, cs.srcSpan && cs.span != 0 && cs.retrig);
         return;
-      }
+      }  // with launched clips (clipRun) the keys play the sound while the clips follow the song
       if (G(G_ArpOn) >= 0.5f) {
         arp_.noteOn(key, vel);
         if (!aux_ || !aux_->model.arp[static_cast<size_t>(activeArp())].thru) return;
@@ -897,7 +913,14 @@ class PlasmaGen final : public Generator {
         }
       for (auto& h : idKeys_)
         if (h.first == id) {
-          if (G(G_ClipOn) >= 0.5f) clip_.noteOff(h.second);
+          if (G(G_ClipOn) >= 0.5f) {
+            clip_.noteOff(h.second);
+            for (auto& sp : spanClip_)
+              if (sp.held() > 0 && sp.key() == h.second) {
+                sp.noteOff(h.second);
+                break;
+              }
+          }
           if (G(G_ArpOn) >= 0.5f) arp_.noteOff(h.second);
           h.first = 0;
         }
@@ -1864,6 +1887,21 @@ class PlasmaGen final : public Generator {
     }
     c.subOn = V(&n, subP(S_Enable)) >= 0.5f;
     c.noiseOn = V(&n, noiseP(N_Enable)) >= 0.5f;
+    double nFold = 0;  // J-215: semitones the noise's key range moves the key by (FOLD)
+    {
+      const float kmin = std::round(V(&n, tailP(T_NKeyMin))), kmax = std::round(V(&n, tailP(T_NKeyMax)));
+      if (static_cast<float>(n.key) < kmin || static_cast<float>(n.key) > kmax) {
+        if (V(&n, tailP(T_NKeyFold)) >= 0.5f && kmax >= kmin) {
+          // the key wraps into the range, its width in keys at a time (measured against the hosted
+          // plugin: range 60..72, key 36 plays as 62, 48 as 61, 84 as 71)
+          const int lo = static_cast<int>(kmin), width = static_cast<int>(kmax - kmin) + 1;
+          const int d = ((n.key - lo) % width + width) % width;
+          nFold = static_cast<double>(lo + d - n.key);
+        } else {
+          c.noiseOn = false;
+        }
+      }
+    }
     lev[3] = static_cast<float>(levelGain(V(&n, noiseP(N_Level))));
     lev[4] = static_cast<float>(levelGain(V(&n, subP(S_Level))));
     panGains(V(&n, noiseP(N_Pan)) + (G(G_VcN) >= 0.5f ? n.vc.pan + n.rndPan : 0.f), pl[3], pr[3]);
@@ -1877,8 +1915,21 @@ class PlasmaGen final : public Generator {
     const auto& fnz = factoryNoises();
     c.nsrc = nType >= 1 && nType - 1 < static_cast<int>(fnz.size()) ? &fnz[static_cast<size_t>(nType - 1)] : nullptr;
     c.nfile = nType == 0 && aux_->noiseFile ? aux_->noiseFile.get() : nullptr;
-    const double nRoot = c.nfile ? c.nfile->sampleRate : 44100.0;
-    const double nPitch = (V(&n, noiseP(N_PitchTrack)) >= 0.5f ? n.pitch - 60.0 : 0.0) + V(&n, noiseP(N_Pitch)) + V(&n, noiseP(N_Fine));
+    const bool nLaw = G(tailP(T_NoiseLaw)) >= 0.5f;  // J-215: the imported noise pitch law
+    const double nRoot = c.nfile && !nLaw ? c.nfile->sampleRate : 44100.0;
+    // J-215: a key-tracking noise follows the played pitch like the oscillators do: glide, the fold
+    // of its key range, the pitch wheel and the main tuning's cents (measured against the hosted
+    // plugin's output); a fixed noise ignores all of them
+    const bool nTrack = V(&n, noiseP(N_PitchTrack)) >= 0.5f;
+    double nPitch;
+    if (nTrack || !nLaw) {
+      nPitch = (nTrack ? n.pitch - 60.0 + nFold + bendSemis(n) + tuneSemis(n) : 0.0) + V(&n, noiseP(N_Pitch)) + V(&n, noiseP(N_Fine));
+    } else {
+      // the imported law, fixed noise: Pitch is the knob position (modulation included), on a curve
+      // of 96 semitones per unit above the centre and 384 below it; Fine 0.96 / 0.6 semitones
+      const double x = std::clamp(0.5 + V(&n, noiseP(N_Pitch)) / 128.0, 0.0, 1.0);
+      nPitch = (x > 0.5 ? 96.0 : 384.0) * (x - 0.5) + (x > 0.5 ? 0.6 : 0.96) * V(&n, noiseP(N_Fine));
+    }
     c.nRate = std::exp2(nPitch / 12.0) * nRoot / srv_;
     c.nOne = V(&n, noiseP(N_OneShot)) >= 0.5f;
     c.nColor = V(&n, noiseP(N_Color));
@@ -2029,9 +2080,11 @@ class PlasmaGen final : public Generator {
       auto runF = [&](int f, float& l, float& r) {
         if (!fOn[f]) return;
         float a = l, b = r;
-        (f == 0 ? *n.f1 : *n.f2).process(a, b);
-        l = (l + (a - l) * fMix[f]) * fLev[f];
-        r = (r + (b - r) * fMix[f]) * fLev[f];
+        Filter& flt = f == 0 ? *n.f1 : *n.f2;
+        flt.process(a, b);
+        const float dl = flt.dry(0), dr = flt.dry(1);
+        l = (dl + (a - dl) * fMix[f]) * fLev[f];
+        r = (dr + (b - dr) * fMix[f]) * fLev[f];
       };
       auto sendF = [&](int rt, float l, float r) {
         float* a = acc[c.raw[rt] ? 1 : 0];
@@ -2141,14 +2194,36 @@ class PlasmaGen final : public Generator {
     seqOut_.n = 0;
     const int midiOut = static_cast<int>(G(G_MidiOut));
     if (clipOn) {
-      const ClipSlot& c = aux_->model.clip[static_cast<size_t>(activeClip())];
       float offs[3] = {GV(G_ClipTranspose), GV(G_ClipRate), GV(G_ClipOffset)};
       clipSeq_.n = 0;
-      clip_.run(c, offs, m, sr_, tempo_, beat_, playing_, G(G_Swing), static_cast<int>(G(G_SwingDiv)), clipSeq_, laneVal_, 32);
       // clip lanes: automation values override their target parameters
-      for (int l = 0; l < std::min(32, static_cast<int>(c.lanes.size())); ++l) {
-        const int t = c.lanes[static_cast<size_t>(l)].target;
-        if (t >= 0 && t < kParamCount && laneVal_[l] >= 0) base_[static_cast<size_t>(t)] = fromNorm(pmaps()[static_cast<size_t>(t)], laneVal_[l]);
+      auto lanes = [&](const ClipSlot& c) {
+        for (int l = 0; l < std::min(32, static_cast<int>(c.lanes.size())); ++l) {
+          const int t = c.lanes[static_cast<size_t>(l)].target;
+          if (t >= 0 && t < kParamCount && laneVal_[l] >= 0) base_[static_cast<size_t>(t)] = fromNorm(pmaps()[static_cast<size_t>(t)], laneVal_[l]);
+        }
+      };
+      const uint32_t run = aux_->model.clipRun & ((1u << kClipSlots) - 1);
+      if (run != runMask_) {  // launched clips changed: restart them on the song position
+        for (int s = 0; s < kClipSlots; ++s) {
+          runClip_[static_cast<size_t>(s)].stop(clipSeq_);
+          if (run & (1u << s)) runClip_[static_cast<size_t>(s)].startSong();
+        }
+        runMask_ = run;
+      }
+      if (run) {
+        for (int s = 0; s < kClipSlots; ++s)
+          if (run & (1u << s)) {
+            const ClipSlot& c = aux_->model.clip[static_cast<size_t>(s)];
+            runClip_[static_cast<size_t>(s)].run(c, offs, m, sr_, tempo_, beat_, playing_, G(G_Swing), static_cast<int>(G(G_SwingDiv)), clipSeq_, laneVal_, 32);
+            lanes(c);
+          }
+      } else {
+        const ClipSlot& c = aux_->model.clip[static_cast<size_t>(activeClip())];
+        clip_.run(c, offs, m, sr_, tempo_, beat_, playing_, G(G_Swing), static_cast<int>(G(G_SwingDiv)), clipSeq_, laneVal_, 32);
+        lanes(c);
+        for (auto& sp : spanClip_)
+          if (sp.active() || sp.held() > 0) sp.run(c, offs, m, sr_, tempo_, beat_, playing_, G(G_Swing), static_cast<int>(G(G_SwingDiv)), clipSeq_, laneVal_, 0);
       }
       for (int i = 0; i < clipSeq_.n; ++i) {
         const SeqNote& e = clipSeq_.ev[i];
@@ -2459,6 +2534,10 @@ class PlasmaGen final : public Generator {
   std::vector<int> scaleBuf_;
   Arp arp_;
   ClipPlayer clip_;
+  std::array<ClipPlayer, 8> spanClip_;          // poly keyboard span: one player per held key
+  size_t spanNext_ = 0;
+  std::array<ClipPlayer, kClipSlots> runClip_;  // launched clips following the song (Model::clipRun)
+  uint32_t runMask_ = 0;
   bool arpWas_ = false;
   SeqOut seqOut_, clipSeq_;
   float laneVal_[32] = {};

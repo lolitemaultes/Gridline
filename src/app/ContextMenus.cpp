@@ -32,6 +32,7 @@
 #include "../engine/KerfMarks.h"
 #include "../core/MenuParity.h"
 #include "TrackIcons.h"
+#include "../core/TrackIconSet.h"
 #include "ChannelRoute.h"
 #include "App.h"
 #include "EditTools.h"
@@ -695,6 +696,12 @@ void channelContextMenu(App& a, ObjectId id) {
     ImGui::EndMenu();
   }
   if (ImGui::MenuItem(i18n::tr("Random colour"))) ops::setChannelsColor(a.doc, {id}, randomColor());
+  if (ImGui::BeginMenu(i18n::tr("Icon"))) {  // J-211: shown on the rack's name button (FL number follows)
+    int ic = c->icon;
+    if (trackicons::picker(c->icon, &ic))
+      a.doc.editChannel(id, "change channel icon", [ic](Channel& ch) { ch.icon = ic, ch.flIcon = trackicon::toFl(ic); });
+    ImGui::EndMenu();
+  }
   if (ImGui::MenuItem(c->muted ? i18n::tr("Unmute") : i18n::tr("Mute"))) ops::setChannelsMuted(a.doc, {id}, !c->muted);
   {
     const bool self = c->cutGroup > 0 && c->cutGroup == c->cutBy;
@@ -706,7 +713,9 @@ void channelContextMenu(App& a, ObjectId id) {
   }
   ImGui::Separator();
   if (ImGui::BeginMenu(i18n::tr("Replace instrument"))) {
-    instrumentItems([&a, id](const std::string& t) { a.doc.setChannelPlugin(id, t); }, c->plugin.type);
+    instrumentItems([&a, id](const std::string& t) {
+      if (a.doc.setChannelPlugin(id, t)) pui::pluginReplaced(PluginTarget{id, -1});  // J-213: renamed, preset selector reset
+    }, c->plugin.type);
     ImGui::EndMenu();
   }
   if (ImGui::BeginMenu(i18n::tr("Insert instrument below"))) {
@@ -1000,6 +1009,12 @@ void playlistTrackMenu(App& a, int track) {
     uint32_t col = randomColor();
     a.doc.editPlaylistTrack(track, "change track colour", [&](PlaylistTrack& x) { x.color = col; });
   }
+  if (ImGui::BeginMenu(i18n::tr("Icon"))) {  // J-211: the mixer's icon set (FL number follows, see trackicon::exportFl)
+    int ic = t.icon;
+    if (trackicons::picker(t.icon, &ic))
+      a.doc.editPlaylistTrack(track, "change track icon", [ic](PlaylistTrack& x) { x.icon = ic, x.flIcon = trackicon::toFl(ic); });
+    ImGui::EndMenu();
+  }
   if (ImGui::BeginMenu(i18n::tr("Live settings"))) {
     liveTrackMenu(a, track);
     ImGui::EndMenu();
@@ -1027,7 +1042,7 @@ void playlistTrackMenu(App& a, int track) {
         a.doc.editPlaylistTrack(track, "auto name track", [&](PlaylistTrack& x) { x.name = nm; });
       }
   }
-  if (ImGui::MenuItem(i18n::tr("Reset name and colour")))
+  if (ImGui::MenuItem(i18n::tr("Reset name, colour and icon")))
     a.doc.editPlaylistTrack(track, "reset track", [](PlaylistTrack& x) {
       PlaylistTrack k;  // the track mode stays (it is changed in its own menu)
       k.mode = x.mode, k.mixer = x.mixer, k.channel = x.channel;
@@ -2181,7 +2196,9 @@ void pluginWindowMenu(App& a, ObjectId owner, int slot) {
       ImGui::EndMenu();
     }
     if (ImGui::BeginMenu(i18n::tr("Replace instrument"))) {
-      instrumentItems([&a, owner](const std::string& type) { a.doc.setChannelPlugin(owner, type); }, info->type);
+      instrumentItems([&a, owner](const std::string& type) {
+        if (a.doc.setChannelPlugin(owner, type)) pui::pluginReplaced(PluginTarget{owner, -1});  // J-213
+      }, info->type);
       ImGui::EndMenu();
     }
     if (chanroute::menuItem(keys::label("rack.routeFree"))) chanroute::routeToFree(a, owner);  // J-195
@@ -2191,7 +2208,9 @@ void pluginWindowMenu(App& a, ObjectId owner, int slot) {
     const MixerTrack* m = s.mixerTrack(owner);
     bool enabled = m && m->slots[static_cast<size_t>(slot)].enabled;
     if (ImGui::BeginMenu(i18n::tr("Replace effect"))) {
-      effectItems([&a, owner, slot](const std::string& type) { a.doc.setSlotPlugin(owner, slot, type); }, info->type);
+      effectItems([&a, owner, slot](const std::string& type) {
+        if (a.doc.setSlotPlugin(owner, slot, type)) pui::pluginReplaced(PluginTarget{owner, slot});  // J-213
+      }, info->type);
       ImGui::EndMenu();
     }
     if (ImGui::MenuItem(enabled ? i18n::tr("Disable") : i18n::tr("Enable"))) ops::setSlotEnabled(a.doc, owner, slot, !enabled);
@@ -2254,6 +2273,12 @@ void drawDevMenu(App& a, const std::string& name) {
   else if (name == "marker") markerMenu(a, 0);
   else if (name == "markers") markerAddItems(a);
   else if (name == "mixer") mixerTrackMenu(a, s.mixer.size() > 1 ? 1 : 0);
+  else if (name.rfind("icons", 0) == 0) {  // J-211: the icon picker ("icons", "icons:<search>", "icons@<category>")
+    if (ImGui::IsWindowAppearing()) trackicons::devPreset(name.size() > 6 && name[5] == ':' ? name.c_str() + 6 : "",
+                                                           name.size() > 6 && name[5] == '@' ? std::atoi(name.c_str() + 6) : -2);
+    int out = 0;
+    trackicons::picker(s.mixer.size() > 1 ? s.mixer[1].icon : 0, &out);
+  }
   else if (name == "slot") {  // the first insert slot holding an effect (else insert 1, slot 1)
     ObjectId tr = s.mixer.size() > 1 ? s.mixer[1].id : kNoId;
     int sl = 0;

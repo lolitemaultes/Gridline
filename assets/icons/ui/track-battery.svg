@@ -1,0 +1,6 @@
+<!-- Gridline original (GPL-3.0), drawn on the Lucide 24-unit grid and stroke rules: track icon: a battery half charged -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="2.5" y="7" width="16.5" height="10" rx="2" />
+  <path d="M21.5 10.5 L21.5 13.5" />
+  <rect x="5" y="9.5" width="5.5" height="5" rx="0.6" fill="currentColor" stroke="none" />
+</svg>

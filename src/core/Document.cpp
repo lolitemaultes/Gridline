@@ -1,6 +1,8 @@
 #include "Document.h"
 #include <algorithm>
+#include <filesystem>
 #include "Arrangements.h"
+#include "ExternalDrop.h"
 #include "../engine/ClipOps.h"
 
 namespace gl {
@@ -570,15 +572,46 @@ bool Document::renameChannel(ObjectId id, const std::string& name) {
   return editChannel(id, "rename channel", [&](Channel& c) { c.name = name; });
 }
 
+namespace {
+// The sample path a channel's instrument holds ("" when it holds none).
+std::string channelSamplePath(const PluginState& p) {
+  switch (xdrop::sampleSlot(p.type)) {
+    case xdrop::SampleSlot::Whole: return p.data;
+    case xdrop::SampleSlot::FirstLine: return p.data.substr(0, p.data.find('\n'));
+    case xdrop::SampleSlot::None: break;
+  }
+  return {};
+}
+}  // namespace
+
+bool channelNameIsAutomatic(const Channel& c) {
+  const PluginInfo* info = findPlugin(c.plugin.type);
+  if (xdrop::autoChannelName(c.name, info ? info->name : std::string(), channelSamplePath(c.plugin))) return true;
+  if (info)
+    for (const auto& p : info->presets)
+      if (xdrop::numberedName(c.name, p.name)) return true;
+  return false;
+}
+
 bool Document::setChannelPlugin(ObjectId id, const std::string& pluginType) {
-  if (!findPlugin(pluginType)) return false;
+  const PluginInfo* info = findPlugin(pluginType);
+  if (!info) return false;
   const Channel* old = song_.channel(id);
   bool typeChanged = old && old->plugin.type != pluginType;
+  // J-213: an automatic name follows the instrument (a sample's name stays
+  // while the new instrument keeps that sample).
+  bool rename = false;
+  if (old && typeChanged && channelNameIsAutomatic(*old)) {
+    const std::string sample = channelSamplePath(old->plugin);
+    const bool sampleName = !sample.empty() && old->name == std::filesystem::path(sample).stem().string();
+    rename = !(sampleName && info->usesSample);
+  }
   beginGroup("replace channel instrument");
   bool ok = editChannel(id, "replace channel instrument", [&](Channel& c) {
     std::string data = c.plugin.data;
     c.plugin = defaultPluginState(pluginType);
-    if (findPlugin(pluginType)->usesSample) c.plugin.data = data;
+    if (info->usesSample) c.plugin.data = data;
+    if (rename) c.name = info->name;
   });
   if (ok && typeChanged) {  // the old instrument's parameters and outputs are gone
     std::vector<ModLink> links = song_.modLinks;

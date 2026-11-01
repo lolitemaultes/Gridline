@@ -1,0 +1,6 @@
+<!-- Gridline original (GPL-3.0), drawn on the Lucide 24-unit grid and stroke rules: track icon: a question mark in a circle -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <circle cx="12" cy="12" r="9" />
+  <path d="M9.4 9.4 A2.7 2.7 0 1 1 13.3 11.8 C12.4 12.3 12 12.9 12 14" />
+  <circle cx="12" cy="17" r="1.2" fill="currentColor" stroke="none" />
+</svg>

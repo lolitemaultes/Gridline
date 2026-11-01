@@ -12605,6 +12605,10 @@ gl.plasma	2208	Noise Skips Env 1	verified	0		VERIFIED: acts on a route under a d
 gl.plasma	2209	Sub Skips Env 1	verified	0		VERIFIED: acts on a route under a decaying amp envelope (parameter coverage test)
 gl.plasma	2210	Filter 1 Skips Env 1	verified	0		VERIFIED: acts on a route under a decaying amp envelope (parameter coverage test)
 gl.plasma	2211	Filter 2 Skips Env 1	verified	0		VERIFIED: acts on a route under a decaying amp envelope (parameter coverage test)
+gl.plasma	2212	Noise Key Min	combination	127	11=1;356=1
+gl.plasma	2213	Noise Key Max	combination	0	11=1;356=1
+gl.plasma	2214	Noise Key Fold	verified	0		VERIFIED: acts on a key-tracking noise whose key range leaves out the played key (parameter coverage test)
+gl.plasma	2215	Noise Pitch Law	verified	0		VERIFIED: acts on a fixed noise pitched away from the centre (parameter coverage test)
 gl.platter	0	A channel fader	working	0	
 gl.platter	1	A trim	working	12	
 gl.platter	2	A EQ high	working	-26	
@@ -13161,7 +13165,7 @@ gl.turntable	4	Pan	working	1
 gl.turntable	5	Volume	working	0	
 gl.turntable	6	Hold	working	1	
 gl.turntable	7	Sensitivity	inert	0		mouse travel when scratching in the editor; the sound engine does not read it
-gl.turntable	8	Motor	working	2	
+gl.turntable	8	Motor	working	0	
 gl.turntable	9	Smooth 1	combination	0	6=1
 gl.turntable	10	Smooth 2	combination	0	6=1
 gl.turntable	11	Smooth 3	combination	0	6=1
@@ -13170,6 +13174,10 @@ gl.turntable	13	Turns	combination	-9	6=1
 gl.turntable	14	Notes	working	1	
 gl.turntable	15	Key track	working	0	
 gl.turntable	16	Cue	working	0.75	
+gl.turntable	17	Timecode	inert	0		timecode vinyl input setting, kept for the FL round trip (no timecode input yet)
+gl.turntable	18	Phono preamp	inert	0		preamp for the timecode input, kept for the FL round trip
+gl.turntable	19	Large editor	inert	0		editor view size; the sound engine does not read it
+gl.turntable	20	Empty deck	inert	0		chooses silence over the built-in sound when the channel's prepared data has no sample
 gl.send	0	Target track	inert	0	
 gl.send	1	Send level	working	0	
 gl.send	2	Send pan	working	1	

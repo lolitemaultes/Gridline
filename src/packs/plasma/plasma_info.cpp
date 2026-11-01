@@ -691,6 +691,7 @@ bool modulatable(int k) {
 bool integerParam(int k) {
   if (k == G_BendUp || k == G_BendDown || k == G_Poly || k == G_Transpose || k == G_MpeBend || k == G_VcSteps) return true;
   if (k == subP(S_Octave)) return true;
+  if (k == tailP(T_NKeyMin) || k == tailP(T_NKeyMax)) return true;
   if (k >= kOscBase && k < kSubBase) {
     const int p = (k - kOscBase) % O_Count;
     return p == O_Octave || p == O_Semi || p == O_Unison || p == O_Slice || p == O_GMaxGrains || p == O_KeyMin || p == O_KeyMax ||
@@ -719,6 +720,12 @@ std::string paramText(int k, double v, const std::vector<float>* params) {
   if (k == G_MasterVol) return fmtDb(masterGain(v));
   if (k == G_DirectVol || k == G_Bus1Vol || k == G_Bus2Vol) return fmtDb(busGain(v));
   if (k == G_PortaTime) return fmtTime(portaTime(v));
+  if (k == noiseP(N_Pitch) && pv(tailP(T_NoiseLaw), 0) >= 0.5 && pv(noiseP(N_PitchTrack), 0) < 0.5) {
+    // J-215: the imported law on a fixed noise: the knob position on its curve, shown in semitones
+    const double x = std::clamp(0.5 + v / 128.0, 0.0, 1.0), st = (x > 0.5 ? 96.0 : 384.0) * (x - 0.5);
+    std::snprintf(b, sizeof b, "%+.1f st", st);
+    return b;
+  }
   if (k >= kOscBase && k < kSubBase) {
     const int p = (k - kOscBase) % O_Count;
     switch (p) {
@@ -1108,6 +1115,18 @@ void appendInfos(std::vector<PluginInfo>& v) {
     static const char* const rn[] = {"A", "B", "C", "Noise", "Sub", "Filter 1", "Filter 2"};
     for (int r = 0; r < kRoutes; ++r) set(tailP(T_RawA + r), tog(std::string(rn[r]) + " Skips Env 1", 0));
   }
+  // J-215: the noise oscillator's key range: outside it the noise is left out of the note, or with
+  // FOLD the key wraps into the range (its width in keys at a time), the noise then following the
+  // wrapped key when it tracks the key.
+  set(tailP(T_NKeyMin), lin("Noise Key Min", "", 0, 127, 0));
+  set(tailP(T_NKeyMax), lin("Noise Key Max", "", 0, 127, 127));
+  set(tailP(T_NKeyFold), tog("Noise Key Fold", 0));
+  // Noise pitch law. Classic: a noise file plays at its own sample rate and Pitch is in semitones.
+  // Imported: noise files play their frames at 44.1 kHz, and a noise that does not follow the keys
+  // reads Pitch as a knob position (-64..64 = 0..1) on a curve of 96 semitones per unit above the
+  // centre and 384 below it, with Fine worth 0.96 semitones up to the centre and 0.6 above it
+  // (measured against the source's output). Preset import selects Imported.
+  set(tailP(T_NoiseLaw), ch("Noise Pitch Law", {"Classic", "Imported"}, 0));
 
   // ---- filters
   for (int f = 0; f < kFilters; ++f) {

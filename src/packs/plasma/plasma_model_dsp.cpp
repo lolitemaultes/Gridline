@@ -534,6 +534,7 @@ std::string modelToData(const Model& m) {
     j.object["chance"] = num(a.chance);
     j.object["chancePre"] = boolean(a.chancePre);
     j.object["rtLaunch"] = boolean(a.retrigLaunch);
+    if (a.srcGrid) j.object["srcGrid"] = boolean(true);
     j.object["rtRate"] = boolean(a.retrigRate);
     j.object["rtNote"] = boolean(a.retrigNote);
     j.object["rtFirst"] = boolean(a.retrigFirst);
@@ -571,6 +572,8 @@ std::string modelToData(const Model& m) {
     for (const auto& n : c.notes) {
       Json e = Json::makeArray();
       e.array = {num(n.start), num(n.len), num(n.key), num(n.vel), num(n.mute ? 1 : 0)};
+      if (!n.plain())
+        for (float a : {n.chance, n.octCh, n.oct, n.semiCh, n.semi, n.velRand, n.relVel}) e.array.push_back(num(a));
       notes.array.push_back(e);
     }
     j.object["notes"] = notes;
@@ -603,12 +606,14 @@ std::string modelToData(const Model& m) {
     j.object["veloTrig"] = boolean(c.veloTrig);
     j.object["noteGate"] = boolean(c.noteGate);
     j.object["startOffset"] = num(c.startOffset);
+    if (c.srcSpan) j.object["srcSpan"] = boolean(true);
     j.object["name"] = str(c.name);
     clips.array.push_back(j);
   }
   r.object["clip"] = clips;
   r.object["clipActive"] = num(m.clipActive);
   r.object["clipPoly"] = boolean(m.clipPoly);
+  if (m.clipRun) r.object["clipRun"] = num(static_cast<double>(m.clipRun));
   Json vs = Json::makeArray();
   for (const auto& s : m.voiceSeq) {
     Json e = Json::makeArray();
@@ -782,6 +787,7 @@ bool modelFromData(const std::string& data, Model& m) {
       a.chance = getF(j, "chance", 1, 0, 1);
       a.chancePre = getBool(j, "chancePre", false);
       a.retrigLaunch = getBool(j, "rtLaunch", true);
+      a.srcGrid = getBool(j, "srcGrid", false);
       a.retrigRate = getBool(j, "rtRate", false);
       a.retrigNote = getBool(j, "rtNote", false);
       a.retrigFirst = getBool(j, "rtFirst", false);
@@ -836,6 +842,12 @@ bool modelFromData(const std::string& data, Model& m) {
           n.key = static_cast<int>(f(2, 0, 127, 60));
           n.vel = static_cast<float>(f(3, 0, 1, 0.8));
           n.mute = f(4, 0, 1, 0) >= 0.5;
+          if (e.array.size() >= 12) {
+            n.chance = static_cast<float>(f(5, 0, 1, 1)), n.octCh = static_cast<float>(f(6, 0, 1, 0));
+            n.oct = static_cast<float>(f(7, 0, 1, 0.5)), n.semiCh = static_cast<float>(f(8, 0, 1, 0));
+            n.semi = static_cast<float>(f(9, 0, 1, 0.5)), n.velRand = static_cast<float>(f(10, 0, 1, 0));
+            n.relVel = static_cast<float>(f(11, 0, 1, 0.5));
+          }
           c.notes.push_back(n);
         }
       c.lanes.clear();
@@ -857,19 +869,21 @@ bool modelFromData(const std::string& data, Model& m) {
       c.transpose = getInt(j, "transpose", 0, -48, 48);
       c.mode = getInt(j, "mode", 0, 0, 8);
       c.modeTime = getF(j, "modeTime", 1, 0.0625f, 64);
-      c.rate = getF(j, "rate", 1, 0.125f, 8);
+      c.rate = getF(j, "rate", 1, 1.0f / 128, 128);
       c.bpm = getBool(j, "bpm", true);
       c.trip = getBool(j, "trip", false);
       c.dot = getBool(j, "dot", false);
-      c.launchQuant = getInt(j, "quant", 6, 0, 15);
+      c.launchQuant = getInt(j, "quant", 6, -1, 15);  // -1: starts at once
       c.retrig = getBool(j, "retrig", true);
       c.veloTrig = getBool(j, "veloTrig", false);
       c.noteGate = getBool(j, "noteGate", false);
       c.startOffset = getF(j, "startOffset", 0, 0, 1024);
+      c.srcSpan = getBool(j, "srcSpan", false);
       c.name = j.text("name", c.name);
     }
   m.clipActive = getInt(r, "clipActive", 0, 0, kClipSlots - 1);
   m.clipPoly = getBool(r, "clipPoly", false);
+  m.clipRun = static_cast<uint32_t>(getInt(r, "clipRun", 0, 0, (1 << kClipSlots) - 1));
   if (const Json* vs = r.find("voiceSeq"); vs && vs->is(Json::Type::Array))
     for (size_t i = 0; i < std::min<size_t>(vs->array.size(), 8); ++i) {
       const Json& e = vs->array[i];

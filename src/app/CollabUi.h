@@ -48,6 +48,8 @@ void fileMenu(App& a);
 
 // J-111e: how "Show in Finder / Files" opens a folder (main.cpp: SDL_OpenURL with a file:// URL).
 void setOpenUrl(std::function<bool(const std::string&)> f);
+// J-219: opens a URL (a file:// URL opens the file in its default app); false when it cannot.
+bool openUrl(const std::string& url);
 // The collaboration controller (made on first use; nullptr in plugin builds).
 collab::Controller* controller(App& a);
 collab::Session* session(App& a);

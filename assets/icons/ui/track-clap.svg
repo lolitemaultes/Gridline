@@ -1,0 +1,8 @@
+<!-- Gridline original (GPL-3.0), drawn on the Lucide 24-unit grid and stroke rules: track icon: two palms meeting with a burst above -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="5.5" y="9.5" width="5.5" height="11.5" rx="2.75" transform="rotate(-16 8.25 15.25)" />
+  <rect x="13" y="9.5" width="5.5" height="11.5" rx="2.75" transform="rotate(16 15.75 15.25)" />
+  <path d="M12 2.5 L12 5.5" />
+  <path d="M7 3.8 L8.4 6.3" />
+  <path d="M17 3.8 L15.6 6.3" />
+</svg>

@@ -17,6 +17,7 @@
 #include <functional>
 #include <unordered_map>
 #include "../../app/AudioRecordUi.h"
+#include "../../core/TrackReceipt.h"
 #include "../../app/DevSignal.h"
 #include "../../app/Look.h"
 #include "../../app/BrowserUi.h"
@@ -435,7 +436,26 @@ bool renderTo(const std::string& item, const Model& m, SamplePtr src, const Rend
   if (!ok || L.empty()) return false;
   std::error_code ec;
   fs::create_directories(fs::path(file).parent_path(), ec);
-  return writeLoopWav(file, L, R, o.sampleRate);
+  if (!writeLoopWav(file, L, R, o.sampleRate)) return false;
+  if (src && !src->path.empty() && src->sampleRate > 0) {  // J-219: where the file comes from (Track Receipt)
+    receipt::Origin og;
+    og.source = src->path;
+    og.kind = "slice";
+    const int k = item.rfind("slice:", 0) == 0 ? std::atoi(item.c_str() + 6) : -1;
+    if (k >= 0 && k < static_cast<int>(m.slices.size())) {
+      const Slice& sl = m.slices[static_cast<size_t>(k)];
+      const double a = static_cast<double>(sl.start) / src->sampleRate, len = static_cast<double>(sl.end - sl.start) / src->sampleRate;
+      og.start = a + len * std::clamp(static_cast<double>(sl.offset), 0.0, 0.9);
+      og.end = std::min(a + len, og.start + len * std::clamp(static_cast<double>(sl.length), 0.05, 1.0));
+      og.speed = (og.end - og.start) / std::max(1e-6, static_cast<double>(L.size()) / o.sampleRate);
+      og.reverse = sl.reverse;
+    } else {
+      og.kind = "render";
+      og.rangeKnown = false;
+    }
+    receipt::writeOrigin(file, og);
+  }
+  return true;
 }
 
 }  // namespace
@@ -613,14 +633,16 @@ void openLoadDialog(App& a, const PluginTarget& t, Ed& e) {
   a.fileDialog.dir = e.path.empty() ? (std::getenv("HOME") ? std::getenv("HOME") : ".") : fs::path(e.path).parent_path().string();
   a.fileDialog.exts = {".wav", ".wave", ".flac", ".mp3", ".ogg", ".aif", ".aiff", ".wv"};
   const PluginTarget tt = t;
-  a.fileDialog.onOk = [&a, tt](const std::string& p) {
-    if (const PluginState* sp = tt.state(a.doc.song())) {
-      PluginState st = *sp;
-      st.data = p;
-      setPluginState(a, tt, st, i18n::tr("Load audio"));
-      if (tt.isChannel()) a.doc.renameChannel(tt.owner, fs::path(p).stem().string());
-    }
-  };
+  a.fileDialog.onOk = [&a, tt](const std::string& p) { loadAudio(a, tt, p); };
+}
+
+void loadAudio(App& a, const PluginTarget& t, const std::string& path, const std::string& name) {
+  if (const PluginState* sp = t.state(a.doc.song())) {
+    PluginState st = *sp;
+    st.data = path;
+    setPluginState(a, t, st, i18n::tr("Load audio"));
+    if (t.isChannel()) a.doc.renameChannel(t.owner, name.empty() ? fs::path(path).stem().string() : name);
+  }
 }
 
 namespace {
@@ -705,9 +727,15 @@ void drawEmpty(App& a, const PluginTarget& t, Ed& e, ImVec2 z0, ImVec2 z1) {
                : i18n::tr("Breaks, loops, full songs, anything. Seltmann finds the tempo and the bars and chops it for you."));
   textC(dl, a.fontRegular, theme::kFontCaption, ImVec2(c.x, c.y + 58), P.textFaint,
         i18n::tr("From Finder or Explorer, Tracklib, the browser, the playlist or the audio editor"));
-  if (button("##sload2", ImVec2(c.x - 75, c.y + 82), ImVec2(150, 34), i18n::N_("Load audio..."), false, nullptr, static_cast<int>(ui::Icon::Open),
-             true))
+  // J-218: Load and Record side by side, the same size
+  if (button("##sload2", ImVec2(c.x - 155, c.y + 82), ImVec2(150, 34), i18n::N_("Load audio..."), false, nullptr,
+             static_cast<int>(ui::Icon::Open), true))
     openLoadDialog(a, t, e);
+  e.recEntry = ImVec2(c.x + 80, c.y + 99);
+  if (button("##srec2", ImVec2(c.x + 5, c.y + 82), ImVec2(150, 34), i18n::N_("Record..."), false,
+             i18n::N_("Record from an audio input (a microphone, an instrument) and load the recording here"),
+             static_cast<int>(ui::Icon::Record), true))
+    openRecorder(a, t);
 }
 
 // ------------------------------------------------------------------ header (what it is)
@@ -959,11 +987,28 @@ void trace(Ed& e, const char* state, const LiveView& lv) {
     std::snprintf(b, sizeof b, " unit %.6g chop %d cuts", e.m.pattern.unitBeats, e.m.chop.mode);
     line += b;
     for (size_t k = 1; k < e.m.slices.size() && k < 5; ++k) line += " " + std::to_string(e.m.slices[k].start);
+    // the steps' own pitches ("<step number>:<semitones>", 1 = the first step)
+    std::string sp;
+    for (size_t i = 0; i < e.m.pattern.steps.size(); ++i)
+      if (std::fabs(e.m.pattern.steps[i].pitch) >= 0.005f) sp += (sp.empty() ? "" : " ") + std::to_string(i + 1) + ":" + pitchText(e.m.pattern.steps[i].pitch);
+    line += " stepst \"" + sp + "\"";
+    // J-214: the steps' own lengths ("<step number>:<beats>"), where the steps end and one cycle (beats)
+    std::string ln;
+    for (size_t i = 0; i < e.m.pattern.steps.size(); ++i)
+      if (e.m.pattern.steps[i].beats > 0) {
+        std::snprintf(b, sizeof b, "%s%zu:%.6g", ln.empty() ? "" : " ", i + 1, e.m.pattern.steps[i].beats);
+        ln += b;
+        if (ln.size() > 200) break;
+      }
+    std::snprintf(b, sizeof b, " lens \"%s\" stepsbeats %.6g cycle %.6g", ln.c_str(), e.m.pattern.stepsBeats(), cycleBeats(e.m));
+    line += b;
   }
   std::snprintf(b, sizeof b, "\nseltmann: body %.0f %.0f", e.body.x, e.body.y);  // J-152: the measured size
   line += b;
   if (std::string(state) == "empty") {
     std::snprintf(b, sizeof b, "\nseltmann: zone %.0f %.0f %.0f %.0f", e.zone0.x, e.zone0.y, e.zone1.x, e.zone1.y);
+    line += b;
+    std::snprintf(b, sizeof b, "\nseltmann: recentry %.0f %.0f", e.recEntry.x, e.recEntry.y);  // J-218
     line += b;
   }
   if (std::string(state) == "ready") {
@@ -984,8 +1029,8 @@ void trace(Ed& e, const char* state, const LiveView& lv) {
       std::snprintf(b, sizeof b, "\nseltmann: cut %zu %.0f %.0f", i + 1, e.cutPts[i].x, e.cutPts[i].y);
       line += b;
     }
-    for (size_t i = 0; i < e.laneCutPts.size() && i < 4; ++i) {
-      std::snprintf(b, sizeof b, "\nseltmann: lanecut %zu %.0f %.0f", i + 1, e.laneCutPts[i].x, e.laneCutPts[i].y);
+    for (size_t i = 0; i < e.laneLenPts.size() && i < 24; ++i) {  // J-214: the step length handles (right edges)
+      std::snprintf(b, sizeof b, "\nseltmann: steplen %zu %.0f %.0f", i, e.laneLenPts[i].x, e.laneLenPts[i].y);
       line += b;
     }
     for (size_t i = 0; i < e.padChips.size() && i < 4; ++i) {
@@ -1033,7 +1078,7 @@ void drawGridTools(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1) {
     }
   }
   if (!e.taps.empty() && a.now - e.taps.back() < 2.0) {
-    char b[16];
+    char b[24];
     std::snprintf(b, sizeof b, "%zu", e.taps.size());
     dl->AddCircleFilled(ImVec2(x + 60, y + 19), 7, accent(), 12);
     textC(dl, a.fontMono, theme::kFontLabel - 2, ImVec2(x + 60, y + 19), theme::contrastText(accent()), b);
@@ -1193,6 +1238,15 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
   //   action bar 32 (play, chop, take it out) | tools 200 (layouts | pads) | Edit drawer 132..236 (per tab, closed by default)
   const float headH = 36, waveH = 128, seqH = 80, barH = 32, toolsH = 200, gap = 8;
   const float bodyH = headH + gap + waveH + seqH + gap + barH + gap + toolsH;
+  if (!e.hasModel && e.path.empty() && recorderOpenFor(t)) {
+    // J-218: the recorder in place of the drop zone, the same height
+    drawRecorder(a, t, e, o, ImVec2(o.x + W, o.y + bodyH));
+    ImGui::SetCursorScreenPos(ImVec2(o.x, o.y + bodyH + 6));
+    ImGui::Dummy(ImVec2(W, 1));
+    e.body = ImVec2(W, bodyH + 6);
+    trace(e, "recorder", lv);
+    return true;
+  }
   if (!e.hasModel) {
     // drop zone (empty), progress (analysing) or a message (unreadable): the same height as the editor
     drawEmpty(a, t, e, o, ImVec2(o.x + W, o.y + bodyH));

@@ -16,6 +16,7 @@
 #include <fstream>
 #include <map>
 #include <sstream>
+#include <utility>
 #include "../../third_party/imgui/imgui_internal.h"
 #include "../core/Json.h"
 #include "../core/Project.h"
@@ -145,23 +146,82 @@ struct PresetNode {
 };
 
 struct HeaderState {
+  std::string type;      // J-213: the plugin type the rest belongs to
   std::string presetName;
   int presetIndex = -1;  // index into factory + user list
   PluginState spare;     // A/B compare
   bool onB = false;
+  int devPick = -1;      // dev: list entry to load on the next draw
+  uint64_t sig = 0;      // the state it was last drawn with (stateSig)
 };
 std::map<uint64_t, HeaderState> headers;
+// A replaced plugin's header, kept per target and plugin type: undoing the replace brings back the
+// exact state it had, and with it the preset it showed.
+std::map<std::pair<uint64_t, std::string>, HeaderState> parked;
+
+// A fingerprint of a plugin state (its type, parameters and data).
+uint64_t stateSig(const PluginState& st) {
+  uint64_t h = 1469598103934665603ull;
+  auto mix = [&h](const void* p, size_t n) {
+    const auto* b = static_cast<const unsigned char*>(p);
+    for (size_t i = 0; i < n; ++i) h = (h ^ b[i]) * 1099511628211ull;
+  };
+  mix(st.type.data(), st.type.size());
+  if (!st.params.empty()) mix(st.params.data(), st.params.size() * sizeof(float));
+  // (a large blob, as a hosted plugin's chunk: its size and both ends, so a frame stays cheap)
+  auto mixText = [&mix](const std::string& x) {
+    const size_t n = x.size();
+    mix(&n, sizeof n);
+    if (n <= 4096) mix(x.data(), n);
+    else {
+      mix(x.data(), 1024);
+      mix(x.data() + n - 1024, 1024);
+    }
+  };
+  mixText(st.data);
+  mixText(st.ins);
+  return h;
+}
+
+void park(uint64_t key, const HeaderState& h) {
+  if (h.type.empty() || (h.presetName.empty() && !h.onB)) return;  // nothing worth bringing back
+  parked[{key, h.type}] = h;
+}
+
+// J-213: the target's header state for plugin `type`; a replaced plugin (another
+// type in the same channel or slot, by any path, undo included) starts over,
+// unless the state is exactly the one a replaced header was showing (an undo).
+HeaderState& headerFor(const PluginTarget& t, const std::string& type, const PluginState* st = nullptr) {
+  HeaderState& h = headers[t.key()];
+  if (h.type != type) {
+    park(t.key(), h);
+    const int pick = h.devPick;
+    h = HeaderState{};
+    h.type = type;
+    h.devPick = pick;
+  }
+  if (st && h.presetName.empty() && !h.onB) {
+    auto it = parked.find({t.key(), type});
+    if (it != parked.end() && it->second.sig == stateSig(*st)) {
+      const int pick = h.devPick;
+      h = it->second;
+      h.devPick = pick;
+      parked.erase(it);
+    }
+  }
+  return h;
+}
 
 }  // namespace
 
 namespace pui {
 void compareStore(App& a, const PluginTarget& t) {
-  if (const PluginState* st = t.state(a.doc.song())) headers[t.key()].spare = *st;
+  if (const PluginState* st = t.state(a.doc.song())) headerFor(t, st->type).spare = *st;
 }
 void compareFlip(App& a, const PluginTarget& t) {
   const PluginState* st = t.state(a.doc.song());
   if (!st) return;
-  HeaderState& h = headers[t.key()];
+  HeaderState& h = headerFor(t, st->type);
   if (h.spare.type != st->type) h.spare = *st;
   PluginState cur = *st;
   setPluginState(a, t, h.spare, "compare A/B");
@@ -172,6 +232,24 @@ bool compareOnB(const PluginTarget& t) {
   auto it = headers.find(t.key());
   return it != headers.end() && it->second.onB;
 }
+void presetLoaded(const PluginTarget& t, const std::string& type, const std::string& name) {
+  HeaderState& h = headerFor(t, type);
+  h.presetName = name;
+  h.presetIndex = -1;
+}
+std::string devHeaderPreset(const PluginTarget& t, std::string* type, bool* onB) {
+  auto it = headers.find(t.key());
+  if (type) *type = it != headers.end() ? it->second.type : std::string();
+  if (onB) *onB = it != headers.end() && it->second.onB;
+  return it == headers.end() || it->second.presetName.empty() ? std::string("Default") : it->second.presetName;
+}
+void pluginReplaced(const PluginTarget& t) {
+  if (auto it = headers.find(t.key()); it != headers.end()) {
+    park(t.key(), it->second);
+    headers.erase(it);
+  }
+}
+void devPickPreset(const PluginTarget& t, int index) { headers[t.key()].devPick = index; }
 }  // namespace pui
 
 namespace pui {
@@ -196,7 +274,8 @@ void drawPluginHeader(App& a, const PluginTarget& t) {
   const PluginInfo* info = t.info(s);
   if (!st || !info) return;
   const auto& P = pal();
-  HeaderState& h = headers[t.key()];
+  HeaderState& h = headerFor(t, st->type, st);
+  h.sig = stateSig(*st);
   ImGui::PushID(static_cast<int>(t.key()));
 
   // Combined preset list: factory, then the preset library (your presets at
@@ -228,6 +307,7 @@ void drawPluginHeader(App& a, const PluginTarget& t) {
     h.presetName = static_cast<size_t>(idx) < factoryCount ? names[static_cast<size_t>(idx)] : lib[static_cast<size_t>(idx) - factoryCount].name;
   };
   (void)menuOpening;
+  if (h.devPick >= 0) apply(std::exchange(h.devPick, -1));
 
   if (!pui::wordmark(a, info->type, 18.0f)) {  // J-130: every built-in plugin shows its wordmark; hosted plugins their name
     ImGui::PushFont(a.fontBold, 15.0f);

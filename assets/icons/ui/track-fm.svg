@@ -1,0 +1,7 @@
+<!-- Gridline original (GPL-3.0), drawn on the Lucide 24-unit grid and stroke rules: track icon: one operator driving another -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <circle cx="6" cy="12" r="3.5" />
+  <circle cx="18" cy="12" r="3.5" />
+  <path d="M9.5 12 L14.5 12" />
+  <path d="M12.3 9.8 L14.5 12 L12.3 14.2" />
+</svg>

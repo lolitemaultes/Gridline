@@ -136,6 +136,7 @@ struct Session {
   float spectralDb = -30;
   int fadeCurve = 0;
   int renameMarker = -1, renameRegion = -1;
+  int devMenu = -1;  // J-207 dev: menu to open on the next frame (screenshots)
   char renameBuf[64] = {};
 
   const Content& cur() const { return hist.cur(); }
@@ -181,8 +182,12 @@ void addMarkerAtCursor(App& a, Session& s);
 
 // Drawing (edison_form_ui.cpp / edison_wave_ui.cpp / edison_tools_ui.cpp).
 void drawForm(App& a, Session& s, float width, float maxHeight);
-void drawMenus(App& a, Session& s, const skin::Form& F, ImDrawList* dl);
-void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, float scale);
+namespace sty {
+struct Metrics;
+}
+// The nine menu words from tl, cells cellW x h (edison_form_ui.cpp).
+void drawMenus(App& a, Session& s, ImVec2 tl, float cellW, float h, const sty::Metrics& M);
+void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, const sty::Metrics& M);
 void drawToolDialogs(App& a, Session& s);
 void openTool(Session& s, Tool t);
 void handleKeys(App& a, Session& s);

@@ -1,0 +1,6 @@
+<!-- Gridline original (GPL-3.0), drawn on the Lucide 24-unit grid and stroke rules: track icon: two pages, one behind the other -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M8 5 L15 5 L19 9 L19 21 L8 21 Z" />
+  <path d="M15 5 L15 9 L19 9" />
+  <path d="M5 17.5 L5 2.5 L12.5 2.5" />
+</svg>

@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include "../../engine/Dsp.h"
+#include "../../engine/SampleTap.h"
 #include "../../engine/pitch/Kernel.h"
 #include "metal.h"
 #include "metal_rt.h"
@@ -71,6 +72,7 @@ class GrainScanGen final : public Generator {
     for (int i = 0; i < GsCount; ++i) p_[i] = prmf(s, i, 0);
   }
   void onNoteOn(uint32_t id, double pitch, float vel) override {
+    tap::play(sample_.get());  // J-219: Track Receipt
     Voice* pick = nullptr;
     for (auto& v : v_)
       if (!v.on) {
@@ -198,6 +200,15 @@ class GrainScanGen final : public Generator {
               // Constant grain gain 1.42 through a balance pan (reference).
               g.panL = 1.42f * std::min(1.0f, 1.0f - pan), g.panR = 1.42f * std::min(1.0f, 1.0f + pan);
               g.rOff = 0;
+              if (tap::active()) {  // J-219: Track Receipt: the frames this grain will read (wrapping round the sample)
+                double a0 = std::fmod(g.pos, frames);
+                if (a0 < 0) a0 += frames;
+                const double span = std::fabs(g.rate) * static_cast<double>(g.len);
+                if (g.rate < 0) a0 = std::max(0.0, a0 - span);
+                const double a1 = a0 + span;
+                tap::markFrames(smp, a0, std::min(a1, frames - 1));
+                if (a1 > frames - 1) tap::markFrames(smp, 0, std::min(frames - 1, a1 - frames));
+              }
               break;
             }
           if (!freeze) v.head += step * smp->sampleRate;

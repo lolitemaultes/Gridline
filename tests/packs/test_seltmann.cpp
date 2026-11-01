@@ -31,6 +31,7 @@
 #include "core/Song.h"
 #include "core/WavWriter.h"
 #include "engine/Generators.h"
+#include "engine/Render.h"
 #include "packs/Packs.h"
 #include "packs/edison/edison.h"
 #include "packs/seltmann/seltmann.h"
@@ -524,7 +525,7 @@ void testRegions() {
     const sm::Model d = sm::defaultModel(*src, an);
     expect(sm::isNaturalOrder(d), "sequence: a dropped file starts in natural order");
   }
-  const double beats0 = base.pattern.beats();
+  const double beats0 = sm::cycleBeats(base);
 
   // ---- split B in half: A B C D -> A B C D E (B and C are B's halves)
   {
@@ -538,7 +539,7 @@ void testRegions() {
     expect(tiles(m) && m.regionStart == r0 && m.regionEnd == r1, "split: the regions still tile the chopped region");
     expect(stepOrder(m) == std::vector<int>{0, 1, 2, 3, 4} && sm::isNaturalOrder(m), "split: the sequence follows (A B C D E)");
     expect(std::fabs(m.pattern.unitBeats - 2.0) < 1e-9 && stepUnits(m) == std::vector<int>{2, 1, 1, 2, 2} &&
-               std::fabs(m.pattern.beats() - beats0) < 1e-9,
+               std::fabs(sm::cycleBeats(m) - beats0) < 1e-9,
            "split: halves get half a step, the pattern length stays");
     expect(m.chop.mode == sm::ChopManual && m.pattern.name == sm::kEditedName, "split: the chop is by hand now, the sequence edited");
     const double d = renderDiff(base, m, src);
@@ -560,10 +561,10 @@ void testRegions() {
     sm::Model m = base;
     expect(sm::splitRegion(m, 0, 3) && m.slices.size() == 6 && tiles(m), "split: A in thirds");
     expect(stepOrder(m) == std::vector<int>{0, 1, 2, 3, 4, 5} && stepUnits(m) == std::vector<int>{1, 1, 1, 3, 3, 3} &&
-               std::fabs(m.pattern.beats() - beats0) < 1e-9,
+               std::fabs(sm::cycleBeats(m) - beats0) < 1e-9,
            "split: thirds (A B C, then D E F are the old B C D)");
     sm::Model q = m;
-    expect(sm::splitRegion(q, 0, 2) && std::fabs(q.pattern.beats() - beats0) < 1e-9 && q.slices.size() == 7 && tiles(q),
+    expect(sm::splitRegion(q, 0, 2) && std::fabs(sm::cycleBeats(q) - beats0) < 1e-9 && q.slices.size() == 7 && tiles(q),
            "split again: halves of a third, the pattern length stays");
   }
   // ---- repeated letters: every occurrence becomes the pieces
@@ -572,7 +573,7 @@ void testRegions() {
     sm::patternFromText("1 2 1 3", m.pattern);
     m.pattern.name = sm::kEditedName;
     expect(sm::splitRegion(m, 0, 2), "split: A that plays twice");
-    expect(stepOrder(m) == std::vector<int>{0, 1, 2, 0, 1, 3} && std::fabs(m.pattern.beats() - beats0) < 1e-9,
+    expect(stepOrder(m) == std::vector<int>{0, 1, 2, 0, 1, 3} && std::fabs(sm::cycleBeats(m) - beats0) < 1e-9,
            "split: A B A C -> A B C A B D (each A is both halves)");
   }
   // ---- a reversed step plays the pieces backwards
@@ -605,7 +606,7 @@ void testRegions() {
     expect(m.slices.size() == 3 && m.slices[1].start == base.slices[1].start && m.slices[1].end == base.slices[2].end && tiles(m) &&
                m.regionStart == r0 && m.regionEnd == r1,
            "delete C: B and C join (B keeps its letter), the region stays the same");
-    expect(stepOrder(m) == std::vector<int>{0, 1, 2} && stepUnits(m) == std::vector<int>{1, 2, 1} && std::fabs(m.pattern.beats() - beats0) < 1e-9,
+    expect(stepOrder(m) == std::vector<int>{0, 1, 2} && stepUnits(m) == std::vector<int>{1, 2, 1} && std::fabs(sm::cycleBeats(m) - beats0) < 1e-9,
            "delete C: the sequence is A B C, B as long as both");
     const double d = renderDiff(base, m, src);
     std::printf("# join render difference: %.5f of the energy\n", d);
@@ -652,7 +653,7 @@ void testRegions() {
     expect(stepOrder(k) == std::vector<int>{1, 0, 2, 3}, "reorder: a tempo fix keeps the order");
     expect(sm::splitRegion(m, 0, 2) && stepOrder(m) == std::vector<int>{2, 0, 1, 3, 4}, "reorder then split: B A C D -> C A B D E");
     sm::naturalPattern(m);
-    expect(sm::isNaturalOrder(m) && std::fabs(m.pattern.beats() - beats0) < 1e-9 && stepUnits(m) == std::vector<int>{1, 1, 2, 2, 2},
+    expect(sm::isNaturalOrder(m) && std::fabs(sm::cycleBeats(m) - beats0) < 1e-9 && stepUnits(m) == std::vector<int>{1, 1, 2, 2, 2},
            "reset: the natural order again, steps as long as their regions");
   }
   // ---- old projects: a straight pattern (saved before J-149) loads and re-chops as before
@@ -691,7 +692,7 @@ void testStartPitchResize() {
   sm::rechop(base, src.get());
   sm::straightPattern(base);
   expect(base.slices.size() == 4 && sm::isNaturalOrder(base), "j185: A B C D to start with");
-  const double beats0 = base.pattern.beats();
+  const double beats0 = sm::cycleBeats(base);
   std::string path;
 
   // ---- start here
@@ -702,7 +703,7 @@ void testStartPitchResize() {
     std::vector<int> want;
     for (int i = 0; i < 4; ++i) want.push_back((at + i) % 4);
     expect(stepOrder(m) == want && sm::sequenceStartRegion(m) == at, "j185: ... the sequence plays from that cell, the ones before after");
-    expect(std::fabs(m.pattern.beats() - beats0) < 1e-9 && !sm::isNaturalOrder(m) && m.pattern.name == sm::kEditedName,
+    expect(std::fabs(sm::cycleBeats(m) - beats0) < 1e-9 && !sm::isNaturalOrder(m) && m.pattern.name == sm::kEditedName,
            "j185: ... the loop keeps its length and counts as edited");
     const auto notes = sm::patternNotes(m, 60, 0, 1);
     expect(notes.size() == 4 && notes[0].key == 60 + at && notes[0].start == 0, "j185: ... the pattern's notes start on that cell's key");
@@ -716,7 +717,7 @@ void testStartPitchResize() {
     sm::Model m = base;
     expect(sm::startSequenceAt(m, 2, true) && sm::startSequenceAt(m, 2, true) && sm::isNaturalOrder(m), "j185: starting at C twice comes back to A");
     m = base;
-    expect(sm::startSequenceAt(m, 1, false) && stepOrder(m) == std::vector<int>{1, 2, 3} && std::fabs(m.pattern.beats() - beats0 * 0.75) < 1e-9,
+    expect(sm::startSequenceAt(m, 1, false) && stepOrder(m) == std::vector<int>{1, 2, 3} && std::fabs(sm::cycleBeats(m) - beats0 * 0.75) < 1e-9,
            "j185: start here, leave out the steps before: B C D, three bars");
     m = base;
     expect(!sm::startSequenceAt(m, 0, true) && !sm::startSequenceAt(m, 4, true) && !sm::startSequenceAt(m, -1, false) && sm::isNaturalOrder(m),
@@ -728,6 +729,30 @@ void testStartPitchResize() {
     sm::Model back = rot;
     sm::startSequenceAt(back, 2, true);
     expect(std::fabs(renderDiff(base, back, src)) < 1e-9, "j185: rotating all the way round sounds exactly like before");
+  }
+
+  // ---- a step's own pitch: "A B C A" with the last A pitched leaves the first A alone
+  {
+    sm::Model m = base;
+    m.pattern.slots = {0, 1, 2};
+    m.pattern.steps.assign(4, sm::Step{});
+    const int seq[4] = {0, 1, 2, 0};
+    for (int i = 0; i < 4; ++i) m.pattern.steps[static_cast<size_t>(i)].src = seq[i];
+    expect(sm::setStepPitch(m, 3, 5) && m.pattern.steps[3].pitch == 5, "step pitch: the last A of A B C A up 5 semitones");
+    expect(m.pattern.steps[0].pitch == 0 && m.slices[0].pitch == 0, "step pitch: ... the first A and region A keep their pitch");
+    expect(!sm::setStepPitch(m, 3, 5), "step pitch: ... the same value changes nothing");
+    expect(sm::setStepPitch(m, 3, 99) && m.pattern.steps[3].pitch == sm::kSlicePitchRange, "step pitch: ... clamped to +24");
+    expect(!sm::setStepPitch(m, 4, 1) && !sm::setStepPitch(m, -1, 1) && !sm::setStepPitch(m, 0, std::nanf("")),
+           "step pitch: ... bad step / value: no change");
+    sm::setStepPitch(m, 3, -3.5f);
+    sm::Model r;
+    expect(sm::parseData(sm::formatData("/x/a.wav", m), path, r) && r.pattern.steps.size() == 4 && r.pattern.steps[3].pitch == -3.5f &&
+               r.pattern.steps[0].pitch == 0,
+           "step pitch: ... saved with the project, on that step only");
+    // the notes sent to the playlist: only the last A carries the pitch
+    const auto notes = sm::patternNotes(m, 60, 0, 1);
+    expect(notes.size() == 4 && notes[0].key == notes[3].key && notes[0].modX == 128 && notes[3].modX != 128,
+           "step pitch: ... the sequence's notes: both A on one key, only the last pitched");
   }
 
   // ---- slice pitch
@@ -766,7 +791,7 @@ void testStartPitchResize() {
     const int64_t cut2 = m.slices[2].start;
     expect(sm::resizeCut(m, 2, cut2 - static_cast<int64_t>(std::llround(2 * bf))), "j185: drag the B|C cut half a bar earlier");
     expect(tiles(m) && m.slices[2].start < cut2 && m.slices[1].end == m.slices[2].start && m.chop.mode == sm::ChopManual, "j185: ... both neighbours resize, cuts by hand");
-    expect(sm::isNaturalOrder(m) && std::fabs(m.pattern.beats() - beats0) < 1e-6 && std::fabs(m.pattern.unitBeats - 2) < 1e-9 &&
+    expect(sm::isNaturalOrder(m) && std::fabs(sm::cycleBeats(m) - beats0) < 1e-6 && std::fabs(m.pattern.unitBeats - 2) < 1e-9 &&
                stepUnits(m) == std::vector<int>{2, 1, 3, 2},
            "j185: ... the in-order sequence follows the new lengths (unit refined to half bars)");
     sm::Model r;
@@ -783,11 +808,374 @@ void testStartPitchResize() {
     expect(sm::resizeCut(rot, 3, rot.slices[3].start + static_cast<int64_t>(bf)) && rot.pattern.steps == before, "j185: a reordered sequence keeps its steps on a resize");
     // a sub-unit move (no snap) refines the unit to keep the timing (down to 1/64 beat)
     sm::Model f = base;
-    expect(sm::resizeCut(f, 1, f.slices[1].start + static_cast<int64_t>(std::llround(bf * 0.25))) && std::fabs(f.pattern.beats() - beats0) < 1e-6 &&
+    expect(sm::resizeCut(f, 1, f.slices[1].start + static_cast<int64_t>(std::llround(bf * 0.25))) && std::fabs(sm::cycleBeats(f) - beats0) < 1e-6 &&
                f.pattern.unitBeats <= 0.25 + 1e-12,
            "j185: a sixteenth move refines the step unit to a sixteenth");
     // an old short slice line (no pitch edits) still loads
     expect(sm::modelFromText(sm::modelToText(base), r) && r.slices.size() == 4 && r.slices[0].pitch == 0, "j185: older states load with pitch 0");
+  }
+}
+
+// ------------------------------------------------------------------ J-208 slice pitch in the sequence
+// Frequency of a sine-like signal over [t0, t1) seconds (rising zero crossings, interpolated).
+double freqOf(const std::vector<float>& x, double rate, double t0, double t1) {
+  const auto i0 = static_cast<size_t>(std::max(1.0, t0 * rate)), i1 = std::min(x.size(), static_cast<size_t>(t1 * rate));
+  double first = -1, last = -1;
+  int n = 0;
+  for (size_t i = i0; i < i1; ++i)
+    if (x[i - 1] < 0 && x[i] >= 0) {
+      const double t = static_cast<double>(i - 1) + x[i - 1] / static_cast<double>(x[i - 1] - x[i]);
+      if (first < 0) first = t;
+      last = t;
+      ++n;
+    }
+  return n > 2 ? (n - 1) / ((last - first) / rate) : 0;
+}
+
+void testSlicePitchJ208() {
+  // a 220 Hz sine, 8 s at 120 bpm: four one-bar regions A B C D (2 s each), the straight sequence
+  const double rate = 44100, f0 = 220;
+  auto src = std::make_shared<Sample>();
+  src->sampleRate = rate;
+  std::vector<float> L(static_cast<size_t>(rate * 8));
+  for (size_t i = 0; i < L.size(); ++i) L[i] = static_cast<float>(0.5 * std::sin(2 * 3.14159265358979 * f0 * static_cast<double>(i) / rate));
+  src->left = L;
+  src->right = L;
+  sm::Model base;
+  base.srcFrames = static_cast<int64_t>(src->frames());
+  base.srcRate = rate;
+  base.grid = sm::flatGrid(*src, 120);
+  base.chop.mode = sm::ChopGrid;
+  base.chop.division = sm::Div1Bar;
+  base.chop.zeroCross = false;
+  sm::setRegionBars(base, 1, 4);
+  sm::rechop(base, src.get());
+  sm::straightPattern(base);
+  std::printf("# j208 slices %zu steps %zu natural %d\n", base.slices.size(), base.pattern.steps.size(), sm::isNaturalOrder(base) ? 1 : 0);
+  expect(base.slices.size() >= 3 && sm::isNaturalOrder(base), "j208: the regions in order");
+  const double b0 = static_cast<double>(base.slices[1].start - base.regionStart) / rate;  // where B starts in the loop
+  const char* syncName[3] = {"original", "resample", "stretch"};
+  struct Case {
+    float slice, step;
+  };
+  const Case cases[] = {{12, 0}, {-7, 0}, {0.5f, 0}, {2, 5}, {-24, 0}, {24, 0}};
+  for (int sync = 0; sync < 3; ++sync) {
+    sm::RenderOpts o;
+    o.sampleRate = rate;
+    o.tempo = 120;
+    o.sync = sync;
+    std::vector<float> L0, R0;
+    expect(sm::renderPatternLoop(base, src, o, L0, R0), ("j208: render the sequence (" + std::string(syncName[sync]) + ")").c_str());
+    const double fb = freqOf(L0, rate, b0 + 0.1, b0 + 0.4);
+    std::printf("# j208 %s unpitched B %.2f Hz\n", syncName[sync], fb);
+    expect(std::fabs(fb - f0) < f0 * 0.01, ("j208: unpitched B plays at the source pitch (" + std::string(syncName[sync]) + ")").c_str());
+    for (const Case& c : cases) {
+      sm::Model m = base;
+      expect(sm::setSlicePitch(m, 1, c.slice), "j208: pitch region B");
+      m.pattern.steps[1].pitch = c.step;
+      std::vector<float> L1, R1;
+      const bool ok = sm::renderPatternLoop(m, src, o, L1, R1);
+      const double want = f0 * std::pow(2.0, (c.slice + c.step) / 12.0);
+      const double got = ok ? freqOf(L1, rate, b0 + 0.05, b0 + 0.2) : 0;
+      std::printf("# j208 %s B %+g st (step %+g): %.2f Hz, want %.2f\n", syncName[sync], static_cast<double>(c.slice), static_cast<double>(c.step), got, want);
+      char nm[160];
+      std::snprintf(nm, sizeof nm, "j208: %s: B pitched %+g st (step %+g) plays at 2^(st/12) times the source pitch", syncName[sync],
+                    static_cast<double>(c.slice), static_cast<double>(c.step));
+      expect(ok && std::fabs(got - want) < want * 0.01, nm);
+      // the other regions keep their pitch; the render is finite and click-free
+      const double fa = freqOf(L1, rate, 0.2, 0.6);
+      expect(std::fabs(fa - f0) < f0 * 0.01, "j208: ... A (unpitched) stays at the source pitch");
+      bool finite = true;
+      for (float v : L1) finite = finite && std::isfinite(v);
+      expect(finite && maxStep(L1) < 0.5 * 2 * 3.14159265358979 * std::max(want, f0) / rate * 2 + 0.02,
+             "j208: ... finite, no clicks (no sample jump past the sine's slope)");
+    }
+    // the region's key plays it pitched too
+    sm::Model m = base;
+    sm::setSlicePitch(m, 1, 7);
+    std::vector<float> L2, R2;
+    expect(sm::renderSlice(m, src, 1, o, L2, R2), "j208: render B on its key");
+    const double fk = freqOf(L2, rate, 0.05, 0.25), wk = f0 * std::pow(2.0, 7 / 12.0);
+    std::printf("# j208 %s key B +7: %.2f Hz, want %.2f\n", syncName[sync], fk, wk);
+    expect(std::fabs(fk - wk) < wk * 0.01, ("j208: B on its key plays +7 st (" + std::string(syncName[sync]) + ")").c_str());
+  }
+  // the instrument as the audio thread runs it (prepared data from the state, the warp render
+  // made by its worker): the pattern key plays B an octave up, in every sync mode
+  const std::string path = (tmpDir() / "j208_sine.wav").string();
+  expect(sm::writeLoopWav(path, src->left, src->right.vec(), rate), "j208: write the sine");
+  for (int sync = 0; sync < 3; ++sync) {
+    sm::Model m = base;
+    sm::setSlicePitch(m, 1, 12);
+    PluginState st = stateWith(path, &m);
+    st.params[sm::SmSync] = static_cast<float>(sync);
+    st.params[sm::SmVelocity] = 0;
+    ChannelAux aux;
+    expect(packs::prepareAux(st, aux) && aux.custom, "j208: prepared data for the instrument");
+    play(st, aux, 4096, 256, {});  // asks the warp worker for this tempo
+    for (int i = 0; i < 300; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    const int64_t n = static_cast<int64_t>(rate * 8);
+    auto r = play(st, aux, n, 256, {{0, 48, n}});
+    const double got = freqOf(r.L, rate, b0 + 0.05, b0 + 0.2), want = 2 * f0;
+    std::printf("# j208 realtime %s B +12: %.2f Hz, want %.2f\n", syncName[sync], got, want);
+    expect(std::fabs(got - want) < want * 0.01, ("j208: the instrument plays B +12 st in the sequence (" + std::string(syncName[sync]) + ")").c_str());
+  }
+  // in a project: the sequence sent to the playlist as notes plays through the engine with B +12
+  // (its region's pitch) and C +5 (the step's own pitch, carried as mod X)
+  for (int sync = 0; sync < 3; ++sync) {
+    sm::Model m = base;
+    sm::setSlicePitch(m, 1, 12);
+    if (m.pattern.steps.size() > 2) m.pattern.steps[2].pitch = 5;
+    Song s = makeEmptySong();
+    s.tempo = 120;
+    Channel c;
+    c.id = s.allocateId();
+    c.name = "Seltmann";
+    c.plugin = stateWith(path, &m);
+    c.plugin.params[sm::SmSync] = static_cast<float>(sync);
+    c.plugin.params[sm::SmVelocity] = 0;
+    c.mixerTrack = s.masterId();
+    s.channels.push_back(c);
+    expect(sm::sendPatternToSong(s, c.id, m, c.plugin.params, 1, 0, 0) != kNoId, "j208: the sequence as notes in a project");
+    RenderOptions ro;
+    ro.sampleRate = static_cast<int>(rate);
+    const AudioBuffer out = renderSong(s, ro);
+    std::vector<float> L2(out.frames);
+    for (size_t i = 0; i < L2.size(); ++i) L2[i] = out.at(0, i);
+    const double fbB = freqOf(L2, rate, b0 + 0.05, b0 + 0.2), wB = 2 * f0;
+    const double c0 = m.slices.size() > 2 ? static_cast<double>(m.slices[2].start - m.regionStart) / rate : 0;
+    const double fbC = freqOf(L2, rate, c0 + 0.05, c0 + 0.3), wC = f0 * std::pow(2.0, 5 / 12.0);
+    std::printf("# j208 project %s: B %.2f Hz (want %.2f), C %.2f Hz (want %.2f)\n", syncName[sync], fbB, wB, fbC, wC);
+    expect(std::fabs(fbB - wB) < wB * 0.01, ("j208: in a project, B plays its region's +12 st (" + std::string(syncName[sync]) + ")").c_str());
+    expect(m.slices.size() < 3 || std::fabs(fbC - wC) < wC * 0.01, ("j208: ... and C its step's +5 st (" + std::string(syncName[sync]) + ")").c_str());
+  }
+}
+
+// ------------------------------------------------------------------ J-214 step lengths
+// Clicks (|x| > 0.6, at least 50 ms apart): the sample frames where they are.
+std::vector<int64_t> clicksOf(const std::vector<float>& x) {
+  std::vector<int64_t> v;
+  for (size_t i = 0; i < x.size(); ++i)
+    if (std::fabs(x[i]) > 0.6f && (v.empty() || static_cast<int64_t>(i) - v.back() > 2205)) v.push_back(static_cast<int64_t>(i));
+  return v;
+}
+double peakIn(const std::vector<float>& x, double rate, double t0, double t1) {
+  double m = 0;
+  for (size_t i = static_cast<size_t>(std::max(0.0, t0 * rate)); i < x.size() && i < static_cast<size_t>(t1 * rate); ++i)
+    m = std::max(m, static_cast<double>(std::fabs(x[i])));
+  return m;
+}
+bool allFinite(const std::vector<float>& x) {
+  for (float v : x)
+    if (!std::isfinite(v)) return false;
+  return true;
+}
+
+void testStepLengthsJ214() {
+  // 10 s at 120 bpm (a bar = 2 s): every bar a quiet sine of its own pitch (220, 330, 440 ... Hz) and a
+  // click 5 ms after its start; four one-bar regions A B C D
+  const double rate = 44100;
+  const int64_t bar = 88200, clickAt = 220;
+  auto src = std::make_shared<Sample>();
+  src->sampleRate = rate;
+  std::vector<float> L(static_cast<size_t>(rate * 10));
+  for (size_t i = 0; i < L.size(); ++i) {
+    const double f = 220 + 110 * static_cast<double>(static_cast<int64_t>(i) / bar);
+    L[i] = static_cast<float>(0.1 * std::sin(2 * 3.14159265358979 * f * static_cast<double>(i) / rate));
+  }
+  for (int64_t b = 0; b * bar < static_cast<int64_t>(L.size()); ++b) L[static_cast<size_t>(b * bar + clickAt)] = 0.9f;
+  src->left = L;
+  src->right = L;
+  sm::Model base;
+  base.srcFrames = static_cast<int64_t>(src->frames());
+  base.srcRate = rate;
+  base.grid = sm::flatGrid(*src, 120);
+  base.chop.mode = sm::ChopGrid;
+  base.chop.division = sm::Div1Bar;
+  base.chop.zeroCross = false;
+  sm::setRegionBars(base, 0, 4);
+  sm::rechop(base, src.get());
+  sm::straightPattern(base);
+  expect(base.slices.size() == 4 && base.slices[1].start == bar && std::fabs(base.pattern.unitBeats - 4) < 1e-9 && sm::isNaturalOrder(base),
+         "j214: four one-bar regions, in order, a bar a step");
+  // the sequence A A B (a duplicate of A)
+  sm::Model aab = base;
+  aab.pattern.steps.insert(aab.pattern.steps.begin() + 1, aab.pattern.steps[0]);
+  aab.pattern.steps.resize(3);
+  expect(stepOrder(aab) == std::vector<int>{0, 0, 1} && !aab.pattern.ownLengths() && std::fabs(sm::cycleBeats(aab) - 12) < 1e-9,
+         "j214: A A B, three bars, no own lengths");
+  sm::RenderOpts o;
+  o.sampleRate = rate;
+  o.tempo = 120;
+  o.sync = sm::SyncOriginal;
+
+  // ---- the model: own lengths
+  {
+    sm::Model m = aab;
+    expect(sm::setStepBeats(m, 0, 2) && m.pattern.steps[0].beats == 2 && m.pattern.steps[1].beats == 0 && m.pattern.ownLengths(),
+           "j214: the first A gets its own length (half a bar); the second A keeps its default");
+    expect(m.slices == aab.slices && m.regionStart == aab.regionStart && m.regionEnd == aab.regionEnd,
+           "j214: ... region A (and every region) keeps its start and end");
+    expect(std::fabs(sm::stepBeats(m.pattern, 0) - 2) < 1e-12 && std::fabs(sm::stepBeats(m.pattern, 1) - 4) < 1e-12 &&
+               std::fabs(sm::stepStart(m.pattern, 1, 0) - 2) < 1e-12 && std::fabs(sm::stepStart(m.pattern, 2, 0) - 6) < 1e-12,
+           "j214: ... the next steps start right after it (A at 2 beats, B at 6)");
+    expect(std::fabs(m.pattern.stepsBeats() - 10) < 1e-12 && std::fabs(sm::cycleBeats(m) - 12) < 1e-12,
+           "j214: ... the steps add up to 10 beats, the cycle pads to the bar line (12)");
+    expect(!sm::setStepBeats(m, 0, 2) && sm::setStepBeats(m, 0, 4) && m.pattern.steps[0].beats == 0 && !m.pattern.ownLengths(),
+           "j214: the same length again changes nothing; its default length (a bar) is no own length");
+    sm::Model x = aab;
+    sm::setStepBeats(x, 0, 1e-9);
+    expect(std::fabs(x.pattern.steps[0].beats - sm::kMinStepBeats) < 1e-9, "j214: lengths clamp at the shortest");
+    sm::setStepBeats(x, 0, 1e9);
+    expect(std::fabs(x.pattern.steps[0].beats - sm::kMaxStepBeats) < 1e-9, "j214: ... and the longest");
+    expect(!sm::setStepBeats(x, 7, 2) && !sm::setStepBeats(x, -1, 2) && !sm::setStepBeats(x, 0, NAN), "j214: no step, no number: nothing");
+    // a sequence in order with an own length is not "in order" (Reset order gives the default lengths back)
+    sm::Model n = base;
+    sm::setStepBeats(n, 2, 3);
+    expect(!sm::isNaturalOrder(n), "j214: an own length is not the natural order");
+    sm::Model n2 = n;
+    sm::naturalPattern(n2);
+    expect(sm::isNaturalOrder(n2) && !n2.pattern.ownLengths(), "j214: ... Reset order: in order, default lengths");
+    // the region's cut moved in the waveform: the steps keep their own lengths
+    sm::Model r = n;
+    expect(sm::resizeCut(r, 1, bar + bar / 2) && r.pattern.steps[2].beats == 3 && r.pattern.steps[0].beats == 0 && r.pattern.steps[0].ties == 0,
+           "j214: a cut moved in the waveform leaves the sequence's lengths alone");
+    // start here (rotate) keeps the lengths with the steps
+    sm::Model s = m;
+    sm::setStepBeats(s, 0, 2);
+    expect(sm::startSequenceAt(s, 1, true) && s.pattern.steps[2].beats == 2 && std::fabs(sm::cycleBeats(s) - 12) < 1e-12,
+           "j214: Start here: the own length moves with its step, the cycle stays");
+    // split a region played by a step with its own length: the pieces share it out
+    sm::Model sp = aab;
+    sm::setStepBeats(sp, 0, 2);
+    expect(sm::splitRegion(sp, 0, 2) && sp.pattern.steps[0].beats == 1 && sp.pattern.steps[1].beats == 1 &&
+               std::fabs(sp.pattern.stepsBeats() - 10) < 1e-9,
+           "j214: split: the pieces of a step with its own length share it out (the timing stays)");
+    // swing: a step on an odd unit still swings, one that starts off the unit grid does not
+    sm::Model sw = base;
+    sw.pattern.unitBeats = 0.5;
+    sm::Model sw2 = sw;
+    sm::setStepBeats(sw, 0, 0.75);
+    sm::setStepBeats(sw2, 0, 1.0);
+    expect(std::fabs(sm::stepStart(sw.pattern, 1, 0.5) - 0.75) < 1e-12 && std::fabs(sm::stepStart(sw.pattern, 2, 0.5) - 1.25) < 1e-12 &&
+               std::fabs(sm::stepStart(sw2.pattern, 1, 0.5) - 1.0) < 1e-12 && std::fabs(sm::stepStart(sw2.pattern, 2, 0.5) - 1.5 - 0.125) < 1e-12,
+           "j214: swing skips a step off the unit grid and still delays one on an odd unit");
+    // the text form: own lengths saved; old text (no lengths) loads unchanged
+    m = aab;
+    sm::setStepBeats(m, 0, 2);
+    sm::setStepBeats(m, 2, 4.0 / 3);
+    const std::string txt = sm::modelToText(m);
+    sm::Model back;
+    expect(txt.find(":b2") != std::string::npos && sm::modelFromText(txt, back) && back.pattern.steps == m.pattern.steps &&
+               std::fabs(back.pattern.steps[2].beats - 4.0 / 3) < 1e-6 && sm::modelToText(back) == txt,
+           "j214: own lengths round-trip through the model text");
+    const std::string old = sm::modelToText(aab);
+    sm::Model oldBack;
+    expect(old.find(":b") == std::string::npos && sm::modelFromText(old, oldBack) && oldBack.pattern.steps == aab.pattern.steps &&
+               !oldBack.pattern.ownLengths() && std::fabs(sm::cycleBeats(oldBack) - 12) < 1e-12,
+           "j214: old model text (no lengths) loads with the default lengths");
+    sm::Pattern p;
+    expect(sm::patternFromText("A:b1.5 B . ~", p) && p.steps.size() == 3 && p.steps[0].beats == 1.5 && p.steps[1].beats == 0 &&
+               p.steps[2].src == sm::kRest && p.steps[2].ties == 1 && sm::stepToText(p.steps[0]) == "A:b1.5",
+           "j214: the step language: b<beats>");
+    sm::Pattern p2;
+    expect(sm::patternFromText(".:b0.5 C:r:b3", p2) && p2.steps[0].src == sm::kRest && p2.steps[0].beats == 0.5 && p2.steps[1].reverse &&
+               p2.steps[1].beats == 3 && sm::stepToText(p2.steps[0]) == ".:b0.5",
+           "j214: ... rests take a length too");
+  }
+
+  // ---- renders: A A B, the first A half a bar
+  std::vector<float> L0, R0, L1, R1;
+  sm::Model shortA = aab;
+  sm::setStepBeats(shortA, 0, 2);
+  expect(sm::renderPatternLoop(aab, src, o, L0, R0) && sm::renderPatternLoop(shortA, src, o, L1, R1), "j214: render A A B (default, short A)");
+  expect(L0.size() == static_cast<size_t>(3 * bar) && L1.size() == static_cast<size_t>(3 * bar), "j214: both loops last three bars");
+  const auto c0 = clicksOf(L0), c1 = clicksOf(L1);
+  std::printf("# j214 clicks default:");
+  for (auto c : c0) std::printf(" %lld", static_cast<long long>(c));
+  std::printf("  short A:");
+  for (auto c : c1) std::printf(" %lld", static_cast<long long>(c));
+  std::printf("\n");
+  expect(c0.size() == 3 && c0[0] == clickAt && c0[1] == bar + clickAt && c0[2] == 2 * bar + clickAt, "j214: default: A A B a bar each");
+  expect(c1.size() == 3 && c1[0] == clickAt && c1[1] == bar / 2 + clickAt && c1[2] == 3 * bar / 2 + clickAt,
+         "j214: short A: the second A right after half a bar, B half a bar earlier");
+  expect(c0.size() == 3 && c1.size() == 3 && c0[2] - c1[2] == bar / 2, "j214: ... B starts earlier by exactly the half bar taken off");
+  expect(std::fabs(freqOf(L1, rate, 3.3, 3.9) - 330) < 4 && std::fabs(freqOf(L1, rate, 1.3, 2.8) - 220) < 3,
+         "j214: ... that is B (330 Hz); the second A plays its whole bar (220 Hz)");
+  expect(peakIn(L1, rate, 5.03, 6.0) < 1e-4 && peakIn(L1, rate, 4.0, 4.98) > 0.05, "j214: ... the rest up to the bar line is silent");
+  // lengthened past its slice: A for 6 beats (a bar and a half): the slice plays out, silence, then B
+  sm::Model longA = base;
+  longA.pattern.steps.resize(2);
+  sm::setStepBeats(longA, 0, 6);
+  std::vector<float> L2, R2;
+  expect(sm::renderPatternLoop(longA, src, o, L2, R2) && std::fabs(sm::cycleBeats(longA) - 12) < 1e-12 && L2.size() == static_cast<size_t>(3 * bar),
+         "j214: A for a bar and a half, then B: 10 beats round up to three whole bars");
+  const auto c2 = clicksOf(L2);
+  expect(c2.size() == 2 && c2[0] == clickAt && c2[1] == 3 * bar / 2 + clickAt, "j214: ... B starts after the bar and a half");
+  expect(peakIn(L2, rate, 0.2, 1.95) > 0.05 && peakIn(L2, rate, 2.03, 2.99) < 1e-4, "j214: ... A plays out its bar, then silence until B");
+  // sent to the song / MIDI: notes where the steps are, the clip as long as the cycle
+  {
+    const auto notes = sm::patternNotes(shortA, 60, 0, 1);
+    expect(notes.size() == 3 && std::fabs(notes[0].length - 2) < 1e-9 && std::fabs(notes[1].start - 2) < 1e-9 && std::fabs(notes[2].start - 6) < 1e-9 &&
+               std::fabs(notes[2].length - 4) < 1e-9,
+           "j214: the notes start and last as the steps do");
+    expect(std::fabs(sm::patternBars(shortA, {}, 4) - 3) < 1e-9, "j214: the pattern lasts three bars");
+    Song s = makeEmptySong();
+    Channel c;
+    c.id = s.allocateId();
+    c.plugin = defaultPluginState(sm::kType);
+    c.mixerTrack = s.masterId();
+    s.channels.push_back(c);
+    const ObjectId pid = sm::sendPatternToSong(s, c.id, shortA, c.plugin.params, 2, 0, 0);
+    expect(pid != kNoId && !s.playlist.empty() && s.playlist.back().length == static_cast<Tick>(24 * s.ppq),
+           "j214: two cycles sent to the playlist: a clip of six bars");
+    const auto* pat = s.pattern(pid);
+    expect(pat && pat->notes.count(c.id) && pat->notes.at(c.id).size() == 6 && pat->notes.at(c.id)[3].start == static_cast<Tick>(12 * s.ppq),
+           "j214: ... the second cycle starts on the bar line after the rest");
+  }
+  // extremes: the shortest and longest lengths, every step tiny: finite, whole bars
+  {
+    sm::Model x = base;
+    for (int i = 0; i < 4; ++i) sm::setStepBeats(x, i, 1e-9);
+    std::vector<float> Lx, Rx;
+    expect(std::fabs(sm::cycleBeats(x) - 4) < 1e-12 && sm::renderPatternLoop(x, src, o, Lx, Rx) && Lx.size() == static_cast<size_t>(bar) && allFinite(Lx),
+           "j214: every step at the shortest: a one-bar loop, finite");
+    sm::Model y = base;
+    sm::setStepBeats(y, 3, 1e9);
+    std::vector<float> Ly, Ry;
+    expect(std::fabs(sm::cycleBeats(y) - 76) < 1e-12 && sm::renderPatternLoop(y, src, o, Ly, Ry) && allFinite(Ly), "j214: the longest: finite, whole bars");
+    for (int sync = 1; sync < 3; ++sync) {
+      sm::RenderOpts o2 = o;
+      o2.sync = sync;
+      o2.tempo = 97;
+      std::vector<float> Lz, Rz;
+      expect(sm::renderPatternLoop(shortA, src, o2, Lz, Rz) && allFinite(Lz) && peakIn(Lz, rate, 0, 1) > 0.05,
+             (std::string("j214: short A renders finite (") + (sync == 1 ? "resample" : "stretch") + ", 97 bpm)").c_str());
+    }
+  }
+  // the instrument as the audio thread runs it: the same onsets, block-size invariant, the loop
+  // restarting on the bar line after the rest
+  {
+    const std::string path = (tmpDir() / "j214_clicks.wav").string();
+    expect(sm::writeLoopWav(path, src->left, src->right.vec(), rate), "j214: write the source");
+    PluginState st = stateWith(path, &shortA);
+    st.params[sm::SmSync] = static_cast<float>(sm::SyncOriginal);
+    st.params[sm::SmVelocity] = 0;
+    ChannelAux aux;
+    expect(packs::prepareAux(st, aux) && aux.custom, "j214: prepared data for the instrument");
+    const int64_t n = 7 * bar;
+    const auto ra = play(st, aux, n, 256, {{0, 48, n}});
+    const auto rb = play(st, aux, n, 97, {{0, 48, n}});
+    const auto ca = clicksOf(ra.L);
+    std::printf("# j214 realtime clicks:");
+    for (auto c : ca) std::printf(" %lld", static_cast<long long>(c));
+    std::printf("\n");
+    expect(ca.size() >= 5 && ca[0] == c1[0] && ca[1] == c1[1] && ca[2] == c1[2] && ca[3] == 3 * bar + clickAt && ca[4] == 3 * bar + bar / 2 + clickAt,
+           "j214: the instrument plays the offline render's onsets; the next cycle starts on the bar line after the rest");
+    expect(maxDiff(ra.L, rb.L) < 1e-6 && allFinite(ra.L), "j214: ... block-size invariant (256 / 97), finite");
+    double d = 0;
+    for (int64_t i = 0; i < 3 * bar; ++i) d = std::max(d, static_cast<double>(std::fabs(ra.L[static_cast<size_t>(i)] - L1[static_cast<size_t>(i)])));
+    std::printf("# j214 realtime vs offline: max diff %.3g\n", d);
+    expect(d < 1e-3, "j214: ... and sounds as the offline render (first cycle)");
   }
 }
 
@@ -1530,6 +1918,9 @@ void* operator new[](std::size_t n) {
   if (void* p = std::malloc(n ? n : 1)) return p;
   throw std::bad_alloc();
 }
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic ignored "-Wmismatched-new-delete"  // the replaced operator new is malloc
+#endif
 void operator delete(void* p) noexcept { std::free(p); }
 void operator delete[](void* p) noexcept { std::free(p); }
 void operator delete(void* p, std::size_t) noexcept { std::free(p); }
@@ -1565,6 +1956,8 @@ int main(int argc, char** argv) {
   if (only.empty() || only == "patterns") testPatterns();
   if (only.empty() || only == "regions") testRegions();
   if (only.empty() || only == "j185") testStartPitchResize();
+  if (only.empty() || only == "j208") testSlicePitchJ208();
+  if (only.empty() || only == "j214") testStepLengthsJ214();
   if (only.empty() || only == "instrument") testInstrument();
   if (only.empty() || only == "renders") testRenders();
   if (only.empty() || only == "long") testLongFile();

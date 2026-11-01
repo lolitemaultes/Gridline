@@ -232,11 +232,16 @@ int main() {
     pl::ImportReport rep;
     // untracked, knob 0.6: 1741.1 Hz on the source (+9.6 semitones)
     expect(import(noiseBody(0.6, false, kRef), st, rep, cache), "noise preset imports");
-    expect(std::fabs(P(st, pl::noiseP(pl::N_Pitch)) - 9.6f) < 1e-3f && P(st, pl::noiseP(pl::N_PitchTrack)) < 0.5f, "untracked noise pitch: +96 st per unit above the centre");
+    // J-215: on the imported noise law an untracked Pitch holds the knob position (-64..64 = 0..1) and
+    // the engine applies the curve (+96 st per unit above the centre, 384 below)
+    expect(std::fabs(P(st, pl::noiseP(pl::N_Pitch)) - 12.8f) < 1e-3f && P(st, pl::noiseP(pl::N_PitchTrack)) < 0.5f && P(st, pl::tailP(pl::T_NoiseLaw)) > 0.5f,
+           "untracked noise pitch: the knob position on the imported law");
     const double f = frequency(render(st, 60, 0.6, 0.6), 0.1, 0.6);
     expect(std::fabs(f - 1741.1) < 1741.1 * 0.005, std::string("untracked noise at 0.6 plays 1741 Hz like the source (" + std::to_string(f) + ")").c_str());
     // untracked below the centre: 384 st per unit (0.45 -> 329.8 Hz on the source)
-    expect(import(noiseBody(0.45, false, kRef), st, rep, cache) && std::fabs(P(st, pl::noiseP(pl::N_Pitch)) + 19.2f) < 1e-3f, "untracked noise pitch below the centre");
+    expect(import(noiseBody(0.45, false, kRef), st, rep, cache) && std::fabs(P(st, pl::noiseP(pl::N_Pitch)) + 6.4f) < 1e-3f, "untracked noise pitch below the centre");
+    const double fb = frequency(render(st, 60, 0.6, 0.6), 0.1, 0.6);
+    expect(std::fabs(fb - 329.8) < 329.8 * 0.005, std::string("untracked noise at 0.45 plays 330 Hz like the source (" + std::to_string(fb) + ")").c_str());
     // tracked, detuneFactor 1, key 60: 1050.8 Hz on the source
     expect(import(noiseBody(0.5, true, 1.0), st, rep, cache), "tracked noise preset imports");
     const double f2 = frequency(render(st, 60, 0.6, 0.6), 0.1, 0.6);
@@ -245,14 +250,14 @@ int main() {
     expect(import(noiseBody(0.5, true, kRef), st, rep, cache), "tracked noise preset imports (usual detune)");
     const double f3 = frequency(render(st, 60, 0.6, 0.6), 0.1, 0.6);
     expect(std::fabs(f3 - 500.0) < 2.5, std::string("tracked noise plays its own rate at key 72 (" + std::to_string(f3) + " Hz at key 60)").c_str());
-    // a matrix route to the knob scales with the knob's span (untracked upper half: 96 of Plasma's 128 st)
+    // a matrix route to the knob moves the knob position (the imported law applies the curve)
     Json body = noiseBody(0.6, false, kRef);
     body.object["ModSlot0"] = obj({{"destModuleTypeString", str("NoiseOsc")}, {"destModuleID", num(3)}, {"destModuleParamName", str("kParamColor")},
                                    {"source", arr({num(25), num(0)})}, {"plainParams", obj({{"kParamAmount", num(50)}})}});
     expect(import(body, st, rep, cache), "noise pitch route imports");
     bool routed = false;
     for (int s = 0; s < pl::kModSlots; ++s)
-      if (static_cast<int>(P(st, pl::modP(s, pl::M_Dest))) == pl::noiseP(pl::N_Pitch) + 1) routed = std::fabs(P(st, pl::modP(s, pl::M_Amount)) - 0.375f) < 1e-4f;
+      if (static_cast<int>(P(st, pl::modP(s, pl::M_Dest))) == pl::noiseP(pl::N_Pitch) + 1) routed = std::fabs(P(st, pl::modP(s, pl::M_Amount)) - 0.5f) < 1e-4f;
     expect(routed, "noise pitch route amount follows the knob span");
   }
 
@@ -326,8 +331,76 @@ int main() {
       return import(b, st, rep, cache) && P(st, pl::G_ClipOn) > 0.5f;
     };
     expect(span("Mono", nullptr) && span("Mono", "Pendulum"), "a mono keyboard-span clip plays from the keys");
-    expect(!span("Poly", nullptr) && !span("Mono", "Static") && !span("Mono", "OneShot") && !span("Off", nullptr),
-           "poly, static, one-shot and unspanned clips play the keys through");
+    // J-203t: measured, poly span clips and static / one-shot span clips play from the keys too
+    expect(span("Poly", nullptr) && span("Mono", "Static") && span("Mono", "OneShot") && span("Poly", "Static"), "poly, static and one-shot span clips play from the keys");
+    expect(!span("Off", nullptr) && !span("Offset", nullptr), "unspanned clips play the keys through");
+  }
+
+  // ---- J-203t: clip timing laws (all measured against the hosted source at 120 BPM)
+  {
+    PluginState st;
+    pl::ImportReport rep;
+    pl::Model m;
+    auto note = [](int key, double at, double len) {
+      return obj({{"noteNum", num(key)}, {"timeStamp", num(at)}, {"length", num(len)}, {"attributes", arr({num(0.79), num(1), num(0), num(0.5), num(0), num(0.5), num(0), num(0.5)})}});
+    };
+    auto spanBody = [&](Json pp, Json notes) {
+      pp.object["kParamSpanKeyboardMode"] = str("Mono");
+      return obj({{"ClipPlayer0", plain({{"kParamEnabled", num(1)}, {"kParamSpanKeyboardClip", num(0)}})}, {"MidiClip0", obj({{"clip", obj({{"notes", notes}})}, {"plainParams", pp}})}});
+    };
+    // a static clip holds the notes at its start for as long as the key is held, transposed by the
+    // key against C4 (source: clip C4 + G4 of a sixteenth, key C3 held 2 s -> C3 + G3 for 2 s)
+    expect(import(spanBody(obj({{"kParamPlaybackMode", str("Static")}}), arr({note(60, 0, 0.25)})), st, rep, cache), "static span clip imports");
+    auto x = render(st, 48, 2.6, 2.0, true);
+    expect(finite(x) && rmsDb(x, 1.5, 1.9) > -40 && std::fabs(frequency(x, 1.0, 1.9) - 130.81) < 2.0, "a static clip holds its notes, transposed by the key");
+    expect(rmsDb(x, 2.4, 2.6) < -80, "a static clip stops with the key");
+    // one-shot: plays once (notes C4 at 0 and G4 at half a beat), nothing after
+    expect(import(spanBody(obj({{"kParamPlaybackMode", str("OneShot")}}), arr({note(60, 0, 0.25), note(67, 0.5, 0.25)})), st, rep, cache), "one-shot span clip imports");
+    x = render(st, 60, 2.5, 2.0, true);
+    expect(rmsDb(x, 0.02, 0.1) > -40 && rmsDb(x, 0.27, 0.35) > -40 && rmsDb(x, 0.6, 2.0) < -80, "a one-shot clip plays once");
+    // synced rate 0.57 plays twice as fast: the half-beat note starts after 0.125 s, not 0.25 s
+    expect(import(spanBody(obj({{"kParamRate", num(0.5714)}, {"kParamLaunchRetrig", num(1)}}), arr({note(60, 0, 0.25), note(67, 0.5, 0.25)})), st, rep, cache) &&
+               pl::modelFromData(st.data, m) && std::fabs(m.clip[0].rate - 2.f) < 1e-4f,
+           "clip rate 0.57 is twice the speed");
+    x = render(st, 60, 0.5, 0.5, true);
+    expect(rmsDb(x, 0.13, 0.18) > -40 && rmsDb(x, 0.08, 0.12) < -60, "a twice-as-fast clip plays its half-beat note after a quarter beat");
+    // free rate: one beat lasts 900 (1 - 2 r)^2 + 100 ms (r = 0.3: 244 ms, a speed of 2.05 x 2 beats / s)
+    expect(import(spanBody(obj({{"kParamBeatSync", num(0)}, {"kParamRate", num(0.3)}}), arr({note(60, 0, 1)})), st, rep, cache) && pl::modelFromData(st.data, m) &&
+               std::fabs(m.clip[0].rate - 1000.f / 244.f / 2.f) < 0.01f && !m.clip[0].bpm,
+           "free clip rate 0.3 is a 244 ms beat");
+    // launch quantize: 0 starts at once, the default is 1/16, 4 a bar, 7 a quarter, 12 a sixteenth triplet; no retrigger by default
+    auto quant = [&](Json pp) { return import(spanBody(pp, arr({note(60, 0, 1)})), st, rep, cache) && pl::modelFromData(st.data, m) ? m.clip[0].launchQuant : -99; };
+    expect(quant(Json::makeObject()) == 7 && quant(obj({{"kParamLaunchQuantize", num(0)}})) == -1 && quant(obj({{"kParamLaunchQuantize", num(4)}})) == 3 &&
+               quant(obj({{"kParamLaunchQuantize", num(7)}})) == 5 && quant(obj({{"kParamLaunchQuantize", num(12)}})) == 12,
+           "launch quantize steps");
+    expect(!m.clip[0].retrig && m.clip[0].srcSpan, "imported clips start on the song position unless retriggered");
+    // launched clips follow the song while the transport runs, the keys play through: a clip note at
+    // beat 4 sounds at 2 s after the key (released at 0.5 s), and nothing plays with the transport stopped
+    Json body = obj({{"ClipPlayer0", obj({{"activeClips", arr({num(0)})}, {"plainParams", obj({{"kParamEnabled", num(1)}})}})},
+                     {"MidiClip0", obj({{"clip", obj({{"notes", arr({note(67, 0, 0.25)})}, {"regionEndBeats", num(4)}})}})}});
+    expect(import(body, st, rep, cache) && pl::modelFromData(st.data, m) && m.clipRun == 1u, "an active clip is launched");
+    x = render(st, 48, 2.6, 0.5, true);
+    expect(rmsDb(x, 0.2, 0.45) > -40 && rmsDb(x, 0.8, 1.9) < -80 && rmsDb(x, 2.02, 2.1) > -40 && std::fabs(frequency(x, 2.01, 2.11) - 392.0) < 4,
+           "a launched clip plays at its song position and the key plays itself");
+    x = render(st, 48, 2.6, 0.5, false);
+    expect(rmsDb(x, 2.02, 2.1) < -80, "a launched clip waits for the transport");
+    // two launched clips: the mono trigger plays the last one, the poly trigger both
+    body.object["MidiClip1"] = obj({{"clip", obj({{"notes", arr({note(72, 1, 0.25)})}, {"regionEndBeats", num(4)}})}});
+    body.object["ClipPlayer0"].object["activeClips"] = arr({num(0), num(1)});
+    expect(import(body, st, rep, cache) && pl::modelFromData(st.data, m) && m.clipRun == 2u, "mono clip trigger: the last launched clip plays");
+    body.object["ClipPlayer0"].object["plainParams"].object["kParamMonoClipTrigger"] = num(0);
+    expect(import(body, st, rep, cache) && pl::modelFromData(st.data, m) && m.clipRun == 3u, "poly clip trigger: every launched clip plays");
+    // note chance 0 never plays; an octave attribute of 0.75 at chance 1 moves the note up 4 octaves
+    Json ch = note(60, 0, 1);
+    ch.object["attributes"].array[1] = num(0);
+    expect(import(spanBody(Json::makeObject(), arr({ch})), st, rep, cache), "chance clip imports");
+    x = render(st, 60, 0.6, 0.6, true);
+    expect(rmsDb(x, 0.05, 0.5) < -80, "a note of chance 0 is skipped");
+    Json oc = note(36, 0, 1);
+    oc.object["attributes"].array[2] = num(1), oc.object["attributes"].array[3] = num(0.75);
+    expect(import(spanBody(Json::makeObject(), arr({oc})), st, rep, cache), "octave clip imports");
+    x = render(st, 60, 0.6, 0.6, true);
+    expect(std::fabs(frequency(x, 0.1, 0.45) - 1046.5) < 15, "octave attribute 0.75 at chance 1 plays four octaves up");
   }
 
   // ---- delay: free times in seconds, mix law, unity feedback per 100 %, stable at high feedback
@@ -380,6 +453,38 @@ int main() {
     const int n = onsets(x, 1.0);
     expect(finite(x) && n >= 3 && n <= 5, std::string("pattern gaps are rests: 4 steps in a second, not 8 (" + std::to_string(n) + ")").c_str());
     expect(m.arp[0].wrap == 2, "pattern rows past the held notes repeat them");
+    // J-203t: each division band in three steps (source at 120 BPM, dotted: 0.46 -> 0.25 beats,
+    // 0.5 / 0.53 -> 0.1875; triplet: 0.46 / 0.5 -> 0.25, 0.53 -> 0.167 beats)
+    auto band = [&](double r, bool dot, bool trip) {
+      Json b = arpBody("Up", r, dot, Json::makeObject());
+      if (trip) b.object["ArpClip0"].object["plainParams"].object["kParamTriplets"] = num(1);
+      return import(b, st, rep, cache) && pl::modelFromData(st.data, m);
+    };
+    expect(band(0.46, true, false) && m.arp[0].rate == 7 && !m.arp[0].dot && !m.arp[0].trip, "dotted on the lower step of a band: straight");
+    expect(band(0.53, true, false) && m.arp[0].rate == 8 && m.arp[0].dot, "dotted on the upper step: the next faster division dotted");
+    expect(band(0.5, false, true) && m.arp[0].rate == 7 && !m.arp[0].trip, "triplet on the middle step: straight");
+    expect(band(0.53, false, true) && m.arp[0].rate == 7 && m.arp[0].trip && !m.arp[0].dot, "triplet on the upper step: a triplet");
+    // the first launch plays a step with the key, later launches wait for the song's step grid (source:
+    // key at 0.3 s plays at once, the next steps at 0.375 / 0.5 s; a key again at 1.3 s first plays at 1.375 s)
+    expect(band(0.5, false, false) && m.arp[0].srcGrid, "imported arps follow the song grid");
+    auto g = packs::createGenerator(st.type);
+    ChannelAux aux;
+    packs::prepareAux(st, aux);
+    g->prepareHost(st, kSr);
+    ProcessContext ctx;
+    ctx.sampleRate = kSr, ctx.tempo = 120, ctx.ppq = 96, ctx.playing = true, ctx.offline = true;
+    std::vector<float> x2, L(256), R(256);
+    for (int pos = 0; pos < static_cast<int>(1.6 * kSr); pos += 256) {
+      if (pos == 14336) g->noteOn(1, 60, 0.8f, 0);  // 0.299 s
+      if (pos == 28672) g->noteOff(1, 0);            // 0.597 s
+      if (pos == 62464) g->noteOn(2, 60, 0.8f, 0);  // 1.301 s
+      std::fill(L.begin(), L.end(), 0.f), std::fill(R.begin(), R.end(), 0.f);
+      g->process(st, aux, ctx, L.data(), R.data(), 256);
+      x2.insert(x2.end(), L.begin(), L.end());
+      ctx.tick += 256.0 / kSr * 2.0 * ctx.ppq;
+    }
+    expect(rmsDb(x2, 0.30, 0.31) > -50 && rmsDb(x2, 0.38, 0.39) > -50 && rmsDb(x2, 1.31, 1.37) < -70 && rmsDb(x2, 1.38, 1.39) > -50,
+           "the first arp launch plays at once, a later one on the grid");
   }
 
   // ---- unison mix: imports select Alternating; levels per channel against one voice

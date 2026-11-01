@@ -37,6 +37,7 @@
 #include "Viewports.h"
 #include "BrowserUi.h"
 #include "MenuParityUi.h"
+#include "TrackReceiptUi.h"
 
 namespace gl {
 
@@ -526,6 +527,7 @@ void menuHelp(App& a) {
   if (ImGui::MenuItem(i18n::tr("Keyboard shortcuts"), keys::label("help.shortcuts"))) a.showShortcuts = true;
   if (ImGui::MenuItem(i18n::tr("Load demo song"))) a.guardUnsaved([&a]() { a.newFromTemplate("demo"); });
   if (ImGui::MenuItem(i18n::tr("Show settings folder"))) a.notify("Settings, presets and templates: " + a.configDir());
+  if (ImGui::MenuItem(i18n::tr("Track Receipt..."))) receiptui::open(a);  // J-219: parts of licensed samples used
   ImGui::Separator();
   if (updui::started() && ImGui::MenuItem(i18n::tr("Check for updates..."))) updui::checkNow(a);  // J-89
   if (ImGui::MenuItem(i18n::tr("About Gridline"))) a.showAbout = true;

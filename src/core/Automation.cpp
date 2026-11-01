@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <map>
 #include "AutomationEdit.h"
 #include "FlCurves.h"
@@ -157,6 +158,62 @@ double AutomationLane::valueAt(double tick) const {
   const AutomationClip& c = *in.clip;
   double v = automationValue(c, static_cast<double>(in.offset) + rel);
   return std::clamp(c.min + v * (c.max - c.min), 0.0, 1.0);
+}
+
+bool AutomationLane::sendsAt(double tick) const {
+  if (inst.empty()) return false;
+  auto it = std::upper_bound(inst.begin(), inst.end(), tick, [](double v, const Instance& q) { return v < static_cast<double>(q.start); });
+  if (it == inst.begin()) return !inst.front().clip->events;  // before the first instance
+  const Instance& in = *(it - 1);
+  const AutomationClip& c = *in.clip;
+  if (!c.events) return true;
+  if (tick >= static_cast<double>(in.end) || c.points.empty()) return false;
+  double t = static_cast<double>(in.offset) + tick - static_cast<double>(in.start);
+  if (c.loop > 0 && t >= static_cast<double>(c.loop)) t = std::fmod(t, static_cast<double>(c.loop));
+  return t >= c.points.front().at();
+}
+
+bool AutomationLane::hasEvents() const {
+  for (const Instance& in : inst)
+    if (in.clip && in.clip->events) return true;
+  return false;
+}
+
+double AutomationLane::nextEventStep(double tick) const {
+  double best = std::numeric_limits<double>::infinity();
+  for (const Instance& in : inst) {
+    const double s = static_cast<double>(in.start), e = static_cast<double>(in.end);
+    if (s >= best) break;  // sorted by start
+    if (!in.clip || !in.clip->events || e <= tick || in.clip->points.empty()) continue;
+    const std::vector<AutoPoint>& pts = in.clip->points;
+    const bool strict = s <= tick;  // a point exactly at `tick` is not after it
+    const double from = std::max(tick, s), off = static_cast<double>(in.offset);
+    double cf = off + from - s;  // content position
+    // First point at (or after, when strict) content position x within [0, lim).
+    auto first = [&](double x, double lim) -> double {
+      for (const AutoPoint& q : pts) {
+        const double a = q.at();
+        if (a >= lim) break;
+        if (strict ? a > x : a >= x) return a;
+      }
+      return -1.0;
+    };
+    double q = -1.0;
+    const Tick L = in.clip->loop;
+    if (L > 0) {
+      const double len = static_cast<double>(L);
+      const double base = std::floor(cf / len) * len;
+      q = first(cf - base, len);
+      if (q >= 0) q += base;
+      else if (pts.front().at() < len) q = base + len + pts.front().at();
+    } else {
+      q = first(cf, std::numeric_limits<double>::infinity());
+    }
+    if (q < 0) continue;
+    const double at = s + (q - off);
+    if (at < e && at > tick) best = std::min(best, at);
+  }
+  return best;
 }
 
 std::vector<AutomationLane> automationLanes(const Song& song) {

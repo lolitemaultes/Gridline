@@ -35,6 +35,7 @@ void appendInfos(std::vector<PluginInfo>& v) {
   p.params[EdOutGain] = lin("Playback level", "dB", -24, 12, 0);
   p.params[EdFollowHost] = tog("Follow transport", 0);
   p.editorWidth = 1100;
+  p.editorMinWidth = 660;  // J-207: the form scales down to fit a small work area (no sideways scrolling)
   p.presets = {
       {"Standard", {}},
       {"Arm on signal", {{EdRecMode, static_cast<float>(RecOnInput)}, {EdPreRoll, 1.0f}, {EdThreshold, -45.f}}},

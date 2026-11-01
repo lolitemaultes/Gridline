@@ -1,0 +1,8 @@
+<!-- Gridline original (GPL-3.0), drawn on the Lucide 24-unit grid and stroke rules: track icon: harmonics taken away (minus) -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M4 20 L4 4" />
+  <path d="M8 20 L8 9" />
+  <path d="M12 20 L12 13" />
+  <path d="M16 20 L16 16" />
+  <path d="M15.5 5.5 L21.5 5.5" />
+</svg>

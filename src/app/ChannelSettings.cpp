@@ -514,7 +514,8 @@ void drawChannelSettings(App& a) {
         cat = p.category;
         ui::Label(cat.c_str());
       }
-      if (ImGui::Selectable(p.name.c_str(), p.type == c->plugin.type)) a.doc.setChannelPlugin(id, p.type);
+      if (ImGui::Selectable(p.name.c_str(), p.type == c->plugin.type) && a.doc.setChannelPlugin(id, p.type))
+        pui::pluginReplaced(PluginTarget{id, -1});  // J-213: the preset selector starts over
     }
     ImGui::EndCombo();
   }

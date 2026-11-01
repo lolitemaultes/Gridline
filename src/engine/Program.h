@@ -410,6 +410,7 @@ struct ProgMacro {
 struct ProgAutoLane {
   ProgLink target;  // target fields (kind, indices, desc, rt); source fields unused
   AutomationLane lane;
+  bool events = false;  // J-210: plays recorded events (stepped on their samples, see AutomationClip::events)
 };
 
 struct ProgPattern {
@@ -504,6 +505,7 @@ struct Program {
   const PluginInfo* hostBankInfo = nullptr;
   bool hasCutGroups = false;    // some channel cuts channels (cut groups)
   bool hasPatternAutos = false;  // some pattern or live clip carries automation
+  bool hasEventLanes = false;    // J-210: some lane plays recorded events (blocks split on their steps)
   // Live mode: the live area's clips and the tracks they sit on.
   std::vector<ProgLiveClip> liveClips;
   std::vector<ProgLiveTrack> liveTracks;

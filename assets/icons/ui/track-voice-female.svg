@@ -1,0 +1,6 @@
+<!-- Gridline original (GPL-3.0), drawn on the Lucide 24-unit grid and stroke rules: track icon: a bust with long hair -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <circle cx="12" cy="8.5" r="3.8" />
+  <path d="M4.5 21 C4.5 17 7.8 15 12 15 C16.2 15 19.5 17 19.5 21" />
+  <path d="M7.5 13.5 C6.5 10 6.5 3 12 3 C17.5 3 17.5 10 16.5 13.5" />
+</svg>

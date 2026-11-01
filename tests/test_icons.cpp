@@ -65,6 +65,9 @@ int main() {
       }
     }
     expect(all, "every ui::Icon maps to an embedded SVG");
+    // The track icon set (core/TrackIconSet: mixer, playlist and channel icons) uses the track-* SVGs by name.
+    for (int i = 0; i < n; ++i)
+      if (std::string(svgs[i].name).rfind("track-", 0) == 0) used.insert(svgs[i].name);
     bool none = true;
     for (int i = 0; i < n; ++i)
       if (!used.count(svgs[i].name)) {
@@ -175,8 +178,9 @@ int main() {
       io.DisplayFramebufferScale = ImVec2(density, density);
       ImGui::NewFrame();
       ImDrawList* dl = ImGui::GetForegroundDrawList();
-      for (int i = 0; i < static_cast<int>(ui::Icon::Count); ++i)
-        icons::draw(dl, ui::iconSvgName(static_cast<ui::Icon>(i)), ImVec2(20.0f + i * 3.3f, 40.0f), 20.0f, IM_COL32_WHITE);
+      for (int i = 0; i < n; ++i)  // every embedded icon (ui::Icon and the track icon set)
+        icons::draw(dl, svgs[i].name, ImVec2(20.0f + (i % 200) * 3.3f, 40.0f + (i / 200) * 24.0f), 20.0f,
+                    IM_COL32_WHITE);
       ImGui::Render();
     };
     // The atlas installs the glyph hook (ImGui's own arrows, checks, crosses as

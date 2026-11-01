@@ -1,5 +1,6 @@
 // Gridline — Wave 2 instruments: Drum Pads, FM Synth, Acid Bass, Keys,
 // Slicer, Granular, MIDI Out. Audio-thread only; no allocation after creation.
+#include "SampleTap.h"
 #include "TimeStretch.h"
 #include <algorithm>
 #include <array>
@@ -215,6 +216,7 @@ class PadsGen final : public Generator {
       v.group = group;
       v.smp = smp;
       v.age = ++clock_;
+      tap::play(smp);  // J-219
       double len = static_cast<double>(smp->frames()) - 2;
       double st = std::clamp(static_cast<double>(param(s, padE(pad, PadStart))) + L.start, 0.0, 1.0);
       double en = std::clamp(L.end, std::min(st + 0.001, 1.0), 1.0);  // start at the very end: lo must not pass hi
@@ -265,6 +267,8 @@ class PadsGen final : public Generator {
       double relC = std::exp(-1.0 / std::max(1.0, param(s, padE(v.pad, PadRelease), 0.05f) * sr_ * 0.25));
       const PadEnvelope* ve = v.useVolEnv && view_.vol ? &view_.vol[v.pad] : nullptr;
       const PadEnvelope* pe = v.usePanEnv && view_.pan ? &view_.pan[v.pad] : nullptr;
+      tap::Run run;  // J-219: Track Receipt coverage
+      if (tap::active()) run.begin(v.smp);
       for (int i = 0; i < n; ++i) {
         if (v.pos < v.startPos - 1 || v.pos > v.endPos || v.fade <= 0) {
           v.on = false;
@@ -298,6 +302,7 @@ class PadsGen final : public Generator {
         }
         float g = v.fade * static_cast<float>(a);
         float sl, sr;
+        run.at(v.pos);
         interpBl(sm, v.pos, v.rate, sl, sr);
         L[i] += sl * v.gl * g;
         R[i] += sr * v.gr * g;
@@ -1038,6 +1043,14 @@ class SlicerGen final : public Generator {
     nSlices_ = 0;
     if (proc_) {
       for (size_t k = 0; k < aux.slices.size() && nSlices_ < kMaxSlices; ++k) starts_[nSlices_++] = aux.slices[k];
+      // J-219: the slices' places in the file (shares, sorted as the processed copy orders them).
+      nProcFrac_ = 0;
+      for (int k = 0; k < kMaxSlices; ++k) {
+        const float m = param(s, slMarker(k), -1);
+        if (m >= 0 && m < 1) procFrac_[nProcFrac_++] = m;
+      }
+      std::sort(procFrac_, procFrac_ + nProcFrac_);
+      nProcFrac_ = static_cast<int>(std::unique(procFrac_, procFrac_ + nProcFrac_) - procFrac_);
     } else if (static_cast<int>(param(s, SlMode) + 0.5f) == SlModeManual && smp) {
       for (int k = 0; k < kMaxSlices; ++k) {
         float m = param(s, slMarker(k), -1);
@@ -1156,10 +1169,16 @@ class SlicerGen final : public Generator {
       for (int i = 0; i < RegionActivity::kSlots; ++i) ra_.off(i);
       return;
     }
+    const bool tapOn = tap::active();  // J-219: Track Receipt coverage
     for (auto& v : voices_) {
       if (!v.on) continue;
       double span = std::max(1.0, v.end - v.start);
       double edge = declick_ ? 0.001 * sr_ : 0.0;
+      tap::Run run;
+      // Processed slices (J-41) play a copy: positions map to the file by share of the slice.
+      tap::Slot* procSlot = tapOn && proc_ ? tap::slotFor(smp.get()) : nullptr;
+      double procLo = 2, procHi = -1;
+      if (tapOn && !proc_) run.begin(smp.get());
       for (int i = 0; i < n; ++i) {
         if (v.delayLeft > 0) {  // region delay: silent until it starts
           --v.delayLeft;
@@ -1185,6 +1204,12 @@ class SlicerGen final : public Generator {
         if (edge > 0 && toEnd < edge) f *= toEnd / edge;
         double g = a * vol_ * f * v.fade;
         float bl, br;
+        if (procSlot) {
+          const double rr = std::clamp((v.pos - v.start) / span, 0.0, 1.0);
+          procLo = std::min(procLo, rr), procHi = std::max(procHi, rr);
+        } else {
+          run.at(v.pos);
+        }
         interpBl(*smp, v.pos, v.rate, bl, br);
         double l = bl, r = br;
         if (ftype_ > 0) {
@@ -1199,6 +1224,10 @@ class SlicerGen final : public Generator {
         R[i] += static_cast<float>(r * g * v.gr);
         v.pos += v.reverse ? -v.rate : v.rate;
         v.fade -= v.fadeStep;
+      }
+      if (procSlot && procHi >= procLo && v.slice >= 0 && v.slice < nProcFrac_) {
+        const double a = procFrac_[v.slice], b = v.slice + 1 < nProcFrac_ ? procFrac_[v.slice + 1] : 1.0;
+        tap::markShare(procSlot, a + (b - a) * procLo, a + (b - a) * procHi);
       }
     }
     publish();
@@ -1220,6 +1249,8 @@ class SlicerGen final : public Generator {
     for (int i = n; i < RegionActivity::kSlots; ++i) ra_.off(i);
   }
   std::array<Voice, 16> voices_{};
+  double procFrac_[pp::kMaxSlices] = {};  // J-219
+  int nProcFrac_ = 0;
   const ChannelAux* aux_ = nullptr;
   const PluginState* state_ = nullptr;
   int64_t starts_[pp::kMaxSlices] = {};
@@ -1288,6 +1319,7 @@ class GranularGen final : public Generator {
         v.vel = vel;
         v.nextGrain = 0;
         v.scan = 0;
+        if (aux_) tap::play(aux_->sample().get());  // J-219
         v.dwell = keyMode_ == 2 ? stepHold_ * sr_ : 0;
         v.env.level = 0;
         v.env.gate(true);
@@ -1311,6 +1343,11 @@ class GranularGen final : public Generator {
     if (!smp || smp->frames() < 16) return;
     const Sample& sm = *smp;
     const double len = static_cast<double>(sm.frames());
+    // J-219: Track Receipt coverage, one run per grain.
+    const bool tapOn = tap::active();
+    std::array<tap::Run, 96> runs;
+    if (tapOn)
+      for (auto& r : runs) r.begin(&sm);
     for (int i = 0; i < n; ++i) {
       for (int ni = 0; ni < static_cast<int>(notes_.size()); ++ni) {  // spawn grains
         NoteV& v = notes_[static_cast<size_t>(ni)];
@@ -1358,6 +1395,7 @@ class GranularGen final : public Generator {
         double w = ph < edge ? 0.5 - 0.5 * std::cos(kPi * ph / edge) : ph > 1 - edge ? 0.5 - 0.5 * std::cos(kPi * (1 - ph) / edge) : 1.0;
         double a = w * v.env.level * v.vel * vol_ * 0.35;
         if (g.pos >= len - 1) g.pos = 0;
+        if (tapOn) runs[static_cast<size_t>(&g - grains_.data())].at(g.pos);
         // J-140: band-limited grain reads (compact kernel: many grains),
         // wrapping round the sample like the grain positions do.
         float o[2];

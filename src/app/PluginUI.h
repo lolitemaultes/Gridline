@@ -195,6 +195,19 @@ bool devPoints(const std::string& name, DevPoints& out);
 void compareStore(App& a, const PluginTarget& t);
 void compareFlip(App& a, const PluginTarget& t);
 bool compareOnB(const PluginTarget& t);
+// J-213: the header's preset selector belongs to one plugin type: when the
+// target's plugin is replaced (any path, undo included) it starts over at the
+// new plugin's "Default". presetLoaded: a preset loaded from outside the header
+// (a browser drop) shows its name there.
+void presetLoaded(const PluginTarget& t, const std::string& type, const std::string& name);
+// The target's plugin was replaced through a menu, possibly by a fresh copy of
+// the same plugin: the header starts over.
+void pluginReplaced(const PluginTarget& t);
+// Dev / test hook (--dev-input "pluginview"): what the header shows for the target
+// (preset label, plugin type it belongs to, A/B slot); devPickPreset: the header
+// loads entry `index` of its list on its next draw, as the menu does.
+std::string devHeaderPreset(const PluginTarget& t, std::string* type, bool* onB);
+void devPickPreset(const PluginTarget& t, int index);
 // True when the parameter has a MIDI controller link.
 bool paramLinked(App& a, ParamId pid);
 }  // namespace pui

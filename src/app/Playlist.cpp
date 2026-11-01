@@ -35,6 +35,7 @@
 #include "SmoothScrollUi.h"
 #include "../core/Grouping.h"
 #include "J31Ui.h"
+#include "LiveTakes.h"
 #include "../core/NoteTools.h"
 #include "AudioRecordUi.h"
 #include "AutomationEditor.h"
@@ -43,6 +44,7 @@
 #include "Widgets.h"
 #include "Windows.h"
 #include "BrowserUi.h"
+#include "TrackIcons.h"
 #include "TrackModeUi.h"
 #include "ChopUi.h"
 #include "../engine/Chop.h"
@@ -298,29 +300,8 @@ void drawLoopGlyph(ImDrawList* dl, ImVec2 c, float r, ImU32 col) {
 }
 
 // ---- audio clip waveforms: min/max per block of frames, cached per sample ----
-struct Peaks {
-  static constexpr size_t kBin = 128;
-  std::vector<float> lo, hi;
-};
-const Peaks& peaksFor(const SamplePtr& s) {
-  static std::map<const Sample*, std::pair<SamplePtr, Peaks>> cache;
-  auto it = cache.find(s.get());
-  if (it != cache.end()) return it->second.second;
-  if (cache.size() > 256) cache.clear();
-  Peaks p;
-  size_t n = s->frames(), bins = (n + Peaks::kBin - 1) / Peaks::kBin;
-  p.lo.assign(bins, 0.f);
-  p.hi.assign(bins, 0.f);
-  for (size_t b = 0; b < bins; ++b) {
-    float lo = 1e9f, hi = -1e9f;
-    for (size_t i = b * Peaks::kBin; i < std::min(n, (b + 1) * Peaks::kBin); ++i) {
-      float v = 0.5f * (s->left[i] + s->right[i]);
-      lo = std::min(lo, v), hi = std::max(hi, v);
-    }
-    p.lo[b] = lo, p.hi[b] = hi;
-  }
-  return (cache[s.get()] = {s, std::move(p)}).second;
-}
+// (J-217: LiveTakes.h samplePeaks: a PeakSummary per sample; a take just
+// recorded keeps the summary it was drawn with while recording.)
 
 // Source seconds an audio clip plays at song tick t (display approximation of
 // the engine's mapping: resample / stretch / tempo sync).
@@ -347,36 +328,50 @@ struct AudioMap {
 
 // J-118: with `xf`, each column's opacity follows the clip's crossfade level
 // there (a waveform fading out under, or into, its crossfade partner).
-void drawWaveform(ImDrawList* dl, const Song& s, const Channel& ch, const Clip& c, const TempoMap& tm, ImVec2 a, ImVec2 b, float clipX0,
-                  float pxPerTick, float visX0, float visX1, ImU32 col, const FadeGeom* xf = nullptr) {
-  SamplePtr smp = sampleCache().request(ch.plugin.data);  // J-30: never waits for a decode (drawn once ready)
-  if (!smp || smp->frames() < 2) return;
-  const Peaks& pk = peaksFor(smp);
+// J-217: drawn from a summary of `frames` frames at `rate` (a decoded sample,
+// a committed take whose file is still decoding, or a take still recording).
+void drawWaveformFrom(ImDrawList* dl, const Song& s, const Channel& ch, const Clip& c, const TempoMap& tm, ImVec2 a, ImVec2 b, float clipX0,
+                      float pxPerTick, float visX0, float visX1, ImU32 col, const FadeGeom* xf, const PeakSummary& pk, size_t frames, double rate) {
+  if (frames < 2 || pk.bins() == 0 || rate <= 0) return;
   const bool rev = c.reverse != (ch.plugin.type == "gl.sampler" && ch.plugin.params.size() > pp::SmpReverse &&
                                  ch.plugin.params[pp::SmpReverse] >= 0.5f);
-  const double srcEnd = c.audioEnd > c.audioStart ? std::min(c.audioEnd, smp->seconds()) : smp->seconds();
+  const double seconds = static_cast<double>(frames) / rate;
+  const double srcEnd = c.audioEnd > c.audioStart ? std::min(c.audioEnd, seconds) : seconds;
   const float mid = (a.y + b.y) * 0.5f, half = (b.y - a.y) * 0.5f;
   const float x0 = std::max(a.x, visX0), x1 = std::min(b.x, visX1);
   const AudioMap map(s, ch, c, tm);
+  const double bin = static_cast<double>(pk.binFrames());
   for (float x = std::floor(x0); x < x1; x += 1.0f) {
     double t0 = static_cast<double>(c.start) + (x - clipX0) / pxPerTick, t1 = t0 + 1.0 / pxPerTick;
     double s0 = map.at(t0), s1 = map.at(t1);
     if (s0 >= srcEnd) break;
     s1 = std::min(s1, srcEnd);
-    double f0 = s0 * smp->sampleRate, f1 = s1 * smp->sampleRate;
+    double f0 = s0 * rate, f1 = s1 * rate;
     if (rev) {
-      double last = static_cast<double>(smp->frames());
+      double last = static_cast<double>(frames);
       std::swap(f0, f1);
       f0 = last - f0, f1 = last - f1;
     }
-    long b0 = static_cast<long>(std::floor(std::min(f0, f1) / Peaks::kBin)), b1 = static_cast<long>(std::ceil(std::max(f0, f1) / Peaks::kBin));
-    b0 = std::clamp<long>(b0, 0, static_cast<long>(pk.lo.size()) - 1);
-    b1 = std::clamp<long>(std::max(b1, b0 + 1), 1, static_cast<long>(pk.lo.size()));
+    long b0 = static_cast<long>(std::floor(std::min(f0, f1) / bin)), b1 = static_cast<long>(std::ceil(std::max(f0, f1) / bin));
+    b0 = std::clamp<long>(b0, 0, static_cast<long>(pk.bins()) - 1);
+    b1 = std::clamp<long>(std::max(b1, b0 + 1), 1, static_cast<long>(pk.bins()));
     float lo = 0, hi = 0;
-    for (long k = b0; k < b1; ++k) lo = std::min(lo, pk.lo[static_cast<size_t>(k)]), hi = std::max(hi, pk.hi[static_cast<size_t>(k)]);
+    pk.range(static_cast<size_t>(b0), static_cast<size_t>(b1), lo, hi);
     const float g = c.gain;  // J-79: the waveform follows the clip's gain (louder clips draw taller, clipped at the body)
     const ImU32 cc = xf ? theme::withAlpha(col, 0.1f + 0.9f * xf->xfGain(x + 0.5f)) : col;
     dl->AddLine(ImVec2(x + 0.5f, mid - std::clamp(hi * g, -1.f, 1.f) * half), ImVec2(x + 0.5f, mid - std::clamp(lo * g, -1.f, 1.f) * half + 1), cc);
+  }
+}
+
+void drawWaveform(ImDrawList* dl, const Song& s, const Channel& ch, const Clip& c, const TempoMap& tm, ImVec2 a, ImVec2 b, float clipX0,
+                  float pxPerTick, float visX0, float visX1, ImU32 col, const FadeGeom* xf = nullptr) {
+  SamplePtr smp = sampleCache().request(ch.plugin.data);  // J-30: never waits for a decode (drawn once ready)
+  if (smp && smp->frames() >= 2) {
+    drawWaveformFrom(dl, s, ch, c, tm, a, b, clipX0, pxPerTick, visX0, visX1, col, xf, livetake::samplePeaks(smp), smp->frames(), smp->sampleRate);
+  } else if (!smp) {
+    // J-217: a take just recorded draws from its live summary until its file has decoded.
+    if (const livetake::Handoff* h = livetake::pending(ch.plugin.data))
+      drawWaveformFrom(dl, s, ch, c, tm, a, b, clipX0, pxPerTick, visX0, visX1, col, xf, h->peaks, static_cast<size_t>(h->frames), h->sampleRate);
   }
 }
 
@@ -1147,6 +1142,53 @@ void drawPlaylist(App& a) {
       ui::Hint(hint);
     };
     int shown = 0;
+    // J-208: on the pattern tab a centred "+" follows the last pattern and makes a new one,
+    // as the New pattern command does. When the rows run past the panel it stays on the
+    // panel's bottom edge (submitted first there, so it takes the pointer over the rows).
+    devGeom.plusX = devGeom.plusY = 0;
+    const float plusS = rowH - 2;
+    auto plusButton = [&](ImVec2 at, bool pinned) {
+      const float w = ImGui::GetContentRegionAvail().x;
+      ImDrawList* pdl = ImGui::GetWindowDrawList();
+      const ImVec2 back = ImGui::GetCursorScreenPos();
+      if (pinned) {  // a footer band in the panel's colour, so the rows pass under it
+        pdl->AddRectFilled(ImVec2(at.x - theme::kS1, at.y - 3), ImVec2(at.x + w + theme::kS1, at.y + plusS + theme::kS1), P.surface900);
+        pdl->AddLine(ImVec2(at.x, at.y - 3), ImVec2(at.x + w, at.y - 3), theme::withAlpha(P.line, 0.8f));
+      }
+      const ImVec2 c(std::round(at.x + w * 0.5f), std::round(at.y + plusS * 0.5f));
+      devGeom.plusX = c.x, devGeom.plusY = c.y;
+      ImGui::SetCursorScreenPos(ImVec2(c.x - plusS * 0.5f, at.y));
+      if (ui::IconButton("##newpat", ui::Icon::Plus, false, plusS, "New pattern: adds one after the last and selects it")) {
+        const ObjectId id = a.doc.addPattern(ops::nextPatternName(a.doc.song()));
+        if (id) {
+          setSource(a, {ClipKind::Pattern, id});
+          st.pickerSel = {id};
+          anchor = id;
+          st.pickerFocus = true;
+        }
+      }
+      if (pinned) {  // the band's sides take the clicks too (no row under them)
+        ImGui::SetCursorScreenPos(ImVec2(at.x, at.y - 3));
+        ImGui::SetNextItemAllowOverlap();
+        ImGui::InvisibleButton("##newpatband", ImVec2(w, plusS + 3));
+      }
+      if (pinned) ImGui::SetCursorScreenPos(back);
+    };
+    bool plusPinned = false;
+    if (st.pickerTab == 0 && !s.patterns.empty()) {
+      const float sp = ImGui::GetStyle().ItemSpacing.y;
+      const float top = ImGui::GetCursorScreenPos().y;
+      const float end = top + static_cast<float>(s.patterns.size()) * (rowH + sp) + 2;
+      const float bottom = ImGui::GetWindowPos().y + ImGui::GetWindowSize().y - ImGui::GetStyle().WindowPadding.y;
+      if (end + plusS > bottom) {
+        plusPinned = true;
+        ImDrawList* pdl = ImGui::GetWindowDrawList();
+        pdl->ChannelsSplit(2);  // the footer is drawn over the rows that follow
+        pdl->ChannelsSetCurrent(1);
+        plusButton(ImVec2(ImGui::GetCursorScreenPos().x, std::max(top, bottom - plusS)), true);
+        pdl->ChannelsSetCurrent(0);
+      }
+    }
     if (st.pickerTab == 0) {
       for (const auto& p : s.patterns) {
         ImGui::PushID(static_cast<int>(p.id));
@@ -1186,6 +1228,15 @@ void drawPlaylist(App& a) {
                                            : st.pickerTab == 2 ? "No automation yet: right-click a control \xE2\x86\x92 Create automation clip"
                                                                : "No patterns");
       ImGui::PopTextWrapPos();
+    }
+    if (st.pickerTab == 0) {
+      if (plusPinned) {
+        ImGui::GetWindowDrawList()->ChannelsMerge();
+        ImGui::Dummy(ImVec2(0, plusS + 4));  // scrolled to the end, the last row sits above the "+"
+      } else {
+        ImGui::Dummy(ImVec2(0, 2));
+        plusButton(ImGui::GetCursorScreenPos(), false);
+      }
     }
     const bool pickerHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByPopup);
     ImGui::EndChild();
@@ -1254,6 +1305,7 @@ void drawPlaylist(App& a) {
   };
   devGeom.x0 = gMin.x - st.scrollX, devGeom.pxPerTick = st.pxPerTick, devGeom.valid = true;
   devGeom.trackTop.clear(), devGeom.trackH.clear(), devGeom.clips.clear(), devGeom.curves.clear();
+  devGeom.dropTrack = -1;
   for (int i = 0; i < nTracks; ++i) devGeom.trackTop.push_back(yOf(i)), devGeom.trackH.push_back(hOf(i));
   auto tickAt = [&](float x) { return timeline::tickAtPx(x - gMin.x + st.scrollX, st.pxPerTick); };
   auto trackAt = [&](float y) {
@@ -1894,6 +1946,81 @@ void drawPlaylist(App& a) {
     for (uint32_t ci : ccache.order)
       if (clipAnim.contains(s.playlist[ci].id)) drawClip(ci);
   clipAnim.prune(animNow, gestureAnimates(cg.kind));
+  // J-217: takes still recording, each drawn as the clip it will become (the
+  // same track, start, colours, title and waveform as the committed clip), its
+  // right edge at the newest recorded frame, with a record-red rim, a lit edge
+  // at the record head and a pulsing dot in the title bar.
+  {
+    static const Channel liveCh = [] {
+      Channel c;
+      c.plugin = defaultPluginState("gl.sampler");  // as commitTakes() makes the take's channel
+      return c;
+    }();
+    dl->PushClipRect(gMin, gMax, true);
+    for (livetake::View& v : livetake::views()) {
+      v.drawn = false;
+      const int tr = v.place.track;
+      if (tr < 0 || tr >= nTracks) continue;
+      const float x0 = xOf(v.span.start), x1 = xOf(v.span.start + v.span.length), y = yOf(tr), th = hOf(tr);
+      if (x1 < gMin.x || x0 > gMax.x || y + th < gMin.y || y > gMax.y || th < 1) continue;
+      const bool muted = v.place.muted || s.tracks[static_cast<size_t>(tr)].muted;
+      const ImU32 base = theme::rgb(v.place.color);
+      const float bodyA = muted ? 0.60f : 0.74f, headA = muted ? 0.80f : 0.90f;
+      const ImU32 headSolid = theme::mix(base, P.well, muted ? 0.56f : 0.0f);
+      const ImU32 body = theme::withAlpha(theme::mix(base, P.well, muted ? 0.75f : 0.43f), bodyA);
+      const ImU32 head = theme::withAlpha(headSolid, headA);
+      const ImVec2 a0(std::round(x0) + 1, y + 1), a1(std::max(std::round(x0) + 5, std::round(x1) - 1), y + th - 1);
+      const float headH = std::min(15.0f, (a1.y - a0.y) * 0.45f);
+      v.drawn = true, v.x0 = a0.x, v.x1 = a1.x, v.y0 = a0.y, v.y1 = a1.y;
+      // Over clips already on the track the take lies on top (the grid beneath, as stacked clips draw).
+      for (const DrawnClip& p : drawn)
+        if (p.track == tr && p.x1 > a0.x && p.x0 < a1.x) gridPatch(std::max(p.x0, a0.x), std::min(p.x1, a1.x) + 1.0f, a0.y, a1.y);
+      dl->AddRectFilled(ImVec2(a0.x, a0.y + headH), a1, body, theme::kRadiusSm, ImDrawFlags_RoundCornersBottom);
+      dl->AddRectFilled(a0, ImVec2(a1.x, a0.y + headH), head, theme::kRadiusSm, ImDrawFlags_RoundCornersTop);
+      dl->AddRectFilled(a0, ImVec2(a1.x, a0.y + headH), theme::withAlpha(P.danger, 0.16f), theme::kRadiusSm, ImDrawFlags_RoundCornersTop);
+      dl->AddLine(ImVec2(a0.x + 1, a0.y + 0.5f), ImVec2(a1.x - 1, a0.y + 0.5f), theme::withAlpha(P.paper, muted ? 0.08f : 0.28f));
+      dl->AddLine(ImVec2(a0.x, a0.y + headH), ImVec2(a1.x, a0.y + headH), theme::withAlpha(P.ink, 0.35f));
+      dl->AddRect(a0, a1, theme::withAlpha(P.danger, 0.85f), theme::kRadiusSm, 0, 1.5f);
+      dl->PushClipRect(ImVec2(std::max(a0.x, gMin.x), std::max(a0.y, gMin.y)), ImVec2(std::min(a1.x, gMax.x), std::min(a1.y, gMax.y)), true);
+      // Title bar as the committed clip shows it (menu arrow, name), the record dot at its right.
+      const std::string title = muted && v.place.muted ? v.place.name + "  (muted)" : v.place.name;
+      const float tx0 = std::max(a0.x, gMin.x);
+      const bool dot = headH >= 9 && a1.x - tx0 > 24;
+      const float titleR = a1.x - (dot ? 14.0f : 0.0f);
+      const bool glyph = titleR - tx0 > 34 && headH >= 9;
+      if (glyph) {
+        const float gx = tx0 + 7, gy = a0.y + headH * 0.5f;
+        ui::drawIconFit(dl, ui::Icon::Down, ImVec2(gx - 3.5f, gy - 2), ImVec2(gx + 3.5f, gy + 2.5f), theme::withAlpha(theme::contrastText(headSolid), 0.8f));
+      }
+      if (titleR - tx0 > 12) {
+        const float nameSize = std::min(theme::kFontCaption, headH - 2);
+        const ImVec2 namePos(tx0 + (glyph ? 15 : 6), a0.y + std::max(0.0f, (headH - theme::kFontCaption) * 0.5f));
+        theme::textEllipsis(dl, a.fontBold, nameSize, namePos, titleR - tx0 - (glyph ? 19 : 10), theme::contrastText(headSolid), title.c_str());
+      }
+      if (dot) {
+        const float pulse = v.done ? 0.6f : 0.55f + 0.45f * static_cast<float>(std::fabs(std::sin(a.now * 4)));
+        dl->AddCircleFilled(ImVec2(std::min(a1.x, gMax.x) - 8, a0.y + headH * 0.5f), std::min(3.5f, headH * 0.26f), theme::withAlpha(P.danger, pulse));
+      }
+      // The waveform, from the take's live summary, exactly as the committed clip draws it.
+      const ImVec2 b0(a0.x + 3, a0.y + headH + 2), b1(a1.x - 3, a1.y - 3);
+      if (b1.y - b0.y > 4) {
+        Clip lc;
+        lc.kind = ClipKind::Audio;
+        lc.track = tr;
+        lc.start = v.span.start;
+        lc.length = v.span.length;
+        const ImU32 ink = P.dark ? theme::mix(base, P.paper, muted ? 0.0f : 0.45f) : theme::mix(base, P.ink, muted ? 0.15f : 0.42f);
+        drawWaveformFrom(dl, s, liveCh, lc, tempoMap, b0, b1, x0, st.pxPerTick, gMin.x, gMax.x, ink, nullptr, *v.peaks,
+                         static_cast<size_t>(v.fileFrames), v.sampleRate);
+      }
+      dl->PopClipRect();
+      // The record head: the take's newest frame.
+      const double headSec = tempoMap.secondsAt(static_cast<double>(v.span.start)) + static_cast<double>(v.fileFrames) / v.sampleRate;
+      const float hx = xOfD(tempoMap.tickAtSeconds(headSec));
+      if (!v.done && hx >= a0.x && hx <= gMax.x) dl->AddLine(ImVec2(hx, a0.y), ImVec2(hx, a1.y), P.danger, 2.0f);
+    }
+    dl->PopClipRect();
+  }
   // J-38: overlaps. The clip beneath keeps a dashed outline through the span
   // it shares with the clip on top (and its end edge), so both extents read at
   // a glance; an audio crossfade shows both curves crossing (an X).
@@ -2000,7 +2127,7 @@ void drawPlaylist(App& a) {
     }
   }
   // Empty arrangement: muted mark (guide §08 C).
-  if (s.playlist.empty())
+  if (s.playlist.empty() && livetake::views().empty())  // (J-217: not under a take being recorded)
     ui::EmptyState(dl, gMin, gMax, "Empty arrangement", "Click to place the selected pattern, or drag one in from the list");
   // Playhead.
   if (a.engine.mode() == PlayMode::Song) {
@@ -2183,6 +2310,13 @@ void drawPlaylist(App& a) {
     const float nameRight = roomy ? h1.x - 6 : h1.x - 22;
     if (roomy || th >= 18) {
       float nx = roomy ? nameX : nameX + 18;
+      // J-211: the track icon before the name, in a box that fits the track's
+      // height (left out when the header is too narrow to keep some name).
+      if (const float box = trackicons::boxFor(roomy ? 16.0f : th - 2.0f, 14.0f); t.icon > 0 && box > 0 && nameRight - nx >= box + 44) {
+        trackicons::draw(dl, t.icon, ImVec2(std::round(nx + box * 0.5f), std::round(nameY + (theme::kFontCaption + 1) * 0.5f + 0.5f)), box,
+                         t.muted ? P.textFaint : P.textDim);
+        nx += box + 4;
+      }
       nx += trackui::drawNameGlyph(a, dl, tr, ImVec2(nx, nameY));  // PL-08: audio / instrument track glyph
       theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption + 1, ImVec2(nx, nameY), nameRight - nx, t.muted ? P.textFaint : P.text,
                           playlistTrackName(s, static_cast<size_t>(tr)).c_str());
@@ -3477,7 +3611,28 @@ void drawPlaylist(App& a) {
       }
       dl->PopClipRect();
     }
-    browserui::acceptPluginDrop(a, browse::DropTarget::Playlist, place);  // instruments: a new channel (effects refused, J-97)
+    // J-208: a plugin dropped on a track (header or lane) is the track's: an instrument makes it an
+    // instrument track (or replaces its instrument), an effect goes onto its mixer track. The track lights up.
+    {
+      browserui::DropFeedback fb;
+      fb.highlight = false;
+      browserui::DropPlace pplace = place;
+      if (m.y < gMin.y || nTracks == 0) pplace.track = -1;  // the ruler: a new channel, as before
+      const int dropTr = pplace.track;
+      browserui::acceptPluginDrop(a, browse::DropTarget::Playlist, pplace, &fb);
+      if (fb.hovering && dropTr >= 0 && dropTr < nTracks) {
+        devGeom.dropTrack = dropTr;
+        const float y0 = std::max(yOf(dropTr), gMin.y), y1 = std::min(yOf(dropTr) + hOf(dropTr), gMax.y);
+        if (y1 > y0) {
+          const ImU32 hot = theme::rgb(theme::role::kDraw);
+          ImDrawList* fdl = ImGui::GetWindowDrawList();
+          fdl->PushClipRect(ImVec2(origin.x, gMin.y), gMax, true);
+          fdl->AddRectFilled(ImVec2(origin.x + vbarW, y0), ImVec2(gMax.x, y1), theme::withAlpha(hot, 0.16f));
+          fdl->AddRect(ImVec2(origin.x + vbarW + 1, y0 + 1), ImVec2(gMax.x - 1, y1 - 1), theme::withAlpha(hot, 0.95f), theme::kRadiusSm, 0, 2.0f);
+          fdl->PopClipRect();
+        }
+      }
+    }
     ImGui::EndDragDropTarget();
   }
 

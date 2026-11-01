@@ -34,10 +34,6 @@ float fxDistTable(int mode, float drive, float x);  // plasma_fxdist_dsp.cpp
 
 namespace {
 double dbToGainF(double db) { return std::pow(10.0, db / 20.0); }
-// The source's full scale inside its effects, in Plasma's units: the source's main volume gives 4.683 n^2
-// where Plasma's gives 1.4125 n^2, so the same output means a 10.4 dB hotter signal inside Plasma
-// (verified: the hosted compressor reacts 10.4 dB later than its threshold law on Plasma's level, at any main volume)
-constexpr double kSrcUnit = 3.31535;
 // the imported convolution's level: the impulse peak-normalised to this
 constexpr double kIrLevel = 0.125;
 // compressor laws (J-203c, measured): threshold offset against the peak (dB), attack time scale
@@ -1069,7 +1065,10 @@ void distImported(FxUnit& u, const float* p, float* L, float* R, int n, const Au
       for (int k = 0; k < stages; ++k) {
         double h[2];
         for (int ch = 0; ch < 2; ++ch) h[ch] = u.odHp[k][1].run(ch, u.odHp[k][0].run(ch, static_cast<float>(w[ch])));
-        const double pk = std::max(std::fabs(h[0]), std::fabs(h[1]));
+        // the linked detector reads the pair's magnitude (fitted and verified against the hosted plugin's output,
+        // held saw at mix 100, one stage: drive 40 / 50 / 60 / 75 % now within 0.3 / 0.5 / 0.4 / 0.4 dB, was
+        // 0.7 / 1.3 / 1.1 / 0.8 dB with the larger channel alone)
+        const double pk = std::sqrt(h[0] * h[0] + h[1] * h[1]);
         u.odEnv[k] += (pk - u.odEnv[k]) * (pk > u.odEnv[k] ? odUp : odDn);
         const double c = u.odEnv[k] < thr ? 1.0 : std::pow(u.odEnv[k] / thr, -0.9);
         for (int ch = 0; ch < 2; ++ch) {

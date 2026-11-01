@@ -459,6 +459,21 @@ std::vector<Cand> candsFor(int k) {
     add([](Scene& s) { oscType(s, 0, OscGranular), P(s, oscP(0, O_GDensity), 0.5f), P(s, oscP(0, O_GLength), 0.4f); });
     return c;
   }
+  if (k == tailP(T_NKeyMin) || k == tailP(T_NKeyMax)) {  // the noise key range: a noise on the played keys
+    add([](Scene& s) { P(s, noiseP(N_Enable), 1), P(s, noiseP(N_Level), 0.8f); });
+    return c;
+  }
+  if (k == tailP(T_NoiseLaw)) {  // the noise pitch law: a fixed noise pitched up (semitones vs. a knob curve)
+    add([](Scene& s) { P(s, noiseP(N_Enable), 1), P(s, noiseP(N_Level), 0.8f), P(s, noiseP(N_Pitch), 20.f); });
+    return c;
+  }
+  if (k == tailP(T_NKeyFold)) {  // the noise key fold: a tracked noise whose range leaves out the played keys
+    add([](Scene& s) {
+      P(s, noiseP(N_Enable), 1), P(s, noiseP(N_Level), 0.8f), P(s, noiseP(N_PitchTrack), 1);
+      P(s, tailP(T_NKeyMin), 70), P(s, tailP(T_NKeyMax), 75);
+    });
+    return c;
+  }
   if (k >= tailP(T_RawA) && k <= tailP(T_RawF2)) {  // a route that skips ENV 1: its source, main out, ENV 1 decaying to zero
     const int r = k - tailP(T_RawA);
     add([r](Scene& s) {
@@ -832,6 +847,9 @@ void* operator new[](std::size_t n) {
   if (void* p = std::malloc(n ? n : 1)) return p;
   throw std::bad_alloc();
 }
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic ignored "-Wmismatched-new-delete"  // the replaced operator new is malloc
+#endif
 void operator delete(void* p) noexcept { std::free(p); }
 void operator delete[](void* p) noexcept { std::free(p); }
 void operator delete(void* p, std::size_t) noexcept { std::free(p); }
@@ -1273,6 +1291,16 @@ int main(int argc, char** argv) {
                back.lfo[2].pts.size() == 3 && back.lfo[2].loop == 1 && back.fx.size() == 1 && back.fx[0].rack == 1 &&
                back.arp[2].shape == pl::ArpConverge && back.clip[1].notes.size() == 1 && back.macroName[0] == "Grit",
            "model data round trip");
+    // J-203t: launched clips, keyboard-span play, note chance / variation, start at once, wide rates
+    m.clipRun = 0x5;
+    m.clip[1].srcSpan = true, m.clip[1].launchQuant = -1, m.clip[1].rate = 1.f / 64;
+    m.clip[1].notes[0].chance = 0.5f, m.clip[1].notes[0].oct = 0.75f, m.clip[1].notes[0].octCh = 1.f;
+    pl::Model back2;
+    expect(pl::modelFromData(pl::modelToData(m), back2) && back2.clipRun == 0x5 && back2.clip[1].srcSpan && back2.clip[1].launchQuant == -1 &&
+               std::fabs(back2.clip[1].rate - 1.f / 64) < 1e-6f && back2.clip[1].notes[0].chance == 0.5f && back2.clip[1].notes[0].oct == 0.75f &&
+               back2.clip[1].notes[0].octCh == 1.f && !back2.clip[0].srcSpan && back2.clip[0].launchQuant == 6 && back.clipRun == 0 &&
+               back.clip[1].notes[0].plain(),
+           "clip launch, span play and note variation round trip (old data: none)");
     pl::Model junk;
     expect(!pl::modelFromData("{not json", junk), "bad data rejected");
     // a custom table plays
@@ -1523,6 +1551,189 @@ int main(int argc, char** argv) {
     for (int i = 48000; i < 52000; ++i) later = std::max(later, std::fabs(o.L[static_cast<size_t>(i)]));
     std::printf("# mono chord, then a new key: peak %.3f\n", static_cast<double>(later));
     expect(o.finite && later > 0.05f, "a mono chord released oldest key first ends; the next key starts a new note");
+  }
+  // ---- J-215: the noise oscillator follows the played key when it tracks it (glide, its key range's fold,
+  // the pitch wheel, the main tuning's cents) and stays put when it does not; its key range gates it; the
+  // import maps the key range, the fine law and the noise file's rate. A pure tone as the noise sample
+  // makes the playback rate measurable as a spectral peak.
+  {
+    const auto dir = std::filesystem::temp_directory_path() / "gl_plasma_j215";
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    // a sine looping in whole cycles: 441 Hz at 44.1 kHz and 480 Hz at 48 kHz (100 samples a cycle)
+    auto sineWav = [&](const std::string& path, int rate) {
+      const int frames = rate;
+      std::vector<int16_t> pcm(static_cast<size_t>(frames));
+      for (int i = 0; i < frames; ++i) pcm[static_cast<size_t>(i)] = static_cast<int16_t>(std::lround(20000 * std::sin(2 * 3.14159265358979 * i / 100.0)));
+      std::ofstream f(path, std::ios::binary);
+      auto u32 = [&](uint32_t v) { f.write(reinterpret_cast<const char*>(&v), 4); };
+      auto u16 = [&](uint16_t v) { f.write(reinterpret_cast<const char*>(&v), 2); };
+      f.write("RIFF", 4), u32(36 + static_cast<uint32_t>(frames) * 2), f.write("WAVE", 4);
+      f.write("fmt ", 4), u32(16), u16(1), u16(1), u32(static_cast<uint32_t>(rate)), u32(static_cast<uint32_t>(rate) * 2), u16(2), u16(16);
+      f.write("data", 4), u32(static_cast<uint32_t>(frames) * 2);
+      f.write(reinterpret_cast<const char*>(pcm.data()), static_cast<std::streamsize>(pcm.size() * 2));
+    };
+    const std::string w44 = (dir / "tone44.wav").string(), w48 = (dir / "tone48.wav").string();
+    sineWav(w44, 44100), sineWav(w48, 48000);
+    auto noiseState = [&](bool track, float pitch) {
+      PluginState s = base();
+      setP(s, pl::oscP(0, pl::O_Enable), 0);
+      setP(s, pl::noiseP(pl::N_Enable), 1), setP(s, pl::noiseP(pl::N_Level), 0.8f), setP(s, pl::noiseP(pl::N_Type), 0);
+      setP(s, pl::noiseP(pl::N_PitchTrack), track ? 1.f : 0.f), setP(s, pl::noiseP(pl::N_Pitch), pitch);
+      pl::Model m;
+      pl::modelFromData(s.data, m);
+      m.noiseFile = w44;
+      s.data = pl::modelToData(m);
+      return s;
+    };
+    // one held key (optionally a pitch wheel position and a legato second key at 0.3 s)
+    auto play = [&](const PluginState& st, int key, int block, float wheel = 0, int key2 = -1) {
+      Out o;
+      const int total = 36000;
+      o.L.assign(total, 0.f), o.R.assign(total, 0.f);
+      auto g = packs::createGenerator(st.type);
+      ChannelAux aux;
+      packs::prepareAux(st, aux);
+      g->prepareHost(st, kSr);
+      ProcessContext ctx;
+      ctx.sampleRate = kSr, ctx.tempo = 120, ctx.ppq = 96;
+      const int bv = static_cast<int>(std::lround(8192 + wheel * (wheel >= 0 ? 8191 : 8192)));
+      for (int pos = 0; pos < total; pos += block) {
+        const int n = std::min(block, total - pos);
+        if (pos == 0) g->midi(0xE0, static_cast<uint8_t>(bv & 127), static_cast<uint8_t>(bv >> 7), 0), g->noteOn(1, key, 0.9f, 0);
+        if (key2 >= 0 && 14400 >= pos && 14400 < pos + n) g->noteOn(2, key2, 0.9f, 14400 - pos), g->noteOff(1, 14400 - pos + 1);
+        g->process(st, aux, ctx, o.L.data() + pos, o.R.data() + pos, n);
+      }
+      for (size_t i = 0; i < o.L.size(); ++i) {
+        if (!std::isfinite(o.L[i]) || !std::isfinite(o.R[i])) o.finite = false;
+        o.peak = std::max({o.peak, std::fabs(o.L[i]), std::fabs(o.R[i])});
+      }
+      return o;
+    };
+    // strongest frequency in [a, b): a 1/48-octave scan, then a fine one around the best
+    auto peakHz = [&](const Out& o, int a, int b) {
+      double best = 0, bf = 0;
+      for (double f = 40; f < 16000; f *= std::exp2(1.0 / 48))
+        if (const double v = mag(o.L, a, b, f); v > best) best = v, bf = f;
+      const double c = bf;
+      for (double f = c * std::exp2(-1.0 / 48); f < c * std::exp2(1.0 / 48); f *= std::exp2(1.0 / 1200))
+        if (const double v = mag(o.L, a, b, f); v > best) best = v, bf = f;
+      return bf;
+    };
+    auto semisOff = [](double got, double want) { return 12.0 * std::log2(std::max(1e-9, got) / want); };
+    const int a = 24000, b = 24000 + 8192;
+    // tracked, pitch -12: the file's own rate at key 72 (441 Hz), an octave per 12 keys
+    {
+      const PluginState s = noiseState(true, -12);
+      double worst = 0;
+      for (int k : {36, 48, 60, 72, 84}) {
+        const Out o = play(s, k, 256);
+        const double hz = peakHz(o, a, b), want = 441.0 * std::exp2((k - 72) / 12.0);
+        std::printf("# noise tracked key %d: %.1f Hz (want %.1f)\n", k, hz, want);
+        worst = std::max(worst, std::fabs(semisOff(hz, want)));
+      }
+      expect(worst < 0.05, "tracked noise moves an octave per 12 keys (sample's own rate at key 72 with pitch -12)");
+    }
+    // not tracked: the same rate at every key (pitch -12: an octave under the file's own rate)
+    {
+      const PluginState s = noiseState(false, -12);
+      double worst = 0;
+      for (int k : {36, 60, 84}) worst = std::max(worst, std::fabs(semisOff(peakHz(play(s, k, 256), a, b), 220.5)));
+      expect(worst < 0.05, "fixed noise stays at one rate on every key");
+    }
+    // the pitch wheel (+2 semitones up, -2 down) and the main tuning's cents move a tracked noise only
+    {
+      PluginState t = noiseState(true, -12), f = noiseState(false, -12);
+      const double up = semisOff(peakHz(play(t, 72, 256, 1.f), a, b), 441), dn = semisOff(peakHz(play(t, 72, 256, -1.f), a, b), 441);
+      const double fixedUp = semisOff(peakHz(play(f, 72, 256, 1.f), a, b), 220.5);
+      std::printf("# noise wheel: tracked %+.3f / %+.3f st, fixed %+.3f st\n", up, dn, fixedUp);
+      expect(std::fabs(up - 2) < 0.05 && std::fabs(dn + 2) < 0.05 && std::fabs(fixedUp) < 0.05, "pitch wheel bends a tracked noise, not a fixed one");
+      setP(t, pl::G_MasterTune, 50), setP(f, pl::G_MasterTune, 50);
+      const double tc = semisOff(peakHz(play(t, 72, 256), a, b), 441), fc = semisOff(peakHz(play(f, 72, 256), a, b), 220.5);
+      expect(std::fabs(tc - 0.5) < 0.05 && std::fabs(fc) < 0.05, "main tuning cents move a tracked noise, not a fixed one");
+    }
+    // glide: a mono legato portamento carries a tracked noise to the new key
+    {
+      PluginState s = noiseState(true, -12);
+      setP(s, pl::G_Mono, 1), setP(s, pl::G_Legato, 1), setP(s, pl::G_PortaTime, static_cast<float>(pl::portaTimeInv(0.1)));
+      const Out o = play(s, 60, 256, 0, 72);
+      const double early = peakHz(o, 2000, 2000 + 8192), late = peakHz(o, 27000, 27000 + 8192);
+      std::printf("# noise glide 60 -> 72: %.1f then %.1f Hz\n", early, late);
+      expect(std::fabs(semisOff(early, 220.5)) < 0.05 && std::fabs(semisOff(late, 441)) < 0.05, "a tracked noise glides with the note");
+    }
+    // the key range: outside it silent; FOLD wraps the key in by the range's width (60..72: 48 plays as 61)
+    {
+      PluginState s = noiseState(true, -12);
+      setP(s, pl::tailP(pl::T_NKeyMin), 60), setP(s, pl::tailP(pl::T_NKeyMax), 72);
+      const Out in = play(s, 66, 256), out = play(s, 48, 256);
+      expect(rms(in.L, a, b) > 0.05 && rms(out.L, a, b) < 1e-6, "noise key range: inside sounds, outside is left out");
+      setP(s, pl::tailP(pl::T_NKeyFold), 1);
+      const Out fo = play(s, 48, 256), hi = play(s, 84, 256);
+      const double f48 = semisOff(peakHz(fo, a, b), 441.0 * std::exp2((61 - 72) / 12.0)), f84 = semisOff(peakHz(hi, a, b), 441.0 * std::exp2((71 - 72) / 12.0));
+      std::printf("# noise fold: key 48 %+.3f st off 61, key 84 %+.3f st off 71\n", f48, f84);
+      expect(rms(fo.L, a, b) > 0.05 && std::fabs(f48) < 0.05 && std::fabs(f84) < 0.05, "noise key fold wraps the key into the range");
+      // block-size invariance with the fold, the wheel and tracking
+      const Out b1 = play(s, 48, 64, 0.5f), b2 = play(s, 48, 37, 0.5f), b3 = play(s, 48, 512, 0.5f);
+      double d = 0;
+      for (size_t i = 0; i < b1.L.size(); ++i) d = std::max({d, static_cast<double>(std::fabs(b1.L[i] - b2.L[i])), static_cast<double>(std::fabs(b1.L[i] - b3.L[i]))});
+      expect(b1.peak > 0.01f && d < 1e-4, "tracked noise is block-size invariant");
+    }
+    // extremes: lowest / highest keys and pitches, full wheel at a wide bend range, a one-key range
+    {
+      bool ok = true;
+      for (float p : {-64.f, 64.f})
+        for (int k : {0, 127}) {
+          PluginState s = noiseState(true, p);
+          setP(s, pl::G_BendUp, 48), setP(s, pl::G_BendDown, 48);
+          setP(s, pl::tailP(pl::T_NKeyMin), 64), setP(s, pl::tailP(pl::T_NKeyMax), 64), setP(s, pl::tailP(pl::T_NKeyFold), 1);
+          const Out o = play(s, k, 256, k ? 1.f : -1.f);
+          ok = ok && o.finite && o.peak < 8;
+        }
+      expect(ok, "tracked noise at the extremes is finite");
+    }
+    // import: key range and fold, the fine law (tracked 1, fixed 0.96 up to the centre and 0.6 above),
+    // and a 48 kHz noise file played the way the source reads it (at 44.1 kHz)
+    {
+      auto imp = [&](double track, double color, double fine, const std::string& file, double rate, double df) {
+        Json o3p = obj({{"kParamEnable", num(1)}, {"kParamVolume", num(0.5)}, {"kParamPitchTrack", num(track)},
+                        {"kParamKeyZoneMin", num(36)}, {"kParamKeyZoneMax", num(84)}, {"kParamKeyZoneFold", num(1)}});
+        Json n3 = obj({{"plainParams", obj({{"kParamColor", num(color)}, {"kParamFine", num(fine)}})},
+                       {"relativePathToNoiseSample", str(file.c_str())}, {"sampleRate", num(rate)}, {"detuneFactor", num(df)}});
+        Json o0 = obj({{"plainParams", obj({{"kParamEnable", num(0)}})}});
+        Json body = obj({{"Oscillator0", o0}, {"Oscillator3", obj({{"plainParams", o3p}, {"NoiseOsc3", n3}})}});
+        PluginState st;
+        pl::ImportReport rep;
+        pl::importSerumBytes(container(body, "Noise Test"), st, rep);
+        return st;
+      };
+      constexpr double kRef = 0.4758218478413068;  // the source's detuneFactor for a 44.1 kHz noise
+      const PluginState t = imp(1, 0.6, 0.5, w44, 44100, kRef), u = imp(0, 0.6, 1, w44, 44100, kRef), v = imp(0, 0.4, 1, w44, 44100, kRef);
+      auto P = [](const PluginState& s, int k) { return s.params[static_cast<size_t>(k)]; };
+      expect(std::lround(P(t, pl::tailP(pl::T_NKeyMin))) == 36 && std::lround(P(t, pl::tailP(pl::T_NKeyMax))) == 84 && P(t, pl::tailP(pl::T_NKeyFold)) > 0.5f,
+             "import maps the noise key range and fold");
+      expect(P(t, pl::tailP(pl::T_NoiseLaw)) > 0.5f && std::fabs(P(t, pl::noiseP(pl::N_Fine)) - 0.5f) < 1e-4f, "import selects the imported noise law");
+      expect(std::fabs(P(t, pl::noiseP(pl::N_Pitch)) - 0.8f) < 1e-3f && P(t, pl::noiseP(pl::N_PitchTrack)) > 0.5f, "import maps the tracked noise pitch");
+      // fixed noise on the imported law: knob 0.6 = +9.6 st, fine +0.6 above the centre; knob 0.4 = -38.4 st,
+      // fine +0.96 below it (the 441 Hz tone at 44.1 kHz)
+      const double fu = semisOff(peakHz(play(u, 60, 256), a, b), 441.0 * std::exp2(10.2 / 12)), fv = semisOff(peakHz(play(v, 84, 256), a, b), 441.0 * std::exp2(-37.44 / 12));
+      std::printf("# noise fixed law: knob 0.6 %+.3f st off, knob 0.4 %+.3f st off\n", fu, fv);
+      expect(std::fabs(fu) < 0.05 && std::fabs(fv) < 0.05, "imported fixed noise follows the knob curve and the fine law");
+      // a 48 kHz file: fixed at the centre it plays at 44.1 kHz (480 Hz tone -> 441 Hz); tracked with the
+      // matching detuneFactor at its own rate at key 72 (480 Hz) and an octave per 12 keys
+      const PluginState f48 = imp(0, 0.5, 0, w48, 48000, kRef * 48000.0 / 44100.0), t48 = imp(1, 0.5, 0, w48, 48000, kRef * 48000.0 / 44100.0);
+      const double fx = semisOff(peakHz(play(f48, 60, 256), a, b), 441), tr = semisOff(peakHz(play(t48, 72, 256), a, b), 480),
+                   tr2 = semisOff(peakHz(play(t48, 60, 256), a, b), 240);
+      std::printf("# noise 48 kHz file: fixed %+.3f st, tracked key 72 %+.3f st, key 60 %+.3f st\n", fx, tr, tr2);
+      expect(std::fabs(fx) < 0.05 && std::fabs(tr) < 0.05 && std::fabs(tr2) < 0.05, "import plays a 48 kHz noise file at the source's rate");
+      // old states (no key range parameters) keep a full range: the noise plays on every key
+      PluginState old = noiseState(true, -12);
+      old.params.resize(static_cast<size_t>(pl::tailP(pl::T_NKeyMin)));
+      normalizePluginState(old);
+      expect(old.params.size() > static_cast<size_t>(pl::tailP(pl::T_NKeyFold)) && std::lround(old.params[static_cast<size_t>(pl::tailP(pl::T_NKeyMax))]) == 127 &&
+                 rms(play(old, 20, 256).L, a, b) > 0.05,
+             "older states get a full noise key range");
+    }
+    std::filesystem::remove_all(dir, ec);
   }
   // ---- every parameter acts (the audit's VERIFIED entries)
   cov::run(*info);

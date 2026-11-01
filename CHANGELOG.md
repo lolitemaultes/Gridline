@@ -3,32 +3,140 @@
 All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLINE_VERSION_PRE` in
 `CMakeLists.txt`; the release workflow publishes the section of the tagged version as the release notes.
 
-## Unreleased
+## 0.7.1
+
+Released 2026-11-01. Everything that changed since 0.7.0. Projects from 0.7.0 open as they are.
+
+### Highlights
+
+- **Track Receipt** (Help, Track Receipt...) measures which parts of which original recordings a
+  project actually plays, merged per song across stems, samplers and plugins, and writes a
+  spreadsheet and a PDF for filling in sample licenses, for example on Tracklib.
+- **Turntable**, a new instrument: load a sample and scratch it on a platter. FL Studio projects
+  with Fruity Scratcher open with it and sound the same.
+- **Seltmann records from an input**, and each step of its sequence can now have its own length
+  and its own pitch.
+- **Recording into the playlist** draws each take's clip and waveform live while you record.
+- **Track icons**: 139 icons with a searchable picker, on mixer tracks, playlist tracks and
+  channels, read from and written to FL Studio projects.
+- **Plasma** plays imported Serum 2 presets much closer to the original.
+- **Loupe**'s interface is redrawn, and smaller things: Stop clicked while stopped goes back to the
+  start, a "+" for new patterns in the playlist, instruments dropped onto playlist tracks.
+- **Fixed**: Sampler notes in the Stretch and Rubber Band modes that played silence, scratching
+  recorded in FL Studio projects timed exactly, and more below.
 
 ### Added
 
-- Turntable, a new instrument: load a sample and scratch it on a platter. Drag the platter or the
-  waveform to scratch, with the platter's speed, acceleration, sensitivity and hold, four smoothing
-  controls and the transport (reverse, pause, forward). Notes can start the motor or jump to a cue
-  point, and key tracking sets the speed. Five factory presets. FL Studio projects with Fruity
-  Scratcher open with it, settings and sample included. The previous scratch effect is still there
-  as Turntable FX, so projects that use it sound as before.
+- Audio recorded into the playlist now appears while you record: each take is drawn as a growing
+  clip on the track it will land on, from its exact start, with its waveform filling in as the
+  audio arrives and a red outline and record head while it is live. Loop passes stack on the
+  tracks below as they record, earlier passes shown muted, and several armed tracks record side by
+  side. When recording stops the finished clip takes its place without a jump or redraw, and long
+  takes stay smooth to draw at any zoom.
+- Seltmann can record from an audio input: Record, next to Load on its start screen, opens a
+  recorder with an input picker (stereo pairs or single inputs) and a live level meter, Record,
+  Pause and Resume, Finish, Clear, a running time and the take drawn as it records. It works
+  with the transport stopped or playing, and says so when no input device is set up, the device
+  goes away or the sample rate changes. Load recording saves the take as a WAV in the project's
+  Recorded folder and loads it like any file: it is analysed, chopped and can be undone. Back
+  asks before throwing away a finished take.
+- Track Receipt (Help, Track Receipt...): a helper for filling in sample licenses, for example on
+  Tracklib. It lists every audio file the project uses, grouped by original song, and ticks the
+  files named like Tracklib downloads. Calculate plays the project through offline and measures
+  which parts of each original are actually heard, in the playlist and in every built-in sampler
+  (loops and repeats count once, the same part from several stems counts once, chopped parts add
+  up). Results show the seconds per song, the length tier, the parts used with timestamps and where
+  each comes from. Muted parts are listed but not counted, files inside third-party plugins count
+  as the whole file until you type the parts used, and a song over 60 s is flagged. Save Track
+  Receipt writes a spreadsheet (Licenses, Usage, Release, Splits); View results saves a PDF and
+  opens it. What you type (category, share, fee, release details, writers) is saved in the
+  project. Files Gridline makes from others (edits, stems, stretched clips, slices, renders) now
+  remember where they came from, so their uses map back to the original. Command line:
+  `gridline track-receipt <project> --out <folder>`. A helper, not legal advice. Check the figures
+  against your license on Tracklib.
+- Clicking the Stop button with the transport already stopped, or double-clicking it, puts the
+  song and pattern position back at the beginning (the first click still returns to the set
+  position; Space is unchanged).
+- Turntable, a new instrument: load a sample and scratch it on a platter. Drag the platter up and
+  down or the waveform sideways to scratch (Ctrl for fine moves), with the platter's speed,
+  acceleration, sensitivity and hold, four smoothing controls, whole extra turns and the motor
+  (reverse, pause, forward). A new Turntable plays its own built-in sound until you load a sample
+  or drop one anywhere on the editor, from the browser or the desktop. Notes can start the motor
+  or jump to a cue point, and key tracking sets the speed. A large view gives the waveform more
+  room. Five factory presets. FL Studio projects with Fruity Scratcher open with it and sound the
+  same: every setting, the sample, the timecode options, automation clips and recorded movements
+  come along, and a scratcher without a sample stays silent. Saving to FL Studio writes it back.
+  The previous scratch effect is still there as Turntable FX, so projects that use it sound as
+  before. Turntable is part of the Gridline Suite too (119 plugins), so it also runs in other DAWs.
+- The playlist's pattern list has a "+" button under the last pattern that adds a new pattern and
+  selects it, named and undone like New pattern. When the list is longer than the panel the button
+  stays at the bottom of the panel.
+- Drag an instrument from the browser or the plugin picker onto a playlist track, on its header or
+  its lane, to make that track an instrument track playing a new channel of it. The track lights
+  up while you hover it. Dropped on an instrument track, the instrument replaces the track's
+  instrument; an effect dropped on an instrument or audio track goes into its mixer track. Each
+  drop is one undo step. Installed plugins are loaded as themselves.
+- Seltmann: turn the mouse wheel over a block in the sequence to pitch that step by a semitone
+  per notch (hold Shift for tenths); the region's other steps (in "A B C A", the first A) keep
+  their pitch. The block's right-click Pitch menu pitches the step too, and also offers the
+  region's pitch, for every step of it. A run of notches is one undo step, and each block shows
+  the pitch it plays at.
+- Track icons: 139 icons in 16 categories (drums, percussion, keys, synths, guitars and strings,
+  brass and wind, vocals, samples, notes, effects, mixing, surround, gear, symbols, numbers and
+  faces). The icon menu has a search field, a category list and the icon's name under the grid.
+  Playlist tracks and channels take icons too (track menu and channel menu): the playlist shows
+  the icon before the track's name at every track height, the channel rack on the name button
+  when there is room. Changing an icon is one undo step.
+- FL Studio projects open with their icons on mixer tracks, playlist tracks and channels, and
+  saving to FL Studio writes them back, including icons chosen in Gridline. Projects imported
+  earlier show their icons when opened again.
 
 ### Changed
 
-- Loupe's interface is laid out on one grid: the transport, recording controls, menus and the
-  tool buttons share their sizes and centre lines, the info boxes carry their captions inside them,
-  an empty editor no longer shows a stray time, and tool dialogs keep Accept and Cancel on the
-  right.
+- Seltmann: the sequence is now separate from the regions. Drag the right edge of a block in the
+  sequence to change how long that step lasts (it snaps to the chop grid; Shift for finer steps, Alt
+  for no snapping; double-click for its default length) without changing its region: a shorter step
+  is cut and the next step starts right after it, a longer one plays its region out and then rests.
+  Two steps of the same region, for example after Duplicate step, can have different lengths. Once a
+  step has its own length, the whole sequence lasts whole bars: when the steps add up to less, it
+  rests until the next bar line, so the loop stays in time (sequences you already have sound as
+  before). Reset length in the block's menu gives a step its default length
+  back. The cuts between regions are resized in the waveform.
+- Mixer: a track's icon sits in its own corner of the name plate in every strip width and
+  interface scale, so it no longer crowds the number or the name; the routing overview and the
+  track panel show it larger.
+- Loupe's interface is redrawn on Gridline's own sizes and laid out on one grid: every button of a
+  row has one size and one face, and the transport, recording controls, menus and tool buttons
+  share their centre lines. The menus sit on one line beside the tool buttons (grouped by what
+  they do), the info boxes carry their captions inside them, and the info line shows the cursor or
+  the selection and its length and says when Loupe is armed or recording. The bottom bar has a
+  wave and spectrum switch, drop-down lists for snapping and the time format, icon zoom buttons
+  and evenly spaced level readouts. An empty editor says how to get audio in (and no longer shows
+  a stray time), and a running edit shows a progress plate. The tool dialogs group their settings
+  in titled sections with one label column and keep Accept and Cancel on the right; their sliders
+  show the value in a field beside the track, where the handle never covers it, and a
+  double-click on it types one. At 150 and 200 % interface scale the editor shrinks to fit the
+  window instead of scrolling sideways.
 - Plasma plays imported Serum 2 presets much closer to the original:
   - Effects: the delay (times, synced range up to 16 beats, feedback, echo filter, Ping-Pong),
     compressor and limiter, reverb (all five models, the pre-delay on every type), distortion,
     convolution (including the impulse gain), chorus, phaser, flanger, frequency shifter (shift
-    direction per side, delay, blur), the dimension stage of the hyper effect and the multiband compressor (per-band ratios, upward
-    compression, crossovers and switches) follow the original. Each gets a Law setting that imports
-    switch on, so Plasma's own projects keep their sound. The reverb knob labelled as a pre-delay now reads TAIL.
+    direction per side, delay, blur), the dimension stage of the hyper effect and the multiband
+    compressor (per-band ratios, upward compression, crossovers and switches) follow the
+    original. Each gets a Law setting that imports switch on, so Plasma's own projects keep
+    their sound. The reverb knob labelled as a pre-delay now reads TAIL.
   - Filters: the dirty ladder filter grows louder and brighter when driven with the cutoff open,
-    the way the original does, in the voice and in the filter effect.
+    the way the original does, in the voice and in the filter effect. A voice filter's drive now
+    acts on its dry signal too, as the original's does, so a driven filter with its mix turned
+    down keeps the drive's level and colour (most types; the ladders, formants, distorted combs
+    and a few others keep a clean dry signal). Driven filters, combs, phasers, flangers, ring
+    mods and sample and hold run through the original's drive stage, and the comb, flanger and
+    phaser types lower their dry signal as the resonance rises. The acid ladder, Wsp and DistComb 1
+    low-pass filters blend with the dry signal the way the original's do when their mix is turned
+    down, and the DistComb 2 filters play at the original's level. A modulation route that has
+    only its aux curve drawn now reads that curve, so routes whose aux source works in reverse
+    move the filter (or any other target) as far as they do in the original. The distortion
+    effect's Overdrive mode compresses the way the original's does at medium drive.
   - Modulation: LFO point modulation, routes to envelope times, curves on LFO segments, routes and
     envelopes, and tempo-synced LFO divisions follow the original.
   - Voice: sub oscillator shapes, granular density and length, sources routed past Env 1,
@@ -37,6 +145,39 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
   - Oscillators: the waveshaper warps (tube, sine shaper, stomp box, tape and the others, on every
     oscillator type), random start phase, routes to the main tuning, the spectral oscillator's
     stereo image from stereo samples, and the loudness of multisample unison follow the original.
+  - Arpeggiator and clips: launched clips follow the song position, clips that span the keyboard
+    play as static, one-shot or one copy per key, clip rates, launch quantize, note chance and the
+    octave, semitone and velocity variations, the arpeggiator's dotted and triplet rates and the
+    timing of its first step follow the original.
+  - Spectral oscillator: imported presets keep the same loudness on every key instead of
+    jumping between notes, and a spectral oscillator without a sample stays silent, as in the
+    original.
+
+### Fixed
+
+- Sampler: in the Stretch and Rubber Band time modes, a note no longer plays silence when the
+  sample start (or, in reverse, the sample end) falls between two samples of the file. Depending
+  on the file length this hit about half of all start and end settings, live and in exports.
+- Runs of Gridline started with command-line options (automated checks, screenshots, layout
+  audits) no longer save their window layout over yours; only a normal start saves it.
+- Plasma: a noise oscillator that follows the keys now also follows the pitch wheel and the cents
+  of the main tuning, like the other oscillators (a noise that does not follow the keys stays at
+  one pitch, as before). The noise also gets a key range, with Fold, on the Oscillator Mapping
+  panel. Imported presets keep the noise's key range and play the noise at the pitch the preset
+  was made with, also for noise samples at other sample rates, for the fine tuning of a noise
+  that does not follow the keys and for modulation of its pitch.
+- FL Studio projects with control changes recorded into a pattern (such as scratching recorded
+  on Fruity Scratcher) now play them as FL does: each change lands on its exact sample instead
+  of the next 64-sample step, and the control keeps its own value until the first change of each
+  pass instead of jumping to it at the start. An imported scratch performance now plays its
+  movements exactly as the plugin receives them in FL.
+- Importing a link with "Browser only" in a collaborative project now adds the file to the shared
+  project audio (as a channel, without a clip), so collaborators receive it too.
+- Replacing a channel's instrument now renames the channel after the new instrument when it still
+  had an automatic name (a name you typed stays), and the plugin window's preset selector starts
+  at the new plugin's default instead of showing the old plugin's preset. Undo restores the old
+  instrument, its name and the preset its selector showed. Replacing an effect resets its preset
+  selector the same way.
 
 ## 0.7.0
 

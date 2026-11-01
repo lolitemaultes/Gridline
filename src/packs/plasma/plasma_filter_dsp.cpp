@@ -25,6 +25,15 @@ enum Engine {
   // distorting types (J-203k): ring mods, sample and hold, distorted combs, screamer, dirty ladder
   EngWRing, EngWSnh, EngWDist, EngWScream, EngWDirty
 };
+// Imports: the source runs most types' drive stage ahead of the dry / wet split, so the filter's MIX blends
+// the filtered signal with the DRIVEN input (fitted on held saws, filter mix 0: +3.3 / +7.7 / +13.5 / +24.1 dB
+// at drive 10 / 25 / 50 / 100 % with PAD, the (1 + drive)^4 gain; without PAD a cubic soft clip at the
+// source's full scale, -1.5 / -0.5 / -0.1 dB on a -18.8 dB saw at drive 75 / 90 / 100 %). The ladders (ZDF_A, LadderMg / Acid / EMS / DirtyMg), formants, distorted combs, Scream 3,
+// Wsp, DJ mixer, pole-zero and Exp types keep the raw input on the dry path.
+bool drivesDry(int t) {
+  if (t == 84 || (t >= 86 && t <= 88) || (t >= 90 && t <= 97) || (t >= 99 && t <= 103) || t >= 105) return false;
+  return true;
+}
 int engineOf(int t) {
   if (t <= 3 || t == 84 || (t >= 99 && t <= 102)) return EngLadder;
   if (t <= 38) return EngSvf;
@@ -266,6 +275,10 @@ inline double cubicClip(double x) {
   x = std::clamp(x, -1.5, 1.5);
   return x - (4.0 / 27.0) * x * x * x;
 }
+// the comb, flanger and phaser types scale their dry path by 1 / (1 + resonance), resonance at least 10 %
+// (held saws: -0.8 / -0.8 / -1.6 / -2.2 / -3.2 / -4.1 / -4.8 / -5.5 / -6.0 dB at 0 / 10 / 20 / 30 / 45 / 60 / 75 /
+// 90 / 100 %, the same at drive 0 and 50 %, with or without PAD)
+double combDry(double res) { return 1.0 / (1.0 + std::max(res, 0.1)); }
 // the dirty ladder's first stage clips off centre as the drive rises (to half way): a driven note leaves a
 // small negative offset that a low cutoff lets through (source: -0.008 at the output, cutoff 0.2 .. 0.5,
 // drive 50 / 100 %; none at drive 0)
@@ -345,6 +358,9 @@ struct Filter::Ch {
   SatC sc1, sc2;
   double wg = 1, wa = 0, wG = 0, wL = 1, wfb = 0.2, wop = 0, wdc = 0, wh = 1, wk = 0, wOut = 1, wb = 0;
   int wD = 1, wD2 = 1;
+  double dg = 0, dk = 1;  // imports: the drive stage's gain ahead of the dry / wet split (0: the dry path is the raw input)
+  bool dPad = false, inv = false;
+  float dry = 0;  // last sample's dry path
   // state (cleared by clear())
   SvfS ss1, ss2, ss3, fs[3];
   OpS o1, o2, o3, o4, od, oe[8];
@@ -458,6 +474,13 @@ void Filter::set(int type, double sr, double hz, double res, double drive, doubl
     }
     h.var = static_cast<float>(var);
     h.outGain = 1;
+    h.dg = boost && drivesDry(type) ? std::pow(1.0 + drive, 4.0) : 0.0;
+    h.dk = (type >= 39 && type <= 70) || type == 104 ? combDry(res) : 1.0;
+    h.dPad = pad;
+    // imports: the acid ladder, Wsp and the DistComb 1 low-pass come out inverted against their input (held
+    // saws at mix 50 %: the source cancels to -29.4 / -32.8 / -25.7 dB where an in-phase mix reads -20.1 /
+    // -19.2 / -23.4 dB; the filter effect alike)
+    h.inv = boost && (type == 90 || type == 96 || type == 100);
     switch (eng) {
       case EngMSvf: {
         const MSvfDesc& d = msvf(type);
@@ -934,16 +957,25 @@ void Filter::set(int type, double sr, double hz, double res, double drive, doubl
   }
 }
 
+float Filter::dry(int c) const { return ch_[c & 1].dry; }
 void Filter::process(float& l, float& r) {
   const int t = type_;
-  if (t < 0) return;
+  if (t < 0) {
+    ch_[0].dry = l, ch_[1].dry = r;
+    return;
+  }
   const int eng = ch_[0].eng;
   float* io[2] = {&l, &r};
   for (int c = 0; c < 2; ++c) {
     Ch& h = ch_[c];
     float x = *io[c];
     float y = x;
-    if (h.head > 0) {
+    h.dry = h.dg > 0 ? static_cast<float>(h.dk * (h.dPad ? x * h.dg : kSrcUnit * cubicClip(x * h.dg / kSrcUnit))) : x;
+    if (h.dg > 0 && h.head > 0 && eng != EngScream && eng != EngLadder && eng != EngMLad && eng != EngMScream) {
+      // imports: the filter runs on the same driven signal as the dry path (combs held within 0.1 dB at drive
+      // 50 / 100 %, where the separate soft clip of the Classic voicing read 1.3 / 1.7 dB low)
+      x = h.dry / static_cast<float>(h.dk);
+    } else if (h.head > 0) {
       if (eng != EngScream && eng != EngLadder && eng != EngMLad && eng != EngMScream) x = h.head * fastTanh(x * h.drv / h.head);
     } else if (h.drv > 1.0001f && eng != EngScream && eng != EngLadder && eng != EngMLad) {
       x = fastTanh(x * h.drv) / std::sqrt(h.drv);
@@ -977,14 +1009,19 @@ void Filter::process(float& l, float& r) {
             break;
           }
           case 2: {
-            const double v = resp(d.a, x, lp, bp, hp, op);
+            double v = resp(d.a, x, lp, bp, hp, op);
+            // imports: the second section takes the first one's output through the same soft clip (24 dB
+            // low-pass at drive 75 / 100 %: within 0.1 dB, 1.1 / 1.2 dB high without it)
+            // the resonance's level drop applies ahead of that clip (resonance 30 / 60 %, drive 80 %: within 0.3 dB)
+            if (h.dg > 0) v = kSrcUnit * cubicClip(v * h.outGain / kSrcUnit) / h.outGain;
             double l2, b2, h2;
             h.ds2.run(h.d2, v, l2, b2, h2);
             y = static_cast<float>(resp(d.a, v, l2, b2, h2, 0));
             break;
           }
           case 3: {
-            const double v = resp(d.a, x, lp, bp, hp, op);
+            double v = resp(d.a, x, lp, bp, hp, op);
+            if (h.dg > 0) v = kSrcUnit * cubicClip(v / kSrcUnit);  // imports: as the 24 dB types
             double l2 = 0, b2 = 0, h2 = 0, o2 = 0;
             if (d.b == 'l' || d.b == 'h') o2 = h.o2.lp(h.op2, static_cast<float>(v));
             else h.ds2.run(h.d2, v, l2, b2, h2);
@@ -996,8 +1033,9 @@ void Filter::process(float& l, float& r) {
             if (d.form == 4) {
               y = static_cast<float>(v);
             } else {
+              const double v5 = h.dg > 0 ? kSrcUnit * cubicClip(v / kSrcUnit) : v;  // imports: as the 24 dB types
               double l2, b2, h2;
-              h.ds2.run(h.d2, v, l2, b2, h2);
+              h.ds2.run(h.d2, v5, l2, b2, h2);
               y = static_cast<float>(h.w1 * resp(d.a, v, l2, b2, h2, 0) + h.w2 * resp(d.b, v, l2, b2, h2, 0) + h.w3 * resp(d.c, v, l2, b2, h2, 0));
             }
             break;
@@ -1093,7 +1131,8 @@ void Filter::process(float& l, float& r) {
       }
       case EngWRing: {
         if (!h.wInit) h.sat1.bp = h.sat2.bp = 0.01, h.wInit = true;
-        const double xi = cubicClip(x * h.wg);
+        // the drive stage clips at the source's full scale (drive 60 %: within 0.1 dB, 6.6 dB low at a unit clip)
+        const double xi = kSrcUnit * cubicClip(x * h.wg / kSrcUnit);
         double o1, b1, o2, b2;
         h.sat1.run(h.sc1, 0.0, o1, b1);
         double m = o1;
@@ -1105,18 +1144,23 @@ void Filter::process(float& l, float& r) {
         break;
       }
       case EngWSnh: {
-        const double xi = cubicClip(x * h.wg);
+        // drive stage and quantiser in the source's units (drive 60 %: within 0.1 dB; resonance 50 %: 0.0 dB)
+        const double xi = kSrcUnit * cubicClip(x * h.wg / kSrcUnit);
         h.snhPh += h.snhInc;
         if (h.snhPh >= 1) {
           h.snhPh -= 1;
-          h.snhHold = static_cast<float>(std::floor(xi * h.wL + 0.5) / h.wL);
+          h.snhHold = static_cast<float>(std::floor(xi / kSrcUnit * h.wL + 0.5) / h.wL * kSrcUnit);
         }
         y = static_cast<float>((t == 79 ? xi - h.snhHold : h.snhHold) * h.wOut);
         break;
       }
       case EngWDist: {
         constexpr int half = kBuf / 2;
-        double u = std::clamp(static_cast<double>(x) + std::clamp(h.wG * h.wfbS, -1.0, 1.0), -1.0, 1.0);
+        // DistComb 2 runs its clipped, gated loop in the source's units (held saw, resonance 30 %: -18.1 dB against
+        // the source's -15.8 dB fully wet, -27.3 dB before; mix 50 %: within 0.9 dB)
+        const bool su = t >= 92;
+        const double xs = su ? x / kSrcUnit : x;
+        double u = std::clamp(xs + std::clamp(h.wG * h.wfbS, -1.0, 1.0), -1.0, 1.0);
         for (int sct = 0; sct < 2; ++sct) {
           float* line = h.buf + sct * half;
           int& wi = h.wi[sct];
@@ -1134,12 +1178,12 @@ void Filter::process(float& l, float& r) {
         const double w1 = std::clamp(32 * h.wG * u, -1.0, 1.0);
         h.wdcS += h.wdc * (w1 - h.wdcS);
         const double w = w1 - h.wdcS;
-        h.wenv = 0.5 * std::fabs(static_cast<double>(x) + h.wenv);
+        h.wenv = 0.5 * std::fabs(xs + h.wenv);
         const double gate = h.wenv > 1.585e-5 ? 0.125 : 3785.75 * h.wenv + 0.005;
         h.wfbS = gate * w;
         double lo, bo;
         h.sat1.run(h.sc1, h.wfbS, lo, bo);
-        y = static_cast<float>(std::clamp((t == 90 || t == 92) ? lo : bo, -1.0, 1.0) * h.wOut);
+        y = static_cast<float>(std::clamp((t == 90 || t == 92) ? lo : bo, -1.0, 1.0) * h.wOut * (su ? kSrcUnit : 1.0));
         break;
       }
       case EngWScream: {
@@ -1616,7 +1660,7 @@ void Filter::process(float& l, float& r) {
       reset();
       y = 0;
     }
-    *io[c] = y;
+    *io[c] = h.inv ? -y : y;
   }
 }
 

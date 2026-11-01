@@ -31,6 +31,7 @@
 #include "../core/WavWriter.h"
 #include "../engine/KerfGrid.h"
 #include "../engine/Render.h"
+#include "../engine/TrackReceiptPass.h"
 #include "ExportUi.h"
 #include "FlpExportUi.h"
 #include "ToastText.h"
@@ -738,6 +739,7 @@ void App::exportAudio(const std::string& path, int bits, int sampleRate, bool pa
     notify("Export failed: cannot write " + p, true);
     return;
   }
+  receipt::writeRenderOrigin(doc.song(), p);  // J-219 (Track Receipt)
   char msg[256];
   std::snprintf(msg, sizeof msg, "Exported %s (%.1f s)%s", fs::path(p).filename().string().c_str(),
                 static_cast<double>(out.frames) / sampleRate, !normalize && peak > 1.0f ? " — clipped, try Normalize" : "");

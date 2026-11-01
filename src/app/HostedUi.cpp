@@ -351,6 +351,23 @@ std::map<uint64_t, WrapperUi>& wrapperUi() {
   static std::map<uint64_t, WrapperUi> m;
   return m;
 }
+// J-213: the picked preset belongs to the plugin it was picked on: another
+// plugin in the same channel or slot (a replace, an undo) starts with none.
+std::map<uint64_t, std::string>& wrapperTypes() {
+  static std::map<uint64_t, std::string> m;
+  return m;
+}
+WrapperUi& wrapperFor(const PluginTarget& t, host::HostedInstance* hi) {
+  WrapperUi& w = wrapperUi()[t.key()];
+  if (hi) {
+    std::string& type = wrapperTypes()[t.key()];
+    if (type != hi->hostedClass().type) {
+      type = hi->hostedClass().type;
+      w.preset = -1;
+    }
+  }
+  return w;
+}
 
 // Slate wrapper palette (panel roles of a plugin wrapper; drawn by Gridline).
 struct WrapLook {
@@ -662,8 +679,8 @@ void drawHostedEditor(App& a, const PluginTarget& t, float width) {
     pui::endSection();
     return;
   }
-  auto [wit, fresh] = wrapperUi().try_emplace(t.key());
-  WrapperUi& w = wit->second;
+  const bool fresh = wrapperUi().try_emplace(t.key()).second;
+  WrapperUi& w = wrapperFor(t, hi);
   if (fresh) w.tab = gWrapperPage;
   header(a, t, hi, *info, w, width);
   hostedui::drawPage(a, t, w.tab, width);
@@ -675,7 +692,7 @@ void hostedui::drawPage(App& a, const PluginTarget& t, int page, float width) {
   const PluginInfo* info = st ? findPlugin(st->type) : nullptr;
   host::HostedInstance* hi = hostedInstanceFor(a, t);  // (a switch may have replaced it)
   if (!info || !hi || hi->crashed()) return;
-  WrapperUi& w = wrapperUi()[t.key()];
+  WrapperUi& w = wrapperFor(t, hi);
   if (page == 1) {
     processingPage(a, hi, width);
     return;
@@ -728,10 +745,10 @@ int presetCount(host::HostedInstance* hi) { return gl::presetCount(hi); }
 std::string presetName(host::HostedInstance* hi, int index) { return gl::presetName(hi, index); }
 bool selectPreset(App& a, const PluginTarget& t, host::HostedInstance* hi, int index) {
   if (!gl::selectPreset(a, t, hi, index)) return false;
-  wrapperUi()[t.key()].preset = index;
+  wrapperFor(t, hi).preset = index;
   return true;
 }
-int& presetIndex(const PluginTarget& t) { return wrapperUi()[t.key()].preset; }
+int& presetIndex(const PluginTarget& t, host::HostedInstance* hi) { return wrapperFor(t, hi).preset; }
 void cpuLoad(App& a, const PluginTarget& t, host::HostedInstance* hi, float& average, float& peak) {
   WrapperUi& w = wrapperUi()[t.key()];
   if (a.now - w.cpuAt > 0.25) {

@@ -3,6 +3,7 @@
 // samples[0] is a pack-private Sample subclass tagged by its path.
 #pragma once
 #include "samplers.h"
+#include "../../engine/SampleTap.h"
 #include "../../engine/pitch/Kernel.h"
 
 namespace gl::packs::samplers {
@@ -376,6 +377,7 @@ class MultiSamplerGen final : public Generator {
       v.vel = vel;
       v.age = ++clock_;
       v.zr = &zr;
+      tap::play(zr.smp.get());  // J-219: Track Receipt
       v.gen = 0;
       v.dir = zr.z.reverse ? -1 : 1;
       v.pos = zr.z.reverse ? static_cast<double>(zr.end - 1) : static_cast<double>(zr.start);
@@ -492,6 +494,8 @@ class MultiSamplerGen final : public Generator {
     Reader rr{s.right.data(), zr.n, zr.ls, zr.le, false};
     const double lfoInc = lfoRate_ / sr_, dt = 1.0 / sr_;
     const float vg = static_cast<float>((1.0 - velAmp_) + velAmp_ * v.vel * v.vel) * zr.gainLin;
+    tap::Run run;  // J-219: Track Receipt coverage
+    if (tap::active()) run.begin(zr.smp.get());
     for (int i = 0; i < m; ++i) {
       if (v.ctl-- <= 0) {
         v.ctl = 15;
@@ -516,6 +520,7 @@ class MultiSamplerGen final : public Generator {
       }
       const bool wrap = v.looping && z.loop != LoopBounce;
       rl.wrap = rr.wrap = wrap;
+      run.at(v.pos);
       float l = rl.read(v.pos, interp_, v.rate), r = rr.read(v.pos, interp_, v.rate);
       if (wrap && zr.xf > 0 && v.dir > 0 && v.pos >= static_cast<double>(zr.le - zr.xf)) {
         double w = (v.pos - static_cast<double>(zr.le - zr.xf)) / static_cast<double>(zr.xf);
@@ -661,6 +666,7 @@ class ScratchGen final : public Generator {
 
   void onNoteOn(uint32_t id, double pitch, float vel) override {
     if (!map_ || !map_->smp || map_->smp->frames() < 4) return;
+    tap::play(map_->smp.get());  // J-219
     int note = std::clamp(static_cast<int>(std::lround(pitch)), 0, 127);
     double ratio;
     int move;
@@ -728,6 +734,8 @@ class ScratchGen final : public Generator {
       const int64_t frames = static_cast<int64_t>(s.frames());
       const double span = static_cast<double>(frames - 1);
       Reader rl{s.left.data(), frames, 0, 0, false}, rr{s.right.data(), frames, 0, 0, false};
+      tap::Run run;  // J-219: Track Receipt coverage
+      if (tap::active()) run.begin(&s);
       for (int i = 0; i < n; ++i) {
         if (motion_ == MotionSpeed) {
           // The curve is the platter speed; the head wraps inside the region.
@@ -744,6 +752,7 @@ class ScratchGen final : public Generator {
         }
         double speed = std::fabs(v.pos - v.lastPos);
         v.lastPos = v.pos;
+        run.at(v.pos);
         float l = rl.read(v.pos, interp_, speed), r = rr.read(v.pos, interp_, speed);
         // Fast motion, Linear reads: one-pole low-pass against aliasing (cutoff
         // ~ Nyquist / speed). The band-limited reads (J-140) need none.

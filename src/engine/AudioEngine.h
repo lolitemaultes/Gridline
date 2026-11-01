@@ -283,6 +283,14 @@ class AudioEngine {
   void setInputPrefill(int frames) { inPrefill_.store(std::max(0, frames)); }
   // Peak of a device input channel since the UI last read it.
   float takeInputPeak(int channel);
+  // J-218: input tap. While on, every block's device input (channel `first`,
+  // plus `first + 1` when stereo; a mono input feeds both sides) goes into one
+  // capture ring, whatever the program and the transport do: an instrument
+  // recording from its own editor. UI thread: inputTap() creates the ring on
+  // first use (it lives as long as the engine) and the caller drains it.
+  const packs::edison::CaptureRing& inputTap();
+  void setInputTap(int first, bool stereo);  // first < 0: off
+  bool inputTapOn() const { return tapFirst_.load(std::memory_order_relaxed) >= 0; }
   int inputUnderruns() const { return inUnderruns_.load(std::memory_order_relaxed); }
   // Disk recording: armed mixer tracks capture their input while recording is
   // on and the transport plays (not during a count-in). `latency` = samples by
@@ -411,7 +419,16 @@ class AudioEngine {
   void startNote(const Program* p, const ProgChannel& ch, const NoteEv& e, int offset, int64_t at, double spt);
   void cutPending(const ProgChannel& ch, int index, int offset);  // cuts and forgets pending note `index`
   void runNoteFx(const Program* p, int n);  // note processor chains for this block
-  void evaluateLinks(const Program* p, int n, double blockTick);  // internal controller links + automation
+  // Internal controller links + automation (`eventTick`: J-210, where lanes of
+  // recorded events read, the block's first frame after a loop wrap at its start).
+  void evaluateLinks(const Program* p, int n, double blockTick, double eventTick);
+  // J-210: the automation lanes of the playing mode at `blockTick` (`eventsOnly`: only
+  // lanes of recorded events, applied between control blocks on their steps).
+  void applyAutomation(const Program* p, double blockTick, double eventTick, bool eventsOnly);
+  void updateStripGains(const Program* p);
+  // J-210: frames until the next step of a recorded-events lane or the loop end
+  // (at most n), so that the block after it starts on that sample.
+  int untilEventStep(const Program* p, int n) const;
   // Live mode: clip launching, follow actions and the launched clips' notes for block samples [from, to).
   void dispatchLive(const Program* p, int from, int to);
   void liveCommand(const Program* p, const Cmd& c);
@@ -672,6 +689,10 @@ class AudioEngine {
   std::vector<std::vector<float>> inBuf_;  // per input channel, this block
   std::vector<float> silence_;
   std::atomic<float> inPeak_[kMaxInputChannels] = {};
+  std::shared_ptr<packs::edison::CaptureRing> tapOwn_;  // J-218 input tap (the UI thread creates it)
+  std::atomic<packs::edison::CaptureRing*> tap_{nullptr};
+  std::atomic<int> tapFirst_{-1};
+  std::atomic<bool> tapStereo_{true};
   std::atomic<bool> recordOn_{false};
   std::atomic<int> recLatency_{0};
   std::atomic<double> punchA_{0}, punchB_{0};

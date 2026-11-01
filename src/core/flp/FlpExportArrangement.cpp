@@ -24,6 +24,7 @@
 #include "../PluginParams.h"
 #include "FlpExportInternal.h"
 #include "FlpFx.h"
+#include "../TrackIconSet.h"
 
 namespace gl::flp::xp {
 
@@ -332,7 +333,7 @@ void Exporter::writeArrangements() {
       const PlaylistTrack& pt = static_cast<size_t>(t) < tracks.size() ? tracks[static_cast<size_t>(t)] : def;
       // (tracks past the song's keep FL's default colour: J-39)
       if (static_cast<size_t>(t) < tracks.size() || oldTracks.count(t)) putU32(r, 4, flColor(pt.color));
-      putU32(r, 8, static_cast<uint32_t>(pt.flIcon));  // J-39
+      putU32(r, 8, static_cast<uint32_t>(trackicon::exportFl(pt.icon, pt.flIcon)));  // J-39, J-211
       putU8(r, 12, pt.muted ? 0 : 1);
       if (!(getF32(r, 13) == pt.height || (std::clamp(getF32(r, 13), 0.25f, 4.0f) == pt.height))) putF32(r, 13, pt.height);
       if (r.size() >= 47) {
@@ -468,15 +469,16 @@ void Exporter::writeMixer() {
         out.push_back({149, b});
       }
       // J-39: FL's insert icon (95) follows the colour, else event 42
-      const bool icon95 = t && t->flIcon != 0;
-      if (icon95 && !out.empty()) out.push_back(scalarEvent(95, static_cast<uint32_t>(t->flIcon)));
+      const int fl95 = t ? trackicon::exportFl(t->icon, t->flIcon) : 0;  // J-211: a Gridline icon exports as its FL number
+      const bool icon95 = fl95 != 0;
+      if (icon95 && !out.empty()) out.push_back(scalarEvent(95, static_cast<uint32_t>(fl95)));
       for (const auto& e : pre) {
         out.push_back(e);
-        if (e.id == 42 && icon95 && !findRaw(out, 95)) out.push_back(scalarEvent(95, static_cast<uint32_t>(t->flIcon)));
+        if (e.id == 42 && icon95 && !findRaw(out, 95)) out.push_back(scalarEvent(95, static_cast<uint32_t>(fl95)));
       }
       if (!findRaw(pre, 42)) {
         out.push_back(scalarEvent(42, 0));
-        if (icon95 && !findRaw(out, 95)) out.push_back(scalarEvent(95, static_cast<uint32_t>(t->flIcon)));
+        if (icon95 && !findRaw(out, 95)) out.push_back(scalarEvent(95, static_cast<uint32_t>(fl95)));
       }
       if (t && !t->name.empty() && !(i == 0 && t->name == "Master" && !findRaw(ev, 204))) out.push_back({204, utf16z(t->name)});
       Bytes fb = flags && flags->data.size() == 12 ? flags->data : dwords({0, i == 0 ? 0x0C : 0x4C, 0});

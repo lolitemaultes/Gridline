@@ -46,6 +46,7 @@ void Arp::reset() {
   soundingN_ = 0;
   veloCur_ = 1;
   first_ = true;
+  launched_ = false;
   heldKey_.fill(0);
 }
 
@@ -154,7 +155,7 @@ void Arp::run(const ArpSlot& s, const float* off, int n, double sr, double tempo
   };
   // Synced to a running song (retrigger on launch off): the step grid is the
   // song's (phase_ counts song steps); otherwise it starts at the trigger.
-  const bool songGrid = s.bpm && playing && !s.retrigLaunch;
+  const bool songGrid = s.bpm && playing && (!s.retrigLaunch || s.srcGrid);
   auto restart = [&]() {
     pos_ = 0, repeat_ = 0, transStep_ = 0, transDir_ = 1, cycles_ = 0, step_ = 0;
     cycle_.clear();
@@ -168,13 +169,18 @@ void Arp::run(const ArpSlot& s, const float* off, int n, double sr, double tempo
   if (first_) {
     restart();
     veloCur_ = 1;
-    if (songGrid) join();
+    // imported: the first launch plays a step at once and the next ones on the grid; later launches
+    // (keys again after all were released) wait for the grid step (measured)
+    if (songGrid && s.retrigLaunch && !launched_) phase_ = next_ = beat / stepBeats;
+    else if (songGrid) join();
     else phase_ = 0, next_ = 0;  // fire immediately; the grid starts here
+    launched_ = true;
     retrigAcc_ = 0;
     first_ = false;
   } else if (newNote_ && (s.retrigNote || (s.retrigFirst && heldCount_ == 1))) {
     restart();
-    phase_ = 0, next_ = 0;
+    if (songGrid) next_ = phase_;  // on the song grid: a step now, the next ones stay on the grid
+    else phase_ = 0, next_ = 0;
   } else if (songGrid && std::fabs(beat / stepBeats - phase_) > 0.5) {
     join();  // the song jumped (loop, seek) or the rate changed: back onto its grid
   }
@@ -185,7 +191,8 @@ void Arp::run(const ArpSlot& s, const float* off, int n, double sr, double tempo
       if (retrigAcc_ >= retrigBeats) {
         retrigAcc_ -= retrigBeats;
         restart();
-        phase_ = 0, next_ = 0;
+        if (songGrid) next_ = phase_;
+        else phase_ = 0, next_ = 0;
       }
     }
     if (gateLeft_ > 0) {
@@ -195,7 +202,7 @@ void Arp::run(const ArpSlot& s, const float* off, int n, double sr, double tempo
     const bool due = phase_ >= swungAt(next_) - 1e-9;
     phase_ += stepsPerSample;
     if (!due) continue;
-    next_ += 1;
+    next_ = std::floor(next_ + 1e-9) + 1;  // (a launch between grid steps rejoins the grid)
     // next step
     if (repeat_ <= 0) {
       if (cycle_.empty() || pos_ >= static_cast<int>(cycle_.size())) {
@@ -296,6 +303,7 @@ void Arp::run(const ArpSlot& s, const float* off, int n, double sr, double tempo
 void ClipPlayer::reset() {
   running_ = false;
   finishing_ = false;
+  song_ = holding_ = stopPending_ = false;
   waitBeats_ = -1;
   held_ = 0;
   pos_ = 0;
@@ -303,10 +311,20 @@ void ClipPlayer::reset() {
   on_.fill(0);
 }
 
-void ClipPlayer::noteOn(int key, float vel) {
+void ClipPlayer::stop(SeqOut& out) {
+  for (int k = 0; k < 128; ++k)
+    if (on_[static_cast<size_t>(k)]) out.push({k, 0, false, 0});
+  reset();
+}
+
+void ClipPlayer::noteOn(int key, float vel, bool retrigger) {
   ++held_;
   trigKey_ = key;
   trigVel_ = vel;
+  if (running_ && retrigger) {  // the clip starts over from the new key
+    stopPending_ = true;
+    running_ = false;
+  }
   if (!running_) {
     running_ = true;
     finishing_ = false;
@@ -337,9 +355,42 @@ void ClipPlayer::run(const ClipSlot& c, const float* off, int n, double sr, doub
         on_[static_cast<size_t>(k)] = 0;
       }
   };
-  if (running_ && held_ <= 0) {
-    if (c.noteGate) {  // note gate: the clip stops with the keys
+  if (stopPending_) {
+    stopAll(0);
+    stopPending_ = holding_ = false;
+  }
+  const double len = std::max(0.25, static_cast<double>(c.lengthBeats));
+  double rate = c.rate * std::pow(2.0, std::round(off[1] * 3.0));
+  if (c.trip) rate *= 1.5;
+  if (c.dot) rate /= 1.5;
+  const double beatsPerSample = (c.bpm ? tempo / 60.0 : 2.0) / sr * rate;
+  const double startOff = c.startOffset + off[2] * len;
+  if (song_) {
+    // a launched clip follows the song position while the transport runs, whatever the keys do
+    if (!playing) {
+      if (running_) stopAll(0);
       running_ = false;
+      pos_ = -1;
+      return;
+    }
+    if (!running_) running_ = true, pos_ = -1;
+    held_ = 1, finishing_ = false;
+    if (c.bpm && c.mode == 0) {
+      const double want = std::fmod(beat * rate + startOff, len);
+      double d = std::fabs(want - pos_);
+      d = std::min(d, len - d);
+      if (pos_ >= 0 && d > 0.01) stopAll(0), pos_ = -1;  // the song jumped
+      if (pos_ < 0) pos_ = want, dir_ = 1;
+    } else if (pos_ < 0) {
+      pos_ = std::fmod(std::max(0.0, startOff), len);
+      dir_ = c.mode == 1 ? -1 : 1;
+      if (c.mode == 1) pos_ = len - pos_;
+    }
+  }
+  if (running_ && held_ <= 0) {
+    if (c.noteGate || (c.srcSpan && c.mode == 8)) {  // note gate (or a held static clip): stops with the keys
+      running_ = false;
+      holding_ = false;
       stopAll(0);
     } else {
       finishing_ = true;  // otherwise it plays to the end of the clip
@@ -347,14 +398,36 @@ void ClipPlayer::run(const ClipSlot& c, const float* off, int n, double sr, doub
   }
   if (held_ > 0) finishing_ = false;
   if (!running_ || c.notes.empty()) return;
-  const double len = std::max(0.25, static_cast<double>(c.lengthBeats));
-  double rate = c.rate * std::pow(2.0, std::round(off[1] * 3.0));
-  if (c.trip) rate *= 1.5;
-  if (c.dot) rate /= 1.5;
-  const double beatsPerSample = (c.bpm ? tempo / 60.0 : 2.0) / sr * rate;
   const int trans = c.transpose + static_cast<int>(std::lround(off[0] * 24)) + (c.span == 0 ? 0 : trigKey_ - 60);
-  const double startOff = c.startOffset + off[2] * len;
-  if (pos_ < 0 && waitBeats_ < 0 && playing && c.launchQuant >= 0) {
+  // a note's velocity: imported keyboard clips scale it by twice the key's velocity (velocity
+  // trigger on) or pass it as it is; Plasma's own clips by the key's velocity over 0.8
+  auto noteVel = [&](float v) {
+    if (c.srcSpan) return std::clamp(v * 2.f * (c.veloTrig ? trigVel_ : 0.5f), 1.f / 127, 1.f);
+    return std::clamp(v * (c.veloTrig ? trigVel_ / 0.8f : 1.f), 0.02f, 1.f);
+  };
+  // a note's start: chance, octave and semitone variation, velocity spread (shift_ keeps the
+  // pitch it started at for its note-off)
+  auto startNote = [&](size_t idx, const ClipNote& nt, int& k, float& v) {
+    v = nt.vel;
+    int sh = 0;
+    if (!nt.plain()) {
+      if (nt.chance < 1.f && nt.chance < rngUni(rng_)) {
+        if (idx < shift_.size()) shift_[idx] = -128;
+        return false;
+      }
+      if (nt.octCh > 0.f && rngUni(rng_) < nt.octCh) sh += 12 * static_cast<int>(16.f * nt.oct - 8.f);
+      if (nt.semiCh > 0.f && rngUni(rng_) < nt.semiCh) sh += static_cast<int>(24.f * nt.semi - 12.f);
+      if (nt.velRand != 0.f) v = std::clamp(v + rngBi(rng_) * nt.velRand, 0.f, 1.f);
+    }
+    if (idx < shift_.size()) shift_[idx] = static_cast<int8_t>(std::clamp(sh, -127, 127));
+    k = std::clamp(nt.key + trans + sh, 0, 127);
+    return true;
+  };
+  auto noteKey = [&](size_t idx, const ClipNote& nt) {
+    const int sh = idx < shift_.size() ? shift_[idx] : 0;
+    return sh == -128 ? -1 : std::clamp(nt.key + trans + sh, 0, 127);
+  };
+  if (pos_ < 0 && waitBeats_ < 0 && playing && c.launchQuant >= 0 && !song_) {
     // launch quantize: start on the next multiple of the launch division
     const double q = divisionBeats(std::clamp(c.launchQuant, 0, static_cast<int>(divisionNames().size()) - 1));
     const double next = std::ceil(beat / q - 1e-9) * q;
@@ -370,22 +443,45 @@ void ClipPlayer::run(const ClipSlot& c, const float* off, int n, double sr, doub
     dir_ = c.mode == 1 ? -1 : 1;
     if (c.mode == 1) pos_ = len - pos_;
   }
+  if (c.srcSpan && c.mode == 8) {
+    // static: the notes at the clip's start position sound while the key is held
+    if (!holding_) {
+      const double p = std::fmod(std::max(0.0, startOff), len);
+      for (size_t i = 0; i < c.notes.size(); ++i) {
+        const auto& nt = c.notes[i];
+        if (nt.mute || !(nt.start <= p + 1e-6 && p < nt.start + nt.len)) continue;
+        int k = 0;
+        float v = 0;
+        if (!startNote(i, nt, k, v)) continue;
+        if (on_[static_cast<size_t>(k)]) out.push({k, 0, false, 0});
+        out.push({k, noteVel(v), true, 0});
+        on_[static_cast<size_t>(k)] = 1;
+      }
+      holding_ = true;
+    }
+    return;
+  }
   const double blockBeats = beatsPerSample * n;
   const double a = pos_, b = pos_ + blockBeats * dir_;
   auto inWindow = [&](double t, double lo, double hi) { return lo <= hi ? (t >= lo && t < hi) : (t > hi && t <= lo); };
   // note-ons and note-offs in clip positions [lo, hi), the window starting `base` samples into the block
   auto scan = [&](double lo, double hi, double base) {
-    for (const auto& nt : c.notes) {
+    for (size_t i = 0; i < c.notes.size(); ++i) {
+      const auto& nt = c.notes[i];
       if (nt.mute) continue;
       const double s0 = swung(nt.start), e0 = s0 + nt.len;
-      const int k = std::clamp(nt.key + trans, 0, 127);
       if (inWindow(s0, lo, hi)) {
-        const int at = std::clamp(static_cast<int>(base + std::fabs(s0 - lo) / beatsPerSample), 0, n - 1);
-        if (on_[static_cast<size_t>(k)]) out.push({k, 0, false, at});
-        out.push({k, std::clamp(nt.vel * (c.veloTrig ? trigVel_ / 0.8f : 1.f), 0.02f, 1.f), true, at});
-        on_[static_cast<size_t>(k)] = 1;
+        int k = 0;
+        float v = 0;
+        if (startNote(i, nt, k, v)) {
+          const int at = std::clamp(static_cast<int>(base + std::fabs(s0 - lo) / beatsPerSample), 0, n - 1);
+          if (on_[static_cast<size_t>(k)]) out.push({k, 0, false, at});
+          out.push({k, noteVel(v), true, at});
+          on_[static_cast<size_t>(k)] = 1;
+        }
       }
-      if (on_[static_cast<size_t>(k)] && inWindow(e0, lo, hi)) {
+      const int k = noteKey(i, nt);
+      if (k >= 0 && on_[static_cast<size_t>(k)] && inWindow(e0, lo, hi)) {
         const int at = std::clamp(static_cast<int>(base + std::fabs(e0 - lo) / beatsPerSample), 0, n - 1);
         out.push({k, 0, false, at});
         on_[static_cast<size_t>(k)] = 0;

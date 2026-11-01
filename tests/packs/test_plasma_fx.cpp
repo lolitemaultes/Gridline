@@ -434,6 +434,29 @@ int main() {
     expect(std::fabs(lp - 20 * std::log10(0.71 * std::exp(0.46 * 1.95))) < 0.3, ("pre filter gain at its cutoff " + std::to_string(lp) + " dB (source +4.7)").c_str());
     dist({{"kParamMode", str("kDownsample")}, {"kParamDrive", num(0)}, {"kParamPrePost", num(1)}, {"kParamFreq", num(0.5)}, {"kParamLPHP", num(100)}});
     expect(sineGainDb(st, 60) < -20, "the high-pass end of the filter type removes lows");
+    {  // overdrive on a held saw (130.8 Hz, the level an init note reaches the rack with): the source's output
+       // rises 5.4 dB from drive 25 to 50 % and 7.9 dB from 25 to 100 %
+      auto odDb = [&](double drive) {
+        dist({{"kParamMode", str("kOverdrive")}, {"kParamDrive", num(drive)}});
+        auto bank = pl::makeFxBank(st, nullptr, kSr);
+        pl::FxContext c;
+        c.sr = kSr;
+        const int n = static_cast<int>(kSr);
+        std::vector<float> L(static_cast<size_t>(n)), R(static_cast<size_t>(n));
+        double ph = 0;
+        for (int i = 0; i < n; ++i) {
+          ph += 130.81 / kSr;
+          ph -= std::floor(ph);
+          L[static_cast<size_t>(i)] = R[static_cast<size_t>(i)] = static_cast<float>(0.56 * (2 * ph - 1));
+        }
+        for (int pos = 0; pos < n; pos += 256) pl::fxProcess(*bank->unit[0], pl::FxDistortion, slot0(st), L.data() + pos, R.data() + pos, std::min(256, n - pos), c, nullptr, 0);
+        return rmsDb(L, 0.5, 1.0);
+      };
+      const double o25 = odDb(25), o50 = odDb(50), o100 = odDb(100);
+      std::printf("# overdrive: +%.2f / +%.2f dB over drive 25 (source +5.4 / +7.9)\n", o50 - o25, o100 - o25);
+      expect(std::fabs(o50 - o25 - 5.4) < 0.7, "overdrive at drive 50 against drive 25");
+      expect(std::fabs(o100 - o25 - 7.9) < 0.9, "overdrive at drive 100 against drive 25");
+    }
     for (int m = 0; m < 18; ++m) {
       dist({{"kParamMode", num(m)}, {"kParamDrive", num(100)}});
       expect(std::isfinite(sineGainDb(st, 300)), ("mode " + std::to_string(m) + " at drive 100 is finite").c_str());
@@ -1068,6 +1091,21 @@ int main() {
       for (float v : a) fin = fin && std::isfinite(v);
       expect(fin && rmsDb(a, 0.05, 0.3) > rmsDb(a, 1.6, 2.0) + 10, (std::string("imported reverb rings out: ") + t).c_str());
     }
+  }
+
+  // a matrix route's curves are positional: with only the aux curve drawn, the first entry is an empty
+  // placeholder and the second holds the aux curve (a falling aux curve turns the aux source into an inverse
+  // depth: a filter route at full aux depth with the macro at 0 opens fully, as on the source)
+  {
+    Json lin = obj({{"curveVals", arr({num(0.5), num(0.5)})}, {"numPoints", num(1)}, {"xVals", arr({num(0), num(1)})}, {"yVals", arr({num(0), num(1)})}});
+    Json slot = obj({{"destModuleID", num(0)}, {"destModuleParamID", num(3)}, {"destModuleParamName", str("kParamFreq")}, {"destModuleTypeString", str("VoiceFilter")},
+                     {"flex", arr({Json::makeObject(), lin})}, {"plainParams", obj({{"kParamAmount", num(100)}, {"kParamAuxCurveData", num(1)}})},
+                     {"source", arr({num(6), num(26)})}});
+    Json body = obj({{"VoiceFilter0", plain({{"kParamEnable", num(1)}, {"kParamFreq", num(0)}, {"kParamType", str("LadderEMS")}})}, {"ModSlot0", slot}});
+    pl::Model m;
+    expect(import(body, st, rep, cache) && pl::modelFromData(st.data, m), "aux-curve route imports");
+    expect(m.modCurve[0].empty(), "an empty main-curve placeholder stays the plain route");
+    expect(m.auxCurve[0].size() == 2 && m.auxCurve[0][0].y > 0.99f && m.auxCurve[0][1].y < 0.01f, "the second flex entry is the aux curve (falling)");
   }
 
   std::error_code ec;

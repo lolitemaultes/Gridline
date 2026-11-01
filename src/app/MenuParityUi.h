@@ -36,6 +36,7 @@ std::string positionText(App& a, double tick);  // song position in the chosen t
 void timeFormatMenu(App& a);                    // right-click on the song position
 void stopMenuItems(App& a);                     // right-click on the stop button
 void stopPressed(App& a);                       // the stop button (remember seek time; J-109: twice = panic)
+void stopButtonPressed(App& a);                 // the button itself: pressed while stopped, also back to the beginning
 void panicPressed(App& a);                      // J-109: stop and silence everything now
 // J-112: the Play the user presses while the transport is stopped (Space, the
 // Play button, the Play / Pause remote / MIDI / MMC action). Plugin playback

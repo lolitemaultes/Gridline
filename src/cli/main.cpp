@@ -16,6 +16,7 @@
 #include "engine/Render.h"
 #include "engine/ExportJob.h"
 #include "engine/ParamAudit.h"
+#include "engine/TrackReceiptPass.h"
 #include "core/MidiFile.h"
 #include "core/MidiImport.h"
 #include "core/ProjectInterop.h"
@@ -60,12 +61,78 @@ int stemsCliMain(int argc, char** argv);  // StemsCli.cpp (J-191)
 int suiteCliMain(int argc, char** argv);  // SuiteCli.cpp (J-131)
 
 namespace {
+// J-219: gridline track-receipt <project.json|.flp> [--out <dir>] [--sr N]: measures which parts
+// of which original recordings the project uses and writes the receipt
+// (SpreadsheetML) and the results PDF.
+int trackReceiptMain(const std::string& project, int argc, char** argv) {
+  std::string out, err;
+  int sr = 44100;
+  for (int i = 3; i + 1 < argc; ++i) {
+    if (std::strcmp(argv[i], "--out") == 0 || std::strcmp(argv[i], "-o") == 0) out = argv[++i];
+    else if (std::strcmp(argv[i], "--sr") == 0) sr = std::max(8000, std::atoi(argv[++i]));
+  }
+  gl::Song song;
+  const std::string ext = std::filesystem::path(project).extension().string();
+  if (ext == ".flp" || ext == ".FLP") {
+    gl::flp::Report rep;
+    if (!gl::importFlp(project, song, rep, &err, "")) {
+      std::fprintf(stderr, "error: %s\n", err.c_str());
+      return 1;
+    }
+  } else if (!gl::loadProject(project, song, &err)) {
+    std::fprintf(stderr, "error: %s\n", err.c_str());
+    return 1;
+  }
+  if (out.empty()) out = std::filesystem::path(project).parent_path().string();
+  if (out.empty()) out = ".";
+  std::error_code ec;
+  std::filesystem::create_directories(out, ec);
+  const std::string name = std::filesystem::path(project).stem().string();
+  gl::receipt::PassOptions o;
+  o.sampleRate = sr;
+  int lastPct = -1;
+  o.progress = [&lastPct](double f) {
+    const int p = static_cast<int>(f * 100);
+    if (p / 10 != lastPct / 10) std::fprintf(stderr, "measuring %d%%\n", p);
+    lastPct = p;
+  };
+  const gl::receipt::Measurement m = gl::receipt::measure(song, o);
+  const gl::receipt::Report r = gl::receipt::build(m, gl::receipt::savedFromJson(song.trackReceipt), name);
+  const std::string xmlPath = (std::filesystem::path(out) / gl::receipt::receiptFileName(name)).string();
+  const std::string pdfPath = (std::filesystem::path(out) / gl::receipt::resultsFileName(name)).string();
+  {
+    std::ofstream x(xmlPath, std::ios::binary);
+    x << gl::receipt::spreadsheetXml(r);
+    std::ofstream p(pdfPath, std::ios::binary);
+    p << gl::receipt::resultsPdf(r);
+    if (!x || !p) {
+      std::fprintf(stderr, "error: cannot write into %s\n", out.c_str());
+      return 1;
+    }
+  }
+  std::printf("mode: %s\n", r.mode.c_str());
+  for (const auto& s : r.songs) {
+    std::printf("song: %s | %s | %s s | %s\n", s.artist.c_str(), s.title.c_str(), gl::receipt::secondsText(s.seconds).c_str(),
+                s.over ? "over 60 s" : s.seconds > 0 ? ("up to " + std::to_string(s.tier) + " s").c_str() : "not played");
+    for (const auto& t : s.timelines)
+      for (const auto& rf : t.parts)
+        std::printf("  part %d: %s-%s\n", t.part, gl::receipt::timeText(rf.r.a).c_str(), gl::receipt::timeText(rf.r.b).c_str());
+  }
+  for (const auto& f : r.files)
+    std::printf("file: %s | %s | used %s s\n", f.name.c_str(), f.ticked ? "ticked" : "not ticked", gl::receipt::secondsText(f.usedSeconds).c_str());
+  for (const auto& w : r.warnings) std::printf("warning: %s\n", w.c_str());
+  for (const auto& w : m.warnings) std::printf("warning: %s\n", w.c_str());
+  std::printf("wrote %s\nwrote %s\n", xmlPath.c_str(), pdfPath.c_str());
+  return m.cancelled ? 1 : 0;
+}
+
 void usage() {
   std::fprintf(stderr,
       "Gridline " GRIDLINE_VERSION ", music workstation command line\n"
       "usage:\n"
       "  gridline --version                          print the version\n"
       "  gridline --check-updates [--beta]           ask GitHub for a newer release (docs/updates.md)\n"
+      "  gridline track-receipt <project.json|.flp> [--out <dir>]  parts of original recordings used: receipt XML + PDF\n"
       "  gridline render <project.json> -o <out.wav|.flac|.mp3|.ogg|.m4a|folder/> [--sr N] [--bits 16|24|32]\n"
       "        [--format wav,flac,mp3,ogg,m4a,mid] [--scope song|pattern:N|range:BAR-BAR] [--loops N]\n"
       "        [--tail cut|leave|wrap] [--dither none|tpdf|shaped] [--channels stereo|mono|left|right]\n"
@@ -477,6 +544,8 @@ int main(int argc, char** argv) {
     return 0;
   }
 
+  if (cmd == "track-receipt") return trackReceiptMain(project, argc, argv);  // J-219
+
   gl::Song song;
   std::string err;
   if (!gl::loadProject(project, song, &err)) {
@@ -694,6 +763,16 @@ int main(int argc, char** argv) {
       else if (!std::strcmp(argv[i], "--no-poly-limit")) es.render.polyphonyLimits = false;
     }
     if (out.empty()) { usage(); return 2; }
+    // J-210: a song without playlist clips plays its pattern (the app opens it in
+    // pattern mode, as FL plays such a project): render the first pattern.
+    if (scope == "song" && song.playlist.empty() && !song.patterns.empty()) {
+      bool explicitScope = false;
+      for (int i = 3; i < argc; ++i) explicitScope = explicitScope || !std::strcmp(argv[i], "--scope");
+      if (!explicitScope) {
+        scope = "pattern:1";
+        std::fprintf(stderr, "note: the playlist is empty: rendering pattern 1 (pattern mode)\n");
+      }
+    }
     // Scope: song | pattern:<n> (1-based) | range:<from>-<to> (bars, 1-based, inclusive start).
     if (scope.rfind("pattern", 0) == 0) {
       int n = scope.size() > 8 ? std::atoi(scope.c_str() + 8) : 1;

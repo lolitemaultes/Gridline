@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <cmath>
 #include "Program.h"
+#include "SampleTap.h"
 
 namespace gl {
 
@@ -117,6 +118,20 @@ void renderAudioClips(const std::vector<ProgAudioClip>& clips, const TempoMap& m
     const uint8_t declickIn = c.declickIn, declickOut = c.declickOut;
     const double fadeIn = c.fadeIn, fadeOut = c.fadeOut;
     const double gain = c.gain;
+    if (tap::active() && gain > 0) {  // J-219: Track Receipt pass: the source seconds this block plays
+      tap::OwnerScope own(c.clip, t0);
+      tap::Slot* slot = tap::slotFor(&s);
+      const int64_t firstAt = sampleOf(static_cast<double>(c.start));
+      if (firstAt >= 0 && firstAt < len) tap::play(slot);
+      const double sa = srcAt(uOf(a), tickAt(a)), sb = std::min(srcAt(uOf(b), tickAt(b)), c.srcEnd);
+      if (sb > sa) {
+        const double total = s.seconds();
+        if (c.reverse)
+          tap::mark(slot, total - sb, total - sa);
+        else
+          tap::mark(slot, sa, sb);
+      }
+    }
     const bool dIn = declickIn == 2 ? false : declickIn == 1 || declickIn == 3 || c.srcStart > 0;
     const bool dOut = declickOut == 2 ? false : declickOut == 1 || declickOut == 3 || c.cutEnd;
     const double fin = fadeIn > 0 ? fadeIn : (dIn ? kDeclick : 0.0);

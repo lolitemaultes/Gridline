@@ -26,6 +26,7 @@
 #include "../../engine/KerfMarks.h"
 #include "../../engine/TimeStretch.h"
 #include "FlpExportInternal.h"
+#include "../TrackIconSet.h"
 
 namespace gl::flp::xp {
 
@@ -625,7 +626,7 @@ void Exporter::writeChannel(int fl) {
   if (RawEvent* e = ce.get(203)) e->data = utf16z(placeholder ? "[Gridline] " + ch.name : ch.name);
   ce.setValue(128, flColor(ch.color));
   ce.setValue(0, ch.muted ? 0 : 1);
-  ce.setValue(155, static_cast<uint32_t>(ch.flIcon));  // J-39
+  ce.setValue(155, static_cast<uint32_t>(trackicon::exportFl(ch.icon, ch.flIcon)));  // J-39, J-211
   {
     const int ins = im.ins(ch.mixerTrack);
     ce.setValue(104, static_cast<uint32_t>(static_cast<uint16_t>(ins < 0 ? 0 : ins)));

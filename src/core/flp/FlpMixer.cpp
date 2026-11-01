@@ -22,6 +22,7 @@
 #include <map>
 #include <set>
 #include "FlpFx.h"
+#include "../TrackIconSet.h"
 
 namespace gl::flp {
 
@@ -264,6 +265,7 @@ void importMixer(Context& c) {
       if (const Event* e = find(in.events, 204)) t.name = e->text();
       if (const Event* e = find(in.events, 149)) t.color = flColor(e->value());
       if (const Event* e = find(in.events, 95)) t.flIcon = static_cast<int>(e->value());  // J-39
+      t.icon = trackicon::fromFl(t.flIcon);  // J-211
       uint32_t flags = kFxEnabled | kEnabled;
       if (const Event* e = find(in.events, 236); e && e->size >= 8) flags = e->u32(4);
       t.invertPolarity = flags & kPolarity;

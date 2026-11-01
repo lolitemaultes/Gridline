@@ -2881,6 +2881,7 @@ void leaveFinished(App& a) {
 
 // ------------------------------------------------------------------- api ----
 void setOpenUrl(std::function<bool(const std::string&)> f) { openUrlFn() = std::move(f); }
+bool openUrl(const std::string& url) { return openUrlFn() && openUrlFn()(url); }
 
 Controller* controller(App& a) {
   if (a.embedded) return nullptr;

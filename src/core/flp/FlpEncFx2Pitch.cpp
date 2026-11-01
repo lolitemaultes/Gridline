@@ -224,39 +224,34 @@ Encoder vocoder() {
 }
 
 // ---------------------------------------------------------------- Fruity Scratcher
-// version 1001000, 14 f32 settings by control tag (internal values), u32
-// length + sample path, then the later versions' flags (kept as they are).
-// J-205: decoded as the Turntable instrument; every setting maps back.
+// Written as version 1001002 (what the current plugin saves): 14 f32 settings
+// by control tag (internal values), u32 length + sample path, u8 editor size
+// (1 normal, 2 large), i32 timecode format (-1 = off), u8 phono preamp.
+// J-205: decoded as the Turntable instrument; J-206: every setting, the path
+// and the options tail map back (older layouts are rewritten in this one).
 constexpr size_t kScrFloats = 4, kScrPath = kScrFloats + 14 * 4;
-Bytes scratcherState(const std::string& path, const Bytes& old) {
+constexpr uint32_t kScrVersion = 1001002;
+float scrParam(const PluginState& g, int k, float d) {
+  return static_cast<size_t>(k) < g.params.size() && std::isfinite(g.params[static_cast<size_t>(k)]) ? g.params[static_cast<size_t>(k)] : d;
+}
+Bytes scratcherState(const PluginState& g, const Bytes& old) {
   ByteWriter w;
-  if (old.size() >= kScrPath) {
-    w.bytes(old.data(), kScrPath);
+  w.u32(kScrVersion);
+  const uint32_t oldVersion = old.size() >= 4 ? getU32(old, 0) : 0;
+  if (old.size() >= kScrPath && oldVersion >= 1001000 && oldVersion <= kScrVersion) {
+    w.bytes(old.data() + kScrFloats, kScrPath - kScrFloats);
   } else {
-    w.u32(1001000);       // version
-    w.f32(0.0f);          // 0 wave position
-    w.f32(1.0f);          // 1 sound on
-    w.f32(50.0f / 100);   // 2 turntable speed (1x)
-    w.f32(25.0f / 100);   // 3 turntable acceleration
-    w.f32(0.5f);          // 4 pan (centre)
-    w.f32(199.0f / 255);  // 5 volume
-    w.f32(0.0f);          // 6 turntable hold off
-    w.f32(50.0f / 100);   // 7 turntable sensitivity
-    w.f32(0.0f);          // 8 transport (pause)
-    w.f32(500.0f / 1000); // 9 smooth 1
-    w.f32(908.0f / 1000); // 10 smooth 2
-    w.f32(999.0f / 1000); // 11 smooth 3
-    w.f32(400.0f / 1000); // 12 smooth 4
-    w.f32(9.0f);          // 13 rotations (none)
+    float v[14];
+    sp::turntableToReference(g.params, v);  // (the fields refine them)
+    for (float x : v) w.f32(x);
   }
+  const std::string& path = g.data;
   w.u32(static_cast<uint32_t>(path.size()));
   w.bytes(reinterpret_cast<const uint8_t*>(path.data()), path.size());
-  // Whatever followed the old path (zoom, timecode flags) stays.
-  if (old.size() >= kScrPath + 4) {
-    const size_t len = getU32(old, kScrPath);
-    const size_t tail = kScrPath + 4 + len;
-    if (len < 4096 && tail <= old.size()) w.bytes(old.data() + tail, old.size() - tail);
-  }
+  w.u8(scrParam(g, sp::TtZoom, 0) >= 0.5f ? 2 : 1);
+  const int tc = static_cast<int>(std::lround(std::clamp(scrParam(g, sp::TtTimecode, 0), 0.f, 8.f)));
+  w.u32(static_cast<uint32_t>(tc - 1));
+  w.u8(scrParam(g, sp::TtRiaa, 0) >= 0.5f ? 1 : 0);
   return w.b;
 }
 Encoder scratcher() {
@@ -264,7 +259,11 @@ Encoder scratcher() {
   e.flName = "Fruity Scratcher";
   e.glType = "gl.turntable";
   e.nativeRank = -1;  // FL hosts it in a mixer slot: only instances imported from it are written back
-  e.defaults = [] { return scratcherState("", {}); };
+  e.defaults = [] {
+    PluginState d = defaultPluginState("gl.turntable");
+    if (d.params.size() > static_cast<size_t>(sp::TtEmpty)) d.params[sp::TtEmpty] = 1.f;  // FL's own default: no sample
+    return scratcherState(d, {});
+  };
   e.fields = [](const Bytes&) {
     auto at = [](int tag) { return kScrFloats + 4 * static_cast<size_t>(tag); };
     auto id = [](double g) { return g; };
@@ -286,9 +285,8 @@ Encoder scratcher() {
     };
   };
   e.write = [](const PluginState& g, Bytes& b, const EncodeContext& c) {
-    PluginMapping cur;
-    if (decodeState("Fruity Scratcher", b, cur, c) && cur.state.data == g.data) return;
-    b = scratcherState(g.data, b);
+    (void)c;
+    b = scratcherState(g, b);  // the path and the options tail from the state; the settings stay for the fields
   };
   // The note settings are Gridline's own: the FL plugin plays by its motor.
   e.strip = [](PluginState& s) {

@@ -1,0 +1,18 @@
+<!-- Gridline original (GPL-3.0), drawn on the Lucide 24-unit grid and stroke rules: track icon: a snowflake -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M12.00 3.00 L12.00 21.00" />
+  <path d="M19.79 7.50 L4.21 16.50" />
+  <path d="M19.79 16.50 L4.21 7.50" />
+  <path d="M12.00 18.00 L13.67 19.99" />
+  <path d="M12.00 18.00 L10.33 19.99" />
+  <path d="M6.80 15.00 L5.91 17.44" />
+  <path d="M6.80 15.00 L4.24 14.55" />
+  <path d="M6.80 9.00 L4.24 9.45" />
+  <path d="M6.80 9.00 L5.91 6.56" />
+  <path d="M12.00 6.00 L10.33 4.01" />
+  <path d="M12.00 6.00 L13.67 4.01" />
+  <path d="M17.20 9.00 L18.09 6.56" />
+  <path d="M17.20 9.00 L19.76 9.45" />
+  <path d="M17.20 15.00 L19.76 14.55" />
+  <path d="M17.20 15.00 L18.09 17.44" />
+</svg>

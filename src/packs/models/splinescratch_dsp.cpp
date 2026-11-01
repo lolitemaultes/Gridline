@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include "../../engine/Dsp.h"
+#include "../../engine/SampleTap.h"
 #include "../../engine/pitch/Kernel.h"
 #include "metal.h"
 #include "metal_rt.h"
@@ -52,6 +53,7 @@ class SplineScratchGen final : public Generator {
     continuous_ = prmi(s, SsContinuous, 0) != 0;
   }
   void onNoteOn(uint32_t id, double pitch, float vel) override {
+    tap::play(sample_.get());  // J-219: Track Receipt
     Voice* pick = nullptr;
     for (auto& v : v_)
       if (!v.on) {
@@ -97,6 +99,8 @@ class SplineScratchGen final : public Generator {
       const float rK = static_cast<float>(1.0 - std::exp(-5.0 / (releaseSec_ * std::max(0.05f, p.release) * sr_)));  // fades within the release time
       const float gK = static_cast<float>(1.0 - std::exp(-1.0 / (0.002 * sr_)));
       const double a = winA_ + (winB_ - winA_) * p.start, b = winA_ + (winB_ - winA_) * p.end;
+      tap::Run run;  // J-219: Track Receipt coverage
+      if (tap::active()) run.begin(smp);
       for (int i = 0; i < n; ++i) {
         double x = v.t / len;
         if (x >= 1.0) {
@@ -122,6 +126,7 @@ class SplineScratchGen final : public Generator {
         // J-140: band-limited read at the head's speed (was linear: scratches
         // faster than 1:1 aliased).
         float l, r;
+        if (vol > 0) run.at(std::clamp(pos, 0.0, frames - 1));
         pitch::read2(smp->left.data(), smp->right.data(), static_cast<int64_t>(smp->frames()), std::clamp(pos, 0.0, frames - 1), speed,
                      pitch::table(pitch::Quality::Realtime), l, r);
         L[i] += l * vol;

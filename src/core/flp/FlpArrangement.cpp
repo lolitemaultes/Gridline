@@ -38,6 +38,7 @@
 #include "../../engine/TimeStretch.h"
 #include "Flp.h"
 #include "FlpFx.h"
+#include "../TrackIconSet.h"
 
 namespace gl::flp {
 
@@ -316,7 +317,8 @@ bool Importer::resolveTarget(uint32_t target, Target& t) {
     }
     int k = pm->second.param(static_cast<int>(lo - 0x8000));
     if (k < 0) return false;
-    t.id = slotParam(track, slot, k);
+    if (auto mv = c_.slotChannels.find({ins, slot}); mv != c_.slotChannels.end()) t.id = channelPluginParam(mv->second, k);  // J-206
+    else t.id = slotParam(track, slot, k);
     auto d = describeParam(s_, t.id);
     if (!d) return false;
     if (pm->second.value) {
@@ -482,6 +484,7 @@ void Importer::importTracksAndClips() {
       PlaylistTrack& t = tracks[static_cast<size_t>(cur)];
       t.color = flColor(e.u32(4));
       t.flIcon = static_cast<int>(std::min<uint32_t>(e.u32(8), 65535));  // J-39
+      t.icon = trackicon::fromFl(t.flIcon);                              // J-211
       t.muted = e.u8(12) == 0;
       float h = e.f32(13);
       t.height = std::isfinite(h) ? std::clamp(h, 0.25f, 4.0f) : 1.0f;
