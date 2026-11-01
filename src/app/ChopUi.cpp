@@ -495,6 +495,9 @@ void clipMenuItems(App& a, ObjectId clip) {
   const Song& s = a.doc.song();
   const Clip* c = s.clip(clip);
   if (!c) return;
+  // An item's edit replaces the song (and can remove this clip), so `c` is not read after the first item.
+  const ClipKind kind = c->kind;
+  const Tick clipLen = s.clipLength(*c);
   std::set<ObjectId> sel = a.playlist.selected;
   if (!sel.count(clip)) sel = ops::expandClipGroups(s, {clip});
   auto run = [&](const char* label, const std::function<std::vector<ObjectId>(Song&)>& fn) {
@@ -508,7 +511,7 @@ void clipMenuItems(App& a, ObjectId clip) {
   ImGui::SeparatorText(i18n::tr("At the grid"));
   for (int i = 0; i + 1 < kGridCount; ++i) {
     const Tick g = gridTicks(a, i);
-    if (ImGui::MenuItem(i18n::tr(kGrids[i].name), nullptr, false, g < s.clipLength(*c) || sel.size() > 1))
+    if (ImGui::MenuItem(i18n::tr(kGrids[i].name), nullptr, false, g < clipLen || sel.size() > 1))
       run("chop clips", [&](Song& x) { return chop::sliceAtGrid(x, sel, g); });
   }
   if (ImGui::MenuItem(i18n::tr("Snap grid"), keys::label("playlist.sliceGrid")))
@@ -521,16 +524,16 @@ void clipMenuItems(App& a, ObjectId clip) {
     }
     ImGui::EndMenu();
   }
-  if (c->kind == ClipKind::Audio) {
+  if (kind == ClipKind::Audio) {
     ImGui::SeparatorText(i18n::tr("At transients"));
     const char* lv[] = {i18n::N_("Gentle"), i18n::N_("Medium"), i18n::N_("Sharp")};
     const double vals[] = {0.25, 0.5, 0.8};
     for (int i = 0; i < 3; ++i)
       if (ImGui::MenuItem(i18n::tr(lv[i]))) run("slice clip at transients", [&](Song& x) { return chop::sliceAtTransients(x, sel, vals[i]); });
-  } else if (c->kind == ClipKind::Pattern) {
+  } else if (kind == ClipKind::Pattern) {
     if (ImGui::MenuItem(i18n::tr("At the note starts"))) run("chop clips", [&](Song& x) { return chop::sliceAtTransients(x, sel, 0.5); });
   }
-  if (c->kind != ClipKind::Automation) {
+  if (kind != ClipKind::Automation) {
     ImGui::SeparatorText(i18n::tr("Stutter"));
     for (int i = 0; i < chop::kPresetCount; ++i) {
       const auto pr = static_cast<chop::Preset>(i);

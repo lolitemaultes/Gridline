@@ -22,8 +22,9 @@ Released 2026-11-01. Everything that changed since 0.7.0. Projects from 0.7.0 op
 - **Plasma** plays imported Serum 2 presets much closer to the original.
 - **Loupe**'s interface is redrawn, and smaller things: Stop clicked while stopped goes back to the
   start, a "+" for new patterns in the playlist, instruments dropped onto playlist tracks.
-- **Fixed**: Sampler notes in the Stretch and Rubber Band modes that played silence, scratching
-  recorded in FL Studio projects timed exactly, and more below.
+- **Fixed**: a crash on "Make unique" in a playlist clip's menu, Sampler notes in the Stretch and
+  Rubber Band modes that played silence, scratching recorded in FL Studio projects timed exactly,
+  and more below.
 
 ### Added
 
@@ -155,6 +156,8 @@ Released 2026-11-01. Everything that changed since 0.7.0. Projects from 0.7.0 op
 
 ### Fixed
 
+- Playlist: "Make unique" in a pattern clip's menu no longer closes Gridline when the pattern has
+  piano roll notes, and the clip's Chop submenu is safe in the same way.
 - Sampler: in the Stretch and Rubber Band time modes, a note no longer plays silence when the
   sample start (or, in reverse, the sample end) falls between two samples of the file. Depending
   on the file length this hit about half of all start and end settings, live and in exports.

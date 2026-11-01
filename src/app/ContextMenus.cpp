@@ -1139,17 +1139,26 @@ void clipContextMenu(App& a, ObjectId clip) {
   if (ImGui::MenuItem(i18n::tr("Make unique"))) {
     ObjectId np = ops::makeClipUnique(a.doc, clip);
     if (np) a.selectPattern(np);
+    return;  // the edit replaced the song: `s`, `c` and `p` point into the old one
   }
   Tick patLen = s.patternContentLength(*p), len = s.clipLength(*c);
-  if (ImGui::MenuItem(i18n::tr("Split at pattern repeats"), nullptr, false, patLen > 0 && (len > patLen || clipRepeats(s, *c)))) ops::chopClip(a.doc, clip, patLen);  // Q-1: at the loop points
+  if (ImGui::MenuItem(i18n::tr("Split at pattern repeats"), nullptr, false, patLen > 0 && (len > patLen || clipRepeats(s, *c)))) {
+    ops::chopClip(a.doc, clip, patLen);  // Q-1: at the loop points
+    return;
+  }
   {
     const Tick pos = static_cast<Tick>(a.engine.position());
-    if (ImGui::MenuItem(i18n::tr("Slice at the song position"), nullptr, false, pos > c->start && pos < c->start + len)) ops::sliceClip(a.doc, clip, pos);
+    if (ImGui::MenuItem(i18n::tr("Slice at the song position"), nullptr, false, pos > c->start && pos < c->start + len)) {
+      ops::sliceClip(a.doc, clip, pos);
+      return;
+    }
   }
   chopui::clipMenu(a, clip);  // PL-13: slice at the grid / into parts / at note starts, stutter presets
+  if (!(c = a.doc.song().clip(clip))) return;  // a chop may have replaced the song
   if (ImGui::MenuItem(i18n::tr("Split by channel"))) {
     auto ids = ops::splitClipByChannel(a.doc, clip);
     a.notify(ids.empty() ? std::string("Nothing to split") : "Split into " + std::to_string(ids.size()) + " clips");
+    return;
   }
   if (ImGui::MenuItem(i18n::tr("Fit length to pattern"), nullptr, false, c->length != 0)) a.doc.setClipLength(clip, 0);
   std::set<ObjectId> sel = a.playlist.selected;

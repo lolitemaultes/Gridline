@@ -1487,6 +1487,14 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(j173_pattern_auto_app PROPERTIES TIMEOUT 300)
 
+    # K-0: "Make unique" from a playlist clip's menu on a pattern with piano roll notes keeps the app
+    # running (a GitHub issue: the menu read the replaced song's pattern).
+    add_test(NAME k0_make_unique_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/k0_make_unique_app -P ${CMAKE_SOURCE_DIR}/tests/k0_make_unique_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(k0_make_unique_app PROPERTIES TIMEOUT 300)
+
     # J-113: detached windows kept across runs and recovered, Space and the typing keyboard from a
     # detached window, focus moving between Gridline's windows keeping held keys, J-97 drops into a
     # detached channel rack, dialogs over it (J-116: detaching, docking back, live resize: j116_detach_app).

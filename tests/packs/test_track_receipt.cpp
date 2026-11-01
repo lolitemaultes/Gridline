@@ -348,8 +348,8 @@ void testChunkPaths() {
 }
 
 int main() {
-  const char* tmp = std::getenv("TMPDIR");
-  const std::string scratch = std::string(tmp ? tmp : "/tmp") + "/gl_track_receipt_test";
+  // An absolute folder on every system ("/tmp" is not one on Windows, and the receipt only reads absolute paths).
+  const std::string scratch = (std::filesystem::temp_directory_path() / "gl_track_receipt_test").generic_string();
   testNames();
   testChunkPaths();
   testRanges();

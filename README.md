@@ -216,7 +216,7 @@ sudo apt install build-essential cmake pkg-config libsdl2-dev libgl-dev libasoun
 
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j4           # a fixed job count: a bare -j starts every compile at once and can run out of memory
-ctest --test-dir build          # 270 tests
+ctest --test-dir build          # 271 tests
 ./build/gridline-app            # start the app
 ```
 
