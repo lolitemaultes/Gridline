@@ -37,6 +37,7 @@ import stat
 import subprocess
 import sys
 import tarfile
+import time
 import urllib.request
 import zipfile
 
@@ -75,11 +76,25 @@ def fetch(url, dest, want):
     """Downloads url to dest (reused when already there and intact) and checks its SHA-256."""
     if os.path.exists(dest) and sha256(dest) == want:
         return dest
-    log(f"download {url}")
     tmp = dest + ".part"
     req = urllib.request.Request(url, headers={"User-Agent": "Gridline-release"})
-    with urllib.request.urlopen(req, timeout=120) as r, open(tmp, "wb") as f:
-        shutil.copyfileobj(r, f)
+    for attempt in range(1, 6):  # source hosts can be slow or drop connections: retry with a growing pause
+        log(f"download {url}" + (f" (attempt {attempt})" if attempt > 1 else ""))
+        try:
+            with urllib.request.urlopen(req, timeout=120) as r, open(tmp, "wb") as f:
+                shutil.copyfileobj(r, f)
+            break
+        except OSError as e:  # URLError, timeouts and connection resets are all OSErrors
+            # Some hosts reset a TLS handshake from one Python build but not from curl (ffmpeg.org
+            # and the macOS runner's Python 3.15): curl is the second way in.
+            if shutil.which("curl") and subprocess.run(["curl", "-fsSL", "--retry", "3", "--connect-timeout", "60",
+                                                        "-A", "Gridline-release", "-o", tmp, url]).returncode == 0:
+                log("downloaded with curl")
+                break
+            if attempt == 5:
+                raise
+            log(f"download failed ({e}), retrying in {30 * attempt} s")
+            time.sleep(30 * attempt)
     got = sha256(tmp)
     if got != want:
         os.remove(tmp)
