@@ -1,6 +1,7 @@
 // Gridline - J-219: small PDF writer (see PdfWriter.h).
 #include "PdfWriter.h"
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <sstream>
 

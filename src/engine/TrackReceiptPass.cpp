@@ -58,9 +58,18 @@ void namesInText(const std::string& run, std::vector<std::string>& out) {
         }
       }
       std::string cand = run.substr(start, end - start);
-      // a path inside: from its root
-      size_t root = cand.find(":\\");
-      if (root != std::string::npos && root > 0) cand = cand.substr(root - 1);
+      // a path inside: from its root ("X:\" or "X:/" on Windows, else the first "/")
+      size_t root = std::string::npos;
+      for (size_t k = cand.find(':'); k != std::string::npos; k = cand.find(':', k + 1)) {
+        const bool slash = k + 1 < cand.size() && (cand[k + 1] == '\\' || cand[k + 1] == '/');
+        const bool drive = k > 0 && std::isalpha(static_cast<unsigned char>(cand[k - 1])) &&
+                           (k == 1 || !std::isalnum(static_cast<unsigned char>(cand[k - 2])));  // not "file:/"
+        if (slash && drive) {
+          root = k - 1;
+          break;
+        }
+      }
+      if (root != std::string::npos) cand = cand.substr(root);
       else if ((root = cand.find('/')) != std::string::npos) cand = cand.substr(root);
       while (!cand.empty() && (cand.front() == ' ' || cand.front() == '\'')) cand.erase(cand.begin());
       if (cand.size() > e.size() && cand.size() < 1024) out.push_back(cand);

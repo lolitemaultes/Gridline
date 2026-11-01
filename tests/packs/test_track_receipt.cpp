@@ -1,6 +1,7 @@
 // Gridline - J-219: Track Receipt tests (names, ranges, tiers, report, XML, PDF,
 // saved fields, and the coverage measured by playing projects through every sampler).
 // Synthetic audio and made-up artist / title names only.
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -338,10 +339,19 @@ void testOutputs(const std::string& outDir) {
 
 }  // namespace
 
+// Paths inside plugin data: Windows drive roots with either slash, not a "file:" prefix.
+void testChunkPaths() {
+  auto has = [](const std::vector<std::string>& v, const std::string& x) { return std::find(v.begin(), v.end(), x) != v.end(); };
+  expect(has(receipt::chunkFileNames("{\"s\":\"C:/Users/me/My Stems/Stem.wav\"}"), "C:/Users/me/My Stems/Stem.wav"), "chunk paths: a drive root with forward slashes");
+  expect(has(receipt::chunkFileNames("{\"s\":\"D:\\x\\Stem.wav\"}"), "D:\\x\\Stem.wav"), "chunk paths: a drive root with backslashes");
+  expect(has(receipt::chunkFileNames("table=file:/Users/me/Loop.wav;"), "/Users/me/Loop.wav"), "chunk paths: a file: prefix is not a drive");
+}
+
 int main() {
   const char* tmp = std::getenv("TMPDIR");
   const std::string scratch = std::string(tmp ? tmp : "/tmp") + "/gl_track_receipt_test";
   testNames();
+  testChunkPaths();
   testRanges();
   testReport();
   testEstimated();

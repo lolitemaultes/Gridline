@@ -101,7 +101,7 @@ void testBounded() {
   expect(same, "bounded: widened bins equal a rescan at their width");
   float lo = 0, hi = 0, lo2 = 0, hi2 = 0;
   a.range(3, 200, lo, hi);
-  for (size_t bi = 3; bi < 200; ++bi) lo2 = std::min(lo2, a.lo(bi)), hi2 = std::max(hi2, a.hi(bi));
+  for (size_t bi = 3; bi < std::min<size_t>(200, a.bins()); ++bi) lo2 = std::min(lo2, a.lo(bi)), hi2 = std::max(hi2, a.hi(bi));
   expect(lo == lo2 && hi == hi2, "bounded: the coarse level follows the widening");
   // Default cap: an hour at 48 kHz stays far below 32 MB of summary.
   const size_t hour = static_cast<size_t>(48000) * 3600;
