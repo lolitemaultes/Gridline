@@ -194,7 +194,7 @@ void scan(void* dpy, XWin container, Watched& w) {
     long mask = kSubstructureNotifyMask;
     if (cur != container) {
       XWinAttrs at{};
-      if (x.getWindowAttributes(dpy, cur, &at) && x11WatchesKeys(at.allEventMasks & ~at.yourEventMask)) mask |= kKeyPressMask | kKeyReleaseMask;
+      if (x.getWindowAttributes(dpy, cur, &at) && x11WatchesKeys(at.allEventMasks & ~at.yourEventMask, w.windows.count(cur) != 0)) mask |= kKeyPressMask | kKeyReleaseMask;
     }
     x.selectInput(dpy, cur, mask);
     if (mask & kKeyPressMask) w.windows.insert(cur);

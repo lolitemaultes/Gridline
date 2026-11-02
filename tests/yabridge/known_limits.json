@@ -1,1 +1,21 @@
-[]
+[
+ {
+  "match": {
+   "wine": "staging-9\\.21",
+   "plugin": "^Dexed$",
+   "host": "gridline",
+   "check": "editor drawn|pixels"
+  },
+  "reason": "Dexed's interface stays black in the control host too; Wine logs stubs for its composition swap chain"
+ },
+ {
+  "match": {
+   "wine": "staging-9\\.21",
+   "plugin": "^Nekobi$",
+   "format": "vst2",
+   "host": "gridline",
+   "check": "parameters still change"
+  },
+  "reason": "this VST2 build reports every edit as 0 to the control host too, so a second drag changes nothing; its VST3 build reports real values"
+ }
+]

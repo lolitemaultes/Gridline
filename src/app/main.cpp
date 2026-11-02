@@ -22,6 +22,12 @@
 #include <set>
 #include <string>
 #include <vector>
+#if defined(__GLIBC__)
+#include <execinfo.h>
+#include <pthread.h>
+#include <csignal>
+#include <exception>
+#endif
 #include "../engine/ChannelIns.h"
 #include "../engine/Sample.h"
 #include "../engine/TimeStretch.h"
@@ -1442,7 +1448,31 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
 
 }  // namespace
 
+#if defined(__GLIBC__)
+// K-9, GRIDLINE_DEV_BACKTRACE (the yabridge test): an uncaught exception, or SIGUSR2 for a process
+// that hangs, prints where the thread is. Development only; the process reports itself.
+static void devBacktrace(const char* why) {
+  char name[32] = "";
+  pthread_getname_np(pthread_self(), name, sizeof name);
+  std::fprintf(stderr, "backtrace (%s) in thread %s\n", why, name);
+  void* frames[64];
+  backtrace_symbols_fd(frames, backtrace(frames, 64), 2);
+  std::fprintf(stderr, "backtrace end\n");
+}
+static void devInstallBacktrace() {
+  if (!std::getenv("GRIDLINE_DEV_BACKTRACE")) return;
+  std::set_terminate([] {
+    devBacktrace("uncaught exception");
+    std::abort();
+  });
+  std::signal(SIGUSR2, [](int) { devBacktrace("asked"); });
+}
+#else
+static void devInstallBacktrace() {}
+#endif
+
 int main(int argc, char** argv) {
+  devInstallBacktrace();
 #if defined(_WIN32)
   // A GUI program has no console: --version / --help / errors go to the one it was started from.
   if (AttachConsole(ATTACH_PARENT_PROCESS)) {

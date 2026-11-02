@@ -50,11 +50,19 @@ def main():
     host.set_engine_callback(on_engine)
     host.show_custom_ui(0, True)
     running = [True]
+    close_ui = [False]
+    ui_open = True
     signal.signal(signal.SIGTERM, lambda *_: running.__setitem__(0, False))
+    signal.signal(signal.SIGUSR1, lambda *_: close_ui.__setitem__(0, True))
     while running[0]:
+        if close_ui[0] and ui_open:
+            host.show_custom_ui(0, False)
+            ui_open = False
+            print("interface closed", flush=True)
         host.engine_idle()
         time.sleep(0.02)
-    host.show_custom_ui(0, False)
+    if ui_open:
+        host.show_custom_ui(0, False)
     host.remove_all_plugins()
     host.engine_close()
     return 0

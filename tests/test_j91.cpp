@@ -162,6 +162,8 @@ void testPluginKeys() {
   // Which windows of the interface Gridline watches (other clients' event masks).
   expect(x11WatchesKeys(1L | (1L << 1)), "a window the plugin takes key presses on is watched");
   expect(!x11WatchesKeys(1L << 2) && !x11WatchesKeys(0), "a window nobody takes keys on is not (its keys reach Gridline's window)");
+  // K-9: reading the masks again once Gridline selects key presses too: "all clients minus Gridline's" no longer shows them.
+  expect(x11WatchesKeys(0, true), "a window already watched stays watched at the next reading");
 }
 
 // ------------------------------------------------------------------ Auto Pan pad

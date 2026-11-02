@@ -203,7 +203,7 @@ class App:
         args = [ctx.app, "--no-ui-sounds", "--size", "1100x700", "--dev-input-live", self.live]
         for t in sandbox_types:
             args += ["--dev-sandbox", t, "1"]
-        env = dict(ctx.env, SDL_AUDIODRIVER="dummy", GRIDLINE_NO_PLUGIN_SCAN="1", GRIDLINE_NO_UPDATE_CHECK="1", GRIDLINE_DEV_PLUGIN_KEYS="1")
+        env = dict(ctx.env, SDL_AUDIODRIVER="dummy", GRIDLINE_NO_PLUGIN_SCAN="1", GRIDLINE_NO_UPDATE_CHECK="1", GRIDLINE_DEV_PLUGIN_KEYS="1", GRIDLINE_DEV_BACKTRACE="1")
         self.proc = subprocess.Popen([str(a) for a in args], stdout=self.log, stderr=subprocess.STDOUT, env=env, start_new_session=True)
         self.seq = 0
 
@@ -299,7 +299,12 @@ class App:
 
     def dump_threads(self):
         """Where a hung process waits, from /proc, into the app's log."""
-        lines = [f"--- still running after quit, pid {self.proc.pid}"]
+        try:
+            os.kill(self.proc.pid, signal.SIGUSR2)
+            time.sleep(1.0)
+        except OSError:
+            pass
+        lines = [f"--- still running, pid {self.proc.pid}"]
         base = Path(f"/proc/{self.proc.pid}/task")
         try:
             for t in sorted(base.iterdir(), key=lambda q: int(q.name)):
@@ -623,6 +628,12 @@ def check_keys(ctx, r, window, app):
 
     toggled, detail = press_space(app, held)
     r.expect("Space held for a moment in the editor toggles the transport", toggled, detail)
+    # Spread over several seconds: the watch on the interface's windows is read again about once a second.
+    results = []
+    for _ in range(6):
+        toggled, detail = press_space(app, lambda: x.key("space"))
+        results.append(toggled)
+    r.expect("Space six times over some seconds: every press toggles", all(results), f"{sum(results)} of 6; last: {detail}")
     # Back to Gridline: click its main window, Space goes to the transport and not to the plugin.
     main = app.main_window()
     if not main:
@@ -1176,6 +1187,17 @@ def real_cell(ctx, r, name, fmt, type_id, entry):
         app.send("plugwin close")
         answers = app.ask("epoch", r"epoch frame", timeout=30) is not None
         r.expect("closing the interface: Gridline keeps answering", answers and app.alive(), f"answers {answers}, alive {app.alive()}, {time.time() - t0:.1f} s")
+        if not answers and app.alive():
+            # Stuck: where, then a new process that quits with the interface open, for the quit path alone.
+            app.dump_threads()
+            app.kill()
+            kill_hosts()
+            app = App(ctx, "real-quit")
+            app.send(f'open "{path}"')
+            if app.wait_instance(timeout=180):
+                app.send("plugwin chan 0")
+                wait_window(app, timeout=90)
+                time.sleep(8.0)
     finally:
         if app.alive():
             t0 = time.time()
@@ -1296,6 +1318,13 @@ def control_real(ctx, r, name, fmt, entry, script):
         r.add("control host: values the plugin reports on drags (for comparison)", "pass" if said else "skip", f"{len(said)} reports, last: {dict(list(last.items())[:8])}")
         shot = x.shot(win, str(ctx.cell_dir / "shot-after.png"))
         r.add("control host: pixels change on drags (for comparison)", "pass" if changed_pixels(img, shot) > 0 else "skip", f"{changed_pixels(img, shot)} pixels")
+        t0 = time.time()
+        proc.send_signal(signal.SIGUSR1)
+        closed = False
+        while not closed and time.time() - t0 < 30 and proc.poll() is None:
+            closed = "interface closed" in log_path.read_text(errors="replace")
+            time.sleep(0.2)
+        r.add("control host: closing the interface returns (for comparison)", "pass" if closed else "skip", f"{time.time() - t0:.1f} s, exit code {proc.poll()}")
     finally:
         t0 = time.time()
         try:
@@ -1339,6 +1368,22 @@ def scan(ctx, r):
         if m:
             rows.append({"format": m.group(1).lower().replace("vst 3", "vst3"), "kind": m.group(2), "name": m.group(3), "type": m.group(4)})
     return rows
+
+
+def symbolize_logs(out, app):
+    """Backtraces in the logs name offsets in gridline-app: adds the function names beside each log."""
+    for log in out.rglob("*.log"):
+        text = log.read_text(errors="replace")
+        if "backtrace (" not in text:
+            continue
+        lines = []
+        for line in text.splitlines():
+            m = re.search(r"gridline-app\(\+(0x[0-9a-f]+)\)", line)
+            if m:
+                line += "  " + " ".join(sh("addr2line", "-fCe", app, m.group(1), timeout=20)[1].split()[:1])
+            if line.startswith("backtrace") or "(+0x" in line or "(_" in line or "[0x" in line:
+                lines.append(line)
+        log.with_suffix(".backtrace.txt").write_text("\n".join(lines) + "\n")
 
 
 def main():
@@ -1460,7 +1505,7 @@ def main():
             except Exception as e:
                 r.add("harness error", "fail", repr(e))
         if a.real:
-            for name, fmt, pattern in (("Dexed", "vst3", ".vst3/yabridge/Dexed*"), ("Nekobi", "vst2", ".vst/yabridge/Nekobi*.so"), ("Nekobi", "vst3", ".vst3/yabridge/Nekobi*")):
+            for name, fmt, pattern in (("Dexed", "vst3", ".vst3/yabridge/Dexed*"), ("Nekobi", "vst2", ".vst/yabridge/Nekobi*.so"), ("Nekobi", "vst3", ".vst3/yabridge/Nekobi*"), ("Surge XT", "vst3", ".vst3/yabridge/Surge*")):
                 found = sorted(Path.home().glob(pattern))
                 if not found:
                     r.cell = {"format": fmt, "mode": "inproc", "plugin": name, "host": "carla"}
@@ -1470,6 +1515,7 @@ def main():
                     control_real(ctx, r, name, fmt, found[0], script)
                 except Exception as e:
                     r.add("harness error", "fail", repr(e))
+    symbolize_logs(ctx.out, a.app)
     stop.set()
     return 0
 

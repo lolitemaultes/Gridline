@@ -306,6 +306,6 @@ bool forwardsToHost(int usage, uint32_t mods) {
   return (mods & (kKeyCtrl | kKeyAlt)) != 0 && usage != 224 && usage != 226;  // chords (not a lone modifier)
 }
 
-bool x11WatchesKeys(long otherClientsMask) { return (otherClientsMask & 1L) != 0; }  // KeyPressMask
+bool x11WatchesKeys(long otherClientsMask, bool alreadyWatched) { return alreadyWatched || (otherClientsMask & 1L) != 0; }  // KeyPressMask
 
 }  // namespace gl::host

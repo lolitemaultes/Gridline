@@ -183,6 +183,7 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 
 ### Fixed
 
+- Linux: Space and Gridline's other shortcuts typed into a plugin's interface no longer get lost; the watch on the interface's windows was switching itself off every second time it was read.
 - A lit key on the piano roll's keyboard now lights the whole white key, including the parts beside
   the black keys, and its colour blends into the key instead of covering it, so light channel
   colours stay soft. The key you click lights the same way.

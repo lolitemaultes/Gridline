@@ -47,8 +47,11 @@ bool forwardsToHost(int usage, uint32_t mods);
 // from the event masks other X clients selected on it (XWindowAttributes
 // all_event_masks without Gridline's own): only when one of them takes key
 // presses. A window nobody takes keys on passes them up to Gridline's own
-// window, where SDL reads them (watching it would stop that).
-bool x11WatchesKeys(long otherClientsMask);
+// window, where SDL reads them (watching it would stop that). The X server
+// gives one mask for all clients, so once Gridline selects key presses on a
+// window its own selection hides the other client's: a window already watched
+// stays watched, or the watch would switch itself off at every second reading.
+bool x11WatchesKeys(long otherClientsMask, bool alreadyWatched = false);
 // Gridline's key of a HID usage (Key::None when Gridline has no name for it).
 keys::Key keyOfHidUsage(int usage);
 // The chord a forwarded key makes in Gridline's keymap (Cmd is Gridline's
