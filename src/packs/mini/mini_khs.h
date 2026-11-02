@@ -1,5 +1,5 @@
-// Gridline: stand-ins for missing Kilohearts effects (J-132, user decision; see
-// AGENTS.md and core/PluginStandIn.h). When a project uses one of the
+// Gridline: stand-ins for missing Kilohearts effects (J-132; see
+// core/PluginStandIn.h). When a project uses one of the
 // Kilohearts single effects and it is not installed, the matching Gridline
 // Suite Mini effect plays in its place. Installed plugins are always hosted
 // as themselves; the original plugin, its parameters and its own state stay

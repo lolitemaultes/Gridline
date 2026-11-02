@@ -1,8 +1,7 @@
 // Gridline — channel instrument envelopes (J-33, J-72). See ChannelIns.h.
 //
 // Classic timing keeps the reference's single-precision arithmetic and its
-// evaluation order (measured sample by sample against the reference running
-// locally); keep both when editing. Floating-point contraction is off here
+// evaluation order; keep both when editing. Floating-point contraction is off here
 // so the order holds on targets with fused multiply-add.
 #include "ChannelIns.h"
 #include <algorithm>

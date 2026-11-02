@@ -1,6 +1,6 @@
 // Gridline — "plasma" pack tests: the imported laws of the phaser, flanger, frequency shifter,
 // dimension and multiband compressor (J-203s). Synthetic .SerumPreset files written by this test
-// check each law against plain numbers measured on the hosted source synth with the same settings
+// check each law against plain numbers measured on the reference synth with the same settings
 // (white noise or a held saw / sine in, the modulation stopped where noted); no preset content is used
 // or shipped.
 #include <algorithm>

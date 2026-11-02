@@ -1,6 +1,6 @@
 // Gridline — "plasma" pack: the imported laws of the modulation effects (phaser, flanger, frequency shifter,
 // dimension) and of the multiband compressor. Included by plasma_fx_dsp.cpp inside its anonymous namespace;
-// each law was fitted and verified against the hosted plugin's output. Plasma's own projects keep the
+// each law was fitted and verified against the reference's output. Plasma's own projects keep the
 // Classic laws in plasma_fx_dsp.cpp.
 
 // The effect LFO shared by the imported phaser and flanger: one phase per module, free at 20 n^4 Hz (n = the
@@ -36,7 +36,7 @@ inline double triHalf(double x) {  // 0 .. 0.5 .. 0
   return x <= 0.5 ? x : 1.0 - x;
 }
 // pole positions of the imported phaser as offsets of the base frequency per unit of spread (DEPTH 2), in pole
-// order (POLES n uses the first n); fitted on the resting notches of the hosted plugin
+// order (POLES n uses the first n); fitted on the resting notches of the reference
 constexpr double kPhaserSpread[18] = {3.0, 1.0, -0.5, -0.75, 0.75, 0.5, -0.333, 0.6667, 0.717,
                                       -0.123, 0.2, -0.4, 0.1, -0.717, 1.3, -0.1, 0.8, -0.9};
 

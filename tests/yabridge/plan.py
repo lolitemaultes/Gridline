@@ -8,7 +8,7 @@ import json
 import sys
 
 WINES = {"staging-9.21": "staging:9.21", "distro": "distro", "staging-11.21": "staging:11.21"}
-REAL = "Surge XT,Dexed,Kars,Nekobi"
+REAL = "Surge XT,Dexed,Nekobi"  # Kars has no interface of its own
 
 
 def job(wine, display, scale, run, real="", control=0, modes="inproc,sandbox"):

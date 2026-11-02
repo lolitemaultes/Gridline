@@ -1,5 +1,5 @@
 // Gridline — "plasma" pack tests: the imported voicing's drive stage ahead of the filter's dry / wet split.
-// Expected values are plain numbers read off the hosted source synth's output (held saw at key 48 through a
+// Expected values are plain numbers read off the reference synth's output (held saw at key 48 through a
 // voice filter at mix 0, and through the filter effect at mix 100); Plasma's own designs, nothing from the
 // source is used or shipped.
 #include <algorithm>

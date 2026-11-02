@@ -29,14 +29,13 @@ if [ -n "$DL" ] && [ -d "$DL" ]; then
   cp "$T/surge/Surge XT.clap" "$CL/"
   # DISTRHO's plugin set: a different toolkit (OpenGL through pugl, not JUCE).
   unzip -q "$DL/DPF-Plugins-v1.7-win64.zip" -d "$T/dpf"
-  find "$T/dpf" -maxdepth 4 -iname 'Kars*' | head -20
   while IFS= read -r -d '' p; do
     case "$p" in
       *.vst3) cp -r "$p" "$V3/" ;;
       *.clap) cp "$p" "$CL/" ;;
       *.dll) cp "$p" "$V2/" ;;
     esac
-  done < <(find "$T/dpf" \( -name 'Kars*.vst3' -o -name 'Kars*.clap' -o -name 'Kars*.dll' -o -name 'Nekobi*.vst3' -o -name 'Nekobi*.clap' -o -name 'Nekobi*.dll' \) -not -path '*/Contents/*' -print0)
+  done < <(find "$T/dpf" \( -name 'Nekobi*.vst3' -o -name 'Nekobi*.clap' -o -name 'Nekobi*.dll' \) -not -path '*/Contents/*' -print0)
   rm -rf "$T"
 fi
 

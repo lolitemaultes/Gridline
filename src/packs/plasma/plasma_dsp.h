@@ -19,7 +19,7 @@ namespace gl::packs::plasma {
 using cpx = std::complex<float>;
 inline constexpr double kPi2 = 6.283185307179586;
 // The source's full scale in Plasma's units: the source's main volume gives 4.683 n^2 where Plasma's gives
-// 1.4125 n^2, so the same output means a 10.4 dB hotter signal inside Plasma (verified: the hosted compressor
+// 1.4125 n^2, so the same output means a 10.4 dB hotter signal inside Plasma (verified: the reference compressor
 // reacts 10.4 dB later than its threshold law on Plasma's level, at any main volume; the voice filter's drive
 // stage clips at the same level). Every absolute-level law of the imported voicing scales with it.
 inline constexpr double kSrcUnit = 3.31535;

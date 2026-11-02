@@ -22,6 +22,7 @@ import wave
 from pathlib import Path
 
 CELL_SECONDS = 600  # a cell that takes longer is a hang: it is killed and reported
+PROBE_ENTRIES = {"vst3": Path.home() / ".vst3/yabridge/GridlineProbe.vst3", "clap": Path.home() / ".clap/yabridge/GridlineProbe.clap", "vst2": Path.home() / ".vst/yabridge/GridlineProbeSynth.so"}
 
 
 def sh(*cmd, timeout=30, check=False, env=None):
@@ -58,10 +59,16 @@ class Results:
 class Probe:
     """The log the probe plugin writes inside the Wine prefix."""
 
-    def __init__(self, prefix):
+    def __init__(self, prefix, archive):
         self.path = Path(prefix) / "drive_c/gridline-probe/log.txt"
+        self.archive = archive
 
     def clear(self):
+        """Starts a new case; what was logged so far stays in the artifacts."""
+        text = self.text()
+        if text:
+            with open(self.archive, "a") as f:
+                f.write(text + "\n---\n")
         try:
             self.path.unlink()
         except OSError:
@@ -285,7 +292,22 @@ class App:
         try:
             return True, self.proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
+            self.dump_threads()
             return False, None
+
+    def dump_threads(self):
+        """Where a hung process waits, from /proc, into the app's log."""
+        lines = [f"--- still running after quit, pid {self.proc.pid}"]
+        base = Path(f"/proc/{self.proc.pid}/task")
+        try:
+            for t in sorted(base.iterdir(), key=lambda q: int(q.name)):
+                read = lambda n: (t / n).read_text(errors="replace").strip() if (t / n).exists() else "?"
+                lines.append(f"thread {t.name} {read('comm')} wchan {read('wchan')} syscall {read('syscall')[:40]}")
+        except OSError as e:
+            lines.append(repr(e))
+        lines.append(sh("ps", "-eo", "pid,ppid,stat,wchan:20,etimes,cmd", "--forest", timeout=10)[1][-3000:])
+        self.log.write(("\n".join(lines) + "\n").encode())
+        self.log.flush()
 
     def kill(self):
         if self.alive():
@@ -1178,6 +1200,44 @@ def control_cell(ctx, r, fmt, entry, carla_script):
         kill_hosts()
 
 
+def control_real(ctx, r, entry, script):
+    """Dexed in the control host: is a blank interface, or a hang on closing, Gridline's doing?"""
+    r.cell = {"format": "vst3", "mode": "inproc", "plugin": "Dexed", "host": "carla"}
+    ctx.cell_dir = ctx.out / "control-Dexed"
+    ctx.cell_dir.mkdir(parents=True, exist_ok=True)
+    x = ctx.x
+    log = open(ctx.cell_dir / "carla.log", "ab")
+    proc = subprocess.Popen([sys.executable, str(script), "vst3", str(entry), "-"], stdout=log, stderr=subprocess.STDOUT, env=ctx.env, start_new_session=True)
+    try:
+        ids = []
+        end = time.time() + 120
+        while not ids and time.time() < end:
+            ids = sh("xdotool", "search", "--name", "Dexed", timeout=10)[1].split()
+            time.sleep(1.0)
+        if not r.expect("control host: editor opens", bool(ids), (ctx.cell_dir / "carla.log").read_text(errors="replace")[-300:]):
+            return
+        time.sleep(8.0)
+        win = hex(int(ids[-1]))
+        x.dump(win, ctx.cell_dir / "x.txt")
+        img = x.shot(win, str(ctx.cell_dir / "shot.png"))
+        colours = len({img[2][i : i + 3] for i in range(0, len(img[2]), 21)}) if img else 0
+        r.add("control host: interface drawn (for comparison)", "pass" if colours > 24 else "skip", f"{colours} colours")
+    finally:
+        t0 = time.time()
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+            proc.wait(timeout=60)
+            r.add("control host: closes in time (for comparison)", "pass", f"{time.time() - t0:.1f} s")
+        except (OSError, subprocess.TimeoutExpired):
+            r.add("control host: closes in time (for comparison)", "skip", "still running after 60 s")
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except OSError:
+                pass
+        log.close()
+        kill_hosts()
+
+
 def scan(ctx, r):
     """yabridge plugins through Gridline's own scanner, as a user's first start does."""
     r.cell = {"format": "all", "mode": "inproc", "plugin": "scan", "host": "gridline"}
@@ -1185,6 +1245,17 @@ def scan(ctx, r):
     rc, o = sh(ctx.cli, "scan-plugins", "--force", timeout=900, env=ctx.env)
     (ctx.out / "scan.txt").write_text(o)
     r.expect("scan finishes", rc == 0, f"{time.time() - t0:.0f} s: {o[:300]}")
+    diag = ctx.out / "scan-diagnosis"
+    diag.mkdir(exist_ok=True)
+    for path in re.findall(r"failed: (/.*?): ", o):
+        fmt = "vst3" if ".vst3" in path else "clap" if ".clap" in path else "vst2"
+        t1 = time.time()
+        env = dict(ctx.env, YABRIDGE_DEBUG_LEVEL="2")
+        rc2, o2 = sh(ctx.cli, "--scan-plugin", fmt, path, "--out", diag / "out.json", timeout=240, env=env)
+        name = re.sub(r"[^A-Za-z0-9.]+", "-", Path(path).name)
+        (diag / f"{fmt}-{name}.txt").write_text(f"exit {rc2} after {time.time() - t1:.1f} s\n" + o2[-200000:])
+        kill_hosts()
+        r.add(f"alone with a long limit: {Path(path).name}", "pass" if rc2 == 0 else "fail", f"exit {rc2} after {time.time() - t1:.1f} s: {o2[-160:]}")
     rc, o = sh(ctx.cli, "list-plugins", timeout=30, env=ctx.env)
     (ctx.out / "plugins.txt").write_text(o)
     rows = []
@@ -1222,7 +1293,7 @@ def main():
     ctx.env = dict(os.environ, GRIDLINE_CONFIG_HOME=str(cfg), XDG_CONFIG_HOME=str(cfg), GRIDLINE_NO_UPDATE_CHECK="1", SDL_AUDIODRIVER="dummy", GRIDLINE_NO_GSETTINGS="1")
     os.environ.update(ctx.env)
     ctx.prefix = os.environ.get("WINEPREFIX", str(Path.home() / ".wine"))
-    ctx.probe = Probe(ctx.prefix)
+    ctx.probe = Probe(ctx.prefix, out / "probe-log.txt")
     ctx.weston = a.display.startswith("weston")
     ctx.has_wm_tools = a.display in ("xvfb-openbox", "weston-x11")
     ctx.has_input = a.display != "weston-wayland"
@@ -1250,8 +1321,7 @@ def main():
         r.cell = {"format": fmt, "mode": "inproc", "plugin": "scan", "host": "gridline"}
         if not r.expect("the scan finds the bridged probe (instrument and effect)", bool(synth and fx), rows or "nothing in this format"):
             continue
-        entries = {"vst3": Path.home() / ".vst3/yabridge/GridlineProbe.vst3", "clap": Path.home() / ".clap/yabridge/GridlineProbe.clap", "vst2": Path.home() / ".vst/yabridge/GridlineProbeSynth.so"}
-        probes[fmt] = {"synth": synth["type"], "fx": fx["type"], "entry": entries[fmt]}
+        probes[fmt] = {"synth": synth["type"], "fx": fx["type"], "entry": PROBE_ENTRIES[fmt]}
 
     if a.display == "weston-wayland":
         # SDL on its Wayland driver: there is no X window to embed a bridged interface in.
@@ -1309,9 +1379,14 @@ def main():
 
     if a.control:
         script = Path(__file__).parent / "carla_control.py"
-        for fmt, types in probes.items():
+        for fmt in a.formats.split(","):
             try:
-                control_cell(ctx, r, fmt, types["entry"], script)
+                control_cell(ctx, r, fmt, PROBE_ENTRIES[fmt], script)
+            except Exception as e:
+                r.add("harness error", "fail", repr(e))
+        if a.real:
+            try:
+                control_real(ctx, r, Path.home() / ".vst3/yabridge/Dexed.vst3", script)
             except Exception as e:
                 r.add("harness error", "fail", repr(e))
     stop.set()

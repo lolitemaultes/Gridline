@@ -1,6 +1,5 @@
 // Gridline — Trio Synth "Reference" oscillators (J-65): the oscillator
-// section of the reference three-oscillator instrument, rebuilt from its
-// measured behaviour (sample by sample against the instrument run locally).
+// section of the reference three-oscillator instrument.
 //   Pitch: 32-bit phase accumulators; increment = round(2^(cents/1200) · base)
 //   with base = 2^32 · 523.2511 Hz / sample rate (the note's key + the
 //   oscillator's coarse / fine, in cents, relative to C5 — which sounds at

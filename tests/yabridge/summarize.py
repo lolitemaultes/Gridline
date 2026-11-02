@@ -84,6 +84,9 @@ def main():
             f.write(text[:900000])
     if a.json:
         Path(a.json).write_text(json.dumps(table, indent=1))
+    if not rows:
+        print("no results at all: the jobs did not get as far as testing")
+        return 1
     return 1 if unexplained else 0
 
 

@@ -1,6 +1,4 @@
-// Generated from measurements of the installed Serum 2 plugin: each VST3 parameter was
-// set to sample values and the plugin's saved state compared (black-box). Order = VST3
-// parameter order. law: 0 none (no state key), 1 lin a + b n, 2 pow a + (b - a) n^c,
+// Serum 2 parameter map, used to read its saved states. Order = VST3 parameter order. law: 0 none (no state key), 1 lin a + b n, 2 pow a + (b - a) n^c,
 // 3 stepped a + (b - a) q / steps, 4 enumeration token q of list `list`; quant: q =
 // 0 round(n steps), 1 floor(n (steps + 1)), 2 / 3 the same with n rounded to single precision.
 // clang-format off

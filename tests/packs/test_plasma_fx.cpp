@@ -1,8 +1,8 @@
 // Gridline — "plasma" pack tests: Serum 2 effect laws (J-203c). Synthetic
 // .SerumPreset files written by this test check the effect laws measured against
-// the hosted source synth: the EQ's Q laws, the source's own values for effect
+// the reference synth: the EQ's Q laws, the source's own values for effect
 // parameters a preset leaves unset, and the compressor's threshold, limiter and
-// makeup laws. Expected numbers are plain values measured on the source (each
+// makeup laws. Expected numbers are plain values measured on the reference (each
 // check says how); no Xfer content is used or shipped.
 #include <algorithm>
 #include <chrono>
@@ -868,7 +868,7 @@ int main() {
   }
 
   // ---- J-203q: delay, compressor and reverb pre-delay on the imported law. Expected numbers were measured on
-  // the hosted source with deterministic white noise (impulse responses by cross-spectrum) and held sines.
+  // the reference with deterministic white noise (impulse responses by cross-spectrum) and held sines.
   auto runSlot = [&](const PluginState& s, int type, std::vector<float>& L, std::vector<float>& R, double tempo = 120) {
     auto bank = pl::makeFxBank(s, nullptr, kSr);
     pl::FxContext c;

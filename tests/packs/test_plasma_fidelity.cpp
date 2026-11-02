@@ -1,9 +1,9 @@
 // Gridline — "plasma" pack tests: Serum 2 import fidelity (J-201). Synthetic
 // .SerumPreset files written by this test check the laws measured against the
-// hosted source synth: noise pitch and key tracking, built-in noise tone and
+// reference synth: noise pitch and key tracking, built-in noise tone and
 // levels, main tuning, Hz offset, the delay effect's times / mix / feedback,
 // arpeggiator rates and pattern timing, and clip players without an active
-// clip. Expected numbers are plain values measured on the source (each check
+// clip. Expected numbers are plain values measured on the reference (each check
 // says how); no Xfer content is used or shipped.
 #include <algorithm>
 #include <chrono>
@@ -336,7 +336,7 @@ int main() {
     expect(!span("Off", nullptr) && !span("Offset", nullptr), "unspanned clips play the keys through");
   }
 
-  // ---- J-203t: clip timing laws (all measured against the hosted source at 120 BPM)
+  // ---- J-203t: clip timing laws (all measured against the reference at 120 BPM)
   {
     PluginState st;
     pl::ImportReport rep;
@@ -536,7 +536,7 @@ int main() {
     expect(finite(render(st, 60, 0.2, 0.2)) && hot - leveled > 6.0, std::string("boost clips 8 dB higher than leveled (" + std::to_string(hot - leveled) + ")").c_str());
   }
 
-  // ---- LFO law (J-203i, measured on the source with LFO 1 on oscillator A's level, key 60):
+  // ---- LFO law (J-203i, measured on the reference with LFO 1 on oscillator A's level, key 60):
   // free rise / delay are seconds, synced ones snap to power-of-two beats (1 beat at 2.1, 1/4 at
   // 1.4, 16 at 3.1), the rise is a linear fade, smoothing is a one-pole of
   // 3.39 ms / (1 - smooth)^1.8 whatever the rate (50 %: 11.8 ms, 90 %: 227 ms)
@@ -610,7 +610,7 @@ int main() {
   }
 
   // ---- compressor makeup under modulation reads the source's knob, gain = 1 + 30.62 knob^2 (J-203i,
-  // measured on the source with the threshold at the top: macro routes of 25 / 50 / 75 % lift the
+  // measured on the reference with the threshold at the top: macro routes of 25 / 50 / 75 % lift the
   // output by 9.4 / 18.8 / 25.3 dB; a 50 % route equals a static makeup of 8.66)
   {
     auto compBody = [](double makeup, double amt) {
@@ -628,7 +628,7 @@ int main() {
            std::string("compressor makeup routes follow 1 + 30.62 knob^2 (" + std::to_string(l25 - l0) + " / " + std::to_string(l50 - l0) + " dB)").c_str());
   }
 
-  // ---- bus output 2 feeds the other bus (J-203i, measured on the source: oscillator A only into bus 1,
+  // ---- bus output 2 feeds the other bus (J-203i, measured on the reference: oscillator A only into bus 1,
   // H1 -14.9 dBFS to the main output, -8.9 through bus 2 at full volumes, -14.9 with either
   // volume at half: both bus volumes apply)
   {
@@ -707,7 +707,7 @@ int main() {
            std::string("a modulated attack time shapes the first attack (" + std::to_string(dip) + " / " + std::to_string(mid) + " dB)").c_str());
   }
 
-  // ---- shape segments bend on the source's segment law (J-203m, measured on the source: a 1 Hz
+  // ---- shape segments bend on the source's segment law (J-203m, measured on the reference: a 1 Hz
   // triangle LFO 1 on oscillator A's level with its rising segment bent 75 % sits 31.7 dB under the
   // straight one at 0.25..0.30 s; macro 1 at 50 through a drawn route curve bent 75 % sits 36.1 dB
   // under the straight curve; Env 1 with a 0.3 s attack at curve 80 and a 0.3 s decay to zero at

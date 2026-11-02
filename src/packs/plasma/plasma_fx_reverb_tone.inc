@@ -1,4 +1,4 @@
-// Gridline - "plasma" pack: reverb tone tables (J-203f). Measured on the import source: white noise
+// Gridline - "plasma" pack: reverb tone tables (J-203f). Measured on the reference: white noise
 // through each reverb type at mix 100, 1/3-octave transfer of a held note, fitted as ShelfEq gains (dB):
 // [0] the gain below 63 Hz, [k] the step at the shelf k (63 Hz * 2^(k-1)). Base: unset low / high cut;
 // low and high cut tables: the change against the base along each knob. Plasma's own numbers.

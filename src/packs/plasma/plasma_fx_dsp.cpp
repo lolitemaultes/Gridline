@@ -40,7 +40,7 @@ constexpr double kIrLevel = 0.125;
 constexpr double kCompThrOfs = 8.4, kCompAtkScale = 0.33;
 // multiband detector (J-203d): running-mean time constant (ms) and its reading offset (dB)
 constexpr double kMbRmsMs = 3.0, kMbOfsDb = 9.5;
-// hyper (J-203h, measured on the source with deterministic white noise, impulse responses per 21 ms window):
+// hyper (J-203h, measured on the reference with deterministic white noise, impulse responses per 21 ms window):
 // voices per side for UNISON 0..7, the voice gain, the wet path's 2-pole low cut, the LFO rate law
 constexpr int kHyperSide[8] = {0, 0, 1, 2, 3, 5, 5, 7};
 constexpr float kHyperVoice = 0.97f;
@@ -608,7 +608,7 @@ std::unique_ptr<FxBank> makeFxBank(const PluginState& s, const Aux* aux, double 
 }
 
 // J-203c: the values Serum 2 uses for module parameters a preset does not store, measured on the
-// source (a module with the parameter unset renders sample-identical to the module with this value).
+// reference (a module with the parameter unset renders sample-identical to the module with this value).
 bool fxSerumDefault(int type, int p, double& plain) {
   struct Def {
     int type;
@@ -656,7 +656,7 @@ bool fxSerumDefault(int type, int p, double& plain) {
 }
 
 namespace {
-// The delay on the imported law (fitted and verified against the hosted plugin's output):
+// The delay on the imported law (fitted and verified against the reference's output):
 // - free time 0.5 t^4 s (t = the TIME knob), synced 2^round(11 t) / 128 beats (1/128 beat .. 16 beats),
 //   either one times the MULT knob (x0.5 .. x1.5); LINK copies the left time to the right
 // - feedback equalised to the same decay per second on both sides (the longer side gets fb^(tR / tL))
@@ -665,7 +665,7 @@ namespace {
 //   Tap>Delay: the summed input runs through the left line into the filtered right loop, mono out
 // - HQ: the read time glides (22.7 ms time constant), cubic read; otherwise linear and jumps
 // - mix: m' = 0.5 - 0.5 cos(pi mix), wet m', dry 1 - m'^2
-// The chorus on the imported law (fitted and verified against the hosted plugin's output). The knobs are stored
+// The chorus on the imported law (fitted and verified against the reference's output). The knobs are stored
 // as their positions n:
 // - one triangle LFO (0 .. 0.5) read at four phases, 90 degrees apart: left pair 1, right pair 1, left pair 2,
 //   right pair 2; free at 20 n^4 Hz, synced locked to the song position (128 beats .. 1/8 beat per cycle)
@@ -829,7 +829,7 @@ void delayImported(FxUnit& u, const float* p, float* L, float* R, int n, const F
 }  // namespace
 
 namespace {
-// The single-band compressor on the imported law (fitted and verified against the hosted plugin's output):
+// The single-band compressor on the imported law (fitted and verified against the reference's output):
 // - peak detector max(|L|, |R|) in dB, threshold 20 log10((1 - t)^3) (t = THRESH)
 // - the level over the threshold is smoothed in dB: attack time constant half the ATTACK time, release the
 //   RELEASE time; the gain falls by (1 - 1 / ratio) dB per dB
@@ -904,7 +904,7 @@ void compImported(FxUnit& u, const float* p, float* L, float* R, int n) {
 }  // namespace
 
 namespace {
-// The distortion on the imported law (fitted and verified against the hosted plugin's output). Levels are in
+// The distortion on the imported law (fitted and verified against the reference's output). Levels are in
 // the source's units (Plasma's divided by kSrcUnit). Every mode but Overdrive and Downsample doubles its input
 // and shapes it four times oversampled (two half-band stages up and down); the dry is 7 samples late to match.
 // Mix: wet 0.25 m', dry 1 - m'^2 (m' = 0.5 - 0.5 cos(pi mix)), then LEVEL. The filter (pre or post) is a
@@ -1065,7 +1065,7 @@ void distImported(FxUnit& u, const float* p, float* L, float* R, int n, const Au
       for (int k = 0; k < stages; ++k) {
         double h[2];
         for (int ch = 0; ch < 2; ++ch) h[ch] = u.odHp[k][1].run(ch, u.odHp[k][0].run(ch, static_cast<float>(w[ch])));
-        // the linked detector reads the pair's magnitude (fitted and verified against the hosted plugin's output,
+        // the linked detector reads the pair's magnitude (fitted and verified against the reference's output,
         // held saw at mix 100, one stage: drive 40 / 50 / 60 / 75 % now within 0.3 / 0.5 / 0.4 / 0.4 dB, was
         // 0.7 / 1.3 / 1.1 / 0.8 dB with the larger channel alone)
         const double pk = std::sqrt(h[0] * h[0] + h[1] * h[1]);
@@ -1151,7 +1151,7 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
         distImported(u, p, L, R, n, aux, slot, out);
         break;
       }
-      // J-203d, measured on the source with held sines and saws (see plasma_fxdist_dsp.cpp for the
+      // J-203d, measured on the reference with held sines and saws (see plasma_fxdist_dsp.cpp for the
       // shapers): the module halves its output; the filter is a state-variable filter whose TYPE
       // knob fades low-pass -> band-pass (at 50 %, peak gain = Q) -> high-pass, cutoff on the voice
       // filter's law, Q = 0.71 e^(0.46 BW) (BW 0.075 / 1.95 / 7.5: Q 0.73 / 1.71 / 23); downsample
@@ -1182,7 +1182,7 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
       const float wetG = static_cast<float>(std::pow(std::sin(1.5707963267948966 * wet), 2.0)), dryG = 1.f - wetG * wetG;
       const float odGain = static_cast<float>(0.68 * std::pow(74.0, static_cast<double>(drive)));
       constexpr float kFull = 1.657f;  // the source's full scale in Plasma's units (where its clippers sit)
-      // X-Shaper (J-203k, fitted and verified against the hosted plugin's output with drawn straight and bent
+      // X-Shaper (J-203k, fitted and verified against the reference's output with drawn straight and bent
       // curves at drive 0 / 50 / 100 %): the drive crossfades from the first curve (drive 0) to the second
       // (drive 100), it is not a gain. The symmetric mode reads the curve over the input's magnitude (0..1 of
       // full scale) and keeps the sign: the curve C is read at the square root of the magnitude and squared,
@@ -1246,7 +1246,7 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
       const float depth = static_cast<float>(type == FxChorus ? P("kParamDepth") : P("kParamDepth") / 100.0);
       const float fb = static_cast<float>(P("kParamFeedback") / 100.0);
       const double phOff = (type == FxChorus ? 90.0 : P("kParamWidth")) / 360.0;
-      // J-203d, measured on the source with a held saw and the modulation stopped (depth 0): all three share one
+      // J-203d, measured on the reference with a held saw and the modulation stopped (depth 0): all three share one
       // mix law. With v = the mix (chorus) or half the mix (flanger, phaser) and x = 3v^2 - 2v^3, the output is
       // (1 - x^2) * dry + x * wet: chorus mix 25 / 50 / 75 / 100 gives dry 0.98 / 0.75 / 0.27 / 0 and wet
       // 0.15 / 0.5 / 0.85 / 1; flanger and phaser at mix 100 give dry 0.75 and wet 0.5, at 50 dry 0.98, wet 0.15
@@ -1388,7 +1388,7 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
         else compImported(u, p, L, R, n);
         break;
       }
-      // J-203c, measured on the source with a saw at -18.8 dB RMS: the limited level is 60 log10(1 - t)
+      // J-203c, measured on the reference with a saw at -18.8 dB RMS: the limited level is 60 log10(1 - t)
       // - 2.1 dB RMS (-26.1 / -38.1 / -62.0 at t = 0.6 / 0.75 / 0.9) and bottoms out near -122 at t = 1.
       // Against this detector (peak, gain smoothed in dB) that is a threshold of 60 log10(1 - t) + 8.4.
       // Release time constant = release / 4. Ratios from 100 up act as a limiter that catches at once.
@@ -1430,7 +1430,7 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
           u.gr[0] = g;
         }
       } else {
-        // J-203d, measured on the source with a held 32.7 Hz sine (deep in the low band; levels are sine RMS
+        // J-203d, measured on the reference with a held 32.7 Hz sine (deep in the low band; levels are sine RMS
         // in dB of the source's output, Plasma's units read 9.04 dB higher). Downward threshold T vs t:
         // -11.8 / -24.9 / -37.2 / -51.7 / -79.4 / -111.5 at 0.25 / 0.4 / 0.5 / 0.6 / 0.75 / 0.9, piecewise
         // linear in log10(1 - t). Above T the gain falls by r (1 - 1/G) dB per dB (G = global ratio: 1.5 /
@@ -1535,7 +1535,7 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
         reverbImported(u, p, L, R, n, c, out);
         break;
       }
-      // J-203c: the decay of each type follows tables measured on the source (Schroeder RT60 in the
+      // J-203c: the decay of each type follows tables measured on the reference (Schroeder RT60 in the
       // 125 Hz / 1 kHz / 8 kHz octaves of a held note's tail; wet 100, other values at their defaults).
       // Which knobs set the decay depends on the type: Plate = size (feedback darkens the tail), Hall =
       // size and the delay knob, Vintage = size, the A diffusion and the delay knob, Abyss = size and
@@ -1632,7 +1632,7 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
         }
       }
       if (N("glLaw") >= 0.5) {
-        // imported law (verified against the hosted plugin's output): every type has the pre-delay, free
+        // imported law (verified against the reference's output): every type has the pre-delay, free
         // 2.5 p^5 s, synced 1/96 .. 6 beats in steps x1, x4/3, x3/2, x2 per octave (p = the PRE-DLY knob)
         const double pd = std::clamp(N("kParamPreDelay"), 0.0, 1.0);
         if (N("kParamPreDelayBeatSync") >= 0.5) {
@@ -1736,7 +1736,7 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
     case FxEq: {
       static const int k1[3] = {0, 1, 3}, k2[3] = {2, 1, 4};
       const int t1 = std::clamp(static_cast<int>(P("kParamType1")), 0, 2), t2 = std::clamp(static_cast<int>(P("kParamType2")), 0, 2);
-      // J-203c: Q = 0.1 + 18.9 * (reso / 100)^4 (measured on the source: the low-pass gain at the
+      // J-203c: Q = 0.1 + 18.9 * (reso / 100)^4 (measured on the reference: the low-pass gain at the
       // cutoff is -20.0 / -17.7 / -4.7 / 8.1 / 17.9 / 25.6 dB at reso 0 / 20 / 40 / 60 / 80 / 100)
       // The shelves: Q = 0.4 + 1.73 * (reso / 100)^3 (shelf shapes matched at reso 0 / 25 / 50 / 75 / 90 / 100).
       auto eqQ = [](double reso, bool shelf) {
@@ -1776,7 +1776,7 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
       break;
     }
     case FxHyper: {
-      // J-203h, measured on the source (deterministic white noise in, impulse responses per 21 ms window):
+      // J-203h, measured on the reference (deterministic white noise in, impulse responses per 21 ms window):
       // - each side carries its own voices (UNISON 1..7: 0 / 1 / 2 / 3 / 5 / 5 / 7 per side), each a plain
       //   delay read with a linear tap at gain 0.97; the voices' sum passes a 2-pole low cut (253 Hz, Q 0.75:
       //   the negative tail after every tap) and is not normalised (unison 4, detune 0: +10 dB near 500 Hz)
@@ -1819,7 +1819,7 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
           l = L[i] * gD + u.hyHp.run(0, hs[0]) * gW;
           r = R[i] * gD + u.hyHp.run(1, hs[1]) * gW;
         }
-        // dimension, measured on the source (held saw, impulse response from the harmonic transfer): the mid
+        // dimension, measured on the reference (held saw, impulse response from the harmonic transfer): the mid
         // passes untouched and a side is added, 0.465 * mix * (x(t - A) - x(t - B)) on the left and its
         // negative on the right, with A = 15.0 + 100 * size and B = 20.9 + 16.9 * size ms (size 0 / 50 / 100:
         // A 15.0 / 65.0 / 115.0, B 20.9 / 29.4 / 37.8 ms). Sine at key 60, size 50: left +4.5, right -4.6 dB.
@@ -1869,7 +1869,7 @@ void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, c
           u.hb[ch].run(x, I, Q);
           float up = I * cs + Q * sn, down = I * cs - Q * sn;
           if (swap) std::swap(up, down);
-          // J-203d, measured on the source with a held sine: the left side carries the down shift and
+          // J-203d, measured on the reference with a held sine: the left side carries the down shift and
           // the right the up shift; DIR m moves the left towards up (m > 0) or the right towards down
           // (m < 0), so m = 0.5 gives left = half down + half up, right = up
           const float o = ch == 0 ? (mixUD >= 0 ? down * (1 - mixUD) + up * mixUD : down) : (mixUD >= 0 ? up : up * (1 + mixUD) - down * mixUD);

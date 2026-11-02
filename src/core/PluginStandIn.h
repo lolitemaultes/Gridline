@@ -1,5 +1,5 @@
 // Gridline: built-in stand-ins for a few third-party plugins that are not
-// installed (user decision, see AGENTS.md). Serum and Serum 2 open as Plasma
+// installed. Serum and Serum 2 open as Plasma
 // ("gl.plasma"), Kickstart and Kickstart 2 as Tideline ("gl.tideline"), and
 // the Kilohearts single effects as their Gridline Suite Mini counterparts
 // (packs/mini/mini_khs.h: one table of identifiers and parameter mappings).

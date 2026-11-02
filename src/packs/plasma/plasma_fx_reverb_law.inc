@@ -1,5 +1,5 @@
 // Plasma reverb, the imported law: the five reverb models of the source (fitted and verified against the
-// hosted plugin's output). Included by plasma_fx_dsp.cpp inside its anonymous namespace, after FxUnit.
+// reference's output). Included by plasma_fx_dsp.cpp inside its anonymous namespace, after FxUnit.
 // The knobs are read as their positions n (0..1); what each knob does depends on the type:
 //   Plate   SIZE length and feedback, DECAY (Feedback) comb damping, LO CUT / HI CUT the input tone, WIDTH
 //   Hall    SIZE all times, TAIL (Delay) the decay time, DECAY (Feedback) the modulation rate, WIDTH its depth

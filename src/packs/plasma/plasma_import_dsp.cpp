@@ -1255,7 +1255,7 @@ struct Importer {
       const Json* sp = plain(sub);
       // a spectral oscillator plays its sample's analysed pitch (the stored base note) at that key,
       // where Plasma's spectral oscillator plays the sample's own pitch at key 60 (measured against
-      // the hosted plugin: a sample stored with base note 72 sounds an octave lower at key 60)
+      // the reference: a sample stored with base note 72 sounds an octave lower at key 60)
       if (double bn = 0; type == OscSpectral && sub && num(sub, "baseNote", bn) && bn >= 0 && bn <= 127)
         set(oscP(i, O_Coarse), static_cast<double>(st.params[static_cast<size_t>(oscP(i, O_Coarse))]) + 60.0 - bn);
       for (int k = 0; k < 5; ++k)  // the other source types' settings are not heard
@@ -1396,7 +1396,7 @@ struct Importer {
       const Json* sub = n->find("NoiseOsc3");
       const Json* sp = plain(sub);
       // The noise "pitch" knob (stored as kParamColor, 0..1, 0.5 = the sample's own
-      // rate) is a playback-rate control, measured on the source (J-201): without key
+      // rate) is a playback-rate control, measured on the reference (J-201): without key
       // tracking +96 semitones per unit above the centre and 384 below it (the lower
       // half drops to near-silent rumble); with key tracking a plain 128 semitone
       // span, with the sample's original rate at MIDI key 72 for the usual
@@ -1532,7 +1532,7 @@ struct Importer {
         static const char* const k[] = {"kRoutingDestFilter", "kRoutingDestMaster", "kRoutingDestDirect", "kRoutingDestNone"};
         set(routeP(r, R_Dest), std::max(0, indexOf(k, 4, s)));
       }
-      // measured on the hosted source: a route with "via Env 1" off keeps a steady level through
+      // measured on the reference: a route with "via Env 1" off keeps a steady level through
       // a decaying ENV 1 (direct and bus outputs), and still ends with the note
       double v;
       if (num(pp, "kParamViaEnv1", v)) set(tailP(T_RawA + r), v < 0.5 ? 1.0 : 0.0);
@@ -1540,7 +1540,7 @@ struct Importer {
   }
   void envLfoMacros(const Json& o) {
     // a preset stores only the values that differ from the source's own defaults, which are not
-    // Plasma's (J-203a, read from the hosted source's parameter defaults and checked by a save
+    // Plasma's (J-203a, read from the reference's parameter defaults and checked by a save
     // round trip): every curve 60, except the attack curve of envelopes 2-4 at 40; their attack is
     // 0.5 ms (envelope 1: 1 ms). Its curves bend on its own law (T_EnvLaw).
     set(tailP(T_EnvLaw), 1.0);
@@ -1579,7 +1579,7 @@ struct Importer {
       num(pp, "kParamBeatSync", bs);
       for (const char* key : {"kParamRise", "kParamDelay"})
         if (num(pp, key, v)) {
-          // J-203i (measured on the hosted source): on a free LFO the value is seconds; on a synced
+          // J-203i (measured on the reference): on a free LFO the value is seconds; on a synced
           // one it snaps to a power-of-two beat count, about 2^round(3.33 (v - 2.1)); the measured
           // steps (1/8 -> 1/4 beat at 1.32, then 1.65, 1.95, 2.22, 2.55, 2.85, 8 -> 16 at 3.05) are
           // used where they were measured. Plasma's imported LFO law reads 16 x^2.
@@ -1658,7 +1658,7 @@ struct Importer {
     if (num(pp, "kParamMasterVolume", v)) set(G_MasterVol, std::sqrt(std::max(0.0, v)));
     if (num(pp, "kParamMasterTuning", v)) {
       // J-201: the source stores its main tuning as 0..1 = -64..+64 semitones (measured against the
-      // hosted source: 0.25 -> -32 st, 0.75 -> +32 st, 1 -> +64 st). Whole semitones go to Transpose.
+      // reference: 0.25 -> -32 st, 0.75 -> +32 st, 1 -> +64 st). Whole semitones go to Transpose.
       const double semis = 128.0 * (v - 0.5);
       const double whole = std::round(semis);
       masterTuneSemis = whole;
@@ -1690,12 +1690,12 @@ struct Importer {
     if (num(pp, "kParamDirectVol", v)) set(G_DirectVol, std::sqrt(std::max(0.0, v) / 2.0));
     if (num(pp, "kParamFXBus1Vol", v)) set(G_Bus1Vol, std::sqrt(std::max(0.0, v) / 2.0));
     if (num(pp, "kParamFXBus2Vol", v)) set(G_Bus2Vol, std::sqrt(std::max(0.0, v) / 2.0));
-    // J-203h, measured on the source (a bus with a clipper on the main rack): bus output 0 runs through the
+    // J-203h, measured on the reference (a bus with a clipper on the main rack): bus output 0 runs through the
     // main rack, 1 is the direct out (skips it), 2 feeds the other bus (no counterpart yet: main, its usual way)
     if (num(pp, "kParamFXBus1Dest", v)) set(G_Bus1Dest, v >= 0.5 && v < 1.5 ? 1 : 0);
     if (num(pp, "kParamFXBus2Dest", v)) set(G_Bus2Dest, v >= 0.5 && v < 1.5 ? 1 : 0);
     // output 2 = the other bus: Plasma's bus chain (one direction; when both buses name each
-    // other, bus 2 feeds bus 1 and bus 1's return is dropped, as the hosted plugin plays it)
+    // other, bus 2 feeds bus 1 and bus 1's return is dropped, as the reference plays it)
     double d1 = 0, d2 = 0;
     num(pp, "kParamFXBus1Dest", d1), num(pp, "kParamFXBus2Dest", d2);
     set(tailP(T_BusChain), d1 >= 1.5 && d2 >= 1.5 ? 3.0 : d1 >= 1.5 ? 1.0 : d2 >= 1.5 ? 2.0 : 0.0);
@@ -1737,8 +1737,7 @@ struct Importer {
     }
     if (num(vp, "kParamGlobalRandomFilterCutoff", v)) set(G_RndCutoff, v / 100.0);
     if (num(vp, "kParamGlobalRandomEnvTime", v)) set(G_RndEnv, v / 100.0);
-    // time scaling: 100 % is neutral and the times scale in proportion (measured against the hosted
-    // plugin: 50 % halves an envelope decay and doubles an LFO's rate, 25 % quarters the decay)
+    // time scaling: 100 % is neutral and the times scale in proportion (measured against the reference: 50 % halves an envelope decay and doubles an LFO's rate, 25 % quarters the decay)
     if (num(vp, "kParamGlobalScalingEnvTime", v)) set(G_EnvScale, std::max(0.1, v / 100.0));
     if (num(vp, "kParamGlobalScalingLfoTime", v)) set(G_LfoScale, std::max(0.1, v / 100.0));
     const char* chips[] = {"kParamOscS", "kParamOscA", "kParamOscB", "kParamOscC", "kParamOscN"};
@@ -1817,7 +1816,7 @@ struct Importer {
       }
     }
   }
-  // The source's delay times (fitted against the hosted plugin's output): TIME L / R store 0.001 + 0.5 t^4 for
+  // The source's delay times (fitted against the reference's output): TIME L / R store 0.001 + 0.5 t^4 for
   // the knob position t, free (seconds) and synced (2^round(11 t) / 128 beats) alike; unset 0.075 free / 0.08
   // synced. LINK uses TIME R for both sides. The imported law (glLaw) reads the knob position.
   void delayTimes(int slot, const Json* pp) {
@@ -1983,7 +1982,7 @@ struct Importer {
         if (!fl || fl->type != Json::Type::Array) continue;
         FxExtra& ex = m.fxExtra[static_cast<size_t>(it->second)];
         // the X-Shaper's curves bend the other way from the source's other curves (J-203k, fitted against the
-        // hosted plugin's output with bent curves): flip the tension
+        // reference's output with bent curves): flip the tension
         auto bent = [](Curve cv) {
           for (CurvePt& q : cv) q.c = -q.c;
           return cv;

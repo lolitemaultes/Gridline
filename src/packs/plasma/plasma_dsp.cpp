@@ -63,7 +63,7 @@ std::map<std::string, std::weak_ptr<const Aux>>& auxCache() {
 // Imported segment bend (LFO law): the bend control c (-1..1) picks one of 256 shapes; shape value
 // q = 1 - k / 255 sets s = 4 q^3 (q <= 0.5) or 1 - 4 (1 - q)^3, r = (s / (1 - s))^2 and
 // y(t) = (1 - r^t) / (1 - r). It bends much harder than Plasma's own law and the other way
-// round (fitted and verified against the hosted plugin's output: a 1 Hz triangle LFO on a level
+// round (fitted and verified against the reference's output: a 1 Hz triangle LFO on a level
 // with its rising segment at 75 % sits 31.7 dB under the straight one a quarter of the way up).
 double bankBend(double t, double c) {
   t = std::clamp(t, 0.0, 1.0);
@@ -256,7 +256,7 @@ constexpr int kCtl = 16;             // control period (base-rate samples)
 constexpr int kVoices = kMaxVoices + 8;  // extra slots for voices fading out after a steal
 constexpr int kMaxOs = 4;
 
-// Alternating unison mix (J-201, measured per voice on held notes against the import source):
+// Alternating unison mix (J-201, measured per voice on held notes against the reference):
 // level per channel against a single voice, by blend in 0.1 steps, before the voice-count
 // level. The centre voice fades as the blend rises; the side voices rise from silence and
 // overtake it above about 0.6 blend.
@@ -317,13 +317,13 @@ struct EnvSet {
   bool steep;  // the source's curve law (T_EnvLaw)
 };
 // Stage curve constant from a curve knob (0..100, 50 = straight). Plasma's own law is k = 8 c (c = -1..1).
-// J-203a, measured on the source (0.3 s attack, decay to zero and release, curves 0..100 in steps of
+// J-203a, measured on the reference (0.3 s attack, decay to zero and release, curves 0..100 in steps of
 // 10, fitted with the same exponential stage shape): k = 9.5 atanh(c) for all three stages (fitted
 // k at curve 60 / 70 / 80 / 90: 2.0 / 4.0 / 6.5 / 10.3; at 40 / 30 / 20 / 10: -2.2 / -4.2 / -6.7 / -10.9;
 // at the ends about +-40 to 50, nearly a step). Its knob default is 60, not Plasma's 66.6.
 // J-203m: the source's stage shape is the segment bend family: with q = curve / 100,
 // s = 4 q^3 (q <= 0.5) or 1 - 4 (1 - q)^3 and k = 2 ln(s / (1 - s)) (within 0.3 of the 9.5 atanh fit
-// over 60..90, steeper at the ends; verified against the hosted plugin's output).
+// over 60..90, steeper at the ends; verified against the reference's output).
 inline double stageK(double curve, bool steep) {
   const double c = (curve - 50) / 50.0;
   if (!steep) return c * 8.0;
@@ -361,8 +361,7 @@ void envStage(EnvState& e, int stage, const EnvSet& p, double srv) {
   }
 }
 // A stage time that changes during the stage (modulation) keeps the level: the stage continues
-// from the same point of its curve at the new rate (fitted and verified against the hosted
-// plugin's output with a macro on the attack time).
+// from the same point of its curve at the new rate (fitted and verified against the reference's output with a macro on the attack time).
 inline void envRetime(EnvState& e, const EnvSet& p, double srv) {
   double time;
   switch (e.stage) {
@@ -758,7 +757,7 @@ class PlasmaGen final : public Generator {
     return false;
   }
   // the compressor's makeup gain: the source's knob reads 1 + 30.62 knob^2 (fitted and verified
-  // against the hosted plugin's output under modulation)
+  // against the reference's output under modulation)
   bool squareKnob(int dst) const {
     if (dst < kFxBase || dst >= kFxBase + kFxSlots * X_Count) return false;
     const int s = (dst - kFxBase) / X_Count, p = (dst - kFxBase) % X_Count - X_P0;
@@ -1079,8 +1078,7 @@ class PlasmaGen final : public Generator {
     Note* n = allocate(key, vel);
     if (!n) return;
     // Imported voice law: a stolen voice is taken over in place, without a fade; its envelopes
-    // start their attack from the level they had (fitted and verified against the hosted
-    // plugin's output on a mono preset retriggered in its release)
+    // start their attack from the level they had (fitted and verified against the reference's output on a mono preset retriggered in its release)
     Note* prev = modLaw_ && takeover_ && takeover_ != n ? takeover_ : nullptr;
     const double from = lastPitch_;
     n->active = true;
@@ -1132,7 +1130,7 @@ class PlasmaGen final : public Generator {
     n->f2->reset();
     // the note starts with its modulation in place: the matrix runs once on the note's own
     // sources (LFOs at their start) before the envelopes and oscillators take their settings
-    // (measured on the hosted plugin: a macro on the amp attack time sets the first attack)
+    // (measured on the reference: a macro on the amp attack time sets the first attack)
     for (int l = 0; l < kLfos; ++l)
       if (G(lfoP(l, L_Mono)) < 0.5f) startLfo(*n, l), stepLfo(n, n->lfo[l], l, 0.0, true, false);
     for (auto& e : n->env)
@@ -1335,7 +1333,7 @@ class PlasmaGen final : public Generator {
     if (modLaw_) return sgn * static_cast<float>(sourceCurve(std::fabs(v), b));
     return sgn * static_cast<float>(bendCurve(std::fabs(v), b));
   }
-  // Imported matrix law (J-203g, measured on the source with a macro route to a level, curves
+  // Imported matrix law (J-203g, measured on the reference with a macro route to a level, curves
   // -100..100 at inputs 0.1..0.9): an exponential bend, y = (e^(a x) - 1) / (e^a - 1) with
   // a = 10 atanh(|c|) for c < 0 (c = -0.5: 0.013 at 0.25, 0.063 at 0.5, 0.255 at 0.75), mirrored
   // (y = 1 - f(1 - x)) for c > 0
@@ -1400,7 +1398,7 @@ class PlasmaGen final : public Generator {
     // point modulation: copy, move, evaluate. Each link offsets its point from the stored shape
     // (two links on one point and axis do not add up; the later one wins); X moves stay between
     // the neighbours as already moved, the first point's X moves twice as far, and the closing
-    // point shares the first point's Y. Fitted and verified against the hosted plugin's output.
+    // point shares the first point's Y. Fitted and verified against the reference's output.
     CurvePt tmp[128];
     const int cnt = std::min(128, static_cast<int>(pts->size()));
     for (int i = 0; i < cnt; ++i) tmp[i] = (*pts)[static_cast<size_t>(i)];
@@ -1609,7 +1607,7 @@ class PlasmaGen final : public Generator {
   // ---------------------------------------------------------------- oscillator settings
   // main tuning in semitones (the cents knob; Transpose holds the whole semitones). Imported matrix
   // law: a route moves the source's main tuning knob, which spans -64..+64 semitones, and the sum
-  // stops at the ends of that range (fitted and verified against the hosted plugin's output: a fixed
+  // stops at the ends of that range (fitted and verified against the reference's output: a fixed
   // source at -18.75 % plays two octaves down, 3 % plays 3.84 semitones up, 30 % on +32 stops at +64)
   double tuneSemis(const Note& n) const {
     const double cents = G(G_MasterTune) / 100.0;
@@ -1765,8 +1763,7 @@ class PlasmaGen final : public Generator {
     }
     float norm = altMix && U > 1 ? 1.f : gsum > 0 ? 1.f / std::sqrt(gsum) : 1.f;
     // mapped law: a multisample's unison voices skip the stack's level drop, so two voices play
-    // 6.7 dB and sixteen 10.2 dB over a wavetable's stack (fitted and verified against the hosted
-    // plugin's output on three maps, any blend or velocity)
+    // 6.7 dB and sixteen 10.2 dB over a wavetable's stack (fitted and verified against the reference's output on three maps, any blend or velocity)
     if (U > 1 && s.type == OscMultisample && G(tailP(T_MsLaw)) >= 0.5f) norm *= std::pow(10.f, (6.2f + 0.25f * static_cast<float>(U)) / 20.f);
     for (int u = 0; u < U; ++u) s.pl[u] *= norm, s.pr[u] *= norm;
     s.wtPos = V(&n, oscP(o, O_WtPos));
@@ -1892,8 +1889,7 @@ class PlasmaGen final : public Generator {
       const float kmin = std::round(V(&n, tailP(T_NKeyMin))), kmax = std::round(V(&n, tailP(T_NKeyMax)));
       if (static_cast<float>(n.key) < kmin || static_cast<float>(n.key) > kmax) {
         if (V(&n, tailP(T_NKeyFold)) >= 0.5f && kmax >= kmin) {
-          // the key wraps into the range, its width in keys at a time (measured against the hosted
-          // plugin: range 60..72, key 36 plays as 62, 48 as 61, 84 as 71)
+          // the key wraps into the range, its width in keys at a time (measured against the reference: range 60..72, key 36 plays as 62, 48 as 61, 84 as 71)
           const int lo = static_cast<int>(kmin), width = static_cast<int>(kmax - kmin) + 1;
           const int d = ((n.key - lo) % width + width) % width;
           nFold = static_cast<double>(lo + d - n.key);
@@ -1918,8 +1914,7 @@ class PlasmaGen final : public Generator {
     const bool nLaw = G(tailP(T_NoiseLaw)) >= 0.5f;  // J-215: the imported noise pitch law
     const double nRoot = c.nfile && !nLaw ? c.nfile->sampleRate : 44100.0;
     // J-215: a key-tracking noise follows the played pitch like the oscillators do: glide, the fold
-    // of its key range, the pitch wheel and the main tuning's cents (measured against the hosted
-    // plugin's output); a fixed noise ignores all of them
+    // of its key range, the pitch wheel and the main tuning's cents (measured against the reference's output); a fixed noise ignores all of them
     const bool nTrack = V(&n, noiseP(N_PitchTrack)) >= 0.5f;
     double nPitch;
     if (nTrack || !nLaw) {

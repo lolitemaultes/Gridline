@@ -1,5 +1,5 @@
 // Gridline — "plasma" pack tests: matched filter voicing (J-203b). With the drive mode on Boost
-// (what every Serum import sets) Plasma's filter types follow laws measured on the hosted source
+// (what every Serum import sets) Plasma's filter types follow laws measured on the reference
 // synth. Each expected row below is the source's transfer, in dB, of white noise routed through the
 // filter, averaged over 1/6-octave bands (centre 25 Hz * 2^(b/6), band +-1/12 octave), 4 s render at
 // key 60, drive 0, filter-on power over filter-off power. Values are plain numbers read off those
@@ -260,7 +260,7 @@ int main() {
     expect(std::fabs(s0 - 65.9) < 3.0 && std::fabs(s25 - 8.1) < 1.5, "matched stereo spread follows the source");
   }
 
-  // ---- distorting types (J-203k), fitted and verified against the hosted source's output. Source numbers:
+  // ---- distorting types (J-203k), fitted and verified against the reference's output. Source numbers:
   // white noise through the voice filter (4 s, key 60, drive 0, cutoff 0.5 = 426 Hz) relative to the filter
   // off, and held saws for the sample and hold / ring mod frequencies.
   {

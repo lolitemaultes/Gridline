@@ -33,6 +33,7 @@ env:
   YABRIDGE_SHA256: d11f0307412b5566b09a75ed4aa191266db56d22f4de4d20e4fbde6296cd1a47
   DEXED_SHA256: 4773150a3dfa281d1caef583f493a41ed99ea95b054b5a3479780799ed6279cc
   SURGE_SHA256: 564e162c560af07ad4ed47fe1bfcd827cf97a575de30d06c48249aad2e7c35e6
+  DPF_SHA256: fdc609e0936e9c999395b9ddd98a9a72739cb672d8838ab71849469aee50ad98
 
 jobs:
   build:
@@ -113,7 +114,7 @@ jobs:
           curl -fsSL -o dl/DPF-Plugins-v1.7-win64.zip https://github.com/DISTRHO/DPF-Plugins/releases/download/v1.7/DPF-Plugins-v1.7-win64.zip
           echo "${DEXED_SHA256}  dl/Dexed-1.1.0-win.zip" | sha256sum -c -
           echo "${SURGE_SHA256}  dl/surge-xt-win64-1.3.4-pluginsonly.zip" | sha256sum -c -
-          sha256sum dl/DPF-Plugins-v1.7-win64.zip
+          echo "${DPF_SHA256}  dl/DPF-Plugins-v1.7-win64.zip" | sha256sum -c -
       - name: Test
         run: |
           args=(--formats "${{ matrix.formats }}" --modes "${{ matrix.modes }}")
@@ -144,8 +145,14 @@ jobs:
         with:
           pattern: results-*
           path: all
+      # This job fails on any failure known_limits.json does not explain, and when a test job stopped
+      # early, so that a failed check shows as a failed run.
       - name: The table
         run: python3 tests/yabridge/summarize.py all --summary "$GITHUB_STEP_SUMMARY" --json results-table.json
+      - name: Every test job finished
+        env:
+          TEST_RESULT: ${{ needs.test.result }}
+        run: test "$TEST_RESULT" = success
       - uses: actions/upload-artifact@v4
         if: always()
         with:

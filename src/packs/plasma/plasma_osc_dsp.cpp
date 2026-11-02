@@ -16,7 +16,7 @@ float fxDistTable(int mode, float drive, float x);  // plasma_fxdist_dsp.cpp
 namespace {
 // Imported law for the waveshaper warps (19..32): the distortion module's shaper with the warp
 // amount as its drive, on the oscillator's full scale and without the module's output halving.
-// The shaper runs at every amount, 0 included (fitted and verified against the hosted plugin's
+// The shaper runs at every amount, 0 included (fitted and verified against the reference's
 // output on the saw at key 48: Sine Shaper at 0 lifts H1 by 1.7 dB, Tube at 100 % gives H1 +5.8,
 // H3 -4.1, H5 -8.9 dB re. the clean H1).
 constexpr float kWarpFull = 1.657f;
@@ -102,7 +102,7 @@ void OscVoice::start(const OscSet& s, float phase, float randPhase, float randSt
   lastMono_ = 0;
   for (int u = 0; u < kMaxUnison; ++u) {
     // imported law: the random phase spreads evenly around the start phase over the amount squared
-    // (fitted and verified against the hosted plugin's output: one note's offset grows 0.0032 /
+    // (fitted and verified against the reference's output: one note's offset grows 0.0032 /
     // 0.0128 / 0.051 cycle at 25 / 50 / 100 %; offsets over 20 notes at 100 % cover -0.39..+0.49)
     const float rp = s.law ? randPhase * randPhase * (rngUni(rng_) - 0.5f) : randPhase * rngUni(rng_);
     phase_[u] = (phaseMode > 0 && memory) ? memory[u] : frac(static_cast<double>(phase) + rp);
@@ -289,7 +289,7 @@ float OscVoice::wavetableSample(const OscSet& s, int u, double& ph, double inc, 
       }
       default:
         if (s.law && m >= 33 && m <= 50) {
-          // J-203g, measured on the source (sine carrier and modulator, harmonic levels fitted with a
+          // J-203g, measured on the reference (sine carrier and modulator, harmonic levels fitted with a
           // linear FM model, keys 60 / 72, modulator an octave up or down; drift of the carrier with
           // pulse modulators of known mean): FM adds a deviation of 88.2 kHz * a^4 times the modulator's
           // output (its DC included) at any pitch. The exponential and linear variants measured the
@@ -401,7 +401,7 @@ float OscVoice::wavetableSample(const OscSet& s, int u, double& ph, double inc, 
 }
 
 // ------------------------------------------------------------------ sample / multisample
-// J-203a, measured on the source's multisample oscillator (single-region maps, key 60):
+// J-203a, measured on the reference's multisample oscillator (single-region maps, key 60):
 // - it plays 9.07 dB above its sample oscillator with the same file (two files, 9.06 / 9.1 dB);
 // - velocity: gain dB = amp_veltrack * 40 log10(velocity) (vel 0.5: -11.9 dB at 100 %, -6.0 at 50 %,
 //   -4.2 at 35 %, 0 at 0 %); amp_velcurve_N points are not used;
@@ -637,7 +637,7 @@ void OscVoice::spectralHop(const OscSet& s) {
   int count = 0;
   const SpecSrc* sp = s.src ? s.src->spec.get() : nullptr;
   // imported law: a stereo sample resynthesises each channel from its own magnitudes, the right
-  // channel keeping its phase lead over the left (fitted and verified against the hosted plugin's
+  // channel keeping its phase lead over the left (fitted and verified against the reference's
   // output: a stereo piano sample plays 2..14 dB of side signal where the mono sum played none)
   const bool stereo = s.law && sp && !sp->magL.empty();
   if (sp && sp->frames > 0) {
@@ -801,7 +801,7 @@ void OscVoice::spectralHop(const OscSet& s) {
   const float hi = s.sHi >= 1.f ? static_cast<float>(s.srv) : std::max(lo + 1.f, static_cast<float>(cutoffHz(s.sHi)));
   const float cut = s.sCut;
   // imported: the band limits apply to the sample's own frequencies, so they follow the key (measured
-  // against the hosted plugin: a 387 Hz low limit leaves a piano sample untouched at its base note and
+  // against the reference: a 387 Hz low limit leaves a piano sample untouched at its base note and
   // three octaves below, a 2 kHz limit takes the same 41 dB off at both)
   const float bandScale = sp && s.law ? static_cast<float>(std::exp2((60.0 - s.pitch) / 12.0)) : 1.f;
   for (int u = 0; u < U; ++u) {
@@ -827,7 +827,7 @@ void OscVoice::spectralHop(const OscSet& s) {
       const float fr = bin - static_cast<float>(b0);
       // imported law: the frame is referenced to its centre, so neighbouring bins alternate in sign;
       // a partial between two bins then keeps its level instead of cancelling under the window
-      // (fitted and verified against the hosted plugin's output: the level stays within 3 dB from
+      // (fitted and verified against the reference's output: the level stays within 3 dB from
       // three octaves below to two above the sample's own pitch, where same-sign bins moved it 9 dB)
       const float sg0 = s.law && (b0 & 1) ? -1.f : 1.f, sg1 = s.law ? -sg0 : sg0;
       const cpx c = std::polar(a, ph[i]) * sg0;
@@ -1002,7 +1002,7 @@ float SubVoice::tick(int shape, double inc, bool law) {
     return 0.0;
   };
   if (law) {
-    // Imported shapes (fitted and verified against the hosted plugin's output, per harmonic):
+    // Imported shapes (fitted and verified against the reference's output, per harmonic):
     // the sine and round rect start downward (the round rect plays as a sine), the triangle starts
     // at zero going down at the sine's loudness, the saw is 1.14x with a -0.105 offset, the square
     // is 0.68x starting low, the pulse is 0.743x, low for the first 27.2 % of the cycle.

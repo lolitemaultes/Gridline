@@ -1,5 +1,5 @@
 // Gridline — "plasma" pack tests: the matched dirty ladder under drive. Expected values are plain numbers
-// read off the hosted source synth's output for a held saw at key 48 through its filter effect; Plasma's
+// read off the reference synth's output for a held saw at key 48 through its filter effect; Plasma's
 // own designs, nothing from the source is used or shipped.
 #include <algorithm>
 #include <cmath>

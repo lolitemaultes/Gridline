@@ -1,4 +1,4 @@
-// Gridline: Kilohearts plugin identifiers -> Gridline Suite Mini stand-ins (J-132, user decision; see
+// Gridline: Kilohearts plugin identifiers -> Gridline Suite Mini stand-ins (J-132; see
 // mini_khs.h). Generated from Gridline's own scans of the installed plugins (identifiers, parameter
 // titles, value ranges as the plugins display them) plus a hand-written parameter mapping; no code,
 // art or presets of the plugins. Extend it by adding a row (or a map line) below.

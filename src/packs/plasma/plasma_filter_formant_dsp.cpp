@@ -1,5 +1,5 @@
 // Plasma: measured formant tables for the matched voicing of the three formant filter types.
-// Measured from impulse responses of the import source (white-noise transfer, 48 kHz) on an 11 x 11
+// Measured from impulse responses of the reference (white-noise transfer, 48 kHz) on an 11 x 11
 // grid of cutoff knob x VAR at resonance 60 %, each fitted with five parallel state-variable
 // band-passes (J-203e). Per grid point and band: centre (Hz), bandwidth (Hz), peak gain.
 #include <algorithm>

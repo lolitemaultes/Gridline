@@ -1,7 +1,7 @@
 // Gridline: Serum states read by Plasma: Serum 1 preset chunks (.fxp, VST2
 // chunks), the state of hosted Serum / Serum 2 instances (VST3 component
 // state, AU class info, VST2 chunk), the single open path for preset files,
-// and automation links of the hosted plugins' parameters (stand-ins, see
+// and automation links of the references' parameters (stand-ins, see
 // core/PluginStandIn.h).
 //
 // Serum 1 layout (worked out from saved presets and published notes; no Xfer

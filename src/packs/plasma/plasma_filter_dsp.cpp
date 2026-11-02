@@ -57,7 +57,7 @@ int engineOf(int t) {
 }
 
 // ---------------------------------------------------------------- matched voicing (J-203b)
-// Laws fitted to white-noise transfer measurements of the import source (1/6-octave bands,
+// Laws fitted to white-noise transfer measurements of the reference (1/6-octave bands,
 // cutoffs 88 Hz .. 10 kHz, resonance 0..100 %). Plasma's own designs, not copies.
 int engineMatched(int t) {
   if (t >= 4 && t <= 38) return EngMSvf;
@@ -239,7 +239,7 @@ struct OpS {
 };
 // Saturating state-variable core (the distorting types, J-203k): a Chamberlin loop run as two half
 // steps per sample, each integrator step limited to +-0.8333 and each state softly bent (y - c y^3),
-// the two half steps averaged [1/4 1/2 1/4]. Fitted and verified against the hosted plugin's output.
+// the two half steps averaged [1/4 1/2 1/4]. Fitted and verified against the reference's output.
 struct SatC {
   double f = 0.1, q = 2, bend = 0.05;
   // hz: resonance frequency; qMax: the damping the resonance asks for (capped for stability)
@@ -462,7 +462,7 @@ void Filter::set(int type, double sr, double hz, double res, double drive, doubl
     h.drv = static_cast<float>(1.0 + drive * 9.0);
     h.head = 0;
     if (boost) {
-      // J-201, measured on the import source with a saw at two input levels: small-signal gain
+      // J-201, measured on the reference with a saw at two input levels: small-signal gain
       // 24 dB x drive^0.8 (+7.7 / +14 / +19.4 / +24 dB at 25 / 50 / 75 / 100 %), into a soft clip
       // whose output ceiling sits 8.5 dB above Plasma's leveled one; the Mg and EMS ladders
       // barely clip, the acid ladder 2.5 dB later, the dirty ladder 5.5 dB earlier.

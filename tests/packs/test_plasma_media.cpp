@@ -582,11 +582,11 @@ int main() {
     const auto wRef = renderWindows(ref, 1.f, 48000, 96000), wDisk = renderWindows(disk, 1.f, 48000, 96000);
     const double lRef = meanDb(wRef, 20, 90), lDisk = meanDb(wDisk, 20, 90), lOne = meanDb(renderWindows(one, 1.f, 48000, 96000), 20, 90);
     std::printf("# multisample %.2f dB (map file %.2f dB), sample %.2f dB\n", lRef, lDisk, lOne);
-    // measured on the source (J-203a): the multisample oscillator plays a file 9.06 dB louder than the
+    // measured on the reference (J-203a): the multisample oscillator plays a file 9.06 dB louder than the
     // sample oscillator plays the same file at the same settings
     expect(lOne > -60 && std::fabs(lRef - lOne - 9.06) < 0.5, "a referenced map plays (samples below the stored map folder), 9.06 dB over the sample oscillator");
     expect(std::fabs(lDisk - lRef) < 0.5, "a map file whose default_path has no trailing slash plays");
-    // velocity: dB = amp_veltrack * 40 * log10(velocity) (measured on the source: 35 % at velocity 0.5 -> -4.2 dB);
+    // velocity: dB = amp_veltrack * 40 * log10(velocity) (measured on the reference: 35 % at velocity 0.5 -> -4.2 dB);
     // 50 % at velocity 0.5 -> -6.02 dB
     const double lHalf = meanDb(renderWindows(ref, 0.5f, 48000, 96000), 20, 90);
     std::printf("# velocity 0.5: %.2f dB\n", lHalf - lRef);
@@ -618,7 +618,7 @@ int main() {
     expect(P(xy, pl::filtP(0, pl::F_X)) == P(def, pl::filtP(0, pl::F_X)) && P(xy, pl::filtP(0, pl::F_Y)) == P(def, pl::filtP(0, pl::F_Y)) &&
                P(xy, pl::filtP(0, pl::F_KeyTrack)) == 1.f,
            "filter X / Y are not imported, key tracking is");
-    // key tracking pivots on key 32 for imports (measured on the source, slope 1): at key 60 the cutoff sits
+    // key tracking pivots on key 32 for imports (measured on the reference, slope 1): at key 60 the cutoff sits
     // 28 semitones higher than with Plasma's own key-60 centre, so a low cutoff passes more of the 220 Hz tone
     xy.params[static_cast<size_t>(pl::filtP(0, pl::F_Freq))] = 0.15f;
     PluginState c60 = xy;
@@ -768,7 +768,7 @@ int main() {
   }
 
   // ---- J-203g: the imported matrix law. Synthetic presets route a macro to oscillator A's volume; the
-  // expected levels were measured on the source against the oscillator at full volume.
+  // expected levels were measured on the reference against the oscillator at full volume.
   {
     auto level = [&](const Json& o0, std::vector<std::pair<const char*, Json>> extra, int law = -1) {
       std::vector<std::pair<const char*, Json>> kv = {{"Oscillator0", o0}};
@@ -841,7 +841,7 @@ int main() {
   }
 
   // ---- J-203i: more wavetable warps on the imported law, the start phase, unmapped multisample keys.
-  // The same synthetic saw as above; expected balances measured on the source at key 60 (dBFS):
+  // The same synthetic saw as above; expected balances measured on the reference at key 60 (dBFS):
   // mirror 0.25 H1 -29.1 H2 -23.1; self phase distortion 0.5 H1 -21.0 H2 -74.0 H3 -32.1;
   // quantize 0.7 H1 -20.9 H4 -41.3 H6 -35.2 (4.5 steps per cycle).
   {
@@ -872,7 +872,7 @@ int main() {
     expect(std::fabs(mir[1] - mir[0] - 6.0) < 1.5 && std::fabs(mirOld[1] - mirOld[0] - 6.0) > 3.0, "the mirror warp follows the source (classic law unchanged)");
     expect(spd[1] - spd[0] < -35.0 && std::fabs(spd[2] - spd[0] + 11.1) < 1.5, "self phase distortion follows the source");
     expect(std::fabs(q[3] - q[0] + 20.4) < 2.0 && std::fabs(q[5] - q[0] + 14.3) < 2.0, "quantize takes partial steps, as on the source");
-    // the waveshaper warps shape at every amount, 0 included (measured on the source's saw, dB re. the
+    // the waveshaper warps shape at every amount, 0 included (measured on the reference's saw, dB re. the
     // plain saw's H1): Sine Shaper 0 H1 +1.7; Sine Shaper 0.5 H5 - H1 = +11.1; Tube 1 H3 - H1 = -9.9;
     // Stomp Box 0.5 H1 - H2 = 19.0; Soft Clip 0 H3 - H1 = -10.8 (plain -9.6)
     const auto plainSaw = warped("kNone", 0), ss0 = warped("kDistSineShaper", 0), ss5 = warped("kDistSineShaper", 0.5);
