@@ -10,6 +10,7 @@
 #include "../host/HostedPlugins.h"
 #include "../host/PluginPrefs.h"
 #include "../host/vst3/Vst3Editor.h"
+#include "../packs/modulation/junction.h"
 #include "HostedUiPages.h"
 #include "App.h"
 #include "PluginSkin.h"
@@ -24,6 +25,22 @@ using theme::pal;
 host::HostedInstance* hostedInstanceFor(App& a, const PluginTarget& t) {
   const PluginState* st = t.state(a.doc.song());
   if (!st || !isHostedType(st->type)) return nullptr;
+  if (t.node) {  // K-7: a module in a Junction
+    if (t.isChannel()) {
+      auto rt = a.builder.channelRuntime(t.owner);
+      packs::modulation::JRuntime* j = rt && rt->gen ? packs::modulation::junctionRuntime(rt->gen.get()) : nullptr;
+      if (!j) return nullptr;
+      if (Generator* g = j->hostedGenerator(t.node)) return host::hostedInstance(g);
+      Effect* f = j->hostedEffect(t.node);
+      return f ? host::hostedInstance(f) : nullptr;
+    }
+    auto rt = a.builder.effectRuntime(t.owner, t.slot);
+    packs::modulation::JRuntime* j = rt && rt->fx ? packs::modulation::junctionRuntime(rt->fx.get()) : nullptr;
+    if (!j) return nullptr;
+    if (Generator* g = j->hostedGenerator(t.node)) return host::hostedInstance(g);
+    Effect* f = j->hostedEffect(t.node);
+    return f ? host::hostedInstance(f) : nullptr;
+  }
   if (t.isChannel()) {
     auto rt = a.builder.channelRuntime(t.owner);
     return rt && rt->gen && rt->type == st->type ? host::hostedInstance(rt->gen.get()) : nullptr;
@@ -36,6 +53,11 @@ namespace {
 
 std::string targetName(App& a, const PluginTarget& t) {
   const Song& s = a.doc.song();
+  if (t.node) {
+    const PluginState* st = t.state(s);
+    const PluginInfo* info = st ? findPlugin(st->type) : nullptr;
+    return targetName(a, PluginTarget{t.owner, t.slot}) + " \xC2\xB7 " + (info ? info->name : std::string("Junction"));
+  }
   if (t.isChannel()) {
     const Channel* c = s.channel(t.owner);
     return c ? c->name : "Channel";
@@ -47,11 +69,25 @@ std::string targetName(App& a, const PluginTarget& t) {
 // Every hosted plugin target in the song.
 std::vector<PluginTarget> hostedTargets(const Song& s) {
   std::vector<PluginTarget> v;
-  for (const auto& c : s.channels)
+  // K-7: installed plugins inside a Junction are targets of their own.
+  const auto inside = [&v](const PluginState& st, ObjectId owner, int slot) {
+    if (st.type != "gl.patcher" && st.type != "gl.patcherfx") return;
+    // (Runs every frame: only a graph that names an installed plugin is worth reading.)
+    bool any = false;
+    for (const char* prefix : {"vst3:", "clap:", "vst2:", "au:", "lv2:"}) any = any || st.data.find(prefix) != std::string::npos;
+    if (!any) return;
+    for (const packs::modulation::JNode& n : packs::modulation::junctionOf(st).nodes)
+      if (isHostedType(n.plugin.type)) v.push_back({owner, slot, n.id});
+  };
+  for (const auto& c : s.channels) {
     if (isHostedType(c.plugin.type)) v.push_back({c.id, -1});
+    inside(c.plugin, c.id, -1);
+  }
   for (const auto& m : s.mixer)
-    for (size_t k = 0; k < m.slots.size(); ++k)
+    for (size_t k = 0; k < m.slots.size(); ++k) {
       if (isHostedType(m.slots[k].plugin.type)) v.push_back({m.id, static_cast<int>(k)});
+      inside(m.slots[k].plugin, m.id, static_cast<int>(k));
+    }
   return v;
 }
 
@@ -73,9 +109,13 @@ void takeOver(App& a, const PluginTarget& t, const PluginState& ns, const char* 
   } else if (a.doc.moveSerial() != 0 && a.doc.moveSerial() == serial) {
     a.doc.patchSong([&](Song& s) {
       if (t.isChannel()) {
-        if (Channel* c = s.channel(t.owner)) c->plugin = ns;
+        if (Channel* c = s.channel(t.owner)) {
+          if (t.node) packs::modulation::junctionSetNodeState(c->plugin, t.node, ns);
+          else c->plugin = ns;
+        }
       } else if (MixerTrack* m = s.mixerTrack(t.owner); m && t.slot < static_cast<int>(m->slots.size())) {
-        m->slots[static_cast<size_t>(t.slot)].plugin = ns;
+        if (t.node) packs::modulation::junctionSetNodeState(m->slots[static_cast<size_t>(t.slot)].plugin, t.node, ns);
+        else m->slots[static_cast<size_t>(t.slot)].plugin = ns;
       }
     });
     return;
@@ -126,7 +166,16 @@ void pumpHostedPlugins(App& a) {
       a.notify(hi->hostedClass().name + " crashed (" + hi->crashReason() + "). It is silenced; reload it from its plugin window.", true);
       continue;
     }
-    for (const auto& e : u.edits) a.doc.setParam(t.pid(e.index), e.value, true);
+    if (t.node) {  // K-7: a module's values live in the Junction's data
+      if (const PluginState* st = !u.edits.empty() ? t.state(a.doc.song()) : nullptr) {
+        PluginState ns = *st;
+        for (const auto& e : u.edits)
+          if (e.index >= 0 && static_cast<size_t>(e.index) < ns.params.size()) ns.params[static_cast<size_t>(e.index)] = static_cast<float>(e.value);
+        setPluginState(a, t, ns, "plugin parameters", t.key() ^ 0x706172616d73ull);
+      }
+    } else {
+      for (const auto& e : u.edits) a.doc.setParam(t.pid(e.index), e.value, true);
+    }
     if (!u.edits.empty()) gOwnStep[t.key()] = a.doc.history().stateSerial();
     if (u.gestureEnd) a.doc.endGesture();
     if (u.readback) {
@@ -771,7 +820,7 @@ void setGenericEditor(App& a, std::string type, bool on) {
   for (const PluginTarget& t : hostedTargets(a.doc.song())) {
     const PluginState* st = t.state(a.doc.song());
     if (!st || st->type != type) continue;
-    const bool panel = t.isChannel() ? a.settingsChannel == t.owner : a.fxEditor == std::make_pair(t.owner, t.slot);
+    const bool panel = !t.node && (t.isChannel() ? a.settingsChannel == t.owner : a.fxEditor == std::make_pair(t.owner, t.slot));
     if (hostedEditorOpen(t) || panel) shown.push_back(t);
     closeHostedEditor(a, t);
     if (panel) {
@@ -783,6 +832,7 @@ void setGenericEditor(App& a, std::string type, bool on) {
   }
   applyOptions(a, type, o);
   for (const PluginTarget& t : shown) {
+    if (t.node) continue;  // (a module in a Junction opens from the Junction)
     if (t.isChannel())
       a.settingsChannel = t.owner;  // routePluginWindows opens the right editor
     else

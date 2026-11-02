@@ -42,6 +42,12 @@ def main():
         print("add_plugin: " + str(host.get_last_error()), flush=True)
         return 2
     print("loaded " + str(host.get_plugin_info(0).get("name")), flush=True)
+
+    def on_engine(_ptr, action, _plugin, value1, _value2, _value3, valuef, _text):
+        if action == cb.ENGINE_CALLBACK_PARAMETER_VALUE_CHANGED:
+            print(f"automate {value1} {valuef:.6f}", flush=True)
+
+    host.set_engine_callback(on_engine)
     host.show_custom_ui(0, True)
     running = [True]
     signal.signal(signal.SIGTERM, lambda *_: running.__setitem__(0, False))

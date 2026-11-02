@@ -7,3 +7,5 @@ gl.multisampler	clip	key-zone map: each zone's sample name is clipped to its own
 gl.waveshaper	overlap	free-form curve editor: points and handles sit inside the curve area
 gl.matrixfm	overlap	free-form envelope editor: the RESET button floats inside the envelope area
 gl.octafilter	overlap	notes text field: its scrolling child area registers as a second item over the field
+gl.patcher	baseline	free-form module map: the port labels of separate modules sit at independent heights
+gl.patcherfx	baseline	free-form module map: the port labels of separate modules sit at independent heights

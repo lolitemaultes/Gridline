@@ -376,7 +376,14 @@ struct FileOpsState {
   std::string browserDrag;  // the browser file row being dragged (moves inside the browser)
 } fops;
 
-void clearListings() {
+// The file operations run from inside the tree (Enter in a name field, a drop on a folder, a
+// row's menu), while dirTree is walking the very listing they make stale: the listings are
+// only forgotten at the start of the next browser frame, when nothing walks them.
+bool listingsStale = false;
+void clearListings() { listingsStale = true; }
+void forgetStaleListings() {
+  if (!listingsStale) return;
+  listingsStale = false;
   dirCache.clear();
   dirFlags.clear();
 }
@@ -1456,6 +1463,7 @@ void tabStrip(App& a) {
 }  // namespace
 
 void drawBrowser(App& a) {
+  forgetStaleListings();
   if (!a.showBrowser) return;
   if (!ui::BeginDockWindow("Browser", &a.showBrowser, ImVec2(260, 600))) {
     ui::EndDockWindow();

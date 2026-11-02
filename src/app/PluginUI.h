@@ -24,6 +24,7 @@ void stateRead(int k);               // an editor read parameter k from the stat
 struct PluginTarget {
   ObjectId owner = kNoId;
   int slot = -1;
+  uint32_t node = 0;  // K-7: a module inside this slot's Junction (0: the slot's own plugin)
   bool isChannel() const { return slot < 0; }
   ParamId pid(int k) const {
     const ParamId p = isChannel() ? channelPluginParam(owner, k) : slotParam(owner, slot, k);
@@ -32,7 +33,7 @@ struct PluginTarget {
   }
   const PluginState* state(const Song& s) const;
   const PluginInfo* info(const Song& s) const;
-  uint64_t key() const { return (static_cast<uint64_t>(owner) << 8) ^ static_cast<uint64_t>(slot + 1); }
+  uint64_t key() const { return (static_cast<uint64_t>(owner) << 8) ^ static_cast<uint64_t>(slot + 1) ^ (static_cast<uint64_t>(node) << 44); }
   const ScopeTap* tap(App& a) const;       // live output for displays
   const ScopeTap* inputTap(App& a) const;  // live input (effects only; nullptr otherwise)
 };

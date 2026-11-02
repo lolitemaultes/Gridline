@@ -23,6 +23,7 @@
 #include "../Json.h"
 #include "../../packs/modulation/modulation.h"
 #include "../../packs/modulation/modulation_dsp.h"
+#include "../../packs/modulation/junction.h"
 #include "../../packs/modulation/patchv2.h"
 #include "FlpFx2.h"
 
@@ -323,7 +324,18 @@ bool decodePatcherV2(Context& c, const std::vector<Event>& evs, PluginMapping& m
       g.slots.push_back(static_cast<int>(rd32(t.data, 8)));
     }
   pv2::PatchV2Topo topo = pv2::patchV2Topology(g);
-  for (const auto& u : topo.unsupported) {
+  // K-7: note processors, installed plugins, sidechains, extra outputs and FL's track outputs
+  // run in the graph runtime (the version 2 data stays what export writes).
+  std::vector<std::string> notRun;
+  std::vector<int> inserts;
+  md::junctionFromV2(g, &notRun, &inserts);
+  bool graphRuntime = !topo.unsupported.empty();
+  for (const auto& n : g.nodes) {
+    const PluginInfo* info = findPlugin(n.plugin.type);
+    graphRuntime = graphRuntime || (info && info->kind == PluginKind::NoteFx) || isHostedType(n.plugin.type);
+  }
+  g.run3 = graphRuntime;
+  for (const auto& u : notRun) {
     exact = false;
     c.report.warn("Patcher: " + u + " not run");
   }
@@ -361,6 +373,14 @@ bool decodePatcherV2(Context& c, const std::vector<Event>& evs, PluginMapping& m
       c.report.warn("Patcher: a control link drives " + who + " parameter " + std::to_string(e.fl) + ", which Gridline does not map");
     }
   fx::begin(m, instrument ? "gl.patcher" : "gl.patcherfx");
+  for (size_t k = 0; k < inserts.size() && k < 4; ++k) {  // FL's outputs to mixer inserts
+    if (instrument) {
+      exact = false;
+      c.report.warn("Patcher: an instrument patch's output to Insert " + std::to_string(inserts[k]) + " needs a channel route in Gridline");
+    } else {
+      fx::set(m, pv2::PhSend0 + static_cast<int>(k), inserts[k]);
+    }
+  }
   for (size_t k = 0; k < topo.slots.size(); ++k) {
     const auto& sl = topo.slots[k];
     if (sl.node < 0) continue;  // (an exposed controller output, or an unknown port)
@@ -378,12 +398,11 @@ bool decodePatcherV2(Context& c, const std::vector<Event>& evs, PluginMapping& m
   for (size_t i = 0; i < g.nodes.size(); ++i) {
     const PluginInfo* info = findPlugin(g.nodes[i].plugin.type);
     if (!info) continue;
-    if (info->kind == PluginKind::NoteFx) exact = false, c.report.warn("Patcher: note processor \"" + g.nodes[i].flName + "\" not run");
-    if (isHostedType(g.nodes[i].plugin.type)) exact = false, c.report.warn("Patcher: installed plugin \"" + g.nodes[i].flName + "\" cannot run inside the Patcher");
+    if (isHostedType(g.nodes[i].plugin.type)) exact = false;  // (its own state; nothing to compare)
   }
   if (g.nodes.size() > static_cast<size_t>(pv2::kV2MaxNodes)) exact = false;
   md::PatchGraph chain;
-  m.state.data = chainOf(g, topo, instrument, chain) ? md::serializePatchGraph(chain) : pv2::serializePatchV2(g);
+  m.state.data = !graphRuntime && inserts.empty() && chainOf(g, topo, instrument, chain) ? md::serializePatchGraph(chain) : pv2::serializePatchV2(g);
   m.exact = exact;
   c.report.counts["patcher graphs (v2)"]++;
   // FL automation of the patch's parameters → host Param slots.

@@ -7,6 +7,22 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 
 ### Added
 
+- **Junction wires anything to anything**: Junction and Junction FX now open on a map of modules
+  and cables. Drag from any port to wire audio, notes or parameters, in parallel, across sidechains
+  and to several outputs; a cable that closes a loop becomes a feedback cable, drawn dashed, that
+  arrives 256 samples later whatever the buffer size. Each cable has its own level, and a right
+  click inserts an effect into it. Modules can be renamed, coloured, bypassed, muted, duplicated
+  and disconnected; note processors can sit before instruments; installed plugins run inside with
+  their own interface. Latency between parallel paths is compensated. The map zooms and pans
+  smoothly, with box select, automatic arrange, a minimap and filters per cable kind. The Panel
+  page holds the eight macros and any parameter put on it, with names, ranges and snapshots; its
+  knobs automate as before. Six new patches show what it can do. On a wired graph, turning a knob
+  or a cable's level updates the running patch without rebuilding it. Every edit is one undo step, and
+  existing projects and presets keep their sound and data until you rewire them.
+  FL Studio import runs more Patcher projects as wired (note processors, installed plugins,
+  sidechains, extra outputs and mixer track outputs), and reports exactly what it leaves out;
+  export writes hand-wired graphs back as Patcher, with cable levels, layout and exposed
+  parameters.
 - **Track "+" in the playlist**: hover a track header and a small "+" appears beside its mute
   switch. Its menu gives the track an instrument (your starred instruments are listed right
   there, then every instrument, or a channel already in the rack) and on an empty track starts a

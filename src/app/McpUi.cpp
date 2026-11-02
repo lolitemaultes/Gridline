@@ -160,8 +160,18 @@ std::string timeText(double t) {
 
 std::string cliPath() {
   fs::path self = host::selfExecutablePath();
-  fs::path cli = self.parent_path() / "gridline";
+  fs::path cli = self.parent_path() / ("gridline" + self.extension().string());  // .exe on Windows
   return cli.string();
+}
+
+// A string as JSON needs it: a Windows path holds backslashes.
+std::string jsonEscaped(const std::string& text) {
+  std::string out;
+  for (char c : text) {
+    if (c == '\\' || c == '"') out += '\\';
+    out += c;
+  }
+  return out;
 }
 
 std::string claudeCodeCommand(App& a) {
@@ -171,7 +181,7 @@ std::string claudeCodeCommand(App& a) {
 }
 
 std::string desktopConfig() {
-  return "{\n  \"mcpServers\": {\n    \"gridline\": {\n      \"command\": \"" + cliPath() + "\",\n      \"args\": [\"mcp\", \"--attach\"]\n    }\n  }\n}";
+  return "{\n  \"mcpServers\": {\n    \"gridline\": {\n      \"command\": \"" + jsonEscaped(cliPath()) + "\",\n      \"args\": [\"mcp\", \"--attach\"]\n    }\n  }\n}";
 }
 
 }  // namespace

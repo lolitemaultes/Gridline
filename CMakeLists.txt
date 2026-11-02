@@ -1702,6 +1702,22 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
 
     # Plugin editors: Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y / Cmd+Z undo and redo knob drags, wheel turns and
     # drawn shapes (plugin data) as one step per gesture, in the main window and in a detached plugin window.
+    # K-7: Junction's map in the real app: wiring, moving, deleting, zooming, undo per edit, both
+    # themes, interface scales 100 % and 200 %.
+    add_test(NAME k7_junction_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/k7_junction_app -P ${CMAKE_SOURCE_DIR}/tests/k7_junction_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(k7_junction_app PROPERTIES TIMEOUT 300)
+
+    # K-7: an installed plugin inside a Junction: its own interface opens, an edit there comes
+    # back as an edit of the song, undo restores it in the plugin (the in-tree test plugin).
+    add_test(NAME k7_junction_hosted_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DCLAP=${GRIDLINE_CLAP_TESTPLUG} -DOUT=${CMAKE_BINARY_DIR}/k7_junction_hosted_app -P ${CMAKE_SOURCE_DIR}/tests/k7_junction_hosted_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(k7_junction_hosted_app PROPERTIES TIMEOUT 120 SKIP_REGULAR_EXPRESSION "SKIP: ")
+
     add_test(NAME plugin_undo_app
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
                      -DOUT=${CMAKE_BINARY_DIR}/plugin_undo_app -P ${CMAKE_SOURCE_DIR}/tests/plugin_undo_app.cmake

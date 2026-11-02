@@ -977,6 +977,13 @@ void testOldProjects() {
 
 // ---- FL import into a mixer slot
 
+// FL's import writes every sample path with forward slashes (flp::Context::resolvePath), on
+// Windows too: "C:\a\b.wav" comes back as "C:/a/b.wav", the same file.
+bool samePathAfterFlImport(const std::string& imported, std::string original) {
+  std::replace(original.begin(), original.end(), '\\', '/');
+  return imported == original;
+}
+
 const MixerTrack* trackWithType(const Song& s, const std::string& type, int* slot) {
   for (const MixerTrack& t : s.mixer)
     for (size_t k = 0; k < t.slots.size(); ++k)
@@ -1035,9 +1042,23 @@ void testFlpSlotFixture() {
   expect(!channel, "no instrument channel is made for it");
   if (!bt) return;
   const PluginState& st = bt->slots[static_cast<size_t>(slot)].plugin;
-  bool same = st.params.size() == g.params.size() && st.data == g.data;
+  bool same = st.params.size() == g.params.size();
   for (size_t k = 0; same && k < g.params.size(); ++k) same = std::fabs(st.params[k] - g.params[k]) < 1e-6f;
-  expect(same, "with its settings and sample");
+  expect(same, "with its settings");
+  expect(samePathAfterFlImport(st.data, g.data), "with its sample");
+  // A Windows path in the FL file, on every system: the import spells it with forward slashes.
+  {
+    Song w = s;
+    w.mixer.back().slots[2].plugin.data = "C:\\Samples\\take\\t.wav";
+    flp::ExportReport wr;
+    flp::Bytes wb;
+    Song wback;
+    flp::Report wrep;
+    int wslot = -1;
+    expect(flp::exportFlp(w, wb, wr, opt) && importFlpBytes(wb, wback, wrep, &err), "a Windows sample path exports and imports");
+    const MixerTrack* wt = trackWithType(wback, "gl.turntablefx", &wslot);
+    expect(wt && wt->slots[static_cast<size_t>(wslot)].plugin.data == "C:/Samples/take/t.wav", "the same file, spelled with forward slashes");
+  }
   const ParamId want = slotParam(bt->id, slot, sp::TtPosition);
   const AutomationClip* ba = nullptr;
   for (const AutomationClip& x : back.automations)
@@ -1095,7 +1116,7 @@ void testRenderTest() {
   int slot2 = -1;
   const MixerTrack* t2 = trackWithType(s2, "gl.turntablefx", &slot2);
   bool same = t2 && slot2 == slot && t2->slots[static_cast<size_t>(slot2)].plugin.params.size() == st.params.size() &&
-              t2->slots[static_cast<size_t>(slot2)].plugin.data == st.data;
+              samePathAfterFlImport(t2->slots[static_cast<size_t>(slot2)].plugin.data, st.data);
   for (size_t k = 0; same && k < st.params.size(); ++k) same = std::fabs(t2->slots[static_cast<size_t>(slot2)].plugin.params[k] - st.params[k]) < 1e-6f;
   expect(same, "FL round trip: the Turntable effect comes back on its slot with its settings and sample");
 }

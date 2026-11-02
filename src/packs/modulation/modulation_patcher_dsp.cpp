@@ -15,6 +15,7 @@
 #include "../Packs.h"
 #include "modulation.h"
 #include "modulation_dsp.h"
+#include "junction.h"
 #include "patchv2.h"
 
 namespace gl::packs::modulation {
@@ -227,32 +228,66 @@ class PatchRuntime {
 
 class PatchHostGenerator final : public Generator {
  public:
-  bool active() const override { return v2on_ ? v2_.active() : rt_.active(); }
-  bool ownPlayback() const override { return v2on_ ? v2_.ownPlayback() : rt_.ownPlayback(); }  // J-112
+  bool active() const override { return j3on_ ? j3_.active() : v2on_ ? v2_.active() : rt_.active(); }
+  bool ownPlayback() const override { return j3on_ ? j3_.ownPlayback() : v2on_ ? v2_.ownPlayback() : rt_.ownPlayback(); }  // J-112
   void stopOwnPlayback() override {
     rt_.stopOwnPlayback();
     v2_.stopOwnPlayback();
+    j3_.stopOwnPlayback();
   }
+  // K-7: installed plugins inside are prepared with their module's state.
+  void prepareHost(const PluginState& state, double sampleRate) override { j3_.prepareHosted(state, sampleRate); }
+  int latencyFor(const PluginState& state, double sampleRate) const override {
+    return isJunction3(state.data) ? j3_.latency(junctionOf(state), sampleRate) : 0;
+  }
+  int auxOutputCount() const override { return j3on_ ? j3_.auxOutputCount() : 0; }
+  bool auxOutput(int k, const float*& L, const float*& R) const override {
+    if (!j3on_ || k < 0 || k >= 4) return false;
+    L = auxL_[k], R = auxR_[k];
+    return k < j3_.auxOutputCount();
+  }
+  JRuntime& junction() { return j3_; }
 
  protected:
   void onNoteOnEx(uint32_t id, double pitch, float velocity, const NoteProps& props) override {
-    if (v2on_) v2_.noteOn(id, pitch, velocity, props);
+    if (j3on_) j3_.noteOn(id, pitch, velocity, props);
+    else if (v2on_) v2_.noteOn(id, pitch, velocity, props);
     else rt_.noteOn(id, pitch, velocity);
   }
   void onNoteOn(uint32_t id, double pitch, float velocity) override { onNoteOnEx(id, pitch, velocity, NoteProps{}); }
   void onNoteOff(uint32_t id) override {
-    if (v2on_) v2_.noteOff(id);
+    if (j3on_) j3_.noteOff(id);
+    else if (v2on_) v2_.noteOff(id);
     else rt_.noteOff(id);
+  }
+  void onMidi(uint8_t status, uint8_t d1, uint8_t d2) override {
+    if (j3on_) j3_.midi(status, d1, d2);
   }
   void onAllOff() override {
     v2_.allOff();
     rt_.allOff();
+    j3_.allOff();
   }
   void onKill() override {
     v2_.kill();
     rt_.kill();
+    j3_.kill();
   }
   void configure(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx) override {
+    j3on_ = j3_.sync(aux.custom.get());  // K-7: graphs wired by hand
+    if (j3on_) {
+      j3_.beginBlock();
+      st_ = &s;
+      ctx_ = ctx;
+      gain_ = static_cast<float>(dsp::dbToGain(static_cast<size_t>(PhGain) < s.params.size() ? s.params[PhGain] : 0.0));
+      auxPos_ = 0;
+      const int ac = j3_.auxOutputCount();
+      for (int k = 0; k < ac && k < 4; ++k) {
+        std::memset(auxL_[k], 0, sizeof auxL_[k]);
+        std::memset(auxR_[k], 0, sizeof auxR_[k]);
+      }
+      return;
+    }
     v2on_ = v2_.sync(aux.custom.get());  // J-41: FL Patcher graphs
     if (v2on_) {
       st_ = &s;
@@ -267,6 +302,25 @@ class PatchHostGenerator final : public Generator {
     gain_ = static_cast<float>(dsp::dbToGain(static_cast<size_t>(PhGain) < s.params.size() ? s.params[PhGain] : 0.0));
   }
   void render(float* L, float* R, int n) override {
+    if (j3on_) {
+      const int ac = std::min(j3_.auxOutputCount(), 4);
+      while (n > 0) {
+        const int m = std::min(n, 256);
+        std::memset(tmpL_, 0, sizeof(float) * static_cast<size_t>(m));
+        std::memset(tmpR_, 0, sizeof(float) * static_cast<size_t>(m));
+        j3_.run(*st_, ctx_, tmpL_, tmpR_, m, true);
+        for (int k = 0; k < m; ++k) L[k] += tmpL_[k] * gain_, R[k] += tmpR_[k] * gain_;
+        for (int p = 0; p < ac; ++p) {  // the block's extra outputs
+          const float* al = nullptr;
+          const float* ar = nullptr;
+          if (!j3_.auxOutput(p, al, ar) || auxPos_ + m > kMaxFrames) continue;
+          for (int k = 0; k < m; ++k) auxL_[p][auxPos_ + k] += al[k] * gain_, auxR_[p][auxPos_ + k] += ar[k] * gain_;
+        }
+        auxPos_ += m;
+        L += m, R += m, n -= m;
+      }
+      return;
+    }
     if (v2on_) {
       while (n > 0) {
         const int m = std::min(n, 256);
@@ -306,6 +360,10 @@ class PatchHostGenerator final : public Generator {
   PatchV2Runtime v2_;
   bool v2on_ = false;
   const PluginState* st_ = nullptr;
+  JRuntime j3_;
+  bool j3on_ = false;
+  int auxPos_ = 0;
+  float auxL_[4][kMaxFrames] = {}, auxR_[4][kMaxFrames] = {};
 };
 
 class PatchHostEffect final : public Effect {
@@ -319,6 +377,23 @@ class PatchHostEffect final : public Effect {
   }
   void processAux(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx, float* L, float* R,
                   int n) override {
+    if (j3_.sync(aux.custom.get())) {  // K-7: graphs wired by hand
+      const float mix = static_cast<size_t>(PhMix) < s.params.size() ? s.params[PhMix] : 1.f;
+      const float gain = static_cast<float>(dsp::dbToGain(static_cast<size_t>(PhGain) < s.params.size() ? s.params[PhGain] : 0.0));
+      j3_.beginBlock();
+      for (int done = 0; done < n;) {
+        const int p = std::min(n - done, 256);
+        std::memcpy(dryL_, L + done, sizeof(float) * static_cast<size_t>(p));
+        std::memcpy(dryR_, R + done, sizeof(float) * static_cast<size_t>(p));
+        j3_.run(s, ctx, L + done, R + done, p, false);
+        for (int k = 0; k < p; ++k) {
+          L[done + k] = (dryL_[k] + (L[done + k] - dryL_[k]) * mix) * gain;
+          R[done + k] = (dryR_[k] + (R[done + k] - dryR_[k]) * mix) * gain;
+        }
+        done += p;
+      }
+      return;
+    }
     if (v2_.sync(aux.custom.get())) {  // J-41: FL Patcher graphs
       const float mix = static_cast<size_t>(PhMix) < s.params.size() ? s.params[PhMix] : 1.f;
       const float gain = static_cast<float>(dsp::dbToGain(static_cast<size_t>(PhGain) < s.params.size() ? s.params[PhGain] : 0.0));
@@ -357,21 +432,28 @@ class PatchHostEffect final : public Effect {
   void reset() override {
     rt_.kill();
     v2_.kill();
+    j3_.kill();
   }
+  void prepareHost(const PluginState& state, double sampleRate) override { j3_.prepareHosted(state, sampleRate); }
+  void setSideIo(const SideIo& io) override { j3_.setSideIo(io); }
+  JRuntime& junction() { return j3_; }
   // J-110: Stop reaches the hosted plugins (their notes, their own playback).
   void stopSound() override {
     rt_.stopSound();
     v2_.stopSound();
+    j3_.stopSound();
   }
   // J-112: a hosted effect / instrument playing on its own (Loupe, Shuttle, Seltmann inside).
-  bool ownPlayback() const override { return rt_.ownPlayback() || v2_.ownPlayback(); }
+  bool ownPlayback() const override { return rt_.ownPlayback() || v2_.ownPlayback() || j3_.ownPlayback(); }
   // Sum over the serial stages of the latest hosted effect in each (macros
   // applied as the runtime does). A node's undelayed dry part is mixed back
   // in, so a serial node counts while its wet part dominates (mix >= 50 %);
   // the same holds for the host's own mix.
   int latencyFor(const PluginState& s, double sr) const override {
     auto prm = [&](int k, float d) { return static_cast<size_t>(k) < s.params.size() ? s.params[static_cast<size_t>(k)] : d; };
-    if (prm(PhMix, 1.f) < 0.5f || isPatchV2(s.data)) return 0;  // v2 graphs: hosted latencies are not compensated
+    if (prm(PhMix, 1.f) < 0.5f) return 0;
+    if (isJunction3(s.data)) return j3_.latency(junctionOf(s), sr);
+    if (isPatchV2(s.data)) return 0;  // v2 graphs: hosted latencies are not compensated
     const PatchGraph g = patchGraphOf(s);
     std::vector<PluginState> live;
     for (const PatchNode& nd : g.nodes) live.push_back(nd.plugin);
@@ -404,6 +486,7 @@ class PatchHostEffect final : public Effect {
  private:
   PatchRuntime rt_;
   PatchV2Runtime v2_;
+  JRuntime j3_;
   float dryL_[256] = {}, dryR_[256] = {};
 };
 
@@ -514,6 +597,7 @@ PatchGraph patchGraphOf(const PluginState& state) {
 }
 
 void preparePatchHost(const PluginState& state, ChannelAux& aux) {
+  if (prepareJunctionFor(state, aux)) return;  // K-7: graphs wired by hand, FL routing the version 2 runtime does not run
   if (isPatchV2(state.data)) {  // J-41: FL Patcher graphs
     PatchV2 g;
     if (parsePatchV2(state.data, g)) {
@@ -551,6 +635,15 @@ void preparePatchHost(const PluginState& state, ChannelAux& aux) {
                                                                                               : ParamDesc{});
     }
   aux.custom = pa;
+}
+
+JRuntime* junctionRuntime(Generator* g) {
+  auto* h = dynamic_cast<PatchHostGenerator*>(g);
+  return h ? &h->junction() : nullptr;
+}
+JRuntime* junctionRuntime(Effect* fx) {
+  auto* h = dynamic_cast<PatchHostEffect*>(fx);
+  return h ? &h->junction() : nullptr;
 }
 
 std::unique_ptr<Generator> createPatchHostGenerator() { return std::make_unique<PatchHostGenerator>(); }

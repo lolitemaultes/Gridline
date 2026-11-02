@@ -128,6 +128,9 @@ struct EncodeContext {
   bool channel = false;
 };
 
+// K-7: what the encoder running now could not carry; encode() adds it to the result's note.
+std::vector<std::string>& encodeNotes();
+
 // FL plugins (by decoder name) that can carry this Gridline state inside FL's
 // plugin wrapper: every parameter not at its default maps. Preferred first.
 std::vector<std::string> wrapCandidates(const PluginState& g);

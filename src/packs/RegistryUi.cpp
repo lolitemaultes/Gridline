@@ -24,6 +24,9 @@ int armTransportRecording(App& a, ObjectId track);
 bool claimEffectEditor(App& a, const PluginTarget& t);  // K-15
 bool dockDevCommand(App& a, const std::string& cmd, const std::vector<std::string>& args);
 }  // namespace gl::packs::edison
+namespace gl::packs::modulation {
+bool junctionDevCommand(App& a, const std::string& cmd, const std::vector<std::string>& args);  // K-7
+}  // namespace gl::packs::modulation
 namespace gl::packs::synths {
 void tickPictureLoads(App& a);                                              // J-184
 bool loadPicture(App& a, const PluginTarget& t, const std::string& path);  // J-184
@@ -66,7 +69,7 @@ bool openAudioEditor(App& a, const std::string& path, ObjectId channel) { return
 
 bool claimEffectEditor(App& a, const PluginTarget& t) { return edison::claimEffectEditor(a, t); }
 
-bool devCommand(App& a, const std::string& cmd, const std::vector<std::string>& args) { return edison::dockDevCommand(a, cmd, args); }
+bool devCommand(App& a, const std::string& cmd, const std::vector<std::string>& args) { return edison::dockDevCommand(a, cmd, args) || modulation::junctionDevCommand(a, cmd, args); }
 
 int armAudioEditorRecording(App& a, ObjectId track) { return edison::armTransportRecording(a, track); }
 

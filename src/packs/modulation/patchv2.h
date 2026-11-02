@@ -52,6 +52,7 @@ struct PatchV2 {
   std::vector<std::string> items;  // hex chunks, or "#n" for node n
   std::vector<PatchV2Node> nodes;
   std::vector<int> slots;          // host Param slot → FL parameter index of the patch
+  bool run3 = false;               // K-7: FL routing version 2 cannot run: the graph runs as version 3
   bool operator==(const PatchV2& o) const;
 };
 

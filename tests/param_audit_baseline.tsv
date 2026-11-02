@@ -10117,6 +10117,10 @@ gl.patcher	134	Param 125	inert	0
 gl.patcher	135	Param 126	inert	0	
 gl.patcher	136	Param 127	inert	0	
 gl.patcher	137	Param 128	inert	0	
+gl.patcher	138	Track out 1	inert	0		the effect version's mixer track for an extra output; an instrument routes through its channel
+gl.patcher	139	Track out 2	inert	0		the effect version's mixer track for an extra output; an instrument routes through its channel
+gl.patcher	140	Track out 3	inert	0		the effect version's mixer track for an extra output; an instrument routes through its channel
+gl.patcher	141	Track out 4	inert	0		the effect version's mixer track for an extra output; an instrument routes through its channel
 gl.patcherfx	0	Macro 1	working	0	
 gl.patcherfx	1	Macro 2	working	1	
 gl.patcherfx	2	Macro 3	combination	0	1048576=1
@@ -10255,6 +10259,10 @@ gl.patcherfx	134	Param 125	inert	0
 gl.patcherfx	135	Param 126	inert	0	
 gl.patcherfx	136	Param 127	inert	0	
 gl.patcherfx	137	Param 128	inert	0	
+gl.patcherfx	138	Track out 1	routing	0	
+gl.patcherfx	139	Track out 2	routing	0	
+gl.patcherfx	140	Track out 3	routing	0	
+gl.patcherfx	141	Track out 4	routing	0	
 gl.peakctl	0	Peak base	combination	1	15=0
 gl.peakctl	1	Peak amount	combination	-1	15=0
 gl.peakctl	2	Peak tension	combination	-1	15=0

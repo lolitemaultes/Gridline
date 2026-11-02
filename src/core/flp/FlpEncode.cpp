@@ -769,7 +769,12 @@ Result encodeWith(const Encoder* e, const PluginState& g0, const std::string& or
     return r;
   }
   Bytes b = t;
+  std::vector<std::string> outerNotes;
+  outerNotes.swap(encodeNotes());  // (a patch encodes its modules inside its own write)
   if (e->write) e->write(g, b, ec);
+  std::vector<std::string> ownNotes;
+  ownNotes.swap(encodeNotes());
+  encodeNotes().swap(outerNotes);
   Solver s(r.flName, ec, g, b);
   std::vector<Field> fields = e->fields ? e->fields(b) : std::vector<Field>{};
   int before = s.mismatches();
@@ -805,10 +810,16 @@ Result encodeWith(const Encoder* e, const PluginState& g0, const std::string& or
     r.note = "the encoded state does not decode";
   }
   r.quality = r.mismatched.empty() && !r.dataMismatch ? Result::Exact : Result::Approx;
+  for (const std::string& n : ownNotes) r.note += (r.note.empty() ? "" : "; ") + n;
   return r;
 }
 
 }  // namespace
+
+std::vector<std::string>& encodeNotes() {
+  thread_local std::vector<std::string> notes;
+  return notes;
+}
 
 // ------------------------------------------------------------------ corpus check
 

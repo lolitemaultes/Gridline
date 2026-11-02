@@ -399,7 +399,12 @@ void routeKey(PluginWindow& w, const SDL_Event& ev) {
     if (typing) return;
   }
   // X11: the plugin may use keys typed into the host's window (VST3 / VST2).
-  if (w.editor && !w.external && w.editor->hostKey(true, sc, 0, modsOf(ev.key.keysym.mod))) return;
+  static const bool trace = std::getenv("GRIDLINE_DEV_PLUGIN_KEYS") != nullptr;
+  if (w.editor && !w.external && w.editor->hostKey(true, sc, 0, modsOf(ev.key.keysym.mod))) {
+    if (trace) std::fprintf(stderr, "plugkey window %d used by the plugin\n", sc);
+    return;
+  }
+  if (trace) std::fprintf(stderr, "plugkey window %d to main\n", sc);
   w.heldKeys.insert(sc);
   sendToMain(true, ev.key.repeat != 0, sc, modsOf(ev.key.keysym.mod));
 }
@@ -407,9 +412,13 @@ void routeKey(PluginWindow& w, const SDL_Event& ev) {
 // Keys the plugin's interface did not use (in-process container or the
 // sandbox window) go to the main window.
 void forwardPluginKeys(PluginWindow& w) {
+  static const bool trace = std::getenv("GRIDLINE_DEV_PLUGIN_KEYS") != nullptr;  // the yabridge test reads these lines
   host::KeyEvent k;
   if (w.container)
-    while (native::popKey(w.container, k)) sendToMain(k);
+    while (native::popKey(w.container, k)) {
+      if (trace) std::fprintf(stderr, "plugkey copy %s code %d mods %u\n", k.down ? "down" : "up", k.code, k.mods);
+      sendToMain(k);
+    }
   if (w.external && w.editor)
     while (w.editor->popKey(k)) sendToMain(k);
 }

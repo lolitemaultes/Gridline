@@ -27,7 +27,12 @@ constexpr int kLatency = 64;
 inline const char* const kParamNames[kParams] = {"Level", "Tone", "Switch"};
 inline const double kParamDefaults[kParams] = {0.5, 0.25, 0.0};
 
-inline std::atomic<int> gNextInstance{1};
+// Instance numbers across every process of this Wine prefix (VST2 hosts run one plugin per process).
+inline int nextInstance() {
+  HANDLE map = CreateFileMappingA(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(LONG), "GridlineProbeInstances");
+  auto* count = map ? static_cast<volatile LONG*>(MapViewOfFile(map, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(LONG))) : nullptr;
+  return count ? static_cast<int>(InterlockedIncrement(count)) : 1;  // the mapping stays open with the process
+}
 
 // One line per event: milliseconds, instance, event, values. Opened per line so that the test can
 // delete the log between cases while a host process keeps running.
@@ -51,7 +56,7 @@ inline void logf(int inst, const char* fmt, ...) {
 // Sound and parameters. The synth is one sine voice whose level is parameter 0; the effect
 // multiplies by 2 x parameter 0 and delays by kLatency samples, so a render can be measured.
 struct Core {
-  const int inst = gNextInstance.fetch_add(1);
+  const int inst = nextInstance();
   const bool synth;
   std::atomic<double> p[kParams];
   double sr = 48000;
@@ -74,6 +79,7 @@ struct Core {
     phase = 0;
     lastKey.store(k);
     notesOn.fetch_add(1);
+    logf(inst, "note on %d", k);  // I/O on the audio thread: this is a test tool, notes are rare
   }
   void noteOff(int k) {
     if (k == key) amp = 0;

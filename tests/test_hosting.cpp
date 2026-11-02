@@ -28,6 +28,8 @@
 #include "host/vst3/Vst3Scan.h"
 #include "engine/Program.h"
 #include "clap/Probe.h"
+#include "packs/Packs.h"
+#include "packs/modulation/junction.h"
 #include "vst2/Probe.h"
 #include "vst3/Probe.h"
 #include "host/Dylib.h"
@@ -1246,6 +1248,160 @@ void testPresetsAndBypass() {
 }
 
 // Sandbox: MIDI output and modulation travel through shared memory.
+// K-7: the actual plugin inside a Junction: one instance, its own state, its latency; a plugin
+// that is not installed passes audio and keeps its state.
+void testJunctionHosted() {
+  namespace md = packs::modulation;
+  md::JGraph g;
+  const uint32_t id = md::jAddNode(g, defaultPluginState(kClapGain), 100, 40);
+  md::JLink in, out;
+  in.src = md::kJInputs, in.dst = id;
+  out.src = id, out.dst = md::kJOutputs;
+  g.links = {in, out};
+  PluginState st = defaultPluginState("gl.patcherfx");
+  st.data = md::serializeJunction(g);
+  auto fx = createEffect(st.type);
+  ChannelAux aux;
+  fx->prepareHost(st, 48000);
+  packs::prepareAux(st, aux);
+  md::JRuntime* rt = md::junctionRuntime(fx.get());
+  expect(rt != nullptr, "Junction: the runtime is reachable");
+  if (!rt) return;
+  const int n = 1024;
+  std::vector<float> in0(n), x(n), y(n);
+  for (int i = 0; i < n; ++i) in0[static_cast<size_t>(i)] = std::sin(i * 0.05f) * 0.5f;
+  ProcessContext c = ctx48();
+  double err = 0;
+  for (int pass = 0; pass < 4; ++pass) {  // (the prepared plugin is adopted on the first block)
+    x = in0, y = in0;
+    fx->processAux(st, aux, c, x.data(), y.data(), n);
+  }
+  for (int i = 100; i < n; ++i) err = std::max(err, static_cast<double>(std::fabs(x[static_cast<size_t>(i)] - in0[static_cast<size_t>(i - 16)])));
+  expect(err < 1e-5, "Junction: the installed plugin runs inside, with its latency");
+  expect(rt->hostedEffect(id) && host::hostedInstance(rt->hostedEffect(id)), "Junction: its instance is reachable for its own interface");
+  expect(fx->latencyFor(st, 48000) == 16, "Junction reports the latency of the plugin inside");
+  // A change of the plugin's stored state keeps the same instance.
+  Effect* before = rt->hostedEffect(id);
+  PluginState inner = defaultPluginState(kClapGain);
+  inner.params[0] = 0.5f;
+  expect(md::junctionSetNodeState(st, id, inner), "Junction: a module's state is stored");
+  fx->prepareHost(st, 48000);
+  packs::prepareAux(st, aux);
+  x = in0, y = in0;
+  fx->processAux(st, aux, c, x.data(), y.data(), n);
+  fx->processAux(st, aux, c, x.data(), y.data(), n);
+  expect(rt->hostedEffect(id) == before, "Junction: an edit keeps the plugin's instance");
+  expect(md::junctionOf(st).node(id)->plugin.params[0] == 0.5f, "Junction: the stored state reads back");
+  // Undo reaches the running plugin: its values and its stored state, the instance staying.
+  {
+    const auto rmsNow = [&]() {
+      for (int pass = 0; pass < 3; ++pass) {
+        x = in0, y = in0;
+        fx->processAux(st, aux, c, x.data(), y.data(), n);
+      }
+      double e = 0;
+      for (int i = 100; i < n; ++i) e += static_cast<double>(x[static_cast<size_t>(i)]) * static_cast<double>(x[static_cast<size_t>(i)]);
+      return std::sqrt(e / (n - 100));
+    };
+    const auto build = [&](const PluginState& s) {
+      st = s;
+      ChannelAux next;
+      fx->prepareHost(st, 48000);
+      packs::prepareAux(st, next);
+      aux = next;
+    };
+    Document d(makeEmptySong());
+    const ObjectId track = d.song().mixer[1].id;
+    PluginState full = st;
+    PluginState one = defaultPluginState(kClapGain);
+    one.params[0] = 1.0f;
+    md::junctionSetNodeState(full, id, one);
+    d.editMixerTrack(track, "put", [&](MixerTrack& m) { m.slots[0].plugin = full; });
+    build(d.song().mixer[1].slots[0].plugin);
+    const double fullLevel = rmsNow();
+    host::HostedInstance* inst = host::hostedInstance(rt->hostedEffect(id));
+    std::string startData;
+    expect(inst && inst->captureState(startData), "Junction undo: the plugin's state is captured");
+    // A knob: values.
+    PluginState low = full;
+    PluginState lowInner = one;
+    lowInner.params[0] = 0.25f;
+    md::junctionSetNodeState(low, id, lowInner);
+    d.editMixerTrack(track, "knob", [&](MixerTrack& m) { m.slots[0].plugin = low; });
+    build(d.song().mixer[1].slots[0].plugin);
+    expect(std::fabs(rmsNow() - fullLevel * 0.25) < fullLevel * 0.02, "Junction undo: a knob reaches the plugin inside");
+    d.undo();
+    build(d.song().mixer[1].slots[0].plugin);
+    expect(std::fabs(rmsNow() - fullLevel) < fullLevel * 0.02, "Junction undo: undo of a knob reaches the plugin inside");
+    d.redo();
+    build(d.song().mixer[1].slots[0].plugin);
+    expect(std::fabs(rmsNow() - fullLevel * 0.25) < fullLevel * 0.02, "Junction undo: redo too");
+    // The plugin's own stored state: an edit that stores it, undone and redone. The instance
+    // loads the state that comes back, as it would after opening the project.
+    d.undo();
+    build(d.song().mixer[1].slots[0].plugin);
+    rmsNow();
+    PluginState stateA = full;
+    PluginState innerA = one;
+    innerA.data = startData;
+    md::junctionSetNodeState(stateA, id, innerA);
+    d.editMixerTrack(track, "state a", [&](MixerTrack& m) { m.slots[0].plugin = stateA; });
+    build(d.song().mixer[1].slots[0].plugin);
+    rmsNow();
+    PluginState lowOnly = stateA;
+    PluginState innerLow = innerA;
+    innerLow.params[0] = 0.25f;
+    md::junctionSetNodeState(lowOnly, id, innerLow);
+    build(lowOnly);
+    rmsNow();
+    std::string lowData;
+    inst->captureState(lowData);
+    expect(lowData != startData, "Junction undo: the plugin's state follows its value");
+    PluginState stateB = lowOnly;
+    innerLow.data = lowData;
+    md::junctionSetNodeState(stateB, id, innerLow);
+    d.editMixerTrack(track, "state b", [&](MixerTrack& m) { m.slots[0].plugin = stateB; });
+    build(d.song().mixer[1].slots[0].plugin);
+    rmsNow();
+    d.undo();
+    build(d.song().mixer[1].slots[0].plugin);
+    expect(std::fabs(rmsNow() - fullLevel) < fullLevel * 0.02, "Junction undo: undo of a stored state reaches the sound");
+    std::string held;
+    inst->captureState(held);
+    expect(held == startData, "Junction undo: undo of a stored state reaches the plugin");
+    d.redo();
+    build(d.song().mixer[1].slots[0].plugin);
+    expect(std::fabs(rmsNow() - fullLevel * 0.25) < fullLevel * 0.02, "Junction undo: redo of a stored state reaches the sound");
+    inst->captureState(held);
+    expect(held == lowData, "Junction undo: redo of a stored state reaches the plugin");
+    expect(host::hostedInstance(rt->hostedEffect(id)) == inst, "Junction undo: the instance stays");
+    st = d.song().mixer[1].slots[0].plugin;
+  }
+  // Not installed: audio passes, the state stays.
+  md::JGraph m;
+  PluginState gone;
+  gone.type = "clap:org.gridline.test.notinstalled";
+  gone.data = "keep me";
+  const uint32_t mid = md::jAddNode(m, gone, 100, 40);
+  md::JLink mi, mo;
+  mi.src = md::kJInputs, mi.dst = mid;
+  mo.src = mid, mo.dst = md::kJOutputs;
+  m.links = {mi, mo};
+  PluginState ms = defaultPluginState("gl.patcherfx");
+  ms.data = md::serializeJunction(m);
+  auto fx2 = createEffect(ms.type);
+  ChannelAux aux2;
+  fx2->prepareHost(ms, 48000);
+  packs::prepareAux(ms, aux2);
+  x = in0, y = in0;
+  fx2->processAux(ms, aux2, c, x.data(), y.data(), n);
+  fx2->processAux(ms, aux2, c, x.data(), y.data(), n);
+  err = 0;
+  for (int i = 0; i < n; ++i) err = std::max(err, static_cast<double>(std::fabs(x[static_cast<size_t>(i)] - in0[static_cast<size_t>(i)])));
+  expect(err < 1e-5, "Junction: a plugin that is not installed passes audio");
+  expect(md::junctionOf(ms).node(mid)->plugin.data == "keep me", "Junction: a plugin that is not installed keeps its state");
+}
+
 void testSandboxFeatures() {
   OfflineScope offline;
   host::setChildExecutable(GRIDLINE_CLI_EXE);
@@ -1514,6 +1670,7 @@ int main() {
   gl::test::hermeticTestEnv("hosting");
   testHelpers();
   testClap();
+  testJunctionHosted();
   testVst2();
   testVst3Extras();
   testMultiOutRender();

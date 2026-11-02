@@ -162,6 +162,9 @@ inline constexpr int PhMix = kMacros, PhGain = kMacros + 1, PhCount = kMacros + 
 inline constexpr int kPatchMaps = 128;
 inline constexpr int PhMap0 = PhCount;
 inline constexpr int PhCountV2 = PhMap0 + kPatchMaps;
+// K-7: the effect version's track outputs: mixer track of Outputs port k + 1 (-1 = none).
+inline constexpr int PhSend0 = PhCountV2;
+inline constexpr int PhCountV3 = PhSend0 + 4;
 inline constexpr int kPatchNodes = 8;
 // "gl.send" — Mixer Send (send from this point of the chain to a track).
 // SnRoute (J-45): 0 = SnTarget is a mixer index, 1 = an FL route index of the

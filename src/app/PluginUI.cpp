@@ -20,6 +20,7 @@
 #include "../../third_party/imgui/imgui_internal.h"
 #include "../core/Json.h"
 #include "../core/Project.h"
+#include "../packs/modulation/junction.h"
 #include "App.h"
 #include "AutomationEditor.h"
 #include "BrowserUi.h"
@@ -36,6 +37,27 @@ namespace fs = std::filesystem;
 bool drawCustomEditor(App& a, const PluginTarget& t, float width);  // PluginEditors.cpp
 
 const PluginState* PluginTarget::state(const Song& s) const {
+  if (node) {  // K-7: a module in a Junction (read from the Junction's data while that changes)
+    const PluginState* host = PluginTarget{owner, slot}.state(s);
+    if (!host) return nullptr;
+    struct Cached {
+      std::string data;
+      bool ok = false;
+      PluginState st;
+    };
+    static std::map<uint64_t, Cached> cache;
+    Cached& c = cache[key()];
+    if (c.data != host->data || !c.ok) {
+      c.data = host->data;
+      c.ok = false;
+      const packs::modulation::JGraph g = packs::modulation::junctionOf(*host);
+      if (const packs::modulation::JNode* n = g.node(node)) {
+        c.st = n->plugin;
+        c.ok = true;
+      }
+    }
+    return c.ok ? &c.st : nullptr;
+  }
   if (isChannel()) {
     const Channel* c = s.channel(owner);
     return c ? &c->plugin : nullptr;
@@ -67,6 +89,14 @@ const ScopeTap* PluginTarget::inputTap(App& a) const {
 }
 
 void setPluginState(App& a, const PluginTarget& t, const PluginState& st0, const std::string& label, uint64_t mergeKey) {
+  if (t.node) {  // K-7: into the Junction's data
+    const PluginTarget host{t.owner, t.slot};
+    const PluginState* cur = host.state(a.doc.song());
+    if (!cur) return;
+    PluginState ns = *cur;
+    if (packs::modulation::junctionSetNodeState(ns, t.node, st0)) setPluginState(a, host, ns, label, mergeKey);
+    return;
+  }
   PluginState st = st0;
   if (const PluginState* cur = t.state(a.doc.song()); cur && st.original.empty() && !cur->original.empty() && cur->type == st.type)
     st.original = cur->original;  // a stand-in stays one (PluginStandIn.h)

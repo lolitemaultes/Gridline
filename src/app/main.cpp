@@ -14,7 +14,9 @@
 #include <cmath>
 #include <cstring>
 #include <cstdio>
+#include <chrono>
 #include <cstdlib>
+#include <thread>
 #include <filesystem>
 #include <map>
 #include <set>
@@ -2674,6 +2676,13 @@ int main(int argc, char** argv) {
   updui::shutdown();           // J-89: a running installer download is cancelled
   urlimportui::shutdown();     // J-192: running downloads / conversions are stopped
   app.shutdownProjectLoad();   // J-167: a load in progress stops; its reader is joined
+  // K-9: the project is dealt with by now; a plugin that never returns from closing (a bridged
+  // one whose Windows side hangs) must not leave an invisible process behind.
+  std::thread([] {
+    std::this_thread::sleep_for(std::chrono::seconds(20));
+    std::fprintf(stderr, "quit: a plugin did not close in 20 seconds, leaving anyway\n");
+    std::_Exit(0);
+  }).detach();
   closeAllHostedEditors(app);
   if (frameClock) host::native::frameClockStop();
   if (gDevice) SDL_CloseAudioDevice(gDevice);

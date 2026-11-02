@@ -4,6 +4,7 @@
 // PanOMatic is decoded by the first wave (never overridden here) and the
 // Fruity Wrapper has its own family (FlpEncWrapper.cpp). The reverse of the
 // decoders in those files; see FlpEncode.h for the model.
+#include <map>
 #include <algorithm>
 #include <cstdlib>
 #include <atomic>
@@ -17,6 +18,7 @@
 #include "../../packs/dynamics/dynamics.h"
 #include "../../packs/edison/edison.h"
 #include "../../packs/modulation/modulation.h"
+#include "../../packs/modulation/junction.h"
 #include "../../packs/modulation/patchv2.h"
 #include "../../packs/modulation/modulation_dsp.h"
 #include "../../packs/spectral/spectral.h"
@@ -777,6 +779,282 @@ Bytes buildPatcher(const std::vector<EncodedNode>& nodes, bool instrument) {
   return out.b;
 }
 
+// K-7: graphs wired by hand. Every module with its ports, the cables as they are, the host's
+// parameters as exposed parameters. Cable ranges have no place in FL's file: the current value
+// of a host parameter is written into its target and the cable runs over the whole range.
+// Written as is: feedback cables (FL has no delay rule for them). Not written: bypass and mute
+// (FL's file keeps them outside the patch); modules with no FL plugin (dropped with their cables).
+Bytes buildJunction(const md::JGraph& g0, const PluginState& host, bool instrument, const EncodeContext& c) {
+  md::JGraph g = g0;
+  uint64_t next = 1000;
+  std::vector<Chunk> top;
+  const uint64_t inPort = next++, notesPort = next++, sidePort = next++, outPort = next++;
+  std::map<int, uint64_t> trackPorts;
+  struct Mod {
+    const md::JNode* n = nullptr;
+    std::string flName;
+    Bytes state;
+    bool generator = false, note = false;
+    uint64_t node = 0, audioIn = 0, sideIn = 0, eventIn = 0, eventOut = 0;
+    std::map<int, uint64_t> audioOut, paramIn, paramOut, noteOut;
+    std::map<int, int> flOfGl;
+  };
+  // Host parameter values go into their targets first.
+  for (const md::JLink& l : g.links) {
+    if (l.kind != md::JKind::Param || l.src != md::kJInputs || l.fl >= 0 || l.sp < 0 || static_cast<size_t>(l.sp) >= host.params.size()) continue;
+    md::JNode* n = g.node(l.dst);
+    const PluginInfo* info = n ? findPlugin(n->plugin.type) : nullptr;
+    if (!info || l.dp < 0 || static_cast<size_t>(l.dp) >= info->params.size() || static_cast<size_t>(l.dp) >= n->plugin.params.size()) continue;
+    const double v = static_cast<double>(l.lo) + static_cast<double>(host.params[static_cast<size_t>(l.sp)]) * static_cast<double>(l.hi - l.lo);
+    n->plugin.params[static_cast<size_t>(l.dp)] = static_cast<float>(info->params[static_cast<size_t>(l.dp)].fromNormalized(v));
+  }
+  std::vector<Mod> mods;
+  std::map<uint32_t, size_t> index;
+  for (const md::JNode& n : g.nodes) {
+    Mod m;
+    m.n = &n;
+    const PluginInfo* info = findPlugin(n.plugin.type);
+    const std::string title = !n.name.empty() ? n.name : info ? info->name : n.plugin.type;
+    if (n.plugin.type == "gl.patcher" || n.plugin.type == "gl.patcherfx") {
+      encodeNotes().push_back(title + ": a Junction inside a Junction is not carried; left out with its cables");
+      continue;
+    }
+    if (n.mode != md::JMode::On) encodeNotes().push_back(title + ": bypass or mute is not carried");
+    if (!n.flRaw.empty()) {
+      m.state = md::patchUnhex(n.flRaw);
+      m.flName = n.flName;
+    } else {
+      const Bytes orig = md::patchUnhex(n.flOrig);
+      Result r = encode(n.plugin, n.flName, orig.empty() ? nullptr : &orig, c);
+      if (r.flName.empty() && !r.hasState) {
+        encodeNotes().push_back(title + ": no FL plugin, left out with its cables");
+        continue;
+      }
+      m.flName = r.flName.empty() ? n.flName : r.flName;
+      m.state = r.state;
+    }
+    if (m.flName.empty()) {
+      encodeNotes().push_back(title + ": no FL plugin, left out with its cables");
+      continue;
+    }
+    m.generator = info && info->kind == PluginKind::Generator;
+    m.note = info && info->kind == PluginKind::NoteFx;
+    m.node = next++;
+    m.audioIn = next++, m.sideIn = next++, m.eventIn = next++;
+    index[n.id] = mods.size();
+    mods.push_back(std::move(m));
+  }
+  auto flParam = [&](Mod& m, int gl) {
+    auto it = m.flOfGl.find(gl);
+    if (it != m.flOfGl.end()) return it->second;
+    int fl = -1;
+    for (const auto& map : m.n->maps)
+      if (map.gl == gl) fl = map.fl;
+    PluginMapping pm;
+    if (fl < 0 && decodeState(m.flName, m.state, pm, c) && pm.param)
+      for (int k = 0; k < 4096 && fl < 0; ++k)
+        if (pm.param(k) == gl) fl = k;
+    m.flOfGl[gl] = fl;
+    return fl;
+  };
+  auto link = [](uint64_t dst, uint64_t src, float gain, uint32_t group) {
+    ByteWriter w;
+    w.u64(dst);
+    w.u64(src);
+    w.f32(gain);
+    w.u32(2);
+    w.u32(group);
+    w.u32(0);
+    return box({leaf(1300, w.b), leaf(1301, {})});
+  };
+  std::vector<Chunk> links, exposed;
+  std::map<int, int> slotOf;  // host parameter → FL parameter index of the patch
+  auto slot = [&](int hp) {
+    auto it = slotOf.find(hp);
+    if (it != slotOf.end()) return it->second;
+    const int k = static_cast<int>(slotOf.size());
+    slotOf[hp] = k;
+    return k;
+  };
+  std::map<uint64_t, bool> usedInsert;
+  for (const md::JLink& l : g.links) {
+    const auto si = index.find(l.src);
+    const auto di = index.find(l.dst);
+    const bool srcHost = l.src == md::kJInputs, dstHost = l.dst == md::kJOutputs;
+    if ((!srcHost && si == index.end()) || (!dstHost && di == index.end())) continue;
+    Mod* sm = srcHost ? nullptr : &mods[si->second];
+    Mod* dm = dstHost ? nullptr : &mods[di->second];
+    if (l.kind == md::JKind::Audio) {
+      uint64_t from = 0, to = 0;
+      if (srcHost) {
+        from = l.sp == 1 ? sidePort : inPort;
+        if (instrument) {
+          encodeNotes().push_back("an instrument patch has no audio input in FL: a cable from the audio input is left out");
+          continue;
+        }
+      } else {
+        auto& ao = sm->audioOut[l.sp];
+        if (!ao) ao = next++;
+        from = ao;
+      }
+      if (dstHost) {
+        if (l.dp == 0) {
+          to = outPort;
+        } else {
+          auto& t = trackPorts[l.dp];
+          if (!t) t = next++;
+          to = t;
+        }
+      } else {
+        to = l.dp == 1 ? dm->sideIn : dm->audioIn;
+      }
+      links.push_back(link(to, from, l.gain, 0));
+    } else if (l.kind == md::JKind::Notes) {
+      if (dstHost) continue;
+      uint64_t from = notesPort;
+      if (!srcHost) {
+        auto& no = sm->noteOut[l.sp];
+        if (!no) no = next++;
+        from = no;
+      }
+      links.push_back(link(dm->eventIn, from, 1.0f, 1));
+    } else {
+      if (dstHost) continue;
+      const int fl = l.fl >= 0 ? l.fl : flParam(*dm, l.dp);
+      if (fl < 0) {  // a parameter FL's plugin does not have
+        const PluginInfo* info = findPlugin(dm->n->plugin.type);
+        encodeNotes().push_back(dm->flName + ": a cable to " + (info && l.dp >= 0 && static_cast<size_t>(l.dp) < info->params.size() ? info->params[static_cast<size_t>(l.dp)].name : std::string("a parameter")) +
+                                " left out (no FL parameter); its current value is written");
+        continue;
+      }
+      if (l.lo != 0.0f || l.hi != 1.0f) encodeNotes().push_back(dm->flName + ": a cable's parameter range is not carried");
+      auto& pi = dm->paramIn[fl];
+      if (!pi) pi = next++;
+      if (srcHost) {
+        ByteWriter w;
+        w.u64(pi);
+        w.u32(static_cast<uint32_t>(slot(l.sp)));
+        w.zeros(20);
+        exposed.push_back(leaf(1100, w.b));
+      } else {
+        auto& po = sm->paramOut[l.sp];
+        if (!po) po = next++;
+        links.push_back(link(pi, po, 1.0f, 2));
+      }
+    }
+  }
+  // Header, window.
+  {
+    ByteWriter w;
+    w.u64(next + 64);
+    w.u32(1);
+    w.zeros(52);
+    top.push_back(leaf(1000, w.b));
+    ByteWriter v;
+    v.zeros(17);
+    v.u32(15);
+    v.f32(40), v.f32(185), v.f32(548), v.f32(185);
+    v.zeros(7);
+    top.push_back(leaf(1002, v.b));
+  }
+  auto port = [](uint32_t group, uint32_t idx, uint64_t id, uint32_t kind) {
+    ByteWriter w;
+    w.u32(group);
+    w.u32(idx);
+    w.u64(id);
+    w.u32(kind);
+    w.zeros(8);
+    return leaf(5009, w.b);
+  };
+  for (Mod& m : mods) {
+    std::vector<Chunk> kids;
+    ByteWriter h;
+    h.u32(m.generator ? 3 : 2);
+    h.u64(m.node);
+    h.zeros(28);
+    kids.push_back(leaf(5000, h.b));
+    kids.push_back(leaf(5004, utf16Bytes(m.flName)));
+    kids.push_back(leaf(5008, utf16Bytes(m.flName)));
+    kids.push_back(leaf(5010, utf16Bytes(m.n->name.empty() ? shortName(m.flName) : m.n->name)));
+    kids.push_back(leaf(5005, m.state));
+    ByteWriter o;
+    o.f32(m.n->mix);
+    o.i32(-1);
+    o.zeros(8);
+    o.i32(0x7FFFFFFF);
+    o.u32(60);
+    o.zeros(16);
+    kids.push_back(leaf(5007, o.b));
+    kids.push_back(port(0, 0, m.audioIn, 3));
+    kids.push_back(port(0, 1, m.sideIn, 7));
+    kids.push_back(port(1, 0, m.eventIn, 3));
+    if (m.audioOut.empty()) m.audioOut[0] = next++;
+    for (const auto& [k, id] : m.audioOut) kids.push_back(port(0, static_cast<uint32_t>(k), id, 2));
+    for (const auto& [k, id] : m.noteOut) kids.push_back(port(1, static_cast<uint32_t>(k), id, 2));
+    for (const auto& [k, id] : m.paramIn) kids.push_back(port(2, static_cast<uint32_t>(k), id, 11));
+    for (const auto& [k, id] : m.paramOut) kids.push_back(port(2, 0x10000000u | static_cast<uint32_t>(k), id, 10));
+    kids.push_back(leaf(5001, {}));
+    top.push_back(box(std::move(kids)));
+  }
+  auto io = [](uint64_t id, uint32_t group, uint32_t kind, bool audio, int insert, const std::string& name) {
+    ByteWriter w;
+    w.u64(id);
+    w.u32(group);
+    w.u32(kind);
+    if (audio) {
+      w.u8(2);  // stereo
+      w.u8(static_cast<uint8_t>(insert & 255));
+      w.u8(static_cast<uint8_t>((insert >> 8) & 255));
+      w.u8(0);
+      w.zeros(8);
+    } else {
+      w.u8(0);
+      w.i32(-1);
+      w.zeros(7);
+    }
+    return box({leaf(1400, w.b), leaf(1402, utf16Bytes(name)), leaf(1401, {})});
+  };
+  if (instrument) {
+    top.push_back(io(notesPort, 1, 7, false, 0, "Notes"));
+  } else {
+    top.push_back(io(inPort, 0, 7, true, 0, "Audio input"));
+  }
+  top.push_back(io(outPort, 0, 6, true, 0, "Audio output"));
+  for (const auto& [dp, id] : trackPorts) {
+    const size_t pi = static_cast<size_t>(md::PhSend0 + dp - 1);
+    const int insert = pi < host.params.size() ? static_cast<int>(host.params[pi]) : -1;
+    top.push_back(io(id, 0, 4, true, std::max(insert, 0), "Insert " + std::to_string(std::max(insert, 0))));
+  }
+  for (Chunk& l : links) top.push_back(std::move(l));
+  {
+    ByteWriter w;
+    w.f32(1.0f);
+    w.zeros(8);
+    w.u32(600), w.u32(470);
+    w.zeros(20);
+    top.push_back(leaf(1500, w.b));
+  }
+  for (Chunk& e : exposed) top.push_back(std::move(e));
+  top.push_back(leaf(0, {}));
+  top.push_back(leaf(0, {}));
+  auto place = [&](uint64_t id, float x, float y) {
+    ByteWriter w;
+    w.u64(id);
+    w.f32(x);
+    w.f32(y);
+    w.zeros(8);
+    top.push_back(box({leaf(1600, w.b)}));
+  };
+  for (const Mod& m : mods) place(m.node, m.n->x, m.n->y);
+  place(instrument ? notesPort : inPort, g.inX, g.inY);
+  place(outPort, g.outX, g.outY);
+  top.push_back(leaf(1001, {}));
+  ByteWriter out;
+  out.u32(4);
+  out.bytes(serialize(top));
+  return out.b;
+}
+
 // Origin states: when the graph keeps its shape (same plugins, flags and
 // mixes), only the changed nodes' own states are re-encoded in place, so the
 // rest of FL's patch (controllers, wiring, layout) is kept.
@@ -906,6 +1184,13 @@ Encoder patcher(bool instrument) {
   e.generator = instrument;
   e.defaults = [instrument] { return buildPatcher({}, instrument); };
   e.write = [instrument](const PluginState& g, Bytes& b, const EncodeContext& c) {
+    if (md::isJunction3(g.data)) {  // K-7: graphs wired by hand
+      md::JGraph graph;
+      if (md::parseJunction(g.data, graph)) {
+        b = buildJunction(graph, g, instrument, c);
+        return;
+      }
+    }
     if (writePatchV2(g, b, c)) return;
     if (patchInPlace(g, b, c)) return;
     md::PatchGraph graph = md::parsePatchGraph(g.data);

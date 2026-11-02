@@ -472,13 +472,15 @@ void appendInfos(std::vector<PluginInfo>& v) {
   // ----------------------------------------------------------- Patch Host
   for (int fx = 0; fx < 2; ++fx) {
     PluginInfo p = make(fx ? "gl.patcherfx" : "gl.patcher", fx ? "Junction FX" : "Junction", "Utility", fx ? E : G);
-    p.params.resize(PhCountV2);
+    p.params.resize(PhCountV3);
     for (int k = 0; k < kMacros; ++k) p.params[k] = lin("Macro " + std::to_string(k + 1), "%", 0, 1, 0.5);
     p.params[PhMix] = lin("Mix", "%", 0, 1, 1);
     p.params[PhGain] = lin("Output", "dB", -24, 12, 0);
     for (int k = 0; k < kPatchMaps; ++k) p.params[PhMap0 + k] = lin("Param " + std::to_string(k + 1), "%", 0, 1, 0);
+    for (int k = 0; k < 4; ++k) p.params[PhSend0 + k] = lin("Track out " + std::to_string(k + 1), "", -1, 500, -1);
+    if (fx) p.sendParams = {PhSend0, PhSend0 + 1, PhSend0 + 2, PhSend0 + 3};
     p.presets = {{"Macros centred", {}}, {"Macros low", {{0, 0.0f}, {1, 0.0f}, {2, 0.0f}, {3, 0.0f}}}, {"Half wet", {{PhMix, 0.5f}}}};
-    p.editorWidth = fx ? 760.0f : 600.0f;  // instruments open in the 600 px channel window
+    p.editorWidth = 760.0f;  // K-7: the map needs room in both versions
     v.push_back(std::move(p));
   }
   // ----------------------------------------------------------- Mixer Send

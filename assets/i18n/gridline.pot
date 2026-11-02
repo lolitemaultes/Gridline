@@ -185,7 +185,7 @@ msgstr ""
 msgid "Keep these audio settings?"
 msgstr ""
 
-#: src/app/AsioUi.cpp src/app/MixerView.cpp
+#: src/app/AsioUi.cpp src/app/MixerView.cpp src/packs/modulation/modulation_patcher_ui.cpp
 msgid "Latency"
 msgstr ""
 
@@ -205,7 +205,7 @@ msgstr ""
 msgid "None (system input device)"
 msgstr ""
 
-#: src/app/AsioUi.cpp src/app/ChannelEnvelopeUi.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/McpUi.cpp src/app/MixerView.cpp src/app/PluginEditorsEqRef.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/PluginEditorsK3Gb.cpp src/app/PluginFoldersUi.cpp src/packs/plasma/plasma_osc_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp src/packs/spectral/turntable_ui.cpp
+#: src/app/AsioUi.cpp src/app/ChannelEnvelopeUi.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/McpUi.cpp src/app/MixerView.cpp src/app/PluginEditorsEqRef.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/PluginEditorsK3Gb.cpp src/app/PluginFoldersUi.cpp src/packs/modulation/modulation_patcher_ui.cpp src/packs/plasma/plasma_osc_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp src/packs/spectral/turntable_ui.cpp
 msgid "Off"
 msgstr ""
 
@@ -481,7 +481,7 @@ msgstr ""
 msgid "Normalize"
 msgstr ""
 
-#: src/app/AudioRecordUi.cpp src/app/MidiUi.cpp src/app/SamplerRenderUi.cpp
+#: src/app/AudioRecordUi.cpp src/app/MidiUi.cpp src/app/SamplerRenderUi.cpp src/packs/modulation/modulation_patcher_ui.cpp
 msgid "Notes"
 msgstr ""
 
@@ -653,7 +653,7 @@ msgstr ""
 msgid "Cut"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Menus.cpp src/app/PatternAutoUi.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_seq_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Menus.cpp src/app/PatternAutoUi.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/modulation/modulation_patcher_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_seq_ui.cpp
 msgid "Delete"
 msgstr ""
 
@@ -673,7 +673,7 @@ msgstr ""
 msgid "Draw"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/ChopUi.cpp src/app/ContextMenus.cpp src/app/Menus.cpp
+#: src/app/AutomationEditor.cpp src/app/ChopUi.cpp src/app/ContextMenus.cpp src/app/Menus.cpp src/packs/modulation/modulation_patcher_ui.cpp
 msgid "Duplicate"
 msgstr ""
 
@@ -1293,7 +1293,7 @@ msgstr ""
 msgid "Plugins that are not part of Gridline are hidden in a collaborative project."
 msgstr ""
 
-#: src/app/Browser.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/MidiUi.cpp src/app/PluginManager.cpp
+#: src/app/Browser.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/MidiUi.cpp src/app/PluginManager.cpp src/packs/modulation/modulation_patcher_ui.cpp
 msgid "Presets"
 msgstr ""
 
@@ -2061,7 +2061,7 @@ msgstr ""
 msgid "Hide the channel strip (volume, pan, pitch, keyboard)"
 msgstr ""
 
-#: src/app/ChannelSettings.cpp src/app/ContextMenus.cpp src/app/PluginManager.cpp src/app/SamplerRenderUi.cpp
+#: src/app/ChannelSettings.cpp src/app/ContextMenus.cpp src/app/PluginManager.cpp src/app/SamplerRenderUi.cpp src/packs/modulation/modulation_patcher_ui.cpp
 msgid "Instrument"
 msgstr ""
 
@@ -2273,7 +2273,7 @@ msgstr ""
 msgid "Loops the region from its start"
 msgstr ""
 
-#: src/app/ChopUi.cpp
+#: src/app/ChopUi.cpp src/packs/modulation/modulation_patcher_ui.cpp
 msgid "Medium"
 msgstr ""
 
@@ -3193,7 +3193,7 @@ msgstr ""
 msgid "Compare it with them by phone or chat. If it matches, nobody is in between."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/packs/modulation/modulation_patcher_ui.cpp
 msgid "Connect"
 msgstr ""
 
@@ -3585,7 +3585,7 @@ msgstr ""
 msgid "Moved or renamed it? Choose the folder where it is now"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/MixerView.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp
+#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/MixerView.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/packs/modulation/modulation_patcher_ui.cpp
 msgid "Mute"
 msgstr ""
 
@@ -3597,7 +3597,7 @@ msgstr ""
 msgid "NOTE TO THEM (OPTIONAL)"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/PluginManager.cpp src/app/SamplerRenderUi.cpp src/app/TrackReceiptUi.cpp src/packs/plasma/plasma_seq_ui.cpp src/packs/plasma/plasma_wted_ui.cpp
+#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/PluginManager.cpp src/app/SamplerRenderUi.cpp src/app/TrackReceiptUi.cpp src/packs/modulation/modulation_patcher_ui.cpp src/packs/plasma/plasma_seq_ui.cpp src/packs/plasma/plasma_wted_ui.cpp
 msgid "Name"
 msgstr ""
 
@@ -5169,7 +5169,7 @@ msgstr ""
 msgid "Insert a step at the start"
 msgstr ""
 
-#: src/app/ContextMenus.cpp
+#: src/app/ContextMenus.cpp src/packs/modulation/modulation_patcher_ui.cpp
 msgid "Insert effect"
 msgstr ""
 
@@ -6137,7 +6137,7 @@ msgstr ""
 msgid "Upside down (pitch)"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/MixerView.cpp src/app/TopBar.cpp
+#: src/app/ContextMenus.cpp src/app/MixerView.cpp src/app/TopBar.cpp src/packs/modulation/modulation_patcher_ui.cpp
 msgid "View"
 msgstr ""
 
@@ -6237,7 +6237,7 @@ msgstr ""
 msgid "Appearance (dark or light, colours, contrast), control style and sounds"
 msgstr ""
 
-#: src/app/Dialogs.cpp src/app/Menus.cpp src/app/Playlist.cpp src/core/TrackIconSet.cpp src/packs/seltmann/seltmann_ui.cpp src/packs/tideline/tideline_ui.cpp
+#: src/app/Dialogs.cpp src/app/Menus.cpp src/app/Playlist.cpp src/core/TrackIconSet.cpp src/packs/modulation/modulation_patcher_ui.cpp src/packs/seltmann/seltmann_ui.cpp src/packs/tideline/tideline_ui.cpp
 msgid "Audio"
 msgstr ""
 
@@ -9417,7 +9417,7 @@ msgstr ""
 msgid "Pattern as MIDI file..."
 msgstr ""
 
-#: src/app/Menus.cpp src/app/Performance.cpp
+#: src/app/Menus.cpp src/app/Performance.cpp src/packs/modulation/modulation_patcher_ui.cpp
 msgid "Performance"
 msgstr ""
 
@@ -12321,7 +12321,7 @@ msgstr ""
 msgid "EQ"
 msgstr ""
 
-#: src/app/PluginManager.cpp
+#: src/app/PluginManager.cpp src/packs/modulation/modulation_patcher_ui.cpp
 msgid "Effect"
 msgstr ""
 
@@ -12745,7 +12745,7 @@ msgstr ""
 msgid "Bypass this effect"
 msgstr ""
 
-#: src/app/PluginUI.cpp src/packs/modulation/modulation_patcher_ui.cpp
+#: src/app/PluginUI.cpp
 msgid "Bypassed"
 msgstr ""
 
@@ -13001,7 +13001,7 @@ msgstr ""
 msgid "Notes in between play the nearest sample, transposed"
 msgstr ""
 
-#: src/app/SamplerRenderUi.cpp src/packs/spacefx/spacefx_ui.cpp
+#: src/app/SamplerRenderUi.cpp src/packs/modulation/modulation_patcher_ui.cpp src/packs/spacefx/spacefx_ui.cpp
 msgid "OUTPUT"
 msgstr ""
 
@@ -16121,7 +16121,7 @@ msgstr ""
 msgid "Info"
 msgstr ""
 
-#: src/core/TrackIconSet.cpp src/packs/dynamics/dist_ui.cpp
+#: src/core/TrackIconSet.cpp src/packs/dynamics/dist_ui.cpp src/packs/modulation/modulation_patcher_ui.cpp
 msgid "Input"
 msgstr ""
 
@@ -16197,7 +16197,7 @@ msgstr ""
 msgid "Organ"
 msgstr ""
 
-#: src/core/TrackIconSet.cpp src/packs/dynamics/dist_ui.cpp
+#: src/core/TrackIconSet.cpp src/packs/dynamics/dist_ui.cpp src/packs/modulation/modulation_patcher_ui.cpp
 msgid "Output"
 msgstr ""
 
@@ -17230,51 +17230,195 @@ msgid "Channel that plays these notes"
 msgstr ""
 
 #: src/packs/modulation/modulation_patcher_ui.cpp
-msgid "%s has no Gridline equivalent; it is kept for export."
+msgid "%d cables"
 msgstr ""
 
 #: src/packs/modulation/modulation_patcher_ui.cpp
-msgid "%zu / %d modules"
+msgid "%zu modules, %zu audio, %zu note, %zu parameter cables"
 msgstr ""
 
 #: src/packs/modulation/modulation_patcher_ui.cpp
-msgid "%zu plugins, %zu audio / %zu controller links, %zu parameters%s"
+msgid "(not available here)"
 msgstr ""
 
 #: src/packs/modulation/modulation_patcher_ui.cpp
-msgid "+ map"
+msgid "+ Add"
 msgstr ""
 
 #: src/packs/modulation/modulation_patcher_ui.cpp
-msgid "Map a macro to module parameters with \"+ map\"."
+msgid "+ Store"
 msgstr ""
 
 #: src/packs/modulation/modulation_patcher_ui.cpp
-msgid "Move earlier"
+msgid "1 cable"
 msgstr ""
 
 #: src/packs/modulation/modulation_patcher_ui.cpp
-msgid "Move later"
+msgid ":  double click for its interface, right click for its menu"
 msgstr ""
 
 #: src/packs/modulation/modulation_patcher_ui.cpp
-msgid "Parallel"
+msgid ":  drag to another port to connect"
 msgstr ""
 
 #: src/packs/modulation/modulation_patcher_ui.cpp
-msgid "Remove mapping"
+msgid "A Junction cannot run inside a Junction."
 msgstr ""
 
 #: src/packs/modulation/modulation_patcher_ui.cpp
-msgid "Remove module"
+msgid "Activity"
 msgstr ""
 
 #: src/packs/modulation/modulation_patcher_ui.cpp
-msgid "Serial"
+msgid "Arrange modules"
 msgstr ""
 
 #: src/packs/modulation/modulation_patcher_ui.cpp
-msgid "Serial: runs after the previous effect. Parallel: runs beside it on the same input."
+msgid "Disconnect"
+msgstr ""
+
+#: src/packs/modulation/modulation_patcher_ui.cpp
+msgid "Disconnect all"
+msgstr ""
+
+#: src/packs/modulation/modulation_patcher_ui.cpp
+msgid "Double click to add a module. Drag to select, wheel to zoom, Alt or middle drag to pan."
+msgstr ""
+
+#: src/packs/modulation/modulation_patcher_ui.cpp
+msgid "Drive a parameter"
+msgstr ""
+
+#: src/packs/modulation/modulation_patcher_ui.cpp
+msgid "Feedback cable: arrives 256 samples later. Right click to set its level."
+msgstr ""
+
+#: src/packs/modulation/modulation_patcher_ui.cpp
+msgid "Labels"
+msgstr ""
+
+#: src/packs/modulation/modulation_patcher_ui.cpp
+msgid "Large"
+msgstr ""
+
+#: src/packs/modulation/modulation_patcher_ui.cpp
+msgid "Map"
+msgstr ""
+
+#: src/packs/modulation/modulation_patcher_ui.cpp
+msgid "Minimap"
+msgstr ""
+
+#: src/packs/modulation/modulation_patcher_ui.cpp
+msgid "Minimap corner"
+msgstr ""
+
+#: src/packs/modulation/modulation_patcher_ui.cpp
+msgid "Minimap size"
+msgstr ""
+
+#: src/packs/modulation/modulation_patcher_ui.cpp
+msgid "Mix %.0f%%"
+msgstr ""
+
+#: src/packs/modulation/modulation_patcher_ui.cpp
+msgid "No parameters"
+msgstr ""
+
+#: src/packs/modulation/modulation_patcher_ui.cpp
+msgid "Not available on this computer. Its state stays in the project."
+msgstr ""
+
+#: src/packs/modulation/modulation_patcher_ui.cpp
+msgid "Note processor"
+msgstr ""
+
+#: src/packs/modulation/modulation_patcher_ui.cpp
+msgid "Open interface"
+msgstr ""
+
+#: src/packs/modulation/modulation_patcher_ui.cpp
+msgid "Out 2 to Out 5 go to these mixer tracks"
+msgstr ""
+
+#: src/packs/modulation/modulation_patcher_ui.cpp
+msgid "Panel"
+msgstr ""
+
+#: src/packs/modulation/modulation_patcher_ui.cpp
+msgid "Params"
+msgstr ""
+
+#: src/packs/modulation/modulation_patcher_ui.cpp
+msgid "Patches"
+msgstr ""
+
+#: src/packs/modulation/modulation_patcher_ui.cpp
+msgid "Put on the Panel"
+msgstr ""
+
+#: src/packs/modulation/modulation_patcher_ui.cpp
+msgid "Remove its cable"
+msgstr ""
+
+#: src/packs/modulation/modulation_patcher_ui.cpp
+msgid "Remove this cable"
+msgstr ""
+
+#: src/packs/modulation/modulation_patcher_ui.cpp
+msgid "Remove this control"
+msgstr ""
+
+#: src/packs/modulation/modulation_patcher_ui.cpp
+msgid "Reset level"
+msgstr ""
+
+#: src/packs/modulation/modulation_patcher_ui.cpp
+msgid "Right click a cable for its level, to remove it or to insert an effect."
+msgstr ""
+
+#: src/packs/modulation/modulation_patcher_ui.cpp
+msgid "SNAPSHOTS"
+msgstr ""
+
+#: src/packs/modulation/modulation_patcher_ui.cpp
+msgid "Select a module to edit it."
+msgstr ""
+
+#: src/packs/modulation/modulation_patcher_ui.cpp
+msgid "Show audio cables"
+msgstr ""
+
+#: src/packs/modulation/modulation_patcher_ui.cpp
+msgid "Show everything"
+msgstr ""
+
+#: src/packs/modulation/modulation_patcher_ui.cpp
+msgid "Show note cables"
+msgstr ""
+
+#: src/packs/modulation/modulation_patcher_ui.cpp
+msgid "Show parameter cables"
+msgstr ""
+
+#: src/packs/modulation/modulation_patcher_ui.cpp
+msgid "Small"
+msgstr ""
+
+#: src/packs/modulation/modulation_patcher_ui.cpp
+msgid "Snap "
+msgstr ""
+
+#: src/packs/modulation/modulation_patcher_ui.cpp
+msgid "Store the current values"
+msgstr ""
+
+#: src/packs/modulation/modulation_patcher_ui.cpp
+msgid "The Panel is full."
+msgstr ""
+
+#: src/packs/modulation/modulation_patcher_ui.cpp
+msgid "This Junction is full."
 msgstr ""
 
 #: src/packs/modulation/modulation_route_ui.cpp

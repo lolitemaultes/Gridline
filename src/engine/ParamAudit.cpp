@@ -241,6 +241,8 @@ const InertDoc kInert[] = {
     {"gl.waveprogram", "*", "program FX / LFOs / mod values: switched on and routed by the program data (off in the default program)"},
     {"gl.notescript", "*", "used by the script text, which is empty by default"},
     {"gl.patcher", "Macro *", "drives what the patch maps to it; the default patch maps macros 1-3"},
+    {"gl.patcher", "Track out *", "the effect version's mixer track for an extra output; an instrument routes through its channel"},
+    {"gl.patcherfx", "Track out *", "acts when a cable reaches that output and a track is chosen (test_k7_junction); the default patch has none"},
     {"gl.patcherfx", "Macro *", "drives what the patch maps to it; the default patch maps macros 1-3"},
     {"gl.patcher", "Mix", "the instrument host has no dry path (the effect version uses it)"},
     {"gl.colormap", "Group *", "needs notes of that colour / velocity layer and an assigned target channel"},

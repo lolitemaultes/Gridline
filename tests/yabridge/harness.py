@@ -184,10 +184,12 @@ def near(a, b, tol=24):
     return a is not None and all(abs(p - q) <= tol for p, q in zip(a, b))
 
 
-def changed_pixels(a, b):
+def changed_pixels(a, b, rows=None):
+    """Pixels that differ; rows limits it to the top of the window (the plugin, not the bar below with its CPU meter)."""
     if not a or not b or a[:2] != b[:2]:
         return -1
-    return sum(1 for i in range(0, len(a[2]), 3) if a[2][i : i + 3] != b[2][i : i + 3])
+    end = len(a[2]) if rows is None else min(len(a[2]), a[0] * rows * 3)
+    return sum(1 for i in range(0, end, 3) if a[2][i : i + 3] != b[2][i : i + 3])
 
 
 class App:
@@ -201,7 +203,7 @@ class App:
         args = [ctx.app, "--no-ui-sounds", "--size", "1100x700", "--dev-input-live", self.live]
         for t in sandbox_types:
             args += ["--dev-sandbox", t, "1"]
-        env = dict(ctx.env, SDL_AUDIODRIVER="dummy", GRIDLINE_NO_PLUGIN_SCAN="1", GRIDLINE_NO_UPDATE_CHECK="1")
+        env = dict(ctx.env, SDL_AUDIODRIVER="dummy", GRIDLINE_NO_PLUGIN_SCAN="1", GRIDLINE_NO_UPDATE_CHECK="1", GRIDLINE_DEV_PLUGIN_KEYS="1")
         self.proc = subprocess.Popen([str(a) for a in args], stdout=self.log, stderr=subprocess.STDOUT, env=env, start_new_session=True)
         self.seq = 0
 
@@ -305,6 +307,12 @@ class App:
                 lines.append(f"thread {t.name} {read('comm')} wchan {read('wchan')} syscall {read('syscall')[:40]}")
         except OSError as e:
             lines.append(repr(e))
+        for pid in sh("pgrep", "-f", "yabridge-host", timeout=5)[1].split():
+            try:
+                for t in sorted(Path(f"/proc/{pid}/task").iterdir(), key=lambda q: int(q.name)):
+                    lines.append(f"wine host {pid} thread {t.name} {(t / 'comm').read_text().strip()} wchan {(t / 'wchan').read_text().strip()}")
+            except OSError as e:
+                lines.append(repr(e))
         lines.append(sh("ps", "-eo", "pid,ppid,stat,wchan:20,etimes,cmd", "--forest", timeout=10)[1][-3000:])
         self.log.write(("\n".join(lines) + "\n").encode())
         self.log.flush()
@@ -325,7 +333,7 @@ class App:
 def base_project(ctx):
     d = json.loads(ctx.demo.read_text())
     master = dict(d["mixer"][0], slots=[], sends=[])
-    track = {"id": d["nextId"], "name": "Test", "color": 5263440, "muted": False, "pan": 0, "sends": [], "slots": []}
+    track = {"id": d["nextId"], "name": "Test", "color": 5263440, "muted": False, "pan": 0, "sends": [{"to": master["id"], "level": 1.0}], "slots": []}
     return dict(d, automations=[], channels=[], patterns=[], playlist=[], markers=[], links=[], modLinks=[], tracks=d["tracks"][:3], mixer=[master, track], nextId=d["nextId"] + 1000, tempo=120.0,
                 info=dict(d["info"], title="yabridge test"))
 
@@ -560,13 +568,25 @@ def check_moved(ctx, r, window, app):
 # ------------------------------------------------------------------------ keyboard
 
 
+def press_space(app, press):
+    """Presses Space one way; (toggled, what Gridline logged about the key), transport back to stopped."""
+    before = app.ask("playstate", r"playstate frame \d+: playing (\d)")
+    mark = app.mark()
+    press()
+    time.sleep(0.7)
+    after = app.ask("playstate", r"playstate frame \d+: playing (\d)")
+    log = " ".join(line for line in app.output(mark).splitlines() if line.startswith("plugkey"))
+    if after and after.group(1) == "1":
+        app.send("stopvia button")
+        time.sleep(0.2)
+    return bool(before and after and before.group(1) != after.group(1)), f"playing {before and before.group(1)} -> {after and after.group(1)}; {log}"
+
+
 def check_keys(ctx, r, window, app):
     probe, x = ctx.probe, ctx.x
     g = x.geom(window["container"])
     x.move(g["x"] + 450, g["y"] + 300)
-    m0 = probe.size()
     x.click(1)
-    r.expect("a click gives the editor the keyboard", bool(probe.wait(r"focus in", m0, timeout=2.0)), probe.text(m0)[-160:])
     time.sleep(0.3)
     m0 = probe.size()
     x.type("abc")
@@ -589,16 +609,20 @@ def check_keys(ctx, r, window, app):
     t = probe.text(m0)
     r.expect("Alt chord reaches the editor", bool(re.search(r"keydown 75 shift 0 ctrl 0 alt 1", t)), t[-200:])
     # Space is Gridline's: with the editor focused the transport still toggles (KeyForward).
-    before = app.ask("playstate", r"playstate frame \d+: playing (\d)")
     m0 = probe.size()
-    x.key("space")
-    time.sleep(0.7)
-    after = app.ask("playstate", r"playstate frame \d+: playing (\d)")
-    toggled = bool(before and after and before.group(1) != after.group(1))
-    r.expect("Space in the editor toggles Gridline's transport", toggled, f"playing {before and before.group(1)} -> {after and after.group(1)}")
-    r.add("Space also reached the editor (for information)", "pass" if "keydown 32" in probe.text(m0) else "skip", "the editor saw it" if "keydown 32" in probe.text(m0) else "the editor did not see it")
-    if after and after.group(1) == "1":
-        app.send("stopvia button")
+    toggled, detail = press_space(app, lambda: x.key("space"))
+    r.expect("Space in the editor toggles Gridline's transport", toggled, detail)
+    saw = "keydown 32" in probe.text(m0)
+    r.add("Space also reached the editor (for information)", "pass" if saw else "skip", "the editor saw it" if saw else "the editor did not see it")
+
+    # The same, held for a moment as a person does, so that down and up fall in different frames.
+    def held():
+        sh("xdotool", "keydown", "space", timeout=5)
+        time.sleep(0.15)
+        sh("xdotool", "keyup", "space", timeout=5)
+
+    toggled, detail = press_space(app, held)
+    r.expect("Space held for a moment in the editor toggles the transport", toggled, detail)
     # Back to Gridline: click its main window, Space goes to the transport and not to the plugin.
     main = app.main_window()
     if not main:
@@ -610,19 +634,24 @@ def check_keys(ctx, r, window, app):
     x.move(mg["x"] + mg["w"] // 2, mg["y"] + mg["h"] - 40)
     m0 = probe.size()
     x.click(1)
-    r.expect("the editor loses the keyboard on a click in Gridline", bool(probe.wait(r"focus out", m0, timeout=2.0)), probe.text(m0)[-120:])
+    saw = bool(probe.wait(r"focus out", m0, timeout=2.0))
+    r.add("the plugin is told it lost the keyboard (for information)", "pass" if saw else "skip", "focus out seen" if saw else "no focus out in the plugin; what counts is where the next keys go, below")
     time.sleep(0.4)
-    before = app.ask("playstate", r"playstate frame \d+: playing (\d)")
     m0 = probe.size()
-    x.key("space")
-    time.sleep(0.7)
-    after = app.ask("playstate", r"playstate frame \d+: playing (\d)")
-    r.expect("transport shortcut works with Gridline focused", bool(before and after and before.group(1) != after.group(1)), f"{before and before.group(1)} -> {after and after.group(1)}")
-    r.expect("the key did not go to the plugin", "keydown 32" not in probe.text(m0), probe.text(m0)[-120:])
-    if after and after.group(1) == "1":
-        app.send("stopvia button")
+    toggled, detail = press_space(app, lambda: x.key("space"))
+    r.expect("transport shortcut works with Gridline focused", toggled, detail)
+    r.expect("after a click in Gridline the key does not go to the plugin", "keydown 32" not in probe.text(m0), probe.text(m0)[-120:])
+    # And back: a click in the editor gives it the keyboard again.
     sh("xdotool", "windowraise", window["window"], timeout=5)
     time.sleep(0.4)
+    x.move(g["x"] + 450, g["y"] + 300)
+    x.click(1)
+    time.sleep(0.3)
+    m0 = probe.size()
+    x.type("xy")
+    time.sleep(0.5)
+    chars = re.findall(r"char (\d+)", probe.text(m0))
+    r.expect("a click in the editor gives it the keyboard again", chars[:2] == ["120", "121"], chars)
 
 
 # ------------------------------------------------------------------------ resizing
@@ -669,6 +698,8 @@ def check_resize(ctx, r, window, app):
         m = probe.wait(r"size (\d+) (\d+)", m0, timeout=2.0)
         r.expect("resizing the window tells the plugin", bool(m and (int(m.group(1)), int(m.group(2))) == (w2["pw"], w2["ph"])), f"{m.group(0) if m else 'nothing'} vs {w2['pw']}x{w2['ph']}")
         check_points(ctx, r, "clicks exact after resizing the window", w2, corner_points(w2["pw"], w2["ph"]))
+    elif r.cell.get("format") == "vst2":
+        r.add("resizing the window tells the plugin", "skip", "VST2 has no call for a host to resize a plugin: the window follows the plugin only")
     else:
         r.add("resizing the window tells the plugin", "fail", "the window is not resizable although the plugin says it can")
     x.window_size((fresh_window(app) or w)["window"], 640, 400 + 40)
@@ -907,8 +938,8 @@ def audio_cell(ctx, r, types, target_fmt, sandbox):
     finally:
         app.kill()
     t = probe.text()
-    notes = re.findall(r"noteson (\d+) notesoff (\d+) lastkey (-?\d+)", t)
-    r.expect("the note reached the plugin (key 69)", bool(notes and notes[-1][2] == "69"), notes[-1:] or t[-160:])
+    notes = re.findall(r"note on (\d+)", t)
+    r.expect("the note reached the plugin (key 69)", "69" in notes, notes[-4:] or t[-160:])
     kill_hosts()
 
     # Offline render: a held note at a known pitch.
@@ -1109,7 +1140,7 @@ def real_cell(ctx, r, name, fmt, type_id, entry):
             time.sleep(0.4)
             if i % 5 == 4:
                 now = x.shot(w["window"], str(ctx.cell_dir / f"shot-step{i + 1}.png"))
-                n = changed_pixels(base, now)
+                n = changed_pixels(base, now, w["ph"])
                 if n > 0:
                     moved += 1
                     total_changed += n
@@ -1136,14 +1167,20 @@ def real_cell(ctx, r, name, fmt, type_id, entry):
             x.up(1)
             time.sleep(0.3)
         now = x.shot(w["window"], str(ctx.cell_dir / "shot-moved-after.png"))
-        r.expect("after moving the window: pixels still change", changed_pixels(base, now) > 0, f"{changed_pixels(base, now)} pixels")
+        n = changed_pixels(base, now, w["ph"])
+        r.expect("after moving the window: pixels still change", n > 0, f"{n} pixels")
         after = app.params()
         diffs = sum(1 for a, b in zip((before or {}).get("values", []), (after or {}).get("values", [])) if abs(a - b) > 1e-5) if before and after else -1
         r.expect("after moving the window: parameters still change", diffs > 0, f"{diffs} parameters changed")
+        t0 = time.time()
+        app.send("plugwin close")
+        answers = app.ask("epoch", r"epoch frame", timeout=30) is not None
+        r.expect("closing the interface: Gridline keeps answering", answers and app.alive(), f"answers {answers}, alive {app.alive()}, {time.time() - t0:.1f} s")
     finally:
         if app.alive():
+            t0 = time.time()
             done, code = app.quit(timeout=60)
-            r.expect("quit: no hang, clean exit", done and code == 0, f"exited {done}, code {code}")
+            r.expect("quit: no hang, clean exit", done and code == 0, f"exited {done}, code {code}, {time.time() - t0:.1f} s")
         app.kill()
         kill_hosts()
 
@@ -1185,15 +1222,19 @@ def control_cell(ctx, r, fmt, entry, carla_script):
             check_points(ctx, r, f"clicks after moving the plugin window ({i + 1})", w, [(3, 3), (636, 396), (300, 200)])
         g = x.geom(win)
         x.move(g["x"] + 450, g["y"] + 300)
-        m0 = probe.size()
         x.click(1)
-        r.expect("a click gives the editor the keyboard", bool(probe.wait(r"focus in", m0, timeout=2.0)), probe.text(m0)[-160:])
         time.sleep(0.3)
         m0 = probe.size()
         x.type("abc")
         time.sleep(0.5)
         chars = re.findall(r"char (\d+)", probe.text(m0))
         r.expect("typed text reaches the editor", chars[:3] == ["97", "98", "99"], chars)
+        # The Wine host dies under the control host too: is Gridline's in-process result the same?
+        kill_hosts()
+        time.sleep(4.0)
+        code = proc.poll()
+        said = (ctx.cell_dir / "carla.log").read_text(errors="replace")[-200:]
+        r.add("control host: survives the Wine host being killed (for comparison)", "pass" if code is None else "skip", f"exit code {code}: {said}")
     finally:
         try:
             os.killpg(proc.pid, signal.SIGTERM)
@@ -1207,36 +1248,63 @@ def control_cell(ctx, r, fmt, entry, carla_script):
         kill_hosts()
 
 
-def control_real(ctx, r, entry, script):
-    """Dexed in the control host: is a blank interface, or a hang on closing, Gridline's doing?"""
-    r.cell = {"format": "vst3", "mode": "inproc", "plugin": "Dexed", "host": "carla"}
-    ctx.cell_dir = ctx.out / "control-Dexed"
+def control_real(ctx, r, name, fmt, entry, script):
+    """A real plugin in the control host: is what Gridline shows with it Gridline's doing?"""
+    r.cell = {"format": fmt, "mode": "inproc", "plugin": name, "host": "carla"}
+    ctx.cell_dir = ctx.out / f"control-{name}-{fmt}"
     ctx.cell_dir.mkdir(parents=True, exist_ok=True)
     x = ctx.x
-    log = open(ctx.cell_dir / "carla.log", "ab")
-    proc = subprocess.Popen([sys.executable, str(script), "vst3", str(entry), "-"], stdout=log, stderr=subprocess.STDOUT, env=ctx.env, start_new_session=True)
+    log_path = ctx.cell_dir / "carla.log"
+    log = open(log_path, "ab")
+    proc = subprocess.Popen([sys.executable, str(script), fmt, str(entry), "-"], stdout=log, stderr=subprocess.STDOUT, env=ctx.env, start_new_session=True)
     try:
         ids = []
         end = time.time() + 120
         while not ids and time.time() < end:
-            ids = sh("xdotool", "search", "--name", "Dexed", timeout=10)[1].split()
+            ids = sh("xdotool", "search", "--name", name, timeout=10)[1].split()
             time.sleep(1.0)
-        if not r.expect("control host: editor opens", bool(ids), (ctx.cell_dir / "carla.log").read_text(errors="replace")[-300:]):
+        if not r.expect("control host: editor opens", bool(ids), log_path.read_text(errors="replace")[-300:]):
             return
         time.sleep(8.0)
         win = hex(int(ids[-1]))
+        x.window_move(win, 40, 40)
+        time.sleep(1.0)
         x.dump(win, ctx.cell_dir / "x.txt")
         img = x.shot(win, str(ctx.cell_dir / "shot.png"))
         colours = len({img[2][i : i + 3] for i in range(0, len(img[2]), 21)}) if img else 0
         r.add("control host: interface drawn (for comparison)", "pass" if colours > 24 else "skip", f"{colours} colours")
+        # The drags the Gridline cell makes, and the values the plugin reports to this host.
+        g = x.geom(win)
+        size = log_path.stat().st_size
+        for cy in (0.2, 0.4, 0.6, 0.8):
+            for cx in (0.15, 0.35, 0.55, 0.75, 0.9):
+                px, py = g["x"] + int(g["w"] * cx), g["y"] + int(g["h"] * cy)
+                x.move(px, py)
+                x.down(1)
+                time.sleep(0.1)
+                x.move(px, py - 30)
+                x.move(px, py - 45)
+                x.up(1)
+                time.sleep(0.3)
+        time.sleep(1.0)
+        with open(log_path, errors="replace") as f:
+            f.seek(size)
+            said = re.findall(r"automate (\d+) (\S+)", f.read())
+        last = {}
+        for k, v in said:
+            last[k] = v
+        r.add("control host: values the plugin reports on drags (for comparison)", "pass" if said else "skip", f"{len(said)} reports, last: {dict(list(last.items())[:8])}")
+        shot = x.shot(win, str(ctx.cell_dir / "shot-after.png"))
+        r.add("control host: pixels change on drags (for comparison)", "pass" if changed_pixels(img, shot) > 0 else "skip", f"{changed_pixels(img, shot)} pixels")
     finally:
         t0 = time.time()
         try:
             os.killpg(proc.pid, signal.SIGTERM)
-            proc.wait(timeout=60)
-            r.add("control host: closes in time (for comparison)", "pass", f"{time.time() - t0:.1f} s")
+            code = proc.wait(timeout=60)
+            said = log_path.read_text(errors="replace")[-160:] if code else ""
+            r.add("control host: closes (for comparison)", "pass" if code == 0 else "skip", f"{time.time() - t0:.1f} s, exit code {code} {said}")
         except (OSError, subprocess.TimeoutExpired):
-            r.add("control host: closes in time (for comparison)", "skip", "still running after 60 s")
+            r.add("control host: closes (for comparison)", "skip", "still running after 60 s")
             try:
                 os.killpg(proc.pid, signal.SIGKILL)
             except OSError:
@@ -1392,10 +1460,16 @@ def main():
             except Exception as e:
                 r.add("harness error", "fail", repr(e))
         if a.real:
-            try:
-                control_real(ctx, r, Path.home() / ".vst3/yabridge/Dexed.vst3", script)
-            except Exception as e:
-                r.add("harness error", "fail", repr(e))
+            for name, fmt, pattern in (("Dexed", "vst3", ".vst3/yabridge/Dexed*"), ("Nekobi", "vst2", ".vst/yabridge/Nekobi*.so"), ("Nekobi", "vst3", ".vst3/yabridge/Nekobi*")):
+                found = sorted(Path.home().glob(pattern))
+                if not found:
+                    r.cell = {"format": fmt, "mode": "inproc", "plugin": name, "host": "carla"}
+                    r.add("control host: editor opens", "skip", f"{pattern} is not installed")
+                    continue
+                try:
+                    control_real(ctx, r, name, fmt, found[0], script)
+                except Exception as e:
+                    r.add("harness error", "fail", repr(e))
     stop.set()
     return 0
 

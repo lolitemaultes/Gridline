@@ -19,6 +19,7 @@
 #include "core/BrowserIndex.h"
 #include "core/Document.h"
 #include "core/FileOps.h"
+#include "core/Json.h"
 #include "core/Platform.h"
 #include "core/ProjectInterop.h"
 #include "core/Song.h"
@@ -59,14 +60,46 @@ void testNames() {
 void testPaths() {
   expect(fileops::isInside("/a/b/c.wav", "/a/b") && fileops::isInside("/a/b", "/a/b"), "isInside: a file in a folder, the folder itself");
   expect(!fileops::isInside("/a/bc/d.wav", "/a/b"), "isInside: a sibling with the same prefix is not inside");
-  std::string p = "/a/b/c.wav";
-  expect(fileops::retargetPath(p, "/a/b/c.wav", "/a/b/d.wav") && p == "/a/b/d.wav", "retarget: the file itself");
-  p = "/a/b/sub/c.wav";
-  expect(fileops::retargetPath(p, "/a/b", "/a/x") && fs::path(p) == fs::path("/a/x/sub/c.wav"), "retarget: a file inside a moved folder");
-  p = "/a/bc/c.wav";
-  expect(!fileops::retargetPath(p, "/a/b", "/a/x") && p == "/a/bc/c.wav", "retarget: a sibling folder stays");
+  // Absolute on this system: "/a/b" has no drive letter, so on Windows it is a relative path.
+#ifdef _WIN32
+  const std::string drive = "C:";
+#else
+  const std::string drive;
+#endif
+  std::string p = drive + "/a/b/c.wav";
+  expect(fileops::retargetPath(p, drive + "/a/b/c.wav", drive + "/a/b/d.wav") && p == drive + "/a/b/d.wav", "retarget: the file itself");
+  p = drive + "/a/b/sub/c.wav";
+  expect(fileops::retargetPath(p, drive + "/a/b", drive + "/a/x") && fs::path(p) == fs::path(drive + "/a/x/sub/c.wav"), "retarget: a file inside a moved folder");
+  p = drive + "/a/bc/c.wav";
+  expect(!fileops::retargetPath(p, drive + "/a/b", drive + "/a/x") && p == drive + "/a/bc/c.wav", "retarget: a sibling folder stays");
   p = "rel/c.wav";
-  expect(!fileops::retargetPath(p, "rel/c.wav", "/x.wav"), "retarget: relative references are left alone");
+  expect(!fileops::retargetPath(p, "rel/c.wav", drive + "/x.wav"), "retarget: relative references are left alone");
+#ifdef _WIN32
+  // Both spellings of one path meet: an FL import writes forward slashes, the browser backslashes.
+  p = "C:/a/b/sub/c.wav";
+  expect(fileops::retargetPath(p, "C:\\a\\b", "C:\\a\\x") && p == "C:\\a\\x\\sub\\c.wav", "retarget: forward slashes in the reference, backslashes in the move");
+  p = "C:\\a\\b\\c.wav";
+  expect(fileops::retargetPath(p, "C:/a/b/c.wav", "C:/a/b/d.wav") && p == "C:/a/b/d.wav", "retarget: backslashes in the reference, forward slashes in the move");
+#endif
+}
+
+// A Windows path in a plugin's JSON state is one reference on every system: its backslashes
+// are escaped, none starts an escape (the "\t" of "\take.wav"), and a rewrite keeps them.
+void testBackslashesInJsonState() {
+  const std::string from = "C:\\Music\\Edited audio\\take.wav", to = "D:\\new\\Edited audio\\take.wav";
+  Json j = Json::makeObject();
+  j.object["path"] = Json::makeString(from);
+  PluginState st;
+  st.type = "gl.edison";
+  st.data = jsonStringify(j, 0);
+  std::vector<std::string> seen;
+  const bool changed = forEachStateFileRef(st, [&](std::string& p) {
+    seen.push_back(p);
+    p = to;
+  });
+  expect(seen == std::vector<std::string>{from}, "JSON state: a Windows path reaches the reference walk whole");
+  Json back;
+  expect(changed && jsonParse(st.data, back) && back.text("path") == to, "JSON state: a rewritten Windows path reads back whole");
 }
 
 void testRename() {
@@ -176,7 +209,10 @@ Song songUsing(const std::string& sample, const std::string& loupeTake) {
   s.channels.push_back(c);
   if (s.mixer.size() > 1) {
     s.mixer[1].slots[0].plugin.type = "gl.edison";
-    s.mixer[1].slots[0].plugin.data = "{\"path\": \"" + loupeTake + "\", \"v\": 1}";
+    Json state = Json::makeObject();  // as the plugin writes it (edison_io_dsp.cpp): backslashes escaped
+    state.object["path"] = Json::makeString(loupeTake);
+    state.object["v"] = Json::makeNumber(1);
+    s.mixer[1].slots[0].plugin.data = jsonStringify(state, 0);
   }
   return s;
 }
@@ -256,6 +292,7 @@ int main() {
   fs::create_directories(root);
   testNames();
   testPaths();
+  testBackslashesInJsonState();
   testRename();
   testMoveAndFolders();
   testTrash();
