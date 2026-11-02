@@ -328,6 +328,8 @@ void testJ1Spectral2() {
   auto shifter = [&](int engine) {
     PluginState s = def("gl.pitch");
     set(s, sp::PsEngine, engine);
+    // the defaults these checks were written for (new instances use the reference defaults since K-2 round 3)
+    set(s, sp::PsPreserve, 0), set(s, sp::PsGrain, 45), set(s, sp::PsDensity, 3), set(s, sp::PsJitter, 0.3f), set(s, sp::PsRand, 0.2f);
     return s;
   };
   {  // Music (granular) engine ratios

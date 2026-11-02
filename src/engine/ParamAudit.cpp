@@ -269,6 +269,7 @@ const InertDoc kInert[] = {
     {"gl.dcosynth", "LFO trigger", "VERIFIED: pressing it restarts the LFOs (J-92 fix); a static value has nothing to restart"},
     {"gl.delay", "Saturation", "VERIFIED: legacy model with Distortion off"},
     {"gl.drawneq", "Smoothing", "VERIFIED: glides morph / depth changes while a curve is drawn"},
+    {"gl.peakctl", "LFO length", "VERIFIED: sets the LFO rate in the legacy model with tempo sync on and a non-zero LFO amount"},
     {"gl.enhance", "*point*", "VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on"},
     {"gl.enhance", "Program: * curve points", "VERIFIED: acts when the added points differ from the curve's end point"},
     {"gl.enhance", "Program: * low threshold", "VERIFIED: upward / downward action below it needs quiet material under the threshold with a below ratio set"},

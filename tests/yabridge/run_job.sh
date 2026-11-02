@@ -7,8 +7,10 @@ shift 9
 HERE="$(cd "$(dirname "$0")" && pwd)"
 mkdir -p "$OUT"
 OUT="$(cd "$OUT" && pwd)"
-export XDG_RUNTIME_DIR="$OUT/xdg"
-mkdir -p "$XDG_RUNTIME_DIR"
+# Short, as on a desktop (/run/user/1000): yabridge makes Unix sockets in here, named after the
+# plugin, and a socket path may hold only 107 characters ("File name too long" otherwise).
+XDG_RUNTIME_DIR="$(mktemp -d /tmp/xdgXXXX)"
+export XDG_RUNTIME_DIR
 chmod 700 "$XDG_RUNTIME_DIR"
 pids=()
 cleanup() { for p in "${pids[@]:-}"; do [ -n "$p" ] && kill "$p" 2> /dev/null; done; }

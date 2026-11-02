@@ -258,6 +258,7 @@ int main() {
     for (double semis : {7.0, -12.0, 3.0}) {
       PluginState st = stateOf("gl.pitch");
       set(st, sp::PsEngine, 0);  // classic engines (the J-1 reference engines: tests/j1/j1_spectral2.inc)
+      set(st, sp::PsPreserve, 0), set(st, sp::PsGrain, 45);  // the defaults before K-2 round 3
       set(st, sp::PsMode, static_cast<float>(mode));
       set(st, sp::PsPitch, static_cast<float>(semis));
       auto fx = createEffect("gl.pitch");

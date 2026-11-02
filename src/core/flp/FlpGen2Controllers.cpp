@@ -18,12 +18,13 @@ namespace {
 // State (version 2): u32 version, i32 attack, i32 release (smoothing, 0..256),
 // f32 value[132] (one per key 0..131, 0..1), i32 zone low, i32 zone high
 // (the selected key zone, editor only), i32 0, u8 flag. Older states (presets
-// saved by FL 4) have no version word and fewer keys; the 13-byte tail is the same.
+// saved by FL 4) have no version word and fewer keys; the 13-byte tail is the same
+// (version 3 has one byte more).
 constexpr size_t kKcTail = 13;
 
-double kcTime(int32_t v) {  // smoothing 0..256 → seconds (approximate curve)
-  double n = std::clamp(v / 256.0, 0.0, 1.0);
-  return std::max(0.001, n * n * 2.0);
+double kcTime(int32_t v) {  // K-2 round 3: smoothing 0..256 → 0.1 (11^(v / 256) - 1) s (the reference's 0 .. 1000 ms)
+  const double n = std::clamp(v / 256.0, 0.0, 1.0);
+  return std::max(0.001, 0.1 * (std::pow(11.0, n) - 1.0));
 }
 
 bool decodeKeyboardController(Context&, const std::vector<Event>& evs, PluginMapping& m) {
@@ -32,7 +33,7 @@ bool decodeKeyboardController(Context&, const std::vector<Event>& evs, PluginMap
   if (b.size() < kKcTail + 8) return true;  // empty state: defaults
   size_t keysAt = 0, keysEnd = b.size() - kKcTail;
   int32_t atk = 0, rel = 0;
-  if (b.u32(0) == 2 && b.size() >= 12 + kKcTail) {
+  if ((b.u32(0) == 2 || b.u32(0) == 3) && b.size() >= 12 + kKcTail) {  // K-2 round 3: version 3 (FL 2026) too
     atk = b.i32(4), rel = b.i32(8), keysAt = 12;
   } else {
     atk = b.i32(0), rel = b.i32(4), keysAt = 8;

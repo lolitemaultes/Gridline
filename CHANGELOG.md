@@ -98,6 +98,8 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 
 ### Changed
 
+- Plasma distortion shapers rewritten.
+
 - **Channel rack play lights.** The green lamp at the end of each channel row now lights while
   the channel plays and fades after, in place of the small light inside the name button (the name
   gets that room back). A selected channel's lamp keeps a green rim, and a click on the lamp still
@@ -189,6 +191,17 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
   vintage phaser's and vintage chorus's switches.
 - FL Studio vocoder settings now import: band range, formant, invert, attack, release, hold and
   the three levels, with their automation. They used to fall back to Gridline's defaults.
+- Auto Pan's LFO imported from FL Studio now runs at the speed FL Studio does
+  and moves the same way, so imported pan and tremolo settings sound the same. A slow setting used
+  to run far too fast. New Auto Pans use the same LFO law; projects saved earlier keep their sound
+  (their LFO law parameter stays at 1), and the factory presets move at about their former rates.
+- FL Studio projects saved with current versions now import their keyboard controller settings
+  (Keyboard Mod), and its attack and release smoothing times match FL Studio's from 0 to 1000 ms.
+- A delay bank unit set to the shortest step in an FL Studio project now sounds at zero delay as
+  it does in FL Studio, instead of a few samples late. Projects saved earlier keep their timing.
+- New Multi Delay, Peak Follower and Pitch Shifter instances have revised starting settings that match
+  imported units (the Pitch Shifter keeps its Hi-fi engine and no delay). The factory presets and saved
+  projects are unchanged.
 - The snare drum track icon is no longer cut off at the bottom. Three more icons that touched or
   crossed their box at small sizes (reverb, voice and the loop arrows on looping clips) are drawn
   inside it now.

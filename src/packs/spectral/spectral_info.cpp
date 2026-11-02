@@ -140,6 +140,10 @@ PluginInfo pitch() {
       {"Chipmunk", V{{PsEngine, 1.f}, {PsPitch, 7.f}, {PsFormant, 5.f}, {PsCorrection, 1.f}}},
   };
   p.editorWidth = 760;
+  // K-2 round 3: new instances start at the reference plugin's defaults (keep formants, 85 ms window, density 2,
+  // no jitter / randomize, 16-step delay); the engine stays Hi-fi (J-87). The delay time stays 0 ms: the Classic engines
+  // apply it whatever the delay mode. Factory presets keep their values.
+  setReferenceDefaults(p, {{PsPreserve, 1}, {PsGrain, 85}, {PsDensity, 2}, {PsJitter, 0}, {PsRand, 0}, {PsDelaySteps, 16}});
   return p;
 }
 

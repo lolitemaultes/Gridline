@@ -3,6 +3,7 @@
 // the sample rate changes (never per block).
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <memory>
 #include <vector>
 #include "../core/DelayCurves.h"
@@ -1047,7 +1048,7 @@ class AutoPanFx final : public Effect {
       lastPan_ = static_cast<float>(std::clamp(span + sm_ * panAmt, -1.0, 1.0)), lastVol_ = static_cast<float>(g);
     }
   }
-  void reset() override { free_ = 0, sm_ = 0, primed_ = false, ctl_ = 0; }
+  void reset() override { free_ = 0, sm_ = 0, primed_ = false, ctl_ = 0, phase_ = 0; }
   // Reference engine: static pan / volume knob, one LFO (sine / triangle / square) on pan or volume,
   // evaluated once per control period (kCtl samples of the effect's own clock — J-30: per
   // host block made the sound depend on the buffer size); pan law folds half of the attenuated
@@ -1062,6 +1063,10 @@ class AutoPanFx final : public Effect {
     const double period = std::round(std::pow(50000.0, (65536.0 - sp) / 65536.0));  // LFO period in samples
     const double inc = 1.0 / std::max(1.0, period);
     const double amount = param(s, ApAmount, 0.5f);
+    if (iparam(s, ApLfoLaw) >= 1) {
+      classic2(ctx, L, R, n, shape, target, p0, g0, std::round(sp), amount);
+      return;
+    }
     const double c = 1.0 - std::exp(-1.0 / (0.005 * ctx.sampleRate));
     for (int i = 0; i < n; ++i) {
       if (ctl_ == 0) {  // targets for the next control period
@@ -1088,6 +1093,51 @@ class AutoPanFx final : public Effect {
       R[i] = static_cast<float>(gRR_ * r + gLR_ * l);
     }
   }
+  // K-2 round 3 (LFO law 2): the reference speed curve (period = u (50000^(u / 65536) - 1) 2048 / rate
+  // samples, u = 65536 - speed), a 32-bit phase stepped once per control period before the LFO is read
+  // (and only while a target is on), and each gain ramped linearly across the period at no more than
+  // 0.001 x 44.1 kHz / rate per sample.
+  void classic2(const ProcessContext& ctx, float* L, float* R, int n, int shape, int target, double p0, double g0, double speed,
+                double amount) {
+    const double sr = std::max(1.0, ctx.sampleRate);
+    const float u = static_cast<float>(65536.0 - std::clamp(speed, 0.0, 65535.0));
+    const float e = static_cast<float>(std::exp(static_cast<double>(static_cast<float>(u / 65536.0)) * std::log(50000.0)) - 1.0);
+    const float per = u * e * static_cast<float>(2048.0 / sr);
+    const double period = std::max(2.0, static_cast<double>(std::nearbyint(per)));
+    const uint32_t inc = static_cast<uint32_t>(4294967296.0 / period);
+    const float slope = static_cast<float>(0.001 * 44100.0 / sr);
+    for (int i = 0; i < n; ++i) {
+      if (ctl_ == 0) {
+        float p = static_cast<float>(p0), g = static_cast<float>(g0);
+        if (target) {
+          phase_ += inc * static_cast<uint32_t>(kCtl);
+          const double ph = static_cast<double>(phase_ >> 18) / 16384.0;
+          const double lfo = shape == 1 ? (ph < 0.25 ? 4 * ph : ph < 0.75 ? 2 - 4 * ph : 4 * ph - 4) : shape == 2 ? (ph < 0.5 ? 1.0 : -1.0) : std::sin(kTwoPi * ph);
+          if (target == 1) p = std::clamp(p + static_cast<float>(amount * lfo), -1.f, 1.f);
+          else g = std::max(0.f, g + static_cast<float>(amount * 0.5 * lfo));
+        }
+        float t[4];  // LL, RL (right into left), RR, LR (left into right)
+        if (p < 0) t[2] = (1 + p) * g, t[1] = -p * 0.5f * g, t[0] = g - t[1], t[3] = 0;
+        else t[0] = (1 - p) * g, t[3] = p * 0.5f * g, t[2] = g - t[3], t[1] = 0;
+        if (!primed_) {
+          for (int k = 0; k < 4; ++k) g2_[k] = t[k];
+          primed_ = true;
+        }
+        for (int k = 0; k < 4; ++k) {
+          float d = (t[k] - g2_[k]) / static_cast<float>(kCtl);
+          if (std::fabs(d) > slope) d = std::copysign(slope, d);
+          step_[k] = d;
+        }
+        lastPan_ = p, lastVol_ = static_cast<float>(std::log(10.0 * g + 1.0) / std::log(11.0));
+        ctl_ = kCtl;
+      }
+      --ctl_;
+      for (int k = 0; k < 4; ++k) g2_[k] += step_[k];
+      const double l = L[i], r = R[i];
+      L[i] = static_cast<float>(g2_[0] * l + g2_[1] * r);
+      R[i] = static_cast<float>(g2_[2] * r + g2_[3] * l);
+    }
+  }
   int meters(float* out, int max) const override {  // current pan (-1 .. 1) / volume on the volume knob's scale (editor's pad)
     if (max < 2) return 0;
     out[0] = lastPan_, out[1] = lastVol_;
@@ -1097,6 +1147,8 @@ class AutoPanFx final : public Effect {
  private:
   double free_ = 0, sm_ = 0, gLL_ = 1, gRR_ = 1, gRL_ = 0, gLR_ = 0;
   double tLL_ = 1, tRR_ = 1, tRL_ = 0, tLR_ = 0;
+  float g2_[4] = {1, 0, 1, 0}, step_[4] = {0, 0, 0, 0};  // LFO law 2 gains (LL, RL, RR, LR) and per-sample ramps
+  uint32_t phase_ = 0;                                    // LFO law 2 phase
   int ctl_ = 0;  // samples left in the current control period (classic engine)
   bool primed_ = false;
   float lastPan_ = 0, lastVol_ = 1;

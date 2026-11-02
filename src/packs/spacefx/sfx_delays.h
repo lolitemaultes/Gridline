@@ -297,6 +297,7 @@ class MultiDelayFx final : public Effect {
     const double sr = ctx.sampleRate * (os ? 2.0 : 1.0);
     const double stepSec = 15.0 / std::max(1.0, ctx.tempo);
     const double wet = pv(s, MdWet, 0.5), gin = pv(s, MdInput, 1), fbScale = pv(s, MdFbScale, 1);
+    const bool zeroMin = pv(s, MdZeroTime, 0) >= 0.5f;
     const int maxD = static_cast<int>(kMdMaxDelay) - 8, maxOff = (1 << 17) - 8;
     for (int k = 0; k < kTaps; ++k) {
       RefTap& r = ref_[k];
@@ -305,6 +306,7 @@ class MultiDelayFx final : public Effect {
       r.on = P(MdOn) >= 0.5;
       r.mode = std::clamp(static_cast<int>(std::lround(P(MdFbMode))), 0, 3);
       double sec = X(MdxTempo, 1) >= 0.5 ? P(MdSteps, 4) * stepSec : P(MdTimeMs, 300) * 0.001;
+      if (X(MdxTempo, 1) >= 0.5 && zeroMin && P(MdSteps, 4) <= 0.002 + 1e-9) sec = 0;  // K-2 round 3: time 0
       r.D = std::clamp(static_cast<int>(std::lround(sec * sr)), 1, maxD);
       double offMs = P(MdOffset);
       int offN = std::clamp(static_cast<int>(std::lround(std::fabs(offMs) * 0.001 * sr)), 0, maxOff);
@@ -329,7 +331,8 @@ class MultiDelayFx final : public Effect {
       r.div = std::clamp(static_cast<int>(std::lround(P(MdGateDiv))), 0, 16);
       r.gShape = clampd(P(MdGateShape), -1, 1);
       if (r.div > 0) {
-        r.gPeriod = sec * sr / r.div;  // the unrounded delay time
+        // The unrounded delay time; at time 0 the delay line's one sample, never a period of 0 (the wrap below would not end).
+        r.gPeriod = (sec > 0 ? sec * sr : 1.0) / r.div;
         r.gLen = std::max(2, static_cast<int>(std::lround(r.gPeriod)));
       }
       flc::mdPanMatrix(clampd(P(MdOutPan), -1, 1), P(MdOutLevel, 0.8f) * wet, 0, false, mm);

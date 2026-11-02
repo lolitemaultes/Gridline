@@ -165,7 +165,7 @@ struct Joint {
 constexpr size_t kKcTail = 13;
 constexpr int kKcKeys = 132;
 
-bool kcVersioned(const Bytes& b) { return rdU32(b, 0) == 2 && b.size() >= 12 + kKcTail; }
+bool kcVersioned(const Bytes& b) { return (rdU32(b, 0) == 2 || rdU32(b, 0) == 3) && b.size() >= 12 + kKcTail; }
 
 Encoder keyboardController() {
   Encoder e;

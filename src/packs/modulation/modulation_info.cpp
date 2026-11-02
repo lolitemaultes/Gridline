@@ -98,6 +98,10 @@ void appendInfos(std::vector<PluginInfo>& v) {
                  {"Bar wobble", {{PkRAmount, 0.f}, {LfRAmount, 256.f}, {LfRSpeed, 32950.f}, {LfShape, 0.f}}},
                  {"Random steps", {{PkRAmount, 0.f}, {LfRAmount, 256.f}, {LfShape, 4.f}, {LfRSpeed, 16384.f}}}};
     p.editorWidth = 640;
+    // K-2 round 3: new instances start at the reference plugin's defaults (peak amount 179, no LFO, no smoothing);
+    // the factory presets keep their former values.
+    setReferenceDefaults(p, {{PkAmount, 0.699219}, {PkDecay, 0.218029}, {LfAmount, 0}, {LfSync, 0}, {LfRate, 0.4515}, {PkRamp, 0},
+                             {PkRAmount, 179}});
     v.push_back(std::move(p));
   }
   // ------------------------------------------------------------- X-Y Pad

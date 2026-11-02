@@ -478,6 +478,9 @@ enum AutoPan {
   // κ3 reference engine: one LFO target (off / pan / volume) and amount, speed knob position,
   // volume knob through 0.1 (11^x - 1), pan law with the far side folded in.
   ApTarget, ApAmount, ApSpeedK, ApClassic,
+  // K-2 round 3: reference LFO law version (0 = the pre-0.7.2 speed curve, 1 = the reference
+  // speed curve, phase step and per-period gain ramps).
+  ApLfoLaw,
   ApCount
 };
 // "gl.shaper" — synced volume + filter envelopes (16 points each)

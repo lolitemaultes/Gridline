@@ -30,6 +30,11 @@ def main():
             print(f"{lib}: {e}", flush=True)
     if host is None:
         return 2
+    # Carla's dummy driver takes neither its default process mode nor JACK transport.
+    host.set_engine_option(cb.ENGINE_OPTION_PROCESS_MODE, cb.ENGINE_PROCESS_MODE_CONTINUOUS_RACK, "")
+    host.set_engine_option(cb.ENGINE_OPTION_TRANSPORT_MODE, cb.ENGINE_TRANSPORT_MODE_INTERNAL, "")
+    host.set_engine_option(cb.ENGINE_OPTION_PATH_BINARIES, 0, "/usr/lib/carla")
+    host.set_engine_option(cb.ENGINE_OPTION_PATH_RESOURCES, 0, "/usr/share/carla/resources")
     if not host.engine_init("Dummy", "control"):
         print("engine: " + str(host.get_last_error()), flush=True)
         return 2

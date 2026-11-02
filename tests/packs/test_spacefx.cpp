@@ -261,6 +261,7 @@ void testMultiDelayTaps() {
   }
   setp(st, sfx::mdParam(0, sfx::MdTimeMs), 100);
   setp(st, sfx::mdParam(0, sfx::MdFeedback), 0.5f);
+  setp(st, sfx::mdParam(1, sfx::MdOn), 1);  // (unit 2 is off on new instances since K-2 round 3)
   setp(st, sfx::mdParam(1, sfx::MdTimeMs), 250);
   setp(st, sfx::mdParam(1, sfx::MdFeedback), 0);
   Buf in(30000);

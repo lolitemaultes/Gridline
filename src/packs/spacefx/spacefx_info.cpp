@@ -115,6 +115,8 @@ PluginInfo multiDelay() {
   // J-1 reference model (new instances); older projects load as legacy.
   p.params[MdModel] = ch("Delay model", {"Legacy", "Reference"}, 1);
   p.params[MdOversample] = tog("Oversample", 0);
+  p.params[MdZeroTime] = tog("Zero time at minimum", 1);
+  p.legacyDefaults.push_back({MdZeroTime, 0.f});  // K-2 round 3: older states keep the 0.002-step minimum
   auto F = [](int tap, int f, float v) { return std::pair<int, float>{mdParam(tap, f), v}; };
   p.presets = {
       {"Wide pair", {}},
@@ -131,6 +133,22 @@ PluginInfo multiDelay() {
       {"Filtered bank", {F(0, MdFbMode, 1), F(0, MdFbFType, 3), F(0, MdFbCut, 1200.f), F(0, MdFbRes, 0.45f), {mdExt(0, MdxFbStages), 2.f},
                          F(1, MdFbFType, 6), F(1, MdFbCut, 3000.f), {mdExt(1, MdxFbGain), 1.6f}, F(1, MdSep, -0.5f), {MdOversample, 1.f}}}};
   p.editorWidth = 840;
+  // K-2 round 3: new instances start at the reference plugin's defaults (one centred tap at 3 steps, full wet,
+  // 1.29 kHz / 27 % filters, feedback filters off); the factory presets keep their former values.
+  std::vector<std::pair<int, double>> defs = {{MdWet, 1}, {mdParam(1, MdOn), 0}};
+  for (int k = 0; k < kTaps; ++k) {
+    defs.push_back({mdParam(k, MdSteps), 3});
+    defs.push_back({mdParam(k, MdInCut), 1287.41});
+    defs.push_back({mdParam(k, MdInRes), 0.267029});
+    defs.push_back({mdParam(k, MdFbFType), 0});
+    defs.push_back({mdParam(k, MdFbCut), 1287.41});
+    defs.push_back({mdParam(k, MdFbRes), 0.267029});
+    defs.push_back({mdParam(k, MdOutLevel), 1});
+    defs.push_back({mdParam(k, MdOutPan), 0});
+    defs.push_back({mdExt(k, MdxInGain), 0.1});
+    defs.push_back({mdExt(k, MdxFbGain), 0.1});
+  }
+  setReferenceDefaults(p, defs);
   return p;
 }
 

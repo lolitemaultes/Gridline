@@ -1159,8 +1159,15 @@ def control_cell(ctx, r, fmt, entry, carla_script):
     cmdfile = ctx.work / "carla-cmd"
     proc = subprocess.Popen([sys.executable, str(carla_script), fmt, str(entry), str(cmdfile)], stdout=log, stderr=subprocess.STDOUT, env=ctx.env, start_new_session=True)
     try:
-        m = probe.wait(r"attached \d+ \d+ hwnd ok", 0, timeout=120)
-        if not r.expect("control host: editor opens", bool(m), (ctx.cell_dir / "carla.log").read_text(errors="replace")[-400:]):
+        end = time.time() + 120
+        m = None
+        while not m and time.time() < end and proc.poll() is None:
+            m = probe.wait(r"attached \d+ \d+ hwnd ok", 0, timeout=1.0)
+        said = (ctx.cell_dir / "carla.log").read_text(errors="replace")[-400:]
+        if not m and "has no" in said and "support" in said:
+            r.add("control host: editor opens", "skip", said.strip())
+            return
+        if not r.expect("control host: editor opens", bool(m), said):
             return
         time.sleep(2.0)
         rc, o = sh("xdotool", "search", "--name", "Gridline Probe", timeout=10)

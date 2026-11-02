@@ -1348,11 +1348,13 @@ GL_NOINLINE void addInfo34(std::vector<PluginInfo>& v) {
   p.params[ApAmount] = lin("LFO amount", "%", 0, 1, 0.5);
   p.params[ApSpeedK] = lin("LFO speed", "%", 0, 55000.0 / 65536.0, 27500.0 / 65536.0);
   p.params[ApClassic] = tog("Reference engine", 1);
+  p.params[ApLfoLaw] = ch("LFO law", {"1", "2"}, 1);
+  p.legacyDefaults.push_back({ApLfoLaw, 0.f});  // K-2 round 3: older states keep the first speed curve
   p.editorWidth = 700;
   p.presets = {{"Static", {}},
-               {"Slow pan", {{ApTarget, 1.f}, {ApAmount, 0.6f}, {ApSpeedK, 0.35f}}},
-               {"Fast tremolo", {{ApTarget, 2.f}, {ApAmount, 1.f}, {ApSpeedK, 0.62f}}},
-               {"Square ping-pong", {{ApTarget, 1.f}, {ApShape, 2.f}, {ApAmount, 0.8f}, {ApSpeedK, 0.45f}}},
+               {"Slow pan", {{ApTarget, 1.f}, {ApAmount, 0.6f}, {ApSpeedK, 0.565f}}},
+               {"Fast tremolo", {{ApTarget, 2.f}, {ApAmount, 1.f}, {ApSpeedK, 0.778f}}},
+               {"Square ping-pong", {{ApTarget, 1.f}, {ApShape, 2.f}, {ApAmount, 0.8f}, {ApSpeedK, 0.64f}}},
                {"Synced pan (morph engine)", {{ApClassic, 0.f}}}};
   v.push_back(p);
 }

@@ -17,7 +17,7 @@ Checksums come from one of:
     --dist <dir>        the release files themselves (SHA-256 and size are computed)
     --sums <file>       a Gridline-<version>-SHA256SUMS file (sizes: --dist or --from-github)
     --from-github       the published release on GitHub: its SHA256SUMS, file sizes, date and commit
-    --fake-sums         zeros everywhere (CI checks that every template renders; never submit these)
+    --fake-sums         made-up sums, one per file (CI checks that every template renders; never submit these)
 
 Output (each folder is what goes into that channel's repository or submission):
     flathub/            com.lolitemaultes.Gridline.yml building the release tag (needs --commit)
@@ -270,7 +270,7 @@ def main():
     g = ap.add_mutually_exclusive_group()
     g.add_argument("--sums", help="Gridline-<version>-SHA256SUMS")
     g.add_argument("--from-github", action="store_true", help="read the published release")
-    g.add_argument("--fake-sums", action="store_true", help="zeros (template checks only)")
+    g.add_argument("--fake-sums", action="store_true", help="made-up sums, one per file (template checks only)")
     ap.add_argument("--dist", help="folder with the release files (SHA-256 and sizes)")
     ap.add_argument("--commit", help="the commit of tag v<version> (Flathub)")
     ap.add_argument("--date", help="release date YYYY-MM-DD (default: today, or the release's)")
@@ -281,7 +281,8 @@ def main():
     v = forms["full"]
     sums, sizes, date, commit = {}, {}, a.date, a.commit
     if a.fake_sums:
-        sums = {n: "0" * 64 for n in RELEASE_FILES}
+        # distinct, because a manifest validator rejects two installers with the same sum
+        sums = {n: hashlib.sha256(n.encode()).hexdigest() for n in RELEASE_FILES}
         sizes = {n: 0 for n in RELEASE_FILES}
         commit = commit or "0" * 40
     if a.dist:

@@ -186,6 +186,7 @@ void testAutoPanPad() {
   // With a volume LFO the live volume stays on the knob's scale and inside the pad's range.
   s.params[static_cast<size_t>(pp::ApTarget)] = 2;
   s.params[static_cast<size_t>(pp::ApAmount)] = 1;
+  s.params[static_cast<size_t>(pp::ApLfoLaw)] = 0;  // the first LFO law, a full cycle in this run (law 2: test_k2_round3)
   float lo = 9, hi = -9;
   for (int b = 0; b < 400; ++b) {
     fx->process(s, c, l.data(), r.data(), 512);

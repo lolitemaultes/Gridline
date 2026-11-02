@@ -864,6 +864,7 @@ gl.autopan	9	LFO target	working	1
 gl.autopan	10	LFO amount	combination	0	9=1
 gl.autopan	11	LFO speed	combination	0	9=1
 gl.autopan	12	Reference engine	working	0	
+gl.autopan	13	LFO law	combination	0	9=1
 gl.banddelay	0	Max time	working	0.05	
 gl.banddelay	1	Tempo sync	working	1	
 gl.banddelay	2	Synced time	combination	0	1=1
@@ -7369,121 +7370,121 @@ gl.multidelay	7	Tap 1 time	combination	0.0199999996	199=0
 gl.multidelay	8	Tap 1 stereo offset	working	-500	
 gl.multidelay	9	Tap 1 input	working	-1.91	
 gl.multidelay	10	Tap 1 input pan	working	1	
-gl.multidelay	11	Tap 1 input filter	working	2	
+gl.multidelay	11	Tap 1 input filter	working	3	
 gl.multidelay	12	Tap 1 input cutoff	combination	2	11=1
 gl.multidelay	13	Tap 1 input resonance	combination	1	11=1
 gl.multidelay	14	Tap 1 feedback	working	-1	
 gl.multidelay	15	Tap 1 feedback mode	working	3	
 gl.multidelay	16	Tap 1 feedback pan	working	1	
-gl.multidelay	17	Tap 1 feedback filter	working	2	
-gl.multidelay	18	Tap 1 feedback cutoff	working	2	
-gl.multidelay	19	Tap 1 feedback resonance	working	1	
+gl.multidelay	17	Tap 1 feedback filter	working	3	
+gl.multidelay	18	Tap 1 feedback cutoff	combination	2	17=1
+gl.multidelay	19	Tap 1 feedback resonance	combination	1	17=1
 gl.multidelay	20	Tap 1 stereo separation	working	-1	
 gl.multidelay	21	Tap 1 mod rate	combination	8	22=1
 gl.multidelay	22	Tap 1 mod depth	working	0.5	
 gl.multidelay	23	Tap 1 diffusion	working	0.25	
-gl.multidelay	24	Tap 1 gate division	working	4	
+gl.multidelay	24	Tap 1 gate division	working	16	
 gl.multidelay	25	Tap 1 gate shape	combination	-1	24=16
 gl.multidelay	26	Tap 1 output	working	-1.91	
 gl.multidelay	27	Tap 1 output pan	working	1	
-gl.multidelay	28	Tap 1 to next	combination	-1.90999997	206=0
-gl.multidelay	29	Tap 2 on	working	0	
-gl.multidelay	30	Tap 2 time (steps)	working	0.002	
-gl.multidelay	31	Tap 2 time	combination	0.0199999996	206=0
-gl.multidelay	32	Tap 2 stereo offset	working	500	
-gl.multidelay	33	Tap 2 input	working	-1.91	
-gl.multidelay	34	Tap 2 input pan	working	-1	
-gl.multidelay	35	Tap 2 input filter	working	2	
-gl.multidelay	36	Tap 2 input cutoff	combination	2	35=1
-gl.multidelay	37	Tap 2 input resonance	combination	1	35=1
-gl.multidelay	38	Tap 2 feedback	working	-1	
-gl.multidelay	39	Tap 2 feedback mode	working	3	
-gl.multidelay	40	Tap 2 feedback pan	working	-1	
-gl.multidelay	41	Tap 2 feedback filter	working	0	
-gl.multidelay	42	Tap 2 feedback cutoff	working	44200	
-gl.multidelay	43	Tap 2 feedback resonance	working	1	
-gl.multidelay	44	Tap 2 stereo separation	working	-1	
-gl.multidelay	45	Tap 2 mod rate	combination	8	46=1
-gl.multidelay	46	Tap 2 mod depth	working	0.25	
-gl.multidelay	47	Tap 2 diffusion	working	0.25	
-gl.multidelay	48	Tap 2 gate division	working	12	
-gl.multidelay	49	Tap 2 gate shape	combination	-1	48=16
-gl.multidelay	50	Tap 2 output	working	-1.91	
-gl.multidelay	51	Tap 2 output pan	working	-1	
-gl.multidelay	52	Tap 2 to next	combination	-1.90999997	53=1;54=0.357770876;55=10;56=500;57=0;58=1;59=7;60=297.321375;61=0.5;62=0;63=3;64=1;65=7;66=297.321375;67=0.5;68=1;69=0.632455532;70=0.5;71=0.5;72=8;73=1;75=1;76=1.91;213=0;214=2;215=1.05;216=1;217=2;218=1.05;219=1
-gl.multidelay	53	Tap 3 on	combination	1	213=0
+gl.multidelay	28	Tap 1 to next	combination	-1.90999997	29=1;30=0.357770876;31=10;32=500;33=0;34=1;35=7;36=297.321375;37=0.5;38=0;39=3;40=1;41=7;42=297.321375;43=0.5;44=1;45=0.632455532;46=0.5;47=0.5;48=8;49=1;51=1;52=1.91;206=0;207=2;208=1.05;209=1;210=2;211=1.05;212=1
+gl.multidelay	29	Tap 2 on	working	1	
+gl.multidelay	30	Tap 2 time (steps)	combination	0.00200000009	29=1
+gl.multidelay	31	Tap 2 time	combination	0.0199999996	29=1;206=0
+gl.multidelay	32	Tap 2 stereo offset	combination	-500	29=1
+gl.multidelay	33	Tap 2 input	combination	-1.90999997	29=1
+gl.multidelay	34	Tap 2 input pan	combination	-1	29=1
+gl.multidelay	35	Tap 2 input filter	combination	1	29=1
+gl.multidelay	36	Tap 2 input cutoff	combination	2	29=1;35=1
+gl.multidelay	37	Tap 2 input resonance	combination	1	29=1;35=1
+gl.multidelay	38	Tap 2 feedback	combination	-1	29=1
+gl.multidelay	39	Tap 2 feedback mode	combination	1	29=1
+gl.multidelay	40	Tap 2 feedback pan	combination	-1	29=1
+gl.multidelay	41	Tap 2 feedback filter	combination	1	29=1
+gl.multidelay	42	Tap 2 feedback cutoff	combination	2	29=1;41=1
+gl.multidelay	43	Tap 2 feedback resonance	combination	1	29=1;41=1
+gl.multidelay	44	Tap 2 stereo separation	combination	-1	29=1
+gl.multidelay	45	Tap 2 mod rate	combination	8	29=1;46=1
+gl.multidelay	46	Tap 2 mod depth	combination	1	29=1
+gl.multidelay	47	Tap 2 diffusion	combination	1	29=1
+gl.multidelay	48	Tap 2 gate division	combination	16	29=1
+gl.multidelay	49	Tap 2 gate shape	combination	-1	29=1;48=16
+gl.multidelay	50	Tap 2 output	combination	-1.90999997	29=1
+gl.multidelay	51	Tap 2 output pan	combination	-1	29=1
+gl.multidelay	52	Tap 2 to next	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
+gl.multidelay	53	Tap 3 on	working	1	
 gl.multidelay	54	Tap 3 time (steps)	combination	0.00200000009	53=1
 gl.multidelay	55	Tap 3 time	combination	0.0199999996	53=1;213=0
 gl.multidelay	56	Tap 3 stereo offset	combination	-500	53=1;213=0
 gl.multidelay	57	Tap 3 input	combination	-1.90999997	53=1;213=0
 gl.multidelay	58	Tap 3 input pan	combination	-1	53=1;213=0
 gl.multidelay	59	Tap 3 input filter	combination	1	53=1;213=0
-gl.multidelay	60	Tap 3 input cutoff	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
-gl.multidelay	61	Tap 3 input resonance	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
+gl.multidelay	60	Tap 3 input cutoff	combination	2	53=1;59=1
+gl.multidelay	61	Tap 3 input resonance	combination	1	53=1;59=1
 gl.multidelay	62	Tap 3 feedback	combination	-1	53=1;213=0
 gl.multidelay	63	Tap 3 feedback mode	combination	1	53=1;213=0
 gl.multidelay	64	Tap 3 feedback pan	combination	-1	53=1;213=0
-gl.multidelay	65	Tap 3 feedback filter	combination	0	53=1;213=0
-gl.multidelay	66	Tap 3 feedback cutoff	combination	2	53=1;213=0
-gl.multidelay	67	Tap 3 feedback resonance	combination	1	53=1;213=0
+gl.multidelay	65	Tap 3 feedback filter	combination	1	53=1;213=0
+gl.multidelay	66	Tap 3 feedback cutoff	combination	2	53=1;65=6
+gl.multidelay	67	Tap 3 feedback resonance	combination	1	53=1;65=6
 gl.multidelay	68	Tap 3 stereo separation	combination	-1	53=1;213=0
-gl.multidelay	69	Tap 3 mod rate	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
+gl.multidelay	69	Tap 3 mod rate	combination	8	53=1;70=0.5
 gl.multidelay	70	Tap 3 mod depth	combination	1	53=1;213=0
 gl.multidelay	71	Tap 3 diffusion	combination	1	53=1;213=0
 gl.multidelay	72	Tap 3 gate division	combination	16	53=1;213=0
-gl.multidelay	73	Tap 3 gate shape	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
+gl.multidelay	73	Tap 3 gate shape	combination	-1	53=1;72=4
 gl.multidelay	74	Tap 3 output	combination	-1.90999997	53=1;213=0
 gl.multidelay	75	Tap 3 output pan	combination	-1	53=1;213=0
 gl.multidelay	76	Tap 3 to next	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
-gl.multidelay	77	Tap 4 on	combination	1	87=3
+gl.multidelay	77	Tap 4 on	working	1	
 gl.multidelay	78	Tap 4 time (steps)	combination	0.00200000009	53=1;77=1
-gl.multidelay	79	Tap 4 time	combination	0.0199999996	77=1;220=0
-gl.multidelay	80	Tap 4 stereo offset	combination	-500	77=1;220=0
-gl.multidelay	81	Tap 4 input	combination	-1.90999997	77=1;220=0
-gl.multidelay	82	Tap 4 input pan	combination	-1	77=1;220=0
-gl.multidelay	83	Tap 4 input filter	combination	1	0=1;1=0.75;2=0.75;3=0.75;4=0.9375;5=1;6=4.7851161;7=223.606798;8=250;9=0.955;10=0.5;12=3625.13514;13=0.75;14=0.5;16=0.5;18=3625.13514;19=0.75;20=0.5;21=2.2493653;22=0.75;23=0.75;24=12;25=0.5;26=0.955;27=0.5;28=0.955;29=1;30=4.7851161;31=223.606798;32=250;33=0.955;34=0.5;36=3625.13514;37=0.75;38=0.5;40=0.5;42=3625.13514;43=0.75;44=0.5;45=2.2493653;46=0.75;47=0.75;48=12;49=0.5;50=0.955;51=0.5;52=0.955;53=1;54=4.7851161;55=223.606798;56=250;57=0.955;58=0.5;60=3625.13514;61=0.75;62=0.5;64=0.5;66=3625.13514;67=0.75;68=0.5;69=2.2493653;70=0.75;71=0.75;72=12;73=0.5;74=0.955;75=0.5;76=0.955;77=1;78=4.7851161;79=223.606798;80=250;81=0.955;82=0.5;84=3625.13514;85=0.75;86=0.5;88=0.5;90=3625.13514;91=0.75;92=0.5;93=2.2493653;94=0.75;95=0.75;96=12;97=0.5;98=0.955;99=0.5;100=0.955;101=1;102=4.7851161;103=223.606798;104=250;105=0.955;106=0.5;108=3625.13514;109=0.75;110=0.5;112=0.5;114=3625.13514;115=0.75;116=0.5;117=2.2493653;118=0.75;119=0.75;120=12;121=0.5;122=0.955;123=0.5;124=0.955;125=1;126=4.7851161;127=223.606798;128=250;129=0.955;130=0.5;132=3625.13514;133=0.75;134=0.5;136=0.5;138=3625.13514;139=0.75;140=0.5;141=2.2493653;142=0.75;143=0.75;144=12;145=0.5;146=0.955;147=0.5;148=0.955;149=1;150=4.7851161;151=223.606798;152=250;153=0.955;154=0.5;156=3625.13514;157=0.75;158=0.5;160=0.5;162=3625.13514;163=0.75;164=0.5;165=2.2493653;166=0.75;167=0.75;168=12;169=0.5;170=0.955;171=0.5;172=0.955;173=1;174=4.7851161;175=223.606798;176=250;177=0.955;178=0.5;180=3625.13514;181=0.75;182=0.5;184=0.5;186=3625.13514;187=0.75;188=0.5;189=2.2493653;190=0.75;191=0.75;192=12;193=0.5;194=0.955;195=0.5;196=0.955;198=1;199=1;200=2.5;201=1.525;202=1;203=2.5;204=1.525;205=1;206=1;207=2.5;208=1.525;209=1;210=2.5;211=1.525;212=1;213=1;214=2.5;215=1.525;216=1;217=2.5;218=1.525;219=1;220=1;221=2.5;222=1.525;223=1;224=2.5;225=1.525;226=1;227=1;228=2.5;229=1.525;230=1;231=2.5;232=1.525;233=1;234=1;235=2.5;236=1.525;237=1;238=2.5;239=1.525;240=1;241=1;242=2.5;243=1.525;244=1;245=2.5;246=1.525;247=1;248=1;249=2.5;250=1.525;251=1;252=2.5;253=1.525;254=1
+gl.multidelay	79	Tap 4 time	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
+gl.multidelay	80	Tap 4 stereo offset	combination	-500	53=1;77=1
+gl.multidelay	81	Tap 4 input	combination	-1.90999997	53=1;77=1
+gl.multidelay	82	Tap 4 input pan	combination	-1	53=1;77=1
+gl.multidelay	83	Tap 4 input filter	combination	1	53=1;77=1
 gl.multidelay	84	Tap 4 input cutoff	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
 gl.multidelay	85	Tap 4 input resonance	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
-gl.multidelay	86	Tap 4 feedback	combination	-1	77=1;220=0
-gl.multidelay	87	Tap 4 feedback mode	combination	3	0=1;1=0.75;2=0.75;3=0.75;4=0.9375;5=1;6=4.7851161;7=223.606798;8=250;9=0.955;10=0.5;12=3625.13514;13=0.75;14=0.5;16=0.5;18=3625.13514;19=0.75;20=0.5;21=2.2493653;22=0.75;23=0.75;24=12;25=0.5;26=0.955;27=0.5;28=0.955;29=1;30=4.7851161;31=223.606798;32=250;33=0.955;34=0.5;36=3625.13514;37=0.75;38=0.5;40=0.5;42=3625.13514;43=0.75;44=0.5;45=2.2493653;46=0.75;47=0.75;48=12;49=0.5;50=0.955;51=0.5;52=0.955;53=1;54=4.7851161;55=223.606798;56=250;57=0.955;58=0.5;60=3625.13514;61=0.75;62=0.5;64=0.5;66=3625.13514;67=0.75;68=0.5;69=2.2493653;70=0.75;71=0.75;72=12;73=0.5;74=0.955;75=0.5;76=0.955;77=1;78=4.7851161;79=223.606798;80=250;81=0.955;82=0.5;84=3625.13514;85=0.75;86=0.5;88=0.5;90=3625.13514;91=0.75;92=0.5;93=2.2493653;94=0.75;95=0.75;96=12;97=0.5;98=0.955;99=0.5;100=0.955;101=1;102=4.7851161;103=223.606798;104=250;105=0.955;106=0.5;108=3625.13514;109=0.75;110=0.5;112=0.5;114=3625.13514;115=0.75;116=0.5;117=2.2493653;118=0.75;119=0.75;120=12;121=0.5;122=0.955;123=0.5;124=0.955;125=1;126=4.7851161;127=223.606798;128=250;129=0.955;130=0.5;132=3625.13514;133=0.75;134=0.5;136=0.5;138=3625.13514;139=0.75;140=0.5;141=2.2493653;142=0.75;143=0.75;144=12;145=0.5;146=0.955;147=0.5;148=0.955;149=1;150=4.7851161;151=223.606798;152=250;153=0.955;154=0.5;156=3625.13514;157=0.75;158=0.5;160=0.5;162=3625.13514;163=0.75;164=0.5;165=2.2493653;166=0.75;167=0.75;168=12;169=0.5;170=0.955;171=0.5;172=0.955;173=1;174=4.7851161;175=223.606798;176=250;177=0.955;178=0.5;180=3625.13514;181=0.75;182=0.5;184=0.5;186=3625.13514;187=0.75;188=0.5;189=2.2493653;190=0.75;191=0.75;192=12;193=0.5;194=0.955;195=0.5;196=0.955;198=1;199=1;200=2.5;201=1.525;202=1;203=2.5;204=1.525;205=1;206=1;207=2.5;208=1.525;209=1;210=2.5;211=1.525;212=1;213=1;214=2.5;215=1.525;216=1;217=2.5;218=1.525;219=1;220=1;221=2.5;222=1.525;223=1;224=2.5;225=1.525;226=1;227=1;228=2.5;229=1.525;230=1;231=2.5;232=1.525;233=1;234=1;235=2.5;236=1.525;237=1;238=2.5;239=1.525;240=1;241=1;242=2.5;243=1.525;244=1;245=2.5;246=1.525;247=1;248=1;249=2.5;250=1.525;251=1;252=2.5;253=1.525;254=1
-gl.multidelay	88	Tap 4 feedback pan	combination	-1	77=1;220=0
-gl.multidelay	89	Tap 4 feedback filter	combination	0	77=1;220=0
-gl.multidelay	90	Tap 4 feedback cutoff	combination	2	77=1;220=0
-gl.multidelay	91	Tap 4 feedback resonance	combination	1	77=1;220=0
-gl.multidelay	92	Tap 4 stereo separation	combination	-1	77=1;220=0
+gl.multidelay	86	Tap 4 feedback	combination	-1	53=1;77=1
+gl.multidelay	87	Tap 4 feedback mode	combination	1	53=1;77=1
+gl.multidelay	88	Tap 4 feedback pan	combination	-1	53=1;77=1
+gl.multidelay	89	Tap 4 feedback filter	combination	1	53=1;77=1
+gl.multidelay	90	Tap 4 feedback cutoff	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
+gl.multidelay	91	Tap 4 feedback resonance	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
+gl.multidelay	92	Tap 4 stereo separation	combination	-1	53=1;77=1
 gl.multidelay	93	Tap 4 mod rate	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
-gl.multidelay	94	Tap 4 mod depth	combination	1	77=1;220=0
-gl.multidelay	95	Tap 4 diffusion	combination	1	77=1;220=0
-gl.multidelay	96	Tap 4 gate division	combination	16	77=1;220=0
+gl.multidelay	94	Tap 4 mod depth	combination	1	53=1;77=1
+gl.multidelay	95	Tap 4 diffusion	combination	1	53=1;77=1
+gl.multidelay	96	Tap 4 gate division	combination	16	53=1;77=1
 gl.multidelay	97	Tap 4 gate shape	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
-gl.multidelay	98	Tap 4 output	combination	-1.90999997	77=1;220=0
-gl.multidelay	99	Tap 4 output pan	combination	-1	77=1;220=0
+gl.multidelay	98	Tap 4 output	combination	-1.90999997	53=1;77=1
+gl.multidelay	99	Tap 4 output pan	combination	-1	53=1;77=1
 gl.multidelay	100	Tap 4 to next	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
-gl.multidelay	101	Tap 5 on	combination	1	111=3
+gl.multidelay	101	Tap 5 on	working	1	
 gl.multidelay	102	Tap 5 time (steps)	combination	0.00200000009	101=1
 gl.multidelay	103	Tap 5 time	combination	0.0199999996	101=1;227=0
-gl.multidelay	104	Tap 5 stereo offset	combination	-500	101=1;227=0
-gl.multidelay	105	Tap 5 input	combination	-1.90999997	101=1;227=0
-gl.multidelay	106	Tap 5 input pan	combination	-1	101=1;227=0
-gl.multidelay	107	Tap 5 input filter	combination	1	0=1;1=0.75;2=0.75;3=0.75;4=0.9375;5=1;6=4.7851161;7=223.606798;8=250;9=0.955;10=0.5;12=3625.13514;13=0.75;14=0.5;16=0.5;18=3625.13514;19=0.75;20=0.5;21=2.2493653;22=0.75;23=0.75;24=12;25=0.5;26=0.955;27=0.5;28=0.955;29=1;30=4.7851161;31=223.606798;32=250;33=0.955;34=0.5;36=3625.13514;37=0.75;38=0.5;40=0.5;42=3625.13514;43=0.75;44=0.5;45=2.2493653;46=0.75;47=0.75;48=12;49=0.5;50=0.955;51=0.5;52=0.955;53=1;54=4.7851161;55=223.606798;56=250;57=0.955;58=0.5;60=3625.13514;61=0.75;62=0.5;64=0.5;66=3625.13514;67=0.75;68=0.5;69=2.2493653;70=0.75;71=0.75;72=12;73=0.5;74=0.955;75=0.5;76=0.955;77=1;78=4.7851161;79=223.606798;80=250;81=0.955;82=0.5;84=3625.13514;85=0.75;86=0.5;88=0.5;90=3625.13514;91=0.75;92=0.5;93=2.2493653;94=0.75;95=0.75;96=12;97=0.5;98=0.955;99=0.5;100=0.955;101=1;102=4.7851161;103=223.606798;104=250;105=0.955;106=0.5;108=3625.13514;109=0.75;110=0.5;112=0.5;114=3625.13514;115=0.75;116=0.5;117=2.2493653;118=0.75;119=0.75;120=12;121=0.5;122=0.955;123=0.5;124=0.955;125=1;126=4.7851161;127=223.606798;128=250;129=0.955;130=0.5;132=3625.13514;133=0.75;134=0.5;136=0.5;138=3625.13514;139=0.75;140=0.5;141=2.2493653;142=0.75;143=0.75;144=12;145=0.5;146=0.955;147=0.5;148=0.955;149=1;150=4.7851161;151=223.606798;152=250;153=0.955;154=0.5;156=3625.13514;157=0.75;158=0.5;160=0.5;162=3625.13514;163=0.75;164=0.5;165=2.2493653;166=0.75;167=0.75;168=12;169=0.5;170=0.955;171=0.5;172=0.955;173=1;174=4.7851161;175=223.606798;176=250;177=0.955;178=0.5;180=3625.13514;181=0.75;182=0.5;184=0.5;186=3625.13514;187=0.75;188=0.5;189=2.2493653;190=0.75;191=0.75;192=12;193=0.5;194=0.955;195=0.5;196=0.955;198=1;199=1;200=2.5;201=1.525;202=1;203=2.5;204=1.525;205=1;206=1;207=2.5;208=1.525;209=1;210=2.5;211=1.525;212=1;213=1;214=2.5;215=1.525;216=1;217=2.5;218=1.525;219=1;220=1;221=2.5;222=1.525;223=1;224=2.5;225=1.525;226=1;227=1;228=2.5;229=1.525;230=1;231=2.5;232=1.525;233=1;234=1;235=2.5;236=1.525;237=1;238=2.5;239=1.525;240=1;241=1;242=2.5;243=1.525;244=1;245=2.5;246=1.525;247=1;248=1;249=2.5;250=1.525;251=1;252=2.5;253=1.525;254=1
-gl.multidelay	108	Tap 5 input cutoff	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
-gl.multidelay	109	Tap 5 input resonance	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
-gl.multidelay	110	Tap 5 feedback	combination	-1	101=1;227=0
-gl.multidelay	111	Tap 5 feedback mode	combination	3	0=1;1=0.75;2=0.75;3=0.75;4=0.9375;5=1;6=4.7851161;7=223.606798;8=250;9=0.955;10=0.5;12=3625.13514;13=0.75;14=0.5;16=0.5;18=3625.13514;19=0.75;20=0.5;21=2.2493653;22=0.75;23=0.75;24=12;25=0.5;26=0.955;27=0.5;28=0.955;29=1;30=4.7851161;31=223.606798;32=250;33=0.955;34=0.5;36=3625.13514;37=0.75;38=0.5;40=0.5;42=3625.13514;43=0.75;44=0.5;45=2.2493653;46=0.75;47=0.75;48=12;49=0.5;50=0.955;51=0.5;52=0.955;53=1;54=4.7851161;55=223.606798;56=250;57=0.955;58=0.5;60=3625.13514;61=0.75;62=0.5;64=0.5;66=3625.13514;67=0.75;68=0.5;69=2.2493653;70=0.75;71=0.75;72=12;73=0.5;74=0.955;75=0.5;76=0.955;77=1;78=4.7851161;79=223.606798;80=250;81=0.955;82=0.5;84=3625.13514;85=0.75;86=0.5;88=0.5;90=3625.13514;91=0.75;92=0.5;93=2.2493653;94=0.75;95=0.75;96=12;97=0.5;98=0.955;99=0.5;100=0.955;101=1;102=4.7851161;103=223.606798;104=250;105=0.955;106=0.5;108=3625.13514;109=0.75;110=0.5;112=0.5;114=3625.13514;115=0.75;116=0.5;117=2.2493653;118=0.75;119=0.75;120=12;121=0.5;122=0.955;123=0.5;124=0.955;125=1;126=4.7851161;127=223.606798;128=250;129=0.955;130=0.5;132=3625.13514;133=0.75;134=0.5;136=0.5;138=3625.13514;139=0.75;140=0.5;141=2.2493653;142=0.75;143=0.75;144=12;145=0.5;146=0.955;147=0.5;148=0.955;149=1;150=4.7851161;151=223.606798;152=250;153=0.955;154=0.5;156=3625.13514;157=0.75;158=0.5;160=0.5;162=3625.13514;163=0.75;164=0.5;165=2.2493653;166=0.75;167=0.75;168=12;169=0.5;170=0.955;171=0.5;172=0.955;173=1;174=4.7851161;175=223.606798;176=250;177=0.955;178=0.5;180=3625.13514;181=0.75;182=0.5;184=0.5;186=3625.13514;187=0.75;188=0.5;189=2.2493653;190=0.75;191=0.75;192=12;193=0.5;194=0.955;195=0.5;196=0.955;198=1;199=1;200=2.5;201=1.525;202=1;203=2.5;204=1.525;205=1;206=1;207=2.5;208=1.525;209=1;210=2.5;211=1.525;212=1;213=1;214=2.5;215=1.525;216=1;217=2.5;218=1.525;219=1;220=1;221=2.5;222=1.525;223=1;224=2.5;225=1.525;226=1;227=1;228=2.5;229=1.525;230=1;231=2.5;232=1.525;233=1;234=1;235=2.5;236=1.525;237=1;238=2.5;239=1.525;240=1;241=1;242=2.5;243=1.525;244=1;245=2.5;246=1.525;247=1;248=1;249=2.5;250=1.525;251=1;252=2.5;253=1.525;254=1
-gl.multidelay	112	Tap 5 feedback pan	combination	-1	101=1;227=0
-gl.multidelay	113	Tap 5 feedback filter	combination	0	101=1;227=0
-gl.multidelay	114	Tap 5 feedback cutoff	combination	2	101=1;227=0
-gl.multidelay	115	Tap 5 feedback resonance	combination	1	101=1;227=0
-gl.multidelay	116	Tap 5 stereo separation	combination	-1	101=1;227=0
+gl.multidelay	104	Tap 5 stereo offset	combination	-500	101=1
+gl.multidelay	105	Tap 5 input	combination	-1.90999997	101=1
+gl.multidelay	106	Tap 5 input pan	combination	-1	101=1
+gl.multidelay	107	Tap 5 input filter	combination	1	101=1
+gl.multidelay	108	Tap 5 input cutoff	combination	2	101=1;107=1
+gl.multidelay	109	Tap 5 input resonance	combination	1	101=1;107=1
+gl.multidelay	110	Tap 5 feedback	combination	-1	101=1
+gl.multidelay	111	Tap 5 feedback mode	combination	1	101=1
+gl.multidelay	112	Tap 5 feedback pan	combination	-1	101=1
+gl.multidelay	113	Tap 5 feedback filter	combination	1	101=1
+gl.multidelay	114	Tap 5 feedback cutoff	combination	2	101=1;113=1
+gl.multidelay	115	Tap 5 feedback resonance	combination	1	101=1;113=1
+gl.multidelay	116	Tap 5 stereo separation	combination	-1	101=1
 gl.multidelay	117	Tap 5 mod rate	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
-gl.multidelay	118	Tap 5 mod depth	combination	1	101=1;227=0
-gl.multidelay	119	Tap 5 diffusion	combination	1	101=1;227=0
-gl.multidelay	120	Tap 5 gate division	combination	16	101=1;227=0
+gl.multidelay	118	Tap 5 mod depth	combination	1	101=1
+gl.multidelay	119	Tap 5 diffusion	combination	1	101=1
+gl.multidelay	120	Tap 5 gate division	combination	16	101=1
 gl.multidelay	121	Tap 5 gate shape	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
-gl.multidelay	122	Tap 5 output	combination	-1.90999997	101=1;227=0
-gl.multidelay	123	Tap 5 output pan	combination	-1	101=1;227=0
+gl.multidelay	122	Tap 5 output	combination	-1.90999997	101=1
+gl.multidelay	123	Tap 5 output pan	combination	-1	101=1
 gl.multidelay	124	Tap 5 to next	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
-gl.multidelay	125	Tap 6 on	combination	1	135=3
+gl.multidelay	125	Tap 6 on	working	1	
 gl.multidelay	126	Tap 6 time (steps)	combination	0.00200000009	125=1
 gl.multidelay	127	Tap 6 time	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
 gl.multidelay	128	Tap 6 stereo offset	combination	-500	125=1;126=2
@@ -7495,9 +7496,9 @@ gl.multidelay	133	Tap 6 input resonance	verified	0		VERIFIED: the tap on (taps 3
 gl.multidelay	134	Tap 6 feedback	combination	-1	125=1;126=2
 gl.multidelay	135	Tap 6 feedback mode	combination	1	125=1;126=2
 gl.multidelay	136	Tap 6 feedback pan	combination	-1	125=1;126=2
-gl.multidelay	137	Tap 6 feedback filter	combination	0	125=1;126=2
-gl.multidelay	138	Tap 6 feedback cutoff	combination	2	125=1;126=2
-gl.multidelay	139	Tap 6 feedback resonance	combination	1	125=1;126=2
+gl.multidelay	137	Tap 6 feedback filter	combination	1	125=1;126=2
+gl.multidelay	138	Tap 6 feedback cutoff	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
+gl.multidelay	139	Tap 6 feedback resonance	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
 gl.multidelay	140	Tap 6 stereo separation	combination	-1	125=1;126=2
 gl.multidelay	141	Tap 6 mod rate	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
 gl.multidelay	142	Tap 6 mod depth	combination	1	125=1;126=2
@@ -7519,9 +7520,9 @@ gl.multidelay	157	Tap 7 input resonance	verified	0		VERIFIED: the tap on (taps 3
 gl.multidelay	158	Tap 7 feedback	combination	-1	149=1
 gl.multidelay	159	Tap 7 feedback mode	combination	1	149=1
 gl.multidelay	160	Tap 7 feedback pan	combination	-1	149=1
-gl.multidelay	161	Tap 7 feedback filter	combination	0	149=1
-gl.multidelay	162	Tap 7 feedback cutoff	combination	2	149=1
-gl.multidelay	163	Tap 7 feedback resonance	combination	1	149=1
+gl.multidelay	161	Tap 7 feedback filter	combination	1	149=1
+gl.multidelay	162	Tap 7 feedback cutoff	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
+gl.multidelay	163	Tap 7 feedback resonance	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
 gl.multidelay	164	Tap 7 stereo separation	combination	-1	149=1
 gl.multidelay	165	Tap 7 mod rate	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
 gl.multidelay	166	Tap 7 mod depth	combination	1	149=1
@@ -7531,88 +7532,89 @@ gl.multidelay	169	Tap 7 gate shape	verified	0		VERIFIED: the tap on (taps 3-8 ar
 gl.multidelay	170	Tap 7 output	combination	-1.90999997	149=1
 gl.multidelay	171	Tap 7 output pan	combination	-1	149=1
 gl.multidelay	172	Tap 7 to next	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
-gl.multidelay	173	Tap 8 on	combination	1	183=3
-gl.multidelay	174	Tap 8 time (steps)	combination	0.00200000009	0=1;5=1;29=1;53=1;77=1;101=1;125=1;149=1;173=1;198=1;199=1;202=1;205=1;206=1;209=1;212=1;213=1;216=1;219=1;220=1;223=1;226=1;227=1;230=1;233=1;234=1;237=1;240=1;241=1;244=1;247=1;248=1;251=1;254=1
-gl.multidelay	175	Tap 8 time	combination	0.0199999996	173=1;248=0
-gl.multidelay	176	Tap 8 stereo offset	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
-gl.multidelay	177	Tap 8 input	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
-gl.multidelay	178	Tap 8 input pan	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
-gl.multidelay	179	Tap 8 input filter	combination	1	0=1;1=0.75;2=0.75;3=0.75;4=0.9375;5=1;6=4.7851161;7=223.606798;8=250;9=0.955;10=0.5;12=3625.13514;13=0.75;14=0.5;16=0.5;18=3625.13514;19=0.75;20=0.5;21=2.2493653;22=0.75;23=0.75;24=12;25=0.5;26=0.955;27=0.5;28=0.955;29=1;30=4.7851161;31=223.606798;32=250;33=0.955;34=0.5;36=3625.13514;37=0.75;38=0.5;40=0.5;42=3625.13514;43=0.75;44=0.5;45=2.2493653;46=0.75;47=0.75;48=12;49=0.5;50=0.955;51=0.5;52=0.955;53=1;54=4.7851161;55=223.606798;56=250;57=0.955;58=0.5;60=3625.13514;61=0.75;62=0.5;64=0.5;66=3625.13514;67=0.75;68=0.5;69=2.2493653;70=0.75;71=0.75;72=12;73=0.5;74=0.955;75=0.5;76=0.955;77=1;78=4.7851161;79=223.606798;80=250;81=0.955;82=0.5;84=3625.13514;85=0.75;86=0.5;88=0.5;90=3625.13514;91=0.75;92=0.5;93=2.2493653;94=0.75;95=0.75;96=12;97=0.5;98=0.955;99=0.5;100=0.955;101=1;102=4.7851161;103=223.606798;104=250;105=0.955;106=0.5;108=3625.13514;109=0.75;110=0.5;112=0.5;114=3625.13514;115=0.75;116=0.5;117=2.2493653;118=0.75;119=0.75;120=12;121=0.5;122=0.955;123=0.5;124=0.955;125=1;126=4.7851161;127=223.606798;128=250;129=0.955;130=0.5;132=3625.13514;133=0.75;134=0.5;136=0.5;138=3625.13514;139=0.75;140=0.5;141=2.2493653;142=0.75;143=0.75;144=12;145=0.5;146=0.955;147=0.5;148=0.955;149=1;150=4.7851161;151=223.606798;152=250;153=0.955;154=0.5;156=3625.13514;157=0.75;158=0.5;160=0.5;162=3625.13514;163=0.75;164=0.5;165=2.2493653;166=0.75;167=0.75;168=12;169=0.5;170=0.955;171=0.5;172=0.955;173=1;174=4.7851161;175=223.606798;176=250;177=0.955;178=0.5;180=3625.13514;181=0.75;182=0.5;184=0.5;186=3625.13514;187=0.75;188=0.5;189=2.2493653;190=0.75;191=0.75;192=12;193=0.5;194=0.955;195=0.5;196=0.955;198=1;199=1;200=2.5;201=1.525;202=1;203=2.5;204=1.525;205=1;206=1;207=2.5;208=1.525;209=1;210=2.5;211=1.525;212=1;213=1;214=2.5;215=1.525;216=1;217=2.5;218=1.525;219=1;220=1;221=2.5;222=1.525;223=1;224=2.5;225=1.525;226=1;227=1;228=2.5;229=1.525;230=1;231=2.5;232=1.525;233=1;234=1;235=2.5;236=1.525;237=1;238=2.5;239=1.525;240=1;241=1;242=2.5;243=1.525;244=1;245=2.5;246=1.525;247=1;248=1;249=2.5;250=1.525;251=1;252=2.5;253=1.525;254=1
+gl.multidelay	173	Tap 8 on	working	1	
+gl.multidelay	174	Tap 8 time (steps)	combination	0.00200000009	173=1
+gl.multidelay	175	Tap 8 time	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
+gl.multidelay	176	Tap 8 stereo offset	combination	-500	173=1
+gl.multidelay	177	Tap 8 input	combination	-1.90999997	173=1
+gl.multidelay	178	Tap 8 input pan	combination	-1	173=1
+gl.multidelay	179	Tap 8 input filter	combination	1	173=1
 gl.multidelay	180	Tap 8 input cutoff	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
 gl.multidelay	181	Tap 8 input resonance	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
-gl.multidelay	182	Tap 8 feedback	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
-gl.multidelay	183	Tap 8 feedback mode	combination	3	0=1;1=0.75;2=0.75;3=0.75;4=0.9375;5=1;6=4.7851161;7=223.606798;8=250;9=0.955;10=0.5;12=3625.13514;13=0.75;14=0.5;16=0.5;18=3625.13514;19=0.75;20=0.5;21=2.2493653;22=0.75;23=0.75;24=12;25=0.5;26=0.955;27=0.5;28=0.955;29=1;30=4.7851161;31=223.606798;32=250;33=0.955;34=0.5;36=3625.13514;37=0.75;38=0.5;40=0.5;42=3625.13514;43=0.75;44=0.5;45=2.2493653;46=0.75;47=0.75;48=12;49=0.5;50=0.955;51=0.5;52=0.955;53=1;54=4.7851161;55=223.606798;56=250;57=0.955;58=0.5;60=3625.13514;61=0.75;62=0.5;64=0.5;66=3625.13514;67=0.75;68=0.5;69=2.2493653;70=0.75;71=0.75;72=12;73=0.5;74=0.955;75=0.5;76=0.955;77=1;78=4.7851161;79=223.606798;80=250;81=0.955;82=0.5;84=3625.13514;85=0.75;86=0.5;88=0.5;90=3625.13514;91=0.75;92=0.5;93=2.2493653;94=0.75;95=0.75;96=12;97=0.5;98=0.955;99=0.5;100=0.955;101=1;102=4.7851161;103=223.606798;104=250;105=0.955;106=0.5;108=3625.13514;109=0.75;110=0.5;112=0.5;114=3625.13514;115=0.75;116=0.5;117=2.2493653;118=0.75;119=0.75;120=12;121=0.5;122=0.955;123=0.5;124=0.955;125=1;126=4.7851161;127=223.606798;128=250;129=0.955;130=0.5;132=3625.13514;133=0.75;134=0.5;136=0.5;138=3625.13514;139=0.75;140=0.5;141=2.2493653;142=0.75;143=0.75;144=12;145=0.5;146=0.955;147=0.5;148=0.955;149=1;150=4.7851161;151=223.606798;152=250;153=0.955;154=0.5;156=3625.13514;157=0.75;158=0.5;160=0.5;162=3625.13514;163=0.75;164=0.5;165=2.2493653;166=0.75;167=0.75;168=12;169=0.5;170=0.955;171=0.5;172=0.955;173=1;174=4.7851161;175=223.606798;176=250;177=0.955;178=0.5;180=3625.13514;181=0.75;182=0.5;184=0.5;186=3625.13514;187=0.75;188=0.5;189=2.2493653;190=0.75;191=0.75;192=12;193=0.5;194=0.955;195=0.5;196=0.955;198=1;199=1;200=2.5;201=1.525;202=1;203=2.5;204=1.525;205=1;206=1;207=2.5;208=1.525;209=1;210=2.5;211=1.525;212=1;213=1;214=2.5;215=1.525;216=1;217=2.5;218=1.525;219=1;220=1;221=2.5;222=1.525;223=1;224=2.5;225=1.525;226=1;227=1;228=2.5;229=1.525;230=1;231=2.5;232=1.525;233=1;234=1;235=2.5;236=1.525;237=1;238=2.5;239=1.525;240=1;241=1;242=2.5;243=1.525;244=1;245=2.5;246=1.525;247=1;248=1;249=2.5;250=1.525;251=1;252=2.5;253=1.525;254=1
-gl.multidelay	184	Tap 8 feedback pan	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
-gl.multidelay	185	Tap 8 feedback filter	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
+gl.multidelay	182	Tap 8 feedback	combination	-1	173=1
+gl.multidelay	183	Tap 8 feedback mode	combination	1	173=1
+gl.multidelay	184	Tap 8 feedback pan	combination	-1	173=1
+gl.multidelay	185	Tap 8 feedback filter	combination	1	173=1
 gl.multidelay	186	Tap 8 feedback cutoff	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
 gl.multidelay	187	Tap 8 feedback resonance	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
-gl.multidelay	188	Tap 8 stereo separation	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
+gl.multidelay	188	Tap 8 stereo separation	combination	-1	173=1
 gl.multidelay	189	Tap 8 mod rate	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
-gl.multidelay	190	Tap 8 mod depth	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
-gl.multidelay	191	Tap 8 diffusion	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
-gl.multidelay	192	Tap 8 gate division	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
+gl.multidelay	190	Tap 8 mod depth	combination	1	173=1
+gl.multidelay	191	Tap 8 diffusion	combination	1	173=1
+gl.multidelay	192	Tap 8 gate division	combination	16	173=1
 gl.multidelay	193	Tap 8 gate shape	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
-gl.multidelay	194	Tap 8 output	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
-gl.multidelay	195	Tap 8 output pan	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
+gl.multidelay	194	Tap 8 output	combination	-1.90999997	173=1
+gl.multidelay	195	Tap 8 output pan	combination	-1	173=1
 gl.multidelay	196	Tap 8 to next	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
 gl.multidelay	197	Delay model	working	0	
 gl.multidelay	198	Oversample	working	1	
 gl.multidelay	199	Tap 1 tempo time	working	0	
 gl.multidelay	200	Tap 1 input filter stages	combination	3	11=1
 gl.multidelay	201	Tap 1 input filter gain	combination	2	11=5
-gl.multidelay	202	Tap 1 input filter post	combination	1	11=1;24=16
-gl.multidelay	203	Tap 1 feedback filter stages	working	3	
+gl.multidelay	202	Tap 1 input filter post	combination	1	11=1;22=1
+gl.multidelay	203	Tap 1 feedback filter stages	combination	3	17=1
 gl.multidelay	204	Tap 1 feedback filter gain	combination	2	17=5
 gl.multidelay	205	Tap 1 leave first echo	working	1	
-gl.multidelay	206	Tap 2 tempo time	working	0	
-gl.multidelay	207	Tap 2 input filter stages	combination	3	35=1
-gl.multidelay	208	Tap 2 input filter gain	combination	2	35=5
-gl.multidelay	209	Tap 2 input filter post	combination	1	35=1;48=16
-gl.multidelay	210	Tap 2 feedback filter stages	working	3	
-gl.multidelay	211	Tap 2 feedback filter gain	combination	2	41=5
-gl.multidelay	212	Tap 2 leave first echo	working	1	
+gl.multidelay	206	Tap 2 tempo time	combination	0	29=1
+gl.multidelay	207	Tap 2 input filter stages	combination	3	29=1;35=1
+gl.multidelay	208	Tap 2 input filter gain	combination	2	29=1;35=5
+gl.multidelay	209	Tap 2 input filter post	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
+gl.multidelay	210	Tap 2 feedback filter stages	combination	3	29=1;41=1
+gl.multidelay	211	Tap 2 feedback filter gain	combination	2	29=1;41=5
+gl.multidelay	212	Tap 2 leave first echo	combination	1	29=1
 gl.multidelay	213	Tap 3 tempo time	combination	0	53=1
-gl.multidelay	214	Tap 3 input filter stages	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
-gl.multidelay	215	Tap 3 input filter gain	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
+gl.multidelay	214	Tap 3 input filter stages	combination	3	53=1;59=1
+gl.multidelay	215	Tap 3 input filter gain	combination	2	53=1;59=6
 gl.multidelay	216	Tap 3 input filter post	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
-gl.multidelay	217	Tap 3 feedback filter stages	combination	3	53=1;213=0
-gl.multidelay	218	Tap 3 feedback filter gain	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
+gl.multidelay	217	Tap 3 feedback filter stages	combination	3	53=1;65=6
+gl.multidelay	218	Tap 3 feedback filter gain	combination	2	53=1;65=6
 gl.multidelay	219	Tap 3 leave first echo	combination	1	53=1;213=0
 gl.multidelay	220	Tap 4 tempo time	combination	0	53=1;77=1
 gl.multidelay	221	Tap 4 input filter stages	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
 gl.multidelay	222	Tap 4 input filter gain	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
 gl.multidelay	223	Tap 4 input filter post	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
-gl.multidelay	224	Tap 4 feedback filter stages	combination	3	77=1;220=0
+gl.multidelay	224	Tap 4 feedback filter stages	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
 gl.multidelay	225	Tap 4 feedback filter gain	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
-gl.multidelay	226	Tap 4 leave first echo	combination	1	77=1;220=0
+gl.multidelay	226	Tap 4 leave first echo	combination	1	53=1;77=1
 gl.multidelay	227	Tap 5 tempo time	combination	0	101=1
-gl.multidelay	228	Tap 5 input filter stages	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
-gl.multidelay	229	Tap 5 input filter gain	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
+gl.multidelay	228	Tap 5 input filter stages	combination	3	101=1;107=1
+gl.multidelay	229	Tap 5 input filter gain	combination	2	101=1;107=5
 gl.multidelay	230	Tap 5 input filter post	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
-gl.multidelay	231	Tap 5 feedback filter stages	combination	3	101=1;227=0
-gl.multidelay	232	Tap 5 feedback filter gain	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
-gl.multidelay	233	Tap 5 leave first echo	combination	1	101=1;227=0
+gl.multidelay	231	Tap 5 feedback filter stages	combination	3	101=1;113=1
+gl.multidelay	232	Tap 5 feedback filter gain	combination	2	101=1;113=5
+gl.multidelay	233	Tap 5 leave first echo	combination	1	101=1
 gl.multidelay	234	Tap 6 tempo time	combination	0	125=1;126=2
 gl.multidelay	235	Tap 6 input filter stages	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
 gl.multidelay	236	Tap 6 input filter gain	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
 gl.multidelay	237	Tap 6 input filter post	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
-gl.multidelay	238	Tap 6 feedback filter stages	combination	3	125=1;126=2
+gl.multidelay	238	Tap 6 feedback filter stages	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
 gl.multidelay	239	Tap 6 feedback filter gain	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
 gl.multidelay	240	Tap 6 leave first echo	combination	1	125=1;126=2
 gl.multidelay	241	Tap 7 tempo time	combination	0	149=1
 gl.multidelay	242	Tap 7 input filter stages	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
 gl.multidelay	243	Tap 7 input filter gain	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
 gl.multidelay	244	Tap 7 input filter post	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
-gl.multidelay	245	Tap 7 feedback filter stages	combination	3	149=1
+gl.multidelay	245	Tap 7 feedback filter stages	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
 gl.multidelay	246	Tap 7 feedback filter gain	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
 gl.multidelay	247	Tap 7 leave first echo	combination	1	149=1
-gl.multidelay	248	Tap 8 tempo time	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
+gl.multidelay	248	Tap 8 tempo time	combination	0	173=1
 gl.multidelay	249	Tap 8 input filter stages	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
 gl.multidelay	250	Tap 8 input filter gain	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
 gl.multidelay	251	Tap 8 input filter post	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
 gl.multidelay	252	Tap 8 feedback filter stages	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
 gl.multidelay	253	Tap 8 feedback filter gain	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
-gl.multidelay	254	Tap 8 leave first echo	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
+gl.multidelay	254	Tap 8 leave first echo	combination	1	173=1
+gl.multidelay	255	Zero time at minimum	combination	0	6=0.002
 gl.multisampler	0	Volume	working	0	
 gl.multisampler	1	Transpose	working	-24	
 gl.multisampler	2	Fine tune	working	100	
@@ -10257,20 +10259,20 @@ gl.peakctl	0	Peak base	combination	1	15=0
 gl.peakctl	1	Peak amount	combination	-1	15=0
 gl.peakctl	2	Peak tension	combination	-1	15=0
 gl.peakctl	3	Peak attack	combination	0.5	15=0
-gl.peakctl	4	Peak decay	combination	0.00999999978	15=0
+gl.peakctl	4	Peak decay	combination	5	15=0
 gl.peakctl	5	LFO base	combination	1	15=0
-gl.peakctl	6	LFO amount	combination	-1	15=0
-gl.peakctl	7	LFO tension	combination	-1	15=0
-gl.peakctl	8	LFO shape	combination	1	15=0
-gl.peakctl	9	LFO tempo sync	combination	0	15=0
-gl.peakctl	10	LFO rate	combination	0.00999999978	15=0;9=0
-gl.peakctl	11	LFO length	combination	0	15=0
-gl.peakctl	12	LFO phase	combination	0.5	15=0
-gl.peakctl	13	Smooth output	working	0	
+gl.peakctl	6	LFO amount	combination	1	15=0;-1=1
+gl.peakctl	7	LFO tension	combination	-1	15=0;6=1
+gl.peakctl	8	LFO shape	combination	1	21=256
+gl.peakctl	9	LFO tempo sync	combination	1	15=0;6=1
+gl.peakctl	10	LFO rate	combination	0.00999999978	15=0;6=1
+gl.peakctl	11	LFO length	verified	0		VERIFIED: sets the LFO rate in the legacy model with tempo sync on and a non-zero LFO amount
+gl.peakctl	12	LFO phase	combination	0.5	15=0;6=1
+gl.peakctl	13	Smooth output	working	1	
 gl.peakctl	14	Mute audio	working	1	
 gl.peakctl	15	Engine	working	0	
 gl.peakctl	16	Peak base (ref.)	working	65536	
-gl.peakctl	17	Peak amount (ref.)	working	256	
+gl.peakctl	17	Peak amount (ref.)	working	-256	
 gl.peakctl	18	Peak tension (ref.)	working	128	
 gl.peakctl	19	Peak decay (ref.)	working	5	
 gl.peakctl	20	LFO base (ref.)	working	65536	
@@ -10305,22 +10307,22 @@ gl.pitch	0	Mode	combination	0	11=0
 gl.pitch	1	Pitch	working	-24	
 gl.pitch	2	Fine	working	100	
 gl.pitch	3	Formant	combination	-12	11=0
-gl.pitch	4	Keep formants	combination	1	11=0;1=24
+gl.pitch	4	Keep formants	combination	0	11=0;1=24
 gl.pitch	5	Window	combination	10	11=0;0=0
 gl.pitch	6	Stereo detune	combination	50	11=0
 gl.pitch	7	Delay	combination	500	11=0
 gl.pitch	8	Feedback	combination	0.949999988	17=1
 gl.pitch	9	Output	working	12	
 gl.pitch	10	Mix	working	0	
-gl.pitch	11	Engine	working	1	
+gl.pitch	11	Engine	working	2	
 gl.pitch	12	Formant correction	combination	0	11=1;1=24
 gl.pitch	13	Grain length	combination	20	11=2
-gl.pitch	14	Density	combination	1	11=2
+gl.pitch	14	Density	combination	5	11=2
 gl.pitch	15	Jitter	combination	1	11=2
 gl.pitch	16	Randomize	combination	1	11=2
 gl.pitch	17	Delay mode	working	1	
-gl.pitch	18	Delay tempo sync	combination	1	17=1
-gl.pitch	19	Delay steps	combination	16	17=1;1048594=1
+gl.pitch	18	Delay tempo sync	combination	1	17=1;0=0
+gl.pitch	19	Delay steps	combination	0	17=1;18=1
 gl.pitch	20	Analysis	combination	1	11=1
 gl.pitch	21	Pitch mode	combination	1	11=1
 gl.pitch	22	Detector	combination	0	11=1

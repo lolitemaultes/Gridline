@@ -551,7 +551,7 @@ void testStereo() {
   expect(near(ol, 0.4 * 0.1 * (std::sqrt(11.0) - 1), 1e-4), "auto pan: volume taper 0.1 (11^x - 1)");
   // Volume LFO (square) moves the gain by +/- amount / 2 around the static volume.
   {
-    PluginState s = st("gl.autopan", {{ApTarget, 2.f}, {ApShape, 2.f}, {ApAmount, 1.f}, {ApSpeedK, 0.05f}});
+    PluginState s = st("gl.autopan", {{ApTarget, 2.f}, {ApShape, 2.f}, {ApAmount, 1.f}, {ApSpeedK, 0.05f}, {ApLfoLaw, 0.f}});  // law 1 (law 2: test_k2_round3)
     auto fx = createEffect("gl.autopan");
     Buf b;
     b.l.assign(44096, 0.5f), b.r.assign(44096, 0.5f);

@@ -148,7 +148,10 @@ inline constexpr int kMdMaxDelay = 1 << 18;  // samples per tap line (5.9 s @ 44
 enum MultiExtGlobal { MdModel = MdCount, MdOversample, MdExtGlobalEnd };
 enum MultiExtField { MdxTempo, MdxInStages, MdxInGain, MdxInPost, MdxFbStages, MdxFbGain, MdxLeaveFirst, MdxCount };
 inline int mdExt(int tap, int e) { return MdExtGlobalEnd + tap * MdxCount + e; }
-inline constexpr int MdTotal = MdExtGlobalEnd + kTaps * MdxCount;
+// K-2 round 3: 1 = a tempo tap at the step knob's minimum (0.002) sits at zero delay like the
+// reference's time 0 (states saved before keep 0 = the 0.002-step delay).
+inline constexpr int MdZeroTime = MdExtGlobalEnd + kTaps * MdxCount;
+inline constexpr int MdTotal = MdZeroTime + 1;
 enum MdFilterType { MfOff, MfLowPass, MfHighPass, MfBandPass, MfNotch, MfLowShelf, MfPeak, MfHighShelf, MfCount };
 enum MdFbModeRef { MfbNormal, MfbPingPong, MfbInvert, MfbOff };
 
