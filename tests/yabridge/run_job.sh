@@ -61,7 +61,9 @@ case "$DISPLAY_KIND" in
       xdotool mousemove 150 150 click 1 >> "$OUT/xwayland-check.log" 2>&1
       sleep 2
       kill "$check_pid" 2> /dev/null
-      if xdpyinfo > /dev/null 2>&1; then
+      # Weston starts a new XWayland on demand after one dies, so a display that answers now proves nothing:
+      # the proof of a crash is Weston's own log line and xdotool's broken connection.
+      if ! grep -q "died on signal" "$OUT/weston.log" && ! grep -q "connection to .* broken" "$OUT/xwayland-check.log"; then
         echo "XWayland takes XTEST input from a plain client" >> "$OUT/xwayland-check.log"
       else
         cp "$OUT/weston.log" "$OUT/weston-xtest-crash.log"

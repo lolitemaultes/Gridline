@@ -88,6 +88,7 @@ void ensureIndex(App& a) {
   ix.setCacheFile((fs::path(a.configDir()) / "browser-index.json").string());
   ix.load();
   ix.setRoots(indexRoots(a));
+  ix.stopAtExit();  // K-W: inside a plugin nothing calls shutdownIndex()
   ix.start();
 }
 

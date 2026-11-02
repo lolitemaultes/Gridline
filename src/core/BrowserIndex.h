@@ -188,6 +188,11 @@ class Index {
   void setRoots(const std::vector<std::pair<std::string, bool>>& roots);
   void start();           // starts / restarts a pass on the worker thread
   void stop();            // cancels and joins the worker
+  // K-W: also stop when this module's static destructors run (the process exits or a host
+  // unloads the plugin), ahead of every static that exists by now. A Gridline plugin has no
+  // main() to stop the worker from, and the host may never close the instance. One index per
+  // module; call it before start().
+  void stopAtExit();
   void waitIdle();        // blocks until the current pass ends (tests)
   bool busy() const { return busy_.load(); }
   size_t done() const { return done_.load(); }

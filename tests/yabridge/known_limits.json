@@ -1,7 +1,7 @@
 [
  {
   "match": {
-   "wine": "^(staging-9\\.21|distro)$",
+   "wine": "^(staging-9\\.21|staging-9\\.22|staging-10\\.20|distro)$",
    "plugin": "^Dexed$",
    "host": "gridline",
    "check": "editor drawn"
@@ -10,7 +10,7 @@
  },
  {
   "match": {
-   "wine": "^(staging-9\\.21|staging-11\\.21|distro)$",
+   "wine": "^(staging-9\\.21|staging-9\\.22|staging-10\\.20|staging-11\\.21|distro)$",
    "plugin": "^Dexed$",
    "host": "gridline",
    "check": "pixels"
@@ -19,7 +19,7 @@
  },
  {
   "match": {
-   "wine": "^(staging-9\\.21|staging-11\\.21|distro)$",
+   "wine": "^(staging-9\\.21|staging-9\\.22|staging-10\\.20|staging-11\\.21|distro)$",
    "plugin": "^Dexed$",
    "host": "gridline",
    "check": "closing the interface"
@@ -28,7 +28,7 @@
  },
  {
   "match": {
-   "wine": "^(staging-9\\.21|staging-11\\.21|distro)$",
+   "wine": "^(staging-9\\.21|staging-9\\.22|staging-10\\.20|staging-11\\.21|distro)$",
    "plugin": "^Surge XT$",
    "host": "gridline",
    "check": "pixels"
@@ -47,10 +47,10 @@
  },
  {
   "match": {
-   "wine": "^staging-11\\.21$",
-   "display": "^xvfb-openbox$",
+   "wine": "^(staging-9\\.22|staging-10\\.20|staging-11\\.21)$",
+   "display": "^xvfb-",
    "check": "click|hover|press, drag|drag out|dragging|wheel|window follows|container follows|plugin asks|edit reaches|each editor|other editor|pixels|parameters still"
   },
-  "reason": "on this Wine a click reaches the plugin offset by the window's position on the screen, or not at all, in the control host too (VST3, VST2 compared); fits yabridge issue 382"
+  "reason": "on this Wine a click reaches the plugin offset by the window's position on the screen, or not at all, in the control host too (VST3, VST2 compared; the control host has no CLAP); fits yabridge issue 382. Wine 9.21 in the same cells has no offset"
  }
 ]

@@ -192,6 +192,8 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 
 - A bridged plugin whose other process dies (a Windows plugin through yabridge, say) no longer takes Gridline down: it shows as crashed and goes silent, other tracks play on and the project still saves. Reload it from its plugin window.
 - Quitting no longer leaves an invisible process behind when a plugin never returns from closing: Gridline leaves after 20 seconds.
+- Gridline as a plugin could crash the host as it quit or unloaded the plugin while the browser was
+  still indexing files. The indexing now stops first.
 - Linux: Space and Gridline's other shortcuts typed into a plugin's interface no longer get lost; the watch on the interface's windows was switching itself off every second time it was read.
 - **FL import, mastering dynamics**: oversampling and curves of more than eight points now load and export;
   release times, the low band's all-pass, the master mid detector and two point shapes now match,

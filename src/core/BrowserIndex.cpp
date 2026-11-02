@@ -345,7 +345,9 @@ double syncRatio(double sampleBpm, double songBpm) {
 }
 
 std::vector<std::string> autoTags(const std::string& path) {
-  static const std::vector<std::pair<const char*, const char*>> vocab = {
+  // Never destroyed (K-W): the index worker reads it, and it comes to exist after the worker's
+  // owner, so a normal static would be gone while the worker is still being stopped.
+  static const auto& vocab = *new std::vector<std::pair<const char*, const char*>>{
       {"kick", "kick"},   {"bd", "kick"},        {"snare", "snare"},  {"sd", "snare"},     {"rim", "snare"},
       {"hihat", "hat"},   {"hat", "hat"},        {"hh", "hat"},       {"clap", "clap"},    {"snap", "clap"},
       {"perc", "perc"},   {"shaker", "perc"},    {"conga", "perc"},   {"bongo", "perc"},   {"tom", "tom"},
@@ -727,6 +729,15 @@ void Index::stop() {
   cancel_ = true;
   if (worker_.joinable()) worker_.join();
   busy_ = false;
+}
+
+void Index::stopAtExit() {
+  static std::atomic<Index*> target{nullptr};
+  Index* none = nullptr;
+  if (!target.compare_exchange_strong(none, this)) return;
+  std::atexit([] {
+    if (Index* ix = target.load()) ix->stop();
+  });
 }
 
 void Index::waitIdle() {

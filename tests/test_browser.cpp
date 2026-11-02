@@ -3,6 +3,7 @@
 // tags, preset trees, the drag & drop target table and the PNG codec used by
 // plugin picker thumbnails.
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <iterator>
 #include <filesystem>
@@ -13,6 +14,7 @@
 #include "core/Png.h"
 #include "core/WavWriter.h"
 #include "engine/Sample.h"
+#include "host/PluginScan.h"
 
 using namespace gl;
 using namespace gl::browse;
@@ -366,8 +368,47 @@ void testCancel() {
   fs::remove_all(root);
 }
 
-int main() {
+// K-W: the child of testStopAtExit. The process exits with the worker walking `root`: the worker
+// has to be stopped, and the tables it reads must still be there, when the statics that existed
+// before stopAtExit() are destroyed.
+[[noreturn]] void exitWhileIndexing(const std::string& root) {
+  using namespace gl::browse;
+  static Index ix;
+  struct Probe {
+    ~Probe() {
+      if (ix.busy()) std::_Exit(3);
+      const std::vector<std::string> tags = autoTags("/samples/kick.wav");
+      if (tags.size() != 1 || tags[0] != "kick") std::_Exit(4);
+    }
+  };
+  static Probe probe;
+  ix.setRoots({{root, false}});
+  ix.stopAtExit();
+  (void)autoTags("/samples/kick.wav");  // its table now comes to exist, like in a running index
+  ix.start();
+  std::exit(0);
+}
+
+void testStopAtExit() {
+  const std::string root = gl::test::hermeticTestEnv("browser") + "/exit-walk";
+  std::filesystem::create_directories(root);
+  for (int i = 0; i < 4000; ++i) std::ofstream(root + "/f" + std::to_string(i) + ".wav").put('x');
+  const std::string exe = gl::host::selfExecutablePath();
+  gl::platform::Process child;
+  const bool started = child.start(exe, {exe, "--exit-while-indexing", root});
+  const bool ended = started && child.wait(60);
+  if (started && !ended) {
+    child.kill();
+    child.wait();
+  }
+  std::printf("# exit while indexing: %s\n", child.status().describe().c_str());
+  expect(ended && !child.status().crashed && child.status().code == 0, "index: an exit during a pass stops the worker before the statics go");
+}
+
+int main(int argc, char** argv) {
+  if (argc == 3 && std::strcmp(argv[1], "--exit-while-indexing") == 0) exitWhileIndexing(argv[2]);
   gl::test::hermeticTestEnv("browser");
+  testStopAtExit();
   testCancel();
   testKinds();
   testTempoKey();

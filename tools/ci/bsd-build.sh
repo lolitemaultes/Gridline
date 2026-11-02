@@ -67,4 +67,7 @@ if [ -n "${GRIDLINE_PACKAGE:-}" ]; then
   "dist/$name/bin/gridline" --version
   (cd dist && tar czf "$name.tar.gz" "$name")
   ls -l "dist/$name.tar.gz"
+  # The VM action copies the whole tree back to the runner; a 4 GB build there can drop the
+  # connection (seen on FreeBSD after all tests had passed), and only the archive is needed.
+  rm -rf build "dist/$name"
 fi

@@ -185,6 +185,7 @@ jobs:
         with:
           release: "14.3"
           usesh: true
+          copyback: false  # the tests ran in the VM; copying a 4 GB build back can drop the connection
           mem: 8192
           prepare: sh tools/ci/install-deps.sh freebsd
           run: sh tools/ci/bsd-build.sh
@@ -194,6 +195,7 @@ jobs:
         with:
           release: "7.7"
           usesh: true
+          copyback: false  # the tests ran in the VM; copying a 4 GB build back can drop the connection
           mem: 8192
           prepare: sh tools/ci/install-deps.sh openbsd
           run: sh tools/ci/bsd-build.sh
@@ -203,6 +205,7 @@ jobs:
         with:
           release: "10.1"
           usesh: true
+          copyback: false  # the tests ran in the VM; copying a 4 GB build back can drop the connection
           mem: 8192
           prepare: sh tools/ci/install-deps.sh netbsd
           run: sh tools/ci/bsd-build.sh
