@@ -2,6 +2,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <functional>
+#include <vector>
 
 #include "Check.h"
 #include "../src/core/Motion.h"
@@ -209,6 +211,136 @@ int main() {
     b.begin(pb, sb, true, p), zoomAt(pb, sb, 1.5, 300), b.end(pb, sb, 0.008, true, p);
     b.begin(pb, sb, true, p), b.end(pb, sb, 0.008, true, p);
     expect(near(pa, pb, 1e-5) && near(sa, sb, 1e-2), "frame-rate independent");
+  }
+  // ---- K-24: RowGlide, the vertical zoom anchored at a point of a row ----
+  {
+    // Rows of mixed heights (multipliers, rounded per row like the playlist), one folded (0 px).
+    const float mult[] = {1.0f, 0.5f, 2.0f, 0.0f, 1.0f, 1.5f, 1.0f, 3.0f, 1.0f, 0.25f, 1.0f, 1.0f};
+    constexpr int n = 12;
+    auto layout = [&](double h, std::vector<float>& top) {
+      top.assign(n + 1, 0.0f);
+      for (int i = 0; i < n; ++i) top[static_cast<size_t>(i) + 1] = top[static_cast<size_t>(i)] + std::round(static_cast<float>(h) * mult[i]);
+    };
+    std::vector<float> top;
+    layout(46, top);
+    bool round = true;
+    for (double y : {0.0, 10.0, 46.0, 69.0, 70.0, 161.0, 162.0, 300.0, 500.0, -12.0}) {
+      const RowAnchor an = rowAnchorAt(top.data(), n, 46, y, 5);
+      round = round && near(rowAnchorPos(top.data(), n, 46, an), y, 1e-3) && an.px == 5;
+      if (y >= 0 && y < top[n]) round = round && an.row >= 0 && an.row < n && mult[an.row] > 0;  // never the folded row
+    }
+    expect(round, "row anchors: a content point and back, folded rows skipped, past either end");
+    const RowAnchor past = rowAnchorAt(top.data(), n, 46, top[n] + 23.0, 0);
+    expect(past.row == n && near(past.frac, 0.5, 1e-9), "below the last row: base heights past the end");
+
+    // A view: the drawn height and scroll, one frame of it (as Playlist.cpp does).
+    struct RView {
+      double h = 46;
+      float scroll = 0;
+      double viewH = 300;
+      RowGlide g;
+      std::vector<float> top;
+      std::function<void(double, std::vector<float>&)> lay;
+      double contentH() { lay(h, top); return top.back(); }
+      void frame(double factor, double py, bool notch = true, const Params& p = Params()) {
+        lay(h, top);
+        const float held = static_cast<float>(h);
+        if (factor != 1.0) {
+          const double to = std::clamp(g.target(held) * factor, 24.0, 120.0);
+          g.zoomTo(held, to, rowAnchorAt(top.data(), n, held, py + scroll, py), notch, p);
+        }
+        h = g.step(held, kDt, p);
+        lay(h, top);
+        if (g.anchored()) {
+          const RowAnchor& an = g.anchor();
+          scroll = static_cast<float>(std::clamp(rowAnchorPos(top.data(), n, h, an) - an.px, 0.0, std::max(0.0, static_cast<double>(top.back()) - viewH)));
+          g.scrollOut = scroll;
+        }
+      }
+    };
+    RView v;
+    v.lay = layout;
+    v.scroll = 120;
+    v.frame(1.0, 0);
+    v.lay(v.h, v.top);
+    const double py = 140;
+    const RowAnchor a0 = rowAnchorAt(v.top.data(), n, v.h, py + v.scroll, py);
+    v.frame(1.1, py);
+    int between = 0;
+    double worst = 0;
+    double prev = v.h;
+    bool mono = true;
+    for (int i = 0; i < 60; ++i) {
+      v.lay(v.h, v.top);
+      const double y = rowAnchorPos(v.top.data(), n, v.h, a0) - v.scroll;  // where the first point is drawn now
+      worst = std::max(worst, std::fabs(y - py));
+      if (v.g.active()) ++between;
+      mono = mono && v.h >= prev - 1e-5;  // (the view holds floats)
+      prev = v.h;
+      v.frame(1.0, py);
+    }
+    std::printf("# row zoom glide: %d frames, worst drift %.4f px\n", between, worst);
+    expect(between >= 4, "an Alt+wheel notch glides over several frames");
+    expect(mono, "it only grows on the way (no overshoot)");
+    expect(worst <= 1e-3, "the point under the pointer stays put at every frame (mixed, rounded, folded rows)");
+    expect(near(v.h, 46 * 1.1, 1e-5) && !v.g.active(), "it ends at exactly the target height");
+
+    // Instant: a trackpad (not a notch) or smoothing off.
+    RView w;
+    w.lay = layout;
+    w.scroll = 120;
+    w.frame(1.0, 0);
+    w.frame(1.2, 100, false);
+    expect(near(w.h, 46 * 1.2, 1e-5) && !w.g.active(), "a trackpad's fractional Alt+scroll applies at once");
+    Params off;
+    off.smooth = false;
+    RView o;
+    o.lay = layout;
+    o.frame(1.0, 0, true, off);
+    o.frame(1.2, 100, true, off);
+    expect(near(o.h, 46 * 1.2, 1e-5) && !o.g.active(), "smooth zooming off: at once");
+
+    // Notches compose on the target (two quick notches: 1.1 squared), and finish() is there at once.
+    RView c;
+    c.lay = layout;
+    c.frame(1.0, 0);
+    c.frame(1.1, 50);
+    c.frame(1.1, 50);
+    expect(c.g.active() && near(c.g.target(c.h), 46 * 1.21, 1e-9), "notches compose on the target mid-glide");
+    c.g.finish();
+    c.frame(1.0, 50);
+    expect(!c.g.active() && near(c.h, 46 * 1.21, 1e-5), "finish: the rest of the glide at once");
+
+    // The top edge holds: zooming out at the top keeps the scroll at 0 every frame (no jitter).
+    RView t;
+    t.lay = layout;
+    t.frame(1.0, 0);
+    t.frame(1.0 / 1.1, 200);
+    bool pinned = true;
+    for (int i = 0; i < 40; ++i) {
+      pinned = pinned && t.scroll == 0.0f;
+      t.frame(1.0, 200);
+    }
+    expect(pinned && t.h < 46, "zooming out at the top: pinned to the top");
+    // The bottom edge holds: scrolled to the end, zooming out keeps the end at the view's bottom.
+    RView b;
+    b.lay = layout;
+    b.scroll = static_cast<float>(b.contentH() - b.viewH);
+    b.frame(1.0, 0);
+    b.frame(1.0 / 1.1, 150);
+    bool atEnd = true;
+    for (int i = 0; i < 40; ++i) {
+      atEnd = atEnd && std::fabs(static_cast<double>(b.scroll) - std::max(0.0, b.contentH() - b.viewH)) < 1e-3;
+      b.frame(1.0, 150);
+    }
+    expect(atEnd, "zooming out at the bottom: the end stays at the view's bottom");
+
+    // An outside write (a menu) is told apart from the glide's own output.
+    RowGlide gg;
+    Params p;
+    expect(!gg.outside(46.0f), "a new glide sees no outside write");
+    gg.step(46, kDt, p);
+    expect(!gg.outside(46.0f) && gg.outside(69.0f), "an outside height write is seen");
   }
   return finish();
 }

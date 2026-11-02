@@ -1,5 +1,6 @@
 #include "MenuOps.h"
 #include "ClipLoop.h"
+#include "NoteBend.h"
 #include "ChordTools.h"
 #include "TrackModes.h"
 #include <algorithm>
@@ -854,6 +855,7 @@ void chop(std::vector<Note>& notes, NoteSel& sel, Tick len) {
       Note c = n;  // pieces keep the note's properties
       c.start = n.start + s;
       c.length = std::min(len, n.length - s);
+      if (!n.bend.empty()) c.bend = gl::bend::head(gl::bend::tail(n.bend, static_cast<double>(s)), static_cast<double>(c.length));  // K-25: its piece of the line
       out.push_back(c);
       os.push_back(sel[i]);
     }
@@ -873,6 +875,9 @@ void glue(std::vector<Note>& notes, NoteSel& sel) {
       if (!t[j] || gone[j] || notes[j].pitch != notes[i].pitch) continue;
       Tick end = notes[i].start + notes[i].length;
       if (notes[j].start > end) break;
+      // K-25: the glued note's bend line continues where it started (a note inside keeps none of its own).
+      if ((!notes[i].bend.empty() || !notes[j].bend.empty()) && notes[j].start + notes[j].length > end)
+        gl::bend::append(notes[i].bend, notes[j].bend, static_cast<double>(notes[j].start - notes[i].start));
       notes[i].length = std::max(end, notes[j].start + notes[j].length) - notes[i].start;
       gone[j] = true;
     }

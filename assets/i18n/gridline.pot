@@ -85,6 +85,198 @@ msgstr ""
 msgid "Saved template"
 msgstr ""
 
+#: src/app/AsioUi.cpp
+msgid "%d in, %d out · %s"
+msgstr ""
+
+#: src/app/AsioUi.cpp
+msgid "(mono: left and right mixed)"
+msgstr ""
+
+#: src/app/AsioUi.cpp
+msgid ", driver's choice"
+msgstr ""
+
+#: src/app/AsioUi.cpp
+msgid "A low-latency ASIO driver from the audio interface's maker"
+msgstr ""
+
+#: src/app/AsioUi.cpp
+msgid "A mixer track (after its fader) also plays on this output pair"
+msgstr ""
+
+#: src/app/AsioUi.cpp
+msgid "ASIO"
+msgstr ""
+
+#: src/app/AsioUi.cpp
+msgid "ASIO driver"
+msgstr ""
+
+#: src/app/AsioUi.cpp
+msgid "All %d"
+msgstr ""
+
+#: src/app/AsioUi.cpp
+msgid "As the driver reports it; recordings are moved earlier by input + output latency"
+msgstr ""
+
+#: src/app/AsioUi.cpp
+msgid "Audio driver"
+msgstr ""
+
+#: src/app/AsioUi.cpp src/app/Dialogs.cpp
+msgid "Buffer size"
+msgstr ""
+
+#: src/app/AsioUi.cpp
+msgid "Channels appear once the driver runs."
+msgstr ""
+
+#: src/app/AsioUi.cpp
+msgid "Choose a driver"
+msgstr ""
+
+#: src/app/AsioUi.cpp
+msgid "Control panel"
+msgstr ""
+
+#: src/app/AsioUi.cpp src/app/MidiUi.cpp
+msgid "Device"
+msgstr ""
+
+#: src/app/AsioUi.cpp
+msgid "Driver settings"
+msgstr ""
+
+#: src/app/AsioUi.cpp
+msgid "Driver type"
+msgstr ""
+
+#: src/app/AsioUi.cpp
+msgid "Driver's preferred size (%d)"
+msgstr ""
+
+#: src/app/AsioUi.cpp
+msgid "Drivers listed in the Windows registry (HKEY_LOCAL_MACHINE\\SOFTWARE\\ASIO)"
+msgstr ""
+
+#: src/app/AsioUi.cpp
+msgid "Extra outputs"
+msgstr ""
+
+#: src/app/AsioUi.cpp src/app/AudioRecordUi.cpp
+msgid "Input channels"
+msgstr ""
+
+#: src/app/AsioUi.cpp
+msgid "Inputs from"
+msgstr ""
+
+#: src/app/AsioUi.cpp
+msgid "Insert %d"
+msgstr ""
+
+#: src/app/AsioUi.cpp
+msgid "Install the driver of your audio interface, then reopen Settings."
+msgstr ""
+
+#: src/app/AsioUi.cpp src/app/DisplayConfirmUi.cpp
+msgid "Keep these audio settings?"
+msgstr ""
+
+#: src/app/AsioUi.cpp src/app/MixerView.cpp
+msgid "Latency"
+msgstr ""
+
+#: src/app/AsioUi.cpp
+msgid "Main output"
+msgstr ""
+
+#: src/app/AsioUi.cpp
+msgid "Mixer In 1 to In %d"
+msgstr ""
+
+#: src/app/AsioUi.cpp
+msgid "No ASIO driver installed"
+msgstr ""
+
+#: src/app/AsioUi.cpp
+msgid "None (system input device)"
+msgstr ""
+
+#: src/app/AsioUi.cpp src/app/ChannelEnvelopeUi.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/McpUi.cpp src/app/MixerView.cpp src/app/PluginEditorsEqRef.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/PluginEditorsK3Gb.cpp src/app/PluginFoldersUi.cpp src/packs/plasma/plasma_osc_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp src/packs/spectral/turntable_ui.cpp
+msgid "Off"
+msgstr ""
+
+#: src/app/AsioUi.cpp
+msgid "Reconnect"
+msgstr ""
+
+#: src/app/AsioUi.cpp
+msgid "Reopen the driver (after plugging the device back in)"
+msgstr ""
+
+#: src/app/AsioUi.cpp src/app/Dialogs.cpp src/app/ExportUi.cpp src/packs/edison/edison_form_ui.cpp
+msgid "Sample rate"
+msgstr ""
+
+#: src/app/AsioUi.cpp src/app/McpUi.cpp src/app/MidiUi.cpp
+msgid "Status"
+msgstr ""
+
+#: src/app/AsioUi.cpp
+msgid "System audio"
+msgstr ""
+
+#: src/app/AsioUi.cpp
+msgid "The device outputs the master plays on"
+msgstr ""
+
+#: src/app/AsioUi.cpp
+msgid "The driver allows"
+msgstr ""
+
+#: src/app/AsioUi.cpp
+msgid "The driver's own settings window (buffer, clock, routing)"
+msgstr ""
+
+#: src/app/AsioUi.cpp
+msgid "The first device input that becomes the mixer's In 1"
+msgstr ""
+
+#: src/app/AsioUi.cpp
+msgid "The operating system's audio (WASAPI on Windows): works with every device"
+msgstr ""
+
+#: src/app/AsioUi.cpp
+msgid "device rate"
+msgstr ""
+
+#: src/app/AsioUi.cpp
+msgid "in %d smp (%s)  out %d smp (%s)"
+msgstr ""
+
+#: src/app/AsioUi.cpp
+msgid "in steps of "
+msgstr ""
+
+#: src/app/AsioUi.cpp
+msgid "no driver"
+msgstr ""
+
+#: src/app/AsioUi.cpp
+msgid "one size"
+msgstr ""
+
+#: src/app/AsioUi.cpp
+msgid "powers of two"
+msgstr ""
+
+#: src/app/AsioUi.cpp
+msgid "preferred buffer"
+msgstr ""
+
 #: src/app/AudioRecordUi.cpp
 msgid "%d mixer track%s armed for audio"
 msgstr ""
@@ -95,6 +287,10 @@ msgstr ""
 
 #: src/app/AudioRecordUi.cpp
 msgid "%s · %.0f Hz · %.2f s"
+msgstr ""
+
+#: src/app/AudioRecordUi.cpp
+msgid "%s, %d inputs (ASIO CHANNELS above)"
 msgstr ""
 
 #: src/app/AudioRecordUi.cpp src/app/CollabUi.cpp src/app/MidiUi.cpp src/app/TrackModeUi.cpp
@@ -243,10 +439,6 @@ msgstr ""
 
 #: src/app/AudioRecordUi.cpp
 msgid "Input + output buffers and plugin delay compensation: recorded audio is moved this much earlier"
-msgstr ""
-
-#: src/app/AudioRecordUi.cpp
-msgid "Input channels"
 msgstr ""
 
 #: src/app/AudioRecordUi.cpp
@@ -401,7 +593,7 @@ msgstr ""
 msgid "Automation clip for"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/ExportUi.cpp src/app/FlpExportUi.cpp src/app/MidiUi.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/ProjectLoadUi.cpp src/app/SamplerRenderUi.cpp src/app/ScriptUi.cpp src/app/SettingsKeysTheme.cpp src/app/StemsUi.cpp src/app/TemplateUi.cpp src/app/TrackReceiptUi.cpp src/app/UpdateUi.cpp src/app/UrlImportUi.cpp src/packs/edison/edison_script_ui.cpp src/packs/edison/edison_tools_ui.cpp src/packs/flex/flex_ui.cpp src/packs/platter/platter_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/Browser.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/ExportUi.cpp src/app/FlpExportUi.cpp src/app/MidiUi.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/ProjectLoadUi.cpp src/app/SamplerRenderUi.cpp src/app/ScriptUi.cpp src/app/SettingsKeysTheme.cpp src/app/StemsUi.cpp src/app/TemplateUi.cpp src/app/TrackReceiptUi.cpp src/app/UpdateUi.cpp src/app/UrlImportUi.cpp src/packs/edison/edison_script_ui.cpp src/packs/edison/edison_tools_ui.cpp src/packs/flex/flex_ui.cpp src/packs/platter/platter_ui.cpp
 msgid "Cancel"
 msgstr ""
 
@@ -786,7 +978,15 @@ msgid "%d failed"
 msgstr ""
 
 #: src/app/Browser.cpp
+msgid "(right-click: new folder, refresh, remove from the browser)"
+msgstr ""
+
+#: src/app/Browser.cpp
 msgid "+ tag"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "A folder with %zu files"
 msgstr ""
 
 #: src/app/Browser.cpp
@@ -797,11 +997,11 @@ msgstr ""
 msgid "Add a tag (Enter) · search with tag:<name>"
 msgstr ""
 
-#: src/app/Browser.cpp
+#: src/app/Browser.cpp src/app/PluginFoldersUi.cpp
 msgid "Add folder..."
 msgstr ""
 
-#: src/app/Browser.cpp src/app/LauncherCollab.cpp src/app/LauncherUi.cpp src/app/PluginManager.cpp src/app/PluginPicker.cpp
+#: src/app/Browser.cpp src/app/LauncherCollab.cpp src/app/LauncherUi.cpp src/app/PluginFavsUi.cpp src/app/PluginManager.cpp src/app/PluginPicker.cpp
 msgid "Add to favourites"
 msgstr ""
 
@@ -835,6 +1035,10 @@ msgstr ""
 
 #: src/app/Browser.cpp src/app/PluginManager.cpp
 msgid "Clear search"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Click a plugin's star (or right-click: Add to favourites)"
 msgstr ""
 
 #: src/app/Browser.cpp
@@ -902,6 +1106,10 @@ msgid "Drag onto a Pixel Tone editor or channel to play this picture · double-c
 msgstr ""
 
 #: src/app/Browser.cpp
+msgid "Drop to move it into "
+msgstr ""
+
+#: src/app/Browser.cpp
 msgid "Edited audio"
 msgstr ""
 
@@ -918,6 +1126,10 @@ msgid "FL Studio projects"
 msgstr ""
 
 #: src/app/Browser.cpp
+msgid "FL Studio's shipped content is read-only"
+msgstr ""
+
+#: src/app/Browser.cpp
 msgid "Favourite plugins"
 msgstr ""
 
@@ -931,6 +1143,10 @@ msgstr ""
 
 #: src/app/Browser.cpp
 msgid "Indexing sample metadata in the background (length, tempo, key, waveform)"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "It can be restored from the system trash."
 msgstr ""
 
 #: src/app/Browser.cpp
@@ -955,6 +1171,26 @@ msgstr ""
 
 #: src/app/Browser.cpp
 msgid "Mixer presets"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Move to the trash?"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Move to trash"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Moved"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Moved to the trash: "
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "New folder"
 msgstr ""
 
 #: src/app/Browser.cpp
@@ -1049,7 +1285,7 @@ msgstr ""
 msgid "Plugin presets"
 msgstr ""
 
-#: src/app/Browser.cpp
+#: src/app/Browser.cpp src/app/Dialogs.cpp
 msgid "Plugins"
 msgstr ""
 
@@ -1067,6 +1303,10 @@ msgstr ""
 
 #: src/app/Browser.cpp
 msgid "Projects"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Read-only here: files can be changed in your own folders and Gridline's folders"
 msgstr ""
 
 #: src/app/Browser.cpp
@@ -1089,12 +1329,16 @@ msgstr ""
 msgid "Remove from browser"
 msgstr ""
 
-#: src/app/Browser.cpp src/app/LauncherCollab.cpp src/app/LauncherUi.cpp src/app/PluginPicker.cpp
+#: src/app/Browser.cpp src/app/LauncherCollab.cpp src/app/LauncherUi.cpp src/app/PluginFavsUi.cpp src/app/PluginPicker.cpp
 msgid "Remove from favourites"
 msgstr ""
 
 #: src/app/Browser.cpp
 msgid "Remove star"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Renamed"
 msgstr ""
 
 #: src/app/Browser.cpp
@@ -1107,10 +1351,6 @@ msgstr ""
 
 #: src/app/Browser.cpp
 msgid "Right-click a file: Star"
-msgstr ""
-
-#: src/app/Browser.cpp
-msgid "Right-click a plugin: Add to favourites"
 msgstr ""
 
 #: src/app/Browser.cpp src/app/PluginEditorsInstrSlicer.cpp
@@ -1143,6 +1383,10 @@ msgstr ""
 
 #: src/app/Browser.cpp
 msgid "Seltmann loops"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Shared with the collaborative project: the others refer to it by this name"
 msgstr ""
 
 #: src/app/Browser.cpp
@@ -1190,11 +1434,43 @@ msgid "Tempo sync: previews (and audio clips dropped on the playlist) follow the
 msgstr ""
 
 #: src/app/Browser.cpp
+msgid "The folder is read-only"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "The open project is saved here: use File > Save as to move it"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "The open project uses it (%d references): they will be missing until it is put back."
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "This folder is one of the browser's own folders"
+msgstr ""
+
+#: src/app/Browser.cpp
 msgid "Try fewer words or filters"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Type the new name (the extension stays) · Enter: rename · Esc: cancel"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Type the new name · Enter: rename · Esc: cancel"
 msgstr ""
 
 #: src/app/Browser.cpp src/app/UpdateUi.cpp src/packs/mini/mini_ui.cpp
 msgid "in"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "project reference updated"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "project references updated"
 msgstr ""
 
 #: src/app/BrowserDrop.cpp src/app/ContextMenus.cpp src/app/MixerView.cpp
@@ -1437,10 +1713,6 @@ msgstr ""
 msgid "Notch"
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/McpUi.cpp src/app/MixerView.cpp src/app/PluginEditorsEqRef.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/PluginEditorsK3Gb.cpp src/packs/plasma/plasma_osc_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp src/packs/spectral/turntable_ui.cpp
-msgid "Off"
-msgstr ""
-
 #: src/app/ChannelEnvelopeUi.cpp src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/MidiUi.cpp src/app/MixerView.cpp src/app/PluginUI.cpp
 msgid "On"
 msgstr ""
@@ -1573,10 +1845,6 @@ msgstr ""
 msgid "Channel rack"
 msgstr ""
 
-#: src/app/ChannelRack.cpp
-msgid "Click to add this channel to the selection"
-msgstr ""
-
 #: src/app/ChannelRack.cpp src/app/LauncherUi.cpp src/app/LoopStarterUi.cpp src/app/TemplateUi.cpp
 msgid "Create"
 msgstr ""
@@ -1603,6 +1871,14 @@ msgstr ""
 
 #: src/app/ChannelRack.cpp
 msgid "Insert new channel here"
+msgstr ""
+
+#: src/app/ChannelRack.cpp
+msgid "Lights while the channel plays · click to add this channel to the selection"
+msgstr ""
+
+#: src/app/ChannelRack.cpp
+msgid "Lights while the channel plays · selected (click to deselect)"
 msgstr ""
 
 #: src/app/ChannelRack.cpp
@@ -1655,10 +1931,6 @@ msgstr ""
 
 #: src/app/ChannelRack.cpp
 msgid "Replace %s"
-msgstr ""
-
-#: src/app/ChannelRack.cpp
-msgid "Selected (click to deselect)"
 msgstr ""
 
 #: src/app/ChannelRack.cpp
@@ -3293,7 +3565,7 @@ msgstr ""
 msgid "Makes a one-time code for one person"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/PluginFoldersUi.cpp
 msgid "Missing"
 msgstr ""
 
@@ -4330,6 +4602,10 @@ msgid "you"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
+msgid "A \"+\" on the hovered track header: give the track an instrument and start patterns for it there"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
 msgid "A new note stops this channel's previous note (monophonic choke)"
 msgstr ""
 
@@ -4431,6 +4707,14 @@ msgstr ""
 
 #: src/app/ContextMenus.cpp
 msgid "Auto colour group"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
+msgid "Auto scrolling"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
+msgid "Auto scrolling in pattern editors"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
@@ -4607,6 +4891,10 @@ msgstr ""
 
 #: src/app/ContextMenus.cpp
 msgid "Cut itself (selected)"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
+msgid "Default track height"
 msgstr ""
 
 #: src/app/ContextMenus.cpp src/app/Playlist.cpp
@@ -5273,6 +5561,10 @@ msgstr ""
 msgid "Piano roll to steps"
 msgstr ""
 
+#: src/app/ContextMenus.cpp src/app/PianoRoll.cpp
+msgid "Pitch bend"
+msgstr ""
+
 #: src/app/ContextMenus.cpp
 msgid "Pitch selected audio clips a semitone down"
 msgstr ""
@@ -5734,6 +6026,14 @@ msgid "That file is not a preset for this plugin"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
+msgid "The piano roll and the channel rack follow the pattern position while it plays (off: the view stays where you put it)"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
+msgid "The playlist follows the song position while it plays (off: the view stays where you put it)"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
 msgid "The stamp turns itself off after placing one chord"
 msgstr ""
 
@@ -5763,6 +6063,10 @@ msgstr ""
 
 #: src/app/ContextMenus.cpp src/app/Widgets.cpp
 msgid "Tool"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
+msgid "Track + button"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
@@ -5909,6 +6213,10 @@ msgstr ""
 msgid "APPEARANCE"
 msgstr ""
 
+#: src/app/Dialogs.cpp
+msgid "ASIO CHANNELS"
+msgstr ""
+
 #: src/app/Dialogs.cpp src/app/Menus.cpp
 msgid "About Gridline"
 msgstr ""
@@ -5947,10 +6255,6 @@ msgstr ""
 
 #: src/app/Dialogs.cpp
 msgid "Backups kept"
-msgstr ""
-
-#: src/app/Dialogs.cpp
-msgid "Buffer size"
 msgstr ""
 
 #: src/app/Dialogs.cpp
@@ -6253,10 +6557,6 @@ msgstr ""
 msgid "STORAGE"
 msgstr ""
 
-#: src/app/Dialogs.cpp src/app/ExportUi.cpp src/packs/edison/edison_form_ui.cpp
-msgid "Sample rate"
-msgstr ""
-
 #: src/app/Dialogs.cpp src/app/Menus.cpp
 msgid "Save as..."
 msgstr ""
@@ -6381,6 +6681,10 @@ msgstr ""
 msgid "Wheel over controls"
 msgstr ""
 
+#: src/app/Dialogs.cpp
+msgid "Where each plugin format is searched, and scanning"
+msgstr ""
+
 #: src/app/Dialogs.cpp src/app/DisplayConfirmUi.cpp src/app/Menus.cpp
 msgid "Windows"
 msgstr ""
@@ -6467,10 +6771,6 @@ msgstr ""
 
 #: src/app/DisplayConfirmUi.cpp src/packs/seltmann/seltmann_rec_ui.cpp
 msgid "Keep"
-msgstr ""
-
-#: src/app/DisplayConfirmUi.cpp
-msgid "Keep these audio settings?"
 msgstr ""
 
 #: src/app/DisplayConfirmUi.cpp
@@ -6655,6 +6955,22 @@ msgstr ""
 
 #: src/app/EditTools.cpp
 msgid "Trim overlaps only"
+msgstr ""
+
+#: src/app/EditorZoomUi.cpp src/app/MixerView.cpp src/app/PluginManager.cpp
+msgid "Automatic"
+msgstr ""
+
+#: src/app/EditorZoomUi.cpp
+msgid "Drag to resize the editor; its size is remembered for this plugin"
+msgstr ""
+
+#: src/app/EditorZoomUi.cpp
+msgid "Editor size"
+msgstr ""
+
+#: src/app/EditorZoomUi.cpp
+msgid "Fits the screen: small editors open larger on a large workspace"
 msgstr ""
 
 #: src/app/EnvEditor.h src/app/PluginEditorsInstrPads.cpp src/packs/modulation/modulation_envart_ui.cpp src/packs/samplers/samplers_ui.cpp src/packs/spacefx/spacefx_ui.cpp
@@ -8501,10 +8817,6 @@ msgstr ""
 msgid "Starts a server for MCP clients such as Claude Desktop or Claude Code, reachable from this computer only (127.0.0.1)"
 msgstr ""
 
-#: src/app/McpUi.cpp src/app/MidiUi.cpp
-msgid "Status"
-msgstr ""
-
 #: src/app/McpUi.cpp
 msgid "Time"
 msgstr ""
@@ -8902,10 +9214,6 @@ msgid "Audio settings..."
 msgstr ""
 
 #: src/app/Menus.cpp
-msgid "Auto scrolling"
-msgstr ""
-
-#: src/app/Menus.cpp
 msgid "Backup settings..."
 msgstr ""
 
@@ -9250,10 +9558,6 @@ msgid "Tempo tapper"
 msgstr ""
 
 #: src/app/Menus.cpp
-msgid "The playlist follows the song position while playing"
-msgstr ""
-
-#: src/app/Menus.cpp
 msgid "Theme..."
 msgstr ""
 
@@ -9379,10 +9683,6 @@ msgstr ""
 
 #: src/app/MidiUi.cpp
 msgid "Default settings (keeps the source and target)"
-msgstr ""
-
-#: src/app/MidiUi.cpp
-msgid "Device"
 msgstr ""
 
 #: src/app/MidiUi.cpp
@@ -9705,10 +10005,6 @@ msgstr ""
 msgid "Allow threaded processing (off: the track always runs on the audio thread)"
 msgstr ""
 
-#: src/app/MixerView.cpp src/app/PluginManager.cpp
-msgid "Automatic"
-msgstr ""
-
 #: src/app/MixerView.cpp
 msgid "Both"
 msgstr ""
@@ -9765,12 +10061,16 @@ msgstr ""
 msgid "Empty slot"
 msgstr ""
 
+#: src/app/MixerView.cpp src/app/PluginFavsUi.cpp src/app/PluginManager.cpp
+msgid "Favourites"
+msgstr ""
+
 #: src/app/MixerView.cpp
 msgid "Increase number of tracks to..."
 msgstr ""
 
 #: src/app/MixerView.cpp
-msgid "Latency"
+msgid "Installed"
 msgstr ""
 
 #: src/app/MixerView.cpp
@@ -10074,7 +10374,35 @@ msgid "pct"
 msgstr ""
 
 #: src/app/PianoRoll.cpp
+msgid "%s, curve amount %+.0f%%"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
+msgid "(Alt: free · right-click a point: curve menu · double-click a point: remove it)"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
+msgid "(Alt: the grid in view and semitones · right-click a point: curve menu · double-click a point: remove it)"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
+msgid "(click: draw · Shift+click: draw and drag its length · wheel: scroll · Ctrl+wheel: zoom · Alt: no snap)"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
+msgid "(double-click the ring: a straight ramp again)"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
 msgid "(drag: move · edge: resize · Shift+drag: copy · Esc / right-click while dragging: cancel · Alt: no snap)"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
+msgid "Auto scrolling is off: the view stays where you put it while the pattern plays (click to follow the pattern position)"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
+msgid "Auto scrolling is on: the piano roll and channel rack follow the pattern position while it plays (click to keep the view still)"
 msgstr ""
 
 #: src/app/PianoRoll.cpp
@@ -10089,8 +10417,20 @@ msgstr ""
 msgid "Chord stamp: the chord Draw and Paint place (root = the clicked key)"
 msgstr ""
 
+#: src/app/PianoRoll.cpp
+msgid "Curve amount %+.0f%%"
+msgstr ""
+
 #: src/app/PianoRoll.cpp src/app/Playlist.cpp
 msgid "Drag cancelled"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
+msgid "Ease in"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
+msgid "Ease out"
 msgstr ""
 
 #: src/app/PianoRoll.cpp
@@ -10103,6 +10443,14 @@ msgstr ""
 
 #: src/app/PianoRoll.cpp
 msgid "Ghost notes: show other channels' notes (double-click a ghost note to edit its channel)"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
+msgid "Glide into the point:"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
+msgid "Glide into this point"
 msgstr ""
 
 #: src/app/PianoRoll.cpp
@@ -10146,7 +10494,27 @@ msgid "Quantize note starts to the snap grid (Ctrl+Q)"
 msgstr ""
 
 #: src/app/PianoRoll.cpp
+msgid "Rack steps"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
 msgid "Release velocity"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
+msgid "Remove point"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
+msgid "Reset curve amount"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
+msgid "Reset the curve (straight)"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
+msgid "Reset the note's bend"
 msgstr ""
 
 #: src/app/PianoRoll.cpp
@@ -10165,12 +10533,40 @@ msgstr ""
 msgid "Slide mode: new notes glide the channel's sounding notes to their pitch instead of starting a note"
 msgstr ""
 
+#: src/app/PianoRoll.cpp src/packs/tideline/tideline_ui.cpp src/packs/utility/utility_ui.cpp
+msgid "Smooth"
+msgstr ""
+
 #: src/app/PianoRoll.cpp
 msgid "Snap: Line and Cell follow the zoom (free at the deepest zoom); hold Alt while dragging to invert snapping"
 msgstr ""
 
 #: src/app/PianoRoll.cpp
 msgid "Starts at the previous note's pitch and glides to its own (channel porta time)"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
+msgid "Step (hold, then jump)"
+msgstr ""
+
+#: src/app/PianoRoll.cpp src/packs/plasma/plasma_pages_ui.cpp src/packs/platter/platter_mixer_ui.cpp
+msgid "Straight"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
+msgid "The channel's rack steps show as notes: moving, resizing or editing one turns them into piano roll notes (one undo step)"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
+msgid "The glide already is a straight ramp"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
+msgid "The glide is a straight ramp again"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
+msgid "The line holds after its last point: there is no curve to reset"
 msgstr ""
 
 #: src/app/PianoRoll.cpp
@@ -10194,6 +10590,18 @@ msgid "click to add, drag to move, drag the end to resize, right-click deletes"
 msgstr ""
 
 #: src/app/PianoRoll.cpp
+msgid "double-click"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
+msgid "double-click the glide"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
+msgid "double-click the note"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
 msgid "drag a box; Ctrl+drag selects with any tool"
 msgstr ""
 
@@ -10210,11 +10618,39 @@ msgid "drag across notes to cut them"
 msgstr ""
 
 #: src/app/PianoRoll.cpp
+msgid "drag anywhere on a note to bend its pitch like an automation line (semitone steps, Alt: free); right-click a point: its curve menu, Shift+click: its next curve; double-click a point to remove it, a curve to straighten it, the note to reset its line"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
+msgid "drag on a note or its line: bend it · Ctrl+drag: select · a note under another note's line keeps its own pitch"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
 msgid "drag over notes to set it, right-drag to draw a line (selected notes only when there is a selection)"
 msgstr ""
 
 #: src/app/PianoRoll.cpp
+msgid "drag up / down: curve amount · right-click: curve menu · double-click: a straight ramp again"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
+msgid "drag: a new point · double-click: this glide a straight ramp again · Ctrl+drag: select"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
+msgid "drag: bend the note · double-click: reset the note's bend · Ctrl+drag: select"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
+msgid "drag: move the point · right-click: curve menu · double-click or Alt+right-click: remove this point"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
 msgid "hold and move to hear the notes under the pointer"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
+msgid "no snap, Alt: the grid in view and semitones"
 msgstr ""
 
 #: src/app/PianoRoll.cpp
@@ -10223,6 +10659,10 @@ msgstr ""
 
 #: src/app/PianoRoll.cpp
 msgid "paint notes while dragging"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
+msgid "snap: %s and semitones, Alt: free"
 msgstr ""
 
 #: src/app/Playlist.cpp
@@ -10266,6 +10706,14 @@ msgid "Audio clip edits land on zero crossings"
 msgstr ""
 
 #: src/app/Playlist.cpp
+msgid "Auto scrolling is off: the view stays where you put it while the song plays (click to follow the song position)"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "Auto scrolling is on: the playlist follows the song position while it plays (click to keep the view still)"
+msgstr ""
+
+#: src/app/Playlist.cpp
 msgid "Automatic crossfade"
 msgstr ""
 
@@ -10295,6 +10743,10 @@ msgstr ""
 
 #: src/app/Playlist.cpp
 msgid "Click to place the selected pattern, or drag one in from the list"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "Click: give the track an instrument, or a new pattern for its instrument (opened in the piano roll)"
 msgstr ""
 
 #: src/app/Playlist.cpp
@@ -10339,6 +10791,34 @@ msgstr ""
 
 #: src/app/Playlist.cpp
 msgid "Deleted clip sources"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "Double-click the name to rename the track · right-click: track menu"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "Double-click the name to rename the track · right-click: track menu · drag the bottom edge to resize"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "Double-click: show the track's instrument · double-click the name: rename · right-click: track menu"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "Drag the end to zoom the time (the other end stays put) · Ctrl+wheel: zoom at the pointer"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "Drag the end to zoom the track height (the other end stays put) · Alt+wheel: zoom at the pointer"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "Drag to zoom the time"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "Drag to zoom the track height"
 msgstr ""
 
 #: src/app/Playlist.cpp
@@ -11609,6 +12089,154 @@ msgstr ""
 msgid "SIZE"
 msgstr ""
 
+#: src/app/PluginFavsUi.cpp
+msgid "Add to favourites (starred plugins are listed first, in every picker and the browser)"
+msgstr ""
+
+#: src/app/PluginFavsUi.cpp
+msgid "Installed plugins"
+msgstr ""
+
+#: src/app/PluginFoldersUi.cpp
+msgid "%d plugins"
+msgstr ""
+
+#: src/app/PluginFoldersUi.cpp
+msgid "%d plugins found"
+msgstr ""
+
+#: src/app/PluginFoldersUi.cpp
+msgid "%d plugins found, %d failed to scan"
+msgstr ""
+
+#: src/app/PluginFoldersUi.cpp
+msgid "Add a folder for every plugin format"
+msgstr ""
+
+#: src/app/PluginFoldersUi.cpp src/app/PluginManager.cpp
+msgid "Add a plugin folder"
+msgstr ""
+
+#: src/app/PluginFoldersUi.cpp
+msgid "Default folders"
+msgstr ""
+
+#: src/app/PluginFoldersUi.cpp
+msgid "Each format is searched in its default folders, its environment variable and the folders you add. Changes are scanned at once."
+msgstr ""
+
+#: src/app/PluginFoldersUi.cpp
+msgid "Every plugin found: formats, favourites, sandbox, failed scans"
+msgstr ""
+
+#: src/app/PluginFoldersUi.cpp
+msgid "FOLDERS FOR EVERY FORMAT"
+msgstr ""
+
+#: src/app/PluginFoldersUi.cpp
+msgid "Finds new and changed plugins in every folder that is on (each plugin is loaded in its own process)"
+msgstr ""
+
+#: src/app/PluginFoldersUi.cpp
+msgid "Inside another"
+msgstr ""
+
+#: src/app/PluginFoldersUi.cpp
+msgid "Lies inside a searched folder: its plugins are found once"
+msgstr ""
+
+#: src/app/PluginFoldersUi.cpp
+msgid "Listed above"
+msgstr ""
+
+#: src/app/PluginFoldersUi.cpp
+msgid "None: a folder added here is searched for VST3, VST2, CLAP and LV2 plugins."
+msgstr ""
+
+#: src/app/PluginFoldersUi.cpp src/app/PluginManager.cpp
+msgid "Not found on this computer: nothing to scan here"
+msgstr ""
+
+#: src/app/PluginFoldersUi.cpp
+msgid "Not scanned, hidden everywhere (click to switch it on)"
+msgstr ""
+
+#: src/app/PluginFoldersUi.cpp
+msgid "Not searched (click to switch it on)"
+msgstr ""
+
+#: src/app/PluginFoldersUi.cpp
+msgid "PLUGIN FOLDERS"
+msgstr ""
+
+#: src/app/PluginFoldersUi.cpp
+msgid "Plugin Manager"
+msgstr ""
+
+#: src/app/PluginFoldersUi.cpp
+msgid "Registered with the system: found wherever they are installed"
+msgstr ""
+
+#: src/app/PluginFoldersUi.cpp
+msgid "Remove this folder from the list"
+msgstr ""
+
+#: src/app/PluginFoldersUi.cpp src/app/PluginManager.cpp
+msgid "Rescan all"
+msgstr ""
+
+#: src/app/PluginFoldersUi.cpp
+msgid "SCANNING"
+msgstr ""
+
+#: src/app/PluginFoldersUi.cpp
+msgid "Scan all"
+msgstr ""
+
+#: src/app/PluginFoldersUi.cpp
+msgid "Scan the plugins in this folder again"
+msgstr ""
+
+#: src/app/PluginFoldersUi.cpp
+msgid "Scanned and listed (click to switch the format off)"
+msgstr ""
+
+#: src/app/PluginFoldersUi.cpp src/app/PluginManager.cpp
+msgid "Scanning %d / %d"
+msgstr ""
+
+#: src/app/PluginFoldersUi.cpp
+msgid "Scans every plugin again, including the ones that failed"
+msgstr ""
+
+#: src/app/PluginFoldersUi.cpp
+msgid "Search one more folder for plugins of every format"
+msgstr ""
+
+#: src/app/PluginFoldersUi.cpp
+msgid "Search one more folder for plugins of this format"
+msgstr ""
+
+#: src/app/PluginFoldersUi.cpp
+msgid "Search this folder (click to switch it off)"
+msgstr ""
+
+#: src/app/PluginFoldersUi.cpp
+msgid "Switched off: not searched; its plugins leave the list (projects keep them as placeholders)"
+msgstr ""
+
+#: src/app/PluginFoldersUi.cpp
+msgid "The same folder as an earlier row: searched once"
+msgstr ""
+
+#: src/app/PluginFoldersUi.cpp
+msgid "The standard folders for this format on this computer (switch off to search only your own folders)"
+msgstr ""
+
+#: src/app/PluginFoldersUi.cpp
+msgid "switched off"
+msgstr ""
+
 #: src/app/PluginManager.cpp
 msgid "%d plugin failed to scan"
 msgstr ""
@@ -11631,10 +12259,6 @@ msgstr ""
 
 #: src/app/PluginManager.cpp src/app/SettingsKeysTheme.cpp src/app/TopBar.cpp src/packs/plasma/plasma_browser_ui.cpp
 msgid "Add"
-msgstr ""
-
-#: src/app/PluginManager.cpp
-msgid "Add a plugin folder"
 msgstr ""
 
 #: src/app/PluginManager.cpp
@@ -11734,10 +12358,6 @@ msgid "Favourite: listed first in the browser (click to remove)"
 msgstr ""
 
 #: src/app/PluginManager.cpp
-msgid "Favourites"
-msgstr ""
-
-#: src/app/PluginManager.cpp
 msgid "Favourites are listed first in the browser"
 msgstr ""
 
@@ -11747,6 +12367,10 @@ msgstr ""
 
 #: src/app/PluginManager.cpp
 msgid "Find plugins"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Folders per format..."
 msgstr ""
 
 #: src/app/PluginManager.cpp
@@ -11834,11 +12458,11 @@ msgid "Not a folder"
 msgstr ""
 
 #: src/app/PluginManager.cpp
-msgid "Not found on this computer: nothing to scan here"
+msgid "Not listed in the browser"
 msgstr ""
 
 #: src/app/PluginManager.cpp
-msgid "Not listed in the browser"
+msgid "Not searched: switched off or listed twice (Settings > Plugins)"
 msgstr ""
 
 #: src/app/PluginManager.cpp
@@ -11902,10 +12526,6 @@ msgid "Remove this folder"
 msgstr ""
 
 #: src/app/PluginManager.cpp
-msgid "Rescan all"
-msgstr ""
-
-#: src/app/PluginManager.cpp
 msgid "Rescan this plugin"
 msgstr ""
 
@@ -11966,10 +12586,6 @@ msgid "Scanned; %d other formats failed"
 msgstr ""
 
 #: src/app/PluginManager.cpp
-msgid "Scanning %d / %d"
-msgstr ""
-
-#: src/app/PluginManager.cpp
 msgid "Scans every format of this plugin again"
 msgstr ""
 
@@ -11991,6 +12607,10 @@ msgstr ""
 
 #: src/app/PluginManager.cpp
 msgid "Select a plugin to see its details."
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Settings > Plugins: each format's folders, switch folders on and off, rescan one folder"
 msgstr ""
 
 #: src/app/PluginManager.cpp
@@ -12059,6 +12679,10 @@ msgstr ""
 
 #: src/app/PluginManager.cpp
 msgid "Yes"
+msgstr ""
+
+#: src/app/PluginManager.cpp
+msgid "Your folder for "
 msgstr ""
 
 #: src/app/PluginManager.cpp
@@ -13621,7 +14245,7 @@ msgstr ""
 msgid "No audio input device (Settings → Audio)"
 msgstr ""
 
-#: src/app/TrackModeUi.cpp
+#: src/app/TrackModeUi.cpp src/app/TrackPlusUi.cpp
 msgid "No free instrument channel"
 msgstr ""
 
@@ -13647,6 +14271,58 @@ msgstr ""
 
 #: src/app/TrackModeUi.cpp
 msgid "Track mode"
+msgstr ""
+
+#: src/app/TrackPlusUi.cpp
+msgid "A new pattern for this instrument, placed on the track at the song position (or the view's left edge) and opened in the piano roll"
+msgstr ""
+
+#: src/app/TrackPlusUi.cpp
+msgid "A rack channel"
+msgstr ""
+
+#: src/app/TrackPlusUi.cpp
+msgid "All instruments"
+msgstr ""
+
+#: src/app/TrackPlusUi.cpp
+msgid "Change instrument"
+msgstr ""
+
+#: src/app/TrackPlusUi.cpp
+msgid "Give it an instrument"
+msgstr ""
+
+#: src/app/TrackPlusUi.cpp
+msgid "Make it an ordinary track"
+msgstr ""
+
+#: src/app/TrackPlusUi.cpp
+msgid "New pattern on this track"
+msgstr ""
+
+#: src/app/TrackPlusUi.cpp
+msgid "On an empty track, the instrument comes with a first pattern on the track, opened in the piano roll"
+msgstr ""
+
+#: src/app/TrackPlusUi.cpp
+msgid "Play another rack channel"
+msgstr ""
+
+#: src/app/TrackPlusUi.cpp
+msgid "Show the instrument"
+msgstr ""
+
+#: src/app/TrackPlusUi.cpp
+msgid "Starred instruments are listed here"
+msgstr ""
+
+#: src/app/TrackPlusUi.cpp
+msgid "Start a pattern with it"
+msgstr ""
+
+#: src/app/TrackPlusUi.cpp
+msgid "The track stops playing this instrument (its clips and the channel stay)"
 msgstr ""
 
 #: src/app/TrackReceiptUi.cpp
@@ -14307,6 +14983,14 @@ msgstr ""
 
 #: src/app/main.cpp
 msgid "Saved the project"
+msgstr ""
+
+#: src/app/main.cpp
+msgid "The ASIO driver stopped delivering audio (was the device unplugged?). Using the system audio; choose the driver again to retry."
+msgstr ""
+
+#: src/app/main.cpp
+msgid "This ASIO driver has no control panel."
 msgstr ""
 
 #: src/collab/Controller.cpp
@@ -14983,6 +15667,10 @@ msgstr ""
 
 #: src/core/Keymap.cpp
 msgid "Picker panel"
+msgstr ""
+
+#: src/core/Keymap.cpp
+msgid "Pitch bend tool"
 msgstr ""
 
 #: src/core/Keymap.cpp
@@ -16293,7 +16981,7 @@ msgstr ""
 msgid "The tail rings into the following audio (and past the end)."
 msgstr ""
 
-#: src/packs/edison/edison_tools_ui.cpp
+#: src/packs/edison/edison_tools_ui.cpp src/packs/edison/edison_ui.cpp
 msgid "selection"
 msgstr ""
 
@@ -16303,6 +16991,46 @@ msgstr ""
 
 #: src/packs/edison/edison_tools_ui.cpp
 msgid "whole file"
+msgstr ""
+
+#: src/packs/edison/edison_ui.cpp
+msgid "As a tab next to the playlist"
+msgstr ""
+
+#: src/packs/edison/edison_ui.cpp
+msgid "Below the playlist"
+msgstr ""
+
+#: src/packs/edison/edison_ui.cpp
+msgid "Edit a sample in Loupe, or open a Loupe effect: it shows here."
+msgstr ""
+
+#: src/packs/edison/edison_ui.cpp
+msgid "Floating panel"
+msgstr ""
+
+#: src/packs/edison/edison_ui.cpp
+msgid "Left, with the browser"
+msgstr ""
+
+#: src/packs/edison/edison_ui.cpp
+msgid "Loupe"
+msgstr ""
+
+#: src/packs/edison/edison_ui.cpp
+msgid "Move in the layout"
+msgstr ""
+
+#: src/packs/edison/edison_ui.cpp
+msgid "Pin to the layout"
+msgstr ""
+
+#: src/packs/edison/edison_ui.cpp
+msgid "Right, with the mixer"
+msgstr ""
+
+#: src/packs/edison/edison_ui.cpp
+msgid "Unpin into its own window"
 msgstr ""
 
 #: src/packs/edison/edison_wave_ui.cpp
@@ -16747,10 +17475,6 @@ msgstr ""
 
 #: src/packs/plasma/plasma_pages_ui.cpp
 msgid "Source curve"
-msgstr ""
-
-#: src/packs/plasma/plasma_pages_ui.cpp src/packs/platter/platter_mixer_ui.cpp
-msgid "Straight"
 msgstr ""
 
 #: src/packs/plasma/plasma_seq_ui.cpp
@@ -19630,6 +20354,10 @@ msgid "Cut the output (a crossfader cut)"
 msgstr ""
 
 #: src/packs/spectral/turntable_ui.cpp
+msgid "Drag sideways to scratch"
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
 msgid "Drag sideways to scratch; Shift+click sets the cue point"
 msgstr ""
 
@@ -19698,6 +20426,10 @@ msgid "Mouse travel when scratching the platter or the scope"
 msgstr ""
 
 #: src/packs/spectral/turntable_ui.cpp
+msgid "Mute, Volume and Pan set the deck only."
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
 msgid "Notes do nothing: the motor selector runs the platter"
 msgstr ""
 
@@ -19715,6 +20447,10 @@ msgstr ""
 
 #: src/packs/spectral/turntable_ui.cpp
 msgid "SENSE"
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "SIGNAL"
 msgstr ""
 
 #: src/packs/spectral/turntable_ui.cpp
@@ -19758,11 +20494,23 @@ msgid "The deck plays its sample; the timecode input is not read."
 msgstr ""
 
 #: src/packs/spectral/turntable_ui.cpp
+msgid "The deck plays on top of it."
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
 msgid "The hand holds the record: the platter follows Position"
 msgstr ""
 
 #: src/packs/spectral/turntable_ui.cpp
+msgid "The insert's audio passes through unchanged."
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
 msgid "The key sets the motor speed (C5 plays at Speed)"
+msgstr ""
+
+#: src/packs/spectral/turntable_ui.cpp
+msgid "The motor runs on its own, not with the song."
 msgstr ""
 
 #: src/packs/spectral/turntable_ui.cpp
@@ -20059,10 +20807,6 @@ msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp
 msgid "Side"
-msgstr ""
-
-#: src/packs/tideline/tideline_ui.cpp src/packs/utility/utility_ui.cpp
-msgid "Smooth"
 msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp

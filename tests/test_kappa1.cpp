@@ -412,12 +412,15 @@ void testReverb() {
   if (fs::exists(flPreset("Fruity Reeverb 2", "Default"))) {
     flp::PresetResult r;
     expect(flp::importFlPreset(flPreset("Fruity Reeverb 2", "Cathedral"), r) && r.state.type == "gl.reverb", "FL Reeverb 2 'Cathedral' decodes");
-    expect(near(r.state.params[RvbDecayTime], 4.5, 1e-5) && near(r.state.params[RvbSize], 0.9, 1e-6) && near(r.state.params[RvbPreDelay], 27 * 1000 / 384.0, 1e-3) &&
-               near(r.state.params[RvbLowCut], 33, 1e-3) && near(r.state.params[RvbHighCut], 2100, 1e-3) && near(r.state.params[RvbDampHz], 3100, 1e-3) &&
-               near(r.state.params[RvbBassMult], 1.5, 1e-5) && near(r.state.params[RvbCrossover], 298, 1e-3),
+    // K-2: the unversioned factory presets load the way the plugin reads them (measured): the
+    // knobs one tag late, no flags, so the wet level stays 0.
+    expect(near(r.state.params[RvbDecayTime], 3.1, 1e-5) && near(r.state.params[RvbSize], 1.0, 1e-6) && near(r.state.params[RvbPreDelay], 90 * 1000 / 384.0, 1e-3) &&
+               near(r.state.params[RvbLowCut], 21, 1e-3) && near(r.state.params[RvbHighCut], 2700, 1e-3) && near(r.state.params[RvbDampHz], 15000, 1e-3) &&
+               near(r.state.params[RvbBassMult], 1.0, 1e-5) && near(r.state.params[RvbCrossover], 25, 1e-3),
            "FL Reeverb 2 'Cathedral': decay, size, pre-delay, cuts, damping, bass, crossover");
-    expect(flp::importFlPreset(flPreset("Fruity Reeverb 2", "Default"), r) && near(r.state.params[RvbWet], (std::pow(11.0, 87 / 256.0) - 1) / (std::pow(11.0, 0.5) - 1), 1e-5),
-           "FL Reeverb 2 'Default': wet level curve");
+    expect(flp::importFlPreset(flPreset("Fruity Reeverb 2", "Default"), r) && near(r.state.params[RvbWet], 0, 1e-9) && near(r.state.params[RvbDry], 1, 1e-6) &&
+               near(r.state.params[RvbFRev], 1, 1e-9),
+           "FL Reeverb 2 'Default': wet 0, dry unity, version 2 engine");
   }
 }
 

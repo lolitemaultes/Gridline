@@ -19,7 +19,7 @@ enum class Icon {
   Eye, EyeOff,                // Q-6: window shown / hidden
   // Q-12: editing tool family (Q-13: SVG icons, see iconSvgName):
   // playlist / piano roll / automation editor tool strips.
-  ToolDraw, ToolPaint, ToolDelete, ToolMute, ToolSlip, ToolSlice, ToolSelect, ToolZoom, ToolPlay, ToolDetune, ToolSnap,
+  ToolDraw, ToolPaint, ToolDelete, ToolMute, ToolSlip, ToolSlice, ToolSelect, ToolZoom, ToolPlay, ToolDetune, ToolBend, ToolSnap,
   // J-79: playlist audio clip editing toggles.
   StretchMode, FadeHandles, ZeroCross,
   // J-100: Shuttle envelope toolbar (step editing, linked slots).

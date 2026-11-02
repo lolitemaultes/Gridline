@@ -423,11 +423,8 @@ void menuOptions(App& a) {
     ui::Hint("Delays faster paths so tracks with latent effects (look-ahead, linear phase, oversampling) stay in time");
   }
   ImGui::MenuItem(i18n::tr("Record automation"), nullptr, &automationRecording());
-  {
-    const bool follow = a.settings.getBool("ui.autoScroll");
-    if (ImGui::MenuItem(i18n::tr("Auto scrolling"), nullptr, follow)) a.settings.set("ui.autoScroll", !follow);
-    ui::Hint("The playlist follows the song position while playing");
-  }
+  autoScrollItem(a, false);  // K-4: the playlist, and the pattern editors on their own
+  autoScrollItem(a, true);
   {  // J-37
     const bool smoothSnap = a.settings.getBool("ui.smoothSnap");
     if (ImGui::MenuItem(i18n::tr("Smooth snapping"), nullptr, smoothSnap)) a.settings.set("ui.smoothSnap", !smoothSnap);

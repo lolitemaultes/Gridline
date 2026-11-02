@@ -6,7 +6,8 @@
 #   2. Kerf: a loop dropped into the editor, a note on region 3's key: the editor reports region 3
 #      lit ("kerf-lit:3" and lit=3 in its trace line); after the note ends it goes dark again.
 # Waits use "waitfor" (frames stop counting until the light is reported), so slow machines pass; after the
-# drop the script holds 5 s of real time so the loop is loaded and sliced before the note (a slow runner
+# drop the script waits until the editor reports the loop loaded and sliced ("kerf-regions") and the
+# engine's program has it ("kerf-engine-ready"), then a second before the note (a slow runner
 # reached the note while the drop was still loading).
 #   cmake -DAPP=<gridline-app> -DTESTBIN=<gridline_test_seltmann> -DOUT=<dir> -P j186_play_lights.cmake
 cmake_minimum_required(VERSION 3.16)
@@ -115,14 +116,21 @@ run(kerf 120 "10 dragenter ${zx} ${zy} \"${OUT}/Break 96.wav\"
 42 dragmove ${zx} ${zy}
 44 dragmove ${zx} ${zy}
 46 drop
-60 waitfor never-reported 5
+60 waitfor kerf-regions 120
+61 waitfor kerf-engine-ready 120
+62 waitfor never-reported 1
 70 noteon ${kch} 62
-71 waitfor kerf-lit:3 30
+71 waitfor kerf-lit:3 60
 74 shot \"${OUT}/kerf_lit.ppm\"
 76 noteoff ${kch} 62
 78 waitfor never-reported 2
 100 move 10 10
 " --plugin gl.slicer)
+check("kerf: the dropped loop is loaded and sliced" kerf_out MATCHES "waitfor kerf-regions: reached")
+check("kerf: the engine has the loop" kerf_out MATCHES "waitfor kerf-engine-ready: reached")
+if(NOT kerf_out MATCHES "waitfor kerf-lit:3: reached")
+  message(STATUS "kerf run output:\n${kerf_out}")
+endif()
 check("kerf: region 3 lit while its note plays" kerf_out MATCHES "waitfor kerf-lit:3: reached")
 check("kerf: the trace lists region 3 lit" kerf_out MATCHES "kerf-ui:[^\n]* lit=3[\n ]")
 string(REGEX MATCHALL "kerf-ui:[^\n]*" kl "${kerf_out}")

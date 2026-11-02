@@ -1,0 +1,29 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.10.0.schema.json
+# Template: packaging/render.py fills in the version (docs/packaging.md).
+PackageIdentifier: Gridline.Gridline
+PackageVersion: @VERSION@
+PackageLocale: en-US
+Publisher: Gridline
+PublisherUrl: https://github.com/lolitemaultes
+PublisherSupportUrl: https://github.com/lolitemaultes/Gridline/issues
+PackageName: Gridline
+PackageUrl: https://github.com/lolitemaultes/Gridline
+License: GPL-3.0-or-later
+LicenseUrl: https://github.com/lolitemaultes/Gridline/blob/main/LICENSE
+ShortDescription: Pattern-based music workstation
+Description: |-
+  Gridline is a free, open source music workstation built around patterns. Sketch beats in the
+  channel rack, write melodies and chords in the piano roll, arrange patterns, audio and automation
+  in the playlist and mix everything on a full mixer. It hosts VST3, CLAP, VST2 and LV2 plugins,
+  runs as a VST3 and CLAP plugin itself and supports live collaboration over the network.
+Moniker: gridline
+Tags:
+  - audio
+  - daw
+  - midi
+  - music
+  - music-production
+  - sequencer
+ReleaseNotesUrl: https://github.com/lolitemaultes/Gridline/releases/tag/v@VERSION@
+ManifestType: defaultLocale
+ManifestVersion: 1.10.0

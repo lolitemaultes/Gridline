@@ -1,0 +1,36 @@
+# Homebrew cask for Gridline (for a tap of Gridline's own: docs/packaging.md).
+# Template: packaging/render.py fills in the version and checksum.
+cask "gridline" do
+  version "@VERSION@"
+  sha256 "@SHA256:macos-universal.dmg@"
+
+  url "https://github.com/lolitemaultes/Gridline/releases/download/v#{version}/Gridline-#{version}-macos-universal.dmg"
+  name "Gridline"
+  desc "Pattern-based music workstation"
+  homepage "https://github.com/lolitemaultes/Gridline"
+
+  livecheck do
+    url :url
+    strategy :github_latest
+  end
+
+  depends_on macos: ">= :big_sur"
+
+  app "Gridline.app"
+  binary "#{appdir}/Gridline.app/Contents/MacOS/gridline"
+
+  zap trash: [
+    "~/.config/gridline",
+    "~/.local/share/gridline",
+  ]
+
+  caveats <<~EOS
+    Gridline is signed ad hoc, not notarised. The first time, open it with Control-click on
+    Gridline.app > Open, then Open in the dialog (or System Settings > Privacy & Security >
+    Open Anyway).
+
+    Gridline's own instruments and effects as plugins for other hosts (the Gridline Suite) are
+    inside Gridline.app: Gridline offers to install them on its first start, or run
+      gridline suite install
+  EOS
+end

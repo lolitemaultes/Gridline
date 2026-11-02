@@ -17,6 +17,7 @@
 #include "../../engine/ClassicDelay.h"
 #include "../../engine/Delay3Ref.h"
 #include "FlpFx.h"
+#include "../PluginInfo.h"
 #include "../PluginParams.h"
 #include "../../packs/spacefx/sfx_flcurves.h"
 #include "../../packs/spacefx/spacefx.h"
@@ -112,24 +113,22 @@ std::shared_ptr<const KnobTable> reeverb2RawTable() {
 bool decodeReeverb2(Context&, const std::vector<Event>& evs, PluginMapping& m) {
   using namespace pp;
   const Event* st = pluginState(evs);
-  if (!st || st->size < 52) return false;
+  if (!st || st->size < 4) return false;
   begin(m, "gl.reverb");
-  // Version word 10000 (13 knobs) or 10001 (15 knobs, with modulation); the
-  // oldest states have no version word (13 knobs).
-  const uint32_t ver = st->u32(0);
-  const bool versioned = ver == 10000 || ver == 10001;
-  const size_t knobs = ver == 10001 && st->size >= 64 ? 15 : 13;
-  std::vector<double> v = versioned ? ints(st, 4, knobs) : ints(st, 0, 13);
-  if (v.size() < 15) v.resize(15), v[13] = 684, v[14] = 0;  // no modulation in old states
-  const size_t flags = (versioned ? 4 : 0) + knobs * 4;
+  // K-2: the knobs as the reference plugin itself reads the state (see
+  // reeverb2Read), then mapped onto the full model's ranges with the same sound.
+  const Reeverb2Knobs r = reeverb2Read(st->data, st->size);
+  std::vector<double> v(r.knob, r.knob + 15);
+  const bool exact = reeverb2Fit(v);
   applyTable(m, *reeverb2Table(), v);  // Gridline-unit mirrors (hall / plate models)
   finish(m, reeverb2RawTable(), v);
   set(m, RvbModel, 2);
+  set(m, RvbFRev, 1);  // the model as measured against the reference's renders
   set(m, RvbDamp, 0);  // damping comes from RvbDampHz
-  set(m, RvbPreSync, st->u8(flags) ? 1 : 0);
-  set(m, RvbInputMode, st->u8(flags + 1) ? 1 : 0);
+  set(m, RvbPreSync, r.tempo ? 1 : 0);
+  set(m, RvbInputMode, r.midSide ? 1 : 0);
   // J-35: the full reference reverb runs the stored knobs (spec j35_fullreverb.md).
-  m.exact = true;
+  m.exact = exact;  // false: values outside the ranges (old layouts) approximated
   return true;
 }
 
@@ -262,6 +261,46 @@ std::shared_ptr<const KnobTable> delayBankTable() {
   return t;
 }
 
+// K-2: automation of the unit controls (tags 4 + 16 k + field). The time and
+// cutoff laws depend on the unit's tempo mode and filter types, so the table is
+// built per instance from the decoded state.
+struct DelayBankUnitModes {
+  bool tempo[sfx::kTaps] = {};
+  int inType[sfx::kTaps] = {}, fbType[sfx::kTaps] = {};
+  double timeScale = 1;  // version 15 time fields are 10x coarser
+};
+
+std::shared_ptr<const KnobTable> delayBankAutoTable(const DelayBankUnitModes& md) {
+  using namespace sfx;
+  KnobTable k = *delayBankTable();
+  auto pan = [](double v) { return std::clamp(v / 128.0, -1.0, 1.0); };
+  auto lvl = [](double v) { return flc::mdGain(std::clamp(v, -160.0, 160.0) / 128.0); };
+  auto res = [](double v) { return std::clamp(v / 65536.0, 0.0, 1.0); };
+  const double ts = md.timeScale;
+  for (int u = 0; u < kTaps; ++u) {
+    const int b = 4 + 16 * u;
+    const int it = md.inType[u] == MfOff ? MfLowPass : md.inType[u], ft = md.fbType[u] == MfOff ? MfLowPass : md.fbType[u];
+    k.push_back({b + 0, -128, 128, mdParam(u, MdInPan), pan});
+    k.push_back({b + 1, -160, 160, mdParam(u, MdInLevel), lvl});
+    k.push_back({b + 2, 0, 65536, mdParam(u, MdInCut), [it](double v) { return flc::mdCutHz(it, v / 65536.0); }});
+    k.push_back({b + 3, 0, 65536, mdParam(u, MdInRes), res});
+    k.push_back({b + 5, -128, 128, mdParam(u, MdFbPan), pan});
+    k.push_back({b + 6, -128, 128, mdParam(u, MdFeedback), pan});
+    k.push_back({b + 7, -128, 128, mdParam(u, MdSep), pan});
+    if (md.tempo[u])
+      k.push_back({b + 8, 0, 7680, mdParam(u, MdSteps), [ts](double v) { return std::clamp(v * ts / 480.0, 0.002, 64.0); }});
+    else
+      k.push_back({b + 8, 0, 7680, mdParam(u, MdTimeMs), [ts](double v) { return std::clamp(v * ts / 3.84, 0.02, 5000.0); }});
+    k.push_back({b + 9, -512, 512, mdParam(u, MdOffset), [](double v) { return flc::mdOffsetMs(v); }});
+    k.push_back({b + 10, 0, 65536, mdParam(u, MdFbCut), [ft](double v) { return flc::mdCutHz(ft, v / 65536.0); }});
+    k.push_back({b + 11, 0, 65536, mdParam(u, MdFbRes), res});
+    k.push_back({b + 13, -128, 128, mdParam(u, MdOutPan), pan});
+    k.push_back({b + 14, -160, 160, mdParam(u, MdOutLevel), lvl});
+    if (u < kTaps - 1) k.push_back({b + 15, -160, 160, mdParam(u, MdToNext), lvl});
+  }
+  return std::make_shared<const KnobTable>(std::move(k));
+}
+
 bool decodeDelayBank(Context&, const std::vector<Event>& evs, PluginMapping& m) {
   using namespace sfx;
   const Event* st = pluginState(evs);
@@ -277,6 +316,8 @@ bool decodeDelayBank(Context&, const std::vector<Event>& evs, PluginMapping& m) 
   static const int kType[8] = {MfOff, MfLowPass, MfBandPass, MfNotch, MfHighPass, MfLowShelf, MfPeak, MfHighShelf};  // FL order → Gridline
   static const int kMode[4] = {MfbOff, MfbNormal, MfbInvert, MfbPingPong};
   bool exact = true;
+  DelayBankUnitModes modes;
+  modes.timeScale = version <= 15 ? 10.0 : 1.0;
   for (int k = 0; k < kTaps; ++k) {
     const double* u = v.data() + 4 + 16 * k;  // tags 4..19 of unit k
     auto P = [&](int f, double x) { set(m, mdParam(k, f), x); };
@@ -286,6 +327,7 @@ bool decodeDelayBank(Context&, const std::vector<Event>& evs, PluginMapping& m) 
     const int inType = kType[std::clamp(st->i32(rec + 0), 0, 7)], fbType = kType[std::clamp(st->i32(rec + 8), 0, 7)];
     const double time = u[8] * (version <= 15 ? 10.0 : 1.0);
     const bool tempo = st->u8(rec + 31) != 0;
+    modes.tempo[k] = tempo, modes.inType[k] = inType, modes.fbType[k] = fbType;
     P(MdOn, on ? 1 : 0);
     P(MdInPan, clampd(u[0] / 128.0, -1, 1));
     P(MdInLevel, flc::mdGain(clampd(u[1], -160, 160) / 128.0));
@@ -325,6 +367,7 @@ bool decodeDelayBank(Context&, const std::vector<Event>& evs, PluginMapping& m) 
     (void)inType, (void)fbType;
   }
   // J-42: the 2x resampler (polyphase IIR half-bands) is the reference's own.
+  bindTable(m, delayBankAutoTable(modes));
   m.exact = exact;
   return true;
 }
@@ -446,6 +489,67 @@ bool decodeFlangus(Context&, const std::vector<Event>& evs, PluginMapping& m) {
 }
 
 }  // namespace
+
+// K-2: observed by loading crafted states into the reference plugin and reading
+// its controls back (behaviour only).
+Reeverb2Knobs reeverb2Read(const uint8_t* p, size_t n) {
+  Reeverb2Knobs r;
+  if (!p || n < 4) return r;
+  Reader rd(p, n);
+  const uint32_t ver = rd.u32();
+  if (ver > 10001) return r;  // unknown version: the plugin keeps its defaults
+  const bool versioned = ver == 10000 || ver == 10001;
+  const size_t knobs = ver == 10001 ? 15 : 13;
+  for (size_t k = 0; k < knobs && rd.left() > 0; ++k) {
+    if (rd.has(4)) {
+      r.knob[k] = rd.i32();
+    } else {  // a short last value: the bytes there, zero-padded
+      uint32_t v = 0;
+      for (int b = 0; rd.left() > 0; ++b) v |= static_cast<uint32_t>(rd.u8()) << (8 * b);
+      r.knob[k] = static_cast<int32_t>(v);
+    }
+  }
+  if (versioned) {
+    if (rd.left() > 0) r.tempo = rd.u8() != 0;
+    if (rd.left() > 0) r.midSide = rd.u8() != 0;
+  }
+  r.current = ver == 10001 && n >= 4 + 15 * 4 + 2;
+  return r;
+}
+
+bool reeverb2Fit(std::vector<double>& v) {
+  if (v.size() < 15) v.resize(15, 0);
+  static const double lo[15] = {19, 5, 0, 1, 0, 1, 5, 20, 25, -64, 0, 0, 0, 0, 0};
+  static const double hi[15] = {3000, 221, 384, 100, 100, 200, 221, 300, 2000, 64, 160, 160, 160, 2048, 2048};
+  bool exact = true;
+  // Equivalent values first (the plugin's own laws give the same sound).
+  for (int k : {1, 6})
+    if (v[static_cast<size_t>(k)] == 0) v[static_cast<size_t>(k)] = 221;  // cut 0 = off, as 221
+  if (v[8] <= 0) {  // crossover at or below 0 Hz: the bass shelf has no effect (multiplier 100 %)
+    if (v[8] < 0) exact = false;
+    v[8] = 25, v[7] = 100;
+  }
+  if (v[9] > 64) v[9] = 64;  // separation saturates at fully merged
+  for (size_t k = 0; k < 15; ++k) {
+    const double c = std::clamp(v[k], lo[k], hi[k]);
+    if (c != v[k] && !(k == 0 && v[k] < 19 && v[k] >= 0)) exact = false;  // low cut under 19 Hz: inaudible
+    v[k] = c;
+  }
+  return exact;
+}
+
+void reeverb2Mirrors(PluginState& s) {
+  using namespace pp;
+  if (s.params.size() <= static_cast<size_t>(RvbFModDepth)) return;
+  PluginMapping m;
+  m.state = s;
+  std::vector<double> v(15);
+  for (size_t k = 0; k < 15; ++k) v[k] = s.params[static_cast<size_t>(RvbFLowCut) + k];
+  applyTable(m, *reeverb2Table(), v);
+  if (const PluginInfo* info = findPlugin(s.type))
+    for (size_t k = 0; k < m.state.params.size() && k < info->params.size(); ++k) m.state.params[k] = static_cast<float>(info->params[k].clamp(m.state.params[k]));
+  s = m.state;
+}
 
 void registerFxTime(std::map<std::string, PluginDecoder>& d) {
   d["Fruity Reeverb 2"] = decodeReeverb2;

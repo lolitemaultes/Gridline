@@ -213,12 +213,30 @@ Encoder vocoder() {
   Encoder e;
   e.flName = "Fruity Vocoder";
   e.glType = "gl.vocoder";
-  e.nativeRank = -1;  // only the band count is carried
+  e.nativeRank = -1;  // band count and the knobs the decoder reads are carried (K-2)
   e.defaults = [] { return vocoderState(16, {}); };
   e.write = [](const PluginState& g, Bytes& b, const EncodeContext&) {
     const int choice = std::clamp(static_cast<int>(std::lround(param(g, sp::VcBands))), 0, static_cast<int>(sp::kVocBandChoiceCount) - 1);
     const int bands = sp::kVocBandChoices[choice];
     if (b.size() < 8 || static_cast<int32_t>(getU32(b, 4)) != bands) b = vocoderState(bands, b);
+    // K-2: the knobs the decoder reads (inverse laws; FL's own ranges).
+    const size_t knobs = kVocLevels + 4 * static_cast<size_t>(bands);
+    if (b.size() < knobs + 12 * 4) return;
+    auto put = [&](int tag, double raw, double lo, double hi) {
+      putI32(b, knobs + 4 * static_cast<size_t>(tag), static_cast<int32_t>(std::lround(std::clamp(raw, lo, hi))));
+    };
+    auto freqRaw = [](double hz) { return 65536.0 * std::log(1.0 + std::max(0.0, hz - 10.0) * 100.0 / 15990.0) / std::log(101.0); };
+    auto lvlRaw = [](double db) { return db <= -60 ? 0.0 : 128.0 * std::pow(10.0, db / 20.0); };
+    put(0, freqRaw(param(g, sp::VcLowFreq)), 0, 65536);
+    put(1, freqRaw(param(g, sp::VcHighFreq)), 0, 65536);
+    put(3, param(g, sp::VcInvert) >= 0.5 ? 1 : 0, 0, 1);
+    put(4, 100.0 * param(g, sp::VcFormant), -1200, 1200);
+    put(6, param(g, sp::VcAttack), 10, 1000);
+    put(7, param(g, sp::VcRelease), 10, 1000);
+    put(8, param(g, sp::VcHold) >= 0.5 ? 1 : 0, 0, 1);
+    put(9, lvlRaw(param(g, sp::VcModLevel)), 0, 160);
+    put(10, lvlRaw(param(g, sp::VcCarLevel)), 0, 160);
+    put(11, lvlRaw(param(g, sp::VcWetLevel)), 0, 160);
   };
   return e;
 }
@@ -227,14 +245,19 @@ Encoder vocoder() {
 // Written as version 1001002 (what the current plugin saves): 14 f32 settings
 // by control tag (internal values), u32 length + sample path, u8 editor size
 // (1 normal, 2 large), i32 timecode format (-1 = off), u8 phono preamp.
-// J-205: decoded as the Turntable instrument; J-206: every setting, the path
-// and the options tail map back (older layouts are rewritten in this one).
+// J-206: every setting, the path and the options tail map back (older layouts
+// are rewritten in this one). K-23: decoded as the Turntable effect, which is
+// written back natively from any mixer slot; the 0.7.1 instrument (an
+// instance a 0.7.1 import moved to a channel) is written as the effect it
+// carries over to (turntableFxOfInstrument), back into its slot.
 constexpr size_t kScrFloats = 4, kScrPath = kScrFloats + 14 * 4;
 constexpr uint32_t kScrVersion = 1001002;
 float scrParam(const PluginState& g, int k, float d) {
-  return static_cast<size_t>(k) < g.params.size() && std::isfinite(g.params[static_cast<size_t>(k)]) ? g.params[static_cast<size_t>(k)] : d;
+  return k >= 0 && static_cast<size_t>(k) < g.params.size() && std::isfinite(g.params[static_cast<size_t>(k)]) ? g.params[static_cast<size_t>(k)] : d;
 }
 Bytes scratcherState(const PluginState& g, const Bytes& old) {
+  const sp::TurntableLayout* lp = sp::turntableLayout(g.type);
+  const sp::TurntableLayout& L = lp ? *lp : sp::kTtFxLayout;
   ByteWriter w;
   w.u32(kScrVersion);
   const uint32_t oldVersion = old.size() >= 4 ? getU32(old, 0) : 0;
@@ -248,20 +271,22 @@ Bytes scratcherState(const PluginState& g, const Bytes& old) {
   const std::string& path = g.data;
   w.u32(static_cast<uint32_t>(path.size()));
   w.bytes(reinterpret_cast<const uint8_t*>(path.data()), path.size());
-  w.u8(scrParam(g, sp::TtZoom, 0) >= 0.5f ? 2 : 1);
-  const int tc = static_cast<int>(std::lround(std::clamp(scrParam(g, sp::TtTimecode, 0), 0.f, 8.f)));
+  w.u8(scrParam(g, L.zoom, 0) >= 0.5f ? 2 : 1);
+  const int tc = static_cast<int>(std::lround(std::clamp(scrParam(g, L.timecode, 0), 0.f, 8.f)));
   w.u32(static_cast<uint32_t>(tc - 1));
-  w.u8(scrParam(g, sp::TtRiaa, 0) >= 0.5f ? 1 : 0);
+  w.u8(scrParam(g, L.riaa, 0) >= 0.5f ? 1 : 0);
   return w.b;
 }
-Encoder scratcher() {
+Encoder scratcher(const sp::TurntableLayout& L) {
   Encoder e;
   e.flName = "Fruity Scratcher";
-  e.glType = "gl.turntable";
-  e.nativeRank = -1;  // FL hosts it in a mixer slot: only instances imported from it are written back
+  e.glType = L.type;
+  // The effect is FL's scratcher in a mixer slot: every instance is written
+  // back. The 0.7.1 instrument: only instances imported from it.
+  e.nativeRank = L.notes < 0 ? 0 : -1;
   e.defaults = [] {
-    PluginState d = defaultPluginState("gl.turntable");
-    if (d.params.size() > static_cast<size_t>(sp::TtEmpty)) d.params[sp::TtEmpty] = 1.f;  // FL's own default: no sample
+    PluginState d = defaultPluginState(sp::kTurntableFx);
+    if (d.params.size() > static_cast<size_t>(sp::TxEmpty)) d.params[sp::TxEmpty] = 1.f;  // FL's own default: no sample
     return scratcherState(d, {});
   };
   e.fields = [](const Bytes&) {
@@ -288,13 +313,13 @@ Encoder scratcher() {
     (void)c;
     b = scratcherState(g, b);  // the path and the options tail from the state; the settings stay for the fields
   };
-  // The note settings are Gridline's own: the FL plugin plays by its motor.
-  e.strip = [](PluginState& s) {
-    if (s.params.size() < static_cast<size_t>(sp::TtCount)) return;
-    s.params[sp::TtNotes] = static_cast<float>(sp::TnOff);
-    s.params[sp::TtKeyTrack] = 1.0f;
-    s.params[sp::TtCue] = 0.0f;
-  };
+  // The instrument's note settings are Gridline's own (the FL plugin plays by
+  // its motor): the instrument is written as the effect it carries over to,
+  // which is what the decoder produces.
+  if (L.notes >= 0)
+    e.strip = [](PluginState& s) {
+      if (s.type == sp::kTurntableInst) s = sp::turntableFxOfInstrument(s);
+    };
   return e;
 }
 
@@ -305,7 +330,8 @@ void registerFx2Pitch(std::vector<Encoder>& v) {
   v.push_back(pitchShifter());
   v.push_back(freqShifter());
   v.push_back(vocoder());
-  v.push_back(scratcher());
+  v.push_back(scratcher(sp::kTtFxLayout));    // K-23: the Turntable effect
+  v.push_back(scratcher(sp::kTtInstLayout));  // the 0.7.1 instrument (old projects)
 }
 
 }  // namespace gl::flp::enc

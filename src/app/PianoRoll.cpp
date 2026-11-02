@@ -1,7 +1,10 @@
 // Gridline — piano roll: notes of (selected pattern, selected channel).
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
+#include <unordered_map>
+#include "../core/MenuOpsExtra.h"
 #include "../core/I18n.h"
 #include "CursorAnchor.h"
 #include "Keys.h"
@@ -16,9 +19,11 @@
 #include "ScriptUi.h"
 #include "../core/Grouping.h"
 #include "../core/MenuParity.h"
+#include "../core/NoteBend.h"
 #include "../core/NoteLaneEdit.h"
 #include "../core/NoteTools.h"
 #include "../core/SmoothSnap.h"
+#include "../core/StepNotes.h"
 #include "Theme.h"
 #include "Widgets.h"
 #include "Windows.h"
@@ -30,6 +35,10 @@ using theme::pal;
 
 namespace {
 
+// K-24: the key rows' height range and one Alt+wheel notch's factor.
+constexpr float kRowHMin = 7.0f, kRowHMax = 28.0f;
+constexpr double kRowZoomStep = 1.1;
+
 const char* kNoteNames[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
 bool isBlack(int pitch) {
   int k = pitch % 12;
@@ -38,7 +47,10 @@ bool isBlack(int pitch) {
 std::string noteName(int pitch) { return std::string(kNoteNames[pitch % 12]) + std::to_string(pitch / 12 - 1); }
 
 struct Gesture {
-  enum Kind { None, Move, Resize, Select, Paint, Erase, Velocity, Slice, Scrub, Mute, Play, Zoom, Detune } kind = None;
+  enum Kind { None, Move, Resize, Select, Paint, Erase, Velocity, Slice, Scrub, Mute, Play, Zoom, Detune, Keys, Bend, BendCurve } kind = None;
+  int bendPt = -1;  // K-25: the bend point dragged (index in the note's line at gesture start), -1 = a new one
+                    // (BendCurve, K-28: the point ending the segment whose curve handle is dragged)
+  double bendT = 0, bendV = 0;  // K-25: where it is now (ticks from the note start, semitones)
   int muteTo = -1;          // mute tool: state applied to every touched note
   std::vector<int> playing; // play tool: pitches sounding
   Tick lastScrub = -1;  // last position sent while scrubbing
@@ -55,6 +67,7 @@ struct Gesture {
   // the drag's edits form one undo step (grouped) that Esc / right-click cancels.
   bool copyPending = false;
   bool grouped = false;
+  bool drawResize = false;  // K-20: a Shift+click drew this note; its length follows the drag once it starts
   std::set<size_t> selBefore;
 };
 Gesture g;
@@ -171,10 +184,16 @@ void commit(App& a, ObjectId pat, ObjectId ch, std::vector<Note> notes, std::vec
   }
   sel.resize(notes.size(), false);
   sortWithSelection(notes, sel);
-  a.doc.setNotes(pat, ch, notes, label, key);
+  stepnotes::write(a.doc, pat, ch, notes, label, key);  // K-22: the first edit moves rack steps in
   a.piano.selected.clear();
   for (size_t i = 0; i < sel.size(); ++i)
     if (sel[i]) a.piano.selected.insert(i);
+}
+
+// K-22: the channel's notes as the piano roll shows them (its rack steps as step notes too).
+std::vector<Note> rollNotes(const App& a, ObjectId pat, ObjectId ch) {
+  const Pattern* p = a.doc.song().pattern(pat);
+  return p ? stepnotes::view(a.doc.song(), *p, ch) : std::vector<Note>{};
 }
 
 std::vector<bool> selVector(const App& a, size_t n) {
@@ -193,6 +212,163 @@ void previewOn(App& a, ObjectId ch, int pitch, int vel) {
 void previewOff(App& a, ObjectId ch) {
   if (g.previewPitch >= 0) a.engine.noteOff(ch, g.previewPitch);
   g.previewPitch = -1;
+}
+
+// ---- K-25: pitch bend lines ----
+// A note's line in screen space: x0 = the note's start, cy = its row's centre, one row per
+// semitone. Straight and step segments need only their ends; curved ones (K-28: smooth, eases,
+// a bent straight) are sampled every few pixels through bend::value, the function playback uses.
+// Drawn to the note's end (points past it wait there, out of play). K-29: `seg[i]` names the
+// bend point whose glide the piece ending at out[i] belongs to (-1: the hold after the last point).
+void bendPolyline(const Note& n, float x0, float cy, float pxPerTick, float rowH, std::vector<ImVec2>& out, std::vector<int>& seg) {
+  out.clear();
+  seg.clear();
+  const double len = static_cast<double>(n.length);
+  int cur = -1;
+  auto at = [&](double t, double v) {
+    out.push_back(ImVec2(x0 + static_cast<float>(t) * pxPerTick, cy - static_cast<float>(v) * rowH));
+    seg.push_back(cur);
+  };
+  at(0.0, bend::value(n.bend, 0.0));
+  double ta = 0.0;
+  for (size_t k = 0; k <= n.bend.size(); ++k) {
+    cur = k < n.bend.size() ? static_cast<int>(k) : -1;
+    const bool last = k == n.bend.size() || n.bend[k].tick >= len;
+    const double tb = last ? len : static_cast<double>(n.bend[k].tick);
+    const uint8_t curve = k < n.bend.size() ? n.bend[k].curve : static_cast<uint8_t>(bend::Straight);
+    if (tb > ta) {
+      if (k < n.bend.size() && bend::curved(n.bend[k])) {  // K-28: every curved shape, sampled (the same value() the engine plays)
+        const int steps = std::clamp(static_cast<int>((tb - ta) * pxPerTick / 3.0), 2, 96);
+        for (int s = 1; s < steps; ++s) {
+          const double t = ta + (tb - ta) * s / steps;
+          at(t, bend::value(n.bend, t));
+        }
+      } else if (curve == bend::Step && k < n.bend.size()) {
+        at(tb, bend::value(n.bend, tb - 1e-4));
+      }
+    }
+    if (last) {
+      at(len, bend::value(n.bend, std::max(0.0, len - 1e-4)));
+      break;
+    }
+    at(tb, n.bend[k].semis);
+    ta = tb;
+  }
+}
+float segDist(ImVec2 p, ImVec2 a, ImVec2 b) {
+  const float dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy;
+  const float u = l2 > 1e-6f ? std::clamp(((p.x - a.x) * dx + (p.y - a.y) * dy) / l2, 0.0f, 1.0f) : 0.0f;
+  const float ex = a.x + u * dx - p.x, ey = a.y + u * dy - p.y;
+  return std::sqrt(ex * ex + ey * ey);
+}
+// "+2.00 st  B2": the bend in semitones and the note it sounds (cents when between keys).
+std::string bendText(int pitch, double semis) {
+  const double target = pitch + semis;
+  const int key = std::clamp(static_cast<int>(std::lround(target)), 0, 127);
+  const int cents = static_cast<int>(std::lround((target - key) * 100.0));
+  char b[64];
+  if (cents != 0)
+    std::snprintf(b, sizeof b, "%+.2f st  %s %+d ct", semis, noteName(key).c_str(), cents);
+  else
+    std::snprintf(b, sizeof b, "%+.2f st  %s", semis, noteName(key).c_str());
+  return b;
+}
+// What the pointer is over with the bend tool (K-25): a point, a curve handle (K-28), a line, or
+// a note body. `point` is the point (kind 4) or the point ending the handle's segment (kind 3),
+// or (K-29) the point ending the line's segment under the pointer (kind 2; -1 = the hold after
+// the last point).
+struct BendHit {
+  enum Kind { None = 0, Body = 1, Line = 2, Handle = 3, Point = 4 };
+  int note = -1, point = -1;
+  int kind = None;
+  float dist = 1e9f;
+  bool selected = false;
+};
+BendHit bendHover;
+// K-29: the last press of the bend tool: what it hit, the notes before it and the history state
+// its drag left (0: it changed nothing). A double-click acts on what its first click hit, on the
+// line as it was before that click: a first click that moved a point by a few pixels (or added
+// one) is undone first, so a double-click is one undo step and leaves no stray point.
+struct BendClick {
+  bool valid = false;
+  BendHit hit;
+  std::vector<Note> before;
+  ObjectId pat = kNoId, ch = kNoId;
+  uint64_t serial = 0;
+  uint64_t press = 0;  // the history state at the press (a drag that changed nothing leaves it)
+};
+BendClick bendClick;
+int bendFrontNote = -1;  // K-28: the note whose line was hovered last frame (drawn on top)
+int bendMenuNote = -1, bendMenuPoint = -1;  // K-28: the point whose curve menu is open (-1 = none)
+uint64_t bendMenuKey = 0;                   // K-28: undo key of the menu's curve amount drag
+
+// K-28: the curve handle of the segment ending at point k: half way in time, on the curve. None
+// for steps, holds and segments narrower than 16 px (too small to grab between their points).
+bool bendHandle(const Note& n, size_t k, float x0, float cy, float pxPerTick, float rowH, ImVec2& out) {
+  if (k >= n.bend.size() || n.bend[k].curve == bend::Step || n.bend[k].tick > static_cast<float>(n.length)) return false;
+  const double ta = k > 0 ? n.bend[k - 1].tick : 0.0, va = k > 0 ? n.bend[k - 1].semis : 0.0, tb = n.bend[k].tick;
+  if ((tb - ta) * pxPerTick < 16.0 || std::fabs(n.bend[k].semis - va) < 1e-4) return false;
+  const double tm = 0.5 * (ta + tb);
+  out = ImVec2(x0 + static_cast<float>(tm) * pxPerTick, cy - static_cast<float>(bend::value(n.bend, tm)) * rowH);
+  return true;
+}
+// Does the segment a-b pass through the rectangle r0-r1? (Liang-Barsky clipping)
+bool segHitsRect(ImVec2 a, ImVec2 b, ImVec2 r0, ImVec2 r1) {
+  double u0 = 0, u1 = 1;
+  const double dx = b.x - a.x, dy = b.y - a.y;
+  const double p[4] = {-dx, dx, -dy, dy}, q[4] = {a.x - r0.x, r1.x - a.x, a.y - r0.y, r1.y - a.y};
+  for (int i = 0; i < 4; ++i) {
+    if (std::fabs(p[i]) < 1e-12) {
+      if (q[i] < 0) return false;
+      continue;
+    }
+    const double r = q[i] / p[i];
+    if (p[i] < 0) u0 = std::max(u0, r);
+    else u1 = std::min(u1, r);
+    if (u0 > u1) return false;
+  }
+  return true;
+}
+
+// K-28: the curve shapes of the bend point menu, in menu order (names are i18n keys).
+struct BendCurveItem { uint8_t curve; const char* name; };
+const BendCurveItem kBendCurves[] = {{bend::Straight, i18n::N_("Straight")}, {bend::Smooth, i18n::N_("Smooth")},
+                                     {bend::EaseIn, i18n::N_("Ease in")},    {bend::EaseOut, i18n::N_("Ease out")},
+                                     {bend::Step, i18n::N_("Step (hold, then jump)")}};
+const char* bendCurveName(uint8_t c) {
+  for (const auto& k : kBendCurves)
+    if (k.curve == c) return k.name;
+  return kBendCurves[0].name;
+}
+// A small drawing of a segment shape (rising) in the box p0-p1, the same function the line uses.
+void drawCurveGlyph(ImDrawList* dl, ImVec2 p0, ImVec2 p1, uint8_t curve, float tension, ImU32 col, ImU32 faint) {
+  dl->AddLine(ImVec2(p0.x, p1.y + 0.5f), ImVec2(p1.x, p1.y + 0.5f), faint, 1.0f);
+  ImVec2 pts[34];
+  int n = 0;
+  if (curve == bend::Step) {
+    pts[n++] = ImVec2(p0.x, p1.y), pts[n++] = ImVec2(p1.x - 1, p1.y), pts[n++] = ImVec2(p1.x - 1, p0.y);
+  } else {
+    for (int i = 0; i <= 32; ++i) {
+      const double x = i / 32.0;
+      pts[n++] = ImVec2(p0.x + static_cast<float>(x) * (p1.x - p0.x), p1.y - static_cast<float>(bend::shape(curve, tension, x)) * (p1.y - p0.y));
+    }
+  }
+  dl->AddPolyline(pts, n, col, ImDrawFlags_None, 1.6f);
+  dl->AddCircleFilled(ImVec2(p0.x, p1.y), 1.8f, col, 8);
+  dl->AddCircleFilled(pts[n - 1], 1.8f, col, 8);
+}
+// One curve choice: its glyph at the left, then its name; a lit dot marks the current one.
+bool curveMenuItem(const char* id, const char* label, uint8_t curve, float tension, bool on, float labelW) {
+  const auto& P = pal();
+  const float fs = ImGui::GetFontSize(), gw = std::round(fs * 1.9f), h = std::round(fs + 8.0f);
+  const ImVec2 p = ImGui::GetCursorScreenPos();
+  const bool hit = ImGui::Selectable(id, false, ImGuiSelectableFlags_None, ImVec2(gw + 10.0f + labelW + fs + 4.0f, h));
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const ImU32 lit = theme::litRole(theme::role::kGraph);
+  drawCurveGlyph(dl, ImVec2(p.x + 2, p.y + 4), ImVec2(p.x + gw, p.y + h - 5), curve, tension, on ? lit : P.textDim, theme::withAlpha(P.textFaint, 0.5f));
+  dl->AddText(ImVec2(p.x + gw + 10.0f, std::round(p.y + (h - fs) * 0.5f)), on ? P.text : P.textDim, label);
+  if (on) dl->AddCircleFilled(ImVec2(p.x + gw + 10.0f + labelW + fs * 0.5f + 4.0f, p.y + h * 0.5f), 3.0f, lit, 12);
+  return hit;
 }
 
 }  // namespace
@@ -282,6 +458,7 @@ void drawPianoRoll(App& a) {
     // Q-12: the shared tool family; tooltips "Name (key): what it does" from the keymap.
     struct T { ui::Icon icon; Tool tool; const char* name; const char* desc; const char* key; uint32_t role; };
     const T tools[] = {{ui::Icon::ToolDraw, Tool::Draw, i18n::N_("Draw"), i18n::N_("click to add, drag to move, drag the end to resize, right-click deletes"), "piano.toolDraw", theme::role::kDraw},
+                       {ui::Icon::ToolBend, Tool::Bend, i18n::N_("Pitch bend"), i18n::N_("drag anywhere on a note to bend its pitch like an automation line (semitone steps, Alt: free); right-click a point: its curve menu, Shift+click: its next curve; double-click a point to remove it, a curve to straighten it, the note to reset its line"), "piano.toolBend", theme::role::kGraph},
                        {ui::Icon::ToolPaint, Tool::Paint, i18n::N_("Paint"), i18n::N_("paint notes while dragging"), "piano.toolPaint", theme::role::kPaint},
                        {ui::Icon::ToolDelete, Tool::Erase, i18n::N_("Delete"), i18n::N_("click or drag over notes to delete them"), "piano.toolDelete", theme::role::kDelete},
                        {ui::Icon::ToolSelect, Tool::Select, i18n::N_("Select"), i18n::N_("drag a box; Ctrl+drag selects with any tool"), "piano.toolSelect", theme::role::kSelect},
@@ -299,6 +476,15 @@ void drawPianoRoll(App& a) {
     }
     // Groups to the right of the tools appear only when they fit (no clipping).
     auto roomLeft = []() { return ImGui::GetWindowPos().x + ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - ImGui::GetItemRectMax().x; };
+    if (roomLeft() > fh + 6) {  // K-4: auto scrolling, the pattern editors' switch (beside the tools, as in the playlist)
+      ImGui::SameLine(0, 4);
+      const bool follow = a.settings.getBool("ui.autoScrollPattern");
+      if (ui::IconButton("prfollow", ui::Icon::ScrollTo, follow, fh,
+                         follow ? "Auto scrolling is on: the piano roll and channel rack follow the pattern position while it plays (click to keep the view still)"
+                                : "Auto scrolling is off: the view stays where you put it while the pattern plays (click to follow the pattern position)",
+                         theme::rgb(theme::role::kView)))
+        a.settings.set("ui.autoScrollPattern", !follow);
+    }
     if (roomLeft() > fh + 2 + 128 + 18) {
       ui::ToolbarDivider();
       ui::ToolButton("snapicon", ui::Icon::ToolSnap, st.snap != Snap::None, fh, i18n::N_("Snap"),
@@ -318,9 +504,7 @@ void drawPianoRoll(App& a) {
     if (room > 120 + 60) {
       ui::ToolbarDivider();
       if (ui::TextButton("Quantize", false, 0, "Quantize note starts to the snap grid (Ctrl+Q)") && pat && chan) {
-        auto it = pat->notes.find(chan->id);
-        if (it != pat->notes.end()) {
-          std::vector<Note> ns = it->second;
+        if (std::vector<Note> ns = rollNotes(a, pat->id, chan->id); !ns.empty()) {
           Tick gsz = st.effGrid > 1 ? st.effGrid : snapTicks(s, st.snap);
           auto sel = selVector(a, ns.size());
           bool any = !st.selected.empty();
@@ -373,7 +557,9 @@ void drawPianoRoll(App& a) {
       }
       ui::Hint("Scale highlighting: rows outside the scale are shaded; optionally drawn notes snap to it");
     }
-    if (roomLeft() > 110) {
+    // Slide button and note colour: shown when both fit (divider, button, swatch).
+    const float slideNeed = 2 * theme::kS2 + 1 + ImGui::CalcTextSize(i18n::tr("Slide")).x + 2 * ImGui::GetStyle().FramePadding.x + 4 + fh + 2;
+    if (roomLeft() > slideNeed) {
       ui::ToolbarDivider();
       if (ui::TextButton("Slide", newSlide, 0, "Slide mode: new notes glide the channel's sounding notes to their pitch instead of starting a note"))
         newSlide = !newSlide;
@@ -393,9 +579,7 @@ void drawPianoRoll(App& a) {
           if (ImGui::InvisibleButton("##c", ImVec2(20, 20))) {
             newColor = k;
             if (pat && chan && !st.selected.empty()) {
-              auto it = pat->notes.find(chan->id);
-              if (it != pat->notes.end()) {
-                std::vector<Note> ns = it->second;
+              if (std::vector<Note> ns = rollNotes(a, pat->id, chan->id); !ns.empty()) {
                 auto sel = selVector(a, ns.size());
                 for (size_t i = 0; i < ns.size(); ++i)
                   if (sel[i]) ns[i].color = k;
@@ -431,8 +615,8 @@ void drawPianoRoll(App& a) {
   }
 
   const ObjectId patId = pat->id, chId = chan->id;
-  std::vector<Note> notes;
-  if (auto it = pat->notes.find(chId); it != pat->notes.end()) notes = it->second;
+  std::vector<Note> notes = rollNotes(a, patId, chId);  // K-22: rack steps show as step notes
+  const bool rackSteps = stepnotes::hasSteps(s, *pat, chId);
   for (auto it = st.selected.begin(); it != st.selected.end();)
     it = *it < notes.size() ? std::next(it) : st.selected.erase(it);
 
@@ -455,7 +639,39 @@ void drawPianoRoll(App& a) {
   const ImVec2 gridMin(origin.x + keyW, origin.y + rulerH);
   const ImVec2 gridMax(origin.x + avail.x, origin.y + avail.y - velH);
   const float gridW = gridMax.x - gridMin.x, gridH = gridMax.y - gridMin.y;
+  // ---- K-24: row height zoom (Alt+wheel), anchored at the pointer ----
+  // The key row under the pointer and the point inside it stay still, gliding
+  // like J-188's horizontal zoom (a trackpad's fractional Alt+scroll 1:1); a
+  // height written from outside (View menu) glides with the top row held.
+  std::array<float, 129> keyTop{};
+  auto layoutKeys = [&](float h) {
+    for (size_t i = 0; i < keyTop.size(); ++i) keyTop[i] = static_cast<float>(i) * h;
+  };
+  {
+    smoothzoom::Params zp;
+    zp.smooth = scrollui::smoothZoom();
+    smoothzoom::RowGlide& vg = st.rowGlide;
+    auto anchorAt = [&](float h, float px) {
+      layoutKeys(h);
+      return smoothzoom::rowAnchorAt(keyTop.data(), 128, h, static_cast<double>(px + st.scrollY), px);
+    };
+    const float held = st.rowHeight;
+    const float drawn = vg.outside(held) ? vg.output() : held;
+    if (vg.outside(held)) vg.zoomTo(drawn, std::clamp(held, kRowHMin, kRowHMax), anchorAt(drawn, 0.0f), true, zp);
+    else if (vg.active() && st.scrollY != vg.scrollOut) vg.setAnchor(anchorAt(drawn, static_cast<float>(vg.anchor().px)));
+    if (hovered && ((io.MouseWheel != 0 && !io.KeyCtrl && !io.KeyAlt) || io.MouseWheelH != 0 || ImGui::IsMouseDragging(ImGuiMouseButton_Middle)))
+      vg.finish();
+    if (hovered && io.MouseWheel != 0 && io.KeyAlt && !io.KeyCtrl && st.centred) {
+      const bool notch = smoothscroll::isNotch(io.MouseWheel);
+      double to = std::clamp(vg.target(drawn) * std::pow(kRowZoomStep, static_cast<double>(io.MouseWheel)), static_cast<double>(kRowHMin),
+                             static_cast<double>(kRowHMax));
+      if (notch) to = std::round(to);  // a notch lands on whole pixels: crisp key rows (a trackpad moves freely)
+      vg.zoomTo(drawn, to, anchorAt(drawn, std::clamp(io.MousePos.y - gridMin.y, 0.0f, gridH)), notch, zp);
+    }
+    st.rowHeight = static_cast<float>(vg.step(drawn, io.DeltaTime, zp));
+  }
   const float rowH = st.rowHeight;
+  layoutKeys(rowH);
   const Tick patLen = s.patternContentLength(*pat);
   const Tick viewTicks = std::max<Tick>(patLen + s.barTicks() * 4, static_cast<Tick>(gridW / st.pxPerTick) + 1);
   // First open: centre on the notes (C5-ish at the top when there are none).
@@ -470,6 +686,11 @@ void drawPianoRoll(App& a) {
       for (const auto& n : notes) lo = std::min(lo, n.pitch), hi = std::max(hi, n.pitch);
       st.scrollY = (127 - (lo + hi) * 0.5f) * rowH - gridH * 0.5f;
     }
+  }
+  if (st.rowGlide.anchored()) {  // K-24: the anchored point back under the pointer (the range's edges hold)
+    const smoothzoom::RowAnchor& an = st.rowGlide.anchor();
+    st.scrollY = std::clamp(static_cast<float>(smoothzoom::rowAnchorPos(keyTop.data(), 128, rowH, an) - an.px), 0.0f, std::max(0.0f, 128 * rowH - gridH));
+    st.rowGlide.scrollOut = st.scrollY;
   }
   // J-67: outside writes are clamped here; the view's own glide / elastic
   // overscroll is left to scrollui::step below.
@@ -510,6 +731,11 @@ void drawPianoRoll(App& a) {
   if (wheelZoom) timeline::zoomAt(s, st.pxPerTick, st.scrollX, std::pow(1.2, static_cast<double>(io.MouseWheel)), io.MousePos.x - gridMin.x);
   st.pxPerTick = static_cast<float>(timeline::clampZoom(s, st.pxPerTick));
   scrollui::zoomEnd(st.zoomGlide, st.pxPerTick, st.scrollX, wheelZoom && !smoothscroll::isNotch(io.MouseWheel));
+  // K-4: auto scrolling: page along with the pattern position while this pattern plays
+  // (not while the user drags or scrolls the view; off: the view stays where it is).
+  if (a.engine.playing() && a.engine.mode() == PlayMode::Pattern && a.engine.pattern() == patId && a.settings.getBool("ui.autoScrollPattern") &&
+      !ImGui::IsMouseDown(ImGuiMouseButton_Left) && !ImGui::IsMouseDown(ImGuiMouseButton_Middle))
+    st.scrollX = ops::followScroll(st.scrollX, static_cast<float>(a.engine.position()) * st.pxPerTick, gridW);
   // ---- snapping: the visible grid (Line/Cell) or a fixed size; Alt inverts ----
   const Tick visGrid = timeline::visibleGrid(s, st.pxPerTick);
   st.effGrid = timeline::snapGrid(s, st.snap, st.pxPerTick, false);
@@ -528,7 +754,7 @@ void drawPianoRoll(App& a) {
     if (io.KeyCtrl) {
       // zoomed above (J-188)
     } else if (io.KeyAlt) {
-      st.rowHeight = std::clamp(st.rowHeight + io.MouseWheel, 7.0f, 28.0f);
+      // the row height, zoomed above (K-24)
     } else if (io.KeyShift) {
       wheelX -= io.MouseWheel * 60;
       notchX = smoothscroll::isNotch(io.MouseWheel);
@@ -632,6 +858,10 @@ void drawPianoRoll(App& a) {
     noteAnim.prune(now, g.kind == Gesture::Move || g.kind == Gesture::Resize);
   }
   const bool noteAnimOn = noteOff[0] != 0 || noteOff[1] != 0 || noteOff[2] != 0;
+  struct NoteBox { float x0 = 0, x1 = 0, y = 0; };
+  std::vector<NoteBox> noteBoxes(notes.size());
+  struct NoteLabel { size_t note; float x0, x1, y; ImU32 fill; std::string text; };
+  std::vector<NoteLabel> labels;  // K-28
   for (size_t i = 0; i < notes.size(); ++i) {
     const Note& n = notes[i];
     bool sel = st.selected.count(i) > 0;
@@ -642,6 +872,7 @@ void drawPianoRoll(App& a) {
       x1 = std::max(x0 + 3, xOf(n.start + n.length) + px + static_cast<float>(noteOff[2]) * st.pxPerTick);
       y -= static_cast<float>(noteOff[1]) * rowH;
     }
+    noteBoxes[i] = {x0, x1, y};  // K-25: the bend pass draws on the note as drawn (gliding with a drag)
     if (x1 < gridMin.x || x0 > gridMax.x || y + rowH < gridMin.y || y > gridMax.y) continue;
     float vel = n.velocity / 127.0f;
     const ImU32 col = groupColor(n.color, noteCol);
@@ -663,20 +894,185 @@ void drawPianoRoll(App& a) {
       dl->AddTriangleFilled(ImVec2(tx - h, cy - h * 0.8f), ImVec2(tx, cy), ImVec2(tx - h, cy + h * 0.8f), theme::contrastText(fill));
     }
     if (n.porta) dl->AddCircleFilled(ImVec2(x0 + 4, y + rowH * 0.5f), std::max(1.5f, rowH * 0.14f), theme::contrastText(fill), 8);
-    if (x1 - x0 > 28 && rowH >= 11) {
-      ImGui::PushFont(a.fontMono, std::min(11.0f, rowH - 3));
+    if (x1 - x0 > 28 && rowH >= 11) {  // K-28: drawn after the bend lines (labelPass below), so a line never hides a name
       const std::string* kn = keyLabel(n.pitch);
-      const std::string label = kn ? *kn : noteName(n.pitch);
-      dl->PushClipRect(ImVec2(x0, y), ImVec2(x1 - 2, y + rowH), true);
-      dl->AddText(ImVec2(x0 + 6, y + (rowH - ImGui::GetFontSize()) * 0.5f), theme::withAlpha(theme::contrastText(fill), 0.85f), label.c_str());
-      dl->PopClipRect();
-      ImGui::PopFont();
+      labels.push_back({i, x0, x1, y, fill, kn ? *kn : noteName(n.pitch)});
     }
     if (hovered && io.MousePos.x >= x0 && io.MousePos.x < x1 && io.MousePos.y >= y && io.MousePos.y < y + rowH &&
         io.MousePos.y < gridMax.y && io.MousePos.x > gridMin.x) {
       hoverNote = static_cast<int>(i);
       hoverEdge = io.MousePos.x > x1 - std::min(8.0f, (x1 - x0) * 0.35f);
     }
+  }
+  // K-25 / K-28: pitch bend lines. The drawing order keeps lines and note names readable over
+  // any note, in both themes: note bodies, then the bend lines, then the note names (a name a line
+  // crosses gets a chip of its own note's colour behind it, so the line passes behind the name
+  // with a clean edge), then the points and curve handles, then the line being dragged (or the
+  // one under the pointer) with its points, on top of everything.
+  // With the bend tool: every note's line, its points and the hover; otherwise only the lines that
+  // bend, dimmed (still readable, never hidden). A dark halo under a light stroke (the reverse on
+  // the light theme) keeps them readable over any note colour and the grid.
+  const bool bendTool = st.tool == Tool::Bend;
+  const int prevFront = bendFrontNote;
+  bendHover = BendHit{};
+  {
+    static std::vector<std::vector<ImVec2>> pls;  // the lines drawn this frame (buffers reused)
+    static std::vector<std::vector<int>> plSeg;   // K-29: the bend segment of each drawn piece
+    static std::vector<size_t> plNote;
+    size_t plCount = 0;
+    const ImVec2 m = io.MousePos;
+    const bool probe = bendTool && hovered && m.x >= gridMin.x && m.x < gridMax.x && m.y >= gridMin.y && m.y < gridMax.y &&
+                       g.kind != Gesture::Bend && g.kind != Gesture::BendCurve &&
+                       (!ImGui::IsMouseDown(ImGuiMouseButton_Left) || ImGui::IsMouseClicked(ImGuiMouseButton_Left));
+    auto better = [](const BendHit& h, const BendHit& best) {
+      if (h.kind != best.kind) return h.kind > best.kind;
+      if (h.selected != best.selected) return h.selected;
+      return h.dist <= best.dist;  // ties: the note drawn later (on top)
+    };
+    const bool dragging = (g.kind == Gesture::Bend || g.kind == Gesture::BendCurve) && g.anchor >= 0;
+    const int front = dragging ? g.anchor : bendTool ? prevFront : -1;
+    for (size_t i = 0; i < notes.size(); ++i) {
+      const Note& n = notes[i];
+      if (n.slide || (!bendTool && n.bend.empty())) continue;
+      const NoteBox& bx = noteBoxes[i];
+      if (bx.x1 < gridMin.x - 8 || bx.x0 > gridMax.x + 8) continue;
+      const float cy = bx.y + rowH * 0.5f;
+      if (plCount >= pls.size()) pls.emplace_back(), plSeg.emplace_back(), plNote.emplace_back();
+      std::vector<ImVec2>& pl = pls[plCount];
+      std::vector<int>& ps = plSeg[plCount];
+      plNote[plCount++] = i;
+      bendPolyline(n, bx.x0, cy, st.pxPerTick, rowH, pl, ps);
+      if (!probe) continue;
+      BendHit h;
+      h.note = static_cast<int>(i);
+      h.selected = st.selected.count(i) > 0;
+      for (size_t k = 0; k < n.bend.size(); ++k) {
+        if (n.bend[k].tick > static_cast<float>(n.length)) break;
+        const ImVec2 q(bx.x0 + n.bend[k].tick * st.pxPerTick, cy - n.bend[k].semis * rowH);
+        const float d = std::hypot(q.x - m.x, q.y - m.y);
+        if (d <= 7.0f && (h.kind < BendHit::Point || d < h.dist)) h.kind = BendHit::Point, h.point = static_cast<int>(k), h.dist = d;
+      }
+      if (h.kind < BendHit::Point)
+        for (size_t k = 0; k < n.bend.size(); ++k) {
+          ImVec2 q;
+          if (!bendHandle(n, k, bx.x0, cy, st.pxPerTick, rowH, q)) continue;
+          const float d = std::hypot(q.x - m.x, q.y - m.y);
+          if (d <= 6.0f && (h.kind < BendHit::Handle || d < h.dist)) h.kind = BendHit::Handle, h.point = static_cast<int>(k), h.dist = d;
+        }
+      if (h.kind < BendHit::Handle)
+        for (size_t k = 1; k < pl.size(); ++k) {
+          const float d = segDist(m, pl[k - 1], pl[k]);
+          if (d <= 5.0f && (h.kind < BendHit::Line || d < h.dist)) h.kind = BendHit::Line, h.dist = d, h.point = ps[k];  // K-29: its segment
+        }
+      if (h.kind < BendHit::Line && m.x >= bx.x0 && m.x < bx.x1 && m.y >= bx.y && m.y < bx.y + rowH) h.kind = BendHit::Body, h.dist = 0;
+      if (h.kind > BendHit::None && better(h, bendHover)) bendHover = h;
+    }
+    bendFrontNote = bendHover.kind >= BendHit::Line ? bendHover.note : -1;
+    // Colours of note i's line: `dim` 0 = not drawn.
+    struct LineLook {
+      float dim;
+      ImU32 line, halo;
+    };
+    auto look = [&](size_t i) {
+      const Note& n = notes[i];
+      const bool sel = st.selected.count(i) > 0;
+      const ImU32 base = groupColor(n.color, noteCol);
+      LineLook L;
+      L.dim = bendTool ? (n.muted ? 0.55f : 1.0f) : (n.bend.empty() ? 0.0f : 0.5f);
+      L.line = P.dark ? theme::mix(base, theme::rgb(0xFFFFFF), sel ? 0.86f : 0.74f) : theme::mix(base, P.ink, 0.62f);
+      L.halo = P.dark ? theme::withAlpha(P.ink, 0.6f * L.dim) : theme::withAlpha(P.paper, 0.8f * L.dim);
+      return L;
+    };
+    auto drawLine = [&](size_t k) {
+      const LineLook L = look(plNote[k]);
+      if (L.dim <= 0) return;
+      const std::vector<ImVec2>& pl = pls[k];
+      dl->AddPolyline(pl.data(), static_cast<int>(pl.size()), L.halo, ImDrawFlags_None, bendTool ? 3.6f : 3.0f);
+      dl->AddPolyline(pl.data(), static_cast<int>(pl.size()), theme::withAlpha(L.line, 0.95f * L.dim), ImDrawFlags_None, bendTool ? 1.6f : 1.25f);
+    };
+    auto drawPoints = [&](size_t k) {
+      const size_t i = plNote[k];
+      const Note& n = notes[i];
+      const LineLook L = look(i);
+      if (L.dim <= 0) return;
+      const NoteBox& bx = noteBoxes[i];
+      const float cy = bx.y + rowH * 0.5f;
+      for (size_t j = 0; j < n.bend.size(); ++j) {  // K-28: curve handles (small rings half way along a segment)
+        ImVec2 q;
+        if (!bendHandle(n, j, bx.x0, cy, st.pxPerTick, rowH, q)) continue;
+        const bool hot = (bendHover.kind == BendHit::Handle && bendHover.note == static_cast<int>(i) && bendHover.point == static_cast<int>(j)) ||
+                         (g.kind == Gesture::BendCurve && g.anchor == static_cast<int>(i) && g.bendPt == static_cast<int>(j));
+        const float r = hot ? 3.5f : 2.6f;
+        dl->AddCircleFilled(q, r + 1.4f, L.halo, 12);
+        dl->AddCircleFilled(q, r, hot ? L.line : (P.dark ? P.well : P.paper), 12);
+        dl->AddCircle(q, r, theme::withAlpha(L.line, 0.8f), 12, 1.2f);
+      }
+      for (size_t j = 0; j < n.bend.size(); ++j) {
+        if (n.bend[j].tick > static_cast<float>(n.length)) break;
+        const ImVec2 q(bx.x0 + n.bend[j].tick * st.pxPerTick, cy - n.bend[j].semis * rowH);
+        const bool hot = (bendHover.kind == BendHit::Point && bendHover.note == static_cast<int>(i) && bendHover.point == static_cast<int>(j)) ||
+                         (bendMenuNote == static_cast<int>(i) && bendMenuPoint == static_cast<int>(j)) ||  // K-28: its menu is open
+                         (g.kind == Gesture::Bend && g.anchor == static_cast<int>(i) && std::fabs(n.bend[j].tick - g.bendT) < 1e-3 &&
+                          std::fabs(n.bend[j].semis - g.bendV) < 1e-3);
+        const float r = hot ? 4.25f : 3.25f;
+        if (n.bend[j].curve == bend::Step) {  // a step (hold, then jump) ends in a square: the shape reads at a glance
+          dl->AddRectFilled(ImVec2(q.x - r - 1.5f, q.y - r - 1.5f), ImVec2(q.x + r + 1.5f, q.y + r + 1.5f), L.halo, 2.0f);
+          dl->AddRectFilled(ImVec2(q.x - r, q.y - r), ImVec2(q.x + r, q.y + r), hot ? L.line : (P.dark ? P.well : P.paper), 1.5f);
+          dl->AddRect(ImVec2(q.x - r, q.y - r), ImVec2(q.x + r, q.y + r), L.line, 1.5f, 0, 1.5f);
+          continue;
+        }
+        dl->AddCircleFilled(q, r + 1.5f, L.halo, 16);
+        dl->AddCircleFilled(q, r, hot ? L.line : (P.dark ? P.well : P.paper), 16);
+        dl->AddCircle(q, r, L.line, 16, 1.5f);
+      }
+    };
+    for (size_t k = 0; k < plCount; ++k)
+      if (static_cast<int>(plNote[k]) != front) drawLine(k);
+    // Note names, over the lines. A name is clipped where a later note on its row starts (that
+    // note is drawn over it) and left out when a later note covers its start.
+    if (!labels.empty()) {
+      ImGui::PushFont(a.fontMono, std::min(11.0f, rowH - 3));
+      const float fs = ImGui::GetFontSize();
+      std::unordered_map<int, std::vector<size_t>> rows;  // notes in view by row
+      for (size_t i = 0; i < notes.size(); ++i) {
+        const NoteBox& bx = noteBoxes[i];
+        if (bx.x1 >= gridMin.x && bx.x0 <= gridMax.x && bx.y + rowH >= gridMin.y && bx.y <= gridMax.y)
+          rows[static_cast<int>(std::lround(bx.y * 4))].push_back(i);
+      }
+      for (const NoteLabel& lb : labels) {
+        float clipR = lb.x1 - 2;
+        bool covered = false;
+        for (size_t j : rows[static_cast<int>(std::lround(lb.y * 4))]) {
+          if (j <= lb.note) continue;
+          const NoteBox& o = noteBoxes[j];
+          if (o.x0 <= lb.x0 + 6 && o.x1 > lb.x0 + 6) covered = true;
+          else if (o.x0 > lb.x0 && o.x0 < clipR) clipR = o.x0;
+        }
+        if (covered) continue;
+        const ImVec2 tp(lb.x0 + 6, lb.y + (rowH - fs) * 0.5f);
+        const ImVec2 ts = ImGui::CalcTextSize(lb.text.c_str());
+        const ImVec2 c0(tp.x - 2, lb.y + 2), c1(std::min(tp.x + ts.x + 2, clipR), lb.y + rowH - 2);
+        bool crossed = false;
+        for (size_t k = 0; k < plCount && !crossed; ++k) {
+          if (look(plNote[k]).dim <= 0) continue;
+          const std::vector<ImVec2>& pl = pls[k];
+          for (size_t q = 1; q < pl.size() && !crossed; ++q) crossed = segHitsRect(pl[q - 1], pl[q], ImVec2(c0.x - 2, c0.y - 2), ImVec2(c1.x + 2, c1.y + 2));
+        }
+        dl->PushClipRect(ImVec2(lb.x0, lb.y), ImVec2(clipR, lb.y + rowH), true);
+        if (crossed) dl->AddRectFilled(c0, c1, lb.fill, theme::kRadiusSm);
+        dl->AddText(tp, theme::withAlpha(theme::contrastText(lb.fill), 0.85f), lb.text.c_str());
+        dl->PopClipRect();
+      }
+      ImGui::PopFont();
+    }
+    if (bendTool)
+      for (size_t k = 0; k < plCount; ++k)
+        if (static_cast<int>(plNote[k]) != front) drawPoints(k);
+    for (size_t k = 0; k < plCount; ++k)
+      if (static_cast<int>(plNote[k]) == front) {
+        drawLine(k);
+        if (bendTool) drawPoints(k);
+      }
   }
   // Playhead.
   if (a.engine.playing() && a.engine.mode() == PlayMode::Pattern && a.engine.pattern() == patId) {
@@ -724,7 +1120,8 @@ void drawPianoRoll(App& a) {
     const ImU32 whiteEdge = theme::mix(P.keyWhite, P.ink, 0.28f);
     const ImU32 black = P.keyBlack;
     const float kx0 = origin.x, kx1 = gridMin.x - 1, blackW = std::round((kx1 - kx0) * 0.6f);
-    const int hoverPitch = hovered && io.MousePos.x < gridMin.x && io.MousePos.y >= gridMin.y && io.MousePos.y < gridMax.y
+    const bool gliss = g.kind == Gesture::Keys;  // K-21
+    const int hoverPitch = !gliss && hovered && io.MousePos.x < gridMin.x && io.MousePos.y >= gridMin.y && io.MousePos.y < gridMax.y
                                ? std::clamp(127 - static_cast<int>(std::floor((io.MousePos.y - gridMin.y + st.scrollY) / rowH)), 0, 127)
                                : -1;
     // White keys: light face shading to a darker tip (left), like a keyboard seen from above.
@@ -734,17 +1131,45 @@ void drawPianoRoll(App& a) {
     // channel colour while held and fade out smoothly on release.
     const keylight::ChannelLights* lit = keylight::lights(a, chId);
     const ImU32 litCol = theme::mix(theme::rgb(chan->color), P.hot, 0.25f);
+    // How lit key p is: sounding (fading on release), or the key being auditioned.
+    auto keyLevel = [&](int p) {
+      if (g.previewPitch == p) return 1.0f;
+      return lit && (!gliss || lit->down[p]) ? lit->key(p) : 0.0f;  // K-21: no fading trail mid-glissando
+    };
+    // A lit key takes the channel colour blended into the key's own colour (about half way at full
+    // level), so a light channel colour stays a soft tint instead of a flat glare.
+    auto litTint = [&](ImU32 key, float lv) { return theme::mix(key, litCol, (P.dark ? 0.55f : 0.5f) * lv); };
+    // A white key is wider than its row: it also owns the strip right of each neighbouring black key,
+    // up to the seam through the middle of that black key's row. Lit and hovered white keys fill that
+    // whole shape, shaded like the key face (darker towards the tip on the left).
+    auto fillWhiteKey = [&](int p, float y, ImU32 face, ImU32 tip) {
+      auto band = [&](float x0, float y0, float y1) { dl->AddRectFilledMultiColor(ImVec2(x0, y0), ImVec2(kx1, y1), tip, face, face, tip); };
+      band(kx0, y, y + rowH);
+      if (p < 127 && isBlack(p + 1)) band(kx0 + blackW, y - rowH * 0.5f, y);         // lower half of the black row above
+      if (p > 0 && isBlack(p - 1)) band(kx0 + blackW, y + rowH, y + rowH * 1.5f);   // upper half of the black row below
+    };
+    for (int p = 0; p < 128; ++p) {
+      const float y = yOf(p);
+      if (isBlack(p) || y - rowH > gridMax.y || y + rowH * 2 < gridMin.y) continue;
+      const float lv = keyLevel(p);
+      if (lv > 0.004f) {
+        const ImU32 face = litTint(white, lv);
+        fillWhiteKey(p, y, face, theme::mix(face, P.ink, 0.12f));
+      } else if (hoverPitch == p) {
+        const ImU32 face = theme::mix(white, P.accent, 0.3f);
+        fillWhiteKey(p, y, face, theme::mix(face, P.ink, 0.12f));
+      }
+    }
     for (int p = 0; p < 128; ++p) {
       float y = yOf(p);
       if (y > gridMax.y || y + rowH < gridMin.y) continue;
       bool isB = isBlack(p);
-      const float lv = lit ? lit->key(p) : 0.0f;
-      ImU32 tint = g.previewPitch == p ? P.accent
-                   : lv > 0.004f      ? theme::mix(isB ? black : white, litCol, 0.9f * lv)
-                   : hoverPitch == p  ? theme::withAlpha(P.accent, 0.35f)
-                                      : 0;
+      const float lv = keyLevel(p);
+      ImU32 tint = !isB              ? 0  // white keys were filled above, over their whole shape
+                   : lv > 0.004f     ? litTint(black, lv)
+                   : hoverPitch == p ? theme::mix(black, P.accent, 0.35f)
+                                     : 0;
       if (!isB) {
-        if (tint) dl->AddRectFilled(ImVec2(kx0, y), ImVec2(kx1, y + rowH), tint);
         // Boundary between two adjacent white keys (E|F, B|C) gets a full line.
         if (p % 12 == 0 || p % 12 == 5) dl->AddLine(ImVec2(kx0, std::round(y + rowH)), ImVec2(kx1, std::round(y + rowH)), whiteEdge);
       } else {
@@ -767,10 +1192,10 @@ void drawPianoRoll(App& a) {
         const std::string* kn = keyLabel(p);
         const float y = yOf(p);
         if (!kn || y > gridMax.y || y + rowH < gridMin.y) continue;
-        const float lv = lit ? lit->key(p) : 0.0f;
+        const float lv = keyLevel(p);
         ImU32 plate = isBlack(p) ? P.surface800 : P.surface700;
-        if (lv > 0.004f) plate = theme::mix(plate, litCol, 0.9f * lv);
-        else if (g.previewPitch == p || hoverPitch == p) plate = theme::mix(plate, P.accent, 0.35f);
+        if (lv > 0.004f) plate = litTint(plate, lv);
+        else if (hoverPitch == p) plate = theme::mix(plate, P.accent, 0.35f);
         dl->AddRectFilled(ImVec2(kx0, y), ImVec2(kx1, y + rowH), plate);
         dl->AddLine(ImVec2(kx0, std::round(y + rowH)), ImVec2(kx1, std::round(y + rowH)), P.line);
         if (rowH < 7) continue;
@@ -867,7 +1292,7 @@ void drawPianoRoll(App& a) {
     if (laneBipolar(lane) && std::fabs(f - 0.5f) < 0.03f) f = 0.5f;  // easy return to centre
     return f;
   };
-  laneGeo = PianoLaneGeometry{gridMin.x - st.scrollX, st.pxPerTick, vMin.y, vMax.y, !autoLane};
+  laneGeo = PianoLaneGeometry{gridMin.x - st.scrollX, st.pxPerTick, vMin.y, vMax.y, !autoLane, gridMin.y - st.scrollY, rowH, g.previewPitch};
 
   // ---------------- interaction ----------------
   const ImVec2 m = io.MousePos;
@@ -876,6 +1301,15 @@ void drawPianoRoll(App& a) {
   const bool inRuler = m.y >= origin.y && m.y < gridMin.y && m.x >= gridMin.x;
   const bool inVel = m.y >= gridMax.y && m.x >= gridMin.x;
   const bool inLaneLabel = m.y >= gridMax.y && m.x >= origin.x && m.x < gridMin.x;
+  // K-25: the other notes a bend edit applies to: a selected note's edit gives every selected
+  // note the same line (a chord bends as one); an unselected note bends alone.
+  auto bendTargets = [&](size_t ni) {
+    std::vector<size_t> out;
+    if (!st.selected.count(ni)) return out;
+    for (size_t j : st.selected)
+      if (j != ni && j < notes.size() && !notes[j].slide) out.push_back(j);
+    return out;
+  };
 
   if (hovered) {
     if (inGrid) {
@@ -884,8 +1318,34 @@ void drawPianoRoll(App& a) {
       char buf[96];
       std::snprintf(buf, sizeof buf, "%s  ·  bar %lld", noteName(pitchAt(m.y)).c_str(),
                     static_cast<long long>(tickAt(m.x) / std::max<Tick>(1, s.barTicks()) + 1));
-      if (hoverNote >= 0 && st.tool == Tool::Draw)
+      if (st.tool == Tool::Bend) {  // K-25
+        if (bendHover.kind == BendHit::Point) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        else if (bendHover.kind > BendHit::None) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+        if (g.kind != Gesture::Bend && g.kind != Gesture::BendCurve) {
+          // K-28: the snapping in force, named: the piano roll's snap for time, semitones for the
+          // value; Alt inverts both (frees them, or with Snap off, snaps to the grid in view).
+          char snapHint[160];
+          if (st.snap != Snap::None)
+            std::snprintf(snapHint, sizeof snapHint, i18n::tr("snap: %s and semitones, Alt: free"), snapName(st.snap));
+          else
+            std::snprintf(snapHint, sizeof snapHint, "%s", i18n::tr("no snap, Alt: the grid in view and semitones"));
+          std::string h = std::string(buf) + "   (";
+          if (bendHover.kind == BendHit::Point)
+            h += i18n::tr("drag: move the point · right-click: curve menu · double-click or Alt+right-click: remove this point");
+          else if (bendHover.kind == BendHit::Handle)
+            h += i18n::tr("drag up / down: curve amount · right-click: curve menu · double-click: a straight ramp again");
+          else if (bendHover.kind == BendHit::Line && bendHover.point >= 0)  // K-29
+            h += i18n::tr("drag: a new point · double-click: this glide a straight ramp again · Ctrl+drag: select");
+          else if (bendHover.kind == BendHit::Body)  // K-29
+            h += i18n::tr("drag: bend the note · double-click: reset the note's bend · Ctrl+drag: select");
+          else
+            h += i18n::tr("drag on a note or its line: bend it · Ctrl+drag: select · a note under another note's line keeps its own pitch");
+          a.setHint(h + " · " + snapHint + ")");
+        }
+      } else if (hoverNote >= 0 && st.tool == Tool::Draw)
         a.setHint(std::string(buf) + "   " + i18n::tr("(drag: move · edge: resize · Shift+drag: copy · Esc / right-click while dragging: cancel · Alt: no snap)"));
+      else if (st.tool == Tool::Draw)  // K-20
+        a.setHint(std::string(buf) + "   " + i18n::tr("(click: draw · Shift+click: draw and drag its length · wheel: scroll · Ctrl+wheel: zoom · Alt: no snap)"));
       else
         a.setHint(std::string(buf) + "   (wheel: scroll · Shift+wheel: horizontal · Ctrl+wheel: zoom · Alt: no snap)");
     } else if (inVel && !autoLane) {
@@ -920,7 +1380,7 @@ void drawPianoRoll(App& a) {
     g = Gesture{};
     lClick = rClick = false;
     a.setHint(i18n::tr("Drag cancelled"));
-    if (const Pattern* cp = a.doc.song().pattern(patId); cp && cp->notes.count(chId)) notes = cp->notes.at(chId);
+    notes = rollNotes(a, patId, chId);
   }
 
   if (lClick || rClick) {
@@ -934,7 +1394,7 @@ void drawPianoRoll(App& a) {
     g.key = 0x50520000000000ull ^ (gestureCounter++ << 8);
     g.anchor = hoverNote;
     if (inKeys && lClick) {
-      g.kind = Gesture::None;
+      g.kind = Gesture::Keys;  // K-21: a glissando while held: the key under the pointer sounds, one at a time
       previewOn(a, chId, pitchAt(m.y), 100);
     } else if (inRuler && lClick) {
       if (a.engine.mode() != PlayMode::Pattern) {  // J-49 (J-77: scrubbing here keeps the rack where it is)
@@ -956,11 +1416,106 @@ void drawPianoRoll(App& a) {
       }
     } else if (inGrid && rClick && st.tool == Tool::Zoom) {
       st.zoomRequest /= 1.5f;  // zoom tool: right-click zooms out
+    } else if (inGrid && rClick && st.tool == Tool::Bend) {
+      // K-25 / K-28: right-click a point or a curve handle: the curve menu of the segment that ends
+      // at that point (Alt+right-click a point removes it at once). Never a note: this tool edits lines.
+      if (bendHover.kind == BendHit::Point && io.KeyAlt) {
+        std::vector<Note> ns = notes;
+        const size_t ni = static_cast<size_t>(bendHover.note);
+        bend::removePoint(ns[ni].bend, static_cast<size_t>(bendHover.point));
+        for (size_t j : bendTargets(ni)) ns[j].bend = ns[ni].bend;
+        commit(a, patId, chId, ns, selVector(a, ns.size()), "remove pitch bend point", 0);
+      } else if (bendHover.kind == BendHit::Point || bendHover.kind == BendHit::Handle) {
+        bendMenuNote = bendHover.note;
+        bendMenuPoint = bendHover.point;
+        ImGui::OpenPopup("##bendpoint");
+      }
     } else if (inGrid && rClick) {
       g.kind = Gesture::Erase;
     } else if (inGrid && lClick) {
       bool ctrl = io.KeyCtrl;
-      if (!dbl && hoverNote < 0 && ghostHover.ch != kNoId && j31::editGhostAt(a, tickAt(m.x), ghostHover.pitch)) {
+      if (st.tool == Tool::Bend && !ctrl) {
+        // K-25: the bend tool edits lines only (an empty spot does nothing; Ctrl+drag still selects).
+        BendClick first = bendClick;
+        const uint64_t now = a.doc.history().stateSerial();
+        if (dbl && !(first.valid && first.pat == patId && first.ch == chId)) first = BendClick{true, bendHover, notes, patId, chId, 0, now};
+        bendClick = BendClick{};
+        if (!dbl) bendClick = BendClick{true, bendHover, notes, patId, chId, 0, now};
+        if (dbl && first.hit.kind > BendHit::None) {
+          // K-29: a double-click: on a point removes that point only, on a segment of the line or
+          // its ring makes that glide a straight ramp again, on the note itself resets its line.
+          BendHit hit = first.hit;
+          if (first.serial != 0 && first.serial == a.doc.history().stateSerial()) a.doc.undo();  // the first click's drag
+          const Pattern* cp = a.doc.song().pattern(patId);
+          std::vector<Note> ns = cp && cp->notes.count(chId) ? cp->notes.at(chId) : std::vector<Note>{};
+          if (ns != first.before) hit = bendHover;  // something else changed in between: what is under the pointer now
+          const size_t ni = static_cast<size_t>(std::max(0, hit.note));
+          if (hit.kind > BendHit::None && ni < ns.size()) {
+            std::vector<BendPoint>& line = ns[ni].bend;
+            const bool inLine = hit.point >= 0 && static_cast<size_t>(hit.point) < line.size();
+            bool changed = false;
+            const char* label = "reset pitch bend";
+            if (hit.kind == BendHit::Point && inLine) {
+              changed = bend::removePoint(line, static_cast<size_t>(hit.point));
+              label = "remove pitch bend point";
+            } else if ((hit.kind == BendHit::Handle || hit.kind == BendHit::Line) && inLine) {
+              changed = bend::resetCurve(line, static_cast<size_t>(hit.point));
+              label = "reset pitch bend curve";
+              a.setHint(i18n::tr(changed ? "The glide is a straight ramp again" : "The glide already is a straight ramp"));
+            } else if (hit.kind == BendHit::Body) {
+              changed = !line.empty();
+              line.clear();
+            } else {
+              a.setHint(i18n::tr("The line holds after its last point: there is no curve to reset"));
+            }
+            if (changed) {
+              for (size_t j : bendTargets(ni)) ns[j].bend = line;
+              commit(a, patId, chId, ns, selVector(a, ns.size()), label, 0);
+            }
+          }
+        } else if (bendHover.kind > BendHit::None && !dbl) {
+          const size_t ni = static_cast<size_t>(bendHover.note);
+          if (io.KeyShift && bendHover.kind == BendHit::Point) {  // Shift+click a point: its segment's next curve
+            std::vector<Note> ns = notes;
+            BendPoint& bp = ns[ni].bend[static_cast<size_t>(bendHover.point)];
+            size_t at = 0;
+            const size_t count = sizeof kBendCurves / sizeof kBendCurves[0];
+            while (at < count && kBendCurves[at].curve != bp.curve) ++at;
+            bp.curve = kBendCurves[(at + 1) % count].curve;
+            bp.tension = 0;
+            for (size_t j : bendTargets(ni)) ns[j].bend = ns[ni].bend;
+            commit(a, patId, chId, ns, selVector(a, ns.size()), "change pitch bend curve", 0);
+            a.setHint(std::string(i18n::tr("Glide into the point:")) + " " + i18n::tr(bendCurveName(bp.curve)));
+          } else if (bendHover.kind == BendHit::Handle) {  // K-28: drag a handle: the curve amount
+            g.kind = Gesture::BendCurve;
+            g.anchor = static_cast<int>(ni);
+            g.bendPt = bendHover.point;
+            g.bendV = notes[ni].bend[static_cast<size_t>(bendHover.point)].tension;
+          } else {
+            // Drag a point, or a new point at the pointer on the line (it moves only once dragged).
+            g.kind = Gesture::Bend;
+            g.anchor = static_cast<int>(ni);
+            std::vector<BendPoint>& line = g.base[ni].bend;
+            if (bendHover.kind == BendHit::Point) {
+              g.bendPt = bendHover.point;
+            } else {
+              // K-28: a new point lands on the snap grid (whole ticks when free) and splits the
+              // segment it falls in, both halves keeping its shape.
+              const Note& n = notes[ni];
+              double t = std::clamp(static_cast<double>(m.x - xOf(n.start)) / std::max(1e-6f, st.pxPerTick), 0.0, static_cast<double>(n.length));
+              t = snapG > 1 ? static_cast<double>(snapNearest(n.start + static_cast<Tick>(std::lround(t)), snapG) - n.start) : std::round(t);
+              t = std::clamp(t, 0.0, static_cast<double>(n.length));
+              auto pos = std::upper_bound(line.begin(), line.end(), static_cast<float>(t), [](float x, const BendPoint& b) { return x < b.tick; });
+              BendPoint np(static_cast<float>(t), static_cast<float>(bend::value(line, t)));
+              if (pos != line.end() && pos->curve != bend::Step) np.curve = pos->curve, np.tension = pos->tension;
+              g.bendPt = static_cast<int>(pos - line.begin());
+              line.insert(pos, np);
+            }
+            const BendPoint& bp = line[static_cast<size_t>(g.bendPt)];
+            g.bendT = bp.tick, g.bendV = bp.semis;
+          }
+        }
+      } else if (!dbl && hoverNote < 0 && ghostHover.ch != kNoId && j31::editGhostAt(a, tickAt(m.x), ghostHover.pitch)) {
         // J-31 editable ghosts: the click switched to the ghost's channel with the note selected.
       } else if (dbl && hoverNote < 0 && ghostHover.ch != kNoId) {
         // Multi-channel editing: double-clicking a ghost note edits its channel.
@@ -1027,12 +1582,15 @@ void drawPianoRoll(App& a) {
           if (st.snapToScale && st.scale > 0) n.pitch = tools::snapPitchToScale(n.pitch, st.scaleRoot, st.scale);
           commit(a, patId, chId, ns, sel, st.stampChord >= 0 ? "add chord" : "add note", g.key);
           if (st.stampOnce && (st.stampChord >= 0 || st.stampAuto > 0)) st.stampChord = -1, st.stampAuto = 0, st.stampOnce = false;
-          notes = a.doc.song().pattern(patId)->notes.at(chId);
+          notes = rollNotes(a, patId, chId);
           g.base = notes;
           g.sel = selVector(a, notes.size());
           g.anchor = static_cast<int>(*st.selected.begin());
           g.startTick = n.start;
-          g.kind = Gesture::Move;
+          // K-20: Shift+click draws the note and the drag sets its length (FL-familiar); a click
+          // without a drag keeps the default length.
+          g.kind = io.KeyShift ? Gesture::Resize : Gesture::Move;
+          g.drawResize = io.KeyShift;
           previewOn(a, chId, n.pitch, n.velocity);
         }
       }
@@ -1055,6 +1613,9 @@ void drawPianoRoll(App& a) {
     const Tick curTick = tickAt(m.x);
     const int curPitch = pitchAt(m.y);
     switch (g.kind) {
+      case Gesture::Keys:  // K-21: the previous key stops as the pointer reaches the next
+        previewOn(a, chId, curPitch, 100);
+        break;
       case Gesture::Scrub: {
         // Smooth: follows the pointer every frame, landing on the snap grid (Alt = free).
         Tick t = std::max<Tick>(0, timeline::snapTick(std::max<Tick>(0, tickAt(std::clamp(m.x, gridMin.x, gridMax.x))), snapG, Snap::Line));
@@ -1098,6 +1659,7 @@ void drawPianoRoll(App& a) {
       }
       case Gesture::Resize: {
         if (g.anchor < 0 || static_cast<size_t>(g.anchor) >= g.base.size()) break;
+        if (g.drawResize && !ImGui::IsMouseDragging(ImGuiMouseButton_Left, 2.0f)) break;  // K-20: not dragged yet
         const Note& an = g.base[static_cast<size_t>(g.anchor)];
         Tick end = timeline::snapTick(curTick, snapG, Snap::Line);
         Tick dl2 = std::max<Tick>(end, an.start + std::max<Tick>(1, snapG)) - (an.start + an.length);
@@ -1173,6 +1735,64 @@ void drawPianoRoll(App& a) {
         break;
       }
       case Gesture::Zoom: break;  // drawn below, applied on release
+      case Gesture::Bend: {  // K-25: the point follows the pointer (the snap grid and semitone steps; Alt inverts)
+        if (g.anchor < 0 || static_cast<size_t>(g.anchor) >= g.base.size() || g.bendPt < 0) break;
+        if (!g.moved && !ImGui::IsMouseDragging(ImGuiMouseButton_Left, 2.0f)) break;  // a click alone changes nothing
+        g.moved = true;
+        const size_t ni = static_cast<size_t>(g.anchor);
+        const Note& bn = g.base[ni];
+        const auto& line = bn.bend;
+        const size_t k = static_cast<size_t>(g.bendPt);
+        if (k >= line.size()) break;
+        // K-28: snapping follows the piano roll's: time on its snap grid (snapG: the grid in view
+        // for Line, the fixed size otherwise), the value in semitones; Alt inverts both, as for
+        // notes (free with a snap set; the grid in view and semitones with Snap off).
+        const bool snapOn = (st.snap != Snap::None) != io.KeyAlt;
+        const double lo = k > 0 ? line[k - 1].tick : 0.0;
+        const double hi = k + 1 < line.size() ? line[k + 1].tick : static_cast<double>(bn.length);
+        double t = static_cast<double>(m.x - xOf(bn.start)) / std::max(1e-6f, st.pxPerTick);
+        t = snapG > 1 ? static_cast<double>(snapNearest(bn.start + static_cast<Tick>(std::lround(t)), snapG) - bn.start) : std::round(t);
+        t = std::clamp(t, lo, std::max(lo, hi));
+        double v = static_cast<double>(yOf(bn.pitch) + rowH * 0.5f - m.y) / std::max(1.0f, rowH);
+        v = snapOn ? std::round(v) : std::round(v * 100.0) / 100.0;
+        v = std::clamp(v, std::max(-static_cast<double>(bend::kMaxSemis), -static_cast<double>(bn.pitch)),
+                       std::min(static_cast<double>(bend::kMaxSemis), 127.0 - bn.pitch));
+        g.bendT = t, g.bendV = v;
+        std::vector<Note> ns = g.base;
+        BendPoint& bp = ns[ni].bend[k];
+        bp.tick = static_cast<float>(t);
+        bp.semis = static_cast<float>(v);
+        bend::normalize(ns[ni].bend);
+        for (size_t j : bendTargets(ni)) ns[j].bend = ns[ni].bend;
+        if (ns != notes) commit(a, patId, chId, ns, g.sel, "bend notes", g.key);
+        a.setHint(bendText(bn.pitch, v) + "   " +
+                  (st.snap != Snap::None ? i18n::tr("(Alt: free · right-click a point: curve menu · double-click a point: remove it)")
+                                         : i18n::tr("(Alt: the grid in view and semitones · right-click a point: curve menu · double-click a point: remove it)")));
+        break;
+      }
+      case Gesture::BendCurve: {  // K-28: one segment's curve amount follows the vertical drag (the curve follows the pointer)
+        if (g.anchor < 0 || static_cast<size_t>(g.anchor) >= g.base.size() || g.bendPt < 0) break;
+        if (!g.moved && !ImGui::IsMouseDragging(ImGuiMouseButton_Left, 2.0f)) break;
+        g.moved = true;
+        const size_t ni = static_cast<size_t>(g.anchor), k = static_cast<size_t>(g.bendPt);
+        const auto& line = g.base[ni].bend;
+        if (k >= line.size()) break;
+        const double rise = line[k].semis >= (k > 0 ? line[k - 1].semis : 0.0f) ? 1.0 : -1.0;
+        const double up = static_cast<double>(g.start.y - m.y) / 120.0;  // 120 px: the whole range, as in automation clips
+        // Up raises the curve's middle: a straight segment or an ease in bends towards a fast
+        // start, an ease out gets stronger, a smooth one steeper.
+        const uint8_t c = line[k].curve;
+        const double d = c == bend::Smooth ? up : c == bend::EaseOut ? up * rise : -up * rise;
+        const float ten = static_cast<float>(std::clamp(std::round((g.bendV + d) * 100.0) / 100.0, -1.0, 1.0));
+        std::vector<Note> ns = g.base;
+        ns[ni].bend[k].tension = ten;
+        for (size_t j : bendTargets(ni)) ns[j].bend = ns[ni].bend;
+        if (ns != notes) commit(a, patId, chId, ns, g.sel, "bend curve", g.key);
+        char b[128];
+        std::snprintf(b, sizeof b, i18n::tr("%s, curve amount %+.0f%%"), i18n::tr(bendCurveName(c)), static_cast<double>(ten) * 100.0);
+        a.setHint(std::string(b) + "   " + i18n::tr("(double-click the ring: a straight ramp again)"));
+        break;
+      }
       case Gesture::Detune: {  // fine pitch of the selection follows the vertical drag
         const float dy = g.start.y - m.y;
         const int cents = static_cast<int>(std::lround(dy * (io.KeyShift ? 1.0f : 5.0f)));
@@ -1253,6 +1873,44 @@ void drawPianoRoll(App& a) {
     dl->AddCircleFilled(pb, 3.0f, lc, 10);
     dl->PopClipRect();
   }
+  if (bendTool) {  // K-25: the value of the point being dragged or hovered, in a pill beside it
+    int ni = -1, curveOf = -1;  // curveOf (K-28): the curve handle shown (point index), -1 = a point's value
+    double bt = 0, bv = 0;
+    if (g.kind == Gesture::Bend && active && g.moved) ni = g.anchor, bt = g.bendT, bv = g.bendV;
+    else if (g.kind == Gesture::BendCurve && active) ni = g.anchor, curveOf = g.bendPt;
+    else if (bendHover.kind == BendHit::Handle && g.kind == Gesture::None) ni = bendHover.note, curveOf = bendHover.point;
+    else if (bendHover.kind == BendHit::Point && g.kind == Gesture::None) {
+      ni = bendHover.note;
+      const BendPoint& bp = notes[static_cast<size_t>(ni)].bend[static_cast<size_t>(bendHover.point)];
+      bt = bp.tick, bv = bp.semis;
+    }
+    if (ni >= 0 && static_cast<size_t>(ni) < notes.size() &&
+        (curveOf < 0 || static_cast<size_t>(curveOf) < notes[static_cast<size_t>(ni)].bend.size())) {
+      const Note& n = notes[static_cast<size_t>(ni)];
+      ImVec2 q(xOf(n.start) + static_cast<float>(bt) * st.pxPerTick, yOf(n.pitch) + rowH * 0.5f - static_cast<float>(bv) * rowH);
+      std::string tip = bendText(n.pitch, bv);
+      if (curveOf >= 0) {  // K-28: the segment's shape and curve amount, beside its handle
+        const BendPoint& bp = n.bend[static_cast<size_t>(curveOf)];
+        if (!bendHandle(n, static_cast<size_t>(curveOf), xOf(n.start), yOf(n.pitch) + rowH * 0.5f, st.pxPerTick, rowH, q))
+          q = ImVec2(xOf(n.start) + bp.tick * st.pxPerTick, yOf(n.pitch) + rowH * 0.5f - bp.semis * rowH);
+        char b[96];
+        std::snprintf(b, sizeof b, "%s %+.0f%%", i18n::tr(bendCurveName(bp.curve)), static_cast<double>(bp.tension) * 100.0);
+        tip = b;
+      }
+      const float fs = theme::kFontLabel;
+      const ImVec2 ts = a.fontMono->CalcTextSizeA(fs, 1e9f, 0, tip.c_str());
+      const float w = std::round(ts.x + 12), h = std::round(fs + 8);
+      float x = std::round(q.x + 10), y = std::round(q.y - h - 8);
+      if (x + w > gridMax.x - 4) x = std::round(q.x - 10 - w);
+      if (y < gridMin.y + 4) y = std::round(q.y + 10);
+      dl->PushClipRect(gridMin, gridMax, true);
+      dl->AddRectFilled(ImVec2(x + 1, y + 2), ImVec2(x + w + 1, y + h + 2), theme::withAlpha(P.ink, 0.25f), theme::kRadius);  // soft drop
+      dl->AddRectFilled(ImVec2(x, y), ImVec2(x + w, y + h), theme::popupBg(P), theme::kRadius);
+      dl->AddRect(ImVec2(x, y), ImVec2(x + w, y + h), P.lineStrong, theme::kRadius);
+      dl->AddText(a.fontMono, fs, ImVec2(x + 6, y + 4), P.text, tip.c_str());
+      dl->PopClipRect();
+    }
+  }
   if (ImGui::IsItemDeactivated()) {
     if (g.kind == Gesture::Play)
       for (int p : g.playing) a.engine.noteOff(chId, p);
@@ -1279,6 +1937,7 @@ void drawPianoRoll(App& a) {
           left.length = cut - n.start;
           right.start = cut;
           right.length = n.start + n.length - cut;
+          if (!n.bend.empty()) bend::split(n, cut - n.start, left, right);  // K-25: each part keeps its piece of the line
           ns.push_back(left);
           ns.push_back(right);
           changed = true;
@@ -1293,6 +1952,9 @@ void drawPianoRoll(App& a) {
     }
     if (g.grouped) a.doc.endGroup();
     a.doc.endGesture();
+    // K-29: the history state a bend drag left (a double-click whose first click moved undoes it)
+    if ((g.kind == Gesture::Bend || g.kind == Gesture::BendCurve) && g.moved && bendClick.valid && a.doc.history().stateSerial() != bendClick.press)
+      bendClick.serial = a.doc.history().stateSerial();
     previewOff(a, chId);
     g = Gesture{};
   }
@@ -1305,11 +1967,89 @@ void drawPianoRoll(App& a) {
     ImGui::EndPopup();
   }
 
+  // K-28: a bend point's menu (right-click a point or its curve handle): the shape of the glide
+  // into the point, each with a drawing of it, its curve amount, removing the point. The line on
+  // the canvas follows every change as it is made. Menu choices are one undo step each, a drag of
+  // the curve amount one step.
+  if (ImGui::BeginPopup("##bendpoint")) {
+    const std::vector<Note> curNotes = rollNotes(a, patId, chId);
+    const std::vector<Note>* cns = curNotes.empty() ? nullptr : &curNotes;
+    const bool ok = cns && bendMenuNote >= 0 && static_cast<size_t>(bendMenuNote) < cns->size() && bendMenuPoint >= 0 &&
+                    static_cast<size_t>(bendMenuPoint) < (*cns)[static_cast<size_t>(bendMenuNote)].bend.size();
+    if (!ok) {
+      ImGui::CloseCurrentPopup();
+    } else {
+      const size_t ni = static_cast<size_t>(bendMenuNote), k = static_cast<size_t>(bendMenuPoint);
+      const Note& n = (*cns)[ni];
+      const BendPoint bp = n.bend[k];
+      auto edit = [&](const char* label, uint64_t key, auto fn) {
+        std::vector<Note> ns = *cns;
+        fn(ns[ni].bend[k]);
+        bend::normalize(ns[ni].bend);
+        for (size_t j : bendTargets(ni)) ns[j].bend = ns[ni].bend;
+        commit(a, patId, chId, ns, selVector(a, ns.size()), label, key);
+      };
+      ImGui::PushFont(a.fontMono, 0.0f);
+      ImGui::TextDisabled("%s", bendText(n.pitch, bp.semis).c_str());
+      ImGui::PopFont();
+      ImGui::Separator();
+      ImGui::TextDisabled("%s", i18n::tr("Glide into this point"));
+      float labelW = 0;
+      for (const auto& c : kBendCurves) labelW = std::max(labelW, ImGui::CalcTextSize(i18n::tr(c.name)).x);
+      int id = 0;
+      for (const auto& c : kBendCurves) {
+        const bool on = c.curve == bp.curve;
+        char sid[16];
+        std::snprintf(sid, sizeof sid, "##curve%d", id++);
+        if (curveMenuItem(sid, i18n::tr(c.name), c.curve, on ? bp.tension : 0.0f, on, labelW) && !on)
+          edit("pitch bend curve", 0, [&](BendPoint& p) { p.curve = c.curve, p.tension = 0; });
+      }
+      const bool hold = std::fabs(bp.semis - (k > 0 ? n.bend[k - 1].semis : 0.0f)) < 1e-4f;
+      ImGui::BeginDisabled(bp.curve == bend::Step || hold);
+      float pct = bp.tension * 100.0f;
+      // A drag field (no slider grab over the text): drag sideways, or Ctrl+click to type.
+      ImGui::SetNextItemWidth(std::max(ImGui::GetContentRegionAvail().x, std::round(ImGui::GetFontSize() * 2.9f + labelW + 4.0f)));
+      if (bendMenuKey == 0) bendMenuKey = 0x4B28000000000000ull ^ (gestureCounter++ << 8);
+      if (ImGui::DragFloat("##bendtension", &pct, 1.0f, -100.0f, 100.0f, i18n::tr("Curve amount %+.0f%%"), ImGuiSliderFlags_AlwaysClamp))
+        edit("bend curve", bendMenuKey, [&](BendPoint& p) { p.tension = std::clamp(std::round(pct) / 100.0f, -1.0f, 1.0f); });
+      if (ImGui::IsItemDeactivatedAfterEdit()) {
+        a.doc.endGesture();
+        bendMenuKey = 0;
+      }
+      ui::Hint(bp.curve == bend::Step ? "A step holds, then jumps: it has no curve" : hold ? "The line holds here: there is no glide to shape"
+                                                                                          : "Bends the glide (drag the ring on the line the same way)");
+      ImGui::EndDisabled();
+      if (ImGui::MenuItem(i18n::tr("Reset curve amount"), nullptr, false, bp.tension != 0.0f))
+        edit("reset pitch bend curve", 0, [](BendPoint& p) { p.tension = 0; });
+      // K-29: the whole curve back to a straight ramp (what a double-click on the glide does)
+      if (ImGui::MenuItem(i18n::tr("Reset the curve (straight)"), i18n::tr("double-click the glide"), false, bp.curve != bend::Straight || bp.tension != 0.0f))
+        edit("reset pitch bend curve", 0, [](BendPoint& p) { p.curve = bend::Straight, p.tension = 0; });
+      ImGui::Separator();
+      if (ImGui::MenuItem(i18n::tr("Remove point"), i18n::tr("double-click"))) {
+        std::vector<Note> ns = *cns;
+        bend::removePoint(ns[ni].bend, k);
+        for (size_t j : bendTargets(ni)) ns[j].bend = ns[ni].bend;
+        commit(a, patId, chId, ns, selVector(a, ns.size()), "remove pitch bend point", 0);
+      }
+      if (ImGui::MenuItem(i18n::tr("Reset the note's bend"), i18n::tr("double-click the note"))) {
+        std::vector<Note> ns = *cns;
+        ns[ni].bend.clear();
+        for (size_t j : bendTargets(ni)) ns[j].bend.clear();
+        commit(a, patId, chId, ns, selVector(a, ns.size()), "reset pitch bend", 0);
+      }
+    }
+    ImGui::EndPopup();
+  } else if (bendMenuNote >= 0) {
+    bendMenuNote = bendMenuPoint = -1;
+    if (bendMenuKey) a.doc.endGesture();
+    bendMenuKey = 0;
+  }
+
   // Note properties popup.
   if (ImGui::BeginPopup("##noteprops")) {
-    const auto* cur = a.doc.song().pattern(patId);
-    if (cur && cur->notes.count(chId) && propsNote >= 0 && static_cast<size_t>(propsNote) < cur->notes.at(chId).size()) {
-      Note n = cur->notes.at(chId)[static_cast<size_t>(propsNote)];
+    const std::vector<Note> curNotes = rollNotes(a, patId, chId);  // K-22: step notes too
+    if (propsNote >= 0 && static_cast<size_t>(propsNote) < curNotes.size()) {
+      Note n = curNotes[static_cast<size_t>(propsNote)];
       Note orig = n;
       ImGui::PushFont(a.fontBold, 0.0f);
       ImGui::Text(i18n::tr("Note %s"), noteName(n.pitch).c_str());
@@ -1356,7 +2096,7 @@ void drawPianoRoll(App& a) {
       n.slide = slide;
       n.porta = porta;
       if (!(n == orig)) {
-        std::vector<Note> ns = cur->notes.at(chId);
+        std::vector<Note> ns = curNotes;
         std::vector<bool> sel(ns.size(), false);
         ns[static_cast<size_t>(propsNote)] = n;
         sel[static_cast<size_t>(propsNote)] = true;
@@ -1370,6 +2110,32 @@ void drawPianoRoll(App& a) {
   } else if (propsNote >= 0) {
     propsNote = -1;
     a.doc.endGesture();
+  }
+
+  // K-22: while the channel's rack steps show here as notes, a quiet chip in the grid's top right
+  // corner says so; the first edit moves them into the piano roll (one undo step).
+  if (rackSteps && gridW > 220 && gridH > 60) {
+    const char* label = i18n::tr("Rack steps");
+    const float fs = theme::kFontLabel;
+    const ImVec2 ts = a.fontMono->CalcTextSizeA(fs, 1e9f, 0, label);
+    const float cell = std::round(fs * 0.5f), gap = std::max(2.0f, std::round(fs * 0.18f));
+    const float glyphW = cell * 3 + gap * 2;
+    const float h = std::round(fs + 10), w = std::round(glyphW + ts.x + 26);
+    const float x = std::round(gridMax.x - w - 10), y = std::round(gridMin.y + 8);
+    const bool over = hovered && io.MousePos.x >= x && io.MousePos.x < x + w && io.MousePos.y >= y && io.MousePos.y < y + h;
+    dl->PushClipRect(gridMin, gridMax, true);
+    dl->AddRectFilled(ImVec2(x + 1, y + 2), ImVec2(x + w + 1, y + h + 2), theme::withAlpha(P.ink, 0.22f), theme::kRadius);
+    dl->AddRectFilled(ImVec2(x, y), ImVec2(x + w, y + h), theme::withAlpha(theme::popupBg(P), over ? 1.0f : 0.92f), theme::kRadius);
+    dl->AddRect(ImVec2(x, y), ImVec2(x + w, y + h), over ? P.lineStrong : P.line, theme::kRadius);
+    const ImU32 lit = theme::mix(noteCol, P.paper, P.dark ? 0.15f : 0.0f);
+    for (int k = 0; k < 3; ++k) {  // three rack step buttons, the middle one off
+      const float gx = x + 9 + static_cast<float>(k) * (cell + gap), gy = std::round(y + (h - cell) * 0.5f);
+      if (k == 1) dl->AddRect(ImVec2(gx, gy), ImVec2(gx + cell, gy + cell), theme::withAlpha(P.textDim, 0.8f), 1.5f);
+      else dl->AddRectFilled(ImVec2(gx, gy), ImVec2(gx + cell, gy + cell), lit, 1.5f);
+    }
+    dl->AddText(a.fontMono, fs, ImVec2(std::round(x + 9 + glyphW + 8), std::round(y + (h - ts.y) * 0.5f)), over ? P.text : P.textDim, label);
+    dl->PopClipRect();
+    if (over) a.setHint(i18n::tr("The channel's rack steps show as notes: moving, resizing or editing one turns them into piano roll notes (one undo step)"));
   }
 
   // ---------------- keyboard shortcuts (window focused) ----------------
@@ -1443,6 +2209,7 @@ void drawPianoRoll(App& a) {
       if (keys::pressed("piano.toolPlay")) st.tool = Tool::Play;
       if (keys::pressed("piano.toolZoom")) st.tool = Tool::Zoom;
       if (keys::pressed("piano.toolDetune")) st.tool = Tool::Detune;
+      if (keys::pressed("piano.toolBend")) st.tool = Tool::Bend;  // K-25
     }
   }
   ui::EndDockWindow();

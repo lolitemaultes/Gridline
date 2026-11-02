@@ -416,7 +416,10 @@ class AudioEngine {
   void liveOff(const Program* p, const ProgChannel& ch, uint32_t id);
   // Sequenced note start with the channel's note settings (cut groups, mono,
   // porta, polyphony) and slide notes. `at` = absolute start sample.
-  void startNote(const Program* p, const ProgChannel& ch, const NoteEv& e, int offset, int64_t at, double spt);
+  // `shift`: ticks added to the event's times (live clips play content ticks from their origin).
+  void startNote(const Program* p, const ProgChannel& ch, const NoteEv& e, int offset, int64_t at, double spt, Tick shift = 0);
+  // K-25: every sounding note with a bend line follows it to the end of block samples [from, to).
+  void applyBends(const Program* p, int from, int to);
   void cutPending(const ProgChannel& ch, int index, int offset);  // cuts and forgets pending note `index`
   void runNoteFx(const Program* p, int n);  // note processor chains for this block
   // Internal controller links + automation (`eventTick`: J-210, where lanes of

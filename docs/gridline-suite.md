@@ -57,7 +57,7 @@ Identifiers come from the plugin type `gl.<name>` alone, never from the suite, s
 
 ## Members
 
-119 plugins: 51 instruments and 68 effects. The CLAP id is `org.gridline.suite.` followed by the type without `gl.`; the VST3 class id ends in the hash shown; the Audio Unit is `aumu` (instruments), `aufx` or `aumf` (effects that take MIDI) with the subtype shown and manufacturer `GrLn`. Effects also have Mix and Bypass besides the parameters counted here.
+120 plugins: 51 instruments and 69 effects. The CLAP id is `org.gridline.suite.` followed by the type without `gl.`; the VST3 class id ends in the hash shown; the Audio Unit is `aumu` (instruments), `aufx` or `aumf` (effects that take MIDI) with the subtype shown and manufacturer `GrLn`. Effects also have Mix and Bypass besides the parameters counted here.
 
 ### Instruments
 
@@ -111,7 +111,7 @@ Identifiers come from the plugin type `gl.<name>` alone, never from the suite, s
 | Grain Scanner | `gl.grainscan` | Sampler | `42FB5F62` | `ehjo` | 23 | 4 |  |
 | Spline Scratch | `gl.splinescratch` | Sampler | `10B6BE51` | `ng3f` | 8 | 3 |  |
 | Seltmann | `gl.seltmann` | Sampler | `A19C8FCA` | `mtkg` | 21 | 6 |  |
-| Turntable | `gl.turntable` | Sampler | `A2221311` | `xz8n` | 21 | 5 |  |
+| Turntable (old) | `gl.turntable` | Sampler | `A2221311` | `xz8n` | 21 | 5 | kept for old projects |
 | Platter | `gl.platter` | Sampler | `74A19BB4` | `q8wc` | 74 | 6 | Takes MIDI from DJ controllers |
 | Plasma | `gl.plasma` | Synth | `F95755DE` | `cw2s` | 2216 | 24 |  |
 
@@ -157,7 +157,8 @@ Identifiers come from the plugin type `gl.<name>` alone, never from the suite, s
 | Cipher | `gl.vocoder` | Spectral | `3E0875BC` | `oxh8` | 64 | 6 | sidechain, MIDI in |
 | Pitch Shifter | `gl.pitch` | Spectral | `CE5B40E6` | `y10a` | 23 | 6 |  |
 | Plumb | `gl.pitcher` | Spectral | `25320011` | `j2sp` | 61 | 6 | MIDI in |
-| Turntable FX | `gl.scratcher` | Spectral | `F6DC4F1D` | `v6zh` | 13 | 5 |  |
+| Turntable FX (old) | `gl.scratcher` | Spectral | `F6DC4F1D` | `v6zh` | 13 | 5 | kept for old projects |
+| Turntable | `gl.turntablefx` | Misc | `662E72D7` | `ztci` | 18 | 5 |  |
 | Stereo Spread | `gl.spread` | Spectral | `5CA9EDFF` | `xuiv` | 18 | 6 |  |
 | Hit Repeater | `gl.hitloop` | Delay & reverb | `5E1CF78B` | `ft5w` | 28 | 4 | sidechain |
 | Crest | `gl.master` | Dynamics | `BD005956` | `ksx9` | 293 | 6 |  |

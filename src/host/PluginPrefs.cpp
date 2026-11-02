@@ -54,6 +54,14 @@ void save(const Store& s) {
   Json j = Json::makeObject();
   j.object["version"] = Json::makeNumber(1);
   j.object["extraFolders"] = strings(s.prefs.extraFolders);
+  if (!s.prefs.formatFolders.empty()) {
+    Json ff = Json::makeObject();
+    for (const auto& [k, v] : s.prefs.formatFolders)
+      if (!v.empty()) ff.object[k] = strings(v);
+    j.object["formatFolders"] = std::move(ff);
+  }
+  if (!s.prefs.disabledFolders.empty()) j.object["disabledFolders"] = strings(s.prefs.disabledFolders);
+  if (!s.prefs.noDefaultFolders.empty()) j.object["noDefaultFolders"] = strings(s.prefs.noDefaultFolders);
   j.object["disabledFormats"] = strings(s.prefs.disabledFormats);
   j.object["sandbox"] = strings(s.prefs.sandbox);
   j.object["favourites"] = strings(s.prefs.favourites);
@@ -82,18 +90,23 @@ void save(const Store& s) {
 }
 }  // namespace
 
-void loadPluginPrefs(const std::string& configDir) {
-  Store& s = store();
-  std::lock_guard<std::mutex> g(s.lock);
-  s.file = configDir.empty() ? std::string() : configDir + "/plugin-manager.json";
+namespace {
+void readFile(Store& s, const std::string& file) {
   s.prefs = PluginPrefs{};
-  std::ifstream f(s.file, std::ios::binary);
+  std::ifstream f(file, std::ios::binary);
   if (f) {
     std::stringstream ss;
     ss << f.rdbuf();
     Json j;
     if (jsonParse(ss.str(), j) && j.is(Json::Type::Object)) {
       s.prefs.extraFolders = readStrings(j, "extraFolders");
+      if (const Json* ff = j.find("formatFolders"); ff && ff->is(Json::Type::Object))
+        for (const auto& [k, v] : ff->object)
+          if (v.is(Json::Type::Array))
+            for (const auto& x : v.array)
+              if (x.is(Json::Type::String) && !x.str.empty()) s.prefs.formatFolders[k].push_back(x.str);
+      for (auto& x : readStrings(j, "disabledFolders")) s.prefs.disabledFolders.insert(x);
+      for (auto& x : readStrings(j, "noDefaultFolders")) s.prefs.noDefaultFolders.insert(x);
       for (auto& x : readStrings(j, "disabledFormats")) s.prefs.disabledFormats.insert(x);
       for (auto& x : readStrings(j, "sandbox")) s.prefs.sandbox.insert(x);
       for (auto& x : readStrings(j, "favourites")) s.prefs.favourites.insert(x);
@@ -117,7 +130,29 @@ void loadPluginPrefs(const std::string& configDir) {
       s.prefs.browserAllFormats = readBool(j, "browserAllFormats", false);
     }
   }
+}
+}  // namespace
+
+void loadPluginPrefs(const std::string& configDir) {
+  Store& s = store();
+  std::lock_guard<std::mutex> g(s.lock);
+  s.file = configDir.empty() ? std::string() : configDir + "/plugin-manager.json";
+  readFile(s, s.file);
   ++s.generation;
+}
+
+void loadPluginPrefsFile(const std::string& file) {
+  Store& s = store();
+  std::lock_guard<std::mutex> g(s.lock);
+  s.file.clear();  // read only: a child process never writes the parent's settings
+  readFile(s, file);
+  ++s.generation;
+}
+
+std::string pluginPrefsFile() {
+  Store& s = store();
+  std::lock_guard<std::mutex> g(s.lock);
+  return s.file;
 }
 
 PluginPrefs pluginPrefs() {
@@ -179,5 +214,19 @@ void setHostOptions(const std::string& type, const HostOptions& o) {
 }
 
 uint64_t pluginPrefsGeneration() { return store().generation.load(); }
+
+bool isFavourite(const std::string& type) {
+  Store& s = store();
+  std::lock_guard<std::mutex> g(s.lock);
+  return s.prefs.favourites.count(type) > 0;
+}
+
+bool setFavourite(const std::string& type, bool on) {
+  if (type.empty()) return false;
+  PluginPrefs p = pluginPrefs();
+  const bool changed = on ? p.favourites.insert(type).second : p.favourites.erase(type) > 0;
+  if (changed) setPluginPrefs(p);
+  return changed;
+}
 
 }  // namespace gl::host

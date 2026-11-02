@@ -43,7 +43,8 @@ const Rule kRules[] = {
     {"gl.vocoder", "Hold"},             // ... hold (freeze) the carrier: a gesture
     {"gl.timegate", "Hold"},            // Shuttle: the free-run hold
     {"gl.hitloop", "Hold loops"},       // Hit Repeater: hold the loop
-    {"gl.scratcher", "Hold platter"},   // Turntable: hand on the platter
+    {"gl.scratcher", "Hold platter"},   // Turntable FX (old): hand on the platter
+    {"gl.turntablefx", "Hold"},         // Turntable: the hand on the record (a gesture)
     {"gl.arp", "Latch"},                // Arpeggiator: latch (held keys)
     {"gl.edison", "Loop playback"},     // Loupe: its own playback loops
     {"gl.analyzer", "Peak hold"},       // displays

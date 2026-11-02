@@ -35,6 +35,8 @@ void drawPianoRoll(App& a);
 struct PianoLaneGeometry {
   float x0 = 0, pxPerTick = 0, yTop = 0, yBottom = 0;
   bool valid = false;
+  float pitchY0 = 0, rowH = 0;  // K-20: the note grid: pitch p's row starts at pitchY0 + (127 - p) * rowH
+  int preview = -1;  // K-21: the key the mouse is sounding (-1: none)
 };
 const PianoLaneGeometry& pianoLaneGeometry();
 void drawPlaylist(App& a);
@@ -67,6 +69,12 @@ struct PlaylistGeometry {
   // track a dragged plugin would land on (-1 = none this frame).
   float plusX = 0, plusY = 0;
   int dropTrack = -1;
+  int renaming = -1;  // the track whose name field is open (-1: none)
+  // K-24: the scrollers' thumbs (vertical: screen y of its top / bottom end; horizontal: x of its
+  // left / right end) and the bars' centre lines (vertical: x, horizontal: y), the vertical
+  // scroll, the base track height and the grid's rectangle (screen).
+  float vThumb0 = 0, vThumb1 = 0, hThumb0 = 0, hThumb1 = 0, vBarX = 0, hBarY = 0;
+  float scrollY = 0, trackHeight = 0, gridX0 = 0, gridY0 = 0, gridY1 = 0;
   bool valid = false;
 };
 const PlaylistGeometry& playlistGeometry();
@@ -128,6 +136,9 @@ int settingsTabFlags(App& a, int index);
 // Context menu bodies (call between BeginPopup/EndPopup) — ContextMenus.cpp.
 void channelContextMenu(App& a, ObjectId channel);
 void rackOptionsMenu(App& a);      // channel rack menu: selection ops, sorting, colours
+// K-4: "Auto scrolling" menu item: the playlist's (ui.autoScroll) or, with `pattern`, the piano
+// roll's and channel rack's (ui.autoScrollPattern).
+void autoScrollItem(App& a, bool pattern);
 void addChannelMenu(App& a);       // instruments by category
 void patternContextMenu(App& a, ObjectId pattern);
 // J-82 (Playlist.cpp): playlist picker source menus and deleting sources.

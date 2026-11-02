@@ -58,6 +58,10 @@ App::App() {
     freshInstall_ = !fs::exists(Settings::defaultPath(), ec);
   }
   settings.load(Settings::defaultPath(), &err);
+  {  // K-24: the playlist's vertical zoom as it was left
+    const double h = settings.getNumber("ui.playlistTrackHeight");
+    if (std::isfinite(h)) playlist.trackHeight = static_cast<float>(std::clamp(h, 24.0, 120.0));
+  }
   BackupPolicy pol;
   pol.frequency = static_cast<BackupFrequency>(static_cast<int>(settings.getNumber("backup.frequency")));
   pol.maxCount = static_cast<int>(settings.getNumber("backup.maxCount"));

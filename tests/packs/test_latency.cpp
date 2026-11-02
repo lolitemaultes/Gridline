@@ -258,6 +258,16 @@ void zeroLatency() {
                          "gl.hall",      "gl.transplit", "gl.stereomatrix", "gl.patcherfx"};
   for (const char* t : types) {
     PluginState s = st(t);
+    // K-2: the frequency shifter now starts fully wet in its HQ type (FL's
+    // defaults); the Hilbert all-pass pair and the HQ type's IIR half-band
+    // resampler spread an impulse (phase, not latency), so the check runs on the
+    // former defaults (standard type, half wet), where the dry impulse marks the timing.
+    if (std::string(t) == "gl.freqshift")
+      if (const PluginInfo* p = findPlugin(t))
+        for (size_t i = 0; i < p->params.size(); ++i) {
+          if (p->params[i].name == "Dry / wet") s.params[i] = 0.5f;
+          if (p->params[i].name == "Type") s.params[i] = 0.f;
+        }
     for (double sr : {44100.0, 48000.0}) {
       const int lat = reported(s, sr), lag = impulseLag(s, sr, 0);
       char name[160];

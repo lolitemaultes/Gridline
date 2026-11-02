@@ -1,0 +1,303 @@
+name: Packaging
+
+# K-1: the files for each distribution channel (packaging/, docs/packaging.md) are checked here.
+#   - every push and pull request that touches them: templates render, manifests parse and match
+#     their published schemas, the AppStream metadata and desktop entry validate;
+#   - the same, plus real builds (Flatpak with flatpak-builder and Flathub's linter, the AUR source
+#     package with makepkg and namcap, the COPR spec with rpmbuild, the FreeBSD port, the snap), on
+#     "Run workflow", on a version tag and every Monday.
+# Nothing is published or submitted: the release workflow writes the filled-in files for a release
+# as the workflow artifact "packaging-<version>" and the user submits them (docs/packaging.md).
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths:
+      - "packaging/**"
+      - "assets/linux/**"
+      - "tools/release/**"
+      - "tools/windows/gridline.iss"
+      - "CMakeLists.txt"
+      - ".github/workflows/packaging.yml"
+  pull_request:
+    paths:
+      - "packaging/**"
+      - "assets/linux/**"
+      - "tools/release/**"
+      - "tools/windows/gridline.iss"
+      - "CMakeLists.txt"
+      - ".github/workflows/packaging.yml"
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      builds:
+        description: "Also build the packages (Flatpak, AUR, COPR, FreeBSD port, snap)"
+        type: boolean
+        default: true
+
+concurrency:
+  group: packaging-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GRIDLINE_NO_PLUGIN_SCAN: "1"
+  GRIDLINE_NO_UPDATE_CHECK: "1"
+
+jobs:
+  lint:
+    name: Manifests, metadata, schemas
+    runs-on: ubuntu-latest
+    outputs:
+      builds: ${{ steps.b.outputs.builds }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: b
+        name: Real builds in this run?
+        run: |
+          b=false
+          case "${{ github.event_name }}" in
+            schedule) b=true ;;
+            workflow_dispatch) b="${{ inputs.builds }}" ;;
+            push) if [ "${GITHUB_REF_TYPE}" = "tag" ]; then b=true; fi ;;
+          esac
+          echo "builds=$b" >> "$GITHUB_OUTPUT"
+      - name: Tools
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q desktop-file-utils libxml2-utils
+          python3 -m pip install --quiet --user pyyaml jsonschema
+      - name: Schemas
+        run: |
+          mkdir -p schemas
+          curl -fsSL -o schemas/flatpak-manifest.schema.json https://raw.githubusercontent.com/flatpak/flatpak-builder/main/data/flatpak-manifest.schema.json
+          curl -fsSL -o schemas/snapcraft.json https://raw.githubusercontent.com/canonical/snapcraft/main/schema/snapcraft.json
+          curl -fsSL -o schemas/scoop.schema.json https://raw.githubusercontent.com/ScoopInstaller/Scoop/master/schema.json
+          w=https://raw.githubusercontent.com/microsoft/winget-cli/master/schemas/JSON/manifests/v1.10.0
+          curl -fsSL -o schemas/winget.version.json "$w/manifest.version.1.10.0.json"
+          curl -fsSL -o schemas/winget.installer.json "$w/manifest.installer.1.10.0.json"
+          curl -fsSL -o schemas/winget.defaultLocale.json "$w/manifest.defaultLocale.1.10.0.json"
+      - name: Render and check every channel's files
+        run: |
+          python3 packaging/render.py --out rendered --fake-sums
+          python3 packaging/check.py --schemas schemas --rendered rendered
+      - name: Desktop entry and file type
+        run: |
+          desktop-file-validate assets/linux/gridline.desktop
+          xmllint --noout assets/linux/gridline.xml packaging/chocolatey/gridline.nuspec.in
+      - name: AppStream metadata (appstreamcli; errors fail)
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w fedora:latest sh -c \
+            'dnf install -y -q appstream > /dev/null && appstreamcli validate --no-net --explain assets/linux/com.lolitemaultes.Gridline.metainfo.xml'
+      - name: AppStream metadata, strict (warnings and pedantic hints, for Flathub's review)
+        continue-on-error: true
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w fedora:latest sh -c \
+            'dnf install -y -q appstream > /dev/null && appstreamcli validate --strict --pedantic --no-net --explain assets/linux/com.lolitemaultes.Gridline.metainfo.xml'
+
+  flatpak:
+    name: Flatpak ${{ matrix.arch }}
+    needs: lint
+    if: needs.lint.outputs.builds == 'true'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-26.08
+      options: --privileged
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64, runner: ubuntu-24.04 }
+          - { arch: aarch64, runner: ubuntu-24.04-arm }
+    env:
+      MANIFEST: packaging/flatpak/com.lolitemaultes.Gridline.yml
+      APP: com.lolitemaultes.Gridline
+    steps:
+      - uses: actions/checkout@v4
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          manifest-path: ${{ env.MANIFEST }}
+          bundle: Gridline-${{ matrix.arch }}.flatpak
+          arch: ${{ matrix.arch }}
+          cache-key: flatpak-builder-${{ matrix.arch }}-${{ hashFiles('packaging/flatpak/**') }}
+          mirror-screenshots-url: https://dl.flathub.org/media
+          upload-artifact: true
+          artifact-name: gridline-flatpak-${{ matrix.arch }}
+      - name: The programs run inside the sandbox
+        run: |
+          eval "$(bash tools/release/version.sh)"
+          out="$(flatpak-builder --run flatpak_app "$MANIFEST" gridline --version)"
+          echo "$out"; test "$out" = "Gridline $full"
+          flatpak-builder --run flatpak_app "$MANIFEST" /app/share/gridline/tools/ffmpeg -hide_banner -version | head -1
+          flatpak-builder --run flatpak_app "$MANIFEST" /app/share/gridline/tools/yt-dlp --version
+          test "$(cat flatpak_app/files/share/gridline/tools/yt-dlp.version)" = "$(flatpak-builder --run flatpak_app "$MANIFEST" /app/share/gridline/tools/yt-dlp --version)"
+          flatpak-builder --run flatpak_app "$MANIFEST" gridline suite status || true
+      - name: Exported desktop entry, icons, file type and metadata
+        run: |
+          e=flatpak_app/export/share
+          command -v desktop-file-validate > /dev/null || dnf install -y -q desktop-file-utils
+          desktop-file-validate "$e/applications/$APP.desktop"
+          grep -x "Icon=$APP" "$e/applications/$APP.desktop"
+          grep -x "StartupWMClass=$APP" "$e/applications/$APP.desktop"
+          test -f "$e/icons/hicolor/scalable/apps/$APP.svg"
+          test -f "$e/icons/hicolor/256x256/apps/$APP.png"
+          test -f "$e/mime/packages/$APP.xml"
+          grep -q "<launchable type=\"desktop-id\">$APP.desktop</launchable>" "flatpak_app/files/share/metainfo/$APP.metainfo.xml"
+          if find flatpak_app/files/lib -name "*.vst3" -o -name "*.clap" | grep -q .; then echo "plugins in the Flatpak"; exit 1; fi
+      - name: Flathub's linter (the Flathub manifest and the built repository)
+        run: |
+          flatpak remote-add --if-not-exists --user flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y --noninteractive flathub org.flatpak.Builder
+          command -v python3 > /dev/null || dnf install -y -q python3
+          python3 packaging/render.py --out rendered --fake-sums --commit "$GITHUB_SHA"
+          flatpak run --command=flatpak-builder-lint org.flatpak.Builder manifest "rendered/flathub/$APP.yml"
+          flatpak run --command=flatpak-builder-lint org.flatpak.Builder repo repo
+
+  aur:
+    name: AUR (Arch Linux)
+    needs: lint
+    if: needs.lint.outputs.builds == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    container: archlinux:latest
+    steps:
+      - name: Tools
+        run: pacman -Syu --noconfirm --needed base-devel git namcap python
+      - uses: actions/checkout@v4
+      - name: Source archive and the filled-in PKGBUILDs
+        run: |
+          git config --global --add safe.directory "$PWD"
+          eval "$(bash tools/release/version.sh)"
+          mkdir -p dist
+          git archive --format=tar.gz --prefix="Gridline-$full/" -o "dist/Gridline-$full-source.tar.gz" HEAD
+          python3 packaging/render.py --out rendered --fake-sums --dist dist
+          useradd -m builder
+          cp "dist/Gridline-$full-source.tar.gz" rendered/aur/gridline/
+          chown -R builder rendered
+      - name: .SRCINFO matches makepkg --printsrcinfo
+        run: |
+          for p in gridline gridline-bin; do
+            (cd "rendered/aur/$p" && su builder -c "makepkg --printsrcinfo" > .SRCINFO.makepkg)
+            diff <(sort "rendered/aur/$p/.SRCINFO") <(sort "rendered/aur/$p/.SRCINFO.makepkg")
+          done
+      - name: namcap (PKGBUILDs)
+        run: namcap rendered/aur/gridline/PKGBUILD rendered/aur/gridline-bin/PKGBUILD
+      - name: Build the source package
+        run: |
+          pacman -S --noconfirm --needed alsa-lib curl hicolor-icon-theme jack2 libgl libx11 sdl2 cmake ninja
+          cd rendered/aur/gridline && su builder -c "makepkg --noconfirm --nodeps"
+      - name: namcap (package) and the installed program
+        run: |
+          pkg="$(ls rendered/aur/gridline/gridline-*.pkg.tar.zst | grep -v debug | head -1)"
+          namcap "$pkg"
+          pacman -U --noconfirm "$pkg"
+          eval "$(bash tools/release/version.sh)"
+          test "$(gridline --version)" = "Gridline $full"
+          bash tools/ci/check-linux-icons.sh /usr
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aur-srcinfo
+          path: rendered/aur/*/.SRCINFO.makepkg
+
+  copr:
+    name: COPR spec (Fedora)
+    needs: lint
+    if: needs.lint.outputs.builds == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    container: fedora:latest
+    steps:
+      - name: Tools
+        run: dnf install -y -q rpm-build rpmlint git python3
+      - uses: actions/checkout@v4
+      - name: Build the rpm from the source archive
+        run: |
+          git config --global --add safe.directory "$PWD"
+          eval "$(bash tools/release/version.sh)"
+          mkdir -p ~/rpmbuild/SOURCES dist
+          git archive --format=tar.gz --prefix="Gridline-$full/" -o "dist/Gridline-$full-source.tar.gz" HEAD
+          cp "dist/Gridline-$full-source.tar.gz" ~/rpmbuild/SOURCES/
+          python3 packaging/render.py --out rendered --fake-sums --dist dist
+          rpmlint rendered/copr/gridline.spec || true
+          rpmspec -q --buildrequires rendered/copr/gridline.spec | xargs -d '\n' dnf install -y -q
+          rpmbuild -ba rendered/copr/gridline.spec
+          rpm -qpl ~/rpmbuild/RPMS/*/gridline-*.rpm | grep -q /usr/bin/gridline-app
+          dnf install -y -q ~/rpmbuild/RPMS/*/gridline-[0-9]*.rpm
+          test "$(gridline --version)" = "Gridline $full"
+
+  freebsd:
+    name: FreeBSD port
+    needs: lint
+    if: needs.lint.outputs.builds == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - name: Source archive and the filled-in port
+        run: |
+          eval "$(bash tools/release/version.sh)"
+          mkdir -p dist
+          git archive --format=tar.gz --prefix="Gridline-$full/" -o "dist/Gridline-$full-source.tar.gz" HEAD
+          python3 packaging/render.py --out rendered --fake-sums --dist dist
+      - uses: vmactions/freebsd-vm@v1
+        with:
+          release: "14.3"
+          usesh: true
+          mem: 8192
+          prepare: pkg install -y git portlint bash
+          run: |
+            set -e
+            git clone --depth 1 https://git.FreeBSD.org/ports.git /usr/ports
+            cp -R rendered/freebsd/audio/gridline /usr/ports/audio/gridline
+            mkdir -p /usr/ports/distfiles && cp dist/Gridline-*-source.tar.gz /usr/ports/distfiles/
+            cd /usr/ports/audio/gridline
+            portlint -AC
+            make BATCH=yes install-missing-packages
+            make BATCH=yes stage
+            make BATCH=yes check-plist
+            make BATCH=yes package
+            ls -l work/pkg
+
+  snap:
+    name: Snap
+    needs: lint
+    if: needs.lint.outputs.builds == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - run: mkdir -p snap && cp packaging/snap/snapcraft.yaml snap/
+      - uses: snapcore/action-build@v1
+        id: snap
+      - name: The snap installs and runs
+        run: |
+          sudo snap install --dangerous "${{ steps.snap.outputs.snap }}"
+          eval "$(bash tools/release/version.sh)"
+          test "$(gridline.cli --version)" = "Gridline $full"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gridline-snap
+          path: ${{ steps.snap.outputs.snap }}
+
+  windows:
+    name: Windows package managers
+    needs: lint
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - name: Render
+        run: python packaging/render.py --out rendered --fake-sums
+      - name: Chocolatey package builds
+        run: |
+          Push-Location rendered/chocolatey/gridline
+          choco pack gridline.nuspec --outputdirectory ..
+          Pop-Location
+          Get-ChildItem rendered/chocolatey/*.nupkg
+      - name: Package manager manifests validate (when the client is installed)
+        run: |
+          $v = (Get-ChildItem rendered/winget/manifests/g/Gridline/Gridline | Select-Object -First 1).FullName
+          $client = Get-Command ("win" + "get") -ErrorAction SilentlyContinue
+          if ($client) { & $client.Source validate --manifest $v } else { Write-Output "client not on this runner: the schema check in the lint job covers the manifests" }

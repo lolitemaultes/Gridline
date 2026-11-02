@@ -1,7 +1,9 @@
 # Gridline — J-212: the transport's Stop button, clicked with the transport already stopped (a
 # second click, or the second half of a double-click), puts the song and pattern position back at
 # the beginning and clears the set position; the first click still returns to the set position.
-# Real SDL clicks on the top bar's Stop button (hidden, isolated config).
+# Real SDL clicks on the top bar's Stop button (hidden, isolated config). After each Play click the
+# script waits on the app's own signals (the transport playing, then moved past the set position)
+# instead of counting frames, so a loaded machine whose audio starts late still passes.
 #   cmake -DAPP=<gridline-app> -DOUT=<dir> -P j212_stop_to_start.cmake
 cmake_minimum_required(VERSION 3.16)  # the project's policies, also under CMake 3.x (CMP0054: a quoted "keep" is that string, never a variable)
 file(REMOVE_RECURSE "${OUT}")
@@ -15,6 +17,8 @@ set(script "5 toasts clear
 10 sdlat play
 12 sdldown 0
 13 sdlup 0
+14 waitfor transport-playing 60
+15 waitfor transport-moved 60
 40 transport
 42 sdlat stop
 44 sdldown 0
@@ -27,6 +31,8 @@ set(script "5 toasts clear
 57 sdlat play
 59 sdldown 0
 60 sdlup 0
+61 forget transport-playing
+62 waitfor transport-playing 60
 85 transport
 87 sdlat stop
 89 sdldown 0
@@ -43,7 +49,7 @@ set(script "5 toasts clear
 file(WRITE "${OUT}/click.txt" "${script}")
 execute_process(COMMAND "${APP}" --hidden --no-ui-sounds --size 1600x900 --frames 108
                         --screenshot "${OUT}/s.ppm" --dev-input "${OUT}/click.txt"
-                RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 200)
+                RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 400)
 file(WRITE "${OUT}/run.log" "${out}")
 if(NOT rc EQUAL 0)
   message(FATAL_ERROR "gridline-app failed (${rc}): ${err}")

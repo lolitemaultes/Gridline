@@ -1,0 +1,8 @@
+Gridline is a free, open source music workstation built around patterns.
+Sketch beats in the channel rack, write melodies and chords in the piano
+roll, arrange patterns, audio and automation in the playlist and mix
+everything on a full mixer with built-in instruments and effects.
+
+It hosts VST3, CLAP, VST2 and LV2 plugins, runs as a VST3 and CLAP plugin
+itself (the Gridline Suite brings its instruments and effects to other
+hosts) and supports live collaboration over the network.

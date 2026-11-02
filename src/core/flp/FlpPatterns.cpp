@@ -7,7 +7,7 @@
 //   (low 4 bits; +128 = imported from MIDI), u8 pan (0..128, 64 = centre),
 //   u8 velocity (0..128, 100 default; the MIDI velocity: kept as is, 128 → 127), u8 mod X,
 //   u8 mod Y (0..255, 128 = neutral).
-// Notes of length 0 were entered in the step sequencer.
+// Notes of length 0 were entered in the step sequencer (K-22: they import as step notes).
 #include <algorithm>
 #include <cmath>
 #include "Flp.h"
@@ -63,6 +63,7 @@ void importPatterns(Context& c) {
         n.start = c.tick(pos);
         if (len == 0) ++steps;  // step-sequencer note: plays one step
         n.length = len == 0 ? stepLen : std::max<Tick>(1, c.tick(len));
+        n.step = len == 0;  // K-22: a step note (plays as a rack step: the step swing, one step long)
         n.pitch = std::clamp(key, 0, 127);
         n.velocity = velocity127(vel);
         n.pan = std::clamp(pan - 64, -kNotePanMax, kNotePanMax);

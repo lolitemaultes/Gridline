@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include "FlpEncode.h"
+#include "FlpFx.h"
 #include "../PluginParams.h"
 #include "../../packs/spacefx/spacefx.h"
 
@@ -61,8 +62,31 @@ Encoder reeverb2() {
     w.u8(0);      // mid/side input
     return w.b;
   };
+  // K-2: the full model version is Gridline's (older states keep version 1); FL
+  // renders as version 2, which is what the decoder sets.
+  // The hall / plate mirrors of a full-model instance follow its knobs (the UI
+  // edits the knobs only), as the decoder writes them.
+  e.strip = [](PluginState& s) {
+    if (s.params.size() <= static_cast<size_t>(RvbFRev) || std::lround(s.params[static_cast<size_t>(RvbModel)]) != 2) return;
+    s.params[static_cast<size_t>(RvbFRev)] = 1;
+    fx::reeverb2Mirrors(s);
+  };
+  // K-2: a changed instance whose origin has an older layout (version 10000,
+  // or the unversioned presets the plugin reads one knob late) is rewritten in
+  // the current layout, starting from the values the plugin read from it.
+  e.write = [](const PluginState&, Bytes& b, const EncodeContext&) {
+    const fx::Reeverb2Knobs r = fx::reeverb2Read(b.data(), b.size());
+    if (r.current) return;
+    ByteWriter w;
+    w.u32(kRv2Version);
+    for (int k : r.knob) w.i32(k);
+    w.u8(r.tempo ? 1 : 0);
+    w.u8(r.midSide ? 1 : 0);
+    b = w.b;
+  };
   e.fields = [](const Bytes& b) {
-    // Older states (version 10000 / none) are read with 13 knobs; written as found.
+    // The current layout (write() converts older ones); version 10000 states that
+    // are written verbatim never reach the solver.
     const uint32_t ver = getU32(b, 0);
     const bool versioned = ver == 10000 || ver == 10001;
     const size_t base = versioned ? 4 : 0;

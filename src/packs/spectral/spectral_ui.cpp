@@ -1840,7 +1840,7 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
   else if (ty == "gl.pitch") editorPitch(a, t, width);
   else if (ty == "gl.pitcher") editorPitcher(a, t, width);
   else if (ty == "gl.scratcher") editorScratcher(a, t, width);
-  else if (ty == "gl.turntable") editorTurntable(a, t, width);
+  else if (ty == "gl.turntable" || ty == "gl.turntablefx") editorTurntable(a, t, width);  // K-23: the effect and the 0.7.1 instrument
   else if (ty == "gl.splitter") editorSplitter(a, t, width);
   else if (ty == "gl.spread") editorSpread(a, t, width);
   else return false;

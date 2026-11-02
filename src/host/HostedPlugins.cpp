@@ -7,6 +7,7 @@
 #include <mutex>
 #include <thread>
 #include "../engine/AudioEngine.h"
+#include "PluginFolders.h"
 #include "PluginPrefs.h"
 #include "sandbox/Sandbox.h"
 
@@ -133,6 +134,23 @@ void setChildExecutable(const std::string& exe) {
 std::string childExecutable() {
   std::lock_guard<std::mutex> g(gExeLock);
   return gChildExe.empty() ? selfExecutablePath() : gChildExe;
+}
+
+// K-13: an entry left the search folders (folder removed or switched off, plugin deleted): its
+// classes leave the list. Projects that use them keep the plugin's state (a placeholder).
+static void unregisterEntry(const std::string& format, const std::string& bundle) {
+  bool any = false;
+  {
+    std::lock_guard<std::mutex> g(gClassLock);
+    for (auto it = classMap().begin(); it != classMap().end();)
+      if (it->second->format == format && it->second->bundle == bundle) {
+        it = classMap().erase(it);
+        any = true;
+      } else {
+        ++it;
+      }
+  }
+  if (any) ++gGeneration;
 }
 
 void registerScanResult(const ScanResult& r) {
@@ -1123,6 +1141,7 @@ struct Service {
   std::thread worker;
   std::atomic<bool> cancel{false};  // J-103: quit: the running scan stops after killing its child
   bool closed = false;              // J-103: after shutdownScan() no scan starts any more
+  bool pending = false;             // K-13: scan again when the running one is done (requestScan)
 };
 Service& service() {
   static auto* s = new Service;  // never destroyed (shutdownScan() joins the worker before main returns)
@@ -1138,17 +1157,13 @@ int countClasses() {
   return static_cast<int>(classMap().size());
 }
 
-// Entries of every enabled format: default folders + user folders.
+// Entries of every enabled format in its search folders (K-13: PluginFolders.h).
 std::vector<std::pair<std::string, std::string>> discoverAll() {
   PluginPrefs prefs = pluginPrefs();
   std::vector<std::pair<std::string, std::string>> out;
   for (const Format& f : formats()) {
     if (prefs.disabledFormats.count(f.id)) continue;
-    std::vector<std::string> folders = f.defaultPaths();
-    if (std::strcmp(f.id, "au") != 0)
-      for (const auto& x : prefs.extraFolders)
-        if (std::find(folders.begin(), folders.end(), x) == folders.end()) folders.push_back(x);
-    for (auto& e : f.discover(folders)) out.push_back({f.id, e});
+    for (auto& e : discoverFormat(f, prefs)) out.push_back({f.id, e});
   }
   return out;
 }
@@ -1178,6 +1193,63 @@ void initHosting(const std::string& configDir) {
   s.status.generation = gGeneration.load();
 }
 
+namespace {
+// One scan over the search folders: entries that are new or changed (every entry when forced)
+// are scanned; entries no longer found leave the cache and the class list.
+void scanPass(Service& sv, const std::string& exe, bool force) {
+  std::vector<std::pair<std::string, std::string>> found = discoverAll();
+  std::vector<std::pair<std::string, std::string>> todo;
+  {
+    std::lock_guard<std::mutex> g2(sv.lock);
+    for (const Format& f : formats()) {
+      std::vector<std::string> mine;
+      for (const auto& [fid, e] : found)
+        if (fid == f.id) mine.push_back(e);
+      for (auto& e : force ? mine : sv.cache.stale(mine, f.id)) todo.push_back({f.id, e});
+    }
+    // Forget entries that were removed (or whose folder or format was switched off).
+    std::vector<std::pair<std::string, std::string>> gone;
+    for (const auto& e : sv.cache.entries())
+      if (std::find(found.begin(), found.end(), std::make_pair(e.format, e.bundle)) == found.end()) gone.push_back({e.format, e.bundle});
+    for (const auto& [fid, b] : gone) {
+      sv.cache.remove(b, fid);
+      unregisterEntry(fid, b);
+    }
+    sv.status.done = 0;
+    sv.status.total = static_cast<int>(todo.size());
+    sv.status.classes = countClasses();
+    sv.status.failed = countFailed(sv.cache);
+    sv.status.generation = gGeneration.load();
+  }
+  for (const auto& [fid, e] : todo) {
+    if (sv.cancel.load()) break;  // J-103: quitting (the rest is scanned at the next start)
+    {
+      std::lock_guard<std::mutex> g2(sv.lock);
+      sv.status.current = e;
+    }
+    ScanResult r = scanIsolated(exe, fid, e, 60, &sv.cancel);
+    if (sv.cancel.load()) break;  // a cancelled scan is not a result: never cached
+    finishEntry(sv, std::move(r));
+    std::lock_guard<std::mutex> g2(sv.lock);
+    ++sv.status.done;
+  }
+}
+// K-13: a scan asked for while another ran (search folders changed): run it now.
+bool takePending(Service& sv) {
+  std::lock_guard<std::mutex> g2(sv.lock);
+  const bool p = sv.pending && !sv.cancel.load();
+  sv.pending = false;
+  return p;
+}
+void endWorker(Service& sv) {
+  std::lock_guard<std::mutex> g2(sv.lock);
+  sv.cache.save();
+  sv.status.current.clear();
+  sv.status.running = false;
+  sv.status.generation = gGeneration.load();
+}
+}  // namespace
+
 void startScan(const std::string& exe, bool force) {
   Service& s = service();
   std::lock_guard<std::mutex> g(s.lock);
@@ -1185,43 +1257,26 @@ void startScan(const std::string& exe, bool force) {
   if (s.worker.joinable()) s.worker.join();
   s.status.running = true;
   s.status.done = s.status.total = 0;
+  s.pending = false;
   s.worker = std::thread([exe, force]() {
     Service& sv = service();
-    std::vector<std::pair<std::string, std::string>> found = discoverAll();
-    std::vector<std::pair<std::string, std::string>> todo;
-    {
-      std::lock_guard<std::mutex> g2(sv.lock);
-      for (const Format& f : formats()) {
-        std::vector<std::string> mine;
-        for (const auto& [fid, e] : found)
-          if (fid == f.id) mine.push_back(e);
-        for (auto& e : force ? mine : sv.cache.stale(mine, f.id)) todo.push_back({f.id, e});
-      }
-      // Forget entries that were removed (or whose format was switched off).
-      std::vector<std::pair<std::string, std::string>> gone;
-      for (const auto& e : sv.cache.entries())
-        if (std::find(found.begin(), found.end(), std::make_pair(e.format, e.bundle)) == found.end()) gone.push_back({e.format, e.bundle});
-      for (const auto& [fid, b] : gone) sv.cache.remove(b, fid);
-      sv.status.total = static_cast<int>(todo.size());
-    }
-    for (const auto& [fid, e] : todo) {
-      if (sv.cancel.load()) break;  // J-103: quitting (the rest is scanned at the next start)
-      {
-        std::lock_guard<std::mutex> g2(sv.lock);
-        sv.status.current = e;
-      }
-      ScanResult r = scanIsolated(exe, fid, e, 60, &sv.cancel);
-      if (sv.cancel.load()) break;  // a cancelled scan is not a result: never cached
-      finishEntry(sv, std::move(r));
-      std::lock_guard<std::mutex> g2(sv.lock);
-      ++sv.status.done;
-    }
-    std::lock_guard<std::mutex> g2(sv.lock);
-    sv.cache.save();
-    sv.status.current.clear();
-    sv.status.running = false;
-    sv.status.generation = gGeneration.load();
+    scanPass(sv, exe, force);
+    while (takePending(sv)) scanPass(sv, exe, false);
+    endWorker(sv);
   });
+}
+
+void requestScan(const std::string& exe) {
+  Service& s = service();
+  {
+    std::lock_guard<std::mutex> g(s.lock);
+    if (s.closed || exe.empty()) return;
+    if (s.status.running) {
+      s.pending = true;  // the running worker scans again when it is done
+      return;
+    }
+  }
+  startScan(exe, false);
 }
 
 void rescanEntry(const std::string& exe, const std::string& format, const std::string& entry) { rescanEntries(exe, {{format, entry}}); }
@@ -1234,6 +1289,7 @@ void rescanEntries(const std::string& exe, const std::vector<std::pair<std::stri
   s.status.running = true;
   s.status.done = 0;
   s.status.total = static_cast<int>(entries.size());
+  s.pending = false;
   s.worker = std::thread([exe, entries]() {
     Service& sv = service();
     for (const auto& [format, entry] : entries) {
@@ -1248,10 +1304,23 @@ void rescanEntries(const std::string& exe, const std::vector<std::pair<std::stri
       std::lock_guard<std::mutex> g2(sv.lock);
       ++sv.status.done;
     }
-    std::lock_guard<std::mutex> g2(sv.lock);
-    sv.status.current.clear();
-    sv.status.running = false;
+    while (takePending(sv)) scanPass(sv, exe, false);
+    endWorker(sv);
   });
+}
+
+std::vector<std::pair<std::string, std::string>> discoverPluginEntries() { return discoverAll(); }
+
+void rescanFolder(const std::string& exe, const std::string& format, const std::string& folder) {
+  const Format* f = findFormat(format);
+  if (!f || !folderSearchApplies(format)) return;
+  std::vector<std::pair<std::string, std::string>> entries;
+  for (auto& e : f->discover({folder})) entries.push_back({format, std::move(e)});
+  if (entries.empty()) {
+    requestScan(exe);  // nothing (left) in it: a pass still drops what was found there before
+    return;
+  }
+  rescanEntries(exe, entries);
 }
 
 uint64_t hostedClassesGeneration() { return gGeneration.load(); }

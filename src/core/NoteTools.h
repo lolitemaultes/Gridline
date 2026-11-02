@@ -267,7 +267,7 @@ const char* stepLaneName(StepLane l);
 double stepLaneNorm(uint8_t vel, const StepProps& p, StepLane l);
 void setStepLaneNorm(uint8_t& vel, StepProps& p, StepLane l, double v);
 // Converts a channel's steps to piano-roll notes (pitch, properties and shift
-// kept) and back. notesToSteps keeps notes that do not fit the step grid
+// kept) and back (convertStepsToNotes below makes K-22 step notes: core/StepNotes.h). notesToSteps keeps notes that do not fit the step grid
 // (returned in `rest`).
 std::vector<Note> stepsToNotes(const StepRow& row, const StepPropRow& props, Tick stepTicks, int defaultPitch = 60);
 void notesToSteps(const std::vector<Note>& notes, Tick stepTicks, int total, StepRow& row, StepPropRow& props,
@@ -289,7 +289,9 @@ bool convertNotesToSteps(Document& d, ObjectId pattern, ObjectId channel);
 // A new pattern holding the channels' data from `pattern` (moved when `move`). Returns its id.
 ObjectId channelsToNewPattern(Document& d, ObjectId pattern, const std::vector<ObjectId>& channels, bool move);
 bool renameChannelGroup(Document& d, int group, const std::string& name);
-// Copies (or moves) notes of one channel to another in the same pattern.
+// Copies (or moves) notes of one channel to another in the same pattern. `notes` + `keep` are the
+// piano roll's list (K-22: its rack steps as step notes among them): a move leaves `from` with
+// `keep` and no steps.
 bool sendNotesToChannel(Document& d, ObjectId pattern, ObjectId from, ObjectId to, const std::vector<Note>& notes, bool move,
                         const std::vector<Note>& keep);
 

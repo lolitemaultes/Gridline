@@ -19,6 +19,7 @@
 #include "../core/PatternAutomation.h"
 #include "../core/PluginParams.h"
 #include "../core/ProjectInterop.h"
+#include "../core/StepNotes.h"
 #include "../engine/NoteFxBurn.h"
 #include "App.h"
 #include "AutomationEditor.h"
@@ -323,8 +324,7 @@ void pianoEditItems(App& a) {
   }
   if (ImGui::MenuItem(i18n::tr("Save the notes as a MIDI file..."), nullptr, false, ok)) {
     const Pattern* pat = a.doc.song().pattern(a.curPattern);
-    std::vector<Note> notes;
-    if (auto it = pat->notes.find(a.selChannel); it != pat->notes.end()) notes = it->second;
+    std::vector<Note> notes = stepnotes::view(a.doc.song(), *pat, a.selChannel);  // K-22: rack steps too
     const int ppq = a.doc.song().ppq;
     const double bpm = a.doc.song().tempo;
     fileDialog(a, "Save notes as a MIDI file", true, {".mid"}, pat->name + ".mid", [&a, notes, ppq, bpm](const std::string& path) {
@@ -381,7 +381,7 @@ void pianoViewItems(App& a) {
   ops::NoteSel sel;
   if (ok) {
     const Pattern* p = a.doc.song().pattern(a.curPattern);
-    if (auto it = p->notes.find(a.selChannel); it != p->notes.end()) notes = it->second;
+    notes = stepnotes::view(a.doc.song(), *p, a.selChannel);  // K-22: the piano roll's list (selection indices)
     sel.assign(notes.size(), false);
     if (a.piano.selPattern == a.curPattern && a.piano.selChannel == a.selChannel)
       for (size_t i : a.piano.selected)

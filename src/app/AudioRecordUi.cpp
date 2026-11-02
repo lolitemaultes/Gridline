@@ -4,6 +4,7 @@
 #include "J31Ui.h"
 #include "LiveTakes.h"
 #include "AudioRecordUi.h"
+#include "AsioUi.h"
 #include "ChopUi.h"
 #include "ClipMultiUi.h"
 #include "StemsUi.h"
@@ -608,29 +609,34 @@ void audioInputSettings(App& a, float fieldW) {
   auto label = [](const char* t) { ui::FormLabelFit(i18n::tr(t), 168.0f, pal().textDim); };
   Settings& st = a.settings;
   // J-54: drawn inside the settings section "INPUT & RECORDING" (no second caption).
-  label("Input device");
-  const char* cur = a.audioInputDevice.empty() ? "None" : a.audioInputDevice == "*" ? "System default" : a.audioInputDevice.c_str();
-  if (ui::BeginCombo("##indev", cur, fieldW)) {
-    auto pick = [&](const std::string& d) {
-      a.audioInputDevice = d;
-      st.set("audio.inputDevice", d);
-      a.audioReopen = true;
-    };
-    if (ImGui::Selectable(i18n::tr("None"), a.audioInputDevice.empty())) pick("");
-    if (ImGui::Selectable(i18n::tr("System default"), a.audioInputDevice == "*")) pick("*");
-    for (const auto& d : a.audioInputDevices)
-      if (ImGui::Selectable(d.c_str(), d == a.audioInputDevice)) pick(d);
-    ImGui::EndCombo();
-  }
-  ui::Hint("Device that mixer track inputs record from (the mixer's INPUT selector picks the channels)");
-  label("Input channels");
-  const int chans[] = {1, 2, 4, 8};
-  const int curCh = static_cast<int>(st.getNumber("audio.inputChannels"));
-  for (int c : chans) {
-    if (c != chans[0]) ImGui::SameLine(0, theme::kS1);
-    if (ui::TextButton(std::to_string(c).c_str(), curCh == c)) {
-      st.set("audio.inputChannels", c);
-      a.audioReopen = true;
+  if (asioui::inputsFromDriver(a)) {  // K-6: the ASIO driver's inputs feed the mixer
+    label("Input device");
+    ImGui::TextColored(theme::vec(P.textDim), i18n::tr("%s, %d inputs (ASIO CHANNELS above)"), a.asio.driver.c_str(), a.asio.inputs);
+  } else {
+    label("Input device");
+    const char* cur = a.audioInputDevice.empty() ? "None" : a.audioInputDevice == "*" ? "System default" : a.audioInputDevice.c_str();
+    if (ui::BeginCombo("##indev", cur, fieldW)) {
+      auto pick = [&](const std::string& d) {
+        a.audioInputDevice = d;
+        st.set("audio.inputDevice", d);
+        a.audioReopen = true;
+      };
+      if (ImGui::Selectable(i18n::tr("None"), a.audioInputDevice.empty())) pick("");
+      if (ImGui::Selectable(i18n::tr("System default"), a.audioInputDevice == "*")) pick("*");
+      for (const auto& d : a.audioInputDevices)
+        if (ImGui::Selectable(d.c_str(), d == a.audioInputDevice)) pick(d);
+      ImGui::EndCombo();
+    }
+    ui::Hint("Device that mixer track inputs record from (the mixer's INPUT selector picks the channels)");
+    label("Input channels");
+    const int chans[] = {1, 2, 4, 8};
+    const int curCh = static_cast<int>(st.getNumber("audio.inputChannels"));
+    for (int c : chans) {
+      if (c != chans[0]) ImGui::SameLine(0, theme::kS1);
+      if (ui::TextButton(std::to_string(c).c_str(), curCh == c)) {
+        st.set("audio.inputChannels", c);
+        a.audioReopen = true;
+      }
     }
   }
   const double sr = std::max(1.0, a.engine.sampleRate());

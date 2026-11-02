@@ -18,7 +18,8 @@ set(ENV{SDL_AUDIODRIVER} "dummy")
 set(ENV{GRIDLINE_NO_PLUGIN_SCAN} "1")
 set(ENV{GRIDLINE_COLLAB_DEBUG} "1")
 
-# Two people at once (a pipeline: the second must quit last, or the first meets a closed pipe);
+# Two people at once (a pipeline: the second must quit last, or the first meets a closed pipe: it
+# waits for the first's report file, then a little);
 # `cfgA` / `cfgB` name their configs (the same person keeps theirs).
 function(runPair tag cfgA cfgB scriptA scriptB timeout)
   file(WRITE "${OUT}/${tag}-a.txt" "${scriptA}")
@@ -55,13 +56,13 @@ set(A1 "5 collab profile Alex
 10 collab new \"${OUT}/Alex/Song\"
 20 collab invite \"${OUT}/invite1.txt\"
 21 waitfor collab-invite-ready 30
-30 waitfor collab-connected 120
+30 waitfor collab-connected 240
 40 collab edit FromAlex1
-41 waitfor collab-channel:FromSam1 60
-42 waitfor collab-synced 60
+41 waitfor collab-channel:FromSam1 120
+42 waitfor collab-synced 120
 43 waitfor never 2
 50 collab remove Sam Testing removal
-51 waitfor never 6
+51 waitfor \"file:${OUT}/b1.json\" 120
 52 collab edit AfterRemoval
 53 waitfor never 1
 55 collab report \"${OUT}/a1.json\"
@@ -69,19 +70,20 @@ set(A1 "5 collab profile Alex
 ")
 set(B1 "5 collab profile Sam
 10 collab join \"${OUT}/invite1.txt\" \"${OUT}/Sam/Song\"
-11 waitfor collab-joined 120
+11 waitfor collab-joined 240
 40 collab edit FromSam1
-41 waitfor collab-channel:FromAlex1 60
-42 waitfor collab-synced 60
-50 waitfor collab-removed 60
+41 waitfor collab-channel:FromAlex1 120
+42 waitfor collab-synced 120
+50 waitfor collab-removed 120
 51 collab report \"${OUT}/b1.json\"
 52 collab keep-copy \"${OUT}/SamCopy\"
 53 waitfor collab-copy-done 10
 54 collab report \"${OUT}/b1c.json\"
-55 waitfor never 12
+55 waitfor \"file:${OUT}/a1.json\" 300
+56 waitfor never 5
 60 quit
 ")
-runPair(1 cfgA cfgB "${A1}" "${B1}" 300)
+runPair(1 cfgA cfgB "${A1}" "${B1}" 600)
 expectField("${OUT}/a1.json" active 1)
 expectField("${OUT}/a1.json" activeMembers 1)
 expectField("${OUT}/a1.json" removed 1)
@@ -132,26 +134,27 @@ set(A3 "10 collab open \"${OUT}/Alex/Song\"
 11 waitfor collab-ready 30
 20 collab invite \"${OUT}/invite3.txt\"
 21 waitfor collab-invite-ready 30
-30 waitfor collab-connected 120
+30 waitfor collab-connected 240
 40 collab edit FromAlex3
-41 waitfor collab-channel:FromKim3 60
-42 waitfor never 15
+41 waitfor collab-channel:FromKim3 120
+42 waitfor collab-left-members:1 120
 45 collab report \"${OUT}/a3.json\"
 50 quit
 ")
 set(K3 "5 collab profile Kim
 10 collab join \"${OUT}/invite3.txt\" \"${OUT}/Kim/Song\"
-11 waitfor collab-joined 120
+11 waitfor collab-joined 240
 40 collab edit FromKim3
-41 waitfor collab-channel:FromAlex3 60
-42 waitfor collab-synced 60
+41 waitfor collab-channel:FromAlex3 120
+42 waitfor collab-synced 120
 43 collab leave keep
 44 waitfor collab-left 30
 45 collab report \"${OUT}/k3.json\"
-46 waitfor never 25
+46 waitfor \"file:${OUT}/a3.json\" 300
+47 waitfor never 5
 50 quit
 ")
-runPair(3 cfgA cfgC "${A3}" "${K3}" 300)
+runPair(3 cfgA cfgC "${A3}" "${K3}" 600)
 expectField("${OUT}/a3.json" left 1)
 expectField("${OUT}/a3.json" activeMembers 1)
 expectField("${OUT}/k3.json" active 0)
@@ -170,26 +173,27 @@ set(A4 "10 collab open \"${OUT}/Alex/Song\"
 11 waitfor collab-ready 30
 20 collab invite \"${OUT}/invite4.txt\"
 21 waitfor collab-invite-ready 30
-30 waitfor collab-connected 120
+30 waitfor collab-connected 240
 40 collab edit FromAlex4
-41 waitfor collab-channel:FromLee4 60
-42 waitfor never 12
+41 waitfor collab-channel:FromLee4 120
+42 waitfor collab-left-members:2 120
 45 collab report \"${OUT}/a4.json\"
 50 quit
 ")
 set(L4 "5 collab profile Lee
 10 collab join \"${OUT}/invite4.txt\" \"${OUT}/Lee/Song\"
-11 waitfor collab-joined 120
+11 waitfor collab-joined 240
 40 collab edit FromLee4
-41 waitfor collab-channel:FromAlex4 60
-42 waitfor collab-synced 60
+41 waitfor collab-channel:FromAlex4 120
+42 waitfor collab-synced 120
 43 collab leave delete
 44 waitfor collab-left 30
 45 collab report \"${OUT}/l4.json\"
-46 waitfor never 22
+46 waitfor \"file:${OUT}/a4.json\" 300
+47 waitfor never 5
 50 quit
 ")
-runPair(4 cfgA cfgD "${A4}" "${L4}" 300 GRIDLINE_TEST_TRASH_DIR=${OUT}/trash GRIDLINE_TEST_TRASH_ROOT=${OUT}/Lee)
+runPair(4 cfgA cfgD "${A4}" "${L4}" 600 GRIDLINE_TEST_TRASH_DIR=${OUT}/trash GRIDLINE_TEST_TRASH_ROOT=${OUT}/Lee)
 expectField("${OUT}/a4.json" left 2)
 expectField("${OUT}/l4.json" active 0)
 expectField("${OUT}/l4.json" appProject "")

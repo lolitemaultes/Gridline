@@ -14,6 +14,7 @@
 #include "../../third_party/imgui/imgui_impl_opengl3.h"
 #include "../../third_party/imgui/imgui_internal.h"
 #include "../core/I18n.h"
+#include "AppIcon.h"
 #include "../core/WindowPlacement.h"
 #include "../host/ui/NativeView.h"
 #include "App.h"
@@ -188,6 +189,7 @@ void wCreate(ImGuiViewport* vp) {
   S.ours.insert(SDL_GetWindowID(w));
   const ImGuiWindow* win = static_cast<ImGuiViewportP*>(vp)->Window;
   if (!win || shortLived(win)) return;
+  appicon::apply(w);  // K-14: the title bar / switcher icon of a detached window
   // A detached window: decorated by the OS (its title bar moves it, its edges resize it).
   if (win->Flags & ImGuiWindowFlags_AlwaysAutoResize) {
     SDL_SetWindowResizable(w, SDL_FALSE);  // fixed-size editors stay fixed

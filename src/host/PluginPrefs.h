@@ -2,6 +2,7 @@
 // per-plugin "Run in sandbox", favourites and user categories. Stored in
 // <config>/plugin-manager.json. Thread-safe.
 #pragma once
+#include <algorithm>
 #include <map>
 #include <cstdint>
 #include <set>
@@ -41,6 +42,12 @@ struct HostOptions {
 
 struct PluginPrefs {
   std::vector<std::string> extraFolders;      // searched for every file-based format
+  // K-13: search folders per format (PluginFolders.h). The user's own folders of each format id,
+  // in the order added; folders switched off ("<format id>|<path>", "*|<path>" for an
+  // extraFolders entry); formats whose Default entry (the OS's standard folders) is switched off.
+  std::map<std::string, std::vector<std::string>> formatFolders;
+  std::set<std::string> disabledFolders;
+  std::set<std::string> noDefaultFolders;
   std::set<std::string> disabledFormats;      // format ids not scanned / not listed ("vst2", …)
   std::set<std::string> sandbox;              // hosted types that run in a child process
   std::set<std::string> favourites;           // plugin types (hosted or built-in)
@@ -53,7 +60,8 @@ struct PluginPrefs {
   std::set<std::string> preferTypes;
   bool browserAllFormats = false;
   bool operator==(const PluginPrefs& o) const {
-    return extraFolders == o.extraFolders && disabledFormats == o.disabledFormats && sandbox == o.sandbox && favourites == o.favourites &&
+    return extraFolders == o.extraFolders && formatFolders == o.formatFolders && disabledFolders == o.disabledFolders &&
+           noDefaultFolders == o.noDefaultFolders && disabledFormats == o.disabledFormats && sandbox == o.sandbox && favourites == o.favourites &&
            categories == o.categories && options == o.options && preferredFormat == o.preferredFormat && preferTypes == o.preferTypes &&
            browserAllFormats == o.browserAllFormats;
   }
@@ -61,6 +69,10 @@ struct PluginPrefs {
 
 // Loads <configDir>/plugin-manager.json (missing file: defaults).
 void loadPluginPrefs(const std::string& configDir);
+// K-13: child processes (scanner, sandbox): the parent's settings file, read only (never saved).
+void loadPluginPrefsFile(const std::string& file);
+// The settings file ("" before loadPluginPrefs), handed to child processes as --plugin-prefs <file>.
+std::string pluginPrefsFile();
 PluginPrefs pluginPrefs();
 // Replaces the settings and saves them (when a config dir is known).
 void setPluginPrefs(const PluginPrefs& p);
@@ -74,5 +86,15 @@ HostOptions hostOptions(const std::string& type);
 void setHostOptions(const std::string& type, const HostOptions& o);
 // Increments whenever the settings change.
 uint64_t pluginPrefsGeneration();
+
+// K-16: the user's favourite plugins (types, built-in or hosted; one list per user,
+// saved with the settings). setFavourite returns false when nothing changed.
+bool isFavourite(const std::string& type);
+bool setFavourite(const std::string& type, bool on);
+// Favourites first, each part in its own order (stable). `typeOf(item)` gives the type.
+template <class T, class TypeOf>
+void favouritesFirst(std::vector<T>& items, const std::set<std::string>& favourites, TypeOf typeOf) {
+  std::stable_partition(items.begin(), items.end(), [&](const T& x) { return favourites.count(typeOf(x)) > 0; });
+}
 
 }  // namespace gl::host

@@ -492,6 +492,7 @@ int main() {
     PluginState bass = stateOf("gl.spread");
     set(bass, sp::SrModel, 0);
     set(bass, sp::SrSpread, 0);
+    set(bass, sp::SrBassMono, 1);  // K-2: off in new instances (FL default)
     auto fx4 = createEffect("gl.spread");
     Buf lb(static_cast<size_t>(kSr));
     for (size_t i = 0; i < lb.size(); ++i) {

@@ -5,6 +5,7 @@
 #include <iterator>
 #include <map>
 #include "Automation.h"
+#include "NoteBend.h"
 #include "Params.h"
 #include "PatternAutomation.h"
 
@@ -340,6 +341,43 @@ struct Collector {
 
   bool wanted(ObjectId ch) const { return o.channels.empty() || o.channels.count(ch); }
 
+  // K-25: the pitch bend range a channel's track announces (RPN 0): its widest note bend, at least
+  // the General MIDI default of 2 semitones.
+  std::map<ObjectId, int> bendRange;
+  int rangeFor(ObjectId ch) {
+    if (auto it = bendRange.find(ch); it != bendRange.end()) return it->second;
+    double widest = 2.0;
+    for (const auto& p : s.patterns)
+      if (auto it = p.notes.find(ch); it != p.notes.end())
+        for (const auto& n : it->second)
+          for (const auto& b : n.bend) widest = std::max(widest, std::fabs(static_cast<double>(b.semis)));
+    return bendRange[ch] = std::clamp(static_cast<int>(std::ceil(widest - 1e-6)), 2, 127);
+  }
+  // A bent note's line as pitch bend messages: sampled every 1/96 beat along it (MIDI has no
+  // ramps; K-29: every tick at 96 PPQ, so steep curves keep their shape) and exactly at its
+  // points, sent when the value changes, centred at the note's end.
+  // Overlapping bent notes on one track share the channel's bend (a MIDI limitation).
+  void addBend(MidiTrack& tr, ObjectId ch, const Note& n, Tick at, Tick len) {
+    const double range = rangeFor(ch);
+    const Tick fine = std::max<Tick>(1, s.ppq / 96);
+    std::vector<double> ticks;
+    for (Tick t = 0; t < len; t += fine) ticks.push_back(static_cast<double>(t));
+    for (const auto& b : n.bend)
+      if (b.tick < static_cast<float>(len)) {
+        ticks.push_back(std::floor(static_cast<double>(b.tick)));
+        if (std::ceil(static_cast<double>(b.tick)) < static_cast<double>(len)) ticks.push_back(std::ceil(static_cast<double>(b.tick)));  // K-29: a step between ticks
+      }
+    std::sort(ticks.begin(), ticks.end());
+    int last = -1;
+    for (double t : ticks) {
+      const int v = std::clamp(8192 + static_cast<int>(std::lround(bend::value(n.bend, t) / range * 8192.0)), 0, 16383);
+      if (v == last) continue;
+      last = v;
+      tr.ctls.push_back({at + static_cast<Tick>(t), kMidiPitchBend, v, 0});
+    }
+    tr.ctls.push_back({at + len, kMidiPitchBend, 8192, 0});
+  }
+
   // Pattern content [0, limit) placed at `offset`, skipping content before `from` (content ticks).
   void addPattern(const Pattern& p, Tick offset, Tick from, Tick limit) {
     Tick stepT = s.ticksPerStep(p);
@@ -354,8 +392,11 @@ struct Collector {
         }
       if (auto it = p.notes.find(c.id); it != p.notes.end())
         for (const auto& n : it->second)
-          if (n.start >= from && n.start < limit)
-            tr.notes.push_back({offset + n.start - from, std::min(n.length, limit - n.start), n.pitch, n.velocity, 0});
+          if (n.start >= from && n.start < limit) {
+            const Tick len = std::min(n.length, limit - n.start);
+            tr.notes.push_back({offset + n.start - from, len, n.pitch, n.velocity, 0});
+            if (!n.bend.empty() && !n.slide) addBend(tr, c.id, n, offset + n.start - from, len);
+          }
       if (!o.automation) continue;
       for (const auto& lane : p.automation) {
         if (lane.owner != c.id || lane.points.empty()) continue;
@@ -402,6 +443,8 @@ struct Collector {
       auto it = tracks.find(c.id);
       if (it == tracks.end() || (it->second.notes.empty() && it->second.ctls.empty())) continue;
       MidiTrack tr = it->second;
+      if (auto br = bendRange.find(c.id); br != bendRange.end() && br->second != 2)  // K-25: RPN 0 = the bend range
+        tr.ctls.insert(tr.ctls.begin(), {{0, 101, 0, 0}, {0, 100, 0, 0}, {0, 6, br->second, 0}, {0, 38, 0, 0}});
       const int ch = midiChannelFor(k++);
       tr.channel = ch;
       for (auto& n : tr.notes) n.channel = ch;
@@ -444,13 +487,13 @@ struct Collector {
 }  // namespace
 
 MidiFileData patternToMidi(const Song& song, ObjectId pattern, const MidiExportOptions& o) {
-  Collector c{song, o, {}};
+  Collector c{song, o, {}, {}};
   if (const Pattern* p = song.pattern(pattern)) c.addPattern(*p, 0, 0, song.patternContentLength(*p));
   return c.finish(-1, 0);
 }
 
 MidiFileData songRangeToMidi(const Song& song, Tick start, Tick end, const MidiExportOptions& o) {
-  Collector col{song, o, {}};
+  Collector col{song, o, {}, {}};
   for (const auto& c : song.playlist) {
     if (c.kind != ClipKind::Pattern || c.muted || c.start < song.live.areaEnd) continue;
     if (c.track >= 0 && static_cast<size_t>(c.track) < song.tracks.size() && song.tracks[static_cast<size_t>(c.track)].muted) continue;

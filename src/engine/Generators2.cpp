@@ -1442,6 +1442,7 @@ class MidiOutGen final : public Generator {
  public:
   bool active() const override { return false; }
   void setMidiOut(MidiOutRing* r) override { out_ = r; }
+  float noteBendRange() const override { return static_cast<float>(std::max(1, bendRange_)); }  // K-25
 
  protected:
   void configure(const PluginState& s, const ChannelAux&, const ProcessContext& ctx) override {

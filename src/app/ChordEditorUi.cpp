@@ -18,6 +18,7 @@
 #include "../../third_party/imgui/imgui.h"
 #include "../core/ChordTools.h"
 #include "../core/NoteTools.h"
+#include "../core/StepNotes.h"
 #include "App.h"
 #include "ContextMenus.h"
 #include "J31Ui.h"
@@ -37,6 +38,7 @@ struct Session {
   ObjectId pat = kNoId, chan = kNoId;
   std::vector<Note> base;  // the pattern's notes before the editor wrote (unlinked chords baked in)
   std::vector<Note> written;  // the notes as the editor last left them (edits made elsewhere since are kept: J-36)
+  stepnotes::Snapshot origin;  // K-22: the channel when the session began (its rack steps too)
   uint64_t key = 0;
   bool changed = false;
   ch::ChordProgression prog;
@@ -101,12 +103,11 @@ void writeNow(App& a) {
   o.mode = S.mode;
   o.withMain = S.withMain;
   o.withBass = S.withBass;
-  auto it = p->notes.find(S.chan);
-  const std::vector<Note> cur = it == p->notes.end() ? std::vector<Note>{} : it->second;
+  const std::vector<Note> cur = stepnotes::view(s, *p, S.chan);  // K-22: rack steps as step notes
   S.base = ch::rebase(S.base, S.written, cur);  // notes drawn / scripted / undone meanwhile stay
   std::vector<Note> notes = ch::write(S.base, S.prog, o);
   if (notes != cur) {
-    a.doc.setNotes(S.pat, S.chan, notes, "chord progression", S.key);
+    stepnotes::write(a.doc, S.pat, S.chan, notes, "chord progression", S.key);
     S.changed = true;
   }
   S.written = notes;
@@ -150,8 +151,7 @@ void setLinked(App& a, size_t i, bool link) {
     // Bake: the current pattern minus the notes the still-linked chords render.
     const Pattern* p = s.pattern(S.pat);
     std::vector<Note> cur;
-    if (p)
-      if (auto it = p->notes.find(S.chan); it != p->notes.end()) cur = it->second;
+    if (p) cur = stepnotes::view(s, *p, S.chan);
     ch::ChordProgression after = S.prog;
     for (size_t k : which)
       if (k < after.chords.size()) after.chords[k].linked = false;
@@ -235,9 +235,10 @@ void closeEditor(App& a, bool keep) {
   releaseHeld(a, S.pressHeld);
   if (!keep && S.changed) {
     std::vector<Note> cur;
-    if (const Pattern* p = a.doc.song().pattern(S.pat))
-      if (auto it = p->notes.find(S.chan); it != p->notes.end()) cur = it->second;
-    a.doc.setNotes(S.pat, S.chan, ch::rebase(S.base, S.written, cur), "cancel chord progression", S.key);
+    if (const Pattern* p = a.doc.song().pattern(S.pat)) cur = stepnotes::view(a.doc.song(), *p, S.chan);
+    std::vector<Note> back = ch::rebase(S.base, S.written, cur);
+    if (back == S.base) stepnotes::restore(a.doc, S.origin, "cancel chord progression", S.key);  // K-22: rack steps come back
+    else stepnotes::write(a.doc, S.pat, S.chan, std::move(back), "cancel chord progression", S.key);
   }
   a.doc.endGesture();
   S.open = false;
@@ -249,8 +250,8 @@ void beginSession(App& a) {
   S.pat = a.curPattern;
   S.chan = a.selChannel;
   S.base.clear();
-  if (const Pattern* p = s.pattern(S.pat))
-    if (auto it = p->notes.find(S.chan); it != p->notes.end()) S.base = it->second;
+  if (const Pattern* p = s.pattern(S.pat)) S.base = stepnotes::view(s, *p, S.chan);  // K-22
+  S.origin = stepnotes::capture(s, S.pat, S.chan);
   S.written = S.base;
   S.key = 0x43485244ull ^ (++sessionCounter << 20);
   S.changed = false;
@@ -987,7 +988,7 @@ void drawChordEditor(App& a) {
   }
   ImGui::SameLine(0, theme::kS2);
   if (ui::TextButton("Reset", false, 88, "Put the pattern back as it was and start the progression again")) {
-    if (S.changed) a.doc.setNotes(S.pat, S.chan, S.base, "chord progression", S.key);
+    if (S.changed) stepnotes::restore(a.doc, S.origin, "chord progression", S.key);  // K-22: rack steps too
     S.prog.chords.clear();
     S.undo.clear();
     S.redo.clear();

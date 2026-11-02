@@ -77,6 +77,19 @@ std::string ParamDesc::format(double v) const {
       std::snprintf(buf, sizeof buf, v >= 9995 ? "%.1f kHz" : "%.2f kHz", v / 1000.0);
     else
       std::snprintf(buf, sizeof buf, "%.0f Hz", v);
+  } else if (unit == "hHz") {  // K-2: x100 Hz knob, its top (221) = off
+    if (v >= 220.5) return "Off";
+    std::snprintf(buf, sizeof buf, "%.1f kHz", std::round(v) / 10.0);
+  } else if (unit == "q384") {  // K-2: 1/384 s steps
+    std::snprintf(buf, sizeof buf, "%.0f ms", std::round(v) * 1000.0 / 384.0);
+  } else if (unit == "ds") {  // K-2: 1/10 s steps
+    std::snprintf(buf, sizeof buf, "%.1f s", std::round(v) / 10.0);
+  } else if (unit == "k128" || unit == "k2048") {  // K-2: knob positions, 128 / 2048 = 100 %
+    std::snprintf(buf, sizeof buf, "%.0f%%", std::round(v) * 100.0 / (unit == "k128" ? 128.0 : 2048.0));
+  } else if (unit == "sep64") {  // K-2: stereo separation, -64 (wider) .. 64 (merged)
+    const long k = std::lround(v);
+    if (k == 0) return "Original";
+    std::snprintf(buf, sizeof buf, k < 0 ? "%.0f%% wide" : "%.0f%% merged", std::fabs(static_cast<double>(k)) * 100.0 / 64.0);
   } else if (unit == "bits") {  // J-98: fractional bit depths are real (continuous step size): never rounded
     std::snprintf(buf, sizeof buf, "%.1f bits", v);
   } else if (unit == "pct") {  // J-92: the value is already in percent (0..100 ranges)
@@ -785,6 +798,8 @@ GL_NOINLINE void addInfo17(std::vector<PluginInfo>& v) {
                {"Punchy drums", {{CmpThreshold, -20.f}, {CmpRatio, 4.f}, {CmpAttack, 0.02f}, {CmpRelease, 0.08f}, {CmpMakeup, 4.f}}},
                {"Vocal leveler", {{CmpThreshold, -22.f}, {CmpRatio, 3.f}, {CmpAttack, 0.003f}, {CmpRelease, 0.15f}, {CmpMakeup, 5.f}}},
                {"Squash", {{CmpThreshold, -32.f}, {CmpRatio, 12.f}, {CmpAttack, 0.0005f}, {CmpRelease, 0.05f}, {CmpMakeup, 10.f}}}};
+  // K-2: new instances start where the reference compressor does (0 dB, 1:1, 15 ms, 200 ms, hard).
+  setReferenceDefaults(p, {{CmpThreshold, 0}, {CmpRatio, 1}, {CmpAttack, 0.015}, {CmpRelease, 0.2}, {CmpKnee, 0}});
   v.push_back(p);
 }
 
@@ -948,20 +963,25 @@ GL_NOINLINE void addInfo21(std::vector<PluginInfo>& v) {
   p.params[RvbDampHz] = lg("High damping", "Hz", 500, 22100, 4000);
   p.params[RvbModel] = ch("Model", {"Hall", "Plate", "Full"}, 0);
   p.params[RvbFLowCut] = lg("Low cut (full)", "Hz", 19, 3000, 75);
-  p.params[RvbFHighCut] = lin("High cut (full)", "x100 Hz", 5, 221, 40);
-  p.params[RvbFPredelay] = lin("Pre-delay (full)", "/384 s", 0, 384, 0);
+  // K-2: display units of the full model's integer knobs (values unchanged): x100 Hz
+  // with the top as "Off", 1/384 s in ms, 1/10 s in seconds, levels and modulation
+  // as a percentage of their unity / full position, separation as spread or merge.
+  p.params[RvbFHighCut] = lin("High cut (full)", "hHz", 5, 221, 40);
+  p.params[RvbFPredelay] = lin("Pre-delay (full)", "q384", 0, 384, 0);
   p.params[RvbFRoom] = lin("Room size (full)", "pct", 1, 100, 50);
   p.params[RvbFDiffusion] = lin("Diffusion (full)", "pct", 0, 100, 100);
-  p.params[RvbFDecay] = lin("Decay (full)", "x0.1 s", 1, 200, 15);
-  p.params[RvbFDamp] = lin("High damping (full)", "x100 Hz", 5, 221, 40);
+  p.params[RvbFDecay] = lin("Decay (full)", "ds", 1, 200, 15);
+  p.params[RvbFDamp] = lin("High damping (full)", "hHz", 5, 221, 40);
   p.params[RvbFBass] = lin("Bass multiplier (full)", "pct", 20, 300, 100);
   p.params[RvbFCross] = lg("Crossover (full)", "Hz", 25, 2000, 500);
-  p.params[RvbFSep] = lin("Separation (full)", "", -64, 64, 0);
-  p.params[RvbFDry] = lin("Dry (full)", "", 0, 160, 128);
-  p.params[RvbFEr] = lin("Early reflections (full)", "", 0, 160, 128);
-  p.params[RvbFWet] = lin("Wet (full)", "", 0, 160, 128);
-  p.params[RvbFModSpeed] = lin("Mod speed (full)", "", 0, 2048, 684);
-  p.params[RvbFModDepth] = lin("Mod depth (full)", "", 0, 2048, 0);
+  p.params[RvbFSep] = lin("Separation (full)", "sep64", -64, 64, 0);
+  p.params[RvbFDry] = lin("Dry (full)", "k128", 0, 160, 128);
+  p.params[RvbFEr] = lin("Early reflections (full)", "k128", 0, 160, 128);
+  p.params[RvbFWet] = lin("Wet (full)", "k128", 0, 160, 128);
+  p.params[RvbFModSpeed] = lin("Mod speed (full)", "k2048", 0, 2048, 684);
+  p.params[RvbFModDepth] = lin("Mod depth (full)", "k2048", 0, 2048, 0);
+  p.params[RvbFRev] = ch("Full model version", {"1", "2"}, 1);
+  p.legacyDefaults.push_back({RvbFRev, 0.f});  // K-2: older states keep the version 1 sound
   p.editorWidth = 880;
   p.presets = {{"Room", {}}, {"Small room", {{RvbSize, 0.3f}, {RvbDecayTime, 0.7f}, {RvbEarly, 0.5f}}},
                {"Hall", {{RvbSize, 0.85f}, {RvbDecayTime, 4.5f}, {RvbPreDelay, 25.f}, {RvbWet, 0.3f}, {RvbModDepth, 0.3f}}},
@@ -1037,6 +1057,8 @@ GL_NOINLINE void addInfo23(std::vector<PluginInfo>& v) {
                {"Slow sweep", {{FlgRateN, 0.15f}, {FlgDepthN, 0.6f}, {FlgFeedN, 0.6f}, {FlgPhase, 90.f}}},
                {"Swirl", {{FlgCrossN, 0.7f}, {FlgPhase, 180.f}, {FlgShape, 1.f}}},
                {"Legacy jet", {{FlgModel, 0.f}, {FlgFeedback, 0.7f}, {FlgDelay, 0.5f}}}};
+  // K-2: new instances start at the reference plugin's defaults.
+  setReferenceDefaults(p, {{FlgPhase, 118}, {FlgInvertWet, 1}});
   v.push_back(p);
 }
 
@@ -1416,6 +1438,8 @@ GL_NOINLINE void addInfo36(std::vector<PluginInfo>& v) {
   trance.push_back({TgGateOn, 1.f});
   p.presets = {{"Clean", {}}, {"Stutter 1/16", {{TgMode, 3.f}}}, {"Half time", {{TgMode, 5.f}}}, {"Tape stop", {{TgMode, 6.f}}},
                {"Trance gate", trance}, {"Slot: half speed + chop", {{TgTimeSlot, 2.f}, {TgVolSlot, 3.f}}}};
+  // K-2: new instances start at the reference plugin's defaults.
+  setReferenceDefaults(p, {{TgVolRelease, 0.00366}});
   v.push_back(p);
 }
 
@@ -1489,6 +1513,8 @@ GL_NOINLINE void addInfo38(std::vector<PluginInfo>& v) {
                {"Barber pole", {{FsFreqPos, 0.5728f}, {FsFeedbackRef, 0.9f}, {FsMixRef, 1.f}}},
                {"Metal", {{FsRange, 1.f}, {FsFreqPos, 0.7454f}, {FsMixRef, 1.f}}},
                {"Wide ring", {{FsType, 2.f}, {FsRange, 1.f}, {FsFreqPos, 0.55f}, {FsMixRef, 0.75f}, {FsLrPhase, 1.f}}}};
+  // K-2: new instances start at the reference plugin's defaults.
+  setReferenceDefaults(p, {{FsType, 1}, {FsFreqPos, 1}, {FsMixRef, 1}});
   v.push_back(p);
 }
 
@@ -1528,6 +1554,8 @@ GL_NOINLINE void addInfo39(std::vector<PluginInfo>& v) {
                {"Sub harmonics", {{LlSlopeDb, -3.f}, {LlPreDb, 14.f}, {LlXoverHz, 80.f}, {LlMultiband, 1.f}}},
                {"Tight", {{LlLowCutHz, 40.f}, {LlSlopeDb, -18.f}, {LlPreDb, 12.f}, {LlMultiband, 0.f}}},
                {"Wide lows", {{LlDiffuse, 0.5f}, {LlDiffCoef, 0.5f}, {LlMultiband, 1.f}, {LlXoverHz, 70.f}}}};
+  // K-2: new instances start at the reference plugin's defaults.
+  setReferenceDefaults(p, {{LlMultiband, 0}});
   v.push_back(p);
 }
 
@@ -1723,6 +1751,21 @@ double bitcrushRateOfDivider(double divider) {
   return std::clamp(legacyRateReference() / n, pp::kBcRateMin, pp::kBcRateOff);
 }
 
+void setReferenceDefaults(PluginInfo& p, const std::vector<std::pair<int, double>>& defs) {
+  for (const auto& [idx, def] : defs) {
+    if (idx < 0 || static_cast<size_t>(idx) >= p.params.size()) continue;
+    const float old = static_cast<float>(p.params[static_cast<size_t>(idx)].def);
+    if (old == static_cast<float>(def)) continue;
+    for (auto& pr : p.presets) {
+      bool has = false;
+      for (const auto& v : pr.values) has = has || v.first == idx;
+      if (!has) pr.values.push_back({idx, old});
+    }
+    p.legacyDefaults.push_back({idx, old});
+    p.params[static_cast<size_t>(idx)].def = def;
+  }
+}
+
 void normalizePluginState(PluginState& s) {
   // J-53: FLEX channels saved before the stand-ins (Analog / Keys / FM + "flex 1" data) become "gl.flex".
   if (flex::isLegacy(s)) flex::migrateLegacy(s);
@@ -1731,6 +1774,9 @@ void normalizePluginState(PluginState& s) {
   if (s.params.size() > p->params.size()) s.params.resize(p->params.size());
   const size_t oldSize = s.params.size();
   for (size_t i = s.params.size(); i < p->params.size(); ++i) s.params.push_back(static_cast<float>(p->params[i].def));
+  if (oldSize > 0)  // K-2: a parameter the state predates keeps the default it had then
+    for (const auto& [idx, old] : p->legacyDefaults)
+      if (static_cast<size_t>(idx) >= oldSize && static_cast<size_t>(idx) < s.params.size()) s.params[static_cast<size_t>(idx)] = old;
   if (p->legacyModelParam >= 0 && oldSize > 0 && oldSize <= static_cast<size_t>(p->legacyModelParam))
     s.params[static_cast<size_t>(p->legacyModelParam)] = 0;  // pre-model state: keep the legacy engine
   // Migrations for states saved before 0.5 appended parameters.

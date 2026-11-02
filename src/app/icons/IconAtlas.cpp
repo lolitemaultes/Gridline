@@ -110,6 +110,23 @@ bool geometryBounds(const char* svgText, float out[4], bool* stroked) {
   return any;
 }
 
+bool inkBounds(const char* svgText, float strokeUnits, float out[4]) {
+  if (!svgText) return false;
+  Parsed p(svgText);
+  if (!p.img) return false;
+  bool any = false;
+  for (NSVGshape* s = p.img->shapes; s; s = s->next) {
+    if (!(s->flags & NSVG_FLAGS_VISIBLE)) continue;
+    const float h = s->stroke.type != NSVG_PAINT_NONE ? strokeUnits * 0.5f : 0.0f;
+    const float b[4] = {s->bounds[0] - h, s->bounds[1] - h, s->bounds[2] + h, s->bounds[3] + h};
+    if (!any) out[0] = b[0], out[1] = b[1], out[2] = b[2], out[3] = b[3];
+    out[0] = std::min(out[0], b[0]), out[1] = std::min(out[1], b[1]);
+    out[2] = std::max(out[2], b[2]), out[3] = std::max(out[3], b[3]);
+    any = true;
+  }
+  return any;
+}
+
 bool rasterize(const char* svgText, int px, float strokeDevicePx, std::vector<uint8_t>& alpha) {
   if (!svgText || px <= 0) return false;
   Parsed p(svgText);

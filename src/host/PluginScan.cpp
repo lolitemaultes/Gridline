@@ -1,4 +1,5 @@
 #include "PluginScan.h"
+#include "PluginPrefs.h"
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -299,7 +300,7 @@ std::string selfExecutablePath() {
 // ---------------------------------------------------------------- child processes
 
 int childMain(int argc, char** argv) {
-  std::string format, entry, out, sandbox;
+  std::string format, entry, out, sandbox, prefsFile;
   for (int i = 1; i < argc; ++i) {
     if (std::strcmp(argv[i], "--scan-vst3") == 0 && i + 1 < argc) {
       format = "vst3";
@@ -311,8 +312,12 @@ int childMain(int argc, char** argv) {
       out = argv[++i];
     } else if (std::strcmp(argv[i], "--plugin-sandbox") == 0 && i + 1 < argc) {
       sandbox = argv[++i];
+    } else if (std::strcmp(argv[i], "--plugin-prefs") == 0 && i + 1 < argc) {
+      prefsFile = argv[++i];
     }
   }
+  // K-13: the parent's plugin folders (read only), so a child searches what the parent does.
+  if (!prefsFile.empty() && (!sandbox.empty() || !entry.empty())) loadPluginPrefsFile(prefsFile);
   if (!sandbox.empty()) {
     platform::quietCrashDialogs();
     return sandboxChildMain(sandbox);
@@ -350,6 +355,7 @@ ScanResult scanIsolated(const std::string& exe, const std::string& format, const
   static std::atomic<int> serial{0};
   fs::path tmp = fs::temp_directory_path() / ("gridline-plugin-scan-" + std::to_string(platform::processId()) + "-" + std::to_string(serial++) + ".json");
   std::vector<std::string> args = {exe, "--scan-plugin", format, entry, "--out", tmp.string()};
+  if (const std::string pf = pluginPrefsFile(); !pf.empty()) args.insert(args.end(), {"--plugin-prefs", pf});  // K-13
   platform::Process child;
   if (!child.start(exe, args)) {
     r.error = "cannot start the scanner process";

@@ -307,7 +307,8 @@ void drawAvailable(App& a) {
   ImGui::PopStyleColor();
 
   const update::Asset* asset = update::pickAsset(r, update::currentTarget());
-  const bool canInstall = asset && update::checksumAsset(r);
+  // K-1: a Flatpak or Snap is updated by its store; an installer download would not replace it.
+  const bool canInstall = asset && update::checksumAsset(r) && !collab::isStoreSandbox(collab::installKind());
   // Download progress / outcome.
   if (s.dl) {
     ImGui::Dummy(ImVec2(0, theme::kS1));
@@ -354,7 +355,7 @@ void drawAvailable(App& a) {
     ImGui::Dummy(ImVec2(0, theme::kS1));
     dimLine(tr("Download opens the release page in your browser."), P.textFaint);
   }
-  if (s.required && collab::installKind() != collab::InstallKind::Official) {
+  if ((s.required || collab::isStoreSandbox(collab::installKind())) && collab::installKind() != collab::InstallKind::Official) {
     ImGui::Dummy(ImVec2(0, theme::kS1));
     dimLine(tr("Or update from your software store when it arrives there."), P.textDim);
   }

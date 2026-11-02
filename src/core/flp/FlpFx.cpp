@@ -77,7 +77,12 @@ void bindTable(PluginMapping& m, std::shared_ptr<const KnobTable> table) {
   m.value = [table](int flParam, double flNorm) {
     for (const Knob& k : *table)
       if (k.flTag == flParam) {
-        double v = k.flMin + std::clamp(flNorm, 0.0, 1.0) * (k.flMax - k.flMin);
+        // K-2: FL turns an automation position into the control's integer value by rounding
+        // the offset from the minimum half to even, measured on the plugins (a 0..7 mode at 0.5
+        // = 4, a 1..10 knob at 0.5 = 5). Tables whose range is under 2 hold stored floats
+        // (0..1 internal values), which stay continuous.
+        const double span = k.flMax - k.flMin, x = std::clamp(flNorm, 0.0, 1.0) * span;
+        double v = k.flMin + (std::fabs(span) >= 2 ? flRoundInt(x) : x);
         return k.conv ? k.conv(v) : v;
       }
     return 0.0;

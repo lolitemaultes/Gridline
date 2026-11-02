@@ -49,6 +49,9 @@ class Document {
   bool editPlaylistTrack(int index, const std::string& label, const std::function<void(PlaylistTrack&)>& fn);
   // Whole-song edit (snapshot) for rare global operations.
   void editSong(const std::string& label, const std::function<void(Song&)>& fn);
+  // K-18: records a ready-made command (applied now), e.g. one that also moves files on disk
+  // (fileops::FileMoveCommand). Never joined with a pointer gesture.
+  void execute(CommandPtr cmd) { exec(std::move(cmd), false); }
 
   // --- channels -----------------------------------------------------------
   ObjectId addChannel(const std::string& name, const std::string& pluginType, int index = -1);

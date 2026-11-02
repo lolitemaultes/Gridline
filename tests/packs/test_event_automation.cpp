@@ -217,7 +217,9 @@ std::vector<float> renderDirect(const PluginState& st0, const std::vector<AutoPo
   PluginState st = st0;
   ChannelAux aux;
   packs::prepareAux(st, aux);
-  auto g = packs::createGenerator("gl.turntable");
+  // K-23: the 0.7.1 instrument (a channel) or the Turntable effect (a mixer slot, silent input).
+  auto g = st.type == "gl.turntable" ? packs::createGenerator("gl.turntable") : nullptr;
+  auto fx = g ? nullptr : packs::createEffect(st.type);
   ProcessContext ctx;
   ctx.sampleRate = kSr;
   const double spt = kSr * 60.0 / (140.0 * 96.0);
@@ -235,7 +237,8 @@ std::vector<float> renderDirect(const PluginState& st0, const std::vector<AutoPo
     if (ei < at.size() && at[ei].first < f0 + n) n = at[ei].first - f0;
     std::fill(L.begin(), L.end(), 0.f);
     std::fill(R.begin(), R.end(), 0.f);
-    g->process(st, aux, ctx, L.data(), R.data(), static_cast<int>(n));
+    if (g) g->process(st, aux, ctx, L.data(), R.data(), static_cast<int>(n));
+    else fx->processAux(st, aux, ctx, L.data(), R.data(), static_cast<int>(n));
     for (int64_t i = 0; i < n; ++i) out.push_back(L[static_cast<size_t>(i)]), out.push_back(R[static_cast<size_t>(i)]);
     f0 += n;
   }
@@ -299,14 +302,24 @@ void testRenderTestImport(const std::string& sample) {
   flp::Report rep;
   std::string err;
   expect(importFlp(f, s, rep, &err), "FL's render test imports");
-  Channel* tt = nullptr;
-  for (Channel& ch : s.channels)
-    if (ch.plugin.type == "gl.turntable") tt = &ch;
+  // K-23: the scratcher is a mixer effect: it lands on its insert's slot as the Turntable effect.
+  auto deckOf = [](Song& song, ParamId& pos) -> PluginState* {
+    for (MixerTrack& t : song.mixer)
+      for (size_t k = 0; k < t.slots.size(); ++k)
+        if (t.slots[k].plugin.type == "gl.turntablefx") {
+          pos = slotParam(t.id, static_cast<int>(k), sp::TtPosition);
+          return &t.slots[k].plugin;
+        }
+    return nullptr;
+  };
+  ParamId posId{};
+  PluginState* tt = deckOf(s, posId);
+  expect(tt != nullptr, "the scratcher lands on its mixer slot as the Turntable effect");
   const PatternAutomation* lane = nullptr;
   const Pattern* pat = nullptr;
   if (tt)
     for (const Pattern& p : s.patterns)
-      if (const PatternAutomation* l = findPatternLane(p, tt->id, channelPluginParam(tt->id, sp::TtPosition).index)) lane = l, pat = &p;
+      if (const PatternAutomation* l = findPatternLane(p, posId.owner, posId.index)) lane = l, pat = &p;
   expect(lane && lane->events, "its recorded Position events import as an events lane");
   expect(s.playlist.empty(), "its song is empty (FL plays the pattern; Gridline opens it in pattern mode)");
   if (!lane || !tt) return;
@@ -324,21 +337,21 @@ void testRenderTestImport(const std::string& sample) {
     flp::Report rep2;
     expect(importFlpBytes(bytes, s2, rep2, &err), "the exported project imports");
     const PatternAutomation* l2 = nullptr;
-    for (const Channel& ch : s2.channels)
-      if (ch.plugin.type == "gl.turntable")
-        for (const Pattern& p : s2.patterns)
-          if (const PatternAutomation* l = findPatternLane(p, ch.id, channelPluginParam(ch.id, sp::TtPosition).index)) l2 = l;
+    ParamId pos2{};
+    if (deckOf(s2, pos2))
+      for (const Pattern& p : s2.patterns)
+        if (const PatternAutomation* l = findPatternLane(p, pos2.owner, pos2.index)) l2 = l;
     bool back = l2 && l2->events && l2->points.size() == want.size();
     for (size_t i = 0; back && i < want.size(); ++i) back = l2->points[i].pos == want[i].pos && std::fabs(l2->points[i].value - want[i].value) < 1e-7f;
     expect(back, "FL round trip: the recorded events come back as events, on the same ticks with the same values");
   }
   // The plugin's loop is swapped for the test sound (the comparison needs no FL audio).
-  tt->plugin.data = sample;
+  tt->data = sample;
   const Tick len = s.patternContentLength(*pat);
   expect(len == 384, "one bar per pass");
   const int64_t frames = static_cast<int64_t>(std::ceil(2.05 * static_cast<double>(len) * kSr * 60.0 / (s.tempo * s.ppq)));
   expect(std::fabs(s.tempo - 140.0) < 1e-9 && s.ppq == 96, "140 BPM at 96 PPQ");
-  const std::vector<float> ref = renderDirect(tt->plugin, lane->points, len, frames);
+  const std::vector<float> ref = renderDirect(*tt, lane->points, len, frames);
   double corr = 0;
   const double d = fittedDiff(renderEngine(s, pat->id, frames, 512, true), ref, &corr);
   std::printf("# imported render test vs the plugin stepped on each event's sample: max diff %.3g, correlation %.6f\n", d, corr);

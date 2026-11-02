@@ -112,6 +112,7 @@ P = {
     'gl.pitcher': ('voice', 'plumb', 'Pitch corrector'),
     'gl.scratcher': ('voice', 'turntable', 'Turntable scratch effect'),
     'gl.turntable': ('sample', 'turntable', 'Sample on a platter you scratch'),
+    'gl.turntablefx': ('voice', 'turntable', 'Turntable deck on a mixer insert'),
     'gl.splitter': ('voice', 'splitter', 'Band splitter to separate outputs'),
     'gl.spread': ('voice', 'spread', 'Stereo unison spread'),
     'gl.hitloop': ('space', 'hitloop', 'Hit repeater / stutter'),

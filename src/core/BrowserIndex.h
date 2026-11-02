@@ -207,6 +207,9 @@ class Index {
   void setTags(const std::string& path, std::vector<std::string> tags);
   std::vector<std::string> tagsOf(const std::string& path) const;
   std::vector<std::string> allTags() const;  // user tags in use, sorted
+  // K-18: a file or folder was renamed / moved: its entries (and every entry inside the
+  // folder) and their tags follow it; `to` empty forgets them (moved to the trash). Saved.
+  void movePath(const std::string& from, const std::string& to);
 
   bool save() const;
   bool load();

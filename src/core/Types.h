@@ -44,6 +44,20 @@ inline constexpr int kNoteModCentre = 128;
 inline constexpr int kNoteReleaseDefault = 64;  // release velocity 0..127
 inline constexpr int kNoteColors = 16;
 
+// K-25: one point of a note's pitch bend line. `tick` counts from the note's start (fractions
+// allowed), `semis` is the offset from the note's pitch, `curve` shapes the segment that ends at
+// this point (BendCurve in core/NoteBend.h). Before the first point the line starts at 0.
+// K-28: `tension` (-1..1, 0 = the shape as named) bends or softens that segment's curve.
+struct BendPoint {
+  float tick = 0;
+  float semis = 0;
+  uint8_t curve = 0;
+  float tension = 0;
+  BendPoint() = default;
+  BendPoint(float t, float v, uint8_t c = 0, float k = 0) : tick(t), semis(v), curve(c), tension(k) {}
+  bool operator==(const BendPoint& o) const { return tick == o.tick && semis == o.semis && curve == o.curve && tension == o.tension; }
+};
+
 // One piano-roll note.
 struct Note {
   Tick start = 0;               // ticks from pattern/clip start
@@ -66,6 +80,14 @@ struct Note {
   // at start + frac (0 <= frac < 1) and ends at start + length + endFrac (-1 < endFrac < 1).
   // Edits that move or copy notes keep them; 0 for every ordinary note.
   float frac = 0, endFrac = 0;
+  // K-25: the note's pitch bend line (core/NoteBend.h), empty = none. Point times count from the
+  // note's start, so moves, transposes and copies carry it and a resize keeps its timing.
+  std::vector<BendPoint> bend;
+  // K-22: a channel rack step shown in (or moved into) the piano roll, FL's step note (stored with
+  // length 0 in .flp files). While it lasts one step of its pattern it plays exactly as the step
+  // did: its step's swing, its offset inside the step, one step long (or truncated by the channel's
+  // swing truncation), whatever Song::swingNotes says. Given another length it is an ordinary note.
+  bool step = false;
 
   // {start, length, pitch, velocity} keeps working everywhere (without
   // missing-initializer warnings for the property fields).
@@ -75,12 +97,13 @@ struct Note {
 
   bool hasProps() const {
     return pan != 0 || fine != 0 || release != kNoteReleaseDefault || modX != kNoteModCentre || modY != kNoteModCentre ||
-           color != 0 || slide || porta || muted || group != 0;
+           color != 0 || slide || porta || muted || group != 0 || !bend.empty() || step;
   }
   bool operator==(const Note& o) const {
     return start == o.start && length == o.length && pitch == o.pitch && velocity == o.velocity && pan == o.pan &&
            fine == o.fine && release == o.release && modX == o.modX && modY == o.modY && color == o.color &&
-           slide == o.slide && porta == o.porta && muted == o.muted && group == o.group && frac == o.frac && endFrac == o.endFrac;
+           slide == o.slide && porta == o.porta && muted == o.muted && group == o.group && frac == o.frac && endFrac == o.endFrac &&
+           bend == o.bend && step == o.step;
   }
 };
 

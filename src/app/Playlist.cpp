@@ -1,6 +1,7 @@
 // Gridline — playlist: pattern, audio and automation clips arranged on tracks
 // (song mode), song markers in the ruler.
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cfloat>
 #include <cstdio>
@@ -9,6 +10,7 @@
 #include <limits>
 #include <map>
 #include <unordered_map>
+#include "LoopNotch.h"
 #include "CollabUi.h"
 #include "CursorAnchor.h"
 #include "../core/I18n.h"
@@ -53,12 +55,21 @@
 #include "../core/PatternAutoOps.h"
 #include "../core/PatternAutomation.h"
 #include "PatternAutoUi.h"
+#include "../core/TrackPlus.h"
+#include "TrackPlusUi.h"
 
 namespace gl {
 
 using theme::pal;
 
 namespace {
+
+// K-24: the vertical zoom: the base track height's range, one Alt+wheel
+// notch's factor, and the scroller thumbs' shortest lengths (their ends are
+// zoom handles).
+constexpr float kTrackHMin = 24.0f, kTrackHMax = 120.0f;
+constexpr double kRowZoomStep = 1.1;
+constexpr float kThumbMinV = 18.0f, kThumbMinH = 24.0f;
 
 struct ClipGesture {
   enum Kind { None, Move, Resize, Trim, Select, Paint, Erase, Scrub, TimeSel, AutoPoint, AutoTension, Mute, Slip, Play, Zoom, SliceLine, MarkerDrag } kind = None;
@@ -181,6 +192,9 @@ struct DrawnClip {
   FadeGeom fade;
   bool audio = false, glide = false;
   int xfBelow = -1;  // index (drawn list) of the clip this one crossfades on, blended (-1: none)
+  // K-26: what a clip lying on this one needs to show it through its body
+  // (its length and pattern loop as drawn).
+  Tick len = 0, loop = 0;
 };
 
 // Notes (pitch-scaled) from every channel, then steps as ticks at the bottom,
@@ -1002,6 +1016,16 @@ void drawPlaylist(App& a) {
       if (st.tool == t.tool) ui::noteActiveTool("playlist", static_cast<int>(t.tool), t.name, t.key);
       ImGui::SameLine(0, 2);
     }
+    {  // K-4: auto scrolling (the view follows the song position), this window's own switch
+      ui::ToolbarDivider();
+      const bool follow = a.settings.getBool("ui.autoScroll");
+      if (ui::IconButton("##plfollow", ui::Icon::ScrollTo, follow, fh,
+                         follow ? "Auto scrolling is on: the playlist follows the song position while it plays (click to keep the view still)"
+                                : "Auto scrolling is off: the view stays where you put it while the song plays (click to follow the song position)",
+                         theme::rgb(theme::role::kView)))
+        a.settings.set("ui.autoScroll", !follow);
+      ImGui::SameLine(0, 2);
+    }
     // Breadcrumb: Playlist > arrangement > current clip source (each opens its menu).
     ImGui::SameLine(0, theme::kS3);
     const pltools::Source src = currentSource(a);
@@ -1274,7 +1298,6 @@ void drawPlaylist(App& a) {
   const float rulerH = hbarH + 26.0f;
   const float rY = origin.y + hbarH;  // ruler top
   const ImVec2 gMin(origin.x + headW, origin.y + rulerH), gMax(origin.x + avail.x, origin.y + avail.y);
-  const float trackH = st.trackHeight;
   const int nTracks = static_cast<int>(s.tracks.size());
   // Per-track heights (relative to the zoomable track height): prefix offsets.
   // Tracks inside a folded group take no room.
@@ -1287,14 +1310,79 @@ void drawPlaylist(App& a) {
       groupDepth[static_cast<size_t>(i + k)] = groupDepth[static_cast<size_t>(i)] + 1;
     }
   }
-  std::vector<float> trackY(static_cast<size_t>(nTracks) + 1, 0.0f);
-  for (int i = 0; i < nTracks; ++i)
-    trackY[static_cast<size_t>(i) + 1] = trackY[static_cast<size_t>(i)] +
-        (folded[static_cast<size_t>(i)] ? 0.0f : std::round(trackH * std::clamp(s.tracks[static_cast<size_t>(i)].height, 0.25f, 4.0f)));
+  auto layoutRows = [&](float h, std::vector<float>& ty) {
+    ty.assign(static_cast<size_t>(nTracks) + 1, 0.0f);
+    for (int i = 0; i < nTracks; ++i)
+      ty[static_cast<size_t>(i) + 1] = ty[static_cast<size_t>(i)] +
+          (folded[static_cast<size_t>(i)] ? 0.0f : std::round(h * std::clamp(s.tracks[static_cast<size_t>(i)].height, 0.25f, 4.0f)));
+  };
+  // Scroller drags (thumbs and, K-24, their ends: zoom), kept across frames.
+  // 1 / 2: the vertical / horizontal thumb; 3 / 4: the vertical thumb's top /
+  // bottom end; 5 / 6: the horizontal thumb's left / right end.
+  static int barDrag = 0;
+  static float barGrab = 0;     // pointer offset into the thumb (or from the grabbed end)
+  static float barFixed = 0;    // ends: the screen position of the end that stays put
+  static float barLen0 = 1;     // ends: the thumb's length at the grab
+  static double barZ0 = 1;      // ends: the zoom at the grab (track height / px per tick)
+  static smoothzoom::RowAnchor barRow;          // vertical ends: the content point held at the opposite edge
+  static double barTick = 0;                    // horizontal ends: the tick held at the opposite edge
+  static float barEdgePx = 0;                   //   and its offset from the grid's left
+  const float gridH0 = gMax.y - gMin.y;
+  smoothzoom::Params zp;
+  zp.smooth = scrollui::smoothZoom();
+  // ---- K-24: vertical zoom (the track height), anchored ----
+  // Alt+wheel keeps the track under the pointer and the point inside it still
+  // (gliding like J-188's horizontal zoom; a trackpad's fractional Alt+scroll
+  // 1:1); dragging an end of the vertical scroller holds the opposite edge;
+  // a height written from outside (View menu) glides with the top row held.
+  // The rows are laid out at the drawn height and the scroll follows the
+  // anchor exactly (mixed heights, folded groups, automation lanes alike).
+  {
+    smoothzoom::RowGlide& vg = st.rowGlide;
+    std::vector<float> ty;
+    auto anchorAt = [&](float h, float px) {
+      layoutRows(h, ty);
+      return smoothzoom::rowAnchorAt(ty.data(), nTracks, h, static_cast<double>(px + st.scrollY), px);
+    };
+    const float held = st.trackHeight;
+    const float drawn = vg.outside(held) ? vg.output() : held;
+    if (vg.outside(held)) {
+      vg.zoomTo(drawn, std::clamp(held, kTrackHMin, kTrackHMax), anchorAt(drawn, 0.0f), true, zp);
+    } else if (vg.active() && st.scrollY != vg.scrollOut) {
+      vg.setAnchor(anchorAt(drawn, static_cast<float>(vg.anchor().px)));  // scrolled from outside mid-glide: the glide moves along
+    }
+    // A plain scroll arriving mid-glide: the zoom is there at once and the scroll goes on from it.
+    if (hovered && ((io.MouseWheel != 0 && !io.KeyCtrl && !io.KeyAlt) || io.MouseWheelH != 0 || ImGui::IsMouseDragging(ImGuiMouseButton_Middle)))
+      vg.finish();
+    if (hovered && io.MouseWheel != 0 && io.KeyAlt && !io.KeyCtrl) {
+      const double to = std::clamp(vg.target(drawn) * std::pow(kRowZoomStep, static_cast<double>(io.MouseWheel)), static_cast<double>(kTrackHMin),
+                                   static_cast<double>(kTrackHMax));
+      const float py = std::clamp(io.MousePos.y - gMin.y, 0.0f, gridH0);
+      vg.zoomTo(drawn, to, anchorAt(drawn, py), smoothscroll::isNotch(io.MouseWheel), zp);
+    }
+    if ((barDrag == 3 || barDrag == 4) && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+      const float end = io.MousePos.y - barGrab;
+      const float len = std::clamp(barDrag == 4 ? end - barFixed : barFixed - end, kThumbMinV, std::max(kThumbMinV, gridH0));
+      const double to = std::clamp(barZ0 * barLen0 / len, static_cast<double>(kTrackHMin), static_cast<double>(kTrackHMax));
+      if (std::fabs(to - vg.target(drawn)) > 1e-4) vg.zoomTo(drawn, to, barRow, false, zp);
+    }
+    st.trackHeight = static_cast<float>(vg.step(drawn, io.DeltaTime, zp));
+    // Remembered with the view (undo-free, like scrolling) once it settles.
+    if (!vg.active() && barDrag != 3 && barDrag != 4 && std::fabs(a.settings.getNumber("ui.playlistTrackHeight") - static_cast<double>(st.trackHeight)) > 1e-3)
+      a.settings.set("ui.playlistTrackHeight", static_cast<double>(st.trackHeight));
+  }
+  const float trackH = st.trackHeight;
+  std::vector<float> trackY;
+  layoutRows(trackH, trackY);
   const float totalH = trackY.back();
   // J-67: the range is enforced here for outside writes; the view's own drawn
   // position (a glide, an elastic overscroll) is left to scrollui::step below.
   const float maxScrollY = std::max(0.0f, totalH - (gMax.y - gMin.y)), maxScrollX = 1e9f;
+  if (st.rowGlide.anchored()) {  // K-24: the anchored point back under the pointer (the range's edges hold)
+    const smoothzoom::RowAnchor& an = st.rowGlide.anchor();
+    st.scrollY = std::clamp(static_cast<float>(smoothzoom::rowAnchorPos(trackY.data(), nTracks, trackH, an) - an.px), 0.0f, maxScrollY);
+    st.rowGlide.scrollOut = st.scrollY;
+  }
   scrollui::clampOuter(st.axY, st.scrollY, 0.0f, maxScrollY);
   scrollui::clampOuter(st.axX, st.scrollX, 0.0f, maxScrollX);
   auto xOf = [&](Tick t) { return gMin.x + static_cast<float>(t) * st.pxPerTick - st.scrollX; };
@@ -1306,6 +1394,7 @@ void drawPlaylist(App& a) {
   devGeom.x0 = gMin.x - st.scrollX, devGeom.pxPerTick = st.pxPerTick, devGeom.valid = true;
   devGeom.trackTop.clear(), devGeom.trackH.clear(), devGeom.clips.clear(), devGeom.curves.clear();
   devGeom.dropTrack = -1;
+  devGeom.renaming = -1;
   for (int i = 0; i < nTracks; ++i) devGeom.trackTop.push_back(yOf(i)), devGeom.trackH.push_back(hOf(i));
   auto tickAt = [&](float x) { return timeline::tickAtPx(x - gMin.x + st.scrollX, st.pxPerTick); };
   auto trackAt = [&](float y) {
@@ -1354,8 +1443,20 @@ void drawPlaylist(App& a) {
     timeline::zoomAt(s, st.pxPerTick, st.scrollX, st.zoomRequest, keyAnchor);
     st.zoomRequest = 1.0f;
   }
+  // K-24: over the track headers the zoom holds the grid's left edge (not a point left of it).
   const bool wheelZoom = hovered && io.MouseWheel != 0 && io.KeyCtrl;
-  if (wheelZoom) timeline::zoomAt(s, st.pxPerTick, st.scrollX, std::pow(1.2, static_cast<double>(io.MouseWheel)), io.MousePos.x - gMin.x);
+  if (wheelZoom)
+    timeline::zoomAt(s, st.pxPerTick, st.scrollX, std::pow(1.2, static_cast<double>(io.MouseWheel)), std::clamp(io.MousePos.x - gMin.x, 0.0f, gridW));
+  // K-24: an end of the horizontal scroller dragged: the thumb's length sets the zoom, the opposite edge's tick stays put (1:1).
+  bool barZoom = false;
+  if ((barDrag == 5 || barDrag == 6) && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+    const float end = io.MousePos.x - barGrab;
+    const float len = std::clamp(barDrag == 6 ? end - barFixed : barFixed - end, kThumbMinH, std::max(kThumbMinH, gridW));
+    const double z = timeline::clampZoom(s, barZ0 * barLen0 / len);
+    st.pxPerTick = static_cast<float>(z);
+    st.scrollX = static_cast<float>(std::max(0.0, barTick * z - barEdgePx));
+    barZoom = true;
+  }
   st.pxPerTick = static_cast<float>(timeline::clampZoom(s, st.pxPerTick));
   // Auto scrolling: page along with the song position while the song plays
   // (not while the user drags or scrolls the view).
@@ -1373,7 +1474,7 @@ void drawPlaylist(App& a) {
     }
   }
   // A trackpad's Ctrl+scroll follows the fingers 1:1; wheel notches and every other zoom glide.
-  scrollui::zoomEnd(st.zoomGlide, st.pxPerTick, st.scrollX, wheelZoom && !smoothscroll::isNotch(io.MouseWheel));
+  scrollui::zoomEnd(st.zoomGlide, st.pxPerTick, st.scrollX, (wheelZoom && !smoothscroll::isNotch(io.MouseWheel)) || barZoom);
   // ---- snapping: the visible grid (Line/Cell) or a fixed size; Alt inverts ----
   const Tick visGrid = timeline::visibleGrid(s, st.pxPerTick);
   const Tick snapG = timeline::snapGrid(s, st.snap, st.pxPerTick, io.KeyAlt);
@@ -1389,7 +1490,7 @@ void drawPlaylist(App& a) {
     if (io.KeyCtrl) {
       // zoomed above (J-188)
     } else if (io.KeyAlt) {
-      st.trackHeight = std::clamp(st.trackHeight + io.MouseWheel * 4, 24.0f, 120.0f);
+      // the track height, zoomed above (K-24)
     } else if (io.KeyShift) {
       wheelX -= io.MouseWheel * 80;
       notchX = smoothscroll::isNotch(io.MouseWheel);
@@ -1556,6 +1657,46 @@ void drawPlaylist(App& a) {
     ObjectId mirror;
   };
   std::vector<FadeHandle> fadeHandles;
+  // K-26: the parts of clips beneath that show through the clip being drawn
+  // (drawn list index, visible x span, depth: 0 the layer right under it,
+  // 1 a layer further down), and the spans already given to a layer.
+  struct Ghost {
+    size_t k;
+    float x0, x1;
+    int depth;
+  };
+  static std::vector<Ghost> ghosts;
+  static std::vector<std::pair<float, float>> ghostCover;
+  // K-26: a clip beneath, seen through the body of the clip lying on it over
+  // [x0, x1]: its content in its own ink (notes and steps, waveform,
+  // automation curve), dimmed by depth. No wash of its colour: the grid
+  // lines seen through the top clip keep one brightness, overlap or not.
+  // Drawn on the top clip's body, under the top clip's own content and title.
+  auto drawGhost = [&](const DrawnClip& p, float x0, float x1, int depth, float bodyY0, float bodyY1, float dim) {
+    const float y0 = std::max({bodyY0, p.body, gMin.y}), y1 = std::min({bodyY1, p.y1, gMax.y});
+    if (x1 - x0 < 0.5f || y1 - y0 < 2.0f) return;
+    const float k = (depth == 0 ? 1.0f : 0.5f) * dim;
+    const float inkA = (P.dark ? 0.50f : 0.46f) * k;
+    const ImU32 ghostInk = theme::withAlpha(p.ink, inkA);
+    dl->PushClipRect(ImVec2(x0, y0), ImVec2(x1, y1), true);
+    const ImVec2 pb0(p.x0 + 3, p.body + 2), pb1(p.x1 - 3, p.y1 - 3);
+    const Clip& c = p.clip;
+    if (c.kind == ClipKind::Pattern) {
+      if (const Pattern* pat = s.pattern(c.pattern))
+        if (st.patternPreview != 2 || pat->automation.empty())
+          drawClipPreview(dl, s, *pat, pb0, pb1, p.len, c.offset, p.loop, ghostInk, x0, x1, true);
+    } else if (c.kind == ClipKind::Audio) {
+      if (pb1.y - pb0.y > 4)
+        if (const Channel* pch = s.channel(c.source)) drawWaveform(dl, s, *pch, c, tempoMap, pb0, pb1, p.clipX0, st.pxPerTick, x0, x1, ghostInk);
+    } else if (c.kind == ClipKind::Automation && pb1.y - pb0.y > 6) {
+      if (const AutomationClip* ac = s.automation(c.source)) {
+        const AutoGeom g{pb0, pb1, p.clipX0, st.pxPerTick, c.start, c.offset, p.len};
+        drawAutomation(dl, *ac, g, x0, x1, ghostInk, theme::withAlpha(p.ink, 0.06f * k), false, -1, -1, ghostInk);
+      }
+    }
+    dl->PopClipRect();
+    // (Its edges: the J-38 dashed outline drawn after every clip.)
+  };
   auto drawClip = [&](size_t ci) {
     if (!ccache.valid[ci]) return;
     const Clip& lc = s.playlist[ci];  // logical clip (what the document holds)
@@ -1624,11 +1765,14 @@ void drawPlaylist(App& a) {
       }
     }
     // J-38: stacking. Where this clip lies over clips drawn before it on the
-    // track, the grid is redrawn under it (the clip beneath no longer shows
-    // through as a muddle of two bodies) and a soft shadow falls from its edge
-    // onto the clip beneath.
+    // track, the grid is redrawn under it (the two bodies never mix into a
+    // muddle of colours). K-26: the clip beneath still shows through, dimmed,
+    // as a ghost layer drawn on this clip's body (below); no shadow falls on
+    // it (a dark band at the edge read as a smear and hid the see-through
+    // look): this clip's own rim is the edge.
+    ghosts.clear();
+    ghostCover.clear();
     {
-      const ImU32 shadow = theme::withAlpha(P.ink, P.dark ? 0.42f : 0.20f), clear = theme::withAlpha(P.ink, 0.0f);
       int budget = 64;
       for (size_t k = drawn.size(); k-- > 0 && budget-- > 0;) {
         const DrawnClip& p = drawn[k];
@@ -1640,11 +1784,41 @@ void drawPlaylist(App& a) {
           continue;
         }
         gridPatch(ox0, ox1, a0.y, a1.y);
-        constexpr float kShadow = 7.0f;
-        if (a0.x > p.x0 + 1 && a0.x < p.x1)  // our left edge over the clip beneath
-          dl->AddRectFilledMultiColor(ImVec2(std::max(p.x0, a0.x - kShadow), oy0), ImVec2(a0.x, oy1), clear, shadow, shadow, clear);
-        if (a1.x < p.x1 - 1 && a1.x > p.x0)  // our right edge too (a short clip inside a long one)
-          dl->AddRectFilledMultiColor(ImVec2(a1.x, oy0), ImVec2(std::min(p.x1, a1.x + kShadow), oy1), shadow, clear, clear, shadow);
+        // K-26: the visible part of the overlap, split into what this clip
+        // covers directly (the nearest layer) and what a clip already found
+        // above it covers too (a deeper, dimmer layer). Clips are visited top
+        // down, so `ghostCover` holds the spans of the layers above.
+        {
+          const float vx0 = std::max(ox0, gMin.x), vx1 = std::min(ox1, gMax.x);
+          if (vx1 - vx0 >= 1.0f && ghosts.size() < 24) {
+            float x = vx0;
+            for (const auto& [cx0, cx1] : ghostCover) {  // sorted, disjoint
+              if (cx1 <= x) continue;
+              if (cx0 >= vx1) break;
+              if (cx0 > x) ghosts.push_back({k, x, cx0, 0});
+              ghosts.push_back({k, std::max(x, cx0), std::min(vx1, cx1), 1});
+              x = std::min(vx1, cx1);
+              if (x >= vx1) break;
+            }
+            if (x < vx1) ghosts.push_back({k, x, vx1, 0});
+            // Merge [vx0, vx1] into the covered spans.
+            float m0 = vx0, m1 = vx1;
+            size_t w = 0;
+            bool placed = false;
+            std::array<std::pair<float, float>, 32> merged{};
+            for (const auto& sp : ghostCover) {
+              if (sp.second < m0) merged[w++] = sp;
+              else if (sp.first > m1) {
+                if (!placed) merged[w++] = {m0, m1}, placed = true;
+                merged[w++] = sp;
+              } else
+                m0 = std::min(m0, sp.first), m1 = std::max(m1, sp.second);
+              if (w + 1 >= merged.size()) break;
+            }
+            if (!placed) merged[w++] = {m0, m1};
+            ghostCover.assign(merged.begin(), merged.begin() + static_cast<std::ptrdiff_t>(w));
+          }
+        }
       }
     }
     // Clip content (notes, waveform, curve): lighter than the colour on dark
@@ -1699,11 +1873,19 @@ void drawPlaylist(App& a) {
           dl->PopClipRect();
         }
     }
+    // K-26: the clips beneath, seen through this clip's body (deepest first).
+    // (A muted clip on top keeps its own dim content clear of them: a step fainter.)
+    const float ghostDim = muted ? 0.7f : 1.0f;
+    for (size_t g = ghosts.size(); g-- > 0;)
+      if (ghosts[g].depth == 1) drawGhost(drawn[ghosts[g].k], ghosts[g].x0, ghosts[g].x1, 1, a0.y + headH + 1, a1.y - 1, ghostDim);
+    for (size_t g = ghosts.size(); g-- > 0;)
+      if (ghosts[g].depth == 0) drawGhost(drawn[ghosts[g].k], ghosts[g].x0, ghosts[g].x1, 0, a0.y + headH + 1, a1.y - 1, ghostDim);
     {
       DrawnClip dc;
       dc.track = lc.track, dc.x0 = a0.x, dc.x1 = a1.x, dc.y0 = a0.y, dc.y1 = a1.y, dc.body = a0.y + headH, dc.ci = ci, dc.rim = rim, dc.sel = sel;
       dc.clip = c, dc.clipX0 = x0, dc.bodyCol = body, dc.headCol = head, dc.ink = ink, dc.fade = fg;
       dc.audio = c.kind == ClipKind::Audio, dc.glide = gliding, dc.xfBelow = xfBelow;
+      dc.len = len, dc.loop = c.kind == ClipKind::Pattern ? ccache.loop[ci] : 0;
       drawn.push_back(dc);
     }
     dl->AddLine(ImVec2(a0.x + 1, a0.y + 0.5f), ImVec2(a1.x - 1, a0.y + 0.5f), theme::withAlpha(P.paper, muted ? 0.08f : 0.28f));
@@ -1812,24 +1994,30 @@ void drawPlaylist(App& a) {
       }
       const float pxTick = (a1.x - a0.x) / static_cast<float>(std::max<Tick>(1, len));
       if (repeats) {
-        // Q-1: repeats are slightly dimmed; each loop point gets a thin
-        // divider with a notch at the top and the bottom of the body.
-        const ImU32 dim = theme::withAlpha(P.well, P.dark ? 0.16f : 0.10f);
-        const ImU32 divider = theme::withAlpha(P.dark ? P.paper : P.ink, P.dark ? 0.42f : 0.35f);
-        const ImU32 notch = P.dark ? theme::withAlpha(P.paper, 0.85f) : theme::mix(base, P.ink, 0.65f);
-        const float yb0 = a0.y + headH, yb1 = a1.y;
-        for (const ClipPass& ps : loopPasses(c.offset, len, loopLen)) {
-          if (ps.index == 0) continue;
-          const float x = a0.x + pxTick * static_cast<float>(ps.at);
-          if (x > gMax.x) break;
-          const float xe = std::min(a1.x, a0.x + pxTick * static_cast<float>(ps.at + ps.len));
-          if (xe < gMin.x) continue;
-          dl->AddRectFilled(ImVec2(x, yb0), ImVec2(xe, yb1), dim);
-          if (x - a0.x < 3 || a1.x - x < 3) continue;
-          dl->AddLine(ImVec2(std::round(x) + 0.5f, yb0), ImVec2(std::round(x) + 0.5f, yb1), divider, 1.0f);
-          const float n = std::clamp((yb1 - yb0) * 0.14f, 2.5f, 4.5f);
-          dl->AddTriangleFilled(ImVec2(x - n, yb0), ImVec2(x + n, yb0), ImVec2(x, yb0 + n), notch);
-          dl->AddTriangleFilled(ImVec2(x - n, yb1), ImVec2(x, yb1 - n), ImVec2(x + n, yb1), notch);
+        // K-11: each loop point is a small V cut into the clip's top and bottom
+        // edges (grid colour behind, so the clip reads as notched), joined by a
+        // faint hairline through the body; repeats are not dimmed. Narrow passes
+        // (zoomed far out) show none of it.
+        const loopnotch::Geom ng = loopnotch::geom(pxTick * static_cast<float>(loopLen), a1.y - a0.y);
+        if (ng.show) {
+          // K-26: the hairline is a faint seam in the grid's colour (as the notches
+          // are cut to it), one crisp pixel: a light line read as a stray, brighter
+          // grid line next to the real ones seen through the body.
+          const ImU32 hair = theme::withAlpha(P.well, P.dark ? 0.34f : 0.30f);
+          const float yb0 = a0.y + headH, yb1 = a1.y, hw = ng.width * 0.5f;
+          for (const ClipPass& ps : loopPasses(c.offset, len, loopLen)) {
+            if (ps.index == 0) continue;
+            const float x = std::round(a0.x + pxTick * static_cast<float>(ps.at));
+            if (x - hw > gMax.x) break;
+            if (x + hw < gMin.x || x - a0.x < ng.width || a1.x - x < ng.width) continue;
+            // The grid behind (odd bars are a step lighter, as drawn above).
+            const ImU32 bg = (tickAt(x) / barT) % 2 == 1 ? theme::mix(P.well, P.paper, P.dark ? 0.035f : 0.018f) : P.well;
+            dl->AddLine(ImVec2(x, yb0 + 1), ImVec2(x, yb1 - ng.depth), hair, 1.0f);  // (AddLine centres on pixel x)
+            // Slightly past the edge (the clip rectangle cuts it), so no anti-aliased
+            // seam is left along the rim; the tip lands on the hairline's pixel centre.
+            dl->AddTriangleFilled(ImVec2(x + 0.5f - hw, a0.y - 1), ImVec2(x + 0.5f + hw, a0.y - 1), ImVec2(x + 0.5f, a0.y + ng.depth), bg);
+            dl->AddTriangleFilled(ImVec2(x + 0.5f - hw, a1.y + 1), ImVec2(x + 0.5f, a1.y - ng.depth), ImVec2(x + 0.5f + hw, a1.y + 1), bg);
+          }
         }
       } else if (contentEnd >= 0 && contentEnd < len) {
         // Q-1: a pattern whose loop mode is off plays nothing past its end
@@ -2021,9 +2209,10 @@ void drawPlaylist(App& a) {
     }
     dl->PopClipRect();
   }
-  // J-38: overlaps. The clip beneath keeps a dashed outline through the span
-  // it shares with the clip on top (and its end edge), so both extents read at
-  // a glance; an audio crossfade shows both curves crossing (an X).
+  // J-38: overlaps. The clip beneath keeps its end edge through the clip on
+  // top (K-26: a crisp rim-coloured edge; a dashed lit outline of the shared
+  // span while it is selected), so both extents read at a glance; an audio
+  // crossfade shows both curves crossing (an X).
   if (drawn.size() > 1) {
     std::vector<size_t> byTrack(drawn.size());
     for (size_t k = 0; k < drawn.size(); ++k) byTrack[k] = k;
@@ -2057,11 +2246,21 @@ void drawPlaylist(App& a) {
           }
           continue;
         }
-        const ImU32 ghost = p.sel ? P.hot : theme::withAlpha(P.dark ? theme::mix(p.rim, P.paper, 0.55f) : p.rim, 0.85f);
-        dashH(ox0, ox1, std::max(p.y0, q.y0) + 0.5f, ghost);
-        dashH(ox0, ox1, std::min(p.y1, q.y1) - 0.5f, ghost);
-        if (p.x1 > q.x0 + 1 && p.x1 < q.x1 - 1) dashV(p.x1 - 0.5f, std::max(p.y0, q.y0), std::min(p.y1, q.y1), ghost);
-        if (p.x0 > q.x0 + 1 && p.x0 < q.x1 - 1) dashV(p.x0 + 0.5f, std::max(p.y0, q.y0), std::min(p.y1, q.y1), ghost);
+        // K-26: the clip beneath shows through (its ghost), so its ends inside
+        // the top clip are its own rim colour, one crisp pixel down the body:
+        // the light dashes read as stray, brighter grid lines. A selected clip
+        // beneath keeps its lit dashed outline (its whole extent at a glance).
+        const float ey0 = std::max(p.body, q.body), ey1 = std::min(p.y1, q.y1) - 1;
+        if (p.sel) {
+          dashH(ox0, ox1, std::max(p.y0, q.y0) + 0.5f, P.hot);
+          dashH(ox0, ox1, std::min(p.y1, q.y1) - 0.5f, P.hot);
+          if (p.x1 > q.x0 + 1 && p.x1 < q.x1 - 1) dashV(p.x1 - 0.5f, std::max(p.y0, q.y0), std::min(p.y1, q.y1), P.hot);
+          if (p.x0 > q.x0 + 1 && p.x0 < q.x1 - 1) dashV(p.x0 + 0.5f, std::max(p.y0, q.y0), std::min(p.y1, q.y1), P.hot);
+        } else if (ey1 - ey0 > 2) {
+          const ImU32 edge = theme::withAlpha(p.rim, 0.75f);
+          if (p.x1 > q.x0 + 1 && p.x1 < q.x1 - 1) dl->AddLine(ImVec2(std::floor(p.x1) - 1, ey0), ImVec2(std::floor(p.x1) - 1, ey1), edge, 1.0f);
+          if (p.x0 > q.x0 + 1 && p.x0 < q.x1 - 1) dl->AddLine(ImVec2(std::floor(p.x0), ey0), ImVec2(std::floor(p.x0), ey1), edge, 1.0f);
+        }
         // Crossfade: the fade-out of the clip beneath, drawn over the clip on top.
         if (pc.kind == ClipKind::Audio && p.ci < ccache.fades.size() && ccache.fades[p.ci].out.len > 0 && q.body < q.y1 - 6 &&
             !clipAnim.contains(pc.id)) {
@@ -2257,11 +2456,22 @@ void drawPlaylist(App& a) {
   int headResize = -1;  // track whose header's bottom edge is under the pointer
   int headHandle = -1;  // track whose "..." handle is under the pointer
   int headLed = -1;     // track whose mute switch is under the pointer
+  int headName = -1;    // track whose name text is under the pointer (double-click renames)
   int headModeTrack = -1, headModeCtl = 0;  // PL-08: audio / instrument track control under the pointer
   static int inputTrack = -1;               // track whose input popup is open
   static int renaming = -1;
   static ObjectId menuClip = kNoId;
   static int dragTrack = -1;  // header being dragged to a new place
+  // K-12: the track "+" (View > Track + button): on the hovered header, left of the mute switch on its line.
+  int headPlus = -1;            // track whose "+" is under the pointer
+  ImVec2 headPlusAnchor(0, 0);  // its menu's corner (under the button)
+  const bool plusOn = trackplusui::enabled(a);
+  const int plusMenu = trackplusui::menuTrack();
+  static std::vector<float> plusFade;  // per track hover fade of the "+"
+  if (plusFade.size() != static_cast<size_t>(nTracks)) plusFade.assign(static_cast<size_t>(nTracks), 0.0f);
+  trackplusui::DevGeom& tpg = trackplusui::devGeom();
+  tpg.on = plusOn;
+  tpg.track = -1;
   for (int tr = trackAt(gMin.y); tr < nTracks && yOf(tr) < gMax.y; ++tr) {
     float y = yOf(tr), th = hOf(tr);
     if (th < 1) continue;  // inside a folded group
@@ -2278,9 +2488,8 @@ void drawPlaylist(App& a) {
     dl->AddLine(ImVec2(h0.x + 6, h0.y + 0.5f), ImVec2(h1.x - 2, h0.y + 0.5f), theme::withAlpha(P.paper, P.dark ? 0.10f : 0.5f));
     if (coloured) dl->AddRectFilled(h0, ImVec2(h0.x + 4, h1.y), tc, theme::kRadiusSm, ImDrawFlags_RoundCornersLeft);
     if (dragTrack == tr) dl->AddRect(h0, h1, theme::withAlpha(P.hot, 0.7f), theme::kRadiusSm, 0, 1.5f);
-    const bool nearEdge = hovered && io.MousePos.x >= headX0 && io.MousePos.x < gMin.x && std::fabs(io.MousePos.y - (y + th)) < 3.0f &&
-                          io.MousePos.y >= gMin.y;
-    if (nearEdge) headResize = tr;
+    bool nearEdge = hovered && io.MousePos.x >= headX0 && io.MousePos.x < gMin.x && std::fabs(io.MousePos.y - (y + th)) < 3.0f &&
+                    io.MousePos.y >= gMin.y;
     const bool roomy = th >= 30;  // two lines: name above, handle + switch below
     float nameY = roomy ? y + 4.0f : y + (th - theme::kFontCaption) * 0.5f - 1;
     float nameX = h0.x + 8 + indent;
@@ -2303,11 +2512,34 @@ void drawPlaylist(App& a) {
     if (!t.muted) dl->AddCircleFilled(ledC, 2.6f, ledCol);
     // "..." handle.
     const ImVec2 hc0(h0.x + 6 + indent, lineY - 5);
-    const bool handleHot = hovHead && !ledHot && io.MousePos.x >= hc0.x - 2 && io.MousePos.x < hc0.x + 20 && std::fabs(io.MousePos.y - lineY) < 7;
+    // K-12: the "+" slot sits right of the mode controls (before the lock / live marks and the switch);
+    // it is kept free on every header that offers it, so the controls never move when it fades in.
+    const float slotX1 = h1.x - 20 - (t.locked ? 16.0f : 0.0f) - (liveMode ? 14.0f : 0.0f);
+    const bool plusOffered = plusOn && trackplusui::offeredOn(s, tr) && slotX1 - trackplusui::kSlotW > hc0.x + 22;
+    const ImVec2 plusC(std::round(slotX1 - trackplusui::kHalf - 2), lineY);
+    float plusA = 0;
+    bool plusHot = false;
+    if (plusOffered) {
+      float& f = plusFade[static_cast<size_t>(tr)];
+      const float target = hovHead || plusMenu == tr || dragTrack == tr ? 1.0f : 0.0f;
+      f += (target - f) * std::min(1.0f, io.DeltaTime * 16.0f);
+      if (std::fabs(target - f) < 0.02f) f = target;
+      plusA = f;
+      plusHot = hovHead && std::fabs(io.MousePos.x - plusC.x) <= trackplusui::kHalf + 2 && std::fabs(io.MousePos.y - plusC.y) <= trackplusui::kHalf + 2;
+      if (plusHot) {
+        headPlus = tr;
+        headPlusAnchor = ImVec2(plusC.x - trackplusui::kHalf, plusC.y + trackplusui::kHalf + 4);
+        nearEdge = false;
+      }
+    }
+    if (nearEdge) headResize = tr;
+    const bool handleHot = hovHead && !ledHot && !plusHot && io.MousePos.x >= hc0.x - 2 && io.MousePos.x < hc0.x + 20 && std::fabs(io.MousePos.y - lineY) < 7;
     if (handleHot) headHandle = tr;
     if (roomy || th >= 22)
       ui::drawIconFit(dl, ui::Icon::More, ImVec2(hc0.x + 2.8f, lineY - 0.2f), ImVec2(hc0.x + 14.2f, lineY + 2.2f), handleHot || dragTrack == tr ? P.hot : P.textFaint);
-    const float nameRight = roomy ? h1.x - 6 : h1.x - 22;
+    float nameRight = roomy ? h1.x - 6 : h1.x - 22;
+    if (!roomy && plusA > 0.01f) nameRight = std::min(nameRight, plusC.x - trackplusui::kHalf - 4);  // one line: the name gives way
+    float nameX0 = 0, iconX1 = 0;
     if (roomy || th >= 18) {
       float nx = roomy ? nameX : nameX + 18;
       // J-211: the track icon before the name, in a box that fits the track's
@@ -2318,14 +2550,38 @@ void drawPlaylist(App& a) {
         nx += box + 4;
       }
       nx += trackui::drawNameGlyph(a, dl, tr, ImVec2(nx, nameY));  // PL-08: audio / instrument track glyph
+      iconX1 = nx;
+      nameX0 = nx;
+      const std::string shownName = playlistTrackName(s, static_cast<size_t>(tr));
       theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption + 1, ImVec2(nx, nameY), nameRight - nx, t.muted ? P.textFaint : P.text,
-                          playlistTrackName(s, static_cast<size_t>(tr)).c_str());
+                          shownName.c_str());
+      // The name's own box (the text as drawn, at least a short word wide) is where a double-click renames.
+      const float textW = a.fontRegular->CalcTextSizeA(theme::kFontCaption + 1, FLT_MAX, 0.0f, shownName.c_str()).x;
+      const float nameHitX1 = std::min(nameRight, nx + std::max(textW, 28.0f)) + 3;
+      if (hovHead && !ledHot && !plusHot && !handleHot && io.MousePos.x >= nx - 3 && io.MousePos.x < nameHitX1 &&
+          io.MousePos.y >= nameY - 3 && io.MousePos.y < nameY + theme::kFontCaption + 4)
+        headName = tr;
     }
     {  // PL-08: input / monitoring / arm (audio tracks), channel (instrument tracks) between the handle and the switch
-      const float cx1 = h1.x - 20 - (t.locked ? 16.0f : 0.0f) - (liveMode ? 14.0f : 0.0f);
-      if (const int ctl = trackui::drawHeader(a, dl, tr, hc0.x + 18, cx1, lineY, hovHead && !ledHot && !handleHot, roomy)) {
+      const float cx1 = slotX1 - (plusOffered ? trackplusui::kSlotW : 0.0f);
+      if (const int ctl = trackui::drawHeader(a, dl, tr, hc0.x + 18, cx1, lineY, hovHead && !ledHot && !handleHot && !plusHot, roomy)) {
         headModeTrack = tr;
         headModeCtl = ctl;
+      }
+      if (plusOffered) {
+        trackplusui::drawButton(a, dl, tr, plusC, plusA, plusHot);
+        if (plusA > 0.01f && (hovHead || plusMenu == tr)) {  // K-12 dev geometry: the "+" and its neighbours
+          tpg.track = tr;
+          tpg.x0 = plusC.x - trackplusui::kHalf, tpg.x1 = plusC.x + trackplusui::kHalf;
+          tpg.y0 = plusC.y - trackplusui::kHalf, tpg.y1 = plusC.y + trackplusui::kHalf;
+          const bool named = (roomy || th >= 18) && nameX0 > 0;
+          tpg.nameX0 = named ? nameX0 : 0, tpg.nameX1 = named ? nameRight : 0;
+          tpg.nameY0 = named ? nameY : 0, tpg.nameY1 = named ? nameY + theme::kFontCaption + 1 : 0;
+          tpg.handleX0 = hc0.x - 2, tpg.handleX1 = hc0.x + 20;
+          tpg.ledX0 = ledC.x - 6, tpg.ledX1 = ledC.x + 6;
+          tpg.ctlX0 = hc0.x + 18, tpg.ctlX1 = cx1;
+          tpg.iconX1 = iconX1;
+        }
       }
     }
     if (liveMode && a.engine.liveActive(tr) != kNoId)  // live: a clip plays on this track
@@ -2343,18 +2599,59 @@ void drawPlaylist(App& a) {
   const float contentW = std::max(static_cast<float>(songLen + 8 * std::max<Tick>(1, s.barTicks())) * st.pxPerTick, st.scrollX + gridW);
   const ImVec2 vb0(origin.x, gMin.y), vb1(origin.x + vbarW - 2, gMax.y);
   const ImVec2 hb0(gMin.x, origin.y + 1), hb1(gMax.x, rY - 1);
-  const float vThumbH = std::max(18.0f, (vb1.y - vb0.y) * std::min(1.0f, gridH / std::max(1.0f, totalH)));
+  const float vThumbH = std::max(kThumbMinV, (vb1.y - vb0.y) * std::min(1.0f, gridH / std::max(1.0f, totalH)));
   const float vThumbY = vb0.y + (totalH > gridH ? (vb1.y - vb0.y - vThumbH) * std::clamp(st.scrollY / (totalH - gridH), 0.0f, 1.0f) : 0.0f);  // J-67: overscroll keeps the thumb in its rail
-  const float hThumbW = std::max(24.0f, (hb1.x - hb0.x) * std::min(1.0f, gridW / std::max(1.0f, contentW)));
+  const float hThumbW = std::max(kThumbMinH, (hb1.x - hb0.x) * std::min(1.0f, gridW / std::max(1.0f, contentW)));
   const float hThumbX = hb0.x + (contentW > gridW ? (hb1.x - hb0.x - hThumbW) * std::clamp(st.scrollX / (contentW - gridW), 0.0f, 1.0f) : 0.0f);
-  static int barDrag = 0;  // 1 vertical, 2 horizontal
-  static float barGrab = 0;
   const bool overV = hovered && io.MousePos.x >= vb0.x && io.MousePos.x < vb1.x + 2 && io.MousePos.y >= vb0.y && io.MousePos.y < vb1.y;
   const bool overH = hovered && io.MousePos.x >= hb0.x && io.MousePos.x < hb1.x && io.MousePos.y >= origin.y && io.MousePos.y < rY;
+  // K-24: the thumbs' ends are zoom handles (a third of a short thumb at most).
+  const float vCap = std::min(7.0f, vThumbH / 3.0f), hCap = std::min(8.0f, hThumbW / 3.0f);
+  int overEnd = 0;
+  if (overV && io.MousePos.y >= vThumbY && io.MousePos.y < vThumbY + vCap) overEnd = 3;
+  else if (overV && io.MousePos.y >= vThumbY + vThumbH - vCap && io.MousePos.y < vThumbY + vThumbH) overEnd = 4;
+  else if (overH && io.MousePos.x >= hThumbX && io.MousePos.x < hThumbX + hCap) overEnd = 5;
+  else if (overH && io.MousePos.x >= hThumbX + hThumbW - hCap && io.MousePos.x < hThumbX + hThumbW) overEnd = 6;
+  const int litEnd = barDrag >= 3 ? barDrag : overEnd;
+  const bool vBusy = barDrag == 1 || barDrag == 3 || barDrag == 4, hBusy = barDrag == 2 || barDrag == 5 || barDrag == 6;
   dl->AddRectFilled(ImVec2(origin.x, gMin.y), ImVec2(headX0, gMax.y), P.dark ? P.well : P.surface950);
-  dl->AddRectFilled(ImVec2(vb0.x + 2, vThumbY), ImVec2(vb1.x, vThumbY + vThumbH), barDrag == 1 || overV ? P.surface600 : P.surface700, 3);
+  dl->AddRectFilled(ImVec2(vb0.x + 2, vThumbY), ImVec2(vb1.x, vThumbY + vThumbH), vBusy || overV ? P.surface600 : P.surface700, 3);
   dl->AddRectFilled(ImVec2(gMin.x, origin.y), ImVec2(gMax.x, rY), P.dark ? P.well : P.surface950);
-  dl->AddRectFilled(ImVec2(hThumbX, hb0.y + 2), ImVec2(hThumbX + hThumbW, hb1.y - 1), barDrag == 2 || overH ? P.surface600 : P.surface700, 3);
+  dl->AddRectFilled(ImVec2(hThumbX, hb0.y + 2), ImVec2(hThumbX + hThumbW, hb1.y - 1), hBusy || overH ? P.surface600 : P.surface700, 3);
+  {  // K-24: end handles: a grip line at each end while the scroller is hovered, the end under the pointer (or dragged) lit
+    const ImU32 grip = P.dark ? P.textFaint : P.textDim;
+    if (overV || vBusy) {
+      const float x0 = vb0.x + 3, x1 = vb1.x - 1;
+      if (litEnd == 3) dl->AddRectFilled(ImVec2(vb0.x + 2, vThumbY), ImVec2(vb1.x, vThumbY + vCap), P.hot, 3, ImDrawFlags_RoundCornersTop);
+      else dl->AddLine(ImVec2(x0, vThumbY + vCap - 0.5f), ImVec2(x1, vThumbY + vCap - 0.5f), grip, 1.0f);
+      if (litEnd == 4) dl->AddRectFilled(ImVec2(vb0.x + 2, vThumbY + vThumbH - vCap), ImVec2(vb1.x, vThumbY + vThumbH), P.hot, 3, ImDrawFlags_RoundCornersBottom);
+      else dl->AddLine(ImVec2(x0, vThumbY + vThumbH - vCap + 0.5f), ImVec2(x1, vThumbY + vThumbH - vCap + 0.5f), grip, 1.0f);
+    }
+    if (overH || hBusy) {
+      const float y0 = hb0.y + 4, y1 = hb1.y - 3;
+      if (litEnd == 5) dl->AddRectFilled(ImVec2(hThumbX, hb0.y + 2), ImVec2(hThumbX + hCap, hb1.y - 1), P.hot, 3, ImDrawFlags_RoundCornersLeft);
+      else dl->AddLine(ImVec2(hThumbX + hCap - 0.5f, y0), ImVec2(hThumbX + hCap - 0.5f, y1), grip, 1.0f);
+      if (litEnd == 6) dl->AddRectFilled(ImVec2(hThumbX + hThumbW - hCap, hb0.y + 2), ImVec2(hThumbX + hThumbW, hb1.y - 1), P.hot, 3, ImDrawFlags_RoundCornersRight);
+      else dl->AddLine(ImVec2(hThumbX + hThumbW - hCap + 0.5f, y0), ImVec2(hThumbX + hThumbW - hCap + 0.5f, y1), grip, 1.0f);
+    }
+    if (litEnd >= 3) ImGui::SetMouseCursor(litEnd <= 4 ? ImGuiMouseCursor_ResizeNS : ImGuiMouseCursor_ResizeEW);
+    // The hint at once (status bar), a tooltip after the hint delay.
+    static double endSince = -1;
+    static int endWas = 0;
+    if (overEnd != endWas) endWas = overEnd, endSince = ImGui::GetTime();
+    if (overEnd >= 3 && barDrag == 0) {
+      const bool v = overEnd <= 4;
+      a.setHint(v ? i18n::tr("Drag the end to zoom the track height (the other end stays put) \xC2\xB7 Alt+wheel: zoom at the pointer")
+                  : i18n::tr("Drag the end to zoom the time (the other end stays put) \xC2\xB7 Ctrl+wheel: zoom at the pointer"));
+      if (ImGui::GetTime() - endSince >= static_cast<double>(ImGui::GetStyle().HoverDelayNormal) && ImGui::BeginTooltip()) {
+        ImGui::TextUnformatted(v ? i18n::tr("Drag to zoom the track height") : i18n::tr("Drag to zoom the time"));
+        ImGui::EndTooltip();
+      }
+    }
+  }
+  devGeom.vThumb0 = vThumbY, devGeom.vThumb1 = vThumbY + vThumbH, devGeom.hThumb0 = hThumbX, devGeom.hThumb1 = hThumbX + hThumbW;
+  devGeom.vBarX = (vb0.x + 2 + vb1.x) * 0.5f, devGeom.hBarY = (hb0.y + hb1.y) * 0.5f;
+  devGeom.scrollY = st.scrollY, devGeom.trackHeight = st.trackHeight, devGeom.gridX0 = gMin.x, devGeom.gridY0 = gMin.y, devGeom.gridY1 = gMax.y;
   {  // song overview in the horizontal scroller: clip extents as thin marks
     const float k = (hb1.x - hb0.x) / std::max(1.0f, contentW);
     for (size_t ci = 0; ci < s.playlist.size() && ci < ccache.count; ++ci) {  // cached lengths / colours (J-25)
@@ -2497,10 +2794,16 @@ void drawPlaylist(App& a) {
                 "time selection (loops playback)  \xC2\xB7  double-click: clear the selection");
   } else if (hovered && inHead) {
     const char* modeHint = trackui::headerHint(a, headModeCtl ? headModeTrack : trackAt(m.y), headModeCtl);
-    if (headLed >= 0) a.setHint("Click: mute / unmute the track \xC2\xB7 right-click: solo (mute every other track)");
+    if (headPlus >= 0) {  // K-12
+      ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+      a.setHint(i18n::tr("Click: give the track an instrument, or a new pattern for its instrument (opened in the piano roll)"));
+    } else if (headLed >= 0) a.setHint("Click: mute / unmute the track \xC2\xB7 right-click: solo (mute every other track)");
     else if (headHandle >= 0) a.setHint("Drag up / down to move the track \xC2\xB7 click: track menu");
     else if (*modeHint) a.setHint(modeHint);  // PL-08
-    else a.setHint("Double-click to rename \xC2\xB7 right-click: track menu \xC2\xB7 drag the bottom edge to resize");
+    else if (headName >= 0) a.setHint(i18n::tr("Double-click the name to rename the track \xC2\xB7 right-click: track menu"));
+    else if (const int ht = trackAt(m.y); ht >= 0 && ht < nTracks && trackmodes::modeOf(s, ht) == TrackMode::Instrument)
+      a.setHint(i18n::tr("Double-click: show the track's instrument \xC2\xB7 double-click the name: rename \xC2\xB7 right-click: track menu"));
+    else a.setHint(i18n::tr("Double-click the name to rename the track \xC2\xB7 right-click: track menu \xC2\xB7 drag the bottom edge to resize"));
   }
 
   // Automation point edits: one undo step per gesture.
@@ -2537,6 +2840,27 @@ void drawPlaylist(App& a) {
   }
   {  // scrollers: drag the thumbs, click the rail to page
     if (barDrag != 0 && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) barDrag = 0;
+    if (lClick && overEnd >= 3) {  // K-24: an end grabbed: the opposite end's edge is held while the drag zooms
+      barDrag = overEnd;
+      if (overEnd == 3 || overEnd == 4) {
+        const bool bottom = overEnd == 4;
+        barGrab = m.y - (bottom ? vThumbY + vThumbH : vThumbY);
+        barFixed = bottom ? vThumbY : vThumbY + vThumbH;
+        barLen0 = vThumbH;
+        barZ0 = trackH;
+        const float px = bottom ? 0.0f : gridH;
+        barRow = smoothzoom::rowAnchorAt(trackY.data(), nTracks, trackH, static_cast<double>(px + st.scrollY), px);
+      } else {
+        const bool right = overEnd == 6;
+        barGrab = m.x - (right ? hThumbX + hThumbW : hThumbX);
+        barFixed = right ? hThumbX : hThumbX + hThumbW;
+        barLen0 = hThumbW;
+        barZ0 = st.pxPerTick;
+        barEdgePx = right ? 0.0f : gridW;
+        barTick = (static_cast<double>(barEdgePx) + st.scrollX) / std::max(1e-9, static_cast<double>(st.pxPerTick));
+      }
+      lClick = false;
+    }
     if (barDrag == 1 && totalH > gridH) {
       const float t = (m.y - barGrab - vb0.y) / std::max(1.0f, vb1.y - vb0.y - vThumbH);
       st.scrollY = std::clamp(t, 0.0f, 1.0f) * (totalH - gridH);
@@ -2570,6 +2894,11 @@ void drawPlaylist(App& a) {
       default: break;
     }
     lClick = rClick = false;
+  }
+  if (lClick && headPlus >= 0) {  // K-12: the track "+" opens its menu (a new pattern goes to the song position in view, else the view's start)
+    const Tick songPos = a.engine.mode() == PlayMode::Song ? static_cast<Tick>(a.engine.position()) : Tick(-1);
+    trackplusui::open(a, headPlus, trackplus::placeTick(s, songPos, tickAt(gMin.x), tickAt(gMax.x)), headPlusAnchor);
+    lClick = false;
   }
   {  // Track resize: drag the bottom edge of a track header (one undo step per drag).
     static int resizing = -1;
@@ -3034,8 +3363,17 @@ void drawPlaylist(App& a) {
     } else if (inHead) {
       int tr = trackAt(m.y);
       if (lClick && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-        renaming = tr;
-        ImGui::OpenPopup("##trname");
+        // A double-click on the name renames; elsewhere on an instrument track's header it shows the
+        // instrument (as the "+" menu's Show the instrument does). The header's controls (the "+",
+        // mute switch, handle, mode controls, fold arrow) took their clicks above and never get here.
+        const Channel* inst = tr >= 0 && tr < nTracks && trackmodes::modeOf(s, tr) == TrackMode::Instrument ? trackmodes::linkedChannel(s, tr) : nullptr;
+        if (headName == tr) {
+          renaming = tr;
+          ImGui::OpenPopup("##trname");
+        } else if (inst) {
+          a.selectChannel(inst->id);
+          a.settingsChannel = inst->id;
+        }
       } else if (rClick) {
         renaming = tr;
         ImGui::OpenPopup("##trmenu");
@@ -3651,7 +3989,7 @@ void drawPlaylist(App& a) {
     }
     if (ImGui::BeginMenu(i18n::tr("New instrument track"), free >= 0)) {
       for (const auto& info : pluginCatalog()) {
-        if (info.kind != PluginKind::Generator) continue;
+        if (info.kind != PluginKind::Generator || info.hidden) continue;
         if (ImGui::MenuItem(info.name.c_str())) {
           std::string why;
           const ObjectId ch = trackmodes::newInstrumentTrack(a.doc, free, info.type, &why);
@@ -3665,6 +4003,7 @@ void drawPlaylist(App& a) {
   }
   // Track popups.
   if (ImGui::BeginPopup("##trname")) {
+    devGeom.renaming = renaming;
     static char buf[128];
     if (ImGui::IsWindowAppearing()) {
       std::snprintf(buf, sizeof buf, "%s", renaming >= 0 && renaming < nTracks ? s.tracks[static_cast<size_t>(renaming)].name.c_str() : "");
@@ -3682,6 +4021,7 @@ void drawPlaylist(App& a) {
     playlistTrackMenu(a, renaming);
     ImGui::EndPopup();
   }
+  trackplusui::menu(a);  // K-12
   trackui::inputPopup(a, inputTrack);  // PL-08
   if (ImGui::BeginPopup("##clipmenu")) {
     arrangementClipMenu(a, menuClip);

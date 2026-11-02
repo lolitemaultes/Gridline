@@ -1,6 +1,7 @@
 // Gridline — channel settings window: strip, routing, instrument parameters,
 // sample loading and waveform for the sampler.
 #include <algorithm>
+#include "EditorZoomUi.h"
 #include "KeyLight.h"
 #include <cmath>
 #include <cstdio>
@@ -15,6 +16,7 @@
 #include "../core/PluginParams.h"
 #include "../engine/ChannelIns.h"
 #include "App.h"
+#include "../host/HostedPlugins.h"
 #include "HostedUi.h"
 #include "Theme.h"
 #include "Widgets.h"
@@ -421,7 +423,43 @@ bool pluginWindowDevCommand(App& a, const std::string& cmd, const std::vector<st
       if (mi < s.mixer.size()) a.fxEditor = {s.mixer[mi].id, std::atoi(args[2].c_str())};
     } else if (what == "close") {
       a.closePluginWindows();
+    } else if (what == "info") {  // K-9: open plugin windows and their native windows to stdout
+      devPrintPluginWindows(frame);
     }
+    return true;
+  }
+  if (cmd == "hostedparam" && args.size() >= 2) {
+    // K-9: hostedparam chan <index> [<k> <value>] | fx <mixer index> <slot> [<k> <value>]: sets a parameter
+    // of a hosted plugin as a knob does, then prints the instance's state and every value the song holds.
+    const Song& s = a.doc.song();
+    const bool isChan = args[0] == "chan";
+    const size_t i = static_cast<size_t>(std::max(0, std::atoi(args[1].c_str())));
+    const size_t rest = isChan ? 2 : 3;
+    PluginTarget t{};
+    const std::vector<float>* vals = nullptr;
+    if (isChan && i < s.channels.size()) {
+      t = {s.channels[i].id, -1};
+      vals = &s.channels[i].plugin.params;
+    } else if (!isChan && args.size() >= 3 && i < s.mixer.size()) {
+      const int slot = std::atoi(args[2].c_str());
+      t = {s.mixer[i].id, slot};
+      if (slot >= 0 && slot < kEffectSlots) vals = &s.mixer[i].slots[static_cast<size_t>(slot)].plugin.params;
+    }
+    if (!vals) {
+      std::printf("hostedparam frame %d: no such target\n", frame);
+      std::fflush(stdout);
+      return true;
+    }
+    if (args.size() >= rest + 2) {
+      const int k = std::atoi(args[rest].c_str());
+      a.doc.setParam(isChan ? channelPluginParam(t.owner, k) : slotParam(t.owner, t.slot, k), std::strtof(args[rest + 1].c_str(), nullptr), false);
+      a.syncEngine();
+    }
+    host::HostedInstance* hi = hostedInstanceFor(a, t);
+    std::printf("hostedparam frame %d: instance %d sandboxed %d crashed %d latency %d open %d params %zu\n", frame, hi ? 1 : 0, hi && hi->sandboxed() ? 1 : 0,
+                hi && hi->crashed() ? 1 : 0, hi ? hi->totalLatency() : 0, hostedEditorOpen(t) ? 1 : 0, vals->size());
+    for (size_t k = 0; k < vals->size(); ++k) std::printf("  param %zu %.6f\n", k, static_cast<double>((*vals)[k]));
+    std::fflush(stdout);
     return true;
   }
   if (cmd != "strip") return false;
@@ -466,11 +504,16 @@ void drawChannelSettings(App& a) {
   }
   editorW = std::floor(editorW);
   const float winW = std::max(624.0f, editorW + 24.0f);
-  const int fitFlags = ui::NextFloatingWindowSize(winW);  // J-158: capped to the work area, the rest scrolls
   {
     ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.42f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
   }
+  // K-19: the window's own size on top of the interface scale (installed plugins keep theirs).
+  const ImGuiStyle& st = ImGui::GetStyle();
+  const float contentW = winW - 2 * st.WindowPadding.x + st.ScrollbarSize;
+  const float zoom = edzoomui::prepare(a, "channelsettings", info ? info->type : std::string("(layer)"), contentW, !info || !isHostedType(info->type));
+  const int fitFlags =  // J-158: capped to the work area, the rest scrolls
+      ui::NextFloatingWindowSize(zoom > 1.0f ? std::floor(contentW * zoom) + 2 * st.WindowPadding.x - st.ScrollbarSize : winW);
   viewports::openAttached(title.c_str());  // opens inside the main window, never popped out by itself
   bool vis = ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking | fitFlags);
   ui::KeepWindowInViewport();
@@ -480,6 +523,7 @@ void drawChannelSettings(App& a) {
     if (!open) a.settingsChannel = kNoId;
     return;
   }
+  edzoomui::begin(a, "channelsettings");
   const ObjectId id = c->id;
   if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) || ImGui::IsWindowAppearing()) {
     a.focusPluginOwner = id;  // controller template knobs follow the focused plugin
@@ -509,7 +553,7 @@ void drawChannelSettings(App& a) {
   if (ui::BeginCombo("##inst", info ? info->name.c_str() : (c->isLayer() ? "Layer" : "None"), 170)) {
     std::string cat;
     for (const auto& p : pluginCatalog()) {
-      if (p.kind != PluginKind::Generator) continue;
+      if (p.kind != PluginKind::Generator || p.hidden) continue;
       if (p.category != cat) {
         cat = p.category;
         ui::Label(cat.c_str());
@@ -617,12 +661,14 @@ void drawChannelSettings(App& a) {
   }
   if (tab == 2) {
     drawChannelEnvelope(a, id);
+    edzoomui::end(a, "channelsettings");
     ImGui::End();
     if (!open) a.settingsChannel = kNoId;
     return;
   }
   if (tab == 1) {
     drawNoteSettings(a, id);
+    edzoomui::end(a, "channelsettings");
     ImGui::End();
     if (!open) a.settingsChannel = kNoId;
     return;
@@ -676,6 +722,7 @@ void drawChannelSettings(App& a) {
   // note processors (arpeggiator, chords, ...); J-151: not for instruments that leave them out (while none is set)
   if (const Channel* cc = a.doc.song().channel(id); !info || info->noteFxPanel || (cc && !cc->noteFx.empty()))
     packs::modulation::drawChannelNoteFx(a, id, 600.0f);
+  edzoomui::end(a, "channelsettings");
   ImGui::End();
   if (!open) a.settingsChannel = kNoId;
 }

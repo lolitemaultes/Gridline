@@ -9,6 +9,11 @@ bool drawEditor(App& a, const PluginTarget& t, float width);
 // Per frame, after the plugin windows: windows a pack keeps open on its own
 // (e.g. the audio editor's standalone window) and background work (recording).
 void drawWindows(App& a);
+// K-15: true when a pack shows this effect's editor in a panel of the main layout (Loupe
+// pinned): the effect window is not drawn (and App::fxEditor is cleared).
+bool claimEffectEditor(App& a, const PluginTarget& t);
+// Dev checks (--dev-input): commands a pack answers ("loupe ..."); true when handled.
+bool devCommand(App& a, const std::string& cmd, const std::vector<std::string>& args);
 // Opens the audio editor (gl.edison) on a channel's sample in its own window.
 bool openAudioEditor(App& a, const std::string& path, ObjectId channel);
 // Record into the audio editor (J-8 record filter): arms the gl.edison slot of

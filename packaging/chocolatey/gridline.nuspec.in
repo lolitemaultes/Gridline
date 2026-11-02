@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Chocolatey package for Gridline. Template: packaging/render.py fills in the version
+     (docs/packaging.md). The package downloads the official installer from the GitHub release. -->
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>gridline</id>
+    <version>@VERSION@</version>
+    <title>Gridline</title>
+    <authors>Gridline</authors>
+    <owners>lolitemaultes</owners>
+    <projectUrl>https://github.com/lolitemaultes/Gridline</projectUrl>
+    <projectSourceUrl>https://github.com/lolitemaultes/Gridline</projectSourceUrl>
+    <packageSourceUrl>https://github.com/lolitemaultes/Gridline/tree/main/packaging/chocolatey</packageSourceUrl>
+    <bugTrackerUrl>https://github.com/lolitemaultes/Gridline/issues</bugTrackerUrl>
+    <docsUrl>https://github.com/lolitemaultes/Gridline/tree/main/docs</docsUrl>
+    <releaseNotes>https://github.com/lolitemaultes/Gridline/releases/tag/v@VERSION@</releaseNotes>
+    <licenseUrl>https://github.com/lolitemaultes/Gridline/blob/main/LICENSE</licenseUrl>
+    <iconUrl>https://raw.githubusercontent.com/lolitemaultes/Gridline/main/assets/icons/gridline-app-256.png</iconUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <tags>gridline daw music audio midi sequencer music-production foss</tags>
+    <summary>Pattern-based music workstation</summary>
+    <description>Gridline is a free, open source music workstation built around patterns. Sketch beats in the channel rack, write melodies and chords in the piano roll, arrange patterns, audio and automation in the playlist and mix everything on a full mixer. It hosts VST3, CLAP, VST2 and LV2 plugins, runs as a VST3 and CLAP plugin itself and supports live collaboration over the network.
+
+This package installs the official 64-bit (x64) installer from the GitHub release.</description>
+  </metadata>
+  <files>
+    <file src="tools\**" target="tools" />
+  </files>
+</package>

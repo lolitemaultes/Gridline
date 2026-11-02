@@ -591,15 +591,21 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, const sty::Metrics& 
   const float ctl = P(sty::kBarCtl), cg = P(sty::kCellGap), gg = P(sty::kGroupGap), sg = P(sty::kSectionGap), ico = P(sty::kBarIcon);
   const float by = b0.y + std::round((barH - ctl) * 0.5f);
   float x = b0.x + std::round((barH - ctl) * 0.5f);
+  // K-15: a narrow dock leaves out what its menus also offer: the time format (View), then
+  // the snap field (Snap) and the brush buttons (View), instead of clipping the row.
+  const float barW = b1.x - b0.x;
+  const bool narrow = barW < P(760), tiny = barW < P(520);
   {
     static const char* kViews[] = {"WAVE", "SPECTRUM"};
     static const char* kViewHints[] = {"Waveform view (W)", "Spectrogram view (W)"};
     const char* labels[] = {i18n::tr(kViews[0]), i18n::tr(kViews[1])};
-    const float w = P(160);
+    const float w = P(tiny ? 120 : 160);
     const int v = sty::segmented("view", ImVec2(x, by), ImVec2(x + w, by + ctl), labels, 2, s.spectral ? 1 : 0, fm, fsVal, kViewHints);
     if (v >= 0) s.spectral = v == 1;
     sty::note("bar.view", "view", ImVec2(x, by), ImVec2(x + w, by + ctl));
-    x += w + gg;
+    x += w + (tiny ? sg : gg);
+  }
+  if (!tiny) {
     sty::Btn b;
     b.lit = s.spectral && s.brushMode;
     b.enabled = s.spectral;
@@ -614,7 +620,7 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, const sty::Metrics& 
     sty::note("bar.brush", "apply", ImVec2(x, by), ImVec2(x + ctl, by + ctl));
     x += ctl + sg;
   }
-  {
+  if (!tiny) {
     static const char* kSnap[] = {"No snap", "Zero crossings", "Markers", "Beats"};
     const float w = P(144);
     if (sty::dropField("##snapf", ImVec2(x, by), ImVec2(x + w, by + ctl), i18n::tr(kSnap[s.snap]), fm, fsVal, true,
@@ -627,7 +633,9 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, const sty::Metrics& 
         if (ImGui::MenuItem(i18n::tr(kSnap[k]), nullptr, s.snap == k)) s.snap = k;
       ImGui::EndPopup();
     }
-    x += w + gg;
+    x += w + (narrow ? sg : gg);
+  }
+  if (!narrow) {
     const float tw = P(112);
     if (sty::dropField("##timefmtf", ImVec2(x, by), ImVec2(x + tw, by + ctl), s.barsTime ? i18n::tr("Bar:beat") : i18n::tr("Min:sec"), fm, fsVal, true,
                        "Time display: minutes and seconds, or bars and beats at the song tempo"))

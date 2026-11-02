@@ -311,6 +311,7 @@ void testSpHallRef() {
     PluginState s = spHallRef();
     spSet(s, sx::HvWidth, 1);
     spSet(s, sx::HvWet, 0);
+    spSet(s, sx::HvLimiter, 0);  // K-2: new instances start with the limiter on (FL default)
     PluginState lm = s;
     spSet(lm, sx::HvLimiter, 1);
     auto L1 = spNoise(48000, 11, 0.9), R1 = spNoise(48000, 12, 0.9), L2 = L1, R2 = R1;
@@ -319,7 +320,7 @@ void testSpHallRef() {
     double p1 = spPeak(L1, 4800), p2 = spPeak(L2, 4800);
     char nm[96];
     std::snprintf(nm, sizeof nm, "hall ref: limiter holds the wet peak (%.2f → %.2f)", p1, p2);
-    expect(p1 > 0.4 && p2 < 0.3, nm);
+    expect(p1 > 0.33 && p2 < 0.3, nm);  // K-2: the new reference defaults give a slightly lower unlimited peak
   }
   // Block-size invariance with everything moving.
   {

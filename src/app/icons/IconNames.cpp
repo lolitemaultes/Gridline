@@ -71,6 +71,7 @@ const char* iconSvgName(Icon icon) {
     case Icon::ToolZoom: return "zoom-in";
     case Icon::ToolPlay: return "step-forward";
     case Icon::ToolDetune: return "detune";
+    case Icon::ToolBend: return "pitch-bend";  // K-25
     case Icon::ToolSnap: return "magnet";
     case Icon::StretchMode: return "move-horizontal";
     case Icon::FadeHandles: return "fade-handles";

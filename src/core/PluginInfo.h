@@ -103,7 +103,19 @@ struct PluginInfo {
   // J-159: names of keys whose notes are commands (index = MIDI note; empty or
   // missing = a plain note). The piano roll labels those rows and notes.
   std::vector<std::string> keyNames = {};
+  // K-23: kept so old projects open and play the same, but no longer offered
+  // (pickers, browser, menus leave it out; projects and FL imports still load it).
+  bool hidden = false;
+  // K-2: defaults a parameter had before it moved to the reference plugin's default
+  // (setReferenceDefaults). A saved state too short to hold the parameter predates the
+  // change and keeps the old default (normalizePluginState).
+  std::vector<std::pair<int, float>> legacyDefaults = {};
 };
+
+// K-2: sets parameter defaults to the reference plugin's (index, new default). Factory
+// presets that relied on the old default get it written out, so they sound as before;
+// the old defaults are kept in legacyDefaults for states saved before the change.
+void setReferenceDefaults(PluginInfo& p, const std::vector<std::pair<int, double>>& defs);
 inline constexpr int kMaxSendOutputs = 4;
 inline constexpr int kRouteIndexAlways = -2;  // PluginInfo::routeModeParam
 

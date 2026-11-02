@@ -360,6 +360,11 @@ enum Reverb {
   // wet 0..160, mod speed / depth 0..2048); RvbPreSync and RvbInputMode (mid / side) shared.
   RvbFLowCut, RvbFHighCut, RvbFPredelay, RvbFRoom, RvbFDiffusion, RvbFDecay, RvbFDamp, RvbFBass, RvbFCross, RvbFSep,
   RvbFDry, RvbFEr, RvbFWet, RvbFModSpeed, RvbFModDepth,
+  // K-2: full model version: 1 = measured against the reference's renders
+  // (reflections from the first tap per side, single-precision LFO phase; new
+  // instances and imports), 0 = the J-35 model (seven / eight reflection taps), kept
+  // for states saved before
+  RvbFRev,
   RvbCount
 };
 // "gl.chorus"

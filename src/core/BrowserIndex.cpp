@@ -857,6 +857,61 @@ std::vector<std::string> Index::tagsOf(const std::string& path) const {
   return it == tags_.end() ? std::vector<std::string>{} : it->second;
 }
 
+void Index::movePath(const std::string& fromIn, const std::string& toIn) {
+  const std::string from = keyOf(fromIn), to = toIn.empty() ? std::string() : keyOf(toIn);
+  if (from.empty() || from == to) return;
+  // `p` equal to `from` or inside it -> its new key ("" when forgotten); nullopt-like flag in `hit`.
+  auto mapKey = [&](const std::string& p, bool& hit) -> std::string {
+    hit = false;
+    if (p == from) {
+      hit = true;
+      return to;
+    }
+    if (p.size() > from.size() && p.compare(0, from.size(), from) == 0 && p[from.size()] == '/') {
+      hit = true;
+      return to.empty() ? std::string() : to + p.substr(from.size());
+    }
+    return p;
+  };
+  bool changed = false;
+  {
+    std::lock_guard<std::mutex> lk(mu_);
+    std::map<std::string, FileMeta> moved;
+    for (auto it = entries_.begin(); it != entries_.end();) {
+      bool hit = false;
+      std::string k = mapKey(it->first, hit);
+      if (!hit) {
+        ++it;
+        continue;
+      }
+      if (!k.empty()) {
+        FileMeta m = std::move(it->second);
+        m.path = k;
+        moved[k] = std::move(m);
+      }
+      it = entries_.erase(it);
+      changed = true;
+    }
+    for (auto& [k, m] : moved) entries_[k] = std::move(m);
+    std::map<std::string, std::vector<std::string>> movedTags;
+    for (auto it = tags_.begin(); it != tags_.end();) {
+      bool hit = false;
+      std::string k = mapKey(it->first, hit);
+      if (!hit) {
+        ++it;
+        continue;
+      }
+      if (!k.empty()) movedTags[k] = std::move(it->second);
+      it = tags_.erase(it);
+      changed = true;
+    }
+    for (auto& [k, t] : movedTags) tags_[k] = std::move(t);
+  }
+  if (!changed) return;
+  ++gen_;
+  save();
+}
+
 std::vector<std::string> Index::allTags() const {
   std::set<std::string> s;
   {

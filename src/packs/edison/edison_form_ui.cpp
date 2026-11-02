@@ -12,7 +12,9 @@
 #include "../../core/I18n.h"
 #include "../../app/Theme.h"
 #include "../../app/Widgets.h"
+#include "../../app/Windows.h"
 #include "../../../third_party/imgui/imgui_internal.h"
+#include "edison_dock.h"
 #include "edison_style.h"
 #include "edison_ui.h"
 
@@ -68,7 +70,12 @@ bool infoButton(const char* id, ImVec2 p0, ImVec2 p1, const char* value, ImFont*
 }  // namespace
 
 // ------------------------------------------------------------------ the form
-void drawForm(App& a, Session& s, float width, float maxHeight) {
+void drawForm(App& a, Session& s, float width, float maxHeight) { drawFormLayout(a, s, dock::floatingLayout(width, maxHeight)); }
+
+// K-15: pinned into the main layout, laid out for the dock's space (edison_dock.h).
+void drawFormDocked(App& a, Session& s, ImVec2 avail) { drawFormLayout(a, s, dock::layoutFor(avail.x, avail.y)); }
+
+void drawFormLayout(App& a, Session& s, const dock::Layout& Lo) {
   static const skin::Skin kSkin = [] {
     skin::Skin k = skin::Skin::fl(col::Panel, col::WaveBg, col::BtnLo, col::Wave, col::Btn, col::Text);
     k.lcdBg = C(col::Lcd);
@@ -78,7 +85,9 @@ void drawForm(App& a, Session& s, float width, float maxHeight) {
     return k;
   }();
   skin::Scope scope(kSkin);
-  const sty::Metrics M = sty::metricsFor(width);
+  sty::Metrics M;
+  M.s = Lo.scale;
+  const bool compact = Lo.compact;  // K-15: a narrow dock: the head rows stacked
   auto P = [&M](float v) { return M.px(v); };
   ImDrawList* dl = ImGui::GetWindowDrawList();
   ImFont* fm = a.fontMono ? a.fontMono : ImGui::GetFont();
@@ -87,19 +96,21 @@ void drawForm(App& a, Session& s, float width, float maxHeight) {
   ImGui::PushID(static_cast<int>(s.key & 0x7FFFFFFF));
 
   // ---- geometry (whole pixels; one left edge L and one right edge R for every row)
-  const float W = std::floor(width);
+  const float W = Lo.formW;
   const float pad = P(sty::kPad), btn = P(sty::kBtn), fld = P(sty::kField), cg = P(sty::kCellGap), gg = P(sty::kGroupGap),
               sg = P(sty::kSectionGap), ico = P(sty::kIcon);
-  const float y1 = pad, y2 = y1 + btn + pad, y3 = y2 + btn + pad, headH = y3 + fld + pad;
+  const float y1 = Lo.yTransport, y2 = Lo.yMenus, y3 = Lo.yInfo, headH = Lo.headH;
   const float L = pad, R = W - pad;
   const float meterW = P(sty::kMeterW), meterX = R - 2 * meterW - cg;
   const float Rc = meterX - gg;  // right edge of the head's controls (the meters sit beyond it)
-  const float waveH = std::clamp(std::floor(maxHeight - headH - pad), P(250), P(600));
+  const float waveH = Lo.waveH;
   const float H = headH + waveH + pad;
   skin::Form F = skin::formAt(W, H, W, 1.0f);
   const ImVec2 o(std::round(F.o.x), std::round(F.o.y));
   auto pt = [&o](float x, float y) { return ImVec2(o.x + x, o.y + y); };
   const float cy1 = y1 + btn * 0.5f;
+  const float cyR = compact ? Lo.yRec + fld * 0.5f : cy1;  // the record options' centre line
+  const float meterBottom = compact ? Lo.yRec + fld : y3 + fld;
 
   // Panel: the head on a soft gradient, the editor below on the recessed tone.
   skin::gradientRect(dl, pt(0, 0), pt(W, headH), C(col::PanelHi), C(col::Panel));
@@ -148,13 +159,13 @@ void drawForm(App& a, Session& s, float width, float maxHeight) {
     b.enabled = s.slot;
     b.litRole = 0xE5484D;
     if (cell("rec", "rec", ui::Icon::Record, b)) toggleRecord(a, s);
-    x += sg - cg;
+    x = compact ? L : x + sg - cg;
     // Record options: when, maximum length, append; one centre line with the transport.
-    const float ft = cy1 - fld * 0.5f;
+    const float ft = cyR - fld * 0.5f;
     paramDrop(a, s, "##recmode", EdRecMode, pt(x, ft), pt(x + P(116), ft + fld), fm, fsVal, "When to start recording");
     sty::note("row1.record", "mode", pt(x, ft), pt(x + P(116), ft + fld));
     x += P(116) + gg;
-    sty::caption(dl, o.x + x, o.y + cy1, i18n::tr("MAX"), s.slot ? C(col::TextDim) : C(col::TextDim, 0.6f), fm, fsCap);
+    sty::caption(dl, o.x + x, o.y + cyR, i18n::tr("MAX"), s.slot ? C(col::TextDim) : C(col::TextDim, 0.6f), fm, fsCap);
     x += std::round(sty::textW(fm, fsCap, i18n::tr("MAX"))) + P(6);
     paramDrop(a, s, "##recmax", EdRecMax, pt(x, ft), pt(x + P(84), ft + fld), fm, fsVal, "Maximum recording length");
     sty::note("row1.record", "max", pt(x, ft), pt(x + P(84), ft + fld));
@@ -163,7 +174,7 @@ void drawForm(App& a, Session& s, float width, float maxHeight) {
       const bool on = param(a, s, EdAppend, 0) >= 0.5;
       const float box = P(14);
       const float w = box + std::round(box * 0.5f) + std::round(sty::textW(fm, fsCap, i18n::tr("APPEND")));
-      const ImVec2 tl = pt(x, std::round(cy1 - box * 0.5f));
+      const ImVec2 tl = pt(x, std::round(cyR - box * 0.5f));
       if (sty::check("append", tl, box, w, i18n::tr("APPEND"), on, s.slot, fm, fsCap,
                      "Append recordings after the existing audio (else a take replaces it)") &&
           s.slot)
@@ -185,33 +196,42 @@ void drawForm(App& a, Session& s, float width, float maxHeight) {
     // No title here: the plugin window's header already carries Loupe's wordmark.
   }
   // Level meters: input and output, the full height of the head rows.
-  meterBar(dl, pt(meterX, y1), pt(meterX + meterW, y3 + fld), s.inMeter);
-  meterBar(dl, pt(meterX + meterW + cg, y1), pt(R, y3 + fld), s.outMeter);
-  if (ImGui::IsMouseHoveringRect(pt(meterX, y1), pt(R, y3 + fld))) a.setHint(i18n::tr("Input and output level"));
+  meterBar(dl, pt(meterX, y1), pt(meterX + meterW, meterBottom), s.inMeter);
+  meterBar(dl, pt(meterX + meterW + cg, y1), pt(R, meterBottom), s.outMeter);
+  if (ImGui::IsMouseHoveringRect(pt(meterX, y1), pt(R, meterBottom))) a.setHint(i18n::tr("Input and output level"));
 
   // ---- row 2: menus (equal cells, flat) | tool strip (groups of equal buttons, right edge)
   {
-    const float stripW = 18 * btn + 12 * cg + 5 * gg;
+    const float stripW = 19 * btn + 13 * cg + 5 * gg;
     const float toolX = Rc - stripW;
     float cellW = P(52);
     if (L + 9 * cellW > toolX - sg) cellW = std::floor((toolX - sg - L) / 9);
-    drawMenus(a, s, pt(L, y2), cellW, btn, M);
+    const int perRow = Lo.menuRows == 2 ? 5 : 9;
+    if (compact) cellW = std::floor((R - L) / static_cast<float>(perRow));  // K-15: the menus across the dock (two rows when narrow)
+    drawMenus(a, s, pt(L, y2), cellW, btn, M, perRow);
 
     bool r = false;
-    float x = toolX;
+    float x = compact ? L : toolX;
+    float ty = compact ? Lo.yTools : y2;  // K-15: compact: the strip wraps over rows of its own
     auto tb = [&](const char* id, ui::Icon icon, const char* hint, bool lit = false, bool en = true) {
+      if (compact && x > L && x + btn > R + 0.5f) {
+        x = L;
+        ty += btn + cg;
+      }
       Btn b;
       b.hint = hint;
       b.lit = lit;
       b.enabled = en && !busy;
       b.right = &r;
-      const ImVec2 p0 = pt(x, y2), p1 = pt(x + btn, y2 + btn);
+      const ImVec2 p0 = pt(x, ty), p1 = pt(x + btn, ty + btn);
       const bool c = sty::iconButton(id, p0, p1, icon, ico, b);
       sty::note("row2.tools", id, p0, p1);
       x += btn + cg;
       return c;
     };
-    auto gap = [&] { x += gg - cg; };
+    auto gap = [&] {
+      if (!compact || x > L) x += gg - cg;
+    };
     if (tb("t_undo", ui::Icon::Undo, "Undo / right-click: redo (Ctrl+Z / Ctrl+Y)", false, s.hist.canUndo() || s.hist.canRedo())) undo(a, s);
     if (r) redo(a, s);
     if (tb("t_redo", ui::Icon::Redo, "Redo", false, s.hist.canRedo())) redo(a, s);
@@ -278,6 +298,17 @@ void drawForm(App& a, Session& s, float width, float maxHeight) {
     gap();
     if (tb("t_send", ui::Icon::SendOut, "Send to the playlist as an audio clip / right-click: send to a new sampler channel", false, hasAudio)) sendToPlaylist(a, s);
     if (r) sendToSampler(a, s, false);
+    // K-17: the drag handle: the selection (or the whole edit) dragged onto the playlist, the rack or a sampler.
+    if (!ImGui::GetDragDropPayload()) s.dragOut.clear();
+    tb("t_drag", ui::Icon::GripDots,
+       "Drag the audio out: onto a playlist track (an audio clip where you drop it), the channel rack or a sampler. "
+       "With a selection, only the selection goes",
+       !s.dragOut.empty(), hasAudio);
+    if (ImGui::IsItemActivated()) s.dragOutUsed = false;
+    if (ImGui::IsItemDeactivated() && !s.dragOutUsed && hasAudio)  // a click without a drag
+      say(s, "Drag this handle onto the playlist, the channel rack or a sampler");
+    devNoteRect("loupedrag");  // dev: an "sdlat" target
+    if (hasAudio && !busy) dragOutSource(a, s);
   }
 
   // ---- row 3: the info line (recessed fields of one height; captions inside)
@@ -291,6 +322,8 @@ void drawForm(App& a, Session& s, float width, float maxHeight) {
       return x0;
     };
     const float wRate = P(84), wBits = P(64), wCh = P(72), wBpm = P(80);
+    const bool mono = s.cur().a().channels == 1;
+    if (!compact) {  // K-15: compact: rate, bits, channels and tempo are left out (Format menu)
     std::snprintf(b, sizeof b, "%.0f Hz", s.rate());
     float fx = next(wRate);
     sty::field(dl, pt(fx, y), pt(fx + wRate, y + fld), nullptr, b, C(col::LcdText), fm, fsVal, fsCap, 1);
@@ -300,7 +333,6 @@ void drawForm(App& a, Session& s, float width, float maxHeight) {
     if (ImGui::IsMouseHoveringRect(pt(fx, y), pt(fx + wBits, y + fld))) a.setHint(i18n::tr("Edits are kept as 32-bit float; exports are 24-bit"));
     sty::note("row3.info", "bits", pt(fx, y), pt(fx + wBits, y + fld));
     fx = next(wCh);
-    const bool mono = s.cur().a().channels == 1;
     if (infoButton("chans", pt(fx, y), pt(fx + wCh, y + fld), mono ? i18n::tr("Mono") : i18n::tr("Stereo"), fm, fsVal, hasAudio && !busy,
                    mono ? "Mono: click to make stereo" : "Stereo: click to mix to mono"))
       runEdit(a, s, mono ? "To stereo" : "To mono", [mono](const Content& c) { return mono ? toStereo(c) : toMono(c); });
@@ -309,9 +341,15 @@ void drawForm(App& a, Session& s, float width, float maxHeight) {
     fx = next(wBpm);
     sty::field(dl, pt(fx, y), pt(fx + wBpm, y + fld), nullptr, b, C(col::LcdText), fm, fsVal, fsCap, 1);
     sty::note("row3.info", "bpm", pt(fx, y), pt(fx + wBpm, y + fld));
+    }
     // Position / length on the right, flush with the right edge; the name takes the rest.
     const float wLen = P(152), wPos = P(232);
-    const float posX = Rc - wLen - P(sty::kFieldGap) - wPos;
+    // K-15: compact: the name across the dock, cursor and length on the row under it.
+    const float posX = compact ? L : Rc - wLen - P(sty::kFieldGap) - wPos;
+    const float nameR = compact ? R : posX - P(sty::kFieldGap);
+    const float y2i = compact ? Lo.yInfo2 : y;
+    const float lenX = compact ? std::round(L + (R - L) * 0.58f) : Rc - wLen, lenR = compact ? R : Rc;
+    const float posR = compact ? lenX - P(sty::kFieldGap) : posX + wPos;
     std::string name;
     if (s.slot) {
       name = s.committed.empty() || s.committed[0] == '\x01' ? std::string(i18n::tr("(empty)")) : fs::path(s.committed).stem().string();
@@ -333,17 +371,17 @@ void drawForm(App& a, Session& s, float width, float maxHeight) {
       name = i18n::tr(kWait[std::clamp(s.rec.config().mode, 0, 3)]);
       nameCol = C(col::Rec);
     }
-    sty::field(dl, pt(x, y), pt(posX - P(sty::kFieldGap), y + fld), nameCap, name.c_str(), nameCol, fm, fsVal, fsCap, 0);
-    sty::note("row3.info", "name", pt(x, y), pt(posX - P(sty::kFieldGap), y + fld));
+    sty::field(dl, pt(x, y), pt(nameR, y + fld), nameCap, name.c_str(), nameCol, fm, fsVal, fsCap, 0);
+    sty::note("row3.info", "name", pt(x, y), pt(nameR, y + fld));
     const Range sr = s.sel;
     const std::string selTxt = sr.empty() ? timeText(a, s, s.cursor) : timeText(a, s, sr.a) + " - " + timeText(a, s, sr.b);
     const std::string lenTxt = timeText(a, s, sr.empty() ? s.frames() : sr.len());
-    sty::field(dl, pt(posX, y), pt(posX + wPos, y + fld), sr.empty() ? i18n::tr("CURSOR") : i18n::tr("SELECTION"), hasAudio ? selTxt.c_str() : "-",
+    sty::field(dl, pt(posX, y2i), pt(posR, y2i + fld), sr.empty() ? i18n::tr("CURSOR") : i18n::tr("SELECTION"), hasAudio ? selTxt.c_str() : "-",
                C(col::LcdText), fm, fsVal, fsCap, 2);
-    sty::note("row3.info", "pos", pt(posX, y), pt(posX + wPos, y + fld));
-    sty::field(dl, pt(Rc - wLen, y), pt(Rc, y + fld), sr.empty() ? i18n::tr("LENGTH") : i18n::tr("SEL LENGTH"), hasAudio ? lenTxt.c_str() : "-",
+    sty::note("row3.info", "pos", pt(posX, y2i), pt(posR, y2i + fld));
+    sty::field(dl, pt(lenX, y2i), pt(lenR, y2i + fld), sr.empty() ? i18n::tr("LENGTH") : i18n::tr("SEL LENGTH"), hasAudio ? lenTxt.c_str() : "-",
                C(col::LcdText), fm, fsVal, fsCap, 2);
-    sty::note("row3.info", "len", pt(Rc - wLen, y), pt(Rc, y + fld));
+    sty::note("row3.info", "len", pt(lenX, y2i), pt(lenR, y2i + fld));
   }
 
   // ---- waveform editor (the rest of the form, on the same left and right edges)
@@ -376,13 +414,14 @@ void drawForm(App& a, Session& s, float width, float maxHeight) {
 }
 
 // ------------------------------------------------------------------ menus (reference: options menu groups)
-void drawMenus(App& a, Session& s, ImVec2 tl, float cellW, float h, const sty::Metrics& M) {
+void drawMenus(App& a, Session& s, ImVec2 tl, float cellW, float h, const sty::Metrics& M, int perRow) {
   static const char* kMenus[] = {"File", "Format", "Edit", "Tools", "Regions", "View", "Snap", "Select", "Zoom"};
   ImFont* fr = a.fontRegular ? a.fontRegular : ImGui::GetFont();
   const bool busy = s.job.active();
   const bool has = s.frames() > 0;
   for (int i = 0; i < 9; ++i) {
-    const ImVec2 p0(tl.x + static_cast<float>(i) * cellW, tl.y), p1(p0.x + cellW, p0.y + h);
+    perRow = std::max(1, perRow);
+    const ImVec2 p0(tl.x + static_cast<float>(i % perRow) * cellW, tl.y + static_cast<float>(i / perRow) * h), p1(p0.x + cellW, p0.y + h);
     char id[16], pid[24];
     std::snprintf(id, sizeof id, "##menu%d", i);
     std::snprintf(pid, sizeof pid, "edmenu%d", i);
@@ -543,6 +582,8 @@ void drawMenus(App& a, Session& s, ImVec2 tl, float cellW, float h, const sty::M
         if (ImGui::MenuItem(i18n::tr("Time as min:sec"), nullptr, !s.barsTime)) s.barsTime = false;
         if (ImGui::MenuItem(i18n::tr("Time as bar:beat (song tempo)"), nullptr, s.barsTime)) s.barsTime = true;
         if (ImGui::MenuItem(i18n::tr("Auto-scroll"), nullptr, s.autoScroll)) s.autoScroll = !s.autoScroll;
+        ImGui::Separator();
+        dockMenuItems(a, s);  // K-15: pin into the main layout / back into a window of its own
         break;
       case 6:  // Snap
         if (ImGui::MenuItem(i18n::tr("No snap"), nullptr, s.snap == 0)) s.snap = 0;

@@ -88,8 +88,9 @@ ReverbView reverbView(const PluginState& st, double sr, double tempo) {
     for (int i = 0; i < 7; ++i) tl[i] = static_cast<int>(std::nearbyint(static_cast<float>(fullrev::kErL[i]) * e));
     for (int i = 0; i < 8; ++i) tr[i] = static_cast<int>(std::nearbyint(static_cast<float>(fullrev::kErR[i]) * e));
     const double M = std::min(tl[0], tr[0]);
-    for (int i = 0; i < 7; ++i) v.erSec[static_cast<size_t>(v.erCount)] = tl[i] / sr, v.erGain[static_cast<size_t>(v.erCount++)] = 0.5 * M / std::max(1, tl[i]);
-    for (int i = 0; i < 8; ++i) v.erSec[static_cast<size_t>(v.erCount)] = tr[i] / sr, v.erGain[static_cast<size_t>(v.erCount++)] = 0.36 * M / std::max(1, tr[i]);
+    const bool first = iv(st, RvbFRev, 1) != 0;  // K-2: version 2 reflections, first tap per side
+    for (int i = 0; i < (first ? 1 : 7); ++i) v.erSec[static_cast<size_t>(v.erCount)] = tl[i] / sr, v.erGain[static_cast<size_t>(v.erCount++)] = 0.5 * M / std::max(1, tl[i]);
+    for (int i = 0; i < (first ? 1 : 8); ++i) v.erSec[static_cast<size_t>(v.erCount)] = tr[i] / sr, v.erGain[static_cast<size_t>(v.erCount++)] = 0.36 * M / std::max(1, tr[i]);
     return v;
   }
   const double preMs = pv(st, RvbPreDelay, 10);

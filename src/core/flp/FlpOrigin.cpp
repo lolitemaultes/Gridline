@@ -90,8 +90,14 @@ uint64_t fingerprintPattern(const Pattern& p, const Song& s, const IndexMap& m) 
   }
   for (const auto& [ch, v] : p.notes) {
     h.i(m.ch(ch)).i(static_cast<int64_t>(v.size()));
-    for (const Note& n : v)
+    for (const Note& n : v) {
       h.i(n.start).i(n.length).i(n.pitch).i(n.velocity).i(n.pan).i(n.fine).i(n.release).i(n.modX).i(n.modY).i(n.color).i(n.slide).i(n.porta).i(n.muted);
+      if (n.step) h.tag("step");  // K-22: written as a step note (only then: stored fingerprints stay valid)
+      if (!n.bend.empty()) {  // K-28: a bend drawn on an imported note changes what export writes (only then: stored fingerprints stay valid)
+        h.tag("bend");
+        for (const auto& b : n.bend) h.f(b.tick).f(b.semis).i(b.curve).f(b.tension);
+      }
+    }
   }
   for (const auto& l : p.automation) {
     h.i(m.owner(l.owner)).i(l.index).i(static_cast<int64_t>(l.points.size()));

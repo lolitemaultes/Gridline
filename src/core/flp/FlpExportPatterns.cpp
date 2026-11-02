@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include "../NoteBend.h"
 #include "../Params.h"
 #include "../PatternAutomation.h"
 #include "FlpExportInternal.h"
@@ -28,6 +29,7 @@ Note decodeNoteRecord(const uint8_t* r, int, Tick stepLen) {
   n.start = static_cast<Tick>(u32(0));
   const uint32_t len = u32(8);
   n.length = len == 0 ? stepLen : std::max<Tick>(1, static_cast<Tick>(len));
+  n.step = len == 0;  // K-22: as the import reads it
   n.pitch = std::clamp(u16(12), 0, 127);
   n.velocity = velocity127(r[21]);
   n.pan = std::clamp(static_cast<int>(r[20]) - 64, -kNotePanMax, kNotePanMax);
@@ -69,6 +71,83 @@ Bytes noteRecord(const Note& n, int flChannel, const Bytes* tmpl) {
 }
 
 namespace {
+
+// K-28: key + fine pitch (FL's 10 cent steps) closest to `pitch` (MIDI, fractional); returns how
+// far the written pitch is from it (semitones).
+double setPitch(Note& n, double pitch) {
+  n.pitch = std::clamp(static_cast<int>(std::lround(pitch)), 0, 127);
+  n.fine = std::clamp(static_cast<int>(std::lround((pitch - n.pitch) * 10.0)) * 10, -kNoteFineMax, kNoteFineMax);
+  return std::fabs(n.pitch + n.fine / 100.0 - pitch);
+}
+
+// K-28: FL notes have no bend line; FL's equivalent is the slide note, which glides every sounding
+// note of its channel and colour to its pitch over its length (fine pitch in 10 cent steps). A line
+// becomes slide notes (bend::toSlides) when only its own note would glide: the note sounds alone in
+// its colour, or with a chord whose notes start with it and carry the same line (a chord bending
+// as one: one set of slides glides them all, measured from the last of them, as a slide is
+// measured from the last note started). Otherwise the line is left out, and counted. The notes
+// come back without lines (converted ones starting at the line's start value); the slides go to
+// `slides`.
+std::vector<Note> bendsAsSlides(const std::vector<Note>& ns, std::vector<Note>& slides, ExportReport& rep) {
+  std::vector<Note> out = ns;
+  for (Note& n : out) n.bend.clear();
+  std::vector<bool> done(ns.size(), false);
+  int asSlides = 0, crowded = 0, onSlides = 0, curves = 0, steps = 0, rounded = 0, cents = 0;
+  for (size_t i = 0; i < ns.size(); ++i) {
+    const Note& n = ns[i];
+    if (n.bend.empty() || done[i]) continue;
+    if (n.slide) {  // a slide note glides others and plays no line of its own
+      ++onSlides;
+      continue;
+    }
+    std::vector<size_t> group;
+    Tick end = n.start;
+    for (size_t j = 0; j < ns.size(); ++j)
+      if (!ns[j].slide && ns[j].color == n.color && ns[j].start == n.start && ns[j].bend == n.bend) {
+        group.push_back(j);
+        end = std::max(end, ns[j].start + std::max<Tick>(1, ns[j].length));
+        done[j] = true;
+      }
+    bool alone = true;
+    for (size_t j = 0; j < ns.size() && alone; ++j) {
+      const Note& o = ns[j];
+      if (o.color != n.color || std::find(group.begin(), group.end(), j) != group.end()) continue;
+      if (o.start < end && o.start + std::max<Tick>(1, o.length) > n.start) alone = false;
+    }
+    if (!alone) {
+      crowded += static_cast<int>(group.size());
+      continue;
+    }
+    const bend::SlidePlan plan = bend::toSlides(n.bend, static_cast<double>(end - n.start));
+    const Note& ref = ns[group.back()];
+    const double refPitch = ref.pitch + ref.fine / 100.0;
+    bool off = false;
+    for (size_t j : group) off = setPitch(out[j], ns[j].pitch + ns[j].fine / 100.0 + plan.start) > 0.005 || off;
+    for (const bend::SlidePiece& pc : plan.pieces) {
+      Note sl(n.start + static_cast<Tick>(pc.tick), std::max<Tick>(1, static_cast<Tick>(pc.length)), 60, n.velocity);
+      off = setPitch(sl, refPitch + pc.target) > 0.005 || off;
+      sl.color = n.color;
+      sl.slide = true;
+      slides.push_back(sl);
+    }
+    asSlides += static_cast<int>(group.size());
+    curves += plan.curves;
+    steps += plan.steps;
+    rounded += plan.rounded;
+    cents += off;
+  }
+  auto count = [&](const char* what, int v) {
+    if (v > 0) rep.counts[what] += v;
+  };
+  count("notes: pitch bend lines written as slide notes", asSlides);
+  count("notes: pitch bend curves written as several shorter slides (approximated)", curves);
+  count("notes: pitch bend steps written as one-tick slides", steps);
+  count("notes: pitch bend points moved to whole ticks", rounded);
+  count("notes: pitch bend lines rounded to 10 cent fine pitch steps", cents);
+  count("notes: pitch bend lines not written (other notes of their colour sound with them, a slide would glide those too)", crowded);
+  count("notes: pitch bend lines on slide notes not written (slide notes play no line)", onSlides);
+  return out;
+}
 
 }  // namespace
 
@@ -112,7 +191,9 @@ void Exporter::writePatternNotes() {
       for (const auto& [cid, ns] : p->notes) {
         const int fl = im.ch(cid);
         if (fl < 0) continue;
-        for (const Note& n : ns) {
+        std::vector<Note> slides;  // K-28: bend lines as slide notes
+        const std::vector<Note> written = bendsAsSlides(ns, slides, rep);
+        for (const Note& n : written) {
           const Bytes* tmpl = nullptr;
           auto range = old.equal_range(std::make_tuple(fl, static_cast<uint32_t>(std::max<Tick>(0, n.start)), n.pitch));
           for (auto it = range.first; it != range.second; ++it) {
@@ -125,6 +206,12 @@ void Exporter::writePatternNotes() {
           Bytes rec;
           if (tmpl && decodeNoteRecord(tmpl->data(), s.ppq, stepLen) == n) rec = *tmpl;
           else rec = noteRecord(n, fl, tmpl);
+          // K-22: a step note one FL step long goes back as a step note (length 0); longer or
+          // shorter it is an ordinary note there too.
+          if (n.step && n.length == stepLen && s.ticksPerStep(*p) == stepLen) {
+            putU32(rec, 8, 0);
+            rep.counts["piano roll step notes (as step notes)"]++;
+          }
           if (n.porta) rep.counts["notes: porta flag not written"]++;
           if (n.muted) rep.counts["notes: muted notes not written as muted"]++;
           all.push_back({n.start, fl, n.pitch, std::move(rec)});
@@ -135,6 +222,9 @@ void Exporter::writePatternNotes() {
                 break;
               }
         }
+        // After the channel's notes: at one position the sort keeps them first, so a slide that
+        // starts with its note glides it.
+        for (const Note& sl : slides) all.push_back({sl.start, fl, sl.pitch, noteRecord(sl, fl, nullptr)});
       }
       // Step-sequencer rows → step notes (length 0).
       const Tick tps = s.ticksPerStep(*p);

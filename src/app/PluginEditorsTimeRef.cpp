@@ -425,6 +425,11 @@ void editorReverbRef(App& a, const PluginTarget& t, float width) {
   {  // J-26: network model (hall / plate reference) in the room view's corner
     static const char* md[3] = {"HALL", "PLATE", "FULL"};
     skin::switchSel(a, t, RvbModel, F.p(80, 6), ImVec2(74 * s, 15 * s), K, md, 3, true);
+    // K-2: the full model's version (projects saved before version 2 keep version 1).
+    if (static_cast<int>(std::lround(val(st, RvbModel))) == 2) {
+      static const char* vr[2] = {"V1", "V2"};
+      skin::switchSel(a, t, RvbFRev, F.p(8, 6), ImVec2(40 * s, 15 * s), K, vr, 2, true);
+    }
   }
   dl->AddRectFilled(F.p(160, 0), F.p(530, 160), skin::hex(0x434B4D), 0);
   dl->AddLine(F.p(160, 0), F.p(160, 160), skin::darken(K.panel, 0.5f), 1.0f);

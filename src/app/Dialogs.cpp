@@ -25,6 +25,7 @@
 #include "../core/flp/Flp.h"
 #include "App.h"
 #include "AudioRecordUi.h"
+#include "AsioUi.h"
 #include "ExportUi.h"
 #include "StemsUi.h"
 #include "TrackReceiptUi.h"
@@ -32,6 +33,7 @@
 #include "Theme.h"
 #include "MidiUi.h"
 #include "SettingsPages.h"
+#include "PluginFoldersUi.h"
 #include "SmoothScrollUi.h"
 #include "McpUi.h"
 #include "TemplateUi.h"
@@ -280,14 +282,15 @@ void settingsWindow(App& a) {
   }
   // J-24 appended General, Files and Debug (tab indices 0..4 stay as they were).
   // J-55 appended Shortcuts and Theme.
-  const char* pagesEn[] = {i18n::N_("Audio"), i18n::N_("MIDI"), i18n::N_("Project"), i18n::N_("Backup"), i18n::N_("Interface"), i18n::N_("General"), i18n::N_("Files"), i18n::N_("Debug"), i18n::N_("Shortcuts"), i18n::N_("Theme"), i18n::N_("Integrations"), i18n::N_("Collaboration")};
+  const char* pagesEn[] = {i18n::N_("Audio"), i18n::N_("MIDI"), i18n::N_("Project"), i18n::N_("Backup"), i18n::N_("Interface"), i18n::N_("General"), i18n::N_("Files"), i18n::N_("Debug"), i18n::N_("Shortcuts"), i18n::N_("Theme"), i18n::N_("Integrations"), i18n::N_("Collaboration"), i18n::N_("Plugins")};
   const char* blurbs[] = {i18n::N_("Output and input devices, sample rate, buffer and recording"), i18n::N_("Controllers, keyboards and MIDI out"),
                           i18n::N_("Defaults for new projects"), i18n::N_("Automatic backups, autosave and restoring a backup"), i18n::N_("Theme, size and hints"),
                           i18n::N_("Startup, default template, language and updates"), i18n::N_("Folders and scripting"), i18n::N_("Log and script console"),
                           i18n::N_("Every keyboard shortcut: search, change, reset"), i18n::N_("Appearance (dark or light, colours, contrast), control style and sounds"),
                           i18n::N_("Let AI assistants (MCP clients) inspect and edit the project"),
-                          i18n::N_("Your name, contact and picture for collaborators, identity and connection")};
-  constexpr int kPages = 12;
+                          i18n::N_("Your name, contact and picture for collaborators, identity and connection"),
+                          i18n::N_("Where each plugin format is searched, and scanning")};
+  constexpr int kPages = 13;  // K-13 appended Plugins (kPluginSettingsTab)
   const char* pages[kPages];
   for (int i = 0; i < kPages; ++i) pages[i] = i18n::tr(pagesEn[i]);
   page = std::clamp(page, 0, kPages - 1);
@@ -299,41 +302,50 @@ void settingsWindow(App& a) {
   {
     if (page == 0) {
       ui::BeginSection("INPUT / OUTPUT");
-      formLabel("Output device");
-      if (ui::BeginCombo("##dev", a.audioDevice.empty() ? "System default" : a.audioDevice.c_str(), fieldW)) {
-        // J-77: device / rate / buffer changes apply at once and ask Keep / Revert (they can cut the sound).
-        if (ImGui::Selectable(i18n::tr("System default"), a.audioDevice.empty())) ui::confirmAudioDevice(a, "");
-        for (const auto& d : a.audioDevices)
-          if (ImGui::Selectable(d.c_str(), d == a.audioDevice)) ui::confirmAudioDevice(a, d);
-        ImGui::EndCombo();
-      }
-      const int rates[] = {44100, 48000, 88200, 96000};
-      formLabel("Sample rate");
-      for (int r : rates) {
-        if (r != rates[0]) ImGui::SameLine(0, theme::kS1);
-        if (ui::TextButton(std::to_string(r).c_str(), a.audioSampleRate == r) && a.audioSampleRate != r) {
-          const dispconf::Snapshot before = dispconf::take(st, dispconf::audioKeys());
-          st.set("audio.sampleRate", r);
-          ui::confirmAudio(a, before);
+      const bool asioMode = asioui::backendRow(a, fieldW);  // K-6
+      if (asioMode) asioui::deviceRows(a, fieldW);
+      if (!asioMode) {
+        formLabel("Output device");
+        if (ui::BeginCombo("##dev", a.audioDevice.empty() ? "System default" : a.audioDevice.c_str(), fieldW)) {
+          // J-77: device / rate / buffer changes apply at once and ask Keep / Revert (they can cut the sound).
+          if (ImGui::Selectable(i18n::tr("System default"), a.audioDevice.empty())) ui::confirmAudioDevice(a, "");
+          for (const auto& d : a.audioDevices)
+            if (ImGui::Selectable(d.c_str(), d == a.audioDevice)) ui::confirmAudioDevice(a, d);
+          ImGui::EndCombo();
         }
-      }
-      const int bufs[] = {64, 128, 256, 512, 1024, 2048};
-      formLabel("Buffer size");
-      for (int b : bufs) {
-        if (b != bufs[0]) ImGui::SameLine(0, theme::kS1);
-        if (ui::TextButton(std::to_string(b).c_str(), a.audioBuffer == b) && a.audioBuffer != b) {
-          const dispconf::Snapshot before = dispconf::take(st, dispconf::audioKeys());
-          st.set("audio.bufferFrames", b);
-          ui::confirmAudio(a, before);
+        const int rates[] = {44100, 48000, 88200, 96000};
+        formLabel("Sample rate");
+        for (int r : rates) {
+          if (r != rates[0]) ImGui::SameLine(0, theme::kS1);
+          if (ui::TextButton(std::to_string(r).c_str(), a.audioSampleRate == r) && a.audioSampleRate != r) {
+            const dispconf::Snapshot before = dispconf::take(st, dispconf::audioKeys());
+            st.set("audio.sampleRate", r);
+            ui::confirmAudio(a, before);
+          }
         }
+        const int bufs[] = {64, 128, 256, 512, 1024, 2048};
+        formLabel("Buffer size");
+        for (int b : bufs) {
+          if (b != bufs[0]) ImGui::SameLine(0, theme::kS1);
+          if (ui::TextButton(std::to_string(b).c_str(), a.audioBuffer == b) && a.audioBuffer != b) {
+            const dispconf::Snapshot before = dispconf::take(st, dispconf::audioKeys());
+            st.set("audio.bufferFrames", b);
+            ui::confirmAudio(a, before);
+          }
+        }
+        char lat[96];
+        std::snprintf(lat, sizeof lat, "%.1f ms", 1000.0 * a.audioBuffer / std::max(1, a.audioSampleRate));
+        formLabel("Output latency");
+        ImGui::PushFont(a.fontMono, theme::kFontNumber + 1);
+        ImGui::TextUnformatted(lat);
+        ImGui::PopFont();
       }
-      char lat[96];
-      std::snprintf(lat, sizeof lat, "%.1f ms", 1000.0 * a.audioBuffer / std::max(1, a.audioSampleRate));
-      formLabel("Output latency");
-      ImGui::PushFont(a.fontMono, theme::kFontNumber + 1);
-      ImGui::TextUnformatted(lat);
-      ImGui::PopFont();
       ui::EndSection();
+      if (asioMode) {
+        ui::BeginSection("ASIO CHANNELS");
+        asioui::channelRows(a, fieldW);
+        ui::EndSection();
+      }
       ui::BeginSection("MIXER");
       // Mixer processing threads (the output is identical for any count).
       {
@@ -594,6 +606,7 @@ void settingsWindow(App& a) {
     if (page == 7) debugSettingsPage(a, fieldW);
     if (page == 10) mcpui::settingsPage(a, fieldW);  // SC-07
     if (page == 11) collabui::settingsPage(a, fieldW);  // J-111
+    if (page == kPluginSettingsTab) pluginFoldersSettingsPage(a, fieldW);  // K-13
   }
   ImGui::EndChild();
   ImGui::End();

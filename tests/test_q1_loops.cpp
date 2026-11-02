@@ -20,6 +20,7 @@
 #include <vector>
 #include "Check.h"
 #include "Hermetic.h"
+#include "app/LoopNotch.h"
 #include "core/ClipLoop.h"
 #include "core/Document.h"
 #include "core/Grouping.h"
@@ -382,6 +383,27 @@ void writeShowcase(const char* path) {
   saveProject(path, a.s);
 }
 
+// K-11: the loop notch geometry (playlist clips that repeat).
+void testNotches() {
+  const loopnotch::Geom bar = loopnotch::geom(64.0f, 44.0f);
+  expect(bar.show && std::fabs(bar.width - 6.0f) < 0.1f && bar.depth >= 3.9f && bar.depth <= 4.1f,
+         "notch at a 64 px pass: about 6 px wide, 4 px deep");
+  const loopnotch::Geom wide = loopnotch::geom(400.0f, 44.0f);
+  expect(wide.show && wide.width == 8.0f && wide.depth > 5.0f && wide.depth < 5.5f, "zoomed in: at most 8 px wide, about 5 px deep");
+  expect(!loopnotch::geom(12.0f, 44.0f).show, "a pass narrower than 16 px: no notches");
+  expect(!loopnotch::geom(64.0f, 12.0f).show, "a clip shorter than 14 px: no notches");
+  const loopnotch::Geom flat = loopnotch::geom(400.0f, 20.0f);
+  expect(flat.show && flat.depth <= 20.0f * 0.16f + 1e-4f, "a short clip: the notch stays shallow");
+  float last = 0;
+  bool grows = true;
+  for (float px = 16; px <= 200; px += 4) {
+    const float w = loopnotch::geom(px, 44.0f).width;
+    grows = grows && w >= last;
+    last = w;
+  }
+  expect(grows, "notches never shrink as the zoom grows");
+}
+
 }  // namespace
 
 int main() {
@@ -394,5 +416,6 @@ int main() {
   testFiles();
   testDemo();
   testCopies();
+  testNotches();
   return finish();
 }

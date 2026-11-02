@@ -146,6 +146,8 @@ void drawPluginPicker(App& a);
 void togglePluginPicker();
 // Shows the browser on its current-project tab (View > Project picker).
 void showProjectTab(App& a);
+// K-17 / K-18 dev checks: "--dev-input" lines "browser ..." (Browser.cpp lists them).
+bool devCommand(App& a, const std::vector<std::string>& args, int frame);
 bool pluginPickerOpen();
 
 // ---- in-house glyphs ----

@@ -248,6 +248,12 @@ PluginInfo hall() {
                {"Choir voices", {{HvFbOn, 1.f}, {HvFbMode, 1.f}, {HvFfDirect, 0.6f}, {HvFfPitch1, 12.f}, {HvFfAmp1, 0.35f}, {HvFfPitch2, 7.f},
                                  {HvFfAmp2, 0.25f}, {HvDecay, 5.f}, {HvSize, 0.7f}}}};
   p.editorWidth = 860;
+  // K-2: new instances start at the reference plugin's defaults.
+  setReferenceDefaults(p, {{HvInGain, -0.515608}, {HvInHighCut, 15000}, {HvPreDelay, 2.12552}, {HvSize, 0.191919}, {HvDecay, 5.22196},
+                           {HvCharacter, 0.4}, {HvDiffusion, 0.403}, {HvFbGain, 0}, {HvFbDelay, 298.8}, {HvFbLowCut, 118.394},
+                           {HvFbHighCut, 599.639}, {HvEnvThresh, -40}, {HvEnvAttack, 50}, {HvEnvRelease, 400}, {HvWet, 0},
+                           {HvEqFreq, 275.03}, {HvEqGain, 3.15}, {HvEqQ, 1.05201}, {HvLimiter, 1}, {HvBright, 0.253}, {HvModFreq, 0.047},
+                           {HvEnvOffset, -0.5}, {HvFfPitch1, 24}, {HvFfAmp1, 1}, {HvFfDelay2, 500}});
   return p;
 }
 
@@ -313,6 +319,10 @@ PluginInfo bbdChorus() {
                {"Clean", {{BcHiss, 0.f}, {BcMode, 1.f}}},
                {"Static doubler", {{BcMode, 3.f}, {BcRate, 0.f}, {BcTime1, 7.5f}, {BcTime2, 7.5f}, {BcMix, 0.5f}, {BcMonoIn, 0.f}}}};
   p.editorWidth = 760;
+  // K-2: new instances start at the reference plugin's defaults.
+  // The reference starts with its hiss gate off; Gridline keeps it on so a new
+  // instance stays silent on silence (quality rule).
+  setReferenceDefaults(p, {{BcMonoIn, 0}});
   return p;
 }
 
@@ -398,6 +408,11 @@ PluginInfo phaser() {
                {"Echo phase", {{VpDelayOn, 1.f}, {VpFeedback, 0.5f}, {VpDelayKeep, 1.f}}},
                {"Hot analog", {{VpEngine, 1.f}, {VpHq, 1.f}, {VpDrive, 9.f}, {VpFeedback, 0.7f}, {VpColorGain, 6.f}, {VpRate, 0.2f}}}};
   p.editorWidth = 820;
+  // K-2: new instances start at the reference plugin's defaults (echo time and mix keep
+  // Gridline's, inaudible while the echo is off as in the reference, so Echo on works alone).
+  setReferenceDefaults(p, {{VpFreqMax, 2326.61}, {VpManualFreq, 1.25}, {VpFeedback, 0.45}, {VpWave, 1}, {VpTension, 0}, {VpPhaseLR, 0},
+                           {VpColorFreq, 50}, {VpInputHp, 5}, {VpFbHp, 5}, {VpDrive, -15}, {VpDelaySync, 0},
+                           {VpDelayFb, 0}, {VpDelayLp, 320}, {VpEngine, 0}});
   return p;
 }
 

@@ -21,6 +21,8 @@ namespace gl::packs::edison {
 void drawWindows(App& a);
 bool openAudioEditor(App& a, const std::string& path, ObjectId channel);
 int armTransportRecording(App& a, ObjectId track);
+bool claimEffectEditor(App& a, const PluginTarget& t);  // K-15
+bool dockDevCommand(App& a, const std::string& cmd, const std::vector<std::string>& args);
 }  // namespace gl::packs::edison
 namespace gl::packs::synths {
 void tickPictureLoads(App& a);                                              // J-184
@@ -61,6 +63,10 @@ bool claimMidi(App& a, const std::string& device) { return platter::claimMidi(a,
 bool recordsWithTransport(App& a) { return platter::recordsWithTransport(a); }
 
 bool openAudioEditor(App& a, const std::string& path, ObjectId channel) { return edison::openAudioEditor(a, path, channel); }
+
+bool claimEffectEditor(App& a, const PluginTarget& t) { return edison::claimEffectEditor(a, t); }
+
+bool devCommand(App& a, const std::string& cmd, const std::vector<std::string>& args) { return edison::dockDevCommand(a, cmd, args); }
 
 int armAudioEditorRecording(App& a, ObjectId track) { return edison::armTransportRecording(a, track); }
 

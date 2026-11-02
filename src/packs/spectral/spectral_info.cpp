@@ -206,7 +206,9 @@ PluginInfo pitcher() {
 }
 
 PluginInfo scratcher() {
-  PluginInfo p{"gl.scratcher", "Turntable FX", "Spectral", PluginKind::Effect, {}, false, {}};
+  // K-23: replaced by Turntable (gl.turntablefx); kept for projects that use it.
+  PluginInfo p{"gl.scratcher", "Turntable FX (old)", "Spectral", PluginKind::Effect, {}, false, {}};
+  p.hidden = true;
   p.params.resize(ScCount);
   p.params[ScHand] = lin("Platter", "%", 0, 1, 0);
   p.params[ScGrab] = tog("Hold platter", 0);
@@ -325,6 +327,8 @@ PluginInfo spreader() {
       {"Mono", V{{SrSpread, 0.f}, {SrSeparation, -1.f}}},
   };
   p.editorWidth = 720;
+  // K-2: new instances start at the reference plugin's defaults.
+  setReferenceDefaults(p, {{SrBassMono, 0}});
   return p;
 }
 
@@ -334,8 +338,9 @@ void appendInfos(std::vector<PluginInfo>& v) {
   v.push_back(vocoder());
   v.push_back(pitch());
   v.push_back(pitcher());
-  v.push_back(scratcher());
-  v.push_back(turntableInfo());  // J-205: the sample instrument
+  v.push_back(scratcher());       // hidden since K-23: old projects only
+  v.push_back(turntableFxInfo());  // K-23: Turntable, the deck as a mixer effect
+  v.push_back(turntableInfo());    // J-205 instrument, hidden since K-23: old projects only
   v.push_back(splitter());
   v.push_back(spreader());
 }

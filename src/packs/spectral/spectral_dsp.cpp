@@ -2956,7 +2956,8 @@ std::unique_ptr<Effect> createEffect(const std::string& type) {
   if (type == "gl.vocoder") return std::make_unique<VocoderFx>();
   if (type == "gl.pitch") return std::make_unique<PitchFx>();
   if (type == "gl.pitcher") return std::make_unique<PitcherFx>();
-  if (type == "gl.scratcher") return std::make_unique<ScratchFx>();
+  if (type == "gl.scratcher") return std::make_unique<ScratchFx>();  // hidden since K-23 (old projects)
+  if (type == kTurntableFx) return createTurntableFx();             // K-23
   if (type == "gl.splitter") return std::make_unique<SplitterFx>();
   if (type == "gl.spread") return std::make_unique<SpreadFx>();
   return nullptr;

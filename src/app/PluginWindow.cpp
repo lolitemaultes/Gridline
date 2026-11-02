@@ -38,6 +38,7 @@
 #include "../host/PluginPrefs.h"
 #include "../host/ui/NativeView.h"
 #include "App.h"
+#include "AppIcon.h"
 #include "HostedUi.h"
 #include "HostedUiPages.h"
 #include "PluginWindowBar.h"
@@ -495,6 +496,22 @@ void setPluginWindowDevResize(int w, int h) {
 
 bool hostedEditorOpen(const PluginTarget& t) { return windowFor(t) != nullptr; }
 
+void devPrintPluginWindows(int frame) {
+  std::printf("plugwin frame %d: %zu windows\n", frame, windows().size());
+  for (const auto& [k, w] : windows()) {
+    int x = 0, y = 0, ww = 0, wh = 0;
+    if (w->win) {
+      SDL_GetWindowPosition(w->win, &x, &y);
+      SDL_GetWindowSize(w->win, &ww, &wh);
+    }
+    std::printf("  plugwin \"%s\" format %s external %d window 0x%lx container 0x%lx at %d,%d size %dx%d plugin %d,%d %dx%d resizable %d\n", w->name.c_str(),
+                w->format.c_str(), w->external ? 1 : 0, static_cast<unsigned long>(reinterpret_cast<uintptr_t>(w->nw.handle)),
+                static_cast<unsigned long>(reinterpret_cast<uintptr_t>(w->container)), x, y, ww, wh, w->L.plugin.x, w->L.plugin.y, w->L.plugin.w, w->L.plugin.h,
+                w->resizable ? 1 : 0);
+  }
+  std::fflush(stdout);
+}
+
 bool hostedEditorUnderMouse(PluginTarget& t, float& fx, float& fy) {
   SDL_Window* f = SDL_GetMouseFocus();
   if (!f) return false;
@@ -590,6 +607,7 @@ bool openHostedEditor(App& a, const PluginTarget& t) {
     a.notify(std::string("Cannot open a window: ") + SDL_GetError(), true);
     return false;
   }
+  appicon::apply(w.win);  // K-14
   w.nw = nativeOf(w.win);
   if (!createSurface(w)) {
     a.notify(std::string("Cannot draw the plugin window: ") + SDL_GetError(), true);

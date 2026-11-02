@@ -1,6 +1,7 @@
 // Gridline — scripting in the app (see ScriptUi.h).
 #include "../core/I18n.h"
 #include "ScriptUi.h"
+#include "../core/StepNotes.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -50,6 +51,7 @@ struct Session {
   ObjectId pat = kNoId, ch = kNoId;
   std::vector<Note> base;
   std::vector<bool> baseSel;
+  stepnotes::Snapshot snap;  // K-22: the channel as it was (its rack steps too), for cancel
   std::vector<Marker> baseMarkers;
   std::vector<script::FormParam> values;
   uint32_t seed = 1;
@@ -69,12 +71,12 @@ std::map<std::string, uint32_t> rememberedSeed;
 std::vector<script::ScriptInfo> prList;
 bool prScanned = false;
 
-const std::vector<Note>* targetNotes(const Song& s) {
+// K-22: the target's notes as the piano roll shows them (its rack steps as step notes); false: no pattern.
+bool targetNotes(const Song& s, std::vector<Note>& out) {
   const Pattern* p = s.pattern(S.pat);
-  if (!p) return nullptr;
-  static const std::vector<Note> empty;
-  auto it = p->notes.find(S.ch);
-  return it == p->notes.end() ? &empty : &it->second;
+  if (!p) return false;
+  out = stepnotes::view(s, *p, S.ch);
+  return true;
 }
 
 void setSelection(App& a, const std::vector<bool>& sel) {
@@ -124,9 +126,9 @@ void runPreview(App& a, bool full) {
     return;
   }
   S.error.clear();
-  const std::vector<Note>* cur = targetNotes(s);
-  if (cur && S.last.notes != *cur) {
-    a.doc.setNotes(S.pat, S.ch, S.last.notes, label(), S.key);
+  std::vector<Note> cur;
+  if (targetNotes(s, cur) && S.last.notes != cur) {
+    stepnotes::write(a.doc, S.pat, S.ch, S.last.notes, label(), S.key);
     S.changed = true;
   }
   setSelection(a, S.last.sel);
@@ -138,18 +140,18 @@ void closeSession(App& a, bool keep) {
   if (keep && S.last.ok && S.last.markersChanged) {
     // Notes and markers as one undo step: drop the preview step, then record both.
     if (S.changed) {
-      a.doc.setNotes(S.pat, S.ch, S.base, label(), S.key);
+      stepnotes::restore(a.doc, S.snap, label(), S.key);
       a.doc.undo();
     }
     a.doc.endGesture();
     a.doc.beginGroup(label());
-    a.doc.setNotes(S.pat, S.ch, S.last.notes, label());
+    stepnotes::write(a.doc, S.pat, S.ch, S.last.notes, label());
     std::vector<Marker> mk = S.last.markers;
     a.doc.editSong(label(), [&mk](Song& s) { s.markers = mk; });
     a.doc.endGroup();
     setSelection(a, S.last.sel);
   } else if (!keep && S.changed) {
-    a.doc.setNotes(S.pat, S.ch, S.base, "cancel", S.key);
+    stepnotes::restore(a.doc, S.snap, "cancel", S.key);  // K-22: rack steps come back as steps
     setSelection(a, S.baseSel);
   } else if (!keep) {
     setSelection(a, S.baseSel);
@@ -515,7 +517,8 @@ void openPianoRollScript(App& a, const std::string& path) {
   n.ch = a.selChannel;
   n.key = 0x4A32345300000000ull ^ (sessionCounter++ << 4);
   S = std::move(n);
-  if (const auto* notes = targetNotes(s)) S.base = *notes;
+  targetNotes(s, S.base);
+  S.snap = stepnotes::capture(s, S.pat, S.ch);
   S.baseSel.assign(S.base.size(), false);
   if (a.piano.selPattern == S.pat && a.piano.selChannel == S.ch)
     for (size_t i : a.piano.selected)

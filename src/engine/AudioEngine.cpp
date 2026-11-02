@@ -766,21 +766,50 @@ void AudioEngine::cutPending(const ProgChannel& ch, int index, int offset) {
   rt->pending[index] = rt->pending[--rt->pendingCount];
 }
 
-void AudioEngine::startNote(const Program* p, const ProgChannel& ch, const NoteEv& e, int offset, int64_t at, double spt) {
+namespace {
+// K-25: a free bend slot of `rt` (no sounding note owns its id) holding `pts` for note `id`; -1 = none free.
+int takeBendSlot(ChannelRuntime& rt, uint32_t id, const std::vector<BendPoint>& pts) {
+  for (int k = 0; k < ChannelRuntime::kBendSlots; ++k) {
+    ChannelRuntime::BendSlot& s = rt.bendSlots[k];
+    bool owned = false;
+    for (int i = 0; i < rt.pendingCount && s.id != 0 && !owned; ++i) owned = rt.pending[i].bendSlot == k && rt.pending[i].id == s.id;
+    if (owned) continue;
+    s.id = id;
+    s.count = std::min(static_cast<int>(pts.size()), bend::kMaxPoints);
+    std::copy(pts.begin(), pts.begin() + s.count, s.pts);
+    s.sent = 0;
+    return k;
+  }
+  return -1;
+}
+}  // namespace
+
+void AudioEngine::startNote(const Program* p, const ProgChannel& ch, const NoteEv& e, int offset, int64_t at, double spt, Tick shift) {
   ChannelRuntime* rt = ch.rt.get();
   Generator* gen = rt->gen.get();
   bool chain = false;
   for (const auto& nf : ch.noteFx) chain = chain || nf.rt != nullptr;
   const bool glides = gen->supportsGlide() && !chain;
-  // Slide note: no new note; the channel's sounding notes glide by the
-  // interval from the last started note to the slide note, over its length.
+  // K-25: the note's bend line (note processors make new notes of it: none there).
+  const bool bent = e.bend && !e.bend->empty() && !chain && !(e.flags & kNoteSlide);
+  const auto portaSamples = static_cast<int64_t>(std::llround(static_cast<double>(ch.portaTime) * sr_));
+  // Slide note: no new note; the channel's sounding notes of the slide's
+  // colour group glide by the interval from the last started note of that
+  // colour to the slide note, over its length (K-5, as in FL: other colours
+  // keep their pitch; projects saved before that slide every colour).
   // (Instruments that cannot glide play it as an ordinary note.)
+  const int color = e.props.color & 15;
   if ((e.flags & kNoteSlide) && glides) {
-    if (rt->pendingCount == 0 || rt->lastPitch < 0) return;
-    const float shift = e.pitch - rt->lastPitch;
+    const bool any = p->slidesAnyColour;
+    const float from = any ? rt->lastPitch : rt->lastPitchColor[color];
+    if (rt->pendingCount == 0 || from < 0) return;
+    const float shift = e.pitch - from;
     const double secs = std::max(1.0, noteOffTick(e) - noteOnTick(e)) * spt / sr_;
     for (int i = 0; i < rt->pendingCount; ++i)
-      gen->glide(rt->pending[i].id, rt->pending[i].pitch + shift + ch.pitchOffset, secs, offset);
+      if (any || rt->pending[i].color == color) {
+        gen->glide(rt->pending[i].id, rt->pending[i].pitch + shift + ch.pitchOffset, secs, offset);
+        rt->pending[i].bendSlot = -1;  // K-25: the slide takes over the note's pitch
+      }
     return;
   }
   if (rt->pendingCount >= kMaxPendingNotes) return;
@@ -809,12 +838,17 @@ void AudioEngine::startNote(const Program* p, const ProgChannel& ch, const NoteE
         }
       gen->glide(kept.id, e.pitch + ch.pitchOffset, ch.portaTime, offset);
       rt->keys.retarget(kept.id, e.pitch);
-      kept.off = noteOffTick(e);
+      kept.off = noteOffTick(e) + static_cast<double>(shift);
       kept.pitch = e.pitch;
       kept.at = at;
+      kept.color = color;
+      kept.on = noteOnTick(e) + static_cast<double>(shift);  // K-25: the new note's line, after the glide
+      kept.bendFrom = at + portaSamples;
       rt->pending[0] = kept;
       rt->pendingCount = 1;
+      rt->pending[0].bendSlot = bent ? takeBendSlot(*rt, kept.id, *e.bend) : -1;
       rt->lastPitch = e.pitch;
+      rt->lastPitchColor[color] = e.pitch;
       return;
     }
     while (rt->pendingCount > 0) cutPending(ch, rt->pendingCount - 1, offset);
@@ -831,7 +865,8 @@ void AudioEngine::startNote(const Program* p, const ProgChannel& ch, const NoteE
   // order for every block size. Range 1 .. 0x10000000 (below note processor ids).
   const uint32_t id = 1u + (((rt->noteSeq++ & 0x1FFFFu) << 11) | (static_cast<uint32_t>(&ch - p->channels.data()) & 0x7FFu));
   const NoteProps* props = e.props.neutral() ? nullptr : &e.props;
-  if (porta && std::fabs(rt->lastPitch - e.pitch) > 1e-4f) {
+  const bool portaGlide = porta && std::fabs(rt->lastPitch - e.pitch) > 1e-4f;
+  if (portaGlide) {
     sendOn(ch, id, rt->lastPitch, e.velocity, offset, 0, props);
     gen->glide(id, e.pitch + ch.pitchOffset, ch.portaTime, offset);
     rt->keys.retarget(id, e.pitch);
@@ -840,11 +875,121 @@ void AudioEngine::startNote(const Program* p, const ProgChannel& ch, const NoteE
   }
   ChannelRuntime::Pending pd;
   pd.id = id;
-  pd.off = noteOffTick(e);
+  pd.off = noteOffTick(e) + static_cast<double>(shift);
   pd.at = at;
   pd.pitch = e.pitch;
+  pd.color = color;
+  pd.on = noteOnTick(e) + static_cast<double>(shift);
+  pd.bendFrom = portaGlide ? at + portaSamples : at;
+  pd.bendSlot = bent ? takeBendSlot(*rt, id, *e.bend) : -1;
+  if (pd.bendSlot >= 0 && glides && !portaGlide) {  // K-25: a line that starts off the note's pitch starts there
+    ChannelRuntime::BendSlot& sl = rt->bendSlots[pd.bendSlot];
+    const double v0 = bend::value(sl.pts, sl.count, 0.0);
+    if (std::fabs(v0) > 1e-6) {
+      gen->glide(id, e.pitch + v0 + ch.pitchOffset, 1.0 / sr_, offset);
+      sl.sent = v0;
+    }
+  }
   rt->pending[rt->pendingCount++] = pd;
   rt->lastPitch = e.pitch;
+  rt->lastPitchColor[color] = e.pitch;
+}
+
+// K-25: bend lines. Every sounding note that has one glides, over this block's part of the note,
+// along its line. Instruments that tune each note (built-ins, hosted plugins with note tuning)
+// follow per note; the others get channel pitch bend on the note's MIDI channel, scaled by their
+// bend range: overlapping bent notes on one MIDI channel share it (the newest note's line wins),
+// and it is centred again once no bent note sounds there.
+// K-29: played as drawn: a straight glide is one ramp to the block's end, a curved one ramps in
+// pieces of at most `curvePiece` samples (64 in a 512-sample block), a point inside the block (a
+// corner) ends a ramp exactly there and a step jumps on its own sample (not a block early). The
+// channel bend is sent every `chanPiece` samples with the line's value half way through the piece.
+void AudioEngine::applyBends(const Program* p, int from, int to) {
+  if (to <= from) return;
+  const int curvePiece = std::max(64, (to - from + 7) / 8), chanPiece = curvePiece;
+  const int64_t b0 = absClock_ + from, b1 = absClock_ + to;
+  auto tickOf = [&](double off) { return tickAt(p, anchorTick_, static_cast<double>(clock_) + (off - from)); };
+  auto offOf = [&](double tick) { return from + static_cast<int>(sampleAt(p, anchorTick_, tick) - clock_); };
+  for (const ProgChannel& ch : p->channels) {
+    ChannelRuntime* rt = ch.rt.get();
+    if (!rt || !rt->gen) continue;
+    bool chain = false;
+    for (const auto& nf : ch.noteFx) chain = chain || nf.rt != nullptr;
+    if (chain) continue;
+    Generator* gen = rt->gen.get();
+    const bool glides = gen->supportsGlide();
+    if (glides) {
+      for (int i = 0; i < rt->pendingCount; ++i) {
+        ChannelRuntime::Pending& pd = rt->pending[i];
+        if (pd.bendSlot < 0) continue;
+        ChannelRuntime::BendSlot& sl = rt->bendSlots[pd.bendSlot];
+        if (sl.id != pd.id) {
+          pd.bendSlot = -1;
+          continue;
+        }
+        const int64_t s0 = std::max(pd.bendFrom, b0);
+        if (s0 >= b1) continue;  // a porta glide still running
+        int off = static_cast<int>(s0 - absClock_);
+        for (int guard = 0; off < to && guard < 96; ++guard) {
+          const double ta = tickOf(off) - pd.on, va = bend::value(sl.pts, sl.count, ta);
+          if (std::fabs(va - sl.sent) > 0.01) {  // the line jumped (a step passed): at once, on this sample
+            gen->glide(pd.id, pd.pitch + va + ch.pitchOffset, 1.0 / sr_, off);
+            sl.sent = va;
+            ++off;
+            continue;
+          }
+          double tz = tickOf(to) - pd.on;
+          int end = to;
+          int k = 0;  // the segment the piece starts in (the glide into point k)
+          while (k < sl.count && sl.pts[k].tick <= ta) ++k;
+          bool step = false;
+          if (k < sl.count && sl.pts[k].tick <= tz) {  // its point is in this block: the piece ends there
+            step = sl.pts[k].curve == bend::Step;
+            const int e = std::clamp(offOf(sl.pts[k].tick + pd.on), off + 1, to);
+            if (e < to || step) end = e, tz = sl.pts[k].tick;
+          }
+          if (!step && k < sl.count && bend::curved(sl.pts[k]) && end - off > curvePiece) end = off + curvePiece, tz = tickOf(end) - pd.on;
+          // A step holds up to its point (the jump follows on the next piece's first sample).
+          const double v = step ? (k > 0 ? sl.pts[k - 1].semis : 0.0) : bend::value(sl.pts, sl.count, tz);
+          if (std::fabs(v - sl.sent) > 1e-5) {
+            gen->glide(pd.id, pd.pitch + v + ch.pitchOffset, static_cast<double>(end - off) / sr_, off);
+            sl.sent = v;
+          }
+          off = end;
+        }
+      }
+      continue;
+    }
+    // Channel pitch bend: each MIDI channel follows its newest bent note.
+    const float range = std::max(0.5f, gen->noteBendRange());
+    for (int off = from; off < to; off += chanPiece) {
+      const int end = std::min(to, off + chanPiece);
+      const double tm = tickOf(0.5 * (off + end));
+      float want[16] = {};
+      int64_t newest[16];
+      for (auto& v : newest) v = -1;
+      for (int i = 0; i < rt->pendingCount; ++i) {
+        ChannelRuntime::Pending& pd = rt->pending[i];
+        if (pd.bendSlot < 0) continue;
+        ChannelRuntime::BendSlot& sl = rt->bendSlots[pd.bendSlot];
+        if (sl.id != pd.id) {
+          pd.bendSlot = -1;
+          continue;
+        }
+        if (pd.bendFrom >= absClock_ + end) continue;  // not started yet in this block, or a porta glide still running
+        if (pd.at > newest[pd.color & 15]) {
+          newest[pd.color & 15] = pd.at;
+          want[pd.color & 15] = static_cast<float>(bend::value(sl.pts, sl.count, std::max(0.0, tm - pd.on)));
+        }
+      }
+      for (int c = 0; c < 16; ++c) {
+        if (std::fabs(want[c] - rt->chanBend[c]) < 1e-4f) continue;
+        rt->chanBend[c] = want[c];
+        const int v14 = std::clamp(8192 + static_cast<int>(std::lround(want[c] / range * 8192.0f)), 0, 16383);
+        gen->midi(static_cast<uint8_t>(0xE0 | c), static_cast<uint8_t>(v14 & 0x7F), static_cast<uint8_t>(v14 >> 7), off);
+      }
+    }
+  }
 }
 
 void AudioEngine::sendOff(const ProgChannel& ch, uint32_t id, int offset) {
@@ -869,6 +1014,11 @@ void AudioEngine::releaseAll(const Program* p, int offset, bool hard) {
     if (c.rt->gen)
       for (int i = 0; i < c.rt->pendingCount; ++i) sendOff(c, c.rt->pending[i].id, offset);
     c.rt->pendingCount = 0;
+    for (int m = 0; m < 16; ++m)  // K-25: channel pitch bend left by bent notes: centred
+      if (c.rt->chanBend[m] != 0.0f) {
+        c.rt->chanBend[m] = 0.0f;
+        if (c.rt->gen) c.rt->gen->midi(static_cast<uint8_t>(0xE0 | m), 0, 64, offset);
+      }
     if (hard) c.rt->keys.clear();
     if (hard && !c.noteFx.empty() && c.rt->gen) {
       NoteMsg m;
@@ -1105,6 +1255,7 @@ void AudioEngine::dispatch(const Program* p, int from, int to) {
               sr_ * 60.0 / (clockMap(p).bpmAt(static_cast<double>(b.ev->on)) * p->ppq));  // local tempo (tempo map)
   }
   offsBefore(c1);
+  applyBends(p, from, to);  // K-25
   if (tMode_ == PlayMode::Song || tMode_ == PlayMode::Pattern) announceAhead(p, from, c0, c1, pat);
 }
 
@@ -1677,10 +1828,8 @@ void AudioEngine::dispatchLive(const Program* p, int from, int to) {
       if (it->channel < 0 || static_cast<size_t>(it->channel) >= p->channels.size()) continue;
       const ProgChannel& ch = p->channels[static_cast<size_t>(it->channel)];
       if (!ch.rt || !ch.rt->gen || ch.rt->pendingCount >= kMaxPendingNotes) continue;
-      NoteEv x = it->e;
-      x.on += origin;
-      x.off += origin;
-      startNote(p, ch, x, from + static_cast<int>(s - c0), absClock_ + from + (s - c0), spt);
+      // (the event as compiled, times shifted by `origin`: the audio thread never copies a NoteEv)
+      startNote(p, ch, it->e, from + static_cast<int>(s - c0), absClock_ + from + (s - c0), spt, origin);
     }
     if (!lc.audio.empty() && livePieceCount_ < kMaxLivePieces)
       livePieces_[livePieceCount_++] = {li, from + static_cast<int>(sa - c0), static_cast<int>(sb - sa),

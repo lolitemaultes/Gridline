@@ -45,7 +45,7 @@ CHANGELOG section say the full version. In the shields.io badge URL a `-` is wri
    `beta.2`, rename the section and add to it) and update the README badge
    (`alt="Version 0.7.0-beta.1"`, `.../badge/version-0.7.0--beta.1-...`).
    Add `<release version="0.7.0-beta.1" date="<release day>" type="development">` at the top of
-   `<releases>` in `assets/linux/org.gridline.Gridline.metainfo.xml` (software centres on Linux;
+   `<releases>` in `assets/linux/com.lolitemaultes.Gridline.metainfo.xml` (software centres on Linux;
    the release workflow checks it).
 3. `bash tools/ci/check-version.sh 0.7.0-beta.1`, then run the workflow with `dry_run` on the
    branch and check the files it uploads.
@@ -66,12 +66,19 @@ not offered the beta; people with the box ticked read the release list and are (
    everything since the last release, and there is never a separate `## 0.7.0` heading waiting
    below it.
 3. Add `<release version="0.7.0" date="<release day>">` at the top of `<releases>` in
-   `assets/linux/org.gridline.Gridline.metainfo.xml` (keep the beta entries below it).
+   `assets/linux/com.lolitemaultes.Gridline.metainfo.xml` (keep the beta entries below it).
 4. Check, dry run and push the tag `v0.7.0`.
 
 Without a label the release is a normal GitHub release marked "Latest". It is offered to
 everyone, including people on a 0.7.0 beta (a beta sorts before its release). For the next
 version, raise `project(VERSION)` and start again with a label or without one.
+
+## Stores and package repositories
+
+Each release also has `Gridline-<version>-source.tar.gz` (in `SHA256SUMS` like every file), and
+the release workflow uploads the workflow artifact `packaging-<version>`: the Flathub manifest,
+AUR, Homebrew, winget, Scoop, Chocolatey, FreeBSD port, COPR and snap files filled in for this
+release. Submitting them is a manual step per channel, described in docs/packaging.md.
 
 ## Installer design
 

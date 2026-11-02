@@ -90,6 +90,21 @@ jobs:
         with:
           name: release-notes
           path: notes.md
+      - name: Source archive (K-1, for the AUR, FreeBSD port and COPR builds)
+        run: |
+          ver="${{ steps.v.outputs.version }}"
+          mkdir -p src-dist
+          git archive --format=tar.gz --prefix="Gridline-$ver/" -o "src-dist/Gridline-$ver-source.tar.gz" HEAD
+          # cmake/build-id.txt carries the commit (export-subst): builds from the archive get the
+          # same build id as these packages.
+          id="$(tar -xzOf "src-dist/Gridline-$ver-source.tar.gz" "Gridline-$ver/cmake/build-id.txt")"
+          echo "$id" | grep -Eqx '[0-9a-f]{40}' || { echo "::error::cmake/build-id.txt in the archive is '$id', not a commit"; exit 1; }
+          tar -tzf "src-dist/Gridline-$ver-source.tar.gz" "Gridline-$ver/LICENSE" "Gridline-$ver/CMakeLists.txt" > /dev/null
+          ls -l src-dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gridline-source
+          path: src-dist/Gridline-*-source.tar.gz
 
   media-tools:
     # J-192: yt-dlp (its official binary) and ffmpeg (built from the official source: audio only,
@@ -410,15 +425,17 @@ jobs:
           rm -rf "stage/$name/share/gridline/assets/sounds/src"
           sed -e "s/@VERSION@/$VER/g" -e "s/@SYSTEM@/Linux/g" -e "s/@ARCH@/${{ matrix.arch }}/g" -e "s/@DEPS@/libasound2, libjack optional/g" \
             tools/release/README-unix.txt > "stage/$name/README.txt"
+          install -m 755 tools/release/install-unix.sh "stage/$name/install.sh"  # K-14: menus, icons, file type
           tar -C stage -czf "dist/$name.tar.gz" "$name"
+          bash tools/ci/check-linux-icons.sh "stage/$name"  # K-14: window class, desktop entry and icons agree
       - name: Desktop entry and AppStream metadata
         run: |
           desktop-file-validate assets/linux/gridline.desktop
-          grep -q "<release version=\"$VER\"" assets/linux/org.gridline.Gridline.metainfo.xml ||
-            { echo "::error::assets/linux/org.gridline.Gridline.metainfo.xml has no <release version=\"$VER\"> (docs/releasing.md)"; exit 1; }
+          grep -q "<release version=\"$VER\"" assets/linux/com.lolitemaultes.Gridline.metainfo.xml ||
+            { echo "::error::assets/linux/com.lolitemaultes.Gridline.metainfo.xml has no <release version=\"$VER\"> (docs/releasing.md)"; exit 1; }
           # A current appstreamcli (Fedora); errors fail, warnings and hints are printed.
           docker run --rm -v "$PWD:/w" -w /w fedora:latest sh -c \
-            'dnf install -y -q appstream > /dev/null && { appstreamcli validate --no-net --explain assets/linux/org.gridline.Gridline.metainfo.xml > as.txt 2>&1; cat as.txt; ! grep -q "^E:" as.txt; }'
+            'dnf install -y -q appstream > /dev/null && { appstreamcli validate --no-net --explain assets/linux/com.lolitemaultes.Gridline.metainfo.xml > as.txt 2>&1; cat as.txt; ! grep -q "^E:" as.txt; }'
       - name: AppImage
         run: |
           arch="${{ matrix.arch }}"
@@ -436,9 +453,14 @@ jobs:
           desktop=AppDir/usr/share/applications/gridline.desktop
           echo "X-AppImage-Version=$VER" >> "$desktop"
           desktop-file-validate "$desktop"
+          # K-14: .DirIcon (file managers, thumbnailers, appimaged) is the 256 px PNG itself: linuxdeploy
+          # links the AppDir's root icon to the scalable SVG (its first choice) and appimagetool would
+          # point .DirIcon there; v0.7.1 shipped a 64 px one.
+          cp AppDir/usr/share/icons/hicolor/256x256/apps/gridline.png AppDir/.DirIcon
           LINUXDEPLOY_OUTPUT_VERSION="$VER" OUTPUT="dist/Gridline-$VER-linux-$arch.AppImage" LDAI_OUTPUT="dist/Gridline-$VER-linux-$arch.AppImage" \
             ./linuxdeploy --appdir AppDir --executable AppDir/usr/bin/gridline-app --executable AppDir/usr/bin/gridline \
               --desktop-file "$desktop" --icon-file AppDir/usr/share/icons/hicolor/256x256/apps/gridline.png --output appimage
+          bash tools/ci/check-linux-icons.sh AppDir/usr AppDir  # K-14: also the AppImage's root icon and .DirIcon
           ls -l dist
       - name: Check
         run: |
@@ -458,6 +480,8 @@ jobs:
           test -x "$RUNNER_TEMP/squashfs-root/usr/share/gridline/tools/yt-dlp"
           xvfb-run -a sh -c "GRIDLINE_CONFIG_HOME=$RUNNER_TEMP/cfg $app --hidden --size 800x600 --screenshot $RUNNER_TEMP/app.ppm --frames 5 --no-ui-sounds"
           test -s "$RUNNER_TEMP/app.ppm"
+          sudo apt-get install -y -q x11-utils
+          xvfb-run -a bash tools/ci/check-x11-window.sh "$app" "$RUNNER_TEMP/wincfg"  # K-14: WM_CLASS and _NET_WM_ICON of the AppImage's window
           deb="$(ls dist/*.deb)"; rpm="$(ls dist/*.rpm)"
           dpkg-deb -f "$deb" Package Version Architecture Depends
           test "$(dpkg-deb -f "$deb" Version)" = "$DEBVER"   # 0.7.0~beta.1 sorts before 0.7.0
@@ -473,10 +497,13 @@ jobs:
           test -f "/usr/lib/clap/Gridline Suite Mini.clap"
           /usr/bin/gridline suite status | grep -q "installed for all users"
           bash tools/ci/smoke.sh /usr/bin/gridline "$VER"
+          bash tools/ci/check-linux-icons.sh /usr  # K-14: the installed .deb
           sudo apt-get remove -y -q gridline
           tar -tzf "dist/Gridline-$VER-linux-$arch.tar.gz" | grep -q "bin/gridline-app"
+          tar -tzf "dist/Gridline-$VER-linux-$arch.tar.gz" | grep -q "share/icons/hicolor/scalable/apps/gridline.svg"
+          tar -tzf "dist/Gridline-$VER-linux-$arch.tar.gz" | grep -q "/install.sh$"
           tar -tzf "dist/Gridline-$VER-linux-$arch.tar.gz" | grep -q "share/gridline/tools/ffmpeg"
-          dpkg-deb -c "$deb" | grep -q "usr/share/metainfo/org.gridline.Gridline.metainfo.xml"
+          dpkg-deb -c "$deb" | grep -q "usr/share/metainfo/com.lolitemaultes.Gridline.metainfo.xml"
           tar -tzf "dist/Gridline-$VER-linux-$arch.tar.gz" | grep -q "lib/clap/Gridline Suite.clap"
           tar -tzf "dist/Gridline-$VER-linux-$arch.tar.gz" | grep -q "lib/clap/Gridline Suite Mini.clap"
       - name: The .rpm installs on Fedora
@@ -567,6 +594,22 @@ jobs:
         with:
           name: Gridline-${{ needs.version.outputs.version }}-all
           path: files/*
+      - uses: actions/checkout@v4
+        with:
+          path: src
+      - name: Distribution channel files (K-1, docs/packaging.md)
+        run: |
+          # Flathub, AUR, Homebrew, the Windows package managers, the FreeBSD port, COPR and the
+          # snap, filled in with this release's checksums. Not release files: the workflow
+          # artifact packaging-<version>, which the user submits to each channel.
+          python3 src/packaging/render.py --out "packaging-$VER" --version "$VER" --dist files \
+            --sums "files/Gridline-$VER-SHA256SUMS" --commit "$GITHUB_SHA" --date "$(date -u +%F)"
+          python3 src/packaging/check.py --rendered "packaging-$VER"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packaging-${{ needs.version.outputs.version }}
+          path: packaging-${{ needs.version.outputs.version }}
+          include-hidden-files: true  # the AUR .SRCINFO files
       - name: Publish the release
         if: needs.version.outputs.publish == 'true'
         env:

@@ -13,6 +13,7 @@
 #include "../core/Automation.h"
 #include "../core/Expr.h"
 #include "../core/Fades.h"
+#include "../core/NoteBend.h"
 #include "../core/Params.h"
 #include "../core/Song.h"
 #include "Effects.h"
@@ -40,6 +41,10 @@ struct NoteEv {
   float velocity = 0.8f;
   NoteProps props;     // pan, release velocity, mod X / Y, colour
   uint8_t flags = 0;   // kNoteSlide, kNotePorta
+  // K-25: the note's pitch bend line (null = none), ticks from `on`. Built on the UI thread and
+  // never copied by the audio thread, which copies the points into a fixed slot of the channel
+  // runtime when the note starts (core/NoteBend.h evaluates both).
+  std::shared_ptr<const std::vector<BendPoint>> bend;
 };
 inline constexpr uint8_t kNoteSlide = 1;  // glides sounding notes instead of starting one
 inline constexpr uint8_t kNotePorta = 2;  // starts at the previous note's pitch and glides
@@ -79,9 +84,27 @@ struct ChannelRuntime {
     double off;         // end tick (with its fraction)
     int64_t at = 0;     // absolute start sample (cut groups spare notes that start together)
     float pitch = 60;   // played pitch without the channel offset (slides are relative to it)
+    int color = 0;      // K-5: note colour group (a slide note glides only the notes of its colour)
+    double on = 0;      // K-25: start tick (with its fraction): bend line times count from here
+    int bendSlot = -1;  // K-25: its bend line in bendSlots (-1 = none)
+    int64_t bendFrom = 0;  // K-25: absolute sample the bend starts to apply (after a porta glide)
   };
   Pending pending[kMaxPendingNotes];
   int pendingCount = 0;
+  // K-25: bend lines of the sounding notes, copied in at note start (a note keeps playing its
+  // line when a new Program replaces the one it started in). A slot is free when no pending
+  // note owns its id. A note finding no free slot plays unbent.
+  struct BendSlot {
+    uint32_t id = 0;
+    int count = 0;
+    BendPoint pts[bend::kMaxPoints];
+    double sent = 0;  // semitones last sent (glide target)
+  };
+  static constexpr int kBendSlots = 32;
+  BendSlot bendSlots[kBendSlots];
+  // K-25: instruments without per-note pitch (hosted plugins without note tuning, MIDI Out):
+  // the channel pitch bend sent per MIDI channel, semitones (0 = centred).
+  float chanBend[16] = {};
   std::atomic<float> level{0};  // recent output peak, for the UI
   // J-186: the last block's output peak after the strip gains (overwritten every block, so any
   // number of UI readers; the channel rack's play light follows it).
@@ -100,8 +123,10 @@ struct ChannelRuntime {
   // identity of the chain last run (a rebuilt chain releases held notes).
   NoteBuffer inbox;
   uintptr_t chainSig = 0;
-  // Note dispatch state (slides / porta): pitch of the last started note.
+  // Note dispatch state (slides / porta): pitch of the last started note,
+  // and (K-5) of the last started note of each colour group (slides).
   float lastPitch = -1;
+  float lastPitchColor[16] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
   // Note ids: sequenced notes and notes made by the note processors are
   // numbered per channel, so the numbering (instruments seed randomness with
   // it) does not depend on how blocks interleave channels (J-30).
@@ -506,6 +531,9 @@ struct Program {
   bool hasCutGroups = false;    // some channel cuts channels (cut groups)
   bool hasPatternAutos = false;  // some pattern or live clip carries automation
   bool hasEventLanes = false;    // J-210: some lane plays recorded events (blocks split on their steps)
+  // K-5: slide notes glide the sounding notes of every colour (Song::slidesAnyColour, projects
+  // saved before slides kept to their colour group); false: only the notes of their own colour.
+  bool slidesAnyColour = false;
   // Live mode: the live area's clips and the tracks they sit on.
   std::vector<ProgLiveClip> liveClips;
   std::vector<ProgLiveTrack> liveTracks;

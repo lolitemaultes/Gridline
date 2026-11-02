@@ -43,6 +43,8 @@ if [ -n "${GRIDLINE_PACKAGE:-}" ]; then
   deps="sndio for MIDI"
   sed -e "s/@VERSION@/$GRIDLINE_PACKAGE/g" -e "s/@SYSTEM@/$(uname -s) $(uname -r)/g" -e "s/@ARCH@/$arch/g" -e "s/@DEPS@/$deps/g" \
     tools/release/README-unix.txt > "dist/$name/README.txt"
+  install -m 755 tools/release/install-unix.sh "dist/$name/install.sh"  # K-14: menus, icons, file type
+  bash tools/ci/check-linux-icons.sh "dist/$name"
   "dist/$name/bin/gridline" --version
   (cd dist && tar czf "$name.tar.gz" "$name")
   ls -l "dist/$name.tar.gz"

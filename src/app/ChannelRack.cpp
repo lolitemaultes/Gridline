@@ -89,17 +89,20 @@ float rackPlayLight(App& a, const Channel& c, size_t index) {
   return e.light.alpha();
 }
 
-// The play light: a slim bar recessed into the right end of the name button.
-void drawPlayLight(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float level) {
+// The row's lamp at the right end of the steps: lit green while the channel plays, fading after
+// (J-186 play light); a selected channel's lamp keeps a green rim.
+void drawRowLamp(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float level, bool selected, bool hovered) {
   const auto& P = pal();
   const ImU32 socket = P.dark ? theme::mix(P.field, P.ink, 0.35f) : theme::mix(P.surface700, P.ink, 0.18f);
-  dl->AddRectFilled(p0, p1, socket, 1.5f);
+  const ImU32 idle = theme::mix(socket, P.led, selected ? 0.22f : hovered ? 0.14f : 0.06f);
+  dl->AddRectFilled(p0, p1, idle, 2.0f);
   if (level > 0.003f) {
     const float l = std::min(1.0f, level);
-    dl->AddRectFilled(ImVec2(p0.x - 2, p0.y - 2), ImVec2(p1.x + 2, p1.y + 2), theme::withAlpha(P.hot, 0.22f * l), 3.0f);  // glow
-    dl->AddRectFilled(p0, p1, theme::mix(socket, theme::mix(P.hot, P.paper, 0.25f * l * l), l), 1.5f);
+    dl->AddRectFilled(ImVec2(p0.x - 2, p0.y - 2), ImVec2(p1.x + 2, p1.y + 2), theme::withAlpha(P.led, 0.22f * l), 3.0f);  // glow
+    dl->AddRectFilled(p0, p1, theme::mix(idle, theme::mix(P.led, P.paper, 0.2f * l * l), l), 2.0f);
   }
-  dl->AddRect(p0, p1, theme::withAlpha(P.ink, P.dark ? 0.5f : 0.25f), 1.5f);
+  if (selected) dl->AddRect(ImVec2(p0.x - 1.5f, p0.y - 1.5f), ImVec2(p1.x + 1.5f, p1.y + 1.5f), theme::withAlpha(P.led, 0.75f), 3.0f, 0, 1.2f);
+  else dl->AddRect(p0, p1, theme::withAlpha(P.ink, P.dark ? 0.5f : 0.25f), 2.0f);
 }
 
 std::vector<uint8_t> rowOf(const Pattern& p, ObjectId ch) {
@@ -460,7 +463,7 @@ void drawChannelRack(App& a) {
   // Step scroll: kept in range (shorter pattern, wider rack); while the
   // pattern plays the view pages along with the playing step.
   scrollui::clampOuter(a.rack.axStep, a.rack.stepScroll, 0, L.scrollMax);
-  if (playStep >= 0 && playStep != a.rack.lastPlayStep && L.scrolls() && !a.rack.thumbDrag) {
+  if (playStep >= 0 && playStep != a.rack.lastPlayStep && L.scrolls() && !a.rack.thumbDrag && a.settings.getBool("ui.autoScrollPattern")) {  // K-4
     const float x0 = L.stepPos(playStep);
     if (x0 < a.rack.stepScroll || x0 + stepW > a.rack.stepScroll + viewW) a.rack.stepScroll = racklayout::clampScroll(L, x0);
   }
@@ -633,7 +636,7 @@ void drawChannelRack(App& a) {
       // J-211: the channel's icon before its name, when the button has room for both.
       const float iconBox = c.icon > 0 && nameW >= 96 ? trackicons::boxFor(cellH - 4, 14.0f) : 0.0f;
       const float iconW = iconBox > 0 ? iconBox + 4 : 0.0f;
-      const float nameTextW = nameW - 20 - iconW;  // J-186: the play light takes the button's right end
+      const float nameTextW = nameW - 14 - iconW;
       const bool truncated = a.fontRegular->CalcTextSizeA(nameFont, 1e9f, 0, c.name.c_str()).x > nameTextW;
       if (truncated) {
         ++shown.truncated;
@@ -663,8 +666,6 @@ void drawChannelRack(App& a) {
                          c.muted ? P.textFaint : P.textDim);
       theme::textEllipsis(dl, a.fontRegular, nameFont, ImVec2(np.x + 10 + iconW, std::round(np.y + (cellH - 13) * 0.5f) - 1),
                           nameTextW, c.muted ? P.textFaint : selected && P.dark ? P.paper : P.text, c.name.c_str());
-      // J-186: the play light (lit while the channel plays, fading after).
-      drawPlayLight(dl, ImVec2(np.x + nameW - 8, np.y + 4), ImVec2(np.x + nameW - 4, np.y + cellH - 5), rackPlayLight(a, c, ci));
       {  // J-111: a collaborator's change flashes; a sample still arriving shows its progress
         ImU32 fc = 0;
         if (const float fl = collabui::flash(a, "channels/#" + std::to_string(c.id), &fc); fl > 0)
@@ -790,14 +791,15 @@ void drawChannelRack(App& a) {
       if (scrollX < L.scrollMax - 0.5f)
         dl->AddRectFilledMultiColor(ImVec2(viewX1 - 6, sp.y), ImVec2(viewX1, sp.y + cellH), edge, edgeIn, edgeIn, edge);
     }
-    // Select lamp (right of the step viewport): lit for selected channels; click toggles the selection.
+    // The row's lamp (right of the step viewport): lights while the channel plays (J-186); a
+    // selected channel's lamp has a green rim; a click toggles the selection.
     {
       ImVec2 l0(rp.x + L.lampX + 5, cy - cellH * 0.5f + 2), l1(l0.x + 6, cy + cellH * 0.5f - 2);
       ImGui::SetCursorScreenPos(ImVec2(l0.x - 3, l0.y - 2));
       if (ImGui::InvisibleButton("sel", ImVec2(12, cellH))) a.selectChannel(c.id, true);
-      ui::Hint(selected ? "Selected (click to deselect)" : "Click to add this channel to the selection");
-      dl->AddRectFilled(l0, l1, selected ? P.led : theme::mix(P.field, P.led, 0.10f), 2);
-      if (selected) dl->AddRectFilled(ImVec2(l0.x - 2, l0.y - 2), ImVec2(l1.x + 2, l1.y + 2), theme::withAlpha(P.led, 0.18f), 3);
+      ui::Hint(selected ? "Lights while the channel plays \xC2\xB7 selected (click to deselect)"
+                        : "Lights while the channel plays \xC2\xB7 click to add this channel to the selection");
+      drawRowLamp(dl, l0, l1, rackPlayLight(a, c, ci), selected, ImGui::IsItemHovered());
     }
     rowDropTarget(a, c, static_cast<int>(ci), rp, rowW, rowH, rowGap, stepsX + 6);  // J-97: drop to replace / insert
     // J-111d: a collaborator's pointer on this row (logical px from its start: the row's layout is fixed from the left)

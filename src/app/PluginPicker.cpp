@@ -319,7 +319,8 @@ void drawPluginPicker(App& a) {
   const host::PluginPrefs prefs = host::pluginPrefs();
   const browse::Query q = browse::parseQuery(S.search);
   std::vector<const PluginInfo*> all;
-  for (const auto& p : pluginCatalog()) all.push_back(&p);
+  for (const auto& p : pluginCatalog())
+    if (!p.hidden) all.push_back(&p);  // K-23: kept for old projects only
   for (const PluginInfo* p : dynamicPlugins()) {
     std::string fmt, uid;
     if (host::splitType(p->type, fmt, uid) && !host::formatEnabled(fmt)) continue;

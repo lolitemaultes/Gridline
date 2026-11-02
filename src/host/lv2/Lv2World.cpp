@@ -7,6 +7,7 @@
 #include <map>
 #include <mutex>
 #include "../Backend.h"
+#include "../PluginFolders.h"
 #include "../PluginScan.h"
 #include "../../core/Platform.h"
 
@@ -217,7 +218,8 @@ std::shared_ptr<const PluginDesc> describe(const std::string& bundleIn, const st
     return nullptr;
   }
   // Other bundles that add to this plugin (UIs, presets).
-  for (const auto& b : allBundles(defaultPaths())) {
+  // K-13: the LV2 search folders the user set (default folders, LV2_PATH, own folders).
+  for (const auto& b : allBundles(host::searchFolders("lv2"))) {
     std::error_code ec;
     if (fs::equivalent(b, bundle, ec)) continue;
     Model man;

@@ -3717,6 +3717,9 @@ void devFrame(App& a) {
   if (all && people > 1 && s->ready()) devsig::reach("collab-all-connected");
   if (synced && people > 1 && s->ready() && s->pendingBatches() == 0) devsig::reach("collab-synced");
   devsig::reach("collab-members:" + std::to_string(people));
+  int left = 0;  // K-B: members who left (as "collab report" counts them)
+  for (const Member& m : s->members()) left += s->memberState(m.site) == MemberState::Left ? 1 : 0;
+  devsig::reach("collab-left-members:" + std::to_string(left));
   for (const auto& ch : a.doc.song().channels) devsig::reach("collab-channel:" + ch.name);
   if (s->ready()) devsig::reach("collab-name:" + s->projectName());  // J-111f
 }

@@ -9,6 +9,8 @@
 #include <functional>
 #include <map>
 #include <set>
+#include "EditorZoomUi.h"
+#include "../packs/PacksUi.h"
 #include "CollabUi.h"
 #include "CursorAnchor.h"
 #include "../core/I18n.h"
@@ -22,6 +24,8 @@
 #include "PluginUI.h"
 #include "Windows.h"
 #include "ContextMenus.h"
+#include "PluginFavsUi.h"
+#include "../host/PluginScan.h"
 #include "HostedUi.h"
 #include "TrackIcons.h"
 #include "../core/MixerLayout.h"
@@ -139,20 +143,40 @@ bool stripToggle(const char* id, const char* label, bool on, ImU32 onCol, ImVec2
   return r;
 }
 
-// Effect picker list (categories as small labels).
+// Effect picker list (categories as small labels). K-16: the favourites (built-in and
+// installed) in their own group at the top, then the categories, then the installed
+// effects; every row has a star (hover shows it, favourites keep it lit).
 void effectList(App& a, ObjectId track, int slot, const std::string& current) {
+  auto pick = [&a, track, slot](const std::string& type) {
+    if (a.doc.setSlotPlugin(track, slot, type)) pui::pluginReplaced(PluginTarget{track, slot});  // J-213
+    a.fxEditor = {track, slot};
+  };
   if (ImGui::Selectable(i18n::tr("(empty)"), current.empty())) a.doc.setSlotPlugin(track, slot, "");
+  const auto favs = favui::favouritesOfKind(PluginKind::Effect);
+  if (!favs.empty()) {
+    ImGui::Spacing();
+    ui::Label(i18n::tr("Favourites"));
+    for (const PluginInfo* p : favs)
+      if (favui::pickerRow(*p, p->type == current)) pick(p->type);
+  }
   std::string cat;
   for (const auto& p : pluginCatalog()) {
-    if (p.kind != PluginKind::Effect) continue;
+    if (p.kind != PluginKind::Effect || p.hidden) continue;
     if (p.category != cat) {
       cat = p.category;
       ImGui::Spacing();
       ui::Label(cat.c_str());
     }
-    if (ImGui::Selectable(p.name.c_str(), p.type == current)) {
-      if (a.doc.setSlotPlugin(track, slot, p.type)) pui::pluginReplaced(PluginTarget{track, slot});  // J-213
-      a.fxEditor = {track, slot};
+    if (favui::pickerRow(p, p.type == current)) pick(p.type);
+  }
+  const auto inst = favui::installedOfKind(PluginKind::Effect);
+  if (!inst.empty()) {
+    ImGui::Spacing();
+    ui::Label(i18n::tr("Installed"));
+    for (const PluginInfo* p : inst) {
+      std::string fmt, uid;
+      const host::Format* f = host::splitType(p->type, fmt, uid) ? host::findFormat(fmt) : nullptr;
+      if (favui::pickerRow(*p, p->type == current, f ? f->label : nullptr)) pick(p->type);
     }
   }
 }
@@ -1660,6 +1684,7 @@ void drawEffectEditor(App& a) {
     return;
   }
   PluginTarget target{t->id, k};
+  if (packs::claimEffectEditor(a, target)) return;  // K-15: Loupe pinned into the layout shows it there
   std::string title = info->name + "  \u00b7  " + mixerTrackName(s, static_cast<size_t>(s.mixerIndex(t->id))) + "  \u00b7  slot " +
                       std::to_string(k + 1) + "###fxeditor";
   float width = info->editorWidth > 0 ? info->editorWidth : (info->type == "gl.eq" ? 780.0f : 600.0f);
@@ -1668,11 +1693,16 @@ void drawEffectEditor(App& a) {
     width = std::floor(place::fitEditor(width, info->editorMinWidth, 24.0f + ImGui::GetStyle().ScrollbarSize, area.x, area.y).content);
   }
   bool open = true;
-  const int fitFlags = ui::NextFloatingWindowSize(width + 24);  // J-158: capped to the work area, the rest scrolls
   {
     ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.42f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
   }
+  // K-19: the editor's own size on top of the interface scale (installed plugins keep theirs).
+  const ImGuiStyle& st = ImGui::GetStyle();
+  const float contentW = width + 24 - 2 * st.WindowPadding.x + st.ScrollbarSize;
+  const float zoom = edzoomui::prepare(a, "fxeditor", info->type, contentW, !isHostedType(info->type));
+  const int fitFlags =  // J-158: capped to the work area, the rest scrolls
+      ui::NextFloatingWindowSize(zoom > 1.0f ? std::floor(contentW * zoom) + 2 * st.WindowPadding.x - st.ScrollbarSize : width + 24);
   viewports::openAttached(title.c_str());  // opens inside the main window, never popped out by itself
   if (ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking | fitFlags)) {
     ui::KeepWindowInViewport();
@@ -1681,10 +1711,12 @@ void drawEffectEditor(App& a) {
       a.focusPluginOwner = target.owner;  // controller template knobs follow the focused plugin
       a.focusPluginSlot = target.slot;
     }
+    edzoomui::begin(a, "fxeditor");
     menuButton("fxmenu", "Effect menu: presets, state, slot", [&a, target]() { pluginWindowMenu(a, target.owner, target.slot); });
     ImGui::SameLine(0, 8);
     drawPluginHeader(a, target);
     drawPluginBody(a, target, width);
+    edzoomui::end(a, "fxeditor");
   }
   ImGui::End();
   if (!open) a.fxEditor = {kNoId, -1};

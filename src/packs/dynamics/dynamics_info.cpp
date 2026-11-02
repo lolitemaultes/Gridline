@@ -335,6 +335,8 @@ void addDistortions(std::vector<PluginInfo>& v) {
                  {"Screamer", {{OdBoost, 1.f}, {OdPreAmp, 0.4f}, {OdPostFilter, 0.4f}, {OdPreBand, 0.35f}, {OdPostGainK, 0.5f}}},
                  {"Legacy tube", {{OdModel, 0.f}, {OdPreAmp, 0.45f}, {OdPostGain, -9.f}}}};
     p.editorWidth = 560;
+    // K-2: new instances start at the reference plugin's defaults.
+    setReferenceDefaults(p, {{OdPreAmp, 0}, {OdPostGain, 0}, {OdPostGainK, 1}});
     v.push_back(p);
   }
   {
@@ -393,6 +395,8 @@ void addDistortions(std::vector<PluginInfo>& v) {
                  {"Ring radio", {{SqModel, 0.f}, {SqRingAmount, 0.7f}, {SqRingFreq, 900.f}, {SqFilterOn, 1.f}, {SqFilterType, 2.f}, {SqCutoff, 1500.f}}},
                  {"Low rate", {{SqModel, 0.f}, {SqRateDiv, 8.f}, {SqFilterOn, 1.f}, {SqCutoff, 3000.f}}}};
     p.editorWidth = 560;
+    // K-2: new instances start at the reference plugin's defaults.
+    setReferenceDefaults(p, {{SqMix, 0.5}, {SqResonance, 0.5}, {SqFilterPos, 0}});
     v.push_back(p);
   }
 }

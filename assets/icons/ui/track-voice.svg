@@ -1,6 +1,8 @@
 <!-- Gridline original (GPL-3.0), drawn on the Lucide 24-unit grid and stroke rules: track icon: a head in profile with sound coming out -->
 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M5 21 L5 17.5 C3.5 15.8 3 13.5 3.6 11 C4.6 7 8.4 4.8 12 5.8 C14.2 6.4 15 8.4 14.5 10.4 L16 13 L14.5 13.5 L14.5 15.2 C14.5 16.3 13.5 16.8 11.8 16.6 L11.8 21" />
-  <path d="M17.8 8.8 A4 4 0 0 1 17.8 15.2" />
-  <path d="M20.2 6.4 A7.4 7.4 0 0 1 20.2 17.6" />
+  <g transform="translate(-0.8 0)">
+    <path d="M5 21 L5 17.5 C3.5 15.8 3 13.5 3.6 11 C4.6 7 8.4 4.8 12 5.8 C14.2 6.4 15 8.4 14.5 10.4 L16 13 L14.5 13.5 L14.5 15.2 C14.5 16.3 13.5 16.8 11.8 16.6 L11.8 21" />
+    <path d="M17.8 8.8 A4 4 0 0 1 17.8 15.2" />
+    <path d="M20.2 6.4 A7.4 7.4 0 0 1 20.2 17.6" />
+  </g>
 </svg>

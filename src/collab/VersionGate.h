@@ -57,7 +57,11 @@ class VersionGate {
 };
 
 // How Gridline was installed (the update screen offers the store too).
-enum class InstallKind { Official, Flatpak, DistroPackage };
+//   Flatpak, Snap   a sandboxed store build: only the store updates it (no installer download)
+//   DistroPackage   under /usr (a .deb / .rpm, AUR, a distribution or ports package)
+enum class InstallKind { Official, Flatpak, DistroPackage, Snap };
 InstallKind installKind();
+// A sandboxed store build (Flatpak, Snap): a downloaded installer could not replace it.
+inline bool isStoreSandbox(InstallKind k) { return k == InstallKind::Flatpak || k == InstallKind::Snap; }
 
 }  // namespace gl::collab

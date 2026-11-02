@@ -14,7 +14,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ICONS = os.path.join(ROOT, 'assets', 'icons')
-SIZES = [16, 24, 32, 48, 64, 128, 256]
+SIZES = [16, 20, 24, 32, 40, 48, 64, 128, 256]  # K-14: 20 and 40 for 125% and 250% small icons
 
 
 def png_size(data):

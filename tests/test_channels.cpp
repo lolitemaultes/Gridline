@@ -257,6 +257,76 @@ int main() {
     expect(render(s).peak() < 1e-4f, "a slide note with nothing sounding is silent");
   }
 
+  // ------------------------------------------------ K-5: a slide glides only the notes of its colour
+  {
+    // A (colour 0) on C5 = 441 Hz, B (colour 1) an octave down = 220.5 Hz, both held 2 s; a
+    // colour-1 slide to C5 over beat 2 takes B up an octave, A keeps its pitch.
+    Song s = baseSong();
+    ObjectId ch = addChannel(s, "gl.sampler", a441);
+    Note na = mk(0, 384, 60), nb = mk(24, 360, 48), slide = mk(96, 96, 60);
+    nb.color = 1, slide.color = 1, slide.slide = true;
+    s.patterns[0].notes[ch] = {na, nb, slide};
+    auto level = [](const AudioBuffer& b, double hz, double t0, double t1) {  // Goertzel magnitude (normalised)
+      const size_t a = static_cast<size_t>(t0 * kSr), e = std::min(b.frames, static_cast<size_t>(t1 * kSr));
+      const double w = 2 * 3.14159265358979323846 * hz / kSr, c = 2 * std::cos(w);
+      double s1 = 0, s2 = 0;
+      for (size_t i = a; i < e; ++i) {
+        const double s0 = b.at(0, i) + c * s1 - s2;
+        s2 = s1, s1 = s0;
+      }
+      return std::sqrt(std::max(0.0, s1 * s1 + s2 * s2 - c * s1 * s2)) * 2.0 / static_cast<double>(std::max<size_t>(1, e - a));
+    };
+    const AudioBuffer by = render(s);
+    const double lo0 = level(by, 220.5, 0.1, 0.45), lo1 = level(by, 220.5, 1.2, 1.7), mid1 = level(by, 441, 1.2, 1.7), hi1 = level(by, 882, 1.2, 1.7);
+    std::printf("# K-5 by colour: before 220.5 Hz %.3f; after 220.5 %.3f, 441 %.3f, 882 %.3f\n", lo0, lo1, mid1, hi1);
+    expect(lo0 > 0.1 && lo1 < 0.02 && mid1 > 0.3 && hi1 < 0.02,
+           "slide of colour 1: only the colour-1 note glides (220.5 -> 441 Hz), the colour-0 note stays on 441 Hz");
+    // The slide in colour 0, to C6: A (the last colour-0 note, C5) glides an octave up, B stays.
+    s.patterns[0].notes[ch][2].color = 0;
+    s.patterns[0].notes[ch][2].pitch = 72;
+    const AudioBuffer by0 = render(s);
+    const double l0 = level(by0, 220.5, 1.2, 1.7), m0 = level(by0, 441, 1.2, 1.7), h0 = level(by0, 882, 1.2, 1.7);
+    std::printf("# K-5 colour-0 slide: 220.5 %.3f, 441 %.3f, 882 %.3f\n", l0, m0, h0);
+    expect(l0 > 0.1 && m0 < 0.02 && h0 > 0.1, "slide of colour 0: only the colour-0 note glides (441 -> 882 Hz), the colour-1 note stays");
+    // A colour no note has: nothing glides.
+    s.patterns[0].notes[ch][2].color = 5;
+    s.patterns[0].notes[ch][2].pitch = 60;
+    const AudioBuffer none = render(s);
+    expect(level(none, 220.5, 1.2, 1.7) > 0.1 && level(none, 441, 1.2, 1.7) > 0.1 && level(none, 882, 1.2, 1.7) < 0.02,
+           "a slide of a colour nothing sounds in leaves every note on its pitch");
+    for (int block : {64, 1000}) {
+      s.patterns[0].notes[ch][2].color = 1;
+      const AudioBuffer bb = render(s, block);
+      const std::string name = "colour slides: same result at block size " + std::to_string(block);
+      expect(level(bb, 220.5, 1.2, 1.7) < 0.02 && level(bb, 441, 1.2, 1.7) > 0.3, name.c_str());
+    }
+    // Projects saved before K-5 (no "slidesByColour") whose slides met other colours keep
+    // sliding every colour: the colour-1 slide moves both notes by its interval from the last
+    // started note (B, 48): A to 882 Hz, B to 441 Hz.
+    s.patterns[0].notes[ch][2].color = 1;
+    Json j = songToJson(s);
+    expect(j.find("slidesByColour") && j.find("slidesByColour")->boolean, "saved projects say slides keep to their colour");
+    Song back;
+    expect(songFromJson(j, back) && !back.slidesAnyColour && back == s, "round trip keeps the slide mode");
+    j.object.erase("slidesByColour");
+    Song legacy;
+    expect(songFromJson(j, legacy) && legacy.slidesAnyColour, "a project from before K-5 with slides among mixed colours slides every colour");
+    const AudioBuffer old = render(legacy);
+    expect(level(old, 882, 1.2, 1.7) > 0.1 && level(old, 441, 1.2, 1.7) > 0.1 && level(old, 220.5, 1.2, 1.7) < 0.02,
+           "... and plays as it did (both notes glide)");
+    Json jl = songToJson(legacy);
+    Song again;
+    expect(jl.find("slidesByColour") && !jl.find("slidesByColour")->boolean && songFromJson(jl, again) && again.slidesAnyColour,
+           "the old slide mode is saved with it");
+    Song single = s;
+    single.patterns[0].notes[ch] = {na, slide};
+    single.patterns[0].notes[ch][1].color = 0;
+    Json js = songToJson(single);
+    js.object.erase("slidesByColour");
+    Song ls;
+    expect(songFromJson(js, ls) && !ls.slidesAnyColour, "an old project whose slides meet one colour only loads with slides by colour (same sound)");
+  }
+
   // ------------------------------------------------ cut groups
   {
     Song s = baseSong();
@@ -524,6 +594,7 @@ int main() {
     expect(p.fine == 100 && p.release == 100 && p.color == 3 && p.pan == -64 && p.velocity == 127 && p.modX == 0 && p.modY == 255 && !p.slide,
            "note properties: fine, release, colour, pan, velocity, mod X / Y");
     expect(ns.at(keys.id)[1].slide && ns.at(keys.id)[1].release == kNoteReleaseDefault, "slide flag");
+    expect(!s.slidesAnyColour, "FL projects: slide notes glide only the notes of their own colour (K-5, as FL plays them)");
     expect(ns.at(hat.id)[0].length == 24, "step notes (length 0) last one step");
     expect(ns.count(s.channels[3].id) && rep.counts["notes: slide"] == 1, "notes on channels after a layer map correctly; report counts");
   }

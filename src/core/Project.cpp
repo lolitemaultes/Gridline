@@ -17,6 +17,7 @@
 #include <string>
 #include "Platform.h"
 #include "Json.h"
+#include "NoteBend.h"
 #include "Params.h"
 #include "PluginParams.h"
 #include "PluginStandIn.h"
@@ -309,6 +310,19 @@ void noteToJson(const Note& n, Json& jn) {
   if (n.group > 0) jn.object["group"] = num(n.group);  // J-31
   if (n.frac != 0.f) jn.object["frac"] = num(n.frac);  // J-159
   if (n.endFrac != 0.f) jn.object["endFrac"] = num(n.endFrac);
+  if (n.step) jn.object["step"] = boolean(true);  // K-22: a rack step in the piano roll
+  if (!n.bend.empty()) {  // K-25: [[tick, semitones, curve, tension], ...] (curve / tension left out when 0)
+    Json b = Json::makeArray();
+    for (const auto& p : n.bend) {
+      Json jp = Json::makeArray();
+      jp.array.push_back(num(p.tick));
+      jp.array.push_back(num(p.semis));
+      if (p.curve || p.tension != 0.f) jp.array.push_back(num(p.curve));
+      if (p.tension != 0.f) jp.array.push_back(num(p.tension));  // K-28
+      b.array.push_back(std::move(jp));
+    }
+    jn.object["bend"] = std::move(b);
+  }
 }
 
 void noteFromJson(const Json& e, Note& n) {
@@ -321,12 +335,28 @@ void noteFromJson(const Json& e, Note& n) {
   n.slide = flag(e, "slide");
   n.porta = flag(e, "porta");
   n.muted = flag(e, "muted");
+  n.step = flag(e, "step");  // K-22
   n.group = jsonInt<int>(std::clamp(e.num("group", 0), 0.0, 1e9));  // J-31
   // J-159: sub-tick timing
   const double fr = e.num("frac", 0), ef = e.num("endFrac", 0);
   n.frac = std::isfinite(fr) && fr > 0 && fr < 1 ? static_cast<float>(fr) : 0.f;
   n.endFrac = std::isfinite(ef) && ef > -1 && ef < 1 ? static_cast<float>(ef) : 0.f;
   n.frac = std::min(n.frac, 0.99999994f);
+  n.bend.clear();
+  if (const Json* b = e.find("bend"); b && b->is(Json::Type::Array)) {  // K-25
+    for (const auto& jp : b->array) {
+      if (!jp.is(Json::Type::Array) || jp.array.size() < 2) continue;
+      auto at = [&](size_t i) { return i < jp.array.size() && jp.array[i].is(Json::Type::Number) ? jp.array[i].number : 0.0; };
+      BendPoint p;
+      p.tick = static_cast<float>(std::clamp(at(0), 0.0, 1e9));
+      p.semis = static_cast<float>(std::clamp(at(1), -1e3, 1e3));
+      p.curve = static_cast<uint8_t>(std::clamp(at(2), 0.0, 255.0));
+      p.tension = static_cast<float>(std::clamp(at(3), -1.0, 1.0));  // K-28 (0 in older files)
+      n.bend.push_back(p);
+      if (n.bend.size() >= static_cast<size_t>(bend::kMaxPoints) * 2) break;
+    }
+    bend::normalize(n.bend);
+  }
 }
 // ---- end of channel / note extras
 
@@ -891,6 +921,8 @@ Json songToJson(const Song& s, bool withFlOrigin) {
   j.object["timeSigDen"] = num(s.timeSigDen);
   j.object["swing"] = num(s.swing);
   if (!s.swingNotes) j.object["swingNotes"] = boolean(false);  // J-138
+  // K-5: always written, so a project saved before slides kept to their colour (no key) is told apart.
+  j.object["slidesByColour"] = boolean(!s.slidesAnyColour);
   j.object["masterPitch"] = num(s.masterPitch);
   if (!s.autoCrossfades) j.object["autoCrossfades"] = boolean(false);  // J-38
   if (!s.trackReceipt.empty()) {  // J-219: the Track Receipt's typed fields
@@ -1099,6 +1131,18 @@ bool migrateProjectJson(Json& j, std::string* err) {
   if (v == 6) j.object["version"] = num(7), v = 7;  // v7: see bitsLawV7 (applied to the loaded song)
   if (v == 7) j.object["version"] = num(8), v = 8;  // v8: see rateLawV8 (applied to the loaded song)
   return true;
+}
+
+// K-5: some channel's notes in some pattern hold a slide note and notes of more than one
+// colour (a slide there sounded on other colours' notes before slides kept to their colour).
+bool slidesMeetOtherColours(const Song& s) {
+  for (const auto& pat : s.patterns)
+    for (const auto& [ch, ns] : pat.notes) {
+      bool slide = false, mixed = false;
+      for (const auto& n : ns) slide = slide || n.slide, mixed = mixed || n.color != ns.front().color;
+      if (slide && mixed) return true;
+    }
+  return false;
 }
 
 // Moves normalized values that target parameter k of gl.bitcrush slots (automation
@@ -1490,6 +1534,12 @@ bool songFromJson(const Json& src, Song& out, std::string* err) {
   trackmodes::dropStaleLinks(s);  // PL-08: links to deleted mixer tracks / channels
   if (srcVersion < 7) remapBitcrushNormalized(s, pp::BcBits, bitsLawV7);
   if (srcVersion < 8) remapBitcrushNormalized(s, pp::BcRate, rateLawV8);
+  // K-5: slide notes glide only the notes of their own colour. A project saved before that
+  // (no "slidesByColour") keeps sliding every colour when a slide there meets other colours.
+  if (const Json* sc = j.find("slidesByColour"); sc && sc->is(Json::Type::Bool))
+    s.slidesAnyColour = !sc->boolean;
+  else
+    s.slidesAnyColour = slidesMeetOtherColours(s);
   out = std::move(s);
   return true;
 }

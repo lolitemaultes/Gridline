@@ -324,6 +324,12 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
   const std::vector<int64_t> starts = rv.on ? rv.starts : gridMode && kg ? kg->cuts : sliceStarts(st, smp.get());
   if (gridMode && kg && !kg->analysing) devsig::reach("kerf-grid-ready");  // dev checks (waitfor): the analysis is in
   const int nSl = static_cast<int>(starts.size());
+  if (smp && nSl > 0 && (!gridMode || (kg && !kg->analysing))) {  // dev checks (waitfor): a loaded loop, sliced
+    devsig::reach("kerf-regions");
+    if (const auto& prog = a.engine.program(); prog && t.isChannel())  // ... and the engine plays it
+      for (const ProgChannel& c : prog->channels)
+        if (c.id == t.owner && c.aux.sample() && c.aux.sample()->path == smp->path) devsig::reach("kerf-engine-ready");
+  }
   if (ui.follow >= 0) {  // J-182: a moved marker keeps its region selected (markers may have changed order)
     for (int s = 0; s < nSl; ++s)
       if (std::llabs(starts[static_cast<size_t>(s)] - ui.follow) <= 1) {

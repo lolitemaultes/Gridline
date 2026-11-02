@@ -1,0 +1,47 @@
+{
+    "version": "@VERSION@",
+    "description": "Pattern-based music workstation",
+    "homepage": "https://github.com/lolitemaultes/Gridline",
+    "license": "GPL-3.0-or-later",
+    "notes": [
+        "Gridline as a VST3 / CLAP plugin for other hosts: $dir\\plugins (copy the folders into",
+        "Common Files\\VST3 and Common Files\\CLAP, or use the setup program, which can install them)."
+    ],
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/lolitemaultes/Gridline/releases/download/v@VERSION@/Gridline-@VERSION@-windows-x64.zip",
+            "hash": "@SHA256:windows-x64.zip@",
+            "extract_dir": "Gridline-@VERSION@-windows-x64"
+        },
+        "arm64": {
+            "url": "https://github.com/lolitemaultes/Gridline/releases/download/v@VERSION@/Gridline-@VERSION@-windows-arm64.zip",
+            "hash": "@SHA256:windows-arm64.zip@",
+            "extract_dir": "Gridline-@VERSION@-windows-arm64"
+        }
+    },
+    "bin": "gridline.exe",
+    "shortcuts": [
+        [
+            "gridline-app.exe",
+            "Gridline"
+        ]
+    ],
+    "checkver": {
+        "github": "https://github.com/lolitemaultes/Gridline"
+    },
+    "autoupdate": {
+        "architecture": {
+            "64bit": {
+                "url": "https://github.com/lolitemaultes/Gridline/releases/download/v$version/Gridline-$version-windows-x64.zip",
+                "extract_dir": "Gridline-$version-windows-x64"
+            },
+            "arm64": {
+                "url": "https://github.com/lolitemaultes/Gridline/releases/download/v$version/Gridline-$version-windows-arm64.zip",
+                "extract_dir": "Gridline-$version-windows-arm64"
+            }
+        },
+        "hash": {
+            "url": "$baseurl/Gridline-$version-SHA256SUMS"
+        }
+    }
+}

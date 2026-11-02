@@ -5,6 +5,7 @@
 // on whole pixels at 1x.
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <set>
 #include <string>
@@ -113,6 +114,75 @@ int main() {
     expect(!icons::rasterize("<svg", 16, 1.5f, a) || coverage(a) == 0, "broken SVG text draws nothing");
     expect(icons::strokePx(16, 1) == 1.5f && icons::strokePx(24, 1) == 2.0f && icons::strokePx(16, 2) == 3.0f,
            "stroke: 1.5 px at 16, 2 px at 24, scaled with density");
+  }
+
+  // ---- K-3: every icon's ink lies inside its box (nothing cut off) ----
+  // Ink bounds (each shape's exact geometry, stroked shapes widened by half the
+  // stroke drawn at that size) against the 24-unit box at the smallest track
+  // icon size (12), a common one (16) and the largest (64); then the bitmaps at
+  // 16 and 64: no edge row or column is solid ink (a shape that runs past the
+  // box shows there as a cut, fully covered border line).
+  {
+    bool inside = true, edges = true;
+    for (int i = 0; i < n; ++i) {
+      for (int px : {12, 16, 64}) {
+        float bb[4] = {0, 0, 0, 0};
+        const float strokeUnits = icons::strokePx(static_cast<float>(px), 1.0f) * 24.0f / static_cast<float>(px);
+        if (!icons::inkBounds(svgs[i].svg, strokeUnits, bb)) continue;
+        if (std::min(bb[0], bb[1]) < -0.01f || std::max(bb[2], bb[3]) > 24.01f) {
+          std::printf("# %s at %d px: ink x %.2f..%.2f, y %.2f..%.2f leaves the 24-unit box\n", svgs[i].name, px, bb[0], bb[2], bb[1], bb[3]);
+          inside = false;
+        }
+        if (px == 12) continue;
+        std::vector<uint8_t> a;
+        icons::rasterize(svgs[i].svg, px, icons::strokePx(static_cast<float>(px), 1.0f), a);
+        if (a.size() != static_cast<size_t>(px * px)) continue;
+        auto solidLine = [&](bool row, int k) {
+          int run = 0, best = 0;
+          for (int j = 0; j < px; ++j) {
+            const uint8_t v = row ? a[static_cast<size_t>(k) * px + j] : a[static_cast<size_t>(j) * px + k];
+            best = std::max(best, run = v >= 250 ? run + 1 : 0);
+          }
+          return best >= std::max(3, px / 5);
+        };
+        if (solidLine(true, 0) || solidLine(true, px - 1) || solidLine(false, 0) || solidLine(false, px - 1)) {
+          std::printf("# %s at %d px: solid ink along the box edge (cut off)\n", svgs[i].name, px);
+          edges = false;
+        }
+      }
+    }
+    // GRIDLINE_ICON_SHEET=<file.pgm>: a contact sheet of every icon at 12 and 64 px (dark ink on
+    // white, each box outlined in grey one texel outside it), to look over by eye.
+    if (const char* sheet = std::getenv("GRIDLINE_ICON_SHEET")) {
+      const int cols = 16, cell = 12 + 64 + 12, rows = (n + cols - 1) / cols, W = cols * cell, H = rows * 72;
+      std::vector<uint8_t> img(static_cast<size_t>(W) * H, 255);
+      for (int i = 0; i < n; ++i) {
+        const int ox = (i % cols) * cell + 4, oy = (i / cols) * 72 + 4;
+        int x0 = ox;
+        for (int px : {12, 64}) {
+          std::vector<uint8_t> a;
+          icons::rasterize(svgs[i].svg, px, icons::strokePx(static_cast<float>(px), 1.0f), a);
+          for (int k = -1; k <= px; ++k)
+            for (int e : {-1, px}) {
+              img[static_cast<size_t>(oy + e) * W + x0 + k] = 170;
+              img[static_cast<size_t>(oy + k) * W + x0 + e] = 170;
+            }
+          for (int y = 0; y < px && a.size() == static_cast<size_t>(px * px); ++y)
+            for (int x = 0; x < px; ++x) img[static_cast<size_t>(oy + y) * W + x0 + x] = static_cast<uint8_t>(255 - a[static_cast<size_t>(y) * px + x]);
+          x0 += px + 4;
+        }
+      }
+      if (FILE* f = std::fopen(sheet, "wb")) {
+        std::fprintf(f, "P5\n%d %d\n255\n", W, H);
+        std::fwrite(img.data(), 1, img.size(), f);
+        std::fclose(f);
+      }
+    }
+    expect(inside, "every icon's ink (stroke included) stays inside its 24-unit box at 12, 16 and 64 px");
+    expect(edges, "no icon is cut by its box edge at 16 and 64 px");
+    float bb[4] = {0, 0, 0, 0};
+    expect(icons::inkBounds(icons::findSvg("track-snare"), 2.0f, bb) && bb[3] <= 21.0f && bb[1] >= 3.0f && bb[3] - 12.0f <= 12.0f - bb[1] + 0.5f,
+           "snare drum: the shell's bottom curve sits inside the box, the drum centred (K-3)");
   }
 
   // ---- crisp straight strokes at 1x (grid fitting) ----

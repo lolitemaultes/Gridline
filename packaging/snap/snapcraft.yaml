@@ -1,0 +1,123 @@
+# Gridline as a snap (Snap Store name: gridline). Prepared, not yet published: docs/packaging.md
+# explains what the store must approve first (the plugin folder access below).
+# Build from the source tree root:
+#   mkdir -p snap && cp packaging/snap/snapcraft.yaml snap/ && snapcraft pack
+# The version comes from CMakeLists.txt (tools/release/version.sh). Import from URL's yt-dlp and
+# FFmpeg are fetched and checked by tools/release/fetch-media-tools.py, as for the other packages.
+name: gridline
+title: Gridline
+base: core24
+adopt-info: gridline
+summary: Pattern-based music workstation
+description: |
+  Gridline is a free, open source music workstation built around patterns. Sketch beats in the
+  channel rack, write melodies and chords in the piano roll, arrange patterns, audio and
+  automation in the playlist and mix everything on a full mixer.
+
+  It hosts VST3, CLAP, VST2 and LV2 plugins from ~/.vst3, ~/.clap, ~/.lv2 and ~/.vst, runs as a
+  VST3 and CLAP plugin itself and supports live collaboration over the network.
+license: GPL-3.0-or-later
+website: https://github.com/lolitemaultes/Gridline
+source-code: https://github.com/lolitemaultes/Gridline
+issues: https://github.com/lolitemaultes/Gridline/issues
+icon: assets/icons/gridline-app-512.png
+grade: stable
+confinement: strict
+
+platforms:
+  amd64:
+  arm64:
+
+plugs:
+  # The plugin folders in the real home folder (the home interface leaves out hidden folders).
+  # Needs the Snap Store's approval (a personal-files request on the forum).
+  plugin-folders:
+    interface: personal-files
+    read:
+      - $HOME/.vst3
+      - $HOME/.clap
+      - $HOME/.lv2
+      - $HOME/.vst
+
+environment:
+  VST3_PATH: $SNAP_REAL_HOME/.vst3
+  CLAP_PATH: $SNAP_REAL_HOME/.clap
+  LV2_PATH: $SNAP_REAL_HOME/.lv2
+  VST_PATH: $SNAP_REAL_HOME/.vst
+  LIBGL_DRIVERS_PATH: $SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/dri
+  __EGL_VENDOR_LIBRARY_DIRS: $SNAP/usr/share/glvnd/egl_vendor.d
+
+apps:
+  gridline:
+    command: usr/bin/gridline-app
+    desktop: usr/share/applications/gridline.desktop
+    common-id: com.lolitemaultes.Gridline
+    plugs:
+      - alsa
+      - audio-playback
+      - audio-record
+      - desktop
+      - desktop-legacy
+      - home
+      - jack1
+      - network
+      - network-bind
+      - opengl
+      - plugin-folders
+      - removable-media
+      - wayland
+      - x11
+  cli:
+    command: usr/bin/gridline
+    plugs:
+      - home
+      - network
+      - network-bind
+      - removable-media
+
+parts:
+  gridline:
+    plugin: nil
+    source: .
+    build-packages:
+      - build-essential
+      - cmake
+      - ninja-build
+      - pkg-config
+      - libsdl2-dev
+      - libgl-dev
+      - libx11-dev
+      - libasound2-dev
+      - libjack-jackd2-dev
+      - python3
+      - nasm
+      - zlib1g-dev
+      - xz-utils
+    stage-packages:
+      - libsdl2-2.0-0
+      - libasound2t64
+      - libjack-jackd2-0
+      - libpulse0
+      - libgl1
+      - libglx-mesa0
+      - libgl1-mesa-dri
+      - libx11-6
+      - curl
+    override-build: |
+      eval "$(bash tools/release/version.sh CMakeLists.txt)"
+      craftctl set version="$full"
+      if [ -n "$pre" ]; then craftctl set grade=devel; fi
+      case "$CRAFT_ARCH_BUILD_FOR" in
+        amd64) target=linux-x86_64 ;;
+        arm64) target=linux-aarch64 ;;
+        *) echo "unsupported architecture $CRAFT_ARCH_BUILD_FOR" >&2; exit 1 ;;
+      esac
+      python3 tools/release/fetch-media-tools.py --target "$target" --out "$CRAFT_PART_BUILD/media/tools" --work "$CRAFT_PART_BUILD/media/work"
+      cmake -S . -B "$CRAFT_PART_BUILD/build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr \
+        -DGRIDLINE_DEV_ASSETS=OFF -DGRIDLINE_GUI_TESTS=OFF "-DGRIDLINE_MEDIA_TOOLS_DIR=$CRAFT_PART_BUILD/media/tools"
+      cmake --build "$CRAFT_PART_BUILD/build" -j"$CRAFT_PARALLEL_BUILD_COUNT" --target gridline gridline-app
+      # The programs, assets, desktop entry, icons and Import from URL's programs (not the Gridline
+      # Suite plugins: hosts outside the snap could not load them).
+      DESTDIR="$CRAFT_PART_INSTALL" cmake --install "$CRAFT_PART_BUILD/build" --component Unspecified
+      sed -i 's|^Icon=gridline$|Icon=${SNAP}/usr/share/icons/hicolor/512x512/apps/gridline.png|' \
+        "$CRAFT_PART_INSTALL/usr/share/applications/gridline.desktop"

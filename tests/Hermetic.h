@@ -5,8 +5,8 @@
 // config folder) are shared between those runs, and one run deleting or
 // rewriting another's files makes tests fail at random. Call
 // hermeticTestEnv() first thing in main(): it creates a unique directory,
-// points TMPDIR (temp_directory_path, child processes) and XDG_CONFIG_HOME
-// (settings, plugin cache, plugin manager prefs) at it, keeps secrets in
+// points TMPDIR (temp_directory_path, child processes), XDG_CONFIG_HOME and
+// GRIDLINE_CONFIG_HOME (settings, plugin cache, plugin manager prefs) at it, keeps secrets in
 // files there instead of the Keychain, and removes it when the process exits
 // normally.
 #pragma once
@@ -40,6 +40,9 @@ inline const std::string& hermeticTestEnv(const char* tag = "test") {
     gl::platform::setEnv("TMP", (d + "/tmp").c_str());   // Windows: GetTempPath reads TMP, then TEMP
     gl::platform::setEnv("TEMP", (d + "/tmp").c_str());
     gl::platform::setEnv("XDG_CONFIG_HOME", (d + "/config").c_str());
+    // K-B: GRIDLINE_CONFIG_HOME wins over XDG_CONFIG_HOME (configRoot): one inherited from the
+    // shell (an isolated scripted run) would point the tests and their plugins elsewhere.
+    gl::platform::setEnv("GRIDLINE_CONFIG_HOME", (d + "/config").c_str());
     gl::platform::setEnv("GRIDLINE_SECRET_STORE", "file");  // J-61: never the user's Keychain / Credential Manager
     static struct Cleanup {
       std::string path;

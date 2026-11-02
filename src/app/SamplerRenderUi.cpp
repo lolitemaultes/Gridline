@@ -11,6 +11,7 @@
 #include "../../third_party/imgui/imgui.h"
 #include "../core/I18n.h"
 #include "../core/Presets.h"
+#include "../core/StepNotes.h"
 #include "../engine/SampledInstrument.h"
 #include "App.h"
 #include "DialogLayout.h"
@@ -298,10 +299,11 @@ void openRenderSampler(App& a, ObjectId channel) {
   // The piano roll's selected notes on this channel.
   R.selection.clear();
   if (a.piano.selChannel == channel && !a.piano.selected.empty())
-    if (const Pattern* p = a.doc.song().pattern(a.piano.selPattern))
-      if (auto it = p->notes.find(channel); it != p->notes.end())
-        for (size_t i : a.piano.selected)
-          if (i < it->second.size()) R.selection.push_back(it->second[i].pitch);
+    if (const Pattern* p = a.doc.song().pattern(a.piano.selPattern)) {
+      const std::vector<Note> ns = stepnotes::view(a.doc.song(), *p, channel);  // K-22: the piano roll's list
+      for (size_t i : a.piano.selected)
+        if (i < ns.size()) R.selection.push_back(ns[i].pitch);
+    }
   std::sort(R.selection.begin(), R.selection.end());
   R.selection.erase(std::unique(R.selection.begin(), R.selection.end()), R.selection.end());
   R.notesMode = R.selection.empty() ? 0 : 1;

@@ -1,0 +1,28 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.10.0.schema.json
+# Template: packaging/render.py fills in the version, date and checksums (docs/packaging.md).
+# The installer is Inno Setup (tools/windows/gridline.iss): it asks for administrator rights itself.
+PackageIdentifier: Gridline.Gridline
+PackageVersion: @VERSION@
+InstallerType: inno
+Scope: machine
+ElevationRequirement: elevatesSelf
+InstallModes:
+  - interactive
+  - silent
+  - silentWithProgress
+UpgradeBehavior: install
+ReleaseDate: '@DATE@'
+ProductCode: '{6E7B2B4C-6F3E-4C8D-9A1B-3D2C5E8F4A10}_is1'
+AppsAndFeaturesEntries:
+  - DisplayName: Gridline @VERSION@
+    Publisher: Gridline
+    ProductCode: '{6E7B2B4C-6F3E-4C8D-9A1B-3D2C5E8F4A10}_is1'
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/lolitemaultes/Gridline/releases/download/v@VERSION@/Gridline-@VERSION@-windows-x64-setup.exe
+    InstallerSha256: '@SHA256UPPER:windows-x64-setup.exe@'
+  - Architecture: arm64
+    InstallerUrl: https://github.com/lolitemaultes/Gridline/releases/download/v@VERSION@/Gridline-@VERSION@-windows-arm64-setup.exe
+    InstallerSha256: '@SHA256UPPER:windows-arm64-setup.exe@'
+ManifestType: installer
+ManifestVersion: 1.10.0

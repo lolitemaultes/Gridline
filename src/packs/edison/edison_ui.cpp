@@ -3,6 +3,7 @@
 // toolbar and menus, the slot editor entry point and the standalone window
 // opened from any sample or audio clip.
 #include "../../core/PluginBrand.h"
+#include "../../core/I18n.h"
 #include "../../app/AudioRecordUi.h"
 #include <algorithm>
 #include <cmath>
@@ -10,12 +11,16 @@
 #include <filesystem>
 #include <map>
 #include <thread>
+#include <utility>
 #include "../../app/StemsUi.h"
 #include "../../app/Theme.h"
 #include "../../app/Widgets.h"
 #include "../../core/Params.h"
 #include "../../core/PluginParams.h"
 #include "../../core/TrackReceipt.h"
+#include "../../core/I18n.h"
+#include "../../../third_party/imgui/imgui_internal.h"
+#include "edison_dock.h"
 #include "edison_ui.h"
 
 namespace gl::packs::edison {
@@ -493,6 +498,30 @@ void sendToPlaylist(App& a, Session& s) {
   say(s, "Sent to the playlist as an audio clip");
 }
 
+std::string dragOutFile(App& a, Session& s) {
+  if (s.job.active() || s.frames() == 0) return "";
+  const Range sel = clampRange(s.cur(), s.sel);
+  if (sel.empty() || (sel.a <= 0 && sel.b >= s.frames())) return currentFile(a, s);
+  const std::string whole = currentFile(a, s);  // the version the selection comes from (its origin)
+  const Content part = makeContent(extract(s.cur().a(), sel));
+  const auto saved = saveVersion(part, audioDir(a), displayName(a, s) + " selection");
+  noteOrigin(whole, saved.first);
+  return saved.first;
+}
+
+void dragOutSource(App& a, Session& s) {
+  if (!ImGui::BeginDragDropSource()) return;
+  s.dragOutUsed = true;
+  if (s.dragOut.empty()) s.dragOut = dragOutFile(a, s);
+  if (!s.dragOut.empty()) {
+    ImGui::SetDragDropPayload("GL_FILE", s.dragOut.data(), s.dragOut.size());
+    const bool part = !clampRange(s.cur(), s.sel).empty() && s.sel.len() < s.frames();
+    const std::string label = displayName(a, s) + (part ? std::string(" Â· ") + i18n::tr("selection") : std::string());
+    ui::DragPreview(ui::Icon::Wave, label.c_str(), theme::rgb(theme::role::kPaint));
+  }
+  ImGui::EndDragDropSource();
+}
+
 void sendToSampler(App& a, Session& s, bool slicer) {
   std::string path = currentFile(a, s);
   if (path.empty()) {
@@ -708,6 +737,10 @@ int armTransportRecording(App& a, ObjectId track) {
   return slot;
 }
 
+namespace {
+uint64_t& panelKey();  // K-15 (below)
+}  // namespace
+
 bool openAudioEditor(App& a, const std::string& path, ObjectId channel) {
   if (path.empty() || channel == kNoId) return false;
   auto& m = sessions();
@@ -721,12 +754,211 @@ bool openAudioEditor(App& a, const std::string& path, ObjectId channel) {
     s->committed = "\x01";
     it = m.emplace(k, std::move(s)).first;
   }
+  if (pinned(a)) {  // K-15: pinned into the layout: the panel shows it
+    panelKey() = k;
+    a.focusWindow = "Loupe";
+    return true;
+  }
   it->second->open = true;
   a.focusWindow = "###edison-standalone-" + std::to_string(channel);
   return true;
 }
 
+
+// ---------------------------------------------------------------- K-15: pinned into the layout
+namespace {
+
+uint64_t& panelKey() {  // the session the panel shows (0 = none chosen)
+  static uint64_t k = 0;
+  return k;
+}
+int& pendingSpot() {  // where to dock the panel when it is next drawn (-1 = where it is)
+  static int v = -1;
+  return v;
+}
+
+Session* findSession(uint64_t k) {
+  auto it = sessions().find(k);
+  return it == sessions().end() ? nullptr : it->second.get();
+}
+
+// The session still has something to show (its slot holds Loupe, its channel exists).
+bool alive(App& a, const Session& s) { return s.slot ? slotState(a, s) != nullptr : a.doc.song().channel(s.channel) != nullptr; }
+
+// The panel's session: the one pinned last, else the project's first Loupe effect.
+Session* panelSession(App& a) {
+  if (Session* s = findSession(panelKey()); s && alive(a, *s)) return s;
+  const Song& song = a.doc.song();
+  for (const MixerTrack& t : song.mixer)
+    for (int k = 0; k < kEffectSlots; ++k)
+      if (t.slots[static_cast<size_t>(k)].plugin.type == kType) {
+        Session& s = sessionFor(a, PluginTarget{t.id, k});
+        panelKey() = s.key;
+        return &s;
+      }
+  return nullptr;
+}
+
+ImGuiID dockOf(const char* window) {
+  ImGuiWindow* w = ImGui::FindWindowByName(window);
+  return w && w->DockIsActive ? w->DockId : 0;
+}
+
+// Puts the panel where the menu asked, before it begins (ImGui's docking keeps it there and
+// saves it with the layout).
+void placePanel(DockSpot spot) {
+  ImGuiID node = 0;
+  switch (spot) {
+    case DockSpot::Tab: node = dockOf("Playlist"); break;
+    case DockSpot::Left: node = dockOf("Browser"); break;
+    case DockSpot::Right: node = dockOf("Mixer"); break;
+    case DockSpot::Below:
+      if (const ImGuiID pl = dockOf("Playlist")) {
+        ImGuiID up = 0, down = 0;
+        ImGui::DockBuilderSplitNode(pl, ImGuiDir_Down, 0.42f, &down, &up);
+        node = down;
+      }
+      break;
+    case DockSpot::Floating: break;
+  }
+  if (node != 0 || spot == DockSpot::Floating) ImGui::SetNextWindowDockID(node, ImGuiCond_Always);
+  if (spot == DockSpot::Floating || node == 0) {
+    ImGuiViewport* vp = ImGui::GetMainViewport();
+    const ImVec2 sz(std::min(1100.0f, vp->WorkSize.x - 80), std::min(560.0f, vp->WorkSize.y - 140));
+    ImGui::SetNextWindowSize(sz, ImGuiCond_Always);
+    ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+  }
+}
+
+void drawPanel(App& a) {
+  if (!pinned(a)) return;
+  const int spot = std::exchange(pendingSpot(), -1);
+  if (spot >= 0) placePanel(static_cast<DockSpot>(spot));
+  bool open = true;
+  ImGui::PushStyleColor(ImGuiCol_WindowBg, ImGui::ColorConvertU32ToFloat4(C(col::PanelLo)));
+  const bool vis = ui::BeginDockWindow("Loupe", &open, ImVec2(1100, 560));
+  ImGui::PopStyleColor();
+  if (vis) {
+    Session* s = panelSession(a);
+    const ImVec2 avail = ImGui::GetContentRegionAvail();
+    if (!s) {
+      const ImVec2 p0 = ImGui::GetCursorScreenPos();
+      ui::EmptyState(ImGui::GetWindowDrawList(), p0, ImVec2(p0.x + avail.x, p0.y + avail.y), "Loupe",
+                     "Edit a sample in Loupe, or open a Loupe effect: it shows here.");
+      ImGui::Dummy(avail);
+    } else {
+      pump(a, *s);
+      devDemo(a, *s);
+      devState(a, *s);
+      // A dock smaller than the form's minimum scrolls (never squeezed below it).
+      const dock::Layout l = dock::layoutFor(avail.x, avail.y);
+      const bool scroll = l.formW > avail.x + 0.5f || l.headH + l.waveH + l.pad > avail.y + 0.5f;
+      if (scroll)
+        ImGui::BeginChild("##loupescroll", avail, ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar | ImGuiWindowFlags_NoBackground);
+      const ImVec2 room = scroll ? ImGui::GetContentRegionAvail() : avail;
+      dockDev() = {room.x, room.y, l.compact, l.scale, l.formW, l.headH, l.waveH};
+      drawFormDocked(a, *s, room);
+      if (scroll) ImGui::EndChild();
+    }
+  }
+  ui::EndDockWindow();
+  if (!open) unpin(a);
+}
+
+}  // namespace
+
+bool pinned(App& a) { return a.settings.getBool("ui.loupePinned"); }
+
+bool inPanel(const Session& s) { return panelKey() == s.key; }
+
+void pinTo(App& a, Session& s, DockSpot spot) {
+  a.settings.set("ui.loupePinned", true);
+  panelKey() = s.key;
+  pendingSpot() = static_cast<int>(spot);
+  if (s.slot) {
+    if (a.fxEditor == std::make_pair(s.target.owner, s.target.slot)) a.fxEditor = {kNoId, -1};
+  } else {
+    s.open = false;  // the panel shows it now
+  }
+  a.focusWindow = "Loupe";
+}
+
+void unpin(App& a) {
+  a.settings.set("ui.loupePinned", false);
+  if (Session* s = findSession(panelKey()); s && alive(a, *s)) {
+    if (s->slot) a.fxEditor = {s->target.owner, s->target.slot};
+    else s->open = true;
+  }
+  pendingSpot() = -1;
+}
+
+void dockMenuItems(App& a, Session& s) {
+  const bool here = pinned(a) && inPanel(s);
+  if (ImGui::BeginMenu(here ? i18n::tr("Move in the layout") : i18n::tr("Pin to the layout"))) {
+    if (ImGui::MenuItem(i18n::tr("As a tab next to the playlist"))) pinTo(a, s, DockSpot::Tab);
+    if (ImGui::MenuItem(i18n::tr("Below the playlist"))) pinTo(a, s, DockSpot::Below);
+    if (ImGui::MenuItem(i18n::tr("Left, with the browser"))) pinTo(a, s, DockSpot::Left);
+    if (ImGui::MenuItem(i18n::tr("Right, with the mixer"))) pinTo(a, s, DockSpot::Right);
+    if (ImGui::MenuItem(i18n::tr("Floating panel"))) pinTo(a, s, DockSpot::Floating);
+    ImGui::EndMenu();
+  }
+  if (ImGui::MenuItem(i18n::tr("Unpin into its own window"), nullptr, false, here)) unpin(a);
+}
+
+bool claimEffectEditor(App& a, const PluginTarget& t) {
+  if (!pinned(a)) return false;
+  const PluginState* sp = t.state(a.doc.song());
+  if (!sp || sp->type != kType) return false;
+  Session& s = sessionFor(a, t);
+  if (panelKey() != s.key) a.focusWindow = "Loupe";
+  panelKey() = s.key;
+  a.fxEditor = {kNoId, -1};
+  return true;
+}
+
+DockDev& dockDev() {
+  static DockDev d;
+  return d;
+}
+
+bool dockDevCommand(App& a, const std::string& cmd, const std::vector<std::string>& args) {
+  if (cmd != "loupe") return false;
+  const std::string what = args.empty() ? "" : args[0];
+  if (what == "pin") {  // loupe pin tab|below|left|right|float: the slot session (first Loupe effect) or the open one
+    Session* s = panelSession(a);
+    if (!s)
+      for (auto& [k, sp] : sessions())
+        if (alive(a, *sp)) s = sp.get();
+    if (!s) {
+      std::printf("loupe: nothing to pin\n");
+    } else {
+      const std::string w = args.size() > 1 ? args[1] : "tab";
+      pinTo(a, *s, w == "below" ? DockSpot::Below : w == "left" ? DockSpot::Left : w == "right" ? DockSpot::Right : w == "float" ? DockSpot::Floating : DockSpot::Tab);
+    }
+  } else if (what == "unpin") {
+    unpin(a);
+  } else {  // loupe: where the panel is and how its form is laid out, to stdout
+    ImGuiWindow* w = ImGui::FindWindowByName("Loupe");
+    const DockDev& d = dockDev();
+    std::printf("loupe: pinned %d shown %d docked %d with \"%s\" pos %.0f,%.0f size %.0fx%.0f room %.0fx%.0f compact %d scale %.2f form %.0f head %.0f wave %.0f fx %d\n",
+                pinned(a) ? 1 : 0, w && w->Active ? 1 : 0, w && w->DockIsActive ? 1 : 0,
+                [&]() -> const char* {
+                  if (!w || !w->DockIsActive || !w->DockNode) return "";
+                  for (ImGuiWindow* o : w->DockNode->Windows)
+                    if (o != w) return ui::stableWindowName(o->Name);
+                  return "";
+                }(),
+                w ? static_cast<double>(w->Pos.x) : 0.0, w ? static_cast<double>(w->Pos.y) : 0.0, w ? static_cast<double>(w->Size.x) : 0.0,
+                w ? static_cast<double>(w->Size.y) : 0.0, static_cast<double>(d.w), static_cast<double>(d.h), d.compact ? 1 : 0,
+                static_cast<double>(d.scale), static_cast<double>(d.formW), static_cast<double>(d.headH), static_cast<double>(d.waveH),
+                a.fxEditor.first != kNoId ? 1 : 0);
+    std::fflush(stdout);
+  }
+  return true;
+}
+
 void drawWindows(App& a) {
+  drawPanel(a);  // K-15
   // Development / screenshots: GRIDLINE_EDISON_STANDALONE=1 writes the demo
   // phrase to a file, puts it on a new sampler channel and opens the
   // standalone editor on it (what "Edit sample in audio editor" does).
@@ -747,11 +979,11 @@ void drawWindows(App& a) {
     if (s.slot) {
       // Keep recording (and finishing jobs) while the slot's window is closed.
       if (!slotState(a, s)) continue;
-      const bool shown = a.fxEditor.first == s.target.owner && a.fxEditor.second == s.target.slot;
+      const bool shown = (a.fxEditor.first == s.target.owner && a.fxEditor.second == s.target.slot) || (pinned(a) && inPanel(s));
       if (!shown) pump(a, s);
       continue;
     }
-    if (!s.open) continue;
+    if (!s.open || (pinned(a) && inPanel(s))) continue;
     const Channel* ch = a.doc.song().channel(s.channel);
     if (!ch) {
       s.open = false;

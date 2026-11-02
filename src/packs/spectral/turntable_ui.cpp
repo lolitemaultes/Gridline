@@ -1,4 +1,5 @@
-// Gridline — "spectral" pack: Turntable (gl.turntable) editor (J-206). Laid
+// Gridline — "spectral" pack: Turntable editor (J-206; K-23: the effect
+// gl.turntablefx in a mixer slot, and the 0.7.1 instrument gl.turntable). Laid
 // out on the reference deck's panel (247 x 303 reference px, scaled to the
 // window): the four hand-spring wheels, pan and volume, Hold and Mute on the
 // left; the platter in the middle with the motor selector under it; Turns,
@@ -80,9 +81,16 @@ skin::WheelLook wheelLook(bool centred) {
   return w;
 }
 
+// The parameter layout of the state's type (K-23: the effect or the 0.7.1 instrument).
+const TurntableLayout& layoutOf(const PluginState& s) {
+  const TurntableLayout* L = turntableLayout(s.type);
+  return L ? *L : kTtFxLayout;
+}
+
 float prm(const PluginState& s, int k) {
-  if (k >= 0 && static_cast<size_t>(k) < s.params.size()) return s.params[static_cast<size_t>(k)];
-  const PluginInfo* info = findPlugin("gl.turntable");
+  if (k < 0) return 0.f;  // a setting this type does not have
+  if (static_cast<size_t>(k) < s.params.size()) return s.params[static_cast<size_t>(k)];
+  const PluginInfo* info = findPlugin(layoutOf(s).type);
   return info && static_cast<size_t>(k) < info->params.size() ? static_cast<float>(info->params[static_cast<size_t>(k)].def) : 0.f;
 }
 void setP(App& a, const PluginTarget& t, int k, double v, bool merge) { a.doc.setParam(t.pid(k), v, merge); }
@@ -101,8 +109,9 @@ void loadSample(App& a, const PluginTarget& t, const std::string& p) {
   if (!now || p.empty()) return;
   PluginState ns = *now;
   ns.data = p;
-  if (ns.params.size() < static_cast<size_t>(TtCount)) normalizePluginState(ns);
-  if (ns.params.size() > static_cast<size_t>(TtEmpty)) ns.params[TtEmpty] = 0.f;
+  const TurntableLayout& L = layoutOf(ns);
+  if (ns.params.size() < static_cast<size_t>(L.count)) normalizePluginState(ns);
+  if (ns.params.size() > static_cast<size_t>(L.empty)) ns.params[static_cast<size_t>(L.empty)] = 0.f;
   setPluginState(a, t, ns, "load sample");
 }
 
@@ -147,7 +156,7 @@ void release(App& a, const PluginTarget& t) {
 
 // What the name field shows.
 std::string sampleName(const PluginState& st, bool missing) {
-  if (st.data.empty()) return prm(st, TtEmpty) >= 0.5f ? i18n::tr("Empty deck: load or drop a sample") : i18n::tr("Built-in sound");
+  if (st.data.empty()) return prm(st, layoutOf(st).empty) >= 0.5f ? i18n::tr("Empty deck: load or drop a sample") : i18n::tr("Built-in sound");
   std::string n = std::filesystem::u8path(st.data).filename().u8string();
   if (missing) n = std::string(i18n::tr("Missing: ")) + n;
   return n;
@@ -272,12 +281,28 @@ void optionsPage(App& a, const PluginTarget& t, const PluginState& st, const ski
   ImDrawList* dl = ImGui::GetWindowDrawList();
   dl->AddRectFilled(F.p(0, 0), F.p(kW, 204), skin::hex(kOverlay), F.u(2), ImDrawFlags_RoundCornersTop);
   const ImU32 cap = skin::hex(kCaption), bright = skin::hex(0xE4ECEE);
+  const TurntableLayout& L = layoutOf(st);
   text(dl, F, 4, 7, 150, 12, i18n::tr("TIMECODE INPUT"), cap, 5.5f, -1);
-  flskin::menu(a, t, TtTimecode, F, 3, 22, 155, 20, K);
+  flskin::menu(a, t, L.timecode, F, 3, 22, 155, 20, K);
   if (ImGui::IsItemHovered()) a.setHint(i18n::tr("Timecode record format (kept with the project; the deck plays its own sample)"));
-  ledBox(a, t, st, F, TtRiaa, 192, 22, 50, 20, i18n::tr("PHONO"), i18n::tr("Phono preamp for the timecode input (kept with the project)"));
+  ledBox(a, t, st, F, L.riaa, 192, 22, 50, 20, i18n::tr("PHONO"), i18n::tr("Phono preamp for the timecode input (kept with the project)"));
 
   skin::insetField(dl, F.p(3, 50), F.p(244, 201), skin::hex(0x353B3E), F.u(2));
+  if (L.notes < 0) {
+    // K-23: the effect. How the deck meets the insert's audio.
+    text(dl, F, 10, 54, 120, 12, i18n::tr("SIGNAL"), cap, 5.5f, -1);
+    const float y0 = 70;
+    const char* lines[4] = {i18n::tr("The insert's audio passes through unchanged."), i18n::tr("The deck plays on top of it."),
+                            i18n::tr("Mute, Volume and Pan set the deck only."), i18n::tr("The motor runs on its own, not with the song.")};
+    for (int i = 0; i < 4; ++i) {
+      const float y = y0 + 16.0f * static_cast<float>(i);
+      dl->AddCircleFilled(F.p(14, y + 6), std::max(1.5f, F.u(1.2f)), skin::hex(kOrange), 8);
+      text(dl, F, 20, y, 217, 12, lines[i], bright, 5.6f, -1);
+    }
+    text(dl, F, 10, 146, 227, 12, i18n::tr("Timecode settings are kept for FL projects."), cap, 5.5f, -1);
+    text(dl, F, 10, 160, 227, 12, i18n::tr("The deck plays its sample; the timecode input is not read."), cap, 5.5f, -1);
+    return;
+  }
   text(dl, F, 10, 54, 120, 12, i18n::tr("NOTES"), cap, 5.5f, -1);
   {
     static const char* labels[3] = {i18n::N_("Off"), i18n::N_("Motor"), i18n::N_("Cue + motor")};
@@ -359,7 +384,8 @@ void editorTurntable(App& a, const PluginTarget& t, float width) {
   if (!sp) return;
   const PluginState st = *sp;
   const skin::Skin& K = deckSkin();
-  const bool zoom = prm(st, TtZoom) >= 0.5f;
+  const TurntableLayout& L = layoutOf(st);
+  const bool zoom = prm(st, L.zoom) >= 0.5f;
   const float grow = zoom ? kZoomGrow : 0.0f;
   const float formH = kH + grow, scopeH = kScH + grow;
   skin::Form F = skin::Form::fit(width, kW);
@@ -367,12 +393,16 @@ void editorTurntable(App& a, const PluginTarget& t, float width) {
   skin::panel(dl, F.o, F.p(kW, formH), K, 4);
   EdState& es = edState(t);
 
-  // Live platter (this channel's runtime; the parameters when none runs).
+  // Live platter (this slot's or channel's runtime; the parameters when none runs).
   const TurntableTelemetry* tel = nullptr;
   std::shared_ptr<ChannelRuntime> rt;
+  std::shared_ptr<EffectRuntime> ert;
   if (t.isChannel()) {
     rt = a.builder.channelRuntime(t.owner);
     if (rt && rt->gen) tel = turntableTelemetry(rt->gen.get());
+  } else {
+    ert = a.builder.effectRuntime(t.owner, t.slot);
+    if (ert && ert->fx) tel = turntableTelemetry(ert->fx.get());
   }
   const SamplePtr smp = turntableSample(st);
   const bool missing = !st.data.empty() && !smp;
@@ -465,7 +495,7 @@ void editorTurntable(App& a, const PluginTarget& t, float width) {
   {
     bool z = zoom;
     ImGui::SetCursorScreenPos(F.p(226, 205));
-    if (ImGui::InvisibleButton("##ttzoom", F.sz(19, 20))) setP(a, t, TtZoom, z ? 0 : 1, false);
+    if (ImGui::InvisibleButton("##ttzoom", F.sz(19, 20))) setP(a, t, L.zoom, z ? 0 : 1, false);
     const bool hov = ImGui::IsItemHovered();
     if (hov) a.setHint(i18n::tr("Large scope"));
     ui::drawIconFitC(dl, ui::Icon::Zoom, F.p(235.5f, 215), F.sz(10, 10), z ? skin::hex(kOrange) : hov ? skin::hex(0xFFFFFF) : skin::hex(0xC9CFD2));
@@ -473,17 +503,18 @@ void editorTurntable(App& a, const PluginTarget& t, float width) {
 
   // ---- scope: play position, cue, drag sideways to scratch
   {
-    const bool showCue = std::lround(prm(st, TtNotes)) == TnCue;
+    const bool hasCue = L.notes >= 0;  // the instrument's cue point (notes start there)
+    const bool showCue = hasCue && std::lround(prm(st, L.notes)) == TnCue;
     const std::string msg = missing ? std::string(i18n::tr("Sample not found: load it again")) : sampleName(st, false);
-    drawScope(dl, F, scopeH, smp.get(), msg, pos, showCue, prm(st, TtCue));
+    drawScope(dl, F, scopeH, smp.get(), msg, pos, showCue, prm(st, L.cue));
     const ImVec2 w0 = F.p(kScX, kScY), w1 = F.p(kScX + kScW, kScY + scopeH);
     ImGui::SetCursorScreenPos(w0);
     ImGui::InvisibleButton("##ttscope", ImVec2(w1.x - w0.x, w1.y - w0.y));
     Hand& h = hand();
     if (ImGui::IsItemActivated()) {
-      if (ImGui::GetIO().KeyShift) {
+      if (ImGui::GetIO().KeyShift && hasCue) {
         const float q0 = w0.x + F.u(2), q1 = w1.x - F.u(2);
-        setP(a, t, TtCue, std::clamp((ImGui::GetIO().MousePos.x - q0) / std::max(1.0f, q1 - q0), 0.0f, 1.0f), false);
+        setP(a, t, L.cue, std::clamp((ImGui::GetIO().MousePos.x - q0) / std::max(1.0f, q1 - q0), 0.0f, 1.0f), false);
       } else if (smp) {
         grab(a, t, 2, pos);
       }
@@ -493,7 +524,8 @@ void editorTurntable(App& a, const PluginTarget& t, float width) {
       a.setHint(i18n::tr("Scratching: drag right plays forward, left pulls back (Ctrl: fine)"));
     }
     if (ImGui::IsItemDeactivated() && h.where == 2) release(a, t);
-    if (ImGui::IsItemHovered() && !ImGui::IsItemActive()) a.setHint(i18n::tr("Drag sideways to scratch; Shift+click sets the cue point"));
+    if (ImGui::IsItemHovered() && !ImGui::IsItemActive())
+      a.setHint(hasCue ? i18n::tr("Drag sideways to scratch; Shift+click sets the cue point") : i18n::tr("Drag sideways to scratch"));
   }
   dropTarget(a, t, F.o, F.p(kW, formH));
   F.end(kW, formH);

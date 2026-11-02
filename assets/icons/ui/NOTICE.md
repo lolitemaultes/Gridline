@@ -31,6 +31,7 @@ caret-up, caret-down, caret-left, caret-right (filled).
 
 - `slip`: clip edges with the content arrow sliding between them (slip tool).
 - `detune`: a note with fine-pitch up / down chevrons (detune tool).
+- `pitch-bend`: a pitch line holding, ramping up through two points and holding again (piano roll pitch bend tool).
 - `fade-handles`: a level rising, holding and falling over the volume line (fade / volume handles toggle).
 - `zero-crossing`: one wave cycle crossing its centre line, the crossing marked (zero-crossing toggle).
 - `stairs`: a level climbing in flat steps (Shuttle envelope step editing).

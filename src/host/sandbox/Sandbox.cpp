@@ -21,6 +21,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #endif
+#include "../PluginPrefs.h"
 #include "../PluginScan.h"
 #include "../../core/Platform.h"
 
@@ -910,6 +911,8 @@ class SandboxBackend final : public Backend {
     inherit = {sv[1], pp[0]};  // become descriptors 3 (kRpcFd) and 4 (kWakeFd) in the child
     const unsigned flags = platform::Process::kInheritStdin | platform::Process::kInheritStderr;
 #endif
+    // K-13: the sandbox searches the same plugin folders (LV2 bundles that add to a plugin).
+    if (const std::string pf = pluginPrefsFile(); !pf.empty()) args.insert(args.end(), {"--plugin-prefs", pf});
     const bool started = proc_.start(exe, args, flags, inherit);
     closeChan(childRpc);
     closeChan(childWake);

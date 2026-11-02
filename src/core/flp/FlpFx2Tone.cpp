@@ -385,7 +385,9 @@ bool decodeEmphasizer(Context& c, const std::vector<Event>& evs, PluginMapping& 
   const int version = r.i32();
   std::vector<double> t = ints(r, version >= 2 ? 6 : 5);
   if (t.size() < 5) return false;
-  if (t.size() < 6) t.push_back(5000);  // J-42: version 1 loads the output wheel's default (5000 = −12.7 dB)
+  // K-2: a version 1 state (every shipped preset) has no output word; FL's plugin then keeps its
+  // own initial output (10000 = 0 dB), measured by loading those presets in FL's library.
+  if (t.size() < 6) t.push_back(10000);
   fx::begin(m, "gl.enhance");
   fx::set(m, dy::EnCustom, 2);
   auto n = [](double v) { return clampd(v / 10000.0, 0, 1); };

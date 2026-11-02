@@ -1,0 +1,29 @@
+# Maintainer: lolitemaultes <188165912+lolitemaultes@users.noreply.github.com>
+# Gridline from the official Linux release (Gridline-<version>-linux-<arch>.tar.gz).
+# Template: packaging/render.py fills in the version and checksums (docs/packaging.md).
+pkgname=gridline-bin
+_ver=@VERSION@
+pkgver=@PKGVER@
+pkgrel=1
+pkgdesc="Pattern-based music workstation (official release build)"
+arch=('x86_64' 'aarch64')
+url="https://github.com/lolitemaultes/Gridline"
+license=('GPL-3.0-or-later')
+depends=('alsa-lib' 'curl' 'gcc-libs' 'glibc' 'hicolor-icon-theme' 'jack' 'libgl' 'libx11' 'sdl2')
+optdepends=('xdg-utils: open links and folders from Gridline')
+provides=('gridline')
+conflicts=('gridline')
+options=('!strip' '!debug')
+source_x86_64=("https://github.com/lolitemaultes/Gridline/releases/download/v${_ver}/Gridline-${_ver}-linux-x86_64.tar.gz")
+source_aarch64=("https://github.com/lolitemaultes/Gridline/releases/download/v${_ver}/Gridline-${_ver}-linux-aarch64.tar.gz")
+sha256sums_x86_64=('@SHA256:linux-x86_64.tar.gz@')
+sha256sums_aarch64=('@SHA256:linux-aarch64.tar.gz@')
+
+package() {
+  cd "Gridline-${_ver}-linux-${CARCH}"
+  install -d "${pkgdir}/usr"
+  # bin/, share/ (assets, desktop entry, icons, file type, AppStream metadata, Import from URL's
+  # yt-dlp and FFmpeg) and lib/ (Gridline and the Gridline Suite as VST3 and CLAP plugins).
+  cp -a bin share lib "${pkgdir}/usr/"
+  install -Dm644 README.txt "${pkgdir}/usr/share/doc/${pkgname}/README.txt"
+}

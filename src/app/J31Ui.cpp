@@ -14,6 +14,7 @@
 #include "../core/Grouping.h"
 #include "../core/NoteTools.h"
 #include "../core/SongTools.h"
+#include "../core/StepNotes.h"
 #include "../engine/AudioLogger.h"
 #include "../engine/AudioRecord.h"
 #include "../engine/Sample.h"
@@ -439,19 +440,24 @@ bool editGhostAt(App& a, Tick t, int pitch) {
   a.selectChannel(h.channel);
   a.piano.selPattern = a.curPattern;
   a.piano.selChannel = h.channel;
-  a.piano.selected = {static_cast<size_t>(h.index)};
+  size_t at = static_cast<size_t>(h.index);
+  if (auto it = p->notes.find(h.channel); it != p->notes.end() && at < it->second.size()) {  // K-22: its index in the piano roll's list
+    const std::vector<Note> ns = stepnotes::view(a.doc.song(), *p, h.channel);
+    if (auto f = std::find(ns.begin(), ns.end(), it->second[at]); f != ns.end()) at = static_cast<size_t>(f - ns.begin());
+  }
+  a.piano.selected = {at};
   return true;
 }
 
 void expandNoteGroups(App& a) {
   const Pattern* p = a.doc.song().pattern(a.curPattern);
   if (!p) return;
-  auto it = p->notes.find(a.selChannel);
-  if (it == p->notes.end()) return;
-  ops::NoteSel sel(it->second.size(), false);
+  const std::vector<Note> ns = stepnotes::view(a.doc.song(), *p, a.selChannel);  // K-22: the piano roll's list
+  if (ns.empty()) return;
+  ops::NoteSel sel(ns.size(), false);
   for (size_t i : a.piano.selected)
     if (i < sel.size()) sel[i] = true;
-  if (tools::selectGroups(it->second, sel) == 0) return;
+  if (tools::selectGroups(ns, sel) == 0) return;
   for (size_t i = 0; i < sel.size(); ++i)
     if (sel[i]) a.piano.selected.insert(i);
 }

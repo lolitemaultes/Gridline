@@ -1,6 +1,7 @@
 #!/bin/sh
 # Installs Gridline's build dependencies (compiler, CMake, Ninja, SDL2, OpenGL, X11, MIDI/audio
-# development files, Xvfb for the window tests) on one platform. Used by the CI and release
+# development files, Xvfb for the window tests; on apt also xprop / xwininfo and
+# desktop-file-validate for the K-14 window class and icon checks) on one platform. Used by the CI and release
 # workflows; also a reference for building by hand.
 #   tools/ci/install-deps.sh <apt|dnf|pacman|zypper|apk|brew|freebsd|openbsd|netbsd>
 set -eu
@@ -9,7 +10,7 @@ case "${1:?platform}" in
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -q
     apt-get install -y -q --no-install-recommends build-essential cmake ninja-build pkg-config git ca-certificates \
-      libsdl2-dev libgl-dev libx11-dev libasound2-dev libjack-jackd2-dev libgl1-mesa-dri xvfb xauth file python3
+      libsdl2-dev libgl-dev libx11-dev libasound2-dev libjack-jackd2-dev libgl1-mesa-dri xvfb xauth x11-utils desktop-file-utils file python3
     ;;
   dnf)
     dnf install -y -q gcc-c++ cmake ninja-build pkgconf-pkg-config git SDL2-devel mesa-libGL-devel libX11-devel \

@@ -15,9 +15,11 @@
 #include "../core/Platform.h"
 #include "../host/HostedPlugins.h"
 #include "../host/PluginGroups.h"
+#include "../host/PluginFolders.h"
 #include "../host/PluginPrefs.h"
 #include "../host/PluginScan.h"
 #include "App.h"
+#include "PluginFoldersUi.h"
 #include "BrowserUi.h"
 #include "HostedUi.h"
 #include "PluginUI.h"
@@ -470,24 +472,31 @@ void formatChips(App& a, const Model& md, host::PluginPrefs& prefs, bool& change
 struct FolderRow {
   std::string tag, path;
   bool user = false, exists = true;
-  size_t index = 0;  // user folder index
+  size_t index = 0;    // user folder index (every format)
+  std::string format;  // K-13: a format's own folder ("" = every format / default)
+  bool searched = true;  // K-13: off, missing or listed twice: not searched
 };
 
 void folderList(App& a, host::PluginPrefs& prefs, bool& changed, float height) {
   const auto& P = pal();
   const Colors C = colors();
   std::vector<FolderRow> rows;
+  // K-13: each format's folders as Settings > Plugins sets them (host/PluginFolders.h).
   for (const host::Format& f : host::formats()) {
     if (prefs.disabledFormats.count(f.id)) continue;
-    for (const auto& p : f.defaultPaths()) {
-      std::error_code ec;
-      rows.push_back(FolderRow{f.label, p, false, fs::is_directory(p, ec), 0});
+    for (const auto& r : host::folderRows(f, prefs)) {
+      if (r.source == host::FolderSource::Every) continue;  // listed once, below
+      FolderRow row{f.label, r.path, false, r.exists, 0, {}, r.searched() || !host::folderSearchApplies(f.id)};
+      if (r.source == host::FolderSource::User) row.format = f.id;
+      rows.push_back(row);
     }
   }
   for (size_t i = 0; i < prefs.extraFolders.size(); ++i) {
     std::error_code ec;
-    rows.push_back(FolderRow{"", prefs.extraFolders[i], true, fs::is_directory(prefs.extraFolders[i], ec), i});
+    const bool on = !prefs.disabledFolders.count(host::folderKey("*", prefs.extraFolders[i]));
+    rows.push_back(FolderRow{"", prefs.extraFolders[i], true, fs::is_directory(prefs.extraFolders[i], ec), i, {}, on});
   }
+  std::string removeFormat, removePath;
   ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::vec(C.field));
   ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, theme::kRadiusLg);
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(4, 4));
@@ -505,29 +514,36 @@ void folderList(App& a, host::PluginPrefs& prefs, bool& changed, float height) {
     ImGui::InvisibleButton("##row", ImVec2(w, rowH));
     const bool hov = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenOverlappedByItem);
     if (hov) dl->AddRectFilled(p, ImVec2(p.x + w, p.y + rowH), C.rowHover, theme::kRadius);
-    if (r.user) badge(dl, a.fontMono, ImVec2(p.x + 2, p.y + 3), rowH - 6, i18n::tr("USER"), false, false, tagW);
-    else badge(dl, a.fontMono, ImVec2(p.x + 2, p.y + 3), rowH - 6, r.tag.c_str(), false, !r.exists, tagW);
+    const bool removable = r.user || !r.format.empty();
+    if (r.user) badge(dl, a.fontMono, ImVec2(p.x + 2, p.y + 3), rowH - 6, i18n::tr("USER"), false, !r.searched, tagW);
+    else badge(dl, a.fontMono, ImVec2(p.x + 2, p.y + 3), rowH - 6, r.tag.c_str(), false, !r.exists || !r.searched, tagW);
     const float x0 = p.x + tagW + 9;
     float right = p.x + w - 4;
-    if (r.user) right -= 20;
-    if (!r.exists) {
-      const char* miss = i18n::tr("missing");
+    if (removable) right -= 20;
+    if (!r.exists || !r.searched) {
+      const char* miss = !r.exists ? i18n::tr("missing") : i18n::tr("off");
       const float mw = textW(a.fontRegular, theme::kFontLabel, miss);
-      text(dl, a.fontRegular, theme::kFontLabel, ImVec2(right - mw, p.y + (rowH - theme::kFontLabel) * 0.5f - 1), r.user ? P.danger : P.textFaint, miss);
+      text(dl, a.fontRegular, theme::kFontLabel, ImVec2(right - mw, p.y + (rowH - theme::kFontLabel) * 0.5f - 1),
+           removable && !r.exists ? P.danger : P.textFaint, miss);
       right -= mw + 8;
     }
     const std::string shown = fitMiddle(a.fontMono, 10.5f, tildePath(r.path), right - x0);
-    text(dl, a.fontMono, 10.5f, ImVec2(x0, p.y + (rowH - 10.5f) * 0.5f - 0.5f), r.exists ? P.text : P.textFaint, shown.c_str());
+    text(dl, a.fontMono, 10.5f, ImVec2(x0, p.y + (rowH - 10.5f) * 0.5f - 0.5f), r.exists && r.searched ? P.text : P.textFaint, shown.c_str());
     if (hov && !ImGui::IsAnyItemActive()) {
       std::string tip = r.path + "\n";
       if (r.user) tip += i18n::tr("Your folder: searched for every format");
+      else if (!r.format.empty()) tip += std::string(i18n::tr("Your folder for ")) + r.tag;
       else tip += std::string(i18n::tr("Default folder for ")) + r.tag;
       if (!r.exists) tip += std::string("\n") + i18n::tr("Not found on this computer: nothing to scan here");
+      else if (!r.searched) tip += std::string("\n") + i18n::tr("Not searched: switched off or listed twice (Settings > Plugins)");
       ImGui::SetTooltip("%s", tip.c_str());
     }
-    if (r.user) {
+    if (removable) {
       ImGui::SetCursorScreenPos(ImVec2(p.x + w - 21, p.y + 2));
-      if (ui::IconButton("##rm", ui::Icon::Trash, false, 18, "Remove this folder")) removeAt = static_cast<int>(r.index);
+      if (ui::IconButton("##rm", ui::Icon::Trash, false, 18, "Remove this folder")) {
+        if (r.user) removeAt = static_cast<int>(r.index);
+        else removeFormat = r.format, removePath = r.path;
+      }
     }
     ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + rowH));
     ImGui::PopID();
@@ -536,7 +552,15 @@ void folderList(App& a, host::PluginPrefs& prefs, bool& changed, float height) {
   ImGui::EndChild();
   ImGui::PopStyleColor();
   if (removeAt >= 0) {
+    prefs.disabledFolders.erase(host::folderKey("*", prefs.extraFolders[static_cast<size_t>(removeAt)]));
     prefs.extraFolders.erase(prefs.extraFolders.begin() + removeAt);
+    changed = true;
+  }
+  if (!removeFormat.empty()) {  // K-13: one format's own folder
+    auto& list = prefs.formatFolders[removeFormat];
+    list.erase(std::remove(list.begin(), list.end(), removePath), list.end());
+    if (list.empty()) prefs.formatFolders.erase(removeFormat);
+    prefs.disabledFolders.erase(host::folderKey(removeFormat, removePath));
     changed = true;
   }
   // Add: a typed / pasted path, or the folder chooser.
@@ -569,8 +593,11 @@ void leftColumn(App& a, const Model& md, host::PluginPrefs& prefs, bool& changed
   formatChips(a, md, prefs, changed);
   ImGui::Dummy(ImVec2(0, theme::kS2));
   caption(a, i18n::N_("SEARCH FOLDERS"));
-  const float addH = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y + 2;
+  const float addH = 2 * (ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y) + 2;
   folderList(a, prefs, changed, std::max(110.0f, ImGui::GetContentRegionAvail().y - addH - ImGui::GetStyle().ItemSpacing.y));
+  // K-13: per-format folders, the Default switch and rescanning one folder live in Settings > Plugins.
+  if (ui::TextButton("Folders per format...", false, ImGui::GetContentRegionAvail().x, "Settings > Plugins: each format's folders, switch folders on and off, rescan one folder"))
+    openPluginFolderSettings(a);
 }
 
 // ---------------------------------------------------------------- right column
@@ -1310,7 +1337,10 @@ void drawPluginManager(App& a) {
     // Sandbox switches were saved by setHostedSandbox: keep them.
     host::PluginPrefs now = host::pluginPrefs();
     prefs.sandbox = now.sandbox;
+    // K-13: a removed folder's plugins leave the list at once (a scan of what changed).
+    const bool folders = prefs.extraFolders.size() < now.extraFolders.size() || prefs.formatFolders != now.formatFolders;
     host::setPluginPrefs(prefs);
+    if (folders) host::requestScan(host::selfExecutablePath());
   }
   ImGui::End();
 }

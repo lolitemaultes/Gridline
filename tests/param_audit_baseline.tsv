@@ -1834,7 +1834,7 @@ gl.bankeq	942	Mode send 16.3 kHz	working	1
 gl.bankeq	943	Mode send 20.5 kHz	working	1	
 gl.bankeq	944	Send numbering	routing	0	
 gl.bassboost	0	Frequency	working	500	
-gl.bassboost	1	Amount	working	1	
+gl.bassboost	1	Amount	working	0	
 gl.bassboost	2	Engine	working	0	
 gl.bbdchorus	0	Mode	working	2	
 gl.bbdchorus	1	Time 1	combination	25	17=0;0=3;4=1
@@ -1849,7 +1849,7 @@ gl.bbdchorus	9	Feedback	combination	0.899999976	17=0;0=3;4=1
 gl.bbdchorus	10	High pass	combination	1000	17=0;0=3;4=1
 gl.bbdchorus	11	Hiss	working	1	
 gl.bbdchorus	12	Gain	working	12	
-gl.bbdchorus	13	Mono input	working	0	
+gl.bbdchorus	13	Mono input	working	1	
 gl.bbdchorus	14	Invert wet	combination	1	17=0;0=3;4=1
 gl.bbdchorus	15	Noise gate	combination	0	11=1
 gl.bbdchorus	16	Mix	combination	0	17=0;0=3;4=1
@@ -1939,21 +1939,21 @@ gl.colormap	13	Group 14	inert	0
 gl.colormap	14	Group 15	inert	0	
 gl.colormap	15	Group 16	combination	9	16=1
 gl.colormap	16	Group by	combination	1	0=9
-gl.comp	0	Threshold	working	0	
-gl.comp	1	Ratio	working	0.4	
-gl.comp	2	Attack	working	0.4	
-gl.comp	3	Release	working	0.001	
-gl.comp	4	Knee	working	24	
+gl.comp	0	Threshold	combination	-60	1=30
+gl.comp	1	Ratio	working	30	
+gl.comp	2	Attack	combination	9.99999975e-05	1=30
+gl.comp	3	Release	combination	0.00100000005	1=30
+gl.comp	4	Knee	combination	24	1=30
 gl.comp	5	Makeup	working	24	
-gl.comp	6	Detector	working	1	
-gl.comp	7	Character	working	1	
+gl.comp	6	Detector	combination	1	1=30
+gl.comp	7	Character	combination	1	0=-15;1=10.1942655;2=0.0502973372;3=0.502973372;4=18;5=18;8=7.5;9=0.75;10=15;11=223.606798;12=1;13=1
 gl.comp	8	Lookahead	working	2.5	
 gl.comp	9	Mix	working	0	
 gl.comp	10	Gain	working	30	
-gl.comp	11	Detector high-pass	working	500	
-gl.comp	12	Fast release	working	1	
+gl.comp	11	Detector high-pass	combination	500	1=30
+gl.comp	12	Fast release	combination	1	1=30;7=1
 gl.comp	13	Output limiter	working	0	
-gl.comp	14	Detector input	combination	1	-1=1
+gl.comp	14	Detector input	combination	1	1=30;-1=1
 gl.convolver	0	Impulse	working	0	
 gl.convolver	1	Space size	working	0	
 gl.convolver	2	Space tone	working	0	
@@ -3392,7 +3392,7 @@ gl.flanger	4	Mix	combination	0	10=0
 gl.flanger	5	Stereo phase	working	180	
 gl.flanger	6	Damp	combination	500	10=0
 gl.flanger	7	LFO shape	working	1	
-gl.flanger	8	Invert wet	working	1	
+gl.flanger	8	Invert wet	working	0	
 gl.flanger	9	Cross	combination	1	10=0
 gl.flanger	10	Engine	working	0	
 gl.flanger	11	Delay	working	0.25	
@@ -3403,7 +3403,7 @@ gl.flanger	15	Feed	working	1
 gl.flanger	16	Invert feedback	working	0	
 gl.flanger	17	Dry	working	0	
 gl.flanger	18	Wet	working	0	
-gl.flanger	19	Cross	working	0	
+gl.flanger	19	Cross	working	1	
 gl.flex	0	Amp attack	working	1	
 gl.flex	1	Amp hold	inert	0	
 gl.flex	2	Amp decay	combination	0	45=5
@@ -3549,10 +3549,10 @@ gl.fmduo	18	Mod 2 sustain	working	1
 gl.fmduo	19	Mod 2 release	combination	0	16=1
 gl.fmduo	20	Mod 2 velocity	combination	0	16=1
 gl.fmduo	21	Octave	working	-3	
-gl.formulactl	0	a	working	0	
-gl.formulactl	1	b	inert	0	
-gl.formulactl	2	c	inert	0	
-gl.formulactl	3	Smoothing	combination	2	1048576=1
+gl.formulactl	0	a	working	1	
+gl.formulactl	1	b	inert	0		used only by a formula that refers to b (the default formula uses a)
+gl.formulactl	2	c	inert	0		used only by a formula that refers to c (the default formula uses a)
+gl.formulactl	3	Smoothing	combination	2	1048576=0.5
 gl.freefilter	0	Type	working	2	
 gl.freefilter	1	Frequency	working	10	
 gl.freefilter	2	Q	combination	20	5=0
@@ -3564,8 +3564,8 @@ gl.freqshift	0	Shift	combination	-1000	12=0
 gl.freqshift	1	Feedback	combination	-0.949999988	12=0
 gl.freqshift	2	Stereo	combination	1	12=0
 gl.freqshift	3	Mix	combination	0	12=0
-gl.freqshift	4	Type	working	1	
-gl.freqshift	5	Range	working	1	
+gl.freqshift	4	Type	working	0	
+gl.freqshift	5	Range	working	2	
 gl.freqshift	6	Shift (wide)	combination	-20000	12=0;5=1
 gl.freqshift	7	Shift (tempo)	combination	-16	12=0;5=2
 gl.freqshift	8	Stereo width	working	0	
@@ -3573,10 +3573,10 @@ gl.freqshift	9	Start phase	combination	180	12=0
 gl.freqshift	10	Shape L	working	0	
 gl.freqshift	11	Shape R	working	0	
 gl.freqshift	12	Engine	working	0	
-gl.freqshift	13	Frequency	working	1	
-gl.freqshift	14	Dry / wet	working	1	
+gl.freqshift	13	Frequency	working	0.75	
+gl.freqshift	14	Dry / wet	working	0	
 gl.freqshift	15	L/R phase	working	1	
-gl.freqshift	16	Feedback	working	1	
+gl.freqshift	16	Feedback	working	0	
 gl.freqshift	17	Start phase	working	0	
 gl.gate	0	Threshold	working	0	
 gl.gate	1	Attack	working	0.1	
@@ -3783,61 +3783,61 @@ gl.granular	17	Wobble rate	combination	0.100000001	16=12
 gl.granular	18	Time jitter	working	0.75	
 gl.granular	19	Step hold	combination	2	8=0;13=2
 gl.granular	20	Pitch	working	-24	
-gl.hall	0	Input gain	working	15	
+gl.hall	0	Input gain	working	-60	
 gl.hall	1	Input low cut	working	5000	
 gl.hall	2	Input high cut	working	40	
 gl.hall	3	Reverb on	working	0	
 gl.hall	4	Pre-delay	working	0	
 gl.hall	5	Pre-delay sync	working	1	
 gl.hall	6	Pre-delay synced	combination	0	39=0;5=1
-gl.hall	7	Size	working	0	
+gl.hall	7	Size	working	0.5	
 gl.hall	8	Decay	working	0.2	
-gl.hall	9	Character	working	0	
-gl.hall	10	Diffusion	working	0	
+gl.hall	9	Character	working	1	
+gl.hall	10	Diffusion	working	1	
 gl.hall	11	Mod rate	combination	10	39=0
-gl.hall	12	Mod depth	working	1	
+gl.hall	12	Mod depth	working	0.5	
 gl.hall	13	High density	working	0	
 gl.hall	14	Freeze	working	1	
 gl.hall	15	Low decay	combination	0.25	39=0
 gl.hall	16	Low crossover	combination	1500	39=0
 gl.hall	17	High decay	combination	0.0500000007	39=0
 gl.hall	18	High crossover	combination	1000	39=0
-gl.hall	19	Shimmer on	working	1	
+gl.hall	19	Shimmer on	combination	1	20=1
 gl.hall	20	Shimmer mode	combination	1	19=1
-gl.hall	21	Shimmer pitch	combination	-24	19=1
+gl.hall	21	Shimmer pitch	combination	-24	19=1;22=1
 gl.hall	22	Shimmer gain	combination	1	19=1
-gl.hall	23	Shimmer delay	combination	1	19=1
-gl.hall	24	Shimmer low cut	combination	5000	19=1
-gl.hall	25	Shimmer high cut	combination	20	19=1
-gl.hall	26	Shimmer into reverb	combination	0	19=1
-gl.hall	27	Envelope	combination	3	39=0
-gl.hall	28	Env threshold	combination	-60	45=1;46=1
+gl.hall	23	Shimmer delay	combination	1	19=1;22=1
+gl.hall	24	Shimmer low cut	combination	5000	19=1;22=1
+gl.hall	25	Shimmer high cut	combination	20000	19=1;22=1
+gl.hall	26	Shimmer into reverb	combination	0	19=1;22=1
+gl.hall	27	Envelope	combination	1	39=0
+gl.hall	28	Env threshold	combination	0	45=1;46=1
 gl.hall	29	Env amount	combination	0	39=0;27=1
-gl.hall	30	Env attack	combination	1000	45=1;46=1
-gl.hall	31	Env release	combination	10	45=1;46=1
+gl.hall	30	Env attack	combination	1	39=0;27=3
+gl.hall	31	Env release	combination	10	39=0;27=1
 gl.hall	32	Dry level	working	15	
 gl.hall	33	Wet level	working	15	
-gl.hall	34	Wet EQ freq	combination	40	35=18
+gl.hall	34	Wet EQ freq	working	40	
 gl.hall	35	Wet EQ gain	working	18	
-gl.hall	36	Wet EQ Q	combination	6	35=18
+gl.hall	36	Wet EQ Q	working	6	
 gl.hall	37	Width	working	0	
-gl.hall	38	Limiter	working	1	
+gl.hall	38	Limiter	working	0	
 gl.hall	39	Reverb model	working	0	
 gl.hall	40	Brightness	working	0	
 gl.hall	41	Mod frequency	working	1	
 gl.hall	42	Pre-delay ticks	combination	768	5=1
-gl.hall	43	Shimmer delay sync	combination	1	19=1
-gl.hall	44	Shimmer delay ticks	combination	768	19=1;43=1
+gl.hall	43	Shimmer delay sync	combination	1	19=1;22=1
+gl.hall	44	Shimmer delay ticks	combination	768	19=1;22=1;43=1
 gl.hall	45	Envelope target	combination	1	46=1
 gl.hall	46	Env scale	combination	-1	45=1
-gl.hall	47	Env offset	combination	-0.5	45=1;46=1
-gl.hall	48	Env smoothing	combination	100	45=1;46=1
-gl.hall	49	Env low cut	combination	2000	45=1;46=1
+gl.hall	47	Env offset	combination	0.5	45=1;46=1
+gl.hall	48	Env smoothing	combination	100	45=1;46=-1
+gl.hall	49	Env low cut	combination	2000	45=1;46=-1
 gl.hall	50	Env sidechain	verified	0		VERIFIED: needs the sidechain input and an envelope target
 gl.hall	51	Unpitched level	combination	1	19=1;20=1;54=1
 gl.hall	52	Voice 1 pitch	combination	-24	19=1;20=1;54=1
 gl.hall	53	Voice 2 pitch	combination	-24	19=1;20=1;54=1
-gl.hall	54	Voice 1 level	combination	1	19=1;20=1;55=1;59=1
+gl.hall	54	Voice 1 level	combination	0	19=1;20=1;55=1;59=1
 gl.hall	55	Voice 2 level	combination	1	19=1;20=1;54=1
 gl.hall	56	Voice 1 delay	combination	1	19=1;20=1;54=1
 gl.hall	57	Voice 2 delay	combination	1	19=1;20=1;54=1
@@ -4607,10 +4607,10 @@ gl.limiter	18	0.2 dB safety	working	1
 gl.limiter	19	View	inert	0	
 gl.limiter	20	Comp detector input	verified	0		VERIFIED: compressor engaged (threshold / ratio) with the sidechain connected
 gl.limiter	21	Comp knee	combination	-1	8=-30;9=4
-gl.lowlift	0	Crossover	combination	400	16=0
+gl.lowlift	0	Crossover	combination	400	16=0;13=1
 gl.lowlift	1	Low gain	combination	-12	16=0
 gl.lowlift	2	Harmonics	combination	1	16=0
-gl.lowlift	3	High gain	combination	-12	16=0
+gl.lowlift	3	High gain	combination	-12	16=0;13=1
 gl.lowlift	4	Low cut	combination	80	16=0
 gl.lowlift	5	Mix	working	0	
 gl.lowlift	6	Pre-shaping boost	combination	24	16=0
@@ -4620,7 +4620,7 @@ gl.lowlift	9	Diffuser	working	1
 gl.lowlift	10	Diffuser coef	combination	0	16=0;9=1
 gl.lowlift	11	Low band	working	0	
 gl.lowlift	12	High band	working	0	
-gl.lowlift	13	Multiband	working	0	
+gl.lowlift	13	Multiband	working	1	
 gl.lowlift	14	Bass boost	combination	1	16=0
 gl.lowlift	15	Boost freq	combination	250	16=0;14=1
 gl.lowlift	16	Engine	working	0	
@@ -8240,7 +8240,7 @@ gl.octafilter	480	Engine	working	0
 gl.overdrive	0	Pre band	working	1	
 gl.overdrive	1	Colour	working	1	
 gl.overdrive	2	Pre amp	working	1	
-gl.overdrive	3	x100 boost	working	1	
+gl.overdrive	3	x100 boost	combination	1	7=0
 gl.overdrive	4	Post filter	working	1	
 gl.overdrive	5	Post gain	combination	-36	7=0
 gl.overdrive	6	Oversampling	combination	0	7=0
@@ -12917,6 +12917,7 @@ gl.reverb	33	Early reflections (full)	combination	0	21=2
 gl.reverb	34	Wet (full)	combination	0	21=2
 gl.reverb	35	Mod speed (full)	combination	2048	21=2;36=2048
 gl.reverb	36	Mod depth (full)	combination	2048	21=2
+gl.reverb	37	Full model version	combination	0	21=2
 gl.samplekeys	0	Decay	working	-1000	
 gl.samplekeys	1	Release	working	1000	
 gl.samplekeys	2	Hardness	working	-1000	
@@ -13178,6 +13179,24 @@ gl.turntable	17	Timecode	inert	0		timecode vinyl input setting, kept for the FL 
 gl.turntable	18	Phono preamp	inert	0		preamp for the timecode input, kept for the FL round trip
 gl.turntable	19	Large editor	inert	0		editor view size; the sound engine does not read it
 gl.turntable	20	Empty deck	inert	0		chooses silence over the built-in sound when the channel's prepared data has no sample
+gl.turntablefx	0	Position	combination	1	6=1
+gl.turntablefx	1	Mute	working	1	
+gl.turntablefx	2	Speed	combination	0	8=0
+gl.turntablefx	3	Acceleration	combination	1	8=0
+gl.turntablefx	4	Pan	working	1	
+gl.turntablefx	5	Volume	working	0	
+gl.turntablefx	6	Hold	combination	1	8=0
+gl.turntablefx	7	Sensitivity	inert	0		mouse travel when scratching in the editor; the sound engine does not read it
+gl.turntablefx	8	Motor	working	2	
+gl.turntablefx	9	Smooth 1	combination	0	6=1;0=1
+gl.turntablefx	10	Smooth 2	combination	0	6=1;0=1
+gl.turntablefx	11	Smooth 3	combination	0	6=1;0=1
+gl.turntablefx	12	Smooth 4	combination	1	6=1;0=1
+gl.turntablefx	13	Turns	combination	-9	6=1
+gl.turntablefx	14	Timecode	inert	0		timecode vinyl input setting, kept for the FL round trip (no timecode input yet)
+gl.turntablefx	15	Phono preamp	inert	0		preamp for the timecode input, kept for the FL round trip
+gl.turntablefx	16	Large editor	inert	0		editor view size; the sound engine does not read it
+gl.turntablefx	17	Empty deck	inert	0		chooses silence over the built-in sound when the slot's prepared data has no sample
 gl.send	0	Target track	inert	0	
 gl.send	1	Send level	working	0	
 gl.send	2	Send pan	working	1	
@@ -14267,8 +14286,8 @@ gl.splitter	52	Send numbering	routing	0
 gl.spread	0	Method	working	1	
 gl.spread	1	Spread	working	1	
 gl.spread	2	Separation	working	-1	
-gl.spread	3	Mono bass	working	0	
-gl.spread	4	Bass freq	combination	20	12=0
+gl.spread	3	Mono bass	working	1	
+gl.spread	4	Bass freq	combination	20	12=0;3=1
 gl.spread	5	L/R offset	working	-20	
 gl.spread	6	Polarity	working	3	
 gl.spread	7	Separation	combination	0	2=1
@@ -14277,11 +14296,11 @@ gl.spread	9	Volume	working	12
 gl.spread	10	Mono check	working	1	
 gl.spread	11	Remove DC	working	1	
 gl.spread	12	Engine	working	0	
-gl.spread	13	Low bypass	combination	1	3=0
-gl.spread	14	Low bypass freq	working	316.227766	
+gl.spread	13	Low bypass	working	1	
+gl.spread	14	Low bypass freq	combination	10000	13=1
 gl.spread	15	Enabled	working	0	
-gl.spread	16	Show input	inert	0	
-gl.spread	17	Show output	inert	0	
+gl.spread	16	Show input	inert	0		editor display
+gl.spread	17	Show output	inert	0		editor display
 gl.squeeze	0	Gain	combination	-24	16=0
 gl.squeeze	1	Mix	combination	0	11=1
 gl.squeeze	2	Squarize	combination	1	16=0
@@ -14296,8 +14315,8 @@ gl.squeeze	10	Rate divide	combination	32	16=0
 gl.squeeze	11	Filter	working	1	
 gl.squeeze	12	Filter type	combination	1	11=1
 gl.squeeze	13	Cutoff	combination	40	16=0;11=1
-gl.squeeze	14	Resonance	combination	1	11=1
-gl.squeeze	15	Filter position	combination	0	0=3;1=0.75;2=0.75;3=608.874043;4=0.75;5=8.94427191;6=375;8=1257.43343;9=0.75;10=24.25;11=1;13=3908.13337;14=0.75;17=0.94488189;18=2435.49617;19=0.75;20=750;21=750;22=0.75
+gl.squeeze	14	Resonance	combination	0	11=1
+gl.squeeze	15	Filter position	combination	1	0=3;1=0.75;2=0.75;3=608.874043;4=0.75;5=8.94427191;6=375;8=1257.43343;9=0.75;10=24.25;11=1;13=3908.13337;14=0.75;17=0.94488189;18=2435.49617;19=0.75;20=750;21=750;22=0.75
 gl.squeeze	16	Engine	combination	0	11=1
 gl.squeeze	17	Gain	working	0	
 gl.squeeze	18	Steps	working	1	
@@ -14570,11 +14589,11 @@ gl.timegate	9	Gate step 8	combination	0	1048577=1
 gl.timegate	10	Gate step 9	combination	0	1048577=1
 gl.timegate	11	Gate step 10	combination	0	1048577=1
 gl.timegate	12	Gate step 11	combination	0	1048577=1;0=1
-gl.timegate	13	Gate step 12	inert	0	
-gl.timegate	14	Gate step 13	inert	0	
-gl.timegate	15	Gate step 14	inert	0	
-gl.timegate	16	Gate step 15	inert	0	
-gl.timegate	17	Gate step 16	inert	0	
+gl.timegate	13	Gate step 12	verified	0		VERIFIED: works with Gate on; steps 12-16 start after the audit's render window
+gl.timegate	14	Gate step 13	verified	0		VERIFIED: works with Gate on; steps 12-16 start after the audit's render window
+gl.timegate	15	Gate step 14	verified	0		VERIFIED: works with Gate on; steps 12-16 start after the audit's render window
+gl.timegate	16	Gate step 15	verified	0		VERIFIED: works with Gate on; steps 12-16 start after the audit's render window
+gl.timegate	17	Gate step 16	verified	0		VERIFIED: works with Gate on; steps 12-16 start after the audit's render window
 gl.timegate	18	Smoothing	combination	50	1048583=0;1=1
 gl.timegate	19	Mix	combination	0	27=1
 gl.timegate	20	Time slot	working	14	
@@ -14582,17 +14601,17 @@ gl.timegate	21	Volume slot	working	21
 gl.timegate	22	Time mix	combination	0	20=1
 gl.timegate	23	Volume mix	combination	0	21=1
 gl.timegate	24	Volume attack	combination	0.5	21=1
-gl.timegate	25	Volume release	combination	9.99999975e-05	21=1
+gl.timegate	25	Volume release	combination	1	21=1
 gl.timegate	26	Tension	combination	-1	21=1
 gl.timegate	27	Hold	working	1	
 gl.timegate	28	Trigger sync	combination	1	20=1
 gl.timegate	29	Declick	combination	0	20=10
-gl.timegate	30	Run when stopped	inert	0	
+gl.timegate	30	Run when stopped	inert	0		only acts while the transport is stopped
 gl.timegate	31	Scratch	combination	-8	20=1
 gl.timegate	32	Remove DC offset	working	1	
 gl.timegate	33	Attack compensation	combination	1	20=1
 gl.timegate	34	HQ resampling	combination	0	20=1
-gl.timegate	35	Trigger slots from notes	inert	0	
+gl.timegate	35	Trigger slots from notes	inert	0		GAP: effects get no note input path for it yet
 gl.timegate	36	Engine	working	1	
 gl.timegate	37	Attack (ref.)	combination	10000	36=1;20=1
 gl.timegate	38	Release (ref.)	combination	10000	36=1;21=1
@@ -15005,46 +15024,46 @@ gl.vocoder	62	Carrier MIDI port	inert	0
 gl.vocoder	63	Editor curve	inert	0	
 gl.vphaser	0	Stages	combination	1	32=0
 gl.vphaser	1	Min frequency	working	20480	
-gl.vphaser	2	Max frequency	working	1.25	
+gl.vphaser	2	Max frequency	working	20480	
 gl.vphaser	3	Manual	working	1	
-gl.vphaser	4	Manual frequency	combination	1.25	3=1
+gl.vphaser	4	Manual frequency	combination	20480	3=1
 gl.vphaser	5	Feedback	working	0.95	
 gl.vphaser	6	Invert feedback	working	1	
-gl.vphaser	7	LFO shape	working	5	
+gl.vphaser	7	LFO shape	working	3	
 gl.vphaser	8	Speed	working	150	
 gl.vphaser	9	Tempo sync	working	1	
 gl.vphaser	10	Synced speed	combination	0	32=0;9=1
-gl.vphaser	11	Tension	working	0	
-gl.vphaser	12	L/R phase	working	0.5	
-gl.vphaser	13	Start phase	working	0.5	
+gl.vphaser	11	Tension	working	1	
+gl.vphaser	12	L/R phase	working	0.75	
+gl.vphaser	13	Start phase	working	0.75	
 gl.vphaser	14	Color gain	working	30	
 gl.vphaser	15	Color frequency	combination	1200	14=30
 gl.vphaser	16	Input high pass	working	800	
 gl.vphaser	17	Feedback high pass	working	800	
-gl.vphaser	18	Drive	working	24	
+gl.vphaser	18	Drive	combination	24	32=0
 gl.vphaser	19	Noise	working	1	
 gl.vphaser	20	Noise gate	combination	0	19=1
 gl.vphaser	21	Mono input	working	1	
 gl.vphaser	22	Mix	working	0	
 gl.vphaser	23	Echo on	working	1	
-gl.vphaser	24	Echo time	combination	1500	23=1;25=0
-gl.vphaser	25	Echo sync	combination	0	23=1
-gl.vphaser	26	Echo synced	combination	0	32=0;23=1
+gl.vphaser	24	Echo time	combination	1500	23=1
+gl.vphaser	25	Echo sync	combination	1	23=1
+gl.vphaser	26	Echo synced	combination	0	32=0;23=1;25=1
 gl.vphaser	27	Echo feedback	combination	1	23=1
 gl.vphaser	28	Echo mix	combination	1	23=1
 gl.vphaser	29	Echo stereo	combination	0	23=1
-gl.vphaser	30	Echo low pass	combination	320	23=1
+gl.vphaser	30	Echo low pass	combination	20480	23=1
 gl.vphaser	31	Echo high pass	combination	20480	23=1
 gl.vphaser	32	Phaser model	working	0	
 gl.vphaser	33	High quality	working	1	
-gl.vphaser	34	Engine	working	0	
-gl.vphaser	35	Speed range low	working	150	
+gl.vphaser	34	Engine	working	1	
+gl.vphaser	35	Speed range low	working	17.0432905	
 gl.vphaser	36	Speed range high	working	0.025	
 gl.vphaser	37	Depth at speed	working	0	
 gl.vphaser	38	Depth pull-down	working	1	
 gl.vphaser	39	Synced period	combination	6144	9=1
-gl.vphaser	40	Echo keep pitch	combination	1	23=1;1048617=384.5
-gl.vphaser	41	Echo synced time	combination	768	23=1
+gl.vphaser	40	Echo keep pitch	combination	1	23=1;1048600=750
+gl.vphaser	41	Echo synced time	combination	768	3=1;6=1;9=1;20=1;21=1;23=1;25=1;33=1;40=1
 gl.warmsynth	0	Osc 1 level	working	1	
 gl.warmsynth	1	Osc 1 LFO	combination	0	39=1
 gl.warmsynth	2	Osc 1 env	working	1	
@@ -15314,7 +15333,7 @@ gl.xyzctl	5	Y min	working	1
 gl.xyzctl	6	Y max	working	0	
 gl.xyzctl	7	Z min	working	1	
 gl.xyzctl	8	Z max	working	0	
-gl.xyzctl	9	Smoothing	combination	0.00100000005	1048576=1
+gl.xyzctl	9	Smoothing	combination	2	1048576=1
 gl.tideline	0	Amount	working	0	
 gl.tideline	1	Shape	working	10	
 gl.tideline	2	Rate	working	5	

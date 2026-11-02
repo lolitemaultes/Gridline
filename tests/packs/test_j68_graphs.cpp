@@ -164,12 +164,13 @@ void testReverb() {
     double t2 = measureT60(impulse(*fx, s2, 10.0));
     expect(t2 > t * 1.6, "full reverb: doubling the decay lengthens the measured tail (view follows)");
   }
-  {  // full model: reflections at the taps the view draws
+  for (int ver = 0; ver < 2; ++ver) {  // full model: reflections at the taps the view draws (K-2: v1 15 taps, v2 one per side)
     PluginState s = fullReverb(15, 221, 128, 0);
+    setp(s, RvbFRev, ver);
     graphmodel::ReverbView v = graphmodel::reverbView(s, kSr, 120);
     std::vector<float> ir = impulse(*fx, s, 0.5);
     double first = 1e9;  // the left output carries the first seven taps
-    for (int e = 0; e < 7; ++e) first = std::min(first, v.erSec[static_cast<size_t>(e)]);
+    for (int e = 0; e < (ver ? 1 : 7); ++e) first = std::min(first, v.erSec[static_cast<size_t>(e)]);
     size_t onset = 0;
     for (size_t i = 0; i < ir.size(); ++i)
       if (std::fabs(ir[i]) > 1e-4f) {
@@ -177,9 +178,9 @@ void testReverb() {
         break;
       }
     std::printf("# full reverb: first reflection view %.1f samples, measured onset %zu\n", first * kSr, onset);
-    expect(v.erCount == 15 && std::fabs(static_cast<double>(onset) - first * kSr) <= 3, "full reverb: first reflection where the view draws it");
+    expect(v.erCount == (ver ? 2 : 15) && std::fabs(static_cast<double>(onset) - first * kSr) <= 3, "full reverb: first reflection where the view draws it");
     PluginState big = fullReverb(15, 221, 128, 0);
-    setp(big, RvbFRoom, 100);
+    setp(big, RvbFRev, ver), setp(big, RvbFRoom, 100);
     graphmodel::ReverbView vb = graphmodel::reverbView(big, kSr, 120);
     expect(vb.erSec[0] > v.erSec[0] && vb.size > v.size, "full reverb view: a bigger room spreads the reflections");
   }

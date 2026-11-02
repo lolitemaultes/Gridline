@@ -15,3 +15,4 @@ imgui.ini
 *~
 # Internal planning files never belong in the published tree
 TASKS.md
+__pycache__/

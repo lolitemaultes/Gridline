@@ -212,6 +212,9 @@ class Generator {
   // noteOff this also ends one-shot voices.
   void cut(uint32_t id, int offset) { push(Ev::make(Ev::Cut, id, 0, 0, offset)); }
   virtual bool supportsGlide() const { return false; }
+  // K-25: instruments that cannot glide each note get note bend lines as channel pitch bend
+  // (midi 0xE0): the semitones a full bend means to them (General MIDI's default: 2).
+  virtual float noteBendRange() const { return 2.0f; }
   // J-68: the step an instrument's own sequencer is playing (−1 = none), for
   // the editor's running-step display. Read on the UI thread: implementations
   // publish it through an atomic.

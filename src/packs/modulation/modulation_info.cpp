@@ -139,6 +139,8 @@ void appendInfos(std::vector<PluginInfo>& v) {
     p.outputs = {"X", "Y", "Z"};
     p.presets = {{"Direct", {{XzSmooth, 0.001f}}}, {"Floating", {{XzSmooth, 0.9f}}}, {"Upper half", {{XzZMin, 0.5f}}}};
     p.editorWidth = 600;
+    // K-2: new instances start at the reference controller's smoothing.
+    setReferenceDefaults(p, {{XzSmooth, 0.0447}});
     v.push_back(std::move(p));
   }
   // --------------------------------------------------- Formula Controller
@@ -153,6 +155,8 @@ void appendInfos(std::vector<PluginInfo>& v) {
     // The formula is the plugin's data; presets set knobs, the editor offers formula examples.
     p.presets = {{"Centre", {}}, {"Low knobs", {{FmA, 0.0f}, {FmB, 0.0f}, {FmC, 0.0f}}}, {"High knobs", {{FmA, 1.0f}, {FmB, 1.0f}, {FmC, 1.0f}}}};
     p.editorWidth = 620;
+    // K-2: new instances start where the reference controller does (a = b = c = 0).
+    setReferenceDefaults(p, {{FmA, 0}, {FmB, 0}, {FmC, 0}});
     v.push_back(std::move(p));
   }
   // -------------------------------------------------- Envelope Controller

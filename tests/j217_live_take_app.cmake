@@ -7,7 +7,8 @@
 #      a rescan of the take); after stop the committed clip's geometry and summary equal the last live
 #      frame, and its file's own summary too; one undo removes it.
 #   2. Loop recording over a one-bar time selection at 200 %: the passes stack on the tracks below
-#      while they record, earlier passes muted, exactly as they are committed.
+#      while they record, earlier passes muted, exactly as they are committed. The script waits for the
+#      third live pass ("livetake-clips:3"), not a fixed time: a busy machine's audio runs late.
 #   cmake -DAPP=<gridline-app> -DOUT=<dir> -P j217_live_take_app.cmake
 cmake_minimum_required(VERSION 3.16)
 file(REMOVE_RECURSE "${OUT}")
@@ -152,7 +153,7 @@ check("one undo removes the recorded take" ok)
 run(loop 2 40 "4 liverec arm 1
 5 liverec select 0 1
 6 liverec start
-7 waitfor rec-a 4.6
+7 waitfor livetake-clips:3 120
 8 liverec trace
 9 shot \"${OUT}/loop_mid.ppm\"
 10 liverec stop
@@ -167,6 +168,7 @@ if(nv GREATER_EQUAL 3)
   set(ok TRUE)
 endif()
 check("loop recording: every pass is a live clip (${nv})" ok)
+check("loop recording: three passes recorded" loop_out MATCHES "waitfor livetake-clips:3: reached")
 set(ok TRUE)
 if(NOT loop_out MATCHES "live take [0-9]+ mixer [0-9]+ pass 0 track 0 start [0-9][0-9]? ")  # (the first pass: after the input latency, longer on a busy machine)
   set(ok FALSE)

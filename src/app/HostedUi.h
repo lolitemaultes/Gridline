@@ -45,6 +45,8 @@ bool hostedEditorOpen(const PluginTarget& t);
 // its plugin and the pointer's fraction of the window. False when none.
 bool hostedEditorUnderMouse(PluginTarget& t, float& fx, float& fy);
 void closeHostedEditor(App& a, const PluginTarget& t);
+// K-9 dev: every open plugin window with its native window ids and the plugin's rectangle, to stdout.
+void devPrintPluginWindows(int frame);
 void closeAllHostedEditors(App& a);
 // Window events for plugin windows (input to their control bar, close,
 // resize). Returns true when the event belonged to one.

@@ -46,6 +46,10 @@ Downloads for each system:
 On Linux the distribution comes from `/etc/os-release` (`ID` and `ID_LIKE`). When a release has no
 package for your distribution and processor, the AppImage is offered.
 
+The Flatpak and the snap are updated by their store (Flathub, the Snap Store): there the popup
+offers only Download (the release page) and says to update from the software store; it never
+downloads a setup program, which could not replace a sandboxed installation (docs/packaging.md).
+
 A download whose SHA-256 checksum does not match the one in `SHA256SUMS` is deleted and reported.
 If a release has no `SHA256SUMS` file, only the release page is offered.
 

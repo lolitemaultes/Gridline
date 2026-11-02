@@ -102,7 +102,7 @@ void trackMenuItems(App& a, int track) {
       }
       if (ImGui::BeginMenu(i18n::tr("New instrument"))) {
         for (const auto& info : pluginCatalog()) {
-          if (info.kind != PluginKind::Generator) continue;
+          if (info.kind != PluginKind::Generator || info.hidden) continue;
           if (ImGui::MenuItem(info.name.c_str())) {
             const ObjectId ch = trackmodes::newInstrumentTrack(a.doc, track, info.type, &why);
             report(a, ch != kNoId, why);

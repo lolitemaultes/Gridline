@@ -1,0 +1,66 @@
+# Gridline for Fedora (COPR, or a local rpmbuild): built from the release's source archive.
+# Template: packaging/render.py fills in the version (docs/packaging.md).
+# Gridline carries a few libraries in third_party/ (Dear ImGui, RtMidi, Rubber Band, Lua, libjuice
+# and others, each with its licence there), which a COPR build may keep.
+Name:           gridline
+Version:        @NUMERIC@
+Release:        @RPMRELEASE@%{?dist}
+Summary:        Pattern-based music workstation
+License:        GPL-3.0-or-later
+URL:            https://github.com/lolitemaultes/Gridline
+Source0:        https://github.com/lolitemaultes/Gridline/releases/download/v@VERSION@/Gridline-@VERSION@-source.tar.gz
+
+BuildRequires:  cmake
+BuildRequires:  ninja-build
+BuildRequires:  gcc-c++
+BuildRequires:  pkgconfig(sdl2)
+BuildRequires:  pkgconfig(gl)
+BuildRequires:  pkgconfig(x11)
+BuildRequires:  pkgconfig(alsa)
+BuildRequires:  pkgconfig(jack)
+BuildRequires:  desktop-file-utils
+BuildRequires:  libappstream-glib
+Requires:       hicolor-icon-theme
+Requires:       curl
+Recommends:     yt-dlp
+Recommends:     ffmpeg-free
+
+%description
+Gridline is a free, open source music workstation built around patterns. Sketch
+beats in the channel rack, write melodies and chords in the piano roll, arrange
+patterns, audio and automation in the playlist and mix everything on a full
+mixer. It hosts VST3, CLAP, VST2 and LV2 plugins, runs as a VST3 and CLAP plugin
+itself and supports live collaboration over the network.
+
+%prep
+%autosetup -n Gridline-@VERSION@
+
+%build
+%cmake -G Ninja -DGRIDLINE_DEV_ASSETS=OFF -DGRIDLINE_GUI_TESTS=OFF -DGRIDLINE_INSTALL_PLUGINS=ON
+%cmake_build --target gridline gridline-app gridline_vst3 gridline_clap gridline_suite_gridline gridline_suite_mini
+
+%install
+%cmake_install
+
+%check
+desktop-file-validate %{buildroot}%{_datadir}/applications/gridline.desktop
+appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/com.lolitemaultes.Gridline.metainfo.xml
+%{buildroot}%{_bindir}/gridline --version
+
+%files
+%license LICENSE
+%doc README.md CHANGELOG.md
+%{_bindir}/gridline
+%{_bindir}/gridline-app
+%{_datadir}/gridline/
+%{_datadir}/applications/gridline.desktop
+%{_datadir}/icons/hicolor/*/apps/gridline.png
+%{_datadir}/icons/hicolor/scalable/apps/gridline.svg
+%{_datadir}/mime/packages/gridline.xml
+%{_metainfodir}/com.lolitemaultes.Gridline.metainfo.xml
+%{_prefix}/lib/vst3/
+%{_prefix}/lib/clap/
+
+%changelog
+* @RPMDATE@ Gridline <188165912+lolitemaultes@users.noreply.github.com> - @NUMERIC@-@RPMRELEASE@
+- Gridline @VERSION@: https://github.com/lolitemaultes/Gridline/releases/tag/v@VERSION@

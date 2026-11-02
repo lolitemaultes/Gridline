@@ -1,0 +1,166 @@
+# Gridline as a Flatpak (Flathub: com.lolitemaultes.Gridline).
+#
+# This copy builds the source tree it sits in (CI: .github/workflows/packaging.yml):
+#   flatpak-builder --user --install --force-clean build-flatpak packaging/flatpak/com.lolitemaultes.Gridline.yml
+# The copy for the Flathub repository is written by packaging/render.py: the same file with the
+# Gridline source replaced by the release tag and its commit (docs/packaging.md).
+#
+# Everything is built from source inside the SDK; nothing is downloaded while building. Import from
+# URL's programs come from their official sources: FFmpeg built audio only without GPL or nonfree
+# parts (the same configure options as tools/release/fetch-media-tools.py) and yt-dlp from its
+# source archive, run by the runtime's Python.
+id: com.lolitemaultes.Gridline
+runtime: org.freedesktop.Platform
+runtime-version: '26.08'
+sdk: org.freedesktop.Sdk
+command: gridline-app
+
+finish-args:
+  # The window: X11 (XWayland on Wayland desktops). Plugin editors are X11 windows that Gridline
+  # embeds in its own, so the X11 socket is required rather than a fallback.
+  - --socket=x11
+  - --share=ipc
+  # Playback and recording (PulseAudio, or PipeWire's PulseAudio service) and JACK through PipeWire.
+  - --socket=pulseaudio
+  - --filesystem=xdg-run/pipewire-0
+  # MIDI keyboards and controllers (the ALSA sequencer /dev/snd/seq, raw MIDI devices) and the
+  # graphics card; this also covers --device=dri.
+  - --device=all
+  # Live collaboration, the update check, Import from URL and the stem separation models.
+  - --share=network
+  # Projects, samples, plugin folders (~/.vst3, ~/.clap, ~/.lv2, ~/.vst) and the browser's folders
+  # anywhere in the home folder; Gridline's own file browser reads folders, not single files.
+  - --filesystem=home
+  # The window class matches the renamed desktop entry (panels and docks show the right icon).
+  - --env=SDL_VIDEO_X11_WMCLASS=com.lolitemaultes.Gridline
+  - --env=SDL_VIDEO_WAYLAND_WMCLASS=com.lolitemaultes.Gridline
+  # Plugins packaged for Flatpak (org.freedesktop.LinuxAudio.Plugins.*), searched besides the
+  # home folder's ~/.vst3, ~/.clap, ~/.lv2 and ~/.vst.
+  - --env=VST3_PATH=/app/extensions/Plugins/vst3
+  - --env=CLAP_PATH=/app/extensions/Plugins/clap
+  - --env=LV2_PATH=/app/extensions/Plugins/lv2
+  - --env=VST_PATH=/app/extensions/Plugins/vst
+
+add-extensions:
+  org.freedesktop.LinuxAudio.Plugins:
+    directory: extensions/Plugins
+    version: '26.08'
+    add-ld-path: lib
+    merge-dirs: clap;lv2;vst;vst3
+    subdirectories: true
+    no-autodownload: true
+
+cleanup:
+  - /include
+  - /lib/pkgconfig
+  - /lib/cmake
+  - /share/man
+  - '*.a'
+  - '*.la'
+
+modules:
+  # FFmpeg for Import from URL: ffmpeg and ffprobe in /app/share/gridline/tools, audio only, LGPL.
+  - name: ffmpeg-tools
+    buildsystem: autotools
+    no-autogen: true
+    config-opts:
+      - --bindir=/app/share/gridline/tools
+      - --disable-everything
+      - --disable-autodetect
+      - --disable-network
+      - --disable-doc
+      - --disable-htmlpages
+      - --disable-manpages
+      - --disable-podpages
+      - --disable-txtpages
+      - --disable-ffplay
+      - --disable-debug
+      - --disable-shared
+      - --enable-static
+      - --enable-ffmpeg
+      - --enable-ffprobe
+      - --enable-swresample
+      - --disable-avdevice
+      - --disable-swscale
+      - --enable-small
+      - --enable-demuxers
+      - --enable-parsers
+      - --enable-bsfs
+      - --enable-decoder=aac,aac_fixed,aac_latm,ac3,ac3_fixed,eac3,alac,als,ape,atrac*,cook,dca,dolby_e,dsd_*,flac,g723_1,g729,gsm,gsm_ms,mlp,mp1,mp1float,mp2,mp2float,mp3,mp3float,mp3adu,mp3adufloat,mp3on4,mp3on4float,nellymoser,opus,pcm_*,adpcm_*,qdm2,ra_144,ra_288,sipr,tak,truehd,tta,vorbis,wavpack,wmalossless,wmapro,wmav1,wmav2,wmavoice,amrnb,amrwb,speex,qcelp,evrc,ilbc,comfortnoise
+      - --enable-encoder=pcm_f32le,pcm_s16le,pcm_s24le,pcm_s32le,flac,aac,opus
+      - --enable-muxer=wav,w64,flac,mp4,ipod,mov,matroska,webm,ogg,opus,adts,mp3,mpegts,null
+      - --enable-filter=aresample,aformat,anull,atrim,asetpts,abuffer,abuffersink,volume,amix,aselect,null,format
+      - --enable-protocol=file,pipe
+      - --enable-zlib
+    post-install:
+      - install -Dm644 COPYING.LGPLv2.1 /app/share/gridline/tools/LICENSES/FFmpeg-COPYING.LGPLv2.1
+    cleanup:
+      - /include
+      - /lib
+      - /share/ffmpeg
+    sources:
+      - type: archive
+        url: https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz
+        sha256: 8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e
+        x-checker-data:
+          type: anitya
+          project-id: 5405
+          stable-only: true
+          url-template: https://ffmpeg.org/releases/ffmpeg-$version.tar.xz
+
+  # yt-dlp for Import from URL: the Python package from its source archive and a small launcher.
+  # Gridline's daily yt-dlp update (docs/import-url.md) puts newer copies in its own data folder.
+  - name: yt-dlp
+    buildsystem: simple
+    build-commands:
+      - mkdir -p /app/share/gridline/yt-dlp /app/share/gridline/tools/LICENSES
+      - cp -r yt_dlp /app/share/gridline/yt-dlp/
+      - python3 -m compileall -q /app/share/gridline/yt-dlp
+      - install -Dm755 yt-dlp-launcher.sh /app/share/gridline/tools/yt-dlp
+      - python3 -c 'import sys; sys.path.insert(0, "."); from yt_dlp.version import __version__; print(__version__)' > /app/share/gridline/tools/yt-dlp.version
+      - install -Dm644 LICENSE /app/share/gridline/tools/LICENSES/yt-dlp-LICENSE.txt
+    sources:
+      - type: archive
+        url: https://github.com/yt-dlp/yt-dlp/releases/download/2026.10.26/yt-dlp.tar.gz
+        sha256: 21f942d258d25cc4e60b4982a25c423460f0bebb835f38e6dfd1fcb140087f95
+        x-checker-data:
+          type: json
+          url: https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest
+          version-query: .tag_name
+          url-query: '"https://github.com/yt-dlp/yt-dlp/releases/download/" + $version + "/yt-dlp.tar.gz"'
+      - type: script
+        dest-filename: yt-dlp-launcher.sh
+        commands:
+          - export PYTHONPATH="/app/share/gridline/yt-dlp${PYTHONPATH:+:$PYTHONPATH}"
+          - exec python3 -m yt_dlp "$@"
+
+  - name: gridline
+    buildsystem: simple
+    build-commands:
+      - cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/app -DGRIDLINE_DEV_ASSETS=OFF -DGRIDLINE_GUI_TESTS=OFF
+      - cmake --build build -j${FLATPAK_BUILDER_N_JOBS} --target gridline gridline-app
+      # The programs, assets, desktop entry, icons, file type and AppStream metadata (not the
+      # Gridline Suite plugins: hosts outside this sandbox could not load them).
+      - cmake --install build --component Unspecified
+      - install -d /app/extensions/Plugins
+      - |
+        printf '%s\n' "Import from URL programs in this Flatpak, built from source by its manifest:" \
+          "  FFmpeg (LGPL-2.1-or-later) and yt-dlp (Unlicense); see LICENSES." > /app/share/gridline/tools/SOURCES.txt
+      # Desktop entry, icons, file type and metadata carry the application id inside the Flatpak.
+      - mv /app/share/applications/gridline.desktop /app/share/applications/${FLATPAK_ID}.desktop
+      - sed -i -e "s/^Icon=gridline$/Icon=${FLATPAK_ID}/" -e "s/^StartupWMClass=gridline$/StartupWMClass=${FLATPAK_ID}/" /app/share/applications/${FLATPAK_ID}.desktop
+      - |
+        for d in /app/share/icons/hicolor/*/apps; do
+          for f in "$d"/gridline.*; do mv "$f" "$d/${FLATPAK_ID}.${f##*.}"; done
+        done
+      - mv /app/share/mime/packages/gridline.xml /app/share/mime/packages/${FLATPAK_ID}.xml
+      - sed -i "s|<icon name=\"gridline\"/>|<icon name=\"${FLATPAK_ID}\"/>|" /app/share/mime/packages/${FLATPAK_ID}.xml
+      - sed -i -e "s|<launchable type=\"desktop-id\">gridline.desktop</launchable>|<launchable type=\"desktop-id\">${FLATPAK_ID}.desktop</launchable>|" -e "s|<icon type=\"stock\">gridline</icon>|<icon type=\"stock\">${FLATPAK_ID}</icon>|" /app/share/metainfo/${FLATPAK_ID}.metainfo.xml
+    sources:
+      # render.py replaces this with the release tag (type: git, tag, commit) for Flathub.
+      - type: dir
+        path: ../..
+        skip:
+          - build
+          - build-flatpak
+          - .flatpak-builder

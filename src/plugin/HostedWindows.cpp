@@ -311,6 +311,7 @@ void setPluginWindowDevAction(const std::string&) {}
 void setPluginWindowDrawStats(bool) {}
 void setPluginWindowDevKeys(bool) {}
 void setPluginWindowDevResize(int, int) {}
+void devPrintPluginWindows(int) {}
 
 bool hostedEditorOpen(const PluginTarget& t) { return windowFor(&app(), t) != nullptr; }
 bool hostedEditorUnderMouse(PluginTarget&, float&, float&) { return false; }  // J-111g: no collaboration inside a plugin build

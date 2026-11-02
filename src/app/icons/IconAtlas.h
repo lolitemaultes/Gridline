@@ -42,6 +42,10 @@ bool rasterize(const char* svgText, int px, float strokeDevicePx, std::vector<ui
 // out = {minX, minY, maxX, maxY}; *stroked = any shape is stroked. False when
 // the SVG does not parse or draws nothing.
 bool geometryBounds(const char* svgText, float out[4], bool* stroked);
+// K-3: the ink bounds in viewBox units: each shape's geometry bounds, stroked
+// shapes widened by half of `strokeUnits` (the stroke width in viewBox units
+// at the size drawn). out = {minX, minY, maxX, maxY}; false as above.
+bool inkBounds(const char* svgText, float strokeUnits, float out[4]);
 
 class Atlas {
  public:

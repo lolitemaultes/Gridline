@@ -1769,7 +1769,7 @@ void testProject(const std::string& path) {
   }
   // the old Turntable effect is untouched
   const PluginInfo* old = findPlugin("gl.scratcher");
-  expect(old && old->kind == PluginKind::Effect && old->name == "Turntable FX", "the old gl.scratcher effect is still there");
+  expect(old && old->kind == PluginKind::Effect && old->name == "Turntable FX (old)", "the old gl.scratcher effect is still there (hidden since K-23)");
   auto fx = createEffect("gl.scratcher");
   expect(fx != nullptr, "gl.scratcher is created");
   if (fx && old) {

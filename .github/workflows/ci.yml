@@ -5,6 +5,7 @@ name: CI
 on:
   push:
     branches: [main, port-ci]
+    paths-ignore: ["tests/yabridge/**", ".github/workflows/yabridge.yml"]
   pull_request:
   workflow_dispatch:
 
@@ -68,6 +69,12 @@ jobs:
         run: bash tools/ci/smoke.sh build/gridline
       - name: App starts (Xvfb)
         run: xvfb-run -a -s '-screen 0 1280x1024x24' sh -c 'build/gridline-app --version && GRIDLINE_CONFIG_HOME=$PWD/build/appcfg build/gridline-app --hidden --size 800x600 --screenshot build/app.ppm --frames 5 --no-ui-sounds' && test -s build/app.ppm
+      - name: Window class and icon (X11), installed icons (K-14)
+        if: matrix.gui == 'ON'
+        run: |
+          xvfb-run -a -s '-screen 0 1280x1024x24' bash tools/ci/check-x11-window.sh build/gridline-app "$PWD/build/wincfg"
+          DESTDIR="$PWD/build/inst" cmake --install build --prefix /usr > /dev/null
+          bash tools/ci/check-linux-icons.sh build/inst/usr
 
   linux-arm64:
     name: Linux arm64 (Ubuntu 24.04)

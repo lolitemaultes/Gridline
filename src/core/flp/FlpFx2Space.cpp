@@ -462,6 +462,19 @@ bool decodePhaser1(Context&, const std::vector<Event>& evs, PluginMapping& m) {
 double vcN(double v) { return clampd(v / 6000.0, 0, 1); }
 double vcSpeedN(double v) { return clampd((v - 1.0) / 245759.0, 0, 1); }
 
+// K-2: switches set outside the knob table still take FL automation (on at
+// >= 1 after FL's rounding; `flip` for the LFO shape, whose order is reversed).
+struct VSwitch {
+  int tag, param;
+  bool flip;
+};
+std::shared_ptr<const KnobTable> withSwitches(const KnobTable& base, std::initializer_list<VSwitch> sw) {
+  KnobTable k = base;
+  for (const VSwitch& w : sw)
+    k.push_back({w.tag, 0, 1, w.param, [f = w.flip](double v) { return (v >= 0.5) != f ? 1.0 : 0.0; }});
+  return std::make_shared<const KnobTable>(std::move(k));
+}
+
 std::shared_ptr<const KnobTable> vintageChorusTable() {
   namespace fc = gl::packs::spacefx::flc;
   static const auto t = std::make_shared<const KnobTable>(KnobTable{
@@ -500,7 +513,9 @@ bool decodeVintageChorus(Context&, const std::vector<Event>& evs, PluginMapping&
   fx::set(m, sx::BcSync, on(t[15]));
   fx::set(m, sx::BcSyncTicks, fc::bcSyncTicks(vcSpeedN(t[2])));
   m.exact = true;  // every control by its exact law (hiss colour / gate timing are the model's guesses)
-  fx::bindTable(m, tab);
+  static const auto autoTab = withSwitches(*tab, {{3, sx::BcWave, true}, {8, sx::BcMonoIn, false}, {9, sx::BcInvertWet, false},
+                                                  {14, sx::BcNoiseGate, false}, {15, sx::BcSync, false}});
+  fx::bindTable(m, autoTab);
   return true;
 }
 
@@ -600,7 +615,12 @@ bool decodeVintagePhaser(Context&, const std::vector<Event>& evs, PluginMapping&
   fx::set(m, sx::VpEngine, on(t[33]));
   // Out-of-range sweep ends (sorted by the engine) stay inside Gridline's range.
   m.exact = true;
-  fx::bindTable(m, tab);
+  static const auto autoTab = withSwitches(*tab, {{3, sx::VpManual, false}, {5, sx::VpHq, false}, {7, sx::VpSync, false},
+                                                  {8, sx::VpWave, true}, {12, sx::VpDelayOn, false}, {13, sx::VpDelayKeep, false},
+                                                  {17, sx::VpDelaySync, false}, {22, sx::VpMonoIn, false},
+                                                  {24, sx::VpNoiseGate, false}, {33, sx::VpEngine, false},
+                                                  {35, sx::VpInvertFb, false}});
+  fx::bindTable(m, autoTab);
   return true;
 }
 

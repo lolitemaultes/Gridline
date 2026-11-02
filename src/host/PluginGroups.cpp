@@ -340,6 +340,10 @@ bool listedInBrowser(const std::string& type) {
   if (type.find(':') == std::string::npos) return true;  // built-in
   if (isOwnSuiteType(type)) return false;
   auto snap = pluginGroups();
+  auto it = snap->groupOf.find(type);
+  // K-13: a hosted type no scanned plugin provides (its folder was removed or switched off, the
+  // plugin uninstalled, its format switched off) is not listed; projects keep its placeholder.
+  if (it == snap->groupOf.end()) return false;
   bool all = false;
   {
     SnapshotCache& c = snapCache();
@@ -347,8 +351,6 @@ bool listedInBrowser(const std::string& type) {
     all = c.prefs.browserAllFormats;
   }
   if (all) return true;
-  auto it = snap->groupOf.find(type);
-  if (it == snap->groupOf.end()) return true;
   return snap->items[snap->groups[it->second].preferred].type == type;
 }
 

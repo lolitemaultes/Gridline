@@ -331,6 +331,7 @@ Projects can also be saved back to `.flp` with **File, Export, FL Studio project
 - [Windows outside the main window](docs/detachable-windows.md) and [the plugin window's channel strip](docs/plugin-window.md).
 - [The Gridline Suite](docs/gridline-suite.md): Gridline's instruments and effects as plugins for other DAWs, and where they are installed.
 - [Plasma](docs/plugins/plasma.md), [Seltmann](docs/plugins/seltmann.md), [Tideline](docs/plugins/tideline.md), [the synths pack](docs/plugins/synths.md) and [recording Platter performances](docs/plugins/platter-recording.md).
+- [ASIO on Windows](docs/asio.md): using an audio interface's ASIO driver, its buffer sizes, sample rates, inputs and outputs.
 - [Lua scripting](docs/scripting.md), [AI assistants (MCP)](docs/mcp.md) and [the update check](docs/updates.md).
 - [CHANGELOG.md](CHANGELOG.md) lists what changed in each version.
 
@@ -354,6 +355,7 @@ Project files are JSON (`"format": "gridline-project"`). Older files are upgrade
 
 Gridline is free software, released under the GNU General Public License v3.0 (see `LICENSE`).
 Bundled third-party libraries keep their own licences, all GPL-compatible: Dear ImGui (MIT), Lua 5.4 (MIT), RtMidi (MIT-style), Signalsmith Stretch and Signalsmith Linear (MIT, time stretching and pitch shifting), the Rubber Band Library (GPL-2.0-or-later, used under the GPL-3.0; the Rubber Band time mode), CLAP headers (MIT), VST3 plug-in interfaces (MIT), LV2 headers (ISC), dr_libs and stb_vorbis (public domain or MIT-0), nanosvg (zlib), and for collaborative projects libjuice and libplum (MPL-2.0), Monocypher (BSD-2-Clause or CC0), stb_image and stb_image_write (public domain or MIT). See `third_party/NOTICE.md` and each folder under `third_party/`.
+The ASIO backend on Windows uses Steinberg's ASIO interface under the GPLv3 option of its dual licence; no SDK file is included (see [docs/asio.md](docs/asio.md)). ASIO is a trademark of Steinberg Media Technologies GmbH.
 The interface icons in `assets/icons/ui/` use geometry from Lucide (ISC) and Tabler Icons (MIT); see `assets/icons/ui/NOTICE.md`.
 Platter's scratch mechanics follow the approach of [Mixxx](https://github.com/mixxxdj/mixxx) (GPL-2.0-or-later); no Mixxx code is included.
 

@@ -1,6 +1,7 @@
 // Gridline — context menus (channel, pattern, playlist track/clip, piano roll,
 // mixer track/slot, knob, plugin window) and the editing helpers they share
 // with the main menu. Window files open these popups and call the bodies here.
+#include "EditorZoomUi.h"
 #include "../core/ClipLoop.h"
 #include "../core/ClipSources.h"
 #include "../core/I18n.h"
@@ -9,6 +10,7 @@
 #include "J31Ui.h"
 #include "HostedUi.h"
 #include "ContextMenus.h"
+#include "PluginFavsUi.h"
 #include "ExportUi.h"
 #include <algorithm>
 #include <cctype>
@@ -28,6 +30,7 @@
 #include "../core/Timeline.h"
 #include "../core/Presets.h"
 #include "../core/MixerOps.h"
+#include "../core/StepNotes.h"
 #include "../engine/PlaylistTools.h"
 #include "../engine/KerfMarks.h"
 #include "../core/MenuParity.h"
@@ -50,6 +53,7 @@
 #include "ChopUi.h"
 #include "../packs/PacksUi.h"
 #include "PatternAutoUi.h"
+#include "TrackPlusUi.h"
 #include "../core/Platform.h"
 
 namespace gl {
@@ -172,21 +176,9 @@ void fileDialog(App& a, const char* title, bool save, std::vector<std::string> e
 }
 
 namespace {
+// K-16: favourites at the top, the built-in categories, the installed plugins; every row has its star.
 void pluginItems(PluginKind kind, const std::function<void(const std::string&)>& pick, const std::string& current) {
-  std::map<std::string, std::vector<const PluginInfo*>> cats;
-  std::vector<std::string> order;
-  for (const auto& p : pluginCatalog()) {
-    if (p.kind != kind) continue;
-    if (!cats.count(p.category)) order.push_back(p.category);
-    cats[p.category].push_back(&p);
-  }
-  for (const auto& c : order) {
-    if (ImGui::BeginMenu(c.c_str())) {
-      for (const PluginInfo* p : cats[c])
-        if (ImGui::MenuItem(p->name.c_str(), nullptr, p->type == current)) pick(p->type);
-      ImGui::EndMenu();
-    }
-  }
+  favui::pluginMenu(kind, pick, current);
 }
 }  // namespace
 
@@ -204,11 +196,9 @@ bool pianoHasTarget(const App& a) {
 }
 
 namespace {
-std::vector<Note> pianoNotes(const App& a) {
+std::vector<Note> pianoNotes(const App& a) {  // K-22: the channel's rack steps as step notes too
   const Pattern* p = a.doc.song().pattern(a.curPattern);
-  if (!p) return {};
-  auto it = p->notes.find(a.selChannel);
-  return it == p->notes.end() ? std::vector<Note>{} : it->second;
+  return p ? stepnotes::view(a.doc.song(), *p, a.selChannel) : std::vector<Note>{};
 }
 ops::NoteSel pianoSel(const App& a, size_t n) {
   ops::NoteSel sel(n, false);
@@ -232,7 +222,7 @@ bool pianoEdit(App& a, const char* label, const std::function<void(std::vector<N
   auto before = notes;
   fn(notes, sel);
   ops::sortNotes(notes, sel);
-  if (notes != before) a.doc.setNotes(a.curPattern, a.selChannel, notes, label);
+  if (notes != before) stepnotes::write(a.doc, a.curPattern, a.selChannel, notes, label);
   a.piano.selPattern = a.curPattern;
   a.piano.selChannel = a.selChannel;
   a.piano.selected.clear();
@@ -797,6 +787,15 @@ void channelContextMenu(App& a, ObjectId id) {
   if (ImGui::MenuItem(i18n::tr("Delete"), keys::label("rack.delete"))) a.doc.removeChannel(id);
 }
 
+void autoScrollItem(App& a, bool pattern) {
+  const char* key = pattern ? "ui.autoScrollPattern" : "ui.autoScroll";
+  const bool on = a.settings.getBool(key);
+  const char* label = pattern ? i18n::tr("Auto scrolling in pattern editors") : i18n::tr("Auto scrolling");
+  if (ImGui::MenuItem(label, nullptr, on)) a.settings.set(key, !on);
+  ui::Hint(pattern ? "The piano roll and the channel rack follow the pattern position while it plays (off: the view stays where you put it)"
+                   : "The playlist follows the song position while it plays (off: the view stays where you put it)");
+}
+
 void rackOptionsMenu(App& a) {
   const Song& s = a.doc.song();
   auto sel = selChannelsInOrder(a);
@@ -908,6 +907,8 @@ void rackOptionsMenu(App& a) {
       a.selChannel = u.front();
     }
   }
+  ImGui::Separator();
+  autoScrollItem(a, true);  // K-4: the step view pages along with the playing step
 }
 
 // ---------------------------------------------------------------- patterns ----
@@ -1376,6 +1377,8 @@ void playlistOptionsMenu(App& a) {
     if (ImGui::MenuItem(i18n::tr("Quick zoom 3 (64 bars)"), keys::label("playlist.quickZoom3"))) a.playlist.quickZoom = 3;
     if (ImGui::MenuItem(i18n::tr("Zoom on selection"), keys::label("playlist.zoomSelection"), false, any || a.playlist.selEnd > a.playlist.selStart)) a.playlist.zoomSelRequest = true;
     if (ImGui::MenuItem(i18n::tr("Whole song"), "Home")) a.playlist.fitRequest = true;
+    ImGui::Separator();  // K-24: the vertical zoom (Alt+wheel, the vertical scroller's ends) back to the default height
+    if (ImGui::MenuItem(i18n::tr("Default track height"), nullptr, false, std::fabs(a.playlist.trackHeight - 46.0f) >= 0.5f)) a.playlist.trackHeight = 46.0f;
     ImGui::EndMenu();
   }
   if (ImGui::BeginMenu(i18n::tr("View"))) {
@@ -1389,6 +1392,8 @@ void playlistOptionsMenu(App& a) {
     ImGui::Separator();
     ImGui::MenuItem(i18n::tr("Clip source picker"), keys::label("playlist.picker"), &a.playlist.pickerOpen);
     ImGui::MenuItem(i18n::tr("Wide track headers"), nullptr, &a.playlist.wideHeaders);
+    if (const bool plus = trackplusui::enabled(a); ImGui::MenuItem(i18n::tr("Track + button"), nullptr, plus)) trackplusui::setEnabled(a, !plus);  // K-12
+    ui::Hint("A \"+\" on the hovered track header: give the track an instrument and start patterns for it there");
     ImGui::MenuItem(i18n::tr("Stretch audio clips when resizing"), keys::label("playlist.stretchResize"), &a.playlist.stretchResize);
     ImGui::MenuItem(i18n::tr("Fade and volume handles on audio clips"), keys::label("playlist.fades"), &a.playlist.showFades);
     ImGui::MenuItem(i18n::tr("Audio clip edits on zero crossings"), keys::label("playlist.zeroCross"), &a.playlist.zeroCross);
@@ -1402,6 +1407,8 @@ void playlistOptionsMenu(App& a) {
       if (ImGui::MenuItem(i18n::tr("Smooth snapping"), nullptr, smoothSnap)) a.settings.set("ui.smoothSnap", !smoothSnap);
       ui::Hint("Snapped drags glide from grid cell to grid cell instead of jumping (positions still land exactly on the grid)");
     }
+    ImGui::Separator();
+    autoScrollItem(a, false);  // K-4
     ImGui::EndMenu();
   }
   ImGui::Separator();
@@ -1646,6 +1653,8 @@ void pianoRollMenu(App& a) {
     ImGui::Separator();
     menuparity::pianoViewItems(a);  // J-27
     j31::pianoViewItems(a);         // J-31: MIDI snap, editable ghosts, key markers, background waveform
+    ImGui::Separator();
+    autoScrollItem(a, true);  // K-4
     ImGui::EndMenu();
   }
   if (ImGui::BeginMenu(i18n::tr("Tool"))) {
@@ -1654,7 +1663,7 @@ void pianoRollMenu(App& a) {
                       {i18n::N_("Delete"), "piano.toolDelete", Tool::Erase},  {i18n::N_("Select"), "piano.toolSelect", Tool::Select},
                       {i18n::N_("Slice"), "piano.toolSlice", Tool::Slice},    {i18n::N_("Mute"), "piano.toolMute", Tool::Mute},
                       {i18n::N_("Play"), "piano.toolPlay", Tool::Play},       {i18n::N_("Zoom"), "piano.toolZoom", Tool::Zoom},
-                      {i18n::N_("Detune"), "piano.toolDetune", Tool::Detune}};
+                      {i18n::N_("Detune"), "piano.toolDetune", Tool::Detune},   {i18n::N_("Pitch bend"), "piano.toolBend", Tool::Bend}};
     for (const auto& t : list)
       if (ImGui::MenuItem(i18n::tr(t.name), keys::label(t.cmd), a.piano.tool == t.tool)) a.piano.tool = t.tool;
     ImGui::EndMenu();
@@ -2234,6 +2243,7 @@ void pluginWindowMenu(App& a, ObjectId owner, int slot) {
     if (ImGui::MenuItem(i18n::tr("Remove effect"))) a.doc.setSlotPlugin(owner, slot, "");
   }
   ImGui::Separator();
+  if (!isHostedType(info->type)) edzoomui::sizeMenu(a, info->type, t.isChannel() ? "channelsettings" : "fxeditor");  // K-19
   if (ImGui::MenuItem(i18n::tr("Close window"))) {
     if (t.isChannel())
       a.settingsChannel = kNoId;

@@ -520,7 +520,8 @@ Json pluginCatalogJson(const std::string& kind, const std::string& query, bool w
     if (isHostedType(p.type)) j.object["hosted"] = jbool(true);
     list.array.push_back(std::move(j));
   };
-  for (const auto& p : pluginCatalog()) add(p);
+  for (const auto& p : pluginCatalog())
+    if (!p.hidden) add(p);  // K-23: kept for old projects only
   for (const PluginInfo* p : dynamicPlugins()) add(*p);
   return jobj({{"plugins", list}, {"count", jnum(static_cast<double>(list.array.size()))}});
 }

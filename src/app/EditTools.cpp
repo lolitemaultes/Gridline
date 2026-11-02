@@ -7,6 +7,7 @@
 #include <functional>
 #include "../../third_party/imgui/imgui.h"
 #include "../core/NoteTools.h"
+#include "../core/StepNotes.h"
 #include "App.h"
 #include "J31Ui.h"
 #include "Theme.h"
@@ -104,6 +105,7 @@ struct Session {
   tools::NoteSel baseSel;
   std::vector<uint8_t> baseRow;
   std::vector<StepProps> baseProps;
+  stepnotes::Snapshot snap;  // K-22: the channel as it was (its rack steps too), for cancel
   uint64_t key = 0;
   bool changed = false;
   bool focus = false;
@@ -196,13 +198,12 @@ void seedButton(const char* id, uint32_t* seed) {
   ImGui::PopID();
 }
 
-// Current notes of the session target.
-const std::vector<Note>* targetNotes(const Song& s) {
+// Current notes of the session target (K-22: its rack steps as step notes too), false: no pattern.
+bool targetNotes(const Song& s, std::vector<Note>& out) {
   const Pattern* p = s.pattern(T.pat);
-  if (!p) return nullptr;
-  static const std::vector<Note> empty;
-  auto it = p->notes.find(T.ch);
-  return it == p->notes.end() ? &empty : &it->second;
+  if (!p) return false;
+  out = stepnotes::view(s, *p, T.ch);
+  return true;
 }
 
 void close(App& a, bool keep) {
@@ -210,7 +211,7 @@ void close(App& a, bool keep) {
     if (T.stepTool != StepTool::None)
       ops::editStepRow(a.doc, T.pat, T.ch, "cancel", [&](tools::StepRow& r, tools::StepPropRow& p) { r = T.baseRow, p = T.baseProps; }, T.key);
     else
-      a.doc.setNotes(T.pat, T.ch, T.base, "cancel", T.key);
+      stepnotes::restore(a.doc, T.snap, "cancel", T.key);  // K-22: rack steps come back as steps
     a.piano.selected.clear();
     for (size_t i = 0; i < T.baseSel.size(); ++i)
       if (T.baseSel[i]) a.piano.selected.insert(i);
@@ -221,11 +222,11 @@ void close(App& a, bool keep) {
 
 // Applies a preview result (one merged undo step per session).
 void preview(App& a, const char* label, std::vector<Note> notes, tools::NoteSel sel) {
-  const std::vector<Note>* cur = targetNotes(a.doc.song());
-  if (!cur) return;
+  std::vector<Note> cur;
+  if (!targetNotes(a.doc.song(), cur)) return;
   ops::sortNotes(notes, sel);
-  if (notes != *cur) {
-    a.doc.setNotes(T.pat, T.ch, notes, label, T.key);
+  if (notes != cur) {
+    stepnotes::write(a.doc, T.pat, T.ch, notes, label, T.key);
     T.changed = true;
   }
   a.piano.selPattern = T.pat;
@@ -788,7 +789,8 @@ void openNoteTool(App& a, NoteTool t) {
   T.ch = a.selChannel;
   T.key = 0x4A31310000000000ull ^ (sessionCounter++ << 4);
   T.focus = true;
-  if (const auto* n = targetNotes(s)) T.base = *n;
+  targetNotes(s, T.base);
+  T.snap = stepnotes::capture(s, T.pat, T.ch);
   T.baseSel.assign(T.base.size(), false);
   if (a.piano.selPattern == T.pat && a.piano.selChannel == T.ch)
     for (size_t i : a.piano.selected)

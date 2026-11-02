@@ -13,6 +13,7 @@
 #include <fstream>
 #include <functional>
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
@@ -23,6 +24,8 @@
 #include "../../third_party/imgui/imgui.h"
 #include "../../third_party/imgui/imgui_internal.h"
 #include "../core/Presets.h"
+#include "../core/FileOps.h"
+#include "../core/ProjectInterop.h"
 #include "../host/HostedPlugins.h"
 #include "../host/PluginGroups.h"
 #include "../host/PluginPrefs.h"
@@ -85,13 +88,14 @@ const DirCache& listDir(const fs::path& dir, double now) {
 
 // fs::is_directory for paths the browser checks every frame (one stat call
 // each): cached for a few seconds like the listings (J-25).
+struct DirFlag {
+  bool dir = false;
+  double stamp = -1;
+};
+std::map<std::string, DirFlag> dirFlags;
+
 bool isDirCached(const fs::path& dir, double now) {
-  struct Entry {
-    bool dir = false;
-    double stamp = -1;
-  };
-  static std::map<std::string, Entry> cache;
-  Entry& e = cache[dir.string()];
+  DirFlag& e = dirFlags[dir.string()];
   if (e.stamp < 0 || now - e.stamp >= 3.0) {
     std::error_code ec;
     e.dir = fs::is_directory(dir, ec);
@@ -141,13 +145,16 @@ bool devOpen(const std::string& label) {
   return !list.empty() && list.find("," + label + ",") != std::string::npos;
 }
 constexpr const char* kStarTag = "starred";
+std::string devSection;  // dev: the section the rows drawn belong to (K-18 "browser rows")
 
 ImU32 roleCol(uint32_t r, float a = 0.9f) { return theme::litRole(r, a); }
 
 // One browser row: icon, name (ellipsised), optional right-aligned detail.
 // Returns true when clicked; `dbl` reports a double-click.
+// K-16: `starHit` (plugin rows): hovering shows the star, a click on it is reported there
+// (the row's own click is not).
 bool browserRow(const char* id, ui::Icon icon, const char* name, const char* detail, float indent, bool* dbl, ImU32 iconCol = 0,
-                bool selected = false, bool star = false) {
+                bool selected = false, bool star = false, bool* starHit = nullptr) {
   const auto& P = pal();
   App& a = app();
   ImGui::PushID(id);
@@ -180,7 +187,16 @@ bool browserRow(const char* id, ui::Icon icon, const char* name, const char* det
     }
   ui::drawIcon(dl, icon, ImVec2(x + 8, q.y + kRowH * 0.5f), 12, hov ? P.text : ic);
   float detailW = 0;
-  if (star) {
+  if (starHit) {
+    const bool sh = hov && ImGui::GetIO().MousePos.x >= q.x + w - 20;
+    *starHit = clicked && sh;
+    if (*starHit) clicked = false;
+    if (star || hov) {
+      if (sh) dl->AddCircleFilled(ImVec2(q.x + w - 10, q.y + kRowH * 0.5f), 8.0f, theme::withAlpha(P.surface950, 0.55f), 16);
+      browserui::drawStar(dl, ImVec2(q.x + w - 10, q.y + kRowH * 0.5f), 4.5f, star ? P.hot : sh ? P.text : P.textFaint, star);
+    }
+    detailW += 16;
+  } else if (star) {
     browserui::drawStar(dl, ImVec2(q.x + w - 10, q.y + kRowH * 0.5f), 4.5f, P.hot, true);
     detailW += 16;
   }
@@ -199,6 +215,13 @@ bool browserRow(const char* id, ui::Icon icon, const char* name, const char* det
 // Collapsible section header (top level): chevron, coloured folder, title, count.
 // `title` is English (and the open state's id); it is shown translated unless
 // it is a name from disk (`translate` false).
+// K-18: the last section header drawn (its rect), for root folder menus and drops.
+struct HeaderHit {
+  ImGuiID id = 0;
+  ImVec2 min, max;
+};
+HeaderHit lastHeader;
+
 bool sectionHeader(const char* title, int count, bool defaultOpen, uint32_t roleColour = role::kView, ui::Icon icon = ui::Icon::Folder,
                    bool translate = true) {
   const auto& P = pal();
@@ -214,6 +237,8 @@ bool sectionHeader(const char* title, int count, bool defaultOpen, uint32_t role
     st->SetBool(id, open);
   }
   bool hov = ImGui::IsItemHovered();
+  lastHeader = HeaderHit{ImGui::GetItemID(), q, ImVec2(q.x + w, q.y + 26)};
+  devSection = title;
   ImGui::PopID();
   ImDrawList* dl = ImGui::GetWindowDrawList();
   dl->AddRectFilled(q, ImVec2(q.x + w, q.y + 26), hov ? P.surface700 : theme::withAlpha(P.surface800, 0.6f), theme::kRadiusSm);
@@ -232,9 +257,12 @@ bool sectionHeader(const char* title, int count, bool defaultOpen, uint32_t role
 }
 
 // Expandable folder row inside a section (state kept per key).
+std::set<std::string> forceOpen;  // K-18: folders to open (a new folder made in them)
+
 bool treeNode(const std::string& key, const char* label, int count, float indent, uint32_t roleColour = role::kView) {
   ImGuiStorage* st = ImGui::GetStateStorage();
   ImGuiID id = ImGui::GetID(key.c_str());
+  if (forceOpen.erase(key)) st->SetBool(id, true);
   bool open = st->GetBool(id, devOpen(label));
   std::string c = count >= 0 ? std::to_string(count) : "";
   if (browserRow(key.c_str(), ui::Icon::Folder, label, c.c_str(), indent, nullptr, roleCol(roleColour, open ? 1.0f : 0.8f))) {
@@ -319,6 +347,399 @@ void toggleStar(const std::string& path) {
   browserui::index().setTags(path, t);
 }
 
+// ------------------------------------------------------ K-18: file operations
+// Rename (inline field in the tree), New folder, move by dragging onto a
+// folder, Move to the trash (asked first). Only inside the user's folders and
+// Gridline's own folders; the open project's references follow (one undo step
+// that also moves the files back), as do the index, tags and recent files.
+
+// Dev (--dev-input "browser rows"): the file and folder rows drawn last frame, by section.
+struct DevRow {
+  std::string section, path;
+  float x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+};
+bool devRowsOn = false;
+std::vector<DevRow> devRowsNow, devRowsLast;
+void devRow(const std::string& path) {
+  if (!devRowsOn) return;
+  const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+  devRowsNow.push_back(DevRow{devSection, path, a.x, a.y, b.x, b.y});
+}
+
+struct FileOpsState {
+  std::string renaming;     // the row showing the name field
+  bool focus = false;       // focus the field next frame
+  char buf[256] = "";
+  std::string error;        // shown under the field
+  std::string trashAsk;     // asked about in the trash dialog
+  bool trashOpen = false;
+  std::string browserDrag;  // the browser file row being dragged (moves inside the browser)
+} fops;
+
+void clearListings() {
+  dirCache.clear();
+  dirFlags.clear();
+}
+
+// The project's referenced files (channels, note effects, mixer slots), listed again
+// only when the song changes.
+const std::vector<std::string>& projectFiles(App& a) {
+  static std::vector<std::string> files;
+  static uint64_t rev = ~0ull;
+  static const Song* song = nullptr;
+  if (rev != a.doc.revision() || song != &a.doc.song()) {
+    rev = a.doc.revision();
+    song = &a.doc.song();
+    files = referencedFiles(a.doc.song());
+  }
+  return files;
+}
+
+int refsTo(App& a, const std::string& path) {
+  int n = 0;
+  for (const auto& f : projectFiles(a)) n += fileops::isInside(f, path) ? 1 : 0;
+  return n;
+}
+
+// Folders whose contents may be renamed, moved and deleted: the user's browser
+// folders and Gridline's own folders.
+std::vector<std::string> editableRoots(App& a) {
+  std::vector<std::string> r(folders.begin(), folders.end());
+  for (const char* n : {"Clipboard files", "Sliced audio"}) r.push_back(browserui::contentDir(a, n));
+  r.push_back(recordedDir(a));
+  r.push_back(renderedDir(a));
+  r.push_back(urlimportui::importedDir(a));
+  r.push_back(stemsDir(a));
+  r.push_back(editedDir(a));
+  r.push_back(seltmannLoopsDir(a));
+  if (!a.projectPath.empty()) r.push_back((fs::path(a.projectPath).parent_path() / "Audio").string());
+  return r;
+}
+
+// Why `path` cannot be renamed, moved or deleted ("" when it can). `asParent`: the
+// folder receives a new folder or a moved item instead (a browser root may).
+std::string lockedWhy(App& a, const std::string& path, bool asParent = false) {
+  const std::string fl = browserui::flDataDir();
+  if (!fl.empty() && fileops::isInside(path, fl)) return i18n::N_("FL Studio's shipped content is read-only");
+  bool inRoot = false, isRoot = false;
+  for (const auto& r : editableRoots(a)) {
+    if (!fileops::isInside(path, r)) continue;
+    inRoot = true;
+    isRoot = isRoot || fileops::isInside(r, path);
+  }
+  if (!inRoot) return i18n::N_("Read-only here: files can be changed in your own folders and Gridline's folders");
+  if (isRoot && !asParent) return i18n::N_("This folder is one of the browser's own folders");
+  if (!asParent && !a.projectPath.empty() && fileops::isInside(a.projectPath, path))
+    return i18n::N_("The open project is saved here: use File > Save as to move it");
+  if (collabui::active(a)) {
+    const std::string shared = a.projectPath.empty() ? std::string() : fs::path(a.projectPath).parent_path().string();
+    if ((!shared.empty() && fileops::isInside(path, shared)) || (!asParent && refsTo(a, path) > 0))
+      return i18n::N_("Shared with the collaborative project: the others refer to it by this name");
+  }
+  const std::string dir = asParent ? path : fs::path(path).parent_path().string();
+  if (!platform::writable(dir)) return i18n::N_("The folder is read-only");
+  return "";
+}
+
+// A menu item that is disabled (with the reason as a tooltip) when `why` is set.
+bool opItem(const char* label, const std::string& why, const char* shortcut = nullptr) {
+  const bool ok = why.empty();
+  const bool hit = ImGui::MenuItem(i18n::tr(label), shortcut, false, ok);
+  if (!ok && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", i18n::tr(why.c_str()));
+  return hit && ok;
+}
+
+void startRename(const std::string& path) {
+  std::error_code ec;
+  const fs::path p(path);
+  const bool folder = fs::is_directory(p, ec);
+  const std::string shown = folder || p.extension().empty() ? p.filename().string() : p.stem().string();
+  std::snprintf(fops.buf, sizeof fops.buf, "%s", shown.c_str());
+  fops.renaming = path;
+  fops.focus = true;
+  fops.error.clear();
+}
+
+// After a rename or move on disk: the index, the user folders, the selection, the
+// recent files and (one undo step) the open project's references follow.
+void afterMoves(App& a, const fileops::Result& r, const std::string& label) {
+  if (r.moves.empty()) return;
+  const fileops::Move top = r.moves.front();
+  const int refs = refsTo(a, top.first);
+  for (const auto& m : r.moves) browserui::index().movePath(m.first, m.second);
+  bool foldersChanged = false;
+  for (auto& f : folders) foldersChanged = fileops::retargetPath(f, top.first, top.second) || foldersChanged;
+  if (foldersChanged) saveFolders(a);
+  fileops::retargetPath(selPath, top.first, top.second);
+  std::vector<fileops::Move> recents;
+  for (const auto& rf : a.recentFiles) {
+    std::string p = rf;
+    if (fileops::retargetPath(p, top.first, top.second)) recents.emplace_back(rf, p);
+  }
+  for (const auto& [from, to] : recents) a.moveRecent(from, to);
+  clearListings();
+  if (refs > 0)
+    a.doc.execute(std::make_unique<fileops::FileMoveCommand>(label, r.moves, std::vector<fileops::Move>{top},
+                                                              [](const std::string& from, const std::string& to) {
+                                                                browserui::index().movePath(from, to);
+                                                                fileops::retargetPath(selPath, from, to);
+                                                                clearListings();
+                                                              }));
+  std::string msg = label + ": " + fs::path(top.second).filename().string();
+  if (refs > 0) msg += "  \xC2\xB7  " + std::to_string(refs) + " " + i18n::tr(refs == 1 ? "project reference updated" : "project references updated");
+  a.notify(msg);
+}
+
+// Renames `path` to the name typed (a file keeps its extension when none is typed).
+// Returns the error to show ("" when done).
+std::string commitRename(App& a, const std::string& path, std::string name) {
+  while (!name.empty() && name.back() == ' ') name.pop_back();
+  std::error_code ec;
+  const fs::path p(path);
+  const bool folder = fs::is_directory(p, ec);
+  const std::string ext = folder ? std::string() : p.extension().string();
+  if (!ext.empty() && (name.size() < ext.size() || lower(name.substr(name.size() - ext.size())) != lower(ext))) name += ext;
+  if (name == p.filename().string()) return "";
+  if (std::string why = lockedWhy(a, path); !why.empty()) return i18n::tr(why.c_str());
+  const fileops::Result r = fileops::rename(path, name);
+  if (!r.ok) return i18n::tr(r.error.c_str());
+  afterMoves(a, r, i18n::tr("Renamed"));
+  return "";
+}
+
+void moveIntoFolder(App& a, const std::string& src, const std::string& dir) {
+  std::string why = lockedWhy(a, src);
+  if (why.empty()) why = lockedWhy(a, dir, true);
+  if (!why.empty()) {
+    a.notify(i18n::tr(why.c_str()), true);
+    return;
+  }
+  const fileops::Result r = fileops::moveInto(src, dir);
+  if (!r.ok) {
+    a.notify(i18n::tr(r.error.c_str()), true);
+    return;
+  }
+  forceOpen.insert(dir);
+  afterMoves(a, r, i18n::tr("Moved"));
+}
+
+void newFolderIn(App& a, const std::string& dir) {
+  if (std::string why = lockedWhy(a, dir, true); !why.empty()) {
+    a.notify(i18n::tr(why.c_str()), true);
+    return;
+  }
+  const fileops::Result r = fileops::makeFolder(dir, i18n::tr("New folder"));
+  if (!r.ok) {
+    a.notify(i18n::tr(r.error.c_str()), true);
+    return;
+  }
+  clearListings();
+  forceOpen.insert(dir);
+  startRename(r.path);
+}
+
+// The name field of the row being renamed, drawn instead of its name. True when drawn.
+bool renameRow(App& a, const fs::path& p, float indent, ui::Icon icon, ImU32 iconCol) {
+  if (fops.renaming.empty() || fops.renaming != p.string()) return false;
+  const auto& P = pal();
+  ImGui::PushID("##renaming");
+  const ImVec2 q = ImGui::GetCursorScreenPos();
+  const float w = std::max(1.0f, ImGui::GetContentRegionAvail().x);
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  dl->AddRectFilled(q, ImVec2(q.x + w, q.y + kRowH), P.surface800, theme::kRadiusSm);
+  dl->AddRectFilled(q, ImVec2(q.x + 2, q.y + kRowH), P.hot);
+  const float x = q.x + indent;
+  ui::drawIcon(dl, icon, ImVec2(x + 8, q.y + kRowH * 0.5f), 12, iconCol);
+  std::error_code ec;
+  const bool folder = fs::is_directory(p, ec);
+  const std::string ext = folder ? std::string() : p.extension().string();
+  const float extW = ext.empty() ? 0.0f : std::round(a.fontRegular->CalcTextSizeA(theme::kFontCaption + 1, 1e9f, 0, ext.c_str()).x) + theme::kS1;
+  const float fieldH = kRowH - 4;
+  ImGui::SetCursorScreenPos(ImVec2(x + 18, q.y + 2));
+  ImGui::SetNextItemWidth(std::max(40.0f, w - indent - 22 - extW - theme::kS1));
+  if (fops.focus) {
+    ImGui::SetKeyboardFocusHere();
+    fops.focus = false;
+  }
+  ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(theme::kS1, std::max(0.0f, std::floor((fieldH - ImGui::GetFontSize()) * 0.5f))));
+  const bool enter = ImGui::InputText("##name", fops.buf, sizeof fops.buf, ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
+  const bool escape = ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+  const bool left = ImGui::IsItemDeactivated();
+  ImGui::PopStyleVar();
+  ui::FocusRing();
+  ui::Hint(folder ? "Type the new name \xC2\xB7 Enter: rename \xC2\xB7 Esc: cancel"
+                  : "Type the new name (the extension stays) \xC2\xB7 Enter: rename \xC2\xB7 Esc: cancel");
+  const ImVec2 f1 = ImGui::GetItemRectMax();
+  if (!ext.empty())
+    dl->AddText(a.fontRegular, theme::kFontCaption + 1, ImVec2(f1.x + theme::kS1, std::round(q.y + (kRowH - 13) * 0.5f) - 1), P.textFaint, ext.c_str());
+  float h = kRowH;
+  if (!fops.error.empty()) {
+    theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption, ImVec2(x + 18, q.y + kRowH + 2), w - indent - 22, theme::lit(P.danger), fops.error.c_str());
+    h += 18;
+  }
+  ImGui::SetCursorScreenPos(ImVec2(q.x, q.y + h));
+  ImGui::Dummy(ImVec2(0, 0));
+  ImGui::PopID();
+  const std::string path = p.string();
+  if (escape) {
+    fops.renaming.clear();
+    fops.error.clear();
+  } else if (enter || left) {
+    const std::string err = commitRename(a, path, fops.buf);
+    if (err.empty()) {
+      fops.renaming.clear();
+    } else if (enter) {
+      fops.error = err;
+      fops.focus = true;
+    } else {
+      fops.renaming.clear();  // clicked away: the name stays as it was, the reason as a notification
+      a.notify(err, true);
+    }
+  }
+  return true;
+}
+
+// The item a drag inside the browser carries: a browser file row or folder ("" otherwise).
+std::string browserDragItem(const ImGuiPayload* pl) {
+  if (!pl || !pl->Data) return "";
+  const std::string v(static_cast<const char*>(pl->Data), static_cast<size_t>(pl->DataSize));
+  if (pl->IsDataType("GL_BFOLDER")) return v;
+  if ((pl->IsDataType("GL_FILE") || pl->IsDataType("GL_ITEM")) && v == fops.browserDrag) return v;
+  return "";
+}
+
+// Between Begin/EndDragDropTarget of a folder: files and folders dragged inside the
+// browser move into it (the reason shows when they cannot).
+void acceptMoveInto(App& a, const std::string& dir) {
+  const ImGuiPayload* pl = ImGui::GetDragDropPayload();
+  const std::string src = browserDragItem(pl);
+  if (src.empty() || fileops::isInside(dir, src) || fileops::isInside(fs::path(src).parent_path().string(), dir)) return;
+  std::string why = lockedWhy(a, src);
+  if (why.empty()) why = lockedWhy(a, dir, true);
+  if (!why.empty()) {
+    a.setHint(i18n::tr(why.c_str()));
+    return;
+  }
+  a.setHint(std::string(i18n::tr("Drop to move it into ")) + fs::path(dir).filename().string());
+  if (ImGui::AcceptDragDropPayload(pl->DataType)) moveIntoFolder(a, src, dir);
+}
+
+// A folder row (in a tree): drag source, drop target, its menu.
+void folderRowExtras(App& a, const fs::path& dir) {
+  const std::string d = dir.string();
+  if (ImGui::BeginDragDropSource()) {
+    ImGui::SetDragDropPayload("GL_BFOLDER", d.data(), d.size());
+    ui::DragPreview(ui::Icon::Folder, dir.filename().string().c_str());
+    ImGui::EndDragDropSource();
+  }
+  if (ImGui::BeginDragDropTarget()) {
+    acceptMoveInto(a, d);
+    ImGui::EndDragDropTarget();
+  }
+  ImGui::PushID(d.c_str());
+  if (ImGui::BeginPopupContextItem("##dctx")) {
+    ImGui::TextDisabled("%s", theme::fitText(dir.filename().string().c_str(), 260));
+    const std::string why = lockedWhy(a, d);
+    if (opItem("New folder", lockedWhy(a, d, true))) newFolderIn(a, d);
+    if (opItem("Rename", why)) startRename(d);
+    if (opItem("Move to the trash...", why)) fops.trashAsk = d, fops.trashOpen = true;
+    ImGui::EndPopup();
+  }
+  ImGui::PopID();
+}
+
+// A browser root's section header (just drawn): drops move into it, right-click: New folder.
+void rootHeaderExtras(App& a, const std::string& dir, const HeaderHit& h) {
+  if (h.id != 0 && ImGui::GetDragDropPayload() && ImGui::BeginDragDropTargetCustom(ImRect(h.min, h.max), h.id)) {
+    acceptMoveInto(a, dir);
+    ImGui::EndDragDropTarget();
+  }
+}
+bool rootHeaderMenu(const HeaderHit& h, const char* id) {
+  if (ImGui::IsMouseReleased(ImGuiMouseButton_Right) && ImGui::IsMouseHoveringRect(h.min, h.max) &&
+      ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup))
+    ImGui::OpenPopup(id);
+  return ImGui::BeginPopup(id);
+}
+
+// The trash dialog's action: `fops.trashAsk` to the system trash.
+void trashNow(App& a) {
+  const std::string path = fops.trashAsk;
+  fops.trashAsk.clear();
+  if (path.empty()) return;
+  const std::string why = lockedWhy(a, path);
+  if (!why.empty()) {
+    a.notify(i18n::tr(why.c_str()), true);
+    return;
+  }
+  const char* testTrash = std::getenv("GRIDLINE_TRASH_DIR");  // tests: a trash folder of their own
+  const fileops::Result r = fileops::moveToTrash(path, testTrash ? testTrash : "");
+  if (!r.ok) {
+    a.notify(i18n::tr(r.error.c_str()), true);
+    return;
+  }
+  for (const auto& m : r.moves) browserui::index().movePath(m.first, "");
+  if (fileops::isInside(selPath, path)) selPath.clear();
+  clearListings();
+  a.notify(std::string(i18n::tr("Moved to the trash: ")) + fs::path(path).filename().string());
+}
+
+// "Move to the trash?" (asked first; the trash keeps the item, the project's
+// references to it go missing).
+void trashDialog(App& a) {
+  if (fops.trashOpen) {
+    ImGui::OpenPopup("##trashask");
+    fops.trashOpen = false;
+  }
+  ImGuiViewport* vp = ImGui::GetMainViewport();
+  ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.35f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS4, theme::kS4));
+  const bool open = ImGui::BeginPopupModal("##trashask", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar);
+  ImGui::PopStyleVar();
+  if (!open) return;
+  const auto& P = pal();
+  constexpr float kW = 340.0f, kButtonW = 112.0f;
+  const fs::path p(fops.trashAsk);
+  std::error_code ec;
+  const bool folder = fs::is_directory(p, ec);
+  ImGui::PushFont(a.fontBold, 0.0f);
+  ImGui::TextUnformatted(i18n::tr("Move to the trash?"));
+  ImGui::PopFont();
+  ImGui::Dummy(ImVec2(0, theme::kS1));
+  ImGui::TextUnformatted(theme::fitText(p.filename().string().c_str(), kW));
+  if (folder) {
+    static std::string counted;
+    static size_t files = 0;
+    if (counted != fops.trashAsk) {
+      counted = fops.trashAsk;
+      files = 0;
+      for (fs::recursive_directory_iterator it(p, fs::directory_options::skip_permission_denied, ec), end; !ec && it != end && files < 100000;
+           it.increment(ec))
+        files += it->is_regular_file(ec) ? 1 : 0;
+    }
+    ImGui::TextColored(theme::vec(P.textDim), i18n::tr("A folder with %zu files"), files);
+  }
+  const int refs = refsTo(a, fops.trashAsk);
+  if (refs > 0) {
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + kW);
+    ImGui::TextColored(theme::vec(theme::lit(P.danger)), i18n::tr("The open project uses it (%d references): they will be missing until it is put back."), refs);
+    ImGui::PopTextWrapPos();
+  }
+  ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("It can be restored from the system trash."));
+  ImGui::Dummy(ImVec2(kW, theme::kS2));
+  ImGui::SetCursorPosX(ImGui::GetCursorPosX() + kW - ui::ButtonRowWidth(2, kButtonW));
+  const bool cancel = ui::TextButton("Cancel", false, kButtonW) || ImGui::IsKeyPressed(ImGuiKey_Escape);
+  ImGui::SameLine(0, theme::kS2);
+  if (ui::DangerButton("Move to trash", true, kButtonW)) {
+    trashNow(a);
+    ImGui::CloseCurrentPopup();
+  } else if (cancel) {
+    fops.trashAsk.clear();
+    ImGui::CloseCurrentPopup();
+  }
+  ImGui::EndPopup();
+}
+
 void fileContextMenu(App& a, const std::string& ps) {
   if (!ImGui::BeginPopupContextItem("##fctx")) return;
   ImGui::TextDisabled("%s", theme::fitText(fs::path(ps).filename().string().c_str(), 260));
@@ -337,6 +758,13 @@ void fileContextMenu(App& a, const std::string& ps) {
     if (ImGui::MenuItem(i18n::tr("Load as impulse on the selected insert"))) browserui::performDrop(a, ps, browse::DropTarget::MixerTrack, {});
     if (ImGui::MenuItem(i18n::tr("Split stems..."))) stemsui::openForFile(a, ps);  // J-191
   }
+  // K-18: rename, new folder beside it, the trash (only in writable user / Gridline folders).
+  ImGui::Separator();
+  const std::string why = lockedWhy(a, ps);
+  const std::string parent = fs::path(ps).parent_path().string();
+  if (opItem("Rename", why)) startRename(ps);
+  if (opItem("New folder", lockedWhy(a, parent, true))) newFolderIn(a, parent);
+  if (opItem("Move to the trash...", why)) fops.trashAsk = ps, fops.trashOpen = true;
   ImGui::EndPopup();
 }
 
@@ -346,6 +774,7 @@ void fileRow(App& a, const fs::path& p, float indent) {
   // Presets show their names; files keep their extension.
   const bool named = k == Kind::Preset || k == Kind::Chain || k == Kind::Shape || k == Kind::Fst;
   std::string name = named ? p.stem().string() : p.filename().string();
+  if (renameRow(a, p, indent, iconOf(k), iconColOf(k))) return;  // K-18
   bool dbl = false;
   const std::string det = fileDetail(p, k);
   const bool sel = ps == selPath;
@@ -370,10 +799,12 @@ void fileRow(App& a, const fs::path& p, float indent) {
     case Kind::Image: ui::Hint("Drag onto a Pixel Tone editor or channel to play this picture \xC2\xB7 double-click: load into the open Pixel Tone"); break;
     default: break;
   }
+  devRow(ps);
   ImGui::PushID(ps.c_str());
   fileContextMenu(a, ps);
   ImGui::PopID();
   browserui::fileDragSource(ps);
+  if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) fops.browserDrag = ps;  // K-18: a move inside the browser
 }
 
 void dirTree(App& a, const fs::path& dir, int depth, float baseIndent = 12.0f) {
@@ -382,7 +813,11 @@ void dirTree(App& a, const fs::path& dir, int depth, float baseIndent = 12.0f) {
   const float indent = baseIndent + depth * 14.0f;
   for (const auto& sub : d.dirs) {
     std::string key = sub.string();
-    if (treeNode(key, sub.filename().string().c_str(), -1, indent)) dirTree(a, sub, depth + 1, baseIndent);
+    if (renameRow(a, sub, indent, ui::Icon::Folder, roleCol(role::kView))) continue;  // K-18
+    const bool open = treeNode(key, sub.filename().string().c_str(), -1, indent);
+    devRow(key);
+    folderRowExtras(a, sub);  // K-18: drag, drop into, menu
+    if (open) dirTree(a, sub, depth + 1, baseIndent);
   }
   for (const auto& f : d.files) fileRow(a, f, indent);
 }
@@ -448,7 +883,10 @@ int presetLibrary(App& a, const std::function<bool(const PluginInfo&)>& want, fl
 void pluginRow(App& a, const PluginInfo& p, float indent, const char* detail, bool fav) {
   bool dbl = false;
   ui::Icon icon = p.kind == PluginKind::Generator ? ui::Icon::Plug : p.kind == PluginKind::Effect ? ui::Icon::Mixer : ui::Icon::Piano;
-  browserRow(p.type.c_str(), icon, p.name.c_str(), detail, indent, &dbl, 0, false, fav);
+  bool starHit = false;
+  browserRow(p.type.c_str(), icon, p.name.c_str(), detail, indent, &dbl, 0, false, fav, &starHit);
+  if (starHit) host::setFavourite(p.type, !fav);  // K-16: the star toggles the favourite
+  if (starHit) dbl = false;
   if (ImGui::BeginDragDropSource()) {
     ImGui::SetDragDropPayload("GL_PLUGIN", p.type.data(), p.type.size());
     ui::DragPreview(icon, p.name.c_str());
@@ -456,12 +894,7 @@ void pluginRow(App& a, const PluginInfo& p, float indent, const char* detail, bo
   }
   ImGui::PushID(p.type.c_str());
   if (ImGui::BeginPopupContextItem("##pctx")) {
-    host::PluginPrefs prefs = host::pluginPrefs();
-    if (ImGui::MenuItem(fav ? i18n::tr("Remove from favourites") : i18n::tr("Add to favourites"))) {
-      if (fav) prefs.favourites.erase(p.type);
-      else prefs.favourites.insert(p.type);
-      host::setPluginPrefs(prefs);
-    }
+    if (ImGui::MenuItem(fav ? i18n::tr("Remove from favourites") : i18n::tr("Add to favourites"))) host::setFavourite(p.type, !fav);
     if (ImGui::MenuItem(i18n::tr("Plugin picker"), keys::label("view.pluginPicker"))) browserui::togglePluginPicker();
     ImGui::EndPopup();
   }
@@ -484,7 +917,7 @@ void pluginRow(App& a, const PluginInfo& p, float indent, const char* detail, bo
     }
   }
   ui::Hint(p.name + " \xC2\xB7 " + p.category + "   " +
-           (p.kind == PluginKind::Generator ? "(double-click or drag onto the channel rack to add \xC2\xB7 right-click: favourite)"
+           (p.kind == PluginKind::Generator ? "(double-click or drag onto the channel rack to add \xC2\xB7 star: favourite)"
             : p.kind == PluginKind::Effect  ? "(double-click to insert on the selected mixer track, or drag onto a strip or slot)"
                                             : "(double-click to add to the selected channel's note effects)"));
 }
@@ -494,7 +927,7 @@ void builtinPlugins(App& a, PluginKind kind, float indent, const char* keyBase) 
   const host::PluginPrefs prefs = host::pluginPrefs();
   std::map<std::string, std::vector<const PluginInfo*>> byCat;
   for (const auto& p : pluginCatalog())
-    if (p.kind == kind) byCat[p.category.empty() ? "Other" : p.category].push_back(&p);
+    if (p.kind == kind && !p.hidden) byCat[p.category.empty() ? "Other" : p.category].push_back(&p);
   for (auto& [cat, list] : byCat) {
     std::sort(list.begin(), list.end(), [](const PluginInfo* x, const PluginInfo* y) { return x->name < y->name; });
     const std::string key = std::string(keyBase) + cat;
@@ -644,18 +1077,11 @@ void sectionCurrentProject(App& a) {
   }
   // Samples used by the project's channels (preview, drag elsewhere), listed
   // again only when the project changes.
-  static std::vector<std::string> used;
-  static uint64_t usedRev = ~0ull;
-  if (usedRev != a.doc.revision()) {
-    usedRev = a.doc.revision();
-    used.clear();
-    std::set<std::string> seen;
-    for (const auto& c : s.channels)
-      if (!c.plugin.data.empty() && !seen.count(c.plugin.data) && browse::kindOf(c.plugin.data) == Kind::Audio) {
-        seen.insert(c.plugin.data);
-        used.push_back(c.plugin.data);
-      }
-  }
+  // K-17: every audio file the project refers to (channel samples, audio clips' channels,
+  // the audio editor's edited takes, impulse responses, recordings, renders, stems, slices).
+  std::vector<std::string> used;
+  for (const auto& f : projectFiles(a))
+    if (browse::kindOf(f) == Kind::Audio) used.push_back(f);
   if (treeNode("##cp.smp", "Samples used", static_cast<int>(used.size()), in, role::kPaint))
     for (const auto& u : used) fileRow(a, u, in + 14);
   // Audio saved with the project (recordings, audio editor renders).
@@ -674,6 +1100,17 @@ void sectionRecent(App& a) {
 
 void sectionPluginDatabase(App& a) {
   if (!sectionHeader("Plugin database", -1, true, role::kDraw, ui::Icon::Plug)) return;
+  {  // K-16: the starred plugins (built-in and installed) first, draggable like the others
+    const host::PluginPrefs prefs = host::pluginPrefs();
+    std::vector<const PluginInfo*> favs;
+    for (const auto& t : prefs.favourites)
+      if (const PluginInfo* p = findPlugin(t); p && collabui::pluginAllowed(a, p->type)) favs.push_back(p);
+    std::sort(favs.begin(), favs.end(), [](const PluginInfo* x, const PluginInfo* y) { return x->name < y->name; });
+    if (treeNode("##pdb.fav", "Favourites", static_cast<int>(favs.size()), 12, role::kStamp)) {
+      for (const PluginInfo* p : favs) pluginRow(a, *p, 26, nullptr, true);
+      if (favs.empty()) emptyLine("Click a plugin's star (or right-click: Add to favourites)", 40);
+    }
+  }
   installedPlugins(a, 12);
   if (treeNode("##pdb.gen", "Generators", -1, 12, role::kDraw)) builtinPlugins(a, PluginKind::Generator, 26, "##pdb.g.");
   if (treeNode("##pdb.fx", "Effects", -1, 12, role::kSlice)) builtinPlugins(a, PluginKind::Effect, 26, "##pdb.e.");
@@ -718,8 +1155,22 @@ void folderSection(App& a, const char* title, const fs::path& dir, uint32_t role
   if (!isDirCached(dir, a.now)) {
     if (!create) return;
   }
-  if (!sectionHeader(title, -1, false, roleColour)) return;
-  if (ui::HintHovered()) ui::Hint(dir.string());
+  {
+    ImGuiStorage* st = ImGui::GetStateStorage();
+    if (forceOpen.erase(dir.string())) st->SetBool(ImGui::GetID(title), true);
+  }
+  const bool open = sectionHeader(title, -1, false, roleColour);
+  const HeaderHit hh = lastHeader;
+  if (ImGui::IsMouseHoveringRect(hh.min, hh.max) && ImGui::IsWindowHovered()) a.setHint(dir.string() + "   (right-click: new folder)");
+  rootHeaderExtras(a, dir.string(), hh);  // K-18: drops move into it
+  ImGui::PushID(title);
+  if (rootHeaderMenu(hh, "##rootctx")) {
+    ImGui::TextDisabled("%s", theme::fitText(dir.string().c_str(), 300));
+    if (opItem("New folder", lockedWhy(a, dir.string(), true))) newFolderIn(a, dir.string());
+    ImGui::EndPopup();
+  }
+  ImGui::PopID();
+  if (!open) return;
   std::error_code ec;
   if (create && !isDirCached(dir, a.now)) fs::create_directories(dir, ec);
   const DirCache& d = listDir(dir, a.now);
@@ -741,10 +1192,15 @@ void sectionUserFolders(App& a) {
   for (size_t i = 0; i < folders.size(); ++i) {
     ImGui::PushID(static_cast<int>(i));
     fs::path f(folders[i]);
+    if (forceOpen.erase(folders[i])) ImGui::GetStateStorage()->SetBool(ImGui::GetID(f.filename().string().c_str()), true);
     bool open = sectionHeader(f.filename().string().c_str(), -1, false, role::kView, ui::Icon::Folder, false);
-    ui::Hint(folders[i] + "   (right-click to remove or refresh)");
-    if (ImGui::BeginPopupContextItem("##fmenu")) {
+    const HeaderHit hh = lastHeader;
+    if (ImGui::IsMouseHoveringRect(hh.min, hh.max) && ImGui::IsWindowHovered())
+      a.setHint(folders[i] + "   " + i18n::tr("(right-click: new folder, refresh, remove from the browser)"));
+    rootHeaderExtras(a, folders[i], hh);  // K-18: drops move into it
+    if (rootHeaderMenu(hh, "##fmenu")) {
       ImGui::TextDisabled("%s", folders[i].c_str());
+      if (opItem("New folder", lockedWhy(a, folders[i], true))) newFolderIn(a, folders[i]);
       if (ImGui::MenuItem(i18n::tr("Refresh"))) {
         dirCache.clear();
         browserui::refreshIndex(a);
@@ -771,7 +1227,7 @@ void sectionStarred(App& a) {
   std::sort(favs.begin(), favs.end(), [](const PluginInfo* x, const PluginInfo* y) { return x->name < y->name; });
   if (sectionHeader("Favourite plugins", static_cast<int>(favs.size()), true, role::kDraw, ui::Icon::Plug)) {
     for (const PluginInfo* p : favs) pluginRow(a, *p, 12, nullptr, true);
-    if (favs.empty()) emptyLine("Right-click a plugin: Add to favourites");
+    if (favs.empty()) emptyLine("Click a plugin's star (or right-click: Add to favourites)");
   }
   browse::Query q;
   q.tags = {kStarTag};
@@ -806,7 +1262,7 @@ int searchResults(App& a, const std::string& text) {
   // Plugins (built-in, then hosted).
   std::vector<const PluginInfo*> plugs;
   for (const auto& p : pluginCatalog())
-    if (browse::matchesPlugin(p, q, prefs.favourites.count(p.type) > 0)) plugs.push_back(&p);
+    if (!p.hidden && browse::matchesPlugin(p, q, prefs.favourites.count(p.type) > 0)) plugs.push_back(&p);
   for (const PluginInfo* p : dynamicPlugins()) {
     std::string fmt, uid;
     if (host::splitType(p->type, fmt, uid) && !host::formatEnabled(fmt)) continue;
@@ -1009,6 +1465,8 @@ void drawBrowser(App& a) {
   loadFolders(a);
   browserui::ensureIndex(a);
   browserui::tickIndex(a);
+  if (!ImGui::GetDragDropPayload()) fops.browserDrag.clear();  // K-18
+  if (devRowsOn) devRowsLast = std::move(devRowsNow), devRowsNow.clear();
   static char filterBuf[128] = "";
   if (!a.browserSearch.empty()) {
     std::snprintf(filterBuf, sizeof filterBuf, "%s", a.browserSearch.c_str());
@@ -1136,11 +1594,11 @@ void drawBrowser(App& a) {
       folderSection(a, "Rendered", renderedDir(a), role::kSelect, "Nothing rendered yet", true);
       folderSection(a, "Imported", urlimportui::importedDir(a), role::kLoop, "Nothing imported from links yet", true);  // J-192
       folderSection(a, "Stems", stemsDir(a), role::kGraph, "No stems yet", true);  // J-191
+      folderSection(a, "Edited audio", editedDir(a), role::kSlip, "No edited audio", true);  // K-17: in PROJECT too
+      folderSection(a, "Seltmann loops", seltmannLoopsDir(a), role::kSlice, "No loops made yet", true);
     }
     if (all || tab == TabSounds) {
       folderSection(a, "Sliced audio", browserui::contentDir(a, "Sliced audio"), role::kSlip, "No sliced audio", true);
-      folderSection(a, "Edited audio", editedDir(a), role::kSlip, "No edited audio", true);
-      folderSection(a, "Seltmann loops", seltmannLoopsDir(a), role::kSlice, "No loops made yet", true);
       sectionUserFolders(a);
     }
     if (tab == TabStarred) sectionStarred(a);
@@ -1193,6 +1651,7 @@ void drawBrowser(App& a) {
     }
   }
   browserui::browserDropTarget(a);  // J-75: folders dragged in from other applications
+  trashDialog(a);                   // K-18
   ui::EndDockWindow();
 }
 
@@ -1223,6 +1682,53 @@ void browserDropTarget(App& a) {
     acceptFileDrop(a, browse::DropTarget::Browser, DropPlace{});
     ImGui::EndDragDropTarget();
   }
+}
+
+// K-17 / K-18 dev checks (--dev-input "browser ..."):
+//   browser tab <0..4>                the tab (All, Project, Plugins, Sounds, Starred)
+//   browser rows [on]                 on: record the drawn rows; else print last frame's rows
+//   browser rename <path>             the inline name field on that row (type with "text", then "key enter")
+//   browser newfolder <dir>           New folder in <dir> (its name field opens)
+//   browser move <path> <dir>         a drop of <path> on folder <dir> inside the browser
+//   browser trash <path>              the trash dialog for <path>; "browser trashok": its Move to trash
+//   browser refs                      the open project's file references (full paths)
+//   browser state                     the name field, its error and why <path> is locked ("browser state <path>")
+bool devCommand(App& a, const std::vector<std::string>& args, int frame) {
+  if (args.empty()) return false;
+  const std::string& op = args[0];
+  const std::string p1 = args.size() > 1 ? args[1] : std::string(), p2 = args.size() > 2 ? args[2] : std::string();
+  if (op == "tab") {
+    tab = std::clamp(std::atoi(p1.c_str()), 0, TabCount - 1);
+  } else if (op == "rows" && p1 == "on") {
+    devRowsOn = true;
+  } else if (op == "rows") {
+    std::printf("browserrows frame %d: %zu\n", frame, devRowsLast.size());
+    for (const auto& r : devRowsLast)
+      std::printf("  row \"%s\" x %.1f %.1f y %.1f %.1f path %s\n", r.section.c_str(), static_cast<double>(r.x0), static_cast<double>(r.x1),
+                  static_cast<double>(r.y0), static_cast<double>(r.y1), r.path.c_str());
+  } else if (op == "rename") {
+    startRename(p1);
+  } else if (op == "newfolder") {
+    newFolderIn(a, p1);
+  } else if (op == "move") {
+    moveIntoFolder(a, p1, p2);
+  } else if (op == "trash") {
+    fops.trashAsk = p1, fops.trashOpen = true;
+  } else if (op == "trashok") {
+    trashNow(a);
+    ImGui::ClosePopupsExceptModals();
+  } else if (op == "refs") {
+    std::printf("browserrefs frame %d:\n", frame);
+    for (const auto& f : referencedFiles(a.doc.song())) std::printf("  ref %s\n", f.c_str());
+  } else if (op == "state") {
+    std::printf("browserstate frame %d: renaming \"%s\" error \"%s\" trash \"%s\" locked \"%s\" undo %zu \"%s\"\n", frame, fops.renaming.c_str(),
+                fops.error.c_str(), fops.trashAsk.c_str(), p1.empty() ? "" : lockedWhy(a, p1).c_str(), a.doc.history().position(),
+                a.doc.history().undoLabel().c_str());
+  } else {
+    return false;
+  }
+  std::fflush(stdout);
+  return true;
 }
 
 // J-27: View > Project picker — the browser on its current-project tab.

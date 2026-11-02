@@ -1,5 +1,7 @@
 #include "NoteTools.h"
+#include "StepNotes.h"
 #include "ChordTools.h"
+#include "NoteBend.h"
 #include <algorithm>
 #include <cmath>
 #include <map>
@@ -347,6 +349,8 @@ void chopByPattern(std::vector<Note>& notes, NoteSel& sel, const ChopPattern& p,
       Tick full = std::min<Tick>(roundTick(pos + piece), n.length) - roundTick(pos);
       c.length = std::max<Tick>(1, roundTick(static_cast<double>(full) * gate));
       if (!p.pitch.empty()) c.pitch = clampPitch(n.pitch + p.pitch[k % p.pitch.size()]);
+      if (!n.bend.empty())  // K-25: each piece plays its part of the bend line
+        c.bend = gl::bend::head(gl::bend::tail(n.bend, static_cast<double>(c.start - n.start)), static_cast<double>(c.length));
       out.push_back(c);
       os.push_back(sel[i]);
       pos += piece;
@@ -1033,7 +1037,16 @@ void notesToSteps(const std::vector<Note>& notes, Tick stepTicks, int total, Ste
     if (stepTicks > 0 && !n.muted && !n.slide) {
       const Tick k = n.start / stepTicks;
       const Tick off = n.start - k * stepTicks;
-      const int shift = static_cast<int>(std::lround(static_cast<double>(off) * kStepShiftMax / static_cast<double>(stepTicks)));
+      int shift = static_cast<int>(std::lround(static_cast<double>(off) * kStepShiftMax / static_cast<double>(stepTicks)));
+      // K-22: the shift nearest to it that lands exactly on the note's tick (shifts are whole
+      // percents of a step, so a step's tick offset can come from more than one of them)
+      for (int d = 1; d < kStepShiftMax && stepTicks * shift / kStepShiftMax != off; ++d)
+        for (int c : {shift - d, shift + d})
+          if (c >= 0 && c < kStepShiftMax && stepTicks * c / kStepShiftMax == off) {
+            shift = c;
+            d = kStepShiftMax;
+            break;
+          }
       if (k < total && shift < kStepShiftMax && stepTicks * shift / kStepShiftMax == off && !row[static_cast<size_t>(k)]) {
         row[static_cast<size_t>(k)] = static_cast<uint8_t>(std::clamp(n.velocity, 1, 127));
         StepProps& sp = props[static_cast<size_t>(k)];
@@ -1103,15 +1116,13 @@ bool editStepRow(Document& d, ObjectId pattern, ObjectId channel, const std::str
 bool convertStepsToNotes(Document& d, ObjectId pattern, ObjectId channel) {
   const Pattern* p = d.song().pattern(pattern);
   if (!p || !d.song().channel(channel) || !p->steps.count(channel)) return false;
-  const Tick tps = d.song().ticksPerStep(*p);
+  // K-22: as step notes, so they play exactly as the steps did (swing, shift, length).
+  std::vector<Note> all = stepnotes::view(d.song(), *p, channel);
   return d.editPattern(pattern, "steps to piano roll", [&](Pattern& q) {
-    tools::StepRow row;
-    tools::StepPropRow props;
-    loadRow(q, channel, row, props);
-    auto add = tools::stepsToNotes(row, props, tps);
-    auto& ns = q.notes[channel];
-    ns.insert(ns.end(), add.begin(), add.end());
-    sortByStart(ns);
+    if (all.empty())
+      q.notes.erase(channel);
+    else
+      q.notes[channel] = all;
     q.steps.erase(channel);
     q.stepProps.erase(channel);
   });
@@ -1184,6 +1195,8 @@ bool sendNotesToChannel(Document& d, ObjectId pattern, ObjectId from, ObjectId t
         q.notes.erase(from);
       else
         q.notes[from] = keep;
+      q.steps.erase(from);  // K-22: `notes` and `keep` split the piano roll's list, its rack steps among them
+      q.stepProps.erase(from);
     }
   });
 }

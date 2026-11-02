@@ -349,7 +349,7 @@ bool patchHostBody(EditTarget& e) {
   ImGui::SetNextItemWidth(180);
   if (g.nodes.size() < static_cast<size_t>(kPatchNodes) && ImGui::BeginCombo("##addfx", "Add effect...")) {
     for (const auto& p : pluginCatalog())
-      if (p.kind == PluginKind::Effect && p.type != "gl.patcherfx" && ImGui::Selectable(p.name.c_str())) {
+      if (p.kind == PluginKind::Effect && !p.hidden && p.type != "gl.patcherfx" && ImGui::Selectable(p.name.c_str())) {
         PatchNode n;
         n.plugin = defaultPluginState(p.type);
         g.nodes.push_back(n);
@@ -363,7 +363,7 @@ bool patchHostBody(EditTarget& e) {
     ImGui::SetNextItemWidth(180);
     if (g.nodes.size() < static_cast<size_t>(kPatchNodes) && ImGui::BeginCombo("##addgen", "Add instrument layer...")) {
       for (const auto& p : pluginCatalog())
-        if (p.kind == PluginKind::Generator && p.type != "gl.patcher" && p.outputs.empty() && ImGui::Selectable(p.name.c_str())) {
+        if (p.kind == PluginKind::Generator && !p.hidden && p.type != "gl.patcher" && p.outputs.empty() && ImGui::Selectable(p.name.c_str())) {
           PatchNode n;
           n.plugin = defaultPluginState(p.type);
           // instruments go before the effects

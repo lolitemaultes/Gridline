@@ -71,6 +71,14 @@ struct Knob {
 };
 using KnobTable = std::vector<Knob>;
 
+// K-2: FL's integer rounding of a control value (half to even, as the plugins
+// do when automation sets a position).
+inline double flRoundInt(double v) {
+  double f = std::floor(v), d = v - f;
+  if (d > 0.5 + 1e-9) return f + 1;
+  if (d < 0.5 - 1e-9) return f;
+  return std::fmod(f, 2.0) == 0 ? f : f + 1;
+}
 // Sets m.param / m.value from a table (shared, so the functions stay valid
 // after the mapping is copied).
 void bindTable(PluginMapping& m, std::shared_ptr<const KnobTable> table);
@@ -80,6 +88,27 @@ void applyTable(PluginMapping& m, const KnobTable& table, const std::vector<doub
 void begin(PluginMapping& m, const std::string& glType);
 // Sets a Gridline parameter (ignored when out of range).
 void set(PluginMapping& m, int glParam, double v);
+// K-2: Fruity Reeverb 2 state as the plugin itself reads it (FlpFxTime.cpp).
+// The first word is a version: 10000 = 13 knobs + 2 flag bytes, 10001 = 15
+// knobs + flags; any other value below 10000 (the oldest presets have no
+// version word, so their low cut lands here) is followed by 13 knobs read
+// from byte 4 (one tag late), a short last knob zero-padded, no flags; a
+// version above 10001 is ignored (defaults). Knobs keep their stored values
+// (no clamping); missing ones keep the defaults.
+struct Reeverb2Knobs {
+  int knob[15] = {75, 40, 0, 50, 100, 15, 40, 100, 500, 0, 128, 64, 64, 684, 0};
+  bool tempo = false, midSide = false;
+  bool current = false;  // version 10001 with all 15 knobs and the flags
+};
+Reeverb2Knobs reeverb2Read(const uint8_t* p, size_t n);
+// Brings knob values (by tag) into the full model's ranges with the same
+// sound where the plugin's own laws make that exact (cut 0 = off, crossover
+// <= 0 = no bass shelf, separation beyond +64 = mono); others are clamped.
+// False when a value had to be approximated.
+bool reeverb2Fit(std::vector<double>& byTag);
+// Full-model (RvbModel 2) state: sets the hall / plate mirror parameters from
+// the full model's knobs, as the decoder does.
+void reeverb2Mirrors(PluginState& s);
 // J-42: a Maximus program file → gl.enhance parameters (reference engine), see FlpFxDyn.cpp.
 bool maximusProgramToEnhance(const std::string& path, std::vector<float>& params, bool* exact);
 

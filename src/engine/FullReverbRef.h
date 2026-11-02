@@ -84,6 +84,10 @@ struct StudioSettings {
   float bass = 1;         // multiplier
   float cross = 500;      // Hz
   float modSpeed = 0.5f, modDepth = 0.5f;  // 0..1
+  // K-2: version 2, measured against the reference's renders: reflections from
+  // the first tap per side only, LFO phase in single precision. false = the J-35
+  // model (seven / eight weighted taps, double phase).
+  bool rev2 = true;
 };
 
 class Engine {
@@ -241,10 +245,18 @@ class Engine {
   }
   // One mono sample → wet (TL, TR) and reflections (EL, ER).
   void tickStudio(float in, float& TL, float& TR, float& EL, float& ER) {
-    const float lfo = static_cast<float>(std::sin(6.283185307179586 * phi_));
-    phi_ = phi_ + inc_;
-    phi_ = phi_ - std::trunc(phi_);
-    d_ = std::fabs(dTarget_ - d_) < 0.01f ? dTarget_ : (d_ + 1e-30f) + ((dTarget_ - d_) * cDepth_);
+    float lfo;
+    if (st_.rev2) {  // single-precision phase, sine in double
+      lfo = static_cast<float>(std::sin(static_cast<double>(phf_) * 6.283185307179586));
+      phf_ = phf_ + inc_;
+      phf_ = phf_ - static_cast<float>(static_cast<int>(phf_));
+    } else {
+      lfo = static_cast<float>(std::sin(6.283185307179586 * phi_));
+      phi_ = phi_ + inc_;
+      phi_ = phi_ - std::trunc(phi_);
+    }
+    const bool snap = st_.rev2 ? static_cast<double>(std::fabs(dTarget_ - d_)) < 0.01 : std::fabs(dTarget_ - d_) < 0.01f;
+    d_ = snap ? dTarget_ : (d_ + 1e-30f) + ((dTarget_ - d_) * cDepth_);
     const float x0 = in + 1e-30f;
     lp_ = ((x0 - lp_) * cHC_) + lp_;
     const float a = ((lp_ - apA_) * cLC_) + apX_;
@@ -253,8 +265,12 @@ class Engine {
     float b[7], c[8];
     for (int i = 0; i < 7; ++i) b[i] = er_[(erPos_ + static_cast<uint32_t>(erL_[i])) & erMask_];
     for (int i = 0; i < 8; ++i) c[i] = er_[(erPos_ + static_cast<uint32_t>(erR_[i])) & erMask_];
-    EL = gL_[6] * b[6] + ((gL_[5] * b[5] + (gL_[4] * b[4] + gL_[3] * b[3])) + ((gL_[1] * b[1] + gL_[0] * b[0]) - gL_[2] * b[2]));
-    ER = (gR_[6] * c[6] + ((gR_[5] * c[5] + gR_[3] * c[3]) + (gR_[2] * c[2] + gR_[0] * c[0]))) - (gR_[7] * c[7] + (gR_[4] * c[4] + gR_[1] * c[1]));
+    if (st_.rev2) {
+      EL = gL_[0] * b[0], ER = gR_[0] * c[0];
+    } else {
+      EL = gL_[6] * b[6] + ((gL_[5] * b[5] + (gL_[4] * b[4] + gL_[3] * b[3])) + ((gL_[1] * b[1] + gL_[0] * b[0]) - gL_[2] * b[2]));
+      ER = (gR_[6] * c[6] + ((gR_[5] * c[5] + gR_[3] * c[3]) + (gR_[2] * c[2] + gR_[0] * c[0]))) - (gR_[7] * c[7] + (gR_[4] * c[4] + gR_[1] * c[1]));
+    }
     const float v1 = in_[0].ap(x, cA_, cA_);
     const float v2 = in_[1].ap(v1, cA_, cA_);
     erWrite(v1);
@@ -593,6 +609,7 @@ class Engine {
   float W0_ = 0, W1_ = 0, W2_ = 0, W3_ = 0, Wh_ = 0;
   float lp_ = 0, apA_ = 0, apX_ = 0, xsL_ = 0, xpL_ = 0, dL_ = 0, xsR_ = 0, xpR_ = 0, dR_ = 0;
   double phi_ = 0;
+  float phf_ = 0;
   float d_ = 0, dTarget_ = 0, cDepth_ = 0, inc_ = 0;
   RackSettings rk_;
   bool rkFirst_ = true;
@@ -605,6 +622,7 @@ struct StudioKnobs {
   int lowCut = 75, highCut = 40, predelay = 0, room = 50, diffusion = 100, decay = 15, damp = 40, bass = 100, cross = 500;
   int sep = 0, dry = 128, er = 128, wet = 128, modSpeed = 684, modDepth = 0;
   bool tempoPredelay = false, midSide = false;
+  bool rev2 = true;  // K-2 (see StudioSettings)
 };
 // Level curve: x = 1 → 1, else (11^x − 1) / 10 (x = knob / 128 for dry, / 256 for ER and wet).
 inline float levelCurve(double x) { return x == 1 ? 1.f : static_cast<float>((std::exp(x * std::log(11.0)) - 1) * 0.1); }
@@ -626,6 +644,7 @@ inline StudioSettings studioSettings(const StudioKnobs& k, int sri, double bpm) 
   s.cross = static_cast<float>(k.cross);
   s.modSpeed = static_cast<float>(k.modSpeed / 2048.0);
   s.modDepth = static_cast<float>(k.modDepth / 2048.0);
+  s.rev2 = k.rev2;
   return s;
 }
 
@@ -663,26 +682,60 @@ class StudioReverb {
       primed_ = true;
     }
     auto ramp = [](float& c, float t) { c = std::fabs(t - c) <= kStep ? t : c + (t > c ? kStep : -kStep); };
-    for (int i = 0; i < n; ++i) {
-      ramp(dry_, dryT);
+    // K-2 (version 2): the reference's block ramp: a linear step per sample
+    // across the block toward the target, at most maxStep (0.001 per sample at
+    // 44.1 kHz, scaled by the rate); an end value under the smallest normal
+    // float snaps to 0.
+    const bool blockRamp = k.rev2 && n > 0;
+    float dryS = 0, dryD = 0, curS[2][4] = {}, curD[2][4] = {};
+    if (blockRamp) {
+      const float maxStep = static_cast<float>(0.001 * (44100.0 / static_cast<double>(sri_)));
+      auto plan = [&](float& c, float t, float& start, float& step) {
+        start = c;
+        step = t - start;
+        if (step == 0) return;
+        c = t;
+        step /= static_cast<float>(n);
+        if (std::fabs(step) > maxStep) {
+          step = std::copysign(maxStep, step);
+          c = static_cast<float>(n) * step + start;
+          if (std::fabs(c) < 1.17549435e-38f) c = 0, step = -start / static_cast<float>(n);
+        }
+      };
+      plan(dry_, dryT, dryS, dryD);
       for (int m = 0; m < 2; ++m)
-        for (int j = 0; j < 4; ++j) ramp(cur_[m][j], mt[m][j]);
+        for (int j = 0; j < 4; ++j) plan(cur_[m][j], mt[m][j], curS[m][j], curD[m][j]);
+    }
+    for (int i = 0; i < n; ++i) {
+      float g[2][4], dg;
+      if (blockRamp) {
+        const float fi = static_cast<float>(i + kRampAhead);
+        dg = dryS + dryD * fi;
+        for (int m = 0; m < 2; ++m)
+          for (int j = 0; j < 4; ++j) g[m][j] = curS[m][j] + curD[m][j] * fi;
+      } else {
+        ramp(dry_, dryT);
+        for (int m = 0; m < 2; ++m)
+          for (int j = 0; j < 4; ++j) ramp(cur_[m][j], mt[m][j]), g[m][j] = cur_[m][j];
+        dg = dry_;
+      }
       const float inL = L[i], inR = R[i];
       const float mono = k.midSide ? inL - inR : inL + inR;
       float TL, TR, EL, ER;
       eng_.tickStudio(mono, TL, TR, EL, ER);
-      float oL = dry_ * inL, oR = dry_ * inR;
+      float oL = dg * inL, oR = dg * inR;
       const float src[2][2] = {{EL, ER}, {TL, TR}};
       for (int m = 0; m < 2; ++m) {
-        oL = ((src[m][0] * cur_[m][0]) + (src[m][1] * cur_[m][2])) + oL;
-        oR = ((src[m][1] * cur_[m][1]) + (src[m][0] * cur_[m][3])) + oR;
+        oL = ((src[m][0] * g[m][0]) + (src[m][1] * g[m][2])) + oL;
+        oR = ((src[m][1] * g[m][1]) + (src[m][0] * g[m][3])) + oR;
       }
       L[i] = oL, R[i] = oR;
     }
   }
 
  private:
-  static constexpr float kStep = 1.f / 2048;  // per-sample level ramp (the reference's slope is unverified)
+  static constexpr float kStep = 1.f / 2048;  // version 1 per-sample level ramp
+  static constexpr int kRampAhead = 0;  // version 2: sample i of a block takes start + (i + kRampAhead) * step
   Engine eng_;
   int sri_ = 0;
   bool primed_ = false;

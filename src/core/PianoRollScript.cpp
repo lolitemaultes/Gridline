@@ -7,6 +7,7 @@
 #include <map>
 #include <numeric>
 #include <sstream>
+#include "NoteBend.h"
 #include "NoteTools.h"
 #include "lua/src/lauxlib.h"
 #include "lua/src/lua.h"
@@ -251,6 +252,23 @@ void pushNote(lua_State* L, const Note& n, bool selected) {
   flag("porta", n.porta);
   flag("muted", n.muted);
   flag("selected", selected);
+  if (n.step) flag("step", true);  // K-22: a rack step (plays as one while it lasts one step)
+  if (!n.bend.empty()) {  // K-25: { {time = ticks from the note start, semis = semitones, curve = 0..4, tension = -1..1}, ... }
+    lua_createtable(L, static_cast<int>(n.bend.size()), 0);
+    for (size_t i = 0; i < n.bend.size(); ++i) {
+      lua_createtable(L, 0, 4);
+      lua_pushnumber(L, static_cast<lua_Number>(n.bend[i].tick));
+      lua_setfield(L, -2, "time");
+      lua_pushnumber(L, static_cast<lua_Number>(n.bend[i].semis));
+      lua_setfield(L, -2, "semis");
+      lua_pushinteger(L, n.bend[i].curve);
+      lua_setfield(L, -2, "curve");
+      lua_pushnumber(L, static_cast<lua_Number>(n.bend[i].tension));  // K-28
+      lua_setfield(L, -2, "tension");
+      lua_rawseti(L, -2, static_cast<lua_Integer>(i + 1));
+    }
+    lua_setfield(L, -2, "bend");
+  }
 }
 
 namespace {
@@ -305,6 +323,33 @@ bool readNote(lua_State* L, int t, Note& n, bool& selected, std::string* err) {
   n.porta = fieldBool(L, t, "porta", false);
   n.muted = fieldBool(L, t, "muted", false);
   selected = fieldBool(L, t, "selected", false);
+  n.step = fieldBool(L, t, "step", false);  // K-22
+  n.bend.clear();  // K-25
+  t = lua_absindex(L, t);
+  lua_getfield(L, t, "bend");
+  if (lua_istable(L, -1)) {
+    const lua_Integer count = std::min<lua_Integer>(static_cast<lua_Integer>(lua_rawlen(L, -1)), gl::bend::kMaxPoints * 2);
+    for (lua_Integer i = 1; i <= count; ++i) {
+      lua_rawgeti(L, -1, i);
+      if (lua_istable(L, -1)) {
+        auto field = [&](const char* k) {
+          lua_getfield(L, -1, k);
+          const double v = lua_isnumber(L, -1) ? lua_tonumber(L, -1) : 0.0;
+          lua_pop(L, 1);
+          return std::isfinite(v) ? v : 0.0;
+        };
+        BendPoint p;
+        p.tick = static_cast<float>(std::clamp(field("time"), 0.0, 1e9));
+        p.semis = static_cast<float>(std::clamp(field("semis"), -1e3, 1e3));
+        p.curve = static_cast<uint8_t>(std::clamp(field("curve"), 0.0, static_cast<double>(gl::bend::CurveCount - 1)));
+        p.tension = static_cast<float>(std::clamp(field("tension"), -1.0, 1.0));  // K-28
+        n.bend.push_back(p);
+      }
+      lua_pop(L, 1);
+    }
+  }
+  lua_pop(L, 1);
+  gl::bend::normalize(n.bend);
   return true;
 }
 

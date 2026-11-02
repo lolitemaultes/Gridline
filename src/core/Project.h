@@ -27,6 +27,9 @@ Json songToJson(const Song& song, bool withFlOrigin = true);
 bool songFromJson(const Json& j, Song& out, std::string* err = nullptr);
 // Upgrades a parsed project document to the latest schema in place.
 bool migrateProjectJson(Json& j, std::string* err = nullptr);
+// K-5: some pattern holds, for one channel, a slide note and notes of more than one colour
+// (a project saved before slides kept to their colour loads with Song::slidesAnyColour then).
+bool slidesMeetOtherColours(const Song& s);
 
 // J-111: one element of a project document, its references checked against
 // `s` (collaboration applies remote edits element by element). The same code

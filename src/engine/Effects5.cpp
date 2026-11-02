@@ -580,6 +580,7 @@ class ReverbFx final : public Effect {
       k.diffusion = ki(RvbFDiffusion, 100), k.decay = ki(RvbFDecay, 15), k.damp = ki(RvbFDamp, 40), k.bass = ki(RvbFBass, 100);
       k.cross = ki(RvbFCross, 500), k.sep = ki(RvbFSep, 0), k.dry = ki(RvbFDry, 128), k.er = ki(RvbFEr, 128), k.wet = ki(RvbFWet, 128);
       k.modSpeed = ki(RvbFModSpeed, 684), k.modDepth = ki(RvbFModDepth, 0);
+      k.rev2 = ki(RvbFRev, 1) != 0;
       k.tempoPredelay = bparam(s, RvbPreSync), k.midSide = iparam(s, RvbInputMode) == 1;
       full_.process(k, ctx.tempo, L, R, n);
       return;

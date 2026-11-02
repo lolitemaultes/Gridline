@@ -3,6 +3,208 @@
 All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLINE_VERSION_PRE` in
 `CMakeLists.txt`; the release workflow publishes the section of the tagged version as the release notes.
 
+## Unreleased
+
+### Added
+
+- **Track "+" in the playlist**: hover a track header and a small "+" appears beside its mute
+  switch. Its menu gives the track an instrument (your starred instruments are listed right
+  there, then every instrument, or a channel already in the rack) and on an empty track starts a
+  first pattern for it on the track, named after the instrument and opened in the piano roll. On
+  an instrument track it makes a new pattern at the song position (or the start of the view),
+  changes the instrument or makes it an ordinary track again. Each action is one undo step. Turn
+  it off in the playlist menu, View, Track + button.
+- **Pitch bend on piano roll notes**: a Pitch bend tool beside the pencil (key N) shows a line on
+  every note. Drag anywhere on a note or its line to bend it like an automation line: semitone
+  steps, the value and the note it reaches shown beside the point. Double-click a point to remove
+  just that point (the points before and after it stay as they were), double-click a glide or its
+  ring to make it a straight ramp again, and double-click the note itself to reset its whole line;
+  each is one undo step, even when the first click slipped a few pixels. Points
+  follow the piano roll's snap (the grid in view, or the size you set) and whole semitones; Alt
+  frees them, or with Snap off snaps them to the grid in view. Right-click a point for its curve
+  menu: the glide into the point as straight, smooth, ease in, ease out or step (hold, then jump),
+  each drawn beside its name, a curve amount, Reset the curve, and Remove point (Alt+right-click
+  removes at once). Every shape and curve amount plays what the line shows: glides follow their
+  curve within a few cents, a step jumps on its own sample, and the channel pitch bend sent to other
+  plugins and MIDI Out, MIDI file export and FL Studio slide notes follow steep curves closely.
+  Drag the small ring half way along a glide to bend it. The line shows the curve exactly as it
+  plays. Note names stay readable when another note's line crosses them, and the line you drag
+  stays on top. With several notes selected, a chord bends as one. Back on the pencil the lines
+  stay visible, dimmed. Bends play per note on Gridline's instruments and on hosted plugins with
+  per-note tuning, as channel pitch bend on other plugins and MIDI Out, travel with moves, copies,
+  splits, chops and glue, and are written to and read from MIDI files. FL Studio export (.flp and
+  zipped) writes each bend as slide notes on the note's channel and colour (curves as several
+  shorter slides, fractions of a semitone as fine pitch), which play the same pitch; a bend over
+  another sounding note of the same colour is left out, since a slide would glide that note too.
+  The export report counts what was converted, approximated and left out.
+- **Channel rack steps in the piano roll**: open a channel with steps in the piano roll and its
+  steps are there as notes, one step long, with each step's key, velocity, pan, fine pitch,
+  release, mod X and Y and shift. A small "Rack steps" tag in the corner says they still belong to
+  the rack; looking changes nothing. Move, resize, delete or edit any of them (or draw a note
+  beside them) and the channel's steps become piano roll notes in the same undo step, so one undo
+  brings the rack row back exactly; the rack then shows the channel's note preview. The notes play
+  exactly as the steps did, swing, swing truncation, shift and step loops included, until one is
+  given another length. Piano roll tools, scripts and the chord progression tool see the steps
+  too, and cancelling them leaves the steps as they were. "Steps to piano roll" in the rack menu
+  makes the same notes, and "Piano roll to steps" turns them back. FL Studio export writes them as
+  step notes, and step notes in imported .flp files now keep the swing of steps.
+- **Plugin folders per format**: Settings, Plugins lists where VST3, VST2, CLAP, LV2 and AU plugins
+  are searched. Add your own folders per format or for every format, switch folders or the default
+  folders off, and rescan one folder or all. The Plugin Manager links to it.
+- The `VST3_PATH` environment variable adds VST3 search folders, as `VST_PATH`, `CLAP_PATH` and
+  `LV2_PATH` already did.
+- **Drag audio out of Loupe**: the grip button in Loupe's toolbar drags the selection (or the whole
+  file when nothing is selected) onto the playlist, where it lands as an audio clip at the drop
+  position on the grid, or onto the channel rack and samplers. A dragged selection is saved as a
+  new file in the project's Edited audio folder.
+- **Organise files in the browser**: right-click a file or folder to rename it in place, make a new
+  folder or move it to the trash (asked first). Drag files and folders onto a folder to move them.
+  Channels and clips that use a renamed or moved file follow it, in one undo step, and its
+  sidecar files move along. Only your own folders and Gridline's folders can be changed; elsewhere
+  the menu says why not.
+- **ASIO on Windows**: Settings, Audio has a driver type switch between the system audio (WASAPI,
+  still the default) and ASIO. Pick any installed ASIO driver, its sample rate and buffer size from
+  the sizes the driver allows, and open the driver's control panel. Device inputs feed the mixer's
+  In 1 to In 16, the main output pair is selectable and other output pairs can each carry a mixer
+  track. The driver's reported latency sets the recording offset, and resets the driver asks for
+  (from its control panel, a new rate or buffer, lost sync) reopen it on their own; an unplugged
+  device falls back to the system audio. See `docs/asio.md`.
+- **Favourite plugins**: a star on each plugin in the mixer slot list, the channel and instrument
+  menus and the browser's plugin database marks it as a favourite. Favourites come first in those
+  lists and have their own group in the browser, for built-in and installed plugins alike.
+- **Shift+click draws a note and sets its length**: in the piano roll, Shift+click with the draw
+  tool places a note where you click and the drag that follows stretches it, in one undo step. A
+  Shift+click without a drag keeps the default length.
+- **Plugin windows have their own size**: the menu of every built-in effect and instrument window
+  has an Editor size submenu (Automatic, 100 % to 200 %), and the corner grip of the window resizes
+  the editor, keeping its proportions. The size is remembered per plugin and comes on top of the
+  interface scale; text and controls stay sharp at every size. Installed plugins keep their own
+  interface size.
+- **Loupe can be pinned into the main layout**: Loupe's View menu pins it as a tab next to the
+  playlist, below the playlist, on the left with the browser, on the right with the mixer, or as a
+  floating panel, and its tab can be dragged to any other dock spot. While pinned, every sample or
+  Loupe effect you open shows there. In a narrow column Loupe stacks its toolbar rows instead of
+  shrinking them. The pinned panel is kept with the layout; "Unpin into its own window" (or closing
+  the tab) puts Loupe back in a window of its own.
+- **Stretch the playlist from its scroll bars**: drag either end of the horizontal scroll bar to
+  zoom the time, or either end of the vertical scroll bar to zoom the track height. The other end
+  stays where it is. The ends light up under the pointer. Zoom, Default track height in the
+  playlist menu brings the tracks back to their normal height.
+- **Ready for software stores**: Gridline's files for Flathub (Flatpak), the AUR, winget, Scoop,
+  Homebrew, Chocolatey, the FreeBSD ports and Fedora COPR, filled in for every release, with the
+  steps to submit them (`docs/packaging.md`). Each release also has a source archive,
+  `Gridline-<version>-source.tar.gz`; builds made from it can collaborate with the official
+  packages.
+
+### Changed
+
+- **Channel rack play lights.** The green lamp at the end of each channel row now lights while
+  the channel plays and fades after, in place of the small light inside the name button (the name
+  gets that room back). A selected channel's lamp keeps a green rim, and a click on the lamp still
+  adds the channel to the selection or takes it out.
+
+- **Double-clicking a playlist track header.** Double-click the track's name to rename it. On a
+  track that plays an instrument, double-clicking anywhere else on its header shows that
+  instrument's window. The header's own controls (the "+", the mute switch, the mode controls)
+  keep their normal clicks, and the hint line says what a double-click does where the pointer is.
+
+- **Overlapping playlist clips show what lies underneath.** Where a clip lies over another on the
+  same track, the notes, waveform or automation curve of the clip beneath stay visible through it,
+  a little dimmed (a clip further down a stack a step dimmer), while the top clip's own content and
+  name stay clear. A click in the overlap still picks the top clip. The dark shadow a top clip cast
+  onto the clip beneath is gone, the end of the clip beneath shows as a thin edge in its own colour
+  instead of light dashes (the lit dashed outline stays while it is selected), and the loop points of
+  a repeating pattern are a crisp, quiet seam, so the grid lines read the same through every clip,
+  overlapped or not.
+- **Turntable is a mixer effect now.** Put it on any mixer insert: the insert's audio passes through
+  unchanged and the deck plays its sample on top, with the same platter, motor, hand and editor as
+  before. FL projects with the scratcher open with Turntable on the same mixer slot, with its
+  settings, its sample and its automation, and export back the same way; a Turntable made in
+  Gridline exports to FL as the scratcher too. The pickers offer this one Turntable. Projects from
+  earlier versions open and sound as before: the 0.7.1 Turntable instrument shows as Turntable (old)
+  and the earlier live-input effect as Turntable FX (old); neither is offered for new use. Platter
+  stays a separate DJ deck instrument.
+- **Small plugin editors open larger on large screens.** On a large workspace (for example a
+  1440p screen at 130 %) an effect or instrument window that would take less than about half of the
+  screen opens at 125 % or more; it never opens larger than fits. Pick 100 % in Editor size to keep
+  the design size.
+- **Alt+wheel zooms the playlist's track height around the pointer**: the track under the pointer
+  and the spot inside it stay put, with tracks of any height, folded groups and automation lanes,
+  and the zoom glides like the horizontal one. At the top and bottom of the song the view stays
+  against the edge. The piano roll's Alt+wheel row height zooms the same way. The track height is
+  remembered for the next start.
+- Ctrl+wheel over the playlist's track headers zooms around the left edge of the grid instead of
+  a point left of it.
+- **Same starting settings as in imported projects**: a new compressor, flanger, time gate,
+  frequency shifter, low-end enhancer, bass booster, overdrive, squeeze, spreader, BBD chorus,
+  vintage phaser, hall reverb, X-Y-Z controller and formula controller now opens with the settings
+  it gets when an FL Studio project brings it in at its defaults. Projects and presets you already
+  have sound exactly as before.
+- **Auto scrolling can be turned off**, for the playlist and for the pattern editors on their own.
+  The playlist and the piano roll each have an auto scrolling button in their toolbar, and the
+  setting is also in Options, in each window's View menu and in the channel rack menu. With it off
+  the view stays where you put it while the song or pattern plays; scrolling by hand works either
+  way. The piano roll now follows the pattern position while it plays, as the playlist already
+  did; the channel rack's step view follows it as before. Both settings are remembered.
+- **Slide notes glide only the notes of their own colour** (piano roll), as in FL Studio. A slide
+  note no longer bends notes of other colours playing on the same channel. FL Studio projects
+  now play their slides as they do in FL Studio. Gridline projects saved before this version whose
+  slides met notes of other colours keep sliding every colour, so they sound as they did.
+- **Looping clips show their loop points as small notches** in the clip's top and bottom edges,
+  like the loop markers on regions in other arrangers, with a faint line through the clip. The
+  repeats are no longer dimmed and the bright markers are gone, so a long loop reads calmer.
+  The notches scale with the zoom and the interface size and disappear when the clip is zoomed
+  too far out to show them.
+- **The browser's PROJECT tab lists every audio file the project uses** (edited audio,
+  recordings, renders, stems and slices), and the Edited audio folder now sits in that tab.
+- The mixer slot list and the channel menus also list installed plugins, not only built-in ones.
+- Gridline's id for Linux software centres is now `com.lolitemaultes.Gridline` (it was
+  `org.gridline.Gridline`, which the metadata lists as replaced), the id it has on Flathub.
+- In a Flatpak or snap, the update popup no longer offers to download a setup program: those
+  installations are updated by their store.
+
+### Fixed
+
+- A lit key on the piano roll's keyboard now lights the whole white key, including the parts beside
+  the black keys, and its colour blends into the key instead of covering it, so light channel
+  colours stay soft. The key you click lights the same way.
+- The playlist could draw garbage on some Windows graphics drivers when a busy project was
+  scrolled: the ruler and track headers went blank and lines streaked across the clips. Large
+  windows now draw correctly whatever OpenGL version the driver provides.
+- Dragging along the piano roll's keyboard plays and lights only the key under the pointer, one
+  key at a time; the key you left stops and no longer stays lit.
+- FL Studio automation that lands halfway between two steps of a switch or a mode list now picks
+  the same step FL Studio does (compressor type, limiter curves and similar controls).
+- Emphasizer presets from FL Studio no longer import about 13 dB too quiet.
+- Reverb settings imported from FL Studio projects and presets (Fruity Reeverb 2) now load the
+  way FL Studio itself loads them, including the oldest preset files without a version number,
+  and the reverb's Full model sounds the same as FL Studio renders those settings: single early
+  reflections per side, the same modulation and the same level ramps when a level moves. A
+  changed reverb that came from an old preset file exports in the current layout. Projects saved
+  with earlier versions keep their sound: their Full model shows V1, new reverbs and new imports
+  use V2 (switch in the corner of the room view). The Full model's knobs show seconds,
+  milliseconds, kHz and percentages instead of raw steps.
+- FL Studio automation of the delay bank's unit controls (pans, levels, filters, times, feedback,
+  stereo separation, offset and send to the next unit) now imports, and so does automation of the
+  vintage phaser's and vintage chorus's switches.
+- FL Studio vocoder settings now import: band range, formant, invert, attack, release, hold and
+  the three levels, with their automation. They used to fall back to Gridline's defaults.
+- The snare drum track icon is no longer cut off at the bottom. Three more icons that touched or
+  crossed their box at small sizes (reverb, voice and the loop arrows on looping clips) are drawn
+  inside it now.
+- Right-clicking the header of a folder added to the browser opens its menu again.
+
+- **The app icon** shows on every window (plugin windows and windows dragged out of the main one),
+  in the Windows taskbar at any display scale, and on Linux in the dock and task switcher (X11 and
+  Wayland). The Linux packages add a scalable icon, and the AppImage's own icon is sharp.
+- The Linux and BSD tarballs come with `install.sh`, which adds Gridline to the desktop menu with
+  its icon (and removes it again with `--uninstall`).
+- Recording armed when Play is pressed captures from the transport's first moment, also when the
+  interface is slow to draw a frame (a take could start late).
+- Sturdier real-time app tests on busy machines (play lights, Stop to start, collaboration leave,
+  live takes).
+
+
 ## 0.7.1
 
 Released 2026-11-01. Everything that changed since 0.7.0. Projects from 0.7.0 open as they are.

@@ -21,3 +21,6 @@
 *.wv binary
 # Vendored as published (CRLF).
 third_party/nanosvg/LICENSE.txt -text
+# K-1: source archives (git archive, GitHub's tag tarballs) carry the commit, so builds from them
+# get the same build id as the official packages (CMakeLists.txt, GRIDLINE_BUILD_ID).
+cmake/build-id.txt export-subst

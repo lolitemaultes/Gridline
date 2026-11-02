@@ -205,6 +205,8 @@ void appendInfos(std::vector<PluginInfo>& v) {
     p.presets = {{"Gentle", {}}, {"Sub weight", {{BbFreq, 50.f}, {BbAmount, 0.5f}}}, {"Punch", {{BbFreq, 110.f}, {BbAmount, 0.35f}}},
                  {"Boom", {{BbFreq, 70.f}, {BbAmount, 0.8f}}}};
     p.editorWidth = 580;
+    // K-2: new instances start at the reference plugin's defaults.
+    setReferenceDefaults(p, {{BbFreq, 60}, {BbAmount, 0.75}});
     v.push_back(p);
   }
   {

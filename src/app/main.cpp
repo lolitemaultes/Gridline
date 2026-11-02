@@ -36,8 +36,10 @@
 #include "../core/I18n.h"
 #include "../core/UiScale.h"
 #include "AlignAudit.h"
+#include "AppIcon.h"
 #include "HostedUi.h"
 #include "../host/HostedPlugins.h"
+#include "../host/audio/AsioHost.h"
 #include "../host/PluginPrefs.h"
 #include "../host/vst3/Vst3Scan.h"
 #include "../host/ui/NativeView.h"
@@ -48,6 +50,7 @@
 #include <cfloat>
 #include <climits>
 #include "../core/ClipSources.h"
+#include "../core/NoteBend.h"
 #include "../core/TrackModes.h"
 #include "../core/Project.h"
 #include "../core/Workspace.h"
@@ -60,6 +63,8 @@
 #include "App.h"
 #include "CollabUi.h"
 #include "PluginUI.h"
+#include "EditorZoomUi.h"
+#include "../core/EditorZoom.h"
 #include "AutomationEditor.h"
 #include "BrowserUi.h"
 #include "ContextMenus.h"
@@ -71,6 +76,7 @@
 #include "Widgets.h"
 #include "Windows.h"
 #include "TrackModeUi.h"
+#include "TrackPlusUi.h"
 #include "ChopUi.h"
 #include "Shell.h"
 #include "SmoothScrollUi.h"
@@ -256,6 +262,237 @@ void openAudioInput(App& a, int rate, int outFrames) {
   SDL_PauseAudioDevice(gInDevice, 0);
 }
 
+// ---- K-6: ASIO backend (Windows; the simulated drivers with GRIDLINE_FAKE_ASIO) ----
+// The driver's thread calls asioRender for every buffer; everything it uses is sized when the
+// driver opens (UI thread).
+asio::Host gAsio;
+struct AsioRender {
+  AudioEngine* eng = nullptr;
+  std::vector<float> inter;  // interleaved device input (frames * inputs)
+  std::vector<float> mix;    // interleaved main pair (interface sounds)
+  std::vector<float> monoR;  // right side of a one-output device
+  int extraCount = 0;
+  int extraMixer[asio::kMaxExtraOutputs] = {};
+  int extraOut[asio::kMaxExtraOutputs] = {};  // index of the pair's left channel in out[]
+  bool mono = false;
+};
+AsioRender gAsioRender;
+bool gAsioActive = false;        // the engine runs on the ASIO driver
+bool gAsioSkip = false;          // the next openAudio uses the system audio (the driver stopped)
+bool gAsioFollowDriver = false;  // the driver asked for a reset: take its new preferred buffer
+std::string gSdlInputDevice;     // the system input choice, kept while ASIO runs
+int gAsioPreferred = 0;          // the driver's preferred buffer when it was opened
+std::string gAsioPreferredOf;
+
+void asioRender(void* user, const float* const* in, int nIn, float* const* out, int nOut, int frames) {
+  auto* r = static_cast<AsioRender*>(user);
+  AudioEngine& eng = *r->eng;
+  const bool stats = fstats::enabled();
+  const Uint64 t0 = stats ? SDL_GetPerformanceCounter() : 0;
+  if (nIn > 0) {
+    float* x = r->inter.data();
+    for (int c = 0; c < nIn; ++c) {
+      const float* src = in[c];
+      for (int i = 0; i < frames; ++i) x[static_cast<size_t>(i) * static_cast<size_t>(nIn) + static_cast<size_t>(c)] = src[i];
+    }
+    eng.pushInput(x, frames);
+  } else if (gSynthInput) {
+    pushSynthInput(eng, frames);
+  } else {
+    feedTestInput(&eng, frames);
+  }
+  if (nOut <= 0) return;
+  float* L = out[0];
+  float* R = r->mono ? r->monoR.data() : out[1];
+  for (int done = 0; done < frames;) {
+    const int n = std::min(AudioEngine::kMaxBlock, frames - done);
+    float* tl[asio::kMaxExtraOutputs];
+    float* tr[asio::kMaxExtraOutputs];
+    for (int k = 0; k < r->extraCount; ++k) {
+      tl[k] = out[r->extraOut[k]] + done;
+      tr[k] = out[r->extraOut[k] + 1] + done;
+    }
+    AudioEngine::OutputTaps taps;
+    taps.count = r->extraCount;
+    taps.mixer = r->extraMixer;
+    taps.L = tl;
+    taps.R = tr;
+    eng.process(L + done, R + done, n, r->extraCount > 0 ? &taps : nullptr);
+    done += n;
+  }
+  if (gUiSounds) {  // interface sounds on top of the main pair only (never recorded or metered)
+    float* m = r->mix.data();
+    for (int i = 0; i < frames; ++i) m[2 * i] = L[i], m[2 * i + 1] = R[i];
+    gUiSounds->mix(m, frames);
+    for (int i = 0; i < frames; ++i) L[i] = m[2 * i], R[i] = m[2 * i + 1];
+  }
+  if (r->mono)
+    for (int i = 0; i < frames; ++i) L[i] = 0.5f * (L[i] + R[i]);
+  if (stats && eng.sampleRate() > 0)
+    fstats::audioBlock(static_cast<double>(SDL_GetPerformanceCounter() - t0) / static_cast<double>(SDL_GetPerformanceFrequency()),
+                       static_cast<double>(frames) / eng.sampleRate());
+}
+
+void* nativeWindowHandle() {
+#ifdef _WIN32
+  if (SDL_Window* w = SDL_GL_GetCurrentWindow()) {
+    SDL_SysWMinfo info;
+    SDL_VERSION(&info.version);
+    if (SDL_GetWindowWMInfo(w, &info) && info.subsystem == SDL_SYSWM_WINDOWS) return info.info.win.window;
+  }
+#endif
+  return nullptr;
+}
+
+asio::Config asioConfig(const Settings& st) {
+  asio::Config c;
+  c.driver = st.getString("audio.asio.driver");
+  c.buffer = static_cast<int>(st.getNumber("audio.asio.buffer"));
+  c.rate = static_cast<int>(st.getNumber("audio.asio.sampleRate"));
+  c.channels.inFirst = static_cast<int>(st.getNumber("audio.asio.inFirst"));
+  c.channels.inCount = static_cast<int>(st.getNumber("audio.asio.inCount"));
+  c.channels.outMain = static_cast<int>(st.getNumber("audio.asio.outMain"));
+  c.channels.extras = asio::parseExtraOuts(st.getString("audio.asio.extraOuts"));
+  return c;
+}
+
+void publishAsio(App& a) {
+  App::AsioState& s = a.asio;
+  const auto& d = gAsio.device();
+  const auto& p = gAsio.plan();
+  s.active = gAsioActive;
+  s.driver = gAsioActive ? d.driver : "";
+  s.numIn = d.numIn, s.numOut = d.numOut;
+  s.inNames = d.inNames, s.outNames = d.outNames;
+  s.bufferChoices = d.bufferChoices, s.rates = d.rates;
+  s.minBuffer = d.buffers.minSize, s.maxBuffer = d.buffers.maxSize, s.preferredBuffer = d.buffers.preferred, s.granularity = d.buffers.granularity;
+  s.buffer = gAsio.bufferFrames(), s.rate = gAsio.sampleRate();
+  s.inLatency = gAsio.inputLatency(), s.outLatency = gAsio.outputLatency();
+  s.inputs = static_cast<int>(p.inputs.size());
+  s.inFirst = p.inputs.empty() ? 0 : p.inputs.front();
+  s.mainOut = std::max(0, p.mainL);
+  s.mono = p.mainL >= 0 && p.mainL == p.mainR;
+  s.extraOuts = static_cast<int>(p.extras.size());
+  s.format = p.mainL >= 0 && p.mainL < static_cast<int>(d.outTypes.size()) ? asio::formatName(d.outTypes[static_cast<size_t>(p.mainL)]) : "";
+  s.outputReady = gAsio.usesOutputReady();
+}
+
+// Opens the chosen ASIO driver and starts the engine on it; false (and a.asio.error) on failure.
+bool openAsio(App& a, int depth = 0) {
+  Settings& st = a.settings;
+  const asio::Config cfg = asioConfig(st);
+  gAsioRender.eng = &a.engine;
+  std::string err;
+  if (!gAsio.open(cfg, nativeWindowHandle(), asioRender, &gAsioRender, &err)) {
+    a.asio.error = err;
+    gAsioFollowDriver = false;
+    return false;
+  }
+  const auto& dev = gAsio.device();
+  // A reset after the driver's own panel changed its buffer: follow the driver's new size.
+  if (gAsioFollowDriver && depth == 0 && gAsioPreferredOf == dev.driver && gAsioPreferred > 0 && dev.buffers.preferred != gAsioPreferred &&
+      static_cast<int>(st.getNumber("audio.asio.buffer")) != 0) {
+    st.set("audio.asio.buffer", 0);
+    gAsio.close();
+    gAsioFollowDriver = false;
+    return openAsio(a, 1);
+  }
+  gAsioFollowDriver = false;
+  gAsioPreferred = dev.buffers.preferred, gAsioPreferredOf = dev.driver;
+  const asio::ChannelPlan& plan = gAsio.plan();
+  const int frames = gAsio.bufferFrames();
+  const int nIn = static_cast<int>(plan.inputs.size());
+  gAsioRender.inter.assign(static_cast<size_t>(frames) * static_cast<size_t>(std::max(1, nIn)), 0.f);
+  gAsioRender.mix.assign(2 * static_cast<size_t>(frames), 0.f);
+  gAsioRender.monoR.assign(static_cast<size_t>(frames), 0.f);
+  gAsioRender.mono = plan.mainL == plan.mainR;
+  gAsioRender.extraCount = static_cast<int>(plan.extras.size());
+  for (int k = 0; k < gAsioRender.extraCount; ++k) {
+    gAsioRender.extraMixer[k] = plan.extras[static_cast<size_t>(k)].mixer;
+    gAsioRender.extraOut[k] = plan.extraOut(k);
+  }
+  const int rate = gAsio.sampleRate();
+  a.engine.setSampleRate(rate);  // the driver is not streaming yet
+  gUiSounds = nullptr;
+  if (!a.uiSoundsDisabled && !a.assetsDir.empty()) {
+    a.loadSoundTheme(rate, true);
+    gUiSounds = &a.uiSounds;
+  }
+  a.audioSampleRate = rate;
+  a.audioBuffer = frames;
+  a.audioInputStatus.clear();
+  a.audioInputLatency = 0;
+  gSynthInput = false;
+  if (nIn > 0) {  // the driver's inputs feed the mixer's In 1.. (same callback: no jitter buffer)
+    gTestInput.store(nullptr, std::memory_order_release);
+    a.engine.setInputChannels(nIn);
+    a.engine.setInputPrefill(0);
+    a.audioInputDevice = "ASIO: " + dev.driver;
+    a.audioInputChannels = nIn;
+    // The driver's reported input and output latency: what a recording is moved earlier by.
+    a.audioInputLatency = gAsio.inputLatency() + gAsio.outputLatency();
+    char buf[256];
+    const size_t first = static_cast<size_t>(plan.inputs.front());
+    const std::string firstName = first < dev.inNames.size() && !dev.inNames[first].empty() ? dev.inNames[first] : "input " + std::to_string(first + 1);
+    std::snprintf(buf, sizeof buf, "Recording from %s: %d input%s, In 1 is %s.", dev.driver.c_str(), nIn, nIn == 1 ? "" : "s", firstName.c_str());
+    a.audioInputStatus = buf;
+  }
+  a.asio.error.clear();
+  if (!gAsio.start(&err)) {
+    gAsio.close();
+    a.asio.error = err;
+    return false;
+  }
+  gAsioActive = true;
+  if (nIn == 0) {  // no driver inputs: the system input device (if one is chosen) feeds the mixer
+    a.audioInputDevice = gSdlInputDevice;
+    openAudioInput(a, rate, gAsio.outputLatency());
+  }
+  char buf[256];
+  std::snprintf(buf, sizeof buf, "Running on the ASIO driver %s: %d Hz, %d-frame buffer, latency %d in / %d out.", dev.driver.c_str(), rate, frames,
+                gAsio.inputLatency(), gAsio.outputLatency());
+  a.audioStatus = buf;
+  publishAsio(a);
+  return true;
+}
+
+void closeAsio(App& a) {
+  if (gAsio.isOpen()) gAsio.close();
+  if (gAsioActive) {  // back to the system audio: its own settings again
+    gAsioActive = false;
+    if (a.audioInputDevice.rfind("ASIO: ", 0) == 0) a.audioInputDevice = gSdlInputDevice;
+    a.audioSampleRate = static_cast<int>(a.settings.getNumber("audio.sampleRate"));
+    a.audioBuffer = static_cast<int>(a.settings.getNumber("audio.bufferFrames"));
+  }
+  a.asio.active = false;
+}
+
+// UI thread, every frame: what the driver asked for (resets, latency changes, a stopped device).
+void pollAsio(App& a) {
+  if (a.asio.panelRequest) {
+    a.asio.panelRequest = false;
+    if (gAsioActive && !gAsio.controlPanel()) a.notify("This ASIO driver has no control panel.");
+  }
+  if (!gAsioActive) return;
+  const int ev = gAsio.poll();
+  if (ev & asio::Host::Latency) {
+    if (a.audioInputDevice.rfind("ASIO: ", 0) == 0) a.audioInputLatency = gAsio.inputLatency() + gAsio.outputLatency();
+    publishAsio(a);
+  }
+  if (ev & asio::Host::Stalled) {
+    a.notify("The ASIO driver stopped delivering audio (was the device unplugged?). Using the system audio; choose the driver again to retry.", true);
+    gAsioSkip = true;
+    a.audioReopen = true;
+    return;
+  }
+  // A new rate from the driver's own panel: the device's clock wins.
+  if ((ev & asio::Host::RateChanged) && static_cast<int>(a.settings.getNumber("audio.asio.sampleRate")) != 0) a.settings.set("audio.asio.sampleRate", 0);
+  if (ev & (asio::Host::Reset | asio::Host::Resync | asio::Host::RateChanged)) {
+    gAsioFollowDriver = (ev & asio::Host::Reset) != 0;
+    a.audioReopen = true;
+  }
+}
+
 void openAudio(App& a) {
   gTestInput.store(nullptr, std::memory_order_release);  // J-218: before the output callback stops
   if (gInDevice) {
@@ -266,6 +503,18 @@ void openAudio(App& a) {
     SDL_CloseAudioDevice(gDevice);
     gDevice = 0;
   }
+  closeAsio(a);
+  a.asio.available = asio::backendAvailable();
+  a.asio.drivers.clear();
+  if (a.asio.available)
+    for (const auto& d : asio::listDrivers()) a.asio.drivers.push_back(d.name);
+  if (a.asio.available && a.settings.getString("audio.backend") == "asio" && !gAsioSkip) {
+    gSdlInputDevice = a.audioInputDevice;
+    if (openAsio(a)) return;
+    a.audioInputDevice = gSdlInputDevice;
+    a.notify(a.asio.error + " Using the system audio.", true);
+  }
+  gAsioSkip = false;
   a.audioDevices.clear();
   for (int i = 0, n = SDL_GetNumAudioDevices(0); i < n; ++i)
     if (const char* nm = SDL_GetAudioDeviceName(i, 0)) a.audioDevices.push_back(nm);
@@ -324,22 +573,6 @@ std::string findAssets(const char* argv0) {
     if (fs::exists(c / "fonts" / "Inter-Regular.ttf", ec)) return fs::weakly_canonical(c, ec).string();
   }
   return "";
-}
-
-
-// Fallback window icon when the assets folder is missing: the Ink mark.
-SDL_Surface* makeIcon(int size) {
-  SDL_Surface* s = SDL_CreateRGBSurfaceWithFormat(0, size, size, 32, SDL_PIXELFORMAT_RGBA32);
-  if (!s) return nullptr;
-  auto cov = markCoverage(size);
-  auto* px = static_cast<Uint8*>(s->pixels);
-  for (int y = 0; y < size; ++y)
-    for (int x = 0; x < size; ++x) {
-      Uint8* p = px + y * s->pitch + x * 4;
-      p[0] = p[1] = p[2] = 0;
-      p[3] = cov[static_cast<size_t>(y) * static_cast<size_t>(size) + static_cast<size_t>(x)];
-    }
-  return s;
 }
 
 
@@ -429,6 +662,7 @@ void releaseTypedNotes(App& app, std::map<SDL_Keycode, HeldNote>& held) {
 //   audio <wav> <track> <bar> (browser drop path) · dump (playlist clips to stdout)
 //   shot <out.ppm> (J-37: this frame is saved once rendered — frame sequences)
 //   text <characters> (J-182: typed into the focused text field)
+//   playmode song|pattern (K-4: the transport's play mode)
 //   key space (J-49) · key escape · key left|right|up|down|enter|delete|tab (J-141), notes (Q-3: piano roll notes to stdout) · transport (J-49: song position / playing / seek position to stdout)
 //   scroll dx dy (J-67: one trackpad-style two-axis scroll event, wheel units)
 //   momentum dx dy frames (J-67: a decaying scroll stream over the next frames, like an OS fling)
@@ -450,7 +684,8 @@ void releaseTypedNotes(App& app, std::map<SDL_Keycode, HeldNote>& held) {
 //   remote Stop) · epoch (the engine's stop epoch to stdout) · forget <name> (a later waitfor <name> waits for it anew)
 //   J-112: playvia remote (the Play / Pause remote / MIDI action) · startsong (a start that is not the Play command, as a
 //   playlist click) · playstate (transport, plugin playback, stop epoch, the focused window to stdout) · focus <window>;
-//   reported each frame for waitfor: transport-playing / transport-stopped, plugin-playback
+//   reported each frame for waitfor: transport-playing / transport-stopped, plugin-playback, transport-moved (playing at
+//   least a tick past the set position)
 //   J-111: collab profile <name> · collab new <folder> · collab invite <file> [minutes] · collab join <code file> <folder>
 //   (waits for the file) · collab open <file|folder> · collab edit <channel name> · collab reconnect-code <file> ·
 //   collab reconnect <file> · collab stall <seconds> · collab report <file> (JSON: shared song digest, members, connected, unseen,
@@ -462,7 +697,7 @@ void releaseTypedNotes(App& app, std::map<SDL_Keycode, HeldNote>& held) {
 //   strip [on|off] [frames] (the plugin window's channel strip: shown fraction, heights, eye button and window rects; Windows.h) ·
 //   plugwin chan <index> | fx <mixer index> <slot> | close (opens / closes plugin windows);
 //   waitfor signals collab-active / -ready / -invite-ready / -joined / -join-failed / -connected / -all-connected /
-//   -synced / -members:<n> / -channel:<name> / -name:<project name>
+//   -synced / -members:<n> / -left-members:<n> / -channel:<name> / -name:<project name>
 //   J-111d: collab point <window> <kind> <a> <b> <cx> <cy> (the pointer to a cursor anchor, CursorAnchor.h) ·
 //   collab demo-cursor <same> (the simulated collaborator's pointer, --show collab-cursors) · collab cursors <file>
 //   (JSON: cursors shown and what each is over here) · collab pixel <file>; signals collab-cursor:<kind>:shown|hidden,
@@ -471,7 +706,15 @@ void releaseTypedNotes(App& app, std::map<SDL_Keycode, HeldNote>& held) {
 //   received, kept, drawn, a pixel) · collab open-editor chN · collab demo-cursor-plugin chN|none · collab trace-reset;
 //   signals collab-picture:<name> (drawn here), collab-picture-kept:<name> (kept on this computer, the one drawn)
 //   waitfor <name> <seconds> (J-108: the script and --frames stop counting until the app reports
-//   devsig::reach(name) or the seconds pass; prints "waitfor <name>: reached|timed out after <s> s")
+//   devsig::reach(name) or the seconds pass; prints "waitfor <name>: reached|timed out after <s> s");
+//   K-B: waitfor "file:<path>" <seconds> waits until that file exists (another app run's report)
+//   K-15: loupe (the Loupe panel: pinned, docked with which window, size, its form's layout to stdout) ·
+//   loupe pin tab|below|left|right|float (pins the panel's / first Loupe there) · loupe unpin
+//   K-19: edzoom fxeditor|channelsettings (the plugin window's editor zoom, design size and window to stdout) ·
+//   edzoomset <plugin type> <zoom> (the zoom remembered for a plugin type, 0 = automatic; atparam points at the magnified spot)
+//   K-9: save <file> (the project, plugin state included) · rmchan <index> (removes a channel, its plugin window open or not);
+//   --dev-input-live <file>: a test harness drives a running app: whenever <file> exists, its lines ("0 <command> <args>")
+//   run on the next frame and the file is removed (tests/yabridge)
 std::string devShotPending;
 bool devLoadHold = true;  // J-167: frames do not count while a project loads ("loadhold off")
 bool devTrace = false;
@@ -487,6 +730,10 @@ float devSoundPeak = 0;  // J-109: output peak since the last "sound" (also drai
 bool devWaitHolds() {
   if (!devWait.on) return false;
   const double t = static_cast<double>(SDL_GetPerformanceCounter() - devWait.start) / static_cast<double>(SDL_GetPerformanceFrequency());
+  if (devWait.name.rfind("file:", 0) == 0 && !devsig::reached(devWait.name)) {  // K-B: "waitfor file:<path>": the file exists
+    std::error_code ec;
+    if (fs::exists(fs::u8path(devWait.name.substr(5)), ec)) devsig::reach(devWait.name);
+  }
   const bool reached = devsig::reached(devWait.name);
   if (!reached && t < devWait.seconds) return true;
   std::printf("waitfor %s: %s after %.2f s\n", devWait.name.c_str(), reached ? "reached" : "timed out", t);
@@ -548,15 +795,35 @@ std::vector<DevInputLine> loadDevInput(const std::string& path) {
 // Q-4 piano roll checks on the edited pattern / channel (--edit p c):
 //   mknotes <count> <step ticks> <length ticks>[x<chord size>] (velocity 64, pitches 60, 64, 68, ...)
 //   selnotes <i,j,...|none> · notes (the notes to stdout) · lane (event lane geometry to stdout)
+//   K-28: pianosnap <Line|Cell|None|"1/6 step"|"1/4 step"|...|Bar> (the snap mode, printed)
+//   K-29: bendline <note index> <tick:semis[:curve[:amount]]> ... (sets that note's bend line, one undo step)
 void devPianoCommand(App& app, const DevInputLine& l, int frame) {
   const Pattern* pat = app.doc.song().pattern(app.curPattern);
   const ObjectId ch = app.selChannel;
   if (l.cmd == "lane") {
     const PianoLaneGeometry& g = pianoLaneGeometry();
-    std::printf("lane frame %d: x0 %.3f pxPerTick %.6f yTop %.2f yBottom %.2f valid %d\n", frame, g.x0, g.pxPerTick, g.yTop, g.yBottom,
-                g.valid ? 1 : 0);
+    std::printf("lane frame %d: x0 %.3f pxPerTick %.6f yTop %.2f yBottom %.2f valid %d pitchY0 %.2f rowH %.3f preview %d live %d\n", frame, g.x0,
+                g.pxPerTick, g.yTop, g.yBottom, g.valid ? 1 : 0, g.pitchY0, g.rowH, g.preview, app.engine.liveHeld());
   } else if (!pat || ch == kNoId) {
     std::printf("%s frame %d: no pattern / channel\n", l.cmd.c_str(), frame);
+  } else if (l.cmd == "pianosnap") {  // K-28: pianosnap <mode name, e.g. Line, None, "1/4 step">: the piano roll's snap
+    for (int i = 0; i < kSnapCount; ++i)
+      if (l.args.size() >= 1 && l.args[0] == snapName(static_cast<Snap>(i))) app.piano.snap = static_cast<Snap>(i);
+    std::printf("pianosnap frame %d: %s grid %lld\n", frame, snapName(app.piano.snap), static_cast<long long>(app.piano.effGrid));
+  } else if (l.cmd == "bendline") {  // K-29
+    auto it = pat->notes.find(ch);
+    const size_t ni = static_cast<size_t>(std::max(0, std::atoi(l.a0.c_str())));
+    if (it != pat->notes.end() && ni < it->second.size()) {
+      std::vector<Note> ns = it->second;
+      ns[ni].bend.clear();
+      for (size_t i = 1; i < l.args.size(); ++i) {
+        float t = 0, v = 0, k = 0;
+        int c = 0;
+        if (std::sscanf(l.args[i].c_str(), "%f:%f:%d:%f", &t, &v, &c, &k) >= 2) ns[ni].bend.push_back(BendPoint(t, v, static_cast<uint8_t>(c), k));
+      }
+      bend::normalize(ns[ni].bend);
+      app.doc.setNotes(pat->id, ch, ns, "dev bend line", 0);
+    }
   } else if (l.cmd == "mknotes") {  // a2 = "<length>" or "<length>x<chord size>"
     const int count = std::atoi(l.a0.c_str());
     const Tick step = std::atoll(l.a1.c_str());
@@ -643,6 +910,7 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
     if (!fresh || l.frame != frame) continue;
     if (viewports::devCommand(app, l.cmd, l.args, frame)) continue;  // J-113
     if (pluginWindowDevCommand(app, l.cmd, l.args, frame)) continue;  // plugin windows, their channel strip
+    if (packs::devCommand(app, l.cmd, l.args)) continue;  // K-15: loupe [pin <tab|below|left|right|float> | unpin]
     if (livetake::devCommand(app, l.cmd, l.args, frame)) continue;  // J-217: live recording checks
     if (l.cmd == "move") {
       pointer = ImVec2(std::strtof(l.a0.c_str(), nullptr), std::strtof(l.a1.c_str(), nullptr));
@@ -675,6 +943,10 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
     else if (l.cmd == "sdlat") {  // J-91: the SDL pointer to the centre of a top bar button ("play", "stop", "rec", "metro")
       float x0 = 0, y0 = 0, x1 = 0, y1 = 0;
       if (topBarButtonRect(l.a0.c_str(), x0, y0, x1, y1)) {
+        if (l.a0.rfind("chroute", 0) == 0) {  // K-19: the channel window's targets show where its zoom puts them
+          const ImVec2 p0 = edzoomui::toScreen("channelsettings", ImVec2(x0, y0)), p1 = edzoomui::toScreen("channelsettings", ImVec2(x1, y1));
+          x0 = p0.x, y0 = p0.y, x1 = p1.x, y1 = p1.y;
+        }
         devSdlPointer = {static_cast<int>(std::lround((x0 + x1) * 0.5f * devDragScale)), static_cast<int>(std::lround((y0 + y1) * 0.5f * devDragScale))};
         SDL_Event e{};
         SDL_Window* w = SDL_GL_GetCurrentWindow();
@@ -756,6 +1028,9 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       }
       std::fflush(stdout);
     }
+    else if (l.cmd == "playmode") {  // K-4: "playmode song|pattern": the transport's play mode (the L key)
+      app.engine.setMode(l.a0 == "pattern" ? PlayMode::Pattern : PlayMode::Song);
+    }
     else if (l.cmd == "seekbeat") {  // J-91: the song position to a beat of the metronome ("2.5")
       // "seekbeat <beat> seek": also the set position (as a ruler click), where Stop returns
       app.engine.setPosition(static_cast<Tick>(std::strtod(l.a0.c_str(), nullptr) * static_cast<double>(app.doc.song().beatTicks())), l.a1 == "seek");
@@ -809,9 +1084,26 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       if (ns)
         for (size_t i = 0; i < ns->size(); ++i) {
           const Note& n = (*ns)[i];
-          std::printf("  note %zu start %lld len %lld pitch %d vel %d pan %d color %d slide %d group %d sel %d\n", i, static_cast<long long>(n.start),
-                      static_cast<long long>(n.length), n.pitch, n.velocity, n.pan, n.color, n.slide ? 1 : 0, n.group, app.piano.selected.count(i) ? 1 : 0);
+          std::printf("  note %zu start %lld len %lld pitch %d vel %d pan %d color %d slide %d group %d sel %d bend %zu", i, static_cast<long long>(n.start),
+                      static_cast<long long>(n.length), n.pitch, n.velocity, n.pan, n.color, n.slide ? 1 : 0, n.group, app.piano.selected.count(i) ? 1 : 0,
+                      n.bend.size());
+          for (const auto& b : n.bend) {  // K-25 (K-28: the curve amount when set)
+            std::printf(" %.2f:%.2f:%d", static_cast<double>(b.tick), static_cast<double>(b.semis), b.curve);
+            if (b.tension != 0.f) std::printf(":%.2f", static_cast<double>(b.tension));
+          }
+          std::printf("\n");
         }
+      std::fflush(stdout);
+    } else if (l.cmd == "rackrow") {  // K-22: the selected channel's rack steps in the current pattern (velocities, 0 = off)
+      const Pattern* p = app.doc.song().pattern(app.curPattern);
+      const auto* row = p && p->steps.count(app.selChannel) ? &p->steps.at(app.selChannel) : nullptr;
+      size_t on = 0;
+      if (row)
+        for (uint8_t v : *row) on += v > 0;
+      std::printf("rackrow frame %d: %zu steps, undo %zu, row", frame, on, app.doc.history().position());
+      if (row)
+        for (uint8_t v : *row) std::printf(" %d", v);
+      std::printf("\n");
       std::fflush(stdout);
     } else if (l.cmd == "transport") {
       std::printf("transport frame %d: pos %.0f playing %d seek %.0f mode %d\n", frame, app.engine.position(), app.engine.playing() ? 1 : 0,
@@ -909,12 +1201,22 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       SDL_Event q{};
       q.type = SDL_QUIT;
       SDL_PushEvent(&q);
+    } else if (l.cmd == "browser") {  // K-17 / K-18: browser rows and file operations (BrowserUi.h)
+      browserui::devCommand(app, l.args, frame);
     } else if (l.cmd == "collab") {  // J-111: collaboration (CollabUi.h)
       ImVec2 to;
       if (collabui::devCommand(app, l.args, frame, &to)) {  // "collab point": the pointer to an anchor
         pointer = to;
         io.AddMousePosEvent(to.x, to.y);
       }
+    } else if (l.cmd == "save") {  // K-9: save <file>
+      const std::string to = l.args.empty() ? l.a0 : l.args[0];
+      std::printf("save frame %d: %s %s\n", frame, app.saveProject(to) ? "saved" : "failed", to.c_str());
+      std::fflush(stdout);
+    } else if (l.cmd == "rmchan") {  // K-9: rmchan <index>, as the rack's Delete
+      const auto& chs = app.doc.song().channels;
+      const size_t ci = static_cast<size_t>(std::max(0, std::atoi(l.a0.c_str())));
+      if (ci < chs.size()) app.doc.removeChannel(chs[ci].id);
     } else if (l.cmd == "open") {  // J-167: open <file>: the normal open path (unsaved changes dropped first)
       app.doc.markSaved();
       app.openProject(l.args.empty() ? l.a0 : l.args[0]);
@@ -990,6 +1292,7 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
           std::printf("atparam frame %d: param %s not shown\n", frame, l.a0.c_str());
         } else {
           pointer = ImVec2((it.x0 + it.x1) * 0.5f + std::strtof(l.a1.c_str(), nullptr), (it.y0 + it.y1) * 0.5f + std::strtof(l.a2.c_str(), nullptr));
+          pointer = edzoomui::toScreen(slot ? "fxeditor" : "channelsettings", pointer);  // K-19: where it shows in a magnified editor
           io.AddMousePosEvent(pointer.x, pointer.y);
           std::printf("atparam frame %d: param %s at %.1f %.1f\n", frame, l.a0.c_str(), static_cast<double>(pointer.x), static_cast<double>(pointer.y));
         }
@@ -1033,11 +1336,15 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
         std::printf("  route %s -> %d \"%s\"\n", c.name.c_str(), mi, mixerTrackName(s, static_cast<size_t>(mi)).c_str());
       }
       std::fflush(stdout);
+    } else if (l.cmd == "edzoom") {  // K-19: edzoom <window key> (fxeditor | channelsettings): the editor zoom drawn last frame
+      edzoomui::devDump(l.a0.c_str());
+    } else if (l.cmd == "edzoomset") {  // K-19: edzoomset <plugin type> <zoom, 0 = automatic>: as the Editor size menu sets it
+      app.settings.set("ui.editorZoom", edzoom::withZoom(app.settings.getString("ui.editorZoom"), l.a0, std::strtof(l.a1.c_str(), nullptr)));
     } else if (l.cmd == "windows") {  // J-111h: windows [frames]
       devWindowsLeft = std::max(1, std::atoi(l.a0.c_str()));
     } else if (l.cmd == "shot") {
       devShotPending = l.args.empty() ? l.a0 : l.args[0];  // J-97: a quoted path may hold spaces
-    } else if (l.cmd == "mknotes" || l.cmd == "notes" || l.cmd == "selnotes" || l.cmd == "lane") {
+    } else if (l.cmd == "mknotes" || l.cmd == "notes" || l.cmd == "selnotes" || l.cmd == "lane" || l.cmd == "pianosnap" || l.cmd == "bendline") {
       devPianoCommand(app, l, frame);
     } else if (l.cmd == "launcher") {  // J-141: launcher [home|back|close]: the launcher's state and tiles to stdout
       if (l.a0 == "home") app.home.showHome(app.now);
@@ -1089,6 +1396,11 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       std::printf("  plus %.1f %.1f droptrack %d patterns %zu current %u undo %zu \"%s\"\n", static_cast<double>(g.plusX),
                   static_cast<double>(g.plusY), g.dropTrack, app.doc.song().patterns.size(), static_cast<unsigned>(app.curPattern),
                   app.doc.history().position(), app.doc.history().undoLabel().c_str());  // J-208
+      std::printf("  view scrollY %.3f trackHeight %.4f grid %.1f %.1f %.1f vthumb %.2f %.2f x %.1f hthumb %.2f %.2f y %.1f\n",
+                  static_cast<double>(g.scrollY), static_cast<double>(g.trackHeight), static_cast<double>(g.gridX0), static_cast<double>(g.gridY0),
+                  static_cast<double>(g.gridY1), static_cast<double>(g.vThumb0), static_cast<double>(g.vThumb1), static_cast<double>(g.vBarX),
+                  static_cast<double>(g.hThumb0), static_cast<double>(g.hThumb1), static_cast<double>(g.hBarY));  // K-24
+      std::printf("  head settings %u renaming %d\n", static_cast<unsigned>(app.settingsChannel), g.renaming);  // header double-clicks
       for (size_t i = 0; i < g.trackTop.size(); ++i) {
         const Song& s = app.doc.song();
         const PlaylistTrack* t = i < s.tracks.size() ? &s.tracks[i] : nullptr;  // J-208: the mode, the linked channel, the name
@@ -1099,6 +1411,18 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
         std::printf("  track %zu top %.1f h %.1f mode %d channel %u type %s fx %d name \"%s\"\n", i, static_cast<double>(g.trackTop[i]),
                     static_cast<double>(g.trackH[i]), t ? static_cast<int>(t->mode) : 0, t ? static_cast<unsigned>(t->channel) : 0u,
                     lc ? lc->plugin.type.c_str() : "-", fx, t ? t->name.c_str() : "");
+      }
+      {  // K-12: the track "+" (button and its neighbours on the hovered header), its menu rows, the piano roll
+        const trackplusui::DevGeom& tp = trackplusui::devGeom();
+        std::printf("  tplus on %d track %d box %.1f %.1f %.1f %.1f name %.1f %.1f %.1f %.1f handle %.1f %.1f led %.1f %.1f ctl %.1f %.1f icon %.1f"
+                    " menu %d piano %d pattern %u channel %u start %d patterns %zu channels %zu\n",
+                    tp.on ? 1 : 0, tp.track, static_cast<double>(tp.x0), static_cast<double>(tp.y0), static_cast<double>(tp.x1),
+                    static_cast<double>(tp.y1), static_cast<double>(tp.nameX0), static_cast<double>(tp.nameX1), static_cast<double>(tp.nameY0),
+                    static_cast<double>(tp.nameY1), static_cast<double>(tp.handleX0), static_cast<double>(tp.handleX1), static_cast<double>(tp.ledX0),
+                    static_cast<double>(tp.ledX1), static_cast<double>(tp.ctlX0), static_cast<double>(tp.ctlX1), static_cast<double>(tp.iconX1),
+                    tp.menu, app.showPiano ? 1 : 0, static_cast<unsigned>(app.curPattern), static_cast<unsigned>(app.selChannel),
+                    app.settings.getBool("ui.trackPlusPattern") ? 1 : 0, app.doc.song().patterns.size(), app.doc.song().channels.size());
+        for (const auto& r : tp.rows) std::printf("  tprow %s x %.1f y %.1f\n", r.key.c_str(), static_cast<double>(r.x), static_cast<double>(r.y));
       }
       for (const auto& r : g.rows)
         std::printf("  row %u x %.1f y %.1f\n", r.id, static_cast<double>(r.x), static_cast<double>(r.y));
@@ -1136,6 +1460,7 @@ int main(int argc, char** argv) {
   if (argc >= 2 && std::string(argv[1]) == "--check-updates")  // J-89: result on stdout, no window
     return http::checkCommand(argc >= 3 && std::string(argv[2]) == "--beta");
   SDL_SetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
+  appicon::prepareIdentity();  // K-14: X11 WM_CLASS / Wayland app_id = the desktop entry id
   if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER) != 0) {
     std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
     return 1;
@@ -1188,14 +1513,7 @@ int main(int argc, char** argv) {
   // ---- fonts (needed to draw the splash) ----
   std::string assets = findAssets(argv[0]);
   if (assets.empty()) std::fprintf(stderr, "warning: assets folder not found; using the built-in font\n");
-  {  // Window / dock icon: the app icon (tools/make_app_icon.py), else the plain mark drawn here.
-    SDL_Surface* icon = assets.empty() ? nullptr : SDL_LoadBMP((fs::path(assets) / "icons" / "gridline-app-256.bmp").string().c_str());
-    if (!icon) icon = makeIcon(256);
-    if (icon) {
-      SDL_SetWindowIcon(window, icon);
-      SDL_FreeSurface(icon);
-    }
-  }
+  appicon::apply(window);  // K-14: window / dock icon, built into the program (AppIcon.h)
   auto font = [&](const char* file, float size) -> ImFont* {
     if (assets.empty()) return nullptr;
     std::string p = (fs::path(assets) / "fonts" / file).string();
@@ -1217,6 +1535,9 @@ int main(int argc, char** argv) {
   theme::apply(true);
   ImGui_ImplSDL2_InitForOpenGL(window, gl);
   ImGui_ImplOpenGL3_Init(glsl);
+  // K-24 dev check: render as on an OpenGL 3.0/3.1 driver, where the renderer cannot honour draw
+  // command vertex offsets (large meshes then rely on 32-bit indices alone).
+  if (std::getenv("GRIDLINE_DEV_NO_VTX_OFFSET")) ImGui::GetIO().BackendFlags &= ~ImGuiBackendFlags_RendererHasVtxOffset;
   viewports::install(window, gl, {startHidden});  // J-113: detachable windows
   if (startHidden) {
     // J-78: automated runs keep their own clipboard (a scripted click on a
@@ -1342,6 +1663,7 @@ int main(int argc, char** argv) {
   std::string devAlignAudit;              // --align-audit <file> (J-128)
   int devGallery = -1, devGalleryPage = 1;  // J-129 --gallery
   float devUiScale = 0.0f;                // --ui-scale F: interface scale for this run only (not saved; J-54 layout checks)
+  std::string devInputLive;   // --dev-input-live file (K-9)
   std::string devSaveAtExit;  // --save-at-exit path: project saved when the run ends (plugin state round trips)
   std::string devSaveAt;      // --save-at path: project saved at frame 3 (J-78: the notification shows in the shot)
   int devWindowCycle = 0;  // --plugin-window-cycle N: close / reopen the plugin window N times
@@ -1365,6 +1687,10 @@ int main(int argc, char** argv) {
     else if (arg == "--tool" && i + 1 < argc) devTool = argv[++i];
     else if (arg == "--script" && i + 1 < argc) devScript = argv[++i];
     else if (arg == "--dev-input" && i + 1 < argc) devInput = loadDevInput(argv[++i]);
+    else if (arg == "--dev-input-live" && i + 1 < argc) {  // K-9: see the command list above runDevInput
+      devInputLive = argv[++i];
+      devInput.push_back({0, "#", "", "", "", {}});  // the session counts frames from the start
+    }
     else if (arg == "--play") app.engine.play();
     else if (arg == "--fx" && i + 2 < argc) {
       size_t mi = static_cast<size_t>(std::atoi(argv[++i]));
@@ -1475,6 +1801,7 @@ int main(int argc, char** argv) {
       else if (w == "theme") app.showSettings = true, app.settingsTab = 9;  // J-55 theme page
       else if (w == "integrations") app.showSettings = true, app.settingsTab = 10;  // SC-07 AI assistants page
       else if (w == "collab-settings") app.showSettings = true, app.settingsTab = 11;  // J-111 Collaboration page
+      else if (w == "plugin-folders") app.showSettings = true, app.settingsTab = 12;  // K-13 Plugins page
       else if (w == "collab") app.showCollab = true;                                // J-111 panel (no session)
       else if (w == "collab-join") gl::collabui::openJoin(app);                      // J-111 join dialog
       else if (w == "collab-demo" || w == "collab-review" || w == "collab-demo-panel" || w == "collab-cursors") {  // J-111: a simulated collaborator
@@ -1796,6 +2123,7 @@ int main(int argc, char** argv) {
       app.cancelProjectLoad();  // J-167: quitting while a project loads: the load stops, the open project is the one asked about
       app.guardUnsaved([&running]() { running = false; });
     }
+    pollAsio(app);  // K-6: driver resets, latency changes, the control panel
     if (app.audioReopen) {
       app.audioReopen = false;
       openAudio(app);
@@ -1859,6 +2187,16 @@ int main(int argc, char** argv) {
       }
       if (!devInput.empty()) {
         devDragScale = uiScale;
+        if (!devInputLive.empty()) {  // K-9: commands of a test harness, for the next frame
+          std::error_code liveEc;
+          if (fs::exists(fs::u8path(devInputLive), liveEc)) {
+            for (DevInputLine& l : loadDevInput(devInputLive)) {
+              l.frame = frameNo + 1;
+              devInput.push_back(std::move(l));
+            }
+            fs::remove(fs::u8path(devInputLive), liveEc);
+          }
+        }
         runDevInput(app, devInput, frameNo);
         lastScaledEvent = g.InputEventsNextEventId - 1;  // already in logical pixels
       }
@@ -1871,6 +2209,7 @@ int main(int argc, char** argv) {
     scrollui::configure(app.settings);  // J-67: smooth scrolling / elastic edges for every ImGui scroll region
     ui::SetWindowRubber(scrollui::params().elastic);  // J-117: the same switch for the windows' elastic boundary
     scrollui::beforeNewFrame();
+    edzoomui::mapPointer();  // K-19: the pointer over a magnified plugin editor, in its design coordinates
     ImGui::NewFrame();
     const bool alignFrame = !devAlignAudit.empty() && !shotPath.empty() && frameNo == shotFrames - 1;
     if (alignFrame) alignaudit::begin();  // J-128
@@ -2148,6 +2487,7 @@ int main(int argc, char** argv) {
     if (alignFrame) alignaudit::finish(devAlignAudit);  // J-128
     if (devGallery >= 0) look::drawGallery(static_cast<look::Dir>(devGallery), ImGui::GetTime(), devGalleryPage);  // J-129
     ImGui::Render();
+    edzoomui::afterRender();  // K-19: magnified plugin editors
     if (useOffscreen) offscreen.use(true);
     glViewport(0, 0, fbW, fbH);
     ImVec4 bg = theme::vec(theme::pal().chrome);
@@ -2158,6 +2498,8 @@ int main(int argc, char** argv) {
     if (!profilePath.empty() && shotPath.empty() && ++frameNo >= shotFrames + profileWarmup) running = false;
     if (!devInput.empty()) {  // J-112: for "waitfor"
       devsig::reach(app.engine.playing() ? "transport-playing" : "transport-stopped");
+      // K-B: playback has moved on from where it started (the set position), for scripts that check it ran
+      if (app.engine.playing() && app.engine.position() >= app.engine.seekPosition() + 1.0) devsig::reach("transport-moved");
       if (app.engine.pluginPlaybackActive()) devsig::reach("plugin-playback");
       {  // J-109: "output-silent" once the output stayed below 1e-5 for 0.2 s (the peak still counts for "sound")
         static double quietSince = -1;
@@ -2336,6 +2678,7 @@ int main(int argc, char** argv) {
   if (frameClock) host::native::frameClockStop();
   if (gDevice) SDL_CloseAudioDevice(gDevice);
   if (gInDevice) SDL_CloseAudioDevice(gInDevice);  // (SDL_Quit would too; explicit, like the output)
+  gAsio.close();  // K-6: the driver stops before the engine goes
   // J-103: the static sample cache's decoders and the clip render thread are joined here,
   // not by their static destructors (a decode or render still running then would use
   // statics already destroyed). Offline work after this point decodes / renders inline.

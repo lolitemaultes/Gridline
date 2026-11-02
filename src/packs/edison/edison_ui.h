@@ -57,6 +57,8 @@ struct Session {
   PluginTarget target;
   ObjectId channel = kNoId;  // standalone: the channel whose sample is edited
   bool open = true;          // standalone window shown
+  std::string dragOut;       // K-17: the file the drag out of the editor carries (made once per drag)
+  bool dragOutUsed = false;  // K-17: the drag handle was dragged since it was pressed
   std::string title;
 
   History hist;
@@ -174,19 +176,52 @@ void saveAs(App& a, Session& s, FileFormat f);
 void exportSelection(App& a, Session& s);
 void openFile(App& a, Session& s);
 void sendToPlaylist(App& a, Session& s);
+// K-17: the file a drag out of the editor carries: the selection, saved as its own file in
+// the edited audio folder (named by its content), or with no selection the whole current
+// version, saved the way Send to playlist saves it. "" while busy or empty.
+std::string dragOutFile(App& a, Session& s);
+// After the item that starts the drag (the toolbar's drag handle): the drag source. The
+// payload is a browser audio file ("GL_FILE"), so the playlist (at the drop position, with
+// snap), the channel rack, sample slots and samplers take it as they take a browser file.
+void dragOutSource(App& a, Session& s);
 // J-191: the current version into the Split stems window (files in the Stems folder).
 void splitStems(App& a, Session& s);
 void sendToSampler(App& a, Session& s, bool slicer);
 void detectSlices(App& a, Session& s, double sensitivity);
 void addMarkerAtCursor(App& a, Session& s);
 
+// K-15: Loupe pinned into the main layout (edison_ui.cpp). The "Loupe" panel is a dock
+// window like the playlist; while pinned (setting ui.loupePinned) every Loupe that opens
+// (a sample, a Loupe effect's editor) shows in it instead of a window of its own.
+enum class DockSpot { Tab, Below, Left, Right, Floating };
+bool pinned(App& a);
+bool inPanel(const Session& s);  // this session is the one the panel shows
+void pinTo(App& a, Session& s, DockSpot spot);
+void unpin(App& a);              // the panel closes; its session goes back to its own window
+void dockMenuItems(App& a, Session& s);  // View menu: Pin to the layout / Unpin
+bool claimEffectEditor(App& a, const PluginTarget& t);
+// Dev checks (--dev-input "loupe [pin <spot> | unpin]"): the panel's room and layout last frame.
+struct DockDev {
+  float w = 0, h = 0;
+  bool compact = false;
+  float scale = 0, formW = 0, headH = 0, waveH = 0;
+};
+DockDev& dockDev();
+bool dockDevCommand(App& a, const std::string& cmd, const std::vector<std::string>& args);
+
 // Drawing (edison_form_ui.cpp / edison_wave_ui.cpp / edison_tools_ui.cpp).
 void drawForm(App& a, Session& s, float width, float maxHeight);
+// K-15: the form pinned into the main layout, laid out for the dock's space `avail`.
+void drawFormDocked(App& a, Session& s, ImVec2 avail);
+namespace dock {
+struct Layout;
+}
+void drawFormLayout(App& a, Session& s, const dock::Layout& layout);
 namespace sty {
 struct Metrics;
 }
-// The nine menu words from tl, cells cellW x h (edison_form_ui.cpp).
-void drawMenus(App& a, Session& s, ImVec2 tl, float cellW, float h, const sty::Metrics& M);
+// The nine menu words from tl, cells cellW x h, perRow to a row (edison_form_ui.cpp).
+void drawMenus(App& a, Session& s, ImVec2 tl, float cellW, float h, const sty::Metrics& M, int perRow = 9);
 void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, const sty::Metrics& M);
 void drawToolDialogs(App& a, Session& s);
 void openTool(Session& s, Tool t);

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include "NoteBend.h"
 #include "Params.h"
 #include "PatternAutomation.h"
 
@@ -22,6 +23,44 @@ int firstFreeTrack(const Song& s) {
 }
 
 std::string pluginOr(const std::string& type, const std::string& fallback) { return findPlugin(type) ? type : fallback; }
+
+// K-25: pitch bend during a note becomes the note's bend line (in the file's bend range: RPN 0,
+// General MIDI's 2 semitones until the file sets one). Overlapping notes on one MIDI channel all
+// get the channel's bend, as they played it.
+struct BendReader {
+  std::vector<MidiCtl> bends[16];                          // per MIDI channel, by tick
+  std::vector<std::pair<int64_t, double>> ranges[16];      // (tick, semitones) from RPN 0
+  explicit BendReader(const MidiTrack& tr) {
+    int msb[16], lsb[16];
+    std::fill(std::begin(msb), std::end(msb), 127);
+    std::fill(std::begin(lsb), std::end(lsb), 127);
+    for (const auto& c : tr.ctls) {
+      const int ch = c.channel & 15;
+      if (c.controller == kMidiPitchBend) bends[ch].push_back(c);
+      else if (c.controller == 101) msb[ch] = c.value;
+      else if (c.controller == 100) lsb[ch] = c.value;
+      else if (c.controller == 6 && msb[ch] == 0 && lsb[ch] == 0) ranges[ch].push_back({c.tick, static_cast<double>(std::max(1, c.value))});
+    }
+    for (auto& b : bends) std::stable_sort(b.begin(), b.end(), [](const MidiCtl& x, const MidiCtl& y) { return x.tick < y.tick; });
+  }
+  std::vector<BendPoint> lineFor(const MidiNote& mn, int division, int ppq) const {
+    const int ch = mn.channel & 15;
+    const auto& bs = bends[ch];
+    if (bs.empty()) return {};
+    double range = 2.0;
+    for (const auto& r : ranges[ch])
+      if (r.first <= mn.start) range = r.second;
+    const double toSong = static_cast<double>(ppq) / std::max(1, division);
+    auto semis = [&](int v) { return (static_cast<double>(std::clamp(v, 0, 16383)) - 8192.0) / 8192.0 * range; };
+    std::vector<std::pair<double, double>> samples;
+    double startValue = 0;
+    auto it = std::upper_bound(bs.begin(), bs.end(), mn.start, [](int64_t t, const MidiCtl& c) { return t < c.tick; });
+    if (it != bs.begin()) startValue = semis(std::prev(it)->value);
+    samples.push_back({0.0, startValue});
+    for (; it != bs.end() && it->tick < mn.start + mn.length; ++it) samples.push_back({static_cast<double>(it->tick - mn.start) * toSong, semis(it->value)});
+    return bend::fromSamples(samples, 0.02, std::max(1.0, ppq / 8.0));  // denser than 1/32 note: a ramp
+  }
+};
 
 }  // namespace
 
@@ -101,10 +140,12 @@ MidiImportResult importMidiIntoSong(Song& song, const MidiFileData& midiIn, cons
     int mch = tr.channel >= 0 ? tr.channel : (tr.notes.empty() ? 0 : tr.notes[0].channel);
     if (!o.midiChannels.empty() && !o.midiChannels.count(mch)) continue;
     std::vector<Note> notes;
+    const BendReader bends(tr);
     for (const auto& mn : tr.notes) {
       if (!o.midiChannels.empty() && !o.midiChannels.count(mn.channel)) continue;
       Note x(T(mn.start), std::max<Tick>(1, T(mn.start + mn.length) - T(mn.start)), std::clamp(mn.pitch, 0, 127),
              std::clamp(mn.velocity, 1, 127));
+      x.bend = bends.lineFor(mn, midi.division, ppq);  // K-25
       notes.push_back(x);
       maxEnd = std::max(maxEnd, x.start + x.length);
     }
@@ -116,7 +157,7 @@ MidiImportResult importMidiIntoSong(Song& song, const MidiFileData& midiIn, cons
         lanes[static_cast<uint32_t>(ChannelParam::Volume)].push_back({T(c.tick), c.value / 127.0});
       else if (o.controllers && c.controller == 10)
         lanes[static_cast<uint32_t>(ChannelParam::Pan)].push_back({T(c.tick), std::clamp((c.value - 64) / 64.0, -1.0, 1.0)});
-      else
+      else if (c.controller != kMidiPitchBend && c.controller != 101 && c.controller != 100 && c.controller != 6 && c.controller != 38)  // K-25: pitch bend (and its RPN 0 range) went into the notes' bend lines
         ++res.skippedControllers;
     }
     if (notes.empty() && lanes.empty()) continue;
@@ -186,10 +227,12 @@ int insertMidiNotes(Song& song, ObjectId pattern, ObjectId channel, Tick at, con
   Tick maxEnd = 0;
   for (size_t ti = 0; ti < midi.tracks.size(); ++ti) {
     if (track >= 0 && static_cast<int>(ti) != track) continue;
+    const BendReader bends(midi.tracks[ti]);
     for (const auto& mn : midi.tracks[ti].notes) {
       const Tick s = midiToSongTicks(mn.start, midi.division, song.ppq);
       Note x(at + s, std::max<Tick>(1, midiToSongTicks(mn.start + mn.length, midi.division, song.ppq) - s), std::clamp(mn.pitch, 0, 127),
              std::clamp(mn.velocity, 1, 127));
+      x.bend = bends.lineFor(mn, midi.division, song.ppq);  // K-25
       dst.push_back(x);
       maxEnd = std::max(maxEnd, x.start + x.length);
       ++added;

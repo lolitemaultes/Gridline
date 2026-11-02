@@ -90,6 +90,7 @@ InstallKind installKind() {
   if (std::getenv("FLATPAK_ID")) return InstallKind::Flatpak;
   std::error_code ec;
   if (std::filesystem::exists("/.flatpak-info", ec)) return InstallKind::Flatpak;
+  if (std::getenv("SNAP") && std::getenv("SNAP_NAME")) return InstallKind::Snap;  // K-1
 #if defined(__linux__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
   if (std::getenv("APPIMAGE")) return InstallKind::Official;
   const std::string exe = platform::executablePath();

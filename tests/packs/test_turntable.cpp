@@ -1,14 +1,21 @@
-// Gridline — Turntable (gl.turntable) tests (J-206): catalogue entry and
-// presets, the built-in sound (plays until a sample is loaded, an imported
-// empty deck stays silent), notes, the reference laws as measured plain
-// numbers (motor, acceleration and speed steps, hold with Position sweeps,
-// each Smooth control at both ends, Turns, pan, volume and mute, automation in
-// the reference's "from MIDI" form), scratch automation through the hand,
-// parameter extremes incl. NaN, block-size invariance, other sample rates,
-// J-205 states, the FL state (every layout, the options tail, the empty deck,
-// automation mapping), FL's own render-test project (sample, recorded
-// position events) and the export round trip, and the Turntable FX effect.
+// Gridline — Turntable tests (J-206, K-23): the effect (gl.turntablefx) and
+// the 0.7.1 instrument (gl.turntable, hidden): catalogue entries and presets
+// (the pickers offer one Turntable, an effect; Platter stays an instrument),
+// the built-in sound (plays until a sample is loaded, an imported empty deck
+// stays silent), notes (instrument), the reference laws as measured plain
+// numbers for both (motor, acceleration and speed steps, hold with Position
+// sweeps, each Smooth control at both ends, Turns, pan, volume and mute,
+// automation in the reference's "from MIDI" form), scratch automation through
+// the hand, parameter extremes incl. NaN, block-size invariance, other sample
+// rates, J-205 states, the FL state (every layout, the options tail, the empty
+// deck, automation mapping), the export round trip (effect natively, the
+// instrument as the effect), the effect's signal path (output = input + deck,
+// as measured on the reference), old projects (Turntable FX and the 0.7.1
+// instrument render identically), FL import into a mixer slot (a fixture
+// written with Gridline's FLP writer, and FL's own render-test project), and
+// the old Turntable FX effect.
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -21,14 +28,18 @@
 #include "../Check.h"
 #include "core/PluginInfo.h"
 #include "core/Params.h"
+#include "core/Project.h"
 #include "core/Song.h"
 #include "core/flp/Flp.h"
 #include "core/flp/FlpEncode.h"
 #include "core/flp/FlpExport.h"
 #include "core/flp/FlpFx2.h"
+#include "engine/AudioEngine.h"
 #include "engine/Effects.h"
 #include "engine/Generators.h"
+#include "engine/Program.h"
 #include "engine/Sample.h"
+#include "packs/spectral/spectral.h"
 #include "packs/Packs.h"
 #include "packs/spectral/turntable.h"
 
@@ -120,16 +131,43 @@ double circ(double a, double b) {
 }
 
 void testCatalogue() {
+  // K-23: Turntable is the effect (as the reference is); the 0.7.1 instrument
+  // and the old live-input effect are kept for old projects, out of the pickers.
+  const PluginInfo* fx = findPlugin("gl.turntablefx");
+  expect(fx != nullptr, "gl.turntablefx is in the catalogue");
+  if (fx) {
+    expect(fx->kind == PluginKind::Effect && fx->usesSample && !fx->hidden, "Turntable: a mixer effect that loads a sample, offered in the pickers");
+    expect(fx->name == "Turntable", "the effect is named Turntable");
+    expect(fx->params.size() == static_cast<size_t>(sp::TxCount), "effect parameter count");
+    for (int k = sp::TtPosition; k <= sp::TtTurns; ++k)
+      expect(fx->params[static_cast<size_t>(k)].name == findPlugin("gl.turntable")->params[static_cast<size_t>(k)].name, "the deck's 14 controls on the same indices");
+    expect(fx->params[sp::TxTimecode].name == "Timecode" && fx->params[sp::TxEmpty].name == "Empty deck", "the kept state after them");
+    expect(fx->presets.size() >= 2 && fx->presets.size() <= 6, "effect: 2 to 6 factory presets");
+    expect(fx->editorWidth == 470, "effect editor width: the reference panel at 1.9 times its size");
+    expect(packs::createEffect("gl.turntablefx") != nullptr, "the effect is created");
+    expect(sp::turntableTelemetry(packs::createEffect("gl.turntablefx").get()) != nullptr, "telemetry of the effect");
+  }
   const PluginInfo* info = findPlugin("gl.turntable");
-  expect(info != nullptr, "gl.turntable is in the catalogue");
+  expect(info != nullptr, "gl.turntable (0.7.1 instrument) still loads");
   if (!info) return;
-  expect(info->kind == PluginKind::Generator && info->usesSample, "an instrument that loads a sample");
+  expect(info->kind == PluginKind::Generator && info->usesSample && info->hidden, "the 0.7.1 instrument: kept, hidden from the pickers");
   expect(info->params.size() == static_cast<size_t>(sp::TtCount), "parameter count");
   expect(info->presets.size() >= 2 && info->presets.size() <= 6, "2 to 6 factory presets");
-  expect(info->name == "Turntable", "named Turntable");
+  expect(info->name == "Turntable (old)", "shown as Turntable (old) in old projects");
   expect(info->editorWidth == 470, "editor width: the reference panel at 1.9 times its size");
   const PluginInfo* old = findPlugin("gl.scratcher");
-  expect(old && old->kind == PluginKind::Effect && old->name == "Turntable FX", "the effect keeps its type, shown as Turntable FX");
+  expect(old && old->kind == PluginKind::Effect && old->hidden && old->name == "Turntable FX (old)", "the old effect keeps its type, hidden, shown as Turntable FX (old)");
+  const PluginInfo* platter = findPlugin("gl.platter");
+  expect(platter && platter->kind == PluginKind::Generator && !platter->hidden, "Platter stays a separate instrument");
+  // What the pickers offer: one Turntable, an effect.
+  int turntables = 0, effects = 0;
+  for (const PluginInfo& p : pluginCatalog()) {
+    if (p.hidden) continue;
+    std::string n = p.name;
+    std::transform(n.begin(), n.end(), n.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (n.find("turntable") != std::string::npos) ++turntables, effects += p.kind == PluginKind::Effect;
+  }
+  expect(turntables == 1 && effects == 1, "the pickers list one Turntable, an effect");
   expect(packs::createGenerator("gl.turntable") != nullptr, "created");
   expect(sp::turntableTelemetry(packs::createGenerator("gl.turntable").get()) != nullptr, "telemetry of the runtime");
 }
@@ -250,19 +288,27 @@ const std::vector<RefCase>& refCases() {
   return c;
 }
 
-void testMeasured() {
+// K-23: the laws hold for the effect (silent input: its output is the deck)
+// and for the 0.7.1 instrument alike.
+void testMeasured(bool effect) {
   static const double lo[14] = {0, 0, 0, 0, -128, 0, 0, 0, -1, 0, 0, 0, 0, 0};
   static const double hi[14] = {30000, 1, 100, 100, 128, 255, 1, 100, 1, 1000, 1000, 1000, 1000, 18};
+  const sp::TurntableLayout& lay = effect ? sp::kTtFxLayout : sp::kTtInstLayout;
   double worst = 0;
   for (const RefCase& rc : refCases()) {
-    PluginState st = defaultPluginState("gl.turntable");
-    sp::turntableFromReference(rc.v, 14, st.params);
+    PluginState st = defaultPluginState(lay.type);
+    sp::turntableFromReference(rc.v, 14, st.params, lay);
     st.data = testSample();
     ChannelAux aux;
     packs::prepareAux(st, aux);
-    auto g = packs::createGenerator("gl.turntable");
+    auto gen = effect ? nullptr : packs::createGenerator(lay.type);
+    auto fxp = effect ? packs::createEffect(lay.type) : nullptr;
     ProcessContext ctx;
     ctx.sampleRate = kSr;
+    auto proc = [&](float* l, float* r, int n) {
+      if (gen) gen->process(st, aux, ctx, l, r, n);
+      else fxp->processAux(st, aux, ctx, l, r, n);
+    };
     const long frames = 44100 - rc.block;
     std::vector<float> L(static_cast<size_t>(frames), 0.f), R(static_cast<size_t>(frames), 0.f);
     size_t ei = 0;
@@ -275,7 +321,7 @@ void testMeasured() {
       long n = std::min<long>(rc.block, frames - f0);
       const long next = ei < rc.events.size() ? rc.events[ei].frame - rc.block : frames;
       if (next > f0 && next < f0 + n) n = next - f0;
-      g->process(st, aux, ctx, L.data() + f0, R.data() + f0, static_cast<int>(n));
+      proc(L.data() + f0, R.data() + f0, static_cast<int>(n));
       f0 += n;
     }
     double err = 0;
@@ -285,7 +331,7 @@ void testMeasured() {
     }
     worst = std::max(worst, err);
     char nm[96];
-    std::snprintf(nm, sizeof nm, "measured law: %s", rc.name);
+    std::snprintf(nm, sizeof nm, "measured law (%s): %s", effect ? "effect" : "instrument", rc.name);
     // The references were captured on x86_64; on other CPUs (Apple Silicon fuses multiply-adds) the
     // tiny rounding differences grow through a second of platter motion, so the bound is looser.
 #if defined(__x86_64__) || defined(_M_X64)
@@ -377,8 +423,11 @@ void testExtremes() {
   float v[14];
   for (float& x : v) x = nan;
   std::vector<float> p;
-  sp::turntableFromReference(v, 14, p);
+  sp::turntableFromReference(v, 14, p, sp::kTtInstLayout);
   bool ok = p.size() == static_cast<size_t>(sp::TtCount);
+  for (float x : p) ok = ok && std::isfinite(x);
+  sp::turntableFromReference(v, 14, p, sp::kTtFxLayout);
+  ok = ok && p.size() == static_cast<size_t>(sp::TxCount);
   for (float x : p) ok = ok && std::isfinite(x);
   expect(ok, "reference values NaN: defaults");
   bool auto_ok = true;
@@ -495,19 +544,19 @@ void testFlState() {
   const float v[14] = {0.111f, 1.0f, 0.5f, 0.25f, 0.5f, 0.78f, 1.0f, 0.5f, 0.0f, 0.5f, 0.908f, 0.999f, 0.4f, 9.0f};
   flp::PluginMapping m;
   const bool ok = decode(flState(1001000, v, "C:\\Samples\\Breaks\\loop.wav"), m);
-  expect(ok && m.glType == "gl.turntable" && m.state.type == "gl.turntable", "Fruity Scratcher imports as the Turntable instrument");
+  expect(ok && m.glType == "gl.turntablefx" && m.state.type == "gl.turntablefx", "Fruity Scratcher imports as the Turntable effect (K-23)");
   auto P = [&](const flp::PluginMapping& x, int k) { return static_cast<double>(x.state.params[static_cast<size_t>(k)]); };
-  if (ok && m.state.params.size() == static_cast<size_t>(sp::TtCount)) {
+  if (ok && m.state.params.size() == static_cast<size_t>(sp::TxCount)) {
     expect(near(P(m, sp::TtPosition), 0.111, 1e-6) && P(m, sp::TtMute) == 0 && near(P(m, sp::TtSpeed), 1.0, 1e-6) &&
                near(P(m, sp::TtAccel), 0.25, 1e-6),
            "position, sound, speed, acceleration");
     expect(near(P(m, sp::TtPan), 0.0, 1e-6) && near(P(m, sp::TtVolume), 0.78, 1e-6) && P(m, sp::TtHold) == 1 && near(P(m, sp::TtSense), 0.5, 1e-6),
            "pan, volume, hold, sensitivity");
-    expect(P(m, sp::TtTransport) == 1 && P(m, sp::TtTurns) == 0 && P(m, sp::TtNotes) == sp::TnOff, "motor paused, no extra turns, played by its motor");
+    expect(P(m, sp::TtTransport) == 1 && P(m, sp::TtTurns) == 0, "motor paused, no extra turns");
     expect(near(P(m, sp::TtSmooth1), 0.5, 1e-6) && near(P(m, sp::TtSmooth2), 0.908, 1e-6) && near(P(m, sp::TtSmooth3), 0.999, 1e-6) &&
                near(P(m, sp::TtSmooth4), 0.4, 1e-6),
            "smooth 1..4");
-    expect(P(m, sp::TtZoom) == 0 && P(m, sp::TtTimecode) == 0 && P(m, sp::TtRiaa) == 0 && P(m, sp::TtEmpty) == 0, "version 1001000: no options tail");
+    expect(P(m, sp::TxZoom) == 0 && P(m, sp::TxTimecode) == 0 && P(m, sp::TxRiaa) == 0 && P(m, sp::TxEmpty) == 0, "version 1001000: no options tail");
   }
   expect(m.state.data.find('\\') == std::string::npos && m.state.data.size() >= 8 && m.state.data.compare(m.state.data.size() - 8, 8, "loop.wav") == 0,
          "the sample path is kept");
@@ -526,10 +575,10 @@ void testFlState() {
   const bool ok2 = decode(flState(1001001, w, "", 2), m2);
   expect(ok2 && P(m2, sp::TtMute) == 1 && P(m2, sp::TtTransport) == 0 && P(m2, sp::TtSpeed) == 2 && P(m2, sp::TtPan) == 1 && P(m2, sp::TtTurns) == 2,
          "mute, reverse, double speed, pan right, +2 turns");
-  expect(ok2 && m2.state.data.empty() && P(m2, sp::TtEmpty) == 1 && P(m2, sp::TtZoom) == 1, "no sample: the empty deck; the large editor");
+  expect(ok2 && m2.state.data.empty() && P(m2, sp::TxEmpty) == 1 && P(m2, sp::TxZoom) == 1, "no sample: the empty deck; the large editor");
   // The current layout: timecode format and phono preamp.
   flp::PluginMapping m3;
-  expect(decode(flState(1001002, v, "", 1, 4, 1), m3) && P(m3, sp::TtTimecode) == 5 && P(m3, sp::TtRiaa) == 1 && P(m3, sp::TtZoom) == 0,
+  expect(decode(flState(1001002, v, "", 1, 4, 1), m3) && P(m3, sp::TxTimecode) == 5 && P(m3, sp::TxRiaa) == 1 && P(m3, sp::TxZoom) == 0,
          "version 1001002: timecode format and phono preamp kept");
   // The older integer layout.
   {
@@ -567,48 +616,439 @@ void testFlState() {
   expect(fin, "NaN values import as defaults");
 }
 
-// Export: a Turntable state written as the scratcher and read back.
+
+// Export: a Turntable state written as the scratcher and read back (K-23: the
+// effect natively, from any slot; the 0.7.1 instrument as the effect it
+// carries over to).
 void testExport() {
   flp::enc::EncodeContext ec;
-  PluginState g = defaultPluginState("gl.turntable");
-  g.params[sp::TtNotes] = sp::TnOff;
-  g.params[sp::TtCue] = 0.f;
+  PluginState g = defaultPluginState("gl.turntablefx");
   g.params[sp::TtPosition] = 0.3f;
   g.params[sp::TtSpeed] = 1.5f;
   g.params[sp::TtPan] = -0.5f;
   g.params[sp::TtTransport] = 0.f;
   g.params[sp::TtTurns] = -3.f;
   g.params[sp::TtSmooth3] = 0.7f;
-  g.params[sp::TtZoom] = 1.f;
-  g.params[sp::TtTimecode] = 3.f;
-  g.params[sp::TtRiaa] = 1.f;
+  g.params[sp::TxZoom] = 1.f;
+  g.params[sp::TxTimecode] = 3.f;
+  g.params[sp::TxRiaa] = 1.f;
   g.data = "/samples/loop.wav";
   const float v[14] = {0.111f, 1.0f, 0.5f, 0.25f, 0.5f, 0.78f, 1.0f, 0.5f, 0.0f, 0.5f, 0.908f, 0.999f, 0.4f, 9.0f};
   const std::vector<uint8_t> origin = flState(1001000, v, "C:\\a.wav");
-  const flp::enc::Result r = flp::enc::encode(g, "Fruity Scratcher", &origin, ec);
-  expect(r.hasState && r.flName == "Fruity Scratcher", "exported as Fruity Scratcher");
-  expect(r.state.size() >= 4 && r.state[0] == 0x2A && r.state[1] == 0x46 && r.state[2] == 0x0F, "written in the current layout (1001002)");
-  flp::PluginMapping back;
-  const bool ok = flp::enc::decodeState("Fruity Scratcher", r.state, back, ec);
-  bool same = ok && back.state.params.size() == g.params.size();
-  for (int k = 0; same && k < sp::TtCount; ++k)
-    if (k != sp::TtEmpty) same = std::fabs(back.state.params[static_cast<size_t>(k)] - g.params[static_cast<size_t>(k)]) < 1e-6f;
-  expect(same, "export round trip: every setting comes back");
-  expect(ok && back.state.data.size() >= 8 && back.state.data.compare(back.state.data.size() - 8, 8, "loop.wav") == 0, "export round trip: the sample");
-  expect(r.mismatched.empty() && !r.dataMismatch, "export: nothing reported as lost");
+  auto roundTrip = [&](const flp::enc::Result& r, const char* what) {
+    expect(r.hasState && r.flName == "Fruity Scratcher", (std::string(what) + ": exported as Fruity Scratcher").c_str());
+    expect(r.state.size() >= 4 && r.state[0] == 0x2A && r.state[1] == 0x46 && r.state[2] == 0x0F, (std::string(what) + ": the current layout (1001002)").c_str());
+    flp::PluginMapping back;
+    const bool ok = flp::enc::decodeState("Fruity Scratcher", r.state, back, ec);
+    bool same = ok && back.state.type == "gl.turntablefx" && back.state.params.size() == g.params.size();
+    for (int k = 0; same && k < sp::TxCount; ++k)
+      if (k != sp::TxEmpty) same = std::fabs(back.state.params[static_cast<size_t>(k)] - g.params[static_cast<size_t>(k)]) < 1e-6f;
+    expect(same, (std::string(what) + ": every setting comes back").c_str());
+    expect(ok && back.state.data.size() >= 8 && back.state.data.compare(back.state.data.size() - 8, 8, "loop.wav") == 0,
+           (std::string(what) + ": the sample comes back").c_str());
+    expect(r.mismatched.empty() && !r.dataMismatch, (std::string(what) + ": nothing reported as lost").c_str());
+  };
+  roundTrip(flp::enc::encode(g, "Fruity Scratcher", &origin, ec), "effect with its FL origin");
+  const flp::enc::Result native = flp::enc::encode(g, "", nullptr, ec);
+  expect(native.quality == flp::enc::Result::Exact, "a Turntable made in Gridline exports exactly as FL's scratcher");
+  roundTrip(native, "native effect");
+  // The 0.7.1 instrument (a 0.7.1 FL import kept its scratcher on a channel): written as the effect.
+  PluginState inst = defaultPluginState("gl.turntable");
+  for (int k = sp::TtPosition; k <= sp::TtTurns; ++k) inst.params[static_cast<size_t>(k)] = g.params[static_cast<size_t>(k)];
+  inst.params[sp::TtNotes] = sp::TnMotor;  // the note settings stay Gridline's
+  inst.params[sp::TtZoom] = 1.f;
+  inst.params[sp::TtTimecode] = 3.f;
+  inst.params[sp::TtRiaa] = 1.f;
+  inst.data = g.data;
+  const PluginState carried = sp::turntableFxOfInstrument(inst);
+  bool carriedSame = carried.type == "gl.turntablefx" && carried.data == g.data && carried.params.size() == g.params.size();
+  for (size_t k = 0; carriedSame && k < g.params.size(); ++k) carriedSame = carried.params[k] == g.params[k];
+  expect(carriedSame, "the instrument's deck settings carry over to the effect's layout");
+  roundTrip(flp::enc::encode(inst, "Fruity Scratcher", &origin, ec), "0.7.1 instrument");
   // An empty deck exports without a path.
   PluginState e = g;
   e.data.clear();
-  e.params[sp::TtEmpty] = 1.f;
+  e.params[sp::TxEmpty] = 1.f;
   const flp::enc::Result re = flp::enc::encode(e, "Fruity Scratcher", &origin, ec);
   flp::PluginMapping eb;
-  expect(flp::enc::decodeState("Fruity Scratcher", re.state, eb, ec) && eb.state.data.empty() && eb.state.params[sp::TtEmpty] == 1,
+  expect(flp::enc::decodeState("Fruity Scratcher", re.state, eb, ec) && eb.state.data.empty() && eb.state.params[sp::TxEmpty] == 1,
          "an empty deck exports without a sample");
 }
 
-// FL's own render test (installed FL only): the slot plugin becomes a channel
-// on that insert, with its sample and its recorded position events; the FL
-// export writes it back and it imports the same again.
+// ---- K-23: the effect
+
+// Effect rig: the insert's audio in `inL / inR`, the effect processes it in place.
+struct FxRig {
+  PluginState st;
+  ChannelAux aux;
+  ProcessContext ctx;
+  std::unique_ptr<Effect> fx;
+  explicit FxRig(const std::function<void(PluginState&)>& tweak = nullptr, bool builtIn = false, double sr = kSr) {
+    st = defaultPluginState("gl.turntablefx");
+    if (!builtIn) st.data = testSample();
+    if (tweak) tweak(st);
+    packs::prepareAux(st, aux);
+    fx = packs::createEffect("gl.turntablefx");
+    ctx.sampleRate = sr;
+  }
+  // Processes `in` (interleaved halves: L then R, `frames` each) in blocks of `block`.
+  void run(std::vector<float>& L, std::vector<float>& R, int block = 256) {
+    const int64_t frames = static_cast<int64_t>(L.size());
+    for (int64_t k = 0; k < frames; k += block) {
+      const int n = static_cast<int>(std::min<int64_t>(block, frames - k));
+      fx->processAux(st, aux, ctx, L.data() + k, R.data() + k, n);
+    }
+  }
+};
+
+void sine(std::vector<float>& L, std::vector<float>& R, size_t n) {
+  L.resize(n);
+  R.resize(n);
+  for (size_t i = 0; i < n; ++i) {
+    L[i] = static_cast<float>(0.1 * std::sin(2 * 3.14159265358979 * 440 * static_cast<double>(i) / kSr));
+    R[i] = static_cast<float>(0.05 * std::cos(2 * 3.14159265358979 * 300 * static_cast<double>(i) / kSr));
+  }
+}
+bool allFinite(const std::vector<float>& v) {
+  for (float x : v)
+    if (!std::isfinite(x)) return false;
+  return true;
+}
+double rms(const std::vector<float>& v, size_t from = 0) {
+  double e = 0;
+  for (size_t i = from; i < v.size(); ++i) e += static_cast<double>(v[i]) * v[i];
+  return std::sqrt(e / static_cast<double>(std::max<size_t>(1, v.size() - from)));
+}
+
+void testEffect() {
+  constexpr size_t n = 22050;
+  // Silence in, silence out: FL's own fresh deck (no sample).
+  {
+    FxRig r([](PluginState& s) { s.params[sp::TxEmpty] = 1.f; }, true);
+    std::vector<float> L(n, 0.f), R(n, 0.f);
+    r.run(L, R);
+    expect(rms(L) == 0.0 && rms(R) == 0.0, "effect: empty deck, silence in -> silence out");
+  }
+  // The insert's audio passes through unchanged (measured on the reference:
+  // output = input + deck, to the last bit), whatever the deck does.
+  for (int c = 0; c < 4; ++c) {
+    auto tweak = [c](PluginState& s) {
+      if (c == 0) s.params[sp::TxEmpty] = 1.f;              // no sample
+      if (c == 1) s.params[sp::TtTransport] = 2.f;           // motor forward
+      if (c == 2) s.params[sp::TtMute] = 1.f, s.params[sp::TtTransport] = 2.f;  // deck muted
+      if (c == 3) s.params[sp::TtHold] = 1.f, s.params[sp::TtPosition] = 0.4f;  // hand on the record
+    };
+    FxRig dry(tweak, c == 0), wet(tweak, c == 0);
+    std::vector<float> L0(n, 0.f), R0(n, 0.f), L, R;
+    sine(L, R, n);
+    const std::vector<float> inL = L, inR = R;
+    dry.run(L0, R0);
+    wet.run(L, R);
+    bool exact = true;
+    for (size_t i = 0; i < n; ++i) exact = exact && L[i] == inL[i] + L0[i] && R[i] == inR[i] + R0[i];
+    static const char* names[4] = {"no sample", "motor forward", "deck muted", "hand on the record"};
+    expect(exact, (std::string("effect: output = input + deck, exactly (") + names[c] + ")").c_str());
+    if (c == 0) expect(L == inL && R == inR, "effect: with no sample the input passes untouched");
+  }
+  // No prepared deck (process() without the slot's data): the input passes.
+  {
+    auto fx = packs::createEffect("gl.turntablefx");
+    PluginState st = defaultPluginState("gl.turntablefx");
+    st.params[sp::TtTransport] = 2.f;
+    ProcessContext ctx;
+    ctx.sampleRate = kSr;
+    std::vector<float> L, R;
+    sine(L, R, 4096);
+    const std::vector<float> inL = L;
+    fx->process(st, ctx, L.data(), R.data(), 4096);
+    expect(L == inL, "effect: without prepared data the input passes untouched");
+  }
+  // Sound with a loaded sample: the motor plays it on top of silence.
+  {
+    FxRig r([](PluginState& s) { s.params[sp::TtTransport] = 2.f, s.params[sp::TtAccel] = 1.f; });
+    std::vector<float> L(n, 0.f), R(n, 0.f);
+    r.run(L, R);
+    expect(rms(L, 4410) > 0.05 && rms(R, 4410) > 0.05 && allFinite(L), "effect: a loaded sample plays with the motor forward");
+    const sp::TurntableTelemetry* tel = sp::turntableTelemetry(r.fx.get());
+    expect(tel && tel->loaded.load() && near(tel->speed.load(), 1.0, 0.02), "effect telemetry: the deck runs at the sample's speed");
+    FxRig b([](PluginState& s) { s.params[sp::TtTransport] = 2.f; }, true);
+    std::vector<float> L2(n, 0.f), R2(n, 0.f);
+    b.run(L2, R2);
+    expect(rms(L2, 4410) > 0.02, "effect: a new Turntable plays its built-in sound");
+    // Motor paused (the default): the record stands still, the deck is quiet.
+    FxRig p;
+    std::vector<float> L3(n, 0.f), R3(n, 0.f);
+    p.run(L3, R3);
+    expect(rms(L3, n / 2) < 1e-4, "effect: motor paused, the deck stays quiet");
+    // Mute: the deck fades out.
+    FxRig m([](PluginState& s) { s.params[sp::TtTransport] = 2.f, s.params[sp::TtMute] = 1.f; });
+    std::vector<float> L4(n, 0.f), R4(n, 0.f);
+    m.run(L4, R4);
+    expect(rms(L4, n / 2) < 1e-6, "effect: Mute cuts the deck");
+  }
+  // Parameter extremes, NaN and huge inputs stay finite.
+  {
+    const PluginInfo* info = findPlugin("gl.turntablefx");
+    bool fin = true;
+    for (int how = 0; how < 3 && info; ++how) {
+      FxRig r([&](PluginState& s) {
+        for (size_t k = 0; k < s.params.size(); ++k)
+          s.params[k] = how == 0 ? static_cast<float>(info->params[k].min) : how == 1 ? static_cast<float>(info->params[k].max) : std::nanf("");
+      });
+      std::vector<float> L, R;
+      sine(L, R, n);
+      r.run(L, R, 97);
+      fin = fin && allFinite(L) && allFinite(R);
+    }
+    expect(fin, "effect: parameters at minimum, maximum and NaN stay finite");
+    FxRig r([](PluginState& s) { s.params[sp::TtTransport] = 2.f, s.params[sp::TtSpeed] = 2.f; });
+    std::vector<float> L(4096, 1e30f), R(4096, -1e30f);
+    r.run(L, R);
+    bool big = true;
+    for (size_t i = 0; i < L.size(); ++i) big = big && std::isfinite(L[i]) && std::isfinite(R[i]);
+    expect(big, "effect: huge input passes finite");
+  }
+  // Block-size invariance (the deck's own clock takes its targets).
+  {
+    auto render = [](int block) {
+      FxRig r([](PluginState& s) { s.params[sp::TtTransport] = 2.f, s.params[sp::TtAccel] = 0.6f, s.params[sp::TtPan] = 0.3f; });
+      std::vector<float> L, R;
+      sine(L, R, 44100);
+      r.run(L, R, block);
+      return L;
+    };
+    const std::vector<float> a = render(512), b = render(37), c = render(1);
+    double d = 0;
+    for (size_t i = 0; i < a.size(); ++i) d = std::max({d, std::fabs(static_cast<double>(a[i]) - b[i]), std::fabs(static_cast<double>(a[i]) - c[i])});
+    expect(d < 1e-6, "effect: block-size invariant (512 / 37 / 1)");
+  }
+  // Other rates: the sample keeps its speed.
+  for (double sr : {48000.0, 96000.0}) {
+    FxRig r([](PluginState& s) { s.params[sp::TtTransport] = 2.f, s.params[sp::TtAccel] = 1.f; }, false, sr);
+    std::vector<float> L(static_cast<size_t>(sr / 2), 0.f), R(L.size(), 0.f);
+    r.run(L, R);
+    expect(near(sp::turntableTelemetry(r.fx.get())->speed.load(), 1.0, 0.02) && allFinite(L), "effect: other rates play at the sample's speed");
+  }
+  // Factory presets play.
+  {
+    const PluginInfo* info = findPlugin("gl.turntablefx");
+    bool ok = info != nullptr;
+    for (size_t p = 0; info && p < info->presets.size(); ++p) {
+      PluginState st = presetState(*info, p);
+      st.data = testSample();
+      ChannelAux aux;
+      packs::prepareAux(st, aux);
+      auto fx = packs::createEffect("gl.turntablefx");
+      ProcessContext ctx;
+      ctx.sampleRate = kSr;
+      std::vector<float> L(8192, 0.f), R(8192, 0.f);
+      fx->processAux(st, aux, ctx, L.data(), R.data(), 8192);
+      ok = ok && allFinite(L) && allFinite(R);
+    }
+    expect(ok, "effect: factory presets play");
+  }
+  // Short / old state vectors normalise to the defaults.
+  {
+    PluginState s;
+    s.type = "gl.turntablefx";
+    s.params = {0.2f, 0.f, 1.5f};
+    normalizePluginState(s);
+    expect(s.params.size() == static_cast<size_t>(sp::TxCount) && near(s.params[sp::TtSpeed], 1.5, 1e-6) && s.params[sp::TxEmpty] == 0,
+           "effect: a short state is padded with the defaults");
+  }
+}
+
+// ---- K-23: old projects
+
+// Renders a project in pattern mode through the engine (stereo interleaved).
+std::vector<float> renderSong(const Song& s, ObjectId pat, int64_t frames) {
+  ProgramBuilder builder;
+  builder.setSampleRate(static_cast<int>(kSr));
+  auto prog = builder.build(s);
+  AudioEngine eng(static_cast<int>(kSr));
+  eng.setProgram(prog);
+  eng.setLooping(true);
+  eng.setOffline(true);
+  eng.setFixedBlock(AudioEngine::kOfflineBlock);
+  eng.setMode(PlayMode::Pattern);
+  eng.setPattern(pat);
+  eng.play();
+  std::vector<float> L(static_cast<size_t>(frames)), R(static_cast<size_t>(frames)), out;
+  for (int64_t pos = 0; pos < frames; pos += 512) {
+    const int n = static_cast<int>(std::min<int64_t>(512, frames - pos));
+    eng.process(L.data() + pos, R.data() + pos, n);
+  }
+  for (int64_t i = 0; i < frames; ++i) out.push_back(L[static_cast<size_t>(i)]), out.push_back(R[static_cast<size_t>(i)]);
+  return out;
+}
+
+// A 0.7.1 project: a synth channel through an insert, and the plugin under test.
+struct OldProject {
+  Song s;
+  ObjectId ch = kNoId, ins = kNoId, pat = kNoId;
+  OldProject() {
+    s = makeEmptySong();
+    MixerTrack t;
+    t.id = s.allocateId();
+    t.name = "Insert 1";
+    t.sends.push_back({s.masterId(), 1.0f, false});
+    s.mixer.push_back(t);
+    ins = t.id;
+    Pattern p;
+    p.id = s.allocateId();
+    p.bars = 1;
+    s.patterns.push_back(p);
+    pat = p.id;
+  }
+  ObjectId addChannel(const PluginState& plugin) {
+    Channel c;
+    c.id = s.allocateId();
+    c.name = findPlugin(plugin.type) ? findPlugin(plugin.type)->name : plugin.type;
+    c.plugin = plugin;
+    c.mixerTrack = ins;
+    s.channels.push_back(c);
+    std::vector<uint8_t> steps(16, 0);
+    steps[0] = steps[8] = 100;
+    s.pattern(pat)->steps[c.id] = steps;
+    return c.id;
+  }
+};
+
+void testOldProjects() {
+  const int64_t frames = 44100;
+  // An old live-input effect (gl.scratcher) on an insert with a synth playing into it.
+  {
+    OldProject o;
+    o.addChannel(defaultPluginState("gl.synth"));
+    PluginState sc = defaultPluginState("gl.scratcher");
+    sc.params[sp::ScPattern] = 1.f;  // its baby-scratch pattern
+    o.s.mixer.back().slots[0].plugin = sc;
+    const std::vector<float> before = renderSong(o.s, o.pat, frames);
+    Song back;
+    std::string err;
+    expect(songFromJson(songToJson(o.s), back, &err), "old project with Turntable FX loads");
+    const PluginState& st = back.mixer.back().slots[0].plugin;
+    expect(st.type == "gl.scratcher" && st.params == sc.params, "Turntable FX (old) keeps its type and settings");
+    const std::vector<float> after = renderSong(back, o.pat, frames);
+    expect(before == after && rms(after) > 1e-3, "Turntable FX (old) renders identically after loading");
+  }
+  // A 0.7.1 instrument Turntable played by notes (Cue + motor, the 0.7.1 default).
+  {
+    OldProject o;
+    PluginState tt = defaultPluginState("gl.turntable");
+    tt.data = testSample();
+    o.addChannel(tt);
+    const std::vector<float> before = renderSong(o.s, o.pat, frames);
+    Song back;
+    std::string err;
+    expect(songFromJson(songToJson(o.s), back, &err), "0.7.1 project with the Turntable instrument loads");
+    const Channel* c = back.channels.empty() ? nullptr : &back.channels.back();
+    expect(c && c->plugin.type == "gl.turntable" && c->plugin.params == tt.params && c->plugin.data == tt.data,
+           "the 0.7.1 instrument keeps its type, settings and sample");
+    const std::vector<float> after = renderSong(back, o.pat, frames);
+    expect(before == after && rms(after) > 1e-3, "the 0.7.1 instrument renders identically (its notes still play it)");
+  }
+  // The engine is one: the instrument with its notes off and the effect it
+  // carries over to play the same deck, sample for sample.
+  {
+    PluginState inst = defaultPluginState("gl.turntable");
+    inst.data = testSample();
+    inst.params[sp::TtNotes] = sp::TnOff;
+    inst.params[sp::TtTransport] = 2.f;
+    inst.params[sp::TtAccel] = 0.4f;
+    inst.params[sp::TtPan] = -0.25f;
+    const PluginState fxs = sp::turntableFxOfInstrument(inst);
+    ChannelAux ai, af;
+    packs::prepareAux(inst, ai);
+    packs::prepareAux(fxs, af);
+    auto g = packs::createGenerator("gl.turntable");
+    auto fx = packs::createEffect("gl.turntablefx");
+    ProcessContext ctx;
+    ctx.sampleRate = kSr;
+    std::vector<float> L1(44100, 0.f), R1(44100, 0.f), L2(44100, 0.f), R2(44100, 0.f);
+    for (int k = 0; k < 44100; k += 300) {
+      const int n = std::min(300, 44100 - k);
+      g->process(inst, ai, ctx, L1.data() + k, R1.data() + k, n);
+      fx->processAux(fxs, af, ctx, L2.data() + k, R2.data() + k, n);
+    }
+    expect(L1 == L2 && R1 == R2 && rms(L1) > 0.05, "instrument (notes off) and effect play the same deck, sample for sample");
+  }
+}
+
+// ---- FL import into a mixer slot
+
+const MixerTrack* trackWithType(const Song& s, const std::string& type, int* slot) {
+  for (const MixerTrack& t : s.mixer)
+    for (size_t k = 0; k < t.slots.size(); ++k)
+      if (t.slots[k].plugin.type == type) {
+        *slot = static_cast<int>(k);
+        return &t;
+      }
+  return nullptr;
+}
+
+// A project written with Gridline's FLP writer: a Turntable effect in slot 2
+// of an insert, with a sample and an automation clip on its Position. FL gets
+// the scratcher in that slot; importing the file brings it back there.
+void testFlpSlotFixture() {
+  Song s = makeEmptySong();
+  MixerTrack t;
+  t.id = s.allocateId();
+  t.name = "Deck";
+  t.sends.push_back({s.masterId(), 1.0f, false});
+  PluginState g = defaultPluginState("gl.turntablefx");
+  g.data = testSample();
+  g.params[sp::TtTransport] = 2.f;
+  g.params[sp::TtSpeed] = 1.5f;
+  g.params[sp::TtAccel] = 0.6f;
+  g.params[sp::TtPan] = 0.25f;
+  t.slots[2].plugin = g;
+  s.mixer.push_back(t);
+  AutomationClip a;
+  a.id = s.allocateId();
+  a.name = "Scratch";
+  a.owner = t.id;
+  a.index = slotParam(t.id, 2, sp::TtPosition).index;
+  a.points = {AutoPoint{0, 0.1f, 0, AutoShape::Curve}, AutoPoint{96, 0.6f, 0, AutoShape::Curve}, AutoPoint{192, 0.2f, 0, AutoShape::Curve}};
+  s.automations.push_back(a);
+  Clip ca;
+  ca.id = s.allocateId();
+  ca.kind = ClipKind::Automation;
+  ca.source = a.id;
+  ca.track = 0;
+  ca.start = 0;
+  ca.length = 192;
+  s.playlist.push_back(ca);
+  flp::ExportOptions opt;
+  flp::ExportReport xr;
+  flp::Bytes bytes;
+  expect(flp::exportFlp(s, bytes, xr, opt), "a project with a Turntable effect exports to FL");
+  Song back;
+  flp::Report rep;
+  std::string err;
+  expect(importFlpBytes(bytes, back, rep, &err), "and imports again");
+  int slot = -1;
+  const MixerTrack* bt = trackWithType(back, "gl.turntablefx", &slot);
+  expect(bt != nullptr && slot == 2, "FL's scratcher lands on its mixer slot as the Turntable effect");
+  bool channel = false;
+  for (const Channel& c : back.channels) channel = channel || c.plugin.type == "gl.turntable";
+  expect(!channel, "no instrument channel is made for it");
+  if (!bt) return;
+  const PluginState& st = bt->slots[static_cast<size_t>(slot)].plugin;
+  bool same = st.params.size() == g.params.size() && st.data == g.data;
+  for (size_t k = 0; same && k < g.params.size(); ++k) same = std::fabs(st.params[k] - g.params[k]) < 1e-6f;
+  expect(same, "with its settings and sample");
+  const ParamId want = slotParam(bt->id, slot, sp::TtPosition);
+  const AutomationClip* ba = nullptr;
+  for (const AutomationClip& x : back.automations)
+    if (x.owner == want.owner && x.index == want.index) ba = &x;
+  expect(ba && ba->points.size() >= 3, "its automation clip drives the effect's Position");
+}
+
+// FL's own render test (installed FL only): the scratcher sits in a mixer
+// slot; it lands there as the Turntable effect, with its sample and its
+// recorded position events; the FL export writes it back and it imports the
+// same again.
 void testRenderTest() {
   const std::string f = "/Applications/FL Studio 2026.app/Contents/Resources/FL/Data/System/Render tests/Fruity Scratcher.flp";
   std::error_code ec;
@@ -620,30 +1060,30 @@ void testRenderTest() {
   flp::Report rep;
   std::string err;
   expect(importFlp(f, s, rep, &err), "FL's render test imports");
-  const Channel* tt = nullptr;
-  for (const Channel& ch : s.channels)
-    if (ch.plugin.type == "gl.turntable") tt = &ch;
-  expect(tt != nullptr && tt->mixerTrack != kNoId && tt->mixerTrack != s.mixer.front().id, "a Turntable channel routed to the plugin's insert");
-  bool leftInSlot = false;
-  for (const MixerTrack& t : s.mixer)
-    for (const EffectSlot& sl : t.slots) leftInSlot = leftInSlot || sl.plugin.type == "gl.turntable" || sl.plugin.type == "gl.scratcher";
-  expect(!leftInSlot, "no instrument left in a mixer slot");
-  if (!tt) return;
-  expect(tt->plugin.params.size() == static_cast<size_t>(sp::TtCount) && tt->plugin.params[sp::TtHold] == 1 && tt->plugin.params[sp::TtEmpty] == 0,
-         "its settings come along");
-  expect(!tt->plugin.data.empty() && tt->plugin.data.find('%') == std::string::npos, "its sample path is resolved");
-  expect(fs::exists(fs::u8path(tt->plugin.data), ec), "its sample is found in FL's factory content");
+  int slot = -1;
+  const MixerTrack* t = trackWithType(s, "gl.turntablefx", &slot);
+  expect(t != nullptr && t->id != s.mixer.front().id, "the scratcher lands on its insert's slot as the Turntable effect");
+  bool channel = false;
+  for (const Channel& c : s.channels) channel = channel || c.plugin.type == "gl.turntable";
+  expect(!channel, "no Turntable channel is made");
+  if (!t) return;
+  const PluginState& st = t->slots[static_cast<size_t>(slot)].plugin;
+  expect(st.params.size() == static_cast<size_t>(sp::TxCount) && st.params[sp::TtHold] == 1 && st.params[sp::TxEmpty] == 0, "its settings come along");
+  expect(!st.data.empty() && st.data.find('%') == std::string::npos, "its sample path is resolved");
+  expect(fs::exists(fs::u8path(st.data), ec), "its sample is found in FL's factory content");
   size_t points = 0;
   float lo = 1, hi = 0;
-  const ParamId pid = channelPluginParam(tt->id, sp::TtPosition);
+  const ParamId pid = slotParam(t->id, slot, sp::TtPosition);
   for (const Pattern& p : s.patterns)
     for (const PatternAutomation& a : p.automation)
       if (a.owner == pid.owner && a.index == pid.index) {
         points += a.points.size();
         for (const AutoPoint& q : a.points) lo = std::min(lo, q.value), hi = std::max(hi, q.value);
       }
+  for (const AutomationClip& a : s.automations)
+    if (a.owner == pid.owner && a.index == pid.index) points += a.points.size();
   std::printf("# render test: %zu recorded position points (%.3f .. %.3f)\n", points, static_cast<double>(lo), static_cast<double>(hi));
-  expect(points > 10 && hi > lo, "the recorded platter movements drive the Turntable's Position");
+  expect(points > 10 && hi > lo, "the recorded platter movements drive the effect's Position");
   // FL export and back.
   flp::ExportOptions opt;
   flp::ExportReport xr;
@@ -652,12 +1092,12 @@ void testRenderTest() {
   Song s2;
   flp::Report rep2;
   expect(importFlpBytes(out, s2, rep2, &err), "the exported project imports");
-  const Channel* t2 = nullptr;
-  for (const Channel& ch : s2.channels)
-    if (ch.plugin.type == "gl.turntable") t2 = &ch;
-  bool same = t2 && t2->plugin.params.size() == tt->plugin.params.size() && t2->plugin.data == tt->plugin.data;
-  for (size_t k = 0; same && k < tt->plugin.params.size(); ++k) same = std::fabs(t2->plugin.params[k] - tt->plugin.params[k]) < 1e-6f;
-  expect(same, "FL round trip: the Turntable comes back with its settings and sample");
+  int slot2 = -1;
+  const MixerTrack* t2 = trackWithType(s2, "gl.turntablefx", &slot2);
+  bool same = t2 && slot2 == slot && t2->slots[static_cast<size_t>(slot2)].plugin.params.size() == st.params.size() &&
+              t2->slots[static_cast<size_t>(slot2)].plugin.data == st.data;
+  for (size_t k = 0; same && k < st.params.size(); ++k) same = std::fabs(t2->slots[static_cast<size_t>(slot2)].plugin.params[k] - st.params[k]) < 1e-6f;
+  expect(same, "FL round trip: the Turntable effect comes back on its slot with its settings and sample");
 }
 
 void testOldEffect() {
@@ -681,7 +1121,8 @@ int main() {
   testCatalogue();
   testBuiltin();
   testNotes();
-  testMeasured();
+  testMeasured(true);
+  testMeasured(false);
   testScratch();
   testExtremes();
   testBlocks();
@@ -689,6 +1130,9 @@ int main() {
   testStates();
   testFlState();
   testExport();
+  testEffect();
+  testOldProjects();
+  testFlpSlotFixture();
   testRenderTest();
   testOldEffect();
   return finish();

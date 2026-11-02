@@ -41,6 +41,15 @@ Settings::Settings() {
       {"audio.inputChannels", Json::makeNumber(2)},
       {"audio.inputOffsetMs", Json::makeNumber(0)},    // manual recording offset (+ = later)
       {"audio.recordBits", Json::makeNumber(32)},      // 32 = float, 24 / 16 = PCM
+      // K-6: audio backend. "system" = SDL (WASAPI / DirectSound on Windows), "asio" = an ASIO driver (Windows).
+      {"audio.backend", Json::makeString("system")},
+      {"audio.asio.driver", Json::makeString("")},
+      {"audio.asio.buffer", Json::makeNumber(0)},       // frames, 0 = the driver's preferred size
+      {"audio.asio.sampleRate", Json::makeNumber(0)},   // 0 = the device's current rate
+      {"audio.asio.inFirst", Json::makeNumber(0)},      // first device input (0-based) = mixer In 1
+      {"audio.asio.inCount", Json::makeNumber(2)},      // device inputs opened (0 = none: the system input device)
+      {"audio.asio.outMain", Json::makeNumber(0)},      // first device output of the main pair
+      {"audio.asio.extraOuts", Json::makeString("")},   // "mixer:firstOut,..." extra output pairs
       {"master.targetLufs", Json::makeNumber(-14)},    // RN-09: master chain loudness target
       // J-31: recording extras, audio logger, piano roll extras, quantized jumps.
       {"record.autoUnarm", b(false)},                  // disarm the tracks after a recording
@@ -63,10 +72,13 @@ Settings::Settings() {
       {"ui.scale", Json::makeNumber(1.0)},
       {"ui.scaleAuto", b(true)},             // J-91: ui.scale is multiplied by the desktop's scale (core/UiScale.h)
       {"ui.detachWindows", b(true)},         // J-113: windows can be dragged out of the main window
+      {"ui.editorZoom", Json::makeString("")},  // K-19: plugin editor sizes per type ("gl.eq=1.5;..."), core/EditorZoom.h
+      {"ui.loupePinned", b(false)},          // K-15: Loupe is a panel of the main layout
       {"ui.animations", b(true)},            // J-91: decorative interface animations (metronome tick, light fades, glides)
       {"ui.showHints", b(true)},
       {"ui.confirmAutoRevert", b(true)},     // J-77: unconfirmed display / audio changes go back after 15 s
-      {"ui.autoScroll", b(true)},              // editors follow the song position while playing
+      {"ui.autoScroll", b(true)},              // the playlist follows the song position while playing
+      {"ui.autoScrollPattern", b(true)},       // K-4: the piano roll and channel rack follow the pattern position
       {"ui.smoothSnap", b(true)},              // J-37: snapped drags glide from cell to cell (drawing only)
       {"ui.smoothScroll", b(true)},            // J-67: wheel scrolling glides to its step (trackpads stay 1:1)
       {"ui.smoothZoom", b(true)},              // J-188: zoom steps glide (the point under the pointer stays put; trackpads stay 1:1)
@@ -83,6 +95,9 @@ Settings::Settings() {
       {"theme.controls", Json::makeString("slate")}, // control style: slate | graphite | hairline | lumen | classic (J-129)
       {"ui.mixerWheel", Json::makeNumber(2)},  // J-83: wheel over mixer controls: 0 adjust, 1 scroll the mixer, 2 auto (scroll when narrow)
       {"ui.mixerLayout", Json::makeNumber(1)},  // mixer strip width: 0 compact, 1 normal, 2 wide
+      {"ui.playlistTrackHeight", Json::makeNumber(46)},  // K-24: the playlist's vertical zoom (base track height, px; 24 .. 120)
+      {"ui.playlistTrackPlus", b(true)},  // K-12: the "+" on a hovered playlist track header (View menu)
+      {"ui.trackPlusPattern", b(true)},   // K-12: an instrument given to an empty track from the "+" starts a pattern
       {"ui.layoutVersion", Json::makeNumber(0)},  // J-28: default workspace version the saved layout.ini was built with
       // J-24: general, file, project defaults, backup / autosave, hints, debug, scripting.
       {"general.startup", Json::makeString("template")},   // "template" | "empty" | "last"

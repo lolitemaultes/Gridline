@@ -1,4 +1,5 @@
-// Gridline — "spectral" pack: Turntable (gl.turntable) runtime. See
+// Gridline — "spectral" pack: Turntable runtimes, the effect (gl.turntablefx,
+// K-23) and the 0.7.1 instrument (gl.turntable), one deck engine. See
 // turntable.h for the model. J-206: at 44.1 kHz every step runs in single
 // precision in the reference's order (the few products it forms in double are
 // formed in double here too), so the output matches it sample for sample; at
@@ -106,29 +107,32 @@ inline void flush(float& v) {
 
 struct Params {
   const PluginState* s;
+  const TurntableLayout& L;
   double operator[](int k) const {
-    if (s && k >= 0 && static_cast<size_t>(k) < s->params.size() && std::isfinite(s->params[static_cast<size_t>(k)]))
+    if (k < 0) return 0.0;  // a setting this type does not have
+    if (s && static_cast<size_t>(k) < s->params.size() && std::isfinite(s->params[static_cast<size_t>(k)]))
       return s->params[static_cast<size_t>(k)];
-    const PluginInfo* info = findPlugin("gl.turntable");
+    const PluginInfo* info = findPlugin(L.type);
     return info && static_cast<size_t>(k) < info->params.size() ? info->params[static_cast<size_t>(k)].def : 0.0;
   }
 };
 float clampf(double v, double lo, double hi) { return static_cast<float>(std::clamp(v, lo, hi)); }
 
-class TurntableGen final : public Generator {
+// The deck (K-23: shared by the effect and the 0.7.1 instrument). render()
+// adds the deck to L / R: the effect hands it the insert's audio, so the input
+// passes through and the deck plays on top, as the reference does.
+class TurntableCore {
  public:
-  TurntableGen() = default;
+  explicit TurntableCore(const TurntableLayout& layout) : lay_(layout) {}
 
-  bool active() const override {
+  bool active() const {
     if (!deck_) return false;
     return keys_ > 0 || hold_ || (transport_ != 0 && speed_ > 0) || vel_ != 0.0f || std::fabs(dcy_[0]) > 1e-7f ||
            std::fabs(dcy_[1]) > 1e-7f || fadeLeft_ > 0;
   }
   const TurntableTelemetry& tel() const { return tel_; }
 
- protected:
-  void onNoteOn(uint32_t id, double pitch, float velocity) override {
-    (void)velocity;
+  void onNoteOn(uint32_t id, double pitch) {
     if (notesMode_ == TnOff) return;
     removeKey(id);  // last-note priority over a small stack of held keys
     if (keys_ < static_cast<int>(keyIds_.size())) {
@@ -146,9 +150,9 @@ class TurntableGen final : public Generator {
       vel_ = keyTarget(pitch);
     }
   }
-  void onNoteOff(uint32_t id) override { removeKey(id); }
-  void onAllOff() override { keys_ = 0; }
-  void onKill() override {
+  void onNoteOff(uint32_t id) { removeKey(id); }
+  void onAllOff() { keys_ = 0; }
+  void onKill() {
     keys_ = 0;
     g_ = 0;
     vel_ = 0;
@@ -158,9 +162,9 @@ class TurntableGen final : public Generator {
     fadeLeft_ = 0;
   }
 
-  void configure(const PluginState& state, const ChannelAux& aux, const ProcessContext& ctx) override {
-    Params p{&state};
-    sr_ = ctx.sampleRate > 0 && std::isfinite(ctx.sampleRate) ? ctx.sampleRate : kRefRate;
+  void configure(const PluginState& state, const ChannelAux& aux, double sampleRate) {
+    Params p{&state, lay_};
+    sr_ = sampleRate > 0 && std::isfinite(sampleRate) ? sampleRate : kRefRate;
     auto* d = dynamic_cast<const TurntableDeck*>(aux.custom.get());
     if (d && d->frames < 2) d = nullptr;
     // A new sample keeps the platter's phase (the reference swaps it under the running platter).
@@ -170,7 +174,7 @@ class TurntableGen final : public Generator {
     // A control change ends the reference's host block there: the targets are
     // taken (from the values before the change) and the block clock restarts.
     bool changed = false;
-    for (int k = 0; k < TtCount; ++k) {
+    for (int k = 0; k < lay_.count && k < TtCount; ++k) {
       const double v = p[k];
       if (v != last_[static_cast<size_t>(k)]) changed = true;
       last_[static_cast<size_t>(k)] = v;
@@ -187,9 +191,9 @@ class TurntableGen final : public Generator {
     transport_ = static_cast<int>(std::lround(std::clamp(p[TtTransport], 0.0, 2.0))) - 1;
     for (int k = 0; k < 4; ++k) smooth_[static_cast<size_t>(k)] = clampf(p[TtSmooth1 + k], 0, 1);
     turns_ = static_cast<int>(std::lround(std::clamp(p[TtTurns], -9.0, 9.0)));
-    notesMode_ = static_cast<int>(std::lround(std::clamp(p[TtNotes], 0.0, 2.0)));
-    keyTrack_ = p[TtKeyTrack] >= 0.5;
-    cue_ = clampf(p[TtCue], 0, 1);
+    notesMode_ = lay_.notes < 0 ? TnOff : static_cast<int>(std::lround(std::clamp(p[lay_.notes], 0.0, 2.0)));
+    keyTrack_ = lay_.keyTrack >= 0 && p[lay_.keyTrack] >= 0.5;
+    cue_ = clampf(p[lay_.cue], 0, 1);
     fadeLen_ = std::max(1, static_cast<int>(0.004 * sr_));
     latchLen_ = std::max(1, static_cast<int>(std::lround(kLatchFrames * sr_ / kRefRate)));
     if (!started_) {  // first block: the targets start where the controls are
@@ -209,7 +213,7 @@ class TurntableGen final : public Generator {
     exactRate_ = std::fabs(sr_ - kRefRate) < 1e-6;
   }
 
-  void render(float* L, float* R, int n) override {
+  void render(float* L, float* R, int n) {
     if (!deck_) {
       publish();
       return;
@@ -426,6 +430,51 @@ class TurntableGen final : public Generator {
   std::array<double, 16> keyPitch_{};
   int keys_ = 0;
   TurntableTelemetry tel_;
+  const TurntableLayout& lay_;
+};
+
+// The 0.7.1 instrument: the deck played by notes (and its motor).
+class TurntableGen final : public Generator {
+ public:
+  bool active() const override { return core_.active(); }
+  const TurntableTelemetry& tel() const { return core_.tel(); }
+
+ protected:
+  void onNoteOn(uint32_t id, double pitch, float velocity) override {
+    (void)velocity;
+    core_.onNoteOn(id, pitch);
+  }
+  void onNoteOff(uint32_t id) override { core_.onNoteOff(id); }
+  void onAllOff() override { core_.onAllOff(); }
+  void onKill() override { core_.onKill(); }
+  void configure(const PluginState& state, const ChannelAux& aux, const ProcessContext& ctx) override {
+    core_.configure(state, aux, ctx.sampleRate);
+  }
+  void render(float* L, float* R, int n) override { core_.render(L, R, n); }
+
+ private:
+  TurntableCore core_{kTtInstLayout};
+};
+
+// K-23: Turntable, the mixer effect. The insert's audio is in L / R; the deck
+// is added to it (the reference's output is its input plus the deck, exactly).
+// No prepared deck (process() without aux): the input passes unchanged.
+class TurntableFx final : public Effect {
+ public:
+  void process(const PluginState& state, const ProcessContext& ctx, float* L, float* R, int n) override {
+    processAux(state, none_, ctx, L, R, n);
+  }
+  void processAux(const PluginState& state, const ChannelAux& aux, const ProcessContext& ctx, float* L, float* R, int n) override {
+    if (n <= 0) return;
+    core_.configure(state, aux, ctx.sampleRate);
+    core_.render(L, R, n);
+  }
+  void reset() override { core_.onKill(); }
+  const TurntableTelemetry& tel() const { return core_.tel(); }
+
+ private:
+  TurntableCore core_{kTtFxLayout};
+  const ChannelAux none_{};  // no deck
 };
 
 // ---------------------------------------------------------------- built-in sound
@@ -520,9 +569,11 @@ SamplePtr turntableBuiltinSample() {
 
 SamplePtr turntableSample(const PluginState& state) {
   if (!state.data.empty()) return sampleCache().get(state.data);
-  const PluginInfo* info = findPlugin("gl.turntable");
-  const float empty = static_cast<size_t>(TtEmpty) < state.params.size() ? state.params[TtEmpty]
-                                                                         : (info ? static_cast<float>(info->params[TtEmpty].def) : 0.f);
+  const TurntableLayout* L = turntableLayout(state.type);
+  if (!L) L = &kTtFxLayout;
+  const size_t k = static_cast<size_t>(L->empty);
+  const PluginInfo* info = findPlugin(L->type);
+  const float empty = k < state.params.size() ? state.params[k] : (info && k < info->params.size() ? static_cast<float>(info->params[k].def) : 0.f);
   return empty >= 0.5f ? nullptr : turntableBuiltinSample();
 }
 
@@ -530,11 +581,16 @@ const TurntableTelemetry* turntableTelemetry(const Generator* g) {
   const auto* t = dynamic_cast<const TurntableGen*>(g);
   return t ? &t->tel() : nullptr;
 }
+const TurntableTelemetry* turntableTelemetry(const Effect* e) {
+  const auto* t = dynamic_cast<const TurntableFx*>(e);
+  return t ? &t->tel() : nullptr;
+}
 
 std::unique_ptr<Generator> createTurntable() { return std::make_unique<TurntableGen>(); }
+std::unique_ptr<Effect> createTurntableFx() { return std::make_unique<TurntableFx>(); }
 
 bool prepareTurntableAux(const PluginState& state, ChannelAux& aux) {
-  if (state.type != "gl.turntable") return false;
+  if (!turntableLayout(state.type)) return false;
   aux = ChannelAux{};
   SamplePtr s = turntableSample(state);
   aux.samples.push_back(s);
@@ -542,11 +598,28 @@ bool prepareTurntableAux(const PluginState& state, ChannelAux& aux) {
   return true;
 }
 
-void turntableFromReference(const float* v, int n, std::vector<float>& params) {
-  params.assign(TtCount, 0.f);
-  const PluginInfo* info = findPlugin("gl.turntable");
+PluginState turntableFxOfInstrument(const PluginState& inst) {
+  PluginState fx = defaultPluginState(kTurntableFx);
+  fx.data = inst.data;
+  auto at = [&](int k) -> float {
+    const PluginInfo* info = findPlugin(kTurntableInst);
+    if (static_cast<size_t>(k) < inst.params.size() && std::isfinite(inst.params[static_cast<size_t>(k)])) return inst.params[static_cast<size_t>(k)];
+    return info && static_cast<size_t>(k) < info->params.size() ? static_cast<float>(info->params[static_cast<size_t>(k)].def) : 0.f;
+  };
+  if (fx.params.size() < static_cast<size_t>(TxCount)) return fx;
+  for (int k = TtPosition; k <= TtTurns; ++k) fx.params[static_cast<size_t>(k)] = at(k);
+  fx.params[TxTimecode] = at(TtTimecode);
+  fx.params[TxRiaa] = at(TtRiaa);
+  fx.params[TxZoom] = at(TtZoom);
+  fx.params[TxEmpty] = at(TtEmpty);
+  return fx;
+}
+
+void turntableFromReference(const float* v, int n, std::vector<float>& params, const TurntableLayout& L) {
+  params.assign(static_cast<size_t>(L.count), 0.f);
+  const PluginInfo* info = findPlugin(L.type);
   if (info)
-    for (int i = 0; i < TtCount && static_cast<size_t>(i) < info->params.size(); ++i)
+    for (int i = 0; i < L.count && static_cast<size_t>(i) < info->params.size(); ++i)
       params[static_cast<size_t>(i)] = static_cast<float>(info->params[static_cast<size_t>(i)].def);
   auto at = [&](int i, float d) { return i < n && std::isfinite(v[i]) ? v[i] : d; };
   params[TtPosition] = std::clamp(at(0, 0.f), 0.f, 1.f);
@@ -563,7 +636,7 @@ void turntableFromReference(const float* v, int n, std::vector<float>& params) {
   for (int k = 0; k < 4; ++k) params[static_cast<size_t>(TtSmooth1 + k)] = std::clamp(at(9 + k, 0.5f), 0.f, 1.f);
   const float rot = std::clamp(at(13, 9.f), 0.f, 18.f);
   params[TtTurns] = static_cast<float>(static_cast<int>(rot) - 9);
-  params[TtNotes] = static_cast<float>(TnOff);  // the reference plays by its motor, not by notes
+  if (L.notes >= 0) params[static_cast<size_t>(L.notes)] = static_cast<float>(TnOff);  // the reference plays by its motor, not by notes
 }
 
 int turntableParamOfReference(int tag) {

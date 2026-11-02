@@ -113,6 +113,17 @@ void App::openRemoteDialogForLink(int index) {
 
 void App::startPlayback() {
   if (engine.playing()) return;
+  if (recordArmed && !audioRecFinishing && engine.mode() != PlayMode::Live) {
+    // Armed tracks capture from the transport's first block: the punch range and the recording flag
+    // are set before Play, not a UI frame later in processAudioRecording (a slow frame there lost the
+    // start of the take, and a first loop pass started late).
+    const bool sel = playlist.selEnd > playlist.selStart;
+    if (recPunch && sel && engine.mode() == PlayMode::Song)
+      engine.setPunch(static_cast<double>(playlist.selStart), static_cast<double>(playlist.selEnd));
+    else
+      engine.setPunch(0, 0);
+    engine.setRecording(true);
+  }
   if (recordArmed && countInBars > 0)
     engine.playWithCountIn(static_cast<double>(countInBars * doc.song().barTicks()));
   else

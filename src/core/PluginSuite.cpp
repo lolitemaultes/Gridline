@@ -128,6 +128,7 @@ void categorize(Member& m) {
       {"gl.stereo", {"Fx|Spatial", "utility", "Imaging"}},
       {"gl.stereomatrix", {"Fx|Spatial", "utility", "Imaging"}},
       {"gl.scratcher", {"Fx", "glitch", "Effects"}},
+      {"gl.turntablefx", {"Fx", "glitch", "Effects"}},
       {"gl.analyzer", {"Fx|Analyzer", "analyzer", "Analyzer"}},
       {"gl.tuner", {"Fx|Analyzer", "analyzer", "Analyzer"}},
       {"gl.freqshift", {"Fx|Modulation", "frequency-shifter", "Modulation"}},

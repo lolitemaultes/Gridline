@@ -148,6 +148,13 @@ void initHosting(const std::string& configDir);
 // entries. No-op while a scan runs.
 void startScan(const std::string& exe, bool force = false);
 // Rescans one entry (plugin manager "retry").
+// K-13: the search folders changed: scans what is new and drops the plugins of folders that left
+// (now, or right after a running scan). Projects using a dropped plugin keep its placeholder.
+void requestScan(const std::string& exe);
+// K-13: scans every entry of a format found in one folder again.
+void rescanFolder(const std::string& exe, const std::string& format, const std::string& folder);
+// Every (format, entry) the search folders hold now (formats switched off left out).
+std::vector<std::pair<std::string, std::string>> discoverPluginEntries();
 void rescanEntry(const std::string& exe, const std::string& format, const std::string& entry);
 // Rescans several entries ({format, entry}) one after another (plugin manager
 // "Retry all", "Rescan" of a plugin installed in several formats).

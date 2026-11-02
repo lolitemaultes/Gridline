@@ -540,6 +540,8 @@ std::vector<NoteEv> compileChannelNotes(const Song& song, const Pattern& p, cons
   }
   const Tick loopTicks = static_cast<Tick>(loop) * stepTicks;
   const Tick patLen = static_cast<Tick>(total) * stepTicks;
+  std::shared_ptr<const std::vector<BendPoint>> bendShared;  // K-25: one copy per note (step loop repeats share it)
+  const Note* bendOf = nullptr;
   if (auto it = p.notes.find(channel); it != p.notes.end())
     for (const auto& n : it->second)
       for (Tick rep = 0;; rep += loopTicks) {  // one pass, or the step loop's repeats (J-31)
@@ -547,12 +549,24 @@ std::vector<NoteEv> compileChannelNotes(const Song& song, const Pattern& p, cons
       if (loopTicks > 0 && (n.start >= loopTicks || n.start + rep >= patLen)) break;
       NoteEv e = makeEv(n.start + rep, n.start + rep + n.length, static_cast<float>(n.pitch) + static_cast<float>(n.fine) / 100.0f,
                         static_cast<float>(n.velocity) / 127.0f);
-      if (n.frac != 0.f || n.endFrac != 0.f) {  // J-159: a sub-tick start / end
+      // K-22: a step note one step long plays exactly as the rack step it was: its step's swing
+      // (whatever swingNotes says), its offset inside the step, one step long or truncated.
+      const bool asStep = n.step && stepTicks > 0 && n.length == stepTicks;
+      if (asStep) {
+        const Tick at = n.start + rep;
+        const Tick grid = at / stepTicks * stepTicks;
+        const double warped = swingWarp(static_cast<double>(grid), swing, stepTicks, p.stepsPerBar);
+        const double offset = static_cast<double>(at - grid) + n.frac;
+        const double on = warped + offset;
+        const double end = c.swingTruncate ? std::max(warped + 1.0, static_cast<double>(grid + stepTicks)) : warped + static_cast<double>(stepTicks);
+        setOn(e, on);
+        setOff(e, c.swingTruncate ? std::max(on + 1.0, end) : end + offset);
+      } else if (n.frac != 0.f || n.endFrac != 0.f) {  // J-159: a sub-tick start / end
         const double t0 = static_cast<double>(n.start + rep) + n.frac;
         setOn(e, t0);
         setOff(e, std::max(t0 + 1e-3, static_cast<double>(n.start + rep + n.length) + n.endFrac));
       }
-      if (swing > 0 && stepTicks > 0 && song.swingNotes) {  // J-138: notes swing with the steps (written positions stay straight)
+      if (!asStep && swing > 0 && stepTicks > 0 && song.swingNotes) {  // J-138: notes swing with the steps (written positions stay straight)
         const double on = swingWarp(noteOnTick(e), swing, stepTicks, p.stepsPerBar);
         const double end = swingWarp(noteOffTick(e), swing, stepTicks, p.stepsPerBar);
         // Truncated: the note ends where its warped end falls. Otherwise it is never shorter than written.
@@ -570,6 +584,10 @@ std::vector<NoteEv> compileChannelNotes(const Song& song, const Pattern& p, cons
       if (n.modX == kNoteModCentre) e.props.modX = 0.5f;
       if (n.modY == kNoteModCentre) e.props.modY = 0.5f;
       e.flags = static_cast<uint8_t>((n.slide ? kNoteSlide : 0) | (n.porta ? kNotePorta : 0));
+      if (!n.bend.empty() && !n.slide) {  // K-25: slide notes glide other notes, they have no line of their own
+        if (!bendShared || bendOf != &n) bendShared = std::make_shared<const std::vector<BendPoint>>(n.bend), bendOf = &n;
+        e.bend = bendShared;
+      }
       out.push_back(e);
       if (loopTicks <= 0) break;
     }
@@ -654,6 +672,7 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
   auto prog = std::make_shared<Program>();
   prog->tempo = song.tempo;
   prog->ppq = song.ppq;
+  prog->slidesAnyColour = song.slidesAnyColour;  // K-5
   prog->barTicks = song.barTicks();
   prog->beatTicks = song.beatTicks();
   prog->songEnd = song.lengthTicks();

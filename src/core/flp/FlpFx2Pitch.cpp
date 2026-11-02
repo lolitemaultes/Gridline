@@ -19,7 +19,9 @@
 //                      (5000 = none), stereo, range, start phase, 2 spare.
 //   Fruity Vocoder     version 2, band count, 2 words, band levels (one per
 //                      band), then the knob block.
-//   Fruity Scratcher   version 1001000 and float settings, sample path (-> Turntable).
+//   Fruity Scratcher   version 1001000 and float settings, sample path (-> the Turntable effect).
+#include <algorithm>
+#include <cmath>
 #include "../../packs/spectral/spectral.h"
 #include "../../packs/spectral/turntable.h"
 #include "../PluginParams.h"
@@ -228,14 +230,39 @@ bool decodeFruityVocoder(Context&, const std::vector<Event>& evs, PluginMapping&
   fx::set(m, sp::VcCarrier, 0);
   fx::set(m, sp::VcModSource, 0);
   fx::set(m, sp::VxModel, 0);  // the 0.5 vocoder engine (left modulator / right carrier)
+  // K-2: after the header (version, bands, two option words, a flag byte) and one
+  // f32 level per band come the 12 knobs as i32 by automation tag. Laws measured
+  // on the reference: frequency 10 + 15990 * (101^n - 1) / 100 Hz, formant in cents,
+  // envelope times in ms, levels linear (128 = 100%). Frequency scale and
+  // bandwidth have no counterpart in this engine and keep its defaults.
+  auto freq = [](double v) { return 10.0 + 15990.0 * (std::pow(101.0, clampd(v / 65536.0, 0, 1)) - 1.0) / 100.0; };
+  auto db = [](double v) { return v <= 0 ? -60.0 : clampd(20.0 * std::log10(v / 128.0), -60, 6); };
+  KnobTable tab = {{0, 0, 65536, sp::VcLowFreq, [freq](double v) { return clampd(freq(v), 20, 2000); }},
+                   {1, 0, 65536, sp::VcHighFreq, [freq](double v) { return clampd(freq(v), 1000, 20000); }},
+                   {3, 0, 1, sp::VcInvert, [](double v) { return v >= 0.5 ? 1.0 : 0.0; }},
+                   {4, -1200, 1200, sp::VcFormant, [](double v) { return clampd(v / 100.0, -12, 12); }},
+                   {6, 10, 1000, sp::VcAttack, [](double v) { return clampd(v, 0.5, 200); }},
+                   {7, 10, 1000, sp::VcRelease, [](double v) { return clampd(v, 5, 1500); }},
+                   {8, 0, 1, sp::VcHold, [](double v) { return v >= 0.5 ? 1.0 : 0.0; }},
+                   {9, 0, 160, sp::VcModLevel, db},
+                   {10, 0, 160, sp::VcCarLevel, db},
+                   {11, 0, 160, sp::VcWetLevel, db}};
+  const size_t knobs = 17 + 4 * static_cast<size_t>(std::clamp(bands, 0, 512));
+  if (bands >= 1 && bands <= 512 && r.n >= knobs + 12 * 4) {
+    Reader k(r.p + knobs, 12 * 4);
+    std::vector<double> t;
+    for (int i = 0; i < 12; ++i) t.push_back(k.i32());
+    fx::applyTable(m, tab, t);
+  }
+  bindKnobs(m, tab);
   m.exact = false;  // band shaping, envelope and level curves approximate
   return true;
 }
 
 // ------------------------------------------------------------------ Fruity Scratcher → Turntable
-// J-205: the plugin plays its own loaded sample on a platter, so it becomes the
-// Turntable instrument (in a mixer slot: a channel routed to that insert, see
-// importPlugins). State: u32 version, 14 f32 settings by control tag (internal
+// K-23: the Turntable effect on the same mixer slot (J-205 / J-206 made it an
+// instrument channel routed to the insert; Gridline projects saved that way
+// keep that channel, see turntable.h). State: u32 version, 14 f32 settings by control tag (internal
 // values: position 0..1, sound flag, speed 0..1 = 0..2x, acceleration, pan
 // 0..1, linear volume, hold, sensitivity, motor -1/0/1, smooth 1..4,
 // rotations 0..18), i32 length + path (ANSI); later versions add the zoom,
@@ -305,17 +332,20 @@ bool decodeScratcher(Context& c, const std::vector<Event>& evs, PluginMapping& m
   } else {
     return false;
   }
-  fx::begin(m, "gl.turntable");
-  sp::turntableFromReference(v, 14, m.state.params);
-  m.state.params[sp::TtZoom] = zoom == 2 ? 1.f : 0.f;
-  m.state.params[sp::TtTimecode] = timecode >= 0 && timecode <= 7 ? static_cast<float>(timecode + 1) : 0.f;
-  m.state.params[sp::TtRiaa] = riaa != 0 ? 1.f : 0.f;
+  // K-23: the reference is a mixer effect (its output is the insert's audio
+  // plus its deck), so it lands on the same slot as the Turntable effect.
+  const sp::TurntableLayout& L = sp::kTtFxLayout;
+  fx::begin(m, L.type);
+  sp::turntableFromReference(v, 14, m.state.params, L);
+  m.state.params[static_cast<size_t>(L.zoom)] = zoom == 2 ? 1.f : 0.f;
+  m.state.params[static_cast<size_t>(L.timecode)] = timecode >= 0 && timecode <= 7 ? static_cast<float>(timecode + 1) : 0.f;
+  m.state.params[static_cast<size_t>(L.riaa)] = riaa != 0 ? 1.f : 0.f;
   if (!path.empty()) {
     for (char& ch : path)
       if (ch == '\\') ch = '/';
     m.state.data = c.resolvePath(path);
   } else {
-    m.state.params[sp::TtEmpty] = 1.f;
+    m.state.params[static_cast<size_t>(L.empty)] = 1.f;
   }
   // Automation (clips, recorded events): FL's values span each control's range.
   m.param = [](int fl) { return fl >= 0 && fl <= 13 ? sp::turntableParamOfReference(fl) : -1; };

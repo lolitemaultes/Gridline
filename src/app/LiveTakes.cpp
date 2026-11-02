@@ -9,6 +9,7 @@
 #include <memory>
 #include <unordered_map>
 #include "App.h"
+#include "DevSignal.h"
 
 namespace gl::livetake {
 
@@ -134,6 +135,9 @@ void update(App& a) {
   const bool closed = !a.audioRec.open();
   s.closedFrames = closed && total == s.lastTotal ? s.closedFrames + 1 : closed ? 1 : 0;
   s.lastTotal = total;
+  static size_t passesReported = 0;  // dev checks (waitfor): "livetake-clips:<n>", n live clips at once
+  if (s.views.size() < passesReported) passesReported = 0;
+  for (; passesReported < s.views.size(); ++passesReported) devsig::reach("livetake-clips:" + std::to_string(passesReported + 1));
   // Dev checks ("liverec watch"): the last live frame, as the takes are about to be committed.
   if (s.watch && settled()) {
     std::printf("livetakes final:\n");
@@ -241,6 +245,7 @@ void devClipPeaks(App& a, int frame) {
 //   liverec start                      · song mode, record button armed (audio), the transport starts
 //   liverec stop                       · the transport stops
 //   liverec trace                      · live takes (devTrace) · liverec clips: committed clips (devClipPeaks)
+//   signal livetake-clips:<n>          · n live clips drawn at once (for waitfor: a loop's passes)
 bool devCommand(App& a, const std::string& cmd, const std::vector<std::string>& args, int frame) {
   if (cmd != "liverec" || args.empty()) return false;
   const std::string& op = args[0];

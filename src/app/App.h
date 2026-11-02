@@ -44,7 +44,7 @@ class Controller;
 // Editing tools of the piano roll and the playlist. J-11 added Slip (playlist:
 // move a clip's content inside it), Play (audition / scrub while held), Zoom
 // (drag a range, click in, right-click out) and Detune (drag notes' fine pitch).
-enum class Tool { Draw, Paint, Erase, Select, Slice, Mute, Slip, Play, Zoom, Detune };
+enum class Tool { Draw, Paint, Erase, Select, Slice, Mute, Slip, Play, Zoom, Detune, Bend };  // K-25: Bend = the piano roll's pitch bend tool
 
 struct PianoRollState {
   float pxPerTick = 0.25f;
@@ -53,6 +53,7 @@ struct PianoRollState {
   bool centred = false;             // J-67: first-open centring done (scrollY < 0 is an elastic overscroll now)
   smoothscroll::Axis axX, axY;      // J-67: smooth scrolling / elastic edges
   smoothzoom::Glide zoomGlide;      // J-188: smooth zooming
+  smoothzoom::RowGlide rowGlide;    // K-24: Alt+wheel row height, anchored at the pointer
   Tool tool = Tool::Draw;
   Snap snap = Snap::Line;
   Tick effGrid = 0;          // grid the last frame snapped to (for the snap chip)
@@ -102,6 +103,9 @@ struct PlaylistState {
   float scrollX = 0, scrollY = 0;
   smoothscroll::Axis axX, axY;  // J-67: smooth scrolling / elastic edges
   smoothzoom::Glide zoomGlide;  // J-188: smooth zooming
+  // K-24: vertical zoom (the track height) anchored at the pointer: Alt+wheel,
+  // the vertical scroller's ends, the View menu; remembered in ui.playlistTrackHeight.
+  smoothzoom::RowGlide rowGlide;
   Tool tool = Tool::Draw;
   Snap snap = Snap::Line;
   Tick effGrid = 0;              // grid the last frame snapped to (for the snap chip)
@@ -281,6 +285,26 @@ class App {
   int audioBuffer = 256;
   bool audioReopen = false;
   std::string audioStatus;
+  // K-6: ASIO backend (Windows; simulated drivers with GRIDLINE_FAKE_ASIO). Filled by main.
+  struct AsioState {
+    bool available = false;  // offered in Settings > Audio
+    bool active = false;     // the engine runs on the driver now
+    std::vector<std::string> drivers;
+    std::string error;       // why the last open failed ("" = it did not)
+    std::string driver;      // open driver
+    int numIn = 0, numOut = 0;
+    std::vector<std::string> inNames, outNames;
+    std::vector<int> bufferChoices, rates;
+    int minBuffer = 0, maxBuffer = 0, preferredBuffer = 0, granularity = 0;
+    int buffer = 0, rate = 0, inLatency = 0, outLatency = 0;
+    int inputs = 0;          // device inputs opened (engine inputs In 1..)
+    int inFirst = 0, mainOut = 0;
+    bool mono = false;       // one output only
+    int extraOuts = 0;       // extra output pairs fed by mixer tracks
+    std::string format;      // sample format of the main output
+    bool outputReady = false;
+    bool panelRequest = false;  // UI: open the driver's control panel (main loop)
+  } asio;
   // Audio input & recording (J-8): input device (Settings → Audio), the
   // recording session (armed mixer tracks → playlist audio clips) and the
   // record filter (what the record button records).

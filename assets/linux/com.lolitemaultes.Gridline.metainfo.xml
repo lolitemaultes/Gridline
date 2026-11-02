@@ -1,15 +1,17 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Gridline for software centres (GNOME Software, KDE Discover) and AppImage tools: AppStream
-     metadata, installed to share/metainfo. Every published release gets a <release> entry here
-     (release.yml checks it and validates the file with appstreamcli; docs/releasing.md). -->
+<!-- Gridline for software centres (GNOME Software, KDE Discover, Flathub) and AppImage tools:
+     AppStream metadata, installed to share/metainfo. Every published release gets a <release>
+     entry here (release.yml checks it and validates the file with appstreamcli; docs/releasing.md).
+     The id is also the Flatpak application id (packaging/flatpak, docs/packaging.md); it replaced
+     org.gridline.Gridline in 0.7.2. -->
 <component type="desktop-application">
-  <id>org.gridline.Gridline</id>
+  <id>com.lolitemaultes.Gridline</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-or-later</project_license>
 
   <name>Gridline</name>
   <summary>Pattern-based music workstation</summary>
-  <developer id="org.gridline">
+  <developer id="com.lolitemaultes">
     <name>Gridline</name>
   </developer>
 
@@ -31,7 +33,12 @@
     </ul>
   </description>
 
+  <replaces>
+    <id>org.gridline.Gridline</id>
+  </replaces>
+
   <launchable type="desktop-id">gridline.desktop</launchable>
+  <icon type="stock">gridline</icon>
   <provides>
     <binary>gridline-app</binary>
     <binary>gridline</binary>
@@ -56,6 +63,7 @@
   <url type="homepage">https://github.com/lolitemaultes/Gridline</url>
   <url type="bugtracker">https://github.com/lolitemaultes/Gridline/issues</url>
   <url type="vcs-browser">https://github.com/lolitemaultes/Gridline</url>
+  <url type="help">https://github.com/lolitemaultes/Gridline/tree/main/docs</url>
 
   <branding>
     <color type="primary" scheme_preference="light">#f2f2f2</color>
@@ -85,7 +93,12 @@
     </screenshot>
   </screenshots>
 
-  <content_rating type="oars-1.1"/>
+  <!-- Online: the update check asks GitHub's API (social-info mild); a collaborator can see the
+       contact email someone chose to share with them (social-contacts intense, off by default). -->
+  <content_rating type="oars-1.1">
+    <content_attribute id="social-info">mild</content_attribute>
+    <content_attribute id="social-contacts">intense</content_attribute>
+  </content_rating>
 
   <requires>
     <display_length compare="ge">768</display_length>
