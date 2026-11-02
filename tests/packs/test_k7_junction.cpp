@@ -912,7 +912,9 @@ void testValueEdits() {
     std::printf("# %d modules: full prepare %.1f ms; value edit %.2f ms (worst %.2f); render %.1f %% of real time\n", md::kJMaxNodes, prepared, total / steps, worst,
                 100.0 * rendered / (1000.0 * 4096.0 / kSr));
     expect(ru->graphCounts().builds == 1, "values: the largest graph: a drag prepares nothing");
-    expect(total / steps < prepared, "values: the largest graph: a value edit costs less than a prepare");
+    // The times above are information only: under CI load a wall-clock comparison says nothing (K-X).
+    // The counts are what proves the path: every edit took the value route, none prepared anything.
+    expect(ru->graphCounts().valueEdits == static_cast<uint64_t>(steps), "values: the largest graph: every edit went the value route");
   }
 }
 

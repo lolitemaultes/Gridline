@@ -7,6 +7,7 @@
 //   K-16: favourites round trip through the settings file (a restart), favourites-first ordering.
 // Every file operation runs in this test's own temp folder (Hermetic.h).
 #include <algorithm>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -80,6 +81,9 @@ void testPaths() {
   expect(fileops::retargetPath(p, "C:\\a\\b", "C:\\a\\x") && p == "C:\\a\\x\\sub\\c.wav", "retarget: forward slashes in the reference, backslashes in the move");
   p = "C:\\a\\b\\c.wav";
   expect(fileops::retargetPath(p, "C:/a/b/c.wav", "C:/a/b/d.wav") && p == "C:/a/b/d.wav", "retarget: backslashes in the reference, forward slashes in the move");
+  // Mixed separators in the move (a folder path joined from two spellings) do not reach the reference.
+  p = "C:\\t/g\\old\\c.wav";
+  expect(fileops::retargetPath(p, "C:\\t/g\\old", "C:\\t/g\\new\\old") && p == "C:\\t\\g\\new\\old\\c.wav", "retarget: a move with mixed separators writes one spelling");
 #endif
 }
 
@@ -243,9 +247,15 @@ void testProjectSide() {
   touch(d / "Archive" / ".keep");
   r = fileops::moveInto((d / "Edited audio").string(), (d / "Archive").string());
   doc.execute(std::make_unique<fileops::FileMoveCommand>("Moved", r.moves, std::vector<fileops::Move>{r.moves.front()}));
+  // Compared as paths, not as strings: the test's own root holds a '/' on Windows (Hermetic.h joins
+  // "<temp>/gridline-...") and a retargeted reference comes out in one spelling, all backslashes.
   const auto refs = referencedFiles(doc.song());
-  expect(std::find(refs.begin(), refs.end(), (d / "Archive" / "Edited audio" / "take.wav").string()) != refs.end(),
-         "a moved folder: the references inside a plugin's JSON state follow");
+  const fs::path movedTake = d / "Archive" / "Edited audio" / "take.wav";
+  const auto followed = std::find_if(refs.begin(), refs.end(), [&](const std::string& f) { return fs::path(f) == movedTake; });
+  if (followed == refs.end() || !has(fs::path(*followed)))
+    for (const auto& f : refs) std::printf("# wanted %s, reference [%s]\n", movedTake.string().c_str(), f.c_str());
+  expect(followed != refs.end(), "a moved folder: the references inside a plugin's JSON state follow");
+  expect(followed != refs.end() && has(fs::path(*followed)), "a moved folder: the reference it wrote opens the moved file");
   doc.undo();
   expect(has(d / "Edited audio" / "take.wav") && fileops::referencesTo(doc.song(), (d / "Edited audio").string()) == 1, "undo: folder and reference back");
 }

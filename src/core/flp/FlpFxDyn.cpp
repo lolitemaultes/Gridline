@@ -353,19 +353,31 @@ bool maximusRefBlock(const Reader& r, PluginMapping& m, int ref, const std::vect
   set(m, ref + dy::MrLin, lin ? 1 : 0);
   set(m, ref + dy::MrLinQuality, std::clamp(quality, 0, 5));
   set(m, ref + dy::MrLinSpeed, std::clamp(speed, 0, 3));
+  // K-S: stored oversampling stages (a word from version 5 on, its first byte in version 4), honoured as FL does.
+  const int stages = ver >= 5 ? rd32(optBase + 0x18) : ver == 4 ? rd8(optBase + 0x18) : 0;
+  set(m, ref + dy::MrOversample, std::clamp(stages, 0, 3));
+  set(m, ref + dy::MrRevision, 1);
   // J-42: both linear-phase splits are reproduced (spec j42 fir notes).
   bool exact = curves.size() >= 8 && quality >= 0 && quality <= 5 && speed >= 0 && speed <= 3;
+  std::string longCurves;  // K-S: curves of more than eight points live in the state's data
   for (int k = 0; k < 4; ++k) {
     const MaxCurve* c = curves.size() >= static_cast<size_t>(2 * k + 1) ? &curves[static_cast<size_t>(2 * k)] : nullptr;
     for (int i = 0; i < dy::kMsCurvePts; ++i) {
       const int ty = c && i < c->n ? c->type[i] : 0;
       set(m, ref + dy::MrPtType0 + k * dy::kMsCurvePts + i, std::clamp(ty, 0, 12));
     }
-    if (c && c->n > dy::kMsCurvePts) exact = false;
     if (c)
       for (int i = 0; i < c->n; ++i)
-        if (c->type[i] > 12 || c->type[i] == 10) exact = false;  // J-42: point shapes 3..12 via the envelope model (smooth: tangents differ)
+        if (c->type[i] > 12) exact = false;  // J-42: point shapes 3..12 via the envelope model
+    if (c && c->n > dy::kMsCurvePts) {
+      dy::LongCurve lc;
+      lc.n = std::min(c->n, dy::kMsLongCurve);
+      for (int i = 0; i < lc.n; ++i)
+        lc.x[i] = static_cast<float>(c->x[i]), lc.y[i] = static_cast<float>(c->y[i]), lc.t[i] = static_cast<float>(c->t[i]), lc.type[i] = std::clamp(c->type[i], 0, 12);
+      longCurves = dy::masterLongCurvesWith(longCurves, k, &lc);
+    }
   }
+  m.state.data = longCurves;
   return exact;
 }
 

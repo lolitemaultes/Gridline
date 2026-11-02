@@ -256,6 +256,7 @@ class Core final : public HostedInstance {
   ~Core() override {
     if (b_->onGoingAway) b_->onGoingAway();
     suspend();
+    if (b_->lost()) (void)b_.release();  // its destructor would call the plugin, and that throws
   }
 
   Backend* backend() override { return b_.get(); }
@@ -265,7 +266,14 @@ class Core final : public HostedInstance {
   std::string crashReason() const override { return b_->crashReason(); }
   void requestReload() override { reload_.store(true); }
   const HostOptions& options() const override { return opts_; }
-  int totalLatency() const override { return b_->latency() + fixedSize_; }
+  int totalLatency() const override {
+    try {
+      return (b_->crashed() ? 0 : b_->latency()) + fixedSize_;
+    } catch (...) {
+      b_->markLost();
+      return fixedSize_;
+    }
+  }
   bool stale() const {
     return reload_.load() || runsInSandbox(cls_->type) != sandboxed_ || !hostOptions(cls_->type).sameStructure(opts_);
   }
@@ -281,6 +289,13 @@ class Core final : public HostedInstance {
 
   // ---- UI thread ----
   void prepareHost(const PluginState& st, double sr) {
+    try {
+      prepareHostNow(st, sr);
+    } catch (...) {
+      b_->markLost();
+    }
+  }
+  void prepareHostNow(const PluginState& st, double sr) {
     for (size_t k = 0; k < ids_.size(); ++k) base_[k].store(k < st.params.size() ? st.params[k] : std::nanf(""), std::memory_order_relaxed);
     if (b_->crashed()) return;
     const bool needLoad = !loaded_ || st.data != lastData_;
@@ -324,6 +339,13 @@ class Core final : public HostedInstance {
   }
 
   void pumpUi(UiUpdate& u) override {
+    try {
+      pumpUiNow(u);
+    } catch (...) {
+      b_->markLost();  // reported with the next call
+    }
+  }
+  void pumpUiNow(UiUpdate& u) {
     if (b_->crashed()) {
       if (!crashReported_) u.crashed = true;
       crashReported_ = true;
@@ -405,22 +427,51 @@ class Core final : public HostedInstance {
   }
 
   bool captureState(std::string& data) override {
-    if (b_->crashed() || !b_->getState(data)) return false;
+    try {
+      if (b_->crashed() || !b_->getState(data)) return false;
+    } catch (...) {
+      b_->markLost();
+      return false;  // the project keeps the state it has
+    }
     lastData_ = data;
     return true;
   }
 
   std::string paramText(int index, float value) override {
     if (b_->crashed() || index < 0 || static_cast<size_t>(index) >= ids_.size() || !mapped_[static_cast<size_t>(index)]) return {};
-    return b_->paramText(ids_[static_cast<size_t>(index)], cls_->toNormalized(static_cast<size_t>(index), value));
+    try {
+      return b_->paramText(ids_[static_cast<size_t>(index)], cls_->toNormalized(static_cast<size_t>(index), value));
+    } catch (...) {
+      b_->markLost();
+      return {};
+    }
   }
 
-  int programCount() const override { return b_->programCount(); }
-  std::string programName(int i) const override { return b_->programName(i); }
+  int programCount() const override {
+    try {
+      return b_->crashed() ? 0 : b_->programCount();
+    } catch (...) {
+      b_->markLost();
+      return 0;
+    }
+  }
+  std::string programName(int i) const override {
+    try {
+      return b_->crashed() ? std::string() : b_->programName(i);
+    } catch (...) {
+      b_->markLost();
+      return {};
+    }
+  }
   bool selectProgram(int i) override {
     if (b_->crashed()) return false;
     suspend();
-    bool ok = b_->selectProgram(i);
+    bool ok = false;
+    try {
+      ok = b_->selectProgram(i);
+    } catch (...) {
+      b_->markLost();
+    }
     resume();
     if (ok) {
       readbackPending_ = true;
@@ -431,7 +482,11 @@ class Core final : public HostedInstance {
   }
   const std::vector<PresetRef>& libraryPresets() override {
     if (!presetsScanned_ && !b_->crashed()) {
-      presets_ = b_->discoverPresets();
+      try {
+        presets_ = b_->discoverPresets();
+      } catch (...) {
+        b_->markLost();
+      }
       presetsScanned_ = true;
     }
     return presets_;
@@ -439,7 +494,12 @@ class Core final : public HostedInstance {
   bool loadLibraryPreset(size_t i) override {
     if (b_->crashed() || i >= libraryPresets().size()) return false;
     suspend();
-    bool ok = b_->loadPreset(presets_[i]);
+    bool ok = false;
+    try {
+      ok = b_->loadPreset(presets_[i]);
+    } catch (...) {
+      b_->markLost();
+    }
     resetSchedule();
     resume();
     if (ok) {
@@ -884,12 +944,20 @@ class HostedGenerator final : public Generator {
     (void)aux;
     sampleRate_ = ctx.sampleRate;
     if (entered_) core_->leave();  // (a block that never rendered)
+    entered_ = false;
+    if (core_->backend()->crashed()) return;  // silent: render adds nothing
     entered_ = core_->enter();
     if (entered_) {
-      core_->beginBlock(ctx);
-      core_->sendParams(state);
-      for (int i = 0; i < deferredCount_; ++i) core_->queueEvent(deferred_[i], 0);
-      deferredCount_ = 0;
+      try {
+        core_->beginBlock(ctx);
+        core_->sendParams(state);
+        for (int i = 0; i < deferredCount_; ++i) core_->queueEvent(deferred_[i], 0);
+        deferredCount_ = 0;
+      } catch (...) {  // no allocation, lock or I/O here (Backend::markLost)
+        core_->backend()->markLost();
+        entered_ = false;
+        core_->leave();
+      }
     }
   }
   // One call per block (wholeBlock): the events of the block are already
@@ -901,7 +969,12 @@ class HostedGenerator final : public Generator {
       return;
     }
     emitGlides(n);
-    core_->run(n, nullptr, nullptr, nullptr, nullptr, L, R, true, aux_.data(), auxCount_, 0);
+    try {
+      core_->run(n, nullptr, nullptr, nullptr, nullptr, L, R, true, aux_.data(), auxCount_, 0);
+    } catch (...) {  // no allocation, lock or I/O here (Backend::markLost)
+      core_->backend()->markLost();
+      clearAux(0, n);
+    }
     entered_ = false;
     core_->leave();
   }
@@ -1065,6 +1138,16 @@ class HostedEffect final : public Effect {
       return;
     }
     if (!core_->enter()) return;  // reconfiguring: pass through
+    try {
+      runEntered(state, ctx, L, R, n, p);
+    } catch (...) {  // no allocation, lock or I/O here (Backend::markLost)
+      p->markLost();
+      std::memset(L, 0, sizeof(float) * static_cast<size_t>(n));
+      std::memset(R, 0, sizeof(float) * static_cast<size_t>(n));
+    }
+    core_->leave();
+  }
+  void runEntered(const PluginState& state, const ProcessContext& ctx, float* L, float* R, int n, Backend* p) {
     core_->beginBlock(ctx);
     core_->sendParams(state);
     if (soundOff_) {
@@ -1081,7 +1164,6 @@ class HostedEffect final : public Effect {
           }
     }
     core_->run(n, L, R, io_.scL, io_.scR, L, R, false, nullptr, 0, 0);
-    core_->leave();
   }
 
   std::unique_ptr<Core> core_;

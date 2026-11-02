@@ -20,12 +20,13 @@
 #include <complex>
 #include <cstring>
 #include <vector>
+#include <atomic>
 #include "../../engine/MEnv.h"
 
 namespace gl::packs::dynamics::maxref {
 
 inline constexpr int kBands = 4;
-inline constexpr int kPts = 8;
+inline constexpr int kPts = 64;  // K-S: a drawn curve holds what the reference's state can hold
 inline constexpr int kRaw = 59;  // 7 globals + 4 × 13 band ints
 enum BandTag { TMode = 0, TPre, TPost, TSep, TSatThr, TSatCeil, TAtt, TRel2, TAttCurve, TRel, TRelCurve, TWindow, TSusMode, TCount };
 inline int rawIndex(int band, int tag) { return 7 + band * TCount + tag; }
@@ -40,6 +41,31 @@ struct Curve {
   int n = 3;
   double x[kPts] = {0, 0.5, 1}, y[kPts] = {0, 0.5, 0.5}, t[kPts] = {0, 0, 0};
   int type[kPts] = {0, 0, 0};
+  // K-S: tangents of "smooth" segments (ends at i), monotone cubic as the envelope model; see prepareTangents().
+  float tanS[kPts] = {}, tanE[kPts] = {};
+  bool hasSmooth = false;
+  void prepareTangents() {
+    hasSmooth = false;
+    for (int i = 1; i < n; ++i) {
+      tanS[i] = tanE[i] = 0;
+      if (type[i] != 10) continue;
+      hasSmooth = true;
+      const double h = x[i] - x[i - 1], dy = static_cast<double>(static_cast<float>(y[i])) - static_cast<float>(y[i - 1]);
+      if (h <= 0 || std::fabs(dy) < 6e-8) continue;
+      const double d = dy / h;
+      auto tangent = [&](int j0, int j1, int j2) {
+        const double h0 = x[j1] - x[j0], h1 = x[j2] - x[j1];
+        if (h0 <= 0 || h1 <= 0) return 0.0;
+        const double d0 = (static_cast<double>(static_cast<float>(y[j1])) - static_cast<float>(y[j0])) / h0;
+        const double d1 = (static_cast<double>(static_cast<float>(y[j2])) - static_cast<float>(y[j1])) / h1;
+        if (d0 * d1 <= 0) return 0.0;
+        return 3 * d0 * d1 * (h0 + h1) / ((2 * h0 + h1) * d0 + (h0 + 2 * h1) * d1);  // measured on the oracle (4 segments, within 1e-3)
+      };
+      const double m0 = (i >= 2 && type[i - 1] == 10) ? tangent(i - 2, i - 1, i) : 0.0;
+      const double m1 = (i + 1 < n && type[i + 1] == 10) ? tangent(i - 1, i, i + 1) : 0.0;
+      tanS[i] = static_cast<float>(m0 / d), tanE[i] = static_cast<float>(m1 / d);
+    }
+  }
   bool operator==(const Curve& o) const {
     if (n != o.n) return false;
     for (int i = 0; i < n; ++i)
@@ -49,10 +75,15 @@ struct Curve {
 };
 
 // Reference envelope segment shape: phase t (0..1), tension τ, point type.
-inline double segShape(double t, double tau, int type) {
+inline double segShape(double t, double tau, int type, int rev = 1, double tanS = 0, double tanE = 0) {
   if (type == 2) return 0.0;  // hold
+  if (type == 12 && rev >= 1) {  // K-S: two mirrored rational bends, measured on the oracle (menv's coefficient halves them twice)
+    const auto c = menv::coef(menv::SingleCurve3, static_cast<float>(tau));
+    return t < 0.5 ? 0.5 * menv::shape(menv::SingleCurve3, c, 2 * t) : 1.0 - 0.5 * menv::shape(menv::SingleCurve3, c, 2 * (1 - t));
+  }
   if (type >= 3 && type <= 12) {  // J-42: the other point shapes of the envelope model
     const auto m = static_cast<uint8_t>(type);
+    if (m == menv::Smooth && rev >= 1) return menv::shape(m, menv::coef(m, static_cast<float>(tau)), t, tanS, tanE);
     return menv::shape(m, menv::coef(m, static_cast<float>(tau)), t);
   }
   auto f = [tau](double u) {
@@ -64,7 +95,7 @@ inline double segShape(double t, double tau, int type) {
   if (type == 1) return t < 0.5 ? 0.5 * f(2 * t) : 1.0 - 0.5 * f(2 * (1 - t));
   return f(t);
 }
-inline double curveAt(const Curve& c, double X) {
+inline double curveAt(const Curve& c, double X, int rev = 1) {
   if (c.n <= 0) return 0;
   if (X <= c.x[0]) return static_cast<float>(c.y[0]);
   for (int i = 1; i < c.n; ++i) {
@@ -73,7 +104,7 @@ inline double curveAt(const Curve& c, double X) {
       const double y0 = static_cast<float>(c.y[i - 1]), y1 = static_cast<float>(c.y[i]);
       if (dx <= 0) return y1;
       const double t = (X - c.x[i - 1]) / dx;
-      return y0 + segShape(t, c.t[i], c.type[i]) * (y1 - y0);
+      return y0 + segShape(t, c.t[i], c.type[i], rev, c.tanS[i], c.tanE[i]) * (y1 - y0);
     }
   }
   return static_cast<float>(c.y[c.n - 1]);
@@ -88,6 +119,9 @@ struct RefState {
   // J-42: linear-phase crossovers — legacy FIR (byte 0x335) and the FFT filter bank (flags bit 0, wins).
   bool fir = false, lin = false;
   int linQuality = 2, linSpeed = 0;
+  int os = 0;  // K-S: oversampling stages of the low / mid / high section (2^os; the master band stays at the base rate)
+  // K-S: 0 = the laws before the K-8 oracle round (states saved with them keep their sound), 1 = current.
+  int rev = 1;
 };
 
 // ---------------------------------------------------------------- J-42 linear-phase splits
@@ -95,8 +129,8 @@ struct RefState {
 // round((slope + 1)·os·27500 / f) | 1 (5 … N), windowed sinc (4-term Blackman–Harris),
 // centred; mid = δ − (LP_low + HP_high), so the three bands sum to a pure delay.
 inline int firTaps(double F) { return std::max(5, static_cast<int>(std::nearbyint(0.004 * F)) | 1); }
-inline int firLen(int slope, double f, int N) {
-  int L = static_cast<int>(std::nearbyint(static_cast<float>((slope + 1) * 27500.0 / f))) | 1;
+inline int firLen(int slope, double f, int N, int osFactor = 1) {
+  int L = static_cast<int>(std::nearbyint(static_cast<float>((slope + 1) * osFactor * 27500.0 / f))) | 1;
   if (L < 6) L = 5;
   return std::min(L, N);
 }
@@ -314,12 +348,57 @@ inline int lmhDelay(const RefState& s, const int* mode, double fs, int k) {
   if (k < 3) return (mode[k] < 2 && anyComp) ? static_cast<int>(std::lround(fs * timeMs(s.raw[4]) / 1000.0)) : 0;
   return mode[3] < 1 ? static_cast<int>(std::lround(fs * timeMs(s.raw[rawIndex(3, TAtt)]) / 1000.0)) : 0;
 }
+// Delay of the oversampling filters at the base rate (their group delay at low
+// frequencies, rounded): reported on top, so delay compensation stays exact.
+inline int osDelay(int stages) {
+  static const int d[4] = {0, 3, 5, 6};
+  return d[std::clamp(stages, 0, 3)];
+}
 inline int latencyOf(const RefState& s, double fs) {
   int mode[kBands];
   effectiveModes(s, mode);
-  const int split = s.lin ? 3 * linSize(fs, s.linQuality) / 4 : s.fir ? (firTaps(fs) - 1) / 2 : 0;
-  return split + std::max({lmhDelay(s, mode, fs, 0), lmhDelay(s, mode, fs, 1), lmhDelay(s, mode, fs, 2)}) + lmhDelay(s, mode, fs, 3);
+  const int f = 1 << std::clamp(s.os, 0, 3);
+  const int split = s.lin ? 3 * linSize(fs * f, s.linQuality) / 4 / f : s.fir ? (firTaps(fs * f) - 1) / 2 / f : 0;
+  return split + std::max({lmhDelay(s, mode, fs, 0), lmhDelay(s, mode, fs, 1), lmhDelay(s, mode, fs, 2)}) + lmhDelay(s, mode, fs, 3) + osDelay(s.os);
 }
+
+// ---------------------------------------------------------------- K-S oversampling
+// One 2x stage: polyphase half-band of two branches of three cascaded first-order
+// all-passes, y = x[-1] + a (x - y[-1]), state in double, float between the stages.
+struct HalfBand {
+  static constexpr double kSlow[3] = {0.0391515977345, 0.302646848328, 0.674615918547};
+  static constexpr double kFast[3] = {0.147377113601, 0.48246854277, 0.883005025769};
+  struct Ap {
+    double x1[2] = {0, 0}, y1[2] = {0, 0};
+    double run(int c, double x, double a) {
+      const double y = x1[c] + a * (x - y1[c]);
+      x1[c] = x, y1[c] = y;
+      return y;
+    }
+  };
+  Ap slow[3], fast[3];
+  void clear() {
+    for (auto& a : slow) a = Ap{};
+    for (auto& a : fast) a = Ap{};
+  }
+  double runSlow(int c, double x) {
+    for (int i = 0; i < 3; ++i) x = slow[i].run(c, x, kSlow[i]);
+    return x;
+  }
+  double runFast(int c, double x) {
+    for (int i = 0; i < 3; ++i) x = fast[i].run(c, x, kFast[i]);
+    return x;
+  }
+  void up(const float* in, float* a, float* b) {  // one stereo frame -> two
+    for (int c = 0; c < 2; ++c) {
+      a[c] = static_cast<float>(runSlow(c, in[c]));
+      b[c] = static_cast<float>(runFast(c, in[c]));
+    }
+  }
+  void down(const float* a, const float* b, float* out) {  // two stereo frames -> one
+    for (int c = 0; c < 2; ++c) out[c] = static_cast<float>((runFast(c, a[c]) + runSlow(c, b[c])) * 0.5);
+  }
+};
 
 // ---------------------------------------------------------------- filters
 struct Biquad {  // direct form I, double coefficients and state
@@ -362,33 +441,72 @@ struct Chain {
 // ---------------------------------------------------------------- engine
 class Engine {
  public:
-  // Buffers are sized when the sample rate is first seen (like the other
-  // reference engines): windows and look-ahead up to 1 s plus margin.
-  void allocate(double fs) {
-    int cap = 1;
-    while (cap < static_cast<int>(fs * 1.05) + 8) cap <<= 1;
-    kCap = cap;
-    for (auto& b : band_) {
-      b.table.assign(32770, 1.f);
-      b.sat.assign(65537, 0.f);
-      b.dqV.assign(static_cast<size_t>(kCap), 0.f);
-      b.dqI.assign(static_cast<size_t>(kCap), 0);
-      b.rms.assign(static_cast<size_t>(kCap), 0.f);
-      b.dl[0].assign(static_cast<size_t>(kCap), 0.f), b.dl[1].assign(static_cast<size_t>(kCap), 0.f);
-    }
+  Engine() = default;
+  Engine(const Engine&) = delete;
+  Engine& operator=(const Engine&) = delete;
+  ~Engine() {
+    delete pending_.exchange(nullptr);
+    freeRetired();
   }
+  // K-S: the audio thread never allocates once the host has prepared the engine.
+  // prepare() (UI thread, every Program build; the engine may be running) builds what
+  // this state needs into a Pool and publishes it; configure() swaps the storage in
+  // without allocating and hands the old storage back to be freed on the UI thread.
+  void prepare(const RefState& s, double fs) {
+    freeRetired();
+    if (Pool* un = pending_.exchange(nullptr, std::memory_order_acq_rel)) {  // not taken yet: its needs count again
+      uiFs_ = un->prevFs, uiStages_ = un->prevStages, uiLinN_ = un->prevLinN;
+      delete un;
+    }
+    freeRetired();
+    const int st = std::clamp(s.os, 0, 3);
+    const bool needRing = fs != uiFs_ || st > uiStages_;
+    const int stages = needRing ? std::max(st, fs == uiFs_ ? uiStages_ : 1) : uiStages_;
+    const int linN = s.lin ? linSize(fs * (1 << st), s.linQuality) : 0;
+    const bool needLin = linN > uiLinN_;
+    if (needRing || needLin) {
+      auto* p = new Pool;
+      p->prevFs = uiFs_, p->prevStages = uiStages_, p->prevLinN = uiLinN_;
+      if (needRing) fillRing(*p, fs, stages), uiFs_ = fs, uiStages_ = stages;
+      if (needLin) fillLin(*p, linN), uiLinN_ = linN;
+      pending_.store(p, std::memory_order_release);
+    }
+    hostPrepared_.store(true, std::memory_order_release);
+  }
+  // A host runs this engine but has nothing to prepare yet: never size buffers on its audio thread.
+  void hostOnly() { hostPrepared_.store(true, std::memory_order_release); }
   int latency() const { return lat_; }
   // Gain reduction of a band (dB, ≤ 0) for meters.
   float bandGr(int k) const { return band_[k].grDb; }
+  // K-S: monitor values of a band since the last call; zeroes them.
+  void takeScope(int k, float& in, float& out, float& env) {
+    Band& B = band_[k];
+    in = B.scopeIn, out = B.scopeOut, env = B.scopeEnv;
+    B.scopeIn = B.scopeOut = B.scopeEnv = 0;
+  }
 
   // Rebuilds what changed; call before process with the current state.
   void configure(const RefState& s, double fs) {
-    const bool rateChanged = fs != fs_;
-    if (rateChanged) fs_ = fs, cfgValid_ = false, allocate(fs);
+    if (Pool* p = pending_.exchange(nullptr, std::memory_order_acq_rel)) {  // no allocation, nothing freed here
+      adopt(*p);
+      retire(p);
+    }
+    const bool hosted = hostPrepared_.load(std::memory_order_acquire);
+    if (!hosted && (fs != fs_ || band_[0].table.empty() || std::clamp(s.os, 0, 3) > capStages_ ||
+                    (s.lin && linSize(fs * (1 << std::clamp(s.os, 0, 3)), s.linQuality) > linCap_))) {
+      // Offline use without a host (no Program build): sized here, on the caller's thread.
+      Pool p;
+      const int st = std::clamp(s.os, 0, 3);
+      const bool ring = fs != fs_ || band_[0].table.empty() || st > capStages_;
+      if (ring) fillRing(p, fs, std::max(st, 1));
+      if (s.lin) fillLin(p, std::max(linCap_, linSize(fs * (1 << st), s.linQuality)));
+      adopt(p);
+    }
+    if (band_[0].table.empty()) return;  // a host's buffers not there yet
     if (cfgValid_ && std::memcmp(s.raw, st_.raw, sizeof s.raw) == 0 && s.solo == st_.solo && s.masterMid == st_.masterMid &&
         s.safetyOff == st_.safetyOff && s.target == st_.target && s.curve[0] == st_.curve[0] && s.curve[1] == st_.curve[1] &&
         s.curve[2] == st_.curve[2] && s.curve[3] == st_.curve[3] && s.fir == st_.fir && s.lin == st_.lin && s.linQuality == st_.linQuality &&
-        s.linSpeed == st_.linSpeed)
+        s.linSpeed == st_.linSpeed && s.os == st_.os && s.rev == st_.rev)
       return;
     const RefState old = st_;
     const bool first = !cfgValid_;
@@ -397,20 +515,29 @@ class Engine {
     const int* r = s.raw;
     // Effective band modes.
     effectiveModes(s, mode_);
+    // Automation can ask for more than was prepared only without a Program build: it waits for the next one.
+    os_ = std::min(std::clamp(s.os, 0, 3), capStages_);
+    const int osf = 1 << os_;
+    const double fo = fs_ * osf;  // rate of the low / mid / high section
+    if (first || os_ != old.os) {
+      for (auto& h : hbUp_) h.clear();
+      for (auto& h : hbDown_) h.clear();
+    }
     // Crossover.
     int slL = r[1] > 0 ? 1 : 0, slH = r[3] > 0 ? 1 : 0;
     pol_[0] = slL == 0 ? -1.f : 1.f, pol_[2] = slH == 0 ? -1.f : 1.f, pol_[1] = 1.f;
-    if (s.fir || s.lin) pol_[0] = pol_[2] = 1.f;
+    const bool useLin = s.lin && linCap_ > 0;
+    if (s.fir || useLin) pol_[0] = pol_[2] = 1.f;
     const int sL0 = slL, sH0 = slH;
     if (r[rawIndex(0, TMode)] == 3) slL = -1;
     if (r[rawIndex(2, TMode)] == 3) slH = -1;
     double fL = splitHz(r[0]), fH = splitHz(r[2]);
-    const double fmax = 0.49 * fs_;
+    const double fmax = 0.49 * fo;
     fL = std::min(fL, fmax), fH = std::min(fH, fmax);
     if (slL >= 0 && slH >= 0 && fH < fL) std::swap(fL, fH);
     auto design = [&](Chain& ch, int slope, double f, bool hp) {
       ch.n = slope + 1;
-      const double w = 2 * 3.141592653589793 * f / fs_, al = slope == 0 ? std::sin(w) : std::sin(w) / std::sqrt(2.0);
+      const double w = 2 * 3.141592653589793 * f / fo, al = slope == 0 ? std::sin(w) : std::sin(w) / std::sqrt(2.0);
       for (auto& b : ch.s) hp ? b.hp(w, al) : b.lp(w, al);
     };
     design(lowLp_, slL, fL, false);
@@ -419,23 +546,26 @@ class Engine {
     design(highHp_, slH, fH, true);
     apOn_ = slH == 1 && slL >= 0;
     {
-      const double w = 2 * 3.141592653589793 * fH / fs_;
-      lowAp_.ap(w, std::sin(w) / std::sqrt(2.0));
+      const double w = 2 * 3.141592653589793 * fH / fo;
+      lowAp_.ap(w, s.rev >= 1 ? std::sin(w) : std::sin(w) / std::sqrt(2.0));  // K-S: Q 0.5 (measured on the oracle)
     }
     // J-42: linear-phase splits.
-    splitMode_ = s.lin ? 2 : s.fir ? 1 : 0;
+    splitMode_ = useLin ? 2 : s.fir ? 1 : 0;
     if (splitMode_ == 1) {
-      const int N = firTaps(fs_);
-      std::vector<double> lo(static_cast<size_t>(N), 0.0), mi(static_cast<size_t>(N), 0.0), hi(static_cast<size_t>(N), 0.0);
-      if (slL >= 0) firAdd(lo, N, fL, fs_, firLen(slL, fL, N), false);
-      if (slH >= 0) firAdd(hi, N, fH, fs_, firLen(slH, fH, N), true);
+      const int N = firTaps(fo);
+      std::vector<double>& lo = firTmp_[0];  // K-S: within the capacity prepared (no allocation)
+      std::vector<double>& mi = firTmp_[1];
+      std::vector<double>& hi = firTmp_[2];
+      for (auto& v : firTmp_) v.assign(static_cast<size_t>(N), 0.0);
+      if (slL >= 0) firAdd(lo, N, fL, fo, firLen(slL, fL, N, osf), false);
+      if (slH >= 0) firAdd(hi, N, fH, fo, firLen(slH, fH, N, osf), true);
       if (slL >= 0 && slH >= 0) {
         for (int i = 0; i < N; ++i) mi[static_cast<size_t>(i)] = -(lo[static_cast<size_t>(i)] + hi[static_cast<size_t>(i)]);
         mi[static_cast<size_t>((N - 1) / 2)] += 1.0;
       } else if (slH >= 0) {
-        firAdd(mi, N, fH, fs_, firLen(slH, fH, N), false);
+        firAdd(mi, N, fH, fo, firLen(slH, fH, N, osf), false);
       } else if (slL >= 0) {
-        firAdd(mi, N, fL, fs_, firLen(slL, fL, N), true);
+        firAdd(mi, N, fL, fo, firLen(slL, fL, N, osf), true);
       }
       midCopy_ = slL < 0 && slH < 0;
       std::vector<double>* k3[3] = {&lo, &mi, &hi};
@@ -445,9 +575,9 @@ class Engine {
       }
     }
     if (splitMode_ == 2) {
-      const int N = linSize(fs_, s.linQuality);
+      const int N = std::min(linSize(fo, s.linQuality), linCap_);
       static const float kSpeed[4] = {0.1f, 0.25f, 0.01f, 0.02f};
-      xfade_ = static_cast<int>(static_cast<float>(static_cast<int>(fs_)) * kSpeed[std::clamp(s.linSpeed, 0, 3)]);
+      xfade_ = static_cast<int>(static_cast<float>(static_cast<int>(fo)) * kSpeed[std::clamp(s.linSpeed, 0, 3)]);
       if (lin_[0].N != N) {
         fft_.init(N);
         for (auto& b : lin_) b.init(N);
@@ -464,9 +594,9 @@ class Engine {
       }
       bool lcOne = false;
       for (int i = 0; i <= N / 2; ++i) {
-        const float f = std::max(static_cast<float>(i) * static_cast<float>(fs_ / N), 0.1f);
+        const float f = std::max(static_cast<float>(i) * static_cast<float>(fo / N), 0.1f);
         float m3[3];
-        if (f > 0.4999f * static_cast<float>(fs_)) {
+        if (f > 0.4999f * static_cast<float>(fo)) {
           m3[0] = m3[1] = m3[2] = 1.f;
         } else {
           m3[0] = maskA(f, FL, SL, false);
@@ -497,36 +627,47 @@ class Engine {
     mix_ = r[5] * 0.001f;
     mixActive_ = mix_ != 1.f;
     // Look-ahead delays.
-    for (int k = 0; k < kBands; ++k) band_[k].D = std::min(lmhDelay(s, mode_, fs_, k), kCap - 2);
-    lat_ = std::max({band_[0].D, band_[1].D, band_[2].D}) + band_[3].D +
-           (splitMode_ == 2 ? 3 * lin_[0].N / 4 : splitMode_ == 1 ? (fir_[0].N - 1) / 2 : 0);
+    for (int k = 0; k < kBands; ++k) band_[k].D = std::min(lmhDelay(s, mode_, fs_, k) * (k < 3 ? osf : 1), band_[k].mask - 1);
+    lat_ = latencyOf(s, fs_);
     // Bands.
     for (int k = 0; k < kBands; ++k) {
       Band& B = band_[k];
       auto R = [&](int tag) { return r[rawIndex(k, tag)]; };
+      const double fb = k < 3 ? fo : fs_;  // the band's own rate
       B.pre = gain7(R(TPre)), B.post = gain7(R(TPost));
       const double sv = std::clamp(R(TSep), -1000, 1000) / 1000.0;
       const double sq = sv > 0 ? (std::pow(5.0, sv) - 1) / 4 : sv;
-      B.h = static_cast<float>(0.5 * std::min(sq, 1.0));
+      B.hTarget = static_cast<float>(0.5 * std::min(sq, 1.0));
+      if (first || s.rev < 1) B.h = B.hTarget;  // later changes glide (K-S, see processBand)
       B.peakMode = R(TSusMode) == 0;
-      B.N = std::clamp(std::max(B.D, static_cast<int>(std::lround(fs_ * timeMs(R(TWindow)) / 1000.0))), 1, kCap - 2);
-      B.relStages = R(TRel) == 0 ? 0 : std::clamp(R(TRelCurve), 1, 8);
+      B.N = std::clamp(std::max(B.D, static_cast<int>(std::lround(fb * timeMs(R(TWindow)) / 1000.0))), 1, B.mask - 1);
+      {  // K-S: added smoothing stages join at the last stage's value (no step in the level)
+        const int stages = R(TRel) == 0 ? 0 : std::clamp(R(TRelCurve), 1, 8);
+        if (!first && s.rev >= 1 && stages > B.relStages && B.relStages > 0)
+          for (int i = B.relStages; i < stages; ++i) B.rel[i] = B.rel[B.relStages - 1];
+        B.relStages = stages;
+      }
       {
-        double Nr = (2 * timeMs(R(TRel)) * fs_ / 1000.0) * 2 / std::sqrt(std::max(1, B.relStages));
+        double Nr = (2 * timeMs(R(TRel)) * fb / 1000.0) * (s.rev >= 1 ? 1 : 2) / std::sqrt(std::max(1, B.relStages));  // K-S: measured on the oracle
         Nr = std::max(1.0, Nr);
         B.cRel = std::exp(std::log(0.01) / Nr);
       }
-      B.gainStages = std::clamp(R(TAttCurve), 1, 8);
+      {
+        const int stages = std::clamp(R(TAttCurve), 1, 8);
+        if (!first && s.rev >= 1 && stages > B.gainStages)
+          for (int i = B.gainStages; i < stages; ++i) B.gs[i] = B.gs[B.gainStages - 1];
+        B.gainStages = stages;
+      }
       {
         const double sA = std::sqrt(static_cast<double>(B.gainStages));
-        double Na = R(TAtt) == 0 ? B.D : fs_ * timeMs(R(TAtt)) / 1000.0;
+        double Na = R(TAtt) == 0 ? B.D : fb * timeMs(R(TAtt)) / 1000.0;
         const double nAtt = Na * 0.8 / sA;
-        const double nRel2 = R(TRel2) == 0 ? nAtt : fs_ * 2 * timeMs(R(TRel2)) / 1000.0 / sA;
+        const double nRel2 = R(TRel2) == 0 ? nAtt : fb * 2 * timeMs(R(TRel2)) / 1000.0 / sA;
         auto co = [](double n) { return n <= 0 ? 0.0 : std::exp(std::log(0.01) / std::max(1.0, n)); };
         B.cAtt = co(nAtt), B.cRel2 = co(nRel2);
       }
-      const bool curveChanged = first || !(s.curve[k] == old.curve[k]) || s.safetyOff != old.safetyOff;
-      if (curveChanged) buildTable(B, s.curve[k], s.safetyOff ? 1.0 : 0.975);
+      const bool curveChanged = first || !(s.curve[k] == old.curve[k]) || s.safetyOff != old.safetyOff || s.rev != old.rev;
+      if (curveChanged) buildTable(B, s.curve[k], s.safetyOff ? 1.0 : 0.975, s.rev);
       const int satV = std::clamp(R(TSatThr), -1000, 1000);
       B.satMode = satV == 0 ? 0 : satV < 0 ? 1 : 2;
       B.ceil = gain7(R(TSatCeil));
@@ -540,7 +681,7 @@ class Engine {
         B.th = b * B.ceil, B.wd = std::max(B.ceil - B.th, 1.5259e-5);
       }
     }
-    if (first || rateChanged) reset();
+    if (first) reset();
   }
 
   void reset() {
@@ -551,6 +692,7 @@ class Engine {
       const double g0 = B.pre * B.post * B.table[0];
       for (double& v : B.gs) v = g0;
       B.head = B.tail = 0, B.t = 0, B.rmsSum = 0;
+      B.h = B.hTarget;
       std::fill(B.rms.begin(), B.rms.end(), 0.f);
       std::fill(B.dl[0].begin(), B.dl[0].end(), 0.f), std::fill(B.dl[1].begin(), B.dl[1].end(), 0.f);
       B.w = 0;
@@ -559,6 +701,8 @@ class Engine {
     lowLp_.clear(), midHp_.clear(), midLp_.clear(), highHp_.clear(), lowAp_.clear();
     for (auto& b : fir_) b.clear();
     for (auto& b : lin_) b.clear();
+    for (auto& h : hbUp_) h.clear();
+    for (auto& h : hbDown_) h.clear();
   }
 
   void process(float* L, float* R, int n) {
@@ -578,43 +722,33 @@ class Engine {
       if (lcOn_)
         for (int c = 0; c < 2; ++c)
           for (auto& b : lc_) x[c] = b.run(c, x[c]);
-      // Split.
-      float lo[2], mid[2], hi[2], full[2] = {x[0], x[1]};
-      if (splitMode_ == 1) {
-        for (auto& b : fir_) b.push(x);
-        for (int c = 0; c < 2; ++c) lo[c] = fir_[0].out(c), mid[c] = midCopy_ ? x[c] : fir_[1].out(c), hi[c] = fir_[2].out(c);
-      } else if (splitMode_ == 2) {
-        lin_[0].run(x, lo, fft_, xfade_);
-        lin_[1].run(x, mid, fft_, xfade_);
-        lin_[2].run(x, hi, fft_, xfade_);
-      }
-      for (int c = 0; c < 2 && splitMode_ == 0; ++c) {
-        float X = x[c];
-        lo[c] = lowLp_.run(c, X);
-        if (apOn_) lo[c] = lowAp_.run(c, lo[c]);
-        if (!st_.masterMid) X = midHp_.run(c, X);
-        mid[c] = midLp_.run(c, X);
-        hi[c] = highHp_.run(c, X);
-      }
       float sum[2] = {0, 0};
-      float* bs[3] = {lo, mid, hi};
-      for (int k = 0; k < 3; ++k) {
-        if (mode_[k] >= 2) continue;
-        float s[2] = {bs[k][0], bs[k][1]}, dry[2];
-        if (k == 1 && st_.masterMid) {
-          float det[2] = {s[0], s[1]};
-          processBand(k, full, dry, det);
-          s[0] = full[0], s[1] = full[1];
-        } else {
-          processBand(k, s, dry, nullptr);
+      if (os_ == 0) {
+        lmh(x, sum);
+      } else {  // K-S: the low / mid / high section runs oversampled
+        float fr[8][2];
+        fr[0][0] = x[0], fr[0][1] = x[1];
+        int cnt = 1;
+        for (int st = 0; st < os_; ++st) {
+          float tmp[8][2];
+          for (int q = 0; q < cnt; ++q) hbUp_[st].up(fr[q], tmp[2 * q], tmp[2 * q + 1]);
+          cnt *= 2;
+          for (int q = 0; q < cnt; ++q) fr[q][0] = tmp[q][0], fr[q][1] = tmp[q][1];
         }
-        const float g = pol_[k];
-        for (int c = 0; c < 2; ++c) {
-          float v = s[c];
-          if (mixActive_) v = mix_ * g * v + (1 - mix_) * g * dry[c];
-          else if (g == -1.f) v = -v;
-          sum[c] += v;
+        for (int q = 0; q < cnt; ++q) {
+          float o[2] = {0, 0};
+          lmh(fr[q], o);
+          fr[q][0] = o[0], fr[q][1] = o[1];
         }
+        for (int st = os_ - 1; st >= 0; --st) {
+          cnt /= 2;
+          for (int q = 0; q < cnt; ++q) {
+            float o[2];
+            hbDown_[st].down(fr[2 * q], fr[2 * q + 1], o);
+            fr[q][0] = o[0], fr[q][1] = o[1];
+          }
+        }
+        sum[0] = fr[0][0], sum[1] = fr[0][1];
       }
       if (mode_[3] == 2) {
         L[i] = R[i] = 0;
@@ -632,9 +766,11 @@ class Engine {
 
  private:
   struct Band {
+    int mask = 0;  // ring size - 1 of this band's buffers
+    float scopeIn = 0, scopeOut = 0, scopeEnv = 0;  // K-S: monitor: peaks since the last takeScope (pre-gain input, output, analysis level)
     // settings
     double pre = 1, post = 1, cRel = 0, cAtt = 0, cRel2 = 0, ceil = 1, th = 1, wd = 1, lmax = -1, p = -1, ratioMax = 1;
-    float h = 0;
+    float h = 0, hTarget = 0;
     bool peakMode = true;
     int D = 0, N = 1, relStages = 3, gainStages = 2, satMode = 0, lastIdx = 0;
     double outLast = 1;
@@ -649,13 +785,13 @@ class Engine {
     float grDb = 0;
   };
 
-  static void buildTable(Band& B, const Curve& c, double M) {
+  static void buildTable(Band& B, const Curve& c, double M, int rev) {
     double maxOut = 0, out = M;
     int lastIdx = 0;
     for (int i = 0; i <= 32768; ++i) {
       const double a = std::max(i, 1) / 8192.0;
       const double X = std::log(2 * a + 1) / std::log(9.0);
-      const double y = curveAt(c, X);
+      const double y = curveAt(c, X, rev);
       out = (std::pow(9.0, y) - 1) / 2 * M;
       if (std::fabs(out - M) < 5.9604644775390625e-08) out = M;
       else lastIdx = i;
@@ -698,10 +834,59 @@ class Engine {
     }
     return x < 0 ? -y : y;
   }
+  // K-S: split + low / mid / high bands + their sum, at the section's rate.
+  void lmh(const float* x, float* sum) {
+    // Split.
+    float lo[2], mid[2], hi[2], full[2] = {x[0], x[1]};
+    if (splitMode_ == 1) {
+      for (auto& b : fir_) b.push(x);
+      for (int c = 0; c < 2; ++c) lo[c] = fir_[0].out(c), mid[c] = midCopy_ ? x[c] : fir_[1].out(c), hi[c] = fir_[2].out(c);
+    } else if (splitMode_ == 2) {
+      lin_[0].run(x, lo, fft_, xfade_);
+      lin_[1].run(x, mid, fft_, xfade_);
+      lin_[2].run(x, hi, fft_, xfade_);
+    }
+    for (int c = 0; c < 2 && splitMode_ == 0; ++c) {
+      float X = x[c];
+      lo[c] = lowLp_.run(c, X);
+      if (apOn_) lo[c] = lowAp_.run(c, lo[c]);
+      if (!st_.masterMid) {
+        X = midHp_.run(c, X);
+        mid[c] = midLp_.run(c, X);
+      } else {  // K-S: the whole input stays whole; the detector copy is still filtered both ways
+        mid[c] = midLp_.run(c, st_.rev >= 1 ? midHp_.run(c, X) : X);
+      }
+      hi[c] = highHp_.run(c, X);
+    }
+    float* bs[3] = {lo, mid, hi};
+    for (int k = 0; k < 3; ++k) {
+      if (mode_[k] >= 2) continue;
+      float s[2] = {bs[k][0], bs[k][1]}, dry[2];
+      if (k == 1 && st_.masterMid) {
+        float det[2] = {s[0], s[1]};
+        processBand(k, full, dry, det);
+        s[0] = full[0], s[1] = full[1];
+      } else {
+        processBand(k, s, dry, nullptr);
+      }
+      const float g = pol_[k];
+      for (int c = 0; c < 2; ++c) {
+        float v = s[c];
+        if (mixActive_) v = mix_ * g * v + (1 - mix_) * g * dry[c];
+        else if (g == -1.f) v = -v;
+        sum[c] += v;
+      }
+    }
+  }
+
   // s: band signal in/out (stereo); dry: delayed pre-gain copy; det: detector input (null = s).
   void processBand(int k, float* s, float* dry, const float* det) {
     Band& B = band_[k];
     const int md = mode_[k];
+    if (B.h != B.hTarget) {  // K-S: separation changes glide (at most 0.001 a sample: no clicks, any block size)
+      const float dh = B.hTarget - B.h;
+      B.h = std::fabs(dh) <= 0.001f ? B.hTarget : B.h + (dh > 0 ? 0.001f : -0.001f);
+    }
     if (md < 2 && B.h != 0) {
       const float l = s[0], r = s[1];
       s[0] = (1 - B.h) * l + B.h * r, s[1] = (1 - B.h) * r + B.h * l;
@@ -713,18 +898,19 @@ class Engine {
         dl = (1 - B.h) * det[0] + B.h * det[1], dr = (1 - B.h) * det[1] + B.h * det[0];
       }
       float e;
+      B.scopeIn = std::max({B.scopeIn, std::fabs(dl), std::fabs(dr)});
       const int32_t t = B.t++;
       if (B.peakMode) {
         const float p = std::max(std::fabs(dl), std::fabs(dr));
-        while (B.tail != B.head && B.dqV[static_cast<size_t>((B.tail - 1) & (kCap - 1))] <= p) --B.tail;
-        B.dqV[static_cast<size_t>(B.tail & (kCap - 1))] = p, B.dqI[static_cast<size_t>(B.tail & (kCap - 1))] = t;
+        while (B.tail != B.head && B.dqV[static_cast<size_t>((B.tail - 1) & B.mask)] <= p) --B.tail;
+        B.dqV[static_cast<size_t>(B.tail & B.mask)] = p, B.dqI[static_cast<size_t>(B.tail & B.mask)] = t;
         ++B.tail;
-        while (B.dqI[static_cast<size_t>(B.head & (kCap - 1))] <= t - B.N) ++B.head;
-        e = B.dqV[static_cast<size_t>(B.head & (kCap - 1))];
+        while (B.dqI[static_cast<size_t>(B.head & B.mask)] <= t - B.N) ++B.head;
+        e = B.dqV[static_cast<size_t>(B.head & B.mask)];
       } else {
         const float q = dl * dl + dr * dr;
-        const size_t idx = static_cast<size_t>(t & (kCap - 1));
-        B.rmsSum += q - B.rms[static_cast<size_t>((t - B.N) & (kCap - 1))];
+        const size_t idx = static_cast<size_t>(t & B.mask);
+        B.rmsSum += q - B.rms[static_cast<size_t>((t - B.N) & B.mask)];
         B.rms[idx] = q;
         e = std::sqrt(std::max(0.f, B.rmsSum / (2.f * static_cast<float>(B.N))));
       }
@@ -736,6 +922,7 @@ class Engine {
         lv = y;
       }
       const float ev = static_cast<float>(lv);
+      B.scopeEnv = std::max(B.scopeEnv, ev);
       const double u = B.pre * ev * 8192.25;
       int i = u > 0 ? static_cast<int>(u) : 0;
       const double f = u - i;
@@ -756,8 +943,8 @@ class Engine {
     }
     // look-ahead delay
     for (int c = 0; c < 2; ++c) {
-      B.dl[c][static_cast<size_t>(B.w & (kCap - 1))] = s[c];
-      s[c] = B.dl[c][static_cast<size_t>((B.w - B.D) & (kCap - 1))];
+      B.dl[c][static_cast<size_t>(B.w & B.mask)] = s[c];
+      s[c] = B.dl[c][static_cast<size_t>((B.w - B.D) & B.mask)];
       dry[c] = s[c];
     }
     ++B.w;
@@ -765,9 +952,103 @@ class Engine {
     for (int c = 0; c < 2; ++c) s[c] *= g;
     if (md < 2 && B.satMode != 0)
       for (int c = 0; c < 2; ++c) s[c] = saturate(B, s[c]);
+    if (md != 0) B.scopeIn = std::max({B.scopeIn, std::fabs(dry[0]), std::fabs(dry[1])});
+    B.scopeOut = std::max({B.scopeOut, std::fabs(s[0]), std::fabs(s[1])});
   }
 
-  int kCap = 1;
+  // K-S: storage built on the UI thread and swapped in by configure().
+  struct Pool {
+    Pool* next = nullptr;
+    double prevFs = 0;
+    int prevStages = -1, prevLinN = 0;
+    bool hasRing = false;
+    double fs = 0;
+    int stages = 0;
+    struct Ring {
+      std::vector<float> table, sat, dqV, rms, dl[2];
+      std::vector<int32_t> dqI;
+      int mask = 0;
+    } ring[kBands];
+    FirBand fir[3];
+    std::vector<double> firTmp[3];
+    int linN = 0;
+    FftD fft;
+    LinBand lin[3];
+  };
+  static void fillRing(Pool& p, double fs, int stages) {
+    int cap = 1;
+    while (cap < static_cast<int>(fs * (1 << stages) * 1.05) + 8) cap <<= 1;
+    int capM = 1;
+    while (capM < static_cast<int>(fs * 1.05) + 8) capM <<= 1;
+    p.hasRing = true, p.fs = fs, p.stages = stages;
+    for (int k = 0; k < kBands; ++k) {
+      auto& r = p.ring[k];
+      const size_t c = static_cast<size_t>(k == 3 ? capM : cap);  // the master band always runs at the base rate
+      r.mask = static_cast<int>(c) - 1;
+      r.table.assign(32770, 1.f);
+      r.sat.assign(65537, 0.f);
+      r.dqV.assign(c, 0.f);
+      r.dqI.assign(c, 0);
+      r.rms.assign(c, 0.f);
+      r.dl[0].assign(c, 0.f), r.dl[1].assign(c, 0.f);
+    }
+    // The older linear-phase split at any oversampling: automation of the split only rewrites taps.
+    const size_t firMax = static_cast<size_t>(firTaps(fs * 8.0));
+    for (auto& v : p.firTmp) v.reserve(firMax);
+    for (auto& f : p.fir) {
+      f.taps.reserve(firMax);
+      for (auto& l : f.line) l.reserve(2 * firMax);
+    }
+  }
+  static void fillLin(Pool& p, int N) {
+    p.linN = N;
+    p.fft.init(N);
+    for (auto& b : p.lin) b.init(N);
+  }
+  void adopt(Pool& p) {  // swaps only: the old storage stays in the pool
+    if (p.hasRing) {
+      for (int k = 0; k < kBands; ++k) {
+        Band& b = band_[k];
+        auto& r = p.ring[k];
+        b.mask = r.mask;
+        b.table.swap(r.table), b.sat.swap(r.sat), b.dqV.swap(r.dqV), b.dqI.swap(r.dqI), b.rms.swap(r.rms);
+        b.dl[0].swap(r.dl[0]), b.dl[1].swap(r.dl[1]);
+      }
+      for (int b = 0; b < 3; ++b) {
+        fir_[b].taps.swap(p.fir[b].taps);
+        fir_[b].line[0].swap(p.fir[b].line[0]), fir_[b].line[1].swap(p.fir[b].line[1]);
+        fir_[b].N = 0, fir_[b].pos = 0;
+        firTmp_[b].swap(p.firTmp[b]);
+      }
+      fs_ = p.fs, capStages_ = p.stages;
+    }
+    if (p.linN > 0) {
+      std::swap(fft_, p.fft);
+      for (int b = 0; b < 3; ++b) std::swap(lin_[b], p.lin[b]);
+      linCap_ = p.linN;
+    }
+    cfgValid_ = false;
+  }
+  void retire(Pool* p) {
+    Pool* head = retired_.load(std::memory_order_relaxed);
+    do p->next = head;
+    while (!retired_.compare_exchange_weak(head, p, std::memory_order_release, std::memory_order_relaxed));
+  }
+  void freeRetired() {
+    Pool* p = retired_.exchange(nullptr, std::memory_order_acquire);
+    while (p) {
+      Pool* n = p->next;
+      delete p;
+      p = n;
+    }
+  }
+  std::atomic<Pool*> pending_{nullptr}, retired_{nullptr};
+  std::atomic<bool> hostPrepared_{false};
+  double uiFs_ = 0;  // what prepare() has already published (UI thread only)
+  int uiStages_ = -1, uiLinN_ = 0;
+  std::vector<double> firTmp_[3];
+  int linCap_ = 0, capStages_ = 0, os_ = 0;
+  HalfBand hbUp_[3], hbDown_[3];
   double fs_ = 0;
   bool cfgValid_ = false, lcOn_ = false, apOn_ = false, mixActive_ = false, stopped_ = false;
   RefState st_;
@@ -787,3 +1068,10 @@ class Engine {
 };
 
 }  // namespace gl::packs::dynamics::maxref
+
+namespace gl {
+struct PluginState;
+}
+namespace gl::packs::dynamics {
+maxref::Curve masterRefCurve(const PluginState& s, int band);  // K-S: the curve a band runs (long curves included)
+}

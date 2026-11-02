@@ -100,8 +100,8 @@ int main() {
     using namespace packs::dynamics;
     static const double os4[7] = {-86.615606158839668, 2604.4507095505046, 481.14257364789177, 0, -0.0481787473, 3.21525826e-25, 0};
     static const double os2[7] = {-86.478856969695556, 2659.0505232690939, 500.7580559141507, 0, -0.145377219, 3.19146646e-25, 0};
-    checkGolden("master dynamics 4x oversampling matches the reference", runFx("gl.master", {{MsOversample, 2.f}}, 1.0), os4, 1e-12);
-    checkGolden("master dynamics 2x oversampling matches the reference", runFx("gl.master", {{MsOversample, 1.f}}, 1.0), os2, 1e-12);
+    checkGolden("master dynamics 4x oversampling matches the reference", runFx("gl.master", {{MsRef0 + MrModel, 0.f}, {MsOversample, 2.f}}, 1.0), os4, 1e-12);
+    checkGolden("master dynamics 2x oversampling matches the reference", runFx("gl.master", {{MsRef0 + MrModel, 0.f}, {MsOversample, 1.f}}, 1.0), os2, 1e-12);
   }
 
   // ---- whole-song undo steps are deltas ----

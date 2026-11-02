@@ -84,6 +84,8 @@ enum MaxRefParam {
   MrPtType0,       // 4 bands × kMsCurvePts point types (0 single curve, 1 double curve, 2 hold)
   MrLinQuality = MrPtType0 + kMsBands * kMsCurvePts,  // J-42: FFT size 512 << quality (0..5)
   MrLinSpeed,      // J-42: cross-fade time on split changes (0.1 / 0.25 / 0.01 / 0.02 s)
+  MrOversample,    // K-S: oversampling stages of the low / mid / high section (2^n)
+  MrRevision,      // K-S: 0 = laws before the K-8 oracle round (older states), 1 = current
   kMrCount
 };
 inline constexpr int MsRef0 = kMsCount;
@@ -98,6 +100,27 @@ struct DrawnCurve {
 DrawnCurve masterDrawnCurve(const PluginState& s, int band);
 // Gain (linear) the drawn curve applies at a linear input level a (0..4).
 double drawnCurveGain(const DrawnCurve& c, double a);
+
+// K-S: curves of more than kMsCurvePts points (the reference's state allows 64)
+// live in PluginState::data: "crv1" then per band " <band> <n>" and n points of
+// four words (x, y, tension as float bits in hex, point type). The point
+// parameters keep the first ones and the last for old readers.
+inline constexpr int kMsLongCurve = 64;
+struct LongCurve {
+  int n = 0;
+  float x[kMsLongCurve], y[kMsLongCurve], t[kMsLongCurve];
+  int type[kMsLongCurve];
+};
+bool masterLongCurve(const std::string& data, int band, LongCurve& out);  // no allocation
+std::string masterLongCurvesWith(const std::string& data, int band, const LongCurve* c);  // data with this band's curve set / removed
+// K-S: monitor frames of a running Crest: per band {input peak, output peak, analysis level, gain reduction dB}.
+struct MasterScope {
+  static constexpr int kFrames = 2048, kHop = 256;  // kHop samples per frame
+  std::atomic<uint32_t> head{0};                    // frames written
+  std::atomic<float> v[kFrames][kMsBands * 4];
+  std::atomic<float> in[kFrames];                   // main input peak
+};
+const MasterScope* masterScope(const Effect* fx);  // null when fx is not a Crest on the reference engine
 
 // Static transfer curve of one band (dB in → dB out, before post gain).
 // Shared by the runtime and the editor so the drawn curve is the real one.

@@ -1205,6 +1205,58 @@ void testClapModulation() {
   host::setHostOptions(kClapSynth, host::HostOptions{});
 }
 
+// K-9: a call into the plugin throws (a bridged plugin whose other process is gone): the instance
+// counts as crashed and is silent, others go on, nothing touches it again, its destructor included.
+void testLostPlugin() {
+  auto* cp = probe<GridlineClapProbe>(clapBinary(), "gridline_clap_probe");
+  if (!cp) return;
+  auto lost = createGenerator(kClapSynth);
+  auto other = createGenerator(kClapSynth);
+  PluginState st = defaultPluginState(kClapSynth);
+  lost->prepareHost(st, 48000);
+  other->prepareHost(st, 48000);
+  host::HostedInstance* hi = host::hostedInstance(lost.get());
+  std::vector<float> L, R;
+  lost->noteOn(1, 69.0, 1.0f, 0);
+  runGen(*lost, st, L, R, 2048, 512);
+  expect(peak(L) > 0.01f && !hi->crashed(), "lost plugin: it sounds before");
+  cp->throwInProcess = true;
+  L.clear();
+  R.clear();
+  lost->noteOn(2, 69.0, 1.0f, 0);
+  runGen(*lost, st, L, R, 2048, 512);
+  expect(peak(L) == 0.0f && peak(R) == 0.0f, "lost plugin: silent after the throw, no abort");
+  expect(hi->crashed() && !hi->crashReason().empty(), "lost plugin: shown as crashed, with a reason");
+  host::UiUpdate u;
+  hi->pumpUi(u);
+  expect(u.crashed, "lost plugin: the UI hears of it");
+  std::string data;
+  expect(!hi->captureState(data), "lost plugin: no state asked for, the project keeps what it has");
+  cp->throwInProcess = false;
+  L.clear();
+  R.clear();
+  runGen(*lost, st, L, R, 2048, 512);
+  expect(peak(L) == 0.0f, "lost plugin: stays silent, not called again");
+  L.clear();
+  R.clear();
+  other->noteOn(1, 69.0, 1.0f, 0);
+  runGen(*other, st, L, R, 2048, 512);
+  expect(peak(L) > 0.01f, "lost plugin: another instance goes on playing");
+  lost.reset();  // the backend stays in memory: its destructor would call the plugin
+  expect(true, "lost plugin: destroying it does not touch the plugin");
+  // An effect: its output is silent, not the unprocessed input.
+  auto fx = createEffect(kClapGain);
+  PluginState fst = defaultPluginState(kClapGain);
+  fx->prepareHost(fst, 48000);
+  ProcessContext ctx;
+  ctx.sampleRate = 48000;
+  std::vector<float> a(512, 0.5f), b(512, 0.5f);
+  cp->throwInProcess = true;
+  fx->process(fst, ctx, a.data(), b.data(), 512);
+  cp->throwInProcess = false;
+  expect(peak(a) == 0.0f && host::hostedInstance(fx.get())->crashed(), "lost effect: silent and shown as crashed");
+}
+
 // CLAP preset discovery + preset load; plugin bypass.
 void testPresetsAndBypass() {
   auto g = createGenerator(kClapSynth);
@@ -1684,6 +1736,7 @@ int main() {
   testSampleAccurate();
   testLatencyChange();
   testClapModulation();
+  testLostPlugin();
   testPresetsAndBypass();
   testSandboxFeatures();
   testPluginWindowLayout();

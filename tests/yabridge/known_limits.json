@@ -1,21 +1,56 @@
 [
  {
   "match": {
-   "wine": "staging-9\\.21",
+   "wine": "^(staging-9\\.21|distro)$",
    "plugin": "^Dexed$",
    "host": "gridline",
-   "check": "editor drawn|pixels"
+   "check": "editor drawn"
   },
-  "reason": "Dexed's interface stays black in the control host too; Wine logs stubs for its composition swap chain"
+  "reason": "Dexed's interface is black in the control host too on this Wine (VST3 compared; the control host has no CLAP)"
  },
  {
   "match": {
-   "wine": "staging-9\\.21",
+   "wine": "^(staging-9\\.21|staging-11\\.21|distro)$",
+   "plugin": "^Dexed$",
+   "host": "gridline",
+   "check": "pixels"
+  },
+  "reason": "no pixel of Dexed changes on drags in the control host either on this Wine (VST3 compared; the control host has no CLAP)"
+ },
+ {
+  "match": {
+   "wine": "^(staging-9\\.21|staging-11\\.21|distro)$",
+   "plugin": "^Dexed$",
+   "host": "gridline",
+   "check": "closing the interface"
+  },
+  "reason": "closing Dexed's interface does not return in 30 s in the control host either on this Wine (VST3 compared; the control host has no CLAP); the call waits inside yabridge"
+ },
+ {
+  "match": {
+   "wine": "^(staging-9\\.21|staging-11\\.21|distro)$",
+   "plugin": "^Surge XT$",
+   "host": "gridline",
+   "check": "pixels"
+  },
+  "reason": "no pixel of Surge XT changes on drags in the control host either on this Wine, though its parameters do (VST3 compared; the control host has no CLAP)"
+ },
+ {
+  "match": {
+   "wine": "^(staging-9\\.21|staging-11\\.21|distro)$",
    "plugin": "^Nekobi$",
    "format": "vst2",
    "host": "gridline",
    "check": "parameters still change"
   },
-  "reason": "this VST2 build reports every edit as 0 to the control host too, so a second drag changes nothing; its VST3 build reports real values"
+  "reason": "this VST2 build reports its edits as 0 to the control host too, so a second drag changes nothing; its VST3 build reports real values"
+ },
+ {
+  "match": {
+   "wine": "^staging-11\\.21$",
+   "display": "^xvfb-openbox$",
+   "check": "click|hover|press, drag|drag out|dragging|wheel|window follows|container follows|plugin asks|edit reaches|each editor|other editor|pixels|parameters still"
+  },
+  "reason": "on this Wine a click reaches the plugin offset by the window's position on the screen, or not at all, in the control host too (VST3, VST2 compared); fits yabridge issue 382"
  }
 ]

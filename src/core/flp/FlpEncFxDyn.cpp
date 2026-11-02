@@ -305,16 +305,22 @@ Encoder maximus() {
       }
       const int want = std::clamp(static_cast<int>(std::lround(P(dy::msExt(b, dy::MxPoints)))), 2, dy::kMsCurvePts);
       std::vector<CurvePt> pts;
-      for (int i = 0; i < want; ++i) {
-        const int k = dy::msExt(b, dy::MxPt0 + 3 * i);
-        const int ty = g.params.size() > static_cast<size_t>(dy::kMsTotal - 1)
-                           ? static_cast<int>(std::lround(P(dy::MsRef0 + dy::MrPtType0 + b * dy::kMsCurvePts + i)))
-                           : 0;
-        pts.push_back({P(k), P(k + 1), static_cast<float>(P(k + 2)), ty});
+      dy::LongCurve lc;
+      const bool isLong = dy::masterLongCurve(g.data, b, lc) && lc.n >= 2;  // K-S: all the points of a long curve
+      if (isLong) {
+        for (int i = 0; i < lc.n; ++i) pts.push_back({lc.x[i], lc.y[i], lc.t[i], lc.type[i]});
+      } else {
+        for (int i = 0; i < want; ++i) {
+          const int k = dy::msExt(b, dy::MxPt0 + 3 * i);
+          const int ty = g.params.size() > static_cast<size_t>(dy::kMsTotal - 1)
+                             ? static_cast<int>(std::lround(P(dy::MsRef0 + dy::MrPtType0 + b * dy::kMsCurvePts + i)))
+                             : 0;
+          pts.push_back({P(k), P(k + 1), static_cast<float>(P(k + 2)), ty});
+        }
       }
-      bool same = cur.size() >= 2 && std::min(cur.size(), static_cast<size_t>(dy::kMsCurvePts)) == pts.size();
+      bool same = cur.size() >= 2 && (isLong ? cur.size() : std::min(cur.size(), static_cast<size_t>(dy::kMsCurvePts))) == pts.size();
       for (size_t i = 0; same && i < pts.size(); ++i) {
-        const CurvePt& c = cur[i == pts.size() - 1 ? cur.size() - 1 : i];
+        const CurvePt& c = cur[(!isLong && i == pts.size() - 1) ? cur.size() - 1 : i];
         same = static_cast<float>(c.x) == static_cast<float>(pts[i].x) && static_cast<float>(c.y) == static_cast<float>(pts[i].y) &&
                c.t == pts[i].t && std::clamp(c.type, 0, 12) == pts[i].type;
       }
@@ -363,6 +369,7 @@ Encoder maximus() {
       const int ver = head >= 0x10000 ? static_cast<int>(head >> 16) : static_cast<int>(head);
       f.push_back(i32(dy::MsRef0 + dy::MrTarget, opt + 4, 0, 3));
       f.push_back(field(dy::MsRef0 + dy::MrSolo, opt + 0x13, Type::U8, 0, 1));
+      if (ver >= 5) f.push_back(i32(dy::MsRef0 + dy::MrOversample, opt + 0x18, 0, 3));  // K-S
       if (ver >= 6) f.push_back(field(dy::MsRef0 + dy::MrMasterMid, opt + 0x20, Type::U8, 0, 1));
       if (ver >= 7) f.push_back(field(dy::MsRef0 + dy::MrFir, opt + 0x21, Type::U8, 0, 1));
       if (ver >= 14 && s.size() >= 4 + 506 + 8) {  // J-42: linear-phase quality / change speed after the block

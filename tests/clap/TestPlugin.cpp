@@ -14,6 +14,7 @@
 //       with "Long" (asks the host for a restart), a bypass parameter.
 // Both record what the host told them (transport, render mode) in a probe
 // the tests read through the exported gridline_clap_probe().
+#include <stdexcept>
 #include <clap/clap.h>
 #include <atomic>
 #include <cmath>
@@ -183,6 +184,7 @@ void synthEvent(Synth* s, const clap_event_header_t* h, const clap_output_events
 }
 
 clap_process_status synthProcess(const clap_plugin_t* p, const clap_process_t* pr) {
+  if (gProbe.throwInProcess) throw std::runtime_error("read: Connection reset by peer");
   Synth* s = synthOf(p);
   noteTransport(pr);
   const uint32_t n = pr->frames_count;
@@ -422,6 +424,7 @@ const clap_plugin_t* makeSynth(const clap_host_t* host) {
 // ---------------------------------------------------------------- gain
 
 clap_process_status gainProcess(const clap_plugin_t* p, const clap_process_t* pr) {
+  if (gProbe.throwInProcess) throw std::runtime_error("read: Connection reset by peer");
   Gain* g = gainOf(p);
   noteTransport(pr);
   if (pr->audio_inputs_count < 1 || pr->audio_outputs_count < 1) return CLAP_PROCESS_ERROR;

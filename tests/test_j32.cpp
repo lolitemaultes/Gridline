@@ -353,6 +353,7 @@ int main() {
   // ============================================== Mastering Dynamics band modes
   {
     PluginState st = defaultPluginState("gl.master");
+    setp(st, dy::MsRef0 + dy::MrModel, 0);  // the legacy engine's modes
     for (int b = 0; b < 4; ++b) setp(st, dy::msParam(b, dy::MbMode), 0);
     setp(st, dy::MsLowFreq, 200), setp(st, dy::MsHighFreq, 3000);
     // Low merged into a muted mid band: a 50 Hz tone disappears.
@@ -364,6 +365,7 @@ int main() {
     expect(merged < 0.02 && alone > 0.3, "gl.master: a merged low band follows the mid band (muted mid mutes it)");
     // No compression: the gain stages still apply (+6 dB post on the master stage).
     PluginState nc = defaultPluginState("gl.master");
+    setp(nc, dy::MsRef0 + dy::MrModel, 0);
     for (int b = 0; b < 3; ++b) setp(nc, dy::msParam(b, dy::MbMode), 0);
     setp(nc, dy::msParam(3, dy::MbMode), 3);
     setp(nc, dy::msParam(3, dy::MbPost), 6);

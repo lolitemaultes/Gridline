@@ -17,4 +17,5 @@ struct GridlineClapProbe {
   int allNotesOff = 0;  // CC 123 (any channel)
   int allSoundOff = 0;  // CC 120 (any channel)
   int sustainOff = 0;   // CC 64 = 0
+  bool throwInProcess = false;  // K-9: process throws, as a bridge does when its other process is gone
 };

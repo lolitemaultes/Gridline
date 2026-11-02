@@ -92,6 +92,80 @@ double drawnCurveGain(const DrawnCurve& c, double a) {
   return out / a;
 }
 
+// ===================================================================== long curves (K-S)
+
+namespace {
+const char* lcWord(const char* p, const char* end, uint32_t& v) {
+  while (p < end && *p == ' ') ++p;
+  if (p >= end) return nullptr;
+  uint32_t r = 0;
+  int digits = 0;
+  for (; p < end && *p != ' '; ++p, ++digits) {
+    const char c = *p;
+    const int d = c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1;
+    if (d < 0 || digits >= 8) return nullptr;
+    r = r * 16 + static_cast<uint32_t>(d);
+  }
+  v = r;
+  return digits ? p : nullptr;
+}
+float lcFloat(uint32_t u) {
+  float f;
+  std::memcpy(&f, &u, 4);
+  return f;
+}
+}  // namespace
+
+bool masterLongCurve(const std::string& data, int band, LongCurve& out) {
+  if (data.compare(0, 4, "crv1") != 0) return false;
+  const char* p = data.c_str() + 4;
+  const char* end = data.c_str() + data.size();
+  uint32_t b, n, w;
+  while (p && (p = lcWord(p, end, b)) && (p = lcWord(p, end, n))) {
+    if (n > kMsLongCurve) return false;
+    const bool mine = static_cast<int>(b) == band;
+    for (uint32_t i = 0; i < n; ++i) {
+      if (!(p = lcWord(p, end, w))) return false;
+      if (mine) out.x[i] = lcFloat(w);
+      if (!(p = lcWord(p, end, w))) return false;
+      if (mine) out.y[i] = lcFloat(w);
+      if (!(p = lcWord(p, end, w))) return false;
+      if (mine) out.t[i] = lcFloat(w);
+      if (!(p = lcWord(p, end, w))) return false;
+      if (mine) out.type[i] = static_cast<int>(w);
+    }
+    if (mine) {
+      out.n = static_cast<int>(n);
+      return true;
+    }
+  }
+  return false;
+}
+
+std::string masterLongCurvesWith(const std::string& data, int band, const LongCurve* c) {
+  std::string r;
+  char buf[64];
+  auto bits = [](float f) {
+    uint32_t u;
+    std::memcpy(&u, &f, 4);
+    return u;
+  };
+  for (int b = 0; b < kMsBands; ++b) {
+    LongCurve o;
+    const LongCurve* use = nullptr;
+    if (b == band) use = c;
+    else if (masterLongCurve(data, b, o)) use = &o;
+    if (!use) continue;
+    std::snprintf(buf, sizeof buf, " %x %x", static_cast<unsigned>(b), static_cast<unsigned>(use->n));
+    r += buf;
+    for (int i = 0; i < use->n; ++i) {
+      std::snprintf(buf, sizeof buf, " %x %x %x %x", bits(use->x[i]), bits(use->y[i]), bits(use->t[i]), static_cast<unsigned>(use->type[i]));
+      r += buf;
+    }
+  }
+  return r.empty() ? r : "crv1" + r;
+}
+
 // ===================================================================== engine
 
 // Envelope stage (1 %-settling coefficients), as used by the reference dynamics.
@@ -444,14 +518,16 @@ void readMasterSet(MasterSet& S, const G& p) {
 
 // J-35: the reference block (+ the drawn points of the extension block) → engine state.
 template <class Get>
-maxref::RefState readMaxRef(Get get, int ref, int prog) {
+maxref::RefState readMaxRef(Get get, int ref, int prog, const std::string* data = nullptr) {
   maxref::RefState r;
+  r.rev = get(ref + MrRevision) >= 0.5 ? 1 : 0;
   for (int k = 0; k < maxref::kRaw; ++k) r.raw[k] = static_cast<int>(std::lround(get(ref + MrRaw0 + k)));
   r.solo = get(ref + MrSolo) >= 0.5, r.masterMid = get(ref + MrMasterMid) >= 0.5, r.safetyOff = get(ref + MrSafetyOff) >= 0.5;
   r.target = std::clamp(static_cast<int>(std::lround(get(ref + MrTarget))), 0, 3);
   r.fir = get(ref + MrFir) >= 0.5, r.lin = get(ref + MrLin) >= 0.5;
   r.linQuality = std::clamp(static_cast<int>(std::lround(get(ref + MrLinQuality))), 0, 5);
   r.linSpeed = std::clamp(static_cast<int>(std::lround(get(ref + MrLinSpeed))), 0, 3);
+  r.os = std::clamp(static_cast<int>(std::lround(get(ref + MrOversample))), 0, 3);
   for (int b = 0; b < kMsBands; ++b) {
     maxref::Curve& c = r.curve[b];
     c.n = std::clamp(static_cast<int>(std::lround(get(prog + msExt(b, MxPoints)))), 1, kMsCurvePts);
@@ -463,6 +539,21 @@ maxref::RefState readMaxRef(Get get, int ref, int prog) {
       c.type[i] = std::clamp(static_cast<int>(std::lround(get(ref + MrPtType0 + b * kMsCurvePts + i))), 0, 12);
       last = c.x[i];
     }
+    if (data && !data->empty()) {  // K-S: a longer curve
+      LongCurve lc;
+      if (masterLongCurve(*data, b, lc) && lc.n >= 1) {
+        c.n = lc.n;
+        last = 0;
+        for (int i = 0; i < c.n; ++i) {
+          c.x[i] = std::max(last, std::clamp(static_cast<double>(lc.x[i]), 0.0, 1.0));
+          c.y[i] = std::clamp(static_cast<double>(lc.y[i]), 0.0, 1.0);
+          c.t[i] = std::clamp(static_cast<double>(lc.t[i]), -1.0, 1.0);
+          c.type[i] = std::clamp(lc.type[i], 0, 12);
+          last = c.x[i];
+        }
+      }
+    }
+    c.prepareTangents();
   }
   return r;
 }
@@ -472,8 +563,29 @@ class MasterFx final : public DynFx {
   MasterFx() : DynFx("gl.master") {}
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
     if (pi(s, MsRef0 + MrModel) == 1) {  // J-35 reference engine
-      ref_.configure(readMaxRef([&](int k) { return p(s, k); }, MsRef0, 0), ctx.sampleRate);
-      ref_.process(L, R, n);
+      ref_.configure(readMaxRef([&](int k) { return p(s, k); }, MsRef0, 0, &s.data), ctx.sampleRate);
+      // K-S: monitor frames every kHop samples (the audio does not depend on this split).
+      for (int i = 0; i < n;) {
+        const int c = std::min(n - i, MasterScope::kHop - hop_);
+        for (int j = 0; j < c; ++j) inPeak_ = std::max({inPeak_, std::fabs(L[i + j]), std::fabs(R[i + j])});
+        ref_.process(L + i, R + i, c);
+        i += c, hop_ += c;
+        if (hop_ >= MasterScope::kHop) {
+          hop_ = 0;
+          const uint32_t h = scope_.head.load(std::memory_order_relaxed);
+          auto& f = scope_.v[h % MasterScope::kFrames];
+          scope_.in[h % MasterScope::kFrames].store(inPeak_, std::memory_order_relaxed);
+          input_ = 20.f * std::log10(std::max(inPeak_, 1e-6f));
+          inPeak_ = 0;
+          for (int b = 0; b < kMsBands; ++b) {
+            float a, o, e;
+            ref_.takeScope(b, a, o, e);
+            f[b * 4].store(a, std::memory_order_relaxed), f[b * 4 + 1].store(o, std::memory_order_relaxed);
+            f[b * 4 + 2].store(e, std::memory_order_relaxed), f[b * 4 + 3].store(ref_.bandGr(b), std::memory_order_relaxed);
+          }
+          scope_.head.store(h + 1, std::memory_order_release);
+        }
+      }
       meter_ = ref_.bandGr(3);
       refOn_ = true;
       return;
@@ -484,6 +596,10 @@ class MasterFx final : public DynFx {
     eng_.process(S, ctx.sampleRate, L, R, n);
     meter_ = eng_.gr(3);
     input_ = eng_.inLevel();
+  }
+  void prepareHost(const PluginState& s, double sr) override {  // UI thread: buffers ahead of the audio thread
+    if (pi(s, MsRef0 + MrModel) == 1) ref_.prepare(readMaxRef([&](int k) { return p(s, k); }, MsRef0, 0, &s.data), sr);
+    else ref_.hostOnly();
   }
   int latencyFor(const PluginState& s, double sr) const override {
     if (pi(s, MsRef0 + MrModel) == 1) return maxref::latencyOf(readMaxRef([&](int k) { return p(s, k); }, MsRef0, 0), sr);
@@ -499,19 +615,38 @@ class MasterFx final : public DynFx {
   void reset() override {
     eng_.reset();
     ref_.reset();
+    hop_ = 0;
   }
+  const MasterScope* scope() const { return refOn_ ? &scope_ : nullptr; }
 
  private:
   MasterEngine eng_;
   maxref::Engine ref_;
+  MasterScope scope_;
+  int hop_ = 0;
+  float inPeak_ = 0;
   bool refOn_ = false;
 };
+
+maxref::Curve masterRefCurve(const PluginState& s, int band) {
+  const auto get = [&](int k) { return static_cast<size_t>(k) < s.params.size() ? static_cast<double>(s.params[static_cast<size_t>(k)]) : 0.0; };
+  return readMaxRef(get, MsRef0, 0, &s.data).curve[std::clamp(band, 0, kMsBands - 1)];
+}
+
+const MasterScope* masterScope(const Effect* fx) {
+  auto* m = dynamic_cast<const MasterFx*>(fx);
+  return m ? m->scope() : nullptr;
+}
 
 // ===================================================================== gl.enhance
 // One amount knob over four voicings of the mastering engine.
 class EnhanceFx final : public DynFx {
  public:
   EnhanceFx() : DynFx("gl.enhance") {}
+  void prepareHost(const PluginState& s, double sr) override {  // K-S: UI thread, as gl.master
+    if (pi(s, EnCustom) == 3) ref_.prepare(readMaxRef([&](int k) { return p(s, k); }, EnRef0, EnProg0, &s.data), sr);
+    else ref_.hostOnly();
+  }
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
     if (pi(s, EnCustom) == 2) {  // J-26 peak emphasis
       emref::Settings es;
@@ -526,7 +661,7 @@ class EnhanceFx final : public DynFx {
     }
     const double amount = clampd(p(s, EnAmount), 0, 1);
     if (pi(s, EnCustom) == 3) {  // J-35: program on the reference engine; amount = band mix
-      maxref::RefState r = readMaxRef([&](int k) { return p(s, k); }, EnRef0, EnProg0);
+      maxref::RefState r = readMaxRef([&](int k) { return p(s, k); }, EnRef0, EnProg0, &s.data);
       r.raw[5] = static_cast<int>(std::lround(amount * 1000));
       ref_.configure(r, ctx.sampleRate);
       ref_.process(L, R, n);

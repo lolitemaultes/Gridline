@@ -1,6 +1,8 @@
 // Gridline — "dynamics" pack: catalogue entries.
 #include "../Packs.h"
 #include "dynamics.h"
+#include "maximus_ref.h"
+#include <array>
 #include "modrack_ref.h"
 
 namespace gl::packs::dynamics {
@@ -53,6 +55,8 @@ void addMaxRef(std::vector<ParamDesc>& ps, int base) {
   ps[static_cast<size_t>(base + MrLin)] = tog("Linear-phase split (ref.)", 0);
   ps[static_cast<size_t>(base + MrLinQuality)] = ch("Linear-phase quality (ref.)", {"Lowest", "Low", "Normal", "High", "Higher", "Highest"}, 2);
   ps[static_cast<size_t>(base + MrLinSpeed)] = ch("Linear-phase change speed (ref.)", {"Normal", "Fast", "Faster", "Ultra"}, 0);
+  ps[static_cast<size_t>(base + MrOversample)] = ch("Oversampling (ref.)", {"Off", "2x", "4x", "8x"}, 0);
+  ps[static_cast<size_t>(base + MrRevision)] = ch("Engine revision (ref.)", {"Before K-8", "Current"}, 1);
   for (int b = 0; b < kMsBands; ++b)
     for (int i = 0; i < kMsCurvePts; ++i)
       ps[static_cast<size_t>(base + MrPtType0 + b * kMsCurvePts + i)] = ch(std::string(names[b]) + " point type (ref.)",
@@ -109,34 +113,48 @@ void addMaster(std::vector<PluginInfo>& v) {
       p.params[msExt(b, MxPt0 + k * 3 + 2)] = lin(pn + " tension", "", -1, 1, 0);
     }
   }
-  auto B = [](int b, int k) { return msParam(b, k); };
-  p.presets = {
-      {"Gentle glue", {}},
-      {"Loud master",
-       {{B(0, MbPre), 3.f}, {B(1, MbPre), 3.f}, {B(2, MbPre), 3.f}, {B(0, MbRatioHi), 3.f}, {B(1, MbRatioHi), 3.f},
-        {B(2, MbRatioHi), 3.f}, {B(3, MbPre), 4.f}, {B(3, MbRatioHi), 30.f}, {B(3, MbThreshHi), -1.f}}},
-      {"De-esser",
-       {{MsHighFreq, 5500.f}, {B(0, MbMode), 0.f}, {B(1, MbMode), 0.f}, {B(2, MbThreshHi), -32.f}, {B(2, MbRatioHi), 8.f},
-        {B(2, MbAttack), 0.5f}, {B(2, MbRelease), 60.f}, {B(3, MbMode), 0.f}}},
-      {"Upward lift",
-       {{B(0, MbThreshLo), -40.f}, {B(1, MbThreshLo), -40.f}, {B(2, MbThreshLo), -40.f}, {B(0, MbRatioLo), 0.6f},
-        {B(1, MbRatioLo), 0.6f}, {B(2, MbRatioLo), 0.6f}}},
-      {"Tight low end",
-       {{MsLowCut, 30.f}, {B(0, MbThreshHi), -24.f}, {B(0, MbRatioHi), 5.f}, {B(0, MbAttack), 25.f}, {B(0, MbStereo), -1.f},
-        {B(0, MbGate), -55.f}}},
+  // K-S: new instances run the reference engine; older states keep the engine and laws they were saved with.
+  p.params[MsRef0 + MrModel].def = 1;
+  p.params[MsRef0 + MrTarget].def = 3;
+  p.legacyModelParam = MsRef0 + MrModel;
+  p.legacyDefaults.push_back({MsRef0 + MrRevision, 0.f});
+  // Presets (Gridline's own settings, on the stored words of the reference engine).
+  auto W = [](int b, int tag) { return MsRef0 + MrRaw0 + maxref::rawIndex(b, tag); };
+  auto dbX = [](double db) { return static_cast<float>(std::log(2.0 * std::pow(10.0, db / 20.0) + 1.0) / std::log(9.0)); };
+  auto gainWord = [](double db) { return static_cast<float>(std::round(1000.0 * std::log(6.0 * std::pow(10.0, db / 20.0) + 1.0) / std::log(7.0))); };
+  auto timeWord = [](double ms) { return static_cast<float>(std::round(1e4 * std::log(ms / 2.0 + 1.0) / std::log(501.0))); };
+  auto setCurve = [&](Vals& v, int b, std::vector<std::array<float, 3>> pts) {
+    v.push_back({msExt(b, MxPoints), static_cast<float>(pts.size())});
+    for (size_t k = 0; k < pts.size(); ++k) {
+      const int i = static_cast<int>(k);
+      v.push_back({msExt(b, MxPt0 + i * 3), pts[k][0]}), v.push_back({msExt(b, MxPt0 + i * 3 + 1), pts[k][1]}), v.push_back({msExt(b, MxPt0 + i * 3 + 2), pts[k][2]});
+    }
   };
-  // κ2: presets for the drawn-curve engine (the curves are Gridline's own).
-  auto X = [](int b, int k) { return msExt(b, k); };
-  Vals soft;
-  for (int b = 0; b < kMsBands; ++b) soft.push_back({X(b, MxCurveMode), 1.f});
+  // A knee at thr dB, then ratio:1 up to the top of the curve (+12 dB in).
+  auto knee = [&](double thr, double ratio, float tension = 0) {
+    return std::vector<std::array<float, 3>>{{0.f, 0.f, 0.f}, {dbX(thr), dbX(thr), 0.f}, {1.f, dbX(thr + (12.0 - thr) / ratio), tension}};
+  };
+  Vals glue, loud, deEss, lift, tight, soft;
   for (int b = 0; b < 3; ++b) {
-    soft.push_back({X(b, MxPoints), 4.f});
-    soft.push_back({X(b, MxPt0 + 3), 0.38f}), soft.push_back({X(b, MxPt0 + 4), 0.38f});
-    soft.push_back({X(b, MxPt0 + 6), 0.62f}), soft.push_back({X(b, MxPt0 + 7), 0.47f}), soft.push_back({X(b, MxPt0 + 8), 0.3f});
-    soft.push_back({X(b, MxPt0 + 9), 1.f}), soft.push_back({X(b, MxPt0 + 10), 0.5f});
-    soft.push_back({B(b, MbPre), 3.f});
+    setCurve(glue, b, knee(-18, 2));
+    glue.push_back({W(b, maxref::TAtt), timeWord(15)}), glue.push_back({W(b, maxref::TRel), timeWord(100)});
+    setCurve(loud, b, knee(-14, 3));
+    loud.push_back({W(b, maxref::TPre), gainWord(3)}), loud.push_back({W(b, maxref::TAtt), timeWord(8)});
+    setCurve(lift, b, {{0.f, 0.f, 0.f}, {dbX(-70), dbX(-70), 0.f}, {dbX(-42), dbX(-30), 0.f}, {dbX(-6), dbX(-6), 0.f}, {0.5f, 0.5f, 0.f}, {1.f, 0.5f, 0.f}});
+    setCurve(soft, b, {{0.f, 0.f, 0.f}, {0.38f, 0.38f, 0.f}, {0.62f, 0.47f, 0.3f}, {1.f, 0.5f, 0.f}});
+    soft.push_back({W(b, maxref::TPre), gainWord(3)});
   }
-  p.presets.push_back({"Drawn: soft multiband glue", soft});
+  loud.push_back({W(3, maxref::TPre), gainWord(4)}), loud.push_back({W(3, maxref::TSatThr), 300.f});
+  deEss.push_back({MsRef0 + MrRaw0 + 2, static_cast<float>(std::round(std::log2(5500.0 / 30.0) / 0.000138227748))});
+  deEss.push_back({W(0, maxref::TMode), 1.f}), deEss.push_back({W(1, maxref::TMode), 1.f}), deEss.push_back({W(3, maxref::TMode), 1.f});
+  setCurve(deEss, 2, knee(-32, 8));
+  deEss.push_back({W(2, maxref::TAtt), timeWord(0.5)}), deEss.push_back({W(2, maxref::TRel), timeWord(30)});
+  deEss.push_back({MsRef0 + MrTarget, 2.f});
+  tight.push_back({MsRef0 + MrRaw0 + 6, static_cast<float>(std::round(16384.0 * std::log2(30.0 / 5.0)))});
+  setCurve(tight, 0, {{0.f, 0.f, 0.f}, {dbX(-58), 0.f, 0.f}, {dbX(-50), dbX(-50), 0.f}, {dbX(-24), dbX(-24), 0.f}, {1.f, dbX(-24 + 36.0 / 5.0), 0.f}});
+  tight.push_back({W(0, maxref::TAtt), timeWord(25)}), tight.push_back({W(0, maxref::TSep), -1000.f});
+  tight.push_back({MsRef0 + MrTarget, 0.f});
+  p.presets = {{"Gentle glue", glue}, {"Loud master", loud}, {"De-esser", deEss}, {"Upward lift", lift}, {"Tight low end", tight}, {"Soft multiband glue", soft}};
   p.editorWidth = 860;
   v.push_back(p);
 }
@@ -198,6 +216,7 @@ void addEnhance(std::vector<PluginInfo>& v) {
         d.name = "Program: " + d.name;
         p.params[static_cast<size_t>(EnProg0) + k] = d;
       }
+  p.legacyDefaults.push_back({EnRef0 + MrRevision, 0.f});  // K-S: older states keep the laws they were saved with
   p.params[EnPeakIn] = lin("Input gain", "dB", 0, 24, 0);
   p.params[EnPeakEmph] = lin("Emphasis", "%", 0, 1, 0.5);
   p.params[EnPeakSoft] = tog("Soft clipping", 0);

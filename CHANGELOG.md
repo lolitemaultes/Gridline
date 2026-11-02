@@ -7,6 +7,13 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 
 ### Added
 
+- **Crest, full round**: new instances run the engine that FL import uses, with six new
+  presets. Oversampling (2x, 4x, 8x), curves of up to 64 points, all 13 point shapes (right-click a
+  point). A monitor with scrolling peaks, curve level and gain for one band or all four, pause and
+  speed; a spectrum and heatmap with range, tilt and smoothing; gain meters in the band tabs; dB,
+  ms and Hz readouts on the knobs; a linear-phase button with its quality menu. Older projects and
+  presets keep their engine and their sound. Automating a split with linear-phase filters no
+  longer allocates memory on the audio thread.
 - **Junction wires anything to anything**: Junction and Junction FX now open on a map of modules
   and cables. Drag from any port to wire audio, notes or parameters, in parallel, across sidechains
   and to several outputs; a cable that closes a loop becomes a feedback cable, drawn dashed, that
@@ -183,7 +190,12 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 
 ### Fixed
 
+- A bridged plugin whose other process dies (a Windows plugin through yabridge, say) no longer takes Gridline down: it shows as crashed and goes silent, other tracks play on and the project still saves. Reload it from its plugin window.
+- Quitting no longer leaves an invisible process behind when a plugin never returns from closing: Gridline leaves after 20 seconds.
 - Linux: Space and Gridline's other shortcuts typed into a plugin's interface no longer get lost; the watch on the interface's windows was switching itself off every second time it was read.
+- **FL import, mastering dynamics**: oversampling and curves of more than eight points now load and export;
+  release times, the low band's all-pass, the master mid detector and two point shapes now match,
+  so imported settings render within -137 dB (median) of the original.
 - A lit key on the piano roll's keyboard now lights the whole white key, including the parts beside
   the black keys, and its colour blends into the key instead of covering it, so light channel
   colours stay soft. The key you click lights the same way.

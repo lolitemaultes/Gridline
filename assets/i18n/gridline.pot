@@ -1661,7 +1661,7 @@ msgstr ""
 msgid "HP"
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp src/app/MixerView.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/app/MixerView.cpp src/packs/dynamics/masterfl_ui.cpp
 msgid "Hold"
 msgstr ""
 
@@ -1745,7 +1745,7 @@ msgstr ""
 msgid "Pitch envelope and vibrato (cents)"
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/packs/dynamics/masterfl_ui.cpp
 msgid "Pulse"
 msgstr ""
 
@@ -8805,7 +8805,7 @@ msgstr ""
 msgid "See docs/mcp.md for details. Assistants never get shell access, and file writes stay inside the folders above."
 msgstr ""
 
-#: src/app/McpUi.cpp src/app/SettingsPages.cpp
+#: src/app/McpUi.cpp src/app/SettingsPages.cpp src/packs/dynamics/masterfl_ui.cpp
 msgid "Show"
 msgstr ""
 
@@ -10501,7 +10501,7 @@ msgstr ""
 msgid "Release velocity"
 msgstr ""
 
-#: src/app/PianoRoll.cpp
+#: src/app/PianoRoll.cpp src/packs/dynamics/masterfl_ui.cpp
 msgid "Remove point"
 msgstr ""
 
@@ -10533,7 +10533,7 @@ msgstr ""
 msgid "Slide mode: new notes glide the channel's sounding notes to their pitch instead of starting a note"
 msgstr ""
 
-#: src/app/PianoRoll.cpp src/packs/tideline/tideline_ui.cpp src/packs/utility/utility_ui.cpp
+#: src/app/PianoRoll.cpp src/packs/dynamics/masterfl_ui.cpp src/packs/tideline/tideline_ui.cpp src/packs/utility/utility_ui.cpp
 msgid "Smooth"
 msgstr ""
 
@@ -13765,7 +13765,7 @@ msgstr ""
 msgid "Guitar"
 msgstr ""
 
-#: src/app/StemsUi.cpp
+#: src/app/StemsUi.cpp src/packs/dynamics/masterfl_ui.cpp
 msgid "High quality"
 msgstr ""
 
@@ -16558,11 +16558,155 @@ msgid "%s band"
 msgstr ""
 
 #: src/packs/dynamics/masterfl_ui.cpp
+msgid "Band input peaks"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Band output peaks"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Bottom half"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Double bend"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Double bend 2"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Double bend 3"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
 msgid "Drawn curve engine"
 msgstr ""
 
 #: src/packs/dynamics/masterfl_ui.cpp
 msgid "Drawn curve engine on all bands"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Fast change speed"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Faster change speed"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Gain of all the bands"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Gain of this band"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Half sine"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Heatmap"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Higher quality"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Highest quality"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Level markers"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Level the curve reads"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Linear-phase split · right-click for quality and change speed"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Lock the spare state"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Long average"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Low quality"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Lowest quality"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Main input peaks"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "No smoothing"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Normal change speed"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Normal quality"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Of the input"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Of the output"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Oversampling: 2x"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Oversampling: 4x"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Oversampling: 8x"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Oversampling: off"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp src/packs/seltmann/seltmann_rec_ui.cpp
+msgid "PAUSED"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Pause the monitor"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Range 120 dB"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Range 60 dB"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Range 90 dB"
 msgstr ""
 
 #: src/packs/dynamics/masterfl_ui.cpp
@@ -16575,6 +16719,58 @@ msgstr ""
 
 #: src/packs/dynamics/masterfl_ui.cpp
 msgid "Show the bands' gain envelopes over time"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Single bend"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Single bend 2"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Single bend 3"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Smooth stairs"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Some smoothing"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Spectrum"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Spectrum heatmap"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Stairs"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Tilt %d dB per octave"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Top half"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Ultra change speed"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Wave"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Whole monitor"
 msgstr ""
 
 #: src/packs/edison/edison_form_ui.cpp
@@ -19279,10 +19475,6 @@ msgstr ""
 
 #: src/packs/seltmann/seltmann_rec_ui.cpp
 msgid "Open Settings > Audio to choose the input device"
-msgstr ""
-
-#: src/packs/seltmann/seltmann_rec_ui.cpp
-msgid "PAUSED"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_rec_ui.cpp

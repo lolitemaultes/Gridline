@@ -650,7 +650,10 @@ def check_keys(ctx, r, window, app):
     time.sleep(0.4)
     m0 = probe.size()
     toggled, detail = press_space(app, lambda: x.key("space"))
-    r.expect("transport shortcut works with Gridline focused", toggled, detail)
+    if ctx.has_wm_tools:
+        r.expect("transport shortcut works with Gridline focused", toggled, detail)
+    else:
+        r.add("transport shortcut works with Gridline focused", "pass" if toggled else "skip", detail if toggled else "no window manager on this display to give the main window the keyboard on a click")
     r.expect("after a click in Gridline the key does not go to the plugin", "keydown 32" not in probe.text(m0), probe.text(m0)[-120:])
     # And back: a click in the editor gives it the keyboard again.
     sh("xdotool", "windowraise", window["window"], timeout=5)
@@ -746,7 +749,7 @@ def editor_cell(ctx, r, app, target):
     time.sleep(1.0)
     check_editor_shown(ctx, r, w, "opened")
     if not ctx.has_input:
-        r.add("mouse and keyboard", "skip", "no XTEST route to this display")
+        r.add("mouse and keyboard", "skip", ctx.no_input_reason)
         return True
     check_mouse(ctx, r, w)
     check_sync_from_plugin(ctx, r, w, app, target)
@@ -1021,10 +1024,18 @@ def audio_cell(ctx, r, types, target_fmt, sandbox):
 
 
 def kill_host_cell(ctx, r, types, sandbox):
-    """The Wine host process dies. Sandbox mode: the instance is marked crashed. In-process: reported as is."""
+    """The Wine host dies with a note sounding: Gridline marks the plugin crashed and silences it, goes on playing, saves."""
     probe = ctx.probe
     probe.clear()
     path = make_project(ctx, ctx.cell_dir / "kill.json", types["synth"], level=0.5)
+    d = json.loads(Path(path).read_text())
+    other = json.loads(json.dumps(d["channels"][0]))
+    other["id"] = d["channels"][0]["id"] + 1
+    other["name"] = "Built-in"
+    other["plugin"] = {"type": "gl.analog", "params": []}
+    d["channels"].append(other)
+    Path(path).write_text(json.dumps(d))
+    saved = ctx.cell_dir / "kill-saved.json"
     app = App(ctx, "kill", [types["synth"]] if sandbox else [])
     try:
         app.send(f'open "{path}"')
@@ -1035,16 +1046,49 @@ def kill_host_cell(ctx, r, types, sandbox):
             app.send("plugwin chan 0")
             wait_window(app)
             time.sleep(1.5)
+        app.send("noteon 0 69")
+        time.sleep(0.8)
+        s = app.ask("sound", r"sound frame \d+: peak (\S+)")
+        r.expect("killing the Wine host: the note sounds before", bool(s and float(s.group(1)) > 0.01), s and s.group(0))
         kill_hosts()
         time.sleep(4.0)
         alive = app.alive()
         answers = alive and app.ask("epoch", r"epoch frame", timeout=20) is not None
         r.expect("killing the Wine host: Gridline stays alive and answers", bool(alive and answers), f"alive {alive}, answers {answers}, code {app.proc.poll()}")
-        if answers:
-            p = app.params()
-            r.add("killing the Wine host: what Gridline shows (for information)", "pass", p and {k: p[k] for k in ("instance", "sandboxed", "crashed", "open")})
-            done, code = app.quit()
-            r.expect("killing the Wine host: quit still works", done, f"exited {done}, code {code}")
+        if not answers:
+            return
+        p = app.params()
+        r.expect("killing the Wine host: the plugin shows as crashed", bool(p and p["crashed"]), p and {k: p[k] for k in ("instance", "sandboxed", "crashed", "open")})
+        app.ask("sound", r"sound frame \d+: peak")
+        time.sleep(0.5)
+        s = app.ask("sound", r"sound frame \d+: peak (\S+)")
+        r.expect("killing the Wine host: the plugin's sound stops", bool(s and float(s.group(1)) < 0.001), s and s.group(0))
+        app.send("noteon 1 60")
+        time.sleep(0.6)
+        s = app.ask("sound", r"sound frame \d+: peak (\S+)")
+        app.send("noteoff 1 60")
+        r.expect("killing the Wine host: other instruments go on playing", bool(s and float(s.group(1)) > 0.01), s and s.group(0))
+        m = app.ask(f'save "{saved}"', r"save frame \d+: (\w+)", timeout=60)
+        ok = False
+        if m and saved.exists():
+            try:
+                ok = json.loads(saved.read_text())["channels"][0]["plugin"]["type"] == types["synth"]
+            except (ValueError, KeyError, IndexError):
+                pass
+        r.expect("killing the Wine host: the project still saves, with the plugin in it", ok, m and m.group(0))
+        done, code = app.quit()
+        r.expect("killing the Wine host: quit still works", done and code == 0, f"exited {done}, code {code}")
+    finally:
+        app.kill()
+        kill_hosts()
+    if not saved.exists():
+        return
+    app = App(ctx, "kill-reload", [types["synth"]] if sandbox else [])
+    try:
+        app.send(f'open "{saved}"')
+        p = app.wait_instance()
+        r.expect("killing the Wine host: the saved project opens with the plugin running", bool(p and not p["crashed"]), p and {k: p[k] for k in ("instance", "crashed")})
+        app.quit()
     finally:
         app.kill()
         kill_hosts()
@@ -1133,7 +1177,7 @@ def real_cell(ctx, r, name, fmt, type_id, entry):
         colours = len({rgb[i : i + 3] for i in range(0, min(len(rgb), fw * w["ph"] * 3), 3 * 7)})
         r.expect("editor drawn, not blank", colours > 24, f"{colours} colours in {w['pw']}x{w['ph']}")
         if not ctx.has_input:
-            r.add("mouse", "skip", "no XTEST route to this display")
+            r.add("mouse", "skip", ctx.no_input_reason)
             return
         g = x.geom(w["container"])
         before = app.params()
@@ -1289,7 +1333,7 @@ def control_real(ctx, r, name, fmt, entry, script):
             return
         time.sleep(8.0)
         win = hex(int(ids[-1]))
-        x.window_move(win, 40, 40)
+        sh("xdotool", "windowmove", win, 40, 40, timeout=6)
         time.sleep(1.0)
         x.dump(win, ctx.cell_dir / "x.txt")
         img = x.shot(win, str(ctx.cell_dir / "shot.png"))
@@ -1388,6 +1432,7 @@ def symbolize_logs(out, app):
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--no-input", default="", help="why this display can take no synthetic input")
     ap.add_argument("--app", required=True)
     ap.add_argument("--cli", required=True)
     ap.add_argument("--out", required=True)
@@ -1416,7 +1461,8 @@ def main():
     ctx.probe = Probe(ctx.prefix, out / "probe-log.txt")
     ctx.weston = a.display.startswith("weston")
     ctx.has_wm_tools = a.display in ("xvfb-openbox", "weston-x11")
-    ctx.has_input = a.display != "weston-wayland"
+    ctx.has_input = a.display != "weston-wayland" and not a.no_input
+    ctx.no_input_reason = a.no_input or "no XTEST route to this display"
     ctx.x = X(sync=not ctx.weston)
     ctx.format = ""
     ctx.demo = ctx.work / "demo.json"

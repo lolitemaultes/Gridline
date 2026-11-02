@@ -2752,7 +2752,7 @@ gl.enhance	4	Program: Mid / high split	combination	16000	2=1;77=1;13=24
 gl.enhance	5	Program: Low split slope	combination	0	2=1;77=1;13=24
 gl.enhance	6	Program: High split slope	combination	0	2=1;77=1;13=24
 gl.enhance	7	Program: Look-ahead	combination	10	2=1;77=1;13=24
-gl.enhance	8	Program: Band mix	inert	0	
+gl.enhance	8	Program: Band mix	inert	0		the Amount knob sets the band mix in this program
 gl.enhance	9	Program: Low cut	combination	300	2=1;77=1;13=24
 gl.enhance	10	Program: Solo	combination	1	2=1;77=1;13=24
 gl.enhance	11	Program: Oversampling	combination	0	2=1;77=1;13=24
@@ -2825,7 +2825,7 @@ gl.enhance	77	Program: Low engine	combination	1	2=1;108=1;28=24;117=1
 gl.enhance	78	Program: Low curve points	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.enhance	79	Program: Low point 1 x	combination	1	2=1;77=1;13=24
 gl.enhance	80	Program: Low point 1 y	combination	1	2=1;77=1;13=24
-gl.enhance	81	Program: Low point 1 tension	inert	0	
+gl.enhance	81	Program: Low point 1 tension	inert	0		the first curve point has no segment leading into it
 gl.enhance	82	Program: Low point 2 x	combination	0	2=1;77=1;13=24
 gl.enhance	83	Program: Low point 2 y	combination	0	2=1;77=1;13=24
 gl.enhance	84	Program: Low point 2 tension	combination	-1	2=1;77=1;13=24
@@ -2856,7 +2856,7 @@ gl.enhance	108	Program: Mid engine	combination	1	2=1;77=1;13=24
 gl.enhance	109	Program: Mid curve points	combination	8	2=3;224=2000;117=1
 gl.enhance	110	Program: Mid point 1 x	combination	1	2=1;108=1;28=24;117=1
 gl.enhance	111	Program: Mid point 1 y	combination	0.5	2=1;108=1;28=24;117=1
-gl.enhance	112	Program: Mid point 1 tension	inert	0	
+gl.enhance	112	Program: Mid point 1 tension	inert	0		the first curve point has no segment leading into it
 gl.enhance	113	Program: Mid point 2 x	combination	0	2=1;108=1;28=24;109=4;116=0.75
 gl.enhance	114	Program: Mid point 2 y	combination	0	2=1;108=1;28=24;109=4;116=0.75
 gl.enhance	115	Program: Mid point 2 tension	combination	-1	2=1;108=1;28=24;117=1
@@ -2887,7 +2887,7 @@ gl.enhance	139	Program: High engine	combination	1	2=1;77=1;13=24
 gl.enhance	140	Program: High curve points	combination	8	2=3;237=2000;148=1
 gl.enhance	141	Program: High point 1 x	combination	1	2=1;139=1;43=24
 gl.enhance	142	Program: High point 1 y	combination	1	2=1;139=1;43=24
-gl.enhance	143	Program: High point 1 tension	inert	0	
+gl.enhance	143	Program: High point 1 tension	inert	0		the first curve point has no segment leading into it
 gl.enhance	144	Program: High point 2 x	combination	0	2=1;139=1;43=24
 gl.enhance	145	Program: High point 2 y	combination	0	2=1;139=1;43=24
 gl.enhance	146	Program: High point 2 tension	combination	-1	2=1;139=1;43=24
@@ -2918,7 +2918,7 @@ gl.enhance	170	Program: Master engine	combination	1	2=1;77=1;13=24
 gl.enhance	171	Program: Master curve points	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.enhance	172	Program: Master point 1 x	combination	1	2=1;170=1;58=24;171=4;178=0.75
 gl.enhance	173	Program: Master point 1 y	combination	1	2=1;170=1;58=24;171=4;178=0.75
-gl.enhance	174	Program: Master point 1 tension	inert	0	
+gl.enhance	174	Program: Master point 1 tension	inert	0		the first curve point has no segment leading into it
 gl.enhance	175	Program: Master point 2 x	combination	0	2=1;170=1;58=24;171=4;178=0.75
 gl.enhance	176	Program: Master point 2 y	combination	0	2=1;170=1;58=24;171=4;178=0.75
 gl.enhance	177	Program: Master point 2 tension	combination	-1	2=1;170=1;58=24;171=4;178=0.75
@@ -2946,13 +2946,13 @@ gl.enhance	198	Soft clipping	combination	1	2=2;196=12
 gl.enhance	199	Level matching	combination	1	2=2;196=12
 gl.enhance	200	Output gain	combination	0	2=2;196=12
 gl.enhance	201	Bypass	combination	1	2=2;196=12
-gl.enhance	202	Engine	inert	0	
+gl.enhance	202	Engine	inert	0		Program 3 selects the reference engine; kept for the FL round trip
 gl.enhance	203	Low / mid split (ref.)	combination	65536	2=3;211=2000;86=1
 gl.enhance	204	Low slope (ref.)	combination	0	2=3;211=2000;86=1
 gl.enhance	205	Mid / high split (ref.)	combination	0	2=3;211=2000;86=1
 gl.enhance	206	High slope (ref.)	combination	0	2=3;211=2000;86=1
 gl.enhance	207	Band look-ahead (ref.)	combination	10000	2=3;211=2000;86=1
-gl.enhance	208	Band mix (ref.)	inert	0	
+gl.enhance	208	Band mix (ref.)	inert	0		the Amount knob sets the band mix before the reference engine runs
 gl.enhance	209	Low cut (ref.)	combination	-1	2=3;211=2000;86=1
 gl.enhance	210	Low mode (ref.)	combination	1	2=3;211=2000;86=1
 gl.enhance	211	Low pre gain (ref.)	combination	0	2=3;224=2000;117=1
@@ -3013,39 +3013,41 @@ gl.enhance	265	No ceiling safety (ref.)	combination	1	2=3;211=2000;86=1
 gl.enhance	266	Linear-phase split, legacy (ref.)	combination	1	2=3;211=2000;86=1
 gl.enhance	267	Linear-phase split (ref.)	combination	1	2=3;211=2000;86=1
 gl.enhance	268	Low point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
-gl.enhance	269	Low point type (ref.)	combination	12	2=3;211=2000;86=1
-gl.enhance	270	Low point type (ref.)	combination	12	2=3;211=2000;86=1
+gl.enhance	269	Low point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
+gl.enhance	270	Low point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.enhance	271	Low point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.enhance	272	Low point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.enhance	273	Low point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.enhance	274	Low point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.enhance	275	Low point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.enhance	276	Mid point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
-gl.enhance	277	Mid point type (ref.)	combination	12	2=3;211=2000;86=1
-gl.enhance	278	Mid point type (ref.)	combination	12	2=3;224=2000;117=1
+gl.enhance	277	Mid point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
+gl.enhance	278	Mid point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.enhance	279	Mid point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.enhance	280	Mid point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.enhance	281	Mid point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.enhance	282	Mid point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.enhance	283	Mid point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.enhance	284	High point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
-gl.enhance	285	High point type (ref.)	combination	12	2=3;211=2000;86=1
-gl.enhance	286	High point type (ref.)	combination	12	2=3;237=2000;148=1
+gl.enhance	285	High point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
+gl.enhance	286	High point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.enhance	287	High point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.enhance	288	High point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.enhance	289	High point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.enhance	290	High point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.enhance	291	High point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.enhance	292	Master point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
-gl.enhance	293	Master point type (ref.)	combination	12	2=3;211=2000;86=1
+gl.enhance	293	Master point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.enhance	294	Master point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
-gl.enhance	295	Master point type (ref.)	combination	12	2=3;250=2000;171=4;178=0.75;182=1
+gl.enhance	295	Master point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.enhance	296	Master point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.enhance	297	Master point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.enhance	298	Master point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.enhance	299	Master point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.enhance	300	Linear-phase quality (ref.)	verified	0		VERIFIED: reference-engine band timing / options act with Program 3 and the band driven (pre gain)
 gl.enhance	301	Linear-phase change speed (ref.)	verified	0		VERIFIED: reference-engine band timing / options act with Program 3 and the band driven (pre gain)
+gl.enhance	302	Oversampling (ref.)	combination	1	2=3;211=2000;86=1
+gl.enhance	303	Engine revision (ref.)	combination	0	2=3;211=2000;86=1
 gl.ensemble	0	Delay	combination	40	12=0
 gl.ensemble	1	Feedback	combination	-0.899999976	12=0
 gl.ensemble	2	Mod amount	combination	1	12=0
@@ -4634,91 +4636,91 @@ gl.lowlift	22	High band gain	working	-120
 gl.lowlift	23	Crossover	working	20	
 gl.lowlift	24	Low cut	working	120	
 gl.lowlift	25	Diffuser coefficient	combination	-0.99000001	9=1
-gl.master	0	Low / mid split	working	1000	
-gl.master	1	Mid / high split	working	800	
-gl.master	2	Low split slope	working	1	
-gl.master	3	High split slope	working	1	
-gl.master	4	Look-ahead	working	5	
-gl.master	5	Band mix	working	0	
-gl.master	6	Low cut	working	300	
-gl.master	7	Solo	working	3	
-gl.master	8	Oversampling	working	0	
-gl.master	9	Low mode	working	2	
-gl.master	10	Low pre gain	working	24	
-gl.master	11	Low post gain	working	24	
-gl.master	12	Low attack	working	300	
-gl.master	13	Low release	working	5	
-gl.master	14	Low threshold	working	-60	
-gl.master	15	Low ratio	working	1	
-gl.master	16	Low knee	working	24	
-gl.master	17	Low low threshold	combination	0	1048594=1.41421356
-gl.master	18	Low below ratio	working	8	
-gl.master	19	Low gate	working	-20	
-gl.master	20	Low saturation	working	-24	
-gl.master	21	Low ceiling	combination	-24	74=1;10=24
-gl.master	22	Low stereo	working	-1	
-gl.master	23	Low RMS window	working	100	
-gl.master	24	Mid mode	working	0	
-gl.master	25	Mid pre gain	working	24	
-gl.master	26	Mid post gain	working	24	
-gl.master	27	Mid attack	working	300	
-gl.master	28	Mid release	working	5	
-gl.master	29	Mid threshold	working	-60	
-gl.master	30	Mid ratio	working	1	
-gl.master	31	Mid knee	working	24	
-gl.master	32	Mid low threshold	combination	0	1048609=1.41421356
-gl.master	33	Mid below ratio	working	8	
-gl.master	34	Mid gate	working	-20	
-gl.master	35	Mid saturation	working	-24	
-gl.master	36	Mid ceiling	combination	-24	105=1;25=24;114=1
-gl.master	37	Mid stereo	working	-1	
-gl.master	38	Mid RMS window	working	100	
-gl.master	39	High mode	working	0	
-gl.master	40	High pre gain	working	24	
-gl.master	41	High post gain	working	24	
-gl.master	42	High attack	working	300	
-gl.master	43	High release	working	5	
-gl.master	44	High threshold	working	-60	
-gl.master	45	High ratio	working	1	
-gl.master	46	High knee	working	24	
-gl.master	47	High low threshold	combination	0	1048624=1.41421356
-gl.master	48	High below ratio	working	8	
-gl.master	49	High gate	working	-20	
-gl.master	50	High saturation	working	-24	
-gl.master	51	High ceiling	combination	-24	136=1;40=24;145=1
-gl.master	52	High stereo	working	-1	
-gl.master	53	High RMS window	working	100	
-gl.master	54	Master mode	working	2	
-gl.master	55	Master pre gain	working	-24	
-gl.master	56	Master post gain	working	24	
-gl.master	57	Master attack	working	300	
-gl.master	58	Master release	working	3000	
-gl.master	59	Master threshold	working	-60	
-gl.master	60	Master ratio	working	1	
-gl.master	61	Master knee	working	24	
-gl.master	62	Master low threshold	combination	0	1048639=1.41421356
-gl.master	63	Master below ratio	working	8	
-gl.master	64	Master gate	working	-20	
-gl.master	65	Master saturation	working	-24	
-gl.master	66	Master ceiling	combination	-24	74=1;10=24
-gl.master	67	Master stereo	working	-1	
-gl.master	68	Master RMS window	working	100	
-gl.master	69	Low release 2	combination	2000	74=1;10=24
-gl.master	70	Low attack curve	combination	0	74=1;10=24
-gl.master	71	Low release curve	combination	0	74=1;10=24
-gl.master	72	Low detector	combination	0	74=1;10=24
-gl.master	73	Low saturation mode	combination	0	74=1;10=24
-gl.master	74	Low engine	working	1	
+gl.master	0	Low / mid split	combination	1000	193=0;74=1;10=24
+gl.master	1	Mid / high split	combination	16000	193=0;74=1;10=24
+gl.master	2	Low split slope	combination	0	193=0;74=1;10=24
+gl.master	3	High split slope	combination	0	193=0;74=1;10=24
+gl.master	4	Look-ahead	combination	10	193=0;74=1;10=24
+gl.master	5	Band mix	combination	0	193=0;74=1;10=24
+gl.master	6	Low cut	combination	300	193=0;74=1;10=24
+gl.master	7	Solo	combination	1	193=0;74=1;10=24
+gl.master	8	Oversampling	combination	0	193=0;74=1;10=24
+gl.master	9	Low mode	combination	0	193=0;74=1;10=24
+gl.master	10	Low pre gain	combination	-24	193=0;136=1;40=24;145=1
+gl.master	11	Low post gain	combination	-24	193=0;74=1;10=24
+gl.master	12	Low attack	combination	0.100000001	193=0;74=1;10=24
+gl.master	13	Low release	combination	5	193=0;74=1;10=24
+gl.master	14	Low threshold	combination	-60	193=0;136=1;40=24;145=1
+gl.master	15	Low ratio	combination	30	193=0;136=1;40=24;145=1
+gl.master	16	Low knee	combination	24	193=0;136=1;40=24;145=1
+gl.master	17	Low low threshold	combination	0	193=0;1048594=1.41421356
+gl.master	18	Low below ratio	combination	8	193=0;136=1;40=24;145=1
+gl.master	19	Low gate	combination	-20	193=0;136=1;40=24;145=1
+gl.master	20	Low saturation	combination	-24	193=0;74=1;10=24
+gl.master	21	Low ceiling	combination	-24	193=0;74=1;10=24
+gl.master	22	Low stereo	combination	-1	193=0;74=1;10=24
+gl.master	23	Low RMS window	combination	100	193=0;74=1;10=24
+gl.master	24	Mid mode	combination	0	193=0;74=1;10=24
+gl.master	25	Mid pre gain	combination	-24	193=0;74=1;10=24
+gl.master	26	Mid post gain	combination	-24	193=0;74=1;10=24
+gl.master	27	Mid attack	combination	0.100000001	193=0;74=1;10=24
+gl.master	28	Mid release	combination	5	193=0;74=1;10=24
+gl.master	29	Mid threshold	combination	-60	193=0;74=1;10=24
+gl.master	30	Mid ratio	combination	30	193=0;74=1;10=24
+gl.master	31	Mid knee	combination	24	193=0;74=1;10=24
+gl.master	32	Mid low threshold	combination	0	193=0;1048609=1.41421356
+gl.master	33	Mid below ratio	combination	8	193=0;74=1;10=24
+gl.master	34	Mid gate	combination	-20	193=0;74=1;10=24
+gl.master	35	Mid saturation	combination	-24	193=0;74=1;10=24
+gl.master	36	Mid ceiling	combination	-24	193=0;105=1;25=24;114=1
+gl.master	37	Mid stereo	combination	-1	193=0;74=1;10=24
+gl.master	38	Mid RMS window	combination	100	193=0;74=1;10=24
+gl.master	39	High mode	combination	0	193=0;74=1;10=24
+gl.master	40	High pre gain	combination	-24	193=0;74=1;10=24
+gl.master	41	High post gain	combination	-24	193=0;74=1;10=24
+gl.master	42	High attack	combination	0.100000001	193=0;74=1;10=24
+gl.master	43	High release	combination	5	193=0;74=1;10=24
+gl.master	44	High threshold	combination	-60	193=0;74=1;10=24
+gl.master	45	High ratio	combination	30	193=0;74=1;10=24
+gl.master	46	High knee	combination	24	193=0;74=1;10=24
+gl.master	47	High low threshold	combination	0	193=0;1048624=1.41421356
+gl.master	48	High below ratio	combination	8	193=0;74=1;10=24
+gl.master	49	High gate	combination	-20	193=0;74=1;10=24
+gl.master	50	High saturation	combination	-24	193=0;74=1;10=24
+gl.master	51	High ceiling	combination	-24	193=0;136=1;40=24;145=1
+gl.master	52	High stereo	combination	-1	193=0;74=1;10=24
+gl.master	53	High RMS window	combination	100	193=0;74=1;10=24
+gl.master	54	Master mode	combination	0	193=0;74=1;10=24
+gl.master	55	Master pre gain	combination	-24	193=0;74=1;10=24
+gl.master	56	Master post gain	combination	-24	193=0;74=1;10=24
+gl.master	57	Master attack	combination	300	193=0;74=1;10=24
+gl.master	58	Master release	combination	3000	193=0;74=1;10=24
+gl.master	59	Master threshold	combination	-60	193=0;74=1;10=24
+gl.master	60	Master ratio	combination	1	193=0;74=1;10=24
+gl.master	61	Master knee	combination	24	193=0;74=1;10=24
+gl.master	62	Master low threshold	combination	0	193=0;1048639=1.41421356
+gl.master	63	Master below ratio	combination	8	193=0;74=1;10=24
+gl.master	64	Master gate	combination	-20	193=0;74=1;10=24
+gl.master	65	Master saturation	combination	-24	193=0;74=1;10=24
+gl.master	66	Master ceiling	combination	-24	193=0;74=1;10=24
+gl.master	67	Master stereo	combination	-1	193=0;74=1;10=24
+gl.master	68	Master RMS window	combination	100	193=0;74=1;10=24
+gl.master	69	Low release 2	combination	2000	193=0;74=1;10=24
+gl.master	70	Low attack curve	combination	0	193=0;74=1;10=24
+gl.master	71	Low release curve	combination	0	193=0;74=1;10=24
+gl.master	72	Low detector	combination	0	193=0;74=1;10=24
+gl.master	73	Low saturation mode	combination	0	193=0;74=1;10=24
+gl.master	74	Low engine	combination	1	193=0;136=1;40=24;145=1
 gl.master	75	Low curve points	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
-gl.master	76	Low point 1 x	combination	1	74=1;10=24
-gl.master	77	Low point 1 y	combination	1	74=1;10=24
-gl.master	78	Low point 1 tension	inert	0	
-gl.master	79	Low point 2 x	combination	0	74=1;10=24
-gl.master	80	Low point 2 y	combination	0	74=1;10=24
-gl.master	81	Low point 2 tension	combination	-1	74=1;10=24
-gl.master	82	Low point 3 x	combination	0	74=1;10=24;83=1
-gl.master	83	Low point 3 y	combination	0	74=1;10=24
-gl.master	84	Low point 3 tension	combination	-1	74=1;10=24;83=1
+gl.master	76	Low point 1 x	working	1	
+gl.master	77	Low point 1 y	working	1	
+gl.master	78	Low point 1 tension	inert	0		the first curve point has no segment leading into it
+gl.master	79	Low point 2 x	working	0	
+gl.master	80	Low point 2 y	working	0	
+gl.master	81	Low point 2 tension	working	1	
+gl.master	82	Low point 3 x	combination	0	193=0;74=1;10=24;83=1
+gl.master	83	Low point 3 y	combination	0	193=0;74=1;10=24
+gl.master	84	Low point 3 tension	combination	-1	193=0;74=1;10=24;83=1
 gl.master	85	Low point 4 x	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.master	86	Low point 4 y	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.master	87	Low point 4 tension	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
@@ -4734,25 +4736,25 @@ gl.master	96	Low point 7 tension	verified	0		VERIFIED: drawn-curve points act in
 gl.master	97	Low point 8 x	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.master	98	Low point 8 y	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.master	99	Low point 8 tension	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
-gl.master	100	Mid release 2	combination	2000	105=1;25=24;114=1
-gl.master	101	Mid attack curve	combination	0	105=1;25=24;106=4;113=0.75
-gl.master	102	Mid release curve	combination	0	105=1;25=24;106=4;113=0.75
-gl.master	103	Mid detector	combination	0	105=1;25=24;106=4;113=0.75
-gl.master	104	Mid saturation mode	combination	0	105=1;25=24;114=1
-gl.master	105	Mid engine	working	1	
+gl.master	100	Mid release 2	combination	2000	193=0;105=1;25=24;114=1
+gl.master	101	Mid attack curve	combination	0	193=0;105=1;25=24;106=4;113=0.75
+gl.master	102	Mid release curve	combination	0	193=0;105=1;25=24;106=4;113=0.75
+gl.master	103	Mid detector	combination	0	193=0;105=1;25=24;106=4;113=0.75
+gl.master	104	Mid saturation mode	combination	0	193=0;105=1;25=24;114=1
+gl.master	105	Mid engine	combination	1	193=0;74=1;10=24
 gl.master	106	Mid curve points	combination	8	193=1;215=2000;114=1
-gl.master	107	Mid point 1 x	combination	1	105=1;25=24;114=1
-gl.master	108	Mid point 1 y	combination	1	105=1;25=24;114=1
-gl.master	109	Mid point 1 tension	inert	0	
-gl.master	110	Mid point 2 x	combination	0	105=1;25=24;106=4;113=0.75
-gl.master	111	Mid point 2 y	combination	0	105=1;25=24;106=4;113=0.75
-gl.master	112	Mid point 2 tension	combination	1	105=1;25=24;114=1
-gl.master	113	Mid point 3 x	combination	0	105=1;25=24;114=1
-gl.master	114	Mid point 3 y	combination	0	105=1;25=24;106=4;113=0.75
-gl.master	115	Mid point 3 tension	combination	-1	105=1;25=24;114=1
-gl.master	116	Mid point 4 x	combination	0	105=1;25=24;106=4;113=0.75;117=1
-gl.master	117	Mid point 4 y	combination	0	105=1;25=24;106=4;113=0.75
-gl.master	118	Mid point 4 tension	combination	-1	105=1;25=24;106=4;113=0.75;117=1
+gl.master	107	Mid point 1 x	working	1	
+gl.master	108	Mid point 1 y	working	1	
+gl.master	109	Mid point 1 tension	inert	0		the first curve point has no segment leading into it
+gl.master	110	Mid point 2 x	working	0	
+gl.master	111	Mid point 2 y	working	0	
+gl.master	112	Mid point 2 tension	working	-1	
+gl.master	113	Mid point 3 x	combination	0	193=0;105=1;25=24;114=1
+gl.master	114	Mid point 3 y	combination	0	193=0;105=1;25=24;106=4;113=0.75
+gl.master	115	Mid point 3 tension	combination	-1	193=0;105=1;25=24;114=1
+gl.master	116	Mid point 4 x	combination	0	193=0;105=1;25=24;106=4;113=0.75;117=1
+gl.master	117	Mid point 4 y	combination	0	193=0;105=1;25=24;106=4;113=0.75
+gl.master	118	Mid point 4 tension	combination	-1	193=0;105=1;25=24;106=4;113=0.75;117=1
 gl.master	119	Mid point 5 x	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.master	120	Mid point 5 y	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.master	121	Mid point 5 tension	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
@@ -4765,24 +4767,24 @@ gl.master	127	Mid point 7 tension	verified	0		VERIFIED: drawn-curve points act i
 gl.master	128	Mid point 8 x	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.master	129	Mid point 8 y	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.master	130	Mid point 8 tension	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
-gl.master	131	High release 2	combination	2000	136=1;40=24;145=1
-gl.master	132	High attack curve	combination	0	136=1;40=24;137=4;144=0.75
-gl.master	133	High release curve	combination	0	136=1;40=24;137=4;144=0.75
-gl.master	134	High detector	combination	0	136=1;40=24;137=4;144=0.75
-gl.master	135	High saturation mode	combination	0	136=1;40=24;145=1
-gl.master	136	High engine	working	1	
+gl.master	131	High release 2	combination	2000	193=0;136=1;40=24;145=1
+gl.master	132	High attack curve	combination	0	193=0;136=1;40=24;137=4;144=0.75
+gl.master	133	High release curve	combination	0	193=0;136=1;40=24;137=4;144=0.75
+gl.master	134	High detector	combination	0	193=0;136=1;40=24;137=4;144=0.75
+gl.master	135	High saturation mode	combination	0	193=0;136=1;40=24;145=1
+gl.master	136	High engine	combination	1	193=0;74=1;10=24
 gl.master	137	High curve points	combination	8	193=1;228=2000;145=1
-gl.master	138	High point 1 x	combination	1	136=1;40=24;145=1
-gl.master	139	High point 1 y	combination	1	136=1;40=24;145=1
-gl.master	140	High point 1 tension	inert	0	
-gl.master	141	High point 2 x	combination	1	136=1;40=24;145=1
-gl.master	142	High point 2 y	combination	1	136=1;40=24;145=1
-gl.master	143	High point 2 tension	combination	1	136=1;40=24;145=1
-gl.master	144	High point 3 x	combination	0	136=1;40=24;145=1
-gl.master	145	High point 3 y	combination	0	136=1;40=24;137=4;144=0.75
-gl.master	146	High point 3 tension	combination	-1	136=1;40=24;145=1
+gl.master	138	High point 1 x	working	1	
+gl.master	139	High point 1 y	working	1	
+gl.master	140	High point 1 tension	inert	0		the first curve point has no segment leading into it
+gl.master	141	High point 2 x	working	0	
+gl.master	142	High point 2 y	working	0	
+gl.master	143	High point 2 tension	working	-1	
+gl.master	144	High point 3 x	combination	0	193=0;136=1;40=24;145=1
+gl.master	145	High point 3 y	combination	0	193=0;136=1;40=24;137=4;144=0.75
+gl.master	146	High point 3 tension	combination	-1	193=0;136=1;40=24;145=1
 gl.master	147	High point 4 x	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
-gl.master	148	High point 4 y	combination	0	136=1;40=24;137=4;144=0.75
+gl.master	148	High point 4 y	combination	0	193=0;136=1;40=24;137=4;144=0.75
 gl.master	149	High point 4 tension	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.master	150	High point 5 x	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.master	151	High point 5 y	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
@@ -4796,25 +4798,25 @@ gl.master	158	High point 7 tension	verified	0		VERIFIED: drawn-curve points act 
 gl.master	159	High point 8 x	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.master	160	High point 8 y	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.master	161	High point 8 tension	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
-gl.master	162	Master release 2	combination	2000	167=1;55=24;168=4;175=0.75
-gl.master	163	Master attack curve	combination	0	167=1;55=24;168=4;175=0.75
-gl.master	164	Master release curve	combination	0	167=1;55=24;168=4;175=0.75
-gl.master	165	Master detector	combination	0	167=1;55=24;168=4;175=0.75
-gl.master	166	Master saturation mode	combination	0	167=1;55=24;168=4;175=0.75
-gl.master	167	Master engine	working	1	
-gl.master	168	Master curve points	combination	8	175=0.5;176=1;177=1;193=1
-gl.master	169	Master point 1 x	combination	1	167=1;55=24;168=4;175=0.75
-gl.master	170	Master point 1 y	combination	1	167=1;55=24;168=4;175=0.75
-gl.master	171	Master point 1 tension	inert	0	
-gl.master	172	Master point 2 x	combination	0	167=1;55=24;168=4;175=0.75
-gl.master	173	Master point 2 y	combination	0	167=1;55=24;168=4;175=0.75
-gl.master	174	Master point 2 tension	combination	-1	167=1;55=24;168=4;175=0.75
-gl.master	175	Master point 3 x	combination	0	173=1;174=1;193=1
-gl.master	176	Master point 3 y	combination	0	167=1;55=24;168=4;175=0.75
-gl.master	177	Master point 3 tension	combination	-1	173=1;174=1;193=1
-gl.master	178	Master point 4 x	combination	0	167=1;55=24;168=4;175=0.75;179=1
-gl.master	179	Master point 4 y	combination	0	167=1;55=24;168=4;175=0.75
-gl.master	180	Master point 4 tension	combination	-1	167=1;55=24;168=4;175=0.75;179=1
+gl.master	162	Master release 2	combination	2000	193=0;167=1;55=24;168=4;175=0.75
+gl.master	163	Master attack curve	combination	0	193=0;167=1;55=24;168=4;175=0.75
+gl.master	164	Master release curve	combination	0	193=0;167=1;55=24;168=4;175=0.75
+gl.master	165	Master detector	combination	0	193=0;167=1;55=24;168=4;175=0.75
+gl.master	166	Master saturation mode	combination	0	193=0;167=1;55=24;168=4;175=0.75
+gl.master	167	Master engine	combination	1	193=0;74=1;10=24
+gl.master	168	Master curve points	combination	8	175=0.5;176=1;177=1
+gl.master	169	Master point 1 x	working	1	
+gl.master	170	Master point 1 y	working	1	
+gl.master	171	Master point 1 tension	inert	0		the first curve point has no segment leading into it
+gl.master	172	Master point 2 x	working	1	
+gl.master	173	Master point 2 y	working	1	
+gl.master	174	Master point 2 tension	working	-1	
+gl.master	175	Master point 3 x	combination	0	176=1;177=1
+gl.master	176	Master point 3 y	working	1	
+gl.master	177	Master point 3 tension	combination	-1	193=0;167=1;55=24;168=4;175=0.75;176=1
+gl.master	178	Master point 4 x	combination	0	193=0;167=1;55=24;168=4;175=0.75;179=1
+gl.master	179	Master point 4 y	combination	0	193=0;167=1;55=24;168=4;175=0.75
+gl.master	180	Master point 4 tension	combination	-1	193=0;167=1;55=24;168=4;175=0.75;179=1
 gl.master	181	Master point 5 x	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.master	182	Master point 5 y	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.master	183	Master point 5 tension	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
@@ -4827,32 +4829,32 @@ gl.master	189	Master point 7 tension	verified	0		VERIFIED: drawn-curve points ac
 gl.master	190	Master point 8 x	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.master	191	Master point 8 y	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.master	192	Master point 8 tension	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
-gl.master	193	Engine	working	1	
-gl.master	194	Low / mid split (ref.)	combination	65536	193=1;202=2000;83=1
-gl.master	195	Low slope (ref.)	combination	0	193=1;202=2000;83=1
-gl.master	196	Mid / high split (ref.)	combination	0	193=1;202=2000;83=1
-gl.master	197	High slope (ref.)	combination	0	193=1;202=2000;83=1
-gl.master	198	Band look-ahead (ref.)	combination	10000	193=1;202=2000;83=1
-gl.master	199	Band mix (ref.)	combination	0	193=1;202=2000;83=1
-gl.master	200	Low cut (ref.)	combination	-1	193=1;202=2000;83=1
-gl.master	201	Low mode (ref.)	combination	1	193=1;202=2000;83=1
-gl.master	202	Low pre gain (ref.)	combination	0	193=1;215=2000;114=1
-gl.master	203	Low post gain (ref.)	combination	0	193=1;202=2000;83=1
-gl.master	204	Low separation (ref.)	combination	-1000	193=1;202=2000;83=1
-gl.master	205	Low saturation (ref.)	combination	-1000	193=1;202=2000;83=1
+gl.master	193	Engine	working	0	
+gl.master	194	Low / mid split (ref.)	working	65536	
+gl.master	195	Low slope (ref.)	working	0	
+gl.master	196	Mid / high split (ref.)	working	32768	
+gl.master	197	High slope (ref.)	working	0	
+gl.master	198	Band look-ahead (ref.)	working	0	
+gl.master	199	Band mix (ref.)	working	0	
+gl.master	200	Low cut (ref.)	working	65536	
+gl.master	201	Low mode (ref.)	working	3	
+gl.master	202	Low pre gain (ref.)	working	2000	
+gl.master	203	Low post gain (ref.)	working	2000	
+gl.master	204	Low separation (ref.)	working	-1000	
+gl.master	205	Low saturation (ref.)	working	-1000	
 gl.master	206	Low ceiling (ref.)	combination	0	193=1;205=-500
-gl.master	207	Low attack (ref.)	combination	10000	76=0.5;77=0.5;78=1;193=1
-gl.master	208	Low release 2 (ref.)	combination	10000	76=0.5;77=0.5;78=1;193=1
-gl.master	209	Low attack curve (ref.)	combination	8	76=0.5;77=0.5;78=1;193=1
-gl.master	210	Low release (ref.)	combination	0	76=0.5;77=0.5;78=1;193=1
-gl.master	211	Low release curve (ref.)	combination	8	76=0.5;77=0.5;78=1;193=1
-gl.master	212	Low window (ref.)	combination	10000	76=0.5;77=0.5;78=1;193=1
+gl.master	207	Low attack (ref.)	combination	10000	260=3
+gl.master	208	Low release 2 (ref.)	combination	10000	260=3
+gl.master	209	Low attack curve (ref.)	combination	8	260=3
+gl.master	210	Low release (ref.)	combination	0	260=3
+gl.master	211	Low release curve (ref.)	combination	8	260=3
+gl.master	212	Low window (ref.)	combination	10000	260=3
 gl.master	213	Low detector (ref.)	combination	1	193=1;205=-500
-gl.master	214	Mid mode (ref.)	combination	1	193=1;202=2000;83=1
-gl.master	215	Mid pre gain (ref.)	combination	0	193=1;202=2000;83=1
-gl.master	216	Mid post gain (ref.)	combination	0	193=1;202=2000;83=1
-gl.master	217	Mid separation (ref.)	combination	-1000	193=1;202=2000;83=1
-gl.master	218	Mid saturation (ref.)	combination	-1000	193=1;202=2000;83=1
+gl.master	214	Mid mode (ref.)	working	2	
+gl.master	215	Mid pre gain (ref.)	working	0	
+gl.master	216	Mid post gain (ref.)	working	2000	
+gl.master	217	Mid separation (ref.)	working	-1000	
+gl.master	218	Mid saturation (ref.)	working	-1000	
 gl.master	219	Mid ceiling (ref.)	combination	0	193=1;218=-500
 gl.master	220	Mid attack (ref.)	combination	10000	193=1;215=2000;114=1
 gl.master	221	Mid release 2 (ref.)	combination	10000	193=1;215=2000;114=1
@@ -4861,11 +4863,11 @@ gl.master	223	Mid release (ref.)	combination	0	193=1;215=2000;114=1
 gl.master	224	Mid release curve (ref.)	combination	8	193=1;215=2000;114=1
 gl.master	225	Mid window (ref.)	combination	10000	193=1;215=2000;114=1
 gl.master	226	Mid detector (ref.)	combination	1	193=1;215=2000;114=1
-gl.master	227	High mode (ref.)	combination	1	193=1;202=2000;83=1
-gl.master	228	High pre gain (ref.)	combination	0	193=1;202=2000;83=1
-gl.master	229	High post gain (ref.)	combination	0	193=1;202=2000;83=1
-gl.master	230	High separation (ref.)	combination	-1000	193=1;202=2000;83=1
-gl.master	231	High saturation (ref.)	combination	-1000	193=1;202=2000;83=1
+gl.master	227	High mode (ref.)	working	3	
+gl.master	228	High pre gain (ref.)	working	0	
+gl.master	229	High post gain (ref.)	working	2000	
+gl.master	230	High separation (ref.)	working	-1000	
+gl.master	231	High saturation (ref.)	working	-1000	
 gl.master	232	High ceiling (ref.)	combination	0	193=1;231=-500
 gl.master	233	High attack (ref.)	combination	10000	193=1;228=2000;145=1
 gl.master	234	High release 2 (ref.)	combination	10000	193=1;228=2000;145=1
@@ -4874,59 +4876,61 @@ gl.master	236	High release (ref.)	combination	0	193=1;228=2000;145=1
 gl.master	237	High release curve (ref.)	combination	8	193=1;228=2000;145=1
 gl.master	238	High window (ref.)	combination	10000	193=1;228=2000;145=1
 gl.master	239	High detector (ref.)	combination	1	193=1;228=2000;145=1
-gl.master	240	Master mode (ref.)	combination	1	193=1;202=2000;83=1
-gl.master	241	Master pre gain (ref.)	combination	0	193=1;202=2000;83=1
-gl.master	242	Master post gain (ref.)	combination	0	193=1;202=2000;83=1
-gl.master	243	Master separation (ref.)	combination	-1000	193=1;202=2000;83=1
-gl.master	244	Master saturation (ref.)	combination	-1000	193=1;202=2000;83=1
+gl.master	240	Master mode (ref.)	working	1	
+gl.master	241	Master pre gain (ref.)	working	0	
+gl.master	242	Master post gain (ref.)	working	2000	
+gl.master	243	Master separation (ref.)	working	-1000	
+gl.master	244	Master saturation (ref.)	working	-1000	
 gl.master	245	Master ceiling (ref.)	combination	0	193=1;244=-500
-gl.master	246	Master attack (ref.)	combination	10000	193=1;202=2000;83=1
-gl.master	247	Master release 2 (ref.)	combination	10000	193=1;202=2000;83=1
-gl.master	248	Master attack curve (ref.)	combination	8	193=1;202=2000;83=1
-gl.master	249	Master release (ref.)	combination	0	193=1;202=2000;83=1
-gl.master	250	Master release curve (ref.)	combination	8	193=1;202=2000;83=1
-gl.master	251	Master window (ref.)	combination	10000	193=1;202=2000;83=1
-gl.master	252	Master detector (ref.)	combination	1	193=1;202=2000;83=1
-gl.master	253	Solo (ref.)	combination	1	193=1;202=2000;83=1
-gl.master	254	Selected band (ref.)	combination	1	193=1;253=1
-gl.master	255	Mid on whole input (ref.)	combination	1	193=1;202=2000;83=1
-gl.master	256	No ceiling safety (ref.)	combination	1	193=1;202=2000;83=1
-gl.master	257	Linear-phase split, legacy (ref.)	combination	1	193=1;202=2000;83=1
-gl.master	258	Linear-phase split (ref.)	combination	1	193=1;202=2000;83=1
+gl.master	246	Master attack (ref.)	working	0	
+gl.master	247	Master release 2 (ref.)	working	10000	
+gl.master	248	Master attack curve (ref.)	working	8	
+gl.master	249	Master release (ref.)	working	10000	
+gl.master	250	Master release curve (ref.)	working	8	
+gl.master	251	Master window (ref.)	working	10000	
+gl.master	252	Master detector (ref.)	working	1	
+gl.master	253	Solo (ref.)	combination	1	254=0
+gl.master	254	Selected band (ref.)	combination	0	193=1;253=1
+gl.master	255	Mid on whole input (ref.)	working	1	
+gl.master	256	No ceiling safety (ref.)	working	1	
+gl.master	257	Linear-phase split, legacy (ref.)	working	1	
+gl.master	258	Linear-phase split (ref.)	working	1	
 gl.master	259	Low point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
-gl.master	260	Low point type (ref.)	combination	12	193=1;202=2000;83=1
-gl.master	261	Low point type (ref.)	combination	12	193=1;202=2000;83=1
+gl.master	260	Low point type (ref.)	working	5	
+gl.master	261	Low point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.master	262	Low point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.master	263	Low point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.master	264	Low point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.master	265	Low point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.master	266	Low point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.master	267	Mid point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
-gl.master	268	Mid point type (ref.)	combination	12	193=1;202=2000;83=1
-gl.master	269	Mid point type (ref.)	combination	12	193=1;215=2000;114=1
+gl.master	268	Mid point type (ref.)	working	2	
+gl.master	269	Mid point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.master	270	Mid point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.master	271	Mid point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.master	272	Mid point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.master	273	Mid point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.master	274	Mid point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.master	275	High point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
-gl.master	276	High point type (ref.)	combination	12	193=1;202=2000;83=1
-gl.master	277	High point type (ref.)	combination	12	193=1;228=2000;145=1
+gl.master	276	High point type (ref.)	working	2	
+gl.master	277	High point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.master	278	High point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.master	279	High point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.master	280	High point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.master	281	High point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.master	282	High point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.master	283	Master point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
-gl.master	284	Master point type (ref.)	combination	12	193=1;202=2000;83=1
-gl.master	285	Master point type (ref.)	combination	12	173=1;174=1;193=1
-gl.master	286	Master point type (ref.)	combination	12	193=1;241=2000;168=4;175=0.75;179=1
+gl.master	284	Master point type (ref.)	working	2	
+gl.master	285	Master point type (ref.)	combination	1	176=1;177=1
+gl.master	286	Master point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.master	287	Master point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.master	288	Master point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.master	289	Master point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.master	290	Master point type (ref.)	verified	0		VERIFIED: drawn-curve points act in a chain (curve points >= N, point N-1 x < 1) with the band's curve engine on
 gl.master	291	Linear-phase quality (ref.)	combination	0	193=1;258=1
 gl.master	292	Linear-phase change speed (ref.)	combination	1	193=1;258=1
+gl.master	293	Oversampling (ref.)	working	3	
+gl.master	294	Engine revision (ref.)	working	0	
 gl.matrixfm	0	Master volume	working	0	
 gl.matrixfm	1	Master LFO level	combination	-1	326=1
 gl.matrixfm	2	Master pitch	working	-24	

@@ -14,6 +14,23 @@ uname -a
 c++ --version || true
 echo "sdl2: $(pkg-config --modversion sdl2 2>&1 || true)"
 echo "gl:   $(pkg-config --modversion gl 2>&1 || true)"
+# K-X: NetBSD under KVM: the guest clock runs at its own rate per boot (seen against the runner's log
+# stamps: 0.60x, 0.97x, 0.91x, 18.56x, always constant within a run; FreeBSD and OpenBSD stay at 1.00x).
+# At 18x every ctest timeout and wall-clock check fires early. Guess: the TSC calibrated at boot is
+# wrong, so a timer that needs no calibration is chosen when the kernel offers one. The stamps below
+# let the next log show the rate: the guest's date against the runner's time on the same line.
+if [ "$(uname -s)" = NetBSD ]; then
+  sysctl kern.timecounter.hardware kern.timecounter.choice || true
+  dmesg | grep -i -E 'timecounter|tsc' | tail -n 8 || true
+  if [ "$(sysctl -n kern.timecounter.hardware 2>/dev/null || true)" = TSC ]; then
+    for tc in hpet0 ACPI-Fast; do
+      if sysctl -n kern.timecounter.choice 2>/dev/null | grep -q "$tc"; then
+        sysctl -w kern.timecounter.hardware="$tc" || true
+        break
+      fi
+    done
+  fi
+fi
 JOBS="$(sysctl -n hw.ncpu 2>/dev/null || echo 2)"
 # The VMs stop answering SSH under memory pressure (GCC 10 on NetBSD, the large render-cache
 # tests everywhere): two compilers or tests at a time.
@@ -22,7 +39,9 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DGRIDLINE_GUI_TESTS=OFF
 cmake --build build -j"$JOBS" -- -k 0
 test -x build/gridline-app || { echo "gridline-app was not built (SDL2 / OpenGL missing)" >&2; exit 1; }
 if [ -z "${GRIDLINE_PACKAGE:-}" ]; then
+  date -u
   ctest --test-dir build -j"$JOBS" --output-on-failure --timeout 2400
+  date -u
 fi
 bash tools/ci/smoke.sh build/gridline
 build/gridline-app --version

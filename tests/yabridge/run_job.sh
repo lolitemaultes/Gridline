@@ -24,6 +24,23 @@ start_xvfb() {
   echo "Xvfb did not start"; return 1
 }
 
+start_weston() {
+  weston --backend=headless --width=1920 --height=1200 --xwayland --socket=wl-gl --idle-time=0 > "$OUT/weston.log" 2>&1 &
+  pids+=($!)
+  export WAYLAND_DISPLAY=wl-gl
+  for _ in $(seq 1 50); do [ -S "$XDG_RUNTIME_DIR/wl-gl" ] && break; sleep 0.2; done
+  # Weston starts XWayland on the first connection to the socket it listens on.
+  local before n
+  before="$(ls /tmp/.X11-unix 2> /dev/null | tr '\n' ' ')"
+  n="$(sed -n 's/.*xserver listening on display \(:[0-9]*\).*/\1/p' "$OUT/weston.log" | head -1)"
+  if [ -z "$n" ]; then n=":$(ls /tmp/.X11-unix 2> /dev/null | sed 's/^X//' | sort -n | tail -1)"; fi
+  export DISPLAY="$n"
+  echo "weston: DISPLAY=$DISPLAY (sockets: $before)"
+  for _ in $(seq 1 100); do xdpyinfo > /dev/null 2>&1 && break; sleep 0.2; done
+  xdpyinfo > /dev/null 2>&1 || { echo "XWayland did not answer"; cat "$OUT/weston.log"; return 2; }
+}
+
+NO_INPUT=""
 case "$DISPLAY_KIND" in
   xvfb-openbox)
     start_xvfb || exit 2
@@ -35,18 +52,28 @@ case "$DISPLAY_KIND" in
     start_xvfb || exit 2
     ;;
   weston-x11 | weston-wayland)
-    weston --backend=headless --width=1920 --height=1200 --xwayland --socket=wl-gl --idle-time=0 > "$OUT/weston.log" 2>&1 &
-    pids+=($!)
-    export WAYLAND_DISPLAY=wl-gl
-    for _ in $(seq 1 50); do [ -S "$XDG_RUNTIME_DIR/wl-gl" ] && break; sleep 0.2; done
-    # Weston starts XWayland on the first connection to the socket it listens on.
-    before="$(ls /tmp/.X11-unix 2> /dev/null | tr '\n' ' ')"
-    n="$(sed -n 's/.*xserver listening on display \(:[0-9]*\).*/\1/p' "$OUT/weston.log" | head -1)"
-    if [ -z "$n" ]; then n=":$(ls /tmp/.X11-unix 2> /dev/null | sed 's/^X//' | sort -n | tail -1)"; fi
-    export DISPLAY="$n"
-    echo "weston: DISPLAY=$DISPLAY (sockets: $before)"
-    for _ in $(seq 1 100); do xdpyinfo > /dev/null 2>&1 && break; sleep 0.2; done
-    xdpyinfo > /dev/null 2>&1 || { echo "XWayland did not answer"; cat "$OUT/weston.log"; exit 2; }
+    start_weston || exit 2
+    if [ "$DISPLAY_KIND" = weston-x11 ]; then
+      # Does XTEST work on this XWayland at all? A plain X client and a click, with neither Gridline nor Wine.
+      xmessage -geometry 300x200+100+100 check > /dev/null 2>&1 &
+      check_pid=$!
+      sleep 2
+      xdotool mousemove 150 150 click 1 >> "$OUT/xwayland-check.log" 2>&1
+      sleep 2
+      kill "$check_pid" 2> /dev/null
+      if xdpyinfo > /dev/null 2>&1; then
+        echo "XWayland takes XTEST input from a plain client" >> "$OUT/xwayland-check.log"
+      else
+        cp "$OUT/weston.log" "$OUT/weston-xtest-crash.log"
+        echo "XWayland died on an XTEST click on a plain client (xmessage)" >> "$OUT/xwayland-check.log"
+        NO_INPUT="this XWayland dies on an XTEST click on a plain X client, with neither Gridline nor Wine (see weston-xtest-crash.log)"
+        for p in "${pids[@]:-}"; do [ -n "$p" ] && kill "$p" 2> /dev/null; done
+        pids=()
+        pkill -x Xwayland 2> /dev/null
+        sleep 1
+        start_weston || exit 2
+      fi
+    fi
     [ "$DISPLAY_KIND" = weston-wayland ] && export SDL_VIDEODRIVER=wayland
     ;;
   *)
@@ -70,7 +97,7 @@ fi
 export WINEDLLOVERRIDES="mscoree=d;mshtml=d"
 export WINEFSYNC=0
 wine --version > "$OUT/wine-version.txt" 2>&1
-python3 "$HERE/harness.py" --app "$APP" --cli "$CLI" --out "$OUT" --wine "$WINE_LABEL" --display "$DISPLAY_KIND" --scale "$SCALE" --run "$RUN" "$@"
+python3 "$HERE/harness.py" --app "$APP" --cli "$CLI" --out "$OUT" --wine "$WINE_LABEL" --display "$DISPLAY_KIND" --scale "$SCALE" --run "$RUN" --no-input "$NO_INPUT" "$@"
 rc=$?
 timeout 30 wineserver -k 2> /dev/null || true
 if [ "$rc" != 0 ]; then

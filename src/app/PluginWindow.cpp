@@ -264,6 +264,7 @@ struct PluginWindow {
       if (!external && resizable) sizes()[target.key()] = {pw, ph};
     }
     if (external && extFrame[2] > 0) places()[target.key()] = {extFrame[0], extFrame[1]};
+    if (backend && backend->lost()) (void)editor.release();  // K-9: closing it would call the lost plugin, and that throws
     editor.reset();  // detaches the plugin's view before its container and window go
     if (container) native::destroyContainer(nw, container);
     container = nullptr;
@@ -400,7 +401,13 @@ void routeKey(PluginWindow& w, const SDL_Event& ev) {
   }
   // X11: the plugin may use keys typed into the host's window (VST3 / VST2).
   static const bool trace = std::getenv("GRIDLINE_DEV_PLUGIN_KEYS") != nullptr;
-  if (w.editor && !w.external && w.editor->hostKey(true, sc, 0, modsOf(ev.key.keysym.mod))) {
+  bool usedByPlugin = false;
+  try {
+    usedByPlugin = w.editor && !w.external && !(w.backend && w.backend->lost()) && w.editor->hostKey(true, sc, 0, modsOf(ev.key.keysym.mod));
+  } catch (...) {
+    if (w.backend) w.backend->markLost();
+  }
+  if (usedByPlugin) {
     if (trace) std::fprintf(stderr, "plugkey window %d used by the plugin\n", sc);
     return;
   }
@@ -771,11 +778,15 @@ void hostedui::pluginWindowsIdle(App& a) {
         }
       const int pwq = w.pendingW.exchange(0), phq = w.pendingH.exchange(0);
       if (pwq > 0 && phq > 0) w.pluginResize(pwq, phq);
-      if (w.notifySize) {
-        w.notifySize = false;
-        w.editor->setSize(w.pw, w.ph);
+      try {
+        if (w.notifySize) {
+          w.notifySize = false;
+          w.editor->setSize(w.pw, w.ph);
+        }
+        w.editor->idle();
+      } catch (...) {
+        if (w.backend) w.backend->markLost();  // K-9: the instance's update closes this window
       }
-      w.editor->idle();
       if (gDevKeys && w.container) devKeys(w);
       if (gDevKeys && w.external) devSandboxKeys(w);
       forwardPluginKeys(w);

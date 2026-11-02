@@ -12,6 +12,7 @@
 #pragma once
 #include <atomic>
 #include <cstdint>
+#include <exception>
 #include <functional>
 #include <memory>
 #include <string>
@@ -280,8 +281,17 @@ class Backend {
   virtual std::vector<PresetRef> discoverPresets() { return {}; }
   virtual bool loadPreset(const PresetRef& p) { (void)p; return false; }
   // Out-of-process instances: the plugin process died.
-  virtual bool crashed() const { return false; }
-  virtual std::string crashReason() const { return {}; }
+  virtual bool crashed() const { return lost(); }
+  virtual std::string crashReason() const { return lost() ? "the connection to its process was lost" : std::string(); }
+  // K-9: a call into the plugin threw (a bridged plugin whose other process is gone: every call
+  // does from then on). The instance counts as crashed and nothing calls it again, its destructor
+  // included: the backend is left in memory. Safe on the audio thread: no allocation, lock or I/O,
+  // and holding on to the exception keeps its release away from that thread.
+  void markLost() noexcept {
+    bool expected = false;
+    if (lost_.compare_exchange_strong(expected, true)) lostError_ = std::current_exception();
+  }
+  bool lost() const noexcept { return lost_.load(std::memory_order_acquire); }
   // Out-of-process instances: the audio exchange so far, one line for test and log messages
   // (blocks sent / answered, budgets missed, the last wait against its budget). Empty otherwise.
   virtual std::string diagnostics() const { return {}; }
@@ -318,6 +328,10 @@ class Backend {
 
  private:
   std::vector<std::pair<uint32_t, int>> lookup_;
+
+ private:
+  std::atomic<bool> lost_{false};
+  std::exception_ptr lostError_;
 };
 
 // Shared helpers.

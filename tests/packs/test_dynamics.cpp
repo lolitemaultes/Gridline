@@ -114,6 +114,7 @@ void set(PluginState& s, int k, double v) { s.params[static_cast<size_t>(k)] = s
 // Master state with every band transparent.
 PluginState neutralMaster() {
   PluginState s = defaultPluginState("gl.master");
+  set(s, MsRef0 + MrModel, 0);  // these checks cover the legacy engine (older projects)
   for (int b = 0; b < kMsBands; ++b) {
     set(s, msParam(b, MbRatioHi), 1);
     set(s, msParam(b, MbRatioLo), 1);

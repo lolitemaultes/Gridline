@@ -301,7 +301,7 @@ std::shared_ptr<const KnobTable> delayBankAutoTable(const DelayBankUnitModes& md
   return std::make_shared<const KnobTable>(std::move(k));
 }
 
-bool decodeDelayBank(Context&, const std::vector<Event>& evs, PluginMapping& m) {
+bool decodeDelayBank(Context& c, const std::vector<Event>& evs, PluginMapping& m) {
   using namespace sfx;
   const Event* st = pluginState(evs);
   const size_t flags = 4 + (4 + 8 * 16) * 4;  // per-unit option records follow the values
@@ -367,7 +367,9 @@ bool decodeDelayBank(Context&, const std::vector<Event>& evs, PluginMapping& m) 
     (void)inType, (void)fbType;
   }
   // J-42: the 2x resampler (polyphase IIR half-bands) is the reference's own.
-  bindTable(m, delayBankAutoTable(modes));
+  // The export's solver decodes a state per candidate it tries and reads only the parameters:
+  // building the unit table (over 100 controls) each time took a Delay Bank to about 2.7x its export cost (K-X).
+  if (!c.paramsOnly) bindTable(m, delayBankAutoTable(modes));
   m.exact = exact;
   return true;
 }
