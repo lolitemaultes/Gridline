@@ -115,11 +115,6 @@ Released 2026-11-03. Everything that changed since 0.7.1. Projects from 0.7.1 op
   zoom the time, or either end of the vertical scroll bar to zoom the track height. The other end
   stays where it is. The ends light up under the pointer. Zoom, Default track height in the
   playlist menu brings the tracks back to their normal height.
-- **Ready for software stores**: Gridline's files for Flathub (Flatpak), the AUR, winget, Scoop,
-  Homebrew, Chocolatey, the FreeBSD ports and Fedora COPR, filled in for every release, with the
-  steps to submit them (`docs/packaging.md`). Each release also has a source archive,
-  `Gridline-<version>-source.tar.gz`; builds made from it can collaborate with the official
-  packages.
 
 ### Changed
 
@@ -187,7 +182,7 @@ Released 2026-11-03. Everything that changed since 0.7.1. Projects from 0.7.1 op
   recordings, renders, stems and slices), and the Edited audio folder now sits in that tab.
 - The mixer slot list and the channel menus also list installed plugins, not only built-in ones.
 - Gridline's id for Linux software centres is now `com.lolitemaultes.Gridline` (it was
-  `org.gridline.Gridline`, which the metadata lists as replaced), the id it has on Flathub.
+  `org.gridline.Gridline`, which the metadata lists as replaced).
 - In a Flatpak or snap, the update popup no longer offers to download a setup program: those
   installations are updated by their store.
 
