@@ -3,7 +3,7 @@
 # This copy builds the source tree it sits in (CI: .github/workflows/packaging.yml):
 #   flatpak-builder --user --install --force-clean build-flatpak packaging/flatpak/com.lolitemaultes.Gridline.yml
 # The copy for the Flathub repository is written by packaging/render.py: the same file with the
-# Gridline source replaced by the release tag and its commit (docs/packaging.md).
+# Gridline source replaced by the release tag and its commit.
 #
 # Everything is built from source inside the SDK; nothing is downloaded while building. Import from
 # URL's programs come from their official sources: FFmpeg built audio only without GPL or nonfree

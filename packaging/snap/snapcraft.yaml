@@ -1,4 +1,4 @@
-# Gridline as a snap (Snap Store name: gridline). Prepared, not yet published: docs/packaging.md
+# Gridline as a snap (Snap Store name: gridline). Prepared, not yet published.
 # explains what the store must approve first (the plugin folder access below).
 # Build from the source tree root:
 #   mkdir -p snap && cp packaging/snap/snapcraft.yaml snap/ && snapcraft pack

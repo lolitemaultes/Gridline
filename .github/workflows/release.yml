@@ -597,7 +597,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           path: src
-      - name: Distribution channel files (K-1, docs/packaging.md)
+      - name: Distribution channel files (K-1)
         run: |
           # Flathub, AUR, Homebrew, the Windows package managers, the FreeBSD port, COPR and the
           # snap, filled in with this release's checksums. Not release files: the workflow

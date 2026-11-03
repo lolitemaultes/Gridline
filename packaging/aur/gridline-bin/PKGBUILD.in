@@ -1,6 +1,6 @@
 # Maintainer: lolitemaultes <188165912+lolitemaultes@users.noreply.github.com>
 # Gridline from the official Linux release (Gridline-<version>-linux-<arch>.tar.gz).
-# Template: packaging/render.py fills in the version and checksums (docs/packaging.md).
+# Template: packaging/render.py fills in the version and checksums.
 pkgname=gridline-bin
 _ver=@VERSION@
 pkgver=@PKGVER@

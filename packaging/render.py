@@ -30,7 +30,7 @@ Output (each folder is what goes into that channel's repository or submission):
     freebsd/audio/gridline/   Makefile, distinfo, pkg-descr, pkg-plist
     copr/               gridline.spec
     snap/               snapcraft.yaml (copy it to snap/snapcraft.yaml at the source root)
-Nothing is uploaded or submitted anywhere: docs/packaging.md has the steps for each channel.
+Nothing is uploaded or submitted anywhere.
 """
 import argparse
 import datetime

@@ -1,13 +1,13 @@
 name: Packaging
 
-# K-1: the files for each distribution channel (packaging/, docs/packaging.md) are checked here.
+# K-1: the files for each distribution channel (packaging/) are checked here.
 #   - every push and pull request that touches them: templates render, manifests parse and match
 #     their published schemas, the AppStream metadata and desktop entry validate;
 #   - the same, plus real builds (Flatpak with flatpak-builder and Flathub's linter, the AUR source
 #     package with makepkg and namcap, the COPR spec with rpmbuild, the FreeBSD port, the snap), on
 #     "Run workflow", on a version tag and every Monday.
 # Nothing is published or submitted: the release workflow writes the filled-in files for a release
-# as the workflow artifact "packaging-<version>" and the user submits them (docs/packaging.md).
+# as the workflow artifact "packaging-<version>" and the user submits them.
 on:
   push:
     branches: [main]

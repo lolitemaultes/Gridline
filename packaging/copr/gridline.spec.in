@@ -1,5 +1,5 @@
 # Gridline for Fedora (COPR, or a local rpmbuild): built from the release's source archive.
-# Template: packaging/render.py fills in the version (docs/packaging.md).
+# Template: packaging/render.py fills in the version.
 # Gridline carries a few libraries in third_party/ (Dear ImGui, RtMidi, Rubber Band, Lua, libjuice
 # and others, each with its licence there), which a COPR build may keep.
 Name:           gridline

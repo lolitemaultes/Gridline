@@ -2,7 +2,7 @@
 <!-- Gridline for software centres (GNOME Software, KDE Discover, Flathub) and AppImage tools:
      AppStream metadata, installed to share/metainfo. Every published release gets a <release>
      entry here (release.yml checks it and validates the file with appstreamcli; docs/releasing.md).
-     The id is also the Flatpak application id (packaging/flatpak, docs/packaging.md); it replaced
+     The id is also the Flatpak application id (packaging/flatpak); it replaced
      org.gridline.Gridline in 0.7.2. -->
 <component type="desktop-application">
   <id>com.lolitemaultes.Gridline</id>

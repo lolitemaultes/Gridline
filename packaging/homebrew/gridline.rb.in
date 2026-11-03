@@ -1,4 +1,4 @@
-# Homebrew cask for Gridline (for a tap of Gridline's own: docs/packaging.md).
+# Homebrew cask for Gridline (for a tap of Gridline's own).
 # Template: packaging/render.py fills in the version and checksum.
 cask "gridline" do
   version "@VERSION@"

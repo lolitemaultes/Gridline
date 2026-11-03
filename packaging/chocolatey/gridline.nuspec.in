@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Chocolatey package for Gridline. Template: packaging/render.py fills in the version
-     (docs/packaging.md). The package downloads the official installer from the GitHub release. -->
+<!-- Chocolatey package for Gridline. Template: packaging/render.py fills in the version.
+     The package downloads the official installer from the GitHub release. -->
 <package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
   <metadata>
     <id>gridline</id>

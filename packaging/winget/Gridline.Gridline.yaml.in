@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.version.1.10.0.schema.json
-# Template: packaging/render.py fills in the version (docs/packaging.md).
+# Template: packaging/render.py fills in the version.
 PackageIdentifier: Gridline.Gridline
 PackageVersion: @VERSION@
 DefaultLocale: en-US

@@ -78,7 +78,7 @@ version, raise `project(VERSION)` and start again with a label or without one.
 Each release also has `Gridline-<version>-source.tar.gz` (in `SHA256SUMS` like every file), and
 the release workflow uploads the workflow artifact `packaging-<version>`: the Flathub manifest,
 AUR, Homebrew, winget, Scoop, Chocolatey, FreeBSD port, COPR and snap files filled in for this
-release. Submitting them is a manual step per channel, described in docs/packaging.md.
+release. Submitting them is a manual step per channel.
 
 ## Installer design
 
