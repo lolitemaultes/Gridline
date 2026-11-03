@@ -32,7 +32,7 @@ for sz in 16 24 32 48 64 96 128 256 512; do
   f="$P/share/icons/hicolor/${sz}x${sz}/apps/$iconname.png"
   if [ ! -f "$f" ]; then bad "missing $f"; continue; fi
   # PNG IHDR width / height (bytes 16..23)
-  dim="$(od -An -tu1 -j16 -N8 "$f" | tr -s ' ' | sed 's/^ //')"
+  dim="$(od -An -tu1 -j16 -N8 "$f" | tr -s ' ' | sed -E 's/^ //; s/(^| )0+([0-9])/\1\2/g')"  # the BSDs' od pads with zeros
   set -- $dim
   w=$(( ($1 << 24) | ($2 << 16) | ($3 << 8) | $4 )); h=$(( ($5 << 24) | ($6 << 16) | ($7 << 8) | $8 ))
   [ "$w" = "$sz" ] && [ "$h" = "$sz" ] || bad "$f is ${w}x${h}, not ${sz}x${sz}"
@@ -54,7 +54,7 @@ if [ -n "$APPDIR" ]; then  # AppImage root: the entry, the icon and .DirIcon (fi
   [ -f "$APPDIR/$wmclass.desktop" ] || bad "AppImage root has no $wmclass.desktop"
   [ -e "$APPDIR/$iconname.png" ] || [ -e "$APPDIR/$iconname.svg" ] || bad "AppImage root has no $iconname icon"
   if [ -e "$APPDIR/.DirIcon" ]; then
-    dim="$(od -An -tu1 -N24 "$APPDIR/.DirIcon" | tr -s ' \n' '  ' | sed 's/^ //')"
+    dim="$(od -An -tu1 -N24 "$APPDIR/.DirIcon" | tr -s ' \n' '  ' | sed -E 's/^ //; s/(^| )0+([0-9])/\1\2/g')"
     set -- $dim
     [ "$2" = 80 ] && [ "$3" = 78 ] && [ "$4" = 71 ] || bad ".DirIcon is not a PNG (thumbnailers read a PNG)"
     w=$(( (${17} << 24) | (${18} << 16) | (${19} << 8) | ${20} ))
