@@ -3,6 +3,16 @@
 All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLINE_VERSION_PRE` in
 `CMakeLists.txt`; the release workflow publishes the section of the tagged version as the release notes.
 
+## Unreleased
+
+### Fixed
+
+- **FL Studio patches line up parallel paths**: imported patches with a plugin that has latency now
+  line up parallel paths at every module's input, by the latency each plugin reports, and report the
+  longest path to the host, as they do in FL Studio. The mixer compensates for it, and uneven parallel
+  paths sum as they do there. A module's level from FL Studio now scales its output too. Hand-wired
+  graphs already worked this way. Projects you imported before keep their sound until you import them again.
+
 ## 0.7.2
 
 Released 2026-11-03. Everything that changed since 0.7.1. Projects from 0.7.1 open as they are, except that Plasma's Linear Fold, Sine Fold and Sine Shaper distortion modes sound different at high drive.

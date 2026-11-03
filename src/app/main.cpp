@@ -2197,6 +2197,7 @@ int main(int argc, char** argv) {
     const float uiScale = devUiScale > 0 ? uiscale::effectiveScale(devUiScale, false, 1.0f, winW, winH)
                                          : uiscale::effectiveScale(app.settings.getNumber("ui.scale"), app.settings.getBool("ui.scaleAuto"), autoDpi, winW, winH);
 
+    setPluginWindowUiScale(uiScale);
     viewports::setAllowed(app.settings.getBool("ui.detachWindows"));
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplSDL2_NewFrame();

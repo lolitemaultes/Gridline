@@ -71,6 +71,7 @@ bool screenshotHostedEditor(const PluginTarget& t, const std::string& pngPath);
 // Dev checks: logs requested / resulting sizes of plugin windows to stderr;
 // the settings panel of new plugin windows starts unfolded on `page` (-1: folded).
 void setPluginWindowLog(bool on);
+void setPluginWindowUiScale(float scale);  // K-35: the main window's interface scale (each frame)
 void setPluginWindowPanel(int page);
 // Dev checks: plugin windows are resized to w x h (as by the user) shortly after opening.
 void setPluginWindowDevResize(int w, int h);

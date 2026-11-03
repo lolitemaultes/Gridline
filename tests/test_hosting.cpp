@@ -33,6 +33,8 @@
 #include "vst2/Probe.h"
 #include "vst3/Probe.h"
 #include "host/Dylib.h"
+#include "host/EditorClose.h"
+#include "host/sandbox/Sandbox.h"
 
 namespace fs = std::filesystem;
 using namespace gl;
@@ -1267,6 +1269,118 @@ void testLostPlugin() {
 #endif
 }
 
+// K-37: a bridged plugin's interface closes on a helper thread, however long it takes.
+void testBridgedClose() {
+  struct FakeEditor final : host::Editor {
+    std::atomic<int> mode{0};  // 0: returns, 1: throws, 2: waits for `release`
+    std::atomic<bool> release{false};
+    std::atomic<int> calls{0};
+    bool size(int& w, int& h) override { return w = 1, h = 1, true; }
+    bool attach(void*) override { return true; }
+    void detachOffThread() override {
+      ++calls;
+      if (mode.load() == 1) throw std::runtime_error("read: End of file");
+      while (mode.load() == 2 && !release.load()) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+  };
+  {
+    FakeEditor e;
+    host::EditorClose c(&e);
+    expect(c.waitFor(5000) && c.done() && !c.failed() && e.calls.load() == 1, "bridged close: an interface that closes is done");
+  }
+  {
+    FakeEditor e;
+    e.mode = 1;
+    host::EditorClose c(&e);
+    expect(c.waitFor(5000) && c.failed(), "bridged close: the bridge's other process gone is reported, no abort");
+  }
+  {
+    FakeEditor e;
+    e.mode = 2;
+    host::EditorClose c(&e);
+    const bool waited = !c.waitFor(30);
+    expect(waited && !c.done(), "bridged close: a stuck interface does not keep the caller waiting");
+    e.release = true;
+    expect(c.waitFor(5000) && c.done() && !c.failed(), "bridged close: it is picked up when it comes back");
+  }
+  // While it closes the UI thread leaves the plugin alone; the audio thread goes on.
+  auto g = createGenerator(kClapSynth);
+  PluginState st = defaultPluginState(kClapSynth);
+  g->prepareHost(st, 48000);
+  host::HostedInstance* hi = host::hostedInstance(g.get());
+  host::Backend* b = hi->backend();
+  expect(!b->bridged(), "bridged close: a native plugin is not bridged");
+  b->setEditorClosing(true);
+  std::string data;
+  host::UiUpdate u;
+  hi->pumpUi(u);
+  expect(!hi->captureState(data) && hi->paramText(2, 1.0f).empty() && !b->editorAvailable() && !u.crashed && !hi->crashed(),
+         "bridged close: nothing asks the plugin meanwhile, it is not a crash");
+  std::vector<float> L, R;
+  g->noteOn(1, 69.0, 1.0f, 0);
+  runGen(*g, st, L, R, 2048, 512);
+  expect(peak(L) > 0.01f, "bridged close: it keeps sounding meanwhile");
+  b->setEditorClosing(false);
+  expect(hi->captureState(data) && !data.empty(), "bridged close: the plugin answers again afterwards");
+  b->setLostReason("its interface did not close");
+  b->markLost();
+  expect(hi->crashed() && hi->crashReason() == "its interface did not close", "bridged close: given up on, it counts as lost and says why");
+}
+
+// K-31: the sandboxed interface inside a window of Gridline's (Linux), by its messages. The window here is
+// made up: the test plugin's plain interface takes any.
+void testSandboxEmbeddedInterface() {
+#if !defined(_WIN32)
+  ::setenv("GRIDLINE_TEST_PLAIN_GUI", "1", 1);
+  ::setenv("GRIDLINE_DEV_SANDBOX_EMBED", "1", 1);
+  host::setRunInSandbox(kClapSynth, true);
+  auto g = createGenerator(kClapSynth);
+  PluginState st = defaultPluginState(kClapSynth);
+  if (g) g->prepareHost(st, 48000);
+  host::HostedInstance* hi = g ? host::hostedInstance(g.get()) : nullptr;
+  expect(hi && hi->sandboxed(), "sandbox interface: the plugin runs in the sandbox");
+  if (hi) {
+    host::Backend* b = hi->backend();
+    expect(b->editorAvailable(), "sandbox interface: it offers its interface");
+    auto e = b->createEditor();
+    expect(e && !e->external(), "sandbox interface: it goes inside Gridline's own window");
+    if (e) {
+      expect(!b->createEditor(), "sandbox interface: one at a time");
+      int w = 0, h = 0;
+      expect(e->size(w, h) && w == 320 && h == 200, "sandbox interface: the size it asks for comes across");
+      expect(!e->canResize(), "sandbox interface: fixed size comes across");
+      int cw = 500, ch = 500;
+      e->constrain(cw, ch);
+      expect(cw == 320 && ch == 200, "sandbox interface: the plugin's size constraint comes across");
+      e->setContentScale(2.0);
+      void* parent = reinterpret_cast<void*>(static_cast<uintptr_t>(0x4A00007));
+      expect(e->attach(parent), "sandbox interface: attached to the window");
+      e->setSize(320, 200);
+      expect(!e->hostKey(true, 44, 0, 0), "sandbox interface: a key is offered, not used");
+      host::UiUpdate u;
+      for (int i = 0; i < 5; ++i) {
+        hi->pumpUi(u);
+        e->idle();
+      }
+      expect(e->isOpen() && !hi->crashed(), "sandbox interface: open and alive");
+      e.reset();
+      auto again = b->createEditor();
+      expect(again && again->attach(parent), "sandbox interface: closes and opens again");
+      // The sandbox process dying: the window closes (PluginWindow: isOpen), the app goes on.
+      auto* gen = g.get();
+      gen->noteOn(1, 1.0, 1.0f, 0);  // key 1 crashes the plugin on purpose
+      std::vector<float> L, R;
+      runGen(*gen, st, L, R, 2048, 512);
+      expect(waitFor([&] { return hi->crashed(); }, 5.0) && !again->isOpen(), "sandbox interface: the process dying closes it");
+    }
+  }
+  g.reset();
+  host::setRunInSandbox(kClapSynth, false);
+  ::unsetenv("GRIDLINE_TEST_PLAIN_GUI");
+  ::unsetenv("GRIDLINE_DEV_SANDBOX_EMBED");
+#endif
+}
+
 // CLAP preset discovery + preset load; plugin bypass.
 void testPresetsAndBypass() {
   auto g = createGenerator(kClapSynth);
@@ -1489,6 +1603,21 @@ void testSandboxFeatures() {
 // bar under it, the settings panel under the bar) ----
 void testPluginWindowLayout() {
   namespace L = host::layout;
+  {  // K-35: at a scale the bar takes scale times its height and the interface keeps its pixels
+    const L::WindowLayout one = L::layoutWindow(1000, 600, 0);
+    const L::WindowLayout two = L::layoutWindow(1000, 600, 0, 2.0);
+    expect(one.bar.h == L::kBarRowH && two.bar.h == 2 * L::kBarRowH && two.plugin.w == 1000 && two.plugin.h == 600 && two.h == 600 + two.bar.h,
+           "bar at scale 2: twice as high, the interface untouched");
+    const L::WindowLayout units = L::barUnits(two, 2.0);
+    expect(units.w == 500 && units.bar.y == 300 && units.bar.h == L::kBarRowH, "bar at scale 2: its own units");
+    const L::WindowLayout folded = L::layoutWindow(1000, 600, 2 * L::kPanelH, 2.0);
+    expect(folded.panel.h == 2 * L::kPanelH && folded.h == 600 + two.bar.h + 2 * L::kPanelH, "bar at scale 2: panel under it");
+    int pw = 0, ph = 0;
+    L::pluginSizeForWindow(two.w, two.h, 0, pw, ph, 2.0);
+    expect(pw == 1000 && ph == 600, "bar at scale 2: window size back to the plugin's size");
+    const L::WindowLayout nar = L::layoutWindow(64, 48, 0, 2.0);
+    expect(nar.w == 2 * L::kMinWindowW, "bar at scale 2: the narrowest window is twice as wide");
+  }
   // Sizes installed plugins asked for on the development machine (tiny Apple
   // units up to large synths), plus extremes.
   const int sizes[][2] = {{48, 30},   {120, 90},  {235, 375}, {236, 375}, {484, 255},  {500, 200},  {522, 72},    {604, 308},
@@ -1747,6 +1876,8 @@ int main() {
   testLatencyChange();
   testClapModulation();
   testLostPlugin();
+  testBridgedClose();
+  testSandboxEmbeddedInterface();
   testPresetsAndBypass();
   testSandboxFeatures();
   testPluginWindowLayout();

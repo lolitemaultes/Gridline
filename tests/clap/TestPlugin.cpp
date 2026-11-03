@@ -17,11 +17,13 @@
 #include <stdexcept>
 #include <clap/clap.h>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <new>
+#include <thread>
 
 #include "Probe.h"
 #if defined(__APPLE__)
@@ -334,31 +336,47 @@ bool presetFromLocation(const clap_plugin_t* p, uint32_t kind, const char*, cons
 }
 const clap_plugin_preset_load_t kPresetLoad = {presetFromLocation};
 
+// GRIDLINE_TEST_PLAIN_GUI: an interface that draws nothing and takes any window (messages and
+// threads of interface calls, on any system, in the process that loads the plugin);
+// GRIDLINE_TEST_GUI_CLOSE_HANGS: closing it never returns (a plugin hanging behind a bridge).
+bool plainGui() { return std::getenv("GRIDLINE_TEST_PLAIN_GUI") != nullptr; }
+
 #if defined(__APPLE__)
+constexpr const char* kGuiApi = CLAP_WINDOW_API_COCOA;
+#elif defined(_WIN32)
+constexpr const char* kGuiApi = CLAP_WINDOW_API_WIN32;
+#else
+constexpr const char* kGuiApi = CLAP_WINDOW_API_X11;
+#endif
+
 // The synth's own interface (macOS): an embedded, fixed 320 x 200 Cocoa view.
 constexpr uint32_t kGuiW = 320, kGuiH = 200;
 const clap_plugin_gui_t kSynthGui = {
     [](const clap_plugin_t*, const char* api, bool floating) {
       if (gProbe.throwInProcess) throw std::runtime_error("read: Connection reset by peer");
-      return !floating && api && !std::strcmp(api, CLAP_WINDOW_API_COCOA);
+      return !floating && api && !std::strcmp(api, kGuiApi);
     },
     [](const clap_plugin_t*, const char** api, bool* floating) {
-      *api = CLAP_WINDOW_API_COCOA;
+      *api = kGuiApi;
       *floating = false;
       return true;
     },
     [](const clap_plugin_t* p, const char* api, bool floating) {
-      if (floating || !api || std::strcmp(api, CLAP_WINDOW_API_COCOA) || synthOf(p)->gui) return false;
+      if (floating || !api || std::strcmp(api, kGuiApi) || synthOf(p)->gui) return false;
       synthOf(p)->gui = true;
       return true;
     },
     [](const clap_plugin_t* p) {
       Synth* s = synthOf(p);
+      if (std::getenv("GRIDLINE_TEST_GUI_CLOSE_HANGS"))
+        for (;;) std::this_thread::sleep_for(std::chrono::seconds(1));
+#if defined(__APPLE__)
       if (s->view) {
         gridlineTestViewRemove(s->view);
         s->view = nullptr;
         --gProbe.views;
       }
+#endif
       s->gui = false;
     },
     [](const clap_plugin_t*, double) { return false; },
@@ -377,21 +395,27 @@ const clap_plugin_gui_t kSynthGui = {
     [](const clap_plugin_t*, uint32_t w, uint32_t h) { return w == kGuiW && h == kGuiH; },
     [](const clap_plugin_t* p, const clap_window_t* win) {
       Synth* s = synthOf(p);
+      if (plainGui()) return s->gui && win;
+#if defined(__APPLE__)
       if (!s->gui || s->view || !win || !win->cocoa) return false;
       s->view = gridlineTestViewAttach(win->cocoa, kGuiW, kGuiH, "CLAP test interface", 0.18f, 0.48f, 0.30f);
       if (s->view) ++gProbe.views;
       return s->view != nullptr;
+#else
+      return false;
+#endif
     },
     [](const clap_plugin_t*, const clap_window_t*) { return false; },
     [](const clap_plugin_t*, const char*) {},
     [](const clap_plugin_t*) { return true; },
     [](const clap_plugin_t*) { return true; },
 };
-#endif
 
 const void* synthExt(const clap_plugin_t*, const char* id) {
 #if defined(__APPLE__)
   if (!std::strcmp(id, CLAP_EXT_GUI)) return &kSynthGui;
+#else
+  if (!std::strcmp(id, CLAP_EXT_GUI) && plainGui()) return &kSynthGui;
 #endif
   if (!std::strcmp(id, CLAP_EXT_PARAMS)) return &kSynthParams;
   if (!std::strcmp(id, CLAP_EXT_STATE)) return &kSynthState;

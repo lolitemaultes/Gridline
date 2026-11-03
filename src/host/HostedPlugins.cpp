@@ -266,9 +266,12 @@ class Core final : public HostedInstance {
   std::string crashReason() const override { return b_->crashReason(); }
   void requestReload() override { reload_.store(true); }
   const HostOptions& options() const override { return opts_; }
+  // K-37: nothing on the UI thread calls the plugin: it crashed, or its interface is closing on a
+  // helper thread and its own UI thread may be stuck (Backend::editorClosing).
+  bool uiBlocked() const { return b_->crashed() || b_->editorClosing(); }
   int totalLatency() const override {
     try {
-      return (b_->crashed() ? 0 : b_->latency()) + fixedSize_;
+      return (uiBlocked() ? 0 : b_->latency()) + fixedSize_;
     } catch (...) {
       b_->markLost();
       return fixedSize_;
@@ -297,7 +300,7 @@ class Core final : public HostedInstance {
   }
   void prepareHostNow(const PluginState& st, double sr) {
     for (size_t k = 0; k < ids_.size(); ++k) base_[k].store(k < st.params.size() ? st.params[k] : std::nanf(""), std::memory_order_relaxed);
-    if (b_->crashed()) return;
+    if (uiBlocked()) return;
     const bool needLoad = !loaded_ || st.data != lastData_;
     const bool needPrepare = !b_->active() || b_->sampleRate() != sr;
     if (!needLoad && !needPrepare) return;
@@ -351,6 +354,7 @@ class Core final : public HostedInstance {
       crashReported_ = true;
       return;
     }
+    if (b_->editorClosing()) return;  // picked up again once it has closed
     if (const int off = offlineRequest_.exchange(-1); off >= 0 && off != offlineApplied_) {
       suspend();
       b_->setOffline(off == 1);
@@ -428,7 +432,7 @@ class Core final : public HostedInstance {
 
   bool captureState(std::string& data) override {
     try {
-      if (b_->crashed() || !b_->getState(data)) return false;
+      if (uiBlocked() || !b_->getState(data)) return false;
     } catch (...) {
       b_->markLost();
       return false;  // the project keeps the state it has
@@ -438,7 +442,7 @@ class Core final : public HostedInstance {
   }
 
   std::string paramText(int index, float value) override {
-    if (b_->crashed() || index < 0 || static_cast<size_t>(index) >= ids_.size() || !mapped_[static_cast<size_t>(index)]) return {};
+    if (uiBlocked() || index < 0 || static_cast<size_t>(index) >= ids_.size() || !mapped_[static_cast<size_t>(index)]) return {};
     try {
       return b_->paramText(ids_[static_cast<size_t>(index)], cls_->toNormalized(static_cast<size_t>(index), value));
     } catch (...) {
@@ -449,7 +453,7 @@ class Core final : public HostedInstance {
 
   int programCount() const override {
     try {
-      return b_->crashed() ? 0 : b_->programCount();
+      return uiBlocked() ? 0 : b_->programCount();
     } catch (...) {
       b_->markLost();
       return 0;
@@ -457,14 +461,14 @@ class Core final : public HostedInstance {
   }
   std::string programName(int i) const override {
     try {
-      return b_->crashed() ? std::string() : b_->programName(i);
+      return uiBlocked() ? std::string() : b_->programName(i);
     } catch (...) {
       b_->markLost();
       return {};
     }
   }
   bool selectProgram(int i) override {
-    if (b_->crashed()) return false;
+    if (uiBlocked()) return false;
     suspend();
     bool ok = false;
     try {
@@ -481,7 +485,7 @@ class Core final : public HostedInstance {
     return ok;
   }
   const std::vector<PresetRef>& libraryPresets() override {
-    if (!presetsScanned_ && !b_->crashed()) {
+    if (!presetsScanned_ && !uiBlocked()) {
       try {
         presets_ = b_->discoverPresets();
       } catch (...) {
@@ -492,7 +496,7 @@ class Core final : public HostedInstance {
     return presets_;
   }
   bool loadLibraryPreset(size_t i) override {
-    if (b_->crashed() || i >= libraryPresets().size()) return false;
+    if (uiBlocked() || i >= libraryPresets().size()) return false;
     suspend();
     bool ok = false;
     try {

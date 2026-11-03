@@ -179,6 +179,17 @@ std::string pathOf(const void* address) {
 }
 #endif
 
+bool isBridged(const std::string& path) {
+  static const bool all = std::getenv("GRIDLINE_DEV_BRIDGED_PLUGINS") != nullptr;
+  if (all) return true;
+#if defined(__linux__)
+  return sym(loaded(path), "yabridge_version") != nullptr;
+#else
+  (void)path;
+  return false;
+#endif
+}
+
 }  // namespace dl
 
 }  // namespace gl::host

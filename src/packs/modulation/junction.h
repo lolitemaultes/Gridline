@@ -118,6 +118,8 @@ bool junctionSetNodeState(PluginState& host, uint32_t node, const PluginState& i
 JGraph junctionFromChain(const PatchGraph& chain);
 // `notRun`: routing the graph leaves out. `inserts`: FL mixer inserts of the track outputs (Outputs port k + 1).
 JGraph junctionFromV2(const PatchV2& g, std::vector<std::string>* notRun = nullptr, std::vector<int>* inserts = nullptr);
+// A module of an FL patch whose level is not 1 (FL's module level; the version 2 runtime has none).
+bool jV2HasLevels(const PatchV2& g);
 
 // ------------------------------------------------------------------- ports
 struct JPort {
@@ -165,11 +167,14 @@ JGraph junctionPatch(size_t index, bool fxHost);
 // without a rebuild. False when `state` is not graph data.
 bool prepareJunctionFor(const PluginState& state, ChannelAux& aux);
 void prepareJunction(const PluginState& state, const JGraph& g, ChannelAux& aux);
+// An FL patch that runs in the graph runtime: routing the version 2 runtime can't run, or
+// (imported as FL runs it, see PatchV2::align) a plugin with latency or a module level inside.
+bool patchV2RunsAsGraph(const PatchV2& g, double sampleRate);
 // Latency of the whole graph in samples (UI thread).
 int junctionLatency(const JGraph& g, double sampleRate);
 // Cables that get a compensating delay: parallel paths of different latency (UI thread).
 int junctionUnevenCables(const JGraph& g, double sampleRate);
-void junctionCompensationForTests(bool on);  // tests: compare with a runtime that sums paths unaligned
+void junctionCompensationForTests(bool on);  // tests: compare with the version 2 runtime, which sums paths unaligned
 
 struct JStats {
   static constexpr int kMax = kJMaxNodes;

@@ -306,6 +306,7 @@ void runAction(NestedWindow& w) {
 // ---------------------------------------------------------------- public
 
 void setPluginWindowLog(bool on) { gLog = on; }
+void setPluginWindowUiScale(float) {}
 void setPluginWindowPanel(int page) { gStartPanel = std::clamp(page, -1, 2); }
 void setPluginWindowDevAction(const std::string&) {}
 void setPluginWindowDrawStats(bool) {}

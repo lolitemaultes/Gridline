@@ -26,6 +26,11 @@ void* createContainer(const Window& w, const layout::Rect& r);
 // Moves / resizes it (keeps it pinned to the top of the content area on macOS).
 void setContainerFrame(const Window& w, void* container, const layout::Rect& r);
 void destroyContainer(const Window& w, void* container);
+// K-37: `w` moved on the screen. X11: a window inside another gets no ConfigureNotify of its own when
+// its toplevel moves, so the container is sent one, as ICCCM has a window manager do for a toplevel:
+// what is embedded in it may watch only the container, and needs to know where it is on the screen
+// (yabridge's Wine windows work out mouse positions from this). Elsewhere a no-op.
+void containerMoved(const Window& w, void* container);
 // Keeps `child` above `parent` (FL-style floating plugin windows): an AppKit
 // child window / an X11 transient. `on` = false undoes it before closing.
 void keepAbove(const Window& child, const Window& parent, bool on);

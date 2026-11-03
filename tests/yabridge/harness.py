@@ -203,7 +203,7 @@ class App:
         args = [ctx.app, "--no-ui-sounds", "--size", "1100x700", "--dev-input-live", self.live]
         for t in sandbox_types:
             args += ["--dev-sandbox", t, "1"]
-        env = dict(ctx.env, SDL_AUDIODRIVER="dummy", GRIDLINE_NO_PLUGIN_SCAN="1", GRIDLINE_NO_UPDATE_CHECK="1", GRIDLINE_DEV_PLUGIN_KEYS="1", GRIDLINE_DEV_BACKTRACE="1")
+        env = dict(ctx.env, SDL_AUDIODRIVER="dummy", GRIDLINE_NO_PLUGIN_SCAN="1", GRIDLINE_NO_UPDATE_CHECK="1", GRIDLINE_DEV_PLUGIN_KEYS="1", GRIDLINE_DEV_BACKTRACE="1", YABRIDGE_DEBUG_LEVEL="0+editor")
         self.proc = subprocess.Popen([str(a) for a in args], stdout=self.log, stderr=subprocess.STDOUT, env=env, start_new_session=True)
         self.seq = 0
 
@@ -748,6 +748,9 @@ def editor_cell(ctx, r, app, target):
     r.add("content scale told to the plugin (for information)", "pass" if m else "skip", m.group(0) if m else "not told")
     time.sleep(1.0)
     check_editor_shown(ctx, r, w, "opened")
+    row = 28 * int(ctx.scale)  # the bar's row follows the system scale; one or two rows by width
+    bar = w["h"] - w["ph"]
+    r.expect("the window bar follows the system scale", bar in (row, 2 * row), f"bar {bar} pixels, row {row}")
     if not ctx.has_input:
         r.add("mouse and keyboard", "skip", ctx.no_input_reason)
         return True
@@ -1113,21 +1116,9 @@ def probe_cell(ctx, r, fmt, mode, types):
         p = app.wait_instance()
         if not r.expect("the plugin loads", bool(p), app.output()[-300:] if not p else f"sandboxed {p['sandboxed']}"):
             return
-        if sandbox:
-            # Gridline's sandboxed plugin windows exist on macOS only (Sandbox.cpp hasEditor): the
-            # plugin runs out of process and shows Gridline's generic parameter panel on Linux.
-            app.send("plugwin chan 0")
-            time.sleep(2.0)
-            ws = app.windows()
-            if ws:
-                r.add("sandbox: no own interface expected on Linux", "fail", f"a window opened: {ws}")
-            else:
-                r.add("editor, mouse, keyboard, resize", "skip", "Run in sandbox shows no plugin interface on Linux: Gridline opens sandboxed interfaces on macOS only")
-                img = ctx.x.shot(app.main_window() or "root", str(ctx.cell_dir / "shot-sandbox-panel.png"))
-                r.add("sandbox: Gridline's own panel on screen", "pass" if img else "skip", "screenshot taken" if img else "no main window")
-        else:
-            editor_cell(ctx, r, app, "chan 0")
-            lifecycle_cell(ctx, r, app, "chan 0")
+        # Sandboxed or not, the interface is in Gridline's own plugin window.
+        editor_cell(ctx, r, app, "chan 0")
+        lifecycle_cell(ctx, r, app, "chan 0")
     finally:
         if app.alive():
             done, code = app.quit()
@@ -1143,17 +1134,17 @@ def probe_cell(ctx, r, fmt, mode, types):
     kill_host_cell(ctx, r, types, sandbox)
 
 
-def real_cell(ctx, r, name, fmt, type_id, entry):
+def real_cell(ctx, r, name, fmt, type_id, entry, sandbox=False):
     """A real plugin: is it drawn, do clicks change pixels, do drags change parameters in Gridline."""
-    r.cell = {"format": fmt, "mode": "inproc", "plugin": name, "host": "gridline"}
-    ctx.cell_dir = ctx.out / f"real-{re.sub(r'[^A-Za-z0-9]+', '-', name)}-{fmt}"
+    r.cell = {"format": fmt, "mode": "sandbox" if sandbox else "inproc", "plugin": name, "host": "gridline"}
+    ctx.cell_dir = ctx.out / f"real-{re.sub(r'[^A-Za-z0-9]+', '-', name)}-{fmt}{'-sandbox' if sandbox else ''}"
     ctx.cell_dir.mkdir(parents=True, exist_ok=True)
     x = ctx.x
     path = make_project(ctx, ctx.cell_dir / "start.json", type_id)
     d = json.loads(Path(path).read_text())
     d["channels"][0]["plugin"]["params"] = []
     Path(path).write_text(json.dumps(d))
-    app = App(ctx, "real")
+    app = App(ctx, "real", [type_id] if sandbox else [])
     try:
         app.send(f'open "{path}"')
         p = app.wait_instance(timeout=180)
@@ -1231,6 +1222,21 @@ def real_cell(ctx, r, name, fmt, type_id, entry):
         app.send("plugwin close")
         answers = app.ask("epoch", r"epoch frame", timeout=30) is not None
         r.expect("closing the interface: Gridline keeps answering", answers and app.alive(), f"answers {answers}, alive {app.alive()}, {time.time() - t0:.1f} s")
+        # A plugin that never closes counts as lost once the wait is over; the others go on.
+        if answers and app.alive():
+            time.sleep(1.0)
+            p = app.params()
+            t1 = time.time()
+            while p and not p["crashed"] and not p["open"] and time.time() - t1 < 25.0 and name == "Dexed":
+                time.sleep(1.0)
+                p = app.params()
+            r.add("closing the interface: the plugin afterwards (for information)", "pass" if p else "fail", f"{p and {k: p[k] for k in ('crashed', 'open')}}, {time.time() - t0:.1f} s; " + (app.output()[-160:] if not p else ""))
+            still = app.ask("epoch", r"epoch frame", timeout=20) is not None
+            r.expect("closing the interface: Gridline still answers after that", still and app.alive(), f"answers {still}")
+            app.send("plugwin chan 0")
+            ws = wait_window(app, timeout=30)
+            lost = bool(p and p["crashed"])
+            r.add("closing the interface: it opens again, unless it was lost" , "pass" if bool(ws) != lost else "fail", f"{len(ws)} windows, lost {lost}")
         if not answers and app.alive():
             # Stuck: where, then a new process that quits with the interface open, for the quit path alone.
             app.dump_threads()
@@ -1474,6 +1480,7 @@ def main():
     ctx.no_input_reason = a.no_input or "no XTEST route to this display"
     ctx.x = X(sync=not ctx.weston)
     ctx.format = ""
+    ctx.scale = a.scale
     ctx.demo = ctx.work / "demo.json"
     sh(ctx.cli, "demo", ctx.demo, timeout=60, check=True, env=ctx.env)
 
@@ -1549,6 +1556,8 @@ def main():
             continue
         try:
             real_cell(ctx, r, p["name"], p["format"], p["type"], None)
+            if p["format"] == "vst3" and not ctx.weston and a.display == "xvfb-openbox":  # a real toolkit in the sandbox's window
+                real_cell(ctx, r, p["name"], p["format"], p["type"], None, sandbox=True)
         except Exception as e:
             r.add("harness error", "fail", repr(e))
 

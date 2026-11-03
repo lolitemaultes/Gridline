@@ -8,8 +8,10 @@
 // context's GL objects and font atlas, so they look like the rest of
 // Gridline. The plugin view sits above the GL surface and is never covered.
 //
-// Sandboxed plugins show their interface in a window of the sandbox process;
-// Gridline docks a bar-only window right under it and follows it.
+// macOS: sandboxed plugins show their interface in a window of the sandbox
+// process; Gridline docks a bar-only window right under it and follows it.
+// Linux: the sandbox process attaches the interface to this window's container,
+// so a sandboxed plugin's window is like any other (Sandbox.cpp embedsEditors).
 //
 // Keys (J-66): Gridline's global shortcuts work while a plugin window has
 // the keyboard, as in FL Studio. Keys the plugin's interface does not use
@@ -23,7 +25,9 @@
 #include "SysWm.h"
 #include <algorithm>
 #include <atomic>
+#include <cfloat>
 #include <cmath>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <map>
@@ -33,6 +37,7 @@
 #include <vector>
 #include "../core/I18n.h"
 #include "../core/UiScale.h"
+#include "../host/EditorClose.h"
 #include "../host/EditorLayout.h"
 #include "../host/HostedPlugins.h"
 #include "../host/PluginPrefs.h"
@@ -45,6 +50,7 @@
 #include "Theme.h"
 #include "Widgets.h"
 #include "../../third_party/imgui/imgui.h"
+#include "../../third_party/imgui/imgui_internal.h"
 #include "../../third_party/imgui/imgui_impl_opengl3.h"
 #include "../../third_party/imgui/imgui_impl_sdl2.h"
 
@@ -57,12 +63,14 @@ namespace {
 
 bool gLog = false;
 int gStartPanel = -1;  // dev: settings panel page new windows start with
+float gUiScale = 1.0f;  // K-35: the main window's interface scale, this frame
 int gDevResizeW = 0, gDevResizeH = 0;  // dev: first window dragged to this size after a few frames
 bool gDevResized = false;
 std::string gDevAction;  // dev: bar button pressed on the first window ("generic", "sandbox", "settings")
 bool gDevKeys = false;  // dev: Space typed into the first window's interface (J-66 check)
 bool gDrawStats = false;  // dev: plugin interface drawing is counted (--frame-stats)
 SDL_Window* gMainWin = nullptr;
+bool gKeyboardToMain = false;  // a closing plugin window had the keyboard
 SDL_GLContext gMainGl = nullptr;
 std::thread::id gUiThread;
 
@@ -163,6 +171,21 @@ struct ContextGuard {
 
 using Action = pluginbar::Action;
 
+// K-37: how long the UI thread waits for a bridged plugin's interface to close before it gets on
+// with its frames, and how long the plugin then has before it counts as lost.
+constexpr int kBridgedCloseWaitMs = 300, kBridgedGoingAwayWaitMs = 2000;
+Uint32 bridgedGiveUpMs() {
+  static const Uint32 ms = [] {
+    const char* e = std::getenv("GRIDLINE_DEV_BRIDGED_GIVE_UP_MS");  // tests
+    return e ? static_cast<Uint32>(std::atoi(e)) : Uint32{15000};
+  }();
+  return ms;
+}
+void traceBridgedClose(const char* what) {  // the test's and the harness's view of it
+  static const bool on = std::getenv("GRIDLINE_DEV_BRIDGED_PLUGINS") != nullptr || std::getenv("GRIDLINE_DEV_PLUGIN_KEYS") != nullptr;
+  if (on) std::fprintf(stderr, "bridged close: %s\n", what);
+}
+
 struct PluginWindow {
   App* app = nullptr;
   PluginTarget target;
@@ -191,13 +214,34 @@ struct PluginWindow {
   std::string capturePath;  // dev check: capture on the next draw
   int frames = 0;           // frames drawn since opening
   std::set<int> heldKeys;   // scancodes whose key-down went to the main window (J-66)
+  int rootX = 0, rootY = 0;  // K-37: position the interface was last told about (Linux)
+  bool rootKnown = false;
+  bool complete = false;  // the window finished opening
+  // K-37: the bridged plugin's interface is closing on a helper thread; the window is hidden.
+  std::unique_ptr<host::EditorClose> closing;
+  Uint32 closingSince = 0;
+  bool reopenAfterClose = false;
+  bool instanceGoing = false;  // closed because the plugin instance is being destroyed
+  double scale = 1.0;  // K-35: window pixels per unit of the bar (X11 at a system scale)
+  ImU32 lastScaledEvent = 0;
 
-  int panelH() const { return panelPage >= 0 ? lay::kPanelH : 0; }
-  void computeLayout() { L = external ? lay::layoutBarWindow(extFrame[2] > 0 ? extFrame[2] : 420, panelH()) : lay::layoutWindow(pw, ph, panelH()); }
+  int panelH() const { return panelPage >= 0 ? static_cast<int>(std::lround(lay::kPanelH * scale)) : 0; }
+  void computeLayout() { L = external ? lay::layoutBarWindow(extFrame[2] > 0 ? extFrame[2] : 420, panelH()) : lay::layoutWindow(pw, ph, panelH(), scale); }
+
+  bool abandoned = false;  // the helper thread may still call back: never freed
+
+  void giveKeyboardBack() {
+    if (!win) return;
+    const bool hadKeyboard = (SDL_GetWindowFlags(win) & SDL_WINDOW_INPUT_FOCUS) != 0;
+    for (int sc : heldKeys) sendToMain(false, false, sc, 0);
+    heldKeys.clear();
+    if (gMainWin) native::keepAbove(nw, nativeOf(gMainWin), false);
+    if (hadKeyboard && gMainWin && !(SDL_GetWindowFlags(gMainWin) & SDL_WINDOW_HIDDEN)) gKeyboardToMain = true;
+  }
 
   void log(const char* what) {
     if (!gLog) return;
-    const lay::BarLayout B = lay::layoutBar(L.w);
+    const lay::BarLayout B = lay::layoutBar(lay::barUnits(L, scale).w);
     std::fprintf(stderr, "[plugin-window] %s | %s (%s)%s: plugin %dx%d (asked %dx%d)%s -> window %dx%d, bar %d (%d row%s), panel %d, scale %.1f\n", what,
                  name.c_str(), format.c_str(), external ? " sandbox" : "", pw, ph, askedW, askedH, resizable ? " resizable" : "", L.w, L.h, L.bar.h,
                  B.rows, B.rows == 1 ? "" : "s", L.panel.h, native::backingScale(nw));
@@ -237,7 +281,7 @@ struct PluginWindow {
       return;
     }
     int nw2 = 0, nh2 = 0;
-    lay::pluginSizeForWindow(w, h, panelH(), nw2, nh2);
+    lay::pluginSizeForWindow(w, h, panelH(), nw2, nh2, scale);
     editor->constrain(nw2, nh2);
     pw = std::max(nw2, lay::kMinPluginW);
     ph = std::max(nh2, lay::kMinPluginH);
@@ -265,6 +309,45 @@ struct PluginWindow {
     }
     if (external && extFrame[2] > 0) places()[target.key()] = {extFrame[0], extFrame[1]};
     if (backend && backend->lost()) (void)editor.release();  // K-9: closing it would call the lost plugin, and that throws
+    if (editor && backend && complete && !external && backend->bridged()) {  // K-37
+      backend->setEditorClosing(true);
+      closing = std::make_unique<host::EditorClose>(editor.get());
+      if (instanceGoing || closing->waitFor(kBridgedCloseWaitMs)) {
+        settleClosing(instanceGoing);
+        return;
+      }
+      traceBridgedClose("waiting");
+      closingSince = SDL_GetTicks();  // the frames go on; settleClosing() finishes this
+      giveKeyboardBack();
+      if (win) SDL_HideWindow(win);
+      if (gKeyboardToMain) SDL_RaiseWindow(gMainWin);
+      gKeyboardToMain = false;
+      backend->onGoingAway = [this]() { settleClosing(true); };
+      return;
+    }
+    finishClose();
+  }
+
+  // K-37: true once the closing is over: the plugin came back, or it counts as lost.
+  bool settleClosing(bool going) {
+    if (!closing) return true;
+    bool done = closing->done();
+    if (!done && going) done = closing->waitFor(kBridgedGoingAwayWaitMs);
+    if (!done && !going && SDL_GetTicks() - closingSince < bridgedGiveUpMs()) return false;
+    traceBridgedClose(done && !closing->failed() ? "closed" : "gave up");
+    backend->setEditorClosing(false);
+    if (!done || closing->failed()) {
+      if (!done) backend->setLostReason("its interface did not close");
+      backend->markLost();
+      (void)editor.release();  // the helper thread may still be inside it
+      abandoned = !done;
+    }
+    closing.reset();
+    finishClose();
+    return true;
+  }
+
+  void finishClose() {
     editor.reset();  // detaches the plugin's view before its container and window go
     if (container) native::destroyContainer(nw, container);
     container = nullptr;
@@ -283,14 +366,12 @@ struct PluginWindow {
     if (gl) SDL_GL_DeleteContext(gl);
     gl = nullptr;
     if (win) {
-      const bool hadKeyboard = (SDL_GetWindowFlags(win) & SDL_WINDOW_INPUT_FOCUS) != 0;
-      for (int sc : heldKeys) sendToMain(false, false, sc, 0);
-      heldKeys.clear();
-      if (gMainWin) native::keepAbove(nw, nativeOf(gMainWin), false);
+      giveKeyboardBack();
       SDL_DestroyWindow(win);
-      // The keyboard goes back to the main window (not to another app's window).
-      if (hadKeyboard && gMainWin && !(SDL_GetWindowFlags(gMainWin) & SDL_WINDOW_HIDDEN)) SDL_RaiseWindow(gMainWin);
     }
+    // The keyboard goes back to the main window (not to another app's window).
+    if (gKeyboardToMain) SDL_RaiseWindow(gMainWin);
+    gKeyboardToMain = false;
     win = nullptr;
     if (backend) backend->onGoingAway = nullptr;
     backend = nullptr;
@@ -301,6 +382,18 @@ struct PluginWindow {
 std::map<uint64_t, std::unique_ptr<PluginWindow>>& windows() {
   static std::map<uint64_t, std::unique_ptr<PluginWindow>> m;
   return m;
+}
+
+// K-37: windows whose bridged plugin is still closing its interface (never destroyed: outlives the
+// other statics, whose destruction at exit must not call a plugin).
+std::vector<std::unique_ptr<PluginWindow>>& closingWindows() {
+  static auto* v = new std::vector<std::unique_ptr<PluginWindow>>;
+  return *v;
+}
+
+// A window that is closed and leaves the list of open windows.
+void retire(std::unique_ptr<PluginWindow> w) {
+  if (w && w->closing) closingWindows().push_back(std::move(w));
 }
 
 PluginWindow* windowFor(const PluginTarget& t) {
@@ -345,14 +438,34 @@ void renderWindow(PluginWindow& w) {
   ImGui::SetCurrentContext(w.ctx);
   ImGui_ImplOpenGL3_NewFrame();
   ImGui_ImplSDL2_NewFrame();
+  if (w.scale != 1.0) {  // K-35: as the main window: the bar in interface units, drawn at the scale
+    ImGuiIO& io = ImGui::GetIO();
+    const float s = static_cast<float>(w.scale);
+    int ww = 0, wh = 0, dw = 0, dh = 0;
+    SDL_GetWindowSize(w.win, &ww, &wh);
+    SDL_GL_GetDrawableSize(w.win, &dw, &dh);
+    if (ww > 0 && wh > 0) {
+      io.DisplaySize = ImVec2(static_cast<float>(ww) / s, static_cast<float>(wh) / s);
+      io.DisplayFramebufferScale = ImVec2(static_cast<float>(dw) / io.DisplaySize.x, static_cast<float>(dh) / io.DisplaySize.y);
+    }
+    ImGuiContext& g = *ImGui::GetCurrentContext();
+    for (ImGuiInputEvent& e : g.InputEventsQueue) {  // queued mouse positions are in window pixels
+      if (e.EventId <= w.lastScaledEvent) continue;
+      w.lastScaledEvent = e.EventId;
+      if (e.Type == ImGuiInputEventType_MousePos && e.MousePos.PosX > -FLT_MAX * 0.5f) {
+        e.MousePos.PosX /= s;
+        e.MousePos.PosY /= s;
+      }
+    }
+  }
   ImGui::NewFrame();
   pluginbar::Bar bar;
   bar.app = w.app;
   bar.target = w.target;
   bar.type = w.type;
-  bar.L = w.L;
+  bar.L = lay::barUnits(w.L, w.scale);
   bar.panelPage = w.panelPage;
-  pluginbar::draw(bar, hi, static_cast<float>(w.L.bar.y));
+  pluginbar::draw(bar, hi, static_cast<float>(bar.L.bar.y));
   w.panelPage = bar.panelPage;
   if (bar.action != Action::None) w.action = bar.action;
   if (bar.wantPanel != pluginbar::kNoPanelChange) w.setPanel(bar.wantPanel);
@@ -501,6 +614,7 @@ void runAction(PluginWindow& w) {
 // ---------------------------------------------------------------- public
 
 void setPluginWindowLog(bool on) { gLog = on; }
+void setPluginWindowUiScale(float scale) { gUiScale = scale; }
 void setPluginWindowPanel(int page) { gStartPanel = std::clamp(page, -1, 2); }
 void setPluginWindowDevAction(const std::string& action) { gDevAction = action; }
 void setPluginWindowDrawStats(bool on) { gDrawStats = on; }
@@ -549,12 +663,17 @@ void closeHostedEditor(App& a, const PluginTarget& t) {
   auto it = windows().find(t.key());
   if (it == windows().end()) return;
   it->second->close();
+  auto w = std::move(it->second);
   windows().erase(it);
+  retire(std::move(w));
   (void)a;
 }
 
 void closeAllHostedEditors(App& a) {
-  for (auto& [k, w] : windows()) w->close();
+  for (auto& [k, w] : windows()) {
+    w->close();
+    retire(std::move(w));
+  }
   windows().clear();
   (void)a;
 }
@@ -564,6 +683,11 @@ bool openHostedEditor(App& a, const PluginTarget& t) {
     if (ex->win) SDL_RaiseWindow(ex->win);
     return true;
   }
+  for (auto& c : closingWindows())  // K-37: it opens as soon as its old interface has closed
+    if (c->target.key() == t.key() && c->closing) {
+      c->reopenAfterClose = true;
+      return true;
+    }
   host::HostedInstance* hi = hostedInstanceFor(a, t);
   if (!hi || hi->crashed()) {
     a.notify(hi ? "This plugin crashed: reload it first" : "This plugin is not loaded", true);
@@ -596,6 +720,9 @@ bool openHostedEditor(App& a, const PluginTarget& t) {
   w.format = b->format();
   w.backend = b;
   w.external = editor->external();
+#if defined(__linux__)  // X11: window pixels; the other systems as they were
+  if (!w.external) w.scale = std::clamp(static_cast<double>(gUiScale), 1.0, 4.0);
+#endif
   const auto place = places().find(t.key());
   const lay::Rect work = workArea(place != places().end() ? &place->second : nullptr);
   const std::string title = cls.name + "  \xC2\xB7  " + hostedTargetName(a, t);
@@ -676,14 +803,18 @@ bool openHostedEditor(App& a, const PluginTarget& t) {
       w.apply();
       editor->setSize(w.pw, w.ph);
     }
-    SDL_SetWindowMinimumSize(w.win, lay::kMinWindowW, w.L.bar.h + lay::kMinPluginH);
+    SDL_SetWindowMinimumSize(w.win, static_cast<int>(std::lround(lay::kMinWindowW * w.scale)), w.L.bar.h + lay::kMinPluginH);
     SDL_ShowWindow(w.win);
     w.shown = true;
     if (gMainWin && !(SDL_GetWindowFlags(gMainWin) & SDL_WINDOW_HIDDEN)) native::keepAbove(w.nw, nativeOf(gMainWin), true);
     SDL_RaiseWindow(w.win);
   }
   w.editor = std::move(editor);
-  b->onGoingAway = [raw]() { raw->close(); };
+  b->onGoingAway = [raw]() {
+    raw->instanceGoing = true;
+    raw->close();
+  };
+  w.complete = true;
   w.log("opened");
   windows()[t.key()] = std::move(pw);
   return true;
@@ -796,6 +927,17 @@ void hostedui::pluginWindowsIdle(App& a) {
       if (gDevKeys && w.container) devKeys(w);
       if (gDevKeys && w.external) devSandboxKeys(w);
       forwardPluginKeys(w);
+#if defined(__linux__)
+      if (w.container && w.win) {  // K-37: tell the interface where its window went
+        int rx = 0, ry = 0;
+        SDL_GetWindowPosition(w.win, &rx, &ry);
+        if (!w.rootKnown || rx != w.rootX || ry != w.rootY) {
+          w.rootX = rx, w.rootY = ry, w.rootKnown = true;
+          native::containerMoved(w.nw, w.container);
+        }
+      }
+#endif
+      if (!w.external && !w.editor->isOpen()) w.close();  // a sandboxed interface whose process died
       if (w.external) {
         if (!w.editor->isOpen()) {
           w.close();
@@ -821,7 +963,27 @@ void hostedui::pluginWindowsIdle(App& a) {
         }
       }
     }
-    it = w.dead ? windows().erase(it) : std::next(it);
+    if (w.dead) {
+      auto gone = std::move(it->second);
+      it = windows().erase(it);
+      retire(std::move(gone));
+    } else {
+      it = std::next(it);
+    }
+  }
+  auto& closingList = closingWindows();
+  for (size_t i = 0; i < closingList.size();) {
+    if (!closingList[i]->settleClosing(false)) {
+      ++i;
+      continue;
+    }
+    std::unique_ptr<PluginWindow> w = std::move(closingList[i]);
+    closingList.erase(closingList.begin() + static_cast<std::ptrdiff_t>(i));
+    const bool reopenIt = w->reopenAfterClose && !w->abandoned;
+    const PluginTarget t = w->target;
+    if (w->abandoned) (void)w.release();  // the helper thread may still call back into it
+    w.reset();
+    if (reopenIt) openHostedEditor(a, t);
   }
   pluginbar::reopenPending(a);  // windows to show again on new instances
   routePluginWindows(a);

@@ -144,6 +144,7 @@ class ClapGui final : public Editor {
   bool attach(void* parent) override;
   void setSize(int w, int h) override;
   void setContentScale(double scale) override;
+  void detachOffThread() override;
   bool created = false;
 
  private:
@@ -157,6 +158,7 @@ class ClapBackend final : public Backend {
     if (!mod) return nullptr;
     std::unique_ptr<ClapBackend> b(new ClapBackend);
     b->mod_ = mod;
+    b->bridged_ = dl::isBridged(path);
     b->mainThread_ = std::this_thread::get_id();
     b->plugin_ = mod->factory->create_plugin(mod->factory, &b->host_, id.c_str());
     if (!b->plugin_) {
@@ -196,6 +198,8 @@ class ClapBackend final : public Backend {
 
   const clap_plugin_t* plugin() const { return plugin_; }
   const clap_plugin_descriptor_t* descriptor() const { return desc_; }
+  bool bridged() const override { return bridged_; }
+  bool bridged_ = false;
 
   // ---- description ----
   const char* format() const override { return "CLAP"; }
@@ -932,6 +936,10 @@ class ClapBackend final : public Backend {
 
 ClapGui::~ClapGui() {
   if (b_->editor_ == this) b_->editorGone();
+}
+void ClapGui::detachOffThread() {
+  if (created && b_->gui()) b_->gui()->destroy(b_->plugin());
+  created = false;
 }
 bool ClapGui::size(int& w, int& h) {
   uint32_t uw = 640, uh = 420;

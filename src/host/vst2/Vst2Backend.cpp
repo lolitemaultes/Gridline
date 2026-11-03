@@ -51,6 +51,7 @@ class Vst2Editor final : public Editor {
   bool attach(void* parent) override;
   void idle() override;
   bool hostKey(bool down, int usage, uint32_t ch, uint32_t mods) override;
+  void detachOffThread() override;
   Vst2Backend* b_;
   bool open = false;
 };
@@ -69,6 +70,7 @@ class Vst2Backend final : public Backend {
       return nullptr;
     }
     b->fx_ = fx;
+    b->bridged_ = dl::isBridged(path);
     fx->hostData = b.get();
     b->dispatch(abi::opOpen);
     b->readInfo();
@@ -224,6 +226,7 @@ class Vst2Backend final : public Backend {
     return true;
   }
   bool hasEditor() const override { return (fx_->flags & abi::kFlagHasEditor) != 0; }
+  bool bridged() const override { return bridged_; }
   std::unique_ptr<Editor> createEditor() override {
     if (!hasEditor() || editor_) return nullptr;
     auto e = std::make_unique<Vst2Editor>(this);
@@ -423,6 +426,7 @@ class Vst2Backend final : public Backend {
   Vst2Editor* editor_ = nullptr;
 
  private:
+  bool bridged_ = false;
   struct Change {
     uint32_t id;
     float value;
@@ -517,6 +521,10 @@ bool Vst2Editor::attach(void* parent) {
   open = true;
   // Some editors only know their size once open.
   return true;
+}
+void Vst2Editor::detachOffThread() {
+  if (b_ && open) b_->dispatch(abi::opEditorClose);
+  open = false;
 }
 void Vst2Editor::idle() {
   if (b_ && open) b_->dispatch(abi::opEditorIdle);

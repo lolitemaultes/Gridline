@@ -26,7 +26,8 @@ std::unique_ptr<Backend> createSandboxBackend(const std::string& exe, const std:
 // Child process entry point (`--plugin-sandbox <shm name>`); returns the exit code.
 int sandboxChildMain(const std::string& shmName);
 
-// Child-side native window for a plugin editor (macOS: SandboxWindow.mm).
+// Child-side native window for a plugin editor (macOS: SandboxWindow.mm; Linux has none: the
+// interface attaches to a window of Gridline's).
 // Returns the content view to attach the editor to, nullptr when unsupported.
 // (x, y): top-left based global position of the window frame, or
 // Editor::kNoPlace to centre it.

@@ -53,6 +53,10 @@ struct PatchV2 {
   std::vector<PatchV2Node> nodes;
   std::vector<int> slots;          // host Param slot → FL parameter index of the patch
   bool run3 = false;               // K-7: FL routing version 2 cannot run: the graph runs as version 3
+  // K-AC: imported as FL runs it: parallel paths lined up by the latency each plugin reports, at
+  // every module's input; the host told the longest path; a module's level scales its output.
+  // Without it (projects from before) the data keeps playing as it did.
+  bool align = false;
   bool operator==(const PatchV2& o) const;
 };
 

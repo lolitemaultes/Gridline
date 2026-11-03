@@ -3,6 +3,7 @@
 #include <cmath>
 #include "../HostedPlugins.h"
 #include "../PluginScan.h"
+#include "../Dylib.h"
 #include "Vst3Editor.h"
 #include "Vst3Plugin.h"
 #include "Vst3Scan.h"
@@ -24,6 +25,10 @@ class View final : public host::Editor {
     view_->setFrame(nullptr);
     view_->release();
     frame_->release();
+  }
+  void detachOffThread() override {
+    if (attached_) view_->removed();
+    attached_ = false;
   }
   bool size(int& w, int& h) override {
     sb::ViewRect r{0, 0, 640, 420};
@@ -98,7 +103,11 @@ int32_t restartToHost(int32_t f) {
 
 class Backend final : public host::Backend {
  public:
-  explicit Backend(std::unique_ptr<Plugin> p) : p_(std::move(p)) { readParams(); }
+  explicit Backend(std::unique_ptr<Plugin> p) : p_(std::move(p)) {
+    bridged_ = p_->module() && (host::dl::isBridged(bundleBinaryPath(p_->module()->path())) || host::dl::isBridged(p_->module()->path()));
+    readParams();
+  }
+  bool bridged() const override { return bridged_; }
 
   Plugin* plugin() { return p_.get(); }
   const char* format() const override { return "VST3"; }
@@ -349,6 +358,7 @@ class Backend final : public host::Backend {
     indexParams();
   }
   std::unique_ptr<Plugin> p_;
+  bool bridged_ = false;
   std::vector<host::ParamInfo> params_;
   std::vector<HostEvent> tmp_;
   std::atomic<double> pendingProgram_{-1.0};

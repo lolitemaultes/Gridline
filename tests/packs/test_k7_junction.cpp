@@ -6,6 +6,9 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <initializer_list>
+#include <memory>
 #include <new>
 #include <string>
 #include <vector>
@@ -114,6 +117,15 @@ struct FxRun {
     }
   }
 };
+
+// What a Program build does to a running host, the audio path staying on the previous data.
+void buildStep(FxRun& r, const PluginState& st) {
+  ChannelAux next;
+  r.fx->prepareHost(st, kSr);
+  packs::prepareAux(st, next);
+  r.st = st;
+  r.aux = next;
+}
 
 PluginState fxHost(const md::JGraph& g) {
   PluginState s = defaultPluginState("gl.patcherfx");
@@ -309,6 +321,170 @@ void testLatency() {
   h.run(L, R, 128);
   expect(L[5] == 0.f && std::fabs(L[5 + TestDelay::kLat] - 1.5f) < 1e-6f, "parallel paths stay aligned over a latent module");
   expect(h.fx->latencyFor(st, kSr) == TestDelay::kLat, "the host reports the latency of its longest path");
+  setTestEffectFactory(nullptr);
+}
+
+// ---------------------------------------------------------------- FL patches and latency
+// What FL's own Patcher library does, measured on it as a local oracle (K-AC, impulse through a
+// latent effect beside a direct cable; the wiring below is the same):
+//   every module's inputs are lined up by the latency each plugin reports, at any block size;
+//   the patch reports its longest path to the host; a module's level scales its output and
+//   leaves its latency alone.
+std::vector<uint8_t> flBytes(std::initializer_list<uint64_t> u64s, float gain = -1) {
+  std::vector<uint8_t> b;
+  for (uint64_t v : u64s)
+    for (int k = 0; k < 8; ++k) b.push_back(static_cast<uint8_t>(v >> (8 * k)));
+  if (gain >= 0) {
+    uint32_t g = 0;
+    std::memcpy(&g, &gain, 4);
+    for (int k = 0; k < 4; ++k) b.push_back(static_cast<uint8_t>(g >> (8 * k)));
+    b.resize(b.size() + 12, 0);
+  }
+  return b;
+}
+std::vector<uint8_t> flJoin(std::initializer_list<std::vector<uint8_t>> parts) {
+  std::vector<uint8_t> b;
+  for (const auto& p : parts) b.insert(b.end(), p.begin(), p.end());
+  return b;
+}
+std::vector<uint8_t> flU32s(std::initializer_list<uint32_t> vs) {
+  std::vector<uint8_t> b;
+  for (uint32_t v : vs)
+    for (int k = 0; k < 4; ++k) b.push_back(static_cast<uint8_t>(v >> (8 * k)));
+  return b;
+}
+
+constexpr uint64_t kFlIn = 1000, kFlOut = 1001;
+// Port of module k.
+uint64_t flPortIn(int k) { return 2000 + 2 * static_cast<uint64_t>(k); }
+uint64_t flPortOut(int k) { return 2001 + 2 * static_cast<uint64_t>(k); }
+
+// An FL patch as import stores it: `plugins` are the modules, `level` FL's level of each, `wires`
+// (source port, destination port).
+md::PatchV2 flPatch(const std::vector<std::string>& plugins, const std::vector<float>& level, const std::vector<std::pair<uint64_t, uint64_t>>& wires, bool align) {
+  md::PatchV2 g;
+  g.align = align;
+  for (size_t k = 0; k < plugins.size(); ++k) {
+    md::PatchV2Node n;
+    n.plugin = defaultPluginState(plugins[k]);
+    n.flName = plugins[k];
+    n.tail = "-";
+    const auto port = [](uint64_t id, uint32_t kind) { return md::patchChunkBytes(5009, flJoin({flU32s({0, 0}), flBytes({id}), flU32s({kind, 0, 0})})); };
+    float lv = level[k];
+    uint32_t lvBits = 0;
+    std::memcpy(&lvBits, &lv, 4);
+    n.head = md::patchHex(flJoin({md::patchChunkBytes(5007, flU32s({lvBits, 0, 0, 0})), port(flPortIn(static_cast<int>(k)), 3), port(flPortOut(static_cast<int>(k)), 2)}));
+    g.items.push_back("#" + std::to_string(k));
+    g.nodes.push_back(std::move(n));
+  }
+  const auto io = [&](uint64_t id, uint32_t kind, const char* name) {
+    std::vector<uint8_t> nm(name, name + std::strlen(name));
+    g.items.push_back(md::patchHex(md::patchChunkBytes(0, flJoin({md::patchChunkBytes(1400, flJoin({flBytes({id}), flU32s({0, kind, 2, 0, 0})})), md::patchChunkBytes(1402, nm)}))));
+  };
+  io(kFlIn, 7, "Audio input");
+  io(kFlOut, 6, "Audio output");
+  for (const auto& [s, d] : wires) g.items.push_back(md::patchHex(md::patchChunkBytes(0, md::patchChunkBytes(1300, flBytes({d, s}, 1.0f)))));
+  return g;
+}
+PluginState flHost(const md::PatchV2& g) {
+  PluginState s = defaultPluginState("gl.patcherfx");
+  s.data = md::serializePatchV2(g);
+  return s;
+}
+// Where an impulse at frame 64 lands, by block size.
+std::vector<float> flRun(const PluginState& st, int block = 128) {
+  std::vector<float> L = impulse(2048, 64), R = impulse(2048, 64);
+  FxRun h(st);
+  h.run(L, R, block);
+  return L;
+}
+
+void testFlLatency() {
+  setTestEffectFactory(testFactory);  // gl.utility: 100 samples of latency, reported
+  const int lat = TestDelay::kLat;
+  const auto near = [](float a, float b) { return std::fabs(a - b) < 1e-5f; };
+  const std::string D = "gl.utility";
+  // A latent module beside a direct cable.
+  const std::vector<std::pair<uint64_t, uint64_t>> parallel = {{kFlIn, flPortIn(0)}, {flPortOut(0), kFlOut}, {kFlIn, kFlOut}};
+  {
+    const md::PatchV2 g = flPatch({D}, {1}, parallel, true);
+    const PluginState st = flHost(g);
+    expect(md::patchV2RunsAsGraph(g, kSr), "FL patch: a latent module takes the graph runtime");
+    for (int block : {64, 128, 256, 1000}) {
+      const std::vector<float> L = flRun(st, block);
+      const std::string what = "FL patch: the direct cable lines up with the latent module, as FL (block " + std::to_string(block) + ")";
+      expect(near(L[64], 0) && near(L[static_cast<size_t>(64 + lat)], 2), what.c_str());
+    }
+    FxRun h(st);
+    expect(h.fx->latencyFor(st, kSr) == lat, "FL patch: the host is told the longest path, as FL");
+    md::PatchV2 again;
+    expect(md::parsePatchV2(st.data, again) && again.align && !again.run3 && again == g, "FL patch: the marker survives save and load");
+  }
+  {
+    // A project from before: same wiring, no marker, plays as it did and stays byte for byte.
+    const md::PatchV2 g = flPatch({D}, {1}, parallel, false);
+    const PluginState st = flHost(g);
+    expect(!md::patchV2RunsAsGraph(g, kSr) && st.data.find("align") == std::string::npos, "older FL patch: stays in its runtime, its data unchanged");
+    const std::vector<float> L = flRun(st);
+    expect(near(L[64], 1) && near(L[static_cast<size_t>(64 + lat)], 1), "older FL patch: keeps its sound, the paths unaligned");
+    FxRun h(st);
+    expect(h.fx->latencyFor(st, kSr) == 0, "older FL patch: still reports no latency");
+    md::PatchV2 r3 = g;
+    r3.run3 = true;
+    FxRun h3(flHost(r3));
+    expect(h3.fx->latencyFor(h3.st, kSr) == 0, "older FL patch in the graph runtime: still reports no latency");
+  }
+  {
+    // Into a module in the middle, and two chained latencies beside a direct cable.
+    const std::vector<float> mid = flRun(flHost(flPatch({D, "gl.filter"}, {1, 1}, {{kFlIn, flPortIn(0)}, {flPortOut(0), flPortIn(1)}, {kFlIn, flPortIn(1)}, {flPortOut(1), kFlOut}}, true)));
+    float early = 0;
+    for (int k = 0; k < 64 + lat; ++k) early = std::max(early, std::fabs(mid[static_cast<size_t>(k)]));
+    expect(early < 1e-6f, "FL patch: a module's inputs line up too, not only the outputs");
+    const std::vector<float> chain = flRun(flHost(flPatch({D, D}, {1, 1}, {{kFlIn, flPortIn(0)}, {flPortOut(0), flPortIn(1)}, {flPortOut(1), kFlOut}, {kFlIn, kFlOut}}, true)));
+    expect(near(chain[static_cast<size_t>(64 + 2 * lat)], 2) && near(chain[static_cast<size_t>(64 + lat)], 0), "FL patch: a chain of two lines up with the direct cable");
+    const std::vector<float> two = flRun(flHost(flPatch({D, D}, {1, 1}, {{kFlIn, flPortIn(0)}, {flPortOut(0), kFlOut}, {kFlIn, flPortIn(1)}, {flPortOut(1), kFlOut}}, true)));
+    expect(near(two[static_cast<size_t>(64 + lat)], 2), "FL patch: two even paths stay together");
+  }
+  {
+    // FL's module level: 0.7 alone gives 0.7 at the latency and no dry signal; 0.3 and 0 beside a
+    // direct cable give 1.3 and 1, the latency staying.
+    const std::vector<float> alone = flRun(flHost(flPatch({D}, {0.7f}, {{kFlIn, flPortIn(0)}, {flPortOut(0), kFlOut}}, true)));
+    expect(near(alone[64], 0) && near(alone[static_cast<size_t>(64 + lat)], 0.7f), "FL patch: a module's level scales its output, no dry part");
+    const std::vector<float> low = flRun(flHost(flPatch({D}, {0.3f}, parallel, true)));
+    expect(near(low[64], 0) && near(low[static_cast<size_t>(64 + lat)], 1.3f), "FL patch: a low level keeps the latency");
+    const std::vector<float> off = flRun(flHost(flPatch({D}, {0}, parallel, true)));
+    expect(near(off[64], 0) && near(off[static_cast<size_t>(64 + lat)], 1), "FL patch: level 0 keeps the latency");
+    const std::vector<float> flat = flRun(flHost(flPatch({"gl.filter"}, {0.5f}, {{kFlIn, flPortIn(0)}, {flPortOut(0), kFlOut}}, true)));
+    float peak = 0;
+    for (float x : flat) peak = std::max(peak, std::fabs(x));
+    expect(peak > 0 && peak < 0.75f && md::jV2HasLevels(flPatch({"gl.filter"}, {0.5f}, {}, true)), "FL patch: a level with no latency runs too");
+    // From before: the old reading of that value stays.
+    md::PatchV2 old = flPatch({D}, {0.7f}, {{kFlIn, flPortIn(0)}, {flPortOut(0), kFlOut}}, false);
+    old.run3 = true;
+    const md::JGraph og = md::junctionFromV2(old);
+    expect(og.nodes.size() == 1 && std::fabs(og.nodes[0].mix - 0.7f) < 1e-6f, "older FL patch in the graph runtime: its mix stays dry / wet");
+  }
+  {
+    // Nothing latent: no reason to leave the runtime it always ran in.
+    const md::PatchV2 g = flPatch({"gl.filter"}, {1}, {{kFlIn, flPortIn(0)}, {flPortOut(0), kFlOut}, {kFlIn, kFlOut}}, true);
+    expect(!md::patchV2RunsAsGraph(g, kSr), "FL patch: no latency inside, the version 2 runtime stays");
+    FxRun h(flHost(g));
+    expect(h.fx->latencyFor(h.st, kSr) == 0, "FL patch: no latency inside, none reported");
+  }
+  {
+    // A value edit on an imported patch running as a graph reaches it without a rebuild.
+    PluginState st = flHost(flPatch({D}, {1}, parallel, true));
+    FxRun r(st);
+    md::JRuntime* ru = md::junctionRuntime(r.fx.get());
+    expect(ru && ru->graphCounts().builds == 1, "FL patch: prepared once");
+    std::vector<float> L(512, 0.f), R(512, 0.f);
+    r.run(L, R, 128);
+    PluginState inner = defaultPluginState(D);
+    if (!inner.params.empty()) inner.params[0] = inner.params[0] == 0 ? 0.5f : 0.f;
+    expect(md::junctionSetNodeState(st, md::kJFirstId, inner), "FL patch: module state set");
+    buildStep(r, st);
+    if (ru) expect(ru->graphCounts().builds == 1 && ru->graphCounts().valueEdits == 1, "FL patch: a value edit keeps the running graph");
+  }
   setTestEffectFactory(nullptr);
 }
 
@@ -653,11 +829,34 @@ void testFlCorpus() {
   }
   const auto pres = testfl::decodePresets("Patcher");
   size_t v2 = 0, graph = 0, tried = 0, close = 0, finiteRuns = 0, ranGraph = 0, freeRunning = 0, sameUnaligned = 0, even = 0, evenClose = 0, unexplained = 0;
+  size_t marked = 0, latent = 0, reportedRight = 0, latentGraph = 0, latentRendered = 0, latentSame = 0;
   for (const auto& d : pres) {
     if (!d.ok || !md::isPatchV2(d.state.data)) continue;
     ++v2;
     md::PatchV2 g;
     if (!md::parsePatchV2(d.state.data, g)) continue;
+    // K-AC: an import runs as FL's Patcher does: lined up, its latency told to the host.
+    marked += g.align;
+    {
+      const int want = md::junctionLatency(md::junctionFromV2(g), kSr);
+      if (want > 0 && !g.run3) {
+        ++latent;
+        latentGraph += md::patchV2RunsAsGraph(g, kSr);
+        std::unique_ptr<Generator> gn = d.state.type == "gl.patcher" ? gl::createGenerator(d.state.type) : nullptr;
+        std::unique_ptr<Effect> fx = d.state.type == "gl.patcherfx" ? gl::createEffect(d.state.type) : nullptr;
+        reportedRight += (gn ? gn->latencyFor(d.state, kSr) : fx ? fx->latencyFor(d.state, kSr) : -1) == want;
+        // Through the whole engine it sounds as the same graph wired by hand.
+        if (d.state.type == "gl.patcher" && latentRendered < 8) {
+          PluginState wired = d.state;
+          wired.data = md::serializeJunction(md::junctionFromV2(g));
+          const AudioBuffer imported = render(instrumentDoc(d.state));
+          if (imported.peak() > 1e-3f && finite(imported.data) && relDiff(imported.data, render(instrumentDoc(d.state)).data) < 1e-3) {
+            ++latentRendered;
+            latentSame += relDiff(imported.data, render(instrumentDoc(wired)).data) < 1e-3;
+          }
+        }
+      }
+    }
     if (g.run3) {
       ++graph;
       if (d.state.type == "gl.patcher" && ranGraph < 8) {
@@ -669,16 +868,21 @@ void testFlCorpus() {
     if (d.state.type != "gl.patcher" || tried >= 32 || !md::patchV2Topology(g).unsupported.empty()) continue;
     PluginState v3 = d.state;
     v3.data = md::serializeJunction(md::junctionFromV2(g));
-    const AudioBuffer a = render(instrumentDoc(d.state));
+    // The version 2 runtime as projects from before play it.
+    PluginState before = d.state;
+    md::PatchV2 oldData = g;
+    oldData.align = false;
+    before.data = md::serializePatchV2(oldData);
+    const AudioBuffer a = render(instrumentDoc(before));
     if (a.peak() < 1e-3f) continue;
-    if (relDiff(a.data, render(instrumentDoc(d.state)).data) > 1e-3) {  // free-running noise or oscillators
+    if (relDiff(a.data, render(instrumentDoc(before)).data) > 1e-3) {  // free-running noise or oscillators
       ++freeRunning;
       continue;
     }
     ++tried;
     // The one difference between the runtimes: the graph runtime lines parallel paths up by
-    // their latency, the FL patch runtime sums them as they come. With that off they must match
-    // sample by sample, every patch.
+    // their latency as FL does (K-AC), the version 2 runtime sums them as they come. With that
+    // off they must match sample by sample, every patch.
     md::junctionCompensationForTests(false);
     const AudioBuffer unaligned = render(instrumentDoc(v3));
     md::junctionCompensationForTests(true);
@@ -686,7 +890,7 @@ void testFlCorpus() {
     if (plain < 0.05) ++sameUnaligned;
     else std::printf("# differs without compensation %.3f: %s\n", plain, d.where.c_str());
     // With it on, a patch whose paths have equal latency stays the same, the output only moved
-    // by the latency the host reports. A patch with uneven paths sums differently: expected, and
+    // by the latency the host reports. A patch with uneven paths sums differently, as in FL, and
     // it has to be one that the compensation acts on.
     const md::JGraph asGraph = md::junctionFromV2(g);
     const int uneven = md::junctionUnevenCables(asGraph, kSr), reported = md::junctionLatency(asGraph, kSr);
@@ -711,21 +915,18 @@ void testFlCorpus() {
     }
   }
   char buf[200];
+  std::snprintf(buf, sizeof buf, "FL patches: every import carries the marker (%zu/%zu)", marked, v2);
+  expect(v2 > 0 && marked == v2, buf);
+  std::snprintf(buf, sizeof buf, "FL patches with latency: %zu/%zu run as graphs, %zu report it to the host", latentGraph, latent, reportedRight);
+  expect(latent > 0 && latentGraph == latent && reportedRight == latent, buf);
+  std::snprintf(buf, sizeof buf, "FL patches with latency sound as the same graph wired by hand (%zu/%zu)", latentSame, latentRendered);
+  expect(latentRendered > 0 && latentSame == latentRendered, buf);
   std::snprintf(buf, sizeof buf, "FL patches: %zu presets, %zu FL graphs, %zu run in the graph runtime (%zu/%zu of those tried finite)", pres.size(), v2, graph, finiteRuns, ranGraph);
   expect(v2 > 0 && finiteRuns == ranGraph, buf);
   std::snprintf(buf, sizeof buf, "FL patches read as a graph match the FL patch runtime with compensation off (%zu/%zu within 5%%, %zu free running)", sameUnaligned, tried, freeRunning);
   expect(tried > 0 && sameUnaligned == tried, buf);
   std::snprintf(buf, sizeof buf, "patches with even paths match with compensation on (%zu/%zu); all compensated: %zu/%zu", evenClose, even, close, tried);
   expect(evenClose == even && unexplained == 0, buf);
-}
-
-// What a Program build does to a running host, the audio path staying on the previous data.
-void buildStep(FxRun& r, const PluginState& st) {
-  ChannelAux next;
-  r.fx->prepareHost(st, kSr);
-  packs::prepareAux(st, next);
-  r.st = st;
-  r.aux = next;
 }
 
 double rmsOf(FxRun& r, double hz) {
@@ -1032,6 +1233,7 @@ int main() {
   testChains();
   testFeedback();
   testLatency();
+  testFlLatency();
   testNotes();
   testParams();
   testSidechain();

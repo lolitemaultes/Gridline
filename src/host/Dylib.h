@@ -35,6 +35,10 @@ void* sym(void* handle, const char* name);
 void close(void* handle);
 // The file of the shared object (or executable) that contains `address`, empty when unknown.
 std::string pathOf(const void* address);
+// K-37: the loaded shared object at `path` is a yabridge plugin (a Windows plugin bridged through
+// Wine): its libraries all export yabridge_version. Linux only. GRIDLINE_DEV_BRIDGED_PLUGINS makes
+// every plugin count as one, for tests.
+bool isBridged(const std::string& path);
 }  // namespace dl
 
 // Function pointer from a symbol address without a pointer-to-object cast.

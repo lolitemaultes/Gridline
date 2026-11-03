@@ -157,6 +157,8 @@ void setContainerFrame(const Window& w, void* container, const layout::Rect& r) 
   if (!NSEqualRects([v frame], f)) [v setFrame:f];
 }
 
+void containerMoved(const Window&, void*) {}
+
 void destroyContainer(const Window& w, void* container) {
   (void)w;
   if (!container) return;

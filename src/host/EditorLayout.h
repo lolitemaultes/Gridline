@@ -80,14 +80,19 @@ struct WindowLayout {
   Rect plugin, bar, panel;
 };
 // Window for a plugin view of pluginW x pluginH with the panel folded
-// (panelH = 0) or unfolded (panelH > 0).
-WindowLayout layoutWindow(int pluginW, int pluginH, int panelH);
+// (panelH = 0) or unfolded (panelH > 0). `scale`: window units per unit of
+// Gridline's own interface (X11 at a system scale: the plugin's size and panelH
+// are in window pixels, the bar is laid out in interface units and takes
+// scale times its height). The result is in window units.
+WindowLayout layoutWindow(int pluginW, int pluginH, int panelH, double scale = 1.0);
 // Window without a plugin view (a sandboxed plugin's bar window: the
 // interface lives in the sandbox process' own window above it).
 WindowLayout layoutBarWindow(int width, int panelH);
 // The user resized the window to winW x winH: the plugin size this asks
 // for (before the plugin's own constraints).
-void pluginSizeForWindow(int winW, int winH, int panelH, int& pluginW, int& pluginH);
+void pluginSizeForWindow(int winW, int winH, int panelH, int& pluginW, int& pluginH, double scale = 1.0);
+// A layout of layoutWindow in the bar's own interface units (what pluginbar::draw takes).
+WindowLayout barUnits(const WindowLayout& L, double scale);
 
 // Moves a window rect inside the screen work area (never resizes; the
 // top-left corner wins when the window is larger than the area).

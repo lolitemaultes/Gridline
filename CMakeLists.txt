@@ -1718,6 +1718,13 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(k7_junction_hosted_app PROPERTIES TIMEOUT 120 SKIP_REGULAR_EXPRESSION "SKIP: ")
 
+    # K-37: a bridged plugin's interface that never closes does not stop the app.
+    add_test(NAME k37_bridged_close_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DCLAP=${GRIDLINE_CLAP_TESTPLUG} -DOUT=${CMAKE_BINARY_DIR}/k37_bridged_close_app -P ${CMAKE_SOURCE_DIR}/tests/k37_bridged_close_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(k37_bridged_close_app PROPERTIES TIMEOUT 200 SKIP_REGULAR_EXPRESSION "SKIP: ")
+
     add_test(NAME plugin_undo_app
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
                      -DOUT=${CMAKE_BINARY_DIR}/plugin_undo_app -P ${CMAKE_SOURCE_DIR}/tests/plugin_undo_app.cmake

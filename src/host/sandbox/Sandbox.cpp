@@ -23,6 +23,9 @@
 #endif
 #include "../PluginPrefs.h"
 #include "../PluginScan.h"
+#if !defined(__APPLE__) && !defined(_WIN32)
+#include "../vst3/Vst3Editor.h"
+#endif
 #include "../../core/Platform.h"
 
 namespace gl::host {
@@ -82,7 +85,28 @@ enum Op : uint8_t {
   OpSetBypass,
   OpDiscoverPresets,
   OpLoadPreset,
+  // The interface inside a window of Gridline's (Linux): see embedsEditors.
+  OpEditorCreate,
+  OpEditorAttach,
+  OpEditorSize,
+  OpEditorConstrain,
+  OpEditorSetSize,
+  OpEditorHostKey,
 };
+
+// K-31: Linux. A window of one process can hold a window of another, so the sandboxed interface attaches
+// directly to the container of Gridline's own plugin window, the same window, bar and input handling as an
+// interface in Gridline's process. macOS has no such thing: the sandbox opens its own window there
+// (SandboxWindow.mm), with Gridline's bar docked under it. The BSDs and Windows show Gridline's
+// panel. GRIDLINE_DEV_SANDBOX_EMBED: the message path of this mode on any system, for tests.
+bool embedsEditors() {
+#if defined(__linux__)
+  return true;
+#else
+  static const bool dev = std::getenv("GRIDLINE_DEV_SANDBOX_EMBED") != nullptr;
+  return dev;
+#endif
+}
 
 struct Wr {
   std::string b;
@@ -422,17 +446,21 @@ class RemoteEditor final : public Editor {
  public:
   explicit RemoteEditor(SandboxBackend* b) : b_(b) {}
   ~RemoteEditor() override;
-  bool size(int& w, int& h) override {
-    w = 640;
-    h = 420;
-    return true;
-  }
+  bool size(int& w, int& h) override;
+  bool canResize() const override { return resizable; }
+  void constrain(int& w, int& h) override;
   bool attach(void* parent) override;
-  bool external() const override { return true; }
+  void setSize(int w, int h) override;
+  void idle() override;
+  void setContentScale(double s) override { scale = s; }
+  bool hostKey(bool down, int usage, uint32_t ch, uint32_t mods) override;
+  bool external() const override { return !embedsEditors(); }
   bool isOpen() const override;
   bool windowFrame(int& x, int& y, int& w, int& h) const override;
   bool popKey(KeyEvent& e) override;
   SandboxBackend* b_;
+  bool resizable = false;
+  double scale = 0;
 };
 
 class SandboxBackend final : public Backend {
@@ -645,12 +673,22 @@ class SandboxBackend final : public Backend {
 #if defined(__APPLE__)
     return desc_.editor;
 #else
-    return false;  // editor windows of sandboxed plugins: macOS only for now
+    return desc_.editor && embedsEditors();  // the BSDs and Windows: Gridline's own panel
 #endif
   }
   std::unique_ptr<Editor> createEditor() override {
     if (!hasEditor() || editor_ || crashed_.load()) return nullptr;
     auto e = std::make_unique<RemoteEditor>(this);
+    if (embedsEditors()) {
+      Wr w;
+      w.u8(OpEditorCreate);
+      std::string reply;
+      if (!call(w.b, reply, kEditorOpenMs)) return nullptr;
+      Rd r(reply);
+      if (!r.u8()) return nullptr;
+      e->resizable = r.u8();
+      editorOpen_ = true;
+    }
     editor_ = e.get();
     return e;
   }
@@ -695,6 +733,8 @@ class SandboxBackend final : public Backend {
       k.mods = r.u32();
       if (r.ok) keys_.push_back(k);
     }
+    const int askedW = r.i32(), askedH = r.i32();  // the interface asked for a new size
+    if (r.ok && askedW > 0 && askedH > 0) askedW_ = askedW, askedH_ = askedH;
     if (changed) {
       values_.clear();
       texts_.clear();
@@ -715,6 +755,62 @@ class SandboxBackend final : public Backend {
     return b;
   }
 
+  bool attachEditor(void* parent, double scale) {
+    Wr w;
+    w.u8(OpEditorAttach);
+    w.u32(static_cast<uint32_t>(reinterpret_cast<uintptr_t>(parent) >> 32));
+    w.u32(static_cast<uint32_t>(reinterpret_cast<uintptr_t>(parent) & 0xFFFFFFFFu));
+    w.f64(scale);
+    std::string reply;
+    editorOpen_ = call(w.b, reply, kEditorOpenMs) && !reply.empty() && reply[0];
+    return editorOpen_;
+  }
+  bool editorSize(int& w, int& h) {
+    Wr m;
+    m.u8(OpEditorSize);
+    std::string reply;
+    if (!call(m.b, reply, 5000)) return false;
+    Rd r(reply);
+    if (!r.u8()) return false;
+    w = r.i32();
+    h = r.i32();
+    return r.ok;
+  }
+  void editorConstrain(int& w, int& h) {
+    Wr m;
+    m.u8(OpEditorConstrain);
+    m.i32(w);
+    m.i32(h);
+    std::string reply;
+    if (!call(m.b, reply, 5000)) return;
+    Rd r(reply);
+    const int nw = r.i32(), nh = r.i32();
+    if (r.ok) w = nw, h = nh;
+  }
+  void editorSetSize(int w, int h) {
+    Wr m;
+    m.u8(OpEditorSetSize);
+    m.i32(w);
+    m.i32(h);
+    std::string reply;
+    call(m.b, reply, 5000);
+  }
+  bool editorHostKey(bool down, int usage, uint32_t ch, uint32_t mods) {
+    Wr m;
+    m.u8(OpEditorHostKey);
+    m.u8(down);
+    m.i32(usage);
+    m.u32(ch);
+    m.u32(mods);
+    std::string reply;
+    return call(m.b, reply, 2000) && !reply.empty() && reply[0];
+  }
+  bool popAskedSize(int& w, int& h) {
+    if (askedW_ <= 0) return false;
+    w = askedW_, h = askedH_;
+    askedW_ = askedH_ = 0;
+    return true;
+  }
   bool openEditor(int x, int y) {
     Wr w;
     w.u8(OpOpenEditor);
@@ -749,6 +845,8 @@ class SandboxBackend final : public Backend {
   RemoteEditor* editor_ = nullptr;
   bool hasFrame_ = false;
   int frame_[4] = {0, 0, 0, 0};
+  int askedW_ = 0, askedH_ = 0;
+  static constexpr int kEditorOpenMs = 60000;  // an interface behind a bridge opens slowly
 
   // ---- audio thread ----
   float* inputChannel(int ch) override { return ch >= 0 && ch < desc_.mainIn && shm_ ? shm_->in[ch] : nullptr; }
@@ -1021,7 +1119,29 @@ class SandboxBackend final : public Backend {
 RemoteEditor::~RemoteEditor() {
   if (b_) b_->closeEditor();
 }
-bool RemoteEditor::attach(void*) { return b_ && b_->openEditor(placeX, placeY); }
+bool RemoteEditor::attach(void* parent) {
+  if (!b_) return false;
+  return embedsEditors() ? b_->attachEditor(parent, scale) : b_->openEditor(placeX, placeY);
+}
+bool RemoteEditor::size(int& w, int& h) {
+  if (b_ && embedsEditors()) return b_->editorSize(w, h);
+  w = 640;
+  h = 420;
+  return true;
+}
+void RemoteEditor::constrain(int& w, int& h) {
+  if (b_ && embedsEditors()) b_->editorConstrain(w, h);
+}
+void RemoteEditor::setSize(int w, int h) {
+  if (b_ && embedsEditors()) b_->editorSetSize(w, h);
+}
+void RemoteEditor::idle() {
+  int w = 0, h = 0;
+  if (b_ && embedsEditors() && b_->popAskedSize(w, h) && requestResize) requestResize(w, h);
+}
+bool RemoteEditor::hostKey(bool down, int usage, uint32_t ch, uint32_t mods) {
+  return b_ && embedsEditors() && b_->editorHostKey(down, usage, ch, mods);
+}
 bool RemoteEditor::isOpen() const { return b_ && b_->editorOpen(); }
 bool RemoteEditor::windowFrame(int& x, int& y, int& w, int& h) const { return b_ && b_->editorFrame(x, y, w, h); }
 bool RemoteEditor::popKey(KeyEvent& e) { return b_ && b_->popKey(e); }
@@ -1035,6 +1155,8 @@ struct Child {
   std::unique_ptr<Editor> editor;
   std::string title;
   int idles = 0;  // idle calls since the editor opened
+  bool embedded = false;  // the interface is inside a window of Gridline's (embedsEditors)
+  int askedW = 0, askedH = 0;  // size the embedded interface asked for, for the next idle reply
 
   void run() {
     std::lock_guard<std::mutex> g(lock);
@@ -1147,7 +1269,7 @@ struct Child {
         // Dev check (J-66): GRIDLINE_SANDBOX_DEV_KEYS types Space into the interface once.
         if (editor && ++idles == 40 && std::getenv("GRIDLINE_SANDBOX_DEV_KEYS")) sandboxDevKeys();
         if (editor) sandboxDevStats(idles);
-        w.u8(editor && sandboxWindowOpen());
+        w.u8(editor && (embedded || sandboxWindowOpen()));
         {
           int fx = 0, fy = 0, fw = 0, fh = 0;
           const bool hasFrame = editor && sandboxWindowFrame(fx, fy, fw, fh);
@@ -1180,6 +1302,9 @@ struct Child {
           w.u32(x.code);
           w.u32(x.mods);
         }
+        w.i32(askedW);
+        w.i32(askedH);
+        askedW = askedH = 0;
         break;
       }
       case OpSelectProgram: {
@@ -1244,8 +1369,70 @@ struct Child {
         w.u8(backend && backend->loadPreset(p));
         break;
       }
+      case OpEditorCreate: {
+        bool ok = false;
+        if (backend && !editor) {
+          editor = backend->createEditor();
+          ok = editor != nullptr;
+          embedded = ok;
+          idles = 0;
+          askedW = askedH = 0;
+        }
+        w.u8(ok);
+        w.u8(ok && editor->canResize());
+        break;
+      }
+      case OpEditorAttach: {
+        const uint64_t hi = r.u32(), lo = r.u32();
+        const double scale = r.f64();
+        bool ok = false;
+        if (editor && embedded) {
+          editor->requestResize = [this](int nw, int nh) {
+            askedW = nw;
+            askedH = nh;
+            return true;
+          };
+          if (scale > 0) editor->setContentScale(scale);
+          ok = editor->attach(reinterpret_cast<void*>(static_cast<uintptr_t>((hi << 32) | lo)));
+          if (!ok) {
+            editor.reset();
+            embedded = false;
+          }
+        }
+        w.u8(ok);
+        break;
+      }
+      case OpEditorSize: {
+        int ew = 640, eh = 420;
+        const bool ok = editor && editor->size(ew, eh);
+        w.u8(ok);
+        w.i32(ew);
+        w.i32(eh);
+        break;
+      }
+      case OpEditorConstrain: {
+        int ew = r.i32(), eh = r.i32();
+        if (editor) editor->constrain(ew, eh);
+        w.i32(ew);
+        w.i32(eh);
+        break;
+      }
+      case OpEditorSetSize: {
+        const int ew = r.i32(), eh = r.i32();
+        if (editor) editor->setSize(ew, eh);
+        w.u8(editor != nullptr);
+        break;
+      }
+      case OpEditorHostKey: {
+        const bool down = r.u8();
+        const int usage = r.i32();
+        const uint32_t ch = r.u32(), mods = r.u32();
+        w.u8(editor && editor->hostKey(down, usage, ch, mods));
+        break;
+      }
       case OpCloseEditor:
         editor.reset();
+        embedded = false;
         sandboxCloseWindow();
         w.u8(1);
         break;
@@ -1332,9 +1519,12 @@ int sandboxChildMain(const std::string& arg) {
     }
     if (child->editor) {
       sandboxPumpEvents();
+#if !defined(__APPLE__) && !defined(_WIN32)  // the timers and connections of VST3 interfaces on X11
+      vst3::runLoop()->pump();
+#endif
       if (child->backend) child->backend->idle();
       child->editor->idle();
-      if (!sandboxWindowOpen()) child->editor.reset();
+      if (!child->embedded && !sandboxWindowOpen()) child->editor.reset();
     }
   }
 }

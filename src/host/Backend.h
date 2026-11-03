@@ -202,6 +202,11 @@ class Editor {
   // True when the plugin used it. `usage`: USB HID usage, `ch`: the character
   // typed (0 for none), `mods`: KeyMods.
   virtual bool hostKey(bool down, int usage, uint32_t ch, uint32_t mods) { (void)down, (void)usage, (void)ch, (void)mods; return false; }
+  // K-37: only for a plugin whose Backend::bridged() is true. The one call that takes its interface
+  // down in the plugin (VST3 removed, CLAP gui destroy, VST2 editor close), made on a helper thread
+  // because it can wait forever inside the bridge (host/EditorClose.h). The destructor then does the rest
+  // on the UI thread. Other plugins never get this call: their editor calls stay on the UI thread.
+  virtual void detachOffThread() {}
 };
 
 // One plugin instance.
@@ -282,7 +287,7 @@ class Backend {
   virtual bool loadPreset(const PresetRef& p) { (void)p; return false; }
   // Out-of-process instances: the plugin process died.
   virtual bool crashed() const { return lost(); }
-  virtual std::string crashReason() const { return lost() ? "the connection to its process was lost" : std::string(); }
+  virtual std::string crashReason() const { return lost() ? (lostWhy_ ? lostWhy_ : "the connection to its process was lost") : std::string(); }
   // K-9: a call into the plugin threw (a bridged plugin whose other process is gone: every call
   // does from then on). The instance counts as crashed and nothing calls it again, its destructor
   // included: the backend is left in memory. Safe on the audio thread: no allocation, lock or I/O,
@@ -292,10 +297,19 @@ class Backend {
     if (lost_.compare_exchange_strong(expected, true)) lostError_ = std::current_exception();
   }
   bool lost() const noexcept { return lost_.load(std::memory_order_acquire); }
+  // Why, when it was not a broken connection (a string literal; set before markLost).
+  void setLostReason(const char* why) noexcept { lostWhy_ = why; }
+  // K-37: the plugin itself runs in another process behind a bridge (yabridge), which makes its calls
+  // there on that process's own UI thread: this process's thread does not matter to the plugin.
+  virtual bool bridged() const { return false; }
+  // K-37: the interface is being taken down on a helper thread. The plugin's UI thread may be stuck, so
+  // nothing on Gridline's UI thread calls it meanwhile (HostedPlugins.cpp); the audio thread goes on.
+  void setEditorClosing(bool on) noexcept { editorClosing_.store(on, std::memory_order_release); }
+  bool editorClosing() const noexcept { return editorClosing_.load(std::memory_order_acquire); }
   // hasEditor() for the UI thread: a CLAP plugin is asked on every frame its panel shows, so this is
   // often the first call to meet a bridged plugin whose other process is gone.
   bool editorAvailable() noexcept {
-    if (lost()) return false;
+    if (lost() || editorClosing()) return false;
     try {
       return hasEditor();
     } catch (...) {
@@ -342,6 +356,8 @@ class Backend {
 
  private:
   std::atomic<bool> lost_{false};
+  std::atomic<bool> editorClosing_{false};
+  const char* lostWhy_ = nullptr;
   std::exception_ptr lostError_;
 };
 

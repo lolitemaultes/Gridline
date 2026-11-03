@@ -438,6 +438,12 @@ int junctionLatency(const JGraph& g, double sr) {
   return latencyOf(g, orderOf(g, fb), fb, sr, nullptr).total;
 }
 
+bool patchV2RunsAsGraph(const PatchV2& v2, double sr) {
+  if (v2.run3) return true;
+  if (!v2.align) return false;
+  return jV2HasLevels(v2) || junctionLatency(junctionFromV2(v2), sr) > 0;
+}
+
 // ----------------------------------------------------------------- runtime
 namespace {
 
@@ -986,7 +992,14 @@ void JRuntime::prepareHosted(const PluginState& host, double sampleRate) {
   tHostedLatency = nullptr;
   tHostedData = nullptr;
   tOwner = nullptr;
-  if (!isJunction3(host.data) && !(isPatchV2(host.data) && host.data.find("\"run3\":1") != std::string::npos)) return;
+  if (!isJunction3(host.data)) {
+    if (!isPatchV2(host.data)) return;
+    if (host.data.find("\"run3\":1") == std::string::npos) {
+      if (host.data.find("\"align\":1") == std::string::npos) return;
+      PatchV2 v2;
+      if (!parsePatchV2(host.data, v2) || !patchV2RunsAsGraph(v2, sampleRate)) return;
+    }
+  }
   tOwner = this;
   static thread_local std::map<uint32_t, int> latencyCopy;
   static thread_local std::string dataCopy;
@@ -1070,7 +1083,7 @@ bool readGraph(const PluginState& state, JGraph& g) {
   if (isJunction3(state.data)) return parseJunction(state.data, g);
   if (isPatchV2(state.data)) {
     PatchV2 v2;
-    if (!parsePatchV2(state.data, v2) || !v2.run3) return false;
+    if (!parsePatchV2(state.data, v2) || !patchV2RunsAsGraph(v2, gSampleRate.load())) return false;
     g = junctionFromV2(v2);
     return true;
   }

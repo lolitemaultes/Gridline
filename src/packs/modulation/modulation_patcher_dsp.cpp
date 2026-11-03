@@ -226,6 +226,13 @@ class PatchRuntime {
   std::vector<float> aL_, aR_, bL_, bR_, cL_, cR_, dL_, dR_;
 };
 
+// The latency an FL patch reports to the host, as FL's does (K-AC). Data from before stays at 0.
+int patchV2Latency(const JRuntime& j3, const PluginState& s, double sr) {
+  PatchV2 g;
+  if (!parsePatchV2(s.data, g) || !g.align || !patchV2RunsAsGraph(g, sr)) return 0;
+  return j3.latency(junctionFromV2(g), sr);
+}
+
 class PatchHostGenerator final : public Generator {
  public:
   bool active() const override { return j3on_ ? j3_.active() : v2on_ ? v2_.active() : rt_.active(); }
@@ -238,7 +245,7 @@ class PatchHostGenerator final : public Generator {
   // K-7: installed plugins inside are prepared with their module's state.
   void prepareHost(const PluginState& state, double sampleRate) override { j3_.prepareHosted(state, sampleRate); }
   int latencyFor(const PluginState& state, double sampleRate) const override {
-    return isJunction3(state.data) ? j3_.latency(junctionOf(state), sampleRate) : 0;
+    return isJunction3(state.data) ? j3_.latency(junctionOf(state), sampleRate) : patchV2Latency(j3_, state, sampleRate);
   }
   int auxOutputCount() const override { return j3on_ ? j3_.auxOutputCount() : 0; }
   bool auxOutput(int k, const float*& L, const float*& R) const override {
@@ -453,7 +460,7 @@ class PatchHostEffect final : public Effect {
     auto prm = [&](int k, float d) { return static_cast<size_t>(k) < s.params.size() ? s.params[static_cast<size_t>(k)] : d; };
     if (prm(PhMix, 1.f) < 0.5f) return 0;
     if (isJunction3(s.data)) return j3_.latency(junctionOf(s), sr);
-    if (isPatchV2(s.data)) return 0;  // v2 graphs: hosted latencies are not compensated
+    if (isPatchV2(s.data)) return patchV2Latency(j3_, s, sr);
     const PatchGraph g = patchGraphOf(s);
     std::vector<PluginState> live;
     for (const PatchNode& nd : g.nodes) live.push_back(nd.plugin);

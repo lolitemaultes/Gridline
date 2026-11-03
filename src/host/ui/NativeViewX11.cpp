@@ -46,9 +46,20 @@ struct XKeyEv {
   unsigned int state, keycode;
   int sameScreen;
 };
+struct XConfigureEv {
+  int type;
+  unsigned long serial;
+  int sendEvent;
+  void* display;
+  XWin event, window;
+  int x, y, width, height, borderWidth;
+  XWin above;
+  int overrideRedirect;
+};
 union XEv {
   int type;
   XKeyEv key;
+  XConfigureEv configure;
   long pad[24];
 };
 struct XWinAttrs {
@@ -66,8 +77,8 @@ struct XWinAttrs {
 };
 using XErrHandler = int (*)(void*, void*);
 
-constexpr long kKeyPressMask = 1L << 0, kKeyReleaseMask = 1L << 1, kSubstructureNotifyMask = 1L << 19;
-constexpr int kKeyPress = 2, kKeyRelease = 3, kCreateNotify = 16, kMapNotify = 19, kReparentNotify = 21;
+constexpr long kKeyPressMask = 1L << 0, kKeyReleaseMask = 1L << 1, kStructureNotifyMask = 1L << 17, kSubstructureNotifyMask = 1L << 19;
+constexpr int kKeyPress = 2, kKeyRelease = 3, kCreateNotify = 16, kMapNotify = 19, kReparentNotify = 21, kConfigureNotify = 22;
 
 struct Xlib {
   XWin (*createSimpleWindow)(void*, XWin, int, int, unsigned, unsigned, unsigned, unsigned long, unsigned long) = nullptr;
@@ -88,6 +99,8 @@ struct Xlib {
   int (*sync)(void*, int) = nullptr;
   XErrHandler (*setErrorHandler)(XErrHandler) = nullptr;
   unsigned long (*keycodeToKeysym)(void*, unsigned char, int, int) = nullptr;  // XkbKeycodeToKeysym
+  int (*translateCoordinates)(void*, XWin, XWin, int, int, int*, int*, XWin*) = nullptr;
+  int (*sendEvent)(void*, XWin, int, long, XEv*) = nullptr;
   bool ok = false;
   bool keys = false;
 };
@@ -119,6 +132,8 @@ const Xlib& xlib() {
     l.sync = reinterpret_cast<decltype(l.sync)>(sym("XSync"));
     l.setErrorHandler = reinterpret_cast<decltype(l.setErrorHandler)>(sym("XSetErrorHandler"));
     l.keycodeToKeysym = reinterpret_cast<decltype(l.keycodeToKeysym)>(sym("XkbKeycodeToKeysym"));
+    l.translateCoordinates = reinterpret_cast<decltype(l.translateCoordinates)>(sym("XTranslateCoordinates"));
+    l.sendEvent = reinterpret_cast<decltype(l.sendEvent)>(sym("XSendEvent"));
     l.ok = l.createSimpleWindow && l.mapWindow && l.moveResizeWindow && l.destroyWindow && l.flush;
     l.keys = l.openDisplay && l.queryTree && l.selectInput && l.getWindowAttributes && l.pending && l.nextEvent && l.xfree && l.sync &&
              l.setErrorHandler && l.keycodeToKeysym;
@@ -296,6 +311,28 @@ void setContainerFrame(const Window& w, void* container, const layout::Rect& r) 
   const Xlib& x = xlib();
   if (!x.ok || !w.display || !container || container == w.handle) return;
   x.moveResizeWindow(w.display, win(container), r.x, r.y, dim(r.w), dim(r.h));
+  x.flush(w.display);
+}
+
+void containerMoved(const Window& w, void* container) {
+  const Xlib& x = xlib();
+  if (!x.ok || !x.sendEvent || !x.translateCoordinates || !x.getWindowAttributes || !w.display || !container || container == w.handle) return;
+  XWinAttrs at{};
+  if (!x.getWindowAttributes(w.display, win(container), &at)) return;
+  int rx = 0, ry = 0;
+  XWin child = 0;
+  if (!x.translateCoordinates(w.display, win(container), at.root, 0, 0, &rx, &ry, &child)) return;
+  XEv e{};
+  e.configure.type = kConfigureNotify;
+  e.configure.display = w.display;
+  e.configure.event = win(container);
+  e.configure.window = win(container);
+  e.configure.x = rx;
+  e.configure.y = ry;
+  e.configure.width = at.width;
+  e.configure.height = at.height;
+  e.configure.borderWidth = at.borderWidth;
+  x.sendEvent(w.display, win(container), 0, kStructureNotifyMask, &e);
   x.flush(w.display);
 }
 

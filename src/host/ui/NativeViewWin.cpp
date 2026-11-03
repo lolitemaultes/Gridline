@@ -130,6 +130,8 @@ void setContainerFrame(const Window&, void* container, const layout::Rect& r) {
   if (container) SetWindowPos(hwndOf(container), nullptr, r.x, r.y, std::max(1, r.w), std::max(1, r.h), SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
+void containerMoved(const Window&, void*) {}
+
 void destroyContainer(const Window&, void* container) {
   if (!container) return;
   unwatchKeys(container);

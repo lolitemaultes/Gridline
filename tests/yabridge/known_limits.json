@@ -20,15 +20,6 @@
  {
   "match": {
    "wine": "^(staging-9\\.21|staging-9\\.22|staging-10\\.20|staging-11\\.21|distro)$",
-   "plugin": "^Dexed$",
-   "host": "gridline",
-   "check": "closing the interface"
-  },
-  "reason": "closing Dexed's interface does not return in 30 s in the control host either on this Wine (VST3 compared; the control host has no CLAP); the call waits inside yabridge"
- },
- {
-  "match": {
-   "wine": "^(staging-9\\.21|staging-9\\.22|staging-10\\.20|staging-11\\.21|distro)$",
    "plugin": "^Surge XT$",
    "host": "gridline",
    "check": "pixels"

@@ -1,6 +1,7 @@
 // Gridline — geometry of a hosted plugin's window.
 #include "EditorLayout.h"
 #include <algorithm>
+#include <cmath>
 
 namespace gl::host::layout {
 
@@ -103,13 +104,18 @@ BarLayout layoutBar(int width, bool route) {
   return L;
 }
 
-WindowLayout layoutWindow(int pluginW, int pluginH, int panelH) {
+namespace {
+int scaled(int units, double scale) { return static_cast<int>(std::lround(units * scale)); }
+int unscaled(int pixels, double scale) { return static_cast<int>(std::lround(pixels / scale)); }
+}  // namespace
+
+WindowLayout layoutWindow(int pluginW, int pluginH, int panelH, double scale) {
   pluginW = std::max(pluginW, kMinPluginW);
   pluginH = std::max(pluginH, kMinPluginH);
   panelH = std::max(panelH, 0);
   WindowLayout L;
-  L.w = std::max(pluginW, panelH > 0 ? kPanelMinW : kMinWindowW);
-  const int barH = layoutBar(L.w).height;
+  L.w = std::max(pluginW, scaled(panelH > 0 ? kPanelMinW : kMinWindowW, scale));
+  const int barH = scaled(layoutBar(unscaled(L.w, scale)).height, scale);
   L.plugin = Rect{(L.w - pluginW) / 2, 0, pluginW, pluginH};
   L.bar = Rect{0, pluginH, L.w, barH};
   L.panel = Rect{0, pluginH + barH, L.w, panelH};
@@ -129,10 +135,19 @@ WindowLayout layoutBarWindow(int width, int panelH) {
   return L;
 }
 
-void pluginSizeForWindow(int winW, int winH, int panelH, int& pluginW, int& pluginH) {
-  const int w = std::max(winW, kMinWindowW);
+void pluginSizeForWindow(int winW, int winH, int panelH, int& pluginW, int& pluginH, double scale) {
+  const int w = std::max(unscaled(winW, scale), kMinWindowW);
   pluginW = std::max(kMinPluginW, winW);
-  pluginH = std::max(kMinPluginH, winH - layoutBar(w).height - std::max(panelH, 0));
+  pluginH = std::max(kMinPluginH, winH - scaled(layoutBar(w).height, scale) - std::max(panelH, 0));
+}
+
+WindowLayout barUnits(const WindowLayout& L, double scale) {
+  WindowLayout u = L;
+  u.w = unscaled(L.w, scale);
+  u.h = unscaled(L.h, scale);
+  u.bar = Rect{0, unscaled(L.bar.y, scale), u.w, unscaled(L.bar.h, scale)};
+  u.panel = Rect{0, unscaled(L.panel.y, scale), u.w, unscaled(L.panel.h, scale)};
+  return u;
 }
 
 Rect fitOnScreen(Rect r, const Rect& work) {

@@ -313,6 +313,22 @@ JGraph junctionFromChain(const PatchGraph& chain) {
   return g;
 }
 
+bool jV2HasLevels(const PatchV2& v2) {
+  for (const PatchV2Node& n : v2.nodes) {
+    std::vector<uint8_t> h = patchUnhex(n.head);
+    if (n.tail != "-") {
+      const std::vector<uint8_t> t = patchUnhex(n.tail);
+      h.insert(h.end(), t.begin(), t.end());
+    }
+    for (const PatchChunk& c : patchChunks(h.data(), h.size()))
+      if (c.id == 5007 && c.data.size() >= 4) {
+        const float m = rdf(c.data.data());
+        if (std::isfinite(m) && std::clamp(m, 0.0f, 1.0f) != 1.0f) return true;
+      }
+  }
+  return false;
+}
+
 JGraph junctionFromV2(const PatchV2& v2, std::vector<std::string>* notRun, std::vector<int>* inserts) {
   JGraph g;
   auto skip = [&](const std::string& why) {
@@ -539,6 +555,15 @@ JGraph junctionFromV2(const PatchV2& v2, std::vector<std::string>* notRun, std::
     }
     g.controls.push_back({hp, name});
   }
+  // FL's module level scales what leaves the module and leaves its latency alone (measured on
+  // FL's own library, K-AC). Junction's mix is dry / wet: the level moves onto the cables.
+  if (v2.align)
+    for (JNode& n : g.nodes) {
+      if (n.mix == 1.0f) continue;
+      for (JLink& l : g.links)
+        if (l.kind == JKind::Audio && l.src == n.id) l.gain *= n.mix;
+      n.mix = 1.0f;
+    }
   if (inserts) *inserts = outs;
   if (inAt.first > -1e8f) g.inX = inAt.first, g.inY = inAt.second;
   if (outAt.first > -1e8f) g.outX = outAt.first, g.outY = outAt.second;

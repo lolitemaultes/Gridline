@@ -116,7 +116,7 @@ bool PatchV2Node::operator==(const PatchV2Node& o) const {
   return plugin == o.plugin && raw == o.raw && orig == o.orig && flName == o.flName && display == o.display && id == o.id && head == o.head && tail == o.tail && maps == o.maps;
 }
 
-bool PatchV2::operator==(const PatchV2& o) const { return version == o.version && items == o.items && nodes == o.nodes && slots == o.slots && run3 == o.run3; }
+bool PatchV2::operator==(const PatchV2& o) const { return version == o.version && items == o.items && nodes == o.nodes && slots == o.slots && run3 == o.run3 && align == o.align; }
 
 // ------------------------------------------------------------------- JSON
 bool isPatchV2(const std::string& data) { return data.size() > 8 && data.compare(0, 7, "{\"v\":2,") == 0; }
@@ -158,7 +158,7 @@ std::string serializePatchV2(const PatchV2& g) {
   Json slots = Json::makeArray();
   for (int s : g.slots) slots.array.push_back(num(s));
   return "{\"v\":2,\"ver\":" + std::to_string(g.version) + ",\"items\":" + jsonStringify(items, 0) + ",\"nodes\":" + jsonStringify(nodes, 0) +
-         ",\"slots\":" + jsonStringify(slots, 0) + (g.run3 ? ",\"run3\":1}" : "}");
+         ",\"slots\":" + jsonStringify(slots, 0) + (g.run3 ? ",\"run3\":1" : "") + (g.align ? ",\"align\":1}" : "}");
 }
 
 bool parsePatchV2(const std::string& data, PatchV2& out) {
@@ -206,6 +206,7 @@ bool parsePatchV2(const std::string& data, PatchV2& out) {
   if (const Json* sl = j.find("slots"); sl && sl->is(Json::Type::Array))
     for (const auto& v : sl->array) out.slots.push_back(jsonInt<int>(v.number));
   out.run3 = j.num("run3", 0) != 0;
+  out.align = j.num("align", 0) != 0;
   return true;
 }
 

@@ -335,6 +335,7 @@ bool decodePatcherV2(Context& c, const std::vector<Event>& evs, PluginMapping& m
     graphRuntime = graphRuntime || (info && info->kind == PluginKind::NoteFx) || isHostedType(n.plugin.type);
   }
   g.run3 = graphRuntime;
+  g.align = true;  // K-AC: FL lines parallel paths up and reports the latency (measured on its library)
   for (const auto& u : notRun) {
     exact = false;
     c.report.warn("Patcher: " + u + " not run");
