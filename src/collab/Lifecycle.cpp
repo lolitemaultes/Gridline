@@ -31,7 +31,7 @@ bool exportPlainProject(const Song& song, const std::string& srcFolder, const st
   const std::string srcAudio = (src / "Audio").generic_string() + "/";
   std::map<std::string, std::string> done;
   bool ok = true;
-  forEachFileRef(copy, [&](std::string& p) {
+  forEachRef(copy, [&](std::string& p, bool) {
     if (p.empty()) return;
     const std::string g = fs::path(p).lexically_normal().generic_string();
     if (g.rfind(srcAudio, 0) != 0) return;  // a file outside the project folder stays where it is
@@ -44,6 +44,11 @@ bool exportPlainProject(const Song& song, const std::string& srcFolder, const st
         const fs::path to = dst / "Audio" / file;
         if (!fs::exists(to, e2)) fs::copy_file(fs::path(srcAudio) / file, to, fs::copy_options::overwrite_existing, e2);
         if (e2 && fs::exists(fs::path(srcAudio) / file)) ok = false;  // (a file that never arrived stays a missing reference)
+        for (const auto& m : bundleMembers((fs::path(srcAudio) / file).string())) {  // what a map or a folder names beside it
+          std::error_code e3;
+          const fs::path member = dst / "Audio" / fs::path(m).filename();
+          if (!fs::exists(member, e3)) fs::copy_file(fs::path(srcAudio) / fs::path(m).filename(), member, fs::copy_options::overwrite_existing, e3);
+        }
       }
       it = done.emplace(file, "Audio/" + file).first;
     }

@@ -409,6 +409,13 @@ class Session {
   void pumpFileSends();
   void finishFile(const std::string& name);
   std::string importFile(const std::string& absPath);
+  std::string importStored(const std::string& absPath);  // the file as it is, by its content
+  std::string importText(const std::string& text, const std::string& ext);
+  std::string importFolder(const std::string& absPath);  // a cabinet folder: its files and a manifest
+  std::string importRef(const std::string& absPath, bool folder) { return folder ? importFolder(absPath) : importFile(absPath); }
+  // What an arrived map or manifest names beside it (content named, so cached for good).
+  const std::vector<std::string>& membersOf(const std::string& rel);
+  std::map<std::string, std::vector<std::string>> bundles_;
   // presence / profile
   void sendPresence(double now);
   void askAvatar(SiteId to, PeerView& pv);  // J-111g

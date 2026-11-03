@@ -48,6 +48,7 @@ inline uint64_t nowNs() {
 
 void AudioEngine::setThreads(int n) {
   n = std::clamp(n, 1, WorkerPool::kMaxThreads);
+  pool_.setRealtime(!offline_);  // (setOffline comes first in the renders)
   pool_.ensureThreads(n - 1);
   threads_.store(n, std::memory_order_relaxed);
 }

@@ -302,7 +302,11 @@ void SampleCache::shutdown() {
 SamplePtr SampleCache::decodeLocked(std::unique_lock<std::mutex>& lk, const std::string& path) {
   inflight_.insert(path);
   lk.unlock();
-  SamplePtr s = loadSample(path);
+  SamplePtr s;
+  try {  // a background decoder: a file too big for memory is a sample that failed, not the end of the app
+    s = loadSample(path);
+  } catch (const std::exception&) {
+  }
   lk.lock();
   inflight_.erase(path);
   if (s)
@@ -396,6 +400,12 @@ bool SampleCache::isPending(const std::string& path) const {
   return inflight_.count(path) || std::find(queue_.begin(), queue_.end(), path) != queue_.end();
 }
 
+void SampleCache::dropQueued(const std::vector<std::string>& paths) {
+  std::lock_guard<std::mutex> lk(mu_);
+  for (const auto& p : paths)
+    if (auto q = std::find(queue_.begin(), queue_.end(), p); q != queue_.end()) queue_.erase(q);
+}
+
 void SampleCache::pauseBackground(bool paused) {
   {
     std::lock_guard<std::mutex> lk(mu_);
@@ -407,6 +417,15 @@ void SampleCache::pauseBackground(bool paused) {
 void SampleCache::waitIdle() {
   std::unique_lock<std::mutex> lk(mu_);
   done_.wait(lk, [&] { return queue_.empty() && inflight_.empty(); });
+}
+
+size_t SampleCache::bytes(size_t* count) const {
+  std::lock_guard<std::mutex> lk(mu_);
+  size_t n = 0;
+  for (const auto& kv : cache_)
+    if (kv.second) n += kv.second->left.capacity() * sizeof(float) * (kv.second->mono() ? 1 : 2);
+  if (count) *count = cache_.size();
+  return n;
 }
 
 size_t SampleCache::trim() {

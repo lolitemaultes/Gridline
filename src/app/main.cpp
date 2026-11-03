@@ -1,5 +1,6 @@
 // Gridline — application entry: SDL2 window + OpenGL 3 + Dear ImGui, audio
 // device, default layout, typing keyboard, file drops.
+#include "CacheUi.h"
 #include "Look.h"
 #include "SettingsPages.h"
 #include "GridlineVersion.h"
@@ -57,6 +58,7 @@
 #include "../../third_party/imgui/imgui_internal.h"
 #include <cfloat>
 #include <climits>
+#include <stdexcept>
 #include "../core/ClipSources.h"
 #include "../core/NoteBend.h"
 #include "../core/TrackModes.h"
@@ -65,10 +67,12 @@
 #include "../packs/PacksUi.h"
 #include "DialogLayout.h"
 #include "ExportUi.h"
+#include "DevStress.h"
 #include "StemsUi.h"
 #include "TrackReceiptUi.h"
 #include "../core/MidiFile.h"
 #include "App.h"
+#include "../core/RemoteFs.h"
 #include "CollabUi.h"
 #include "PluginUI.h"
 #include "EditorZoomUi.h"
@@ -86,6 +90,9 @@
 #include "TrackModeUi.h"
 #include "TrackPlusUi.h"
 #include "ChopUi.h"
+#include "CrashUi.h"
+#include "../core/Crash.h"
+#include "../core/Settings.h"
 #include "Shell.h"
 #include "SmoothScrollUi.h"
 #include "ExternalDragUi.h"
@@ -167,6 +174,8 @@ void feedTestInput(AudioEngine* eng, int frames) {
 
 void audioCallback(void* user, Uint8* stream, int len) {
   auto* eng = static_cast<AudioEngine*>(user);
+  crash::noteAudioThread();  // K-39: which thread a report comes from (a relaxed store)
+  if (crash::audioCrashRequested()) crash::crashNowForTest();
   const int frames = len / static_cast<int>(sizeof(float) * 2);
   const bool stats = fstats::enabled();
   const Uint64 t0 = stats ? SDL_GetPerformanceCounter() : 0;
@@ -1211,6 +1220,8 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       SDL_PushEvent(&q);
     } else if (l.cmd == "browser") {  // K-17 / K-18: browser rows and file operations (BrowserUi.h)
       browserui::devCommand(app, l.args, frame);
+    } else if (l.cmd == "cache") {  // K-45: the unpacked project cache (CacheUi.h)
+      cacheui::devCommand(l.args);
     } else if (l.cmd == "collab") {  // J-111: collaboration (CollabUi.h)
       ImVec2 to;
       if (collabui::devCommand(app, l.args, frame, &to)) {  // "collab point": the pointer to an anchor
@@ -1221,6 +1232,18 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       const std::string to = l.args.empty() ? l.a0 : l.args[0];
       std::printf("save frame %d: %s %s\n", frame, app.saveProject(to) ? "saved" : "failed", to.c_str());
       std::fflush(stdout);
+    } else if (l.cmd == "stress") {  // a seeded stress run (DevStress.h)
+      devstress::start(l.args);
+    } else if (l.cmd == "export") {  // export: the render job's state to stdout (ExportUi.h)
+      std::printf("export frame %d: %s\n", frame, exportui::devState().c_str());
+      std::fflush(stdout);
+    } else if (l.cmd == "exportstart") {  // exportstart <formats mask> <folder>: a render of the song with the dialog's other settings
+      exportui::DevRender r;
+      r.formats = std::atoi(l.a0.c_str());
+      r.folder = l.args.size() > 1 ? l.args[1] : l.a1;
+      exportui::devStart(app, r);
+    } else if (l.cmd == "exportcancel") {
+      exportui::devCancel();
     } else if (l.cmd == "rmchan") {  // K-9: rmchan <index>, as the rack's Delete
       const auto& chs = app.doc.song().channels;
       const size_t ci = static_cast<size_t>(std::max(0, std::atoi(l.a0.c_str())));
@@ -1234,6 +1257,8 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       app.fileDialog.devAccept = l.args.empty() ? l.a0 : l.args[0];
     } else if (l.cmd == "dialogok") {  // J-184: OK with <file> on the file dialog that is (or next) open, whoever opened it
       app.fileDialog.devAccept = l.args.empty() ? l.a0 : l.args[0];
+    } else if (l.cmd == "loadchoose") {  // K-42: answers the "which project in this archive" question
+      app.projectLoad.choose(std::atoi(l.a0.c_str()));
     } else if (l.cmd == "loadstate") {  // J-167: the project load's phase, counts, log and the open popups to stdout
       projloadui::devReport(app, frame);
     } else if (l.cmd == "loadhold") {  // J-167: loadhold on|off: frames count during a load (off) or wait for it (on)
@@ -1471,6 +1496,85 @@ static void devInstallBacktrace() {
 static void devInstallBacktrace() {}
 #endif
 
+// K-39: the pop-up as a small process of its own, right after a crash or during a freeze (see
+// core/Crash.h). Only SDL, OpenGL, ImGui and the theme: nothing that may be what failed.
+static int runCrashDialog(SDL_Window* window, SDL_GLContext gl, const std::string& report, const std::string& session, const std::string& shot,
+                          int shotFrames, float forcedScale, ImFont* fBold, ImFont* fMono, const std::string& assets) {
+  Settings st;
+  st.load(Settings::defaultPath());
+  theme::applyFromSettings(st);
+  if (!assets.empty()) i18n::setLanguage(st.getString("general.language"), (fs::path(assets) / "i18n").string());
+  const std::string configDir = fs::u8path(Settings::defaultPath()).parent_path().u8string();
+  const float uiScale = forcedScale > 0 ? forcedScale : uiscale::effectiveScale(st.getNumber("ui.scale"), false, 1.0f, 0, 0);
+  int w = 0, h = 0;
+  crashui::dialogSize(w, h);
+  w = static_cast<int>(static_cast<float>(w) * uiScale);
+  h = static_cast<int>(static_cast<float>(h) * uiScale);
+  OffscreenTarget offscreen;
+  const bool useOffscreen = !shot.empty() && offscreen.create(w, h);
+  if (shot.empty()) {
+    SDL_SetWindowBordered(window, SDL_TRUE);
+    SDL_SetWindowResizable(window, SDL_TRUE);
+    SDL_SetWindowMinimumSize(window, 480, 400);
+    SDL_SetWindowSize(window, w, h);
+    SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+    SDL_SetWindowTitle(window, "Gridline");
+    SDL_ShowWindow(window);
+    SDL_RaiseWindow(window);
+  }
+  crashui::DialogState* state = crashui::dialogOpen(configDir, report, session);
+  crashui::DialogFonts fonts{fBold, fMono};
+  ImGuiIO& io = ImGui::GetIO();
+  for (int frameNo = 0;; ++frameNo) {
+    SDL_Event e;
+    bool closing = false;
+    while (SDL_PollEvent(&e)) {
+      ImGui_ImplSDL2_ProcessEvent(&e);
+      if (e.type == SDL_QUIT || (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_CLOSE)) closing = true;
+    }
+    int winW = w, winH = h, fbW = w, fbH = h;
+    if (!useOffscreen) {
+      SDL_GetWindowSize(window, &winW, &winH);
+      SDL_GL_GetDrawableSize(window, &fbW, &fbH);
+    }
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplSDL2_NewFrame();
+    io.DisplaySize = ImVec2(static_cast<float>(winW) / uiScale, static_cast<float>(winH) / uiScale);
+    io.DisplayFramebufferScale = ImVec2(static_cast<float>(fbW) / io.DisplaySize.x, static_cast<float>(fbH) / io.DisplaySize.y);
+    ImGuiContext& g = *ImGui::GetCurrentContext();
+    for (ImGuiInputEvent& ev : g.InputEventsQueue)
+      if (ev.Type == ImGuiInputEventType_MousePos && ev.MousePos.PosX > -FLT_MAX * 0.5f && ev.EventId > 0) {
+        ev.MousePos.PosX /= uiScale;
+        ev.MousePos.PosY /= uiScale;
+        ev.EventId = 0;  // done once
+      }
+    ImGui::NewFrame();
+    const bool more = crashui::dialogFrame(state, fonts);
+    ImGui::Render();
+    if (useOffscreen) offscreen.use(true);
+    glViewport(0, 0, fbW, fbH);
+    const ImU32 bg = theme::pal().surface900;
+    glClearColor(static_cast<float>(bg & 255) / 255.0f, static_cast<float>((bg >> 8) & 255) / 255.0f, static_cast<float>((bg >> 16) & 255) / 255.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    if (!shot.empty() && frameNo >= shotFrames) {
+      writePpm(shot.c_str(), fbW, fbH);
+      closing = true;
+    }
+    if (useOffscreen) offscreen.use(false);
+    SDL_GL_SwapWindow(window);
+    if (!more || closing) break;
+  }
+  crashui::dialogClose(state);
+  ImGui_ImplOpenGL3_Shutdown();
+  ImGui_ImplSDL2_Shutdown();
+  ImGui::DestroyContext();
+  SDL_GL_DeleteContext(gl);
+  SDL_DestroyWindow(window);
+  SDL_Quit();
+  return 0;
+}
+
 int main(int argc, char** argv) {
   devInstallBacktrace();
 #if defined(_WIN32)
@@ -1491,10 +1595,46 @@ int main(int argc, char** argv) {
   }
   if (argc >= 2 && std::string(argv[1]) == "--check-updates")  // J-89: result on stdout, no window
     return http::checkCommand(argc >= 3 && std::string(argv[2]) == "--beta");
+  // K-39: the separate process that outlives a crash; no window, no audio.
+  if (argc >= 2 && std::string(argv[1]) == "--crash-sentinel") return crash::sentinelMain(argc, argv);
+  std::string crashDialogReport, crashDialogSession, crashDialogShot;
+  int crashDialogFrames = 6;
+  float crashDialogScale = 0.0f;
+  if (argc >= 3 && std::string(argv[1]) == "--crash-dialog") {
+    crashDialogReport = argv[2];
+    for (int i = 3; i + 1 < argc; ++i) {
+      const std::string a = argv[i];
+      if (a == "--crash-session") crashDialogSession = argv[++i];
+      else if (a == "--screenshot") crashDialogShot = argv[++i];
+      else if (a == "--frames") crashDialogFrames = std::atoi(argv[++i]);
+      else if (a == "--ui-scale") crashDialogScale = static_cast<float>(std::atof(argv[++i]));
+    }
+  }
+  bool hiddenRun = false;
+  for (int i = 1; i < argc; ++i) hiddenRun = hiddenRun || std::string(argv[i]) == "--hidden";
+  // Forced failures for the crash tests: a --hidden run with the variable set, and nothing else.
+  std::string crashForce;
+  int crashForceFrame = 5;
+  if (const char* f = std::getenv("GRIDLINE_CRASH_TEST_FORCE"); f && *f && hiddenRun) {
+    crashForce = f;
+    if (const size_t c = crashForce.rfind('@'); c != std::string::npos) {
+      crashForceFrame = std::atoi(crashForce.c_str() + c + 1);
+      crashForce.resize(c);
+    }
+  }
+  if (crashDialogReport.empty() && !std::getenv("GRIDLINE_NO_CRASH_HANDLER")) {
+    crash::Config cc;
+    cc.configDir = fs::u8path(Settings::defaultPath()).parent_path().u8string();
+    cc.sentinel = !hiddenRun || std::getenv("GRIDLINE_CRASH_TEST_SENTINEL");
+    cc.devBacktrace = std::getenv("GRIDLINE_DEV_BACKTRACE") != nullptr;
+    if (const char* t = std::getenv("GRIDLINE_CRASH_TEST_FREEZE_SECONDS"); t && hiddenRun) cc.frozenAfterSeconds = std::atoi(t);
+    crash::install(cc);
+  }
   SDL_SetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
   appicon::prepareIdentity();  // K-14: X11 WM_CLASS / Wayland app_id = the desktop entry id
   if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER) != 0) {
     std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
+    crash::markCleanExit();  // said so; the pop-up has nothing to add
     return 1;
   }
 #if defined(__APPLE__)
@@ -1521,17 +1661,27 @@ int main(int argc, char** argv) {
   // J-216: a run started with any "--" option (tests, screenshots, audits, the dev layout options)
   // never writes the saved window layout; only a plain start (no options, or a project to open) does.
   bool devOptions = false;
-  for (int i = 1; i < argc; ++i) devOptions = devOptions || std::string(argv[i]).rfind("--", 0) == 0;
+  // (K-39: a restart that recovers a project is an ordinary start.)
+  for (int i = 1; i < argc; ++i) {
+    if (std::string(argv[i]) == "--crash-recover") {
+      ++i;
+      continue;
+    }
+    devOptions = devOptions || std::string(argv[i]).rfind("--", 0) == 0;
+  }
   SDL_Window* window = SDL_CreateWindow("Gridline", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 640, 380,
                                         SDL_WINDOW_OPENGL | SDL_WINDOW_BORDERLESS | SDL_WINDOW_ALLOW_HIGHDPI |
                                             (startHidden ? SDL_WINDOW_HIDDEN : 0));
   if (!window) {
     std::fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
+    crash::markCleanExit();
     return 1;
   }
   SDL_GLContext gl = SDL_GL_CreateContext(window);
   SDL_GL_MakeCurrent(window, gl);
   SDL_GL_SetSwapInterval(1);
+  crash::setGpu(reinterpret_cast<const char*>(glGetString(GL_VENDOR)), reinterpret_cast<const char*>(glGetString(GL_RENDERER)),
+                reinterpret_cast<const char*>(glGetString(GL_VERSION)));
 
   IMGUI_CHECKVERSION();
   ImGui::CreateContext();
@@ -1570,6 +1720,10 @@ int main(int argc, char** argv) {
   // K-24 dev check: render as on an OpenGL 3.0/3.1 driver, where the renderer cannot honour draw
   // command vertex offsets (large meshes then rely on 32-bit indices alone).
   if (std::getenv("GRIDLINE_DEV_NO_VTX_OFFSET")) ImGui::GetIO().BackendFlags &= ~ImGuiBackendFlags_RendererHasVtxOffset;
+  if (!crashDialogReport.empty()) {
+    theme::setMarkTextureProvider(&markTexture);
+    return runCrashDialog(window, gl, crashDialogReport, crashDialogSession, crashDialogShot, crashDialogFrames, crashDialogScale, fBold, fMono, assets);
+  }
   viewports::install(window, gl, {startHidden});  // J-113: detachable windows
   if (startHidden) {
     // J-78: automated runs keep their own clipboard (a scripted click on a
@@ -1661,6 +1815,7 @@ int main(int argc, char** argv) {
     else
       app.applyStartup(plainLaunch && !app.embedded);
   }
+  crashui::startup(app);  // K-39: reports from earlier runs, the recovery copies
   // Opened with files (file manager, "Open with", the Linux desktop entry's %F): no options,
   // only paths; the first project among them opens (J-167: in the loading window, over the
   // starting interface).
@@ -1668,7 +1823,8 @@ int main(int argc, char** argv) {
   for (int i = 1; i < argc; ++i) onlyPaths = onlyPaths && argv[i][0] != '-';
   for (int i = 1; onlyPaths && i < argc; ++i) {
     std::error_code ec;
-    if (fs::is_regular_file(fs::u8path(argv[i]), ec) && app.openProject(argv[i])) break;
+    // K-42: a project on a web drive is not stat-ed while starting: the loading window reports it.
+    if ((gl::remotefs::isRemote(argv[i]) || fs::is_regular_file(fs::u8path(argv[i]), ec)) && app.openProject(argv[i])) break;
   }
 
   // Command line: [project] [--screenshot out.ppm] [--frames N] [--play] [--fx mixer slot] [--chan index]
@@ -1825,6 +1981,7 @@ int main(int argc, char** argv) {
       else if (w == "midi") app.showSettings = true, app.settingsTab = 1;
       else if (w == "project-settings") app.showSettings = true, app.settingsTab = 2;
       else if (w == "backup") app.showSettings = true, app.settingsTab = 3;
+      else if (w == "files") app.showSettings = true, app.settingsTab = 6;  // K-45 Files page
       else if (w == "interface") app.showSettings = true, app.settingsTab = 4;
       else if (w == "general") app.showSettings = true, app.settingsTab = 5;
       else if (w == "files") app.showSettings = true, app.settingsTab = 6;
@@ -1984,9 +2141,13 @@ int main(int argc, char** argv) {
       updateOpts.disabled = true;
     } else if (arg == "--fake-update" && i + 1 < argc) {  // J-89 dev check: a made-up newer release is offered (no network)
       updateOpts.fakeVersion = argv[++i];
+    } else if (arg == "--crash-recover" && i + 1 < argc) {  // K-39: restart from the crash pop-up
+      crashui::recoverFrom(app, argv[++i]);
     } else if (arg == "--hidden") {
       // J-78: read before the window is created (see startHidden)
-    } else if (fs::exists(arg) && !onlyPaths) {
+      // K-45: scripted runs leave the default cache alone (their own has GRIDLINE_CACHE_DIR).
+      if (!std::getenv("GRIDLINE_CACHE_DIR")) cacheui::skipStartupSweep();
+    } else if ((gl::remotefs::isRemote(arg) || fs::exists(arg)) && !onlyPaths) {
       // Options after the project (--chan, --fx, --edit, --plugin) act on it: it loads now (J-167).
       argProject = app.openProject(arg) || argProject;
       app.finishProjectLoad();
@@ -2138,6 +2299,9 @@ int main(int argc, char** argv) {
   // One complete frame after the events: tick, interface, render and swap of every window. The
   // main loop draws it after each event pump; J-116: SDL's event watch also draws it from inside
   // a pump the window system blocks while a window is resized (`live`, see LiveResize.h).
+  int crashForceCount = 0;
+  float lastUiScale = 1.0f;  // the failing-interface pop-up draws at the same size
+  bool crashTestDirty = hiddenRun && std::getenv("GRIDLINE_CRASH_TEST_DIRTY") != nullptr;
   auto frame = [&](bool live) {
     liveresize::frameBegin(live);
     uint64_t statT = 0;
@@ -2169,6 +2333,7 @@ int main(int argc, char** argv) {
       app.tick(now);
       collabui::frame(app, now);  // J-111: network, collaborators' edits, saving
       pumpHostedPlugins(app);
+      crashui::frame(app);  // K-39: the recovery copy
       app.processMidi();
       app.processAudioRecording();  // J-8
     }
@@ -2197,6 +2362,7 @@ int main(int argc, char** argv) {
     const float uiScale = devUiScale > 0 ? uiscale::effectiveScale(devUiScale, false, 1.0f, winW, winH)
                                          : uiscale::effectiveScale(app.settings.getNumber("ui.scale"), app.settings.getBool("ui.scaleAuto"), autoDpi, winW, winH);
 
+    lastUiScale = uiScale;
     // K-35: the plugin windows' bars follow the scale asked for; the limit above is this window's size.
     setPluginWindowUiScale(devUiScale > 0 ? uiscale::effectiveScale(devUiScale, false, 1.0f, 0, 0)
                                           : uiscale::effectiveScale(app.settings.getNumber("ui.scale"), app.settings.getBool("ui.scaleAuto"), autoDpi, 0, 0));
@@ -2232,6 +2398,7 @@ int main(int argc, char** argv) {
             fs::remove(fs::u8path(devInputLive), liveEc);
           }
         }
+        devstress::frame(app);  // a seeded stress run, if one was asked for
         runDevInput(app, devInput, frameNo);
         lastScaledEvent = g.InputEventsNextEventId - 1;  // already in logical pixels
       }
@@ -2246,6 +2413,16 @@ int main(int argc, char** argv) {
     scrollui::beforeNewFrame();
     edzoomui::mapPointer();  // K-19: the pointer over a magnified plugin editor, in its design coordinates
     ImGui::NewFrame();
+    if (crashTestDirty && !app.doc.song().channels.empty()) {  // K-39 tests: unsaved work to recover
+      crashTestDirty = false;
+      app.doc.renameChannel(app.doc.song().channels[0].id, "k39-unsaved-marker");
+    }
+    if (!crashForce.empty() && ++crashForceCount >= crashForceFrame) {  // K-39 tests only (see above)
+      if (crashForce == "exception-always") throw std::runtime_error("forced repeating failure");
+      const std::string k = crashForce;
+      crashForce.clear();
+      crash::forceForTest(k);
+    }
     const bool alignFrame = !devAlignAudit.empty() && !shotPath.empty() && frameNo == shotFrames - 1;
     if (alignFrame) alignaudit::begin();  // J-128
     pointerGestureFrame(app);  // one undo step per pointer gesture, in every editor
@@ -2401,6 +2578,7 @@ int main(int argc, char** argv) {
       browserui::drawPluginPicker(app);
       collabui::draw(app);  // J-111
       projloadui::draw(app);  // J-167: last, at the root level (it replaces any popup open when a load starts)
+      crashui::draw(app);     // K-39: a failure's pop-up goes over everything
     }
     browserui::thumbDraw(app);
     if (!devMenu.empty()) drawDevMenu(app, devMenu);
@@ -2605,7 +2783,70 @@ int main(int argc, char** argv) {
     }
     liveresize::frameEnd();
   };
-  liveresize::install(window, [&frame]() { frame(true); });
+  // K-39: a frame that throws is reported and left behind; the app goes on. Three in a row: what
+  // draws the interface is broken for now, so the pop-up alone, until the user decides.
+  int failedFrames = 0, goodFrames = 0;
+  auto guardedFrame = [&](bool live) {
+    crash::uiHeartbeat();
+    try {
+      frame(live);
+      if (failedFrames && ++goodFrames > 30) failedFrames = 0;
+    } catch (...) {
+      crash::reportCurrentException("Drawing the interface");
+      if (ImGui::GetCurrentContext()->WithinFrameScope) ImGui::EndFrame();  // closes what the frame left open
+      liveresize::frameEnd();
+      goodFrames = 0;
+      ++failedFrames;
+    }
+  };
+  auto keepsFailing = [&]() {
+    // Until the user decides. An automated run takes its picture and ends.
+    for (int shown = 0;; ++shown) {
+      crash::uiHeartbeat();
+      SDL_Event e;
+      while (SDL_PollEvent(&e)) ImGui_ImplSDL2_ProcessEvent(&e);
+      int winW = 0, winH = 0, fbW = 0, fbH = 0;
+      SDL_GetWindowSize(window, &winW, &winH);
+      SDL_GL_GetDrawableSize(window, &fbW, &fbH);
+      if (useOffscreen) {
+        winW = fbW = offscreen.w;
+        winH = fbH = offscreen.h;
+      }
+      ImGui_ImplOpenGL3_NewFrame();
+      ImGui_ImplSDL2_NewFrame();
+      if (winW > 0 && winH > 0) {
+        io.DisplaySize = ImVec2(static_cast<float>(winW) / lastUiScale, static_cast<float>(winH) / lastUiScale);
+        io.DisplayFramebufferScale = ImVec2(static_cast<float>(fbW) / io.DisplaySize.x, static_cast<float>(fbH) / io.DisplaySize.y);
+      }
+      ImGui::NewFrame();
+      const crashui::KeepsFailingResult r = crashui::drawKeepsFailing(app);
+      ImGui::Render();
+      if (useOffscreen) offscreen.use(true);
+      glViewport(0, 0, fbW, fbH);
+      glClear(GL_COLOR_BUFFER_BIT);
+      ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+      const bool automated = !shotPath.empty() && shown >= 5;
+      if (automated) writePpm(shotPath.c_str(), fbW, fbH);
+      if (useOffscreen) offscreen.use(false);
+      SDL_GL_SwapWindow(window);
+      if (automated) {
+        crash::markCleanExit();
+        std::fflush(nullptr);
+        std::_Exit(0);
+      }
+      if (r.done) {
+        if (r.retry) {
+          failedFrames = 0;
+          return;
+        }
+        crash::markCleanExit();  // the copy is saved and the new start is under way
+        std::fflush(nullptr);
+        std::_Exit(0);
+      }
+    }
+  };
+  liveresize::install(window, [&guardedFrame]() { guardedFrame(true); });
+  crash::armWatchdog();
   while (running) {
     prof::beginFrame();
     SDL_Event ev;
@@ -2683,11 +2924,14 @@ int main(int argc, char** argv) {
     }
     liveresize::pumpEnd();
     fstats::since(fstats::Events, statT);
-    frame(false);
+    guardedFrame(false);
+    if (failedFrames >= 3) keepsFailing();
     prof::endFrame();
     fstats::endFrame();
   }
   liveresize::uninstall();
+  crashui::shutdown(app);   // K-39: the user answered "save changes?"; this run's copy goes
+  crash::markCleanExit();   // what follows is teardown: a failure there still gets a report
   if (!profilePath.empty()) {
     std::string label = std::to_string(forcedSize.first) + "x" + std::to_string(forcedSize.second);
     if (prof::writeJson(profilePath, label))

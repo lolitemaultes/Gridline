@@ -382,7 +382,7 @@ bool maximusRefBlock(const Reader& r, PluginMapping& m, int ref, const std::vect
       longCurves = dy::masterLongCurvesWith(longCurves, k, &lc);
     }
   }
-  m.state.data = longCurves;
+  m.state.data = dy::masterWithMoveLaw(longCurves);  // K-46: imports move as the original does
   return exact;
 }
 

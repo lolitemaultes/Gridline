@@ -1,5 +1,7 @@
 // Gridline — J-75: drags from other applications inside the interface (ExternalDragUi.h).
 #include "ExternalDragUi.h"
+#include "../core/RemoteFs.h"
+#include "../core/ProjectFiles.h"
 #include <algorithm>
 #include <cfloat>
 #include <chrono>
@@ -366,7 +368,7 @@ void sdlDropFile(const std::string& path) {
   it.path = path;
   it.name = fs::path(path).filename().string();
   std::error_code ec;
-  it.dir = fs::is_directory(path, ec);
+  it.dir = !(remotefs::isRemote(path) && opensAsProject(path)) && fs::is_directory(path, ec);  // K-42: no stat on a drive for a project
   gSdlItems.push_back(it);
 }
 

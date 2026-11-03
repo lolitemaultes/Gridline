@@ -122,6 +122,23 @@ option(GRIDLINE_GUI_TESTS "Register the tests that open (hidden) application win
 
 # ---- core + engine (no UI dependencies) ----
 # Plugin packs (src/packs/<pack>/): *_info/*_dsp go into the core library, *_ui into the app.
+# K-39: crash reports walk the frame chain (Linux and the BSDs drop it otherwise; macOS and Windows keep or
+# do not need it). Release builds add symbol files with GRIDLINE_RELEASE_SYMBOLS: line tables only, the code
+# is the same, and tools/crash_symbolize.py turns a crash code into functions and lines with them.
+option(GRIDLINE_RELEASE_SYMBOLS "Debug line tables in a release build, for the per-release symbol files" OFF)
+if(NOT MSVC AND UNIX AND NOT APPLE)
+  add_compile_options(-fno-omit-frame-pointer)
+endif()
+if(GRIDLINE_RELEASE_SYMBOLS)
+  if(MSVC)
+    add_compile_options(/Z7)
+    add_link_options(/DEBUG /OPT:REF /OPT:ICF)
+  elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_compile_options(-gline-tables-only)
+  else()
+    add_compile_options(-g1)
+  endif()
+endif()
 file(GLOB GRIDLINE_CORE_SRC CONFIGURE_DEPENDS src/core/*.cpp src/core/flp/*.cpp src/engine/*.cpp src/engine/pitch/*.cpp src/engine/stems/*.cpp src/packs/Registry.cpp
      src/packs/*/*_info.cpp src/packs/*/*_dsp.cpp src/host/*.cpp src/host/*/*.cpp)
 # Plugin hosting on macOS: Audio Units, Cocoa plugin views, sandbox windows (Objective-C++).
@@ -1009,6 +1026,29 @@ target_include_directories(gridline_tests_j177 PRIVATE tests src)
 target_compile_options(gridline_tests_j177 PRIVATE ${GL_WARN})
 add_test(NAME j177_flp_clip_time COMMAND gridline_tests_j177 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 # J-167: the project loader's progress / cancel model (reading, samples, plugins, cancel at each phase).
+# K-42: opening projects from web and network drives (zip streaming, the local cache, stalled and
+# failing reads, cancel, no folder walks).
+add_executable(gridline_tests_k42 tests/test_k42.cpp)
+target_link_libraries(gridline_tests_k42 PRIVATE gridline_core)
+target_include_directories(gridline_tests_k42 PRIVATE tests src)
+target_compile_options(gridline_tests_k42 PRIVATE ${GL_WARN})
+add_test(NAME k42_web_drives COMMAND gridline_tests_k42 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+set_tests_properties(k42_web_drives PROPERTIES TIMEOUT 120)
+add_executable(gridline_tests_k44 tests/test_k44.cpp)
+target_link_libraries(gridline_tests_k44 PRIVATE gridline_core)
+target_include_directories(gridline_tests_k44 PRIVATE tests src)
+target_compile_options(gridline_tests_k44 PRIVATE ${GL_WARN})
+add_test(NAME k44_zip_holds_everything COMMAND gridline_tests_k44 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+set_tests_properties(k44_zip_holds_everything PROPERTIES TIMEOUT 300)
+
+# K-45: the unpacked project cache: local archives, close, sweep, limit, Clear cache.
+add_executable(gridline_tests_k45 tests/test_k45.cpp)
+target_link_libraries(gridline_tests_k45 PRIVATE gridline_core)
+target_include_directories(gridline_tests_k45 PRIVATE tests src)
+target_compile_options(gridline_tests_k45 PRIVATE ${GL_WARN})
+add_test(NAME k45_unpacked_cache COMMAND gridline_tests_k45 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+set_tests_properties(k45_unpacked_cache PROPERTIES TIMEOUT 180)
+
 add_executable(gridline_tests_j167 tests/test_j167.cpp)
 target_link_libraries(gridline_tests_j167 PRIVATE gridline_core)
 target_include_directories(gridline_tests_j167 PRIVATE tests src)
@@ -1144,6 +1184,27 @@ target_include_directories(gridline_tests_k22 PRIVATE tests src)
 target_compile_options(gridline_tests_k22 PRIVATE ${GL_WARN})
 add_test(NAME k22_steps_in_piano_roll COMMAND gridline_tests_k22 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
+# K-39: crash reports. The probe has debug information of its own: the symbol test needs no debug build of the app.
+add_executable(gridline_tests_k39 tests/test_k39.cpp)
+target_link_libraries(gridline_tests_k39 PRIVATE gridline_core)
+target_include_directories(gridline_tests_k39 PRIVATE tests src)
+target_compile_options(gridline_tests_k39 PRIVATE ${GL_WARN})
+add_test(NAME k39_crash_units COMMAND gridline_tests_k39 ${CMAKE_BINARY_DIR}/k39_units WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+add_executable(gridline_crash_probe tests/crash_probe.cpp)
+target_link_libraries(gridline_crash_probe PRIVATE gridline_core)
+target_include_directories(gridline_crash_probe PRIVATE tests src)
+target_compile_options(gridline_crash_probe PRIVATE ${GL_WARN} $<IF:$<CXX_COMPILER_ID:MSVC>,/Z7,-g>)
+if(MSVC)
+  target_link_options(gridline_crash_probe PRIVATE /DEBUG)
+endif()
+find_program(GRIDLINE_PYTHON3 NAMES python3 python)
+if(GRIDLINE_PYTHON3)
+  add_test(NAME k39_crash_symbols_and_false_alarms
+           COMMAND ${CMAKE_COMMAND} -DPROBE=$<TARGET_FILE:gridline_crash_probe> -DTOOL=${CMAKE_SOURCE_DIR}/tools/crash_symbolize.py -DPYTHON=${GRIDLINE_PYTHON3}
+                   -DOUT=${CMAKE_BINARY_DIR}/k39_probe -P ${CMAKE_SOURCE_DIR}/tests/k39_crash_probe.cmake
+           WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+  set_tests_properties(k39_crash_symbols_and_false_alarms PROPERTIES TIMEOUT 200)
+endif()
 add_executable(gridline_tests_k29 tests/test_k29.cpp)
 target_link_libraries(gridline_tests_k29 PRIVATE gridline_core)
 target_include_directories(gridline_tests_k29 PRIVATE tests src)
@@ -1600,6 +1661,25 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(j202_plasma_pages PROPERTIES TIMEOUT 600)
 
+    # K-42: a zipped project on a "web drive" in the real app: frames keep coming while it reads,
+    # nothing lands on the drive, the second open needs no read, offline opens the last copy, the
+    # recent list survives a drive that has gone.
+    add_test(NAME k42_web_drive_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DSOUNDS=${CMAKE_SOURCE_DIR}/assets/sounds -DOUT=${CMAKE_BINARY_DIR}/k42_web_drive
+                     -P ${CMAKE_SOURCE_DIR}/tests/k42_web_drive_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(k42_web_drive_app PROPERTIES TIMEOUT 300)
+
+    # K-45: every zip unpacks into the cache, a closed local project's copy goes, a drive's stays, the
+    # startup sweep, and the Clear cache control in Settings > Files.
+    add_test(NAME k45_cache_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DSOUNDS=${CMAKE_SOURCE_DIR}/assets/sounds -DOUT=${CMAKE_BINARY_DIR}/k45_cache
+                     -P ${CMAKE_SOURCE_DIR}/tests/k45_cache_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(k45_cache_app PROPERTIES TIMEOUT 300)
+
     # J-167: opening a slow project through File > Open: the dialog closes at once, frames keep
     # coming, the loading window shows progress and the log, input is blocked, Esc cancels back to
     # the open project exactly; a finished load keeps its warnings on a card; a corrupt file says why.
@@ -1673,6 +1753,15 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -DOUT=${CMAKE_BINARY_DIR}/k28_bend_snap_app -P ${CMAKE_SOURCE_DIR}/tests/k28_bend_snap_app.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(k28_bend_snap_app PROPERTIES TIMEOUT 300)
+    # K-39: every failure forced in the real app, judged by the report it wrote; recovery; the pop-up process.
+    # (POSIX only: it expects signal names and the forked rescue copy. Windows has the units and the probe.)
+    if(UNIX)
+      add_test(NAME k39_crash_app
+               COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                       -DOUT=${CMAKE_BINARY_DIR}/k39_crash_app -P ${CMAKE_SOURCE_DIR}/tests/k39_crash_app.cmake
+               WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+      set_tests_properties(k39_crash_app PROPERTIES TIMEOUT 400)
+    endif()
     # K-29: double-click a point removes only it, a glide or its ring straightens, the note resets its line; one undo step each, chords too.
     add_test(NAME k29_bend_dblclick_app
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
@@ -1686,6 +1775,13 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -DOUT=${CMAKE_BINARY_DIR}/piano_erase_overlap -P ${CMAKE_SOURCE_DIR}/tests/piano_erase_overlap.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(piano_erase_overlap PROPERTIES TIMEOUT 300)
+
+    # The hovered key on the piano roll's keyboard has exactly the accent chosen in Settings.
+    add_test(NAME piano_key_accent_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/piano_key_accent_app -P ${CMAKE_SOURCE_DIR}/tests/piano_key_accent_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(piano_key_accent_app PROPERTIES TIMEOUT 300)
 
     # J-113: detached windows kept across runs and recovered, Space and the typing keyboard from a
     # detached window, focus moving between Gridline's windows keeping held keys, J-97 drops into a
@@ -1724,6 +1820,20 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -DCLAP=${GRIDLINE_CLAP_TESTPLUG} -DOUT=${CMAKE_BINARY_DIR}/k7_junction_hosted_app -P ${CMAKE_SOURCE_DIR}/tests/k7_junction_hosted_app.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(k7_junction_hosted_app PROPERTIES TIMEOUT 120 SKIP_REGULAR_EXPRESSION "SKIP: ")
+
+    # An export of a project with an installed plugin leaves the window alive, and Cancel and quit work.
+    add_test(NAME k38_export_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DCLAP=${GRIDLINE_CLAP_TESTPLUG} -DOUT=${CMAKE_BINARY_DIR}/k38_export_app -P ${CMAKE_SOURCE_DIR}/tests/k38_export_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(k38_export_app PROPERTIES TIMEOUT 420)
+
+    # A seeded stress run (src/app/DevStress.h): rapid edits, undo, add and remove, play, render while editing.
+    add_test(NAME k38_stress_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/k38_stress_app -P ${CMAKE_SOURCE_DIR}/tests/k38_stress_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(k38_stress_app PROPERTIES TIMEOUT 300)
 
     # K-37: a bridged plugin's interface that never closes does not stop the app.
     add_test(NAME k37_bridged_close_app

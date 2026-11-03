@@ -3,6 +3,7 @@
 #include <ctime>
 #include <filesystem>
 #include "Project.h"
+#include "RemoteFs.h"
 
 namespace gl {
 
@@ -36,7 +37,8 @@ int64_t BackupPolicy::intervalSeconds() const {
 }
 
 std::string BackupManager::folderFor(const std::string& projectPath) const {
-  if (policy_.inProjectFolder && !projectPath.empty())
+  // K-42: backups stay on this computer for a project on a web or network drive.
+  if (policy_.inProjectFolder && !projectPath.empty() && !remotefs::isRemote(projectPath))
     return (fs::path(projectPath).parent_path() / "Backup").string();
   return policy_.globalFolder;
 }

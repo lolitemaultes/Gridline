@@ -852,8 +852,10 @@ int main(int argc, char** argv) {
     else if (cmd == "bones") rep = gl::exportProjectBones(song, out, name).files;
     else rep = gl::exportProjectDataFiles(song, out, name);
     for (const auto& m : rep.missing) std::fprintf(stderr, "missing: %s\n", m.c_str());
+    for (const auto& m : rep.unpacked) std::fprintf(stderr, "not packed: %s\n", m.c_str());
+    for (const auto& m : rep.insidePlugins) std::fprintf(stderr, "packed, but named inside a third-party plugin: %s\n", m.c_str());
     if (!rep.error.empty()) { std::fprintf(stderr, "error: %s\n", rep.error.c_str()); return 1; }
-    std::printf("wrote %s (%d files copied, %zu missing)\n", out.c_str(), rep.copied + rep.reused, rep.missing.size());
+    std::printf("wrote %s (%d files copied, %zu missing, %zu not packed)\n", out.c_str(), rep.copied + rep.reused, rep.missing.size(), rep.unpacked.size());
     return 0;
   }
 

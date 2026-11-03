@@ -169,6 +169,21 @@ bool exportFlpZip(const Song& song, const std::string& zipPath, const std::strin
         if (auto it = rendered.find(norm(z.path)); it != rendered.end()) z.path = it->second;
       c.plugin.data = dwn::formatProgram(p);
     }
+    // A renamed file (same name as another in the package) inside a plugin's own state: found by
+    // name, it would be the other file. The channel's sample event is rewritten below instead.
+    auto renamed = [&](std::string& p) {
+      if (auto it = entries.find(norm(p)); it != entries.end() && it->second != fs::u8path(p).filename().u8string()) p = it->second;
+    };
+    auto followChannelSample = [](const PluginState& st) {
+      const PluginInfo* info = findPlugin(st.type);
+      return info && info->usesSample && info->kind == PluginKind::Generator && st.data.find('\n') == std::string::npos;
+    };
+    for (auto& c : work.channels) {
+      if (!followChannelSample(c.plugin)) forEachStateFileRef(c.plugin, renamed);
+      for (auto& nf : c.noteFx) forEachStateFileRef(nf, renamed);
+    }
+    for (auto& m : work.mixer)
+      for (auto& sl : m.slots) forEachStateFileRef(sl.plugin, renamed);
   }
   Bytes flp;
   if (!exportFlpWithStandIns(work, sr, flp, rep.flp, opt.flp)) {
@@ -186,6 +201,24 @@ bool exportFlpZip(const Song& song, const std::string& zipPath, const std::strin
   if (!z.add(rep.projectEntry, flp)) {
     if (z.close(err) && err) *err = "cannot write " + zipPath;  // close() names the reason (J-78)
     return false;
+  }
+  {
+    // Sidecars beside their files. FL Studio passes over them; Gridline reads them.
+    std::set<std::string> names = {lowerStr(rep.projectEntry)};
+    for (const auto& [src, e] : entries) names.insert(lowerStr(e));
+    const auto sidecars = sidecarsFor(entries, [&](const std::string& fileName) {
+      const fs::path f = fs::u8path(fileName);
+      std::string nm;
+      for (int k = 1;; ++k) {
+        nm = k == 1 ? fileName : f.stem().u8string() + " (" + std::to_string(k) + ")" + f.extension().u8string();
+        if (names.insert(lowerStr(nm)).second) return nm;
+      }
+    });
+    for (const auto& [entry, text] : sidecars)
+      if (!z.add(entry, Bytes(text.begin(), text.end()))) {
+        if (z.close(err) && err) *err = "cannot write " + zipPath;
+        return false;
+      }
   }
   for (const auto& [src, entry] : entries) {
     if (!z.addFile(entry, src, err)) return false;

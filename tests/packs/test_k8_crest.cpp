@@ -386,6 +386,13 @@ void testNoAllocation() {
   noAlloc(l, {{dy::MsRef0 + dy::MrLinQuality, 0}}, "quality automation, linear-phase split");
   noAlloc(d, {{dy::MsRef0 + dy::MrLin, 1}}, "linear-phase split switched on by automation");
   noAlloc(d, {{dy::MsRef0 + dy::MrOversample, 3}}, "oversampling automation");
+  // K-46: everything that clears or restarts when it moves.
+  noAlloc(d, {{split + 4, 9000}}, "band delay automation");
+  noAlloc(d, {{rawParam(3, mr::TAtt), 9000}}, "master attack automation");
+  noAlloc(d, {{rawParam(1, mr::TWindow), 9000}, {rawParam(1, mr::TSusMode), 1}}, "window and detector automation");
+  noAlloc(d, {{rawParam(1, mr::TAttCurve), 8}, {rawParam(1, mr::TRelCurve), 8}, {rawParam(1, mr::TRel), 0}}, "stage automation");
+  noAlloc(d, {{split + 1, 0}, {split + 3, 0}, {rawParam(0, mr::TMode), 3}}, "slope and band off automation");
+  noAlloc(d, {{rawParam(1, mr::TSep), 1000}, {rawParam(3, mr::TSep), -1000}}, "separation automation");
   // A change that skipped the build (generic edits): no allocation either, it waits for the next build.
   {
     auto fx = createEffect("gl.master");
@@ -434,6 +441,299 @@ void testNoAllocation() {
 
 bool decodeState(const std::vector<uint8_t>& state, flp::PluginMapping& m);
 
+// ---------------------------------------------------------------- controls moved while running (K-46)
+struct Move {
+  size_t at;
+  int param;
+  double value;
+};
+Buf runMoves(PluginState st, Buf in, const std::vector<Move>& moves, int block = 512, double sr = kSr) {
+  auto fx = createEffect(st.type);
+  ProcessContext ctx;
+  ctx.sampleRate = sr;
+  fx->prepareHost(st, sr);
+  const size_t n = in.L.size();
+  size_t next = 0;
+  for (size_t i = 0; i < n;) {
+    while (next < moves.size() && moves[next].at <= i) put(st, moves[next].param, moves[next].value), ++next;
+    size_t c = std::min(static_cast<size_t>(block), n - i);
+    if (next < moves.size() && moves[next].at > i && moves[next].at < i + c) c = moves[next].at - i;
+    fx->process(st, ctx, in.L.data() + i, in.R.data() + i, static_cast<int>(c));
+    i += c;
+  }
+  return in;
+}
+PluginState saved(PluginState s) {  // as a state saved before the moving law
+  s.data.clear();
+  return s;
+}
+double peakIn(const Buf& b, size_t from, size_t to) {
+  double p = 0;
+  for (size_t i = from; i < to && i < b.L.size(); ++i) p = std::max({p, static_cast<double>(std::fabs(b.L[i])), static_cast<double>(std::fabs(b.R[i]))});
+  return p;
+}
+double diffIn(const Buf& a, const Buf& b, size_t from, size_t to) {
+  double d = 0;
+  for (size_t i = from; i < to && i < a.L.size(); ++i) d = std::max({d, static_cast<double>(std::fabs(a.L[i] - b.L[i])), static_cast<double>(std::fabs(a.R[i] - b.R[i]))});
+  return d;
+}
+int delaySamples(int word) { return static_cast<int>(std::lround(kSr * mr::timeMs(word) / 1000.0)); }
+// Low cut off, nothing shaping: the input reaches the master band untouched.
+PluginState flat() {
+  PluginState s = defaultPluginState("gl.master");
+  const int raw = dy::MsRef0 + dy::MrRaw0;
+  put(s, raw + 6, -1);
+  put(s, rawParam(0, mr::TMode), 3), put(s, rawParam(2, mr::TMode), 3), put(s, rawParam(1, mr::TMode), 1), put(s, rawParam(3, mr::TMode), 1);
+  return s;
+}
+void hotCurve(PluginState& s, int band) {
+  setCurve(s, band, {{0, 0, 0, 0}, {xDb(-24), xDb(-24), 0, 0}, {xDb(-3), xDb(-12), 0, 0}, {1, xDb(-6), 0, 0}});
+}
+Buf steady(float l, float r, double sec) {
+  const size_t n = static_cast<size_t>(sec * kSr);
+  return Buf{std::vector<float>(n, l), std::vector<float>(n, r)};
+}
+
+void testMoves() {
+  constexpr size_t kAt = 9600;
+  const int raw = dy::MsRef0 + dy::MrRaw0;
+  const size_t end = static_cast<size_t>(0.5 * kSr);
+  // Band delay: a new length starts from an empty line, for the new length.
+  {
+    PluginState s = defaultPluginState("gl.master");
+    put(s, rawParam(3, mr::TMode), 1);  // the master band adds no delay of its own
+    Buf in = noise(0.5, 0.4f);
+    for (int word : {3000, 500}) {
+      const std::vector<Move> mv = {{kAt, raw + 4, static_cast<double>(word)}};
+      const size_t D = static_cast<size_t>(delaySamples(word));
+      Buf a = runMoves(s, in, mv), b = runMoves(saved(s), in, mv);
+      expect(diffIn(a, b, 0, kAt) == 0, "band delay: nothing changes before the move");
+      expect(peakIn(a, kAt, kAt + D) == 0, "band delay: the new length starts silent");
+      expect(peakIn(a, kAt + D, kAt + D + 200) > 0.01, "band delay: the sound comes back after the new length");
+      expect(peakIn(b, kAt, kAt + D) > 0.01, "band delay: states saved earlier keep the old move");
+    }
+    const std::vector<Move> same = {{kAt, raw + 4, 1115}};
+    expect(diffIn(runMoves(s, in, same), runMoves(saved(s), in, same), 0, end) == 0, "band delay: the same value clears nothing");
+  }
+  // Master attack: it is the master band's delay too.
+  {
+    PluginState s = flat();
+    put(s, rawParam(3, mr::TMode), 0);
+    Buf in = noise(0.5, 0.2f);
+    const std::vector<Move> mv = {{kAt, rawParam(3, mr::TAtt), 500}};
+    Buf a = runMoves(s, in, mv), b = runMoves(saved(s), in, mv);
+    const size_t D = static_cast<size_t>(delaySamples(500));
+    expect(peakIn(a, kAt, kAt + D) == 0, "master attack: the new delay starts silent");
+    expect(peakIn(a, kAt + D, kAt + D + 200) > 0.01, "master attack: the sound comes back");
+    expect(peakIn(b, kAt, kAt + D) > 0.01, "master attack: states saved earlier keep the old move");
+  }
+  // Attack curve: another stage count restarts the gain from unity.
+  {
+    PluginState s = flat();
+    put(s, rawParam(3, mr::TMode), 0);
+    hotCurve(s, 3);
+    Buf in = sine(1000, 0.7f, 0.5);
+    const std::vector<Move> mv = {{kAt, rawParam(3, mr::TAttCurve), 5}};
+    Buf a = runMoves(s, in, mv), b = runMoves(saved(s), in, mv);
+    const double before = peakIn(a, kAt - 480, kAt);
+    expect(peakIn(a, kAt, kAt + 60) > 1.5 * before, "attack curve: the gain restarts from unity");
+    expect(peakIn(b, kAt, kAt + 60) < 1.1 * before, "attack curve: states saved earlier keep the old move");
+    const std::vector<Move> fewer = {{kAt, rawParam(3, mr::TAttCurve), 1}};  // the stage that stays restarts too
+    expect(peakIn(runMoves(s, in, fewer), kAt, kAt + 60) > 1.5 * before, "attack curve: fewer stages restart from unity as well");
+    expect(peakIn(runMoves(saved(s), in, fewer), kAt, kAt + 60) < 1.1 * before, "attack curve: fewer stages, states saved earlier keep the old move");
+    const std::vector<Move> same = {{kAt, rawParam(3, mr::TAttCurve), 2}};
+    expect(diffIn(runMoves(s, in, same), runMoves(saved(s), in, same), 0, end) == 0, "attack curve: the same value restarts nothing");
+  }
+  // Release curve and sustain window, on a level that falls: the detector and the level restart.
+  {
+    PluginState s = flat();
+    put(s, rawParam(3, mr::TMode), 0);
+    hotCurve(s, 3);
+    Buf in = sine(1000, 0.8f, 0.5);
+    for (size_t i = kAt - 1200; i < in.L.size(); ++i) in.L[i] *= 0.2f, in.R[i] *= 0.2f;
+    const int susWord = rawParam(3, mr::TSusMode);
+    const std::vector<std::vector<Move>> cases = {{{kAt, rawParam(3, mr::TRelCurve), 6}},
+                                                  {{kAt, rawParam(3, mr::TWindow), 800}},
+                                                  {{kAt, susWord, 1}, {kAt + 2000, susWord, 0}, {kAt + 4000, susWord, 1}}};  // the detector's memory, on its way back
+    for (const std::vector<Move>& mv : cases) {
+      Buf a = runMoves(s, in, mv), b = runMoves(saved(s), in, mv);
+      expect(diffIn(a, b, 0, kAt) == 0, "release curve, window, detector: nothing changes before the move");
+      expect(diffIn(a, b, kAt, end) > 1e-5, "release curve, window, detector: the move restarts them, states saved earlier do not");
+      expect(finite(a), "release curve, window, detector: finite");
+    }
+    // Release curve: the level restarts from nothing, so a long release lets go of the loud part at once.
+    {
+      PluginState r = s;
+      put(r, rawParam(3, mr::TWindow), 0), put(r, rawParam(3, mr::TRel), 8000);
+      const std::vector<Move> rc = {{kAt, rawParam(3, mr::TRelCurve), 6}};
+      Buf a = runMoves(r, in, rc), b = runMoves(saved(r), in, rc);
+      const size_t soon = kAt + 2000;
+      expect(peakIn(a, soon, soon + 200) > 1.3 * peakIn(b, soon, soon + 200), "release curve: the level restarts from nothing");
+    }
+    // A longer window starts empty: it does not reach back to the loud part.
+    Buf k = sine(1000, 0.8f, 0.5);
+    for (size_t i = kAt - 200; i < k.L.size(); ++i) k.L[i] *= 0.2f, k.R[i] *= 0.2f;
+    PluginState w = s;
+    put(w, rawParam(3, mr::TRel), 0);
+    const std::vector<Move> mv = {{kAt, rawParam(3, mr::TWindow), 6000}};
+    Buf a = runMoves(w, k, mv), b = runMoves(saved(w), k, mv);
+    const size_t later = kAt + static_cast<size_t>(delaySamples(1115)) + 2000;
+    expect(peakIn(a, later, later + 200) > 1.3 * peakIn(b, later, later + 200), "sustain window: a new window forgets the old level");
+  }
+  // Separation: straight lines of 512 host samples from the move, limited, from the first
+  // sample; the host's block size plays no part.
+  {
+    constexpr size_t kGrid = 9728;  // 19 x 512
+    PluginState s = flat();
+    Buf in = steady(0.5f, 0.f, 0.5);
+    const float limit = static_cast<float>(44.1 / kSr);
+    const auto sepOf = [](double word) { return static_cast<float>(0.5 * (std::pow(5.0, word / 1000.0) - 1) / 4); };
+    const float hSlow = sepOf(400);
+    const std::vector<Move> slow = {{kGrid, rawParam(3, mr::TSep), 400}};
+    Buf a = runMoves(s, in, slow, 512);
+    expect(a.R[kGrid - 1] == 0 && a.R[kGrid] == 0, "separation: the first sample still has the old matrix");
+    bool line = true;
+    for (int k = 0; k < 512; ++k) line = line && std::fabs(a.R[kGrid + static_cast<size_t>(k)] - 0.5f * hSlow * static_cast<float>(k) / 512.f) < 1e-4f;
+    expect(line, "separation: a straight line of 512 samples");
+    expect(std::fabs(a.R[kGrid + 512] - 0.5f * hSlow) < 1e-5f && std::fabs(a.L[kGrid + 600] - 0.5f * (1 - hSlow)) < 1e-5f, "separation: there after the line");
+    const std::vector<Move> fast = {{kGrid, rawParam(3, mr::TSep), 1000}};
+    Buf c = runMoves(s, in, fast, 512);
+    bool limited = true;
+    for (int k = 0; k < 500; ++k) limited = limited && std::fabs(c.R[kGrid + static_cast<size_t>(k)] - 0.5f * limit * static_cast<float>(k)) < 1e-4f;
+    expect(limited, "separation: a big move runs at the limit");
+    expect(std::fabs(c.R[kGrid + 1024] - 0.25f) < 1e-5f, "separation: a big move arrives over later lines");
+    // A second move starts its own line from where the first one has got to.
+    Buf m = runMoves(s, in, {{kGrid, rawParam(3, mr::TSep), 400}, {kGrid + 100, rawParam(3, mr::TSep), 0}}, 512);
+    const float at100 = hSlow * 100.f / 512.f;
+    bool bent = true;
+    for (int k = 0; k < 512; ++k) bent = bent && std::fabs(m.R[kGrid + 100 + static_cast<size_t>(k)] - 0.5f * at100 * (1.f - static_cast<float>(k) / 512.f)) < 1e-4f;
+    expect(bent && std::fabs(m.R[kGrid + 612]) < 1e-5f, "separation: a new move starts its line from the current value");
+    // Another band's move leaves a running line alone.
+    Buf two = runMoves(s, in, {{kGrid, rawParam(3, mr::TSep), 400}, {kGrid + 100, rawParam(1, mr::TSep), 0}}, 512);
+    expect(maxDiff(a, two) < 1e-6, "separation: lines of different bands are independent");
+    for (int block : {37, 64, 100, 1024, 4096}) {
+      char nm[80];
+      std::snprintf(nm, sizeof nm, "separation: the same line at block %d", block);
+      expect(maxDiff(c, runMoves(s, in, fast, block)) < 1e-6 && maxDiff(a, runMoves(s, in, slow, block)) < 1e-6, nm);
+    }
+    Buf old = runMoves(saved(s), in, fast, 512);
+    expect(std::fabs(old.R[kGrid] - 0.5f * 0.001f) < 1e-6f, "separation: states saved earlier keep the old glide");
+    // Oversampled band: the limit belongs to the band's own rate.
+    PluginState o = flat();
+    put(o, dy::MsRef0 + dy::MrOversample, 1);
+    Buf e = runMoves(o, in, {{kGrid, rawParam(1, mr::TSep), 1000}}, 64);
+    expect(std::fabs(e.R[kGrid + 200] - 0.5f * 200.f * limit) < 0.003f, "separation: the limit follows the oversampled rate");
+  }
+  // Slopes: filters, delays and envelopes restart; the detectors keep what they saw.
+  {
+    PluginState s = defaultPluginState("gl.master");
+    put(s, rawParam(3, mr::TMode), 1);
+    Buf in = noise(0.5, 0.4f);
+    for (int word : {1, 3}) {
+      const std::vector<Move> mv = {{kAt, raw + word, 0}};
+      const size_t D = static_cast<size_t>(delaySamples(1115));
+      Buf a = runMoves(s, in, mv), b = runMoves(saved(s), in, mv);
+      expect(peakIn(a, kAt, kAt + D) == 0, "slope: the engine restarts");
+      expect(peakIn(b, kAt, kAt + D) > 0.01, "slope: states saved earlier keep the old move");
+    }
+    PluginState h = flat();
+    put(h, rawParam(3, mr::TMode), 0);
+    hotCurve(h, 3);
+    put(h, rawParam(3, mr::TWindow), 7000);
+    Buf k = sine(1000, 0.9f, 0.5);
+    for (size_t i = kAt - 100; i < k.L.size(); ++i) k.L[i] *= 0.1f, k.R[i] *= 0.1f;
+    Buf a = runMoves(h, k, {{kAt, raw + 1, 0}});
+    const size_t q = kAt + static_cast<size_t>(delaySamples(1115)) + 1000;
+    expect(peakIn(a, q, q + 200) < 0.6 * 0.09, "slope: the detector still holds the loud part");
+  }
+  // A band switched off changes the filter layout: filters start clean.
+  {
+    PluginState s = defaultPluginState("gl.master");
+    Buf in = noise(0.5, 0.4f);
+    const std::vector<Move> mv = {{kAt, rawParam(0, mr::TMode), 3}};
+    Buf a = runMoves(s, in, mv), b = runMoves(saved(s), in, mv);
+    expect(diffIn(a, b, 0, kAt) == 0 && diffIn(a, b, kAt, end) > 1e-4, "band off: filters restart, states saved earlier do not");
+  }
+  // Mid on the whole input: the matrix is the detector's; the whole input stays whole.
+  {
+    PluginState s = flat();
+    put(s, dy::MsRef0 + dy::MrMasterMid, 1);
+    put(s, rawParam(1, mr::TMode), 0);
+    put(s, rawParam(1, mr::TSep), 1000);
+    Buf in = steady(0.2f, 0.f, 0.3);
+    Buf a = run(s, in), b = run(saved(s), in);
+    expect(peak(Buf{a.R, a.R}, 12000) == 0 && peak(Buf{b.R, b.R}, 12000) > 0.01, "mid on the whole input: separation stays out of the audio");
+  }
+  // Static sound: the marker changes nothing unless something moves.
+  {
+    Buf in = noise(0.5, 0.5f);
+    PluginState s = defaultPluginState("gl.master");
+    expect(maxDiff(run(s, in), run(saved(s), in)) == 0, "no moves: new instances and saved states sound the same (default)");
+    put(s, rawParam(1, mr::TSep), 700), put(s, rawParam(3, mr::TSep), -500), put(s, rawParam(2, mr::TSusMode), 1), put(s, raw + 5, 500), put(s, dy::MsRef0 + dy::MrOversample, 1);
+    hotCurve(s, 0);
+    expect(maxDiff(run(s, in), run(saved(s), in)) == 0, "no moves: new instances and saved states sound the same (shaped)");
+  }
+  // Moves land on the same sample whatever the block size.
+  {
+    Buf in = noise(0.5, 0.4f);
+    const std::vector<Move> mv = {{kAt, raw + 4, 3000},
+                                  {kAt + 2000, rawParam(1, mr::TAttCurve), 4},
+                                  {kAt + 3000, rawParam(1, mr::TRelCurve), 7},
+                                  {kAt + 4000, rawParam(1, mr::TWindow), 1000},
+                                  {kAt + 5000, rawParam(3, mr::TAtt), 800},
+                                  {kAt + 6000, rawParam(2, mr::TMode), 3},
+                                  {kAt + 7000, raw + 1, 0},
+                                  {kAt + 7500, rawParam(1, mr::TSep), 700}};
+    PluginState s = defaultPluginState("gl.master");
+    Buf a = runMoves(s, in, mv, 512);
+    for (int block : {64, 97, 2048}) {
+      char nm[80];
+      std::snprintf(nm, sizeof nm, "moves: the same audio at block %d", block);
+      expect(maxDiff(a, runMoves(s, in, mv, block)) < 1e-6, nm);
+    }
+  }
+  // Every word slammed to its ends while running.
+  {
+    const PluginInfo* pi = findPlugin("gl.master");
+    Buf in = noise(0.5, 0.9f);
+    std::vector<Move> mv;
+    uint32_t seed = 11;
+    for (size_t at = 300; at < in.L.size(); at += 300) {
+      seed = seed * 1664525u + 1013904223u;
+      const int k = raw + static_cast<int>((seed >> 8) % 59);
+      const ParamDesc& d = pi->params[static_cast<size_t>(k)];
+      mv.push_back({at, k, (seed >> 20) & 1 ? d.max : d.min});
+    }
+    expect(finite(runMoves(defaultPluginState("gl.master"), in, mv)), "moves at the extremes: finite output");
+  }
+  // Who gets the law.
+  {
+    PluginState d = defaultPluginState("gl.master");
+    expect(dy::masterHasMoveLaw(d.data), "new instances have the moving law");
+    const PluginInfo* pi = findPlugin("gl.master");
+    expect(dy::masterHasMoveLaw(presetState(*pi, 1).data), "factory presets have the moving law");
+    PluginState old = saved(d);
+    old.params.resize(static_cast<size_t>(dy::MsRef0 + dy::MrRevision));
+    normalizePluginState(old);
+    expect(old.data.empty() && !dy::masterHasMoveLaw(old.data), "older states stay as they were saved");
+    PluginState rev1 = saved(d);
+    normalizePluginState(rev1);
+    expect(rev1.data.empty(), "states of the previous version stay as they were saved");
+    dy::LongCurve lc;
+    lc.n = 2;
+    lc.x[0] = 0, lc.x[1] = 1, lc.y[0] = 0, lc.y[1] = 0.5f, lc.t[0] = lc.t[1] = 0, lc.type[0] = lc.type[1] = 0;
+    const std::string with = dy::masterLongCurvesWith(d.data, 2, &lc);
+    dy::LongCurve back, none;
+    expect(dy::masterHasMoveLaw(with) && dy::masterLongCurve(with, 2, back) && back.n == 2, "a long curve lives beside the law");
+    expect(!dy::masterLongCurve(with, 1, none), "other bands find no long curve in the law's word");
+    expect(!dy::masterLongCurve(d.data, 2, none), "the law's word alone is no curve");
+    expect(dy::masterLongCurvesWith(with, 2, nullptr) == d.data, "removing the curve keeps the law");
+    expect(dy::masterLongCurvesWith(std::string(), 2, nullptr).empty(), "curves of an older state do not add the law");
+    expect(!dy::masterHasMoveLaw(dy::masterLongCurvesWith(std::string(), 2, &lc)), "edits of an older state do not add the law");
+    expect(dy::masterWithMoveLaw(d.data) == d.data, "the law's word is written once");
+  }
+}
+
 void testFlp() {
   // Round trip: all the stored words, options, a long curve with its shapes.
   PluginState s = defaultPluginState("gl.master");
@@ -461,6 +761,7 @@ void testFlp() {
     opts = opts && m.state.params[static_cast<size_t>(dy::MsRef0 + k)] == s.params[static_cast<size_t>(dy::MsRef0 + k)];
   expect(opts, "round trip: options, oversampling among them");
   expect(m.state.data == s.data && m.exact && m.state.params[dy::MsRef0 + dy::MrRevision] == 1, "round trip: long curve, exact, current laws");
+  expect(dy::masterHasMoveLaw(m.state.data), "imports have the moving law");
   const Buf nz = noise(0.4, 0.6f);
   expect(maxDiff(run(s, nz), run(m.state, nz)) < 1e-6, "round trip renders the same");
 
@@ -541,6 +842,7 @@ int main() {
   testGainCurves();
   testCurves();
   testNoAllocation();
+  testMoves();
   testFlp();
   return finish();
 }

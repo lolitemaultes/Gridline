@@ -5,14 +5,46 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 
 ## Unreleased
 
+### Added
+
+- **Crash reports and project recovery.** If Gridline crashes or freezes, a window now says what happened and gives you a code to copy. The code tells developers exactly where it failed: version, system, graphics card, the failing thread and functions, and your last few actions. It holds no file paths and no project names, and Gridline never sends it anywhere: you choose where to share it. See [docs/crash-reports.md](docs/crash-reports.md).
+- After a serious error Gridline cannot safely keep running, so it closes and offers to restart with a recovery copy of your project. On macOS, Linux and the BSDs that copy is normally saved at the moment of the crash; on Windows it is the last automatic one, from at most about 30 seconds earlier. Lesser errors (a failed load, export or plugin call) show the same window while Gridline keeps running.
+- If the interface stops answering for 30 seconds, the window offers to keep waiting or to force a restart, and closes itself if Gridline comes back. Long work such as loading, exporting and saving does not trigger it, nor does a computer waking from sleep.
+
 ### Changed
 
+- **Projects on web and network drives open properly** (Google Drive, Dropbox, OneDrive, iCloud, rclone, gvfs, SMB, NFS): the file is read once, off the interface, with a progress bar in bytes, the speed, the time left and a Cancel that returns at once. If the drive stops answering the window says so; if the file is gone or cut short, it says why.
+- A zipped project on such a drive unpacks to a cache on this computer (`gridline/unpacked` in your cache folder) and nothing is written to the drive. Opening the same archive again needs no read, and when the drive is offline the last copy opens with a note. Save asks where to put the project. The cache trims itself oldest first, down to 16 GB, and keeps anything a saved project points at.
+- **Zipped projects keep their folders clean**: every zipped project, on a local disk too, now unpacks to the same cache instead of beside the archive, and Save asks where (a Gridline zipped project offers to replace its archive). Folders earlier versions unpacked beside an archive are left alone, and projects saved there keep working. When a project from a local disk closes its copy is deleted, unless it is open in another Gridline, a saved project uses it, or a recent backup or a crash recovery copy uses it; a copy from a web or network drive stays, for quick and offline opening. What a crash leaves behind is cleared in the background at the next start.
+- **Clear cache**: Settings > Files shows the size of the unpacked project cache and clears everything nothing needs, then says what it kept and why.
+- An archive with several projects asks which one to open. One named like the archive opens straight away, and copies in backup folders and macOS leftovers no longer count as projects.
+- Gridline never writes to a drive on its own: autosave of a project on a web or network drive is off there, and timed backups stay on this computer even if they are set to the project folder. Save still writes there.
+- The browser's search index no longer walks web or network drives, and Search folder in the missing samples window stays in the folder you pick there. Folders on a drive still browse one at a time.
 - **Crest has a cleaner interface**: every knob, button and caption now sits on one grid with one knob size, in the same panels as the other flagship plugins, in both themes.
+- Crest's display buttons stay readable when they are off, and the spectrum heatmap button has its own icon. It looked blank when off.
+- Crest in new instances and FL imports now reacts differently while a control moves. A new band delay or master attack length starts from an empty delay, a new sustain window or detector starts fresh, a new curve stage count restarts its envelope, a new slope restarts the engine, and stereo separation moves in a short straight line, the same at every buffer size. Moving the delay or attack knob therefore makes a short gap in the sound. Saved projects and saved presets keep the behaviour they had, and sound the same when nothing moves.
 
 ### Fixed
 
+- **Exporting a project with installed plugins no longer freezes the window.** Such a project used to render on the interface thread, so Gridline stopped responding until the end, with no progress and no Cancel, and Windows could mark the window as not responding and paint it over. It now renders in the background like any other project, so the progress bar, Cancel and quitting all work. Render to sampled instrument gets the same fix. The sound does not change.
+- Exports no longer run at real-time priority. A long render took priority over the interface, the graphics driver and the rest of the computer. On Windows, live playback also leaves one processor free of real-time work.
+- An export that runs out of memory or hits a file system error now reports an error instead of closing Gridline. The same goes for rendering to a sampled instrument, exporting a clip or sample as WAV, decoding a sample in the background and rendering a stretched clip.
+- Cancel now stops MP3, Ogg and AAC encoding straight away, and removes the partial file. Before, it waited for the encoder to finish, and so did quitting.
+- A full disk during a WAV or MP3 export is now reported as an error, and no cut-off file is left under the export's name.
+- The render dialog no longer searches the disk for encoders and copies the whole project on every frame, which slowed big projects while it was open.
+- Folio instruments no longer share one random number generator between threads, and the Crest editor reads the engine state safely while audio plays.
+- A big project with thousands of audio clips uses about half the memory it did before. Each clip's standby stretch voice kept large buffers it almost never touches; they now take memory only if they are reached. The sound is unchanged.
+- Zipped projects and FL Studio zipped loop packages over 4 GB now save correctly, and packing a large sample no longer needs its size in memory. Smaller archives are written exactly as before.
+- SFZ maps that use #include or #define now play correctly, and packing follows them. Maps without those directives play as before. Include loops are skipped safely.
+- In collaborative projects, an SFZ map's samples and a cabinet folder's files now reach every collaborator with the map or the folder, and copies made with Leave keep them.
+- Zipped projects now carry each file's origin and source notes, so the Track Receipt still maps a derived file back to its original after unpacking. Files named inside third-party plugins that sit inside a patch are now packed and named in the notice too, and a third-party plugin's saved state is never edited, at any depth.
+- A zipped project now holds every file the project uses. It used to leave out Abacus pads after the first and their layers, Multisampler zones and sound fonts, the other deck of a region model, wave programs, Plasma wavetables, samples, sample maps and impulses, and files used by a plugin inside a patch, while reporting nothing missing. An SFZ map travels with its samples, and a cabinet folder with its files. Whatever cannot be packed is now named in a notice, and the project inside no longer points at files on your computer. The same goes for Export project data files, project bones and the FL Studio zipped loop package.
+- Files that exist or are not files at all no longer show up as missing samples: Plasma wavetables on disk, built-in sounds, empty pads, generated tones and the labels inside a plugin's state.
+- Large zipped projects opened far too slowly anywhere, and used as much memory as the archive: the whole file was read again for every file inside it. Archives over 4 GB (ZIP64) and file names in the older zip encoding now open too.
+- A slow or offline drive no longer freezes Gridline: at startup, on the welcome screen, in the open and save dialogs, in the browser, in the missing samples window, when previewing a sound from the drive, or when quitting during a read. A project on an offline drive also stays in Recent files instead of being dropped by Remove missing.
+- FL project export: a Sweep Kick whose Seed sits between two whole numbers no longer takes about half a second of extra solving.
 - Piano roll: right-clicking (or using the delete tool on) overlapping notes deletes only the top note. It used to take the note underneath as well while the button was held.
-- Piano roll keyboard: a sounding key now lights in the channel's real colour instead of a dulled one, and a highlighted white key no longer changes shade beside the black keys.
+- Piano roll keyboard: the key under the pointer now shows exactly the accent colour chosen in Settings, a sounding key lights in the channel's real colour instead of a dulled one, and a highlighted white key no longer changes shade beside the black keys.
 - **Linux, plugins through yabridge**: the first click after moving a plugin window now lands where
   you clicked (Wine 9.0 and 9.21). A plugin whose interface never returns from closing no longer
   freezes Gridline: its window goes, after 15 seconds the plugin shows as crashed, and quitting

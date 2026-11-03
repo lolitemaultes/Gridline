@@ -141,7 +141,11 @@ bool writeBytes(const std::string& path, const std::vector<uint8_t>& b, std::str
   std::ofstream f(path, std::ios::binary | std::ios::trunc);
   if (!f) return fail(err, "cannot write " + path);
   f.write(reinterpret_cast<const char*>(b.data()), static_cast<std::streamsize>(b.size()));
-  return static_cast<bool>(f) || fail(err, "write failed: " + path);
+  f.close();  // the end of the file may only reach the disk here
+  if (f.good()) return true;
+  std::error_code ec;
+  fs::remove(path, ec);  // a full disk: no cut-off file left behind under the export's name
+  return fail(err, "write failed (is the disk full?): " + path);
 }
 
 }  // namespace
@@ -312,10 +316,17 @@ std::vector<std::string> candidates(ExportFormat f) {
   }
 }
 
-int run(const std::vector<std::string>& args) {
+// The program's exit code, -1 when it could not run or crashed, -2 when `cancel` stopped it.
+int run(const std::vector<std::string>& args, const std::atomic<bool>* cancel) {
   platform::Process child;
   if (args.empty() || !child.start(args[0], args)) return -1;
-  child.wait();
+  while (!child.wait(0.05)) {
+    if (cancel && cancel->load()) {
+      child.kill();
+      child.wait();
+      return -2;
+    }
+  }
   return child.status().crashed ? -1 : child.status().code;
 }
 
@@ -367,9 +378,13 @@ bool encodeExternal(const std::string& path, const AudioBuffer& buf, int sampleR
   } else {
     args = {exe, "-Q", "-b", br, "-o", path, tmp};
   }
-  const int rc = run(args);
+  const int rc = run(args, o.cancel);
   std::error_code ec;
   fs::remove(tmp, ec);
+  if (rc == -2) {
+    fs::remove(path, ec);
+    return fail(err, "cancelled");
+  }
   if (rc != 0) return fail(err, prog + " failed (exit " + std::to_string(rc) + ")");
   if (!fs::exists(path, ec) || fs::file_size(path, ec) == 0) return fail(err, prog + " wrote no file");
   return true;

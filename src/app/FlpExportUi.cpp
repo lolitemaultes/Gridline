@@ -1,5 +1,6 @@
 // Gridline — J-80: FL Studio export job, progress and report windows (see FlpExportUi.h).
 #include "FlpExportUi.h"
+#include "../core/Crash.h"
 #include "../core/Platform.h"
 #include <atomic>
 #include <cerrno>
@@ -240,6 +241,7 @@ bool start(App& a, const std::string& path, bool zip, std::function<void(bool)> 
     } catch (const std::exception& e) {
       ok = false;
       err = std::string("internal error (") + e.what() + "). Please report it; try another format meanwhile.";
+      crash::reportCurrentException("Exporting an FL project");
     }
     {
       std::lock_guard<std::mutex> lk(job.mu);

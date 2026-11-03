@@ -246,7 +246,7 @@ std::string sharedSongDigest(const Song& in) {
   s.nextId = 0;
   // project-relative file names: every folder refers to Audio/<sha256>.<ext>
   // (by path elements, so a Windows path with backslashes is matched too)
-  forEachFileRef(s, [](std::string& p) {
+  forEachRef(s, [](std::string& p, bool) {
     const std::filesystem::path f = std::filesystem::u8path(p);
     if (f.has_parent_path() && f.parent_path().filename() == "Audio") p = "Audio/" + f.filename().u8string();
   });

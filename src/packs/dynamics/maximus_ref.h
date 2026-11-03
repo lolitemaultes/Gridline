@@ -122,6 +122,9 @@ struct RefState {
   int os = 0;  // K-S: oversampling stages of the low / mid / high section (2^os; the master band stays at the base rate)
   // K-S: 0 = the laws before the K-8 oracle round (states saved with them keep their sound), 1 = current.
   int rev = 1;
+  // K-46: controls moved while running follow the reference (see the "moving" notes below). Static sound is the same
+  // either way; states saved before this keep the moves they had (masterHasMoveLaw, dynamics.h).
+  bool moveLaw = false;
 };
 
 // ---------------------------------------------------------------- J-42 linear-phase splits
@@ -506,7 +509,7 @@ class Engine {
     if (cfgValid_ && std::memcmp(s.raw, st_.raw, sizeof s.raw) == 0 && s.solo == st_.solo && s.masterMid == st_.masterMid &&
         s.safetyOff == st_.safetyOff && s.target == st_.target && s.curve[0] == st_.curve[0] && s.curve[1] == st_.curve[1] &&
         s.curve[2] == st_.curve[2] && s.curve[3] == st_.curve[3] && s.fir == st_.fir && s.lin == st_.lin && s.linQuality == st_.linQuality &&
-        s.linSpeed == st_.linSpeed && s.os == st_.os && s.rev == st_.rev)
+        s.linSpeed == st_.linSpeed && s.os == st_.os && s.rev == st_.rev && s.moveLaw == st_.moveLaw)
       return;
     const RefState old = st_;
     const bool first = !cfgValid_;
@@ -531,6 +534,10 @@ class Engine {
     const int sL0 = slL, sH0 = slH;
     if (r[rawIndex(0, TMode)] == 3) slL = -1;
     if (r[rawIndex(2, TMode)] == 3) slH = -1;
+    if (s.moveLaw && !first && (slL != chainL_ || slH != chainH_)) {  // moving: another filter layout starts from clean filters
+      lowLp_.clear(), midHp_.clear(), midLp_.clear(), highHp_.clear(), lowAp_.clear();
+    }
+    chainL_ = slL, chainH_ = slH;
     double fL = splitHz(r[0]), fH = splitHz(r[2]);
     const double fmax = 0.49 * fo;
     fL = std::min(fL, fmax), fH = std::min(fH, fmax);
@@ -627,7 +634,13 @@ class Engine {
     mix_ = r[5] * 0.001f;
     mixActive_ = mix_ != 1.f;
     // Look-ahead delays.
-    for (int k = 0; k < kBands; ++k) band_[k].D = std::min(lmhDelay(s, mode_, fs_, k) * (k < 3 ? osf : 1), band_[k].mask - 1);
+    for (int k = 0; k < kBands; ++k) {
+      Band& B = band_[k];
+      const int D = std::min(lmhDelay(s, mode_, fs_, k) * (k < 3 ? osf : 1), B.mask - 1);
+      const bool moved = D != B.D;
+      B.D = D;
+      if (moved && s.moveLaw && !first) clearDelay(B);  // moving: a new length starts from an empty line
+    }
     lat_ = latencyOf(s, fs_);
     // Bands.
     for (int k = 0; k < kBands; ++k) {
@@ -639,12 +652,20 @@ class Engine {
       const double sq = sv > 0 ? (std::pow(5.0, sv) - 1) / 4 : sv;
       B.hTarget = static_cast<float>(0.5 * std::min(sq, 1.0));
       if (first || s.rev < 1) B.h = B.hTarget;  // later changes glide (K-S, see processBand)
+      B.sepTarget[0] = B.sepTarget[1] = 1.f - B.hTarget, B.sepTarget[2] = B.sepTarget[3] = B.hTarget;
+      const bool wasPeak = B.peakMode;
+      const int wasN = B.N;
       B.peakMode = R(TSusMode) == 0;
       B.N = std::clamp(std::max(B.D, static_cast<int>(std::lround(fb * timeMs(R(TWindow)) / 1000.0))), 1, B.mask - 1);
+      if (s.moveLaw && !first && (B.N != wasN || B.peakMode != wasPeak)) clearDetector(B);  // moving: a new window starts empty
       {  // K-S: added smoothing stages join at the last stage's value (no step in the level)
         const int stages = R(TRel) == 0 ? 0 : std::clamp(R(TRelCurve), 1, 8);
-        if (!first && s.rev >= 1 && stages > B.relStages && B.relStages > 0)
+        if (!first && s.moveLaw) {  // moving: another stage count restarts the level from nothing
+          if (stages != B.relStages)
+            for (int i = 0; i < stages; ++i) B.rel[i] = 0;
+        } else if (!first && s.rev >= 1 && stages > B.relStages && B.relStages > 0) {
           for (int i = B.relStages; i < stages; ++i) B.rel[i] = B.rel[B.relStages - 1];
+        }
         B.relStages = stages;
       }
       {
@@ -654,8 +675,12 @@ class Engine {
       }
       {
         const int stages = std::clamp(R(TAttCurve), 1, 8);
-        if (!first && s.rev >= 1 && stages > B.gainStages)
+        if (!first && s.moveLaw) {  // moving: another stage count restarts the gain from unity
+          if (stages != B.gainStages)
+            for (int i = 0; i < stages; ++i) B.gs[i] = 1.0;
+        } else if (!first && s.rev >= 1 && stages > B.gainStages) {
           for (int i = B.gainStages; i < stages; ++i) B.gs[i] = B.gs[B.gainStages - 1];
+        }
         B.gainStages = stages;
       }
       {
@@ -682,18 +707,25 @@ class Engine {
       }
     }
     if (first) reset();
+    // Moving: a new slope restarts the engine (filters, delays, envelopes); the detectors keep their windows.
+    else if (s.moveLaw && (r[1] != old.raw[1] || r[3] != old.raw[3])) restart(true);
   }
 
-  void reset() {
+  void reset() { restart(false); }
+
+  void restart(bool keepDetectors) {
     if (fs_ <= 0) return;
     for (int k = 0; k < kBands; ++k) {
       Band& B = band_[k];
       for (double& v : B.rel) v = 0;
       const double g0 = B.pre * B.post * B.table[0];
       for (double& v : B.gs) v = g0;
-      B.head = B.tail = 0, B.t = 0, B.rmsSum = 0;
+      if (!keepDetectors) {
+        B.head = B.tail = 0, B.t = 0, B.rmsSum = 0;
+        std::fill(B.rms.begin(), B.rms.end(), 0.f);
+      }
       B.h = B.hTarget;
-      std::fill(B.rms.begin(), B.rms.end(), 0.f);
+      for (int c = 0; c < 4; ++c) B.sepNow[c] = B.sepEnd[c] = B.sepGoal[c] = B.sepTarget[c], B.sepStep[c] = 0;
       std::fill(B.dl[0].begin(), B.dl[0].end(), 0.f), std::fill(B.dl[1].begin(), B.dl[1].end(), 0.f);
       B.w = 0;
     }
@@ -705,10 +737,35 @@ class Engine {
     for (auto& h : hbDown_) h.clear();
   }
 
+  // Moving (K-46): the separation matrix runs in straight lines per host block, 44.1 per second at most (at the band's
+  // own rate: 0.001 a sample at 44.1 kHz, half that when oversampled twice; measured on the oracle). run() can
+  // then be called in several parts (the editor's monitor hop) without changing the audio.
+  // K-46: the separation coefficients move in straight lines of kSepLine host samples from the
+  // moment their target changes, so a move sounds the same at every host block size.
+  void beginBlock() {
+    if (fs_ <= 0 || !st_.moveLaw) return;
+    for (int k = 0; k < kBands; ++k) {
+      if (mode_[k] >= 2) continue;
+      const Band& B = band_[k];
+      bool moved = false;
+      for (int c = 0; c < 4; ++c) moved = moved || B.sepTarget[c] != B.sepGoal[c];
+      if (moved) sepLine(k, true);
+    }
+  }
   void process(float* L, float* R, int n) {
+    beginBlock();
+    run(L, R, n);
+  }
+  void run(float* L, float* R, int n) {
     if (fs_ <= 0) return;
     const double silenceN = 1.5 * fs_ + lat_;
     for (int i = 0; i < n; ++i) {
+      if (st_.moveLaw)
+        for (int k = 0; k < kBands; ++k) {
+          if (mode_[k] >= 2) continue;
+          if (band_[k].sepLeft == 0) sepLine(k, false);
+          --band_[k].sepLeft;
+        }
       float x[2] = {L[i], R[i]};
       if (std::fabs(x[0]) < 1e-38f && std::fabs(x[1]) < 1e-38f) {
         if (++quiet_ >= silenceN) {
@@ -771,6 +828,8 @@ class Engine {
     // settings
     double pre = 1, post = 1, cRel = 0, cAtt = 0, cRel2 = 0, ceil = 1, th = 1, wd = 1, lmax = -1, p = -1, ratioMax = 1;
     float h = 0, hTarget = 0;
+    float sepTarget[4] = {1, 1, 0, 0}, sepNow[4] = {1, 1, 0, 0}, sepStep[4] = {0, 0, 0, 0}, sepEnd[4] = {1, 1, 0, 0}, sepGoal[4] = {1, 1, 0, 0};  // K-46: LL, RR, LR, RL
+    int sepLeft = 0;  // host samples left in the current line
     bool peakMode = true;
     int D = 0, N = 1, relStages = 3, gainStages = 2, satMode = 0, lastIdx = 0;
     double outLast = 1;
@@ -785,6 +844,15 @@ class Engine {
     float grDb = 0;
   };
 
+  // Moving (K-46): only what the new length reads before it is written again; no allocation.
+  static void clearDelay(Band& B) {
+    for (int i = 1; i <= B.D; ++i)
+      for (auto& d : B.dl) d[static_cast<size_t>((B.w - i) & B.mask)] = 0.f;
+  }
+  static void clearDetector(Band& B) {
+    B.head = B.tail = 0, B.rmsSum = 0;
+    for (int i = 1; i <= B.N; ++i) B.rms[static_cast<size_t>((B.t - i) & B.mask)] = 0.f;
+  }
   static void buildTable(Band& B, const Curve& c, double M, int rev) {
     double maxOut = 0, out = M;
     int lastIdx = 0;
@@ -883,19 +951,25 @@ class Engine {
   void processBand(int k, float* s, float* dry, const float* det) {
     Band& B = band_[k];
     const int md = mode_[k];
-    if (B.h != B.hTarget) {  // K-S: separation changes glide (at most 0.001 a sample: no clicks, any block size)
+    const bool moveLaw = st_.moveLaw;
+    if (!moveLaw && B.h != B.hTarget) {  // K-S: separation changes glide (at most 0.001 a sample: no clicks, any block size)
       const float dh = B.hTarget - B.h;
       B.h = std::fabs(dh) <= 0.001f ? B.hTarget : B.h + (dh > 0 ? 0.001f : -0.001f);
     }
-    if (md < 2 && B.h != 0) {
+    const float ll = moveLaw ? B.sepNow[0] : 1 - B.h, rr = moveLaw ? B.sepNow[1] : 1 - B.h;
+    const float lr = moveLaw ? B.sepNow[2] : B.h, rl = moveLaw ? B.sepNow[3] : B.h;
+    // Mid on the whole input: the matrix belongs to the detector's copy; the whole input stays whole (with the moving law).
+    if (md < 2 && (lr != 0 || rl != 0 || ll != 1 || rr != 1) && !(moveLaw && det)) {
       const float l = s[0], r = s[1];
-      s[0] = (1 - B.h) * l + B.h * r, s[1] = (1 - B.h) * r + B.h * l;
+      s[0] = ll * l + lr * r, s[1] = rr * r + rl * l;
     }
+    if (moveLaw && md < 2)
+      for (int c = 0; c < 4; ++c) B.sepNow[c] += B.sepStep[c];
     double G = B.post;
     if (md == 0) {
       float dl = s[0], dr = s[1];
       if (det) {  // mid-only master mode: the filtered band drives the detector
-        dl = (1 - B.h) * det[0] + B.h * det[1], dr = (1 - B.h) * det[1] + B.h * det[0];
+        dl = ll * det[0] + lr * det[1], dr = rr * det[1] + rl * det[0];
       }
       float e;
       B.scopeIn = std::max({B.scopeIn, std::fabs(dl), std::fabs(dr)});
@@ -1050,6 +1124,26 @@ class Engine {
   int linCap_ = 0, capStages_ = 0, os_ = 0;
   HalfBand hbUp_[3], hbDown_[3];
   double fs_ = 0;
+  static constexpr int kSepLine = 512;  // host samples in one separation line
+  void sepLine(int k, bool moved) {
+    Band& B = band_[k];
+    const int frames = k < 3 ? kSepLine << os_ : kSepLine;
+    const float limit = static_cast<float>(44.1 / (k < 3 ? fs_ * (1 << os_) : fs_));
+    for (int c = 0; c < 4; ++c) {
+      const float from = stopped_ ? B.sepTarget[c] : moved ? B.sepNow[c] : B.sepEnd[c];
+      float end = from, step = 0;
+      if (B.sepTarget[c] != from) {
+        end = B.sepTarget[c];
+        step = (end - from) / static_cast<float>(frames);
+        if (std::fabs(step) > limit) {
+          step = step > 0 ? limit : -limit;
+          end = static_cast<float>(frames) * step + from;
+        }
+      }
+      B.sepNow[c] = from, B.sepStep[c] = step, B.sepEnd[c] = end, B.sepGoal[c] = B.sepTarget[c];
+    }
+    B.sepLeft = kSepLine;
+  }
   bool cfgValid_ = false, lcOn_ = false, apOn_ = false, mixActive_ = false, stopped_ = false;
   RefState st_;
   int mode_[kBands] = {0, 0, 0, 0};
@@ -1061,6 +1155,7 @@ class Engine {
   Chain lowLp_, midHp_, midLp_, highHp_;
   Band band_[kBands];
   int splitMode_ = 0, xfade_ = 0;  // 0 IIR, 1 legacy FIR, 2 FFT bank
+  int chainL_ = 0, chainH_ = 0;     // K-46: the filter layout now running (sections - 1, -1 = split removed)
   bool midCopy_ = false;
   FirBand fir_[3];
   LinBand lin_[3];

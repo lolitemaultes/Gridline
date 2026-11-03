@@ -594,7 +594,54 @@ std::string Session::projectFile() const { return (fs::path(cfg_.folder) / fileN
 
 uint64_t Session::wallNowMs() const { return static_cast<uint64_t>(nowMsOf(cfg_.wallMs)); }
 
+// A map names its samples by what they contain, beside it (they all sit in Audio/), so it plays on
+// every computer once they have arrived.
 std::string Session::importFile(const std::string& absPath) {
+  if (lowerExt(absPath) == ".sfz") {
+    const SfzBundle b = sfzBundle(absPath, [&](const std::string& src) {
+      const std::string rel = importStored(src);
+      return rel.empty() ? std::string() : fs::path(rel).filename().string();
+    });
+    if (b.ok) return importText(b.text, ".sfz");
+  }
+  return importStored(absPath);
+}
+
+std::string Session::importText(const std::string& text, const std::string& ext) {
+  std::error_code ec;
+  const fs::path tmp = fs::path(cfg_.folder) / kDir / ("import" + ext);
+  fs::create_directories(tmp.parent_path(), ec);
+  {
+    std::ofstream o(tmp, std::ios::binary | std::ios::trunc);
+    o << text;
+    if (!o) return {};
+  }
+  const std::string rel = importStored(tmp.string());
+  fs::remove(tmp, ec);
+  return rel;
+}
+
+std::string Session::importFolder(const std::string& absPath) {
+  if (isFolderManifest(absPath)) return importStored(absPath);
+  std::vector<std::pair<std::string, std::string>> listed;
+  for (const auto& [file, name] : folderRefFiles(absPath)) {
+    const std::string rel = importStored(file);
+    if (rel.empty()) return {};
+    listed.emplace_back(name, fs::path(rel).filename().string());
+  }
+  return listed.empty() ? std::string() : importText(folderManifestText(listed), kFolderManifestExt);
+}
+
+const std::vector<std::string>& Session::membersOf(const std::string& rel) {
+  auto it = bundles_.find(rel);
+  if (it != bundles_.end()) return it->second;
+  std::vector<std::string> names;
+  for (const auto& n : bundleMembers(localPath(rel)))
+    if (safeAudioName("Audio/" + n)) names.push_back("Audio/" + n);  // what a collaborator sent: only names of this kind
+  return bundles_.emplace(rel, std::move(names)).first->second;
+}
+
+std::string Session::importStored(const std::string& absPath) {
   std::error_code ec;
   if (!fs::is_regular_file(absPath, ec)) return {};
   const std::string h = update::sha256File(absPath);
@@ -642,16 +689,16 @@ bool Session::bootstrap(std::string* err) {
   // collect the project's files into Audio/ (content addressed)
   std::map<std::string, std::string> moved;
   Song copy = doc_.song();
-  forEachFileRef(copy, [&](std::string& p) {
+  forEachRef(copy, [&](std::string& p, bool folder) {
     if (p.empty() || !fs::path(p).is_absolute()) return;
     auto it = moved.find(p);
     if (it == moved.end()) {
-      const std::string rel = importFile(p);
+      const std::string rel = importRef(p, folder);
       it = moved.emplace(p, rel.empty() ? p : localPath(rel)).first;
     }
     p = it->second;
   });
-  if (!moved.empty()) doc_.patchSong([&](Song& s) { forEachFileRef(s, [&](std::string& p) {
+  if (!moved.empty()) doc_.patchSong([&](Song& s) { forEachRef(s, [&](std::string& p, bool) {
       auto it = moved.find(p);
       if (it != moved.end()) p = it->second;
     }); });
@@ -1006,7 +1053,7 @@ void Session::refsToReplica(Json& song) {
     PluginState st;
     st.type = plug.text("type");
     st.data = data->str;
-    if (forEachStateFileRef(st, [&](std::string& p) {
+    if (forEachStateRef(st, [&](std::string& p, bool folder) {
           if (p.empty() || !fs::path(p).is_absolute()) return;
           const std::string g = fs::path(p).lexically_normal().generic_string();
           if (g.rfind(audioDir, 0) == 0) {
@@ -1018,7 +1065,7 @@ void Session::refsToReplica(Json& song) {
             p = "Audio/" + fs::path(it->second).filename().string();
             return;
           }
-          const std::string rel = importFile(p);  // a new file from outside: it joins the project
+          const std::string rel = importRef(p, folder);  // a new file from outside: it joins the project
           if (rel.empty()) return;
           fix[p] = localPath(rel);
           p = rel;
@@ -1027,7 +1074,7 @@ void Session::refsToReplica(Json& song) {
   });
   if (!fix.empty())
     doc_.patchSong([&](Song& s) {
-      forEachFileRef(s, [&](std::string& p) {
+      forEachRef(s, [&](std::string& p, bool) {
         auto it = fix.find(p);
         if (it != fix.end()) p = it->second;
       });
@@ -1041,7 +1088,7 @@ void Session::refsToLocal(Json& song) const {
     PluginState st;
     st.type = plug.text("type");
     st.data = data->str;
-    if (forEachStateFileRef(st, [&](std::string& p) {
+    if (forEachStateRef(st, [&](std::string& p, bool) {
           if (p.rfind("Audio/", 0) == 0 && safeAudioName(p)) p = localPath(p);
         }))
       data->str = st.data;
@@ -2166,7 +2213,7 @@ void Session::writeProjectFile() {
   copy.idSlot = 0;
   copy.idStride = 1;
   const std::string base = fs::path(cfg_.folder).lexically_normal().generic_string() + "/";
-  forEachFileRef(copy, [&](std::string& p) {
+  forEachRef(copy, [&](std::string& p, bool) {
     const std::string g = fs::path(p).lexically_normal().generic_string();
     if (g.rfind(base, 0) == 0) p = g.substr(base.size());
   });
@@ -2926,6 +2973,13 @@ std::vector<std::pair<std::string, uint64_t>> Session::unusedAudio() const {
     }
   audioRefsIn(jsonCompact(conflicts_.toJson()), refs);
   for (const auto& [name, inc] : incoming_) refs.insert(name);
+  // What a map or a folder manifest in use names beside it is in use too.
+  {
+    std::set<std::string> members;
+    for (const auto& r : refs)
+      for (const auto& n : bundleMembers(localPath(r))) members.insert("Audio/" + n);
+    refs.insert(members.begin(), members.end());
+  }
   std::vector<std::pair<std::string, uint64_t>> out;
   std::error_code ec;
   const fs::path dir = fs::path(cfg_.folder) / "Audio";
@@ -2960,8 +3014,15 @@ bool Session::fileLoading(const std::string& absPath, float* progress) const {
   const std::string base = (fs::path(cfg_.folder) / "Audio").lexically_normal().generic_string() + "/";
   const std::string g = fs::path(absPath).lexically_normal().generic_string();
   if (g.rfind(base, 0) != 0) return false;
-  auto it = incoming_.find("Audio/" + g.substr(base.size()));
-  if (it == incoming_.end()) return false;
+  const std::string rel = "Audio/" + g.substr(base.size());
+  auto it = incoming_.find(rel);
+  if (it == incoming_.end()) {  // a map or a folder is still arriving while what it names is
+    auto b = bundles_.find(rel);
+    if (b == bundles_.end()) return false;
+    for (const auto& m : b->second)
+      if (auto in = incoming_.find(m); in != incoming_.end()) it = in;
+    if (it == incoming_.end()) return false;
+  }
   if (progress) *progress = it->second.total ? static_cast<float>(it->second.have) / static_cast<float>(it->second.total) : 0.0f;
   return true;
 }
@@ -2971,13 +3032,18 @@ void Session::scanFiles() {
   const std::string base = (fs::path(cfg_.folder) / "Audio").lexically_normal().generic_string() + "/";
   std::set<std::string> wanted;
   Song copy = doc_.song();
-  forEachFileRef(copy, [&](std::string& p) {
+  forEachRef(copy, [&](std::string& p, bool) {
     const std::string g = fs::path(p).lexically_normal().generic_string();
     if (g.rfind(base, 0) != 0) return;
     const std::string rel = "Audio/" + g.substr(base.size());
     if (!safeAudioName(rel)) return;
     std::error_code ec;
-    if (!fs::exists(localPath(rel), ec)) wanted.insert(rel);
+    if (!fs::exists(localPath(rel), ec)) {
+      wanted.insert(rel);
+    } else {  // a map or a folder: what it names beside it comes too
+      for (const auto& m : membersOf(rel))
+        if (!fs::exists(localPath(m), ec)) wanted.insert(m);
+    }
   });
   for (const auto& w : wanted)
     if (!incoming_.count(w)) {

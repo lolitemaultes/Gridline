@@ -1,6 +1,7 @@
 // Gridline — hosted (VST3 / CLAP / VST2 / AU) plugins in the app.
 #include "../core/I18n.h"
 #include "HostedUi.h"
+#include "../core/Crash.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -205,6 +206,7 @@ void pumpHostedPlugins(App& a) {
 }
 
 void captureHostedStates(App& a) {
+  crash::BusyScope busy("reading plugin states", 120);
   for (const PluginTarget& t : hostedTargets(a.doc.song()))
     if (host::HostedInstance* hi = hostedInstanceFor(a, t)) {
       std::string data;

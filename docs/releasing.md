@@ -75,6 +75,10 @@ version, raise `project(VERSION)` and start again with a label or without one.
 
 ## Stores and package repositories
 
+Each release also has `Gridline-<version>-symbols-<target>.zip` (macOS, Windows and Linux): the debug
+line tables of `gridline-app`, so a crash code from that release resolves to functions and lines with
+`tools/crash_symbolize.py` ([crash-reports.md](crash-reports.md)). The programs themselves stay small.
+
 Each release also has `Gridline-<version>-source.tar.gz` (in `SHA256SUMS` like every file), and
 the release workflow uploads the workflow artifact `packaging-<version>`: the Flathub manifest,
 AUR, Homebrew, winget, Scoop, Chocolatey, FreeBSD port, COPR and snap files filled in for this

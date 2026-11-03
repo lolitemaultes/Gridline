@@ -19,6 +19,7 @@
 #include "core/flp/FlpEncode.h"
 #include "core/flp/FlpExport.h"
 #include "core/flp/FlpPackage.h"
+#include "core/ProjectArchive.h"
 #include "core/ProjectInterop.h"
 
 namespace {
@@ -52,10 +53,22 @@ int encodeCheckMain(int argc, char** argv) {
 bool loadAny(const std::string& path, gl::Song& song, const std::string& data, std::string* err) {
   std::string ext = std::filesystem::path(path).extension().string();
   for (char& ch : ext) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-  if (ext == ".zip") {  // zipped project / FL Studio zipped loop package: unpacked beside the archive
-    const std::filesystem::path zp(path);
-    std::string proj;
-    if (!gl::unpackZippedProject(path, (zp.parent_path() / zp.stem()).string(), proj, err)) return false;
+  if (ext == ".zip") {  // zipped project / FL Studio zipped loop package: unpacked in the cache
+    gl::archive::UnpackRequest u;
+    u.zipPath = path;
+    gl::archive::UnpackResult ur;
+    if (!gl::archive::unpackForOpening(u, ur, err)) return false;
+    // Claimed until the command ends; then a local archive's copy goes, as when the app closes it.
+    static struct CopyDuringRun {
+      gl::archive::CopyHold use;
+      ~CopyDuringRun() {
+        if (!use) return;
+        use.reset();
+        gl::archive::sweepCache();
+      }
+    } during;
+    during.use = ur.use;
+    const std::string proj = ur.projectFile;
     if (!loadAny(proj, song, data, err)) return false;
     gl::resolveRelativePaths(song, std::filesystem::path(proj).parent_path().string());
     return true;
@@ -92,6 +105,7 @@ int exportMain(int argc, char** argv) {
     std::fprintf(stderr, "error: %s\n", err.c_str());
     return 1;
   }
+  gl::archive::pinUnpacked(song);  // K-45: the .flp keeps full paths to its samples
   std::printf("wrote %s\n", out.c_str());
   std::printf("%s\n", gl::flp::exportSummary(rep, std::filesystem::path(out).filename().string()).c_str());
   if (!rep.files.empty()) std::printf("rendered %zu sample file(s) into %s\n", rep.files.size(), gl::flp::defaultSampleDir(out).c_str());

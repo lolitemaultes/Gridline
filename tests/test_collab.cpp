@@ -17,9 +17,12 @@
 #include "collab/Session.h"
 #include "core/Png.h"
 #include "core/Project.h"
+#include "packs/dynamics/cabinet_ir.h"
+#include "packs/plasma/plasma_dsp.h"
 #include "core/ProjectInterop.h"
 #include "core/Png.h"
 #include "core/Update.h"
+#include "core/Zip.h"
 #include "core/WavWriter.h"
 
 using namespace gl;
@@ -523,6 +526,122 @@ std::string writeTestWav(const std::string& path, int seconds, float freq) {
   for (size_t i = 0; i < buf.frames; ++i) buf.plane(0)[i] = buf.plane(1)[i] = 0.3f * std::sin(6.2831853f * freq * static_cast<float>(i) / 44100.0f);
   writeWav(path, buf, 44100, 16);
   return path;
+}
+
+// A multisample map's samples and a cabinet folder's files come along, not only the reference.
+void testBundles() {
+  namespace fs = std::filesystem;
+  Trio t(15, "bundles", false);
+  t.a.s->fileBudget = 48 * 1024;
+  settle(t.net, {&t.a, &t.b}, t.clock);
+  const std::string dir = tmpDir("bundles_src");
+  fs::create_directories(dir + "/map/samples");
+  writeTestWav(dir + "/map/samples/low.wav", 1, 110.0f);
+  writeTestWav(dir + "/map/samples/high.wav", 1, 880.0f);
+  {
+    std::ofstream m(dir + "/map/kit.sfz", std::ios::binary);
+    m << "#define $D samples\n<region> sample=$D/low.wav key=40\n<region> sample=$D/high.wav key=70\n";
+  }
+  fs::create_directories(dir + "/cab");
+  writeTestWav(dir + "/cab/board one.wav", 1, 200.0f);
+  writeTestWav(dir + "/cab/IMP Room.wv.wav", 1, 300.0f);
+  const ObjectId ch = t.a.doc.addChannel("Map", "gl.sampler");
+  t.a.doc.editChannel(ch, "sample", [&](Channel& c) { c.plugin.data = dir + "/map/kit.sfz"; });
+  t.a.doc.editMixerTrack(t.a.doc.song().mixer[1].id, "cabinet", [&](MixerTrack& m) {
+    m.slots[0].plugin.type = "gl.amprack";
+    m.slots[0].plugin.data = "cabdir=" + dir + "/cab\n";
+  });
+  t.a.s->frame(t.net.now);
+  const std::string mapA = t.a.doc.song().channel(ch)->plugin.data;
+  expect(fs::path(mapA).extension() == ".sfz" && fs::path(mapA).filename().string().size() == 64 + 4, "a map joins the project by its content");
+  expect(samePath(fs::path(mapA).parent_path().string(), t.a.folder + "/Audio"), "a map is copied into the Audio folder");
+  std::string cabA;
+  for (const auto& sl : t.a.doc.song().mixer[1].slots)
+    if (sl.plugin.type == "gl.amprack") cabA = sl.plugin.data;
+  expect(cabA.rfind("cabdir=", 0) == 0 && cabA.find(".cabinet") != std::string::npos && cabA.find(dir) == std::string::npos, "a cabinet folder joins the project as a list of its files");
+  const size_t aFiles = [&] {
+    size_t n = 0;
+    for (const auto& e : fs::directory_iterator(t.a.folder + "/Audio")) n += e.is_regular_file();
+    return n;
+  }();
+  expect(aFiles == 6, "the map, its samples, the list and its files are in the project");
+  expect(t.a.s->unusedAudio().empty(), "what a map and a list name counts as in use");
+
+  std::string mapB, cabB;
+  auto all = [&] {
+    const Channel* cb = t.b.doc.song().channel(ch);
+    mapB = cb ? cb->plugin.data : std::string();
+    cabB.clear();
+    if (!t.b.doc.song().mixer.empty())
+      for (const auto& sl : t.b.doc.song().mixer[1].slots)
+        if (sl.plugin.type == "gl.amprack") cabB = sl.plugin.data;
+    size_t n = 0;
+    std::error_code ec;
+    for (const auto& e : fs::directory_iterator(t.b.folder + "/Audio", ec)) n += e.is_regular_file() && e.path().extension() != ".tmp";
+    return n >= aFiles;
+  };
+  t.net.maxDelay = 0.01;
+  bool mapWaited = false;
+  for (int i = 0; i < 4000 && !all(); ++i) {
+    run(t.net, {&t.a, &t.b}, t.clock, 0.02);
+    mapWaited = mapWaited || (!mapB.empty() && fs::exists(mapB) && t.b.s->fileLoading(mapB));
+  }
+  expect(all(), "everything arrives on the other computer");
+  expect(mapWaited, "a map counts as loading while its samples arrive");
+  expect(!t.b.s->fileLoading(mapB), "and no longer once they have");
+  size_t verified = 0;
+  for (const auto& e : fs::directory_iterator(t.b.folder + "/Audio"))
+    verified += update::sha256File(e.path().string()) == e.path().stem().string();
+  expect(verified == aFiles, "every file arrives verified");
+  std::vector<packs::plasma::Zone> zones;
+  packs::plasma::parseSfz(mapB, zones, nullptr);
+  expect(zones.size() == 2 && zones[0].s && zones[1].s && zones[0].loKey == 40 && zones[1].loKey == 70, "the map plays on the other computer");
+  const std::string manifestB = cabB.size() > 8 ? cabB.substr(7, cabB.find('\n') - 7) : std::string();
+  expect(isFolderManifest(manifestB) && fs::exists(manifestB), "the list arrives");
+  const auto listed = folderRefFiles(manifestB);
+  expect(listed.size() == 2, "the list names the folder's files");
+  std::set<std::string> realNames;
+  for (const auto& [file, name] : listed) {
+    realNames.insert(name);
+    expect(fs::exists(file) && samePath(fs::path(file).parent_path().string(), t.b.folder + "/Audio"), "a listed file is on the other computer");
+  }
+  expect(realNames.count("board one.wav") && realNames.count("IMP Room.wv.wav"), "the list keeps the real names");
+  const std::string board = packs::dynamics::cab::boardFile(manifestB, 2);
+  expect(!board.empty() && fs::exists(board) && fs::path(board).parent_path().filename() == "Audio", "the cabinet finds a file through the list");
+  expect(t.b.s->unusedAudio().empty(), "on the other computer too, nothing of it counts as unused");
+
+  // A zipped copy of the shared project holds them under their real names.
+  {
+    const std::string zip = tmpDir("bundles_zip") + "/z.gridline.zip";
+    CollectReport zr = exportZippedProject(t.b.doc.song(), zip, "Z");
+    expect(zr.error.empty() && zr.missing.empty(), "a shared project zips");
+    std::vector<ZipEntry> es;
+    readZipDirectory(zip, es);
+    size_t cabFiles = 0, mapFiles = 0;
+    for (const auto& e : es) {
+      cabFiles += e.name.find("/board one.wav") != std::string::npos || e.name.find("/IMP Room.wv.wav") != std::string::npos;
+      mapFiles += e.name.size() > 4 && e.name.compare(e.name.size() - 4, 4, ".sfz") == 0;
+    }
+    expect(cabFiles == 2 && mapFiles == 1, "the zip holds the cabinet's files by name and the map");
+  }
+
+  // A private copy holds what the map and the list name, and opens with them.
+  const std::string dest = tmpDir("bundles_copy") + "/Private";
+  std::string file, err;
+  expect(exportPlainProject(t.b.doc.song(), t.b.folder, dest, "Song", false, &file, &err), "a private copy");
+  size_t copied = 0;
+  for (const auto& e : fs::directory_iterator(dest + "/Audio")) copied += e.is_regular_file();
+  expect(copied == aFiles, "the copy holds every file");
+  Song loaded;
+  expect(loadProject(file, loaded), "the copy opens");
+  bool found = false;
+  if (!loaded.mixer.empty())
+    for (const auto& sl : loaded.mixer[1].slots)
+      if (sl.plugin.type == "gl.amprack") {
+        const std::string at = sl.plugin.data.substr(7, sl.plugin.data.find('\n') - 7);
+        found = fs::exists(at) && samePath(fs::path(at).parent_path().string(), dest + "/Audio");
+      }
+  expect(found, "in the copy the list resolves");
 }
 
 void testFiles() {
@@ -1456,6 +1575,7 @@ int main() {
   testOpLog();
   testReopen();
   testFiles();
+  testBundles();
   testPolicy();
   testRelay();
   testConflicts();

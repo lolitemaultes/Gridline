@@ -26,6 +26,7 @@
 #include "core/Project.h"
 #include "core/flp/FlpEncode.h"
 #include "core/flp/FlpExport.h"
+#include "packs/models/drums.h"
 #include "packs/spacefx/spacefx.h"
 
 using namespace gl;
@@ -245,6 +246,18 @@ int main() {
     flp::ExportReport rep;
     exportSeconds(s, out, rep);
     if (dump) saveProject(std::string(dump) + "/" + name + ".gridline.json", s);
+  }
+  // K-43: a Sweep Kick seed between two integers has no exact stored value: the closest one is
+  // written, found through the field's law (every candidate decoded here as well, to check it).
+  {
+    PluginState kick = defaultPluginState("gl.sweepkick");
+    kick.params[gl::packs::models::dr::SkSeed] = 3238900.25f;
+    flp::enc::EncodeContext ec;
+    flp::enc::setVerifyLaws(1);
+    flp::enc::clearEncodeCache();
+    const flp::enc::Result res = flp::enc::encode(kick, "", nullptr, ec);
+    expect(res.flName == "Fruit Kick" && res.state.size() >= 32 && flp::getU32(res.state, 28) == 3238900u,
+           "a Sweep Kick seed between two integers stores the closest one");
   }
   flp::enc::setVerifyLaws(0);
   std::printf("# law mismatches: %d\n", flp::enc::lawMismatches() - before);

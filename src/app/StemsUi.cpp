@@ -1,5 +1,6 @@
 // Gridline - J-191: the Split stems window (see StemsUi.h).
 #include "StemsUi.h"
+#include "../core/Crash.h"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -150,7 +151,12 @@ void startJob(Job::Kind kind, std::function<bool(Job&)> body) {
   j.started = Clock::now();
   j.running = true;
   j.worker = std::thread([&j, body] {
-    const bool ok = body(j);
+    bool ok = false;
+    try {
+      ok = body(j);
+    } catch (...) {  // K-39: reported; the job ends as failed
+      crash::reportCurrentException("Splitting stems");
+    }
     {
       std::lock_guard<std::mutex> lk(j.mu);
       j.ok = ok;

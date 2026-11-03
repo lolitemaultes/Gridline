@@ -2,9 +2,12 @@
 #include "ExportJob.h"
 #include <cmath>
 #include <cstdio>
+#include <exception>
 #include <filesystem>
 #include <map>
+#include <new>
 #include "../core/Automation.h"
+#include "../core/Crash.h"
 #include "../core/MidiFile.h"
 #include "Loudness.h"
 #include "TrackReceiptPass.h"
@@ -40,6 +43,7 @@ struct Writer {
   const Song& song;
   const ExportSettings& s;
   ExportOutcome& out;
+  const std::atomic<bool>* cancel;
 
   bool first = true;
 
@@ -70,6 +74,7 @@ struct Writer {
       o.dither = s.dither;
       o.bits = f == ExportFormat::Flac ? s.flacBits : s.wavBits;
       o.bitrate = f == ExportFormat::Mp3 ? s.mp3Bitrate : f == ExportFormat::Ogg ? s.oggBitrate : s.m4aBitrate;
+      o.cancel = cancel;
       if (f == ExportFormat::Wav) o.meta = meta;
       const std::string path = (fs::path(s.folder) / (stem + exportFormatExt(f))).string();
       std::string err;
@@ -85,16 +90,17 @@ struct Writer {
 
 }  // namespace
 
-ExportOutcome runExport(const Song& song, const ExportSettings& s, const std::function<void(double, const std::string&)>& progress,
-                        const std::atomic<bool>* cancel) {
-  ExportOutcome out;
+namespace {
+
+void runExportInto(ExportOutcome& out, const Song& song, const ExportSettings& s, const std::function<void(double, const std::string&)>& progress,
+                   const std::atomic<bool>* cancel) {
   std::error_code ec;
   fs::create_directories(s.folder, ec);
   if (ec) {
     out.errors.push_back("cannot create folder " + s.folder);
-    return out;
+    return;
   }
-  Writer w{song, s, out};
+  Writer w{song, s, out, cancel};
   const std::string base = safeFileName(s.baseName);
   const bool audio = !s.formats.empty();
   // Work units for the progress bar: the mix + each part.
@@ -118,11 +124,11 @@ ExportOutcome runExport(const Song& song, const ExportSettings& s, const std::fu
     RenderResult r = renderAudio(song, job);
     if (r.cancelled) {
       out.cancelled = true;
-      return out;
+      return;
     }
     if (!r.error.empty()) {
       out.errors.push_back("Nothing to render: " + r.error);
-      return out;
+      return;
     }
     out.frames = static_cast<int64_t>(r.audio.frames);
     out.peak = r.audio.peak();
@@ -167,7 +173,7 @@ ExportOutcome runExport(const Song& song, const ExportSettings& s, const std::fu
   }
   if (cancel && cancel->load()) {
     out.cancelled = true;
-    return out;
+    return;
   }
   if (s.midi) {
     MidiFileData m = exportScopeMidi(song, s.render);
@@ -181,6 +187,35 @@ ExportOutcome runExport(const Song& song, const ExportSettings& s, const std::fu
       out.errors.push_back("MIDI: " + err);
   }
   if (progress) progress(1.0, "Done");
+}
+
+}  // namespace
+
+ExportOutcome runExport(const Song& song, const ExportSettings& s, const std::function<void(double, const std::string&)>& progress,
+                        const std::atomic<bool>* cancel) {
+  // An exception must not leave the render's thread (the app would end at once): a project too long
+  // for the memory there is, a file system error on a strange name. It comes back as the export's
+  // error, and as a crash report (one, here: the callers never see the exception). Short of memory,
+  // writing that report can fail as well; the error is in the outcome by then.
+  ExportOutcome out;
+  auto report = []() noexcept {
+    try {
+      crash::reportCurrentException("Exporting audio");
+    } catch (...) {
+    }
+  };
+  try {
+    runExportInto(out, song, s, progress, cancel);
+  } catch (const std::bad_alloc&) {
+    out.errors.push_back("not enough memory for this render (try a lower sample rate, no oversampling or fewer loops)");
+    report();
+  } catch (const std::exception& e) {
+    out.errors.push_back(std::string("the render stopped: ") + e.what());
+    report();
+  } catch (...) {
+    out.errors.push_back("the render stopped on an unknown error");
+    report();
+  }
   return out;
 }
 

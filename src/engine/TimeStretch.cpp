@@ -2,6 +2,7 @@
 // TimeStretch.h. The spectral engines are Signalsmith Stretch (MIT) and
 // Rubber Band Library R3 (GPL-2.0-or-later); the streaming around them, the
 // resampler, the clip renderer and the realtime voice are Gridline's own.
+#include "../core/Platform.h"
 #include "TimeStretch.h"
 #include <algorithm>
 #include <cmath>
@@ -796,7 +797,10 @@ class Renderer {
       if (rc && !rc->ready.load(std::memory_order_acquire)) {
         lk.unlock();
         if (j.hasMap) j.req.map = &j.map;
-        renderInto(*rc, j.req);
+        try {  // this thread must survive a clip too big for memory
+          renderInto(*rc, j.req);
+        } catch (const std::exception&) {
+        }
         rc->readyFrames.store(rc->frames(), std::memory_order_release);
         rc->ready.store(true, std::memory_order_release);
         rc.reset();  // the clip (or the cache) owns it; never freed here while locked
@@ -841,6 +845,36 @@ size_t clipCacheBytes() { return renderer().bytes(); }
 
 // ------------------------------------------------------------- realtime voice
 
+// A voice's big buffers: sized for the top of its range (speed 8, pitch 8: over a megabyte per
+// channel) and reached only as far as the rate being played. K-45: a project has one voice per clip
+// that may need one, thousands of them, most never playing: pages nothing reached take no memory.
+class VoiceBuffer {
+ public:
+  VoiceBuffer() = default;
+  VoiceBuffer(const VoiceBuffer&) = delete;
+  VoiceBuffer& operator=(const VoiceBuffer&) = delete;
+  ~VoiceBuffer() { release(); }
+  void allocate(size_t frames) {  // (zeroed; UI thread)
+    release();
+    p_ = static_cast<float*>(platform::zeroedPages(frames * sizeof(float)));
+    if (!p_) throw std::bad_alloc();
+    n_ = frames;
+  }
+  void release() {
+    platform::releasePages(p_, n_ * sizeof(float));
+    p_ = nullptr;
+    n_ = 0;
+  }
+  float* data() { return p_; }
+  const float* data() const { return p_; }
+  float* begin() { return p_; }
+  float& operator[](size_t i) { return p_[i]; }
+
+ private:
+  float* p_ = nullptr;
+  size_t n_ = 0;
+};
+
 struct Voice::Impl {
   Spectral engine{kSeed};
   Guard guard;
@@ -849,11 +883,11 @@ struct Voice::Impl {
   double maxPitch = 8, maxSpeed = 8;
   // Engine output (before the pitch resampler): frames [0, filled) of mid,
   // read at fractional position `pos`. Compacted as it is consumed.
-  std::vector<float> mid[2];
+  VoiceBuffer mid[2];
   int64_t filled = 0;
   double pos = 0;
   double inAcc = 0;          // fractional input frames owed to the engine
-  std::vector<float> in[2];  // reader scratch
+  VoiceBuffer in[2];         // reader scratch
   int inCap = 0, midCap = 0;
   // Pitch glide: two one-pole stages on the log pitch, per output frame, so
   // a pitch change (automation, a new block's value) never steps.
@@ -1043,9 +1077,9 @@ void Voice::prepare(int channels, double sampleRate, double maxPitch, double max
     m.inCap = std::max(1024, static_cast<int>(std::ceil(m.maxSpeed * Impl::kChunk)) + 16);
     m.rb->setMaxProcessSize(static_cast<size_t>(m.inCap));
     for (int c = 0; c < 2; ++c) {
-      m.in[c].assign(static_cast<size_t>(m.inCap), 0.0f);
+      m.in[c].allocate(static_cast<size_t>(m.inCap));
       m.rbDump[c].assign(Impl::kRbDump, 0.0f);
-      m.mid[c].clear(), m.mid[c].shrink_to_fit();
+      m.mid[c].release();
     }
     // Its resampler sizes its buffers for each new pitch ratio the first time
     // it meets it: the pitches a voice is likely to play are met here.
@@ -1072,8 +1106,8 @@ void Voice::prepare(int channels, double sampleRate, double maxPitch, double max
   const double perMid = m.maxSpeed * m.maxPitch;  // speed / pitch at the lowest pitch
   m.inCap = std::max(m.engine.outputSeekLength(static_cast<float>(perMid)), static_cast<int>(std::ceil(perMid * Impl::kChunk))) + 16;
   for (int c = 0; c < 2; ++c) {
-    m.mid[c].assign(static_cast<size_t>(m.midCap), 0.0f);
-    m.in[c].assign(static_cast<size_t>(m.inCap), 0.0f);
+    m.mid[c].allocate(static_cast<size_t>(m.midCap));
+    m.in[c].allocate(static_cast<size_t>(m.inCap));
   }
   // The guard reads the source up to the engine's whole lead (start-up input
   // plus a chunk) and one window behind the frame being played.

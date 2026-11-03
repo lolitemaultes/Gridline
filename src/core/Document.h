@@ -201,6 +201,7 @@ class Document {
   // --- saved state --------------------------------------------------------
   bool modified() const { return undo_.stateSerial() != savedSerial_; }
   void markSaved() { savedSerial_ = undo_.stateSerial(); }
+  void markUnsaved() { savedSerial_ = ~uint64_t{0}; }  // K-39: a recovered project is not on disk yet
 
  private:
   void exec(CommandPtr cmd, bool mayJoin = true, bool clipLevels = false);

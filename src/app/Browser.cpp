@@ -34,6 +34,7 @@
 #include "AudioRecordUi.h"
 #include "AutomationEditor.h"
 #include "BrowserUi.h"
+#include "../core/RemoteFs.h"
 #include "StemsUi.h"
 #include "ExternalDragUi.h"
 #include "HostedUi.h"
@@ -62,11 +63,30 @@ std::string lower(std::string s) {
 struct DirCache {
   std::vector<fs::path> dirs, files;
   double stamp = -1;
+  std::shared_ptr<const remotefs::Listing> from;  // K-42: on a web drive: the listing this was made from
+  bool pending = false;                           // and none has arrived yet
 };
 std::map<std::string, DirCache> dirCache;
 
 const DirCache& listDir(const fs::path& dir, double now) {
   DirCache& d = dirCache[dir.string()];
+  auto byNameOf = [](const fs::path& a, const fs::path& b) { return lower(a.filename().string()) < lower(b.filename().string()); };
+  if (remotefs::isRemote(dir.string())) {  // K-42: a folder on a web drive is read off the interface thread
+    const remotefs::DirState st = remotefs::listAsync(dir.string(), 30.0);
+    d.pending = st.pending && !st.listing;
+    if (st.listing && st.listing != d.from) {
+      d = DirCache{};
+      d.from = st.listing;
+      d.stamp = now;
+      for (const auto& e : st.listing->entries) {
+        if (e.isDir) d.dirs.push_back(dir / fs::u8path(e.name));
+        else if (browse::listable(browse::kindOf(e.name))) d.files.push_back(dir / fs::u8path(e.name));
+      }
+      std::sort(d.dirs.begin(), d.dirs.end(), byNameOf);
+      std::sort(d.files.begin(), d.files.end(), byNameOf);
+    }
+    return d;
+  }
   if (d.stamp >= 0 && now - d.stamp < 3.0) return d;
   d = DirCache{};
   d.stamp = now;
@@ -95,6 +115,10 @@ struct DirFlag {
 std::map<std::string, DirFlag> dirFlags;
 
 bool isDirCached(const fs::path& dir, double now) {
+  if (remotefs::isRemote(dir.string())) {  // K-42: asked off the interface thread; a folder until it says otherwise
+    const remotefs::Probe p = remotefs::probe(dir.string(), 30.0);
+    return !p.known || p.isDir;
+  }
   DirFlag& e = dirFlags[dir.string()];
   if (e.stamp < 0 || now - e.stamp >= 3.0) {
     std::error_code ec;
@@ -818,6 +842,7 @@ void dirTree(App& a, const fs::path& dir, int depth, float baseIndent = 12.0f) {
   if (depth > 12) return;
   const DirCache& d = listDir(dir, a.now);
   const float indent = baseIndent + depth * 14.0f;
+  if (d.pending) emptyLine("Reading this folder", indent + 20.0f);
   for (const auto& sub : d.dirs) {
     std::string key = sub.string();
     if (renameRow(a, sub, indent, ui::Icon::Folder, roleCol(role::kView))) continue;  // K-18
@@ -1181,7 +1206,7 @@ void folderSection(App& a, const char* title, const fs::path& dir, uint32_t role
   std::error_code ec;
   if (create && !isDirCached(dir, a.now)) fs::create_directories(dir, ec);
   const DirCache& d = listDir(dir, a.now);
-  if (d.dirs.empty() && d.files.empty()) emptyLine(emptyText);
+  if (d.dirs.empty() && d.files.empty()) emptyLine(d.pending ? "Reading this folder" : emptyText);
   else dirTree(a, dir, 0);
   ImGui::Dummy(ImVec2(0, 4));
 }
@@ -1667,7 +1692,7 @@ namespace browserui {
 void addBrowserFolder(App& a, const std::string& dir) {
   loadFolders(a);
   std::error_code ec;
-  if (!fs::is_directory(dir, ec)) {
+  if (!remotefs::isRemote(dir) && !fs::is_directory(dir, ec)) {
     a.notify(std::string(i18n::tr("Not a folder: ")) + dir, true);
     return;
   }

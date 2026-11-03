@@ -1,5 +1,6 @@
 // Gridline — browser content model (see BrowserIndex.h).
 #include "BrowserIndex.h"
+#include "RemoteFs.h"
 #include "Platform.h"
 #include <algorithm>
 #include <cctype>
@@ -1031,8 +1032,12 @@ void Index::run(std::vector<std::pair<std::string, bool>> roots) {
   // 1. Walk: register every listable file at once (search works right away).
   for (const auto& [root, analyse] : roots) {
     if (cancel_) break;
+    // K-42: a web or network drive is never walked or analysed (each file read would download it);
+    // the browser's tree lists its folders one at a time as they are opened.
+    if (remotefs::isRemote(root)) continue;
     std::error_code ec;
     if (!fs::is_directory(root, ec)) continue;
+    remotefs::countWalk();
     std::vector<FileMeta> batch;
     for (fs::recursive_directory_iterator it(root, fs::directory_options::skip_permission_denied, ec), end; !ec && it != end;
          it.increment(ec)) {

@@ -1857,6 +1857,35 @@ void testScanShutdown() {
 
 }  // namespace
 
+// A render on a worker thread: the calls of a hosted plugin that belong to the interface thread reach
+// it (this thread here, as a frame does), the sound is the same as a render on the interface thread,
+// the plugin is told about the offline render.
+void testRenderWorker() {
+  auto* cp = probe<GridlineClapProbe>(clapBinary(), "gridline_clap_probe");
+  Document d(makeEmptySong());
+  ObjectId pat = d.song().patterns[0].id;
+  ObjectId ch = d.addChannel("clap", kClapSynth);
+  d.addNote(pat, ch, {0, 48, 69, 100});
+  d.addClip(pat, 0, 0);
+  RenderOptions o;
+  o.blockSize = 512;
+  const AudioBuffer here = renderSong(d.song(), o);
+  cp->renderMode = 0;
+  std::atomic<bool> running{true};
+  AudioBuffer there;
+  std::thread worker([&] {
+    host::UiThreadRenderScope scope;
+    there = renderSong(d.song(), o);
+    running = false;
+  });
+  host::serveUiThreadTasksWhile(running);
+  worker.join();
+  bool same = here.frames > 0 && here.frames == there.frames && here.peak() > 0.1f;
+  for (size_t k = 0; same && k < here.frames; ++k) same = here.at(0, k) == there.at(0, k) && here.at(1, k) == there.at(1, k);
+  expect(same, "a render on a worker thread sounds the same as one on the interface thread");
+  expect(cp->renderMode == CLAP_RENDER_OFFLINE, "the plugin is told about the offline render there too");
+}
+
 int main() {
   gl::test::hermeticTestEnv("hosting");
   testHelpers();
@@ -1869,6 +1898,7 @@ int main() {
   testSandbox();
   testWrapper();
   testTransport();
+  testRenderWorker();
   testSidechainRender();
   testStopReleasesHosted();
   testMidiOutRouting();

@@ -1,5 +1,6 @@
 // Gridline - J-219: Track Receipt (see TrackReceipt.h).
 #include "TrackReceipt.h"
+#include <filesystem>
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -284,6 +285,13 @@ bool readOrigin(const std::string& file, Origin& o) {
   if (const Json* a = j.find("sources"); a && a->type == Json::Type::Array)
     for (const auto& s : a->array)
       if (s.type == Json::Type::String) o.sources.push_back(s.str);
+  // In a package the sources are named relative to the file (ProjectInterop, sidecarsFor).
+  auto beside = [&](std::string& p) {
+    const std::filesystem::path f = std::filesystem::u8path(p);
+    if (!p.empty() && !f.is_absolute()) p = (std::filesystem::u8path(file).parent_path() / f).lexically_normal().u8string();
+  };
+  beside(o.source);
+  for (auto& x : o.sources) beside(x);
   return !o.source.empty();
 }
 

@@ -8,6 +8,7 @@
 // installed on the computer (ffmpeg, lame, oggenc), run as a separate process;
 // encoderStatus() reports what is available.
 #pragma once
+#include <atomic>
 #include <cstdint>
 #include <map>
 #include <string>
@@ -74,6 +75,7 @@ struct AudioFileOptions {
   int bitrate = 320;             // MP3 / Ogg / AAC, kbit/s
   WavMeta meta;                  // WAV only
   uint32_t seed = 0x2545F491u;   // dither seed
+  const std::atomic<bool>* cancel = nullptr;  // stops an encoder program that is running
 };
 // Writes one audio file (the buffer is the final channel layout). Integer
 // formats are dithered here.

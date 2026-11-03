@@ -6,6 +6,7 @@
 // (completeProjectLoad, one frame: Document::reset, the prepared plugins handed to the
 // builder, a build that finds them ready, the engine gets the new program atomically).
 // Cancel drops the loader's work; the open project was never touched.
+#include "CacheUi.h"
 #include "ProjectLoadUi.h"
 #include <algorithm>
 #include <cmath>
@@ -14,10 +15,13 @@
 #include <filesystem>
 #include "../../third_party/imgui/imgui.h"
 #include "../../third_party/imgui/imgui_internal.h"
+#include "../collab/Session.h"
 #include "../core/I18n.h"
 #include "../core/Log.h"
 #include "../core/ProjectInterop.h"
 #include "App.h"
+#include "CrashUi.h"
+#include "../core/Crash.h"
 #include "CollabUi.h"
 #include "DevSignal.h"
 #include "DialogLayout.h"
@@ -65,8 +69,13 @@ void App::startProjectLoad(const std::string& path, bool collab) {
   r.pdc = settings.getBool("audio.pdc");
   r.sketch = !embedded;
   if (const char* d = std::getenv("GRIDLINE_DEV_SLOW_LOAD_MS")) r.devDelayMs = std::clamp(std::atoi(d), 0, 60000);  // dev / tests
+  if (const char* d = std::getenv("GRIDLINE_DEV_SLOW_READ_MS")) r.devReadDelayMs = std::clamp(std::atoi(d), 0, 60000);  // dev / tests
+  if (const char* d = std::getenv("GRIDLINE_DEV_STALL_SECONDS")) r.stallSeconds = std::atof(d);  // dev / tests
+  r.askProject = !embedded;
+  r.collabProbe = [](const std::string& file) { return !collab::Session::folderOfProjectFile(file).empty(); };
   projectLoad.start(std::move(r));
   logging::info("app", "Opening " + path);
+  crash::crumb("project open");
   for (const char* n : {"project-loaded", "project-load-cancelled", "project-load-failed", "project-load-preparing"}) devsig::forget(n);
   devsig::reach("project-load-started");
   if (embedded) finishProjectLoad();  // the host's thread waits (no frames of our own to draw it in)
@@ -124,12 +133,14 @@ void App::completeProjectLoad() {
   for (const auto& l : projectLoad.log())
     if (l.level == Level::Warning) warnings.push_back(l.text());
   const int ms = static_cast<int>(projectLoad.elapsed() * 1000.0);
+  crash::BusyScope busy("installing the opened project");
+  crash::crumb("project loaded");
   engine.stopToStart();
   engine.panic(false);  // (the project is replaced: no fade over the new one)
   // The prepared plugins go to the builder: the build below (or the collaborative open's)
   // finds every one ready, so the swap itself starts none.
   builder.adoptPreloaded(std::move(projectLoad.prepared()));
-  if (load_.collab) {  // J-111: the session opens the shared project (a quick read of the same file)
+  if (load_.collab || r.collabOnDrive) {  // J-111: the session opens the shared project (a quick read of the same file)
     const std::string file = r.projectFile;
     projectLoad.clear();
     bool opened = false;
@@ -146,15 +157,21 @@ void App::completeProjectLoad() {
   }
   collabui::closeSession(*this);  // J-111
   doc.reset(std::move(r.song));
+  cacheui::projectChanged(*this, std::move(r.copyUse));  // K-45: this copy stays claimed, the closed project's can go
   trimSamplesAt_ = now + 1.0;  // J-30: the old project's samples go
   // J-52: an FL Studio project is not a Gridline file yet: Save asks where and in which format,
-  // so the .flp is never replaced unasked. A zip opens from its unpacked project.
-  const std::string recent = r.fromFl ? shownAs : r.projectFile;
-  projectPath = r.fromFl ? std::string() : r.projectFile;
+  // so the .flp is never replaced unasked. A zip opens from its unpacked project; K-42: when that
+  // copy is in the local cache (the archive is on a drive) it is no place to save to, so Save asks
+  // too, and the archive itself is what stays in the recent list. K-45: every archive unpacks there.
+  const bool saveAsks = r.fromFl || r.inCache;
+  const std::string recent = saveAsks ? shownAs : r.projectFile;
+  projectPath = saveAsks ? std::string() : r.projectFile;
   projectFormat = SaveFormat::Gridline;
-  openedFrom = r.fromFl ? shownAs : std::string();
-  addRecent(recent);
-  if (r.hasSketch && !embedded && !recent.empty()) launcherui::rememberSketch(*this, recent, std::move(r.sketch));  // J-141
+  openedFrom = saveAsks ? shownAs : std::string();
+  const bool recovered = crashui::isRecovering();
+  if (recovered) crashui::recoveredLoaded(*this);  // K-39: Save goes to the project's real home; not a recent file
+  else addRecent(recent);
+  if (r.hasSketch && !recovered && !embedded && !recent.empty()) launcherui::rememberSketch(*this, recent, std::move(r.sketch));  // J-141
   curPattern = doc.song().patterns.empty() ? kNoId : doc.song().patterns[0].id;
   selChannel = doc.song().channels.empty() ? kNoId : doc.song().channels[0].id;
   selChannels = {selChannel};
@@ -187,9 +204,10 @@ void App::completeProjectLoad() {
     uiSound(uisound::Event::Open);
   }
   const bool zipped = r.fromZip;
+  std::vector<std::string> missingRefs = std::move(r.missingRefs);  // (checked on the loader's worker)
   logging::info("app", "Opened " + shownAs + " in " + std::to_string(ms) + " ms, " + std::to_string(warnings.size()) + " warning(s)");
   projectLoad.clear();
-  if (zipped && !missingFiles(doc.song()).empty()) exportui::openMissingSamples(*this);
+  if (zipped && !missingRefs.empty()) exportui::openMissingSamples(*this, std::move(missingRefs));
   devsig::reach("project-loaded");
 }
 
@@ -230,7 +248,13 @@ std::string nowText(const projload::Now& n) {
   switch (n.kind) {
     case K::Idle: return {};
     case K::Reading: return i18n::tr("Reading the project file");
-    case K::Unpacking: return i18n::tr("Unpacking the zipped project");
+    case K::Unpacking:
+      if (n.count > 0 && !n.name.empty()) {
+        std::snprintf(b, sizeof b, i18n::tr("Unpacking %s (%d of %d)"), n.name.c_str(), n.index, n.count);
+        return b;
+      }
+      return i18n::tr("Unpacking the zipped project");
+    case K::Choosing: return i18n::tr("Which project in this archive should open?");
     case K::Converting: return i18n::tr("Converting the FL Studio project");
     case K::Listing: return i18n::tr("Listing samples and plugins");
     case K::Building: return i18n::tr("Building the mixer, automation and arrangement");
@@ -250,6 +274,32 @@ void activityDots(ImDrawList* dl, ImVec2 c, float t, ImU32 col) {
     v.w *= a;
     dl->AddCircleFilled(ImVec2(c.x + static_cast<float>(i) * 7.0f, c.y), 2.2f, ImGui::ColorConvertFloat4ToU32(v));
   }
+}
+
+std::string sizeText(uint64_t bytes) {
+  char b[48];
+  const double v = static_cast<double>(bytes);
+  if (v >= 1024.0 * 1024.0 * 1024.0) std::snprintf(b, sizeof b, i18n::tr("%.2f GB"), v / (1024.0 * 1024.0 * 1024.0));
+  else if (v >= 1024.0 * 1024.0) std::snprintf(b, sizeof b, i18n::tr("%.1f MB"), v / (1024.0 * 1024.0));
+  else std::snprintf(b, sizeof b, i18n::tr("%.0f KB"), v / 1024.0);
+  return b;
+}
+
+// "1.20 GB of 3.08 GB, 42.0 MB/s, about 1 min left"
+std::string bytesLine(const projload::Loader& L) {
+  char b[200];
+  std::snprintf(b, sizeof b, i18n::tr("%s of %s"), sizeText(L.bytesDone()).c_str(), sizeText(L.bytesTotal()).c_str());
+  std::string s = b;
+  const double rate = L.bytesPerSecond();
+  if (rate > 1.0 && L.bytesDone() < L.bytesTotal()) {
+    std::snprintf(b, sizeof b, i18n::tr("%s/s"), sizeText(static_cast<uint64_t>(rate)).c_str());
+    s += std::string(", ") + b;
+    const double left = static_cast<double>(L.bytesTotal() - L.bytesDone()) / rate;
+    if (left >= 90.0) std::snprintf(b, sizeof b, i18n::tr("about %d min left"), static_cast<int>(left / 60.0 + 0.5));
+    else std::snprintf(b, sizeof b, i18n::tr("about %d s left"), std::max(1, static_cast<int>(left + 0.5)));
+    s += std::string(", ") + b;
+  }
+  return s;
 }
 
 // The progress bar: a recessed track with the accent fill.
@@ -308,6 +358,55 @@ void drawLog(App& a, const std::vector<projload::LogLine>& all, float h) {
 
 }  // namespace
 
+// An archive holding several equal projects: the list, the first (the best guess) selected.
+void drawChoice(App& a, float w) {
+  projload::Loader& L = a.projectLoad;
+  const auto& P = theme::pal();
+  static int selected = 0;
+  const std::vector<std::string> names = L.choices();
+  if (selected >= static_cast<int>(names.size())) selected = 0;
+  ui::TextFit(i18n::tr("This archive holds several projects. Which one should open?"), w, P.text);
+  ImGui::Dummy(ImVec2(0, theme::kS1));
+  const float rowH = ImGui::GetTextLineHeight() + theme::kS2;
+  const float listH = std::min(static_cast<float>(names.size()) * rowH + 2 * theme::kS1 + 2.0f, 220.0f);
+  ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::vec(P.well));
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS1, theme::kS1));
+  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
+  ImGui::BeginChild("##loadchoice", ImVec2(w, listH), ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+  for (int i = 0; i < static_cast<int>(names.size()); ++i) {
+    ImGui::PushID(i);
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const float rw = ImGui::GetContentRegionAvail().x;
+    const bool hit = ImGui::InvisibleButton("##r", ImVec2(rw, rowH));
+    const bool hov = ImGui::IsItemHovered();
+    if (hit) selected = i;
+    if (hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) L.choose(i);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    if (i == selected || hov)
+      dl->AddRectFilled(p, ImVec2(p.x + rw, p.y + rowH), i == selected ? theme::withAlpha(P.accent, 0.3f) : P.surface800, theme::kRadiusSm);
+    ui::drawIcon(dl, ui::Icon::File, ImVec2(p.x + 12.0f, p.y + rowH * 0.5f), 12, P.textDim);
+    theme::textEllipsis(dl, a.fontRegular, ImGui::GetFontSize(), ImVec2(p.x + 26.0f, p.y + theme::kS1), rw - 32.0f, P.text, names[static_cast<size_t>(i)].c_str());
+    ImGui::PopID();
+  }
+  ImGui::EndChild();
+  ImGui::PopStyleVar(2);
+  ImGui::PopStyleColor();
+  ImGui::Dummy(ImVec2(0, theme::kS1));
+  const float bw = 110.0f;
+  const float y = ImGui::GetCursorPosY();
+  ImGui::SetCursorPos(ImVec2(theme::kS6 + w - 2 * bw - theme::kS2, y));
+  if (ui::TextButton("Cancel", false, bw, "Stop opening and go back to the project as it was") || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+    selected = 0;
+    a.cancelProjectLoad();
+    return;
+  }
+  ImGui::SameLine(0, theme::kS2);
+  if (ui::TextButton("Open", true, bw) || ImGui::IsKeyPressed(ImGuiKey_Enter)) {
+    L.choose(selected);
+    selected = 0;
+  }
+}
+
 void draw(App& a) {
   projload::Loader& L = a.projectLoad;
   const bool want = a.projectLoadBlocking();
@@ -353,6 +452,13 @@ void draw(App& a) {
   }
   ui::TextFit(fileNameOf(a.projectLoadName()).c_str(), w, P.textDim);
   ImGui::Dummy(ImVec2(0, theme::kS1));
+  if (L.awaitingChoice()) {
+    drawChoice(a, w);
+    if (!a.projectLoadBlocking()) ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+    ImGui::PopStyleVar();
+    return;
+  }
   if (failed) {
     ImGui::PushStyleColor(ImGuiCol_Text, theme::vec(P.danger));
     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + w);
@@ -362,13 +468,13 @@ void draw(App& a) {
   } else {
     // Progress over the real work units, then the step running now.
     const int total = L.unitsTotal(), done = L.unitsDone();
-    progressBar(static_cast<float>(L.progress()), w);
+    progressBar(static_cast<float>(L.overall()), w);
     const std::string step = nowText(L.now());
     const ImVec2 p = ImGui::GetCursorScreenPos();
     activityDots(dl, ImVec2(p.x + 3.0f, p.y + ImGui::GetTextLineHeight() * 0.5f + 2.0f), static_cast<float>(ImGui::GetTime()), P.accent);
     ImGui::SetCursorScreenPos(ImVec2(p.x + 24.0f, p.y + 2.0f));
     char pc[48] = "";
-    if (total > 0) std::snprintf(pc, sizeof pc, i18n::tr("%d%%"), static_cast<int>(std::floor(L.progress() * 100.0)));
+    if (total > 0 || L.overall() > 0.0) std::snprintf(pc, sizeof pc, i18n::tr("%d%%"), static_cast<int>(std::floor(L.overall() * 100.0)));
     const float pw = ImGui::CalcTextSize(pc).x;
     ui::TextFit(step.c_str(), w - 24.0f - pw - theme::kS2, P.text);
     if (pc[0]) {
@@ -379,7 +485,16 @@ void draw(App& a) {
     if (total > 0)
       std::snprintf(counts, sizeof counts, i18n::tr("Samples %d of %d, plugins %d of %d"), L.samplesDone(), L.samplesTotal(), L.pluginsDone(),
                     L.pluginsTotal());
-    ui::TextFit(counts[0] ? counts : " ", w, P.textFaint);
+    const bool reading = L.phase() == Phase::Reading && L.bytesTotal() > 0;
+    if (L.stalledFor() > 0.0) {  // K-42: a read or a sample on a drive has gone quiet: never a silent wait
+      ImGui::PushStyleColor(ImGuiCol_Text, theme::vec(P.meterMid));
+      ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + w);
+      ImGui::TextUnformatted(i18n::tr("The drive is not answering. It may be offline or still downloading. Cancel goes back to your project."));
+      ImGui::PopTextWrapPos();
+      ImGui::PopStyleColor();
+    } else {
+      ui::TextFit(reading ? bytesLine(L).c_str() : counts[0] ? counts : " ", w, P.textFaint);
+    }
     (void)done;
   }
   ImGui::Dummy(ImVec2(0, theme::kS1));
@@ -430,6 +545,9 @@ void devReport(App& a, int frame) {
   std::printf("loadstate frame %d: phase %s units %d/%d samples %d/%d plugins %d/%d log %zu warnings %d slow %d errors %d shown %d now \"%s\" popups [%s]\n",
               frame, kPhase[static_cast<int>(L.phase())], L.unitsDone(), L.unitsTotal(), L.samplesDone(), L.samplesTotal(), L.pluginsDone(),
               L.pluginsTotal(), L.log().size(), warn, slow, errors, shown ? 1 : 0, L.current().c_str(), popups.c_str());
+  if (L.bytesTotal() > 0 || L.awaitingChoice())
+    std::printf("  bytes %llu/%llu overall %.3f stalled %.0f choices %zu\n", static_cast<unsigned long long>(L.bytesDone()),
+                static_cast<unsigned long long>(L.bytesTotal()), L.overall(), L.stalledFor(), L.choices().size());
   for (const auto& l : L.log()) std::printf("  log %.2f %d %s\n", l.at, static_cast<int>(l.level), l.text().c_str());
   if (!a.toasts.empty()) std::printf("  toast \"%s\" details \"%s\"\n", a.toasts.back().english.c_str(), a.toasts.back().details.c_str());
   std::fflush(stdout);

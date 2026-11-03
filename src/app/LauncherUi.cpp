@@ -1,5 +1,6 @@
 // Gridline - J-141: the welcome launcher (see LauncherUi.h, core/Launcher.h).
 #include "LauncherUi.h"
+#include "../core/RemoteFs.h"
 #include "GridlineVersion.h"
 #include <algorithm>
 #include <chrono>
@@ -150,7 +151,7 @@ class Store {
           r.ok = true;
         } else if (!dir.empty() && preview::loadCached(dir, j.key, r.k)) {
           r.ok = true;
-        } else if (openKindOf(j.key) == OpenKind::GridlineProject) {
+        } else if (openKindOf(j.key) == OpenKind::GridlineProject && !remotefs::isRemote(j.key)) {  // K-42: a picture never downloads a project
           Song s;
           if (loadProject(j.key, s)) {
             r.k = preview::make(s);
@@ -220,6 +221,12 @@ UiState& ui_() {
 }
 
 bool fileExists(const std::string& path, double now) {
+  // K-42: a project on a web drive is checked off the interface thread, and counts as there until
+  // the drive has said otherwise (an offline drive is not a deleted project).
+  if (remotefs::isRemote(path)) {
+    const remotefs::Probe p = remotefs::probe(path);
+    return !p.known || p.exists;
+  }
   auto& m = ui_().exists;
   auto it = m.find(path);
   if (it == m.end() || now - it->second.second > 2.0) {

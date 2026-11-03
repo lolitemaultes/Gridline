@@ -1165,8 +1165,7 @@ void drawPianoRoll(App& a) {
         const ImU32 face = litTint(white, lv);
         fillWhiteKey(p, y, face, theme::mix(face, P.ink, 0.12f));
       } else if (hoverPitch == p) {
-        const ImU32 face = theme::mix(white, P.accent, 0.3f);
-        fillWhiteKey(p, y, face, theme::mix(face, P.ink, 0.12f));
+        fillWhiteKey(p, y, P.accent, P.accent);  // the accent chosen in Settings, as it is
       }
     }
     for (int p = 0; p < 128; ++p) {
@@ -1176,7 +1175,7 @@ void drawPianoRoll(App& a) {
       const float lv = keyLevel(p);
       ImU32 tint = !isB              ? 0  // white keys were filled above, over their whole shape
                    : lv > 0.004f     ? litTint(black, lv)
-                   : hoverPitch == p ? theme::mix(black, P.accent, 0.35f)
+                   : hoverPitch == p ? P.accent
                                      : 0;
       if (!isB) {
         // Boundary between two adjacent white keys (E|F, B|C) gets a full line.
@@ -1192,7 +1191,8 @@ void drawPianoRoll(App& a) {
         float fs = std::min(theme::kFontLabel, rowH - 1);
         std::string nn = noteName(p);
         ImVec2 ts = a.fontMono->CalcTextSizeA(fs, 1e9f, 0, nn.c_str());
-        dl->AddText(a.fontMono, fs, ImVec2(kx1 - ts.x - 5, std::round(y + (rowH - ts.y) * 0.5f)), theme::mix(P.keyWhite, P.ink, 0.6f), nn.c_str());
+        dl->AddText(a.fontMono, fs, ImVec2(kx1 - ts.x - 5, std::round(y + (rowH - ts.y) * 0.5f)),
+                    lv <= 0.004f && hoverPitch == p ? theme::contrastText(P.accent) : theme::mix(P.keyWhite, P.ink, 0.6f), nn.c_str());
       }
     }
     // J-159: named keys are flat name plates over the keyboard (a drum-map look)
@@ -1204,13 +1204,13 @@ void drawPianoRoll(App& a) {
         const float lv = keyLevel(p);
         ImU32 plate = isBlack(p) ? P.surface800 : P.surface700;
         if (lv > 0.004f) plate = litTint(plate, lv);
-        else if (hoverPitch == p) plate = theme::mix(plate, P.accent, 0.35f);
+        else if (hoverPitch == p) plate = P.accent;
         dl->AddRectFilled(ImVec2(kx0, y), ImVec2(kx1, y + rowH), plate);
         dl->AddLine(ImVec2(kx0, std::round(y + rowH)), ImVec2(kx1, std::round(y + rowH)), P.line);
         if (rowH < 7) continue;
         const float fs = std::min(theme::kFontLabel, rowH - 1);
         dl->PushClipRect(ImVec2(kx0, y), ImVec2(kx1 - 3, y + rowH), true);
-        dl->AddText(a.fontMono, fs, ImVec2(kx0 + 4, std::round(y + (rowH - fs) * 0.5f)), P.text, kn->c_str());
+        dl->AddText(a.fontMono, fs, ImVec2(kx0 + 4, std::round(y + (rowH - fs) * 0.5f)), lv <= 0.004f && hoverPitch == p ? theme::contrastText(plate) : P.text, kn->c_str());
         dl->PopClipRect();
       }
     dl->AddLine(ImVec2(kx1, gridMin.y), ImVec2(kx1, gridMax.y), P.lineStrong);

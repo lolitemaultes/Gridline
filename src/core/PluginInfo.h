@@ -111,6 +111,8 @@ struct PluginInfo {
   // (setReferenceDefaults). A saved state too short to hold the parameter predates the
   // change and keeps the old default (normalizePluginState).
   std::vector<std::pair<int, float>> legacyDefaults = {};
+  // K-46: PluginState::data of a new instance (states saved earlier keep theirs).
+  std::string defaultData = {};
 };
 
 // K-2: sets parameter defaults to the reference plugin's (index, new default). Factory

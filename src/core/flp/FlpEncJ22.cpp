@@ -127,7 +127,10 @@ Encoder fruitKick() {
   e.fields = [](const Bytes&) {
     std::vector<Field> f;
     for (int k = 0; k < 6; ++k) f.push_back(i32v(k, 4 + 4 * static_cast<size_t>(k), lo[k], hi[k]));
-    f.push_back(withInverse(dr::SkSeed, 28, Type::U32, 0, 0xFFFFFF, ident));
+    // With the decoder's law: a seed between two integers has no exact stored value, and the
+    // search for the closest one takes about 131000 candidates over this range.
+    f.push_back(lawField(withInverse(dr::SkSeed, 28, Type::U32, 0, 0xFFFFFF, ident),
+                         [](double r, const Bytes&) { return static_cast<double>(static_cast<uint32_t>(r) & 0xFFFFFF); }));
     return f;
   };
   e.defaults = [f = e.fields] {

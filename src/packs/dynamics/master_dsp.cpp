@@ -142,6 +142,16 @@ bool masterLongCurve(const std::string& data, int band, LongCurve& out) {
   return false;
 }
 
+bool masterHasMoveLaw(const std::string& data) {
+  const size_t n = std::strlen(kMsMoveLawWord);
+  return data.size() >= n && data.compare(data.size() - n, n, kMsMoveLawWord) == 0;
+}
+
+std::string masterWithMoveLaw(const std::string& data) {
+  if (masterHasMoveLaw(data)) return data;
+  return data.empty() ? std::string(kMsMoveLawWord) : data + " " + kMsMoveLawWord;
+}
+
 std::string masterLongCurvesWith(const std::string& data, int band, const LongCurve* c) {
   std::string r;
   char buf[64];
@@ -163,7 +173,8 @@ std::string masterLongCurvesWith(const std::string& data, int band, const LongCu
       r += buf;
     }
   }
-  return r.empty() ? r : "crv1" + r;
+  if (!r.empty()) r = "crv1" + r;
+  return masterHasMoveLaw(data) ? masterWithMoveLaw(r) : r;
 }
 
 // ===================================================================== engine
@@ -528,6 +539,7 @@ maxref::RefState readMaxRef(Get get, int ref, int prog, const std::string* data 
   r.linQuality = std::clamp(static_cast<int>(std::lround(get(ref + MrLinQuality))), 0, 5);
   r.linSpeed = std::clamp(static_cast<int>(std::lround(get(ref + MrLinSpeed))), 0, 3);
   r.os = std::clamp(static_cast<int>(std::lround(get(ref + MrOversample))), 0, 3);
+  r.moveLaw = data && masterHasMoveLaw(*data);
   for (int b = 0; b < kMsBands; ++b) {
     maxref::Curve& c = r.curve[b];
     c.n = std::clamp(static_cast<int>(std::lround(get(prog + msExt(b, MxPoints)))), 1, kMsCurvePts);
@@ -565,10 +577,11 @@ class MasterFx final : public DynFx {
     if (pi(s, MsRef0 + MrModel) == 1) {  // J-35 reference engine
       ref_.configure(readMaxRef([&](int k) { return p(s, k); }, MsRef0, 0, &s.data), ctx.sampleRate);
       // K-S: monitor frames every kHop samples (the audio does not depend on this split).
+      ref_.beginBlock();
       for (int i = 0; i < n;) {
         const int c = std::min(n - i, MasterScope::kHop - hop_);
         for (int j = 0; j < c; ++j) inPeak_ = std::max({inPeak_, std::fabs(L[i + j]), std::fabs(R[i + j])});
-        ref_.process(L + i, R + i, c);
+        ref_.run(L + i, R + i, c);
         i += c, hop_ += c;
         if (hop_ >= MasterScope::kHop) {
           hop_ = 0;
@@ -625,7 +638,7 @@ class MasterFx final : public DynFx {
   MasterScope scope_;
   int hop_ = 0;
   float inPeak_ = 0;
-  bool refOn_ = false;
+  std::atomic<bool> refOn_{false};  // audio thread -> the editor (scope())
 };
 
 maxref::Curve masterRefCurve(const PluginState& s, int band) {

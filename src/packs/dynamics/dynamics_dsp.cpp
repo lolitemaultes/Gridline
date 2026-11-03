@@ -1,5 +1,6 @@
 // Gridline — "dynamics" pack: runtimes (dispatch; the effects live in
 // master_dsp.cpp, dist_dsp.cpp and rack_dsp.cpp).
+#include "../../core/ProjectInterop.h"
 #include "../Packs.h"
 #include <filesystem>
 #include <map>
@@ -29,6 +30,14 @@ std::string cab::boardFile(const std::string& dir, int n) {
   if (n < 1) return {};
   std::vector<std::string> names;
   std::error_code ec;
+  if (isFolderManifest(dir)) {  // a shared project: the folder's files under their content names
+    auto files = folderRefFiles(dir);
+    std::vector<std::pair<std::string, std::string>> wavs;
+    for (auto& f : files)
+      if (std::filesystem::u8path(f.second).extension() == ".wav") wavs.emplace_back(f.second, f.first);
+    std::sort(wavs.begin(), wavs.end());
+    return n <= static_cast<int>(wavs.size()) ? wavs[static_cast<size_t>(n - 1)].second : std::string();
+  }
   for (const auto& e : std::filesystem::directory_iterator(dir, ec))
     if (e.path().extension() == ".wav") names.push_back(e.path().filename().string());
   std::sort(names.begin(), names.end());
@@ -72,7 +81,14 @@ bool prepareAux(const PluginState& state, ChannelAux& aux) {
   for (int k = 0; k < kDrModules; ++k) {
     const int ir = pv(drParam(k, DmImpulse));
     if (pv(drParam(k, DmKind)) != 3 || !cab::valid(ir)) continue;
-    const std::string path = cab::fileFor(dir, ir);
+    std::string path = cab::fileFor(dir, ir);
+    if (isFolderManifest(dir)) {
+      const std::string wanted = std::filesystem::u8path(path).filename().u8string();
+      path.clear();
+      for (const auto& f : folderRefFiles(dir))
+        if (f.second == wanted) path = f.first;
+      if (path.empty()) continue;
+    }
     std::lock_guard<std::mutex> lk(mu);
     auto& slot = cache[{path, rate}];
     if (!slot) {

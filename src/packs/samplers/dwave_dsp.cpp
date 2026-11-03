@@ -5,6 +5,7 @@
 // filters, insert effects and buses run per sample.
 #include "../../engine/TimeStretch.h"
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <memory>
 #include "../../engine/Dsp.h"
@@ -96,7 +97,8 @@ struct Lfo {
   double phi = 0, ramp = 1, sh = 0, lp = 0, out = 0;
 };
 
-uint32_t g_seed = 0x2F6B3A1u;
+// Each instance draws its own random numbers: instruments render on several threads at once.
+std::atomic<uint32_t> g_instances{0};
 
 class WaveProgramGen final : public Generator {
  public:
@@ -208,8 +210,8 @@ class WaveProgramGen final : public Generator {
       l.phi += inc;
       while (l.phi >= kTwoPi) {
         l.phi -= kTwoPi;
-        g_seed = g_seed * 1664525u + 1013904223u;
-        l.sh = (g_seed >> 8) * (2.0 / 16777216.0) - 1.0;
+        seed_ = seed_ * 1664525u + 1013904223u;
+        l.sh = (seed_ >> 8) * (2.0 / 16777216.0) - 1.0;
       }
       l.lp += (l.sh - l.lp) * std::min(1.0, inc);
       l.ramp = std::min(1.0, l.ramp + 1.0 / (R * timeOf(att)));
@@ -311,8 +313,8 @@ class WaveProgramGen final : public Generator {
     *v = Voice{};
     v->on = true, v->id = id, v->zone = zi, v->note = note, v->vel = vel, v->flFine = flFine, v->age = ++clock_;
     tap::play(sp.get());  // J-219: Track Receipt
-    g_seed = g_seed * 1664525u + 1013904223u;
-    v->rnd = (g_seed >> 8) / 16777216.0;
+    seed_ = seed_ * 1664525u + 1013904223u;
+    v->rnd = (seed_ >> 8) / 16777216.0;
     v->glideTarget = note;
     v->glideNote = glideFrom;
     v->glideStep = std::fabs(note - glideFrom) / (ctlRate() * timeOf(t_[DwGlide]));
@@ -362,16 +364,16 @@ class WaveProgramGen final : public Generator {
       if (n == 0) continue;
       const DwTrigger& tg = p.trig[static_cast<size_t>(g)];
       if (tg.prob < 1.f) {
-        g_seed = g_seed * 1664525u + 1013904223u;
-        if (tg.prob <= (g_seed >> 8) / 16777216.0) continue;
+        seed_ = seed_ * 1664525u + 1013904223u;
+        if (tg.prob <= (seed_ >> 8) / 16777216.0) continue;
       }
       int only = -1;  // index among the candidates when one is chosen
       if (n > 1 && tg.type != 0) {
-        g_seed = g_seed * 1664525u + 1013904223u;
-        const int r = static_cast<int>((g_seed >> 8) % static_cast<uint32_t>(n));
+        seed_ = seed_ * 1664525u + 1013904223u;
+        const int r = static_cast<int>((seed_ >> 8) % static_cast<uint32_t>(n));
         if (tg.type == 1) only = (last_[g] + 1) % n;
         else if (tg.type == 2) only = r;
-        else only = last_[g] < 0 ? r : (last_[g] + 1 + static_cast<int>((g_seed >> 8) % static_cast<uint32_t>(n - 1))) % n;
+        else only = last_[g] < 0 ? r : (last_[g] + 1 + static_cast<int>((seed_ >> 8) % static_cast<uint32_t>(n - 1))) % n;
         last_[g] = only;
       }
       int ci = -1;
@@ -665,6 +667,7 @@ class WaveProgramGen final : public Generator {
   Lfo plfo_[2];
   uint8_t held_[128] = {};
   int last_[100] = {-1};
+  uint32_t seed_ = 0x2F6B3A1u + 0x9E3779B9u * g_instances.fetch_add(1, std::memory_order_relaxed);
   double lastNote_ = 60;
   uint64_t clock_ = 0;
   int tail_ = 0;

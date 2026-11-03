@@ -184,6 +184,9 @@ void applyDevState(MaxUi& u) {
   u.view = num("view=", u.view);
   u.paused = num("pause=", 0) == 1;
   u.devMenu = num("menu=", 0);
+  u.heat = num("heat=", u.heat ? 1 : 0) == 1;
+  if (num("glyphs=", 1) == 0)
+    for (bool& v : u.vis) v = false;
   if (num("demo=", 0) == 1) {
     constexpr int K = MasterScope::kFrames, S = kMsBands * 4 + 1;
     u.devDemo = u.paused = true;
@@ -769,6 +772,20 @@ void glyphDots(ImDrawList* dl, ImVec2 c, float s, ImU32 col) { ::gl::ui::drawIco
 void glyphBars(ImDrawList* dl, ImVec2 c, float s, ImU32 col) { ::gl::ui::drawIconGlyph(dl, ::gl::ui::Icon::DisplayBars, c, s * 0.32f, 0.0f, col); }  // a shade inside: the bars sit on part pixels at 1.5x
 void glyphLine(ImDrawList* dl, ImVec2 c, float s, ImU32 col) { ::gl::ui::drawIconGlyph(dl, ::gl::ui::Icon::DisplayLine, c, s * 0.34f, 1.3f, col); }
 
+// The heatmap's own glyph: a small block of cells, unlike the bars and lines beside it.
+void glyphHeat(ImDrawList* dl, ImVec2 c, float s, ImU32 col) {
+  static constexpr float kCell[3][4] = {{0.45f, 0.70f, 1.00f, 0.70f}, {0.70f, 1.00f, 0.70f, 0.45f}, {1.00f, 0.70f, 0.45f, 0.45f}};
+  const float gap = std::max(1.0f, std::round(s / 24.0f));
+  const float cell = std::max(2.0f, std::round((s * 0.60f - 3.0f * gap) / 4.0f));
+  const float x0 = std::round(c.x - (4.0f * cell + 3.0f * gap) * 0.5f), y0 = std::round(c.y - (3.0f * cell + 2.0f * gap) * 0.5f);
+  const float alpha = static_cast<float>((col >> IM_COL32_A_SHIFT) & 0xFF) / 255.0f;
+  for (int r = 0; r < 3; ++r)
+    for (int k = 0; k < 4; ++k) {
+      const ImVec2 a(x0 + static_cast<float>(k) * (cell + gap), y0 + static_cast<float>(r) * (cell + gap));
+      dl->AddRectFilled(a, ImVec2(a.x + cell, a.y + cell), theme::withAlpha(col, alpha * kCell[r][k]), 1.0f);
+    }
+}
+
 // Dev (GL_CREST_TRACE, tests): the editor's own items only; an open menu floats above them.
 ImGuiWindow*& auditWindow() {
   static ImGuiWindow* w = nullptr;
@@ -1012,7 +1029,17 @@ void editorMasterFl(App& a, const PluginTarget& t, float width) {
   // Display options: a glyph on its own face, lit in the colour of what it shows.
   auto glyph = [&](const char* id, const crest::Rect& r, bool& on, uint32_t role, void (*draw)(ImDrawList*, ImVec2, float, ImU32), const char* hint) {
     skin::raisedFace(dl, f.p(r.x, r.y), f.p(r.x1(), r.y1()), on ? P.faceOn : P.face, f.d(theme::kRadius));
-    skin::glyphToggle(f, id, r.x, r.y, r.w, r.h, on, theme::litRole(role), draw, hint);
+    // Off still has to read as an icon on its face: the option's colour leaning to the caption colour.
+    const ImVec2 p0 = f.p(r.x, r.y), p1 = f.p(r.x1(), r.y1());
+    ImGui::PushID(id);
+    ImGui::SetCursorScreenPos(p0);
+    ImGui::InvisibleButton("##g", ImVec2(p1.x - p0.x, p1.y - p0.y));
+    if (ImGui::IsItemClicked()) on = !on;
+    const bool hov = ImGui::IsItemHovered();
+    if (hint && hov) a.setHint(hint);
+    ImGui::PopID();
+    const ImU32 lit = theme::litRole(role), off = theme::mix(lit, P.label, 0.45f);
+    draw(dl, ImVec2((p0.x + p1.x) * 0.5f, (p0.y + p1.y) * 0.5f), std::min(p1.x - p0.x, p1.y - p0.y), on ? lit : theme::withAlpha(off, hov ? 1.0f : 0.8f));
   };
   if (ref) {
     glyph("mvm", l.glyph[0], u.vis[0], 0x609E98, glyphBars, i18n::tr("Main input peaks"));
@@ -1022,7 +1049,7 @@ void editorMasterFl(App& a, const PluginTarget& t, float width) {
     glyph("mvg", l.glyph[4], u.vis[4], 0xDD4AEB, glyphLine, i18n::tr("Gain of this band"));
     glyph("mve", l.glyph[5], u.vis[5], 0xC9B465, glyphLine, i18n::tr("Gain of all the bands"));
     glyph("mvk", l.glyph[6], u.vis[6], 0x9FB3BD, glyphDots, i18n::tr("Level markers"));
-    glyph("mvh", l.heat, u.heat, 0x23889D, glyphBars, i18n::tr("Spectrum heatmap"));
+    glyph("mvh", l.heat, u.heat, 0x38BCD8, glyphHeat, i18n::tr("Spectrum heatmap"));
     static const char* views[2] = {"MONITOR", "BANDS"};
     skin::TabLook vl{P.face, P.selFace, P.label, P.selText};
     skin::tabsUi(f, "mxview", l.views.x, l.views.y, l.views.w, l.views.h, views, 2, u.view, vl, false);

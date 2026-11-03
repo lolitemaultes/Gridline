@@ -1,4 +1,5 @@
 #include "Document.h"
+#include "Crash.h"
 #include <algorithm>
 #include <filesystem>
 #include "Arrangements.h"
@@ -167,6 +168,7 @@ void Document::reset(Song song) {
 }
 
 void Document::exec(CommandPtr cmd, bool mayJoin, bool clipLevels) {
+  if (const std::string what = cmd->label(); !what.empty()) crash::crumb("edit", what.c_str());
   const bool join = mayJoin && groups_.empty() && pointerGesture_ && gestureSerial_ != 0 && undo_.canAmend() &&
                     undo_.stateSerial() == gestureSerial_;
   if (beforeChange && groups_.empty() && !join && !undo_.wouldMerge(*cmd)) beforeChange();
@@ -306,6 +308,7 @@ void Document::replaceSong(Song song) {
 }
 
 bool Document::undo() {
+  crash::crumb("undo");
   if (historyHook) return groups_.empty() && undo_.canUndo() && historyHook(-1);
   if (!groups_.empty() || !undo_.undo(song_)) return false;
   ++revision_;
@@ -314,6 +317,7 @@ bool Document::undo() {
 }
 
 bool Document::redo() {
+  crash::crumb("redo");
   if (historyHook) return groups_.empty() && undo_.canRedo() && historyHook(1);
   if (!groups_.empty() || !undo_.redo(song_)) return false;
   ++revision_;

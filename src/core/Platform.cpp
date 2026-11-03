@@ -18,6 +18,8 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <spawn.h>
+#include <sys/file.h>
+#include <sys/mman.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -153,6 +155,74 @@ int processId() {
 #else
   return static_cast<int>(::getpid());
 #endif
+}
+
+void* zeroedPages(std::size_t bytes) {
+#if defined(_WIN32)
+  return VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+  void* p = ::mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+  return p == MAP_FAILED ? nullptr : p;
+#endif
+}
+
+void releasePages(void* p, std::size_t bytes) {
+  if (!p) return;
+#if defined(_WIN32)
+  (void)bytes;
+  VirtualFree(p, 0, MEM_RELEASE);
+#else
+  ::munmap(p, bytes);
+#endif
+}
+
+FileLock& FileLock::operator=(FileLock&& o) noexcept {
+  if (this != &o) {
+    unlock();
+    handle_ = o.handle_;
+    o.handle_ = kNone;
+  }
+  return *this;
+}
+
+bool FileLock::tryLock(const std::string& path, Mode mode) {
+  unlock();
+#if defined(_WIN32)
+  // (not inherited by child processes; the lock is on one byte, per handle)
+  HANDLE h = CreateFileW(widen(path).c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_ALWAYS,
+                         FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (h == INVALID_HANDLE_VALUE) return false;
+  OVERLAPPED at{};
+  const DWORD flags = LOCKFILE_FAIL_IMMEDIATELY | (mode == Mode::Exclusive ? LOCKFILE_EXCLUSIVE_LOCK : 0);
+  if (!LockFileEx(h, flags, 0, 1, 0, &at)) {
+    CloseHandle(h);
+    return false;
+  }
+  handle_ = reinterpret_cast<std::intptr_t>(h);
+  return true;
+#else
+  // flock, not fcntl: it belongs to this open file, so two holders in one process still exclude
+  // each other and closing an unrelated descriptor of the same file does not drop it. O_CLOEXEC: a
+  // child process that outlives a crash does not keep it.
+  const int fd = ::open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+  if (fd < 0) return false;
+  if (::flock(fd, (mode == Mode::Exclusive ? LOCK_EX : LOCK_SH) | LOCK_NB) != 0) {
+    ::close(fd);
+    return false;
+  }
+  handle_ = fd;
+  return true;
+#endif
+}
+
+void FileLock::unlock() {
+  if (handle_ == kNone) return;
+#if defined(_WIN32)
+  CloseHandle(reinterpret_cast<HANDLE>(handle_));
+#else
+  ::close(static_cast<int>(handle_));
+#endif
+  handle_ = kNone;
 }
 
 bool setEnv(const char* name, const char* value, bool overwrite) {

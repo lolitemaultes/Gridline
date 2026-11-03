@@ -155,6 +155,8 @@ class SampleCache {
   // Drops the samples nothing else holds any more (e.g. after a program swap
   // or a project change); returns how many were released.
   size_t trim();
+  // What the decoded samples in the cache hold, in bytes, and how many (mono files count once).
+  size_t bytes(size_t* count = nullptr) const;
   // Background decodes queued or running.
   int pending() const;
   bool isPending(const std::string& path) const;
@@ -164,6 +166,8 @@ class SampleCache {
   void waitIdle();
   // Holds queued decodes back (tests: a deterministic "not decoded yet" state).
   void pauseBackground(bool paused);
+  // Takes these out of the background queue (a cancelled load: files not read yet stay unread).
+  void dropQueued(const std::vector<std::string>& paths);
   // J-103 app quit: drops queued decodes and joins the background decoders (a running
   // decode finishes), before main() returns: none runs into static destruction. get()
   // still decodes on the calling thread; request() queues nothing any more. Idempotent.

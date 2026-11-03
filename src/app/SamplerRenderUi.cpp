@@ -1,5 +1,6 @@
 // Gridline — render to sampled instrument window (RN-08, see J59Ui.h and
 // engine/SampledInstrument.h).
+#include "../core/Crash.h"
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -13,6 +14,7 @@
 #include "../core/Presets.h"
 #include "../core/StepNotes.h"
 #include "../engine/SampledInstrument.h"
+#include "../host/HostedPlugins.h"
 #include "App.h"
 #include "DialogLayout.h"
 #include "HostedUi.h"
@@ -85,22 +87,32 @@ void start(App& a) {
   job.running = true;
   Song song = a.doc.song();
   const ObjectId ch = R.channel;
-  auto work = [song = std::move(song), ch, o, dir]() {
-    sampled::Result r = sampled::renderToSampler(song, ch, o, dir, [](double p) { job.progress = p; }, &job.cancel);
+  crash::crumb("render to sampler start");
+  // A worker for every instrument (host::UiThreadRenderScope, as the render dialog does; no heartbeat
+  // from its progress either, for the same reason).
+  job.worker = std::thread([song = std::move(song), ch, o, dir]() {
+    host::UiThreadRenderScope scope;
+    sampled::Result r;
+    try {  // an exception must not leave this thread (out of memory, a file system error)
+      r = sampled::renderToSampler(song, ch, o, dir, [](double p) { job.progress = p; }, &job.cancel);
+    } catch (const std::exception& e) {  // K-39: reported; the job ends as a failed render
+      crash::reportCurrentException("Rendering an instrument to a sampler");
+      r = sampled::Result{};
+      r.dir = dir;
+      r.error = std::string("The render stopped: ") + e.what();
+    } catch (...) {
+      crash::reportCurrentException("Rendering an instrument to a sampler");
+      r = sampled::Result{};
+      r.dir = dir;
+      r.error = "An internal error stopped the render.";
+    }
     {
       std::lock_guard<std::mutex> lk(job.mu);
       job.result = std::move(r);
     }
     job.finished = true;
     job.running = false;
-  };
-  // Hosted plugins make their offline instance where the render runs; some
-  // formats allow that on the main thread only (as the render dialog does).
-  bool hosted = isHostedType(c->plugin.type);
-  for (ObjectId id : c->layer)
-    if (const Channel* l = a.doc.song().channel(id)) hosted = hosted || isHostedType(l->plugin.type);
-  if (hosted) work();
-  else job.worker = std::thread(std::move(work));
+  });
 }
 
 void finish(App& a) {
@@ -314,6 +326,7 @@ void drawRenderSampler(App& a) { window(a); }
 
 void shutdownRenderSampler() {
   job.cancel = true;
+  host::serveUiThreadTasksWhile(job.running);
   if (job.worker.joinable()) job.worker.join();
 }
 

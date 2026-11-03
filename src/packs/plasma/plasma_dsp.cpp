@@ -130,9 +130,11 @@ std::shared_ptr<const Aux> buildAux(const PluginState& state) {
     std::lock_guard<std::mutex> lk(auxMu());
     auto it = auxCache().find(key);
     if (it != auxCache().end())
-      if (auto sp = it->second.lock()) return sp;
+      if (auto sp = it->second.lock())
+        if (!sp->incomplete || sp->builtAt == sampleCache().generation()) return sp;
   }
   auto a = std::make_shared<Aux>();
+  a->builtAt = sampleCache().generation();
   Model m;
   modelFromData(state.data, m);
   for (int o = 0; o < kOscs; ++o) {
@@ -191,7 +193,10 @@ std::shared_ptr<const Aux> buildAux(const PluginState& state) {
         x.spec = sp;
       }
     }
-    if (const std::string path = mediaFile(m, d.sfz); !path.empty()) parseSfz(path, x.zones, nullptr);
+    if (const std::string path = mediaFile(m, d.sfz); !path.empty()) {
+      int skipped = 0;
+      if (!parseSfz(path, x.zones, nullptr, &skipped) || skipped > 0) a->incomplete = true;
+    }
     for (int r = 0; r < 4; ++r) {
       const Curve& c = d.remap[static_cast<size_t>(r)];
       if (c.empty()) {

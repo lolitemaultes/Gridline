@@ -13,8 +13,10 @@
 #include <thread>
 #include <vector>
 #include "../core/I18n.h"
+#include "../core/Log.h"
 #include "../core/TrackReceipt.h"
 #include "../engine/TrackReceiptPass.h"
+#include "../host/HostedPlugins.h"
 #include "App.h"
 #include "CollabUi.h"
 #include "ContextMenus.h"
@@ -168,11 +170,17 @@ void startMeasure(App& a) {
   Song song = a.doc.song();
   const int rate = a.audioSampleRate > 0 ? a.audioSampleRate : 44100;
   j.worker = std::thread([&j, song, rate]() {
+    host::UiThreadRenderScope scope;  // hosted plugins: as the render dialog does
     PassOptions o;
     o.sampleRate = rate;
     o.cancel = &j.cancel;
     o.progress = [&j](double f) { j.progress = f; };
-    Measurement m = measure(song, o);
+    Measurement m;
+    try {  // an exception must not leave this thread
+      m = measure(song, o);
+    } catch (const std::exception& e) {
+      logging::error("receipt", std::string("the measurement stopped: ") + e.what());
+    }
     {
       std::lock_guard<std::mutex> lk(j.mu);
       j.result = std::move(m);
@@ -680,6 +688,7 @@ void draw(App& a) {
 
 void shutdown() {
   J().cancel = true;
+  host::serveUiThreadTasksWhile(J().running);
   J().join();
 }
 

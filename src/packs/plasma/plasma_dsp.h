@@ -123,7 +123,7 @@ struct Zone {
   double velTrack = 1.0;
   double egDelay = 0, egAttack = 0, egHold = 0, egDecay = 0, egSustain = 1, egRelease = 0.5;
 };
-bool parseSfz(const std::string& path, std::vector<Zone>& zones, std::string* err);
+bool parseSfz(const std::string& path, std::vector<Zone>& zones, std::string* err, int* skipped = nullptr);
 
 // ------------------------------------------------------------------ prepared data (aux)
 struct SpecSrc {           // STFT analysis of a sample for the spectral oscillator
@@ -150,6 +150,8 @@ struct LfoAux {
   std::vector<float> pathX;
 };
 struct Aux : AuxData {
+  bool incomplete = false;  // a multisample map lacked files: built again once the sample cache changes
+  uint64_t builtAt = 0;     // the sample cache's generation when built
   std::array<OscAux, kOscs> osc;
   std::array<LfoAux, kLfos> lfo;
   std::vector<std::vector<CurvePt>> factoryShapes;  // index = L_Shape (0 unused)

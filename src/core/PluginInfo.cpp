@@ -1744,8 +1744,10 @@ const PluginInfo* findPlugin(const std::string& type) {
 PluginState defaultPluginState(const std::string& type) {
   PluginState s;
   s.type = type;
-  if (const PluginInfo* p = findPlugin(type))
+  if (const PluginInfo* p = findPlugin(type)) {
     for (const auto& d : p->params) s.params.push_back(static_cast<float>(d.def));
+    s.data = p->defaultData;
+  }
   return s;
 }
 

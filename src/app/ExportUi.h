@@ -29,6 +29,18 @@ void openRender(App& a, Preset p = Preset::Audio);
 void openRenderAgain(App& a);
 // Starts the render with the dialog's settings into `folder` (dev checks / scripting).
 void startRenderTo(App& a, const std::string& folder);
+// Dev checks and the stress run: a render with these choices, its cancel and its state in a line.
+struct DevRender {
+  int formats = 1;     // bit per format: WAV, FLAC, MP3, Ogg, AAC
+  int scope = 0;       // 0 song, 1 pattern
+  int dest = 0;        // 0 files, 1 audio clip, 2 audio editor
+  int split = 0;       // 1 mixer tracks, 2 playlist tracks, 3 playlist track groups
+  int sampleRate = 2;  // index in the dialog's rate list
+  std::string folder;
+};
+void devStart(App& a, const DevRender& r);
+void devCancel();
+std::string devState();
 // Per frame (from drawDialogs): render dialog, progress, MIDI import, missing samples.
 void draw(App& a);
 // Body of a progress window (status line, bar, Cancel): the render progress
@@ -59,6 +71,7 @@ bool writeFlpZip(App& a, const std::string& path, std::function<void(bool)> done
 // for the caller's "Saved" message.
 bool writeGridlineZip(App& a, const std::string& path, std::string* note = nullptr);
 void openMissingSamples(App& a);
+void openMissingSamples(App& a, std::vector<std::string> known);  // K-42: already checked (on a worker)
 // J-103 app quit: a running audio export is cancelled and its worker joined (not left to
 // the static Job's destructor during static teardown). Idempotent.
 void shutdown();

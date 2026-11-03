@@ -61,6 +61,33 @@ int64_t fileTimeSeconds(std::filesystem::file_time_type t);
 double cpuSeconds();
 double peakRssMb();
 
+// An advisory lock on a small file (created when missing), shared or exclusive, between processes
+// and between holders in one process. It lives in an open file: the system drops it when the process
+// ends, however it ends, so a crash cannot leave it stuck. Never waits.
+class FileLock {
+ public:
+  enum class Mode { Shared, Exclusive };
+  FileLock() = default;
+  FileLock(const FileLock&) = delete;
+  FileLock& operator=(const FileLock&) = delete;
+  FileLock(FileLock&& o) noexcept : handle_(o.handle_) { o.handle_ = kNone; }
+  FileLock& operator=(FileLock&& o) noexcept;
+  ~FileLock() { unlock(); }
+  // False when someone holds it in a way that excludes `mode`, or when the file cannot be made.
+  bool tryLock(const std::string& path, Mode mode);
+  void unlock();
+  bool held() const { return handle_ != kNone; }
+
+ private:
+  static constexpr std::intptr_t kNone = -1;
+  std::intptr_t handle_ = kNone;
+};
+
+// Zeroed memory straight from the system: untouched pages take no physical memory (nullptr on
+// failure). For big buffers that are mostly never reached. Release with the same size.
+void* zeroedPages(std::size_t bytes);
+void releasePages(void* p, std::size_t bytes);
+
 // Locale-independent numbers ('.' as the decimal separator whatever LC_NUMERIC says; hosted
 // plugins may change the process locale). parseDouble behaves like strtod.
 double parseDouble(const char* s, char** end = nullptr);

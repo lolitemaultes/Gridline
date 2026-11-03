@@ -1,6 +1,12 @@
 // Gridline — J-24 settings pages (see SettingsPages.h).
+#include "CacheUi.h"
 #include "DisplayConfirmUi.h"
 #include "SettingsPages.h"
+#include <cctype>
+#include <cstdio>
+#include <filesystem>
+#include "../core/Crash.h"
+#include "CollabUi.h"
 #include <algorithm>
 #include <cstdio>
 #include <ctime>
@@ -124,6 +130,7 @@ void fileSettingsPage(App& a, float fieldW) {
   folder("Controller scripts", userScriptsDir(a, "controllers"));
   folder("Backups", a.backups->policy().globalFolder);
   ui::EndSection();
+  cacheui::settingsSection(a);  // K-45
 
   ui::BeginSection(tr("SCRIPTS"));
   label("Scripting");
@@ -214,6 +221,25 @@ void debugSettingsPage(App& a, float fieldW) {
   if (ui::TextButton(tr("Clear"))) logging::clear();
   ui::EndSection();
   (void)fieldW;
+  ui::BeginSection(tr("CRASH REPORTS"));  // K-39
+  ImGui::TextColored(theme::vec(P.textDim), "%s", tr("Reports and recovery copies stay on this computer. Nothing is sent anywhere."));
+  auto openFolder = [](const std::string& path) {
+    std::string url = "file://";
+    for (unsigned char ch : fs::absolute(fs::u8path(path)).generic_u8string()) {
+      if (std::isalnum(ch) || ch == '/' || ch == '-' || ch == '_' || ch == '.' || ch == '~') {
+        url += static_cast<char>(ch);
+      } else {
+        char b[4];
+        std::snprintf(b, sizeof b, "%%%02X", ch);
+        url += b;
+      }
+    }
+    collabui::openUrl(url);
+  };
+  if (ui::TextButton("Open reports folder")) openFolder(crash::reportsDir(a.configDir()));
+  ImGui::SameLine();
+  if (ui::TextButton("Open recovery folder")) openFolder(crash::recoveryDir(a.configDir()));
+  ui::EndSection();
   ui::BeginSection(tr("SCRIPT CONSOLE"));
   ImGui::TextColored(theme::vec(P.textDim), "%s", tr("Runs Lua against the open project with the controller-script API."));
   drawScriptConsole(a, 120);

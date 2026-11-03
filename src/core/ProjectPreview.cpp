@@ -1,4 +1,5 @@
 #include "ProjectPreview.h"
+#include "RemoteFs.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -255,7 +256,8 @@ bool fileStamp(const std::string& path, uint64_t& size, int64_t& time) {
 bool loadCached(const std::string& cacheDir, const std::string& projectPath, Sketch& out) {
   uint64_t size = 0;
   int64_t time = 0;
-  if (!fileStamp(projectPath, size, time)) return false;
+  const bool remote = remotefs::isRemote(projectPath);  // K-42: a tile's picture never touches a drive
+  if (!remote && !fileStamp(projectPath, size, time)) return false;
   std::ifstream is(fs::u8path(cacheFile(cacheDir, projectPath)), std::ios::binary);
   if (!is) return false;
   std::stringstream ss;
@@ -263,13 +265,14 @@ bool loadCached(const std::string& cacheDir, const std::string& projectPath, Ske
   Json j;
   Sketch k;
   if (!jsonParse(ss.str(), j) || !fromJson(j, k)) return false;
-  if (k.fileSize != size || k.fileTime != time) return false;
+  if (!remote && (k.fileSize != size || k.fileTime != time)) return false;
   out = std::move(k);
   return true;
 }
 
 bool storeCached(const std::string& cacheDir, const std::string& projectPath, Sketch k) {
-  if (!fileStamp(projectPath, k.fileSize, k.fileTime)) return false;
+  if (remotefs::isRemote(projectPath)) k.fileSize = 0, k.fileTime = 0;
+  else if (!fileStamp(projectPath, k.fileSize, k.fileTime)) return false;
   std::error_code ec;
   fs::create_directories(fs::u8path(cacheDir), ec);
   return writeFileAtomic(cacheFile(cacheDir, projectPath), jsonCompact(toJson(k)));

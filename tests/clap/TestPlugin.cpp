@@ -432,7 +432,14 @@ const clap_plugin_t* makeSynth(const clap_host_t* host) {
   clap_plugin_t& p = s->plugin;
   p.desc = &kSynthDesc;
   p.plugin_data = s;
-  p.init = [](const clap_plugin_t*) { return true; };
+  p.init = [](const clap_plugin_t*) {
+    // A plugin that loads slowly, from its third instance on (the scan makes one, the project one, a render the next).
+    static std::atomic<int> made{0};
+    const int n = made.fetch_add(1);
+    if (const char* ms = std::getenv("GRIDLINE_TEST_SLOW_NEXT_INSTANCE_MS"); ms && n > 1)
+      std::this_thread::sleep_for(std::chrono::milliseconds(std::atoi(ms)));
+    return true;
+  };
   p.destroy = [](const clap_plugin_t* pl) { delete synthOf(pl); };
   p.activate = [](const clap_plugin_t* pl, double sr, uint32_t, uint32_t) {
     synthOf(pl)->sr = sr;

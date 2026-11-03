@@ -6,9 +6,12 @@
 // the project's folder, so they resolve wherever the archive is unpacked.
 //
 // The .flp is otherwise byte for byte the one File > Export > FL Studio
-// project writes. Paths that FL keeps inside a plugin's own state are left as
-// they are: the files sit beside the project, where FL and Gridline look for
-// a missing sample by its name.
+// project writes. Paths that FL keeps inside a plugin's own state (layers of a
+// drum machine, zones of a sampler) are left as they are: the files sit beside
+// the project, where FL and Gridline look for a missing sample by its name. The
+// exception is a file that had to be renamed because another file of that name
+// is in the package: looking for it by the old name would find the wrong one,
+// so those states name the file beside the project.
 #pragma once
 #include <map>
 #include <string>

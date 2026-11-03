@@ -113,6 +113,11 @@ struct LongCurve {
 };
 bool masterLongCurve(const std::string& data, int band, LongCurve& out);  // no allocation
 std::string masterLongCurvesWith(const std::string& data, int band, const LongCurve* c);  // data with this band's curve set / removed
+// K-46: a word at the end of the data marks states whose controls, moved while running, follow the reference: new
+// instances and imports. States saved before it keep the moves they had; a word no older reader stumbles on.
+inline constexpr const char* kMsMoveLawWord = "mv2";
+bool masterHasMoveLaw(const std::string& data);  // no allocation
+std::string masterWithMoveLaw(const std::string& data);
 // K-S: monitor frames of a running Crest: per band {input peak, output peak, analysis level, gain reduction dB}.
 struct MasterScope {
   static constexpr int kFrames = 2048, kHop = 256;  // kHop samples per frame

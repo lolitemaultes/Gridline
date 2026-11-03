@@ -3,6 +3,10 @@
 #include "HostedUi.h"
 #include "McpUi.h"
 #include "App.h"
+#include "../core/Crash.h"
+#include "../core/RemoteFs.h"
+#include "../core/ProjectArchive.h"
+#include "CacheUi.h"
 #include "CollabUi.h"
 #include "../collab/Controller.h"
 #include "../core/NoteTools.h"
@@ -80,6 +84,7 @@ App::App() {
 
 App::~App() {
   launcherui::shutdown();        // J-141: the sketch worker
+  cacheui::shutdown(*this);      // K-45: the project's unpacked copy can go
   collabui::closeSession(*this);  // J-111: the log is synced, collaborators are told
   shutdownControllerScripts();  // onDeinit while the app still exists
   mcpui::shutdown();             // SC-07: stop the assistant server, remove its endpoint file
@@ -139,7 +144,8 @@ bool App::removeRecent(const std::string& path) {
 
 size_t App::removeMissingRecents() {
   recents::List l = takeRecents();
-  const size_t n = l.pruneMissing([](const std::string& p) { return recents::exists(p); });
+  // K-42: a project on a drive that is offline right now has not gone: it stays listed.
+  const size_t n = l.pruneMissing([](const std::string& p) { return remotefs::isRemote(p) || recents::exists(p); });
   putRecents(std::move(l));
   if (n) saveRecents();
   return n;
@@ -275,6 +281,7 @@ void App::tick(double t) {
   pollPresetImport();
   now = t;
   pollProjectLoad();  // J-167: a slice of the project load, the swap once it is ready
+  cacheui::tick(*this);  // K-45: what a crash left in the unpacked cache
   {  // J-48: recording start / stop and a user-started plugin scan finishing
     const bool rec = recordArmed && engine.playing() && !engine.countingIn() && engine.mode() != PlayMode::Live;
     if (rec != wasRecording_) uiSound(rec ? uisound::Event::RecordStart : uisound::Event::RecordStop);
@@ -297,6 +304,7 @@ void App::tick(double t) {
       loadSoundTheme(uiSoundRate, false);
     uiSounds.collect();
   }
+  pollPreview();
   // Marker actions (J-11) run in the audio engine at the exact sample (J-85).
   engine.collectGarbage();
   toasts.erase(std::remove_if(toasts.begin(), toasts.end(), [&](const Toast& x) { return x.until < now; }), toasts.end());
@@ -309,7 +317,10 @@ void App::tick(double t) {
     }
     // Autosave (J-24): saved projects are written back to their file.
     // Only Gridline files: an FL Studio project is re-exported on an explicit Save only.
-    if (settings.getBool("backup.autosave") && !projectPath.empty() && projectFormat == SaveFormat::Gridline && doc.modified()) {
+    // K-42: never to a web or network drive (only an explicit Save writes there; the timed backups
+    // above stay on this computer).
+    if (settings.getBool("backup.autosave") && !projectPath.empty() && projectFormat == SaveFormat::Gridline && doc.modified() &&
+        !remotefs::isRemote(projectPath)) {
       if (lastAutosave_ == 0) lastAutosave_ = wall;
       const int64_t every = static_cast<int64_t>(std::clamp(settings.getNumber("backup.autosaveMinutes"), 1.0, 120.0) * 60.0);
       if (wall - lastAutosave_ >= every) {
@@ -444,6 +455,7 @@ void App::startProject(Song s) {
   engine.stopToStart();
   engine.panic(false);  // (the project is replaced: no fade over the new one)
   doc.reset(std::move(s));  // the new project is the "saved" baseline, with no history
+  cacheui::projectChanged(*this, nullptr);  // K-45: the closed project's unpacked copy can go
   trimSamplesAt_ = now + 1.0;  // J-30: the old project's samples leave the cache once its program is retired
   projectPath.clear();
   projectFormat = SaveFormat::Gridline;
@@ -503,7 +515,9 @@ void App::applyStartup(bool plainLaunch) {
   in.startupMode = settings.getString("general.startup");
   {
     std::error_code ec;
-    in.lastExists = !recentFiles.empty() && fs::exists(recentFiles.front(), ec);
+    // K-42: a project on a web drive is not checked here (a stat can stall a starting app): if the
+    // drive is offline, the loading window says so.
+    in.lastExists = !recentFiles.empty() && (remotefs::isRemote(recentFiles.front()) || fs::exists(recentFiles.front(), ec));
   }
   in.defaultTemplate = !settings.getString("general.defaultTemplate").empty();
   const launcher::StartupPlan plan = launcher::planStartup(in);
@@ -531,7 +545,11 @@ bool App::openProject(const std::string& pathIn) {
 
 bool App::openProjectFile(const std::string& pathIn) {
   // J-111: a collaborative project folder opens its project (with its session)
-  const std::string collabFile = collabui::projectFileIn(pathIn);
+  // K-42: on a web drive the project's kind goes by its name and the loader asks the drive on its
+  // worker; only a path with no project extension (a folder) needs a quick, bounded look here.
+  const bool onDrive = remotefs::isRemote(pathIn);
+  const bool lookInFolder = !onDrive || (openKindOf(pathIn) == OpenKind::Unknown && remotefs::probeWithin(pathIn, 1500).isDir);
+  const std::string collabFile = lookInFolder ? collabui::projectFileIn(pathIn) : std::string();
   const std::string& path = collabFile.empty() ? pathIn : collabFile;
   // J-52: FL Studio projects and zipped projects open as projects; MIDI and
   // audio files are imported into the open project.
@@ -543,6 +561,7 @@ bool App::openProjectFile(const std::string& pathIn) {
     case OpenKind::ZippedProject: break;
     case OpenKind::GridlineProject:
     case OpenKind::Unknown:
+      if (onDrive && collabFile.empty()) break;  // K-42: found out on the loader's worker (Request::collabProbe)
       // J-111: a collaborative project opens with its session (or asks for an update first)
       switch (collabui::openGate(*this, path)) {
         case collabui::OpenGate::NotCollab: break;
@@ -599,6 +618,8 @@ void App::pollPresetImport() {
 bool App::saveProject(const std::string& path) { return saveProjectAs(path, saveFormatOf(path)); }
 
 bool App::saveProjectAs(const std::string& path, SaveFormat format, std::function<void()> then) {
+  crash::crumb("project save", format == SaveFormat::Gridline ? "gridline" : format == SaveFormat::GridlineZip ? "zip" : "fl");
+  crash::BusyScope busy("saving");
   captureHostedStates(*this);  // third-party plugin state into the song
   std::string err, note;
   std::string p = path;
@@ -622,9 +643,11 @@ bool App::saveProjectAs(const std::string& path, SaveFormat format, std::functio
           notify("Could not save the project: " + err, true, p);
           return false;
         }
+        archive::pinUnpacked(doc.song());  // K-42: the samples it points at stay in the cache
         break;
       case SaveFormat::Flp:
       case SaveFormat::FlZip: {
+        if (format == SaveFormat::Flp) archive::pinUnpacked(doc.song());  // K-45: an .flp keeps full paths too
         // J-80: a background job (instruments rendered to samples, progress,
         // cancel); it refuses a read-only target (J-78) and notifies the summary ("Saved x.flp: ...") or the error
         // itself, and the save completes, and `then` runs, when it is done.
@@ -641,6 +664,7 @@ bool App::saveProjectAs(const std::string& path, SaveFormat format, std::functio
       case SaveFormat::Count: return false;
     }
   } catch (const std::exception& e) {
+    crash::reportCurrentException("Saving the project");
     notify(std::string("Could not save the project: internal error (") + e.what() + "). Please report it; try another format meanwhile.", true, p);
     return false;
   }
@@ -674,7 +698,9 @@ void App::saveAs(std::function<void()> then) {
   // zipped project (J-78), FL Studio project, FL Studio zipped loop package. A project opened from an FL file
   // starts in its folder, under its name, as a Gridline project.
   const std::string ref = projectFile();
-  const SaveFormat fmt = projectPath.empty() ? SaveFormat::Gridline : projectFormat;
+  // K-45: a Gridline zipped project starts as what it was, so Save can replace the archive.
+  const bool fromGridlineZip = projectPath.empty() && saveFormatOf(ref) == SaveFormat::GridlineZip;
+  const SaveFormat fmt = fromGridlineZip ? SaveFormat::GridlineZip : projectPath.empty() ? SaveFormat::Gridline : projectFormat;
   fileDialog = {};
   fileDialog.open = true;
   fileDialog.save = true;
@@ -788,6 +814,10 @@ void App::openPianoRoll(ObjectId channel) {
 }
 
 void App::previewSample(const std::string& path) {
+  if (remotefs::isRemote(path)) {  // K-42: read on a background decoder, and heard when it has arrived
+    previewWhenReady(path);
+    return;
+  }
   SamplePtr s = sampleCache().get(path);
   if (!s) {
     notify("Cannot decode " + fs::path(path).filename().string(), true);
@@ -796,7 +826,32 @@ void App::previewSample(const std::string& path) {
   engine.preview(s);
 }
 
-void App::stopPreview() { engine.preview(nullptr); }
+void App::previewWhenReady(const std::string& path) {
+  pendingPreview_ = path;
+  pollPreview();
+}
+
+void App::pollPreview() {
+  if (pendingPreview_.empty()) return;
+  SampleCache& cache = sampleCache();
+  if (SamplePtr s = cache.request(pendingPreview_)) {
+    engine.preview(s);
+  } else if (cache.isPending(pendingPreview_)) {
+    return;
+  } else if (SamplePtr again = cache.request(pendingPreview_)) {  // (finished between the two calls)
+    engine.preview(again);
+  } else if (!cache.isPending(pendingPreview_)) {
+    notify("Cannot decode " + fs::path(pendingPreview_).filename().string(), true);
+  } else {
+    return;
+  }
+  pendingPreview_.clear();
+}
+
+void App::stopPreview() {
+  pendingPreview_.clear();
+  engine.preview(nullptr);
+}
 
 }  // namespace gl
 
@@ -860,6 +915,7 @@ void App::saveNewVersion() {
 }
 
 bool App::revertToLastBackup() {
+  crash::crumb("revert to backup");
   auto list = backups->list(projectPath);
   if (list.empty()) {
     notify("No backup of this project yet", true);

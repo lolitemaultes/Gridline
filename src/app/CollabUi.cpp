@@ -2993,6 +2993,7 @@ bool pluginAllowed(const App& a, const std::string& type) { return !active(a) ||
 bool fileLoading(App& a, const std::string& path, float* progress) {
   Session* s = session(a);
   if (!s || path.empty()) return false;
+  if (path.rfind("cabdir=", 0) == 0) return s->fileLoading(path.substr(7, path.find('\n') - 7), progress);  // a cabinet folder's list
   if (path.find("/Audio/") != std::string::npos || path.find("\\Audio\\") != std::string::npos) return s->fileLoading(path, progress);
   if (path.front() == '{' || path.front() == '[') {  // JSON plugin data: any of its files
     PluginState st;

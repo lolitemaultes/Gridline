@@ -1,8 +1,13 @@
 #include "HostedPlugins.h"
+#include "../core/Crash.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstring>
+#include <deque>
+#include <exception>
+#include <functional>
 #include <map>
 #include <mutex>
 #include <thread>
@@ -120,6 +125,69 @@ std::atomic<uint64_t> gGeneration{0};
 std::mutex& gExeLock = *new std::mutex;
 std::string& gChildExe = *new std::string;
 }  // namespace
+
+namespace {
+
+thread_local bool tRenderWorker = false;  // inside a UiThreadRenderScope
+
+struct UiTask {
+  const std::function<void()>* fn;
+  bool done = false;
+  std::exception_ptr error;
+};
+std::mutex& gUiTaskLock = *new std::mutex;
+std::condition_variable& gUiTaskDone = *new std::condition_variable;
+std::deque<UiTask*>& gUiTasks = *new std::deque<UiTask*>;
+
+// Runs `fn` on the interface thread and waits for it (a render worker, never an audio device's thread).
+void callOnUiThread(const std::function<void()>& fn) {
+  UiTask t{&fn, false, nullptr};
+  std::unique_lock<std::mutex> lk(gUiTaskLock);
+  gUiTasks.push_back(&t);
+  gUiTaskDone.wait(lk, [&] { return t.done; });
+  lk.unlock();
+  if (t.error) std::rethrow_exception(t.error);
+}
+
+}  // namespace
+
+UiThreadRenderScope::UiThreadRenderScope() { tRenderWorker = true; }
+UiThreadRenderScope::~UiThreadRenderScope() { tRenderWorker = false; }
+
+void runUiThreadTasks() {
+  for (;;) {
+    UiTask* t = nullptr;
+    {
+      std::lock_guard<std::mutex> lk(gUiTaskLock);
+      if (gUiTasks.empty()) return;
+      t = gUiTasks.front();
+      gUiTasks.pop_front();
+    }
+    std::exception_ptr error;
+    {
+      // Loading a big plugin holds this frame up for as long as it takes: long work, not a freeze.
+      crash::BusyScope busy("a plugin call of a render", 120);
+      try {
+        (*t->fn)();
+      } catch (...) {
+        error = std::current_exception();
+      }
+    }
+    std::lock_guard<std::mutex> lk(gUiTaskLock);
+    t->error = error;
+    t->done = true;
+    gUiTaskDone.notify_all();
+  }
+}
+
+void serveUiThreadTasksWhile(const std::atomic<bool>& running) {
+  while (running.load()) {
+    crash::uiHeartbeat();  // no frames while the interface waits here (a cancelled render, leaving the app)
+    runUiThreadTasks();
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  runUiThreadTasks();
+}
 
 std::string lastError() {
   std::lock_guard<std::mutex> g(gErrLock);
@@ -254,10 +322,17 @@ class Core final : public HostedInstance {
     }
   }
   ~Core() override {
+    if (renderWorker_ && std::this_thread::get_id() != creator_) callOnUiThread([this] { goAway(); });
+    else goAway();
+  }
+  void goAway() {
     if (b_->onGoingAway) b_->onGoingAway();
     suspend();
     if (b_->lost()) (void)b_.release();  // its destructor would call the plugin, and that throws
+    b_.reset();
   }
+  // This instance belongs to a render on a worker thread (UiThreadRenderScope).
+  void setRenderWorker(bool on) { renderWorker_ = on; }
 
   Backend* backend() override { return b_.get(); }
   const HostedClass& hostedClass() const override { return *cls_; }
@@ -269,7 +344,20 @@ class Core final : public HostedInstance {
   // K-37: nothing on the UI thread calls the plugin: it crashed, or its interface is closing on a
   // helper thread and its own UI thread may be stuck (Backend::editorClosing).
   bool uiBlocked() const { return b_->crashed() || b_->editorClosing(); }
+  // K-39: a plugin threw on the UI thread. (The sandbox has its own report: the plugin is shown as crashed.)
+  void reportThrow() const {
+    if (!sandboxed_) crash::caught("Calling a plugin");
+  }
   int totalLatency() const override {
+    if (renderWorker_ && std::this_thread::get_id() != creator_) {
+      int v = 0;
+      const Core* self = this;
+      callOnUiThread([&] { v = self->totalLatencyNow(); });
+      return v;
+    }
+    return totalLatencyNow();
+  }
+  int totalLatencyNow() const {
     try {
       return (uiBlocked() ? 0 : b_->latency()) + fixedSize_;
     } catch (...) {
@@ -292,9 +380,17 @@ class Core final : public HostedInstance {
 
   // ---- UI thread ----
   void prepareHost(const PluginState& st, double sr) {
+    if (renderWorker_ && std::this_thread::get_id() != creator_) {
+      callOnUiThread([&] { prepareHostSafe(st, sr); });
+      return;
+    }
+    prepareHostSafe(st, sr);
+  }
+  void prepareHostSafe(const PluginState& st, double sr) {
     try {
       prepareHostNow(st, sr);
     } catch (...) {
+      reportThrow();
       b_->markLost();
     }
   }
@@ -345,6 +441,7 @@ class Core final : public HostedInstance {
     try {
       pumpUiNow(u);
     } catch (...) {
+      reportThrow();
       b_->markLost();  // reported with the next call
     }
   }
@@ -434,6 +531,7 @@ class Core final : public HostedInstance {
     try {
       if (uiBlocked() || !b_->getState(data)) return false;
     } catch (...) {
+      reportThrow();
       b_->markLost();
       return false;  // the project keeps the state it has
     }
@@ -446,6 +544,7 @@ class Core final : public HostedInstance {
     try {
       return b_->paramText(ids_[static_cast<size_t>(index)], cls_->toNormalized(static_cast<size_t>(index), value));
     } catch (...) {
+      reportThrow();
       b_->markLost();
       return {};
     }
@@ -455,6 +554,7 @@ class Core final : public HostedInstance {
     try {
       return uiBlocked() ? 0 : b_->programCount();
     } catch (...) {
+      reportThrow();
       b_->markLost();
       return 0;
     }
@@ -463,6 +563,7 @@ class Core final : public HostedInstance {
     try {
       return uiBlocked() ? std::string() : b_->programName(i);
     } catch (...) {
+      reportThrow();
       b_->markLost();
       return {};
     }
@@ -474,6 +575,7 @@ class Core final : public HostedInstance {
     try {
       ok = b_->selectProgram(i);
     } catch (...) {
+      reportThrow();
       b_->markLost();
     }
     resume();
@@ -502,6 +604,7 @@ class Core final : public HostedInstance {
     try {
       ok = b_->loadPreset(presets_[i]);
     } catch (...) {
+      reportThrow();
       b_->markLost();
     }
     resetSchedule();
@@ -537,6 +640,9 @@ class Core final : public HostedInstance {
       // right here, between two process calls; otherwise ask the UI thread.
       if (std::this_thread::get_id() == creator_) {
         b_->setOffline(want == 1);
+        offlineApplied_ = want;
+      } else if (renderWorker_) {  // the interface thread makes the call; this render waits for it
+        callOnUiThread([&] { b_->setOffline(want == 1); });
         offlineApplied_ = want;
       } else {
         offlineRequest_.store(want);
@@ -861,6 +967,7 @@ class Core final : public HostedInstance {
   std::vector<HostEvent> events_;
   std::atomic<bool> suspended_{false}, busy_{false};
   std::thread::id creator_;
+  bool renderWorker_ = false;
   int offlineApplied_ = 0;               // audio thread / UI while suspended
   std::atomic<int> offlineRequest_{-1};  // audio → UI
   // audio-thread scheduling
@@ -1195,15 +1302,31 @@ std::unique_ptr<Core> makeCore(const std::string& type) {
 }  // namespace
 
 std::unique_ptr<Generator> createHostedGenerator(const std::string& type) {
-  auto core = makeCore(type);
-  if (!core) return nullptr;
-  return std::make_unique<HostedGenerator>(std::move(core));
+  std::unique_ptr<Generator> out;
+  const bool worker = tRenderWorker;
+  auto make = [&] {
+    auto core = makeCore(type);
+    if (!core) return;
+    core->setRenderWorker(worker);
+    out = std::make_unique<HostedGenerator>(std::move(core));
+  };
+  if (worker) callOnUiThread(make);
+  else make();
+  return out;
 }
 
 std::unique_ptr<Effect> createHostedEffect(const std::string& type) {
-  auto core = makeCore(type);
-  if (!core) return nullptr;
-  return std::make_unique<HostedEffect>(std::move(core));
+  std::unique_ptr<Effect> out;
+  const bool worker = tRenderWorker;
+  auto make = [&] {
+    auto core = makeCore(type);
+    if (!core) return;
+    core->setRenderWorker(worker);
+    out = std::make_unique<HostedEffect>(std::move(core));
+  };
+  if (worker) callOnUiThread(make);
+  else make();
+  return out;
 }
 
 HostedInstance* hostedInstance(Generator* g) {

@@ -118,6 +118,7 @@ void addMaster(std::vector<PluginInfo>& v) {
   p.params[MsRef0 + MrTarget].def = 3;
   p.legacyModelParam = MsRef0 + MrModel;
   p.legacyDefaults.push_back({MsRef0 + MrRevision, 0.f});
+  p.defaultData = kMsMoveLawWord;  // K-46: new instances move as the reference does
   // Presets (Gridline's own settings, on the stored words of the reference engine).
   auto W = [](int b, int tag) { return MsRef0 + MrRaw0 + maxref::rawIndex(b, tag); };
   auto dbX = [](double db) { return static_cast<float>(std::log(2.0 * std::pow(10.0, db / 20.0) + 1.0) / std::log(9.0)); };

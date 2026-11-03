@@ -2,7 +2,9 @@
 //
 // A Loader builds the new project next to the open one, never touching it:
 //   Reading    (worker thread) unzip, read / convert the file into its own Song, list its samples
-//              and plugins, draw the welcome launcher sketch;
+//              and plugins, draw the welcome launcher sketch. K-42: the file is read in chunks that
+//              count as progress, once, and a read on a web drive can stall without the interface
+//              noticing: the window says so and Cancel returns at once;
 //   Preparing  (UI thread, a slice per frame via step()) the samples decode on the sample cache's
 //              background decoders, each finished one a work unit; every channel instrument and mixer
 //              effect is created and its state restored in a ProgramBuilder of the loader's own, one
@@ -10,20 +12,23 @@
 //              interface says which plugin is starting while it runs);
 //   Ready      everything is prepared: the caller swaps it in (Document::reset, then
 //              ProgramBuilder::adoptPreloaded and a build that finds every plugin ready).
-// Cancel stops at the next safe point: while reading the worker cannot be interrupted, so its
-// result is dropped when it ends (the thread is joined later); while preparing the prepared
-// plugins are destroyed. The open project (document, undo, engine, runtimes) is never touched.
+// Cancel stops at the next safe point: while reading the worker stops at its next chunk and removes
+// what it unpacked, and whatever it is stuck in no longer matters (its thread is joined later, or
+// left behind at quit); while preparing the prepared plugins are destroyed. The open project (document, undo, engine, runtimes) is never touched.
 // Every step is logged with its time; missing samples, unavailable plugins and stand-ins are
 // warnings. UI thread only (start, step, cancel and every accessor).
 #pragma once
+#include "../core/ProjectArchive.h"
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <thread>
 #include <vector>
 #include "../core/ProjectPreview.h"
+#include "../core/RemoteFs.h"
 #include "../core/Song.h"
 #include "../core/flp/Flp.h"
 #include "Program.h"
@@ -47,11 +52,14 @@ struct LogLine {
 
 // The current step, for the window ("Starting plugin %s (%d of %d)").
 struct Now {
-  enum class Kind { Idle, Reading, Unpacking, Converting, Listing, Plugin, Sample, Building, Failed };
+  enum class Kind { Idle, Reading, Unpacking, Converting, Listing, Plugin, Sample, Building, Failed, Choosing };
   Kind kind = Kind::Idle;
   std::string name;  // plugin / sample
   int index = 0, count = 0;  // 1-based
 };
+
+// No new byte or finished sample for this long, on a drive: the window says the drive is not answering.
+inline constexpr double kStallSeconds = 15.0;
 
 struct Request {
   std::string path;     // a Gridline project, an FL Studio project (.flp) or a zipped project
@@ -60,6 +68,14 @@ struct Request {
   bool pdc = true;
   bool sketch = true;   // draw the welcome launcher sketch on the worker
   int devDelayMs = 0;   // dev / tests: every plugin preparation and the reading take this long longer
+  int devReadDelayMs = 0;  // dev / tests: every chunk read from the file takes this long longer
+  std::string unpackCache;  // where archives from drives unpack ("": archive::defaultCacheRoot())
+  double stallSeconds = kStallSeconds;
+  bool askProject = false;  // an archive with several equal projects asks which (choices / choose)
+  // A file on a drive: says whether it belongs to a collaborative project (asked on the worker).
+  std::function<bool(const std::string& projectFile)> collabProbe;
+  // Tests: how the opened file is read (default remotefs::openFile).
+  std::function<std::unique_ptr<remotefs::ByteSource>(const std::string& path, std::string* err)> open;
 };
 
 // What a finished load hands over (valid in Phase::Ready).
@@ -68,6 +84,11 @@ struct Result {
   std::string projectFile;  // the file that was read (inside the unpacked folder for zips)
   bool fromFl = false;      // converted from an FL Studio project (`report` holds the conversion report)
   bool fromZip = false;     // unpacked from a zipped project
+  bool inCache = false;     // K-42: unpacked in the local cache: not a place to save to, Save asks where
+  archive::CopyHold copyUse;  // K-45: keeps that copy while the project is open
+  bool offlineCopy = false;  // K-42: the drive could not be reached, the last copy opened
+  bool collabOnDrive = false;  // K-42: a project on a drive that turned out to be collaborative
+  std::vector<std::string> missingRefs;  // a zipped project: every referenced file not found
   flp::Report report;
   bool hasSketch = false;
   preview::Sketch sketch;
@@ -107,6 +128,17 @@ class Loader {
   int unitsDone() const;
   int unitsTotal() const;   // 0 while reading (not known yet)
   double progress() const;  // 0..1
+  // K-42: the bar: the bytes of a large read count for most of it, then the units.
+  double overall() const;
+  uint64_t bytesDone() const;
+  uint64_t bytesTotal() const;
+  double bytesPerSecond() const;
+  // Seconds without any sign of life from a drive (0 when all is moving, or nothing is on a drive).
+  double stalledFor() const;
+  // K-42: an archive holds several equal projects and the load waits for the person's choice.
+  bool awaitingChoice() const;
+  std::vector<std::string> choices() const;
+  void choose(int index);
   int samplesDone() const { return samplesDone_; }
   int samplesTotal() const { return static_cast<int>(samples_.size()); }
   int pluginsDone() const { return static_cast<int>(nextItem_); }
@@ -156,6 +188,9 @@ class Loader {
   std::vector<SampleItem> samples_;
   int samplesDone_ = 0;
   std::string lastSample_;
+  bool anyRemoteSample_ = false;
+  double lastSampleAt_ = 0;
+  uint64_t bytesRead_ = 0, bytesWanted_ = 0;  // the reading's figures once it has ended
   int warnings_ = 0;
   std::vector<LogLine> log_;
   std::string error_;

@@ -38,6 +38,10 @@ class WorkerPool {
 
   WorkerPool() = default;
   ~WorkerPool();
+  // Before the first ensureThreads: false keeps the pool threads at normal priority. An offline
+  // render has no deadline and runs flat out for minutes; at real-time priority it would starve the
+  // interface, the graphics driver and the rest of the system.
+  void setRealtime(bool on) { realtimeWanted_.store(on, std::memory_order_relaxed); }
   // UI thread: makes sure `count` pool threads exist (never shrinks).
   void ensureThreads(int count);
   int threads() const { return spawned_.load(std::memory_order_acquire); }
@@ -52,6 +56,7 @@ class WorkerPool {
   std::vector<std::thread> threads_;
   std::atomic<int> spawned_{0};
   std::atomic<int> realtime_{0};
+  std::atomic<bool> realtimeWanted_{true};
   Semaphore sem_;
   std::atomic<bool> quit_{false};
   std::atomic<bool> open_{false};

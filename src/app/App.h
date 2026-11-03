@@ -374,7 +374,7 @@ class App {
   // shown under the FL file's name (`openedFrom`) with the import report; Save
   // asks where and in which format (never writes over the .flp unasked).
   // Zipped projects: Gridline zips and FL Studio zipped loop packages are
-  // unpacked beside the archive and opened from there.
+  // unpacked in the cache and opened from there (K-45, core/ProjectArchive.h).
   // J-167: every project opens through the project loader (openProject).
   projload::Loader projectLoad;
   // A project is being read or prepared: the loading window shows (after a short delay) and
@@ -433,6 +433,9 @@ class App {
   void selectChannel(ObjectId id, bool additive = false);
   void openPianoRoll(ObjectId channel);
   void previewSample(const std::string& path);
+  // K-42: a file on a web drive: decoded in the background, starts when it has arrived.
+  void previewWhenReady(const std::string& path);
+  void pollPreview();
   void stopPreview();
   // A notification card; `details` (path, code) is not shown but is copied
   // with the message when the card is clicked (J-78).
@@ -543,6 +546,7 @@ class App {
   double trimSamplesAt_ = -1;     // drop the replaced project's samples from the cache at this time (J-30)
   int64_t lastBackupCheck_ = 0;
   SamplePtr preview_;
+  std::string pendingPreview_;
   double lastCcTime_ = -1;
   double lastRecPos_ = 0;
   std::map<uint64_t, int> templateKnobDown_;  // template buttons: last pressed state

@@ -15,6 +15,7 @@
 // child process when the class is set to "Run in sandbox" (PluginPrefs); the
 // UI reaches them through hostedInstance().
 #pragma once
+#include <atomic>
 #include <memory>
 #include <string>
 #include <vector>
@@ -61,6 +62,22 @@ std::vector<std::shared_ptr<const HostedClass>> hostedClasses();
 uint64_t hostedClassesGeneration();
 PluginInfo makePluginInfo(const HostedClass& c);
 HostedClass makeHostedClass(const ScannedClass& c, const std::string& bundle, const std::string& format = "vst3");
+
+// A render on a worker thread, with hosted plugins in the project. Some plugin formats only allow
+// creating, preparing and destroying an instance on the interface thread, while their audio side runs
+// on any one thread at a time. A thread inside this scope hands those calls to the interface thread
+// and waits for them; the interface thread runs them with runUiThreadTasks (every frame). So the
+// window stays alive and Cancel works during the render, whatever the project holds.
+class UiThreadRenderScope {
+ public:
+  UiThreadRenderScope();
+  ~UiThreadRenderScope();
+  UiThreadRenderScope(const UiThreadRenderScope&) = delete;
+  UiThreadRenderScope& operator=(const UiThreadRenderScope&) = delete;
+};
+void runUiThreadTasks();
+// Interface thread: `running` is the worker's own flag; serves its calls until it is false.
+void serveUiThreadTasksWhile(const std::atomic<bool>& running);
 
 // Runtime instances (UI thread). nullptr when the type is unknown or the
 // plugin cannot be loaded; the reason is kept for lastError().

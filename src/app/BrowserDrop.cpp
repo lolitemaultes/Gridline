@@ -21,6 +21,8 @@
 #include "../packs/PacksUi.h"
 #include "App.h"
 #include "BrowserUi.h"
+#include "../core/RemoteFs.h"
+#include "../core/ProjectFiles.h"
 #include "CollabUi.h"
 #include "ExternalDragUi.h"
 #include "PluginUI.h"
@@ -1106,6 +1108,10 @@ bool acceptPluginDrop(App& a, DropTarget target, const DropPlace& place, DropFee
 }
 
 void openFile(App& a, const std::string& path) {
+  if (remotefs::isRemote(path) && opensAsProject(path)) {  // K-42: nothing here looks at the drive; the loader does
+    a.guardUnsaved([&a, path] { a.openProject(path); });
+    return;
+  }
   if (!collabui::projectFileIn(path).empty()) {  // J-111: a collaborative project folder opens
     a.guardUnsaved([&a, path] { a.openProject(path); });
     return;
@@ -1189,6 +1195,10 @@ bool& previewSync() {
 }
 
 void previewFile(App& a, const std::string& path) {
+  if (remotefs::isRemote(path)) {  // K-42: read on a background decoder and heard when it has arrived
+    a.previewWhenReady(path);
+    return;
+  }
   SamplePtr s = sampleCache().get(path);
   if (!s) {
     a.notify("Cannot decode " + fs::path(path).filename().string(), true);

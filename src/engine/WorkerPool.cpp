@@ -65,9 +65,9 @@ namespace {
 // GRIDLINE_NO_REALTIME=1 keeps every worker at normal priority.
 bool makeRealtime(int index) {
   if (const char* off = std::getenv("GRIDLINE_NO_REALTIME"); off && *off && *off != '0') return false;
-#if defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
-  // No real-time throttling on the BSDs (Linux keeps 5% of the CPU for everything else): one
-  // CPU stays free of real-time workers, or a long render could starve the rest of the system.
+#if defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) || defined(_WIN32)
+  // No real-time throttling on the BSDs and Windows (Linux keeps 5% of the CPU for everything else):
+  // one CPU stays free of real-time workers, or an overloaded project could starve the rest of the system.
   const unsigned cpus = std::thread::hardware_concurrency();
   if (cpus == 0 || static_cast<unsigned>(index) >= cpus - 1) return false;
 #else
@@ -97,7 +97,7 @@ bool makeRealtime(int index) {
 
 void WorkerPool::loop(int index) {
   flushDenormals();  // same float mode as the audio thread (identical output for any thread count)
-  if (makeRealtime(index)) realtime_.fetch_add(1);
+  if (realtimeWanted_.load(std::memory_order_relaxed) && makeRealtime(index)) realtime_.fetch_add(1);
   for (;;) {
     sem_.wait();
     if (quit_.load()) return;

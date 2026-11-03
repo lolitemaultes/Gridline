@@ -1310,6 +1310,10 @@ msgid "Read-only here: files can be changed in your own folders and Gridline's f
 msgstr ""
 
 #: src/app/Browser.cpp
+msgid "Reading this folder"
+msgstr ""
+
+#: src/app/Browser.cpp
 msgid "Recent files"
 msgstr ""
 
@@ -1595,6 +1599,70 @@ msgstr ""
 
 #: src/app/BrowserDrop.cpp
 msgid "Unsupported file type: "
+msgstr ""
+
+#: src/app/CacheUi.cpp src/app/ProjectLoadUi.cpp
+msgid "%s of %s"
+msgstr ""
+
+#: src/app/CacheUi.cpp
+msgid "Clear cache"
+msgstr ""
+
+#: src/app/CacheUi.cpp
+msgid "Clear the unpacked project cache?"
+msgstr ""
+
+#: src/app/CacheUi.cpp
+msgid "Cleared, %s freed."
+msgstr ""
+
+#: src/app/CacheUi.cpp
+msgid "Clearing..."
+msgstr ""
+
+#: src/app/CacheUi.cpp
+msgid "Copies nothing needs are deleted. Open projects, copies a saved project uses and copies a recent backup uses stay. Zipped projects unpack again when they open; those on a drive read it again."
+msgstr ""
+
+#: src/app/CacheUi.cpp
+msgid "Delete every copy nothing needs"
+msgstr ""
+
+#: src/app/CacheUi.cpp
+msgid "Kept %d: a recent backup or crash recovery uses its samples."
+msgstr ""
+
+#: src/app/CacheUi.cpp
+msgid "Kept %d: a saved project uses its samples."
+msgstr ""
+
+#: src/app/CacheUi.cpp
+msgid "Kept %d: could not be checked, so it stays."
+msgstr ""
+
+#: src/app/CacheUi.cpp
+msgid "Kept %d: its files are in use, tried again at the next start."
+msgstr ""
+
+#: src/app/CacheUi.cpp
+msgid "Kept %d: open in Gridline now."
+msgstr ""
+
+#: src/app/CacheUi.cpp
+msgid "Measuring..."
+msgstr ""
+
+#: src/app/CacheUi.cpp
+msgid "Nothing could be cleared."
+msgstr ""
+
+#: src/app/CacheUi.cpp
+msgid "UNPACKED PROJECTS"
+msgstr ""
+
+#: src/app/CacheUi.cpp
+msgid "Zipped projects open from a copy on this computer, so their folders stay clean. A local project's copy is deleted when it closes; a copy from a web or network drive stays for quick and offline opening."
 msgstr ""
 
 #: src/app/ChannelEnvelopeUi.cpp
@@ -3697,7 +3765,7 @@ msgstr ""
 msgid "Only you, the admin, can do this."
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/LauncherCollab.cpp src/app/LauncherUi.cpp
+#: src/app/CollabUi.cpp src/app/LauncherCollab.cpp src/app/LauncherUi.cpp src/app/ProjectLoadUi.cpp
 msgid "Open"
 msgstr ""
 
@@ -4833,7 +4901,7 @@ msgstr ""
 msgid "Colour selected"
 msgstr ""
 
-#: src/app/ContextMenus.cpp
+#: src/app/ContextMenus.cpp src/app/CrashUi.cpp
 msgid "Copied"
 msgstr ""
 
@@ -6189,6 +6257,106 @@ msgstr ""
 msgid "bars"
 msgstr ""
 
+#: src/app/CrashUi.cpp
+msgid "%d minutes"
+msgstr ""
+
+#: src/app/CrashUi.cpp
+msgid "%d seconds"
+msgstr ""
+
+#: src/app/CrashUi.cpp
+msgid "A copy of your project was saved at the moment this happened. Memory may already have been damaged by then, so check the copy before you save over the original."
+msgstr ""
+
+#: src/app/CrashUi.cpp
+msgid "An operation"
+msgstr ""
+
+#: src/app/CrashUi.cpp
+msgid "Copy code"
+msgstr ""
+
+#: src/app/CrashUi.cpp
+msgid "Crash code"
+msgstr ""
+
+#: src/app/CrashUi.cpp
+msgid "Drawing the interface failed several times in a row, so Gridline stopped trying. Your project is still in memory. You can save a copy and restart, or try again."
+msgstr ""
+
+#: src/app/CrashUi.cpp
+msgid "Force restart ends the frozen window. Changes since your last save are lost."
+msgstr ""
+
+#: src/app/CrashUi.cpp
+msgid "Force restart ends the frozen window. Gridline first tries to save a fresh recovery copy of your project, and you can open it after the restart."
+msgstr ""
+
+#: src/app/CrashUi.cpp
+msgid "Force restart ends the frozen window. Gridline first tries to save a recovery copy of your project."
+msgstr ""
+
+#: src/app/CrashUi.cpp
+msgid "Force restart ends the frozen window. You can open the last automatic recovery copy of your project after the restart."
+msgstr ""
+
+#: src/app/CrashUi.cpp
+msgid "Gridline ended unexpectedly"
+msgstr ""
+
+#: src/app/CrashUi.cpp
+msgid "Gridline ended without saying why. It may have been closed from outside, or the computer may have run out of memory."
+msgstr ""
+
+#: src/app/CrashUi.cpp
+msgid "Gridline hit a serious error and had to close. After a fault like this its memory can no longer be trusted, so it cannot safely keep running."
+msgstr ""
+
+#: src/app/CrashUi.cpp
+msgid "Gridline is not responding"
+msgstr ""
+
+#: src/app/CrashUi.cpp
+msgid "Gridline sends nothing anywhere. The code holds no file paths and no project names: share it where you choose, for example in a GitHub issue."
+msgstr ""
+
+#: src/app/CrashUi.cpp
+msgid "Gridline stopped after an error"
+msgstr ""
+
+#: src/app/CrashUi.cpp
+msgid "No recovery copy could be saved, so changes since your last save are lost. Automatic backups may have an older state: see Settings, Backup."
+msgstr ""
+
+#: src/app/CrashUi.cpp
+msgid "Recovered project: check it, then save to keep it"
+msgstr ""
+
+#: src/app/CrashUi.cpp
+msgid "Something went wrong"
+msgstr ""
+
+#: src/app/CrashUi.cpp
+msgid "The interface has not answered for a while. It may still be working on something long: if it comes back, this window closes by itself."
+msgstr ""
+
+#: src/app/CrashUi.cpp
+msgid "The interface keeps failing"
+msgstr ""
+
+#: src/app/CrashUi.cpp
+msgid "The interface stopped answering last time, and Gridline did not come back from it."
+msgstr ""
+
+#: src/app/CrashUi.cpp
+msgid "There is no recovery copy for this report"
+msgstr ""
+
+#: src/app/CrashUi.cpp
+msgid "There were no unsaved changes, so nothing was lost."
+msgstr ""
+
 #: src/app/Dialogs.cpp
 msgid "%d samples (%.1f ms)"
 msgstr ""
@@ -6259,10 +6427,6 @@ msgstr ""
 
 #: src/app/Dialogs.cpp
 msgid "Change PPQ"
-msgstr ""
-
-#: src/app/Dialogs.cpp
-msgid "Choose it, or open a sub-folder"
 msgstr ""
 
 #: src/app/Dialogs.cpp
@@ -6482,10 +6646,6 @@ msgid "Never (remind every 10 minutes)"
 msgstr ""
 
 #: src/app/Dialogs.cpp
-msgid "No matching files here"
-msgstr ""
-
-#: src/app/Dialogs.cpp
 msgid "Occasionally (every 10 minutes)"
 msgstr ""
 
@@ -6643,10 +6803,6 @@ msgstr ""
 
 #: src/app/Dialogs.cpp
 msgid "Theme, size and hints"
-msgstr ""
-
-#: src/app/Dialogs.cpp
-msgid "This folder is empty"
 msgstr ""
 
 #: src/app/Dialogs.cpp
@@ -7267,6 +7423,14 @@ msgstr ""
 
 #: src/app/ExportUi.cpp
 msgid "Stems through the master effects"
+msgstr ""
+
+#: src/app/ExportUi.cpp
+msgid "Stop searching"
+msgstr ""
+
+#: src/app/ExportUi.cpp
+msgid "Stops the search in the folder"
 msgstr ""
 
 #: src/app/ExportUi.cpp
@@ -12866,6 +13030,18 @@ msgid "The plugin's own programs and preset library"
 msgstr ""
 
 #: src/app/ProjectLoadUi.cpp
+msgid "%.0f KB"
+msgstr ""
+
+#: src/app/ProjectLoadUi.cpp
+msgid "%.1f MB"
+msgstr ""
+
+#: src/app/ProjectLoadUi.cpp
+msgid "%.2f GB"
+msgstr ""
+
+#: src/app/ProjectLoadUi.cpp
 msgid "%d ms"
 msgstr ""
 
@@ -12934,7 +13110,31 @@ msgid "Stop opening and go back to the project as it was"
 msgstr ""
 
 #: src/app/ProjectLoadUi.cpp
+msgid "The drive is not answering. It may be offline or still downloading. Cancel goes back to your project."
+msgstr ""
+
+#: src/app/ProjectLoadUi.cpp
+msgid "This archive holds several projects. Which one should open?"
+msgstr ""
+
+#: src/app/ProjectLoadUi.cpp
+msgid "Unpacking %s (%d of %d)"
+msgstr ""
+
+#: src/app/ProjectLoadUi.cpp
 msgid "Unpacking the zipped project"
+msgstr ""
+
+#: src/app/ProjectLoadUi.cpp
+msgid "Which project in this archive should open?"
+msgstr ""
+
+#: src/app/ProjectLoadUi.cpp
+msgid "about %d min left"
+msgstr ""
+
+#: src/app/ProjectLoadUi.cpp src/app/StemsUi.cpp
+msgid "about %d s left"
 msgstr ""
 
 #: src/app/SamplerRenderUi.cpp
@@ -13518,6 +13718,10 @@ msgid "Backups"
 msgstr ""
 
 #: src/app/SettingsPages.cpp
+msgid "CRASH REPORTS"
+msgstr ""
+
+#: src/app/SettingsPages.cpp
 msgid "Command that opens a script for editing (the file path is added at the end)"
 msgstr ""
 
@@ -13590,6 +13794,14 @@ msgid "Open as new project"
 msgstr ""
 
 #: src/app/SettingsPages.cpp
+msgid "Open recovery folder"
+msgstr ""
+
+#: src/app/SettingsPages.cpp
+msgid "Open reports folder"
+msgstr ""
+
+#: src/app/SettingsPages.cpp
 msgid "Opens the backup as a separate, unsaved project"
 msgstr ""
 
@@ -13607,6 +13819,10 @@ msgstr ""
 
 #: src/app/SettingsPages.cpp
 msgid "Replace the project with the selected backup (undoable)"
+msgstr ""
+
+#: src/app/SettingsPages.cpp
+msgid "Reports and recovery copies stay on this computer. Nothing is sent anywhere."
 msgstr ""
 
 #: src/app/SettingsPages.cpp
@@ -13895,10 +14111,6 @@ msgstr ""
 
 #: src/app/StemsUi.cpp
 msgid "about %d min %02d s left"
-msgstr ""
-
-#: src/app/StemsUi.cpp
-msgid "about %d s left"
 msgstr ""
 
 #: src/app/StemsUi.cpp
@@ -16494,7 +16706,15 @@ msgid "No Gridline equivalent yet: %s"
 msgstr ""
 
 #: src/engine/ProjectLoad.cpp
+msgid "Opened the copy unpacked earlier: %s"
+msgstr ""
+
+#: src/engine/ProjectLoad.cpp
 msgid "Opening %s"
+msgstr ""
+
+#: src/engine/ProjectLoad.cpp
+msgid "Other projects in this archive: %s"
 msgstr ""
 
 #: src/engine/ProjectLoad.cpp
@@ -16518,7 +16738,15 @@ msgid "Started %s"
 msgstr ""
 
 #: src/engine/ProjectLoad.cpp
+msgid "The drive cannot be reached: opened the last copy of %s"
+msgstr ""
+
+#: src/engine/ProjectLoad.cpp
 msgid "Unpacked %s"
+msgstr ""
+
+#: src/engine/ProjectLoad.cpp
+msgid "Unpacked on this computer, nothing was written to the drive: %s"
 msgstr ""
 
 #: src/packs/creative/creative_ui.cpp

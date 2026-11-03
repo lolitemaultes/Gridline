@@ -1,6 +1,8 @@
 // Gridline — dialogs (file, settings, project info, export, history, about,
 // shortcuts, unsaved changes) and global keyboard shortcuts.
 #include "CollabUi.h"
+#include "../core/RemoteFs.h"
+#include "../engine/ProjectLoad.h"
 #include "DisplayConfirmUi.h"
 #include "GridlineVersion.h"
 #include <algorithm>
@@ -117,7 +119,10 @@ void fileDialog(App& a) {
   const bool folderMode = fd.exts.size() == 1 && fd.exts[0] == "/";
   dialogTitle(a, fd.title.c_str());
   std::error_code ec;
-  if (fd.dir.empty() || !fs::is_directory(fd.dir, ec)) fd.dir = gl::platform::homeEnv() ? gl::platform::homeEnv() : ".";
+  // K-42: a folder on a web drive is never looked at on this thread: it is read in the background
+  // (below), and an offline drive shows as such instead of jumping back home.
+  const auto dirRemote = [](const std::string& d) { return gl::remotefs::isRemote(d); };
+  if (fd.dir.empty() || (!dirRemote(fd.dir) && !fs::is_directory(fd.dir, ec))) fd.dir = gl::platform::homeEnv() ? gl::platform::homeEnv() : ".";
   const float fh = ImGui::GetFrameHeight();
   if (ui::IconButton("up", ui::Icon::Up, false, fh, "Parent folder")) fd.dir = fs::path(fd.dir).parent_path().string();
   ImGui::SameLine(0, theme::kS1);
@@ -126,7 +131,7 @@ void fileDialog(App& a) {
   static char dirBuf[1024];
   std::snprintf(dirBuf, sizeof dirBuf, "%s", fd.dir.c_str());
   ImGui::SetNextItemWidth(-1);
-  if (ImGui::InputText("##dir", dirBuf, sizeof dirBuf, ImGuiInputTextFlags_EnterReturnsTrue) && fs::is_directory(dirBuf, ec)) fd.dir = dirBuf;
+  if (ImGui::InputText("##dir", dirBuf, sizeof dirBuf, ImGuiInputTextFlags_EnterReturnsTrue) && (dirRemote(dirBuf) || fs::is_directory(dirBuf, ec))) fd.dir = dirBuf;
   if (ImGui::CalcTextSize(fd.dir.c_str()).x > ImGui::GetItemRectSize().x - 2 * ImGui::GetStyle().FramePadding.x) ui::Tooltip(fd.dir.c_str());
   ui::FocusRing();
 
@@ -139,14 +144,41 @@ void fileDialog(App& a) {
   ImGui::BeginChild("##list", ImVec2(0, -footer), ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
   ImGui::PopStyleColor();
   std::vector<fs::path> dirs, files;
-  for (fs::directory_iterator it(fd.dir, fs::directory_options::skip_permission_denied, ec), end; !ec && it != end; it.increment(ec)) {
-    std::string n = it->path().filename().string();
-    if (n.empty() || n[0] == '.') continue;
-    std::error_code e2;
-    if (it->is_directory(e2))
-      dirs.push_back(it->path());
-    else if (!folderMode && matches(n, fd.exts))
-      files.push_back(it->path());
+  const char* noteTitle = nullptr;  // why the list is empty, or a wait
+  const char* noteBody = "";
+  {
+    // A local folder is listed here, at most twice a second (it used to be every frame).
+    static std::string localDir;
+    static double localAt = -1.0;
+    static gl::remotefs::Listing local;
+    const gl::remotefs::Listing* l = nullptr;
+    gl::remotefs::DirState st;
+    if (dirRemote(fd.dir)) {
+      st = gl::remotefs::listAsync(fd.dir, 15.0);
+      l = st.listing.get();
+      if (st.pending && !l) {
+        const bool stalled = st.waited >= gl::projload::kStallSeconds;
+        noteTitle = stalled ? "The drive is not answering" : "Reading this folder";
+        noteBody = stalled ? "It may be offline. Go up a folder, or keep waiting" : "On a web drive this can take a moment";
+      }
+    } else {
+      if (localDir != fd.dir || a.now - localAt >= 0.5 || a.now < localAt) {
+        local = gl::remotefs::listNow(fd.dir);
+        localDir = fd.dir;
+        localAt = a.now;
+      }
+      l = &local;
+    }
+    if (l) {
+      if (!l->ok && l->entries.empty()) {
+        noteTitle = "This folder cannot be read";
+        noteBody = "If it is on a drive, check that the drive is connected and online";
+      }
+      for (const auto& e : l->entries) {
+        if (e.isDir) dirs.push_back(fs::u8path(fd.dir) / fs::u8path(e.name));
+        else if (!folderMode && matches(e.name, fd.exts)) files.push_back(fs::u8path(fd.dir) / fs::u8path(e.name));
+      }
+    }
   }
   auto byName = [](const fs::path& x, const fs::path& y) { return lower(x.filename().string()) < lower(y.filename().string()); };
   std::sort(dirs.begin(), dirs.end(), byName);
@@ -178,8 +210,8 @@ void fileDialog(App& a) {
   for (const auto& f : files) row(f, false);
   if (dirs.empty() && files.empty()) {
     ImVec2 mn = ImGui::GetWindowPos(), sz = ImGui::GetWindowSize();
-    ui::EmptyState(ImGui::GetWindowDrawList(), mn, ImVec2(mn.x + sz.x, mn.y + sz.y), "This folder is empty",
-                   folderMode ? "Choose it, or open a sub-folder" : "No matching files here");
+    ui::EmptyState(ImGui::GetWindowDrawList(), mn, ImVec2(mn.x + sz.x, mn.y + sz.y), noteTitle ? noteTitle : "This folder is empty",
+                   noteTitle ? noteBody : folderMode ? "Choose it, or open a sub-folder" : "No matching files here");
   }
   ImGui::PopStyleVar();  // rows sit flush inside the list; the list itself keeps the normal gap below it
   ImGui::EndChild();
@@ -234,7 +266,8 @@ void fileDialog(App& a) {
       chosen = target;
   }
   // Saving over an existing file asks once (the button turns into Replace).
-  if (fd.save && ok && !chosen.empty() && chosen != fd.confirmOverwrite && fs::exists(chosen, ec)) {
+  if (fd.save && ok && !chosen.empty() && chosen != fd.confirmOverwrite &&
+      (dirRemote(chosen) ? gl::remotefs::probeWithin(chosen, 2000).exists : fs::exists(chosen, ec))) {
     fd.confirmOverwrite = chosen;
     fd.name = fs::path(chosen).filename().string();
     chosen.clear();

@@ -8,6 +8,8 @@
 #include "../core/I18n.h"
 #include "../core/TrackReceipt.h"
 #include "ExportUi.h"
+#include "../core/Crash.h"
+#include "../core/RemoteFs.h"
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -39,11 +41,13 @@
 #include "App.h"
 #include "CollabUi.h"
 #include "ContextMenus.h"
+#include "DevSignal.h"
 #include "FlpExportUi.h"
 #include "HostedUi.h"
 #include "Theme.h"
 #include "Widgets.h"
 #include "../core/Platform.h"
+#include "../host/HostedPlugins.h"
 
 namespace fs = std::filesystem;
 
@@ -100,6 +104,7 @@ struct Job {
   }
 };
 Job job;
+int devRendersFinished = 0, devRendersCancelled = 0, devRendersFailed = 0;  // since the start (devState)
 
 // MIDI import options.
 struct MidiDlg {
@@ -119,6 +124,20 @@ struct Missing {
   RelinkReport found;
   std::string folder;
   bool searched = false;
+  // K-42: checks and searches run off the interface thread (the files or the folder can be on a
+  // web drive). Each job owns its cell, so a stuck drive leaves only that thread waiting.
+  struct Check {
+    std::atomic<bool> done{false};
+    std::vector<std::string> files;
+  };
+  struct Search {
+    std::atomic<bool> done{false}, cancel{false};
+    RelinkReport found;
+    std::string folder;
+  };
+  std::shared_ptr<Check> check;
+  std::shared_ptr<Search> search;
+  double nextCheck = 0;
 };
 Missing missing;
 
@@ -204,11 +223,36 @@ bool applyScope(const App& a, RenderJob& r, std::string* why) {
 }
 
 double scopeSeconds(const App& a) {
+  // A few times a second: the song scope copies the whole project.
+  static double cached = 0, at = -1;
+  static int scope = -1;
+  if (at >= 0 && scope == dlg.scope && a.now >= at && a.now - at < 0.25) return cached;
+  at = a.now;
+  scope = dlg.scope;
+  cached = 0;
   RenderJob r;
   if (!applyScope(a, r, nullptr)) return 0;
   Tick A = 0, B = 0;
   if (!renderScopeTicks(a.doc.song(), r, A, B)) return 0;
-  return static_cast<double>(scopeFrames(a.doc.song(), r, A, B, 48000)) / 48000.0;
+  cached = static_cast<double>(scopeFrames(a.doc.song(), r, A, B, 48000)) / 48000.0;
+  return cached;
+}
+
+// The encoder of a format as the dialog shows it: searched for a few times a second, not on every
+// frame (on Windows a search looks in each PATH folder, some of which can be slow network drives).
+struct EncoderLook {
+  std::string name, status;
+  double at = -1;
+};
+const EncoderLook& encoderLook(const App& a, ExportFormat f) {
+  static EncoderLook looks[static_cast<int>(ExportFormat::Count)];
+  EncoderLook& l = looks[static_cast<int>(f)];
+  if (l.at < 0 || a.now < l.at || a.now - l.at >= 2.0) {
+    l.name = encoderFor(f);
+    l.status = encoderStatus(f);
+    l.at = a.now;
+  }
+  return l;
 }
 
 // ---------------------------------------------------------------- worker
@@ -276,43 +320,48 @@ void startJob(App& a) {
     job.status = "Preparing";
   }
   Song song = a.doc.song();
-  auto work = [song = std::move(song), s]() {
-    ExportOutcome o = runExport(song, s, [](double p, const std::string& what) {
-      job.progress = p;
-      std::lock_guard<std::mutex> lk(job.mu);
-      job.status = what;
-    }, &job.cancel);
+  dlg.open = false;
+  crash::crumb("export start");
+  // A worker for every project: the window stays alive and Cancel works. The calls that must happen
+  // on the interface thread for hosted plugins come back to it (host::UiThreadRenderScope).
+  // The interface does not wait for this work, so its progress is no sign of the interface's life:
+  // a heartbeat here would hide a frozen window. Frames beat by themselves; the calls that come back
+  // are busy work (host::runUiThreadTasks).
+  job.worker = std::thread([song = std::move(song), s]() {
+    host::UiThreadRenderScope scope;
+    ExportOutcome o;
+    try {
+      o = runExport(song, s, [](double p, const std::string& what) {
+        job.progress = p;
+        std::lock_guard<std::mutex> lk(job.mu);
+        job.status = what;
+      }, &job.cancel);  // reports what it catches (one report, one pop-up)
+    } catch (...) {  // only what runExport could not catch itself
+      crash::reportCurrentException("Exporting audio");
+      o.errors.push_back("An internal error stopped the export.");
+    }
+    crash::crumb("export end");
     {
       std::lock_guard<std::mutex> lk(job.mu);
       job.outcome = std::move(o);
     }
     job.finished = true;
     job.running = false;
-  };
-  // Hosted plugins create their offline instances where the render runs; some
-  // formats only allow that on the main thread, so those projects render here
-  // (the window waits) instead of on the worker.
-  bool hosted = false;
-  for (const auto& c : a.doc.song().channels) hosted = hosted || isHostedType(c.plugin.type);
-  for (const auto& m : a.doc.song().mixer)
-    for (const auto& sl : m.slots) hosted = hosted || isHostedType(sl.plugin.type);
-  dlg.open = false;
-  if (hosted)
-    work();
-  else
-    job.worker = std::thread(std::move(work));
+  });
 }
 
 // UI thread: what to do with the result.
 void finishJob(App& a) {
   if (!job.finished.exchange(false)) return;
   if (job.worker.joinable()) job.worker.join();
+  devsig::reach("render-finished");
   job.seconds = a.now - job.started;
   ExportOutcome o;
   {
     std::lock_guard<std::mutex> lk(job.mu);
     o = job.outcome;
   }
+  ++(o.cancelled ? devRendersCancelled : o.errors.empty() ? devRendersFinished : devRendersFailed);
   if (o.cancelled) {
     a.notify("Render cancelled");
     for (const auto& f : o.files) {
@@ -519,9 +568,10 @@ void drawRenderDialog(App& a) {
         ImGui::EndDisabled();
         if (exportFormatExternal(static_cast<ExportFormat>(k))) {
           ImGui::SameLine();
-          const bool have = !encoderFor(static_cast<ExportFormat>(k)).empty();
-          ImGui::TextColored(theme::vec(have ? P.textFaint : P.danger), "%s", have ? ("via " + encoderFor(static_cast<ExportFormat>(k))).c_str() : "no encoder");
-          if (ImGui::IsItemHovered()) ui::Tooltip(encoderStatus(static_cast<ExportFormat>(k)).c_str());
+          const EncoderLook& enc = encoderLook(a, static_cast<ExportFormat>(k));
+          const bool have = !enc.name.empty();
+          ImGui::TextColored(theme::vec(have ? P.textFaint : P.danger), "%s", have ? ("via " + enc.name).c_str() : "no encoder");
+          if (ImGui::IsItemHovered()) ui::Tooltip(enc.status.c_str());
         }
       };
       row(0, "WAV", wb, 3, &dlg.wavBits);
@@ -778,7 +828,27 @@ void drawMissing(App& a) {
   ui::KeepWindowInViewport();
   if (vis) {
     const auto& P = pal();
-    missing.files = missingFiles(a.doc.song());
+    if (missing.check && missing.check->done.load(std::memory_order_acquire)) {
+      missing.files = std::move(missing.check->files);
+      missing.check.reset();
+    }
+    if (!missing.check && a.now >= missing.nextCheck) {
+      missing.nextCheck = a.now + 2.0;
+      missing.check = std::make_shared<Missing::Check>();
+      std::thread([c = missing.check, refs = referencedFiles(a.doc.song())] {
+        c->files = missingAmong(refs);
+        c->done.store(true, std::memory_order_release);
+      }).detach();
+    }
+    if (missing.search && missing.search->done.load(std::memory_order_acquire)) {
+      missing.found = std::move(missing.search->found);
+      missing.folder = missing.search->folder;
+      missing.searched = true;
+      missing.search.reset();
+      a.notify("Found " + std::to_string(missing.found.found.size()) + " of " + std::to_string(missing.found.found.size() + missing.found.notFound.size()) +
+               " missing file(s) (" + std::to_string(missing.found.indexed) + " files searched)" +
+               (missing.found.shallow ? ". On a web or network drive only that folder is searched, not its sub-folders." : ""));
+    }
     ImGui::TextColored(theme::vec(P.textDim), i18n::tr("%zu file(s) this project refers to cannot be found."), missing.files.size());
     ImGui::BeginChild("##list", ImVec2(0, -ui::DialogFooterHeight()), ImGuiChildFlags_Borders);
     for (size_t k = 0; k < missing.files.size(); ++k) {
@@ -803,6 +873,8 @@ void drawMissing(App& a) {
                      a.doc.editSong("relink sample", [&](Song& s) { relinkFiles(s, {{from, p}}); });
                      sampleCache().clear();
                      a.syncEngine();
+                     missing.files.erase(std::remove(missing.files.begin(), missing.files.end(), from), missing.files.end());
+                     missing.nextCheck = 0;
                    });
       }
       ImGui::PopID();
@@ -810,14 +882,24 @@ void drawMissing(App& a) {
     if (missing.files.empty()) ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("Nothing is missing."));
     ImGui::EndChild();
     ui::DialogFooter(150 + 120 + theme::kS2);
-    if (ui::TextButton("Search folder...", false, 150, "Looks for the files by name in a folder and its sub-folders"))
-      fileDialog(a, "Search for missing samples in", false, {"/"}, "", [&a](const std::string& d) {
-        missing.folder = d;
-        missing.found = findReplacements(missingFiles(a.doc.song()), d);
-        missing.searched = true;
-        a.notify("Found " + std::to_string(missing.found.found.size()) + " of " + std::to_string(missing.found.found.size() + missing.found.notFound.size()) +
-                 " missing file(s) (" + std::to_string(missing.found.indexed) + " files searched)");
+    if (missing.search) {
+      if (ui::TextButton("Stop searching", false, 150, "Stops the search in the folder")) {
+        missing.search->cancel.store(true);
+        missing.search.reset();
+      }
+    } else if (ui::TextButton("Search folder...", false, 150, "Looks for the files by name in a folder and its sub-folders")) {
+      fileDialog(a, "Search for missing samples in", false, {"/"}, "", [](const std::string& d) {
+        auto job = std::make_shared<Missing::Search>();
+        job->folder = d;
+        missing.search = job;
+        std::thread([job, files = missing.files, d] {
+          RelinkOptions o;
+          o.cancel = &job->cancel;
+          job->found = findReplacements(files, d, o);
+          job->done.store(true, std::memory_order_release);
+        }).detach();
       });
+    }
     ImGui::SameLine(0, theme::kS2);
     ImGui::BeginDisabled(missing.found.found.empty());
     if (ui::TextButton(("Relink " + std::to_string(missing.found.found.size())).c_str(), true, 120)) {
@@ -827,6 +909,7 @@ void drawMissing(App& a) {
       sampleCache().clear();
       a.syncEngine();
       missing.found = {};
+      missing.nextCheck = 0;
       a.notify("Relinked " + std::to_string(n) + " reference(s)");
     }
     ImGui::EndDisabled();
@@ -848,7 +931,13 @@ void writeSampleDialog(App& a, const std::string& title, const std::string& name
   fileDialog(a, title.c_str(), true, {".wav"}, safeFileName(name) + ".wav", [&a, make](const std::string& p) {
     std::string path = p, err;
     if (fs::path(path).extension().empty()) path += ".wav";
-    if (make(path, err)) {
+    bool ok = false;
+    try {  // (out of memory on a long clip, a file system error)
+      ok = make(path, err);
+    } catch (const std::exception& e) {
+      err = e.what();
+    }
+    if (ok) {
       a.notify("Saved " + fs::path(path).filename().string());
       a.uiSound(uisound::Event::Export);
     } else {
@@ -894,7 +983,35 @@ void startRenderTo(App& a, const std::string& folder) {
   startJob(a);
 }
 
+void devStart(App& a, const DevRender& r) {
+  initDialog(a);
+  for (int k = 0; k < 5; ++k) dlg.fmt[k] = (r.formats >> k) & 1;
+  dlg.scope = r.scope;
+  dlg.dest = r.dest;
+  dlg.rateIdx = std::clamp(r.sampleRate, 0, 6);
+  dlg.s.splitMixer = r.split == 1;
+  dlg.s.splitPlaylist = r.split == 2;
+  dlg.s.splitPlaylistGroups = r.split == 3;
+  std::snprintf(dlg.folder, sizeof dlg.folder, "%s", r.folder.c_str());
+  startJob(a);
+}
+
+void devCancel() { job.cancel = true; }
+
+std::string devState() {
+  std::lock_guard<std::mutex> lk(job.mu);
+  char b[256];
+  std::snprintf(b, sizeof b, "running %d finished %d progress %.3f files %zu errors %zu cancelled %d", job.running.load() ? 1 : 0, job.finished.load() ? 1 : 0, job.progress.load(),
+                job.outcome.files.size(), job.outcome.errors.size(), job.outcome.cancelled ? 1 : 0);
+  std::string out = b;
+  out += " (renders so far: " + std::to_string(devRendersFinished) + " finished, " + std::to_string(devRendersCancelled) + " cancelled, " +
+         std::to_string(devRendersFailed) + " with errors)";
+  for (const auto& e : job.outcome.errors) out += "\n  error: " + e;
+  return out;
+}
+
 void draw(App& a) {
+  host::runUiThreadTasks();  // hosted plugin calls of a render on its worker
   if (a.showExport) openRender(a, Preset::Audio);  // Ctrl+R / older entry points
   drawRenderDialog(a);
   drawProgress(a);
@@ -978,18 +1095,50 @@ void exportMidiDialog(App& a, int scope) {
   });
 }
 
+namespace {
+
+// Missing files of a package: one red card (the archive lacks them), the paths as its details.
+void notifyMissing(App& a, const char* what, const std::vector<std::string>& missingFiles) {
+  if (missingFiles.empty()) return;
+  std::string list;
+  for (const auto& m : missingFiles) list += (list.empty() ? "" : "\n") + m;
+  a.notify(std::string(what) + " written without " + std::to_string(missingFiles.size()) +
+               " missing file(s); relink them with File > Locate missing samples",
+           true, list);
+}
+
+// What a package could not carry: every file by name, in the card's details.
+void notifyPackReport(App& a, const char* what, const CollectReport& r) {
+  notifyMissing(a, what, r.missing);
+  auto listOf = [](const std::vector<std::string>& files) {
+    std::string list;
+    for (const auto& m : files) list += (list.empty() ? "" : "\n") + m;
+    return list;
+  };
+  if (!r.unpacked.empty())
+    a.notify(std::string(what) + " still points at " + std::to_string(r.unpacked.size()) +
+                 " file(s) outside it; whoever receives it will not have them",
+             true, listOf(r.unpacked));
+  if (!r.insidePlugins.empty())
+    a.notify(std::string(what) + " holds " + std::to_string(r.insidePlugins.size()) +
+                 " file(s) that third-party plugins name in their own state; on another computer, point the plugin at them",
+             false, listOf(r.insidePlugins));
+}
+
+}  // namespace
+
 void exportDataFilesDialog(App& a) {
   fileDialog(a, "Export project data files into folder", false, {"/"}, "", [&a](const std::string& dir) {
     captureHostedStates(a);
     const std::string folder = (fs::path(dir) / safeFileName(projectName(a))).string();
     CollectReport r = exportProjectDataFiles(a.doc.song(), folder, safeFileName(projectName(a)));
-    if (!r.error.empty())
+    if (!r.error.empty()) {
       a.notify("Export failed: " + r.error, true);
-    else
-      a.notify("Project + " + std::to_string(r.copied + r.reused) + " file(s) in " + folder +
-                   (r.missing.empty() ? std::string() : " (" + std::to_string(r.missing.size()) + " missing)"),
-               !r.missing.empty());
-    if (r.error.empty() && r.missing.empty()) a.uiSound(uisound::Event::Export);
+      return;
+    }
+    a.notify("Project + " + std::to_string(r.copied + r.reused) + " file(s) in " + folder);
+    notifyPackReport(a, "Project data files", r);
+    if (r.missing.empty() && r.unpacked.empty()) a.uiSound(uisound::Event::Export);
   });
 }
 
@@ -1003,24 +1152,12 @@ void exportBonesDialog(App& a) {
     else {
       a.notify("Bones: " + std::to_string(r.files.copied + r.files.reused) + " samples, " + std::to_string(r.midiFiles) + " MIDI files, " +
                std::to_string(r.presets) + " presets, " + std::to_string(r.chains) + " effect chains");
-      a.uiSound(uisound::Event::Export);
+      notifyPackReport(a, "Project bones", r.files);
+      if (r.files.missing.empty() && r.files.unpacked.empty()) a.uiSound(uisound::Event::Export);
     }
   });
 }
 
-namespace {
-
-// Missing files of a package: one red card (the archive lacks them), the paths as its details.
-void notifyMissing(App& a, const char* what, const std::vector<std::string>& missingFiles) {
-  if (missingFiles.empty()) return;
-  std::string list;
-  for (const auto& m : missingFiles) list += (list.empty() ? "" : "\n") + m;
-  a.notify(std::string(what) + " written without " + std::to_string(missingFiles.size()) +
-               " missing file(s); relink them with File > Locate missing samples",
-           true, list);
-}
-
-}  // namespace
 
 // J-80: both run as a background job (FlpExportUi.h): Gridline-only
 // instruments are rendered to samples first, with progress and cancel; the
@@ -1041,7 +1178,7 @@ bool writeGridlineZip(App& a, const std::string& path, std::string* note) {
     a.notify("Could not save the zipped project: " + r.error, true, path);
     return false;
   }
-  notifyMissing(a, "Zipped project", r.missing);
+  notifyPackReport(a, "Zipped project", r);
   if (note && r.copied) *note = " (" + std::to_string(r.copied) + " file(s))";
   return true;
 }
@@ -1071,10 +1208,16 @@ void exportZipDialog(App& a) {
 }
 
 void openMissingSamples(App& a) {
+  // K-42: from a menu: the list fills from a check off the interface thread.
+  openMissingSamples(a, remotefs::isRemote(a.projectFile()) ? std::vector<std::string>{} : missingFiles(a.doc.song()));
+}
+
+void openMissingSamples(App&, std::vector<std::string> known) {
   missing.open = true;
   missing.found = {};
   missing.searched = false;
-  missing.files = missingFiles(a.doc.song());
+  missing.files = std::move(known);
+  missing.nextCheck = 0;
 }
 
 void importAudioAsClip(App& a, const std::string& path) {
@@ -1192,6 +1335,7 @@ void exportClipAudio(App& a, ObjectId clip) {
 
 void shutdown() {
   job.cancel = true;
+  host::serveUiThreadTasksWhile(job.running);  // the render may be waiting for its plugins to close
   if (job.worker.joinable()) job.worker.join();
 }
 

@@ -13,6 +13,7 @@
 #include <mutex>
 #include <sstream>
 #include "../../engine/pitch/Kernel.h"
+#include "../../core/SfzText.h"
 #include "plasma_dsp.h"
 
 namespace gl::packs::plasma {
@@ -763,20 +764,13 @@ int noteNumber(const std::string& v) {
 }
 }  // namespace
 
-bool parseSfz(const std::string& path, std::vector<Zone>& zones, std::string* err) {
-  std::ifstream f(path);
-  if (!f) {
+bool parseSfz(const std::string& path, std::vector<Zone>& zones, std::string* err, int* skipped) {
+  sfz::Expanded expanded;  // comments gone, #include and #define applied
+  if (!sfz::expand(path, expanded)) {
     if (err) *err = "cannot open " + path;
     return false;
   }
-  std::stringstream ss;
-  ss << f.rdbuf();
-  std::string text = ss.str();
-  // strip comments
-  for (size_t p = text.find("//"); p != std::string::npos; p = text.find("//", p)) {
-    const size_t e = text.find('\n', p);
-    text.erase(p, e == std::string::npos ? std::string::npos : e - p);
-  }
+  const std::string& text = expanded.text;
   std::string dir = path;
   const size_t sl = dir.find_last_of("/\\");
   dir = sl == std::string::npos ? "" : dir.substr(0, sl + 1);
@@ -797,7 +791,10 @@ bool parseSfz(const std::string& path, std::vector<Zone>& zones, std::string* er
     const std::string full = (sp.size() && (sp[0] == '/' || std::filesystem::u8path(sp).is_absolute())) ? sp : dir + dp + sp;
     Zone z;
     z.s = loadSample(full);
-    if (!z.s) return;
+    if (!z.s) {
+      if (skipped) ++*skipped;
+      return;
+    }
     auto num = [&](const char* k, double d) { return o.count(k) ? std::atof(o[k].c_str()) : d; };
     auto key = [&](const char* k, int d) {
       if (!o.count(k)) return d;

@@ -1549,9 +1549,13 @@ bool loadProject(const std::string& path, Song& out, std::string* err) {
   if (!is) return fail(err, "cannot open " + path);
   std::stringstream ss;
   ss << is.rdbuf();
+  return loadProjectText(ss.str(), path, out, err);
+}
+
+bool loadProjectText(const std::string& text, const std::string& path, Song& out, std::string* err) {
   Json j;
   size_t pos = 0;
-  if (!jsonParse(ss.str(), j, &pos)) return fail(err, "JSON syntax error at byte " + std::to_string(pos));
+  if (!jsonParse(text, j, &pos)) return fail(err, "JSON syntax error at byte " + std::to_string(pos));
   if (!songFromJson(j, out, err)) return false;
   // Portable projects (zipped / exported data files) refer to their files
   // relative to the project file.

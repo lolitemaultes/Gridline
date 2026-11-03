@@ -17,6 +17,8 @@ inline constexpr int kProjectSchemaVersion = 8;  // v7 (J-98): gl.bitcrush Bits 
 inline constexpr const char* kProjectFormatTag = "gridline-project";
 
 bool loadProject(const std::string& path, Song& out, std::string* err = nullptr);
+// The same from the file's text, already read (K-42); `path` places its relative references.
+bool loadProjectText(const std::string& text, const std::string& path, Song& out, std::string* err = nullptr);
 // Atomic: writes `<path>.tmp` then renames over `path`, so a crash never
 // leaves a half-written project.
 bool saveProject(const std::string& path, const Song& song, std::string* err = nullptr);

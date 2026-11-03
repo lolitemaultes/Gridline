@@ -1328,6 +1328,7 @@ JobWork pExport(Environment& env, const Json& a, std::string& err) {
   const std::string factory = env.factoryData.empty() ? flp::defaultFactoryData() : env.factoryData;
   return [song, path, format, pattern, factory](Job& job) {
     std::string e;
+    size_t missing = 0;  // files the package could not hold
     job.setStatus("Exporting " + fs::path(path).filename().string());
     if (format == "midi") {
       MidiFileData m = pattern != kNoId ? patternToMidi(*song, pattern) : songToMidi(*song);
@@ -1343,9 +1344,10 @@ JobWork pExport(Environment& env, const Json& a, std::string& err) {
       opt.flp.factoryData = factory;
       flp::PackageReport rep;
       if (!flp::exportFlpZip(*song, path, fs::path(path).stem().string(), opt, rep, &e)) return fail(e);
+      missing = rep.missing.size();
     }
     std::error_code ec;
-    ToolResult r = ok(jobj({{"path", jstr(path)}, {"format", jstr(format)}, {"bytes", jnum(static_cast<double>(fs::file_size(path, ec)))}}),
+    ToolResult r = ok(jobj({{"path", jstr(path)}, {"format", jstr(format)}, {"missingFiles", jnum(static_cast<double>(missing))}, {"bytes", jnum(static_cast<double>(fs::file_size(path, ec)))}}),
                       "exported " + fs::path(path).filename().string());
     r.changed = true;
     return r;

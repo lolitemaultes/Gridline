@@ -1,4 +1,5 @@
 #include "Dylib.h"
+#include "../core/Crash.h"
 #include <filesystem>
 #include <map>
 #include <mutex>
@@ -124,6 +125,7 @@ void* open(const std::string& path, std::string* err, bool) {
   DWORD oldMode = 0;
   SetThreadErrorMode(SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX, &oldMode);
   HMODULE h = LoadLibraryExW(widen(path).c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+  gl::crash::modulesChanged();  // K-39: named in a crash report from here on
   SetThreadErrorMode(oldMode, nullptr);
   if (!h && err) *err = "LoadLibrary: " + lastError();
   return reinterpret_cast<void*>(h);
@@ -161,6 +163,7 @@ std::string pathOf(const void* address) {
 #else
 void* open(const std::string& path, std::string* err, bool now) {
   void* h = dlopen(path.c_str(), (now ? RTLD_NOW : RTLD_LAZY) | RTLD_LOCAL);
+  gl::crash::modulesChanged();  // K-39: named in a crash report from here on
   if (!h && err) {
     const char* e = dlerror();
     *err = std::string("dlopen: ") + (e ? e : "failed");
