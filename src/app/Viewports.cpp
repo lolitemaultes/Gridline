@@ -847,6 +847,27 @@ void freezeDetachedMove() {
 
 }  // namespace
 
+namespace {
+void hookBackend() {
+  ImGuiPlatformIO& pio = ImGui::GetPlatformIO();
+  S.createWindow = pio.Platform_CreateWindow, pio.Platform_CreateWindow = wCreate;
+  S.destroyWindow = pio.Platform_DestroyWindow, pio.Platform_DestroyWindow = wDestroy;
+  S.showWindow = pio.Platform_ShowWindow, pio.Platform_ShowWindow = wShow;
+  S.setPos = pio.Platform_SetWindowPos, pio.Platform_SetWindowPos = wSetPos;
+  S.getPos = pio.Platform_GetWindowPos, pio.Platform_GetWindowPos = wGetPos;
+  S.setSize = pio.Platform_SetWindowSize, pio.Platform_SetWindowSize = wSetSize;
+  S.getSize = pio.Platform_GetWindowSize, pio.Platform_GetWindowSize = wGetSize;
+  S.getFbScale = pio.Platform_GetWindowFramebufferScale, pio.Platform_GetWindowFramebufferScale = wFbScale;
+  S.setFocus = pio.Platform_SetWindowFocus, pio.Platform_SetWindowFocus = wSetFocus;
+  S.getFocus = pio.Platform_GetWindowFocus, pio.Platform_GetWindowFocus = wGetFocus;
+}
+}  // namespace
+
+void backendRestarted(SDL_GLContext gl) {
+  S.gl = gl;
+  if (S.installed && S.available) hookBackend();
+}
+
 void install(SDL_Window* mainWindow, SDL_GLContext gl, const Options& o) {
   ImGuiIO& io = ImGui::GetIO();
   ImGuiPlatformIO& pio = ImGui::GetPlatformIO();
@@ -866,16 +887,7 @@ void install(SDL_Window* mainWindow, SDL_GLContext gl, const Options& o) {
   io.ConfigViewportsNoDecoration = false;
   io.ConfigViewportsNoTaskBarIcon = true;  // one taskbar entry: the main window
   if (S.available) {
-    S.createWindow = pio.Platform_CreateWindow, pio.Platform_CreateWindow = wCreate;
-    S.destroyWindow = pio.Platform_DestroyWindow, pio.Platform_DestroyWindow = wDestroy;
-    S.showWindow = pio.Platform_ShowWindow, pio.Platform_ShowWindow = wShow;
-    S.setPos = pio.Platform_SetWindowPos, pio.Platform_SetWindowPos = wSetPos;
-    S.getPos = pio.Platform_GetWindowPos, pio.Platform_GetWindowPos = wGetPos;
-    S.setSize = pio.Platform_SetWindowSize, pio.Platform_SetWindowSize = wSetSize;
-    S.getSize = pio.Platform_GetWindowSize, pio.Platform_GetWindowSize = wGetSize;
-    S.getFbScale = pio.Platform_GetWindowFramebufferScale, pio.Platform_GetWindowFramebufferScale = wFbScale;
-    S.setFocus = pio.Platform_SetWindowFocus, pio.Platform_SetWindowFocus = wSetFocus;
-    S.getFocus = pio.Platform_GetWindowFocus, pio.Platform_GetWindowFocus = wGetFocus;
+    hookBackend();
     GImGui->ViewportLateCreateFilter = lateCreate;
     GImGui->CloseRequestFilter = closeFilter;
     GImGui->DockNodeWindowMenuHandler = windowMenu;

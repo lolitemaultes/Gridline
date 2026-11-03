@@ -14,6 +14,7 @@
 #include "RackReveal.h"
 #include "../core/Timeline.h"
 #include "../core/Backup.h"
+#include "../core/MenuOpsExtra.h"
 #include "../core/Document.h"
 #include "../core/Launcher.h"
 #include "../core/Recents.h"
@@ -367,8 +368,19 @@ class App {
   void playedNoteOn(ObjectId channel, int pitch, int velocity);
   void playedNoteOff(ObjectId channel, int pitch);
   void publishMidi();                          // routing / sync settings → engine and drivers
-  double tapTimes_[4] = {0, 0, 0, 0};
-  int tapCount_ = 0;
+  // K-48: one tapper for the top bar button, its key, the controller action and the Tools menu.
+  ops::TapTempo tapper;
+  uint64_t tapRunSerial_ = 0;  // the history step this run of taps writes to (0: none yet)
+  // Registers a tap on the beat and returns the tempo read so far (0 before the second tap), without
+  // changing the song (the Tools menu measures, then sets).
+  double tapMeasure();
+  // A tap on the beat: from the second tap on the song tempo follows, one undo step for a run of taps.
+  void tapTempo();
+  void tapReset();
+  // A run of taps is open: the next tap continues it.
+  bool tapListening() const;
+  // Seconds since the last tap (a large value when there is none).
+  double tapAge() const;
   void importMidi(const std::string& path);
   // J-52: FL Studio projects (.flp) open as projects: the converted song,
   // shown under the FL file's name (`openedFrom`) with the import report; Save

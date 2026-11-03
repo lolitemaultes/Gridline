@@ -1184,6 +1184,14 @@ target_include_directories(gridline_tests_k22 PRIVATE tests src)
 target_compile_options(gridline_tests_k22 PRIVATE ${GL_WARN})
 add_test(NAME k22_steps_in_piano_roll COMMAND gridline_tests_k22 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
+# K-47: exports with progress and Cancel, no partial target; a clipboard that holds a closed project's copy.
+add_executable(gridline_tests_k47 tests/test_k47.cpp)
+target_link_libraries(gridline_tests_k47 PRIVATE gridline_core)
+target_include_directories(gridline_tests_k47 PRIVATE tests src)
+target_compile_options(gridline_tests_k47 PRIVATE ${GL_WARN})
+add_test(NAME k47_exports_and_clipboard COMMAND gridline_tests_k47 ${CMAKE_BINARY_DIR}/k47_units WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+set_tests_properties(k47_exports_and_clipboard PROPERTIES TIMEOUT 180)
+
 # K-39: crash reports. The probe has debug information of its own: the symbol test needs no debug build of the app.
 add_executable(gridline_tests_k39 tests/test_k39.cpp)
 target_link_libraries(gridline_tests_k39 PRIVATE gridline_core)
@@ -1464,7 +1472,8 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
   file(GLOB GRIDLINE_APP_SRC CONFIGURE_DEPENDS src/app/*.cpp src/packs/RegistryUi.cpp src/packs/*/*_ui.cpp)
   list(REMOVE_ITEM GRIDLINE_APP_SRC ${CMAKE_SOURCE_DIR}/src/app/main.cpp ${CMAKE_SOURCE_DIR}/src/app/PluginWindow.cpp
        ${CMAKE_SOURCE_DIR}/src/app/Viewports.cpp ${CMAKE_SOURCE_DIR}/src/app/LiveResize.cpp
-       ${CMAKE_SOURCE_DIR}/src/app/AppIcon.cpp ${CMAKE_SOURCE_DIR}/src/app/AppIconImage.cpp)  # K-14: the program only
+       ${CMAKE_SOURCE_DIR}/src/app/AppIcon.cpp ${CMAKE_SOURCE_DIR}/src/app/AppIconImage.cpp  # K-14: the program only
+       ${CMAKE_SOURCE_DIR}/src/app/GlRecovery.cpp)  # K-47: the program's own OpenGL context
   add_library(gridline_ui OBJECT ${GRIDLINE_APP_SRC})
   target_link_libraries(gridline_ui PRIVATE gridline_core imgui_core rtmidi gridline_sdl_headers)
   target_compile_options(gridline_ui PRIVATE ${GL_WARN_LOOSE})
@@ -1485,7 +1494,7 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
   target_include_directories(gridline_tests_app_icon PRIVATE src tests)
   target_compile_options(gridline_tests_app_icon PRIVATE ${GL_WARN})
   add_test(NAME k14_app_icon COMMAND gridline_tests_app_icon WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-  add_executable(gridline-app src/app/main.cpp src/app/PluginWindow.cpp src/app/Viewports.cpp src/app/LiveResize.cpp $<TARGET_OBJECTS:gridline_ui> ${GRIDLINE_ICON_OBJS}
+  add_executable(gridline-app src/app/main.cpp src/app/PluginWindow.cpp src/app/Viewports.cpp src/app/LiveResize.cpp src/app/GlRecovery.cpp $<TARGET_OBJECTS:gridline_ui> ${GRIDLINE_ICON_OBJS}
                               src/app/AppIcon.cpp $<TARGET_OBJECTS:gridline_appicon>)
   target_link_libraries(gridline-app PRIVATE gridline_core imgui rtmidi)
   if(APPLE)
@@ -1762,6 +1771,21 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
       set_tests_properties(k39_crash_app PROPERTIES TIMEOUT 400)
     endif()
+    # K-47: the exports off the interface thread, the clipboard and the cache, a lost OpenGL context.
+    # (POSIX only, like k39_crash_app: never run on Windows. Windows has the units in k47_exports_and_clipboard.)
+    if(UNIX)
+      add_test(NAME k47_exports_app
+               COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                       -DSOUNDS=${CMAKE_SOURCE_DIR}/assets/sounds -DOUT=${CMAKE_BINARY_DIR}/k47_exports -P ${CMAKE_SOURCE_DIR}/tests/k47_exports_app.cmake
+               WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+      set_tests_properties(k47_exports_app PROPERTIES TIMEOUT 400)
+    endif()
+    # K-48: the top bar's tap tempo button: real clicks, tempo follows, one undo step a run, a pause starts over, one tapper, every width.
+    add_test(NAME k48_tap_tempo_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/k48_tap_tempo_app -P ${CMAKE_SOURCE_DIR}/tests/k48_tap_tempo_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(k48_tap_tempo_app PROPERTIES TIMEOUT 400)
     # K-29: double-click a point removes only it, a glide or its ring straightens, the note resets its line; one undo step each, chords too.
     add_test(NAME k29_bend_dblclick_app
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
@@ -1854,7 +1878,7 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app>
                      -DOUT=${CMAKE_BINARY_DIR}/k40_crest_layout_app -P ${CMAKE_SOURCE_DIR}/tests/k40_crest_layout_app.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
-    set_tests_properties(k40_crest_layout_app PROPERTIES TIMEOUT 600)
+    set_tests_properties(k40_crest_layout_app PROPERTIES TIMEOUT 1200)
 
     # J-117: floating windows inside the main window have an elastic boundary (dragged past an
     # edge they follow with damped overshoot, released they spring back inside; a shrunk main

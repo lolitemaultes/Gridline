@@ -1,5 +1,7 @@
 // Gridline — project interop. See ProjectInterop.h.
 #include "ProjectInterop.h"
+#include "I18n.h"
+#include "Platform.h"
 #include "ProjectArchive.h"
 #include "ProjectFiles.h"
 #include "RemoteFs.h"
@@ -487,18 +489,113 @@ void walkAbsolutePaths(const Json& j, std::set<std::string>& seen, std::vector<s
   }
 }
 
-// Copies `src` to `dst` unless the same content is there. False + the reason on failure.
-bool copyInto(const fs::path& src, const fs::path& dst, CollectReport& rep) {
+const char* const kCopyingStatus = i18n::N_("Copying the project's files");
+
+// K-47: how far an export is, in bytes of the files it carries.
+class ExportMeter {
+ public:
+  ExportMeter(const ExportControl* c, const char* status) : c_(c), status_(status) {}
+  bool on() const { return c_ != nullptr; }
+  bool stopped() const { return c_ && c_->cancelled(); }
+  void addTotal(const fs::path& file) {
+    if (!c_) return;
+    std::error_code ec;
+    const uint64_t n = fs::file_size(file, ec);
+    if (!ec) total_ += n;
+  }
+  void advance(uint64_t bytes) {
+    done_ += bytes;
+    if (!c_ || !c_->progress) return;
+    // The last part of the bar is what follows the files (the project itself, the archive's index).
+    c_->progress(total_ ? 0.95 * std::min(1.0, static_cast<double>(done_) / static_cast<double>(total_)) : 0.0, status_);
+  }
+  void say(double done, const char* status) const {
+    if (c_ && c_->progress) c_->progress(done, status);
+  }
+
+ private:
+  const ExportControl* c_;
+  std::string status_;
+  uint64_t total_ = 0, done_ = 0;
+};
+
+// Under a temporary name, so nothing cut off ever stands under the real one. False: failed
+// (rep.error) or stopped (rep.cancelled).
+bool copyInChunks(const fs::path& src, const fs::path& dst, CollectReport& rep, ExportMeter& meter) {
+  const fs::path tmp = fs::u8path(dst.u8string() + ".part");
   std::error_code ec;
-  if (fs::exists(dst, ec) && (fs::equivalent(dst, src, ec) || sameContent(dst, src))) {
+  auto drop = [&] { fs::remove(tmp, ec); };
+  const std::string cannotWrite = "cannot copy " + src.u8string() + ": could not write " + dst.u8string() + " (is the disk full?)";
+  {
+    std::ifstream in(src, std::ios::binary);
+    std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+    if (!in || !out) {
+      out.close();
+      drop();
+      rep.error = in ? cannotWrite : "cannot copy " + src.u8string();
+      return false;
+    }
+    std::vector<char> buf(1u << 20);
+    while (in) {
+      if (meter.stopped()) {
+        rep.cancelled = true;
+        out.close();
+        drop();
+        return false;
+      }
+      in.read(buf.data(), static_cast<std::streamsize>(buf.size()));
+      const std::streamsize got = in.gcount();
+      if (got > 0) out.write(buf.data(), got);
+      if (!out || in.bad()) {
+        out.close();
+        drop();
+        rep.error = cannotWrite;
+        return false;
+      }
+      meter.advance(static_cast<uint64_t>(got));
+    }
+    out.close();
+    if (!out) {
+      drop();
+      rep.error = cannotWrite;
+      return false;
+    }
+  }
+  fs::permissions(tmp, fs::status(src, ec).permissions(), ec);
+  ec.clear();
+  std::string why;
+  if (!platform::replaceFile(tmp.u8string(), dst.u8string(), &why)) {
+    drop();
+    rep.error = "cannot copy " + src.u8string() + ": " + why;
+    return false;
+  }
+  return true;
+}
+
+// Copies `src` to `dst` unless the same content is there. False + the reason on failure.
+bool copyInto(const fs::path& src, const fs::path& dst, CollectReport& rep, ExportMeter& meter) {
+  std::error_code ec;
+  if (meter.stopped()) {
+    rep.cancelled = true;
+    return false;
+  }
+  const bool there = fs::exists(dst, ec);
+  if (there && (fs::equivalent(dst, src, ec) || sameContent(dst, src))) {
     ++rep.reused;
+    if (meter.on()) {
+      const uint64_t n = fs::file_size(src, ec);
+      if (!ec) meter.advance(n);
+    }
     return true;
   }
   fs::create_directories(dst.parent_path(), ec);
-  if (!fs::copy_file(src, dst, fs::copy_options::overwrite_existing, ec)) {
+  if (meter.on()) {
+    if (!copyInChunks(src, dst, rep, meter)) return false;
+  } else if (!fs::copy_file(src, dst, fs::copy_options::overwrite_existing, ec)) {
     rep.error = "cannot copy " + src.u8string() + ": " + ec.message();
     return false;
   }
+  if (!there) rep.created.push_back(dst.u8string());
   ++rep.copied;
   return true;
 }
@@ -751,7 +848,19 @@ int resolveRelativePaths(Song& song, const std::string& baseDir) {
   });
 }
 
-CollectReport collectFiles(Song& song, const std::string& folder, const std::string& relativeTo) {
+void undoCollect(const CollectReport& report, const std::string& folder) {
+  const fs::path top = fs::u8path(folder).lexically_normal();
+  std::error_code ec;
+  for (const auto& f : report.created) {
+    fs::path p = fs::u8path(f).lexically_normal();
+    fs::remove(p, ec);
+    // Folders it leaves empty, up to the top. (Removing a folder that holds anything fails: it stays.)
+    for (p = p.parent_path(); p != top && !p.empty() && p != p.parent_path() && p.u8string().rfind(top.u8string(), 0) == 0; p = p.parent_path())
+      if (!fs::remove(p, ec)) break;
+  }
+}
+
+CollectReport collectFiles(Song& song, const std::string& folder, const std::string& relativeTo, const ExportControl* control) {
   CollectReport rep;
   std::error_code ec;
   const fs::path root = fs::u8path(folder);
@@ -759,6 +868,23 @@ CollectReport collectFiles(Song& song, const std::string& folder, const std::str
   if (ec) {
     rep.error = "cannot create " + folder;
     return rep;
+  }
+  ExportMeter meter(control, kCopyingStatus);
+  if (meter.on()) {  // how much there is to copy, for the progress bar
+    std::set<std::string> counted;
+    visitSong(song, [&](std::string& p, RefKind kind) {
+      if (!counted.insert(p).second) return;
+      if (kind == RefKind::Folder) {
+        if (existsFolder(p))
+          for (const auto& [f, member] : folderRefFiles(p)) meter.addTotal(fs::u8path(f));
+      } else if (existsFile(p)) {
+        if (const SfzBundle sfz = isSfz(p) ? sfzBundle(p) : SfzBundle{}; sfz.ok) {
+          for (const auto& [src, member] : sfz.members) meter.addTotal(fs::u8path(src));
+        } else {
+          meter.addTotal(fs::u8path(p));
+        }
+      }
+    });
   }
   std::set<std::string> missing;
   auto addMissing = [&](const std::string& p) {
@@ -771,7 +897,7 @@ CollectReport collectFiles(Song& song, const std::string& folder, const std::str
     return relativeTo.empty() ? dst : fs::u8path(dst).lexically_relative(fs::u8path(relativeTo)).generic_u8string();
   };
   visitSong(song, [&](std::string& p, RefKind kind) {
-    if (!rep.error.empty()) return;
+    if (!rep.error.empty() || rep.cancelled) return;
     if (kind == RefKind::Folder ? !existsFolder(p) : !existsFile(p)) {
       addMissing(p);
       return;
@@ -787,7 +913,7 @@ CollectReport collectFiles(Song& song, const std::string& folder, const std::str
         for (const auto& [f, name] : files) {
           if (!existsFile(f)) {
             addMissing(f);
-          } else if (!copyInto(fs::u8path(f), dst / fs::u8path(name), rep)) {
+          } else if (!copyInto(fs::u8path(f), dst / fs::u8path(name), rep, meter)) {
             return;
           } else {
             carried[f] = (dst / fs::u8path(name)).lexically_normal().u8string();
@@ -802,12 +928,13 @@ CollectReport collectFiles(Song& song, const std::string& folder, const std::str
         };
         const fs::path dir = freeFolder(root, fs::u8path(p).stem().u8string(), usedNames, holds);
         for (const auto& [src, member] : sfz.members) {
-          if (!copyInto(fs::u8path(src), dir / fs::u8path(member), rep)) return;
+          if (!copyInto(fs::u8path(src), dir / fs::u8path(member), rep, meter)) return;
           carried[src] = (dir / fs::u8path(member)).lexically_normal().u8string();
         }
         dst = dir / fs::u8path(name);
         fs::create_directories(dir, ec);
         if (!holds(dir)) {
+          if (!fs::exists(dst, ec)) rep.created.push_back(dst.u8string());
           std::ofstream o(dst, std::ios::binary | std::ios::trunc);
           o << sfz.text;
           o.close();
@@ -829,7 +956,7 @@ CollectReport collectFiles(Song& song, const std::string& folder, const std::str
           if (fs::equivalent(dst, src, ec) || sameContent(dst, src)) break;
         }
         usedNames.insert(lower(dst.u8string()));
-        if (!copyInto(src, dst, rep)) return;
+        if (!copyInto(src, dst, rep, meter)) return;
       }
       it = done.emplace(p, dst.lexically_normal().u8string()).first;
       rep.moved[p] = it->second;
@@ -837,7 +964,10 @@ CollectReport collectFiles(Song& song, const std::string& folder, const std::str
     }
     p = refTo(it->second);
   });
-  if (!rep.error.empty()) return rep;
+  if (!rep.error.empty() || rep.cancelled) {
+    if (meter.on()) undoCollect(rep, folder);
+    return rep;
+  }
   // Sidecars beside their files (a file collected onto itself keeps its own).
   for (auto c = carried.begin(); c != carried.end();)
     c = c->first == c->second ? carried.erase(c) : std::next(c);
@@ -849,11 +979,13 @@ CollectReport collectFiles(Song& song, const std::string& folder, const std::str
     }
   });
   for (const auto& [to, text] : sidecars) {
+    if (!fs::exists(fs::u8path(to), ec)) rep.created.push_back(to);
     std::ofstream o(fs::u8path(to), std::ios::binary | std::ios::trunc);
     o << text;
     o.close();
     if (!o) {
       rep.error = "cannot write " + to;
+      if (meter.on()) undoCollect(rep, folder);
       return rep;
     }
   }
@@ -868,15 +1000,34 @@ std::vector<std::string> absolutePathsInProject(const std::string& projectText) 
   return out;
 }
 
-CollectReport exportProjectDataFiles(const Song& song, const std::string& folder, const std::string& name) {
+namespace {
+
+// The folder of an export: what a run that does not finish takes away again.
+struct ExportFolder {
+  fs::path folder;
+  bool existed = false;
+  explicit ExportFolder(const std::string& path) : folder(fs::u8path(path)) {
+    std::error_code ec;
+    existed = fs::exists(folder, ec);
+  }
+  void undo(const CollectReport& rep) const {
+    std::error_code ec;
+    if (!existed) fs::remove_all(folder, ec);  // this run made it: all of it goes
+    else undoCollect(rep, folder.u8string());
+  }
+};
+
+CollectReport writeDataFiles(const Song& song, const std::string& folder, const std::string& name, const ExportControl* control) {
   Song copy = song;
-  CollectReport rep = collectFiles(copy, (fs::u8path(folder) / "Samples").u8string(), folder);
-  if (!rep.error.empty()) return rep;
+  CollectReport rep = collectFiles(copy, (fs::u8path(folder) / "Samples").u8string(), folder, control);
+  if (!rep.error.empty() || rep.cancelled) return rep;
   std::map<std::string, std::string> keys;
   for (const auto& [from, to] : rep.moved) keys[from] = fs::u8path(to).lexically_relative(fs::u8path(folder)).generic_u8string();
   relinkReceipt(copy, keys);
   // Third-party plugins' own references: copied too, and named in the report.
   rep.insidePlugins = insidePluginFiles(copy);
+  ExportMeter meter(control, kCopyingStatus);
+  for (const auto& p : rep.insidePlugins) meter.addTotal(fs::u8path(p));
   for (const auto& p : rep.insidePlugins) {
     fs::path to;
     std::error_code ec;
@@ -884,41 +1035,98 @@ CollectReport exportProjectDataFiles(const Song& song, const std::string& folder
       to = fs::u8path(folder) / "Samples" / "Inside plugins" / fs::u8path(numberedName(fileNameOf(p), k));
       if (!fs::exists(to, ec) || sameContent(to, fs::u8path(p))) break;
     }
-    if (!copyInto(fs::u8path(p), to, rep)) return rep;
+    if (!copyInto(fs::u8path(p), to, rep, meter)) return rep;
   }
+  if (meter.stopped()) {
+    rep.cancelled = true;
+    return rep;
+  }
+  meter.say(0.96, i18n::N_("Writing the project"));
+  const fs::path project = fs::u8path(folder) / fs::u8path(name + ".gridline.json");
+  std::error_code ec;
+  const bool projectThere = fs::exists(project, ec);
   std::string err;
-  if (!saveProject((fs::u8path(folder) / fs::u8path(name + ".gridline.json")).u8string(), copy, &err)) rep.error = err;
-  else rep.unpacked = absolutePathsInProject(projectToText(copy));
+  if (!saveProject(project.u8string(), copy, &err)) {
+    rep.error = err;
+  } else {
+    if (!projectThere) rep.created.push_back(project.u8string());
+    rep.unpacked = absolutePathsInProject(projectToText(copy));
+  }
   return rep;
 }
 
-BonesReport exportProjectBones(const Song& song, const std::string& folder, const std::string& name) {
+}  // namespace
+
+CollectReport exportProjectDataFiles(const Song& song, const std::string& folder, const std::string& name, const ExportControl* control) {
+  const ExportFolder target(folder);
+  CollectReport rep = writeDataFiles(song, folder, name, control);
+  if (!rep.error.empty() || rep.cancelled) target.undo(rep);
+  return rep;
+}
+
+BonesReport exportProjectBones(const Song& song, const std::string& folder, const std::string& name, const ExportControl* control) {
   BonesReport rep;
-  rep.files = exportProjectDataFiles(song, folder, name);
-  if (!rep.files.error.empty()) return rep;
+  const ExportFolder target(folder);
+  const fs::path midiDir = fs::u8path(folder) / "MIDI", presetDir = fs::u8path(folder) / "Presets";
   std::error_code ec;
-  const fs::path midiDir = fs::path(folder) / "MIDI";
+  const bool midiThere = fs::exists(midiDir, ec), presetsThere = fs::exists(presetDir, ec);
+  rep.files = writeDataFiles(song, folder, name, control);
+  // A run that does not finish: what it added goes. MIDI and presets of an earlier export in the
+  // same place are whole files, old or new (each one replaces its file at once).
+  auto stop = [&](const std::string& why) {
+    rep.files.error = why;
+    if (!midiThere) fs::remove_all(midiDir, ec);
+    if (!presetsThere) fs::remove_all(presetDir, ec);
+    target.undo(rep.files);
+    return rep;
+  };
+  if (!rep.files.error.empty() || rep.files.cancelled) return stop(rep.files.error);
+  const ExportMeter meter(control, "");
+  auto stopped = [&] {
+    if (!meter.stopped()) return false;
+    rep.files.cancelled = true;
+    return true;
+  };
+  meter.say(0.97, i18n::N_("Writing MIDI files and presets"));
   fs::create_directories(midiDir, ec);
+  auto writeMidi = [&](const std::string& fileName, const MidiFileData& m) {
+    std::string safe = fileName;
+    for (char& c : safe)
+      if (c == '/' || c == '\\' || c == ':') c = '_';
+    const fs::path file = midiDir / fs::u8path(safe);
+    const std::string tmp = file.u8string() + ".part";
+    return writeMidiFile(tmp, m) && platform::replaceFile(tmp, file.u8string());
+  };
   int k = 0;
   for (const auto& p : song.patterns) {
     ++k;
+    if (stopped()) return stop("");
     MidiFileData m = patternToMidi(song, p.id);
     if (m.tracks.empty()) continue;
     char num[32];
     std::snprintf(num, sizeof num, "%02d ", k);
-    if (writeMidiFile((midiDir / (num + p.name + ".mid")).string(), m)) ++rep.midiFiles;
+    if (!writeMidi(num + p.name + ".mid", m)) return stop("cannot write the MIDI file of " + p.name + " in " + midiDir.u8string());
+    ++rep.midiFiles;
   }
   if (!song.playlist.empty()) {
     MidiFileData m = songToMidi(song);
-    if (!m.tracks.empty() && writeMidiFile((midiDir / (name + " (song).mid")).string(), m)) ++rep.midiFiles;
+    if (!m.tracks.empty()) {
+      if (!writeMidi(name + " (song).mid", m)) return stop("cannot write the song's MIDI file in " + midiDir.u8string());
+      ++rep.midiFiles;
+    }
   }
   // Instrument states and effect chains, with references to the collected files.
   Song copy = song;
   relinkFiles(copy, rep.files.moved);
-  const std::string presets = (fs::path(folder) / "Presets").string();
-  for (const auto& c : copy.channels)
-    if (!c.plugin.type.empty() && savePreset(presets, c.plugin, c.name, "project bones: " + name)) ++rep.presets;
+  const std::string presets = presetDir.u8string();
+  for (const auto& c : copy.channels) {
+    if (stopped()) return stop("");
+    if (c.plugin.type.empty()) continue;
+    if (!savePreset(presets, c.plugin, c.name, "project bones: " + name)) return stop("cannot write the preset of " + c.name + " in " + presets);
+    ++rep.presets;
+  }
   for (size_t i = 0; i < copy.mixer.size(); ++i) {
+    if (stopped()) return stop("");
     const auto& m = copy.mixer[i];
     ChainPreset chain;
     bool any = false;
@@ -927,12 +1135,14 @@ BonesReport exportProjectBones(const Song& song, const std::string& folder, cons
       chain.mix.push_back(sl.mix);
       any = any || !sl.plugin.type.empty();
     }
-    if (any && saveChain(presets, chain, mixerTrackName(copy, i))) ++rep.chains;
+    if (!any) continue;
+    if (!saveChain(presets, chain, mixerTrackName(copy, i))) return stop("cannot write the effect chain of " + mixerTrackName(copy, i) + " in " + presets);
+    ++rep.chains;
   }
   return rep;
 }
 
-CollectReport exportZippedProject(const Song& song, const std::string& zipPath, const std::string& name) {
+CollectReport exportZippedProject(const Song& song, const std::string& zipPath, const std::string& name, const ExportControl* control) {
   CollectReport rep;
   Song copy = song;
   std::map<std::string, std::string> entry;  // source → archive name (a file, a folder or a map)
@@ -999,7 +1209,15 @@ CollectReport exportZippedProject(const Song& song, const std::string& zipPath, 
     for (const auto& [src, n] : extra) carried.emplace(src, n);
     for (const auto& [n, t] : sidecarsFor(carried, uniqueEntry)) generated.emplace_back(n, t);
   }
+  ExportMeter meter(control, i18n::N_("Packing the project's files"));
+  for (const auto& [src, n] : extra) meter.addTotal(fs::u8path(src));
   ZipWriter z;
+  if (meter.on())
+    z.setChunkHook([&meter](uint64_t bytes) {  // (a stopped writer never replaces the target)
+      if (meter.stopped()) return false;
+      meter.advance(bytes);
+      return true;
+    });
   std::string err;
   if (!z.open(zipPath, &err)) {
     rep.error = err;
@@ -1018,12 +1236,18 @@ CollectReport exportZippedProject(const Song& song, const std::string& zipPath, 
     ++rep.copied;
   }
   for (const auto& [src, n] : extra) {
-    if (!z.addFile(n, src, &err)) {
-      rep.error = err;
+    if (meter.stopped() || !z.addFile(n, src, &err)) {
+      if (meter.stopped()) rep.cancelled = true;
+      else rep.error = err;
       return rep;
     }
     ++rep.copied;
   }
+  if (meter.stopped()) {  // (the temporary archive goes with the writer)
+    rep.cancelled = true;
+    return rep;
+  }
+  meter.say(0.98, i18n::N_("Finishing the archive"));
   if (!z.close(&err)) rep.error = err;
   // Nothing may stay behind unnoticed: whatever the walk above does not know is named here.
   rep.unpacked = absolutePathsInProject(text);

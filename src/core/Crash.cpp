@@ -658,6 +658,46 @@ void setGpu(const char* vendor, const char* renderer, const char* version) {
   copyText(s->gpu, sizeof s->gpu, t.c_str());
 }
 
+void endAfterGraphicsLoss(const char* why) {
+  if (installed()) {
+    crumb("graphics lost for good", why);
+    char clean[480];
+    scrubText(why ? why : "", clean, sizeof clean, gHome, gUser);
+    char thread[64];
+    plat::currentThreadName(thread, sizeof thread);
+    ReportInfo info;
+    info.kind = "graphics";
+    info.cause = "graphics driver reset";
+    info.note = "a new OpenGL context could not be made";
+    info.message = clean;
+    info.thread = thread;
+    plat::currentStack(info);
+    SessionBlock* s = session();
+    char name[128];
+    if (writeReportToDisk(info, name, sizeof name) && s) {
+      copyText(s->reportName, sizeof s->reportName, name);
+      s->reportReady.store(1);
+      s->frozen.store(0);
+    }
+    // This thread is healthy and the song is whole: the copy is a plain save.
+    RescueFn fn = rescueFn();
+    if (s && fn && s->unsaved.load(std::memory_order_relaxed)) {
+      char tmp[1200], final[1200], mark[1200];
+      rescuePaths(tmp, sizeof tmp, final, sizeof final, mark, sizeof mark);
+      std::error_code ec;
+      if (fn(tmp)) {
+        fs::rename(fs::u8path(tmp), fs::u8path(final), ec);
+        if (!ec) std::ofstream(fs::u8path(mark), std::ios::trunc) << plat::unixTime();
+      } else {
+        fs::remove(fs::u8path(tmp), ec);
+      }
+    }
+  }
+  std::fprintf(stderr, "Gridline lost its graphics driver and could not get it back; a report was written.\n");
+  std::fflush(nullptr);
+  std::_Exit(3);
+}
+
 // ---- recoverable failures ----
 namespace {
 

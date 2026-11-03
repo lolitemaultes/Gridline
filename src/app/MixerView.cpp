@@ -14,6 +14,8 @@
 #include "CollabUi.h"
 #include "CursorAnchor.h"
 #include "../core/I18n.h"
+#include "../core/Platform.h"
+#include "ExportUi.h"
 #include "Keys.h"
 #include "Look.h"
 #include "../../third_party/imgui/imgui.h"
@@ -878,22 +880,45 @@ void renderMixerStems(App& a, const std::vector<ObjectId>& tracks) {
                       captureHostedStates(a);
                       namespace fs = std::filesystem;
                       fs::path pth(path);
-                      std::string dir = pth.parent_path().string(), stem = pth.stem().string();
-                      std::error_code ec;
-                      fs::create_directories(dir, ec);
-                      const Song& song = a.doc.song();
+                      const std::string dir = pth.parent_path().string(), stem = pth.stem().string();
+                      const Song song = a.doc.song();
                       const int sr = static_cast<int>(a.engine.sampleRate());
-                      int files = 0;
-                      for (const auto& job : mixops::stemJobs(song, ids, dir, stem)) {
-                        RenderOptions o;
-                        o.sampleRate = sr;
-                        o.tail = song.barTicks();
-                        AudioBuffer buf = renderSong(mixops::stemSong(song, job.track), o);
-                        if (buf.frames == 0) continue;
-                        if (writeWav(job.file, buf, sr, 24)) ++files;
-                      }
-                      a.notify(files ? "Rendered " + std::to_string(files) + " track(s) to " + dir : std::string("Nothing rendered: the song is empty"),
-                               files == 0);
+                      // K-47: off the interface thread, as every render.
+                      exportui::startFileJob(a, i18n::N_("Rendering tracks to wave files"), song, [song, ids, dir, stem, sr](const ExportControl& control) -> exportui::FileJobDone {
+                        std::error_code ec;
+                        fs::create_directories(dir, ec);
+                        const auto jobs = mixops::stemJobs(song, ids, dir, stem);
+                        std::vector<std::string> written;
+                        bool failed = false;
+                        std::string failedFile;
+                        for (size_t k = 0; k < jobs.size() && !control.cancelled() && !failed; ++k) {
+                          const auto& job = jobs[k];
+                          RenderOptions o;
+                          o.sampleRate = sr;
+                          o.tail = song.barTicks();
+                          o.cancel = control.cancel;
+                          const double part = 1.0 / static_cast<double>(jobs.size());
+                          o.progress = [&control, k, part](double p) { control.progress((static_cast<double>(k) + p) * part, i18n::N_("Rendering tracks to wave files")); };
+                          AudioBuffer buf = renderSong(mixops::stemSong(song, job.track), o);
+                          if (control.cancelled() || buf.frames == 0) continue;
+                          const std::string tmp = job.file + ".part.wav";  // whole or not at all under the real name
+                          if (writeWav(tmp, buf, sr, 24) && platform::replaceFile(tmp, job.file)) {
+                            written.push_back(job.file);
+                          } else {
+                            fs::remove(fs::u8path(tmp), ec);
+                            failed = true;
+                            failedFile = job.file;
+                          }
+                        }
+                        const bool cancelled = control.cancelled();
+                        if (cancelled || failed)
+                          for (const auto& f : written) fs::remove(fs::u8path(f), ec);
+                        return [cancelled, failed, failedFile, files = written.size(), dir](App& app) {
+                          if (cancelled) app.notify("Render cancelled");
+                          else if (failed) app.notify("Could not write " + failedFile, true);
+                          else app.notify(files ? "Rendered " + std::to_string(files) + " track(s) to " + dir : std::string("Nothing rendered: the song is empty"), files == 0);
+                        };
+                      });
                     });
 }
 

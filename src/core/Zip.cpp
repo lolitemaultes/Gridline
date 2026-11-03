@@ -202,6 +202,10 @@ bool ZipWriter::addFile(const std::string& name, const std::string& sourcePath, 
     }
     if (!ok_) return fail(err, fileWriteError(path_, errno_));
     left -= want;
+    if (chunkHook_ && !chunkHook_(want)) {
+      ok_ = false;
+      return fail(err, "stopped");
+    }
   }
   if (in.peek() != std::char_traits<char>::eof() || in.bad()) return unreadable();
   entries_.back().crc = crc;

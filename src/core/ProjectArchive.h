@@ -101,6 +101,10 @@ int pinUnpacked(const Song& song, const std::string& cacheRoot = "");
 std::vector<std::string> copiesUsedBy(const Song& song, const std::string& cacheRoot = "");
 // Claims a copy that is there. Empty when it is not there or its lock cannot be had.
 CopyHold holdCopy(const std::string& folder, const std::string& cacheRoot = "");
+// K-47: keeps the copies `song` refers to for something that outlives the project they came from, the
+// clipboard for one. As long as the holds live nothing removes them. Where a lock cannot be had the
+// copy is marked (pinUnpacked) instead, so it stays until the person clears it: the sound never goes.
+std::vector<CopyHold> holdCopiesOf(const Song& song, const std::string& cacheRoot = "");
 // Removes copies, oldest first, until the cache holds at most `limit` bytes. Copies in use, marked
 // folders, copies crash recovery points at, `keep` and folders used in the last `minAgeSeconds` stay;
 // copies a recent backup points at go last. Returns how many folders went.

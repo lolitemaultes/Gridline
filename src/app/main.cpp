@@ -67,6 +67,10 @@
 #include "../packs/PacksUi.h"
 #include "DialogLayout.h"
 #include "ExportUi.h"
+#include "GlEpoch.h"
+#include "GlRecovery.h"
+#include <fstream>
+#include "../core/Log.h"
 #include "DevStress.h"
 #include "StemsUi.h"
 #include "TrackReceiptUi.h"
@@ -1230,7 +1234,43 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       }
     } else if (l.cmd == "save") {  // K-9: save <file>
       const std::string to = l.args.empty() ? l.a0 : l.args[0];
-      std::printf("save frame %d: %s %s\n", frame, app.saveProject(to) ? "saved" : "failed", to.c_str());
+      const bool saved = app.saveProject(to);
+      exportui::waitFileJob();  // K-47: a zipped project saves in the background; its card follows on the next frame
+      std::printf("save frame %d: %s %s\n", frame, saved ? "saved" : "failed", to.c_str());
+      std::fflush(stdout);
+    } else if (l.cmd == "ppmdiff" && l.args.size() >= 2) {  // K-47: ppmdiff <a> <b>: how many pixels of two "shot" pictures differ
+      auto readPpm = [](const std::string& file) {
+        std::ifstream f(fs::u8path(file), std::ios::binary);
+        std::string magic;
+        int w = 0, h = 0, depth = 0;
+        f >> magic >> w >> h >> depth;
+        f.get();
+        std::vector<char> px(static_cast<size_t>(std::max(w, 0)) * static_cast<size_t>(std::max(h, 0)) * 3);
+        f.read(px.data(), static_cast<std::streamsize>(px.size()));
+        return px;
+      };
+      const std::vector<char> pa = readPpm(l.args[0]), pb = readPpm(l.args[1]);
+      size_t differ = 0;
+      for (size_t i = 0; i + 2 < pa.size() && i + 2 < pb.size(); i += 3) differ += pa[i] != pb[i] || pa[i + 1] != pb[i + 1] || pa[i + 2] != pb[i + 2] ? 1 : 0;
+      std::printf("ppmdiff pixels %zu differ %zu\n", pa.size() / 3, pa.size() == pb.size() ? differ : pa.size() / 3);
+      std::fflush(stdout);
+    } else if (l.cmd == "docstate") {  // K-47: is the project modified, and where does it live
+      std::printf("docstate modified %d path %s\n", app.doc.modified() ? 1 : 0, app.projectFile().c_str());
+      std::fflush(stdout);
+    } else if (l.cmd == "glreset") {  // K-47: glreset: the next frame finds the OpenGL context lost; all that follows is real
+      glrecovery::simulateLoss();
+    } else if (l.cmd == "filejob") {  // K-47: filejob data|bones|zip|clip|sample <target> · cancel · wait · state
+      exportui::devFileJob(app, l.args);
+    } else if (l.cmd == "edit") {  // K-47: edit copy|paste <mixer|rack> [mixer index], through the Edit menu's own code
+      const std::string what = l.args.empty() ? "" : l.args[0];
+      if (l.args.size() > 1 && l.args[1] == "mixer") app.editFocus = App::EditFocus::Mixer;
+      if (l.args.size() > 2) {
+        const int m = std::atoi(l.args[2].c_str());
+        if (m >= 0 && m < static_cast<int>(app.doc.song().mixer.size())) app.selMixer = app.doc.song().mixer[static_cast<size_t>(m)].id;
+      }
+      if (what == "copy") menus::editCopy(app);
+      else if (what == "paste") menus::editPaste(app);
+      std::printf("edit %s frame %d\n", what.c_str(), frame);
       std::fflush(stdout);
     } else if (l.cmd == "stress") {  // a seeded stress run (DevStress.h)
       devstress::start(l.args);
@@ -1274,6 +1314,18 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       const std::string& name = l.args.empty() ? l.a0 : l.args[0];
       const std::string& secs = l.args.size() > 1 ? l.args[1] : l.a1;
       devWait = {name, std::max(0.0, std::strtod(secs.c_str(), nullptr)), SDL_GetPerformanceCounter(), true};
+    } else if (l.cmd == "taptempo") {  // K-48: "taptempo": the shared tapper to stdout; "taptempo action": the controller action; "taptempo bar": where the top bar's groups sit
+      if (l.a0 == "action") {
+        app.runAction(RemoteAction::TapTempo);
+      } else if (l.a0 == "bar") {
+        for (const char* n : {"stop", "bar_transport", "bar_tempo", "taptempo", "bar_pos", "bar_pattern", "bar_master", "bar_monitor", "bar_windows", "bar_more"}) {
+          float x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+          if (topBarButtonRect(n, x0, y0, x1, y1)) std::printf("bar frame %d: %s %.1f %.1f %.1f %.1f\n", frame, n, static_cast<double>(x0), static_cast<double>(y0), static_cast<double>(x1), static_cast<double>(y1));
+        }
+      } else {
+        std::printf("taptempo frame %d: taps %d bpm %.3f tempo %.3f undo %zu listening %d\n", frame, static_cast<int>(app.tapper.taps.size()), app.tapper.bpm(), app.doc.song().tempo, app.doc.history().position(), app.tapListening() ? 1 : 0);
+      }
+      std::fflush(stdout);
     } else if (l.cmd == "tempo" && l.a0.empty()) {  // J-198: the song tempo to stdout
       std::printf("tempo frame %d: %.3f undo %zu\n", frame, app.doc.song().tempo, app.doc.history().position());
       std::fflush(stdout);
@@ -1677,9 +1729,10 @@ int main(int argc, char** argv) {
     crash::markCleanExit();
     return 1;
   }
-  SDL_GLContext gl = SDL_GL_CreateContext(window);
+  SDL_GLContext gl = glrecovery::createContext(window);  // K-47: robust where the driver offers it
   SDL_GL_MakeCurrent(window, gl);
   SDL_GL_SetSwapInterval(1);
+  glrecovery::attach();
   crash::setGpu(reinterpret_cast<const char*>(glGetString(GL_VENDOR)), reinterpret_cast<const char*>(glGetString(GL_RENDERER)),
                 reinterpret_cast<const char*>(glGetString(GL_VERSION)));
 
@@ -1725,7 +1778,8 @@ int main(int argc, char** argv) {
     return runCrashDialog(window, gl, crashDialogReport, crashDialogSession, crashDialogShot, crashDialogFrames, crashDialogScale, fBold, fMono, assets);
   }
   viewports::install(window, gl, {startHidden});  // J-113: detachable windows
-  if (startHidden) {
+  auto keepDevClipboard = [startHidden]() {
+    if (!startHidden) return;
     // J-78: automated runs keep their own clipboard (a scripted click on a
     // notification must not replace what the user copied); stdout shows it.
     static std::string devClipboard;
@@ -1735,7 +1789,8 @@ int main(int argc, char** argv) {
       std::printf("clipboard: %s\n", devClipboard.c_str());
     };
     pio.Platform_GetClipboardTextFn = [](ImGuiContext*) -> const char* { return devClipboard.c_str(); };
-  }
+  };
+  keepDevClipboard();
   theme::setMarkTextureProvider(&markTexture);
 
   // ---- splash: each real start-up step advances the bar ----
@@ -2302,6 +2357,7 @@ int main(int argc, char** argv) {
   int crashForceCount = 0;
   float lastUiScale = 1.0f;  // the failing-interface pop-up draws at the same size
   bool crashTestDirty = hiddenRun && std::getenv("GRIDLINE_CRASH_TEST_DIRTY") != nullptr;
+  const char* graphicsLost = nullptr;  // K-47: why, until it is dealt with
   auto frame = [&](bool live) {
     liveresize::frameBegin(live);
     uint64_t statT = 0;
@@ -2627,6 +2683,7 @@ int main(int argc, char** argv) {
     if (!devSaveAt.empty() && frameNo == 3) {
       app.saveProject(devSaveAt);
       flpexport::wait();  // J-80: an FL format saves in the background; its card is up on the next frame
+      exportui::waitFileJob();  // K-47: so does a zipped project
     }
     if (devChords && frameNo == 3) j31::openChordEditor(app);
     if (!devDialog.empty() && frameNo == 3) {  // a popup opened before frame 3 is closed again
@@ -2750,6 +2807,7 @@ int main(int argc, char** argv) {
       running = false;
     }
     if (useOffscreen) offscreen.use(false);
+    if (const char* why = glrecovery::poll()) graphicsLost = why;  // K-47: seen on the main context, dealt with between frames
     fstats::since(fstats::Ui, statT);
     statT = fstats::stamp();
     viewports::renderWindows();  // J-113: the detached windows
@@ -2846,6 +2904,66 @@ int main(int argc, char** argv) {
     }
   };
   liveresize::install(window, [&guardedFrame]() { guardedFrame(true); });
+  // K-47: the context is gone (a driver update, a driver timeout): it and what lives in it are made
+  // again; the project and the sound never noticed. False: no new context could be had.
+  int graphicsRecoveries = 0;
+  std::vector<double> graphicsLosses;
+  auto recoverGraphics = [&](const char* why) {
+    crash::BusyScope busy("graphics driver reset", 60);
+    crash::crumb("graphics reset", why);
+    logging::warning("graphics", std::string("The OpenGL context was lost: ") + why);
+    const int interval = SDL_GL_GetSwapInterval();
+    glrecovery::waitForResetToEnd(10000);
+    pluginWindowsGraphicsLost();
+    ImGui_ImplOpenGL3_Shutdown();  // (the detached windows go here; they come back on the next frame)
+    ImGui_ImplSDL2_Shutdown();
+    SDL_GL_MakeCurrent(window, nullptr);
+    SDL_GL_DeleteContext(gl);
+    gl = glrecovery::recreateContext(window, 10000);
+    if (!gl) return false;
+    SDL_GL_MakeCurrent(window, gl);
+    SDL_GL_SetSwapInterval(interval);
+    glrecovery::attach();
+    crash::setGpu(reinterpret_cast<const char*>(glGetString(GL_VENDOR)), reinterpret_cast<const char*>(glGetString(GL_RENDERER)),
+                  reinterpret_cast<const char*>(glGetString(GL_VERSION)));
+    ImGui_ImplSDL2_InitForOpenGL(window, gl);
+    ImGui_ImplOpenGL3_Init(glsl);
+    if (std::getenv("GRIDLINE_DEV_NO_VTX_OFFSET")) ImGui::GetIO().BackendFlags &= ~ImGuiBackendFlags_RendererHasVtxOffset;
+    keepDevClipboard();
+    viewports::backendRestarted(gl);
+    glepoch::next();
+    glrecovery::restoreTextures();
+    pluginWindowsGraphicsBack(window, gl);
+    if (useOffscreen) offscreen.create(offscreen.w, offscreen.h);
+    ++graphicsRecoveries;
+    devsig::reach("graphics-recovered");
+    return true;
+  };
+  auto dealWithGraphicsLoss = [&]() {
+    const char* why = graphicsLost;
+    graphicsLost = nullptr;
+    // A driver that keeps resetting is not coming back either.
+    const double nowSeconds = static_cast<double>(SDL_GetTicks()) / 1000.0;
+    graphicsLosses.erase(std::remove_if(graphicsLosses.begin(), graphicsLosses.end(), [&](double t) { return nowSeconds - t > 60.0; }), graphicsLosses.end());
+    graphicsLosses.push_back(nowSeconds);
+    bool back = false;
+    if (graphicsLosses.size() <= 3) {
+      try {
+        back = recoverGraphics(why);
+      } catch (...) {
+        crash::reportCurrentException("Rebuilding the display");
+      }
+    }
+    if (!back) {
+      try {
+        captureHostedStates(app);  // (the copy below holds what the plugins say now)
+      } catch (...) {
+        crash::crumb("graphics: plugin state not read");
+      }
+      crash::endAfterGraphicsLoss(why);
+    }
+    app.notify("The graphics driver restarted. Gridline rebuilt its display, and your project and the sound are as they were.");
+  };
   crash::armWatchdog();
   while (running) {
     prof::beginFrame();
@@ -2924,6 +3042,7 @@ int main(int argc, char** argv) {
     }
     liveresize::pumpEnd();
     fstats::since(fstats::Events, statT);
+    if (graphicsLost) dealWithGraphicsLoss();
     guardedFrame(false);
     if (failedFrames >= 3) keepsFailing();
     prof::endFrame();
@@ -2940,7 +3059,7 @@ int main(int argc, char** argv) {
 
   if (!devSaveAtExit.empty()) {
     captureHostedStates(app);
-    std::fprintf(stderr, "%s %s\n", app.saveProject(devSaveAtExit) && (flpexport::wait(), true) ? "saved" : "could not save", devSaveAtExit.c_str());
+    std::fprintf(stderr, "%s %s\n", app.saveProject(devSaveAtExit) && (flpexport::wait(), exportui::waitFileJob(), true) ? "saved" : "could not save", devSaveAtExit.c_str());
   }
   // J-103: no background thread may run into static teardown (a plugin scan finishing then
   // locked the destroyed class registry mutex: "mutex lock failed", abort on quit).

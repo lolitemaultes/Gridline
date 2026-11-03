@@ -60,6 +60,7 @@ def source_files():
     files += glob.glob(os.path.join(ROOT, "src", "plugin", "*.mm"))  # J-64: Cocoa views, hosted plugins' windows, Audio Unit
     files += glob.glob(os.path.join(ROOT, "src", "collab", "*.cpp"))  # J-111: collaboration messages (codes, refusals, connection test)
     files.append(os.path.join(ROOT, "src", "core", "TrackIconSet.cpp"))  # J-211: track icon and category names
+    files.append(os.path.join(ROOT, "src", "core", "ProjectInterop.cpp"))  # K-47: what a running export is doing (N_)
     return sorted(files)
 
 

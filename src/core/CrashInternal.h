@@ -135,7 +135,7 @@ extern char gProgramName[56];  // the main program's module name
 // ---- what a report says ----
 constexpr int kMaxFrames = 64;
 struct ReportInfo {
-  const char* kind = "crash";      // crash, freeze, exception, ended
+  const char* kind = "crash";      // crash, freeze, exception, ended, graphics
   const char* cause = nullptr;     // SIGSEGV, EXCEPTION_ACCESS_VIOLATION, ...
   int64_t code = 0;
   int64_t number = 0;

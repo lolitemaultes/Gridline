@@ -65,6 +65,8 @@ std::string ageText(int64_t seconds) {
 
 // The honest state of the user's work after this report.
 std::string workLine(const crash::PendingReport& r) {
+  if (r.kind == "graphics" && r.recoveryRescued)
+    return tr("A copy of your project was saved when this happened, with every change. Nothing was damaged: open it to carry on.");
   if (r.recoveryRescued)
     return tr("A copy of your project was saved at the moment this happened. Memory may already have been damaged by then, so check the copy before you save over the original.");
   if (!r.recoveryFile.empty() && r.recoverySaved > 0)
@@ -80,12 +82,15 @@ std::string leadFor(const crash::PendingReport& r) {
     return tr("The interface has not answered for a while. It may still be working on something long: if it comes back, this window closes by itself.");
   if (r.kind == "ended")
     return tr("Gridline ended without saying why. It may have been closed from outside, or the computer may have run out of memory.");
+  if (r.kind == "graphics")
+    return tr("The graphics driver stopped working and did not come back for Gridline, so it had to close. A driver update or a driver timeout can do this. Restarting Gridline usually puts it right; if not, restart the computer.");
   return tr("Gridline hit a serious error and had to close. After a fault like this its memory can no longer be trusted, so it cannot safely keep running.");
 }
 
 std::string titleFor(const std::string& kind) {
   if (kind == "freeze") return tr("Gridline is not responding");
   if (kind == "ended") return tr("Gridline ended unexpectedly");
+  if (kind == "graphics") return tr("Gridline lost the graphics driver");
   return tr("Gridline stopped after an error");
 }
 

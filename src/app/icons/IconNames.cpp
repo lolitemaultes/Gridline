@@ -172,6 +172,7 @@ const char* iconSvgName(Icon icon) {
     case Icon::HeartFilled: return "heart-filled";
     case Icon::People: return "people";
     case Icon::RouteFree: return "route-free";
+    case Icon::TapTempo: return "tap-tempo";
     case Icon::Count: break;
   }
   return nullptr;

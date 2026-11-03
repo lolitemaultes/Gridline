@@ -77,6 +77,11 @@ std::string reportCurrentException(const char* where);
 // The queue the pop-up drains (UI thread).
 bool takeRecoverable(Recoverable& out);
 
+// K-47: the graphics driver went and Gridline could not get it back. Nothing is wrong with the memory,
+// so a report and a fresh recovery copy are written here and now, and the app ends: the pop-up process
+// shows the report with the copy, in a process of its own. UI thread. (Not installed: it just ends.)
+[[noreturn]] void endAfterGraphicsLoss(const char* why);
+
 // ---- recovery copies ----
 // A fresher copy saved from the crash path, in a forked child: `save(path)` runs on a copy of the
 // process's memory. Its failure costs nothing; the last periodic copy stays.
@@ -89,7 +94,7 @@ std::string sessionId();  // this run's name: <unix time>-<pid>
 // ---- reports on disk (normal code: UI thread, sentinel, dialog) ----
 struct PendingReport {
   std::string path;
-  std::string kind;        // crash, freeze, exception, ended
+  std::string kind;        // crash, freeze, exception, ended, graphics
   std::string id;
   std::string text;        // the whole code
   std::string sessionId;   // whose recovery copy belongs to it ("" none)

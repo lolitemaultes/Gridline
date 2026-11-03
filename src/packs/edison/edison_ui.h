@@ -94,6 +94,7 @@ struct Session {
   uint64_t specSerial = 0;
   std::future<Spectrogram> specJob;
   unsigned tex = 0;
+  uint64_t texEpoch = 0;  // K-47: the OpenGL context it was made in
   int texW = 0, texH = 0;
   bool texDirty = false;
   Levels levels;

@@ -5,6 +5,7 @@
 #include "PluginUI.h"
 
 union SDL_Event;
+struct SDL_Window;
 
 namespace gl {
 
@@ -12,6 +13,11 @@ class App;
 namespace host {
 class HostedInstance;
 }
+
+// K-47: a graphics driver reset: the plugin windows' bars let go of the lost context, then come back
+// on the new one (defined with the windows).
+void pluginWindowsGraphicsLost();
+void pluginWindowsGraphicsBack(SDL_Window* mainWindow, void* mainGl);
 
 // Running hosted plugin behind a channel instrument / mixer slot (nullptr when
 // not hosted, not instantiated or missing).

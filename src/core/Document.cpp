@@ -165,6 +165,7 @@ void Document::reset(Song song) {
   undo_.clear();
   savedSerial_ = undo_.stateSerial();
   ++revision_;
+  ++projectEpoch_;
 }
 
 void Document::exec(CommandPtr cmd, bool mayJoin, bool clipLevels) {

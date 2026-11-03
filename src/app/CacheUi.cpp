@@ -41,6 +41,7 @@ struct State {
   bool haveUses = false;
   archive::CopyHold nextUse;
   std::vector<std::string> nextFolders;
+  std::vector<std::string> moreFolders;  // K-47: claimed on top of what is held
   bool sweepDue = false;
   Clock::time_point sweepAt{};
   bool clearWanted = false;
@@ -62,7 +63,7 @@ struct State {
     for (;;) {
       if (stop && !haveUses && !sweepDue) return;
       const bool sweepNow = sweepDue && (stop || Clock::now() >= sweepAt);
-      if (!haveUses && !sweepNow && !clearWanted && !measureWanted) {
+      if (!haveUses && moreFolders.empty() && !sweepNow && !clearWanted && !measureWanted) {
         if (sweepDue) wake.wait_until(lk, sweepAt);
         else wake.wait(lk);
         continue;
@@ -82,6 +83,17 @@ struct State {
             if (archive::CopyHold h = archive::holdCopy(f)) held.push_back(std::move(h));
         use = std::move(newUse);
         folders = std::move(held);
+        lk.lock();
+      } else if (!moreFolders.empty()) {
+        std::vector<std::string> names = std::move(moreFolders);
+        moreFolders.clear();
+        lk.unlock();
+        for (const auto& f : names) {
+          bool have = use && use->folder == f;
+          for (const auto& h : folders) have = have || h->folder == f;
+          if (!have)
+            if (archive::CopyHold h = archive::holdCopy(f)) folders.push_back(std::move(h));
+        }
         lk.lock();
       } else if (clearWanted) {
         clearWanted = false;
@@ -239,8 +251,23 @@ void projectChanged(App& a, archive::CopyHold use) {
     u.st->haveUses = true;
     u.st->nextUse = std::move(use);
     u.st->nextFolders = std::move(folders);
+    u.st->moreFolders.clear();
     u.st->sweepDue = true;
     u.st->sweepAt = Clock::now() + std::chrono::milliseconds(static_cast<int>(kCloseGrace * 1000.0));
+  }
+  u.st->wake.notify_all();
+}
+
+void projectUsesMore(App& a) {
+  if (a.embedded) return;
+  std::vector<std::string> folders = archive::copiesUsedBy(a.doc.song());  // (no disk)
+  if (folders.empty()) return;
+  Ui& u = ui_();
+  u.holdsCopy = true;
+  ensureWorker();
+  {
+    std::lock_guard<std::mutex> lk(u.st->mu);
+    u.st->moreFolders = std::move(folders);
   }
   u.st->wake.notify_all();
 }

@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include "../../third_party/imgui/imgui.h"
 #include "MenuParityUi.h"
 #include "App.h"
 #include "AutomationEditor.h"
@@ -171,21 +172,38 @@ void App::runAction(RemoteAction action, bool fromMmc) {
     }
     case RemoteAction::Undo: doc.undo(); break;
     case RemoteAction::Redo: doc.redo(); break;
-    case RemoteAction::TapTempo: {
-      if (tapCount_ > 0 && now - tapTimes_[(tapCount_ - 1) % 4] > 2.0) tapCount_ = 0;  // start over
-      tapTimes_[tapCount_ % 4] = now;
-      ++tapCount_;
-      int k = std::min(tapCount_, 4);
-      if (k >= 2) {
-        double first = tapTimes_[(tapCount_ - k) % 4], last = tapTimes_[(tapCount_ - 1) % 4];
-        double bpm = 60.0 * (k - 1) / std::max(1e-3, last - first);
-        if (bpm >= 10 && bpm <= 522) doc.setParam(songParam(SongParam::Tempo), std::round(bpm * 10) / 10, false);
-      }
-      break;
-    }
+    case RemoteAction::TapTempo: tapTempo(); break;
     default: break;
   }
 }
+
+// ------------------------------------------------------------ tap tempo ----
+
+double App::tapMeasure() {
+  const double t = ImGui::GetTime();  // frame time: one clock for the mouse, the keys and controllers
+  if (tapper.taps.empty() || t - tapper.taps.back() > tapper.resetAfter) tapRunSerial_ = 0;  // a new run
+  else if (t <= tapper.taps.back()) return tapper.bpm();  // a second source in the same frame is one tap
+  return tapper.tap(t);
+}
+
+void App::tapTempo() {
+  const double bpm = tapMeasure();
+  if (bpm <= 0 || bpm >= 522.0) return;  // nothing to follow yet, or a bounce rather than a beat
+  const uint64_t before = doc.history().stateSerial();
+  // The step of this run if it is still the newest; an edit or undo since then starts a new one.
+  doc.amendStep(tapRunSerial_, [&] { doc.setParam(songParam(SongParam::Tempo), std::round(bpm * 10.0) / 10.0, false); });
+  const uint64_t after = doc.history().stateSerial();
+  if (after != before) tapRunSerial_ = after;
+}
+
+void App::tapReset() {
+  tapper.reset();
+  tapRunSerial_ = 0;
+}
+
+bool App::tapListening() const { return !tapper.taps.empty() && ImGui::GetTime() - tapper.taps.back() <= tapper.resetAfter; }
+
+double App::tapAge() const { return tapper.taps.empty() ? 1e9 : ImGui::GetTime() - tapper.taps.back(); }
 
 void App::playedNoteOn(ObjectId channel, int pitch, int velocity) {
   j31::chordEditorNote(*this, pitch, true);  // J-31: learn chords from MIDI input

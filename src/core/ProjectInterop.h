@@ -75,6 +75,14 @@ std::vector<std::string> bundleMembers(const std::string& path);
 std::map<std::string, std::string> sidecarsFor(const std::map<std::string, std::string>& files,
                                                const std::function<std::string(const std::string& fileName)>& freeName);
 
+// K-47: progress and Cancel for the exports that can take long. Called from whichever thread runs
+// the export. Without one an export runs to its end, as before.
+struct ExportControl {
+  std::function<void(double done, const std::string& status)> progress;  // 0..1, a short status line
+  const std::atomic<bool>* cancel = nullptr;
+  bool cancelled() const { return cancel && cancel->load(std::memory_order_relaxed); }
+};
+
 struct CollectReport {
   int copied = 0;                       // files copied
   int reused = 0;                       // identical file already in the folder
@@ -87,17 +95,24 @@ struct CollectReport {
   std::vector<std::string> unpacked;
   std::map<std::string, std::string> moved;  // old path → new path
   std::string error;
+  bool cancelled = false;               // stopped by ExportControl; what it had written is gone again
+  std::vector<std::string> created;     // files this run added to a folder (not ones that were there)
 };
 // Copies every existing referenced file into `folder` (unique names; a file
 // already there with the same content is reused) and points the references
 // at the copies: absolute paths, or paths relative to `relativeTo` when given.
 // A multisample map (.sfz) gets a folder of its own, with its samples beside it
 // and the map rewritten to name them; a folder reference is copied as a folder.
-CollectReport collectFiles(Song& song, const std::string& folder, const std::string& relativeTo = "");
+// With a control the copies go through a temporary name, so a stopped copy leaves no cut-off file,
+// and whatever this run added is removed again after a failure or a Cancel (undoCollect).
+CollectReport collectFiles(Song& song, const std::string& folder, const std::string& relativeTo = "", const ExportControl* control = nullptr);
+// Removes the files a collect added and the folders that leaves empty, up to `folder` itself.
+void undoCollect(const CollectReport& report, const std::string& folder);
 
 // "Export project data files": `<folder>/<name>.gridline.json` + `<folder>/Samples/…`
-// with relative references. The song in memory is not changed.
-CollectReport exportProjectDataFiles(const Song& song, const std::string& folder, const std::string& name);
+// with relative references. The song in memory is not changed. K-47: a failure or a Cancel takes away
+// what this run added (the whole folder when it made it); `error` or `cancelled` says so.
+CollectReport exportProjectDataFiles(const Song& song, const std::string& folder, const std::string& name, const ExportControl* control = nullptr);
 // "Export project bones": data files + one MIDI file per pattern and for the
 // song (MIDI/), every channel's instrument state (Presets/) and every mixer
 // track's effect chain (Presets/chains/).
@@ -105,9 +120,10 @@ struct BonesReport {
   CollectReport files;
   int midiFiles = 0, presets = 0, chains = 0;
 };
-BonesReport exportProjectBones(const Song& song, const std::string& folder, const std::string& name);
-// Zipped project: the project (relative references) + its files in one .zip.
-CollectReport exportZippedProject(const Song& song, const std::string& zipPath, const std::string& name);
+BonesReport exportProjectBones(const Song& song, const std::string& folder, const std::string& name, const ExportControl* control = nullptr);
+// Zipped project: the project (relative references) + its files in one .zip. A failure or a Cancel
+// leaves the target as it was (ZipWriter).
+CollectReport exportZippedProject(const Song& song, const std::string& zipPath, const std::string& name, const ExportControl* control = nullptr);
 // Absolute paths to files that exist on this computer, found anywhere in a project's text.
 std::vector<std::string> absolutePathsInProject(const std::string& projectText);
 // Extracts a zipped project into `dir` and returns the project file inside it

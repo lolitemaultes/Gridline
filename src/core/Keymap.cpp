@@ -58,6 +58,7 @@ std::vector<Command> buildCommands() {
       // ---- global: transport and switches ----
       {"transport.play", G, N_("Play / stop"), {ch(K::Space)}},
       {"transport.songMode", G, N_("Switch pattern / song mode"), {ch(K::L)}},
+      {"transport.tapTempo", G, N_("Tap tempo"), {ch(K::T, C | S)}},  // K-48: every command has a default chord
       {"options.typingKeyboard", G, N_("Typing keyboard to piano"), {ch(K::T, C)}},
       {"options.metronome", G, N_("Metronome"), {ch(K::M, C)}},
       {"tools.stopSound", G, N_("Stop all sound"), {ch(K::H, C)}},

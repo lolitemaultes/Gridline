@@ -201,6 +201,11 @@ class Document {
   // --- saved state --------------------------------------------------------
   bool modified() const { return undo_.stateSerial() != savedSerial_; }
   void markSaved() { savedSerial_ = undo_.stateSerial(); }
+  // K-47: a save that runs in the background writes the song as it was when it started: edits made
+  // since stay unsaved. `projectEpoch` tells whether the same project is still open by then.
+  uint64_t saveSerial() const { return undo_.stateSerial(); }
+  void markSavedAt(uint64_t serial) { savedSerial_ = serial; }
+  uint64_t projectEpoch() const { return projectEpoch_; }
   void markUnsaved() { savedSerial_ = ~uint64_t{0}; }  // K-39: a recovered project is not on disk yet
 
  private:
@@ -216,6 +221,7 @@ class Document {
   std::vector<std::unique_ptr<GroupCommand>> groups_;
   uint64_t savedSerial_ = 0;
   uint64_t revision_ = 0;
+  uint64_t projectEpoch_ = 0;
   ParamId lastTouched_;
   ParamId prevTouched_;
   uint64_t touchSerial_ = 0;

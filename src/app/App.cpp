@@ -621,10 +621,14 @@ bool App::saveProjectAs(const std::string& path, SaveFormat format, std::functio
   crash::crumb("project save", format == SaveFormat::Gridline ? "gridline" : format == SaveFormat::GridlineZip ? "zip" : "fl");
   crash::BusyScope busy("saving");
   captureHostedStates(*this);  // third-party plugin state into the song
-  std::string err, note;
+  std::string err;
   std::string p = path;
   if (format != SaveFormat::Gridline || fs::path(p).extension().empty()) p = withSaveExtension(p, format);
-  auto saved = [this, p, format]() {
+  // K-47: the background saves write the song as it is now. By the time one is done the person may
+  // have edited on (those edits stay unsaved) or opened another project (nothing of this applies to it).
+  const uint64_t epoch = doc.projectEpoch(), serial = doc.saveSerial();
+  auto saved = [this, p, format, epoch, serial]() {
+    if (doc.projectEpoch() != epoch) return;
     if (collabui::active(*this)) {  // J-111: a copy; the project stays the collaborative one
       notify("Saved a copy: " + fs::path(p).filename().string());
       return;
@@ -632,9 +636,16 @@ bool App::saveProjectAs(const std::string& path, SaveFormat format, std::functio
     projectPath = p;
     projectFormat = format;
     openedFrom.clear();
-    doc.markSaved();
+    doc.markSavedAt(serial);
     addRecent(p);
     rememberSketch(p);  // J-141: the launcher's tile shows what was saved
+  };
+  // What was waiting for this save (closing, opening another project) only goes on if nothing
+  // unsaved would be lost by it.
+  auto thenWhenSaved = [this, then, epoch]() {
+    if (!then || doc.projectEpoch() != epoch) return;
+    if (doc.modified()) notify("The project changed while it was saving, so it stayed open. Save it again.", true);
+    else then();
   };
   try {  // J-78: an unexpected failure is reported, never a crash that loses the open project
     switch (format) {
@@ -651,16 +662,21 @@ bool App::saveProjectAs(const std::string& path, SaveFormat format, std::functio
         // J-80: a background job (instruments rendered to samples, progress,
         // cancel); it refuses a read-only target (J-78) and notifies the summary ("Saved x.flp: ...") or the error
         // itself, and the save completes, and `then` runs, when it is done.
-        auto done = [saved, then](bool ok) {
+        auto done = [saved, thenWhenSaved](bool ok) {
           if (!ok) return;
           saved();
-          if (then) then();
+          thenWhenSaved();
         };
         return format == SaveFormat::Flp ? exportui::writeFlpFile(*this, p, done) : exportui::writeFlpZip(*this, p, done);
       }
       case SaveFormat::GridlineZip:
-        if (!exportui::writeGridlineZip(*this, p, &note)) return false;
-        break;
+        // K-47: a background job as well: a zip of a big project takes a while.
+        return exportui::writeGridlineZip(*this, p, [this, p, saved, thenWhenSaved](const std::string& files) {
+          saved();
+          notify("Saved " + fs::path(p).filename().string() + files, false, p);
+          uiSound(uisound::Event::Save);
+          thenWhenSaved();
+        });
       case SaveFormat::Count: return false;
     }
   } catch (const std::exception& e) {
@@ -669,7 +685,7 @@ bool App::saveProjectAs(const std::string& path, SaveFormat format, std::functio
     return false;
   }
   saved();
-  notify("Saved " + fs::path(p).filename().string() + note, false, p);
+  notify("Saved " + fs::path(p).filename().string(), false, p);
   if (!autosaving_) uiSound(uisound::Event::Save);
   if (then) then();
   return true;

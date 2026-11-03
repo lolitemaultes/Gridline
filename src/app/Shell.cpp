@@ -2,6 +2,7 @@
 // plugin build (PH-09): the logo mark texture, the default docked workspace
 // and keeping the docked panels usable while the window is resized.
 #include "Shell.h"
+#include "GlEpoch.h"
 #include "Widgets.h"
 #include <SDL_opengl.h>
 #include <algorithm>
@@ -42,6 +43,11 @@ std::vector<unsigned char> markCoverage(int size) {
 // and faded by the draw list (theme::drawMark), so the holes are true holes.
 ImTextureID markTexture(int px) {
   static std::map<int, GLuint> cache;
+  static uint64_t epoch = glepoch::current();
+  if (epoch != glepoch::current()) {  // K-47: the driver reset took them
+    epoch = glepoch::current();
+    cache.clear();
+  }
   if (px < 8 || px > 1024) return ImTextureID_Invalid;
   if (auto it = cache.find(px); it != cache.end()) return static_cast<ImTextureID>(it->second);
   auto cov = markCoverage(px);

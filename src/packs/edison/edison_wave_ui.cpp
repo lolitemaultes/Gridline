@@ -3,6 +3,7 @@
 // selection with snapping, scrubbing, spectral brush, overview scroller and
 // the bottom bar with view options and level / pitch readouts. J-207: every
 // size from edison_style.h (one row of equal-height controls in the bar).
+#include "../../app/GlEpoch.h"
 #include <SDL_opengl.h>
 #include <algorithm>
 #include <cmath>
@@ -74,6 +75,10 @@ ImU32 heat(uint8_t v) {
 }
 
 void updateSpectrogram(Session& s) {
+  if (s.tex && s.texEpoch != glepoch::current()) {  // K-47: a driver reset took it
+    s.tex = 0;
+    s.texDirty = true;
+  }
   const uint64_t serial = s.hist.serial();
   if (s.specJob.valid() && s.specJob.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
     s.spec = s.specJob.get();
@@ -101,6 +106,7 @@ void updateSpectrogram(Session& s) {
     GLuint t = 0;
     glGenTextures(1, &t);
     s.tex = t;
+    s.texEpoch = glepoch::current();
   }
   glBindTexture(GL_TEXTURE_2D, s.tex);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);

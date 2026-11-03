@@ -85,6 +85,10 @@ msgstr ""
 msgid "Saved template"
 msgstr ""
 
+#: src/app/App.cpp
+msgid "The project changed while it was saving, so it stayed open. Save it again."
+msgstr ""
+
 #: src/app/AsioUi.cpp
 msgid "%d in, %d out · %s"
 msgstr ""
@@ -3845,7 +3849,7 @@ msgstr ""
 msgid "Position"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/ExportUi.cpp
 msgid "Preparing"
 msgstr ""
 
@@ -6270,6 +6274,10 @@ msgid "A copy of your project was saved at the moment this happened. Memory may 
 msgstr ""
 
 #: src/app/CrashUi.cpp
+msgid "A copy of your project was saved when this happened, with every change. Nothing was damaged: open it to carry on."
+msgstr ""
+
+#: src/app/CrashUi.cpp
 msgid "An operation"
 msgstr ""
 
@@ -6318,6 +6326,10 @@ msgid "Gridline is not responding"
 msgstr ""
 
 #: src/app/CrashUi.cpp
+msgid "Gridline lost the graphics driver"
+msgstr ""
+
+#: src/app/CrashUi.cpp
 msgid "Gridline sends nothing anywhere. The code holds no file paths and no project names: share it where you choose, for example in a GitHub issue."
 msgstr ""
 
@@ -6335,6 +6347,10 @@ msgstr ""
 
 #: src/app/CrashUi.cpp
 msgid "Something went wrong"
+msgstr ""
+
+#: src/app/CrashUi.cpp
+msgid "The graphics driver stopped working and did not come back for Gridline, so it had to close. A driver update or a driver timeout can do this. Restarting Gridline usually puts it right; if not, restart the computer."
 msgstr ""
 
 #: src/app/CrashUi.cpp
@@ -7170,6 +7186,14 @@ msgid "Also render the full mix"
 msgstr ""
 
 #: src/app/ExportUi.cpp
+msgid "An internal error stopped the export."
+msgstr ""
+
+#: src/app/ExportUi.cpp
+msgid "Another export is still running. Wait for it, or cancel it first."
+msgstr ""
+
+#: src/app/ExportUi.cpp
 msgid "Applied when writing 16 / 24-bit files"
 msgstr ""
 
@@ -7218,11 +7242,23 @@ msgid "Enable master effects"
 msgstr ""
 
 #: src/app/ExportUi.cpp
+msgid "Export cancelled"
+msgstr ""
+
+#: src/app/ExportUi.cpp
 msgid "Export failed"
 msgstr ""
 
 #: src/app/ExportUi.cpp src/packs/edison/edison_ui.cpp
 msgid "Exported"
+msgstr ""
+
+#: src/app/ExportUi.cpp
+msgid "Exporting project bones"
+msgstr ""
+
+#: src/app/ExportUi.cpp
+msgid "Exporting project data files"
 msgstr ""
 
 #: src/app/ExportUi.cpp
@@ -7362,10 +7398,14 @@ msgid "QUALITY"
 msgstr ""
 
 #: src/app/ExportUi.cpp
+msgid "Reading the sample"
+msgstr ""
+
+#: src/app/ExportUi.cpp
 msgid "Relinked"
 msgstr ""
 
-#: src/app/ExportUi.cpp src/app/SamplerRenderUi.cpp
+#: src/app/ExportUi.cpp src/app/MixerView.cpp src/app/SamplerRenderUi.cpp
 msgid "Render cancelled"
 msgstr ""
 
@@ -7382,6 +7422,10 @@ msgid "Rendered into Loupe"
 msgstr ""
 
 #: src/app/ExportUi.cpp
+msgid "Rendering the clip"
+msgstr ""
+
+#: src/app/ExportUi.cpp
 msgid "Renders at a multiple of the sample rate and filters down (less aliasing from synths and distortion)"
 msgstr ""
 
@@ -7395,6 +7439,14 @@ msgstr ""
 
 #: src/app/ExportUi.cpp
 msgid "Save tempo information (WAV)"
+msgstr ""
+
+#: src/app/ExportUi.cpp
+msgid "Saving the zipped project"
+msgstr ""
+
+#: src/app/ExportUi.cpp
+msgid "Saving the zipped project was cancelled. The file on disk is as it was."
 msgstr ""
 
 #: src/app/ExportUi.cpp
@@ -7471,6 +7523,10 @@ msgstr ""
 
 #: src/app/ExportUi.cpp
 msgid "With project"
+msgstr ""
+
+#: src/app/ExportUi.cpp
+msgid "Writing the file"
 msgstr ""
 
 #: src/app/ExternalDragUi.cpp
@@ -9050,6 +9106,10 @@ msgid "Clone with controller links"
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
+msgid "Copied the samples into"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
 msgid "Could not copy the samples"
 msgstr ""
 
@@ -9235,6 +9295,14 @@ msgstr ""
 
 #: src/app/MenuParityUi.cpp
 msgid "Saves the project into a folder of its own, with copies of every sample it uses"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
+msgid "Saving into a new project folder"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
+msgid "Saving into a new project folder was cancelled"
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
@@ -10189,6 +10257,10 @@ msgstr ""
 msgid "Compact"
 msgstr ""
 
+#: src/app/MixerView.cpp src/app/TrackReceiptUi.cpp
+msgid "Could not write"
+msgstr ""
+
 #: src/app/MixerView.cpp
 msgid "Disable: the input passes straight through (no effects, EQ, fader) and costs no CPU"
 msgstr ""
@@ -10331,6 +10403,10 @@ msgstr ""
 
 #: src/app/MixerView.cpp
 msgid "Render armed tracks to wave files..."
+msgstr ""
+
+#: src/app/MixerView.cpp
+msgid "Rendering tracks to wave files"
 msgstr ""
 
 #: src/app/MixerView.cpp
@@ -14374,6 +14450,10 @@ msgid "Stop and return to the set song position; press again (or double-click) t
 msgstr ""
 
 #: src/app/TopBar.cpp
+msgid "Tap tempo: click on every beat. The tempo follows from the second tap, and a pause of over 2 seconds starts over. Right-click to link a controller."
+msgstr ""
+
+#: src/app/TopBar.cpp
 msgid "Tempo (BPM): drag or scroll the decimals to fine-tune (scroll: 0.1, Shift: 0.01), double-click to type"
 msgstr ""
 
@@ -14607,10 +14687,6 @@ msgstr ""
 
 #: src/app/TrackReceiptUi.cpp
 msgid "Check artist and title: guessed from the file name."
-msgstr ""
-
-#: src/app/TrackReceiptUi.cpp
-msgid "Could not write"
 msgstr ""
 
 #: src/app/TrackReceiptUi.cpp
@@ -15199,6 +15275,10 @@ msgstr ""
 
 #: src/app/main.cpp
 msgid "The ASIO driver stopped delivering audio (was the device unplugged?). Using the system audio; choose the driver again to retry."
+msgstr ""
+
+#: src/app/main.cpp
+msgid "The graphics driver restarted. Gridline rebuilt its display, and your project and the sound are as they were."
 msgstr ""
 
 #: src/app/main.cpp
@@ -16041,6 +16121,10 @@ msgstr ""
 msgid "Switch pattern / song mode"
 msgstr ""
 
+#: src/core/Keymap.cpp src/packs/seltmann/seltmann_ui.cpp
+msgid "Tap tempo"
+msgstr ""
+
 #: src/core/Keymap.cpp
 msgid "Transpose down a semitone"
 msgstr ""
@@ -16111,6 +16195,26 @@ msgstr ""
 
 #: src/core/ProjectFiles.cpp
 msgid "Zipped project / FL Studio zipped loop package (.zip)"
+msgstr ""
+
+#: src/core/ProjectInterop.cpp
+msgid "Copying the project's files"
+msgstr ""
+
+#: src/core/ProjectInterop.cpp
+msgid "Finishing the archive"
+msgstr ""
+
+#: src/core/ProjectInterop.cpp
+msgid "Packing the project's files"
+msgstr ""
+
+#: src/core/ProjectInterop.cpp
+msgid "Writing MIDI files and presets"
+msgstr ""
+
+#: src/core/ProjectInterop.cpp
+msgid "Writing the project"
 msgstr ""
 
 #: src/core/TrackIconSet.cpp
@@ -20471,10 +20575,6 @@ msgstr ""
 
 #: src/packs/seltmann/seltmann_ui.cpp
 msgid "Tap along on the beat; after four taps the tempo follows (bar 1 stays)"
-msgstr ""
-
-#: src/packs/seltmann/seltmann_ui.cpp
-msgid "Tap tempo"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_ui.cpp

@@ -596,6 +596,21 @@ CopyHold holdCopy(const std::string& folder, const std::string& cacheRootIn) {
   return holdLocked(dir);
 }
 
+std::vector<CopyHold> holdCopiesOf(const Song& song, const std::string& cacheRootIn) {
+  std::vector<CopyHold> holds;
+  for (const auto& folder : copiesUsedBy(song, cacheRootIn)) {
+    if (CopyHold h = holdCopy(folder, cacheRootIn)) {
+      holds.push_back(std::move(h));
+      continue;
+    }
+    std::error_code ec;
+    if (fs::is_directory(fs::u8path(folder), ec)) {
+      std::ofstream o(fs::u8path(folder) / kPinned, std::ios::binary);
+    }
+  }
+  return holds;
+}
+
 uint64_t cacheBytes(const std::string& cacheRootIn) {
   const fs::path root = fs::u8path(cacheRootIn.empty() ? defaultCacheRoot() : cacheRootIn);
   return sweepableRoot(root) ? folderBytes(root) : 0;  // (never a walk of anything that is not a cache)

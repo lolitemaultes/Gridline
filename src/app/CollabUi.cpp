@@ -1,5 +1,6 @@
 // Gridline - J-111: collaboration in the app. See CollabUi.h.
 #include "CollabUi.h"
+#include "GlEpoch.h"
 #include <SDL.h>
 #include <SDL_opengl.h>
 #include <algorithm>
@@ -487,6 +488,11 @@ std::string dots() { return std::string(static_cast<size_t>(static_cast<int>(ImG
 ImTextureID avatarTexture(const std::string& jpeg, std::string* hashOut = nullptr) {
   if (jpeg.empty()) return ImTextureID_Invalid;
   Ui& u = U();
+  static uint64_t epoch = glepoch::current();
+  if (epoch != glepoch::current()) {  // K-47: the driver reset took them
+    epoch = glepoch::current();
+    u.avatars.clear();
+  }
   Profile tmp;
   tmp.avatar = jpeg;
   const std::string h = tmp.avatarHash();

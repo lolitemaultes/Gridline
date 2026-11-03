@@ -76,6 +76,7 @@ void keymapTests() {
   for (const auto& c : conflicts) std::printf("# default conflict: %s\n", c.c_str());
   expect(conflicts.empty(), "default map has no same-context conflicts");
   expect(keys::format(km.bindings("file.save").front()) == "Ctrl+S", "default: Save is Ctrl+S");
+  expect(keys::format(km.bindings("transport.tapTempo").front()) == "Ctrl+Shift+T", "default: Tap tempo is Ctrl+Shift+T");
   expect(km.bindings("edit.redo").size() == 2, "default: Redo has Ctrl+Y and Ctrl+Shift+Z");
   expect(keys::format(km.bindings("view.mixer").front()) == "F9", "default: Mixer is F9");
   expect(keys::format(km.bindings("piano.toolDraw").front()) == "P", "default: piano roll draw tool is P");

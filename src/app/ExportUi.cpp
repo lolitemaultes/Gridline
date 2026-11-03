@@ -9,9 +9,11 @@
 #include "../core/TrackReceipt.h"
 #include "ExportUi.h"
 #include "../core/Crash.h"
+#include "../core/ProjectArchive.h"
 #include "../core/RemoteFs.h"
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -105,6 +107,26 @@ struct Job {
 };
 Job job;
 int devRendersFinished = 0, devRendersCancelled = 0, devRendersFailed = 0;  // since the start (devState)
+std::vector<archive::CopyHold> renderHolds;  // K-47: the unpacked copies the running render reads
+
+// K-47: the other file work that can take long (zip save, project data and bones, WAV of a clip or
+// a sample, mixer tracks to wave files, saving into a new folder).
+struct FileJob {
+  std::thread worker;
+  std::atomic<bool> running{false}, finished{false}, cancel{false};
+  std::atomic<double> progress{0};
+  std::mutex mu;
+  std::string status;  // guarded by mu
+  std::string title;
+  FileJobDone done;    // written by the worker before `finished`
+  std::vector<archive::CopyHold> holds;
+  int finishedCount = 0, placed = 0;
+  ~FileJob() {
+    cancel = true;
+    if (worker.joinable()) worker.join();
+  }
+};
+FileJob fileJob;
 
 // MIDI import options.
 struct MidiDlg {
@@ -320,6 +342,7 @@ void startJob(App& a) {
     job.status = "Preparing";
   }
   Song song = a.doc.song();
+  renderHolds = archive::holdCopiesOf(song);  // closing the project during the render takes nothing from it
   dlg.open = false;
   crash::crumb("export start");
   // A worker for every project: the window stays alive and Cancel works. The calls that must happen
@@ -354,6 +377,7 @@ void startJob(App& a) {
 void finishJob(App& a) {
   if (!job.finished.exchange(false)) return;
   if (job.worker.joinable()) job.worker.join();
+  renderHolds.clear();
   devsig::reach("render-finished");
   job.seconds = a.now - job.started;
   ExportOutcome o;
@@ -681,7 +705,16 @@ void drawRenderDialog(App& a) {
 
 bool progressBody(const std::string& status, double progress, bool escapeCancels) {
   ImGui::TextUnformatted(i18n::trMessage(status).c_str());
-  ImGui::ProgressBar(static_cast<float>(std::clamp(progress, 0.0, 1.0)), ImVec2(440, 0));
+  // The percent stands beside the bar: on the fill it could not be read near the end.
+  const float done = static_cast<float>(std::clamp(progress, 0.0, 1.0));
+  const std::string percent = std::to_string(static_cast<int>(done * 100.0f)) + "%";
+  const float percentW = ImGui::CalcTextSize("100%").x;
+  ImGui::PushStyleColor(ImGuiCol_PlotHistogram, theme::vec(pal().accent));
+  ImGui::ProgressBar(done, ImVec2(440 - percentW - theme::kS2, 0), "");
+  ImGui::PopStyleColor();
+  ImGui::SameLine(0, theme::kS2);
+  ImGui::AlignTextToFramePadding();
+  ImGui::TextUnformatted(percent.c_str());
   ui::DialogFooter(96);
   return ui::TextButton(i18n::tr("Cancel"), false, 96) || (escapeCancels && ImGui::IsKeyPressed(ImGuiKey_Escape));
 }
@@ -732,6 +765,41 @@ void drawProgress(App& a) {
   }
   ImGui::End();
   if (!open) job.showSummary = false;
+}
+
+// ---------------------------------------------------------------- file jobs (K-47)
+
+void finishFileJob(App& a) {
+  if (!fileJob.finished.exchange(false)) return;
+  if (fileJob.worker.joinable()) fileJob.worker.join();
+  fileJob.holds.clear();
+  FileJobDone done = std::move(fileJob.done);
+  fileJob.done = nullptr;
+  ++fileJob.finishedCount;
+  devsig::reach("file-job-finished");
+  if (done) done(a);
+}
+
+void drawFileJob(App& a) {
+  finishFileJob(a);
+  if (!fileJob.running) return;
+  centerNext(ImVec2(480, 0));
+  if (job.running || flpexport::running()) {  // never on top of the other progress window
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.5f + 96.0f), ImGuiCond_Appearing, ImVec2(0.5f, 0.0f));
+  }
+  const std::string name = std::string(i18n::tr(fileJob.title.c_str())) + "###filejobprog";
+  const bool vis = ImGui::Begin(name.c_str(), nullptr, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
+  ui::KeepWindowInViewport();
+  if (vis) {
+    std::string st;
+    {
+      std::lock_guard<std::mutex> lk(fileJob.mu);
+      st = fileJob.status;
+    }
+    if (progressBody(st, fileJob.progress.load())) fileJob.cancel = true;
+  }
+  ImGui::End();
 }
 
 // ---------------------------------------------------------------- MIDI import dialog
@@ -927,28 +995,114 @@ bool hasExt(const std::string& p, std::initializer_list<const char*> exts) {
   return false;
 }
 
-void writeSampleDialog(App& a, const std::string& title, const std::string& name, std::function<bool(const std::string&, std::string&)> make) {
-  fileDialog(a, title.c_str(), true, {".wav"}, safeFileName(name) + ".wav", [&a, make](const std::string& p) {
-    std::string path = p, err;
-    if (fs::path(path).extension().empty()) path += ".wav";
-    bool ok = false;
-    try {  // (out of memory on a long clip, a file system error)
-      ok = make(path, err);
-    } catch (const std::exception& e) {
-      err = e.what();
-    }
-    if (ok) {
-      a.notify("Saved " + fs::path(path).filename().string());
-      a.uiSound(uisound::Event::Export);
-    } else {
-      a.notify("Export failed: " + err, true);
-    }
+// What a WAV export makes. `writeTo` is a temporary name: the file takes its real name when it is
+// whole, so a failure or a Cancel leaves what was there. `origin` is its Track Receipt sidecar, if any.
+using SampleMaker = std::function<bool(const std::string& writeTo, std::string& err, const ExportControl& control, std::unique_ptr<receipt::Origin>& origin)>;
+
+void writeSampleJob(App& a, const std::string& title, const Song& uses, const std::string& pathIn, const SampleMaker& make) {
+  std::string path = pathIn;
+  if (fs::path(path).extension().empty()) path += ".wav";
+  startFileJob(a, title.c_str(), uses, [make, path](const ExportControl& control) -> FileJobDone {
+      const std::string tmp = path + ".part.wav";
+      std::string err;
+      std::unique_ptr<receipt::Origin> origin;
+      bool ok = false;
+      try {  // (out of memory on a long clip, a file system error)
+        ok = make(tmp, err, control, origin);
+        if (ok && !control.cancelled()) ok = platform::replaceFile(tmp, path, &err);
+      } catch (const std::exception& e) {
+        crash::reportCurrentException("Exporting audio");
+        ok = false;
+        err = e.what();
+      }
+      const bool cancelled = control.cancelled();
+      if (ok && !cancelled) {
+        if (origin) receipt::writeOrigin(path, *origin);
+      } else {
+        std::error_code ec;
+        fs::remove(fs::u8path(tmp), ec);
+      }
+      return [ok, cancelled, err, path](App& app) {
+        if (cancelled) {
+          app.notify("Export cancelled");
+        } else if (ok) {
+          app.notify("Saved " + fs::path(path).filename().string());
+          app.uiSound(uisound::Event::Export);
+        } else {
+          app.notify("Export failed: " + err, true);
+        }
+      };
   });
+}
+
+void writeSampleDialog(App& a, const std::string& title, const std::string& name, const Song& uses, const SampleMaker& make) {
+  Song song = uses;
+  fileDialog(a, title.c_str(), true, {".wav"}, safeFileName(name) + ".wav", [&a, make, song, title](const std::string& p) { writeSampleJob(a, title, song, p, make); });
 }
 
 }  // namespace
 
 // ---------------------------------------------------------------- public
+
+bool fileJobRunning() { return fileJob.running.load(); }
+
+bool startFileJob(App& a, const char* title, const Song& uses, std::function<FileJobDone(const ExportControl&)> work) {
+  if (fileJob.running) {
+    a.notify("Another export is still running. Wait for it, or cancel it first.", true);
+    return false;
+  }
+  if (fileJob.worker.joinable()) fileJob.worker.join();
+  fileJob.holds = archive::holdCopiesOf(uses);
+  fileJob.title = title;
+  fileJob.cancel = false;
+  fileJob.finished = false;
+  fileJob.progress = 0;
+  {
+    std::lock_guard<std::mutex> lk(fileJob.mu);
+    fileJob.status = i18n::N_("Preparing");
+  }
+  fileJob.done = nullptr;
+  fileJob.running = true;
+  crash::crumb("file job start", title);
+  // As for a render: this thread's progress says nothing of the interface's life, so it does not
+  // beat for it; calls that must come back to the interface are busy work there.
+  fileJob.worker = std::thread([work = std::move(work), titleText = fileJob.title]() {
+    host::UiThreadRenderScope scope;
+    static const int delayMs = [] {  // tests: a job that takes its time
+      const char* e = std::getenv("GRIDLINE_DEV_SLOW_FILE_JOB_MS");
+      return e ? std::atoi(e) : 0;
+    }();
+    ExportControl control;
+    control.cancel = &fileJob.cancel;
+    control.progress = [](double p, const std::string& what) {
+      fileJob.progress = p;
+      {
+        std::lock_guard<std::mutex> lk(fileJob.mu);
+        fileJob.status = what;
+      }
+      if (delayMs > 0) std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
+    };
+    FileJobDone done;
+    try {
+      done = work(control);
+    } catch (...) {
+      crash::reportCurrentException(titleText.c_str());
+      done = [](App& app) { app.notify("An internal error stopped the export.", true); };
+    }
+    crash::crumb("file job end");
+    fileJob.done = std::move(done);
+    fileJob.finished = true;
+    fileJob.running = false;
+  });
+  return true;
+}
+
+void waitFileJob() {
+  if (fileJob.worker.joinable()) {
+    host::serveUiThreadTasksWhile(fileJob.running);
+    fileJob.worker.join();
+  }
+}
 
 void openRender(App& a, Preset p) {
   initDialog(a);
@@ -1015,6 +1169,7 @@ void draw(App& a) {
   if (a.showExport) openRender(a, Preset::Audio);  // Ctrl+R / older entry points
   drawRenderDialog(a);
   drawProgress(a);
+  drawFileJob(a);
   drawMidiImport(a);
   drawMissing(a);
 }
@@ -1127,35 +1282,61 @@ void notifyPackReport(App& a, const char* what, const CollectReport& r) {
 
 }  // namespace
 
-void exportDataFilesDialog(App& a) {
-  fileDialog(a, "Export project data files into folder", false, {"/"}, "", [&a](const std::string& dir) {
-    captureHostedStates(a);
-    const std::string folder = (fs::path(dir) / safeFileName(projectName(a))).string();
-    CollectReport r = exportProjectDataFiles(a.doc.song(), folder, safeFileName(projectName(a)));
-    if (!r.error.empty()) {
-      a.notify("Export failed: " + r.error, true);
-      return;
-    }
-    a.notify("Project + " + std::to_string(r.copied + r.reused) + " file(s) in " + folder);
-    notifyPackReport(a, "Project data files", r);
-    if (r.missing.empty() && r.unpacked.empty()) a.uiSound(uisound::Event::Export);
+namespace {
+
+// K-47: started from the dialogs and from dev scripts. The song's copy is what gets written; hosted
+// plugins were asked for their state just before, here on the interface thread.
+void startDataFiles(App& a, const std::string& dir) {
+  captureHostedStates(a);
+  const std::string name = safeFileName(projectName(a));
+  const std::string folder = (fs::u8path(dir) / fs::u8path(name)).u8string();
+  Song song = a.doc.song();
+  startFileJob(a, i18n::N_("Exporting project data files"), song, [song, folder, name](const ExportControl& control) -> FileJobDone {
+    CollectReport r = exportProjectDataFiles(song, folder, name, &control);
+    return [r = std::move(r), folder](App& app) {
+      if (r.cancelled) {
+        app.notify("Export cancelled");
+      } else if (!r.error.empty()) {
+        app.notify("Export failed: " + r.error, true);
+      } else {
+        app.notify("Project + " + std::to_string(r.copied + r.reused) + " file(s) in " + folder);
+        notifyPackReport(app, "Project data files", r);
+        if (r.missing.empty() && r.unpacked.empty()) app.uiSound(uisound::Event::Export);
+      }
+    };
   });
 }
 
-void exportBonesDialog(App& a) {
-  fileDialog(a, "Export project bones into folder", false, {"/"}, "", [&a](const std::string& dir) {
-    captureHostedStates(a);
-    const std::string folder = (fs::path(dir) / (safeFileName(projectName(a)) + " bones")).string();
-    BonesReport r = exportProjectBones(a.doc.song(), folder, safeFileName(projectName(a)));
-    if (!r.files.error.empty())
-      a.notify("Export failed: " + r.files.error, true);
-    else {
-      a.notify("Bones: " + std::to_string(r.files.copied + r.files.reused) + " samples, " + std::to_string(r.midiFiles) + " MIDI files, " +
-               std::to_string(r.presets) + " presets, " + std::to_string(r.chains) + " effect chains");
-      notifyPackReport(a, "Project bones", r.files);
-      if (r.files.missing.empty() && r.files.unpacked.empty()) a.uiSound(uisound::Event::Export);
-    }
+void startBones(App& a, const std::string& dir) {
+  captureHostedStates(a);
+  const std::string name = safeFileName(projectName(a));
+  const std::string folder = (fs::u8path(dir) / fs::u8path(name + " bones")).u8string();
+  Song song = a.doc.song();
+  startFileJob(a, i18n::N_("Exporting project bones"), song, [song, folder, name](const ExportControl& control) -> FileJobDone {
+    BonesReport r = exportProjectBones(song, folder, name, &control);
+    return [r = std::move(r)](App& app) {
+      if (r.files.cancelled) {
+        app.notify("Export cancelled");
+      } else if (!r.files.error.empty()) {
+        app.notify("Export failed: " + r.files.error, true);
+      } else {
+        app.notify("Bones: " + std::to_string(r.files.copied + r.files.reused) + " samples, " + std::to_string(r.midiFiles) + " MIDI files, " +
+                   std::to_string(r.presets) + " presets, " + std::to_string(r.chains) + " effect chains");
+        notifyPackReport(app, "Project bones", r.files);
+        if (r.files.missing.empty() && r.files.unpacked.empty()) app.uiSound(uisound::Event::Export);
+      }
+    };
   });
+}
+
+}  // namespace
+
+void exportDataFilesDialog(App& a) {
+  fileDialog(a, "Export project data files into folder", false, {"/"}, "", [&a](const std::string& dir) { startDataFiles(a, dir); });
+}
+
+void exportBonesDialog(App& a) {
+  fileDialog(a, "Export project bones into folder", false, {"/"}, "", [&a](const std::string& dir) { startBones(a, dir); });
 }
 
 
@@ -1171,16 +1352,22 @@ bool writeFlpZip(App& a, const std::string& path, std::function<void(bool)> done
   return flpexport::start(a, path, true, std::move(done));
 }
 
-bool writeGridlineZip(App& a, const std::string& path, std::string* note) {
+bool writeGridlineZip(App& a, const std::string& path, std::function<void(const std::string&)> done) {
   captureHostedStates(a);
-  CollectReport r = exportZippedProject(a.doc.song(), path, projectStemOf(path));
-  if (!r.error.empty()) {
-    a.notify("Could not save the zipped project: " + r.error, true, path);
-    return false;
-  }
-  notifyPackReport(a, "Zipped project", r);
-  if (note && r.copied) *note = " (" + std::to_string(r.copied) + " file(s))";
-  return true;
+  Song song = a.doc.song();
+  return startFileJob(a, i18n::N_("Saving the zipped project"), song, [song, path, done = std::move(done)](const ExportControl& control) -> FileJobDone {
+    CollectReport r = exportZippedProject(song, path, projectStemOf(path), &control);
+    return [r = std::move(r), path, done](App& app) {
+      if (r.cancelled) {
+        app.notify("Saving the zipped project was cancelled. The file on disk is as it was.");
+      } else if (!r.error.empty()) {
+        app.notify("Could not save the zipped project: " + r.error, true, path);
+      } else {
+        notifyPackReport(app, "Zipped project", r);
+        if (done) done(r.copied ? " (" + std::to_string(r.copied) + " file(s))" : std::string());
+      }
+    };
+  });
 }
 
 void exportFlpDialog(App& a) {
@@ -1200,10 +1387,10 @@ void exportZipDialog(App& a) {
   fileDialog(a, "Export Gridline zipped project", true, {".gridline.zip"}, safeFileName(projectName(a)) + ".gridline.zip",
              [&a](const std::string& p) {
                const std::string path = withSaveExtension(p, SaveFormat::GridlineZip);
-               std::string note;
-               if (!writeGridlineZip(a, path, &note)) return;
-               a.notify("Exported " + fs::path(path).filename().string() + note, false, path);
-               a.uiSound(uisound::Event::Export);
+               writeGridlineZip(a, path, [&a, path](const std::string& files) {
+                 a.notify("Exported " + fs::path(path).filename().string() + files, false, path);
+                 a.uiSound(uisound::Event::Export);
+               });
              });
 }
 
@@ -1264,35 +1451,31 @@ bool openAny(App& a, const std::string& path) {
   return false;
 }
 
-void exportChannelSample(App& a, ObjectId channel) {
-  const Channel* c = a.doc.song().channel(channel);
-  if (!c || c->plugin.data.empty()) return;
-  const std::string src = c->plugin.data.substr(0, c->plugin.data.find('\n'));  // J-182: the file (first line)
-  writeSampleDialog(a, "Export sample as WAV", c->name, [src](const std::string& path, std::string& err) {
+namespace {
+
+SampleMaker channelSampleMaker(const std::string& src) {
+  return [src](const std::string& writeTo, std::string& err, const ExportControl& control, std::unique_ptr<receipt::Origin>& origin) {
+    if (control.progress) control.progress(0.1, i18n::N_("Reading the sample"));
     SamplePtr s = loadSample(src, &err);
     if (!s) return false;
+    if (control.cancelled()) return false;
     AudioBuffer b(2, s->frames());
     std::copy(s->left.begin(), s->left.end(), b.plane(0));
     std::copy(s->right.begin(), s->right.end(), b.plane(1));
     AudioFileOptions o;
     o.bits = 24;
-    if (!writeAudioFile(path, b, static_cast<int>(std::lround(s->sampleRate)), o, &err)) return false;
-    receipt::Origin og;  // J-219: a copy, second for second (Track Receipt)
-    og.source = src;
-    og.kind = "copy";
-    receipt::writeOrigin(path, og);
+    o.cancel = control.cancel;
+    if (control.progress) control.progress(0.6, i18n::N_("Writing the file"));
+    if (!writeAudioFile(writeTo, b, static_cast<int>(std::lround(s->sampleRate)), o, &err)) return false;
+    origin = std::make_unique<receipt::Origin>();  // J-219: a copy, second for second (Track Receipt)
+    origin->source = src;
+    origin->kind = "copy";
     return true;
-  });
+  };
 }
 
-void exportClipAudio(App& a, ObjectId clip) {
-  const Song& s = a.doc.song();
-  const Clip* c = s.clip(clip);
-  if (!c) return;
-  const std::string name = c->kind == ClipKind::Audio && s.channel(c->source) ? s.channel(c->source)->name : "clip";
-  const int rate = a.audioSampleRate > 0 ? a.audioSampleRate : 44100;
-  Song song = s;
-  writeSampleDialog(a, "Export clip as WAV", name, [song, clip, rate](const std::string& path, std::string& err) {
+SampleMaker clipMaker(const Song& songIn, ObjectId clip, int rate) {
+  return [song = songIn, clip, rate](const std::string& writeTo, std::string& err, const ExportControl& control, std::unique_ptr<receipt::Origin>& origin) {
     // The clip as it sounds (clip gain, pitch, stretch, fades) through its channel, master neutral.
     const Clip* k = song.clip(clip);
     if (!k) return false;
@@ -1308,16 +1491,25 @@ void exportClipAudio(App& a, ObjectId clip) {
     j.start = k->start;
     j.end = k->start + song.clipLength(*k);
     j.tail = TailMode::Cut;
+    if (control.progress) {
+      control.progress(0, i18n::N_("Rendering the clip"));
+      j.progress = [&control](double p) { control.progress(0.9 * p, i18n::N_("Rendering the clip")); };
+    }
+    j.cancel = control.cancel;
     RenderResult r = renderAudio(solo, j);
+    if (r.cancelled || control.cancelled()) return false;
     if (!r.error.empty()) {
       err = r.error;
       return false;
     }
     AudioFileOptions o;
     o.bits = 24;
-    if (!writeAudioFile(path, r.audio, rate, o, &err)) return false;
+    o.cancel = control.cancel;
+    if (control.progress) control.progress(0.92, i18n::N_("Writing the file"));
+    if (!writeAudioFile(writeTo, r.audio, rate, o, &err)) return false;
     if (const Channel* ch = song.channel(k->source); ch && k->kind == ClipKind::Audio && r.audio.frames > 0) {
-      receipt::Origin og;  // J-219: the clip's part of its file (Track Receipt)
+      origin = std::make_unique<receipt::Origin>();  // J-219: the clip's part of its file (Track Receipt)
+      receipt::Origin& og = *origin;
       og.source = ch->plugin.data.substr(0, ch->plugin.data.find('\n'));
       og.start = std::max(0.0, k->audioStart);
       og.end = k->audioEnd > og.start ? k->audioEnd : -1;
@@ -1327,16 +1519,74 @@ void exportClipAudio(App& a, ObjectId clip) {
       else og.rangeKnown = false;
       og.reverse = k->reverse;
       og.kind = "clip";
-      receipt::writeOrigin(path, og);
     }
     return true;
-  });
+  };
+}
+
+}  // namespace
+
+void exportChannelSample(App& a, ObjectId channel) {
+  const Channel* c = a.doc.song().channel(channel);
+  if (!c || c->plugin.data.empty()) return;
+  const std::string src = c->plugin.data.substr(0, c->plugin.data.find('\n'));  // J-182: the file (first line)
+  writeSampleDialog(a, "Export sample as WAV", c->name, a.doc.song(), channelSampleMaker(src));
+}
+
+void exportClipAudio(App& a, ObjectId clip) {
+  const Song& s = a.doc.song();
+  const Clip* c = s.clip(clip);
+  if (!c) return;
+  const std::string name = c->kind == ClipKind::Audio && s.channel(c->source) ? s.channel(c->source)->name : "clip";
+  const int rate = a.audioSampleRate > 0 ? a.audioSampleRate : 44100;
+  captureHostedStates(a);  // a clip through a hosted effect: its current state, asked for here
+  writeSampleDialog(a, "Export clip as WAV", name, a.doc.song(), clipMaker(a.doc.song(), clip, rate));
+}
+
+void devFileJob(App& a, const std::vector<std::string>& args) {
+  const std::string what = args.empty() ? "state" : args[0];
+  const std::string to = args.size() > 1 ? args[1] : "";
+  if (what == "data") {
+    startDataFiles(a, to);
+  } else if (what == "bones") {
+    startBones(a, to);
+  } else if (what == "zip") {
+    a.saveProject(to);
+  } else if (what == "clip") {  // the first audio clip
+    captureHostedStates(a);
+    const Song& s = a.doc.song();
+    for (const auto& c : s.playlist)
+      if (c.kind == ClipKind::Audio) {
+        writeSampleJob(a, "Export clip as WAV", s, to, clipMaker(s, c.id, a.audioSampleRate > 0 ? a.audioSampleRate : 44100));
+        break;
+      }
+  } else if (what == "sample") {  // the first channel with a sample file
+    for (const auto& c : a.doc.song().channels) {
+      const PluginInfo* pi = findPlugin(c.plugin.type);
+      if (pi && pi->usesSample && !c.plugin.data.empty() && c.plugin.data[0] != '{') {
+        writeSampleJob(a, "Export sample as WAV", a.doc.song(), to, channelSampleMaker(c.plugin.data.substr(0, c.plugin.data.find('\n'))));
+        break;
+      }
+    }
+  } else if (what == "cancel") {
+    fileJob.cancel = true;
+  } else if (what == "wait") {
+    waitFileJob();
+  } else {
+    std::printf("filejob running %d finished %d count %d progress %.3f\n", fileJob.running.load() ? 1 : 0, fileJob.finished.load() ? 1 : 0, fileJob.finishedCount, fileJob.progress.load());
+    std::fflush(stdout);
+  }
 }
 
 void shutdown() {
   job.cancel = true;
   host::serveUiThreadTasksWhile(job.running);  // the render may be waiting for its plugins to close
   if (job.worker.joinable()) job.worker.join();
+  fileJob.cancel = true;  // (it removes what it wrote; a save that was not done leaves the file as it was)
+  host::serveUiThreadTasksWhile(fileJob.running);
+  if (fileJob.worker.joinable()) fileJob.worker.join();
+  fileJob.holds.clear();
+  renderHolds.clear();
 }
 
 }  // namespace gl::exportui

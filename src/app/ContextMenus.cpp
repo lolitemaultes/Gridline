@@ -10,6 +10,8 @@
 #include "J31Ui.h"
 #include "HostedUi.h"
 #include "ContextMenus.h"
+#include "CacheUi.h"
+#include "../core/ProjectArchive.h"
 #include "PluginFavsUi.h"
 #include "ExportUi.h"
 #include <algorithm>
@@ -393,6 +395,18 @@ struct RackClip {
 };
 RackClip rackClip;
 std::vector<EffectSlot> fxChainClip;
+// K-47: the rack's clip holds steps and notes only. An effect chain holds its plugins' states, and
+// those can name files in the unpacked copy of a zipped project: as long as the clip refers to such a
+// copy it keeps it, so closing that project does not take the sound away from a later paste.
+std::vector<archive::CopyHold> fxChainHolds;
+
+std::vector<archive::CopyHold> holdsForChain(const std::vector<EffectSlot>& slots) {
+  Song refs;
+  MixerTrack t;
+  t.slots = slots;
+  refs.mixer.push_back(std::move(t));
+  return archive::holdCopiesOf(refs);
+}
 
 std::vector<ObjectId> selectedChannels(const App& a) {
   std::vector<ObjectId> out;
@@ -434,6 +448,7 @@ void editCopy(App& a) {
     case App::EditFocus::Mixer:
       if (const MixerTrack* t = s.mixerTrack(a.selMixer)) {
         fxChainClip = t->slots;
+        fxChainHolds = holdsForChain(fxChainClip);
         a.notify("Copied the effect chain of " + mixerTrackName(s, static_cast<size_t>(s.mixerIndex(t->id))));
       }
       break;
@@ -519,8 +534,10 @@ void editPaste(App& a) {
       a.doc.endGroup();
       break;
     case App::EditFocus::Mixer:
-      if (!fxChainClip.empty() && s.mixerTrack(a.selMixer))
+      if (!fxChainClip.empty() && s.mixerTrack(a.selMixer)) {
         a.doc.editMixerTrack(a.selMixer, "paste effect chain", [](MixerTrack& m) { m.slots = fxChainClip; });
+        cacheui::projectUsesMore(a);  // what it refers to now stays with the open project
+      }
       break;
     default: {
       auto& clip = a.piano.clipboard;

@@ -20,6 +20,7 @@
 // parts of the window have the keyboard go to the main window's handlers as
 // if typed there. A text field of the interface keeps every key, and the
 // interface always sees a key first (its own computer-keyboard notes).
+#include "GlRecovery.h"
 #include <SDL.h>
 #include <SDL_opengl.h>
 #include "SysWm.h"
@@ -438,7 +439,7 @@ bool createSurface(PluginWindow& w) {
 }
 
 void renderWindow(PluginWindow& w) {
-  if (w.dead || !w.win || !w.ctx) return;
+  if (w.dead || !w.win || !w.ctx || !w.gl) return;
   if (!w.shown) return;
   host::HostedInstance* hi = hostedInstanceFor(*w.app, w.target);
   makeCurrent(w.win, w.gl);
@@ -891,6 +892,50 @@ void renderHostedEditors(App& a) {
       break;  // the map may have changed
     }
   (void)a;
+}
+
+// K-47: a driver reset. The bars of the plugin windows lose their GL with the main window; their ImGui
+// contexts stay. (A plugin's own interface is the plugin's: it may draw with GL of its own.)
+void pluginWindowsGraphicsLost() {
+  ContextGuard g;
+  auto drop = [](PluginWindow& w) {
+    if (!w.ctx || !w.gl) return;
+    makeCurrent(w.win, w.gl);
+    ImGui::SetCurrentContext(w.ctx);
+    ImGui_ImplOpenGL3_Shutdown();
+    ImGui_ImplSDL2_Shutdown();
+    SDL_GL_MakeCurrent(w.win, nullptr);
+    SDL_GL_DeleteContext(w.gl);
+    w.gl = nullptr;
+  };
+  for (auto& [key, w] : windows()) drop(*w);
+  for (auto& w : closingWindows()) drop(*w);
+  g.win = nullptr;  // what it would restore is gone
+  g.gl = nullptr;
+}
+
+void pluginWindowsGraphicsBack(SDL_Window* mainWindow, SDL_GLContext mainGl) {
+  ContextGuard g;
+  gMainWin = mainWindow;
+  gMainGl = mainGl;
+  auto back = [&](PluginWindow& w) {
+    if (!w.ctx || !w.win || w.gl) return;
+    makeCurrent(mainWindow, mainGl);
+    SDL_GL_SetAttribute(SDL_GL_SHARE_WITH_CURRENT_CONTEXT, 1);
+    w.gl = SDL_GL_CreateContext(w.win);
+    SDL_GL_SetAttribute(SDL_GL_SHARE_WITH_CURRENT_CONTEXT, 0);
+    if (!w.gl) return;  // (its bar stays undrawn; the plugin's own view is not affected)
+    makeCurrent(w.win, w.gl);
+    SDL_GL_SetSwapInterval(0);
+    ImGui::SetCurrentContext(w.ctx);
+    ImGui_ImplSDL2_InitForOpenGL(w.win, w.gl);
+    ImGui_ImplOpenGL3_Init(kGlsl);
+    glrecovery::restoreTextures();
+  };
+  for (auto& [key, w] : windows()) back(*w);
+  for (auto& w : closingWindows()) back(*w);
+  g.win = mainWindow;
+  g.gl = mainGl;
 }
 
 bool screenshotHostedEditor(const PluginTarget& t, const std::string& pngPath) {

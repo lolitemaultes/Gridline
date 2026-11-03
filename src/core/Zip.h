@@ -27,6 +27,9 @@ class ZipWriter {
   bool add(const std::string& name, const std::vector<uint8_t>& data);
   bool addFile(const std::string& name, const std::string& sourcePath, std::string* err = nullptr);
   bool close(std::string* err = nullptr);
+  // K-47: addFile calls this after each chunk it read, with the chunk's bytes; false stops it (the
+  // writer is then failed, and the target stays as it was). Empty: none.
+  void setChunkHook(std::function<bool(uint64_t bytes)> hook) { chunkHook_ = std::move(hook); }
   ~ZipWriter();
 
  private:
@@ -41,6 +44,7 @@ class ZipWriter {
   uint64_t pos_ = 0;
   int errno_ = 0;  // first write error
   bool ok_ = true;
+  std::function<bool(uint64_t)> chunkHook_;
   void raw(const void* p, size_t n);
   void localHeader(const std::string& name, uint64_t size, uint32_t crc);
 };

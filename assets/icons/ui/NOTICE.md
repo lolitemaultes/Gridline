@@ -123,6 +123,7 @@ mirror the Lucide chevrons; the ImGui arrow, check, close and step glyphs draw t
 - `store-tray`: an arrow down into a tray (store in the spare state).
 - `stretch`: arrows pulling apart round two lines (time stretch).
 - `swap-arrows`: two opposing arrows (flip with the spare state).
+- `tap-tempo`: a hand pointing up with a ripple over the fingertip (tap tempo button).
 - `track-bass`: mixer track icon: one deep wave (bass).
 - `track-bus`: mixer track icon: three lines merging into one (bus).
 - `track-delay`: mixer track icon: four fading echoes (delay).

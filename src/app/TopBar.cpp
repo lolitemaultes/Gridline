@@ -59,6 +59,7 @@ const MenuDef kMenus[] = {{i18n::N_("File"), menuFile},     {i18n::N_("Edit"), m
 
 
 void noteRectAt(const char* name, ImVec2 a, ImVec2 b);  // dev: an "sdlat" target (below)
+void noteRect(const char* name);                        // the last item's rectangle
 
 // Tempo LCD: drag / wheel / double-click to type. Returns true when changed.
 bool tempoLcd(App& a, double* v, float width) {
@@ -145,6 +146,25 @@ bool tempoLcd(App& a, double* v, float width) {
   return changed;
 }
 
+// K-48: the tap tempo button. It acts when it goes down, the moment of the beat (as the transport
+// buttons do); it stays lit while a run of taps is open and flashes with each tap.
+void tapButton(App& a, float size) {
+  const char* key = keys::label("transport.tapTempo");
+  const std::string hint = std::string(i18n::tr("Tap tempo: click on every beat. The tempo follows from the second tap, and a pause of over 2 seconds starts over. Right-click to link a controller.")) +
+                           (key ? std::string(" (") + key + ")" : std::string());
+  const ImVec2 p = ImGui::GetCursorScreenPos();
+  if (ui::IconButton("taptempo", ui::Icon::TapTempo, a.tapListening(), size, hint.c_str(), 0, 0, true)) a.tapTempo();
+  noteRect("taptempo");
+  if (ImGui::BeginPopupContextItem("##tapmenu")) {
+    actionLinkMenuItems(a, RemoteAction::TapTempo);
+    ImGui::EndPopup();
+  }
+  constexpr double kFlash = 0.16;
+  const double age = a.tapAge();
+  if (age < kFlash && scrollui::animations())
+    ImGui::GetWindowDrawList()->AddRectFilled(p, ImVec2(p.x + size, p.y + size), theme::withAlpha(pal().hot, 0.32f * static_cast<float>(1.0 - age / kFlash)), theme::kRadius);
+}
+
 void panel(ImDrawList* dl, float x, float w, float top) {
   const auto& P = pal();
   dl->AddRectFilled(ImVec2(x, top), ImVec2(x + w, top + kPanelH), P.surface900, theme::kRadiusLg);
@@ -214,7 +234,7 @@ struct DevRect {
   ImVec2 a, b;
   int frame = -1;
 };
-DevRect gDevRects[] = {{"play", {}, {}}, {"stop", {}, {}}, {"rec", {}, {}}, {"metro", {}, {}}, {"brsearch", {}, {}}, {"brclear", {}, {}}, {"chroute", {}, {}}, {"chroutefree", {}, {}}, {"chroutelist", {}, {}}, {"tempoint", {}, {}}, {"tempofrac", {}, {}}, {"loupedrag", {}, {}}};
+DevRect gDevRects[] = {{"play", {}, {}}, {"stop", {}, {}}, {"rec", {}, {}}, {"metro", {}, {}}, {"brsearch", {}, {}}, {"brclear", {}, {}}, {"chroute", {}, {}}, {"chroutefree", {}, {}}, {"chroutelist", {}, {}}, {"tempoint", {}, {}}, {"tempofrac", {}, {}}, {"loupedrag", {}, {}}, {"taptempo", {}, {}}, {"tapmenu", {}, {}}, {"tapmenutap", {}, {}}, {"menutools", {}, {}}, {"bar_transport", {}, {}}, {"bar_tempo", {}, {}}, {"bar_pos", {}, {}}, {"bar_pattern", {}, {}}, {"bar_master", {}, {}}, {"bar_monitor", {}, {}}, {"bar_windows", {}, {}}, {"bar_more", {}, {}}};
 float gMetroMirror = 1.0f;
 void noteRectAt(const char* name, ImVec2 a, ImVec2 b) {
   for (DevRect& r : gDevRects)
@@ -268,6 +288,7 @@ float drawTopBar(App& a) {
   float wTransport = 0, wTempo = 0, wPos = 0, wPattern = 0;
   const float wMaster = kPanelPad * 2 + 26 + kInner + 26 + theme::kS2 + kBtn * 2 + kInner;
   const float wMonitor = kPanelPad * 2 + 96.0f;
+  float breathing = theme::kS6;  // room between the left and right clusters
   const float wWindows = kPanelPad * 2 + kBtn * 5 + kInner * 4;
   const float wMark = kBtn;
   const float wMore = kBtn;
@@ -283,7 +304,7 @@ float drawTopBar(App& a) {
     posW = compact ? 104.0f : 118.0f;
     patW = compact ? 120.0f : 150.0f;
     wTransport = kPanelPad * 2 + (segW * 3 + 4) + theme::kS2 + kBtn * 3 + kInner * 2;
-    wTempo = kPanelPad * 2 + tempoW;
+    wTempo = kPanelPad * 2 + tempoW + kInner + kBtn;  // the display and the tap button
     wPos = posW + kInner;  // joins the tempo panel
     wPattern = kPanelPad * 2 + patW + kInner + kBtn;
   };
@@ -308,12 +329,18 @@ float drawTopBar(App& a) {
         if (g != Pos) ++n;
       }
     bool anyHidden = std::find(show, show + Count, false) != show + Count;
-    r += n * kGap + theme::kS6;  // gaps + breathing room between the left and right clusters
+    r += n * kGap + breathing;  // gaps + breathing room between the left and right clusters
     if (anyHidden) r += wMore + kGap;
     return r;
   };
   if (required() > W) {
     measure(true);
+    setWidths();
+  }
+  if (required() > W) {  // K-48: tighter still before any group has to go
+    breathing = kGap;
+    patW = 112.0f;
+    wPattern = kPanelPad * 2 + patW + kInner + kBtn;
     setWidths();
   }
   // Menus stay visible as long as possible (a right click on the mark opens them too).
@@ -354,6 +381,7 @@ float drawTopBar(App& a) {
       ImGui::SetCursorScreenPos(bp);
       ImGui::PushID(static_cast<int>(i));
       bool clicked = ImGui::InvisibleButton("##m", ImVec2(menuW[i], kBtn));
+      if (kMenus[i].fn == menuTools) noteRect("menutools");
       bool hov = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup);
       ImGui::PopID();
       bool isOpen = ImGui::IsPopupOpen(pid.c_str());
@@ -383,6 +411,7 @@ float drawTopBar(App& a) {
   // ---- transport ----
   if (show[Transport]) {
     panel(dl, x, wTransport, panelTop);
+    noteRectAt("bar_transport", ImVec2(x, panelTop), ImVec2(x + wTransport, panelTop + kPanelH));
     float cx = x + kPanelPad;
     ImGui::SetCursorScreenPos(ImVec2(cx, btnTop));
     int mode = a.engine.mode() == PlayMode::Song ? 1 : a.engine.mode() == PlayMode::Live ? 2 : 0;
@@ -471,10 +500,14 @@ float drawTopBar(App& a) {
     if (tempoLcd(a, &tempo, tempoW) && !(automated && tempo == shown)) a.doc.setParam(songParam(SongParam::Tempo), tempo, true);
     if (automated) ui::Hint("Tempo follows the tempo automation clip; dragging changes the base tempo");
     if (ImGui::IsItemDeactivated()) a.doc.endGesture();
+    ImGui::SetCursorScreenPos(ImVec2(x + kPanelPad + tempoW + kInner, btnTop));
+    tapButton(a, kBtn);
+    noteRectAt("bar_tempo", ImVec2(x, panelTop), ImVec2(x + wTempo, panelTop + kPanelH));
     if (show[Pos]) {
       const std::string pos = menuparity::positionText(a, a.engine.position());  // J-27: time formats
-      ImVec2 p(x + kPanelPad + tempoW + kInner, btnTop);
+      ImVec2 p(x + kPanelPad + tempoW + kInner + kBtn + kInner, btnTop);
       ImGui::SetCursorScreenPos(p);
+      noteRectAt("bar_pos", p, ImVec2(p.x + posW, p.y + kBtn));
       ImGui::InvisibleButton("##pos", ImVec2(posW, kBtn));
       if (ImGui::BeginPopupContextItem("##posmenu")) {
         menuparity::timeFormatMenu(a);
@@ -490,6 +523,7 @@ float drawTopBar(App& a) {
   // ---- pattern selector ----
   if (show[Pat]) {
     panel(dl, x, wPattern, panelTop);
+    noteRectAt("bar_pattern", ImVec2(x, panelTop), ImVec2(x + wPattern, panelTop + kPanelH));
     const Pattern* cur = s.pattern(a.curPattern);
     ImVec2 p(x + kPanelPad, btnTop);
     ImGui::SetCursorScreenPos(p);
@@ -531,11 +565,13 @@ float drawTopBar(App& a) {
     ImGui::SetCursorScreenPos(ImVec2(rx, btnTop));
     if (ui::IconButton("more", ui::Icon::More, ImGui::IsPopupOpen("##overflow"), kBtn, "More controls"))
       ImGui::OpenPopup("##overflow");
+    noteRect("bar_more");
     rx -= kGap;
   }
   if (show[Windows]) {
     rx -= wWindows;
     panel(dl, rx, wWindows, panelTop);
+    noteRectAt("bar_windows", ImVec2(rx, panelTop), ImVec2(rx + wWindows, panelTop + kPanelH));
     struct Wn { const char* id; ui::Icon icon; bool* flag; const char* cmd; const char* name; };
     const Wn wins[] = {{"w_pl", ui::Icon::Playlist, &a.showPlaylist, "view.playlist", i18n::N_("Playlist")},
                        {"w_cr", ui::Icon::Rack, &a.showRack, "view.channelRack", i18n::N_("Channel rack")},
@@ -583,6 +619,7 @@ float drawTopBar(App& a) {
   if (show[Monitor]) {
     rx -= wMonitor;
     panel(dl, rx, wMonitor, panelTop);
+    noteRectAt("bar_monitor", ImVec2(rx, panelTop), ImVec2(rx + wMonitor, panelTop + kPanelH));
     ImVec2 p(rx + kPanelPad + 4, panelTop + 7);
     monitor(p, wMonitor - kPanelPad * 2 - 8);
     ImGui::SetCursorScreenPos(ImVec2(rx, panelTop));
@@ -598,6 +635,7 @@ float drawTopBar(App& a) {
   if (show[Master]) {
     rx -= wMaster;
     panel(dl, rx, wMaster, panelTop);
+    noteRectAt("bar_master", ImVec2(rx, panelTop), ImVec2(rx + wMaster, panelTop + kPanelH));
     ImGui::SetCursorScreenPos(ImVec2(rx + kPanelPad, panelTop + (kPanelH - 26) * 0.5f));
     ImGui::BeginGroup();
     masterControls(false);
@@ -652,6 +690,8 @@ float drawTopBar(App& a) {
         if (ImGui::DragScalar("BPM", ImGuiDataType_Double, &tempo, 0.25f, nullptr, nullptr, "%.3f"))
           a.doc.setParam(songParam(SongParam::Tempo), std::clamp(tempo, 10.0, 522.0), true);
         if (ImGui::IsItemDeactivated()) a.doc.endGesture();
+        ImGui::SameLine(0, theme::kS2);
+        tapButton(a, kBtn);  // K-48: goes with the tempo
       }
       const std::string pos = menuparity::positionText(a, a.engine.position());
       ImGui::PushFont(a.fontMonoBold, theme::kFontBody);

@@ -36,6 +36,9 @@ struct Options {
 
 // After the ImGui SDL2 / OpenGL3 backends are initialised (main context current).
 void install(SDL_Window* mainWindow, SDL_GLContext gl, const Options& o);
+// K-47: the window backend started again with a new context (a driver reset): the windows' hooks go
+// back on it. The detached windows themselves come back on the next frame.
+void backendRestarted(SDL_GLContext gl);
 // Off-screen runs (--screenshot / --profile-frames with --size): two virtual monitors,
 // the main window and one of the same size to its right, so runs are the same everywhere.
 void setVirtualMonitors(bool on);

@@ -1110,6 +1110,7 @@ void handleGlobalShortcuts(App& a) {
   if (pressed("file.new")) a.guardUnsaved([&a]() { a.newProject(); });
   if (pressed("file.render")) a.showExport = true;
   if (pressed("file.importUrl")) urlimportui::open(a);  // J-192
+  if (pressed("transport.tapTempo")) a.tapTempo();  // K-48
   if (pressed("options.typingKeyboard")) a.typingKeyboard = !a.typingKeyboard;
   if (pressed("options.metronome")) a.metronome = !a.metronome;
   if (!a.typingKeyboard && pressed("transport.songMode"))

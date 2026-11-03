@@ -42,6 +42,7 @@ enum class Icon {
   Heart, HeartFilled,  // J-148: favourite projects (welcome screen)
   People,  // J-146: collaborators (the welcome screen's Collaborative view)
   RouteFree,  // J-195: route a channel to a free mixer track
+  TapTempo,   // K-48: tap the tempo (top bar)
   Count  // number of icons (not an icon)
 };
 // Q-12: true for the tool family (playlist / piano roll / automation editor strips).

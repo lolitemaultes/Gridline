@@ -151,16 +151,30 @@ void fileItems(App& a) {
         a.notify("Could not create " + folder.string(), true);
         return;
       }
-      Song s = a.doc.song();
-      auto rep = collectFiles(s, (folder / "Samples").string());
-      if (!rep.error.empty()) {
-        a.notify("Could not copy the samples: " + rep.error, true);
-        return;
-      }
-      if (s != a.doc.song()) a.doc.editSong("save to a new project folder", [&s](Song& x) { x = s; });
-      if (a.saveProject((folder / (name + ".gridline.json")).string()))
-        a.notify("Saved into " + folder.string() + " (" + std::to_string(rep.copied) + " files copied" +
-                 (rep.missing.empty() ? std::string(")") : ", " + std::to_string(rep.missing.size()) + " missing)"));
+      // K-47: the copying is off the interface thread; the project then points at the copies (edits
+      // made meanwhile stay), and is saved, as one step on the interface thread.
+      const Song song = a.doc.song();
+      const uint64_t epoch = a.doc.projectEpoch();
+      exportui::startFileJob(a, i18n::N_("Saving into a new project folder"), song, [song, folder, name, epoch](const ExportControl& control) -> exportui::FileJobDone {
+        Song s = song;
+        CollectReport rep = collectFiles(s, (folder / "Samples").u8string(), "", &control);
+        return [rep = std::move(rep), folder, name, epoch](App& app) {
+          if (rep.cancelled) {
+            app.notify("Saving into a new project folder was cancelled");
+          } else if (!rep.error.empty()) {
+            app.notify("Could not copy the samples: " + rep.error, true);
+          } else if (app.doc.projectEpoch() != epoch) {
+            app.notify("Copied the samples into " + folder.u8string() + ", but another project is open now");
+          } else {
+            bool moved = false;
+            for (const auto& [from, to] : rep.moved) moved = moved || from != to;
+            if (moved) app.doc.editSong("save to a new project folder", [&rep](Song& x) { relinkFiles(x, rep.moved); });
+            if (app.saveProject((folder / (name + ".gridline.json")).u8string()))
+              app.notify("Saved into " + folder.u8string() + " (" + std::to_string(rep.copied) + " files copied" +
+                         (rep.missing.empty() ? std::string(")") : ", " + std::to_string(rep.missing.size()) + " missing)"));
+          }
+        };
+      });
     });
   }
   ui::Hint("Saves the project into a folder of its own, with copies of every sample it uses");

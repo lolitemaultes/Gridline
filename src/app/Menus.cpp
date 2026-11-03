@@ -457,18 +457,21 @@ void menuTools(App& a) {
     progressionItems(a, true);
     ImGui::EndMenu();
   }
-  if (ImGui::BeginMenu(i18n::tr("Tempo tapper"))) {
-    static ops::TapTempo tapper;
+  const bool tapperOpen = ImGui::BeginMenu(i18n::tr("Tempo tapper"));
+  devNoteRect("tapmenu");
+  if (tapperOpen) {
+    const ops::TapTempo& tapper = a.tapper;  // K-48: the top bar button's tapper
     ImGui::TextDisabled("%s", i18n::tr("Click Tap (or press T) on every beat"));
     bool tap = ImGui::Button(i18n::tr("Tap"), ImVec2(160, 36));
+    devNoteRect("tapmenutap");
     tap = tap || (ImGui::IsWindowFocused() && ImGui::IsKeyPressed(ImGuiKey_T, false));
-    if (tap) tapper.tap(ImGui::GetTime());
+    if (tap) a.tapMeasure();
     const double bpm = tapper.bpm();
     if (bpm > 0) ImGui::Text(i18n::tr("%.1f BPM  (%d taps)"), bpm, static_cast<int>(tapper.taps.size()));
     else ImGui::TextDisabled("—");
     if (ImGui::Button(i18n::tr("Set the song tempo")) && bpm > 0) a.doc.setParam(songParam(SongParam::Tempo), std::round(bpm * 10.0) / 10.0, false);
     ImGui::SameLine();
-    if (ImGui::Button(i18n::tr("Reset"))) tapper.reset();
+    if (ImGui::Button(i18n::tr("Reset"))) a.tapReset();
     ImGui::EndMenu();
   }
   if (ImGui::MenuItem(i18n::tr("Loop starter..."))) j59::openLoopStarter(a);  // J-59 (GEN-01)

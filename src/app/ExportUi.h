@@ -4,7 +4,9 @@
 // samples window, and "export as WAV" for samples and audio clips.
 #pragma once
 #include <functional>
+#include <vector>
 #include <string>
+#include "../core/ProjectInterop.h"
 #include "../core/Types.h"
 
 namespace gl {
@@ -67,11 +69,24 @@ void exportFlpZipDialog(App& a);
 // could not start.
 bool writeFlpFile(App& a, const std::string& path, std::function<void(bool)> done = {});
 bool writeFlpZip(App& a, const std::string& path, std::function<void(bool)> done = {});
-// Gridline zipped project (J-78): failures notified; `note` sums up the files
-// for the caller's "Saved" message.
-bool writeGridlineZip(App& a, const std::string& path, std::string* note = nullptr);
+// Gridline zipped project (J-78), K-47 as a background job with progress and Cancel: failures are
+// notified as error cards. `done(files)` runs on the interface thread once the archive is written;
+// `files` sums up the files for the caller's "Saved" message. False when it could not start.
+bool writeGridlineZip(App& a, const std::string& path, std::function<void(const std::string& files)> done);
 void openMissingSamples(App& a);
 void openMissingSamples(App& a, std::vector<std::string> known);  // K-42: already checked (on a worker)
+// K-47: file work that can take long, off the interface thread, with the same progress window and
+// Cancel as a render. `work` runs on a worker with a copy of what it needs and returns what to do with
+// the result on the interface thread. `uses` is a snapshot of the song it reads: the unpacked copies
+// it refers to stay while the job runs, even if the project closes. The project stays editable
+// meanwhile, as during a render. One job at a time: false (with a card) when one is running.
+using FileJobDone = std::function<void(App&)>;
+bool startFileJob(App& a, const char* title, const Song& uses, std::function<FileJobDone(const ExportControl&)> work);
+bool fileJobRunning();
+// Dev: waits for a job to end (its result follows on the next frame), the state on stdout.
+void waitFileJob();
+// Dev: filejob <what> <args>, see main.cpp.
+void devFileJob(App& a, const std::vector<std::string>& args);
 // J-103 app quit: a running audio export is cancelled and its worker joined (not left to
 // the static Job's destructor during static teardown). Idempotent.
 void shutdown();

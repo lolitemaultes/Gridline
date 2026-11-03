@@ -21,6 +21,9 @@ void skipStartupSweep();
 // A project replaced the open one. `use`: the copy it was opened from (may be empty); the copies the
 // new song refers to are claimed too. What the old project used is released and swept a moment later.
 void projectChanged(App& a, archive::CopyHold use);
+// K-47: the open project just took in references to copies it did not use before (a paste from a
+// closed zipped project): those are claimed too, until it closes. No disk here.
+void projectUsesMore(App& a);
 // The app is quitting: the same, without the wait, for at most a moment (the next start finishes it).
 void shutdown(App& a);
 // Settings > Files.

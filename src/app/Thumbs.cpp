@@ -5,6 +5,7 @@
 // picker loads them lazily as textures.
 #include <SDL.h>
 #include <SDL_opengl.h>
+#include "GlEpoch.h"
 #include <algorithm>
 #include <atomic>
 #include <cctype>
@@ -109,6 +110,11 @@ std::string thumbPath(App& a, const std::string& type) {
 }
 
 ImTextureID pluginThumb(App& a, const std::string& type, ImVec2* size) {
+  static uint64_t epoch = glepoch::current();
+  if (epoch != glepoch::current()) {  // K-47: the driver reset took them
+    epoch = glepoch::current();
+    textures.clear();
+  }
   if (texGeneration.load() != seenGeneration) {  // a thumbnail run finished: reload
     seenGeneration = texGeneration.load();
     for (auto& [t, x] : textures)
