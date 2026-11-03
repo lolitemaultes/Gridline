@@ -257,6 +257,30 @@ bool decodeMultibandDelay(Context&, const std::vector<Event>& evs, PluginMapping
   gen2::set(m, sfx::BdRWeight, clampd(tag(393, 0), 0, 1));
   gen2::set(m, sfx::BdRHp, clampd((tag(394, 1000) - 1000) / 99000.0, 0, 1));
   gen2::set(m, sfx::BdRSat, clampd(tag(395, 0), 0, 2));
+  // Automation drives the reference model's engine values (the same laws as above).
+  // The band values (FL parameters 0..383) live in the state text, not in parameters.
+  auto engine = [](int fl, double lo, double hi, int gl, std::function<double(double)> law) {
+    return std::make_pair(gen2::Link{fl, gl, [lo, hi, law](double x) { return law(lo + x * (hi - lo)); }}, gl::flp::RawRange{fl, lo, hi});
+  };
+  const auto step = [](double hi) { return [hi](double v) { return clampd(std::round(v), 0, hi); }; };
+  const std::pair<gen2::Link, gl::flp::RawRange> rows[] = {
+      engine(384, -6000, 6000, sfx::BdRScale, [](double v) { return clampd((v + 6000) / 12000.0, 0, 1); }),
+      engine(385, 0, 1, sfx::BdRTenth, step(1)),
+      engine(386, 0, 6000, sfx::BdRFeedback, [](double v) { return clampd(v / 6000.0, 0, 1); }),
+      engine(387, 0, 6000, sfx::BdRSmooth, [](double v) { return clampd(v / 6000.0, 0, 1); }),
+      engine(388, 0, 2, sfx::BdRMode, step(2)),
+      engine(389, 0, 1, sfx::BdRKeep, step(1)),
+      engine(390, 0, 7000, sfx::BdRMorph, [](double v) { return clampd(v / 7000.0, 0, 1); }),
+      engine(391, -128, 128, sfx::BdRMix, [](double v) { return clampd((v + 128) / 256.0, 0, 1); }),
+      engine(392, 0, 1, sfx::BdRHarmonic, step(1)),
+      engine(393, 0, 1, sfx::BdRWeight, step(1)),
+      engine(394, 1000, 100000, sfx::BdRHp, [](double v) { return clampd((v - 1000) / 99000.0, 0, 1); }),
+      engine(395, 0, 2, sfx::BdRSat, step(2)),
+  };
+  std::vector<gen2::Link> links;
+  std::vector<gl::flp::RawRange> ranges;
+  for (const auto& r : rows) links.push_back(r.first), ranges.push_back(r.second);
+  gen2::linkParams(m, std::move(links), std::move(ranges));
   // Band strip states (version ≥ 4: after 2 UI ints and the option bytes): off / locked bands are not modelled.
   bool statesZero = true;
   const uint32_t ver = b.u32(0);

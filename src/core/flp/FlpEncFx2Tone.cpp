@@ -128,6 +128,16 @@ Encoder paramEq1() {
     w.i32(main);
     return w.b;
   };
+  // K-37: a band on its 20 Hz floor holds its real frequency in EqClassicLow; every raw word below
+  // 20 Hz decodes to that floor, so the word is written here and the solver has nothing to change.
+  e.write = [](const PluginState& g, Bytes& s, const EncodeContext&) {
+    for (int b = 0; b < 7; ++b) {
+      const size_t at = 28 + 4 * static_cast<size_t>(b);
+      if (s.size() < at + 4 || paramOf(g, pp::eqParam(b, pp::EqFreq)) > 20.f) continue;
+      const double hz = std::clamp(static_cast<double>(paramOf(g, pp::EqClassicLow + b)), 10.0, 20.0);
+      putI32(s, at, static_cast<int32_t>(std::lround(65536.0 * std::log(1.0 + (hz - 10.0) / 159.9) / std::log(101.0))));
+    }
+  };
   e.fields = [](const Bytes&) {
     std::vector<Field> f;
     for (int b = 0; b < 7; ++b) {

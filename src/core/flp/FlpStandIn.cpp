@@ -227,6 +227,7 @@ Mapping mapGate(const PluginState& g) {
   put(m.state, LimGateThresh, prm(g, GtThreshold, -40));
   put(m.state, LimGateFloor, prm(g, GtRange, -80));
   put(m.state, LimGateRelease, clampd(prm(g, GtRelease, 0.1f), 0.001, 2));
+  put(m.state, LimGateReleaseW, clampd(prm(g, GtRelease, 0.1f), 0.001, 2));
   m.note = "noise gate section; attack, hold, hysteresis and key filters not carried";
   m.ok = true;
   return m;
@@ -239,6 +240,7 @@ Mapping mapMaximizer(const PluginState& g) {
   put(m.state, LimGain, clampd(prm(g, MxDrive), -36, 24));
   put(m.state, LimCeiling, prm(g, MxCeiling));
   put(m.state, LimRelease, clampd(prm(g, MxRelease, 0.1f), 0.001, 2));
+  put(m.state, LimReleaseW, clampd(prm(g, MxRelease, 0.1f), 0.001, 2));
   m.note = "single-band limiter: band gains and band compressors not carried";
   m.ok = true;
   return m;
@@ -255,6 +257,7 @@ Mapping mapDucker(const PluginState& g) {
   put(s, LimCompRatio, clampd(prm(g, mo::SdRatio, 4), 0.25, 20));
   put(s, LimCompAttack, clampd(prm(g, mo::SdAttack, 0.005f), 0.0001, 1));
   put(s, LimCompRelease, clampd(prm(g, mo::SdRelease, 0.2f), 0.001, 2));
+  put(s, LimCompReleaseW, clampd(prm(g, mo::SdRelease, 0.2f), 0.001, 2));
   put(s, LimSidechain, iprm(g, mo::SdSource) == 0 ? 1 : 0);
   m.note = "compressor section keyed by the sidechain; depth limit not carried";
   m.ok = true;

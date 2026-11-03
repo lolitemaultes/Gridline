@@ -185,6 +185,7 @@ bool decodeFreqShifter(Context&, const std::vector<Event>& evs, PluginMapping& m
   if (t.size() < 10) return false;
   fx::begin(m, "gl.freqshift");
   fx::set(m, pp::FsModel, 1);
+  fx::set(m, pp::FsLaw, 1);
   auto lvl = [](double v) { return clampd(v / 10000.0, 0, 1); };
   auto type = [](double v) {
     double n = clampd(v / 2.0, 0, 1);
@@ -237,10 +238,15 @@ bool decodeFruityVocoder(Context&, const std::vector<Event>& evs, PluginMapping&
   // bandwidth have no counterpart in this engine and keep its defaults.
   auto freq = [](double v) { return 10.0 + 15990.0 * (std::pow(101.0, clampd(v / 65536.0, 0, 1)) - 1.0) / 100.0; };
   auto db = [](double v) { return v <= 0 ? -60.0 : clampd(20.0 * std::log10(v / 128.0), -60, 6); };
-  KnobTable tab = {{0, 0, 65536, sp::VcLowFreq, [freq](double v) { return clampd(freq(v), 20, 2000); }},
+  // K-37: the first row of a tag is what automation drives; the narrow knobs follow for old states.
+  fx::set(m, sp::VcRange, 1);
+  KnobTable tab = {{0, 0, 65536, sp::VcLowW, [freq](double v) { return clampd(freq(v), 10, 20000); }},
+                   {0, 0, 65536, sp::VcLowFreq, [freq](double v) { return clampd(freq(v), 20, 2000); }},
+                   {1, 0, 65536, sp::VcHighW, [freq](double v) { return clampd(freq(v), 10, 20000); }},
                    {1, 0, 65536, sp::VcHighFreq, [freq](double v) { return clampd(freq(v), 1000, 20000); }},
                    {3, 0, 1, sp::VcInvert, [](double v) { return v >= 0.5 ? 1.0 : 0.0; }},
                    {4, -1200, 1200, sp::VcFormant, [](double v) { return clampd(v / 100.0, -12, 12); }},
+                   {6, 10, 1000, sp::VcAttackW, [](double v) { return clampd(v, 0.5, 1000); }},
                    {6, 10, 1000, sp::VcAttack, [](double v) { return clampd(v, 0.5, 200); }},
                    {7, 10, 1000, sp::VcRelease, [](double v) { return clampd(v, 5, 1500); }},
                    {8, 0, 1, sp::VcHold, [](double v) { return v >= 0.5 ? 1.0 : 0.0; }},

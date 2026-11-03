@@ -184,6 +184,7 @@ bool decodeParamEq1(Context&, const std::vector<Event>& evs, PluginMapping& m) {
   tab.push_back({28, 0, 256, pp::EqMainLin, peq1Main});
   fx::applyTable(m, tab, t);
   fx::set(m, pp::EqMain, clampd(dbOf(peq1Main(t[28]), -18), -18, 18));  // the dB view
+  for (int b = 0; b < 7; ++b) fx::set(m, pp::EqClassicLow + b, clampd(peq1Hz(t[static_cast<size_t>(7 + b)]), 10, 20));  // K-37
   m.exact = true;
   bindKnobs(m, tab);
   return true;

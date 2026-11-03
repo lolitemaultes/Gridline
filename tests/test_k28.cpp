@@ -2,7 +2,7 @@
 // step) with a curve amount (tension): shapes, save / load (old files load as before), edits that
 // carry them, playback following the drawn curve; FL Studio export as slide notes (one per ramp,
 // curves as several ramps, steps as one-tick slides, start values in the note's own pitch, chords
-// bending as one, lines next to other notes of the colour left out and counted), proven by
+// bending as one, lines next to other notes of the colour moved to a free one: K-AB), proven by
 // rendering the original and the exported-then-reimported project and comparing their pitch
 // tracks; zipped FL export goes through the same writer.
 #include <cmath>
@@ -311,14 +311,15 @@ int main() {
     Song back;
     flp::ExportReport rep;
     expect(flRoundTrip(s, back, rep), "chords export");
-    expect(rep.counts["notes: pitch bend lines written as slide notes"] == 3 &&
-               rep.counts["notes: pitch bend lines not written (other notes of their colour sound with them, a slide would glide those too)"] == 1,
-           "a chord bending as one becomes one set of slides; a line over another sounding note is left out and reported");
+    // (K-AB: the line over the held note moves to a free colour, test_kab_bend_export has the rest)
+    expect(rep.counts["notes: pitch bend lines written as slide notes"] == 4 &&
+               rep.counts["notes: pitch bend lines moved to a free note colour (their slides would glide other notes of the old colour)"] == 1,
+           "a chord bending as one becomes one set of slides; a line over another sounding note moves colour and is reported");
     const std::vector<Note>* ns = firstNotes(back);
     int slides = 0;
     if (ns)
       for (const Note& n : *ns) slides += n.slide;
-    expect(slides == 1, "one slide glides the whole chord");
+    expect(slides == 2, "one slide glides the whole chord, one the moved line");
     const AudioBuffer a = render(s), b = render(back);
     double worst = 0;
     for (double hz : {f0, f0 * std::pow(2.0, 4 / 12.0), f0 * std::pow(2.0, 7 / 12.0)}) {

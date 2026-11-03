@@ -14,6 +14,7 @@
 #include "../NoteBend.h"
 #include "../Params.h"
 #include "../PatternAutomation.h"
+#include "../../packs/plasma/plasma.h"
 #include "FlpExportInternal.h"
 
 namespace gl::flp::xp {
@@ -80,19 +81,54 @@ double setPitch(Note& n, double pitch) {
   return std::fabs(n.pitch + n.fine / 100.0 - pitch);
 }
 
+// K-AB: within 5 cents where the ticks allow: half of FL's fine pitch step, the most a held value
+// can be off anyway.
+constexpr double kSlideTolerance = 0.05, kFinePitchStep = 0.1;
+
+// K-AB: what colour means on a channel, beyond grouping slides: a note's colour reaches these
+// instruments and they act on it, so a note can't change colour there. Hosted plugins and MIDI Out
+// get it as the MIDI channel, the slicer picks deck and direction by it, the FM synth portamento
+// and key tracking, Junction hands it to what it hosts, FL's voltage controller reads it, note
+// processors can route by it, Plasma
+// reads it as the channel in MPE mode.
+bool colourSelects(const Song& s, const Channel& c, int depth = 0) {
+  const std::string& t = c.plugin.type;
+  if (isHostedType(t) || t == "gl.midiout" || t == "gl.slicer" || t == "gl.matrixfm" || t == "gl.patcher" || t == "gl.cvctl" || !c.noteFx.empty()) return true;
+  const auto mpe = static_cast<size_t>(packs::plasma::G_MpeOn);
+  if (t == "gl.plasma" && mpe < c.plugin.params.size() && c.plugin.params[mpe] >= 0.5f) return true;
+  if (depth < 4)
+    for (ObjectId k : c.layer)
+      if (const Channel* kid = s.channel(k); kid && colourSelects(s, *kid, depth + 1)) return true;
+  return false;
+}
+
+struct ColourUse {
+  bool selects = false;    // colourSelects
+  bool colour0Busy = false;  // the channel's step row sounds in colour 0 (its notes have that colour)
+  uint32_t elsewhere = 0;  // colours of this channel's notes in other patterns (clips can overlap: taken last)
+};
+
 // K-28: FL notes have no bend line; FL's equivalent is the slide note, which glides every sounding
-// note of its channel and colour to its pitch over its length (fine pitch in 10 cent steps). A line
-// becomes slide notes (bend::toSlides) when only its own note would glide: the note sounds alone in
-// its colour, or with a chord whose notes start with it and carry the same line (a chord bending
-// as one: one set of slides glides them all, measured from the last of them, as a slide is
-// measured from the last note started). Otherwise the line is left out, and counted. The notes
-// come back without lines (converted ones starting at the line's start value); the slides go to
-// `slides`.
-std::vector<Note> bendsAsSlides(const std::vector<Note>& ns, std::vector<Note>& slides, ExportReport& rep) {
+// note of its channel and colour by the interval from the last note of that colour started, over
+// its length (fine pitch in 10 cent steps). A line becomes slide notes (bend::toSlides) when only
+// its own note would glide: nothing else of its colour sounds during the slides or starts between
+// the note and its last slide, or the others are a chord starting with it and carrying the same
+// line (a chord bending as one: one set of slides glides them all, measured from the last of them).
+// K-AB: otherwise the note and its slides move to a colour free for the note's whole length, where
+// colour means nothing else on the channel; only without one is the line left out, and counted.
+// The user's own slide notes keep what they glide: a line they play over or count from stays put.
+// FL's file has no place for the old colour, so the note reads back in the new one. The notes come
+// back without lines (converted ones starting at the line's start value); the slides go to `slides`.
+std::vector<Note> bendsAsSlides(const std::vector<Note>& ns, std::vector<Note>& slides, ExportReport& rep, const ColourUse& use) {
   std::vector<Note> out = ns;
   for (Note& n : out) n.bend.clear();
   std::vector<bool> done(ns.size(), false);
-  int asSlides = 0, crowded = 0, onSlides = 0, curves = 0, steps = 0, rounded = 0, cents = 0;
+  std::vector<int> colour;  // as written so far
+  colour.reserve(ns.size());
+  for (const Note& n : ns) colour.push_back(n.color);
+  uint32_t moveTargets = 0;
+  auto noteEnd = [](const Note& o) { return o.start + std::max<Tick>(1, o.length); };
+  int asSlides = 0, moved = 0, noColour = 0, selects = 0, underSlide = 0, onSlides = 0, curves = 0, steps = 0, rounded = 0, cents = 0, relaxed = 0;
   for (size_t i = 0; i < ns.size(); ++i) {
     const Note& n = ns[i];
     if (n.bend.empty() || done[i]) continue;
@@ -108,33 +144,82 @@ std::vector<Note> bendsAsSlides(const std::vector<Note>& ns, std::vector<Note>& 
         end = std::max(end, ns[j].start + std::max<Tick>(1, ns[j].length));
         done[j] = true;
       }
-    bool alone = true;
-    for (size_t j = 0; j < ns.size() && alone; ++j) {
-      const Note& o = ns[j];
-      if (o.color != n.color || std::find(group.begin(), group.end(), j) != group.end()) continue;
-      if (o.start < end && o.start + std::max<Tick>(1, o.length) > n.start) alone = false;
-    }
-    if (!alone) {
-      crowded += static_cast<int>(group.size());
-      continue;
-    }
-    const bend::SlidePlan plan = bend::toSlides(n.bend, static_cast<double>(end - n.start));
+    const int groupSize = static_cast<int>(group.size());
+    auto inGroup = [&](size_t j) { return std::find(group.begin(), group.end(), j) != group.end(); };
     const Note& ref = ns[group.back()];
     const double refPitch = ref.pitch + ref.fine / 100.0;
-    bool off = false;
+    const bend::SlidePlan plan = bend::toSlides(n.bend, static_cast<double>(end - n.start), kSlideTolerance, kFinePitchStep, refPitch);
+    // The ticks the slides take; a line that only starts off its pitch has none.
+    const Tick wStart = plan.pieces.empty() ? n.start : n.start + static_cast<Tick>(plan.pieces.front().tick);
+    const Tick wEnd = plan.pieces.empty() ? n.start : n.start + static_cast<Tick>(plan.pieces.back().tick + plan.pieces.back().length);
+    int col = n.color;
+    bool crowded = col == 0 && use.colour0Busy && !plan.pieces.empty();
+    for (size_t j = 0; j < ns.size() && !crowded && !plan.pieces.empty(); ++j) {
+      const Note& o = ns[j];
+      if (colour[j] != col || o.slide || inGroup(j)) continue;
+      crowded = o.start < wEnd && (noteEnd(o) > wStart || o.start >= n.start);  // glided, or the slides would count from it
+    }
+    // A slide note of the colour over this note takes it over, in place or moved it plays another
+    // sound. One after it that counts from it would get another interval if it moved away.
+    bool slideOver = false, countsFromIt = false;
+    for (size_t j = 0; j < ns.size(); ++j) {
+      const Note& o = ns[j];
+      if (!o.slide || colour[j] != col) continue;
+      if (o.start < end && noteEnd(o) > n.start) slideOver = true;
+      if (o.start < n.start) continue;
+      bool newer = false;  // an ordinary note of the colour started since: the slide counts from that
+      for (size_t k = 0; k < ns.size() && !newer; ++k)
+        newer = !ns[k].slide && colour[k] == col && !inGroup(k) && ns[k].start > n.start && ns[k].start <= o.start;
+      if (!newer) countsFromIt = true;
+    }
+    if (slideOver || (crowded && countsFromIt)) {
+      underSlide += groupSize;
+      continue;
+    }
+    if (crowded && use.selects) {
+      selects += groupSize;
+      continue;
+    }
+    if (crowded) {
+      int best = -1, bestRank = 0;
+      for (int c = 0; c < kNoteColors; ++c) {
+        if (c == col || (c == 0 && use.colour0Busy)) continue;
+        bool free = true, usedHere = false;
+        for (size_t j = 0; j < ns.size() && free; ++j) {
+          if (colour[j] != c) continue;
+          usedHere = true;
+          free = !ns[j].slide && !(ns[j].start < end && noteEnd(ns[j]) > n.start);
+        }
+        if (!free) continue;
+        // Colours this channel doesn't use elsewhere first (clips can overlap), 14 and 15 last (FL's
+        // synths read those two), and a colour lines already moved to before one the user chose.
+        const int rank = (((use.elsewhere >> c) & 1u) ? 4 : 0) + (c >= 14 ? 2 : 0) + (usedHere && !((moveTargets >> c) & 1u) ? 1 : 0);
+        if (best < 0 || rank < bestRank) best = c, bestRank = rank;
+      }
+      if (best < 0) {
+        noColour += groupSize;
+        continue;
+      }
+      col = best;
+      moveTargets |= 1u << best;
+      for (size_t j : group) colour[j] = best, out[j].color = best;
+      moved += groupSize;
+    }
+    bool off = plan.offGrid;
     for (size_t j : group) off = setPitch(out[j], ns[j].pitch + ns[j].fine / 100.0 + plan.start) > 0.005 || off;
     for (const bend::SlidePiece& pc : plan.pieces) {
       Note sl(n.start + static_cast<Tick>(pc.tick), std::max<Tick>(1, static_cast<Tick>(pc.length)), 60, n.velocity);
       off = setPitch(sl, refPitch + pc.target) > 0.005 || off;
-      sl.color = n.color;
+      sl.color = col;
       sl.slide = true;
       slides.push_back(sl);
     }
-    asSlides += static_cast<int>(group.size());
+    asSlides += groupSize;
     curves += plan.curves;
     steps += plan.steps;
     rounded += plan.rounded;
     cents += off;
+    relaxed += plan.relaxed;
   }
   auto count = [&](const char* what, int v) {
     if (v > 0) rep.counts[what] += v;
@@ -144,7 +229,11 @@ std::vector<Note> bendsAsSlides(const std::vector<Note>& ns, std::vector<Note>& 
   count("notes: pitch bend steps written as one-tick slides", steps);
   count("notes: pitch bend points moved to whole ticks", rounded);
   count("notes: pitch bend lines rounded to 10 cent fine pitch steps", cents);
-  count("notes: pitch bend lines not written (other notes of their colour sound with them, a slide would glide those too)", crowded);
+  count("notes: pitch bend lines over the limit of 64 slides (a wider tolerance was used)", relaxed);
+  count("notes: pitch bend lines moved to a free note colour (their slides would glide other notes of the old colour)", moved);
+  count("notes: pitch bend lines not written (other notes of their colour sound with them and no note colour is free)", noColour);
+  count("notes: pitch bend lines not written (other notes of their colour sound with them and this instrument reads note colours)", selects);
+  count("notes: pitch bend lines not written (a slide note of their colour plays over them or counts from them)", underSlide);
   count("notes: pitch bend lines on slide notes not written (slide notes play no line)", onSlides);
   return out;
 }
@@ -192,7 +281,18 @@ void Exporter::writePatternNotes() {
         const int fl = im.ch(cid);
         if (fl < 0) continue;
         std::vector<Note> slides;  // K-28: bend lines as slide notes
-        const std::vector<Note> written = bendsAsSlides(ns, slides, rep);
+        ColourUse use;
+        if (std::any_of(ns.begin(), ns.end(), [](const Note& x) { return !x.bend.empty(); })) {
+          if (const Channel* c = s.channel(cid)) use.selects = colourSelects(s, *c);
+          if (auto row = p->steps.find(cid); row != p->steps.end())
+            use.colour0Busy = std::any_of(row->second.begin(), row->second.end(), [](uint8_t v) { return v != 0; });
+          for (const Pattern& q : s.patterns) {
+            if (q.id == pid) continue;
+            if (auto it = q.notes.find(cid); it != q.notes.end())
+              for (const Note& x : it->second) use.elsewhere |= 1u << (x.color & 15);
+          }
+        }
+        const std::vector<Note> written = bendsAsSlides(ns, slides, rep, use);
         for (const Note& n : written) {
           const Bytes* tmpl = nullptr;
           auto range = old.equal_range(std::make_tuple(fl, static_cast<uint32_t>(std::max<Tick>(0, n.start)), n.pitch));

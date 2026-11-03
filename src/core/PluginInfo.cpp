@@ -22,6 +22,7 @@ double ParamDesc::toNormalized(double v) const {
   }
   if (max <= min) return 0.0;
   if (scale == ParamScale::Log && min > 0) return std::log(v / min) / std::log(max / min);
+  if (scale == ParamScale::Curve501) return std::log(1.0 + 500.0 * (v - min) / (max - min)) / std::log(501.0);
   if (scale == ParamScale::Detent && def > min && def < max) return v <= def ? 0.5 * (v - min) / (def - min) : 0.5 + 0.5 * (v - def) / (max - def);
   return (v - min) / (max - min);
 }
@@ -33,6 +34,7 @@ double ParamDesc::fromNormalized(double n) const {
     return clamp(n * hi);
   }
   if (scale == ParamScale::Log && min > 0) return clamp(min * std::pow(max / min, n));
+  if (scale == ParamScale::Curve501) return clamp(min + (max - min) * (std::pow(501.0, n) - 1.0) / 500.0);
   if (scale == ParamScale::Detent && def > min && def < max) return clamp(n <= 0.5 ? min + 2.0 * n * (def - min) : def + (2.0 * n - 1.0) * (max - def));
   return clamp(min + n * (max - min));
 }
@@ -735,6 +737,8 @@ GL_NOINLINE void addInfo15(std::vector<PluginInfo>& v) {
   p.params[EqLinear] = ch("Linear phase", {"Off", "Lowest", "Low", "Medium", "High", "Higher", "Highest"}, 0);
   p.params[EqPhaseView] = tog("Show phase", 0);
   p.params[EqHistAvg] = tog("Histogram average", 0);
+  for (int b = 0; b < kEqBands; ++b)  // K-37: the classic band model reaches down to 10 Hz (from FL imports)
+    p.params[EqClassicLow + b] = lg((std::string("Band ") + bandNames[b] + " below 20 Hz").c_str(), "Hz", 10, 20, 20);
   p.editorWidth = 900;
   auto band = [](int b, int f, float v) { return std::make_pair(eqParam(b, f), v); };
   auto fl = [](int b, int f, float v) { return std::make_pair(eqFl(b, f), v); };
@@ -811,7 +815,7 @@ GL_NOINLINE void addInfo18(std::vector<PluginInfo>& v) {
   // ceiling up to +12 dB, times up to 1 s / 2 s, curves 1-8).
   p.params[LimGain] = lin("Gain", "dB", -36, 24, 0);
   p.params[LimCeiling] = lin("Ceiling", "dB", -36, 12, 0);
-  p.params[LimRelease] = lg("Release", "s", 0.001, 2, 0.0855);
+  p.params[LimRelease] = lg("Release (legacy)", "s", 0.001, 2, 0.0855);
   p.params[LimAttack] = lg("Attack (look-ahead)", "s", 0.0001, 1, 0.002);
   p.params[LimHold] = lg("Sustain (peak window)", "s", 0.0001, 1, 0.01);
   p.params[LimRelCurve] = ch("Release curve", {"1", "2", "3", "4", "5", "6", "7", "8"}, 2);
@@ -821,21 +825,33 @@ GL_NOINLINE void addInfo18(std::vector<PluginInfo>& v) {
   p.params[LimCompRatio] = lg("Comp ratio", "x", 0.25, 20, 1);
   p.params[LimCompKnee] = lin("Comp soft knee", "dB", 0, 24, 0);
   p.params[LimCompAttack] = lg("Comp attack", "s", 0.0001, 1, 0.0001);
-  p.params[LimCompRelease] = lg("Comp release", "s", 0.001, 2, 0.248);
+  p.params[LimCompRelease] = lg("Comp release (legacy)", "s", 0.001, 2, 0.248);
   p.params[LimCompRms] = lg("Comp RMS window", "s", 0.0001, 1, 0.001);
   p.params[LimCompCurve] = ch("Comp curve", {"1", "2", "3", "4", "5", "6", "7", "8"}, 0);
   p.params[LimGateThresh] = lin("Noise threshold", "dB", -80, 0, -80);
   p.params[LimGateFloor] = lin("Noise gain", "dB", -80, 0, 0);
-  p.params[LimGateRelease] = lg("Noise release", "s", 0.001, 2, 0.05);
+  p.params[LimGateRelease] = lg("Noise release (legacy)", "s", 0.001, 2, 0.05);
   p.params[LimSafety] = tog("0.2 dB safety", 0);
   p.params[LimView] = ch("View", {"Limiter", "Compressor"}, 0);
   p.params[LimSidechain] = ch("Comp detector input", {"Own signal", "Sidechain"}, 0);
   p.params[LimCompShape] = lin("Comp knee", "%", -1, 1, 0);
+  // K-37: the release knobs reach 0 ms. Saved automation holds normalized positions of the old 1 ms..2 s
+  // range, so states from before keep those knobs (range 0) and everything else uses the new ones.
+  p.params[LimRange] = ch("Release range", {"From 1 ms", "From 0 ms"}, 0);
+  auto wide = [](const char* n, double d) {
+    ParamDesc x = lin(n, "s", 0, 2, d);
+    x.scale = ParamScale::Curve501;
+    return x;
+  };
+  p.params[LimReleaseW] = wide("Release", 0.0855);
+  p.params[LimCompReleaseW] = wide("Comp release", 0.248);
+  p.params[LimGateReleaseW] = wide("Noise release", 0.05);
   p.editorWidth = 780;
   p.presets = {{"Safety", {}}, {"Loud master", {{LimGain, 6.f}, {LimCeiling, -0.3f}, {LimRelease, 0.06f}}},
                {"Brickwall -1 dB", {{LimCeiling, -1.f}}},
                {"Bus glue", {{LimCompThresh, -18.f}, {LimCompRatio, 2.5f}, {LimCompAttack, 0.01f}, {LimCompRelease, 0.2f}, {LimGain, 3.f}}},
                {"Gated drums", {{LimGateThresh, -38.f}, {LimGateFloor, -60.f}, {LimGateRelease, 0.08f}}}};
+  setReferenceDefaults(p, {{LimRange, 1}});
   v.push_back(p);
 }
 
@@ -1509,6 +1525,7 @@ GL_NOINLINE void addInfo38(std::vector<PluginInfo>& v) {
   p.params[FsLrPhase] = lin("L/R phase", "%", 0, 1, 0);
   p.params[FsFeedbackRef] = lin("Feedback", "%", 0, 1, 0.5);
   p.params[FsStartRef] = lin("Start phase", "%", 0, 1, 0.5);
+  p.params[FsLaw] = ch("Shift law", {"1", "2"}, 0);
   p.legacyModelParam = FsModel;
   p.editorWidth = 760;
   p.presets = {{"Subtle", {}},
@@ -1516,7 +1533,7 @@ GL_NOINLINE void addInfo38(std::vector<PluginInfo>& v) {
                {"Metal", {{FsRange, 1.f}, {FsFreqPos, 0.7454f}, {FsMixRef, 1.f}}},
                {"Wide ring", {{FsType, 2.f}, {FsRange, 1.f}, {FsFreqPos, 0.55f}, {FsMixRef, 0.75f}, {FsLrPhase, 1.f}}}};
   // K-2: new instances start at the reference plugin's defaults.
-  setReferenceDefaults(p, {{FsType, 1}, {FsFreqPos, 1}, {FsMixRef, 1}});
+  setReferenceDefaults(p, {{FsType, 1}, {FsFreqPos, 1}, {FsMixRef, 1}, {FsLaw, 1}});
   v.push_back(p);
 }
 

@@ -62,11 +62,22 @@ Encoder limiter() {
     w.u8(0);           // flags: no safety margin
     return w.b;
   };
+  // K-37: a state on the legacy release knobs writes and compares as the same times on the new ones.
+  e.strip = [](PluginState& s) {
+    if (s.params.size() < static_cast<size_t>(pp::LimCount)) return;
+    static const int pairs[3][2] = {{pp::LimRelease, pp::LimReleaseW}, {pp::LimCompRelease, pp::LimCompReleaseW}, {pp::LimGateRelease, pp::LimGateReleaseW}};
+    const bool legacy = s.params[pp::LimRange] < 0.5f;
+    for (const auto& q : pairs) {
+      if (legacy) s.params[static_cast<size_t>(q[1])] = s.params[static_cast<size_t>(q[0])];
+      else s.params[static_cast<size_t>(q[0])] = std::clamp(s.params[static_cast<size_t>(q[1])], 0.001f, 2.f);
+    }
+    s.params[pp::LimRange] = 1.f;
+  };
   e.fields = [](const Bytes& s) {
     static const int gl[kLimKnobs] = {pp::LimGain,       pp::LimSaturation,  pp::LimCeiling,    pp::LimAttack,    pp::LimAtkCurve,
-                                      pp::LimRelease,    pp::LimRelCurve,    pp::LimHold,       pp::LimCompThresh, pp::LimCompRatio,
-                                      pp::LimCompShape,  pp::LimCompAttack,  pp::LimCompRelease, pp::LimCompCurve, pp::LimCompRms,
-                                      pp::LimGateFloor,  pp::LimGateThresh,  pp::LimGateRelease};
+                                      pp::LimReleaseW,   pp::LimRelCurve,    pp::LimHold,       pp::LimCompThresh, pp::LimCompRatio,
+                                      pp::LimCompShape,  pp::LimCompAttack,  pp::LimCompReleaseW, pp::LimCompCurve, pp::LimCompRms,
+                                      pp::LimGateFloor,  pp::LimGateThresh,  pp::LimGateReleaseW};
     static const int lo[kLimKnobs] = {0, 0, 0, 0, 1, 0, 1, 0, 0, -1000, -1000, 0, 0, 1, 0, 0, 0, 0};
     static const int hi[kLimKnobs] = {2000, 1000, 2000, 10000, 8, 10000, 8, 10000, 1000, 1000, 1000, 10000, 10000, 8, 10000, 1000, 1000, 10000};
     std::vector<Field> f;

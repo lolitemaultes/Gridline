@@ -49,7 +49,7 @@ uint32_t versionOf(const Bytes& b) {
 // top byte (1 up, -1 down, 2 straight curve; nothing on the first point).
 uint32_t pointFlags(int i, float t, uint8_t mode) {
   const uint32_t dir = i == 0 ? 0u : t > 0 ? 1u : t < 0 ? 0xFFu : mode == menv::SingleCurve ? 2u : 0u;
-  return mode | dir << 24;
+  return static_cast<uint32_t>(menv::toFlMode(mode)) | dir << 24;
 }
 // Envelope points: u32 format 3 (64-bit points), u32 n, n × {f64 dx, f64 y,
 // f32 tension, u32 flags}; x positions are stored as distances.

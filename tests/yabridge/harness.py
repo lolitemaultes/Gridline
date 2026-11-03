@@ -251,7 +251,7 @@ class App:
         m = self.ask("plugwin info", r"plugwin frame \d+: (\d+) windows\n((?:  plugwin .*\n)*)", timeout=20)
         out = []
         if m:
-            for w in re.finditer(r'plugwin "(.*)" format (\S+) external (\d) window (0x[0-9a-f]+) container (0x[0-9a-f]+) at (-?\d+),(-?\d+) size (\d+)x(\d+) plugin (\d+),(\d+) (\d+)x(\d+) resizable (\d)', m.group(2)):
+            for w in re.finditer(r'plugwin "(.*)" format (\S+)(?: \(sandbox\))? external (\d) window (0x[0-9a-f]+) container (0x[0-9a-f]+) at (-?\d+),(-?\d+) size (\d+)x(\d+) plugin (\d+),(\d+) (\d+)x(\d+) resizable (\d)', m.group(2)):
                 g = w.groups()
                 out.append({"name": g[0], "format": g[1], "external": g[2] == "1", "window": g[3], "container": g[4], "x": int(g[5]), "y": int(g[6]), "w": int(g[7]), "h": int(g[8]),
                             "px": int(g[9]), "py": int(g[10]), "pw": int(g[11]), "ph": int(g[12]), "resizable": g[13] == "1"})

@@ -57,6 +57,8 @@ std::shared_ptr<const KnobTable> limiterTable() {
       {2, 0, 2000, pp::LimCeiling, [](double v) { return std::clamp(limDb(limAmp3(v), -36), -36.0, 12.0); }},
       {3, 0, 10000, pp::LimAttack, [](double v) { return std::clamp(limMs(v) * 0.001, 0.0001, 1.0); }},
       {4, 1, 8, pp::LimAtkCurve, [](double v) { return std::clamp(v - 1, 0.0, 7.0); }},
+      // K-37: the first row of a tag is what automation drives; the legacy knobs follow for old states.
+      {5, 0, 10000, pp::LimReleaseW, [](double v) { return std::clamp(2.0 * limMs(v) * 0.001, 0.0, 2.0); }},
       {5, 0, 10000, pp::LimRelease, [](double v) { return std::clamp(2.0 * limMs(v) * 0.001, 0.001, 2.0); }},
       {6, 1, 8, pp::LimRelCurve, [](double v) { return std::clamp(v - 1, 0.0, 7.0); }},
       {7, 0, 10000, pp::LimHold, [](double v) { return std::clamp(limMs(v) * 0.001, 0.0001, 1.0); }},
@@ -64,11 +66,13 @@ std::shared_ptr<const KnobTable> limiterTable() {
       {9, -1000, 1000, pp::LimCompRatio, [](double v) { return std::clamp(limRatio(v), 0.25, 20.0); }},
       {10, -1000, 1000, pp::LimCompShape, [](double v) { return std::clamp(v / 1000.0, -1.0, 1.0); }},
       {11, 0, 10000, pp::LimCompAttack, [](double v) { return std::clamp(limMs(v) * 0.001, 0.0001, 1.0); }},
+      {12, 0, 10000, pp::LimCompReleaseW, [](double v) { return std::clamp(2.0 * limMs(v) * 0.001, 0.0, 2.0); }},
       {12, 0, 10000, pp::LimCompRelease, [](double v) { return std::clamp(2.0 * limMs(v) * 0.001, 0.001, 2.0); }},
       {13, 1, 8, pp::LimCompCurve, [](double v) { return std::clamp(v - 1, 0.0, 7.0); }},
       {14, 0, 10000, pp::LimCompRms, [](double v) { return std::clamp(limMs(v) * 0.001, 0.0001, 1.0); }},
       {15, 0, 1000, pp::LimGateFloor, [](double v) { return std::clamp(limDb(limAmp7(v), -80), -80.0, 0.0); }},
       {16, 0, 1000, pp::LimGateThresh, [](double v) { return std::clamp(limDb(limAmp7(v), -80), -80.0, 0.0); }},
+      {17, 0, 10000, pp::LimGateReleaseW, [](double v) { return std::clamp(2.0 * limMs(v) * 0.001, 0.0, 2.0); }},
       {17, 0, 10000, pp::LimGateRelease, [](double v) { return std::clamp(2.0 * limMs(v) * 0.001, 0.001, 2.0); }},
   });
   return t;
@@ -84,6 +88,7 @@ bool decodeLimiter(Context&, const std::vector<Event>& evs, PluginMapping& m) {
   applyTable(m, *t, asDouble(v));
   bindTable(m, t);
   set(m, pp::LimCompKnee, 0.0);  // the reference has no dB soft knee
+  set(m, pp::LimRange, 1);
   // Tail: spare state (18), i32 ?, i32 view, 4 x u8 display toggles, i32 ?,
   // i32 sidechain input (0 = own signal); version >= 7: u8 flags (bit 0 = 0.2 dB safety).
   if (r.has(18 * 4 + 8)) {

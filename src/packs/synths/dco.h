@@ -48,7 +48,7 @@ enum DcoParam {
   DcEnsOn, DcEnsDelay, DcEnsFb, DcEnsRate, DcEnsDepth, DcEnsMove, DcEnsMoveRate, DcEnsLines, DcEnsLowPass,
   DcEnsHighPass, DcEnsMix, DcEnsPhase,
   DcXOffset, DcYOffset,
-  DcVcaSmooth, DcSatHq, DcMasterTune, DcHpfOn,  // 151..154 (not stored by the reference)
+  DcVcaSmooth, DcSatHq, DcMasterTune, DcHpfOn,  // 151..154 (stored only by the newer state version)
   DcMxSrc1,                                      // 8 matrix sources (choice, 0 = none)
   DcMxDst1 = DcMxSrc1 + 8,                       // 8 matrix destinations (choice, 0 = none)
   DcPanel = DcMxDst1 + 8,                        // 0 two-DCO panel, 1 classic one-DCO panel

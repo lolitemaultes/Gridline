@@ -164,7 +164,8 @@ void editorVocoderLegacy(App& a, const PluginTarget& t, float width) {
   }
   // Envelope.
   box(dlt, F, 4, 156, 150, 134, K, "ENVELOPE", 16);
-  W(a, t, VcAttack, F, 16, 186, 48, K, "ATTACK", skin::WheelBigLine, env);
+  const bool wideRange = val(st, VcRange) >= 0.5f;  // K-37
+  W(a, t, wideRange ? VcAttackW : VcAttack, F, 16, 186, 48, K, "ATTACK", skin::WheelBigLine, env);
   W(a, t, VcRelease, F, 86, 186, 48, K, "RELEASE", skin::WheelBigLine, env);
   // Bands.
   box(dlt, F, 158, 156, 214, 134, K, "BANDS", 16);
@@ -175,8 +176,8 @@ void editorVocoderLegacy(App& a, const PluginTarget& t, float width) {
     sel(a, t, VcOrder, F, 166, 230, 62, 20, K, true, ol);
     cap(dlt, F, 197, 252, "SLOPE", K.textDim);
   }
-  W(a, t, VcLowFreq, F, 238, 178, 38, K, "LOW", skin::WheelBigLine, band);
-  W(a, t, VcHighFreq, F, 282, 178, 38, K, "HIGH", skin::WheelBigLine, band);
+  W(a, t, wideRange ? VcLowW : VcLowFreq, F, 238, 178, 38, K, "LOW", skin::WheelBigLine, band);
+  W(a, t, wideRange ? VcHighW : VcHighFreq, F, 282, 178, 38, K, "HIGH", skin::WheelBigLine, band);
   W(a, t, VcSpacing, F, 326, 178, 38, K, "SPACE", skin::WheelBigLine, band);
   W(a, t, VcBandwidth, F, 260, 234, 38, K, "WIDTH", skin::WheelBigLine, band);
   W(a, t, VcFormant, F, 306, 234, 38, K, "FORMANT", skin::WheelBigLine, band);
@@ -223,7 +224,8 @@ void editorVocoderLegacy(App& a, const PluginTarget& t, float width) {
       }
     }
   const int nb = vocBandCount(val(st, VcBands));
-  const double lo = val(st, VcLowFreq), hi = val(st, VcHighFreq), spc = val(st, VcSpacing);
+  const bool wideBands = val(st, VcRange) >= 0.5f;
+  const double lo = val(st, wideBands ? VcLowW : VcLowFreq), hi = val(st, wideBands ? VcHighW : VcHighFreq), spc = val(st, VcSpacing);
   const int count = lv.fx ? std::min(nb, lv.fx->tel.count.load(std::memory_order_relaxed)) : 0;
   auto levelY = [&](float db) { return bot - std::clamp((db + 72.0f) / 72.0f, 0.0f, 1.0f) * (bot - top); };
   for (int b = 0; b < nb; ++b) {

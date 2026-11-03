@@ -90,9 +90,6 @@ gl.limiter	gap	3
 gl.lowlift	baseline	6
 gl.lowlift	gap	3
 gl.lowlift	row	6
-gl.master	baseline	10
-gl.master	gap	6
-gl.master	label	12
 gl.matrixfm	baseline	6
 gl.matrixfm	ctl-row	3
 gl.matrixfm	label	2

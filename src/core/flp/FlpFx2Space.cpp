@@ -592,6 +592,7 @@ bool decodeVintagePhaser(Context&, const std::vector<Event>& evs, PluginMapping&
   fx::applyTable(m, *tab, t);
   auto on = [](double v) { return v >= 1 ? 1.0 : 0.0; };
   fx::set(m, sx::VpModel, 1);
+  fx::set(m, sx::VpEchoLaw, 1);
   fx::set(m, sx::VpStages, 0);
   fx::set(m, sx::VpInvertFb, on(t[35]));
   fx::set(m, sx::VpManual, on(t[3]));

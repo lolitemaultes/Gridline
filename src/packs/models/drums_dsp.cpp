@@ -12,8 +12,10 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include "../../engine/ChannelIns.h"
 #include "../../engine/pitch/Kernel.h"
 #include "../Packs.h"
+#include "../dynamics/dynamics.h"
 #include "drums.h"
 #include "drums_ref.h"
 #include "drums_voice.h"
@@ -462,13 +464,26 @@ class KickSculptGen final : public Generator {
 };
 
 // ---------------------------------------------------------------- Sweep Kick
+// Engine 1 (SkModel): a 32-bit phase reads a
+// 16384-point sine; the click is the start phase (click x 2^24), start level 1.5; the sweep and
+// the amp fall per sample by factors of the decay knobs; the start pitch follows the key at half
+// rate. Then an optional distortion and the channel envelopes and filter (engine/ChannelIns.h).
+// The channel's pitch envelope and LFO do not reach this instrument's oscillator.
 class SweepKickGen final : public Generator {
  public:
+  SweepKickGen() {
+    for (int i = 0; i < 16384; ++i) sine_[static_cast<size_t>(i)] = static_cast<float>(std::sin(kTwoPi * i / 16384.0));
+    for (int k = 0; k <= 8191; ++k) shape_[static_cast<size_t>(k)] = static_cast<float>(gl::packs::dynamics::fastDistRef(k / 8191.0, 0, 10));
+    shape_[8192] = shape_[8191];
+  }
   bool active() const override {
     for (const auto& v : voices_)
       if (v.on) return true;
+    for (const auto& v : refs_)
+      if (v.on) return true;
     return false;
   }
+  bool handlesNotePan() const override { return model_; }
 
  protected:
   struct Voice {
@@ -477,12 +492,75 @@ class SweepKickGen final : public Generator {
     int64_t t = 0, len = 0;
     double ph = 0, f0 = 100, f1 = 50, fk = 0.999;
     float amp = 1, ampK = 0.999f, click = 0, vel = 1;
+    uint32_t id = 0;
+    bool held = false;
+    InsVoice ins;  // switched on in the envelope page; older states have none
   };
-  void configure(const PluginState& s, const ChannelAux&, const ProcessContext& ctx) override {
+  struct RefVoice {
+    bool on = false, held = false, ending = false;
+    uint32_t id = 0, phase = 0;
+    uint64_t age = 0;
+    float step = 0, amp = 1.5f, hostL = 0, hostR = 0;
+    int fade = -1;
+    InsVoice ins;
+  };
+  void configure(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx) override {
+    const bool rateChanged = ctx.sampleRate != sr_ || !configured_;
     sr_ = ctx.sampleRate;
-    for (int k = 0; k < SkCount; ++k) p_[k] = pv(s, k);
+    bool changed = rateChanged;
+    for (int k = 0; k < SkCount; ++k) {
+      const float x = pv(s, k);
+      changed = changed || x != p_[k];
+      p_[k] = x;
+    }
+    configured_ = true;
+    model_ = p_[SkModel] >= 0.5f;
+    ins_ = aux.ins;
+    tempo_ = ctx.tempo, ppq_ = ctx.ppq, tick0_ = ctx.tick, blockPos_ = 0;
+    if (!changed || !model_) return;
+    // The reference's single-precision laws.
+    const float rate = 44100.0f / static_cast<float>(sr_);
+    stepBase_ = 2.2473466e12f / static_cast<float>(sr_);
+    auto fall = [rate](float knob, double top, double range) {
+      const float inner = 1.0f - knob * 0.00390625f;
+      const double e = static_cast<double>(static_cast<float>(std::exp(static_cast<double>(inner) * 6.90875477931522) - 1.0)) * range;
+      const float x = static_cast<float>(top - e);
+      if (rate == 1.0f) return x;
+      return static_cast<float>(std::exp(std::log(static_cast<double>(x)) * static_cast<double>(rate)));
+    };
+    sweepK_ = fall(std::round(p_[SkFreqDecay]), 0.9997, 9.700000000000043e-06);
+    ampK_ = fall(std::round(p_[SkAmpDecay]), 0.99998, 4.9799999999999845e-06);
+    minStep_ = centsToStep(static_cast<float>(std::round(p_[SkMinFreq]) - 3600.0f));
+    const float d = std::round(p_[SkDist]) * 0.0078125f;
+    dry_ = 1.0f - d, wet_ = d * 3.3f;
+    dist_ = std::round(p_[SkDist]) > 0.0f;
   }
-  void onNoteOn(uint32_t, double pitch, float velocity) override {
+  void startVoice(uint32_t id, double pitch, float velocity, float pan, double modX, double modY) {
+    RefVoice* v = &refs_[0];
+    for (auto& x : refs_)
+      if (!x.on) {
+        v = &x;
+        break;
+      } else if (x.age < v->age) {
+        v = &x;
+      }
+    v->on = true, v->held = true, v->ending = false, v->id = id, v->age = ++clock_, v->fade = -1;
+    v->phase = static_cast<uint32_t>(std::lround(p_[SkClick])) << 24;
+    const float lo = std::round(p_[SkMinFreq]) - 3600.0f;
+    float cents = static_cast<float>((pitch - 60.0) * 100.0) * 0.5f + std::round(p_[SkMaxFreq]) + 1200.0f;
+    cents = std::min(std::max(cents, lo), 4800.0f);
+    v->step = static_cast<float>(centsToStep(cents));
+    v->amp = 1.5f;
+    // The host's note level and constant-power pan.
+    const double vol = (std::pow(11.0, std::nearbyint(static_cast<double>(velocity) * 128.0) / 100.0) - 1.0) / 10.0;
+    const float p = std::clamp(pan, -1.0f, 1.0f);
+    const double a = (1.0 + static_cast<double>(p)) * 0.7853981633974483;
+    v->hostL = static_cast<float>(std::cos(a) * vol), v->hostR = static_cast<float>(std::sin(a) * vol);
+    v->ins.start(ins_.get(), sr_, tempo_, ppq_, modX, modY, tick0_ + static_cast<double>(blockPos_) * tempo_ * ppq_ / (60.0 * sr_));
+    if (v->ins.active()) v->ins.setHostGains(p, static_cast<float>(vol)), v->ins.setNote(pitch, velocity);
+  }
+  void onNoteOn(uint32_t id, double pitch, float velocity) override {
+    if (model_) return startVoice(id, pitch, velocity, 0.f, 0.0, 0.0);
     Voice* v = &voices_[0];
     for (auto& x : voices_)
       if (!x.on) {
@@ -503,13 +581,38 @@ class SweepKickGen final : public Generator {
     v->len = static_cast<int64_t>(dec * sr_ * 1.2) + 64;
     v->click = p_[SkClick] / 64.0f;
     v->vel = velocity;
+    v->id = id, v->held = true;
+    v->ins.start(ins_.get(), sr_, tempo_, ppq_, 0, 0, tick0_ + static_cast<double>(blockPos_) * tempo_ * ppq_ / (60.0 * sr_));
+    if (v->ins.active()) v->ins.setNote(pitch, velocity);
   }
-  void onNoteOff(uint32_t) override {}
-  void onAllOff() override {}
+  void onNoteOnEx(uint32_t id, double pitch, float velocity, const NoteProps& np) override {
+    if (model_) return startVoice(id, pitch, velocity, np.pan, (np.modX - 0.5) * 2.0, (np.modY - 0.5) * 2.0);
+    onNoteOn(id, pitch, velocity);
+  }
+  void endNote(RefVoice& v) {
+    v.held = false;
+    // The volume envelope releases the voice; without one the note end fades it out at once.
+    if (v.ins.active()) v.ins.release();
+    if (!(v.ins.active() && ins_ && ins_->volumeEnvelope()) && v.fade < 0) v.fade = 0;
+  }
+  void onNoteOff(uint32_t id) override {
+    for (auto& v : refs_)
+      if (v.on && v.held && v.id == id) endNote(v);
+    for (auto& v : voices_)
+      if (v.on && v.held && v.id == id) v.held = false, v.ins.release();
+  }
+  void onAllOff() override {
+    for (auto& v : refs_)
+      if (v.on && v.held) endNote(v);
+    for (auto& v : voices_)
+      if (v.on && v.held) v.held = false, v.ins.release();
+  }
   void onKill() override {
     for (auto& v : voices_) v.on = false;
+    for (auto& v : refs_) v.on = false;
   }
   void render(float* L, float* R, int n) override {
+    blockPos_ += n;
     const float dist = p_[SkDist] / 128.0f;
     const float drive = 1.0f + 20.0f * dist * dist, norm = 1.0f / std::tanh(drive);
     for (auto& v : voices_) {
@@ -525,20 +628,71 @@ class SweepKickGen final : public Generator {
         v.amp *= v.ampK;
         if (dist > 0) x = std::tanh(x * drive) * norm;
         const float y = static_cast<float>(x) * 0.8f * v.vel;
-        L[i] += y;
-        R[i] += y;
+        float yl = y, yr = y;
+        if (v.ins.active()) {
+          v.ins.process(yl, yr);
+          if (!v.held && v.ins.done()) v.t = v.len;
+        }
+        L[i] += yl;
+        R[i] += yr;
         if (++v.t >= v.len) {
           v.on = false;
           break;
         }
       }
     }
+    for (auto& v : refs_) {
+      if (!v.on) continue;
+      const bool ins = v.ins.active();
+      const int fadeLen = static_cast<int>(sr_ * 0.01);
+      for (int i = 0; i < n; ++i) {
+        float x = sine_[v.phase >> 18] * v.amp;
+        v.phase += static_cast<uint32_t>(static_cast<int64_t>(std::nearbyint(v.step)));
+        v.amp *= ampK_;
+        if (minStep_ < v.step) v.step *= sweepK_;
+        else v.step = minStep_;
+        if (dist_) {
+          const float u = std::min(std::fabs(x * 0.1f) * 8191.0f, 8191.0f);
+          const int k = static_cast<int>(u);
+          const float y = shape_[static_cast<size_t>(k)] + (shape_[static_cast<size_t>(k) + 1] - shape_[static_cast<size_t>(k)]) * (u - static_cast<float>(k));
+          x = (x < 0 ? -y : y) * wet_ + x * dry_;
+        }
+        float dk = 1.0f;
+        if (v.fade >= 0) {
+          dk = v.fade >= fadeLen ? 0.0f : 0.5f + 0.5f * std::cos(static_cast<float>(kTwoPi) * 0.5f * static_cast<float>(v.fade) / static_cast<float>(fadeLen));
+          if (++v.fade >= fadeLen) v.on = false;
+        }
+        float l = x, r = x;
+        if (ins) {
+          v.ins.processWith(l, r, dk);
+          if (v.ins.done() && v.fade < 0) v.fade = 0;
+        } else {
+          l *= dk * v.hostL, r *= dk * v.hostR;
+        }
+        L[i] += l;
+        R[i] += r;
+        if (!v.on) break;
+      }
+      // The reference ends a voice at the end of the block that falls under this level.
+      if (v.amp < 0.0002f) v.on = false;
+    }
   }
 
  private:
+  float centsToStep(float cents) const {
+    return static_cast<float>(static_cast<int32_t>(std::nearbyint(std::exp(static_cast<double>(cents) * 0.00057762265046662109) * static_cast<double>(stepBase_))));
+  }
   std::array<Voice, 4> voices_;
+  std::array<RefVoice, 8> refs_;
+  std::array<float, 16384> sine_{};
+  std::array<float, 8193> shape_{};
+  std::shared_ptr<const InsSettings> ins_;
   float p_[SkCount] = {};
-  double sr_ = 44100;
+  bool configured_ = false, model_ = false, dist_ = false;
+  float stepBase_ = 0, sweepK_ = 1, ampK_ = 1, minStep_ = 0, dry_ = 1, wet_ = 0;
+  double sr_ = 44100, tempo_ = 120, tick0_ = 0;
+  int ppq_ = 96;
+  int64_t blockPos_ = 0;
   uint64_t clock_ = 0;
 };
 

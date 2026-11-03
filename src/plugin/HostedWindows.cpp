@@ -307,6 +307,8 @@ void runAction(NestedWindow& w) {
 
 void setPluginWindowLog(bool on) { gLog = on; }
 void setPluginWindowUiScale(float) {}
+void settleClosingHostedEditors() {}
+bool hostedEditorAbandoned() { return false; }
 void setPluginWindowPanel(int page) { gStartPanel = std::clamp(page, -1, 2); }
 void setPluginWindowDevAction(const std::string&) {}
 void setPluginWindowDrawStats(bool) {}

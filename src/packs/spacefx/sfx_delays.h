@@ -220,7 +220,8 @@ class MultiDelayFx final : public Effect {
     BqState inS[2][3], fbS[2][3];
     flc::Bq inQ, fbQ;
     int inType = 0, inStages = 1, fbType = 0, fbStages = 1, mode = 0, D = 1, offN[2] = {0, 0}, div = 0, gLen = 2;
-    bool on = false, post = false, leaveFirst = false;
+    bool on = false, post = false, leaveFirst = false, gSlots = false;
+    int gIdx = 0, gLeft = 0;
     double gPos = 0, gPeriod = 1, gShape = 0, modInc = 0, modDepth = 0, modPh = 0, diffuse = 0;
     Ramp mi[4], mo[4], toNext, m[4];
     void clear() {
@@ -231,6 +232,7 @@ class MultiDelayFx final : public Effect {
       for (auto& c : fbS)
         for (auto& b : c) b = BqState{};
       gPos = modPh = 0;
+      gIdx = gLeft = 0;
       toNext = Ramp{};
       for (auto& q : mi) q = Ramp{};
       for (auto& q : mo) q = Ramp{};
@@ -258,6 +260,7 @@ class MultiDelayFx final : public Effect {
       for (auto& h : dn_) h.clear();
       lastOs_ = os;
     }
+    for (auto& r : ref_) r.gLeft = 0;  // gate law 2: each block starts a new slot from the current position
     const double dry = pv(s, MdDry, 1);
     const int sub = os ? 2 : 1;
     const double inv = 1.0 / (static_cast<double>(kRefSub) * sub);
@@ -334,6 +337,18 @@ class MultiDelayFx final : public Effect {
         // The unrounded delay time; at time 0 the delay line's one sample, never a period of 0 (the wrap below would not end).
         r.gPeriod = (sec > 0 ? sec * sr : 1.0) / r.div;
         r.gLen = std::max(2, static_cast<int>(std::lround(r.gPeriod)));
+        r.gSlots = pv(s, MdGateLaw, 0) >= 0.5f;
+        if (r.gSlots) {
+          // Single precision from the whole time unit (1/1920 beat or 1/3.84 ms), so position ties round the same
+          // way on every run. A slot rounding to no samples leaves the audio ungated.
+          const bool beats = X(MdxTempo, 1) >= 0.5;
+          const double units = std::rint(beats ? P(MdSteps, 4) * 480.0 : P(MdTimeMs, 300) * 3.84);
+          const float total = static_cast<float>(units * sr);
+          const float time = sec <= 0 ? 0.f : beats ? total * 0.03125f / static_cast<float>(std::max(1.0, ctx.tempo)) : total / 3840.f;
+          const float slot = time / static_cast<float>(r.div);
+          r.gPeriod = std::max(static_cast<double>(slot), 1e-3);
+          r.gLen = static_cast<int>(std::lrint(slot));
+        }
       }
       flc::mdPanMatrix(clampd(P(MdOutPan), -1, 1), P(MdOutLevel, 0.8f) * wet, 0, false, mm);
       for (int j = 0; j < 4; ++j) r.mo[j].target(mm[j]);
@@ -396,8 +411,24 @@ class MultiDelayFx final : public Effect {
         }
         if (swap) std::swap(y[0], y[1]);  // invert: the unit's output sides swap (J-35), not the feedback
       }
-      if (r.div > 0) {
-        while (r.gPos >= r.gPeriod) r.gPos -= r.gPeriod;
+      if (r.div > 0 && r.gSlots) {
+        // Law 2: a slot plays from its first position to the end of the table, then the position wraps.
+        if (r.gLeft <= 0 && r.gLen > 0) {
+          if (r.gPos >= r.gPeriod) r.gPos = r.gPos < 2 * r.gPeriod ? r.gPos - r.gPeriod : std::fmod(r.gPos, r.gPeriod);
+          r.gIdx = static_cast<int>(std::lrint(r.gPos)) % r.gLen;
+          r.gLeft = r.gLen - r.gIdx;
+        }
+        if (r.gLen > 0) {
+          double w = r.gLen == 2 ? (r.gIdx == 0 ? 1.0 : 0.0) : flc::mdGrainWindow(r.gIdx, r.gLen, r.gShape);
+          y[0] *= w, y[1] *= w;
+          ++r.gIdx, --r.gLeft;
+          r.gPos += 1.0;
+        }
+      } else if (r.div > 0) {
+        // One step almost always; a very long time automated to a very short one must not spin here.
+        if (r.gPos >= r.gPeriod) {
+          r.gPos = r.gPos < 2 * r.gPeriod ? r.gPos - r.gPeriod : std::fmod(r.gPos, r.gPeriod);
+        }
         int idx = static_cast<int>(std::lround(r.gPos)) % r.gLen;
         double w = flc::mdGrainWindow(idx, r.gLen, r.gShape);
         y[0] *= w, y[1] *= w;

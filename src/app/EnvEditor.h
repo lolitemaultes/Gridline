@@ -58,7 +58,8 @@ enum Result { None = 0, Changed = 1, Released = 2 };
 
 inline const char* const* defaultModeNames() {
   static const char* n[menv::ModeCount] = {"Single curve", "Double curve", "Hold", "Stairs", "Smooth stairs", "Pulse", "Wave",
-                                           "Single curve 2", "Double curve 2", "Half sine", "Smooth", "Single curve 3", "Double curve 3"};
+                                           "Single curve 2", "Double curve 2", "Half sine", "Smooth (old curve)", "Single curve 3", "Double curve 3 (old curve)",
+                                           "Smooth", "Double curve 3"};
   return n;
 }
 
@@ -227,11 +228,14 @@ int edit(const char* id, ImVec2 p0, ImVec2 p1, menv::Env<N>& e, State& st, const
         const char* const* names = o.modeNames ? o.modeNames : defaultModeNames();
         if (i > 0) {
           ImGui::TextDisabled("%s", i18n::tr("Segment shape"));
-          for (int k = 0; k < o.modeCount; ++k)
+          for (int k = 0; k < o.modeCount; ++k) {
+            // K-34: the old curves are only listed on a point that still uses one.
+            if ((k == menv::Smooth || k == menv::DoubleCurve3) && e.mode[i] != k) continue;
             if (ImGui::MenuItem(names[k], nullptr, e.mode[i] == k)) {
               e.mode[i] = static_cast<uint8_t>(k);
               res |= Changed | Released;
             }
+          }
           if (ImGui::MenuItem(i18n::tr("Reset tension"))) e.t[i] = 0, res |= Changed | Released;
           ImGui::Separator();
         }

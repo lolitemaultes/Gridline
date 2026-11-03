@@ -70,7 +70,7 @@ double knobU(int v) {
 double insKnobTime(int v, bool beats) { return knobU(v) * (beats ? 0.128 : 0.064); }
 
 bool insSupported(const std::string& pluginType) {
-  return pluginType == "gl.synth" || pluginType == "gl.fmduo" || pluginType == "gl.pixeltone";
+  return pluginType == "gl.synth" || pluginType == "gl.fmduo" || pluginType == "gl.pixeltone" || pluginType == "gl.sweepkick";
 }
 
 bool InsTarget::operator==(const InsTarget& o) const {

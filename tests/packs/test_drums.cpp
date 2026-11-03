@@ -407,9 +407,12 @@ int main() {
     hiMax.params[SkMaxFreq] = 3600;
     loMax.params[SkMaxFreq] = -2400;
     expect(zcr(hit(hiMax), 0, 1500) > zcr(hit(loMax), 0, 1500), "sweep: max frequency sets the start");
-    PluginState dist = s;
+    // The first engine's distortion law (the second engine's: test_k2_kick).
+    PluginState first = s;
+    first.params[SkModel] = 0;
+    PluginState dist = first;
     dist.params[SkDist] = 128;
-    expect(brightness(hit(dist)) > brightness(base), "sweep: distortion adds harmonics");
+    expect(brightness(hit(dist)) > brightness(hit(first)), "sweep: distortion adds harmonics");
     for (float v : {0.0f, 1.0f}) {
       PluginState x = s;
       const PluginInfo* p = findPlugin("gl.sweepkick");

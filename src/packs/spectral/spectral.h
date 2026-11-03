@@ -77,6 +77,9 @@ enum VocParam {
   VxCarDetune,     // ct
   VxMidiPort,      // -1 = held keys only, else MIDI port whose notes play the carrier
   VxEditTarget,    // choice: curve shown in the band editor (UI state)
+  // K-37: legacy engine only. 0 = VcLowFreq, VcHighFreq, VcAttack (states from before; saved automation
+  // holds positions of those ranges), 1 = the three below (FL imports: FL's full ranges).
+  VcRange, VcLowW, VcHighW, VcAttackW,
   VcCount
 };
 inline constexpr int kVxMaps = 13;       // per-band curves kept in PluginState::data

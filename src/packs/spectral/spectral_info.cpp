@@ -90,6 +90,10 @@ PluginInfo vocoder() {
                                                "Attack", "Release", "Band spread", "Band width", "Mod pitch", "Saturation mix",
                                                "Saturation curve"},
                               0);
+  p.params[VcRange] = ch("Band and attack range", {"Narrow", "Wide"}, 0);
+  p.params[VcLowW] = lg("Low band (wide)", "Hz", 10, 20000, 90);
+  p.params[VcHighW] = lg("High band (wide)", "Hz", 10, 20000, 11000);
+  p.params[VcAttackW] = lg("Attack (wide)", "ms", 0.5, 1000, 3);
   p.legacyModelParam = VxModel;
   p.presets = {
       {"Talk box", {}},

@@ -38,6 +38,7 @@
 //   u32 count (151), count × f32 (tags 0..150), u32 1, u32 8, 8 × (i32 source,
 //   i32 destination tag; 256 / 257 = DCO 1 / DCO 2 pitch; −1 = empty), then
 //   u32 2, u64 56 and 56 bytes of runtime data (ignored: rebuilt on load).
+//   Version 4 (FL 2026): count 155 (tags 151..154) and 3 option bytes after the matrix.
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -276,7 +277,7 @@ bool decodeKeplerExo(Context& c, const std::vector<Event>& evs, PluginMapping& m
   if (b.u32(0) != 1 || b.u32(4) != 1 || nameLen == 0 || nameLen > 64) return false;
   size_t at = 32 + nameLen;
   const uint32_t ver = b.u32(at), count = b.u32(at + 4);
-  if (ver < 1 || ver > 2 || count == 0 || count > 155) return false;
+  if (ver < 1 || ver > 4 || count == 0 || count > 155) return false;
   at += 8;
   if (!b.has(at, 4 * static_cast<size_t>(count) + 8)) return false;
   PluginState s = gen::base("gl.dcosynth");
@@ -310,6 +311,14 @@ bool decodeKeplerExo(Context& c, const std::vector<Event>& evs, PluginMapping& m
     setp(s, dc::DcMxSrc1 + static_cast<int>(r), gsrc);
     setp(s, dc::DcMxDst1 + static_cast<int>(r), gdst);
   }
+  // K-37: three option bytes from version 3 or 4 on; their meaning is not known, so anything
+  // but the default marks the import approximate.
+  bool options = false;
+  if (ver >= 3) {
+    if (!b.has(at, 3)) return false;
+    options = b.u8(at) != 0 || b.u8(at + 1) != 0 || b.u8(at + 2) != 0;
+    at += 3;
+  }
   // Runtime chunk (rebuilt on load): u32 2, u64 size, payload.
   if (b.u32(at) != 2) return false;
   const uint64_t extra = b.u64(at + 4);
@@ -320,7 +329,8 @@ bool decodeKeplerExo(Context& c, const std::vector<Event>& evs, PluginMapping& m
   // ("off") reuses a filter object the analysis could not confirm, so it plays unfiltered.
   auto on = [&](int t) { return s.params[static_cast<size_t>(t)] >= 0.5f; };
   const bool dlyType3 = on(dc::DcDlyOn) && std::trunc(3.0 * s.params[static_cast<size_t>(dc::DcDlyFbType)] + 0.5) >= 3;
-  m.exact = !lost && !dlyType3;
+  m.exact = !lost && !dlyType3 && !options;
+  if (options) gen::note(c, "Kepler Exo", "option bytes of the newer state not mapped");
   if (lost) gen::note(c, "Kepler Exo", "unknown modulation matrix source / destination dropped");
   if (dlyType3) gen::note(c, "Kepler Exo", "delay feedback filter \"off\" path unconfirmed (plays unfiltered)");
   keplerLinks(m, false);

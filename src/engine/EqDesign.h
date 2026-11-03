@@ -280,7 +280,9 @@ inline void designEqBandClassic(const PluginState& s, int band, double sr, EqBan
   f.count = 0;
   const int type = static_cast<int>(eqValue(s, band, EqType) + 0.5f);
   if (type == EqOff) return;
-  const double hz = std::min(static_cast<double>(eqValue(s, band, EqFreq)), 0.4999 * sr);
+  float bandHz = eqValue(s, band, EqFreq);
+  if (bandHz <= 20.f) bandHz = eqParamOr(s, EqClassicLow + band, 20.f);  // K-37: down to 10 Hz
+  const double hz = std::min(static_cast<double>(bandHz), 0.4999 * sr);
   const double w = std::clamp(static_cast<double>(eqParamOr(s, eqFl(band, EqWidth), 0.267f)), 0.0, 1.0);
   const double A = std::pow(10.0, eqValue(s, band, EqGain) / 40.0);
   const double w0 = 2 * 3.14159265358979323846 * hz / sr, sw = std::sin(w0), cw = std::cos(w0);

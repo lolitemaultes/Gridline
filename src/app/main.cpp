@@ -2197,7 +2197,9 @@ int main(int argc, char** argv) {
     const float uiScale = devUiScale > 0 ? uiscale::effectiveScale(devUiScale, false, 1.0f, winW, winH)
                                          : uiscale::effectiveScale(app.settings.getNumber("ui.scale"), app.settings.getBool("ui.scaleAuto"), autoDpi, winW, winH);
 
-    setPluginWindowUiScale(uiScale);
+    // K-35: the plugin windows' bars follow the scale asked for; the limit above is this window's size.
+    setPluginWindowUiScale(devUiScale > 0 ? uiscale::effectiveScale(devUiScale, false, 1.0f, 0, 0)
+                                          : uiscale::effectiveScale(app.settings.getNumber("ui.scale"), app.settings.getBool("ui.scaleAuto"), autoDpi, 0, 0));
     viewports::setAllowed(app.settings.getBool("ui.detachWindows"));
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplSDL2_NewFrame();
@@ -2715,6 +2717,7 @@ int main(int argc, char** argv) {
     std::_Exit(0);
   }).detach();
   closeAllHostedEditors(app);
+  settleClosingHostedEditors();
   if (frameClock) host::native::frameClockStop();
   if (gDevice) SDL_CloseAudioDevice(gDevice);
   if (gInDevice) SDL_CloseAudioDevice(gInDevice);  // (SDL_Quit would too; explicit, like the output)
@@ -2730,7 +2733,13 @@ int main(int argc, char** argv) {
   SDL_GL_DeleteContext(gl);
   SDL_DestroyWindow(window);
   SDL_Quit();
-  return browserui::auditIssueCount() > 0 ? 1 : 0;  // Q-7: --layout-audit fails on any inset issue
+  const int exitCode = browserui::auditIssueCount() > 0 ? 1 : 0;  // Q-7: --layout-audit fails on any inset issue
+  if (hostedEditorAbandoned()) {  // K-37: nothing may tear the bridge down around that thread
+    std::fprintf(stderr, "quit: a plugin's interface never closed, leaving without teardown\n");
+    std::fflush(nullptr);
+    std::_Exit(exitCode);
+  }
+  return exitCode;
 }
 
 #if defined(_WIN32)

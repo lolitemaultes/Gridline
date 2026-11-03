@@ -218,7 +218,8 @@ bool parseStepBass(const uint8_t* p, size_t n, StepBassState& out) {
   if (!p || n < 0x40 || n > (1u << 22)) return false;
   Rd r{p, n};
   for (auto& h : out.head) h = r.u32();
-  if (out.head[0] != 1 || out.head[2] != 8 || out.head[7] != n - 36 || out.head[10] != n - 48) return false;
+  // K-37: head[0] 2 is what FL 2026 writes (bank version 5): each sequence and the trailer hold one value more.
+  if ((out.head[0] != 1 && out.head[0] != 2) || out.head[2] != 8 || out.head[7] != n - 36 || out.head[10] != n - 48) return false;
   out.version = r.u16();
   out.root = r.u32();
   out.root2 = r.u32();
@@ -270,8 +271,13 @@ bool parseStepBass(const uint8_t* p, size_t n, StepBassState& out) {
     sq.bpm = r.f64();
     if (!std::isfinite(sq.bpm)) r.bad = true;
     for (auto& t : sq.tail) t = r.u8();
+    if (sq.pre >= 2) sq.extra = r.f64();
   }
   for (auto& t : out.trailer) t = r.u32();
+  if (!r.bad && r.at + 4 == n) {
+    out.hasTrailer2 = true;
+    out.trailer2 = r.u32();
+  }
   out.consumed = r.bad ? 0 : r.at;
   return !r.bad && r.at == n;
 }

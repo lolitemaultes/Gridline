@@ -313,6 +313,7 @@ bool decodeDelayBank(Context& c, const std::vector<Event>& evs, PluginMapping& m
   set(m, MdModel, 1);
   set(m, MdSync, 1);
   set(m, MdOversample, st->i32(flags) >= 1 ? 1 : 0);
+  set(m, MdGateLaw, 1);
   static const int kType[8] = {MfOff, MfLowPass, MfBandPass, MfNotch, MfHighPass, MfLowShelf, MfPeak, MfHighShelf};  // FL order → Gridline
   static const int kMode[4] = {MfbOff, MfbNormal, MfbInvert, MfbPingPong};
   bool exact = true;

@@ -5,13 +5,37 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 
 ## Unreleased
 
+### Changed
+
+- **Crest has a cleaner interface**: every knob, button and caption now sits on one grid with one knob size, in the same panels as the other flagship plugins, in both themes.
+
 ### Fixed
 
+- **Linux, plugins through yabridge**: the first click after moving a plugin window now lands where
+  you clicked (Wine 9.0 and 9.21). A plugin whose interface never returns from closing no longer
+  freezes Gridline: its window goes, and after 15 seconds the plugin shows as crashed.
 - **FL Studio patches line up parallel paths**: imported patches with a plugin that has latency now
   line up parallel paths at every module's input, by the latency each plugin reports, and report the
   longest path to the host, as they do in FL Studio. The mixer compensates for it, and uneven parallel
   paths sum as they do there. A module's level from FL Studio now scales its output too. Hand-wired
   graphs already worked this way. Projects you imported before keep their sound until you import them again.
+- Pitch bend export to FL Studio projects: a bend over another sounding note of the same colour is no longer left out. The bent note and its slides move to a colour that's free for the note's whole length, so the other note keeps its pitch. The note reads back in that colour after opening the file, since the file has no place for the old one. A bend is still left out, and counted in the export report, when no colour is free, when the instrument reads note colours (hosted plugins, MIDI Out, the slicer, the FM synth, Junction, channels with note processors, Plasma in MPE mode), or when one of your own slide notes plays over the note or counts from it.
+- Curves in that export now stay within 5 cents of the line, counting the 10 cent steps of FL Studio's fine pitch, for glides of 2 beats and up at any curve amount and range (they reached about 7.7 cents), and with fewer slides (at most 32 for one glide, 64 for one note's line). Glides that are short and sharp at the same time are limited by the project's ticks: at 96 ticks per beat a 2 octave glide with the sharpest curve is off by up to 12.5 cents over half a beat, and more below that. A step is one slide of one tick, the shortest the format has.
+- Limiter: the release knobs reach 0 ms. New instances and FL imports use the new range; existing projects, presets and automation keep the old one.
+- Cipher, legacy engine: FL imports reach the full band range (10 Hz up) and attacks up to 1 s. Existing projects and automation keep the old ranges.
+- Parametric EQ: FL imports of the classic band model reach down to 10 Hz.
+- Envelope curves: the Smooth and Double curve 3 shapes are more accurate. FL imports and newly picked shapes use them; saved curves keep their old shape and sound.
+- Delay Bank: automating a very long time down to a very short one with a gate on no longer stalls the audio thread for a moment.
+- Multi Delay: FL imports now play the gate in whole slots of its window within each audio block, and very short slots open and close correctly. New instances and existing projects keep their sound. Projects imported before keep theirs until you import them again.
+- FL imports: the newest saved states of DCO Synth and Step Bass no longer fail to load, and Kerf picks up the transpose, detune, cutoff and resonance of an empty slicer.
+- Sweep Kick has a second engine for FL imports and new instances, with a closer start phase, pitch sweep, decays, key tracking, velocity and note-off fade. Imported envelope, LFO and filter settings now work through the channel's Envelope page. Existing projects and factory presets keep the first engine and their sound.
+- Freq Shifter: FL imports and new instances use the exact shift curve and filter tunings. Existing projects keep their sound.
+- Retro Phaser: the echo has a new mode with unfiltered taps, filters in the feedback path, a per-channel stereo balance and closer timing. FL imports and new instances use it; existing projects and factory presets keep the first echo.
+- FL Studio automation now imports for Velocity Scale (all 36 controls), Colour Router (the 16
+  group outputs), Note Sequencer (steps, rate, both transpose controls), Envelope Mod (base,
+  envelope and LFO level of all four envelopes, it was only the first) and Band Delay (all 12
+  main controls). Band Delay's old links reached controls its imported engine doesn't read, so
+  they had no effect. Automation of a single band of Band Delay still doesn't import.
 
 ## 0.7.2
 

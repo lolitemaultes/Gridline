@@ -81,6 +81,14 @@ bool decodeColorMapper(Context&, const std::vector<Event>& evs, PluginMapping& m
     exact = false;
   }
   m.exact = exact;
+  // Automation: parameters 0..15 pick a group's output port (0..15), the same law as above.
+  std::vector<gen2::Link> links;
+  std::vector<RawRange> ranges;
+  for (int k = 0; k < md::kColorGroups && k < 16; ++k) {
+    links.push_back({k, md::CmMap + k, [](double x) { return std::clamp(std::round(15.0 * x), 0.0, 7.0) + 1.0; }});
+    ranges.push_back({k, 0, 15});
+  }
+  gen2::linkParams(m, std::move(links), std::move(ranges));
   return true;
 }
 
@@ -190,6 +198,21 @@ bool decodeSequencer(Context& c, const std::vector<Event>& evs, PluginMapping& m
   const int rate = seqRateOf(g[3]);
   set(m, md::SqRate, rate < 0 ? 4 : rate);
   set(m, md::SqTranspose, std::clamp(12 * static_cast<int8_t>(g[12]) + static_cast<int8_t>(b.p[s.fpgp + 14]), -24, 24));
+  // Automation: steps, rate and the two transpose controls (each adds to the other's saved
+  // value). Gate, swing and the rest have no counterpart here; the step lanes are not parameters.
+  {
+    const int oct = static_cast<int8_t>(g[12]), semi = static_cast<int8_t>(b.p[s.fpgp + 14]);
+    gen2::linkParams(
+        m,
+        {{40, md::SqLength, [](double x) { return std::clamp(std::round(64.0 * x), 1.0, static_cast<double>(md::kSeqSteps)); }},
+         {42, md::SqRate, [](double x) {
+            const int r = seqRateOf(static_cast<int>(std::round(12.0 * x)));
+            return static_cast<double>(r < 0 ? 4 : r);
+          }},
+         {51, md::SqTranspose, [semi](double x) { return std::clamp(12.0 * std::round(-3.0 + 6.0 * x) + semi, -24.0, 24.0); }},
+         {53, md::SqTranspose, [oct](double x) { return std::clamp(12.0 * oct + std::round(-12.0 + 24.0 * x), -24.0, 24.0); }}},
+        {{40, 0, 64}, {42, 0, 12}, {51, -3, 3}, {53, -12, 12}});
+  }
   for (int i = 0; i < md::kSeqSteps; ++i) {
     auto lane = [&](int k) { return b.p[s.lanes[k] + static_cast<size_t>(i)]; };
     const int type = lane(2), keys = lane(3), oct = lane(1);
@@ -225,6 +248,24 @@ bool decodeLevelScaler(Context& c, const std::vector<Event>& evs, PluginMapping&
   namespace md = packs::modulation;
   begin(m, "gl.velscale");
   set(m, md::VsModel, 1);
+  // Automation: 6 parameters per target in the state's order, same laws as the values below.
+  {
+    static const double lo[6] = {0, -16384, -8192, -8192, 0, 0}, hi[6] = {8192, 16384, 8192, 8192, 16384, 2};
+    static const double div[6] = {8192, 8192, 8192, 8192, 16384, 1};
+    static const double gmin[6] = {0, -2, -1, -1, 0, 0}, gmax[6] = {1, 2, 1, 1, 1, 2};
+    std::vector<gen2::Link> links;
+    std::vector<RawRange> ranges;
+    for (int t = 0; t < md::kVsTargets; ++t)
+      for (int f = 0; f < md::VfCount; ++f) {
+        const int fl = t * md::VfCount + f;
+        links.push_back({fl, md::vsRef(t, f), [f](double x) {
+                           const double raw = lo[f] + x * (hi[f] - lo[f]);
+                           return std::clamp((f == md::VfMode ? std::round(raw) : raw) / div[f], gmin[f], gmax[f]);
+                         }});
+        ranges.push_back({fl, lo[f], hi[f]});
+      }
+    gen2::linkParams(m, std::move(links), std::move(ranges));
+  }
   size_t at = 4, data = 0;
   while (b.has(at, 12)) {
     const uint32_t id = b.u32(at);

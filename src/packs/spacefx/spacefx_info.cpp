@@ -117,6 +117,7 @@ PluginInfo multiDelay() {
   p.params[MdOversample] = tog("Oversample", 0);
   p.params[MdZeroTime] = tog("Zero time at minimum", 1);
   p.legacyDefaults.push_back({MdZeroTime, 0.f});  // K-2 round 3: older states keep the 0.002-step minimum
+  p.params[MdGateLaw] = ch("Gate law", {"1", "2"}, 0);  // K-37: law 2 follows the host block, so FL imports only
   auto F = [](int tap, int f, float v) { return std::pair<int, float>{mdParam(tap, f), v}; };
   p.presets = {
       {"Wide pair", {}},
@@ -419,6 +420,7 @@ PluginInfo phaser() {
   p.params[VpSyncTicks] = lin("Synced period", "ticks", 1, 6144, 192);
   p.params[VpDelayKeep] = tog("Echo keep pitch", 0);
   p.params[VpDelayTicks] = lin("Echo synced time", "ticks", 1, 768, 48);
+  p.params[VpEchoLaw] = ch("Echo law", {"1", "2"}, 0);
   p.presets = {{"Classic four", {}},
                {"Deep twelve", {{VpModel, 0.f}, {VpStages, 4.f}, {VpFeedback, 0.6f}, {VpRate, 0.12f}}},
                {"Jet sweep", {{VpModel, 0.f}, {VpStages, 3.f}, {VpFeedback, 0.85f}, {VpWave, 1.f}, {VpRate, 0.08f}, {VpFreqMin, 120.f}, {VpFreqMax, 6000.f}}},
@@ -430,7 +432,7 @@ PluginInfo phaser() {
   // Gridline's, inaudible while the echo is off as in the reference, so Echo on works alone).
   setReferenceDefaults(p, {{VpFreqMax, 2326.61}, {VpManualFreq, 1.25}, {VpFeedback, 0.45}, {VpWave, 1}, {VpTension, 0}, {VpPhaseLR, 0},
                            {VpColorFreq, 50}, {VpInputHp, 5}, {VpFbHp, 5}, {VpDrive, -15}, {VpDelaySync, 0},
-                           {VpDelayFb, 0}, {VpDelayLp, 320}, {VpEngine, 0}});
+                           {VpDelayFb, 0}, {VpDelayLp, 320}, {VpEngine, 0}, {VpEchoLaw, 1}});
   return p;
 }
 

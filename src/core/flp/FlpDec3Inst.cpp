@@ -113,6 +113,18 @@ bool decodeSlicer2(Context&, const std::vector<Event>& evs, PluginMapping& m) {
   bool hasPath = b.find(".wav") != std::string::npos || b.find(std::string("w\0a\0v", 5)) != std::string::npos ||
                  b.find(std::string(":\\")) != std::string::npos || b.find("%FL") != std::string::npos;
   m.exact = !hasPath;
+  // K-37: the whole-instrument knobs of the "slc1" chunk (unaligned; this layout is only known without a
+  // sample): i8 semitones at 89, then 0..1 positions for cents at 93, cutoff at 106, resonance at 110.
+  // Curves are not measured and the per-slice knobs are not imported, so moved knobs make this approximate.
+  if (!hasPath && b.has(110, 4) && b.u32(40) == 0x31636c73u) {
+    const int semi = static_cast<int8_t>(b.u8(89));
+    const float cents = b.f32(93), cut = b.f32(106), res = b.f32(110);
+    if (semi != 0) gen2::set(m, SlPitch, clampd(semi, -24, 24));
+    if (cents != 0.5f) gen2::set(m, SlFine, clampd((cents - 0.5) * 200.0, -100, 100));
+    if (cut != 1.0f) gen2::set(m, SlCutoff, logMap(clampd(cut, 0, 1), 20, 20000));
+    if (res != 0.0f) gen2::set(m, SlReso, clampd(res, 0, 1));
+    if (semi != 0 || cents != 0.5f || cut != 1.0f || res != 0.0f) m.exact = false;
+  }
   return true;
 }
 

@@ -172,7 +172,7 @@ void testLimiter() {
     auto recovery = [](float rel) {
       PluginState st = state("gl.limiter");
       st.params[LimCeiling] = -12;
-      st.params[LimRelease] = rel;
+      st.params[LimReleaseW] = rel;
       Buf in = sine(200, 1.0, 1.0);
       for (size_t i = in.size() / 4; i < in.size(); ++i) in.L[i] = in.R[i] = static_cast<float>(0.1 * std::sin(2 * M_PI * 200 * i / kSr));
       Buf out = run(st, in);

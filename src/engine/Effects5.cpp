@@ -1186,6 +1186,7 @@ class FreqShiftFx final : public Effect {
       fs.freqPos = param(s, FsFreqPos, 0.5f), fs.mix = param(s, FsMixRef, 1), fs.lrPhase = param(s, FsLrPhase);
       fs.shapeL = param(s, FsShapeL, 1), fs.shapeR = param(s, FsShapeR, 1), fs.feedback = param(s, FsFeedbackRef, 0.5f);
       fs.stereo = param(s, FsWidth, 1), fs.startPhase = param(s, FsStartRef, 0.5f);
+      fs.law = iparam(s, FsLaw);
       ref_.process(fs, ctx.sampleRate, ctx.tempo, ctx.playing, ctx.tick / std::max(1, ctx.ppq), L, R, n);
       return;
     }

@@ -32,6 +32,10 @@ namespace gl::menv {
 
 enum Mode : uint8_t {
   SingleCurve, DoubleCurve, Hold, Stairs, SmoothStairs, Pulse, Wave, SingleCurve2, DoubleCurve2, HalfSine, Smooth, SingleCurve3, DoubleCurve3,
+  // K-34: corrected Smooth and DoubleCurve3 (their numbers above stay as they were, so
+  // saved curves keep their sound): Smooth2 has the right tangent weights and flat ends beside other modes,
+  // DoubleCurve3b does not halve its bend twice. FL imports and new points use these.
+  Smooth2, DoubleCurve3b,
   ModeCount
 };
 
@@ -52,6 +56,18 @@ struct Coef {
 
 // Coefficients of one segment (mode + tension). `prevSmooth`/`nextSmooth`
 // tangents are only used by mode 10 and filled by the envelope.
+inline bool isSmooth(uint8_t m) { return m == Smooth || m == Smooth2; }
+// FL stores 13 modes, numbered like the first 13 here.
+inline constexpr int kFlModeCount = 13;
+inline uint8_t fromFlMode(uint8_t m) {
+  if (m == Smooth) return Smooth2;
+  return m == DoubleCurve3 ? static_cast<uint8_t>(DoubleCurve3b) : m;
+}
+inline uint8_t toFlMode(uint8_t m) {
+  if (m == Smooth2) return Smooth;
+  return m == DoubleCurve3b ? static_cast<uint8_t>(DoubleCurve3) : m;
+}
+
 inline Coef coef(uint8_t mode, float t) {
   Coef c;
   c.sign = t > 0 ? 1 : t < 0 ? -1 : 0;
@@ -98,9 +114,11 @@ inline Coef coef(uint8_t mode, float t) {
     case SingleCurve2:
     case DoubleCurve2: c.A = t; break;
     case HalfSine: c.A = std::fabs(t); break;
-    case Smooth: c.C = 1.f - std::fabs(t); break;
+    case Smooth:
+    case Smooth2: c.C = 1.f - std::fabs(t); break;
     case SingleCurve3:
-    case DoubleCurve3: {
+    case DoubleCurve3:
+    case DoubleCurve3b: {
       double x = std::max(0.9 * std::fabs(static_cast<double>(t)), 1.0 / 65536.0);
       double A = 1.0 - (1.0 - x) * (1.0 - x) * (1.0 - x);
       double B = (1.0 - A) / A, C = B;
@@ -164,12 +182,14 @@ inline double shape(uint8_t mode, const Coef& c, double f, double tanStart = 0, 
       double s = c.sign > 0 ? std::sin(kPi * f * 0.5) : 1.0 - std::cos(kPi * f * 0.5);
       return f - c.A * (f - s);
     }
-    case Smooth: {
+    case Smooth:
+    case Smooth2: {
       double f2 = f * f, f3 = f2 * f;
       return f + c.C * (3 * f2 - 2 * f3 + tanEnd * f2 * (f - 1) + tanStart * f * (f - 1) * (f - 1) - f);
     }
     case SingleCurve3: return r11(c, f);
-    case DoubleCurve3: return f < 0.5 ? 0.5 * r11(c, 2 * f) : 1.0 - 0.5 * r11(c, 2 * (1 - f));
+    case DoubleCurve3:
+    case DoubleCurve3b: return f < 0.5 ? 0.5 * r11(c, 2 * f) : 1.0 - 0.5 * r11(c, 2 * (1 - f));
     default: return f;
   }
 }
@@ -211,7 +231,8 @@ struct Env {
     // Smooth mode: monotone cubic tangents (in units of the segment's normalised slope).
     for (int i = 1; i < n; ++i) {
       tanS[i] = tanE[i] = 0;
-      if (mode[i] != Smooth) continue;
+      if (!isSmooth(mode[i])) continue;
+      const bool law2 = mode[i] == Smooth2;
       double h = x[i] - x[i - 1], dy = static_cast<double>(y[i]) - y[i - 1];
       if (h <= 0 || std::fabs(dy) < 6e-8) {
         c[i].sign = 2;
@@ -223,10 +244,13 @@ struct Env {
         if (h0 <= 0 || h1 <= 0) return 0.0;
         double d0 = (static_cast<double>(y[j1]) - y[j0]) / h0, d1 = (static_cast<double>(y[j2]) - y[j1]) / h1;
         if (d0 * d1 <= 0) return 0.0;
+        if (law2) return 3 * d0 * d1 * (h0 + h1) / ((2 * h1 + h0) * d1 + (h1 + 2 * h0) * d0);
         return 3 * d0 * d1 * (h0 + h1) / ((2 * h1 + h0) * d0 + (h1 + 2 * h0) * d1);
       };
-      double m0 = (i >= 2 && mode[i - 1] == Smooth) ? tangent(i - 2, i - 1, i) : d;
-      double m1 = (i + 1 < n && mode[i + 1] == Smooth) ? tangent(i - 1, i, i + 1) : d;
+      auto next = [&](int k) { return law2 ? isSmooth(mode[k]) : mode[k] == Smooth; };
+      const double flat = law2 ? 0.0 : d;
+      double m0 = (i >= 2 && next(i - 1)) ? tangent(i - 2, i - 1, i) : flat;
+      double m1 = (i + 1 < n && next(i + 1)) ? tangent(i - 1, i, i + 1) : flat;
       // Express as f-domain derivatives of the normalised curve (value 0..1 over the segment).
       tanS[i] = static_cast<float>(m0 / d);
       tanE[i] = static_cast<float>(m1 / d);

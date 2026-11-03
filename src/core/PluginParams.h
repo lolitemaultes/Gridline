@@ -272,7 +272,9 @@ inline constexpr int EqHistAvg = EqPhaseView + 1;                 // histogram: 
 // eqFl(b, EqWidth) = width knob (Q / slope law per type), RBJ designs at the host rate; output gain
 // is linear (EqMainLin, 0 = silence) instead of EqMain.
 inline constexpr int EqMainLin = EqHistAvg + 1;
-inline constexpr int EqCount = EqMainLin + 1;
+// K-37: classic model only: a band whose EqFreq sits at its 20 Hz floor plays at this frequency (10..20 Hz).
+inline constexpr int EqClassicLow = EqMainLin + 1;
+inline constexpr int EqCount = EqClassicLow + kEqBands;
 inline constexpr int eqLinearTaps(int choice) { return choice <= 0 ? 0 : 256 << choice; }
 // EqFlOrder choices, steepest first (the reference stores -3..3 = index - 3).
 enum EqFlOrderChoice { EqSteep8, EqSteep6, EqSteep4, EqOrd2, EqGentle4, EqGentle6, EqGentle8 };
@@ -312,6 +314,8 @@ enum Limiter {
   LimGateThresh, LimGateFloor, LimGateRelease, LimSafety, LimView,
   LimSidechain,  // 0.5 FL import: compressor detector follows the track's sidechain input
   LimCompShape,  // κ2: compressor curve shape -1..1 (0 = straight; > 0 bends down, < 0 bends up)
+  // K-37: 0 = the three legacy release knobs (1 ms..2 s, log), 1 = the ones below (0..2 s).
+  LimRange, LimReleaseW, LimCompReleaseW, LimGateReleaseW,
   LimCount
 };
 // "gl.gate"
@@ -360,7 +364,7 @@ enum Reverb {
   // wet 0..160, mod speed / depth 0..2048); RvbPreSync and RvbInputMode (mid / side) shared.
   RvbFLowCut, RvbFHighCut, RvbFPredelay, RvbFRoom, RvbFDiffusion, RvbFDecay, RvbFDamp, RvbFBass, RvbFCross, RvbFSep,
   RvbFDry, RvbFEr, RvbFWet, RvbFModSpeed, RvbFModDepth,
-  // K-2: full model version: 1 = measured against the reference's renders
+  // K-2: full model version: 1 = the second engine
   // (reflections from the first tap per side, single-precision LFO phase; new
   // instances and imports), 0 = the J-35 model (seven / eight reflection taps), kept
   // for states saved before
@@ -533,6 +537,7 @@ enum FreqShift {
   // start phase (0.5 = 0°). FsShapeL/R = sideband blend, FsWidth = stereo; FsRange 0 narrow
   // (±200 Hz), 1 wide (±20 kHz), 2 tempo.
   FsModel, FsFreqPos, FsMixRef, FsLrPhase, FsFeedbackRef, FsStartRef,
+  FsLaw,  // K-37: 1 = exact shift exponents and filter tunings; older states stay at 0
   FsCount
 };
 // "gl.lowlift"

@@ -265,7 +265,7 @@ class WaveshaperFx final : public Effect {
           const float delta = static_cast<float>(static_cast<double>(c.y[k]) - centre - start);
           const double w = c.x[k] - c.x[k - 1];
           const double f = w > 0 ? (xq - c.x[k - 1]) / w : 1.0;
-          const float r = static_cast<float>(c.mode[k] == menv::Smooth ? menv::shape(menv::Smooth, c.c[k], f, c.tanS[k], c.tanE[k])
+          const float r = static_cast<float>(menv::isSmooth(c.mode[k]) ? menv::shape(menv::Smooth, c.c[k], f, c.tanS[k], c.tanE[k])
                                                                         : menv::shape(c.mode[k], c.c[k], f));
           v = r * delta + start;
         }

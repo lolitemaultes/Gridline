@@ -272,6 +272,24 @@ void testFreqShift() {
   Buf in = noise(0.5, 0.3);
   expect(maxDiff(run(s, in, 64), run(s, in, 777)) < 1e-6, "freq shift: block-size invariant");
   legacyKept("gl.freqshift", pp::FsModel);
+  // K-37: the shift law marker. States saved before it keep the first law, imports and new instances take the second.
+  expect(P(m, pp::FsLaw) == 1 && defaultPluginState("gl.freqshift").params[pp::FsLaw] == 1.f, "freq shift: imports and new instances use law 2");
+  {
+    PluginState old = defaultPluginState("gl.freqshift");
+    old.params.resize(static_cast<size_t>(pp::FsLaw));
+    normalizePluginState(old);
+    expect(old.params[pp::FsLaw] == 0.f, "freq shift: a state saved before the marker keeps law 1");
+    const PluginInfo* fi = findPlugin("gl.freqshift");
+    for (size_t k = 0; fi && k < fi->presets.size(); ++k) expect(presetState(*fi, k).params[pp::FsLaw] == 0.f, "freq shift: factory presets keep law 1");
+    expect(near(fsref::shiftHz(1.0, 0, 1, 120, 1), 19999.9934, 1e-3) && fsref::shiftHz(1.0, 0, 1, 120, 0) == 0.1 * 200000.0, "freq shift: the two laws at the top of the wide range");
+    PluginState a = s, b = s;
+    a.params[pp::FsLaw] = 0, b.params[pp::FsLaw] = 1;
+    a.params[pp::FsRange] = b.params[pp::FsRange] = 1;
+    Buf x = noise(0.5, 0.3);
+    double dLaw = maxDiff(run(a, x), run(b, x));
+    expect(dLaw > 0 && dLaw < 0.05, "freq shift: law 2 differs only by the small exponent change");
+    expect(run(a, x).L == run(a, x).L, "freq shift: law 1 repeats exactly");
+  }
   presetsExact("Frequency Shifter", "gl.freqshift");
 }
 

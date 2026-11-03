@@ -200,6 +200,7 @@ class EqFx final : public Effect {
           if (changed(s, pp::eqExt(b, f))) return true;
         for (int f = 0; f < pp::EqFlFields; ++f)
           if (changed(s, pp::eqFl(b, f))) return true;
+        if (changed(s, pp::EqClassicLow + b)) return true;
         return false;
       };
       bool redesign[pp::kEqBands];

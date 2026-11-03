@@ -1,7 +1,8 @@
 # Gridline - K-37: closing a bridged plugin's interface in the real app (hidden, isolated config,
 # off-screen, SDL's dummy audio driver) with the in-tree test plugin standing in for a bridged one
 # (GRIDLINE_DEV_BRIDGED_PLUGINS) and an interface that draws nothing (GRIDLINE_TEST_PLAIN_GUI):
-#   1. an interface that closes: closed at once, the plugin alive, the frames go on;
+#   1. an interface that closes: closed at once, the plugin alive, the frames go on, its hidden
+#      window kept a moment and then gone, and opening it again does not wait for that;
 #   2. an interface that never closes (GRIDLINE_TEST_GUI_CLOSE_HANGS): the frames go on, the plugin
 #      counts as lost when the wait is over, and the app quits;
 #   3. the same with the window open at quit: the app quits.
@@ -59,7 +60,19 @@ endif()
 if(NOT out MATCHES "epoch frame 70")
   message(FATAL_ERROR "FAIL: the frames stopped after closing\n${out}")
 endif()
+if(NOT out MATCHES "bridged close: closed.*bridged close: window gone")
+  message(FATAL_ERROR "FAIL: the hidden window should go after the hold\n${out}")
+endif()
 message(STATUS "ok - an interface that closes closes")
+
+run(reopens "${open}50 plugwin close
+54 junction open last
+60 plugwin info
+")
+if(NOT out MATCHES "plugwin frame 60: 1 windows")
+  message(FATAL_ERROR "FAIL: it should open again at once after closing\n${out}")
+endif()
+message(STATUS "ok - it opens again while the old window waits")
 
 set(ENV{GRIDLINE_TEST_GUI_CLOSE_HANGS} "1")
 run(hangs "${open}${after}")
@@ -69,10 +82,16 @@ endif()
 if(NOT out MATCHES "epoch frame 52" OR NOT out MATCHES "epoch frame 70" OR NOT out MATCHES "plugwin frame 76: 0 windows")
   message(FATAL_ERROR "FAIL: the frames should go on and the window go away\n${out}")
 endif()
+if(NOT out MATCHES "leaving without teardown")
+  message(FATAL_ERROR "FAIL: the app should leave without tearing the bridge down\n${out}")
+endif()
 message(STATUS "ok - an interface that never closes does not stop the app, and the app quits")
 
 run(quits "${open}")
 if(NOT out MATCHES "plugwin frame 36: 1 windows")
   message(FATAL_ERROR "FAIL: the window should be open at quit\n${out}")
+endif()
+if(NOT out MATCHES "bridged close: gave up[^\n]*\n(.*\n)?quit: a plugin's interface never closed")
+  message(FATAL_ERROR "FAIL: the closing should be settled before the app's last step\n${out}")
 endif()
 message(STATUS "ok - quitting with such an interface open ends")

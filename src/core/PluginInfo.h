@@ -11,7 +11,8 @@ namespace gl {
 enum class ParamKind { Continuous, Toggle, Choice };
 // Detent (J-160): the default sits at the centre of the travel, like a mixer knob's
 // centre detent: min..def over the lower half, def..max over the upper (each linear).
-enum class ParamScale { Linear, Log, Detent };
+// Curve501 (K-37): min..max along (501^n - 1) / 500, which reaches a true min of 0, unlike Log.
+enum class ParamScale { Linear, Log, Detent, Curve501 };
 
 struct ParamDesc {
   std::string name;

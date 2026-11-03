@@ -611,7 +611,7 @@ bool switchSel(App& a, const PluginTarget& t, int param, ImVec2 tl, ImVec2 size,
     ImVec2 ts = ui::TextSizeExact(labels[i]);
     dl->PushClipRect(c0, c1, true);
     dl->AddText(ImVec2(std::round((c0.x + c1.x - ts.x) * 0.5f + (horizontal ? 0 : 3)), std::round((c0.y + c1.y - ts.y) * 0.5f)),
-                on ? lighten(k.select, 0.35f) : k.textDim, labels[i]);
+                on ? (k.selectText ? k.selectText : lighten(k.select, 0.35f)) : k.textDim, labels[i]);
     dl->PopClipRect();
     ImGui::PopFont();
   }

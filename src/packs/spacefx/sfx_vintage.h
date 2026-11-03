@@ -220,6 +220,7 @@ class PhaserRef {
       eLp_[c].clear();
       eHp_[c].clear();
       echo_[c].clear();
+      eFbZ_[c] = 0;
       std::memset(z_[c], 0, sizeof z_[c]);
       std::memset(s_[c], 0, sizeof s_[c]);
       hpS_[c] = yPrev_[c] = 0;
@@ -273,6 +274,8 @@ class PhaserRef {
     const double eT = clampd(eSec * sr, 1.0, static_cast<double>(echo_[0].size() - 8));
     const double efb = clampd(pv(s, VpDelayFb, 0.35f), 0, 1), emix = clampd(pv(s, VpDelayMix, 0.3f), 0, 1);
     const double est = clampd(pv(s, VpDelayStereo, 0.5f), 0, 1) * 2.0 - 1.0;
+    const bool echoLaw2 = pi(s, VpEchoLaw, 0) >= 1;
+    const double balA = flc::vpEchoBalance((est + 1.0) * 0.5), balB = flc::vpEchoBalance(1.0 - (est + 1.0) * 0.5);
     for (int c = 0; c < 2; ++c) {
       eLp_[c].setLp(sr, pv(s, VpDelayLp, 7000));
       eHp_[c].setHp(sr, pv(s, VpDelayHp, 100));
@@ -344,9 +347,11 @@ class PhaserRef {
       if (echoOn) {
         double tap[2];
         if (keep) {
-          if (eHeadA_ < 0) eHeadA_ = eHeadB_ = eT;
-          if (eFade_ >= 1 && std::fabs(eT - eHeadA_) > 0.5) {
-            eHeadB_ = eT;
+          // Echo law 2 reads whole samples in this mode: a tap keeps its full height.
+          const double eKeep = echoLaw2 ? std::floor(eT) : eT;
+          if (eHeadA_ < 0) eHeadA_ = eHeadB_ = eKeep;
+          if (eFade_ >= 1 && std::fabs(eKeep - eHeadA_) > 0.5) {
+            eHeadB_ = eKeep;
             eFade_ = 0;
           }
           for (int c = 0; c < 2; ++c) {
@@ -358,18 +363,49 @@ class PhaserRef {
             if (eFade_ >= 1) eFade_ = 1, eHeadA_ = eHeadB_;
           }
         } else {
-          eSm_ = eSm_ < 0 ? eT : eSm_ + cGlide * (eT - eSm_);
+          if (echoLaw2) {
+            // Single precision on purpose: the glide comes to rest a little short of the target,
+            // where one step no longer changes the value. A new instance starts already at rest.
+            const float tf = static_cast<float>(eT), kf = static_cast<float>(cGlide);
+            float v = static_cast<float>(eSm_);
+            if (eSm_ < 0) {
+              v = 0;
+              for (int it = 0; it < 2000000; ++it) {
+                const float nx = v + (tf - v) * kf;
+                if (nx == v) break;
+                v = nx;
+              }
+            } else {
+              v += (tf - v) * kf;
+            }
+            eSm_ = static_cast<double>(v);
+          } else {
+            eSm_ = eSm_ < 0 ? eT : eSm_ + cGlide * (eT - eSm_);
+          }
           eHeadA_ = eSm_;
           tap[0] = echo_[0].readLinear(eSm_);
           tap[1] = echo_[1].readLinear(eSm_);
         }
-        for (int c = 0; c < 2; ++c) {
-          tap[c] = eHp_[c].process(eLp_[c].process(tap[c]));
-          echo_[c].push(flush(static_cast<float>(out[c] + efb * tap[c])));
+        if (echoLaw2) {
+          // The filters sit in the feedback path; the taps reach the output unfiltered. Each channel
+          // keeps its own echo: the balance moves the left channel towards its direct sound and the
+          // right channel towards its echo (and back).
+          // The feedback comes back one sample later than the tap.
+          for (int c = 0; c < 2; ++c) {
+            echo_[c].push(flush(static_cast<float>(out[c] + efb * eFbZ_[c])));
+            eFbZ_[c] = eHp_[c].process(eLp_[c].process(tap[c]));
+          }
+          out[0] = out[0] * balA + tap[0] * emix * balB;
+          out[1] = out[1] * balB + tap[1] * emix * balA;
+        } else {
+          for (int c = 0; c < 2; ++c) {
+            tap[c] = eHp_[c].process(eLp_[c].process(tap[c]));
+            echo_[c].push(flush(static_cast<float>(out[c] + efb * tap[c])));
+          }
+          double m = 0.5 * (tap[0] + tap[1]), d = 0.5 * (tap[0] - tap[1]) * est;
+          out[0] += (m + d) * emix;
+          out[1] += (m - d) * emix;
         }
-        double m = 0.5 * (tap[0] + tap[1]), d = 0.5 * (tap[0] - tap[1]) * est;
-        out[0] += (m + d) * emix;
-        out[1] += (m - d) * emix;
       }
       L[i] = flush(static_cast<float>(out[0]));
       R[i] = flush(static_cast<float>(out[1]));
@@ -438,6 +474,7 @@ class PhaserRef {
   RefLfoClock clock_;
   VintageGate gate_;
   dsp::Noise nz_[2];
+  double eFbZ_[2] = {};
   double driveS_ = -1, eHeadA_ = -1, eHeadB_ = -1, eSm_ = -1, eFade_ = 1;
   int nzCount_ = 0;
 };

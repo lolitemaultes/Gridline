@@ -300,6 +300,7 @@ void testPhaserRef() {
   s2Set(ec, s2::VpDelayLp, 20480);
   s2Set(ec, s2::VpDelayHp, 20);
   s2Set(ec, s2::VpDelayStereo, 1);
+  s2Set(ec, s2::VpEchoLaw, 0);  // this test pins the first echo law
   S2Out e1 = s2Run(ec, s2Impulse(24000, 100));
   expect(s2Peak(e1.l, 100 + 4790, 100 + 4860) > 0.3 && s2Peak(e1.l, 300, 4800) < 0.02, "phaser: echo at 1000n ms (100 ms, + oversampling latency)");
   {

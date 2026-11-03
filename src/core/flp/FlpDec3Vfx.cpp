@@ -759,12 +759,16 @@ bool decodeVfxEnvelope(Context& c, const std::vector<Event>& evs, PluginMapping&
     set(m, mod::envParam(a, mod::EaEnvAmt), 1.0);
     set(m, mod::envParam(a, mod::EaLfoAmt), 0.0);
   }
-  // FL controls 8..10 (base, envelope, LFO level of the shown articulator) → articulator A.
-  applyRows(m,
-            {{8, 0, 256, mod::envParam(0, mod::EaBase), [](double v) { return v / 256.0; }},
-             {9, -256, 256, mod::envParam(0, mod::EaEnvAmt), [](double v) { return v / 256.0; }},
-             {10, -256, 256, mod::envParam(0, mod::EaLfoAmt), [](double v) { return v / 256.0; }}},
-            {});
+  // FL parameters run 11 per target, 5 targets per articulator (read back from FL's own list).
+  // Base, envelope and LFO level of each articulator's first target reach the matching envelope.
+  std::vector<Row> levels;
+  for (int a = 0; a < mod::kEnvArts; ++a) {
+    const int at = a * 55;
+    levels.push_back({at + 8, 0, 256, mod::envParam(a, mod::EaBase), [](double v) { return v / 256.0; }});
+    levels.push_back({at + 9, -256, 256, mod::envParam(a, mod::EaEnvAmt), [](double v) { return v / 256.0; }});
+    levels.push_back({at + 10, -256, 256, mod::envParam(a, mod::EaLfoAmt), [](double v) { return v / 256.0; }});
+  }
+  applyRows(m, levels, {});
   // Per-voice note parameter envelopes become control outputs: approximate.
   m.exact = false;
   return true;

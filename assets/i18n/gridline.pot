@@ -845,7 +845,7 @@ msgstr ""
 msgid "SHAPE CONTROLS"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/spectral/turntable_ui.cpp
+#: src/app/AutomationEditor.cpp src/packs/dynamics/masterfl_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/spectral/turntable_ui.cpp
 msgid "SPEED"
 msgstr ""
 
@@ -1629,7 +1629,7 @@ msgstr ""
 msgid "Delay"
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp src/packs/edison/edison_tools_ui.cpp src/packs/spacefx/spacefx_ui.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/packs/dynamics/masterfl_ui.cpp src/packs/edison/edison_tools_ui.cpp src/packs/spacefx/spacefx_ui.cpp
 msgid "ENVELOPE"
 msgstr ""
 
@@ -6897,7 +6897,7 @@ msgstr ""
 msgid "Keep the changes (Enter)"
 msgstr ""
 
-#: src/app/EditTools.cpp
+#: src/app/EditTools.cpp src/packs/dynamics/masterfl_ui.cpp
 msgid "MODE"
 msgstr ""
 
@@ -11765,7 +11765,7 @@ msgstr ""
 msgid "4 beats"
 msgstr ""
 
-#: src/app/PluginEditorsK3Gb.cpp
+#: src/app/PluginEditorsK3Gb.cpp src/packs/dynamics/masterfl_ui.cpp
 msgid "ATTACK"
 msgstr ""
 
@@ -11865,7 +11865,7 @@ msgstr ""
 msgid "Link: this time slot also picks the volume slot with the same number"
 msgstr ""
 
-#: src/app/PluginEditorsK3Gb.cpp src/packs/edison/edison_tools_ui.cpp
+#: src/app/PluginEditorsK3Gb.cpp src/packs/dynamics/masterfl_ui.cpp src/packs/edison/edison_tools_ui.cpp
 msgid "MIX"
 msgstr ""
 
@@ -11913,7 +11913,7 @@ msgstr ""
 msgid "Quick time effect"
 msgstr ""
 
-#: src/app/PluginEditorsK3Gb.cpp
+#: src/app/PluginEditorsK3Gb.cpp src/packs/dynamics/masterfl_ui.cpp
 msgid "RELEASE"
 msgstr ""
 
@@ -16558,6 +16558,14 @@ msgid "%s band"
 msgstr ""
 
 #: src/packs/dynamics/masterfl_ui.cpp
+msgid "ATT CURVE"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "BANDS"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
 msgid "Band input peaks"
 msgstr ""
 
@@ -16567,6 +16575,18 @@ msgstr ""
 
 #: src/packs/dynamics/masterfl_ui.cpp
 msgid "Bottom half"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Curves, Release 2 and the detector"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "DELAY"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "DETECTOR"
 msgstr ""
 
 #: src/packs/dynamics/masterfl_ui.cpp
@@ -16598,11 +16618,19 @@ msgid "Faster change speed"
 msgstr ""
 
 #: src/packs/dynamics/masterfl_ui.cpp
+msgid "GAIN"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
 msgid "Gain of all the bands"
 msgstr ""
 
 #: src/packs/dynamics/masterfl_ui.cpp
 msgid "Gain of this band"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "HIGH"
 msgstr ""
 
 #: src/packs/dynamics/masterfl_ui.cpp
@@ -16619,6 +16647,14 @@ msgstr ""
 
 #: src/packs/dynamics/masterfl_ui.cpp
 msgid "Highest quality"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp src/packs/platter/platter_mixer_ui.cpp
+msgid "LOW"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp src/packs/spacefx/spacefx_ui.cpp
+msgid "LOW CUT"
 msgstr ""
 
 #: src/packs/dynamics/masterfl_ui.cpp
@@ -16693,8 +16729,32 @@ msgstr ""
 msgid "PAUSED"
 msgstr ""
 
+#: src/packs/dynamics/masterfl_ui.cpp src/packs/platter/platter_deck_ui.cpp
+msgid "PHASE"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "POST"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "PRE"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "Parametric curve"
+msgstr ""
+
 #: src/packs/dynamics/masterfl_ui.cpp
 msgid "Pause the monitor"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "REL CURVE"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "RELEASE 2"
 msgstr ""
 
 #: src/packs/dynamics/masterfl_ui.cpp
@@ -16715,6 +16775,34 @@ msgstr ""
 
 #: src/packs/dynamics/masterfl_ui.cpp
 msgid "Reset this band's curve"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "SAT CEIL"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "SAT MODE"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "SAT THRES"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "SLOPE"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "SPLIT"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp src/packs/tideline/tideline_ui.cpp
+msgid "STEREO"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "SUSTAIN"
 msgstr ""
 
 #: src/packs/dynamics/masterfl_ui.cpp
@@ -16771,6 +16859,10 @@ msgstr ""
 
 #: src/packs/dynamics/masterfl_ui.cpp
 msgid "Whole monitor"
+msgstr ""
+
+#: src/packs/dynamics/masterfl_ui.cpp
+msgid "apply to drawn curves"
 msgstr ""
 
 #: src/packs/edison/edison_form_ui.cpp
@@ -18138,10 +18230,6 @@ msgid "On: touching the jog wheel's top grabs the record. Off: it nudges the tem
 msgstr ""
 
 #: src/packs/platter/platter_deck_ui.cpp
-msgid "PHASE"
-msgstr ""
-
-#: src/packs/platter/platter_deck_ui.cpp
 msgid "PLAY"
 msgstr ""
 
@@ -18255,10 +18343,6 @@ msgstr ""
 
 #: src/packs/platter/platter_mixer_ui.cpp
 msgid "Kill the band (click again to bring it back)"
-msgstr ""
-
-#: src/packs/platter/platter_mixer_ui.cpp
-msgid "LOW"
 msgstr ""
 
 #: src/packs/platter/platter_mixer_ui.cpp
@@ -20534,10 +20618,6 @@ msgid "LOAD..."
 msgstr ""
 
 #: src/packs/spacefx/spacefx_ui.cpp
-msgid "LOW CUT"
-msgstr ""
-
-#: src/packs/spacefx/spacefx_ui.cpp
 msgid "Load a WAV / FLAC / MP3 impulse response (or drop a file on the view)"
 msgstr ""
 
@@ -21135,10 +21215,6 @@ msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp
 msgid "SHIFT"
-msgstr ""
-
-#: src/packs/tideline/tideline_ui.cpp
-msgid "STEREO"
 msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp

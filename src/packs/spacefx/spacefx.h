@@ -151,7 +151,10 @@ inline int mdExt(int tap, int e) { return MdExtGlobalEnd + tap * MdxCount + e; }
 // K-2 round 3: 1 = a tempo tap at the step knob's minimum (0.002) sits at zero delay like the
 // reference's time 0 (states saved before keep 0 = the 0.002-step delay).
 inline constexpr int MdZeroTime = MdExtGlobalEnd + kTaps * MdxCount;
-inline constexpr int MdTotal = MdZeroTime + 1;
+// K-37: 1 = the gate window plays whole slots from its table, restarted each block (FL imports); 0 = a free-running
+// position that doesn't depend on the block size (new instances and states saved before).
+inline constexpr int MdGateLaw = MdZeroTime + 1;
+inline constexpr int MdTotal = MdGateLaw + 1;
 enum MdFilterType { MfOff, MfLowPass, MfHighPass, MfBandPass, MfNotch, MfLowShelf, MfPeak, MfHighShelf, MfCount };
 enum MdFbModeRef { MfbNormal, MfbPingPong, MfbInvert, MfbOff };
 
@@ -259,6 +262,7 @@ enum PhaserParam {
   VpDelayOn, VpDelayTime, VpDelaySync, VpDelaySyncTime, VpDelayFb, VpDelayMix, VpDelayStereo, VpDelayLp, VpDelayHp,
   // J-1 reference model (old states load as legacy).
   VpModel, VpHq, VpEngine, VpRateLo, VpRateHi, VpDepthScale, VpDepthPull, VpSyncTicks, VpDelayKeep, VpDelayTicks,
+  VpEchoLaw,  // K-37: 1 = echo filters in the feedback path only, per-channel stereo balance; older states stay at 0
   VpCount
 };
 inline constexpr int kPhaserStages[] = {4, 6, 8, 10, 12};

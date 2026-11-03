@@ -18,6 +18,7 @@
 #include "../../src/engine/Effects.h"
 #include "../../src/packs/modulation/modulation.h"
 #include "../../src/packs/modulation/modulation_dsp.h"
+#include "../../src/packs/spacefx/sfx_flcurves.h"
 #include "../../src/packs/spacefx/spacefx.h"
 #include "../../src/packs/spectral/spectral.h"
 #include "../Check.h"
@@ -219,11 +220,122 @@ int main() {
       ctx.sampleRate = 44100, ctx.tempo = 120;
       fx->process(g, ctx, L.data(), R.data(), 2048);
       expect(finite(L) && finite(R), "multi delay: a gate at a raw time of 0 ms returns and stays finite");
+      // K-AD: a very long time automated to a very short one wraps the gate position in one step.
+      g.params[static_cast<size_t>(sfx::mdParam(0, sfx::MdTimeMs))] = 2000;
+      auto fx2 = createEffect(g.type);
+      for (int block = 0; block < 40; ++block) {
+        std::fill(L.begin(), L.end(), 0.25f), std::fill(R.begin(), R.end(), 0.25f);
+        fx2->process(g, ctx, L.data(), R.data(), 2048);
+      }
+      g.params[static_cast<size_t>(sfx::mdParam(0, sfx::MdTimeMs))] = 0.1f;
+      fx2->process(g, ctx, L.data(), R.data(), 2048);
+      expect(finite(L) && finite(R), "multi delay: a gated time drop wraps and stays finite");
     }
     PluginState shortS = defaultPluginState("gl.multidelay");
     shortS.params.resize(static_cast<size_t>(sfx::MdZeroTime));
     normalizePluginState(shortS);
     expect(P(shortS, sfx::MdZeroTime) == 0, "multi delay: a state saved before the switch keeps the old minimum");
+  }
+
+  // ------------------------------------------------------------------ Multi Delay gate law
+  {
+    namespace sfx = gl::packs::spacefx;
+    namespace flc = gl::packs::spacefx::flc;
+    PluginState base = defaultPluginState("gl.multidelay");
+    expect(P(base, sfx::MdGateLaw) == 0, "multi delay: new instances keep the block-free gate law 1");
+    PluginState saved = base;
+    saved.params.resize(static_cast<size_t>(sfx::MdGateLaw));
+    normalizePluginState(saved);
+    expect(P(saved, sfx::MdGateLaw) == 0, "multi delay: a state saved before the switch keeps gate law 1");
+    {
+      Blob st;
+      st.i32(16);
+      for (int k = 0; k < 133; ++k) st.i32(0);
+      for (int k = 0; k < 8 * 32; ++k) st.u8(0);
+      flp::PluginMapping im;
+      expect(decode("Fruity Delay Bank", st.b, im) && P(im.state, sfx::MdGateLaw) == 1, "multi delay: FL imports use gate law 2");
+    }
+    base.params[sfx::MdGateLaw] = 1;
+    base.params[sfx::MdDry] = 0, base.params[sfx::MdWet] = 1, base.params[sfx::MdModel] = 1;
+    for (int k = 0; k < sfx::kTaps; ++k) base.params[static_cast<size_t>(sfx::mdParam(k, sfx::MdOn))] = k == 0 ? 1.f : 0.f;
+    auto PI = [&](PluginState& s, int f, float v) { s.params[static_cast<size_t>(sfx::mdParam(0, f))] = v; };
+    PI(base, sfx::MdFbMode, sfx::MfbOff);  // no delay line: the output is the gate window itself
+    PI(base, sfx::MdInLevel, 1), PI(base, sfx::MdOutLevel, 1), PI(base, sfx::MdInPan, 0), PI(base, sfx::MdOutPan, 0);
+    PI(base, sfx::MdInFType, 0), PI(base, sfx::MdGateShape, 0), PI(base, sfx::MdOffset, 0);
+    base.params[static_cast<size_t>(sfx::mdExt(0, sfx::MdxTempo))] = 0;
+    auto render = [](const PluginState& st, int block) {
+      auto fx = createEffect(st.type);
+      std::vector<float> L(8192, 1.f), R(8192, 1.f);
+      ProcessContext ctx;
+      ctx.sampleRate = 44100, ctx.tempo = 120;
+      for (int f0 = 0; f0 < 8192; f0 += block) fx->process(st, ctx, L.data() + f0, R.data() + f0, std::min(block, 8192 - f0));
+      return L;
+    };
+    // 150 time units / 8 = 215.33 samples, 215 in the table: a slot runs to the table's end, and each block
+    // starts a new slot from the rounded position.
+    PluginState g = base;
+    PI(g, sfx::MdTimeMs, 39.0625f), PI(g, sfx::MdGateDiv, 8);
+    auto expected = [](int block) {
+      const double period = 215.33203125;
+      std::vector<float> w(8192);
+      double pos = 0;
+      int idx = 0, left = 0;
+      for (int i = 0; i < 8192; ++i) {
+        if (i % block == 0) left = 0;
+        if (left <= 0) {
+          if (pos >= period) pos -= period;
+          idx = static_cast<int>(std::lrint(pos)) % 215;
+          left = 215 - idx;
+        }
+        w[static_cast<size_t>(i)] = static_cast<float>(flc::mdGrainWindow(idx, 215, 0));
+        ++idx, --left;
+        pos += 1;
+      }
+      return w;
+    };
+    auto worst = [](const std::vector<float>& a, const std::vector<float>& b) {
+      float e = 0;
+      for (size_t i = 64; i < a.size(); ++i) e = std::max(e, std::fabs(a[i] - b[i]));
+      return e;
+    };
+    for (int block : {64, 512, 1024}) {
+      const float e = worst(render(g, block), expected(block));
+      std::printf("# gate law 2, block %d: worst window error %g\n", block, static_cast<double>(e));
+      expect(e < 1e-4f, "multi delay: gate law 2 follows whole slots in each block");
+    }
+    PluginState oldGate = g;
+    oldGate.params[sfx::MdGateLaw] = 0;
+    const std::vector<float> o64 = render(oldGate, 64), o1024 = render(oldGate, 1024);
+    expect(worst(o64, o1024) < 1e-6f, "multi delay: gate law 1 stays free of the block size");
+    expect(worst(o1024, render(g, 1024)) > 1e-3f, "multi delay: the two gate laws differ on a fractional slot");
+    PluginState shortSlot = base;
+    PI(shortSlot, sfx::MdTimeMs, 0.2604167f), PI(shortSlot, sfx::MdGateDiv, 16);  // 1 unit: one sample per slot
+    expect(finite(render(shortSlot, 512)), "multi delay: a one-sample gate slot stays finite");
+    PluginState zero = base;
+    zero.params[static_cast<size_t>(sfx::mdExt(0, sfx::MdxTempo))] = 1;
+    PI(zero, sfx::MdSteps, 0.002f), PI(zero, sfx::MdGateDiv, 4);
+    const std::vector<float> z = render(zero, 512);
+    bool open = true;
+    for (size_t i = 64; i < z.size(); ++i) open = open && std::fabs(z[i] - 1.f) < 1e-4f;
+    expect(open, "multi delay: a gate at time 0 leaves the audio ungated");
+    PluginState on = base;
+    on.params[static_cast<size_t>(sfx::mdExt(0, sfx::MdxTempo))] = 1;
+    PI(on, sfx::MdSteps, 4.f / 480.f), PI(on, sfx::MdGateDiv, 16);
+    {
+      // Tempo 140: 39.375 / 16 = 2.46 samples, a table of two: open, closed.
+      auto fx = createEffect(on.type);
+      std::vector<float> L(4096, 1.f), R(4096, 1.f);
+      ProcessContext ctx;
+      ctx.sampleRate = 44100, ctx.tempo = 140;
+      fx->process(on, ctx, L.data(), R.data(), 4096);
+      bool binary = true;
+      int closed = 0;
+      for (size_t i = 64; i < L.size(); ++i) {
+        binary = binary && (std::fabs(L[i]) < 1e-4f || std::fabs(L[i] - 1.f) < 1e-4f);
+        closed += std::fabs(L[i]) < 1e-4f ? 1 : 0;
+      }
+      expect(binary && closed > 1000, "multi delay: a two-sample gate table alternates open and closed");
+    }
   }
 
   // ------------------------------------------------------------------ reference defaults, factory presets unchanged

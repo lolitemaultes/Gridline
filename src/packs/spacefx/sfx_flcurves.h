@@ -58,6 +58,12 @@ inline double vpBend(double x, double t) {
 inline double vpEchoLpHz(double n) { return 320.0 * std::pow(2.0, 6.0 * clamp01(n)); }
 inline double vpEchoHpHz(double n) { return 20.0 * std::pow(2.0, 10.0 * clamp01(n)); }
 inline double vpHpHz(double n) { n = clamp01(n); return 195.0 * n * n * n + 5.0; }
+// Echo stereo balance: the gain of the side a position turns towards (0 at 0, 1 at the centre, sqrt(2) at 1).
+inline double vpEchoBalance(double n) {
+  n = clamp01(n);
+  constexpr double kRoot2 = 1.4142135623730951;
+  return kRoot2 * n * ((2.0 * kRoot2 - 1.0) - (2.0 * kRoot2 - 2.0) * n);
+}
 inline double vpNoiseAmp(double n) { return n <= 0 ? 0.0 : 0.35 * std::pow(10.0, (50.0 * clamp01(n) - 90.0) / 20.0); }
 // Speed-dependent sweep: exponent position (0..1 of the min..max octave span)
 // for a bent LFO value y, speed position s, depth scale S and pull-down P.

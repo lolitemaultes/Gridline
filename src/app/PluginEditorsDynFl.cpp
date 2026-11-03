@@ -265,7 +265,8 @@ void editorLimiter(App& a, const PluginTarget& t, float width) {
   const skin::WheelLook& we = comp ? wEnvC : wEnv;
   skin::wheel(a, t, comp ? LimCompAttack : LimAttack, f, 290, 184, 46, 46, we);
   knobLabel(295, 36, "ATT");
-  skin::wheel(a, t, comp ? LimCompRelease : LimRelease, f, 346, 184, 46, 46, we);
+  const bool wideRel = val(st, LimRange) >= 0.5f;  // K-37
+  skin::wheel(a, t, comp ? (wideRel ? LimCompReleaseW : LimCompRelease) : (wideRel ? LimReleaseW : LimRelease), f, 346, 184, 46, 46, we);
   knobLabel(351, 36, "REL");
   skin::wheel(a, t, comp ? LimCompRms : LimHold, f, 406, 184, 46, 46, we);
   knobLabel(406, 46, "SUSTAIN");
@@ -282,7 +283,7 @@ void editorLimiter(App& a, const PluginTarget& t, float width) {
     skin::digi(a, t, LimSidechain, f, 351, 272, 37, 21, digi, ival(st, LimSidechain) > 0 ? "1" : "-");
   }
   // ---- noise gate
-  skin::wheel(a, t, LimGateRelease, f, 466, 184, 46, 46, wGate);
+  skin::wheel(a, t, wideRel ? LimGateReleaseW : LimGateRelease, f, 466, 184, 46, 46, wGate);
   knobLabel(471, 36, "REL");
   skin::wheel(a, t, LimGateFloor, f, 520, 184, 46, 46, wGate);
   knobLabel(525, 36, "GAIN");

@@ -39,7 +39,7 @@ inline double envAt(const OEnv& e, double b, int ls, int le, double off) {
   const double w = e.x[i] - e.x[i - 1];
   if (w <= 0) return e.y[i] - off;
   const double f = (b - e.x[i - 1]) / w;
-  const double r = e.mode[i] == menv::Smooth ? menv::shape(menv::Smooth, e.c[i], f, e.tanS[i], e.tanE[i]) : menv::shape(e.mode[i], e.c[i], f);
+  const double r = menv::isSmooth(e.mode[i]) ? menv::shape(menv::Smooth, e.c[i], f, e.tanS[i], e.tanE[i]) : menv::shape(e.mode[i], e.c[i], f);
   return a + (e.y[i] - a) * r - off;
 }
 

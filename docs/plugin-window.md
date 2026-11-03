@@ -81,22 +81,35 @@ the right side. These results are from one full run with three repeats of each c
 On 9.22 and later the interface still shows and the keyboard still works, but a click lands offset
 by the window's position on the screen or reaches nothing. Carla behaves the same way, and
 yabridge 5.1.1 states that it supports Wine up to 9.21. Until this changes, use Wine 9.21 or older
-for bridged plugins whose interface you need to click.
+for bridged plugins whose interface you need to click. Gridline telling the interface where its
+window went (below) does not change this: the same clicks stay offset by the window's position on
+9.22, 10.20 and 11.21. yabridge's issue 382 reports that Wine ignores such a message since 9.22,
+and users there report other Wine builds and settings as workarounds. Gridline has tested none of
+those and does not recommend them.
 
 **What works on every Wine above:** scanning and loading, sound, saving and restoring state, typed
 text and Space, and closing and reopening the interface ten times. If the Wine side dies, the
 plugin shows as crashed and goes silent, other tracks play on and the project still saves.
 
+**Fixed, measured:**
+
+- The first click after a plugin window moves: the plugin's view sits in a child window of Gridline's
+  hidden top-level window, and yabridge only updates its idea of the position when it is told about
+  that child or when the pointer enters. Moving the window told it neither, so the pointer was
+  still inside the old place and the click landed there. This happened in 36 of 36 runs with no
+  window manager and in 4 of 36 with Openbox. Now, on Linux, `native::containerMoved` sends the
+  plugin's container a ConfigureNotify when the window's position changes. Clicks were exact after
+  each of three moves on Wine 9.0 and 9.21, in VST3, VST2 and CLAP, at scale 1 and 2, with and
+  without Openbox (72 of 72 cells, 3 runs each).
+
 **Known problems measured:**
 
-- The first click after a plugin window moves for the first time can be lost or land in the wrong
-  place on Wine 9.0 and 9.21. With no window manager this happened in every Gridline run (36 of
-  36). With Openbox it happened in 4 of 36. Carla had none in 24. Later moves are fine. The cause
-  is not found yet and this one looks like Gridline's.
 - Dexed: closing its interface does not return within 30 s on any Wine above, in Gridline and in
-  Carla, and Gridline stops answering while it waits. Quitting with it open still ends after 20 s
-  (30 of 30). Its interface is black on Wine up to 10.20 in both hosts, with one exception in 24
-  runs, and draws on 11.21.
+  Carla. Gridline closes the interface of a bridged plugin on a helper thread and waits 300 ms; if
+  that is not enough the window hides and Gridline goes on (it answered in about 0.4 s in 30 of 30
+  closes). After 15 s the plugin counts as lost and shows as crashed. Its
+  interface is black on Wine up to 10.20 in both hosts, with one exception in 24 runs, and draws on
+  11.21.
 - Surge XT: its interface draws and drags change its parameters, but no screenshot taken right
   after a drag showed any change, in Gridline (30 of 30) or in Carla (14 of 14). After moving the
   window the changes showed in 8 of 12 runs on Wine 9.0 and 9.21, and in none of 18 on later Wines.

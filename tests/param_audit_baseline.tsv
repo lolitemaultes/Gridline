@@ -3355,6 +3355,13 @@ gl.eq	75	Linear phase	working	2
 gl.eq	76	Show phase	inert	0	
 gl.eq	77	Histogram average	inert	0	
 gl.eq	78	Output (classic)	combination	12	74=2
+gl.eq	79	Band 1 below 20 Hz	combination	10	74=2;1=20;2=12
+gl.eq	80	Band 2 below 20 Hz	combination	10	74=2;6=20;7=12
+gl.eq	81	Band 3 below 20 Hz	combination	10	74=2;11=20;12=12
+gl.eq	82	Band 4 below 20 Hz	combination	10	74=2;16=20;17=12
+gl.eq	83	Band 5 below 20 Hz	combination	10	74=2;21=20;22=12
+gl.eq	84	Band 6 below 20 Hz	combination	10	74=2;26=20;27=12
+gl.eq	85	Band 7 below 20 Hz	combination	10	74=2;31=20;32=12
 gl.fastdist	0	Pre amp	combination	24	9=0
 gl.fastdist	1	Threshold	combination	0.0500000007	9=0
 gl.fastdist	2	Type	working	1	
@@ -3581,6 +3588,7 @@ gl.freqshift	14	Dry / wet	working	0
 gl.freqshift	15	L/R phase	working	1	
 gl.freqshift	16	Feedback	working	0	
 gl.freqshift	17	Start phase	working	0	
+gl.freqshift	18	Shift law	working	0	
 gl.gate	0	Threshold	working	0	
 gl.gate	1	Attack	working	0.1	
 gl.gate	2	Hold	combination	1	0=0
@@ -4590,7 +4598,7 @@ gl.kicksculpt	22	Noise filter	working	0
 gl.kicksculpt	23	Noise sample	working	4	
 gl.limiter	0	Gain	working	-36	
 gl.limiter	1	Ceiling	working	-36	
-gl.limiter	2	Release	working	2	
+gl.limiter	2	Release (legacy)	combination	2	22=0
 gl.limiter	3	Attack (look-ahead)	working	0.0001	
 gl.limiter	4	Sustain (peak window)	working	1	
 gl.limiter	5	Release curve	working	7	
@@ -4600,16 +4608,20 @@ gl.limiter	8	Comp threshold	combination	-60	9=20
 gl.limiter	9	Comp ratio	combination	20	8=-60
 gl.limiter	10	Comp soft knee	combination	24	8=-30;9=4
 gl.limiter	11	Comp attack	combination	1	8=-30;9=4
-gl.limiter	12	Comp release	combination	0.00100000005	8=-30;9=4
+gl.limiter	12	Comp release (legacy)	combination	0.00100000005	22=0;8=-30;9=4
 gl.limiter	13	Comp RMS window	combination	1	8=-30;9=4
 gl.limiter	14	Comp curve	combination	1	8=-30;9=4
 gl.limiter	15	Noise threshold	combination	0	8=-30;9=4
 gl.limiter	16	Noise gain	combination	-80	15=0
-gl.limiter	17	Noise release	combination	0.00100000005	15=0;0=-36
+gl.limiter	17	Noise release (legacy)	combination	0.00100000005	22=0;15=0;0=-36
 gl.limiter	18	0.2 dB safety	working	1	
 gl.limiter	19	View	inert	0	
 gl.limiter	20	Comp detector input	verified	0		VERIFIED: compressor engaged (threshold / ratio) with the sidechain connected
 gl.limiter	21	Comp knee	combination	-1	8=-30;9=4
+gl.limiter	22	Release range	inert	0	
+gl.limiter	23	Release	working	2	
+gl.limiter	24	Comp release	combination	2	8=-30;9=4
+gl.limiter	25	Noise release	combination	2	15=0;0=-36
 gl.lowlift	0	Crossover	combination	400	16=0;13=1
 gl.lowlift	1	Low gain	combination	-12	16=0
 gl.lowlift	2	Harmonics	combination	1	16=0
@@ -7619,6 +7631,7 @@ gl.multidelay	252	Tap 8 feedback filter stages	verified	0		VERIFIED: the tap on 
 gl.multidelay	253	Tap 8 feedback filter gain	verified	0		VERIFIED: the tap on (taps 3-8 are off by default), its filter / gate / mod section on
 gl.multidelay	254	Tap 8 leave first echo	combination	1	173=1
 gl.multidelay	255	Zero time at minimum	combination	0	6=0.002
+gl.multidelay	256	Gate law	combination	1	0=1;1=0.75;2=0.75;3=0.75;4=0.9375;5=1;6=4.7851161;7=223.606798;8=250;9=0.955;10=0.5;12=3625.13514;13=0.75;14=0.5;16=0.5;18=3625.13514;19=0.75;20=0.5;21=2.2493653;22=0.75;23=0.75;24=12;25=0.5;26=0.955;27=0.5;28=0.955;29=1;30=4.7851161;31=223.606798;32=250;33=0.955;34=0.5;36=3625.13514;37=0.75;38=0.5;40=0.5;42=3625.13514;43=0.75;44=0.5;45=2.2493653;46=0.75;47=0.75;48=12;49=0.5;50=0.955;51=0.5;52=0.955;53=1;54=4.7851161;55=223.606798;56=250;57=0.955;58=0.5;60=3625.13514;61=0.75;62=0.5;64=0.5;66=3625.13514;67=0.75;68=0.5;69=2.2493653;70=0.75;71=0.75;72=12;73=0.5;74=0.955;75=0.5;76=0.955;77=1;78=4.7851161;79=223.606798;80=250;81=0.955;82=0.5;84=3625.13514;85=0.75;86=0.5;88=0.5;90=3625.13514;91=0.75;92=0.5;93=2.2493653;94=0.75;95=0.75;96=12;97=0.5;98=0.955;99=0.5;100=0.955;101=1;102=4.7851161;103=223.606798;104=250;105=0.955;106=0.5;108=3625.13514;109=0.75;110=0.5;112=0.5;114=3625.13514;115=0.75;116=0.5;117=2.2493653;118=0.75;119=0.75;120=12;121=0.5;122=0.955;123=0.5;124=0.955;125=1;126=4.7851161;127=223.606798;128=250;129=0.955;130=0.5;132=3625.13514;133=0.75;134=0.5;136=0.5;138=3625.13514;139=0.75;140=0.5;141=2.2493653;142=0.75;143=0.75;144=12;145=0.5;146=0.955;147=0.5;148=0.955;149=1;150=4.7851161;151=223.606798;152=250;153=0.955;154=0.5;156=3625.13514;157=0.75;158=0.5;160=0.5;162=3625.13514;163=0.75;164=0.5;165=2.2493653;166=0.75;167=0.75;168=12;169=0.5;170=0.955;171=0.5;172=0.955;173=1;174=4.7851161;175=223.606798;176=250;177=0.955;178=0.5;180=3625.13514;181=0.75;182=0.5;184=0.5;186=3625.13514;187=0.75;188=0.5;189=2.2493653;190=0.75;191=0.75;192=12;193=0.5;194=0.955;195=0.5;196=0.955;198=1;199=1;200=2.5;201=1.525;202=1;203=2.5;204=1.525;205=1;206=1;207=2.5;208=1.525;209=1;210=2.5;211=1.525;212=1;213=1;214=2.5;215=1.525;216=1;217=2.5;218=1.525;219=1;220=1;221=2.5;222=1.525;223=1;224=2.5;225=1.525;226=1;227=1;228=2.5;229=1.525;230=1;231=2.5;232=1.525;233=1;234=1;235=2.5;236=1.525;237=1;238=2.5;239=1.525;240=1;241=1;242=2.5;243=1.525;244=1;245=2.5;246=1.525;247=1;248=1;249=2.5;250=1.525;251=1;252=2.5;253=1.525;254=1;255=1
 gl.multisampler	0	Volume	working	0	
 gl.multisampler	1	Transpose	working	-24	
 gl.multisampler	2	Fine tune	working	100	
@@ -14526,6 +14539,7 @@ gl.sweepkick	3	Amp decay	working	256
 gl.sweepkick	4	Click	working	64	
 gl.sweepkick	5	Distortion	working	128	
 gl.sweepkick	6	Seed	inert	0	
+gl.sweepkick	7	Engine	working	0	
 gl.swirl	0	Voices	working	1	
 gl.swirl	1	Depth	combination	0	15=0
 gl.swirl	2	Speed	combination	10	15=0
@@ -15036,6 +15050,10 @@ gl.vocoder	60	Carrier voices	working	1.75
 gl.vocoder	61	Carrier detune	combination	50	60=4
 gl.vocoder	62	Carrier MIDI port	inert	0	
 gl.vocoder	63	Editor curve	inert	0	
+gl.vocoder	64	Band and attack range	inert	0	
+gl.vocoder	65	Low band (wide)	combination	2000	31=0;64=1
+gl.vocoder	66	High band (wide)	combination	1000	31=0;64=1
+gl.vocoder	67	Attack (wide)	combination	1000	31=0;64=1
 gl.vphaser	0	Stages	combination	1	32=0
 gl.vphaser	1	Min frequency	working	20480	
 gl.vphaser	2	Max frequency	working	20480	
@@ -15066,8 +15084,8 @@ gl.vphaser	26	Echo synced	combination	0	32=0;23=1;25=1
 gl.vphaser	27	Echo feedback	combination	1	23=1
 gl.vphaser	28	Echo mix	combination	1	23=1
 gl.vphaser	29	Echo stereo	combination	0	23=1
-gl.vphaser	30	Echo low pass	combination	20480	23=1
-gl.vphaser	31	Echo high pass	combination	20480	23=1
+gl.vphaser	30	Echo low pass	combination	20480	23=1;27=1
+gl.vphaser	31	Echo high pass	combination	20480	23=1;27=1
 gl.vphaser	32	Phaser model	working	0	
 gl.vphaser	33	High quality	working	1	
 gl.vphaser	34	Engine	working	1	
@@ -15078,6 +15096,7 @@ gl.vphaser	38	Depth pull-down	working	1
 gl.vphaser	39	Synced period	combination	6144	9=1
 gl.vphaser	40	Echo keep pitch	combination	1	23=1;1048600=750
 gl.vphaser	41	Echo synced time	combination	768	3=1;6=1;9=1;20=1;21=1;23=1;25=1;33=1;40=1
+gl.vphaser	42	Echo law	combination	0	23=1
 gl.warmsynth	0	Osc 1 level	working	1	
 gl.warmsynth	1	Osc 1 LFO	combination	0	39=1
 gl.warmsynth	2	Osc 1 env	working	1	

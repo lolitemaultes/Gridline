@@ -48,6 +48,13 @@ void closeHostedEditor(App& a, const PluginTarget& t);
 // K-9 dev: every open plugin window with its native window ids and the plugin's rectangle, to stdout.
 void devPrintPluginWindows(int frame);
 void closeAllHostedEditors(App& a);
+// K-37: at quit, before the system windows go: interfaces still closing are given a last, bounded
+// wait and their windows are destroyed now (later, the plugin instance going away would do that
+// with SDL and the display already shut down). Windows of closed interfaces wait out their hold.
+void settleClosingHostedEditors();
+// K-37: a bridged interface never came back: the helper thread is still inside the bridge, and the
+// bridge's own threads end the process when its statics go. The process leaves without static teardown.
+bool hostedEditorAbandoned();
 // Window events for plugin windows (input to their control bar, close,
 // resize). Returns true when the event belonged to one.
 bool hostedEditorEvent(App& a, const SDL_Event& ev);

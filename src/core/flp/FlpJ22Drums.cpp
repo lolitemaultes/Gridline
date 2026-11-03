@@ -217,7 +217,6 @@ bool decodeBassDrum(Context& c, const std::vector<Event>& events, PluginMapping&
 
 // ---------------------------------------------------------------- Fruit Kick
 bool decodeFruitKick(Context& c, const std::vector<Event>& events, PluginMapping& m) {
-  (void)c;
   Blob b = gen2::stateBlob(events);
   const int32_t version = b.i32(0);
   constexpr size_t kV0 = 32, kV1 = 32 + 5 * 68 + 24 + 4;  // 400
@@ -230,17 +229,15 @@ bool decodeFruitKick(Context& c, const std::vector<Event>& events, PluginMapping
     gen2::set(m, k, v);
   }
   gen2::set(m, dr::SkSeed, static_cast<double>(b.u32(28) & 0xFFFFFF));
-  bool neutral = true;
-  if (version == 1) {
-    // Five channel envelope / LFO records (17 dwords: flags, on, predelay, A,
-    // H, D, S, R, amount, LFO predelay / attack / amount / speed / shape,
-    // tensions) from offset 32, then the levels record (24 bytes) and a word.
-    for (int k = 0; k < 5; ++k) {
-      const size_t at = 32 + 68 * static_cast<size_t>(k);
-      if (b.i32(at + 4) > 0 || b.i32(at + 44) != 0) neutral = false;  // envelope on / LFO amount
-    }
-  }
-  m.exact = neutral;
+  gen2::set(m, dr::SkModel, 1);
+  // The channel's envelopes, LFOs and filter: its own records, else the copy in a version 1
+  // state (5 x 68 bytes from offset 32, then the levels record).
+  bool insExact = true;
+  const gen::Bytes all(b.p, b.size());
+  m.state.ins = version == 1 ? gen::channelInsText(events, all.sub(32, 5 * 68), all.sub(372, 24), &insExact)
+                             : gen::channelInsText(events, {}, {}, &insExact);
+  m.exact = insExact;
+  if (!insExact) gen::note(c, "Fruit Kick", "panning envelope approximated");
   std::vector<gen2::Link> links;
   for (int k = 0; k < 6; ++k) links.push_back({k, k, [k](double n) { return lo[k] + n * (hi[k] - lo[k]); }});
   gen2::linkParams(m, std::move(links), {{0, -2400, 3600}, {1, -1200, 1200}, {2, 0, 256}, {3, 0, 256}, {4, 0, 64}, {5, 0, 128}});

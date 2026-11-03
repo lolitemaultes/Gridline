@@ -174,6 +174,11 @@ using Action = pluginbar::Action;
 // K-37: how long the UI thread waits for a bridged plugin's interface to close before it gets on
 // with its frames, and how long the plugin then has before it counts as lost.
 constexpr int kBridgedCloseWaitMs = 300, kBridgedGoingAwayWaitMs = 2000;
+// K-37: how long a closed bridged interface's hidden window and container stay. The bridge takes
+// the Wine window out of them about a second after the close returns; destroying them sooner takes
+// that window with them, and Wine's side dies of the X error.
+constexpr Uint32 kBridgedHoldMs = 1500;
+bool gInterfaceAbandoned = false;  // a bridged interface never came back from closing
 Uint32 bridgedGiveUpMs() {
   static const Uint32 ms = [] {
     const char* e = std::getenv("GRIDLINE_DEV_BRIDGED_GIVE_UP_MS");  // tests
@@ -220,6 +225,8 @@ struct PluginWindow {
   // K-37: the bridged plugin's interface is closing on a helper thread; the window is hidden.
   std::unique_ptr<host::EditorClose> closing;
   Uint32 closingSince = 0;
+  bool holding = false;  // the plugin is done with; the hidden window waits until holdUntil
+  Uint32 holdUntil = 0;
   bool reopenAfterClose = false;
   bool instanceGoing = false;  // closed because the plugin instance is being destroyed
   double scale = 1.0;  // K-35: window pixels per unit of the bar (X11 at a system scale)
@@ -318,10 +325,7 @@ struct PluginWindow {
       }
       traceBridgedClose("waiting");
       closingSince = SDL_GetTicks();  // the frames go on; settleClosing() finishes this
-      giveKeyboardBack();
-      if (win) SDL_HideWindow(win);
-      if (gKeyboardToMain) SDL_RaiseWindow(gMainWin);
-      gKeyboardToMain = false;
+      hideForClosing();
       backend->onGoingAway = [this]() { settleClosing(true); };
       return;
     }
@@ -334,21 +338,54 @@ struct PluginWindow {
     bool done = closing->done();
     if (!done && going) done = closing->waitFor(kBridgedGoingAwayWaitMs);
     if (!done && !going && SDL_GetTicks() - closingSince < bridgedGiveUpMs()) return false;
-    traceBridgedClose(done && !closing->failed() ? "closed" : "gave up");
+    const bool clean = done && !closing->failed();
+    traceBridgedClose(clean ? "closed" : "gave up");
     backend->setEditorClosing(false);
-    if (!done || closing->failed()) {
+    if (!clean) {
       if (!done) backend->setLostReason("its interface did not close");
       backend->markLost();
       (void)editor.release();  // the helper thread may still be inside it
       abandoned = !done;
+      if (abandoned) gInterfaceAbandoned = true;
     }
     closing.reset();
-    finishClose();
+    if (clean) {
+      releasePlugin();
+      hideForClosing();
+      holding = true;
+      holdUntil = SDL_GetTicks() + kBridgedHoldMs;
+    } else {
+      finishClose();
+    }
     return true;
   }
 
+  void hideForClosing() {
+    giveKeyboardBack();
+    if (win) SDL_HideWindow(win);
+    if (gKeyboardToMain) SDL_RaiseWindow(gMainWin);
+    gKeyboardToMain = false;
+  }
+
+  bool holdOver() const { return !holding || SDL_TICKS_PASSED(SDL_GetTicks(), holdUntil); }
+  void endHold() {
+    holding = false;
+    destroySystemWindow();
+    traceBridgedClose("window gone");
+  }
+
   void finishClose() {
+    releasePlugin();
+    destroySystemWindow();
+  }
+
+  void releasePlugin() {
     editor.reset();  // detaches the plugin's view before its container and window go
+    if (backend) backend->onGoingAway = nullptr;
+    backend = nullptr;
+  }
+
+  void destroySystemWindow() {
     if (container) native::destroyContainer(nw, container);
     container = nullptr;
     if (ctx) {
@@ -373,8 +410,6 @@ struct PluginWindow {
     if (gKeyboardToMain) SDL_RaiseWindow(gMainWin);
     gKeyboardToMain = false;
     win = nullptr;
-    if (backend) backend->onGoingAway = nullptr;
-    backend = nullptr;
   }
   ~PluginWindow() { close(); }
 };
@@ -393,7 +428,7 @@ std::vector<std::unique_ptr<PluginWindow>>& closingWindows() {
 
 // A window that is closed and leaves the list of open windows.
 void retire(std::unique_ptr<PluginWindow> w) {
-  if (w && w->closing) closingWindows().push_back(std::move(w));
+  if (w && (w->closing || w->holding)) closingWindows().push_back(std::move(w));
 }
 
 PluginWindow* windowFor(const PluginTarget& t) {
@@ -676,6 +711,23 @@ void closeAllHostedEditors(App& a) {
   }
   windows().clear();
   (void)a;
+}
+
+bool hostedEditorAbandoned() { return gInterfaceAbandoned; }
+
+void settleClosingHostedEditors() {
+  auto& list = closingWindows();
+  for (auto& w : list) w->settleClosing(true);
+  Uint32 longest = 0;
+  const Uint32 now = SDL_GetTicks();
+  for (auto& w : list)
+    if (!w->holdOver()) longest = std::max(longest, w->holdUntil - now);
+  if (longest > 0) SDL_Delay(longest);
+  for (auto& w : list) {
+    if (w->holding) w->endHold();
+    if (w->abandoned) (void)w.release();  // the helper thread may still call back into it
+  }
+  list.clear();
 }
 
 bool openHostedEditor(App& a, const PluginTarget& t) {
@@ -977,8 +1029,18 @@ void hostedui::pluginWindowsIdle(App& a) {
       ++i;
       continue;
     }
+    if (closingList[i]->holding && closingList[i]->reopenAfterClose) {  // the old window is no obstacle
+      closingList[i]->reopenAfterClose = false;
+      const PluginTarget again = closingList[i]->target;
+      openHostedEditor(a, again);
+    }
+    if (!closingList[i]->holdOver()) {
+      ++i;
+      continue;
+    }
     std::unique_ptr<PluginWindow> w = std::move(closingList[i]);
     closingList.erase(closingList.begin() + static_cast<std::ptrdiff_t>(i));
+    if (w->holding) w->endHold();
     const bool reopenIt = w->reopenAfterClose && !w->abandoned;
     const PluginTarget t = w->target;
     if (w->abandoned) (void)w.release();  // the helper thread may still call back into it

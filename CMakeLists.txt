@@ -1731,6 +1731,14 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(plugin_undo_app PROPERTIES TIMEOUT 300 SKIP_REGULAR_EXPRESSION "SKIP: ")
 
+    # K-40: Crest's editor as drawn: no overlaps, knobs and controls on their rows and columns, no
+    # clipped text, in every view, band, mode and engine, at interface scales 100 and 200 %, in both themes.
+    add_test(NAME k40_crest_layout_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app>
+                     -DOUT=${CMAKE_BINARY_DIR}/k40_crest_layout_app -P ${CMAKE_SOURCE_DIR}/tests/k40_crest_layout_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(k40_crest_layout_app PROPERTIES TIMEOUT 600)
+
     # J-117: floating windows inside the main window have an elastic boundary (dragged past an
     # edge they follow with damped overshoot, released they spring back inside; a shrunk main
     # window pulls them back), the pop-out button stays beside the close button whatever the
@@ -1774,6 +1782,13 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -DOUT=${CMAKE_BINARY_DIR}/j118_paint_brush -P ${CMAKE_SOURCE_DIR}/tests/j118_paint_brush.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(j118_paint_brush_app PROPERTIES TIMEOUT 300)
+
+    # K-37: the Sweep Kick channel's envelope page at 100 % and 200 %, dark and light.
+    add_test(NAME k37_sweepkick_env_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DOUT=${CMAKE_BINARY_DIR}/k37_sweepkick_env
+                     -P ${CMAKE_SOURCE_DIR}/tests/k37_sweepkick_env.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(k37_sweepkick_env_app PROPERTIES TIMEOUT 300)
 
     # J-142: relative volume / fade drags across a selection of audio clips (one undo step each),
     # a single clip edited alone, and right-clicks on a clip's title strip: the name box and the

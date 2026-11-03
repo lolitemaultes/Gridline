@@ -137,6 +137,12 @@ Encoder fruitKick() {
     storeDefaults(w.b, "gl.sweepkick", f(w.b));
     return w.b;
   };
+  // Version 1 states carry the channel envelope / filter copy (PluginState::ins).
+  e.write = [](const PluginState& g, Bytes& b, const EncodeContext& c) {
+    PluginMapping m;
+    if (b.size() < 400 || b[0] != 1 || !decodeState("Fruit Kick", b, m, c) || m.state.ins == g.ins) return;
+    writeInsCopy(b, 32, 372, g.ins);
+  };
   return e;
 }
 
@@ -382,14 +388,16 @@ TbLayout tbLayout(const Bytes& b) {
     at += 4 * strs::kSbPatchFloats;
   }
   for (int k = 0; k < strs::kSbPrograms; ++k) {
+    if (!has(2)) return L;
+    const bool extra = b[at] >= 2 || b[at + 1] != 0;  // pre >= 2: one more f64 (see parseStepBass)
     at += 2;
-    if (!name() || !has(6 + 21 * strs::kSbSteps + 8 + 9)) return L;
+    if (!name() || !has(6 + 21 * strs::kSbSteps + 8 + 9 + (extra ? 8 : 0))) return L;
     at += 6 + 21 * strs::kSbSteps;
     L.bpm.push_back(at);
-    at += 8 + 9;
+    at += 8 + 9 + (extra ? 8 : 0);
   }
   L.trailer = at;
-  L.ok = has(24) && at + 24 == b.size();
+  L.ok = has(24) && (at + 24 == b.size() || at + 28 == b.size());
   return L;
 }
 // Serializes a parsed bank (inverse of parseStepBass); header sizes recomputed.
@@ -435,8 +443,10 @@ Bytes tbSerialize(const j22::StepBassState& s) {
     }
     w.f64(q.bpm);
     w.bytes(q.tail, sizeof q.tail);
+    if (q.pre >= 2) w.f64(q.extra);
   }
   for (uint32_t t : s.trailer) w.u32(t);
+  if (s.hasTrailer2) w.u32(s.trailer2);
   const auto n = static_cast<uint32_t>(w.b.size());
   putU32(w.b, 7 * 4, n - 36);  // the two size words the decoder checks
   putU32(w.b, 10 * 4, n - 48);

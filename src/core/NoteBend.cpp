@@ -142,15 +142,17 @@ std::vector<BendPoint> fromSamples(const std::vector<std::pair<double, double>>&
   return out;
 }
 
-// K-28: see NoteBend.h.
-SlidePlan toSlides(const std::vector<BendPoint>& b, double length, double tolerance) {
+namespace {
+// K-AB: one pass of toSlides at one tolerance.
+SlidePlan planSlides(const std::vector<BendPoint>& line, double length, double tolerance, double grid, double base) {
   SlidePlan plan;
-  if (b.empty() || !(length > 0)) return plan;
-  const std::vector<BendPoint> line = head(b, length);
-  plan.start = value(line, 0.0);
+  auto snap = [&](double v) { return grid > 0 ? std::round((base + v) / grid) * grid - base : v; };
   const int64_t end = std::max<int64_t>(1, std::llround(length));
   std::vector<SlidePiece> raw;
-  double t0 = 0, v0 = plan.start;
+  double t0 = 0, v0 = value(line, 0.0);
+  plan.start = snap(v0);
+  double at = plan.start;  // where the slides have got to (on the grid)
+  plan.offGrid = grid > 0 && std::fabs(at - v0) > 0.005;
   for (const BendPoint& p : line) {
     const double t1 = p.tick, v1 = p.semis;
     if (t1 <= 0) {  // the start value (already in plan.start)
@@ -160,38 +162,64 @@ SlidePlan toSlides(const std::vector<BendPoint>& b, double length, double tolera
     if (t1 > length) break;
     if (std::fabs(t1 - std::round(t1)) > 1e-3) ++plan.rounded;
     const int64_t a = std::llround(t0), z = std::llround(t1);
-    const double span = t1 - t0;
+    const double span = t1 - t0, landing = snap(v1);
+    if (grid > 0 && !curved(p) && std::fabs(landing - v1) > 0.005) plan.offGrid = true;
     auto segV = [&](double t) { return v0 + (v1 - v0) * shape(p.curve, p.tension, std::clamp((t - t0) / span, 0.0, 1.0)); };
     if (std::fabs(v1 - v0) < 1e-6) {
       // a hold: nothing to slide
     } else if (p.curve == Step || z <= a) {  // a jump at the point (or a ramp shorter than a tick)
-      if (z < end) raw.push_back({z, 1, v1});
+      if (z < end && landing != at) raw.push_back({z, 1, landing});
+      at = landing;
       plan.steps += p.curve == Step;
     } else if (!curved(p)) {
-      raw.push_back({a, z - a, v1});
+      if (landing != at) raw.push_back({a, z - a, landing});
+      at = landing;
     } else {
       ++plan.curves;
-      // K-29: the curve at whole ticks, thinned (Ramer-Douglas-Peucker) to the fewest ramps that
-      // stay within the tolerance: cuts land where the curve bends most (a steep ease gets its
-      // short ramps at its steep end), at most 32 per segment.
-      const int64_t stride = std::max<int64_t>(1, (z - a) / 2048);
-      std::vector<std::pair<double, double>> smp;
-      for (int64_t c = a; c < z; c += stride) smp.push_back({static_cast<double>(c), segV(static_cast<double>(c))});
-      smp.push_back({static_cast<double>(z), v1});
-      std::vector<bool> keep;
-      for (double tol = std::max(1e-4, tolerance);; tol *= 1.5) {
-        keep.assign(smp.size(), false);
-        keep.front() = keep.back() = true;
-        thin(smp, 0, smp.size() - 1, tol, keep);
-        if (std::count(keep.begin(), keep.end(), true) <= 33 || tol > 48) break;
-      }
-      int64_t prev = a;
-      for (size_t i = 1; i < smp.size(); ++i)
-        if (keep[i]) {
-          const int64_t c = static_cast<int64_t>(smp[i].first);
-          raw.push_back({prev, c - prev, i + 1 == smp.size() ? v1 : smp[i].second});
-          prev = c;
+      // From where the last ramp landed, the longest ramp that stays within the tolerance. Doubling
+      // then halving: few ends are tried, each at few places, so the work doesn't grow with length.
+      int64_t cur = a;
+      while (cur < z) {
+        auto fits = [&](int64_t c, double& target) {
+          const double exact = c == z ? v1 : segV(static_cast<double>(c));
+          double tries[2] = {snap(exact), snap(exact)};
+          if (grid > 0 && c < z) tries[1] = tries[0] + (tries[0] < exact ? grid : -grid);  // the other neighbour may fit better
+          const int64_t len = c - cur;
+          const int checks = static_cast<int>(std::min<int64_t>(len * 2, 64));
+          for (const double q : tries) {
+            double worst = std::fabs(q - exact);
+            for (int i = 1; i < checks && worst <= tolerance; ++i) {
+              const double f = static_cast<double>(i) / checks;
+              worst = std::max(worst, std::fabs(at + (q - at) * f - segV(static_cast<double>(cur) + f * static_cast<double>(len))));
+            }
+            if (worst <= tolerance) {
+              target = q;
+              return true;
+            }
+          }
+          return false;
+        };
+        double target = cur + 1 == z ? landing : snap(segV(static_cast<double>(cur + 1)));  // one tick always goes
+        int64_t lo = 1, hi = 0;
+        for (int64_t len = 2; lo < z - cur; len *= 2) {
+          const int64_t tryLen = std::min(len, z - cur);
+          double q = 0;
+          if (!fits(cur + tryLen, q)) {
+            hi = tryLen;
+            break;
+          }
+          lo = tryLen, target = q;
         }
+        while (hi > lo + 1) {
+          const int64_t mid = lo + (hi - lo) / 2;
+          double q = 0;
+          if (fits(cur + mid, q)) lo = mid, target = q;
+          else hi = mid;
+        }
+        if (target != at) raw.push_back({cur, lo, target});  // a ramp to where it already is: a hold
+        at = target;
+        cur += lo;
+      }
     }
     t0 = t1, v0 = v1;
   }
@@ -217,6 +245,22 @@ SlidePlan toSlides(const std::vector<BendPoint>& b, double length, double tolera
     }
     plan.pieces.push_back(pc);
   }
+  return plan;
+}
+}  // namespace
+
+// K-28, K-AB: see NoteBend.h.
+SlidePlan toSlides(const std::vector<BendPoint>& b, double length, double tolerance, double grid, double base) {
+  if (b.empty() || !(length > 0)) return {};
+  const std::vector<BendPoint> line = head(b, length);
+  bool relaxed = false;
+  SlidePlan plan;
+  for (double tol = std::max(1e-4, tolerance);; tol *= 1.25) {
+    plan = planSlides(line, length, tol, grid, base);
+    if (static_cast<int>(plan.pieces.size()) <= kMaxSlidesPerLine || tol > 96) break;  // past 96: only the line's own points are left
+    relaxed = true;
+  }
+  plan.relaxed = relaxed;
   return plan;
 }
 

@@ -20,7 +20,9 @@ inline constexpr double kPi = 3.14159265358979323846;
 // Shift in Hz for knob position n (0..1, 0.5 = none) — tempo range: in
 // periods of `beats` (signed, 0.25 .. 32 beats), returned via `periodBeats`.
 inline double tempoPeriodBeats(double x) { return 0.25 * std::floor(48.0 * std::pow(2.0, 7.0 * (1.0 - std::clamp(x, 0.0, 1.0)))) / 48.0; }
-inline double shiftHz(double n, int type, int range, double tempo) {
+// `law` 1 (K-37): the exact exponents FL's stored positions were written against; law 0 keeps the
+// rounder 200000^x / 2000^x of states saved before it, a few millionths lower or higher in pitch.
+inline double shiftHz(double n, int type, int range, double tempo, int law = 0) {
   n = std::clamp(n, 0.0, 1.0);
   double x, sign = 1;
   if (type == 2) {
@@ -31,6 +33,7 @@ inline double shiftHz(double n, int type, int range, double tempo) {
   }
   if (range == 2) return sign / (tempoPeriodBeats(x) * 60.0 / std::max(1.0, tempo));
   if (x <= 0) return 0;
+  if (law >= 1) return sign * 0.1 * std::exp2(x * (range == 1 ? 17.60964 : 10.965784));
   return sign * 0.1 * std::pow(range == 1 ? 200000.0 : 2000.0, x);
 }
 // Inverse of the free-range law (for editors / presets): Hz → knob position.
@@ -63,11 +66,11 @@ struct Biquad {
 // 16th-order Linkwitz-Riley section (an 8th-order Butterworth applied twice).
 struct Lr16 {
   Biquad s[8];
-  void set(bool hp, double f, double sr) {
-    static const double q[4] = {0.5098, 0.6013, 0.9000, 2.5629};
+  void set(bool hp, double f, double sr, int law) {
+    static const double q[2][4] = {{0.5098, 0.6013, 0.9000, 2.5629}, {0.5097956, 0.6013449, 0.8999762, 2.5629153}};
     for (int k = 0; k < 8; ++k) {
       double z1 = s[k].z1, z2 = s[k].z2;
-      s[k].set(hp, f, q[k & 3], sr);
+      s[k].set(hp, f, q[law >= 1 ? 1 : 0][k & 3], sr);
       s[k].z1 = z1, s[k].z2 = z2;
     }
   }
@@ -82,7 +85,7 @@ struct Lr16 {
 // Linkwitz-Riley all-pass: low + high pass sum.
 struct Lr16AllPass {
   Lr16 lo, hi;
-  void set(double f, double sr) { lo.set(false, f, sr), hi.set(true, f, sr); }
+  void set(double f, double sr, int law) { lo.set(false, f, sr, law), hi.set(true, f, sr, law); }
   double tick(double x) { return lo.tick(x) + hi.tick(x); }
   void clear() { lo.clear(), hi.clear(); }
 };
@@ -106,7 +109,7 @@ struct Quadrature {
 };
 
 struct Settings {
-  int type = 0, range = 0;
+  int type = 0, range = 0, law = 0;
   double freqPos = 0.5, mix = 1, lrPhase = 0, shapeL = 1, shapeR = 1, feedback = 0.5, stereo = 1, startPhase = 0.5;
 };
 
@@ -147,9 +150,9 @@ class Shifter {
       }
       sm_[7] += (tgt[7] - sm_[7]) * k100_;
       if (std::fabs(sm_[7] - tgt[7]) < 1e-4) sm_[7] = tgt[7];
-      if (sm_[7] != hzPos_ || s.type != hzType_ || s.range != hzRange_ || tempo != hzTempo_) {
-        hzPos_ = sm_[7], hzType_ = s.type, hzRange_ = s.range, hzTempo_ = tempo;
-        hz_ = shiftHz(hzPos_, s.type, s.range, tempo);
+      if (sm_[7] != hzPos_ || s.type != hzType_ || s.range != hzRange_ || tempo != hzTempo_ || s.law != hzLaw_) {
+        hzPos_ = sm_[7], hzType_ = s.type, hzRange_ = s.range, hzTempo_ = tempo, hzLaw_ = s.law;
+        hz_ = shiftHz(hzPos_, s.type, s.range, tempo, s.law);
       }
       const double mix = sm_[0], kfb = 1.005 * (2 * sm_[4] - 1);
       const double dryG = std::min(1.0, 2 - 2 * mix), wetG = std::min(1.0, 2 * mix);
@@ -226,14 +229,14 @@ class Shifter {
     if (s.range == 2 && a > 0) a = 1.0 / a;  // reference quirk: the tempo range designs at the period value
     double fHp = std::clamp(a, 20.0, 20000.0), fLp = std::clamp(22050.0 - a, 20.0, 20000.0);
     for (int c = 0; c < 2; ++c) {
-      bandLo_[c][0].set(false, fLp, sr_), apLo_[c][0].set(fHp, sr_);
-      bandLo_[c][1].set(true, fHp, sr_), apLo_[c][1].set(fLp, sr_);
-      dryAp_[c][0].set(fLp, sr_), dryAp_[c][1].set(fHp, sr_);
+      bandLo_[c][0].set(false, fLp, sr_, s.law), apLo_[c][0].set(fHp, sr_, s.law);
+      bandLo_[c][1].set(true, fHp, sr_, s.law), apLo_[c][1].set(fLp, sr_, s.law);
+      dryAp_[c][0].set(fLp, sr_, s.law), dryAp_[c][1].set(fHp, sr_, s.law);
     }
   }
   double sr_ = 0, k5_ = 0, k100_ = 0, sm_[8] = {}, phase_ = 0, beat_ = 0, hz_ = 0, swap_ = -1;
   double hzPos_ = -1, hzTempo_ = 0;
-  int hzType_ = -1, hzRange_ = -1, design_ = 0;
+  int hzType_ = -1, hzRange_ = -1, hzLaw_ = -1, design_ = 0;
   bool primed_ = false, wasPlaying_ = false, wasTempo_ = false;
   Biquad hp_[2], lp_[2];
   double fb_[2] = {};

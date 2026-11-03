@@ -214,6 +214,20 @@ Encoder vocoder() {
   e.flName = "Fruity Vocoder";
   e.glType = "gl.vocoder";
   e.nativeRank = -1;  // band count and the knobs the decoder reads are carried (K-2)
+  // K-37: an instance imported before the wide range compares as the same values on the wide knobs.
+  e.strip = [](PluginState& s) {
+    if (s.params.size() < static_cast<size_t>(sp::VcCount)) return;
+    if (s.params[sp::VcRange] < 0.5f) {
+      s.params[sp::VcLowW] = s.params[sp::VcLowFreq];
+      s.params[sp::VcHighW] = s.params[sp::VcHighFreq];
+      s.params[sp::VcAttackW] = s.params[sp::VcAttack];
+    } else {
+      s.params[sp::VcLowFreq] = std::clamp(s.params[sp::VcLowW], 20.f, 2000.f);
+      s.params[sp::VcHighFreq] = std::clamp(s.params[sp::VcHighW], 1000.f, 20000.f);
+      s.params[sp::VcAttack] = std::clamp(s.params[sp::VcAttackW], 0.5f, 200.f);
+    }
+    s.params[sp::VcRange] = 1.f;
+  };
   e.defaults = [] { return vocoderState(16, {}); };
   e.write = [](const PluginState& g, Bytes& b, const EncodeContext&) {
     const int choice = std::clamp(static_cast<int>(std::lround(param(g, sp::VcBands))), 0, static_cast<int>(sp::kVocBandChoiceCount) - 1);
@@ -227,11 +241,12 @@ Encoder vocoder() {
     };
     auto freqRaw = [](double hz) { return 65536.0 * std::log(1.0 + std::max(0.0, hz - 10.0) * 100.0 / 15990.0) / std::log(101.0); };
     auto lvlRaw = [](double db) { return db <= -60 ? 0.0 : 128.0 * std::pow(10.0, db / 20.0); };
-    put(0, freqRaw(param(g, sp::VcLowFreq)), 0, 65536);
-    put(1, freqRaw(param(g, sp::VcHighFreq)), 0, 65536);
+    const bool wide = param(g, sp::VcRange) >= 0.5;  // K-37
+    put(0, freqRaw(param(g, wide ? sp::VcLowW : sp::VcLowFreq)), 0, 65536);
+    put(1, freqRaw(param(g, wide ? sp::VcHighW : sp::VcHighFreq)), 0, 65536);
     put(3, param(g, sp::VcInvert) >= 0.5 ? 1 : 0, 0, 1);
     put(4, 100.0 * param(g, sp::VcFormant), -1200, 1200);
-    put(6, param(g, sp::VcAttack), 10, 1000);
+    put(6, param(g, wide ? sp::VcAttackW : sp::VcAttack), 10, 1000);
     put(7, param(g, sp::VcRelease), 10, 1000);
     put(8, param(g, sp::VcHold) >= 0.5 ? 1 : 0, 0, 1);
     put(9, lvlRaw(param(g, sp::VcModLevel)), 0, 160);

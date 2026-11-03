@@ -95,6 +95,10 @@ std::shared_ptr<const Sample> kickNoiseSample(int k);
 int kickNoiseIndex(const std::string& path);
 
 // ------------------------------------------------------------ Sweep Kick
-enum SweepParam { SkMaxFreq, SkMinFreq, SkFreqDecay, SkAmpDecay, SkClick, SkDist, SkSeed, SkCount };
+// SkModel: 0 = the first engine (states saved before K-AD and the three factory presets),
+// 1 = the engine FL imports and new instances use: wave table oscillator, fixed amp and sweep
+// laws, the channel envelopes and filter (PluginState::ins), notes end at note off without a
+// volume envelope.
+enum SweepParam { SkMaxFreq, SkMinFreq, SkFreqDecay, SkAmpDecay, SkClick, SkDist, SkSeed, SkModel, SkCount };
 
 }  // namespace gl::packs::models::dr

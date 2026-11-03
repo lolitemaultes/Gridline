@@ -74,6 +74,7 @@ void writeChain(MixerTrack& master, int first, const Macros& in) {
     setP(p, LimGain, m.drive);
     setP(p, LimCeiling, m.ceiling);
     setP(p, LimRelease, 0.1f);
+    setP(p, LimReleaseW, 0.1f);
   }
 }
 

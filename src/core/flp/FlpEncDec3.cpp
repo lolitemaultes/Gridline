@@ -1280,7 +1280,7 @@ void registerDec3(std::vector<Encoder>& v) {
   v.push_back(keyboardSplitter());
   v.push_back(vfxScript());
   v.push_back(vfxEnvelope());
-  // FlpDec3Inst.cpp: Slicer 2's decoder reads nothing (an empty slicer).
+  // FlpDec3Inst.cpp: Slicer 2's decoder reads only the whole-instrument knobs of an empty slicer.
   v.push_back(make("Fruity Slicer 2", "gl.slicer", -1, true));
   // FlpDec4.cpp
   v.push_back(bigClock());

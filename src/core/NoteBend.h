@@ -120,10 +120,14 @@ std::vector<BendPoint> fromSamples(const std::vector<std::pair<double, double>>&
 //   - `start`: the value at the note's start (the exported note itself starts there);
 //   - one slide per straight ramp (at the ramp's start, as long as the ramp, aiming at its end);
 //   - a curve (smooth, eases, a bent straight) as several shorter ramps that stay within
-//     `tolerance` semitones of it (K-29: cut where it bends most, at most 32 per segment, none
-//     shorter than one tick);
-//   - a step as a one-tick slide at its point; a hold as nothing.
-// Times are whole ticks (FL notes have no fractions); pieces never overlap.
+//     `tolerance` semitones of it (K-AB: each ramp as long as the tolerance allows, none shorter
+//     than one tick);
+//   - a step as a one-tick slide at its point (FL's shortest slide); a hold as nothing.
+// Times are whole ticks (FL notes have no fractions); pieces never overlap. With `grid` > 0 every
+// value lands where `base + value` is a multiple of it (FL's fine pitch: 0.1 semitones, `base` the
+// note's pitch), and the tolerance includes that rounding. A line that would need more than
+// kMaxSlidesPerLine slides gets a wider tolerance, as little as it takes (`relaxed`).
+inline constexpr int kMaxSlidesPerLine = 64;
 struct SlidePiece {
   int64_t tick = 0;    // from the note's start
   int64_t length = 1;  // ticks, >= 1
@@ -135,7 +139,9 @@ struct SlidePlan {
   int curves = 0;   // curved segments played as several ramps
   int steps = 0;    // steps played as one-tick slides
   int rounded = 0;  // point times moved to whole ticks
+  bool offGrid = false;  // a held value or ramp end isn't on the grid (it went to the nearest)
+  bool relaxed = false;  // over kMaxSlidesPerLine at `tolerance`: a wider one was used
 };
-SlidePlan toSlides(const std::vector<BendPoint>& b, double length, double tolerance = 0.03);
+SlidePlan toSlides(const std::vector<BendPoint>& b, double length, double tolerance = 0.03, double grid = 0, double base = 0);
 
 }  // namespace gl::bend

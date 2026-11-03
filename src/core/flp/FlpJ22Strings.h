@@ -55,6 +55,7 @@ struct StepBassState {
     Step steps[32];
     double bpm = 125;
     uint8_t tail[9] = {};
+    double extra = 0.5;  // pre >= 2 (FL 2026's states): one more value, no control yet
   };
   uint32_t head[12] = {};
   uint16_t version = 0;
@@ -64,6 +65,8 @@ struct StepBassState {
   std::vector<Patch> patches;      // 256
   std::vector<Sequence> sequences; // 128
   uint32_t trailer[6] = {};        // u32 mode, 3 × u32, f32 bits, u32
+  bool hasTrailer2 = false;        // FL 2026's states: one more word
+  uint32_t trailer2 = 0;
   size_t consumed = 0;
 };
 bool parseStepBass(const uint8_t* p, size_t n, StepBassState& out);

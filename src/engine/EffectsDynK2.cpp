@@ -190,7 +190,8 @@ class LimiterK2 final : public Effect {
     const int W = std::max(std::max(A, 1), static_cast<int>(smp(prm(s, LimHold, 0.01f))));
     peak_.setWindow(W);
     atkStages_.set(A > 0 ? iprm(s, LimAtkCurve, 2) + 1 : 0, 0.8 * A, 0.8 * A);
-    const double rel = prm(s, LimRelease, 0.0855f);
+    const bool wideRel = prm(s, LimRange) >= 0.5f;  // K-37
+    const double rel = prm(s, wideRel ? LimReleaseW : LimRelease, 0.0855f);
     relStages_.set(rel > 0 ? iprm(s, LimRelCurve, 2) + 1 : 0, 0.0, smp(rel));
     // Compressor.
     const LimComp law = LimComp::from(s);
@@ -198,13 +199,13 @@ class LimiterK2 final : public Effect {
     rms_.setWindow(std::max(1, static_cast<int>(smp(prm(s, LimCompRms, 0.001f)))));
     double catk = prm(s, LimCompAttack, 0.0001f);
     if (catk < 0.00011) catk = 0;
-    compStages_.set(iprm(s, LimCompCurve) + 1, smp(catk), smp(prm(s, LimCompRelease, 0.248f)));
+    compStages_.set(iprm(s, LimCompCurve) + 1, smp(catk), smp(prm(s, wideRel ? LimCompReleaseW : LimCompRelease, 0.248f)));
     const bool side = iprm(s, LimSidechain) > 0 && io_.scL && io_.scR;
     // Noise gate.
     const double gThrDb = prm(s, LimGateThresh, -80);
     const double gateThr = gThrDb <= -79.9 ? 0.0 : std::min(dbToGain(gThrDb), ceilEff);
     const double noiseGain = prm(s, LimGateFloor) <= -79.9f ? 0.0 : dbToGain(prm(s, LimGateFloor));
-    const double gateCoef = std::exp(-4.605170185988091 / std::max(1.0, smp(prm(s, LimGateRelease, 0.05f))));
+    const double gateCoef = std::exp(-4.605170185988091 / std::max(1.0, smp(prm(s, wideRel ? LimGateReleaseW : LimGateRelease, 0.05f))));
     // Output stage.
     const double satT = dbToGain(prm(s, LimSaturation));
     const bool sat = satT < 0.999;

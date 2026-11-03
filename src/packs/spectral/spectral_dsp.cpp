@@ -642,7 +642,7 @@ class VocoderFx final : public SpectralFx {
     design(p, sr);
     const int nb = nb_;
     const int ord = p.choice(VcOrder) + 1;
-    const double ca = coefFor(sr, p[VcAttack]), cr = coefFor(sr, p[VcRelease]);
+    const double ca = coefFor(sr, p[p.on(VcRange) ? VcAttackW : VcAttack]), cr = coefFor(sr, p[VcRelease]);
     const double cca = coefFor(sr, 4.0), ccr = coefFor(sr, 60.0);
     const double flatten = std::clamp(static_cast<double>(p[VcFlatten]), 0.0, 1.0);
     const double makeup = 3.6 * std::pow(6.0, 1.0 - flatten) * (1.0 + 0.5 * flatten);
@@ -775,14 +775,16 @@ class VocoderFx final : public SpectralFx {
   };
 
   void design(const Params& p, double sr) {
-    float key[8] = {static_cast<float>(sr), p[VcBands], p[VcLowFreq], p[VcHighFreq], p[VcSpacing], p[VcFormant], p[VcBandwidth], p[VcOrder]};
+    const bool wide = p.on(VcRange);
+    const float loHz = p[wide ? VcLowW : VcLowFreq], hiHz = p[wide ? VcHighW : VcHighFreq];
+    float key[8] = {static_cast<float>(sr), p[VcBands], loHz, hiHz, p[VcSpacing], p[VcFormant], p[VcBandwidth], p[VcOrder]};
     if (sr != sr_ || std::memcmp(key, key_, sizeof key) != 0) {
       std::memcpy(key_, key, sizeof key);
       if (sr != sr_) reset();
       sr_ = sr;
       nb_ = vocBandCount(p[VcBands]);
       const int ord = p.choice(VcOrder) + 1;
-      const double lo = p[VcLowFreq], hi = std::max(static_cast<double>(p[VcHighFreq]), lo * 1.1);
+      const double lo = loHz, hi = std::max(static_cast<double>(hiHz), lo * 1.1);
       const double fshift = std::pow(2.0, -p[VcFormant] / 12.0);
       // Per-stage widening so cascades keep the requested -3 dB width.
       const double stageWiden = ord == 1 ? 1.0 : (ord == 2 ? 1.554 : 1.961);
@@ -2391,7 +2393,8 @@ class SplitterFx final : public SpectralFx {
   int refLayout(const Params& p, double sr, double* f, int* sl) const {
     const int nb = std::clamp(p.choice(SpBands), 0, 2) + 2;
     double v[3] = {p[SpFreq1], p[SpFreq2], p[SpFreq3]};
-    std::sort(v, v + (nb - 1));
+    for (int i = 1; i < nb - 1; ++i)
+      for (int j = i; j > 0 && v[j] < v[j - 1]; --j) std::swap(v[j], v[j - 1]);
     for (int k = 0; k < 3; ++k) f[k] = std::clamp(v[k], 10.0, sr * 0.49);
     sl[0] = std::clamp(p.choice(SpSlopeA), 0, kSplitSlopes - 1);
     sl[1] = std::clamp(p.choice(SpSlopeB), 0, kSplitSlopes - 1);

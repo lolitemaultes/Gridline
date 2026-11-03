@@ -39,6 +39,7 @@ struct Skin {
   ImU32 lcdBg = 0, lcdText = 0;
   ImU32 graphBg = 0, graphGrid = 0, graphGridStrong = 0, graphText = 0, graphCurve = 0;
   ImU32 select = 0;      // selector highlight
+  ImU32 selectText = 0;  // K-40: text of the selected cell (0 = the highlight, lightened)
   // Optional explicit roles (0 = derived from the ones above).
   ImU32 well = 0;                  // section bevel fill (reference "plain rounded" bevels)
   ImU32 pillBg = 0, pillText = 0;  // caption pills ("rounded subtle" labels)

@@ -283,10 +283,12 @@ PluginInfo sweepKick() {
   q[SkClick] = lin("Click", "", 0, 64, 32);
   q[SkDist] = lin("Distortion", "", 0, 128, 0);
   q[SkSeed] = lin("Seed", "", 0, 16777215, 4479715);
+  q[SkModel] = tog("Engine", 1);
+  p.legacyDefaults.push_back({SkModel, 0.f});  // older states keep the first engine
   using V = std::vector<std::pair<int, float>>;
-  p.presets.push_back({"Boom", V{{SkMaxFreq, -1800}, {SkMinFreq, -900}, {SkFreqDecay, 150}, {SkAmpDecay, 170}, {SkClick, 20}}});
-  p.presets.push_back({"Snap", V{{SkMaxFreq, 900}, {SkMinFreq, -500}, {SkFreqDecay, 40}, {SkAmpDecay, 90}, {SkClick, 60}}});
-  p.presets.push_back({"Dirty", V{{SkMaxFreq, 0}, {SkMinFreq, -700}, {SkFreqDecay, 80}, {SkAmpDecay, 140}, {SkClick, 30}, {SkDist, 90}}});
+  p.presets.push_back({"Boom", V{{SkMaxFreq, -1800}, {SkMinFreq, -900}, {SkFreqDecay, 150}, {SkAmpDecay, 170}, {SkClick, 20}, {SkModel, 0}}});
+  p.presets.push_back({"Snap", V{{SkMaxFreq, 900}, {SkMinFreq, -500}, {SkFreqDecay, 40}, {SkAmpDecay, 90}, {SkClick, 60}, {SkModel, 0}}});
+  p.presets.push_back({"Dirty", V{{SkMaxFreq, 0}, {SkMinFreq, -700}, {SkFreqDecay, 80}, {SkAmpDecay, 140}, {SkClick, 30}, {SkDist, 90}, {SkModel, 0}}});
   p.editorWidth = 380 * 1.8f;
   return p;
 }

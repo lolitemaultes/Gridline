@@ -109,6 +109,7 @@ void drawChannelEnvelope(App& a, ObjectId id) {
   const Channel* c = a.doc.song().channel(id);
   if (!c) return;
   const auto& P = pal();
+  const bool noPitch = c->plugin.type == "gl.sweepkick";
   InsSettings st;
   if (!parseIns(c->plugin.ins, st)) {
     st = InsSettings{};
@@ -136,7 +137,9 @@ void drawChannelEnvelope(App& a, ObjectId id) {
     const char* hints[] = {i18n::tr("Panning LFO (the panning envelope is kept but does not move the voice)"),
                            i18n::tr("Volume envelope and tremolo"), i18n::tr("Mod X: filter cutoff envelope and LFO"),
                            i18n::tr("Mod Y: filter resonance envelope and LFO"), i18n::tr("Pitch envelope and vibrato (cents)")};
-    ui::Segmented("##instarget", targets, InsTargets, &g_target, 72, 0, hints);
+    // Sweep Kick's oscillator takes no pitch modulation: its saved pitch record is kept, not shown.
+    if (noPitch && g_target == InsPitch) g_target = InsVol;
+    ui::Segmented("##instarget", targets, noPitch ? InsPitch : InsTargets, &g_target, 72, 0, hints);
     ImGui::SameLine(0, 16);
     if (ui::TextButton("FL timing", st.classic(), 96,
                        "On: envelopes and LFOs step once per song tick with FL Studio's exact results (FL imports switch it on). "

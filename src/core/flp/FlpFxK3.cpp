@@ -195,7 +195,8 @@ bool decodeGrossBeat(Context& c, const std::vector<Event>& evs, PluginMapping& m
         uint8_t mode = static_cast<uint8_t>(p.flags & 0xFF);
         int8_t sign = static_cast<int8_t>(p.flags >> 24);
         float t = std::clamp(p.t, -1.0f, 1.0f);
-        if (mode >= menv::ModeCount) mode = menv::SingleCurve, lossy = true;
+        if (mode >= menv::kFlModeCount) mode = menv::SingleCurve, lossy = true;
+        mode = menv::fromFlMode(mode);
         if (sign == 2 && mode != menv::Hold) mode = menv::SingleCurve, t = 0;  // forced linear segment
         s->env.add(p.x, static_cast<float>(std::clamp(p.y, 0.0, 1.0)), t == 0.0f ? 0.0f : t, mode);
       }
@@ -287,7 +288,8 @@ bool decodeWaveShaper(Context& c, const std::vector<Event>& evs, PluginMapping& 
     if (!std::isfinite(dx) || !std::isfinite(y)) break;
     x += std::max(0.0, dx);
     if (i % step != 0 && i + 1 != n) continue;
-    if (mode >= menv::ModeCount) mode = menv::SingleCurve;
+    if (mode >= menv::kFlModeCount) mode = menv::SingleCurve;
+    mode = menv::fromFlMode(mode);
     if (!std::isfinite(t)) t = 0;
     cv.add(std::clamp(x, 0.0, 1.0), static_cast<float>(std::clamp(y, 0.0, 1.0)), std::clamp(t, -1.0f, 1.0f), mode);
   }
@@ -488,7 +490,8 @@ cr::OEnv toEnv(const LpReader::Rec& r, bool& lossy) {
     uint8_t mode = static_cast<uint8_t>(p.flags & 0xFF);
     int8_t sign = static_cast<int8_t>(p.flags >> 24);
     float t = std::clamp(p.t, -1.0f, 1.0f);
-    if (mode >= menv::ModeCount) mode = menv::SingleCurve, lossy = true;
+    if (mode >= menv::kFlModeCount) mode = menv::SingleCurve, lossy = true;
+    mode = menv::fromFlMode(mode);
     if (sign == 2 && mode != menv::Hold) mode = menv::SingleCurve, t = 0;
     e.add(p.x, static_cast<float>(std::clamp(p.y, 0.0, 1.0)), t == 0.0f ? 0.0f : t, mode);
   }
