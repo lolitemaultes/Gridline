@@ -127,6 +127,10 @@ run(kerf 120 "10 dragenter ${zx} ${zy} \"${OUT}/Break 96.wav\"
 100 move 10 10
 " --plugin gl.slicer)
 check("kerf: the dropped loop is loaded and sliced" kerf_out MATCHES "waitfor kerf-regions: reached")
+if(NOT kerf_out MATCHES "waitfor kerf-engine-ready: reached")
+  string(REGEX MATCHALL "waitfor [^\n]*" kerfWaits "${kerf_out}")
+  message(STATUS "kerf waits: ${kerfWaits}")
+endif()
 check("kerf: the engine has the loop" kerf_out MATCHES "waitfor kerf-engine-ready: reached")
 if(NOT kerf_out MATCHES "waitfor kerf-lit:3: reached")
   message(STATUS "kerf run output:\n${kerf_out}")

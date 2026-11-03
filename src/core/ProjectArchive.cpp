@@ -460,7 +460,7 @@ std::vector<std::string> foldersUnder(const Song& song, const fs::path& root) {
     if (slash != std::string::npos) found[p.substr(0, slash)] = true;
   }
   std::vector<std::string> out;
-  for (const auto& kv : found) out.push_back(kv.first);
+  for (const auto& kv : found) out.push_back(fs::u8path(kv.first).make_preferred().u8string());
   return out;
 }
 

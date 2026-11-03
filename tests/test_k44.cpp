@@ -565,7 +565,12 @@ void testReport() {
   expect(rep.error.empty(), "report: written");
   expect(contains(rep.unpacked, hidden), "report: a path the walk does not know is named, not lost");
   expect(!contains(rep.unpacked, real), "report: a packed file is not named");
-  expect(contains(absolutePathsInProject("{\"a\":{\"data\":\"z lo=1 | " + real + "\"},\"b\":\"sf2:" + real + "#3\"}"), real), "the check reads lines and references");
+  std::string realInJson;  // (a Windows path's backslashes are escapes in a project's text)
+  for (const char c : real) {
+    if (c == '\\') realInJson += '\\';
+    realInJson += c;
+  }
+  expect(contains(absolutePathsInProject("{\"a\":{\"data\":\"z lo=1 | " + realInJson + "\"},\"b\":\"sf2:" + realInJson + "#3\"}"), real), "the check reads lines and references");
   expect(absolutePathsInProject("{\"a\":\"/no/such/file.wav\",\"b\":\"Samples/x.wav\"}").empty(), "the check ignores what is not real");
 
   // A file that cannot be read: an error, the archive as it was, no temporary file.
@@ -709,8 +714,7 @@ void testOver4Gb() {
   const fs::path bigFile = base / "big.wav";
   { std::ofstream(bigFile, std::ios::binary).put('\0'); }
   fs::resize_file(bigFile, bigSize, ec);
-  expect(!ec, "4 GB: a sparse source");
-  if (diskUse(bigFile) > (64u << 20)) {
+  if (ec || diskUse(bigFile) > (64u << 20)) {
     std::printf("# skipped the 4 GB archive: this file system has no sparse files\n");
     fs::remove(bigFile, ec);
     return;
@@ -760,11 +764,15 @@ void testStreamFailure() {
     std::string err;
     z.open(zip);
     expect(!z.addFile("gone.wav", (base / "gone.wav").u8string(), &err) && !err.empty(), "a file that is not there is an error");
-    // (A failed read marks the writer: see below with a folder, which opens but cannot be read.)
+#if !defined(_WIN32)
+    // (A failed read marks the writer: a folder opens but cannot be read. Windows does not open one.)
     expect(!z.addFile("folder", base.u8string(), &err) && !err.empty(), "what cannot be read is an error");
     expect(!z.close(&err), "a failed read: the archive can no longer replace the target");
+#endif
   }
+#if !defined(_WIN32)
   expect(bytesOf(zip) == good, "the target stays as it was");
+#endif
   size_t left = 0;
   for (const auto& e : fs::directory_iterator(base)) left += e.path().filename().u8string().find(".tmp.") != std::string::npos ? 1 : 0;
   expect(left == 0, "no temporary file left");

@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <new>
 #include <set>
 #include <string>
 #include <thread>
@@ -216,7 +217,7 @@ void testPinnedAndRefs(const fs::path& base) {
     const fs::path copy = fs::u8path(r.folder);
     const Song s = songUsing((copy / "tone.wav").u8string());
     const auto used = archive::copiesUsedBy(s, f.cache.u8string());
-    expect(used.size() == 1 && used[0] == copy.u8string(), "the song's copy is found");
+    expect(used.size() == 1 && fs::u8path(used[0]) == copy, "the song's copy is found");
     expect(archive::pinUnpacked(s, f.cache.u8string()) == 1, "a saved project marks it");
     r.use.reset();
     expect(f.sweep().keptSaved == 1 && fs::exists(copy), "a marked copy survives closing and the sweep");
@@ -458,13 +459,18 @@ void testIdleVoices() {
   voices.push_back(std::make_unique<stretch::Voice>());
   voices.back()->prepare(2, 44100.0, 8.0, 8.0, false);  // (the shared tables are built once)
   const double before = rssNow();
-  for (int i = 0; i < 1500; ++i) {
-    voices.push_back(std::make_unique<stretch::Voice>());
-    voices.back()->prepare(2, 44100.0, 8.0, 8.0, false);
+  int made = 0;
+  try {  // (a small virtual machine's memory limit may come first)
+    for (; made < 1500; ++made) {
+      voices.push_back(std::make_unique<stretch::Voice>());
+      voices.back()->prepare(2, 44100.0, 8.0, 8.0, false);
+    }
+  } catch (const std::bad_alloc&) {
   }
-  const double perVoiceKb = (rssNow() - before) * 1024.0 / 1500.0;
-  std::printf("# an idle voice holds %.0f KB\n", perVoiceKb);
+  const double perVoiceKb = (rssNow() - before) * 1024.0 / std::max(made, 1);
+  std::printf("# %d idle voices: one holds %.0f KB\n", made, perVoiceKb);
   expect(perVoiceKb < 2500.0, "an idle voice does not hold its big buffers (it held over 4 MB)");
+  voices.resize(1);
   // And it works: a tone goes in, sound comes out, all of it finite, at the top of its range too.
   struct Src {
     double ph = 0;
@@ -493,6 +499,20 @@ void testIdleVoices() {
       expect(finite && peak > 0.05, "a voice plays at speed " + std::to_string(speed) + " pitch " + std::to_string(pitch));
     }
   }
+}
+
+// A build finds a file missing and queues it, then the editor decodes it on its own thread: the next
+// build has to hear of it, or the engine never gets the sample.
+void testDecodedOnTheCallersThread(const fs::path& base) {
+  fs::create_directories(base / "decoded");
+  const std::string wav = wavFile(base / "decoded" / "here.wav");
+  sampleCache().pauseBackground(true);
+  expect(!sampleCache().request(wav), "a build finds the file missing");
+  const uint64_t before = sampleCache().generation();
+  expect(sampleCache().get(wav) != nullptr, "the editor decodes it itself");
+  expect(sampleCache().generation() != before, "and the next build hears of it");
+  sampleCache().pauseBackground(false);
+  sampleCache().clear();
 }
 
 void testLoader(const fs::path& base) {
@@ -549,5 +569,6 @@ int main(int argc, char** argv) {
   testRace(base);
   testLoader(base);
   testIdleVoices();
+  testDecodedOnTheCallersThread(base);
   return finish();
 }

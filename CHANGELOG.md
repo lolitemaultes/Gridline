@@ -25,6 +25,7 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 - Crest in new instances and FL imports now reacts differently while a control moves. A new band delay or master attack length starts from an empty delay, a new sustain window or detector starts fresh, a new curve stage count restarts its envelope, a new slope restarts the engine, and stereo separation moves in a short straight line, the same at every buffer size. Moving the delay or attack knob therefore makes a short gap in the sound. Saved projects and saved presets keep the behaviour they had, and sound the same when nothing moves.
 
 ### Fixed
+- A loop dropped into Kerf no longer stays silent until the next edit on a busy computer.
 
 - **Exporting a project with installed plugins no longer freezes the window.** Such a project used to render on the interface thread, so Gridline stopped responding until the end, with no progress and no Cancel, and Windows could mark the window as not responding and paint it over. It now renders in the background like any other project, so the progress bar, Cancel and quitting all work. Render to sampled instrument gets the same fix. The sound does not change.
 - Exports no longer run at real-time priority. A long render took priority over the interface, the graphics driver and the rest of the computer. On Windows, live playback also leaves one processor free of real-time work.

@@ -361,7 +361,9 @@ SamplePtr SampleCache::get(const std::string& path) {
   if (auto it = cache_.find(path); it != cache_.end()) return it->second;
   if (failed_.count(path)) return nullptr;
   if (auto q = std::find(queue_.begin(), queue_.end(), path); q != queue_.end()) queue_.erase(q);  // decode it here, now
-  return decodeLocked(lk, path);
+  SamplePtr s = decodeLocked(lk, path);
+  gen_.fetch_add(1, std::memory_order_acq_rel);  // (a build that found it missing and queued it must hear of it)
+  return s;
 }
 
 void SampleCache::forget(const std::string& path) {
