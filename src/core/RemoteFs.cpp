@@ -8,6 +8,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <map>
 #include <mutex>
 #include <thread>
@@ -165,25 +166,69 @@ bool remoteByName(const std::string& path) {
   return path.rfind("//", 0) == 0 || path.rfind("\\\\", 0) == 0;  // a network share by name
 }
 
+#if defined(_WIN32)
+namespace {
+// The path a symbolic link or junction on the way to `p` leads to, or nothing when there is none. Only
+// the link itself is read: nothing is asked of the drive behind it.
+fs::path throughLink(const fs::path& p) {
+  fs::path cur = p.root_path();
+  const fs::path rel = p.relative_path();
+  for (auto it = rel.begin(); it != rel.end(); ++it) {
+    cur /= *it;
+    const DWORD at = GetFileAttributesW(cur.c_str());
+    if (at == INVALID_FILE_ATTRIBUTES) return {};
+    if (!(at & FILE_ATTRIBUTE_REPARSE_POINT)) continue;
+    std::error_code ec;
+    const fs::path link = fs::read_symlink(cur, ec);
+    if (ec || link.empty()) continue;  // (a cloud placeholder folder is a reparse point too, not a link)
+    fs::path to = link.is_absolute() ? link : cur.parent_path() / link;
+    for (auto r = std::next(it); r != rel.end(); ++r) to /= *r;
+    return to.lexically_normal();
+  }
+  return {};
+}
+
+bool remoteOnWindows(const std::string& path) {
+  fs::path p;
+  try {
+    std::error_code ec;
+    p = fs::absolute(fs::u8path(path), ec);
+    for (int hops = 0; hops < 8; ++hops) {
+      const std::string name = p.u8string();
+      if (underTestPrefix(name) || remoteByName(name)) return true;
+      const std::wstring w = p.wstring();
+      if (w.size() < 3 || w[1] != L':') return false;
+      const wchar_t root[4] = {w[0], L':', L'\\', 0};
+      if (GetDriveTypeW(root) == DRIVE_REMOTE) return true;
+      // Cloud placeholders (OneDrive and others): the attributes say so without fetching the data.
+      const DWORD at = GetFileAttributesW(w.c_str());
+      constexpr DWORD kRecallOnOpen = 0x00040000, kPinned = 0x00080000, kUnpinned = 0x00100000, kRecallOnAccess = 0x00400000;
+      if (at != INVALID_FILE_ATTRIBUTES && (at & (FILE_ATTRIBUTE_OFFLINE | kRecallOnOpen | kRecallOnAccess | kPinned | kUnpinned)) != 0) return true;
+      p = throughLink(p);
+      if (p.empty()) return false;
+    }
+  } catch (const std::exception&) {
+  }
+  return false;
+}
+}  // namespace
+#endif
+
 bool isRemote(const std::string& path) {
   if (path.empty()) return false;
   if (underTestPrefix(path) || remoteByName(path)) return true;
 #if defined(_WIN32)
-  std::wstring w;
-  try {
-    std::error_code ec;
-    w = fs::absolute(fs::u8path(path), ec).wstring();
-  } catch (const std::exception&) {
-    return false;
+  static std::mutex mu;
+  static std::map<std::string, bool> known;  // callers ask every frame: the walk runs once per table
+  static double readAt = -1e9;
+  std::lock_guard<std::mutex> lk(mu);
+  if (nowSeconds() - readAt > 5.0) {
+    readAt = nowSeconds();
+    known.clear();
   }
-  if (w.size() < 3 || w[1] != L':') return false;
-  const wchar_t root[4] = {w[0], L':', L'\\', 0};
-  if (GetDriveTypeW(root) == DRIVE_REMOTE) return true;
-  // Cloud placeholders (OneDrive and others): the attributes say so without fetching the data.
-  const DWORD at = GetFileAttributesW(w.c_str());
-  if (at == INVALID_FILE_ATTRIBUTES) return false;
-  constexpr DWORD kRecallOnOpen = 0x00040000, kPinned = 0x00080000, kUnpinned = 0x00100000, kRecallOnAccess = 0x00400000;
-  return (at & (FILE_ATTRIBUTE_OFFLINE | kRecallOnOpen | kRecallOnAccess | kPinned | kUnpinned)) != 0;
+  if (const auto it = known.find(path); it != known.end()) return it->second;
+  if (known.size() > 4096) known.clear();
+  return known[path] = remoteOnWindows(path);
 #else
   static std::mutex mu;
   static std::vector<Mount> mounts;
