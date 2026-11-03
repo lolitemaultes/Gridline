@@ -476,7 +476,7 @@ void header(App& a, const PluginTarget& t, host::HostedInstance* hi, const Plugi
   // Generic / sandbox. The plugin's own interface is its window: this
   // panel only shows for plugins without one, when the generic editor is
   // chosen, or when asked for from the plugin window's settings.
-  const bool hasUi = hi->backend()->hasEditor();
+  const bool hasUi = hi->backend()->editorAvailable();
   if (skin::button(F, "##gen", 10, 44, 82, 20, "GENERIC", opts.genericEditor || !hasUi ? L.btnOn : L.btn, hasUi ? L.btnText : L.dim,
                    hasUi ? (opts.genericEditor ? "Switch back to the plugin's own interface"
                                                : "Use Gridline's parameter list as this plugin's editor instead of its own interface")

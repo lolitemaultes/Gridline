@@ -156,8 +156,10 @@ void effectList(App& a, ObjectId track, int slot, const std::string& current) {
   if (!favs.empty()) {
     ImGui::Spacing();
     ui::Label(i18n::tr("Favourites"));
+    ImGui::PushID("favs");  // a favourite is also listed under its category
     for (const PluginInfo* p : favs)
       if (favui::pickerRow(*p, p->type == current)) pick(p->type);
+    ImGui::PopID();
   }
   std::string cat;
   for (const auto& p : pluginCatalog()) {

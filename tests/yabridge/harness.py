@@ -811,7 +811,7 @@ def lifecycle_cell(ctx, r, app, target):
         r.add("close and reopen ten times", "pass", f"{time.time() - t0:.1f} s")
     time.sleep(1.0)
     w = fresh_window(app)
-    if w:
+    if w and ctx.has_input:
         check_points(ctx, r, "clicks exact after reopening", w, corner_points(w["pw"], w["ph"]))
     return w
 
@@ -1274,19 +1274,25 @@ def control_cell(ctx, r, fmt, entry, carla_script):
             return
         time.sleep(2.0)
         rc, o = sh("xdotool", "search", "--name", "Gridline Probe", timeout=10)
-        ids = o.split()
+        ids = [i for i in o.split() if i.isdigit()]
         if not ids:
             r.add("control host: window found", "fail", "no window named after the plugin")
             return
         win = hex(int(ids[-1]))
         x.dump(win, ctx.cell_dir / "x.txt")
         x.shot(win, str(ctx.cell_dir / "shot.png"))
+        if not ctx.has_input:
+            r.add("control host: mouse and keyboard", "skip", ctx.no_input_reason)
+            return
         w = {"window": win, "container": win, "pw": 640, "ph": 400, "px": 0, "py": 0, "resizable": True}
         check_points(ctx, r, "left click at corners and centre", w, corner_points(640, 400))
         for i, (mx, my) in enumerate([(300, 250), (700, 90)]):
             x.window_move(win, mx, my)
             check_points(ctx, r, f"clicks after moving the plugin window ({i + 1})", w, [(3, 3), (636, 396), (300, 200)])
         g = x.geom(win)
+        if not g:
+            r.add("control host: window found", "skip", "the window went away")
+            return
         x.move(g["x"] + 450, g["y"] + 300)
         x.click(1)
         time.sleep(0.3)
@@ -1327,7 +1333,7 @@ def control_real(ctx, r, name, fmt, entry, script):
         ids = []
         end = time.time() + 120
         while not ids and time.time() < end:
-            ids = sh("xdotool", "search", "--name", name, timeout=10)[1].split()
+            ids = [i for i in sh("xdotool", "search", "--name", name, timeout=10)[1].split() if i.isdigit()]
             time.sleep(1.0)
         if not r.expect("control host: editor opens", bool(ids), log_path.read_text(errors="replace")[-300:]):
             return
@@ -1341,6 +1347,9 @@ def control_real(ctx, r, name, fmt, entry, script):
         r.add("control host: interface drawn (for comparison)", "pass" if colours > 24 else "skip", f"{colours} colours")
         # The drags the Gridline cell makes, and the values the plugin reports to this host.
         g = x.geom(win)
+        if not g:  # the name also matches short-lived windows of the plugin's start
+            r.add("control host: window found (for comparison)", "skip", "the window went away")
+            return
         size = log_path.stat().st_size
         for cy in (0.2, 0.4, 0.6, 0.8):
             for cx in (0.15, 0.35, 0.55, 0.75, 0.9):

@@ -351,8 +351,8 @@ bool openHostedEditor(App& a, const PluginTarget& t) {
   if (!owner) return false;  // Gridline's editor is closed: nothing to own the window
   host::Backend* b = hi->backend();
   const host::HostedClass& cls = hi->hostedClass();
-  if (!b->hasEditor()) {
-    a.notify(std::string("No interface of its own, Gridline shows its parameters: ") + cls.name);
+  if (!b->editorAvailable()) {
+    if (!b->lost()) a.notify(std::string("No interface of its own, Gridline shows its parameters: ") + cls.name);
     return false;
   }
   // Plugin interfaces may bind their own GL context or ImGui may be mid-frame:
@@ -368,7 +368,13 @@ bool openHostedEditor(App& a, const PluginTarget& t) {
     }
   } restore{gl, imgui};
 
-  std::unique_ptr<host::Editor> editor = b->createEditor();
+  std::unique_ptr<host::Editor> editor;
+  try {
+    editor = b->createEditor();
+  } catch (...) {  // a bridged plugin whose other process is gone; the next pump reports the crash
+    b->markLost();
+    return false;
+  }
   if (!editor) {
     a.notify(std::string("Its interface cannot be shown on this system: ") + cls.name, true);
     return false;

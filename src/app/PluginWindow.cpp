@@ -571,11 +571,17 @@ bool openHostedEditor(App& a, const PluginTarget& t) {
   }
   host::Backend* b = hi->backend();
   const host::HostedClass& cls = hi->hostedClass();
-  if (!b->hasEditor()) {
-    a.notify(cls.name + " has no interface of its own: Gridline shows its parameters");
+  if (!b->editorAvailable()) {
+    if (!b->lost()) a.notify(cls.name + " has no interface of its own: Gridline shows its parameters");
     return false;
   }
-  std::unique_ptr<host::Editor> editor = b->createEditor();
+  std::unique_ptr<host::Editor> editor;
+  try {
+    editor = b->createEditor();
+  } catch (...) {  // a bridged plugin whose other process is gone; the next pump reports the crash
+    b->markLost();
+    return false;
+  }
   if (!editor) {
     a.notify(cls.name + ": its interface cannot be shown on this system", true);
     return false;

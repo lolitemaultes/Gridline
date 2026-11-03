@@ -516,7 +516,7 @@ void dragOutSource(App& a, Session& s) {
   if (!s.dragOut.empty()) {
     ImGui::SetDragDropPayload("GL_FILE", s.dragOut.data(), s.dragOut.size());
     const bool part = !clampRange(s.cur(), s.sel).empty() && s.sel.len() < s.frames();
-    const std::string label = displayName(a, s) + (part ? std::string(" Â· ") + i18n::tr("selection") : std::string());
+    const std::string label = displayName(a, s) + (part ? std::string(" \xC2\xB7 ") + i18n::tr("selection") : std::string());
     ui::DragPreview(ui::Icon::Wave, label.c_str(), theme::rgb(theme::role::kPaint));
   }
   ImGui::EndDragDropSource();

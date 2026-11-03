@@ -292,6 +292,17 @@ class Backend {
     if (lost_.compare_exchange_strong(expected, true)) lostError_ = std::current_exception();
   }
   bool lost() const noexcept { return lost_.load(std::memory_order_acquire); }
+  // hasEditor() for the UI thread: a CLAP plugin is asked on every frame its panel shows, so this is
+  // often the first call to meet a bridged plugin whose other process is gone.
+  bool editorAvailable() noexcept {
+    if (lost()) return false;
+    try {
+      return hasEditor();
+    } catch (...) {
+      markLost();
+      return false;
+    }
+  }
   // Out-of-process instances: the audio exchange so far, one line for test and log messages
   // (blocks sent / answered, budgets missed, the last wait against its budget). Empty otherwise.
   virtual std::string diagnostics() const { return {}; }

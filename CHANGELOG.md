@@ -3,7 +3,9 @@
 All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLINE_VERSION_PRE` in
 `CMakeLists.txt`; the release workflow publishes the section of the tagged version as the release notes.
 
-## Unreleased
+## 0.7.2
+
+Released 2026-11-03. Everything that changed since 0.7.1. Projects from 0.7.1 open as they are, except that Plasma's Linear Fold, Sine Fold and Sine Shaper distortion modes sound different at high drive.
 
 ### Added
 
@@ -26,9 +28,9 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
   knobs automate as before. Six new patches show what it can do. On a wired graph, turning a knob
   or a cable's level updates the running patch without rebuilding it. Every edit is one undo step, and
   existing projects and presets keep their sound and data until you rewire them.
-  FL Studio import runs more Patcher projects as wired (note processors, installed plugins,
-  sidechains, extra outputs and mixer track outputs), and reports exactly what it leaves out;
-  export writes hand-wired graphs back as Patcher, with cable levels, layout and exposed
+  FL Studio import runs more patches as wired (note processors, installed plugins, sidechains,
+  extra outputs and mixer track outputs), and reports exactly what it leaves out; export writes
+  hand-wired graphs back in FL Studio's patch format, with cable levels, layout and exposed
   parameters.
 - **Track "+" in the playlist**: hover a track header and a small "+" appears beside its mute
   switch. Its menu gives the track an instrument (your starred instruments are listed right
@@ -121,7 +123,8 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 
 ### Changed
 
-- Plasma distortion shapers rewritten.
+- **Plasma's distortion curves are rewritten.** Most modes keep their level; Linear Fold, Sine
+  Fold and Sine Shaper sound different at high drive.
 
 - **Channel rack play lights.** The green lamp at the end of each channel row now lights while
   the channel plays and fades after, in place of the small light inside the name button (the name
@@ -143,9 +146,9 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
   overlapped or not.
 - **Turntable is a mixer effect now.** Put it on any mixer insert: the insert's audio passes through
   unchanged and the deck plays its sample on top, with the same platter, motor, hand and editor as
-  before. FL projects with the scratcher open with Turntable on the same mixer slot, with its
+  before. FL Studio projects with its scratch plugin open with Turntable on the same mixer slot, with its
   settings, its sample and its automation, and export back the same way; a Turntable made in
-  Gridline exports to FL as the scratcher too. The pickers offer this one Turntable. Projects from
+  Gridline exports to FL Studio as that plugin too. The pickers offer this one Turntable. Projects from
   earlier versions open and sound as before: the 0.7.1 Turntable instrument shows as Turntable (old)
   and the earlier live-input effect as Turntable FX (old); neither is offered for new use. Platter
   stays a separate DJ deck instrument.
@@ -161,8 +164,8 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 - Ctrl+wheel over the playlist's track headers zooms around the left edge of the grid instead of
   a point left of it.
 - **Same starting settings as in imported projects**: a new compressor, flanger, time gate,
-  frequency shifter, low-end enhancer, bass booster, overdrive, squeeze, spreader, BBD chorus,
-  vintage phaser, hall reverb, X-Y-Z controller and formula controller now opens with the settings
+  frequency shifter, low-end enhancer, bass booster, overdrive, Pinch, spreader, Bucket Chorus,
+  Retro Phaser, hall reverb, X-Y-Z Pad and Formula Mod now opens with the settings
   it gets when an FL Studio project brings it in at its defaults. Projects and presets you already
   have sound exactly as before.
 - **Auto scrolling can be turned off**, for the playlist and for the pattern editors on their own.
@@ -171,7 +174,7 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
   the view stays where you put it while the song or pattern plays; scrolling by hand works either
   way. The piano roll now follows the pattern position while it plays, as the playlist already
   did; the channel rack's step view follows it as before. Both settings are remembered.
-- **Slide notes glide only the notes of their own colour** (piano roll), as in FL Studio. A slide
+- **Slide notes glide only the notes of their own colour** (piano roll). A slide
   note no longer bends notes of other colours playing on the same channel. FL Studio projects
   now play their slides as they do in FL Studio. Gridline projects saved before this version whose
   slides met notes of other colours keep sliding every colour, so they sound as they did.
@@ -208,8 +211,8 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
   key at a time; the key you left stops and no longer stays lit.
 - FL Studio automation that lands halfway between two steps of a switch or a mode list now picks
   the same step FL Studio does (compressor type, limiter curves and similar controls).
-- Emphasizer presets from FL Studio no longer import about 13 dB too quiet.
-- Reverb settings imported from FL Studio projects and presets (Fruity Reeverb 2) now load the
+- Enhance presets from FL Studio no longer import about 13 dB too quiet.
+- Reverb settings imported from FL Studio projects and presets now load the
   way FL Studio itself loads them, including the oldest preset files without a version number,
   and the reverb's Full model sounds the same as FL Studio renders those settings: single early
   reflections per side, the same modulation and the same level ramps when a level moves. A
@@ -217,18 +220,17 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
   with earlier versions keep their sound: their Full model shows V1, new reverbs and new imports
   use V2 (switch in the corner of the room view). The Full model's knobs show seconds,
   milliseconds, kHz and percentages instead of raw steps.
-- FL Studio automation of the delay bank's unit controls (pans, levels, filters, times, feedback,
-  stereo separation, offset and send to the next unit) now imports, and so does automation of the
-  vintage phaser's and vintage chorus's switches.
+- FL Studio automation of Multi Delay's unit controls (pans, levels, filters, times, feedback,
+  stereo separation, offset and send to the next unit) now imports, and so does automation of
+  Retro Phaser's and Bucket Chorus's switches.
 - FL Studio vocoder settings now import: band range, formant, invert, attack, release, hold and
   the three levels, with their automation. They used to fall back to Gridline's defaults.
 - Auto Pan's LFO imported from FL Studio now runs at the speed FL Studio does
   and moves the same way, so imported pan and tremolo settings sound the same. A slow setting used
   to run far too fast. New Auto Pans use the same LFO law; projects saved earlier keep their sound
   (their LFO law parameter stays at 1), and the factory presets move at about their former rates.
-- FL Studio projects saved with current versions now import their keyboard controller settings
-  (Keyboard Mod), and its attack and release smoothing times match FL Studio's from 0 to 1000 ms.
-- A delay bank unit set to the shortest step in an FL Studio project now sounds at zero delay as
+- FL Studio projects saved with current versions now import their Keyboard Mod settings, and its attack and release smoothing times match FL Studio's from 0 to 1000 ms.
+- A Multi Delay unit set to the shortest step in an FL Studio project now sounds at zero delay as
   it does in FL Studio, instead of a few samples late. Projects saved earlier keep their timing.
 - New Multi Delay, Peak Follower and Pitch Shifter instances have revised starting settings that match
   imported units (the Pitch Shifter keeps its Hi-fi engine and no delay). The factory presets and saved
@@ -245,8 +247,6 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
   its icon (and removes it again with `--uninstall`).
 - Recording armed when Play is pressed captures from the transport's first moment, also when the
   interface is slow to draw a frame (a take could start late).
-- Sturdier real-time app tests on busy machines (play lights, Stop to start, collaboration leave,
-  live takes).
 
 
 ## 0.7.1

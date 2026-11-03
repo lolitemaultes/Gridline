@@ -493,18 +493,26 @@ VIEWS += [
 ]
 
 # The release banner and screenshots of this version.
-RELEASE = "0.7.1"
+RELEASE = "0.7.2"
 # The banner: version as set, headline, subline; a prerelease adds its tag and label.
-RELEASE_BANNER = ("0.7.1", "Know what you sample",
-                  "Track Receipt, Turntable, Seltmann recording, live takes and track icons")
+RELEASE_BANNER = ("0.7.2", "Bend the notes, wire the sound",
+                  "Pitch bend, hand-wired Junction, Crest, browser file tools and a pinned Loupe")
 RELEASE_BANNER_OPTS = {}
 # Plugin editors on one sheet (none in this release).
 RELEASE_EDITORS = []
-# Release screenshots from 3200x2000 / 3200x2200 / 2880x1920 captures (UI scale 2), cropped to the window.
+# Release screenshots from 3200x2000 captures (UI scale 2), cropped to the part that shows the feature.
 RELEASE_VIEWS = [
-    ("receipt.png", "track-receipt.png", (850, 434, 2352, 1608)),
-    ("turntable.png", "turntable.png", (966, 120, 2234, 1830)),
-    ("recording_200.png", "seltmann-record.png", (292, 96, 2590, 1476)),
+    ("bend.png", "pitch-bend.png", (490, 100, 2440, 1300)),
+    ("junction.png", "junction.png", (805, 238, 2395, 1392)),
+    ("crest.png", "crest.png", (708, 224, 2494, 1456)),
+    ("browser.png", "browser-files.png", (0, 950, 1000, 1580)),
+    ("loupe.png", "loupe.png", (490, 100, 2440, 1950)),
+    ("trackplus.png", "track-plus.png", (0, 224, 1500, 1250)),
+    ("favslot.png", "favourites.png", (2560, 870, 3180, 1790)),
+    ("folders.png", "plugin-folders.png", (563, 115, 2637, 1610)),
+    ("overlap.png", "clip-overlap.png", (360, 224, 2170, 690)),
+    ("steps.png", "rack-steps.png", (490, 100, 2440, 1300)),
+    ("turntable.png", "turntable.png", (1097, 140, 2105, 1530)),
 ]
 
 if __name__ == "__main__":

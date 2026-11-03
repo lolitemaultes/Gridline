@@ -59,3 +59,54 @@ turns, hiding slides it back to the hidden size, and shown, closed and opened ag
 A plugin window pops out of the main window only with its pop-out button, and only while it
 stays open: closed and opened again, after a restart or with another project it opens inside
 the main window again (`docs/detachable-windows.md`, "Plugin windows").
+
+## Windows plugins through yabridge
+
+`.github/workflows/yabridge.yml` and `tests/yabridge/` run Gridline on a GitHub Linux machine
+(Ubuntu 24.04, yabridge 5.1.1) with real windows and a real X server, and click, type and drag
+through X. A probe plugin in VST3, VST2 and CLAP logs what reaches it, along with Surge XT, Dexed
+and Nekobi. Carla runs the same probe and plugins as a control host, so a failure can be pinned on
+the right side. These results are from one full run with three repeats of each cell.
+
+**Mouse input depends on the Wine version.** The boundary is between Wine 9.21 and 9.22:
+
+| Wine | Clicks in Gridline | Clicks in Carla |
+|---|---|---|
+| 9.0 (Ubuntu's package) | exact | exact |
+| 9.21 Staging | exact | exact |
+| 9.22 Staging | offset or lost | offset or lost |
+| 10.20 Staging | offset or lost | offset or lost |
+| 11.21 Staging | offset or lost | offset or lost |
+
+On 9.22 and later the interface still shows and the keyboard still works, but a click lands offset
+by the window's position on the screen or reaches nothing. Carla behaves the same way, and
+yabridge 5.1.1 states that it supports Wine up to 9.21. Until this changes, use Wine 9.21 or older
+for bridged plugins whose interface you need to click.
+
+**What works on every Wine above:** scanning and loading, sound, saving and restoring state, typed
+text and Space, and closing and reopening the interface ten times. If the Wine side dies, the
+plugin shows as crashed and goes silent, other tracks play on and the project still saves.
+
+**Known problems measured:**
+
+- The first click after a plugin window moves for the first time can be lost or land in the wrong
+  place on Wine 9.0 and 9.21. With no window manager this happened in every Gridline run (36 of
+  36). With Openbox it happened in 4 of 36. Carla had none in 24. Later moves are fine. The cause
+  is not found yet and this one looks like Gridline's.
+- Dexed: closing its interface does not return within 30 s on any Wine above, in Gridline and in
+  Carla, and Gridline stops answering while it waits. Quitting with it open still ends after 20 s
+  (30 of 30). Its interface is black on Wine up to 10.20 in both hosts, with one exception in 24
+  runs, and draws on 11.21.
+- Surge XT: its interface draws and drags change its parameters, but no screenshot taken right
+  after a drag showed any change, in Gridline (30 of 30) or in Carla (14 of 14). After moving the
+  window the changes showed in 8 of 12 runs on Wine 9.0 and 9.21, and in none of 18 on later Wines.
+- Nekobi's VST2 build reports its edits as 0 in both hosts; its VST3 build reports real values.
+
+**Not covered:**
+
+- Run in sandbox shows no plugin interface on Linux.
+- With Gridline on the Wayland video driver the plugins scan and load, but the interface does not
+  open.
+- XWayland has no clean result yet. XWayland on the headless Weston of the test machine crashes on a
+  synthetic click, even on a plain X client with neither Gridline nor Wine, so mouse and keyboard
+  there need a person to check.

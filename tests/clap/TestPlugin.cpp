@@ -338,7 +338,10 @@ const clap_plugin_preset_load_t kPresetLoad = {presetFromLocation};
 // The synth's own interface (macOS): an embedded, fixed 320 x 200 Cocoa view.
 constexpr uint32_t kGuiW = 320, kGuiH = 200;
 const clap_plugin_gui_t kSynthGui = {
-    [](const clap_plugin_t*, const char* api, bool floating) { return !floating && api && !std::strcmp(api, CLAP_WINDOW_API_COCOA); },
+    [](const clap_plugin_t*, const char* api, bool floating) {
+      if (gProbe.throwInProcess) throw std::runtime_error("read: Connection reset by peer");
+      return !floating && api && !std::strcmp(api, CLAP_WINDOW_API_COCOA);
+    },
     [](const clap_plugin_t*, const char** api, bool* floating) {
       *api = CLAP_WINDOW_API_COCOA;
       *floating = false;

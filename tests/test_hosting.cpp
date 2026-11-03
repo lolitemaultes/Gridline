@@ -1255,6 +1255,16 @@ void testLostPlugin() {
   fx->process(fst, ctx, a.data(), b.data(), 512);
   cp->throwInProcess = false;
   expect(peak(a) == 0.0f && host::hostedInstance(fx.get())->crashed(), "lost effect: silent and shown as crashed");
+#if defined(__APPLE__)  // the test plugin has an interface on macOS only; the call under test is the same everywhere
+  // The plugin's panel on screen and no audio running: asking whether it has an interface is the first call to throw.
+  auto shown = createGenerator(kClapSynth);
+  shown->prepareHost(st, 48000);
+  host::HostedInstance* shownHi = host::hostedInstance(shown.get());
+  expect(shownHi->backend()->editorAvailable(), "lost plugin: the interface is there before");
+  cp->throwInProcess = true;
+  expect(!shownHi->backend()->editorAvailable() && shownHi->crashed(), "lost plugin: asking for the interface marks it crashed, no abort");
+  cp->throwInProcess = false;
+#endif
 }
 
 // CLAP preset discovery + preset load; plugin bypass.

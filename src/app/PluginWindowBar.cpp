@@ -257,7 +257,7 @@ bool wantsNative(App& a, const PluginTarget& t) {
   if (!st || !isHostedType(st->type)) return false;
   host::HostedInstance* hi = hostedInstanceFor(a, t);
   if (!hi || hi->crashed()) return false;  // Gridline's panel explains (missing / crashed)
-  return lay::chooseEditorMode(hi->backend()->hasEditor(), host::hostOptions(hi->hostedClass().type).genericEditor) == lay::EditorMode::Native;
+  return lay::chooseEditorMode(hi->backend()->editorAvailable(), host::hostOptions(hi->hostedClass().type).genericEditor) == lay::EditorMode::Native;
 }
 
 }  // namespace
@@ -329,7 +329,7 @@ void reopenPending(App& a) {
     if (!done) {
       host::HostedInstance* hi = hostedInstanceFor(a, found);
       if (hi && !hi->crashed()) {
-        if (hi->backend()->hasEditor() && !host::hostOptions(hi->hostedClass().type).genericEditor) openHostedEditor(a, found);
+        if (hi->backend()->editorAvailable() && !host::hostOptions(hi->hostedClass().type).genericEditor) openHostedEditor(a, found);
         done = true;
       }
     }
