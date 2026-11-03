@@ -345,7 +345,8 @@ void testZipReadOnce() {
   std::ifstream back(files[7], std::ios::binary);
   const Bytes got((std::istreambuf_iterator<char>(back)), std::istreambuf_iterator<char>());
   expect(got == noise(each, 8), "an entry comes back byte for byte");
-  fs::remove_all(out);
+  back.close();  // (Windows does not delete an open file)
+  { std::error_code rmEc; fs::remove_all(out, rmEc); }
 }
 
 void testInflate() {
@@ -397,7 +398,7 @@ void testInflate() {
   std::ifstream back(dir / "a.bin", std::ios::binary);
   const Bytes got((std::istreambuf_iterator<char>(back)), std::istreambuf_iterator<char>());
   expect(got.size() == 300000 && std::equal(got.begin(), got.end(), big.begin()), "the same bytes come out");
-  fs::remove_all(dir);
+  { std::error_code rmEc; fs::remove_all(dir, rmEc); }
 }
 
 void testNamesAndZip64() {
@@ -492,7 +493,7 @@ void testNamesAndZip64() {
   const Bytes evil = makeZip({{"good.wav", bytesOf("x")}, {"../escape.wav", bytesOf("y")}});
   TestSource s4(evil, sh, "v.zip");
   const fs::path evilDir = fs::temp_directory_path() / "k42-evil";
-  fs::remove_all(evilDir);
+  { std::error_code rmEc; fs::remove_all(evilDir, rmEc); }
   expect(readZipDirectory(s4, dir, &err) && !extractZipEntries(s4, dir, evilDir.u8string(), nullptr, {}, &err) && !fs::exists(evilDir / "good.wav"),
          "an escaping name refuses the archive before anything is written");
   const Bytes tiny = bytesOf("not an archive at all, and not long enough either");

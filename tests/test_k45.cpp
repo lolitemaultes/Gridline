@@ -225,7 +225,7 @@ void testPinnedAndRefs(const fs::path& base) {
     expect(c.keptSaved == 1 && c.removed == 0 && fs::exists(copy), "and Clear cache, which says why");
     archive::trimCache(f.cache.u8string(), 0, "", 0, &f.refs);
     expect(fs::exists(copy), "and the limit");
-    fs::remove_all(copy);
+    { std::error_code rmEc; fs::remove_all(copy, rmEc); }
   }
   // Crash recovery.
   {
@@ -243,7 +243,7 @@ void testPinnedAndRefs(const fs::path& base) {
     expect(fs::exists(copy), "and the limit");
     fs::last_write_time(f.recovery / "Crashed.gridline.json", fs::file_time_type::clock::now() - std::chrono::hours(24 * 90));
     expect(f.sweep().keptRecovery == 1 && fs::exists(copy), "however old the recovery file is");
-    fs::remove_all(f.recovery);
+    { std::error_code rmEc; fs::remove_all(f.recovery, rmEc); }
     expect(f.sweep().removed == 1 && !fs::exists(copy), "once it has been dealt with the copy goes");
   }
   // Timed backups.
@@ -294,7 +294,7 @@ void testPinnedAndRefs(const fs::path& base) {
       expect(s.keptUnknown == 1 && fs::exists(copy), "a recovery file that cannot be read: the copy stays");
     }
     fs::permissions(shut, fs::perms::owner_all);
-    fs::remove_all(f.recovery);
+    { std::error_code rmEc; fs::remove_all(f.recovery, rmEc); }
     f.sweep();
     expect(!fs::exists(copy), "readable again: it goes");
   }
