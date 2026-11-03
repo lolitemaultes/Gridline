@@ -11,9 +11,15 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 
 ### Fixed
 
+- Piano roll: right-clicking (or using the delete tool on) overlapping notes deletes only the top note. It used to take the note underneath as well while the button was held.
+- Piano roll keyboard: a sounding key now lights in the channel's real colour instead of a dulled one, and a highlighted white key no longer changes shade beside the black keys.
 - **Linux, plugins through yabridge**: the first click after moving a plugin window now lands where
   you clicked (Wine 9.0 and 9.21). A plugin whose interface never returns from closing no longer
-  freezes Gridline: its window goes, and after 15 seconds the plugin shows as crashed.
+  freezes Gridline: its window goes, after 15 seconds the plugin shows as crashed, and quitting
+  ends normally.
+- **Linux, Run in sandbox**: the plugin's own interface now shows, inside Gridline's plugin window on
+  X11, with clicks and keys working as in process.
+- **Linux, X11**: the bar of a plugin window now follows the system scale.
 - **FL Studio patches line up parallel paths**: imported patches with a plugin that has latency now
   line up parallel paths at every module's input, by the latency each plugin reports, and report the
   longest path to the host, as they do in FL Studio. The mixer compensates for it, and uneven parallel

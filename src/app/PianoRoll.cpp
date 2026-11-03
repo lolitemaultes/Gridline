@@ -69,6 +69,13 @@ struct Gesture {
   bool grouped = false;
   bool drawResize = false;  // K-20: a Shift+click drew this note; its length follows the drag once it starts
   std::set<size_t> selBefore;
+  // A delete sweep takes only the topmost note at each point: where it already deleted one, the note
+  // that was under it stays (a later frame of the same press would otherwise take that one too).
+  struct ErasedSpan {
+    int pitch;
+    Tick start, end;
+  };
+  std::vector<ErasedSpan> erased;
 };
 Gesture g;
 uint64_t gestureCounter = 1;
@@ -1130,23 +1137,25 @@ void drawPianoRoll(App& a) {
     // J-77: keys sounding on this channel (playback, MIDI, typing keyboard, previews) light in the
     // channel colour while held and fade out smoothly on release.
     const keylight::ChannelLights* lit = keylight::lights(a, chId);
-    const ImU32 litCol = theme::mix(theme::rgb(chan->color), P.hot, 0.25f);
+    const ImU32 litCol = theme::rgb(chan->color);
     // How lit key p is: sounding (fading on release), or the key being auditioned.
     auto keyLevel = [&](int p) {
       if (g.previewPitch == p) return 1.0f;
       return lit && (!gliss || lit->down[p]) ? lit->key(p) : 0.0f;  // K-21: no fading trail mid-glissando
     };
-    // A lit key takes the channel colour blended into the key's own colour (about half way at full
-    // level), so a light channel colour stays a soft tint instead of a flat glare.
-    auto litTint = [&](ImU32 key, float lv) { return theme::mix(key, litCol, (P.dark ? 0.55f : 0.5f) * lv); };
+    // A lit key takes the channel colour, keeping a little of the key's own colour at full level so
+    // a light channel colour doesn't turn into a flat glare.
+    auto litTint = [&](ImU32 key, float lv) { return theme::mix(key, litCol, 0.8f * lv); };
     // A white key is wider than its row: it also owns the strip right of each neighbouring black key,
     // up to the seam through the middle of that black key's row. Lit and hovered white keys fill that
-    // whole shape, shaded like the key face (darker towards the tip on the left).
+    // whole shape, shaded like the key face (darker towards the tip on the left). The strips start
+    // part way along that shading, so they read as one surface with the key's main band.
     auto fillWhiteKey = [&](int p, float y, ImU32 face, ImU32 tip) {
-      auto band = [&](float x0, float y0, float y1) { dl->AddRectFilledMultiColor(ImVec2(x0, y0), ImVec2(kx1, y1), tip, face, face, tip); };
-      band(kx0, y, y + rowH);
-      if (p < 127 && isBlack(p + 1)) band(kx0 + blackW, y - rowH * 0.5f, y);         // lower half of the black row above
-      if (p > 0 && isBlack(p - 1)) band(kx0 + blackW, y + rowH, y + rowH * 1.5f);   // upper half of the black row below
+      const ImU32 stripTip = theme::mix(tip, face, blackW / std::max(1.0f, kx1 - kx0));
+      dl->AddRectFilledMultiColor(ImVec2(kx0, y), ImVec2(kx1, y + rowH), tip, face, face, tip);
+      auto strip = [&](float y0, float y1) { dl->AddRectFilledMultiColor(ImVec2(kx0 + blackW, y0), ImVec2(kx1, y1), stripTip, face, face, stripTip); };
+      if (p < 127 && isBlack(p + 1)) strip(y - rowH * 0.5f, y);         // lower half of the black row above
+      if (p > 0 && isBlack(p - 1)) strip(y + rowH, y + rowH * 1.5f);    // upper half of the black row below
     };
     for (int p = 0; p < 128; ++p) {
       const float y = yOf(p);
@@ -1704,7 +1713,14 @@ void drawPianoRoll(App& a) {
         break;
       }
       case Gesture::Erase: {
-        if (hoverNote >= 0) {
+        const Tick at = tickAt(m.x);
+        const bool swept = hoverNote >= 0 && std::any_of(g.erased.begin(), g.erased.end(), [&](const Gesture::ErasedSpan& e) {
+                             return e.pitch == notes[static_cast<size_t>(hoverNote)].pitch && at >= e.start && at < e.end;
+                           });
+        if (hoverNote >= 0 && !swept) {
+          const Note& gone = notes[static_cast<size_t>(hoverNote)];
+          // Up to the note's drawn end: a very short note is drawn wider than its length.
+          g.erased.push_back({gone.pitch, std::min(at, gone.start), std::max({at + 1, gone.start + gone.length, tickAt(noteBoxes[static_cast<size_t>(hoverNote)].x1)})});
           std::vector<Note> ns = notes;
           auto sel = selVector(a, ns.size());
           ns.erase(ns.begin() + hoverNote);

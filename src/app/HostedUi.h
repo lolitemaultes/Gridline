@@ -50,7 +50,7 @@ void devPrintPluginWindows(int frame);
 void closeAllHostedEditors(App& a);
 // K-37: at quit, before the system windows go: interfaces still closing are given a last, bounded
 // wait and their windows are destroyed now (later, the plugin instance going away would do that
-// with SDL and the display already shut down). Windows of closed interfaces wait out their hold.
+// with SDL and the display already shut down).
 void settleClosingHostedEditors();
 // K-37: a bridged interface never came back: the helper thread is still inside the bridge, and the
 // bridge's own threads end the process when its statics go. The process leaves without static teardown.

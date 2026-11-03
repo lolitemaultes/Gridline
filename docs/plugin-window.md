@@ -99,15 +99,28 @@ plugin shows as crashed and goes silent, other tracks play on and the project st
   still inside the old place and the click landed there. This happened in 36 of 36 runs with no
   window manager and in 4 of 36 with Openbox. Now, on Linux, `native::containerMoved` sends the
   plugin's container a ConfigureNotify when the window's position changes. Clicks were exact after
-  each of three moves on Wine 9.0 and 9.21, in VST3, VST2 and CLAP, at scale 1 and 2, with and
-  without Openbox (72 of 72 cells, 3 runs each).
+  each of three moves on Wine 9.0 and 9.21, in VST3, VST2 and CLAP, at scale 1 and 2 with Openbox
+  and at scale 1 without a window manager, in process and in the sandbox (2 full runs, 3 repeats each).
+- Run in sandbox shows the plugin's interface on Linux: the sandbox process puts its window inside
+  Gridline's plugin window, under the same bar. VST3, VST2 and CLAP probes and the VST3 builds of
+  Nekobi, Dexed and Surge XT open on every Wine above. On Wine 9.0 and 9.21 clicks, drags, keys,
+  resizing and quitting behave as they do in process, with and without Openbox (3 repeats each).
+  On 9.22 and later the clicks are off in the same way. Under XWayland it opens; input there is
+  not measured.
+- The bar of a plugin window follows Gridline's interface scale on X11: at system scale 2 its row
+  is 56 pixels, in process and in the sandbox, with Openbox and under XWayland.
 
 **Known problems measured:**
 
+- Closing an interface right after it opened can end the Wine side with an X error (BadWindow on its
+  own window) on Wine 9.0 and 9.21: 9 of 216 runs of the test that closes and opens ten times at
+  once. Keeping Gridline's window for 1.5 s longer did not change it. The real plugins' single
+  closes showed none.
 - Dexed: closing its interface does not return within 30 s on any Wine above, in Gridline and in
   Carla. Gridline closes the interface of a bridged plugin on a helper thread and waits 300 ms; if
   that is not enough the window hides and Gridline goes on (it answered in about 0.4 s in 30 of 30
-  closes). After 15 s the plugin counts as lost and shows as crashed. Its
+  closes). After 15 s the plugin counts as lost and shows as crashed, and quitting ends cleanly with
+  code 0 (45 of 45). Its
   interface is black on Wine up to 10.20 in both hosts, with one exception in 24 runs, and draws on
   11.21.
 - Surge XT: its interface draws and drags change its parameters, but no screenshot taken right
@@ -117,9 +130,8 @@ plugin shows as crashed and goes silent, other tracks play on and the project st
 
 **Not covered:**
 
-- Run in sandbox shows no plugin interface on Linux.
 - With Gridline on the Wayland video driver the plugins scan and load, but the interface does not
-  open.
+  open. Run in sandbox has not been measured on that driver.
 - XWayland has no clean result yet. XWayland on the headless Weston of the test machine crashes on a
   synthetic click, even on a plain X client with neither Gridline nor Wine, so mouse and keyboard
   there need a person to check.

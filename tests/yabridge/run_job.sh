@@ -17,7 +17,7 @@ cleanup() { for p in "${pids[@]:-}"; do [ -n "$p" ] && kill "$p" 2> /dev/null; d
 trap cleanup EXIT
 
 start_xvfb() {
-  Xvfb :77 -screen 0 1920x1200x24 +extension GLX +extension RANDR +extension XTEST > "$OUT/xvfb.log" 2>&1 &
+  Xvfb :77 -noreset -screen 0 1920x1200x24 +extension GLX +extension RANDR +extension XTEST > "$OUT/xvfb.log" 2>&1 &
   pids+=($!)
   export DISPLAY=:77
   for _ in $(seq 1 50); do xdpyinfo > /dev/null 2>&1 && return 0; sleep 0.2; done

@@ -203,7 +203,7 @@ class App:
         args = [ctx.app, "--no-ui-sounds", "--size", "1100x700", "--dev-input-live", self.live]
         for t in sandbox_types:
             args += ["--dev-sandbox", t, "1"]
-        env = dict(ctx.env, SDL_AUDIODRIVER="dummy", GRIDLINE_NO_PLUGIN_SCAN="1", GRIDLINE_NO_UPDATE_CHECK="1", GRIDLINE_DEV_PLUGIN_KEYS="1", GRIDLINE_DEV_BACKTRACE="1", YABRIDGE_DEBUG_LEVEL="0+editor")
+        env = dict(ctx.env, SDL_AUDIODRIVER="dummy", GRIDLINE_NO_PLUGIN_SCAN="1", GRIDLINE_NO_UPDATE_CHECK="1", GRIDLINE_DEV_PLUGIN_KEYS="1", GRIDLINE_DEV_BACKTRACE="1")
         self.proc = subprocess.Popen([str(a) for a in args], stdout=self.log, stderr=subprocess.STDOUT, env=env, start_new_session=True)
         self.seq = 0
 

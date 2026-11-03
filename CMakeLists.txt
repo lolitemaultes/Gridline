@@ -1680,6 +1680,13 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(k29_bend_dblclick_app PROPERTIES TIMEOUT 300)
 
+    # A right-click on overlapping notes deletes only the top one, held or with a slight slip.
+    add_test(NAME piano_erase_overlap
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/piano_erase_overlap -P ${CMAKE_SOURCE_DIR}/tests/piano_erase_overlap.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(piano_erase_overlap PROPERTIES TIMEOUT 300)
+
     # J-113: detached windows kept across runs and recovered, Space and the typing keyboard from a
     # detached window, focus moving between Gridline's windows keeping held keys, J-97 drops into a
     # detached channel rack, dialogs over it (J-116: detaching, docking back, live resize: j116_detach_app).

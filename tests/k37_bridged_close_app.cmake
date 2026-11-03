@@ -1,8 +1,7 @@
 # Gridline - K-37: closing a bridged plugin's interface in the real app (hidden, isolated config,
 # off-screen, SDL's dummy audio driver) with the in-tree test plugin standing in for a bridged one
 # (GRIDLINE_DEV_BRIDGED_PLUGINS) and an interface that draws nothing (GRIDLINE_TEST_PLAIN_GUI):
-#   1. an interface that closes: closed at once, the plugin alive, the frames go on, its hidden
-#      window kept a moment and then gone, and opening it again does not wait for that;
+#   1. an interface that closes: closed at once, the plugin alive, the frames go on, and it opens again;
 #   2. an interface that never closes (GRIDLINE_TEST_GUI_CLOSE_HANGS): the frames go on, the plugin
 #      counts as lost when the wait is over, and the app quits;
 #   3. the same with the window open at quit: the app quits.
@@ -60,9 +59,6 @@ endif()
 if(NOT out MATCHES "epoch frame 70")
   message(FATAL_ERROR "FAIL: the frames stopped after closing\n${out}")
 endif()
-if(NOT out MATCHES "bridged close: closed.*bridged close: window gone")
-  message(FATAL_ERROR "FAIL: the hidden window should go after the hold\n${out}")
-endif()
 message(STATUS "ok - an interface that closes closes")
 
 run(reopens "${open}50 plugwin close
@@ -72,7 +68,7 @@ run(reopens "${open}50 plugwin close
 if(NOT out MATCHES "plugwin frame 60: 1 windows")
   message(FATAL_ERROR "FAIL: it should open again at once after closing\n${out}")
 endif()
-message(STATUS "ok - it opens again while the old window waits")
+message(STATUS "ok - it opens again")
 
 set(ENV{GRIDLINE_TEST_GUI_CLOSE_HANGS} "1")
 run(hangs "${open}${after}")

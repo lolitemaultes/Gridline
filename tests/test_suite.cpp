@@ -146,7 +146,7 @@ bool registerAu(const std::string& suiteId, const std::string& bundle) {
   for (const suite::Member& m : suite::members(suiteId)) {
     const AudioComponentDescription d{m.auType, m.auSubtype, suite::kAuManufacturer, 0, 0};
     CFStringRef name = CFStringCreateWithCString(nullptr, ("Gridline: " + m.name).c_str(), kCFStringEncodingUTF8);
-    ok = AudioComponentRegister(&d, name, 0x00000700, factory) != nullptr && ok;
+    ok = AudioComponentRegister(&d, name, 0x7FFFFFFF, factory) != nullptr && ok;
     CFRelease(name);
   }
   return ok;
