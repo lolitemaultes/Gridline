@@ -93,6 +93,41 @@ std::shared_ptr<ChannelRuntime> newChannelRuntime(const std::string& type) {
   return rt;
 }
 
+// The built-in types that allocate in their first block (tests/test_q18.cpp
+// fails on any other type that does, patch hosts aside: they can hold hosted
+// plugins, which must not run here, so they still size theirs in the first
+// real block). A block of no frames on the builder's
+// thread does that work where allocation is allowed, and advances no phase or
+// random state, so the sound stays the same; the runtime is not shared yet.
+bool allocatesInFirstBlock(const std::string& type) {
+  static const std::set<std::string> kTypes = {"gl.chorus",      "gl.delay",    "gl.eq",         "gl.geq",
+                                                "gl.reverb",      "gl.timegate", "gl.vocoder",    "gl.dcosynth",
+                                                "gl.flex",        "gl.hexsynth", "gl.membranepad", "gl.pocketsynth",
+                                                "gl.twinstring",  "gl.waveprogram"};
+  return kTypes.count(type) != 0;
+}
+ProcessContext warmUpContext(double sampleRate) {
+  ProcessContext ctx;
+  ctx.sampleRate = sampleRate;
+  return ctx;
+}
+void warmUp(EffectRuntime& rt, const PluginState& state, const ChannelAux& aux, double sampleRate) {
+  if (rt.warmed) return;
+  rt.warmed = true;
+  if (!rt.fx || !allocatesInFirstBlock(rt.type)) return;
+  float l = 0, r = 0;
+  rt.fx->processAux(state, aux, warmUpContext(sampleRate), &l, &r, 0);
+  rt.fx->reset();
+}
+void warmUp(ChannelRuntime& rt, const PluginState& state, const ChannelAux& aux, double sampleRate) {
+  if (rt.warmed) return;
+  rt.warmed = true;
+  if (!rt.gen || !allocatesInFirstBlock(rt.type)) return;
+  float l = 0, r = 0;
+  rt.gen->process(state, aux, warmUpContext(sampleRate), &l, &r, 0);
+  rt.gen->kill();
+}
+
 int paramInt(const PluginState& s, size_t k, int dflt) {
   return k < s.params.size() ? static_cast<int>(std::lround(s.params[k])) : dflt;
 }
@@ -795,6 +830,7 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
                          [&](const PluginState& st) { ps.rt->fx->prepareHost(st, sampleRate_); });
         }
         packs::prepareAux(es.plugin, ps.aux);
+        if (ps.rt && warmUp_) warmUp(*ps.rt, es.plugin, ps.aux, sampleRate_);
         ps.controller = hasOutputs(es.plugin.type);
         if (const PluginInfo* pi = findPlugin(es.plugin.type); pi && pi->sideInParam >= 0) {  // J-45 side input
           const int v = paramInt(es.plugin, static_cast<size_t>(pi->sideInParam), -1);
@@ -920,6 +956,7 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
       auto ins = std::make_shared<InsSettings>();
       if (parseIns(c.plugin.ins, *ins) && ins->active()) pc.aux.ins = ins;
     }
+    if (pc.rt && warmUp_) warmUp(*pc.rt, c.plugin, pc.aux, sampleRate_);
     pc.controller = hasOutputs(c.plugin.type);
     double g = c.muted ? 0.0 : dsp::faderGain(c.gain, 0.78), l, r;
     dsp::panGains(c.pan, l, r);
@@ -1253,7 +1290,7 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
       return;
     } else {
       if (deferRenders_) slot.engine = stretch::Engine::Stretch, ++newVoices;
-      slot.voice = makeClipVoice(sampleRate_, slot.engine);
+      slot.voice = makeClipVoice(sampleRate_, slot.engine, ac.sample ? ac.sample->sampleRate : 0.0);
       ++voicesMade_;
     }
     ac.rt = slot.voice;

@@ -189,8 +189,9 @@ class Voice {
   Voice& operator=(const Voice&) = delete;
   // maxPitch / maxSpeed bound the buffers (frequency ratio, input frames per output frame).
   // live: the shorter block of live effects (about half the latency).
+  // minPitch: the lowest frequency ratio (0: 1 / maxPitch); the Stretch engine only, Rubber Band's range is symmetric.
   void prepare(int channels, double sampleRate, double maxPitch = 8.0, double maxSpeed = 8.0, bool live = false,
-               Engine engine = Engine::Stretch);
+               Engine engine = Engine::Stretch, double minPitch = 0);
   bool prepared() const { return prepared_; }
   Engine engine() const;
   // Begins a stream (a note, a seek, a loop): speed = input frames per output

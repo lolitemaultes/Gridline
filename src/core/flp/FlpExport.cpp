@@ -380,9 +380,30 @@ double Exporter::glValue(uint32_t target, double v) {
   return t.toNormalized(v);
 }
 
+double Exporter::glClipValue(uint32_t target, double v) {
+  FlTarget t;
+  if (!resolveFlClipTarget(*res().c, target, t)) return kNaN;
+  return t.toNormalized(v);
+}
+
+namespace {
+double flValueOn(const FlTarget& t, double norm);
+}
+
 double Exporter::flValue(uint32_t target, double norm) {
   FlTarget t;
   if (!resolveFlTarget(*res().c, target, t)) return kNaN;
+  return flValueOn(t, norm);
+}
+
+double Exporter::flClipValue(uint32_t target, double norm) {
+  FlTarget t;
+  if (!resolveFlClipTarget(*res().c, target, t)) return kNaN;
+  return flValueOn(t, norm);
+}
+
+namespace {
+double flValueOn(const FlTarget& t, double norm) {
   auto f = [&](double v) { return t.toNormalized(v); };
   const double a0 = f(0), a1 = f(1);
   if (!std::isfinite(a0) || !std::isfinite(a1)) return kNaN;
@@ -409,6 +430,7 @@ double Exporter::flValue(uint32_t target, double norm) {
     }
   return best;
 }
+}  // namespace
 
 // ------------------------------------------------------------ header / trailer
 

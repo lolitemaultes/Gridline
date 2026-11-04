@@ -80,12 +80,19 @@ enum VocParam {
   // K-37: legacy engine only. 0 = VcLowFreq, VcHighFreq, VcAttack (states from before; saved automation
   // holds positions of those ranges), 1 = the three below (FL imports: FL's full ranges).
   VcRange, VcLowW, VcHighW, VcAttackW,
+  // K-41: reference model. 0 = no added delay, reports 0 (states from before). 1 and 2 (FL imports): the
+  // output delayed to the figure vxFlLatency gives, and reported; 2 with the 16 extra samples.
+  VxLatencyLaw,
   VcCount
 };
 inline constexpr int kVxMaps = 13;       // per-band curves kept in PluginState::data
 inline constexpr int kVxMaxBands = 100;
 inline constexpr int kVxMaxOrder = 4;
 inline constexpr int kVxMaxUnison = 5;
+// K-41: 16 samples by the imported state's flag, 4 ms for the enhancer stage while it's on.
+inline int vxFlLatency(int law, double enhance, double sr) {
+  return (law >= 2 ? 16 : 0) + (enhance > 0 ? static_cast<int>(0.004 * sr) : 0);
+}
 inline constexpr double kVxOffLow = 39.5, kVxOffHigh = 15000.5;
 // Pass-through / noise filter wheels (0..65536 raw): Hz = 40 * 375^(v/65536).
 inline double vxFilterHz(double raw) { return 40.0 * std::pow(375.0, raw / 65536.0); }

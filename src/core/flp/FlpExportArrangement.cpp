@@ -153,6 +153,19 @@ void Exporter::writeArrangements() {
         groupNo[c.group] = next, used.insert(next);
       }
     }
+    // K-49: a channel whose FL origin keeps a stretch to a time.
+    std::map<ObjectId, bool> keepsTime;
+    auto channelKeepsTime = [&](ObjectId id) {
+      auto [it, fresh] = keepsTime.emplace(id, false);
+      if (fresh) {
+        const EventList oc = origin(originKey("ch", id));
+        if (const RawEvent* e = findRaw(oc, 215)) {
+          const Event v = e->view();
+          it->second = channelFitBeats(v) > 0;
+        }
+      }
+      return it->second;
+    };
     ByteWriter pl;
     for (const Clip& c : clips) {
       const uint32_t grp = c.group == kNoId ? 0 : groupNo[c.group];
@@ -245,13 +258,15 @@ void Exporter::writeArrangements() {
         if (!(orec && getF32(r, 52) == c.gain)) putF32(r, 52, c.gain);
         // J-193: FL's clip does not follow the tempo here: a synced clip is
         // written as the stretch it plays at the tempo where it starts.
+        // K-49: on a channel stretched to a time FL follows the tempo itself: the clip's own stretch stands.
+        const bool followsInFl = channelKeepsTime(c.source);
         double st = c.stretch;
-        if (c.syncBpm > 0) st = std::clamp(c.stretch * c.syncBpm / std::max(1.0, songMap.bpmAt(static_cast<double>(c.start))), 0.0625, 16.0);
+        if (c.syncBpm > 0 && !followsInFl) st = std::clamp(c.stretch * c.syncBpm / std::max(1.0, songMap.bpmAt(static_cast<double>(c.start))), 0.0625, 16.0);
         if (!(orec && getF64(r, 64) == st)) putF64(r, 64, st);
         // PL-13: FL's per-clip reverse ("Reverse clip"): bit 0 of u32 @72; the
         // source window is stored mirrored, like Clip::audioStart / audioEnd.
         putU32(r, 72, (getU32(r, 72) & ~1u) | (c.reverse ? 1u : 0u));
-        if (c.syncBpm > 0) rep.counts["audio clips: tempo sync written as the stretch at the song tempo"]++;
+        if (c.syncBpm > 0 && !followsInFl) rep.counts["audio clips: tempo sync written as the stretch at the song tempo"]++;
       }
       pl.bytes(r);
     }

@@ -56,7 +56,7 @@ SamplePtr fromInterleaved(const std::string& path, float* data, uint64_t frames,
 
 bool isAudioFile(const std::string& path) {
   std::string e = lowerExt(path);
-  return e == ".wav" || e == ".wave" || e == ".flac" || e == ".mp3" || e == ".ogg" || e == ".wv";
+  return e == ".wav" || e == ".wave" || e == ".flac" || e == ".mp3" || e == ".ogg" || e == ".wv" || e == ".aif" || e == ".aiff" || e == ".aifc";
 }
 
 namespace {
@@ -180,7 +180,7 @@ SamplePtr loadSample(const std::string& path, std::string* err) {
   } else if (auto vorb = riffVorbisPayload(bytes); vorb.first) {
     DecodedAudio d;
     if (decodeOggVorbis(vorb.first, vorb.second, d, &why)) out = fromDecoded(path, d);
-  } else if (magic("RIFF") || magic("RF64") || magic("RIFX") || e == ".wav" || e == ".wave") {
+  } else if (magic("RIFF") || magic("RF64") || magic("RIFX") || magic("FORM") || e == ".wav" || e == ".wave") {  // K-49: FORM is AIFF
     unsigned int ch = 0, sr = 0;
     drwav_uint64 n = 0;
     if (cancellable) {

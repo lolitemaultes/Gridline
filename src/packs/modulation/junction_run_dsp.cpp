@@ -579,6 +579,11 @@ bool JRuntime::sync(const AuxData* aux) {
   return true;
 }
 
+void JRuntime::exchangeEffects(PatchV2Runtime& v2) {
+  for (size_t i = 0; i < static_cast<size_t>(kJMaxNodes); ++i)
+    if (d_->ids[i] >= kJFirstId) v2.exchangeEffect(static_cast<int>(d_->ids[i] - kJFirstId), d_->hashes[i], d_->fxs[i]);
+}
+
 void JRuntime::noteOn(uint32_t id, double pitch, float velocity, const NoteProps& props) {
   NoteMsg m;
   m.kind = NoteMsg::On;

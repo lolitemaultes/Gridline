@@ -405,6 +405,7 @@ const InertDoc kInert[] = {
     {"gl.harmor", "Chorus spread", "GAP: not implemented"},
     {"gl.harmor", "Chorus cross", "GAP: not implemented"},
     {"gl.timegate", "Trigger slots from notes", "GAP: effects get no note input path for it yet"},
+    {"gl.timegate", "Latency law", "what the mixer is told: the engine's own delay doesn't change"},
     {"gl.surface", "Control *", "GAP: controls 17-64 output, but links read only 16 controller outputs"},
 };
 // Settings that enable whole sections, tried first by the condition search

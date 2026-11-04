@@ -517,7 +517,9 @@ inline constexpr int TgScratch = TgSmooth + 13, TgDcRemove = TgSmooth + 14, TgCo
 inline constexpr int TgMidiTrigger = TgSmooth + 17;
 // J-42 reference engine (GrossBeatRef.h): model switch and the stored attack / release / scratch.
 inline constexpr int TgModel = TgSmooth + 18, TgRAttack = TgSmooth + 19, TgRRelease = TgSmooth + 20, TgRScratch = TgSmooth + 21;
-inline constexpr int TgCount = TgSmooth + 22;
+// K-41: 1 = the reference engine's 15-sample delay is reported to the mixer (FL imports); older states stay at 0.
+inline constexpr int TgLatencyLaw = TgSmooth + 22;
+inline constexpr int TgCount = TgSmooth + 23;
 // "gl.maximizer" — three-band upward/downward compression + saturating ceiling
 enum Maximizer {
   MxLowFreq, MxHighFreq, MxLowGain, MxMidGain, MxHighGain, MxDrive, MxRelease, MxCeiling, MxLowCut,

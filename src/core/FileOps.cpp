@@ -2,12 +2,17 @@
 #include "FileOps.h"
 #include <algorithm>
 #include <cctype>
+#include <cerrno>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <map>
+#include <mutex>
 #include <set>
+#include <string_view>
 #include <system_error>
 #include "Platform.h"
 #include "ProjectInterop.h"
@@ -15,6 +20,9 @@
 #if defined(_WIN32)
 #include <windows.h>
 #include <shellapi.h>
+#elif defined(__APPLE__)
+#include <CoreFoundation/CoreFoundation.h>
+#include <unistd.h>
 #endif
 
 namespace fs = std::filesystem;
@@ -37,6 +45,102 @@ std::string norm(const std::string& p) {
 bool present(const fs::path& p) {
   std::error_code ec;
   return fs::exists(fs::symlink_status(p, ec));
+}
+
+// K-32: does the file system take two spellings of a path for one item? Windows always does, macOS
+// asks the volume, Linux and the BSDs never do. Paths are compared one component at a time, so what
+// follows a match keeps the reference's own spelling however folding changes lengths. Identical
+// spellings and different names never reach the disk.
+std::function<bool(const std::string&)> gCaseRule;  // tests: instead of the system's answer
+
+struct CaseAnswer {
+  bool ignores;
+  std::chrono::steady_clock::time_point until;
+};
+std::mutex gCaseMutex;
+std::map<std::string, CaseAnswer> gCaseAnswers;
+
+bool isAscii(std::string_view s) {
+  return std::all_of(s.begin(), s.end(), [](char c) { return static_cast<unsigned char>(c) < 0x80; });
+}
+
+// Two different spellings of one name, once case (and on macOS, composed or decomposed accents) is
+// ignored? Beyond ASCII that is the system's own folding.
+bool sameNameFolded(std::string_view a, std::string_view b) {
+#if !defined(_WIN32) && !defined(__APPLE__)
+  if (!gCaseRule) return false;
+#endif
+  if (isAscii(a) && isAscii(b))
+    return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
+             return std::tolower(static_cast<unsigned char>(x)) == std::tolower(static_cast<unsigned char>(y));
+           });
+#if defined(_WIN32)
+  // The ordinal, invariant case rule NTFS names follow (not the user's language).
+  const std::wstring wa = fs::u8path(std::string(a)).wstring(), wb = fs::u8path(std::string(b)).wstring();
+  return CompareStringOrdinal(wa.c_str(), static_cast<int>(wa.size()), wb.c_str(), static_cast<int>(wb.size()), TRUE) == CSTR_EQUAL;
+#elif defined(__APPLE__)
+  auto text = [](std::string_view s) {
+    return CFStringCreateWithBytes(nullptr, reinterpret_cast<const UInt8*>(s.data()), static_cast<CFIndex>(s.size()), kCFStringEncodingUTF8, false);
+  };
+  CFStringRef ca = text(a), cb = text(b);
+  const bool same = ca && cb && CFStringCompare(ca, cb, kCFCompareCaseInsensitive | kCFCompareNonliteral) == kCFCompareEqualTo;
+  if (ca) CFRelease(ca);
+  if (cb) CFRelease(cb);
+  return same;
+#else
+  return false;
+#endif
+}
+
+#if defined(__APPLE__)
+// Asks the volume holding `path`, or the nearest folder above it that exists: a moved item is gone
+// by the time its references follow it.
+bool volumeIgnoresCase(const std::string& path) {
+  fs::path p(path);
+  while (!p.empty()) {
+    errno = 0;
+    const long v = ::pathconf(p.c_str(), _PC_CASE_SENSITIVE);
+    if (v != -1) return v == 0;
+    if (errno != ENOENT && errno != ENOTDIR) return false;  // no answer from this volume: exact
+    if (!p.has_relative_path()) return false;
+    p = p.parent_path();
+  }
+  return false;
+}
+#endif
+
+// May two spellings of `folder` mean one item? Only asked when the spellings really differ, and a
+// browser drawing such a path every frame reaches the volume once in a few seconds at most.
+bool folderIgnoresCase(const std::string& folder) {
+#if defined(_WIN32)
+  if (!gCaseRule) return true;
+#elif !defined(__APPLE__)
+  if (!gCaseRule) return false;
+#endif
+  const auto now = std::chrono::steady_clock::now();
+  std::lock_guard<std::mutex> lk(gCaseMutex);
+  if (const auto it = gCaseAnswers.find(folder); it != gCaseAnswers.end() && now < it->second.until) return it->second.ignores;
+  bool ignores = false;
+  if (gCaseRule) ignores = gCaseRule(folder);
+#if defined(__APPLE__)
+  else ignores = volumeIgnoresCase(folder);
+#endif
+  if (gCaseAnswers.size() >= 256) gCaseAnswers.clear();
+  gCaseAnswers[folder] = CaseAnswer{ignores, now + std::chrono::seconds(5)};
+  return ignores;
+}
+
+bool samePath(const std::string& a, const std::string& b) {
+  const std::string na = norm(a);
+  return matchedLength(na, norm(b)) == na.size();
+}
+
+// True when `target` is an item other than `source`. On a file system that ignores case, a change
+// of letter case finds its own source at the target.
+bool taken(const fs::path& target, const fs::path& source) {
+  if (!present(target)) return false;
+  std::error_code ec;
+  return !(samePath(target.string(), source.string()) && fs::equivalent(target, source, ec));
 }
 
 // Renames, or copies and removes when the target is on another drive.
@@ -66,7 +170,7 @@ void moveSidecars(const fs::path& from, const fs::path& to, std::vector<Move>& m
   if (fs::is_directory(to, ec)) return;
   for (const auto& suf : sidecarSuffixes()) {
     const fs::path a = from.string() + suf, b = to.string() + suf;
-    if (!present(a) || present(b)) continue;
+    if (!present(a) || taken(b, a)) continue;
     if (moveItem(a, b, nullptr)) moves.emplace_back(a.string(), b.string());
   }
 }
@@ -220,26 +324,53 @@ std::vector<std::string> sidecarsOf(const std::string& file) {
 
 bool isInside(const std::string& p, const std::string& dir) {
   if (p.empty() || dir.empty()) return false;
-  const std::string a = norm(p), d = norm(dir);
-  if (a == d) return true;
-  return a.size() > d.size() && a.compare(0, d.size(), d) == 0 && (a[d.size()] == '/' || d.back() == '/');
+  return matchedLength(norm(p), norm(dir)) != std::string::npos;
+}
+
+size_t matchedLength(const std::string& p, const std::string& dir) {
+  const std::string_view a(p), d(dir);
+  bool otherSpelling = false;
+  size_t i = 0, j = 0, matched = std::string::npos;
+  for (;;) {
+    const size_t ie = std::min(a.find('/', i), a.size()), je = std::min(d.find('/', j), d.size());
+    const std::string_view x = a.substr(i, ie - i), y = d.substr(j, je - j);
+    if (x != y) {
+      if (!sameNameFolded(x, y)) return std::string::npos;
+      otherSpelling = true;
+    }
+    if (je + 1 >= d.size()) {  // the folder's last component ("/": the root holds everything below it)
+      matched = ie + 1 == a.size() ? a.size() : ie;
+      break;
+    }
+    if (ie == a.size()) return std::string::npos;  // the path ends above the folder
+    i = ie + 1;
+    j = je + 1;
+  }
+  if (otherSpelling && !folderIgnoresCase(dir)) return std::string::npos;
+  return matched;
+}
+
+void setCaseRuleForTests(std::function<bool(const std::string&)> rule) {
+  std::lock_guard<std::mutex> lk(gCaseMutex);
+  gCaseRule = std::move(rule);
+  gCaseAnswers.clear();
 }
 
 bool retargetPath(std::string& p, const std::string& from, const std::string& to) {
   if (p.empty() || from.empty() || !fs::path(p).is_absolute()) return false;
-  const std::string a = norm(p), f = norm(from);
-  if (a == f) {
+  const std::string a = norm(p);
+  const size_t n = matchedLength(a, norm(from));
+  if (n == std::string::npos) return false;
+  if (n == a.size()) {
     if (p == to) return false;
     p = to;
     return true;
   }
-  if (a.size() > f.size() && a.compare(0, f.size(), f) == 0 && a[f.size()] == '/') {
-    const std::string next = (fs::path(to) / fs::path(a.substr(f.size() + 1))).make_preferred().string();
-    if (next == p) return false;
-    p = next;
-    return true;
-  }
-  return false;
+  // What lies below the moved folder keeps the reference's own spelling.
+  const std::string next = (fs::path(to) / fs::path(a.substr(n + 1))).make_preferred().string();
+  if (next == p) return false;
+  p = next;
+  return true;
 }
 
 int retargetSong(Song& song, const std::vector<Move>& moves) {
@@ -324,7 +455,7 @@ Result moveInto(const std::string& path, const std::string& folder) {
     return r;
   }
   const fs::path dst = dir / p.filename();
-  if (norm(p.parent_path().string()) == norm(folder)) {
+  if (samePath(p.parent_path().string(), folder)) {
     r.ok = true;  // already there
     r.path = path;
     return r;
@@ -390,7 +521,7 @@ Result moveToTrash(const std::string& path, const std::string& trashRoot) {
 bool moveBack(const std::vector<Move>& moves, std::string* err) {
   bool ok = true;
   for (auto it = moves.rbegin(); it != moves.rend(); ++it) {
-    if (!present(it->second) || present(it->first)) {
+    if (!present(it->second) || taken(it->first, it->second)) {
       ok = false;
       if (err) *err = fs::path(it->first).filename().string() + " cannot go back";
       continue;
@@ -403,7 +534,7 @@ bool moveBack(const std::vector<Move>& moves, std::string* err) {
 bool moveAgain(const std::vector<Move>& moves, std::string* err) {
   bool ok = true;
   for (const auto& [from, to] : moves) {
-    if (!present(from) || present(to)) {
+    if (!present(from) || taken(to, from)) {
       ok = false;
       if (err) *err = fs::path(from).filename().string() + " cannot move again";
       continue;

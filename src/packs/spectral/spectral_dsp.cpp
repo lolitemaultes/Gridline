@@ -561,6 +561,22 @@ class VocRef {
   double hfEnv_ = 0, totEnv_ = 0, unv_ = 0, cont_ = 0, carEnv_ = 0, enhEnv_ = 0;
 };
 
+// J-42: the enhancer program an imported state carries ("sge" line, gl.enhance parameters).
+std::vector<float> enhanceProgram(const std::string& data) {
+  std::vector<float> program;
+  if (size_t at = data.find("\nsge"); at != std::string::npos) {
+    const char* q = data.c_str() + at + 4;
+    for (;;) {
+      char* end = nullptr;
+      const float v = std::strtof(q, &end);
+      if (end == q) break;
+      program.push_back(v);
+      q = end;
+    }
+  }
+  return program;
+}
+
 class VocoderFx final : public SpectralFx {
  public:
   VocoderFx() {
@@ -587,6 +603,8 @@ class VocoderFx final : public SpectralFx {
     sr_ = 0;
     ref_.reset();
     carrier_.reset();
+    std::memset(pad_, 0, sizeof pad_);
+    padW_ = 0;
   }
   // J-65: the imported carrier tone's engine (UI thread).
   void prepareHost(const PluginState& state, double sampleRate) override {
@@ -625,10 +643,32 @@ class VocoderFx final : public SpectralFx {
         }
         sgState_.params[0] = p[VxEnhance];  // EnAmount: the program's band mix
         sgFx_->process(sgState_, ctx, L, R, n);
+        if (maps != sgLatFrom_ || ctx.sampleRate != sgLatRate_) {  // no allocation: the program is plain numbers
+          sgLat_ = sgFx_->latencyFor(sgState_, ctx.sampleRate);
+          sgLatFrom_ = maps, sgLatRate_ = ctx.sampleRate;
+        }
+        padOutput(p, ctx.sampleRate, sgLat_, L, R, n);
+        return;
       }
+      padOutput(p, ctx.sampleRate, 0, L, R, n);
       return;
     }
     process(state, ctx, L, R, n);
+  }
+  // K-41: what the mixer compensates, the delay the output really has. The enhancer stage's own
+  // delay (its program's) is part of the figure, the output pad is the rest.
+  int latencyFor(const PluginState& state, double sampleRate) const override {
+    Params p{info_, &state};
+    const int law = p.choice(VxLatencyLaw);
+    if (p.choice(VxModel) != 1 || law < 1) return 0;
+    const int total = vxFlLatency(law, p[VxEnhance], sampleRate);
+    if (p[VxEnhance] <= 0) return total;
+    const std::vector<float> program = enhanceProgram(state.data);
+    if (program.empty()) return total;
+    PluginState sg = defaultPluginState("gl.enhance");
+    if (sg.params.size() < program.size()) return total;
+    std::copy(program.begin(), program.end(), sg.params.begin());
+    return std::max(total, effectLatency(sg, sampleRate));
   }
 
   void process(const PluginState& state, const ProcessContext& ctx, float* L, float* R, int n) override {
@@ -636,6 +676,7 @@ class VocoderFx final : public SpectralFx {
     if (p.choice(VxModel) == 1) {  // reference model without prepared curves: default curves
       ref_.process(p, nullptr, ctx, scL_, scR_, L, R, n);
       ref_.publish(tel);
+      padOutput(p, ctx.sampleRate, 0, L, R, n);
       return;
     }
     const double sr = ctx.sampleRate;
@@ -839,6 +880,23 @@ class VocoderFx final : public SpectralFx {
   PluginState sgState_;
   std::unique_ptr<Effect> sgFx_;
   const VocMapsAux* sgFrom_ = nullptr;
+  // K-41: the output pad, and the enhancer stage's delay it counts from.
+  void padOutput(const Params& p, double sr, int stage, float* L, float* R, int n) {
+    const int law = p.choice(VxLatencyLaw);
+    if (law < 1) return;
+    const int d = std::clamp(vxFlLatency(law, p[VxEnhance], sr) - stage, 0, kPadCap - 1);
+    for (int i = 0; i < n; ++i) {
+      pad_[0][padW_] = L[i], pad_[1][padW_] = R[i];
+      const int r = (padW_ - d) & (kPadCap - 1);
+      L[i] = pad_[0][r], R[i] = pad_[1][r];
+      padW_ = (padW_ + 1) & (kPadCap - 1);
+    }
+  }
+  static constexpr int kPadCap = 8192;
+  float pad_[2][kPadCap] = {};
+  int padW_ = 0, sgLat_ = 0;
+  const VocMapsAux* sgLatFrom_ = nullptr;
+  double sgLatRate_ = 0;
   // J-65: exact carrier tone.
   static constexpr int kCarChunk = 512;
   static std::string exactTone(const PluginState& state) {
@@ -2975,16 +3033,7 @@ bool prepareAux(const PluginState& state, ChannelAux& aux) {
     auto a = std::make_shared<VocMapsAux>();
     a->build(d);
     a->hash = std::hash<std::string>{}(state.data);
-    if (size_t at = state.data.find("\nsge"); at != std::string::npos) {
-      const char* q = state.data.c_str() + at + 4;
-      for (;;) {
-        char* end = nullptr;
-        const float v = std::strtof(q, &end);
-        if (end == q) break;
-        a->sge.push_back(v);
-        q = end;
-      }
-    }
+    a->sge = enhanceProgram(state.data);
     aux.custom = a;
     return true;
   }

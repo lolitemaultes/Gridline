@@ -239,9 +239,24 @@ struct FlTarget {
   std::string what;  // description for the report
   double toNormalized(double fl) const { return convert ? convert(fl) : min + fl * (max - min); }
 };
+inline constexpr uint32_t kFlTempoTarget = 0x40000005u;
 // FL target id (event 227 / pattern events; see FlpArrangement.cpp) → parameter.
 // Valid after importArrangement (needs the decoded plugins and audio channels).
 bool resolveFlTarget(Context& c, uint32_t target, FlTarget& out);
+// K-49: an automation clip's range. FL keeps it in the clip channel's levels
+// (219: @0 the value at the clip's 0, @4 the value at its 1, both 0..12800 of the
+// target's whole scale). The whole scale of the tempo is 10..522 BPM (a new tempo
+// clip gets 1250..4250: 60..180 BPM) and of the channel pitch -8..+8 semitones (a
+// new one gets 4800..8000: -2..+2); every other target's scale is what
+// resolveFlTarget gives. A clip point x means lo + x * (hi - lo) on that scale.
+struct FlClipRange {
+  double lo = 0, hi = 1;
+  double at(double x) const { return lo + x * (hi - lo); }
+};
+FlClipRange flClipRangeOf(uint32_t target, const Event* levels);
+FlClipRange flClipDefaultRange(uint32_t target);
+// resolveFlTarget with the target's whole scale, the one a clip's range is on.
+bool resolveFlClipTarget(Context& c, uint32_t target, FlTarget& out);
 // MIDI remote-control link (event 226, 20 bytes): u32 MIDI source
 // ((port + 1) << 22 | channel << 16 | control: 0..127 CC, 253 channel
 // aftertouch, 254 key aftertouch, 255 pitch bend, 256 + n note n; port 0 =

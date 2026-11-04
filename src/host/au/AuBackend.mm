@@ -15,6 +15,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstring>
+#include <memory>
 #include <string>
 #include <vector>
 #include "../PluginScan.h"
@@ -257,14 +258,14 @@ class AuBackend final : public Backend {
   }
   void drainHostEvents(std::vector<HostEvent>& out) override {
     HostEvent e;
-    while (events_.pop(e)) out.push_back(e);
-    if (int32_t f = restartFlags_.exchange(0)) {
+    while (listen_->events.pop(e)) out.push_back(e);
+    if (int32_t f = listen_->restartFlags.exchange(0)) {
       HostEvent r;
       r.kind = HostEvent::Restart;
       r.flags = f;
       out.push_back(r);
     }
-    if (dirty_.exchange(false)) {
+    if (listen_->dirty.exchange(false)) {
       HostEvent d;
       d.kind = HostEvent::Dirty;
       out.push_back(d);
@@ -403,6 +404,17 @@ class AuBackend final : public Backend {
     double toNorm(double v) const { return max > min ? std::clamp((v - min) / (max - min), 0.0, 1.0) : 0.0; }
     double toPlain(double n) const { return min + std::clamp(n, 0.0, 1.0) * (max - min); }
   };
+  // K-36: everything the listener block reads or writes. The block owns a share of this and never
+  // sees the backend. AUListenerDispose documents nothing about blocks in flight; on macOS 15 it was
+  // measured to wait for them, but nothing here depends on that: a late block finds its own data,
+  // and its events go nowhere. The ranges are a snapshot, replaced whole, because the UI thread
+  // reads the parameter list again while blocks run.
+  struct ListenState {
+    HostEventQueue events;
+    std::atomic<int32_t> restartFlags{0};
+    std::atomic<bool> dirty{false};
+    std::shared_ptr<const std::vector<Range>> ranges;  // through std::atomic_load / atomic_store only
+  };
   struct Change {
     uint32_t id;
     float value;
@@ -413,7 +425,7 @@ class AuBackend final : public Backend {
     int offset = 0;
   };
   static constexpr int kMaxChanges = 2048, kMaxEvents = 1024, kMaxBufs = 8;
-  AuBackend() : changes_(new Change[kMaxChanges]), events2_(new Midi[kMaxEvents]) {}
+  AuBackend() : changes_(new Change[kMaxChanges]), events2_(new Midi[kMaxEvents]), listen_(std::make_shared<ListenState>()) {}
 
   float* buf(int slot, int ch) { return storage_.data() + (static_cast<size_t>(slot) * 2 + static_cast<size_t>(std::clamp(ch, 0, 1))) * static_cast<size_t>(maxBlock_); }
 
@@ -482,12 +494,14 @@ class AuBackend final : public Backend {
       }
     }
     std::sort(ranges_.begin(), ranges_.end(), [](const Range& a, const Range& b) { return a.id < b.id; });
+    std::atomic_store(&listen_->ranges, std::shared_ptr<const std::vector<Range>>(std::make_shared<std::vector<Range>>(ranges_)));
     indexParams();
   }
-  const Range* range(uint32_t id) const {
-    auto it = std::lower_bound(ranges_.begin(), ranges_.end(), id, [](const Range& r, uint32_t v) { return r.id < v; });
-    return it != ranges_.end() && it->id == id ? &*it : nullptr;
+  static const Range* findRange(const std::vector<Range>& ranges, uint32_t id) {
+    auto it = std::lower_bound(ranges.begin(), ranges.end(), id, [](const Range& r, uint32_t v) { return r.id < v; });
+    return it != ranges.end() && it->id == id ? &*it : nullptr;
   }
+  const Range* range(uint32_t id) const { return findRange(ranges_, id); }
   void readPresets() {
     presets_.clear();
     CFArrayRef arr = nullptr;
@@ -616,12 +630,15 @@ class AuBackend final : public Backend {
   // Edits in the unit's view and property changes, delivered on a private queue.
   void listen() {
     dispatch_queue_t q = dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0);
-    AuBackend* self = this;
+    const std::shared_ptr<ListenState> owned = listen_;
     AUEventListenerCreateWithDispatchQueue(&listener_, 0.01f, 0.005f, q, ^(void*, const AudioUnitEvent* e, UInt64, AudioUnitParameterValue v) {
+      // A share for this run too: the data stays even if the block itself is released while it runs.
+      const std::shared_ptr<ListenState> state = owned;
       HostEvent h;
       switch (e->mEventType) {
         case kAudioUnitEvent_ParameterValueChange: {
-          const Range* r = self->range(e->mArgument.mParameter.mParameterID);
+          const std::shared_ptr<const std::vector<Range>> ranges = std::atomic_load(&state->ranges);
+          const Range* r = ranges ? findRange(*ranges, e->mArgument.mParameter.mParameterID) : nullptr;
           if (!r || e->mArgument.mParameter.mParameterID == kAUParameterListener_AnyParameter) return;
           h.kind = HostEvent::PerformEdit;
           h.id = e->mArgument.mParameter.mParameterID;
@@ -638,18 +655,18 @@ class AuBackend final : public Backend {
           break;
         case kAudioUnitEvent_PropertyChange: {
           const AudioUnitPropertyID pid = e->mArgument.mProperty.mPropertyID;
-          if (pid == kAudioUnitProperty_Latency) self->restartFlags_ |= kRestartLatency;
-          else if (pid == kAudioUnitProperty_ParameterList || pid == kAudioUnitProperty_ParameterInfo) self->restartFlags_ |= kRestartParamInfo;
+          if (pid == kAudioUnitProperty_Latency) state->restartFlags |= kRestartLatency;
+          else if (pid == kAudioUnitProperty_ParameterList || pid == kAudioUnitProperty_ParameterInfo) state->restartFlags |= kRestartParamInfo;
           else {
-            self->restartFlags_ |= kRestartParamValues;
-            self->dirty_.store(true);
+            state->restartFlags |= kRestartParamValues;
+            state->dirty.store(true);
           }
           return;
         }
         default:
           return;
       }
-      self->events_.push(h);
+      state->events.push(h);
     });
     if (!listener_) return;
     for (const auto& r : ranges_)
@@ -695,9 +712,7 @@ class AuBackend final : public Backend {
     AudioBuffer more[kMaxBufs];
   } abl_{};
   AUEventListenerRef listener_ = nullptr;
-  HostEventQueue events_;
-  std::atomic<int32_t> restartFlags_{0};
-  std::atomic<bool> dirty_{false};
+  std::shared_ptr<ListenState> listen_;
 };
 
 AuView::~AuView() {
@@ -865,6 +880,12 @@ std::unique_ptr<Backend> auCreate(const std::string& key, const std::string& uid
 }
 
 }  // namespace
+
+bool auPostParameterForTests(Backend& b, uint32_t id, float plainValue) {
+  if (std::strcmp(b.format(), "AU") != 0) return false;
+  AudioUnitParameter p{static_cast<AuBackend&>(b).unit(), id, kAudioUnitScope_Global, 0};
+  return AUParameterSet(nullptr, nullptr, &p, plainValue, 0) == noErr;
+}
 
 Format auFormat() {
   Format f{};

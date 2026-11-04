@@ -880,7 +880,7 @@ struct Voice::Impl {
   Guard guard;
   int channels = 2;
   double sampleRate = 44100;
-  double maxPitch = 8, maxSpeed = 8;
+  double maxPitch = 8, minPitch = 0.125, maxSpeed = 8;
   // Engine output (before the pitch resampler): frames [0, filled) of mid,
   // read at fractional position `pos`. Compacted as it is consumed.
   VoiceBuffer mid[2];
@@ -1060,12 +1060,13 @@ Voice::~Voice() = default;
 
 Engine Voice::engine() const { return impl_->kind; }
 
-void Voice::prepare(int channels, double sampleRate, double maxPitch, double maxSpeed, bool live, Engine engine) {
+void Voice::prepare(int channels, double sampleRate, double maxPitch, double maxSpeed, bool live, Engine engine, double minPitch) {
   Impl& m = *impl_;
   m.channels = std::clamp(channels, 1, 2);
   m.sampleRate = sampleRate;
   m.glideCoef = 1.0 - std::exp(-1.0 / (Impl::kGlideSec * sampleRate));
   m.maxPitch = std::max(1.0, maxPitch);
+  m.minPitch = minPitch > 0 && engine != Engine::RubberBand ? std::min(minPitch, m.maxPitch) : 1.0 / m.maxPitch;
   m.maxSpeed = std::max(1.0, maxSpeed);
   m.kind = engine;
   if (engine == Engine::RubberBand) {
@@ -1103,7 +1104,7 @@ void Voice::prepare(int channels, double sampleRate, double maxPitch, double max
   const int hw = pitch::maxReach(m.maxPitch, t) + 4;
   m.midCap = 8 * (Impl::kChunk + hw) + static_cast<int>(2048 * m.maxPitch);
   // in: the engine's start-up input, or one chunk at the top input rate.
-  const double perMid = m.maxSpeed * m.maxPitch;  // speed / pitch at the lowest pitch
+  const double perMid = m.maxSpeed / m.minPitch;  // speed / pitch at the lowest pitch
   m.inCap = std::max(m.engine.outputSeekLength(static_cast<float>(perMid)), static_cast<int>(std::ceil(perMid * Impl::kChunk))) + 16;
   for (int c = 0; c < 2; ++c) {
     m.mid[c].allocate(static_cast<size_t>(m.midCap));
@@ -1163,7 +1164,7 @@ void Voice::start(Reader rd, void* ctx, double speed, double pitch, int preroll)
 bool Voice::prime(Reader rd, void* ctx, double speed, double pitch, int budget) {
   Impl& m = *impl_;
   if (!m.rb) return true;
-  pitch = std::clamp(pitch, 1.0 / m.maxPitch, m.maxPitch);
+  pitch = std::clamp(pitch, m.minPitch, m.maxPitch);
   speed = std::clamp(speed, 0.0, m.maxSpeed);
   // The pre-roll, then the steps rbRender() takes before its first frame
   // (the same decisions in the same order, without taking the output).
@@ -1193,7 +1194,7 @@ int64_t Voice::fedFrames() const { return impl_->rb ? impl_->rbFed : impl_->inRe
 void Voice::startLater(Reader rd, void* ctx, double speed, double pitch, int preroll) {
   Impl& m = *impl_;
   reset();
-  pitch = std::clamp(pitch, 1.0 / m.maxPitch, m.maxPitch);
+  pitch = std::clamp(pitch, m.minPitch, m.maxPitch);
   speed = std::clamp(speed, 0.0, m.maxSpeed);
   if (m.rb) {
     // The engine wants `pad` input frames ahead of the start point and puts
@@ -1237,7 +1238,7 @@ void Voice::startLater(Reader rd, void* ctx, double speed, double pitch, int pre
 
 void Voice::render(float* const* out, int n, double speed, double pitch, Reader rd, void* ctx) {
   Impl& m = *impl_;
-  pitch = std::clamp(pitch, 1.0 / m.maxPitch, m.maxPitch);
+  pitch = std::clamp(pitch, m.minPitch, m.maxPitch);
   speed = std::clamp(speed, 0.0, m.maxSpeed);
   if (m.rb) {
     m.rbRender(out, n, speed, pitch, rd, ctx);

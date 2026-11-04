@@ -385,9 +385,27 @@ class RetroPhaserFx final : public Effect {
     }
     return best;
   }
+  static int refDelay(bool hq) {
+    static const int lat[2] = {measureOs(2), measureOs(3)};
+    return lat[hq ? 1 : 0];
+  }
+  // K-41: the rest of the way to FL's figure, after the oversampler's own delay.
+  void pad(int d, float* L, float* R, int n) {
+    d = std::clamp(d, 0, kPadCap - 1);
+    for (int i = 0; i < n; ++i) {
+      pad_[0][padW_] = L[i], pad_[1][padW_] = R[i];
+      const int r = (padW_ - d) & (kPadCap - 1);
+      L[i] = pad_[0][r], R[i] = pad_[1][r];
+      padW_ = (padW_ + 1) & (kPadCap - 1);
+    }
+  }
+  static constexpr int kPadCap = 64;
+  float pad_[2][kPadCap] = {};
+  int padW_ = 0;
 
  public:
   RetroPhaserFx() {
+    refDelay(false);  // measured here, not on the audio thread
     echo_[0].init(static_cast<size_t>(1.6 * kMaxRate));
     echo_[1].init(static_cast<size_t>(1.6 * kMaxRate));
     ref_.init();
@@ -397,8 +415,7 @@ class RetroPhaserFx final : public Effect {
   // oversampler; its delay (measured once on an impulse) is the latency.
   int latencyFor(const PluginState& s, double) const override {
     if (pi(s, VpModel, 0) != 1) return 0;
-    static const int lat[2] = {measureOs(2), measureOs(3)};
-    return lat[pb(s, VpHq) ? 1 : 0];
+    return pi(s, VpLatencyLaw, 0) >= 1 ? kVpFlLatency : refDelay(pb(s, VpHq));
   }
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
     const bool refModel = pi(s, VpModel, 0) == 1;
@@ -408,6 +425,7 @@ class RetroPhaserFx final : public Effect {
     }
     if (refModel) {
       ref_.process(s, ctx, L, R, n);
+      if (pi(s, VpLatencyLaw, 0) >= 1) pad(kVpFlLatency - refDelay(pb(s, VpHq)), L, R, n);
       return;
     }
     const double sr = ctx.sampleRate;
@@ -487,6 +505,8 @@ class RetroPhaserFx final : public Effect {
     }
   }
   void reset() override {
+    std::memset(pad_, 0, sizeof pad_);
+    padW_ = 0;
     std::memset(z_, 0, sizeof z_);
     last_[0] = last_[1] = 0;
     for (int c = 0; c < 2; ++c) {

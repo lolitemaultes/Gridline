@@ -121,6 +121,9 @@ class PatchV2Runtime {
   // Renders n (<= 256) frames: instruments add into L / R (`instrument`),
   // the effect version replaces L / R with the patch output.
   void run(const PluginState& host, const ProcessContext& ctx, float* L, float* R, int n, bool instrument);
+  // K-41: a marked patch changing runtime (see JRuntime::exchangeEffects): the running effect of a
+  // module of this plugin type goes into `fx`, what `fx` held comes here. Audio thread, no allocation.
+  void exchangeEffect(int node, uint64_t typeHash, std::unique_ptr<Effect>& fx);
 
  private:
   struct Impl;

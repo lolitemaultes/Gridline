@@ -100,7 +100,9 @@ message(STATUS "ok - a cancelled save leaves the archive that was there")
 
 # Quitting in the middle ends the app, and leaves no target.
 file(MAKE_DIRECTORY "${OUT}/quit")
+set(ENV{GRIDLINE_DEV_SLOW_FILE_JOB_MS} "4000")  # (a slow machine's next frame must not find it finished)
 run(quit_in "5 filejob data \"${OUT}/quit/data\"\n6 quit discard\n")
+set(ENV{GRIDLINE_DEV_SLOW_FILE_JOB_MS} "150")
 file(GLOB_RECURSE left "${OUT}/quit/*")
 if(left)
   message(FATAL_ERROR "FAIL: quitting during an export left ${left}")

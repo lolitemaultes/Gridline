@@ -125,6 +125,12 @@ class FlexGen final : public Generator {
     }
     Generator* g = eng_[static_cast<size_t>(aux_->engine)].get();
     const PluginState& w = work_[static_cast<size_t>(aux_->engine)];
+    if (n == 0) {  // the builder's warm-up: the engine and its effects size their buffers
+      g->process(w, aux_->engineAux, ctx_, bufL_.data(), bufR_.data(), 0);
+      if (dly_) dly_->process(dlyWork_, ctx_, bufL_.data(), bufR_.data(), 0);
+      if (rev_) rev_->process(revWork_, ctx_, bufL_.data(), bufR_.data(), 0);
+      return;
+    }
     size_t ei = 0;
     for (int c0 = 0; c0 < n; c0 += kChunk) {
       const int len = std::min(kChunk, n - c0);

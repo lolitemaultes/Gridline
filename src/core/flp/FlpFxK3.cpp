@@ -170,6 +170,7 @@ bool decodeGrossBeat(Context& c, const std::vector<Event>& evs, PluginMapping& m
   set(m, pp::TgGateOn, 0);
   // J-42: the reference engine reads the stored attack / release and scratch.
   set(m, pp::TgModel, 1);
+  set(m, pp::TgLatencyLaw, 1);
   set(m, pp::TgRAttack, std::clamp(fl[4], 0.0, 10000.0));
   set(m, pp::TgRRelease, std::clamp(fl[5], 0.0, 10000.0));
   set(m, pp::TgRScratch, std::clamp(fl[8] / 65536.0 - 1.0, -1.0, 1.0));

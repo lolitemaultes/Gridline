@@ -263,8 +263,10 @@ enum PhaserParam {
   // J-1 reference model (old states load as legacy).
   VpModel, VpHq, VpEngine, VpRateLo, VpRateHi, VpDepthScale, VpDepthPull, VpSyncTicks, VpDelayKeep, VpDelayTicks,
   VpEchoLaw,  // K-37: 1 = echo filters in the feedback path only, per-channel stereo balance; older states stay at 0
+  VpLatencyLaw,  // K-41: 1 = the reference model pads its output to kVpFlLatency (FL imports); older states stay at 0
   VpCount
 };
+inline constexpr int kVpFlLatency = 44;  // samples, at every rate and quality
 inline constexpr int kPhaserStages[] = {4, 6, 8, 10, 12};
 // LFO shape value (0..1) at phase 0..1 for a wave choice and tension (shared with the editor).
 double phaserLfo(int wave, double phase, double tension);

@@ -107,6 +107,11 @@ void addSystemPluginFolders(std::vector<std::string>& v, const char* winCommon, 
 // codes (codes that are not plain text are written as 0xXXXXXXXX).
 std::string auKey(uint32_t type, uint32_t subtype, uint32_t manufacturer);
 std::string fourCharCode(uint32_t v);
+#if defined(__APPLE__)
+// Tests: a parameter edit made in the Audio Unit itself, as its view makes it. False when `b` is
+// not an Audio Unit.
+bool auPostParameterForTests(Backend& b, uint32_t id, float plainValue);
+#endif
 // "vst2:" type id of a VST2 unique id (8 upper-case hex digits).
 std::string vst2Type(uint32_t uniqueId);
 

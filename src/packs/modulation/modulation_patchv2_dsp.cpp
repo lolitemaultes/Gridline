@@ -491,6 +491,12 @@ bool PatchV2Runtime::sync(const AuxData* aux) {
   return true;
 }
 
+void PatchV2Runtime::exchangeEffect(int node, uint64_t type, std::unique_ptr<Effect>& fx) {
+  if (node < 0 || node >= kV2MaxNodes || !fx) return;
+  const size_t i = static_cast<size_t>(node);
+  if (d_->fxs[i] && d_->hash[i] == type) std::swap(d_->fxs[i], fx);
+}
+
 void PatchV2Runtime::noteOn(uint32_t id, double pitch, float velocity, const NoteProps& props) {
   const V2Aux* a = d_->synced;
   if (!a) return;

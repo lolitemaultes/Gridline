@@ -1450,6 +1450,7 @@ GL_NOINLINE void addInfo36(std::vector<PluginInfo>& v) {
   p.params[TgRAttack] = lin("Attack (ref.)", "", 0, 10000, 0);
   p.params[TgRRelease] = lin("Release (ref.)", "", 0, 10000, 1000);
   p.params[TgRScratch] = lin("Scratch (ref.)", "", -1, 1, 0);
+  p.params[TgLatencyLaw] = ch("Latency law", {"1", "2"}, 0);
   p.editorWidth = 1000;
   std::vector<std::pair<int, float>> trance;
   for (int k = 0; k < kGateSteps; ++k) trance.push_back({TgGate + k, (k % 4 == 1 || k % 4 == 3) ? 0.f : 1.f});

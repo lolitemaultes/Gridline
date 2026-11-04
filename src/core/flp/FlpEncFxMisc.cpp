@@ -585,6 +585,11 @@ Encoder vocodex() {
   };
   // Curves, pitch follow, held keys (data) and the carrier tone name.
   e.write = [](const PluginState& g, Bytes& b, const EncodeContext& c) {
+    // K-41: the latency law reads the fifth fixed int; a state from before the law keeps what's there.
+    if (const int law = static_cast<int>(param(g, sp::VxLatencyLaw)); law >= 1) {
+      const VxLayout F = vxLayout(b);
+      if (F.ok && (law >= 2) != (static_cast<int32_t>(getU32(b, F.ints + 16)) == 0)) putI32(b, F.ints + 16, law >= 2 ? 0 : 1);
+    }
     PluginState cur;
     if (!decoded("Vocodex", b, c, cur)) return;
     sp::VxData d, dc;

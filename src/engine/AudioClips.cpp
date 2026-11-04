@@ -82,9 +82,11 @@ double pitchOf(const ProgAudioClip& c, double secRate) {
 
 }  // namespace
 
-std::shared_ptr<ClipVoice> makeClipVoice(double sampleRate, stretch::Engine engine) {
+std::shared_ptr<ClipVoice> makeClipVoice(double sampleRate, stretch::Engine engine, double sourceRate) {
   auto v = std::make_shared<ClipVoice>();
-  v->voice.prepare(2, sampleRate, 8.0, 8.0, false, engine);
+  const double toFrames = sourceRate > 0 && engine == stretch::Engine::Stretch ? sourceRate / sampleRate : 1.0;
+  const double top = 8.0 * std::max(1.0, toFrames);
+  v->voice.prepare(2, sampleRate, top, top, false, engine, toFrames / 8.0);
   return v;
 }
 

@@ -26,6 +26,8 @@
 #include "../../src/packs/modulation/junction.h"
 #include "../../src/packs/modulation/modulation.h"
 #include "../../src/packs/modulation/modulation_dsp.h"
+#include "../../src/packs/spacefx/spacefx.h"
+#include "../../src/packs/spectral/spectral.h"
 
 namespace {
 thread_local bool gCount = false;
@@ -470,6 +472,55 @@ void testFlLatency() {
     expect(!md::patchV2RunsAsGraph(g, kSr), "FL patch: no latency inside, the version 2 runtime stays");
     FxRun h(flHost(g));
     expect(h.fx->latencyFor(h.st, kSr) == 0, "FL patch: no latency inside, none reported");
+  }
+  {
+    // K-41: a direct cable beside an imported phaser arrives with the 44 samples it reports, as in FL.
+    md::PatchV2 g = flPatch({"gl.vphaser"}, {1}, parallel, true);
+    g.nodes[0].plugin.params[gl::packs::spacefx::VpLatencyLaw] = 1;
+    const PluginState st = flHost(g);
+    FxRun h(st);
+    expect(h.fx->latencyFor(st, kSr) == gl::packs::spacefx::kVpFlLatency, "FL patch: the host reports the phaser's 44 samples");
+    // Level 0: only the direct cable sounds, the latency stays.
+    md::PatchV2 quiet = flPatch({"gl.vphaser"}, {0}, parallel, true);
+    quiet.nodes[0].plugin.params[gl::packs::spacefx::VpLatencyLaw] = 1;
+    const std::vector<float> direct = flRun(flHost(quiet));
+    expect(near(direct[64], 0) && near(direct[64 + gl::packs::spacefx::kVpFlLatency], 1), "FL patch: the direct cable arrives with the phaser's 44 samples");
+    md::PatchV2 old = g;
+    old.nodes[0].plugin.params[gl::packs::spacefx::VpLatencyLaw] = 0;
+    const PluginState ost = flHost(old);
+    FxRun oh(ost);
+    expect(oh.fx->latencyFor(ost, kSr) == 34, "FL patch from before the law: the phaser's own 34");
+  }
+  {
+    // K-41: an edit that takes a patch's latency from zero to non-zero and back changes its runtime.
+    // The effects inside keep playing: a delay's echoes are still there on the other side.
+    namespace sp = gl::packs::spectral;
+    md::PatchV2 g = flPatch({"gl.delay", "gl.pitch"}, {1, 1}, {{kFlIn, flPortIn(0)}, {flPortOut(0), flPortIn(1)}, {flPortOut(1), kFlOut}}, true);
+    PluginState& dly = g.nodes[0].plugin;
+    dly.params[pp::DlySync] = 0, dly.params[pp::DlyTimeMs] = 200, dly.params[pp::DlyFeedback] = 0.7f, dly.params[pp::DlyModel] = 1;
+    dly.params[pp::DlyTicks] = 0;
+    PluginState& ps = g.nodes[1].plugin;
+    ps.params[sp::PsEngine] = sp::kPsMusic, ps.params[sp::PsMix] = 0;  // dry through it, whatever the engine
+    expect(!md::patchV2RunsAsGraph(g, kSr), "patch edit: no latency before");
+    FxRun r(flHost(g));
+    std::vector<float> L = impulse(4096, 64), R = impulse(4096, 64);
+    const auto energy = [&](size_t frames, int block) {
+      L.resize(frames, 0.f), R.resize(frames, 0.f);
+      r.run(L, R, block);
+      double e = 0;
+      for (float x : L) e += static_cast<double>(x) * x;
+      std::fill(L.begin(), L.end(), 0.f), std::fill(R.begin(), R.end(), 0.f);
+      return e;
+    };
+    energy(4096, 128);  // the impulse is in the delay, its first echo still ahead
+    g.nodes[1].plugin.params[sp::PsEngine] = sp::kPsVoice;
+    expect(md::patchV2RunsAsGraph(g, kSr), "patch edit: latency now");
+    buildStep(r, flHost(g));
+    expect(energy(60000, 128) > 0.05, "patch edit, zero to non-zero: the delay inside keeps its echoes");
+    g.nodes[1].plugin.params[sp::PsEngine] = sp::kPsMusic;
+    expect(!md::patchV2RunsAsGraph(g, kSr), "patch edit: no latency again");
+    buildStep(r, flHost(g));
+    expect(energy(60000, 128) > 0.001, "patch edit, non-zero to zero: the delay inside keeps its echoes");
   }
   {
     // A value edit on an imported patch running as a graph reaches it without a rebuild.

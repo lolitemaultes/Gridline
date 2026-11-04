@@ -4,10 +4,13 @@
 //   folder, and the native one under a test HOME), a read-only folder refused; the open project's
 //   references follow a rename or a folder move as one undo step that moves the files back on
 //   undo and again on redo; the browser index and its tags follow.
+//   K-32: paths that differ only in letter case, by the rule (scripted) and on the disk this runs on;
+//   GRIDLINE_TEST_OTHER_VOLUME names a folder on a volume with the other rule (a disk image).
 //   K-16: favourites round trip through the settings file (a restart), favourites-first ordering.
 // Every file operation runs in this test's own temp folder (Hermetic.h).
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -297,6 +300,166 @@ void testFavourites() {
 
 }  // namespace
 
+// K-32, the rule itself: a scripted answer to "does this folder ignore case?", on every system.
+void testCaseRule() {
+#ifdef _WIN32
+  const std::string drive = "C:";
+#else
+  const std::string drive;
+#endif
+  int asked = 0;
+  fileops::setCaseRuleForTests([&asked](const std::string&) {
+    ++asked;
+    return true;
+  });
+  std::string p = drive + "/Proj/DRUMS/Sub Dir/Kick.WAV";
+  expect(fileops::isInside(p, drive + "/proj/drums"), "ignoring case: a folder spelled differently holds the file");
+  expect(!fileops::isInside(drive + "/proj/drumsets/a.wav", drive + "/PROJ/DRUMS"), "ignoring case: a sibling with the same prefix is still not inside");
+  expect(!fileops::isInside(drive + "/proj", drive + "/PROJ/DRUMS"), "ignoring case: a parent is not inside its child");
+  expect(fileops::retargetPath(p, drive + "/proj/drums", drive + "/proj/moved"), "ignoring case: the reference follows a moved folder");
+  expect(fs::path(p) == fs::path(drive + "/proj/moved/Sub Dir/Kick.WAV"), "ignoring case: below the move it keeps its own spelling");
+  p = drive + "/Proj/KICK.wav";
+  expect(fileops::retargetPath(p, drive + "/proj/kick.WAV", drive + "/proj/Snare.wav") && p == drive + "/proj/Snare.wav", "ignoring case: the file itself follows");
+  p = drive + "/Proj/snare.wav";
+  expect(!fileops::retargetPath(p, drive + "/proj/kick.wav", drive + "/proj/Snare.wav") && p == drive + "/Proj/snare.wav", "ignoring case: an unrelated reference keeps its spelling");
+  p = drive + "/a/Loops/x.wav";
+  expect(fileops::retargetPath(p, drive + "/a/Loops", drive + "/a/loops") && fs::path(p) == fs::path(drive + "/a/loops/x.wav"), "a folder's change of case reaches what is inside it");
+  expect(!fileops::retargetPath(p, drive + "/a/loops", drive + "/a/loops"), "... and a reference already spelled so does not count as changed");
+#ifdef _WIN32
+  p = "c:\\Samples\\Kick.wav";
+  expect(fileops::retargetPath(p, "C:\\samples", "D:\\Moved") && p == "D:\\Moved\\Kick.wav", "ignoring case: another drive-letter case follows too");
+  expect(fileops::isInside("c:/Samples/Kick.wav", "C:\\"), "ignoring case: a drive root holds its files");
+#else
+  expect(fileops::isInside("c:/Samples/Kick.wav", "C:/samples"), "ignoring case: drive letters are compared the same way");
+#endif
+  // The volume is only asked when spellings differ, and not once per call.
+  fileops::setCaseRuleForTests([&asked](const std::string&) {
+    ++asked;
+    return true;
+  });
+  asked = 0;
+  for (int k = 0; k < 2000; ++k) {
+    fileops::isInside("/Same/Spelling/x.wav", "/Same/Spelling");
+    fileops::isInside("/Same/Spelling/x.wav", "/Other/Folder");
+    fileops::isInside("/Same/Spelling/x.wav", "/Same/Spellings");
+  }
+  expect(asked == 0, "the same spelling, or another name, never asks the volume");
+  for (int k = 0; k < 2000; ++k) fileops::isInside("/Same/Spelling/x.wav", "/same/spelling");
+  expect(asked == 1, "another spelling asks once for 2000 frames");
+  // A file system that does not ignore case.
+  fileops::setCaseRuleForTests([](const std::string&) { return false; });
+  p = drive + "/Proj/DRUMS/Kick.wav";
+  expect(!fileops::isInside(p, drive + "/proj/drums"), "case-sensitive: another spelling is another folder");
+  expect(!fileops::retargetPath(p, drive + "/proj/drums", drive + "/proj/moved") && p == drive + "/Proj/DRUMS/Kick.wav", "case-sensitive: the other spelling stays");
+  expect(fileops::retargetPath(p, drive + "/Proj/DRUMS", drive + "/Proj/moved"), "case-sensitive: the exact spelling follows");
+  fileops::setCaseRuleForTests({});
+#if !defined(_WIN32) && !defined(__APPLE__)
+  expect(!fileops::isInside("/Proj/DRUMS/Kick.wav", "/proj/drums"), "Linux stays case-sensitive");
+  p = "/Proj/DRUMS/Kick.wav";
+  expect(!fileops::retargetPath(p, "/proj/drums", "/x") && p == "/Proj/DRUMS/Kick.wav", "Linux stays case-sensitive: the reference stays");
+#endif
+#ifdef _WIN32
+  expect(fileops::isInside("C:/Proj/DRUMS/Kick.wav", "c:\\proj\\drums"), "Windows ignores case without asking anything");
+#endif
+}
+
+// `dir` is a scratch folder on the volume under test; what the disk really does decides what is expected.
+void testCaseOnDisk(const fs::path& d, const char* tag) {
+  auto check = [tag](bool ok, const char* name) { expect(ok, (std::string(tag) + ": " + name).c_str()); };
+  touch(d / "CaseProbe");
+  const bool ignores = has(d / "caseprobe");
+  std::printf("# %s: this volume %s case\n", tag, ignores ? "ignores" : "keeps");
+  touch(d / "Drums" / "Sub" / "Kick.wav");
+  touch(d / "Drums" / "Sub" / "Kick.wav.origin.json", "{}");
+  touch(d / "Archive" / ".keep");
+  // A reference with the folder spelled otherwise: what an FL import or an edited project can hold.
+  const std::string spelled = (d / "DRUMS" / "Sub" / "Kick.wav").string();
+  Document doc;
+  doc.reset(songUsing(ignores ? spelled : (d / "Drums" / "Sub" / "Kick.wav").string(), (d / "unused.wav").string()));
+  check(fileops::referencesTo(doc.song(), (d / "Drums").string()) == 1, "references are counted through the other spelling");
+  auto r = fileops::moveInto((d / "Drums").string(), (d / "Archive").string());
+  check(r.ok && has(d / "Archive" / "Drums" / "Sub" / "Kick.wav"), "the folder moved");
+  doc.execute(std::make_unique<fileops::FileMoveCommand>("Moved", r.moves, std::vector<fileops::Move>{r.moves.front()}));
+  check(fs::path(doc.song().channels.back().plugin.data) == d / "Archive" / "Drums" / "Sub" / "Kick.wav", "the reference follows the move");
+  check(has(fs::path(doc.song().channels.back().plugin.data)), "the reference opens the moved file");
+  doc.undo();
+  check(has(d / "Drums" / "Sub" / "Kick.wav") && fileops::referencesTo(doc.song(), (d / "Drums").string()) == 1, "undo: file and reference back");
+  check(fileops::isInside(spelled, (d / "Drums").string()) == ignores, "the other spelling is the same folder only where the volume says so");
+  // Moved "into" the folder it is in, spelled otherwise.
+  r = fileops::moveInto((d / "Drums" / "Sub" / "Kick.wav").string(), (d / "Drums" / "SUB").string());
+  if (ignores) check(r.ok && r.moves.empty() && has(d / "Drums" / "Sub" / "Kick.wav"), "moving into its own folder, spelled otherwise, does nothing");
+  else check(!r.ok, "the other spelling is no folder here");
+  // A change of letter case only: rename, undo, redo, with its sidecar, on disk and in the project.
+  Document doc2;
+  doc2.reset(songUsing((d / "Drums" / "Sub" / "Kick.wav").string(), (d / "unused.wav").string()));
+  r = fileops::rename((d / "Drums" / "Sub" / "Kick.wav").string(), "KICK.wav");
+  auto listed = [&](const char* name) {
+    for (const auto& e : fs::directory_iterator(d / "Drums" / "Sub"))
+      if (e.path().filename() == name) return true;
+    return false;
+  };
+  check(r.ok && listed("KICK.wav") && !listed("Kick.wav"), "a change of case: the disk has the new spelling");
+  check(listed("KICK.wav.origin.json") && !listed("Kick.wav.origin.json") && r.moves.size() == 2, "a change of case: the sidecar goes along");
+  doc2.execute(std::make_unique<fileops::FileMoveCommand>("Renamed", r.moves, std::vector<fileops::Move>{r.moves.front()}));
+  check(doc2.song().channels.back().plugin.data == (d / "Drums" / "Sub" / "KICK.wav").string(), "a change of case: the reference follows");
+  doc2.undo();
+  check(listed("Kick.wav") && !listed("KICK.wav") && listed("Kick.wav.origin.json") && !listed("KICK.wav.origin.json"), "a change of case: undo restores the spelling on disk");
+  check(doc2.song().channels.back().plugin.data == (d / "Drums" / "Sub" / "Kick.wav").string(), "a change of case: undo restores the reference");
+  doc2.redo();
+  check(listed("KICK.wav") && !listed("Kick.wav"), "a change of case: redo");
+  // A different item at the target still blocks an undo, on every file system.
+  std::string err;
+  touch(d / "Other" / "a.wav");
+  touch(d / "Other" / "b.wav");
+  check(!fileops::moveBack({{(d / "Other" / "b.wav").string(), (d / "Other" / "a.wav").string()}}, &err) && has(d / "Other" / "a.wav"), "another item at the target blocks moving back");
+  // The browser index: entries stored in the other spelling follow too.
+  const fs::path cache = d / "ix.json";
+  browse::Index ix;
+  ix.setCacheFile(cache.string());
+  ix.setTags((d / "Tree" / "One.wav").string(), {"keep"});
+  ix.movePath((d / "TREE").string(), (d / "Moved").string());
+  const std::string wanted = ((ignores ? d / "Moved" : d / "Tree") / "One.wav").string();
+  check(!ix.tagsOf(wanted).empty(), "the index follows the other spelling where the volume ignores case");
+}
+
+#if defined(__APPLE__)
+// What folding says against what this volume does, for names beyond ASCII. A name the volume keeps
+// apart must not be taken for one: a reference would go to the wrong file.
+void testFoldingAgainstVolume() {
+  const fs::path d = root / "fold";
+  fs::create_directories(d);
+  touch(d / "CaseProbe");
+  if (!has(d / "caseprobe")) return;
+  struct Pair {
+    const char* a;
+    const char* b;
+  };
+  const Pair pairs[] = {
+      {"\xC3\x84rger", "\xC3\xA4RGER"},        // A diaeresis, both cases
+      {"caf\xC3\xA9", "cafe\xCC\x81"},         // composed, decomposed
+      {"CAF\xC3\x89", "cafe\xCC\x81"},         // and both at once
+      {"\xCE\xA3\xCE\xA1", "\xCF\x83\xCF\x81"},  // Greek
+      {"\xD0\x96", "\xD0\xB6"},                // Cyrillic
+      {"stra\xC3\x9F" "e", "STRASSE"},         // sharp s
+      {"\xC4\xB1", "I"},                       // dotless i
+      {"\xC4\xB0", "i"},                       // dotted capital I
+      {"\xE2\x84\xAA", "k"},                   // Kelvin sign
+      {"\xEF\xAC\x81", "FI"},                  // ligature
+      {"\xCF\x82", "\xCF\x83"},                // final sigma
+      {"a", "b"},
+  };
+  int k = 0;
+  for (const Pair& pr : pairs) {
+    const fs::path cell = d / std::to_string(k++);
+    touch(cell / pr.a);
+    const bool onDisk = has(cell / pr.b);
+    const bool ours = fileops::isInside((cell / pr.b).string(), (cell / pr.a).string());
+    std::printf("# fold pair %d: volume %d, compare %d\n", k, onDisk ? 1 : 0, ours ? 1 : 0);
+    expect(onDisk == ours, ("the comparison agrees with the volume: pair " + std::to_string(k)).c_str());
+  }
+}
+#endif
+
 int main() {
   root = fs::path(test::hermeticTestEnv("k18")) / "files";
   fs::create_directories(root);
@@ -309,5 +472,12 @@ int main() {
   testProjectSide();
   testIndex();
   testFavourites();
+  testCaseRule();
+  testCaseOnDisk(root / "case", "here");
+#if defined(__APPLE__)
+  testFoldingAgainstVolume();
+#endif
+  // A folder on a volume with the other rule, when a run provides one (scripts: a disk image).
+  if (const char* other = std::getenv("GRIDLINE_TEST_OTHER_VOLUME"); other && *other) testCaseOnDisk(fs::path(other) / "k32", "other volume");
   return finish();
 }

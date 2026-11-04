@@ -40,6 +40,10 @@ class TimeGateK3 final : public Effect {
     *bank_ = *factory_;
   }
 
+  // K-41: the reference engine delays its dry path 15 samples while playing (GrossBeatRef.h) and reads
+  // the time path the same 15 behind. States from before report 0 and keep their timing.
+  int latencyFor(const PluginState& s, double) const override { return bparam(s, pp::TgModel) && bparam(s, pp::TgLatencyLaw) ? 15 : 0; }
+
   // Slot trigger from a note (MIDI trigger option): time slots 60..95, volume slots 24..59.
   void note(int pitch, bool on) {
     ref_.note(pitch, on);

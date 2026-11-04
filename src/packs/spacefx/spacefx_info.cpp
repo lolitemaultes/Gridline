@@ -421,6 +421,7 @@ PluginInfo phaser() {
   p.params[VpDelayKeep] = tog("Echo keep pitch", 0);
   p.params[VpDelayTicks] = lin("Echo synced time", "ticks", 1, 768, 48);
   p.params[VpEchoLaw] = ch("Echo law", {"1", "2"}, 0);
+  p.params[VpLatencyLaw] = ch("Latency law", {"1", "2"}, 0);
   p.presets = {{"Classic four", {}},
                {"Deep twelve", {{VpModel, 0.f}, {VpStages, 4.f}, {VpFeedback, 0.6f}, {VpRate, 0.12f}}},
                {"Jet sweep", {{VpModel, 0.f}, {VpStages, 3.f}, {VpFeedback, 0.85f}, {VpWave, 1.f}, {VpRate, 0.08f}, {VpFreqMin, 120.f}, {VpFreqMax, 6000.f}}},

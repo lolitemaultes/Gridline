@@ -283,6 +283,8 @@ class PatchHostGenerator final : public Generator {
   void configure(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx) override {
     j3on_ = j3_.sync(aux.custom.get());  // K-7: graphs wired by hand
     if (j3on_) {
+      if (lastV2_) j3_.exchangeEffects(v2_);  // K-41: the effects inside keep playing
+      lastV2_ = false, lastJ3_ = true;
       j3_.beginBlock();
       st_ = &s;
       ctx_ = ctx;
@@ -297,6 +299,8 @@ class PatchHostGenerator final : public Generator {
     }
     v2on_ = v2_.sync(aux.custom.get());  // J-41: FL Patcher graphs
     if (v2on_) {
+      if (lastJ3_) j3_.exchangeEffects(v2_);
+      lastV2_ = true, lastJ3_ = false;
       st_ = &s;
       ctx_ = ctx;
       gain_ = static_cast<float>(dsp::dbToGain(static_cast<size_t>(PhGain) < s.params.size() ? s.params[PhGain] : 0.0));
@@ -369,6 +373,7 @@ class PatchHostGenerator final : public Generator {
   const PluginState* st_ = nullptr;
   JRuntime j3_;
   bool j3on_ = false;
+  bool lastV2_ = false, lastJ3_ = false;  // the runtime that ran last
   int auxPos_ = 0;
   float auxL_[4][kMaxFrames] = {}, auxR_[4][kMaxFrames] = {};
 };
@@ -385,6 +390,8 @@ class PatchHostEffect final : public Effect {
   void processAux(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx, float* L, float* R,
                   int n) override {
     if (j3_.sync(aux.custom.get())) {  // K-7: graphs wired by hand
+      if (lastV2_) j3_.exchangeEffects(v2_);  // K-41: the effects inside keep playing
+      lastV2_ = false, lastJ3_ = true;
       const float mix = static_cast<size_t>(PhMix) < s.params.size() ? s.params[PhMix] : 1.f;
       const float gain = static_cast<float>(dsp::dbToGain(static_cast<size_t>(PhGain) < s.params.size() ? s.params[PhGain] : 0.0));
       j3_.beginBlock();
@@ -402,6 +409,8 @@ class PatchHostEffect final : public Effect {
       return;
     }
     if (v2_.sync(aux.custom.get())) {  // J-41: FL Patcher graphs
+      if (lastJ3_) j3_.exchangeEffects(v2_);
+      lastV2_ = true, lastJ3_ = false;
       const float mix = static_cast<size_t>(PhMix) < s.params.size() ? s.params[PhMix] : 1.f;
       const float gain = static_cast<float>(dsp::dbToGain(static_cast<size_t>(PhGain) < s.params.size() ? s.params[PhGain] : 0.0));
       for (int done = 0; done < n;) {
@@ -494,6 +503,7 @@ class PatchHostEffect final : public Effect {
   PatchRuntime rt_;
   PatchV2Runtime v2_;
   JRuntime j3_;
+  bool lastV2_ = false, lastJ3_ = false;  // the runtime that ran last
   float dryL_[256] = {}, dryR_[256] = {};
 };
 

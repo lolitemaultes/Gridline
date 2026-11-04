@@ -76,6 +76,7 @@ struct CpuStat {
 struct ChannelRuntime {
   std::string type;
   std::unique_ptr<Generator> gen;
+  bool warmed = false;  // UI thread: the builder ran warmUp on it (never read by the audio thread)
   float curL = 0, curR = 0;  // smoothed strip gains
   float fromL = 0, fromR = 0;  // gains at the start of the current control block (links)
   bool primed = false;
@@ -154,6 +155,7 @@ struct LinkRuntime {
 struct EffectRuntime {
   std::string type;
   std::unique_ptr<Effect> fx;
+  bool warmed = false;  // UI thread: the builder ran warmUp on it (never read by the audio thread)
   std::atomic<float> meter{0};
   std::atomic<float> input{-120};
   std::atomic<float> bands[4] = {};
@@ -220,7 +222,9 @@ struct ClipVoice {
   float out[2][kOut] = {};
 };
 // UI thread (allocates). J-157: Rubber Band clips get its realtime engine.
-std::shared_ptr<ClipVoice> makeClipVoice(double sampleRate, stretch::Engine engine = stretch::Engine::Stretch);
+// sourceRate: the clip's sample rate (0: the engine's). The voice works in source frames per output
+// frame, so its range follows that rate and a 192 kHz file keeps the range a 44.1 kHz one has.
+std::shared_ptr<ClipVoice> makeClipVoice(double sampleRate, stretch::Engine engine = stretch::Engine::Stretch, double sourceRate = 0);
 
 // J-196: a value the UI thread may change in a playing Program (relaxed
 // atomic; the audio thread reads it once per block). Copies take the value.
@@ -576,6 +580,10 @@ class ProgramBuilder {
   // build; the caller rebuilds when SampleCache::generation() changes. Off by
   // default (offline renders and tools need every sample).
   void setAsyncSamples(bool on) { asyncSamples_ = on; }
+  // Instruments and effects that size their buffers in their first block get
+  // that block here, on the builder's thread, before the audio thread sees
+  // them. Off only in the test that proves it does not change the sound.
+  void setWarmUp(bool on) { warmUp_ = on; }
   // J-196: while an edit goes on (a knob or handle held), builds start no
   // new clip renders (pitch, stretch): renders already made still play, the
   // realtime stretch plays the rest. deferredRenders(): the last build left
@@ -647,6 +655,7 @@ class ProgramBuilder {
   double sampleRate_ = 44100.0;
   bool pdc_ = true;
   bool asyncSamples_ = false;
+  bool warmUp_ = true;
   bool deferRenders_ = false, deferred_ = false, voicesPending_ = false;
   std::weak_ptr<const Program> last_;
   uint64_t builds_ = 0, patches_ = 0, voicesMade_ = 0, voicesReused_ = 0;

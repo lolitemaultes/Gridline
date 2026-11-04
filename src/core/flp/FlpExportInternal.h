@@ -100,6 +100,9 @@ struct Exporter {
   double flValue(uint32_t target, double glNorm);  // NaN when unknown
   // Gridline normalized value the importer makes of an FL value for a target (NaN: unknown).
   double glValue(uint32_t target, double flValue);
+  // K-49: the same on the target's whole scale, the one an automation clip's range is on (FlClipRange).
+  double flClipValue(uint32_t target, double glNorm);
+  double glClipValue(uint32_t target, double flValue);
   // Import-side view used to resolve targets with the importer's own logic.
   struct Resolver;
   std::shared_ptr<Resolver> resolver;

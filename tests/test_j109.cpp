@@ -177,7 +177,6 @@ void testPanicClearsTails() {
   rig.eng.play();
   rig.eng.noteOn(ch, 60, 1.0f);
   rig.run(secs(0.3));
-  rig.resetAllocs();  // (only Stop and the panic are measured here)
   rig.eng.noteOff(ch, 60);
   rig.run(secs(0.3));
   expect(!rig.eng.stopPressed(), "tails: first Stop releases");

@@ -25,10 +25,18 @@ std::string checkName(const std::string& name);
 const std::vector<std::string>& sidecarSuffixes();
 std::vector<std::string> sidecarsOf(const std::string& file);
 
-// True when `p` is `dir` or lies inside it (compared lexically, normalised).
+// True when `p` is `dir` or lies inside it (compared lexically, normalised). Spellings that differ
+// only in letter case are one path where the file system says so: Windows always, macOS when the
+// volume ignores case, Linux never. The same goes for retargetPath and everything built on them.
 bool isInside(const std::string& p, const std::string& dir);
+// For paths already normalised: how many bytes of `p` spell `dir` (`p.size()` when `p` is `dir`,
+// else `p[result]` is the separator after it), or npos when `p` is not `dir` nor inside it.
+size_t matchedLength(const std::string& p, const std::string& dir);
+// Tests: `rule` answers "does this folder's file system ignore case?" instead of the system (empty:
+// the system again); remembered answers are forgotten.
+void setCaseRuleForTests(std::function<bool(const std::string&)> rule);
 // `p` equal to `from`, or inside folder `from`, becomes the same path under
-// `to`. Returns true when it changed.
+// `to` (the part below `from` keeps its spelling). Returns true when it changed.
 bool retargetPath(std::string& p, const std::string& from, const std::string& to);
 // Every file reference of the song through the moves (each `from` -> `to`).
 // Returns how many references changed.

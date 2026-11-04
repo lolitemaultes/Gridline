@@ -13,7 +13,7 @@
 //       u32 fade flags @56, f32 clip pitch (semitones, PL-13) @60, f64 stretch factor @64,
 //       u32 @72 bit 0 clip reverse (PL-13). 88-byte records (FL 2026) add 8
 //       bytes after these (zero in every record seen so far; not read).
-//   234 automation points: see FlpAutomation.cpp.
+//   234 automation points: see FlpAutomation.cpp; their range: FlClipRange (Flp.h).
 //   227 automation link: u16 source channel @2, u32 target @8.
 //       Target: 0x40000005 tempo; < 0x2000 << 16: channel (high word) +
 //       parameter (low word: 0 volume, 1 pan, 4 pitch, 0x10 pan offset,
@@ -35,7 +35,9 @@
 #include "../Fades.h"
 #include "../Params.h"
 #include "../PluginParams.h"
+#include "../../engine/Sample.h"
 #include "../../engine/TimeStretch.h"
+#include "../ClipRate.h"
 #include "Flp.h"
 #include "FlpFx.h"
 #include "../TrackIconSet.h"
@@ -94,6 +96,15 @@ class Importer {
   std::map<int, ObjectId> automations_;    // FL channel → AutomationClip
   std::map<int, std::string> autoNames_;
   std::map<ObjectId, int> channelCents_;   // audio clip channel → pitch knob (cents), applied per clip
+  // K-49: an audio clip channel stretched to a time: the sample spans that many
+  // beats at whatever the tempo is, so its clips follow the tempo.
+  struct ChannelFit {
+    double sourcePerTick = 0;  // source seconds per tick (time and multiplier, before the clip's stretch)
+    double timeStretch = 1;    // the channel's stored time stretch
+    bool beyondRange = false;  // K-50: the time needs more than the stored stretch can say
+  };
+  std::map<ObjectId, ChannelFit> channelFits_;
+  bool tempoAutomated_ = false;  // an automation clip drives the tempo
 
   void importAudioChannels();
   void importAutomationChannels();
@@ -209,13 +220,16 @@ void Importer::importAudioChannels() {
       set(pp::SmpPitchShift, static_cast<float>(std::clamp(cents, -1200, 1200)));
       // 0 = resample; FL's other methods keep the pitch apart from the speed (J-87: closest Gridline mode).
       set(pp::SmpStretchMode, static_cast<float>(stretch::modeFromFl(mode)));
-      double tf = std::pow(2.0, mul / 10000.0);
+      const double mulFactor = std::pow(2.0, mul / 10000.0);
+      double tf = mulFactor;
+      double fitBeats = 0;
       // J-177: the channel's "time" fits the sample to its beats at the project
       // tempo, on top of the multiplier: Resample changes the pitch with it, the
       // other methods keep it (the clips' source windows stay in sample time).
       if (const double beats = channelFitBeats(*e); beats > 0) {
         if (const double f = channelFitStretch(c_, ch->plugin.data, beats, 1.0); f > 0) {
           tf *= f;
+          fitBeats = beats;
           ++fitted;
         } else {
           ++unfitted;
@@ -223,6 +237,9 @@ void Importer::importAudioChannels() {
       }
       if (tf < 0.25 || tf > 4.0) ++clamped;
       if (tf != 1.0) set(pp::SmpTimeStretch, static_cast<float>(std::clamp(tf, 0.25, 4.0)));
+      if (fitBeats > 0)
+        if (const SamplePtr smp = sampleCache().get(ch->plugin.data))
+          channelFits_[id] = ChannelFit{smp->seconds() / (fitBeats * std::max(1, s_.ppq)) / mulFactor, static_cast<double>(prm[pp::SmpTimeStretch]), tf < 0.25 || tf > 4.0};
     }
     if (const Event* e = find(evs, 70)) set(pp::SmpReverse, (e->value() & 2) ? 1.f : 0.f);
     if (const Event* e = find(evs, 219); e && e->size >= 12 && e->i32(8) != 0) channelCents_[id] = e->i32(8);
@@ -258,7 +275,7 @@ void Importer::importAutomationChannels() {
 
 bool Importer::resolveTarget(uint32_t target, Target& t) {
   const uint32_t hi = target >> 16, lo = target & 0xFFFF;
-  if (target == 0x40000005u) {  // tempo; FL's tempo clips span 60 … 180 BPM
+  if (target == kFlTempoTarget) {  // tempo; a new FL tempo clip spans 60 … 180 BPM (a clip's own range: resolveFlClipTarget)
     t.id = songParam(SongParam::Tempo);
     auto d = describeParam(s_, t.id);
     t.min = static_cast<float>(d->toNormalized(60.0));
@@ -412,19 +429,24 @@ void Importer::importTargets() {
     if (!a || linked.count(src)) continue;  // one target per clip (FL can link more; first wins)
     linked.insert(src);
     c_.automationTargets[src] = e.u32(8);
+    tempoAutomated_ = tempoAutomated_ || e.u32(8) == kFlTempoTarget;
     Target t;
-    if (!resolveTarget(e.u32(8), t)) {
+    FlTarget whole;
+    if (!resolveTarget(e.u32(8), t) || !resolveFlClipTarget(c_, e.u32(8), whole)) {
       ++bad;
       c_.report.warn("automation \"" + a->name + "\": target not mapped (" + (t.what.empty() ? "unknown" : t.what) + ")");
       continue;
     }
-    a->owner = t.id.owner;
-    a->index = t.id.index;
-    a->min = std::clamp(t.min, 0.0f, 1.0f);
-    a->max = std::clamp(t.max, 0.0f, 1.0f);
-    if (t.convert) {
-      for (auto& p : a->points) p.value = static_cast<float>(std::clamp(t.convert(p.value), 0.0, 1.0));
+    // K-49: the clip's own range, kept with the channel (a point x is lo + x * (hi - lo) on the target's scale).
+    const FlClipRange range = flClipRangeOf(e.u32(8), find(c_.sec.channels[src], 219));
+    a->owner = whole.id.owner;
+    a->index = whole.id.index;
+    if (whole.convert) {
+      for (auto& p : a->points) p.value = static_cast<float>(std::clamp(whole.convert(range.at(p.value)), 0.0, 1.0));
       a->min = 0, a->max = 1;
+    } else {
+      a->min = static_cast<float>(std::clamp(whole.toNormalized(range.lo), 0.0, 1.0));
+      a->max = static_cast<float>(std::clamp(whole.toNormalized(range.hi), 0.0, 1.0));
     }
     ++ok;
   }
@@ -550,7 +572,7 @@ void Importer::importTracksAndClips() {
           if (e.u16(o + 12) > 198) trackBase = 499;
   }
   int lastUsed = -1;
-  int patClips = 0, audioClips = 0, autoClips = 0, muted = 0, offsets = 0, other = 0;
+  int patClips = 0, audioClips = 0, autoClips = 0, muted = 0, offsets = 0, other = 0, fitClips = 0, fitWindows = 0, derivedEnds = 0;
   std::map<int, ObjectId> clipGroups;
   for (const auto& e : evs) {
     if (e.id != 233) continue;
@@ -634,6 +656,38 @@ void Importer::importTracksAndClips() {
           cl.speedPitch = cl.pitch;
           if (const Channel* sc = s_.channel(ch->second); sc && sc->plugin.params.size() > static_cast<size_t>(pp::SmpPitchShift))
             cl.speedPitch += sc->plugin.params[pp::SmpPitchShift];
+          const Channel* sourceChannel = s_.channel(ch->second);
+          const double windowSeconds = eo > so ? (static_cast<double>(eo) - std::max(0.0, static_cast<double>(so))) / 1000.0 : 0.0;
+          const int64_t recordLength = e.u32(o + 8);
+          if (auto fit = channelFits_.find(ch->second); fit != channelFits_.end() && sourceChannel) {
+            // K-49: under tempo automation a clip stretched to a time spans its ticks
+            // whatever the tempo is (at a constant tempo the channel's stretch alone
+            // does that). FL's own window says the same to within a tick; where it
+            // disagrees by more (the file is not the one the time was set for) the
+            // window is what the clip plays. A channel that resamples also moves by its pitch.
+            // K-50: a time beyond the stored stretch's range takes this path at any tempo: the
+            // clip's rate carries what the stretch cannot, and a resampled pitch follows that rate.
+            const double stretchNow = std::max(1e-6, cl.stretch);
+            const double pitchSpeed = clipRate(*sourceChannel, cl).resample ? std::pow(2.0, static_cast<double>(cl.speedPitch) / 1200.0) : 1.0;
+            double perTick = fit->second.sourcePerTick * pitchSpeed / stretchNow;
+            bool windowDisagrees = false;
+            if (windowSeconds > 0 && recordLength >= 24) {
+              const double said = windowSeconds / static_cast<double>(recordLength);
+              if (std::fabs(said / perTick - 1.0) > 0.05) perTick = said, windowDisagrees = true, ++fitWindows;
+            }
+            const double bpm = 60.0 / (perTick * std::max(1, s_.ppq) * stretchNow * fit->second.timeStretch);
+            if ((tempoAutomated_ || windowDisagrees || fit->second.beyondRange) && std::isfinite(bpm) && bpm > 0) {
+              cl.syncBpm = std::min(bpm, 1000.0);
+              cl.tempoLock = true;
+              ++fitClips;
+            }
+          } else if (tempoAutomated_ && windowSeconds > 0 && sourceChannel) {
+            // K-49: the end FL stores is the clip's length turned into milliseconds at
+            // the project tempo, not an edit: under tempo automation the clip's ticks
+            // last longer or shorter, and it is the ticks that end it.
+            const double atProjectTempo = windowSeconds / std::max(1e-6, clipRate(*sourceChannel, cl).speed) * s_.tempo / 60.0 * s_.ppq;
+            if (std::fabs(atProjectTempo - static_cast<double>(recordLength)) <= std::max(1.5, 0.002 * atProjectTempo)) cl.audioEnd = 0, ++derivedEnds;
+          }
           ++audioClips;
         } else {
           ++other;
@@ -652,6 +706,9 @@ void Importer::importTracksAndClips() {
   s_.tracks.assign(tracks.begin(), tracks.begin() + nTracks);
   c_.report.counts["pattern clips"] = patClips;
   if (audioClips) c_.report.counts["audio clips"] = audioClips;
+  if (fitClips) c_.report.counts["audio clips following the tempo (stretched to a time)"] = fitClips;
+  if (fitWindows) c_.report.counts["audio clips whose window disagrees with the channel's time (window used)"] = fitWindows;
+  if (derivedEnds) c_.report.counts["audio clips ended by their length under tempo automation"] = derivedEnds;
   if (autoClips) c_.report.counts["automation clips"] = autoClips;
   if (muted) c_.report.counts["muted clips"] = muted;
   if (offsets) c_.report.counts["clips with a start offset"] = offsets;
@@ -725,8 +782,10 @@ void importArrangement(Context& c) {
 
 void settleImportedFades(Context& c) {
   Song& s = c.song;
+  // K-49: FL turns a crossfade's overlap into milliseconds at the project tempo
+  // (also under tempo automation), so that is where a derived one matches.
   TempoMap tm;
-  tm.build(s);
+  tm.setConstant(s.tempo, s.ppq);
   int derived = 0, kept = 0;
   auto settle = [&](std::vector<Clip>& clips) {
     std::vector<Clip> probe = clips;
@@ -803,6 +862,30 @@ bool remoteLinkToController(const FlRemoteLink& r, const FlTarget& t, Controller
                                         RemoteButton::Value};
   l.button = kMode[std::clamp(r.noteMode, 0, 4)];
   out = l;
+  return true;
+}
+
+FlClipRange flClipDefaultRange(uint32_t target) {
+  if (target == kFlTempoTarget) return {1250.0 / 12800.0, 4250.0 / 12800.0};
+  if (target >> 16 < 0x2000 && (target & 0xFFFF) == 0x04) return {4800.0 / 12800.0, 8000.0 / 12800.0};
+  return {};
+}
+
+FlClipRange flClipRangeOf(uint32_t target, const Event* levels) {
+  if (!levels || levels->size < 8) return flClipDefaultRange(target);
+  const double lo = levels->i32(0) / 12800.0, hi = levels->i32(4) / 12800.0;
+  if (lo == hi) return flClipDefaultRange(target);  // no range stored
+  return {std::clamp(lo, 0.0, 1.0), std::clamp(hi, 0.0, 1.0)};
+}
+
+bool resolveFlClipTarget(Context& c, uint32_t target, FlTarget& out) {
+  if (!resolveFlTarget(c, target, out)) return false;
+  const bool pitch = target >> 16 < 0x2000 && (target & 0xFFFF) == 0x04;
+  if (target != kFlTempoTarget && !pitch) return true;
+  const auto d = describeParam(c.song, out.id);
+  if (!d) return false;
+  out.min = static_cast<float>(d->toNormalized(pitch ? -8.0 : 10.0));
+  out.max = static_cast<float>(d->toNormalized(pitch ? 8.0 : 522.0));
   return true;
 }
 

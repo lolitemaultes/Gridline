@@ -94,6 +94,7 @@ PluginInfo vocoder() {
   p.params[VcLowW] = lg("Low band (wide)", "Hz", 10, 20000, 90);
   p.params[VcHighW] = lg("High band (wide)", "Hz", 10, 20000, 11000);
   p.params[VcAttackW] = lg("Attack (wide)", "ms", 0.5, 1000, 3);
+  p.params[VxLatencyLaw] = ch("Latency law", {"1", "2", "3"}, 0);
   p.legacyModelParam = VxModel;
   p.presets = {
       {"Talk box", {}},

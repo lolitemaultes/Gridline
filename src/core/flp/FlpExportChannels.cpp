@@ -476,7 +476,9 @@ namespace {
 // f64 beats after the previous point, f64 value, f32 tension, u8 curve mode,
 // 2 bytes, u8 tension sign 255 / 1 / 0), with the template's header word,
 // trailer and the original numbers where they still decode to the point.
-Bytes automationPoints(const AutomationClip& a, Exporter& x, const RawEvent* old) {
+// K-49: the point values sit in the clip's range, which goes back in the levels (219)
+// with them: the template's while every point fits, else the target's whole scale.
+Bytes automationPoints(const AutomationClip& a, Exporter& x, const RawEvent* old, const RawEvent* levels, FlClipRange& range) {
   Bytes trailer = automationTrailer();
   uint8_t hdrFlag = 0;
   uint32_t hdrB = 64;
@@ -495,6 +497,19 @@ Bytes automationPoints(const AutomationClip& a, Exporter& x, const RawEvent* old
   uint32_t target = 0;
   const bool hasTarget = x.flTarget(ParamId{a.owner, a.index}, target);
   const int ppq = std::max(1, x.s.ppq);
+  auto normOf = [&](const AutoPoint& p) { return a.min + static_cast<double>(p.value) * (a.max - a.min); };
+  range = FlClipRange{};
+  if (hasTarget) {
+    const Event lv = levels ? levels->view() : Event{};
+    range = flClipRangeOf(target, levels ? &lv : nullptr);
+    for (const AutoPoint& p : a.points) {
+      const double v = (x.flClipValue(target, normOf(p)) - range.lo) / (range.hi - range.lo);
+      if (std::isfinite(v) && (v < -1e-6 || v > 1.0 + 1e-6)) {
+        range = FlClipRange{};
+        break;
+      }
+    }
+  }
   ByteWriter b;
   b.u32(1);
   b.u32(hdrB);
@@ -511,10 +526,10 @@ Bytes automationPoints(const AutomationClip& a, Exporter& x, const RawEvent* old
     const Tick d = p.pos - prev;
     prev = p.pos;
     if (!(haveOld && std::llround(getF64(r, 0) * ppq) == d)) putF64(r, 0, static_cast<double>(d) / ppq);
-    const double norm = a.min + static_cast<double>(p.value) * (a.max - a.min);
+    const double norm = normOf(p);
     bool keep = false;
     if (haveOld && hasTarget) {
-      const double g = x.glValue(target, getF64(r, 8));
+      const double g = x.glClipValue(target, range.at(getF64(r, 8)));
       keep = std::isfinite(g) && static_cast<float>(g) == static_cast<float>(norm);
     }
     if (!keep) {
@@ -522,10 +537,8 @@ Bytes automationPoints(const AutomationClip& a, Exporter& x, const RawEvent* old
       // sets the clip range to the target's), else the law is inverted.
       double v = static_cast<double>(p.value);
       if (hasTarget) {
-        const double g = x.glValue(target, v);
-        if (!(std::isfinite(g) && static_cast<float>(g) == static_cast<float>(norm) && a.min == static_cast<float>(x.glValue(target, 0.0)) &&
-              a.max == static_cast<float>(x.glValue(target, 1.0))))
-          v = x.flValue(target, norm);
+        const double g = x.glClipValue(target, range.at(v));
+        if (!(std::isfinite(g) && std::fabs(g - norm) <= 1e-6)) v = (x.flClipValue(target, norm) - range.lo) / (range.hi - range.lo);
       }
       if (!std::isfinite(v)) v = p.value;
       putF64(r, 8, v);
@@ -560,7 +573,12 @@ void Exporter::writeChannel(int fl) {
     if (a) {
       if (RawEvent* e = ce.get(203)) e->data = utf16z(a->name);
       ce.setValue(128, flColor(a->color));
-      if (RawEvent* e = ce.get(234)) e->data = automationPoints(*a, *this, findRaw(tmpl, 234));
+      FlClipRange range;
+      if (RawEvent* e = ce.get(234)) e->data = automationPoints(*a, *this, findRaw(tmpl, 234), findRaw(tmpl, 219), range);
+      if (RawEvent* e = ce.get(219); e && e->data.size() >= 8) {
+        putI32(e->data, 0, static_cast<int32_t>(std::lround(range.lo * 12800.0)));
+        putI32(e->data, 4, static_cast<int32_t>(std::lround(range.hi * 12800.0)));
+      }
       if (a->loop > 0) rep.warn("automation '" + a->name + "': looped content is written once (FL loops automation clips by their length)");
     }
     for (const auto& e : ce.ev) w.raw(e);

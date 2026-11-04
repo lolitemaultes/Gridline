@@ -189,6 +189,10 @@ class JRuntime {
   JRuntime();
   ~JRuntime();
   bool sync(const AuxData* aux);  // adopts a prepared graph; false when `aux` is not version 3
+  // K-41: an edit moved an imported patch between the two runtimes (its latency left or reached
+  // zero, see patchV2RunsAsGraph). The effects inside change places, so they keep playing.
+  // Module k of the patch is node kJFirstId + k here. Audio thread, no allocation.
+  void exchangeEffects(PatchV2Runtime& v2);
   void noteOn(uint32_t id, double pitch, float velocity, const NoteProps& props);
   void noteOff(uint32_t id);
   void midi(uint8_t status, uint8_t d1, uint8_t d2);

@@ -1,5 +1,6 @@
 // Gridline — browser content model (see BrowserIndex.h).
 #include "BrowserIndex.h"
+#include "FileOps.h"
 #include "RemoteFs.h"
 #include "Platform.h"
 #include <algorithm>
@@ -879,9 +880,10 @@ void Index::movePath(const std::string& fromIn, const std::string& toIn) {
       hit = true;
       return to;
     }
-    if (p.size() > from.size() && p.compare(0, from.size(), from) == 0 && p[from.size()] == '/') {
+    const size_t n = fileops::matchedLength(p, from);  // K-32: another spelling of one path on this file system
+    if (n != std::string::npos) {
       hit = true;
-      return to.empty() ? std::string() : to + p.substr(from.size());
+      return to.empty() ? std::string() : to + p.substr(n);
     }
     return p;
   };
