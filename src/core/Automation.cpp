@@ -1,4 +1,5 @@
 #include "Automation.h"
+#include <functional>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -339,6 +340,53 @@ double TempoMap::tickAfterSamples(double t0, double samples, double sampleRate) 
   double cand = t0 + samples / (sampleRate * 60.0 / (segs_[i].bpm * ppq_));
   if (segAt(cand) == i) return cand;
   return tickAtSeconds(secondsAt(t0) + samples / sampleRate);
+}
+
+// K-62: FL moves the control along the clip's curve and the plugin applies its own law to where the
+// control is; points converted one by one would glide in the law's scale instead. A segment that
+// strays from FL's values (over 0.1 dB, floor -80 dB) becomes straight pieces that follow them.
+void followFlKnobLaw(const std::vector<AutoPoint>& fl, std::vector<AutoPoint>& out, const std::function<double(double)>& law) {
+  if (fl.size() < 2 || fl.size() != out.size()) return;
+  const auto close = [](double a, double b) {
+    const double e = std::fabs(a - b);
+    return e <= 1e-4 || e <= 0.0116 * std::max(std::fabs(a), std::fabs(b));
+  };
+  const auto trueAt = [&](size_t k, double u) {
+    return law(static_cast<double>(fl[k - 1].value) + (static_cast<double>(fl[k].value) - fl[k - 1].value) * flAutoShape(fl, k, u));
+  };
+  std::vector<AutoPoint> res;
+  res.push_back(out.front());
+  for (size_t k = 1; k < fl.size(); ++k) {
+    const double va = out[k - 1].value, vb = out[k].value;
+    bool fits = true;
+    for (int i = 1; i < 16 && fits; ++i) {
+      const double u = i / 16.0;
+      fits = close(trueAt(k, u), va + (vb - va) * flAutoShape(out, k, u));
+    }
+    if (fits || fl[k].pos <= fl[k - 1].pos) {
+      res.push_back(out[k]);
+      continue;
+    }
+    // Straight pieces, each halved until its middle is close.
+    std::function<void(double, double, double, double, int)> split = [&](double u0, double y0, double u1, double y1, int depth) {
+      const double um = 0.5 * (u0 + u1), ym = trueAt(k, um);
+      if (depth < 9 && (depth < 1 || !close(ym, 0.5 * (y0 + y1)))) {
+        split(u0, y0, um, ym, depth + 1);
+        split(um, ym, u1, y1, depth + 1);
+        return;
+      }
+      AutoPoint p;
+      const double at = static_cast<double>(fl[k - 1].pos) + static_cast<double>(fl[k].pos - fl[k - 1].pos) * u1;
+      p.pos = static_cast<Tick>(std::floor(at));
+      p.frac = static_cast<float>(at - std::floor(at));
+      p.value = static_cast<float>(y1);
+      p.tension = 0.f;
+      p.shape = AutoShape::Curve;
+      res.push_back(p);
+    };
+    split(0.0, va, 1.0, trueAt(k, 1.0), 0);
+  }
+  out = std::move(res);
 }
 
 }  // namespace gl

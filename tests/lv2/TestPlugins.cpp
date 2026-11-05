@@ -193,6 +193,7 @@ void synthRun(LV2_Handle h, uint32_t n) {
     if (ev->body.type == s->midiEvent) {
       const uint8_t* m = static_cast<const uint8_t*>(LV2_ATOM_BODY_CONST(&ev->body));
       const uint8_t st = m[0] & 0xF0;
+      if (st == 0x90 || st == 0x80) gProbe.notes.add(st == 0x90 && m[2] > 0, m[1], -1, static_cast<int>(ev->time.frames));
       if (st == 0x90 && m[2] > 0) {
         if (m[1] == 1) std::abort();  // crash on purpose (sandbox tests)
         s->key = m[1];
@@ -214,6 +215,7 @@ void synthRun(LV2_Handle h, uint32_t n) {
     }
   }
   render(pos, n);
+  gProbe.notes.frames += n;
   lv2_atom_forge_pop(&s->forge, &frame);
 }
 void synthFree(LV2_Handle h) { delete static_cast<Synth*>(h); }

@@ -879,7 +879,7 @@ void install(SDL_Window* mainWindow, SDL_GLContext gl, const Options& o) {
   S.available = !wayland && (io.BackendFlags & ImGuiBackendFlags_PlatformHasViewports) && (io.BackendFlags & ImGuiBackendFlags_RendererHasViewports) &&
                 pio.Platform_CreateWindow && pio.Platform_GetWindowPos;
   if (wayland)
-    S.reason = i18n::N_("Not available on Wayland. Start Gridline with SDL_VIDEODRIVER=x11 to use it through XWayland.");
+    S.reason = i18n::N_("Not available on Wayland: detached windows need XWayland.");
   else if (!S.available)
     S.reason = i18n::N_("Not available with this display system.");
   // J-114: detached windows are ordinary decorated OS windows (the OS moves and resizes them);

@@ -311,14 +311,16 @@ class SynthProcessor final : public RefCounted, public IComponent, public IAudio
       while (ei < evCount && ev->getEvent(ei, e) == kResultOk && e.sampleOffset <= i) {
         ++ei;
         if (e.type == Event::kNoteOnEvent) {
+          gProbe.notes.add(true, e.noteOn.pitch, e.noteOn.noteId, e.sampleOffset);
           noteId_ = e.noteOn.noteId;
           pitch_ = e.noteOn.pitch + e.noteOn.tuning / 100.0;
           bend_ = 0;
           amp_ = e.noteOn.velocity;
           phase_ = 0;
           ++notesPlayed_;
-        } else if (e.type == Event::kNoteOffEvent && (e.noteOff.noteId == noteId_ || e.noteOff.noteId == -1)) {
-          amp_ = 0;
+        } else if (e.type == Event::kNoteOffEvent) {
+          gProbe.notes.add(false, e.noteOff.pitch, e.noteOff.noteId, e.sampleOffset);
+          if (e.noteOff.noteId == noteId_ || e.noteOff.noteId == -1) amp_ = 0;
         } else if (e.type == Event::kNoteExpressionValueEvent && e.noteExpressionValue.typeId == kTuningTypeID &&
                    e.noteExpressionValue.noteId == noteId_) {
           bend_ = 240.0 * (e.noteExpressionValue.value - 0.5);
@@ -339,6 +341,7 @@ class SynthProcessor final : public RefCounted, public IComponent, public IAudio
       L[i] = R[i] = s;
       if (SL) SL[i] = SR[i] = sub;
     }
+    gProbe.notes.frames += d.numSamples;
     return kResultOk;
   }
   // IConnectionPoint: greets the controller with a message on connect.

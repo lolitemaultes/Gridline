@@ -24,6 +24,8 @@ def main():
     for run in range(1, repeats + 1):
         if kind != "full":
             jobs.append(job("staging-9.21", "xvfb-openbox", 1, run, real=REAL, control=1))
+            jobs.append(job("staging-9.21", "weston-env", 1, run, modes="inproc"))
+            jobs.append(job("staging-9.21", "weston-wayland", 1, run, modes="inproc"))
             continue
         for wine in WINES:
             for display in ("xvfb-openbox", "xvfb-bare", "weston-x11"):
@@ -33,6 +35,7 @@ def main():
                     control = 1 if scale == 1 else 0
                     jobs.append(job(wine, display, scale, run, real=REAL if first else "", control=control))
             jobs.append(job(wine, "weston-wayland", 1, run, modes="inproc"))
+            jobs.append(job(wine, "weston-env", 1, run, modes="inproc"))
         for wine in BOUNDARY:
             jobs.append(job(wine, "xvfb-openbox", 1, run, real=REAL, control=1))
     print("matrix=" + json.dumps(jobs))

@@ -2,7 +2,8 @@
 // project turned up. A channel stretched to a time beyond the sampler's x0.25..x4 range still spans
 // that time and, when it resamples, is heard at that speed's pitch. A clip whose source runs at a
 // much higher sample rate than the engine keeps its pitch through the realtime stretch, which plays
-// until the clip's offline render is ready. Every file here is synthetic.
+// until the clip's offline render is ready. Every file here is synthetic. These are constant tempos;
+// under tempo automation a channel that resamples holds its rate instead (test_k58.cpp).
 #include <algorithm>
 #include <cmath>
 #include <cstring>

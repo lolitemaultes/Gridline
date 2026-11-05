@@ -238,6 +238,8 @@ class Generator {
   void process(const PluginState& state, const ChannelAux& aux, const ProcessContext& ctx, float* L, float* R,
                int n);
   virtual bool active() const = 0;  // any voice sounding
+  // K-64: no voice sounding and no event waiting for the next block.
+  bool idle() const { return count_ == 0 && !active(); }
   // J-112: the instrument plays on its own (its own sequence, not notes it is
   // given: Seltmann's latched pattern). Audio thread, after a block; the
   // engine publishes it as plugin playback (AudioEngine::pluginPlayback).

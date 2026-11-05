@@ -9,6 +9,7 @@
 // against the shipped demo projects (see format notes).
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include "../PluginParams.h"
 #include "../../engine/Sample.h"
@@ -36,6 +37,25 @@ double envTime(int32_t v) {
 }  // namespace
 
 double flEnvTime(int32_t v) { return envTime(v); }
+
+uint32_t flNativeExportBuild(const std::string& version) {
+  if (std::count(version.begin(), version.end(), '.') != 3) return 0;
+  const unsigned long build = std::strtoul(version.c_str() + version.rfind('.') + 1, nullptr, 10);
+  return build > 1 ? static_cast<uint32_t>(build - 1) : 0;
+}
+
+// K-63: the level of a note on an FL sampler channel: (11^x - 1) / 10 for
+// channel volume x, times 0.61 at velocity 100.
+// Gridline's strip plays (x / 0.78)^2 and the sampler its volume times v / 127,
+// so the sampler's volume carries the difference; the channel keeps FL's x (it
+// goes back to FL as it was). Under x = 0.13 the difference no longer fits the
+// knob's range; such a channel plays at about -33 dB or less, slightly quiet.
+double flSamplerVolume(double x) {
+  if (!(x > 0)) return 0.8;
+  const double fl = (std::pow(11.0, x) - 1.0) / 10.0 * (100.0 / 128.0) * (100.0 / 128.0);
+  const double strip = (x / 0.78) * (x / 0.78);
+  return std::clamp(fl / (strip * (100.0 / 127.0)), 0.0, 1.0);
+}
 
 // J-177: the channel's "time" (215 @96): the sample (its region) is stretched
 // to span this many beats. FL 2026 stores an f32, earlier versions a u32 (as
@@ -138,6 +158,11 @@ void applyInsToSampler(const ChannelIns& ins, PluginState& s) {
 
 void importChannels(Context& c) {
   Song& s = c.song;
+  // K-63: a project Gridline wrote from its own song plays its samplers at Gridline's levels.
+  bool nativeExport = false;
+  if (const uint32_t mark = flNativeExportBuild(c.file.version); mark != 0)
+    for (const auto& e : c.sec.project)
+      if (e.id == 159) nativeExport = e.value() == mark;
   // Display groups: names (231, project-wide, in order) indexed by 145 per channel.
   for (const auto& e : c.sec.project)
     if (e.id == 231) s.channelGroups.push_back(e.text());
@@ -311,6 +336,7 @@ void importChannels(Context& c) {
     if (type == 0) {
       using namespace pp;
       PluginState& sp = ch.plugin;
+      if (!nativeExport) setParam(sp, SmpVolume, flSamplerVolume(ch.gain));  // K-63
       if (const Event* e = find(evs, 135)) setParam(sp, SmpRoot, std::clamp(e->ivalue(), 0, 127));
       if (const Event* e = find(evs, 70)) {  // FX flags: 1 stereo fade, 2 reverse, 4 boost clip, 256 swap stereo
         if (e->value() & 1) setParam(sp, SmpPreFadeStereo, 1);

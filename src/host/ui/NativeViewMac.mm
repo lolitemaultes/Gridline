@@ -201,6 +201,7 @@ double backingScale(const Window& w) {
 }
 
 std::string xResources(const Window&) { return {}; }  // X11 only
+bool xServerAnswers() { return false; }
 
 PointerSize pointerSize(const Window&) {
   PointerSize r;

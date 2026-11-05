@@ -262,6 +262,14 @@ bool flatEnvelope(const std::vector<sx::EnvPoint>& e) {
   return true;
 }
 
+// K-62: FL's separation knob (-1000..1000): the cross mix is the knob below centre and
+// (5^x - 1) / 4 above it (x = knob / 1000); Gridline's width is 1 - that mix.
+double convSeparationWidth(double v) {
+  const double x = clampd(v / 1000.0, -1, 1);
+  const double t = x > 0 ? (std::exp(x * std::log(5.0)) - 1.0) * 0.25 : x;
+  return clampd(1.0 - t, 0, 2);
+}
+
 bool decodeConvolver(Context& c, const std::vector<Event>& evs, PluginMapping& m) {
   std::vector<uint8_t> b = stateBytes(evs);
   if (b.size() < 22) return false;
@@ -273,8 +281,8 @@ bool decodeConvolver(Context& c, const std::vector<Event>& evs, PluginMapping& m
   fx::begin(m, "gl.convolver");
   KnobTable tab = {{0, 0, 1000, sx::CvDry, [](double v) { return sx::convDryGain(clampd(v / 1000.0, 0, 1)); }},
                    {1, 0, 1000, sx::CvWet, [](double v) { return sx::convWetGain(clampd(v / 1000.0, 0, 1)); }},
-                   {2, -1000, 1000, sx::CvInWidth, [](double v) { return clampd(1.0 - v / 1000.0, 0, 2); }},
-                   {3, -1000, 1000, sx::CvWidth, [](double v) { return clampd(1.0 - v / 1000.0, 0, 2); }}};
+                   {2, -1000, 1000, sx::CvInWidth, convSeparationWidth},
+                   {3, -1000, 1000, sx::CvWidth, convSeparationWidth}};
   fx::applyTable(m, tab, t);
   // FL plays the impulse as loaded: no Gridline trims, fades or tone shaping.
   fx::set(m, sx::CvStart, 0);
@@ -320,6 +328,7 @@ bool decodeConvolver(Context& c, const std::vector<Event>& evs, PluginMapping& m
     if (!flatEnvelope(env[0])) cd.pan = env[0];
     if (!flatEnvelope(env[1])) cd.env = env[1];
     if (!flatEnvelope(env[2])) cd.sep = env[2];
+    cd.envFit = true;  // K-62: FL spreads each envelope over the whole source
     if (!flatEnvelope(env[4])) cd.eq = env[4];
     fx::set(m, sx::CvEnvOn, cd.env.empty() && cd.pan.empty() && cd.sep.empty() ? 0 : 1);
     for (int k : {0, 1, 2, 4})

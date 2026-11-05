@@ -21,7 +21,7 @@ namespace gl {
 
 struct ClipRate {
   bool resample = true;   // the channel's time mode resamples (else it keeps the pitch)
-  double timeFactor = 1;  // clip stretch x the channel's time stretch (2 = twice as long)
+  double timeFactor = 1;  // clip stretch x its rate fit x the channel's time stretch (2 = twice as long)
   double speed = 1;       // source seconds per playback second (not tempo-synced)
   double pitch = 1;       // heard frequency ratio against the source (before the channel's pitch knob)
 };
@@ -33,7 +33,7 @@ inline ClipRate clipRate(const Channel& ch, const Clip& c) {
   };
   ClipRate r;
   r.resample = par(pp::SmpStretchMode, 0) < 0.5;
-  r.timeFactor = std::max(0.01, c.stretch * par(pp::SmpTimeStretch, 1));
+  r.timeFactor = std::max(0.01, c.stretch * c.rateFit * par(pp::SmpTimeStretch, 1));
   const double cents = par(pp::SmpPitchShift, 0) + static_cast<double>(c.pitch);
   const double ratio = std::pow(2.0, cents / 1200.0);
   if (r.resample) {

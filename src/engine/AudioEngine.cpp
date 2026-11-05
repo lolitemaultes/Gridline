@@ -222,10 +222,12 @@ AudioEngine::~AudioEngine() = default;
 void AudioEngine::setSampleRate(double sr) { sr_ = sr; }
 
 void AudioEngine::setProgram(std::shared_ptr<const Program> p) {
-  uint64_t stamp = blocks_.load() + 2;
-  if (current_) retired_.push_back({current_, stamp});
+  std::shared_ptr<const Program> old = std::move(current_);
   current_ = std::move(p);
   live_.store(current_.get());
+  // Counted after the new one is published: a block that took the old one has started by now, however
+  // long this thread was held up before the store, and the next block to start takes the new one.
+  if (old) retired_.push_back({std::move(old), blocks_.load() + 2});
   collectGarbage();
 }
 
@@ -283,15 +285,28 @@ void AudioEngine::logAudio(const Program* p, const float* mL, const float* mR, i
 
 void AudioEngine::collectGarbage() {
   uint64_t b = blocks_.load();
+  // The Program of a block in progress stays whatever the count says: a block can take long (a plugin
+  // that stops answering, a machine under load) while edits keep arriving. See processDirect.
+  const Program* running = running_.load();
   retiredLoggers_.erase(std::remove_if(retiredLoggers_.begin(), retiredLoggers_.end(), [&](const auto& r) { return b >= r.second; }),
                         retiredLoggers_.end());
-  retired_.erase(std::remove_if(retired_.begin(), retired_.end(), [&](const auto& r) { return b >= r.second; }),
+  retired_.erase(std::remove_if(retired_.begin(), retired_.end(), [&](const auto& r) { return b >= r.second && r.first.get() != running; }),
                  retired_.end());
   retiredSamples_.erase(std::remove_if(retiredSamples_.begin(), retiredSamples_.end(),
                                       [&](const auto& r) { return b >= r.second; }),
                        retiredSamples_.end());
-  // If the audio thread is not running, nothing is in flight beyond the newest few.
-  if (retired_.size() > 64) retired_.erase(retired_.begin(), retired_.end() - 64);
+  // If the audio thread is not running, its count stands still and nothing is in flight: the newest few are
+  // enough. The list never holds on to more, apart from the one a running block may be using.
+  if (retired_.size() > 64) {
+    size_t drop = retired_.size() - 64;
+    retired_.erase(std::remove_if(retired_.begin(), retired_.end(),
+                                  [&](const auto& r) {
+                                    if (drop == 0 || r.first.get() == running) return false;
+                                    --drop;
+                                    return true;
+                                  }),
+                   retired_.end());
+  }
 }
 
 void AudioEngine::send(const Cmd& c) {
@@ -1511,6 +1526,15 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
     ctxNextTick_ = curTick_;
   }
   bc_.profile = profiling_.load(std::memory_order_relaxed);
+  bc_.rest = !offline_;
+  if (bc_.rest && tPlaying_ && tMode_ == PlayMode::Song) {
+    const TempoMap& map = songMap(p);
+    const double ahead = audioClipLookahead() * sr_;
+    for (int k = 0; k < segCount_; ++k) {
+      segT0_[k] = map.tickAfterSamples(segs_[k].anchor, static_cast<double>(segs_[k].clock), sr_);
+      segTA_[k] = map.tickAfterSamples(segs_[k].anchor, static_cast<double>(segs_[k].clock + segs_[k].len) + ahead, sr_);
+    }
+  }
   runGraph(p, n);
   captureRecording(p, n, true);  // J-31: tracks recording their output (closes their takes too)
   const float* mL = busL_[static_cast<size_t>(p->master)].data();
@@ -2243,7 +2267,15 @@ void AudioEngine::processDirect(float* L, float* R, int frames) {
   int done = 0;
   while (done < frames) {
     int n = std::min(kMaxBlock, frames - done);
+    // Tell the interface thread which Program this block uses (collectGarbage), then look again: if a
+    // newer one arrived in between, that thread may not have seen this one in time, so take the newer.
     const Program* p = live_.load();
+    for (;;) {
+      running_.store(p);
+      const Program* again = live_.load();
+      if (again == p) break;
+      p = again;
+    }
     // With controller links, render on a fixed grid so link evaluation (once
     // per control block) is independent of the audio buffer size.
     if (p && p->controlGrid())
@@ -2256,6 +2288,7 @@ void AudioEngine::processDirect(float* L, float* R, int frames) {
     processBlock(p, L + done, R + done, n);
     if (taps_) copyTaps(p, done, n);
     absClock_ += n;
+    running_.store(nullptr);
     blocks_.fetch_add(1);
     done += n;
   }

@@ -79,6 +79,7 @@ void processReplacing(abi::Effect* e, float** in, float** out, int32_t n) {
   }
   if (p->kind == 1) {
     processSynth(p, out, n);
+    gProbe.notes.frames += n;
     return;
   }
   for (int c = 0; c < 2; ++c)
@@ -92,6 +93,7 @@ float getParam(abi::Effect* e, int32_t i) { return i >= 0 && i < 2 ? self(e)->pa
 
 void midi(Plugin* p, const abi::MidiEvent& m) {
   const int st = m.data[0] & 0xF0;
+  if (st == 0x90 || st == 0x80) gProbe.notes.add(st == 0x90 && m.data[2] > 0, m.data[1], -1, m.frameOffset);
   if (st == 0x90 || st == 0x80) {  // echo one octave up through the host's MIDI output
     abi::MidiEvent o = m;
     o.data[1] = static_cast<uint8_t>(std::min(127, m.data[1] + 12));

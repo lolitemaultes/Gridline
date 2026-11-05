@@ -1,6 +1,7 @@
 // What the in-tree CLAP test plugins saw last (exported as gridline_clap_probe()).
 #pragma once
 #include <clap/clap.h>
+#include "../NoteLog.h"
 
 struct GridlineClapProbe {
   int transports = 0;
@@ -17,5 +18,6 @@ struct GridlineClapProbe {
   int allNotesOff = 0;  // CC 123 (any channel)
   int allSoundOff = 0;  // CC 120 (any channel)
   int sustainOff = 0;   // CC 64 = 0
+  GridlineNoteLog notes;  // what the synth received
   bool throwInProcess = false;  // K-9: process throws, as a bridge does when its other process is gone
 };

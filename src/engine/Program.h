@@ -9,6 +9,7 @@
 #include <map>
 #include <memory>
 #include <tuple>
+#include <unordered_map>
 #include <vector>
 #include "../core/Automation.h"
 #include "../core/Expr.h"
@@ -133,6 +134,8 @@ struct ChannelRuntime {
   // it) does not depend on how blocks interleave channels (J-30).
   uint32_t noteSeq = 0;
   uint32_t fxIdSeq = 0;
+  // K-64 (audio thread): an idle channel left outL / outR out of this block: its output is silence.
+  bool outZero = false;
   // This block's output after the strip gains (the mixer pulls it).
   std::vector<float> outL = std::vector<float>(kEngineMaxBlock, 0.f), outR = std::vector<float>(kEngineMaxBlock, 0.f);
   CpuStat cpu;
@@ -155,6 +158,7 @@ struct LinkRuntime {
 struct EffectRuntime {
   std::string type;
   std::unique_ptr<Effect> fx;
+  int64_t quiet = 0;  // K-64 (audio thread): frames in a row of exact silence in and out
   bool warmed = false;  // UI thread: the builder ran warmUp on it (never read by the audio thread)
   std::atomic<float> meter{0};
   std::atomic<float> input{-120};
@@ -181,6 +185,7 @@ struct MixerRuntime {
   ScopeTap tap;  // post-fader output
   StripEqState eq;  // strip EQ filter memory (audio thread)
   bool sent = false;  // (audio thread) processed and audible this block (destinations pull its output)
+  int64_t quiet = 0;  // K-64 (audio thread): frames in a row of exact silence through the strip
   CpuStat cpu;        // inputs, strip and sends (slots count separately)
   // Audio input (J-8): input level since the UI last read it, and the disk
   // recording capture (allocated on the UI thread while the track is armed).
@@ -224,7 +229,7 @@ struct ClipVoice {
 // UI thread (allocates). J-157: Rubber Band clips get its realtime engine.
 // sourceRate: the clip's sample rate (0: the engine's). The voice works in source frames per output
 // frame, so its range follows that rate and a 192 kHz file keeps the range a 44.1 kHz one has.
-std::shared_ptr<ClipVoice> makeClipVoice(double sampleRate, stretch::Engine engine = stretch::Engine::Stretch, double sourceRate = 0);
+std::shared_ptr<ClipVoice> makeClipVoice(double sampleRate, stretch::Engine engine = stretch::Engine::Stretch, double sourceRate = 0, bool spread = false);
 
 // J-196: a value the UI thread may change in a playing Program (relaxed
 // atomic; the audio thread reads it once per block). Copies take the value.
@@ -293,11 +298,16 @@ struct ProgAudioClip {
 // whose first sample sits `clock` samples after `anchorTick` (engine clock).
 // `pitchSemis` is the channel pitch (knob, master pitch, automation): it
 // transposes the clips without changing their timing.
+// K-64: does a clip of `clips` (sorted by start) play or start priming between ticks t0 and tA, the
+// end of the block plus audioClipLookahead() seconds?
+bool audioClipsNear(const std::vector<ProgAudioClip>& clips, double t0, double tA);
+double audioClipLookahead();
 void renderAudioClips(const std::vector<ProgAudioClip>& clips, const TempoMap& map, double sampleRate, double anchorTick,
                       int64_t clock, int from, int len, float* L, float* R, double pitchSemis = 0);
 
 struct ProgChannel {
   ObjectId id = kNoId;
+  bool restable = false;  // K-64: an idle channel with nothing near may be left out of a block
   std::vector<ProgAudioClip> audio;  // audio clips played through this channel (song mode), by start
   std::shared_ptr<ChannelRuntime> rt;
   PluginState plugin;
@@ -354,6 +364,9 @@ struct ProgSlot {
   mutable PluginState live;  // state with linked parameters applied (audio thread)
   bool modded = false;
   bool controller = false;   // effect has control outputs
+  // K-64: realtime playback leaves this effect out once this many frames in a row were exact silence
+  // in and out, until sound comes again (0: it always runs). See restSeconds() in Program.cpp.
+  int restFrames = 0;
   int sendTo = -1;           // send effects: destination mixer index
   int busSend = -1;          // audio bus written by a bus send
   int busRecv = -1;          // audio bus read by a bus return
@@ -674,6 +687,10 @@ class ProgramBuilder {
     bool inPlace(const ClipVoiceSlot& o) const;
   };
   std::map<std::pair<ObjectId, bool>, ClipVoiceSlot> clipVoices_;
+  // K-64: the render of each playlist clip of the last build. A clip muted since (a solo, its track's
+  // mute) keeps its render and voice here, so bringing it back costs nothing: no new voices on the
+  // interface thread, and the renders are still there instead of being made again.
+  std::unordered_map<ObjectId, stretch::RenderedClipPtr> clipRenders_;
   std::vector<ParamId> macroTargets_;
   ParamId bankTarget_;
   // Plugin delay compensation: computes latencies and fills ProgMixer::inputs

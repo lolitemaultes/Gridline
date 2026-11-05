@@ -209,6 +209,7 @@ int App::processingThreads() const {
 
 void App::syncEngine() {
   if (const int th = processingThreads(); th != engine.threads()) engine.setThreads(th);
+  stretch::setRenderFocus(engine.position());  // K-64: the renders about to play first
   // Hosted plugins prepare for the engine's sample rate: rebuild when it
   // changes, when delay compensation is switched, and when a hosted plugin
   // reports a new latency.

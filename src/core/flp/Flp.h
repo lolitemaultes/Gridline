@@ -314,6 +314,11 @@ struct ChannelIns {
 ChannelIns decodeChannelIns(const std::vector<Event>& channelEvents);
 // Seconds of an FL channel envelope time knob (100..65536), as the importer reads it.
 double flEnvTime(int32_t v);
+double flSamplerVolume(double channelVolume);  // K-63: the sampler volume giving FL's note level
+// K-63: the build number a project written from Gridline's own song carries next to `version`: one
+// under the version's build, which FL's own files never have (0 when the version has no build). FL
+// writes its own number when it saves, so the mark says Gridline's levels are still what the file holds.
+uint32_t flNativeExportBuild(const std::string& version);
 // J-177: a channel's stretch "time" (channel parameters 215 @96, in 1/192
 // beats): the beats its sample is stretched to, 0 when off or not in use.
 inline constexpr double kFlFitTicksPerBeat = 192.0;

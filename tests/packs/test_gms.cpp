@@ -10,6 +10,7 @@
 #include "../../src/core/PluginInfo.h"
 #include "../../src/core/flp/FlpGen.h"
 #include "../../src/engine/Generators.h"
+#include "../../src/engine/Sample.h"
 #include "../../src/packs/Packs.h"
 #include "../../src/packs/synths/gms.h"
 #include "../Check.h"
@@ -163,6 +164,35 @@ int main() {
     WaveFiles r = parseWaveFiles(s.data);
     expect(r.path[0] == path && r.path[1].empty(), "wave-file data round trip");
     expect(parseWaveFiles("junk").path[0].empty() && parseWaveFiles("gms 1\nw 9 x\nw 1\n").path[1].empty(), "malformed wave data ignored");
+  }
+  // A build that finds the wave file still loading must not stick: the next one gets it.
+  {
+    const std::string path = (std::filesystem::temp_directory_path() / "gl_gms_test_loading.wav").string();
+    {
+      std::ofstream f(path, std::ios::binary);
+      const int n = 256;
+      auto u32 = [&](uint32_t v) { f.write(reinterpret_cast<const char*>(&v), 4); };
+      auto u16 = [&](uint16_t v) { f.write(reinterpret_cast<const char*>(&v), 2); };
+      f.write("RIFF", 4), u32(36 + n * 2), f.write("WAVE", 4), f.write("fmt ", 4), u32(16), u16(1), u16(1), u32(44100), u32(88200), u16(2),
+          u16(16), f.write("data", 4), u32(n * 2);
+      for (int i = 0; i < n; ++i) u16(static_cast<uint16_t>(static_cast<int16_t>(i < n / 2 ? 20000 : -20000)));
+    }
+    PluginState s = base();
+    set(s, osc(0, OsWave), WvFile);
+    WaveFiles w;
+    w.path[0] = path;
+    s.data = serializeWaveFiles(w);
+    sampleCache().clear();
+    sampleCache().pauseBackground(true);
+    {
+      SampleCache::NonBlocking nb;
+      ChannelAux first;
+      packs::prepareAux(s, first);
+    }
+    sampleCache().pauseBackground(false);
+    sampleCache().waitIdle();
+    Out o = render(s, kOne, 20000, 256);
+    expect(o.finite && tone(o.L, 4000, 16000, 440) < 0.05 * tone(o.L, 4000, 16000, 660), "a wave file still loading at the first build plays at the next");
   }
   // Osc 2 → osc 1 modulation kinds.
   {

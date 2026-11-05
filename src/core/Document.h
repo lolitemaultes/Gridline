@@ -197,6 +197,8 @@ class Document {
   }
   // Number of edits made outside groups that started a new history step.
   uint64_t pushCount() const { return undo_.pushCount(); }
+  // K-64 (tests): tempo map builds the edits have done so far.
+  uint64_t tempoMapBuilds() const { return tempoMapBuilds_; }
 
   // --- saved state --------------------------------------------------------
   bool modified() const { return undo_.stateSerial() != savedSerial_; }
@@ -221,6 +223,7 @@ class Document {
   std::vector<std::unique_ptr<GroupCommand>> groups_;
   uint64_t savedSerial_ = 0;
   uint64_t revision_ = 0;
+  uint64_t tempoMapBuilds_ = 0;
   uint64_t projectEpoch_ = 0;
   ParamId lastTouched_;
   ParamId prevTouched_;

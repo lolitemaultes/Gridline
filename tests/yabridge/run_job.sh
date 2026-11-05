@@ -51,9 +51,9 @@ case "$DISPLAY_KIND" in
   xvfb-bare)
     start_xvfb || exit 2
     ;;
-  weston-x11 | weston-wayland)
+  weston-x11 | weston-wayland | weston-env)
     start_weston || exit 2
-    if [ "$DISPLAY_KIND" = weston-x11 ]; then
+    if [ "$DISPLAY_KIND" != weston-wayland ]; then
       # Does XTEST work on this XWayland at all? A plain X client and a click, with neither Gridline nor Wine.
       xmessage -geometry 300x200+100+100 check > /dev/null 2>&1 &
       check_pid=$!
@@ -76,7 +76,10 @@ case "$DISPLAY_KIND" in
         start_weston || exit 2
       fi
     fi
-    [ "$DISPLAY_KIND" = weston-wayland ] && export SDL_VIDEODRIVER=wayland
+    # weston-wayland: kept on Wayland on purpose. weston-env: a session that sets the variable for every
+    # program (for games): Gridline goes through XWayland all the same, and interfaces open.
+    [ "$DISPLAY_KIND" = weston-wayland ] && export GRIDLINE_VIDEO_DRIVER=wayland
+    [ "$DISPLAY_KIND" = weston-env ] && export SDL_VIDEODRIVER=wayland
     ;;
   *)
     echo "unknown display $DISPLAY_KIND"; exit 2 ;;

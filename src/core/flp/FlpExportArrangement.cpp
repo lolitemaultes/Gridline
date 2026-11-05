@@ -20,6 +20,7 @@
 #include <limits>
 #include <map>
 #include <set>
+#include "../ClipRate.h"
 #include "../Fades.h"
 #include "../PluginParams.h"
 #include "FlpExportInternal.h"
@@ -222,8 +223,18 @@ void Exporter::writeArrangements() {
           if (!(orec && std::isfinite(old) && std::fabs(static_cast<double>(old) / scale - v) <= tol)) putF32(r, at, static_cast<float>(v * scale));
         };
         keepF(24, c.audioStart, 1000.0);
-        if (c.audioEnd > 0) keepF(28, c.audioEnd, 1000.0);
-        else putF32(r, 28, -1.0f);
+        if (c.audioEnd > 0) {
+          keepF(28, c.audioEnd, 1000.0);
+        } else if (const Channel* fc = s.channel(c.source); fc && c.rateFit != 1.0) {
+          // A rate the channel's time does not say lives in the window. K-60: the rate is the one at the
+          // tempo where the clip starts, so the file span is the clip's length at that tempo: the end
+          // FL derives, the same at any tempo for a clip fitted to it.
+          const double bpm = std::max(1.0, songMap.bpmAt(static_cast<double>(c.start)));
+          const double seconds = static_cast<double>(len) * 60.0 / (bpm * ppq) * clipRate(*fc, c).speed;
+          putF32(r, 28, static_cast<float>((c.audioStart + seconds) * 1000.0));
+        } else {
+          putF32(r, 28, -1.0f);
+        }
         // J-38 / J-43: FL's fade record (@36 in ms, @40 in tension, @44 out ms,
         // @48 out tension, @52 gain, @56 flags). FL stores the fades it derives
         // for overlaps too, so every edge carries its effective length
@@ -258,7 +269,7 @@ void Exporter::writeArrangements() {
         if (!(orec && getF32(r, 52) == c.gain)) putF32(r, 52, c.gain);
         // J-193: FL's clip does not follow the tempo here: a synced clip is
         // written as the stretch it plays at the tempo where it starts.
-        // K-49: on a channel stretched to a time FL follows the tempo itself: the clip's own stretch stands.
+        // K-49: on a channel stretched to a time the channel carries the time: the clip's own stretch stands.
         const bool followsInFl = channelKeepsTime(c.source);
         double st = c.stretch;
         if (c.syncBpm > 0 && !followsInFl) st = std::clamp(c.stretch * c.syncBpm / std::max(1.0, songMap.bpmAt(static_cast<double>(c.start))), 0.0625, 16.0);

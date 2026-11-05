@@ -160,6 +160,7 @@ BankPtr fileBank(const std::string& path) {
       for (size_t i = 0; i < c.size(); ++i) c[i] = 0.5f * (c[i] + s->right[i]);
     b = makeBank(c);
   }
+  if (!b && sampleCache().isPending(path)) return b;  // still loading: asked again at the next build
   std::lock_guard<std::mutex> lk(mu);
   if (cache.size() > 256) cache.clear();
   cache[path] = b;

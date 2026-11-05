@@ -48,6 +48,8 @@
 #include "HostedUi.h"
 #include "HostedUiPages.h"
 #include "PluginWindowBar.h"
+#include "ToastText.h"
+#include "VideoDriver.h"
 #include "Theme.h"
 #include "Widgets.h"
 #include "../../third_party/imgui/imgui.h"
@@ -697,6 +699,18 @@ void settleClosingHostedEditors() {
   list.clear();
 }
 
+// The same failure clicked again renews its message rather than stacking another one.
+static void notifyOnce(App& a, const std::string& text, const std::string& format) {
+  const std::string details = format + ", video driver " + (SDL_GetCurrentVideoDriver() ? SDL_GetCurrentVideoDriver() : "none");
+  std::fprintf(stderr, "[plugin-window] %s (%s)\n", text.c_str(), details.c_str());
+  for (Toast& t : a.toasts)
+    if (t.english == text) {
+      t.until = a.now + toast::lifetime(true);
+      return;
+    }
+  a.notify(text, true, details);
+}
+
 bool openHostedEditor(App& a, const PluginTarget& t) {
   if (PluginWindow* ex = windowFor(t)) {
     if (ex->win) SDL_RaiseWindow(ex->win);
@@ -716,6 +730,12 @@ bool openHostedEditor(App& a, const PluginTarget& t) {
   const host::HostedClass& cls = hi->hostedClass();
   if (!b->editorAvailable()) {
     if (!b->lost()) a.notify(cls.name + " has no interface of its own: Gridline shows its parameters");
+    return false;
+  }
+  // On SDL's Wayland driver there is no X11 window to embed an interface in: say why, before asking
+  // the plugin for a view (Gridline's own panel with its parameters stays).
+  if (const std::string problem = videodriver::interfaceProblem(); !problem.empty()) {
+    notifyOnce(a, cls.name + ": " + problem, b->format());
     return false;
   }
   std::unique_ptr<host::Editor> editor;
@@ -802,10 +822,16 @@ bool openHostedEditor(App& a, const PluginTarget& t) {
       }
       return raw->pluginResize(nw, nh);
     };
-    if (!w.container || !editor->attach(w.container)) {
+    const bool hadContainer = w.container != nullptr;
+    if (!hadContainer || !editor->attach(w.container)) {
       w.editor = std::move(editor);
       w.close();
-      a.notify(cls.name + ": its interface could not be attached", true);
+      if (!hadContainer)
+        notifyOnce(a, cls.name + ": Gridline could not make a window for its interface", b->format());
+      else if (b->bridged())
+        notifyOnce(a, cls.name + ": the plugin's bridge refused to open its interface. Check that it works in another host, and its logs", b->format());
+      else
+        notifyOnce(a, cls.name + ": the plugin refused to open its interface in Gridline's window", b->format());
       return false;
     }
     // Some editors (VST2) know their final size only once open.

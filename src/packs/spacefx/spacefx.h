@@ -72,6 +72,10 @@ struct ConvData {
   std::string path;
   std::vector<EnvPoint> env, eq, pan, sep;
   int envMode = CurveAuto, eqMode = CurveAuto;
+  // K-62: FL spreads each time envelope over the whole source IR whatever the file's own length is:
+  // point time t falls on source frame t / (last point's time) * frames. False (no "#fit" line:
+  // Gridline's own curves and FL imports made before K-62): point times are seconds of the source.
+  bool envFit = false;
 };
 ConvData parseConvData(const std::string& data);
 std::string formatConvData(const ConvData& d);

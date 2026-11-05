@@ -18,6 +18,7 @@
 #include <thread>
 #include "../../engine/ChannelIns.h"
 #include "../PluginStandIn.h"
+#include "../../packs/spacefx/spacefx.h"
 #include "../../packs/synths/matrixfm.h"
 #include "../../packs/synths/mfmref.h"
 
@@ -233,6 +234,11 @@ std::vector<int> diffParams(const PluginState& a, const PluginState& b) {
 // Data equality; Matrix FM's exact section (J-50) is derived from the FL state itself.
 bool sameData(const PluginState& a, const PluginState& b) {
   if (a.type == "gl.matrixfm") return gl::packs::synths::mfmref::withoutExact(a.data) == gl::packs::synths::mfmref::withoutExact(b.data);
+  if (a.type == "gl.convolver") {  // K-62: the FL law marker is no setting FL stores
+    gl::packs::spacefx::ConvData x = gl::packs::spacefx::parseConvData(a.data), y = gl::packs::spacefx::parseConvData(b.data);
+    x.envFit = y.envFit = false;
+    return gl::packs::spacefx::formatConvData(x) == gl::packs::spacefx::formatConvData(y);
+  }
   return a.data == b.data;
 }
 

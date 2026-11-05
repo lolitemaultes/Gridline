@@ -1,4 +1,5 @@
 #include "Document.h"
+#include <type_traits>
 #include "Crash.h"
 #include <algorithm>
 #include <filesystem>
@@ -13,11 +14,12 @@ namespace {
 // Parameter change; consecutive changes of one parameter merge.
 class ParamCommand final : public Command {
  public:
-  ParamCommand(ParamId id, double before, double after, bool mergeable)
-      : id_(id), before_(before), after_(after), mergeable_(mergeable) {}
+  ParamCommand(ParamId id, double before, double after, bool mergeable, bool channelOwned = false)
+      : id_(id), before_(before), after_(after), mergeable_(mergeable), channelOwned_(channelOwned) {}
   void apply(Song& s) override { setParam(s, id_, after_); }
   void revert(Song& s) override { setParam(s, id_, before_); }
   std::string label() const override { return "change parameter"; }
+  bool mayMoveTempo() const override { return !channelOwned_; }
   uint64_t mergeKey() const override { return mergeable_ ? id_.packed() : 0; }
   bool mergeWith(const Command& next) override {
     auto* n = dynamic_cast<const ParamCommand*>(&next);
@@ -30,6 +32,7 @@ class ParamCommand final : public Command {
   ParamId id_;
   double before_, after_;
   bool mergeable_;
+  bool channelOwned_;  // a channel parameter: never the tempo
 };
 
 // Replaces one object (found by id) with a before/after copy.
@@ -43,6 +46,7 @@ class ObjectEdit final : public Command {
   void revert(Song& s) override { *get_(s, id_) = before_; }
   std::string label() const override { return label_; }
   uint64_t mergeKey() const override { return key_; }
+  bool mayMoveTempo() const override { return !std::is_same<T, Channel>::value && !std::is_same<T, MixerTrack>::value; }
   bool mergeWith(const Command& next) override {
     auto* n = dynamic_cast<const ObjectEdit<T>*>(&next);
     if (!n || n->id_ != id_ || n->get_ != get_) return false;
@@ -183,6 +187,12 @@ void Document::exec(CommandPtr cmd, bool mayJoin, bool clipLevels) {
     levelTail_ = revision_;
     tempoMapRev_ = revision_;
     if (!mapCurrent) tempoMapOk_ = false;
+  } else if (!cmd->mayMoveTempo()) {  // K-64: a mute, a solo, a channel knob: the tempo map stays valid if it was
+    const bool mapCurrent = tempoMapOk_ && tempoMapRev_ == revision_;
+    cmd->apply(song_);
+    ++revision_;
+    tempoMapRev_ = revision_;
+    if (!mapCurrent) tempoMapOk_ = false;
   } else {
     cmd = applyWithTempoRefit(std::move(cmd));  // (applied)
     ++revision_;
@@ -210,11 +220,11 @@ CommandPtr Document::applyWithTempoRefit(CommandPtr cmd) {
     tempoMapOk_ = false;
     return cmd;
   }
-  if (!tempoMapOk_ || tempoMapRev_ != revision_) tempoMap_.build(song_);
+  if (!tempoMapOk_ || tempoMapRev_ != revision_) tempoMap_.build(song_), ++tempoMapBuilds_;
   const int ppq = song_.ppq;
   cmd->apply(song_);
   TempoMap map;
-  map.build(song_);
+  map.build(song_), ++tempoMapBuilds_;
   tempoMapOk_ = true;
   if (map.signature() == tempoMap_.signature() || song_.ppq != ppq) {  // (a PPQ change keeps every clip's seconds itself)
     tempoMap_ = map;
@@ -677,7 +687,7 @@ bool Document::setParam(ParamId id, double value, bool merge) {
   ++touchSerial_;
   if (after == *before) return true;
   if (!merge) undo_.breakMerge();
-  exec(std::make_unique<ParamCommand>(id, *before, after, merge));
+  exec(std::make_unique<ParamCommand>(id, *before, after, merge, song_.channel(id.owner) != nullptr));
   if (!merge) undo_.breakMerge();
   if (paramObserver) paramObserver(id, after);
   return true;

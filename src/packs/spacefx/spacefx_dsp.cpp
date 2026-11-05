@@ -145,8 +145,12 @@ double phaserLfo(int wave, double phase, double tension) {
   return std::pow(clampd(v, 0, 1), e);
 }
 
-void setConvolverRateHint(double sr) { g_convRate.store(sr, std::memory_order_relaxed); }
+void setConvolverRateHint(double sr) {
+  t_convBuildRate = sr;
+  g_convRate.store(sr, std::memory_order_relaxed);
+}
 double convolverRateHint() {
+  if (t_convBuildRate > 0) return t_convBuildRate;
   double r = g_convRate.load(std::memory_order_relaxed);
   return r > 0 ? r : 44100.0;
 }
@@ -212,6 +216,8 @@ ConvData parseConvData(const std::string& data) {
       d.pan = parsePoints(line.substr(5));
     } else if (line.compare(0, 5, "#sep ") == 0) {
       d.sep = parsePoints(line.substr(5));
+    } else if (line == "#fit") {  // K-62
+      d.envFit = true;
     } else if (line.compare(0, 6, "#mode ") == 0) {  // J-106: "eq=smooth;env=straight"
       size_t p = 6;
       while (p < line.size()) {
@@ -236,8 +242,9 @@ ConvData parseConvData(const std::string& data) {
 
 std::string formatConvData(const ConvData& d) {
   std::string s = d.path;
-  if (d.env.empty() && d.eq.empty() && d.pan.empty() && d.sep.empty() && d.envMode == CurveAuto && d.eqMode == CurveAuto) return s;
+  if (d.env.empty() && d.eq.empty() && d.pan.empty() && d.sep.empty() && d.envMode == CurveAuto && d.eqMode == CurveAuto && !d.envFit) return s;
   s += "\n#v 1";
+  if (d.envFit) s += "\n#fit";
   if (d.envMode != CurveAuto || d.eqMode != CurveAuto) {
     const auto name = [](int m) { return m == CurveSmooth ? "smooth" : "straight"; };
     s += "\n#mode ";

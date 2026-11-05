@@ -294,7 +294,29 @@ Encoder convolver() {
     // J-106: a Smooth curve goes out as straight points that follow it within 0.1 dB.
     const std::vector<sx::EnvPoint> wantEnv = sx::curveSmooth(want.envMode) ? sx::smoothToSegments(want.env, sx::convEnvErrDb, 0.1) : want.env;
     const std::vector<sx::EnvPoint> wantEq = sx::curveSmooth(want.eqMode) ? sx::smoothToSegments(want.eq, sx::convEqErrDb, 0.1) : want.eq;
-    const std::vector<sx::EnvPoint>* wantK[3] = {&want.pan, &wantEnv, &want.sep};
+    // K-62: FL spreads each envelope over the whole source. A curve in seconds (Gridline's own) goes out
+    // ending at the impulse's length, so its times stay true.
+    std::vector<sx::EnvPoint> kPan = want.pan, kVol = wantEnv, kSep = want.sep;
+    if (!want.envFit && (!kPan.empty() || !kVol.empty() || !kSep.empty())) {
+      const SamplePtr ir = want.path.empty() ? nullptr : sampleCache().get(want.path);
+      const double span = ir && ir->sampleRate > 0 ? static_cast<double>(ir->frames()) / ir->sampleRate : -1;
+      if (span > 0)
+        for (std::vector<sx::EnvPoint>* v : {&kPan, &kVol, &kSep}) {
+          if (v->empty()) continue;
+          while (v->size() > 1 && v->back().t > span && (*v)[v->size() - 2].t >= span) v->pop_back();
+          if (v->back().t > span && v->size() > 1) {
+            const sx::EnvPoint& a = (*v)[v->size() - 2];
+            sx::EnvPoint& z = v->back();
+            z.v = a.v + (z.v - a.v) * (span - a.t) / (z.t - a.t);
+            z.t = span;
+          } else if (v->back().t < span) {
+            sx::EnvPoint hold = v->back();
+            hold.t = span, hold.k = 0, hold.c = 0;
+            v->push_back(hold);
+          }
+        }
+    }
+    const std::vector<sx::EnvPoint>* wantK[3] = {&kPan, &kVol, &kSep};
     const std::vector<sx::EnvPoint>* haveK[3] = {&have.pan, &have.env, &have.sep};
     for (int k = 0; k < 3; ++k)
       if (pointsKey(*wantK[k]) != pointsKey(*haveK[k])) {

@@ -19,6 +19,16 @@ static void testFxDyn() {
     expect(param(m, pp::LimCompRatio) > 1.5 && param(m, pp::LimCompRatio) < 5, "limiter: comp ratio");
     expect(param(m, pp::LimSidechain) == 1 && param(m, pp::LimView) == 1, "limiter: sidechain input + comp view");
     expect(m.param && m.param(8) == pp::LimCompThresh && m.value && near(m.value(8, 1.0), 0.0, 1e-6), "limiter: automation mapping");
+    expect(param(m, pp::LimSafety) == 1, "limiter: flags without bit 0 keep the 0.2 dB margin");
+    {
+      std::vector<uint8_t> off = b.b;
+      off.back() = 1;
+      flp::PluginMapping o;
+      expect(decodeFx("Fruity Limiter", off, o) && param(o, pp::LimSafety) == 0, "limiter: bit 0 turns the margin off");
+      off[0] = 6;
+      flp::PluginMapping old;
+      expect(decodeFx("Fruity Limiter", off, old) && param(old, pp::LimSafety) == 1, "limiter: a state before version 7 keeps the margin whatever the byte");
+    }
   }
   // Fruity Compressor.
   {

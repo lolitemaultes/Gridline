@@ -209,6 +209,7 @@ int fitClipToTempo(Song& song, ObjectId id) {
   const int beats = std::max(1, static_cast<int>(std::llround(secs * bpm / 60.0)));
   const double tfCh = std::max(0.01, par(*song.channel(c->source), pp::SmpTimeStretch, 1));
   c->stretch = 1.0;
+  c->rateFit = 1.0;
   c->syncBpm = beats * 60.0 / secs;
   c->tempoLock = true;  // J-193: a fit is a stretch
   c->length = std::max<Tick>(1, static_cast<Tick>(std::llround(beats * song.ppq * tfCh)));
@@ -313,6 +314,7 @@ bool resetClipStretch(Song& song, ObjectId id) {
   c->syncBpm = 0;
   c->tempoLock = false;
   c->stretch = 1.0;
+  c->rateFit = 1.0;
   if (span > 0)
     if (Tick n = ticksForSpan(song, *c, span); n > 0) song.clip(id)->length = n;
   return true;
@@ -403,6 +405,7 @@ std::string renderClipStretch(Song& song, ObjectId id, double timeFactor, double
   c->audioStart = 0;
   c->audioEnd = 0;
   c->stretch = 1.0;
+  c->rateFit = 1.0;
   c->syncBpm = 0;
   c->pitch = 0;
   c->speedPitch = 0;  // J-164

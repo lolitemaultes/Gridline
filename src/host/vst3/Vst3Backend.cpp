@@ -1,6 +1,7 @@
 // Gridline — VST3 as a host::Backend (format "vst3"): wraps vst3::Plugin.
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include "../HostedPlugins.h"
 #include "../PluginScan.h"
 #include "../Dylib.h"
@@ -51,7 +52,9 @@ class View final : public host::Editor {
       return true;
     };
     view_->setFrame(frame_);
-    attached_ = parent && view_->attached(parent, platformViewType()) == sb::kResultOk;
+    const sb::tresult res = parent ? view_->attached(parent, platformViewType()) : sb::kInvalidArgument;
+    attached_ = res == sb::kResultOk;
+    if (!attached_) std::fprintf(stderr, "[vst3] IPlugView::attached(%s) returned %d\n", platformViewType(), static_cast<int>(res));
     return attached_;
   }
   void setSize(int w, int h) override {

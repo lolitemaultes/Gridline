@@ -17,6 +17,7 @@
 #include <vector>
 #include "Check.h"
 #include "Hermetic.h"
+#include "NoteRetrigger.h"
 #include "core/Json.h"
 #include "core/Settings.h"
 #include "engine/Program.h"
@@ -407,6 +408,13 @@ void testSynth() {
   expect(!hi->backend()->hasEditor(), "no interface of its own: Gridline's generic parameter view");
 }
 
+// Two clips of one pattern back to back: this synth goes by the key alone, as LV2's MIDI does.
+void testNoteRetrigger() {
+  auto* pr = probe<GridlineLv2Probe>(dspBinary(), "gridline_lv2_probe");
+  expect(pr != nullptr, "LV2 test probe reachable");
+  if (pr) gl::test::checkRetrigger("LV2", kSynth, &pr->notes);
+}
+
 // ---------------------------------------------------------------- worker / state / latency
 
 void testState() {
@@ -656,6 +664,7 @@ int main() {
   testGain();
   testSampleAccurate();
   testSynth();
+  testNoteRetrigger();
   testState();
   testEditors();
   testSandbox();

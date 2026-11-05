@@ -579,6 +579,9 @@ void irView(App& a, const PluginTarget& t, const PluginState& st, ConvUi& u, ImV
   const bool envEdit = val(st, CvEnvOn) >= 0.5f || ref;
   ConvData cd = parseConvData(st.data);
   std::vector<EnvPoint> pts = cd.env;
+  // K-62: an FL state's envelope spans the whole source: the points show where they act.
+  const double envScale = cd.envFit && !pts.empty() && pts.back().t > 0 && v.rawSeconds > 0 ? v.rawSeconds / pts.back().t : 1.0;
+  for (EnvPoint& q : pts) q.t *= envScale;
   const int envHot = envEdit && (ImGui::IsItemHovered() || ImGui::IsItemActive()) ? hitPoint(P, pts.empty() ? std::vector<EnvPoint>{EnvPoint{0, 0.5, 0, 0}, EnvPoint{avail, 0.5, 0, 0}} : pts, m, hitR) : -1;
   // Trim handles: 0 fade-in end, 1 fade-out start, 2 length.
   const ImVec2 hs[3] = {ImVec2(P.X(std::min(fin, len)), top), ImVec2(P.X(len - fout), top), ImVec2(P.X(len), top + (bot - top) * 0.5f)};
@@ -612,6 +615,7 @@ void irView(App& a, const PluginTarget& t, const PluginState& st, ConvUi& u, ImV
         PluginState ns = st;
         ConvData nd = parseConvData(st.data);
         nd.env = np;
+        for (EnvPoint& q : nd.env) q.t /= envScale;
         nd.envMode = mode;  // a new curve keeps the Smooth it was shown with
         ns.data = formatConvData(nd);
         setPluginState(a, t, ns, lbl, key);

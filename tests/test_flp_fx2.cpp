@@ -232,7 +232,7 @@ int main() {
     Blob s;
     std::string path = "%FLStudioData%\\Patches\\Impulses\\Room.wav";
     s.i32(14).i32(1000).i32(250).i32(0).i32(0).u8(1).u8(static_cast<uint8_t>(path.size())).bytes(path);
-    expect(decode(e, "Fruity Convolver", s.b, m) && m.state.data == "/fl/Data/Patches/Impulses/Room.wav", "Convolver impulse path");
+    expect(decode(e, "Fruity Convolver", s.b, m) && sx::parseConvData(m.state.data).path == "/fl/Data/Patches/Impulses/Room.wav", "Convolver impulse path");
     expect(near(P(m, sx::CvWet), (std::pow(1001.0, 0.25) - 1.0) / 1000.0, 1e-6) && near(P(m, sx::CvDry), 1.0, 1e-6) && P(m, sx::CvSource) == sx::SrcFile &&
                P(m, sx::CvFadeOut) == 0,
            "Convolver levels (FL wet / dry laws)");

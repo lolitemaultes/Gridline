@@ -407,6 +407,14 @@ add_executable(gridline_tests_pdc tests/test_pdc.cpp)
 target_link_libraries(gridline_tests_pdc PRIVATE gridline_core)
 target_compile_options(gridline_tests_pdc PRIVATE ${GL_WARN})
 add_test(NAME pdc COMMAND gridline_tests_pdc WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+add_executable(gridline_tests_video_driver tests/test_video_driver.cpp)
+target_compile_options(gridline_tests_video_driver PRIVATE ${GL_WARN})
+add_test(NAME video_driver COMMAND gridline_tests_video_driver)
+add_executable(gridline_tests_program_retire tests/test_program_retire.cpp)
+target_link_libraries(gridline_tests_program_retire PRIVATE gridline_core)
+target_compile_options(gridline_tests_program_retire PRIVATE ${GL_WARN})
+add_test(NAME program_retire COMMAND gridline_tests_program_retire WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(program_retire PROPERTIES TIMEOUT 300)
 add_executable(gridline_tests_automation_edit tests/test_automation_edit.cpp)
 target_link_libraries(gridline_tests_automation_edit PRIVATE gridline_core)
 target_compile_options(gridline_tests_automation_edit PRIVATE ${GL_WARN})
@@ -1205,6 +1213,35 @@ target_compile_options(gridline_tests_k49 PRIVATE ${GL_WARN})
 add_test(NAME k49_fl_tempo_clips_and_stretched_clips COMMAND gridline_tests_k49 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 set_tests_properties(k49_fl_tempo_clips_and_stretched_clips PROPERTIES TIMEOUT 300)
 
+# K-58: FL audio clips on a channel that resamples hold their rate and pitch under tempo automation.
+add_executable(gridline_tests_k58 tests/test_k58.cpp)
+target_link_libraries(gridline_tests_k58 PRIVATE gridline_core)
+target_include_directories(gridline_tests_k58 PRIVATE tests src)
+target_compile_options(gridline_tests_k58 PRIVATE ${GL_WARN})
+add_test(NAME k58_fl_resampled_clips_under_tempo_automation COMMAND gridline_tests_k58 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+set_tests_properties(k58_fl_resampled_clips_under_tempo_automation PROPERTIES TIMEOUT 300)
+
+add_executable(gridline_tests_k62 tests/test_k62.cpp)
+target_link_libraries(gridline_tests_k62 PRIVATE gridline_core)
+target_include_directories(gridline_tests_k62 PRIVATE tests src)
+target_compile_options(gridline_tests_k62 PRIVATE ${GL_WARN})
+add_test(NAME k62_convolver_against_fl COMMAND gridline_tests_k62 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+set_tests_properties(k62_convolver_against_fl PROPERTIES TIMEOUT 300)
+
+add_executable(gridline_tests_k63 tests/test_k63.cpp)
+target_link_libraries(gridline_tests_k63 PRIVATE gridline_core)
+target_include_directories(gridline_tests_k63 PRIVATE tests src)
+target_compile_options(gridline_tests_k63 PRIVATE ${GL_WARN})
+add_test(NAME k63_fl_sampler_note_level COMMAND gridline_tests_k63 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+set_tests_properties(k63_fl_sampler_note_level PROPERTIES TIMEOUT 300)
+
+add_executable(gridline_tests_k64 tests/test_k64.cpp)
+target_link_libraries(gridline_tests_k64 PRIVATE gridline_core)
+target_include_directories(gridline_tests_k64 PRIVATE tests src)
+target_compile_options(gridline_tests_k64 PRIVATE ${GL_WARN})
+add_test(NAME k64_smooth_playback_and_solo COMMAND gridline_tests_k64 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+set_tests_properties(k64_smooth_playback_and_solo PROPERTIES TIMEOUT 300)
+
 # K-50: the pitch of FL audio clips: times beyond the sampler's range, sources far above the engine's rate.
 add_executable(gridline_tests_k50 tests/test_k50.cpp)
 target_link_libraries(gridline_tests_k50 PRIVATE gridline_core)
@@ -1501,7 +1538,7 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
   list(REMOVE_ITEM GRIDLINE_APP_SRC ${CMAKE_SOURCE_DIR}/src/app/main.cpp ${CMAKE_SOURCE_DIR}/src/app/PluginWindow.cpp
        ${CMAKE_SOURCE_DIR}/src/app/Viewports.cpp ${CMAKE_SOURCE_DIR}/src/app/LiveResize.cpp
        ${CMAKE_SOURCE_DIR}/src/app/AppIcon.cpp ${CMAKE_SOURCE_DIR}/src/app/AppIconImage.cpp  # K-14: the program only
-       ${CMAKE_SOURCE_DIR}/src/app/GlRecovery.cpp)  # K-47: the program's own OpenGL context
+       ${CMAKE_SOURCE_DIR}/src/app/GlRecovery.cpp ${CMAKE_SOURCE_DIR}/src/app/VideoDriver.cpp)  # K-47: the program's own OpenGL context
   add_library(gridline_ui OBJECT ${GRIDLINE_APP_SRC})
   target_link_libraries(gridline_ui PRIVATE gridline_core imgui_core rtmidi gridline_sdl_headers)
   target_compile_options(gridline_ui PRIVATE ${GL_WARN_LOOSE})
@@ -1522,7 +1559,7 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
   target_include_directories(gridline_tests_app_icon PRIVATE src tests)
   target_compile_options(gridline_tests_app_icon PRIVATE ${GL_WARN})
   add_test(NAME k14_app_icon COMMAND gridline_tests_app_icon WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-  add_executable(gridline-app src/app/main.cpp src/app/PluginWindow.cpp src/app/Viewports.cpp src/app/LiveResize.cpp src/app/GlRecovery.cpp $<TARGET_OBJECTS:gridline_ui> ${GRIDLINE_ICON_OBJS}
+  add_executable(gridline-app src/app/main.cpp src/app/PluginWindow.cpp src/app/Viewports.cpp src/app/LiveResize.cpp src/app/GlRecovery.cpp src/app/VideoDriver.cpp $<TARGET_OBJECTS:gridline_ui> ${GRIDLINE_ICON_OBJS}
                               src/app/AppIcon.cpp $<TARGET_OBJECTS:gridline_appicon>)
   target_link_libraries(gridline-app PRIVATE gridline_core imgui rtmidi)
   if(APPLE)

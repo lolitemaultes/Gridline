@@ -24,7 +24,7 @@ namespace gl {
 namespace {
 constexpr double kDeclick = 0.002;     // minimum fade at clip edges, seconds
 constexpr double kSwitchFade = 0.010;  // seconds: render <-> realtime crossfade
-constexpr double kPrimeAhead = 0.15;   // J-170: seconds ahead a clip's Rubber Band stream begins priming
+constexpr double kPrimeAhead = 0.15;   // J-170: seconds ahead a clip's realtime stream begins priming
 
 // The realtime stretch's reader: source frames in clip direction (reverse
 // clips read from the end), silence outside the sound and past the window.
@@ -82,12 +82,22 @@ double pitchOf(const ProgAudioClip& c, double secRate) {
 
 }  // namespace
 
-std::shared_ptr<ClipVoice> makeClipVoice(double sampleRate, stretch::Engine engine, double sourceRate) {
+std::shared_ptr<ClipVoice> makeClipVoice(double sampleRate, stretch::Engine engine, double sourceRate, bool spread) {
   auto v = std::make_shared<ClipVoice>();
   const double toFrames = sourceRate > 0 && engine == stretch::Engine::Stretch ? sourceRate / sampleRate : 1.0;
   const double top = 8.0 * std::max(1.0, toFrames);
-  v->voice.prepare(2, sampleRate, top, top, false, engine, toFrames / 8.0);
+  v->voice.prepare(2, sampleRate, top, top, false, engine, toFrames / 8.0, sourceRate, spread);
   return v;
+}
+
+double audioClipLookahead() { return kPrimeAhead; }
+
+bool audioClipsNear(const std::vector<ProgAudioClip>& clips, double t0, double tA) {
+  for (const ProgAudioClip& c : clips) {
+    if (static_cast<double>(c.start) > tA + 1.0) return false;  // sorted by start
+    if (static_cast<double>(c.end) >= t0 - 1.0) return true;
+  }
+  return false;
 }
 
 void renderAudioClips(const std::vector<ProgAudioClip>& clips, const TempoMap& map, double sr, double anchorTick,
@@ -232,16 +242,17 @@ void renderAudioClips(const std::vector<ProgAudioClip>& clips, const TempoMap& m
     }
   }
 
-  // J-170: the realtime Rubber Band stream of a clip starting soon begins
-  // now and does its start-up work (pre-roll, the engine's start delay: 17
-  // engine steps at 44.1 kHz) spread over the blocks before the clip, which
-  // then plays it from its first frame (above) as if it had started there.
+  // J-170: the realtime stream of a clip starting soon begins now and does
+  // its start-up work (pre-roll, Rubber Band's start delay: 17 engine steps
+  // at 44.1 kHz; K-64: the stretch's pre-roll: 8 engine steps, 17 from a 96 kHz
+  // source) spread over the blocks before the clip, which then plays it from
+  // its first frame (above) as if it had started there.
   const auto ahead = static_cast<int64_t>(std::llround(kPrimeAhead * sr));
   const double tA = map.tickAfterSamples(anchorTick, static_cast<double>(clock + len + ahead), sr);
   for (const ProgAudioClip& c : clips) {
     if (static_cast<double>(c.start) > tA + 1.0) break;  // sorted by start
     ClipVoice* rv = c.rt.get();
-    if (!rv || c.engine != stretch::Engine::RubberBand || !c.sample || (!c.granular && chanRatio == 1.0)) continue;
+    if (!rv || !c.sample || (!c.granular && chanRatio == 1.0)) continue;
     const int64_t first = sampleOf(static_cast<double>(c.start));
     if (first < len || first >= len + ahead) continue;
     if (c.hq && std::fabs(pitchSemis - c.hqSemis) < 1e-6 && c.hq->readyFrames.load(std::memory_order_acquire) > 0) continue;  // its render plays

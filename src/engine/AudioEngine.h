@@ -565,6 +565,7 @@ class AudioEngine {
   double clickPhase_ = 0, clickFreq_ = 0;
   int clickLeft_ = 0, clickStart_ = -1;
   std::atomic<const Program*> live_{nullptr};
+  std::atomic<const Program*> running_{nullptr};  // the Program of the block in progress (audio thread); nullptr between blocks
   std::atomic<uint64_t> blocks_{0};
 
   // Command queue (single producer: UI, single consumer: audio).
@@ -614,6 +615,7 @@ class AudioEngine {
   };
   static constexpr int kMaxSegments = 72;
   Segment segs_[kMaxSegments];
+  double segT0_[kMaxSegments] = {}, segTA_[kMaxSegments] = {};  // K-64: ticks each segment's clips are looked for in
   int segCount_ = 0;
   int64_t absClock_ = 0;      // samples rendered since construction (control-block grid)
   // Note starts of the current block, in time order (dispatch).
@@ -674,6 +676,7 @@ class AudioEngine {
     int gpos = 0;
     size_t nb = 0;
     bool profile = false;
+    bool rest = false;  // K-64: realtime playback: idle channels and effects are left out
     ProcessContext ctx;
   } bc_;
   WorkerPool pool_;

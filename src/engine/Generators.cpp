@@ -650,17 +650,20 @@ class SamplerGen final : public Generator {
     const int count = std::min(std::clamp(static_cast<int>(param(s, pp::SmpVoices, 32) + 0.5f), 1, 32),
                                engine == stretch::Engine::RubberBand ? kRubberVoices : 32);
     if (!keep) return;  // the pool (if any) stays until the stretch needs another one
-    if (uiPool_ && sampleRate == uiRate_ && count == uiCount_ && engine == uiEngine_) return;
+    // K-61: the voices' windows are seconds of the sample's own rate.
+    const SamplePtr smp = sampleCache().get(s.data);
+    const double srcRate = smp ? smp->sampleRate : 0.0;
+    if (uiPool_ && sampleRate == uiRate_ && srcRate == uiSrcRate_ && count == uiCount_ && engine == uiEngine_) return;
     auto* pool = new StretchPool;
     pool->rate = sampleRate;
     pool->engine = engine;
     pool->voices.resize(static_cast<size_t>(count));
     for (auto& v : pool->voices) {
       v = std::make_unique<stretch::Voice>();
-      v->prepare(2, sampleRate, 8.0, 8.0, false, engine);
+      v->prepare(2, sampleRate, 8.0, 8.0, false, engine, 0.0, srcRate);
     }
     delete pending_.exchange(pool, std::memory_order_acq_rel);  // a pool never picked up is dropped
-    uiPool_ = true, uiRate_ = sampleRate, uiCount_ = count, uiEngine_ = engine;
+    uiPool_ = true, uiRate_ = sampleRate, uiSrcRate_ = srcRate, uiCount_ = count, uiEngine_ = engine;
   }
 
   bool active() const override {
@@ -1312,7 +1315,7 @@ class SamplerGen final : public Generator {
   StretchPool* active_ = nullptr;               // audio thread
   bool uiPool_ = false;    // UI thread: a pool was built (for uiRate_ / uiCount_)
   bool clipOnly_ = false;  // UI thread
-  double uiRate_ = 0;
+  double uiRate_ = 0, uiSrcRate_ = 0;
   int uiCount_ = 0;
   stretch::Engine uiEngine_ = stretch::Engine::Stretch;
   struct ReadCtx {

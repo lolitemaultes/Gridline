@@ -8,12 +8,14 @@
 #include <functional>
 #include <set>
 #include <unordered_map>
+#include <unordered_set>
 #include "../core/Arrangements.h"
 #include "../core/ClipGain.h"
 #include "../core/ClipLoop.h"
 #include "../core/ClipRate.h"
 #include "../core/PatternAutomation.h"
 #include "../core/PluginParams.h"
+#include "Delay3Ref.h"
 #include "Dsp.h"
 #include "Slicing.h"
 
@@ -85,6 +87,30 @@ std::shared_ptr<EffectRuntime> newEffectRuntime(const std::string& type) {
 }
 
 // A new channel runtime of `type` (gen is null when the instrument cannot be created).
+// K-64: how long exact silence must have gone through an effect before realtime playback leaves it
+// out (seconds, longer than anything it can still hold; 0: it always runs). Only effects whose whole
+// state is their signal, so that leaving them out cannot change what comes later: no free-running
+// modulation (its phase would differ from an export's), nothing that makes sound on its own.
+double restSeconds(const PluginState& p) {
+  using namespace pp;
+  const auto is = [&](int i, float def) { return static_cast<size_t>(i) < p.params.size() ? p.params[static_cast<size_t>(i)] : def; };
+  if (p.type == "gl.eq") return is(EqListen, 0) > 0.5f ? 0.0 : 3.0;  // (linear phase: its FIR is shorter)
+  if (p.type == "gl.delay") {
+    const int model = static_cast<int>(std::lround(is(DlyModel, 0)));
+    if (model == 0 && (is(DlyModDepth, 0) != 0 || is(DlyModCutoff, 0) != 0)) return 0.0;
+    if (model == 3 && (is(DlyD3Raw0 + d3ref::PModTime, 0) != 0 || is(DlyD3Raw0 + d3ref::PModCut, 0) != 0)) return 0.0;
+    return 14.0;  // one bar at 20 BPM
+  }
+  if (p.type == "gl.reverb") {
+    const int model = static_cast<int>(std::lround(is(RvbModel, 0)));
+    if (is(RvbFreeze, 0) > 0.5f) return 0.0;
+    if (model == 0 && is(RvbModDepth, 0) != 0) return 0.0;
+    if (model == 2 && is(RvbFModDepth, 0) != 0) return 0.0;
+    return 6.0;  // (the longest pre-delay and the first reflections)
+  }
+  return 0.0;
+}
+
 std::shared_ptr<ChannelRuntime> newChannelRuntime(const std::string& type) {
   auto rt = std::make_shared<ChannelRuntime>();
   rt->type = type;
@@ -380,6 +406,7 @@ bool compileAudioClip(const Song& song, const Channel& ch, const Clip& c, const 
     rq.reverse = out.reverse;
     rq.rate = rctx->sampleRate;
     rq.frames = static_cast<int64_t>(std::ceil(out.durSec * rctx->sampleRate)) + 2;
+    rq.atTick = static_cast<double>(out.start);
     bool need = false;
     if (out.resampleSync) {  // J-193: resampled through the tempo map (pitch follows the speed)
       rq.map = &map;
@@ -832,6 +859,7 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
         packs::prepareAux(es.plugin, ps.aux);
         if (ps.rt && warmUp_) warmUp(*ps.rt, es.plugin, ps.aux, sampleRate_);
         ps.controller = hasOutputs(es.plugin.type);
+        ps.restFrames = static_cast<int>(restSeconds(es.plugin) * sampleRate_);
         if (const PluginInfo* pi = findPlugin(es.plugin.type); pi && pi->sideInParam >= 0) {  // J-45 side input
           const int v = paramInt(es.plugin, static_cast<size_t>(pi->sideInParam), -1);
           if (v >= 0) {
@@ -946,6 +974,7 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     }
     chans[c.id] = pc.rt;
     pc.plugin = c.plugin;
+    pc.restable = c.plugin.type == "gl.sampler" && c.plugin.ins.empty();
     if (pc.rt->gen && c.plugin.type == "gl.sampler")  // J-87: no stretch voices for clip-only channels
       pc.rt->gen->setClipOnly((c.audioClip || clipSources.count(c.id)) && !noteChannels.count(c.id));
     if (pc.rt->gen)
@@ -1134,8 +1163,13 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
       if (nf.modded) nf.live = nf.state;
   }
   for (auto& pm : prog->mixer)
-    for (auto& ps : pm.slots)
+    for (auto& ps : pm.slots) {
       if (ps.modded) ps.live = ps.plugin;
+      // K-64: an effect taking sound from elsewhere or passing it on keeps running.
+      if (ps.controller || ps.sideOwn || ps.sendTo >= 0 || ps.busSend >= 0 || ps.busRecv >= 0) ps.restFrames = 0;
+      for (int k : ps.multiSend)
+        if (k >= 0) ps.restFrames = 0;
+    }
 
   // --- patterns (pattern mode) and song events ---
   for (const auto& p : song.patterns) {
@@ -1148,11 +1182,15 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
   }
   const std::vector<ClipFades> clipFades = resolveAllFades(song, prog->tempoMap);  // J-38
   bool deferred = false;  // J-196: some clip's render waits for the edit to settle
+  std::unordered_set<ObjectId> mutedClips;  // K-64: they keep what they had (clipRenders_, clipVoices_)
   for (size_t clipIdx = 0; clipIdx < song.playlist.size(); ++clipIdx) {
     const Clip& clip = song.playlist[clipIdx];
     if (clip.track >= 0 && static_cast<size_t>(clip.track) < song.tracks.size() &&
-        song.tracks[static_cast<size_t>(clip.track)].muted)
+        song.tracks[static_cast<size_t>(clip.track)].muted) {
+      mutedClips.insert(clip.id);
       continue;
+    }
+    if (clip.muted) mutedClips.insert(clip.id);
     if (clip.muted || inLiveArea(song, clip)) continue;  // live area: launched by hand (below)
     if (clip.kind == ClipKind::Audio) {  // arrangement: audio clip through its channel
       int ci = song.channelIndex(clip.source);
@@ -1279,7 +1317,7 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     ClipVoiceSlot want = slot;
     if (preview) want.engine = stretch::Engine::Stretch;
     if (ac.clip != kNoId && old != clipVoices_.end() && old->second.same(want) && !voices.count(key)) {
-      slot.voice = old->second.voice;
+      slot.voice = old->second.voice;  // (a clip that was muted: its gen moved on, so its stream restarts)
       slot.engine = want.engine;
       // A new timing (a time stretch knob, a trim, a move): the stream starts
       // again where the clip now is (the audio thread restarts it).
@@ -1290,7 +1328,8 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
       return;
     } else {
       if (deferRenders_) slot.engine = stretch::Engine::Stretch, ++newVoices;
-      slot.voice = makeClipVoice(sampleRate_, slot.engine, ac.sample ? ac.sample->sampleRate : 0.0);
+      // K-64: in realtime playback its steps are shared out over the blocks (an export has no deadline).
+      slot.voice = makeClipVoice(sampleRate_, slot.engine, ac.sample ? ac.sample->sampleRate : 0.0, asyncSamples_);
       ++voicesMade_;
     }
     ac.rt = slot.voice;
@@ -1307,7 +1346,23 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
   // zero) are kept for when it comes back.
   if (deferRenders_)
     for (auto& kv : clipVoices_) voices.emplace(kv.first, std::move(kv.second));
+  // K-64: the voices and renders of clips muted since stay for when they come back.
+  for (auto& kv : clipVoices_)
+    if (mutedClips.count(kv.first.first) && kv.second.voice) {
+      ++kv.second.gen;
+      voices.emplace(kv.first, std::move(kv.second));
+    }
   clipVoices_ = std::move(voices);
+  {
+    std::unordered_map<ObjectId, stretch::RenderedClipPtr> renders;
+    renders.reserve(clipRenders_.size());
+    for (const auto& pc : prog->channels)
+      for (const auto& ac : pc.audio)
+        if (ac.hq && ac.clip != kNoId) renders.emplace(ac.clip, ac.hq);
+    for (auto& kv : clipRenders_)
+      if (mutedClips.count(kv.first)) renders.emplace(kv.first, std::move(kv.second));
+    clipRenders_ = std::move(renders);
+  }
   deferred_ = deferred;
   voicesPending_ = voicesPending;
 

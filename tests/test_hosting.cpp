@@ -14,6 +14,7 @@
 #include <vector>
 #include "Check.h"
 #include "Hermetic.h"
+#include "NoteRetrigger.h"
 #include "core/Document.h"
 #include "core/Project.h"
 #include "core/flp/Flp.h"
@@ -1042,6 +1043,60 @@ void testStopReleasesHosted() {
   expect(eng.panicsDone() == 1 && !eng.panicking(), "J-109: the panic completed");
 }
 
+// Two clips of one pattern back to back: the new note sounds in every format, and what the plugin
+// receives leaves it held for an instrument that goes by the key alone.
+void testNoteRetrigger() {
+  auto* cp = probe<GridlineClapProbe>(clapBinary(), "gridline_clap_probe");
+  auto* v2 = probe<GridlineVst2Probe>(vst2Binary(), "gridline_vst2_probe");
+  auto* v3 = probe<GridlineVst3Probe>(vst3::bundleBinaryPath(kVst3Bundle), "gridline_vst3_probe");
+  expect(cp && v2 && v3, "retrigger: test plugin probes reachable");
+  if (!cp || !v2 || !v3) return;
+  gl::test::checkRetrigger("CLAP", kClapSynth, &cp->notes);
+  gl::test::checkRetrigger("VST2", kVst2Synth, &v2->notes);
+  gl::test::checkRetrigger("VST3", kVst3Synth, &v3->notes);
+#if defined(__APPLE__)
+  gl::test::checkRetrigger("AU (Apple's DLS synth)", "au:aumu/dls /appl", nullptr, 0.012f);  // (a release tail stays near 0.006)
+#endif
+  // Through the sandbox: the order survives the shared memory (a key-only synth, offline as in testSandbox).
+  {
+    OfflineScope offline;
+    host::setRunInSandbox(kVst2Synth, true);
+    const gl::test::RetrigResult r = gl::test::retrigOffline(kVst2Synth, gl::test::RetrigScene::EndsAtClipEnd, nullptr);
+    const int bar = gl::test::kRetrigBarFrames;
+    expect(gl::test::retrigPeak(r.audio, bar + bar / 4, bar + 3 * bar / 4) > 0.01f, "retrigger: VST2 in the sandbox, the second clip's note sounds");
+    host::setRunInSandbox(kVst2Synth, false);
+  }
+  // The rules themselves, on one instrument: note ids stay paired.
+  cp->notes = GridlineNoteLog{};
+  auto g = createGenerator(kClapSynth);
+  PluginState st = defaultPluginState(kClapSynth);
+  g->prepareHost(st, 48000);
+  std::vector<float> L, R;
+  const auto log = [&](int i) { return i < cp->notes.count ? cp->notes.ev[i] : GridlineNoteLog::Ev{false, -1, -1, -1}; };
+  g->noteOn(1, 60, 0.9f, 10);  // a note with no length still goes on, then off
+  g->noteOff(1, 10);
+  runGen(*g, st, L, R, 256, 256);
+  expect(cp->notes.count == 2 && log(0).on && !log(1).on && log(0).id == log(1).id && log(0).at == log(1).at, "retrigger: a note of no length goes on, then off");
+  cp->notes = GridlineNoteLog{};
+  g->noteOn(2, 60, 0.9f, 10);
+  runGen(*g, st, L, R, 256, 256);
+  g->noteOn(3, 60, 0.9f, 20);  // a later note on the key: the old one ends first, and only once
+  g->noteOff(2, 30);
+  g->noteOff(3, 40);
+  runGen(*g, st, L, R, 256, 256);
+  expect(cp->notes.count == 4 && log(0).on && !log(1).on && log(2).on && !log(3).on && log(0).id == log(1).id && log(2).id == log(3).id && log(1).at == log(2).at,
+         ("retrigger: on A, off A, on B, off B [" + gl::test::retrigTrace(cp->notes) + "]").c_str());
+  cp->notes = GridlineNoteLog{};
+  g->noteOn(4, 60, 0.9f, 0);  // another pitch or another colour group is left alone
+  g->noteOn(5, 62, 0.9f, 10);
+  NoteProps other;
+  other.color = 3;
+  g->noteOn(6, 60, 0.9f, 20, other);
+  g->noteOff(4, 30), g->noteOff(5, 30), g->noteOff(6, 30);
+  runGen(*g, st, L, R, 256, 256);
+  expect(cp->notes.count == 6 && log(0).on && log(1).on && log(2).on && log(3).at == log(0).at + 30, "retrigger: another key or MIDI channel is not touched");
+}
+
 // Sidechain from the mixer: a sidechain send feeds a hosted effect's sidechain input.
 void testSidechainRender() {
   auto render = [](float sideParam) {
@@ -1901,6 +1956,7 @@ int main() {
   testRenderWorker();
   testSidechainRender();
   testStopReleasesHosted();
+  testNoteRetrigger();
   testMidiOutRouting();
   testSampleAccurate();
   testLatencyChange();

@@ -1,6 +1,7 @@
 // Gridline: K-49, FL import of tempo clips and of audio clips stretched to a time.
 // An automation clip's values sit in the range its channel stores, not a fixed one;
-// clips stretched to a time span their ticks at whatever the tempo is; the clip end
+// clips stretched to a time on a channel that keeps its pitch span their ticks at whatever
+// the tempo is, on a channel that resamples they hold their rate (test_k58.cpp); the clip end
 // FL derives from the project tempo does not stop the audio under tempo automation;
 // the FL export writes those values back. Every file here is synthetic.
 #include <algorithm>
@@ -292,8 +293,8 @@ int main() {
     expect(load(B, s), "imports clips stretched to a time");
     const Clip* a = audioClipAt(s, 0);
     const Clip* b = audioClipAt(s, 16 * kPpq);
-    expect(a && a->syncBpm > 0 && a->tempoLock, "a clip stretched to a time follows the tempo");
-    expect(b && b->syncBpm > 0 && b->tempoLock, "also when its channel resamples");
+    expect(a && a->syncBpm > 0 && a->tempoLock, "a clip stretched to a time on a channel that keeps its pitch follows the tempo");
+    expect(b && b->syncBpm == 0 && !b->tempoLock, "on a channel that resamples it does not");
     AudioBuffer ka = [&] {
       Song one = s;
       one.playlist.erase(std::remove_if(one.playlist.begin(), one.playlist.end(), [](const Clip& c) { return c.kind == ClipKind::Audio && c.start != 0; }), one.playlist.end());
@@ -306,7 +307,8 @@ int main() {
       one.playlist.erase(std::remove_if(one.playlist.begin(), one.playlist.end(), [](const Clip& c) { return c.kind == ClipKind::Audio && c.start == 0; }), one.playlist.end());
       return renderOf(one, 28 * kPpq);
     }();
-    expect(near(audioEnd(kb, 44100), 12.0, 0.03), "resampled: audio ends at the clip's end at the tempo that plays");
+    // K-60: the rate is fitted at the tempo where the clip starts: the 4 s window spans the clip's 4 s.
+    expect(near(audioEnd(kb, 44100), 8.0 + 4.0, 0.03), "resampled: the audio spans the clip at the tempo where it starts");
   }
   {
     // Half the window in half the ticks, a clip stretch, and a window that says something else.

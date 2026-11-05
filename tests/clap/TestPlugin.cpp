@@ -117,6 +117,7 @@ void synthEvent(Synth* s, const clap_event_header_t* h, const clap_output_events
     case CLAP_EVENT_NOTE_ON: {
       auto* n = reinterpret_cast<const clap_event_note_t*>(h);
       if (n->key == 1) std::abort();  // crash on purpose (sandbox tests)
+      gProbe.notes.add(true, n->key, n->note_id, static_cast<int>(h->time));
       s->noteId = n->note_id;
       s->key = n->key;
       s->tuning = s->expr = 0;
@@ -129,6 +130,7 @@ void synthEvent(Synth* s, const clap_event_header_t* h, const clap_output_events
     case CLAP_EVENT_NOTE_OFF: {
       auto* n = reinterpret_cast<const clap_event_note_t*>(h);
       ++gProbe.noteOffs;
+      gProbe.notes.add(false, n->key, n->note_id, static_cast<int>(h->time));
       if (n->note_id == s->noteId || n->note_id == -1) s->amp = 0;
       if (s->echo.load() >= 0.5 && out) echoNote(n, out);
       break;
@@ -151,6 +153,7 @@ void synthEvent(Synth* s, const clap_event_header_t* h, const clap_output_events
     case CLAP_EVENT_MIDI: {
       auto* m = reinterpret_cast<const clap_event_midi_t*>(h);
       const int st = m->data[0] & 0xF0;
+      if (st == 0x90 || st == 0x80) gProbe.notes.add(st == 0x90 && m->data[2] > 0, m->data[1], -1, static_cast<int>(h->time));
       if (st == 0xE0) s->bend = (((m->data[1] & 0x7F) | ((m->data[2] & 0x7F) << 7)) - 8192) / 8192.0 * 2.0;
       if (st == 0x90 && m->data[2] > 0) {
         s->key = m->data[1];
@@ -220,6 +223,7 @@ clap_process_status synthProcess(const clap_plugin_t* p, const clap_process_t* p
     if (SL) SL[i] = SR[i] = sub;
   }
   while (ei < ne) synthEvent(s, pr->in_events->get(pr->in_events, ei++), pr->out_events);
+  gProbe.notes.frames += n;
   return CLAP_PROCESS_CONTINUE;
 }
 

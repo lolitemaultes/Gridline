@@ -42,6 +42,9 @@ void orderAbove(const Window& w, const Window& ref);
 // right now (macOS: a window is in live resize; Windows: the UI thread is in move / size mode).
 // The main loop is blocked inside the event pump then. False where no such loop exists (X11).
 bool inModalSizeLoop();
+// An X server answers on this session's display: a real one or XWayland, which may start now (X11
+// systems; false elsewhere). Before SDL starts, to choose its window system (core/VideoDriverChoice.h).
+bool xServerAnswers();
 // Device pixels per logical unit of the window (2 on Retina screens).
 double backingScale(const Window& w);
 // The X resource database of the window's display (XResourceManagerString:

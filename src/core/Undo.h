@@ -23,6 +23,9 @@ class Command {
   virtual uint64_t mergeKey() const { return 0; }
   // Absorb `next` (same merge key, already applied). Returns false to refuse.
   virtual bool mergeWith(const Command& next) { (void)next; return false; }
+  // K-64: false when this command can never change the tempo map (Document then skips the tempo
+  // map work every edit otherwise pays: a large project with tempo automation spends 10 ms on it).
+  virtual bool mayMoveTempo() const { return true; }
 };
 
 using CommandPtr = std::unique_ptr<Command>;

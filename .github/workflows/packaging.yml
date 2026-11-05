@@ -194,6 +194,21 @@ jobs:
           eval "$(bash tools/release/version.sh)"
           test "$(gridline --version)" = "Gridline $full"
           bash tools/ci/check-linux-icons.sh /usr
+      # Arch's SDL2 is sdl2-compat over SDL3, which can choose Wayland by itself.
+      - name: Plugin interfaces on a Wayland desktop (sdl2-compat)
+        run: |
+          pacman -S --noconfirm --needed weston xorg-xwayland mesa
+          pacman -Q sdl2 sdl2-compat sdl3 weston || true
+          mkdir -p wl-work && chown builder wl-work
+          su builder -c "python3 tools/ci/check-wayland.py /usr/bin/gridline-app /usr/bin/gridline /usr/lib/vst3 wl-work"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aur-wayland-logs
+          path: |
+            wl-work/*/app.log
+            wl-work/*.log
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         with:
           name: aur-srcinfo

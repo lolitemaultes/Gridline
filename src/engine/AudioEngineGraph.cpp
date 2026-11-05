@@ -40,6 +40,12 @@ inline float sumSq(const float* x, int n) {
   for (int i = 0; i < n; ++i) a += x[i] * x[i];
   return a;
 }
+// K-64: stops at the first sample that is not exact silence.
+inline bool allZero(const float* x, int n) {
+  for (int i = 0; i < n; ++i)
+    if (x[i] != 0.f) return false;
+  return true;
+}
 inline uint64_t nowNs() {
   return static_cast<uint64_t>(
       std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
@@ -129,6 +135,33 @@ void AudioEngine::runChannel(size_t ci, int worker) {
   float* cR = sc.chR;
   std::memset(cL, 0, sizeof(float) * static_cast<size_t>(n));
   std::memset(cR, 0, sizeof(float) * static_cast<size_t>(n));
+  // K-64: a sampler channel with no voice, no event and no clip near this block makes silence:
+  // nothing to run. (Most channels of a large arrangement, most of the time.)
+  rt->outZero = false;
+  if (bc_.rest && ch.restable && rt->gen->idle() && !rt->gen->wantsNoteLookahead() && !(livePieceCount_ > 0 && tMode_ == PlayMode::Live)) {
+    bool near = false;
+    if (!ch.audio.empty() && tPlaying_ && tMode_ == PlayMode::Song)
+      for (int sgi = 0; sgi < segCount_ && !near; ++sgi) near = audioClipsNear(ch.audio, segT0_[sgi], segTA_[sgi]);
+    if (!near) {
+      rt->sounding.store(false, std::memory_order_relaxed);
+      if (!rt->primed) {
+        rt->curL = ch.gainL, rt->curR = ch.gainR;
+        rt->primed = true;
+      } else if (bc_.grid) {
+        if (bc_.gpos == 0) rt->fromL = rt->curL, rt->fromR = rt->curR;
+        const float k = static_cast<float>(bc_.gpos + n) / static_cast<float>(kControlBlock);
+        rt->curL = bc_.gpos + n >= kControlBlock ? ch.gainL : rt->fromL + (ch.gainL - rt->fromL) * k;
+        rt->curR = bc_.gpos + n >= kControlBlock ? ch.gainR : rt->fromR + (ch.gainR - rt->fromR) * k;
+      } else {
+        rt->curL = ch.gainL, rt->curR = ch.gainR;
+      }
+      rt->outZero = true;
+      rt->peak.store(0.f, std::memory_order_relaxed);
+      rt->tap.write(cL, cR, n);
+      if (bc_.profile) rt->cpu.add(nowNs() - t0);
+      return;
+    }
+  }
   if (tPlaying_ && rt->gen->wantsLanes()) {
     // J-159: the lanes on this instrument's own parameters (it evaluates them itself)
     ParamLane lanes[kMaxParamLanes];
@@ -225,7 +258,7 @@ void AudioEngine::pullInput(const ProgInput& in, float* accL, float* accR) const
   switch (in.kind) {
     case ProgInput::Channel: {
       const ChannelRuntime* rt = p->channels[static_cast<size_t>(in.src)].rt.get();
-      in.tap.run(rt->outL.data(), rt->outR.data(), 1.0f, accL, accR, n);
+      in.tap.run(rt->outZero ? nullptr : rt->outL.data(), rt->outZero ? nullptr : rt->outR.data(), 1.0f, accL, accR, n);
       break;
     }
     case ProgInput::ChannelAux: {  // multi-output instrument: unity gain, muted with the channel
@@ -361,6 +394,19 @@ void AudioEngine::runMixer(size_t idx, int worker) {
       continue;
     }
     const uint64_t s0 = bc_.profile ? nowNs() : 0;
+    // K-64: an effect resting: exact silence in, its own silence out, nothing to run.
+    const bool mayRest = bc_.rest && slot.restFrames > 0;
+    const bool quietIn = mayRest && allZero(bL, n) && allZero(bR, n);
+    if (quietIn && slot.rt->quiet >= slot.restFrames) {
+      slot.rt->inTap.write(bL, bR, n);
+      slot.rt->tap.write(bL, bR, n);
+      if (bc_.profile) {
+        const uint64_t d = nowNs() - s0;
+        slot.rt->cpu.add(d);
+        slotNs += d;
+      }
+      continue;
+    }
     bool blend = slot.mix < 0.999f;
     if (blend) {
       std::memcpy(scr.dryL, bL, bytes);
@@ -417,6 +463,7 @@ void AudioEngine::runMixer(size_t idx, int worker) {
         bL[i] = scr.dryL[i] + (bL[i] - scr.dryL[i]) * slot.mix;
         bR[i] = scr.dryR[i] + (bR[i] - scr.dryR[i]) * slot.mix;
       }
+    if (mayRest) slot.rt->quiet = quietIn && allZero(bL, n) && allZero(bR, n) ? slot.rt->quiet + n : 0;
     slot.rt->meter.store(slot.rt->fx->meter(), std::memory_order_relaxed);
     slot.rt->input.store(slot.rt->fx->inputLevel(), std::memory_order_relaxed);
     {
@@ -430,6 +477,29 @@ void AudioEngine::runMixer(size_t idx, int worker) {
       slot.rt->cpu.add(d);
       slotNs += d;
     }
+  }
+  // K-64: silence through a settled strip stays silence (the strip EQ's memory is gone after a second).
+  const bool stripQuiet = bc_.rest && rt && allZero(bL, n) && allZero(bR, n);
+  if (stripQuiet && rt->quiet >= static_cast<int64_t>(sr_)) {
+    if (m.hasPreSend) {
+      std::memset(preL_[idx].data(), 0, bytes);
+      std::memset(preR_[idx].data(), 0, bytes);
+    }
+    if (!rt->primed) {
+      rt->curL = m.gainL, rt->curR = m.gainR;
+      rt->primed = true;
+    } else if (bc_.grid) {
+      if (bc_.gpos == 0) rt->fromL = rt->curL, rt->fromR = rt->curR;
+      const float k = static_cast<float>(bc_.gpos + n) / static_cast<float>(kControlBlock);
+      rt->curL = bc_.gpos + n >= kControlBlock ? m.gainL : rt->fromL + (m.gainL - rt->fromL) * k;
+      rt->curR = bc_.gpos + n >= kControlBlock ? m.gainR : rt->fromR + (m.gainR - rt->fromR) * k;
+    } else {
+      rt->curL = m.gainL, rt->curR = m.gainR;
+    }
+    rt->tap.write(bL, bR, n);
+    rt->sent = true;
+    if (bc_.profile) rt->cpu.add(nowNs() - t0 - slotNs);
+    return;
   }
   // Strip: EQ, stereo separation, swap, polarity, volume/pan (smoothed).
   if (rt) rt->eq.process(m.eq, sr_, bL, bR, n);
@@ -487,6 +557,7 @@ void AudioEngine::runMixer(size_t idx, int worker) {
     storeMax(rt->rmsR, std::sqrt(sumSq(bR, n) / static_cast<float>(n)));
     rt->tap.write(bL, bR, n);
     rt->sent = true;
+    if (bc_.rest) rt->quiet = stripQuiet && allZero(bL, n) && allZero(bR, n) ? rt->quiet + n : 0;
     if (bc_.profile) rt->cpu.add(nowNs() - t0 - slotNs);
   }
 }

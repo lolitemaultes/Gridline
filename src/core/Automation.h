@@ -3,6 +3,7 @@
 #pragma once
 #include <cstdint>
 #include <memory>
+#include <functional>
 #include <vector>
 #include "Song.h"
 
@@ -18,6 +19,10 @@ double automationValue(const AutomationClip& a, double t);
 double pointsValue(const std::vector<AutoPoint>& pts, double t, bool fl);
 // FL-law progress of the segment ending at point k (smooth uses its neighbours).
 double flAutoShape(const std::vector<AutoPoint>& pts, size_t k, double x);
+// K-62: FL moves a control along its clip's curve and the plugin applies its law to where the control
+// is. `fl`: the clip's points as control positions, `out`: the same points through `law`. Segments of
+// `out` that stray from `law` (over 0.1 dB, floor 1e-4) are replaced by straight pieces that follow it.
+void followFlKnobLaw(const std::vector<AutoPoint>& fl, std::vector<AutoPoint>& out, const std::function<double(double)>& law);
 // Inserts a point keeping the list sorted (after points at the same tick); returns its index.
 int insertAutoPoint(AutomationClip& a, const AutoPoint& p);
 const char* autoShapeName(AutoShape s);

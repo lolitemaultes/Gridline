@@ -1507,6 +1507,10 @@ class MidiOutGen final : public Generator {
     int p = std::clamp(static_cast<int>(std::lround(pitch)), 0, 127);
     double v = velCurve_ == 1 ? std::sqrt(vel) : velCurve_ == 2 ? vel * vel : velCurve_ == 3 ? 100.0 / 127.0 : vel;
     const int v7 = std::clamp(static_cast<int>(v * 127 * velScale_), 1, 127);
+    // The receiver knows a note by its key: an earlier note on this key ends first, or its
+    // note-off would end the new one.
+    for (auto& h : held_)
+      if (h.id != 0 && h.pitch == p) onNoteOff(h.id);
     for (auto& h : held_)
       if (h.id == 0) {
         h = {id, p, v7};

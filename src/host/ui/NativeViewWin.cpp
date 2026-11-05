@@ -146,6 +146,7 @@ void keepAbove(const Window& child, const Window& parent, bool on) {
 double backingScale(const Window&) { return 1.0; }  // SDL window units are pixels (per-monitor DPI aware)
 long windowNumber(const Window&) { return -1; }
 std::string xResources(const Window&) { return {}; }  // X11 only
+bool xServerAnswers() { return false; }
 
 PointerSize pointerSize(const Window&) {
   PointerSize r;

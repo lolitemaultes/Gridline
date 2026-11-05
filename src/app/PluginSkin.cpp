@@ -691,7 +691,7 @@ bool button(const char* id, ImVec2 tl, ImVec2 size, const Skin& k, const char* t
     ImGui::PushFont(app().fontMonoBold, font > 0 ? font : std::clamp(size.y * 0.5f, 8.0f, 12.0f));
     ImVec2 ts = ui::TextSizeExact(ui::labelText(text));
     ui::drawLabel(dl, ImVec2(std::round((tl.x + p1.x - ts.x) * 0.5f), std::round((tl.y + p1.y - ts.y) * 0.5f)),
-                  on ? lighten(k.select, 0.6f) : hov ? k.text : k.textDim, text);
+                  on ? (look::styled() && !theme::isDark() ? darken(k.select, 0.55f) : lighten(k.select, 0.6f)) : hov ? k.text : k.textDim, text);  // on the light theme's pale lit face
     ImGui::PopFont();
   }
   return pressed;

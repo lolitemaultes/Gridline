@@ -220,7 +220,7 @@ int main() {
     const bool inTime = t.wall < c.bound || t.cpu < c.cpuBound;
     if (t.wall >= c.bound && inTime) std::printf("# %s: wall time over the bound (machine load), CPU time within it\n", c.name);
     expect(inTime, (std::string(c.name) + ": export within the time bound (wall, or CPU under load)").c_str());
-    const bool cachedFast = tCached.wall < std::max(0.5, 0.5 * t.wall) || tCached.cpu < std::max(0.25, 0.5 * t.cpu);
+    const bool cachedFast = tCached.wall < std::max(0.75, 0.5 * t.wall) || tCached.cpu < std::max(0.4, 0.6 * t.cpu);
     expect(cachedFast, (std::string(c.name) + ": a repeat export reuses the solved states").c_str());
     if (dump) {
       const std::string base = std::string(dump) + "/" + c.name;

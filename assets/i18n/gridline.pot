@@ -15238,7 +15238,7 @@ msgid "Dock back into Gridline"
 msgstr ""
 
 #: src/app/Viewports.cpp
-msgid "Not available on Wayland. Start Gridline with SDL_VIDEODRIVER=x11 to use it through XWayland."
+msgid "Not available on Wayland: detached windows need XWayland."
 msgstr ""
 
 #: src/app/Viewports.cpp
@@ -15267,6 +15267,14 @@ msgstr ""
 
 #: src/app/main.cpp
 msgid "Cannot decode sample: missing.wav"
+msgstr ""
+
+#: src/app/main.cpp
+msgid "Long Plugin Name 2"
+msgstr ""
+
+#: src/app/main.cpp
+msgid "Long Plugin Name 2: the plugin's bridge refused to open its interface. Check that it works in another host, and its logs"
 msgstr ""
 
 #: src/app/main.cpp

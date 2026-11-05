@@ -457,7 +457,11 @@ void Exporter::writeHeader() {
   };
   auto raw = [&](uint8_t id, int nth = 0) { return findIn(pe, id, nth); };
   w.ascii(199, o.version);
-  w.dword(159, buildOf(o.version));
+  // K-63: the mark tells the importer these samplers carry Gridline's levels, not FL's. A song that
+  // came from such a file keeps it; one that came from FL's own file goes out as FL's.
+  const uint32_t mark = flNativeExportBuild(o.version);
+  const bool fromFl = o.useOrigin && !s.flOrigin.empty() && pv(159, 0) != mark;
+  w.dword(159, mark != 0 && !fromFl ? mark : buildOf(o.version));
   w.dword(169, pv(169, 7));
   if (const RawEvent* e = raw(172)) w.raw(*e);
   w.byte(37, pv(37, 1));

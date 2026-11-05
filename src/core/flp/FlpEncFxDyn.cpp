@@ -19,7 +19,7 @@ constexpr size_t knob(int k) { return 4 + 4 * static_cast<size_t>(k); }
 // ------------------------------------------------------------------ Fruity Limiter
 // Version 7 (FL 25, 169 bytes): 18 knobs by tag, the same 18 for the A/B
 // spare state, i32 scroll speed, i32 view, 4 × u8 display toggles, i32 ?,
-// i32 sidechain input, u8 flags (bit 0: 0.2 dB safety margin).
+// i32 sidechain input, u8 flags (bit 0: no 0.2 dB safety margin).
 constexpr int kLimKnobs = 18;
 constexpr size_t kLimTail = 4 + 2 * 4 * kLimKnobs;  // after the spare state
 

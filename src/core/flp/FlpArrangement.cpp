@@ -31,6 +31,7 @@
 #include <cstdio>
 #include <functional>
 #include <set>
+#include "../Automation.h"
 #include "../ClipGain.h"
 #include "../Fades.h"
 #include "../Params.h"
@@ -96,8 +97,9 @@ class Importer {
   std::map<int, ObjectId> automations_;    // FL channel → AutomationClip
   std::map<int, std::string> autoNames_;
   std::map<ObjectId, int> channelCents_;   // audio clip channel → pitch knob (cents), applied per clip
-  // K-49: an audio clip channel stretched to a time: the sample spans that many
-  // beats at whatever the tempo is, so its clips follow the tempo.
+  // K-49: an audio clip channel stretched to a time: the sample spans that many beats at
+  // whatever the tempo is, so its clips follow the tempo when the channel keeps the pitch.
+  // A channel that resamples holds the rate its time means at the tempo where the clip starts.
   struct ChannelFit {
     double sourcePerTick = 0;  // source seconds per tick (time and multiplier, before the clip's stretch)
     double timeStretch = 1;    // the channel's stored time stretch
@@ -391,6 +393,22 @@ bool Importer::resolveTarget(uint32_t target, Target& t) {
   }
 }
 
+namespace {
+// K-62: true for a parameter of the Convolver on a mixer slot.
+bool isConvolverParam(const Song& song, const ParamId& id) {
+  for (const auto& m : song.mixer) {
+    if (m.id != id.owner) continue;
+    for (size_t s = 0; s < m.slots.size(); ++s) {
+      if (m.slots[s].plugin.type != "gl.convolver") continue;
+      const uint32_t base = slotParam(m.id, static_cast<int>(s), 0).index;
+      if (id.index >= base && id.index < base + static_cast<uint32_t>(m.slots[s].plugin.params.size())) return true;
+    }
+  }
+  return false;
+}
+
+}  // namespace
+
 // 227 records link automation channels to their targets.
 void Importer::importTargets() {
   int ok = 0, bad = 0;
@@ -442,8 +460,10 @@ void Importer::importTargets() {
     a->owner = whole.id.owner;
     a->index = whole.id.index;
     if (whole.convert) {
+      const std::vector<AutoPoint> flPoints = a->points;
       for (auto& p : a->points) p.value = static_cast<float>(std::clamp(whole.convert(range.at(p.value)), 0.0, 1.0));
       a->min = 0, a->max = 1;
+      if (isConvolverParam(s_, whole.id)) followFlKnobLaw(flPoints, a->points, [&](double x) { return std::clamp(whole.convert(range.at(x)), 0.0, 1.0); });
     } else {
       a->min = static_cast<float>(std::clamp(whole.toNormalized(range.lo), 0.0, 1.0));
       a->max = static_cast<float>(std::clamp(whole.toNormalized(range.hi), 0.0, 1.0));
@@ -572,8 +592,9 @@ void Importer::importTracksAndClips() {
           if (e.u16(o + 12) > 198) trackBase = 499;
   }
   int lastUsed = -1;
-  int patClips = 0, audioClips = 0, autoClips = 0, muted = 0, offsets = 0, other = 0, fitClips = 0, fitWindows = 0, derivedEnds = 0;
+  int patClips = 0, audioClips = 0, autoClips = 0, muted = 0, offsets = 0, other = 0, fitClips = 0, fixedRateClips = 0, fitWindows = 0, derivedEnds = 0;
   std::map<int, ObjectId> clipGroups;
+  std::vector<size_t> fixedRateAt;  // playlist indexes of clips resampled at a fixed rate
   for (const auto& e : evs) {
     if (e.id != 233) continue;
     const uint32_t k = playlistStride(e);
@@ -594,6 +615,7 @@ void Importer::importTracksAndClips() {
     }
     for (uint32_t o = 0; o + k <= e.size; o += k) {
       Clip cl;
+      bool fixedRate = false;
       cl.start = c_.tick(e.u32(o));
       cl.length = c_.tick(e.u32(o + 8));
       int base = e.u16(o + 4), item = e.u16(o + 6);
@@ -659,34 +681,51 @@ void Importer::importTracksAndClips() {
           const Channel* sourceChannel = s_.channel(ch->second);
           const double windowSeconds = eo > so ? (static_cast<double>(eo) - std::max(0.0, static_cast<double>(so))) / 1000.0 : 0.0;
           const int64_t recordLength = e.u32(o + 8);
+          // K-49: the end FL stores is the clip's length turned into milliseconds at the
+          // project tempo, not an edit: under tempo automation the clip's ticks last longer
+          // or shorter, and it is the ticks (or the file's end) that end it.
+          auto dropDerivedEnd = [&] {
+            if (!(windowSeconds > 0)) return;
+            const double atProjectTempo = windowSeconds / std::max(1e-6, clipRate(*sourceChannel, cl).speed) * s_.tempo / 60.0 * s_.ppq;
+            if (std::fabs(atProjectTempo - static_cast<double>(recordLength)) <= std::max(1.5, 0.002 * atProjectTempo)) cl.audioEnd = 0, ++derivedEnds;
+          };
           if (auto fit = channelFits_.find(ch->second); fit != channelFits_.end() && sourceChannel) {
-            // K-49: under tempo automation a clip stretched to a time spans its ticks
-            // whatever the tempo is (at a constant tempo the channel's stretch alone
-            // does that). FL's own window says the same to within a tick; where it
-            // disagrees by more (the file is not the one the time was set for) the
-            // window is what the clip plays. A channel that resamples also moves by its pitch.
-            // K-50: a time beyond the stored stretch's range takes this path at any tempo: the
-            // clip's rate carries what the stretch cannot, and a resampled pitch follows that rate.
+            // K-49: FL's own window says the same as the channel's time to within a tick;
+            // where it disagrees by more (the file is not the one the time was set for)
+            // the window is what the clip plays. A channel that resamples also moves by its pitch.
             const double stretchNow = std::max(1e-6, cl.stretch);
-            const double pitchSpeed = clipRate(*sourceChannel, cl).resample ? std::pow(2.0, static_cast<double>(cl.speedPitch) / 1200.0) : 1.0;
+            const bool resamples = clipRate(*sourceChannel, cl).resample;
+            const double pitchSpeed = resamples ? std::pow(2.0, static_cast<double>(cl.speedPitch) / 1200.0) : 1.0;
             double perTick = fit->second.sourcePerTick * pitchSpeed / stretchNow;
             bool windowDisagrees = false;
             if (windowSeconds > 0 && recordLength >= 24) {
               const double said = windowSeconds / static_cast<double>(recordLength);
               if (std::fabs(said / perTick - 1.0) > 0.05) perTick = said, windowDisagrees = true, ++fitWindows;
             }
-            const double bpm = 60.0 / (perTick * std::max(1, s_.ppq) * stretchNow * fit->second.timeStretch);
-            if ((tempoAutomated_ || windowDisagrees || fit->second.beyondRange) && std::isfinite(bpm) && bpm > 0) {
-              cl.syncBpm = std::min(bpm, 1000.0);
-              cl.tempoLock = true;
-              ++fitClips;
+            if (tempoAutomated_ && resamples) {
+              // A channel that resamples fits the clip when it starts and then holds that rate and
+              // pitch, whatever the tempo does while it plays. This is the rate at the project tempo;
+              // the pass after the loop moves it to the tempo where the clip starts.
+              const double speed = perTick * std::max(1, s_.ppq) * s_.tempo / 60.0;
+              const double factor = pitchSpeed / (speed * stretchNow * fit->second.timeStretch);
+              if (std::isfinite(factor) && factor > 0 && std::fabs(factor - 1.0) > 1e-5) cl.rateFit = std::clamp(factor, 1.0 / 1024.0, 1024.0);
+              dropDerivedEnd();
+              fixedRate = true;
+              ++fixedRateClips;
+            } else {
+              // K-49: under tempo automation a clip that keeps its pitch spans its ticks whatever
+              // the tempo is (at a constant tempo the channel's stretch alone does that).
+              // K-50: a time beyond the stored stretch's range takes this path at a constant tempo:
+              // the clip's rate carries what the stretch cannot, and a resampled pitch follows that rate.
+              const double bpm = 60.0 / (perTick * std::max(1, s_.ppq) * stretchNow * fit->second.timeStretch);
+              if ((tempoAutomated_ || windowDisagrees || fit->second.beyondRange) && std::isfinite(bpm) && bpm > 0) {
+                cl.syncBpm = std::min(bpm, 1000.0);
+                cl.tempoLock = true;
+                ++fitClips;
+              }
             }
-          } else if (tempoAutomated_ && windowSeconds > 0 && sourceChannel) {
-            // K-49: the end FL stores is the clip's length turned into milliseconds at
-            // the project tempo, not an edit: under tempo automation the clip's ticks
-            // last longer or shorter, and it is the ticks that end it.
-            const double atProjectTempo = windowSeconds / std::max(1e-6, clipRate(*sourceChannel, cl).speed) * s_.tempo / 60.0 * s_.ppq;
-            if (std::fabs(atProjectTempo - static_cast<double>(recordLength)) <= std::max(1.5, 0.002 * atProjectTempo)) cl.audioEnd = 0, ++derivedEnds;
+          } else if (tempoAutomated_ && sourceChannel) {
+            dropDerivedEnd();
           }
           ++audioClips;
         } else {
@@ -698,15 +737,31 @@ void Importer::importTracksAndClips() {
       cl.id = s_.allocateId();
       c_.clipRecords[cl.id] = std::string(reinterpret_cast<const char*>(e.data + o), k);
       muted += cl.muted;
+      if (fixedRate) fixedRateAt.push_back(s_.playlist.size());
       s_.playlist.push_back(cl);
       lastUsed = std::max(lastUsed, cl.track);
     }
   }
   int nTracks = std::clamp(std::max({lastUsed + 1, lastNamed + 1, 8}) + 2, 1, kMaxPlaylistTracks);
   s_.tracks.assign(tracks.begin(), tracks.begin() + nTracks);
+  // K-60: a resampled clip's rate is fitted at the tempo where it starts, not at the tempo the
+  // project happened to be saved at: in a section at another tempo its audio still spans the clip
+  // and its beats stay with the clips that follow the tempo. It holds that rate while it plays.
+  if (!fixedRateAt.empty()) {
+    TempoMap map;
+    map.build(s_);
+    for (size_t at : fixedRateAt) {
+      Clip& fixed = s_.playlist[at];
+      const double bpm = map.bpmAt(static_cast<double>(fixed.start));
+      if (!(bpm > 0)) continue;
+      const double fit = fixed.rateFit * s_.tempo / bpm;
+      fixed.rateFit = std::fabs(fit - 1.0) > 1e-5 ? std::clamp(fit, 1.0 / 1024.0, 1024.0) : 1.0;
+    }
+  }
   c_.report.counts["pattern clips"] = patClips;
   if (audioClips) c_.report.counts["audio clips"] = audioClips;
   if (fitClips) c_.report.counts["audio clips following the tempo (stretched to a time)"] = fitClips;
+  if (fixedRateClips) c_.report.counts["audio clips resampled at a fixed rate under tempo automation"] = fixedRateClips;
   if (fitWindows) c_.report.counts["audio clips whose window disagrees with the channel's time (window used)"] = fitWindows;
   if (derivedEnds) c_.report.counts["audio clips ended by their length under tempo automation"] = derivedEnds;
   if (autoClips) c_.report.counts["automation clips"] = autoClips;

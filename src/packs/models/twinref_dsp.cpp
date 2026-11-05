@@ -484,6 +484,7 @@ struct TwinRef::Engine {
     int key;
   } held[128] = {};
   int nHeld = 0;
+  uint32_t newest[128] = {};  // the note that struck each key last
   float out[2 * kBlock] = {};
   int readPos = kBlock;
   int64_t quiet = INT64_MAX / 2;  // frames since the output was last audible
@@ -1112,6 +1113,7 @@ void TwinRef::noteOn(uint32_t id, double pitch, float vel, float pan) {
   ev.pitch = static_cast<float>(pitch - static_cast<double>(key));
   e.push(ev);
   if (e.nHeld < 128) e.held[e.nHeld++] = {id, key};
+  e.newest[key] = id;
 }
 
 void TwinRef::noteOff(uint32_t id) {
@@ -1121,8 +1123,13 @@ void TwinRef::noteOff(uint32_t id) {
       Event ev;
       ev.kind = Event::Off;
       ev.key = e.held[i].key;
-      e.push(ev);
       e.held[i] = e.held[--e.nHeld];
+      // The engine releases by key: while a newer note holds this key (clips back to back) it goes
+      // on sounding. The newest note's own release releases the key.
+      if (e.newest[ev.key] != id)
+        for (int k = 0; k < e.nHeld; ++k)
+          if (e.held[k].key == ev.key) return;
+      e.push(ev);
       return;
     }
 }

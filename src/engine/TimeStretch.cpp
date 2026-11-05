@@ -14,9 +14,15 @@
 #include <map>
 #include <mutex>
 #include <thread>
+#include <unordered_map>
 #include <rubberband/RubberBandStretcher.h>
+#include <atomic>
+// K-64: spectralStepsRun() counts the engine's work, not its time.
+namespace gl::stretch { static std::atomic<int64_t> gSpectralSteps{0}; }
+#define SIGNALSMITH_STRETCH_PROFILE_PROCESS_STEP(step, steps) gl::stretch::gSpectralSteps.fetch_add(1, std::memory_order_relaxed)
 #include <signalsmith-stretch/signalsmith-stretch.h>
 #include "../core/Automation.h"
+#include "LowTonal.h"
 
 namespace gl::stretch {
 
@@ -27,7 +33,11 @@ constexpr long kSeed = 0x6c696e65;  // fixed: renders are reproducible
 // ------------------------------------------------------------- configuration
 
 // One block length and one hop at every sample rate (the same time
-// resolution at 44.1, 48 and 96 kHz), offline and realtime alike. The hop
+// resolution at 44.1, 48 and 96 kHz), offline and realtime alike. K-61: the
+// engine runs on the source's frames, so these seconds are seconds of the
+// source's rate, whatever the output's: sized at a 44.1 kHz output, a 96 kHz
+// source got a 96 ms block and a 14 ms hop, which left the notes of a bass
+// 20 dB of noise between their partials. The hop
 // must stay at 30 ms or more: with 20 or 25 ms hops the partials of a low
 // note drift by 2 to 4 Hz near unity speed (measured at any block length).
 // The 210 ms block (seven blocks overlapping) keeps stretches up to x4 free
@@ -40,10 +50,10 @@ constexpr double kIntervalSec = 0.03;
 constexpr double kLiveBlockSec = 0.12;
 constexpr double kLiveIntervalSec = 0.03;
 
-void configure(Spectral& e, int nch, double sr, bool live = false) {
+void configure(Spectral& e, int nch, double sr, bool live = false, bool spread = false) {
   const int block = std::max(256, static_cast<int>(std::lround((live ? kLiveBlockSec : kBlockSec) * sr)));
   const int interval = std::max(32, static_cast<int>(std::lround((live ? kLiveIntervalSec : kIntervalSec) * sr)));
-  e.configure(nch, block, interval);
+  e.configure(nch, block, interval, spread);
   // Time only: the pitch is applied by resampling the engine's output.
   e.setTransposeFactor(1.0f);
   e.setFormantFactor(1.0f, false);
@@ -63,10 +73,11 @@ void configure(Spectral& e, int nch, double sr, bool live = false) {
 class Guard {
  public:
   static constexpr int kSub = 32;  // frames per energy sum
-  void prepare(double sr) {
+  // sr: the rate of the frames it runs on (the source's). outRate: the output's.
+  void prepare(double sr, double outRate) {
     w_ = std::max(1, static_cast<int>(std::lround(0.025 * sr / kSub)));
     window_ = w_ * kSub;
-    lead_ = 0.001 * sr;
+    lead_ = 0.001 * outRate;
     coef_ = static_cast<float>(1.0 - std::exp(-1.0 / (0.001 * sr)));
     ring_.assign(static_cast<size_t>(w_), 0.0);
     reset();
@@ -173,15 +184,16 @@ using Map = std::function<double(int64_t)>;
 // one block and hop of it, silence before the input's start), so frame 0 is
 // already settled, and it is fed at its real latency all the way: frame q
 // is centred on x(q). Past the input's end it reads silence (its tail).
-// `out` must hold len frames; progress reports finished frames.
-void stream(const float* const* in, int nch, int64_t n, float* const* out, int64_t len, double sr, const Map& x,
+// `out` must hold len frames; progress reports finished frames. sr: the
+// rate of the input's frames; outRate: the rate after the pitch resampler.
+void stream(const float* const* in, int nch, int64_t n, float* const* out, int64_t len, double sr, double outRate, const Map& x,
             const Progress* pr, double midPerOut = 1.0) {
   if (len <= 0) return;
   Spectral e(kSeed);
   configure(e, nch, sr);
   const int inLat = e.inputLatency(), outLat = e.outputLatency();
   Guard guard;
-  guard.prepare(sr);
+  guard.prepare(sr, outRate);
   const SourceLevel level(in, nch, n);
   const auto blk = std::max<int64_t>(16, static_cast<int64_t>(0.01 * sr));
   const double x0 = x(0);
@@ -233,12 +245,18 @@ void stream(const float* const* in, int nch, int64_t n, float* const* out, int64
 // Stretch with pitch: the engine renders an intermediate signal on a time
 // line `pitch` times as long (its frame q plays at output time q / pitch),
 // which band-limited resampling brings back to the output length, raising
-// the pitch by `pitch`. `srcAt` maps output frames to input positions.
-void stretchPitched(const float* const* in, int nch, int64_t n, float* const* out, int64_t outLen, double sr, double pitch,
-                    const Map& srcAt, const Progress* pr) {
+// the pitch by `pitch`. `srcAt` maps output frames to input positions. sr:
+// the input's rate; outRate: the output's (`pitch` carries their ratio).
+// K-61: tonal: a low monophonic sound being slowed down (LowTonal.h) runs on
+// that stretch instead of the spectral one; the pitch step is the same.
+void stretchPitched(const float* const* in, int nch, int64_t n, float* const* out, int64_t outLen, double sr, double outRate, double pitch,
+                    const Map& srcAt, const Progress* pr, bool tonal = false) {
   if (outLen <= 0) return;
   if (std::fabs(pitch - 1.0) < 1e-12) {
-    stream(in, nch, n, out, outLen, sr, srcAt, pr);
+    if (tonal)
+      lowTonalStream(in, nch, n, out, outLen, sr, srcAt, pr);
+    else
+      stream(in, nch, n, out, outLen, sr, outRate, srcAt, pr);
     return;
   }
   const SincTable& t = sincTable(Quality::Offline);
@@ -273,7 +291,10 @@ void stretchPitched(const float* const* in, int nch, int64_t n, float* const* ou
     if (midDone >= midLen) return;  // the end: below
     resampleTo(static_cast<int64_t>(std::floor((static_cast<double>(midDone) - hw) / pitch)));
   };
-  stream(in, nch, n, mp.data(), midLen, sr, midAt, pr ? &midProgress : nullptr, pitch);
+  if (tonal)
+    lowTonalStream(in, nch, n, mp.data(), midLen, sr, midAt, pr ? &midProgress : nullptr);
+  else
+    stream(in, nch, n, mp.data(), midLen, sr, outRate, midAt, pr ? &midProgress : nullptr, pitch);
   resampleTo(outLen);
 }
 
@@ -313,7 +334,8 @@ std::atomic<int64_t> gRbFed{0};            // J-170: rubberBandFramesFed()
 // (one key frame per 50 ms of output) that the engine follows. Output frame 0
 // is input position x(0): the engine starts `pre` frames earlier on the input
 // that leads in, and those frames are dropped. Frames it does not reach stay
-// as they are (the callers clear `out`).
+// as they are (the callers clear `out`). sr: the input's rate (its windows
+// are seconds of the input).
 void rubberStream(const float* const* in, int nch, int64_t n, float* const* out, int64_t len, double sr, double pitch, const Map& x,
                   const Progress* pr) {
   if (len <= 0 || nch <= 0) return;
@@ -547,7 +569,7 @@ void process(const float* const* in, int nch, int64_t n, float* const* out, int6
   if (s.mode == Mode::RubberBand)
     rubberStream(in, nch, n, out, outLen, sr, p, at, nullptr);
   else
-    stretchPitched(in, nch, n, out, outLen, sr, p, at, nullptr);
+    stretchPitched(in, nch, n, out, outLen, sr, sr, p, at, nullptr);
 }
 
 void processMapped(const float* const* in, int nch, int64_t n, float* const* out, int64_t outLen, double sr, const Settings& s,
@@ -563,7 +585,7 @@ void processMapped(const float* const* in, int nch, int64_t n, float* const* out
   if (s.mode == Mode::RubberBand)
     rubberStream(in, nch, n, out, outLen, sr, p, srcAt, nullptr);
   else
-    stretchPitched(in, nch, n, out, outLen, sr, p, srcAt, nullptr);
+    stretchPitched(in, nch, n, out, outLen, sr, sr, p, srcAt, nullptr);
 }
 
 // ------------------------------------------------------------- rendered clips
@@ -653,10 +675,13 @@ void renderInto(RenderedClip& rc, const ClipRequest& r) {
     resampleMapped(in, nch, n, out, len, srcAt);
     pr(len);
   } else if (r.mode == Mode::RubberBand) {
-    rubberStream(in, nch, n, out, len, r.rate, p, srcAt, &pr);
+    rubberStream(in, nch, n, out, len, sr, p, srcAt, &pr);
     pr(len);
   } else {
-    stretchPitched(in, nch, n, out, len, r.rate, p, srcAt, &pr);
+    // K-61: the input (the clip's window with its context) decides, at this clip's rate.
+    const double perEngine = (srcAt(len) - srcAt(0)) / static_cast<double>(len) / p;
+    const bool tonal = lowTonalInRange(perEngine) && lowTonal(in, nch, n, sr);
+    stretchPitched(in, nch, n, out, len, sr, r.rate, p, srcAt, &pr, tonal);
     pr(len);
   }
   if (nch == 1) std::copy(rc.L.begin(), rc.L.end(), rc.R.begin());
@@ -679,17 +704,19 @@ class Renderer {
   // J-103: queued renders are dropped and the worker joined (the clip it is rendering
   // finishes); later requests render on the calling thread. Idempotent.
   void shutdown() {
-    std::thread t;
+    std::vector<std::thread> ts;
     {
       std::lock_guard<std::mutex> lk(mu_);
       quit_ = true;
       pending_ -= static_cast<int>(queue_.size());
       queue_.clear();
-      t = std::move(thread_);
+      ts = std::move(threads_);
+      threads_.clear();
     }
     work_.notify_all();
     idle_.notify_all();
-    if (t.joinable()) t.join();
+    for (std::thread& t : ts)
+      if (t.joinable()) t.join();
   }
 
   RenderedClipPtr get(const ClipRequest& r, bool async) {
@@ -724,7 +751,13 @@ class Renderer {
     j.req.map = nullptr;
     queue_.push_back(std::move(j));
     ++pending_;
-    if (!thread_.joinable()) thread_ = std::thread([this] { loop(); });
+    // K-64: a project's renders used to wait for one another on one thread (minutes on a large
+    // project, all that time on realtime stretch voices): a few workers, below normal priority.
+    if (threads_.size() < workerLimit() && threads_.size() < queue_.size() + static_cast<size_t>(busy_))
+      threads_.emplace_back([this] {
+        platform::lowerThisThreadPriority();
+        loop();
+      });
     lk.unlock();
     work_.notify_one();
     // Keep it alive while queued: the clip holds it; the job only a weak ref.
@@ -744,6 +777,8 @@ class Renderer {
     return nullptr;
   }
 
+  void setFocus(double tick) { focus_.store(tick, std::memory_order_relaxed); }
+
   void wait() {
     std::unique_lock<std::mutex> lk(mu_);
     idle_.wait(lk, [this] { return pending_ == 0; });
@@ -752,6 +787,7 @@ class Renderer {
   void trim() {
     std::lock_guard<std::mutex> lk(mu_);
     recent_.clear();
+    recentAt_.clear();
     recentBytes_ = 0;
     for (auto it = cache_.begin(); it != cache_.end();) it = it->second.expired() ? cache_.erase(it) : std::next(it);
   }
@@ -769,16 +805,18 @@ class Renderer {
   // toggling a setting back are instant.
   static constexpr size_t kKeepBytes = size_t{512} << 20;
   void touch(const std::string& key, const std::shared_ptr<RenderedClip>& p) {
-    for (auto it = recent_.begin(); it != recent_.end(); ++it)
-      if (it->first == key) {
-        recentBytes_ -= sizeOf(*it->second);
-        recent_.erase(it);
-        break;
-      }
+    // K-64: by key, not a walk through the list: a build touches every clip's render.
+    if (auto it = recentAt_.find(key); it != recentAt_.end()) {
+      recentBytes_ -= sizeOf(*it->second->second);
+      recent_.erase(it->second);
+      recentAt_.erase(it);
+    }
     recent_.emplace_front(key, p);
+    recentAt_[key] = recent_.begin();
     recentBytes_ += sizeOf(*p);
     while (recentBytes_ > kKeepBytes && recent_.size() > 1) {
       recentBytes_ -= sizeOf(*recent_.back().second);
+      recentAt_.erase(recent_.back().first);
       recent_.pop_back();
     }
   }
@@ -791,10 +829,20 @@ class Renderer {
     for (;;) {
       work_.wait(lk, [this] { return quit_ || !queue_.empty(); });
       if (quit_) return;
-      Job j = std::move(queue_.front());
-      queue_.pop_front();
+      // K-64: the nearest ahead of the song position first, then the rest in the order they came.
+      const double focus = focus_.load(std::memory_order_relaxed);
+      auto best = queue_.begin();
+      double bestAt = 1e300;
+      for (auto it = queue_.begin(); it != queue_.end(); ++it) {
+        const double ahead = it->req.atTick - focus;
+        const double at = ahead >= 0 ? ahead : 1e200;
+        if (at < bestAt) bestAt = at, best = it;
+      }
+      Job j = std::move(*best);
+      queue_.erase(best);
       std::shared_ptr<RenderedClip> rc = j.clip.lock();
       if (rc && !rc->ready.load(std::memory_order_acquire)) {
+        ++busy_;
         lk.unlock();
         if (j.hasMap) j.req.map = &j.map;
         try {  // this thread must survive a clip too big for memory
@@ -805,6 +853,7 @@ class Renderer {
         rc->ready.store(true, std::memory_order_release);
         rc.reset();  // the clip (or the cache) owns it; never freed here while locked
         lk.lock();
+        --busy_;
       }
       if (--pending_ == 0) idle_.notify_all();
     }
@@ -814,9 +863,15 @@ class Renderer {
   std::deque<Job> queue_;
   int pending_ = 0;
   bool quit_ = false;
-  std::thread thread_;
+  int busy_ = 0;  // workers rendering now
+  std::vector<std::thread> threads_;
+  std::atomic<double> focus_{0};
+  static size_t workerLimit() {
+    return static_cast<size_t>(std::clamp(static_cast<int>(std::thread::hardware_concurrency()) / 4, 1, 4));
+  }
   std::map<std::string, std::weak_ptr<RenderedClip>> cache_;
   std::list<std::pair<std::string, std::shared_ptr<RenderedClip>>> recent_;
+  std::unordered_map<std::string, std::list<std::pair<std::string, std::shared_ptr<RenderedClip>>>::iterator> recentAt_;
   size_t recentBytes_ = 0;
 };
 
@@ -839,6 +894,7 @@ RenderedClipPtr findRenderedClip(const ClipRequest& r) {
 }
 
 void waitForPendingRenders() { renderer().wait(); }
+void setRenderFocus(double tick) { renderer().setFocus(tick); }
 void shutdownClipRenderer() { renderer().shutdown(); }
 void trimClipCache() { renderer().trim(); }
 size_t clipCacheBytes() { return renderer().bytes(); }
@@ -920,6 +976,10 @@ struct Voice::Impl {
   // fed since the stream began, and what its start-up needs in all (estimate).
   int rbPreLeft = 0;
   int64_t rbFed = 0, rbNeed = 0;
+  // K-64: the Stretch engine's pre-roll still to run (startLater): the mid frames up to `pos`.
+  bool stPre = false;
+  double stPerMid = 1;
+  bool spread = false;  // K-64: prepare(..., spread)
 
   void rbSet(double speed, double pitch) {
     const double ratio = 1.0 / std::max(kRbMinRate, speed);
@@ -1042,6 +1102,21 @@ struct Voice::Impl {
       filled += kChunk;
     }
   }
+  // K-64: runs the pre-roll start() would run, chunk by chunk (the same chunks), about `budget`
+  // input frames of it; true once it is done.
+  bool stRun(Reader rd, void* ctx, int64_t budget) {
+    if (!stPre) return true;
+    const int hw = pitch::maxReach(maxPitch, sincTable(Quality::Realtime)) + 4;
+    while (filled < static_cast<int64_t>(std::floor(pos)) + 1) {
+      if (budget <= 0) return false;
+      const int64_t was = inRead;
+      produce(filled + 1, stPerMid, rd, ctx);
+      compact(hw, true);
+      budget -= std::max<int64_t>(1, inRead - was);
+    }
+    stPre = false;
+    return true;
+  }
   // Drops the mid frames the reader has passed (`force`: now, else once a quarter of mid is free).
   void compact(int hw, bool force = false) {
     const auto drop = std::min(filled, static_cast<int64_t>(std::floor(pos)) - hw - 2);  // (pre-roll: pos may run past filled)
@@ -1054,14 +1129,16 @@ struct Voice::Impl {
 };
 
 int64_t rubberBandFramesFed() { return gRbFed.load(std::memory_order_relaxed); }
+int64_t spectralStepsRun() { return gSpectralSteps.load(std::memory_order_relaxed); }
 
 Voice::Voice() : impl_(std::make_unique<Impl>()) {}
 Voice::~Voice() = default;
 
 Engine Voice::engine() const { return impl_->kind; }
 
-void Voice::prepare(int channels, double sampleRate, double maxPitch, double maxSpeed, bool live, Engine engine, double minPitch) {
+void Voice::prepare(int channels, double sampleRate, double maxPitch, double maxSpeed, bool live, Engine engine, double minPitch, double sourceRate, bool spread) {
   Impl& m = *impl_;
+  const double srcRate = sourceRate > 0 ? sourceRate : sampleRate;  // the rate of the frames the engine runs on
   m.channels = std::clamp(channels, 1, 2);
   m.sampleRate = sampleRate;
   m.glideCoef = 1.0 - std::exp(-1.0 / (Impl::kGlideSec * sampleRate));
@@ -1072,7 +1149,7 @@ void Voice::prepare(int channels, double sampleRate, double maxPitch, double max
   if (engine == Engine::RubberBand) {
     // J-157: the engine and every buffer it fills are made here; the largest
     // chunk it is given bounds its own buffers (setMaxProcessSize).
-    m.rb = std::make_unique<RubberBandStretcher>(static_cast<size_t>(std::lround(sampleRate)), static_cast<size_t>(m.channels), quietLog(),
+    m.rb = std::make_unique<RubberBandStretcher>(static_cast<size_t>(std::lround(srcRate)), static_cast<size_t>(m.channels), quietLog(),
                                                  kRbRealtime, 1.0, 1.0);
     m.rbPad = static_cast<int>(m.rb->getPreferredStartPad());
     m.inCap = std::max(1024, static_cast<int>(std::ceil(m.maxSpeed * Impl::kChunk)) + 16);
@@ -1097,8 +1174,9 @@ void Voice::prepare(int channels, double sampleRate, double maxPitch, double max
     return;
   }
   m.rb.reset();
-  configure(m.engine, m.channels, sampleRate, live);
-  m.guard.prepare(sampleRate);
+  configure(m.engine, m.channels, srcRate, live, spread);
+  m.spread = spread;
+  m.guard.prepare(srcRate, sampleRate);
   const SincTable& t = sincTable(Quality::Realtime);
   // mid: render steps at the top pitch, the resampler's reach, slack for compaction.
   const int hw = pitch::maxReach(m.maxPitch, t) + 4;
@@ -1131,6 +1209,7 @@ void Voice::reset() {
   }
   m.engine.reset();
   m.guard.reset();
+  m.stPre = false;
   m.inRead = 0, m.srcCur = 0, m.midSrc = 0;
   m.filled = 0;
   m.pos = 0;
@@ -1159,11 +1238,12 @@ int Voice::prerollFor(double speed) const {
 void Voice::start(Reader rd, void* ctx, double speed, double pitch, int preroll) {
   startLater(rd, ctx, speed, pitch, preroll);
   if (impl_->rb) impl_->rbPre(rd, ctx, std::numeric_limits<int>::max());
+  else impl_->stRun(rd, ctx, std::numeric_limits<int64_t>::max());
 }
 
 bool Voice::prime(Reader rd, void* ctx, double speed, double pitch, int budget) {
   Impl& m = *impl_;
-  if (!m.rb) return true;
+  if (!m.rb) return m.stRun(rd, ctx, std::max(1, budget));
   pitch = std::clamp(pitch, m.minPitch, m.maxPitch);
   speed = std::clamp(speed, 0.0, m.maxSpeed);
   // The pre-roll, then the steps rbRender() takes before its first frame
@@ -1183,7 +1263,12 @@ bool Voice::prime(Reader rd, void* ctx, double speed, double pitch, int budget) 
 
 int Voice::primeLeft(double speed) const {
   const Impl& m = *impl_;
-  if (!m.rb || m.rbReady()) return 0;
+  if (!m.rb) {
+    if (!m.stPre) return 0;
+    const double frames = (std::floor(m.pos) + 1.0 - static_cast<double>(m.filled)) * m.stPerMid;
+    return static_cast<int>(std::clamp(std::ceil(frames), 1.0, 1e9));
+  }
+  if (m.rbReady()) return 0;
   const double s = std::max(kRbMinRate, std::clamp(speed, 0.0, m.maxSpeed));
   const int64_t need = m.rbNeed + static_cast<int64_t>(std::ceil(s * Impl::kChunk));
   return static_cast<int>(std::clamp<int64_t>(need - m.rbFed, 1, int64_t{1} << 30));
@@ -1220,19 +1305,31 @@ void Voice::startLater(Reader rd, void* ctx, double speed, double pitch, int pre
   m.glideSet = true;
   m.midPerOut = pitch;
   const double perMid = speed / pitch;  // input frames per mid frame
+  const float* ip[2] = {m.in[0].data(), m.in[1].data()};
+  if (m.spread) {
+    // K-64: no engine step in this call. The engine starts where its seek would start, and the frames that seek makes
+    // and throws away (its output latency, at this speed) are made and passed over like the pre-roll.
+    const int lat = m.engine.inputLatency();
+    m.pull(rd, ctx, lat);
+    m.engine.reset();
+    m.engine.seek(ip, lat, static_cast<float>(std::max(1e-3, perMid)));
+    const int extra = m.engine.outputLatency();
+    m.midSrc = -perMid * extra;
+    m.pos = extra + (preroll > 0 && perMid > 1e-6 ? static_cast<double>(preroll) / perMid : 0.0);
+    m.stPerMid = perMid;
+    m.stPre = true;
+    return;
+  }
   const int seek = std::min(m.inCap, m.engine.outputSeekLength(static_cast<float>(std::max(1e-3, perMid))));
   m.pull(rd, ctx, seek);
-  const float* ip[2] = {m.in[0].data(), m.in[1].data()};
   m.engine.outputSeek(ip, seek);
   // The stream starts `preroll` input frames before the start point: the
-  // mid frames those make are rendered and passed over, chunk by chunk.
+  // mid frames those make are rendered and passed over, chunk by chunk
+  // (K-64: by start(), prime() or the first render()).
   if (preroll > 0 && perMid > 1e-6) {
     m.pos = static_cast<double>(preroll) / perMid;
-    const int hw = pitch::maxReach(m.maxPitch, sincTable(Quality::Realtime)) + 4;
-    while (m.filled < static_cast<int64_t>(std::floor(m.pos)) + 1) {
-      m.produce(m.filled + 1, perMid, rd, ctx);
-      m.compact(hw, true);
-    }
+    m.stPerMid = perMid;
+    m.stPre = true;
   }
 }
 
@@ -1244,6 +1341,7 @@ void Voice::render(float* const* out, int n, double speed, double pitch, Reader 
     m.rbRender(out, n, speed, pitch, rd, ctx);
     return;
   }
+  m.stRun(rd, ctx, std::numeric_limits<int64_t>::max());  // K-64: what startLater() left of the pre-roll
   const SincTable& t = sincTable(Quality::Realtime);
   const double target = std::log(pitch);
   if (!m.glideSet) m.glide[0] = m.glide[1] = target, m.glideSet = true;

@@ -90,6 +90,7 @@ struct Xlib {
   char* (*resourceManagerString)(void*) = nullptr;
   // Keys (J-91).
   void* (*openDisplay)(const char*) = nullptr;
+  int (*closeDisplay)(void*) = nullptr;
   int (*queryTree)(void*, XWin, XWin*, XWin*, XWin**, unsigned*) = nullptr;
   int (*selectInput)(void*, XWin, long) = nullptr;
   int (*getWindowAttributes)(void*, XWin, XWinAttrs*) = nullptr;
@@ -123,6 +124,7 @@ const Xlib& xlib() {
     l.flush = reinterpret_cast<decltype(l.flush)>(sym("XFlush"));
     l.resourceManagerString = reinterpret_cast<decltype(l.resourceManagerString)>(sym("XResourceManagerString"));
     l.openDisplay = reinterpret_cast<decltype(l.openDisplay)>(sym("XOpenDisplay"));
+    l.closeDisplay = reinterpret_cast<decltype(l.closeDisplay)>(sym("XCloseDisplay"));
     l.queryTree = reinterpret_cast<decltype(l.queryTree)>(sym("XQueryTree"));
     l.selectInput = reinterpret_cast<decltype(l.selectInput)>(sym("XSelectInput"));
     l.getWindowAttributes = reinterpret_cast<decltype(l.getWindowAttributes)>(sym("XGetWindowAttributes"));
@@ -352,6 +354,17 @@ void keepAbove(const Window& child, const Window& parent, bool on) {
 }
 
 Window windowOfView(void*) { return {}; }
+bool xServerAnswers() {
+  const char* name = std::getenv("DISPLAY");
+  if (!name || !*name) return false;
+  const Xlib& x = xlib();
+  if (!x.openDisplay || !x.closeDisplay) return false;
+  void* d = x.openDisplay(nullptr);
+  if (!d) return false;
+  x.closeDisplay(d);
+  return true;
+}
+
 double backingScale(const Window&) { return 1.0; }
 long windowNumber(const Window&) { return -1; }
 bool captureWindow(const Window&, const std::string&, const unsigned char*, int, int) { return false; }

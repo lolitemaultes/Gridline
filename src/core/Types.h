@@ -138,6 +138,13 @@ struct Clip {
   // own clips keep 0: no pitch edit changes their timing. FL projects: the
   // pitch at import (FL plays a resampled pitch faster or slower).
   float speedPitch = 0.0f;
+  // FL projects under tempo automation, on a channel that resamples: a factor on
+  // the clip's time (core/ClipRate.h) for the rate the channel's time and the
+  // clip's stretch cannot say (the tempo where the clip starts, a stored window
+  // that disagrees with the time, a time beyond the sampler's range). The clip
+  // holds that rate while it plays. 1 everywhere else. Not the clip's stretch,
+  // which is FL's own value and goes back to FL as it was.
+  double rateFit = 1.0;
   double syncBpm = 0;        // > 0: follows the song tempo, natural speed at this tempo
   // J-193: tempo-locked by the user (a stretch, Fit to tempo or "Follow the
   // project tempo"): follows the tempo through syncBpm like any synced clip
@@ -166,7 +173,7 @@ struct Clip {
     return id == o.id && pattern == o.pattern && track == o.track && start == o.start && length == o.length &&
            kind == o.kind && source == o.source && offset == o.offset && muted == o.muted && audioStart == o.audioStart &&
            audioEnd == o.audioEnd && fadeIn == o.fadeIn && fadeOut == o.fadeOut && gain == o.gain && pitch == o.pitch &&
-           speedPitch == o.speedPitch &&
+           speedPitch == o.speedPitch && rateFit == o.rateFit &&
            stretch == o.stretch && syncBpm == o.syncBpm && tempoLock == o.tempoLock && reverse == o.reverse && takeGroup == o.takeGroup &&
            take == o.take && launched == o.launched && group == o.group && fadeInShape == o.fadeInShape &&
            fadeOutShape == o.fadeOutShape && fadeInTension == o.fadeInTension && fadeOutTension == o.fadeOutTension &&

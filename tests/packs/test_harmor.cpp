@@ -10,6 +10,7 @@
 #include "../../src/core/PluginInfo.h"
 #include "../../src/core/flp/FlpGen.h"
 #include "../../src/engine/Generators.h"
+#include "../../src/engine/Sample.h"
 #include "../../src/packs/Packs.h"
 #include "../../src/packs/models/harmor.h"
 #include "../Check.h"
@@ -196,6 +197,37 @@ int main() {
     s.data = serializePatch(d);
     Out lo = render(s, {{0, true, 1, 45, 0.2f}}, 12000, 256), hi = render(s, {{0, true, 1, 45, 1.0f}}, 12000, 256);
     expect(hi.peak > 2.5f * lo.peak, "velocity map scales the volume");
+  }
+  // A source file still loading at the first build must not stick: the next build analyses it.
+  {
+    const std::string path = (std::filesystem::temp_directory_path() / "gl_harmor_test_loading.wav").string();
+    {
+      std::ofstream f(path, std::ios::binary);
+      const int n = 44100;
+      auto u32 = [&](uint32_t v) { f.write(reinterpret_cast<const char*>(&v), 4); };
+      auto u16 = [&](uint16_t v) { f.write(reinterpret_cast<const char*>(&v), 2); };
+      f.write("RIFF", 4), u32(36 + n * 2), f.write("WAVE", 4), f.write("fmt ", 4), u32(16), u16(1), u16(1), u32(44100), u32(88200), u16(2),
+          u16(16), f.write("data", 4), u32(n * 2);
+      for (int i = 0; i < n; ++i) u16(static_cast<uint16_t>(static_cast<int16_t>(16000.0 * std::sin(2.0 * 3.14159265358979 * 330.0 * i / 44100.0))));
+    }
+    PluginState s = base();
+    Out none = render(s, kOne, 20000, 256);
+    PatchData d;
+    d.part[0].image.source = path;
+    s.data = serializePatch(d);
+    sampleCache().clear();
+    sampleCache().pauseBackground(true);
+    {
+      SampleCache::NonBlocking nb;
+      ChannelAux first;
+      packs::prepareAux(s, first);
+    }
+    sampleCache().pauseBackground(false);
+    sampleCache().waitIdle();
+    Out o = render(s, kOne, 20000, 256);
+    double diff = 0;
+    for (size_t i = 0; i < o.L.size(); ++i) diff = std::max(diff, static_cast<double>(std::fabs(o.L[i] - none.L[i])));
+    expect(o.finite && diff > 1e-3, "an image source still loading at the first build is analysed at the next");
   }
   // Image layer: a picture with one bright row = one partial.
   {

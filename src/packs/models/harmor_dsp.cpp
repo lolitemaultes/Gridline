@@ -118,6 +118,8 @@ void prepImage(const ImageData& im, PartPrep& p) {
         std::vector<float> mono(smp->left);
         for (size_t i = 0; i < mono.size() && i < smp->right.size(); ++i) mono[i] = 0.5f * (mono[i] + smp->right[i]);
         analyzeAudio(mono, smp->sampleRate, 255, 0.01, out);
+      } else if (sampleCache().isPending(src.source)) {
+        return;  // still loading: asked again at the next build
       } else {
         imageFromPicture(src.source, 128, out);
       }

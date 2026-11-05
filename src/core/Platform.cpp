@@ -9,6 +9,11 @@
 #include <cstring>
 #include <filesystem>
 #include <thread>
+#if defined(__linux__)
+#include <sys/resource.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -27,6 +32,7 @@
 extern char** environ;
 #endif
 #if defined(__APPLE__)
+#include <pthread.h>
 #include <mach-o/dyld.h>
 #endif
 #if defined(__FreeBSD__) || defined(__DragonFly__) || defined(__NetBSD__) || defined(__OpenBSD__)
@@ -154,6 +160,16 @@ int processId() {
   return static_cast<int>(GetCurrentProcessId());
 #else
   return static_cast<int>(::getpid());
+#endif
+}
+
+void lowerThisThreadPriority() {
+#if defined(__APPLE__)
+  pthread_set_qos_class_self_np(QOS_CLASS_UTILITY, 0);
+#elif defined(_WIN32)
+  SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+#elif defined(__linux__)
+  setpriority(PRIO_PROCESS, static_cast<id_t>(syscall(SYS_gettid)), 10);  // (per thread on Linux)
 #endif
 }
 

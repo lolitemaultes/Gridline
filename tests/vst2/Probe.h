@@ -1,5 +1,6 @@
 // What the in-tree VST2 test plugins saw last (exported as gridline_vst2_probe()).
 #pragma once
+#include "../NoteLog.h"
 #include "host/vst2/Vst2Abi.h"
 
 struct GridlineVst2Probe {
@@ -7,4 +8,5 @@ struct GridlineVst2Probe {
   int timeCalls = 0;
   int processLevel = 0;
   int bypassCalls = 0;
+  GridlineNoteLog notes;  // what the synth received
 };

@@ -21,8 +21,10 @@ Contents (an install tree; extract anywhere, or into /usr/local):
                                    it starts (or: gridline suite install)
 
 Needs the system's SDL2 (and on Linux ALSA; @DEPS@).
-Wayland: Gridline runs natively through SDL; the interfaces of hosted plugins are X11 windows
-and open through XWayland.
+Wayland: the interfaces of hosted plugins are X11 windows, so Gridline runs through XWayland
+whenever it is available, whatever SDL_VIDEODRIVER says. Without XWayland it runs on Wayland and
+plugins show their parameters in Gridline's own panel. GRIDLINE_VIDEO_DRIVER=wayland keeps it on
+Wayland anyway.
 
 Settings live in $XDG_CONFIG_HOME/gridline (~/.config/gridline).
 ========================================================================

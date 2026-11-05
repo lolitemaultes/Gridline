@@ -14,11 +14,16 @@
 #pragma once
 #include <atomic>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <list>
 #include <map>
 #include <mutex>
+#include <numeric>
 #include "../../engine/MEnv.h"
 #include "../../engine/Resample.h"
+#include "../../engine/SlicexEngine.h"
 #include "../../engine/TimeStretch.h"
 #include "../../engine/pitch/Kernel.h"
 #include "sfx_common.h"
@@ -26,6 +31,9 @@
 namespace gl::packs::spacefx::detail {
 
 inline std::atomic<double> g_convRate{0.0};
+// K-62: the engine rate of the Program being built on this thread (ConvolverFx::prepareHost runs
+// right before prepareAux), so a kernel is never built for another engine's rate.
+inline thread_local double t_convBuildRate = 0.0;
 
 constexpr int kHeadLen = 64;     // direct FIR taps
 constexpr int kBA = 64;          // stage A block
@@ -54,6 +62,7 @@ struct ConvKernel {
 // (left/right = display channels at the native rate). Identified by path tag.
 struct IrData : Sample {
   ConvKernel kernel;
+  bool flMatch = false;  // K-62: an FL state decoded with its full law (see ConvData::envFit)
 };
 
 // ------------------------------------------------------------ generation
@@ -401,7 +410,7 @@ struct EnvEval {
       sc = SmoothCurve(pts);
       return;
     }
-    for (const EnvPoint& q : pts) c.push_back(menv::coef(static_cast<uint8_t>(std::clamp(q.c, 0, 12)), static_cast<float>(q.k)));
+    for (const EnvPoint& q : pts) c.push_back(menv::coef(menv::fromFlMode(static_cast<uint8_t>(std::clamp(q.c, 0, 12))), static_cast<float>(q.k)));
   }
   double at(double t) const {
     const auto& v = *p;
@@ -414,7 +423,7 @@ struct EnvEval {
     const EnvPoint& b = v[i];
     const double span = b.t - a.t;
     const double f = span > 0 ? (t - a.t) / span : 1.0;
-    const uint8_t mode = static_cast<uint8_t>(std::clamp(b.c, 0, 12));
+    const uint8_t mode = menv::fromFlMode(static_cast<uint8_t>(std::clamp(b.c, 0, 12)));
     return a.v + (b.v - a.v) * menv::shape(mode, c[i], f);
   }
 };
@@ -498,18 +507,22 @@ inline void normalise(IrBuf& ir) {
     for (float& v : ir.p[p]) v *= g;
 }
 
-// Pan (0), volume (1) and separation (2) envelopes, time = seconds of the source file.
+// Pan (0), volume (1) and separation (2) envelopes. Time = seconds of the source file, or (K-62,
+// FL's states) each envelope spread over the whole source.
 inline void envelopes(IrBuf& ir, const ConvData& cd) {
   const bool pan = !cd.pan.empty() && !flatAt(cd.pan, 0.5), vol = !cd.env.empty() && !flatAt(cd.env, 0.5),
              sep = !cd.sep.empty() && !flatAt(cd.sep, 0.5);
   if (!pan && !vol && !sep) return;
   const EnvEval ep(cd.pan), ev(cd.env, curveSmooth(cd.envMode)), es(cd.sep);
   float m[4];
+  const double frames = static_cast<double>(std::max<size_t>(ir.len(), 1));
+  const auto stepOf = [&](const std::vector<EnvPoint>& e) { return cd.envFit ? (e.empty() ? 0.0 : e.back().t / frames) : 1.0 / ir.rate; };
+  const double sPan = stepOf(cd.pan), sVol = stepOf(cd.env), sSep = stepOf(cd.sep);
   for (size_t i = 0; i < ir.len(); ++i) {
-    const double t = static_cast<double>(i) / ir.rate;
-    const double p = pan ? 2.0 * (static_cast<float>(ep.at(t)) - 0.5) : 0.0;
-    const double g = vol ? 2.0 * static_cast<float>(ev.at(t)) : 1.0;
-    const double sp = sep ? 2.0 * (static_cast<float>(es.at(t)) - 0.5) : 0.0;
+    const double at = static_cast<double>(i) + (cd.envFit ? 1.0 : 0.0);  // FL steps the curve first
+    const double p = pan ? 2.0 * (static_cast<float>(ep.at(at * sPan)) - 0.5) : 0.0;
+    const double g = vol ? 2.0 * static_cast<float>(ev.at(at * sVol)) : 1.0;
+    const double sp = sep ? 2.0 * (static_cast<float>(es.at(at * sSep)) - 0.5) : 0.0;
     sepPan(p, g, sp, m);
     const float l = ir.p[0][i], r = ir.p[1][i];
     ir.p[0][i] = m[0] * l + m[2] * r;
@@ -630,6 +643,103 @@ inline void trimTail(IrBuf& ir) {
   for (int p = 0; p < 2; ++p) ir.p[p].resize(n);
 }
 
+// K-62: FL splits a pre-delay of pd frames with `lead` silent frames at the IR's start into an engine
+// delay B (the largest power of two <= pd + lead, at least 512, else 0) and an edit of the IR's start.
+// Inserting zeros (when the edit is negative) holds one frame more than the arithmetic says.
+inline bool preDelayExtraFrame(const IrBuf& ir, long pd) {
+  const float eps = 1.0f / 16777216.0f;
+  long lead = 0;
+  const long n = static_cast<long>(ir.len());
+  while (lead < n && std::fabs(ir.p[0][static_cast<size_t>(lead)]) < eps && std::fabs(ir.p[1][static_cast<size_t>(lead)]) < eps) ++lead;
+  long e = pd + lead, B = 0;
+  if (e >= 512) {
+    for (B = 512; B * 2 <= e; B <<= 1) {
+    }
+    e -= B;
+  }
+  return lead - e < 0;
+}
+
+// K-62: an impulse file's first region or cue point: FL plays that part of the file (a cue point
+// alone runs to the end). False when the file has none. Runs on the build thread.
+inline bool firstRegion(const std::string& path, size_t frames, size_t& from, size_t& to) {
+  std::ifstream f(std::filesystem::u8path(path), std::ios::binary);
+  if (!f) return false;
+  const std::vector<uint8_t> b((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+  const slicex::WavRegions w = slicex::readWavRegions(b.data(), b.size());
+  if (!w.riff || w.regions.empty()) return false;
+  const slicex::Region& r = w.regions.front();
+  from = std::min<size_t>(static_cast<size_t>(std::max<int64_t>(r.start, 0)), frames);
+  to = r.length > 0 ? std::min<size_t>(from + static_cast<size_t>(r.length), frames) : frames;
+  return to > from;
+}
+
+// K-62: FL's conversion of an impulse: 256 half taps of a sinc (cut at the lower of the two rates)
+// under the window (0.5 + 0.5 c) (0.36 + 0.64 c), c = cos(pi x / 256); silence outside the file;
+// length = frames x ratio, rounded.
+constexpr int kIrHalf = 256, kIrTaps = 2 * kIrHalf;
+inline void irTaps(double frac, double speed, float* h) {
+  const double cut = speed > 1.0 ? 1.0 / speed : 1.0, wStep = kPi / kIrHalf, sStep = kPi * cut;
+  // Both waves step by recurrence: y(x + 1) = 2 cos(step) y(x) - y(x - 1).
+  const double x0 = static_cast<double>(1 - kIrHalf) - frac;
+  const double wK = 2.0 * std::cos(wStep), sK = 2.0 * std::cos(sStep);
+  double c1 = std::cos(wStep * (x0 - 1.0)), c0 = std::cos(wStep * x0);
+  double s1 = std::sin(sStep * (x0 - 1.0)), s0 = std::sin(sStep * x0);
+  double x = x0;
+  for (int t = 0; t < kIrTaps; ++t) {
+    const double w = (0.5 + 0.5 * c0) * (0.36 + 0.64 * c0);
+    const double px = kPi * x;
+    h[t] = static_cast<float>((std::fabs(px) < 1e-9 ? cut : s0 / px) * w);
+    const double cN = wK * c0 - c1, sN = sK * s0 - s1;
+    c1 = c0, c0 = cN, s1 = s0, s0 = sN;
+    x += 1.0;
+  }
+}
+inline double irDot(const float* a, const float* h) {
+  float s[8] = {};
+  for (int t = 0; t + 8 <= kIrTaps; t += 8)
+    for (int j = 0; j < 8; ++j) s[j] += a[t + j] * h[t + j];
+  return static_cast<double>(s[0]) + s[1] + s[2] + s[3] + s[4] + s[5] + s[6] + s[7];
+}
+inline std::vector<float> irConvert(const std::vector<float>& in, double fromRate, double toRate) {
+  const double ratio = toRate / fromRate, speed = fromRate / toRate;
+  const int64_t len = static_cast<int64_t>(in.size());
+  const int64_t n = static_cast<int64_t>(std::nearbyint(static_cast<double>(len) * ratio));
+  std::vector<float> out(static_cast<size_t>(std::max<int64_t>(n, 0)));
+  // Whole-number rates repeat their phases: a table of them saves most of the work.
+  int phases = 0;
+  if (const double a = std::nearbyint(fromRate), b = std::nearbyint(toRate); std::fabs(a - fromRate) < 1e-9 && std::fabs(b - toRate) < 1e-9) {
+    const int64_t den = static_cast<int64_t>(b) / std::gcd(static_cast<int64_t>(a), static_cast<int64_t>(b));
+    if (den <= 2048) phases = static_cast<int>(den);
+  }
+  std::vector<float> table(static_cast<size_t>(phases) * kIrTaps);
+  for (int k = 0; k < phases; ++k) {
+    const double pos = static_cast<double>(k) * speed;
+    irTaps(pos - std::floor(pos), speed, table.data() + static_cast<size_t>(k) * kIrTaps);
+  }
+  std::vector<float> own(kIrTaps), edge(kIrTaps);
+  for (int64_t i = 0; i < n; ++i) {
+    const double pos = static_cast<double>(i) * speed;
+    const int64_t base = static_cast<int64_t>(std::floor(pos));
+    const float* h = own.data();
+    if (phases > 0) h = table.data() + static_cast<size_t>(i % phases) * kIrTaps;
+    else irTaps(pos - static_cast<double>(base), speed, own.data());
+    const int64_t first = base - kIrHalf + 1;
+    const float* a = nullptr;
+    if (first >= 0 && first + kIrTaps <= len) {
+      a = in.data() + first;
+    } else {
+      for (int t = 0; t < kIrTaps; ++t) {
+        const int64_t at = first + t;
+        edge[static_cast<size_t>(t)] = at >= 0 && at < len ? in[static_cast<size_t>(at)] : 0.f;
+      }
+      a = edge.data();
+    }
+    out[static_cast<size_t>(i)] = static_cast<float>(irDot(a, h));
+  }
+  return out;
+}
+
 // File-rate part of the chain.
 inline void buildSource(IrBuf& ir, const PluginState& s) {
   ir.paths = 2;
@@ -637,19 +747,33 @@ inline void buildSource(IrBuf& ir, const PluginState& s) {
   const ConvData cd = parseConvData(s.data);
   if (pb(s, CvNormalize)) normalise(ir);
   envelopes(ir, cd);
+  if (size_t from = 0, to = 0; cd.envFit && pi(s, CvSource, SrcHall) == SrcFile && firstRegion(cd.path, ir.len(), from, to))
+    for (int p = 0; p < 2; ++p) {
+      ir.p[p].resize(to);
+      ir.p[p].erase(ir.p[p].begin(), ir.p[p].begin() + static_cast<long>(from));
+    }
   selfConvolution(ir, clampd(pv(s, CvSelfConv, 0), 0, 1));
 }
 
 // Engine-rate part: stretch + conversion, EQ, tail trim.
 inline void buildForRate(IrBuf& ir, const PluginState& s, double rate) {
-  const double r = clampd(pv(s, CvStretch, 1), 0.5, 2.0), rp = r * rate;
-  if (const size_t len = ir.len(); len > 0 && std::fabs(rp - ir.rate) > 1e-9)  // len: read before p[0] changes
-    for (int p = 0; p < 2; ++p) ir.p[p] = resampleChannel(ir.p[p].data(), len, ir.rate, rp, 64);
-  ir.rate = rp;
   const ConvData cd = parseConvData(s.data);
+  const double r = clampd(pv(s, CvStretch, 1), 0.5, 2.0);
+  // K-62: FL's stretch and target rate are in single precision from its whole knob steps (a long impulse
+  // shows the difference).
+  const float knob = static_cast<float>(std::nearbyint(1000.0 * std::log2(r))) * 0.001f;
+  const float flR = static_cast<float>(std::exp(static_cast<double>(knob) * std::log(2.0)));
+  const double rp = cd.envFit ? static_cast<double>(static_cast<float>(rate) * flR) : r * rate;
+  if (const size_t len = ir.len(); len > 0 && std::fabs(rp - ir.rate) > 1e-9)  // len: read before p[0] changes
+    for (int p = 0; p < 2; ++p) ir.p[p] = cd.envFit ? irConvert(ir.p[p], ir.rate, rp) : resampleChannel(ir.p[p].data(), len, ir.rate, rp, 64);
+  ir.rate = rp;
   eqCurve(ir, cd.eq, clampd(pv(s, CvEqMix, 1), 0, 1), rp, r, curveSmooth(cd.eqMode));
   trimTail(ir);
   ir.rate = rate;  // played at the engine rate
+  // K-62: the pre-delay runs at run time (whole samples); FL's zero insertion holds one more frame
+  // unless the delay fits in the IR's own leading silence with its engine's block delay.
+  if (const long pd = std::lround(pv(s, CvPreDelay, 0) * 0.001 * rate); cd.envFit && pd > 0 && preDelayExtraFrame(ir, pd))
+    for (int p = 0; p < 2; ++p) ir.p[p].insert(ir.p[p].begin(), 0.f);
 }
 
 }  // namespace ref
@@ -778,6 +902,7 @@ inline void buildKernel(const IrBuf& ir, ConvKernel& k) {
 struct IrCacheEntry {
   std::string key;
   bool reference = false;  // CvModel 1: buildForRate per engine rate
+  bool noFileYet = false;  // K-62: a file source without its audio: asked again next time (it may be loading)
   PluginState state;       // the state the entry was built from (reference build)
   IrView view;
   IrBuf edited;  // at native rate
@@ -799,9 +924,9 @@ inline std::string irKey(const PluginState& s) {
                 pv(s, CvTone, 0.6f), pv(s, CvStart), pv(s, CvLength, 12), pv(s, CvFadeIn), pv(s, CvFadeOut, 0.1f), pv(s, CvTighten),
                 pb(s, CvReverse) ? 1 : 0, pv(s, CvStretch, 1), pv(s, CvLowCut, 20), pv(s, CvHighCut, 20000), pv(s, CvSelfConv),
                 pb(s, CvNormalize) ? 1 : 0, pi(s, CvStereo, 1));
-  char ext[96];
-  std::snprintf(ext, sizeof ext, "|%.6f|%d|%d|%d|%.7f", pv(s, CvEqMix, 1), pb(s, CvEnvOn) ? 1 : 0, pi(s, CvStretchMode, 0), pi(s, CvModel, 0),
-                pv(s, CvStretch, 1));
+  char ext[128];
+  std::snprintf(ext, sizeof ext, "|%.6f|%d|%d|%d|%.7f|%.5f", pv(s, CvEqMix, 1), pb(s, CvEnvOn) ? 1 : 0, pi(s, CvStretchMode, 0), pi(s, CvModel, 0),
+                pv(s, CvStretch, 1), pi(s, CvModel, 0) == 1 ? pv(s, CvPreDelay, 0) : 0.f);
   std::string d = s.data;
   if (pi(s, CvSource, SrcHall) != SrcFile) {  // generated spaces ignore the path line
     size_t nl = d.find('\n');
@@ -816,6 +941,11 @@ inline IrCacheEntry* irEntry(const PluginState& s) {
   auto& c = irCache();
   for (auto it = c.begin(); it != c.end(); ++it)
     if (it->key == key) {
+      // K-62: the app's builds do not wait for a decode, so the first one finds the file still loading.
+      if (it->noFileYet) {
+        c.erase(it);
+        break;
+      }
       c.splice(c.begin(), c, it);  // most recently used first
       return &c.front();
     }
@@ -830,7 +960,8 @@ inline IrCacheEntry* irEntry(const PluginState& s) {
     const std::string path = parseConvData(s.data).path;
     SamplePtr smp = path.empty() ? nullptr : sampleCache().get(path);
     if (!smp || smp->frames() == 0) {
-      e.view.error = path.empty() ? "No impulse file loaded" : "Could not read the impulse file";
+      e.view.error = path.empty() ? "No impulse file loaded" : sampleCache().isPending(path) ? "Loading the impulse file" : "Could not read the impulse file";
+      e.noFileYet = !path.empty();
     } else {
       raw.rate = smp->sampleRate;
       raw.paths = 2;
@@ -885,6 +1016,7 @@ inline std::shared_ptr<const IrData> irKernel(IrCacheEntry& e, double rate) {
   auto d = std::make_shared<IrData>();
   d->path = kIrTag;
   d->sampleRate = rate;
+  d->flMatch = e.reference && parseConvData(e.state.data).envFit;
   buildKernel(r, d->kernel);
   e.kernels[rk] = d;
   return d;
@@ -1102,6 +1234,8 @@ class ConvolverFx final : public Effect {
   // more partitions than it fits. The new, empty stage is handed to the audio
   // thread lock-free; the replaced one comes back here to be freed.
   void prepareHost(const PluginState& s, double sampleRate) override {
+    t_convBuildRate = sampleRate;
+    g_convRate.store(sampleRate, std::memory_order_relaxed);
     delete retired_.exchange(nullptr);
     int need = 0;
     {
@@ -1130,13 +1264,32 @@ class ConvolverFx final : public Effect {
       }
     }
     const ConvKernel* k = nullptr;
-    if (SamplePtr sp = aux.sample(0); sp && sp->path == kIrTag) k = &static_cast<const IrData*>(sp.get())->kernel;
+    bool flMatch = false;  // states from before K-62 keep their sound
+    if (SamplePtr sp = aux.sample(0); sp && sp->path == kIrTag) {
+      const IrData* irData = static_cast<const IrData*>(sp.get());
+      k = &irData->kernel;
+      flMatch = irData->flMatch;
+    }
     const double sr = ctx.sampleRate;
     const float dry = pv(s, CvDry, 1), wet = pv(s, CvWet, 0.35f);
     const float inW = pv(s, CvInWidth, 1), outW = pv(s, CvWidth, 1);
     const bool mono = pi(s, CvStereo, 1) == 2;
     double preD = std::max(0.0, pv(s, CvPreDelay, 0) * 0.001 * sr);
-    if (pi(s, CvModel, 0) == 1) preD = std::nearbyint(preD);  // reference: whole samples
+    const bool reference = pi(s, CvModel, 0) == 1;
+    if (reference) preD = std::nearbyint(preD);  // reference: whole samples
+    // K-62: FL's wet level holds at 44.1 kHz (it scales with 44100 / rate). Dry and each entry of its
+    // input and wet matrices move to their targets over a block, at most 0.001 x 44100 / rate per sample.
+    const float maxStep = static_cast<float>(0.001 * 44100.0 / sr);
+    const float wetT = flMatch ? static_cast<float>(wet * (44100.0 / sr)) : wet;
+    const float inA = 0.5f * (1.f + inW), inB = 0.5f * (1.f - inW), outA = wetT * 0.5f * (1.f + outW), outB = wetT * 0.5f * (1.f - outW);
+    if (flMatch && !rampOn_) {
+      dryS_.cur = dry, inAS_.cur = inA, inBS_.cur = inB, outAS_.cur = outA, outBS_.cur = outB;
+      rampOn_ = true;
+    }
+    if (flMatch) {
+      dryS_.begin(dry, maxStep, n), inAS_.begin(inA, maxStep, n), inBS_.begin(inB, maxStep, n);
+      outAS_.begin(outA, maxStep, n), outBS_.begin(outB, maxStep, n);
+    }
     // Tempo-synced length: fade the tail out partition by partition.
     const bool sync = computeGains(s, ctx, k);
     ConvStage& c = *c_;
@@ -1145,6 +1298,10 @@ class ConvolverFx final : public Effect {
       float xl = L[i], xr = R[i];
       float m = 0.5f * (xl + xr), sd = 0.5f * (xl - xr) * inW;
       float il = mono ? m : m + sd, ir = mono ? m : m - sd;
+      if (flMatch && !mono) {
+        const float a0 = inAS_.at(i), b0 = inBS_.at(i);
+        il = a0 * xl + b0 * xr, ir = b0 * xl + a0 * xr;
+      }
       if (preD >= 1.0) {
         float dl = pre_[0].read(preD), dr = pre_[1].read(preD);
         pre_[0].push(il);
@@ -1180,10 +1337,17 @@ class ConvolverFx final : public Effect {
       feed(a_, il, ir, k ? k->specA : nullptr, k ? k->paths : 2, k ? k->partsA : 0, sync ? gainsA_ : nullptr);
       feed(b_, il, ir, k ? k->specB : nullptr, k ? k->paths : 2, k ? k->partsB : 0, sync ? gainsB_ : nullptr);
       c.feedSpread(il, ir, k ? k->specC : nullptr, k ? k->paths : 2, k ? k->partsC : 0, gC);
-      float wm = 0.5f * (yl + yr), ws = 0.5f * (yl - yr) * outW;
-      L[i] = flush(xl * dry + (wm + ws) * wet);
-      R[i] = flush(xr * dry + (wm - ws) * wet);
+      if (flMatch) {
+        const float a1 = outAS_.at(i), b1 = outBS_.at(i), d1 = dryS_.at(i);
+        L[i] = flush(xl * d1 + yl * a1 + yr * b1);
+        R[i] = flush(xr * d1 + yl * b1 + yr * a1);
+      } else {
+        float wm = 0.5f * (yl + yr), ws = 0.5f * (yl - yr) * outW;
+        L[i] = flush(xl * dry + (wm + ws) * wetT);
+        R[i] = flush(xr * dry + (wm - ws) * wetT);
+      }
     }
+    if (flMatch) dryS_.end(), inAS_.end(), inBS_.end(), outAS_.end(), outBS_.end();
   }
   void reset() override {
     a_.clear();
@@ -1241,6 +1405,23 @@ class ConvolverFx final : public Effect {
   int hp_ = 0;
   float gainsA_[kPartsA] = {};
   float gainsB_[kMaxPartsB] = {};
+  // K-62: FL's gain moves: the new value is reached at the block's end unless the step limit holds it back.
+  struct Slew {
+    float cur = 0, step = 0, next = 0;
+    void begin(float target, float maxStep, int n) {
+      next = target, step = 0;
+      if (target == cur || n <= 0) return;
+      step = (target - cur) / static_cast<float>(n);
+      if (std::fabs(step) > maxStep) {
+        step = std::copysign(maxStep, step);
+        next = cur + static_cast<float>(n) * step;
+      }
+    }
+    float at(int i) const { return cur + static_cast<float>(i) * step; }
+    void end() { cur = next; }
+  };
+  Slew dryS_, inAS_, inBS_, outAS_, outBS_;
+  bool rampOn_ = false;
 };
 
 }  // namespace gl::packs::spacefx::detail

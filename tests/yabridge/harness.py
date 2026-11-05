@@ -1452,7 +1452,7 @@ def main():
     ap.add_argument("--cli", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--wine", required=True, help="label of the Wine under test")
-    ap.add_argument("--display", required=True, help="xvfb-openbox | xvfb-bare | weston-x11 | weston-wayland")
+    ap.add_argument("--display", required=True, help="xvfb-openbox | xvfb-bare | weston-x11 | weston-wayland | weston-env")
     ap.add_argument("--scale", required=True)
     ap.add_argument("--run", default="1", help="repeat number, to expose instability")
     ap.add_argument("--formats", default="vst3,vst2,clap")
@@ -1475,7 +1475,7 @@ def main():
     ctx.prefix = os.environ.get("WINEPREFIX", str(Path.home() / ".wine"))
     ctx.probe = Probe(ctx.prefix, out / "probe-log.txt")
     ctx.weston = a.display.startswith("weston")
-    ctx.has_wm_tools = a.display in ("xvfb-openbox", "weston-x11")
+    ctx.has_wm_tools = a.display in ("xvfb-openbox", "weston-x11", "weston-env")
     ctx.has_input = a.display != "weston-wayland" and not a.no_input
     ctx.no_input_reason = a.no_input or "no XTEST route to this display"
     ctx.x = X(sync=not ctx.weston)
@@ -1526,7 +1526,9 @@ def main():
                 time.sleep(4)
                 ws = app.windows()
                 out_text = app.output()
-                r.add("interface on the Wayland driver", "skip", f"{len(ws)} windows; X11 is what plugin interfaces embed in, Gridline uses XWayland there. Log: {out_text[-160:]}")
+                # X11 is what plugin interfaces embed in: on purpose on Wayland, they stay closed and it says so.
+                r.expect("no interface window on the Wayland driver", len(ws) == 0, f"{len(ws)} windows")
+                r.expect("the message names the reason", "GRIDLINE_VIDEO_DRIVER keeps Gridline on Wayland" in out_text, out_text[-200:])
                 done, code = app.quit()
                 r.expect("quit: no hang, clean exit", done and code == 0, f"exited {done}, code {code}")
             finally:

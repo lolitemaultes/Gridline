@@ -7,6 +7,8 @@
 #include <SDL.h>
 #include <SDL_opengl.h>
 #include "SysWm.h"
+#include "VideoDriver.h"
+#include "../core/VideoDriverChoice.h"
 #if defined(_WIN32)
 #include <shellapi.h>  // CommandLineToArgvW
 #endif
@@ -1684,27 +1686,37 @@ int main(int argc, char** argv) {
   }
   SDL_SetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
   appicon::prepareIdentity();  // K-14: X11 WM_CLASS / Wayland app_id = the desktop entry id
-  if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER) != 0) {
+  videodriver::prepare();  // X11 where an X server answers: what plugin interfaces can open on
+  bool sdlStarted = SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER) == 0;
+  if (!sdlStarted && videodriver::dropRequest()) sdlStarted = SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER) == 0;
+  videodriver::finish();
+  if (!sdlStarted) {
     std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
     crash::markCleanExit();  // said so; the pop-up has nothing to add
     return 1;
   }
 #if defined(__APPLE__)
   const char* glsl = "#version 150";
-  SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG);
-  SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
 #else
   const char* glsl = "#version 130";
-  SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, 0);
-  SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
 #endif
-  SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
-  SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0);
-  SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
+  const auto setGlAttributes = [] {
+#if defined(__APPLE__)
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
+#else
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, 0);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+#endif
+    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+    SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0);
+    SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
+  };
+  setGlAttributes();
   // Start as a compact borderless splash; becomes the main window once loaded.
   // J-78: --hidden (automated off-screen runs with --size / --screenshot): the
   // window is never shown on the user's desktop.
@@ -1721,9 +1733,20 @@ int main(int argc, char** argv) {
     }
     devOptions = devOptions || std::string(argv[i]).rfind("--", 0) == 0;
   }
-  SDL_Window* window = SDL_CreateWindow("Gridline", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 640, 380,
-                                        SDL_WINDOW_OPENGL | SDL_WINDOW_BORDERLESS | SDL_WINDOW_ALLOW_HIGHDPI |
-                                            (startHidden ? SDL_WINDOW_HIDDEN : 0));
+  const auto createSplashWindow = [&] {
+    return SDL_CreateWindow("Gridline", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 640, 380,
+                            SDL_WINDOW_OPENGL | SDL_WINDOW_BORDERLESS | SDL_WINDOW_ALLOW_HIGHDPI | (startHidden ? SDL_WINDOW_HIDDEN : 0));
+  };
+  SDL_Window* window = createSplashWindow();
+  // An X server that answers but cannot give an OpenGL window: SDL's own choice gets a try.
+  if (!window && videodriver::dropRequest()) {
+    SDL_QuitSubSystem(SDL_INIT_VIDEO);
+    if (SDL_InitSubSystem(SDL_INIT_VIDEO) == 0) {
+      setGlAttributes();
+      window = createSplashWindow();
+    }
+    videodriver::finish();
+  }
   if (!window) {
     std::fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
     crash::markCleanExit();
@@ -1733,8 +1756,13 @@ int main(int argc, char** argv) {
   SDL_GL_MakeCurrent(window, gl);
   SDL_GL_SetSwapInterval(1);
   glrecovery::attach();
-  crash::setGpu(reinterpret_cast<const char*>(glGetString(GL_VENDOR)), reinterpret_cast<const char*>(glGetString(GL_RENDERER)),
-                reinterpret_cast<const char*>(glGetString(GL_VERSION)));
+  {
+    // The window system goes with the driver line of a crash report.
+    const char* glVersion = reinterpret_cast<const char*>(glGetString(GL_VERSION));
+    const char* videoName = SDL_GetCurrentVideoDriver();
+    const std::string versionLine = std::string(glVersion ? glVersion : "?") + " / " + (videoName ? videoName : "?");
+    crash::setGpu(reinterpret_cast<const char*>(glGetString(GL_VENDOR)), reinterpret_cast<const char*>(glGetString(GL_RENDERER)), versionLine.c_str());
+  }
 
   IMGUI_CHECKVERSION();
   ImGui::CreateContext();
@@ -2102,6 +2130,10 @@ int main(int argc, char** argv) {
       } else if (w == "toast") {  // layout check: notification toasts
         app.notify("Saved the project");
         app.notify("Cannot decode sample: missing.wav", true);
+      } else if (w == "toast-plugin") {  // layout check: why a plugin's interface cannot open
+        app.notify(std::string("Long Plugin Name 2: ") + videodriver::blockMessage(videodriver::Block::NoXServer), true);
+        app.notify(std::string("Long Plugin Name 2: ") + videodriver::blockMessage(videodriver::Block::WaylandByChoice), true);
+        app.notify("Long Plugin Name 2: the plugin's bridge refused to open its interface. Check that it works in another host, and its logs", true);
       }
     } else if (arg == "--rack" && i + 1 < argc) {  // J-84 dev check: rack pattern length / size / docking
       rackDevSpec(argv[++i]);

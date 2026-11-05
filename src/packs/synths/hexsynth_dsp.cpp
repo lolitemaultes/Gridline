@@ -178,6 +178,7 @@ class HexSynthGen final : public Generator {
     const int key = std::clamp(static_cast<int>(std::lround(pitch)), 0, 127);
     noteFrac_ = pitch - key;
     if (idCount_ < static_cast<int>(ids_.size())) ids_[static_cast<size_t>(idCount_++)] = {id, key};
+    newestId_[static_cast<size_t>(key)] = id;
     const int vel = std::clamp(static_cast<int>(velocity * 127.f), 1, 127);
     held_[key] = static_cast<uint8_t>(vel);
     heldOrder_[key] = ++heldClock_;
@@ -206,6 +207,11 @@ class HexSynthGen final : public Generator {
         break;
       }
     if (key < 0) return;
+    // While a newer note holds this key (clips back to back) it goes on sounding; the newest note's
+    // own release releases the key.
+    if (newestId_[static_cast<size_t>(key)] != id)
+      for (int i = 0; i < idCount_; ++i)
+        if (ids_[static_cast<size_t>(i)].second == key) return;
     held_[key] = 0;
     if (seqOn_) {
       seqDirty_ = true;
@@ -824,6 +830,7 @@ class HexSynthGen final : public Generator {
   uint64_t heldOrder_[128] = {};
   uint64_t heldClock_ = 0, ageClock_ = 0;
   std::array<std::pair<uint32_t, int>, 256> ids_{};
+  std::array<uint32_t, 128> newestId_{};  // the note that struck each key last
   int idCount_ = 0;
   double noteFrac_ = 0;
   int poly_ = -1, lastNote_ = -1;

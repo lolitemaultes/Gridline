@@ -33,6 +33,11 @@
 // dropped), so both line up with the source like the stretch does. It does
 // its own transient handling and its own pitch shifting; Gridline's guard
 // and resampler are not used on it.
+//
+// K-61: the engines run on the source's own frames, so their windows are
+// seconds of the source's sample rate, whatever the output's. A clip's offline
+// render slows a low monophonic sound (a bass line) through LowTonal.h instead
+// of the spectral stretch; realtime voices stay on the spectral stretch.
 #pragma once
 #include <atomic>
 #include <cstdint>
@@ -150,6 +155,7 @@ struct ClipRequest {
   const TempoMap* map = nullptr;
   double secPerTick = 0, startTick = 0, startSec = 0;
   std::string mapKey;               // identifies the tempo map (cache key)
+  double atTick = 0;                // where the song plays it: renders near the song position go first (not part of the key)
 };
 // Returns the rendered clip (cached by content), or null when nothing needs
 // rendering. async: queued on the background renderer (playback falls back to
@@ -161,6 +167,8 @@ RenderedClipPtr renderClip(const ClipRequest& r, bool async);
 RenderedClipPtr findRenderedClip(const ClipRequest& r);
 // Blocks until every queued clip render is done (tests, exports).
 void waitForPendingRenders();
+// K-64: the song position: the background renders nearest ahead of it are made first.
+void setRenderFocus(double tick);
 // J-103 app quit: drops queued renders and joins the render thread before main() returns
 // (later requests render synchronously). Idempotent.
 void shutdownClipRenderer();
@@ -190,8 +198,12 @@ class Voice {
   // maxPitch / maxSpeed bound the buffers (frequency ratio, input frames per output frame).
   // live: the shorter block of live effects (about half the latency).
   // minPitch: the lowest frequency ratio (0: 1 / maxPitch); the Stretch engine only, Rubber Band's range is symmetric.
+  // sourceRate: the rate of the frames the reader gives (0: sampleRate); the engine's windows are seconds of it.
+  // spread: the Stretch engine shares each of its steps out over the blocks until the next one instead of doing it
+  // in one block, and its seek is left to prime() like its pre-roll (K-64: a seek on a 96 kHz stereo source takes
+  // about 10 ms in one block); it reads one hop further ahead, the rendered frames stay at the same place.
   void prepare(int channels, double sampleRate, double maxPitch = 8.0, double maxSpeed = 8.0, bool live = false,
-               Engine engine = Engine::Stretch, double minPitch = 0);
+               Engine engine = Engine::Stretch, double minPitch = 0, double sourceRate = 0, bool spread = false);
   bool prepared() const { return prepared_; }
   Engine engine() const;
   // Begins a stream (a note, a seek, a loop): speed = input frames per output
@@ -207,7 +219,8 @@ class Voice {
   // worth of CPU at once; priming does that work in pieces over the blocks
   // before the stream plays. The engine sees the same calls with the same
   // input in the same order as after start(), so the output is identical.
-  // The Stretch engine starts at once (its start-up is cheap).
+  // K-64: the Stretch engine too: its pre-roll is a whole block's worth of
+  // engine steps (8 at the source's pitch, 17 for a 96 kHz source at 44.1 kHz).
   void startLater(Reader rd, void* ctx, double speed, double pitch, int preroll = 0);
   // Does start-up work of the stream begun by startLater(), about `budget`
   // input frames (at least one engine call while any is left). Returns true
@@ -238,5 +251,7 @@ class Voice {
 // engines so far, by every voice (not the silence voices feed themselves:
 // start pads, the warm-up in prepare()).
 int64_t rubberBandFramesFed();
+// K-64: the Stretch engine's work so far, in its own steps (a part of an analysis, a synthesis, ...).
+int64_t spectralStepsRun();
 
 }  // namespace gl::stretch

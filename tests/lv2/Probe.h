@@ -3,6 +3,7 @@
 // the interface binary).
 #pragma once
 #include <cstdint>
+#include "../NoteLog.h"
 
 struct GridlineLv2Probe {
   // synth: time:Position objects received and the last one's values
@@ -13,6 +14,7 @@ struct GridlineLv2Probe {
   int64_t bar = -1;
   double beat = -1;
   int notesOn = 0;
+  GridlineNoteLog notes;  // what the synth received
   // state plugin
   int maxBlock = 0;        // options: buf-size maxBlockLength seen at instantiate
   int works = 0;           // worker work() calls

@@ -1075,6 +1075,7 @@ class HostedGenerator final : public Generator {
   // queued with their offsets; Core splits the block at them when the
   // "process maximum size buffers" option is off.
   void render(float* L, float* R, int n) override {
+    blockStart_ += n;
     if (!entered_) {
       clearAux(0, n);
       return;
@@ -1101,6 +1102,7 @@ class HostedGenerator final : public Generator {
     double glideTo = 60, glideStep = 0;
     int64_t glideLeft = 0;
     int glideFrom = 0;  // offset in the block where the glide starts
+    int64_t startAt = 0;  // sample it started on (frames this instrument has run)
   };
   Note* find(uint32_t id) {
     for (auto& n : notes_)
@@ -1132,8 +1134,15 @@ class HostedGenerator final : public Generator {
       slot = &notes_[0];
     }
     const int key = std::clamp(static_cast<int>(std::lround(pitch)), 0, 127);
+    // Most plugins know a note by its key alone, so an earlier note still held on this key ends
+    // first: its note-off, due now (clips back to back) or later (overlap), would otherwise end
+    // the new note. Notes starting on the same sample stay a stack, as they always were.
+    const int64_t startAt = blockStart_ + eventOffset();
+    for (auto& n : notes_)
+      if (n.used && n.key == key && n.channel == channel && n.startAt < startAt) stopNote(n.id, 0.5f);
     *slot = Note{};
     slot->used = true;
+    slot->startAt = startAt;
     slot->id = id;
     slot->noteId = nextNoteId_;
     nextNoteId_ = (nextNoteId_ + 1) & 0x7fffffff;
@@ -1214,6 +1223,7 @@ class HostedGenerator final : public Generator {
   bool entered_ = false;
   Note notes_[256];
   int32_t nextNoteId_ = 1;
+  int64_t blockStart_ = 0;  // frames this instrument has run
   int auxCount_ = 0;
   std::vector<float> aux_;  // [output][L, R][kMaxBlock]
 };

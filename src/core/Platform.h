@@ -33,6 +33,9 @@ namespace gl::platform {
 const char* homeEnv();
 std::string homeDir();  // homeEnv() or "."
 std::string configRoot();
+// K-64: the calling background worker runs below normal priority, so it never competes with the
+// audio thread or the interface for a core.
+void lowerThisThreadPriority();
 std::string cacheRoot();
 std::string dataRoot();
 

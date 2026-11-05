@@ -90,14 +90,16 @@ bool decodeLimiter(Context&, const std::vector<Event>& evs, PluginMapping& m) {
   set(m, pp::LimCompKnee, 0.0);  // the reference has no dB soft knee
   set(m, pp::LimRange, 1);
   // Tail: spare state (18), i32 ?, i32 view, 4 x u8 display toggles, i32 ?,
-  // i32 sidechain input (0 = own signal); version >= 7: u8 flags (bit 0 = 0.2 dB safety).
+  // i32 sidechain input (0 = own signal); version >= 7: u8 flags (bit 0 = no 0.2 dB safety).
+  // K-60: the margin is on unless that bit turns it off, in every older state too.
+  set(m, pp::LimSafety, 1);
   if (r.has(18 * 4 + 8)) {
     r.skip(18 * 4 + 4);
     set(m, pp::LimView, r.i32() == 1 ? 1 : 0);
     if (r.has(12)) {
       r.skip(4 + 4);
       set(m, pp::LimSidechain, r.i32() > 0 ? 1 : 0);
-      if (version >= 7 && r.has(1)) set(m, pp::LimSafety, (r.u8() & 1) ? 1 : 0);
+      if (version >= 7 && r.has(1)) set(m, pp::LimSafety, (r.u8() & 1) ? 0 : 1);
     }
   }
   m.exact = true;
