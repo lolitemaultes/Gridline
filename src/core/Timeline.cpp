@@ -93,6 +93,13 @@ Tick snapGrid(const Song& s, Snap mode, double pxPerTick, bool altHeld) {
 
 Tick snapTick(Tick t, Tick grid, Snap mode) { return mode == Snap::Cell ? snapDown(t, grid) : snapNearest(t, grid); }
 
+Tick moveDistance(Tick dragged, Tick grid, Snap mode, Tick earliest) {
+  const Tick d = snapTick(dragged, grid, mode);
+  if (earliest + d >= 0) return d;
+  const Tick g = std::max<Tick>(grid, 1);
+  return -(earliest / g * g);
+}
+
 Tick tickAtPx(float px, float pxPerTick) {
   constexpr double kLim = 4.0e15;  // far past any song, well inside Tick
   const double t = static_cast<double>(std::floor(px / pxPerTick));

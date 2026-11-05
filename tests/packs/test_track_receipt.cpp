@@ -85,6 +85,10 @@ void testRanges() {
   expect(tierFor(2.0) == 2 && tierFor(2.04) == 2 && tierFor(2.06) == 15 && tierFor(15) == 15 && tierFor(15.1) == 60 &&
              tierFor(60) == 60 && tierFor(60.1) == 0,
          "tiers: 2 / 15 / 60, over 60 = none");
+  expect(shareRate("A", 2) == 10 && shareRate("B", 2) == 5 && shareRate("C", 2) == 2 && shareRate("A", 15) == 25 && shareRate("B", 15) == 15 &&
+             shareRate("C", 15) == 10 && shareRate("A", 60) == 50 && shareRate("B", 60) == 30 && shareRate("C", 60) == 20,
+         "shares: the rate of each category and tier");
+  expect(shareRate("", 2) < 0 && shareRate("A", 0) < 0 && shareRate("D", 15) < 0, "shares: no rate without a category or over the limit");
   expect(parseShare("10") == 10 && parseShare(" 12.5 %") == 12.5 && parseShare("") < 0 && parseShare("x") < 0, "shares: parse");
   auto ds = reportDates("2026-08-31", 3);
   expect(ds.size() == 3 && ds[0] == "2027-02-28" && ds[1] == "2027-08-31" && ds[2] == "2028-02-29", "release: report dates every 6 months");
@@ -144,6 +148,36 @@ void testReport() {
   expect(c && near(c->seconds, 0.8) && c->tier == 2 && c->artist == "Jean-Luc Ferro", "report: chopped parts add up, typed artist wins");
   expect(l && l->over && near(l->seconds, 75), "report: over 60 s flagged");
   expect(near(r.totalShare, 12) && !r.sharesComplete, "report: shares add up (one song still blank)");
+  {  // The share follows the category and the tier; a typed share wins; over 60 s has none.
+    Saved au;
+    au.songs["Neon Harbor-Paper Lanterns"].category = "B";       // 7 s: up to 15 s
+    au.songs["Jean-Luc Ferro-World-Wide Sunday"].category = "A";  // 0.8 s: up to 2 s
+    au.songs["Long Song-Loop"].category = "A";                    // 75 s: over the limit
+    const Report ar = build(sampleMeasurement(), au, "p");
+    const SongRow* x = nullptr;
+    const SongRow* y = nullptr;
+    const SongRow* z = nullptr;
+    for (const SongRow& s : ar.songs) {
+      if (s.key == "Neon Harbor-Paper Lanterns") x = &s;
+      if (s.key == "Jean-Luc Ferro-World-Wide Sunday") y = &s;
+      if (s.title == "Loop") z = &s;
+    }
+    expect(x && near(x->share, 15) && near(x->autoShare, 15), "auto share: category B, up to 15 s = 15%");
+    expect(y && near(y->share, 10), "auto share: category A, up to 2 s = 10%");
+    expect(z && z->share < 0 && z->autoShare < 0, "auto share: none over 60 s");
+    expect(near(ar.totalShare, 25) && !ar.sharesComplete, "auto share: in the total; a song over the limit stays open");
+    expect(resultsPdf(ar).find("15%") != std::string::npos, "auto share: in the PDF");
+    expect(spreadsheetXml(ar).find(">15<") != std::string::npos, "auto share: in the spreadsheet");
+    au.songs["Neon Harbor-Paper Lanterns"].share = "7";
+    const Report tr = build(sampleMeasurement(), au, "p");
+    for (const SongRow& s : tr.songs)
+      if (s.key == "Neon Harbor-Paper Lanterns") expect(near(s.share, 7) && near(s.autoShare, 15), "auto share: a typed share wins and the calculated one is kept");
+    au.songs["Neon Harbor-Paper Lanterns"].share = "";
+    au.songs["Neon Harbor-Paper Lanterns"].category = "";
+    const Report nr = build(sampleMeasurement(), au, "p");
+    for (const SongRow& s : nr.songs)
+      if (s.key == "Neon Harbor-Paper Lanterns") expect(s.share < 0, "auto share: none without a category");
+  }
   bool mutedListed = false;
   for (const auto& f : r.files)
     if (f.path == sampleMeasurement().files[1].path) mutedListed = f.muted.size() == 1;

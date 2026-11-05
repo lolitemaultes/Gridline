@@ -237,6 +237,14 @@ int tierFor(double seconds) {
   return 0;
 }
 
+double shareRate(const std::string& category, int tier) {
+  const int row = tier == 2 ? 0 : tier == 15 ? 1 : tier == 60 ? 2 : -1;
+  const int col = category == "A" ? 0 : category == "B" ? 1 : category == "C" ? 2 : -1;
+  if (row < 0 || col < 0) return -1;
+  static const double rates[3][3] = {{10, 5, 2}, {25, 15, 10}, {50, 30, 20}};
+  return rates[row][col];
+}
+
 // ---- origin sidecar
 
 std::string originPath(const std::string& file) { return file + ".origin.json"; }
@@ -685,7 +693,8 @@ Report build(const Measurement& m, const Saved& saved, const std::string& projec
     s.tier = s.seconds > 0 ? tierFor(s.seconds) : 0;  // nothing played: no license needed
     s.over = s.seconds > kMaxLicensable;
     if (s.over) s.warnings.insert(s.warnings.begin(), "More than 60 s of this song is used: a sample license covers at most 60 s per song.");
-    s.share = parseShare(s.fields.share);
+    if (!s.over) s.autoShare = shareRate(s.fields.category, s.tier);
+    s.share = trim(s.fields.share).empty() ? s.autoShare : parseShare(s.fields.share);
     rep.songs.push_back(s);
   }
   std::sort(rep.songs.begin(), rep.songs.end(), [](const SongRow& a, const SongRow& b) {

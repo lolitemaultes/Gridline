@@ -1108,6 +1108,40 @@ void testSync(const std::string& path100) {
   expect(std::fabs(view(d).speed - 1.0) < 1e-6, "unlocked: the track's own tempo");
 }
 
+// A scratch leaves a synced deck out of phase. Let go, it is back in phase at once and at its
+// right speed, with no stretch of wrong pitch while the speed lock would catch up.
+void testSyncAfterScratch(const std::string& path100) {
+  for (double dir : {-1.0, 1.0}) {
+    Deck d = makeDeck(path100, 100, [](PluginState& s, pl::Model&) { s.params[pl::PKeyLock] = 0; });
+    d.ctx.tempo = 125;
+    d.ctx.playing = true;
+    run(d, 4410, 256);
+    button(d, pl::CtlPlay, true);
+    run(d, static_cast<int64_t>(3 * kSr), 256);
+    run(d, 256, 256, [](Deck& dd, int64_t, int) { cmd(dd, pl::CmdHandDown); });
+    const int64_t t0 = d.pos, moveLen = static_cast<int64_t>(0.5 * kSr);
+    run(d, moveLen, 64, [&](Deck& dd, int64_t pos, int) {
+      if ((pos - t0) % 735 < 64) cmd(dd, pl::CmdHandMove, 0, dir * 0.13 * static_cast<double>(pos - t0) / static_cast<double>(moveLen));
+    });
+    run(d, static_cast<int64_t>(0.2 * kSr), 64);  // the hand rests, then lets go
+    run(d, 64, 64, [](Deck& dd, int64_t, int) { cmd(dd, pl::CmdHandUp); });
+    run(d, static_cast<int64_t>(0.05 * kSr), 64);
+    double worstSpeed = 0, worstPhase = 0;
+    run(d, static_cast<int64_t>(2 * kSr), 64, [&](Deck& dd, int64_t, int) {
+      const pl::LiveView v = view(dd);
+      worstSpeed = std::max(worstSpeed, std::fabs(v.speed - 1.25));
+      const double deckBeat = pl::beatAt(dd.m.deck[0], v.pos), songBeat = dd.ctx.tick / dd.ctx.ppq;
+      double err = (deckBeat - std::floor(deckBeat)) - (songBeat - std::floor(songBeat));
+      err -= std::round(err);
+      worstPhase = std::max(worstPhase, std::fabs(err));
+    });
+    std::printf("# after a scratch (%+.0f): speed off by up to %.4f, phase by up to %.4f beats\n", dir, worstSpeed, worstPhase);
+    expect(worstSpeed < 0.01, "sync after a scratch: the deck plays at its right speed at once");
+    expect(worstPhase < 0.03, "sync after a scratch: the deck is back in phase at once");
+    expect(finite(d.L) && finite(d.R), "sync after a scratch: finite output");
+  }
+}
+
 // ------------------------------------------------------------------ cues, loops, notes, block size
 void performance(Deck& d, int64_t pos, int n) {
   auto at = [&](int64_t f, const std::function<void(int)>& fn) {
@@ -1838,6 +1872,7 @@ int main(int argc, char** argv) {
   if (want("resampler")) testResampler(high);
   if (want("keylock")) testKeyLock(sine);
   if (want("sync")) testSync(music100);
+  if (want("sync")) testSyncAfterScratch(music100);
   if (want("cues")) testCues(music120);
   if (want("hottaps")) testHotTaps(music120);
   if (want("blocks")) testBlockSize(music120);

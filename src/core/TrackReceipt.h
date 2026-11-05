@@ -15,8 +15,8 @@
 // engine/TrackReceiptPass.h; the spreadsheet and PDF writers are
 // core/TrackReceiptXml.cpp and core/TrackReceiptPdf.cpp.
 //
-// A helper, not legal advice: the category, rate and fee come from the
-// user's license and are typed in, never computed.
+// A helper, not legal advice: the category and fee come from the user's license and
+// are typed in. The share follows from the category and tier (shareRate) unless typed.
 #pragma once
 #include <cstdint>
 #include <map>
@@ -77,6 +77,9 @@ inline constexpr double kMinHeard = 0.01;
 // The tier to choose: 2, 15 or 60 (seconds); 0 when over 60 s (not licensable).
 // Rounded to 0.1 s first, like the figures shown.
 int tierFor(double seconds);
+// The revenue share in percent of a license of category "A", "B" or "C" at tier 2, 15 or 60;
+// -1 for anything else.
+double shareRate(const std::string& category, int tier);
 
 // ---- derived files: origin sidecar ("<file>.origin.json") -------------------------
 // Written when Gridline makes a file from another one (an edit, a separated
@@ -216,7 +219,8 @@ struct SongRow {
   int tier = 0;         // suggested tier (2 / 15 / 60; 0 = over the limit)
   bool over = false;    // more than 60 s: not licensable
   SongFields fields;
-  double share = -1;    // fields.share as a number (-1 = not filled in)
+  double share = -1;    // the share in force: fields.share, else autoShare (-1 = none yet)
+  double autoShare = -1;  // the share the category and tier give (-1 = no category, nothing played or over 60 s)
   int64_t plays = 0;
   std::vector<std::string> warnings;
 };

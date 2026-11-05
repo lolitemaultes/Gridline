@@ -68,6 +68,7 @@ struct Gesture {
   bool copyPending = false;
   bool grouped = false;
   bool drawResize = false;  // K-20: a Shift+click drew this note; its length follows the drag once it starts
+  bool drawn = false;       // the click just drew this note: it follows the pointer at once
   std::set<size_t> selBefore;
   // A delete sweep takes only the topmost note at each point: where it already deleted one, the note
   // that was under it stays (a later frame of the same press would otherwise take that one too).
@@ -748,7 +749,6 @@ void drawPianoRoll(App& a) {
   st.effGrid = timeline::snapGrid(s, st.snap, st.pxPerTick, false);
   const Tick grid = std::max<Tick>(1, st.effGrid);  // keyboard nudges / quantize
   const Tick snapG = timeline::snapGrid(s, st.snap, st.pxPerTick, io.KeyAlt);
-  auto snapPos = [&](Tick t) { return timeline::snapTick(t, snapG, st.snap); };
   const Tick defLen = st.lastLength > 0 ? st.lastLength : std::max<Tick>(1, s.ppq / 4);
 
   // Scroll & zoom.
@@ -1600,6 +1600,7 @@ void drawPianoRoll(App& a) {
           // without a drag keeps the default length.
           g.kind = io.KeyShift ? Gesture::Resize : Gesture::Move;
           g.drawResize = io.KeyShift;
+          g.drawn = true;
           previewOn(a, chId, n.pitch, n.velocity);
         }
       }
@@ -1636,17 +1637,17 @@ void drawPianoRoll(App& a) {
       }
       case Gesture::Move: {
         if (g.anchor < 0 || static_cast<size_t>(g.anchor) >= g.base.size()) break;
+        if (!g.moved && !g.drawn && !ImGui::IsMouseDragging(ImGuiMouseButton_Left, 3.0f)) break;  // a click moves nothing
         const Note& an = g.base[static_cast<size_t>(g.anchor)];
-        Tick target = snapPos(an.start + (curTick - g.startTick));
-        Tick dt = target - an.start;
+        Tick earliest = an.start;
+        for (size_t i = 0; i < g.base.size(); ++i)
+          if (g.sel[i]) earliest = std::min(earliest, g.base[i].start);
+        const Tick dt = timeline::moveDistance(curTick - g.startTick, snapG, st.snap, earliest);
         int dp = curPitch - g.startPitch;
         if (st.snapToScale && st.scale > 0) dp = tools::snapPitchToScale(an.pitch + dp, st.scaleRoot, st.scale) - an.pitch;
         // Keep the whole selection in range.
         for (size_t i = 0; i < g.base.size(); ++i)
-          if (g.sel[i]) {
-            dt = std::max<Tick>(dt, -g.base[i].start);
-            dp = std::clamp(dp, -g.base[i].pitch, 127 - g.base[i].pitch);
-          }
+          if (g.sel[i]) dp = std::clamp(dp, -g.base[i].pitch, 127 - g.base[i].pitch);
         noteAnimT.d = {static_cast<double>(dt), static_cast<double>(dp), 0.0};
         if (dt == 0 && dp == 0 && !g.moved) break;
         if (g.copyPending) {  // Q-3: the copies (every property kept, new groups) are what moves from here
@@ -1668,7 +1669,8 @@ void drawPianoRoll(App& a) {
       }
       case Gesture::Resize: {
         if (g.anchor < 0 || static_cast<size_t>(g.anchor) >= g.base.size()) break;
-        if (g.drawResize && !ImGui::IsMouseDragging(ImGuiMouseButton_Left, 2.0f)) break;  // K-20: not dragged yet
+        if (!g.moved && !ImGui::IsMouseDragging(ImGuiMouseButton_Left, 2.0f)) break;  // K-20: not dragged yet; a click changes nothing
+        g.moved = true;
         const Note& an = g.base[static_cast<size_t>(g.anchor)];
         Tick end = timeline::snapTick(curTick, snapG, Snap::Line);
         Tick dl2 = std::max<Tick>(end, an.start + std::max<Tick>(1, snapG)) - (an.start + an.length);

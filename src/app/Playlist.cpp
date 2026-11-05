@@ -102,6 +102,7 @@ struct ClipGesture {
   std::set<ObjectId> selBefore;
   bool cancelled = false;
   bool copyPending = false;  // Q-3: Shift+drag — copies are made when the pointer first moves
+  bool placed = false;       // the click just placed this clip: it follows the pointer at once
   bool copied = false;       // the dragged clips are copies
   bool loopAsked = false;    // Q-1: the resize already decided about the pattern's loop mode
   bool unique = false;       // Q-3: the copies were made unique (Shift+V)
@@ -3502,6 +3503,7 @@ void drawPlaylist(App& a) {
           cg.anchor = id;
           cg.startTick = at;
           cg.kind = ClipGesture::Move;
+          cg.placed = true;
         }
       }
     }
@@ -3591,8 +3593,11 @@ void drawPlaylist(App& a) {
       case ClipGesture::Move: {
         const Clip* an = baseClip();
         if (!an) break;
-        Tick target = snapPos(an->start + (curTick - cg.startTick));
-        const Tick dt = target - an->start;
+        if (!cg.moved && !cg.placed && !ImGui::IsMouseDragging(ImGuiMouseButton_Left, 3.0f)) break;  // a click moves nothing
+        Tick earliest = an->start;
+        for (const auto& c : cg.base)
+          if (st.selected.count(c.id)) earliest = std::min(earliest, c.start);
+        const Tick dt = timeline::moveDistance(curTick - cg.startTick, snapG, st.snap, earliest);
         const int dtr = curTrack - cg.startTrack;
         if (dt == 0 && dtr == 0 && !cg.moved) break;
         if (cg.copyPending) {
@@ -3633,6 +3638,7 @@ void drawPlaylist(App& a) {
       case ClipGesture::Resize: {
         const Clip* an = baseClip();
         if (!an) break;
+        if (!cg.moved && !ImGui::IsMouseDragging(ImGuiMouseButton_Left, 3.0f)) break;  // a click on the edge changes nothing
         const Tick oldEnd = an->start + s.clipLength(*an);
         const Tick end = std::max(timeline::snapTick(curTick, snapG, Snap::Line), an->start + 1);
         const Tick d = end - oldEnd;
@@ -3669,6 +3675,7 @@ void drawPlaylist(App& a) {
       case ClipGesture::Trim: {  // left edge: later start, content stays in place
         const Clip* an = baseClip();
         if (!an) break;
+        if (!cg.moved && !ImGui::IsMouseDragging(ImGuiMouseButton_Left, 3.0f)) break;  // a click on the edge changes nothing
         const Tick d = timeline::snapTick(curTick, snapG, Snap::Line) - an->start;
         if (d == 0 && !cg.moved) break;
         cg.moved = true;

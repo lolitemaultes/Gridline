@@ -68,6 +68,19 @@ int main() {
              gridName(s, 4 * bar) == "4 bars",
          "grid names");
 
+  // A drag moves things by whole grid steps from where they are, whatever their offset.
+  expect(moveDistance(0, bar, Snap::Bar, 50) == 0, "a drag of nothing moves nothing, off the grid too");
+  expect(moveDistance(bar + 10, bar, Snap::Bar, bar + 50) == bar, "one bar dragged moves one bar");
+  expect(moveDistance(bar / 2 - 1, bar, Snap::Bar, 50) == 0, "under half a bar stays put");
+  expect(moveDistance(-bar, bar, Snap::Bar, 2 * bar + 50) == -bar, "back one bar");
+  expect(moveDistance(step - 1, step, Snap::Cell, 7) == 0, "Cell: within the first step stays put");
+  expect(moveDistance(step, step, Snap::Cell, 7) == step, "Cell: one step on");
+  expect(moveDistance(-3 * step, step, Snap::Line, step + 7) == -step, "the song's start stops it on the last whole step");
+  expect(moveDistance(-3 * step, step, Snap::Line, 7) == 0, "... which keeps the offset");
+  expect(moveDistance(-3 * step, step, Snap::Line, 2 * step) == -2 * step, "on the grid it reaches the start");
+  expect(moveDistance(-500, 1, Snap::None, 30) == -30, "free: reaches the start");
+  expect(moveDistance(17, 1, Snap::None, 30) == 17, "free: follows the pointer");
+
   // Odd PPQ (e.g. 120 → step 30): ladder still reaches single ticks.
   Song s2 = makeEmptySong();
   s2.ppq = 120;

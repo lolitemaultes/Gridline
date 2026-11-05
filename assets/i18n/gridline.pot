@@ -14634,6 +14634,10 @@ msgid "%d places"
 msgstr ""
 
 #: src/app/TrackReceiptUi.cpp
+msgid "%g (auto)"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
 msgid "(not measured: whole file, type the parts below)"
 msgstr ""
 
@@ -14686,7 +14690,15 @@ msgid "Calculate"
 msgstr ""
 
 #: src/app/TrackReceiptUi.cpp
+msgid "Calculated: category %s, up to %d s. Type a share if your license says otherwise."
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
 msgid "Check artist and title: guessed from the file name."
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "Choose the category on the license and the share is calculated from it and the length."
 msgstr ""
 
 #: src/app/TrackReceiptUi.cpp
@@ -14838,7 +14850,15 @@ msgid "Your release"
 msgstr ""
 
 #: src/app/TrackReceiptUi.cpp
+msgid "Your typed share is used. Calculated: %g%%. Clear the field to use it."
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
 msgid "Your writers and publishers"
+msgstr ""
+
+#: src/app/TrackReceiptUi.cpp
+msgid "auto"
 msgstr ""
 
 #: src/app/TrackReceiptUi.cpp
@@ -14850,15 +14870,11 @@ msgid "derived"
 msgstr ""
 
 #: src/app/TrackReceiptUi.cpp
-msgid "e.g. 10"
-msgstr ""
-
-#: src/app/TrackReceiptUi.cpp
 msgid "sample shares %s%%, yours %s%%"
 msgstr ""
 
 #: src/app/TrackReceiptUi.cpp
-msgid "shares to fill in"
+msgid "shares to fill in: choose each song's category"
 msgstr ""
 
 #: src/app/TrackReceiptUi.cpp

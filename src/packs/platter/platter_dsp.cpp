@@ -44,7 +44,9 @@
 //           the motor catches it;
 //   nudge   rim turns (and the platter top in CDJ mode) bend the speed for a
 //           moment; while stopped they move the record by hand.
-//   sync    the tempo and beat phase follow the project, or the other deck.
+//   sync    the tempo and beat phase follow the project, or the other deck. Small errors are
+//           played out in the speed; after a scratch the deck falls back in phase at once with a
+//           crossfaded jump (a beat's error at the speed lock's limit is seconds of wrong pitch).
 //
 // Mixer: per channel trim, isolator EQ with kills, filter, channel fader (with
 // its curve), crossfader (curve, cut, reverse, per deck assign), master level.
@@ -364,7 +366,7 @@ class Deck {
       phase = sb - std::floor(sb);
       return true;
     }
-    if (leader_ == kLeadDeck && other_ && other_->motor_ && other_->loaded() && !other_->inTake_) {
+    if (leader_ == kLeadDeck && other_ && other_->motor_ && other_->loaded() && !other_->inTake_ && !other_->scratching()) {  // (not a hand's wandering)
       phase = other_->startBeat_ - std::floor(other_->startBeat_);
       return true;
     }
@@ -1109,6 +1111,7 @@ class Deck {
   }
   // Restored: the rest of what a step carries (the next one starts fresh where the pass did).
   void perfRestored() {
+    relock_ = false;
     wheelRaw_ = 0;
     wheelN_ = normOf(deckParam(idx_, DWheel), 0.0);
     nudgeSum_ = 0;
@@ -1408,6 +1411,7 @@ class Deck {
         v1 = scratchStep(len, static_cast<double>(clock)) * unity();
         x1 = start + 0.5 * (v0 + v1) * fLen;
         flags |= TfHand;
+        relock_ = true;
       } else {
         const double base = baseSpeed();
         double target = motor_ ? base * (1.0 + bend_ + nudge_) : 0.0;
@@ -1415,14 +1419,16 @@ class Deck {
         // phase lock to what the deck follows (sync, motor running steadily)
         // (not while a nudge or bend moves the phase on purpose)
         double want = 0;
+        if (leader_ == kLeadDeck && other_ && other_->scratching()) relock_ = true;  // what it follows is being moved by hand
         if (motor_ && on(DSync) && !censor_ && bend_ == 0 && nudge_ == 0 && std::fabs(v0 - target) <= 0.05 * std::fabs(target) && noteHot_ < 0 &&
             !loopOn_ && leaderPhase(static_cast<double>(clock - sh_->blockClock), want)) {
           const double db = beatAt(model(), start);
           double err = (db - std::floor(db)) - want;
           if (err > 0.5) err -= 1;
           if (err < -0.5) err += 1;
-          const double corr = std::clamp(-err * 0.6, -0.04, 0.04);
-          target *= 1.0 + corr;
+          if (relock_ && std::fabs(err) > kRelockBeats) jump(frameAt(model(), db - err) + target * fLen);
+          else target *= 1.0 + std::clamp(-err * 0.6, -0.04, 0.04);
+          relock_ = false;
         }
         const double t = motor_ && std::fabs(target) >= std::fabs(v0) ? P(DStartTime) : P(DStopTime);
         const double slope = t > 1e-4 ? std::max(unity(), std::fabs(base)) * fLen / (static_cast<double>(t) * sh_->sr) : 1e9;
@@ -1761,6 +1767,7 @@ class Deck {
 
   // ---------------------------------------------------------------- state (the generator reads some)
   static constexpr int kLeadNone = -1, kLeadProject = 0, kLeadDeck = 1;
+  static constexpr double kRelockBeats = 0.01;  // out of phase by less than this after a scratch: the speed lock takes it
   int idx_ = 0;
   Shared* sh_ = nullptr;
   const Deck* other_ = nullptr;
@@ -1810,6 +1817,7 @@ class Deck {
   bool loopOn_ = false, marksDirty_ = false;
   bool slipping_ = false;
   double slipPos_ = 0;
+  bool relock_ = false;  // a scratch moved the phase: fall back in it once the motor has the record
 
   // performances (J-159): the lane values of this deck (live: what the pass records; replay:
   // what the lanes said last), the wheel lane playing this step

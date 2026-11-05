@@ -352,7 +352,7 @@ void songCard(Page& w, const SongRow& s, int index) {
   w.y += wrapped(&d, x + 14, w.y - 0.5, usedFrom, 8.5, false, cw - 14, 11, kDim) + 5;
   y = w.y;
   const char* labels[3] = {"Category", "Share", "Fee"};
-  const std::string vals[3] = {s.fields.category, s.fields.share.empty() ? "" : s.fields.share + (s.fields.share.back() == '%' ? "" : " %"), s.fields.fee};
+  const std::string vals[3] = {s.fields.category, s.share >= 0 ? pct(s.share) : "", s.fields.fee};
   const double fw = (cw - 14) / 3.0;
   double fh = 11;
   for (int i = 0; i < 3; ++i) {
@@ -510,7 +510,7 @@ std::string resultsPdf(const Report& r) {
   for (const auto& p : parts) legendH += std::max(15.0, wrapped(nullptr, 0, 0, p.first, 8.5, false, nameW, 11, kText) + 4);
   w.heading("Splits when you release", std::max(170.0, legendH) + 40);
   w.para("The share each license sets applies to both the master and the publishing of your song, so one chart shows both. With several "
-         "samples the shares add up: the rest is yours. Fill in each song's share in Track Receipt and these figures follow.",
+         "samples the shares add up: the rest is yours. Choose each song's category in Track Receipt and these figures follow.",
          9.5, kDim);
   w.need(std::max(170.0, legendH + 30));
   const double top = w.y + 4;
@@ -571,7 +571,7 @@ std::string resultsPdf(const Report& r) {
       "which sections you used.",
       "Enter your song's details: title, performer or artist, a reference copy (an MP3 of at most 10 MB), the ISRC, the release date "
       "and your distributor, and the licensee (you or your company).",
-      "Check the category, fee and revenue share the license shows, and type them into Track Receipt so the splits here are right.",
+      "Check the category, fee and revenue share the license shows. In Track Receipt choose the category and type the fee: the share is calculated from the category and length, and a share you type replaces it.",
       "Release only after every license is in place. If you sell or lease the beat, each buyer needs a license of their own.",
   };
   int k = 1;

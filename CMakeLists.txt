@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(gridline VERSION 0.7.2 LANGUAGES C CXX)
+project(gridline VERSION 0.7.3 LANGUAGES C CXX)
 # Prerelease label: "beta.1" makes this Gridline 0.7.0-beta.1 (published as a GitHub pre-release);
 # empty ("") for a release. The version is set only here (cmake/GridlineVersion.cmake, docs/releasing.md).
 set(GRIDLINE_VERSION_PRE "")
@@ -1864,6 +1864,13 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -DOUT=${CMAKE_BINARY_DIR}/typing_key_positions_app -P ${CMAKE_SOURCE_DIR}/tests/typing_key_positions_app.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(typing_key_positions_app PROPERTIES TIMEOUT 120)
+
+    # A click on an off-grid clip or note changes nothing; a drag moves it by whole grid steps, keeping its offset.
+    add_test(NAME drag_keeps_offset_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/drag_keeps_offset_app -P ${CMAKE_SOURCE_DIR}/tests/drag_keeps_offset_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(drag_keeps_offset_app PROPERTIES TIMEOUT 240)
 
     # A right-click on overlapping notes deletes only the top one, held or with a slight slip.
     add_test(NAME piano_erase_overlap

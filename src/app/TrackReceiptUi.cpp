@@ -446,11 +446,30 @@ void songCard(App& a, SongRow& sr, int idx) {
     ImGui::SameLine(x0 + cw + theme::kS4);
     ImGui::TextColored(theme::vec(P.textDim), "%s", i18n::tr("Share %"));
     ImGui::SameLine(x0 + cw + theme::kS4 + 70);
-    if (field("##share", f.share, cw - 70, i18n::tr("e.g. 10"))) commit(a);
+    char autoHint[48];
+    if (sr.autoShare >= 0) std::snprintf(autoHint, sizeof autoHint, i18n::tr("%g (auto)"), sr.autoShare);
+    else std::snprintf(autoHint, sizeof autoHint, "%s", i18n::tr("auto"));
+    if (field("##share", f.share, cw - 70, autoHint)) commit(a);
     ImGui::SameLine(x0 + 2 * (cw + theme::kS4));
     ImGui::TextColored(theme::vec(P.textDim), "%s", i18n::tr("Fee"));
     ImGui::SameLine(x0 + 2 * (cw + theme::kS4) + 70);
     if (field("##fee", f.fee, cw - 70)) commit(a);
+  }
+  {
+    char note[160] = "";
+    if (sr.over || sr.seconds <= 0) {
+    } else if (f.category.empty()) {
+      std::snprintf(note, sizeof note, "%s", i18n::tr("Choose the category on the license and the share is calculated from it and the length."));
+    } else if (f.share.empty()) {
+      std::snprintf(note, sizeof note, i18n::tr("Calculated: category %s, up to %d s. Type a share if your license says otherwise."), f.category.c_str(), sr.tier);
+    } else if (sr.autoShare >= 0 && sr.share != sr.autoShare) {
+      std::snprintf(note, sizeof note, i18n::tr("Your typed share is used. Calculated: %g%%. Clear the field to use it."), sr.autoShare);
+    }
+    if (*note) {
+      ImGui::PushFont(nullptr, theme::kFontLabel);
+      ImGui::TextColored(theme::vec(P.textFaint), "%s", note);
+      ImGui::PopFont();
+    }
   }
   label(i18n::tr("Rights holders"), x0 + 110);
   if (field("##holders", f.holders, kW - 16 - 110, i18n::tr("Master and publishing owners, from the license"))) commit(a);
@@ -503,7 +522,7 @@ void resultsPage(App& a) {
     ImGui::SameLine(0, theme::kS2);
     if (r.sharesComplete) std::snprintf(b, sizeof b, i18n::tr("sample shares %s%%, yours %s%%"), secondsText(r.totalShare).c_str(),
                                          secondsText(std::max(0.0, 100 - r.totalShare)).c_str());
-    else std::snprintf(b, sizeof b, "%s", i18n::tr("shares to fill in"));
+    else std::snprintf(b, sizeof b, "%s", i18n::tr("shares to fill in: choose each song's category"));
     ImGui::TextColored(theme::vec(P.textDim), "%s", b);
   }
   for (const auto& w : r.warnings) ImGui::TextColored(theme::vec(P.danger), "%s", w.c_str());
@@ -511,7 +530,10 @@ void resultsPage(App& a) {
   if (r.songs.empty())
     ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("No ticked files: go back and tick the licensed samples."));
   int idx = 0;
-  for (SongRow& sr : r.songs) songCard(a, sr, idx++);
+  for (size_t i = 0; i < r.songs.size(); ++i) {  // (a copy: an edit in the card rebuilds the report)
+    SongRow sr = r.songs[i];
+    songCard(a, sr, idx++);
+  }
   // Not counted.
   bool anyMuted = false;
   for (const FileRow& f : r.files) anyMuted = anyMuted || !f.muted.empty();

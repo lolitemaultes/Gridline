@@ -174,12 +174,13 @@ class TurntableCore {
     // A control change ends the reference's host block there: the targets are
     // taken (from the values before the change) and the block clock restarts.
     bool changed = false;
+    const bool turnsAlone = p[TtTurns] != last_[TtTurns] && p[TtPosition] == last_[TtPosition];
     for (int k = 0; k < lay_.count && k < TtCount; ++k) {
       const double v = p[k];
       if (v != last_[static_cast<size_t>(k)]) changed = true;
       last_[static_cast<size_t>(k)] = v;
     }
-    if (changed && started_) latch(posParam_);
+    if (changed && started_) latch(posParam_, hold_ ? turns_ : 0);
     // Internal values, as the reference holds them.
     posParam_ = clampf(p[TtPosition], 0, 1);
     sound_ = p[TtMute] < 0.5;
@@ -191,6 +192,7 @@ class TurntableCore {
     transport_ = static_cast<int>(std::lround(std::clamp(p[TtTransport], 0.0, 2.0))) - 1;
     for (int k = 0; k < 4; ++k) smooth_[static_cast<size_t>(k)] = clampf(p[TtSmooth1 + k], 0, 1);
     turns_ = static_cast<int>(std::lround(std::clamp(p[TtTurns], -9.0, 9.0)));
+    if (hold_ && turnsAlone) turnsTarget_ = turns_;  // (Position stays: they act at once)
     notesMode_ = lay_.notes < 0 ? TnOff : static_cast<int>(std::lround(std::clamp(p[lay_.notes], 0.0, 2.0)));
     keyTrack_ = lay_.keyTrack >= 0 && p[lay_.keyTrack] >= 0.5;
     cue_ = clampf(p[lay_.cue], 0, 1);
@@ -203,6 +205,7 @@ class TurntableCore {
       started_ = true;
       latchCount_ = 0;
       posTarget_ = posParam_;
+      turnsTarget_ = hold_ ? turns_ : 0;
       panTarget_ = panParam_;
       pan_ = 0.0f;
       gTarget_ = sound_ ? volume_ : 0.0f;
@@ -247,9 +250,8 @@ class TurntableCore {
         c = static_cast<float>(c * rate_);
         s4 = static_cast<float>(s4 * rate_);
       }
-      const float off = static_cast<float>(turns_);
       for (int i = 0; i < n; ++i) {
-        const float err = (posTarget_ + off) - pos_;
+        const float err = (posTarget_ + static_cast<float>(turnsTarget_)) - pos_;
         vel_ = k * err + a2 * vel_;
         const float step = err * c + s4 * vel_;
         pos_ = pos_ + step;
@@ -304,11 +306,15 @@ class TurntableCore {
   // platter's position into the position control as it runs.
   void tick(bool motor) {
     if (++latchCount_ < latchLen_) return;
-    latch(motor ? pos_ : posParam_);
+    if (motor) latch(pos_, 0);
+    else latch(posParam_, turns_);
   }
-  void latch(float pos) {
+  // A hand crossing the sample's start changes Position and Turns at once (0.001 + 0 turns to
+  // 0.999 - 1 turn): they are taken together, one without the other is a target a whole turn away.
+  void latch(float pos, int turns) {
     latchCount_ = 0;
     posTarget_ = pos;
+    turnsTarget_ = turns;
     panTarget_ = panParam_;
     gTarget_ = sound_ ? volume_ : 0.0f;
   }
@@ -417,6 +423,7 @@ class TurntableCore {
   float unit2_ = 0;
   // platter and output
   float pos_ = 0, vel_ = 0, travel_ = 0, posTarget_ = 0;
+  int turnsTarget_ = 0;
   float g_ = 0, gTarget_ = 0, pan_ = 0, panTarget_ = 0;
   std::array<float, 2> dcx_{0, 0}, dcy_{0, 0};
   // cue jump crossfade

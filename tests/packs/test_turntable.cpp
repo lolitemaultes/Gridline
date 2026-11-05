@@ -345,6 +345,43 @@ void testMeasured(bool effect) {
   std::printf("# measured laws: worst difference %.3g\n", worst);
 }
 
+// A hand crossing the sample's start changes Position and Turns together (as the editor does):
+// the record moves on steadily, with no lurch toward a target a whole turn away.
+void testScratchAcrossStart() {
+  for (double dir : {-1.0, 1.0}) {
+    Rig r([](PluginState& s) {
+      s.params[sp::TtNotes] = sp::TnOff;
+      s.params[sp::TtHold] = 1.f;
+    });
+    double hand = dir < 0 ? 0.02 : 0.98;
+    int turns = 0;
+    r.set(sp::TtPosition, static_cast<float>(hand));
+    r.run(44100, 64);
+    double steady = 0, peak = 0;
+    float last = r.pos();
+    double worstStep = 0;
+    for (int k = 0; k < 100; ++k) {
+      hand += dir * 0.0004;
+      while (hand > 1.0) hand -= 1.0, ++turns;
+      while (hand < 0.0) hand += 1.0, --turns;
+      r.set(sp::TtPosition, static_cast<float>(hand));
+      r.set(sp::TtTurns, static_cast<float>(turns));
+      for (int b = 0; b < 3; ++b) {
+        r.run(64, 64);
+        const double sp = std::fabs(static_cast<double>(r.speed()));
+        if (k < 30) steady = std::max(steady, sp);
+        peak = std::max(peak, sp);
+        worstStep = std::max(worstStep, circ(r.pos(), last));
+        last = r.pos();
+      }
+    }
+    std::printf("# across the start (%+.0f): turns %d, speed before %.3g, peak %.3g, largest move per block %.5f\n", dir, turns, steady, peak, worstStep);
+    expect(turns == (dir < 0 ? -1 : 1), "the hand crossed the sample's start");
+    expect(peak < 2.0 * steady, "scratch across the start: no lurch in the record's speed");
+    expect(worstStep < 0.002, "scratch across the start: the position moves on steadily");
+  }
+}
+
 // ---- scratching (the editor and automation drive the hand through Hold + Position)
 void testScratch() {
   Rig r([](PluginState& s) {
@@ -1145,6 +1182,7 @@ int main() {
   testMeasured(true);
   testMeasured(false);
   testScratch();
+  testScratchAcrossStart();
   testExtremes();
   testBlocks();
   testRates();
