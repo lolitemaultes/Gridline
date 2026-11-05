@@ -1605,6 +1605,7 @@ static int runCrashDialog(SDL_Window* window, SDL_GLContext gl, const std::strin
     ImGui::NewFrame();
     const bool more = crashui::dialogFrame(state, fonts);
     ImGui::Render();
+    ImGui::UpdatePlatformWindows();
     if (useOffscreen) offscreen.use(true);
     glViewport(0, 0, fbW, fbH);
     const ImU32 bg = theme::pal().surface900;
@@ -1836,6 +1837,7 @@ int main(int argc, char** argv) {
       ImGui::NewFrame();
       drawSplash(fBold, fMono, shown, status, tt);
       ImGui::Render();
+      ImGui::UpdatePlatformWindows();  // no detached windows yet; the first frame with them checks this was called
       int w, h;
       SDL_GL_GetDrawableSize(window, &w, &h);
       glViewport(0, 0, w, h);
@@ -2884,6 +2886,7 @@ int main(int argc, char** argv) {
     } catch (...) {
       crash::reportCurrentException("Drawing the interface");
       if (ImGui::GetCurrentContext()->WithinFrameScope) ImGui::EndFrame();  // closes what the frame left open
+      if (ImGui::GetCurrentContext()->FrameCountPlatformEnded < ImGui::GetFrameCount()) ImGui::UpdatePlatformWindows();
       liveresize::frameEnd();
       goodFrames = 0;
       ++failedFrames;
@@ -2911,6 +2914,7 @@ int main(int argc, char** argv) {
       ImGui::NewFrame();
       const crashui::KeepsFailingResult r = crashui::drawKeepsFailing(app);
       ImGui::Render();
+      ImGui::UpdatePlatformWindows();
       if (useOffscreen) offscreen.use(true);
       glViewport(0, 0, fbW, fbH);
       glClear(GL_COLOR_BUFFER_BIT);

@@ -1077,8 +1077,8 @@ void renderWindows() {
   const int slot = S.frameN % 120;
   if (S.lastRender) S.frameMs[slot] = seconds(S.lastRender, t) * 1000.0, S.windowsMs[slot] = 0, ++S.frameN;
   S.lastRender = t;
+  ImGui::UpdatePlatformWindows();  // every frame, also with detached windows off: ImGui checks it when they come on
   if (!(GImGui->ConfigFlagsCurrFrame & ImGuiConfigFlags_ViewportsEnable)) return;
-  ImGui::UpdatePlatformWindows();
   for (ImGuiViewportP* vp : GImGui->Viewports)
     if (!isMain(vp) && owned(vp) && vp->PlatformWindowCreated && !S.homing.count(vp->Window->ID))
       rememberOut(vp->Window);  // not once it is docking back
