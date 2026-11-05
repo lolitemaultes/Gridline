@@ -109,6 +109,12 @@
   </supports>
 
   <releases>
+    <release version="0.7.3" date="2026-11-06">
+      <url type="details">https://github.com/lolitemaultes/Gridline/releases/tag/v0.7.3</url>
+      <description>
+        <p>Crash reports and project recovery, smoother playback of large projects, clips and notes that keep their offset when dragged, Track Receipt share calculation and tap tempo.</p>
+      </description>
+    </release>
     <release version="0.7.2" date="2026-11-03">
       <url type="details">https://github.com/lolitemaultes/Gridline/releases/tag/v0.7.2</url>
       <description>

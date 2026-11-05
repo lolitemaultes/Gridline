@@ -4818,7 +4818,7 @@ void startLauncherDemo(App& a, const std::string& folder) {
   };
   Ui::LauncherDemo::Sim& sam = sim("Sam", 0xD8775A);
   Ui::LauncherDemo::Sim& kim = sim("Kim", 0x8E7CE0);
-  Ui::LauncherDemo::Sim& alex = sim("Alex", 0x6CB86A);
+  Ui::LauncherDemo::Sim& mia = sim("Mia", 0x6CB86A);  // (not this user's default name: that would read as this user elsewhere)
   Ui::LauncherDemo::Sim& lee = sim("Lee", 0xD9B44A);
   lee.ctl->setShowOnline(false);  // Lee keeps presence hidden: never "offline", just not known
   double t = a.now;
@@ -4863,11 +4863,11 @@ void startLauncherDemo(App& a, const std::string& folder) {
     run(2.0, nullptr);
     me.close();
   }
-  // Glass Choir: Alex's (I joined); Alex works on it now, Lee too but hidden
-  alex.doc.reset(song(2, 96));
-  ok = ok && alex.ctl->create(alex.doc, (fs::path(folder) / "Alex" / "Glass Choir").string(), "Glass Choir", &err);
-  ok = ok && invite(*alex.ctl, me, d->mine, (mine / "Glass Choir").string());
-  ok = ok && invite(*alex.ctl, *lee.ctl, lee.doc, (fs::path(folder) / "Lee" / "Glass Choir").string());
+  // Glass Choir: Mia's (I joined); Mia works on it now, Lee too but hidden
+  mia.doc.reset(song(2, 96));
+  ok = ok && mia.ctl->create(mia.doc, (fs::path(folder) / "Mia" / "Glass Choir").string(), "Glass Choir", &err);
+  ok = ok && invite(*mia.ctl, me, d->mine, (mine / "Glass Choir").string());
+  ok = ok && invite(*mia.ctl, *lee.ctl, lee.doc, (fs::path(folder) / "Lee" / "Glass Choir").string());
   if (ok) me.close();
   // Tape Loops: mine; nobody reachable; a sync review and offline changes wait
   d->mine.reset(song(3, 82));

@@ -476,7 +476,7 @@ VIEWS = [
     ("pr.png", "piano-roll.png", (490, 104, 2440, 1940)),
     ("edison.png", "audio-editor.png", (467, 104, 2728, 1712)),
     ("chords.png", "chord-editor.png", (592, 525, 2595, 1520)),
-    ("autoedit.png", "automation.png", (978, 488, 2720, 1635)),
+    ("autoedit.png", "automation.png", (488, 384, 2730, 1664)),
     ("picker.png", "plugin-picker.png", None),
     ("collab.png", "collaboration.png", (0, 0, 3200, 1324)),
 ]

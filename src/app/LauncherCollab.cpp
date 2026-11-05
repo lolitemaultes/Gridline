@@ -297,7 +297,12 @@ Status statusOf(const ListRow& r, const Look& C) {
     return {r.review == 1 ? std::string(tr("1 change to review")) : fmtN(tr("%lld changes to review"), static_cast<long long>(r.review)), theme::lit(P.hot), P.hot,
             false};
   if (!r.workingNow.empty()) {
-    const std::string names = joinNames(r.workingNow, tr("and"), tr("%d others"));
+    // (an empty name: this user on another computer)
+    if (r.workingNow.size() == 1 && r.workingNow[0].empty()) return {tr("You are working on it on another computer"), C.text, P.led, true};
+    std::vector<std::string> who = r.workingNow;
+    for (std::string& n : who)
+      if (n.empty()) n = tr("you on another computer");
+    const std::string names = joinNames(who, tr("and"), tr("%d others"));
     return {fmtS(r.workingNow.size() == 1 ? tr("%s is working on it now") : tr("%s are working on it now"), names), C.text, P.led, true};
   }
   if (r.openHere) return {tr("Open here"), C.dim, C.accent, false};

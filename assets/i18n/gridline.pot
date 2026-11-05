@@ -8350,6 +8350,10 @@ msgid "You are its admin"
 msgstr ""
 
 #: src/app/LauncherCollab.cpp
+msgid "You are working on it on another computer"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
 msgid "You, on another computer"
 msgstr ""
 
@@ -8379,6 +8383,10 @@ msgstr ""
 
 #: src/app/LauncherCollab.cpp
 msgid "yesterday"
+msgstr ""
+
+#: src/app/LauncherCollab.cpp
+msgid "you on another computer"
 msgstr ""
 
 #: src/app/LauncherUi.cpp

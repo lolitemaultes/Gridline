@@ -71,7 +71,7 @@ endif()
 expectLines(demo "${out}" "launcher visible=1 open=0 view=2")
 expectLines(demo "${out}" "collab view rows=4 live=2 ")
 expectLines(demo "${out}" "collab row name=Night Drive state=0 admin=1 open=0 card=1 [^\n]*working=1 [^\n]*Sam:working\\*")
-expectLines(demo "${out}" "collab row name=Glass Choir state=0 admin=0 [^\n]*working=1 [^\n]*Alex:working\\*")
+expectLines(demo "${out}" "collab row name=Glass Choir state=0 admin=0 [^\n]*working=1 [^\n]*Mia:working\\*")
 expectLines(hidden "${out}" "collab row name=Glass Choir [^\n]*Lee:(unknown|checking|no-answer)[,\n ]")  # Lee keeps presence private
 expectLines(review "${out}" "collab row name=Tape Loops state=0 admin=1 [^\n]*pending=5 review=2 [^\n]*status=2 changes to review")
 expectLines(missing "${out}" "collab row name=Old Sketches state=3 [^\n]*status=Folder not found")
