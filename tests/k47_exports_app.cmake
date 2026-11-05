@@ -111,7 +111,9 @@ message(STATUS "ok - quitting during an export ends the app and leaves nothing")
 
 # Edits during a zip save: they stay unsaved, and the project now lives in the archive. A second job
 # is refused while one runs. A save with no edits leaves the project saved.
+set(ENV{GRIDLINE_DEV_SLOW_FILE_JOB_MS} "4000")  # (still running two frames later, on a slow machine too)
 run(edit_during "5 forget file-job-finished\n6 filejob zip \"${OUT}/res/During.gridline.zip\"\n8 filejob data \"${OUT}/res/refused\"\n10 rmchan 0\n40 waitfor file-job-finished 60\n44 docstate\n50 quit discard\n")
+set(ENV{GRIDLINE_DEV_SLOW_FILE_JOB_MS} "150")
 if(EXISTS "${OUT}/res/refused")
   message(FATAL_ERROR "FAIL: a second job ran beside the first")
 endif()

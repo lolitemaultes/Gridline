@@ -9849,6 +9849,14 @@ msgstr ""
 msgid "Zoom to ticks (snap turns free)"
 msgstr ""
 
+#: src/app/MidiUi.cpp
+msgid "%s chord mode · %s next chord"
+msgstr ""
+
+#: src/app/MidiUi.cpp
+msgid "%s…%s and %s…%s play · %s %s octave · %s %s velocity"
+msgstr ""
+
 #: src/app/MidiUi.cpp src/packs/platter/platter_ui.cpp
 msgid "Any device"
 msgstr ""
@@ -10159,14 +10167,6 @@ msgstr ""
 
 #: src/app/MidiUi.cpp
 msgid "Your own templates (JSON) override the shipped ones by id"
-msgstr ""
-
-#: src/app/MidiUi.cpp
-msgid "Z…/ and Q…P play · [ ] octave · - = velocity"
-msgstr ""
-
-#: src/app/MidiUi.cpp
-msgid "\\ chord mode · ' next chord"
 msgstr ""
 
 #: src/app/MidiUi.cpp

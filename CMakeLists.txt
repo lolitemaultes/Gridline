@@ -1858,6 +1858,13 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(k29_bend_dblclick_app PROPERTIES TIMEOUT 300)
 
+    # The typing keyboard goes by where keys sit: other layouts play the same notes.
+    add_test(NAME typing_key_positions_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/typing_key_positions_app -P ${CMAKE_SOURCE_DIR}/tests/typing_key_positions_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(typing_key_positions_app PROPERTIES TIMEOUT 120)
+
     # A right-click on overlapping notes deletes only the top one, held or with a slight slip.
     add_test(NAME piano_erase_overlap
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json

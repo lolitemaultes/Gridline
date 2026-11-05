@@ -387,28 +387,36 @@ void recordOptionsMenu(App& a) {
   actionLinkMenuItems(a, RemoteAction::Record);
 }
 
+int (*typingLayoutKey)(int position) = nullptr;
+
+std::string typingKeyName(int key) {
+  return TypingKeyboard::keyLabel(key, typingLayoutKey ? typingLayoutKey(TypingKeyboard::positionOfKey(key)) : 0);
+}
+
 void typingKeyboardMenu(App& a) {
   TypingKeyboard& k = a.typing;
   ImGui::TextDisabled("%s", i18n::tr("Typing keyboard"));
   if (ImGui::MenuItem(i18n::tr("Play notes from the computer keyboard"), keys::label("options.typingKeyboard"), a.typingKeyboard)) a.typingKeyboard = !a.typingKeyboard;
   if (ImGui::BeginMenu(i18n::tr("Octave"))) {
     for (int o = 1; o <= 8; ++o) {
-      std::string n = "Z = " + midiNoteName(12 * o);
+      std::string n = typingKeyName('z') + " = " + midiNoteName(12 * o);
       if (ImGui::MenuItem(n.c_str(), nullptr, k.octave == o)) k.octave = o;
     }
     ImGui::EndMenu();
   }
   ImGui::SetNextItemWidth(160);
   ImGui::SliderInt(i18n::tr("Velocity"), &k.velocity, 1, 127);
-  ImGui::MenuItem(i18n::tr("Chord mode"), "\\", &k.chordMode);
+  ImGui::MenuItem(i18n::tr("Chord mode"), typingKeyName('\\').c_str(), &k.chordMode);
   if (ImGui::BeginMenu(i18n::tr("Chord"))) {
     for (int i = 0; i < static_cast<int>(ChordType::Count); ++i)
       if (ImGui::MenuItem(chordTypeName(static_cast<ChordType>(i)), nullptr, static_cast<int>(k.chord) == i)) k.chord = static_cast<ChordType>(i);
     ImGui::EndMenu();
   }
   ImGui::Separator();
-  ImGui::TextDisabled("%s", i18n::tr("Z…/ and Q…P play · [ ] octave · - = velocity"));
-  ImGui::TextDisabled("%s", i18n::tr("\\ chord mode · ' next chord"));
+  ImGui::TextDisabled(i18n::tr("%s…%s and %s…%s play · %s %s octave · %s %s velocity"), typingKeyName('z').c_str(), typingKeyName('/').c_str(),
+                      typingKeyName('q').c_str(), typingKeyName('p').c_str(), typingKeyName('[').c_str(), typingKeyName(']').c_str(),
+                      typingKeyName('-').c_str(), typingKeyName('=').c_str());
+  ImGui::TextDisabled(i18n::tr("%s chord mode · %s next chord"), typingKeyName('\\').c_str(), typingKeyName('\'').c_str());
 }
 
 // ------------------------------------------------------------ settings page ----

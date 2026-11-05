@@ -134,7 +134,16 @@ class TypingKeyboard {
   static int keyOffset(int key);
   // True for octave / velocity / chord keys (so the caller can swallow them).
   static bool isControlKey(int key);
+  // The key code of a key by where it sits, whatever the layout types there: `position` is its USB
+  // usage (SDL's scan codes use the same numbers, named after US QWERTY). 0 = not a typing key.
+  static int keyAtPosition(int position);
+  // Where a key code sits, 0 if it has no place.
+  static int positionOfKey(int key);
+  // What to call a key on this keyboard: `typed`, the character its position types on the layout
+  // in use, in capitals; the US character when that is not plain ASCII.
+  static std::string keyLabel(int key, int typed);
   bool anyHeld() const { return !held_.empty(); }
+  std::vector<int> heldNotes() const;
 
  private:
   std::map<int, std::vector<int>> held_;

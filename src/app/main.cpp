@@ -2,6 +2,7 @@
 // device, default layout, typing keyboard, file drops.
 #include "CacheUi.h"
 #include "Look.h"
+#include "MidiUi.h"
 #include "SettingsPages.h"
 #include "GridlineVersion.h"
 #include <SDL.h>
@@ -644,20 +645,9 @@ void writePpm(const char* path, int w, int h) {
   }
 }
 
-// Typing keyboard: SDL key → the ASCII key code TypingKeyboard uses (keypad
-// −/+ change the octave, keypad / * the velocity). 0 = not a typing key.
-int typingKey(SDL_Keycode k) {
-  switch (k) {
-    case SDLK_KP_MINUS: return '[';
-    case SDLK_KP_PLUS: return ']';
-    case SDLK_KP_DIVIDE: return '-';
-    case SDLK_KP_MULTIPLY: return '=';
-    default: break;
-  }
-  if (k > 0 && k < 128 && (TypingKeyboard::keyOffset(static_cast<int>(k)) >= 0 || TypingKeyboard::isControlKey(static_cast<int>(k))))
-    return static_cast<int>(k);
-  return 0;
-}
+// Typing keyboard: where a key sits → the key code TypingKeyboard uses, so the rows stay a piano
+// on any layout. 0 = not a typing key.
+int typingKey(SDL_Scancode s) { return TypingKeyboard::keyAtPosition(static_cast<int>(s)); }
 
 struct HeldNote {
   ObjectId channel;
@@ -666,7 +656,7 @@ struct HeldNote {
 };
 
 // J-109: ends every note held on the typing keyboard (on the channel each key started it on).
-void releaseTypedNotes(App& app, std::map<SDL_Keycode, HeldNote>& held) {
+void releaseTypedNotes(App& app, std::map<SDL_Scancode, HeldNote>& held) {
   for (const auto& [k, h] : held)
     for (int p : app.typing.keyUp(typingKey(k))) {
       app.engine.noteOff(h.channel, p);
@@ -700,7 +690,7 @@ void releaseTypedNotes(App& app, std::map<SDL_Keycode, HeldNote>& held) {
 //   Close project); signals launcher-shown / launcher-hidden
 //   quit [discard] (J-103: an SDL_QUIT, the normal quit path: unsaved-changes guard, teardown, settings saved;
 //   "discard" drops unsaved changes first, as the prompt's "Don't save")
-//   J-109: sdlkey <key> down|up [ctrl|super] · focuslost · typing on|off · noteon|noteoff <channel index> <pitch> ·
+//   J-109: sdlkey <key>[@<position>] down|up [ctrl|super] · focuslost · typing on|off|show · noteon|noteoff <channel index> <pitch> ·
 //   previewfile <wav> · sound (output peak since the last "sound", live notes held, preview, panics, playing);
 //   waitfor output-silent: the output stayed below 1e-5 for 0.2 s (forget output-silent to wait again)
 //   J-110: stopvia button|menu|remote (the Stop button's action, Tools > Stop all sound, a MIDI controller's /
@@ -1149,9 +1139,16 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
         e.key.state = down ? SDL_PRESSED : SDL_RELEASED;
         e.key.keysym.sym = l.a0.empty() ? 0 : static_cast<SDL_Keycode>(l.a0[0]);
         e.key.keysym.scancode = SDL_GetScancodeFromKey(e.key.keysym.sym);
+        if (l.a0.size() == 3 && l.a0[1] == '@')  // ";@z": the key in the Z position types ';' (another layout)
+          e.key.keysym.scancode = static_cast<SDL_Scancode>(TypingKeyboard::positionOfKey(l.a0[2]));
         e.key.keysym.mod = static_cast<Uint16>(devKeyMods(l.a2));  // "ctrl", "super", "shift", "ctrl+shift"...
       }
       SDL_PushEvent(&e);
+    } else if (l.cmd == "typing" && l.a0 == "show") {  // the notes held, octave and velocity
+      std::printf("typing notes");
+      for (int p : app.typing.heldNotes()) std::printf(" %d", p);
+      std::printf(" octave %d velocity %d chord %d\n", app.typing.octave, app.typing.velocity, app.typing.chordMode ? 1 : 0);
+      std::fflush(stdout);
     } else if (l.cmd == "typing") {  // J-109: the typing keyboard on / off
       app.typingKeyboard = l.a0 != "off";
     } else if (l.cmd == "noteon" || l.cmd == "noteoff") {  // J-109: a live note on channel <index> (pads, preview keys)
@@ -1852,6 +1849,7 @@ int main(int argc, char** argv) {
   };
   splash(0.12f, "Loading interface");
   splash(0.22f, "Reading settings");
+  typingLayoutKey = [](int position) -> int { return SDL_GetKeyFromScancode(static_cast<SDL_Scancode>(position)); };
   App app;
   app.fontRegular = fRegular;
   app.fontBold = fBold;
@@ -2381,7 +2379,7 @@ int main(int argc, char** argv) {
   io.IniFilename = keepSavedLayout ? nullptr : iniPath.c_str();
   if (keepSavedLayout) std::fprintf(stderr, "layout: %s is read, not saved (a run with options)\n", iniPath.c_str());
 
-  std::map<SDL_Keycode, HeldNote> held;
+  std::map<SDL_Scancode, HeldNote> held;
   std::string lastTitle;
   bool running = true;
   Uint64 t0 = SDL_GetPerformanceCounter();
@@ -2767,9 +2765,10 @@ int main(int argc, char** argv) {
       app.focusWindow.clear();
     }
     if (app.typingKeyboard && app.hint.empty()) {
-      std::string h = "Typing keyboard: Z…/ and Q…P play from " + midiNoteName(app.typing.baseNote()) +
-                      " · [ ] octave · - = velocity " + std::to_string(app.typing.velocity) + " · \\ chord mode";
-      if (app.typing.chordMode) h += std::string(" (") + chordTypeName(app.typing.chord) + ", ' next)";
+      std::string h = "Typing keyboard: " + typingKeyName('z') + "…" + typingKeyName('/') + " and " + typingKeyName('q') + "…" + typingKeyName('p') +
+                      " play from " + midiNoteName(app.typing.baseNote()) + " · " + typingKeyName('[') + " " + typingKeyName(']') + " octave · " +
+                      typingKeyName('-') + " " + typingKeyName('=') + " velocity " + std::to_string(app.typing.velocity) + " · " + typingKeyName('\\') + " chord mode";
+      if (app.typing.chordMode) h += std::string(" (") + chordTypeName(app.typing.chord) + ", " + typingKeyName('\'') + " next)";
       if (app.stepRecord) h += " · step record: → rest, ⌫ back";
       app.setHint(h);
     }
@@ -3035,12 +3034,12 @@ int main(int argc, char** argv) {
       }
       // A held typed note ends on its key-up whatever changed meanwhile
       // (a modifier pressed, a text field focused, the typing keyboard switched off).
-      if (ev.type == SDL_KEYUP && held.count(ev.key.keysym.sym) && !(app.typingKeyboard && !io.WantTextInput &&
-                                                                     !(ev.key.keysym.mod & (KMOD_CTRL | KMOD_GUI | KMOD_ALT)))) {
-        const SDL_Keycode k = ev.key.keysym.sym;
-        const ObjectId chId = held[k].channel;
-        held.erase(k);
-        for (int p : app.typing.keyUp(typingKey(k))) {
+      if (ev.type == SDL_KEYUP && held.count(ev.key.keysym.scancode) && !(app.typingKeyboard && !io.WantTextInput &&
+                                                                          !(ev.key.keysym.mod & (KMOD_CTRL | KMOD_GUI | KMOD_ALT)))) {
+        const SDL_Scancode sc = ev.key.keysym.scancode;
+        const ObjectId chId = held[sc].channel;
+        held.erase(sc);
+        for (int p : app.typing.keyUp(typingKey(sc))) {
           app.engine.noteOff(chId, p);
           app.playedNoteOff(chId, p);
         }
@@ -3048,8 +3047,9 @@ int main(int argc, char** argv) {
       // Typing keyboard (key events straight from SDL so key-up is never missed).
       if ((ev.type == SDL_KEYDOWN || ev.type == SDL_KEYUP) && app.typingKeyboard && !io.WantTextInput && !app.projectLoadBlocking() &&
           !(ev.key.keysym.mod & (KMOD_CTRL | KMOD_GUI | KMOD_ALT))) {
-        SDL_Keycode k = ev.key.keysym.sym;
-        int key = typingKey(k);
+        const SDL_Keycode k = ev.key.keysym.sym;
+        const SDL_Scancode sc = ev.key.keysym.scancode;
+        int key = typingKey(sc);
         const bool down = ev.type == SDL_KEYDOWN && !ev.key.repeat;
         if (down && app.stepRecord && !app.engine.playing() && (k == SDLK_RIGHT || k == SDLK_BACKSPACE)) {
           if (k == SDLK_RIGHT)
@@ -3064,10 +3064,10 @@ int main(int argc, char** argv) {
               app.engine.noteOn(app.selChannel, p, app.typing.velocity / 127.0f);
               app.playedNoteOn(app.selChannel, p, app.typing.velocity);
             }
-            if (!on.empty()) held[k] = {app.selChannel, 0, 0};
+            if (!on.empty()) held[sc] = {app.selChannel, 0, 0};
           } else if (ev.type == SDL_KEYUP) {
-            ObjectId chId = held.count(k) ? held[k].channel : app.selChannel;
-            held.erase(k);
+            ObjectId chId = held.count(sc) ? held[sc].channel : app.selChannel;
+            held.erase(sc);
             for (int p : app.typing.keyUp(key)) {
               app.engine.noteOff(chId, p);
               app.playedNoteOff(chId, p);

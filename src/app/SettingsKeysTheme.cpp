@@ -18,6 +18,7 @@
 #include "../core/Keymap.h"
 #include "App.h"
 #include "Keys.h"
+#include "MidiUi.h"
 #include "SettingsPages.h"
 #include "SmoothScrollUi.h"
 #include "SoundThemeUi.h"
@@ -300,8 +301,13 @@ void shortcutReference(App& a) {
   row(tr("Right-click"), tr("Delete note"));
   row(tr("Double-click clip"), tr("Edit its pattern"));
   heading(tr("Typing keyboard"));
-  row("Z S X D C V G B H N J M", tr("Lower octave (C to B)"));
-  row("Q 2 W 3 E R 5 T 6 Y 7 U", tr("Upper octave"));
+  const auto typingRow = [](const char* keys) {
+    std::string names;
+    for (const char* c = keys; *c; ++c) names += (names.empty() ? "" : " ") + typingKeyName(*c);
+    return names;
+  };
+  row(typingRow("zsxdcvgbhnjm").c_str(), tr("Lower octave (C to B)"));
+  row(typingRow("q2w3er5t6y7u").c_str(), tr("Upper octave"));
   heading(tr("Knobs"));
   row(tr("Drag / Shift+drag"), tr("Change / fine"));
   row(tr("Double-click"), tr("Reset"));

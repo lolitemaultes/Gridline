@@ -381,6 +381,44 @@ bool TypingKeyboard::isControlKey(int key) {
   return key == '[' || key == ']' || key == '-' || key == '=' || key == '\\' || key == '\'';
 }
 
+namespace {
+struct KeyPosition {
+  int position, key;
+};
+// Each key's USB usage. Where one key code has two places the first is the one positionOfKey gives.
+constexpr KeyPosition kKeyPositions[] = {
+    {29, 'z'}, {22, 's'}, {27, 'x'}, {7, 'd'},  {6, 'c'},  {25, 'v'}, {10, 'g'}, {5, 'b'},  {11, 'h'}, {17, 'n'}, {13, 'j'}, {16, 'm'},
+    {54, ','}, {15, 'l'}, {55, '.'}, {51, ';'}, {56, '/'}, {20, 'q'}, {31, '2'}, {26, 'w'}, {32, '3'}, {8, 'e'},  {21, 'r'}, {34, '5'},
+    {23, 't'}, {35, '6'}, {28, 'y'}, {36, '7'}, {24, 'u'}, {12, 'i'}, {38, '9'}, {18, 'o'}, {39, '0'}, {19, 'p'},
+    {47, '['}, {48, ']'}, {45, '-'}, {46, '='}, {49, '\\'}, {52, '\''},
+    {50, '\\'},                                       // the same key on ISO keyboards
+    {86, '['}, {87, ']'}, {84, '-'}, {85, '='},        // keypad - + change the octave, / * the velocity
+};
+}  // namespace
+
+int TypingKeyboard::keyAtPosition(int position) {
+  for (const KeyPosition& k : kKeyPositions)
+    if (k.position == position) return k.key;
+  return 0;
+}
+
+int TypingKeyboard::positionOfKey(int key) {
+  for (const KeyPosition& k : kKeyPositions)
+    if (k.key == key) return k.position;
+  return 0;
+}
+
+std::string TypingKeyboard::keyLabel(int key, int typed) {
+  const int c = typed > 32 && typed < 127 ? typed : key;
+  return std::string(1, static_cast<char>(c >= 'a' && c <= 'z' ? c - 'a' + 'A' : c));
+}
+
+std::vector<int> TypingKeyboard::heldNotes() const {
+  std::vector<int> notes;
+  for (const auto& [key, on] : held_) notes.insert(notes.end(), on.begin(), on.end());
+  return notes;
+}
+
 std::vector<int> TypingKeyboard::keyDown(int key) {
   switch (key) {
     case '[': octave = std::max(0, octave - 1); return {};

@@ -492,6 +492,32 @@ int main() {
     expect(k.releaseAll().size() == 3 && !k.anyHeld(), "release all");
     expect(TypingKeyboard::keyOffset('/') == 16 && TypingKeyboard::keyOffset('p') == 28 && TypingKeyboard::keyOffset('a') == -1,
            "FL-like layout extents");
+
+    // Keys go by where they sit (USB usages, the numbers of SDL's scan codes).
+    expect(TypingKeyboard::keyAtPosition(29) == 'z' && TypingKeyboard::keyAtPosition(56) == '/' && TypingKeyboard::keyAtPosition(19) == 'p',
+           "positions: Z, / and P");
+    expect(TypingKeyboard::keyAtPosition(4) == 0 && TypingKeyboard::keyAtPosition(0) == 0, "positions: A and nothing are no typing keys");
+    bool roundTrip = true, placed = true;
+    for (int key = 1; key < 128; ++key) {
+      if (TypingKeyboard::keyOffset(key) < 0 && !TypingKeyboard::isControlKey(key)) continue;
+      const int position = TypingKeyboard::positionOfKey(key);
+      placed = placed && position > 0;
+      roundTrip = roundTrip && TypingKeyboard::keyAtPosition(position) == key;
+    }
+    expect(placed && roundTrip, "positions: every note and control key has its place");
+    expect(TypingKeyboard::keyAtPosition(49) == '\\' && TypingKeyboard::keyAtPosition(50) == '\\', "positions: chord key on ANSI and ISO keyboards");
+    expect(TypingKeyboard::keyAtPosition(86) == '[' && TypingKeyboard::keyAtPosition(87) == ']' && TypingKeyboard::keyAtPosition(84) == '-' &&
+               TypingKeyboard::keyAtPosition(85) == '=',
+           "positions: keypad keys change octave and velocity");
+    expect(TypingKeyboard::positionOfKey('-') == 45 && TypingKeyboard::positionOfKey('\\') == 49, "positions: the main key comes before the keypad and ISO one");
+    expect(TypingKeyboard::keyLabel('z', ';') == ";", "labels: Dvorak's Z position says ;");
+    expect(TypingKeyboard::keyLabel('q', 'a') == "A", "labels: AZERTY's Q position says A, in capitals");
+    expect(TypingKeyboard::keyLabel('2', 0xE9) == "2", "labels: outside ASCII, the US character");
+    expect(TypingKeyboard::keyLabel('z', 0) == "Z", "labels: nothing typed, the US character");
+    TypingKeyboard held;
+    held.keyDown('z');
+    held.keyDown('x');
+    expect(held.heldNotes().size() == 2, "the notes held can be read");
   }
 
   // ---------------------------------------------------------------- clock out (direct)
