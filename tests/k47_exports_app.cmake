@@ -78,6 +78,7 @@ endif()
 message(STATUS "ok - every export wrote its target, without temporary files")
 
 # Cancel: no target. The archive that is there stays for a zip.
+set(ENV{GRIDLINE_DEV_SLOW_FILE_JOB_MS} "4000")  # (a slow machine's next frame must not find it finished)
 file(READ "${OUT}/res/Song.gridline.zip" zipBefore HEX)
 file(MAKE_DIRECTORY "${OUT}/can")
 foreach(job IN ITEMS "zip;${OUT}/can/Song.gridline.zip" "data;${OUT}/can/data" "bones;${OUT}/can/bones" "sample;${OUT}/can/sample.wav" "clip;${OUT}/can/clip.wav")
@@ -97,6 +98,7 @@ if(NOT zipBefore STREQUAL zipAfter)
   message(FATAL_ERROR "FAIL: a cancelled save changed the archive that was there")
 endif()
 message(STATUS "ok - a cancelled save leaves the archive that was there")
+set(ENV{GRIDLINE_DEV_SLOW_FILE_JOB_MS} "150")
 
 # Quitting in the middle ends the app, and leaves no target.
 file(MAKE_DIRECTORY "${OUT}/quit")

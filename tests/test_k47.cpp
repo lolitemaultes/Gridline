@@ -112,6 +112,16 @@ void testZip(const fs::path& base) {
     expect(r.cancelled && r.error.empty(), "a cancelled zip says so, and it is no error");
     expect(listing(out.parent_path()).empty(), "a cancelled zip leaves nothing behind");
   }
+  {  // Cancel at the last step (the archive's index): still nothing stays.
+    Stopper st;
+    st.also = [&](double, const std::string& what) {
+      if (what == "Finishing the archive") st.flag = true;
+    };
+    const ExportControl c = st.control();
+    const CollectReport r = exportZippedProject(song, out.u8string(), "Tune", &c);
+    expect(r.cancelled && r.error.empty(), "a zip cancelled at its last step says so");
+    expect(listing(out.parent_path()).empty(), "a zip cancelled at its last step leaves nothing behind");
+  }
   std::string whole;
   {  // To its end, with progress.
     Stopper st;
@@ -173,6 +183,16 @@ void testDataFiles(const fs::path& base) {
     const CollectReport r = exportProjectDataFiles(song, out.u8string(), "Tune", &c);
     expect(r.cancelled && r.error.empty(), "cancelled data files say so");
     expect(!fs::exists(out), "a cancelled export removes the folder it made");
+  }
+  {  // Cancel at the last step (the project file): the folder goes too.
+    Stopper st;
+    st.also = [&](double, const std::string& what) {
+      if (what == "Writing the project") st.flag = true;
+    };
+    const ExportControl c = st.control();
+    const CollectReport r = exportProjectDataFiles(song, out.u8string(), "Tune", &c);
+    expect(r.cancelled && r.error.empty(), "data files cancelled at their last step say so");
+    expect(!fs::exists(out), "and the folder they made is gone");
   }
   {
     Stopper st;

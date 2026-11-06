@@ -1857,6 +1857,12 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -DOUT=${CMAKE_BINARY_DIR}/k29_bend_dblclick_app -P ${CMAKE_SOURCE_DIR}/tests/k29_bend_dblclick_app.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(k29_bend_dblclick_app PROPERTIES TIMEOUT 300)
+    # Script window: a slow drag on an integer knob moves it; a double-click goes back to the script's value.
+    add_test(NAME script_knob_drag_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/script_knob_drag_app -P ${CMAKE_SOURCE_DIR}/tests/script_knob_drag_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(script_knob_drag_app PROPERTIES TIMEOUT 300)
 
     # The typing keyboard goes by where keys sit: other layouts play the same notes.
     add_test(NAME typing_key_positions_app

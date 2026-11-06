@@ -11,6 +11,7 @@
 #include <memory>
 #include <set>
 #include "../../third_party/imgui/imgui.h"
+#include "../../third_party/imgui/imgui_internal.h"  // (ImGui::GetActiveID: the integer knob's drag)
 #include "../core/ControllerScript.h"
 #include "../core/ProjectScript.h"
 #include "../core/Log.h"
@@ -162,6 +163,9 @@ void closeSession(App& a, bool keep) {
 }
 
 // Knob cell: knob, name and value under it.
+// Development (scriptform): each knob of the last frame, its value and the centre of its face.
+std::string devKnobs;
+
 bool knobCell(const char* id, script::FormParam& p) {
   const auto& P = pal();
   const float cell = 76;
@@ -172,11 +176,34 @@ bool knobCell(const char* id, script::FormParam& p) {
   ParamDesc d;
   d.min = p.min;
   d.max = p.max;
-  d.def = p.value;
+  d.def = p.def;
   d.name = p.name;
+  // An integer knob keeps its unrounded value while dragged: a slow drag adds up instead of
+  // rounding back to the same step every frame.
+  static std::map<ImGuiID, double> dragged;
+  const bool isInt = p.kind == script::FormKind::KnobInt;
+  ImGui::PushID(id);
+  const ImGuiID knobId = ImGui::GetID("##knob");  // (the item ui::Knob makes)
+  ImGui::PopID();
   double v = p.value;
-  const bool changed = ui::Knob(id, &v, d, r, nullptr, false);
-  if (changed) p.value = std::clamp(p.kind == script::FormKind::KnobInt ? std::round(v) : v, p.min, p.max);
+  if (isInt && ImGui::GetActiveID() == knobId)
+    if (auto it = dragged.find(knobId); it != dragged.end()) v = it->second;
+  bool changed = ui::Knob(id, &v, d, r, nullptr, false);
+  if (isInt) {
+    if (ImGui::GetActiveID() == knobId) dragged[knobId] = v;
+    else dragged.erase(knobId);
+  }
+  {
+    const ImVec2 c = ImGui::GetItemRectMin(), e = ImGui::GetItemRectMax();
+    char line[160];
+    std::snprintf(line, sizeof line, "knob \"%s\" %g at %.0f %.0f\n", p.name.c_str(), p.value, (c.x + e.x) * 0.5f, (c.y + e.y) * 0.5f);
+    devKnobs += line;
+  }
+  if (changed) {
+    const double next = std::clamp(isInt ? std::round(v) : v, p.min, p.max);
+    changed = next != p.value;
+    p.value = next;
+  }
   if (!p.hint.empty()) ui::Hint(p.name + ": " + p.hint);
   ImDrawList* dl = ImGui::GetWindowDrawList();
   float y = pos.y + 2 * r + 4;
@@ -202,6 +229,7 @@ bool knobCell(const char* id, script::FormParam& p) {
 }
 
 bool drawForm(std::vector<script::FormParam>& vals) {
+  devKnobs.clear();
   bool changed = false;
   std::string group = "\x01";
   int knobsInRow = 0;
@@ -894,6 +922,8 @@ void drawProjectScriptWindow(App& a) {
 }
 
 bool drawScriptForm(std::vector<script::FormParam>& values) { return drawForm(values); }
+
+std::string devScriptForm() { return devKnobs; }
 
 void devOpenScript(App& a, const std::string& id) {
   if (id.rfind("project:", 0) == 0) {  // --script project:<id>: J-57 project script window

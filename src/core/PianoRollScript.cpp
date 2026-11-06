@@ -193,6 +193,7 @@ bool readForm(lua_State* L, int idx, Form& out, std::string* err) {
       if (p.max < p.min) std::swap(p.min, p.max);
       if (p.kind == FormKind::KnobInt) p.min = std::round(p.min), p.max = std::round(p.max), p.value = std::round(p.value);
       p.value = std::clamp(p.value, p.min, p.max);
+      p.def = p.value;
     } else if (kind == "combo") {
       p.kind = FormKind::Combo;
       lua_getfield(L, t, "items");

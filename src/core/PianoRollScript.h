@@ -40,11 +40,12 @@ struct FormParam {
   std::string name, hint, group;
   double value = 0;      // Knob / KnobInt; Combo: 1-based item index; Check: 0 / 1
   double min = 0, max = 1;
+  double def = 0;                  // Knob / KnobInt: the script's own value (Reset)
   std::vector<std::string> items;  // Combo
   std::string text;                // Text
   bool operator==(const FormParam& o) const {
     return kind == o.kind && name == o.name && hint == o.hint && group == o.group && value == o.value && min == o.min &&
-           max == o.max && items == o.items && text == o.text;
+           max == o.max && def == o.def && items == o.items && text == o.text;
   }
 };
 struct Form {

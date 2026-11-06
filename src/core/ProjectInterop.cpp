@@ -1042,6 +1042,10 @@ CollectReport writeDataFiles(const Song& song, const std::string& folder, const 
     return rep;
   }
   meter.say(0.96, i18n::N_("Writing the project"));
+  if (meter.stopped()) {  // (a Cancel during the last step is a Cancel too)
+    rep.cancelled = true;
+    return rep;
+  }
   const fs::path project = fs::u8path(folder) / fs::u8path(name + ".gridline.json");
   std::error_code ec;
   const bool projectThere = fs::exists(project, ec);
@@ -1248,6 +1252,10 @@ CollectReport exportZippedProject(const Song& song, const std::string& zipPath, 
     return rep;
   }
   meter.say(0.98, i18n::N_("Finishing the archive"));
+  if (meter.stopped()) {  // (a Cancel during the last step is a Cancel too)
+    rep.cancelled = true;
+    return rep;
+  }
   if (!z.close(&err)) rep.error = err;
   // Nothing may stay behind unnoticed: whatever the walk above does not know is named here.
   rep.unpacked = absolutePathsInProject(text);

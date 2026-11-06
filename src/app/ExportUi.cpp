@@ -1006,16 +1006,16 @@ void writeSampleJob(App& a, const std::string& title, const Song& uses, const st
       const std::string tmp = path + ".part.wav";
       std::string err;
       std::unique_ptr<receipt::Origin> origin;
-      bool ok = false;
+      bool ok = false, cancelled = false;
       try {  // (out of memory on a long clip, a file system error)
         ok = make(tmp, err, control, origin);
-        if (ok && !control.cancelled()) ok = platform::replaceFile(tmp, path, &err);
+        cancelled = control.cancelled();  // (read once: a Cancel after the file is in place comes too late)
+        if (ok && !cancelled) ok = platform::replaceFile(tmp, path, &err);
       } catch (const std::exception& e) {
         crash::reportCurrentException("Exporting audio");
         ok = false;
         err = e.what();
       }
-      const bool cancelled = control.cancelled();
       if (ok && !cancelled) {
         if (origin) receipt::writeOrigin(path, *origin);
       } else {

@@ -1304,6 +1304,9 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       devLoadHold = l.a0 != "off";
     } else if (l.cmd == "loadcancel") {  // J-167: the window's Cancel
       app.cancelProjectLoad();
+    } else if (l.cmd == "scriptform") {  // the script window's knobs: value and where each one is
+      std::printf("scriptform frame %d\n%s", frame, devScriptForm().c_str());
+      std::fflush(stdout);
     } else if (l.cmd == "loadfilter") {  // J-167: loadfilter on|off: the log shows only the warnings (the footer's toggle)
       projloadui::setWarningsOnly(l.a0 != "off");
     } else if (l.cmd == "urlimport") {  // J-192: Import from URL (UrlImportUi.h)

@@ -56,5 +56,7 @@ void drawScriptConsole(App& a, float height);
 
 // Development (--script <id>): opens a piano roll script for screenshots.
 void devOpenScript(App& a, const std::string& id);
+// Development (scriptform): the knobs the last frame drew, a line each: knob "<name>" <value> at <x> <y>.
+std::string devScriptForm();
 
 }  // namespace gl
