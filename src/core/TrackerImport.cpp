@@ -551,7 +551,10 @@ bool buildSong(const Module& m, const std::string& name, const ImportOptions& o,
   }
   rep.rowsPerBeat = rpb;
 
-  song = Song{};
+  {  // (a named blank: GCC 12.2 wrongly warns that a Song{} temporary's strings may be uninitialized)
+    Song blank;
+    song = std::move(blank);
+  }
   song.ppq = kDefaultPpq;
   const Tick rowTicks = static_cast<Tick>(song.ppq / rpb);
   song.info.title = m.title.empty() ? name : m.title;

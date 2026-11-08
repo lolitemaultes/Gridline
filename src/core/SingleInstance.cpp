@@ -603,11 +603,12 @@ void Server::serve() {
         connected = TRUE;
       } else if (e == ERROR_IO_PENDING) {
         HANDLE w[2] = {ev, stopEv};
+        DWORD n = 0;
         if (WaitForMultipleObjects(2, w, FALSE, INFINITE) != WAIT_OBJECT_0) {
           CancelIo(h);
+          GetOverlappedResult(h, &ov, &n, TRUE);  // (the cancelled wait is done with `ov` before it goes)
           return;
         }
-        DWORD n = 0;
         connected = GetOverlappedResult(h, &ov, &n, FALSE);
       }
     }

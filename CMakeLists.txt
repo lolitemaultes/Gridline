@@ -1675,7 +1675,7 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
     # tests/alignment_allowlist.tsv does not justify (AlignCheck.h gate()).
     set_tests_properties(editor_layout_audit PROPERTIES ENVIRONMENT
                          "GRIDLINE_CONFIG_HOME=${CMAKE_BINARY_DIR}/layout_audit_cfg;GRIDLINE_ALIGN_BASELINE=${CMAKE_SOURCE_DIR}/tests/alignment_baseline.tsv;GRIDLINE_ALIGN_ALLOW=${CMAKE_SOURCE_DIR}/tests/alignment_allowlist.tsv"
-                         TIMEOUT 900
+                         TIMEOUT 1800  # about 630 s on an x86_64 CI runner; software-rendered arm64 takes longer
                          FAIL_REGULAR_EXPRESSION "terminating due to|mutex lock failed|libc\\+\\+abi")
 
     # J-129: every built-in editor renders in every control style (thumbnail run, hidden, isolated config).

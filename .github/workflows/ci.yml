@@ -41,7 +41,8 @@ jobs:
       matrix:
         include:
           - { name: Ubuntu 22.04, image: "ubuntu:22.04", pm: apt, werror: "ON", gui: "OFF" }
-          - { name: Ubuntu 24.04, image: "ubuntu:24.04", pm: apt, werror: "ON", gui: "ON" }
+          # FFmpeg here so the M4A / AAC decode through the FFmpeg program is tested on Linux too.
+          - { name: Ubuntu 24.04, image: "ubuntu:24.04", pm: apt, werror: "ON", gui: "ON", extra: ffmpeg }
           - { name: Debian 12, image: "debian:12", pm: apt, werror: "ON", gui: "OFF" }
           # The system the Linux release is built on (GCC 10, glibc 2.31); its .deb goes on to the
           # Debian 11, 12 and 13 install checks below.
@@ -59,6 +60,7 @@ jobs:
         run: |
           if [ "${{ matrix.pm }}" = apt ]; then sh tools/ci/debian-archive.sh; fi
           sh tools/ci/install-deps.sh ${{ matrix.pm }}
+          if [ -n "${{ matrix.extra }}" ]; then apt-get install -y -q --no-install-recommends ${{ matrix.extra }}; fi
       - name: Configure
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DGRIDLINE_WERROR=${{ matrix.werror }} -DGRIDLINE_GUI_TESTS=${{ matrix.gui }} \

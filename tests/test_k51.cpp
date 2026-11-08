@@ -233,7 +233,15 @@ int main() {
 #else
   const bool system = false;
 #endif
-  expect(!files.empty(), "K-51: test files were made (afconvert or FFmpeg)");
+  // Without an encoder (no afconvert, no FFmpeg: most Linux and BSD systems) nothing can be made:
+  // the decode checks are skipped (TAP skip), the checks of damaged files below still run.
+#if defined(__APPLE__)
+  const bool encoder = ffmpeg || fs::exists("/usr/bin/afconvert");
+#else
+  const bool encoder = ffmpeg;
+#endif
+  if (encoder) expect(!files.empty(), "K-51: test files were made (afconvert or FFmpeg)");
+  else std::printf("ok %d - K-51: test files were made # SKIP no encoder here (afconvert or FFmpeg)\n", ++checks);
   for (const Encoded& f : files) {
     if (system) {
       setAacRouteForTests(AacRoute::System);

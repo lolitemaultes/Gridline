@@ -41,8 +41,9 @@ jobs:
           sudo apt-get install -y -q squashfs-tools
           bash tools/ci/crostini-docker.sh "$RUNNER_TEMP/crostini" "${{ matrix.release }}"
       - name: Build, tests and .deb inside it
+        # CI goes in too: the tests allow for CI's slow, software-rendered frames as on the other runners.
         run: |
-          docker run --rm -v "$PWD:/w" -w /w -e CTEST_OUTPUT_ON_FAILURE=1 -e GRIDLINE_NO_PLUGIN_SCAN=1 gridline-crostini bash -c '
+          docker run --rm -v "$PWD:/w" -w /w -e CI -e CTEST_OUTPUT_ON_FAILURE=1 -e GRIDLINE_NO_PLUGIN_SCAN=1 gridline-crostini bash -c '
             set -e
             sh tools/ci/debian-archive.sh
             sh tools/ci/install-deps.sh apt

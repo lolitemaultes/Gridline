@@ -804,6 +804,7 @@ struct DevWait {
 } devWait;
 float devSoundPeak = 0;  // J-109: output peak since the last "sound" (also drained each frame for "output-silent")
 double devLongestFrameMs = 0;  // K-71: the longest frame (its work, not the wait for the display) since the last "scan"
+double devSecondFrameMs = 0;   // ... and the next longest (tests tell one outlier on a busy machine from a stall)
 double devFrameMsSum = 0;      // K-73: ... and the sum and count of those frames (their average)
 int devFrameCount = 0;
 // J-108: true while a "waitfor" holds the script's frame count (checked once per frame).
@@ -1356,11 +1357,12 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       if (l.a0 == "start" || l.a0 == "force") host::startScan(scanner, l.a0 == "force");
       else if (l.a0 == "folder" && l.args.size() >= 3) host::rescanFolder(host::selfExecutablePath(), l.args[1], l.args[2]);
       const host::ScanStatus st = host::scanStatus();
-      std::printf("scan running %d done %d total %d active %d searching %d failed %d classes %d longest-frame %.1f ms average-frame %.2f ms frames %d\n",
+      std::printf("scan running %d done %d total %d active %d searching %d failed %d classes %d longest-frame %.1f ms average-frame %.2f ms frames %d second-frame %.1f ms\n",
                   st.running ? 1 : 0, st.done, st.total, st.active, st.searching.empty() ? 0 : 1, st.failed, st.classes, devLongestFrameMs,
-                  devFrameCount ? devFrameMsSum / devFrameCount : 0.0, devFrameCount);
+                  devFrameCount ? devFrameMsSum / devFrameCount : 0.0, devFrameCount, devSecondFrameMs);
       std::fflush(stdout);
       devLongestFrameMs = 0;
+      devSecondFrameMs = 0;
       devFrameMsSum = 0;
       devFrameCount = 0;
     } else if (l.cmd == "edit") {  // K-47: edit copy|paste <mixer|rack> [mixer index], through the Edit menu's own code
@@ -3228,7 +3230,8 @@ int main(int argc, char** argv) {
       collabui::devFrame(app);  // J-111: collab-connected, collab-joined, collab-synced, ...
       if (!host::scanStatus().running) devsig::reach("scan-idle");  // K-71
       const double frameMs = 1e3 * static_cast<double>(SDL_GetPerformanceCounter() - frameStart) / static_cast<double>(SDL_GetPerformanceFrequency());
-      devLongestFrameMs = std::max(devLongestFrameMs, frameMs);
+      if (frameMs > devLongestFrameMs) devSecondFrameMs = devLongestFrameMs, devLongestFrameMs = frameMs;
+      else devSecondFrameMs = std::max(devSecondFrameMs, frameMs);
       devFrameMsSum += frameMs;
       ++devFrameCount;
     }

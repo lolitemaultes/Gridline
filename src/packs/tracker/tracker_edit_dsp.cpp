@@ -194,8 +194,7 @@ Edit readEdit(const std::string& data, int sound) {
     e.text = trk::InstrumentText{};
     const BuiltinSound* b = builtinSound(sound);
     e.text.def = b ? b->def : first.empty() ? defaultDefinition() : trk::InstrumentDef{};
-    e.text.def.samples.fill(trk::SampleDef{});
-    for (auto& s : e.text.def.samples) s.length = 0;
+    e.text.def.samples = {};  // no samples (fill() here trips a false GCC 12 -Wstringop-overflow)
     if (!first.empty()) {
       e.text.files.push_back(first);
       e.text.fileOf[0] = 0;

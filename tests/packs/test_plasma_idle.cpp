@@ -23,6 +23,9 @@
 #include <new>
 #include <string>
 #include <vector>
+#if defined(_WIN32)
+#include <windows.h>
+#endif
 #include "../../src/core/PluginInfo.h"
 #include "../../src/core/Project.h"
 #include "../../src/core/Song.h"
@@ -45,10 +48,18 @@ std::atomic<long> gAllocs{0};
 constexpr double kSr = 48000;
 constexpr int kBlock = 512;
 
+// This thread's CPU time. Windows: its cycle count at a nominal 1 GHz (GetThreadTimes only moves
+// in scheduler ticks of about 15.6 ms, too coarse for the idle stretches; the test compares ratios).
 double threadSeconds() {
+#if defined(_WIN32)
+  ULONG64 cycles = 0;
+  QueryThreadCycleTime(GetCurrentThread(), &cycles);
+  return static_cast<double>(cycles) * 1e-9;
+#else
   timespec ts{};
   clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
   return static_cast<double>(ts.tv_sec) + static_cast<double>(ts.tv_nsec) * 1e-9;
+#endif
 }
 
 void setP(PluginState& s, int k, float v) {

@@ -185,7 +185,7 @@ void testCollabFolders() {
 void testConversation() {
   using namespace single;
   std::vector<std::string> files;
-  const std::vector<std::string> in = {"/a/Song A.gridline", "C:\\Users\\Zoë\\Été mix 2.gridline.json", "/b/line\nbreak.xm"};
+  const std::vector<std::string> in = {"/a/Song A.gridline", "C:\\Users\\someone\\Zoë\\Été mix 2.gridline.json", "/b/line\nbreak.xm"};
   const std::string enc = encodeRequest(in);
   expect(decodeRequest(enc, files) == Parse::Done && files == in, "a request round trip (spaces, accents, a line break)");
   expect(decodeRequest(encodeRequest({}), files) == Parse::Done && files.empty(), "a request without files");
