@@ -76,13 +76,18 @@ jobs:
           echo "Gridline $ver (numbers $numeric, prerelease: $prerelease, publish: $publish)"
       - name: The version agrees everywhere (README badge, CHANGELOG)
         run: bash tools/ci/check-version.sh "${{ steps.v.outputs.version }}"
-      - name: Release notes from CHANGELOG.md
+      - name: Release notes (docs/releases/<version>.md, else the CHANGELOG.md section)
         run: |
           ver="${{ steps.v.outputs.version }}"
           awk -v v="$ver" '
             /^## / { if (on) exit; if ($2 == v) { on = 1; next } }
-            on { print }' CHANGELOG.md > notes.md
-          test -s notes.md || { echo "::error::CHANGELOG.md has no section ## $ver"; exit 1; }
+            on { print }' CHANGELOG.md > changelog-section.md
+          test -s changelog-section.md || { echo "::error::CHANGELOG.md has no section ## $ver"; exit 1; }
+          if [ -s "docs/releases/$ver.md" ]; then
+            cp "docs/releases/$ver.md" notes.md
+          else
+            cp changelog-section.md notes.md
+          fi
           if grep -q $'\xe2\x80\x94' notes.md; then echo "::error::em dash in the release notes"; exit 1; fi
           if grep -q $'\xe2\x80\x93' notes.md; then echo "::error::en dash in the release notes"; exit 1; fi
           cat notes.md

@@ -1,7 +1,9 @@
 # Changelog
 
 All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLINE_VERSION_PRE` in
-`CMakeLists.txt`; the release workflow publishes the section of the tagged version as the release notes.
+`CMakeLists.txt`; the release workflow publishes `docs/releases/<version>.md` as the release notes, or this file's section of the tagged version when there is none.
+
+## Unreleased
 
 ## 0.7.4
 

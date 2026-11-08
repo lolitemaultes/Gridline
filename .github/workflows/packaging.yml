@@ -5,7 +5,8 @@ name: Packaging
 #     their published schemas, the AppStream metadata and desktop entry validate;
 #   - the same, plus real builds (Flatpak with flatpak-builder and Flathub's linter, the AUR source
 #     package with makepkg and namcap, the COPR spec with rpmbuild, the FreeBSD port, the snap), on
-#     "Run workflow", on a version tag and every Monday.
+#     every push to main that touches these files, on "Run workflow", on a version tag and every
+#     Monday, so a change to the packaging is built before a release tag builds it.
 # Nothing is published or submitted: the release workflow writes the filled-in files for a release
 # as the workflow artifact "packaging-<version>" and the user submits them.
 on:
@@ -59,7 +60,7 @@ jobs:
           case "${{ github.event_name }}" in
             schedule) b=true ;;
             workflow_dispatch) b="${{ inputs.builds }}" ;;
-            push) if [ "${GITHUB_REF_TYPE}" = "tag" ]; then b=true; fi ;;
+            push) b=true ;;  # (main, only when the paths above change, and version tags)
           esac
           echo "builds=$b" >> "$GITHUB_OUTPUT"
       - name: Tools
@@ -124,9 +125,14 @@ jobs:
           upload-artifact: true
           artifact-name: gridline-flatpak-${{ matrix.arch }}
       - name: The programs run inside the sandbox
-        # (No rofiles-fuse in the container: the build step above runs without it too.)
+        # rofiles-fuse cannot mount in the container, so the build step above passes
+        # --disable-rofiles-fuse. flatpak-builder --run does not take that option (it always tries
+        # rofiles-fuse) and does without it only when rofiles-fuse is not on PATH: move it aside.
         run: |
-          fb_run() { flatpak-builder --disable-rofiles-fuse --run flatpak_app "$MANIFEST" "$@"; }
+          rf="$(command -v rofiles-fuse || true)"
+          if [ -n "$rf" ]; then mv "$rf" "$rf.off"; fi
+          if command -v rofiles-fuse > /dev/null; then echo "rofiles-fuse is still on PATH"; exit 1; fi
+          fb_run() { flatpak-builder --run flatpak_app "$MANIFEST" "$@"; }
           eval "$(bash tools/release/version.sh)"
           out="$(fb_run gridline --version)"
           echo "$out"; test "$out" = "Gridline $full"
@@ -270,7 +276,10 @@ jobs:
             mkdir -p /usr/ports/distfiles && cp dist/Gridline-*-source.tar.gz /usr/ports/distfiles/
             cd /usr/ports/audio/gridline
             portlint -AC
-            make BATCH=yes install-missing-packages
+            # Resolve the dependencies with the options the binary packages are built with:
+            # some ports default differently outside the package builders (libdvdread, under
+            # FFmpeg's DVD option, then wants libdvdcss, which has no binary package).
+            env PACKAGE_BUILDING=yes make BATCH=yes install-missing-packages
             make BATCH=yes stage
             make BATCH=yes check-plist
             make BATCH=yes package
