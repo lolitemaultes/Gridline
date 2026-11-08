@@ -37,6 +37,8 @@ double metronomeTick(double beats, bool ticking, double anchorBeat);
 class MetronomeTicker {
  public:
   double update(double beats, bool ticking);
+  bool ticking() const { return ticking_; }
+  double anchor() const { return anchor_; }  // the beat ticking started in (whole beats)
 
  private:
   bool ticking_ = false;

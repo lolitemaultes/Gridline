@@ -42,6 +42,7 @@ jobs:
           bash tools/ci/crostini-docker.sh "$RUNNER_TEMP/crostini" "${{ matrix.release }}"
       - name: Build, tests and .deb inside it
         # CI goes in too: the tests allow for CI's slow, software-rendered frames as on the other runners.
+        # Each test's own time limit is doubled: the ARM runners render these frames slowest.
         run: |
           docker run --rm -v "$PWD:/w" -w /w -e CI -e CTEST_OUTPUT_ON_FAILURE=1 -e GRIDLINE_NO_PLUGIN_SCAN=1 gridline-crostini bash -c '
             set -e
@@ -50,7 +51,7 @@ jobs:
             apt-get install -y -q --no-install-recommends dpkg-dev
             git config --global --add safe.directory /w  # (the checkout belongs to the runner user)
             cmake -S . -B build-cros -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DGRIDLINE_WERROR=ON \
-              -DGRIDLINE_GUI_TESTS=ON -DGRIDLINE_INSTALL_PLUGINS=ON
+              -DGRIDLINE_GUI_TESTS=ON -DGRIDLINE_INSTALL_PLUGINS=ON -DGRIDLINE_TEST_TIMEOUT_SCALE=2
             cmake --build build-cros -j4 -- -k 0
             xvfb-run -a -s "-screen 0 2560x1700x24" ctest --test-dir build-cros -j4 --timeout 1500 --output-on-failure
             (cd build-cros && cpack -G DEB)

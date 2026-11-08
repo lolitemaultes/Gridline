@@ -25,9 +25,10 @@ set(ENV{GRIDLINE_DEV_REMOTE_PATHS} "${OUT}/drive")
 file(GLOB wavs "${SOUNDS}/classic/*.wav")
 list(GET wavs 0 wav)
 configure_file("${wav}" "${OUT}/build/near.wav" COPYONLY)
-# (padding, so the slowed reads take a few chunks)
+# (padding, so the slowed reads take about ten chunks: a quarter of a minute, longer than the
+# frames up to Esc take on a slow runner)
 set(pad "")
-foreach(i RANGE 1 400)
+foreach(i RANGE 1 2000)
   string(RANDOM LENGTH 2000 ALPHABET "0123456789abcdefghijklmnopqrstuvwxyz" line)
   string(APPEND pad "${line}")
 endforeach()
@@ -79,11 +80,14 @@ endfunction()
 
 set(zip "${OUT}/drive/Music/Song.zip")
 
-# 1. Slow reads: the window, frames, bytes moving; Esc returns to the open project.
-run(cancel "2 loadhold off\n3 dialogopen \"${zip}\"\n30 loadstate\n60 loadstate\n62 key escape\n66 loadstate\n70 quit discard\n" 1500)
-must(cancel "loadstate frame 30: phase reading" "frames keep coming while the archive reads")
-must(cancel "loadstate frame 60: phase reading[^\n]*\n  bytes [0-9]+/[1-9][0-9]*" "with the bytes on the bar")
-must(cancel "loadstate frame 66: phase idle" "Esc cancels at once")
+# 1. Slow reads: the window, frames, bytes moving; Esc returns to the open project, and the
+# cancelled project never opens later.
+run(cancel "2 loadhold off\n3 dialogopen \"${zip}\"\n20 loadstate\n30 loadstate\n32 key escape\n36 loadstate\n37 waitfor never 4\n40 loadstate\n42 quit discard\n" 1500)
+must(cancel "loadstate frame 20: phase reading" "frames keep coming while the archive reads")
+must(cancel "loadstate frame 30: phase reading[^\n]*\n  bytes [0-9]+/[1-9][0-9]*" "with the bytes on the bar")
+must(cancel "loadstate frame 36: phase idle" "Esc cancels at once")
+must(cancel "loadstate frame 40: phase idle" "and it stays cancelled")
+mustnot(cancel "Opened Song" "the cancelled project does not open after all")
 driveUntouched("a cancelled open")
 file(GLOB leftovers "${OUT}/cache/gridline/unpacked/*")
 set(waited 0)

@@ -2642,3 +2642,16 @@ get_property(GL_ALL_TESTS DIRECTORY PROPERTY TESTS)
 if(GL_ALL_TESTS)
   set_property(TEST ${GL_ALL_TESTS} APPEND PROPERTY ENVIRONMENT "GRIDLINE_PLUGIN_WINDOW_SIZE=1")
 endif()
+
+# Slow test machines (software-rendered frames on small ARM runners, as in the Chromebook container
+# on CI): -DGRIDLINE_TEST_TIMEOUT_SCALE=<n> multiplies every test's own time limit by n.
+set(GRIDLINE_TEST_TIMEOUT_SCALE 1 CACHE STRING "Multiply each test's own TIMEOUT by this whole number (slow test machines)")
+if(GL_ALL_TESTS AND NOT GRIDLINE_TEST_TIMEOUT_SCALE EQUAL 1)
+  foreach(t IN LISTS GL_ALL_TESTS)
+    get_test_property(${t} TIMEOUT limit)
+    if(limit)
+      math(EXPR limit "${limit} * ${GRIDLINE_TEST_TIMEOUT_SCALE}")
+      set_tests_properties(${t} PROPERTIES TIMEOUT ${limit})
+    endif()
+  endforeach()
+endif()

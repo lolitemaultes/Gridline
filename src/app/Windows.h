@@ -18,6 +18,8 @@ bool topBarButtonRect(const char* name, float& x0, float& y0, float& x1, float& 
 void devNoteRect(const char* name);  // the last item's rectangle as an "sdlat" target (browser: "brsearch", "brclear"; channel window: "chroute", "chroutefree", "chroutelist")
 void devTopBarFitWidth(float w);  // K-132: dev, the top bar fits its groups into w px (0 = the window's width)
 float topBarMetronomeMirror();
+double topBarMetronomeBeat();  // dev: the beat that pose was drawn for
+bool topBarMetronomeTicking(double* anchorBeat);  // dev: ... whether it ticked then, and the beat it started in
 void drawStatusBar(App& a);    // hint bar + notifications
 void drawNotificationCards(App& a);  // J-141: the notification cards alone (the launcher has no status bar)
 void drawBrowser(App& a);

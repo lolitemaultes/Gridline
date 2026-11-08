@@ -241,6 +241,9 @@ struct DevRect {
 };
 DevRect gDevRects[] = {{"play", {}, {}}, {"stop", {}, {}}, {"rec", {}, {}}, {"metro", {}, {}}, {"brsearch", {}, {}}, {"brclear", {}, {}}, {"chroute", {}, {}}, {"chroutefree", {}, {}}, {"chroutelist", {}, {}}, {"tempoint", {}, {}}, {"tempofrac", {}, {}}, {"loupedrag", {}, {}}, {"taptempo", {}, {}}, {"tapmenu", {}, {}}, {"tapmenutap", {}, {}}, {"menutools", {}, {}}, {"bar_transport", {}, {}}, {"bar_tempo", {}, {}}, {"bar_pos", {}, {}}, {"bar_pattern", {}, {}}, {"bar_master", {}, {}}, {"bar_monitor", {}, {}}, {"bar_windows", {}, {}}, {"bar_more", {}, {}}};
 float gMetroMirror = 1.0f;
+double gMetroBeat = 0;  // (dev: the song position, in beats, the glyph's pose was drawn for)
+bool gMetroTicking = false;  // (dev: ... whether it ticked then, and from which beat)
+double gMetroAnchor = 0;
 float gDevFitWidth = 0;  // K-132: dev, the width the bar fits its groups into (0 = the window's)
 void noteRectAt(const char* name, ImVec2 a, ImVec2 b) {
   for (DevRect& r : gDevRects)
@@ -260,6 +263,11 @@ bool topBarButtonRect(const char* name, float& x0, float& y0, float& x1, float& 
   return false;
 }
 float topBarMetronomeMirror() { return gMetroMirror; }
+double topBarMetronomeBeat() { return gMetroBeat; }
+bool topBarMetronomeTicking(double* anchorBeat) {
+  if (anchorBeat) *anchorBeat = gMetroAnchor;
+  return gMetroTicking;
+}
 
 static float drawTopBarLogic(App& a);
 
@@ -668,10 +676,14 @@ float drawTopBar(App& a) {
     const bool ticking = a.metronome && a.engine.playing() && !a.engine.countingIn() && scrollui::animations();
     const double beatTicks = static_cast<double>(std::max<Tick>(1, s.beatTicks()));  // the metronome's beat (time signature)
     static motion::MetronomeTicker ticker;
-    const float mirror = static_cast<float>(ticker.update(a.engine.position() / beatTicks, ticking));
+    const double beatNow = a.engine.position() / beatTicks;
+    const float mirror = static_cast<float>(ticker.update(beatNow, ticking));
     if (ui::ToggleIcon("metro", ui::Icon::Metronome, a.metronome, kBtn, "Metronome (Ctrl+M)", mirror)) a.metronome = !a.metronome;
     noteRect("metro");
     gMetroMirror = mirror;
+    gMetroBeat = beatNow;
+    gMetroTicking = ticker.ticking();
+    gMetroAnchor = ticker.anchor();
     if (ImGui::BeginPopupContextItem("##metromenu")) {
       actionLinkMenuItems(a, RemoteAction::Metronome);
       ImGui::EndPopup();

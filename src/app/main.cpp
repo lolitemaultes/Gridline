@@ -1122,8 +1122,13 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       app.engine.setPosition(static_cast<Tick>(std::strtod(l.a0.c_str(), nullptr) * static_cast<double>(app.doc.song().beatTicks())), l.a1 == "seek");
     }
     else if (l.cmd == "metro") {  // J-91: metronome state and its glyph's pose (J-97: +1 / -1)
-      std::printf("metro frame %d: on %d playing %d mirror %.3f beat %.3f\n", frame, app.metronome ? 1 : 0, app.engine.playing() ? 1 : 0,
-                  static_cast<double>(topBarMetronomeMirror()), app.engine.position() / static_cast<double>(std::max<Tick>(1, app.doc.song().beatTicks())));
+      // (the song plays on in real time: "drawn" is the beat the shown pose was drawn for, "beat" the one now)
+      // (and whether it ticked then, from which beat: the one it was switched on in)
+      double anchor = 0;
+      const bool ticked = topBarMetronomeTicking(&anchor);
+      std::printf("metro frame %d: on %d playing %d mirror %.3f beat %.3f drawn %.3f ticking %d from %.0f\n", frame, app.metronome ? 1 : 0,
+                  app.engine.playing() ? 1 : 0, static_cast<double>(topBarMetronomeMirror()),
+                  app.engine.position() / static_cast<double>(std::max<Tick>(1, app.doc.song().beatTicks())), topBarMetronomeBeat(), ticked ? 1 : 0, anchor);
       std::fflush(stdout);
     }
     else if (l.cmd == "recording") {

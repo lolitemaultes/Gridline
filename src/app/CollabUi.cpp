@@ -62,6 +62,7 @@ namespace {
 constexpr float kPanelW = 520.0f;     // Collaboration / Join windows: default width
 constexpr float kPanelMinW = 440.0f;  // ... and the narrowest they get (Sync review too)
 constexpr double kFlashSec = 1.2;
+constexpr float kCursorHoldSec = 0.28f;  // J-111g: a collaborator's cursor hidden for less than this: no fade (gaps, title bars, edges)
 
 struct NetTestJob {
   std::mutex mu;
@@ -147,6 +148,7 @@ struct Ui {
     bool crossing = false;   // J-111g: a far jump: fading in quickly at the new spot
     bool occluded = false;   // J-111g: its hotspot is under a plugin editor open here (clipped there)
     float minVis = 1;        // J-111g: the lowest visibility since the last trace reset (dev)
+    double longestHidden = 0;  // ... and the longest the spot was seen hidden on a frame since then, in seconds (dev)
     ImGuiWindow* root = nullptr;  // window it is drawn over
     ImGuiWindow* ghostRoot = nullptr;  // J-111h: the window the fading copy (crossfade) is over
     float covered = 0;       // J-111h: how much of the arrow's box windows in front of it cover here (0..1, dev)
@@ -3309,6 +3311,8 @@ std::string cursorReport(App& a) {
       j.object["why"] = Json::makeString(sc.why);
       j.object["vis"] = Json::makeNumber(sc.vis);
       j.object["minVis"] = Json::makeNumber(sc.minVis);  // J-111g: since "collab trace-reset"
+      j.object["longestHidden"] = Json::makeNumber(sc.longestHidden);  // (a gap that slow frames stretch past the hold may fade)
+      j.object["holdSec"] = Json::makeNumber(kCursorHoldSec);
       j.object["holding"] = Json::makeNumber(sc.holding ? 1 : 0);
       j.object["occluded"] = Json::makeNumber(sc.occluded ? 1 : 0);
       j.object["covered"] = Json::makeNumber(std::round(sc.covered * 1000) / 1000);  // J-111h
@@ -3532,7 +3536,7 @@ bool devCommand(App& a, const std::vector<std::string>& args, int frame, ImVec2*
       u.demo->cursor.pluginSlot = -1;
     }
   } else if (cmd == "trace-reset") {  // collab trace-reset: J-111g, cursors' lowest visibility starts again (minVis in reports)
-    for (auto& [site, sc] : u.shownCursors) sc.minVis = sc.vis;
+    for (auto& [site, sc] : u.shownCursors) sc.minVis = sc.vis, sc.longestHidden = 0;
   } else if (cmd == "demo-cursor") {  // collab demo-cursor <anchor> [x y]: the simulated collaborator's pointer
     if (u.demo && devAnchor(a, args, 1, u.demo->cursor)) {
       if (args.size() > 8) u.demo->cursor.x = std::strtof(arg(7).c_str(), nullptr), u.demo->cursor.y = std::strtof(arg(8).c_str(), nullptr);
@@ -3899,7 +3903,6 @@ namespace {
 
 constexpr float kCursorFadeSec = 0.13f;   // fade out once the spot stays hidden here, fade in where it shows
 constexpr float kCursorCrossSec = 0.08f;  // J-111g: the brief crossfade of a far jump
-constexpr float kCursorHoldSec = 0.28f;   // J-111g: hidden for less than this, no fade (gaps, title bars, edges)
 constexpr float kCursorJump = 48.0f;      // to another window farther than this: it snaps there (no glide)
 constexpr float kCursorFar = 320.0f;      // J-111g: ... and farther than this, a brief crossfade
 constexpr float kDefaultArrowH = 20.0f;   // logical units, until the system's pointer size is known
@@ -4275,6 +4278,7 @@ void drawCursors(App& a) {
       if (sc.vis >= 1.0f) sc.crossing = false;
     } else {
       if (sc.hiddenSince < 0) sc.hiddenSince = u.now;
+      sc.longestHidden = std::max(sc.longestHidden, live ? u.now - sc.hiddenSince : 1e9);  // (dev trace; offline: no hold)
       const bool hold = live && u.now - sc.hiddenSince < kCursorHoldSec;  // a moment away: it stays where it was
       if (!hold) sc.vis = std::max(0.0f, sc.vis - fade);
       sc.holding = hold && sc.vis > 0;

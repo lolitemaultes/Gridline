@@ -260,6 +260,9 @@ void testMotion() {
   expect(t.update(4.0, true) == -1.0 && t.update(4.7, true) == -1.0 && t.update(5.0, true) == 1.0, "then ticks on each beat boundary");
   expect(t.update(5.2, false) == 1.0, "switched off: back to rest at once");
   expect(t.update(6.1, false) == 1.0 && t.update(6.2, true) == 1.0 && t.update(7.0, true) == -1.0, "switched on again: rest, then the next beat");
+  expect(t.ticking() && t.anchor() == 6.0, "it reports that it ticks, from the beat it was switched on in");
+  expect(t.update(2.6, true) == 1.0 && t.update(1.6, true) == -1.0 && t.anchor() == 6.0, "a jump back keeps that beat: still every second beat from it");
+  expect(t.update(1.7, false) == 1.0 && !t.ticking(), "switched off: it reports it rests");
   MetronomeTicker reduced;  // animations off / reduced motion: the caller passes ticking = false
   bool still = true;
   for (int i = 0; i < 100; ++i) still = still && reduced.update(i * 0.25, false) == 1.0;
