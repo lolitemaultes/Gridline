@@ -130,12 +130,22 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build tools
         run: |
+          fetch=(python3 tools/release/fetch-media-tools.py --target "${{ matrix.target }}" --out media/tools --work media/work
+                 --zip "media/Gridline-$VER-media-tools-${{ matrix.target }}.zip")
           case "${{ matrix.target }}" in
-            macos-*) brew install --quiet nasm || true ;;
-            *) sudo apt-get update -q && sudo apt-get install -y -q nasm zlib1g-dev make xz-utils ;;
+            macos-*) brew install --quiet nasm || true; "${fetch[@]}" ;;
+            linux-*)
+              # Built on Debian 11 like the Linux packages (glibc 2.31), so they run wherever Gridline does.
+              docker run --rm -v "$PWD:/w" -w /w -e OWNER="$(id -u):$(id -g)" debian:11 bash -c '
+                set -e
+                sh tools/ci/debian-archive.sh
+                apt-get update -q
+                apt-get install -y -q --no-install-recommends build-essential nasm zlib1g-dev make xz-utils python3 ca-certificates
+                "$@"
+                chown -R "$OWNER" media' fetch "${fetch[@]}" ;;
+            *) sudo apt-get update -q && sudo apt-get install -y -q nasm zlib1g-dev make xz-utils; "${fetch[@]}" ;;
           esac
-          python3 tools/release/fetch-media-tools.py --target "${{ matrix.target }}" --out "media/tools" --work "$RUNNER_TEMP/mt" \
-            --zip "media/Gridline-$VER-media-tools-${{ matrix.target }}.zip"
+          rm -rf media/work
           tar -C media -cf "media/tools-${{ matrix.target }}.tar" tools  # keeps the execute bits through the artifact
       - uses: actions/upload-artifact@v4
         with:
@@ -399,10 +409,14 @@ jobs:
           bash tools/ci/smoke.sh "$exe" "$VER"
 
   linux:
+    # Built in a Debian 11 container (glibc 2.31, GCC 10), so the packages install and run on Debian
+    # 11, 12 and 13, Ubuntu 22.04 and later, and Chromebooks with an older Debian 11 Linux. The build
+    # steps run in that container (their shell is docker exec); the checks run on the Ubuntu 22.04
+    # runner itself, which installs the .deb as a user there would.
     name: Linux ${{ matrix.arch }}
     needs: [version, media-tools]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -417,7 +431,17 @@ jobs:
       APPIMAGE_EXTRACT_AND_RUN: "1"
     steps:
       - uses: actions/checkout@v4
-      - name: Dependencies
+      - name: Build system (Debian 11 container)
+        run: |
+          docker run -d --name gl-build -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" -v "$RUNNER_TEMP:$RUNNER_TEMP" -w "$GITHUB_WORKSPACE" \
+            -e VER -e VERNUM -e DEBVER -e RPMREL -e APPIMAGE_EXTRACT_AND_RUN -e GRIDLINE_NO_PLUGIN_SCAN -e RUNNER_TEMP -e GITHUB_WORKSPACE \
+            -e DEBIAN_FRONTEND=noninteractive debian:11 sleep infinity
+          docker exec gl-build sh tools/ci/debian-archive.sh
+          docker exec gl-build sh tools/ci/install-deps.sh apt
+          docker exec gl-build apt-get install -y -q --no-install-recommends rpm dpkg-dev file desktop-file-utils curl binutils
+          docker exec gl-build git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          docker exec gl-build sh -c 'echo "Debian $(cat /etc/debian_version), $(ldd --version | head -1), $(c++ --version | head -1), $(cmake --version | head -1)"'
+      - name: Dependencies of the checks (on the runner)
         run: |
           sudo sh tools/ci/install-deps.sh apt
           sudo apt-get install -y -q rpm dpkg-dev file desktop-file-utils
@@ -426,9 +450,9 @@ jobs:
           name: media-tools-folder-linux-${{ matrix.arch }}
           path: media
       - name: Build
+        shell: docker exec gl-build bash -e {0}
         run: |
           tar -C media -xf "media/tools-linux-${{ matrix.arch }}.tar"  # J-192: Import from URL's tools (share/gridline/tools)
-          # Built on the oldest supported Ubuntu (22.04): the binaries run on newer glibc systems.
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DGRIDLINE_DEV_ASSETS=OFF \
             -DGRIDLINE_INSTALL_PLUGINS=ON -DGRIDLINE_GUI_TESTS=OFF -DGRIDLINE_RELEASE_SYMBOLS=ON "-DGRIDLINE_MEDIA_TOOLS_DIR=$PWD/media/tools"
           cmake --build build -j4 --target gridline gridline-app gridline_vst3 gridline_clap gridline_suite_gridline gridline_suite_mini
@@ -438,10 +462,12 @@ jobs:
           objcopy --strip-debug --add-gnu-debuglink=symbols/gridline-app.debug build/gridline-app
           (cd symbols && python3 -m zipfile -c "Gridline-$VER-symbols-linux-${{ matrix.arch }}.zip" gridline-app.debug)
       - name: Packages (.deb, .rpm, .tar.gz)
+        shell: docker exec gl-build bash -e {0}
         run: |
           mkdir -p dist
           (cd build && cpack -G "DEB;RPM")
           mv build/Gridline-$VER-linux-*.deb build/Gridline-$VER-linux-*.rpm dist/
+          bash tools/release/deb-depends.sh dist/Gridline-$VER-linux-*.deb  # libraries renamed in newer Debian releases
           name="Gridline-$VER-linux-${{ matrix.arch }}"
           rm -rf "stage/$name" && mkdir -p stage
           cmake --install build --prefix "$PWD/stage/$name"
@@ -460,6 +486,7 @@ jobs:
           docker run --rm -v "$PWD:/w" -w /w fedora:latest sh -c \
             'dnf install -y -q appstream > /dev/null && { appstreamcli validate --no-net --explain assets/linux/com.lolitemaultes.Gridline.metainfo.xml > as.txt 2>&1; cat as.txt; ! grep -q "^E:" as.txt; }'
       - name: AppImage
+        shell: docker exec gl-build bash -e {0}
         run: |
           arch="${{ matrix.arch }}"
           curl -fsSL -o linuxdeploy "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-$arch.AppImage"
@@ -480,11 +507,25 @@ jobs:
           # links the AppDir's root icon to the scalable SVG (its first choice) and appimagetool would
           # point .DirIcon there; v0.7.1 shipped a 64 px one.
           cp AppDir/usr/share/icons/hicolor/256x256/apps/gridline.png AppDir/.DirIcon
+          ./linuxdeploy --appdir AppDir --executable AppDir/usr/bin/gridline-app --executable AppDir/usr/bin/gridline \
+            --desktop-file "$desktop" --icon-file AppDir/usr/share/icons/hicolor/256x256/apps/gridline.png
+          # linuxdeploy leaves out the libraries its exclude list expects on every system, but Debian
+          # 13 and newer systems no longer need libgpg-error, which the bundled libgcrypt (sound
+          # through libpulse and libsystemd) still does: it goes in by hand.
+          for lib in $(objdump -p AppDir/usr/lib/*.so* | sed -n 's/^ *NEEDED *\(libgpg-error\.so\.[0-9]*\)$/\1/p' | sort -u); do
+            cp -L "$(ldconfig -p | awk -v l="$lib" '$1 == l { print $NF; exit }')" AppDir/usr/lib/
+          done
           LINUXDEPLOY_OUTPUT_VERSION="$VER" OUTPUT="dist/Gridline-$VER-linux-$arch.AppImage" LDAI_OUTPUT="dist/Gridline-$VER-linux-$arch.AppImage" \
-            ./linuxdeploy --appdir AppDir --executable AppDir/usr/bin/gridline-app --executable AppDir/usr/bin/gridline \
-              --desktop-file "$desktop" --icon-file AppDir/usr/share/icons/hicolor/256x256/apps/gridline.png --output appimage
+            ./linuxdeploy --appdir AppDir --output appimage
           bash tools/ci/check-linux-icons.sh AppDir/usr AppDir  # K-14: also the AppImage's root icon and .DirIcon
+          # Nothing may need a newer C library than the build system's (glibc 2.31, Debian 11).
+          bash tools/release/check-glibc.sh 2.31 AppDir "stage/Gridline-$VER-linux-$arch"
           ls -l dist
+      - name: Hand the files back to the runner user
+        if: always()
+        run: |
+          sudo chown -R "$(id -u):$(id -g)" "$GITHUB_WORKSPACE"
+          docker rm -f gl-build > /dev/null || true
       - name: Check
         run: |
           set -e
@@ -508,6 +549,7 @@ jobs:
           deb="$(ls dist/*.deb)"; rpm="$(ls dist/*.rpm)"
           dpkg-deb -f "$deb" Package Version Architecture Depends
           test "$(dpkg-deb -f "$deb" Version)" = "$DEBVER"   # 0.7.0~beta.1 sorts before 0.7.0
+          dpkg-deb -f "$deb" Depends | grep -q 'libasound2 ([^)]*) | libasound2t64'  # tools/release/deb-depends.sh
           rpm -qp --queryformat '%{NAME} %{VERSION} %{RELEASE} %{ARCH}\n' "$rpm"
           test "$(rpm -qp --queryformat '%{VERSION}' "$rpm")" = "$VERNUM"
           test "$(rpm -qp --queryformat '%{RELEASE}' "$rpm")" = "$RPMREL"  # 0.1.beta.1 (Fedora prerelease) / 1
@@ -596,9 +638,75 @@ jobs:
           name: gridline-${{ matrix.os }}
           path: dist/Gridline-*.tar.gz
 
+  debian:
+    # The Linux .deb and AppImage of this release, installed with apt into fresh Debian 11, 12 and 13
+    # and Ubuntu 24.04 containers (the official images), x86_64 and ARM64: the dependencies resolve
+    # from each system's own repositories, every program and plugin finds its libraries, and the CLI
+    # and the app run there (tools/ci/debian-check.sh). Ubuntu 22.04 is the runner of the Linux job
+    # itself. A release that would not install on one of them is not published.
+    name: ${{ matrix.system }} ${{ matrix.arch }}
+    needs: [version, linux]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        system: ["debian:11", "debian:12", "debian:13", "ubuntu:24.04"]
+        arch: [x86_64, aarch64]
+        include:
+          - { arch: x86_64, deb: amd64, os: ubuntu-22.04 }
+          - { arch: aarch64, deb: arm64, os: ubuntu-22.04-arm }
+    env:
+      VER: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: gridline-linux-${{ matrix.arch }}
+          path: dist
+      - name: Install and run
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w "${{ matrix.system }}" bash tools/ci/debian-check.sh \
+            "dist/Gridline-$VER-linux-${{ matrix.deb }}.deb" "dist/Gridline-$VER-linux-${{ matrix.arch }}.AppImage" "$VER"
+
+  chromeos:
+    # The Linux .deb and AppImage of this release, installed into the container image a Chromebook's
+    # Linux development environment uses (Google's own image, newest ChromeOS milestone), and into
+    # Google's older Debian 11 image that Chromebooks set up before, x86_64 and ARM64: the
+    # dependencies resolve from that system's repositories and the app runs there
+    # (tools/ci/chromeos-check.sh). A release that would not install on a Chromebook is not published.
+    name: ChromeOS ${{ matrix.arch }} (${{ matrix.image == 'bullseye' && 'Debian 11 container' || 'newest container' }})
+    needs: [version, linux]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
+        image: [newest, bullseye]
+        include:
+          - { arch: x86_64, os: ubuntu-22.04 }
+          - { arch: aarch64, os: ubuntu-22.04-arm }
+    env:
+      VER: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: gridline-linux-${{ matrix.arch }}
+          path: dist
+      - name: The Chromebook container image
+        run: |
+          sudo apt-get install -y -q squashfs-tools
+          bash tools/ci/crostini-docker.sh "$RUNNER_TEMP/crostini" "${{ matrix.image == 'bullseye' && 'bullseye' || '' }}"
+      - name: Install and run
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w gridline-crostini bash tools/ci/chromeos-check.sh \
+            "dist/Gridline-$VER-linux-$(dpkg --print-architecture).deb" "dist/Gridline-$VER-linux-${{ matrix.arch }}.AppImage" "$VER"
+
   release:
     name: Checksums and release
-    needs: [version, media-tools, macos, windows, linux, bsd]
+    needs: [version, media-tools, macos, windows, linux, bsd, debian, chromeos]
     runs-on: ubuntu-latest
     env:
       VER: ${{ needs.version.outputs.version }}

@@ -71,26 +71,28 @@ int main() {
     for (float w : widths) {
       const Layout l = compute({w, n});
       // The left section (LED, pan, volume, mixer box) has a fixed place: nothing is ever dropped.
-      leftFixed = leftFixed && kXLed + 16 <= kXPan && kXPan + kKnobW <= kXVol + 0.01f && kXVol + kKnobW <= kXMix && kXMix + kMixW <= kNameX;
+      leftFixed = leftFixed && kXLeft <= kXPan && kXPan + kKnobW <= kXVol + 0.01f && kXVol + kKnobW <= kXMix && kXMix + kMixW <= kNameX;
       inRow = inRow && l.stepsX >= kNameX + l.nameW + kNameGap - 0.01f;
       stepRange = stepRange && l.stepW >= kStepMin && l.stepW <= kStepMax;
       nameRange = nameRange && l.nameW >= kNameFloor && l.nameW <= kNameMax && l.nameW >= prevName - 0.01f;  // never narrower in a wider rack
       prevName = l.nameW;
       scrollRange = scrollRange && near(l.contentW, contentWidth(n, l.stepW)) && near(l.scrollMax, std::max(0.0f, l.contentW - l.viewW)) &&
                     (l.scrolls() || near(l.viewW, l.contentW));
-      lampEnd = lampEnd && near(l.lampX, l.stepsX + l.viewW) && near(l.rowW, l.lampX + kSelLampW);
+      // K-127: the lamp sits between the name button and the first step, clear of both.
+      lampEnd = lampEnd && l.lampX >= kNameX + l.nameW + 2 - 0.01f && l.lampX + kSelLampW <= l.stepsX - 2 + 0.01f &&
+                near(l.rowW, l.stepsX + l.viewW);
       stepsLeftOfLamp = stepsLeftOfLamp && l.viewW >= std::min(l.contentW, kMinView) - 0.01f;
       // Down to the smallest rack (left section + minimum name + a few steps) a row fits the pane.
       if (w >= kNameX + kNameFloor + kNameGap + kMinView + kSelLampW) viewFits = viewFits && l.rowW <= w + 0.01f;
       else minimalFits = minimalFits && l.nameW >= kNameFloor;
     }
   }
-  expect(leftFixed, "left section: LED, pan, volume and mixer box have fixed, non-overlapping places at every width");
+  expect(leftFixed, "left section: pan, volume and mixer box have fixed, non-overlapping places at every width");
   expect(inRow, "the step area starts right of the name button");
   expect(stepRange, "step width stays between the minimum and maximum");
   expect(nameRange, "name width stays in range and never shrinks as the rack widens");
   expect(scrollRange, "scroll range = content width - view width (0 when everything fits)");
-  expect(lampEnd, "select lamp sits at the end of the step viewport");
+  expect(lampEnd, "the channel's light sits between the name button and the steps");
   expect(stepsLeftOfLamp, "a few steps always stay visible");
   expect(viewFits, "rows fit the pane from the smallest rack up (no clipped knobs, no outer scrollbar)");
   expect(minimalFits, "below the smallest rack the name keeps its floor width");
@@ -192,6 +194,20 @@ int main() {
     s.mode = wheelroute::Mode::Adjust;
     s.frame(1.0f);
     expect(s.velocity == 108 && s.scroll == 0, "setting adjust: the wheel changes the step even in a scrolling rack");
+  }
+  // K-136: the rack's height follows its content.
+  {
+    const float top = 60, bar = 28, chrome = 1, pitch = 33;
+    auto rows = [&](int n) { return 8.0f + 8 + 4 + n * pitch - 4 + 8; };  // paddings, step lamps, n rows
+    const float h5 = racklayout::fitHeight(top, rows(5), bar, chrome, false, 140);
+    expect(h5 == std::ceil(top + rows(5) + bar + chrome), "fit height: header, rows, add bar and frame (5 channels)");
+    expect(racklayout::fitHeight(top, rows(6), bar, chrome, false, 140) - h5 == pitch, "one more channel: one row pitch taller");
+    expect(racklayout::fitHeight(top, rows(4), bar, chrome, false, 140) - h5 == -pitch, "one channel fewer: one row pitch shorter");
+    expect(racklayout::fitHeight(top, 0, bar, chrome, true, 140) == top + 140 + chrome, "empty rack: room for its hint");
+    expect(racklayout::fitHeight(10.2f, 20.1f, 0, 0, false, 0) == 31.0f, "fit height rounds up to a whole pixel (never cuts the add bar)");
+    expect(racklayout::rowsRegion(rows(5), 600) == rows(5), "short list: the rows take their content's height (add bar under the last row)");
+    expect(racklayout::rowsRegion(rows(30), 600) == 0, "long list: the rows fill the room and scroll");
+    expect(racklayout::rowsRegion(0, 600) == 0, "not measured yet: fill the room");
   }
   return finish();
 }

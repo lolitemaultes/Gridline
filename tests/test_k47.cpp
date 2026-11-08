@@ -199,14 +199,14 @@ void testDataFiles(const fs::path& base) {
     const ExportControl c = st.control();
     const CollectReport r = exportProjectDataFiles(song, out.u8string(), "Tune", &c);
     expect(r.error.empty() && r.copied == 2, "data files with a control (" + r.error + ")");
-    expect(fs::exists(out / "Tune.gridline.json") && fs::file_size(out / "Samples" / "two.wav") == (3u << 20), "the project and whole samples are there");
+    expect(fs::exists(out / "Tune.gridline") && fs::file_size(out / "Samples" / "two.wav") == (3u << 20), "the project and whole samples are there");
     expect(!anyNamed(out, ".part"), "no temporary names stay");
     Song back;
-    expect(loadProject((out / "Tune.gridline.json").u8string(), back, nullptr), "the project reads back");
+    expect(loadProject((out / "Tune.gridline").u8string(), back, nullptr), "the project reads back");
     expect(missingFiles(back).empty(), "and finds its samples");
   }
   const std::vector<std::string> before = listing(out);
-  const std::string projectBefore = slurp(out / "Tune.gridline.json");
+  const std::string projectBefore = slurp(out / "Tune.gridline");
   {  // Cancel over an earlier export: what was there stays, what this run added goes.
     const std::string three = audioFile(dir / "src" / "three.wav", 'c');
     const Song more = songWith({three, one, two});
@@ -216,7 +216,7 @@ void testDataFiles(const fs::path& base) {
     const CollectReport r = exportProjectDataFiles(more, out.u8string(), "Tune", &c);
     expect(r.cancelled, "a cancel over an earlier export");
     expect(listing(out) == before, "that export's files are as they were, the new ones gone");
-    expect(slurp(out / "Tune.gridline.json") == projectBefore, "its project too");
+    expect(slurp(out / "Tune.gridline") == projectBefore, "its project too");
   }
   {  // A failure in the middle of a new folder: the folder goes, and it is an error.
     const fs::path out2 = dir / "out" / "Other";

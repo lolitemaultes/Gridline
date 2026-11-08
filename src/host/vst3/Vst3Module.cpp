@@ -4,6 +4,7 @@
 #include <map>
 #include <mutex>
 #include "../Dylib.h"
+#include "../PluginScan.h"
 #include "../../core/Platform.h"
 #if defined(__APPLE__)
 #include <CoreFoundation/CoreFoundation.h>
@@ -106,30 +107,13 @@ std::vector<std::string> defaultSearchPaths() {
 }
 
 std::vector<std::string> findBundles(const std::vector<std::string>& folders) {
-  std::vector<std::string> out;
-  for (const auto& f : folders) {
-    std::error_code ec;
-    if (!fs::is_directory(f, ec)) continue;
-    fs::recursive_directory_iterator it(f, fs::directory_options::skip_permission_denied | fs::directory_options::follow_directory_symlink, ec), end;
-    for (; !ec && it != end; it.increment(ec)) {
-      const fs::path& p = it->path();
-      if (p.extension() == ".vst3") {
-        if (it->is_directory(ec)) {
-          out.push_back(p.generic_string());
-          it.disable_recursion_pending();
-        }
+  // K-73: the shared search (each real folder once, links followed, stops on quit, shows where it is).
+  // Bundles are folders; on Windows a VST 3.6 or older plugin can be a single .vst3 DLL too.
 #if defined(_WIN32)
-        else if (it->is_regular_file(ec)) {
-          out.push_back(p.generic_string());  // VST 3.6 and older: a single .vst3 DLL
-        }
+  return host::findEntries(folders, ".vst3", true, true);
+#else
+  return host::findEntries(folders, ".vst3", true, false);
 #endif
-      }
-      if (it.depth() > 6) it.disable_recursion_pending();
-    }
-  }
-  std::sort(out.begin(), out.end());
-  out.erase(std::unique(out.begin(), out.end()), out.end());
-  return out;
 }
 
 Module::~Module() {

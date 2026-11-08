@@ -1,5 +1,6 @@
 // Gridline - J-89: update check popup and settings (see UpdateUi.h).
 #include "UpdateUi.h"
+#include "Keys.h"
 #include "GridlineVersion.h"
 #include <algorithm>
 #include <atomic>
@@ -374,13 +375,13 @@ void drawAvailable(App& a) {
     const float wCancel = buttonW("Cancel");
     const float right = wCancel + (mid ? wMid + theme::kS2 : 0.0f) + wGo + theme::kS2;
     ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), x0 + kDialogW - right));
-    cancelRequired = ui::TextButton("Cancel", false, wCancel) || ImGui::IsKeyPressed(ImGuiKey_Escape);
+    cancelRequired = ui::TextButton("Cancel", false, wCancel) || ::gl::keys::escapePressed();
   } else {
     skip = ui::TextButton("Skip this version", false, wSkip);
     ImGui::SameLine(0, 0);
     const float right = wLater + (mid ? wMid + theme::kS2 : 0.0f) + wGo + theme::kS2;
     ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX() + theme::kS2, x0 + kDialogW - right));
-    later = ui::TextButton("Remind me later", false, wLater) || ImGui::IsKeyPressed(ImGuiKey_Escape);
+    later = ui::TextButton("Remind me later", false, wLater) || ::gl::keys::escapePressed();
   }
   bool midPressed = false;
   if (mid) {
@@ -444,7 +445,7 @@ void drawResult(App& a) {
     ImGui::Dummy(ImVec2(kDialogW, theme::kS1 + theme::kS2));
     const float wc = buttonW("Cancel"), wp2 = buttonW("Open the releases page");
     rightAlign(wc + wp2 + theme::kS2);
-    const bool cancel = ui::TextButton("Cancel", false, wc) || ImGui::IsKeyPressed(ImGuiKey_Escape);
+    const bool cancel = ui::TextButton("Cancel", false, wc) || ::gl::keys::escapePressed();
     ImGui::SameLine(0, theme::kS2);
     if (ui::TextButton("Open the releases page", true, wp2)) {
       openPage(update::kReleasesPage);
@@ -468,7 +469,7 @@ void drawResult(App& a) {
   ImGui::Dummy(ImVec2(kDialogW, theme::kS1 + theme::kS2));
   const float w = buttonW("OK");
   rightAlign(w);
-  if (ui::TextButton("OK", true, w) || ImGui::IsKeyPressed(ImGuiKey_Escape) || ImGui::IsKeyPressed(ImGuiKey_Enter) ||
+  if (ui::TextButton("OK", true, w) || ::gl::keys::escapePressed() || ImGui::IsKeyPressed(ImGuiKey_Enter) ||
       ImGui::IsKeyPressed(ImGuiKey_KeypadEnter))
     closeDialog();
 }
@@ -482,7 +483,7 @@ void drawChecking(App& a) {
   ImGui::Dummy(ImVec2(kDialogW, theme::kS1 + theme::kS2));
   const float w = buttonW("Cancel");
   rightAlign(w);
-  if (ui::TextButton("Cancel", false, w) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+  if (ui::TextButton("Cancel", false, w) || ::gl::keys::escapePressed()) {
     s.manual = false;  // the result arrives quietly
     closeDialog();
   }

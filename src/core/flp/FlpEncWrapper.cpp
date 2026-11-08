@@ -22,6 +22,8 @@
 #include "FlpEncode.h"
 #include "../../host/HostedPlugins.h"
 #include "../PluginStandIn.h"
+#include "../../engine/Program.h"
+#include "FlpWrapper.h"
 
 namespace gl::flp::enc {
 
@@ -184,7 +186,20 @@ std::string typeOfRecords(const std::vector<Rec>& rs) {
 // defaults). `tpl`: the origin's record 53 of the same plugin (or null): its
 // framing (header words, the VST3 header and parameter table, trailers) is
 // kept and only the plugin's own state is replaced (J-171).
-bool stateRecord(Format f, const std::string& data, const host::HostedClass* cls, const Bytes* tpl, Bytes& out) {
+// K-110: the host parameter ids of a Gridline Suite member, in the order the plugin lists them
+// (its parameters as ids 0..n-1, then an effect's Mix and Bypass; src/plugin/PluginSingle.cpp).
+// (the plugin's Mix and Bypass ids, plugin::kMixParamId / kBypassParamId; tests/test_flp_suite.cpp checks them)
+constexpr uint32_t kSuiteMixId = 0x00100000, kSuiteBypassId = 0x00100001;
+std::vector<uint32_t> suiteParamIds(const suite::Member& m) {
+  std::vector<uint32_t> v;
+  const size_t n = std::min(m.info->params.size(), static_cast<size_t>(kMaxHostParams));
+  for (size_t k = 0; k < n; ++k) v.push_back(static_cast<uint32_t>(k));
+  if (!m.instrument) v.push_back(kSuiteMixId), v.push_back(kSuiteBypassId);
+  return v;
+}
+
+bool stateRecord(Format f, const std::string& data, const host::HostedClass* cls, const Bytes* tpl, Bytes& out,
+                 const suite::Member* sm = nullptr, const std::vector<uint32_t>* knownIds = nullptr) {
   out.clear();
   if (data.empty()) return true;
   std::string bytes;
@@ -255,9 +270,18 @@ bool stateRecord(Format f, const std::string& data, const host::HostedClass* cls
       rs.push_back({3, {}});
       rs.push_back({2, {}});
       ByteWriter t;  // the class's exposed parameters
-      const size_t n = cls ? cls->params.size() : 0;
-      t.u32(static_cast<uint32_t>(n));
-      for (size_t k = 0; k < n; ++k) t.u32(cls->params[k].id);
+      if (sm) {  // K-110: a Gridline Suite plugin, installed here or not
+        const std::vector<uint32_t> ids = suiteParamIds(*sm);
+        t.u32(static_cast<uint32_t>(ids.size()));
+        for (uint32_t id : ids) t.u32(id);
+      } else if (!cls && knownIds && !knownIds->empty()) {  // K-132: not installed, its list known
+        t.u32(static_cast<uint32_t>(knownIds->size()));
+        for (uint32_t id : *knownIds) t.u32(id);
+      } else {
+        const size_t n = cls ? cls->params.size() : 0;
+        t.u32(static_cast<uint32_t>(n));
+        for (size_t k = 0; k < n; ++k) t.u32(cls->params[k].id);
+      }
       rs.push_back({4, t.b});
     }
     for (Rec& r : rs) {
@@ -317,8 +341,10 @@ bool writeHosted(const PluginState& g, Bytes& b, const EncodeContext& ec) {
     b = build(b.size() >= 4 ? std::max<uint32_t>(getU32(b, 0), 1) : kWrapperVersion, rs);
     return true;
   }
+  const suite::Member* sm = f == Format::Vst3 ? suiteMemberOfType(g.type) : nullptr;  // K-110
   bool instrument = false;
   if (cls) instrument = cls->instrument;
+  else if (sm) instrument = sm->instrument;
   else if (f == Format::Au) instrument = auInstrumentType(id);
   else if (ec.channel) instrument = true;
   else if (const PluginInfo* info = findPlugin(g.type)) instrument = info->kind == PluginKind::Generator;
@@ -349,12 +375,14 @@ bool writeHosted(const PluginState& g, Bytes& b, const EncodeContext& ec) {
     }
   }
   // Identity text: the installed class, else the name the plugin goes by.
-  const std::string name = cls ? cls->name : standin::pluginNameOf(g.type);
+  const std::string name = cls ? cls->name : sm ? sm->name : standin::pluginNameOf(g.type);
   if (!name.empty()) rs.push_back({54, text(name)});
   if (cls && cls->format != "au" && !cls->bundle.empty()) rs.push_back({55, text(cls->bundle)});
   if (cls && !cls->vendor.empty()) rs.push_back({56, text(cls->vendor)});
+  else if (sm) rs.push_back({56, text("Gridline")});
   Bytes st;
-  if (!stateRecord(f, g.data, cls.get(), nullptr, st)) return false;
+  const std::vector<uint32_t> known = cls ? std::vector<uint32_t>{} : standin::vst3ParamIds(standin::familyOf(g.type), g.type);
+  if (!stateRecord(f, g.data, cls.get(), nullptr, st, sm, &known)) return false;
   if (!g.data.empty()) rs.push_back({53, st});
   b = build(b.size() >= 4 ? std::max<uint32_t>(getU32(b, 0), 1) : kWrapperVersion, rs);
   return true;

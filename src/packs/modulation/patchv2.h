@@ -124,6 +124,9 @@ class PatchV2Runtime {
   // K-41: a marked patch changing runtime (see JRuntime::exchangeEffects): the running effect of a
   // module of this plugin type goes into `fx`, what `fx` held comes here. Audio thread, no allocation.
   void exchangeEffect(int node, uint64_t typeHash, std::unique_ptr<Effect>& fx);
+  // K-132: the same for a built-in instrument, so its sounding notes carry on (and their note-offs
+  // reach it) on the other side.
+  void exchangeInstrument(int node, uint64_t typeHash, std::unique_ptr<Generator>& gen);
 
  private:
   struct Impl;

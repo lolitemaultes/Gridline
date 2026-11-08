@@ -20,7 +20,7 @@ namespace gl::browse {
 // ---------------------------------------------------------------- file kinds
 enum class Kind { Other, Audio, Midi, Project, Flp, Fst, Preset, Chain, Shape, Score, Folder, Image };  // J-184: Image (Pixel Tone pictures)
 
-// By extension (and, for .json, by name / location: "*.gridline.json" is a
+// By extension (".gridline" / ".gridlinez" are projects; for .json, by name / location: "*.gridline.json" is a
 // project, files under a "chains" / "automation" folder of the preset library
 // are chains / shapes, other .json files there are plugin presets).
 Kind kindOf(const std::string& path);

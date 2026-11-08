@@ -35,13 +35,16 @@ void s2Set(PluginState& s, int k, double v) { s.params[static_cast<size_t>(k)] =
 struct S2Out {
   std::vector<float> l, r;
 };
-S2Out s2Run(const PluginState& s, const std::vector<float>& inL, const std::vector<float>& inR, int block = 256, double sr = jt::kSr) {
+S2Out s2Run(const PluginState& s, const std::vector<float>& inL, const std::vector<float>& inR, int block = 256, double sr = jt::kSr,
+             bool playing = false) {
   auto fx = createEffect(s.type);
   S2Out o{inL, inR};
-  jt::run(*fx, s, o.l, o.r, block, sr);
+  jt::run(*fx, s, o.l, o.r, block, sr, playing);
   return o;
 }
-S2Out s2Run(const PluginState& s, const std::vector<float>& in, int block = 256) { return s2Run(s, in, in, block); }
+S2Out s2Run(const PluginState& s, const std::vector<float>& in, int block = 256, bool playing = false) {
+  return s2Run(s, in, in, block, jt::kSr, playing);
+}
 double s2MaxDiff(const std::vector<float>& a, const std::vector<float>& b, size_t from = 0) {
   double d = 0;
   for (size_t i = from; i < a.size() && i < b.size(); ++i) d = std::max(d, std::fabs(static_cast<double>(a[i]) - b[i]));
@@ -167,7 +170,7 @@ void testBbdChorusRef() {
   s2Set(dl, s2::BcMix, 1);
   s2Set(dl, s2::BcHighPass, 10);
   s2Set(dl, s2::BcTime1, 5);
-  S2Out imp = s2Run(dl, s2Impulse(4800, 100));
+  S2Out imp = s2Run(dl, s2Impulse(4800, 100), 256, true);  // K-133: the start phase applies once the transport runs
   size_t at = 0;
   double pk = 0;
   for (size_t i = 0; i < imp.l.size(); ++i)

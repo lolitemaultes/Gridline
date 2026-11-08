@@ -1,5 +1,6 @@
 // Gridline - J-111: collaboration in the app. See CollabUi.h.
 #include "CollabUi.h"
+#include "Keys.h"
 #include "GlEpoch.h"
 #include <SDL.h>
 #include <SDL_opengl.h>
@@ -739,7 +740,7 @@ void saveCodeFile(App& a, const std::string& code, const char* name) {
 }
 
 // ---- windows ------------------------------------------------------------------
-// The open project becomes collaborative in `folder` (file <name>.gridline.json).
+// The open project becomes collaborative in `folder` (file <name>.gridline).
 bool makeCollaborativeAt(App& a, const std::string& folder, const std::string& name) {
   Ui& uu = U();
   std::error_code ec;
@@ -899,7 +900,7 @@ void renameEditor(App& a, float x) {
     u.nameFocus = false;
   }
   const bool enter = ImGui::InputTextWithHint("##projname", tr("Project name"), u.projNameBuf, sizeof u.projNameBuf, ImGuiInputTextFlags_EnterReturnsTrue);
-  const bool escape = ImGui::IsItemDeactivated() && ImGui::IsKeyPressed(ImGuiKey_Escape);
+  const bool escape = ImGui::IsItemDeactivated() && ::gl::keys::escapePressed();
   ui::FocusRing();
   ImGui::SameLine(0, theme::kS2);
   ImGui::BeginDisabled(name.empty() || nothing);
@@ -999,7 +1000,7 @@ void projectTitle(App& a, const std::string& title, float maxW) {
   if (u.nameFocus) ImGui::SetKeyboardFocusHere();
   ImGui::InputText("##projtitle", u.projNameBuf, sizeof u.projNameBuf, ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
   const bool active = ImGui::IsItemActive(), gone = ImGui::IsItemDeactivated();
-  const bool escape = gone && ImGui::IsKeyPressed(ImGuiKey_Escape);
+  const bool escape = gone && ::gl::keys::escapePressed();
   dl->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), active ? P.accent : P.lineStrong, theme::kRadius, 0, active ? 1.5f : 1.0f);
   ImGui::PopStyleColor(3);
   ImGui::PopStyleVar(2);
@@ -2533,7 +2534,7 @@ void removeDialog(App& a) {
   ui::EndSection();
   if (!u.removeErr.empty()) statusLine(u.removeErr, P.danger, theme::lit(P.danger));
   modalFooter(buttonsWidth({"Cancel##rm", "Remove"}));
-  if (ui::TextButton("Cancel##rm") || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+  if (ui::TextButton("Cancel##rm") || ::gl::keys::escapePressed()) {
     u.removeTarget = 0;
     ImGui::CloseCurrentPopup();
   }
@@ -2732,7 +2733,7 @@ void leaveDialog(App& a) {
   const float bw = waitOffer ? buttonsWidth({"Cancel##leave", "Wait for sync", action}) : buttonsWidth({"Cancel##leave", action});
   if (ImGui::IsWindowAppearing()) u.leaveErr.clear();
   modalFooter(bw);
-  if (ui::TextButton("Cancel##leave") || ImGui::IsKeyPressed(ImGuiKey_Escape)) close();
+  if (ui::TextButton("Cancel##leave") || ::gl::keys::escapePressed()) close();
   if (waitOffer) {
     ImGui::SameLine(0, theme::kS2);
     if (ui::TextButton("Wait for sync", true, 0, "Goes on by itself once a collaborator has your changes")) u.leaveWait = true;
@@ -2774,12 +2775,12 @@ void cleanupDialog(App& a) {
   const char* act = "Delete unused files";
   modalFooter(u.unused.empty() ? ui::TextButtonWidth("Close##clean") : buttonsWidth({"Cancel##clean", act}));
   if (u.unused.empty()) {
-    if (ui::TextButton("Close##clean", true) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+    if (ui::TextButton("Close##clean", true) || ::gl::keys::escapePressed()) {
       u.cleanupOpen = false;
       ImGui::CloseCurrentPopup();
     }
   } else {
-    if (ui::TextButton("Cancel##clean") || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+    if (ui::TextButton("Cancel##clean") || ::gl::keys::escapePressed()) {
       u.cleanupOpen = false;
       ImGui::CloseCurrentPopup();
     }
@@ -2849,7 +2850,7 @@ void duplicateDialog(App& a) {
   ImGui::EndGroup();
   ui::EndSection();
   modalFooter(ui::TextButtonWidth("Cancel##dup"));
-  if (ui::TextButton("Cancel##dup") || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+  if (ui::TextButton("Cancel##dup") || ::gl::keys::escapePressed()) {
     u.dupFolder.clear();
     ImGui::CloseCurrentPopup();
   }

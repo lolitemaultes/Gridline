@@ -23,6 +23,7 @@
 #include "../core/Json.h"
 #include "../core/PluginParams.h"
 #include "../core/Project.h"
+#include "../core/SuiteState.h"
 #include "PluginCore.h"
 #include "PluginView.h"
 
@@ -503,6 +504,8 @@ std::string Instance::saveSingle() {
   ed.object["zoom"] = Json::makeNumber(zoom_);
   ed.object["tab"] = Json::makeNumber(editorTab_);
   j.object["editor"] = std::move(ed);
+  // K-110: a state that came with its files (an exported project) keeps them for the next computer.
+  if (st && !embedded_.empty()) suitestate::embedFiles(*st, j, suitestate::kEmbedLimit, nullptr, &embedded_);
   return jsonStringify(j, 0);
 }
 
@@ -543,6 +546,14 @@ bool Instance::loadSingle(const std::string& data, std::string* err) {
     return false;
   }
   PluginState st = pluginStateFromJson(*pj);
+  // K-110: files carried in the state: a reference whose file is not on this computer plays the
+  // embedded copy, written once into the cache (setState runs on the host's main or loading
+  // thread, never the audio thread).
+  embedded_.clear();
+  if (j.find("files")) {
+    std::string ferr;
+    suitestate::restoreFiles(st, j, suitestate::defaultCacheDir(), &embedded_, &ferr);
+  }
   const PluginState* cur = singleState();
   if (!pj->find("data") && cur && j.text("format") != kSuiteStateFormat) st.data = cur->data;  // a preset keeps the loaded sample
   double mix = 1.0;

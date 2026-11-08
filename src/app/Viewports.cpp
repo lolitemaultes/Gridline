@@ -24,6 +24,12 @@
 #include "Widgets.h"
 #include "SysWm.h"
 
+// SDL 2.0.22 added this hint; Linux releases build against older system SDL headers (Debian 11 has
+// 2.0.14). The name is only a string, so a newer SDL at run time still honours it.
+#ifndef SDL_HINT_WINDOW_NO_ACTIVATION_WHEN_SHOWN
+#define SDL_HINT_WINDOW_NO_ACTIVATION_WHEN_SHOWN "SDL_WINDOW_NO_ACTIVATION_WHEN_SHOWN"
+#endif
+
 namespace gl::viewports {
 namespace {
 
@@ -92,6 +98,15 @@ struct State {
   double frameMs[120] = {}, windowsMs[120] = {};  // frame interval; time spent updating / drawing / swapping detached windows
   int frameN = 0;
   Uint64 lastRender = 0;
+  std::vector<VRect> devMonitors;  // dev "vmonitors": the monitors published instead (ImGui coordinates)
+  int popupWindowsMade = 0;        // dev: OS windows made for popups / menus / tooltips so far
+  // K-83: popups, menus and tooltips of a detached window stay inside it where they fit (X11 window
+  // managers flash the screen as an OS window is made and destroyed for each one); dev "popupsin".
+#if defined(__APPLE__) || defined(_WIN32)
+  bool popupsStayIn = false;
+#else
+  bool popupsStayIn = true;
+#endif
 };
 State S;
 
@@ -108,6 +123,17 @@ SDL_Window* sdlOf(const ImGuiViewport* vp) {
 }
 Uint32 idOf(const ImGuiViewport* vp) { return vp ? static_cast<Uint32>(reinterpret_cast<intptr_t>(vp->PlatformHandle)) : 0; }
 bool shortLived(const ImGuiWindow* w) { return (w->Flags & (ImGuiWindowFlags_Popup | ImGuiWindowFlags_Tooltip | ImGuiWindowFlags_ChildMenu)) != 0; }
+// K-72: the viewport a popup / menu / tooltip belongs to: a tooltip's is the one under the pointer
+// (ImGui gives it that one: a drag's tooltip follows the pointer onto a detached window), a
+// popup's or menu's that of the window it was opened from (through its parent menus); none yet
+// counts as the main window.
+const ImGuiViewport* shortLivedHost(const ImGuiWindow* w) {
+  if ((w->Flags & ImGuiWindowFlags_Tooltip) && w->Viewport) return w->Viewport;
+  const ImGuiWindow* p = w;
+  while (p && shortLived(p)) p = p->ParentWindow;
+  const ImGuiViewport* vp = p ? p->RootWindowDockTree->Viewport : w->Viewport;
+  return vp ? vp : ImGui::GetMainViewport();
+}
 const char* nameOf(const ImGuiWindow* w) { return ui::stableWindowName(w->Name); }
 // A window of its own outside the main window (not a popup / menu / tooltip).
 bool isOut(const ImGuiWindow* root) { return root && root->Viewport && !isMain(root->Viewport) && !shortLived(root); }
@@ -188,6 +214,7 @@ void wCreate(ImGuiViewport* vp) {
   if (!w) return;
   S.ours.insert(SDL_GetWindowID(w));
   const ImGuiWindow* win = static_cast<ImGuiViewportP*>(vp)->Window;
+  if (win && shortLived(win)) ++S.popupWindowsMade;
   if (!win || shortLived(win)) return;
   appicon::apply(w);  // K-14: the title bar / switcher icon of a detached window
   // A detached window: decorated by the OS (its title bar moves it, its edges resize it).
@@ -254,12 +281,28 @@ bool wGetFocus(ImGuiViewport* vp) { return !S.hidden && S.getFocus(vp); }
 // GRIDLINE PATCH (J-113) filter: a window that stops fitting the main window never gets an OS
 // window of its own because of that (not while it is dragged, J-116: not when it is released
 // outside either, not when it grows past the edge: it stays clipped to the main window, only the
-// pop-out button detaches), except popups / menus / tooltips (they may stick out of a small detached window) and a
-// window opened outside on purpose (centre outside the main window within the few frames it
+// pop-out button detaches), except popups / menus / tooltips of a detached window (they may stick out of a small
+// detached window) and a window opened outside on purpose (centre outside the main window within the few frames it
 // takes to appear and centre itself: a dialog over a detached window). Detached windows get
 // theirs as windows that always want one (ImGuiViewportFlags_NoAutoMerge in their window class).
+// K-72: popups, menus and tooltips of the main window stay in it (ImGui keeps them inside it too,
+// GRIDLINE PATCH (K-72) in WindowSelectViewport). They used to get OS windows of their own where
+// they ran past its edge (a menu opened at its right edge, a docked panel's "+" menu, a hint):
+// each submenu hovered made and destroyed one, and some window managers then blank the whole
+// main window for a frame (issue 15: the app flickered while instruments were added).
+// K-83: on X11 (Linux, BSD) the same goes for a detached window's popups, menus and hints that fit
+// inside it: an undecorated OS window mapped for each submenu or hint is given the focus, raised
+// and animated by the window manager, and the screen flickered (user report, GNOME on X11). Only
+// one larger than the detached window itself still gets an OS window, and dialogs (modal popups)
+// still open where they are placed.
 bool lateCreate(ImGuiWindow* w) {
-  if (shortLived(w)) return true;
+  if (shortLived(w)) {
+    const ImGuiViewport* host = shortLivedHost(w);
+    if (isMain(host)) return false;
+    if (!S.popupsStayIn || (w->Flags & ImGuiWindowFlags_Modal)) return true;
+    if (w->Viewport && w->Viewport != host) return true;  // a submenu of one that is out already
+    return w->SizeFull.x > host->WorkSize.x || w->SizeFull.y > host->WorkSize.y;
+  }
   const ImGuiContext& g = *GImGui;
   const auto ap = S.appeared.find(w->ID);
   if (!w->Appearing && (ap == S.appeared.end() || g.FrameCount - ap->second > 4)) return false;
@@ -583,6 +626,11 @@ void publishMonitors() {
     m.PlatformHandle = reinterpret_cast<void*>(static_cast<intptr_t>(n));
     pio.Monitors.push_back(m);
   };
+  if (!S.devMonitors.empty()) {
+    int n = 0;
+    for (const VRect& r : S.devMonitors) add(r.pos, r.size, r.pos, r.size, n++);
+    return;
+  }
   if (S.virtualMonitors || S.monBounds.empty()) {
     add(ImVec2(0, 0), S.display, ImVec2(0, 0), S.display, 0);
     if (S.virtualMonitors) add(ImVec2(S.display.x, 0), S.display, ImVec2(S.display.x, 0), S.display, 1);
@@ -723,9 +771,9 @@ void dump(int frame) {
   const int n = std::min(S.frameN, 120);
   double wms = 0;
   for (int i = 0; i < n; ++i) ms += S.frameMs[i], wms += S.windowsMs[i];
-  std::printf("viewports frame %d: available %d enabled %d detached %d mainos %.0f %.0f scale %.3f monitors %d frame-ms %.3f windows-ms %.3f\n", frame,
-              S.available ? 1 : 0, enabled() ? 1 : 0, detachedCount(), static_cast<double>(S.mainOs.x), static_cast<double>(S.mainOs.y),
-              static_cast<double>(S.scale), g.PlatformIO.Monitors.Size, n > 0 ? ms / n : 0.0, n > 0 ? wms / n : 0.0);
+  std::printf("viewports frame %d: available %d enabled %d detached %d mainos %.0f %.0f scale %.3f monitors %d frame-ms %.3f windows-ms %.3f popup-windows %d popups-stay-in %d\n",
+              frame, S.available ? 1 : 0, enabled() ? 1 : 0, detachedCount(), static_cast<double>(S.mainOs.x), static_cast<double>(S.mainOs.y),
+              static_cast<double>(S.scale), g.PlatformIO.Monitors.Size, n > 0 ? ms / n : 0.0, n > 0 ? wms / n : 0.0, S.popupWindowsMade, S.popupsStayIn ? 1 : 0);
   if (!S.available) std::printf("  unavailable: %s\n", S.reason.c_str());
   for (int i = 0; i < g.PlatformIO.Monitors.Size; ++i) {
     const ImGuiPlatformMonitor& m = g.PlatformIO.Monitors[i];
@@ -759,6 +807,11 @@ void dump(int frame) {
                 static_cast<double>(w->ContentSizeIdeal.x), static_cast<double>(w->ContentSizeIdeal.y), static_cast<double>(w->ScrollMax.x),
                 static_cast<double>(w->ScrollMax.y));
   }
+  // Open popups / menus / tooltips: where they are and which viewport they are in (0 = the main window).
+  for (ImGuiWindow* w : g.Windows)
+    if (w->WasActive && shortLived(w) && !(w->Flags & ImGuiWindowFlags_ChildWindow))
+      std::printf("  popup \"%s\" pos %.1f %.1f size %.1f %.1f viewport %d\n", w->Name, static_cast<double>(w->Pos.x), static_cast<double>(w->Pos.y),
+                  static_cast<double>(w->Size.x), static_cast<double>(w->Size.y), viewportIndex(w->Viewport));
   std::fflush(stdout);
 }
 
@@ -1294,6 +1347,11 @@ bool devCommand(App& a, const std::string& cmd, const std::vector<std::string>& 
   };
   if (cmd == "viewports") {
     dump(frame);
+  } else if (cmd == "popupsin") {  // popupsin on|off: a detached window's popups stay inside it where they fit (the X11 default) or may stick out
+    S.popupsStayIn = args.empty() || args[0] != "off";
+  } else if (cmd == "vmonitors") {  // vmonitors x y w h [x y w h ...]: these monitors (main-window logical px) instead of the real ones; none: the real ones again
+    S.devMonitors.clear();
+    for (size_t i = 0; i + 3 < args.size(); i += 4) S.devMonitors.push_back({ImVec2(num(i), num(i + 1)), ImVec2(num(i + 2), num(i + 3))});
   } else if (cmd == "detach") {  // detach <window> x y [w h]: popped out with its top-left at x y (main-window logical px), a test set-up
     if (ImGuiWindow* w = window()) {
       if (w->DockId != 0) ImGui::DockContextQueueUndockWindow(GImGui, w);

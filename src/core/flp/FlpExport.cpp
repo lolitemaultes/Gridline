@@ -21,9 +21,14 @@
 #include "../PluginStandIn.h"
 #include "../PluginBrand.h"
 #include "../Arrangements.h"
+#include "../ClipLoop.h"
+#include "../../engine/ClipOps.h"
 #include "../Params.h"
 #include "../Project.h"
 #include "FlpExportInternal.h"
+#include "FlpWrapper.h"
+#include "../SuiteState.h"
+#include "../../host/HostedPlugins.h"
 
 namespace gl::flp {
 
@@ -37,6 +42,8 @@ Bytes words(std::initializer_list<int64_t> v) {
   for (int64_t x : v) w.u32(static_cast<uint32_t>(x));
   return w.b;
 }
+
+}  // namespace
 
 // J-45: FL plugins number their send targets and side inputs by the hosting
 // insert's route list (flRouteOutputs / flRouteInputs). A Gridline state that
@@ -72,7 +79,6 @@ PluginState routeIndexed(const Song& s, int track, const PluginState& p) {
   }
   return q;
 }
-}  // namespace
 
 // ------------------------------------------------------------ indices
 
@@ -250,7 +256,27 @@ Exporter::PluginOut Exporter::encodePlugin(const PluginState& p, ObjectId owner,
   reportPlugin(rp, owner, slot);
   if (out.flPlugin) {
     PluginMapping m;
-    if (enc::decodeState(out.flName, out.hasState ? out.state : Bytes{}, m, ec)) writtenPlugins[key] = std::move(m);
+    if (enc::decodeState(out.flName, out.hasState ? out.state : Bytes{}, m, ec)) {
+      // K-132: a plugin that is not installed here reads back as its stand-in (Mini, Plasma,
+      // Tideline), but the song holds the plugin itself and its automation is on the plugin's own
+      // parameters: FL's index maps to those (on their own 0..1 scale), not to the stand-in's.
+      WrapperInfo w;
+      if (isHostedType(p.type) && !findPlugin(p.type) && standin::isStandIn(m.state) && standin::originalState(m.state).type == p.type &&
+          out.hasState && parseWrapper(out.state.data(), out.state.size(), w)) {
+        const standin::Family fam = standin::familyOf(p.type, w.name, w.vendor);
+        const std::vector<uint32_t> ids = w.paramIds;
+        const bool byIndex = w.format != WrapperInfo::Vst3;  // VST2 / AU: FL index = parameter id
+        const std::string type = p.type;
+        m.param = [fam, ids, byIndex, type](int fl) {
+          if (fl < 0) return -1;
+          const uint32_t id = byIndex ? static_cast<uint32_t>(fl) : (static_cast<size_t>(fl) < ids.size() ? ids[static_cast<size_t>(fl)] : 0xFFFFFFFFu);
+          return standin::paramIndexOfId(fam, type, id);
+        };
+        m.value = nullptr;
+        m.rawNorm = nullptr;
+      }
+      writtenPlugins[key] = std::move(m);
+    }
   }
   pluginCache[key] = out;
   return out;
@@ -300,8 +326,19 @@ Exporter::Resolver& Exporter::res() {
   resolver = std::make_shared<Resolver>();
   Resolver& r = *resolver;
   r.song = s;
+  // K-110: Gridline Suite plugins resolve as the built-ins they carry (their parameters are those).
+  auto builtIn = [](PluginState& p) {
+    if (!suiteMemberOfType(p.type)) return;
+    std::string comp, ctrl;
+    PluginState inner;
+    if (host::decodeState(p.data, comp, ctrl) && suitestate::parse(comp, inner)) normalizePluginState(inner), p = inner;
+  };
+  for (auto& c : r.song.channels) builtIn(c.plugin);
+  for (auto& t : r.song.mixer)
+    for (auto& sl : t.slots) builtIn(sl.plugin);
   r.c = std::make_unique<Context>(r.file, r.song, r.report);
   Context& c = *r.c;
+  c.missingHostedByIndex = true;  // K-132: missing plugins written as themselves
   for (const auto& [id, fl] : im.channel) c.channelIds[fl] = id;
   for (const auto& [id, fl] : im.insert) c.insertIds[fl] = id;
   for (const auto& [id, fl] : im.pattern) c.patternIds[fl] = id;
@@ -662,6 +699,61 @@ void Exporter::writeLinks() {
 
 namespace {
 bool exportPrepared(const Song& song, const StandInResult* standIns, Bytes& out, ExportReport& rep, const ExportOptions& opt);
+
+// K-114: FL loops per pattern (its loop mode) and never loops an audio clip;
+// Gridline loops per clip. On the copy that is written: each pattern takes the
+// mode its clips play (patternLoopMode); a clip that plays otherwise is written
+// as what it plays: a looping clip of a pattern that does not loop as one clip
+// per pass, a clip that does not loop, of a pattern that does, cut at the
+// pattern's end (the rest was silent). A looping audio clip: one clip per pass.
+void writeClipLoopsAsFl(Song& s, ExportReport& rep) {
+  for (Pattern& p : s.patterns) p.loop = patternLoopMode(s, p);
+  TempoMap tm;
+  tm.build(s);
+  auto fix = [&](std::vector<Clip>& list) {
+    std::vector<Clip> out;
+    out.reserve(list.size());
+    for (const Clip& c : list) {
+      if (c.kind == ClipKind::Audio && c.loop) {
+        const std::vector<Clip> passes = audioLoopPasses(s, c, tm);
+        for (size_t k = 0; k < passes.size(); ++k) {
+          Clip x = passes[k];
+          if (k > 0) x.id = s.allocateId();
+          out.push_back(x);
+        }
+        rep.counts["looping audio clips (written pass by pass)"]++;
+        continue;
+      }
+      const Pattern* p = c.kind == ClipKind::Pattern ? s.pattern(c.pattern) : nullptr;
+      if (!p || !clipPastContent(s, c) || c.loop == p->loop) {
+        out.push_back(c);
+        continue;
+      }
+      const Tick pl = std::max<Tick>(1, s.patternContentLength(*p));
+      if (!c.loop) {  // its pattern loops in FL: the clip ends where its content does
+        Clip x = c;
+        if (c.offset < pl) x.length = pl - c.offset;
+        out.push_back(x);
+        rep.counts["pattern clips cut at their pattern's end (it loops in FL)"]++;
+        continue;
+      }
+      const std::vector<ClipPass> passes = clipPasses(s, c);
+      for (const ClipPass& ps : passes) {
+        Clip x = c;
+        if (ps.index > 0) x.id = s.allocateId();
+        x.start = c.start + ps.at;
+        x.length = ps.len;
+        x.offset = ps.content;
+        x.loop = false;
+        out.push_back(x);
+      }
+      rep.counts["looping pattern clips (written pass by pass)"]++;
+    }
+    list = std::move(out);
+  };
+  fix(s.playlist);
+  for (Arrangement& a : s.arrangements) fix(a.playlist);
+}
 }
 
 bool exportFlp(const Song& song, Bytes& out, ExportReport& rep, const ExportOptions& opt) {
@@ -671,6 +763,7 @@ bool exportFlp(const Song& song, Bytes& out, ExportReport& rep, const ExportOpti
   StandInResult sr;
   StandInOptions so;
   so.sampleDir = opt.renderInstruments ? opt.sampleDir : std::string();
+  so.gridlinePlugins = opt.gridlinePlugins;
   so.progress = opt.progress;
   so.cancel = opt.cancel;
   if (!applyStandIns(work, opt, so, sr)) {
@@ -688,7 +781,9 @@ bool exportFlpWithStandIns(const Song& work, const StandInResult& sr, Bytes& out
 }
 
 namespace {
-bool exportPrepared(const Song& song, const StandInResult* standIns, Bytes& out, ExportReport& rep, const ExportOptions& opt) {
+bool exportPrepared(const Song& prepared, const StandInResult* standIns, Bytes& out, ExportReport& rep, const ExportOptions& opt) {
+  Song song = prepared;
+  writeClipLoopsAsFl(song, rep);  // K-114
   xp::Exporter x(song, opt, rep);
   x.standIns = standIns;
   x.ec.tempo = song.tempo;
@@ -716,6 +811,22 @@ bool exportPrepared(const Song& song, const StandInResult* standIns, Bytes& out,
   return true;
 }
 }  // namespace
+
+const char* gridlinePluginsKey(GridlinePlugins m) {
+  switch (m) {
+    case GridlinePlugins::Suite: return "suite";
+    case GridlinePlugins::SuiteWithFallback: return "suite+fallback";
+    default: return "render";
+  }
+}
+
+bool parseGridlinePlugins(const std::string& s, GridlinePlugins& out) {
+  if (s == "render") out = GridlinePlugins::Render;
+  else if (s == "suite") out = GridlinePlugins::Suite;
+  else if (s == "suite+fallback" || s == "fallback") out = GridlinePlugins::SuiteWithFallback;
+  else return false;
+  return true;
+}
 
 std::string defaultSampleDir(const std::string& flpPath) {
   const std::filesystem::path p(flpPath);
@@ -756,16 +867,18 @@ std::string reportText(const ExportReport& rep) {
 }
 
 std::string exportSummary(const ExportReport& rep, const std::string& fileName) {
-  int rendered = 0, mappedFx = 0, mappedInst = 0, neutral = 0;
+  int rendered = 0, mappedFx = 0, mappedInst = 0, neutral = 0, suitePlugins = 0;
   for (const auto& p : rep.plugins) {
     const PluginInfo* pi = findPlugin(p.glType);
     const bool inst = pi && pi->kind == PluginKind::Generator;
-    if (p.quality == "rendered") ++rendered;
+    if (p.quality == "suite") ++suitePlugins;
+    else if (p.quality == "rendered") ++rendered;
     else if (p.quality == "mapped") ++(inst ? mappedInst : mappedFx);
     else if (p.quality == "placeholder") ++neutral;
   }
   std::vector<std::string> parts;
   auto n = [](int k, const char* one, const char* many) { return std::to_string(k) + " " + (k == 1 ? one : many); };
+  if (suitePlugins) parts.push_back(n(suitePlugins, "Gridline plugin as a Gridline Suite plugin", "Gridline plugins as Gridline Suite plugins"));
   if (rendered) parts.push_back(n(rendered, "Gridline instrument rendered to samples", "Gridline instruments rendered to samples"));
   if (mappedInst) parts.push_back(n(mappedInst, "instrument mapped", "instruments mapped"));
   if (mappedFx) parts.push_back(n(mappedFx, "effect mapped", "effects mapped"));

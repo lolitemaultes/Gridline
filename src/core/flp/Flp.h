@@ -171,6 +171,10 @@ struct Context {
   // decoders may skip building PluginState::data (the parameters must not
   // depend on it).
   bool paramsOnly = false;
+  // K-132: the FL export's solver: a parameter of a hosted plugin that is not installed here (no
+  // description) still resolves, by its index and on its own 0..1 scale (a missing plugin opened
+  // as a stand-in is written back as itself, its automation on its own parameters).
+  bool missingHostedByIndex = false;
   Context(const File& f, Song& s, Report& r) : file(f), song(s), report(r) {}
   // FL tick → Gridline tick (the song keeps the FL PPQ, so this is identity
   // unless the PPQ had to change).

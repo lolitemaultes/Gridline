@@ -345,11 +345,11 @@ void rescuePaths(char* tmp, size_t tmpCap, char* final, size_t finalCap, char* m
     n[k] = 0;
   };
   put(gSessionId);
-  put(".rescue.tmp.gridline.json");
+  put(".rescue.tmp.gridline");
   joinPath(tmp, tmpCap, gRecoveryDir, n);
   k = 0;
   put(gSessionId);
-  put(".gridline.json");
+  put(".gridline");  // K-121: the new name (copies an earlier version left as .gridline.json still open)
   joinPath(final, finalCap, gRecoveryDir, n);
   k = 0;
   put(gSessionId);
@@ -462,13 +462,23 @@ bool installed() { return gInstalled.load(); }
 std::string sessionId() { return gSessionId; }
 bool audioCrashRequested() noexcept { return audioCrashWanted(); }
 
+namespace {
+std::atomic<uint64_t> gBusyStarted{0};
+std::atomic<int> gBusyAlive{0};
+}  // namespace
+uint64_t busyScopesStarted() noexcept { return gBusyStarted.load(std::memory_order_relaxed); }
+bool busyNow() noexcept { return gBusyAlive.load(std::memory_order_relaxed) > 0; }
+
 BusyScope::BusyScope(const char* what, int maxSeconds) noexcept {
+  gBusyStarted.fetch_add(1, std::memory_order_relaxed);
+  gBusyAlive.fetch_add(1, std::memory_order_relaxed);
   previous_ = gBusyUntilMs.load(std::memory_order_relaxed);
   gBusyUntilMs.store(steadyMs() + int64_t{maxSeconds} * 1000, std::memory_order_relaxed);
   if (what) crumb("busy", what);
 }
 BusyScope::~BusyScope() {
   gBusyUntilMs.store(previous_, std::memory_order_relaxed);
+  gBusyAlive.fetch_sub(1, std::memory_order_relaxed);
   uiHeartbeat();  // the time spent counts from now
 }
 
@@ -865,7 +875,8 @@ PendingReport readReport(const std::string& configDir, const std::string& path) 
   }
   if (!r.sessionId.empty()) {
     const fs::path rec = fs::u8path(recoveryDir(configDir));
-    const fs::path copy = rec / (r.sessionId + ".gridline.json");
+    fs::path copy = rec / (r.sessionId + ".gridline");
+    if (!fs::exists(copy, ec)) copy = rec / (r.sessionId + ".gridline.json");  // K-121: written by an earlier version
     if (fs::exists(copy, ec)) {
       r.recoveryFile = copy.u8string();
       std::ifstream meta(rec / (r.sessionId + ".meta"));
@@ -916,7 +927,8 @@ void markSeen(const std::string& path) {
 void discardRecovery(const std::string& configDir, const std::string& sid) {
   if (sid.empty()) return;
   const fs::path rec = fs::u8path(recoveryDir(configDir));
-  for (const char* ext : {".gridline.json", ".meta", ".rescued", ".rescue.tmp.gridline.json"}) removeQuietly(rec / (sid + ext));
+  for (const char* ext : {".gridline", ".gridline.json", ".meta", ".rescued", ".rescue.tmp.gridline", ".rescue.tmp.gridline.json"})
+    removeQuietly(rec / (sid + ext));
 }
 
 void sweep(const std::string& configDir) {

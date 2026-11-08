@@ -18,12 +18,22 @@ namespace menuparity {
 void fileItems(App& a);     // File: save to a new project folder
 void exportItems(App& a);   // File › Export: render again with the last settings
 void addItems(App& a);      // Add: automation clip for the last tweaked control
-void viewItems(App& a);     // View: project picker (browser), played chord hint
-void optionsItems(App& a);  // Options: MIDI master sync output
-void toolsItems(App& a);    // Tools: last tweaked controls, score logger, macros
+void viewItems(App& a);       // View › Windows: project picker (browser)
+void viewHintItems(App& a);   // View › Appearance: played chord hint
+void optionsItems(App& a);    // Options: MIDI master sync output
+// Tools, in the menu's sections (K-77):
+void toolsControlItems(App& a);  // last tweaked controls
+void toolsNoteItems(App& a);     // composing: last piano roll script, note clipboard as MIDI
+void toolsScoreLogItem(App& a);  // recording: score logger
+void toolsMacroItems(App& a);    // macros: lock tracks, live area, audio clip channels, declicking
+void toolsCleanupItems(App& a);  // clean-up: delete unused automation clips
 
 // ---- context menus ----
-void channelItems(App& a, ObjectId channel);                    // channel menu
+// The channel menu, in its sections (K-77):
+void channelItems(App& a, ObjectId channel);        // create: clone with controller links
+void channelStepItems(App& a, ObjectId channel);    // steps: repeat the first bar, bake note effects
+void channelSampleItems(App& a, ObjectId channel);  // instrument: the sample in a new channel
+void channelLayerItems(App& a, ObjectId channel);   // properties: a layer's channels
 void rackItems(App& a, const std::vector<ObjectId>& selection);  // channel rack menu
 void pianoEditItems(App& a);                                    // piano roll › Edit
 void pianoToolItems(App& a);                                    // piano roll › Tools

@@ -190,8 +190,18 @@ Palette makePalette(bool dark, const Tweaks& t) {
   }
   p.meterLow = dark ? hex(0x86D64A) : hex(0x4CA81C);
   p.meterMid = dark ? hex(0xF2D04A) : hex(0xD9A800);
+  // K-79 roles: derived from the palette's own colours (and the user's tweaks) below.
+  constexpr ImU32 kUnset = 0;
+  p.solo = p.muteLamp = p.arm = p.loopStrip = p.monitor = p.launch = p.selection = kUnset;
   p.meterHigh = p.danger;
   applyTweaks(p, t);
+  if (p.solo == kUnset) p.solo = p.hot;
+  if (p.muteLamp == kUnset) p.muteLamp = p.led;
+  if (p.arm == kUnset) p.arm = p.danger;
+  if (p.loopStrip == kUnset) p.loopStrip = withAlpha(p.hot, 0.55f);
+  if (p.monitor == kUnset) p.monitor = p.hot;
+  if (p.launch == kUnset) p.launch = p.led;
+  if (p.selection == kUnset) p.selection = withAlpha(p.accent, 0.35f);
   return p;
 }
 

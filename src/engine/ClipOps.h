@@ -18,6 +18,37 @@ double clipSourceAt(const Song& song, const Clip& clip, const TempoMap& map, dou
 // Natural length (ticks) of an audio clip's source window at the current settings.
 Tick audioClipNaturalLength(const Song& song, const Clip& clip);
 
+// K-114: looping audio clips (Clip::loop). The loop is the clip's audio window
+// [audioStart, audioEnd or the sample's end); the clip's offset (ticks) is
+// where its first pass starts inside it. audioLoopLength: ticks of one pass at
+// the clip's start (0 = the clip does not loop or has no audio).
+// audioLoopPasses: the passes as plain clips (same id, loop off, one window
+// each: the first from the offset on), what the engine plays and FL export
+// writes; a clip that does not loop is returned alone.
+Tick audioLoopLength(const Song& song, const Clip& clip, const TempoMap& map);
+std::vector<Clip> audioLoopPasses(const Song& song, const Clip& clip, const TempoMap& map);
+// K-114: turning a clip's loop on or off (a copy; gestures and the clip menu).
+// On: an audio clip shorter than its audio loops what it shows (its window
+// ends at the clip's end). Off: an audio clip that started inside its loop
+// starts its audio there. Automation curves need a loop length too
+// (prepareAutomationLoops).
+Clip withClipLoop(const Song& song, const TempoMap& map, Clip c, bool on);
+// K-114: automation curves of the clips of `clips` listed in `sel` without a
+// loop length get one: what those placements show (offset + length, the
+// longest of them).
+void prepareAutomationLoops(Song& song, const std::vector<Clip>& clips, const std::set<ObjectId>& sel);
+// K-114: the loop of every listed clip on or off (withClipLoop, plus the
+// automation loop lengths). False when nothing changed.
+bool setClipsLoop(Song& song, const std::set<ObjectId>& clips, bool on);
+// K-114: how long a looping clip plays before its content first repeats
+// (from its loop start to the end of its pattern, audio window or curve loop);
+// 0 when it does not loop.
+Tick loopFirstPass(const Song& song, const Clip& clip, const TempoMap& map);
+// K-114: a plain right-edge drag that brings a looping clip back to its own
+// length (loopFirstPass) or shorter stops it looping, per clip of `sel` in
+// `clips` (withClipLoop off). Returns how many stopped.
+int unloopWithinFirstPass(const Song& song, std::vector<Clip>& clips, const std::set<ObjectId>& sel, const TempoMap& map);
+
 // Splits an audio (or pattern) clip at song tick `at` (start < at < end).
 // Returns the id of the right part (kNoId when not split).
 ObjectId splitClipAt(Song& song, ObjectId clip, Tick at);

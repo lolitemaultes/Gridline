@@ -60,6 +60,11 @@ const char* whyText(Why w) {
 }  // namespace
 
 void prepare() {
+  // K-83: SDL asks X11 compositors to stop compositing its windows (meant for full-screen games).
+  // A window the size of the monitor is then shown directly, and the compositor switches back and
+  // forth, flashing the screen, whenever a menu, hint or plugin window appears over it. Gridline
+  // is a desktop application: its windows stay composited. (A variable the session sets still wins.)
+  SDL_SetHint(SDL_HINT_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR, "0");
   remember(kSdl2Name, gSavedSdl2, gHadSdl2);
   remember(kSdl3Name, gSavedSdl3, gHadSdl3);
   Inputs in;

@@ -92,7 +92,7 @@ inline Song retrigSong(const std::string& type, RetrigScene scene) {
     }
     case RetrigScene::LoopedClip:
       d.addNote(pat, ch, note(0, bar, kRetrigKey));
-      d.addClip(pat, 0, 0, 2 * bar);
+      if (const ObjectId lc = d.addClip(pat, 0, 0, 2 * bar); lc != kNoId) d.editClip(lc, "loop", [](Clip& c) { c.loop = true; });
       break;
     case RetrigScene::PatternLoop:
       d.addNote(pat, ch, note(0, bar, kRetrigKey));

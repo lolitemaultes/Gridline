@@ -159,6 +159,7 @@ bool decodePitchShifter(Context&, const std::vector<Event>& evs, PluginMapping& 
   fx::set(m, sp::PsDelaySync, sync);
   fx::set(m, sp::PsEngine, type ? sp::kPsMusic : sp::kPsVoice);
   fx::set(m, sp::PsDetector, det);
+  fx::set(m, sp::PsMusicLaw, 1);
   fx::set(m, sp::PsFine, 0);
   fx::set(m, sp::PsDetune, 0);
   fx::set(m, sp::PsOutput, 0);

@@ -96,8 +96,8 @@ Tick snapTick(Tick t, Tick grid, Snap mode) { return mode == Snap::Cell ? snapDo
 Tick moveDistance(Tick dragged, Tick grid, Snap mode, Tick earliest) {
   const Tick d = snapTick(dragged, grid, mode);
   if (earliest + d >= 0) return d;
-  const Tick g = std::max<Tick>(grid, 1);
-  return -(earliest / g * g);
+  (void)grid;
+  return -std::max<Tick>(0, earliest);  // K-82: the wall at 0 (always a grid line)
 }
 
 Tick tickAtPx(float px, float pxPerTick) {

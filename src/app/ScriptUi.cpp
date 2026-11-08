@@ -1,5 +1,6 @@
 // Gridline — scripting in the app (see ScriptUi.h).
 #include "../core/I18n.h"
+#include "Keys.h"
 #include "ScriptUi.h"
 #include "../core/StepNotes.h"
 #include <algorithm>
@@ -642,7 +643,7 @@ void drawScriptTool(App& a) {
   ui::Hint("Time the last run took");
   if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput) {
     if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) accept = true;
-    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) cancel = true;
+    if (::gl::keys::escapePressed()) cancel = true;
   }
   ui::KeepWindowInViewport();
   ImGui::End();
@@ -907,7 +908,7 @@ void drawProjectScriptWindow(App& a) {
   if (a.settings.getBool("scripts.allowTransport")) ImGui::TextColored(theme::vec(P.textFaint), "Scripts may control the transport");
   if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput) {
     if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) run = true;
-    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) close = true;
+    if (::gl::keys::escapePressed()) close = true;
   }
   ui::KeepWindowInViewport();
   ImGui::End();

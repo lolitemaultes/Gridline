@@ -1122,6 +1122,49 @@ void distImported(FxUnit& u, const float* p, float* L, float* R, int n, const Au
 void fxReset(FxUnit& u) { u.clear(); }
 float fxMeter(const FxUnit& u) { return u.meter; }
 
+double fxHoldSeconds(const FxUnit* u, int type, const float* p, double tempo) {
+  auto N = [&](const char* key) {
+    const int i = fxParamIndex(type, key);
+    return i < 0 ? 0.0 : std::clamp(static_cast<double>(p[i]), 0.0, 1.0);
+  };
+  auto P = [&](const char* key) {
+    const int i = fxParamIndex(type, key);
+    return i < 0 ? 0.0 : fxPlain(type, i, p[i]);
+  };
+  const double beat = 60.0 / std::max(20.0, tempo);
+  switch (type) {
+    case FxDelay: {
+      // the longest of the classic and imported time laws (free or synced), at the larger multiplier
+      auto secs = [&](double v) {
+        const double classicFree = 0.001 + 1.999 * v * v, importedFree = 0.5 * v * v * v * v;
+        const double importedSync = std::exp2(std::round(11.0 * v)) / 128.0 * beat, classicSync = 4.0 * beat;
+        return N("kParamBeatSync") >= 0.5 ? std::max(importedSync, classicSync) : std::max(classicFree, importedFree);
+      };
+      const double t = std::max(secs(N("kParamTimeL")), secs(N("kParamTimeR"))) * std::max({1.0, P("kParamOffsetL"), P("kParamOffsetR")});
+      return std::min(32.0, t) + 0.1;
+    }
+    case FxReverb: {
+      // the pre-delay (either law), then the tank's longest lines (1.05 s)
+      const double pd = N("kParamPreDelay");
+      double pre = std::max(2.5 * std::pow(pd, 5.0), 0.12);
+      if (N("kParamPreDelayBeatSync") >= 0.5) pre = std::max({pre, 6.0 * beat, P("kParamPreDelay") * beat});
+      return std::min(8.0, pre) + 1.2;
+    }
+    case FxConvolve: {
+      const double ir = u && u->sr > 0 ? static_cast<double>(u->parts) * FxUnit::kPart / u->sr : 2.0;
+      return 1.0 + ir + 0.1;  // pre-delay line (1 s) + the impulse
+    }
+    case FxBode:
+      return std::min(2.0, std::max(0.0, P("kParamDelayTime"))) + 0.1;
+    case FxChorus:
+    case FxFlanger:
+    case FxHyper:
+      return 0.1;
+    default:
+      return 0.05;
+  }
+}
+
 // ------------------------------------------------------------------ processing
 void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, const FxContext& c, const Aux* aux, int slot) {
   if (type != u.type) {

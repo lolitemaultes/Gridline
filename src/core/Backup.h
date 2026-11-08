@@ -38,7 +38,7 @@ class BackupManager {
   std::string folderFor(const std::string& projectPath) const;
   // True when a timed backup is due at `nowSec` (Unix seconds).
   bool due(int64_t nowSec) const;
-  // Writes "<stem> (backup YYYY-MM-DD HH-MM-SS).gridline.json" and prunes the
+  // Writes "<stem> (backup YYYY-MM-DD HH-MM-SS).gridline" and prunes the
   // oldest backups of the same project beyond maxCount. Returns the file path, "" on failure.
   std::string write(const Song& song, const std::string& projectPath, int64_t nowSec, std::string* err = nullptr);
   // Existing backups of `projectPath`, oldest first.

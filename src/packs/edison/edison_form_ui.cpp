@@ -5,6 +5,7 @@
 // line), level meters at the right end of the head, and the waveform editor
 // filling the rest. Every glyph and label is Gridline's own.
 #include <algorithm>
+#include "../../app/Keys.h"
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -661,7 +662,10 @@ void handleKeys(App& a, Session& s) {
   if (key(ImGuiKey_0) || key(ImGuiKey_Keypad0)) zoomAll(s);
   if (key(ImGuiKey_Home)) s.cursor = 0, s.viewStart = 0;
   if (key(ImGuiKey_End)) s.cursor = s.frames();
-  if (key(ImGuiKey_Escape)) s.sel = {}, s.brush.clear();
+  if ((!s.sel.empty() || !s.brush.empty()) && key(ImGuiKey_Escape)) {  // K-124: with nothing to clear, Esc goes on to the playlist
+    s.sel = {}, s.brush.clear();
+    ::gl::keys::claimEscape();
+  }
 }
 
 }  // namespace gl::packs::edison

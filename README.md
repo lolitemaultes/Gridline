@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version 0.7.3" src="https://img.shields.io/badge/version-0.7.3-0B0B0B?style=flat-square&labelColor=1F1F1F">
+  <img alt="Version 0.7.4" src="https://img.shields.io/badge/version-0.7.4-0B0B0B?style=flat-square&labelColor=1F1F1F">
   <img alt="License: GPL-3.0" src="https://img.shields.io/badge/license-GPL--3.0-0B0B0B?style=flat-square&labelColor=1F1F1F">
   <img alt="C++17" src="https://img.shields.io/badge/C%2B%2B-17-0B0B0B?style=flat-square&labelColor=1F1F1F">
   <img alt="Plugins" src="https://img.shields.io/badge/plugins-VST3%20%7C%20CLAP%20%7C%20VST2%20%7C%20AU%20%7C%20LV2-0B0B0B?style=flat-square&labelColor=1F1F1F">
@@ -23,7 +23,7 @@
 <br>
 
 <p align="center">
-  <img src="docs/images/workspace.png" alt="The Gridline workspace: browser, playlist arrangement and mixer" width="100%">
+  <a href="https://www.youtube.com/watch?v=DCNx7LjV0Pc"><img src="docs/images/showcase.jpg" alt="See Gridline in action: play the showcase video on YouTube" width="100%"></a>
 </p>
 
 ## Download
@@ -33,7 +33,9 @@ Get the files for your system from the [latest release](https://github.com/lolit
 - **Windows 10 / 11** (x64 and ARM64): `-setup.exe` installer, or a portable `.zip`.
 - **macOS 11 or later**: one `.dmg` with a universal app for Apple Silicon and Intel, the command line tool and the VST3, CLAP and AU plugins. Every download also carries the [Gridline Suite](docs/gridline-suite.md), Gridline's instruments and effects as plugins for other DAWs.
 - **Linux** (x86_64 and aarch64): `.AppImage` for most distributions, `.deb` for Debian and Ubuntu, `.rpm` for Fedora and openSUSE, or a `.tar.gz`.
+- **Debian 11, 12 and 13, Ubuntu 22.04 and later** (amd64 and arm64): the `.deb`, installed with `sudo apt install ./Gridline-<version>-linux-amd64.deb`. See [docs/debian.md](docs/debian.md).
 - **FreeBSD, OpenBSD, NetBSD** (x86_64): a `.tar.gz` built and tested on each system.
+- **Chromebooks** (Intel, AMD and ARM): the Linux `.deb`, installed in ChromeOS's Linux development environment. See [docs/chromeos.md](docs/chromeos.md).
 
 Every release lists SHA-256 checksums in `Gridline-<version>-SHA256SUMS`. The builds are not signed by Apple or Microsoft: on macOS open the app the first time with right-click, Open; on Windows choose "More info", then "Run anyway" in the SmartScreen prompt. On Wayland Gridline runs natively through SDL; the interfaces of hosted plugins are X11 windows and open through XWayland, and windows outside the main window need X11 or XWayland (`SDL_VIDEODRIVER=x11`). The [release notes](https://github.com/lolitemaultes/Gridline/releases/latest) have the install steps for each system.
 
@@ -47,7 +49,7 @@ Every release lists SHA-256 checksums in `Gridline-<version>-SHA256SUMS`. The bu
 
 **Make music together.** Work on one project live with other people, on the same network or across the internet, peer to peer and end-to-end encrypted, with no server and no account. Invite someone with a one-time code; each collaborator gets a colour, a cursor and a picture, and everyone keeps their own windows, transport and sound. [More below](#work-together).
 
-**The Gridline Suite.** Gridline's own instruments and effects run in any DAW: 120 plugins as VST3, CLAP and, on macOS, Audio Unit, plus Gridline Suite Mini, 35 compact effects. Every download carries both. [More below](#the-gridline-suite).
+**The Gridline Suite.** Gridline's own instruments and effects run in any DAW: 121 plugins as VST3, CLAP and, on macOS, Audio Unit, plus Gridline Suite Mini, 35 compact effects. Every download carries both. [More below](#the-gridline-suite).
 
 **Platter, Seltmann and Turntable.** Platter puts two DJ decks and a mixer on a channel, with scratching that feels like a record, DJ controller mappings and performances recorded as editable automation. Seltmann takes any audio you drop on it or record into it, finds the tempo, chops it and flips it with ready-made layouts. Turntable scratches a sample on a platter.
 
@@ -55,7 +57,7 @@ Every release lists SHA-256 checksums in `Gridline-<version>-SHA256SUMS`. The bu
 
 **Junction.** Wire instruments, effects and note processors by hand on a map of modules and cables: parallel paths, sidechains, several outputs, feedback, and eight macros on a panel of their own.
 
-**177 built-in instruments and effects.** A family of flagships with their own names: Plasma (wavetable hybrid), Platter (two DJ decks and a mixer), Lattice (six-operator FM), Isoline (wavetable), Facet (additive), Halftone (resynthesis), Tercet, Abacus (drum pads), Kerf (a region slicer that cuts on the beat grid), Pixel Tone (plays your own pictures), Turntable (scratch a sample on a platter), Folio (sampler), Loupe (audio editor), Shuttle (time and volume), Tracer (delay), Cloister (reverb), Crest (mastering), Cipher (vocoder), Plumb (pitch correction), Junction (patching), Graticule (scope), Tideline (tempo-synced ducking, triggered by a mixer track, a channel's notes and clips or MIDI) and Seltmann (drop in any audio and it finds the tempo, chops it and flips it with ready-made layouts). Around them, plain-named studio tools: EQs, dynamics, modulation, physical models and utilities, and Gridline Suite Mini, 35 compact single-purpose effects. Every one has its own editor with its own wordmark, and every gesture in it (a knob drag, a wheel turn, a drawn stroke, a preset load) is one undo step. Double-click any knob to reset it, or to type a value when it is already at its default.
+**178 built-in instruments and effects.** A family of flagships with their own names: Plasma (wavetable hybrid), Platter (two DJ decks and a mixer), Lattice (six-operator FM), Isoline (wavetable), Facet (additive), Halftone (resynthesis), Tercet, Abacus (drum pads), Kerf (a region slicer that cuts on the beat grid), Pixel Tone (plays your own pictures), Turntable (scratch a sample on a platter), Folio (sampler), Loupe (audio editor), Shuttle (time and volume), Tracer (delay), Cloister (reverb), Crest (mastering), Cipher (vocoder), Plumb (pitch correction), Junction (patching), Graticule (scope), Tideline (tempo-synced ducking, triggered by a mixer track, a channel's notes and clips or MIDI) and Seltmann (drop in any audio and it finds the tempo, chops it and flips it with ready-made layouts). Around them, plain-named studio tools: EQs, dynamics, modulation, physical models and utilities, and Gridline Suite Mini, 35 compact single-purpose effects. Every one has its own editor with its own wordmark, and every gesture in it (a knob drag, a wheel turn, a drawn stroke, a preset load) is one undo step. Double-click any knob to reset it, or to type a value when it is already at its default.
 
 **Real plugins, real interfaces.** VST3, CLAP, VST2, AU and LV2 instruments and effects open with their own interface, can run sandboxed in a separate process, and are checked by a built-in compatibility sweep. Edits made in a plugin's own interface can be undone too.
 
@@ -63,6 +65,8 @@ Every release lists SHA-256 checksums in `Gridline-<version>-SHA256SUMS`. The bu
 <td width="50%" valign="top">
 
 **Pattern workflow.** Build loops in the channel rack, arrange them as clips in the playlist and mix them on inserts. Patterns, audio and automation all live on the same tracks, and mixer tracks, playlist tracks and channels take icons from a searchable set of 139.
+
+**Window layouts and tracker modules.** Arrange the main window as Studio, or try the Live and Logic previews, always in your own theme. Open .xm and .mod modules as projects, played by the Tracker Sampler, which also works as a sampler for your own sounds with a key map, envelopes and sample editing.
 
 **A welcome screen.** Gridline opens on your recent projects, each with a sketch of its arrangement, its tempo and its length. Mark favourites, start from a template or the demo song, and see in the Collaborative view who is working on a shared project right now. Big projects never freeze the window while they open: a loading window counts every sample and plugin as it loads, logs how long each took, and Cancel takes you back to the project you had open.
 
@@ -84,7 +88,7 @@ Every release lists SHA-256 checksums in `Gridline-<version>-SHA256SUMS`. The bu
 </tr>
 </table>
 
-**Demo song.** File > New from template > Demo song (or Help > Load demo song) opens "Gridline", a 4:25 liquid drum & bass track (it also greets a new install on its first launch) at 174 BPM made only with the built-in instruments, effects and automation: no samples. It is a full project to take apart, from the felted wooden mallet lead and the moving reese to the rain bed, the buses, the sidechains and the automation lanes. `gridline demo song.json` writes it to a file; `tools/make_demo_song.py` is the script that composes it.
+**Demo song.** File > New from template > Demo song (or Help > Load demo song) opens "Gridline", a 4:25 liquid drum & bass track (it also greets a new install on its first launch) at 174 BPM made only with the built-in instruments, effects and automation: no samples. It is a full project to take apart, from the felted wooden mallet lead and the moving reese to the rain bed, the buses, the sidechains and the automation lanes. `gridline demo song.gridline` writes it to a file; `tools/make_demo_song.py` is the script that composes it.
 
 ## Work together
 
@@ -108,7 +112,7 @@ Collaborative projects let two or more people work on one project at the same ti
 
 ## The Gridline Suite
 
-Every Gridline download also carries the **Gridline Suite**: 120 of Gridline's own instruments and effects (51 instruments, 69 effects), each as a plugin of its own for any DAW (vendor "Gridline"), in one bundle per format: `Gridline Suite.vst3`, `Gridline Suite.clap` and, on macOS, `Gridline Suite.component`. Gridline Suite Mini, 35 compact effects, ships beside it in the same way (`Gridline Suite Mini.vst3`, `.clap`, `.component`). Each plugin is the same DSP and the same editor as inside Gridline:
+Every Gridline download also carries the **Gridline Suite**: 121 of Gridline's own instruments and effects (52 instruments, 69 effects), each as a plugin of its own for any DAW (vendor "Gridline"), in one bundle per format: `Gridline Suite.vst3`, `Gridline Suite.clap` and, on macOS, `Gridline Suite.component`. Gridline Suite Mini, 35 compact effects, ships beside it in the same way (`Gridline Suite Mini.vst3`, `.clap`, `.component`). Each plugin is the same DSP and the same editor as inside Gridline:
 
 - **Parameters:** every parameter of the plugin, named, with its range, steps and value text (`1.20 kHz`, `-6.0 dB`), automatable; effects add **Mix** and **Bypass**.
 - **Instruments** take MIDI; **effects** have a sidechain input where the effect uses one (Compressor, Limiter, Sidechain Ducker, Cipher, Cloister, Tideline, Transient Split, Hit Repeater); effects that play from notes (Cipher, Plumb, Tideline) also take MIDI.
@@ -238,18 +242,18 @@ Audio goes through SDL (Core Audio, WASAPI, ALSA / PulseAudio / PipeWire / JACK,
 ## Command line
 
 ```sh
-build/gridline demo    song.json                            # write the demo song to a project file
-build/gridline info    song.json                            # inspect a project
-build/gridline render  song.json -o out.wav --bits 24       # render to audio (also .flac, .mp3, .ogg, .m4a, --stems)
-build/gridline export-midi song.json -o song.mid            # write a MIDI file
-build/gridline import-midi song.mid -o song.json            # read a MIDI file
-build/gridline zip     song.json -o song.zip                # project plus samples
-build/gridline export-flp-zip song.json -o song.zip         # FL Studio zipped loop package
+build/gridline demo    song.gridline                        # write the demo song to a project file
+build/gridline info    song.gridline                        # inspect a project
+build/gridline render  song.gridline -o out.wav --bits 24   # render to audio (also .flac, .mp3, .ogg, .m4a, --stems)
+build/gridline export-midi song.gridline -o song.mid        # write a MIDI file
+build/gridline import-midi song.mid -o song.gridline        # read a MIDI file
+build/gridline zip     song.gridline -o song.gridlinez      # project plus samples
+build/gridline export-flp-zip song.gridline -o song.zip     # FL Studio zipped loop package
 build/gridline plugin-check --all --json report.json        # plugin compatibility sweep
-build/gridline bench   song.json                            # load, save and render timings
+build/gridline bench   song.gridline                        # load, save and render timings
 build/gridline seltmann-analyse loop.wav                    # tempo, kind and slices Seltmann hears
-build/gridline track-receipt song.json --out receipt/       # which parts of which original recordings are used (spreadsheet + PDF)
-build/gridline mcp     song.json                            # MCP server for AI assistants (docs/mcp.md)
+build/gridline track-receipt song.gridline --out receipt/   # which parts of which original recordings are used (spreadsheet + PDF)
+build/gridline mcp     song.gridline                        # MCP server for AI assistants (docs/mcp.md)
 build/gridline collab-run --test-connection                 # router type, port mapping and IPv6 for collaboration
 ```
 
@@ -325,6 +329,14 @@ Gridline opens FL Studio projects (`.flp`), FL Studio zipped loop packages (`.zi
 
 Projects can also be saved back to `.flp` with **File, Export, FL Studio project** (or **File, Save as**), or as an FL Studio zipped loop package (the `.flp` plus every sample it uses, with relative sample paths) with **File, Export, FL Studio zipped loop package**: unchanged parts are written back exactly as they were imported, FL Studio's own plugins are saved with their settings, and third-party plugins such as Serum 2 keep their original plugin host settings. Nothing from FL Studio is bundled with Gridline.
 
+Gridline instruments and effects that FL Studio has no exact counterpart for go into the project the way **Settings, Project, FL Studio export** says; the export window shows the choice and can change it for one export or for the project:
+
+- **Gridline Suite plugins, with muted audio copies** (the default): instruments that would otherwise be rendered, and effects that would otherwise be left out, are written as the matching [Gridline Suite](docs/gridline-suite.md) plugin (VST3) with all their settings, so FL Studio opens them live and editable where the Suite is installed. Each such instrument also gets a muted copy of its channel that plays it rendered to audio, for computers without the Suite. Instruments and effects that a close FL Studio plugin can stand in for keep that stand-in;
+- **Gridline Suite plugins only**: every Gridline plugin without an exact FL Studio counterpart is written as its Gridline Suite plugin, including the ones a close FL Studio plugin would only approximate, and no audio copies are made;
+- **Rendered to audio**: instruments are rendered to samples and effects become the closest FL Studio effect, as in earlier versions.
+
+Samples a Gridline Suite plugin uses travel inside its settings, up to 64 MB of files per plugin, and the plugin writes them into its cache on the other computer when the original files are not there; larger files are copied into the sample folder next to the project. Playlist automation clips of a Suite plugin's parameters carry over; automation recorded inside patterns on those parameters is not written yet. Without the Suite, FL Studio reports the plugins as missing. Gridline opens such a project with its own plugins again, with their exact settings. The export report (**File, Export, FL Studio export report**) lists how each channel and effect was written. From the command line: `gridline export-flp song.gridline -o song.flp --gridline-plugins fallback|suite|render`.
+
 ## Documentation
 
 - [Split stems](docs/stems.md) and [Import from URL](docs/import-url.md).
@@ -333,6 +345,9 @@ Projects can also be saved back to `.flp` with **File, Export, FL Studio project
 - [Windows outside the main window](docs/detachable-windows.md) and [the plugin window's channel strip](docs/plugin-window.md).
 - [The Gridline Suite](docs/gridline-suite.md): Gridline's instruments and effects as plugins for other DAWs, and where they are installed.
 - [Plasma](docs/plugins/plasma.md), [Seltmann](docs/plugins/seltmann.md), [Tideline](docs/plugins/tideline.md), [the synths pack](docs/plugins/synths.md) and [recording Platter performances](docs/plugins/platter-recording.md).
+- [Opening files from the file manager](docs/opening-files.md): double-clicking projects and tracker modules on Linux, macOS and Windows, and choosing Gridline once where the system asks.
+- [Gridline on Debian and Ubuntu](docs/debian.md): installing the `.deb` with apt, the supported versions, Debian 11's archived updates.
+- [Gridline on a Chromebook](docs/chromeos.md): installing in ChromeOS's Linux environment, sound, shared folders, MIDI devices and plugins.
 - [ASIO on Windows](docs/asio.md): using an audio interface's ASIO driver, its buffer sizes, sample rates, inputs and outputs.
 - [Lua scripting](docs/scripting.md), [AI assistants (MCP)](docs/mcp.md) and [the update check](docs/updates.md).
 - [CHANGELOG.md](CHANGELOG.md) lists what changed in each version.
@@ -351,7 +366,7 @@ Projects can also be saved back to `.flp` with **File, Export, FL Studio project
 | Interface | `src/app/` | SDL2, OpenGL 3 and Dear ImGui, with windows that can move out onto other monitors. Controls are drawn in code; icons are SVG files (`assets/icons/ui/`) rasterised at the screen's exact pixel size. |
 | Import and export | `src/core/flp/`, `src/core/MidiFile`, `src/engine/Export` | Project import, MIDI, audio export and stems. |
 
-Project files are JSON (`"format": "gridline-project"`). Older files are upgraded on load, and `gridline upgrade` rewrites them in the current schema.
+Project files are JSON (`"format": "gridline-project"`), saved as `.gridline` (zipped with their files: `.gridlinez`; files named `.gridline.json` by earlier versions still open). Older files are upgraded on load, and `gridline upgrade` rewrites them in the current schema.
 
 ## License
 

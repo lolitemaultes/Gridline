@@ -625,6 +625,7 @@ void preparePatchHost(const PluginState& state, ChannelAux& aux) {
   auto pa = std::make_shared<PatchAux>();
   pa->fx = state.type == "gl.patcherfx";
   pa->graph = patchGraphOf(state);
+  const double sr = junctionPrepareRate();
   for (size_t i = 0; i < pa->graph.nodes.size(); ++i) {
     const PluginState& ps = pa->graph.nodes[i].plugin;
     const PluginInfo* info = findPlugin(ps.type);
@@ -636,11 +637,18 @@ void preparePatchHost(const PluginState& state, ChannelAux& aux) {
       prepareChannelAux(ps, na);
       pa->gens[i] = gl::createGenerator(ps.type);
       // J-30: instruments allocate the memory their settings need here (UI thread).
-      if (pa->gens[i]) pa->gens[i]->prepareHost(ps, 44100.0);
+      // K-59: and those that size their buffers in their first block get that block here.
+      if (pa->gens[i]) {
+        pa->gens[i]->prepareHost(ps, sr);
+        warmUpBuiltin(*pa->gens[i], ps.type, ps, na, sr);
+      }
     } else {
       packs::prepareAux(ps, na);
       pa->fxs[i] = gl::createEffect(ps.type);
-      if (pa->fxs[i]) pa->fxs[i]->prepareHost(ps, 44100.0);
+      if (pa->fxs[i]) {
+        pa->fxs[i]->prepareHost(ps, sr);
+        warmUpBuiltin(*pa->fxs[i], ps.type, ps, na, sr);
+      }
     }
     pa->nodeAux.push_back(std::move(na));
     pa->live.push_back(ps);

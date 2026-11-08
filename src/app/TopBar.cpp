@@ -27,6 +27,7 @@
 #include "../core/Motion.h"
 #include "SmoothScrollUi.h"
 #include "App.h"
+#include "LayoutPresets.h"
 #include "Theme.h"
 #include "Widgets.h"
 #include "Windows.h"
@@ -48,14 +49,18 @@ constexpr float kInner = 2.0f;              // gap between buttons inside a pane
 constexpr float kMenuPadX = 9.0f;
 constexpr float kMenuPadXCompact = 6.0f;
 
-struct MenuDef {
-  const char* name;
-  void (*fn)(App&);
-};
-// The bar hosts up to ~9 menus; add entries here when Menus.cpp grows.
-const MenuDef kMenus[] = {{i18n::N_("File"), menuFile},     {i18n::N_("Edit"), menuEdit},       {i18n::N_("Add"), menuAdd}, {i18n::N_("Patterns"), menuPatterns},
-                          {i18n::N_("View"), menuView},     {i18n::N_("Options"), menuOptions}, {i18n::N_("Tools"), menuTools},
-                          {i18n::N_("Help"), menuHelp}};
+// K-79: the menus come from the menu bar style of the layout preset (core/MenuStyle.h); the
+// studio style is File, Edit, Add, Patterns, View, Options, Tools, Help. A style's unnamed menu
+// is the program menu, opened from the mark.
+std::vector<const menustyle::Menu*> barMenus(const App& a, const menustyle::Menu** program) {
+  std::vector<const menustyle::Menu*> v;
+  *program = nullptr;
+  for (const menustyle::Menu& m : menustyle::menus(layoutui::menuStyle(a))) {
+    if (m.name) v.push_back(&m);
+    else *program = &m;
+  }
+  return v;
+}
 
 
 void noteRectAt(const char* name, ImVec2 a, ImVec2 b);  // dev: an "sdlat" target (below)
@@ -236,6 +241,7 @@ struct DevRect {
 };
 DevRect gDevRects[] = {{"play", {}, {}}, {"stop", {}, {}}, {"rec", {}, {}}, {"metro", {}, {}}, {"brsearch", {}, {}}, {"brclear", {}, {}}, {"chroute", {}, {}}, {"chroutefree", {}, {}}, {"chroutelist", {}, {}}, {"tempoint", {}, {}}, {"tempofrac", {}, {}}, {"loupedrag", {}, {}}, {"taptempo", {}, {}}, {"tapmenu", {}, {}}, {"tapmenutap", {}, {}}, {"menutools", {}, {}}, {"bar_transport", {}, {}}, {"bar_tempo", {}, {}}, {"bar_pos", {}, {}}, {"bar_pattern", {}, {}}, {"bar_master", {}, {}}, {"bar_monitor", {}, {}}, {"bar_windows", {}, {}}, {"bar_more", {}, {}}};
 float gMetroMirror = 1.0f;
+float gDevFitWidth = 0;  // K-132: dev, the width the bar fits its groups into (0 = the window's)
 void noteRectAt(const char* name, ImVec2 a, ImVec2 b) {
   for (DevRect& r : gDevRects)
     if (std::strcmp(r.name, name) == 0) r.a = a, r.b = b, r.frame = ImGui::GetFrameCount();
@@ -244,6 +250,7 @@ void noteRect(const char* name) { noteRectAt(name, ImGui::GetItemRectMin(), ImGu
 }  // namespace
 
 void devNoteRect(const char* name) { noteRect(name); }
+void devTopBarFitWidth(float w) { gDevFitWidth = std::max(0.0f, w); }
 bool topBarButtonRect(const char* name, float& x0, float& y0, float& x1, float& y1) {
   for (const DevRect& r : gDevRects)
     if (std::strcmp(r.name, name) == 0 && r.frame >= ImGui::GetFrameCount() - 1) {
@@ -254,7 +261,10 @@ bool topBarButtonRect(const char* name, float& x0, float& y0, float& x1, float& 
 }
 float topBarMetronomeMirror() { return gMetroMirror; }
 
+static float drawTopBarLogic(App& a);
+
 float drawTopBar(App& a) {
+  if (layoutui::active() == layout::Preset::Logic) return drawTopBarLogic(a);  // K-79: two rows
   const auto& P = pal();
   ImGuiViewport* vp = ImGui::GetMainViewport();
   const float h = theme::kTopBarH;
@@ -281,8 +291,10 @@ float drawTopBar(App& a) {
   dl->AddLine(ImVec2(wp.x, wp.y + h - 1), ImVec2(wp.x + W, wp.y + h - 1), P.line);
 
   // ---- group widths (full, or compact when the full bar does not fit) ----
-  constexpr size_t kMenuCount = sizeof kMenus / sizeof kMenus[0];
-  float menuW[kMenuCount];
+  const menustyle::Menu* program = nullptr;
+  const std::vector<const menustyle::Menu*> kMenus = barMenus(a, &program);
+  const size_t kMenuCount = kMenus.size();
+  std::vector<float> menuW(kMenuCount, 0.0f);
   float menusTotal = 0;
   float segW = 50.0f, tempoW = 84.0f, posW = 118.0f, patW = 150.0f;
   float wTransport = 0, wTempo = 0, wPos = 0, wPattern = 0;
@@ -296,7 +308,7 @@ float drawTopBar(App& a) {
     menusTotal = 0;
     const float pad = compact ? kMenuPadXCompact : kMenuPadX;
     for (size_t i = 0; i < kMenuCount; ++i) {
-      menuW[i] = std::ceil(ImGui::CalcTextSize(i18n::tr(kMenus[i].name)).x + pad * 2);
+      menuW[i] = std::ceil(ImGui::CalcTextSize(i18n::tr(kMenus[i]->name)).x + pad * 2);
       menusTotal += menuW[i];
     }
     segW = compact ? 40.0f : 46.0f;
@@ -333,11 +345,12 @@ float drawTopBar(App& a) {
     if (anyHidden) r += wMore + kGap;
     return r;
   };
-  if (required() > W) {
+  const float fitW = gDevFitWidth > 0 ? std::min(W, gDevFitWidth) : W;  // K-132: dev override (tests)
+  if (required() > fitW) {
     measure(true);
     setWidths();
   }
-  if (required() > W) {  // K-48: tighter still before any group has to go
+  if (required() > fitW) {  // K-48: tighter still before any group has to go
     breathing = kGap;
     patW = 112.0f;
     wPattern = kPanelPad * 2 + patW + kInner + kBtn;
@@ -346,7 +359,7 @@ float drawTopBar(App& a) {
   // Menus stay visible as long as possible (a right click on the mark opens them too).
   const G hideOrder[] = {Monitor, Master, Windows, Pos, Pat, Menus, Tempo};
   for (G g : hideOrder)
-    if (required() > W) show[g] = false;
+    if (required() > fitW) show[g] = false;
   const bool overflow = std::find(show, show + Count, false) != show + Count;
 
   // ---- left cluster: mark + menus ----
@@ -359,15 +372,23 @@ float drawTopBar(App& a) {
     // welcome launcher (the project stays open behind it); a right click opens the main menu.
     theme::drawMark(dl, ImVec2(x, btnTop), kBtn, P.logo, P.chrome, mh ? 0.8f : 1.0f);
     ui::Hint("Home: recent projects and templates (right-click: main menu)");
-    if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) a.home.showHome(a.now);
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
+      if (program) ImGui::OpenPopup("##programmenu");  // K-79: a style with a program menu opens it from the mark
+      else a.home.showHome(a.now);
+    }
     if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("##mainmenu");
     ImGui::SetNextWindowPos(ImVec2(x, wp.y + h - 2));
     if (ImGui::BeginPopup("##mainmenu")) {
-      for (const auto& m : kMenus)
-        if (ImGui::BeginMenu(i18n::tr(m.name))) {
-          m.fn(a);
+      for (const menustyle::Menu* m : kMenus)
+        if (ImGui::BeginMenu(i18n::tr(m->name))) {
+          drawStyleMenu(a, *m);
           ImGui::EndMenu();
         }
+      ImGui::EndPopup();
+    }
+    ImGui::SetNextWindowPos(ImVec2(x, wp.y + h - 2));
+    if (program && ImGui::BeginPopup("##programmenu")) {
+      drawStyleMenu(a, *program);
       ImGui::EndPopup();
     }
     x += kBtn + theme::kS2;
@@ -375,13 +396,13 @@ float drawTopBar(App& a) {
   if (show[Menus]) {
     static int openMenu = -1;
     bool anyOpen = false;
-    for (size_t i = 0; i < sizeof kMenus / sizeof kMenus[0]; ++i) {
-      std::string pid = std::string("##menu_") + kMenus[i].name;
+    for (size_t i = 0; i < kMenuCount; ++i) {
+      std::string pid = std::string("##menu_") + kMenus[i]->name;
       ImVec2 bp(x, btnTop);
       ImGui::SetCursorScreenPos(bp);
       ImGui::PushID(static_cast<int>(i));
       bool clicked = ImGui::InvisibleButton("##m", ImVec2(menuW[i], kBtn));
-      if (kMenus[i].fn == menuTools) noteRect("menutools");
+      if (std::strcmp(kMenus[i]->name, "Tools") == 0) noteRect("menutools");
       bool hov = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup);
       ImGui::PopID();
       bool isOpen = ImGui::IsPopupOpen(pid.c_str());
@@ -391,14 +412,14 @@ float drawTopBar(App& a) {
       isOpen = ImGui::IsPopupOpen(pid.c_str());
       if (isOpen || hov)
         dl->AddRectFilled(bp, ImVec2(bp.x + menuW[i], bp.y + kBtn), isOpen ? P.surface800 : P.surface900, theme::kRadius);
-      ImVec2 ts = ImGui::CalcTextSize(i18n::tr(kMenus[i].name));
+      ImVec2 ts = ImGui::CalcTextSize(i18n::tr(kMenus[i]->name));
       dl->AddText(ImVec2(std::round(bp.x + (menuW[i] - ts.x) * 0.5f), std::round(bp.y + (kBtn - ts.y) * 0.5f)),
-                  isOpen || hov ? P.text : P.textDim, i18n::tr(kMenus[i].name));
+                  isOpen || hov ? P.text : P.textDim, i18n::tr(kMenus[i]->name));
       ImGui::SetNextWindowPos(ImVec2(bp.x, wp.y + h - 2));
       if (ImGui::BeginPopup(pid.c_str())) {
         anyOpen = true;
         openMenu = static_cast<int>(i);
-        kMenus[i].fn(a);
+        drawStyleMenu(a, *kMenus[i]);
         ImGui::EndPopup();
       }
       x += menuW[i];
@@ -676,9 +697,9 @@ float drawTopBar(App& a) {
     };
     if (!show[Menus]) {
       section("MENU");
-      for (const auto& m : kMenus)
-        if (ImGui::BeginMenu(i18n::tr(m.name))) {
-          m.fn(a);
+      for (const menustyle::Menu* m : kMenus)
+        if (ImGui::BeginMenu(i18n::tr(m->name))) {
+          drawStyleMenu(a, *m);
           ImGui::EndMenu();
         }
     }
@@ -730,6 +751,323 @@ float drawTopBar(App& a) {
   return h;
 }
 
+// K-79: the tracks layout's top bar, two rows: the menus on their own row (they never hide),
+// then the control row: pane toggles, transport, one display (position, tempo, metre), the
+// modes and the output monitor.
+static float drawTopBarLogic(App& a) {
+  const auto& P = pal();
+  ImGuiViewport* vp = ImGui::GetMainViewport();
+  constexpr float kMenuRowH = 26.0f, kCtrlRowH = 44.0f, kMenuBtnH = 22.0f;
+  const float h = kMenuRowH + kCtrlRowH;
+  ImGui::SetNextWindowPos(vp->WorkPos);
+  ImGui::SetNextWindowSize(ImVec2(vp->WorkSize.x, h));
+  ImGui::SetNextWindowViewport(vp->ID);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowMinSize, ImVec2(1, 1));
+  ImGui::PushStyleColor(ImGuiCol_WindowBg, theme::vec(P.chrome));
+  ImGui::Begin("##topbar", nullptr,
+               ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoSavedSettings |
+                   ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoScrollWithMouse);
+  ImGui::PopStyleColor();
+  ImGui::PopStyleVar(4);
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const Song& s = a.doc.song();
+  const ImVec2 wp = ImGui::GetWindowPos();
+  const float W = ImGui::GetWindowWidth();
+  dl->AddRectFilled(wp, ImVec2(wp.x + W, wp.y + kMenuRowH), P.surface950);
+  dl->AddLine(ImVec2(wp.x, wp.y + kMenuRowH - 0.5f), ImVec2(wp.x + W, wp.y + kMenuRowH - 0.5f), P.line);
+  dl->AddLine(ImVec2(wp.x, wp.y + h - 1), ImVec2(wp.x + W, wp.y + h - 1), P.line);
+
+  // ---- menu row ----
+  const menustyle::Menu* program = nullptr;
+  const std::vector<const menustyle::Menu*> menus = barMenus(a, &program);
+  {
+    float x = wp.x + kPad;
+    const float my = wp.y + (kMenuRowH - kMenuBtnH) * 0.5f;
+    ImGui::SetCursorScreenPos(ImVec2(x, my));
+    ImGui::InvisibleButton("##mark", ImVec2(kMenuBtnH, kMenuBtnH));
+    const bool mh = ImGui::IsItemHovered() || ImGui::IsPopupOpen("##programmenu");
+    theme::drawMark(dl, ImVec2(x + 2, my + 2), kMenuBtnH - 4, P.logo, P.surface950, mh ? 0.8f : 1.0f);
+    ui::Hint(program ? "Gridline: settings, shortcuts, the welcome screen" : "Home: recent projects and templates");
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
+      if (program) ImGui::OpenPopup("##programmenu");
+      else a.home.showHome(a.now);
+    }
+    ImGui::SetNextWindowPos(ImVec2(x, wp.y + kMenuRowH - 1));
+    if (program && ImGui::BeginPopup("##programmenu")) {
+      drawStyleMenu(a, *program);
+      ImGui::EndPopup();
+    }
+    x += kMenuBtnH + theme::kS2;
+    static int openMenu = -1;
+    bool anyOpen = false;
+    const float pad = W < 1100 ? kMenuPadXCompact : kMenuPadX;
+    for (size_t i = 0; i < menus.size(); ++i) {
+      const char* name = i18n::tr(menus[i]->name);
+      const float mw = std::ceil(ImGui::CalcTextSize(name).x + pad * 2);
+      const std::string pid = std::string("##menu_") + menus[i]->name;
+      const ImVec2 bp(x, my);
+      ImGui::SetCursorScreenPos(bp);
+      ImGui::PushID(static_cast<int>(i));
+      const bool clicked = ImGui::InvisibleButton("##m", ImVec2(mw, kMenuBtnH));
+      if (std::strcmp(menus[i]->name, "Tools") == 0) noteRect("menutools");
+      const bool hov = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup);
+      ImGui::PopID();
+      bool isOpen = ImGui::IsPopupOpen(pid.c_str());
+      if (clicked && !isOpen) ImGui::OpenPopup(pid.c_str());
+      if (hov && openMenu >= 0 && openMenu != static_cast<int>(i) && !isOpen) ImGui::OpenPopup(pid.c_str());
+      isOpen = ImGui::IsPopupOpen(pid.c_str());
+      if (isOpen || hov) dl->AddRectFilled(bp, ImVec2(bp.x + mw, bp.y + kMenuBtnH), isOpen ? P.surface800 : P.surface900, theme::kRadius);
+      const ImVec2 ts = ImGui::CalcTextSize(name);
+      dl->AddText(ImVec2(std::round(bp.x + (mw - ts.x) * 0.5f), std::round(bp.y + (kMenuBtnH - ts.y) * 0.5f)), isOpen || hov ? P.text : P.textDim, name);
+      ImGui::SetNextWindowPos(ImVec2(bp.x, wp.y + kMenuRowH - 1));
+      if (ImGui::BeginPopup(pid.c_str())) {
+        anyOpen = true;
+        openMenu = static_cast<int>(i);
+        drawStyleMenu(a, *menus[i]);
+        ImGui::EndPopup();
+      }
+      x += mw;
+    }
+    if (!anyOpen) openMenu = -1;
+  }
+
+  // ---- control row ----
+  const float panelTop = wp.y + kMenuRowH + std::floor((kCtrlRowH - kPanelH) * 0.5f);
+  const float btnTop = panelTop + (kPanelH - kBtn) * 0.5f;
+  const float posW = 118.0f, tempoW = 84.0f, sigW = 46.0f, segW = 44.0f, patW = 140.0f;
+  const float wViews = kPanelPad * 2 + kBtn * 5 + kInner * 4;
+  const float wTransport = kPanelPad * 2 + kBtn * 6 + kInner * 5;
+  const float wDisplay = kPanelPad * 2 + posW + kInner + tempoW + kInner + kBtn + kInner + sigW;
+  const float wModes = kPanelPad * 2 + kBtn * 2 + kInner + theme::kS2 + segW * 3 + 4;
+  const float wPattern = kPanelPad * 2 + patW + kInner + kBtn;
+  const float wMonitor = kPanelPad * 2 + 96.0f;
+  const float wLists = kPanelPad * 2 + kBtn;
+  // Narrow windows drop the least used groups first: the pattern, the monitor, the modes.
+  bool showPattern = true, showMonitor = true, showModes = true;
+  auto need = [&]() {
+    return kPad * 2 + wViews + wTransport + wDisplay + wLists + kGap * 4 + (showModes ? wModes + kGap : 0) + (showPattern ? wPattern + kGap : 0) +
+           (showMonitor ? wMonitor + kGap : 0);
+  };
+  if (need() > W) showPattern = false;
+  if (need() > W) showMonitor = false;
+  if (need() > W) showModes = false;
+
+  float x = wp.x + kPad;
+  // Pane toggles, lit while shown (the hint names the shortcut).
+  {
+    panel(dl, x, wViews, panelTop);
+    noteRectAt("bar_views", ImVec2(x, panelTop), ImVec2(x + wViews, panelTop + kPanelH));
+    const bool editorsOn = a.showPiano || a.showRack;
+    struct Tg {
+      const char* id;
+      ui::Icon icon;
+      bool on;
+      const char* cmd;
+      const char* name;
+      int what;
+    };
+    const Tg tg[] = {{"t_br", ui::Icon::Browser, a.showBrowser, "view.browser", i18n::N_("Browser"), 0},
+                     {"t_mx", ui::Icon::Mixer, a.showMixer, "view.mixer", i18n::N_("Mixer"), 1},
+                     {"t_ed", ui::Icon::Piano, editorsOn, "view.editors", i18n::N_("Editors"), 2},
+                     {"t_cr", ui::Icon::Rack, a.showRack, "view.channelRack", i18n::N_("Channel rack"), 3},
+                     {"t_pl", ui::Icon::Playlist, a.showPlaylist, "view.playlist", i18n::N_("Playlist"), 4}};
+    float cx = x + kPanelPad;
+    for (const Tg& t : tg) {
+      ImGui::SetCursorScreenPos(ImVec2(cx, btnTop));
+      const char* key = keys::label(t.cmd);
+      const std::string hint = std::string(i18n::tr(t.name)) + (key ? std::string(" (") + key + ")" : std::string());
+      if (ui::ToggleIcon(t.id, t.icon, t.on, kBtn, hint.c_str())) {
+        switch (t.what) {
+          case 0: a.showBrowser = !a.showBrowser; break;
+          case 1: a.showMixer = !a.showMixer; break;
+          case 2: layoutui::toggleEditors(a); break;
+          case 3: a.showRack = !a.showRack; break;
+          default: a.showPlaylist = !a.showPlaylist; break;
+        }
+      }
+      cx += kBtn + kInner;
+    }
+    x += wViews + kGap;
+  }
+  // Transport: to the start, back and forward a bar, stop, play, record.
+  {
+    panel(dl, x, wTransport, panelTop);
+    noteRectAt("bar_transport", ImVec2(x, panelTop), ImVec2(x + wTransport, panelTop + kPanelH));
+    float cx = x + kPanelPad;
+    const Tick bar = std::max<Tick>(1, s.barTicks());
+    const Tick pos = static_cast<Tick>(a.engine.position());
+    auto hintKey = [](const char* text, const char* cmd) {
+      const char* k = keys::label(cmd);
+      return std::string(i18n::tr(text)) + (k ? std::string(" (") + k + ")" : std::string());
+    };
+    ImGui::SetCursorScreenPos(ImVec2(cx, btnTop));
+    if (ui::IconButton("tostart", ui::Icon::ChevronLeft, false, kBtn, hintKey("Go to the start", "transport.toStart").c_str())) a.engine.setPosition(0);
+    cx += kBtn + kInner;
+    ImGui::SetCursorScreenPos(ImVec2(cx, btnTop));
+    if (ui::IconButton("barback", ui::Icon::Left, false, kBtn, hintKey("Back one bar", "transport.rewindBar").c_str()))
+      a.engine.setPosition(std::max<Tick>(0, (pos - 1) / bar * bar));
+    cx += kBtn + kInner;
+    ImGui::SetCursorScreenPos(ImVec2(cx, btnTop));
+    if (ui::IconButton("barfwd", ui::Icon::Right, false, kBtn, hintKey("Forward one bar", "transport.forwardBar").c_str())) a.engine.setPosition((pos / bar + 1) * bar);
+    cx += kBtn + kInner;
+    menuparity::transportTick(a);
+    ImGui::SetCursorScreenPos(ImVec2(cx, btnTop));
+    if (ui::IconButton("stop", ui::Icon::Stop, false, kBtn, "Stop (right-click: options)", 0, 0, true)) menuparity::stopButtonPressed(a);
+    noteRect("stop");
+    if (ImGui::BeginPopupContextItem("##stopmenu")) {
+      menuparity::stopMenuItems(a);
+      ImGui::EndPopup();
+    }
+    cx += kBtn + kInner;
+    const bool playing = a.engine.playing();
+    ImGui::SetCursorScreenPos(ImVec2(cx, btnTop));
+    const std::string playTip = menuparity::playButtonHint(a);
+    if (ui::IconButton("play", playing ? ui::Icon::Pause : ui::Icon::Play, playing, kBtn, playTip.empty() ? hintKey("Play / pause", "transport.play").c_str() : playTip.c_str(),
+                       theme::rgb(theme::role::kPlay), theme::rgb(theme::role::kPlay, 0.8f), true))
+      playing ? a.engine.pause() : (void)menuparity::playPressed(a);
+    noteRect("play");
+    cx += kBtn + kInner;
+    ImGui::SetCursorScreenPos(ImVec2(cx, btnTop));
+    if (ui::IconButton("rec", ui::Icon::Record, a.recordArmed, kBtn, hintKey("Record (right-click: what to record, punch, count-in)", "transport.record").c_str(),
+                       P.arm, theme::withAlpha(P.arm, 0.7f), true))
+      a.recordArmed = !a.recordArmed;
+    noteRect("rec");
+    if (ImGui::BeginPopupContextItem("##recmenu")) {
+      recordOptionsMenu(a);
+      ImGui::EndPopup();
+    }
+    x += wTransport + kGap;
+  }
+  // One display: position, tempo (tap beside it), metre.
+  {
+    panel(dl, x, wDisplay, panelTop);
+    noteRectAt("bar_display", ImVec2(x, panelTop), ImVec2(x + wDisplay, panelTop + kPanelH));
+    float cx = x + kPanelPad;
+    const std::string posText = menuparity::positionText(a, a.engine.position());
+    ImGui::SetCursorScreenPos(ImVec2(cx, btnTop));
+    ImGui::InvisibleButton("##pos", ImVec2(posW, kBtn));
+    if (ImGui::BeginPopupContextItem("##posmenu")) {
+      menuparity::timeFormatMenu(a);
+      ImGui::EndPopup();
+    }
+    ui::Lcd(dl, ImVec2(cx, btnTop), ImVec2(posW, kBtn), posText.c_str(), false, false);
+    ui::Hint("Song position (right-click: bars and beats, minutes and seconds, or timecode)");
+    cx += posW + kInner;
+    static TempoMap map;
+    static uint64_t mapRev = ~0ull;
+    static const Song* mapSong = nullptr;
+    if (mapRev != a.doc.revision() || mapSong != &s) {
+      map.build(s);
+      mapRev = a.doc.revision();
+      mapSong = &s;
+    }
+    const bool automated = !map.constant() && a.engine.mode() == PlayMode::Song;
+    double tempo = automated ? map.bpmAt(a.engine.position()) : s.tempo;
+    const double shown = tempo;
+    ImGui::SetCursorScreenPos(ImVec2(cx, btnTop));
+    if (tempoLcd(a, &tempo, tempoW) && !(automated && tempo == shown)) a.doc.setParam(songParam(SongParam::Tempo), tempo, true);
+    if (ImGui::IsItemDeactivated()) a.doc.endGesture();
+    cx += tempoW + kInner;
+    ImGui::SetCursorScreenPos(ImVec2(cx, btnTop));
+    tapButton(a, kBtn);
+    cx += kBtn + kInner;
+    char sig[16];
+    std::snprintf(sig, sizeof sig, "%d/%d", s.timeSigNum, s.timeSigDen);
+    ui::Lcd(dl, ImVec2(cx, btnTop), ImVec2(sigW, kBtn), sig, false, false);
+    ImGui::SetCursorScreenPos(ImVec2(cx, btnTop));
+    ImGui::InvisibleButton("##sig", ImVec2(sigW, kBtn));
+    ui::Hint("Time signature of the project (Project settings)");
+    x += wDisplay + kGap;
+  }
+  // Modes: metronome, count-in, pattern / song / live.
+  if (showModes) {
+    panel(dl, x, wModes, panelTop);
+    float cx = x + kPanelPad;
+    ImGui::SetCursorScreenPos(ImVec2(cx, btnTop));
+    if (ui::ToggleIcon("metro", ui::Icon::Metronome, a.metronome, kBtn,
+                       (std::string(i18n::tr("Metronome")) + (keys::label("options.metronome") ? std::string(" (") + keys::label("options.metronome") + ")" : "")).c_str()))
+      a.metronome = !a.metronome;
+    noteRect("metro");
+    cx += kBtn + kInner;
+    ImGui::SetCursorScreenPos(ImVec2(cx, btnTop));
+    if (ui::ToggleIcon("countin", ui::Icon::LoopArrows, a.countInBars > 0, kBtn, i18n::N_("Count-in before recording")))
+      a.countInBars = a.countInBars > 0 ? 0 : 1;
+    cx += kBtn + theme::kS2;
+    ImGui::SetCursorScreenPos(ImVec2(cx, btnTop));
+    int mode = a.engine.mode() == PlayMode::Song ? 1 : a.engine.mode() == PlayMode::Live ? 2 : 0;
+    const char* labels[] = {"PAT", "SONG", "LIVE"};
+    const char* hints[] = {"Pattern mode: play the selected pattern", "Song mode: play the playlist arrangement", "Live mode: launch the clips of the live area by hand"};
+    ImGui::PushFont(a.fontBold, theme::kFontCaption);
+    if (ui::Segmented("mode", labels, 3, &mode, segW, kBtn, hints))
+      a.engine.setMode(mode == 2 ? PlayMode::Live : mode == 1 ? PlayMode::Song : PlayMode::Pattern);
+    ImGui::PopFont();
+    x += wModes + kGap;
+  }
+  if (showPattern) {
+    panel(dl, x, wPattern, panelTop);
+    const Pattern* cur = s.pattern(a.curPattern);
+    const ImVec2 p(x + kPanelPad, btnTop);
+    ImGui::SetCursorScreenPos(p);
+    ImGui::InvisibleButton("##patbtn", ImVec2(patW, kBtn));
+    const bool hov = ImGui::IsItemHovered(), open = ImGui::IsPopupOpen("##patpop");
+    if (ImGui::IsItemClicked()) ImGui::OpenPopup("##patpop");
+    dl->AddRectFilled(p, ImVec2(p.x + patW, p.y + kBtn), open ? P.surface700 : hov ? P.surface800 : P.surface950, theme::kRadius);
+    dl->AddRect(p, ImVec2(p.x + patW, p.y + kBtn), open ? P.accent : P.line, theme::kRadius);
+    if (cur) dl->AddRectFilled(ImVec2(p.x + 8, p.y + 8), ImVec2(p.x + 12, p.y + kBtn - 8), theme::rgb(cur->color), 2);
+    theme::textEllipsis(dl, a.fontRegular, theme::kFontBody, ImVec2(p.x + 20, std::round(p.y + (kBtn - theme::kFontBody) * 0.5f)), patW - 20 - 24, P.text,
+                        cur ? cur->name.c_str() : "No pattern");
+    ui::drawIcon(dl, ui::Icon::ChevronDown, ImVec2(p.x + patW - 13, p.y + kBtn * 0.5f), 12, P.textDim);
+    ui::Hint("Selected pattern: click to choose");
+    ImGui::SetNextWindowPos(ImVec2(p.x, panelTop + kPanelH));
+    ImGui::SetNextWindowSizeConstraints(ImVec2(patW, 0), ImVec2(320, 420));
+    if (ImGui::BeginPopup("##patpop")) {
+      patternList(a);
+      ImGui::EndPopup();
+    }
+    ImGui::SetCursorScreenPos(ImVec2(p.x + patW + kInner, btnTop));
+    if (ui::IconButton("newpat", ui::Icon::Plus, false, kBtn, "New pattern")) {
+      ObjectId id = a.doc.addPattern("Pattern " + std::to_string(s.patterns.size() + 1));
+      if (id) a.selectPattern(id);
+    }
+  }
+  // Right: the output monitor, then the lists pane toggle.
+  float rx = wp.x + W - kPad - wLists;
+  {
+    panel(dl, rx, wLists, panelTop);
+    ImGui::SetCursorScreenPos(ImVec2(rx + kPanelPad, btnTop));
+    const char* key = keys::label("edit.history");
+    const std::string hint = std::string(i18n::tr("Undo history")) + (key ? std::string(" (") + key + ")" : std::string());
+    if (ui::ToggleIcon("t_lists", ui::Icon::ListBullets, a.showHistory, kBtn, hint.c_str())) a.showHistory = !a.showHistory;
+    rx -= kGap;
+  }
+  static LevelMeter out;
+  out.update(a.engine.takeMasterPeakL(), a.engine.takeMasterPeakR(), ImGui::GetIO().DeltaTime);
+  if (showMonitor) {
+    rx -= wMonitor;
+    panel(dl, rx, wMonitor, panelTop);
+    const ImVec2 p(rx + kPanelPad + 4, panelTop + 7);
+    const float w = wMonitor - kPanelPad * 2 - 8, lf = theme::kFontLabel, labelW = 26.0f;
+    dl->AddText(a.fontMono, lf, p, P.textFaint, "OUT");
+    outMeter(dl, ImVec2(p.x + labelW, p.y + 1), ImVec2(w - labelW, 9.0f), out);
+    const float load = std::clamp(a.engine.cpuLoad(), 0.0f, 1.0f);
+    char cpu[16];
+    std::snprintf(cpu, sizeof cpu, "%d%%", CpuMeter::displayPercent(a.engine.cpuLoad()));
+    const float y2 = p.y + 14;
+    const ImU32 col = load > 0.8f ? P.danger : P.textDim;
+    dl->AddText(a.fontMono, lf, ImVec2(p.x, y2), P.textFaint, "CPU");
+    const float tw = a.fontMono->CalcTextSizeA(lf, 1e9f, 0, cpu).x;
+    dl->AddText(a.fontMono, lf, ImVec2(p.x + w - tw, y2), col, cpu);
+    ImGui::SetCursorScreenPos(ImVec2(rx, panelTop));
+    if (ImGui::InvisibleButton("##mon", ImVec2(wMonitor, kPanelH))) a.showPerformance = !a.showPerformance;
+    ui::Hint("Master output level and audio processing load (click: Performance window)");
+  }
+  ImGui::End();
+  return h;
+}
+
 // ---------------------------------------------------------- status bar ----
 
 static void drawNotifications(App& a, ImVec2 wp, float W, float fs);
@@ -746,9 +1084,11 @@ void drawStatusBar(App& a) {
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
   ImGui::PushStyleVar(ImGuiStyleVar_WindowMinSize, ImVec2(1, 1));
   ImGui::PushStyleColor(ImGuiCol_WindowBg, theme::vec(P.chrome));
+  // K-79: the live layout puts its bottom panel toggles in the status bar's corner.
+  const bool corner = layoutui::active() == layout::Preset::Live;
   ImGui::Begin("##status", nullptr,
-               ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoDocking |
-                   ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoInputs);
+               ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoSavedSettings |
+                   ImGuiWindowFlags_NoBringToFrontOnFocus | (corner ? ImGuiWindowFlags_NoScrollWithMouse : ImGuiWindowFlags_NoInputs));
   ImGui::PopStyleColor();
   ImGui::PopStyleVar(4);
   ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -758,12 +1098,40 @@ void drawStatusBar(App& a) {
   const float ty = std::round(wp.y + (h - fs) * 0.5f) - 1;
   dl->AddLine(wp, ImVec2(wp.x + W, wp.y), P.line);
 
+  float rx = wp.x + W - theme::kS3;
+  if (corner) {  // Editor, channel settings, Mixer (lit while shown)
+    struct Tg {
+      const char* id;
+      const char* label;
+      bool on;
+      int what;
+    };
+    const Tg tg[] = {{"##sb_mixer", i18n::N_("Mixer"), a.showMixer, 2}, {"##sb_chan", i18n::N_("Channel"), a.settingsChannel != kNoId, 1},
+                     {"##sb_editor", i18n::N_("Editor"), a.showPiano, 0}};
+    for (const Tg& t : tg) {
+      const char* text = i18n::tr(t.label);
+      const float tw = a.fontRegular->CalcTextSizeA(fs, 1e9f, 0, text).x + 14;
+      rx -= tw;
+      const ImVec2 bp(rx, wp.y + 3);
+      ImGui::SetCursorScreenPos(bp);
+      const bool click = ImGui::InvisibleButton(t.id, ImVec2(tw, h - 6));
+      const bool hov = ImGui::IsItemHovered();
+      dl->AddRectFilled(bp, ImVec2(bp.x + tw, bp.y + h - 6), t.on ? theme::withAlpha(P.hot, 0.9f) : hov ? P.surface800 : P.surface900, theme::kRadiusSm);
+      dl->AddText(a.fontRegular, fs, ImVec2(bp.x + 7, ty), t.on ? theme::contrastText(P.hot) : P.textDim, text);
+      if (click) {
+        if (t.what == 0) a.showPiano = !a.showPiano;
+        if (t.what == 1) a.settingsChannel = a.settingsChannel != kNoId ? kNoId : a.selChannel;
+        if (t.what == 2) a.showMixer = !a.showMixer;
+      }
+      rx -= theme::kS1;
+    }
+    rx -= theme::kS3;
+  }
   // Right: audio format · project name · unsaved marker.
   std::string proj = a.projectFile().empty() ? "Untitled project" : fs::path(a.projectFile()).filename().string();
   if (std::string shared = collabui::projectTitle(a); !shared.empty()) proj = shared;  // J-111f
   char audio[48];
   std::snprintf(audio, sizeof audio, "%.1f kHz  \xC2\xB7  %d", a.engine.sampleRate() / 1000.0, a.audioBuffer);
-  float rx = wp.x + W - theme::kS3;
   float aw = a.fontMono->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, audio).x;
   float pw = std::min(a.fontRegular->CalcTextSizeA(fs, 1e9f, 0, proj.c_str()).x, W * 0.3f);
   bool showAudio = W > 700;

@@ -7,6 +7,7 @@
 #include <map>
 #include <sstream>
 #include "Project.h"
+#include "ProjectFiles.h"
 
 namespace gl {
 
@@ -14,16 +15,10 @@ namespace fs = std::filesystem;
 
 namespace {
 
-const std::string kExt = ".gridline.json";
-
-bool isTemplateFile(const fs::path& p) {
-  std::string n = p.filename().string();
-  return n.size() > kExt.size() && n.compare(n.size() - kExt.size(), kExt.size(), kExt) == 0;
-}
-std::string stemOf(const fs::path& p) {
-  std::string n = p.filename().string();
-  return n.substr(0, n.size() - kExt.size());
-}
+// K-121: templates are saved as "<Name>.gridline"; older ones named "<Name>.gridline.json" still list.
+bool isTemplateFile(const fs::path& p) { return isGridlineProjectName(p.filename().u8string()); }
+bool hasNewName(const fs::path& p) { return saveFormatOf(p.filename().u8string()) == SaveFormat::Gridline; }
+std::string stemOf(const fs::path& p) { return projectStemOf(p.u8string()); }
 std::string readDescription(const fs::path& txt) {
   std::ifstream is(txt, std::ios::binary);
   if (!is) return "";
@@ -47,22 +42,35 @@ std::string safeName(std::string n) {
   return n;
 }
 
-void addFile(std::map<std::pair<std::string, std::string>, TemplateInfo>& out, const fs::path& f, const std::string& category,
-             bool user) {
+// Which root a template came from, and whether it has the new name: a later root replaces an earlier
+// one; in one folder the new name wins over the older one (a template saved again after K-121).
+struct Found {
+  TemplateInfo info;
+  size_t root = 0;
+  bool newName = false;
+};
+
+void addFile(std::map<std::pair<std::string, std::string>, Found>& out, const fs::path& f, const std::string& category, bool user,
+             size_t root) {
   TemplateInfo t;
   t.path = f.string();
   t.name = stemOf(f);
   t.category = category;
   t.user = user;
   t.description = readDescription(f.parent_path() / (t.name + ".txt"));
-  out[{t.category, t.name}] = t;
+  const bool newName = hasNewName(f);
+  auto it = out.find({t.category, t.name});
+  if (it != out.end() && it->second.root == root && it->second.newName && !newName) return;
+  out[{t.category, t.name}] = Found{t, root, newName};
 }
 
 }  // namespace
 
 std::vector<TemplateInfo> scanTemplates(const std::vector<std::pair<std::string, bool>>& roots) {
-  std::map<std::pair<std::string, std::string>, TemplateInfo> found;
-  for (const auto& [root, user] : roots) {
+  std::map<std::pair<std::string, std::string>, Found> found;
+  for (size_t ri = 0; ri < roots.size(); ++ri) {
+    const std::string& root = roots[ri].first;
+    const bool user = roots[ri].second;
     std::error_code ec;
     for (fs::directory_iterator it(root, ec), end; !ec && it != end; it.increment(ec)) {
       std::error_code e2;
@@ -70,14 +78,14 @@ std::vector<TemplateInfo> scanTemplates(const std::vector<std::pair<std::string,
         std::string cat = it->path().filename().string();
         if (cat.empty() || cat[0] == '.') continue;
         for (fs::directory_iterator jt(it->path(), e2), jend; !e2 && jt != jend; jt.increment(e2))
-          if (isTemplateFile(jt->path())) addFile(found, jt->path(), cat, user);
+          if (isTemplateFile(jt->path())) addFile(found, jt->path(), cat, user, ri);
       } else if (isTemplateFile(it->path())) {
-        addFile(found, it->path(), user ? "User" : "Other", user);
+        addFile(found, it->path(), user ? "User" : "Other", user, ri);
       }
     }
   }
   std::vector<TemplateInfo> out;
-  for (auto& [k, t] : found) out.push_back(t);
+  for (auto& [k, t] : found) out.push_back(t.info);
   return out;
 }
 
@@ -91,10 +99,11 @@ bool saveTemplate(const std::string& root, const std::string& category, const st
   fs::path dir = c.empty() ? fs::path(root) : fs::path(root) / c;
   std::error_code ec;
   fs::create_directories(dir, ec);
-  fs::path file = dir / (n + kExt);
+  fs::path file = dir / fs::u8path(n + kProjectExt);
   Song s = song;
   s.info.title = n;
-  if (!saveProject(file.string(), s, err)) return false;
+  if (!saveProject(file.u8string(), s, err)) return false;
+  fs::remove(dir / fs::u8path(n + kOldProjectExt), ec);  // (the same template under its older name is replaced)
   fs::path txt = dir / (n + ".txt");
   if (!description.empty()) {
     if (!writeFileAtomic(txt.string(), description + "\n", err)) return false;

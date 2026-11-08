@@ -1,11 +1,13 @@
 // Gridline — channel rack: channels of the selected pattern with step
 // sequencer rows (or a note preview when the channel has piano-roll notes).
 #include <algorithm>
+#include <cfloat>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <map>
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -50,13 +52,34 @@ struct RackShown {
   bool wheelScrolls = false;
   float originX = 0, row0Y = -1, viewX0 = 0, graphY = -1;  // screen geometry for scripted input
   float rowPitch = 0;                                       // J-97: from one row to the next
+  float lastRowBottom = -1;                                 // K-136: the last channel row's bottom (screen)
 };
 RackShown gShown;
+// K-136: the rack's height follows its content (racklayout::fitHeight), measured each frame.
+struct RackFit {
+  float rowsContent = 0;  // the rows' content height last frame (0: not measured yet)
+  float fitH = 0;         // the floating window's largest height (its content)
+  float winH = 0, winBottom = 0;
+  bool docked = false;
+  bool detached = false;  // in an OS window of its own (popped out): its menus need the room, no limit
+  ImVec2 addMin{0, 0}, addMax{0, 0};  // the add button under the rows (screen)
+} gFit;
+// K-127 dev check: each row's controls as drawn last frame (screen rectangles: x0 y0 x1 y1).
+struct RowGeom {
+  ImVec4 pan, vol, mix, name, lamp, steps;
+  int lights = 0;  // K-127: lights drawn on the row (one)
+  int frame = -1;
+};
+std::unordered_map<ObjectId, RowGeom> gRowGeom;
+ImVec4 rectOf(ImVec2 p0, ImVec2 p1) { return ImVec4(p0.x, p0.y, p1.x, p1.y); }
+// K-126: the mute states from before the rack's last channel solo (a second solo click brings them back).
+std::map<ObjectId, bool> gSoloBefore;
 struct RackDev {
   int steps = 0;
   float w = 0, h = 0, scroll = -1;
   bool dock = false;
   int playStep = -1;  // J-137 "play<k>": the song-position outline on step k (stills of the play highlight)
+  ImVec2 addMin{0, 0}, addMax{0, 0};  // K-72: the toolbar's "+" (add an instrument) button, last drawn
 } gRackDev;
 
 // J-186: the play light of each channel row (UI state, per channel; rows not drawn keep theirs).
@@ -89,20 +112,19 @@ float rackPlayLight(App& a, const Channel& c, size_t index) {
   return e.light.alpha();
 }
 
-// The row's lamp at the right end of the steps: lit green while the channel plays, fading after
-// (J-186 play light); a selected channel's lamp keeps a green rim.
-void drawRowLamp(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float level, bool selected, bool hovered) {
+// The channel's one light, between the name button and the steps (K-127): green while the
+// channel is on, dark while it is muted, and glowing brighter while it plays, fading after (J-186).
+void drawRowLamp(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float level, bool muted, bool hovered) {
   const auto& P = pal();
   const ImU32 socket = P.dark ? theme::mix(P.field, P.ink, 0.35f) : theme::mix(P.surface700, P.ink, 0.18f);
-  const ImU32 idle = theme::mix(socket, P.led, selected ? 0.22f : hovered ? 0.14f : 0.06f);
+  const ImU32 idle = muted ? theme::mix(socket, P.paper, hovered ? 0.10f : 0.0f) : theme::mix(socket, P.led, hovered ? 0.62f : 0.5f);
   dl->AddRectFilled(p0, p1, idle, 2.0f);
-  if (level > 0.003f) {
+  if (level > 0.003f && !muted) {
     const float l = std::min(1.0f, level);
     dl->AddRectFilled(ImVec2(p0.x - 2, p0.y - 2), ImVec2(p1.x + 2, p1.y + 2), theme::withAlpha(P.led, 0.22f * l), 3.0f);  // glow
     dl->AddRectFilled(p0, p1, theme::mix(idle, theme::mix(P.led, P.paper, 0.2f * l * l), l), 2.0f);
   }
-  if (selected) dl->AddRect(ImVec2(p0.x - 1.5f, p0.y - 1.5f), ImVec2(p1.x + 1.5f, p1.y + 1.5f), theme::withAlpha(P.led, 0.75f), 3.0f, 0, 1.2f);
-  else dl->AddRect(p0, p1, theme::withAlpha(P.ink, P.dark ? 0.5f : 0.25f), 2.0f);
+  dl->AddRect(p0, p1, theme::withAlpha(P.ink, P.dark ? 0.5f : 0.25f), 2.0f);
 }
 
 std::vector<uint8_t> rowOf(const Pattern& p, ObjectId ch) {
@@ -291,6 +313,17 @@ std::string laneText(uint8_t vel, const StepProps& p, tools::StepLane l) {
 
 void drawChannelRack(App& a) {
   if (!a.showRack) return;
+  // K-136: a floating rack is never taller than its content (docked, the dock node sets the size).
+  // A rack popped out into an OS window of its own (or being placed outside the main window this
+  // frame) keeps its size: its menus open inside it.
+  const float prevFit = gFit.fitH;
+  bool goingOut = false;
+  if (const ImGuiWindow* rw = ImGui::FindWindowByName("Channel rack"); rw && !rw->DockIsActive) {
+    // (the viewports module marks a window it pops out with NoAutoMerge, app/Viewports.cpp)
+    goingOut = (rw->Viewport && rw->Viewport != ImGui::GetMainViewport()) ||
+               (rw->WindowClass.ViewportFlagsOverrideSet & ImGuiViewportFlags_NoAutoMerge) != 0;
+  }
+  if (prevFit > 0 && !gFit.detached && !goingOut) ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(FLT_MAX, prevFit));
   if (!ui::BeginDockWindow("Channel rack", &a.showRack, ImVec2(760, 360))) {
     ui::EndDockWindow();
     return;
@@ -355,6 +388,7 @@ void drawChannelRack(App& a) {
     (void)y0;
     ImGui::SetCursorScreenPos(ImVec2(rx, rowY));
     if (ui::IconButton("add", ui::Icon::Plus, false, fh, "Add an instrument channel")) ImGui::OpenPopup("##addch");
+    gRackDev.addMin = ImGui::GetItemRectMin(), gRackDev.addMax = ImGui::GetItemRectMax();
     if (ImGui::BeginPopup("##addch")) {
       addChannelMenu(a);
       ImGui::EndPopup();
@@ -436,20 +470,28 @@ void drawChannelRack(App& a) {
   // height (J-28) is unchanged.
   constexpr float kBarH = 28.0f;
   const bool showBar = !s.channels.empty();
+  // K-136: the rows take their content's height when it is shorter than the room, so the add
+  // button sits under the last row; a taller list fills the room and scrolls.
+  const float rowsTop = ImGui::GetCursorPosY();
+  const float rowsRoom = ImGui::GetContentRegionAvail().y - (showBar ? kBarH : 0.0f);
+  const float bottomChrome =
+      ImGui::GetWindowPos().y + ImGui::GetWindowHeight() - (ImGui::GetCursorScreenPos().y + ImGui::GetContentRegionAvail().y);
+  const float rowsH = racklayout::rowsRegion(gFit.rowsContent, rowsRoom);
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS2, theme::kS2));
   ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::vec(P.dark ? theme::mix(P.surface900, P.surface800, 0.35f) : P.surface900));
   // The horizontal scrollbar only shows for a rack narrower than its left section plus a few steps.
-  ImGui::BeginChild("##rows", ImVec2(0, showBar ? -kBarH : 0.0f), ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_HorizontalScrollbar);
+  ImGui::BeginChild("##rows", ImVec2(0, rowsH > 0 ? rowsH : showBar ? -kBarH : 0.0f), ImGuiChildFlags_AlwaysUseWindowPadding,
+                    ImGuiWindowFlags_HorizontalScrollbar);
   ImGui::PopStyleColor();
   ImGui::PopStyleVar();
   ImDrawList* dl = ImGui::GetWindowDrawList();
   // Channel button proportions after the reference rack: mute lamp · pan · volume
-  // · mixer track box · name button · steps · select lamp.
+  // · mixer track box · name button · activity / select lamp · steps (K-127).
   const float rowH = 26.0f, rowGap = 3.0f, cellH = 20.0f;
   const float avail = ImGui::GetContentRegionAvail().x;
   a.rack.lastAvail = avail;
   const racklayout::Layout L = racklayout::compute({avail, total});
-  const float xLed = racklayout::kXLed, xPan = racklayout::kXPan, xVol = racklayout::kXVol, xMix = racklayout::kXMix,
+  const float xLeft = racklayout::kXLeft, xPan = racklayout::kXPan, xVol = racklayout::kXVol, xMix = racklayout::kXMix,
               nameX = racklayout::kNameX, nameW = L.nameW, stepsX = L.stepsX, stepW = L.stepW, stepGap = racklayout::kStepGap,
               groupGap = racklayout::kGroupGap, viewW = L.viewW, rowW = L.rowW;
   auto stepPos = [&L](int k) { return L.stepPos(k); };
@@ -516,7 +558,7 @@ void drawChannelRack(App& a) {
     ImVec2 rp = ImGui::GetCursorScreenPos();
     if (a.rack.zipped.count(c.id)) {  // J-11 zipped row: a thin strip; click unzips
       const float zh = 7.0f;
-      ImGui::InvisibleButton("zip", ImVec2(L.lampX, zh));
+      ImGui::InvisibleButton("zip", ImVec2(L.rowW, zh));
       const bool zhov = ImGui::IsItemHovered();
       if (ImGui::IsItemClicked()) a.rack.zipped.erase(c.id);
       if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
@@ -524,7 +566,7 @@ void drawChannelRack(App& a) {
         ImGui::OpenPopup("##chmenu");
       }
       if (ui::HintHovered()) ui::Hint(c.name + " (zipped: click to unzip)");
-      dl->AddRectFilled(ImVec2(rp.x + nameX, rp.y + 1), ImVec2(rp.x + L.lampX, rp.y + zh - 1),
+      dl->AddRectFilled(ImVec2(rp.x + nameX, rp.y + 1), ImVec2(rp.x + L.rowW, rp.y + zh - 1),
                         theme::withAlpha(theme::rgb(c.color), zhov ? 0.75f : 0.45f), 2);
       if (ImGui::BeginPopup("##chmenu")) {
         channelContextMenu(a, c.id);
@@ -532,6 +574,7 @@ void drawChannelRack(App& a) {
       }
       ImGui::SetCursorScreenPos(ImVec2(rp.x, rp.y + zh + 2));
       ImGui::Dummy(ImVec2(rowW, 0));
+      shown.lastRowBottom = rp.y + zh;
       ImGui::PopID();
       continue;
     }
@@ -541,6 +584,7 @@ void drawChannelRack(App& a) {
         !ImGui::IsPopupOpen("##chmenu") && !ImGui::IsPopupOpen("##route")) {
       ImGui::SetCursorScreenPos(ImVec2(rp.x, rp.y + rowH + rowGap));
       ImGui::Dummy(ImVec2(rowW, 0));
+      shown.lastRowBottom = rp.y + rowH;
       ImGui::PopID();
       continue;
     }
@@ -551,29 +595,17 @@ void drawChannelRack(App& a) {
     bool selected = a.selChannels.count(c.id) > 0;
     if (selected) dl->AddRectFilled(rp, ImVec2(rp.x + rowW, rp.y + rowH), theme::withAlpha(P.paper, 0.035f), theme::kRadius);
 
-    // Mute lamp (Ctrl+click: solo).
-    {
-      ImGui::SetCursorScreenPos(ImVec2(rp.x + xLed, cy - 8));
-      if (ImGui::InvisibleButton("mute", ImVec2(16, 16))) {
-        if (ImGui::GetIO().KeyCtrl) {
-          a.doc.beginGroup("solo channel");
-          for (const auto& o : s.channels) a.doc.setParam(channelParam(o.id, ChannelParam::Mute), o.id == c.id ? 0 : 1, false);
-          a.doc.endGroup();
-        } else {
-          a.doc.setParam(channelParam(c.id, ChannelParam::Mute), c.muted ? 0 : 1, false);
-        }
-      }
-      ui::Hint(c.muted ? "Unmute channel (Ctrl+click: solo)" : "Mute channel (Ctrl+click: solo)");
-      float lvl = 0;
-      if (auto rt = a.builder.channelRuntime(c.id)) lvl = rt->level.exchange(0);
-      ui::Led(dl, ImVec2(rp.x + xLed + 8, cy), 4.5f, !c.muted, std::min(1.0f, lvl * 3));
-    }
+    RowGeom& geom = gRowGeom[c.id];
+    geom.lights = 0;
+    geom.frame = ImGui::GetFrameCount();
     // Pan & volume knobs: always shown (J-84).
     {
       ImGui::SetCursorScreenPos(ImVec2(rp.x + xPan, cy - 9));
       ui::ParamKnob("pan", channelParam(c.id, ChannelParam::Pan), 9.0f, nullptr, true);
+      geom.pan = rectOf(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
       ImGui::SetCursorScreenPos(ImVec2(rp.x + xVol, cy - 9));
       ui::ParamKnob("vol", channelParam(c.id, ChannelParam::Volume), 9.0f);
+      geom.vol = rectOf(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
       ++shown.knobRows;
     }
     // Mixer track box: drag to change, right-click to pick.
@@ -582,6 +614,7 @@ void drawChannelRack(App& a) {
       ImVec2 bp(rp.x + xMix, cy - cellH * 0.5f);
       ImGui::SetCursorScreenPos(bp);
       ImGui::InvisibleButton("mt", ImVec2(boxW, cellH));
+      geom.mix = rectOf(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
       int mi = std::max(0, s.mixerIndex(c.mixerTrack));
       bool hov = ImGui::IsItemHovered();
       if (ImGui::IsItemActive() && std::fabs(ImGui::GetMouseDragDelta().y) > 8) {
@@ -618,6 +651,7 @@ void drawChannelRack(App& a) {
       ImVec2 np(rp.x + nameX, cy - cellH * 0.5f);
       ImGui::SetCursorScreenPos(np);
       ImGui::InvisibleButton("name", ImVec2(nameW, cellH));
+      geom.name = rectOf(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
       bool hov = ImGui::IsItemHovered();
       // Click (without dragging): select the channel and toggle its settings / info
       // window, like the reference channel button. No sound; Ctrl+click only adds to the selection.
@@ -661,6 +695,9 @@ void drawChannelRack(App& a) {
       dl->AddRectFilled(np, ImVec2(np.x + nameW, np.y + cellH - 1), bg, theme::kRadiusSm);
       dl->AddLine(ImVec2(np.x + 5, np.y + 0.5f), ImVec2(np.x + nameW - 2, np.y + 0.5f), theme::withAlpha(P.paper, P.dark ? 0.12f : 0.5f));
       dl->AddRectFilled(np, ImVec2(np.x + 4, np.y + cellH), theme::content(c.color), theme::kRadiusSm, ImDrawFlags_RoundCornersLeft);
+      if (selected)  // K-127: the selection shows on the name button (the light shows the channel's state)
+        dl->AddRect(ImVec2(np.x + 0.5f, np.y + 0.5f), ImVec2(np.x + nameW - 0.5f, np.y + cellH - 0.5f), theme::withAlpha(P.paper, P.dark ? 0.55f : 0.7f),
+                    theme::kRadiusSm, 0, 1.0f);
       if (iconBox > 0)
         trackicons::draw(dl, c.icon, ImVec2(std::round(np.x + 9 + iconBox * 0.5f), std::round(np.y + cellH * 0.5f)), iconBox,
                          c.muted ? P.textFaint : P.textDim);
@@ -791,28 +828,44 @@ void drawChannelRack(App& a) {
       if (scrollX < L.scrollMax - 0.5f)
         dl->AddRectFilledMultiColor(ImVec2(viewX1 - 6, sp.y), ImVec2(viewX1, sp.y + cellH), edge, edgeIn, edgeIn, edge);
     }
-    // The row's lamp (right of the step viewport): lights while the channel plays (J-186); a
-    // selected channel's lamp has a green rim; a click toggles the selection.
+    geom.steps = rectOf(ImVec2(viewX0, sp.y), ImVec2(viewX1, sp.y + cellH));
+    // The channel's one light (K-127: between the name button and the steps, as in the reference
+    // rack): green while the channel is on, dark while muted, glowing while it plays (J-186).
+    // Click: mute / unmute; right-click or Ctrl+click: solo, again: unsolo (K-126); Shift+click:
+    // add to or take out of the selection.
     {
-      ImVec2 l0(rp.x + L.lampX + 5, cy - cellH * 0.5f + 2), l1(l0.x + 6, cy + cellH * 0.5f - 2);
-      ImGui::SetCursorScreenPos(ImVec2(l0.x - 3, l0.y - 2));
-      if (ImGui::InvisibleButton("sel", ImVec2(12, cellH))) a.selectChannel(c.id, true);
-      ui::Hint(selected ? "Lights while the channel plays \xC2\xB7 selected (click to deselect)"
-                        : "Lights while the channel plays \xC2\xB7 click to add this channel to the selection");
-      drawRowLamp(dl, l0, l1, rackPlayLight(a, c, ci), selected, ImGui::IsItemHovered());
+      const float lx = std::round(rp.x + L.lampX + (racklayout::kSelLampW - 6) * 0.5f);
+      ImVec2 l0(lx, cy - cellH * 0.5f + 2), l1(l0.x + 6, cy + cellH * 0.5f - 2);
+      ImGui::SetCursorScreenPos(ImVec2(rp.x + L.lampX, cy - cellH * 0.5f));
+      const bool muted = c.muted;
+      const ObjectId cid = c.id;
+      if (ImGui::InvisibleButton("light", ImVec2(racklayout::kSelLampW, cellH))) {
+        const ImGuiIO& io = ImGui::GetIO();
+        if (io.KeyShift) a.selectChannel(cid, true);
+        else if (io.KeyCtrl || io.KeySuper) ops::toggleChannelSolo(a.doc, cid, gSoloBefore);
+        else a.doc.setParam(channelParam(cid, ChannelParam::Mute), muted ? 0 : 1, false);
+      }
+      if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) ops::toggleChannelSolo(a.doc, cid, gSoloBefore);
+      const bool hov = ImGui::IsItemHovered();
+      geom.lamp = rectOf(l0, l1);
+      ++geom.lights;
+      ui::Hint(muted ? "Muted \xC2\xB7 click: unmute \xC2\xB7 right-click: solo, again: unsolo \xC2\xB7 Shift+click: select"
+                     : "Glows while the channel plays \xC2\xB7 click: mute \xC2\xB7 right-click: solo, again: unsolo \xC2\xB7 Shift+click: select");
+      drawRowLamp(dl, l0, l1, rackPlayLight(a, c, ci), muted, hov);
     }
     rowDropTarget(a, c, static_cast<int>(ci), rp, rowW, rowH, rowGap, stepsX + 6);  // J-97: drop to replace / insert
     // J-111d: a collaborator's pointer on this row (logical px from its start: the row's layout is fixed from the left)
     canchor::publish(canchor::RackRow, c.id, 0, rp, ImVec2(1.0f, rowH), rp, ImVec2(rp.x + rowW, rp.y + rowH));
     ImGui::SetCursorScreenPos(ImVec2(rp.x, rp.y + rowH + rowGap));
     ImGui::Dummy(ImVec2(rowW, 0));
+    shown.lastRowBottom = rp.y + rowH;
     ImGui::PopID();
   }
   // J-173: the pattern's automation clips as rows below the channels, and a
   // drop row while an automation clip is dragged from the clip sources.
   if (pat) {
     const ObjectId patId = pat->id;
-    patautoui::RackRows rr{rowW, rowH, rowGap, cellH, xLed, nameX, nameW, stepsX, stepsW, scrollX, viewX0, viewX1};
+    patautoui::RackRows rr{rowW, rowH, rowGap, cellH, xLeft, nameX, nameW, stepsX, stepsW, scrollX, viewX0, viewX1};
     if (a.engine.playing() && a.engine.mode() == PlayMode::Pattern && a.engine.pattern() == patId) rr.playTick = a.engine.position();
     patautoui::drawRackRows(a, patId, rr);
     patautoui::rackDropRow(a, patId, rowW, rowH);
@@ -987,10 +1040,16 @@ void drawChannelRack(App& a) {
   shown.originX = originX;
   shown.viewX0 = viewX0;
   gShown = shown;
+  {  // K-136: the rows' content height (step lamps, rows, automation rows, graph editor, both paddings)
+    const ImGuiWindow* rw = ImGui::GetCurrentWindow();
+    gFit.rowsContent = ImGui::GetCursorPosY() - ImGui::GetStyle().ItemSpacing.y + rw->WindowPadding.y +
+                       (rw->ScrollbarX ? ImGui::GetStyle().ScrollbarSize : 0.0f);
+  }
   ImGui::EndChild();
   acceptDrops(a);
   // Bottom bar: add-channel button under the names, time scroller under the
   // steps (bar ticks, the playing position and a thumb for the visible part).
+  float restTop = 0;  // K-136: the top of the space under the add button bar
   if (showBar) {
     ImDrawList* bdl = ImGui::GetWindowDrawList();
     const ImVec2 b0(ImGui::GetItemRectMin().x, ImGui::GetItemRectMax().y);  // flush under the rows (no item spacing)
@@ -1002,6 +1061,7 @@ void drawChannelRack(App& a) {
       const ImVec2 bp(a.rack.originX + racklayout::kNameX, by);
       ImGui::SetCursorScreenPos(bp);
       if (ImGui::InvisibleButton("##addrow", ImVec2(L.nameW, cellH))) ImGui::OpenPopup("##addch2");
+      gFit.addMin = ImGui::GetItemRectMin(), gFit.addMax = ImGui::GetItemRectMax();
       const bool hov = ImGui::IsItemHovered();
       bdl->AddRectFilled(bp, ImVec2(bp.x + L.nameW, bp.y + cellH), hov ? P.surface700 : theme::withAlpha(P.surface800, 0.6f), theme::kRadiusSm);
       ui::drawIcon(bdl, ui::Icon::Plus, ImVec2(bp.x + L.nameW * 0.5f, bp.y + cellH * 0.5f), 10, hov ? P.hot : P.textDim);
@@ -1046,6 +1106,33 @@ void drawChannelRack(App& a) {
       bdl->AddRect(ImVec2(t0.x + th0, t0.y), ImVec2(t0.x + th0 + thw, t1.y), theme::withAlpha(P.paper, 0.18f), 3);
       ui::Hint("Steps: drag to scroll the pattern (Shift+wheel or a sideways swipe over the steps also scrolls)");
     }
+    restTop = b0.y + kBarH;
+    ImGui::SetCursorScreenPos(b0);  // the bar is the window's last item (its content ends under the add button)
+    ImGui::Dummy(ImVec2(bw, kBarH));
+  }
+  // K-136: below the add button (a docked rack taller than its content) the rest is plain
+  // background that still takes drops from the browser (no item there: the window's size is the dock node's).
+  if (const ImGuiWindow* rw = ImGui::GetCurrentWindow(); restTop > 0 && rw->InnerRect.Max.y - restTop > 1) {
+    const ImRect r(ImVec2(rw->InnerRect.Min.x, restTop), rw->InnerRect.Max);
+    if (ImGui::BeginDragDropTargetCustom(r, ImGui::GetID("##rackrest"))) {
+      browserui::acceptPluginDrop(a, browse::DropTarget::Rack, {});
+      browserui::acceptFileDrop(a, browse::DropTarget::Rack, {});
+      ImGui::EndDragDropTarget();
+    }
+  }
+  {  // K-136: the floating rack's largest height for the next frame; a rack at its full height grows with new rows
+    const ImGuiWindow* w = ImGui::GetCurrentWindow();
+    gFit.docked = ImGui::IsWindowDocked();
+    gFit.detached = !gFit.docked && w->Viewport && w->Viewport != ImGui::GetMainViewport();
+    gFit.winH = w->Size.y;
+    gFit.winBottom = w->Pos.y + w->Size.y;
+    const float fit = racklayout::fitHeight(rowsTop, gFit.rowsContent, showBar ? kBarH : 0.0f, bottomChrome, s.channels.empty(), 140.0f);
+    if (!gFit.docked && !gFit.detached && !w->Collapsed && prevFit > 0 && fit > prevFit + 0.5f && w->SizeFull.y >= prevFit - 1.0f) {
+      const ImGuiViewport* vp = ImGui::GetMainViewport();
+      const float room = vp->WorkPos.y + vp->WorkSize.y - w->Pos.y;
+      if (w->SizeFull.y < room - 0.5f) ImGui::SetWindowSize(ImVec2(w->SizeFull.x, std::max(w->SizeFull.y, std::min(fit, room))));
+    }
+    gFit.fitH = fit;
   }
   ui::EndDockWindow();
 }
@@ -1094,12 +1181,17 @@ void rackDevDump(App& a, int frame) {
   const racklayout::Layout& L = r.layout;
   std::printf("rack frame %d: steps %d avail %.1f nameW %.1f stepW %.1f viewW %.1f scroll %.1f scrollMax %.1f rowsScroll %.1f rowsScrollMax %.1f "
               "wheelScrolls %d rows %d knobRows %d truncated %d undo %zu\n"
-              "  geom originX %.1f row0Y %.1f viewX0 %.1f graphY %.1f rowPitch %.1f\n",
+              "  geom originX %.1f row0Y %.1f viewX0 %.1f graphY %.1f rowPitch %.1f addbutton %.1f %.1f %.1f %.1f"
+              " docked %d winH %.1f fitH %.1f winBottom %.1f lastRowBottom %.1f addrow %.1f %.1f %.1f %.1f rowsContent %.1f\n",
               frame, L.steps, static_cast<double>(a.rack.lastAvail), static_cast<double>(L.nameW), static_cast<double>(L.stepW),
               static_cast<double>(L.viewW), static_cast<double>(r.scroll), static_cast<double>(L.scrollMax), static_cast<double>(r.rowsScrollY),
               static_cast<double>(r.rowsScrollMaxY), r.wheelScrolls ? 1 : 0, r.rows, r.knobRows, r.truncated, a.doc.history().position(),
               static_cast<double>(r.originX), static_cast<double>(r.row0Y), static_cast<double>(r.viewX0), static_cast<double>(r.graphY),
-              static_cast<double>(r.rowPitch));
+              static_cast<double>(r.rowPitch), static_cast<double>(gRackDev.addMin.x), static_cast<double>(gRackDev.addMin.y),
+              static_cast<double>(gRackDev.addMax.x), static_cast<double>(gRackDev.addMax.y), gFit.docked ? 1 : 0,
+              static_cast<double>(gFit.winH), static_cast<double>(gFit.fitH), static_cast<double>(gFit.winBottom),
+              static_cast<double>(r.lastRowBottom), static_cast<double>(gFit.addMin.x), static_cast<double>(gFit.addMin.y),
+              static_cast<double>(gFit.addMax.x), static_cast<double>(gFit.addMax.y), static_cast<double>(gFit.rowsContent));
   const Pattern* pat = s.pattern(a.curPattern);
   for (size_t i = 0; i < s.channels.size(); ++i) {
     const Channel& c = s.channels[i];
@@ -1111,8 +1203,17 @@ void rackDevDump(App& a, int frame) {
     }
     const auto lt = gRackLights.find(c.id);  // J-186: the row's play light as drawn last
     const float light = lt == gRackLights.end() ? 0.0f : lt->second.light.alpha();
-    std::printf("  channel %zu volume %.4f pan %.4f velsum %d pitchsum %d light %.3f\n", i, static_cast<double>(c.gain), static_cast<double>(c.pan), velSum,
-                pitchSum, static_cast<double>(light));
+    std::printf("  channel %zu volume %.4f pan %.4f velsum %d pitchsum %d light %.3f muted %d\n", i, static_cast<double>(c.gain),
+                static_cast<double>(c.pan), velSum, pitchSum, static_cast<double>(light), c.muted ? 1 : 0);
+    if (const auto g = gRowGeom.find(c.id); g != gRowGeom.end()) {  // K-127: the row's controls, left to right
+      const RowGeom& r = g->second;
+      const std::pair<const char*, ImVec4> parts[] = {{"pan", r.pan}, {"vol", r.vol}, {"mix", r.mix},
+                                                      {"name", r.name}, {"lamp", r.lamp}, {"steps", r.steps}};
+      std::printf("  rowgeom %zu lights %d selected %d", i, r.lights, a.selChannels.count(c.id) ? 1 : 0);
+      for (const auto& [n, v] : parts)
+        std::printf(" %s %.1f %.1f %.1f %.1f", n, static_cast<double>(v.x), static_cast<double>(v.y), static_cast<double>(v.z), static_cast<double>(v.w));
+      std::printf("\n");
+    }
   }
   std::fflush(stdout);
 }

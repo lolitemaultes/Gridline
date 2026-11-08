@@ -44,6 +44,8 @@ bool isBlack(int pitch) {
   int k = pitch % 12;
   return k == 1 || k == 3 || k == 6 || k == 8 || k == 10;
 }
+// K-81: how opaque a piano roll note body is (dark and light themes).
+float noteBodyAlpha(bool dark) { return dark ? 0.84f : 0.82f; }
 std::string noteName(int pitch) { return std::string(kNoteNames[pitch % 12]) + std::to_string(pitch / 12 - 1); }
 
 struct Gesture {
@@ -889,11 +891,15 @@ void drawPianoRoll(App& a) {
     if (sel) fill = theme::mix(fill, P.paper, 0.45f);
     if (n.slide) fill = theme::withAlpha(fill, 0.55f);  // slide notes: lighter body + glide mark
     if (n.muted) fill = theme::withAlpha(theme::mix(fill, P.well, 0.6f), 0.6f);  // muted: dim, hollow look
+    // K-81: the body (and its cap) is slightly see-through, so a note lying under or over another
+    // on the same key shows through, and the overlap reads denser. Rim, names and marks stay
+    // opaque; slide and muted notes are lighter already.
+    const ImU32 body = n.slide || n.muted ? fill : theme::withAlpha(fill, noteBodyAlpha(P.dark));
     const ImVec2 n0(x0, y + 1), n1(x1 - 1, y + rowH - 1);
-    dl->AddRectFilled(n0, n1, fill, theme::kRadiusSm);
+    dl->AddRectFilled(n0, n1, body, theme::kRadiusSm);
     if (n.muted && x1 - x0 > 6) dl->AddLine(ImVec2(n0.x + 2, n1.y - 2), ImVec2(n1.x - 2, n0.y + 2), theme::withAlpha(theme::rgb(theme::role::kMute), 0.7f), 1.2f);
     if (x1 - x0 > 10 && rowH >= 9)
-      dl->AddRectFilled(n0, ImVec2(std::min(n1.x, n0.x + 4), n1.y), theme::mix(fill, P.ink, 0.25f), theme::kRadiusSm, ImDrawFlags_RoundCornersLeft);
+      dl->AddRectFilled(n0, ImVec2(std::min(n1.x, n0.x + 4), n1.y), theme::mix(body, P.ink, 0.25f), theme::kRadiusSm, ImDrawFlags_RoundCornersLeft);
     dl->AddLine(ImVec2(n0.x + 1, n0.y + 0.5f), ImVec2(n1.x - 1, n0.y + 0.5f), theme::withAlpha(P.paper, 0.35f));
     dl->AddRect(n0, n1, sel ? P.hot : theme::withAlpha(P.ink, 0.55f), theme::kRadiusSm, 0, sel ? 1.5f : 1.0f);
     if (n.slide && x1 - x0 > 8) {

@@ -61,6 +61,9 @@ class BusyScope {
  private:
   int64_t previous_ = 0;
 };
+// K-132: how many BusyScopes have started in this process, and whether one is alive now (tests).
+uint64_t busyScopesStarted() noexcept;
+bool busyNow() noexcept;
 
 // ---- recoverable failures (never the audio thread) ----
 struct Recoverable {

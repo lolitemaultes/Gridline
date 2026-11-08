@@ -137,7 +137,7 @@ std::string paramLabel(const App& a, ParamId p) {
 void fileItems(App& a) {
   if (ImGui::MenuItem(i18n::tr("Save to a new project folder..."))) {
     std::string title = a.doc.song().info.title.empty() ? std::string("Untitled") : a.doc.song().info.title;
-    fileDialog(a, "Save into a new project folder (with its samples)", true, {".json"}, title, [&a](const std::string& p) {
+    fileDialog(a, "Save into a new project folder (with its samples)", true, {".gridline", ".json"}, title, [&a](const std::string& p) {
       fs::path in(p);
       std::string name = in.filename().string();
       for (const char* ext : {".json", ".gridline"})
@@ -169,7 +169,7 @@ void fileItems(App& a) {
             bool moved = false;
             for (const auto& [from, to] : rep.moved) moved = moved || from != to;
             if (moved) app.doc.editSong("save to a new project folder", [&rep](Song& x) { relinkFiles(x, rep.moved); });
-            if (app.saveProject((folder / (name + ".gridline.json")).u8string()))
+            if (app.saveProject((folder / fs::u8path(name + ".gridline")).u8string()))  // K-121: the new name
               app.notify("Saved into " + folder.u8string() + " (" + std::to_string(rep.copied) + " files copied" +
                          (rep.missing.empty() ? std::string(")") : ", " + std::to_string(rep.missing.size()) + " missing)"));
           }
@@ -197,6 +197,9 @@ void addItems(App& a) {
 void viewItems(App& a) {
   if (ImGui::MenuItem(i18n::tr("Project picker"))) browserui::showProjectTab(a);
   ui::Hint("The browser's project tab: patterns, channels, effects, automation and samples of this project");
+}
+
+void viewHintItems(App& a) {
   {
     const bool on = a.settings.getBool("ui.showPlayedChords");
     if (ImGui::MenuItem(i18n::tr("Show played chords in the hint bar"), nullptr, on)) a.settings.set("ui.showPlayedChords", !on);
@@ -215,7 +218,7 @@ void optionsItems(App& a) {
   ui::Hint("Other devices follow Gridline's tempo and transport (MIDI clock on the MIDI output; timecode in MIDI settings)");
 }
 
-void toolsItems(App& a) {
+void toolsControlItems(App& a) {
   const ParamId last = a.doc.lastTouchedParam(), prev = a.doc.previousTouchedParam();
   const std::string ln = paramLabel(a, last), pn = paramLabel(a, prev);
   if (ImGui::BeginMenu(("Last moved control" + (ln.empty() ? std::string() : ": " + ln)).c_str(), !ln.empty())) {
@@ -226,10 +229,16 @@ void toolsItems(App& a) {
     knobContextMenu(a, prev);
     ImGui::EndMenu();
   }
+}
+
+void toolsScoreLogItem(App& a) {
   if (ImGui::BeginMenu(i18n::tr("Score logger"))) {
     scoreLogItems(a);
     ImGui::EndMenu();
   }
+}
+
+void toolsNoteItems(App& a) {
   const std::string& script = lastPianoRollScript();
   if (ImGui::MenuItem(i18n::tr("Open the last piano roll script again"), nullptr, false, !script.empty())) openPianoRollScript(a, script);
   if (ImGui::MenuItem(i18n::tr("Save the note clipboard as a MIDI file"), nullptr, false, !a.piano.clipboard.empty())) {
@@ -245,7 +254,9 @@ void toolsItems(App& a) {
     else
       a.notify("Could not save the MIDI file: " + err, true);
   }
-  ImGui::SeparatorText(i18n::tr("More macros"));
+}
+
+void toolsMacroItems(App& a) {
   if (ImGui::MenuItem(i18n::tr("Lock every playlist track"))) ops::setAllTracksLocked(a.doc, true);
   if (ImGui::MenuItem(i18n::tr("Unlock every playlist track"))) ops::setAllTracksLocked(a.doc, false);
   if (ImGui::MenuItem(i18n::tr("Prepare the live area"))) {
@@ -261,6 +272,9 @@ void toolsItems(App& a) {
     declickItems(a, selectedChannels(a));
     ImGui::EndMenu();
   }
+}
+
+void toolsCleanupItems(App& a) {
   if (ImGui::MenuItem(i18n::tr("Delete unused automation clips")))
     report(a, ops::deleteUnusedAutomationClips(a.doc), "Deleted unused automation clips", "No unused automation clips");
 }
@@ -273,6 +287,12 @@ void channelItems(App& a, ObjectId channel) {
   if (!c) return;
   if (ImGui::MenuItem(i18n::tr("Clone with controller links"))) a.selectChannel(ops::cloneChannelWithLinks(a.doc, channel));
   ui::Hint("The copy follows the same MIDI controls and internal controllers as this channel");
+}
+
+void channelStepItems(App& a, ObjectId channel) {
+  const Song& s = a.doc.song();
+  const Channel* c = s.channel(channel);
+  if (!c) return;
   const Pattern* p = s.pattern(a.curPattern);
   if (p && ImGui::MenuItem(i18n::tr("Repeat the first bar of steps"), nullptr, false, p->bars > 1 && p->steps.count(channel)))
     ops::autoFillSteps(a.doc, p->id, channel);
@@ -281,6 +301,11 @@ void channelItems(App& a, ObjectId channel) {
     else a.notify("Nothing to bake: the channel has no notes or steps here");
   }
   ui::Hint("Plays the channel's note effects (arpeggiator, chords, …) and writes their output as notes");
+}
+
+void channelSampleItems(App& a, ObjectId channel) {
+  const Channel* c = a.doc.song().channel(channel);
+  if (!c) return;
   {  // the channel's sample in a new channel of a sample-based instrument
     const PluginInfo* pi = findPlugin(c->plugin.type);
     const bool hasSample = pi && pi->usesSample && !c->plugin.data.empty() && c->plugin.data[0] != '{' &&
@@ -288,10 +313,15 @@ void channelItems(App& a, ObjectId channel) {
     if (ImGui::BeginMenu(i18n::tr("Open the sample in a new channel"), hasSample)) {
       const std::string path = kerfmarks::pathOf(c->plugin.data);
       for (const char* type : {"gl.sampler", "gl.granular", "gl.slicer"})
-        if (const PluginInfo* ti = findPlugin(type); ti && ImGui::MenuItem(ti->name.c_str())) a.addInstrument(type, path);
+        if (const PluginInfo* ti = findPlugin(type); ti && ImGui::MenuItem(ti->name.c_str())) a.showNewInstrument(a.addInstrument(type, path));
       ImGui::EndMenu();
     }
   }
+}
+
+void channelLayerItems(App& a, ObjectId channel) {
+  const Channel* c = a.doc.song().channel(channel);
+  if (!c) return;
   if (c->isLayer() && ImGui::BeginMenu(i18n::tr("Layer"))) {
     if (ImGui::MenuItem(i18n::tr("Put its channels in a new group"))) {
       int g = ops::groupLayerChildren(a.doc, channel, c->name);

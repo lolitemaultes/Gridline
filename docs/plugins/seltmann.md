@@ -135,9 +135,22 @@ the song position.
 Projects keep the file, the beat grid, the region, the chop, the slices and the pattern, so nothing
 is analysed again when a project opens. The main controls can be automated.
 
-FL Studio export: FL Studio has no Seltmann. When you save as an FL Studio project, the channel is
-rendered to audio like other Gridline instruments without an FL Studio counterpart, so the song
-sounds the same.
+FL Studio export: FL Studio has no Seltmann of its own. How the channel goes into an FL Studio
+project follows **Settings, Project, FL Studio export** (the export window can change it for one
+export, or for the project):
+
+- **Gridline Suite plugins, with muted audio copies** (the default): the channel holds Seltmann
+  from the Gridline Suite with all its settings, and the sample travels inside the plugin's
+  settings (up to 64 MB of files per plugin). With the Gridline Suite installed, FL Studio opens it
+  live and editable. A muted copy of the channel, right after it, plays the same notes rendered to
+  audio: on a computer without the Suite, unmute the copy.
+- **Gridline Suite plugins only**: the same, without the audio copy.
+- **Rendered to audio**: the channel is rendered to audio like other Gridline instruments without
+  an FL Studio counterpart, so the song sounds the same, but it is no longer Seltmann.
+
+A sample larger than the limit is not carried: it is copied into the sample folder next to the
+project, where you can load it into the plugin again. Opening the project in Gridline again gives
+back Seltmann with its exact settings.
 
 ## Command line
 

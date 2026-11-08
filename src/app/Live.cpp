@@ -6,6 +6,7 @@
 #include <string>
 #include "../core/I18n.h"
 #include "../../third_party/imgui/imgui.h"
+#include "../../third_party/imgui/imgui_internal.h"
 #include "../core/Arrangements.h"
 #include "App.h"
 #include "Theme.h"
@@ -133,8 +134,23 @@ void setLiveArea(App& a, Tick end) {
 }
 
 void drawLivePads(App& a) {
-  if (!a.showLivePads) return;
-  if (!ui::BeginDockWindow("Live pads", &a.showLivePads, ImVec2(560, 300))) {
+  static int shownFrames = 0;
+  if (!a.showLivePads) {
+    shownFrames = 0;
+    return;
+  }
+  if (shownFrames == 0) {  // K-79: a first floating open goes over the middle of the window ...
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.5f), ImGuiCond_FirstUseEver,
+                            ImVec2(0.5f, 0.5f));
+  }
+  const bool vis = ui::BeginDockWindow("Live pads", &a.showLivePads, ImVec2(560, 300));
+  if (shownFrames < 3) {  // ... and in front of the floating channel rack (it used to hide the empty-state text)
+    ImGuiWindow* w = ImGui::GetCurrentWindow();
+    if (!w->DockIsActive) ImGui::BringWindowToDisplayFront(w);
+    ++shownFrames;
+  }
+  if (!vis) {
     ui::EndDockWindow();
     return;
   }

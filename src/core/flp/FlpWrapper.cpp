@@ -1,5 +1,6 @@
 // Gridline — FLP import: "Fruity Wrapper" instances → hosted plugins.
 #include "FlpWrapper.h"
+#include "../../host/CrossFormat.h"
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -7,6 +8,8 @@
 #include <set>
 #include "../../host/HostedPlugins.h"
 #include "../PluginStandIn.h"
+#include "../SuiteState.h"
+#include "../../engine/Program.h"
 #include "FlpGen2.h"
 
 namespace gl::flp {
@@ -173,30 +176,64 @@ WrapperMatch matchWrapper(const WrapperInfo& w) {
   }
   const char* own = w.format == WrapperInfo::Vst2 ? "vst2" : w.format == WrapperInfo::Vst3 ? "vst3" : "au";
   const std::string name = fold(w.name), vendor = fold(w.vendor);
-  if (name.empty()) return m;
-  std::shared_ptr<const host::HostedClass> sameFormat, other;
+  if (name.empty() && saved.empty()) return m;
+  std::shared_ptr<const host::HostedClass> sameFormat;
   std::set<std::string> vendors;  // vendors of the name matches
   for (const auto& c : host::hostedClasses()) {
-    if (c->instrument != w.instrument || fold(c->name) != name || standin::hidden(c->type, c->name)) continue;
+    if (name.empty() || c->format != own || c->instrument != w.instrument || fold(c->name) != name || standin::hidden(c->type, c->name)) continue;
     if (!vendor.empty() && !c->vendor.empty() && fold(c->vendor).find(vendor) == std::string::npos && vendor.find(fold(c->vendor)) == std::string::npos)
       continue;
     vendors.insert(fold(c->vendor));
-    if (c->format == own) {
-      if (!sameFormat) sameFormat = c;
-    } else if (!other || (c->format == "vst3" && other->format != "vst3")) {
-      other = c;  // prefer VST3, then whatever is installed
-    }
+    if (!sameFormat) sameFormat = c;
   }
   // No vendor saved and several vendors make a plugin of that name: no
   // guess (another company's plugin is not this plugin).
-  if (vendor.empty() && vendors.size() > 1) return m;
-  if (sameFormat) {
+  if (sameFormat && !(vendor.empty() && vendors.size() > 1)) {
     m.type = sameFormat->type;
     m.stateKept = true;  // same format, different id (version): the state usually still loads
-  } else if (other) {
-    m.type = other->type;
+    return m;
+  }
+  // K-78: another format of the same plugin, found and converted as projects do.
+  host::ident::Identity id;
+  id.type = saved;
+  id.name = w.name;
+  id.vendor = w.vendor;
+  id.instrument = w.instrument ? 1 : 0;
+  const auto ranked = host::xformat::candidatesFor(id);
+  const host::ident::Candidate* pick = host::ident::autoPick(ranked);
+  if (!pick) return m;
+  m.type = pick->cls->type;
+  PluginState st;
+  st.type = saved;
+  st.data = w.data;
+  host::xformat::Conversion cv;
+  if (host::xformat::convert(st, id, *pick->cls, pick->confidence, cv)) {
+    m.movedData = cv.state.data;
+    m.ident = cv.state.ident;
   }
   return m;
+}
+
+std::string suiteVst3Type(const std::string& glType) {
+  const suite::Member* m = suite::findMember(glType);
+  if (!m) return {};
+  char b[40];
+  std::snprintf(b, sizeof b, "%08X%08X%08X%08X", m->vst3Uid[0], m->vst3Uid[1], m->vst3Uid[2], m->vst3Uid[3]);
+  return std::string("vst3:") + b;
+}
+
+const suite::Member* suiteMemberOfType(const std::string& t) {
+  if (t.size() != 37 || t.compare(0, 5, "vst3:") != 0) return nullptr;
+  uint32_t uid[4] = {0, 0, 0, 0};
+  for (int k = 0; k < 4; ++k) {
+    for (int i = 0; i < 8; ++i) {
+      const char c = t[static_cast<size_t>(5 + 8 * k + i)];
+      if (!std::isxdigit(static_cast<unsigned char>(c))) return nullptr;
+      uid[k] = (uid[k] << 4) | static_cast<uint32_t>(std::isdigit(static_cast<unsigned char>(c)) ? c - '0' : std::tolower(static_cast<unsigned char>(c)) - 'a' + 10);
+    }
+  }
+  if (uid[0] != suite::kVst3Uid0 || uid[1] != suite::kVst3Uid1 || uid[2] != suite::kVst3Uid2) return nullptr;
+  return suite::byVst3Uid(uid);
 }
 
 bool isImageLineVendor(const std::string& vendor) {
@@ -225,14 +262,59 @@ bool decodeWrapper(Context& c, const std::vector<Event>& evs, PluginMapping& m, 
     return false;
   }
   const std::string label = w.name + " (" + w.formatName() + ")";
+  // K-110: a Gridline Suite plugin is Gridline's own: it becomes the built-in
+  // again, with the exact state it carries (and its embedded files where the
+  // originals are not on this computer), installed here or not.
+  if (const suite::Member* sm = w.format == WrapperInfo::Vst3 ? suiteMemberOfType(w.savedType()) : nullptr) {
+    std::string comp, ctrl;
+    PluginState st;
+    Json whole;
+    if (host::decodeState(w.data, comp, ctrl) && (suitestate::parse(comp, st, &whole) || suitestate::parse(ctrl, st, &whole)) && st.type == sm->type) {
+      normalizePluginState(st);
+      std::string ferr;
+      suitestate::restoreFiles(st, whole, suitestate::defaultCacheDir(), nullptr, &ferr);
+      if (!ferr.empty()) c.report.warn(label + ": " + ferr);
+      m.glType = st.type;
+      m.state = st;
+      m.exact = true;
+      c.report.counts["Gridline Suite plugins"]++;
+      // Automation: FL index -> ParamID (the wrapper's table; ParamID k is parameter k).
+      const std::vector<uint32_t> ids = w.paramIds;
+      const PluginInfo* info = sm->info;
+      const int n = static_cast<int>(std::min(info->params.size(), static_cast<size_t>(kMaxHostParams)));
+      auto index = [ids, n](int fl) -> int {
+        if (fl < 0) return -1;
+        const uint32_t id = static_cast<size_t>(fl) < ids.size() ? ids[static_cast<size_t>(fl)] : static_cast<uint32_t>(fl);
+        return id < static_cast<uint32_t>(n) ? static_cast<int>(id) : -1;
+      };
+      m.param = index;
+      m.value = [info, index](int fl, double v) {
+        const int k = index(fl);
+        return k < 0 ? v : info->params[static_cast<size_t>(k)].fromNormalized(v);
+      };
+      return true;
+    }
+    c.report.warn(label + ": a Gridline Suite plugin without a readable state; it opens with its defaults");
+    m.glType = sm->type;
+    m.state = defaultPluginState(sm->type);
+    m.exact = false;
+    return true;
+  }
   const WrapperMatch mt = matchWrapper(w);
   if (!mt.type.empty()) {
     m.glType = mt.type;
     m.state = defaultPluginState(mt.type);
     if (mt.stateKept) m.state.data = w.data;
+    else m.state.data = mt.movedData;
+    m.state.ident = mt.ident;
     m.exact = mt.stateKept && !w.data.empty();
     c.report.counts["hosted plugins: installed"]++;
-    if (!mt.stateKept) c.report.warn(label + ": only installed in another format; its saved settings could not be carried over");
+    if (!mt.stateKept) {
+      auto cls = host::hostedClass(mt.type);
+      const std::string as = cls ? std::string(cls->formatLabel()) : std::string("another format");
+      c.report.warn(mt.movedData.empty() ? label + ": opened the " + as + " version; its saved settings could not be carried over"
+                                         : label + ": opened the " + as + " version; its saved settings were carried over");
+    }
     // Automation of the wrapper's parameters (FL index → plugin parameter).
     if (auto cls = host::hostedClass(mt.type); cls && mt.stateKept) {
       std::vector<uint32_t> ids = w.paramIds;

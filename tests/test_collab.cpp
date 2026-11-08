@@ -19,6 +19,7 @@
 #include "core/Project.h"
 #include "packs/dynamics/cabinet_ir.h"
 #include "packs/plasma/plasma_dsp.h"
+#include "core/ProjectFiles.h"
 #include "core/ProjectInterop.h"
 #include "core/Png.h"
 #include "core/Update.h"
@@ -507,9 +508,9 @@ void testReopen() {
   Peer tmp;
   expect(s2 && jsonStringify(songToJson([&] { Song x = doc2.song(); x.nextId = 0; return x; }()), 0) == before,
          "a collaborative project reopens from its op log exactly");
-  expect(std::filesystem::exists(folder + "/Song.gridline.json"), "the folder also holds a plain project file");
+  expect(std::filesystem::exists(folder + "/Song.gridline"), "the folder also holds a plain project file");
   Song plain;
-  expect(loadProject(folder + "/Song.gridline.json", plain) && plain.channels[0].name == "Persisted", "the plain project file is current");
+  expect(loadProject(folder + "/Song.gridline", plain) && plain.channels[0].name == "Persisted", "the plain project file is current");
   // compaction keeps the state
   if (s2) {
     expect(s2->compactNow(&err), "compaction succeeds");
@@ -1284,7 +1285,7 @@ void testUnusedAudio() {
 
 void testExport() {
   // the original project before Make collaborative is never touched
-  const std::string orig = tmpDir("export_orig") + "/Original.gridline.json";
+  const std::string orig = tmpDir("export_orig") + "/Original.gridline";
   Document doc;
   doc.reset(makeEmptySong());
   doc.addChannel("Kick", "gl.kick");
@@ -1341,7 +1342,7 @@ std::vector<std::string> projectFilesIn(const std::string& folder) {
   std::error_code ec;
   for (const auto& e : std::filesystem::directory_iterator(folder, ec)) {
     const std::string f = e.path().filename().string();
-    if (f.size() > 14 && f.compare(f.size() - 14, 14, ".gridline.json") == 0) out.push_back(f);
+    if (gl::isGridlineProjectName(f)) out.push_back(f);  // both names, so a left-over older file shows
   }
   std::sort(out.begin(), out.end());
   return out;
@@ -1382,16 +1383,16 @@ void testRenameLive() {
     by = who;
   };
   for (Peer* p : t.all()) p->s->saveNow();
-  expect(t.a.s->projectName() == "Song" && projectFilesIn(t.b.folder) == std::vector<std::string>{"Song.gridline.json"}, "every copy starts as Song");
+  expect(t.a.s->projectName() == "Song" && projectFilesIn(t.b.folder) == std::vector<std::string>{"Song.gridline"}, "every copy starts as Song");
   // a member who is not the admin renames: everyone gets it, live
   std::string err;
   expect(t.b.s->rename("  Night   Drive ", &err), "any member can rename the project");
   settle(t.net, t.all(), t.clock);
   for (Peer* p : t.all()) p->s->saveNow();
   expect(t.a.s->projectName() == "Night Drive" && t.c.s->projectName() == "Night Drive", "the new name reaches everyone");
-  expect(projectFilesIn(t.a.folder) == std::vector<std::string>{"Night Drive.gridline.json"} &&
-             projectFilesIn(t.c.folder) == std::vector<std::string>{"Night Drive.gridline.json"} &&
-             samePath(t.c.s->projectFile(), t.c.folder + "/Night Drive.gridline.json") && Session::projectNameOf(t.c.folder) == "Night Drive" &&
+  expect(projectFilesIn(t.a.folder) == std::vector<std::string>{"Night Drive.gridline"} &&
+             projectFilesIn(t.c.folder) == std::vector<std::string>{"Night Drive.gridline"} &&
+             samePath(t.c.s->projectFile(), t.c.folder + "/Night Drive.gridline") && Session::projectNameOf(t.c.folder) == "Night Drive" &&
              Session::projectFileOf(t.c.folder) == t.c.s->projectFile(),
          "each computer's project file is renamed to match (and collab.json records it)");
   Song plain;
@@ -1429,22 +1430,22 @@ void testRenameLive() {
   t.a.s->rename("SAM'S LATER NAME");
   settle(t.net, t.all(), t.clock);
   for (Peer* p : t.all()) p->s->saveNow();
-  expect(projectFilesIn(t.b.folder) == std::vector<std::string>{"SAM'S LATER NAME.gridline.json"}, "a case-only rename renames the file");
+  expect(projectFilesIn(t.b.folder) == std::vector<std::string>{"SAM'S LATER NAME.gridline"}, "a case-only rename renames the file");
   // a name that is not a file name: the file is sanitised, the name is kept whole
   t.a.s->rename("CON: a/b ...");
   settle(t.net, t.all(), t.clock);
   for (Peer* p : t.all()) p->s->saveNow();
-  expect(t.b.s->projectName() == "CON: a/b ..." && projectFilesIn(t.b.folder) == std::vector<std::string>{"CON- a-b.gridline.json"},
+  expect(t.b.s->projectName() == "CON: a/b ..." && projectFilesIn(t.b.folder) == std::vector<std::string>{"CON- a-b.gridline"},
          "the display keeps the name, the file name is made safe");
   // another file has the name: never replaced, the project takes "(2)"
-  std::ofstream(t.c.folder + "/Taken.gridline.json") << "{\"mine\":1}";
+  std::ofstream(t.c.folder + "/Taken.gridline") << "{\"mine\":1}";
   t.a.s->rename("Taken");
   settle(t.net, t.all(), t.clock);
   for (Peer* p : t.all()) p->s->saveNow();
   std::string mine;
-  readFileText(t.c.folder + "/Taken.gridline.json", mine);
-  expect(mine == "{\"mine\":1}" && samePath(t.c.s->projectFile(), t.c.folder + "/Taken (2).gridline.json") &&
-             std::filesystem::exists(t.c.s->projectFile()) && projectFilesIn(t.a.folder) == std::vector<std::string>{"Taken.gridline.json"},
+  readFileText(t.c.folder + "/Taken.gridline", mine);
+  expect(mine == "{\"mine\":1}" && samePath(t.c.s->projectFile(), t.c.folder + "/Taken (2).gridline") &&
+             std::filesystem::exists(t.c.s->projectFile()) && projectFilesIn(t.a.folder) == std::vector<std::string>{"Taken.gridline"},
          "a file of another name is never replaced (the project file takes \"Taken (2)\")");
   expect(converged(t), "the songs stay the same throughout");
 }
@@ -1460,7 +1461,7 @@ void testRenameOffline() {
   run(t.net, {&t.a}, t.clock, 0.5);
   std::string err;
   t.b.s = Session::open(t.b.doc, config(bFolder, t.b.id, "Sam", &t.clock), &err);
-  expect(t.b.s && t.b.s->projectName() == "Song" && samePath(t.b.s->projectFile(), bFolder + "/Song.gridline.json"), "B reopens under the old name");
+  expect(t.b.s && t.b.s->projectName() == "Song" && samePath(t.b.s->projectFile(), bFolder + "/Song.gridline"), "B reopens under the old name");
   if (!t.b.s) return;
   std::vector<std::string> told;
   t.b.s->onRenamed = [&](const std::string&, const std::string& after, SiteId) { told.push_back(after); };
@@ -1468,15 +1469,15 @@ void testRenameOffline() {
   t.net.connect(&t.a, &t.b);
   settle(t.net, {&t.a, &t.b}, t.clock);
   t.b.s->saveNow();
-  expect(t.b.s->projectName() == "While you were away" && told.size() == 1 && projectFilesIn(bFolder) == std::vector<std::string>{"While you were away.gridline.json"} &&
+  expect(t.b.s->projectName() == "While you were away" && told.size() == 1 && projectFilesIn(bFolder) == std::vector<std::string>{"While you were away.gridline"} &&
              Session::projectNameOf(bFolder) == "While you were away",
          "an offline rename arrives with the catch-up (name, file, collab.json)");
   // the file is found by the folder, whatever it is called: renamed by hand while closed, with a stale record
   t.b.s.reset();
-  std::filesystem::rename(bFolder + "/While you were away.gridline.json", bFolder + "/renamed by hand.gridline.json");
-  expect(samePath(Session::projectFileOf(bFolder), bFolder + "/renamed by hand.gridline.json"), "the project file is found in its folder after a rename");
+  std::filesystem::rename(bFolder + "/While you were away.gridline", bFolder + "/renamed by hand.gridline");
+  expect(samePath(Session::projectFileOf(bFolder), bFolder + "/renamed by hand.gridline"), "the project file is found in its folder after a rename");
   t.b.s = Session::open(t.b.doc, config(bFolder, t.b.id, "Sam", &t.clock), &err);
-  expect(t.b.s && t.b.s->projectName() == "While you were away" && projectFilesIn(bFolder) == std::vector<std::string>{"While you were away.gridline.json"},
+  expect(t.b.s && t.b.s->projectName() == "While you were away" && projectFilesIn(bFolder) == std::vector<std::string>{"While you were away.gridline"},
          "opening it renames it back after the project's name");
   // projects made before the shared file record: collab.json without "file", a file named after the name
   t.b.s.reset();
@@ -1487,13 +1488,13 @@ void testRenameOffline() {
   j.object.erase("file");
   j.object.erase("name");
   writeFileDurable(bFolder + "/.gridline-collab/collab.json", jsonStringify(j, 2));
-  expect(Session::projectNameOf(bFolder).empty() && samePath(Session::projectFileOf(bFolder), bFolder + "/While you were away.gridline.json"),
+  expect(Session::projectNameOf(bFolder).empty() && samePath(Session::projectFileOf(bFolder), bFolder + "/While you were away.gridline"),
          "a folder without a name record still finds its file");
   t.b.s = Session::open(t.b.doc, config(bFolder, t.b.id, "Sam", &t.clock), &err);
   expect(t.b.s && t.b.s->projectName() == "While you were away", "...and opens with the project's name");
   // the static fallback: no record at all, nothing written yet
   const std::string empty = tmpDir("rename_none");
-  expect(samePath(Session::projectFileOf(empty), empty + "/Project.gridline.json"), "no record, no file: Project.gridline.json");
+  expect(samePath(Session::projectFileOf(empty), empty + "/Project.gridline"), "no record, no file: Project.gridline");
 }
 
 void testRenameConflict() {
@@ -1523,7 +1524,7 @@ void testRenameConflict() {
   settle(t.net, {&t.a, &t.b}, t.clock);
   for (Peer* p : {&t.a, &t.b}) p->s->saveNow();
   expect(t.b.s->projectName() == "Alex's name" && t.b.s->conflicts().openCount() == 0 &&
-             projectFilesIn(t.b.folder) == std::vector<std::string>{"Alex's name.gridline.json"},
+             projectFilesIn(t.b.folder) == std::vector<std::string>{"Alex's name.gridline"},
          "the admin's choice renames the project (and the files) everywhere");
 }
 
@@ -1547,7 +1548,7 @@ void testRenameJoinAndStop() {
   settle(t.net, t.all(), t.clock);
   t.c.s->saveNow();
   expect(t.c.s->ready() && t.c.s->projectName() == "Renamed mid-join" && t.a.s->projectName() == "Renamed mid-join" &&
-             projectFilesIn(t.c.folder) == std::vector<std::string>{"Renamed mid-join.gridline.json"},
+             projectFilesIn(t.c.folder) == std::vector<std::string>{"Renamed mid-join.gridline"},
          "the joiner ends with the current name and file (a stale invite name never wins)");
   expect(told <= 1, "the name a join receives is not announced as a rename (at most the rename made during the join)");
   // a rename racing Stop sharing: nothing crashes, the stopped copy keeps its name

@@ -109,13 +109,14 @@ CollectReport collectFiles(Song& song, const std::string& folder, const std::str
 // Removes the files a collect added and the folders that leaves empty, up to `folder` itself.
 void undoCollect(const CollectReport& report, const std::string& folder);
 
-// "Export project data files": `<folder>/<name>.gridline.json` + `<folder>/Samples/…`
+// "Export project data files": `<folder>/<name>.gridline` + `<folder>/Samples/…`
 // with relative references. The song in memory is not changed. K-47: a failure or a Cancel takes away
 // what this run added (the whole folder when it made it); `error` or `cancelled` says so.
 CollectReport exportProjectDataFiles(const Song& song, const std::string& folder, const std::string& name, const ExportControl* control = nullptr);
 // "Export project bones": data files + one MIDI file per pattern and for the
 // song (MIDI/), every channel's instrument state (Presets/) and every mixer
-// track's effect chain (Presets/chains/).
+// track's effect chain (Presets/chains/). K-133: over an earlier export, its files are replaced
+// only when every new one was written; a failure or a Cancel leaves the earlier export as it was.
 struct BonesReport {
   CollectReport files;
   int midiFiles = 0, presets = 0, chains = 0;
@@ -127,7 +128,7 @@ CollectReport exportZippedProject(const Song& song, const std::string& zipPath, 
 // Absolute paths to files that exist on this computer, found anywhere in a project's text.
 std::vector<std::string> absolutePathsInProject(const std::string& projectText);
 // Extracts a zipped project into `dir` and returns the project file inside it
-// (.gridline.json, or an FL Studio .flp) in `projectFile`.
+// (.gridline / .gridline.json, or an FL Studio .flp) in `projectFile`.
 bool unpackZippedProject(const std::string& zipPath, const std::string& dir, std::string& projectFile, std::string* err = nullptr);
 
 // ---- missing files ----

@@ -1,6 +1,7 @@
 #include "../packs/Packs.h"
 #include "Program.h"
 #include "ChannelIns.h"
+#include "ClipOps.h"
 #include "../packs/edison/edison.h"
 #include <algorithm>
 #include <cmath>
@@ -120,9 +121,9 @@ std::shared_ptr<ChannelRuntime> newChannelRuntime(const std::string& type) {
 }
 
 // The built-in types that allocate in their first block (tests/test_q18.cpp
-// fails on any other type that does, patch hosts aside: they can hold hosted
-// plugins, which must not run here, so they still size theirs in the first
-// real block). A block of no frames on the builder's
+// fails on any other type that does). Patch hosts are not in the list: they can
+// hold hosted plugins, which must not run here; the built-in modules inside get
+// this warm-up when the host prepares them (K-59, warmUpBuiltin). A block of no frames on the builder's
 // thread does that work where allocation is allowed, and advances no phase or
 // random state, so the sound stays the same; the runtime is not shared yet.
 bool allocatesInFirstBlock(const std::string& type) {
@@ -341,6 +342,8 @@ void setClipLevels(const ProgAudioClip& out, const Clip& c, const ClipFades* fad
     out.tensionIn = c.fadeInTension, out.tensionOut = c.fadeOutTension;
   }
   out.declickIn = c.fadeInDeclick, out.declickOut = c.fadeOutDeclick;  // J-43
+  if (!out.head) out.fadeIn = 0;  // K-114: a later pass of a looping clip
+  if (!out.tail) out.fadeOut = 0;
 }
 
 bool compileAudioClip(const Song& song, const Channel& ch, const Clip& c, const TempoMap& map, ProgAudioClip& out,
@@ -469,6 +472,19 @@ bool compileAudioClip(const Song& song, const Channel& ch, const Clip& c, const 
 }
 
 }  // namespace
+
+void warmUpBuiltin(Generator& g, const std::string& type, const PluginState& state, const ChannelAux& aux, double sampleRate) {
+  if (isHostedType(type) || !allocatesInFirstBlock(type)) return;
+  float l = 0, r = 0;
+  g.process(state, aux, warmUpContext(sampleRate), &l, &r, 0);
+  g.kill();
+}
+void warmUpBuiltin(Effect& fx, const std::string& type, const PluginState& state, const ChannelAux& aux, double sampleRate) {
+  if (isHostedType(type) || !allocatesInFirstBlock(type)) return;
+  float l = 0, r = 0;
+  fx.processAux(state, aux, warmUpContext(sampleRate), &l, &r, 0);
+  fx.reset();
+}
 
 namespace {
 
@@ -649,6 +665,11 @@ std::vector<NoteEv> compileChannelNotes(const Song& song, const Pattern& p, cons
       if (!n.bend.empty() && !n.slide) {  // K-25: slide notes glide other notes, they have no line of their own
         if (!bendShared || bendOf != &n) bendShared = std::make_shared<const std::vector<BendPoint>>(n.bend), bendOf = &n;
         e.bend = bendShared;
+      }
+      if (!n.tracker.empty()) {  // K-76
+        e.tracker = std::make_shared<const std::vector<uint8_t>>(n.tracker);
+        e.props.tracker = e.tracker->data();
+        e.props.trackerLen = static_cast<uint32_t>(e.tracker->size());
       }
       out.push_back(e);
       if (loopTicks <= 0) break;
@@ -997,6 +1018,8 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     pc.pitch = c.pitch;
     pc.masterPitch = song.masterPitch + static_cast<float>(c.fine) / 100.0f;
     pc.pitchOffset = static_cast<float>(c.pitch) + static_cast<float>(c.fine) / 100.0f + song.masterPitch;
+    pc.pitchSmooth = c.pitchSmooth;
+    pc.knobFine = static_cast<float>(c.knobFine) / 100.0f;
     int mi = song.mixerIndex(c.mixerTrack);
     pc.mixer = mi >= 0 ? mi : prog->master;
     for (ObjectId t : c.auxOuts) pc.auxMixer.push_back(t == kNoId ? -1 : song.mixerIndex(t));
@@ -1149,7 +1172,9 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
         AutomationLane l;
         l.owner = a->owner;
         l.index = a->index;
-        l.inst.push_back({0, len, c.offset, std::make_shared<const AutomationClip>(*a)});
+        AutomationClip k = *a;
+        if (!c.loop) k.loop = 0;  // K-114: only a placement that loops repeats the curve
+        l.inst.push_back({0, len, c.offset, std::make_shared<const AutomationClip>(std::move(k))});
         prog->hasPatternAutos |= compileLane(std::move(l), lanes);
       }
     }
@@ -1194,10 +1219,16 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     if (clip.muted || inLiveArea(song, clip)) continue;  // live area: launched by hand (below)
     if (clip.kind == ClipKind::Audio) {  // arrangement: audio clip through its channel
       int ci = song.channelIndex(clip.source);
-      ProgAudioClip ac;
       const ClipRenderCtx rctx{sampleRate_, asyncSamples_, deferRenders_, &deferred};
-      if (ci >= 0 && compileAudioClip(song, song.channels[static_cast<size_t>(ci)], clip, prog->tempoMap, ac, &clipFades[clipIdx], &rctx))
-        prog->channels[static_cast<size_t>(ci)].audio.push_back(std::move(ac));
+      if (ci < 0) continue;
+      // K-114: a looping clip plays pass by pass (one window each).
+      const std::vector<Clip> passes = clip.loop ? audioLoopPasses(song, clip, prog->tempoMap) : std::vector<Clip>{clip};
+      for (size_t k = 0; k < passes.size(); ++k) {
+        ProgAudioClip ac;
+        ac.pass = static_cast<int>(k), ac.head = k == 0, ac.tail = k + 1 == passes.size();
+        if (compileAudioClip(song, song.channels[static_cast<size_t>(ci)], passes[k], prog->tempoMap, ac, &clipFades[clipIdx], &rctx))
+          prog->channels[static_cast<size_t>(ci)].audio.push_back(std::move(ac));
+      }
       continue;
     }
     if (clip.kind != ClipKind::Pattern) continue;
@@ -1245,11 +1276,15 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
       int ci = song.channelIndex(clip.source);
       Clip at0 = clip;
       at0.start = 0;
-      ProgAudioClip ac;
       const ClipRenderCtx rctx{sampleRate_, asyncSamples_, deferRenders_, &deferred};
-      if (ci >= 0 && compileAudioClip(song, song.channels[static_cast<size_t>(ci)], at0, prog->flatMap, ac, nullptr, &rctx)) {
-        lc.audioChannel = ci;
-        lc.audio.push_back(std::move(ac));
+      const std::vector<Clip> passes = at0.loop ? audioLoopPasses(song, at0, prog->flatMap) : std::vector<Clip>{at0};  // K-114
+      for (size_t k = 0; ci >= 0 && k < passes.size(); ++k) {
+        ProgAudioClip ac;
+        ac.pass = static_cast<int>(k), ac.head = k == 0, ac.tail = k + 1 == passes.size();
+        if (compileAudioClip(song, song.channels[static_cast<size_t>(ci)], passes[k], prog->flatMap, ac, nullptr, &rctx)) {
+          lc.audioChannel = ci;
+          lc.audio.push_back(std::move(ac));
+        }
       }
     }
     int ti = prog->liveTrackIndex(clip.track);
@@ -1295,7 +1330,7 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
   constexpr int kNewVoicesWhileEditing = 4;
   int newVoices = 0;
   bool voicesPending = false;
-  std::map<std::pair<ObjectId, bool>, ClipVoiceSlot> voices;
+  std::map<std::pair<ObjectId, int>, ClipVoiceSlot> voices;
   auto giveVoice = [&](ProgAudioClip& ac, const ProgChannel& pc, bool live) {
     const bool rubber = ac.engine == stretch::Engine::RubberBand;
     if (!((asyncSamples_ && ac.hq && !(rubber && ac.hq->ready.load(std::memory_order_acquire))) || pc.pitchMoves ||
@@ -1308,7 +1343,7 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     slot.start = ac.start;
     slot.srcStart = ac.srcStart, slot.srcEnd = ac.srcEnd, slot.speed = ac.speed, slot.secPerTick = ac.secPerTick;
     slot.resampleSync = ac.resampleSync;
-    const auto key = std::make_pair(ac.clip, live);
+    const auto key = std::make_pair(ac.clip, live ? -1 - ac.pass : ac.pass);
     auto old = clipVoices_.find(key);
     // A preview voice (the stretch standing in for Rubber Band) plays on
     // until the clip's render is ready, unless the channel pitch moves at run

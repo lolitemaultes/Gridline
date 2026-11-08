@@ -28,6 +28,15 @@ bool decodeWavPack(const uint8_t* data, size_t size, DecodedAudio& out, std::str
 // Ogg Vorbis (whole stream in memory). Implemented in AudioCodecs.cpp.
 bool decodeOggVorbis(const uint8_t* data, size_t size, DecodedAudio& out, std::string* err);
 
+// K-51: MPEG-4 audio (.m4a / .mp4: AAC, HE-AAC, Apple Lossless) and raw AAC (ADTS .aac),
+// decoded from the file at `path` by the computer's own decoder (macOS AudioToolbox, Windows
+// Media Foundation), else by the FFmpeg program (Linux, the BSDs). AudioCodecsAac.cpp.
+bool looksLikeAacFile(const uint8_t* data, size_t size);
+bool isAacExtension(const std::string& lowerExt);  // ".m4a", ".aac", ...
+bool decodeAacFile(const std::string& path, DecodedAudio& out, std::string* err);
+enum class AacRoute { Auto, System, Program };  // tests: only the system's decoder, only FFmpeg
+void setAacRouteForTests(AacRoute r);
+
 // J-51: both decoders give up (false, "cancelled") when the calling thread's
 // DecodeCancelScope flag is set (Sample.h; defined in Sample.cpp).
 bool decodeCancelled();

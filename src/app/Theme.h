@@ -69,6 +69,15 @@ struct Palette {
   ImU32 field;             // input fields, LCDs, combo boxes, number boxes
   ImU32 knobFill;          // knob value ring at rest
   ImU32 keyWhite, keyBlack;  // piano-roll keyboard
+  // K-79 roles, derived from the palette's own colours (solo = hot, mute
+  // lamp = led, arm = danger, ...), so they follow the theme and the user's tweaks.
+  ImU32 solo;              // solo buttons and lamps
+  ImU32 muteLamp;          // a muted track or strip
+  ImU32 arm;               // record arm
+  ImU32 loopStrip;         // the loop range in a ruler
+  ImU32 monitor;           // input monitoring
+  ImU32 launch;            // launched / playing clips
+  ImU32 selection;         // selected slots, clips and time range (has alpha)
   bool dark;
 };
 

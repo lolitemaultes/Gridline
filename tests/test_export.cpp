@@ -862,14 +862,14 @@ void testInterop() {
              fs::exists(fs::path(out) / "Samples" / "hall.wav"),
          "data files: name clashes get unique names");
   {
-    std::ifstream in(fs::path(out) / "Song.gridline.json");
+    std::ifstream in(fs::path(out) / "Song.gridline");
     std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     expect(text.find("Samples/kick (2).wav") != std::string::npos && text.find(scratch + "/lib") == std::string::npos,
            "saved project refers to its files relatively");
   }
   Song loaded;
   std::string err;
-  expect(loadProject((fs::path(out) / "Song.gridline.json").string(), loaded, &err), "exported project loads");
+  expect(loadProject((fs::path(out) / "Song.gridline").string(), loaded, &err), "exported project loads");
   bool ok = loaded.channels.size() == 3 && missingFiles(loaded).empty() &&
             readBytes(loaded.channels[1].plugin.data) == readBytes(kickB) && loaded.channels[0].plugin.data == loaded.channels[2].plugin.data &&
             fs::path(loaded.channels[0].plugin.data).parent_path() == fs::path(out) / "Samples";
@@ -886,10 +886,10 @@ void testInterop() {
   rep = exportZippedProject(s, zp, "Song");
   std::vector<ZipEntry> dir;
   readZipDirectory(zp, dir);
-  expect(rep.error.empty() && dir.size() == 4 && dir[0].name == "Song.gridline.json", "zipped project: project + 3 files");
+  expect(rep.error.empty() && dir.size() == 4 && dir[0].name == "Song.gridline", "zipped project: project + 3 files");
   std::string proj;
   const std::string unz = (fs::path(scratch) / "unzipped").string();
-  expect(unpackZippedProject(zp, unz, proj, &err) && fs::path(proj).filename() == "Song.gridline.json", "zipped project unpacks");
+  expect(unpackZippedProject(zp, unz, proj, &err) && fs::path(proj).filename() == "Song.gridline", "zipped project unpacks");
   Song z;
   expect(loadProject(proj, z, &err) && missingFiles(z).empty() && readBytes(z.channels[1].plugin.data) == readBytes(kickB) &&
              z.channels[1].plugin.data.rfind(fs::weakly_canonical(unz).string(), 0) == 0,

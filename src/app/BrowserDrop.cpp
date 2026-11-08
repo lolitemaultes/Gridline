@@ -564,16 +564,19 @@ bool runAction(App& a, const std::string& path, DropAction act, DropTarget targe
     case DropAction::None:
       return false;
     case DropAction::NewSamplerChannel:
-      a.settingsChannel = addChannelAt(a, "gl.sampler", path, target == DropTarget::Rack ? place.insertAt : -1);
-      return a.settingsChannel != kNoId;
+    {
+      const ObjectId id = addChannelAt(a, "gl.sampler", path, target == DropTarget::Rack ? place.insertAt : -1);
+      a.showNewInstrument(id);
+      return id != kNoId;
+    }
     case DropAction::ReplaceInstrument:  // J-97: another instrument's row becomes a sampler with the file
       if (!replaceChannel(a, place.channel, "gl.sampler", nullptr, path, fs::path(path).stem().string(), "replace with sampler")) return false;
-      a.selectChannel(place.channel);
+      a.showNewInstrument(place.channel);  // K-125
       return true;
     case DropAction::ReplaceFromPreset: {  // J-97: the row's instrument from a preset (FL "Replace")
       if (d.item.pluginType.empty() || !replaceChannel(a, place.channel, d.item.pluginType, &d.state, "", d.name, "replace instrument")) return false;
       pui::presetLoaded(PluginTarget{place.channel, -1}, d.item.pluginType, d.name);  // J-213: the plugin view shows that preset
-      a.selectChannel(place.channel);
+      a.showNewInstrument(place.channel);  // K-125
       return true;
     }
     case DropAction::AudioClip: {
@@ -669,7 +672,7 @@ bool runAction(App& a, const std::string& path, DropAction act, DropTarget targe
         pui::presetLoaded(PluginTarget{id, -1}, ns.type, d.name);
       }
       a.doc.endGroup();
-      a.settingsChannel = id;
+      a.showNewInstrument(id);
       return id != kNoId;
     }
     case DropAction::InsertEffectPreset: {
@@ -1045,15 +1048,18 @@ bool performPluginDrop(App& a, const std::string& type, DropTarget target, const
       return false;
     case PlugAct::ReplaceChannel:
       if (!replaceChannel(a, p.owner, type, nullptr, "", info ? info->name : type, "replace instrument")) return false;
-      a.selectChannel(p.owner);
+      a.showNewInstrument(p.owner);  // K-125: a new instrument opens its editor, wherever it is dropped
       return true;
     case PlugAct::NewChannel: {
       const ObjectId id = a.addInstrument(type);
-      if (target == DropTarget::Playlist) a.settingsChannel = id;
+      a.showNewInstrument(id);
       return id != kNoId;
     }
-    case PlugAct::InsertChannel:
-      return addChannelAt(a, type, "", place.insertAt) != kNoId;
+    case PlugAct::InsertChannel: {
+      const ObjectId id = addChannelAt(a, type, "", place.insertAt);
+      a.showNewInstrument(id);
+      return id != kNoId;
+    }
     case PlugAct::NewTrackInstrument: {  // J-208: one undo step (a new channel + the track's link)
       std::string why;
       const ObjectId ch = trackmodes::newInstrumentTrack(a.doc, p.track, type, &why);
@@ -1061,12 +1067,12 @@ bool performPluginDrop(App& a, const std::string& type, DropTarget target, const
         a.notify(why.empty() ? std::string(i18n::tr("This instrument can't play on that track")) : why, true);
         return false;
       }
-      a.selectChannel(ch);
+      a.showNewInstrument(ch);
       return true;
     }
     case PlugAct::ReplaceTrackInstrument:
       if (!replaceChannel(a, p.owner, type, nullptr, "", info ? info->name : type, "replace instrument track")) return false;
-      a.selectChannel(p.owner);
+      a.showNewInstrument(p.owner);
       return true;
     case PlugAct::FreeSlot:
     case PlugAct::Slot:

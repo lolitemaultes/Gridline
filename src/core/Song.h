@@ -49,6 +49,11 @@ struct Channel {
   std::vector<PluginState> noteFx;
   // --- Channel note settings (defaults keep the previous behaviour) ---
   int fine = 0;              // fine tune, cents -200..200 (added to `pitch`)
+  // K-132 (FL import): automation of the pitch (ChannelParam::Pitch) moves it in cents, as FL's
+  // pitch knob does, instead of whole semitones, and replaces the knob's share of `fine`
+  // (`knobFine` cents) with it. Off for Gridline's own channels: they sound as they always did.
+  bool pitchSmooth = false;
+  int knobFine = 0;
   float swingMix = 1.0f;     // share of the song swing applied to this channel's steps, 0..1
   float timeShift = 0;       // every note starts this many beats later, 0..1
   int polyphony = 0;         // maximum sounding notes (0 = unlimited); the oldest is cut
@@ -89,7 +94,7 @@ struct Channel {
   bool operator==(const Channel& o) const {
     return id == o.id && name == o.name && color == o.color && plugin == o.plugin && gain == o.gain &&
            pan == o.pan && muted == o.muted && pitch == o.pitch && mixerTrack == o.mixerTrack && noteFx == o.noteFx &&
-           fine == o.fine && swingMix == o.swingMix && timeShift == o.timeShift && polyphony == o.polyphony &&
+           fine == o.fine && pitchSmooth == o.pitchSmooth && knobFine == o.knobFine && swingMix == o.swingMix && timeShift == o.timeShift && polyphony == o.polyphony &&
            mono == o.mono && porta == o.porta && portaTime == o.portaTime && cutGroup == o.cutGroup &&
            cutBy == o.cutBy && echo == o.echo && layer == o.layer && layerMode == o.layerMode && group == o.group &&
            auxOuts == o.auxOuts && midiOutPort == o.midiOutPort && midiInPort == o.midiInPort && keyLo == o.keyLo &&
@@ -603,6 +608,9 @@ struct Song {
   // J-219: what the user typed in Track Receipt (song categories, shares, release
   // details, writers, ticked files; compact JSON, core/TrackReceipt.h). Empty = none.
   std::string trackReceipt;
+  // K-110: how this project's Gridline-only plugins go into FL Studio exports ("render", "suite",
+  // "suite+fallback"; core/flp/FlpExport.h GridlinePlugins). Empty = the app's default.
+  std::string flExportGridline;
   FlOrigin flOrigin;  // FL Studio import data for the FL exporter (see FlOrigin)
 
   // J-111 (collaboration): object ids are partitioned between collaborators so
@@ -659,7 +667,7 @@ struct Song {
            mixer == o.mixer && links == o.links && modLinks == o.modLinks && automations == o.automations &&
            markers == o.markers && channelGroups == o.channelGroups && patternGroups == o.patternGroups && live == o.live &&
            arrangements == o.arrangements &&
-           currentArrangement == o.currentArrangement && trackReceipt == o.trackReceipt && flOrigin == o.flOrigin;
+           currentArrangement == o.currentArrangement && trackReceipt == o.trackReceipt && flExportGridline == o.flExportGridline && flOrigin == o.flOrigin;
   }
   bool operator!=(const Song& o) const { return !(*this == o); }
 };

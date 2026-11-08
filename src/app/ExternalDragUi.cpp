@@ -1,5 +1,6 @@
 // Gridline — J-75: drags from other applications inside the interface (ExternalDragUi.h).
 #include "ExternalDragUi.h"
+#include "Keys.h"
 #include "../core/RemoteFs.h"
 #include "../core/ProjectFiles.h"
 #include <algorithm>
@@ -273,7 +274,7 @@ void feedPointer() {
 
 void beginFrame(App& a) {
   if (st.phase == Phase::Hover || st.phase == Phase::DropNext) {
-    if (st.phase == Phase::Hover && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+    if (st.phase == Phase::Hover && ::gl::keys::escapePressed(false)) {
       cancel(a, true);
       return;
     }

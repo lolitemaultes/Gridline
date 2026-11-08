@@ -3,6 +3,7 @@
 // are pure functions on a note list so the piano roll, menus and tests share them.
 #pragma once
 #include <cstdint>
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
@@ -109,6 +110,12 @@ bool moveMixerTrack(Document& d, ObjectId id, int dir);  // never moves the mast
 int trimUnusedMixerTracks(Document& d);
 bool setSlotEnabled(Document& d, ObjectId track, int slot, bool enabled);
 bool soloMixerTrack(Document& d, ObjectId id);  // exclusive solo toggle
+// K-126: the channel rack's solo (right-click or Ctrl+click on a channel's LED), one undo step:
+// channel `id` plays and every other channel is muted; when `id` is already the only one playing,
+// the mute states from before the solo come back (`before`, written by the solo and kept by the
+// caller; channels it does not know play). Returns true when it soloed, false when it unsoloed
+// (or `id` is unknown).
+bool toggleChannelSolo(Document& d, ObjectId id, std::map<ObjectId, bool>& before);
 
 // -------------------------------------------------------------------- notes ----
 // All tools act on the selected notes (`sel`, same size as `notes`), or on all

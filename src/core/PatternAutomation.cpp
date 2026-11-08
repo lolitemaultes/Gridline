@@ -162,7 +162,7 @@ PatternAutomation patternClipFromPlaylist(const Song& s, const AutomationClip& s
   // The window one placement plays: its passes over the (looping) content, unrolled.
   c.loop = 0;
   const Tick len = std::max<Tick>(1, s.clipLength(*placement));
-  for (const ClipPass& ps : loopPasses(placement->offset, len, src.loop)) {
+  for (const ClipPass& ps : loopPasses(placement->offset, len, placement->loop ? src.loop : 0)) {
     const Tick base = at + ps.at;
     const Tick c0 = ps.content, c1 = ps.content + ps.len;
     bool startCovered = false;

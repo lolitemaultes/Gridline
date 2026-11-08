@@ -73,7 +73,7 @@ claude mcp add gridline -- /path/to/gridline mcp --attach
 To work on a project file without the app (for example on a build server):
 
 ```sh
-claude mcp add gridline-song -- /path/to/gridline mcp "/path/to/My song.gridline.json" --export-dir "/path/to/Renders"
+claude mcp add gridline-song -- /path/to/gridline mcp "/path/to/My song.gridline" --export-dir "/path/to/Renders"
 ```
 
 ## Connect Claude Desktop
@@ -101,18 +101,18 @@ Gridline is closed or the switch is off, tool calls answer with an error saying 
 is restarted, the bridge opens a new session by itself.
 
 For a headless server on one project instead, use
-`"args": ["mcp", "/path/to/My song.gridline.json"]`.
+`"args": ["mcp", "/path/to/My song.gridline"]`.
 
 ## Headless server
 
 ```
-gridline mcp <project.gridline.json|.flp> [--export-dir DIR] [--read-only] [--fl-data DIR]
+gridline mcp <project.gridline|.flp> [--export-dir DIR] [--read-only] [--fl-data DIR]
 gridline mcp --attach [--endpoint FILE]
 ```
 
-* The project is loaded once; edits stay in memory until `save_project`. A `.gridline.json`
+* The project is loaded once; edits stay in memory until `save_project`. A `.gridline`
   path that does not exist yet starts a new project that `save_project` writes. An FL Studio
-  `.flp` is imported; save it with `save_project` and a `.gridline.json` path.
+  `.flp` is imported; save it with `save_project` and a `.gridline` path (`.gridline.json`, the older name, works too).
 * `--export-dir` adds a folder for renders and exports (relative paths go there).
 * `--read-only` refuses every editing and file-writing tool.
 * The protocol uses stdout; everything else the program prints goes to stderr, including one
@@ -177,8 +177,8 @@ Files (need the same switch; only inside the project and export folders):
 | Tool | What it does |
 |---|---|
 | `render_audio` | song or pattern to a 16 or 24-bit WAV, with its loudness |
-| `export_project` | MIDI (song or one pattern), FL Studio `.flp`, FL Studio zipped loop package |
-| `save_project` | save, or save as a new `.gridline.json` |
+| `export_project` | MIDI (song or one pattern), FL Studio `.flp`, FL Studio zipped loop package; `gridline_plugins` (`fallback`, `suite`, `render`) says how Gridline plugins without an FL Studio counterpart are written |
+| `save_project` | save, or save as a new `.gridline` |
 
 Jobs (always allowed):
 

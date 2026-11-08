@@ -1,5 +1,5 @@
 // Gridline CLI — MCP server (SC-07).
-//   gridline mcp <project.gridline.json|.flp> [--export-dir DIR] [--read-only] [--fl-data DIR]
+//   gridline mcp <project.gridline|.flp> [--export-dir DIR] [--read-only] [--fl-data DIR]
 //       stdio MCP server on a project file, headless (see docs/mcp.md)
 //   gridline mcp --attach [--endpoint FILE]
 //       stdio bridge to the running app's local MCP endpoint
@@ -42,7 +42,7 @@ int mcpMain(int argc, char** argv) {
   }
   if (!attach && project.empty()) {
     std::fprintf(stderr,
-                 "usage: gridline mcp <project.gridline.json|.flp> [--export-dir DIR] [--read-only] [--fl-data DIR]\n"
+                 "usage: gridline mcp <project.gridline|.flp> [--export-dir DIR] [--read-only] [--fl-data DIR]\n"
                  "       gridline mcp --attach [--endpoint FILE]\n");
     return 2;
   }
@@ -88,7 +88,7 @@ int mcpMain(int argc, char** argv) {
     } else {
       savePath = path.string();
     }
-  } else if (ext == ".json") {  // a new project, written on save_project
+  } else if (ext == ".json" || ext == ".gridline") {  // a new project, written on save_project (K-121: .gridline)
     song = gl::makeEmptySong();
     std::string stem = path.filename().string();
     stem = stem.substr(0, stem.find('.'));

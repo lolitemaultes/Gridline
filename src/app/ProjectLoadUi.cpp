@@ -7,6 +7,7 @@
 // builder, a build that finds them ready, the engine gets the new program atomically).
 // Cancel drops the loader's work; the open project was never touched.
 #include "CacheUi.h"
+#include "Keys.h"
 #include "ProjectLoadUi.h"
 #include <algorithm>
 #include <cmath>
@@ -395,7 +396,7 @@ void drawChoice(App& a, float w) {
   const float bw = 110.0f;
   const float y = ImGui::GetCursorPosY();
   ImGui::SetCursorPos(ImVec2(theme::kS6 + w - 2 * bw - theme::kS2, y));
-  if (ui::TextButton("Cancel", false, bw, "Stop opening and go back to the project as it was") || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+  if (ui::TextButton("Cancel", false, bw, "Stop opening and go back to the project as it was") || ::gl::keys::escapePressed()) {
     selected = 0;
     a.cancelProjectLoad();
     return;
@@ -517,8 +518,8 @@ void draw(App& a) {
   }
   ImGui::SetCursorPos(ImVec2(theme::kS6 + w - bw, y));
   if (failed) {
-    if (ui::TextButton("Close", true, bw) || ImGui::IsKeyPressed(ImGuiKey_Escape) || ImGui::IsKeyPressed(ImGuiKey_Enter)) a.dismissProjectLoad();
-  } else if (ui::TextButton("Cancel", false, bw, "Stop opening and go back to the project as it was") || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+    if (ui::TextButton("Close", true, bw) || ::gl::keys::escapePressed() || ImGui::IsKeyPressed(ImGuiKey_Enter)) a.dismissProjectLoad();
+  } else if (ui::TextButton("Cancel", false, bw, "Stop opening and go back to the project as it was") || ::gl::keys::escapePressed()) {
     a.cancelProjectLoad();
   }
   if (!a.projectLoadBlocking()) ImGui::CloseCurrentPopup();

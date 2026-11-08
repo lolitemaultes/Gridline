@@ -120,9 +120,10 @@ GenericName=Digital Audio Workstation
 Comment=Pattern-based music production
 Exec=gridline-app %F
 Icon=gridline
+StartupWMClass=gridline
 Terminal=false
 Categories=AudioVideo;Audio;Midi;Sequencer;Music;
-MimeType=application/x-gridline-project;
+MimeType=application/x-gridline-project;application/x-gridline-zipped-project;audio/x-xm;audio/x-mod;
 Keywords=DAW;music;sequencer;beat;piano roll;
 """
 

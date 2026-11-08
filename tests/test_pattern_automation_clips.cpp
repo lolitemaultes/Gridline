@@ -80,6 +80,7 @@ struct Fx {
     c.start = start;
     c.length = len;
     c.offset = offset;
+    c.loop = true;  // these placements repeat their pattern
     s.playlist.push_back(c);
     return c.id;
   }
@@ -210,6 +211,7 @@ void testPlayback() {
     k.source = ac.id;
     k.track = 2;
     k.start = L, k.length = 2 * L + L / 2, k.offset = L / 4;
+    k.loop = true;
     b.s.playlist.push_back(k);
     const AudioBuffer ra = render(a.s), rb = render(b.s);
     size_t at = 0;

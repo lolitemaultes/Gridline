@@ -16,7 +16,15 @@ namespace flpexport {
 // Starts writing `path` (.flp, or the zipped loop package when `zip`).
 // `done(ok)` runs on the UI thread when it has finished (ok = written).
 // False when an export is already running.
+// Gridline-only plugins go as the project's choice, else the app default (K-110).
 bool start(App& a, const std::string& path, bool zip, std::function<void(bool ok)> done = {});
+// K-110: File > Export: first a small window shows how Gridline-only plugins go
+// (the project's choice, else the app default) and lets this export choose
+// another, optionally kept for the project. Starts at once when the song has
+// no Gridline plugin that is in the Gridline Suite.
+void askAndStart(App& a, const std::string& path, bool zip, std::function<void(bool ok)> done = {});
+// The mode an export uses (project setting, else Settings > Project), as a GridlinePlugins key.
+std::string modeKey(const App& a);
 bool running();
 // Per frame: the progress window while running, the report window when open.
 void draw(App& a);

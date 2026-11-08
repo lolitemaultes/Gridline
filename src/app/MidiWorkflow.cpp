@@ -266,8 +266,8 @@ void App::processMidi() {
     multilinkSerial_ = doc.touchSerial();
     return;
   }
-  for (const auto& c : doc.song().channels)  // MIDI Out channels → device
-    if (c.plugin.type == "gl.midiout")
+  for (const auto& c : doc.song().channels)  // MIDI Out channels → device (K-129: and Tracker Samplers sending their notes)
+    if (c.plugin.type == "gl.midiout" || c.plugin.type == "gl.tracker")
       if (auto rt = builder.channelRuntime(c.id)) {
         MidiOutRing::Msg msg;
         while (rt->midiOut.pop(msg)) midi->send(msg.s, msg.a, msg.b);

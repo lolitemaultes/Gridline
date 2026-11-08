@@ -449,9 +449,11 @@ class AudioEngine {
   double flatBpm(const Program* p) const { return hostTempo() ? hostBpm_ : p->tempo; }
   void followHost(const Program* p);  // applies hostIn_ (start of a process() call)
   double tickAt(const Program* p, double anchor, double clk) const { return clockMap(p).tickAfterSamples(anchor, clk, sr_); }
-  // First sample (counted from the anchor) at or after `tick`.
+  // First sample (counted from the anchor) at or after `tick`. A position within a millionth of a
+  // sample after a frame is that frame: the tempo map's sums over many tempo changes carry rounding
+  // that size, and an event exactly on a frame (an imported song's rows) must not slip to the next.
   int64_t sampleAt(const Program* p, double anchor, double tick) const {
-    return static_cast<int64_t>(std::ceil(clockMap(p).samplesBetween(anchor, tick, sr_) - 1e-9));
+    return static_cast<int64_t>(std::ceil(clockMap(p).samplesBetween(anchor, tick, sr_) - 1e-6));
   }
   void drainMidi(const Program* p);
   // J-109 (audio thread): releaseAllNotes / releaseLiveNotes / the panic.

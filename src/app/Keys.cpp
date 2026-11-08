@@ -1,6 +1,8 @@
 // Gridline - keyboard commands in the UI (see Keys.h).
 #include "Keys.h"
+#include <string>
 #include <unordered_map>
+#include "../../third_party/imgui/imgui_internal.h"
 
 namespace gl::keys {
 
@@ -8,6 +10,8 @@ namespace {
 
 Context gFocus = Context::Global;
 bool gCapturing = false;
+int gEscClaimFrame = -10;  // K-124: frame in which something used Esc
+bool gEscBusyAtStart = false;
 int gCaptureFrame = -10;  // capture lapses when the shortcut editor stops refreshing it (window closed)
 int gReleaseFrame = -10;  // frame a capture ended in
 
@@ -31,6 +35,17 @@ const ImGuiKey kMap[] = {
 static_assert(sizeof(kMap) / sizeof(kMap[0]) == static_cast<size_t>(Key::Count), "ImGui key table");
 
 uint8_t modsNow() {
+  const ImGuiIO& io = ImGui::GetIO();
+  const uint8_t rest = static_cast<uint8_t>((io.KeyShift ? kShift : 0) | (io.KeyAlt ? kAlt : 0));
+  if (keymap().separateCmd()) {
+    // K-79 (tracks shortcut set, macOS): ImGui reports Command as KeyCtrl and Control as KeySuper there.
+    return static_cast<uint8_t>(rest | (io.KeyCtrl ? kCmd : 0) | (io.KeySuper ? kCtrl : 0));
+  }
+  return static_cast<uint8_t>(((io.KeyCtrl || io.KeySuper) ? kCtrl : 0) | rest);
+}
+
+// Mouse gestures keep Cmd and Ctrl as one modifier in every shortcut set.
+uint8_t mouseMods() {
   const ImGuiIO& io = ImGui::GetIO();
   return static_cast<uint8_t>(((io.KeyCtrl || io.KeySuper) ? kCtrl : 0) | (io.KeyShift ? kShift : 0) | (io.KeyAlt ? kAlt : 0));
 }
@@ -78,6 +93,42 @@ bool pressed(const char* id) {
   return false;
 }
 
+bool pressedPastEditor(const char* id) {
+  if (capturing() || ImGui::GetIO().WantTextInput) return false;
+  const Command* cmd = findCommand(id);
+  if (!cmd) return false;
+  const uint8_t mods = modsNow();
+  const Keymap& km = keymap();
+  for (const Chord& c : km.bindings(id)) {
+    if (c.mods != mods || !ImGui::IsKeyPressed(toImGui(c.key), cmd->repeat)) continue;
+    bool editorTakes = false;
+    if (cmd->context == Context::Global && gFocus != Context::Global)
+      for (const Command* e : km.lookup(gFocus, c)) {
+        const std::string eid = e->id;
+        if (eid != "playlist.cancelDrag" && eid != "piano.cancelDrag" && eid != "auto.cancel") editorTakes = true;
+      }
+    if (!editorTakes) return true;
+  }
+  return false;
+}
+
+void escapeFrameBegin() {
+  const ImGuiIO& io = ImGui::GetIO();
+  gEscBusyAtStart = io.WantTextInput || capturing() || ImGui::IsAnyMouseDown() || ImGui::GetActiveID() != 0 ||
+                    ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel) ||
+                    ImGui::GetDragDropPayload() != nullptr;
+}
+
+bool escapePressed(bool repeat) {
+  if (!ImGui::IsKeyPressed(ImGuiKey_Escape, repeat)) return false;
+  claimEscape();
+  return true;
+}
+
+void claimEscape() { gEscClaimFrame = ImGui::GetFrameCount(); }
+
+bool escapeBusy() { return gEscBusyAtStart || gEscClaimFrame == ImGui::GetFrameCount(); }
+
 bool pressedHeld(const char* id) {
   if (capturing() || ImGui::GetIO().WantTextInput) return false;
   const Command* cmd = findCommand(id);
@@ -96,14 +147,14 @@ bool keyDown(const char* id) {
 
 bool modifierHeld(const char* id) {
   const uint8_t want = mouseModifier(id);
-  return want != 0 && modsNow() == want;
+  return want != 0 && mouseMods() == want;
 }
 
-bool modifierExact(const char* id) { return modsNow() == mouseModifier(id); }
+bool modifierExact(const char* id) { return mouseMods() == mouseModifier(id); }
 
 bool modifierIncludes(const char* id) {
   const uint8_t want = mouseModifier(id);
-  return want != 0 && (modsNow() & want) == want;
+  return want != 0 && (mouseMods() & want) == want;
 }
 
 const char* label(const char* id) {

@@ -150,7 +150,10 @@ struct LfoAux {
   std::vector<float> pathX;
 };
 struct Aux : AuxData {
-  bool incomplete = false;  // a multisample map lacked files: built again once the sample cache changes
+  // A file it reads was missing (a multisample map's members; K-132: also a table, sample, impulse
+  // response or noise file, as a collaborator's file still arriving): built again once the sample
+  // cache changes.
+  bool incomplete = false;
   uint64_t builtAt = 0;     // the sample cache's generation when built
   std::array<OscAux, kOscs> osc;
   std::array<LfoAux, kLfos> lfo;
@@ -224,6 +227,10 @@ void fxReset(FxUnit& u);
 void fxProcess(FxUnit& u, int type, const float* p, float* L, float* R, int n, const FxContext& c, const Aux* aux, int slot);
 // Meter of the last block (0..1 peak), for the editor.
 float fxMeter(const FxUnit& u);
+// Upper bound of the time a module can hold sound with nothing audible at its output (delay
+// lines, pre-delays, an impulse): the idle sleep waits this long after the output went quiet.
+// u may be null (no memory yet). p: the slot's normalized params.
+double fxHoldSeconds(const FxUnit* u, int type, const float* p, double tempo);
 // LR4 band splitter used by the splitter modules and the multiband compressor.
 struct Lr4 {
   double a1 = 0, a2 = 0, b0 = 0, b1 = 0, b2 = 0, hb0 = 0, hb1 = 0, hb2 = 0;

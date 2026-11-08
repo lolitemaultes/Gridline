@@ -31,7 +31,7 @@ std::string lower(std::string s) {
 }
 
 Chord ch(Key k, uint8_t m = 0) { return Chord{k, m}; }
-constexpr uint8_t C = kCtrl, S = kShift, A = kAlt;
+constexpr uint8_t C = kCtrl, S = kShift, A = kAlt, H = C | A | S;  // H: the free Ctrl+Alt+Shift space of the K-79 commands
 
 std::vector<Command> buildCommands() {
   using K = Key;
@@ -62,6 +62,12 @@ std::vector<Command> buildCommands() {
       {"options.typingKeyboard", G, N_("Typing keyboard to piano"), {ch(K::T, C)}},
       {"options.metronome", G, N_("Metronome"), {ch(K::M, C)}},
       {"tools.stopSound", G, N_("Stop all sound"), {ch(K::H, C)}},
+      // K-79: transport commands the other shortcut sets put on single keys.
+      {"transport.record", G, N_("Record on / off"), {ch(K::R, H)}},
+      {"transport.toStart", G, N_("Go to the start"), {ch(K::Home, H)}},
+      {"transport.rewindBar", G, N_("Back one bar"), {ch(K::Left, H)}, true},
+      {"transport.forwardBar", G, N_("Forward one bar"), {ch(K::Right, H)}, true},
+      {"options.countIn", G, N_("Count-in on / off"), {ch(K::K, H)}},
       // ---- global: patterns ----
       {"pattern.new", G, N_("New pattern"), {ch(K::F4)}},
       {"pattern.findFirstEmpty", G, N_("Find first empty pattern"), {ch(K::F4, S)}},
@@ -81,10 +87,14 @@ std::vector<Command> buildCommands() {
       {"view.browser", G, N_("Browser"), {ch(K::F8, A)}},
       {"view.mixer", G, N_("Mixer"), {ch(K::F9)}},
       {"view.settings", G, N_("Settings (MIDI page)"), {ch(K::F10)}},
+      {"view.backToPlaylist", G, N_("Back to the playlist (from an editor or plugin window)"), {ch(K::Escape)}},  // K-124
       {"view.closeAll", G, N_("Close all windows"), {ch(K::F12)}},
       {"view.closePlugins", G, N_("Close plugin windows"), {ch(K::F12, A)}},
       {"view.resetLayout", G, N_("Reset window layout"), {ch(K::H, C | S)}},
       {"help.shortcuts", G, N_("Keyboard shortcuts"), {ch(K::F1)}},
+      // K-79: layout presets.
+      {"view.toggleMain", G, N_("Switch the main view (playlist / live pads)"), {ch(K::Tab, H)}},
+      {"view.editors", G, N_("Editors in the bottom pane (show / hide)"), {ch(K::E, H)}},
       // ---- playlist ----
       {"playlist.delete", PL, N_("Delete selected clips"), {ch(K::Delete), ch(K::Backspace)}},
       {"playlist.selectAll", PL, N_("Select all clips"), {ch(K::A, C)}},
@@ -113,6 +123,7 @@ std::vector<Command> buildCommands() {
       {"playlist.quickZoom2", PL, N_("Quick zoom 2"), {ch(K::D2, S)}},
       {"playlist.quickZoom3", PL, N_("Quick zoom 3"), {ch(K::D3, S)}},
       {"playlist.zoomSelection", PL, N_("Zoom to the selection"), {ch(K::D4, S)}},
+      {"playlist.splitAtSongPos", PL, N_("Split selected clips at the song position"), {ch(K::T, H)}},  // K-79
       // PL-13: chop, stutter and time selection editing.
       {"playlist.chopWindow", PL, N_("Chop and stutter window"), {ch(K::C, A)}},
       {"playlist.sliceGrid", PL, N_("Slice selected clips at the snap grid"), {ch(K::C, S)}},
@@ -244,6 +255,7 @@ std::string format(const Chord& c) {
   if (!c.valid()) return {};
   std::string s;
   if (c.mods & kCtrl) s += "Ctrl+";
+  if (c.mods & kCmd) s += "Cmd+";
   if (c.mods & kAlt) s += "Alt+";
   if (c.mods & kShift) s += "Shift+";
   return s + keyName(c.key);
@@ -263,7 +275,7 @@ Chord parse(const std::string& text) {
       }
       return false;
     };
-    if (strip("ctrl+", kCtrl) || strip("alt+", kAlt) || strip("shift+", kShift)) continue;
+    if (strip("ctrl+", kCtrl) || strip("cmd+", kCmd) || strip("alt+", kAlt) || strip("shift+", kShift)) continue;
     break;
   }
   c.key = keyFromName(rest);
@@ -301,8 +313,23 @@ const Command* findCommand(const std::string& id) {
 const std::vector<Chord>& Keymap::bindings(const std::string& id) const {
   auto it = overrides_.find(id);
   if (it != overrides_.end()) return it->second;
+  return defaults(id);
+}
+
+const std::vector<Chord>& Keymap::defaults(const std::string& id) const {
+  if (profileDefaults_) {
+    auto it = profileDefaults_->find(id);
+    if (it != profileDefaults_->end()) return it->second;
+  }
   const Command* c = findCommand(id);
   return c ? c->defaults : kNone;
+}
+
+void Keymap::setProfile(Profile p, bool separateCmd) {
+  profile_ = p;
+  separateCmd_ = p == Profile::Logic && separateCmd;
+  profileDefaults_ = p == Profile::Studio ? nullptr : &profileDefaults(p, separateCmd_);
+  ++version_;
 }
 
 bool Keymap::set(const std::string& id, std::vector<Chord> chords) {
@@ -311,7 +338,7 @@ bool Keymap::set(const std::string& id, std::vector<Chord> chords) {
   std::vector<Chord> clean;
   for (const auto& x : chords)
     if (x.valid() && std::find(clean.begin(), clean.end(), x) == clean.end()) clean.push_back(x);
-  if (clean == c->defaults)
+  if (clean == defaults(id))
     overrides_.erase(id);
   else
     overrides_[id] = std::move(clean);
@@ -419,9 +446,198 @@ bool Keymap::load(const std::string& json, std::string* err) {
     for (const auto& x : v.array)
       if (x.is(Json::Type::String))
         if (Chord cc = parse(x.str); cc.valid()) chords.push_back(cc);
-    if (chords != c->defaults) overrides_[id] = std::move(chords);
+    if (chords != defaults(c->id)) overrides_[id] = std::move(chords);
   }
   return true;
+}
+
+// ---- K-79: shortcut sets ----
+
+const char* profileId(Profile p) {
+  switch (p) {
+    case Profile::Live: return "live";
+    case Profile::Logic: return "logic";
+    default: return "studio";
+  }
+}
+
+Profile profileFromId(const std::string& id) {
+  const std::string t = lower(id);
+  if (t == "live" || t == "performance") return Profile::Live;
+  if (t == "logic" || t == "tracks") return Profile::Logic;
+  return Profile::Studio;
+}
+
+namespace {
+
+using Rows = std::vector<std::pair<const char*, std::vector<Chord>>>;
+
+// The tools on single letters are left to the toolbars in both sets.
+const char* const kToolCommands[] = {"playlist.toolDraw", "playlist.toolPaint", "playlist.toolDelete", "playlist.toolMute", "playlist.toolSlip",
+                                     "playlist.toolSlice", "playlist.toolSelect", "playlist.toolZoom", "playlist.toolPlay", "piano.toolDraw",
+                                     "piano.toolPaint", "piano.toolDelete", "piano.toolSelect", "piano.toolSlice", "piano.toolMute",
+                                     "piano.toolPlay", "piano.toolZoom", "piano.toolDetune", "piano.toolBend", "auto.toolDraw",
+                                     "auto.toolSelect", "auto.toolDelete"};
+
+// Performance: view keys on Ctrl+Alt, single-key switches (O, M, 0), Tab
+// for the main view, the editing keys most other music programs share
+// (Ctrl+D duplicate, Ctrl+J join, Ctrl+L loop, Ctrl+E split), B for draw.
+Rows liveRows() {
+  using K = Key;
+  Rows r;
+  for (const char* t : kToolCommands) r.push_back({t, {}});
+  auto set = [&](const char* id, std::vector<Chord> c) {
+    for (auto& row : r)
+      if (std::string(row.first) == id) {
+        row.second = std::move(c);
+        return;
+      }
+    r.push_back({id, std::move(c)});
+  };
+  set("view.toggleMain", {ch(K::Tab)});
+  set("view.browser", {ch(K::B, C | A)});
+  set("view.mixer", {ch(K::M, C | A)});
+  set("view.pianoRoll", {ch(K::D3, C | A)});
+  set("view.editors", {ch(K::E, C | A)});
+  set("edit.history", {ch(K::Z, C | A)});
+  set("view.settings", {ch(K::Comma, C)});
+  set("file.render", {ch(K::R, C | S)});
+  set("file.renderStems", {});
+  set("file.exportMidi", {ch(K::E, C | S)});
+  set("edit.rename", {ch(K::R, C), ch(K::F2)});
+  set("options.metronome", {ch(K::O)});
+  set("options.typingKeyboard", {ch(K::M)});
+  set("transport.record", {ch(K::F9)});
+  set("transport.songMode", {});
+  set("help.shortcuts", {ch(K::F1), ch(K::Slash, C)});
+  // playlist
+  set("playlist.duplicate", {ch(K::D, C)});
+  set("playlist.deselect", {ch(K::A, C | S)});
+  set("playlist.merge", {ch(K::J, C)});
+  set("playlist.loopMarkers", {ch(K::L, C)});
+  set("playlist.insertSpace", {ch(K::I, C)});
+  set("playlist.deleteSpace", {ch(K::Delete, C | S)});
+  set("playlist.duplicateTime", {ch(K::D, C | S)});
+  set("playlist.mute", {ch(K::D0)});
+  set("playlist.toolDraw", {ch(K::B)});
+  set("playlist.zoomSelection", {ch(K::Z)});
+  set("playlist.zoomIn", {ch(K::Equal), ch(K::PageUp)});
+  set("playlist.zoomOut", {ch(K::Minus), ch(K::PageDown)});
+  set("playlist.splitAtSongPos", {ch(K::E, C)});
+  // piano roll
+  set("piano.duplicate", {ch(K::D, C)});
+  set("piano.deselect", {ch(K::A, C | S)});
+  set("piano.quickQuantize", {ch(K::U, C)});
+  set("piano.chopSteps", {ch(K::E, C)});
+  set("piano.glue", {ch(K::J, C)});
+  set("piano.toolDraw", {ch(K::B)});
+  set("piano.zoomIn", {ch(K::Equal), ch(K::PageUp)});
+  set("piano.zoomOut", {ch(K::Minus), ch(K::PageDown)});
+  set("auto.toolDraw", {ch(K::B)});
+  return r;
+}
+
+// Tracks: single letters open the panes and drive the transport (B browser,
+// X mixer, E editors, P piano roll, R record, K metronome, L mode), Return
+// goes to the start, comma and full stop move a bar. `M` is the command
+// modifier (Cmd on macOS when told apart, else Ctrl) and `LC` the set's
+// control modifier (Ctrl on macOS, Ctrl+Alt elsewhere).
+Rows logicRows(bool sep) {
+  using K = Key;
+  const uint8_t M = sep ? kCmd : kCtrl, LC = sep ? static_cast<uint8_t>(kCtrl) : static_cast<uint8_t>(kCtrl | kAlt);
+  Rows r;
+  for (const char* t : kToolCommands) r.push_back({t, {}});
+  auto add = [&](const char* id, std::vector<Chord> c) { r.push_back({id, std::move(c)}); };
+  add("transport.play", {ch(K::Space), ch(K::NumEnter), ch(K::Num0)});
+  add("transport.record", {ch(K::R)});
+  add("transport.toStart", {ch(K::Enter)});
+  add("transport.rewindBar", {ch(K::Comma)});
+  add("transport.forwardBar", {ch(K::Period)});
+  add("options.metronome", {ch(K::K)});
+  add("options.countIn", {ch(K::K, S)});
+  add("transport.songMode", {ch(K::L)});
+  add("view.browser", {ch(K::B)});
+  add("view.mixer", {ch(K::X), ch(K::D2, M)});
+  add("view.editors", {ch(K::E)});
+  add("view.pianoRoll", {ch(K::P), ch(K::D4, M)});
+  add("view.channelRack", {ch(K::D3, M)});
+  add("view.settings", {ch(K::Comma, M)});
+  add("help.shortcuts", {ch(K::K, A)});
+  add("file.render", {ch(K::B, M)});
+  add("file.renderStems", {ch(K::E, M | S)});
+  add("file.exportMidi", {ch(K::E, M | A)});
+  add("edit.history", {sep ? ch(K::Z, kCtrl | kAlt | kCmd) : ch(K::Z, A)});
+  add("edit.rename", {ch(K::Enter, S), ch(K::F2)});
+  add("tools.stopSound", {sep ? ch(K::Period, kCtrl | kAlt | kCmd) : ch(K::H, C)});
+  add("options.typingKeyboard", {ch(K::K, M)});
+  add("playlist.splitAtSongPos", {ch(K::T, M)});
+  add("playlist.merge", {ch(K::J, M)});
+  add("playlist.duplicate", {ch(K::R, M)});
+  add("playlist.mute", {ch(K::M, LC)});
+  add("playlist.loopMarkers", {ch(K::U, M)});
+  add("playlist.zoomFit", {ch(K::Z)});
+  add("playlist.zoomIn", {ch(K::Right, M), ch(K::PageUp)});
+  add("playlist.zoomOut", {ch(K::Left, M), ch(K::PageDown)});
+  add("playlist.marker", {ch(K::Apostrophe, A)});
+  add("playlist.deselect", {ch(K::D, S)});
+  add("piano.deselect", {ch(K::D, S)});
+  add("piano.quickQuantize", {ch(K::Q)});
+  add("piano.zoomIn", {ch(K::Right, M), ch(K::PageUp)});
+  add("piano.zoomOut", {ch(K::Left, M), ch(K::PageDown)});
+  add("piano.transposeUp", {ch(K::Up), ch(K::Up, A)});
+  add("piano.transposeDown", {ch(K::Down), ch(K::Down, A)});
+  add("piano.octaveUp", {ch(K::Up, S), ch(K::Up, A | S)});
+  add("piano.octaveDown", {ch(K::Down, S), ch(K::Down, A | S)});
+  return r;
+}
+
+std::map<std::string, std::vector<Chord>> buildProfile(Profile p, bool sep) {
+  std::map<std::string, std::vector<Chord>> out;
+  const Rows rows = p == Profile::Live ? liveRows() : logicRows(sep);
+  std::map<std::string, std::vector<Chord>> own;
+  for (const auto& [id, chords] : rows) own[id] = chords;
+  // Chords the set gives to its own rows, per context.
+  std::map<Context, std::vector<Chord>> claimed;
+  for (const auto& [id, chords] : own)
+    if (const Command* c = findCommand(id))
+      for (const Chord& x : chords) claimed[c->context].push_back(x);
+  auto taken = [&](Context ctx, const Chord& x) {
+    const auto& v = claimed[ctx];
+    return std::find(v.begin(), v.end(), x) != v.end();
+  };
+  for (const Command& c : commands()) {
+    if (auto it = own.find(c.id); it != own.end()) {
+      out[c.id] = it->second;
+      continue;
+    }
+    std::vector<Chord> keep;
+    for (Chord x : c.defaults) {
+      if (sep && (x.mods & kCtrl)) x.mods = static_cast<uint8_t>((x.mods & ~kCtrl) | kCmd);  // Studio's Ctrl is Cmd on macOS
+      // A chord the set uses elsewhere in this context, or globally, leaves this command.
+      if (taken(c.context, x) || (c.context != Context::Global && taken(Context::Global, x))) continue;
+      keep.push_back(x);
+    }
+    out[c.id] = std::move(keep);
+  }
+  return out;
+}
+
+}  // namespace
+
+const std::map<std::string, std::vector<Chord>>& profileDefaults(Profile p, bool separateCmd) {
+  static const std::map<std::string, std::vector<Chord>> studio = [] {
+    std::map<std::string, std::vector<Chord>> m;
+    for (const Command& c : commands()) m[c.id] = c.defaults;
+    return m;
+  }();
+  static const auto perf = buildProfile(Profile::Live, false);
+  static const auto tracks = buildProfile(Profile::Logic, false);
+  static const auto tracksMac = buildProfile(Profile::Logic, true);
+  switch (p) {
+    case Profile::Live: return perf;
+    case Profile::Logic: return separateCmd ? tracksMac : tracks;
+    default: return studio;
+  }
 }
 
 Keymap& keymap() {

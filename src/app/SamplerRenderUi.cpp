@@ -1,6 +1,7 @@
 // Gridline — render to sampled instrument window (RN-08, see J59Ui.h and
 // engine/SampledInstrument.h).
 #include "../core/Crash.h"
+#include "Keys.h"
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -21,6 +22,7 @@
 #include "J59Ui.h"
 #include "Theme.h"
 #include "Widgets.h"
+#include "WorkerStall.h"
 
 namespace gl::j59 {
 
@@ -37,6 +39,8 @@ struct Job {
   std::atomic<double> progress{0};
   std::mutex mu;
   sampled::Result result;  // guarded by mu
+  WorkerBeat beat;         // K-133: each progress step
+  StallWatch watch;
   ~Job() {
     cancel = true;
     if (worker.joinable()) worker.join();
@@ -84,17 +88,22 @@ void start(App& a) {
   const std::string dir = sampled::freshFolder(outputParent(a), o.name);
   R.jobChannel = R.channel, R.jobReplace = R.replace, R.jobLibrary = R.library, R.jobName = o.name;
   job.cancel = false, job.finished = false, job.progress = 0;
+  workerstall::start(job.watch, job.beat);
   job.running = true;
   Song song = a.doc.song();
   const ObjectId ch = R.channel;
   crash::crumb("render to sampler start");
   // A worker for every instrument (host::UiThreadRenderScope, as the render dialog does; no heartbeat
-  // from its progress either, for the same reason).
+  // for the interface from its progress either, for the same reason). K-133: its own sign of life is
+  // watched (a worker that stops moving on is reported).
   job.worker = std::thread([song = std::move(song), ch, o, dir]() {
     host::UiThreadRenderScope scope;
     sampled::Result r;
     try {  // an exception must not leave this thread (out of memory, a file system error)
-      r = sampled::renderToSampler(song, ch, o, dir, [](double p) { job.progress = p; }, &job.cancel);
+      r = sampled::renderToSampler(song, ch, o, dir, [](double p) {
+        job.beat.beat();
+        job.progress = p;
+      }, &job.cancel);
     } catch (const std::exception& e) {  // K-39: reported; the job ends as a failed render
       crash::reportCurrentException("Rendering an instrument to a sampler");
       r = sampled::Result{};
@@ -144,6 +153,7 @@ void finish(App& a) {
 
 void window(App& a) {
   finish(a);
+  if (job.running) workerstall::watch(a, job.watch, job.beat, "Render to sampled instrument", "");
   if (!R.open) return;
   const Song& song = a.doc.song();
   const Channel* ch = song.channel(R.channel);
@@ -291,9 +301,11 @@ void window(App& a) {
     ImGui::ProgressBar(static_cast<float>(job.progress.load()), ImVec2(w - bw - theme::kS2, 0), pr);
     ImGui::SameLine(0, theme::kS2);
     if (ui::TextButton("Stop", false, bw, "Cancel the render")) job.cancel = true;
+    if (job.watch.stalled())
+      ImGui::TextColored(theme::vec(theme::pal().danger), "%s", i18n::tr("No progress for a while. A plugin or the disk may not be responding."));
   } else {
     ui::DialogFooter(ui::ButtonRowWidth(2, bw));
-    if (ui::TextButton("Cancel", false, bw) || (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::IsKeyPressed(ImGuiKey_Escape)))
+    if (ui::TextButton("Cancel", false, bw) || (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ::gl::keys::escapePressed()))
       R.open = false;
     ImGui::SameLine(0, theme::kS2);
     if (ui::TextButton("Render", true, bw, "Render the notes, write the samples and build the instrument")) start(a);

@@ -18,6 +18,8 @@ cmake_minimum_required(VERSION 3.16)  # the project's policies, also under CMake
 file(REMOVE_RECURSE "${OUT}")
 file(MAKE_DIRECTORY "${OUT}")
 file(READ "${DEMO}" demo)  # a copy: the demo song is never opened (or saved over) in place
+# A channel name longer than a narrow rack's name button (the tooltip check below).
+string(REPLACE "\"name\": \"Chords\"" "\"name\": \"Chords with a long layered name\"" demo "${demo}")
 file(WRITE "${OUT}/fixture.gridline.json" "${demo}")
 
 function(run tag spec script)
@@ -136,7 +138,7 @@ field(gS 0 originX)
 field(gS 0 row0Y)
 string(REGEX REPLACE "\\..*" "" kx "${gS_originX}")
 string(REGEX REPLACE "\\..*" "" ky "${gS_row0Y}")
-math(EXPR kx "${kx} + 49")  # volume knob centre
+math(EXPR kx "${kx} + 33")  # volume knob centre (row-relative x 24, 18 px wide)
 run(sPlain steps16,w1300,h200 "9 rack\n10 move ${kx} ${ky}\n12 wheel -1\n14 wheel -1\n26 rack\n")
 field(sPlain 1 rowsScroll)
 field(sPlain 1 wheelScrolls)

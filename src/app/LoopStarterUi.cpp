@@ -1,5 +1,6 @@
 // Gridline — loop starter window (GEN-01, see J59Ui.h and core/LoopStarter.h).
 #include <algorithm>
+#include "Keys.h"
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -323,7 +324,7 @@ void window(App& a) {
   ImGui::SameLine();
   const float bw = 96;
   ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - ui::ButtonRowWidth(3, bw));
-  if (ui::TextButton("Close", false, bw) || (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::IsKeyPressed(ImGuiKey_Escape)))
+  if (ui::TextButton("Close", false, bw) || (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ::gl::keys::escapePressed()))
     L.open = false;
   ImGui::SameLine(0, theme::kS2);
   if (ui::TextButton("Apply", false, bw, "Replace the current project with this one (undo brings it back)")) applyTo(a, undoLabel);

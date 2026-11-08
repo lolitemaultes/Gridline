@@ -22,7 +22,8 @@ void openChordEditor(App& a);
 // ---- main menu ----
 void patternsItems(App& a);  // Patterns: pattern groups
 void toolsItems(App& a);     // Tools: audio logger, cancel recording
-void optionsItems(App& a);   // Options: quantized jumps, recording options
+void optionsItems(App& a);   // Options: quantized jumps
+void recordingOptionItems(App& a);  // the record options menu: audio take handling (inside an open menu)
 
 // ---- context menus ----
 void channelItems(App& a, ObjectId channel);                      // channel menu: step loop, key range, layer split

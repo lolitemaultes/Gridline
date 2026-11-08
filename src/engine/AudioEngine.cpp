@@ -2071,7 +2071,9 @@ void AudioEngine::applyLinkValue(const Program* p, const ProgLink& l, double nor
       case ProgLink::ChanMute: p->channels[static_cast<size_t>(l.chan)].modMuted = v >= 0.5; break;
       case ProgLink::ChanPitch: {
         const ProgChannel& c = p->channels[static_cast<size_t>(l.chan)];
-        c.pitchOffset = static_cast<float>(std::lround(v)) + c.masterPitch;
+        // K-132: an FL channel's pitch knob moves in cents and its automation replaces the knob's
+        // share of the fine tune; Gridline's own channels keep whole semitones.
+        c.pitchOffset = c.pitchSmooth ? static_cast<float>(v) - c.knobFine + c.masterPitch : static_cast<float>(std::lround(v)) + c.masterPitch;
         break;
       }
       case ProgLink::MixVolume: p->mixer[static_cast<size_t>(l.mixer)].modVolume = fv; break;

@@ -7,6 +7,9 @@
 #include <map>
 #include <set>
 #include <tuple>
+#include <optional>
+#include "../core/Automation.h"
+#include "../core/Params.h"
 #include "../core/ProjectInterop.h"
 #include "../core/Zip.h"
 #include "../host/Backend.h"
@@ -32,6 +35,35 @@ const char* kAudioExt[] = {".wav", ".wave", ".flac", ".mp3", ".ogg", ".oga", ".w
 bool analysesFile(const std::string& type) {
   return type == "gl.gms" || type == "gl.harmor" || type == "gl.convolver" || type == "gl.plasma" || type == "gl.amprack";
 }
+
+// K-132: a parameter set to silence (a mute on, a volume at zero) can still be heard once its
+// automation runs: an automation clip placed in the playlist, a pattern's automation, a controller
+// or modulation link. True when one of them gives it a value that is not silent (a link: any value).
+bool automationHears(const Song& s, ParamId id, bool (*silentAt)(double)) {
+  const std::optional<ParamDesc> d = describeParam(s, id);
+  if (!d) return false;
+  const auto clipHears = [&](const AutomationClip& a) {
+    for (const AutoPoint& p : a.points) {
+      const double n = std::clamp(static_cast<double>(a.min) + static_cast<double>(p.value) * static_cast<double>(a.max - a.min), 0.0, 1.0);
+      if (!silentAt(d->fromNormalized(n))) return true;
+    }
+    return false;
+  };
+  for (const AutomationLane& l : automationLanes(s))
+    if (l.owner == id.owner && l.index == id.index)
+      for (const auto& in : l.inst)
+        if (in.clip && clipHears(*in.clip)) return true;
+  for (const Pattern& p : s.patterns)
+    for (const PatternAutomation& a : p.automation)
+      if (a.owner == id.owner && a.index == id.index && clipHears(a)) return true;
+  for (const ControllerLink& l : s.links)
+    if (l.owner == id.owner && l.index == id.index) return true;
+  for (const ModLink& l : s.modLinks)
+    if (l.enabled && l.owner == id.owner && l.index == id.index) return true;
+  return false;
+}
+bool mutedAt(double v) { return v >= 0.5; }
+bool zeroAt(double v) { return v <= 0; }
 
 std::string pluginName(const std::string& type) {
   const PluginInfo* p = findPlugin(type);
@@ -287,14 +319,18 @@ Measurement measure(const Song& song0, const PassOptions& o) {
   for (size_t i = 0; i < m.files.size(); ++i) fileIndex[m.files[i].path] = static_cast<int>(i);
   // The song as the pass plays it: what is muted or silent is taken out (and listed).
   Song song = song0;
+  // K-132: silent as set and kept so by its automation (a muted channel whose mute is automated
+  // off later is heard there).
+  const auto trackMuted = [&](const MixerTrack& t) { return t.muted && !automationHears(song0, mixerParam(t.id, MixerParam::Mute), mutedAt); };
+  const auto trackZero = [&](const MixerTrack& t) { return t.volume <= 0 && !automationHears(song0, mixerParam(t.id, MixerParam::Volume), zeroAt); };
   std::set<ObjectId> silentCh;
   for (Channel& c : song.channels) {
     std::string why;
     const MixerTrack* mt = song.mixerTrack(c.mixerTrack);
-    if (c.muted) why = "muted channel";
-    else if (c.gain <= 0) why = "channel volume at zero";
-    else if (mt && mt->muted) why = "muted mixer track";
-    else if (mt && mt->volume <= 0) why = "mixer track volume at zero";
+    if (c.muted && !automationHears(song0, channelParam(c.id, ChannelParam::Mute), mutedAt)) why = "muted channel";
+    else if (c.gain <= 0 && !automationHears(song0, channelParam(c.id, ChannelParam::Volume), zeroAt)) why = "channel volume at zero";
+    else if (mt && trackMuted(*mt)) why = "muted mixer track";
+    else if (mt && trackZero(*mt)) why = "mixer track volume at zero";
     if (why.empty()) continue;
     silentCh.insert(c.id);
     for (const FileRef& r : refs)
@@ -307,7 +343,7 @@ Measurement measure(const Song& song0, const PassOptions& o) {
     c.noteFx.clear();
   }
   for (MixerTrack& t : song.mixer) {
-    if (!(t.muted || t.volume <= 0)) continue;
+    if (!(trackMuted(t) || trackZero(t))) continue;
     for (const FileRef& r : refs)
       if (!r.channel && r.owner == t.id) {
         Use u;
@@ -444,7 +480,7 @@ Measurement measure(const Song& song0, const PassOptions& o) {
     if (r.channel && (silentCh.count(r.owner) || !playing.count(r.owner))) continue;
     if (!r.channel) {
       const MixerTrack* t = song0.mixerTrack(r.owner);
-      if (!t || t->muted || t->volume <= 0) continue;
+      if (!t || trackMuted(*t) || trackZero(*t)) continue;
     }
     std::string type;
     if (r.channel) {

@@ -4,6 +4,7 @@
 #include <cfloat>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <map>
 #include <string>
 #include <unordered_map>
@@ -36,6 +37,7 @@ struct Slot {
   ImVec2 origin{0, 0};
   ImRect clip;
   ImVec2 savedFb{1, 1};
+  ImVec2 savedMax{0, 0}, savedIdeal{0, 0};  // K-136: the host's content extent before a reduced editor
   ImDrawList* fg = nullptr;
   int fgStart = 0;
   // drag-resizing with the corner grip
@@ -67,6 +69,13 @@ std::unordered_map<const ImGuiWindow*, Member>& members() {
 }
 
 float rememberedZoom(App& a, const std::string& type) { return edzoom::zoomFor(a.settings.getString("ui.editorZoom"), type); }
+// K-136: GRIDLINE_PLUGIN_WINDOW_SIZE (tests): a fixed global size instead of the setting
+// (the test suite runs the editors at their design size, 1, unless a test clears it).
+float globalZoom(App& a) {
+  static const char* env = std::getenv("GRIDLINE_PLUGIN_WINDOW_SIZE");
+  if (env && *env) return edzoom::globalSize(std::strtod(env, nullptr));
+  return edzoom::globalSize(a.settings.getNumber("ui.pluginWindowSize"));
+}
 void remember(App& a, const std::string& type, float z) { a.settings.set("ui.editorZoom", edzoom::withZoom(a.settings.getString("ui.editorZoom"), type, z)); }
 
 ImVec2 chrome() {
@@ -148,15 +157,16 @@ float prepare(App& a, const char* key, const std::string& type, float contentW, 
   const ImVec2 ch = chrome();
   const float winW = contentW + ch.x, winH = s.design.y > 0 ? s.design.y + ch.y : 0.0f;
   float want = s.dragging ? s.liveZ : rememberedZoom(a, type);
-  if (!(want > 0)) {
-    if (s.autoZ <= 0 && winH > 0) s.autoZ = edzoom::autoZoom(winW, winH, area.x, area.y);
-    want = s.autoZ > 0 ? s.autoZ : 1.0f;
+  if (!(want > 0)) {  // K-136: the global size (or the automatic one, when that is on and larger)
+    const bool fit = a.settings.getBool("ui.pluginWindowFit");
+    if (fit && s.autoZ <= 0 && winH > 0) s.autoZ = edzoom::autoZoom(winW, winH, area.x, area.y);
+    want = std::max(globalZoom(a), fit && s.autoZ > 0 ? s.autoZ : 0.0f);
   }
   const float z = edzoom::fitZoom(want, winW, winH, area.x, area.y);
   const float prev = s.z;
-  s.z = z > 1.001f ? z : 1.0f;
+  s.z = std::fabs(z - 1.0f) > 0.001f ? z : 1.0f;
   ImGuiViewport* vp = ImGui::GetMainViewport();
-  if (s.z > 1.0f && s.shownFrames <= 4) {  // opened magnified: centred on its final size
+  if (s.shownFrames <= 4 && (s.z != 1.0f || std::fabs(prev - s.z) > 0.001f)) {  // opened at another size: centred on its final size
     s.centre = ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.45f);
     s.recentre = 4;
   } else if (std::fabs(prev - s.z) > 0.001f && !s.dragging && s.host && s.shownFrames > 1) {
@@ -176,13 +186,17 @@ void begin(App&, const char* key) {
   ImGuiContext& g = *GImGui;
   s.host = ImGui::GetCurrentWindow();
   s.child = nullptr;
-  s.active = s.z > 1.0f;
+  s.active = s.z != 1.0f;
   s.origin = ImGui::GetCursorScreenPos();
   if (!s.active) {
     ImGui::BeginGroup();
     return;
   }
   s.clip = s.host->InnerClipRect;
+  s.savedMax = s.host->DC.CursorMaxPos;
+  s.savedIdeal = s.host->DC.IdealMaxPos;
+  if (s.z < 1.0f)  // K-136: a reduced editor is laid out at its full design size, past the smaller window's edges
+    ImGui::PushClipRect(ImVec2(s.origin.x - 4096, s.origin.y - 4096), ImVec2(s.origin.x + 16384, s.origin.y + 16384), false);
   ImGuiViewportP* vp = s.host->Viewport;
   s.savedFb = vp->FramebufferScale;
   vp->FramebufferScale = ImVec2(s.savedFb.x * s.z, s.savedFb.y * s.z);  // glyphs baked at the magnified density
@@ -205,6 +219,11 @@ void end(App& a, const char* key) {
   } else {
     s.design = s.child ? s.child->Size : ImVec2(s.contentW, 0);
     ImGui::EndChild();
+    if (s.z < 1.0f) {  // the window holds only the reduced picture (not the design size laid out above)
+      ImGui::PopClipRect();
+      s.host->DC.CursorMaxPos = s.savedMax;
+      s.host->DC.IdealMaxPos = s.savedIdeal;
+    }
     ImGuiViewportP* vp = s.host->Viewport;
     vp->FramebufferScale = s.savedFb;
     g.DrawListSharedData.InitialFringeScale = 1.0f;
@@ -224,10 +243,12 @@ void sizeMenu(App& a, const std::string& type, const char* key) {
   const auto it = slots().find(key);
   const float shown = it != slots().end() && it->second.type == type ? it->second.z : 1.0f;
   if (!ImGui::BeginMenu(i18n::tr("Editor size"))) return;
-  char b[64];
-  std::snprintf(b, sizeof b, "%s (%.0f %%)", i18n::tr("Automatic"), static_cast<double>(remembered > 0 ? 0.0f : shown * 100.0f));
-  if (ImGui::MenuItem(remembered > 0 ? i18n::tr("Automatic") : b, nullptr, remembered <= 0)) remember(a, type, 0);
-  ui::Hint("Fits the screen: small editors open larger on a large workspace");
+  char b[96];
+  // K-136: no size of its own: the global plugin window size (Settings > Interface).
+  std::snprintf(b, sizeof b, "%s (%.0f %%)", i18n::tr("Same as other plugins"),
+                static_cast<double>((remembered > 0 ? globalZoom(a) : shown) * 100.0f));
+  if (ImGui::MenuItem(b, nullptr, remembered <= 0)) remember(a, type, 0);
+  ui::Hint("The plugin window size set in Settings > Interface");
   ImGui::Separator();
   for (float z : edzoom::kSteps) {
     std::snprintf(b, sizeof b, "%.0f %%", static_cast<double>(z * 100.0f));
@@ -298,6 +319,14 @@ void mapPointer() {
     ImGui::GetIO().AddMousePosEvent(m.x, m.y);
     lastId = g.InputEventsNextEventId - 1;
   }
+  // K-136: a reduced editor (under 100 %) is laid out larger than it shows, so its windows'
+  // rectangles reach past the picture. While the pointer is not over the picture they take
+  // no mouse input this frame (ImGui finds the hovered window before they begin again).
+  Member over;
+  const bool onPicture = lastReal.x > -FLT_MAX * 0.5f && hit(lastReal, over);
+  if (!onPicture && !(downMask != 0 && captured))
+    for (auto& [w, m] : members())
+      if (m.z < 1.0f) const_cast<ImGuiWindow*>(w)->Flags |= ImGuiWindowFlags_NoMouseInputs;
 }
 
 void afterRender() {
@@ -340,17 +369,18 @@ void devDump(const char* key) {
   } else {
     const Slot& s = it->second;
     const ImGuiWindow* h = s.host;
-    std::printf("edzoom %s: type %s zoom %.2f design %.0fx%.0f origin %.1f,%.1f window %.1f,%.1f %.1fx%.1f\n", key, s.type.c_str(),
+    const ImGuiWindow* hw = GImGui->HoveredWindow;  // K-136: is the pointer over this editor (its window or a child)?
+    std::printf("edzoom %s: type %s zoom %.2f design %.0fx%.0f origin %.1f,%.1f window %.1f,%.1f %.1fx%.1f hovered %d\n", key, s.type.c_str(),
                 static_cast<double>(s.z), static_cast<double>(s.design.x), static_cast<double>(s.design.y), static_cast<double>(s.origin.x),
                 static_cast<double>(s.origin.y), h ? static_cast<double>(h->Pos.x) : 0.0, h ? static_cast<double>(h->Pos.y) : 0.0,
-                h ? static_cast<double>(h->Size.x) : 0.0, h ? static_cast<double>(h->Size.y) : 0.0);
+                h ? static_cast<double>(h->Size.x) : 0.0, h ? static_cast<double>(h->Size.y) : 0.0, hw && h && hw->RootWindow == h->RootWindow ? 1 : 0);
   }
   std::fflush(stdout);
 }
 
 ImVec2 toScreen(const char* key, ImVec2 p) {
   const auto it = slots().find(key);
-  if (it == slots().end() || it->second.z <= 1.0f) return p;
+  if (it == slots().end() || it->second.z == 1.0f) return p;
   return mapOut(it->second.origin, it->second.z, p);
 }
 

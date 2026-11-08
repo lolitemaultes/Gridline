@@ -1,6 +1,6 @@
 # Gridline - K-19: plugin editors have their own size on top of the interface scale, in the
 # real app (hidden, isolated configs, off-screen, SDL's dummy audio driver):
-#   1. automatic size: a small editor (Reverb) on a 2560x1440 screen at 130 % opens larger
+#   1. automatic size (K-136: with "larger on big screens" on): a small editor (Reverb) on a 2560x1440 screen at 130 % opens larger
 #      (125 %), on a 1440x900 one at its design size (100 %);
 #   2. a size picked for the plugin (Editor size 150 %) is drawn at that zoom, the window is
 #      that much larger, inside the work area, and remembered in the next run;
@@ -15,6 +15,7 @@ file(MAKE_DIRECTORY "${OUT}")
 set(ENV{SDL_AUDIODRIVER} "dummy")
 set(ENV{GRIDLINE_NO_PLUGIN_SCAN} "1")
 set(ENV{GRIDLINE_HIDE_PLUGINS} "all")
+unset(ENV{GRIDLINE_PLUGIN_WINDOW_SIZE})  # K-136: the real plugin window size setting
 file(READ "${DEMO}" demo)
 file(WRITE "${OUT}/fixture.gridline.json" "${demo}")
 
@@ -72,14 +73,14 @@ function(inside what mw mh)
 endfunction()
 
 # ---- 1. automatic size
-run(auto_1440p130 a 2560x1440 1.3 gl.reverb "38 edzoom fxeditor\n")
+run(auto_1440p130 a 2560x1440 1.3 gl.reverb "1 setting ui.pluginWindowFit on\n38 edzoom fxeditor\n")
 zoom(a 38)
 if(NOT a_z EQUAL 125)
   fail("Reverb at 2560x1440 / 130 %: automatic zoom ${a_z}, expected 125")
 endif()
 inside(a 1969 1108)
 message(STATUS "ok - automatic: Reverb opens at 125 % on 2560x1440 at 130 % (${a_w}x${a_h})")
-run(auto_900 b 1440x900 1 gl.reverb "38 edzoom fxeditor\n")
+run(auto_900 b 1440x900 1 gl.reverb "1 setting ui.pluginWindowFit on\n38 edzoom fxeditor\n")
 zoom(b 38)
 if(NOT b_z EQUAL 100)
   fail("Reverb at 1440x900: automatic zoom ${b_z}, expected 100")

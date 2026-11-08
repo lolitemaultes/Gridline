@@ -594,7 +594,7 @@ bool renameRow(App& a, const fs::path& p, float indent, ui::Icon icon, ImU32 ico
   }
   ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(theme::kS1, std::max(0.0f, std::floor((fieldH - ImGui::GetFontSize()) * 0.5f))));
   const bool enter = ImGui::InputText("##name", fops.buf, sizeof fops.buf, ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
-  const bool escape = ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+  const bool escape = ::gl::keys::escapePressed(false);
   const bool left = ImGui::IsItemDeactivated();
   ImGui::PopStyleVar();
   ui::FocusRing();
@@ -759,7 +759,7 @@ void trashDialog(App& a) {
   ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("It can be restored from the system trash."));
   ImGui::Dummy(ImVec2(kW, theme::kS2));
   ImGui::SetCursorPosX(ImGui::GetCursorPosX() + kW - ui::ButtonRowWidth(2, kButtonW));
-  const bool cancel = ui::TextButton("Cancel", false, kButtonW) || ImGui::IsKeyPressed(ImGuiKey_Escape);
+  const bool cancel = ui::TextButton("Cancel", false, kButtonW) || ::gl::keys::escapePressed();
   ImGui::SameLine(0, theme::kS2);
   if (ui::DangerButton("Move to trash", true, kButtonW)) {
     trashNow(a);
@@ -779,7 +779,7 @@ void fileContextMenu(App& a, const std::string& ps) {
   if (browse::kindOf(ps) == Kind::Audio) {
     if (ImGui::MenuItem(i18n::tr("Preview"))) browserui::previewFile(a, ps);
     if (ImGui::MenuItem(i18n::tr("Open in Seltmann"))) {  // J-107: a new Seltmann channel analyses and chops it
-      a.settingsChannel = a.addInstrument("gl.seltmann", ps);
+      a.showNewInstrument(a.addInstrument("gl.seltmann", ps));
     }
     if (ImGui::MenuItem(i18n::tr("Add to playlist as audio clip"))) {
       browserui::DropPlace pl;
@@ -934,7 +934,7 @@ void pluginRow(App& a, const PluginInfo& p, float indent, const char* detail, bo
   ObjectId target = a.settingsChannel != kNoId ? a.settingsChannel : a.selChannel;
   if (dbl) {
     if (p.kind == PluginKind::Generator) {
-      a.settingsChannel = a.addInstrument(p.type);
+      a.showNewInstrument(a.addInstrument(p.type));
     } else if (p.kind == PluginKind::Effect) {
       if (const MixerTrack* t = a.doc.song().mixerTrack(a.selMixer))
         for (int k = 0; k < kEffectSlots; ++k)
@@ -968,16 +968,69 @@ void builtinPlugins(App& a, PluginKind kind, float indent, const char* keyBase) 
   }
 }
 
-void installedPlugins(App& a, float indent) {
-  const auto& P = pal();
-  const host::ScanStatus ss = host::scanStatus();
+// K-73: the installed plugins the browser lists, by group and sorted. Worked out again only when the
+// plugins, their grouping or the plugin settings change: with a few thousand plugins, doing it every
+// frame (and drawing every row of an open group) held each frame up.
+struct InstalledList {
+  size_t count = ~size_t(0);
+  const void* groups = nullptr;
+  uint64_t prefsGen = ~uint64_t(0);
+  std::shared_ptr<const host::GroupSnapshot> keep;  // the grouping the key points at, alive
+  int total = 0;
+  struct Group {
+    std::string key, title;
+    std::vector<std::pair<const PluginInfo*, const char*>> plugins;  // plugin, format label
+  };
+  std::vector<Group> byGroup;
+};
+
+void buildInstalled(App& a, InstalledList& out, const std::vector<const PluginInfo*>& all) {
   std::vector<const PluginInfo*> list;
-  for (const PluginInfo* p : dynamicPlugins()) {
+  for (const PluginInfo* p : all) {
     std::string fmt, uid;
     if (host::splitType(p->type, fmt, uid) && !host::formatEnabled(fmt)) continue;
     if (!host::listedInBrowser(p->type)) continue;  // J-147: one format per plugin, no Gridline Suite builds
     if (!collabui::pluginAllowed(a, p->type)) continue;  // J-111: not in a collaborative project
     list.push_back(p);
+  }
+  const host::PluginPrefs prefs = host::pluginPrefs();
+  auto group = [&prefs](const PluginInfo* p) {
+    auto it = prefs.categories.find(p->type);
+    return it == prefs.categories.end() ? p->category : it->second;
+  };
+  std::map<std::string, std::vector<const PluginInfo*>> byGroup;
+  for (const PluginInfo* p : list)
+    byGroup[(p->kind == PluginKind::Generator ? "Instruments \xC2\xB7 " : "Effects \xC2\xB7 ") + group(p)].push_back(p);
+  out.total = static_cast<int>(list.size());
+  out.byGroup.clear();
+  for (auto& [g, ps] : byGroup) {
+    std::sort(ps.begin(), ps.end(), [](const PluginInfo* x, const PluginInfo* y) { return x->name < y->name; });
+    InstalledList::Group grp{"##inst" + g, g, {}};
+    for (const PluginInfo* p : ps) {
+      std::string fmtId, fmtUid;
+      const host::Format* fmt = host::splitType(p->type, fmtId, fmtUid) ? host::findFormat(fmtId) : nullptr;
+      grp.plugins.push_back({p, fmt ? fmt->label : ""});
+    }
+    out.byGroup.push_back(std::move(grp));
+  }
+}
+
+void installedPlugins(App& a, float indent) {
+  const auto& P = pal();
+  const host::ScanStatus ss = host::scanStatus();
+  static InstalledList cached;
+  {
+    const std::vector<const PluginInfo*> all = dynamicPlugins();
+    std::shared_ptr<const host::GroupSnapshot> groups = host::pluginGroups();
+    const uint64_t pg = host::pluginPrefsGeneration();
+    // A collaborative project decides per plugin (its session changes): worked out every frame.
+    if (collabui::active(a) || cached.count != all.size() || cached.groups != groups.get() || cached.prefsGen != pg) {
+      buildInstalled(a, cached, all);
+      cached.count = all.size();
+      cached.groups = groups.get();
+      cached.keep = std::move(groups);
+      cached.prefsGen = pg;
+    }
   }
   if (collabui::active(a)) {
     ImGui::Indent(indent);
@@ -987,16 +1040,14 @@ void installedPlugins(App& a, float indent) {
     ImGui::Unindent(indent);
   }
   const host::PluginPrefs prefs = host::pluginPrefs();
-  auto group = [&prefs](const PluginInfo* p) {
-    auto it = prefs.categories.find(p->type);
-    return it == prefs.categories.end() ? p->category : it->second;
-  };
-  if (!treeNode("##installed", "Installed", static_cast<int>(list.size()), indent, role::kMenu)) return;
+  if (!treeNode("##installed", "Installed", cached.total, indent, role::kMenu)) return;
   ImGui::Dummy(ImVec2(0, 2));
   ImGui::SetCursorPosX(ImGui::GetCursorPosX() + indent + 14);
-  if (ss.running) {
-    std::string cur = fs::path(ss.current).stem().string();
-    ui::Label(("Scanning " + std::to_string(ss.done + 1) + "/" + std::to_string(ss.total) + "  " + cur).c_str());
+  if (ss.running && !ss.searching.empty()) {  // K-71: a big folder takes a while to search
+    ui::Label("Looking for plugins");
+  } else if (ss.running) {
+    const std::string cur = host::scanCurrentLabel(ss);
+    ui::Label(("Scanning " + std::to_string(std::min(ss.done + 1, std::max(1, ss.total))) + "/" + std::to_string(ss.total) + "  " + cur).c_str());
   } else {
     if (ui::TextButton("Rescan", false, 0, "Look for new or updated plugins (right-click: rescan everything, including failed ones)"))
       { host::startScan(host::selfExecutablePath(), false); a.scanByUser = true; }
@@ -1014,20 +1065,19 @@ void installedPlugins(App& a, float indent) {
       }
     }
   }
-  if (list.empty()) {
+  if (cached.byGroup.empty()) {
     emptyLine("No plugins found", indent + 20);
     return;
   }
-  std::map<std::string, std::vector<const PluginInfo*>> byGroup;
-  for (const PluginInfo* p : list)
-    byGroup[(p->kind == PluginKind::Generator ? "Instruments \xC2\xB7 " : "Effects \xC2\xB7 ") + group(p)].push_back(p);
-  for (auto& [g, ps] : byGroup) {
-    std::sort(ps.begin(), ps.end(), [](const PluginInfo* x, const PluginInfo* y) { return x->name < y->name; });
-    if (!treeNode("##inst" + g, g.c_str(), static_cast<int>(ps.size()), indent + 14, role::kMenu)) continue;
-    for (const PluginInfo* p : ps) {
-      std::string fmtId, fmtUid;
-      const host::Format* fmt = host::splitType(p->type, fmtId, fmtUid) ? host::findFormat(fmtId) : nullptr;
-      pluginRow(a, *p, indent + 28, fmt ? fmt->label : "", prefs.favourites.count(p->type) > 0);
+  for (const InstalledList::Group& g : cached.byGroup) {
+    if (!treeNode(g.key, g.title.c_str(), static_cast<int>(g.plugins.size()), indent + 14, role::kMenu)) continue;
+    for (const auto& [p, label] : g.plugins) {
+      // K-73: a row out of sight takes its place without being drawn (an open group of hundreds).
+      if (!ImGui::IsRectVisible(ImVec2(std::max(1.0f, ImGui::GetContentRegionAvail().x), kRowH))) {
+        ImGui::Dummy(ImVec2(1, kRowH));
+        continue;
+      }
+      pluginRow(a, *p, indent + 28, label, prefs.favourites.count(p->type) > 0);
     }
   }
 }

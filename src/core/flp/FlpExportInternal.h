@@ -110,6 +110,9 @@ struct Exporter {
 };
 inline constexpr int kMixerBase = 448;  // FL 25: mixer target / record insert base (0x7000 >> 6)
 
+// J-45: a state that names mixer tracks, in the numbering of FL insert `track`'s routes (as encoded).
+PluginState routeIndexed(const Song& s, int track, const PluginState& p);
+
 // Pattern note record (24 bytes) for a Gridline note.
 Bytes noteRecord(const Note& n, int flChannel, const Bytes* tmpl);
 // Decodes a note record the way the importer does (for template matching).

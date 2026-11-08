@@ -156,7 +156,7 @@ namespace {
 // insert / note effect on the selected channel).
 void addPlugin(App& a, const PluginInfo& p) {
   if (p.kind == PluginKind::Generator) {
-    a.settingsChannel = a.addInstrument(p.type);
+    a.showNewInstrument(a.addInstrument(p.type));
     return;
   }
   if (p.kind == PluginKind::NoteFx) {
@@ -184,6 +184,51 @@ struct Group {
   PluginKind kind;
   std::vector<const PluginInfo*> items;
 };
+
+// The plugins the picker lists (filter and search applied), by category, sorted.
+void collectGroups(App& a, const host::PluginPrefs& prefs, const std::vector<const PluginInfo*>& dynamic, std::vector<Group>& groups, int& total) {
+  const PickerState& S = st();
+  const browse::Query q = browse::parseQuery(S.search);
+  std::vector<const PluginInfo*> all;
+  for (const auto& p : pluginCatalog())
+    if (!p.hidden) all.push_back(&p);  // K-23: kept for old projects only
+  for (const PluginInfo* p : dynamic) {
+    std::string fmt, uid;
+    if (host::splitType(p->type, fmt, uid) && !host::formatEnabled(fmt)) continue;
+    if (!host::listedInBrowser(p->type)) continue;  // J-147: one format per plugin, no Gridline Suite builds
+    if (!collabui::pluginAllowed(a, p->type)) continue;  // J-111: not in a collaborative project
+    all.push_back(p);
+  }
+  groups.clear();
+  total = 0;
+  std::map<std::string, size_t> at;  // K-73: group key -> index (not a search of the groups per plugin)
+  for (const PluginInfo* p : all) {
+    const bool fav = prefs.favourites.count(p->type) > 0;
+    if (S.filter == 1 && p->kind != PluginKind::Generator) continue;
+    if (S.filter == 2 && p->kind != PluginKind::Effect) continue;
+    if (S.filter == 3 && p->kind != PluginKind::NoteFx) continue;
+    if (S.filter == 4 && !fav) continue;
+    if (!q.empty() && !browse::matchesPlugin(*p, q, fav)) continue;
+    std::string cat = p->category.empty() ? "Other" : p->category;
+    if (auto it = prefs.categories.find(p->type); it != prefs.categories.end()) cat = it->second;
+    const std::string key = std::to_string(static_cast<int>(p->kind)) + ":" + cat;
+    auto [g, fresh] = at.emplace(key, groups.size());
+    if (fresh) groups.push_back(Group{key, cat, p->kind, {}});
+    groups[g->second].items.push_back(p);
+    ++total;
+  }
+  std::sort(groups.begin(), groups.end(), [](const Group& x, const Group& y) {
+    return x.kind != y.kind ? static_cast<int>(x.kind) < static_cast<int>(y.kind) : browse::lower(x.title) < browse::lower(y.title);
+  });
+  for (auto& g : groups) {
+    // K-73: favourite first, then by lower-case name, worked out once per plugin.
+    std::vector<std::pair<std::pair<bool, std::string>, const PluginInfo*>> keyed;
+    keyed.reserve(g.items.size());
+    for (const PluginInfo* p : g.items) keyed.push_back({{prefs.favourites.count(p->type) == 0, browse::lower(p->name)}, p});
+    std::stable_sort(keyed.begin(), keyed.end(), [](const auto& x, const auto& y) { return x.first < y.first; });
+    for (size_t i = 0; i < keyed.size(); ++i) g.items[i] = keyed[i].second;
+  }
+}
 
 constexpr float kTileW = 172, kTileH = 136, kThumbH = 100, kGap = 10;
 
@@ -307,7 +352,7 @@ void drawPluginPicker(App& a) {
   ImGui::PopStyleVar(2);
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const ImVec2 wp = ImGui::GetWindowPos(), ws = ImGui::GetWindowSize();
-  if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) pickerOpen = false;
+  if (::gl::keys::escapePressed(false)) pickerOpen = false;
 
   // ---- header ----
   const float headH = 52;
@@ -317,45 +362,30 @@ void drawPluginPicker(App& a) {
   dl->AddText(a.fontBold, theme::kFontTitle, ImVec2(wp.x + 28, wp.y + 11), P.text, i18n::tr("Plugin picker"));
   // Collect.
   const host::PluginPrefs prefs = host::pluginPrefs();
-  const browse::Query q = browse::parseQuery(S.search);
-  std::vector<const PluginInfo*> all;
-  for (const auto& p : pluginCatalog())
-    if (!p.hidden) all.push_back(&p);  // K-23: kept for old projects only
-  for (const PluginInfo* p : dynamicPlugins()) {
-    std::string fmt, uid;
-    if (host::splitType(p->type, fmt, uid) && !host::formatEnabled(fmt)) continue;
-    if (!host::listedInBrowser(p->type)) continue;  // J-147: one format per plugin, no Gridline Suite builds
-    if (!collabui::pluginAllowed(a, p->type)) continue;  // J-111: not in a collaborative project
-    all.push_back(p);
-  }
-  std::vector<Group> groups;
-  int total = 0;
-  for (const PluginInfo* p : all) {
-    const bool fav = prefs.favourites.count(p->type) > 0;
-    if (S.filter == 1 && p->kind != PluginKind::Generator) continue;
-    if (S.filter == 2 && p->kind != PluginKind::Effect) continue;
-    if (S.filter == 3 && p->kind != PluginKind::NoteFx) continue;
-    if (S.filter == 4 && !fav) continue;
-    if (!q.empty() && !browse::matchesPlugin(*p, q, fav)) continue;
-    std::string cat = p->category.empty() ? "Other" : p->category;
-    if (auto it = prefs.categories.find(p->type); it != prefs.categories.end()) cat = it->second;
-    const std::string key = std::to_string(static_cast<int>(p->kind)) + ":" + cat;
-    auto g = std::find_if(groups.begin(), groups.end(), [&](const Group& x) { return x.key == key; });
-    if (g == groups.end()) {
-      groups.push_back(Group{key, cat, p->kind, {}});
-      g = groups.end() - 1;
+  // K-73: the groups of the last frame while the plugins, their grouping, the settings, the filter
+  // and the search are the same (sorting a few thousand plugins every frame held each frame up).
+  static std::vector<Group> groups;
+  static int total = 0;
+  {
+    static size_t lastCount = ~size_t(0);
+    static const void* lastGroups = nullptr;
+    static std::shared_ptr<const host::GroupSnapshot> keep;
+    static uint64_t lastPrefs = ~uint64_t(0);
+    static int lastFilter = -1;
+    static std::string lastSearch;
+    const std::vector<const PluginInfo*> dyn = dynamicPlugins();
+    std::shared_ptr<const host::GroupSnapshot> snap = host::pluginGroups();
+    const uint64_t pg = host::pluginPrefsGeneration();
+    if (collabui::active(a) || dyn.size() != lastCount || snap.get() != lastGroups || pg != lastPrefs || S.filter != lastFilter || lastSearch != S.search) {
+      collectGroups(a, prefs, dyn, groups, total);
+      lastCount = dyn.size();
+      lastGroups = snap.get();
+      keep = std::move(snap);
+      lastPrefs = pg;
+      lastFilter = S.filter;
+      lastSearch = S.search;
     }
-    g->items.push_back(p);
-    ++total;
   }
-  std::sort(groups.begin(), groups.end(), [](const Group& x, const Group& y) {
-    return x.kind != y.kind ? static_cast<int>(x.kind) < static_cast<int>(y.kind) : browse::lower(x.title) < browse::lower(y.title);
-  });
-  for (auto& g : groups)
-    std::sort(g.items.begin(), g.items.end(), [&prefs](const PluginInfo* x, const PluginInfo* y) {
-      const bool fx = prefs.favourites.count(x->type) > 0, fy = prefs.favourites.count(y->type) > 0;
-      return fx != fy ? fx : browse::lower(x->name) < browse::lower(y->name);
-    });
   {
     char b[48];
     std::snprintf(b, sizeof b, "%d plugins", total);
@@ -471,6 +501,13 @@ void drawPluginPicker(App& a) {
   ImGui::EndChild();
   ImGui::PopStyleVar();
   ImGui::End();
+}
+
+bool pickerAdd(App& a, const std::string& type) {
+  const PluginInfo* p = findPlugin(type);
+  if (!p) return false;
+  addPlugin(a, *p);
+  return true;
 }
 
 }  // namespace gl::browserui

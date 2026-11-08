@@ -9,6 +9,7 @@
 // bar, the mapping drawer, the waveform bands and the shared helpers; the decks
 // are in platter_deck_ui.cpp, the mixer in platter_mixer_ui.cpp.
 #include "platter_ui.h"
+#include "../../app/Keys.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -746,7 +747,7 @@ void drawDrawer(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, cons
   const ImVec2 c = panel(dl, a, p0, p1, i18n::tr("CONTROLLER MAPPING"), cap.c_str());
   // learning: the next message from the controller binds the control
   if (e.learn >= 0) {
-    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) e.learn = -1;
+    if (::gl::keys::escapePressed()) e.learn = -1;
     else if (lv.rawSeq != e.learnSeq) {
       e.learnSeq = lv.rawSeq;
       const uint8_t s = lv.raw[0], d1 = lv.raw[1], d2 = lv.raw[2];

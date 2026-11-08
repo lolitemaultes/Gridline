@@ -21,6 +21,7 @@
 #include <string>
 #include <vector>
 #include "Flp.h"
+#include "../PluginSuite.h"
 
 namespace gl::flp {
 
@@ -43,12 +44,16 @@ struct WrapperInfo {
 bool parseWrapper(const uint8_t* p, size_t n, WrapperInfo& out);
 
 // The installed hosted plugin for a wrapper instance: by id in its own
-// format, else by name (+ vendor) in its own format, else by name in another
-// format (the state cannot move between formats). Empty type: not installed.
+// format, else by name (+ vendor) in its own format, else the same plugin in
+// another format as projects find it (host/CrossFormat.h: ids, name, vendor,
+// kind; only a confident match), its state moved into that format when it
+// can be. Empty type: not installed.
 struct WrapperMatch {
   std::string type;   // installed hosted type, or "" when none
   bool byId = false;
   bool stateKept = false;  // the saved state applies to `type`
+  std::string movedData;   // K-78: another format: the saved state in its wrapping ("" = could not move)
+  std::string ident;       // K-78: identity record for the state (aliases keep the saved type)
 };
 WrapperMatch matchWrapper(const WrapperInfo& w);
 
@@ -60,6 +65,12 @@ bool isImageLineVendor(const std::string& vendor);
 // carries FL's "Fruity " name. Only these may become Gridline built-ins on
 // import; every other plugin stays the real hosted plugin (or a placeholder).
 bool isImageLinePlugin(const std::string& vendor, const std::string& name, const std::string& path);
+
+// K-110: Gridline Suite plugins. The hosted type of a member's VST3 class
+// ("vst3:<32 hex digits>"), and the member a hosted type names (nullptr when
+// it is not a Gridline Suite VST3 class).
+std::string suiteVst3Type(const std::string& glType);
+const suite::Member* suiteMemberOfType(const std::string& hostedType);
 
 void registerWrapperDecoder(std::map<std::string, PluginDecoder>& d);
 

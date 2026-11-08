@@ -83,12 +83,18 @@ enum VocParam {
   // K-41: reference model. 0 = no added delay, reports 0 (states from before). 1 and 2 (FL imports): the
   // output delayed to the figure vxFlLatency gives, and reported; 2 with the 16 extra samples.
   VxLatencyLaw,
+  // K-133: reference model with the imported enhancer program. 0 = the enhancer amount is the program's band
+  // mix (states from before), 1 = the amount moves the band mix only a little (FL imports: the program keeps
+  // its level whatever the amount).
+  VxEnhanceLaw,
   VcCount
 };
 inline constexpr int kVxMaps = 13;       // per-band curves kept in PluginState::data
 inline constexpr int kVxMaxBands = 100;
 inline constexpr int kVxMaxOrder = 4;
 inline constexpr int kVxMaxUnison = 5;
+// K-133: enhancer law 1, the program's band mix per unit of the enhancer amount.
+inline constexpr float kVxEnhanceMix = 0.01f;
 // K-41: 16 samples by the imported state's flag, 4 ms for the enhancer stage while it's on.
 inline int vxFlLatency(int law, double enhance, double sr) {
   return (law >= 2 ? 16 : 0) + (enhance > 0 ? static_cast<int>(0.004 * sr) : 0);
@@ -334,6 +340,7 @@ enum PitchParam {
   PsAnalysis,   // choice: Left / Right / Left + Right (Voice pitch analysis)
   PsPitchMode,  // choice: Relative / Absolute C4 / C5 / C6 (Voice)
   PsDetector,   // choice: Fast / Accurate (Voice analysis window)
+  PsMusicLaw,   // choice: 1 (old grain level and read point) / 2 (K-133: reference read point and level law)
   PsCount
 };
 inline constexpr int kPsClassic = 0, kPsVoice = 1, kPsMusic = 2;

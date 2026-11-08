@@ -46,6 +46,8 @@ struct NoteEv {
   // never copied by the audio thread, which copies the points into a fixed slot of the channel
   // runtime when the note starts (core/NoteBend.h evaluates both).
   std::shared_ptr<const std::vector<BendPoint>> bend;
+  // K-76: the note's tracker cells (null = none); props.tracker points into them.
+  std::shared_ptr<const std::vector<uint8_t>> tracker;
 };
 inline constexpr uint8_t kNoteSlide = 1;  // glides sounding notes instead of starting one
 inline constexpr uint8_t kNotePorta = 2;  // starts at the previous note's pitch and glides
@@ -271,6 +273,11 @@ struct ProgAudioClip {
   stretch::Engine engine = stretch::Engine::Stretch;  // J-157: what keeps the pitch (the channel's time mode)
   bool reverse = false;
   ObjectId clip = kNoId;            // J-196: Clip::id
+  // K-114: a looping clip plays as one ProgAudioClip per pass (engine/ClipOps.h,
+  // audioLoopPasses): the pass number, and whether the pass holds the clip's
+  // own start / end (its fades are there only).
+  int pass = 0;
+  bool head = true, tail = true;
   // J-196: the clip's levels; the UI thread patches them into the playing
   // Program while only they change (ProgramBuilder::patchClipLevels).
   mutable Relaxed<float> gain = 1;
@@ -315,6 +322,8 @@ struct ProgChannel {
   mutable float gainL = 0, gainR = 0;  // target strip gains (taper, pan, mute applied)
   mutable float pitchOffset = 0;       // channel pitch + master pitch (semitones)
   bool pitchMoves = false;             // J-153: automation / a link moves the channel pitch
+  bool pitchSmooth = false;            // K-132: Channel::pitchSmooth (automation in cents, no rounding)
+  float knobFine = 0;                  // K-132: Channel::knobFine in semitones (the automation replaces it)
   float volume = 0.78f, pan = 0, masterPitch = 0;  // unlinked strip values (masterPitch includes the channel fine tune)
   int pitch = 0;
   bool muted = false;
@@ -578,6 +587,12 @@ struct Program {
 };
 
 // Builds Programs and owns the runtime registries (UI thread only).
+// K-59: the builder's first-block warm-up (setWarmUp) for a new built-in instrument or effect
+// a host of plugins keeps inside (Junction), on the preparing thread before any audio thread
+// sees it. Installed plugins are never run here; types that need no warm-up are left alone.
+void warmUpBuiltin(Generator& g, const std::string& type, const PluginState& state, const ChannelAux& aux, double sampleRate);
+void warmUpBuiltin(Effect& fx, const std::string& type, const PluginState& state, const ChannelAux& aux, double sampleRate);
+
 class ProgramBuilder {
  public:
   std::shared_ptr<const Program> build(const Song& song);
@@ -686,7 +701,7 @@ class ProgramBuilder {
     bool same(const ClipVoiceSlot& o) const;
     bool inPlace(const ClipVoiceSlot& o) const;
   };
-  std::map<std::pair<ObjectId, bool>, ClipVoiceSlot> clipVoices_;
+  std::map<std::pair<ObjectId, int>, ClipVoiceSlot> clipVoices_;  // (clip, pass; live clips: -1 - pass)
   // K-64: the render of each playlist clip of the last build. A clip muted since (a solo, its track's
   // mute) keeps its render and voice here, so bringing it back costs nothing: no new voices on the
   // interface thread, and the renders are still there instead of being made again.

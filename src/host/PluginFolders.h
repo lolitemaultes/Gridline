@@ -37,6 +37,10 @@ const char* folderEnvVar(const std::string& formatId);
 bool folderSearchApplies(const std::string& formatId);
 // Every folder of a format as the settings list shows it.
 std::vector<FolderRow> folderRows(const Format& f, const PluginPrefs& p);
+// K-73: the same for a list the interface draws every frame. The folders are looked at on disk
+// (exists, the same as another, inside another) again when the plugin settings change, and else
+// every two seconds on a helper thread, so a slow folder (a network drive) never holds up a frame.
+std::vector<FolderRow> folderRowsForDisplay(const Format& f, const PluginPrefs& p);
 // The folders a scan searches (rows that are on, exist and are not duplicates), in order.
 std::vector<std::string> searchFolders(const Format& f, const PluginPrefs& p);
 // Same for a format id with the current settings (empty for an unknown format).

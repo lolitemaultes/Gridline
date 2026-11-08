@@ -143,9 +143,9 @@ void drawRackRows(App& a, ObjectId pattern, const RackRows& g) {
     const ImU32 col = theme::rgb(curveRgb(ac, k));
     const std::string name = patternAutoName(s, ac);
     // Automation glyph where a channel's lamp is.
-    ui::drawIcon(dl, ui::Icon::ClipAutomation, ImVec2(rp.x + g.xLed + 8, cy), 13, theme::mix(col, P.paper, 0.2f));
+    ui::drawIcon(dl, ui::Icon::ClipAutomation, ImVec2(rp.x + g.xLeft + 8, cy), 13, theme::mix(col, P.paper, 0.2f));
     // Name button over the knob / mixer / name cells (a clip has none of those).
-    const float nx = rp.x + g.xLed + 20, nw = g.nameX + g.nameW - (g.xLed + 20);
+    const float nx = rp.x + g.xLeft + 20, nw = g.nameX + g.nameW - (g.xLeft + 20);
     const ImVec2 np(nx, cy - g.cellH * 0.5f);
     ImGui::SetCursorScreenPos(np);
     ImGui::InvisibleButton("aname", ImVec2(nw, g.cellH));

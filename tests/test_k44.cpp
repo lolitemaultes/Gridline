@@ -506,7 +506,7 @@ void testDataFilesAndBones() {
   expect(rep.error.empty() && rep.unpacked.empty() && rep.missing.size() == pr.gone.size(), "data files: everything copied, gone files listed");
   Song back;
   std::string err;
-  expect(loadProject((out / "Song.gridline.json").u8string(), back, &err), "data files: the project loads");
+  expect(loadProject((out / "Song.gridline").u8string(), back, &err), "data files: the project loads (as Song.gridline)");
   checkResolved(original, back, pr, out, "data files");
   checkSfz(out / "Samples" / "kit" / "kit.sfz", "data files");
   // Again into the same folder: reused, no second copies.
@@ -630,7 +630,7 @@ void testNoFalseAlarms() {
   // A note processor's state is walked too.
   {
     Song n = s;
-    n.channels.front().noteFx.push_back(PluginState{"gl.sampler", {}, "/somewhere/note.wav", "", ""});
+    n.channels.front().noteFx.push_back(PluginState{"gl.sampler", {}, "/somewhere/note.wav", "", "", ""});
     expect(contains(referencedFiles(n), "/somewhere/note.wav"), "a note processor's file is listed");
   }
   const auto refs = referencedFiles(s);

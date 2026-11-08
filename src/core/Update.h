@@ -71,11 +71,19 @@ struct Target {
   std::string arch;  // "x86_64", "aarch64"
   std::string package;  // Linux: the distribution's package format, "deb" or "rpm"; "" = none of ours
 };
-Target currentTarget();  // on Linux, `package` comes from /etc/os-release
+Target currentTarget();  // on Linux, `package` = detectLinuxPackage("/")
 // The package format of a Linux distribution from its os-release text (ID and ID_LIKE):
-// "deb" for Debian, Ubuntu and their derivatives, "rpm" for Fedora, RHEL and openSUSE
-// families, "" for the rest (Arch, Gentoo, ...).
+// "deb" for Debian, Ubuntu and their derivatives (also any ID or ID_LIKE word containing
+// "debian" or "ubuntu"), "rpm" for Fedora, RHEL and openSUSE families, "" for the rest
+// (Arch, Gentoo, ...).
 std::string linuxPackage(const std::string& osRelease);
+// The package format for the Linux system under `root` ("/"; tests pass a folder). os-release
+// decides (etc/os-release, else usr/lib/os-release). When it names no family we ship a package
+// for, Gridline installed from our .deb (var/lib/dpkg/info/gridline.list) still means "deb".
+// When no os-release can be read, the package database decides: var/lib/dpkg/status "deb",
+// var/lib/rpm or usr/lib/sysimage/rpm "rpm". The answer is the same whether this Gridline runs
+// from the .deb, the .rpm, the AppImage or the .tar.gz.
+std::string detectLinuxPackage(const std::string& root);
 // The installer / package of `r` for `t` (nullptr: none, offer the release page):
 //   macOS          Gridline-<v>-macos-universal.dmg
 //   Windows        Gridline-<v>-windows-<x64|arm64>-setup.exe

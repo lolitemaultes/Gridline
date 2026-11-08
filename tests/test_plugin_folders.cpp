@@ -253,9 +253,12 @@ void testScanService(const std::string& dir) {
 
   // Rescan one folder: only its plugin is scanned.
   host::rescanFolder(exe, "clap", f2);
-  bool sawOne = host::scanStatus().total == 1;
   host::stopScan();
-  expect(sawOne && host::scanStatus().done == 1, "rescan a folder: only its plugin");
+  expect(host::scanStatus().total == 1 && host::scanStatus().done == 1, "rescan a folder: only its plugin");
+  // K-71: "*" (a folder for every format): the formats that are on, searched on the scan worker.
+  host::rescanFolder(exe, "*", f2);
+  host::stopScan();
+  expect(host::scanStatus().total == 1 && host::scanStatus().done == 1, "rescan a folder for every format: its plugin");
 
   // A missing folder never breaks a scan.
   p.formatFolders["clap"].push_back(dir + "/service/not-here");

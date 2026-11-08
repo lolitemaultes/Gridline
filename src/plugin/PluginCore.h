@@ -25,6 +25,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 #include "../core/Params.h"
@@ -244,6 +245,8 @@ class Instance {
   int editorW_ = 0, editorH_ = 0;
   float zoom_ = 1.0f;
   int editorTab_ = 0;
+  // K-110: files the loaded state carried inside it (embedded again on save; core/SuiteState.h).
+  std::set<std::string> embedded_;
 };
 
 // Finds the assets folder for a plugin binary (bundle Resources, then the

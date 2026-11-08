@@ -117,7 +117,14 @@ parameters are used and Tideline's Pump shape plays.
 
 ## FL Studio export
 
-When you export to an FL Studio project, Tideline becomes a Gross Beat volume envelope. The
-envelope is the tempo-synced curve with Amount, Duration and Shift applied, spread over a
-bar-locked slot. Audio and MIDI triggers, the band split and Mid / Side do not carry over, and
-the export notes say so.
+How Tideline goes into an FL Studio project follows **Settings, Project, FL Studio export**:
+
+- **Gridline Suite plugins, with muted audio copies** (the default) and **Rendered to audio**:
+  Tideline becomes the volume envelope of FL Studio's own time and volume effect. The envelope is
+  the tempo-synced curve with Amount, Duration and Shift applied, spread over a bar-locked slot.
+  Audio and MIDI triggers, the band split and Mid / Side do not carry over, and the export notes
+  say so.
+- **Gridline Suite plugins only**: the slot holds Tideline from the Gridline Suite with all its
+  settings, so nothing is approximated. FL Studio needs the Gridline Suite installed to play it.
+
+Opening the project in Gridline again gives back Tideline as it was written.

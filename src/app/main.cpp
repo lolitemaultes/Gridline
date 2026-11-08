@@ -10,6 +10,7 @@
 #include "SysWm.h"
 #include "VideoDriver.h"
 #include "../core/VideoDriverChoice.h"
+#include "../core/ChromeOs.h"
 #if defined(_WIN32)
 #include <shellapi.h>  // CommandLineToArgvW
 #endif
@@ -78,11 +79,14 @@
 #include "StemsUi.h"
 #include "TrackReceiptUi.h"
 #include "../core/MidiFile.h"
+#include "Keys.h"
 #include "App.h"
 #include "../core/RemoteFs.h"
+#include "../core/SingleInstance.h"
 #include "CollabUi.h"
 #include "PluginUI.h"
 #include "EditorZoomUi.h"
+#include "OpenDocuments.h"
 #include "../core/EditorZoom.h"
 #include "AutomationEditor.h"
 #include "BrowserUi.h"
@@ -101,6 +105,7 @@
 #include "../core/Crash.h"
 #include "../core/Settings.h"
 #include "Shell.h"
+#include "LayoutPresets.h"
 #include "SmoothScrollUi.h"
 #include "ExternalDragUi.h"
 #include "SuiteUi.h"
@@ -177,6 +182,26 @@ void feedTestInput(AudioEngine* eng, int frames) {
     eng->pushInput(ti->chunk, k);
     frames -= k;
   }
+}
+
+// K-10 dev capture, --video-clock <fps>: no audio device; every frame advances the engine by exactly one
+// video frame of samples on this thread, and the interface by 1/fps, so footage and meters are frame exact
+// however long a frame takes to draw. With --video-out <file or fifo> each frame goes out as raw RGB
+// (top row first); --video-cursor draws a pointer, which an off-screen frame otherwise lacks.
+int gVideoFps = 0;
+long long gVideoFrames = 0;
+long long gVideoRemainder = 0;
+void videoClockStep(AudioEngine& eng) {
+  static float block[2 * 256];
+  gVideoRemainder += static_cast<long long>(eng.sampleRate());
+  long long samples = gVideoRemainder / gVideoFps;
+  gVideoRemainder %= gVideoFps;
+  while (samples > 0) {
+    const int k = static_cast<int>(std::min<long long>(samples, 256));
+    eng.processInterleaved(block, k);
+    samples -= k;
+  }
+  ++gVideoFrames;
 }
 
 void audioCallback(void* user, Uint8* stream, int len) {
@@ -528,6 +553,11 @@ void openAudio(App& a) {
     gDevice = 0;
   }
   closeAsio(a);
+  if (gVideoFps > 0) {  // K-10: the engine runs from the frame loop (videoClockStep)
+    a.engine.setSampleRate(a.audioSampleRate);
+    a.audioStatus = "Video clock: no audio device.";
+    return;
+  }
   a.asio.available = asio::backendAvailable();
   a.asio.drivers.clear();
   if (a.asio.available)
@@ -645,6 +675,38 @@ void writePpm(const char* path, int w, int h) {
   }
 }
 
+void writeVideoFrame(FILE* f, int w, int h) {  // K-10: --video-out
+  static std::vector<unsigned char> px;
+  px.resize(static_cast<size_t>(w) * static_cast<size_t>(h) * 3);
+  glPixelStorei(GL_PACK_ALIGNMENT, 1);
+  glReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, px.data());
+  for (int y = h - 1; y >= 0; --y) std::fwrite(px.data() + static_cast<size_t>(y) * static_cast<size_t>(w) * 3, 1, static_cast<size_t>(w) * 3, f);
+  std::fflush(f);
+}
+
+void drawVideoCursor() {  // K-10: --video-cursor, a plain arrow at the dev pointer
+  const ImGuiIO& io = ImGui::GetIO();
+  if (!ImGui::IsMousePosValid(&io.MousePos)) return;
+  // Filled only: a thin outline polyline breaks up on the arrow's sharp corners at this size. The
+  // outline is the arrow drawn black a pixel out all round, under the white.
+  static const ImVec2 kArrow[7] = {{0, 0}, {0, 16.5f}, {4.1f, 12.7f}, {6.9f, 19.1f}, {9.6f, 17.9f}, {6.8f, 11.6f}, {12.2f, 11.6f}};
+  ImDrawList* d = ImGui::GetForegroundDrawList();
+  // Convex pieces (the concave fill drops the stem): the head as a fan from the tip, the stem as a quad.
+  auto arrow = [&](float dx, float dy, ImU32 col) {
+    ImVec2 p[7];
+    for (int i = 0; i < 7; ++i) p[i] = ImVec2(io.MousePos.x + kArrow[i].x + dx, io.MousePos.y + kArrow[i].y + dy);
+    d->AddTriangleFilled(p[0], p[1], p[2], col);
+    d->AddTriangleFilled(p[0], p[2], p[5], col);
+    d->AddTriangleFilled(p[0], p[5], p[6], col);
+    const ImVec2 stem[4] = {p[2], p[3], p[4], p[5]};
+    d->AddConvexPolyFilled(stem, 4, col);
+  };
+  arrow(0.9f, 1.4f, IM_COL32(0, 0, 0, 60));  // soft shadow
+  static const float kRing[8][2] = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}, {-0.7f, -0.7f}, {0.7f, -0.7f}, {-0.7f, 0.7f}, {0.7f, 0.7f}};
+  for (const auto& o : kRing) arrow(o[0], o[1], IM_COL32(0, 0, 0, 255));
+  arrow(0.1f, 0.25f, IM_COL32(255, 255, 255, 255));  // (in from the tip, so the white never passes the outline there)
+}
+
 // Typing keyboard: where a key sits → the key code TypingKeyboard uses, so the rows stay a piano
 // on any layout. 0 = not a typing key.
 int typingKey(SDL_Scancode s) { return TypingKeyboard::keyAtPosition(static_cast<int>(s)); }
@@ -690,7 +752,7 @@ void releaseTypedNotes(App& app, std::map<SDL_Scancode, HeldNote>& held) {
 //   Close project); signals launcher-shown / launcher-hidden
 //   quit [discard] (J-103: an SDL_QUIT, the normal quit path: unsaved-changes guard, teardown, settings saved;
 //   "discard" drops unsaved changes first, as the prompt's "Don't save")
-//   J-109: sdlkey <key>[@<position>] down|up [ctrl|super] · focuslost · typing on|off|show · noteon|noteoff <channel index> <pitch> ·
+//   J-109: sdlkey <key>[@<position>] down|up [ctrl|super] · focuslost · typing on|off|show · K-113: typing layout <id> · typing labels · noteon|noteoff <channel index> <pitch> ·
 //   previewfile <wav> · sound (output peak since the last "sound", live notes held, preview, panics, playing);
 //   waitfor output-silent: the output stayed below 1e-5 for 0.2 s (forget output-silent to wait again)
 //   J-110: stopvia button|menu|remote (the Stop button's action, Tools > Stop all sound, a MIDI controller's /
@@ -725,12 +787,14 @@ void releaseTypedNotes(App& app, std::map<SDL_Scancode, HeldNote>& held) {
 //   loupe pin tab|below|left|right|float (pins the panel's / first Loupe there) · loupe unpin
 //   K-19: edzoom fxeditor|channelsettings (the plugin window's editor zoom, design size and window to stdout) ·
 //   edzoomset <plugin type> <zoom> (the zoom remembered for a plugin type, 0 = automatic; atparam points at the magnified spot)
+//   K-10: cursor 0|1 (hides or shows the --video-cursor pointer)
 //   K-9: save <file> (the project, plugin state included) · rmchan <index> (removes a channel, its plugin window open or not);
 //   --dev-input-live <file>: a test harness drives a running app: whenever <file> exists, its lines ("0 <command> <args>")
 //   run on the next frame and the file is removed (tests/yabridge)
 std::string devShotPending;
 bool devLoadHold = true;  // J-167: frames do not count while a project loads ("loadhold off")
 bool devTrace = false;
+bool devVideoCursor = false;  // K-10
 ImVec2 devTraceWheel;  // this frame's wheel input (io clears it at the end of the frame)
 struct DevWait {
   std::string name;
@@ -739,6 +803,9 @@ struct DevWait {
   bool on = false;
 } devWait;
 float devSoundPeak = 0;  // J-109: output peak since the last "sound" (also drained each frame for "output-silent")
+double devLongestFrameMs = 0;  // K-71: the longest frame (its work, not the wait for the display) since the last "scan"
+double devFrameMsSum = 0;      // K-73: ... and the sum and count of those frames (their average)
+int devFrameCount = 0;
 // J-108: true while a "waitfor" holds the script's frame count (checked once per frame).
 bool devWaitHolds() {
   if (!devWait.on) return false;
@@ -876,6 +943,7 @@ void devPianoCommand(App& app, const DevInputLine& l, int frame) {
 // J-111h: "windows [frames]": the main window's size and every shown root window's position and size
 // (this frame, or each of the next `frames` frames) to stdout, to see a window's size change over frames.
 int devWindowsLeft = 0;
+bool devFlpAsk = false;  // K-110: --show flp-export-options
 void devDumpWindows(int frame) {
   const ImGuiContext& g = *ImGui::GetCurrentContext();
   int ww = 0, wh = 0;
@@ -918,6 +986,10 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
   if (fresh && devWindowsLeft > 0) {
     --devWindowsLeft;
     devDumpWindows(frame);
+  }
+  if (fresh && devFlpAsk && frame == 3) {  // K-110 layout check: the FL export options window
+    devFlpAsk = false;
+    flpexport::askAndStart(app, (std::filesystem::path(app.configDir()) / "dev-flp-export" / "check.flp").string(), false);
   }
   for (const auto& l : script) {
     if (!fresh || l.frame != frame) continue;
@@ -1063,6 +1135,7 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
     else if (l.cmd == "trace") devTrace = l.a0 != "off";
     else if (l.cmd == "setting") {  // J-188: "setting <key> on|off": a switch changed as the Settings dialog does (live)
       if (l.a1 == "on" || l.a1 == "off") app.settings.set(l.a0, l.a1 == "on");
+      else if (!l.a1.empty()) app.settings.set(l.a0, std::strtod(l.a1.c_str(), nullptr));  // K-136: "setting <key> <number>"
     } else if (l.cmd == "toasts") app.toasts.clear();  // J-78: "toasts clear": no notification cards (control runs)
     else if (l.cmd == "mod") {
       const bool on = std::atoi(l.a1.c_str()) != 0;
@@ -1076,6 +1149,11 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
     } else if (l.cmd == "key" && l.a0 == "space") {
       io.AddKeyEvent(ImGuiKey_Space, true);
       io.AddKeyEvent(ImGuiKey_Space, false);
+    } else if (l.cmd == "key" && l.a0.size() >= 2 && l.a0.size() <= 3 && l.a0[0] == 'f' && std::atoi(l.a0.c_str() + 1) >= 1 &&
+               std::atoi(l.a0.c_str() + 1) <= 12) {  // K-124: function keys (f2 rename, f12 close all)
+      const ImGuiKey k = static_cast<ImGuiKey>(ImGuiKey_F1 + (std::atoi(l.a0.c_str() + 1) - 1));
+      io.AddKeyEvent(k, true);
+      io.AddKeyEvent(k, false);
     } else if (l.cmd == "key" && l.a0 == "escape") {  // Q-3: cancel a drag
       io.AddKeyEvent(ImGuiKey_Escape, true);
       io.AddKeyEvent(ImGuiKey_Escape, false);
@@ -1148,6 +1226,13 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       std::printf("typing notes");
       for (int p : app.typing.heldNotes()) std::printf(" %d", p);
       std::printf(" octave %d velocity %d chord %d\n", app.typing.octave, app.typing.velocity, app.typing.chordMode ? 1 : 0);
+      std::fflush(stdout);
+    } else if (l.cmd == "typing" && l.a0 == "layout") {  // K-113: typing layout <id> (standard, qwertz, azerty, dvorak, colemak, computer)
+      setTypingLayout(app, typingLayoutFromId(l.a1));
+    } else if (l.cmd == "typing" && l.a0 == "labels") {  // K-113: the layout in use and every typing key's name
+      std::printf("typing labels %s:", typingLayoutId(typingLayout));
+      for (const char* k = "zsxdcvgbhnjm,l.;/q2w3er5t6y7ui9o0p[]-=\\'"; *k; ++k) std::printf(" %s", typingKeyName(*k).c_str());
+      std::printf("\n");
       std::fflush(stdout);
     } else if (l.cmd == "typing") {  // J-109: the typing keyboard on / off
       app.typingKeyboard = l.a0 != "off";
@@ -1231,6 +1316,8 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
         pointer = to;
         io.AddMousePosEvent(to.x, to.y);
       }
+    } else if (l.cmd == "cursor") {  // K-10
+      devVideoCursor = l.a0 != "0";
     } else if (l.cmd == "save") {  // K-9: save <file>
       const std::string to = l.args.empty() ? l.a0 : l.args[0];
       const bool saved = app.saveProject(to);
@@ -1253,6 +1340,9 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       for (size_t i = 0; i + 2 < pa.size() && i + 2 < pb.size(); i += 3) differ += pa[i] != pb[i] || pa[i + 1] != pb[i + 1] || pa[i + 2] != pb[i + 2] ? 1 : 0;
       std::printf("ppmdiff pixels %zu differ %zu\n", pa.size() / 3, pa.size() == pb.size() ? differ : pa.size() / 3);
       std::fflush(stdout);
+    } else if (l.cmd == "scriptform") {  // the script window's knobs: value and where each one is
+      std::printf("scriptform frame %d\n%s", frame, devScriptForm().c_str());
+      std::fflush(stdout);
     } else if (l.cmd == "docstate") {  // K-47: is the project modified, and where does it live
       std::printf("docstate modified %d path %s\n", app.doc.modified() ? 1 : 0, app.projectFile().c_str());
       std::fflush(stdout);
@@ -1260,6 +1350,19 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       glrecovery::simulateLoss();
     } else if (l.cmd == "filejob") {  // K-47: filejob data|bones|zip|clip|sample <target> · cancel · wait · state
       exportui::devFileJob(app, l.args);
+    } else if (l.cmd == "scan") {  // K-71: scan start|force [scanner] · folder <format|*> <folder> (a Rescan button) · state (and the longest frame since)
+      // K-73: tests name a stand-in scanner (fake plugins); the app's own scanner otherwise.
+      const std::string scanner = (l.a0 == "start" || l.a0 == "force") && l.args.size() >= 2 ? l.args[1] : host::selfExecutablePath();
+      if (l.a0 == "start" || l.a0 == "force") host::startScan(scanner, l.a0 == "force");
+      else if (l.a0 == "folder" && l.args.size() >= 3) host::rescanFolder(host::selfExecutablePath(), l.args[1], l.args[2]);
+      const host::ScanStatus st = host::scanStatus();
+      std::printf("scan running %d done %d total %d active %d searching %d failed %d classes %d longest-frame %.1f ms average-frame %.2f ms frames %d\n",
+                  st.running ? 1 : 0, st.done, st.total, st.active, st.searching.empty() ? 0 : 1, st.failed, st.classes, devLongestFrameMs,
+                  devFrameCount ? devFrameMsSum / devFrameCount : 0.0, devFrameCount);
+      std::fflush(stdout);
+      devLongestFrameMs = 0;
+      devFrameMsSum = 0;
+      devFrameCount = 0;
     } else if (l.cmd == "edit") {  // K-47: edit copy|paste <mixer|rack> [mixer index], through the Edit menu's own code
       const std::string what = l.args.empty() ? "" : l.args[0];
       if (l.args.size() > 1 && l.args[1] == "mixer") app.editFocus = App::EditFocus::Mixer;
@@ -1287,6 +1390,15 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       const auto& chs = app.doc.song().channels;
       const size_t ci = static_cast<size_t>(std::max(0, std::atoi(l.a0.c_str())));
       if (ci < chs.size()) app.doc.removeChannel(chs[ci].id);
+    } else if (l.cmd == "rackzip") {  // K-136: rackzip <index> [off]: the rack row zipped (a thin strip) or unzipped
+      const auto& chs = app.doc.song().channels;
+      const size_t ci = static_cast<size_t>(std::max(0, std::atoi(l.a0.c_str())));
+      if (ci < chs.size()) {
+        if (l.a1 == "off") app.rack.zipped.erase(chs[ci].id);
+        else app.rack.zipped.insert(chs[ci].id);
+      }
+    } else if (l.cmd == "osopen") {  // K-119: osopen <file>...: the open request macOS sends to a running Gridline
+      gl::opendocs::post(l.args.empty() ? std::vector<std::string>{l.a0} : l.args);
     } else if (l.cmd == "open") {  // J-167: open <file>: the normal open path (unsaved changes dropped first)
       app.doc.markSaved();
       app.openProject(l.args.empty() ? l.a0 : l.args[0]);
@@ -1304,9 +1416,6 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       devLoadHold = l.a0 != "off";
     } else if (l.cmd == "loadcancel") {  // J-167: the window's Cancel
       app.cancelProjectLoad();
-    } else if (l.cmd == "scriptform") {  // the script window's knobs: value and where each one is
-      std::printf("scriptform frame %d\n%s", frame, devScriptForm().c_str());
-      std::fflush(stdout);
     } else if (l.cmd == "loadfilter") {  // J-167: loadfilter on|off: the log shows only the warnings (the footer's toggle)
       projloadui::setWarningsOnly(l.a0 != "off");
     } else if (l.cmd == "urlimport") {  // J-192: Import from URL (UrlImportUi.h)
@@ -1319,6 +1428,8 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
     } else if (l.cmd == "taptempo") {  // K-48: "taptempo": the shared tapper to stdout; "taptempo action": the controller action; "taptempo bar": where the top bar's groups sit
       if (l.a0 == "action") {
         app.runAction(RemoteAction::TapTempo);
+      } else if (l.a0 == "fit") {  // K-132: "taptempo fit <px>": the bar fits into that width (the overflow popup)
+        devTopBarFitWidth(static_cast<float>(std::strtod(l.a1.c_str(), nullptr)));
       } else if (l.a0 == "bar") {
         for (const char* n : {"stop", "bar_transport", "bar_tempo", "taptempo", "bar_pos", "bar_pattern", "bar_master", "bar_monitor", "bar_windows", "bar_more"}) {
           float x0 = 0, y0 = 0, x1 = 0, y1 = 0;
@@ -1344,6 +1455,27 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       const ObjectId ch = app.settingsChannel != kNoId ? app.settingsChannel : app.selChannel;
       if (app.doc.setChannelPlugin(ch, l.a0)) pui::pluginReplaced(PluginTarget{ch, -1});
       app.syncEngine();
+    } else if (l.cmd == "addvia") {  // K-125: addvia <rack|below|replace|droprack|dropplaylist|picker> <type>: an instrument added the way that path adds it
+      const std::string type = l.a1;
+      if (l.a0 == "rack") menus::addInstrumentPick(app, type);
+      else if (l.a0 == "below") menus::addInstrumentPick(app, type, app.selChannel);
+      else if (l.a0 == "replace") menus::replaceInstrumentPick(app, app.selChannel, type);
+      else if (l.a0 == "droprack") browserui::performPluginDrop(app, type, browse::DropTarget::Rack, {});
+      else if (l.a0 == "dropplaylist") browserui::performPluginDrop(app, type, browse::DropTarget::Playlist, {});
+      else if (l.a0 == "picker") browserui::pickerAdd(app, type);
+      app.syncEngine();
+    } else if (l.cmd == "closeplugins") {  // K-125: every plugin window closed, as View > Close plugin windows
+      app.closePluginWindows();
+    } else if (l.cmd == "instview") {  // K-124 / K-125: the open channel settings and the focused window
+      const Channel* c = app.doc.song().channel(app.settingsChannel);
+      const ImGuiContext& g = *ImGui::GetCurrentContext();
+      const ImGuiWindow* nav = g.NavWindow ? g.NavWindow->RootWindow : nullptr;
+      std::printf("instview frame %d: open \"%s\" type %s focus \"%s\" channels %zu undo %zu popup %d text %d\n", frame,
+                  c ? c->name.c_str() : "-", c ? c->plugin.type.c_str() : "-", nav ? ui::stableWindowName(nav->Name) : "-",
+                  app.doc.song().channels.size(), app.doc.history().position(),
+                  ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel) ? 1 : 0,
+                  ImGui::GetIO().WantTextInput ? 1 : 0);
+      std::fflush(stdout);
     } else if (l.cmd == "pickpreset") {  // J-213: pickpreset <index>: the open plugin header loads that entry of its preset list
       const bool slot = app.fxEditor.first != kNoId && app.fxEditor.second >= 0;
       pui::devPickPreset(slot ? PluginTarget{app.fxEditor.first, app.fxEditor.second} : PluginTarget{app.settingsChannel, -1}, std::atoi(l.a0.c_str()));
@@ -1444,12 +1576,12 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
                   app.doc.history().position());
       for (const auto& c : s.playlist)
         std::printf("  clip %u kind %d track %d start %lld len %lld offset %lld audioStart %.6f muted %d pattern %u group %u sel %d"
-                    " source %u audioEnd %.6f fadeIn %.6f fadeOut %.6f gain %.4f pitch %.2f stretch %.4f reverse %d syncBpm %.4f tempoLock %d\n",
+                    " source %u audioEnd %.6f fadeIn %.6f fadeOut %.6f gain %.4f pitch %.2f stretch %.4f reverse %d syncBpm %.4f tempoLock %d loop %d\n",
                     static_cast<unsigned>(c.id), static_cast<int>(c.kind), c.track, static_cast<long long>(c.start),
                     static_cast<long long>(s.clipLength(c)), static_cast<long long>(c.offset), c.audioStart, c.muted ? 1 : 0,
                     static_cast<unsigned>(c.pattern), static_cast<unsigned>(c.group), app.playlist.selected.count(c.id) ? 1 : 0,
                     static_cast<unsigned>(c.source), c.audioEnd, c.fadeIn, c.fadeOut, static_cast<double>(c.gain),
-                    static_cast<double>(c.pitch), c.stretch, c.reverse ? 1 : 0, c.syncBpm, c.tempoLock ? 1 : 0);
+                    static_cast<double>(c.pitch), c.stretch, c.reverse ? 1 : 0, c.syncBpm, c.tempoLock ? 1 : 0, c.loop ? 1 : 0);  // (K-114: loop)
       std::fflush(stdout);
     } else if (l.cmd == "builds") {  // J-196: program builds and clip level patches so far, renders waiting for an edit to end
       std::printf("builds frame %d: builds %llu patches %llu deferred %d voices made %llu kept %llu\n", frame,
@@ -1550,6 +1682,47 @@ static void devInstallBacktrace() {
 static void devInstallBacktrace() {}
 #endif
 
+// K-133: a lost OpenGL context while one window draws alone (the splash, the crash pop-up): what the
+// main window's recovery does (K-47), without what exists only later (plugin windows, the detached
+// windows' contexts). False: no new context could be had (ImGui then has no renderer).
+static bool rebuildLoneContext(SDL_Window* window, SDL_GLContext& gl, const char* where, const char* why) {
+  crash::crumb("graphics reset", why);
+  logging::warning("graphics", std::string("The OpenGL context was lost (") + where + "): " + why);
+  const int interval = SDL_GL_GetSwapInterval();
+  glrecovery::waitForResetToEnd(10000);
+  ImGui_ImplOpenGL3_Shutdown();
+  ImGui_ImplSDL2_Shutdown();
+  SDL_GL_MakeCurrent(window, nullptr);
+  SDL_GL_DeleteContext(gl);
+  gl = glrecovery::recreateContext(window, 10000);
+  if (!gl) {
+    std::fprintf(stderr, "[graphics] no new context (%s)\n", where);
+    return false;
+  }
+  SDL_GL_MakeCurrent(window, gl);
+  SDL_GL_SetSwapInterval(interval);
+  glrecovery::attach();
+  crash::setGpu(reinterpret_cast<const char*>(glGetString(GL_VENDOR)), reinterpret_cast<const char*>(glGetString(GL_RENDERER)),
+                reinterpret_cast<const char*>(glGetString(GL_VERSION)));
+  ImGui_ImplSDL2_InitForOpenGL(window, gl);
+  ImGui_ImplOpenGL3_Init(glrecovery::glsl());
+  if (std::getenv("GRIDLINE_DEV_NO_VTX_OFFSET")) ImGui::GetIO().BackendFlags &= ~ImGuiBackendFlags_RendererHasVtxOffset;
+  glepoch::next();
+  glrecovery::restoreTextures();
+  std::fprintf(stderr, "[graphics] context rebuilt (%s)\n", where);
+  return true;
+}
+
+// K-133 dev checks: GRIDLINE_DEV_GL_LOSS_EARLY=splash|dialog loses the context once, on the third
+// frame of the splash or of the crash pop-up; all that follows is the real path.
+static void devEarlyLoss(const char* where, int frame) {
+  static bool done = false;
+  const char* e = std::getenv("GRIDLINE_DEV_GL_LOSS_EARLY");
+  if (done || !e || std::strcmp(e, where) != 0 || frame != 2) return;
+  done = true;
+  glrecovery::simulateLoss();
+}
+
 // K-39: the pop-up as a small process of its own, right after a crash or during a freeze (see
 // core/Crash.h). Only SDL, OpenGL, ImGui and the theme: nothing that may be what failed.
 static int runCrashDialog(SDL_Window* window, SDL_GLContext gl, const std::string& report, const std::string& session, const std::string& shot,
@@ -1617,7 +1790,27 @@ static int runCrashDialog(SDL_Window* window, SDL_GLContext gl, const std::strin
       closing = true;
     }
     if (useOffscreen) offscreen.use(false);
-    SDL_GL_SwapWindow(window);
+    devEarlyLoss("dialog", frameNo);
+    const char* lost = glrecovery::poll();  // K-133: as the main window does (K-47)
+    if (!lost) SDL_GL_SwapWindow(window);
+    if (lost && !closing) {
+      if (!rebuildLoneContext(window, gl, "crash pop-up", lost)) {
+        // Nothing can be drawn any more. The report stays unread, so the next start shows it and
+        // offers its recovery copy; a box from the system says so now.
+        crashui::dialogClose(state);
+        std::fprintf(stderr, "Gridline's crash pop-up lost its graphics driver; the report is shown at the next start.\n");
+        if (shot.empty())
+          SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Gridline",
+                                   i18n::tr("Gridline stopped unexpectedly, and the graphics driver restarted while its report was shown. "
+                                            "The report and any recovered work are shown the next time Gridline starts."),
+                                   nullptr);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        return 3;
+      }
+      if (useOffscreen) offscreen.create(w, h);
+      continue;  // the frame again, on the new context
+    }
     if (!more || closing) break;
   }
   crashui::dialogClose(state);
@@ -1629,6 +1822,51 @@ static int runCrashDialog(SDL_Window* window, SDL_GLContext gl, const std::strin
   SDL_Quit();
   return 0;
 }
+
+// K-121: one Gridline per user on Linux, the BSDs and Windows (core/SingleInstance.h). A launch
+// with only files (the file manager, Open with) or with nothing (the menu, a launcher icon) hands
+// them to the Gridline that is running and exits; that one opens them as macOS does (the
+// unsaved-changes prompt first) and comes to the front. Without files the running one only
+// comes forward: each Gridline has the sound card, the MIDI ports and the window layout to
+// itself, so a second one would compete for them. GRIDLINE_SINGLE_INSTANCE=0 starts every launch
+// on its own. Runs with options (tests, tools, --hidden) never meet the user's Gridline; the tests
+// use their own endpoint (GRIDLINE_TEST_INSTANCE_ENDPOINT, only with --hidden).
+namespace {
+struct InstancePlan {
+  std::string endpoint;            // "" = this launch runs on its own
+  std::vector<std::string> files;  // absolute paths to hand over
+  bool claimOnly = false;          // a restart after a crash: takes the endpoint if free, never hands over
+};
+
+InstancePlan planInstance(int argc, char** argv, bool hiddenRun) {
+  InstancePlan p;
+  if (const char* o = std::getenv("GRIDLINE_SINGLE_INSTANCE"); o && std::string(o) == "0") return p;
+  const char* test = std::getenv("GRIDLINE_TEST_INSTANCE_ENDPOINT");
+  const bool testRun = hiddenRun && test && *test;
+  if (hiddenRun && !testRun) return p;
+  for (int i = 1; i < argc; ++i) {
+    const std::string a = argv[i];
+    if (a.rfind("-psn_", 0) == 0) continue;  // (macOS process serial)
+    if (a == "--crash-recover") {
+      ++i;
+      p.claimOnly = true;
+      continue;
+    }
+    if (!a.empty() && a[0] == '-') {
+      if (!testRun) return InstancePlan{};  // a run with options
+      for (const char* v : {"--dev-input", "--dev-input-live", "--size", "--ui-scale", "--frames", "--screenshot"})
+        if (a == v) ++i;
+      continue;
+    }
+    std::error_code ec;
+    const fs::path abs = a.find("://") != std::string::npos ? fs::u8path(a) : fs::absolute(fs::u8path(a), ec);
+    p.files.push_back(ec ? a : abs.u8string());
+  }
+  p.endpoint = testRun ? gl::single::testEndpoint(test)
+                       : gl::single::defaultEndpoint(fs::u8path(Settings::defaultPath()).parent_path().u8string());
+  return p;
+}
+}  // namespace
 
 int main(int argc, char** argv) {
   devInstallBacktrace();
@@ -1677,6 +1915,36 @@ int main(int argc, char** argv) {
       crashForce.resize(c);
     }
   }
+  // K-121: hand the files to the Gridline that is running, or become the one later launches find.
+  gl::single::Server instance;
+  if (const InstancePlan plan = crashDialogReport.empty() ? planInstance(argc, argv, hiddenRun) : InstancePlan{}; !plan.endpoint.empty()) {
+    for (int attempt = 0; attempt < 2; ++attempt) {
+      std::string err;
+      const gl::single::Server::Claim c = instance.claim(plan.endpoint, &err);
+      if (c == gl::single::Server::Claim::Taken) {
+        if (hiddenRun) std::printf("single instance: listening\n");
+        break;
+      }
+      if (c == gl::single::Server::Claim::Failed) {
+        std::fprintf(stderr, "[instance] %s: this Gridline runs on its own\n", err.c_str());
+        break;
+      }
+      if (plan.claimOnly) break;
+      const gl::single::Handover h = gl::single::handOver(plan.endpoint, plan.files, &err);
+      if (h == gl::single::Handover::Sent) {
+        if (hiddenRun) std::printf("single instance: handed over %zu file(s)\n", plan.files.size());
+        std::fflush(stdout);
+        return 0;
+      }
+      if (h == gl::single::Handover::Failed) {
+        std::fprintf(stderr, "[instance] the running Gridline did not answer (%s): starting another one\n", err.c_str());
+        break;
+      }
+      // NoServer: it has just quit; this launch takes its place
+    }
+    std::fflush(stdout);
+    instance.start({});  // (the interface thread takes the requests every frame)
+  }
   if (crashDialogReport.empty() && !std::getenv("GRIDLINE_NO_CRASH_HANDLER")) {
     crash::Config cc;
     cc.configDir = fs::u8path(Settings::defaultPath()).parent_path().u8string();
@@ -1686,16 +1954,20 @@ int main(int argc, char** argv) {
     crash::install(cc);
   }
   SDL_SetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
+  gl::opendocs::setCommandLine(argc, argv);  // K-119: (AppKit repeats them as an open request)
   appicon::prepareIdentity();  // K-14: X11 WM_CLASS / Wayland app_id = the desktop entry id
   videodriver::prepare();  // X11 where an X server answers: what plugin interfaces can open on
   bool sdlStarted = SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER) == 0;
   if (!sdlStarted && videodriver::dropRequest()) sdlStarted = SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER) == 0;
   videodriver::finish();
+  if (const std::string sys = chromeos::describe(chromeos::current()); !sys.empty()) std::fprintf(stderr, "[system] %s\n", sys.c_str());  // K-75
   if (!sdlStarted) {
     std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
     crash::markCleanExit();  // said so; the pop-up has nothing to add
     return 1;
   }
+  for (int i = 1; i + 1 < argc; ++i)  // K-119 dev check: the open request macOS sends when a file is double-clicked
+    if (std::string(argv[i]) == "--dev-os-open") gl::opendocs::post({argv[i + 1]});
 #if defined(__APPLE__)
   const char* glsl = "#version 150";
 #else
@@ -1754,15 +2026,22 @@ int main(int argc, char** argv) {
     return 1;
   }
   SDL_GLContext gl = glrecovery::createContext(window);  // K-47: robust where the driver offers it
+  if (!gl) {
+    std::fprintf(stderr, "No OpenGL context (3.0 core, 3.0 compatibility or 2.1): %s\n", SDL_GetError());
+    crash::markCleanExit();
+    return 1;
+  }
   SDL_GL_MakeCurrent(window, gl);
   SDL_GL_SetSwapInterval(1);
   glrecovery::attach();
+  glsl = glrecovery::glsl();  // K-75: GLSL 1.20 on an OpenGL 2.x context
   {
     // The window system goes with the driver line of a crash report.
     const char* glVersion = reinterpret_cast<const char*>(glGetString(GL_VERSION));
     const char* videoName = SDL_GetCurrentVideoDriver();
     const std::string versionLine = std::string(glVersion ? glVersion : "?") + " / " + (videoName ? videoName : "?");
     crash::setGpu(reinterpret_cast<const char*>(glGetString(GL_VENDOR)), reinterpret_cast<const char*>(glGetString(GL_RENDERER)), versionLine.c_str());
+    std::fprintf(stderr, "[graphics] OpenGL %s, shaders %s\n", versionLine.c_str(), glsl);  // K-75
   }
 
   IMGUI_CHECKVERSION();
@@ -1825,11 +2104,13 @@ int main(int argc, char** argv) {
   // ---- splash: each real start-up step advances the bar ----
   Uint64 splashT0 = SDL_GetPerformanceCounter();
   float shown = 0.0f;
+  int splashFrames = 0;
   auto splash = [&](float target, const char* status) {
     // Render until the bar has caught up (min ~4 frames per step).
     for (int f = 0; f < 60; ++f) {
       SDL_Event e;
-      while (SDL_PollEvent(&e)) ImGui_ImplSDL2_ProcessEvent(&e);
+      while (SDL_PollEvent(&e))
+        if (!gl::opendocs::take(e)) ImGui_ImplSDL2_ProcessEvent(&e);  // K-119: a file macOS asks to open is kept
       shown += (target - shown) * 0.35f;
       double tt = static_cast<double>(SDL_GetPerformanceCounter() - splashT0) / static_cast<double>(SDL_GetPerformanceFrequency());
       ImGui_ImplOpenGL3_NewFrame();
@@ -1846,6 +2127,14 @@ int main(int argc, char** argv) {
       ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
       if (const char* shot = std::getenv("GRIDLINE_SPLASH_SHOT"); shot && target > 0.4f && target < 0.5f && f == 5)
         writePpm(shot, w, h);
+      devEarlyLoss("splash", splashFrames++);
+      if (const char* lost = glrecovery::poll()) {  // K-133: as the main window does (K-47)
+        if (!rebuildLoneContext(window, gl, "splash", lost)) crash::endAfterGraphicsLoss(lost);  // no project yet: a report, the pop-up
+        glsl = glrecovery::glsl();
+        viewports::backendRestarted(gl);
+        keepDevClipboard();
+        continue;  // the frame again, on the new context
+      }
       SDL_GL_SwapWindow(window);
       if (f >= 4 && target - shown < 0.01f) break;
     }
@@ -1880,6 +2169,7 @@ int main(int argc, char** argv) {
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
     if (arg == "--no-ui-sounds" || arg == "--screenshot" || arg == "--profile-frames") app.uiSoundsDisabled = true;
+    if (arg == "--video-clock" && i + 1 < argc) gVideoFps = std::max(0, std::atoi(argv[i + 1]));  // K-10: before the audio device opens
   }
   app.assetsDir = assets;
   openAudio(app);
@@ -1896,6 +2186,8 @@ int main(int argc, char** argv) {
     // the welcome launcher; files and options (tests, tools) keep opening straight into a project.
     bool plainLaunch = true;
     for (int i = 1; i < argc; ++i) plainLaunch = plainLaunch && std::string(argv[i]).rfind("-psn_", 0) == 0;
+    // K-119: a launch to open a document (macOS sends it as an open request, not an argument) is no plain launch.
+    plainLaunch = plainLaunch && !gl::opendocs::pending();
     if (shot)
       app.applySettingsHooks();
     else
@@ -1907,20 +2199,38 @@ int main(int argc, char** argv) {
   // starting interface).
   bool onlyPaths = argc > 1;
   for (int i = 1; i < argc; ++i) onlyPaths = onlyPaths && argv[i][0] != '-';
+  bool argOpened = false;
   for (int i = 1; onlyPaths && i < argc; ++i) {
     std::error_code ec;
     // K-42: a project on a web drive is not stat-ed while starting: the loading window reports it.
-    if ((gl::remotefs::isRemote(argv[i]) || fs::is_regular_file(fs::u8path(argv[i]), ec)) && app.openProject(argv[i])) break;
+    if ((gl::remotefs::isRemote(argv[i]) || fs::is_regular_file(fs::u8path(argv[i]), ec)) && app.openProject(argv[i])) {
+      argOpened = true;
+      break;
+    }
   }
+  // K-119: macOS started Gridline to open documents: the first project among them, as from the command line.
+  for (const std::string& f : gl::opendocs::takeReady()) {
+    if (hiddenRun) std::printf("os open: %s (starting)\n", f.c_str());
+    std::error_code ec;
+    if (!argOpened && fs::is_regular_file(fs::u8path(f), ec) && app.openProject(f)) argOpened = true;
+  }
+  gl::opendocs::startupDone();
 
   // Command line: [project] [--screenshot out.ppm] [--frames N] [--play] [--fx mixer slot] [--chan index]
   //               [--plugin type] [--size WxH]
   splash(0.88f, "Opening project");
   std::string shotPath;
   int shotFrames = 45;
+  std::string videoOutPath;  // K-10: raw RGB frames
+  FILE* videoOut = nullptr;
   std::pair<int, int> forcedSize{0, 0};  // --size WxH (window size for layout checks)
   std::pair<int, int> resizeTo{0, 0};    // --resize WxH (applied halfway through --frames)
   std::string devMenu;                    // --menu name: open a menu for screenshots
+  std::string devLayoutPreset;            // K-79 --layout studio|performance|tracks: this run only (nothing saved)
+  std::vector<std::string> devPanes;      // K-79 --pane mixer|piano|rack|history|pads|settings: open a window at frame 3
+  bool devSwitchCheck = false;
+  int devSwitchFrame = -100;  // the frame a layout switch was applied on (for --switch-check)
+  std::vector<std::pair<int, std::string>> devSwitches;  // K-79 --switch-layout <id>@<frame>: choose a preset while running
   std::string devFocus;                   // --show <window>: focus a docked window once the layout exists
   bool devLive = false;                   // --live: launch live clips once the program exists
   int devAutoEdit = 0;                    // --show autoedit / autolfo
@@ -1957,7 +2267,19 @@ int main(int argc, char** argv) {
     else if (arg == "--profile-frames" && i + 1 < argc) profilePath = argv[++i];
     else if (arg == "--profile-warmup" && i + 1 < argc) profileWarmup = std::max(0, std::atoi(argv[++i]));
     else if (arg == "--frames" && i + 1 < argc) shotFrames = std::atoi(argv[++i]);
+    else if (arg == "--video-clock" && i + 1 < argc) ++i;  // K-10: read before the audio device opens
+    else if (arg == "--dev-os-open" && i + 1 < argc) ++i;  // K-119: posted after SDL_Init
+    else if (arg == "--video-out" && i + 1 < argc) videoOutPath = argv[++i];
+    else if (arg == "--video-cursor") devVideoCursor = true;
     else if (arg == "--menu" && i + 1 < argc) devMenu = argv[++i];
+    else if (arg == "--layout" && i + 1 < argc) devLayoutPreset = argv[++i];
+    else if (arg == "--pane" && i + 1 < argc) devPanes.push_back(argv[++i]);
+    else if (arg == "--switch-check") devSwitchCheck = true;  // K-79: report each layout switch's frames (stderr)
+    else if (arg == "--switch-layout" && i + 1 < argc) {
+      const std::string v = argv[++i];
+      const size_t at = v.find('@');
+      devSwitches.push_back({at == std::string::npos ? 10 : std::atoi(v.c_str() + at + 1), v.substr(0, at)});
+    }
     else if (arg == "--tool" && i + 1 < argc) devTool = argv[++i];
     else if (arg == "--script" && i + 1 < argc) devScript = argv[++i];
     else if (arg == "--dev-input" && i + 1 < argc) devInput = loadDevInput(argv[++i]);
@@ -2077,6 +2399,8 @@ int main(int argc, char** argv) {
       else if (w == "integrations") app.showSettings = true, app.settingsTab = 10;  // SC-07 AI assistants page
       else if (w == "collab-settings") app.showSettings = true, app.settingsTab = 11;  // J-111 Collaboration page
       else if (w == "plugin-folders") app.showSettings = true, app.settingsTab = 12;  // K-13 Plugins page
+      else if (w == "project-settings") app.showSettings = true, app.settingsTab = 2;  // K-110 FL Studio export section
+      else if (w == "flp-export-options") devFlpAsk = true;  // K-110 export options window (needs the song loaded first and a --dev-input script)
       else if (w == "collab") app.showCollab = true;                                // J-111 panel (no session)
       else if (w == "collab-join") gl::collabui::openJoin(app);                      // J-111 join dialog
       else if (w == "collab-demo" || w == "collab-review" || w == "collab-demo-panel" || w == "collab-cursors") {  // J-111: a simulated collaborator
@@ -2369,11 +2693,29 @@ int main(int argc, char** argv) {
     suiteui::start(app, updateOpts.automated);  // J-131: Gridline Suite into the plug-in folders
     urlimportui::start(updateOpts.automated);    // J-192: scripted runs never download the tools
   }
-  const bool frameClock = profilePath.empty() && mainNative.valid() && !std::getenv("GRIDLINE_VSYNC_SWAP") && host::native::frameClockStart(mainNative);
+  if (gVideoFps > 0) {
+    fixedDt = 1.0 / gVideoFps;
+    SDL_GL_SetSwapInterval(0);
+  }
+  const bool frameClock = gVideoFps == 0 && profilePath.empty() && mainNative.valid() && !std::getenv("GRIDLINE_VSYNC_SWAP") && host::native::frameClockStart(mainNative);
   if (frameClock) SDL_GL_SetSwapInterval(0);
   // The saved layout, read now that the main window is where it will be (J-113: detached
   // windows are saved relative to it), then saved there on exit.
   viewports::setVirtualMonitors(useOffscreen);
+  // K-79: the layout preset (Settings > Interface > Layout) decides which layout file is read;
+  // Studio keeps layout.ini. --layout shows another one for this run without saving anything.
+  layout::Preset layoutPreset = layout::current(app.settings);
+  if (!devLayoutPreset.empty()) {
+    layoutPreset = layout::fromId(devLayoutPreset);
+    layoutui::setDevOverride(layoutPreset);
+    layoutui::applyKeyProfile(app);
+    theme::applyFromSettings(app.settings);
+  }
+  layoutui::setActive(layoutPreset);
+  iniPath = (fs::path(app.configDir()) / layout::iniFileName(layoutPreset)).string();
+  firstRun = !fs::exists(iniPath);
+  bool layoutRebuild = false;  // K-79: a preset switch found no saved layout file
+  bool layoutRebuildKeep = false;  // ... and the windows open before the switch stay open
   ImGui::LoadIniSettingsFromDisk(iniPath.c_str());
   // Automated runs and the dev options (--show mixer rebuilds the layout around one panel) read the
   // saved layout but never write it back: a test run must not leave its layout in the user's own.
@@ -2394,6 +2736,7 @@ int main(int argc, char** argv) {
   bool crashTestDirty = hiddenRun && std::getenv("GRIDLINE_CRASH_TEST_DIRTY") != nullptr;
   const char* graphicsLost = nullptr;  // K-47: why, until it is dealt with
   auto frame = [&](bool live) {
+    const Uint64 frameStart = SDL_GetPerformanceCounter();  // K-71: "scan state"
     liveresize::frameBegin(live);
     uint64_t statT = 0;
     // J-109: Gridline lost focus (another application, a plugin window, a key released
@@ -2418,6 +2761,7 @@ int main(int argc, char** argv) {
     if (!app.typingKeyboard && app.typing.anyHeld()) releaseTypedNotes(app, held);
 
     double now = static_cast<double>(SDL_GetPerformanceCounter() - t0) / static_cast<double>(SDL_GetPerformanceFrequency());
+    if (gVideoFps > 0) now = static_cast<double>(gVideoFrames) / gVideoFps;
     {
       prof::Scope ps("tick");
       fstats::Timer ft(fstats::Tick);
@@ -2494,6 +2838,7 @@ int main(int argc, char** argv) {
         lastScaledEvent = g.InputEventsNextEventId - 1;  // already in logical pixels
       }
     }
+    if (gVideoFps > 0) videoClockStep(app.engine);  // K-10: after the frame's commands, so a seek holds for this frame
     if (pointerAt < 0 || now - pointerAt >= 3.0) {  // J-111g: the system pointer's size (Settings may change it)
       pointerSize = host::native::pointerSize(pointerNative);
       pointerAt = now;
@@ -2503,7 +2848,44 @@ int main(int argc, char** argv) {
     ui::SetWindowRubber(scrollui::params().elastic);  // J-117: the same switch for the windows' elastic boundary
     scrollui::beforeNewFrame();
     edzoomui::mapPointer();  // K-19: the pointer over a magnified plugin editor, in its design coordinates
+    if (layout::Preset to; layoutui::takeSwitch(&to)) {
+      // K-79: another layout preset. The current arrangement is kept in its own file, the other
+      // preset's file is read back (ImGui 1.92 rebuilds the dock nodes and re-applies every
+      // window's saved place on a runtime load), or its default is built when it has none yet.
+      static std::string iniCache[layout::kPresetCount];  // this run's arrangement of each preset
+      const double switchStart = SDL_GetPerformanceCounter() / static_cast<double>(SDL_GetPerformanceFrequency());
+      {
+        size_t n = 0;
+        const char* d = ImGui::SaveIniSettingsToMemory(&n);
+        iniCache[static_cast<int>(layoutui::active())].assign(d, n);
+      }
+      if (io.IniFilename) ImGui::SaveIniSettingsToDisk(io.IniFilename);
+      layoutui::setActive(to);
+      if (to == layout::Preset::Studio) app.showLivePads = false;  // a floating window there, opened from View
+      iniPath = (fs::path(app.configDir()) / layout::iniFileName(to)).string();
+      io.IniFilename = keepSavedLayout ? nullptr : iniPath.c_str();
+      const bool current = static_cast<int>(app.settings.getNumber(layout::versionKey(to))) >= layout::defaultVersion(to);
+      std::error_code ec;
+      const std::string& cached = iniCache[static_cast<int>(to)];
+      // The open project, its selection, playback and the open windows stay as they are; only
+      // the arrangement changes (the live layout adds its pads view behind the playlist).
+      if (!cached.empty()) {
+        ImGui::LoadIniSettingsFromMemory(cached.c_str(), cached.size());
+      } else if (current && fs::exists(iniPath, ec)) {
+        ImGui::LoadIniSettingsFromDisk(iniPath.c_str());
+      } else {
+        layoutRebuild = layoutRebuildKeep = true;
+      }
+      layoutui::enterPreset(app, to);
+      layoutui::noteSwitched(ImGui::GetTime());
+      if (devSwitchCheck) {
+        const double ms = (SDL_GetPerformanceCounter() / static_cast<double>(SDL_GetPerformanceFrequency()) - switchStart) * 1000.0;
+        std::fprintf(stderr, "[layout-switch] frame %d to %s took %.2f ms\n", frameNo, layout::id(to), ms);
+        devSwitchFrame = frameNo;
+      }
+    }
     ImGui::NewFrame();
+    keys::escapeFrameBegin();  // K-124: what Esc may meet this frame (popups, drags, text fields)
     if (crashTestDirty && !app.doc.song().channels.empty()) {  // K-39 tests: unsaved work to recover
       crashTestDirty = false;
       app.doc.renameChannel(app.doc.song().channels[0].id, "k39-unsaved-marker");
@@ -2561,22 +2943,28 @@ int main(int argc, char** argv) {
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoDocking |
                      ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_NoSavedSettings);
     ImGuiID dockId = ImGui::GetID("GridlineDock");
-    // J-28: saved layouts from before the current default are replaced once.
-    const bool migrate = static_cast<int>(app.settings.getNumber("ui.layoutVersion")) < workspace::kLayoutVersion;
+    // J-28: saved layouts from before the current default are replaced once (K-79: per preset).
+    const layout::Preset preset = layoutui::active();
+    static bool builtThisRun[layout::kPresetCount] = {};  // (a --layout run stores no version)
+    const bool migrate = static_cast<int>(app.settings.getNumber(layout::versionKey(preset))) < layout::defaultVersion(preset) &&
+                         !builtThisRun[static_cast<int>(preset)];
     // Dev layout options (--show mixer / playlist, --hide) ask for the default layout they adjust,
     // whatever layout.ini holds (it is read since J-113).
     static bool devLayout = devMixerOnly || devPlaylistOnly || !devHide.empty();
-    if (firstRun || migrate || app.resetLayout || devLayout || !ImGui::DockBuilderGetNode(dockId)) {
+    if (firstRun || migrate || app.resetLayout || devLayout || layoutRebuild || !ImGui::DockBuilderGetNode(dockId)) {
       devLayout = false;
+      layoutRebuild = false;
       const ImVec2 inner(dsize.x - 8, dsize.y - 8);  // dock host padding
       if (app.resetLayout) viewports::gatherAll();  // J-113: detached windows come back too
-      const workspace::Rect r = buildDefaultLayout(dockId, inner, static_cast<int>(app.doc.song().channels.size()));
+      const workspace::Rect r = buildLayout(preset, dockId, inner, static_cast<int>(app.doc.song().channels.size()));
       rackPlacement = {dpos.x + 4 + r.x, dpos.y + 4 + r.y, r.w, r.h};
-      placeRack = true;
-      app.settings.set("ui.layoutVersion", workspace::kLayoutVersion);
+      placeRack = preset == layout::Preset::Studio;  // the other presets dock the rack
+      if (!layoutui::hasDevOverride()) app.settings.set(layout::versionKey(preset), layout::defaultVersion(preset));
+      builtThisRun[static_cast<int>(preset)] = true;
       firstRun = false;
       app.resetLayout = false;
-      app.showBrowser = app.showRack = app.showPiano = app.showPlaylist = app.showMixer = true;
+      if (!layoutRebuildKeep) layoutui::showPresetWindows(app, preset);
+      layoutRebuildKeep = false;
       if (devPlaylistOnly) app.showBrowser = app.showRack = app.showPiano = app.showMixer = false;
       for (const std::string& w : devHide) {
         if (w == "rack") app.showRack = false;
@@ -2617,6 +3005,7 @@ int main(int argc, char** argv) {
       prof::Scope ps("playlist");
       drawPlaylist(app);
     }
+    layoutui::paneGroupsFrame(app);  // K-79: the tracks preset's one-at-a-time panes
     drawLivePads(app);
     trackui::devDemo(app);  // PL-08 / RN-09 screenshot set-ups
     chopui::devDemo(app);   // PL-13 screenshot set-ups
@@ -2674,6 +3063,18 @@ int main(int argc, char** argv) {
     browserui::thumbDraw(app);
     if (!devMenu.empty()) drawDevMenu(app, devMenu);
     if (!devFocus.empty() && frameNo == 3) app.focusWindow = devFocus;
+    for (const auto& [f, id] : devSwitches)
+      if (frameNo == f) layoutui::choose(app, layout::fromId(id), layout::linkedFromSettings(app.settings));
+    if (frameNo == 3)
+      for (const std::string& w : devPanes) {  // K-79: screenshots of the presets' panes
+        if (w == "mixer") app.showMixer = true;
+        else if (w == "piano") app.showPiano = true;
+        else if (w == "rack") app.showRack = true;
+        else if (w == "history") app.showHistory = true;
+        else if (w == "pads") layoutui::toggleMainView(app);
+        else if (w == "settings" && !app.doc.song().channels.empty()) app.settingsChannel = app.doc.song().channels.front().id;
+        else if (w == "launcher-layout") launcherui::openLayoutChooser();
+      }
     if (devHostedEditor && frameNo == 3) openHostedEditor(app, devEditorTarget);
     if (devWindowCycle > 0 && frameNo >= 10 && frameNo % 10 == 0 && frameNo / 10 <= 2 * devWindowCycle) {
       togglePluginWindow(app, devEditorTarget);  // channel button / slot click
@@ -2792,6 +3193,14 @@ int main(int argc, char** argv) {
     viewports::drawTitleButtons();  // J-114
     if (alignFrame) alignaudit::finish(devAlignAudit);  // J-128
     if (devGallery >= 0) look::drawGallery(static_cast<look::Dir>(devGallery), ImGui::GetTime(), devGalleryPage);  // J-129
+    if (!homeShown) layoutui::drawSwitchFade(ImGui::GetTime());  // K-79: a short fade over a layout switch
+    if (devSwitchCheck && frameNo > devSwitchFrame && frameNo <= devSwitchFrame + 4) {
+      const std::string bad = layoutui::switchCheck(app);
+      std::fprintf(stderr, "[layout-switch] frame %d %s playing %d tick %.0f open %s%s%s\n", frameNo, layout::id(layoutui::active()),
+                   app.engine.playing() ? 1 : 0, static_cast<double>(app.engine.position()), layoutui::openWindows(app).c_str(),
+                   bad.empty() ? " ok" : " BLANK", bad.c_str());
+    }
+    if (devVideoCursor) drawVideoCursor();  // K-10
     ImGui::Render();
     edzoomui::afterRender();  // K-19: magnified plugin editors
     if (useOffscreen) offscreen.use(true);
@@ -2817,6 +3226,11 @@ int main(int argc, char** argv) {
         else if (now - quietSince >= 0.2) devsig::reach("output-silent");
       }
       collabui::devFrame(app);  // J-111: collab-connected, collab-joined, collab-synced, ...
+      if (!host::scanStatus().running) devsig::reach("scan-idle");  // K-71
+      const double frameMs = 1e3 * static_cast<double>(SDL_GetPerformanceCounter() - frameStart) / static_cast<double>(SDL_GetPerformanceFrequency());
+      devLongestFrameMs = std::max(devLongestFrameMs, frameMs);
+      devFrameMsSum += frameMs;
+      ++devFrameCount;
     }
     // J-108: "waitfor" keeps the script (and --frames) on this frame; J-167: so does a project load
     // (scripts and screenshots see the project loaded; "loadhold off" watches a load frame by frame).
@@ -2830,6 +3244,10 @@ int main(int argc, char** argv) {
                   app.playlist.scrollX, app.playlist.scrollY, app.piano.scrollX, app.piano.scrollY, hw ? hw->Name : "-", hw ? hw->Scroll.x : 0.0f,
                   hw ? hw->Scroll.y : 0.0f);
       std::fflush(stdout);
+    }
+    if (!videoOutPath.empty() && !devHold) {  // K-10: frames the script counts, so its frame numbers are the video's
+      if (!videoOut) videoOut = std::fopen(videoOutPath.c_str(), "wb");
+      if (videoOut) writeVideoFrame(videoOut, fbW, fbH);
     }
     if (!devShotPending.empty()) {  // J-37: dev-input "shot" (frame sequences)
       writePpm(devShotPending.c_str(), fbW, fbH);
@@ -2962,6 +3380,7 @@ int main(int argc, char** argv) {
     SDL_GL_MakeCurrent(window, gl);
     SDL_GL_SetSwapInterval(interval);
     glrecovery::attach();
+    glsl = glrecovery::glsl();
     crash::setGpu(reinterpret_cast<const char*>(glGetString(GL_VENDOR)), reinterpret_cast<const char*>(glGetString(GL_RENDERER)),
                   reinterpret_cast<const char*>(glGetString(GL_VERSION)));
     ImGui_ImplSDL2_InitForOpenGL(window, gl);
@@ -2973,6 +3392,8 @@ int main(int argc, char** argv) {
     glrecovery::restoreTextures();
     pluginWindowsGraphicsBack(window, gl);
     if (useOffscreen) offscreen.create(offscreen.w, offscreen.h);
+    reopenHostedEditorsAfterGraphicsReset(app);  // K-133: a plugin's own OpenGL is built again by the plugin
+    SDL_GL_MakeCurrent(window, gl);
     ++graphicsRecoveries;
     devsig::reach("graphics-recovered");
     return true;
@@ -3009,6 +3430,7 @@ int main(int argc, char** argv) {
     uint64_t statT = fstats::stamp();
     liveresize::pumpBegin();
     while (SDL_PollEvent(&ev)) {
+      if (gl::opendocs::take(ev)) continue;  // K-119: a file macOS asks the running Gridline to open (below)
       ImGui_ImplSDL2_ProcessEvent(&ev);
       viewports::onEvent(ev);  // J-113: focus over Gridline's windows, minimise
       if (hostedEditorEvent(app, ev)) continue;  // plugin editor windows
@@ -3080,6 +3502,31 @@ int main(int argc, char** argv) {
       }
     }
     liveresize::pumpEnd();
+    // K-121: a later launch handed its files over (Linux, Windows): they open as macOS's requests do
+    // below; a launch without files only brings the window forward.
+    for (gl::single::Request& r : instance.take()) {
+      if (hiddenRun) std::printf("single instance: request with %zu file(s)\n", r.files.size());
+      std::fflush(stdout);
+      if (!r.files.empty()) {
+        gl::opendocs::queue(r.files);
+      } else if (!startHidden) {
+        if (SDL_GetWindowFlags(window) & SDL_WINDOW_MINIMIZED) SDL_RestoreWindow(window);
+        SDL_RaiseWindow(window);
+      }
+    }
+    // K-119: files the system asked to open (macOS: a double click in the Finder, Open with, the Dock icon),
+    // once no project is loading: as a double click in the browser, the unsaved-changes prompt first.
+    if (gl::opendocs::pending() && !app.projectLoadBlocking()) {
+      const std::vector<std::string> files = gl::opendocs::takeReady();
+      if (hiddenRun)
+        for (const std::string& f : files) std::printf("os open: %s (running)\n", f.c_str());
+      std::fflush(stdout);
+      if (!startHidden) {
+        if (SDL_GetWindowFlags(window) & SDL_WINDOW_MINIMIZED) SDL_RestoreWindow(window);  // K-121
+        SDL_RaiseWindow(window);
+      }
+      gl::opendocs::open(app, files);
+    }
     fstats::since(fstats::Events, statT);
     if (graphicsLost) dealWithGraphicsLoss();
     guardedFrame(false);
@@ -3088,6 +3535,7 @@ int main(int argc, char** argv) {
     fstats::endFrame();
   }
   liveresize::uninstall();
+  instance.stop();          // K-121: the next launch starts a Gridline of its own (its socket goes)
   crashui::shutdown(app);   // K-39: the user answered "save changes?"; this run's copy goes
   crash::markCleanExit();   // what follows is teardown: a failure there still gets a report
   if (!profilePath.empty()) {
@@ -3120,6 +3568,7 @@ int main(int argc, char** argv) {
   }).detach();
   closeAllHostedEditors(app);
   settleClosingHostedEditors();
+  if (videoOut) std::fclose(videoOut);
   if (frameClock) host::native::frameClockStop();
   if (gDevice) SDL_CloseAudioDevice(gDevice);
   if (gInDevice) SDL_CloseAudioDevice(gInDevice);  // (SDL_Quit would too; explicit, like the output)

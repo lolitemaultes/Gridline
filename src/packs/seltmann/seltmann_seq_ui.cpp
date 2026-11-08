@@ -11,6 +11,7 @@
 // region stays; the next step follows right after it; the loop fills up to the bar line with a
 // rest). The cuts between regions are resized in the waveform.
 #include <algorithm>
+#include "../../app/Keys.h"
 #include <cmath>
 #include <cstdio>
 #include <functional>
@@ -666,7 +667,7 @@ void drawSequence(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, co
       dl->AddLine(ImVec2(cx, by0 - 3), ImVec2(cx, by1 + 3), accent(), 2.5f);
       dl->AddTriangleFilled(ImVec2(cx - 5, by1 + 5), ImVec2(cx + 5, by1 + 5), ImVec2(cx, by1 - 1), accent());
     }
-    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) e.seqDrag = -1, e.seqDrop = -1;
+    if (::gl::keys::escapePressed()) e.seqDrag = -1, e.seqDrop = -1;
     if (!io.MouseDown[0] && e.seqDrag >= 0) {
       Model nm = m;
       const int from = e.seqDrag;

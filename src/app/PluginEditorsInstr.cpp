@@ -35,7 +35,7 @@ void chooseSample(App& a, const char* title, const std::string& current, std::fu
   a.fileDialog.title = title;
   const char* home = gl::platform::homeEnv();
   a.fileDialog.dir = current.empty() || current.rfind("builtin:", 0) == 0 ? (home ? home : ".") : std::filesystem::path(current).parent_path().string();
-  a.fileDialog.exts = {".wav", ".wave", ".flac", ".mp3", ".ogg", ".wv"};
+  a.fileDialog.exts = {".wav", ".wave", ".flac", ".mp3", ".ogg", ".wv", ".m4a", ".aac"};
   a.fileDialog.onOk = std::move(ok);
 }
 

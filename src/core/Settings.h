@@ -29,6 +29,9 @@ class Settings {
   bool set(const std::string& key, const std::string& v);
   bool set(const std::string& key, const char* v) { return set(key, std::string(v)); }
   void resetToDefaults() { values_ = defaults_; }
+  // A different default for a registered number (K-75: the system's sensible value, e.g. on
+  // ChromeOS). The current value follows when it was still the old default. False for unknown keys.
+  bool setDefault(const std::string& key, double v);
 
  private:
   const Json* lookup(const std::string& key, Json::Type t) const;

@@ -266,7 +266,10 @@ void prepareJunction(const PluginState& state, const JGraph& gIn, ChannelAux& au
       prepareChannelAux(gn.plugin, n.aux);
       if (!n.hosted) {
         a->gens[i] = gl::createGenerator(gn.plugin.type);
-        if (a->gens[i]) a->gens[i]->prepareHost(gn.plugin, gSampleRate.load());
+        if (a->gens[i]) {
+          a->gens[i]->prepareHost(gn.plugin, gSampleRate.load());
+          warmUpBuiltin(*a->gens[i], gn.plugin.type, gn.plugin, n.aux, gSampleRate.load());  // K-59
+        }
       }
     } else if (n.kind == KFx) {
       packs::prepareAux(gn.plugin, n.aux);
@@ -581,7 +584,10 @@ bool JRuntime::sync(const AuxData* aux) {
 
 void JRuntime::exchangeEffects(PatchV2Runtime& v2) {
   for (size_t i = 0; i < static_cast<size_t>(kJMaxNodes); ++i)
-    if (d_->ids[i] >= kJFirstId) v2.exchangeEffect(static_cast<int>(d_->ids[i] - kJFirstId), d_->hashes[i], d_->fxs[i]);
+    if (d_->ids[i] >= kJFirstId) {
+      v2.exchangeEffect(static_cast<int>(d_->ids[i] - kJFirstId), d_->hashes[i], d_->fxs[i]);
+      v2.exchangeInstrument(static_cast<int>(d_->ids[i] - kJFirstId), d_->hashes[i], d_->gens[i]);  // K-132: notes keep sounding
+    }
 }
 
 void JRuntime::noteOn(uint32_t id, double pitch, float velocity, const NoteProps& props) {
@@ -1171,6 +1177,8 @@ bool JRuntime::prepareFor(const PluginState& state, ChannelAux& aux) {
   ++d.counts.builds;
   return true;
 }
+
+double junctionPrepareRate() { return gSampleRate.load(); }
 
 bool prepareJunctionFor(const PluginState& state, ChannelAux& aux) {
   JRuntime* owner = tOwner;

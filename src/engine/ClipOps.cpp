@@ -115,6 +115,109 @@ Tick audioClipNaturalLength(const Song& song, const Clip& c) {
   return ticksForSpan(song, c, b - a);
 }
 
+Tick audioLoopLength(const Song& song, const Clip& c, const TempoMap& map) {
+  if (c.kind != ClipKind::Audio || !c.loop) return 0;
+  SamplePtr smp;
+  double a = 0, b = 0;
+  if (!sourceWindow(song, c, smp, a, b)) return 0;
+  const Channel* ch = song.channel(c.source);
+  const ClipMap m = clipMap(song, *ch, c);
+  double ticks = 0;
+  if (m.secPerTick > 0) {
+    ticks = (b - a) / m.secPerTick;
+  } else {
+    const double s0 = map.secondsAt(static_cast<double>(c.start));
+    ticks = map.tickAtSeconds(s0 + (b - a) / std::max(1e-6, m.speed)) - static_cast<double>(c.start);
+  }
+  if (!std::isfinite(ticks)) return 0;
+  return std::max<Tick>(1, static_cast<Tick>(std::llround(std::min(ticks, 4.0e15))));
+}
+
+std::vector<Clip> audioLoopPasses(const Song& song, const Clip& c, const TempoMap& map) {
+  const Tick n = audioLoopLength(song, c, map);
+  if (n <= 0) return {c};
+  SamplePtr smp;
+  double a = 0, b = 0;
+  sourceWindow(song, c, smp, a, b);
+  std::vector<Clip> out;
+  const std::vector<ClipPass> passes = loopPasses(c.offset, song.clipLength(c), n);
+  for (size_t k = 0; k < passes.size(); ++k) {
+    const ClipPass& p = passes[k];
+    Clip x = c;
+    x.loop = false;
+    x.offset = 0;
+    x.start = c.start + p.at;
+    x.length = p.len;
+    x.audioEnd = b;
+    x.audioStart = a;
+    if (p.content > 0) x.audioStart = std::clamp(clipSourceAt(song, c, map, static_cast<double>(c.start + p.content)), a, b);
+    if (k > 0) x.fadeIn = 0, x.fadeInManual = true, x.fadeInTension = 0;  // the clip's fades: at its own edges only
+    if (k + 1 < passes.size()) x.fadeOut = 0, x.fadeOutManual = true, x.fadeOutTension = 0;
+    out.push_back(x);
+  }
+  return out;
+}
+
+Clip withClipLoop(const Song& song, const TempoMap& map, Clip c, bool on) {
+  if (c.loop == on) return c;
+  if (c.kind == ClipKind::Audio) {
+    SamplePtr smp;
+    double a = 0, b = 0;
+    if (on && sourceWindow(song, c, smp, a, b)) {
+      const double end = clipSourceAt(song, c, map, static_cast<double>(c.start + song.clipLength(c)));
+      if (end > a + 1e-6 && end < b - 1e-6) c.audioEnd = end;  // loops what it shows
+      c.offset = 0;
+    } else if (!on && c.offset != 0) {
+      const Tick n = audioLoopLength(song, c, map);
+      if (n > 0) c.audioStart = std::max(0.0, clipSourceAt(song, c, map, static_cast<double>(c.start + wrapLoopOffset(c.offset, n))));
+      c.offset = 0;
+    }
+  }
+  c.loop = on;
+  return c;
+}
+
+void prepareAutomationLoops(Song& song, const std::vector<Clip>& clips, const std::set<ObjectId>& sel) {
+  std::map<ObjectId, Tick> want;
+  for (const Clip& c : clips)
+    if (c.kind == ClipKind::Automation && sel.count(c.id))
+      if (const AutomationClip* a = song.automation(c.source); a && a->loop <= 0)
+        want[a->id] = std::max(want[a->id], std::max<Tick>(1, c.offset + song.clipLength(c)));
+  for (const auto& [id, len] : want)
+    if (AutomationClip* a = song.automation(id)) a->loop = len;
+}
+
+bool setClipsLoop(Song& song, const std::set<ObjectId>& clips, bool on) {
+  if (on) prepareAutomationLoops(song, std::vector<Clip>(song.playlist), clips);
+  TempoMap map;
+  map.build(song);
+  bool changed = false;
+  for (Clip& c : song.playlist)
+    if (clips.count(c.id) && c.loop != on) {
+      c = withClipLoop(song, map, c, on);
+      changed = true;
+    }
+  return changed;
+}
+
+Tick loopFirstPass(const Song& song, const Clip& c, const TempoMap& map) {
+  if (!c.loop) return 0;
+  const Tick n = c.kind == ClipKind::Audio ? audioLoopLength(song, c, map) : clipLoopLength(song, c);
+  return n > 0 ? n - wrapLoopOffset(c.offset, n) : 0;
+}
+
+int unloopWithinFirstPass(const Song& song, std::vector<Clip>& clips, const std::set<ObjectId>& sel, const TempoMap& map) {
+  int n = 0;
+  for (Clip& c : clips) {
+    if (!c.loop || !sel.count(c.id)) continue;
+    const Tick first = loopFirstPass(song, c, map);
+    if (first <= 0 || song.clipLength(c) > first) continue;
+    c = withClipLoop(song, map, c, false);
+    ++n;
+  }
+  return n;
+}
+
 ObjectId splitClipAt(Song& song, ObjectId id, Tick at) {
   Clip* c = song.clip(id);
   if (!c) return kNoId;
@@ -124,7 +227,14 @@ ObjectId splitClipAt(Song& song, ObjectId id, Tick at) {
   right.id = song.allocateId();
   right.start = at;
   right.length = c->start + len - at;
-  if (c->kind == ClipKind::Audio) {
+  if (c->kind == ClipKind::Audio && c->loop) {  // K-114: the right part loops the same audio from where it is
+    TempoMap map;
+    map.build(song);
+    const Tick n = audioLoopLength(song, *c, map);
+    right.offset = n > 0 ? wrapLoopOffset(c->offset + (at - c->start), n) : 0;
+    right.fadeIn = 0;
+    right.fadeInManual = false, right.fadeInShape = 0, right.fadeInTension = 0;
+  } else if (c->kind == ClipKind::Audio) {
     TempoMap map;
     map.build(song);
     right.audioStart = std::max(0.0, clipSourceAt(song, *c, map, static_cast<double>(at)));

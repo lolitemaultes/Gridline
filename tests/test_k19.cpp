@@ -2,7 +2,8 @@
 // layout (packs/edison/edison_dock.h).
 //  * the automatic zoom follows the work area (a 1440p screen at 130 % opens a small editor
 //    larger, a 1440x900 screen keeps the design size, big editors never grow);
-//  * a picked zoom is capped so the window fits the work area, never under 100 %;
+//  * a picked zoom is capped so the window fits the work area, never under 100 % (or the
+//    smaller size asked for); K-136: one global size (75 % to 150 %, 85 % by default);
 //  * the remembered zooms round-trip through the setting string (and junk is ignored);
 //  * the magnified picture and the pointer use one mapping;
 //  * Loupe's layout in every dock spot: wide / compact form, the waveform takes the rest,
@@ -43,7 +44,23 @@ int main() {
   expect(edzoom::fitZoom(1.5f, 914, 355, 1953, 1018) == 1.5f, "150 % fits a 1440p workspace: kept");
   expect(edzoom::fitZoom(1.5f, 1200, 700, 1000, 600) == 1.0f, "an editor larger than the area: 100 % (it scrolls, as before)");
   expect(edzoom::fitZoom(5.0f, 100, 100, 5000, 5000) == edzoom::kMax, "never above 200 %");
-  expect(edzoom::fitZoom(0.5f, 100, 100, 5000, 5000) == edzoom::kMin, "never below 100 %");
+  expect(edzoom::fitZoom(0.5f, 100, 100, 5000, 5000) == edzoom::kMin, "never below 75 %");
+  // K-136: sizes under 100 %
+  expect(edzoom::fitZoom(0.85f, 754, 334, 1904, 990) == 0.85f && edzoom::fitZoom(0.75f, 754, 334, 1904, 990) == 0.75f,
+         "85 % and 75 % are kept as asked");
+  expect(edzoom::fitZoom(0.85f, 1200, 700, 1000, 600) == 0.85f, "a reduced editor larger than the area: the size asked (it scrolls)");
+  expect(edzoom::fitZoom(1.25f, 1200, 700, 1000, 600) == 1.0f, "an enlarged editor larger than the area: 100 % (as before)");
+  expect(edzoom::globalSize(0) == edzoom::kGlobalDefault && edzoom::globalSize(-1) == edzoom::kGlobalDefault &&
+             edzoom::globalSize(std::nan("")) == edzoom::kGlobalDefault,
+         "global size: unset or junk is the default");
+  expect(edzoom::globalSize(0.5) == 0.75f && edzoom::globalSize(3) == 1.5f, "global size: 75 % to 150 %");
+  expect(edzoom::globalSize(0.87) == 0.85f && edzoom::globalSize(1.13) == 1.15f, "global size: 5 % steps");
+  {
+    Settings st;
+    expect(st.getNumber("ui.pluginWindowSize") == 0.85 && edzoom::globalSize(st.getNumber("ui.pluginWindowSize")) == edzoom::kGlobalDefault,
+           "setting ui.pluginWindowSize: 85 % by default");
+    expect(!st.getBool("ui.pluginWindowFit"), "setting ui.pluginWindowFit: off by default (editors do not grow on large screens)");
+  }
   {
     bool ok = true;
     for (float want : {1.0f, 1.25f, 1.5f, 1.75f, 2.0f})
@@ -61,9 +78,9 @@ int main() {
   s = edzoom::withZoom(s, "gl.eq", 1.5f);
   s = edzoom::withZoom(s, "gl.reverb", 2.0f);
   expect(edzoom::zoomFor(s, "gl.eq") == 1.5f && edzoom::zoomFor(s, "gl.reverb") == 2.0f, "two types remembered");
-  expect(edzoom::zoomFor(s, "gl.comp") == 0.0f, "a type never sized: automatic");
+  expect(edzoom::zoomFor(s, "gl.comp") == 0.0f, "a type never sized: the global size");
   s = edzoom::withZoom(s, "gl.eq", 0);
-  expect(edzoom::zoomFor(s, "gl.eq") == 0.0f && edzoom::zoomFor(s, "gl.reverb") == 2.0f, "automatic again: forgotten, the others kept");
+  expect(edzoom::zoomFor(s, "gl.eq") == 0.0f && edzoom::zoomFor(s, "gl.reverb") == 2.0f, "back to the global size: forgotten, the others kept");
   s = edzoom::withZoom(s, "gl.comp", 1.337f);
   expect(edzoom::zoomFor(s, "gl.comp") == 1.34f, "a dragged size is kept to whole percent");
   s = edzoom::withZoom(s, "gl.dist", 9.0f);
@@ -73,7 +90,7 @@ int main() {
   expect(edzoom::format(edzoom::parse(s)) == s, "the setting string round-trips");
   {
     Settings st;
-    expect(st.getString("ui.editorZoom").empty(), "setting ui.editorZoom: empty by default (automatic)");
+    expect(st.getString("ui.editorZoom").empty(), "setting ui.editorZoom: empty by default (the global size)");
     expect(st.set("ui.editorZoom", s) && st.getString("ui.editorZoom") == s, "setting ui.editorZoom: stores the string");
     expect(!st.getBool("ui.loupePinned") && st.set("ui.loupePinned", true), "setting ui.loupePinned: off by default, settable");
   }

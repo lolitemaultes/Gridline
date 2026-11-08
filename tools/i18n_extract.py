@@ -4,7 +4,8 @@
     python3 tools/i18n_extract.py            # writes assets/i18n/gridline.pot
     python3 tools/i18n_extract.py --check    # exit 1 when the template is out of date
 
-Collected (src/app, src/packs/*/*_ui.cpp, src/collab, src/core/Keymap.cpp, src/core/ProjectFiles.cpp, src/core/PluginStandIn.cpp, src/engine/Chop.cpp,
+Collected (src/app, src/packs/*/*_ui.cpp, src/collab, src/core/Keymap.cpp, src/core/ProjectFiles.cpp, src/core/PluginStandIn.cpp, src/core/LayoutPreset.cpp,
+src/core/MenuStyle.cpp, src/engine/Chop.cpp,
 src/engine/ProjectLoad.cpp, src/plugin .cpp and .mm):
   * i18n::tr("...") and i18n::N_("...") literals (N_ marks text translated later);
   * the English text handed to the widgets that translate themselves:
@@ -54,6 +55,7 @@ def source_files():
     files += [os.path.join(ROOT, "src", "core", "ExternalDrop.cpp")]  # J-75: drop hints ("Drop to add 3 audio clips ...")
     files += [os.path.join(ROOT, "src", "core", "ProjectFiles.cpp")]  # J-78: open / save dialog file types (N_)
     files += [os.path.join(ROOT, "src", "core", "PluginStandIn.cpp")]  # J-132: stand-in notices ("Not installed: ...")
+    files += [os.path.join(ROOT, "src", "core", n) for n in ("LayoutPreset.cpp", "MenuStyle.cpp")]  # layout names and menu titles (N_)
     files += [os.path.join(ROOT, "src", "engine", "Chop.cpp")]  # PL-13: chop preset names and hints (N_)
     files += [os.path.join(ROOT, "src", "engine", "ProjectLoad.cpp")]  # J-167: the loading window's log lines (N_)
     files += glob.glob(os.path.join(ROOT, "src", "plugin", "*.cpp"))  # PH-09: the plugin build's own panel and messages

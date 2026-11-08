@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Gridline.app (CMakeLists.txt configures it; packaging/check.py checks it).
+     The file types: Gridline's own projects are exported types that Gridline owns (Editor,
+     Owner): .gridline and .gridlinez, so a double click in the Finder opens them in Gridline.
+     Tracker modules are imported types Gridline offers to open (Viewer, Alternate: it never
+     becomes their default over another app). Projects saved by earlier versions are named .gridline.json
+     and .gridline.zip; the types keep those names as their second extension, but macOS names a
+     file's type by its last extension only, so the Finder sees such a file as JSON or a zip
+     archive: Gridline is listed in Open With for those (Viewer, Alternate) and never takes them
+     over. -->
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>Gridline</string>
+  <key>CFBundleDisplayName</key><string>Gridline</string>
+  <key>CFBundleExecutable</key><string>gridline-app</string>
+  <key>CFBundleIdentifier</key><string>org.gridline.Gridline</string>
+  <key>CFBundleIconFile</key><string>Gridline</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>@GRIDLINE_VERSION_NUMERIC@</string>
+  <key>CFBundleVersion</key><string>@GRIDLINE_VERSION_NUMERIC@</string>
+  <key>LSApplicationCategoryType</key><string>public.app-category.music</string>
+  <key>LSMinimumSystemVersion</key><string>@GL_MACOS_MIN@</string>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>NSMicrophoneUsageDescription</key><string>Gridline records audio from your input devices.</string>
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key><string>Gridline project</string>
+      <key>CFBundleTypeRole</key><string>Editor</string>
+      <key>LSHandlerRank</key><string>Owner</string>
+      <key>LSItemContentTypes</key>
+      <array><string>com.lolitemaultes.gridline.project</string></array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key><string>Gridline zipped project</string>
+      <key>CFBundleTypeRole</key><string>Editor</string>
+      <key>LSHandlerRank</key><string>Owner</string>
+      <key>LSItemContentTypes</key>
+      <array><string>com.lolitemaultes.gridline.zipped-project</string></array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key><string>Tracker module</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>LSHandlerRank</key><string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>com.lolitemaultes.gridline.xm-module</string>
+        <string>com.lolitemaultes.gridline.mod-module</string>
+        <!-- the declarations media players commonly export for the same files -->
+        <string>org.videolan.xm</string>
+        <string>org.videolan.mod</string>
+      </array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key><string>Gridline project saved as JSON or zip</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>LSHandlerRank</key><string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>public.json</string>
+        <string>public.zip-archive</string>
+      </array>
+    </dict>
+  </array>
+  <key>UTExportedTypeDeclarations</key>
+  <array>
+    <dict>
+      <key>UTTypeIdentifier</key><string>com.lolitemaultes.gridline.project</string>
+      <key>UTTypeDescription</key><string>Gridline project</string>
+      <key>UTTypeConformsTo</key>
+      <array><string>public.json</string></array>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key><array><string>gridline</string><string>gridline.json</string></array>
+        <key>public.mime-type</key><array><string>application/x-gridline-project</string></array>
+      </dict>
+    </dict>
+    <dict>
+      <key>UTTypeIdentifier</key><string>com.lolitemaultes.gridline.zipped-project</string>
+      <key>UTTypeDescription</key><string>Gridline zipped project</string>
+      <key>UTTypeConformsTo</key>
+      <array><string>public.zip-archive</string></array>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key><array><string>gridlinez</string><string>gridline.zip</string></array>
+        <key>public.mime-type</key><array><string>application/x-gridline-zipped-project</string></array>
+      </dict>
+    </dict>
+  </array>
+  <key>UTImportedTypeDeclarations</key>
+  <array>
+    <dict>
+      <key>UTTypeIdentifier</key><string>com.lolitemaultes.gridline.xm-module</string>
+      <key>UTTypeDescription</key><string>Extended tracker module</string>
+      <key>UTTypeConformsTo</key>
+      <array><string>public.audio</string><string>public.data</string></array>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key><array><string>xm</string></array>
+        <key>public.mime-type</key><array><string>audio/x-xm</string></array>
+      </dict>
+    </dict>
+    <dict>
+      <key>UTTypeIdentifier</key><string>com.lolitemaultes.gridline.mod-module</string>
+      <key>UTTypeDescription</key><string>Tracker module</string>
+      <key>UTTypeConformsTo</key>
+      <array><string>public.audio</string><string>public.data</string></array>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key><array><string>mod</string></array>
+        <key>public.mime-type</key><array><string>audio/x-mod</string></array>
+      </dict>
+    </dict>
+  </array>
+</dict>
+</plist>

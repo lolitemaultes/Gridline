@@ -139,3 +139,10 @@ any other clip.
 With **Take** selected, a pass becomes a single take note that replays it as played. Takes
 follow the same new pattern rule. Takes recorded earlier keep playing, whichever of the two is
 selected.
+
+## FL Studio export
+
+Exported to an FL Studio project, Platter goes as Platter from the Gridline Suite unless you choose
+**Rendered to audio** (Settings, Project, FL Studio export). Its tracks travel inside the plugin's
+settings up to 64 MB of files per plugin; a longer track is copied into the sample folder next to
+the project instead, where you load it into Platter again on the other computer.

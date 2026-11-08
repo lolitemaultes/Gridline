@@ -190,6 +190,8 @@ int main() {
   // ---- slip ----
   {
     Clip c = *f.s.clip(f.pClip);
+    expect(pltools::slipClip(f.s, tm, c, beat).offset == 0, "plain pattern slip right: content stops at its start");
+    c.loop = true;  // a looping clip's content wraps
     Clip s1 = pltools::slipClip(f.s, tm, c, beat);
     expect(s1.offset == 3 * beat && s1.start == c.start, "pattern slip right: content wraps (offset = len - 1 beat)");
     expect(pltools::slipClip(f.s, tm, c, -beat).offset == beat, "pattern slip left");

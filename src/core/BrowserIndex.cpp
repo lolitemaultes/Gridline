@@ -141,6 +141,8 @@ Kind kindOf(const std::string& path) {
   if (e == ".mid" || e == ".midi") return Kind::Midi;
   if (e == ".flp") return Kind::Flp;
   if (e == ".zip") return Kind::Project;  // J-52: zipped project / FL Studio zipped loop package
+  if (e == ".gridline" || e == ".gridlinez") return Kind::Project;  // K-121: a Gridline project / zipped project
+  if (e == ".xm" || e == ".mod") return Kind::Project;  // K-76: tracker modules open as projects
   if (e == ".fst") return Kind::Fst;
   if (e == ".serumpreset" || e == ".fxp") return Kind::Preset;  // Serum presets: opened by Plasma
   if (e == ".fsc") return Kind::Score;

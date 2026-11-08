@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <string>
 #include "../../third_party/imgui/imgui.h"
+#include "../core/GlslChoice.h"
 #include "../core/Log.h"
 
 namespace gl::glrecovery {
@@ -25,6 +26,11 @@ using ResetStatusFn = GLenum(APIENTRY*)(void);
 
 ResetStatusFn gResetStatus = nullptr;
 std::atomic<bool> gSimulated{false};
+#if defined(__APPLE__)
+const char* gGlsl = "#version 150";
+#else
+const char* gGlsl = "#version 130";
+#endif
 
 #if !defined(__APPLE__)
 void drainErrors() {
@@ -37,20 +43,52 @@ void drainErrors() {
 
 SDL_GLContext createContext(SDL_Window* window) {
 #if !defined(__APPLE__)
-  // Robustness first; a driver that refuses it gets what it always got.
-  SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_ROBUST_ACCESS_FLAG);
-  SDL_GL_SetAttribute(SDL_GL_CONTEXT_RESET_NOTIFICATION, SDL_GL_CONTEXT_RESET_LOSE_CONTEXT);
-  if (SDL_GLContext c = SDL_GL_CreateContext(window)) return c;
-  logging::info("graphics", std::string("No robust OpenGL context here: ") + SDL_GetError());
-  SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, 0);
-  SDL_GL_SetAttribute(SDL_GL_CONTEXT_RESET_NOTIFICATION, SDL_GL_CONTEXT_RESET_NO_NOTIFICATION);
-#endif
+  // K-75: the levels tried, best first. A virtual machine's graphics (a Chromebook's Linux
+  // environment, other virtual GPUs) or an old driver may refuse a 3.0 core context but give a
+  // compatibility one, or only OpenGL 2.1; the interface renders on all of them.
+  // GRIDLINE_DEV_GL_LEVEL=compat|legacy starts further down (dev checks of the lower levels).
+  struct Level {
+    int major, minor, profile;
+    const char* name;
+  };
+  static constexpr Level kLevels[] = {
+      {3, 0, SDL_GL_CONTEXT_PROFILE_CORE, "OpenGL 3.0 core"},
+      {3, 0, 0, "OpenGL 3.0 compatibility"},
+      {2, 1, 0, "OpenGL 2.1"},
+  };
+  size_t first = 0;
+  if (const char* dev = std::getenv("GRIDLINE_DEV_GL_LEVEL")) first = std::string(dev) == "compat" ? 1 : std::string(dev) == "legacy" ? 2 : 0;
+  for (size_t i = first; i < sizeof kLevels / sizeof kLevels[0]; ++i) {
+    const Level& l = kLevels[i];
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, l.profile);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, l.major);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, l.minor);
+    // Robustness first; a driver that refuses it gets what it always got.
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_ROBUST_ACCESS_FLAG);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_RESET_NOTIFICATION, SDL_GL_CONTEXT_RESET_LOSE_CONTEXT);
+    if (SDL_GLContext c = SDL_GL_CreateContext(window)) {
+      if (i > 0) logging::warning("graphics", std::string("Using ") + l.name + " (a better context was refused)");
+      return c;
+    }
+    logging::info("graphics", std::string("No robust ") + l.name + " context here: " + SDL_GetError());
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, 0);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_RESET_NOTIFICATION, SDL_GL_CONTEXT_RESET_NO_NOTIFICATION);
+    if (SDL_GLContext c = SDL_GL_CreateContext(window)) {
+      if (i > 0) logging::warning("graphics", std::string("Using ") + l.name + " (a better context was refused)");
+      return c;
+    }
+    logging::info("graphics", std::string("No ") + l.name + " context here: " + SDL_GetError());
+  }
+  return nullptr;
+#else
   return SDL_GL_CreateContext(window);
+#endif
 }
 
 void attach() {
   gResetStatus = nullptr;
 #if !defined(__APPLE__)
+  gGlsl = glslForVersionString(reinterpret_cast<const char*>(glGetString(GL_VERSION)));
   drainErrors();
   GLint strategy = 0;
   glGetIntegerv(kResetStrategy, &strategy);
@@ -67,6 +105,8 @@ void attach() {
 }
 
 bool canReport() { return gResetStatus != nullptr; }
+
+const char* glsl() { return gGlsl; }
 
 const char* poll() {
   if (gSimulated.exchange(false)) return "simulated loss of the context";

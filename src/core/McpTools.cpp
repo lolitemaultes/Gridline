@@ -18,6 +18,7 @@
 #include "Presets.h"
 #include "Project.h"
 #include "WavWriter.h"
+#include "engine/ClipOps.h"
 #include "engine/Loudness.h"
 #include "engine/Render.h"
 #include "flp/Flp.h"
@@ -628,6 +629,7 @@ ToolResult tGetPlaylist(Environment& env, const Json& a) {
                    {"start", beatsJ(s, c->start)},
                    {"length", beatsJ(s, s.clipLength(*c))}});
     if (c->muted) j.object["muted"] = jbool(true);
+    if (c->loop) j.object["loop"] = jbool(true);  // K-114
     if (c->kind == ClipKind::Pattern) {
       j.object["pattern"] = jnum(patternNumber(s, c->pattern));
       if (const Pattern* p = s.pattern(c->pattern)) j.object["name"] = jstr(p->name);
@@ -973,6 +975,7 @@ ToolResult tAddClip(Environment& env, const Json& a) {
   const Tick len = has(a, "length") ? toTicks(s, argNum(a, "length")) : 0;
   const ObjectId id = d.addClip(p->id, static_cast<int>(argInt(a, "track") - 1), toTicks(s, argNum(a, "start")), len);
   if (id == kNoId) return fail("could not add the clip");
+  if (has(a, "loop") && argBool(a, "loop")) d.editSong("loop clip", [id](Song& x) { setClipsLoop(x, {id}, true); });  // K-114
   return ok(jobj({{"clip", jnum(id)}}), "pattern clip on track " + std::to_string(argInt(a, "track")) + " at beat " + dump(jnum(argNum(a, "start"))));
 }
 
@@ -991,9 +994,14 @@ ToolResult tEditClip(Environment& env, const Json& a) {
     const bool m = argBool(a, "muted");
     d.editClip(id, m ? "mute clip" : "unmute clip", [m](Clip& x) { x.muted = m; });
   }
+  if (has(a, "loop")) {  // K-114
+    const bool on = argBool(a, "loop");
+    d.editSong(on ? "loop clip" : "stop looping clip", [id, on](Song& x) { setClipsLoop(x, {id}, on); });
+  }
   const Song& s = d.song();
   c = s.clip(id);
-  return ok(jobj({{"clip", jnum(id)}, {"track", jnum(c->track + 1)}, {"start", beatsJ(s, c->start)}, {"length", beatsJ(s, s.clipLength(*c))}, {"muted", jbool(c->muted)}}),
+  return ok(jobj({{"clip", jnum(id)}, {"track", jnum(c->track + 1)}, {"start", beatsJ(s, c->start)}, {"length", beatsJ(s, s.clipLength(*c))}, {"muted", jbool(c->muted)},
+                  {"loop", jbool(c->loop)}}),
             "edited clip " + std::to_string(id));
 }
 
@@ -1326,7 +1334,17 @@ JobWork pExport(Environment& env, const Json& a, std::string& err) {
     pattern = p->id;
   }
   const std::string factory = env.factoryData.empty() ? flp::defaultFactoryData() : env.factoryData;
-  return [song, path, format, pattern, factory](Job& job) {
+  // K-110: how Gridline-only plugins go into FL Studio projects.
+  flp::GridlinePlugins glMode = flp::GridlinePlugins::SuiteWithFallback;
+  if (has(a, "gridline_plugins")) {
+    if (!flp::parseGridlinePlugins(argStr(a, "gridline_plugins"), glMode)) {
+      err = "gridline_plugins: fallback, suite or render";
+      return nullptr;
+    }
+  } else {
+    flp::parseGridlinePlugins(song->flExportGridline, glMode);
+  }
+  return [song, path, format, pattern, factory, glMode](Job& job) {
     std::string e;
     size_t missing = 0;  // files the package could not hold
     job.setStatus("Exporting " + fs::path(path).filename().string());
@@ -1337,11 +1355,13 @@ JobWork pExport(Environment& env, const Json& a, std::string& err) {
     } else if (format == "flp") {
       flp::ExportOptions opt;
       opt.factoryData = factory;
+      opt.gridlinePlugins = glMode;
       flp::ExportReport rep;
       if (!flp::exportFlpFile(*song, path, rep, opt, &e)) return fail(e);
     } else {
       flp::PackageOptions opt;
       opt.flp.factoryData = factory;
+      opt.flp.gridlinePlugins = glMode;
       flp::PackageReport rep;
       if (!flp::exportFlpZip(*song, path, fs::path(path).stem().string(), opt, rep, &e)) return fail(e);
       missing = rep.missing.size();
@@ -1371,13 +1391,15 @@ ToolResult tCancelJob(Environment& env, const Json& a) {
 ToolResult tSave(Environment& env, const Json& a) {
   std::string path = env.projectPath, err;
   if (has(a, "path")) {
-    if (!resolveWritePath(argStr(a, "path"), env.writeRoots(), {".json"}, path, err)) return fail(err);
+    // K-121: ".gridline" is the project's name now; ".json" (".gridline.json") still writes the same text
+    if (!resolveWritePath(argStr(a, "path"), env.writeRoots(), {".gridline", ".json"}, path, err)) return fail(err);
   } else {
-    if (path.empty()) return fail("the project has no file yet: give a path (e.g. \"My song.gridline.json\" in the export folder)");
+    if (path.empty()) return fail("the project has no file yet: give a path (e.g. \"My song.gridline\" in the export folder)");
     std::string lp = path;
     for (char& c : lp) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    if (lp.size() < 5 || lp.compare(lp.size() - 5, 5, ".json") != 0)
-      return fail("the project was opened from another format: give a path ending in .gridline.json");
+    auto ends = [&lp](const std::string& e) { return lp.size() > e.size() && lp.compare(lp.size() - e.size(), e.size(), e) == 0; };
+    if (!ends(".json") && !ends(".gridline"))
+      return fail("the project was opened from another format: give a path ending in .gridline");
   }
   if (env.save) {
     if (!env.save(path, err)) return fail(err.empty() ? "save failed" : err);
@@ -1576,15 +1598,17 @@ std::vector<Tool> buildTools() {
       objSchema({{"pattern", intP(kPatternD, 1, 999)},
                  {"track", intP("Playlist track (1 = first)", 1, kMaxPlaylistTracks)},
                  {"start", numP("Start in beats from the song start", 0, 1e7)},
-                 {"length", numP("Length in beats (default: the pattern's length)", 0.0001, 1e7)}},
+                 {"length", numP("Length in beats (default: the pattern's length)", 0.0001, 1e7)},
+                 {"loop", boolP("Repeat the pattern when the clip is longer than it (default false: the rest stays empty)")}},
                 {"pattern", "track", "start"}),
       false, tAddClip);
-  add("edit_clip", "edit clip", "Moves a playlist clip, changes its length or mutes it. One undo step.",
+  add("edit_clip", "edit clip", "Moves a playlist clip, changes its length, mutes it or makes it loop. One undo step.",
       objSchema({{"clip", intP("Clip id (get_playlist)", 1, 4294967295.0)},
                  {"track", intP("Playlist track", 1, kMaxPlaylistTracks)},
                  {"start", numP("Start in beats", 0, 1e7)},
                  {"length", numP("Length in beats", 0.0001, 1e7)},
-                 {"muted", boolP("Mute the clip")}},
+                 {"muted", boolP("Mute the clip")},
+                 {"loop", boolP("Repeat the content when the clip is longer than it (off: a pattern clip stays empty past its pattern, audio stops at its end)")}},
                 {"clip"}),
       false, tEditClip);
   add("remove_clip", "remove clip", "Deletes a playlist clip. One undo step.", objSchema({{"clip", intP("Clip id (get_playlist)", 1, 4294967295.0)}}, {"clip"}),
@@ -1674,7 +1698,9 @@ std::vector<Tool> buildTools() {
                   "export or project folder.",
                   objSchema(withWait({{"format", enumP("midi, flp or flp_zip", {"midi", "flp", "flp_zip"})},
                                       {"path", strP("Output file, relative to the export folder (or the project folder)", 1024)},
-                                      {"pattern", intP("MIDI: only this pattern", 1, 999)}}),
+                                      {"pattern", intP("MIDI: only this pattern", 1, 999)},
+                                      {"gridline_plugins", enumP("FL Studio: Gridline plugins without an exact FL Studio counterpart as Gridline Suite plugins with muted audio copies (fallback), as Gridline Suite plugins only (suite) or rendered to audio (render); default: the project's choice, else fallback",
+                                                                 {"fallback", "suite", "render"})}}),
                             {"format", "path"}),
                   false, nullptr);
     t.writesFiles = true;
@@ -1687,7 +1713,7 @@ std::vector<Tool> buildTools() {
   add("cancel_job", "cancel a job", "Stops a running render, loudness analysis or export (nothing is written).",
       objSchema({{"job", intP("Job number returned by the call", 1, 1e15)}}, {"job"}), true, tCancelJob);
   add("save_project", "save project",
-      "Saves the project to its file, or to a new .gridline.json path inside the project or export folder.",
+      "Saves the project to its file, or to a new .gridline path inside the project or export folder.",
       objSchema({{"path", strP("Save as this file (relative to the project folder)", 1024)}}), false, tSave)
       .writesFiles = true;
   for (auto& t : v) {

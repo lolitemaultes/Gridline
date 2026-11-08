@@ -144,6 +144,9 @@ bool& previewSync();
 // ---- plugin picker (F8) ----
 void drawPluginPicker(App& a);
 void togglePluginPicker();
+// K-125: what a pick in the plugin picker does with `type` (an instrument: a new channel whose
+// editor opens). False for unknown types.
+bool pickerAdd(App& a, const std::string& type);
 // Shows the browser on its current-project tab (View > Project picker).
 void showProjectTab(App& a);
 // K-17 / K-18 dev checks: "--dev-input" lines "browser ..." (Browser.cpp lists them).

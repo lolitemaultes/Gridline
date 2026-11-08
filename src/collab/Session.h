@@ -42,7 +42,8 @@ inline constexpr size_t kFileChunk = 16 * 1024;
 // last-writer-wins register any member may set (docs: "Naming and renaming").
 // Each computer's project file is named after it (sanitised), the folder is not.
 inline constexpr size_t kMaxProjectNameChars = 80;
-inline constexpr const char* kProjectFileExt = ".gridline.json";
+inline constexpr const char* kProjectFileExt = ".gridline";          // K-121 (the name every project file has)
+inline constexpr const char* kOldProjectFileExt = ".gridline.json";  // folders made by earlier versions
 // A display name: trimmed, control and invisible formatting characters
 // removed, runs of spaces collapsed, at most kMaxProjectNameChars characters
 // (UTF-8 aware; any script). "" when nothing is left.
@@ -188,12 +189,12 @@ class Session {
   static std::string projectNameOf(const std::string& folder);
   // The project file of a collaborative project folder, found without
   // trusting its name: collab.json's "file" record, else a file named after
-  // the project, else the only / the last written *.gridline.json in the
+  // the project, else the only / the last written *.gridline (or older *.gridline.json) in the
   // folder (a rename interrupted by a crash, a file renamed by hand). When the
   // folder has none yet: where it will be written.
   static std::string projectFileOf(const std::string& folder);
-  // Renames <folder>/<from> to the first free "<stem>.gridline.json",
-  // "<stem> (2).gridline.json" ... (a file of another name is never replaced;
+  // Renames <folder>/<from> to the first free "<stem>.gridline",
+  // "<stem> (2).gridline" ... (a file of another name is never replaced;
   // a case-only rename goes through a temporary name, for case-insensitive
   // file systems). `from` may not exist yet. Returns the file name now in
   // use (`from` when the rename failed, `err` set).
@@ -427,7 +428,7 @@ class Session {
   std::string projectId_;
   SiteId creator_ = 0;
   crypto::Key creatorSign_{};
-  std::string fileName_;      // this computer's project file in the folder ("<stem>.gridline.json")
+  std::string fileName_;      // this computer's project file in the folder ("<stem>.gridline")
   std::string shownName_;     // the name the UI was last told about
   bool nameReady_ = false;    // ready_ when shownName_ was set (a join's first name is not a rename)
   double fileRetryAt_ = -1;   // a failed file rename (the file is open elsewhere) is retried then

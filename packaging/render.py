@@ -41,6 +41,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -309,6 +310,8 @@ def main():
     date = date or datetime.date.today().isoformat()
     timestamp = int(datetime.datetime.combine(datetime.date.fromisoformat(date), datetime.time(12, 0),
                                               tzinfo=datetime.timezone.utc).timestamp())
+    # portlint rejects a distinfo TIMESTAMP in the future (a morning run on the release day).
+    timestamp = min(timestamp, int(time.time()))
 
     written, missing, left = render(os.path.abspath(a.out), forms, sums, sizes, date, commit, a.maintainer, timestamp)
     for p in written:

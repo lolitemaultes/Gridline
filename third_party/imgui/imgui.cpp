@@ -17562,6 +17562,9 @@ static void ImGui::WindowSelectViewport(ImGuiWindow* window)
                 window->ViewportAllowPlatformMonitorExtend = FindPlatformMonitorForPos((use_mouse_ref && mouse_valid) ? mouse_ref : NavCalcPreferredRefPos(window->Flags));
             else
                 window->ViewportAllowPlatformMonitorExtend = window->Viewport->PlatformMonitor;
+            // GRIDLINE PATCH (K-72, K-83): a popup / tooltip the filter keeps in its viewport (the main one, or a detached window's) is placed within it (not on the whole monitor), so it never runs past its edge
+            if (window->ViewportAllowPlatformMonitorExtend >= 0 && window->Viewport != NULL && g.ViewportLateCreateFilter != NULL && !g.ViewportLateCreateFilter(window))
+                window->ViewportAllowPlatformMonitorExtend = -1;
         }
         else if (window->Viewport && window != window->Viewport->Window && window->Viewport->Window && !(flags & ImGuiWindowFlags_ChildWindow) && window->DockNode == NULL)
         {

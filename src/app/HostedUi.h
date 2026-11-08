@@ -18,6 +18,9 @@ class HostedInstance;
 // on the new one (defined with the windows).
 void pluginWindowsGraphicsLost();
 void pluginWindowsGraphicsBack(SDL_Window* mainWindow, void* mainGl);
+// K-133: then every open plugin interface is closed and opened again, so a plugin that draws with
+// OpenGL of its own builds it anew. Returns how many opened again.
+int reopenHostedEditorsAfterGraphicsReset(App& a);
 
 // Running hosted plugin behind a channel instrument / mixer slot (nullptr when
 // not hosted, not instantiated or missing).

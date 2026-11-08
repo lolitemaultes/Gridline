@@ -1,5 +1,6 @@
 // Gridline — J-167: opening a project without freezing the interface (see ProjectLoad.h).
 #include "ProjectLoad.h"
+#include "../host/CrossFormat.h"
 #include "../core/Crash.h"
 #include <algorithm>
 #include <cstdio>
@@ -14,6 +15,7 @@
 #include "../core/ProjectArchive.h"
 #include "../core/ProjectFiles.h"
 #include "../core/ProjectInterop.h"
+#include "../core/TrackerImport.h"
 
 namespace gl::projload {
 
@@ -73,6 +75,7 @@ struct Loader::Job {
   std::vector<std::string> samples, missing;
   std::vector<ProgramBuilder::PreloadItem> items;
   std::vector<std::string> standins;
+  std::vector<std::string> swaps;  // K-78: plugins opened in another format
   struct Step {
     const char* fmt;
     std::string arg;
@@ -194,6 +197,44 @@ struct Loader::Job {
       }
       res.fromFl = true;
       steps.push_back({N_("Converted the FL Studio project %s"), fileName(path), msSince(t)});
+    } else if (kind == OpenKind::TrackerModule) {
+      // K-76: a tracker module becomes a new project; its samples are written into the local cache
+      // (as a zipped project's files are), so Save asks where the project goes.
+      stage = static_cast<int>(Now::Kind::Reading);
+      std::string e;
+      bool ok = readWhole(path, bytes, true, e);
+      tracker::Module mod;
+      if (ok) {
+        stage = static_cast<int>(Now::Kind::Converting);
+        ok = tracker::parseModule(bytes, mod, &e);
+      }
+      archive::UnpackResult ur;
+      if (ok) {
+        archive::MakeRequest mr;
+        mr.sourcePath = path;
+        mr.cacheRoot = req.unpackCache;
+        mr.size = bytes.size();
+        mr.write = [&mod](const std::string& folder, std::vector<std::string>& names, std::string* we) {
+          return tracker::writeSamples(mod, folder, names, we);
+        };
+        ok = archive::makeCopy(mr, ur, &e);
+      }
+      tracker::ImportReport rep;
+      if (ok) {
+        tracker::ImportOptions o;
+        o.sampleFolder = ur.folder;
+        o.write = false;
+        ok = tracker::buildSong(mod, projectStemOf(path), o, res.song, rep, &e);
+      }
+      if (!ok) {
+        if (e == remotefs::kCancelled) cancelled = true;
+        err = std::string(N_("Cannot open the tracker module")) + ": " + e;
+        return;
+      }
+      res.inCache = true;
+      res.copyUse = std::move(ur.use);
+      steps.push_back({N_("Converted the tracker module %s"), fileName(path), msSince(t)});
+      for (const auto& w : rep.warnings) steps.push_back({N_("Module: %s"), w, -1, Level::Warning});
     } else {
       stage = static_cast<int>(Now::Kind::Reading);
       std::string e;
@@ -227,6 +268,7 @@ struct Loader::Job {
     if (res.fromZip) res.missingRefs = missingFiles(res.song);  // (for the relink window, without a stat on the UI thread)
     items = ProgramBuilder::preloadItems(res.song);
     standins = standin::summary(res.song);
+    swaps = host::xformat::summary(res.song);
     if (req.sketch) {
       res.sketch = preview::make(res.song);
       res.hasSketch = true;
@@ -364,6 +406,7 @@ void Loader::pollReader() {
   items_ = std::move(job->items);
   for (const auto& m : job->missing) add(Level::Warning, N_("Sample not found: %s"), m);
   for (const auto& s : job->standins) add(Level::Warning, "%s", s);
+  for (const auto& s : job->swaps) add(Level::Warning, "%s", s);
   if (res_.fromFl) {
     for (const auto& w : res_.report.warnings) add(Level::Warning, "%s", w);
     for (const auto& [name, n] : res_.report.unmapped)
@@ -440,6 +483,8 @@ bool Loader::prepareNext(double deadline) {
     sleepMs(req_.devDelayMs);
     const bool ok = pre_.preload(res_.song, it);
     const int ms = msSince(t);
+    for (const auto& c : host::xformat::takeLoadChecks())  // K-78: a state moved from another format, read back
+      add(c.find("did not take") != std::string::npos ? Level::Warning : Level::Info, "%s", c);
     const std::string label = itemLabel(nextItem_);
     if (!ok)
       add(Level::Warning, N_("Plugin not available: %s"), label);

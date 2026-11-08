@@ -3,6 +3,7 @@
 // automation recording, step recording, typing keyboard, MIDI clock / MTC
 // output timing, clock following, count-in, input routing and pedals.
 // Everything runs on simulated MIDI messages (no hardware).
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -16,6 +17,7 @@
 #include "core/PatternAutomation.h"
 #include "core/Project.h"
 #include "core/Remote.h"
+#include "core/Settings.h"
 #include "engine/AudioEngine.h"
 
 using namespace gl;
@@ -512,8 +514,81 @@ int main() {
     expect(TypingKeyboard::positionOfKey('-') == 45 && TypingKeyboard::positionOfKey('\\') == 49, "positions: the main key comes before the keypad and ISO one");
     expect(TypingKeyboard::keyLabel('z', ';') == ";", "labels: Dvorak's Z position says ;");
     expect(TypingKeyboard::keyLabel('q', 'a') == "A", "labels: AZERTY's Q position says A, in capitals");
-    expect(TypingKeyboard::keyLabel('2', 0xE9) == "2", "labels: outside ASCII, the US character");
+    expect(TypingKeyboard::keyLabel('2', 0xE9) == "\xC3\x89", "labels: Latin-1 letters in capitals (AZERTY's 2 position says É)");
+    expect(TypingKeyboard::keyLabel('-', 0xDF) == "\xC3\x9F", "labels: ß has no capital and stays");
+    expect(TypingKeyboard::keyLabel('2', 0x3B1) == "2", "labels: outside Latin-1, the US character");
     expect(TypingKeyboard::keyLabel('z', 0) == "Z", "labels: nothing typed, the US character");
+    // K-113: the layout choice. Standard is the default, for a fresh settings store and for a file saved before the choice existed.
+    {
+      Settings fresh;
+      expect(typingLayoutFromId(fresh.getString("keys.typingLayout")) == TypingLayout::Standard, "layout: Standard on a fresh config");
+      const std::string dir = (std::filesystem::temp_directory_path() / "gridline_k113_settings").string();
+      std::filesystem::create_directories(dir);
+      const std::string old = dir + "/settings.json";
+      if (FILE* f = std::fopen(old.c_str(), "wb")) {
+        std::fputs("{\"version\": 1, \"values\": {\"ui.scale\": 1.25, \"keys.bindings\": \"\"}}", f);
+        std::fclose(f);
+      }
+      Settings loaded;
+      expect(loaded.load(old), "layout: an old settings file loads");
+      expect(typingLayoutFromId(loaded.getString("keys.typingLayout")) == TypingLayout::Standard, "layout: Standard after an old settings file");
+      loaded.set("keys.typingLayout", typingLayoutId(TypingLayout::Dvorak));
+      expect(loaded.save(old), "layout: settings save");
+      Settings again;
+      again.load(old);
+      expect(typingLayoutFromId(again.getString("keys.typingLayout")) == TypingLayout::Dvorak, "layout: a chosen layout is kept");
+      std::filesystem::remove_all(dir);
+      expect(typingLayoutFromId("") == TypingLayout::Standard && typingLayoutFromId("bogus") == TypingLayout::Standard,
+             "layout: unknown values are Standard, never Dvorak");
+      bool ids = true;
+      for (int i = 0; i < static_cast<int>(TypingLayout::Count); ++i) ids = ids && typingLayoutFromId(typingLayoutId(static_cast<TypingLayout>(i))) == static_cast<TypingLayout>(i);
+      expect(ids, "layout: every id reads back");
+      expect(std::string(typingLayoutName(TypingLayout::Standard)) == "Standard (QWERTY)" &&
+                 std::string(typingLayoutName(TypingLayout::Computer)) == "Follow the computer",
+             "layout: names");
+    }
+    {
+      const auto row = [](TypingLayout l, const char* keys) {
+        std::string s;
+        for (const char* k = keys; *k; ++k)
+          s += (s.empty() ? "" : " ") + TypingKeyboard::keyLabel(*k, TypingKeyboard::layoutChar(l, TypingKeyboard::positionOfKey(*k)));
+        return s;
+      };
+      const char* bottom = "zsxdcvgbhnjm,l.;/";
+      const char* top = "q2w3er5t6y7ui9o0p";
+      const char* control = "[]-=\\'";
+      expect(row(TypingLayout::Standard, bottom) == "Z S X D C V G B H N J M , L . ; /", "Standard: bottom row");
+      expect(row(TypingLayout::Standard, top) == "Q 2 W 3 E R 5 T 6 Y 7 U I 9 O 0 P", "Standard: top row");
+      expect(row(TypingLayout::Standard, control) == "[ ] - = \\ '", "Standard: control keys");
+      expect(row(TypingLayout::Dvorak, bottom) == "; O Q E J K I X D B H M W N V S Z", "Dvorak: bottom row");
+      expect(row(TypingLayout::Dvorak, top) == "' 2 , 3 . P 5 Y 6 F 7 G C 9 R 0 L", "Dvorak: top row");
+      expect(row(TypingLayout::Dvorak, control) == "/ = [ ] \\ -", "Dvorak: control keys");
+      expect(row(TypingLayout::Colemak, bottom) == "Z R X S C V D B H K N M , I . O /", "Colemak: bottom row");
+      expect(row(TypingLayout::Colemak, top) == "Q 2 W 3 F P 5 G 6 J 7 L U 9 Y 0 ;", "Colemak: top row");
+      expect(row(TypingLayout::Qwertz, bottom) == "Y S X D C V G B H N J M , L . \xC3\x96 -", "QWERTZ: bottom row");
+      expect(row(TypingLayout::Qwertz, top) == "Q 2 W 3 E R 5 T 6 Z 7 U I 9 O 0 P", "QWERTZ: top row");
+      expect(row(TypingLayout::Qwertz, control) == "\xC3\x9C + \xC3\x9F \xC2\xB4 # \xC3\x84", "QWERTZ: control keys");
+      expect(row(TypingLayout::Azerty, bottom) == "W S X D C V G B H N J , ; L : M !", "AZERTY: bottom row");
+      expect(row(TypingLayout::Azerty, top) == "A \xC3\x89 Z \" E R ( T - Y \xC3\x88 U I \xC3\x87 O \xC3\x80 P", "AZERTY: top row");
+      expect(row(TypingLayout::Azerty, control) == "^ $ ) = * \xC3\x99", "AZERTY: control keys");
+      expect(TypingKeyboard::layoutChar(TypingLayout::Computer, 29) == 0, "Computer: asks the system");
+      // Every layout names every typing key, and no two keys alike (so the menu and hints never show one name twice).
+      bool named = true, distinct = true;
+      for (int i = 0; i < static_cast<int>(TypingLayout::Computer); ++i) {
+        std::vector<std::string> seen;
+        for (int key = 1; key < 128; ++key) {
+          if (TypingKeyboard::keyOffset(key) < 0 && !TypingKeyboard::isControlKey(key)) continue;
+          const int c = TypingKeyboard::layoutChar(static_cast<TypingLayout>(i), TypingKeyboard::positionOfKey(key));
+          named = named && c > 32;
+          const std::string n = TypingKeyboard::keyLabel(key, c);
+          distinct = distinct && std::find(seen.begin(), seen.end(), n) == seen.end();
+          seen.push_back(n);
+        }
+      }
+      expect(named && distinct, "layouts: every typing key has its own name");
+      // Play goes by position whatever the layout: the layout only names keys.
+      expect(TypingKeyboard::keyAtPosition(29) == 'z' && TypingKeyboard::keyOffset(TypingKeyboard::keyAtPosition(29)) == 0, "the Z position plays C");
+    }
     TypingKeyboard held;
     held.keyDown('z');
     held.keyDown('x');

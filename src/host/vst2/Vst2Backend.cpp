@@ -646,6 +646,7 @@ ScanResult vst2Scan(const std::string& path) {
       c.name = name;
       describe(*sb, c, path);
       r.classes.push_back(std::move(c));
+      scanProgress();  // K-73: a shell of hundreds takes minutes: the scan's timeout starts again
       (void)sb.release();  // scanner: never closed
     }
   } else {
@@ -675,6 +676,10 @@ Format vst2Format() {
   f.scanInProcess = vst2Scan;
   f.create = vst2Create;
   f.mtime = pathMtime;
+#if defined(_WIN32)
+  // K-73: VST 2 folders on Windows also hold 32-bit plugins and the DLLs plugins need (never loaded).
+  f.precheck = [](const std::string& entry) { return peDllPrecheck(entry, {"VSTPluginMain", "main"}); };
+#endif
   return f;
 }
 

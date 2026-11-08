@@ -22,6 +22,9 @@
 #include "../WavWriter.h"
 #include "FlpEncode.h"
 #include "FlpOrigin.h"
+#include "FlpExportInternal.h"
+#include "FlpWrapper.h"
+#include "../../host/HostedPlugins.h"
 
 namespace gl::flp {
 
@@ -687,6 +690,49 @@ bool padsUseBuiltinSounds(const PluginState& p, const UsedNotes& un) {
 
 }  // namespace
 
+bool suitePluginState(const PluginState& st, PluginState& out, suitestate::EmbedReport* rep) {
+  const std::string type = suiteVst3Type(st.type);
+  if (type.empty()) return false;
+  PluginState inner = st;
+  inner.original.clear();  // (stand-ins are restored before the export)
+  const std::string json = suitestate::stateText(inner, true, rep);
+  out = PluginState{};
+  out.type = type;
+  // One object is the plugin's component and controller: FL keeps its state as the component's.
+  out.data = host::encodeState(json, "");
+  return true;
+}
+
+namespace {
+
+// K-110: a copy of channel `src` right after it, muted, with the same notes in every pattern,
+// the same layers and routing. Returns its id.
+ObjectId addFallbackChannel(Song& song, ObjectId src, const PluginState& plays) {
+  const Channel* c = song.channel(src);
+  if (!c) return kNoId;
+  Channel cp = *c;
+  cp.id = song.allocateId();
+  cp.name = c->name + " (audio)";
+  cp.muted = true;
+  cp.plugin = plays;
+  for (Pattern& p : song.patterns) {
+    if (auto it = p.notes.find(src); it != p.notes.end()) p.notes[cp.id] = it->second;
+    if (auto it = p.steps.find(src); it != p.steps.end()) p.steps[cp.id] = it->second;
+    if (auto it = p.stepProps.find(src); it != p.stepProps.end()) p.stepProps[cp.id] = it->second;
+    if (auto it = p.stepLoop.find(src); it != p.stepLoop.end()) p.stepLoop[cp.id] = it->second;
+  }
+  for (Channel& l : song.channels)
+    if (std::find(l.layer.begin(), l.layer.end(), src) != l.layer.end()) l.layer.push_back(cp.id);
+  for (size_t i = 0; i < song.channels.size(); ++i)
+    if (song.channels[i].id == src) {
+      song.channels.insert(song.channels.begin() + static_cast<std::ptrdiff_t>(i + 1), cp);
+      return cp.id;
+    }
+  return kNoId;
+}
+
+}  // namespace
+
 bool applyStandIns(Song& song, const ExportOptions& eo, const StandInOptions& o, StandInResult& r) {
   r = StandInResult{};
   enc::EncodeContext ec;
@@ -700,10 +746,48 @@ bool applyStandIns(Song& song, const ExportOptions& eo, const StandInOptions& o,
     return !ev.empty() && originTypeMatches(ev, p.type);
   };
   const Song original = song;  // renders play the song as it is
+  // K-110: Gridline Suite plugins.
+  const GridlinePlugins mode = o.gridlinePlugins;
+  auto inSuite = [&](const std::string& type) { return mode != GridlinePlugins::Render && !suiteVst3Type(type).empty(); };
+  // An FL plugin that carries the instance exactly (FL's defaults may be exact too, J-81).
+  auto exactFl = [](const enc::Result& e) {
+    return e.quality == enc::Result::Exact || e.quality == enc::Result::Verbatim ||
+           (e.quality == enc::Result::Defaults && e.mismatched.empty() && !e.dataMismatch && e.note.rfind("FL defaults (the defaults match)", 0) == 0);
+  };
+  auto toSuite = [&](PluginState& p, ObjectId owner, int slot, const std::string& where, const std::string& note) {
+    PluginState sp;
+    suitestate::EmbedReport er;
+    if (!suitePluginState(p, sp, &er)) return false;
+    SuiteEntry se;
+    se.embedded = er.files, se.embeddedBytes = er.bytes, se.notEmbedded = er.skipped;
+    std::string n = note;
+    if (er.files) n += std::string(n.empty() ? "" : "; ") + std::to_string(er.files) + (er.files == 1 ? " file" : " files") + " carried in the plugin's state";
+    if (!er.skipped.empty()) {
+      // Too large to carry (or missing): a copy beside the project, for relinking in the plugin.
+      int copied = 0;
+      for (const std::string& f : er.skipped) {
+        std::error_code fe;
+        if (o.sampleDir.empty() || !fs::is_regular_file(fs::u8path(f), fe)) continue;
+        fs::create_directories(fs::u8path(o.sampleDir), fe);
+        const fs::path to = fs::u8path(o.sampleDir) / fs::u8path(f).filename();
+        if (!fs::exists(to, fe)) fs::copy_file(fs::u8path(f), to, fe);
+        if (!fe && fs::exists(to, fe)) ++copied, r.files.push_back(to.u8string());
+      }
+      n += std::string(n.empty() ? "" : "; ") + std::to_string(er.skipped.size()) +
+           " file(s) not carried (over the 64 MB limit per plugin, or missing)" +
+           (copied ? ", " + std::to_string(copied) + " copied into the sample folder beside the project" : std::string());
+    }
+    r.entries.push_back({owner, slot, where, p.type, "suite", "Gridline Suite", n, {}});
+    r.suite[{owner, slot}] = se;
+    sp.ins.clear();
+    p = sp;
+    return true;
+  };
   // Instruments first (the renders), then effects.
   struct Job {
     size_t channel;
     UsedNotes notes;
+    bool suite = false;  // K-110: the channel becomes the Suite plugin, the render goes to a muted copy
   };
   std::vector<Job> renders;
   std::set<std::string> stems;
@@ -712,6 +796,10 @@ bool applyStandIns(Song& song, const ExportOptions& eo, const StandInOptions& o,
     PluginState& p = ch.plugin;
     if (p.empty() || p.type == "gl.sampler" || isHostedType(p.type) || !findPlugin(p.type) || hasOrigin(p, ch.id, -1)) continue;
     const std::string where = "channel '" + ch.name + "'";
+    if (p.type == "gl.keys" && mode == GridlinePlugins::Suite && inSuite(p.type)) {  // K-110: no approximation in Suite mode
+      toSuite(p, ch.id, -1, where, "instead of a close FL Studio instrument (approximate)");
+      continue;
+    }
     if (p.type == "gl.keys") {
       Mapping m = mapKeys(p);
       r.entries.push_back({ch.id, -1, where, p.type, "mapped", "FL Keys", m.note, {}});
@@ -735,7 +823,24 @@ bool applyStandIns(Song& song, const ExportOptions& eo, const StandInOptions& o,
     }
     UsedNotes un = usedNotes(original, ch.id);
     if (!render && p.type == "gl.pads" && padsUseBuiltinSounds(p, un)) render = true, why = "built-in kit sounds have no files for FPC";
+    // K-110, Suite mode: every instrument without an exact FL instrument (approximations too).
+    if (!render && mode == GridlinePlugins::Suite && inSuite(p.type) && !exactFl(er)) {
+      toSuite(p, ch.id, -1, where, "instead of a close FL Studio instrument (approximate)");
+      continue;
+    }
     if (!render) continue;
+    if (inSuite(p.type)) {
+      // A muted copy plays the rendered samples, for computers without the suite.
+      if (mode == GridlinePlugins::SuiteWithFallback && !un.empty() && !o.sampleDir.empty()) {
+        renders.push_back({i, std::move(un), true});
+        continue;
+      }
+      toSuite(p, ch.id, -1, where,
+              mode == GridlinePlugins::Suite ? std::string()
+              : un.empty()                   ? "no audio copy: the channel plays no notes"
+                                             : "no audio copy: no sample folder");
+      continue;
+    }
     if (un.empty()) {  // nothing to render; written as the exporter can (an empty channel at worst)
       if (!home || er.quality == enc::Result::None || er.flName.empty())
         r.entries.push_back({ch.id, -1, where, p.type, "unused", "", "the channel plays no notes: nothing to render", {}});
@@ -747,6 +852,13 @@ bool applyStandIns(Song& song, const ExportOptions& eo, const StandInOptions& o,
     }
     renders.push_back({i, std::move(un)});
   }
+  struct Fallback {
+    ObjectId channel;
+    PluginState plays;
+    std::vector<std::string> files;
+    std::string note;
+  };
+  std::vector<Fallback> fallbacks;
   for (size_t j = 0; j < renders.size(); ++j) {
     Channel& ch = song.channels[renders[j].channel];
     std::string stem = safeStem(ch.name);
@@ -760,6 +872,10 @@ bool applyStandIns(Song& song, const ExportOptions& eo, const StandInOptions& o,
     }
     const std::string where = "channel '" + ch.name + "'";
     if (!ro.error.empty()) {
+      if (renders[j].suite) {  // the plugin still goes; only the copy is missing
+        toSuite(ch.plugin, ch.id, -1, where, "no audio copy: not rendered: " + ro.error);
+        continue;
+      }
       r.entries.push_back({ch.id, -1, where, ch.plugin.type, "neutral", "", "not rendered: " + ro.error, {}});
       continue;
     }
@@ -790,10 +906,28 @@ bool applyStandIns(Song& song, const ExportOptions& eo, const StandInOptions& o,
         return false;
       }
     }
+    if (renders[j].suite) {
+      fallbacks.push_back({ch.id, ro.state, ro.files, ro.note});
+      continue;
+    }
     r.entries.push_back({ch.id, -1, where, ch.plugin.type, "rendered", ro.state.type == "gl.sampler" ? "" : "DirectWave", ro.note, ro.files});
     r.files.insert(r.files.end(), ro.files.begin(), ro.files.end());
     dropTargets(song, ch.id, -1);
     ch.plugin = ro.state;  // its channel envelope / filter are in the takes
+  }
+  // K-110: the Suite plugins with their muted audio copies (added last: channel indexes above stay put).
+  for (Fallback& f : fallbacks) {
+    Channel* ch = song.channel(f.channel);
+    if (!ch) continue;
+    const std::string where = "channel '" + ch->name + "'";
+    const ObjectId copy = addFallbackChannel(song, f.channel, f.plays);
+    ch = song.channel(f.channel);
+    std::string copyName;
+    if (const Channel* cp = song.channel(copy)) copyName = cp->name;
+    if (!toSuite(ch->plugin, f.channel, -1, where, "muted copy '" + copyName + "' plays it rendered to samples (" + f.note + ")")) continue;
+    r.suite[{f.channel, -1}].fallback = copy;
+    r.entries.back().files = f.files;
+    r.files.insert(r.files.end(), f.files.begin(), f.files.end());
   }
   // Effects.
   for (size_t i = 0; i < song.mixer.size(); ++i) {
@@ -803,8 +937,15 @@ bool applyStandIns(Song& song, const ExportOptions& eo, const StandInOptions& o,
       const int slot = static_cast<int>(k);
       if (p.empty() || isHostedType(p.type) || !findPlugin(p.type) || hasOrigin(p, t.id, slot)) continue;
       const enc::Result er = enc::encode(p, "", nullptr, ec);
-      if (er.quality != enc::Result::None && !er.flName.empty()) continue;
       const std::string where = "insert " + std::to_string(i) + " slot " + std::to_string(k + 1);
+      // (the exporter encodes routing targets in the insert's own numbering: judge that state)
+      auto routedExact = [&] { return exactFl(enc::encode(xp::routeIndexed(song, static_cast<int>(i), p), "", nullptr, ec)); };
+      // K-110, Suite mode: every effect without an exact FL effect, mapped ones too.
+      if (mode == GridlinePlugins::Suite && inSuite(p.type) && !exactFl(er) && !routedExact()) {
+        toSuite(p, t.id, slot, where, er.quality == enc::Result::None || er.flName.empty() ? "" : "instead of a close FL Studio effect (approximate)");
+        continue;
+      }
+      if (er.quality != enc::Result::None && !er.flName.empty()) continue;
       Mapping m;
       const std::string& ty = p.type;
       if (ty == "gl.chorus") m = mapChorus(p);
@@ -852,6 +993,7 @@ bool applyStandIns(Song& song, const ExportOptions& eo, const StandInOptions& o,
           continue;
         }
       }
+      if (inSuite(p.type) && toSuite(p, t.id, slot, where, "")) continue;  // K-110: instead of a neutral slot
       const StandInPolicy pol = standInPolicy(p.type);
       r.entries.push_back({t.id, slot, where, p.type, "neutral", "Fruity Balance", pol.reason.empty() ? "no FL counterpart" : pol.reason, {}});
     }

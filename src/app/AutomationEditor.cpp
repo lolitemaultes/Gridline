@@ -492,13 +492,23 @@ void sidePanel(App& a, const AutomationClip& ac, float width) {
       if (ImGui::IsItemDeactivated()) a.doc.endGesture();
       ui::Hint("Length of this placement in the playlist (drag or Ctrl+click to type)");
     }
-    bool loop = ac.loop > 0;
+    // K-114: a playlist placement loops on its own (Clip::loop); the loop length is the curve's.
+    bool loop = ac.loop > 0 && (!pl || pl->loop);
     if (ImGui::Checkbox(i18n::tr("Loop the content"), &loop)) {
       Tick len = ac.points.empty() ? s.barTicks() : std::max<Tick>(beat, (ac.points.back().pos + beat - 1) / beat * beat);
-      editCur(a, "loop automation", [&](AutomationClip& c) { c.loop = loop ? len : 0; });
+      if (pl) {
+        const ObjectId cid = pl->id, aid = ac.id;
+        a.doc.editSong("loop automation", [&](Song& x) {
+          AutomationClip* q = x.automation(aid);
+          if (q && loop && q->loop <= 0) q->loop = len;
+          if (Clip* k = x.clip(cid)) k->loop = loop;
+        });
+      } else {
+        editCur(a, "loop automation", [&](AutomationClip& c) { c.loop = loop ? len : 0; });
+      }
     }
-    ui::Hint("Repeat the points every loop length when the clip is longer");
-    if (ac.loop > 0) {
+    ui::Hint(pl ? "Repeat the points every loop length when this clip is longer" : "Repeat the points every loop length when the clip is longer");
+    if (ac.loop > 0 && loop) {
       int lb = static_cast<int>(std::max<Tick>(1, ac.loop / beat));
       ImGui::SetNextItemWidth(w);
       if (ImGui::DragInt("##loopl", &lb, 0.1f, 1, 1024, "Loop every %d beats"))
@@ -1255,7 +1265,8 @@ void shortcuts(App& a, const AutomationClip& ac) {
     editPoints(a, "quantize points", [&](ae::Points& p) { out = ae::quantize(p, t, grid); });
     E.sel = out;
   }
-  if (keys::pressed("auto.cancel")) {
+  if ((E.preview || !E.sel.empty()) && keys::pressed("auto.cancel")) {  // K-124: with nothing to close or clear, Esc goes on to the playlist
+    keys::claimEscape();
     if (E.preview) E.lfoOpen = E.scaleOpen = E.thinOpen = false, E.preview.reset();
     else E.sel.clear();
   }

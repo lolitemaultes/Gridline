@@ -493,26 +493,22 @@ VIEWS += [
 ]
 
 # The release banner and screenshots of this version.
-RELEASE = "0.7.2"
+RELEASE = "0.7.4"
 # The banner: version as set, headline, subline; a prerelease adds its tag and label.
-RELEASE_BANNER = ("0.7.2", "Bend the notes, wire the sound",
-                  "Pitch bend, hand-wired Junction, Crest, browser file tools and a pinned Loupe")
+RELEASE_BANNER = ("0.7.4", "Pick a layout, play a module",
+                  "Chromebooks and Debian, tracker modules, window layouts and double-click projects")
 RELEASE_BANNER_OPTS = {}
 # Plugin editors on one sheet (none in this release).
 RELEASE_EDITORS = []
 # Release screenshots from 3200x2000 captures (UI scale 2), cropped to the part that shows the feature.
 RELEASE_VIEWS = [
-    ("bend.png", "pitch-bend.png", (490, 100, 2440, 1300)),
-    ("junction.png", "junction.png", (805, 238, 2395, 1392)),
-    ("crest.png", "crest.png", (708, 224, 2494, 1456)),
-    ("browser.png", "browser-files.png", (0, 950, 1000, 1580)),
-    ("loupe.png", "loupe.png", (490, 100, 2440, 1950)),
-    ("trackplus.png", "track-plus.png", (0, 224, 1500, 1250)),
-    ("favslot.png", "favourites.png", (2560, 870, 3180, 1790)),
-    ("folders.png", "plugin-folders.png", (563, 115, 2637, 1610)),
-    ("overlap.png", "clip-overlap.png", (360, 224, 2170, 690)),
-    ("steps.png", "rack-steps.png", (490, 100, 2440, 1300)),
-    ("turntable.png", "turntable.png", (1097, 140, 2105, 1530)),
+    ("tracker.png", "tracker-sampler.png", (712, 136, 2472, 2144)),  # a 3200x2200 capture
+    ("chooser.png", "layout-chooser.png", (500, 40, 2920, 1120)),
+    ("logic.png", "logic-layout.png", None),
+    ("rack.png", "channel-rack.png", (683, 397, 2080, 1488)),
+    ("notes.png", "see-through-notes.png", (488, 224, 1920, 1440)),
+    ("midi.png", "keyboard-layout.png", (744, 464, 2448, 864)),
+    ("pwsize.png", "plugin-window-size.png", (333, 1222, 1710, 1744)),  # a 3200x3400 capture
 ]
 
 if __name__ == "__main__":

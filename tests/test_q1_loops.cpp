@@ -70,8 +70,10 @@ struct Fx {
     s.patterns.push_back(p);
     pat = p.id;
   }
-  ObjectId clip(Tick start, Tick len, Tick offset, int track = 0) {
+  // K-114: looping is per clip; these clips loop unless asked otherwise.
+  ObjectId clip(Tick start, Tick len, Tick offset, int track = 0, bool loop = true) {
     Clip c;
+    c.loop = loop;
     c.id = s.allocateId();
     c.pattern = pat;
     c.track = track;
@@ -137,17 +139,15 @@ void testPlayback() {
     const size_t p1 = static_cast<size_t>(std::llround(L * spt)), p2 = static_cast<size_t>(std::llround(2 * L * spt));
     expect(peak(r, p1, p1 + 2000) > 0.01 && peak(r, p2, p2 + 2000) > 0.01, "playback: the second and third passes sound");
   }
-  {  // loop mode off: nothing past the pattern's end (FL)
+  {  // K-114: a clip that does not loop: nothing past the pattern's end
     Fx a;
-    (*a.s.pattern(a.pat)).loop = false;
-    a.clip(0, 3 * L, 0);
+    a.clip(0, 3 * L, 0, 0, false);
     Fx b;
-    (*b.s.pattern(b.pat)).loop = false;
-    b.clip(0, L, 0);
+    b.clip(0, L, 0, 0, false);
     const AudioBuffer ra = render(a.s), rb = render(b.s);
     const double spt = 60.0 / (a.s.tempo * a.s.ppq) * 44100.0;
     const size_t p2 = static_cast<size_t>(std::llround(2 * L * spt));
-    expect(peak(ra, p2, p2 + 20000) < 1e-6, "playback: a pattern whose loop mode is off is silent past its end");
+    expect(peak(ra, p2, p2 + 20000) < 1e-6, "playback: a clip that does not loop is silent past its pattern's end");
     bool same = true;
     size_t at = 0;
     for (size_t i = 0; i < std::min(ra.frames, rb.frames) && same; ++i) same = ra.at(0, i) == rb.at(0, i), at = i;
@@ -198,9 +198,9 @@ void testEditing() {
   std::vector<Clip> out = pltools::trimStarts(b.s, tm, b.s.playlist, {t}, -L / 4, false, false);
   expect(out[0].start == 2 * L - L / 4 && out[0].length == L + L / 4 && out[0].offset == L - L / 4,
          "trim: the left edge grows a looping clip and moves its loop start");
-  (*b.s.pattern(b.pat)).loop = false;
+  b.s.clip(t)->loop = false;
   out = pltools::trimStarts(b.s, tm, b.s.playlist, {t}, -L / 4, false, false);
-  expect(out[0].start == 2 * L && out[0].offset == 0, "trim: a pattern that does not loop cannot grow past its start");
+  expect(out[0].start == 2 * L && out[0].offset == 0, "trim: a clip that does not loop cannot grow past its start");
   // Pattern length change reflows the repeats.
   Fx c;
   const ObjectId lc = c.clip(0, 4 * L, 0);

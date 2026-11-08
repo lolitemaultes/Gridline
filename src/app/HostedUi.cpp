@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <map>
 #include <memory>
+#include "../host/CrossFormat.h"
 #include "../host/HostedPlugins.h"
 #include "../host/PluginPrefs.h"
 #include "../host/vst3/Vst3Editor.h"
@@ -703,6 +704,63 @@ void settingsPage(App& a, const PluginTarget& t, host::HostedInstance* hi, Wrapp
   pui::endSection();
 }
 
+// K-78: a plugin that is not installed in its saved format: the installed plugins that may be it, in
+// other formats, best first. Nothing is replaced until one is picked (a low-confidence match never
+// loads on its own when the project opens).
+void otherFormatsSection(App& a, const PluginTarget& t, const PluginState& st, float width) {
+  const auto& P = pal();
+  const host::ident::Identity id = host::xformat::savedIdentity(st);
+  static uint64_t gen = ~uint64_t(0);
+  static std::string key;
+  static std::vector<host::ident::Candidate> ranked;
+  if (gen != host::hostedClassesGeneration() || key != st.type + "|" + st.ident) {  // ranked once per plugin and class set
+    gen = host::hostedClassesGeneration();
+    key = st.type + "|" + st.ident;
+    ranked = host::xformat::candidatesFor(id);
+  }
+  pui::beginSection("OTHER FORMATS", width);
+  if (!id.name.empty())
+    ImGui::TextColored(theme::vec(P.textDim), i18n::tr("Saved as %s%s%s"), id.name.c_str(), id.vendor.empty() ? "" : " by ", id.vendor.c_str());
+  if (ranked.empty()) {
+    ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("No installed format of this plugin was found."));
+    pui::endSection();
+    return;
+  }
+  ImGui::TextWrapped("%s", i18n::tr("Installed plugins that may be the same plugin. Pick one to use it here: its settings are carried over where they can be."));
+  ImGui::PushID("xformat");
+  for (size_t i = 0; i < ranked.size() && i < 6; ++i) {
+    const auto& c = ranked[i];
+    ImGui::PushID(static_cast<int>(i));
+    const char* conf = c.confidence >= host::ident::Confidence::High ? i18n::tr("sure match")
+                       : c.confidence == host::ident::Confidence::Medium ? i18n::tr("likely match")
+                                                                          : i18n::tr("possible match");
+    std::string label = c.cls->name + " (" + c.cls->formatLabel() + ")";
+    if (!c.cls->vendor.empty()) label += "  " + c.cls->vendor;
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(theme::fitText(label.c_str(), std::max(60.0f, width - 190)));
+    if (ImGui::IsItemHovered()) {
+      std::string tip;
+      for (const auto& r : c.reasons) tip += (tip.empty() ? "" : "\n") + r;
+      if (c.paramsTotal > 0) tip += "\n" + std::to_string(c.paramsMatched) + " / " + std::to_string(c.paramsTotal) + " parameters";
+      ImGui::SetTooltip("%s", tip.c_str());
+    }
+    ImGui::SameLine();
+    ImGui::TextColored(theme::vec(c.confidence >= host::ident::Confidence::Medium ? P.textDim : P.meterMid), "%s", conf);
+    ImGui::SameLine(std::max(ImGui::GetCursorPosX(), width - 60));
+    if (ImGui::SmallButton(i18n::tr("Use"))) {
+      host::xformat::Conversion cv;
+      if (host::xformat::convert(st, id, *c.cls, c.confidence, cv)) {
+        setPluginState(a, t, cv.state, std::string("Use ") + label);
+        a.syncEngine();
+        a.notify(host::xformat::describe(cv.note));
+      }
+    }
+    ImGui::PopID();
+  }
+  ImGui::PopID();
+  pui::endSection();
+}
+
 }  // namespace
 
 void drawHostedEditor(App& a, const PluginTarget& t, float width) {
@@ -719,6 +777,7 @@ void drawHostedEditor(App& a, const PluginTarget& t, float width) {
     ImGui::TextColored(theme::vec(P.textDim), "%s", i18n::tr("Its parameters and state stay in the project."));
     if (info && ui::TextButton("Try again", false, 0, "Loads the plugin again")) a.syncEngine();
     pui::endSection();
+    if (!info && st) otherFormatsSection(a, t, *st, width);
     return;
   }
   const host::HostedClass& cls = hi->hostedClass();

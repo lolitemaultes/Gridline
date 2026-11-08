@@ -163,7 +163,14 @@ struct NoteProps {
   // channel / master pitch. Key-mapped instruments (slices, pads, kit pieces) pick what they play
   // by noteKey() and tune it by the rest, so a fine-pitched note never lands on another key.
   float detune = 0;
-  bool neutral() const { return pan == 0 && release == 0.5f && modX == 0.5f && modY == 0.5f && color == 0 && detune == 0; }
+  // K-76: the tracker cells of an imported module note (core/TrackerStream.h), null = none. The
+  // program that sent the note owns them; they stay valid until the process() call that fires the
+  // note returns, so an instrument that needs them later copies them.
+  const uint8_t* tracker = nullptr;
+  uint32_t trackerLen = 0;
+  bool neutral() const {
+    return pan == 0 && release == 0.5f && modX == 0.5f && modY == 0.5f && color == 0 && detune == 0 && tracker == nullptr;
+  }
 };
 // J-180: the key a note was written on (its pitch without the detune).
 inline int noteKey(double pitch, const NoteProps& p) { return static_cast<int>(std::lround(pitch - static_cast<double>(p.detune))); }

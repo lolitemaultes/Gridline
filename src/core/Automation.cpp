@@ -218,15 +218,21 @@ double AutomationLane::nextEventStep(double tick) const {
 }
 
 std::vector<AutomationLane> automationLanes(const Song& song) {
-  std::map<ObjectId, std::shared_ptr<const AutomationClip>> copies;
+  std::map<std::pair<ObjectId, bool>, std::shared_ptr<const AutomationClip>> copies;  // (curve, the placement loops)
   std::map<std::pair<ObjectId, uint32_t>, AutomationLane> lanes;
   for (const auto& c : song.playlist) {
     if (c.kind != ClipKind::Automation || c.muted || c.start < song.live.areaEnd) continue;  // live area: launched by hand
     if (c.track >= 0 && static_cast<size_t>(c.track) < song.tracks.size() && song.tracks[static_cast<size_t>(c.track)].muted) continue;
     const AutomationClip* a = song.automation(c.source);
     if (!a || a->points.empty() || a->owner == kNoId) continue;
-    auto& cp = copies[a->id];
-    if (!cp) cp = std::make_shared<const AutomationClip>(*a);
+    // K-114: only a placement that loops repeats the curve (Clip::loop); the others hold its last value.
+    const bool loops = c.loop && a->loop > 0;
+    auto& cp = copies[{a->id, loops}];
+    if (!cp) {
+      AutomationClip k = *a;
+      if (!loops) k.loop = 0;
+      cp = std::make_shared<const AutomationClip>(std::move(k));
+    }
     AutomationLane& l = lanes[{a->owner, a->index}];
     l.owner = a->owner;
     l.index = a->index;

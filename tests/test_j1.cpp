@@ -33,9 +33,10 @@ inline bool near(double a, double b, double tol) { return std::fabs(a - b) <= to
 inline bool haveFl() { return fs::exists(kFlData); }
 // Runs an effect over a buffer pair in blocks of `block` frames.
 inline void run(Effect& fx, const PluginState& s, std::vector<float>& L, std::vector<float>& R, int block = 256,
-                double sr = kSr) {
+                double sr = kSr, bool playing = false) {
   ProcessContext ctx;
   ctx.sampleRate = sr;
+  ctx.playing = playing;
   for (size_t i = 0; i < L.size(); i += static_cast<size_t>(block)) {
     int n = static_cast<int>(std::min<size_t>(static_cast<size_t>(block), L.size() - i));
     fx.process(s, ctx, L.data() + i, R.data() + i, n);

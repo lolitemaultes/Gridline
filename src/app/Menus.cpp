@@ -31,6 +31,7 @@
 #include "UpdateUi.h"
 #include "UrlImportUi.h"
 #include "Widgets.h"
+#include "LayoutPresets.h"
 #include "Windows.h"
 #include "Keys.h"
 #include "ThemeSettings.h"
@@ -92,9 +93,7 @@ void stopSound(App& a) { menuparity::panicPressed(a); }  // J-109: stops the tra
 // ---------------------------------------------------------------- menus ----
 
 void menuFile(App& a) {
-  if (ImGui::MenuItem(i18n::tr("Welcome screen"))) a.home.showHome(a.now);  // J-141
-  ui::Hint("Recent projects, templates and the demo song (also a click on the Gridline logo)");
-  ImGui::Separator();
+  // K-77: create, open, save, import / export, sharing, project, quit.
   if (ImGui::MenuItem(i18n::tr("New"), keys::label("file.new"))) a.guardUnsaved([&a]() { a.newProject(); });
   if (ImGui::BeginMenu(i18n::tr("New from template"))) {
     if (ImGui::MenuItem(i18n::tr("Browse templates..."))) a.showNewProject = true;
@@ -130,13 +129,15 @@ void menuFile(App& a) {
     if (ImGui::MenuItem(i18n::tr("Clear list"))) a.clearRecents();
     ImGui::EndMenu();
   }
-  if (ImGui::MenuItem(i18n::tr("Revert to last backup"), nullptr, false, a.backups != nullptr)) a.revertToLastBackup();
+  if (ImGui::MenuItem(i18n::tr("Welcome screen"))) a.home.showHome(a.now);  // J-141
+  ui::Hint("Recent projects, templates and the demo song (also a click on the Gridline logo)");
   ImGui::Separator();
   if (ImGui::MenuItem(i18n::tr("Save"), keys::label("file.save"))) a.save();
   if (ImGui::MenuItem(i18n::tr("Save as..."), keys::label("file.saveAs"))) a.saveAs();
   if (ImGui::MenuItem(i18n::tr("Save new version"), keys::label("file.saveNewVersion"))) a.saveNewVersion();
   if (ImGui::MenuItem(i18n::tr("Save as template..."))) a.showSaveTemplate = true;
   menuparity::fileItems(a);  // J-27
+  if (ImGui::MenuItem(i18n::tr("Revert to last backup"), nullptr, false, a.backups != nullptr)) a.revertToLastBackup();
   ImGui::Separator();
   if (ImGui::BeginMenu(i18n::tr("Import"))) {
     // J-52: FL Studio projects and zipped projects open through File > Open.
@@ -150,7 +151,7 @@ void menuFile(App& a) {
     ImGui::Separator();
     if (ImGui::MenuItem(i18n::tr("Audio file into a sampler...")))
       fileDialog(a, "Import audio file", false, importAudioTypes()[0].exts, "",
-                 [&a](const std::string& p) { a.addInstrument("gl.sampler", p); });
+                 [&a](const std::string& p) { a.showNewInstrument(a.addInstrument("gl.sampler", p)); });
     if (ImGui::MenuItem(i18n::tr("Audio file as playlist clip...")))
       fileDialog(a, "Import audio clip", false, importAudioTypes()[0].exts, "",
                  [&a](const std::string& p) { exportui::importAudioAsClip(a, p); });
@@ -172,18 +173,19 @@ void menuFile(App& a) {
     ImGui::SeparatorText(i18n::tr("Project"));
     if (ImGui::MenuItem(i18n::tr("Project data files..."))) exportui::exportDataFilesDialog(a);
     if (ImGui::MenuItem(i18n::tr("Project bones..."))) exportui::exportBonesDialog(a);
-    if (ImGui::MenuItem(i18n::tr("Gridline zipped project (.gridline.zip)..."))) exportui::exportZipDialog(a);
+    if (ImGui::MenuItem(i18n::tr("Gridline zipped project (.gridlinez)..."))) exportui::exportZipDialog(a);
     if (ImGui::MenuItem(i18n::tr("FL Studio project (.flp)..."))) exportui::exportFlpDialog(a);  // J-34
     if (ImGui::MenuItem(i18n::tr("FL Studio zipped loop package (.zip)..."))) exportui::exportFlpZipDialog(a);  // J-52
     if (ImGui::MenuItem(i18n::tr("FL Studio export report..."), nullptr, false, flpexport::hasReport())) flpexport::openReport();  // J-80
     ImGui::EndMenu();
   }
   if (ImGui::MenuItem(i18n::tr("Locate missing samples..."))) exportui::openMissingSamples(a);
-  ImGui::Separator();
-  collabui::fileMenu(a);  // J-111
+  if (!a.embedded) {  // the sharing items (none inside another host: no empty section)
+    ImGui::Separator();
+    collabui::fileMenu(a);  // J-111
+  }
   ImGui::Separator();
   if (ImGui::MenuItem(i18n::tr("Project info..."), keys::label("file.projectInfo"))) a.showInfo = true;
-  if (ImGui::MenuItem(i18n::tr("Plugin manager..."))) a.showPluginManager = true;
   ImGui::Separator();
   if (ImGui::MenuItem(i18n::tr("Quit"), keys::label("file.quit"))) a.quitRequested = true;
 }
@@ -218,11 +220,13 @@ void menuEdit(App& a) {
 }
 
 void menuAdd(App& a) {
+  // K-77: the things made most often first, then clips, then tracks.
+  const Song& s = a.doc.song();
   if (ImGui::BeginMenu(i18n::tr("Instrument channel"))) {
     addChannelMenu(a);
     ImGui::EndMenu();
   }
-  const Song& s = a.doc.song();
+  if (ImGui::MenuItem(i18n::tr("Pattern"), keys::label("pattern.new"))) newPattern(a);
   const MixerTrack* mt = s.mixerTrack(a.selMixer);
   std::string fxLabel = "Effect on " + (mt ? mixerTrackName(s, static_cast<size_t>(s.mixerIndex(mt->id))) : std::string("mixer track"));
   if (ImGui::BeginMenu(fxLabel.c_str(), mt != nullptr)) {
@@ -239,14 +243,8 @@ void menuAdd(App& a) {
     });
     ImGui::EndMenu();
   }
+  menuparity::addItems(a);  // J-27: automation clip for the last moved control
   ImGui::Separator();
-  if (ImGui::MenuItem(i18n::tr("Pattern"), keys::label("pattern.new"))) newPattern(a);
-  if (ImGui::MenuItem(i18n::tr("Mixer track"))) {
-    ObjectId id = a.doc.addMixerTrack();
-    if (id != kNoId) a.selMixer = id;
-  }
-  if (ImGui::MenuItem(i18n::tr("8 playlist tracks"), nullptr, false, static_cast<int>(s.tracks.size()) + 8 <= kMaxPlaylistTracks))
-    a.doc.setPlaylistTrackCount(static_cast<int>(s.tracks.size()) + 8);
   if (ImGui::MenuItem(i18n::tr("Clip of the current pattern at the song end"))) {
     int track = 0;
     for (const auto& c : s.playlist)
@@ -256,65 +254,26 @@ void menuAdd(App& a) {
     ObjectId id = a.doc.addClip(a.curPattern, track, at);
     if (id) a.playlist.selected = {id};
   }
-  menuparity::addItems(a);  // J-27
+  ImGui::Separator();
+  if (ImGui::MenuItem(i18n::tr("Mixer track"))) {
+    ObjectId id = a.doc.addMixerTrack();
+    if (id != kNoId) a.selMixer = id;
+  }
+  if (ImGui::MenuItem(i18n::tr("8 playlist tracks"), nullptr, false, static_cast<int>(s.tracks.size()) + 8 <= kMaxPlaylistTracks))
+    a.doc.setPlaylistTrackCount(static_cast<int>(s.tracks.size()) + 8);
 }
 
 void menuPatterns(App& a) {
   const Song& s = a.doc.song();
   const Pattern* cur = s.pattern(a.curPattern);
   ObjectId id = a.curPattern;
+  const int idx = s.patternIndex(id);
+  // K-77: create, go to, properties, arrange, render, delete (the pattern context menu keeps the same order).
   if (ImGui::MenuItem(i18n::tr("New pattern"), keys::label("pattern.new"))) newPattern(a);
+  if (ImGui::MenuItem(i18n::tr("Insert one before"), keys::label("pattern.insert"))) a.selectPattern(ops::insertPattern(a.doc, id, ops::nextPatternName(s)));
+  if (ImGui::MenuItem(i18n::tr("Clone"), keys::label("pattern.clone"), false, cur != nullptr)) a.selectPattern(a.doc.clonePattern(id));
   if (ImGui::MenuItem(i18n::tr("Find first empty"), keys::label("pattern.findFirstEmpty"))) findEmptyPattern(a, true, true);
   if (ImGui::MenuItem(i18n::tr("Find next empty"), keys::label("pattern.findNextEmpty"))) findEmptyPattern(a, false, false);
-  ImGui::Separator();
-  if (ImGui::MenuItem(i18n::tr("Rename..."), keys::label("edit.rename"), false, cur != nullptr))
-    openPrompt("Rename pattern", cur->name, [&a, id](const std::string& n) { a.doc.renamePattern(id, n); });
-  if (ImGui::BeginMenu(i18n::tr("Colour"), cur != nullptr)) {
-    uint32_t col;
-    if (colorGrid(&col)) ops::setPatternColor(a.doc, id, col);
-    ImGui::EndMenu();
-  }
-  if (ImGui::MenuItem(i18n::tr("Random colour"), nullptr, false, cur != nullptr)) ops::setPatternColor(a.doc, id, randomColor());
-  if (ImGui::MenuItem(i18n::tr("Select in playlist"), nullptr, false, cur != nullptr)) {
-    a.playlist.selected.clear();
-    for (const auto& c : s.playlist)
-      if (c.pattern == id) a.playlist.selected.insert(c.id);
-    a.showPlaylist = true;
-  }
-  if (ImGui::BeginMenu(i18n::tr("Transpose"), cur != nullptr)) {
-    for (int st : {12, 1, -1, -12}) {
-      std::string l = (st > 0 ? "+" : "") + std::to_string(st) + (std::abs(st) == 12 ? " (octave)" : " semitone");
-      if (ImGui::MenuItem(l.c_str())) ops::transposePattern(a.doc, id, st);
-    }
-    ImGui::EndMenu();
-  }
-  if (ImGui::BeginMenu(i18n::tr("Length"), cur != nullptr)) {
-    for (int b : {1, 2, 4, 8, 16}) {
-      std::string l = std::to_string(b) + (b == 1 ? " bar" : " bars");
-      if (ImGui::MenuItem(l.c_str(), nullptr, cur->bars == b)) a.doc.setPatternLength(id, b, cur->stepsPerBar);
-    }
-    ImGui::EndMenu();
-  }
-  ImGui::Separator();
-  if (ImGui::MenuItem(i18n::tr("Insert one"), keys::label("pattern.insert"))) a.selectPattern(ops::insertPattern(a.doc, id, ops::nextPatternName(s)));
-  if (ImGui::MenuItem(i18n::tr("Clone"), keys::label("pattern.clone"), false, cur != nullptr)) a.selectPattern(a.doc.clonePattern(id));
-  if (ImGui::MenuItem(i18n::tr("Delete"), keys::label("pattern.delete"), false, s.patterns.size() > 1)) deletePattern(a);
-  j31::patternsItems(a);  // J-31: pattern groups
-  int idx = s.patternIndex(id);
-  if (ImGui::MenuItem(i18n::tr("Move up"), keys::label("pattern.moveUp"), false, idx > 0)) movePattern(a, -1);
-  if (ImGui::MenuItem(i18n::tr("Move down"), keys::label("pattern.moveDown"), false, idx >= 0 && idx + 1 < static_cast<int>(s.patterns.size()))) movePattern(a, 1);
-  ImGui::Separator();
-  if (ImGui::MenuItem(i18n::tr("Split by channel"), nullptr, false, cur != nullptr)) {
-    auto ids = ops::splitPatternByChannel(a.doc, id);
-    a.notify(ids.empty() ? std::string("Nothing to split: the pattern is empty") : "Split into " + std::to_string(ids.size()) + " patterns");
-  }
-  if (ImGui::MenuItem(i18n::tr("Delete unused patterns"))) {
-    int n = ops::deleteUnusedPatterns(a.doc);
-    a.notify(n ? "Deleted " + std::to_string(n) + " unused pattern(s)" : std::string("No unused patterns"));
-  }
-  if (ImGui::MenuItem(i18n::tr("Render pattern to file..."), nullptr, false, cur != nullptr)) exportui::openRender(a, exportui::Preset::PatternFile);
-  if (ImGui::MenuItem(i18n::tr("Render as audio clip..."), nullptr, false, cur != nullptr)) exportui::openRender(a, exportui::Preset::AudioClip);
-  if (ImGui::MenuItem(i18n::tr("Render and replace..."), nullptr, false, cur != nullptr)) exportui::openRender(a, exportui::Preset::PatternReplace);
   ImGui::Separator();
   if (ImGui::BeginMenu(i18n::tr("Go to"))) {
     for (const auto& p : s.patterns) {
@@ -326,6 +285,53 @@ void menuPatterns(App& a) {
   if (ImGui::MenuItem(i18n::tr("Next pattern"), keys::label("pattern.next"), false, idx + 1 < static_cast<int>(s.patterns.size())))
     a.selectPattern(s.patterns[static_cast<size_t>(idx + 1)].id);
   if (ImGui::MenuItem(i18n::tr("Previous pattern"), keys::label("pattern.previous"), false, idx > 0)) a.selectPattern(s.patterns[static_cast<size_t>(idx - 1)].id);
+  ImGui::Separator();
+  if (ImGui::MenuItem(i18n::tr("Rename..."), keys::label("edit.rename"), false, cur != nullptr))
+    openPrompt("Rename pattern", cur->name, [&a, id](const std::string& n) { a.doc.renamePattern(id, n); });
+  if (ImGui::BeginMenu(i18n::tr("Colour"), cur != nullptr)) {
+    uint32_t col;
+    if (colorGrid(&col)) ops::setPatternColor(a.doc, id, col);
+    ImGui::EndMenu();
+  }
+  if (ImGui::MenuItem(i18n::tr("Random colour"), nullptr, false, cur != nullptr)) ops::setPatternColor(a.doc, id, randomColor());
+  if (ImGui::BeginMenu(i18n::tr("Length"), cur != nullptr)) {
+    for (int b : {1, 2, 4, 8, 16}) {
+      std::string l = std::to_string(b) + (b == 1 ? " bar" : " bars");
+      if (ImGui::MenuItem(l.c_str(), nullptr, cur->bars == b)) a.doc.setPatternLength(id, b, cur->stepsPerBar);
+    }
+    ImGui::EndMenu();
+  }
+  if (ImGui::BeginMenu(i18n::tr("Transpose"), cur != nullptr)) {
+    for (int st : {12, 1, -1, -12}) {
+      std::string l = (st > 0 ? "+" : "") + std::to_string(st) + (std::abs(st) == 12 ? " (octave)" : " semitone");
+      if (ImGui::MenuItem(l.c_str())) ops::transposePattern(a.doc, id, st);
+    }
+    ImGui::EndMenu();
+  }
+  ImGui::Separator();
+  if (ImGui::MenuItem(i18n::tr("Split by channel"), nullptr, false, cur != nullptr)) {
+    auto ids = ops::splitPatternByChannel(a.doc, id);
+    a.notify(ids.empty() ? std::string("Nothing to split: the pattern is empty") : "Split into " + std::to_string(ids.size()) + " patterns");
+  }
+  if (ImGui::MenuItem(i18n::tr("Select in playlist"), nullptr, false, cur != nullptr)) {
+    a.playlist.selected.clear();
+    for (const auto& c : s.playlist)
+      if (c.pattern == id) a.playlist.selected.insert(c.id);
+    a.showPlaylist = true;
+  }
+  j31::patternsItems(a);  // J-31: pattern groups
+  if (ImGui::MenuItem(i18n::tr("Move up"), keys::label("pattern.moveUp"), false, idx > 0)) movePattern(a, -1);
+  if (ImGui::MenuItem(i18n::tr("Move down"), keys::label("pattern.moveDown"), false, idx >= 0 && idx + 1 < static_cast<int>(s.patterns.size()))) movePattern(a, 1);
+  ImGui::Separator();
+  if (ImGui::MenuItem(i18n::tr("Render pattern to file..."), nullptr, false, cur != nullptr)) exportui::openRender(a, exportui::Preset::PatternFile);
+  if (ImGui::MenuItem(i18n::tr("Render as audio clip..."), nullptr, false, cur != nullptr)) exportui::openRender(a, exportui::Preset::AudioClip);
+  if (ImGui::MenuItem(i18n::tr("Render and replace..."), nullptr, false, cur != nullptr)) exportui::openRender(a, exportui::Preset::PatternReplace);
+  ImGui::Separator();
+  if (ImGui::MenuItem(i18n::tr("Delete"), keys::label("pattern.delete"), false, s.patterns.size() > 1)) deletePattern(a);
+  if (ImGui::MenuItem(i18n::tr("Delete unused patterns"))) {
+    int n = ops::deleteUnusedPatterns(a.doc);
+    a.notify(n ? "Deleted " + std::to_string(n) + " unused pattern(s)" : std::string("No unused patterns"));
+  }
 }
 
 void menuView(App& a) {
@@ -333,16 +339,16 @@ void menuView(App& a) {
   ImGui::MenuItem(i18n::tr("Playlist"), keys::label("view.playlist"), &a.showPlaylist);
   ImGui::MenuItem(i18n::tr("Channel rack"), keys::label("view.channelRack"), &a.showRack);
   ImGui::MenuItem(i18n::tr("Piano roll"), keys::label("view.pianoRoll"), &a.showPiano);
+  ImGui::MenuItem(i18n::tr("Mixer"), keys::label("view.mixer"), &a.showMixer);  // K-77: with the other main editors
   ImGui::MenuItem(i18n::tr("Browser"), keys::label("view.browser"), &a.showBrowser);
   if (ImGui::MenuItem(i18n::tr("Plugin picker"), keys::label("view.pluginPicker"), browserui::pluginPickerOpen())) browserui::togglePluginPicker();
-  menuparity::viewItems(a);  // J-27
-  ImGui::MenuItem(i18n::tr("Mixer"), keys::label("view.mixer"), &a.showMixer);
-  ImGui::MenuItem(i18n::tr("Undo history"), keys::label("edit.history"), &a.showHistory);
-  ImGui::MenuItem(i18n::tr("Live pads"), nullptr, &a.showLivePads);
-  ImGui::MenuItem(i18n::tr("Master chain"), nullptr, &a.showMaster);  // RN-09
-  ImGui::MenuItem(i18n::tr("Performance"), nullptr, &a.showPerformance);
+  menuparity::viewItems(a);  // J-27: project picker
   if (ImGui::MenuItem(i18n::tr("Channel settings"), nullptr, a.settingsChannel != kNoId, a.doc.song().channel(a.selChannel) != nullptr))
     a.settingsChannel = a.settingsChannel != kNoId ? kNoId : a.selChannel;
+  ImGui::MenuItem(i18n::tr("Master chain"), nullptr, &a.showMaster);  // RN-09
+  ImGui::MenuItem(i18n::tr("Live pads"), nullptr, &a.showLivePads);
+  ImGui::MenuItem(i18n::tr("Undo history"), keys::label("edit.history"), &a.showHistory);
+  ImGui::MenuItem(i18n::tr("Performance"), nullptr, &a.showPerformance);
   // Zoom acts on the piano roll when it was the last editor used, otherwise on the playlist.
   const bool piano = a.editFocus == App::EditFocus::Piano;
   ImGui::SeparatorText(piano ? i18n::tr("Zoom (piano roll)") : i18n::tr("Zoom (playlist)"));
@@ -354,10 +360,14 @@ void menuView(App& a) {
   if (!piano && ImGui::MenuItem(i18n::tr("Clear time selection"), nullptr, false, a.playlist.selEnd > a.playlist.selStart))
     a.playlist.selStart = a.playlist.selEnd = 0;
   ImGui::SeparatorText(i18n::tr("Layout"));
-  if (ImGui::MenuItem(i18n::tr("Close all windows"), keys::label("view.closeAll"))) a.closeAllWindows();
   if (ImGui::MenuItem(i18n::tr("Close plugin windows"), keys::label("view.closePlugins"))) a.closePluginWindows();
+  if (ImGui::MenuItem(i18n::tr("Close all windows"), keys::label("view.closeAll"))) a.closeAllWindows();
   if (ImGui::MenuItem(i18n::tr("Bring all windows back into Gridline"), nullptr, false, viewports::detachedCount() > 0))  // J-113
     viewports::gatherAll();
+  if (ImGui::BeginMenu(i18n::tr("Window layout"))) {  // K-79: Studio, Performance, Tracks
+    layoutui::viewLayoutMenu(a);
+    ImGui::EndMenu();
+  }
   if (ImGui::MenuItem(i18n::tr("Reset window layout"), keys::label("view.resetLayout"))) ui::confirmLayoutReset(a);
   ImGui::SeparatorText(i18n::tr("Appearance"));
   bool dark = theme::isDark();
@@ -368,13 +378,6 @@ void menuView(App& a) {
     ui::confirmTheme(a, before, "Theme");
   }
   if (ImGui::MenuItem(i18n::tr("Theme settings..."))) openSettings(a, 9);
-  if (ImGui::BeginMenu(i18n::tr("Mixer layout"))) {
-    const int cur = static_cast<int>(a.settings.getNumber("ui.mixerLayout"));
-    const char* names[] = {i18n::N_("Compact strips"), i18n::N_("Normal strips"), i18n::N_("Wide strips")};
-    for (int i = 0; i < 3; ++i)
-      if (ImGui::MenuItem(i18n::tr(names[i]), nullptr, cur == i)) a.settings.set("ui.mixerLayout", i);
-    ImGui::EndMenu();
-  }
   if (ImGui::BeginMenu(i18n::tr("Interface size"))) {
     double cur = a.settings.getNumber("ui.scale");
     for (int pct : {75, 90, 100, 110, 125, 150, 175, 200}) {
@@ -383,9 +386,18 @@ void menuView(App& a) {
     }
     ImGui::EndMenu();
   }
+  if (ImGui::BeginMenu(i18n::tr("Mixer layout"))) {
+    const int cur = static_cast<int>(a.settings.getNumber("ui.mixerLayout"));
+    const char* names[] = {i18n::N_("Compact strips"), i18n::N_("Normal strips"), i18n::N_("Wide strips")};
+    for (int i = 0; i < 3; ++i)
+      if (ImGui::MenuItem(i18n::tr(names[i]), nullptr, cur == i)) a.settings.set("ui.mixerLayout", i);
+    ImGui::EndMenu();
+  }
+  menuparity::viewHintItems(a);  // J-27: played chords in the hint bar
 }
 
 void menuOptions(App& a) {
+  // K-77: settings pages (in the Settings window's tab order), then the switches by subject.
   ImGui::SeparatorText(i18n::tr("Settings"));
   if (ImGui::MenuItem(i18n::tr("Audio settings..."))) openSettings(a, 0);
   if (ImGui::MenuItem(i18n::tr("MIDI settings..."), keys::label("view.settings"))) openSettings(a, 1);
@@ -397,39 +409,8 @@ void menuOptions(App& a) {
   if (ImGui::MenuItem(i18n::tr("Debug log and script console..."))) openSettings(a, 7);
   if (ImGui::MenuItem(i18n::tr("Keyboard shortcuts..."))) openSettings(a, 8);
   if (ImGui::MenuItem(i18n::tr("Theme..."))) openSettings(a, 9);
-  if (ImGui::MenuItem(i18n::tr("Project info..."), keys::label("file.projectInfo"))) a.showInfo = true;
-  ImGui::SeparatorText(i18n::tr("Switches"));
-  ImGui::MenuItem(i18n::tr("Metronome"), keys::label("options.metronome"), &a.metronome);
-  ImGui::MenuItem(i18n::tr("Typing keyboard to piano"), keys::label("options.typingKeyboard"), &a.typingKeyboard);
-  ImGui::MenuItem(i18n::tr("Record notes"), nullptr, &a.recordArmed);
-  if (ImGui::BeginMenu(i18n::tr("Recording options"))) {
-    recordOptionsMenu(a);
-    ImGui::EndMenu();
-  }
-  if (ImGui::BeginMenu(i18n::tr("Typing keyboard options"))) {
-    typingKeyboardMenu(a);
-    ImGui::EndMenu();
-  }
-  ImGui::MenuItem(i18n::tr("Step record"), nullptr, &a.stepRecord);
-  ImGui::MenuItem(i18n::tr("Multilink to controllers"), nullptr, &a.multilink);
-  menuparity::optionsItems(a);  // J-27
-  j31::optionsItems(a);         // J-31: quantized jumps, recording options
-  {
-    const bool pdc = a.settings.getBool("audio.pdc");
-    if (ImGui::MenuItem(i18n::tr("Plugin delay compensation"), nullptr, pdc)) {
-      a.settings.set("audio.pdc", !pdc);
-      a.syncEngine();
-    }
-    ui::Hint("Delays faster paths so tracks with latent effects (look-ahead, linear phase, oversampling) stay in time");
-  }
-  ImGui::MenuItem(i18n::tr("Record automation"), nullptr, &automationRecording());
-  autoScrollItem(a, false);  // K-4: the playlist, and the pattern editors on their own
-  autoScrollItem(a, true);
-  {  // J-37
-    const bool smoothSnap = a.settings.getBool("ui.smoothSnap");
-    if (ImGui::MenuItem(i18n::tr("Smooth snapping"), nullptr, smoothSnap)) a.settings.set("ui.smoothSnap", !smoothSnap);
-    ui::Hint("Clips and notes dragged on a snapped grid glide from cell to cell instead of jumping (positions still land exactly on the grid)");
-  }
+  if (ImGui::MenuItem(i18n::tr("Plugin manager..."))) a.showPluginManager = true;
+  ImGui::SeparatorText(i18n::tr("Playback"));
   bool song = a.engine.mode() == PlayMode::Song;
   if (ImGui::MenuItem(i18n::tr("Song mode"), "L", song)) a.engine.setMode(song ? PlayMode::Pattern : PlayMode::Song);
   bool liveOn = a.engine.mode() == PlayMode::Live;
@@ -438,25 +419,45 @@ void menuOptions(App& a) {
     arrangementMenu(a);
     ImGui::EndMenu();
   }
+  j31::optionsItems(a);  // J-31: song position jumps
+  ImGui::MenuItem(i18n::tr("Metronome"), keys::label("options.metronome"), &a.metronome);
+  {
+    const bool pdc = a.settings.getBool("audio.pdc");
+    if (ImGui::MenuItem(i18n::tr("Plugin delay compensation"), nullptr, pdc)) {
+      a.settings.set("audio.pdc", !pdc);
+      a.syncEngine();
+    }
+    ui::Hint("Delays faster paths so tracks with latent effects (look-ahead, linear phase, oversampling) stay in time");
+  }
+  menuparity::optionsItems(a);  // J-27: MIDI clock out
+  ImGui::SeparatorText(i18n::tr("Recording"));
+  ImGui::MenuItem(i18n::tr("Record notes"), nullptr, &a.recordArmed);
+  ImGui::MenuItem(i18n::tr("Step record"), nullptr, &a.stepRecord);
+  ImGui::MenuItem(i18n::tr("Record automation"), nullptr, &automationRecording());
+  if (ImGui::BeginMenu(i18n::tr("Recording options"))) {  // the record button's menu (audio takes included)
+    recordOptionsMenu(a);
+    ImGui::EndMenu();
+  }
+  ImGui::SeparatorText(i18n::tr("Keyboard and controllers"));
+  ImGui::MenuItem(i18n::tr("Typing keyboard to piano"), keys::label("options.typingKeyboard"), &a.typingKeyboard);
+  if (ImGui::BeginMenu(i18n::tr("Typing keyboard options"))) {
+    typingKeyboardMenu(a);
+    ImGui::EndMenu();
+  }
+  ImGui::MenuItem(i18n::tr("Multilink to controllers"), nullptr, &a.multilink);
+  ImGui::SeparatorText(i18n::tr("Editing"));
+  autoScrollItem(a, false);  // K-4: the playlist, and the pattern editors on their own
+  autoScrollItem(a, true);
+  {  // J-37
+    const bool smoothSnap = a.settings.getBool("ui.smoothSnap");
+    if (ImGui::MenuItem(i18n::tr("Smooth snapping"), nullptr, smoothSnap)) a.settings.set("ui.smoothSnap", !smoothSnap);
+    ui::Hint("Clips and notes dragged on a snapped grid glide from cell to cell instead of jumping (positions still land exactly on the grid)");
+  }
 }
 
 void menuTools(App& a) {
-  if (ImGui::BeginMenu(i18n::tr("Piano roll tools"))) {
-    pianoToolItems(a);
-    ImGui::EndMenu();
-  }
-  if (ImGui::BeginMenu(i18n::tr("Piano roll selection"))) {
-    pianoSelectItems(a);
-    ImGui::EndMenu();
-  }
-  if (ImGui::BeginMenu(i18n::tr("Chord progression"))) {
-    progressionItems(a, false);
-    ImGui::EndMenu();
-  }
-  if (ImGui::BeginMenu(i18n::tr("Riff from progression"))) {
-    progressionItems(a, true);
-    ImGui::EndMenu();
-  }
+  // K-77: quick actions, composing, audio and recording, macros, clean-up (removals last), assistant.
+  if (ImGui::MenuItem(i18n::tr("Stop all sound"), keys::label("tools.stopSound"))) stopSound(a);
   const bool tapperOpen = ImGui::BeginMenu(i18n::tr("Tempo tapper"));
   devNoteRect("tapmenu");
   if (tapperOpen) {
@@ -474,16 +475,36 @@ void menuTools(App& a) {
     if (ImGui::Button(i18n::tr("Reset"))) a.tapReset();
     ImGui::EndMenu();
   }
+  menuparity::toolsControlItems(a);  // J-27: last moved controls
+  ImGui::SeparatorText(i18n::tr("Composing"));
   if (ImGui::MenuItem(i18n::tr("Loop starter..."))) j59::openLoopStarter(a);  // J-59 (GEN-01)
-  if (ImGui::MenuItem(i18n::tr("Render channel to sampled instrument..."), nullptr, false, a.doc.song().channel(a.selChannel) != nullptr))
-    j59::openRenderSampler(a, a.selChannel);  // J-59 (RN-08)
+  if (ImGui::BeginMenu(i18n::tr("Chord progression"))) {
+    progressionItems(a, false);
+    ImGui::EndMenu();
+  }
+  if (ImGui::BeginMenu(i18n::tr("Riff from progression"))) {
+    progressionItems(a, true);
+    ImGui::EndMenu();
+  }
+  if (ImGui::BeginMenu(i18n::tr("Piano roll tools"))) {
+    pianoToolItems(a);
+    ImGui::EndMenu();
+  }
+  if (ImGui::BeginMenu(i18n::tr("Piano roll selection"))) {
+    pianoSelectItems(a);
+    ImGui::EndMenu();
+  }
+  menuparity::toolsNoteItems(a);  // J-27: last piano roll script, note clipboard
   if (ImGui::BeginMenu(i18n::tr("Project scripts"))) {  // J-57: Lua scripts over the whole project (SC-02)
     projectScriptsMenuItems(a);
     ImGui::EndMenu();
   }
-  if (ImGui::MenuItem(i18n::tr("AI assistant activity"))) mcpui::showActivity();  // SC-07
+  ImGui::SeparatorText(i18n::tr("Audio and recording"));
+  if (ImGui::MenuItem(i18n::tr("Render channel to sampled instrument..."), nullptr, false, a.doc.song().channel(a.selChannel) != nullptr))
+    j59::openRenderSampler(a, a.selChannel);  // J-59 (RN-08)
+  j31::toolsItems(a);  // J-31: audio logger, cancel recording
+  menuparity::toolsScoreLogItem(a);  // J-27
   ImGui::SeparatorText(i18n::tr("Macros"));
-  if (ImGui::MenuItem(i18n::tr("Stop all sound"), keys::label("tools.stopSound"))) stopSound(a);
   if (ImGui::MenuItem(i18n::tr("Route channels to free mixer tracks"), keys::label("rack.routeFree"))) chanroute::routeToFree(a, selectedChannels(a));
   if (ImGui::MenuItem(i18n::tr("Route every channel to its own mixer track"))) {
     std::vector<ObjectId> all;
@@ -502,14 +523,6 @@ void menuTools(App& a) {
       a.showRack = true;
     }
   }
-  if (ImGui::MenuItem(i18n::tr("Delete unused patterns"))) {
-    int n = ops::deleteUnusedPatterns(a.doc);
-    a.notify(n ? "Deleted " + std::to_string(n) + " unused pattern(s)" : std::string("No unused patterns"));
-  }
-  if (ImGui::MenuItem(i18n::tr("Trim unused mixer tracks"))) {
-    int n = ops::trimUnusedMixerTracks(a.doc);
-    a.notify(n ? "Removed " + std::to_string(n) + " unused mixer track(s)" : std::string("No unused mixer tracks at the end"));
-  }
   if (ImGui::MenuItem(i18n::tr("Unmute all channels"))) {
     std::vector<ObjectId> all;
     for (const auto& c : a.doc.song().channels) all.push_back(c.id);
@@ -518,16 +531,27 @@ void menuTools(App& a) {
   if (ImGui::MenuItem(i18n::tr("Unsolo all mixer tracks"))) a.doc.editSong("unsolo all", [](Song& s) {
       for (auto& m : s.mixer) m.solo = false;
     });
+  menuparity::toolsMacroItems(a);  // J-27: track locks, live area, audio clip channels, declicking
   if (ImGui::MenuItem(i18n::tr("Close plugin windows"), keys::label("view.closePlugins"))) a.closePluginWindows();
-  menuparity::toolsItems(a);  // J-27
-  j31::toolsItems(a);         // J-31: audio logger, cancel recording
+  ImGui::SeparatorText(i18n::tr("Clean up"));
+  if (ImGui::MenuItem(i18n::tr("Trim unused mixer tracks"))) {
+    int n = ops::trimUnusedMixerTracks(a.doc);
+    a.notify(n ? "Removed " + std::to_string(n) + " unused mixer track(s)" : std::string("No unused mixer tracks at the end"));
+  }
+  menuparity::toolsCleanupItems(a);  // J-27: unused automation clips
+  if (ImGui::MenuItem(i18n::tr("Delete unused patterns"))) {
+    int n = ops::deleteUnusedPatterns(a.doc);
+    a.notify(n ? "Deleted " + std::to_string(n) + " unused pattern(s)" : std::string("No unused patterns"));
+  }
+  ImGui::Separator();
+  if (ImGui::MenuItem(i18n::tr("AI assistant activity"))) mcpui::showActivity();  // SC-07
 }
 
 void menuHelp(App& a) {
   if (ImGui::MenuItem(i18n::tr("Keyboard shortcuts"), keys::label("help.shortcuts"))) a.showShortcuts = true;
   if (ImGui::MenuItem(i18n::tr("Load demo song"))) a.guardUnsaved([&a]() { a.newFromTemplate("demo"); });
-  if (ImGui::MenuItem(i18n::tr("Show settings folder"))) a.notify("Settings, presets and templates: " + a.configDir());
   if (ImGui::MenuItem(i18n::tr("Track Receipt..."))) receiptui::open(a);  // J-219: parts of licensed samples used
+  if (ImGui::MenuItem(i18n::tr("Show settings folder"))) a.notify("Settings, presets and templates: " + a.configDir());
   ImGui::Separator();
   if (updui::started() && ImGui::MenuItem(i18n::tr("Check for updates..."))) updui::checkNow(a);  // J-89
   if (ImGui::MenuItem(i18n::tr("About Gridline"))) a.showAbout = true;

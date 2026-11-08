@@ -50,16 +50,21 @@ struct VintageGate {
 
 // LFO phase source: free running from the start phase, or locked to the song
 // position while the transport runs (tempo sync).
+// K-133: as in the reference, the start phase is where the LFO is when the transport starts; while
+// the transport stands still from the first block on, the LFO runs from phase 0.
 struct RefLfoClock {
   double ph = 0;
-  bool started = false;
+  bool started = false, wasPlaying = false;
   // Phase increment for this block and (synced + playing) the locked start.
   void begin(const ProcessContext& ctx, bool sync, double periodBeats, double rateHz, double start, double& inc) {
     const double sr = ctx.sampleRate;
     if (!started) {
-      ph = start;
+      ph = ctx.playing ? start : 0.0;
       started = true;
+    } else if (ctx.playing && !wasPlaying) {
+      ph = start;  // the transport starts
     }
+    wasPlaying = ctx.playing;
     if (sync) {
       double beatsPerSample = std::max(1.0, ctx.tempo) / 60.0 / sr;
       inc = beatsPerSample / std::max(1e-6, periodBeats);
@@ -77,7 +82,7 @@ struct RefLfoClock {
     if (ph >= 1e6) ph -= std::floor(ph);
     return p;
   }
-  void clear() { started = false, ph = 0; }
+  void clear() { started = false, wasPlaying = false, ph = 0; }
 };
 
 // ============================================================ Bucket Chorus

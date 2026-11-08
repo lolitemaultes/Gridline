@@ -88,6 +88,12 @@ struct Note {
   // did: its step's swing, its offset inside the step, one step long (or truncated by the channel's
   // swing truncation), whatever Song::swingNotes says. Given another length it is an ordinary note.
   bool step = false;
+  // K-76: a note imported from a tracker module carries its voice's tracker cells (the channel
+  // state it starts with and the volume column / effect of every row it sounds through:
+  // core/TrackerStream.h). The Tracker Sampler plays them exactly; every other instrument and
+  // edit treats the note as an ordinary one (moves, copies and transposes carry the data). Empty
+  // for every other note.
+  std::vector<uint8_t> tracker;
 
   // {start, length, pitch, velocity} keeps working everywhere (without
   // missing-initializer warnings for the property fields).
@@ -97,13 +103,13 @@ struct Note {
 
   bool hasProps() const {
     return pan != 0 || fine != 0 || release != kNoteReleaseDefault || modX != kNoteModCentre || modY != kNoteModCentre ||
-           color != 0 || slide || porta || muted || group != 0 || !bend.empty() || step;
+           color != 0 || slide || porta || muted || group != 0 || !bend.empty() || step || !tracker.empty();
   }
   bool operator==(const Note& o) const {
     return start == o.start && length == o.length && pitch == o.pitch && velocity == o.velocity && pan == o.pan &&
            fine == o.fine && release == o.release && modX == o.modX && modY == o.modY && color == o.color &&
            slide == o.slide && porta == o.porta && muted == o.muted && group == o.group && frac == o.frac && endFrac == o.endFrac &&
-           bend == o.bend && step == o.step;
+           bend == o.bend && step == o.step && tracker == o.tracker;
   }
 };
 
@@ -125,6 +131,13 @@ struct Clip {
   ClipKind kind = ClipKind::Pattern;
   ObjectId source = kNoId;   // Audio: Channel::id (sample + strip + insert); Automation: AutomationClip::id
   Tick offset = 0;           // pattern / automation clips: content ticks skipped at the clip start
+  // K-114: the clip repeats its content past the content's end (core/ClipLoop.h):
+  // a pattern clip its pattern, an audio clip its audio window [audioStart,
+  // audioEnd) (`offset` is then where the first pass starts inside the window),
+  // an automation clip its curve every AutomationClip::loop ticks. Off, the
+  // content plays once: an empty pattern past its end, audio up to the end of
+  // its window, automation holding its last value.
+  bool loop = false;
   bool muted = false;
   // Audio clips (source times in seconds of the sample).
   double audioStart = 0;     // source position at the clip start
@@ -171,7 +184,7 @@ struct Clip {
 
   bool operator==(const Clip& o) const {
     return id == o.id && pattern == o.pattern && track == o.track && start == o.start && length == o.length &&
-           kind == o.kind && source == o.source && offset == o.offset && muted == o.muted && audioStart == o.audioStart &&
+           kind == o.kind && source == o.source && offset == o.offset && loop == o.loop && muted == o.muted && audioStart == o.audioStart &&
            audioEnd == o.audioEnd && fadeIn == o.fadeIn && fadeOut == o.fadeOut && gain == o.gain && pitch == o.pitch &&
            speedPitch == o.speedPitch && rateFit == o.rateFit &&
            stretch == o.stretch && syncBpm == o.syncBpm && tempoLock == o.tempoLock && reverse == o.reverse && takeGroup == o.takeGroup &&

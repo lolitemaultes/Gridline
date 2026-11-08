@@ -37,7 +37,10 @@ enum class Key : uint8_t {
 const char* keyName(Key k);       // "S", "F4", "PgUp", "Num +", ...
 Key keyFromName(const std::string& name);  // case-insensitive; Key::None if unknown
 
-enum Mod : uint8_t { kCtrl = 1, kShift = 2, kAlt = 4 };
+// kCmd (K-79): the macOS Command key, told apart from Control only by the
+// "tracks" shortcut set on macOS (Keymap::separateCmd). Everywhere else Cmd
+// is folded into kCtrl, as before.
+enum Mod : uint8_t { kCtrl = 1, kShift = 2, kAlt = 4, kCmd = 8 };
 
 struct Chord {
   Key key = Key::None;
@@ -48,7 +51,7 @@ struct Chord {
   bool operator<(const Chord& o) const { return key != o.key ? key < o.key : mods < o.mods; }
 };
 
-// "Ctrl+Alt+Shift+S" (modifier order Ctrl, Alt, Shift). Empty for an invalid chord.
+// "Ctrl+Alt+Shift+S" (modifier order Ctrl, Cmd, Alt, Shift). Empty for an invalid chord.
 std::string format(const Chord& c);
 // Accepts any modifier order and case ("shift+ctrl+s", "Ctrl+Num +"). Invalid -> Key::None.
 Chord parse(const std::string& text);
@@ -68,8 +71,27 @@ struct Command {
 const std::vector<Command>& commands();
 const Command* findCommand(const std::string& id);
 
+// K-79: shortcut sets. Studio is the table above; the others start from it
+// with their own rows replaced, and a Studio chord another command of the set
+// claims (in its context, or globally) is dropped from the command that had
+// it. separateCmd: the macOS Command key is its own modifier (kCmd) and the
+// set's command chords use it (the tracks set on macOS only).
+enum class Profile : uint8_t { Studio, Live, Logic, Count };
+const char* profileId(Profile p);  // "studio" | "live" | "logic" ("performance", "tracks": the working names)
+Profile profileFromId(const std::string& id);  // unknown = Studio
+// Default chords of every command in a set (ids of commands(), all present).
+const std::map<std::string, std::vector<Chord>>& profileDefaults(Profile p, bool separateCmd);
+
 class Keymap {
  public:
+  // The shortcut set the defaults come from. Overrides are per set: load()
+  // the set's own overrides after switching. Bumps version().
+  void setProfile(Profile p, bool separateCmd = false);
+  Profile profile() const { return profile_; }
+  bool separateCmd() const { return separateCmd_; }
+  // Default chords of a command in the current set (empty for unknown ids).
+  const std::vector<Chord>& defaults(const std::string& id) const;
+
   // Current chords of a command (overrides, else defaults). Empty for unknown ids.
   const std::vector<Chord>& bindings(const std::string& id) const;
   // Replaces the chords of one command (empty = unbound). False for unknown ids.
@@ -103,6 +125,9 @@ class Keymap {
 
  private:
   std::map<std::string, std::vector<Chord>> overrides_;
+  Profile profile_ = Profile::Studio;
+  bool separateCmd_ = false;
+  const std::map<std::string, std::vector<Chord>>* profileDefaults_ = nullptr;  // null = Studio
   uint32_t version_ = 1;
 };
 

@@ -14,8 +14,8 @@ set(ENV{GRIDLINE_NO_PLUGIN_SCAN} "1")
 configure_file("${DEMO}" "${OUT}/song.gridline.json" COPYONLY)  # a copy: never the fixture itself
 
 # The pinned menu (ContextMenus drawDevMenu) opens at the work area's (60, 70); "Make unique" is its
-# fifth row below the title.
-file(WRITE "${OUT}/click.txt" "6 move 130 200\n8 down 0\n10 up 0\n14 dump\n16 quit discard\n")
+# third row below the title (K-77: Edit pattern, then Duplicate and Make unique).
+file(WRITE "${OUT}/click.txt" "6 move 130 160\n8 down 0\n10 up 0\n14 dump\n16 quit discard\n")
 execute_process(COMMAND "${APP}" "${OUT}/song.gridline.json" --hidden --no-ui-sounds --fixed-dt 16 --size 1440x900 --menu clip
                         --dev-input "${OUT}/click.txt"
                 RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 240)

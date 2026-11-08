@@ -1,5 +1,6 @@
 // Gridline - J-219: the Track Receipt window (see TrackReceiptUi.h).
 #include "TrackReceiptUi.h"
+#include "Keys.h"
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -10,6 +11,7 @@
 #include <map>
 #include <mutex>
 #include <set>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 #include "../core/I18n.h"
@@ -24,6 +26,7 @@
 #include "DialogLayout.h"
 #include "Theme.h"
 #include "Widgets.h"
+#include "WorkerStall.h"
 
 namespace fs = std::filesystem;
 
@@ -42,6 +45,9 @@ struct Job {
   std::atomic<double> progress{0.0};
   std::mutex mu;
   Measurement result;
+  std::string error;  // K-133: why the measurement stopped (guarded by mu); shown to the person
+  WorkerBeat beat;    // K-133: each progress step
+  StallWatch watch;
   void join() {
     if (worker.joinable()) worker.join();
   }
@@ -166,6 +172,7 @@ void startMeasure(App& a) {
   j.cancel = false;
   j.finished = false;
   j.progress = 0;
+  workerstall::start(j.watch, j.beat);
   j.running = true;
   Song song = a.doc.song();
   const int rate = a.audioSampleRate > 0 ? a.audioSampleRate : 44100;
@@ -174,16 +181,25 @@ void startMeasure(App& a) {
     PassOptions o;
     o.sampleRate = rate;
     o.cancel = &j.cancel;
-    o.progress = [&j](double f) { j.progress = f; };
+    o.progress = [&j](double f) {
+      j.beat.beat();
+      j.progress = f;
+    };
     Measurement m;
+    std::string error;
     try {  // an exception must not leave this thread
+      if (std::getenv("GRIDLINE_DEV_RECEIPT_FAIL")) throw std::runtime_error("a test failure");  // K-133 tests
       m = measure(song, o);
     } catch (const std::exception& e) {
-      logging::error("receipt", std::string("the measurement stopped: ") + e.what());
+      error = e.what();
+    } catch (...) {
+      error = "an internal error";
     }
+    if (!error.empty()) logging::error("receipt", "the measurement stopped: " + error);
     {
       std::lock_guard<std::mutex> lk(j.mu);
       j.result = std::move(m);
+      j.error = std::move(error);
     }
     j.running = false;
     j.finished = true;
@@ -196,9 +212,18 @@ void finish(App& a) {
   j.join();
   State& s = S();
   Measurement m;
+  std::string error;
   {
     std::lock_guard<std::mutex> lk(j.mu);
     m = std::move(j.result);
+    error = std::move(j.error);
+    j.error.clear();
+  }
+  if (!error.empty()) {  // K-133: told, not only logged; the files page is where it started
+    s.page = 0;
+    a.notify("The Track Receipt could not be calculated. Nothing was changed: try Calculate again.", true, error);
+    devsig::reach("receipt-failed");
+    return;
   }
   if (m.cancelled) {
     s.page = 0;
@@ -635,13 +660,17 @@ void open(App& a) {
 
 void draw(App& a) {
   finish(a);
+  if (J().running.load()) workerstall::watch(a, J().watch, J().beat, "Track Receipt", "");
   State& s = S();
-  // Screenshots: GRIDLINE_TRACK_RECEIPT_DEMO=picker|progress|results opens a page on the project given.
+  // Screenshots: GRIDLINE_TRACK_RECEIPT_DEMO=picker|progress|results opens a page on the project given
+  // (K-133: calculate also starts the measurement, as the Calculate button does).
   static int frames = 0;
   if (const char* env = std::getenv("GRIDLINE_TRACK_RECEIPT_DEMO"); env && *env && ++frames == 4) {
     open(a);
     const std::string mode = env;
-    if (mode == "progress") {
+    if (mode == "calculate") {
+      startMeasure(a);
+    } else if (mode == "progress") {
       s.page = 1;
       s.demoProgress = 0.42;
     } else if (mode == "results") {
@@ -682,7 +711,7 @@ void draw(App& a) {
       if (ui::TextButton(i18n::tr("Calculate"), true, bw, i18n::tr("Plays the project offline and measures the parts used"))) startMeasure(a);
     } else if (s.page == 1) {
       ui::DialogFooter(ui::ButtonRowWidth(1, bw));
-      if (ui::TextButton(i18n::tr("Cancel"), false, bw) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+      if (ui::TextButton(i18n::tr("Cancel"), false, bw) || ::gl::keys::escapePressed()) {
         j.cancel = true;
         if (s.demoProgress >= 0) s.page = 0, s.demoProgress = -1;
       }

@@ -14,7 +14,8 @@ LICENSE_FILE=	${WRKSRC}/LICENSE
 LIB_DEPENDS=	libsndio.so:audio/sndio
 RUN_DEPENDS=	curl:ftp/curl
 
-USES=		cmake compiler:c++17-lang gl pkgconfig sdl xorg
+USES=		cmake compiler:c++17-lang desktop-file-utils gl pkgconfig sdl \
+		shared-mime-info xorg
 USE_GL=		gl
 USE_SDL=	sdl2
 USE_XORG=	x11

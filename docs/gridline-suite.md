@@ -39,6 +39,7 @@ Each bundle carries `gridline-suite.txt` (`Gridline Suite <version> <build>`), w
 - **Parameters:** every parameter of the plugin as a host parameter, with its name, unit, range, steps or choices and value text, automatable with begin and end of each gesture. Effects add **Mix** and **Bypass** (the format's bypass switch). Parameter ids are the parameter's index in Gridline (Mix and Bypass are 1048576 and 1048577), so automation stays attached across versions.
 - **Presets:** the plugin's factory presets in the editor's preset menu; the Audio Unit also lists them as factory presets.
 - **State:** the plugin's state exactly as Gridline saves it in a project (JSON: parameters, sample references by path, the plugin's own data), with Mix, Bypass and the editor's zoom. A suite plugin also loads a Gridline preset file's state of the same plugin.
+- **Files in the state:** a state may carry the files it refers to (`"files"`: each file's path as the state names it, its name, size, SHA-256 and the bytes in base64), as Gridline writes it into FL Studio projects (up to 64 MB of files per plugin). When a referenced file is not on the computer, the plugin writes the carried copy into its cache (`<cache>/gridline/suite-files/<first 16 hex digits of the SHA-256>/<file name>`, where `<cache>` is `~/.cache`, `$XDG_CACHE_HOME` or `%LOCALAPPDATA%`) and plays it from there. An existing file in the cache is reused only when its content is the same and is never overwritten; nothing is written outside the cache. The files are written while the host loads the plugin, never while it plays. When the host saves the plugin again, the files it came with are carried again, so the project keeps working on the next computer. Older suite versions ignore the key and use the paths.
 - **Latency** is reported to the host and updated when it changes; effects report a tail.
 - **Editor:** the plugin's editor from Gridline, with its header (presets, menu) and, for sample-based instruments, a sample loader. The window is resizable: the editor zooms to fit (0.5 to 3 times) and keeps its proportions.
 - **Cipher** (the vocoder) plays its carrier from the host's MIDI when its **Carrier MIDI port** parameter is 0 (the default, -1, uses the keys stored in the plugin); **Plumb** and **Tideline** hear the host's MIDI by default.
@@ -57,7 +58,7 @@ Identifiers come from the plugin type `gl.<name>` alone, never from the suite, s
 
 ## Members
 
-120 plugins: 51 instruments and 69 effects. The CLAP id is `org.gridline.suite.` followed by the type without `gl.`; the VST3 class id ends in the hash shown; the Audio Unit is `aumu` (instruments), `aufx` or `aumf` (effects that take MIDI) with the subtype shown and manufacturer `GrLn`. Effects also have Mix and Bypass besides the parameters counted here.
+121 plugins: 52 instruments and 69 effects. The CLAP id is `org.gridline.suite.` followed by the type without `gl.`; the VST3 class id ends in the hash shown; the Audio Unit is `aumu` (instruments), `aufx` or `aumf` (effects that take MIDI) with the subtype shown and manufacturer `GrLn`. Effects also have Mix and Bypass besides the parameters counted here.
 
 ### Instruments
 
@@ -114,6 +115,7 @@ Identifiers come from the plugin type `gl.<name>` alone, never from the suite, s
 | Turntable (old) | `gl.turntable` | Sampler | `A2221311` | `xz8n` | 21 | 5 | kept for old projects |
 | Platter | `gl.platter` | Sampler | `74A19BB4` | `q8wc` | 74 | 6 | Takes MIDI from DJ controllers |
 | Plasma | `gl.plasma` | Synth | `F95755DE` | `cw2s` | 2216 | 24 |  |
+| Tracker Sampler | `gl.tracker` | Sampler | `94EC410C` | `krvy` | 7 | 6 |  |
 
 ### Effects
 

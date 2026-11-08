@@ -94,6 +94,19 @@ inline constexpr bool closedCopyStays(bool fromDrive) { return fromDrive; }
 // nothing half-unpacked is left in the cache. Blocks: call it from a worker.
 bool unpackForOpening(const UnpackRequest& r, UnpackResult& out, std::string* err);
 
+// K-76: a copy made from a file rather than unpacked from an archive (a tracker module's samples):
+// the same cache, manifest, lock and rules as an unpacked archive. `write` fills the folder it is
+// given and lists the files it wrote (relative); an unchanged source finds its earlier copy whole
+// and writes nothing. Blocks: call it from a worker.
+struct MakeRequest {
+  std::string sourcePath;
+  std::string cacheRoot;                        // "" = defaultCacheRoot()
+  uint64_t size = 0;                            // the source's size (with its time: which version)
+  uint64_t cacheLimit = kCacheLimit;
+  std::function<bool(const std::string& folder, std::vector<std::string>& names, std::string* err)> write;
+  const CacheRefs* refs = nullptr;              // tests; default CacheRefs::standard()
+};
+bool makeCopy(const MakeRequest& r, UnpackResult& out, std::string* err);
 // The song refers to files in the cache (it was saved from a project opened out of an archive):
 // marks those folders so nothing removes them. Returns how many folders it marked.
 int pinUnpacked(const Song& song, const std::string& cacheRoot = "");

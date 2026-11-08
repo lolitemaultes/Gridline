@@ -30,10 +30,68 @@ std::vector<ClipPass> loopPasses(Tick offset, Tick len, Tick loop) {
 }
 
 Tick clipLoopLength(const Song& s, const Clip& c) {
+  if (!c.loop) return 0;
+  if (c.kind == ClipKind::Automation) {
+    const AutomationClip* a = s.automation(c.source);
+    return a && a->loop > 0 ? a->loop : 0;
+  }
   if (c.kind != ClipKind::Pattern) return 0;
   const Pattern* p = s.pattern(c.pattern);
-  if (!p || !p->loop) return 0;
+  if (!p) return 0;
   return std::max<Tick>(1, s.patternContentLength(*p));
+}
+
+bool clipPastContent(const Song& s, const Clip& c) {
+  if (c.kind != ClipKind::Pattern) return false;
+  const Pattern* p = s.pattern(c.pattern);
+  if (!p) return false;
+  const Tick pl = std::max<Tick>(1, s.patternContentLength(*p));
+  const Tick off = c.loop ? wrapLoopOffset(c.offset, pl) : c.offset;
+  return off + s.clipLength(c) > pl;
+}
+
+bool patternLoopMode(const Song& s, const Pattern& p) {
+  bool looped = false, plain = false;
+  auto scan = [&](const std::vector<Clip>& list) {
+    for (const Clip& c : list)
+      if (c.kind == ClipKind::Pattern && c.pattern == p.id && clipPastContent(s, c)) (c.loop ? looped : plain) = true;
+  };
+  scan(s.playlist);
+  for (const Arrangement& a : s.arrangements) scan(a.playlist);
+  if (looped) return true;
+  if (plain) return false;
+  return p.loop;
+}
+
+namespace {
+template <typename Fn>
+void eachPlaylist(Song& s, Fn fn) {
+  fn(s.playlist);
+  for (Arrangement& a : s.arrangements) fn(a.playlist);
+}
+}  // namespace
+
+void adoptOldClipLoops(Song& s) {
+  eachPlaylist(s, [&](std::vector<Clip>& list) {
+    for (Clip& c : list) {
+      c.loop = false;
+      if (c.kind == ClipKind::Automation) {
+        const AutomationClip* a = s.automation(c.source);
+        c.loop = a && a->loop > 0;  // every placement wrapped at the curve's loop length
+      } else if (c.kind == ClipKind::Pattern) {
+        const Pattern* p = s.pattern(c.pattern);
+        if (p && p->loop) c.loop = c.offset + s.clipLength(c) > std::max<Tick>(1, s.patternContentLength(*p));
+      }
+    }
+  });
+}
+
+void adoptPatternLoopModes(Song& s) {
+  eachPlaylist(s, [&](std::vector<Clip>& list) {
+    for (Clip& c : list)
+      if (c.kind == ClipKind::Pattern)
+        if (const Pattern* p = s.pattern(c.pattern)) c.loop = p->loop;
+  });
 }
 
 std::vector<ClipPass> clipPasses(const Song& s, const Clip& c) { return loopPasses(c.offset, s.clipLength(c), clipLoopLength(s, c)); }

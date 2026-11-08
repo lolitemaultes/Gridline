@@ -7,6 +7,7 @@
 // Gridline's own Suite builds sit in a collapsed group: the native plugins
 // are built in, so the browser never lists them.
 #include <algorithm>
+#include "Keys.h"
 #include <cstdio>
 #include <filesystem>
 #include <map>
@@ -69,6 +70,8 @@ std::string lower(std::string s) {
   for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
   return s;
 }
+
+constexpr float kSlotW = 38;  // one format tag in the table
 
 std::string groupKey(const host::PluginGroup& g) { return host::groupNameKey(g.name) + "|" + host::groupVendorKey(g.vendor) + (g.ownSuite ? "|suite" : ""); }
 
@@ -171,6 +174,7 @@ std::string fmtCount(const char* english, int n) {
 struct Row {
   const host::PluginGroup* g = nullptr;  // nullptr: the Gridline Suite group header
   std::string key, category;             // group key, shown category
+  std::string sortName, sortColumn;      // K-73: lower-case name, and the sorted column's text
   bool fav = false;
   int sandbox = 0;  // members in the sandbox: 0 none, 1 some, 2 all
 };
@@ -181,6 +185,10 @@ struct Model {
   int counts[kViewCount] = {};  // per view (Suite builds not counted)
   int suiteCount = 0;
   std::vector<host::CacheEntry> failed;
+  // K-73: worked out with the rows, not every frame (thousands of plugins).
+  std::map<std::string, const host::PluginGroup*> byKey;  // every group by its key (the details of the selected one)
+  std::map<std::string, int> perFormat;                   // plugins scanned per format
+  float slotsWidth = 0;                                   // width of the formats column
 };
 
 std::string shownCategory(const host::GroupSnapshot& s, const host::PluginGroup& g, const host::PluginPrefs& prefs) {
@@ -216,11 +224,15 @@ Model buildModel(const host::PluginPrefs& prefs, const std::string& q) {
   Model md;
   md.snap = host::pluginGroups();
   const host::GroupSnapshot& s = *md.snap;
-  for (const auto& e : host::cacheEntries())
+  for (const auto& e : host::cacheEntries()) {
     if (!e.ok && !prefs.disabledFormats.count(e.format)) md.failed.push_back(e);
+    if (e.ok) md.perFormat[e.format] += std::max(0, e.classes);
+  }
   md.counts[kFailed] = static_cast<int>(md.failed.size());
   std::vector<Row> main, suite;
   for (const host::PluginGroup& g : s.groups) {
+    const std::string key = groupKey(g);
+    md.byKey[key] = &g;  // the last group of a key, as the details always showed
     Row r;
     r.g = &g;
     r.category = shownCategory(s, g, prefs);
@@ -237,19 +249,18 @@ Model buildModel(const host::PluginPrefs& prefs, const std::string& q) {
     if (ms.view == kEffects && g.instrument) continue;
     if (ms.view == kFavourites && (!r.fav || g.ownSuite)) continue;
     if (!matches(s, g, r.category, q)) continue;
-    r.key = groupKey(g);
+    r.key = key;
+    // K-73: the sort keys once per row, not twice per comparison.
+    r.sortName = lower(g.name);
+    r.sortColumn = ms.sortColumn == 3 ? lower(r.category) : ms.sortColumn == 4 ? lower(g.vendor) : std::string();
     (g.ownSuite ? suite : main).push_back(std::move(r));
   }
   auto cmp = [&](const Row& x, const Row& y) {
-    std::string a1, b1;
-    switch (ms.sortColumn) {
-      case 3: a1 = lower(x.category), b1 = lower(y.category); break;
-      case 4: a1 = lower(x.g->vendor), b1 = lower(y.g->vendor); break;
-      default: break;
-    }
-    if (a1 == b1) a1 = lower(x.g->name), b1 = lower(y.g->name);
-    if (a1 == b1) return false;
-    return ms.sortAscending ? a1 < b1 : a1 > b1;
+    const std::string* a1 = &x.sortColumn;
+    const std::string* b1 = &y.sortColumn;
+    if (*a1 == *b1) a1 = &x.sortName, b1 = &y.sortName;
+    if (*a1 == *b1) return false;
+    return ms.sortAscending ? *a1 < *b1 : *a1 > *b1;
   };
   std::stable_sort(main.begin(), main.end(), cmp);
   std::stable_sort(suite.begin(), suite.end(), cmp);
@@ -260,6 +271,43 @@ Model buildModel(const host::PluginPrefs& prefs, const std::string& q) {
     md.rows.push_back(h);
     if (ms.suiteOpen)
       for (auto& r : suite) md.rows.push_back(std::move(r));
+  }
+  // The formats column: the most formats any plugin comes in.
+  size_t slots = 1;
+  for (const Row& r : md.rows)
+    if (r.g) {
+      std::set<std::string> f;
+      for (size_t m : r.g->members) f.insert(s.items[m].format);
+      slots = std::max(slots, f.size());
+    }
+  md.slotsWidth = static_cast<float>(slots) * kSlotW - 4;
+  return md;
+}
+
+// K-73: the model of the last frame while nothing it shows has changed. With a big collection
+// (thousands of plugins) building it took longer than drawing the window.
+Model& currentModel(const host::PluginPrefs& prefs, const std::string& q) {
+  struct Key {
+    const host::GroupSnapshot* snap = nullptr;
+    uint64_t prefsGen = 0, cacheChanges = 0;
+    int view = 0, sortColumn = 0;
+    bool sortAscending = false, suiteOpen = false;
+    std::string q;
+    bool operator==(const Key& o) const {
+      return snap == o.snap && prefsGen == o.prefsGen && cacheChanges == o.cacheChanges && view == o.view && sortColumn == o.sortColumn &&
+             sortAscending == o.sortAscending && suiteOpen == o.suiteOpen && q == o.q;
+    }
+  };
+  static Model md;
+  static Key last;
+  static bool built = false;
+  const ManagerState& ms = state();
+  Key k{host::pluginGroups().get(), host::pluginPrefsGeneration(), host::scanStatus().cacheChanges, ms.view, ms.sortColumn, ms.sortAscending, ms.suiteOpen, q};
+  if (!built || !(k == last)) {
+    md = buildModel(prefs, q);
+    k.snap = md.snap.get();  // the snapshot the rows point into
+    last = k;
+    built = true;
   }
   return md;
 }
@@ -296,7 +344,7 @@ void setPreferred(const host::GroupSnapshot& s, const host::PluginGroup& g, host
 
 void addToProject(App& a, const std::string& type, bool instrument) {
   if (instrument) {
-    a.settingsChannel = a.addInstrument(type);
+    a.showNewInstrument(a.addInstrument(type));
     return;
   }
   const Song& s = a.doc.song();
@@ -351,9 +399,10 @@ void scanCard(App& a, const Model& md) {
     dl->AddRectFilled(ImVec2(p.x, p.y + 4), ImVec2(p.x + w, p.y + 8), colors().field, 2.0f);
     dl->AddRectFilled(ImVec2(p.x, p.y + 4), ImVec2(p.x + std::max(4.0f, w * frac), p.y + 8), P.accent, 2.0f);
     char b[96];
-    std::snprintf(b, sizeof b, i18n::tr("Scanning %d / %d"), std::min(ss.done + 1, std::max(1, ss.total)), ss.total);
+    if (!ss.searching.empty()) std::snprintf(b, sizeof b, "%s", i18n::tr("Looking for plugins"));  // K-71: a big folder takes a while
+    else std::snprintf(b, sizeof b, i18n::tr("Scanning %d / %d"), std::min(ss.done + 1, std::max(1, ss.total)), ss.total);
     text(dl, a.fontRegular, theme::kFontCaption, ImVec2(p.x, p.y + 13), P.text, b);
-    const std::string cur = fs::path(ss.current).filename().string();
+    const std::string cur = !ss.searching.empty() ? ss.searching : host::scanCurrentLabel(ss);
     const float bw = textW(a.fontRegular, theme::kFontCaption, b) + 8;
     text(dl, a.fontMono, 10.5f, ImVec2(p.x + bw, p.y + 14), P.textFaint, cur.c_str(), w - bw);
     ImGui::Dummy(ImVec2(w, 32));
@@ -395,10 +444,7 @@ void formatChips(App& a, const Model& md, host::PluginPrefs& prefs, bool& change
   const auto& P = pal();
   const Colors C = colors();
   ImDrawList* dl = ImGui::GetWindowDrawList();
-  std::map<std::string, int> perFormat;
-  for (const auto& e : host::cacheEntries())
-    if (e.ok) perFormat[e.format] += std::max(0, e.classes);
-  (void)md;
+  const std::map<std::string, int>& perFormat = md.perFormat;  // K-73: counted with the model
   const auto& fmts = host::formats();
   const float w = ImGui::GetContentRegionAvail().x, gap = 6, h = 26;
   const int cols = w >= 3 * 72 + 2 * gap ? 3 : 2;
@@ -481,11 +527,15 @@ void folderList(App& a, host::PluginPrefs& prefs, bool& changed, float height) {
   const auto& P = pal();
   const Colors C = colors();
   std::vector<FolderRow> rows;
+  std::map<std::string, bool> everyExists;  // K-73: the folders for every format as the rows found them
   // K-13: each format's folders as Settings > Plugins sets them (host/PluginFolders.h).
   for (const host::Format& f : host::formats()) {
     if (prefs.disabledFormats.count(f.id)) continue;
-    for (const auto& r : host::folderRows(f, prefs)) {
-      if (r.source == host::FolderSource::Every) continue;  // listed once, below
+    for (const auto& r : host::folderRowsForDisplay(f, prefs)) {  // K-73: no disk look per frame
+      if (r.source == host::FolderSource::Every) {  // listed once, below
+        everyExists.emplace(r.path, r.exists);
+        continue;
+      }
       FolderRow row{f.label, r.path, false, r.exists, 0, {}, r.searched() || !host::folderSearchApplies(f.id)};
       if (r.source == host::FolderSource::User) row.format = f.id;
       rows.push_back(row);
@@ -494,7 +544,9 @@ void folderList(App& a, host::PluginPrefs& prefs, bool& changed, float height) {
   for (size_t i = 0; i < prefs.extraFolders.size(); ++i) {
     std::error_code ec;
     const bool on = !prefs.disabledFolders.count(host::folderKey("*", prefs.extraFolders[i]));
-    rows.push_back(FolderRow{"", prefs.extraFolders[i], true, fs::is_directory(prefs.extraFolders[i], ec), i, {}, on});
+    const auto known = everyExists.find(prefs.extraFolders[i]);
+    const bool exists = known != everyExists.end() ? known->second : fs::is_directory(prefs.extraFolders[i], ec);
+    rows.push_back(FolderRow{"", prefs.extraFolders[i], true, exists, i, {}, on});
   }
   std::string removeFormat, removePath;
   ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::vec(C.field));
@@ -671,7 +723,7 @@ void searchBox(App& a, float w) {
   const bool active = ImGui::IsItemActive();
   ImGui::PopStyleVar(2);
   ui::FocusRing();
-  if (active && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) ms.search[0] = 0;
+  if (active && ::gl::keys::escapePressed(false)) ms.search[0] = 0;
   ui::drawIcon(dl, ui::Icon::Search, ImVec2(p.x + 14, p.y + h * 0.5f), 12, P.textFaint);
   if (ms.search[0]) {
     ImGui::SetCursorScreenPos(ImVec2(p.x + w - h + 2, p.y + 2));
@@ -695,8 +747,6 @@ void headersRow(int columns) {
   }
 }
 
-constexpr float kSlotW = 38;  // one format tag in the table
-
 // Format tags of a row in the platform's format order; the listed one lit.
 void formatSlots(App& a, ImDrawList* dl, ImVec2 p, float rowH, const host::GroupSnapshot& s, const host::PluginGroup& g, bool dim) {
   const float h = 17;
@@ -714,17 +764,8 @@ void formatSlots(App& a, ImDrawList* dl, ImVec2 p, float rowH, const host::Group
   }
 }
 
-// Width of the formats column: the most formats any plugin comes in.
-float formatSlotsWidth(const Model& md) {
-  size_t n = 1;
-  for (const Row& r : md.rows)
-    if (r.g) {
-      std::set<std::string> f;
-      for (size_t m : r.g->members) f.insert(md.snap->items[m].format);
-      n = std::max(n, f.size());
-    }
-  return static_cast<float>(n) * kSlotW - 4;
-}
+// Width of the formats column (worked out with the model, K-73).
+float formatSlotsWidth(const Model& md) { return md.slotsWidth; }
 
 void pluginTable(App& a, Model& md, host::PluginPrefs& prefs, bool& changed, ImVec2 size) {
   const auto& P = pal();
@@ -921,9 +962,8 @@ void detailsPanel(App& a, const Model& md, host::PluginPrefs& prefs, bool& chang
   const Colors C = colors();
   ManagerState& ms = state();
   const host::GroupSnapshot& s = *md.snap;
-  const host::PluginGroup* g = nullptr;
-  for (const host::PluginGroup& x : s.groups)
-    if (groupKey(x) == ms.selected) g = &x;
+  const auto found = md.byKey.find(ms.selected);  // K-73: not a key worked out per plugin every frame
+  const host::PluginGroup* g = found == md.byKey.end() ? nullptr : found->second;
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const float w = ImGui::GetContentRegionAvail().x;
   if (!g) {
@@ -1236,7 +1276,11 @@ void keyboard(Model& md) {
   const ImGuiIO& io = ImGui::GetIO();
   if ((io.KeyCtrl || io.KeySuper) && ImGui::IsKeyPressed(ImGuiKey_F, false)) ms.focusSearch = true;
   if (io.WantTextInput) return;
-  if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && ms.search[0]) ms.search[0] = 0;
+  if (::gl::keys::escapePressed(false) && ms.search[0]) ms.search[0] = 0;
+  // K-73: the keys are listed only when a key moves the selection (thousands of rows).
+  if (!ImGui::IsKeyPressed(ImGuiKey_DownArrow) && !ImGui::IsKeyPressed(ImGuiKey_UpArrow) && !ImGui::IsKeyPressed(ImGuiKey_PageDown) &&
+      !ImGui::IsKeyPressed(ImGuiKey_PageUp) && !ImGui::IsKeyPressed(ImGuiKey_Home, false) && !ImGui::IsKeyPressed(ImGuiKey_End, false))
+    return;
   // Selectable keys of the current view, in row order.
   std::vector<std::string> keys;
   if (ms.view == kFailed) {
@@ -1279,7 +1323,7 @@ void drawPluginManager(App& a) {
   host::PluginPrefs prefs = host::pluginPrefs();
   bool changed = false;
   const std::string q = lower(ms.search);
-  Model md = buildModel(prefs, q);
+  Model& md = currentModel(prefs, q);
   // Keep a selection: the first row when nothing (or something no longer shown) is selected.
   if (ms.view != kFailed) {
     bool shown = false;

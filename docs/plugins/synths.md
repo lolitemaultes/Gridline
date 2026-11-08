@@ -60,6 +60,15 @@ voice sum → FX strip (drive → chorus → ping-pong delay → reverb) → pan
   Bass, Pulse Drift, Drawbar Organ, Glass Bell, Sub Pressure, Macro Morph
   Lead, Vowel Bass.
 
+## FL Studio export
+
+When FL Studio has no exact counterpart for one of these synths, the FL Studio export follows
+**Settings, Project, FL Studio export**: by default the channel holds the synth from the Gridline
+Suite with all its settings (opened live where the Suite is installed) plus a muted copy playing it
+rendered to audio; **Gridline Suite plugins only** writes the plugin alone and also replaces close
+FL Studio instruments that only approximate it; **Rendered to audio** renders the channel to
+samples as before. Synths FL Studio carries exactly stay FL Studio's own instruments in every mode.
+
 ## Engineering notes
 
 - No allocation on the audio thread: voices, scratch buffers are fixed arrays;

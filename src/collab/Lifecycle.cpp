@@ -61,7 +61,7 @@ bool exportPlainProject(const Song& song, const std::string& srcFolder, const st
   std::string base = name.empty() ? std::string("Project") : name;
   for (char& c : base)
     if (c == '/' || c == '\\' || c == ':' || static_cast<unsigned char>(c) < 0x20) c = '-';
-  const std::string file = (dst / (base + ".gridline.json")).string();
+  const std::string file = (dst / (base + ".gridline")).string();  // K-121: the new name
   if (!writeFileAtomic(file, projectToText(copy), err)) return false;
   if (removeHistory) {
     // the shared history, other members' records and names: gone with the collaboration

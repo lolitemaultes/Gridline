@@ -494,7 +494,7 @@ ProjectPick pickProject(const std::vector<ZipEntry>& entries, const std::string&
     if (e.dir() || e.size == 0 || isJunkEntry(e.name)) continue;
     const std::string l = lower(e.name);
     int kind = -1;
-    if (endsWith(l, ".gridline.json")) kind = 0;
+    if (isGridlineProjectName(baseName(e.name))) kind = 0;  // .gridline, or the older .gridline.json
     else if (endsWith(l, ".flp")) kind = 1;
     else if (endsWith(l, ".json")) kind = 2;
     if (kind < 0) continue;
@@ -820,6 +820,108 @@ bool unpackForOpening(const UnpackRequest& r, UnpackResult& out, std::string* er
   }
   trimCache(cache.u8string(), r.cacheLimit, folder.u8string(), 3600, r.refs);
   out.projectFile = (folder / fs::u8path(chosen)).u8string();
+  out.folder = folder.u8string();
+  return true;
+}
+
+bool makeCopy(const MakeRequest& r, UnpackResult& out, std::string* err) {
+  const fs::path src = fs::u8path(r.sourcePath);
+  const fs::path cache = fs::u8path(r.cacheRoot.empty() ? defaultCacheRoot() : r.cacheRoot);
+  const bool remote = remotefs::isRemote(r.sourcePath);
+  out.fromDrive = remote;
+  out.inCache = true;
+  int64_t mtime = 0;
+  {
+    std::error_code ec;
+    const auto t = fs::last_write_time(src, ec);
+    if (!ec) mtime = platform::fileTimeSeconds(t);
+  }
+  const std::string versionKey = r.sourcePath + "|" + std::to_string(r.size) + "|" + std::to_string(mtime) + "|made";
+  const std::string namePrefix = safeStem(projectStemOf(r.sourcePath)) + "-";
+  fs::path folder = cache / fs::u8path(namePrefix + fnvHex(versionKey));
+  auto sameVersion = [&](const Manifest& m) { return m.source == r.sourcePath && m.size == r.size && m.mtime == mtime; };
+  {
+    std::error_code ec;
+    if (fs::is_directory(folder, ec)) {
+      CacheGuard guard(cache);
+      Manifest m;
+      if (readManifest(folder, m) && sameVersion(m) && copyIsWhole(folder, m)) {
+        out.use = holdLocked(folder);
+        fs::last_write_time(folder / kManifest, fs::file_time_type::clock::now(), ec);
+        out.folder = folder.u8string();
+        out.reused = true;
+        return true;
+      }
+    }
+  }
+  std::error_code ec;
+  fs::create_directories(cache, ec);
+  static std::atomic<unsigned> serial{0};
+  const fs::path work(folder.u8string() + kPartTag + std::to_string(platform::processId()) + "-" + std::to_string(serial.fetch_add(1)));
+  platform::FileLock workLock;
+  {
+    CacheGuard guard(cache);
+    if (guard.ok()) workLock.tryLock(lockFile(work).u8string(), platform::FileLock::Mode::Exclusive);
+  }
+  auto forgetWorkLock = [&] {
+    workLock.unlock();
+    std::error_code e2;
+    CacheGuard guard(cache);
+    if (guard.ok()) fs::remove(lockFile(work), e2);
+  };
+  auto dropWork = [&] {
+    std::error_code e2;
+    fs::remove_all(work, e2);
+    forgetWorkLock();
+  };
+  fs::create_directories(work, ec);
+  Manifest m;
+  m.source = r.sourcePath;
+  m.size = r.size;
+  m.mtime = mtime;
+  if (ec || !r.write || !r.write(work.u8string(), m.names, err)) {
+    if (ec && err) *err = fileWriteError(work.u8string(), ec.value());
+    dropWork();
+    return false;
+  }
+  bool marked = writeManifest(work, m);
+  if (marked && !remote) marked = static_cast<bool>(std::ofstream(work / kLocalSource, std::ios::binary));
+  if (!marked) {
+    dropWork();
+    if (err) *err = fileWriteError((work / kManifest).u8string(), ENOSPC);
+    return false;
+  }
+  bool renamed = false, already = false;
+  fs::path damaged;
+  {
+    CacheGuard guard(cache);
+    Manifest have;
+    if (readManifest(folder, have) && sameVersion(have) && copyIsWhole(folder, have)) {
+      already = true;
+      out.use = holdLocked(folder);
+    } else {
+      if (fs::exists(folder, ec)) {
+        fs::path trash;
+        if (takeOutOfUse(folder, trash) == Taken::Yes) damaged = trash;
+        else folder = cache / fs::u8path(namePrefix + fnvHex(versionKey + "|" + work.filename().u8string()));
+      }
+      fs::rename(work, folder, ec);
+      renamed = !ec;
+      if (renamed) out.use = holdLocked(folder);
+    }
+  }
+  if (!damaged.empty()) deleteTrash(damaged);
+  if (already) {
+    dropWork();
+  } else if (!renamed) {
+    const int code = ec.value();
+    dropWork();
+    if (err) *err = fileWriteError(folder.u8string(), code);
+    return false;
+  } else {
+    forgetWorkLock();
+  }
+  trimCache(cache.u8string(), r.cacheLimit, folder.u8string(), 3600, r.refs);
   out.folder = folder.u8string();
   return true;
 }

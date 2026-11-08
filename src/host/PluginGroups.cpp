@@ -1,6 +1,8 @@
 #include "PluginGroups.h"
 #include <algorithm>
 #include <cctype>
+#include <chrono>
+#include <cstring>
 #include <mutex>
 #include "HostedPlugins.h"
 #include "PluginPrefs.h"
@@ -181,19 +183,29 @@ std::string groupNameKey(const std::string& name) {
   trim();
   // Drop trailing format tags, one at a time: "Name (VST3)", "Name VST3", "Name-x64", "Name [AU]".
   static const char* const tags[] = {"vst3", "vst2", "vst", "clap", "au", "lv2", "x64", "64-bit", "64bit"};
+  // K-73: `n` ends with <open><tag><close> (no strings built: this runs for every plugin).
+  auto endsWith = [&n](char open, const char* tag, size_t tl, char close) {
+    const size_t len = tl + 1 + (close ? 2 : 0);  // " (" + tag + ")" or "<open>" + tag
+    if (n.size() <= len) return size_t(0);
+    const size_t at = n.size() - len;
+    if (close ? (n[at] != ' ' || n[at + 1] != open || n.back() != close) : n[at] != open) return size_t(0);
+    return n.compare(at + (close ? 2 : 1), tl, tag) == 0 ? len : size_t(0);
+  };
   for (bool again = true; again;) {
     again = false;
     for (const char* tag : tags) {
-      const std::string t(tag);
-      for (const std::string& form : {" (" + t + ")", " [" + t + "]", " " + t, "-" + t, "_" + t}) {
-        if (n.size() > form.size() && n.compare(n.size() - form.size(), form.size(), form) == 0) {
-          n.resize(n.size() - form.size());
-          trim();
-          again = true;
-          break;
-        }
+      const size_t tl = std::strlen(tag);
+      size_t cut = endsWith('(', tag, tl, ')');
+      if (!cut) cut = endsWith('[', tag, tl, ']');
+      if (!cut) cut = endsWith(' ', tag, tl, 0);
+      if (!cut) cut = endsWith('-', tag, tl, 0);
+      if (!cut) cut = endsWith('_', tag, tl, 0);
+      if (cut) {
+        n.resize(n.size() - cut);
+        trim();
+        again = true;
+        break;
       }
-      if (again) break;
     }
   }
   std::string out;
@@ -295,6 +307,7 @@ struct SnapshotCache {
   std::shared_ptr<const GroupSnapshot> snap;
   uint64_t scanGen = ~uint64_t(0), prefsGen = ~uint64_t(0);
   PluginPrefs prefs;
+  std::chrono::steady_clock::time_point builtAt{};  // K-73
 };
 SnapshotCache& snapCache() {
   static auto* c = new SnapshotCache;  // never destroyed (like the class map)
@@ -307,6 +320,11 @@ std::shared_ptr<const GroupSnapshot> pluginGroups() {
   const uint64_t sg = hostedClassesGeneration(), pg = pluginPrefsGeneration();
   std::lock_guard<std::mutex> g(c.lock);
   if (c.snap && sg == c.scanGen && pg == c.prefsGen) return c.snap;
+  // K-73: while a scan adds plugins one after another, the list is grouped again twice a second at
+  // most (with a few thousand plugins that takes a while, and it was redone on every frame and
+  // several times within one). A change of the user's settings shows at once.
+  const auto now = std::chrono::steady_clock::now();
+  if (c.snap && pg == c.prefsGen && scanRunning() && now - c.builtAt < std::chrono::milliseconds(500)) return c.snap;
   auto s = std::make_shared<GroupSnapshot>();
   const PluginPrefs prefs = pluginPrefs();
   for (const auto& cls : hostedClasses()) {
@@ -316,9 +334,10 @@ std::shared_ptr<const GroupSnapshot> pluginGroups() {
   }
   // Stable order: by name, then format (hostedClasses() comes from a map keyed by type).
   std::vector<size_t> idx(s->items.size());
-  for (size_t i = 0; i < idx.size(); ++i) idx[i] = i;
+  std::vector<std::string> names(s->items.size());  // K-73: lower case once per plugin, not per comparison
+  for (size_t i = 0; i < idx.size(); ++i) idx[i] = i, names[i] = lower(s->items[i].name);
   std::sort(idx.begin(), idx.end(), [&](size_t a, size_t b) {
-    const std::string x = lower(s->items[a].name), y = lower(s->items[b].name);
+    const std::string &x = names[a], &y = names[b];
     return x != y ? x < y : s->items[a].type < s->items[b].type;
   });
   GroupSnapshot sorted;
@@ -333,6 +352,7 @@ std::shared_ptr<const GroupSnapshot> pluginGroups() {
   c.scanGen = sg;
   c.prefsGen = pg;
   c.prefs = prefs;
+  c.builtAt = now;
   return c.snap;
 }
 

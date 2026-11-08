@@ -1,4 +1,5 @@
 #include "Settings.h"
+#include <cctype>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -73,6 +74,8 @@ Settings::Settings() {
       {"ui.scaleAuto", b(true)},             // J-91: ui.scale is multiplied by the desktop's scale (core/UiScale.h)
       {"ui.detachWindows", b(true)},         // J-113: windows can be dragged out of the main window
       {"ui.editorZoom", Json::makeString("")},  // K-19: plugin editor sizes per type ("gl.eq=1.5;..."), core/EditorZoom.h
+      {"ui.pluginWindowSize", Json::makeNumber(0.85)},  // K-136: built-in plugin editors' size, 0.75 .. 1.5 (edzoom::kGlobalDefault)
+      {"ui.pluginWindowFit", b(false)},                 // K-136: small editors open larger on a large screen (K-19's automatic size)
       {"ui.loupePinned", b(false)},          // K-15: Loupe is a panel of the main layout
       {"ui.animations", b(true)},            // J-91: decorative interface animations (metronome tick, light fades, glides)
       {"ui.showHints", b(true)},
@@ -99,6 +102,18 @@ Settings::Settings() {
       {"ui.playlistTrackPlus", b(true)},  // K-12: the "+" on a hovered playlist track header (View menu)
       {"ui.trackPlusPattern", b(true)},   // K-12: an instrument given to an empty track from the "+" starts a pattern
       {"ui.layoutVersion", Json::makeNumber(0)},  // J-28: default workspace version the saved layout.ini was built with
+      // K-79: window layout presets (core/LayoutPreset.h): "studio" | "live" | "logic". Per user, never in a project.
+      {"ui.layout", Json::makeString("studio")},
+      {"ui.layoutChosen", b(false)},                 // the welcome screen has offered the choice once
+      {"ui.layoutLinkKeys", b(true)},                // choosing a layout also switches the shortcut set ...
+      {"ui.layoutLinkMenus", b(true)},               // ... and the menu bar style (never the theme or colours, K-122)
+      {"ui.layoutVersion.live", Json::makeNumber(0)},  // like ui.layoutVersion, per preset layout file
+      {"ui.layoutVersion.logic", Json::makeNumber(0)},
+      {"ui.layout.live.view", Json::makeString("playlist")},  // main view in front: "playlist" | "pads"
+      {"ui.menuStyle", Json::makeString("studio")},
+      {"keys.profile", Json::makeString("studio")},
+      {"keys.bindings.live", Json::makeString("")},  // shortcut overrides of the other shortcut sets
+      {"keys.bindings.logic", Json::makeString("")},
       // J-24: general, file, project defaults, backup / autosave, hints, debug, scripting.
       {"general.startup", Json::makeString("template")},   // "template" | "empty" | "last"
       {"general.demoShown", b(false)},                       // J-135: the first launch has opened the demo song
@@ -106,7 +121,9 @@ Settings::Settings() {
       {"general.defaultTemplate", Json::makeString("")},   // "<Category>/<Name>" ("" = built-in starter kit)
       {"general.language", Json::makeString("en")},        // i18n code ("en", "pseudo", catalogue stem)
       {"keys.bindings", Json::makeString("")},             // J-55: shortcut overrides, JSON (keys::Keymap::serialize)
+      {"keys.typingLayout", Json::makeString("standard")},  // K-113: what the typing keys are called (typingLayoutFromId)
       {"file.scriptEditor", Json::makeString("")},         // command that opens a script ("" = system default)
+      {"export.flGridlinePlugins", Json::makeString("suite+fallback")},  // K-110: Gridline-only plugins in FL Studio exports (flp::GridlinePlugins key)
       {"project.defaultNum", Json::makeNumber(4)},
       {"project.defaultDen", Json::makeNumber(4)},
       {"project.defaultAuthor", Json::makeString("")},
@@ -175,6 +192,35 @@ std::string Settings::defaultPath() {
   return (fs::path(platform::configRoot()) / "gridline" / "settings.json").string();
 }
 
+namespace {
+// K-122: a window layout no longer brings its own colours. Older files kept the layout's
+// palette (theme.palette), the link tick (ui.layoutLinkPalette) and the control style kept
+// per palette (theme.controlsFor.*). They are dropped; a file left on the live or logic
+// palette gets back the control style the user had before the layout replaced it.
+void retireLayoutPalette(std::map<std::string, Json>& values) {
+  auto str = [&](const char* key) -> std::string {
+    auto it = values.find(key);
+    return it != values.end() && it->second.is(Json::Type::String) ? it->second.str : std::string();
+  };
+  std::string pal = str("theme.palette");
+  for (auto& c : pal) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  const char* kept = pal == "live" || pal == "performance" ? "live" : pal == "logic" || pal == "tracks" ? "logic" : nullptr;
+  if (kept) {
+    // The style the layout put in place: its own kept one, else the one it shipped with.
+    std::string applied = str((std::string("theme.controlsFor.") + kept).c_str());
+    if (applied.empty()) applied = std::string(kept) == "live" ? "hairline" : "graphite";
+    const std::string own = str("theme.controlsFor.studio");
+    auto cur = values.find("theme.controls");
+    // Only when the layout's style is still in use: a style the user picked since stays.
+    if (!own.empty() && cur != values.end() && cur->second.is(Json::Type::String) && cur->second.str == applied)
+      cur->second = Json::makeString(own);
+  }
+  for (const char* key : {"theme.palette", "ui.layoutLinkPalette", "theme.controlsFor.studio", "theme.controlsFor.live",
+                          "theme.controlsFor.logic"})
+    values.erase(key);
+}
+}  // namespace
+
 bool Settings::load(const std::string& path, std::string* err) {
   std::ifstream is(path, std::ios::binary);
   if (!is) return true;  // first run
@@ -197,6 +243,7 @@ bool Settings::load(const std::string& path, std::string* err) {
   // Retired: the channel strip of plugin windows is no longer remembered (it opens
   // hidden, app/ChannelStrip.h); older files that still have it load as before.
   values_.erase("ui.channelStrip");
+  retireLayoutPalette(values_);
   return true;
 }
 
@@ -245,6 +292,15 @@ bool Settings::set(const std::string& key, double v) {
   values_[key] = Json::makeNumber(v);
   return true;
 }
+bool Settings::setDefault(const std::string& key, double v) {
+  auto d = defaults_.find(key);
+  if (d == defaults_.end() || d->second.type != Json::Type::Number) return false;
+  auto cur = values_.find(key);
+  if (cur == values_.end() || (cur->second.type == Json::Type::Number && cur->second.number == d->second.number)) values_[key] = Json::makeNumber(v);
+  d->second = Json::makeNumber(v);
+  return true;
+}
+
 bool Settings::set(const std::string& key, const std::string& v) {
   auto d = defaults_.find(key);
   if (d == defaults_.end() || d->second.type != Json::Type::String) return false;

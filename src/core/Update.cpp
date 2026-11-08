@@ -201,11 +201,40 @@ Target currentTarget() {
   t.arch = "unknown";
 #endif
 #if defined(__linux__)
-  std::ifstream f("/etc/os-release", std::ios::binary);
-  if (!f) f.open("/usr/lib/os-release", std::ios::binary);
-  if (f) t.package = linuxPackage(std::string(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>()));
+  t.package = detectLinuxPackage("/");
 #endif
   return t;
+}
+
+namespace {
+std::string readText(const fs::path& p) {
+  std::ifstream f(p, std::ios::binary);
+  if (!f) return {};
+  return std::string(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+}
+
+bool hasIdLine(const std::string& osRelease) { return osRelease.rfind("ID=", 0) == 0 || osRelease.find("\nID=") != std::string::npos; }
+}  // namespace
+
+std::string detectLinuxPackage(const std::string& root) {
+  const fs::path r = fs::u8path(root.empty() ? std::string("/") : root);
+  std::error_code ec;
+  // os-release names the family (etc/ first; usr/lib/ holds the vendor copy it usually links to).
+  std::string text = readText(r / "etc" / "os-release");
+  if (!hasIdLine(text)) text = readText(r / "usr" / "lib" / "os-release");
+  const bool known = hasIdLine(text);
+  if (known) {
+    const std::string pkg = linuxPackage(text);
+    if (!pkg.empty()) return pkg;
+  }
+  // Gridline itself was installed from our .deb: the next version comes the same way.
+  for (const char* n : {"gridline.list", "gridline:amd64.list", "gridline:arm64.list"})
+    if (fs::is_regular_file(r / "var" / "lib" / "dpkg" / "info" / n, ec)) return "deb";
+  if (known) return "";  // a distribution we ship no package for (Arch, Gentoo, ...): the AppImage
+  // No os-release to read: the package manager's own database is the next best sign.
+  if (fs::is_regular_file(r / "var" / "lib" / "dpkg" / "status", ec)) return "deb";
+  if (fs::is_directory(r / "var" / "lib" / "rpm", ec) || fs::is_directory(r / "usr" / "lib" / "sysimage" / "rpm", ec)) return "rpm";
+  return "";
 }
 
 std::string linuxPackage(const std::string& osRelease) {
@@ -230,7 +259,8 @@ std::string linuxPackage(const std::string& osRelease) {
       p = q;
     }
   }
-  static const char* const kDeb[] = {"debian", "ubuntu", "linuxmint", "pop", "elementary", "zorin", "kali", "raspbian", "neon", "deepin", "mx"};
+  static const char* const kDeb[] = {"debian", "ubuntu", "linuxmint", "pop", "elementary", "zorin", "kali", "raspbian", "neon", "deepin", "mx",
+                                     "devuan", "pureos", "parrot", "trisquel", "peppermint", "bodhi", "tuxedo"};
   static const char* const kRpm[] = {"fedora", "rhel", "centos", "rocky", "almalinux", "ol", "nobara", "ultramarine",
                                      "suse", "opensuse", "opensuse-leap", "opensuse-tumbleweed", "sles", "mageia", "openmandriva"};
   for (const std::string& i : ids) {
@@ -238,6 +268,10 @@ std::string linuxPackage(const std::string& osRelease) {
       if (i == d) return "deb";
     for (const char* d : kRpm)
       if (i == d) return "rpm";
+    // spins and remixes that name their family inside the word ("ubuntu-studio", "debian-edu")
+    if (i.find("ubuntu") != std::string::npos || i.find("debian") != std::string::npos) return "deb";
+    for (const char* d : {"fedora", "rhel", "suse"})
+      if (i.find(d) != std::string::npos) return "rpm";
   }
   return "";
 }

@@ -1,6 +1,7 @@
 // Gridline — keyboard / MIDI workflow UI (J-17): remote control settings
 // dialog, link menu items, Settings → MIDI page, recording options and typing
 // keyboard menus. Drawn with Gridline's theme.
+#include "../core/ChromeOs.h"
 #include <algorithm>
 #include <chrono>
 #include <cfloat>
@@ -14,6 +15,7 @@
 #include "MidiUi.h"
 #include "ScriptUi.h"
 #include "AudioRecordUi.h"
+#include "J31Ui.h"
 #include "Theme.h"
 #include "Widgets.h"
 
@@ -317,7 +319,7 @@ void drawRemoteDialog(App& a) {
   }
   float right = ImGui::GetContentRegionAvail().x;
   ImGui::SameLine(ImGui::GetCursorPosX() + right - 96 * 2 - theme::kS2);
-  if (ui::TextButton("Cancel", false, 96) || ImGui::IsKeyPressed(ImGuiKey_Escape)) close = true;
+  if (ui::TextButton("Cancel", false, 96) || ::gl::keys::escapePressed()) close = true;
   ImGui::SameLine(0, theme::kS2);
   if (ui::TextButton("Accept", true, 96)) {
     saveLink(a);
@@ -360,7 +362,10 @@ void recordOptionsMenu(App& a) {
   RecordOptions& o = a.recOptions;
   audioRecordFilterMenu(a);  // J-8: what to record (audio / audio editor / notes / automation)
   ImGui::Separator();
-  ImGui::TextDisabled("%s", i18n::tr("Notes"));
+  ImGui::TextDisabled("%s", i18n::tr("Audio takes"));  // K-77: one record options menu (it was a second one in Options)
+  j31::recordingOptionItems(a);
+  ImGui::Separator();
+  ImGui::TextDisabled("%s", i18n::tr("Note recording"));  // K-77: was "Notes", the same as the switch above
   if (ImGui::MenuItem(i18n::tr("Overdub (keep existing notes)"), nullptr, o.overdub)) o.overdub = true;
   if (ImGui::MenuItem(i18n::tr("Replace (clear the channel's notes)"), nullptr, !o.overdub)) o.overdub = false;
   ImGui::Separator();
@@ -389,9 +394,30 @@ void recordOptionsMenu(App& a) {
 
 int (*typingLayoutKey)(int position) = nullptr;
 
-std::string typingKeyName(int key) {
-  return TypingKeyboard::keyLabel(key, typingLayoutKey ? typingLayoutKey(TypingKeyboard::positionOfKey(key)) : 0);
+TypingLayout typingLayout = TypingLayout::Standard;
+
+void loadTypingLayout(const Settings& s) { typingLayout = typingLayoutFromId(s.getString("keys.typingLayout")); }
+
+void setTypingLayout(App& a, TypingLayout l) {
+  typingLayout = l;
+  a.settings.set("keys.typingLayout", typingLayoutId(l));
 }
+
+std::string typingKeyName(int key) {
+  const int position = TypingKeyboard::positionOfKey(key);
+  const int typed = typingLayout == TypingLayout::Computer ? (typingLayoutKey ? typingLayoutKey(position) : 0)
+                                                           : TypingKeyboard::layoutChar(typingLayout, position);
+  return TypingKeyboard::keyLabel(key, typed);
+}
+
+namespace {
+void typingLayoutItems(App& a) {
+  for (int i = 0; i < static_cast<int>(TypingLayout::Count); ++i) {
+    const auto l = static_cast<TypingLayout>(i);
+    if (ImGui::MenuItem(i18n::tr(typingLayoutName(l)), nullptr, typingLayout == l)) setTypingLayout(a, l);
+  }
+}
+}  // namespace
 
 void typingKeyboardMenu(App& a) {
   TypingKeyboard& k = a.typing;
@@ -412,6 +438,10 @@ void typingKeyboardMenu(App& a) {
       if (ImGui::MenuItem(chordTypeName(static_cast<ChordType>(i)), nullptr, static_cast<int>(k.chord) == i)) k.chord = static_cast<ChordType>(i);
     ImGui::EndMenu();
   }
+  if (ImGui::BeginMenu(i18n::tr("Keyboard layout"))) {  // K-113
+    typingLayoutItems(a);
+    ImGui::EndMenu();
+  }
   ImGui::Separator();
   ImGui::TextDisabled(i18n::tr("%s…%s and %s…%s play · %s %s octave · %s %s velocity"), typingKeyName('z').c_str(), typingKeyName('/').c_str(),
                       typingKeyName('q').c_str(), typingKeyName('p').c_str(), typingKeyName('[').c_str(), typingKeyName(']').c_str(),
@@ -424,6 +454,23 @@ void typingKeyboardMenu(App& a) {
 void midiSettingsPage(App& a, float fieldW) {
   const auto& P = pal();
   ImGui::Dummy(ImVec2(0, theme::kS2));
+  {  // K-113: the typing keyboard needs no MIDI device
+    ui::BeginSection("TYPING KEYBOARD");
+    label("Keyboard layout", 168);
+    if (ui::BeginCombo("##typinglayout", i18n::tr(typingLayoutName(typingLayout)), std::max(240.0f, fieldW))) {
+      for (int i = 0; i < static_cast<int>(TypingLayout::Count); ++i) {
+        const auto l = static_cast<TypingLayout>(i);
+        if (ImGui::Selectable(i18n::tr(typingLayoutName(l)), typingLayout == l)) setTypingLayout(a, l);
+      }
+      ImGui::EndCombo();
+    }
+    ImGui::PushTextWrapPos(0);
+    ImGui::TextColored(theme::vec(P.textFaint), i18n::tr("Keys play by where they sit; this names them. %s…%s play, %s %s octave, %s %s velocity."),
+                       typingKeyName('z').c_str(), typingKeyName('/').c_str(), typingKeyName('[').c_str(), typingKeyName(']').c_str(),
+                       typingKeyName('-').c_str(), typingKeyName('=').c_str());
+    ImGui::PopTextWrapPos();
+    ui::EndSection();
+  }
   if (!a.midi) {
     ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("MIDI is not available."));
     return;
@@ -435,7 +482,14 @@ void midiSettingsPage(App& a, float fieldW) {
   // Input devices table.
   ui::BeginSection("INPUT DEVICES");
   ImGui::TextColored(theme::vec(P.textDim), "%s", i18n::tr("Notes play the selected channel; controls drive links and the device template."));
-  if (m.inputs.empty()) ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("No MIDI inputs found."));
+  if (m.inputs.empty()) {
+    ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("No MIDI inputs found."));
+    if (const char* hint = chromeos::midiHint(chromeos::current()); *hint) {  // K-75
+      ImGui::PushTextWrapPos(0);
+      ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr(hint));
+      ImGui::PopTextWrapPos();
+    }
+  }
   if (!m.inputs.empty() && ImGui::BeginTable("##ins", 5, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingFixedFit)) {
     ImGui::TableSetupColumn(i18n::tr("On"), ImGuiTableColumnFlags_WidthFixed, 30);
     ImGui::TableSetupColumn(i18n::tr("Device"), ImGuiTableColumnFlags_WidthStretch);
@@ -551,10 +605,16 @@ void midiSettingsPage(App& a, float fieldW) {
   if (ImGui::Checkbox(i18n::tr("Sostenuto (CC 66)"), &r.sostenuto)) changed = true;
   ImGui::SameLine(0, theme::kS3);
   if (ImGui::Checkbox(i18n::tr("Soft (CC 67)"), &r.soft)) changed = true;
+  // The caption and the value sit beside the slider: inside it, the handle covered them.
+  ImGui::SameLine(0, theme::kS2);
+  ImGui::AlignTextToFramePadding();
+  ImGui::TextUnformatted(i18n::tr("Soft velocity"));
   ImGui::SameLine(0, theme::kS2);
   ImGui::SetNextItemWidth(110);
   float softPct = r.softFactor * 100;
-  if (ImGui::SliderFloat("##softf", &softPct, 10, 100, "velocity %.0f%%")) r.softFactor = softPct / 100, changed = true;
+  if (ImGui::SliderFloat("##softf", &softPct, 10, 100, "")) r.softFactor = softPct / 100, changed = true;
+  ImGui::SameLine(0, theme::kS2);
+  ImGui::Text("%.0f%%", static_cast<double>(r.softFactor * 100));
   ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("Sustain (CC 64), aftertouch and pitch bend always reach the instrument."));
   if (ImGui::TreeNodeEx("MIDI channel routing and pitch bend range", r.byChannel ? ImGuiTreeNodeFlags_DefaultOpen : 0)) {
     const Song& s = a.doc.song();

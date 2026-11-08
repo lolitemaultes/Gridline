@@ -221,7 +221,10 @@ void optionsItems(App& a) {
     ImGui::EndMenu();
   }
   ui::Hint("While playing, a click in the ruler or a marker jump waits for the next beat / bar line");
-  if (ImGui::BeginMenu(i18n::tr("Recording options"))) {
+}
+
+void recordingOptionItems(App& a) {
+  {
     bool b = a.settings.getBool("record.autoUnarm");
     if (ImGui::MenuItem(i18n::tr("Disarm tracks after recording"), nullptr, &b)) a.settings.set("record.autoUnarm", b);
     b = a.settings.getBool("record.ignoreSilent");
@@ -233,7 +236,6 @@ void optionsItems(App& a) {
     ImGui::Separator();
     if (ImGui::MenuItem(i18n::tr("Name takes after the mixer track"), nullptr, naming == 0)) a.settings.set("record.naming", 0);
     if (ImGui::MenuItem(i18n::tr("Name takes after the audio input"), nullptr, naming == 1)) a.settings.set("record.naming", 1);
-    ImGui::EndMenu();
   }
 }
 

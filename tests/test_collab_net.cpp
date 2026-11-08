@@ -767,7 +767,7 @@ void testLifecycle() {
   expect(removedRow, "the recent list shows the project as removed");
   cb.dismissExit();
   cb.forgetProject(root + "/Sam/Third");
-  expect(!std::filesystem::exists(root + "/Sam/Third/.gridline-collab") && std::filesystem::exists(root + "/Sam/Third/Song.gridline.json"),
+  expect(!std::filesystem::exists(root + "/Sam/Third/.gridline-collab") && std::filesystem::exists(root + "/Sam/Third/Song.gridline"),
          "forget: the folder keeps the music as a normal project, the shared history goes");
   // 3. stop sharing: the admin's copy becomes a normal project
   expect(ca.requestStopSharing(da, &err), "stop sharing");
@@ -797,7 +797,7 @@ void testInviteName() {
   w.run(1.0);
   b.peer.s->saveNow();
   expect(b.peer.s->ready() && b.peer.s->projectName() == "Renamed after the invite" && a.peer.s->projectName() == "Renamed after the invite" &&
-             sim::samePath(b.peer.s->projectFile(), b.peer.folder + "/Renamed after the invite.gridline.json") && std::filesystem::exists(b.peer.s->projectFile()) &&
+             sim::samePath(b.peer.s->projectFile(), b.peer.folder + "/Renamed after the invite.gridline") && std::filesystem::exists(b.peer.s->projectFile()) &&
              told == 0,
          "after the first sync the joiner has the project's current name (the invite's never overwrites it, no rename notice)");
   InviteInfo fresh;
@@ -835,7 +835,7 @@ void testControllerRename() {
   expect(sim::samePath(c.folderForName(), parent + "/Album opener"), "the folder keeps its name unless asked");
   std::string now;
   expect(c.renameFolder(doc, &now, &err) && sim::samePath(now, parent + "/Album opener") && c.session() && c.session()->config().folder == now &&
-             std::filesystem::exists(now + "/Album opener.gridline.json") && !std::filesystem::exists(folder),
+             std::filesystem::exists(now + "/Album opener.gridline") && !std::filesystem::exists(folder),
          "asked to, the folder takes the name; the project reopens from it");
   known = c.knownProjects();
   expect(known.size() == 1 && known.front().folder == now, "Recent collaborative projects points at the renamed folder (one entry)");

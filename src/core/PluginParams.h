@@ -53,6 +53,11 @@ enum Sampler {
   // stereo fade, reverb). Neutral defaults leave the sample untouched.
   SmpPreRampIn, SmpPreRampOut, SmpPreBoost, SmpPreClip, SmpPreTilt, SmpPreCutoff, SmpPreReso,
   SmpPreRingMix, SmpPreRingFreq, SmpPreStereoDelay, SmpPreWarp, SmpPreReverbMix, SmpPreReverbType, SmpPreFadeStereo,
+  // K-132: the tempo the time stretch (or, resampling, the pitch) was fitted at; 0 = fixed. Set,
+  // the sample follows the tempo: a stretch keeps its beats at whatever the tempo is, a resampled
+  // note takes the rate the tempo gives it when it starts. FL import sets it for a channel
+  // stretched to a time; nothing else does, so other projects sound as they did.
+  SmpFitTempo,
   SmpCount
 };
 // "gl.kick"

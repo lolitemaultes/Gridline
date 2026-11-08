@@ -95,6 +95,7 @@ PluginInfo vocoder() {
   p.params[VcHighW] = lg("High band (wide)", "Hz", 10, 20000, 11000);
   p.params[VcAttackW] = lg("Attack (wide)", "ms", 0.5, 1000, 3);
   p.params[VxLatencyLaw] = ch("Latency law", {"1", "2", "3"}, 0);
+  p.params[VxEnhanceLaw] = ch("Enhancer law", {"1", "2"}, 0);
   p.legacyModelParam = VxModel;
   p.presets = {
       {"Talk box", {}},
@@ -135,6 +136,7 @@ PluginInfo pitch() {
   p.params[PsAnalysis] = ch("Analysis", {"Left", "Right", "Left + Right"}, 0);
   p.params[PsPitchMode] = ch("Pitch mode", {"Relative", "Fixed C4", "Fixed C5", "Fixed C6"}, 0);
   p.params[PsDetector] = ch("Detector", {"Fast", "Accurate"}, 1);
+  p.params[PsMusicLaw] = ch("Grain law", {"1", "2"}, 0);
   p.legacyModelParam = PsEngine;
   p.presets = {
       {"Unity", {}},
@@ -148,7 +150,7 @@ PluginInfo pitch() {
   // K-2 round 3: new instances start at the reference plugin's defaults (keep formants, 85 ms window, density 2,
   // no jitter / randomize, 16-step delay); the engine stays Hi-fi (J-87). The delay time stays 0 ms: the Classic engines
   // apply it whatever the delay mode. Factory presets keep their values.
-  setReferenceDefaults(p, {{PsPreserve, 1}, {PsGrain, 85}, {PsDensity, 2}, {PsJitter, 0}, {PsRand, 0}, {PsDelaySteps, 16}});
+  setReferenceDefaults(p, {{PsPreserve, 1}, {PsGrain, 85}, {PsDensity, 2}, {PsJitter, 0}, {PsRand, 0}, {PsDelaySteps, 16}, {PsMusicLaw, 1}});
   return p;
 }
 

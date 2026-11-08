@@ -95,7 +95,8 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 Name: "plugins"; Description: "Install the Gridline VST3 and CLAP plugins for other hosts (Common Files\VST3, Common Files\CLAP)"; GroupDescription: "Plugins:"; Flags: unchecked
-Name: "assocproject"; Description: "Offer Gridline in ""Open with"" for Gridline projects (.gridline.json)"; GroupDescription: "File types:"; Flags: unchecked
+Name: "assocproject"; Description: "Open Gridline projects (.gridline, .gridlinez) with Gridline, and offer it in ""Open with"" for older ones (.gridline.json, .gridline.zip)"; GroupDescription: "File types:"
+Name: "assocmodule"; Description: "Offer Gridline in ""Open with"" for tracker modules (.xm, .mod)"; GroupDescription: "File types:"
 Name: "assocflp"; Description: "Offer Gridline in ""Open with"" for FL Studio projects (.flp)"; GroupDescription: "File types:"; Flags: unchecked
 
 [InstallDelete]
@@ -131,11 +132,42 @@ Name: "{group}\Uninstall Gridline"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\Gridline"; Filename: "{app}\gridline-app.exe"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Registry]
-; Optional file associations (off by default).
+; File types (K-119, K-121). .gridline and .gridlinez are Gridline's own extensions: Gridline is
+; their default program. For every other type Gridline only adds itself to "Open with"
+; (OpenWithProgids and the Applications key's SupportedTypes) and never writes the extension's
+; default value, so the program that opens it stays the user's choice. Windows names a file's
+; type by its last extension, so a project saved by an earlier version (.gridline.json,
+; .gridline.zip) is a .json or .zip file: Gridline is offered in Open with for those.
+; The Gridline project and tracker module entries are on by default, the FL Studio one is not.
+Root: HKA; Subkey: "Software\Classes\Applications\gridline-app.exe"; ValueType: string; ValueName: "FriendlyAppName"; ValueData: "Gridline"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\Applications\gridline-app.exe\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\gridline-app.exe,0"
+Root: HKA; Subkey: "Software\Classes\Applications\gridline-app.exe\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\gridline-app.exe"" ""%1"""
+Root: HKA; Subkey: "Software\Classes\Applications\gridline-app.exe\SupportedTypes"; ValueType: string; ValueName: ".gridline"; ValueData: ""; Tasks: assocproject
+Root: HKA; Subkey: "Software\Classes\Applications\gridline-app.exe\SupportedTypes"; ValueType: string; ValueName: ".gridlinez"; ValueData: ""; Tasks: assocproject
+Root: HKA; Subkey: "Software\Classes\Applications\gridline-app.exe\SupportedTypes"; ValueType: string; ValueName: ".json"; ValueData: ""; Tasks: assocproject
+Root: HKA; Subkey: "Software\Classes\Applications\gridline-app.exe\SupportedTypes"; ValueType: string; ValueName: ".zip"; ValueData: ""; Tasks: assocproject
+Root: HKA; Subkey: "Software\Classes\Applications\gridline-app.exe\SupportedTypes"; ValueType: string; ValueName: ".xm"; ValueData: ""; Tasks: assocmodule
+Root: HKA; Subkey: "Software\Classes\Applications\gridline-app.exe\SupportedTypes"; ValueType: string; ValueName: ".mod"; ValueData: ""; Tasks: assocmodule
+Root: HKA; Subkey: "Software\Classes\Applications\gridline-app.exe\SupportedTypes"; ValueType: string; ValueName: ".flp"; ValueData: ""; Tasks: assocflp
+Root: HKA; Subkey: "Software\Classes\.gridline"; ValueType: string; ValueName: ""; ValueData: "Gridline.Project"; Flags: uninsdeletevalue uninsdeletekeyifempty; Tasks: assocproject
+Root: HKA; Subkey: "Software\Classes\.gridline"; ValueType: string; ValueName: "Content Type"; ValueData: "application/x-gridline-project"; Flags: uninsdeletevalue uninsdeletekeyifempty; Tasks: assocproject
+Root: HKA; Subkey: "Software\Classes\.gridline\OpenWithProgids"; ValueType: string; ValueName: "Gridline.Project"; ValueData: ""; Flags: uninsdeletevalue uninsdeletekeyifempty; Tasks: assocproject
+Root: HKA; Subkey: "Software\Classes\.gridlinez"; ValueType: string; ValueName: ""; ValueData: "Gridline.ZippedProject"; Flags: uninsdeletevalue uninsdeletekeyifempty; Tasks: assocproject
+Root: HKA; Subkey: "Software\Classes\.gridlinez"; ValueType: string; ValueName: "Content Type"; ValueData: "application/x-gridline-zipped-project"; Flags: uninsdeletevalue uninsdeletekeyifempty; Tasks: assocproject
+Root: HKA; Subkey: "Software\Classes\.gridlinez\OpenWithProgids"; ValueType: string; ValueName: "Gridline.ZippedProject"; ValueData: ""; Flags: uninsdeletevalue uninsdeletekeyifempty; Tasks: assocproject
 Root: HKA; Subkey: "Software\Classes\.json\OpenWithProgids"; ValueType: string; ValueName: "Gridline.Project"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assocproject
 Root: HKA; Subkey: "Software\Classes\Gridline.Project"; ValueType: string; ValueName: ""; ValueData: "Gridline project"; Flags: uninsdeletekey; Tasks: assocproject
 Root: HKA; Subkey: "Software\Classes\Gridline.Project\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\gridline-app.exe,0"; Tasks: assocproject
 Root: HKA; Subkey: "Software\Classes\Gridline.Project\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\gridline-app.exe"" ""%1"""; Tasks: assocproject
+Root: HKA; Subkey: "Software\Classes\.zip\OpenWithProgids"; ValueType: string; ValueName: "Gridline.ZippedProject"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assocproject
+Root: HKA; Subkey: "Software\Classes\Gridline.ZippedProject"; ValueType: string; ValueName: ""; ValueData: "Gridline zipped project"; Flags: uninsdeletekey; Tasks: assocproject
+Root: HKA; Subkey: "Software\Classes\Gridline.ZippedProject\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\gridline-app.exe,0"; Tasks: assocproject
+Root: HKA; Subkey: "Software\Classes\Gridline.ZippedProject\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\gridline-app.exe"" ""%1"""; Tasks: assocproject
+Root: HKA; Subkey: "Software\Classes\.xm\OpenWithProgids"; ValueType: string; ValueName: "Gridline.Module"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assocmodule
+Root: HKA; Subkey: "Software\Classes\.mod\OpenWithProgids"; ValueType: string; ValueName: "Gridline.Module"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assocmodule
+Root: HKA; Subkey: "Software\Classes\Gridline.Module"; ValueType: string; ValueName: ""; ValueData: "Tracker module (Gridline)"; Flags: uninsdeletekey; Tasks: assocmodule
+Root: HKA; Subkey: "Software\Classes\Gridline.Module\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\gridline-app.exe,0"; Tasks: assocmodule
+Root: HKA; Subkey: "Software\Classes\Gridline.Module\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\gridline-app.exe"" ""%1"""; Tasks: assocmodule
 Root: HKA; Subkey: "Software\Classes\.flp\OpenWithProgids"; ValueType: string; ValueName: "Gridline.FLP"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assocflp
 Root: HKA; Subkey: "Software\Classes\Gridline.FLP"; ValueType: string; ValueName: ""; ValueData: "FL Studio project (Gridline)"; Flags: uninsdeletekey; Tasks: assocflp
 Root: HKA; Subkey: "Software\Classes\Gridline.FLP\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\gridline-app.exe,0"; Tasks: assocflp

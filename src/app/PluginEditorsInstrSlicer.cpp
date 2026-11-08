@@ -445,7 +445,7 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
     a.fileDialog.title = "Load loop";
     const char* h = gl::platform::homeEnv();
     a.fileDialog.dir = file.empty() ? (h ? h : ".") : fs::path(file).parent_path().string();
-    a.fileDialog.exts = {".wav", ".wave", ".flac", ".mp3", ".ogg", ".wv"};
+    a.fileDialog.exts = {".wav", ".wave", ".flac", ".mp3", ".ogg", ".wv", ".m4a", ".aac"};
     a.fileDialog.onOk = [&a, tt](const std::string& p) {
       if (const PluginState* cur = tt.state(a.doc.song())) {
         PluginState ns = *cur;

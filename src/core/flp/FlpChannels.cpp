@@ -229,6 +229,7 @@ void importChannels(Context& c) {
     // Resample-mode speed change (sampler): the pitch follows the speed.
     double stretchMul = 1;
     int stretchMode = 0;
+    bool fittedToTime = false;  // K-132: the channel's time fits the sample (it follows the tempo)
     if (params && params->size >= 112) {
       stretchMul = std::pow(2.0, params->i32(104) / 10000.0);
       stretchMode = params->i32(108);
@@ -242,6 +243,7 @@ void importChannels(Context& c) {
           }
           if (const double f = channelFitStretch(c, sample, beats, region); f > 0) {
             stretchMul *= f;
+            fittedToTime = true;
             c.report.counts["sampler channels stretched to a time"]++;
           } else {
             c.report.counts["sampler channels stretched to a time (sample not found: not stretched)"]++;
@@ -397,6 +399,13 @@ void importChannels(Context& c) {
           setParam(sp, SmpPitchShift, std::clamp(params->i32(100), -1200, 1200));
           if (stretchMul < 0.25 || stretchMul > 4.0) c.report.counts["sampler time stretches beyond x0.25..x4 (clamped)"]++;
         }
+      }
+      // K-132: a sample stretched to a time spans its beats at whatever the tempo is (tempo
+      // automation, a tempo change after the import), as in FL: the stretch, or resampling the
+      // pitch, was fitted at the project tempo and follows it from there.
+      if (fittedToTime && (stretchMode == 0 || (params && params->size >= 144))) {
+        setParam(sp, SmpFitTempo, std::clamp(c.song.tempo, 10.0, 1000.0));
+        c.report.counts["sampler channels stretched to a time (follow the tempo)"]++;
       }
       ChannelIns ins = decodeChannelIns(evs);
       // FL plays a sampler voice to the end of the sample unless the volume

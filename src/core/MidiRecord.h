@@ -115,6 +115,14 @@ enum class ChordType : uint8_t { Major = 0, Minor, Seventh, Major7, Minor7, Sus4
 const char* chordTypeName(ChordType c);
 std::vector<int> chordIntervals(ChordType c);
 
+// K-113: the layout the typing keyboard names its keys after. Keys always play by where they sit;
+// the layout only says what each place is called. Standard (US QWERTY) is the default, also for
+// settings saved before there was a choice; Computer asks the operating system's current layout.
+enum class TypingLayout : uint8_t { Standard = 0, Qwertz, Azerty, Dvorak, Colemak, Computer, Count };
+const char* typingLayoutName(TypingLayout l);           // "Standard (QWERTY)", ..., "Follow the computer"
+const char* typingLayoutId(TypingLayout l);             // the settings value: "standard", "qwertz", ..., "computer"
+TypingLayout typingLayoutFromId(const std::string& id);  // anything unknown or empty: Standard
+
 class TypingKeyboard {
  public:
   int octave = 4;      // lower row starts at baseNote() = 12 * octave
@@ -140,8 +148,11 @@ class TypingKeyboard {
   // Where a key code sits, 0 if it has no place.
   static int positionOfKey(int key);
   // What to call a key on this keyboard: `typed`, the character its position types on the layout
-  // in use, in capitals; the US character when that is not plain ASCII.
+  // in use (a Unicode code point), in capitals; the US character when it has no Latin-1 name.
   static std::string keyLabel(int key, int typed);
+  // K-113: what `layout` types at `position` (a Unicode code point), 0 when it has nothing there or the
+  // layout is Computer (the caller asks the system).
+  static int layoutChar(TypingLayout layout, int position);
   bool anyHeld() const { return !held_.empty(); }
   std::vector<int> heldNotes() const;
 

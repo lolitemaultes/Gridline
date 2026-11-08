@@ -145,10 +145,12 @@ std::shared_ptr<const Aux> buildAux(const PluginState& state) {
     } else if (d.table.rfind("file:", 0) == 0) {
       auto t = loadTableFile(d.table.substr(5));
       if (t) x.mip = buildMip(t);
+      else a->incomplete = true;  // K-132: a file still arriving (collab) is read once it is there
     }
     if (const std::string path = mediaFile(m, d.sample); !path.empty()) {
       x.sample = sampleCache().get(path);
       if (!x.sample) x.sample = loadSample(path);
+      if (!x.sample) a->incomplete = true;
       if (x.sample) {
         for (float sl : d.slices) x.slices.push_back(static_cast<double>(sl) * static_cast<double>(x.sample->frames()));
         // spectral analysis (limited to 30 s)
@@ -240,9 +242,15 @@ std::shared_ptr<const Aux> buildAux(const PluginState& state) {
     sampleCurve(da, a->shapeA[static_cast<size_t>(s)].data(), 257, true);
     sampleCurve(db, a->shapeB[static_cast<size_t>(s)].data(), 257, true);
     if (!e.ir.empty() && e.ir.rfind("factory:", 0) != 0)
-      if (const std::string path = mediaFile(m, e.ir); !path.empty()) a->irFile[static_cast<size_t>(s)] = loadSample(path);
+      if (const std::string path = mediaFile(m, e.ir); !path.empty()) {
+        a->irFile[static_cast<size_t>(s)] = loadSample(path);
+        if (!a->irFile[static_cast<size_t>(s)]) a->incomplete = true;
+      }
   }
-  if (const std::string path = mediaFile(m, m.noiseFile); !path.empty()) a->noiseFile = loadSample(path);
+  if (const std::string path = mediaFile(m, m.noiseFile); !path.empty()) {
+    a->noiseFile = loadSample(path);
+    if (!a->noiseFile) a->incomplete = true;
+  }
   if (!m.tuning.empty()) a->tuning = parseTun(m.tuning, a->hasTuning);
   else
     for (int i = 0; i < 128; ++i) a->tuning[static_cast<size_t>(i)] = i;
@@ -551,9 +559,12 @@ class PlasmaGen final : public Generator {
     hostAux_ = aux;  // keeps the IR / curves alive for the bank
   }
 
+  bool sleeping() const { return asleep_; }
+  void allowSleep(bool on) { sleepAllowed_ = on; }
   void* liveData() { return &live_; }
   struct Live {
     std::atomic<int> voices{0}, arpStep{-1};
+    mutable std::atomic<uint32_t> views{0};  // counted by liveView (the editor reads the displays)
     std::atomic<float> oscPos[kOscs], env[kEnvs], envTime[kEnvs], lfo[kLfos], lfoPh[kLfos], fx[kFxSlots], outL{0}, outR{0}, mod[kModSlots], cut[kFilters];
     std::atomic<int> envStage[kEnvs], oscOn[kOscs];
     std::atomic<double> clipPos{-1};
@@ -652,7 +663,9 @@ class PlasmaGen final : public Generator {
     tempo_ = ctx.tempo > 1 ? ctx.tempo : 120;
     playing_ = ctx.playing;
     beat_ = ctx.ppq > 0 ? ctx.tick / ctx.ppq : 0;
+    bool bankChanged = false;
     if (FxBank* b = pending_.exchange(nullptr)) {
+      bankChanged = true;
       FxBank* old = bank_;
       bank_ = b;
       if (old) {
@@ -670,13 +683,23 @@ class PlasmaGen final : public Generator {
     const auto& p = state.params;
     const size_t n = std::min(p.size(), static_cast<size_t>(kParamCount));
     std::copy(p.begin(), p.begin() + static_cast<std::ptrdiff_t>(n), base_.begin());
+    // the matrix and the idle sleep's hold only change with the parameters, the effect bank or the data
+    const bool same = !bankChanged && aux_ == lastAux_ && n == lastN_ &&
+                      std::memcmp(lastParams_.data(), p.data(), n * sizeof(float)) == 0;
+    offline_ = ctx.offline;
+    if (!same || offline_ || !sleepAllowed_) wake();
     os_ = G(G_Quality) >= 1.5f ? 4 : G(G_Quality) >= 0.5f ? 2 : 1;
     if (os_ != prevOs_) {
       for (auto& d : decim_) d.reset();
       prevOs_ = os_;
     }
     srv_ = sr_ * os_;
-    buildMatrix();
+    if (!same || !matrixBuilt_) {
+      std::copy(p.begin(), p.begin() + static_cast<std::ptrdiff_t>(n), lastParams_.begin());
+      lastN_ = n, lastAux_ = aux_;
+      buildMatrix();
+      matrixBuilt_ = true;
+    }
     // scale for the arp / porta (Key + Scale)
     scaleBuf_.clear();
     for (int s : scaleSteps(static_cast<int>(G(G_Scale)))) scaleBuf_.push_back(s);
@@ -689,6 +712,12 @@ class PlasmaGen final : public Generator {
 
   void render(float* L, float* R, int n) override {
     if (!aux_) return;
+    // the editor reads the live data (liveView): asleep, the unrouted LFOs and displays keep moving for it
+    const uint32_t views = live_.views.load(std::memory_order_relaxed);
+    if (views != seenViews_) seenViews_ = views, viewLeft_ = static_cast<int>(sr_ * 0.5);
+    else viewLeft_ = std::max(0, viewLeft_ - n);
+    const bool viewed = viewLeft_ > 0;
+    viewed_ = viewed;
     // control periods on an absolute grid: the result does not depend on the host block size
     for (int pos = 0; pos < n;) {
       const bool grid = ctlLeft_ <= 0;
@@ -697,13 +726,18 @@ class PlasmaGen final : public Generator {
         runSequencers(kCtl);  // sequencer events land on the control grid
       }
       const int m = std::min(ctlLeft_, n - pos);
-      renderChunk(L + pos, R + pos, m, grid, ctlLeft_);
+      if (asleep_ && busy()) wake();  // a note (played or from a sequencer) wakes it in this chunk
+      if (asleep_) idleChunk(m, grid, ctlLeft_);
+      else renderChunk(L + pos, R + pos, m, grid, ctlLeft_);
       beat_ += m / sr_ * tempo_ / 60.0;
       recClock_ += m / sr_ * tempo_ / 60.0;
       ctlLeft_ -= m;
       pos += m;
     }
-    publishLive();
+    // the editor's displays: every block while it reads them or while awake; asleep and unseen,
+    // the values stay as published in the block the sleep began
+    if (!asleep_ || viewed || !publishedAsleep_) publishLive();
+    publishedAsleep_ = asleep_;
   }
 
   int takeMidiOut(MidiOutEvent* out, int max) override {
@@ -776,6 +810,7 @@ class PlasmaGen final : public Generator {
     slotCount_ = 0;
     destCount_ = 0;
     audioSrc_ = false;
+    lfoUsed_ = 0;
     for (int s = 0; s < kModSlots; ++s) {
       const int src = static_cast<int>(std::lround(G(modP(s, M_Source))));
       const int dst = static_cast<int>(std::lround(G(modP(s, M_Dest)))) - 1;
@@ -787,6 +822,10 @@ class PlasmaGen final : public Generator {
         destOf_[static_cast<size_t>(dst)] = d;
         destParam_[d] = dst;
         cubeDest_[static_cast<size_t>(d)] = static_cast<uint8_t>(!law ? 0 : cubeKnob(dst) ? 1 : squareKnob(dst) ? 2 : (dst == G_EnvScale || dst == G_LfoScale) ? 3 : 0);
+      }
+      for (int q : {src, static_cast<int>(std::lround(G(modP(s, M_Aux))))}) {
+        if (q >= SrcLfo1 && q <= SrcLfo10) lfoUsed_ |= 1u << (q - SrcLfo1);
+        if (q >= SrcLfo1Y && q <= SrcLfo10Y) lfoUsed_ |= 1u << (q - SrcLfo1Y);
       }
       Slot& sl = slots_[slotCount_++];
       sl.index = s;
@@ -2309,24 +2348,8 @@ class PlasmaGen final : public Generator {
     fc.sr = sr_, fc.tempo = tempo_, fc.beat = beat_, fc.playing = playing_, fc.driveBoost = G(tailP(T_DriveMode)) >= 0.5f;
     // bus / direct / master gains: under the imported law they glide to their targets over about
     // 113 ms and snap within 0.01, as the source's gain smoothing does
-    const float tgt[4] = {static_cast<float>(busGain(GV(G_Bus1Vol))), static_cast<float>(busGain(GV(G_Bus2Vol))),
-                          static_cast<float>(busGain(GV(G_DirectVol))), static_cast<float>(masterGain(GV(G_MasterVol)))};
-    const bool glide = modLaw_ && gainsSet_;
-    if (!glide)
-      for (int k = 0; k < 4; ++k) gainNow_[k] = tgt[k];
-    gainsSet_ = true;
-    const float gk = static_cast<float>(1.0 - std::exp(-1.0 / (0.1134 * sr_)));
-    auto glideTo = [&](int k) {
-      if (!glide) return;
-      gainNow_[k] += (tgt[k] - gainNow_[k]) * gk;
-      if (std::fabs(tgt[k] - gainNow_[k]) < 0.01f) gainNow_[k] = tgt[k];
-    };
-    const bool gliding = glide && (gainNow_[0] != tgt[0] || gainNow_[1] != tgt[1] || gainNow_[2] != tgt[2] || gainNow_[3] != tgt[3]);
-    std::array<float, 4> g0{gainNow_[0], gainNow_[1], gainNow_[2], gainNow_[3]};
-    if (gliding)  // per-sample gains for this chunk (bus 1, bus 2, direct, master)
-      for (int i = 0; i < m; ++i) {
-        for (int k = 0; k < 4; ++k) glideTo(k), gainRamp_[k][i] = gainNow_[k];
-      }
+    const bool gliding = stepGains(m, true);  // per-sample gains for this chunk (bus 1, bus 2, direct, master)
+    const std::array<float, 4> g0{gainNow_[0], gainNow_[1], gainNow_[2], gainNow_[3]};
     auto gain = [&](int k, int i) { return gliding ? gainRamp_[k][i] : g0[static_cast<size_t>(k)]; };
     // bus chain: one bus feeds the other's input (after its own rack and level) instead of going to
     // its own output; one direction only, so there is no feedback. Both ways: bus 2 feeds bus 1 and
@@ -2368,6 +2391,81 @@ class PlasmaGen final : public Generator {
     // effect tails keep the instrument alive after the last note
     if (pk > 1e-6f || activeCount() > 0) tailLeft_ = static_cast<int>(sr_ * 0.25);
     else if (tailLeft_ > 0) tailLeft_ = std::max(0, tailLeft_ - m);
+    sleepCheck(pk, m);
+  }
+  // ---------------------------------------------------------------- idle sleep
+  // Asleep, a chunk does only what a later note hears: the free-running global LFOs, the global
+  // matrix (its smoothing) and the bus / master gain glide, exactly as a running chunk does with
+  // no note. Voices, decimators and effect racks are skipped and the output is silence (the racks
+  // went quiet for longer than any of their delay lines can hold sound).
+  static constexpr float kQuiet = 1e-6f;  // -120 dBFS, as the effect tail that keeps active() on
+  bool busy() const {
+    for (const auto& n : notes_)
+      if (n.active) return true;
+    if (runMask_ != 0 && playing_) return true;
+    for (const auto& sp : spanClip_)
+      if (sp.active()) return true;
+    return arp_.held() || clip_.active();
+  }
+  void wake() {
+    asleep_ = false;
+    quietFrames_ = 0;
+  }
+  int holdFrames() const {
+    double secs = 0.25;
+    for (int s = 0; s < kFxSlots; ++s) {
+      const int type = fxType(s);
+      if (type == FxNone || G(fxP(s, X_On)) < 0.5f) continue;
+      float pv[kFxParams];
+      for (int q = 0; q < kFxParams; ++q) pv[q] = fxParam(s, q);
+      secs += fxHoldSeconds(bank_ ? bank_->unit[static_cast<size_t>(s)].get() : nullptr, type, pv, tempo_);
+    }
+    return static_cast<int>(secs * sr_);
+  }
+  // after a running chunk with output peak pk: count the quiet, and sleep once it held long enough
+  void sleepCheck(float pk, int m) {
+    if (pk > kQuiet || busy() || !sleepAllowed_ || offline_) {
+      quietFrames_ = 0;
+      return;
+    }
+    if (quietFrames_ == 0) holdFrames_ = holdFrames();
+    quietFrames_ += m;
+    if (quietFrames_ >= holdFrames_) {
+      asleep_ = true;
+      tailLeft_ = 0;
+      outPeak_ = 0;
+    }
+  }
+  void idleChunk(int m, bool grid, int period) {
+    const double dt = period / sr_;
+    lead_ = nullptr;
+    if (grid) {
+      // an LFO no matrix slot reads makes no sound: asleep it runs only for the editor
+      for (int l = 0; l < kLfos; ++l)
+        if (viewed_ || (lfoUsed_ >> l & 1u)) stepLfo(nullptr, globalLfo_[l], l, dt, true, true);
+      evalMatrix(nullptr, goff_, static_cast<float>(dt));
+    }
+    stepGains(m, false);
+  }
+  // the bus 1 / bus 2 / direct / master gains for this chunk; ramp: write the per-sample gains
+  // (gainRamp_). Returns true when they glide within the chunk.
+  bool stepGains(int m, bool ramp) {
+    const float tgt[4] = {static_cast<float>(busGain(GV(G_Bus1Vol))), static_cast<float>(busGain(GV(G_Bus2Vol))),
+                          static_cast<float>(busGain(GV(G_DirectVol))), static_cast<float>(masterGain(GV(G_MasterVol)))};
+    const bool glide = modLaw_ && gainsSet_;
+    if (!glide)
+      for (int k = 0; k < 4; ++k) gainNow_[k] = tgt[k];
+    gainsSet_ = true;
+    const bool gliding = glide && (gainNow_[0] != tgt[0] || gainNow_[1] != tgt[1] || gainNow_[2] != tgt[2] || gainNow_[3] != tgt[3]);
+    if (!gliding) return false;
+    const float gk = static_cast<float>(1.0 - std::exp(-1.0 / (0.1134 * sr_)));
+    for (int i = 0; i < m; ++i)
+      for (int k = 0; k < 4; ++k) {
+        gainNow_[k] += (tgt[k] - gainNow_[k]) * gk;
+        if (std::fabs(tgt[k] - gainNow_[k]) < 0.01f) gainNow_[k] = tgt[k];
+        if (ramp) gainRamp_[static_cast<size_t>(k)][static_cast<size_t>(i)] = gainNow_[k];
+      }
+    return true;
   }
   float fxParam(int slot, int p) const { return std::clamp(GV(fxP(slot, X_P0 + p)), 0.f, 1.f); }
   int fxType(int slot) const { return std::clamp(static_cast<int>(std::lround(G(fxP(slot, X_Type)))), 0, FxTypeCount - 1); }
@@ -2552,6 +2650,14 @@ class PlasmaGen final : public Generator {
   std::vector<FxNode> fxOrder_ = std::vector<FxNode>(0);
   Lr4 split_[kFxSlots][2];
   int tailLeft_ = 0, ctlLeft_ = 0;
+  bool asleep_ = false, sleepAllowed_ = true, offline_ = false, matrixBuilt_ = false;
+  bool viewed_ = false, publishedAsleep_ = false;
+  uint32_t seenViews_ = 0, lfoUsed_ = 0;  // lfoUsed_: LFOs a matrix slot reads (source or aux)
+  int viewLeft_ = 0;
+  int quietFrames_ = 0, holdFrames_ = 0;
+  std::vector<float> lastParams_ = std::vector<float>(kParamCount, 0.f);  // the parameters the matrix was built from
+  size_t lastN_ = 0;
+  const Aux* lastAux_ = nullptr;
   float outPeak_ = 0;
   float gainNow_[4] = {};  // gliding bus 1, bus 2, direct and master gains
   bool gainsSet_ = false;
@@ -2566,6 +2672,7 @@ bool liveView(const Generator* g, LiveView& out) {
   const auto* p = dynamic_cast<const PlasmaGen*>(g);
   if (!p) return false;
   const auto& l = p->live();
+  l.views.fetch_add(1, std::memory_order_relaxed);
   out.voices = l.voices.load(std::memory_order_relaxed);
   for (int o = 0; o < kOscs; ++o) out.oscPos[o] = l.oscPos[o].load(std::memory_order_relaxed), out.oscOn[o] = l.oscOn[o].load(std::memory_order_relaxed) != 0;
   for (int e = 0; e < kEnvs; ++e) {
@@ -2600,6 +2707,13 @@ float sourceMeterValue(int src, float raw, bool& bipolar) {
   return std::clamp(raw, 0.f, 1.f);
 }
 
+bool asleep(const Generator* g) {
+  const auto* p = dynamic_cast<const PlasmaGen*>(g);
+  return p && p->sleeping();
+}
+void setSleepAllowed(Generator* g, bool allowed) {
+  if (auto* p = dynamic_cast<PlasmaGen*>(g)) p->allowSleep(allowed);
+}
 void previewNote(Generator* g, int key, bool on) {
   auto* p = dynamic_cast<PlasmaGen*>(g);
   if (!p) return;

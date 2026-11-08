@@ -1017,7 +1017,9 @@ struct ExportFolder {
   }
 };
 
-CollectReport writeDataFiles(const Song& song, const std::string& folder, const std::string& name, const ExportControl* control) {
+// `stage`: the project file goes there instead (K-133: project bones move their files into place together).
+CollectReport writeDataFiles(const Song& song, const std::string& folder, const std::string& name, const ExportControl* control,
+                             const fs::path* stage = nullptr) {
   Song copy = song;
   CollectReport rep = collectFiles(copy, (fs::u8path(folder) / "Samples").u8string(), folder, control);
   if (!rep.error.empty() || rep.cancelled) return rep;
@@ -1046,14 +1048,15 @@ CollectReport writeDataFiles(const Song& song, const std::string& folder, const 
     rep.cancelled = true;
     return rep;
   }
-  const fs::path project = fs::u8path(folder) / fs::u8path(name + ".gridline.json");
+  const fs::path project = (stage ? *stage : fs::u8path(folder)) / fs::u8path(name + kProjectExt);  // K-121: the new name
   std::error_code ec;
+  if (stage) fs::create_directories(*stage, ec);
   const bool projectThere = fs::exists(project, ec);
   std::string err;
   if (!saveProject(project.u8string(), copy, &err)) {
     rep.error = err;
   } else {
-    if (!projectThere) rep.created.push_back(project.u8string());
+    if (!projectThere && !stage) rep.created.push_back(project.u8string());
     rep.unpacked = absolutePathsInProject(projectToText(copy));
   }
   return rep;
@@ -1068,17 +1071,63 @@ CollectReport exportProjectDataFiles(const Song& song, const std::string& folder
   return rep;
 }
 
+// K-133: the files of project bones that replace an earlier export's (the project, MIDI files,
+// presets, effect chains) are written into a staging folder first, and moved into place together
+// once every one of them was written. A run that fails or is cancelled replaces nothing.
+namespace {
+constexpr const char* kBonesStage = ".gridline-bones-staging";
+
+// Moves every file under `stage` to the same place under `folder`. False (with the error) when one
+// cannot be moved.
+bool commitStage(const fs::path& stage, const fs::path& folder, CollectReport& rep) {
+  std::error_code ec;
+  std::vector<fs::path> files;
+  for (fs::recursive_directory_iterator it(stage, ec), end; !ec && it != end; it.increment(ec))
+    if (it->is_regular_file(ec)) files.push_back(it->path());
+  if (ec) {
+    rep.error = "cannot read the written files in " + stage.u8string();
+    return false;
+  }
+  std::sort(files.begin(), files.end());
+  // First every place is checked (a folder where a file goes, a folder that cannot be made), so a
+  // move that cannot happen is found before anything was moved.
+  for (const fs::path& f : files) {
+    const fs::path to = folder / f.lexically_relative(stage);
+    fs::create_directories(to.parent_path(), ec);
+    if (!fs::is_directory(to.parent_path(), ec) || (fs::exists(to, ec) && !fs::is_regular_file(to, ec))) {
+      rep.error = "cannot write " + to.u8string() + ": something else is in its place";
+      return false;
+    }
+  }
+  for (const fs::path& f : files) {
+    const fs::path to = folder / f.lexically_relative(stage);
+    const bool there = fs::exists(to, ec);
+    std::string err;
+    if (!platform::replaceFile(f.u8string(), to.u8string(), &err)) {
+      rep.error = err.empty() ? "cannot move " + to.u8string() + " into place" : err;
+      return false;
+    }
+    if (!there) rep.created.push_back(to.u8string());
+  }
+  fs::remove_all(stage, ec);
+  return true;
+}
+}  // namespace
+
 BonesReport exportProjectBones(const Song& song, const std::string& folder, const std::string& name, const ExportControl* control) {
   BonesReport rep;
   const ExportFolder target(folder);
   const fs::path midiDir = fs::u8path(folder) / "MIDI", presetDir = fs::u8path(folder) / "Presets";
+  const fs::path stage = fs::u8path(folder) / kBonesStage, stageMidi = stage / "MIDI", stagePresets = stage / "Presets";
   std::error_code ec;
+  fs::remove_all(stage, ec);  // (what a run that was killed left)
   const bool midiThere = fs::exists(midiDir, ec), presetsThere = fs::exists(presetDir, ec);
-  rep.files = writeDataFiles(song, folder, name, control);
-  // A run that does not finish: what it added goes. MIDI and presets of an earlier export in the
-  // same place are whole files, old or new (each one replaces its file at once).
+  rep.files = writeDataFiles(song, folder, name, control, &stage);
+  // A run that does not finish: what it added goes, and nothing of an earlier export in the same
+  // place was replaced (what would replace it is still in the staging folder).
   auto stop = [&](const std::string& why) {
     rep.files.error = why;
+    fs::remove_all(stage, ec);
     if (!midiThere) fs::remove_all(midiDir, ec);
     if (!presetsThere) fs::remove_all(presetDir, ec);
     target.undo(rep.files);
@@ -1092,14 +1141,15 @@ BonesReport exportProjectBones(const Song& song, const std::string& folder, cons
     return true;
   };
   meter.say(0.97, i18n::N_("Writing MIDI files and presets"));
-  fs::create_directories(midiDir, ec);
+  // A file where a folder goes: the move at the end could not put anything there.
+  for (const fs::path& d : {midiDir, presetDir})
+    if (fs::exists(d, ec) && !fs::is_directory(d, ec)) return stop("cannot write into " + d.u8string() + ": a file is in the way");
+  fs::create_directories(stageMidi, ec);
   auto writeMidi = [&](const std::string& fileName, const MidiFileData& m) {
     std::string safe = fileName;
     for (char& c : safe)
       if (c == '/' || c == '\\' || c == ':') c = '_';
-    const fs::path file = midiDir / fs::u8path(safe);
-    const std::string tmp = file.u8string() + ".part";
-    return writeMidiFile(tmp, m) && platform::replaceFile(tmp, file.u8string());
+    return writeMidiFile((stageMidi / fs::u8path(safe)).u8string(), m);
   };
   int k = 0;
   for (const auto& p : song.patterns) {
@@ -1122,11 +1172,11 @@ BonesReport exportProjectBones(const Song& song, const std::string& folder, cons
   // Instrument states and effect chains, with references to the collected files.
   Song copy = song;
   relinkFiles(copy, rep.files.moved);
-  const std::string presets = presetDir.u8string();
+  const std::string presets = stagePresets.u8string();
   for (const auto& c : copy.channels) {
     if (stopped()) return stop("");
     if (c.plugin.type.empty()) continue;
-    if (!savePreset(presets, c.plugin, c.name, "project bones: " + name)) return stop("cannot write the preset of " + c.name + " in " + presets);
+    if (!savePreset(presets, c.plugin, c.name, "project bones: " + name)) return stop("cannot write the preset of " + c.name + " in " + presetDir.u8string());
     ++rep.presets;
   }
   for (size_t i = 0; i < copy.mixer.size(); ++i) {
@@ -1140,9 +1190,13 @@ BonesReport exportProjectBones(const Song& song, const std::string& folder, cons
       any = any || !sl.plugin.type.empty();
     }
     if (!any) continue;
-    if (!saveChain(presets, chain, mixerTrackName(copy, i))) return stop("cannot write the effect chain of " + mixerTrackName(copy, i) + " in " + presets);
+    if (!saveChain(presets, chain, mixerTrackName(copy, i))) return stop("cannot write the effect chain of " + mixerTrackName(copy, i) + " in " + presetDir.u8string());
     ++rep.chains;
   }
+  if (stopped()) return stop("");
+  // Every file was written: now they replace the earlier export's.
+  if (!commitStage(stage, fs::u8path(folder), rep.files)) return stop(rep.files.error);
+  fs::create_directories(midiDir, ec);  // (a project without notes still gets its folder, as before)
   return rep;
 }
 
@@ -1228,7 +1282,7 @@ CollectReport exportZippedProject(const Song& song, const std::string& zipPath, 
     return rep;
   }
   const std::string text = projectToText(copy);
-  if (!z.add(name + ".gridline.json", std::vector<uint8_t>(text.begin(), text.end()))) {
+  if (!z.add(projectFileNameInZip(zipPath, name), std::vector<uint8_t>(text.begin(), text.end()))) {  // K-121
     rep.error = z.close(&err) ? "cannot write " + zipPath : err;  // J-78: a failed entry is reported (the target stays as it was)
     return rep;
   }

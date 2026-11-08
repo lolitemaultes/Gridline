@@ -58,9 +58,13 @@ void testRouting() {
 
   // File > Open: all projects first, then one type per format.
   const auto& open = openFileTypes();
-  expect(open.size() == 4, "open dialog: 4 types");
-  expect(has(open[0].exts, ".json") && has(open[0].exts, ".flp") && has(open[0].exts, ".zip"), "open: all projects lists json, flp, zip");
-  expect(open[2].exts == std::vector<std::string>{".flp"} && open[3].exts == std::vector<std::string>{".zip"}, "open: per-type filters");
+  expect(open.size() == 5, "open dialog: 5 types");
+  expect(has(open[0].exts, ".gridline") && has(open[0].exts, ".gridlinez") && has(open[0].exts, ".json") && has(open[0].exts, ".flp") &&
+             has(open[0].exts, ".zip") && has(open[0].exts, ".xm") && has(open[0].exts, ".mod"),
+         "open: all projects lists gridline, gridlinez, json, flp, zip, xm, mod");
+  expect(open[1].exts == std::vector<std::string>{".gridline", ".json"} && open[2].exts == std::vector<std::string>{".flp"} &&
+             open[3].exts == std::vector<std::string>{".gridlinez", ".zip"} && open[4].exts == std::vector<std::string>{".xm", ".mod"},
+         "open: per-type filters");
   // File > Import no longer offers projects.
   for (const auto* t : {&importMidiTypes(), &importAudioTypes()})
     for (const auto& ft : *t) expect(!has(ft.exts, ".flp") && !has(ft.exts, ".zip") && !has(ft.exts, ".json"), "import types hold no projects");
@@ -71,17 +75,20 @@ void testRouting() {
   expect(dropAction(DropItem{Kind::Project, "", PluginKind::Generator}, DropTarget::Rack) == DropAction::OpenProject, "drop zip/project opens it");
   expect(std::string(dropActionLabel(DropAction::OpenProject)) == "Open project", "drop label");
 
-  // Save as: Gridline, Gridline zipped (J-78), FL Studio project, FL Studio zipped loop package.
+  // Save as: Gridline, Gridline zipped (J-78), FL Studio project, FL Studio zipped loop package, then
+  // (K-121) the two Gridline formats under their older names.
   const auto& save = saveFileTypes();
-  expect(save.size() == 4 && save[1].exts[0] == ".gridline.zip" && save[2].exts[0] == ".flp" && save[3].exts[0] == ".zip", "save types");
+  expect(save.size() == 6 && save[0].exts[0] == ".gridline" && save[1].exts[0] == ".gridlinez" && save[2].exts[0] == ".flp" &&
+             save[3].exts[0] == ".zip" && save[4].exts[0] == ".gridline.json" && save[5].exts[0] == ".gridline.zip",
+         "save types");
   expect(saveFormatOf("/a/x.flp") == SaveFormat::Flp && saveFormatOf("/a/x.zip") == SaveFormat::FlZip &&
-             saveFormatOf("/a/x.gridline.json") == SaveFormat::Gridline,
+             saveFormatOf("/a/x.gridline") == SaveFormat::Gridline && saveFormatOf("/a/x.gridline.json") == SaveFormat::GridlineJson,
          "save format by name");
-  expect(withSaveExtension("Song.flp", SaveFormat::Gridline) == "Song.gridline.json", "flp -> gridline name (never the .flp)");
+  expect(withSaveExtension("Song.flp", SaveFormat::Gridline) == "Song.gridline", "flp -> gridline name (never the .flp)");
   expect(withSaveExtension("Song.gridline.json", SaveFormat::Flp) == "Song.flp", "gridline -> flp name");
   expect(withSaveExtension("/d/Song.zip", SaveFormat::Flp) == "/d/Song.flp", "zip -> flp name");
   expect(withSaveExtension("My.Song", SaveFormat::FlZip) == "My.Song.zip", "dots kept");
-  expect(withSaveExtension("Song", SaveFormat::Gridline) == "Song.gridline.json", "no extension");
+  expect(withSaveExtension("Song", SaveFormat::Gridline) == "Song.gridline", "no extension");
   expect(projectStemOf("/d/Song.gridline.json") == "Song" && projectStemOf("/d/Song.flp") == "Song" && projectStemOf("Pack.zip") == "Pack",
          "project stems");
 }

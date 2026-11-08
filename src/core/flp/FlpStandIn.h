@@ -25,6 +25,7 @@
 #include <vector>
 #include "../Song.h"
 #include "FlpExport.h"
+#include "../SuiteState.h"
 
 namespace gl::flp {
 
@@ -51,10 +52,19 @@ struct StandIn {
   int slot = -1;           // -1: the channel's instrument
   std::string where;       // "channel 'Kick'", "insert 3 slot 2"
   std::string glType;      // the Gridline type replaced
-  std::string action;      // "mapped", "rendered", "neutral", "unused" (no notes to render)
+  std::string action;      // "mapped", "rendered", "neutral", "unused" (no notes to render),
+                           // "suite" (K-110: a Gridline Suite plugin)
   std::string flName;      // FL plugin written ("" = sampler channel / none)
   std::string note;        // what was done / approximated
   std::vector<std::string> files;  // rendered samples
+};
+
+// K-110: a plugin written as a Gridline Suite plugin.
+struct SuiteEntry {
+  ObjectId fallback = kNoId;      // the muted copy of the channel playing the rendered samples
+  int embedded = 0;               // files carried in the plugin's state
+  size_t embeddedBytes = 0;
+  std::vector<std::string> notEmbedded;  // referenced, not carried (over the limit, missing)
 };
 
 struct StandInOptions {
@@ -64,11 +74,13 @@ struct StandInOptions {
   int sampleRate = 44100;
   std::function<void(double)> progress;  // 0..1
   const std::atomic<bool>* cancel = nullptr;
+  GridlinePlugins gridlinePlugins = GridlinePlugins::Render;  // K-110
 };
 
 struct StandInResult {
   std::vector<StandIn> entries;
   std::vector<std::string> files;  // every sample written
+  std::map<std::pair<ObjectId, int>, SuiteEntry> suite;  // K-110: by (owner, slot)
   bool cancelled = false;
   std::string error;
   const StandIn* find(ObjectId owner, int slot) const {
@@ -77,6 +89,11 @@ struct StandInResult {
     return nullptr;
   }
 };
+
+// K-110: `st` as the Gridline Suite plugin FL loads (type "vst3:<class id>",
+// data the plugin's VST3 state with the files embedded). False when the type
+// is not in a suite.
+bool suitePluginState(const PluginState& st, PluginState& out, suitestate::EmbedReport* rep = nullptr);
 
 // Replaces the Gridline-only plugins of `song` by their stand-ins (see above).
 // `eo` gives the origin / encoder context. False when cancelled or a render

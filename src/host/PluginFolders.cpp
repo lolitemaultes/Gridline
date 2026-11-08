@@ -2,9 +2,13 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstring>
 #include <filesystem>
+#include <map>
+#include <mutex>
 #include <set>
+#include <thread>
 
 namespace fs = std::filesystem;
 
@@ -86,6 +90,60 @@ std::vector<FolderRow> folderRows(const Format& f, const PluginPrefs& p) {
         break;
       }
   }
+  return rows;
+}
+
+namespace {
+struct DisplayRows {
+  std::vector<FolderRow> rows;
+  uint64_t prefsGen = 0;
+  std::chrono::steady_clock::time_point at{};
+  bool refreshing = false;
+};
+std::mutex& displayLock() {
+  static auto* m = new std::mutex;  // never destroyed: a refresh thread may outlive main
+  return *m;
+}
+std::map<std::string, DisplayRows>& displayRows() {
+  static auto* m = new std::map<std::string, DisplayRows>;
+  return *m;
+}
+}  // namespace
+
+std::vector<FolderRow> folderRowsForDisplay(const Format& f, const PluginPrefs& p) {
+  const uint64_t gen = pluginPrefsGeneration();
+  const auto now = std::chrono::steady_clock::now();
+  {
+    std::lock_guard<std::mutex> g(displayLock());
+    auto it = displayRows().find(f.id);
+    if (it != displayRows().end() && it->second.prefsGen == gen) {
+      DisplayRows& d = it->second;
+      if (!d.refreshing && now - d.at >= std::chrono::seconds(2)) {
+        d.refreshing = true;
+        try {
+          // The format by value (the list of formats may be gone when a late refresh ends).
+          std::thread([fmt = f, prefs = p, gen] {
+            std::vector<FolderRow> rows = folderRows(fmt, prefs);
+            std::lock_guard<std::mutex> g2(displayLock());
+            DisplayRows& e = displayRows()[fmt.id];
+            if (e.prefsGen == gen) e.rows = std::move(rows), e.at = std::chrono::steady_clock::now();
+            e.refreshing = false;
+          }).detach();
+        } catch (const std::exception&) {
+          d.refreshing = false;  // no thread: looked at again next time
+          d.at = now;
+        }
+      }
+      return d.rows;
+    }
+  }
+  // The settings changed (or the first time): now, so a switch shows at once.
+  std::vector<FolderRow> rows = folderRows(f, p);
+  std::lock_guard<std::mutex> g(displayLock());
+  DisplayRows& d = displayRows()[f.id];
+  d.rows = rows;
+  d.prefsGen = gen;
+  d.at = now;
   return rows;
 }
 

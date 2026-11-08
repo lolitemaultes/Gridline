@@ -168,7 +168,7 @@ endif()
 
 # ---- recovery ----
 function(recovery_file tag outVar)
-  file(GLOB files "${OUT}/cfg_${tag}/gridline/recovery/*.gridline.json")
+  file(GLOB files "${OUT}/cfg_${tag}/gridline/recovery/*.gridline")  # K-121: the new name
   list(LENGTH files n)
   if(NOT n EQUAL 1)
     message(FATAL_ERROR "${tag}: ${n} recovery copies: ${files}")
@@ -265,7 +265,7 @@ if(NOT DEFINED ONLY OR ONLY STREQUAL "recovery")
   run(clean)
   unset(ENV{GRIDLINE_CRASH_TEST_DIRTY})
   unset(ENV{GRIDLINE_CRASH_TEST_COPY_SECONDS})
-  file(GLOB leftovers "${OUT}/cfg_clean/gridline/crash-reports/*.txt" "${OUT}/cfg_clean/gridline/recovery/*.gridline.json")
+  file(GLOB leftovers "${OUT}/cfg_clean/gridline/crash-reports/*.txt" "${OUT}/cfg_clean/gridline/recovery/*.gridline" "${OUT}/cfg_clean/gridline/recovery/*.gridline.json")
   if(leftovers)
     message(FATAL_ERROR "clean end: left behind: ${leftovers}")
   endif()

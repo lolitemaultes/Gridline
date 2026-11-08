@@ -75,8 +75,11 @@ int main() {
   expect(moveDistance(-bar, bar, Snap::Bar, 2 * bar + 50) == -bar, "back one bar");
   expect(moveDistance(step - 1, step, Snap::Cell, 7) == 0, "Cell: within the first step stays put");
   expect(moveDistance(step, step, Snap::Cell, 7) == step, "Cell: one step on");
-  expect(moveDistance(-3 * step, step, Snap::Line, step + 7) == -step, "the song's start stops it on the last whole step");
-  expect(moveDistance(-3 * step, step, Snap::Line, 7) == 0, "... which keeps the offset");
+  // K-82: past the song's start the earliest one hits the wall and lands on the beat (0), its offset gone.
+  expect(moveDistance(-3 * step, step, Snap::Line, step + 7) == -(step + 7), "K-82: the song's start stops it at 0, on the beat");
+  expect(moveDistance(-3 * step, step, Snap::Line, 7) == -7, "K-82: slightly off the beat, it still lands on 0");
+  expect(moveDistance(-bar, bar, Snap::Bar, bar / 3) == -(bar / 3), "K-82: bar snap, off the beat: lands on 0");
+  expect(moveDistance(-step, step, Snap::Line, step + 7) == -step, "K-82: not at the wall yet: whole steps, the offset kept");
   expect(moveDistance(-3 * step, step, Snap::Line, 2 * step) == -2 * step, "on the grid it reaches the start");
   expect(moveDistance(-500, 1, Snap::None, 30) == -30, "free: reaches the start");
   expect(moveDistance(17, 1, Snap::None, 30) == 17, "free: follows the pointer");

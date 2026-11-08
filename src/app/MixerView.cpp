@@ -1729,7 +1729,7 @@ void drawEffectEditor(App& a) {
   const float contentW = width + 24 - 2 * st.WindowPadding.x + st.ScrollbarSize;
   const float zoom = edzoomui::prepare(a, "fxeditor", info->type, contentW, !isHostedType(info->type));
   const int fitFlags =  // J-158: capped to the work area, the rest scrolls
-      ui::NextFloatingWindowSize(zoom > 1.0f ? std::floor(contentW * zoom) + 2 * st.WindowPadding.x - st.ScrollbarSize : width + 24);
+      ui::NextFloatingWindowSize(zoom != 1.0f ? std::floor(contentW * zoom) + 2 * st.WindowPadding.x - st.ScrollbarSize : width + 24);
   viewports::openAttached(title.c_str());  // opens inside the main window, never popped out by itself
   if (ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking | fitFlags)) {
     ui::KeepWindowInViewport();

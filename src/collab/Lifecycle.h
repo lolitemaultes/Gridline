@@ -1,7 +1,7 @@
 // Gridline - J-111e collaboration: what happens to the files of a collaborative
 // project when it ends for this computer (leave, removed, stop sharing,
 // abandoned, keep a private copy). One code path turns the shared folder (or a
-// copy of it) into a normal project: <name>.gridline.json + Audio/, without
+// copy of it) into a normal project: <name>.gridline + Audio/, without
 // .gridline-collab (the shared history, other members' identities and names).
 // Deleting a copy goes to the system trash, never a plain delete.
 #pragma once
@@ -11,7 +11,7 @@
 
 namespace gl::collab {
 
-// Writes `song` as a normal project <destFolder>/<name>.gridline.json. Audio
+// Writes `song` as a normal project <destFolder>/<name>.gridline. Audio
 // files of `srcFolder`/Audio the song uses are copied to <destFolder>/Audio
 // (nothing is copied when the folders are the same) and referenced relative to
 // the project file. With `removeHistory` (in place: Leave > keep, Stop sharing,

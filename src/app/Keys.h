@@ -39,6 +39,21 @@ bool modifierExact(const char* id);
 // gestures without a modifier.
 bool modifierIncludes(const char* id);
 
+// K-124: like pressed(), but an editor command on the same chord that only acts in a passing
+// state (cancel a drag, close a tool) does not take the key from it: that state shows itself
+// through the Esc bookkeeping below instead.
+bool pressedPastEditor(const char* id);
+
+// K-124: who used Esc this frame. escapeFrameBegin() runs right after ImGui::NewFrame and notes
+// what was going on as the frame started (an open popup or menu, an active item or drag, a text
+// field, a pressed mouse button, a shortcut capture). escapePressed() is ImGui::IsKeyPressed(Esc)
+// for dialogs and tools: when it reports the key it also marks it as used. escapeBusy() is true
+// when the key went to one of them (or the frame started busy), so a later command leaves it.
+void escapeFrameBegin();
+bool escapePressed(bool repeat = true);
+void claimEscape();
+bool escapeBusy();
+
 // Menu shortcut text: the first chord ("Ctrl+S"), nullptr when unbound.
 const char* label(const char* id);
 // Every chord, "Ctrl+Y / Ctrl+Shift+Z" ("" when unbound).

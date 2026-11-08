@@ -1,0 +1,59 @@
+name: ChromeOS
+
+# Chromebooks: the container image ChromeOS installs for its Linux development environment
+# (Google's own, newest milestone, both architectures), and the older Debian 11 image that
+# Chromebooks set up before. Gridline is built and every test runs inside it, then the .deb made
+# there installs into a fresh copy of it and runs (tools/ci/chromeos-check.sh). Up to 2.5 hours per
+# job, so it runs every Monday, on a version tag and on "Run workflow"; the release workflow
+# installs and starts each release's own .deb and AppImage on the same images before publishing.
+on:
+  push:
+    tags: ["v*"]
+  schedule:
+    - cron: "41 3 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: chromeos-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CTEST_OUTPUT_ON_FAILURE: "1"
+  GRIDLINE_NO_PLUGIN_SCAN: "1"
+
+jobs:
+  chromeos:
+    name: ChromeOS Linux ${{ matrix.arch }} (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64, os: ubuntu-24.04, release: "", label: "newest container" }
+          - { arch: arm64, os: ubuntu-24.04-arm, release: "", label: "newest container" }
+          - { arch: x86_64, os: ubuntu-24.04, release: bullseye, label: "Debian 11 container" }
+          - { arch: arm64, os: ubuntu-24.04-arm, release: bullseye, label: "Debian 11 container" }
+    steps:
+      - uses: actions/checkout@v4
+      - name: The Chromebook container image
+        run: |
+          sudo apt-get install -y -q squashfs-tools
+          bash tools/ci/crostini-docker.sh "$RUNNER_TEMP/crostini" "${{ matrix.release }}"
+      - name: Build, tests and .deb inside it
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w -e CTEST_OUTPUT_ON_FAILURE=1 -e GRIDLINE_NO_PLUGIN_SCAN=1 gridline-crostini bash -c '
+            set -e
+            sh tools/ci/debian-archive.sh
+            sh tools/ci/install-deps.sh apt
+            apt-get install -y -q --no-install-recommends dpkg-dev
+            git config --global --add safe.directory /w  # (the checkout belongs to the runner user)
+            cmake -S . -B build-cros -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DGRIDLINE_WERROR=ON \
+              -DGRIDLINE_GUI_TESTS=ON -DGRIDLINE_INSTALL_PLUGINS=ON
+            cmake --build build-cros -j4 -- -k 0
+            xvfb-run -a -s "-screen 0 2560x1700x24" ctest --test-dir build-cros -j4 --timeout 1500 --output-on-failure
+            (cd build-cros && cpack -G DEB)
+            mkdir -p dist-cros && mv build-cros/Gridline-*.deb dist-cros/
+            bash tools/release/deb-depends.sh dist-cros/Gridline-*.deb'
+      - name: The .deb installs and runs in a fresh Chromebook container
+        run: docker run --rm -v "$PWD:/w" -w /w gridline-crostini bash tools/ci/chromeos-check.sh dist-cros/*.deb

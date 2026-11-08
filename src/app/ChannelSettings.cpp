@@ -16,6 +16,7 @@
 #include "../core/PluginParams.h"
 #include "../engine/ChannelIns.h"
 #include "App.h"
+#include "LayoutPresets.h"
 #include "../host/HostedPlugins.h"
 #include "HostedUi.h"
 #include "Theme.h"
@@ -512,10 +513,13 @@ void drawChannelSettings(App& a) {
   const ImGuiStyle& st = ImGui::GetStyle();
   const float contentW = winW - 2 * st.WindowPadding.x + st.ScrollbarSize;
   const float zoom = edzoomui::prepare(a, "channelsettings", info ? info->type : std::string("(layer)"), contentW, !info || !isHostedType(info->type));
+  // K-79: the performance preset docks the channel settings in its bottom panel (they scroll there).
+  const bool docks = layoutui::active() == layout::Preset::Live;
   const int fitFlags =  // J-158: capped to the work area, the rest scrolls
-      ui::NextFloatingWindowSize(zoom > 1.0f ? std::floor(contentW * zoom) + 2 * st.WindowPadding.x - st.ScrollbarSize : winW);
+      docks ? 0 : ui::NextFloatingWindowSize(zoom != 1.0f ? std::floor(contentW * zoom) + 2 * st.WindowPadding.x - st.ScrollbarSize : winW);
   viewports::openAttached(title.c_str());  // opens inside the main window, never popped out by itself
-  bool vis = ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking | fitFlags);
+  bool vis = ImGui::Begin(title.c_str(), &open,
+                          docks ? ImGuiWindowFlags_HorizontalScrollbar : (ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking | fitFlags));
   ui::KeepWindowInViewport();
   ui::MarkDetachable();  // J-114: pops out / docks back like the panels
   if (!vis) {
@@ -559,7 +563,7 @@ void drawChannelSettings(App& a) {
         ui::Label(cat.c_str());
       }
       if (ImGui::Selectable(p.name.c_str(), p.type == c->plugin.type) && a.doc.setChannelPlugin(id, p.type))
-        pui::pluginReplaced(PluginTarget{id, -1});  // J-213: the preset selector starts over
+        pui::pluginReplaced(PluginTarget{id, -1}), a.showNewInstrument(id);  // J-213: the preset selector starts over; K-125
     }
     ImGui::EndCombo();
   }

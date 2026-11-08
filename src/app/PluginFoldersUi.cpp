@@ -168,7 +168,9 @@ void pluginFoldersSettingsPage(App& a, float fieldW) {
   ui::BeginSection(tr("SCANNING"));
   {
     char line[160];
-    if (ss.running) {
+    if (ss.running && !ss.searching.empty()) {  // K-71: a big folder takes a while to search
+      std::snprintf(line, sizeof line, "%s", tr("Looking for plugins"));
+    } else if (ss.running) {
       std::snprintf(line, sizeof line, tr("Scanning %d / %d"), std::min(ss.done + 1, std::max(1, ss.total)), ss.total);
     } else if (ss.failed > 0) {
       std::snprintf(line, sizeof line, tr("%d plugins found, %d failed to scan"), ss.classes, ss.failed);
@@ -177,10 +179,11 @@ void pluginFoldersSettingsPage(App& a, float fieldW) {
     }
     ImGui::AlignTextToFramePadding();
     ImGui::TextColored(theme::vec(ss.running ? P.text : P.textDim), "%s", line);
-    if (ss.running && !ss.current.empty()) {
+    if (ss.running && (!ss.searching.empty() || !ss.current.empty())) {
       ImGui::SameLine(0, theme::kS2);
       ImGui::PushFont(a.fontMono, theme::kFontLabel + 0.5f);
-      ui::TextFit(fs::path(ss.current).filename().string().c_str(), std::max(40.0f, ImGui::GetContentRegionAvail().x), P.textFaint, true);
+      const std::string what = !ss.searching.empty() ? ss.searching : host::scanCurrentLabel(ss);
+      ui::TextFit(what.c_str(), std::max(40.0f, ImGui::GetContentRegionAvail().x), P.textFaint, true);
       ImGui::PopFont();
     }
     ImGui::BeginDisabled(ss.running);
@@ -199,9 +202,15 @@ void pluginFoldersSettingsPage(App& a, float fieldW) {
   }
   ui::EndSection();
 
-  std::map<std::string, int> perFormat;
-  for (const auto& e : host::cacheEntries())
-    if (e.ok) perFormat[e.format] += std::max(0, e.classes);
+  // K-73: counted again only when the cache changed (it lists every plugin: thousands).
+  static std::map<std::string, int> perFormat;
+  static uint64_t countedAt = ~uint64_t(0);
+  if (countedAt != ss.cacheChanges) {
+    perFormat.clear();
+    for (const auto& e : host::cacheEntries())
+      if (e.ok) perFormat[e.format] += std::max(0, e.classes);
+    countedAt = ss.cacheChanges;
+  }
 
   // ---- per format ----
   ui::BeginSection(tr("PLUGIN FOLDERS"));
@@ -231,7 +240,7 @@ void pluginFoldersSettingsPage(App& a, float fieldW) {
       ImGui::AlignTextToFramePadding();
       ImGui::TextColored(theme::vec(P.textFaint), "%s", n);
     }
-    const std::vector<host::FolderRow> rows = host::folderRows(f, prefs);
+    const std::vector<host::FolderRow> rows = host::folderRowsForDisplay(f, prefs);  // K-73: no disk look per frame
     const bool applies = host::folderSearchApplies(id);
     // Default: the OS's standard folders, one switch, listed below it.
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + indent);
@@ -305,13 +314,8 @@ void pluginFoldersSettingsPage(App& a, float fieldW) {
         if (prefs.disabledFolders.count(key)) prefs.disabledFolders.erase(key);
         else prefs.disabledFolders.insert(key);
         changed = true;
-      } else if (act == kRescan) {  // every format's plugins in it, one scan
-        std::vector<std::pair<std::string, std::string>> entries;
-        for (const host::Format& f : host::formats())
-          if (host::folderSearchApplies(f.id) && !prefs.disabledFormats.count(f.id))
-            for (auto& e : f.discover({r.path})) entries.push_back({f.id, std::move(e)});
-        if (entries.empty()) host::requestScan(exe);
-        else host::rescanEntries(exe, entries);
+      } else if (act == kRescan) {  // every format's plugins in it, one scan (K-71: searched on the scan worker)
+        host::rescanFolder(exe, "*", r.path);
       } else if (act == kRemove) {
         removeAt = static_cast<int>(i);
       }

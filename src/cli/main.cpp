@@ -1,10 +1,11 @@
 // Gridline CLI — offline renderer.
-//   gridline render <project.json> -o <out.wav> [--sr 44100] [--bits 16|24]
-//   gridline info   <project.json>
-//   gridline upgrade <project.json> [-o <out.json>]   rewrite in the current schema
-//   gridline import-flp <project.flp> -o <out.json> [--fl-data DIR]   convert an FL Studio project
+//   gridline render <project.gridline> -o <out.wav> [--sr 44100] [--bits 16|24]
+//   gridline info   <project.gridline>
+//   gridline upgrade <project.gridline> [-o <out.gridline>]   rewrite in the current schema
+//   gridline import-flp <project.flp> -o <out.gridline> [--fl-data DIR]   convert an FL Studio project
 #include "GridlineVersion.h"
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -20,6 +21,9 @@
 #include "core/MidiFile.h"
 #include "core/MidiImport.h"
 #include "core/ProjectInterop.h"
+#include "core/ProjectArchive.h"
+#include "core/ProjectFiles.h"
+#include "core/TrackerImport.h"
 #include <algorithm>
 #include "core/Automation.h"
 #include "core/Demo.h"
@@ -33,6 +37,7 @@
 #include "core/Settings.h"
 #include "host/HostedPlugins.h"
 #include "host/net/Http.h"
+#include "host/CrossFormat.h"
 #include "host/PluginCheck.h"
 #include "host/Smoke.h"
 #include "host/vst3/Vst3Scan.h"
@@ -61,7 +66,7 @@ int stemsCliMain(int argc, char** argv);  // StemsCli.cpp (J-191)
 int suiteCliMain(int argc, char** argv);  // SuiteCli.cpp (J-131)
 
 namespace {
-// J-219: gridline track-receipt <project.json|.flp> [--out <dir>] [--sr N]: measures which parts
+// J-219: gridline track-receipt <project.gridline|.flp> [--out <dir>] [--sr N]: measures which parts
 // of which original recordings the project uses and writes the receipt
 // (SpreadsheetML) and the results PDF.
 int trackReceiptMain(const std::string& project, int argc, char** argv) {
@@ -132,32 +137,33 @@ void usage() {
       "usage:\n"
       "  gridline --version                          print the version\n"
       "  gridline --check-updates [--beta]           ask GitHub for a newer release (docs/updates.md)\n"
-      "  gridline track-receipt <project.json|.flp> [--out <dir>]  parts of original recordings used: receipt XML + PDF\n"
-      "  gridline render <project.json> -o <out.wav|.flac|.mp3|.ogg|.m4a|folder/> [--sr N] [--bits 16|24|32]\n"
+      "  gridline track-receipt <project.gridline|.flp> [--out <dir>]  parts of original recordings used: receipt XML + PDF\n"
+      "  gridline render <project.gridline> -o <out.wav|.flac|.mp3|.ogg|.m4a|folder/> [--sr N] [--bits 16|24|32]\n"
       "        [--format wav,flac,mp3,ogg,m4a,mid] [--scope song|pattern:N|range:BAR-BAR] [--loops N]\n"
       "        [--tail cut|leave|wrap] [--dither none|tpdf|shaped] [--channels stereo|mono|left|right]\n"
       "        [--normalize] [--normalize-lufs L] [--ceiling DB] [--stems] [--stems-master-fx] [--tracks] [--names PATTERN] [--midi] [--bitrate K]\n"
       "        [--interp 0-7] [--oversample 1|2|4] [--no-master-fx] [--no-insert-fx] [--no-poly-limit]\n"
-      "  gridline export-midi <project.json> -o <out.mid> [--pattern N]\n"
-      "  gridline import-midi <file.mid> -o <out.json>   new project from a MIDI file\n"
-      "  gridline collect|bones <project.json> -o <folder>   copy the project + its samples (bones: + MIDI, presets)\n"
-      "  gridline zip <project.json> -o <out.zip>          zipped project with its samples\n"
-      "  gridline render-stats <project.json> [--max-seconds S]   QA: render in memory, print level / NaN / clipping\n"
-      "  gridline info   <project.json>\n"
+      "  gridline export-midi <project.gridline> -o <out.mid> [--pattern N]\n"
+      "  gridline import-midi <file.mid> -o <out.gridline>   new project from a MIDI file\n"
+      "  gridline collect|bones <project.gridline> -o <folder>   copy the project + its samples (bones: + MIDI, presets)\n"
+      "  gridline zip <project.gridline> -o <out.gridlinez>    zipped project with its samples\n"
+      "  gridline render-stats <project.gridline> [--max-seconds S]   QA: render in memory, print level / NaN / clipping\n"
+      "  gridline info   <project.gridline>\n"
       "  gridline plugin-params [type]               built-in plugin catalog (params, ranges, defaults) as JSON\n"
       "  gridline suite-info [suite] [--json] [--excluded]   Gridline Suite members and their plugin ids\n"
       "  gridline suite status|install|remove [--json]   the Gridline Suite in your plug-in folders\n"
       "  gridline param-audit [--type T]... [--json F] [--md F] [--baseline F] [--threads N] [--no-combos] [--no-live] [--base k=v;..] [--probe]\n"
       "  gridline param-audit --relabel <baseline.tsv> <out.tsv>   apply the documented-inert list to a baseline\n"
       "                                                 does every parameter of every built-in plugin change the output?\n"
-      "  gridline upgrade <project.json> [-o <out.json>]\n"
-      "  gridline demo    <out.json>                 write the demo song\n"
-      "  gridline import-flp <project.flp> -o <out.json> [--fl-data DIR]   convert an FL Studio project\n"
-      "  gridline export-flp <project.json|.flp> -o <out.flp> [--no-origin] [--fl-data DIR]   write an FL Studio project\n"
-      "  gridline export-flp-zip <project.json|.flp|.zip> -o <out.zip> [--fl-data DIR] [--factory-samples]   FL Studio zipped loop package\n"
+      "  gridline upgrade <project.gridline> [-o <out.gridline>]\n"
+      "  gridline demo    <out.gridline>                 write the demo song\n"
+      "  gridline import-flp <project.flp> -o <out.gridline> [--fl-data DIR]   convert an FL Studio project\n"
+      "  gridline import-module <song.xm|.mod> -o <out.gridline> [--samples DIR]   convert a tracker module\n"
+      "  gridline export-flp <project.gridline|.flp> -o <out.flp> [--no-origin] [--fl-data DIR]   write an FL Studio project\n"
+      "  gridline export-flp-zip <project.gridline|.flp|.zip> -o <out.zip> [--fl-data DIR] [--factory-samples]   FL Studio zipped loop package\n"
       "  gridline flp-roundtrip <in.flp> [-o out.flp] [--no-origin] [--json report.json]   import, export, re-import, compare\n"
       "  gridline flp-encode-check [--plugin NAME]... [--max N] [--verbose] [files...]   plugin encoders on FL's shipped states\n"
-      "  gridline bench <project.json|.flp> [--threads 1,4] [--repeat N] [--render-seconds S] [--no-render] [--json out]\n"
+      "  gridline bench <project.gridline|.flp> [--threads 1,4] [--repeat N] [--render-seconds S] [--no-render] [--json out]\n"
       "                                                 load / save / render timings, undo memory, audio hash\n"
       "  gridline import-fl-presets [--fl-data DIR] [--out DIR]   convert FL Studio's presets into your preset library\n"
       "  gridline --scan-plugin <format> <entry> [--out <file>]   describe a plugin (scanner child process)\n"
@@ -169,8 +175,9 @@ void usage() {
       "  gridline plugin-check [--all | <type | name>...] [--json FILE] [--timeout S] [--no-editor] [--format F]\n"
       "                                                 compatibility sweep, one child process per plugin class\n"
       "  gridline list-plugins [format]                 list plugins this computer has (from the plugin cache)\n"
+      "  gridline plugin-xformat <from type> <to type>...   does a plugin's state move between its installed formats?\n"
       "  gridline scan-plugins [--force]                scan installed plugins into the app's plugin cache\n"
-      "  gridline mcp <project.gridline.json|.flp> [--export-dir DIR] [--read-only]   MCP server for AI assistants on stdio\n"
+      "  gridline mcp <project.gridline|.flp> [--export-dir DIR] [--read-only]   MCP server for AI assistants on stdio\n"
       "  gridline mcp --attach                          MCP stdio bridge to the running app (docs/mcp.md)\n"
       "  gridline stems <audio> [--model ID] [--out DIR] [--stems vocals,drums,...]   split a song into stems\n"
       "  gridline stems --list | --download ID | --import FILE | --remove ID   stem models (docs/stems.md)\n"
@@ -340,6 +347,7 @@ int main(int argc, char** argv) {
     gl::host::initHosting(std::filesystem::path(gl::Settings::defaultPath()).parent_path().string());
   if (int r = flpToolsMain(argc, argv); r >= 0) return r;  // export-flp, flp-roundtrip, flp-encode-check (FlpTools.cpp)
   if (argc >= 2 && std::string(argv[1]) == "plugin-check") return gl::host::pluginCheckMain(argc, argv);
+  if (argc >= 2 && std::string(argv[1]) == "plugin-xformat") return gl::host::crossFormatCheckMain(argc, argv);  // K-78
   if (argc >= 2 && std::string(argv[1]) == "list-plugins") {
     for (const auto& c : gl::host::hostedClasses()) {
       if (argc >= 3 && c->format != argv[2]) continue;
@@ -352,6 +360,20 @@ int main(int argc, char** argv) {
     std::string dir = std::filesystem::path(gl::Settings::defaultPath()).parent_path().string();
     gl::host::initHosting(dir);
     gl::host::startScan(gl::host::selfExecutablePath(), argc >= 3 && std::string(argv[2]) == "--force");
+    // K-71: progress on stderr (once a second at most), so a slow plugin never looks like a hang.
+    std::string last;
+    auto printed = std::chrono::steady_clock::now();
+    for (gl::host::ScanStatus st = gl::host::scanStatus(); st.running; st = gl::host::scanStatus()) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      if (std::chrono::steady_clock::now() - printed < std::chrono::seconds(1)) continue;
+      const std::string line = !st.searching.empty() ? "looking for plugins: " + st.searching
+                                                     : "scanning " + std::to_string(std::min(st.done + 1, std::max(1, st.total))) + "/" +
+                                                           std::to_string(st.total) + ": " + gl::host::scanCurrentLabel(st);
+      if (line == last) continue;
+      std::fprintf(stderr, "%s\n", line.c_str());
+      last = line;
+      printed = std::chrono::steady_clock::now();
+    }
     gl::host::stopScan();
     auto st = gl::host::scanStatus();
     std::printf("%d plugins scanned, %d hosted classes, %d failed (cache: %s/plugin-cache.json)\n", st.done, st.classes, st.failed, dir.c_str());
@@ -483,7 +505,7 @@ int main(int argc, char** argv) {
   if (argc < 3) { usage(); return 2; }
   std::string cmd = argv[1];
   std::string project = argv[2];
-  if (cmd == "demo") {  // gridline demo <out.json>
+  if (cmd == "demo") {  // gridline demo <out.gridline>
     std::string err;
     if (!gl::saveProject(project, gl::makeDemoTrack(), &err)) {
       std::fprintf(stderr, "error: %s\n", err.c_str());
@@ -493,7 +515,7 @@ int main(int argc, char** argv) {
     return 0;
   }
 
-  if (cmd == "import-midi") {  // gridline import-midi <file.mid> -o <out.json>
+  if (cmd == "import-midi") {  // gridline import-midi <file.mid> -o <out.gridline>
     std::string out;
     for (int i = 3; i < argc; ++i)
       if (!std::strcmp(argv[i], "-o") && i + 1 < argc) out = argv[++i];
@@ -546,9 +568,58 @@ int main(int argc, char** argv) {
 
   if (cmd == "track-receipt") return trackReceiptMain(project, argc, argv);  // J-219
 
+  if (cmd == "import-module") {  // K-76: a tracker module (.xm, .mod) as a Gridline project
+    std::string out, samples;
+    for (int i = 3; i + 1 < argc; ++i) {
+      if (std::strcmp(argv[i], "-o") == 0) out = argv[++i];
+      else if (std::strcmp(argv[i], "--samples") == 0) samples = argv[++i];
+    }
+    if (out.empty()) { usage(); return 2; }
+    std::ifstream in(std::filesystem::u8path(project), std::ios::binary);
+    const std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    if (samples.empty()) samples = (std::filesystem::u8path(out).parent_path() / (gl::projectStemOf(out) + " samples")).u8string();
+    gl::tracker::ImportOptions o;
+    o.sampleFolder = std::filesystem::absolute(std::filesystem::u8path(samples)).u8string();
+    gl::tracker::ImportReport rep;
+    gl::Song song;
+    std::string err;
+    if (!gl::tracker::importModule(bytes, gl::projectStemOf(project), o, song, rep, &err) || !gl::saveProject(out, song, &err)) {
+      std::fprintf(stderr, "error: %s\n", err.c_str());
+      return 1;
+    }
+    std::printf("wrote %s: %d instruments, %d notes, %d patterns (%d variants), %d clips, %d rows, %.1f s, %d rows per beat%s\n", out.c_str(),
+                rep.instruments, rep.notes, rep.patterns, rep.variants, rep.clips, rep.rows, rep.seconds, rep.rowsPerBeat, rep.loops ? ", loops" : "");
+    std::printf("  samples: %d files in %s\n", static_cast<int>(rep.files.size()), o.sampleFolder.c_str());
+    for (const auto& w : rep.warnings) std::printf("  warning: %s\n", w.c_str());
+    return 0;
+  }
+
   gl::Song song;
   std::string err;
-  if (!gl::loadProject(project, song, &err)) {
+  if (gl::openKindOf(project) == gl::OpenKind::TrackerModule) {
+    // K-76: a module opens as the app opens it: its samples in the local cache.
+    std::ifstream in(std::filesystem::u8path(project), std::ios::binary);
+    const std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    gl::tracker::Module mod;
+    gl::archive::UnpackResult ur;
+    gl::archive::MakeRequest mr;
+    mr.sourcePath = std::filesystem::absolute(std::filesystem::u8path(project)).u8string();
+    mr.size = bytes.size();
+    mr.write = [&mod](const std::string& folder, std::vector<std::string>& names, std::string* we) { return gl::tracker::writeSamples(mod, folder, names, we); };
+    gl::tracker::ImportOptions o;
+    gl::tracker::ImportReport rep;
+    bool ok = gl::tracker::parseModule(bytes, mod, &err) && gl::archive::makeCopy(mr, ur, &err);
+    if (ok) {
+      o.sampleFolder = ur.folder;
+      o.write = false;
+      ok = gl::tracker::buildSong(mod, gl::projectStemOf(project), o, song, rep, &err);
+    }
+    if (!ok) {
+      std::fprintf(stderr, "error: %s\n", err.c_str());
+      return 1;
+    }
+    for (const auto& w : rep.warnings) std::fprintf(stderr, "note: %s\n", w.c_str());
+  } else if (!gl::loadProject(project, song, &err)) {
     std::fprintf(stderr, "error: %s\n", err.c_str());
     return 1;
   }

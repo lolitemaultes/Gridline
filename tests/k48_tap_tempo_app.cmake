@@ -6,7 +6,8 @@
 #   4. the button, the controller action and the Tools menu share one tapper (the menu measures only);
 #   5. the same clicks at interface scale 2, and a key bound in the settings taps (J, free until then);
 #   6. the bar at every width: same size as its neighbours, nothing overlaps or leaves the window, and
-#      the button still taps at the narrowest width.
+#      the button still taps at the narrowest width;
+#   7. (K-132) the tap button in the overflow popup taps, with the popup open.
 #   cmake -DAPP=<gridline-app> -DDEMO=<test_song.gridline.json> -DOUT=<dir> -P k48_tap_tempo_app.cmake
 cmake_minimum_required(VERSION 3.16)
 file(REMOVE_RECURSE "${OUT}")
@@ -232,3 +233,25 @@ endif()
 state(narrow 40)
 want(narrow "taps at the narrowest width" "${taps}/${tempo}" "2/150.000")
 message(STATUS "ok - at the narrowest width the button stays on the bar and taps")
+
+# K-132: the tap button inside the overflow popup. The bar is told to fit a narrower width than any
+# window can have, so the tempo goes into the popup: the popup opens from the "more" button and its
+# own tap button follows the clicks (two taps 0.4 s apart: 150 BPM) while the popup stays open.
+clicks(o 10)
+clicks(t 18 43)
+run(overflow "6 taptempo fit 420\n8 sdlat bar_more\n${o}15 taptempo bar\n16 sdlat taptempo\n${t}46 taptempo\n47 taptempo bar\n50 quit discard\n" --size 1440x900)
+if(NOT overflow_out MATCHES "sdlat frame 8: bar_more at")
+  message(FATAL_ERROR "FAIL (overflow): no overflow button when the bar fits 420 px\n${overflow_out}")
+endif()
+if(overflow_out MATCHES "bar frame 15: bar_tempo ")
+  message(FATAL_ERROR "FAIL (overflow): the tempo stayed on the bar\n${overflow_out}")
+endif()
+if(NOT overflow_out MATCHES "sdlat frame 16: taptempo at")
+  message(FATAL_ERROR "FAIL (overflow): no tap button in the open popup\n${overflow_out}")
+endif()
+state(overflow 46)
+want(overflow "the popup's tap button taps" "${taps}/${tempo}" "2/150.000")
+if(NOT overflow_out MATCHES "bar frame 47: taptempo ")
+  message(FATAL_ERROR "FAIL (overflow): the popup closed after the taps\n${overflow_out}")
+endif()
+message(STATUS "ok - the tap button in the overflow popup taps and keeps the popup open")

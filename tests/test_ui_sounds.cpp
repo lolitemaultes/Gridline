@@ -28,7 +28,7 @@ void* operator new(std::size_t n) {
   throw std::bad_alloc();
 }
 void* operator new[](std::size_t n) { return operator new(n); }
-#if defined(__GNUC__) && !defined(__clang__)
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 11  // (GCC 11 added this warning)
 #pragma GCC diagnostic ignored "-Wmismatched-new-delete"  // the replaced operator new is malloc
 #endif
 void operator delete(void* p) noexcept { std::free(p); }

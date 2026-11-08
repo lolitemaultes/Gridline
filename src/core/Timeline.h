@@ -43,8 +43,9 @@ Tick snapGrid(const Song& s, Snap mode, double pxPerTick, bool altHeld);
 // every other mode to the nearest grid line.
 Tick snapTick(Tick t, Tick grid, Snap mode);
 // How far a drag moves clips or notes: whole grid steps from where they are, so what sits off the
-// grid keeps its offset. `earliest` is the earliest start among them: at the song's start they stop
-// on the last whole step that fits.
+// grid keeps its offset. `earliest` is the earliest start among them. K-82: dragged past the song's
+// start they stop at the wall: the earliest one lands on 0 (on the beat, its offset gone) and the
+// others keep their places relative to it.
 Tick moveDistance(Tick dragged, Tick grid, Snap mode, Tick earliest);
 
 // Tick under a pixel offset (floor(px / pxPerTick)), defined for any input:

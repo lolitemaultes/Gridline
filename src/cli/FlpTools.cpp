@@ -1,6 +1,6 @@
 // Gridline CLI — FL Studio project export and round-trip tools (J-34).
-//   gridline export-flp <project.json|.flp> -o <out.flp> [--no-origin] [--fl-data DIR]
-//   gridline export-flp-zip <project.json|.flp|.zip> -o <out.zip> [--no-origin] [--fl-data DIR] [--factory-samples]
+//   gridline export-flp <project.gridline|.flp> -o <out.flp> [--no-origin] [--fl-data DIR]
+//   gridline export-flp-zip <project.gridline|.flp|.zip> -o <out.zip> [--no-origin] [--fl-data DIR] [--factory-samples]
 //   gridline flp-roundtrip <in.flp> [-o <exported.flp>] [--no-origin] [--fl-data DIR] [--json <report.json>]
 //   gridline flp-encode-check [--plugin NAME]... [--max N] [--verbose] [--fl-data DIR] [files...]
 #include <cctype>
@@ -53,7 +53,7 @@ int encodeCheckMain(int argc, char** argv) {
 bool loadAny(const std::string& path, gl::Song& song, const std::string& data, std::string* err) {
   std::string ext = std::filesystem::path(path).extension().string();
   for (char& ch : ext) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-  if (ext == ".zip") {  // zipped project / FL Studio zipped loop package: unpacked in the cache
+  if (ext == ".zip" || ext == ".gridlinez") {  // zipped project / FL Studio zipped loop package: unpacked in the cache
     gl::archive::UnpackRequest u;
     u.zipPath = path;
     gl::archive::UnpackResult ur;
@@ -82,15 +82,16 @@ bool loadAny(const std::string& path, gl::Song& song, const std::string& data, s
 
 int exportMain(int argc, char** argv) {
   if (argc < 3) return 2;
-  std::string in = argv[2], out, data;
+  std::string in = argv[2], out, data, mode;
   gl::flp::ExportOptions opt;
   for (int i = 3; i < argc; ++i) {
     if (!std::strcmp(argv[i], "-o") && i + 1 < argc) out = argv[++i];
     else if (!std::strcmp(argv[i], "--no-origin")) opt.useOrigin = false;
     else if (!std::strcmp(argv[i], "--fl-data") && i + 1 < argc) data = argv[++i];
+    else if (!std::strcmp(argv[i], "--gridline-plugins") && i + 1 < argc) mode = argv[++i];  // K-110
   }
-  if (out.empty()) {
-    std::fprintf(stderr, "usage: gridline export-flp <project.json|.flp> -o <out.flp> [--no-origin] [--fl-data DIR]\n");
+  if (out.empty() || (!mode.empty() && !gl::flp::parseGridlinePlugins(mode, opt.gridlinePlugins))) {
+    std::fprintf(stderr, "usage: gridline export-flp <project.gridline|.flp> -o <out.flp> [--no-origin] [--fl-data DIR] [--gridline-plugins fallback|suite|render]\n");
     return 2;
   }
   opt.factoryData = data.empty() ? gl::flp::defaultFactoryData() : data;
@@ -100,6 +101,9 @@ int exportMain(int argc, char** argv) {
     std::fprintf(stderr, "error: %s\n", err.c_str());
     return 1;
   }
+  // K-110: without --gridline-plugins, the project's own choice, else plugins with muted audio copies (the app's default).
+  if (mode.empty() && !gl::flp::parseGridlinePlugins(song.flExportGridline, opt.gridlinePlugins))
+    opt.gridlinePlugins = gl::flp::GridlinePlugins::SuiteWithFallback;
   gl::flp::ExportReport rep;
   if (!gl::flp::exportFlpFile(song, out, rep, opt, &err)) {
     std::fprintf(stderr, "error: %s\n", err.c_str());
@@ -117,16 +121,17 @@ int exportMain(int argc, char** argv) {
 // files the project uses, beside it in one .zip.
 int exportZipMain(int argc, char** argv) {
   if (argc < 3) return 2;
-  std::string in = argv[2], out, data;
+  std::string in = argv[2], out, data, mode;
   gl::flp::PackageOptions opt;
   for (int i = 3; i < argc; ++i) {
     if (!std::strcmp(argv[i], "-o") && i + 1 < argc) out = argv[++i];
     else if (!std::strcmp(argv[i], "--no-origin")) opt.flp.useOrigin = false;
     else if (!std::strcmp(argv[i], "--fl-data") && i + 1 < argc) data = argv[++i];
     else if (!std::strcmp(argv[i], "--factory-samples")) opt.includeFactorySamples = true;
+    else if (!std::strcmp(argv[i], "--gridline-plugins") && i + 1 < argc) mode = argv[++i];  // K-110
   }
-  if (out.empty()) {
-    std::fprintf(stderr, "usage: gridline export-flp-zip <project.json|.flp|.zip> -o <out.zip> [--no-origin] [--fl-data DIR] [--factory-samples]\n");
+  if (out.empty() || (!mode.empty() && !gl::flp::parseGridlinePlugins(mode, opt.flp.gridlinePlugins))) {
+    std::fprintf(stderr, "usage: gridline export-flp-zip <project.gridline|.flp|.zip> -o <out.zip> [--no-origin] [--fl-data DIR] [--factory-samples] [--gridline-plugins fallback|suite|render]\n");
     return 2;
   }
   opt.flp.factoryData = data.empty() ? gl::flp::defaultFactoryData() : data;
@@ -136,6 +141,8 @@ int exportZipMain(int argc, char** argv) {
     std::fprintf(stderr, "error: %s\n", err.c_str());
     return 1;
   }
+  if (mode.empty() && !gl::flp::parseGridlinePlugins(song.flExportGridline, opt.flp.gridlinePlugins))
+    opt.flp.gridlinePlugins = gl::flp::GridlinePlugins::SuiteWithFallback;
   std::string name = std::filesystem::path(out).stem().string();
   gl::flp::PackageReport rep;
   if (!gl::flp::exportFlpZip(song, out, name, opt, rep, &err)) {

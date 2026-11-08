@@ -15,6 +15,7 @@
 #include "Check.h"
 #include "Hermetic.h"
 #include "NoteRetrigger.h"
+#include "core/Crash.h"
 #include "core/Document.h"
 #include "core/Project.h"
 #include "core/flp/Flp.h"
@@ -195,12 +196,28 @@ void testClap() {
              pi->params[2].kind == ParamKind::Choice,
          "CLAP plugin registered as an instrument type");
 
+  const uint64_t busy0 = crash::busyScopesStarted();
   auto g = createGenerator(kClapSynth);
   expect(g != nullptr, ("CLAP instrument instantiates " + host::lastError()).c_str());
   if (!g) return;
+  const uint64_t busy1 = crash::busyScopesStarted();
   host::HostedInstance* hi = host::hostedInstance(g.get());
   PluginState st = defaultPluginState(kClapSynth);
   g->prepareHost(st, 48000);
+  // K-132: loading a plugin and giving it its state are long work on the interface thread (the
+  // watchdog's busy scope), never a freeze; nothing is left busy afterwards.
+  expect(busy1 > busy0 && crash::busyScopesStarted() > busy1 && !crash::busyNow(), "loading a plugin and its state run in a busy scope");
+  {  // a channel's instrument replaced by the plugin: the build that loads it is busy, not frozen
+    Document d(makeEmptySong());
+    const ObjectId ch = d.addChannel("replace", "gl.synth");
+    ProgramBuilder b;
+    b.setSampleRate(48000);
+    auto p0 = b.build(d.song());
+    const uint64_t c0 = crash::busyScopesStarted();
+    expect(d.setChannelPlugin(ch, kClapSynth), "replace with the plugin");
+    auto p1 = b.build(d.song());
+    expect(p0 && p1 && crash::busyScopesStarted() > c0 && !crash::busyNow(), "plugin replace: the build that loads it runs in a busy scope");
+  }
   host::UiUpdate u;
   hi->pumpUi(u);
   expect(u.readback && u.values.size() == 4 && std::fabs(u.values[0] - 0.5f) < 1e-6f, "CLAP parameters read back");
@@ -1481,6 +1498,43 @@ void testPresetsAndBypass() {
 // Sandbox: MIDI output and modulation travel through shared memory.
 // K-7: the actual plugin inside a Junction: one instance, its own state, its latency; a plugin
 // that is not installed passes audio and keeps its state.
+// K-59: the builder warms the built-in modules inside a Junction (their first block runs on its
+// thread) and never runs an installed plugin there: that one first runs on the audio path.
+void testJunctionWarmUpSkipsHosted() {
+  auto* cp = probe<GridlineClapProbe>(clapBinary(), "gridline_clap_probe");
+  expect(cp != nullptr, "K-59: CLAP probe reachable");
+  if (!cp) return;
+  namespace md = packs::modulation;
+  md::JGraph g;
+  const uint32_t plug = md::jAddNode(g, defaultPluginState(kClapGain), 100, 40);
+  const uint32_t dly = md::jAddNode(g, defaultPluginState("gl.delay"), 200, 40);
+  md::JLink a, b, c;
+  a.src = md::kJInputs, a.dst = plug;
+  b.src = plug, b.dst = dly;
+  c.src = dly, c.dst = md::kJOutputs;
+  g.links = {a, b, c};
+  Document d(makeEmptySong());
+  const ObjectId kick = d.addChannel("k", "gl.kick");
+  const ObjectId t1 = d.song().mixer[1].id;
+  d.routeChannel(kick, t1);
+  d.setSlotPlugin(t1, 0, "gl.patcherfx");
+  d.editMixerTrack(t1, "patch", [&](MixerTrack& m) { m.slots[0].plugin.data = md::serializeJunction(g); });
+  ProgramBuilder pb;
+  pb.setSampleRate(48000);
+  const int before = cp->transports;
+  auto prog = pb.build(d.song());
+  expect(cp->transports == before, "K-59: building a Junction runs no installed plugin inside it");
+  AudioEngine e{48000};
+  e.setProgram(prog);
+  e.play();
+  std::vector<float> L(256), R(256);
+  for (int i = 0; i < 8; ++i) {
+    if (i == 1) e.noteOn(kick, 60, 1.0f);
+    e.process(L.data(), R.data(), 256);
+  }
+  expect(cp->transports > before, "K-59: the installed plugin inside runs on the audio path");
+}
+
 void testJunctionHosted() {
   namespace md = packs::modulation;
   md::JGraph g;
@@ -1946,6 +2000,7 @@ int main() {
   testHelpers();
   testClap();
   testJunctionHosted();
+  testJunctionWarmUpSkipsHosted();
   testVst2();
   testVst3Extras();
   testMultiOutRender();

@@ -171,10 +171,10 @@ void testLarge() {
   m.tracks.resize(600);
   expect(roundTrip(m, why), "large project (300 channels, 1100 patterns, 140 inserts, 600 tracks) exports (" + why + ")");
   // Hosted plugin states (installed or not).
-  Song h = withChannel(PluginState{"vst3:0123456789ABCDEF0123456789ABCDEF", {0.5f, 0.25f}, "", "", ""});
+  Song h = withChannel(PluginState{"vst3:0123456789ABCDEF0123456789ABCDEF", {0.5f, 0.25f}, "", "", "", ""});
   ensureMixer(h);
-  h.mixer[1].slots[0].plugin = PluginState{"au:aufx,dely,appl", {}, "", "", ""};
-  h.mixer[1].slots[1].plugin = PluginState{"clap:com.example.thing", {1.0f}, "garbage", "", ""};
+  h.mixer[1].slots[0].plugin = PluginState{"au:aufx,dely,appl", {}, "", "", "", ""};
+  h.mixer[1].slots[1].plugin = PluginState{"clap:com.example.thing", {1.0f}, "garbage", "", "", ""};
   expect(roundTrip(h, why), "hosted plugin placeholders export (" + why + ")");
 }
 
@@ -192,6 +192,8 @@ Song featureSong() {
   if (!pat.empty()) ops::chopClip(d, pat[0], d.song().barTicks() / 2);
   s = d.song();
   for (auto& p : s.patterns) p.loop = true;
+  for (auto& c : s.playlist)
+    if (c.kind == ClipKind::Pattern) c.loop = true;  // the clips themselves loop
   for (size_t i = 0; i < s.playlist.size() && i < 4; ++i) {
     Clip c = s.playlist[i];
     c.id = s.allocateId();
@@ -229,6 +231,7 @@ Song featureSong() {
   ac.source = a.id;
   ac.track = 5;
   ac.length = s.barTicks() * 3;
+  ac.loop = true;
   s.playlist.push_back(ac);
   s.markers.push_back({s.barTicks() * 2, "Loop", 0, 0, MarkerAction::Loop});
   s.markers.push_back({s.barTicks() * 3, "Sig", 7, 8});
@@ -267,32 +270,40 @@ void testFeatures() {
 void testSaveTypes() {
   const auto& t = saveFileTypes();
   expect(t.size() == static_cast<size_t>(SaveFormat::Count), "one save type per format");
-  expect(t.size() == 4 && t[0].label.find("Gridline project") == 0 && t[1].label.find("Gridline zipped project") == 0 &&
-             t[2].label.find("FL Studio project") == 0 && t[3].label.find("FL Studio zipped loop package") == 0,
-         "save types: Gridline, Gridline zipped, FL Studio project, FL Studio zipped loop package");
-  expect(t[static_cast<size_t>(SaveFormat::GridlineZip)].exts == std::vector<std::string>{".gridline.zip"} &&
+  expect(t.size() == 6 && t[0].label.find("Gridline project") == 0 && t[1].label.find("Gridline zipped project") == 0 &&
+             t[2].label.find("FL Studio project") == 0 && t[3].label.find("FL Studio zipped loop package") == 0 &&
+             t[4].label.find("Gridline project, older name") == 0 && t[5].label.find("Gridline zipped project, older name") == 0,
+         "save types: Gridline, Gridline zipped, FL Studio project, FL Studio zipped loop package, the older Gridline names");
+  expect(t[static_cast<size_t>(SaveFormat::GridlineZip)].exts == std::vector<std::string>{".gridlinez"} &&
+             t[static_cast<size_t>(SaveFormat::GridlineZipOld)].exts == std::vector<std::string>{".gridline.zip"} &&
              t[static_cast<size_t>(SaveFormat::FlZip)].exts == std::vector<std::string>{".zip"},
          "type index = format; the zipped types differ by extension");
-  // Extension handling: the two .zip formats never get confused.
-  expect(saveFormatOf("/d/Song.gridline.zip") == SaveFormat::GridlineZip && saveFormatOf("/d/SONG.Gridline.ZIP") == SaveFormat::GridlineZip,
-         "format by name: .gridline.zip (any case)");
+  // Extension handling: the .zip formats never get confused.
+  expect(saveFormatOf("/d/Song.gridlinez") == SaveFormat::GridlineZip && saveFormatOf("/d/SONG.GridlineZ") == SaveFormat::GridlineZip,
+         "format by name: .gridlinez (any case)");
+  expect(saveFormatOf("/d/Song.gridline.zip") == SaveFormat::GridlineZipOld && saveFormatOf("/d/SONG.Gridline.ZIP") == SaveFormat::GridlineZipOld,
+         "format by name: .gridline.zip (any case) is the older name");
   expect(saveFormatOf("/d/Song.zip") == SaveFormat::FlZip && saveFormatOf("/d/gridline.zip") == SaveFormat::FlZip,
          "format by name: any other .zip is an FL package");
-  expect(withSaveExtension("Song.zip", SaveFormat::GridlineZip) == "Song.gridline.zip", "FL zip name -> Gridline zip name");
+  expect(withSaveExtension("Song.zip", SaveFormat::GridlineZip) == "Song.gridlinez", "FL zip name -> Gridline zip name");
   expect(withSaveExtension("Song.gridline.zip", SaveFormat::FlZip) == "Song.zip", "Gridline zip name -> FL zip name (no .gridline left)");
-  expect(withSaveExtension("Song.gridline.zip", SaveFormat::GridlineZip) == "Song.gridline.zip", "Gridline zip name kept");
-  expect(withSaveExtension("Song.gridline.zip", SaveFormat::Gridline) == "Song.gridline.json", "Gridline zip -> Gridline project");
+  expect(withSaveExtension("Song.gridlinez", SaveFormat::FlZip) == "Song.zip", "new Gridline zip name -> FL zip name");
+  expect(withSaveExtension("Song.gridlinez", SaveFormat::GridlineZip) == "Song.gridlinez", "Gridline zip name kept");
+  expect(withSaveExtension("Song.gridline.zip", SaveFormat::GridlineZip) == "Song.gridlinez", "older zip name -> the new one");
+  expect(withSaveExtension("Song.gridlinez", SaveFormat::GridlineZipOld) == "Song.gridline.zip", "new zip name -> the older one");
+  expect(withSaveExtension("Song.gridline.zip", SaveFormat::Gridline) == "Song.gridline", "Gridline zip -> Gridline project");
   expect(withSaveExtension("Song.gridline.zip", SaveFormat::Flp) == "Song.flp", "Gridline zip -> FL project");
-  expect(withSaveExtension("/d/Song.flp", SaveFormat::GridlineZip) == "/d/Song.gridline.zip", "FL project -> Gridline zip");
-  expect(withSaveExtension("Song", SaveFormat::GridlineZip) == "Song.gridline.zip", "no extension -> .gridline.zip");
-  expect(withSaveExtension("My.Song", SaveFormat::GridlineZip) == "My.Song.gridline.zip", "dots kept");
-  expect(projectStemOf("/d/Song.gridline.zip") == "Song", "stem of a Gridline zip");
+  expect(withSaveExtension("/d/Song.flp", SaveFormat::GridlineZip) == "/d/Song.gridlinez", "FL project -> Gridline zip");
+  expect(withSaveExtension("Song", SaveFormat::GridlineZip) == "Song.gridlinez", "no extension -> .gridlinez");
+  expect(withSaveExtension("My.Song", SaveFormat::GridlineZip) == "My.Song.gridlinez", "dots kept");
+  expect(projectStemOf("/d/Song.gridline.zip") == "Song" && projectStemOf("/d/Song.gridlinez") == "Song", "stem of a Gridline zip");
   // Every format's name maps back to that format.
   for (int f = 0; f < static_cast<int>(SaveFormat::Count); ++f)
     expect(saveFormatOf(withSaveExtension("Track 1", static_cast<SaveFormat>(f))) == static_cast<SaveFormat>(f),
            "format " + std::to_string(f) + ": name round trip");
   // Opening: both zips open as projects.
   expect(openKindOf("/d/Song.gridline.zip") == OpenKind::ZippedProject && opensAsProject("/d/Song.gridline.zip"), "a Gridline zip opens");
+  expect(openKindOf("/d/Song.gridlinez") == OpenKind::ZippedProject && opensAsProject("/d/Song.gridlinez"), "a new Gridline zip opens");
 }
 
 std::string tone(const std::string& path) {
@@ -331,10 +342,20 @@ void testZipRoundTrip() {
   expect(r.error.empty() && r.copied == 1 && fs::exists(gz), "Gridline zip written with its sample");
   expect(saveFormatOf(gz) == SaveFormat::GridlineZip, "the written name re-saves as a Gridline zip");
   std::string proj, err;
-  expect(unpackZippedProject(gz, dir + "/My Song", proj, &err) && proj.size() > 14 && proj.compare(proj.size() - 14, 14, ".gridline.json") == 0,
-         "Gridline zip unpacks to a Gridline project (" + err + ")");
+  expect(unpackZippedProject(gz, dir + "/My Song", proj, &err) && fs::u8path(proj).filename().u8string() == "My Song.gridline",
+         "Gridline zip unpacks to a Gridline project named .gridline (" + err + ")");
   Song back;
   expect(loadProject(proj, back, &err) && back.channels.size() == 1 && back.info.title == "Zip test", "Gridline zip opens (" + err + ")");
+  {  // K-121: the older name holds the project under its older name, which earlier versions look for
+    const std::string oz = withSaveExtension(dir + "/Old Song", SaveFormat::GridlineZipOld);
+    expect(fs::u8path(oz).filename().u8string() == "Old Song.gridline.zip" && exportZippedProject(s, oz, projectStemOf(oz)).error.empty(),
+           "older-name Gridline zip written");
+    std::string op;
+    Song ob;
+    expect(unpackZippedProject(oz, dir + "/Old Song", op, &err) && fs::u8path(op).filename().u8string() == "Old Song.gridline.json" &&
+               loadProject(op, ob, &err) && ob.channels.size() == 1,
+           "older-name Gridline zip holds Old Song.gridline.json and opens (" + err + ")");
+  }
   expect(!back.channels.empty() && fs::exists(back.channels[0].plugin.data) && missingFiles(back).empty(), "Gridline zip: the sample resolves");
   // Re-saving the opened project as a Gridline zip again (Save keeps the format).
   r = exportZippedProject(back, gz, projectStemOf(gz));

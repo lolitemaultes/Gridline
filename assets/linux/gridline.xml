@@ -1,10 +1,24 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Gridline project files for the desktop's file manager (shared-mime-info). -->
+<!-- Gridline project files for the desktop's file manager (shared-mime-info).
+     Projects are named *.gridline and zipped projects *.gridlinez (weight 80: no other type uses
+     these names). Projects saved by earlier versions are named *.gridline.json and *.gridline.zip:
+     those globs (weight 60) win over the plain format's own *.json / *.zip (weight 50). Each type
+     is a sub-class of the format it is written in, so programs for that format still list it,
+     and the file manager opens it with Gridline, the only program that lists it in its desktop
+     entry. Tracker modules use the standard audio/x-xm and audio/x-mod types. -->
 <mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
   <mime-type type="application/x-gridline-project">
     <comment>Gridline project</comment>
     <sub-class-of type="application/json"/>
+    <glob pattern="*.gridline" weight="80"/>
     <glob pattern="*.gridline.json" weight="60"/>
+    <icon name="gridline"/>
+  </mime-type>
+  <mime-type type="application/x-gridline-zipped-project">
+    <comment>Gridline zipped project</comment>
+    <sub-class-of type="application/zip"/>
+    <glob pattern="*.gridlinez" weight="80"/>
+    <glob pattern="*.gridline.zip" weight="60"/>
     <icon name="gridline"/>
   </mime-type>
 </mime-info>

@@ -397,9 +397,19 @@ bool reservedDeviceName(std::string base) {
   return base.size() == 4 && (base.rfind("COM", 0) == 0 || base.rfind("LPT", 0) == 0) && base[3] >= '0' && base[3] <= '9';
 }
 
-bool hasProjectExt(const std::string& f) {
-  const std::string ext = kProjectFileExt;
+bool endsWithExt(const std::string& f, const std::string& ext) {
   return f.size() > ext.size() && f.compare(f.size() - ext.size(), ext.size(), ext) == 0;
+}
+
+// K-121: the project file is "<stem>.gridline"; folders made by earlier versions hold
+// "<stem>.gridline.json", which is found and then renamed to the new name like any rename.
+bool hasProjectExt(const std::string& f) { return endsWithExt(f, kProjectFileExt) || endsWithExt(f, kOldProjectFileExt); }
+
+// The file name without its project extension (either one).
+std::string stemOfProjectFile(const std::string& f) {
+  for (const char* e : {kOldProjectFileExt, kProjectFileExt})
+    if (endsWithExt(f, e)) return f.substr(0, f.size() - std::string(e).size());
+  return f;
 }
 
 // A plain file name (no folders, no "..") as stored in collab.json.
@@ -453,7 +463,7 @@ std::string projectFileStem(const std::string& name) {
     while (!t.empty() && (t.back() == '.' || t.back() == ' ')) t.pop_back();  // Windows drops these
   };
   trim(out);
-  constexpr size_t kMaxStemBytes = 120;  // + " (99).gridline.json" stays far below 255 bytes
+  constexpr size_t kMaxStemBytes = 120;  // + " (99).gridline" stays far below 255 bytes
   if (out.size() > kMaxStemBytes) {
     size_t cut = kMaxStemBytes;
     while (cut > 0 && (static_cast<unsigned char>(out[cut]) & 0xC0) == 0x80) --cut;
@@ -553,8 +563,10 @@ std::string Session::projectFileOf(const std::string& folder) {
   const std::string rec = cj.text("file"), name = cj.text("name");
   if (isFile(rec)) return (dir / rec).string();
   if (!name.empty()) {
-    if (const std::string f = projectFileStem(name) + kProjectFileExt; isFile(f)) return (dir / f).string();
-    if (const std::string f = name + kProjectFileExt; isFile(f)) return (dir / f).string();  // projects made before J-111f
+    for (const char* ext : {kProjectFileExt, kOldProjectFileExt}) {
+      if (const std::string f = projectFileStem(name) + ext; isFile(f)) return (dir / f).string();
+      if (const std::string f = name + ext; isFile(f)) return (dir / f).string();  // projects made before J-111f
+    }
   }
   // renamed by hand, or a rename that a crash interrupted before collab.json was written:
   // the folder's project file is the one Gridline wrote last
@@ -897,7 +909,7 @@ bool Session::loadFromDisk(std::string* err) {
   shadowValid_ = true;
   remoteDirty_ = false;
   attach();
-  // External edits of <name>.gridline.json (an older Gridline, a text editor): they become local changes.
+  // External edits of <name>.gridline (an older Gridline, a text editor): they become local changes.
   std::string written, cur;
   readFileText((fs::path(cfg_.folder) / kDir / "written.txt").string(), written, 1 << 10);
   if (readFileText(projectFile(), cur) && !written.empty() && update::sha256Hex(cur) != written) {
@@ -1312,7 +1324,7 @@ std::string Session::projectName() const {
     if (std::string c = cleanProjectName(n.str); !c.empty()) return c;
   // projects without a shared name (none was ever written): collab.json / the invite, then the file
   if (!cfg_.name.empty()) return cfg_.name;
-  if (hasProjectExt(fileName_)) return fileName_.substr(0, fileName_.size() - std::string(kProjectFileExt).size());
+  if (hasProjectExt(fileName_)) return stemOfProjectFile(fileName_);
   return "Project";
 }
 

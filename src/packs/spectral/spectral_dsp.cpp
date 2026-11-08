@@ -641,7 +641,8 @@ class VocoderFx final : public SpectralFx {
           std::copy(maps->sge.begin(), maps->sge.end(), sgState_.params.begin());
           sgFrom_ = maps;
         }
-        sgState_.params[0] = p[VxEnhance];  // EnAmount: the program's band mix
+        // EnAmount: the program's band mix (K-133: law 1, a hundredth of the amount)
+        sgState_.params[0] = p.choice(VxEnhanceLaw) == 1 ? kVxEnhanceMix * p[VxEnhance] : p[VxEnhance];
         sgFx_->process(sgState_, ctx, L, R, n);
         if (maps != sgLatFrom_ || ctx.sampleRate != sgLatRate_) {  // no allocation: the program is plain numbers
           sgLat_ = sgFx_->latencyFor(sgState_, ctx.sampleRate);
@@ -1233,6 +1234,7 @@ class PitchFx final : public SpectralFx {
     const double dens = std::clamp(static_cast<double>(p[PsDensity]), 1.0, 5.0);
     const double jit = std::clamp(static_cast<double>(p[PsJitter]), 0.0, 1.0), rnd = std::clamp(static_cast<double>(p[PsRand]), 0.0, 1.0);
     const int dmode = std::clamp(p.choice(PsDelayMode), 0, 3);
+    const int glaw = std::clamp(p.choice(PsMusicLaw), 0, 1);
     double dTarget = p.on(PsDelaySync) ? std::clamp(static_cast<double>(p[PsDelaySteps]), 0.0, 16.0) * 15.0 * sr / std::max(10.0, ctx.tempo)
                                        : std::clamp(static_cast<double>(p[PsDelay]), 0.0, 1000.0) * 0.001 * sr;
     dTarget = std::clamp(dTarget, 1.0, static_cast<double>(delay_[0].size() - 8));
@@ -1273,10 +1275,10 @@ class PitchFx final : public SpectralFx {
         const bool voiced = det_.voiced();
         for (int c = 0; c < 2; ++c) s[c] = ps_[c].process(static_cast<float>(in[c]), a, det_.period(), voiced, &v[c], 1);
       } else {
-        cloud_.process(static_cast<float>(in[0]), static_cast<float>(in[1]), s[0], s[1], ratio[0], len, dens, jit, rnd);
+        cloud_.process(static_cast<float>(in[0]), static_cast<float>(in[1]), s[0], s[1], ratio[0], len, dens, jit, rnd, glaw);
         if (det > 0) {  // stereo detune: the right channel's grains run at their own ratio
           float d0, d1;
-          cloud2_.process(static_cast<float>(in[0]), static_cast<float>(in[1]), d0, d1, ratio[1], len, dens, jit, rnd);
+          cloud2_.process(static_cast<float>(in[0]), static_cast<float>(in[1]), d0, d1, ratio[1], len, dens, jit, rnd, glaw);
           s[1] = d1;
         }
       }

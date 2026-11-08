@@ -71,9 +71,9 @@ runPair(1 "5 collab profile Alex
 43 waitfor never 8
 50 quit
 " 300)
-expectName(a1 "Night Drive: take 2" "${OUT}/Alex/Song/Night Drive- take 2.gridline.json")
-expectName(b1 "Night Drive: take 2" "${OUT}/Sam/Song/Night Drive- take 2.gridline.json")
-if(EXISTS "${OUT}/Sam/Song/Song.gridline.json")
+expectName(a1 "Night Drive: take 2" "${OUT}/Alex/Song/Night Drive- take 2.gridline")
+expectName(b1 "Night Drive: take 2" "${OUT}/Sam/Song/Night Drive- take 2.gridline")
+if(EXISTS "${OUT}/Sam/Song/Song.gridline")
   message(FATAL_ERROR "FAIL (live): Sam's old project file is still there")
 endif()
 file(READ "${OUT}/cfgB/gridline/collab/known-projects.json" known)
@@ -95,17 +95,17 @@ execute_process(COMMAND ${CMAKE_COMMAND} -E env GRIDLINE_CONFIG_HOME=${OUT}/cfgA
 if(NOT rc2 EQUAL 0)
   message(FATAL_ERROR "FAIL (offline rename): exit code ${rc2}")
 endif()
-expectName(a2 "Offline rename" "${OUT}/Alex/Song/Offline rename.gridline.json")
+expectName(a2 "Offline rename" "${OUT}/Alex/Song/Offline rename.gridline")
 
 # ---- 3: both open it again; Sam (from his old Recent files entry) catches up ----
-runPair(3 "10 collab open \"${OUT}/Alex/Song/Offline rename.gridline.json\"
+runPair(3 "10 collab open \"${OUT}/Alex/Song/Offline rename.gridline\"
 11 waitfor collab-ready 30
 12 waitfor collab-connected 200
 13 waitfor collab-synced 60
 14 waitfor never 4
 15 collab report \"${OUT}/a3.json\"
 30 quit
-" "10 collab open \"${OUT}/Sam/Song/Night Drive- take 2.gridline.json\"
+" "10 collab open \"${OUT}/Sam/Song/Night Drive- take 2.gridline\"
 11 waitfor collab-ready 30
 12 waitfor collab-connected 200
 13 waitfor \"collab-name:Offline rename\" 60
@@ -114,7 +114,7 @@ runPair(3 "10 collab open \"${OUT}/Alex/Song/Offline rename.gridline.json\"
 16 waitfor never 8
 30 quit
 " 400)
-expectName(b3 "Offline rename" "${OUT}/Sam/Song/Offline rename.gridline.json")
+expectName(b3 "Offline rename" "${OUT}/Sam/Song/Offline rename.gridline")
 file(READ "${OUT}/cfgB/gridline/collab/known-projects.json" known)
 string(FIND "${known}" "Offline rename" at)
 if(at LESS 0)

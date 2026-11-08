@@ -16,6 +16,7 @@ float drawTopBar(App& a);      // menu + transport; returns height used
 // logical pixels; false when it is not shown. `mirror`: the metronome glyph's last horizontal scale.
 bool topBarButtonRect(const char* name, float& x0, float& y0, float& x1, float& y1);
 void devNoteRect(const char* name);  // the last item's rectangle as an "sdlat" target (browser: "brsearch", "brclear"; channel window: "chroute", "chroutefree", "chroutelist")
+void devTopBarFitWidth(float w);  // K-132: dev, the top bar fits its groups into w px (0 = the window's width)
 float topBarMetronomeMirror();
 void drawStatusBar(App& a);    // hint bar + notifications
 void drawNotificationCards(App& a);  // J-141: the notification cards alone (the launcher has no status bar)
@@ -152,7 +153,7 @@ void clipContextMenu(App& a, ObjectId clip);
 void playlistOptionsMenu(App& a);
 void pianoRollMenu(App& a);
 void markerMenu(App& a, int index);  // playlist ruler: one marker (J-11)
-void markerAddItems(App& a);         // playlist menu > Time markers (J-11)
+void markerAddItems(App& a);         // playlist menu > Time markers: add at the selection, every N bars (J-11)
 // J-85: a song loop marker at `pos` snapped to the playlist grid (one undo
 // step; playback reaching the song end goes on from it).
 void addLoopMarker(App& a, Tick pos);

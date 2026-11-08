@@ -51,6 +51,11 @@ bool canPaste(const App& a);
 void instrumentItems(const std::function<void(const std::string& type)>& pick, const std::string& current = "");
 void effectItems(const std::function<void(const std::string& type)>& pick, const std::string& current = "");
 
+// K-125: the instrument picks of the channel rack's menus and plugin menus: a new channel (after
+// `after`; kNoId: after the selected channel) or a replaced instrument. Its editor opens at once.
+ObjectId addInstrumentPick(App& a, const std::string& type, ObjectId after = kNoId);
+bool replaceInstrumentPick(App& a, ObjectId channel, const std::string& type);
+
 // Renames whatever F2 means for the focused editor.
 void renameFocused(App& a);
 

@@ -720,7 +720,8 @@ class GrainCloud {
     for (auto& g : g_) g.on = false;
     rng_ = Lcg{};
   }
-  void process(float xl, float xr, float& yl, float& yr, double ratio, double len, double density, double jitter, double rnd) {
+  void process(float xl, float xr, float& yl, float& yr, double ratio, double len, double density, double jitter, double rnd,
+               int law = 0) {
     l_.at(w_) = xl;
     r_.at(w_) = xr;
     ++w_;
@@ -731,7 +732,7 @@ class GrainCloud {
       next_ += spacing + jitter * rng_.next() * spacing;
       for (auto& g : g_)
         if (!g.on) {
-          double back = std::max(0.0, ratio - 1.0) * len + 5.0 + rnd * rng_.next() * len;
+          double back = std::max(0.0, ratio - 1.0) * len + (law ? 4.0 : 5.0) + rnd * rng_.next() * len;
           g.pos = static_cast<double>(w_ - 1) - std::min(back, kRing - len * 2.0 - 8.0);
           g.inc = ratio;
           g.len = len;
@@ -749,6 +750,11 @@ class GrainCloud {
       sr += r_.band(g.pos, g.inc, w_ - 1) * wv;
       g.pos += g.inc;
       if (++g.age >= g.len) g.on = false;
+    }
+    if (law) {  // K-133: the grains sum as they are (more overlap = louder) into a tanh soft clip
+      yl = static_cast<float>(std::tanh(sl));
+      yr = static_cast<float>(std::tanh(sr));
+      return;
     }
     const double norm = 2.0 / density * (1.0 + 0.5 * jitter);
     yl = static_cast<float>(sl * norm);

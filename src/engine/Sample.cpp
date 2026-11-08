@@ -56,7 +56,8 @@ SamplePtr fromInterleaved(const std::string& path, float* data, uint64_t frames,
 
 bool isAudioFile(const std::string& path) {
   std::string e = lowerExt(path);
-  return e == ".wav" || e == ".wave" || e == ".flac" || e == ".mp3" || e == ".ogg" || e == ".wv" || e == ".aif" || e == ".aiff" || e == ".aifc";
+  return e == ".wav" || e == ".wave" || e == ".flac" || e == ".mp3" || e == ".ogg" || e == ".wv" || e == ".aif" || e == ".aiff" || e == ".aifc" ||
+         e == ".m4a" || e == ".aac";  // K-51
 }
 
 namespace {
@@ -209,6 +210,9 @@ SamplePtr loadSample(const std::string& path, std::string* err) {
     channels = ch, rate = sr, frames = n;
     if (data) out = fromInterleaved(path, data, frames, channels, rate);
     drflac_free(data, nullptr);
+  } else if (looksLikeAacFile(bytes.data(), bytes.size()) || isAacExtension(e)) {  // K-51 (ADTS before MP3: both start 0xFFF)
+    DecodedAudio d;
+    if (decodeAacFile(path, d, &why)) out = fromDecoded(path, d);
   } else if (e == ".mp3" || (bytes.size() > 2 && bytes[0] == 0xFF && (bytes[1] & 0xE0) == 0xE0) ||
              (bytes.size() > 3 && std::memcmp(bytes.data(), "ID3", 3) == 0)) {
     drmp3_config cfg{};

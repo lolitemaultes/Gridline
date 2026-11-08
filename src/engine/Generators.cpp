@@ -678,6 +678,7 @@ class SamplerGen final : public Generator {
     uint32_t id = 0;
     double pos = 0, rate = 1, dir = 1;
     double note = 60, target = 60;
+    double fitSemis = 0;  // K-132: a resampled note fitted to a time: its pitch at the tempo it started at
     float vel = 0;
     uint64_t age = 0;
     Adsr env, fenv;
@@ -752,6 +753,11 @@ class SamplerGen final : public Generator {
     }
     pitchShift_ = param(s, SmpPitchShift);
     timeStretch_ = param(s, SmpTimeStretch, 1);
+    // K-132: fitted to a time at `fitTempo_`: the stretch follows the tempo as it changes (a
+    // resampled note takes its rate from the tempo when it starts, see onNoteOn).
+    fitTempo_ = param(s, SmpFitTempo, 0);
+    tempo_ = ctx.tempo > 0 ? ctx.tempo : 120.0;
+    if (fitTempo_ > 0) timeStretch_ = std::clamp(timeStretch_ * fitTempo_ / tempo_, 0.01, 100.0);
     delay_ = param(s, SmpEnvDelay), hold_ = param(s, SmpEnvHold);
     ftype_ = std::clamp(static_cast<int>(param(s, SmpFilterType) + 0.5f), 0, 5);
     cutoff_ = param(s, SmpCutoff, 20000), reso_ = param(s, SmpReso), fenvAmt_ = param(s, SmpFiltEnv);
@@ -852,6 +858,7 @@ class SamplerGen final : public Generator {
     v.vel = vel;
     v.age = clock_;
     v.note = v.target = pitch;
+    v.fitSemis = fitTempo_ > 0 && !stretch_ ? 12.0 * std::log2(tempo_ / fitTempo_) : 0.0;
     v.dir = reverse_ ? -1 : 1;
     v.pos = reverse_ ? regionHi() : regionLo();
     v.src = v.pos;
@@ -1026,7 +1033,7 @@ class SamplerGen final : public Generator {
           } else {
             v.lfo = 0;
           }
-          double semis = v.note - root_ + fine_ / 100.0 + (lfoTarget_ == 4 ? v.lfo * 12.0 : 0.0);
+          double semis = v.note - root_ + fine_ / 100.0 + v.fitSemis + (lfoTarget_ == 4 ? v.lfo * 12.0 : 0.0);
           v.rate = std::pow(2.0, semis / 12.0) * base;
           if (ftype_ > 0) {
             double cut = cutoff_ * std::pow(2.0, fenvAmt_ * v.fenv.level * 6.0 + velCut_ * (v.vel - 0.75) * 4.0 +
@@ -1392,6 +1399,7 @@ class SamplerGen final : public Generator {
   const stretch::SincTable* bl_ = &stretch::sincTable(stretch::Quality::Realtime);
   const stretch::SincTable* blOff_ = &stretch::sincTable(stretch::Quality::Offline);
   double pitchShift_ = 0, timeStretch_ = 1, delay_ = 0, hold_ = 0;
+  double fitTempo_ = 0, tempo_ = 120;     // K-132: SmpFitTempo, the block's tempo
   double cutoff_ = 20000, reso_ = 0, fenvAmt_ = 0, velCut_ = 0, keyCut_ = 0, lfoRate_ = 2, lfoAmt_ = 0, lfoDelay_ = 0;
   double panL_ = 1, panR_ = 1, velVol_ = 1, glide_ = 0.001;
   int declick_ = 0, ftype_ = 0, lfoTarget_ = 0, lfoShape_ = 0, voices_n_ = 32;

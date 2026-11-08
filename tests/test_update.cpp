@@ -478,6 +478,115 @@ void installer() {
   fs::remove_all(dir, ec);
 }
 
+// Debian and Ubuntu families get the .deb: from os-release, from how Gridline was installed,
+// or from the package database when os-release cannot be read.
+const char* kZorin17 =
+    "PRETTY_NAME=\"Zorin OS 17.3\"\nNAME=\"Zorin OS\"\nVERSION_ID=\"17\"\nVERSION=\"17.3\"\nVERSION_CODENAME=jammy\nID=zorin\n"
+    "ID_LIKE=\"ubuntu debian\"\nHOME_URL=\"https://zorin.com/os/\"\nUBUNTU_CODENAME=jammy\n";
+const char* kMint21 =
+    "NAME=\"Linux Mint\"\nVERSION=\"21.3 (Virginia)\"\nID=linuxmint\nID_LIKE=\"ubuntu debian\"\nPRETTY_NAME=\"Linux Mint 21.3\"\n"
+    "VERSION_ID=\"21.3\"\nVERSION_CODENAME=virginia\nUBUNTU_CODENAME=jammy\n";
+const char* kPop22 =
+    "NAME=\"Pop!_OS\"\nVERSION=\"22.04 LTS\"\nID=pop\nID_LIKE=\"ubuntu debian\"\nPRETTY_NAME=\"Pop!_OS 22.04 LTS\"\nVERSION_ID=\"22.04\"\n"
+    "VERSION_CODENAME=jammy\nUBUNTU_CODENAME=jammy\n";
+const char* kElementary7 =
+    "PRETTY_NAME=\"elementary OS 7.1 Horus\"\nNAME=\"elementary OS\"\nVERSION_ID=\"7.1\"\nVERSION=\"7.1 Horus\"\nVERSION_CODENAME=horus\n"
+    "ID=elementary\nID_LIKE=ubuntu\nUBUNTU_CODENAME=jammy\n";
+const char* kCrostini = "PRETTY_NAME=\"Debian GNU/Linux 12 (bookworm)\"\nNAME=\"Debian GNU/Linux\"\nVERSION_ID=\"12\"\nVERSION_CODENAME=bookworm\nID=debian\n";
+
+// GitHub's /releases/latest answer for a release with every file the release workflow uploads
+// (the 0.7.4 names, in the order GitHub lists them).
+std::string everyAssetJson(bool withDeb) {
+  const char* files[] = {"freebsd-x86_64.tar.gz", "linux-aarch64.AppImage", "linux-aarch64.rpm", "linux-aarch64.tar.gz", "linux-amd64.deb",
+                         "linux-arm64.deb", "linux-x86_64.AppImage", "linux-x86_64.rpm", "linux-x86_64.tar.gz", "macos-universal.dmg",
+                         "media-tools-linux-aarch64.zip", "media-tools-linux-x86_64.zip", "media-tools-macos-universal.zip",
+                         "netbsd-x86_64.tar.gz", "openbsd-x86_64.tar.gz", "SHA256SUMS", "source.tar.gz", "symbols-linux-x86_64.zip",
+                         "windows-arm64-setup.exe", "windows-arm64.zip", "windows-x64-setup.exe", "windows-x64.zip"};
+  std::string j = R"({"tag_name":"v0.7.4","name":"Gridline 0.7.4","draft":false,"prerelease":false,"assets":[)";
+  bool first = true;
+  for (const char* f : files) {
+    const std::string n = std::string("Gridline-0.7.4-") + f;
+    if (!withDeb && n.size() > 4 && n.compare(n.size() - 4, 4, ".deb") == 0) continue;
+    j += std::string(first ? "" : ",") + R"({"name":")" + n + R"(","label":"","uploader":{"login":"x"},"size":1000,)" +
+         R"("browser_download_url":"https://github.com/lolitemaultes/Gridline/releases/download/v0.7.4/)" + n + "\"}";
+    first = false;
+  }
+  return j + "]}";
+}
+
+void writeFile(const fs::path& p, const std::string& text) {
+  std::error_code ec;
+  fs::create_directories(p.parent_path(), ec);
+  std::ofstream(p, std::ios::binary) << text;
+}
+
+void linuxFamilies() {
+  expect(linuxPackage(kZorin17) == "deb", "os-release: Zorin OS 17 -> deb");
+  expect(linuxPackage(kMint21) == "deb", "os-release: Linux Mint 21 -> deb");
+  expect(linuxPackage(kPop22) == "deb", "os-release: Pop!_OS 22.04 -> deb");
+  expect(linuxPackage(kElementary7) == "deb", "os-release: elementary OS 7 -> deb");
+  expect(linuxPackage(kCrostini) == "deb", "os-release: Debian on a Chromebook -> deb");
+  expect(linuxPackage("ID=ubuntu-studio\n") == "deb" && linuxPackage("ID=debian-edu\n") == "deb" &&
+             linuxPackage("ID=myspin\nID_LIKE=\"kubuntu\"\n") == "deb",
+         "os-release: an ID or ID_LIKE word containing ubuntu or debian -> deb");
+  expect(linuxPackage("ID=arch\nID_LIKE=archlinux\n") == "", "os-release: Arch stays on the AppImage");
+
+  std::vector<Release> rel;
+  expect(parseReleases(everyAssetJson(true), rel) && rel.size() == 1, "every-asset release parsed");
+  if (rel.size() != 1) return;
+  auto pick = [](const Release& r, const char* arch, const std::string& pkg) {
+    const Asset* a = pickAsset(r, Target{"linux", arch, pkg});
+    return a ? a->name : std::string("-");
+  };
+  for (const char* osr : {kZorin17, kMint21, kPop22, kElementary7, kCrostini})
+    expect(pick(rel[0], "x86_64", linuxPackage(osr)) == "Gridline-0.7.4-linux-amd64.deb" &&
+               pick(rel[0], "aarch64", linuxPackage(osr)) == "Gridline-0.7.4-linux-arm64.deb",
+           (std::string("every asset: the .deb for ") + std::string(osr).substr(0, 24)).c_str());
+  const Asset* deb = pickAsset(rel[0], Target{"linux", "x86_64", "deb"});
+  expect(deb && deb->url == "https://github.com/lolitemaultes/Gridline/releases/download/v0.7.4/Gridline-0.7.4-linux-amd64.deb",
+         "every asset: the .deb's own download address");
+  expect(pick(rel[0], "x86_64", "") == "Gridline-0.7.4-linux-x86_64.AppImage", "every asset: other distributions get the AppImage");
+  std::vector<Release> noDeb;
+  expect(parseReleases(everyAssetJson(false), noDeb) && noDeb.size() == 1 &&
+             pick(noDeb[0], "x86_64", "deb") == "Gridline-0.7.4-linux-x86_64.AppImage" &&
+             pick(noDeb[0], "aarch64", "deb") == "Gridline-0.7.4-linux-aarch64.AppImage",
+         "a release without the .deb: the AppImage");
+
+  // detectLinuxPackage on made-up system folders.
+  const fs::path base = fs::temp_directory_path() / ("gridline-update-distro-" + std::to_string(platform::processId()));
+  std::error_code ec;
+  fs::remove_all(base, ec);
+  auto root = [&](const char* name) { return (base / name).string(); };
+  writeFile(base / "zorin" / "etc" / "os-release", kZorin17);
+  expect(detectLinuxPackage(root("zorin")) == "deb", "system: Zorin -> deb");
+  writeFile(base / "vendor" / "usr" / "lib" / "os-release", kMint21);  // no etc/os-release (or not readable)
+  expect(detectLinuxPackage(root("vendor")) == "deb", "system: only usr/lib/os-release -> deb");
+  writeFile(base / "emptyetc" / "etc" / "os-release", "");
+  writeFile(base / "emptyetc" / "usr" / "lib" / "os-release", kPop22);
+  expect(detectLinuxPackage(root("emptyetc")) == "deb", "system: an empty etc/os-release falls back to usr/lib");
+  writeFile(base / "nodpkgrel" / "var" / "lib" / "dpkg" / "status", "Package: base-files\n");
+  expect(detectLinuxPackage(root("nodpkgrel")) == "deb", "system: no os-release, a dpkg database -> deb");
+  fs::create_directories(base / "norpmrel" / "var" / "lib" / "rpm", ec);
+  expect(detectLinuxPackage(root("norpmrel")) == "rpm", "system: no os-release, an rpm database -> rpm");
+  writeFile(base / "archdeb" / "etc" / "os-release", "ID=arch\n");
+  writeFile(base / "archdeb" / "var" / "lib" / "dpkg" / "status", "");
+  expect(detectLinuxPackage(root("archdeb")) == "", "system: Arch with dpkg installed stays on the AppImage");
+  writeFile(base / "archdeb" / "var" / "lib" / "dpkg" / "info" / "gridline.list", "/usr/bin/gridline-app\n");
+  expect(detectLinuxPackage(root("archdeb")) == "deb", "system: Gridline installed from our .deb -> deb");
+  fs::create_directories(base / "bare", ec);
+  expect(detectLinuxPackage(root("bare")) == "", "system: nothing to go on -> AppImage");
+
+  // Downloaded under its own name, not marked executable.
+  const Release fk = fakeRelease("0.7.4");
+  const Asset* fdeb = pickAsset(fk, Target{"linux", "x86_64", detectLinuxPackage(root("zorin"))});
+  expect(fdeb && fdeb->name == "Gridline-0.7.4-linux-amd64.deb", "fake release on Zorin: the .deb");
+  if (fdeb) {
+    const InstallerResult res = downloadInstaller(fakeFetcher(fk), fakeDownloader(), fk, *fdeb, (base / "dl").string(), nullptr, nullptr);
+    expect(res.ok && fs::path(res.path).filename() == "Gridline-0.7.4-linux-amd64.deb", "the .deb is saved as the .deb");
+  }
+  fs::remove_all(base, ec);
+}
+
 }  // namespace
 
 int main() {
@@ -489,5 +598,6 @@ int main() {
   prereleases();
   schedule();
   installer();
+  linuxFamilies();
   return finish();
 }

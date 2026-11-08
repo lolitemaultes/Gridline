@@ -1,5 +1,6 @@
 // Gridline — piano roll / channel rack tool windows (see EditTools.h).
 #include "../core/I18n.h"
+#include "Keys.h"
 #include "EditTools.h"
 #include <algorithm>
 #include <cmath>
@@ -896,7 +897,7 @@ void drawEditTools(App& a) {
   bool cancel = ui::TextButton("Cancel", false, 90, "Close and restore the notes (Esc)");
   if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput) {
     if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) accept = true;
-    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) cancel = true;
+    if (::gl::keys::escapePressed()) cancel = true;
   }
   ui::KeepWindowInViewport();
   ImGui::End();

@@ -124,14 +124,16 @@ jobs:
           upload-artifact: true
           artifact-name: gridline-flatpak-${{ matrix.arch }}
       - name: The programs run inside the sandbox
+        # (No rofiles-fuse in the container: the build step above runs without it too.)
         run: |
+          fb_run() { flatpak-builder --disable-rofiles-fuse --run flatpak_app "$MANIFEST" "$@"; }
           eval "$(bash tools/release/version.sh)"
-          out="$(flatpak-builder --run flatpak_app "$MANIFEST" gridline --version)"
+          out="$(fb_run gridline --version)"
           echo "$out"; test "$out" = "Gridline $full"
-          flatpak-builder --run flatpak_app "$MANIFEST" /app/share/gridline/tools/ffmpeg -hide_banner -version | head -1
-          flatpak-builder --run flatpak_app "$MANIFEST" /app/share/gridline/tools/yt-dlp --version
-          test "$(cat flatpak_app/files/share/gridline/tools/yt-dlp.version)" = "$(flatpak-builder --run flatpak_app "$MANIFEST" /app/share/gridline/tools/yt-dlp --version)"
-          flatpak-builder --run flatpak_app "$MANIFEST" gridline suite status || true
+          fb_run /app/share/gridline/tools/ffmpeg -hide_banner -version | head -1
+          fb_run /app/share/gridline/tools/yt-dlp --version
+          test "$(cat flatpak_app/files/share/gridline/tools/yt-dlp.version)" = "$(fb_run /app/share/gridline/tools/yt-dlp --version)"
+          fb_run gridline suite status || true
       - name: Exported desktop entry, icons, file type and metadata
         run: |
           e=flatpak_app/export/share
@@ -264,6 +266,7 @@ jobs:
             set -e
             git clone --depth 1 https://git.FreeBSD.org/ports.git /usr/ports
             cp -R rendered/freebsd/audio/gridline /usr/ports/audio/gridline
+            git -C /usr/ports add audio/gridline  # (portlint -C wants the port's files in git)
             mkdir -p /usr/ports/distfiles && cp dist/Gridline-*-source.tar.gz /usr/ports/distfiles/
             cd /usr/ports/audio/gridline
             portlint -AC

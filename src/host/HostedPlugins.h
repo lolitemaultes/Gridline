@@ -42,6 +42,7 @@ struct HostedClass {
   bool instrument = false;
   bool sidechain = false;
   bool eventInput = false, eventOutput = false;  // takes / sends notes and MIDI
+  int inputChannels = 0, outputChannels = 0;     // K-78: main bus channels (cross-format matching)
   std::vector<std::string> auxOutputs;  // extra output names
   std::vector<std::string> programs;    // program / factory preset names
   std::vector<ScannedParam> params;     // exposed parameters, PluginInfo order
@@ -168,7 +169,8 @@ void startScan(const std::string& exe, bool force = false);
 // K-13: the search folders changed: scans what is new and drops the plugins of folders that left
 // (now, or right after a running scan). Projects using a dropped plugin keep its placeholder.
 void requestScan(const std::string& exe);
-// K-13: scans every entry of a format found in one folder again.
+// K-13: scans every entry of a format found in one folder again; format "*": of every format that
+// is on and searches folders. K-71: the folder is searched on the scan worker (returns at once).
 void rescanFolder(const std::string& exe, const std::string& format, const std::string& folder);
 // Every (format, entry) the search folders hold now (formats switched off left out).
 std::vector<std::pair<std::string, std::string>> discoverPluginEntries();
@@ -176,15 +178,27 @@ void rescanEntry(const std::string& exe, const std::string& format, const std::s
 // Rescans several entries ({format, entry}) one after another (plugin manager
 // "Retry all", "Rescan" of a plugin installed in several formats).
 void rescanEntries(const std::string& exe, const std::vector<std::pair<std::string, std::string>>& entries);
+// K-71: a scan runs a few scanner children side by side (GRIDLINE_SCAN_JOBS=1..8 sets how many). The
+// status is cheap to read every frame: it is never held while the cache is written or a child is
+// waited for.
 struct ScanStatus {
   bool running = false;
   int done = 0, total = 0;
-  std::string current;  // entry being scanned
+  std::string current;          // entry being scanned (of several: the one scanning longest)
+  double currentSeconds = 0;    // K-71: how long `current` has been scanning
+  int active = 0;               // K-71: entries being scanned now
+  std::string searching;        // K-71: folder being searched for plugins (before the entries are scanned)
   int classes = 0;      // registered hosted classes
   int failed = 0;       // blacklisted entries
   uint64_t generation = 0;  // increments whenever the registered set changes
+  uint64_t cacheChanges = 0;  // K-73: increments whenever the cache changes (what cacheEntries() lists)
 };
 ScanStatus scanStatus();
+// K-73: scanStatus().running without the copy (no lock): cheap enough to ask per plugin.
+bool scanRunning();
+// K-71: the entry being scanned as the interface shows it: its file name, and after a few seconds
+// how long it has taken ("Big Synth.vst3  12 s"), so a slow plugin never looks like a hang.
+std::string scanCurrentLabel(const ScanStatus& st);
 // Blacklisted entries with the reason (cache entries with ok == false).
 std::vector<std::pair<std::string, std::string>> blacklist();
 struct CacheEntry {

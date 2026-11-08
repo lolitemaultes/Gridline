@@ -43,7 +43,7 @@ svg="$P/share/icons/hicolor/scalable/apps/$iconname.svg"
 meta="$P/share/metainfo/com.lolitemaultes.Gridline.metainfo.xml"
 if [ -f "$meta" ]; then
   grep -q "<launchable type=\"desktop-id\">$wmclass.desktop</launchable>" "$meta" || bad "AppStream launchable is not $wmclass.desktop"
-  grep -q "<icon type=\"stock\">$iconname</icon>" "$meta" || bad "AppStream stock icon is not $iconname"
+  ! grep -q "<icon type=\"stock\">" "$meta" || bad "AppStream names a stock icon (appstream-util rejects it; the desktop entry's Icon= is used)"
 else
   bad "missing $meta"
 fi

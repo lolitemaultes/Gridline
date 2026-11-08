@@ -44,7 +44,7 @@ even if the computer crashes. Ctrl+S still works and writes everything immediate
 The folder looks like this:
 
     My Song/
-      My Song.gridline.json     the project, always up to date (opens in any Gridline), named after the project
+      My Song.gridline          the project, always up to date (opens as a normal project too), named after the project
       Audio/                    every sample, loop and impulse response, named by its content
       .gridline-collab/         the shared history (do not edit)
 
@@ -80,11 +80,11 @@ nothing.
 * **Invites** show the name the project had when the invite was made. Whoever joins gets the
   project's current name with the project, never the invite's.
 
-**On disk.** Each computer's project file (`<name>.gridline.json`) is renamed to match the new name,
+**On disk.** Each computer's project file (`<name>.gridline`; a folder made by an earlier version renames its `<name>.gridline.json` to it) is renamed to match the new name,
 as soon as the rename arrives. The display name is kept whole; the file name is made safe for
 Linux, macOS and Windows (characters like `/ \ : * ? " < > |` become `-`, no dots or spaces at the
 start or end, names such as CON or LPT1 get a `_`, long names are shortened). A file of another name
-that is already in the folder is never replaced (the project file becomes "Name (2).gridline.json").
+that is already in the folder is never replaced (the project file becomes "Name (2).gridline").
 A rename that only changes capital letters works on macOS and Windows too. If the file can't be
 renamed (Windows: it is open in another program), Gridline keeps the old file name and tries again
 later. Gridline finds the project file in its folder whatever it is called (also after you renamed
@@ -142,9 +142,9 @@ the project again later, in any of these ways:
   (also shown in the Collaboration panel when no project is open). Leaving a project removes it.
 * **File > Open collaborative project...** and choose the project's folder (the one that contains
   `.gridline-collab`).
-* **File > Open** (or Recent files) and choose the `.gridline.json` file in that folder, or the
+* **File > Open** (or Recent files) and choose the `.gridline` file in that folder, or the
   folder itself.
-* **Drag** the folder or its `.gridline.json` file onto the Gridline window.
+* **Drag** the folder or its `.gridline` file onto the Gridline window.
 
 Like any project, it opens through the loading window (samples and plugins counted as they load,
 Cancel to stay in the project you had open); the session starts once everything is ready.
@@ -285,7 +285,7 @@ are shown as "about".
   a join receives with the project.
 * **collab.json** caches the name (for lists of projects that are not open) and records which file
   in the folder is the project (`"file"`). Finding the file: that record, else a file named after
-  the name, else the only `*.gridline.json` in the folder, else the one whose content Gridline wrote
+  the name, else the only `*.gridline` (or older `*.gridline.json`) in the folder, else the one whose content Gridline wrote
   last (`written.txt`), else the newest. Folders are identified by the project id in collab.json.
 * **File renames** are atomic `rename()` calls in the same folder, done before the content is
   written; a case-only rename on a case-insensitive file system goes through a temporary name.
@@ -455,7 +455,7 @@ Nothing is ever deleted without asking, and nothing goes away by itself.
   member). Opening it asks: open the original, make the copy a separate private project (its
   shared history is deleted), or use the copy instead of the original.
 * **Keep a private copy** and **Make it a normal project** write the project file and its audio
-  (`<name>.gridline.json` + `Audio/`); the music is the same, the file has no identities, keys,
+  (`<name>.gridline` + `Audio/`); the music is the same, the file has no identities, keys,
   names or history.
 * **Forget** (removed, stopped or missing projects) takes a project off the list; a removed or
   stopped folder stays as a normal project without its shared history.
@@ -673,7 +673,7 @@ build of Gridline and a display name set.
    update, A is told B needs to update; nobody is admitted.
 10. **Rename.** A: Collaboration panel > click the name > "Night Drive: take 2" > Enter. Expect on B within a
     second: the notice "A renamed the project to Night Drive: take 2", the window title and panel
-    header, and B's file `Night Drive- take 2.gridline.json` (the colon is not allowed in file
+    header, and B's file `Night Drive- take 2.gridline` (the colon is not allowed in file
     names). Close B; A renames again; open B: B shows the newer name after catching up. Then both
     rename while disconnected (pull the network cable): after reconnecting, the admin gets a Sync
     review item for the name.

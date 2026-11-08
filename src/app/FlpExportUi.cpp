@@ -1,5 +1,6 @@
 // Gridline — J-80: FL Studio export job, progress and report windows (see FlpExportUi.h).
 #include "FlpExportUi.h"
+#include "Keys.h"
 #include "../core/Crash.h"
 #include "../core/Platform.h"
 #include <atomic>
@@ -16,6 +17,8 @@
 #include "../core/flp/Flp.h"
 #include "../core/flp/FlpExport.h"
 #include "../core/flp/FlpPackage.h"
+#include "../core/flp/FlpOrigin.h"
+#include "../core/flp/FlpWrapper.h"
 #include "App.h"
 #include "DialogLayout.h"
 #include "HostedUi.h"
@@ -27,6 +30,8 @@ namespace gl::flpexport {
 namespace fs = std::filesystem;
 
 namespace {
+
+bool startWith(App& a, const std::string& path, bool zip, std::function<void(bool)> done, flp::GridlinePlugins mode);
 
 struct Job {
   std::thread worker;
@@ -55,7 +60,114 @@ struct Last {
   flp::ExportReport report;
 } last;
 
+// K-110: the export options window (File > Export).
+struct Ask {
+  bool open = false, keep = false;
+  std::string path;
+  bool zip = false;
+  flp::GridlinePlugins mode = flp::GridlinePlugins::SuiteWithFallback;
+  std::function<void(bool)> done;
+} ask;
+
+flp::GridlinePlugins modeOf(const App& a) {
+  flp::GridlinePlugins m = flp::GridlinePlugins::SuiteWithFallback;
+  if (!flp::parseGridlinePlugins(a.doc.song().flExportGridline, m)) flp::parseGridlinePlugins(a.settings.getString("export.flGridlinePlugins"), m);
+  return m;
+}
+
+// A Gridline plugin of the song that a Suite plugin can carry (not imported from FL).
+bool hasSuiteCandidates(const Song& s) {
+  auto fromFl = [&](ObjectId owner, int slot) { return s.flOrigin.blobs.count(flp::pluginKey(owner, slot)) > 0; };
+  for (const auto& c : s.channels)
+    if (!c.plugin.empty() && !flp::suiteVst3Type(c.plugin.type).empty() && !fromFl(c.id, -1)) return true;
+  for (const auto& t : s.mixer)
+    for (size_t k = 0; k < t.slots.size(); ++k)
+      if (!t.slots[k].plugin.empty() && !flp::suiteVst3Type(t.slots[k].plugin.type).empty() && !fromFl(t.id, static_cast<int>(k))) return true;
+  return false;
+}
+
+struct ModeText {
+  flp::GridlinePlugins mode;
+  const char* label;
+  const char* hint;
+};
+const ModeText kModes[] = {
+    {flp::GridlinePlugins::SuiteWithFallback, i18n::N_("Gridline Suite plugins, with muted audio copies"),
+     i18n::N_("Plugins open live with the Gridline Suite installed. Each instrument also gets a muted copy playing it as audio, for computers without the Suite.")},
+    {flp::GridlinePlugins::Suite, i18n::N_("Gridline Suite plugins only"),
+     i18n::N_("Every Gridline plugin without an exact FL Studio counterpart opens live. The other computer needs the Gridline Suite.")},
+    {flp::GridlinePlugins::Render, i18n::N_("Rendered to audio"),
+     i18n::N_("Instruments play rendered samples and effects become the closest FL Studio effect. Plays anywhere; the Gridline plugins are not editable.")},
+};
+
+const char* modeLabel(flp::GridlinePlugins m) {
+  for (const auto& t : kModes)
+    if (t.mode == m) return i18n::tr(t.label);
+  return "";
+}
+
+void askWindow(App& a) {
+  if (!ask.open) return;
+  const std::string title = std::string(i18n::tr("Export FL Studio project")) + "###flpexportask";
+  ImGui::OpenPopup(title.c_str());
+  ui::PlaceNextDialog(ImVec2(560, 0), ImGuiCond_Always);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS4, theme::kS3));
+  const bool vis = ImGui::BeginPopupModal(title.c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings);
+  ImGui::PopStyleVar();
+  if (!vis) return;
+  const auto& P = theme::pal();
+  const float w = 520, indent = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x;
+  ui::TextFit(fs::path(ask.path).filename().string().c_str(), w, P.textDim);
+  ImGui::Dummy(ImVec2(w, theme::kS1));
+  ImGui::TextUnformatted(i18n::tr("Gridline plugins without an exact FL Studio counterpart"));
+  ImGui::Dummy(ImVec2(0, theme::kS1));
+  for (const auto& t : kModes) {
+    ImGui::PushID(static_cast<int>(t.mode));
+    if (ImGui::RadioButton(i18n::tr(t.label), ask.mode == t.mode)) ask.mode = t.mode;
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + indent);
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + w - indent);
+    ImGui::TextColored(theme::vec(P.textDim), "%s", i18n::tr(t.hint));
+    ImGui::PopTextWrapPos();
+    ImGui::Dummy(ImVec2(0, theme::kS1));
+    ImGui::PopID();
+  }
+  ImGui::Checkbox(i18n::tr("Use this choice for this project from now on"), &ask.keep);
+  {
+    std::string dflt = std::string(i18n::tr("Default for every project: ")) + modeLabel([&] {
+                         flp::GridlinePlugins m = flp::GridlinePlugins::SuiteWithFallback;
+                         flp::parseGridlinePlugins(a.settings.getString("export.flGridlinePlugins"), m);
+                         return m;
+                       }()) +
+                       i18n::tr(" (Settings, Project)");
+    ui::TextFit(dflt.c_str(), w, P.textFaint);
+  }
+  const float bw = 96;
+  ui::DialogFooter(ui::ButtonRowWidth(2, bw));
+  bool go = false, cancel = false;
+  const bool keys = !ImGui::IsWindowAppearing();  // (the key that closed the file dialog is not ours)
+  if (ui::TextButton(i18n::tr("Cancel"), false, bw) || (keys && ::gl::keys::escapePressed())) cancel = true;
+  ImGui::SameLine(0, theme::kS2);
+  if (ui::TextButton(i18n::tr("Export"), true, bw) || (keys && ImGui::IsKeyPressed(ImGuiKey_Enter))) go = true;
+  if (go || cancel) {
+    ask.open = false;
+    ImGui::CloseCurrentPopup();
+  }
+  ImGui::EndPopup();
+  if (cancel) {
+    auto done = std::move(ask.done);
+    ask.done = nullptr;
+    if (done) done(false);
+  } else if (go) {
+    const std::string key = flp::gridlinePluginsKey(ask.mode);
+    if (ask.keep && a.doc.song().flExportGridline != key)
+      a.doc.editSong("FL Studio export choice", [key](Song& s) { s.flExportGridline = key; });
+    startWith(a, ask.path, ask.zip, std::move(ask.done), ask.mode);
+    ask.done = nullptr;
+  }
+}
+
 const char* actionLabel(const std::string& q) {
+  if (q == "suite") return i18n::tr("Gridline Suite plugin");
   if (q == "rendered") return i18n::tr("Rendered to samples");
   if (q == "mapped") return i18n::tr("Mapped");
   if (q == "verbatim" || q == "exact") return i18n::tr("Exact");
@@ -119,7 +231,7 @@ void progressWindow() {
     std::snprintf(pr, sizeof pr, i18n::tr("%.0f%%"), job.progress.load() * 100.0);
     ImGui::ProgressBar(static_cast<float>(job.progress.load()), ImVec2(w - bw - theme::kS2, 0), pr);
     ImGui::SameLine(0, theme::kS2);
-    if (ui::TextButton("Cancel", false, bw, "Stop the export") || ImGui::IsKeyPressed(ImGuiKey_Escape)) job.cancel = true;
+    if (ui::TextButton("Cancel", false, bw, "Stop the export") || ::gl::keys::escapePressed()) job.cancel = true;
     ImGui::EndPopup();
   }
   ImGui::PopStyleVar();
@@ -194,7 +306,26 @@ bool running() { return job.running.load(); }
 bool hasReport() { return last.have; }
 void openReport() { last.open = true; }
 
-bool start(App& a, const std::string& path, bool zip, std::function<void(bool)> done) {
+std::string modeKey(const App& a) { return flp::gridlinePluginsKey(modeOf(a)); }
+
+bool start(App& a, const std::string& path, bool zip, std::function<void(bool)> done) { return startWith(a, path, zip, std::move(done), modeOf(a)); }
+
+void askAndStart(App& a, const std::string& path, bool zip, std::function<void(bool)> done) {
+  if (!hasSuiteCandidates(a.doc.song())) {
+    startWith(a, path, zip, std::move(done), modeOf(a));
+    return;
+  }
+  ask.open = true;
+  ask.keep = false;
+  ask.path = path;
+  ask.zip = zip;
+  ask.mode = modeOf(a);
+  ask.done = std::move(done);
+}
+
+namespace {
+
+bool startWith(App& a, const std::string& path, bool zip, std::function<void(bool)> done, flp::GridlinePlugins mode) {
   if (job.running) {
     a.notify(i18n::tr("An FL Studio export is already running"), true);
     return false;
@@ -216,8 +347,9 @@ bool start(App& a, const std::string& path, bool zip, std::function<void(bool)> 
   job.done = std::move(done);
   job.running = true;
   Song song = a.doc.song();
-  auto work = [song = std::move(song), path, zip]() {
+  auto work = [song = std::move(song), path, zip, mode]() {
     flp::ExportOptions opt;
+    opt.gridlinePlugins = mode;  // K-110
     opt.factoryData = flp::defaultFactoryData();
     opt.projectDir = fs::path(path).parent_path().string();
     opt.progress = [](double p) { job.progress = p; };
@@ -257,8 +389,11 @@ bool start(App& a, const std::string& path, bool zip, std::function<void(bool)> 
   return true;
 }
 
+}  // namespace
+
 void draw(App& a) {
   finish(a);
+  askWindow(a);
   progressWindow();
   reportWindow();
 }

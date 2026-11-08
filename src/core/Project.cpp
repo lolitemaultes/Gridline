@@ -1,4 +1,5 @@
 #include "Project.h"
+#include "ClipLoop.h"
 #include "ClipGain.h"
 #include "Fades.h"
 #include "ProjectInterop.h"
@@ -21,6 +22,7 @@
 #include "Params.h"
 #include "PluginParams.h"
 #include "PluginStandIn.h"
+#include "../host/CrossFormat.h"
 #include "TrackIconSet.h"
 #include "TrackModes.h"
 
@@ -205,6 +207,8 @@ Json pluginToJson(const PluginState& p) {
     Json o;
     if (jsonParse(p.original, o) && o.is(Json::Type::Object)) j.object["original"] = std::move(o);
   }
+  // K-78: who a third-party plugin is, in every format it was installed in (host/CrossFormat.h).
+  if (Json id = host::xformat::identityForSave(p); id.is(Json::Type::Object)) j.object["ident"] = std::move(id);
   return j;
 }
 
@@ -224,6 +228,8 @@ int iconFromJson(const Json& j, int flIcon) {
 void channelExtrasToJson(const Channel& c, Json& jc) {
   const Channel d;
   if (c.fine != d.fine) jc.object["fine"] = num(c.fine);
+  if (c.pitchSmooth) jc.object["pitchSmooth"] = boolean(true);  // K-132
+  if (c.knobFine != d.knobFine) jc.object["knobFine"] = num(c.knobFine);
   if (c.swingMix != d.swingMix) jc.object["swingMix"] = num(c.swingMix);
   if (c.timeShift != d.timeShift) jc.object["timeShift"] = num(c.timeShift);
   if (c.polyphony != d.polyphony) jc.object["polyphony"] = num(c.polyphony);
@@ -263,6 +269,8 @@ void channelExtrasToJson(const Channel& c, Json& jc) {
 
 void channelExtrasFromJson(const Json& jc, Channel& c) {
   c.fine = jsonInt<int>(std::clamp(jc.num("fine", 0), -200.0, 200.0));
+  c.pitchSmooth = flag(jc, "pitchSmooth");  // K-132
+  c.knobFine = jsonInt<int>(std::clamp(jc.num("knobFine", 0), -10000.0, 10000.0));
   c.swingMix = static_cast<float>(std::clamp(jc.num("swingMix", 1), 0.0, 1.0));
   c.timeShift = static_cast<float>(std::clamp(jc.num("timeShift", 0), 0.0, 1.0));
   c.polyphony = jsonInt<int>(std::clamp(jc.num("polyphony", 0), 0.0, 256.0));
@@ -323,6 +331,13 @@ void noteToJson(const Note& n, Json& jn) {
     }
     jn.object["bend"] = std::move(b);
   }
+  if (!n.tracker.empty()) {  // K-76: the note's tracker cells, as hex
+    static const char* hex = "0123456789abcdef";
+    std::string h;
+    h.reserve(n.tracker.size() * 2);
+    for (uint8_t b : n.tracker) h += hex[b >> 4], h += hex[b & 15];
+    jn.object["trk"] = str(h);
+  }
 }
 
 void noteFromJson(const Json& e, Note& n) {
@@ -357,6 +372,18 @@ void noteFromJson(const Json& e, Note& n) {
     }
     bend::normalize(n.bend);
   }
+  n.tracker.clear();
+  if (const Json* t = e.find("trk"); t && t->is(Json::Type::String) && t->str.size() % 2 == 0 && t->str.size() <= 2 * 65536) {  // K-76
+    auto nib = [](char c) { return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1; };
+    for (size_t i = 0; i < t->str.size(); i += 2) {
+      const int a = nib(t->str[i]), b = nib(t->str[i + 1]);
+      if (a < 0 || b < 0) {
+        n.tracker.clear();
+        break;
+      }
+      n.tracker.push_back(static_cast<uint8_t>(a * 16 + b));
+    }
+  }
 }
 // ---- end of channel / note extras
 
@@ -367,6 +394,7 @@ PluginState pluginFromJson(const Json* j) {
   p.data = j->text("data");
   p.ins = j->text("ins");
   if (const Json* o = j->find("original"); o && o->is(Json::Type::Object)) p.original = jsonCompact(*o);
+  if (const Json* o = j->find("ident"); o && o->is(Json::Type::Object)) p.ident = jsonCompact(*o);
   if (const Json* a = j->find("params"); a && a->is(Json::Type::Array))
     for (const auto& v : a->array) p.params.push_back(static_cast<float>(v.is(Json::Type::Number) ? v.number : 0));
   normalizePluginState(p);
@@ -383,6 +411,7 @@ void clipArrangementToJson(const Clip& c, Json& jc) {
   if (c.kind == ClipKind::Automation) jc.object["kind"] = str("automation");
   if (c.source != kNoId) jc.object["source"] = num(c.source);
   if (c.offset != 0) jc.object["offset"] = num(static_cast<double>(c.offset));
+  if (c.loop) jc.object["loop"] = boolean(true);  // K-114
   if (c.muted) jc.object["muted"] = boolean(true);
   if (c.audioStart != 0) jc.object["audioStart"] = num(c.audioStart);
   if (c.audioEnd != 0) jc.object["audioEnd"] = num(c.audioEnd);
@@ -416,6 +445,7 @@ void clipArrangementFromJson(const Json& jc, Clip& c) {
   c.kind = k == "audio" ? ClipKind::Audio : k == "automation" ? ClipKind::Automation : ClipKind::Pattern;
   c.source = jsonInt<ObjectId>(std::max(0.0, jc.num("source", 0)));
   c.offset = std::max<Tick>(0, jsonTick(jc.num("offset", 0)));
+  c.loop = flag(jc, "loop");  // K-114 (projects saved before it: songFromJson, adoptOldClipLoops)
   c.muted = flag(jc, "muted");
   c.audioStart = std::max(0.0, jc.num("audioStart", 0));
   c.audioEnd = std::max(0.0, jc.num("audioEnd", 0));
@@ -925,8 +955,11 @@ Json songToJson(const Song& s, bool withFlOrigin) {
   if (!s.swingNotes) j.object["swingNotes"] = boolean(false);  // J-138
   // K-5: always written, so a project saved before slides kept to their colour (no key) is told apart.
   j.object["slidesByColour"] = boolean(!s.slidesAnyColour);
+  // K-114: always written, so a project saved before clips looped one by one (no key) is told apart.
+  j.object["clipLoops"] = boolean(true);
   j.object["masterPitch"] = num(s.masterPitch);
   if (!s.autoCrossfades) j.object["autoCrossfades"] = boolean(false);  // J-38
+  if (!s.flExportGridline.empty()) j.object["flExportGridline"] = Json::makeString(s.flExportGridline);  // K-110
   if (!s.trackReceipt.empty()) {  // J-219: the Track Receipt's typed fields
     Json tr;
     if (jsonParse(s.trackReceipt, tr) && tr.type == Json::Type::Object) j.object["trackReceipt"] = std::move(tr);
@@ -1350,7 +1383,10 @@ bool songFromJson(const Json& src, Song& out, std::string* err) {
   Json j = src;
   const int srcVersion = jsonInt<int>(src.num("version", 1));
   if (!migrateProjectJson(j, err)) return false;
-  if (!standin::resolving()) standin::resolveProjectJson(j);  // missing Serum / Kickstart <-> stand-ins
+  if (!standin::resolving()) {
+    host::xformat::resolveProjectJson(j);  // K-78: a plugin missing here in its saved format opens in another
+    standin::resolveProjectJson(j);        // missing Serum / Kickstart <-> stand-ins
+  }
   Song s;
   s.mixer.clear();
   if (const Json* info = j.find("info"); info && info->is(Json::Type::Object)) {
@@ -1375,6 +1411,7 @@ bool songFromJson(const Json& src, Song& out, std::string* err) {
   s.masterPitch = static_cast<float>(std::clamp(j.num("masterPitch", 0), -12.0, 12.0));
   s.autoCrossfades = flag(j, "autoCrossfades", true);  // J-38
   if (const Json* tr = j.find("trackReceipt"); tr && tr->type == Json::Type::Object) s.trackReceipt = jsonCompact(*tr);  // J-219
+  s.flExportGridline = j.text("flExportGridline");  // K-110
 
   std::set<ObjectId> ids;
   ObjectId maxId = kSongId;
@@ -1542,6 +1579,9 @@ bool songFromJson(const Json& src, Song& out, std::string* err) {
     s.slidesAnyColour = !sc->boolean;
   else
     s.slidesAnyColour = slidesMeetOtherColours(s);
+  // K-114: before clips looped one by one, a pattern's loop mode (or an automation
+  // curve's loop length) looped every clip of it: each clip keeps the loop it played with.
+  if (const Json* cl = j.find("clipLoops"); !cl || !cl->is(Json::Type::Bool)) adoptOldClipLoops(s);
   out = std::move(s);
   return true;
 }

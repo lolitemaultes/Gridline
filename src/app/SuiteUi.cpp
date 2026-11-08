@@ -1,5 +1,6 @@
 // Gridline - J-131: the Gridline Suite in the app. See SuiteUi.h.
 #include "SuiteUi.h"
+#include "Keys.h"
 #include <algorithm>
 #include <cstdlib>
 #include <memory>
@@ -164,7 +165,7 @@ void drawOffer(App& a) {
   ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), x));
   const bool never = ui::TextButton(tr("Never"), false, wn, tr("Don't copy the suite; Settings can still install it"));
   ImGui::SameLine(0, theme::kS2);
-  const bool later = ui::TextButton(tr("Not now"), false, wl, tr("Ask again the next time Gridline starts")) || ImGui::IsKeyPressed(ImGuiKey_Escape);
+  const bool later = ui::TextButton(tr("Not now"), false, wl, tr("Ask again the next time Gridline starts")) || ::gl::keys::escapePressed();
   ImGui::SameLine(0, theme::kS2);
   const bool install = ui::TextButton(tr("Install"), true, wi);
   if (never || install) {

@@ -155,7 +155,7 @@ modules:
         done
       - mv /app/share/mime/packages/gridline.xml /app/share/mime/packages/${FLATPAK_ID}.xml
       - sed -i "s|<icon name=\"gridline\"/>|<icon name=\"${FLATPAK_ID}\"/>|" /app/share/mime/packages/${FLATPAK_ID}.xml
-      - sed -i -e "s|<launchable type=\"desktop-id\">gridline.desktop</launchable>|<launchable type=\"desktop-id\">${FLATPAK_ID}.desktop</launchable>|" -e "s|<icon type=\"stock\">gridline</icon>|<icon type=\"stock\">${FLATPAK_ID}</icon>|" /app/share/metainfo/${FLATPAK_ID}.metainfo.xml
+      - sed -i -e "s|<launchable type=\"desktop-id\">gridline.desktop</launchable>|<launchable type=\"desktop-id\">${FLATPAK_ID}.desktop</launchable>|" /app/share/metainfo/${FLATPAK_ID}.metainfo.xml
     sources:
       # render.py replaces this with the release tag (type: git, tag, commit) for Flathub.
       - type: dir

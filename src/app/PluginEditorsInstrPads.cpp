@@ -168,7 +168,7 @@ void openSample(App& a, const char* title, std::function<void(const std::string&
   a.fileDialog.title = title;
   const char* h = gl::platform::homeEnv();
   a.fileDialog.dir = h ? h : ".";
-  a.fileDialog.exts = {".wav", ".wave", ".flac", ".mp3", ".ogg", ".wv"};
+  a.fileDialog.exts = {".wav", ".wave", ".flac", ".mp3", ".ogg", ".wv", ".m4a", ".aac"};
   a.fileDialog.onOk = std::move(ok);
 }
 

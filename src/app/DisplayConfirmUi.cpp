@@ -2,6 +2,7 @@
 // unsaved-changes prompt (title, dim subtitle, right-aligned buttons), with a
 // before / after row, a preview of both sides and the auto-revert countdown.
 #include "DisplayConfirmUi.h"
+#include "Keys.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -224,7 +225,7 @@ void drawDisplayConfirm(App& a) {
   const float rw = std::max(96.0f, ImGui::CalcTextSize(revertL.c_str()).x + 2 * theme::kS4);
   const float kw = std::max(96.0f, ImGui::CalcTextSize(keepL.c_str()).x + 2 * theme::kS4);
   ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), ImGui::GetCursorPosX() + kDialogW - rw - kw - theme::kS2));
-  bool revert = ui::TextButton(revertL.c_str(), false, rw) || ImGui::IsKeyPressed(ImGuiKey_Escape);
+  bool revert = ui::TextButton(revertL.c_str(), false, rw) || ::gl::keys::escapePressed();
   ImGui::SameLine(0, theme::kS2);
   bool keep = ui::TextButton(keepL.c_str(), true, kw) || ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter);
   if (revert) {

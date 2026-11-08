@@ -136,7 +136,7 @@ std::vector<Clip> resizeEnds(const Song& s, const std::vector<Clip>& base, const
     if (!sel.count(c.id)) continue;
     const Tick len = s.clipLength(c);
     d = std::max<Tick>(d, 1 - len);
-    if (c.kind == ClipKind::Audio && !stretch) {
+    if (c.kind == ClipKind::Audio && !stretch && !c.loop) {  // K-114: a looping clip repeats its audio instead
       const Tick natural = std::max(audioClipNaturalLength(s, c), audioClipNaturalLength(s, fullWindow(c)));
       if (natural > 0) d = std::min<Tick>(d, std::max<Tick>(0, natural - len));
     }
@@ -145,6 +145,10 @@ std::vector<Clip> resizeEnds(const Song& s, const std::vector<Clip>& base, const
   for (auto& c : out) {
     if (!sel.count(c.id)) continue;
     const Tick len = s.clipLength(c), nl = std::max<Tick>(1, len + d);
+    if (c.kind == ClipKind::Audio && c.loop) {  // K-114: more or fewer passes; the loop itself stays (no stretch)
+      c.length = nl;
+      continue;
+    }
     if (c.kind == ClipKind::Audio && stretch && len > 0) c.stretch = std::clamp(c.stretch * static_cast<double>(nl) / static_cast<double>(len), 0.0625, 16.0);
     c.length = nl;
     if (c.kind == ClipKind::Audio && stretch) {  // J-193: a stretched clip keeps its bars when the tempo changes
@@ -194,6 +198,7 @@ std::vector<Clip> trimStarts(const Song& s, const TempoMap& tm, const std::vecto
     const Tick len = s.clipLength(c);
     d = std::min<Tick>(d, len - 1);
     d = std::max<Tick>(d, -c.start);
+    if (c.kind == ClipKind::Audio && c.loop) continue;  // K-114: the loop start follows the edge (wraps)
     if (c.kind == ClipKind::Audio) {
       if (stretch) continue;
       // Content may not start before the audio's beginning: the earliest
@@ -217,7 +222,10 @@ std::vector<Clip> trimStarts(const Song& s, const TempoMap& tm, const std::vecto
     const Tick len = s.clipLength(b);
     c.start = b.start + d;
     c.length = len - d;
-    if (b.kind == ClipKind::Audio) {
+    if (b.kind == ClipKind::Audio && b.loop) {
+      const Tick n = audioLoopLength(s, b, tm);
+      c.offset = n > 0 ? wrapLoopOffset(b.offset + d, n) : 0;
+    } else if (b.kind == ClipKind::Audio) {
       if (stretch) {
         c.stretch = std::clamp(b.stretch * static_cast<double>(len - d) / static_cast<double>(std::max<Tick>(1, len)), 0.0625, 16.0);
         lockClipToTempo(s, c, tm);  // J-193
@@ -238,6 +246,10 @@ std::vector<Clip> trimStarts(const Song& s, const TempoMap& tm, const std::vecto
 Clip slipClip(const Song& s, const TempoMap& tm, const Clip& base, Tick d, bool zeroCross) {
   Clip c = base;
   if (d == 0) return c;
+  if (base.kind == ClipKind::Audio && base.loop) {  // K-114: the loop's audio stays, where the passes start moves
+    if (const Tick n = audioLoopLength(s, base, tm); n > 0) c.offset = wrapLoopOffset(base.offset - d, n);
+    return c;
+  }
   if (base.kind == ClipKind::Audio) {
     // Dragging right shows earlier audio: the source start moves back by the
     // source time the drag spans.
@@ -280,7 +292,7 @@ std::vector<ObjectId> sliceClips(Song& s, const std::vector<ObjectId>& ids, Tick
     if (ObjectId r = splitClipAt(s, id, at); r != kNoId) {
       out.push_back(r);
       Clip* right = s.clip(r);
-      if (!zeroCross || !right || right->kind != ClipKind::Audio) continue;
+      if (!zeroCross || !right || right->kind != ClipKind::Audio || right->loop) continue;
       const double zc = nearestZeroCrossing(s, *right, right->audioStart, true);  // the left part ends on it
       if (Clip* left = s.clip(id); left && zc > left->audioStart) left->audioEnd = zc;
       if ((right = s.clip(r))) {

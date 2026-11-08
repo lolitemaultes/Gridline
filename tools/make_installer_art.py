@@ -580,7 +580,7 @@ def wizard_mock(root, direction, page="welcome"):
         sm = small_image(SMALL_AREA[200]).resize((48 * k, 48 * k), Image.LANCZOS)
         img.paste(sm, (W - 58 * k, 35 * k), sm)
         opts = ["Create a desktop shortcut", "Install the plugins for other hosts (VST3, CLAP)",
-                "Open Gridline projects (.gridline.json) with Gridline", "Offer Gridline for FL Studio projects (.flp)"]
+                "Open Gridline projects (.gridline, .gridlinez) with Gridline", "Offer Gridline for FL Studio projects (.flp)"]
         for j, opt in enumerate(opts):
             yy = (112 + j * 30) * k
             d.rounded_rectangle([30 * k, yy, 44 * k, yy + 14 * k], radius=3 * k,

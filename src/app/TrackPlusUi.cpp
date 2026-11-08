@@ -38,7 +38,7 @@ void row(const char* key) {
 
 // After an assignment / a new pattern: the pattern selected and open in the
 // piano roll on the track's channel, else the channel selected.
-void finish(App& a, const trackplus::Started& st, const std::string& why) {
+void finish(App& a, const trackplus::Started& st, const std::string& why, bool newInstrument = false) {
   if (st.channel == kNoId) {
     if (!why.empty()) a.notify(why, true);
     return;
@@ -49,6 +49,7 @@ void finish(App& a, const trackplus::Started& st, const std::string& why) {
   } else {
     a.selectChannel(st.channel);
   }
+  if (newInstrument) a.showNewInstrument(st.channel);  // K-125: in front of the piano roll
 }
 
 // The instrument of an instrument track replaced on its channel (one undo
@@ -69,7 +70,7 @@ void replaceInstrument(App& a, int track, ObjectId ch, const std::string& type) 
   a.doc.endGroup();
   if (ok) {
     pui::pluginReplaced(PluginTarget{ch, -1});
-    a.selectChannel(ch);
+    a.showNewInstrument(ch);  // K-125
   }
 }
 
@@ -237,9 +238,9 @@ void menu(App& a) {
   } else {
     const bool startPat = a.settings.getBool(kStart);
     ImGui::SeparatorText(i18n::tr("Give it an instrument"));
-    favouriteRows("", [&](const std::string& t) { finish(a, trackplus::assignNewInstrument(a.doc, track, t, startPat, gAt, &why), why); });
+    favouriteRows("", [&](const std::string& t) { finish(a, trackplus::assignNewInstrument(a.doc, track, t, startPat, gAt, &why), why, true); });
     if (ImGui::BeginMenu(i18n::tr("All instruments"))) {
-      menus::instrumentItems([&](const std::string& t) { finish(a, trackplus::assignNewInstrument(a.doc, track, t, startPat, gAt, &why), why); });
+      menus::instrumentItems([&](const std::string& t) { finish(a, trackplus::assignNewInstrument(a.doc, track, t, startPat, gAt, &why), why, true); });
       ImGui::EndMenu();
     }
     row("all");

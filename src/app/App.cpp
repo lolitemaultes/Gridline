@@ -1,8 +1,11 @@
+#include "MidiUi.h"
 #include "DisplayConfirm.h"
 #include "../core/Platform.h"
 #include "HostedUi.h"
 #include "McpUi.h"
 #include "App.h"
+#include "../core/ChromeOs.h"
+#include "LayoutPresets.h"
 #include "../core/Crash.h"
 #include "../core/RemoteFs.h"
 #include "../core/ProjectArchive.h"
@@ -61,7 +64,12 @@ App::App() {
     std::error_code ec;
     freshInstall_ = !fs::exists(Settings::defaultPath(), ec);
   }
+  // K-75: on a Chromebook (or the Android Linux Terminal) a new installation starts with the audio
+  // settings its sound server runs at; saved settings still win.
+  chromeos::applyDefaults(settings, chromeos::current());
   settings.load(Settings::defaultPath(), &err);
+  loadTypingLayout(settings);  // K-113
+  if (const std::string sys = chromeos::describe(chromeos::current()); !sys.empty()) logging::info("app", "Running in the " + sys);
   {  // K-24: the playlist's vertical zoom as it was left
     const double h = settings.getNumber("ui.playlistTrackHeight");
     if (std::isfinite(h)) playlist.trackHeight = static_cast<float>(std::clamp(h, 24.0, 120.0));
@@ -320,7 +328,7 @@ void App::tick(double t) {
     // Only Gridline files: an FL Studio project is re-exported on an explicit Save only.
     // K-42: never to a web or network drive (only an explicit Save writes there; the timed backups
     // above stay on this computer).
-    if (settings.getBool("backup.autosave") && !projectPath.empty() && projectFormat == SaveFormat::Gridline && doc.modified() &&
+    if (settings.getBool("backup.autosave") && !projectPath.empty() && isGridlineText(projectFormat) && doc.modified() &&
         !remotefs::isRemote(projectPath)) {
       if (lastAutosave_ == 0) lastAutosave_ = wall;
       const int64_t every = static_cast<int64_t>(std::clamp(settings.getNumber("backup.autosaveMinutes"), 1.0, 120.0) * 60.0);
@@ -498,7 +506,8 @@ void App::applySettingsHooks() {
   logging::setFile(settings.getBool("debug.logToFile") ? (fs::path(configDir()) / "gridline.log").string() : std::string());
   std::string err;
   if (!i18n::setLanguage(settings.getString("general.language"), languageDir(), &err)) logging::warning("app", err);
-  if (!keys::keymap().load(settings.getString("keys.bindings"), &err)) logging::warning("app", err);
+  layout::normalize(settings);    // K-79: layout keys from an older or newer Gridline
+  layoutui::applyKeyProfile(*this);  // the shortcut set of the layout preset, with its own overrides
 }
 
 std::string App::languageDir() const { return assetsDir.empty() ? std::string() : (fs::path(assetsDir) / "i18n").string(); }
@@ -559,7 +568,8 @@ bool App::openProjectFile(const std::string& pathIn) {
     case OpenKind::Midi:
     case OpenKind::Audio: return exportui::openAny(*this, path);
     case OpenKind::FlProject:
-    case OpenKind::ZippedProject: break;
+    case OpenKind::ZippedProject:
+    case OpenKind::TrackerModule: break;
     case OpenKind::GridlineProject:
     case OpenKind::Unknown:
       if (onDrive && collabFile.empty()) break;  // K-42: found out on the loader's worker (Request::collabProbe)
@@ -619,12 +629,14 @@ void App::pollPresetImport() {
 bool App::saveProject(const std::string& path) { return saveProjectAs(path, saveFormatOf(path)); }
 
 bool App::saveProjectAs(const std::string& path, SaveFormat format, std::function<void()> then) {
-  crash::crumb("project save", format == SaveFormat::Gridline ? "gridline" : format == SaveFormat::GridlineZip ? "zip" : "fl");
+  crash::crumb("project save", isGridlineText(format) ? "gridline" : isGridlineZip(format) ? "zip" : "fl");
   crash::BusyScope busy("saving");
   captureHostedStates(*this);  // third-party plugin state into the song
   std::string err;
   std::string p = path;
-  if (format != SaveFormat::Gridline || fs::path(p).extension().empty()) p = withSaveExtension(p, format);
+  // A Gridline project keeps the name it was given (K-121: an older ".gridline.json" file is saved
+  // in place, under that name); every other format gets its own extension.
+  if (!isGridlineText(format) || fs::path(p).extension().empty()) p = withSaveExtension(p, format);
   // K-47: the background saves write the song as it is now. By the time one is done the person may
   // have edited on (those edits stay unsaved) or opened another project (nothing of this applies to it).
   const uint64_t epoch = doc.projectEpoch(), serial = doc.saveSerial();
@@ -651,6 +663,7 @@ bool App::saveProjectAs(const std::string& path, SaveFormat format, std::functio
   try {  // J-78: an unexpected failure is reported, never a crash that loses the open project
     switch (format) {
       case SaveFormat::Gridline:
+      case SaveFormat::GridlineJson:
         if (!gl::saveProject(p, doc.song(), &err)) {
           notify("Could not save the project: " + err, true, p);
           return false;
@@ -671,6 +684,7 @@ bool App::saveProjectAs(const std::string& path, SaveFormat format, std::functio
         return format == SaveFormat::Flp ? exportui::writeFlpFile(*this, p, done) : exportui::writeFlpZip(*this, p, done);
       }
       case SaveFormat::GridlineZip:
+      case SaveFormat::GridlineZipOld:
         // K-47: a background job as well: a zip of a big project takes a while.
         return exportui::writeGridlineZip(*this, p, [this, p, saved, thenWhenSaved](const std::string& files) {
           saved();
@@ -715,9 +729,14 @@ void App::saveAs(std::function<void()> then) {
   // zipped project (J-78), FL Studio project, FL Studio zipped loop package. A project opened from an FL file
   // starts in its folder, under its name, as a Gridline project.
   const std::string ref = projectFile();
-  // K-45: a Gridline zipped project starts as what it was, so Save can replace the archive.
-  const bool fromGridlineZip = projectPath.empty() && saveFormatOf(ref) == SaveFormat::GridlineZip;
-  const SaveFormat fmt = fromGridlineZip ? SaveFormat::GridlineZip : projectPath.empty() ? SaveFormat::Gridline : projectFormat;
+  // K-45: a Gridline zipped project starts as what it was, so Save can replace the archive (K-121:
+  // under its own name, older or new). Everything else starts as a project under the new name; the
+  // older names stay in the type list.
+  const SaveFormat refFormat = saveFormatOf(ref);
+  const bool fromGridlineZip = projectPath.empty() && isGridlineZip(refFormat);
+  const SaveFormat fmt = fromGridlineZip                        ? refFormat
+                         : projectPath.empty() || isGridlineText(projectFormat) ? SaveFormat::Gridline
+                                                                : projectFormat;
   fileDialog = {};
   fileDialog.open = true;
   fileDialog.save = true;
@@ -806,6 +825,14 @@ ObjectId App::addInstrument(const std::string& pluginType, const std::string& sa
   doc.endGroup();
   selectChannel(id);
   return id;
+}
+
+void App::showNewInstrument(ObjectId channel) {
+  const Channel* c = doc.song().channel(channel);
+  if (!c) return;
+  selectChannel(channel);
+  settingsChannel = channel;  // routePluginWindows opens an installed plugin's own window
+  if (!isHostedType(c->plugin.type)) focusWindow = "###channelsettings";  // already open for another channel: to the front
 }
 
 void App::selectPattern(ObjectId id) {
@@ -898,23 +925,13 @@ void App::exportMidi(const std::string& path, bool patternOnly) {
 
 // ---- menu actions --------------------------------------------------------------
 
-namespace {
-// "song.gridline.json" -> "song"; other extensions are stripped once.
-std::string projectStem(const fs::path& p) {
-  std::string n = p.filename().string();
-  const std::string ext = ".gridline.json";
-  if (n.size() > ext.size() && n.compare(n.size() - ext.size(), ext.size(), ext) == 0) return n.substr(0, n.size() - ext.size());
-  return p.stem().string();
-}
-}  // namespace
-
 void App::saveNewVersion() {
   if (projectPath.empty()) {
     saveAs();
     return;
   }
   fs::path cur(projectPath);
-  std::string stem = projectStem(cur);
+  std::string stem = projectStemOf(projectPath);  // "song.gridline" / "song.gridline.json" -> "song"
   // Strip a trailing " N" version number.
   int ver = 1;
   size_t sp = stem.find_last_of(' ');

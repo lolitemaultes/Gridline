@@ -1,5 +1,6 @@
 // Gridline - J-191: the Split stems window (see StemsUi.h).
 #include "StemsUi.h"
+#include "Keys.h"
 #include "../core/Crash.h"
 #include <algorithm>
 #include <atomic>
@@ -454,7 +455,7 @@ void draw(App& a) {
     const float bw = 96.0f;
     ui::DialogFooter(ui::ButtonRowWidth(2, bw));
     if (splitting) {
-      if (ui::TextButton(i18n::tr("Cancel"), false, bw) || ImGui::IsKeyPressed(ImGuiKey_Escape)) j.cancel = true;
+      if (ui::TextButton(i18n::tr("Cancel"), false, bw) || ::gl::keys::escapePressed()) j.cancel = true;
       ImGui::SameLine(0, theme::kS2);
       ImGui::BeginDisabled(true);
       ui::TextButton(i18n::tr("Split"), true, bw);
@@ -473,7 +474,7 @@ void draw(App& a) {
                     currentModel().id.c_str(), have ? 1 : 0, nKeep);
       }
       if (go && can) startSplit(a);
-      if (ImGui::IsWindowFocused() && ImGui::IsKeyPressed(ImGuiKey_Escape)) open = false;
+      if (ImGui::IsWindowFocused() && ::gl::keys::escapePressed()) open = false;
     }
   }
   ImGui::End();

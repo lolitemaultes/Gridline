@@ -6,6 +6,7 @@
 #include <fstream>
 #include "Flp.h"
 #include "FlpOrigin.h"
+#include "../ClipLoop.h"
 #include "../Platform.h"
 
 namespace gl::flp {
@@ -365,6 +366,7 @@ bool importFile(const flp::File& file, Song& out, flp::Report& report, const std
   flp::finishChannels(c);
   flp::importArrangement(c);
   flp::importPatternEvents(c);
+  adoptPatternLoopModes(song);  // K-114: FL loops per pattern (event 26); Gridline per clip
   flp::settleImportedFades(c);
   ensureMixer(song);
   // J-210: a song without playlist clips plays its patterns in pattern mode in FL;

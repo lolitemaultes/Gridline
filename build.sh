@@ -20,7 +20,7 @@ echo "== tests =="
 ./build/gridline_tests_m1
 
 echo "== demo render =="
-./build/gridline demo build/demo.gridline.json
-./build/gridline render build/demo.gridline.json -o build/demo.wav --sr 44100 --bits 16 --normalize
-./build/gridline info build/demo.gridline.json
+./build/gridline demo build/demo.gridline
+./build/gridline render build/demo.gridline -o build/demo.wav --sr 44100 --bits 16 --normalize
+./build/gridline info build/demo.gridline
 echo "done: build/demo.wav"

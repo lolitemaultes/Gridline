@@ -1,7 +1,7 @@
 // Gridline — project templates (TP-01). A template is an ordinary project
 // file in a category folder, with an optional description next to it:
 //
-//   <root>/<Category>/<Name>.gridline.json
+//   <root>/<Category>/<Name>.gridline   (K-121; older templates: <Name>.gridline.json)
 //   <root>/<Category>/<Name>.txt          (first paragraph = preview text)
 //
 // Files directly in a root get the category "User" (user folder) or "Other".

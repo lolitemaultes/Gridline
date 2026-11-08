@@ -151,6 +151,17 @@ is not installed, Plasma plays it instead:
   what is approximated on hover, and **Replace with Plasma** keeps Plasma for good (the missing
   plugin and its saved settings are then removed from the project).
 
+## FL Studio export
+
+FL Studio has no Plasma of its own. Unless you choose **Rendered to audio** in **Settings, Project,
+FL Studio export**, a Plasma channel goes into an FL Studio project as Plasma from the Gridline
+Suite with all its settings, and FL Studio opens it live and editable where the Gridline Suite is
+installed. With the default choice a muted copy of the channel plays it rendered to audio, for
+computers without the Suite; with **Gridline Suite plugins only** there is no copy. **Rendered to
+audio** renders the channel to samples. Automation of Plasma's parameters is kept in every case
+where the plugin is written. (A Plasma that stands in for a missing Serum is exported as that
+plugin, as described above.)
+
 ## Performance
 
 Plasma renders control changes on a fixed grid, so the sound does not depend on the buffer size.

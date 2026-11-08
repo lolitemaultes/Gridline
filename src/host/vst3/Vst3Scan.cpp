@@ -80,6 +80,7 @@ ScanResult scanBundleInProcess(const std::string& bundle) {
       continue;
     }
     r.classes.push_back(std::move(c));
+    host::scanProgress();  // K-73: bundles of hundreds of plugins: the scan's timeout starts again
   }
   r.ok = !r.classes.empty();
   if (!r.ok && r.error.empty()) r.error = "no audio module classes";

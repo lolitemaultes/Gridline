@@ -1,5 +1,5 @@
 // Gridline CLI — `gridline bench`: load / save / render timings of a project (J-25).
-//   gridline bench <project.json|.flp> [--threads 1,4] [--repeat 5] [--render-seconds S] [--json out.json]
+//   gridline bench <project.gridline|.flp> [--threads 1,4] [--repeat 5] [--render-seconds S] [--json out.json]
 // Prints medians of every stage plus a hash of the rendered audio (bit-exact checks
 // of optimisations: equal hashes = identical output).
 #include "../core/Platform.h"
@@ -71,7 +71,7 @@ struct Stage {
 
 int benchMain(int argc, char** argv) {
   if (argc < 3) {
-    std::fprintf(stderr, "usage: gridline bench <project.json|.flp> [--threads 1,4] [--repeat N] [--render-seconds S] [--json out]\n");
+    std::fprintf(stderr, "usage: gridline bench <project.gridline|.flp> [--threads 1,4] [--repeat N] [--render-seconds S] [--json out]\n");
     return 2;
   }
   std::string path = argv[2], jsonOut;

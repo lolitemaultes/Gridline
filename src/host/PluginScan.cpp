@@ -7,8 +7,11 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <set>
 #include <sstream>
 #include <thread>
+#include <unordered_map>
+#include <unordered_set>
 #include "../core/Project.h"
 #include "sandbox/Sandbox.h"
 #include "../core/Platform.h"
@@ -28,6 +31,8 @@ Format auFormat();
 
 namespace {
 constexpr double kCacheVersion = 3;  // 3: every format in one cache, host parameter flags
+constexpr double kKillWaitSeconds = 10;       // K-73: how long a killed scanner child is waited for
+constexpr double kScanLongestSeconds = 1800;  // K-73: one entry at most, however it progresses (shells)
 Json str(const std::string& s) { return Json::makeString(s); }
 Json num(double v) { return Json::makeNumber(v); }
 Json boolean(bool b) {
@@ -201,26 +206,81 @@ int64_t pathMtime(const std::string& path) {
   return best;
 }
 
+namespace {
+// K-71: the scan worker's search (DiscoveryScope).
+thread_local const std::atomic<bool>* tDiscoveryCancel = nullptr;
+thread_local DiscoveryScope::Progress* tDiscoveryProgress = nullptr;
+// Folders that hold no plugins and never end (Unix pseudo filesystems).
+bool specialFolder(const std::string& real) {
+#if defined(_WIN32)
+  (void)real;
+  return false;
+#else
+  for (const char* top : {"/proc", "/sys", "/dev"}) {
+    const size_t n = std::strlen(top);
+    if (real.compare(0, n, top) == 0 && (real.size() == n || real[n] == '/')) return true;
+  }
+  return false;
+#endif
+}
+}  // namespace
+
+DiscoveryScope::DiscoveryScope(const std::atomic<bool>* cancel, Progress progress) {
+  tDiscoveryCancel = cancel;
+  tDiscoveryProgress = progress ? new Progress(std::move(progress)) : nullptr;
+}
+
+DiscoveryScope::~DiscoveryScope() {
+  delete tDiscoveryProgress;
+  tDiscoveryProgress = nullptr;
+  tDiscoveryCancel = nullptr;
+}
+
 std::vector<std::string> findEntries(const std::vector<std::string>& folders, const std::string& ext, bool directories, bool files) {
   std::vector<std::string> out;
+  // K-71: every real folder once. A folder's real path is its parent's plus its name, or for a
+  // symlink the link's target, so a loop (a link back up) is caught without a lookup per folder.
+  std::unordered_set<std::string> visited;
+  struct Dir {
+    fs::path path, real;
+    int depth;  // of its children (a search folder's children: 0)
+  };
+  std::vector<Dir> todo;
+  size_t searched = 0;
   for (const auto& f : folders) {
     std::error_code ec;
     if (!fs::is_directory(f, ec)) continue;
-    fs::recursive_directory_iterator it(f, fs::directory_options::skip_permission_denied | fs::directory_options::follow_directory_symlink, ec), end;
-    for (; !ec && it != end; it.increment(ec)) {
-      const fs::path& p = it->path();
-      const bool dir = it->is_directory(ec);
-      std::string e = p.extension().string();
-      for (char& ch : e) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-      if (dir) {
-        // Never look inside bundles (of any format).
-        bool bundle = e == ".vst3" || e == ".vst" || e == ".clap" || e == ".component" || e == ".lv2" || e == ".app" || e == ".bundle" || e == ".framework";
+    fs::path real = fs::canonical(f, ec);
+    if (ec || specialFolder(real.generic_string()) || !visited.insert(real.generic_string()).second) continue;
+    todo.push_back({fs::path(f), real, 0});
+    while (!todo.empty()) {
+      if (tDiscoveryCancel && tDiscoveryCancel->load()) return out;
+      const Dir d = std::move(todo.back());
+      todo.pop_back();
+      if (tDiscoveryProgress && searched++ % 64 == 0) (*tDiscoveryProgress)(d.path.generic_string());
+      ec.clear();
+      for (fs::directory_iterator it(d.path, fs::directory_options::skip_permission_denied, ec), end; !ec && it != end; it.increment(ec)) try {
+        const fs::path& p = it->path();
+        std::error_code e2;
+        const bool dir = it->is_directory(e2);  // follows a symlink
+        std::string e = p.extension().string();
+        for (char& ch : e) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        if (!dir) {
+          if (e == ext && files) out.push_back(p.generic_string());
+          continue;
+        }
         if (e == ext && directories) out.push_back(p.generic_string());
-        if (bundle) it.disable_recursion_pending();
-      } else if (e == ext && files) {
-        out.push_back(p.generic_string());
+        // Never look inside bundles (of any format).
+        const bool bundle = e == ".vst3" || e == ".vst" || e == ".clap" || e == ".component" || e == ".lv2" || e == ".app" || e == ".bundle" || e == ".framework";
+        if (bundle || d.depth > 6) continue;
+        fs::path sub = it->is_symlink(e2) ? fs::canonical(p, e2) : d.real / p.filename();
+        if (e2) continue;
+        std::string key = sub.generic_string();
+        if (specialFolder(key) || !visited.insert(std::move(key)).second) continue;
+        todo.push_back({p, std::move(sub), d.depth + 1});
+      } catch (const std::exception&) {
+        // K-73: a name the system cannot spell in UTF-8 (Windows) is passed over, the search goes on.
       }
-      if (it.depth() > 6) it.disable_recursion_pending();
     }
   }
   std::sort(out.begin(), out.end());
@@ -299,6 +359,104 @@ std::string selfExecutablePath() {
 
 // ---------------------------------------------------------------- child processes
 
+namespace {
+// K-73: the scanner child's progress file (<out>.progress): one byte per plugin described.
+std::string& progressFile() {
+  static auto* f = new std::string;
+  return *f;
+}
+}  // namespace
+
+void scanProgress() {
+  if (progressFile().empty()) return;
+  std::ofstream(progressFile(), std::ios::binary | std::ios::app) << '+';
+}
+
+std::string scanProgressFile(const std::string& outFile) { return outFile + ".progress"; }
+
+std::string peDllPrecheck(const std::string& path, const std::vector<std::string>& entryPoints, uint16_t hostMachine) {
+  if (hostMachine == 0) {
+#if defined(_M_ARM64) || defined(__aarch64__)
+    hostMachine = 0xAA64;
+#elif defined(_M_IX86) || defined(__i386__)
+    hostMachine = 0x14C;
+#else
+    hostMachine = 0x8664;
+#endif
+  }
+  std::ifstream f(path, std::ios::binary);
+  if (!f) return {};
+  f.seekg(0, std::ios::end);
+  const std::streamoff size = f.tellg();
+  // Little-endian fields read from the file; false past its end.
+  auto read = [&](std::streamoff at, void* to, size_t n) {
+    if (at < 0 || at + static_cast<std::streamoff>(n) > size) return false;
+    f.clear();
+    f.seekg(at);
+    return static_cast<bool>(f.read(static_cast<char*>(to), static_cast<std::streamsize>(n)));
+  };
+  auto u16 = [&](std::streamoff at, uint32_t& v) {
+    unsigned char b[2];
+    if (!read(at, b, 2)) return false;
+    v = static_cast<uint32_t>(b[0] | (b[1] << 8));
+    return true;
+  };
+  auto u32 = [&](std::streamoff at, uint32_t& v) {
+    unsigned char b[4];
+    if (!read(at, b, 4)) return false;
+    v = static_cast<uint32_t>(b[0]) | (static_cast<uint32_t>(b[1]) << 8) | (static_cast<uint32_t>(b[2]) << 16) | (static_cast<uint32_t>(b[3]) << 24);
+    return true;
+  };
+  const std::string notDll = "not a plugin (not a Windows DLL)";
+  char mz[2];
+  uint32_t peAt = 0, sig = 0, machine = 0, sections = 0, optSize = 0, magic = 0;
+  if (!read(0, mz, 2) || mz[0] != 'M' || mz[1] != 'Z' || !u32(0x3C, peAt) || !u32(peAt, sig) || sig != 0x00004550) return notDll;
+  if (!u16(peAt + 4, machine) || !u16(peAt + 6, sections) || !u16(peAt + 20, optSize)) return notDll;
+  const bool host64 = hostMachine != 0x14C;
+  if (host64 && machine == 0x14C) return "a 32-bit plugin (this Gridline loads 64-bit plugins only)";
+  if (!host64 && (machine == 0x8664 || machine == 0xAA64)) return "a 64-bit plugin (this Gridline loads 32-bit plugins only)";
+  const std::streamoff opt = static_cast<std::streamoff>(peAt) + 24;
+  if (!u16(opt, magic) || (magic != 0x10B && magic != 0x20B)) return notDll;
+  // The export directory (data directory 0).
+  const std::streamoff dirs = opt + (magic == 0x20B ? 112 : 96);
+  uint32_t dirCount = 0, expRva = 0, expSize = 0;
+  if (!u32(opt + (magic == 0x20B ? 108 : 92), dirCount) || dirCount < 1 || !u32(dirs, expRva) || !u32(dirs + 4, expSize) || expRva == 0) return {};
+  // Virtual addresses to file offsets through the section table.
+  const std::streamoff table = opt + optSize;
+  auto fileOffset = [&](uint32_t rva, std::streamoff& out) {
+    for (uint32_t i = 0; i < sections && i < 96; ++i) {
+      uint32_t vsize = 0, va = 0, rawSize = 0, raw = 0;
+      const std::streamoff s = table + 40 * static_cast<std::streamoff>(i);
+      if (!u32(s + 8, vsize) || !u32(s + 12, va) || !u32(s + 16, rawSize) || !u32(s + 20, raw)) return false;
+      const uint32_t span = std::max(vsize, rawSize);
+      if (rva >= va && rva - va < span) {
+        out = static_cast<std::streamoff>(raw) + (rva - va);
+        return true;
+      }
+    }
+    return false;
+  };
+  std::streamoff exp = 0;
+  uint32_t names = 0, namesRva = 0;
+  if (!fileOffset(expRva, exp) || !u32(exp + 24, names) || !u32(exp + 32, namesRva) || names == 0) return {};  // packed: the scan decides
+  std::streamoff nameTable = 0;
+  if (!fileOffset(namesRva, nameTable)) return {};
+  for (uint32_t i = 0; i < names && i < 65536; ++i) {
+    uint32_t rva = 0;
+    std::streamoff at = 0;
+    if (!u32(nameTable + 4 * static_cast<std::streamoff>(i), rva) || !fileOffset(rva, at)) return {};
+    char name[64] = {};
+    const std::streamoff n = std::min<std::streamoff>(static_cast<std::streamoff>(sizeof name) - 1, size - at);
+    if (n <= 0 || !read(at, name, static_cast<size_t>(n))) return {};
+    name[sizeof name - 1] = '\0';
+    for (const auto& e : entryPoints)
+      if (e == name) return {};
+  }
+  std::string list;
+  for (const auto& e : entryPoints) list += (list.empty() ? "" : " or ") + e;
+  return "not a plugin (no " + list + " in it)";
+}
+
 int childMain(int argc, char** argv) {
   std::string format, entry, out, sandbox, prefsFile;
   for (int i = 1; i < argc; ++i) {
@@ -327,6 +485,7 @@ int childMain(int argc, char** argv) {
   ScanResult r;
   r.format = format;
   r.bundle = entry;
+  if (!out.empty()) progressFile() = scanProgressFile(out);
   if (const Format* f = findFormat(format))
     r = f->scanInProcess(entry);
   else
@@ -352,8 +511,17 @@ ScanResult scanIsolated(const std::string& exe, const std::string& format, const
   r.bundle = entry;
   const Format* fmt = findFormat(format);
   r.mtime = fmt ? fmt->mtime(entry) : 0;
+  // K-73: what is plainly not a plugin for this computer (a 32-bit DLL in a 64-bit Gridline, a DLL
+  // without a plugin entry point) is told without loading it in a child.
+  if (fmt && fmt->precheck) {
+    if (std::string why = fmt->precheck(entry); !why.empty()) {
+      r.error = why;
+      return r;
+    }
+  }
   static std::atomic<int> serial{0};
   fs::path tmp = fs::temp_directory_path() / ("gridline-plugin-scan-" + std::to_string(platform::processId()) + "-" + std::to_string(serial++) + ".json");
+  const fs::path progress = scanProgressFile(tmp.string());
   std::vector<std::string> args = {exe, "--scan-plugin", format, entry, "--out", tmp.string()};
   if (const std::string pf = pluginPrefsFile(); !pf.empty()) args.insert(args.end(), {"--plugin-prefs", pf});  // K-13
   platform::Process child;
@@ -361,11 +529,38 @@ ScanResult scanIsolated(const std::string& exe, const std::string& format, const
     r.error = "cannot start the scanner process";
     return r;
   }
-  // Waited for in short steps so a quit (cancel) does not wait for a slow plugin.
-  const auto t0 = std::chrono::steady_clock::now();
+  auto cleanUp = [&] {
+    std::error_code ec;
+    fs::remove(tmp, ec);
+    fs::remove(progress, ec);
+  };
+  // K-73: a killed child that does not end soon after (stuck in a driver) is left behind: a scan
+  // never waits for it for good.
+  auto stop = [&] {
+    child.kill();
+    child.wait(kKillWaitSeconds);
+  };
+  // Waited for in short steps so a quit (cancel) does not wait for a slow plugin. K-73: the timeout
+  // counts from the child's last sign of progress (a shell of hundreds of plugins takes minutes, each
+  // of them quick), and kScanLongestSeconds at most in all.
+  using Clock = std::chrono::steady_clock;
+  const auto t0 = Clock::now();
+  auto lastProgress = t0, lastLook = t0;
+  std::uintmax_t progressSize = 0;
   bool done = false, cancelled = false;
   for (;;) {
-    const double left = timeoutSeconds < 0 ? 1.0 : timeoutSeconds - std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    const auto now = Clock::now();
+    if (timeoutSeconds >= 0 && now - lastLook >= std::chrono::milliseconds(250)) {
+      lastLook = now;
+      std::error_code ec;
+      const std::uintmax_t n = fs::file_size(progress, ec);
+      if (!ec && n > progressSize) {
+        progressSize = n;
+        lastProgress = now;
+      }
+    }
+    double left = timeoutSeconds < 0 ? 1.0 : timeoutSeconds - std::chrono::duration<double>(now - lastProgress).count();
+    if (timeoutSeconds >= 0 && std::chrono::duration<double>(now - t0).count() > std::max(timeoutSeconds, kScanLongestSeconds)) left = 0;
     if ((done = child.wait(std::clamp(left, 0.0, 0.05))) || left <= 0) break;
     if (cancel && cancel->load()) {
       cancelled = true;
@@ -373,19 +568,15 @@ ScanResult scanIsolated(const std::string& exe, const std::string& format, const
     }
   }
   if (cancelled) {
-    child.kill();
-    child.wait();
+    stop();
     r.error = "cancelled";
-    std::error_code ec;
-    fs::remove(tmp, ec);
+    cleanUp();
     return r;
   }
   if (!done) {
-    child.kill();
-    child.wait();
-    r.error = "timed out while loading";
-    std::error_code ec;
-    fs::remove(tmp, ec);
+    stop();
+    r.error = progressSize > 0 ? "timed out while loading (after " + std::to_string(progressSize) + " plugins)" : "timed out while loading";
+    cleanUp();
     return r;
   }
   std::string text;
@@ -395,8 +586,7 @@ ScanResult scanIsolated(const std::string& exe, const std::string& format, const
     ss << f.rdbuf();
     text = ss.str();
   }
-  std::error_code ec;
-  fs::remove(tmp, ec);
+  cleanUp();
   if (child.status().crashed) {
     r.error = "crashed while loading (" + child.status().describe().substr(9);
     return r;
@@ -467,12 +657,21 @@ void ScanCache::remove(const std::string& bundle, const std::string& format) {
                  entries_.end());
 }
 
+void ScanCache::remove(const std::vector<std::pair<std::string, std::string>>& entries) {
+  const std::set<std::pair<std::string, std::string>> drop(entries.begin(), entries.end());
+  entries_.erase(std::remove_if(entries_.begin(), entries_.end(), [&](const ScanResult& e) { return drop.count({e.format, e.bundle}) > 0; }),
+                 entries_.end());
+}
+
 std::vector<std::string> ScanCache::stale(const std::vector<std::string>& bundles, const std::string& format) const {
   const Format* f = findFormat(format);
+  std::unordered_map<std::string, const ScanResult*> cached;  // K-71: one lookup per entry, not a search of the cache
+  for (const auto& e : entries_)
+    if (e.format == format) cached.emplace(e.bundle, &e);
   std::vector<std::string> out;
   for (const auto& b : bundles) {
-    const ScanResult* e = find(b, format);
-    if (!e || !f || e->mtime != f->mtime(b)) out.push_back(b);
+    const auto it = cached.find(b);
+    if (it == cached.end() || !f || it->second->mtime != f->mtime(b)) out.push_back(b);
   }
   return out;
 }

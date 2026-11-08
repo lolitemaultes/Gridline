@@ -38,13 +38,19 @@ Downloads for each system:
 |---|---|
 | macOS (Apple silicon and Intel) | `Gridline-<version>-macos-universal.dmg` |
 | Windows x64 / ARM64 | `Gridline-<version>-windows-x64-setup.exe` / `-windows-arm64-setup.exe` |
-| Debian, Ubuntu and derivatives | `Gridline-<version>-linux-amd64.deb` / `-linux-arm64.deb` |
+| Debian, Ubuntu and derivatives (Zorin OS, Linux Mint, Pop!_OS, elementary OS, Debian on a Chromebook, ...) | `Gridline-<version>-linux-amd64.deb` / `-linux-arm64.deb` |
 | Fedora, RHEL, openSUSE and derivatives | `Gridline-<version>-linux-x86_64.rpm` / `-linux-aarch64.rpm` |
 | Other Linux x86_64 / aarch64 | `Gridline-<version>-linux-x86_64.AppImage` / `-linux-aarch64.AppImage` (marked executable) |
 | FreeBSD, OpenBSD, NetBSD | `Gridline-<version>-<system>-<arch>.tar.gz` |
 
-On Linux the distribution comes from `/etc/os-release` (`ID` and `ID_LIKE`). When a release has no
-package for your distribution and processor, the AppImage is offered.
+On Linux the distribution comes from `/etc/os-release` (or `/usr/lib/os-release`), from `ID` and
+`ID_LIKE`: any word there that is or contains `debian` or `ubuntu` means the `.deb`. A Gridline
+installed from our `.deb` gets the `.deb` even on a system not listed here. When no os-release can be read, the package
+database decides (`/var/lib/dpkg`: `.deb`; `/var/lib/rpm`: `.rpm`). The choice is the same whether
+Gridline runs from a package, the AppImage or the `.tar.gz`, so on Ubuntu the AppImage also offers
+the `.deb`. When a release has no package for your distribution and processor, the AppImage is
+offered. Versions before 0.7.0 (its betas included) always download the AppImage on Linux; to
+move from one of those to the `.deb`, install the `.deb` from the release page once.
 
 The Flatpak and the snap are updated by their store (Flathub, the Snap Store): there the popup
 offers only Download (the release page) and says to update from the software store; it never

@@ -38,7 +38,8 @@
   </replaces>
 
   <launchable type="desktop-id">gridline.desktop</launchable>
-  <icon type="stock">gridline</icon>
+  <!-- No stock icon element: the desktop entry names the icon (Icon=), and appstream-util
+       rejects a stock icon that is not one of the freedesktop names. -->
   <provides>
     <binary>gridline-app</binary>
     <binary>gridline</binary>
@@ -109,6 +110,12 @@
   </supports>
 
   <releases>
+    <release version="0.7.4" date="2026-11-08">
+      <url type="details">https://github.com/lolitemaultes/Gridline/releases/tag/v0.7.4</url>
+      <description>
+        <p>Chromebook and Debian support, tracker modules that open as projects with the new Tracker Sampler, window layouts with a new layout chooser, projects that open with a double click, clips that loop only when asked, M4A and AAC samples and a keyboard layout setting.</p>
+      </description>
+    </release>
     <release version="0.7.3" date="2026-11-06">
       <url type="details">https://github.com/lolitemaultes/Gridline/releases/tag/v0.7.3</url>
       <description>

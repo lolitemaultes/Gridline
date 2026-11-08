@@ -10351,6 +10351,7 @@ gl.pitch	19	Delay steps	combination	0	17=1;18=1
 gl.pitch	20	Analysis	combination	1	11=1
 gl.pitch	21	Pitch mode	combination	1	11=1
 gl.pitch	22	Detector	combination	0	11=1
+gl.pitch	23	Grain law	combination	0	11=2
 gl.pitcher	0	Key	working	1	
 gl.pitcher	1	Scale	working	8	
 gl.pitcher	2	Speed	combination	1	32=0
@@ -13021,6 +13022,7 @@ gl.sampler	57	Time warp	working	1
 gl.sampler	58	Pre reverb	working	1	
 gl.sampler	59	Pre reverb type	combination	0	58=1
 gl.sampler	60	Stereo fade	working	1	
+gl.sampler	61	Time follows tempo from	working	1000	
 gl.sawswarm	0	Level	working	24	
 gl.sawswarm	1	Pan	working	1	
 gl.sawswarm	2	Attack	working	1	
@@ -13185,6 +13187,13 @@ gl.scratcher	9	Crossfader	working	0
 gl.scratcher	10	Fader curve	combination	1	0=0.75;1=1;2=1;3=0.720843424;4=1.05737126;5=1.59054146;6=53.182959;9=0.75;11=3;12=0.5
 gl.scratcher	11	Volume	working	12	
 gl.scratcher	12	Pan	working	1	
+gl.tracker	0	Interpolation	working	0	
+gl.tracker	1	Pitch table	working	1	
+gl.tracker	2	Rows per beat	working	4	
+gl.tracker	3	Ticks per row	working	31	
+gl.tracker	4	Level	working	0	
+gl.tracker	5	Click removal	working	0	
+gl.tracker	6	Built-in sound	working	5	
 gl.turntable	0	Position	combination	1	6=1
 gl.turntable	1	Mute	working	1	
 gl.turntable	2	Speed	working	2	
@@ -15056,6 +15065,7 @@ gl.vocoder	65	Low band (wide)	combination	2000	31=0;64=1
 gl.vocoder	66	High band (wide)	combination	1000	31=0;64=1
 gl.vocoder	67	Attack (wide)	combination	1000	31=0;64=1
 gl.vocoder	68	Latency law	working	2	
+gl.vocoder	69	Enhancer law	inert	1		acts only on an imported enhancer program
 gl.vphaser	0	Stages	combination	1	32=0
 gl.vphaser	1	Min frequency	working	20480	
 gl.vphaser	2	Max frequency	working	20480	

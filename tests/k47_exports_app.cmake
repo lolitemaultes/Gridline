@@ -8,6 +8,7 @@
 #   3. a lost OpenGL context: the interface comes back whole, more than once, the project as it was; a
 #      detached window comes back too; when no new context can be had, a report and a recovery copy,
 #      then the crash pop-up with its Recover button, never a black window.
+# Every platform (K-133): nothing here needs signals or a fork.
 #   cmake -DAPP=<gridline-app> -DDEMO=<test_song.gridline.json> -DSOUNDS=<assets/sounds> -DOUT=<dir> [-DSHOTS=<dir>] -P k47_exports_app.cmake
 cmake_minimum_required(VERSION 3.18)
 file(REMOVE_RECURSE "${OUT}")
@@ -61,7 +62,7 @@ foreach(job IN ITEMS "zip;${OUT}/res/Song.gridline.zip" "data;${OUT}/res/data" "
   must(${kind} "filejob running 1 finished 0 count 0" "${kind}: the frame after the start finds it running")
   must(${kind} "filejob running 0 finished 0 count 1" "${kind}: it ends by itself")
 endforeach()
-foreach(f "${OUT}/res/Song.gridline.zip" "${OUT}/res/sample.wav" "${OUT}/res/clip.wav" "${OUT}/res/data/Gridline Demo/Gridline Demo.gridline.json" "${OUT}/res/bones/Gridline Demo bones/Gridline Demo.gridline.json")
+foreach(f "${OUT}/res/Song.gridline.zip" "${OUT}/res/sample.wav" "${OUT}/res/clip.wav" "${OUT}/res/data/Gridline Demo/Gridline Demo.gridline" "${OUT}/res/bones/Gridline Demo bones/Gridline Demo.gridline")
   if(NOT EXISTS "${f}")
     file(GLOB_RECURSE have "${OUT}/res/*")
     message(FATAL_ERROR "FAIL: ${f} was not written: ${have}")
@@ -232,10 +233,12 @@ function(lostForGood tag script)
     endif()
   endforeach()
   string(FIND "${report}" "${OUT}" at)
-  if(NOT at EQUAL -1)
+  file(TO_NATIVE_PATH "${OUT}" outNative)  # (K-133: Windows writes its own separators)
+  string(FIND "${report}" "${outNative}" atNative)
+  if(NOT at EQUAL -1 OR NOT atNative EQUAL -1)
     message(FATAL_ERROR "FAIL (${tag}): a path got into the report:\n${report}")
   endif()
-  file(GLOB copies "${OUT}/cfg_${tag}/gridline/recovery/*.gridline.json")
+  file(GLOB copies "${OUT}/cfg_${tag}/gridline/recovery/*.gridline")
   list(LENGTH copies n)
   if(NOT n EQUAL 1)
     message(FATAL_ERROR "FAIL (${tag}): ${n} recovery copies\n${out}\n${err}")

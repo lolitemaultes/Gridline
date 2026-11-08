@@ -37,7 +37,8 @@ function(run tag saveAt)
   set(${tag}_out "${out}" PARENT_SCOPE)
 endfunction()
 
-set(want "{\"id\":9001,\"length\":1536,\"pattern\":30,\"start\":3840,\"track\":12}")
+# The clip outlasts its pattern in a file from before per-clip loops: it keeps repeating ("loop").
+set(want "{\"id\":9001,\"length\":1536,\"loop\":true,\"pattern\":30,\"start\":3840,\"track\":12}")
 # A notification run: the clip stays, and the clipboard holds every expected piece.
 function(expectToast tag)
   string(FIND "${${tag}_saved}" "${want}" kept)

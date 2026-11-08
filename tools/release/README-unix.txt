@@ -7,6 +7,11 @@ Install: ./install.sh puts Gridline in your menus and launchers with its icon (f
 ~/.local, or as root for everyone in /usr/local; --prefix DIR for another place, --uninstall
 to remove it). Or run bin/gridline-app straight from this folder.
 
+Opening files: after ./install.sh (or the .deb / .rpm) Gridline projects (.gridline,
+.gridlinez, and .gridline.json, .gridline.zip from earlier versions) open in Gridline from the
+file manager, in the Gridline that is running, and Gridline is listed under Open With for
+tracker modules (.xm, .mod); choose it there once to open them by double click.
+
 Contents (an install tree; extract anywhere, or into /usr/local):
   bin/gridline-app                 the application
   bin/gridline                     the command line tool (gridline --help)

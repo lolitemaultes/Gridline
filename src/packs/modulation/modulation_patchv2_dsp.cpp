@@ -7,6 +7,7 @@
 #include "../../core/Json.h"
 #include "../../engine/Program.h"
 #include "../Packs.h"
+#include "junction.h"
 #include "modulation.h"
 #include "patchv2.h"
 
@@ -407,6 +408,7 @@ void preparePatchV2(const PluginState& state, const PatchV2& g, ChannelAux& aux)
   a->runs.assign(N, 0);
   a->controlsInto.resize(N);
   a->audioInto.resize(N + 1);
+  const double sr = junctionPrepareRate();
   for (size_t i = 0; i < N; ++i) {
     PluginState ps = g.nodes[i].plugin;
     normalizePluginState(ps);
@@ -420,11 +422,17 @@ void preparePatchV2(const PluginState& state, const PatchV2& g, ChannelAux& aux)
       if (gen) {
         prepareChannelAux(ps, na);
         a->gens[i] = gl::createGenerator(ps.type);
-        if (a->gens[i]) a->gens[i]->prepareHost(ps, 44100.0);
+        if (a->gens[i]) {  // K-59: memory and the first-block warm-up for the host's rate (installed plugins: not run)
+          a->gens[i]->prepareHost(ps, sr);
+          warmUpBuiltin(*a->gens[i], ps.type, ps, na, sr);
+        }
       } else {
         packs::prepareAux(ps, na);
         a->fxs[i] = gl::createEffect(ps.type);
-        if (a->fxs[i]) a->fxs[i]->prepareHost(ps, 44100.0);
+        if (a->fxs[i]) {
+          a->fxs[i]->prepareHost(ps, sr);
+          warmUpBuiltin(*a->fxs[i], ps.type, ps, na, sr);
+        }
       }
       a->runs[i] = (a->gens[i] || a->fxs[i]) ? 1 : 0;
     }
@@ -495,6 +503,12 @@ void PatchV2Runtime::exchangeEffect(int node, uint64_t type, std::unique_ptr<Eff
   if (node < 0 || node >= kV2MaxNodes || !fx) return;
   const size_t i = static_cast<size_t>(node);
   if (d_->fxs[i] && d_->hash[i] == type) std::swap(d_->fxs[i], fx);
+}
+
+void PatchV2Runtime::exchangeInstrument(int node, uint64_t type, std::unique_ptr<Generator>& gen) {
+  if (node < 0 || node >= kV2MaxNodes || !gen) return;
+  const size_t i = static_cast<size_t>(node);
+  if (d_->gens[i] && d_->hash[i] == type) std::swap(d_->gens[i], gen);
 }
 
 void PatchV2Runtime::noteOn(uint32_t id, double pitch, float velocity, const NoteProps& props) {

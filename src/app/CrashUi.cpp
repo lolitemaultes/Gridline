@@ -235,7 +235,7 @@ int64_t unixNow() {
   return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
-std::string copyPath() { return (fs::u8path(gCopy.dir) / (gCopy.sid + ".gridline.json")).u8string(); }
+std::string copyPath() { return (fs::u8path(gCopy.dir) / (gCopy.sid + ".gridline")).u8string(); }  // K-121: the new name
 
 void writeMeta(const std::string& original, int64_t saved) {
   std::ofstream f(fs::u8path(gCopy.dir) / (gCopy.sid + ".meta"), std::ios::trunc);

@@ -77,11 +77,6 @@ bool gKeyboardToMain = false;  // a closing plugin window had the keyboard
 SDL_GLContext gMainGl = nullptr;
 std::thread::id gUiThread;
 
-#if defined(__APPLE__)
-const char* kGlsl = "#version 150";
-#else
-const char* kGlsl = "#version 130";
-#endif
 
 native::Window nativeOf(SDL_Window* w) {
   native::Window n;
@@ -436,7 +431,7 @@ bool createSurface(PluginWindow& w) {
   io.FontDefault = defFont;
   ImGui::GetStyle() = style;
   ImGui_ImplSDL2_InitForOpenGL(w.win, w.gl);
-  ImGui_ImplOpenGL3_Init(kGlsl);
+  ImGui_ImplOpenGL3_Init(glrecovery::glsl());
   return true;
 }
 
@@ -955,13 +950,31 @@ void pluginWindowsGraphicsBack(SDL_Window* mainWindow, SDL_GLContext mainGl) {
     SDL_GL_SetSwapInterval(0);
     ImGui::SetCurrentContext(w.ctx);
     ImGui_ImplSDL2_InitForOpenGL(w.win, w.gl);
-    ImGui_ImplOpenGL3_Init(kGlsl);
+    ImGui_ImplOpenGL3_Init(glrecovery::glsl());
     glrecovery::restoreTextures();
   };
   for (auto& [key, w] : windows()) back(*w);
   for (auto& w : closingWindows()) back(*w);
   g.win = mainWindow;
   g.gl = mainGl;
+}
+
+// K-133: a plugin's own interface may draw with OpenGL of its own. The reset took that too, and
+// the plugin is never told: its view would stay black or draw into a context that is gone. Every
+// open interface is closed and opened again, where it was, so the plugin builds its view (and its
+// OpenGL) anew. A sandboxed interface lives in the sandbox's process, which lost its context too.
+int reopenHostedEditorsAfterGraphicsReset(App& a) {
+  std::vector<PluginTarget> open;
+  for (const auto& [key, w] : windows())
+    if (w && !w->dead) open.push_back(w->target);
+  for (const PluginTarget& t : open) closeHostedEditor(a, t);
+  int reopened = 0;
+  for (const PluginTarget& t : open) {
+    const bool ok = openHostedEditor(a, t);
+    reopened += ok ? 1 : 0;
+    std::fprintf(stderr, "[plugin-window] interface %s after the graphics reset\n", ok ? "opened again" : "could not be opened again");
+  }
+  return reopened;
 }
 
 bool screenshotHostedEditor(const PluginTarget& t, const std::string& pngPath) {

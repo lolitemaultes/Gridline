@@ -4,6 +4,8 @@
 // distinct, and reset. J-129: the control style (theme.controls) defaults to
 // slate, reads unknown text as slate, round-trips and applies. Headless Dear ImGui (no window, no renderer).
 #include <cmath>
+#include <cstddef>
+#include <cstring>
 #include <cstdio>
 #include <filesystem>
 #include <string>
@@ -11,6 +13,7 @@
 #include "../third_party/imgui/imgui.h"
 #include "app/Theme.h"
 #include "app/ThemeSettings.h"
+#include "core/LayoutPreset.h"
 #include "core/Settings.h"
 
 using namespace gl;
@@ -141,6 +144,48 @@ int main() {
       expect(ui::controlStyle() == ui::ControlStyle::Lumen, "controls: a preview scope draws its own style");
     }
     expect(ui::controlStyle() == ui::ControlStyle::Slate, "controls: back to the setting after the preview");
+  }
+
+  // K-122: choosing any layout and applying the settings again leaves the palette, the
+  // ImGui style colours and the control style exactly as they were, on a custom theme too.
+  {
+    auto samePal = [](const theme::Palette& a, const theme::Palette& b) {
+      return std::memcmp(&a, &b, offsetof(theme::Palette, dark)) == 0 && a.dark == b.dark;
+    };
+    for (int dark = 0; dark < 2; ++dark) {
+      Settings ls;
+      theme::modeToSettings(dark ? theme::Mode::Dark : theme::Mode::Light, ls);
+      theme::Tweaks ct;
+      ct.accent = 0x3D63DD;
+      ct.hot = 0x12AB34;
+      ct.contrast = 0.3f;
+      ct.brightness = 0.2f;
+      theme::tweaksToSettings(ct, ls);
+      theme::controlStyleToSettings(ui::ControlStyle::Hairline, ls);
+      theme::applyFromSettings(ls);
+      const theme::Palette before = theme::pal();
+      ImVec4 colsBefore[ImGuiCol_COUNT];
+      std::memcpy(colsBefore, ImGui::GetStyle().Colors, sizeof colsBefore);
+      bool same = true;
+      layout::Linked all;
+      for (layout::Preset p : {layout::Preset::Live, layout::Preset::Logic, layout::Preset::Studio, layout::Preset::Live}) {
+        layout::choose(ls, p, all);
+        theme::applyFromSettings(ls);
+        same = same && samePal(theme::pal(), before) && std::memcmp(colsBefore, ImGui::GetStyle().Colors, sizeof colsBefore) == 0 &&
+               ui::controlStyle() == ui::ControlStyle::Hairline;
+      }
+      expect(same, dark ? "dark: every layout keeps the palette, style colours and control style" : "light: every layout keeps the palette, style colours and control style");
+      // The slate theme itself: a Live or Logic layout draws the stock dark palette.
+      if (dark) {
+        Settings plain;
+        layout::choose(plain, layout::Preset::Logic, all);
+        theme::applyFromSettings(plain);
+        expect(samePal(theme::pal(), theme::makePalette(true, theme::Tweaks{})), "logic layout: the stock slate palette");
+        layout::choose(plain, layout::Preset::Live, all);
+        theme::applyFromSettings(plain);
+        expect(samePal(theme::pal(), theme::makePalette(true, theme::Tweaks{})), "live layout: the stock slate palette");
+      }
+    }
   }
 
   std::error_code ec;

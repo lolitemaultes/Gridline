@@ -11,6 +11,23 @@ case "${1:?platform}" in
     apt-get update -q
     apt-get install -y -q --no-install-recommends build-essential cmake ninja-build pkg-config git ca-certificates \
       libsdl2-dev libgl-dev libx11-dev libasound2-dev libjack-jackd2-dev libgl1-mesa-dri xvfb xauth x11-utils desktop-file-utils file python3
+    # Debian 11's CMake (3.18) builds Gridline, but the app tests read JSON with CMake 3.19 or later:
+    # there Kitware's official CMake goes to /usr/local (checked against its SHA-256).
+    if ! cmake --version | head -1 | grep -Eq ' (3\.(19|[2-9][0-9])|[4-9])\.'; then
+      v=3.31.9
+      case "$(uname -m)" in
+        x86_64) a=x86_64 sum=312d78e0b7c5c9b4a97a87a46c3e525aa84895fe8135c238c4616bba73dc9518 ;;
+        aarch64) a=aarch64 sum=09b7127b09e3d3ed5fa894f4e59f6a01112f267da6acc4249e46dba97b14afcb ;;
+        *) echo "install-deps: no CMake $v binary for $(uname -m)" >&2; exit 1 ;;
+      esac
+      apt-get install -y -q --no-install-recommends curl > /dev/null
+      curl -fsSL -o /tmp/cmake.tar.gz "https://github.com/Kitware/CMake/releases/download/v$v/cmake-$v-linux-$a.tar.gz"
+      echo "$sum  /tmp/cmake.tar.gz" | sha256sum -c -
+      rm -rf /opt/cmake && mkdir -p /opt/cmake && tar -C /opt/cmake --strip-components=1 -xzf /tmp/cmake.tar.gz && rm -f /tmp/cmake.tar.gz
+      for t in cmake ctest cpack; do ln -sf "/opt/cmake/bin/$t" "/usr/local/bin/$t"; done
+      hash -r 2>/dev/null || true
+      /usr/local/bin/cmake --version | head -1
+    fi
     ;;
   dnf)
     dnf install -y -q gcc-c++ cmake ninja-build pkgconf-pkg-config git SDL2-devel mesa-libGL-devel libX11-devel \

@@ -73,6 +73,54 @@ Without a label the release is a normal GitHub release marked "Latest". It is of
 everyone, including people on a 0.7.0 beta (a beta sorts before its release). For the next
 version, raise `project(VERSION)` and start again with a label or without one.
 
+## Linux build system, Debian and Ubuntu
+
+The Linux packages (`.deb`, `.rpm`, AppImage, `.tar.gz`, x86_64 and aarch64) are built in a
+`debian:11` container (glibc 2.31, GCC 10, the system's SDL2 2.0.14, and Kitware's CMake 3.31,
+which `tools/ci/install-deps.sh` adds there because the app tests need CMake 3.19), so they run on
+every system with glibc 2.31 or later. The AppImage also carries `libgpg-error`, which linuxdeploy
+leaves out but minimal Debian 13 systems do not have. The Import from URL tools (ffmpeg) are built in the same container.
+`tools/release/check-glibc.sh` fails the build when anything in the AppImage or the `.tar.gz` needs
+a newer glibc, and `tools/release/deb-depends.sh` adds the names Debian 13 and Ubuntu 24.04 gave
+renamed libraries (`libasound2 | libasound2t64`) to the `.deb`'s Depends. The CI workflow builds
+and tests every change on Debian 11 with the same compiler, so code that GCC 10 cannot build fails
+there and not at release time.
+
+The release workflow's **Debian** jobs install the release's `.deb` with apt into fresh
+`debian:11`, `debian:12`, `debian:13` and `ubuntu:24.04` containers, for x86_64 and ARM64, and run
+`tools/ci/debian-check.sh`: every program and plugin finds its libraries, the CLI smoke test, the
+app and the AppImage start hidden under Xvfb and draw. The Linux job itself installs the `.deb` on
+its Ubuntu 22.04 runner. Debian 11 is past its long-term support: `tools/ci/debian-archive.sh` points
+apt at `archive.debian.org` for what the mirrors no longer serve (its security updates today).
+
+To check a release by hand on a Linux computer with Docker:
+
+    docker run --rm -v "$PWD:/w" -w /w debian:11 bash tools/ci/debian-check.sh \
+      dist/Gridline-<version>-linux-amd64.deb dist/Gridline-<version>-linux-x86_64.AppImage <version>
+
+## Chromebooks
+
+The release workflow's **ChromeOS** jobs install the release's `.deb` and AppImage, for x86_64 and
+ARM64, into the container images ChromeOS itself installs for its Linux development environment
+(Google's image of the newest ChromeOS milestone, and its Debian 11 image from the newest milestone
+that still offers one; fetched and checked against their SHA-256 by `tools/ci/crostini_image.py`,
+imported into Docker by `tools/ci/crostini-docker.sh`), and run `tools/ci/chromeos-check.sh` there:
+the CLI smoke test, the app on Mesa with OpenGL capped at 3.0 and 2.1, the Chromebook defaults of a
+new installation. The release is only published when they pass. When Google's newest milestone
+cannot be found or fetched, `crostini_image.py` uses the pinned milestone `FALLBACK_MILESTONE`
+instead, so a broken new index does not stop a release. There is no separate Chromebook package:
+Chromebook users install the Linux `.deb` (docs/chromeos.md).
+
+The **ChromeOS** workflow (`.github/workflows/chromeos.yml`) also builds Gridline and runs every
+test inside both images, then installs the `.deb` made there. It takes up to 2.5 hours per job, so
+it runs every Monday, on each version tag and on "Run workflow", not on every change.
+
+To check a release by hand on a Linux computer with Docker:
+
+    bash tools/ci/crostini-docker.sh /tmp/crostini            # or: ... /tmp/crostini bullseye
+    docker run --rm -v "$PWD:/w" -w /w gridline-crostini bash tools/ci/chromeos-check.sh \
+      dist/Gridline-<version>-linux-amd64.deb dist/Gridline-<version>-linux-x86_64.AppImage <version>
+
 ## Stores and package repositories
 
 Each release also has `Gridline-<version>-symbols-<target>.zip` (macOS, Windows and Linux): the debug

@@ -152,6 +152,10 @@ struct PluginState {
   // Stand-ins (core/PluginStandIn.h): the third-party plugin this built-in
   // state replaces while it is not installed (compact JSON; empty = none).
   std::string original;
+  // Third-party plugins: the identity record kept from the project file (compact JSON, host/CrossFormat.h),
+  // so a plugin that is not installed here can be found again in another format. Descriptive only: it is
+  // rebuilt on every save, so it takes no part in comparing states.
+  std::string ident;
 
   bool operator==(const PluginState& o) const {
     return type == o.type && params == o.params && data == o.data && ins == o.ins && original == o.original;

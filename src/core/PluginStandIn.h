@@ -43,7 +43,8 @@ std::string pluginNameOf(const std::string& type, const std::string& name = "", 
 
 // Plugins treated as not installed: the environment variable
 // GRIDLINE_HIDE_PLUGINS (comma-separated hosted types, plugin names or
-// family words: "serum", "kickstart", "kilohearts", "all") plus setHiddenPlugins (tests).
+// family words: "serum", "kickstart", "kilohearts", "all"; "format:au" for every plugin of a format)
+// plus setHiddenPlugins (tests).
 void setHiddenPlugins(const std::vector<std::string>& entries);
 bool hidden(const std::string& type, const std::string& name = "");
 // The hosted class is registered (scanned) and not hidden.
@@ -90,6 +91,9 @@ bool paramLink(Family f, const PluginState& orig, int index, ParamLink& out);
 // Parameter index (hosted type's list) of a plugin parameter id (VST3 / AU
 // parameter id; VST2: the index itself), -1 when unknown.
 int paramIndexOfId(Family f, const std::string& type, uint32_t id);
+// K-132: the VST3 parameter ids of the hosted type's list, in its order (empty when unknown):
+// what an FL wrapper written for a plugin that is not installed lists as its parameters.
+std::vector<uint32_t> vst3ParamIds(Family f, const std::string& type);
 
 // Builds the stand-in state for `orig` (not installed). False when the
 // family is unknown or the state cannot be read at all (the original then

@@ -30,6 +30,12 @@ Command line
       ./gridline --help
   Copy it somewhere on your PATH, e.g. /usr/local/bin.
 
+Opening files
+  Gridline projects (.gridline, .gridlinez) open in Gridline by double click, in the Gridline
+  that is running. The Finder sees a project saved by an earlier version (.gridline.json) as
+  JSON: select it, File > Get Info, and pick Gridline under Open with, or save it again from
+  Gridline. Tracker modules (.xm, .mod) list Gridline in Open With.
+
 Settings live in ~/.config/gridline.
 ========================================================================
 https://github.com/lolitemaultes/Gridline

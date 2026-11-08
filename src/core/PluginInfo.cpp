@@ -275,6 +275,7 @@ GL_NOINLINE void addInfo2(std::vector<PluginInfo>& v) {
   p.params[SmpPreReverbMix] = lin("Pre reverb", "%", 0, 1, 0);
   p.params[SmpPreReverbType] = ch("Pre reverb type", {"Room", "Hall"}, 1);
   p.params[SmpPreFadeStereo] = tog("Stereo fade", 0);
+  p.params[SmpFitTempo] = lin("Time follows tempo from", "BPM", 0, 1000, 0);  // K-132: 0 = fixed
   p.presets = {{"One shot", {}}, {"Sustained", {{SmpOneShot, 0.f}, {SmpSustain, 1.f}, {SmpRelease, 0.3f}, {SmpDeclick, 3.f}}},
                {"Looped pad", {{SmpOneShot, 0.f}, {SmpLoop, 1.f}, {SmpLoopStart, 0.2f}, {SmpLoopEnd, 0.8f}, {SmpLoopXfade, 0.2f}, {SmpAttack, 0.3f}, {SmpRelease, 1.2f}}},
                {"Filtered pluck", {{SmpFilterType, 1.f}, {SmpCutoff, 800.f}, {SmpFiltEnv, 0.6f}, {SmpFiltDecay, 0.25f}, {SmpReso, 0.3f}}},

@@ -43,7 +43,7 @@ void* operator new[](std::size_t n) {
   if (void* p = std::malloc(n ? n : 1)) return p;
   throw std::bad_alloc();
 }
-#if defined(__GNUC__) && !defined(__clang__)
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 11  // (GCC 11 added this warning)
 #pragma GCC diagnostic ignored "-Wmismatched-new-delete"  // the replaced operator new is malloc
 #endif
 void operator delete(void* p) noexcept { std::free(p); }
@@ -1191,6 +1191,91 @@ void testFlExportNotes() {
 }
 
 // Hand-wired graphs through the FL exporter and back.
+// K-132: an instrument patch whose latency starts or stops at run time (an edit inside it) changes
+// runtime; the instrument's sounding note carries on there and its note-off still ends it.
+void testInstrumentRuntimeSwitch() {
+  namespace sp = gl::packs::spectral;
+  constexpr uint64_t kNotesIo = 1002, kSynNotes = 3000, kSynOut = 3001, kPsIn = 3002, kPsOut = 3003;
+  md::PatchV2 g;
+  g.align = true;
+  const auto port = [](uint64_t id, uint32_t cls, uint32_t kind) {
+    return md::patchChunkBytes(5009, flJoin({flU32s({cls, 0}), flBytes({id}), flU32s({kind, 0, 0})}));
+  };
+  const auto node = [&](const char* type, const std::vector<uint8_t>& ports) {
+    md::PatchV2Node n;
+    n.plugin = defaultPluginState(type);
+    n.flName = type;
+    n.tail = "-";
+    const float lv = 1;
+    uint32_t lvBits = 0;
+    std::memcpy(&lvBits, &lv, 4);
+    n.head = md::patchHex(flJoin({md::patchChunkBytes(5007, flU32s({lvBits, 0, 0, 0})), ports}));
+    g.items.push_back("#" + std::to_string(g.nodes.size()));
+    g.nodes.push_back(std::move(n));
+  };
+  node("gl.synth", flJoin({port(kSynNotes, 1, 3), port(kSynOut, 0, 2)}));
+  node("gl.pitch", flJoin({port(kPsIn, 0, 3), port(kPsOut, 0, 2)}));
+  const auto io = [&](uint64_t id, uint32_t cls, uint32_t kind, const char* name) {
+    std::vector<uint8_t> nm(name, name + std::strlen(name));
+    g.items.push_back(md::patchHex(md::patchChunkBytes(0, flJoin({md::patchChunkBytes(1400, flJoin({flBytes({id}), flU32s({cls, kind, 2, 0, 0})})), md::patchChunkBytes(1402, nm)}))));
+  };
+  io(kNotesIo, 1, 5, "Notes");
+  io(kFlOut, 0, 6, "Audio output");
+  for (const auto& [s, d] : std::vector<std::pair<uint64_t, uint64_t>>{{kNotesIo, kSynNotes}, {kSynOut, kPsIn}, {kPsOut, kFlOut}})
+    g.items.push_back(md::patchHex(md::patchChunkBytes(0, md::patchChunkBytes(1300, flBytes({d, s}, 1.0f)))));
+  PluginState& syn = g.nodes[0].plugin;
+  syn.params[pp::SynSustain] = 1.0f, syn.params[pp::SynRelease] = 0.01f;
+  g.nodes[1].plugin.params[sp::PsEngine] = sp::kPsMusic, g.nodes[1].plugin.params[sp::PsMix] = 0;  // dry through it, whatever the engine
+  const auto host = [&] {
+    PluginState s = defaultPluginState("gl.patcher");
+    s.data = md::serializePatchV2(g);
+    return s;
+  };
+  expect(!md::patchV2RunsAsGraph(g, kSr), "instrument patch: no latency before");
+  PluginState st = host();
+  std::unique_ptr<Generator> gen = gl::createGenerator(st.type);
+  ChannelAux aux;
+  gen->prepareHost(st, kSr);
+  prepareChannelAux(st, aux);
+  const auto rebuild = [&] {
+    st = host();
+    ChannelAux next;
+    gen->prepareHost(st, kSr);
+    prepareChannelAux(st, next);
+    aux = next;
+  };
+  ProcessContext ctx;
+  ctx.sampleRate = kSr;
+  std::vector<float> L(256), R(256);
+  const auto blocks = [&](int n) {
+    double e = 0;
+    for (int k = 0; k < n; ++k) {
+      std::fill(L.begin(), L.end(), 0.f), std::fill(R.begin(), R.end(), 0.f);
+      gen->process(st, aux, ctx, L.data(), R.data(), 256);
+      for (float x : L) e += static_cast<double>(x) * x;
+    }
+    return e / (256.0 * n);
+  };
+  gen->noteOn(7, 60, 0.9f, 0);
+  const double before = blocks(40);
+  expect(before > 1e-5, "instrument patch: the note sounds");
+  // An edit makes it latent: the patch moves to the graph runtime while the note is held.
+  g.nodes[1].plugin.params[sp::PsEngine] = sp::kPsVoice;
+  expect(md::patchV2RunsAsGraph(g, kSr), "instrument patch: latency now");
+  rebuild();
+  blocks(40);  // the latency's start
+  const double after = blocks(40);
+  expect(after > before * 0.2, "instrument patch, zero to non-zero latency: the held note keeps sounding");
+  // Back again (no latency), the note still held.
+  g.nodes[1].plugin.params[sp::PsEngine] = sp::kPsMusic;
+  rebuild();
+  const double back = blocks(40);
+  expect(back > before * 0.2, "instrument patch, non-zero to zero latency: the held note keeps sounding");
+  gen->noteOff(7, 0);
+  blocks(80);
+  expect(blocks(20) < before * 1e-3, "instrument patch: the note-off still ends the note after the switches");
+}
+
 void testFlExport() {
   const auto& list = md::junctionPatches();
   for (size_t i = 0; i < list.size(); ++i) {
@@ -1285,6 +1370,7 @@ int main() {
   testFeedback();
   testLatency();
   testFlLatency();
+  testInstrumentRuntimeSwitch();
   testNotes();
   testParams();
   testSidechain();

@@ -152,6 +152,18 @@ void quietCrashDialogs() {
 #if defined(_WIN32)
   SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
   _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+  // K-73: no "stopped working" window either when a plugin in a scanner child fails fast (stack
+  // cookie, invalid parameter): Windows Error Reporting shows it whatever the error mode, and the
+  // scan would wait for the timeout. WerSetFlags(WER_FAULT_REPORTING_NO_UI), looked up by name.
+  if (HMODULE k32 = GetModuleHandleW(L"kernel32.dll")) {
+    if (FARPROC p = GetProcAddress(k32, "WerSetFlags")) {
+      using WerSetFlagsFn = HRESULT(WINAPI*)(DWORD);
+      WerSetFlagsFn setFlags = nullptr;
+      static_assert(sizeof setFlags == sizeof p, "function pointer size");
+      std::memcpy(&setFlags, &p, sizeof setFlags);
+      setFlags(0x00000020);  // WER_FAULT_REPORTING_NO_UI
+    }
+  }
 #endif
 }
 

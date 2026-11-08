@@ -3,7 +3,10 @@
 // follow the reference's measured behaviour; keep them when editing.
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
+#include <memory>
+#include <new>
 #include <vector>
 #include "../synths/hex_fx.h"
 #include "twinref.h"
@@ -314,6 +317,7 @@ struct Voice {
   float lc[4] = {};  // x2, x1, y2, y1
   float lcB0 = 0, lcA1 = 0, lcA2 = 0;
   float* line[6] = {};  // string 1 lanes, string 2 lanes, comb 1, comb 2 (nullptr: no string memory)
+  bool dirty = true;    // K-132: its lines may hold sound (false: still all zero, never rendered)
   int pos[6] = {}, end[6] = {};
   float combLevel = 0, combFb = 0, sat = 0;
   float dm1[4] = {}, dm2[4] = {}, dc[4] = {}, damp[4] = {}, sharp[4] = {}, decT[4] = {}, dec[4] = {}, gainT[4] = {}, gain[4] = {};
@@ -333,9 +337,10 @@ void resetVoice(Voice& v) {
   v.hcRate = v.hcTarget = v.hcEnv = v.hcCut = v.hcRes = 0;
   v.lcB0 = v.lcA1 = v.lcA2 = 0;
   for (int k = 0; k < 6; ++k) {
-    if (v.line[k]) std::fill(v.line[k], v.line[k] + kLine, 0.0f);
+    if (v.line[k] && v.dirty) std::fill(v.line[k], v.line[k] + kLine, 0.0f);
     v.pos[k] = 0;
   }
+  v.dirty = false;
   v.drive = 0;
   for (int j = 0; j < 4; ++j) v.dm1[j] = v.dm2[j] = v.dc[j] = v.damp[j] = v.sharp[j] = v.decT[j] = v.gain[j] = v.gainT[j] = 0;
   v.quiet = -1;
@@ -450,7 +455,12 @@ struct TwinRef::Engine {
   bool keyDown[128] = {};
   Voice voices[kAllVoices];
   Voice dummy;
-  std::vector<float> lineMem;
+  // K-132: the string memory (37 MB) comes zeroed from the system and is only written by voices
+  // that play, so an instrument that never plays (or plays few voices) keeps most of it unused.
+  struct FreeMem {
+    void operator()(float* p) const { std::free(p); }
+  };
+  std::unique_ptr<float, FreeMem> lineMem;
   int counter = 0;
   double sr = 0, bpm = 120;
   double pos = 0;
@@ -490,10 +500,12 @@ struct TwinRef::Engine {
   int64_t quiet = INT64_MAX / 2;  // frames since the output was last audible
 
   Engine() {
-    lineMem.assign(static_cast<size_t>(kLineVoices) * 6 * kLine, 0.0f);
+    lineMem.reset(static_cast<float*>(std::calloc(static_cast<size_t>(kLineVoices) * 6 * kLine, sizeof(float))));
+    if (!lineMem) throw std::bad_alloc();
     for (int i = 0; i < kAllVoices; ++i) {
       if (i < kLineVoices)
-        for (int k = 0; k < 6; ++k) voices[i].line[k] = lineMem.data() + (static_cast<size_t>(i) * 6 + static_cast<size_t>(k)) * kLine;
+        for (int k = 0; k < 6; ++k) voices[i].line[k] = lineMem.get() + (static_cast<size_t>(i) * 6 + static_cast<size_t>(k)) * kLine;
+      voices[i].dirty = false;  // zeroed already
       resetVoice(voices[i]);
     }
     resetVoice(dummy);
@@ -845,6 +857,7 @@ struct TwinRef::Engine {
   }
 
   void render4(Voice* const* lane, float* outL, float* outR, int n, bool first) {
+    for (int k = 0; k < 4; ++k) lane[k]->dirty = true;  // K-132: its lines are written from here on
     for (int i = 0; i < n; ++i) {
       const uint32_t s0 = seed;
       const uint32_t s1 = s0 * 0xbb38435u + 0x3619636bu;

@@ -470,6 +470,8 @@ bool hidden(const std::string& type, const std::string& name) {
   for (const auto& e : entries) {
     const std::string le = fold(e);
     if (e == type || (!name.empty() && le == fold(name))) return true;
+    // K-78: "format:au" hides every plugin of a format (cross-format checks).
+    if (e.compare(0, 7, "format:") == 0 && e.size() > 7 && type.compare(0, e.size() - 6, e.substr(7) + ":") == 0) return true;
     if (f == Family::None) continue;
     if (le == "all" || (le == "serum" && isSerum(f)) || (le == "kickstart" && isKick(f)) ||
         ((le == "kilohearts" || le == "khs") && f == Family::Kilohearts))
@@ -599,6 +601,14 @@ int paramIndexOfId(Family f, const std::string& type, uint32_t id) {
   if (f == Family::Kilohearts)
     if (const khs::Product* p = khs::find(type)) return khs::paramIndexOfId(*p, type, id);
   return -1;
+}
+
+std::vector<uint32_t> vst3ParamIds(Family f, const std::string& type) {
+  std::vector<uint32_t> ids;
+  if (f != Family::Kilohearts || type.rfind("vst3:", 0) != 0) return ids;  // Serum / Kickstart: not listed here
+  if (const khs::Product* p = khs::find(type))
+    for (int k : khs::hostedList(*p, type, 0)) ids.push_back(static_cast<uint32_t>(p->params[static_cast<size_t>(k)].vst3Id));
+  return ids;
 }
 
 bool makeStandIn(const PluginState& orig, const std::string& name, const std::string& vendor, PluginState& out,

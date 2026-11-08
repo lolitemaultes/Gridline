@@ -32,6 +32,44 @@ in the `recovery` folder of Gridline's settings folder. A normal quit removes th
 Recovery copies are separate from the timed backups you can set in **Settings**, which are kept
 whether or not Gridline crashes.
 
+## When the graphics driver restarts
+
+A driver update, a driver that stopped answering for a moment or a laptop switching its graphics
+card can take away what Gridline draws with. Gridline then builds its display again: the main window,
+detached windows, the start-up screen and the crash window come back as they were, plugin windows
+are closed and opened again in the same place so each plugin can rebuild its own interface, and the
+project and the sound are not affected. A notification says it happened. If the driver does not
+come back, or restarts again and again (four times within a minute), Gridline saves a recovery copy,
+writes a report and closes, and the crash window offers the copy.
+
+macOS does not tell programs about a driver restart, so there it is handled by the system.
+
+### Trying it on your own computer
+
+A real restart can only be tried on a real computer. These steps restart the graphics driver for a
+moment and are safe for the computer, but save your work in other programs first.
+
+1. Turn on **Log file** in **Settings, Debug**. Start Gridline, open a project and make a change without saving it. Start playback, open a
+   plugin's window, and drag the mixer out into a window of its own.
+2. Restart the driver:
+   - **Windows**: press Windows key + Ctrl + Shift + B. The screen goes black for a second and the
+     computer beeps.
+   - **Linux with an AMD card**: `sudo cat /sys/kernel/debug/dri/0/amdgpu_gpu_recover` (the number
+     after `dri/` can differ on a computer with several cards).
+   - **Linux with an Intel card**: `echo 1 | sudo tee /sys/kernel/debug/dri/0/i915_wedged`.
+   - **Linux with an NVIDIA card**: there is no command for this; switching to a text console and back
+     (Ctrl + Alt + F3, then Ctrl + Alt + F2 or F1) comes close on some drivers.
+3. What should happen: within a few seconds every Gridline window is drawn again and shows what it
+   showed before, the notification about the driver appears, playback never stopped, Undo still has
+   your change, the plugin's window is open again where it was, and the mixer is still in its own
+   window. Repeat the restart once or twice: the same each time.
+4. To try the start-up screen, restart the driver while Gridline is starting; Gridline should finish
+   starting normally.
+
+If a window stays black, Gridline closes, or anything else differs, please open an issue with the
+crash code if a crash window appeared, the system, the graphics card and driver version, and the
+lines with `graphics` from `gridline.log` in Gridline's settings folder.
+
 ## Sharing a code
 
 **Copy code** puts the whole text on the clipboard. Paste it in a [GitHub

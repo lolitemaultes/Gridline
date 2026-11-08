@@ -1,5 +1,6 @@
 // Gridline - J-192: Import from URL popup, settings and hooks (see UrlImportUi.h).
 #include "UrlImportUi.h"
+#include "Keys.h"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -583,7 +584,7 @@ void drawEntry(App& a) {
   ImGui::Dummy(ImVec2(kW, theme::kS2));
   const float w = buttonW("Close");
   rightAlign(w);
-  if (ui::TextButton("Close", false, w) || ImGui::IsKeyPressed(ImGuiKey_Escape)) close();
+  if (ui::TextButton("Close", false, w) || ::gl::keys::escapePressed()) close();
 }
 
 void drawSetup(App& a) {
@@ -610,7 +611,7 @@ void drawSetup(App& a) {
   ImGui::Dummy(ImVec2(kW, theme::kS2));
   const float w = buttonW("Cancel");
   rightAlign(w);
-  if (ui::TextButton("Cancel", false, w) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+  if (ui::TextButton("Cancel", false, w) || ::gl::keys::escapePressed()) {
     s.setup->cancel = true;
     s.fetchAfterSetup = false;
   }
@@ -630,7 +631,7 @@ void drawFetching(App& a) {
   ImGui::Dummy(ImVec2(kW, theme::kS2));
   const float w = buttonW("Cancel");
   rightAlign(w);
-  if ((ui::TextButton("Cancel", false, w) || ImGui::IsKeyPressed(ImGuiKey_Escape)) && s.job) s.job->cancel = true;
+  if ((ui::TextButton("Cancel", false, w) || ::gl::keys::escapePressed()) && s.job) s.job->cancel = true;
 }
 
 // Title, uploader / site / length of what the link holds.
@@ -779,7 +780,7 @@ void drawPreview(App& a) {
   ImGui::Dummy(ImVec2(kW, theme::kS2));
   const float wc = buttonW("Cancel"), wi = buttonW("Import");
   rightAlign(wc + wi + theme::kS2);
-  const bool cancel = ui::TextButton("Cancel", false, wc) || ImGui::IsKeyPressed(ImGuiKey_Escape);
+  const bool cancel = ui::TextButton("Cancel", false, wc) || ::gl::keys::escapePressed();
   ImGui::SameLine(0, theme::kS2);
   ImGui::BeginDisabled(!ok);
   const bool go = ui::TextButton("Import", true, wi);
@@ -826,7 +827,7 @@ void drawImporting(App& a) {
   ImGui::Dummy(ImVec2(kW, theme::kS2));
   const float w = buttonW("Cancel");
   rightAlign(w);
-  if (ui::TextButton("Cancel", false, w) || ImGui::IsKeyPressed(ImGuiKey_Escape)) s.job->cancel = true;
+  if (ui::TextButton("Cancel", false, w) || ::gl::keys::escapePressed()) s.job->cancel = true;
 }
 
 void drawError(App& a) {
@@ -846,7 +847,7 @@ void drawError(App& a) {
   rightAlign(wb + wc + theme::kS2);
   const bool back = ui::TextButton("Back", false, wb);
   ImGui::SameLine(0, theme::kS2);
-  const bool cl = ui::TextButton("Close", true, wc) || ImGui::IsKeyPressed(ImGuiKey_Escape);
+  const bool cl = ui::TextButton("Close", true, wc) || ::gl::keys::escapePressed();
   if (back) {
     s.screen = s.errorBack;
     s.focusUrl = s.errorBack == Screen::Entry;

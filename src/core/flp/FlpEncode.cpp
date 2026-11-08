@@ -18,6 +18,9 @@
 #include <thread>
 #include "../../engine/ChannelIns.h"
 #include "../PluginStandIn.h"
+#include "../SuiteState.h"
+#include "../../host/HostedPlugins.h"
+#include "FlpWrapper.h"
 #include "../../packs/spacefx/spacefx.h"
 #include "../../packs/synths/matrixfm.h"
 #include "../../packs/synths/mfmref.h"
@@ -754,6 +757,21 @@ Result encodeWith(const Encoder* e, const PluginState& g0, const std::string& or
   // stand-in keeps, untouched.
   auto asLoaded = [&](PluginState& st) {
     if (hosted && st.type != g.type && standin::isStandIn(st)) st = standin::originalState(st);
+    // K-110: a Gridline Suite plugin decodes to its built-in; what FL loads is the suite plugin
+    // with this state, when the built-in is the one the state carries.
+    if (hosted && st.type != g.type) {
+      if (const suite::Member* sm = suiteMemberOfType(g.type); sm && st.type == sm->type) {
+        std::string comp, ctrl;
+        PluginState inner;
+        if (host::decodeState(g.data, comp, ctrl) && suitestate::parse(comp, inner)) {
+          normalizePluginState(inner);
+          if (inner == st) {
+            st = PluginState{};
+            st.type = g.type, st.params = g.params, st.data = g.data, st.ins = g.ins;
+          }
+        }
+      }
+    }
   };
   if (decOk) asLoaded(m.state);
   if (decOk && m.state.type == g.type && (hosted || diffParams(m.state, g).empty()) && sameData(m.state, g) && sameInsForState(m.state.ins, g.ins)) {

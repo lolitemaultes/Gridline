@@ -1205,6 +1205,7 @@ ScanResult clapScan(const std::string& path) {
       c.params.push_back(std::move(sp));
     }
     r.classes.push_back(std::move(c));
+    scanProgress();     // K-73: the scan's timeout starts again with each plugin of the file
     (void)b.release();  // never destroyed in the scanner (plugins that crash on destroy must not fail the scan)
   }
   r.ok = !r.classes.empty();
@@ -1227,6 +1228,9 @@ Format clapFormat() {
   f.scanInProcess = clapScan;
   f.create = clapCreate;
   f.mtime = pathMtime;
+#if defined(_WIN32)
+  f.precheck = [](const std::string& entry) { return peDllPrecheck(entry, {"clap_entry"}); };  // K-73: a CLAP file is a DLL
+#endif
   return f;
 }
 

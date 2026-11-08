@@ -792,6 +792,37 @@ bool soloMixerTrack(Document& d, ObjectId id) {
   return true;
 }
 
+bool toggleChannelSolo(Document& d, ObjectId id, std::map<ObjectId, bool>& before) {
+  const Song& s = d.song();
+  const Channel* c = s.channel(id);
+  if (!c) return false;
+  bool alone = !c->muted && s.channels.size() > 1;
+  for (const auto& o : s.channels) alone = alone && (o.id == id || o.muted);
+  std::vector<std::pair<ObjectId, bool>> want;  // channel -> muted
+  if (alone) {
+    for (const auto& o : s.channels) {
+      const auto it = before.find(o.id);
+      want.emplace_back(o.id, o.id != id && it != before.end() && it->second);
+    }
+    before.clear();
+  } else {
+    size_t playing = 0;  // another channel soloed now (one plays): keep the states from before that solo
+    for (const auto& o : s.channels) playing += o.muted ? 0 : 1;
+    if (!(playing == 1 && s.channels.size() > 1 && !before.empty())) {
+      before.clear();
+      for (const auto& o : s.channels) before[o.id] = o.muted;
+    }
+    for (const auto& o : s.channels) want.emplace_back(o.id, o.id != id);
+  }
+  want.erase(std::remove_if(want.begin(), want.end(), [&s](const auto& w) { return s.channel(w.first)->muted == w.second; }), want.end());
+  if (!want.empty()) {
+    d.beginGroup(alone ? "unsolo channel" : "solo channel");
+    for (const auto& [ch, muted] : want) d.setParam(channelParam(ch, ChannelParam::Mute), muted ? 1 : 0, false);
+    d.endGroup();
+  }
+  return !alone;
+}
+
 // -------------------------------------------------------------------- notes ----
 
 void sortNotes(std::vector<Note>& notes, NoteSel& sel) {

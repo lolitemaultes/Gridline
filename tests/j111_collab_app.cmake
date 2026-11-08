@@ -104,7 +104,7 @@ if(NOT rcs_1 STREQUAL "0;0")
 endif()
 
 # ---- 3 + 4: both reopen (Alex the project file, Sam the folder 15 s later), reconnect, converge ----
-set(A2 "10 collab open \"${OUT}/Alex/Song/Song.gridline.json\"
+set(A2 "10 collab open \"${OUT}/Alex/Song/Song.gridline\"
 11 waitfor collab-ready 30
 12 waitfor collab-connected 200
 13 collab links
@@ -174,7 +174,7 @@ execute_process(
 expectConverged("re-invite" a4 b4 FromAlex1 FromSam2 FromAlex4 FromSam4)
 file(READ "${OUT}/b4.json" j)
 string(JSON pf GET "${j}" projectFile)
-if(NOT pf MATCHES "/Sam/Song/Song.gridline.json$" OR EXISTS "${OUT}/Sam/Other folder")
+if(NOT pf MATCHES "/Sam/Song/Song.gridline$" OR EXISTS "${OUT}/Sam/Other folder")
   message(FATAL_ERROR "FAIL (re-invite): Sam's project is ${pf} (expected his existing copy in Sam/Song)")
 endif()
 

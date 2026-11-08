@@ -14,8 +14,10 @@
 #pragma once
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 #include "../core/Json.h"
 #include "Backend.h"
@@ -69,6 +71,9 @@ struct Format {
   std::unique_ptr<Backend> (*create)(const std::string& entry, const std::string& uid, std::string* err);
   // Modification stamp of an entry (seconds or a version number).
   int64_t (*mtime)(const std::string& entry);
+  // K-73: why the entry cannot be a plugin for this computer, told without loading it ("" = it may
+  // be one: scan it). nullptr: every entry is scanned.
+  std::string (*precheck)(const std::string& entry) = nullptr;
 };
 // Formats available on this platform (AU on macOS only).
 const std::vector<Format>& formats();
@@ -82,19 +87,44 @@ std::unique_ptr<Backend> createBackend(const std::string& format, const std::str
 // Same in a child process running `exe --scan-plugin <format> <entry> --out
 // <tmp>`; a crash, error exit or timeout gives ok = false. When `cancel` turns
 // true the child is killed and the result (ok = false) must not be cached (J-103: quit).
+// K-73: the timeout counts from the child's last progress (scanProgress), so a shell of hundreds of
+// plugins is not given up while it describes them; 30 minutes at most in all.
 ScanResult scanIsolated(const std::string& exe, const std::string& format, const std::string& entry, double timeoutSeconds = 60,
                         const std::atomic<bool>* cancel = nullptr);
 // Entry point of child processes: the scanner (`--scan-plugin`, `--scan-vst3`)
 // and the playback sandbox (`--plugin-sandbox`). Returns the exit code, or -1
 // when the arguments name no child mode.
 int childMain(int argc, char** argv);
+// K-73: in the scanner child, one plugin of the entry is described (the parent's timeout starts
+// again). Elsewhere it does nothing.
+void scanProgress();
+// The file a scanner child writing `outFile` reports its progress in (it grows by a byte a plugin).
+std::string scanProgressFile(const std::string& outFile);
+// K-73: Windows DLLs (PE files): "" when the file may be a plugin with one of the `entryPoints`
+// exported for this computer; else why it is not (not a DLL, built for another processor such as a
+// 32-bit DLL in a 64-bit Gridline, no plugin entry point). Unreadable files give "" (the scan decides).
+// `hostMachine` is a PE machine code (0x8664 x64, 0xAA64 ARM64, 0x14C x86), 0 for this build's.
+std::string peDllPrecheck(const std::string& path, const std::vector<std::string>& entryPoints, uint16_t hostMachine = 0);
 // Path of the running executable ("" when unknown).
 std::string selfExecutablePath();
 // Newest modification time (seconds) of a path and, for bundles, its binaries.
 int64_t pathMtime(const std::string& path);
 // Every file / bundle with extension `ext` (".clap") below the folders; bundles
-// (directories with that extension) are not searched inside.
+// (directories with that extension) are not searched inside. K-71: each real folder is searched
+// once (symlink loops, links back up, folders reached twice), seven levels deep at most; /proc,
+// /sys and /dev are never searched.
 std::vector<std::string> findEntries(const std::vector<std::string>& folders, const std::string& ext, bool directories, bool files);
+// K-71: while one lives, findEntries on this thread stops early when `cancel` turns true (what it
+// found so far is returned and must not be trusted) and tells `progress` the folder it searches,
+// now and then. The scan worker searches with one; scopes do not nest.
+class DiscoveryScope {
+ public:
+  using Progress = std::function<void(const std::string& folder)>;
+  DiscoveryScope(const std::atomic<bool>* cancel, Progress progress);
+  ~DiscoveryScope();
+  DiscoveryScope(const DiscoveryScope&) = delete;
+  DiscoveryScope& operator=(const DiscoveryScope&) = delete;
+};
 // Search folders from an environment variable (":"-separated), appended to v.
 void addEnvPaths(std::vector<std::string>& v, const char* var);
 // $var/sub, "" when the variable is not set.
@@ -125,6 +155,8 @@ class ScanCache {
   const ScanResult* find(const std::string& bundle, const std::string& format = {}) const;
   void put(ScanResult r);
   void remove(const std::string& bundle, const std::string& format = {});
+  // K-71: several entries ({format, entry}) in one pass.
+  void remove(const std::vector<std::pair<std::string, std::string>>& entries);
   // Entries of `format` that are new or changed since they were cached.
   std::vector<std::string> stale(const std::vector<std::string>& bundles, const std::string& format = "vst3") const;
   const std::string& file() const { return file_; }

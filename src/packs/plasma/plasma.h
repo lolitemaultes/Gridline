@@ -590,6 +590,11 @@ struct LiveView {
 float sourceMeterValue(int src, float raw, bool& bipolar);
 // Reads the running instance's live data (false when g is not a Plasma instance).
 bool liveView(const Generator* g, LiveView& out);
+// Idle sleep: an instance with no note, no sequencer running and its effect tails done skips its
+// effect racks and outputs zeros until a note, a parameter change or a new effect bank wakes it.
+// asleep: read after a block (tests). setSleepAllowed(false): never sleep (comparison renders).
+bool asleep(const Generator* g);
+void setSleepAllowed(Generator* g, bool allowed);
 // Audition / preview from the editor (UI thread): queued for the audio thread.
 void previewNote(Generator* g, int key, bool on);
 // Clip recording: while on, played notes sound directly (not through the clip

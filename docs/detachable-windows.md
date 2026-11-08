@@ -215,8 +215,8 @@ a window is detached.
   next undocked). Windows restored detached from `layout.ini` get it again on their first frame.
 - **No tear-off by dragging.** One small patch in the vendored ImGui (`GRIDLINE PATCH (J-113)`,
   `ImGuiContext::ViewportLateCreateFilter`; J-116 still needs it, unchanged): a window that stops
-  fitting the main window gets its own OS window only if it is a popup / menu / tooltip, or if it
-  was opened outside on purpose (centre outside the main window within the frames it takes to
+  fitting the main window gets its own OS window only if it is a popup / menu / tooltip of a
+  detached window, or if it was opened outside on purpose (centre outside the main window within the frames it takes to
   appear and centre itself: a dialog opened from a detached window). Dragged, released or grown
   windows stay in the main window. J-158: the filter also guards ImGui's fallback for a window's
   first frame in a run (`GRIDLINE PATCH (J-158)` in `WindowSelectViewport`): a window restored
@@ -224,6 +224,15 @@ a window is detached.
   saved while the main window was maximised) used to get an OS window of its own the moment it
   opened. A window centred with a pivot is judged by where it is being centred, not by the
   rectangle it had before it was centred.
+- **Popups of the main window stay in it** (K-72, issue 15). A popup, menu or tooltip belongs to
+  the viewport of the window it was opened from (a tooltip: the one under the pointer). One that
+  belongs to the main window never gets an OS window, and `GRIDLINE PATCH (K-72)` in
+  `WindowSelectViewport` places it within the main window rather than on the whole monitor
+  (`ViewportAllowPlatformMonitorExtend = -1`), so it is moved inside instead of being cut off.
+  Before, a menu at the main window's edge (a docked rack's "+" menu at the right) ran onto the
+  monitor and each submenu hovered made and destroyed an OS window; the reporter's desktop
+  (XWayland) blanked the main window for a frame each time. Popups of detached
+  windows still get OS windows where they run past them.
 - **No ImGui moves of detached windows.** Before and after `NewFrame`, a `g.MovingWindow` whose
   root is detached is dropped (the title bar's id stays active until the release; nothing happens
   then). So a detached window shows no dock targets and never docks by being dragged.

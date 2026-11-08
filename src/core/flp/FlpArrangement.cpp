@@ -35,6 +35,7 @@
 #include "../ClipGain.h"
 #include "../Fades.h"
 #include "../Params.h"
+#include "../PluginInfo.h"
 #include "../PluginParams.h"
 #include "../../engine/Sample.h"
 #include "../../engine/TimeStretch.h"
@@ -88,6 +89,7 @@ class Importer {
   explicit Importer(Context& c) : c_(c), s_(c.song) {}
   void run();
   bool resolveTarget(uint32_t target, Target& t);
+  void markPitchAutomated(uint32_t target);
 
  private:
   Context& c_;
@@ -275,6 +277,41 @@ void Importer::importAutomationChannels() {
   if (!automations_.empty()) c_.report.counts["automation clips (contents)"] = static_cast<int>(automations_.size());
 }
 
+// K-132: the plugin `id` names is a hosted plugin that is not installed (no description).
+static bool missingHosted(const Song& s, ParamId id) {
+  const PluginState* p = nullptr;
+  if (const Channel* c = s.channel(id.owner); c && id.index >= kChannelPluginBase && id.index < kNoteFxBase) p = &c->plugin;
+  const int mi = s.mixerIndex(id.owner);
+  if (mi >= 0 && id.index >= kSlotBase) {
+    const size_t slot = (id.index - kSlotBase) / kSlotStride;
+    if (slot < s.mixer[static_cast<size_t>(mi)].slots.size()) p = &s.mixer[static_cast<size_t>(mi)].slots[slot].plugin;
+  }
+  return p && isHostedType(p->type) && !findPlugin(p->type);
+}
+
+// K-132: FL's automation (or a link) on the channel pitch knob replaces the knob with a smooth value
+// (no whole-semitone steps). Only imported channels get this, so saved Gridline projects keep rounding.
+// The channel keeps the knob's cents (knobFine) so the fine tune and any resample offset stay on top.
+// An audio clip channel then keeps its knob on the channel (not baked into every clip): the
+// automation replaces it instead of adding to it. Runs before the clips are read.
+void Importer::markPitchAutomated(uint32_t target) {
+  if (target >> 16 >= 0x2000 || (target & 0xFFFF) != 0x04) return;
+  const int fl = static_cast<int>(target >> 16);
+  Channel* ch = s_.channel(channelId(fl));
+  auto evs = c_.sec.channels.find(fl);
+  if (!ch || ch->pitchSmooth || evs == c_.sec.channels.end()) return;
+  long knob = 0;
+  if (const Event* e = find(evs->second, 219); e && e->size >= 12) knob = std::clamp<long>(e->i32(8), -4800, 4800);
+  const auto ty = c_.channelTypes.find(fl);
+  if (ty != c_.channelTypes.end() && ty->second == 4) {
+    ch->pitch = static_cast<int>(std::clamp<long>((knob >= 0 ? knob + 50 : knob - 50) / 100, -24, 24));
+    ch->fine = static_cast<int>(std::clamp<long>(knob - ch->pitch * 100L, -200, 200));
+  }
+  ch->pitchSmooth = true;
+  ch->knobFine = static_cast<int>(knob - ch->pitch * 100L);
+  c_.report.counts["channel pitch automation (smooth)"]++;
+}
+
 bool Importer::resolveTarget(uint32_t target, Target& t) {
   const uint32_t hi = target >> 16, lo = target & 0xFFFF;
   if (target == kFlTempoTarget) {  // tempo; a new FL tempo clip spans 60 … 180 BPM (a clip's own range: resolveFlClipTarget)
@@ -298,6 +335,7 @@ bool Importer::resolveTarget(uint32_t target, Target& t) {
       if (k < 0) return false;
       t.id = channelPluginParam(ch, k);
       auto d = describeParam(s_, t.id);
+      if (!d && c_.missingHostedByIndex && missingHosted(s_, t.id)) return true;  // K-132
       if (!d) return false;
       if (pm->second.value) {
         auto conv = pm->second.value;
@@ -339,6 +377,7 @@ bool Importer::resolveTarget(uint32_t target, Target& t) {
     if (auto mv = c_.slotChannels.find({ins, slot}); mv != c_.slotChannels.end()) t.id = channelPluginParam(mv->second, k);  // J-206
     else t.id = slotParam(track, slot, k);
     auto d = describeParam(s_, t.id);
+    if (!d && c_.missingHostedByIndex && missingHosted(s_, t.id)) return true;  // K-132
     if (!d) return false;
     if (pm->second.value) {
       auto conv = pm->second.value;
@@ -433,6 +472,7 @@ void Importer::importTargets() {
         ++ctlBad;
         continue;
       }
+      markPitchAutomated(e.u32(8));
       ml.owner = t.id.owner;
       ml.index = t.id.index;
       ml.min = t.min;
@@ -457,6 +497,7 @@ void Importer::importTargets() {
     }
     // K-49: the clip's own range, kept with the channel (a point x is lo + x * (hi - lo) on the target's scale).
     const FlClipRange range = flClipRangeOf(e.u32(8), find(c_.sec.channels[src], 219));
+    markPitchAutomated(e.u32(8));
     a->owner = whole.id.owner;
     a->index = whole.id.index;
     if (whole.convert) {
@@ -505,7 +546,7 @@ void Importer::importRemoteLinks() {
     }
     bool dup = false;
     for (const auto& x : s_.links) dup = dup || x == l;
-    if (!dup) s_.links.push_back(l), ++ok;
+    if (!dup) s_.links.push_back(l), ++ok, markPitchAutomated(r.target);
   }
   if (ok) c_.report.counts["MIDI remote links"] = ok;
   if (focused) c_.report.counts["MIDI remote links to the focused channel (not imported)"] = focused;
@@ -672,10 +713,15 @@ void Importer::importTracksAndClips() {
             // PL-13: per-clip reverse, bit 0 of u32 @72 (window stored mirrored).
             cl.reverse = (e.u32(o + 72) & 1u) != 0;
           }
-          if (auto cc = channelCents_.find(ch->second); cc != channelCents_.end()) cl.pitch += static_cast<float>(cc->second);
+          // K-132: an automated pitch knob stays on the channel (the automation replaces it); the
+          // clip's speed still follows the knob as saved.
+          const Channel* kc = s_.channel(ch->second);
+          const bool knobOnChannel = kc && kc->pitchSmooth;
+          const float knobCents = [&] { auto cc = channelCents_.find(ch->second); return cc == channelCents_.end() ? 0.0f : static_cast<float>(cc->second); }();
+          if (!knobOnChannel) cl.pitch += knobCents;
           // J-164: FL resamples the whole pitch (channel pitch shift + clip):
           // it sets the speed too, so the clip keeps FL's timing here.
-          cl.speedPitch = cl.pitch;
+          cl.speedPitch = cl.pitch + (knobOnChannel ? knobCents : 0.0f);
           if (const Channel* sc = s_.channel(ch->second); sc && sc->plugin.params.size() > static_cast<size_t>(pp::SmpPitchShift))
             cl.speedPitch += sc->plugin.params[pp::SmpPitchShift];
           const Channel* sourceChannel = s_.channel(ch->second);

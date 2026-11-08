@@ -25,6 +25,21 @@
 
 namespace gl::flp {
 
+// K-110: what the export does with a Gridline built-in that has no exact FL
+// plugin (FlpStandIn.h):
+//   Render             rendered to samples / mapped to a close FL plugin /
+//                      neutral (the J-80 stand-ins)
+//   Suite              every such built-in in the Gridline Suite becomes that
+//                      Suite plugin (VST3 in FL's plugin wrapper) with its full
+//                      state and files; mapped ones too
+//   SuiteWithFallback  instruments that would be rendered and effects that
+//                      would be neutral become Suite plugins; each such
+//                      instrument also gets a muted copy of its channel playing
+//                      the rendered samples; mapped plugins stay mapped
+enum class GridlinePlugins { Render, Suite, SuiteWithFallback };
+const char* gridlinePluginsKey(GridlinePlugins m);  // "render", "suite", "suite+fallback"
+bool parseGridlinePlugins(const std::string& s, GridlinePlugins& out);  // also "fallback"
+
 struct ExportOptions {
   bool useOrigin = true;     // false: ignore Song::flOrigin (tests the encoders)
   std::string factoryData;   // folder %FLStudioFactoryData% stands for (sample paths)
@@ -36,6 +51,7 @@ struct ExportOptions {
   // instruments stay placeholders.
   std::string sampleDir;
   bool renderInstruments = true;
+  GridlinePlugins gridlinePlugins = GridlinePlugins::Render;  // K-110 (the app's default is a setting)
   std::function<void(double)> progress;           // 0..1 (rendering)
   const std::atomic<bool>* cancel = nullptr;      // stops the export (exportFlp returns false)
 };

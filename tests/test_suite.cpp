@@ -13,6 +13,8 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <map>
 #include <set>
 #include <string>
@@ -25,6 +27,8 @@
 #include "core/PluginSuite.h"
 #include "core/Project.h"
 #include "core/SuiteInstall.h"
+#include "core/SuiteState.h"
+#include "core/WavWriter.h"
 #include "engine/AudioEngine.h"
 #include "engine/Effects.h"
 #include "engine/Generators.h"
@@ -592,8 +596,49 @@ void testStartupAction() {
 
 }  // namespace
 
+// K-110: a state carrying its files (an FL Studio project exported by Gridline): where the
+// original sample is not there, the plugin plays the copy it restores into the cache (never over
+// another file), and carries the file again when the host saves it.
+void testEmbeddedFiles() {
+  const suite::Member* m = suite::findMember("gl.seltmann");
+  if (!m) return;
+  const fs::path dir = fs::temp_directory_path() / "suite-embed";
+  fs::create_directories(dir);
+  const fs::path wav = dir / "Borrowed Break.wav";
+  gl::AudioBuffer b(2, 6000);
+  for (size_t i = 0; i < 6000; ++i) b.plane(0)[i] = b.plane(1)[i] = 0.3f * std::sin(0.05f * static_cast<float>(i));
+  writeWav(wav.string(), b, 44100, 16);
+  std::string bytes;
+  {
+    std::ifstream f(wav, std::ios::binary);
+    bytes.assign(std::istreambuf_iterator<char>(f), {});
+  }
+  PluginState st = defaultPluginState(m->type);
+  st.data = wav.string();
+  const std::string text = suitestate::stateText(st, true);
+  fs::remove(wav);  // another computer
+  Inst g = make("vst3:" + vst3Key(*m), true, vst3Data(text));
+  std::string back;
+  Json j;
+  const bool loaded = g.hi && g.hi->captureState(back) && jsonParse(innerState("vst3", back), j) && j.find("plugin");
+  expect(loaded, "suite vst3: a state with an embedded file loads");
+  if (!loaded) return;
+  const PluginState rs = pluginStateFromJson(*j.find("plugin"));
+  std::string have;
+  {
+    std::ifstream f(fs::u8path(rs.data), std::ios::binary);
+    have.assign(std::istreambuf_iterator<char>(f), {});
+  }
+  expect(rs.data != wav.string() && rs.data.rfind(suitestate::defaultCacheDir(), 0) == 0 && have == bytes,
+         "suite vst3: the missing sample plays from its copy restored into the cache");
+  const Json* files = j.find("files");
+  expect(files && files->is(Json::Type::Array) && files->array.size() == 1 && files->array[0].text("path") == rs.data,
+         "suite vst3: the host's save carries the file again");
+}
+
 int main(int argc, char** argv) {
-  test::hermeticTestEnv("suite");
+  const std::string& hermetic = test::hermeticTestEnv("suite");
+  platform::setEnv("XDG_CACHE_HOME", (hermetic + "/cache").c_str());  // K-110: restored files stay in the test's folder
   std::setvbuf(stdout, nullptr, _IONBF, 0);  // a crash keeps every line printed so far
   // "--quick": every member is scanned, a few are played (the full run plays all of them in every format).
   const bool quick = argc > 1 && std::strcmp(argv[1], "--quick") == 0;
@@ -603,6 +648,7 @@ int main(int argc, char** argv) {
   testAcrossSuites();
   testFormat("gridline", {"clap", clapKey, clapWrap}, kClap, true);
   testFormat("gridline", {"vst3", vst3Key, vst3Wrap}, kVst3, !quick);
+  testEmbeddedFiles();
   testFormat("mini", {"clap", clapKey, clapWrap}, kMiniClap, true);
   testFormat("mini", {"vst3", vst3Key, vst3Wrap}, kMiniVst3, !quick);
   testMixAndSidechain();

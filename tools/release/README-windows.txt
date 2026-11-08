@@ -26,6 +26,14 @@ Gridline Suite
   offers to copy plugins\VST3\Gridline Suite.vst3 and plugins\CLAP\Gridline Suite.clap (with
   Gridline Suite-assets) into your plug-in folders the first time it starts.
 
+Opening files
+  The setup program makes Gridline the program for Gridline projects (.gridline,
+  .gridlinez), which open in the Gridline that is running. It adds Gridline to "Open with"
+  for projects saved by earlier versions (.gridline.json, .gridline.zip) and for tracker
+  modules (.xm, .mod), and never changes the default program of those types: Windows sees a
+  .gridline.json file as .json, so choose Gridline once with Open with, or save the project
+  again from Gridline. The zip registers no file types.
+
 Settings live in %APPDATA%\gridline.
 ========================================================================
 https://github.com/lolitemaultes/Gridline

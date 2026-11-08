@@ -1,7 +1,7 @@
 // Gridline - J-111: headless collaboration for scripts and the integration
 // test (two processes on one computer, separate GRIDLINE_CONFIG_HOME each).
 //
-//   gridline collab-run --folder DIR --name NAME (--new | --create FILE.gridline.json | --join CODEFILE | --open)
+//   gridline collab-run --folder DIR --name NAME (--new | --create FILE.gridline | --join CODEFILE | --open)
 //                       [--invite-out FILE] [--seconds N] [--edits host|guest] [--audio WAV]
 //                       [--report FILE] [--stun HOST:PORT] [--app-net] [--ice-delay S] [--test-connection]
 //

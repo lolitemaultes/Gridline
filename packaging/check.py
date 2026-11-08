@@ -12,6 +12,10 @@
   runtime version, sandbox permissions Flathub's linter refuses;
 * the AppStream metadata names the Flatpak id and replaces the old one; the Windows manifests
   name the installer's AppId (tools/windows/gridline.iss);
+* K-119, the file types Gridline opens: the Linux MIME package and desktop entry (and, where
+  installed, update-mime-database and desktop-file-validate on them), the macOS Info.plist's
+  document and type declarations (plutil -lint where installed) and the Windows installer's
+  "Open with" entries; Gridline never takes another program's file type as its default;
 * with --schemas <dir>: the Flatpak, Snapcraft, Scoop and the three Windows package manager
   manifests validate against their published JSON schemas (needs the jsonschema module; CI
   downloads the schemas, see .github/workflows/packaging.yml).
@@ -22,7 +26,9 @@ import argparse
 import importlib.util
 import json
 import os
+import plistlib
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -164,6 +170,258 @@ def check_metainfo():
             bad(f"assets/linux/{f}: a second metainfo file")
 
 
+MIME_NS = "{http://www.freedesktop.org/standards/shared-mime-info}"
+# Gridline's own types: {glob: weight at least}, the format it is written in. The single extensions
+# (.gridline, .gridlinez) are the names Gridline saves; the two-part names are those of projects
+# saved by earlier versions, which must keep winning over the plain *.json / *.zip (weight 50).
+OWN_TYPES = {
+    "application/x-gridline-project": ({"*.gridline": 80, "*.gridline.json": 60}, "application/json"),
+    "application/x-gridline-zipped-project": ({"*.gridlinez": 80, "*.gridline.zip": 60}, "application/zip"),
+}
+# Other formats Gridline opens as projects: their standard types, listed for Open with (never
+# defined here, so Gridline is never the only program that claims them).
+OPENED_TYPES = ["audio/x-xm", "audio/x-mod"]
+
+
+def desktop_keys(path):
+    keys = {}
+    group = None
+    for line in read(path).splitlines():
+        if line.startswith("["):
+            group = line.strip()
+        elif "=" in line and group == "[Desktop Entry]":
+            k, v = line.split("=", 1)
+            keys[k] = v
+    return keys
+
+
+def check_linux_file_types():
+    path = os.path.join(ROOT, "assets", "linux", "gridline.xml")
+    try:
+        root = ET.parse(path).getroot()
+    except (OSError, ET.ParseError) as e:
+        bad(f"{path}: {e}")
+        return
+    defined = {t.get("type"): t for t in root.findall(f"{MIME_NS}mime-type")}
+    for t in defined:
+        if t not in OWN_TYPES:
+            bad(f"{path}: defines {t}: only Gridline's own formats belong here")
+    for t, (want_globs, parent) in OWN_TYPES.items():
+        e = defined.get(t)
+        if e is None:
+            bad(f"{path}: {t} is missing")
+            continue
+        globs = {g.get("pattern"): int(g.get("weight", "50")) for g in e.findall(f"{MIME_NS}glob")}
+        for glob, weight in want_globs.items():
+            if globs.get(glob, 0) < weight:
+                bad(f"{path}: {t} needs the glob {glob} with a weight of {weight} or more (it must win over the plain format)")
+        for glob in globs:
+            if glob not in want_globs:
+                bad(f"{path}: {t} has the glob {glob}: only Gridline's own names belong here")
+        if parent not in [c.get("type") for c in e.findall(f"{MIME_NS}sub-class-of")]:
+            bad(f"{path}: {t} is not a sub-class-of {parent}")
+        if not e.findtext(f"{MIME_NS}comment"):
+            bad(f"{path}: {t} has no comment")
+        icon = e.find(f"{MIME_NS}icon")
+        if icon is None or icon.get("name") != "gridline":
+            bad(f"{path}: {t} must use the icon 'gridline' (the Flatpak build renames it)")
+    desktop = os.path.join(ROOT, "assets", "linux", "gridline.desktop")
+    keys = desktop_keys(desktop)
+    if "%F" not in keys.get("Exec", "") and "%U" not in keys.get("Exec", ""):
+        bad(f"{desktop}: Exec does not take the files to open (%F)")
+    mimes = [m for m in keys.get("MimeType", "").split(";") if m]
+    for m in list(OWN_TYPES) + OPENED_TYPES:
+        if m not in mimes:
+            bad(f"{desktop}: MimeType does not list {m}")
+    for m in mimes:
+        if m not in OWN_TYPES and m not in OPENED_TYPES:
+            bad(f"{desktop}: MimeType lists {m}: only types Gridline opens as projects (see OPENED_TYPES)")
+    brand = read(os.path.join(ROOT, "tools", "make_brand.py"))
+    if read(desktop) not in brand:
+        bad("tools/make_brand.py: its desktop entry differs from assets/linux/gridline.desktop")
+    if shutil.which("desktop-file-validate"):
+        r = subprocess.run(["desktop-file-validate", desktop], capture_output=True, text=True)
+        if r.returncode != 0 or "error" in (r.stdout + r.stderr).lower():
+            bad(f"desktop-file-validate {desktop}: {r.stdout}{r.stderr}")
+        else:
+            notes.append("desktop-file-validate: gridline.desktop is valid")
+    else:
+        notes.append("desktop-file-validate not installed: desktop entry validation skipped")
+    if shutil.which("update-mime-database"):
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, "mime", "packages"))
+            shutil.copy(path, os.path.join(tmp, "mime", "packages", "gridline.xml"))
+            r = subprocess.run(["update-mime-database", os.path.join(tmp, "mime")], capture_output=True, text=True)
+            # (a scratch folder outside XDG_DATA_DIRS gets a note on stderr: only the status counts)
+            if r.returncode != 0:
+                bad(f"update-mime-database refuses {path}: {r.stdout}{r.stderr}")
+            else:
+                globs2 = read(os.path.join(tmp, "mime", "globs2"))
+                subclasses = read(os.path.join(tmp, "mime", "subclasses"))
+                for t, (want_globs, parent) in OWN_TYPES.items():
+                    for glob, weight in want_globs.items():
+                        m = re.search(rf"^(\d+):{re.escape(t)}:{re.escape(glob)}$", globs2, re.M)
+                        if not m or int(m.group(1)) < weight:
+                            bad(f"update-mime-database: no weight {weight} glob {glob} for {t}")
+                    if f"{t} {parent}\n" not in subclasses:
+                        bad(f"update-mime-database: {t} is not recorded as a sub-class of {parent}")
+                notes.append("update-mime-database: gridline.xml compiles")
+    else:
+        notes.append("update-mime-database not installed: MIME compile check skipped")
+    cmake = read(os.path.join(ROOT, "CMakeLists.txt"))
+    for needle in ("assets/linux/gridline.xml DESTINATION share/mime/packages",
+                   "assets/linux/gridline.desktop DESTINATION share/applications",
+                   "CPACK_RPM_POST_INSTALL_SCRIPT_FILE ${CMAKE_SOURCE_DIR}/cmake/linux/rpm-refresh-caches.sh"):
+        if needle not in cmake:
+            bad(f"CMakeLists.txt: missing '{needle}'")
+    port = read(os.path.join(HERE, "freebsd", "audio", "gridline", "Makefile.in"))
+    uses = re.search(r"^USES=((?:.*\\\n)*.*)$", port, re.M)
+    for u in ("desktop-file-utils", "shared-mime-info"):
+        if not uses or u not in uses.group(1).replace("\\", " ").split():
+            bad(f"freebsd Makefile.in: USES lacks {u} (the package refreshes the desktop caches)")
+
+
+def render_plist(numeric):
+    path = os.path.join(ROOT, "cmake", "macos", "Info.plist.in")
+    text = read(path).replace("@GRIDLINE_VERSION_NUMERIC@", numeric).replace("@GL_MACOS_MIN@", "11.0")
+    left = re.findall(r"@[A-Za-z0-9_]+@", text)
+    if left:
+        bad(f"{path}: placeholders the build does not set: {left}")
+    return path, text
+
+
+def check_macos_file_types(forms):
+    if not os.path.isfile(os.path.join(ROOT, "cmake", "macos", "Info.plist.in")):
+        bad("cmake/macos/Info.plist.in is missing (Gridline.app's Info.plist with its file types)")
+        return
+    path, text = render_plist(forms["numeric"])
+    try:
+        pl = plistlib.loads(text.encode("utf-8"))
+    except Exception as e:  # plistlib raises several kinds
+        bad(f"{path}: does not parse: {e}")
+        return
+    if "configure_file(${CMAKE_SOURCE_DIR}/cmake/macos/Info.plist.in ${GRIDLINE_APP_BUNDLE}/Contents/Info.plist @ONLY)" not in \
+            read(os.path.join(ROOT, "CMakeLists.txt")):
+        bad("CMakeLists.txt does not write Gridline.app's Info.plist from cmake/macos/Info.plist.in")
+    for k in ("CFBundleIdentifier", "CFBundleExecutable", "CFBundleShortVersionString", "LSMinimumSystemVersion"):
+        if not pl.get(k):
+            bad(f"{path}: no {k}")
+    # The extension Gridline saves first (the type's preferred one), then the name earlier versions saved.
+    own = {"com.lolitemaultes.gridline.project": (["gridline", "gridline.json"], "application/x-gridline-project", "public.json"),
+           "com.lolitemaultes.gridline.zipped-project": (["gridlinez", "gridline.zip"], "application/x-gridline-zipped-project",
+                                                          "public.zip-archive")}
+    imported = {"com.lolitemaultes.gridline.xm-module": ("xm", "audio/x-xm"),
+                "com.lolitemaultes.gridline.mod-module": ("mod", "audio/x-mod")}
+    exported = {d.get("UTTypeIdentifier"): d for d in pl.get("UTExportedTypeDeclarations", [])}
+    if set(exported) != set(own):
+        bad(f"{path}: exported types {sorted(exported)} are not Gridline's own {sorted(own)}")
+    for uti, (exts, mime, parent) in own.items():
+        d = exported.get(uti, {})
+        tags = d.get("UTTypeTagSpecification", {})
+        if tags.get("public.filename-extension") != exts or tags.get("public.mime-type") != [mime]:
+            bad(f"{path}: {uti} should carry the extensions {exts} (in that order) and the type {mime}")
+        if parent not in d.get("UTTypeConformsTo", []):
+            bad(f"{path}: {uti} does not conform to {parent}")
+        if mime not in OWN_TYPES:
+            bad(f"{path}: {uti}'s type {mime} is not one of the Linux MIME package's")
+    imp = {d.get("UTTypeIdentifier"): d for d in pl.get("UTImportedTypeDeclarations", [])}
+    for uti, (ext, mime) in imported.items():
+        tags = imp.get(uti, {}).get("UTTypeTagSpecification", {})
+        if tags.get("public.filename-extension") != [ext] or tags.get("public.mime-type") != [mime]:
+            bad(f"{path}: imported type {uti} should carry the extension {ext} and the type {mime}")
+    handled = {}
+    for d in pl.get("CFBundleDocumentTypes", []):
+        if not d.get("CFBundleTypeName"):
+            bad(f"{path}: a document type without CFBundleTypeName")
+        for uti in d.get("LSItemContentTypes", []):
+            handled[uti] = (d.get("CFBundleTypeRole"), d.get("LSHandlerRank"))
+        if "CFBundleTypeExtensions" in d:
+            bad(f"{path}: {d.get('CFBundleTypeName')}: name types by UTI (LSItemContentTypes), not by extension")
+    for uti in own:
+        if handled.get(uti) != ("Editor", "Owner"):
+            bad(f"{path}: {uti} should be handled as Editor, Owner (got {handled.get(uti)})")
+    for uti in list(imported) + ["public.json", "public.zip-archive"]:
+        if handled.get(uti) != ("Viewer", "Alternate"):
+            bad(f"{path}: {uti} should be handled as Viewer, Alternate (got {handled.get(uti)})")
+    for uti, (role, rank) in handled.items():
+        if uti not in own and rank != "Alternate":
+            bad(f"{path}: {uti} belongs to another program: rank Alternate only (got {rank})")
+        if "flp" in uti.lower():
+            bad(f"{path}: {uti}: another music program's project type is not declared")
+    if shutil.which("plutil"):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "Info.plist")
+            with open(out, "w", encoding="utf-8") as f:
+                f.write(text)
+            r = subprocess.run(["plutil", "-lint", out], capture_output=True, text=True)
+            if r.returncode != 0:
+                bad(f"plutil -lint: {r.stdout}{r.stderr}")
+            else:
+                notes.append("plutil -lint: Info.plist is valid")
+
+
+def check_windows_file_types():
+    path = os.path.join(ROOT, "tools", "windows", "gridline.iss")
+    text = read(path)
+    if not re.search(r"^ChangesAssociations=yes$", text, re.M):
+        bad(f"{path}: ChangesAssociations=yes is missing (Explorer would not see the new entries)")
+    tasks = {m.group(1): m.group(2) for m in re.finditer(r'^Name: "(assoc\w+)";(.*)$', text, re.M)}
+    for t in ("assocproject", "assocmodule", "assocflp"):
+        if t not in tasks:
+            bad(f"{path}: task {t} is missing")
+    if "assocflp" in tasks and "unchecked" not in tasks["assocflp"]:
+        bad(f"{path}: the FL Studio project entry must stay off by default")
+    sec = re.search(r"^\[Registry\]\n(.*?)(?=^\[)", text, re.M | re.S)
+    if not sec:
+        bad(f"{path}: no [Registry] section")
+        return
+    entries = []
+    for line in sec.group(1).splitlines():
+        if not line.startswith("Root:"):
+            continue
+        fields = dict((k.strip(), v.strip()) for k, v in (p.split(":", 1) for p in line.split("; ") if ":" in p))
+        entries.append((fields.get("Subkey", "").strip('"'), fields.get("ValueName", "").strip('"'),
+                        fields.get("ValueData", ""), fields.get("Tasks", "")))
+    # Gridline's own extensions: Gridline is their default program (only Gridline writes them).
+    own_exts = {".gridline": "Gridline.Project", ".gridlinez": "Gridline.ZippedProject"}
+    progids, defaults = {}, {}
+    for sub, name, data, task in entries:
+        m = re.fullmatch(r"Software\\Classes\\(\.[A-Za-z0-9]+)(\\.*)?", sub)
+        if m and m.group(1) in own_exts and m.group(2) is None:
+            if name == "":
+                defaults[m.group(1)] = data.strip('"')
+            elif name != "Content Type":
+                bad(f"{path}: writes {sub} value {name}: only its default program and Content Type")
+            if task != "assocproject":
+                bad(f"{path}: {sub} is written without the task assocproject")
+        elif m and m.group(2) != "\\OpenWithProgids":
+            bad(f"{path}: writes {sub}: an extension's own key (its default program) is the user's choice")
+        if m and m.group(2) == "\\OpenWithProgids":
+            progids.setdefault(m.group(1), []).append(name)
+    for ext, pid in own_exts.items():
+        if defaults.get(ext) != pid:
+            bad(f"{path}: {ext} should open with {pid} by default (got {defaults.get(ext)})")
+    want = {".gridline": "Gridline.Project", ".gridlinez": "Gridline.ZippedProject", ".json": "Gridline.Project",
+            ".zip": "Gridline.ZippedProject", ".xm": "Gridline.Module", ".mod": "Gridline.Module"}
+    for ext, pid in want.items():
+        if pid not in progids.get(ext, []):
+            bad(f"{path}: {ext} does not list {pid} in OpenWithProgids")
+    for pid in set(n for names in progids.values() for n in names):
+        cmd = [d for s2, n, d, _ in entries if s2 == f"Software\\Classes\\{pid}\\shell\\open\\command"]
+        if not cmd or '""%1""' not in cmd[0] or '""{app}\\gridline-app.exe""' not in cmd[0]:
+            bad(f"{path}: {pid} has no open command passing the quoted file (\"%1\")")
+    supported = [n for s2, n, _, _ in entries if s2 == "Software\\Classes\\Applications\\gridline-app.exe\\SupportedTypes"]
+    for ext in want:
+        if ext not in supported:
+            bad(f"{path}: Applications\\gridline-app.exe\\SupportedTypes lacks {ext}")
+
+
+def check_file_types(forms):
+    check_linux_file_types()
+    check_macos_file_types(forms)
+    check_windows_file_types()
+
+
 def check_rendered(out, forms):
     v = forms["full"]
     placeholder = re.compile(r"@[A-Z0-9_]+(?::[A-Za-z0-9._-]+)?@")
@@ -271,6 +529,7 @@ def main():
     check_flatpak(render_mod)
     check_metainfo()
     check_snap()
+    check_file_types(forms)
     with tempfile.TemporaryDirectory() as tmp:
         out = a.rendered
         if not out:

@@ -1,16 +1,20 @@
 #include "HostedPlugins.h"
+#include "CrossFormat.h"
 #include "../core/Crash.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <exception>
 #include <functional>
 #include <map>
 #include <mutex>
+#include <set>
 #include <thread>
+#include "../core/Json.h"
 #include "../engine/AudioEngine.h"
 #include "PluginFolders.h"
 #include "PluginPrefs.h"
@@ -53,6 +57,8 @@ HostedClass makeHostedClass(const ScannedClass& c, const std::string& bundle, co
   h.sidechain = c.sidechainChannels > 0;
   h.eventInput = c.eventInput;
   h.eventOutput = c.eventOutput;
+  h.inputChannels = c.inputChannels;
+  h.outputChannels = c.outputChannels;
   h.auxOutputs = c.auxOutputs;
   if (h.auxOutputs.size() > static_cast<size_t>(kMaxAuxOutputs)) h.auxOutputs.resize(kMaxAuxOutputs);
   h.programs = c.programs;
@@ -206,12 +212,14 @@ std::string childExecutable() {
 
 // K-13: an entry left the search folders (folder removed or switched off, plugin deleted): its
 // classes leave the list. Projects that use them keep the plugin's state (a placeholder).
-static void unregisterEntry(const std::string& format, const std::string& bundle) {
+// K-71: every entry in one pass over the classes.
+static void unregisterEntries(const std::set<std::pair<std::string, std::string>>& entries) {
+  if (entries.empty()) return;
   bool any = false;
   {
     std::lock_guard<std::mutex> g(gClassLock);
     for (auto it = classMap().begin(); it != classMap().end();)
-      if (it->second->format == format && it->second->bundle == bundle) {
+      if (entries.count({it->second->format, it->second->bundle})) {
         it = classMap().erase(it);
         any = true;
       } else {
@@ -379,6 +387,32 @@ class Core final : public HostedInstance {
   bool hasMidiOutput() const override { return b_->hasEventOutput(); }
 
   // ---- UI thread ----
+  // K-78: true unless `st` holds a state moved from another format that the plugin did not take: its
+  // parameters, read back now, differ from the saved values. The outcome goes to the load report.
+  bool movedStateTook(const PluginState& st, bool setStateOk) {
+    xformat::LoadNote n;
+    if (st.ident.empty() || !xformat::loadNote(st, n) || n.via != "state" || n.to != cls_->type) return true;
+    int agree = 0, total = 0;
+    fixups_.clear();
+    for (int k : n.verify) {
+      const size_t i = static_cast<size_t>(k);
+      if (k < 0 || i >= ids_.size() || i >= st.params.size() || !mapped_[i]) continue;
+      ++total;
+      if (std::fabs(cls_->toNormalized(i, st.params[i]) - b_->paramNormalized(ids_[i])) <= 0.01) ++agree;
+      else fixups_.push_back(i);
+    }
+    const bool ok = setStateOk && (total == 0 || agree * 10 >= total * 9);
+    const std::string name = cls_->name + " (" + cls_->formatLabel() + ")";
+    if (ok)
+      xformat::postLoadCheck(name + ": the moved settings loaded; " + std::to_string(agree) + " of " + std::to_string(total) +
+                             " parameters read back as saved" + (fixups_.empty() ? std::string() : ", the others were set to their saved values"));
+    if (!ok) {
+      fixups_.clear();
+      xformat::postLoadCheck(name + ": the plugin did not take the moved settings (" + std::to_string(agree) + " of " + std::to_string(total) +
+                             " parameters as saved); the saved values were set by name instead");
+    }
+    return ok;
+  }
   void prepareHost(const PluginState& st, double sr) {
     if (renderWorker_ && std::this_thread::get_id() != creator_) {
       callOnUiThread([&] { prepareHostSafe(st, sr); });
@@ -400,13 +434,19 @@ class Core final : public HostedInstance {
     const bool needLoad = !loaded_ || st.data != lastData_;
     const bool needPrepare = !b_->active() || b_->sampleRate() != sr;
     if (!needLoad && !needPrepare) return;
+    // K-132: a big plugin can take long to take its state (a replace, a project opening): long
+    // work on the interface thread, not a freeze.
+    crash::BusyScope busy("a plugin taking its state", 120);
     suspend();
     if (needPrepare) b_->prepare(sr, AudioEngine::kMaxBlock);
     if (needLoad) {
-      if (!st.data.empty()) b_->setState(st.data);
+      const bool took = st.data.empty() || b_->setState(st.data);
       lastData_ = st.data;
       loaded_ = true;
-      if (st.data.empty()) {
+      // K-78: a state moved from another format of the plugin: its parameters must read back as saved,
+      // else the saved values are set one by one (below, like a state-less load).
+      const bool keepSong = !st.data.empty() && !movedStateTook(st, took);
+      if (st.data.empty() || keepSong) {
         // No plugin state yet (new instance, imported values): the song's
         // values are the truth — every one goes to the plugin with the next block.
         songValues_ = st.params;
@@ -430,6 +470,14 @@ class Core final : public HostedInstance {
         ctrlKnown_[k] = c;
         audioVals_[k].store(c, std::memory_order_relaxed);
       }
+      // K-78: parameters the moved state left elsewhere than saved get their saved values.
+      for (size_t k : fixups_) {
+        b_->setParamNormalized(ids_[k], cls_->toNormalized(k, st.params[k]));
+        sent_[k] = std::nanf("");
+        ctrlKnown_[k] = st.params[k];
+        audioVals_[k].store(st.params[k], std::memory_order_relaxed);
+      }
+      fixups_.clear();
       readbackPending_ = true;
       readbackFromSong_ = false;
     }
@@ -956,6 +1004,7 @@ class Core final : public HostedInstance {
   std::unique_ptr<std::atomic<float>[]> audioVals_;
   std::unique_ptr<std::atomic<float>[]> base_;  // song values of the last program build (modulation)
   std::string lastData_;
+  std::vector<size_t> fixups_;  // K-78: see movedStateTook
   bool loaded_ = false;
   bool readbackPending_ = false;
   bool programCapture_ = false;
@@ -1298,6 +1347,9 @@ std::unique_ptr<Core> makeCore(const std::string& type) {
     setError("plugin not installed or not scanned: " + type);
     return nullptr;
   }
+  // K-132: loading a plugin (adding or replacing one, a project opening) holds the interface up for
+  // as long as the plugin takes: long work, not a freeze.
+  crash::BusyScope busy("loading a plugin", 120);
   std::string err;
   const bool sandbox = runsInSandbox(type);
   std::unique_ptr<Backend> b = sandbox ? createSandboxBackend(childExecutable(), cls->format, cls->bundle, cls->uid, &err, cls->name)
@@ -1352,13 +1404,37 @@ HostedInstance* hostedInstance(Effect* fx) {
 // ---------------------------------------------------------------- scanning service
 
 namespace {
+using ScanClock = std::chrono::steady_clock;
+constexpr double kScanTimeoutSeconds = 60;              // one entry; longer is a hung plugin (blacklisted)
+// K-73: tests shorten it (GRIDLINE_SCAN_TIMEOUT, seconds).
+double scanTimeout() {
+  if (const char* e = std::getenv("GRIDLINE_SCAN_TIMEOUT"); e && *e) return std::clamp(std::atof(e), 0.5, 600.0);
+  return kScanTimeoutSeconds;
+}
+constexpr auto kSaveEvery = std::chrono::seconds(2);    // K-71: the cache file is written at most this often during a scan
+
 struct Service {
+  // K-71: two locks. `lock` guards the status, the slots and the flags, and the cache against a
+  // change while it is read; it is held only for short reads and changes, never across file I/O,
+  // a stat or a child wait, so the interface's scanStatus() / cacheEntries() never wait long.
+  // `writeLock` lets one writer at a time change the cache (scan threads, initHosting) and is held
+  // while the cache is checked against the disk and saved. The cache changes only with both held.
   std::mutex lock;
+  std::mutex writeLock;
   std::string cacheFile;
   ScanCache cache;
+  bool dirty = false;                    // writeLock: changed since the last save
+  ScanClock::time_point lastSave{};      // writeLock
+  ScanClock::duration saveTook{};        // writeLock: how long the last save took (K-73)
   ScanStatus status;
+  struct Slot {
+    std::string entry;  // empty: idle
+    ScanClock::time_point start{};
+  };
+  std::vector<Slot> slots;  // K-71: what each scanner child scans now
   std::thread worker;
-  std::atomic<bool> cancel{false};  // J-103: quit: the running scan stops after killing its child
+  std::atomic<bool> cancel{false};  // J-103: quit: the running scan stops after killing its children
+  std::atomic<bool> running{false};  // K-73: status.running, readable without `lock`
   bool closed = false;              // J-103: after shutdownScan() no scan starts any more
   bool pending = false;             // K-13: scan again when the running one is done (requestScan)
 };
@@ -1376,6 +1452,21 @@ int countClasses() {
   return static_cast<int>(classMap().size());
 }
 
+// K-71: scanner children at once: a hung or slow plugin does not hold up the rest.
+int scanJobs() {
+  if (const char* e = std::getenv("GRIDLINE_SCAN_JOBS"); e && *e) return std::clamp(std::atoi(e), 1, 8);
+  const int cores = static_cast<int>(std::thread::hardware_concurrency());
+  return std::clamp(cores / 2, 2, 4);
+}
+
+// K-71: the worker's searches stop on quit and show the folder they are in.
+DiscoveryScope searchScope(Service& sv) {
+  return DiscoveryScope(&sv.cancel, [&sv](const std::string& folder) {
+    std::lock_guard<std::mutex> g(sv.lock);
+    sv.status.searching = folder;
+  });
+}
+
 // Entries of every enabled format in its search folders (K-13: PluginFolders.h).
 std::vector<std::pair<std::string, std::string>> discoverAll() {
   PluginPrefs prefs = pluginPrefs();
@@ -1387,27 +1478,113 @@ std::vector<std::pair<std::string, std::string>> discoverAll() {
   return out;
 }
 
+// Writes the cache file (writeLock held): when it changed, at most every kSaveEvery unless `now`.
+// K-73: a big cache (thousands of plugins, tens of MB) takes a while to write, and every scanner
+// child waits for writeLock meanwhile: saved at most once in eight times what the last save took.
+void saveCache(Service& sv, bool now) {
+  const auto every = std::max<ScanClock::duration>(kSaveEvery, 8 * sv.saveTook);
+  if (!sv.dirty || (!now && ScanClock::now() - sv.lastSave < every)) return;
+  const auto t0 = ScanClock::now();
+  sv.cache.save();  // reads the cache: no other writer while writeLock is held
+  sv.dirty = false;
+  sv.lastSave = ScanClock::now();
+  sv.saveTook = sv.lastSave - t0;
+}
+
+// K-71: the same classes as the cached result (a rescan of an unchanged plugin).
+bool sameScan(const ScanResult& a, const ScanResult& b) {
+  if (a.ok != b.ok || a.classes.size() != b.classes.size()) return false;
+  Json ja = toJson(a), jb = toJson(b);
+  ja.object.erase("mtime");
+  jb.object.erase("mtime");
+  return jsonStringify(ja, 0) == jsonStringify(jb, 0);
+}
+
 void finishEntry(Service& sv, ScanResult r) {
-  registerScanResult(r);
-  std::lock_guard<std::mutex> g2(sv.lock);
-  sv.cache.put(std::move(r));
-  sv.cache.save();
-  sv.status.classes = countClasses();
-  sv.status.failed = countFailed(sv.cache);
-  sv.status.generation = gGeneration.load();
+  std::lock_guard<std::mutex> w(sv.writeLock);
+  // K-71: an unchanged plugin is registered already (the browser's plugin list only grows).
+  const ScanResult* old = sv.cache.find(r.bundle, r.format);
+  if (!old || !sameScan(*old, r)) registerScanResult(r);
+  const int classes = countClasses();
+  {
+    std::lock_guard<std::mutex> g(sv.lock);
+    sv.cache.put(std::move(r));
+    ++sv.status.cacheChanges;
+    sv.status.classes = classes;
+    sv.status.failed = countFailed(sv.cache);
+    sv.status.generation = gGeneration.load();
+    ++sv.status.done;
+  }
+  sv.dirty = true;
+  saveCache(sv, false);
+}
+
+// Scans the entries, a few at a time (K-71), each in its own child process.
+void scanEntries(Service& sv, const std::string& exe, const std::vector<std::pair<std::string, std::string>>& todo) {
+  if (todo.empty()) return;
+  const size_t jobs = std::min(static_cast<size_t>(scanJobs()), todo.size());
+  {
+    std::lock_guard<std::mutex> g(sv.lock);
+    sv.slots.assign(jobs, Service::Slot{});
+  }
+  std::atomic<size_t> next{0};
+  auto run = [&sv, &exe, &todo, &next](size_t slot) {
+    for (;;) {
+      if (sv.cancel.load()) return;  // J-103: quitting (the rest is scanned at the next start)
+      const size_t i = next++;
+      if (i >= todo.size()) return;
+      const auto& [format, entry] = todo[i];
+      {
+        std::lock_guard<std::mutex> g(sv.lock);
+        sv.slots[slot] = {entry, ScanClock::now()};
+      }
+      ScanResult r;
+      try {
+        r = scanIsolated(exe, format, entry, scanTimeout(), &sv.cancel);
+      } catch (const std::exception& e) {  // K-73: (a path the system cannot spell, no temp folder) one entry fails, not the app
+        r = ScanResult{};
+        r.format = format;
+        r.bundle = entry;
+        r.error = std::string("cannot be scanned: ") + e.what();
+      }
+      {
+        std::lock_guard<std::mutex> g(sv.lock);
+        sv.slots[slot] = {};
+      }
+      if (sv.cancel.load()) return;  // a cancelled scan is not a result: never cached
+      finishEntry(sv, std::move(r));
+    }
+  };
+  std::vector<std::thread> helpers;
+  for (size_t s = 1; s < jobs; ++s) {
+    try {
+      helpers.emplace_back(run, s);
+    } catch (const std::exception&) {
+      break;  // no more threads: fewer children at once
+    }
+  }
+  run(0);
+  for (auto& t : helpers) t.join();
+  std::lock_guard<std::mutex> g(sv.lock);
+  sv.slots.clear();
 }
 }  // namespace
 
 void initHosting(const std::string& configDir) {
   loadPluginPrefs(configDir);
   Service& s = service();
-  std::lock_guard<std::mutex> g(s.lock);
-  s.cacheFile = configDir + "/plugin-cache.json";
-  s.cache = ScanCache(s.cacheFile);
-  s.cache.load();
-  for (const auto& e : s.cache.entries())
+  ScanCache cache(configDir + "/plugin-cache.json");
+  cache.load();
+  std::lock_guard<std::mutex> w(s.writeLock);
+  for (const auto& e : cache.entries())
     if (findFormat(e.format)) registerScanResult(e);
-  s.status.classes = countClasses();
+  const int classes = countClasses();
+  std::lock_guard<std::mutex> g(s.lock);
+  s.cacheFile = cache.file();
+  s.cache = std::move(cache);
+  ++s.status.cacheChanges;
+  s.dirty = false;
+  s.status.classes = classes;
   s.status.failed = countFailed(s.cache);
   s.status.generation = gGeneration.load();
 }
@@ -1416,42 +1593,45 @@ namespace {
 // One scan over the search folders: entries that are new or changed (every entry when forced)
 // are scanned; entries no longer found leave the cache and the class list.
 void scanPass(Service& sv, const std::string& exe, bool force) {
-  std::vector<std::pair<std::string, std::string>> found = discoverAll();
+  std::vector<std::pair<std::string, std::string>> found;
+  {
+    DiscoveryScope scope = searchScope(sv);  // K-71: on this worker, never the interface's thread
+    found = discoverAll();
+  }
+  if (sv.cancel.load()) return;  // a search cut short is not what the folders hold
   std::vector<std::pair<std::string, std::string>> todo;
   {
-    std::lock_guard<std::mutex> g2(sv.lock);
+    std::lock_guard<std::mutex> w(sv.writeLock);  // K-71: the stats of stale() run without `lock`
+    std::map<std::string, std::vector<std::string>> byFormat;
+    for (const auto& [fid, e] : found) byFormat[fid].push_back(e);
     for (const Format& f : formats()) {
-      std::vector<std::string> mine;
-      for (const auto& [fid, e] : found)
-        if (fid == f.id) mine.push_back(e);
+      const std::vector<std::string>& mine = byFormat[f.id];
       for (auto& e : force ? mine : sv.cache.stale(mine, f.id)) todo.push_back({f.id, e});
     }
     // Forget entries that were removed (or whose folder or format was switched off).
+    const std::set<std::pair<std::string, std::string>> have(found.begin(), found.end());
     std::vector<std::pair<std::string, std::string>> gone;
     for (const auto& e : sv.cache.entries())
-      if (std::find(found.begin(), found.end(), std::make_pair(e.format, e.bundle)) == found.end()) gone.push_back({e.format, e.bundle});
-    for (const auto& [fid, b] : gone) {
-      sv.cache.remove(b, fid);
-      unregisterEntry(fid, b);
+      if (!have.count({e.format, e.bundle})) gone.push_back({e.format, e.bundle});
+    if (!gone.empty()) {
+      {
+        std::lock_guard<std::mutex> g(sv.lock);
+        sv.cache.remove(gone);
+        ++sv.status.cacheChanges;
+      }
+      unregisterEntries(std::set<std::pair<std::string, std::string>>(gone.begin(), gone.end()));
+      sv.dirty = true;
     }
+    const int classes = countClasses();
+    std::lock_guard<std::mutex> g(sv.lock);
+    sv.status.searching.clear();
     sv.status.done = 0;
     sv.status.total = static_cast<int>(todo.size());
-    sv.status.classes = countClasses();
+    sv.status.classes = classes;
     sv.status.failed = countFailed(sv.cache);
     sv.status.generation = gGeneration.load();
   }
-  for (const auto& [fid, e] : todo) {
-    if (sv.cancel.load()) break;  // J-103: quitting (the rest is scanned at the next start)
-    {
-      std::lock_guard<std::mutex> g2(sv.lock);
-      sv.status.current = e;
-    }
-    ScanResult r = scanIsolated(exe, fid, e, 60, &sv.cancel);
-    if (sv.cancel.load()) break;  // a cancelled scan is not a result: never cached
-    finishEntry(sv, std::move(r));
-    std::lock_guard<std::mutex> g2(sv.lock);
-    ++sv.status.done;
-  }
+  scanEntries(sv, exe, todo);
 }
 // K-13: a scan asked for while another ran (search folders changed): run it now.
 bool takePending(Service& sv) {
@@ -1461,28 +1641,82 @@ bool takePending(Service& sv) {
   return p;
 }
 void endWorker(Service& sv) {
+  {
+    std::lock_guard<std::mutex> w(sv.writeLock);
+    saveCache(sv, true);  // the end of a scan, or a cancel: what was scanned is kept
+  }
+  // The worker's last use of `lock`: a new scan joins it once `running` is false.
   std::lock_guard<std::mutex> g2(sv.lock);
-  sv.cache.save();
-  sv.status.current.clear();
+  sv.status.searching.clear();
+  sv.slots.clear();
   sv.status.running = false;
+  sv.running = false;
   sv.status.generation = gGeneration.load();
+}
+
+// What a worker does: a pass over the search folders, given entries, or every entry found in
+// some folders ({format or "*", folder}).
+struct ScanJob {
+  bool force = false;
+  std::vector<std::pair<std::string, std::string>> entries, folders;
+};
+void runJob(Service& sv, const std::string& exe, const ScanJob& job) {
+  if (!job.folders.empty()) {
+    std::vector<std::pair<std::string, std::string>> entries;
+    {
+      DiscoveryScope scope = searchScope(sv);
+      const PluginPrefs prefs = pluginPrefs();
+      for (const auto& [format, folder] : job.folders)
+        for (const Format& f : formats()) {
+          if (format == "*" ? !folderSearchApplies(f.id) || prefs.disabledFormats.count(f.id) : format != f.id) continue;
+          for (auto& e : f.discover({folder})) entries.push_back({f.id, std::move(e)});
+        }
+    }
+    if (sv.cancel.load()) {
+    } else if (entries.empty()) {
+      scanPass(sv, exe, false);  // nothing (left) in it: a pass still drops what was found there before
+    } else {
+      {
+        std::lock_guard<std::mutex> g(sv.lock);
+        sv.status.searching.clear();
+        sv.status.done = 0;
+        sv.status.total = static_cast<int>(entries.size());
+      }
+      scanEntries(sv, exe, entries);
+    }
+  } else if (!job.entries.empty()) {
+    scanEntries(sv, exe, job.entries);
+  } else {
+    scanPass(sv, exe, job.force);
+  }
+  while (takePending(sv)) scanPass(sv, exe, false);
+  endWorker(sv);
+}
+void launch(const std::string& exe, ScanJob job) {
+  Service& s = service();
+  std::lock_guard<std::mutex> g(s.lock);
+  if (s.closed || s.status.running || exe.empty()) return;
+  if (s.worker.joinable()) s.worker.join();  // finished: past its last use of the lock (endWorker)
+  s.status.running = true;
+  s.running = true;
+  s.status.done = 0;
+  s.status.total = static_cast<int>(job.entries.size());
+  s.status.searching.clear();
+  s.pending = false;
+  s.worker = std::thread([exe, job = std::move(job)]() {
+    try {
+      runJob(service(), exe, job);
+    } catch (const std::exception&) {  // K-73: a search the system cannot finish ends the scan, not the app
+      endWorker(service());
+    }
+  });
 }
 }  // namespace
 
 void startScan(const std::string& exe, bool force) {
-  Service& s = service();
-  std::lock_guard<std::mutex> g(s.lock);
-  if (s.closed || s.status.running || exe.empty()) return;
-  if (s.worker.joinable()) s.worker.join();
-  s.status.running = true;
-  s.status.done = s.status.total = 0;
-  s.pending = false;
-  s.worker = std::thread([exe, force]() {
-    Service& sv = service();
-    scanPass(sv, exe, force);
-    while (takePending(sv)) scanPass(sv, exe, false);
-    endWorker(sv);
-  });
+  ScanJob job;
+  job.force = force;
+  launch(exe, std::move(job));
 }
 
 void requestScan(const std::string& exe) {
@@ -1501,53 +1735,49 @@ void requestScan(const std::string& exe) {
 void rescanEntry(const std::string& exe, const std::string& format, const std::string& entry) { rescanEntries(exe, {{format, entry}}); }
 
 void rescanEntries(const std::string& exe, const std::vector<std::pair<std::string, std::string>>& entries) {
-  Service& s = service();
-  std::lock_guard<std::mutex> g(s.lock);
-  if (s.closed || s.status.running || exe.empty() || entries.empty()) return;
-  if (s.worker.joinable()) s.worker.join();
-  s.status.running = true;
-  s.status.done = 0;
-  s.status.total = static_cast<int>(entries.size());
-  s.pending = false;
-  s.worker = std::thread([exe, entries]() {
-    Service& sv = service();
-    for (const auto& [format, entry] : entries) {
-      if (sv.cancel.load()) break;
-      {
-        std::lock_guard<std::mutex> g2(sv.lock);
-        sv.status.current = entry;
-      }
-      ScanResult r = scanIsolated(exe, format, entry, 60, &sv.cancel);
-      if (sv.cancel.load()) break;
-      finishEntry(sv, std::move(r));
-      std::lock_guard<std::mutex> g2(sv.lock);
-      ++sv.status.done;
-    }
-    while (takePending(sv)) scanPass(sv, exe, false);
-    endWorker(sv);
-  });
+  if (entries.empty()) return;
+  ScanJob job;
+  job.entries = entries;
+  launch(exe, std::move(job));
 }
 
 std::vector<std::pair<std::string, std::string>> discoverPluginEntries() { return discoverAll(); }
 
 void rescanFolder(const std::string& exe, const std::string& format, const std::string& folder) {
-  const Format* f = findFormat(format);
-  if (!f || !folderSearchApplies(format)) return;
-  std::vector<std::pair<std::string, std::string>> entries;
-  for (auto& e : f->discover({folder})) entries.push_back({format, std::move(e)});
-  if (entries.empty()) {
-    requestScan(exe);  // nothing (left) in it: a pass still drops what was found there before
-    return;
-  }
-  rescanEntries(exe, entries);
+  if (format != "*" && (!findFormat(format) || !folderSearchApplies(format))) return;
+  ScanJob job;
+  job.folders = {{format, folder}};  // K-71: searched on the worker (a big folder takes a while)
+  launch(exe, std::move(job));
 }
 
 uint64_t hostedClassesGeneration() { return gGeneration.load(); }
 
+bool scanRunning() { return service().running.load(); }
+
 ScanStatus scanStatus() {
   Service& s = service();
+  const auto now = ScanClock::now();
   std::lock_guard<std::mutex> g(s.lock);
-  return s.status;
+  ScanStatus st = s.status;
+  const Service::Slot* longest = nullptr;
+  for (const auto& sl : s.slots) {
+    if (sl.entry.empty()) continue;
+    ++st.active;
+    if (!longest || sl.start < longest->start) longest = &sl;
+  }
+  if (longest) {
+    st.current = longest->entry;
+    st.currentSeconds = std::chrono::duration<double>(now - longest->start).count();
+  }
+  return st;
+}
+
+std::string scanCurrentLabel(const ScanStatus& st) {
+  if (st.current.empty()) return {};
+  const size_t slash = st.current.find_last_of("/\\");  // the path's last part
+  std::string out = slash == std::string::npos ? st.current : st.current.substr(slash + 1);
+  if (st.currentSeconds >= 5) out += "  " + std::to_string(static_cast<int>(st.currentSeconds)) + " s";
+  return out;
 }
 
 std::vector<std::pair<std::string, std::string>> blacklist() {
@@ -1563,6 +1793,7 @@ std::vector<CacheEntry> cacheEntries() {
   Service& s = service();
   std::lock_guard<std::mutex> g(s.lock);
   std::vector<CacheEntry> out;
+  out.reserve(s.cache.entries().size());
   for (const auto& e : s.cache.entries()) out.push_back({e.format, e.bundle, e.error, e.ok, static_cast<int>(e.classes.size())});
   return out;
 }

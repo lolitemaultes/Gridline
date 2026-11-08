@@ -66,7 +66,9 @@ int main() {
   expect(has(meta, std::string("<id>") + appicon::kAppStreamId + "</id>"), "AppStream id (the Flatpak app id)");
   expect(has(meta, std::string("<replaces>\n    <id>") + appicon::kAppId + "</id>"), "AppStream replaces the old id");
   expect(has(meta, std::string("<launchable type=\"desktop-id\">") + appicon::kDesktopId + ".desktop</launchable>"), "AppStream launchable");
-  expect(has(meta, std::string("<icon type=\"stock\">") + appicon::kIconName + "</icon>"), "AppStream stock icon");
+  // No stock icon: appstream-util (Fedora's rpm check) rejects any name outside the freedesktop set;
+  // the icon comes from the desktop entry's Icon=.
+  expect(!has(meta, "<icon type=\"stock\">"), "AppStream names no stock icon (the desktop entry's Icon= is used)");
   expect(has(readFile("assets/linux/gridline.xml"), std::string("<icon name=\"") + appicon::kIconName + "\"/>"), "MIME type icon");
   const std::string cmake = readFile("CMakeLists.txt");
   for (int sz : {16, 24, 32, 48, 64, 96, 128, 256, 512}) {
@@ -79,8 +81,10 @@ int main() {
   expect(has(cmake, "assets/icons/gridline-app.svg DESTINATION share/icons/hicolor/scalable/apps RENAME gridline.svg"), "CMake installs the scalable icon");
 
   // ---- macOS: bundle icon and identifier ----
-  expect(has(cmake, std::string("<key>CFBundleIdentifier</key><string>") + appicon::kAppId + "</string>"), "bundle identifier");
-  expect(has(cmake, "<key>CFBundleIconFile</key><string>Gridline</string>"), "bundle icon file");
+  // (K-119: Gridline.app's Info.plist is cmake/macos/Info.plist.in)
+  const std::string plist = readFile("cmake/macos/Info.plist.in");
+  expect(has(plist, std::string("<key>CFBundleIdentifier</key><string>") + appicon::kAppId + "</string>"), "bundle identifier");
+  expect(has(plist, "<key>CFBundleIconFile</key><string>Gridline</string>"), "bundle icon file");
   const std::string icns = readFile("assets/icons/Gridline.icns");
   std::set<std::string> types;
   for (std::size_t i = 8; icns.size() >= 8 && i + 8 <= icns.size();) {

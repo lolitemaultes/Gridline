@@ -11,6 +11,7 @@
 #   6. another instrument dropped on an instrument track replaces its instrument (same channel);
 #   7. an effect dropped on an instrument track goes onto its mixer track; on an ordinary track it is refused.
 # Screenshots: <OUT>/plus.ppm, <OUT>/plus_many.ppm, <OUT>/plus_150.ppm, <OUT>/plus_200.ppm,
+# (A dropped instrument opens its editor: the script closes it before the next drop.)
 # <OUT>/drop_highlight.ppm, <OUT>/drop_result.ppm.
 #   cmake -DAPP=<gridline-app> -DDEMO=<demo.gridline.json> -DOUT=<dir> -P j208_playlist_app.cmake
 cmake_minimum_required(VERSION 3.16)
@@ -181,17 +182,20 @@ run(drops 120 "8 plgeom
 16 shot \"${OUT}/drop_highlight.ppm\"
 17 dragmove ${hx} ${y0}
 18 drop
+22 closeplugins
 24 plgeom
 25 dump
 30 dragenter ${lx} ${y5} plugin:gl.kick
 32 dragmove ${lx} ${y5}
 34 dragmove ${lx} ${y5}
 36 drop
+40 closeplugins
 42 plgeom
 50 dragenter ${lx} ${y0} plugin:gl.kick
 52 dragmove ${lx} ${y0}
 54 dragmove ${lx} ${y0}
 56 drop
+60 closeplugins
 62 plgeom
 70 dragenter ${hx} ${y0} plugin:gl.delay
 72 dragmove ${hx} ${y0}

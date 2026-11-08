@@ -18,6 +18,7 @@
 #include "../core/Keymap.h"
 #include "App.h"
 #include "Keys.h"
+#include "LayoutPresets.h"
 #include "MidiUi.h"
 #include "SettingsPages.h"
 #include "SmoothScrollUi.h"
@@ -52,7 +53,7 @@ float keyChip(App& a, ImDrawList* dl, ImVec2 q, const char* text, ImU32 edge) {
   return w;
 }
 
-void saveKeymap(App& a) { a.settings.set("keys.bindings", keys::keymap().serialize()); }
+void saveKeymap(App& a) { layoutui::saveKeymap(a); }  // K-79: per shortcut set
 
 std::string commandName(const keys::Command& c) {
   return std::string(tr(c.label)) + " (" + tr(keys::contextName(c.context)) + ")";
@@ -109,6 +110,24 @@ void shortcutSettingsPage(App& a, float fieldW) {
     }
   }
 
+  // K-79: the shortcut set (each layout preset has one; the overrides below belong to it).
+  {
+    const layout::Preset cur = layout::keyProfile(a.settings);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(theme::vec(P.textDim), "%s", tr("Shortcut set"));
+    ImGui::SameLine(0, theme::kS2);
+    if (ui::BeginCombo("##keyset", tr(layout::displayName(cur)), 180)) {
+      for (int i = 0; i < layout::kPresetCount; ++i) {
+        const layout::Preset p = static_cast<layout::Preset>(i);
+        if (ImGui::Selectable(tr(layout::displayName(p)), p == cur) && p != cur) {
+          a.settings.set("keys.profile", layout::id(p));
+          layoutui::applyKeyProfile(a);
+        }
+      }
+      ImGui::EndCombo();
+    }
+    ui::Hint("Which default shortcuts apply. Choosing a window layout can switch it too (Settings > Interface)");
+  }
   // Toolbar: search, context filter, reset all.
   ImGui::SetNextItemWidth(std::min(fieldW, 260.0f));
   ImGui::InputTextWithHint("##keysearch", tr("Search commands or keys"), E.search, sizeof E.search);

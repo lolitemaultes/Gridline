@@ -167,6 +167,9 @@ JGraph junctionPatch(size_t index, bool fxHost);
 // without a rebuild. False when `state` is not graph data.
 bool prepareJunctionFor(const PluginState& state, ChannelAux& aux);
 void prepareJunction(const PluginState& state, const JGraph& g, ChannelAux& aux);
+// The sample rate of the host being prepared (its prepareHost ran just before: UI thread). K-59:
+// the built-in modules inside size their memory and get their first-block warm-up for it.
+double junctionPrepareRate();
 // An FL patch that runs in the graph runtime: routing the version 2 runtime can't run, or
 // (imported as FL runs it, see PatchV2::align) a plugin with latency or a module level inside.
 bool patchV2RunsAsGraph(const PatchV2& g, double sampleRate);
@@ -190,7 +193,8 @@ class JRuntime {
   ~JRuntime();
   bool sync(const AuxData* aux);  // adopts a prepared graph; false when `aux` is not version 3
   // K-41: an edit moved an imported patch between the two runtimes (its latency left or reached
-  // zero, see patchV2RunsAsGraph). The effects inside change places, so they keep playing.
+  // zero, see patchV2RunsAsGraph). The effects and instruments inside change places, so they keep
+  // playing (K-132: an instrument's sounding notes too).
   // Module k of the patch is node kJFirstId + k here. Audio thread, no allocation.
   void exchangeEffects(PatchV2Runtime& v2);
   void noteOn(uint32_t id, double pitch, float velocity, const NoteProps& props);

@@ -1,10 +1,14 @@
-// Gridline - K-19: plugin editor windows have their own size (100 % to 200 %) on top
-// of the interface scale (core/EditorZoom.h for the rules).
+// Gridline - K-19: plugin editor windows have their own size (75 % to 200 %, K-136: one
+// global size from Settings > Interface unless a plugin has its own) on top of the
+// interface scale (core/EditorZoom.h for the rules).
 //
 // An editor is laid out at its design size in logical pixels, as always, inside a child
-// region of its window; at a zoom above 100 % the window reserves the magnified size and,
-// once the frame is drawn, the region's draw lists (its child windows and the popups it
-// opened too) are magnified about the region's top-left corner. Text is rasterised at the
+// region of its window; at any other zoom the window reserves the zoomed size and, once
+// the frame is drawn, the region's draw lists (its child windows and the popups it opened
+// too) are magnified or reduced about the region's top-left corner. Under 100 % the region
+// is laid out past the window's edges (the clip is widened for it, the window's content
+// size is put back), and while the pointer is off the picture its windows take no mouse
+// input. Text is rasterised at the
 // magnified density and anti-aliasing fringes are kept one device pixel wide, so the
 // result is as sharp as a natively larger editor. The pointer over the magnified picture
 // is mapped back to design coordinates before ImGui sees it (a drag that started inside

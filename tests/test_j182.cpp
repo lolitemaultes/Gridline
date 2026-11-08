@@ -216,7 +216,7 @@ void testState() {
   expect(old.params.size() == static_cast<size_t>(pp::SlCount) && old.params[pp::SlSnap] == 0 && old.params[pp::SlSnapZero] == 0 &&
              old.params[pp::SlRuler] == 0 && old.params[pp::SlMode] == 3 && old.params[pp::SlLoopBeats] == 8,
          "state: an older state opens with snap off and a seconds ruler (its settings kept)");
-  PluginState tiny{"gl.slicer", {1.0f}, "x.wav", "", ""};
+  PluginState tiny{"gl.slicer", {1.0f}, "x.wav", "", "", ""};
   normalizePluginState(tiny);
   expect(tiny.params.size() == static_cast<size_t>(pp::SlCount) && tiny.params[pp::SlSnap] == 0 && tiny.params[pp::SlGridLines] == 1, "state: a short vector pads");
 

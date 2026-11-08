@@ -29,6 +29,7 @@ P = {
     'gl.acid': ('synth', 'acid', 'Monophonic acid bass line synth'),
     'gl.keys': ('synth', 'keys', 'Electric piano / keys'),
     'gl.slicer': ('sample', 'kerf', 'Beat slicer: cuts loops into slices'),
+    'gl.tracker': ('sample', 'rows', 'Sampler for instruments of tracker modules'),
     'gl.granular': ('sample', 'grain', 'Granular sample player'),
     'gl.midiout': ('structure', 'midi', 'Sends notes and CC to MIDI ports'),
     'gl.analog': ('synth', 'saw', 'Virtual analog subtractive synth'),

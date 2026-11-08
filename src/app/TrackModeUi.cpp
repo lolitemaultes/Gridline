@@ -106,7 +106,7 @@ void trackMenuItems(App& a, int track) {
           if (ImGui::MenuItem(info.name.c_str())) {
             const ObjectId ch = trackmodes::newInstrumentTrack(a.doc, track, info.type, &why);
             report(a, ch != kNoId, why);
-            if (ch != kNoId) a.selectChannel(ch);
+            if (ch != kNoId) a.showNewInstrument(ch);  // K-125
           }
         }
         ImGui::EndMenu();

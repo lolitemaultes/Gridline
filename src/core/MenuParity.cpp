@@ -238,8 +238,9 @@ ObjectId mergeAutomationClips(Document& d, const std::set<ObjectId>& clips) {
   merged.max = 1.0f;
   merged.flCurves = first->flCurves;
   for (const Clip* c : same) {
-    const AutomationClip* ac = s.automation(c->source);
-    for (auto p : visiblePoints(*ac, c->offset, s.clipLength(*c))) {
+    AutomationClip shown = *s.automation(c->source);
+    if (!c->loop) shown.loop = 0;  // K-114: a placement that does not loop holds the last value
+    for (auto p : visiblePoints(shown, c->offset, s.clipLength(*c))) {
       p.pos += c->start - start;
       // Later clips win where placements overlap.
       merged.points.erase(std::remove_if(merged.points.begin(), merged.points.end(),

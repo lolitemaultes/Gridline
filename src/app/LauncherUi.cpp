@@ -3,6 +3,7 @@
 #include "../core/RemoteFs.h"
 #include "GridlineVersion.h"
 #include <algorithm>
+#include <utility>
 #include <chrono>
 #include <cfloat>
 #include <cmath>
@@ -25,6 +26,7 @@
 #include "../core/Recents.h"
 #include "../host/net/Http.h"
 #include "App.h"
+#include "LayoutPresets.h"
 #include "DevSignal.h"
 #include "Keys.h"
 #include "LauncherCollab.h"
@@ -199,7 +201,9 @@ Tile tileOf(TileKind k) {
 }
 
 struct UiState {
-  int view = 0;  // 0 recent, 1 templates, 2 collaborative (J-146)
+  int view = 0;  // 0 recent, 1 templates, 2 collaborative (J-146), 3 window layout (K-130)
+  int prevView = 0;     // the view the layout page returns to (Esc, the Layout row again)
+  int layoutFocus = 0;  // the layout page's focused card (keyboard)
   char search[128] = {};
   int focus = 0;         // tile index (keyboard)
   bool keyNav = false;   // focus ring shown (after keyboard use)
@@ -428,6 +432,7 @@ void buildTiles(App& a, std::vector<Tile>& tiles, std::vector<launcher::Item>& i
       if (const SEntry* e = store().get(t.sketch); e && e->st == SState::Ready) f = facts(e->k);
       else if (openKindOf(t.key) == OpenKind::FlProject) f = tr("FL Studio project");
       else if (openKindOf(t.key) == OpenKind::ZippedProject) f = tr("Zipped project");
+      else if (openKindOf(t.key) == OpenKind::TrackerModule) f = tr("Tracker module");
       t.meta = age.empty() ? f : f.empty() ? age : age + "  \xC2\xB7  " + f;
     }
   } else {
@@ -579,7 +584,7 @@ void textAt(ImDrawList* dl, ImFont* f, float size, ImVec2 p, ImU32 col, const ch
 ImVec2 measure(ImFont* f, float size, const char* s) { return f ? f->CalcTextSizeA(size, FLT_MAX, 0, s) : ImVec2(0, size); }
 
 // A rail row: icon, label, a right-hand note (shortcut or count). Returns true when clicked.
-bool railRow(App& a, const char* id, const Rect& r, ui::Icon icon, const char* label, const char* note, bool selected) {
+bool railRow(App& a, const char* id, const Rect& r, ui::Icon icon, const char* label, const char* note, bool selected, int glyph = -1) {
   const Colors C = colors();
   ImDrawList* dl = ImGui::GetWindowDrawList();
   ImGui::SetCursorScreenPos(ImVec2(r.x, r.y));
@@ -590,7 +595,8 @@ bool railRow(App& a, const char* id, const Rect& r, ui::Icon icon, const char* l
   else if (t > 0) dl->AddRectFilled(a0, a1, theme::withAlpha(C.fillHover, t), theme::kRadiusLg);
   if (selected) dl->AddRectFilled(ImVec2(r.x, r.y + 9), ImVec2(r.x + 2, r.b() - 9), C.accent, 1.0f);
   const ImU32 tc = selected || t > 0.5f ? C.text : theme::mix(C.dim, C.text, t);
-  ui::drawIcon(dl, icon, ImVec2(r.x + 18, r.y + r.h * 0.5f), 15, tc);
+  if (glyph >= 0) layoutui::drawGlyph(dl, ImVec2(r.x + 18, r.y + r.h * 0.5f), 16, static_cast<layout::Preset>(glyph), tc);
+  else ui::drawIcon(dl, icon, ImVec2(r.x + 18, r.y + r.h * 0.5f), 15, tc);
   float noteW = 0;
   if (note && *note) {
     noteW = measure(a.fontMono, theme::kFontLabel, note).x;
@@ -717,7 +723,7 @@ bool drawTile(App& a, int index, const Tile& t, ImVec2 p, const launcher::Layout
       drawSketch(dl, t0, t1, e->k, fa * dim);
       dl->PopClipRect();
     } else if (t.missing || (e && e->st == SState::None)) {
-      const char* label = t.missing ? tr("Not found") : openKindOf(t.key) == OpenKind::FlProject ? "FLP" : openKindOf(t.key) == OpenKind::ZippedProject ? "ZIP" : "";
+      const char* label = t.missing ? tr("Not found") : openKindOf(t.key) == OpenKind::FlProject ? "FLP" : openKindOf(t.key) == OpenKind::ZippedProject ? "ZIP" : openKindOf(t.key) == OpenKind::TrackerModule ? "MOD" : "";
       if (*label) {
         const ImVec2 ts = measure(a.fontMono, theme::kFontLabel, label);
         dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(std::round((t0.x + t1.x - ts.x) * 0.5f), std::round((t0.y + t1.y - ts.y) * 0.5f)),
@@ -815,6 +821,62 @@ void rememberSketch(App& a, const std::string& path, preview::Sketch k) {
 }
 
 void setView(int view) { ui_().view = std::clamp(view, 0, 2); }
+namespace {
+bool gOpenLayout = false;
+}
+void openLayoutChooser() { gOpenLayout = true; }
+
+namespace {
+// K-130: the layout page (view 3) on / off.
+void showLayoutPage(bool on) {
+  UiState& S = ui_();
+  if (on && S.view != 3) {
+    S.prevView = S.view;
+    S.view = 3;
+    S.layoutFocus = static_cast<int>(layoutui::active());
+    S.keyNav = false;
+  } else if (!on && S.view == 3) {
+    S.view = S.prevView;
+    S.focus = 0;
+  }
+}
+
+// The layout page: a line on what it does, the cards, the two options and a note.
+void drawLayoutPage(App& a, const launcher::Layout& L, ImVec2 origin) {
+  UiState& S = ui_();
+  const Colors C = colors();
+  const float ring = 4;
+  ImGui::SetCursorScreenPos(ImVec2(origin.x + L.grid.x - ring, origin.y + L.grid.y - ring));
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+  ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(0, 0, 0, 0));
+  if (ImGui::BeginChild("##launcherLayouts", ImVec2(L.grid.w + 2 * ring, L.grid.h + 2 * ring), ImGuiChildFlags_None, ImGuiWindowFlags_NoNav)) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 b0 = ImGui::GetCursorScreenPos();
+    const ImVec2 base(b0.x + ring, b0.y + ring);
+    const float w = L.grid.w - (ImGui::GetScrollMaxY() > 0 ? ImGui::GetStyle().ScrollbarSize + 6 : 0);
+    const char* intro = tr("Choose how the main window is arranged. Your theme, colours and projects stay as they are.");
+    const float introH = a.fontRegular->CalcTextSizeA(theme::kFontBody, FLT_MAX, w, intro).y;
+    dl->AddText(a.fontRegular, theme::kFontBody, ImVec2(std::round(base.x + 2), std::round(base.y)), C.dim, intro, nullptr, w - 4);
+    float y = base.y + introH + 24;
+    ImGui::SetCursorScreenPos(ImVec2(base.x, y));
+    const int picked = layoutui::cards(a, w, 380.0f, S.layoutFocus, S.keyNav);
+    if (picked >= 0) S.layoutFocus = picked;
+    const layoutui::CardGrid g = layoutui::cardGrid(w, layout::kPresetCount, 380.0f, 150.0f);
+    y += g.height(layout::kPresetCount) + 28;
+    ImGui::SetCursorScreenPos(ImVec2(base.x, y));
+    layoutui::linkedOptions(a, std::min(w, 640.0f));
+    y = ImGui::GetItemRectMax().y + 18;
+    const char* note = tr("Each layout remembers your own changes. You can switch any time from View > Window layout.");
+    const float noteH = a.fontRegular->CalcTextSizeA(theme::kFontCaption, FLT_MAX, w, note).y;
+    dl->AddText(a.fontRegular, theme::kFontCaption, ImVec2(std::round(base.x + 2), std::round(y)), C.faint, note, nullptr, w - 4);
+    ImGui::SetCursorScreenPos(ImVec2(base.x, y + noteH + ring));
+    ImGui::Dummy(ImVec2(1, 1));
+  }
+  ImGui::EndChild();
+  ImGui::PopStyleColor();
+  ImGui::PopStyleVar();
+}
+}  // namespace
 
 bool drawSketchKey(App& a, ImDrawList* dl, ImVec2 p0, ImVec2 p1, const std::string& key, float alpha) {
   Store& st = store();
@@ -852,6 +914,7 @@ void devReport(App& a) {
               fs::path(a.projectFile()).filename().string().c_str(), a.windowTitle().c_str());
   std::printf("launcher menu=%s\n", S.menuShown && a.home.visible() ? S.menu.name.c_str() : "-");  // J-148: the tile menu shown
   if (S.view == 2) launchercollab::devReport(a);  // J-146
+  std::fputs(layoutui::devCards(a).c_str(), stdout);  // K-130: the layout cards drawn and the layout in use
   for (const Tile& t : S.tiles) {
     if (S.view == 2) break;  // (J-146: the rows above say it)
     if (!t.key.empty() && t.key[0] == '#') continue;
@@ -888,7 +951,9 @@ void draw(App& a) {
   std::vector<launcher::Item> items;
   std::vector<std::string> sections;
   std::vector<float> blockH;
-  if (S.view == 2) {  // J-146: the Collaborative view fills the grid itself
+  if (std::exchange(gOpenLayout, false)) showLayoutPage(true);
+  if (S.view == 3) {  // K-130: the layout page draws its own content
+  } else if (S.view == 2) {  // J-146: the Collaborative view fills the grid itself
     launchercollab::update(a, S.search);
     launchercollab::items(items, blockH);
     tiles.assign(items.size(), Tile{});
@@ -917,18 +982,18 @@ void draw(App& a) {
   if (ImGui::GetFrameCount() == S.shownFrame) ImGui::SetWindowFocus();  // keys go to the launcher at once
 
   // ---- layout ----
-  const char* title = S.view == 0 ? tr("Recent projects") : S.view == 1 ? tr("Templates") : tr("Collaborative projects");
+  const char* title = S.view == 0 ? tr("Recent projects") : S.view == 1 ? tr("Templates") : S.view == 2 ? tr("Collaborative projects") : tr("Window layout");
   const float noteW = S.view == 2 ? launchercollab::titleNoteWidth(a) : 0.0f;  // J-146: presence pill
   launcher::LayoutIn in;
   in.width = vp->WorkSize.x;
   in.height = vp->WorkSize.y;
   in.items = items;
   in.hasBack = a.home.projectOpen();
-  in.titleW = measure(a.fontBold, 22, title).x + (S.view == 2 ? (noteW > 0 ? noteW + 14 : 0) : 40);  // + the list menu button / presence pill
+  in.titleW = measure(a.fontBold, 22, title).x + (S.view == 2 ? (noteW > 0 ? noteW + 14 : 0) : S.view == 3 ? 0 : 40);  // + the list menu button / presence pill
   in.backW = measure(a.fontRegular, theme::kFontBody, tr("Back to project")).x + 66;
   in.brandW = theme::lockupWidth(28, a.fontBold);
   in.actions = 3;
-  in.views = 3;
+  in.views = vp->WorkSize.x >= launcher::kNarrowBelow ? 3 : 4;  // K-130: narrow, the layout page has a header icon too
   in.blockH = blockH;
   in.scrollbar = ImGui::GetStyle().ScrollbarSize;
   const launcher::Layout L = launcher::layout(in);
@@ -945,6 +1010,7 @@ void draw(App& a) {
     dl->AddRectFilled(scr(L.railRect), ImVec2(o.x + L.railRect.r(), o.y + L.railRect.b()), C.rail);
     dl->AddLine(ImVec2(o.x + L.railRect.r() - 0.5f, o.y), ImVec2(o.x + L.railRect.r() - 0.5f, o.y + L.railRect.b()), C.railEdge);
     int action = 0, view = 0;
+    float viewBottom = 0;
     for (const auto& [kind, r] : L.railRows) {
       Rect sr{o.x + r.x, o.y + r.y, r.w, r.h};
       switch (kind) {
@@ -959,14 +1025,22 @@ void draw(App& a) {
           dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(std::round(sr.x), std::round(sr.y + 3)), C.faint, tr("LIBRARY"));
           break;
         case launcher::RailRow::View:
-          if (view == 0 && railRow(a, "##vrecent", sr, ui::Icon::ListBullets, tr("Recent"), cntR, S.view == 0)) S.view = 0, S.focus = 0;
+          viewBottom = std::max(viewBottom, sr.b());
+          if (view == 0 && railRow(a, "##vrecent", sr, ui::Icon::ListBullets, tr("Recent"), cntR, S.view == 0)) S.view = 0, S.focus = 0;  // (any view leaves the layout page)
           if (view == 1 && railRow(a, "##vtpl", sr, ui::Icon::Clone, tr("Templates"), cntT, S.view == 1)) S.view = 1, S.focus = 0;
           if (view == 2 && railRow(a, "##vcollab", sr, ui::Icon::People, tr("Collaborative"), cntC, S.view == 2)) S.view = 2, S.focus = 0;
           ++view;
           break;
-        case launcher::RailRow::Settings:
+        case launcher::RailRow::Settings: {
+          // K-79: the window layout, above Settings when the rail has room for it (K-130: it opens the layout page).
+          const Rect lr{sr.x, sr.y - sr.h - 2, sr.w, sr.h};
+          if (lr.y >= viewBottom + 8 &&
+              railRow(a, "##layout", lr, ui::Icon::Browser, tr("Layout"), tr(layout::displayName(layoutui::active())), S.view == 3,
+                      static_cast<int>(layoutui::active())))
+            showLayoutPage(S.view != 3);
           if (railRow(a, "##settings", sr, ui::Icon::Settings, tr("Settings"), "", false)) a.showSettings = true;
           break;
+        }
         case launcher::RailRow::Version:
           dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(std::round(sr.x), std::round(sr.y)), C.faint, "Gridline " GRIDLINE_VERSION);
           break;
@@ -988,10 +1062,20 @@ void draw(App& a) {
                      {"##nrecent", ui::Icon::ListBullets, i18n::N_("Recent projects"), S.view == 0},
                      {"##ntpl", ui::Icon::Clone, i18n::N_("Templates"), S.view == 1},
                      {"##ncollab", ui::Icon::People, i18n::N_("Collaborative projects"), S.view == 2},
+                     {"##nlayout", ui::Icon::Browser, i18n::N_("Window layout"), S.view == 3},
                      {"##nset", ui::Icon::Settings, i18n::N_("Settings"), false}};
-    for (size_t i = 0; i < L.headerIcons.size() && i < 7; ++i) {
+    for (size_t i = 0; i < L.headerIcons.size() && i < 8; ++i) {
       ImGui::SetCursorScreenPos(scr(L.headerIcons[i]));
-      const bool hit = ui::IconButton(btn[i].id, btn[i].icon, btn[i].active, L.headerIcons[i].w, btn[i].hint);
+      bool hit = false;
+      if (i == 6) {  // K-130: the layout glyph, drawn like the icon buttons around it
+        const Rect& r = L.headerIcons[i];
+        hit = ImGui::InvisibleButton(btn[i].id, ImVec2(r.w, r.h));
+        const bool hov = ImGui::IsItemHovered();
+        if (btn[i].active || hov) dl->AddRectFilled(scr(r), ImVec2(o.x + r.r(), o.y + r.b()), btn[i].active ? C.fillHover : theme::withAlpha(C.fillHover, 0.7f), theme::kRadiusLg);
+        layoutui::drawGlyph(dl, ImVec2(o.x + r.x + r.w * 0.5f, o.y + r.y + r.h * 0.5f), 16, layoutui::active(), btn[i].active || hov ? C.text : C.dim);
+      } else {
+        hit = ui::IconButton(btn[i].id, btn[i].icon, btn[i].active, L.headerIcons[i].w, btn[i].hint);
+      }
       ui::Tooltip(btn[i].hint);  // (no status bar here for the hint)
       if (hit) {
         if (i == 0) openTile(a, tileOf(TileKind::New));
@@ -1000,7 +1084,8 @@ void draw(App& a) {
         if (i == 3) S.view = 0, S.focus = 0;
         if (i == 4) S.view = 1, S.focus = 0;
         if (i == 5) S.view = 2, S.focus = 0;
-        if (i == 6) a.showSettings = true;
+        if (i == 6) showLayoutPage(S.view != 3);
+        if (i == 7) a.showSettings = true;
       }
     }
   }
@@ -1010,7 +1095,7 @@ void draw(App& a) {
     const ImVec2 tp = scr(L.title);
     const float ty = std::round(tp.y + (L.title.h - 22) * 0.5f);
     const float tw = measure(a.fontBold, 22, title).x;
-    textAt(dl, a.fontBold, 22, ImVec2(tp.x, ty), C.text, title, L.title.w - (S.view == 2 ? 0 : 36));
+    textAt(dl, a.fontBold, 22, ImVec2(tp.x, ty), C.text, title, L.title.w - (S.view >= 2 ? 0 : 36));
     if (S.view == 2 && noteW > 0 && L.title.w >= tw + noteW + 14) launchercollab::drawTitleNote(a, dl, ImVec2(tp.x + tw + 14, tp.y), L.title.h, look);
     if (S.view == 0 && L.title.w >= tw + 36) {
       ImGui::SetCursorScreenPos(ImVec2(tp.x + tw + 8, std::round(tp.y + (L.title.h - 24) * 0.5f)));
@@ -1029,7 +1114,7 @@ void draw(App& a) {
         ImGui::EndPopup();
       }
     }
-    if (L.search.w > 0) {
+    if (L.search.w > 0 && S.view != 3) {
       const ImVec2 sp = scr(L.search);
       ImGui::SetCursorScreenPos(sp);
       ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(32, std::round((L.search.h - theme::kFontBody) * 0.5f)));
@@ -1079,13 +1164,14 @@ void draw(App& a) {
     if (items[i] == launcher::Item::Tile) tileIdx.push_back(static_cast<int>(i));
   const int nTiles = static_cast<int>(tileIdx.size());
   S.focus = nTiles ? std::clamp(S.focus, 0, nTiles - 1) : 0;
+  if (S.view == 3) drawLayoutPage(a, L, o);
   ImGui::SetCursorScreenPos(scr(L.grid));
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
   ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(0, 0, 0, 0));
   // A little room around the grid so focus rings and outlines are never clipped.
   const float ring = 4;
   ImGui::SetCursorScreenPos(ImVec2(o.x + L.grid.x - ring, o.y + L.grid.y - ring));
-  if (ImGui::BeginChild("##launcherGrid", ImVec2(L.grid.w + 2 * ring, L.grid.h + 2 * ring), ImGuiChildFlags_None, ImGuiWindowFlags_NoNav)) {
+  if (S.view != 3 && ImGui::BeginChild("##launcherGrid", ImVec2(L.grid.w + 2 * ring, L.grid.h + 2 * ring), ImGuiChildFlags_None, ImGuiWindowFlags_NoNav)) {
     ImDrawList* gdl = ImGui::GetWindowDrawList();
     const ImVec2 g0 = ImGui::GetCursorScreenPos();
     const ImVec2 base(g0.x + ring, g0.y + ring);
@@ -1142,7 +1228,7 @@ void draw(App& a) {
     ImGui::SetCursorScreenPos(ImVec2(base.x, base.y + L.contentH + ring));
     ImGui::Dummy(ImVec2(1, 1));
   }
-  ImGui::EndChild();
+  if (S.view != 3) ImGui::EndChild();
   ImGui::PopStyleColor();
   ImGui::PopStyleVar();
   if (S.view == 2) launchercollab::menus(a), S.menuShown = false;
@@ -1152,7 +1238,30 @@ void draw(App& a) {
   const bool popup = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
   ImGuiWindow* nav = GImGui->NavWindow;
   const bool mine = !nav || std::string(nav->RootWindow ? nav->RootWindow->Name : nav->Name).find("##launcher") != std::string::npos;
-  if (!popup && mine && !a.fileDialog.open && !a.confirmDiscard) {
+  if (!popup && mine && !a.fileDialog.open && !a.confirmDiscard && S.view == 3) {
+    // K-130: the layout page: arrows move between the cards, Enter or Space picks, Esc goes back.
+    const int n = layout::kPresetCount;
+    const int cols = layoutui::cardGrid(L.grid.w, n, 380.0f, 150.0f).cols;
+    auto move = [&](int d) {
+      if (S.keyNav) S.layoutFocus = std::clamp(S.layoutFocus + d, 0, n - 1);
+      S.keyNav = true;
+    };
+    if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) move(1);
+    if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) move(-1);
+    if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) move(cols);
+    if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) move(-cols);
+    if (ImGui::IsKeyPressed(ImGuiKey_Home)) S.layoutFocus = 0, S.keyNav = true;
+    if (ImGui::IsKeyPressed(ImGuiKey_End)) S.layoutFocus = n - 1, S.keyNav = true;
+    if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter) || ImGui::IsKeyPressed(ImGuiKey_Space)) {
+      S.layoutFocus = std::clamp(S.layoutFocus, 0, n - 1);
+      layoutui::choose(a, static_cast<layout::Preset>(S.layoutFocus), layout::linkedFromSettings(a.settings));
+      S.keyNav = true;
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) showLayoutPage(false);
+    if (ImGui::IsKeyPressed(ImGuiKey_Tab)) S.view = io.KeyShift ? 2 : 0, S.focus = 0;
+    if (keys::pressed("file.new")) openTile(a, tileOf(TileKind::New));
+    if (keys::pressed("file.open")) a.openDialog();
+  } else if (!popup && mine && !a.fileDialog.open && !a.confirmDiscard) {
     if (!io.WantTextInput) {
       auto move = [&](int d) {
         if (!nTiles) return;
@@ -1188,11 +1297,11 @@ void draw(App& a) {
       if (keys::pressed("file.open")) a.openDialog();
       if (ImGui::IsKeyPressed(ImGuiKey_F) && io.KeyMods == ImGuiMod_Ctrl) S.focusSearch = true;
       if (ImGui::IsKeyPressed(ImGuiKey_F) && io.KeyMods == ImGuiMod_Super) S.focusSearch = true;
-      if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+      if (::gl::keys::escapePressed()) {
         if (S.search[0]) S.search[0] = 0;
         else a.home.back(a.now);
       }
-    } else if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+    } else if (::gl::keys::escapePressed()) {
       S.search[0] = 0;
       ImGui::ClearActiveID();
     }

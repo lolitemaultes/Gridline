@@ -18,6 +18,7 @@
 #include <memory>
 #include <string>
 #include "../../third_party/imgui/imgui.h"
+#include "../core/GlslChoice.h"
 #include "PluginCore.h"
 #include "PluginView.h"
 // Xlib last: its macros (None, Bool, …) would clash with Gridline's names.
@@ -39,7 +40,9 @@ void glXSwapBuffers(Display* dpy, GLXDrawable drawable);
 GLXContext glXGetCurrentContext(void);
 GLXDrawable glXGetCurrentDrawable(void);
 Display* glXGetCurrentDisplay(void);
+const unsigned char* glGetString(unsigned int name);  // (GLubyte, GLenum)
 }
+constexpr unsigned int kGlVersion = 0x1F02;  // GL_VERSION
 
 namespace gl::plugin {
 
@@ -259,7 +262,7 @@ class X11View final : public View {
     if (!win_ || !ctx_) return;
     glXMakeCurrent(s.dpy, win_, ctx_);
     if (!glReady_) {
-      glReady_ = surface_->init("#version 130");
+      glReady_ = surface_->init(glslForVersionString(reinterpret_cast<const char*>(glGetString(kGlVersion))));  // K-75: 1.20 on OpenGL 2.x
       if (!glReady_) return;
     }
     surface_->draw(static_cast<int>(w_ / scale_), static_cast<int>(h_ / scale_), w_, h_);

@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <string>
 #include <vector>
+#include "../../src/core/Params.h"
 #include "../../src/core/PluginInfo.h"
 #include "../../src/core/PluginParams.h"
 #include "../../src/core/Project.h"
@@ -155,6 +156,54 @@ void testPlaylist(const std::string& dir) {
     bool listed = false;
     for (const FileRow& f : r.files) listed = listed || !f.muted.empty();
     expect(listed, "project: the muted clip is listed as not counted");
+  }
+  {  // K-132: silent as set, heard through its automation: counted; kept silent by it: not counted
+    const auto automate = [](Song& s, ParamId id, std::vector<float> values) {
+      AutomationClip a;
+      a.id = s.allocateId(), a.owner = id.owner, a.index = id.index;
+      for (size_t i = 0; i < values.size(); ++i) a.points.push_back(AutoPoint{static_cast<Tick>(i) * s.barTicks(), values[i]});
+      s.automations.push_back(a);
+      Clip k;
+      k.id = s.allocateId(), k.kind = ClipKind::Automation, k.source = a.id, k.track = 5;
+      k.start = 0, k.length = 16 * s.barTicks();
+      s.playlist.push_back(k);
+    };
+    {  // a channel at volume zero that its automation brings up
+      Song s = base();
+      ObjectId m = audioChannel(s, master, "m");
+      chan(s, m).gain = 0;
+      addClip(s, m, 1.0, 3.0, 2.0);
+      automate(s, channelParam(m, ChannelParam::Volume), {0.0f, 0.8f});
+      expect(within(secondsOf(run(s), kSongA), 2.0, 0.05), "project: a channel at volume zero brought up by its automation counts");
+    }
+    {  // a muted channel its mute automation switches on
+      Song s = base();
+      ObjectId m = audioChannel(s, master, "m");
+      chan(s, m).muted = true;
+      addClip(s, m, 1.0, 3.0, 2.0);
+      automate(s, channelParam(m, ChannelParam::Mute), {1.0f, 0.0f});
+      expect(within(secondsOf(run(s), kSongA), 2.0, 0.05), "project: a muted channel unmuted by its automation counts");
+    }
+    {  // a muted mixer track brought back by its automation
+      Song s = base();
+      ObjectId m = audioChannel(s, master, "m");
+      chan(s, m).mixerTrack = s.mixer[1].id;
+      s.mixer[1].muted = true;
+      addClip(s, m, 1.0, 3.0, 2.0);
+      automate(s, mixerParam(s.mixer[1].id, MixerParam::Mute), {0.0f});
+      expect(within(secondsOf(run(s), kSongA), 2.0, 0.05), "project: a muted mixer track unmuted by its automation counts");
+    }
+    {  // automation that keeps it at zero: still silent, still listed
+      Song s = base();
+      ObjectId m = audioChannel(s, master, "m");
+      chan(s, m).gain = 0;
+      addClip(s, m, 1.0, 3.0, 2.0);
+      automate(s, channelParam(m, ChannelParam::Volume), {0.0f, 0.0f});
+      const Report rep = run(s);
+      bool listed = false;
+      for (const FileRow& f : rep.files) listed = listed || !f.muted.empty();
+      expect(secondsOf(rep, kSongA) <= 0.0 && listed, "project: automation that keeps the volume at zero: not counted, listed");
+    }
   }
   {  // reverse: the same part of the file counts
     Song s = base();

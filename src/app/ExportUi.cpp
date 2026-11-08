@@ -6,6 +6,7 @@
 // effects, tempo info, markers). Rendering runs on a worker thread with a
 // progress window that can cancel; the summary lists the files written.
 #include "../core/I18n.h"
+#include "Keys.h"
 #include "../core/TrackReceipt.h"
 #include "ExportUi.h"
 #include "../core/Crash.h"
@@ -48,6 +49,7 @@
 #include "HostedUi.h"
 #include "Theme.h"
 #include "Widgets.h"
+#include "WorkerStall.h"
 #include "../core/Platform.h"
 #include "../host/HostedPlugins.h"
 
@@ -100,6 +102,8 @@ struct Job {
   Tick start = 0;  // scope start (song ticks) for audio clips
   bool showSummary = false;
   double started = 0, seconds = 0;
+  WorkerBeat beat;   // K-133: the worker's sign of life (each progress step)
+  StallWatch watch;  // the interface's view of it
   ~Job() {
     cancel = true;
     if (worker.joinable()) worker.join();
@@ -121,6 +125,8 @@ struct FileJob {
   FileJobDone done;    // written by the worker before `finished`
   std::vector<archive::CopyHold> holds;
   int finishedCount = 0, placed = 0;
+  WorkerBeat beat;   // K-133: as for a render
+  StallWatch watch;
   ~FileJob() {
     cancel = true;
     if (worker.joinable()) worker.join();
@@ -350,11 +356,14 @@ void startJob(App& a) {
   // The interface does not wait for this work, so its progress is no sign of the interface's life:
   // a heartbeat here would hide a frozen window. Frames beat by themselves; the calls that come back
   // are busy work (host::runUiThreadTasks).
+  // K-133: but its progress is the worker's own sign of life: a worker that stops is reported.
+  workerstall::start(job.watch, job.beat);
   job.worker = std::thread([song = std::move(song), s]() {
     host::UiThreadRenderScope scope;
     ExportOutcome o;
     try {
       o = runExport(song, s, [](double p, const std::string& what) {
+        job.beat.beat();
         job.progress = p;
         std::lock_guard<std::mutex> lk(job.mu);
         job.status = what;
@@ -716,13 +725,27 @@ bool progressBody(const std::string& status, double progress, bool escapeCancels
   ImGui::AlignTextToFramePadding();
   ImGui::TextUnformatted(percent.c_str());
   ui::DialogFooter(96);
-  return ui::TextButton(i18n::tr("Cancel"), false, 96) || (escapeCancels && ImGui::IsKeyPressed(ImGuiKey_Escape));
+  return ui::TextButton(i18n::tr("Cancel"), false, 96) || (escapeCancels && ::gl::keys::escapePressed());
 }
 
 namespace {
 
+// K-133: under the bar of a worker that stopped moving on.
+void stalledLine(const StallWatch& w) {
+  char b[160];
+  std::snprintf(b, sizeof b, i18n::tr("No progress for %d s. A plugin or the disk may not be responding."),
+                static_cast<int>(w.silentMs(workerstall::nowMs()) / 1000));
+  ImGui::TextColored(theme::vec(pal().danger), "%s", b);
+}
+
+std::string statusOf(std::mutex& mu, const std::string& status) {
+  std::lock_guard<std::mutex> lk(mu);
+  return status;
+}
+
 void drawProgress(App& a) {
   finishJob(a);
+  if (job.running) workerstall::watch(a, job.watch, job.beat, "Rendering", statusOf(job.mu, job.status));
   if (!job.running && !job.showSummary) return;
   const auto& P = pal();
   centerNext(ImVec2(480, 0));
@@ -739,6 +762,7 @@ void drawProgress(App& a) {
         st = job.status;
       }
       if (progressBody(st, job.progress.load())) job.cancel = true;
+      if (job.watch.stalled()) stalledLine(job.watch);
     } else {
       ExportOutcome o;
       {
@@ -775,6 +799,8 @@ void finishFileJob(App& a) {
   fileJob.holds.clear();
   FileJobDone done = std::move(fileJob.done);
   fileJob.done = nullptr;
+  // K-133: a job that stalled and then ended is reported as moving on again (its last beat came at the end).
+  if (fileJob.watch.stalled()) workerstall::watch(a, fileJob.watch, fileJob.beat, fileJob.title, std::string());
   ++fileJob.finishedCount;
   devsig::reach("file-job-finished");
   if (done) done(a);
@@ -783,6 +809,7 @@ void finishFileJob(App& a) {
 void drawFileJob(App& a) {
   finishFileJob(a);
   if (!fileJob.running) return;
+  workerstall::watch(a, fileJob.watch, fileJob.beat, fileJob.title, statusOf(fileJob.mu, fileJob.status));
   centerNext(ImVec2(480, 0));
   if (job.running || flpexport::running()) {  // never on top of the other progress window
     const ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -798,6 +825,7 @@ void drawFileJob(App& a) {
       st = fileJob.status;
     }
     if (progressBody(st, fileJob.progress.load())) fileJob.cancel = true;
+    if (fileJob.watch.stalled()) stalledLine(fileJob.watch);
   }
   ImGui::End();
 }
@@ -936,7 +964,7 @@ void drawMissing(App& a) {
       if (ui::TextButton("Locate...", false, 80)) {
         const std::string from = f;
         std::string ext = fs::path(f).extension().string();
-        fileDialog(a, ("Locate " + name).c_str(), false, {".wav", ".flac", ".ogg", ".mp3", ".aif", ".aiff", ".wv", ".png", ".jpg", ".mid"}, "",
+        fileDialog(a, ("Locate " + name).c_str(), false, {".wav", ".flac", ".ogg", ".mp3", ".aif", ".aiff", ".wv", ".m4a", ".aac", ".png", ".jpg", ".mid"}, "",
                    [&a, from](const std::string& p) {
                      a.doc.editSong("relink sample", [&](Song& s) { relinkFiles(s, {{from, p}}); });
                      sampleCache().clear();
@@ -1062,6 +1090,7 @@ bool startFileJob(App& a, const char* title, const Song& uses, std::function<Fil
     fileJob.status = i18n::N_("Preparing");
   }
   fileJob.done = nullptr;
+  workerstall::start(fileJob.watch, fileJob.beat);  // K-133: its progress steps are its sign of life
   fileJob.running = true;
   crash::crumb("file job start", title);
   // As for a render: this thread's progress says nothing of the interface's life, so it does not
@@ -1075,6 +1104,7 @@ bool startFileJob(App& a, const char* title, const Song& uses, std::function<Fil
     ExportControl control;
     control.cancel = &fileJob.cancel;
     control.progress = [](double p, const std::string& what) {
+      fileJob.beat.beat();
       fileJob.progress = p;
       {
         std::lock_guard<std::mutex> lk(fileJob.mu);
@@ -1089,6 +1119,7 @@ bool startFileJob(App& a, const char* title, const Song& uses, std::function<Fil
       crash::reportCurrentException(titleText.c_str());
       done = [](App& app) { app.notify("An internal error stopped the export.", true); };
     }
+    fileJob.beat.beat();  // the end is a sign of life too
     crash::crumb("file job end");
     fileJob.done = std::move(done);
     fileJob.finished = true;
@@ -1372,21 +1403,22 @@ bool writeGridlineZip(App& a, const std::string& path, std::function<void(const 
 
 void exportFlpDialog(App& a) {
   fileDialog(a, "Export FL Studio project", true, {".flp"}, safeFileName(projectName(a)) + ".flp", [&a](const std::string& p) {
-    writeFlpFile(a, withSaveExtension(p, SaveFormat::Flp));
+    flpexport::askAndStart(a, withSaveExtension(p, SaveFormat::Flp), false);  // K-110: how Gridline plugins go, first
   });
 }
 
 void exportFlpZipDialog(App& a) {
   fileDialog(a, "Export FL Studio zipped loop package", true, {".zip"}, safeFileName(projectName(a)) + ".zip", [&a](const std::string& p) {
-    writeFlpZip(a, withSaveExtension(p, SaveFormat::FlZip));
+    flpexport::askAndStart(a, withSaveExtension(p, SaveFormat::FlZip), true);
   });
 }
 
 void exportZipDialog(App& a) {
-  // J-78: the writer of Save as > Gridline zipped project; the name always ends in .gridline.zip.
-  fileDialog(a, "Export Gridline zipped project", true, {".gridline.zip"}, safeFileName(projectName(a)) + ".gridline.zip",
+  // J-78: the writer of Save as > Gridline zipped project; the name always ends in .gridlinez (K-121),
+  // or in .gridline.zip when that older name is typed.
+  fileDialog(a, "Export Gridline zipped project", true, {kZippedProjectExt, kOldZippedProjectExt}, safeFileName(projectName(a)) + kZippedProjectExt,
              [&a](const std::string& p) {
-               const std::string path = withSaveExtension(p, SaveFormat::GridlineZip);
+               const std::string path = withSaveExtension(p, saveFormatOf(p) == SaveFormat::GridlineZipOld ? SaveFormat::GridlineZipOld : SaveFormat::GridlineZip);
                writeGridlineZip(a, path, [&a, path](const std::string& files) {
                  a.notify("Exported " + fs::path(path).filename().string() + files, false, path);
                  a.uiSound(uisound::Event::Export);

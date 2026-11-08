@@ -24,6 +24,8 @@ void drawReturnFade(App& a);
 void rememberSketch(App& a, const std::string& path, preview::Sketch k);
 // 0 = Recent, 1 = Templates, 2 = Collaborative (dev: --show launcher-templates / launcher-collab).
 void setView(int view);
+// K-79 (dev, screenshots): opens the layout chooser of the rail on the next frame.
+void openLayoutChooser();
 // J-146: the sketch kept for `key` (a project file, or "@current") drawn into p0..p1 (asked for on
 // first use); false while there is none yet.
 bool drawSketchKey(App& a, ImDrawList* dl, ImVec2 p0, ImVec2 p1, const std::string& key, float alpha);

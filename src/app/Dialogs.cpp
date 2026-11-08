@@ -1,5 +1,6 @@
 // Gridline — dialogs (file, settings, project info, export, history, about,
 // shortcuts, unsaved changes) and global keyboard shortcuts.
+#include "../core/ChromeOs.h"
 #include "CollabUi.h"
 #include "../core/RemoteFs.h"
 #include "../engine/ProjectLoad.h"
@@ -10,6 +11,7 @@
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <ctime>
 #include <filesystem>
 #include <map>
@@ -21,11 +23,15 @@
 #include "J31Ui.h"
 #include "MenuParityUi.h"
 #include "../../third_party/imgui/imgui.h"
+#include "../../third_party/imgui/imgui_internal.h"
 #include "../core/Backup.h"
 #include "../core/I18n.h"
+#include "../core/EditorZoom.h"
 #include "../core/UiScale.h"
 #include "../core/flp/Flp.h"
 #include "App.h"
+#include "LayoutPresets.h"
+#include "../engine/PlaylistTools.h"
 #include "AudioRecordUi.h"
 #include "AsioUi.h"
 #include "ExportUi.h"
@@ -128,6 +134,16 @@ void fileDialog(App& a) {
   ImGui::SameLine(0, theme::kS1);
   if (ui::IconButton("home", ui::Icon::Folder, false, fh, "Home folder")) fd.dir = gl::platform::homeEnv() ? gl::platform::homeEnv() : ".";
   ImGui::SameLine(0, theme::kS1);
+  // K-75: in a Chromebook's (or the Android terminal's) Linux environment, the folders shared from
+  // the host; until one is shared, the button says how.
+  const std::string shared = chromeos::sharedFolder(chromeos::current());
+  if (!shared.empty()) {
+    if (ui::IconButton("shared", ui::Icon::Open, false, fh, "Shared folders")) {
+      if (fs::is_directory(shared, ec)) fd.dir = shared;
+      else a.notify(chromeos::shareHint(chromeos::current()));
+    }
+    ImGui::SameLine(0, theme::kS1);
+  }
   static char dirBuf[1024];
   std::snprintf(dirBuf, sizeof dirBuf, "%s", fd.dir.c_str());
   ImGui::SetNextItemWidth(-1);
@@ -208,6 +224,10 @@ void fileDialog(App& a) {
   };
   for (const auto& d : dirs) row(d, true);
   for (const auto& f : files) row(f, false);
+  if (dirs.empty() && files.empty() && !noteTitle && !shared.empty() && fs::path(fd.dir).lexically_normal() == fs::path(shared)) {
+    noteTitle = "Nothing is shared with Linux yet";  // K-75
+    noteBody = chromeos::shareHint(chromeos::current());
+  }
   if (dirs.empty() && files.empty()) {
     ImVec2 mn = ImGui::GetWindowPos(), sz = ImGui::GetWindowSize();
     ui::EmptyState(ImGui::GetWindowDrawList(), mn, ImVec2(mn.x + sz.x, mn.y + sz.y), noteTitle ? noteTitle : "This folder is empty",
@@ -254,7 +274,7 @@ void fileDialog(App& a) {
     ImGui::SameLine(0, theme::kS2);
   }
   alignRight(96 + theme::kS2 + okW);
-  bool cancel = ui::TextButton("Cancel", false, 96) || ImGui::IsKeyPressed(ImGuiKey_Escape);
+  bool cancel = ui::TextButton("Cancel", false, 96) || ::gl::keys::escapePressed();
   ImGui::SameLine(0, theme::kS2);
   bool ok = ui::TextButton(okLabel, true, okW);
   if (!fd.confirmOverwrite.empty()) ui::Hint((fd.name + " already exists. Replace it?").c_str());
@@ -474,6 +494,38 @@ void settingsWindow(App& a) {
         ui::Hint("Presets appear in each plugin's preset menu under Library \xE2\x96\xB8 FL Studio, effect chains in the mixer track menu");
       }
       ui::EndSection();
+      ui::BeginSection("FL STUDIO EXPORT");  // K-110
+      {
+        static const char* keys[] = {"suite+fallback", "suite", "render"};
+        static const char* names[] = {i18n::N_("Gridline Suite plugins, with muted audio copies"), i18n::N_("Gridline Suite plugins only"),
+                                      i18n::N_("Rendered to audio")};
+        auto nameOf = [&](const std::string& k) {
+          for (int i = 0; i < 3; ++i)
+            if (k == keys[i]) return i18n::tr(names[i]);
+          return i18n::tr(names[0]);
+        };
+        formLabel("Gridline plugins");
+        const std::string cur = st.getString("export.flGridlinePlugins");
+        if (ui::BeginCombo("##flgl", nameOf(cur), fieldW)) {
+          for (int i = 0; i < 3; ++i)
+            if (ImGui::Selectable(i18n::tr(names[i]), cur == keys[i])) st.set("export.flGridlinePlugins", std::string(keys[i]));
+          ImGui::EndCombo();
+        }
+        ui::Hint("How Gridline plugins without an exact FL Studio counterpart go into FL Studio projects. Suite plugins open live where the Gridline Suite is installed; muted audio copies play the instruments everywhere else.");
+        formLabel("This project");
+        const std::string pk = a.doc.song().flExportGridline;
+        if (pk.empty()) {
+          ImGui::AlignTextToFramePadding();
+          ImGui::TextColored(theme::vec(pal().textDim), "%s", i18n::tr("Uses the default"));
+        } else {
+          ImGui::AlignTextToFramePadding();
+          ImGui::TextColored(theme::vec(pal().text), "%s", nameOf(pk));
+          ImGui::SameLine(0, theme::kS2);
+          if (ui::TextButton(i18n::tr("Use the default"), false, 0, "This project's FL Studio exports follow the default above again"))
+            a.doc.editSong("FL Studio export choice", [](Song& s) { s.flExportGridline.clear(); });
+        }
+      }
+      ui::EndSection();
       ui::BeginSection("UNDO");
       int levels = static_cast<int>(st.getNumber("undo.maxLevels"));
       formLabel("Maximum levels");
@@ -525,6 +577,28 @@ void settingsWindow(App& a) {
       backupRestorePanel(a, fieldW);  // J-24
     }
     if (page == 4) {
+      ui::BeginSection("LAYOUT");  // K-79: window layout presets
+      {
+        // K-130: the welcome screen's cards at a fitting size, the two options, then the reset.
+        const float w = ImGui::GetContentRegionAvail().x;
+        ImGui::Dummy(ImVec2(0, theme::kS1));
+        layoutui::cards(a, w, 232.0f);
+        ImGui::Dummy(ImVec2(0, theme::kS2));
+        layoutui::linkedOptions(a, std::min(w, 640.0f));
+        ImGui::Dummy(ImVec2(0, theme::kS1));
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0, theme::kS1));
+        const char* resetLabel = i18n::tr("Reset this layout");
+        const float resetW = ImGui::CalcTextSize(resetLabel).x + ImGui::GetStyle().FramePadding.x * 2;
+        ImGui::AlignTextToFramePadding();
+        ImGui::PushStyleColor(ImGuiCol_Text, theme::vec(P.textFaint));
+        ImGui::TextUnformatted(i18n::tr("Each layout remembers your own changes to it."));
+        ImGui::PopStyleColor();
+        ImGui::SameLine();
+        alignRight(resetW);
+        if (ui::TextButton("Reset this layout", false, 0, "Builds the default arrangement of the layout in use again")) ui::confirmLayoutReset(a);
+      }
+      ui::EndSection();
       ui::BeginSection("APPEARANCE");
       formLabel("Theme");
       if (ui::TextButton("Theme settings...", false, 0, "Dark, light or follow the system, accent colour, contrast")) page = 9;
@@ -549,6 +623,22 @@ void settingsWindow(App& a) {
         ui::Hint("On: the interface size is multiplied by the scale set in your system's display settings. Off: the size above is used as it is");
       }
 #endif
+      // K-136: Gridline's own plugin windows, on top of the interface scale (core/EditorZoom.h).
+      formLabel("Plugin window size");
+      {
+        float pct = std::round(edzoom::globalSize(st.getNumber("ui.pluginWindowSize")) * 100.0f);
+        ImGui::SetNextItemWidth(fieldW);
+        if (ImGui::SliderFloat("##pluginsize", &pct, edzoom::kGlobalMin * 100.0f, edzoom::kGlobalMax * 100.0f, "%.0f%%"))
+          st.set("ui.pluginWindowSize", static_cast<double>(edzoom::globalSize(pct / 100.0)));
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Right))
+          st.set("ui.pluginWindowSize", static_cast<double>(edzoom::kGlobalDefault));
+        ui::Hint("Size of the built-in instrument and effect windows (right-click: default). "
+                 "A size picked in a plugin window's menu (Editor size) is kept for that plugin");
+        formLabel("");
+        bool fit = st.getBool("ui.pluginWindowFit");
+        if (ImGui::Checkbox(i18n::tr("Open small plugin windows larger on big screens"), &fit)) st.set("ui.pluginWindowFit", fit);
+        ui::Hint("On: a small plugin window grows to suit a large workspace. Plugins you install keep their own size");
+      }
       formLabel("Confirm changes");
       bool autoRevert = st.getBool("ui.confirmAutoRevert");
       if (ImGui::Checkbox(i18n::tr("Revert size, theme, language and audio changes not kept within 15 s"), &autoRevert))
@@ -739,7 +829,7 @@ void infoWindow(App& a) {
     dialogTitle(a, title, sub);
     ImGui::Dummy(ImVec2(372, theme::kS2));
     alignRight(ui::ButtonRowWidth(2, 110));
-    const bool cancel = ui::TextButton("Cancel", false, 110) || ImGui::IsKeyPressed(ImGuiKey_Escape);
+    const bool cancel = ui::TextButton("Cancel", false, 110) || ::gl::keys::escapePressed();
     ImGui::SameLine(0, theme::kS2);
     if (ui::TextButton("Change PPQ", true, 110)) {
       a.doc.setPpq(pendingPpq);
@@ -872,7 +962,7 @@ void unsavedPrompt(App& a) {
       if (a.afterDiscard) a.afterDiscard();
     }
     ImGui::SameLine(0, theme::kS2);
-    if (ui::TextButton("Cancel", false, 90) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+    if (ui::TextButton("Cancel", false, 90) || ::gl::keys::escapePressed()) {
       a.afterDiscard = nullptr;
       a.quitRequested = false;
       ImGui::CloseCurrentPopup();
@@ -917,7 +1007,7 @@ void confirmPrompt(App& a) {
   }
   ImGui::Dummy(ImVec2(372, theme::kS1 + theme::kS2));
   alignRight(90 + 100 + theme::kS2);
-  if (ui::TextButton("Cancel", false, 90) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+  if (ui::TextButton("Cancel", false, 90) || ::gl::keys::escapePressed()) {
     c.action = nullptr;
     ImGui::CloseCurrentPopup();
   }
@@ -1094,12 +1184,37 @@ void endPointerGesture(App& a) {
 
 void pointerGestureFrameEnd(App& a) { endPointerGesture(a); }
 
+namespace {
+// K-124: the focused window is one of the editors or plugin windows Esc leaves for the playlist.
+bool editorWindowFocused() {
+  const ImGuiWindow* nav = GImGui->NavWindow;
+  if (!nav) return false;
+  const char* full = nav->RootWindow ? nav->RootWindow->Name : nav->Name;
+  const char* id = ui::stableWindowName(full);
+  for (const char* n : {"Piano roll", "Channel rack", "Mixer", "Loupe"})
+    if (!std::strcmp(id, n)) return true;
+  for (const char* tag : {"###autoedit", "###channelsettings", "###fxeditor", "###edison-standalone-"})
+    if (std::strstr(full, tag)) return true;
+  return false;
+}
+}  // namespace
+
 void handleGlobalShortcuts(App& a) {
   endPointerGesture(a);
   if (menuShortcuts(a)) return;
   ImGuiIO& io = ImGui::GetIO();
   if (io.WantTextInput) return;
   using keys::pressed;
+  // K-79: with the typing keyboard on, letters and digits play notes: a command on such a key
+  // without Ctrl / Alt / Cmd (the tracks set: B, X, E, R, K, ...) waits until it is off.
+  auto typed = [&a](const char* id) {
+    if (a.typingKeyboard && !ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyAlt && !ImGui::GetIO().KeySuper)
+      for (const keys::Chord& c : keys::keymap().bindings(id)) {
+        const bool typingKey = (c.key >= keys::Key::A && c.key <= keys::Key::D9) || (c.key >= keys::Key::Minus && c.key <= keys::Key::Grave);
+        if (typingKey && !(c.mods & (keys::kCtrl | keys::kAlt | keys::kCmd))) return false;
+      }
+    return keys::pressed(id);
+  };
   if (pressed("transport.play")) a.engine.playing() ? menuparity::stopPressed(a) : (void)menuparity::playPressed(a);  // J-109: Stop releases everything; J-112: stops plugin playback first
   if (pressed("edit.undo")) a.doc.undo();
   if (pressed("edit.redo")) a.doc.redo();
@@ -1112,7 +1227,7 @@ void handleGlobalShortcuts(App& a) {
   if (pressed("file.importUrl")) urlimportui::open(a);  // J-192
   if (pressed("transport.tapTempo")) a.tapTempo();  // K-48
   if (pressed("options.typingKeyboard")) a.typingKeyboard = !a.typingKeyboard;
-  if (pressed("options.metronome")) a.metronome = !a.metronome;
+  if (typed("options.metronome")) a.metronome = !a.metronome;
   if (!a.typingKeyboard && pressed("transport.songMode"))
     a.engine.setMode(a.engine.mode() == PlayMode::Song ? PlayMode::Pattern : PlayMode::Song);
   if (pressed("help.shortcuts")) a.showShortcuts = !a.showShortcuts;
@@ -1124,12 +1239,38 @@ void handleGlobalShortcuts(App& a) {
     f = !f;
     if (f) a.focusWindow = name;
   };
-  if (pressed("view.playlist")) toggle(a.showPlaylist, "Playlist");
-  if (pressed("view.channelRack")) toggle(a.showRack, "Channel rack");
-  if (pressed("view.pianoRoll")) toggle(a.showPiano, "Piano roll");
-  if (pressed("view.browser")) toggle(a.showBrowser, "Browser");
-  if (pressed("view.mixer")) toggle(a.showMixer, "Mixer");
+  if (typed("view.playlist")) toggle(a.showPlaylist, "Playlist");
+  if (typed("view.channelRack")) toggle(a.showRack, "Channel rack");
+  if (typed("view.pianoRoll")) toggle(a.showPiano, "Piano roll");
+  if (typed("view.browser")) toggle(a.showBrowser, "Browser");
+  if (typed("view.mixer")) toggle(a.showMixer, "Mixer");
+  // K-124: Esc in an editor or plugin window brings the playlist (the main window) to the front,
+  // once nothing else used the key this frame: a popup, menu or dialog, a drag, a text field, a tool.
+  if (!keys::escapeBusy() && editorWindowFocused() && keys::pressedPastEditor("view.backToPlaylist")) layoutui::showPlaylist(a);
   if (pressed("file.projectInfo")) a.showInfo = !a.showInfo;
+  // K-79: commands the layout presets' shortcut sets put on single keys.
+  if (typed("transport.record")) a.recordArmed = !a.recordArmed;
+  if (typed("transport.toStart")) a.engine.setPosition(0);
+  if (typed("transport.rewindBar") || typed("transport.forwardBar")) {
+    const Tick bar = std::max<Tick>(1, a.doc.song().barTicks());
+    const Tick pos = static_cast<Tick>(a.engine.position());
+    const Tick at = keys::pressed("transport.rewindBar") ? std::max<Tick>(0, (pos - 1) / bar * bar) : (pos / bar + 1) * bar;
+    a.engine.setPosition(at);
+  }
+  if (typed("options.countIn")) a.countInBars = a.countInBars > 0 ? 0 : 1;
+  if (typed("view.toggleMain")) layoutui::toggleMainView(a);
+  if (typed("view.editors")) {
+    if (layoutui::active() == layout::Preset::Studio) toggle(a.showPiano, "Piano roll");
+    else layoutui::toggleEditors(a);
+  }
+  if (keys::focusContext() == keys::Context::Playlist && typed("playlist.splitAtSongPos")) {
+    const Song& s = a.doc.song();
+    const Tick at = static_cast<Tick>(a.engine.position());
+    std::vector<ObjectId> ids = pltools::clipsAcross(s, at, 0, static_cast<int>(s.tracks.size()) - 1);
+    if (!a.playlist.selected.empty())  // the selected clips only, when there is a selection
+      ids.erase(std::remove_if(ids.begin(), ids.end(), [&](ObjectId c) { return !a.playlist.selected.count(c); }), ids.end());
+    if (!ids.empty()) a.doc.editSong("split clips", [&](Song& x) { pltools::sliceClips(x, ids, at, a.playlist.zeroCross); });
+  }
   const auto& pats = a.doc.song().patterns;
   int pi = a.doc.song().patternIndex(a.curPattern);
   if (pressed("pattern.next") && pi + 1 < static_cast<int>(pats.size())) a.selectPattern(pats[static_cast<size_t>(pi + 1)].id);

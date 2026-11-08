@@ -13,7 +13,7 @@ namespace {
 std::string stemOf(const std::string& projectPath) {
   if (projectPath.empty()) return "Untitled";
   std::string name = fs::path(projectPath).filename().string();
-  for (const char* ext : {".gridline.json", ".json", ".glproj"}) {
+  for (const char* ext : {".gridline.json", ".json", ".gridline", ".glproj"}) {
     std::string e(ext);
     if (name.size() > e.size() && name.compare(name.size() - e.size(), e.size(), e) == 0)
       return name.substr(0, name.size() - e.size());
@@ -81,7 +81,7 @@ std::string BackupManager::write(const Song& song, const std::string& projectPat
 #endif
   char stamp[32];
   std::strftime(stamp, sizeof stamp, "%Y-%m-%d %H-%M-%S", &tm);
-  fs::path file = dir / (stemOf(projectPath) + kBackupTag + stamp + ").gridline.json");
+  fs::path file = dir / (stemOf(projectPath) + kBackupTag + stamp + ").gridline");  // K-121: the new name
   if (!saveProject(file.string(), song, err)) return "";
   lastBackup_ = nowSec;
   auto all = list(projectPath);

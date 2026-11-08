@@ -25,7 +25,7 @@ mkdir -p "$OUT/home"
 export HOME="$OUT/home"
 APP="$BUILD/gridline-app"
 PY="${PYTHON:-python3}"
-SONG="$OUT/showcase.gridline.json"
+SONG="$OUT/showcase.gridline"
 "$PY" "$G/tools/readme_showcase.py" "$SONG" "$G"
 
 want() { [ -z "$ONLY" ] || case " $ONLY " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
@@ -76,9 +76,9 @@ done
 # Platter with a track on each deck (the showcase song on A, the demo song's drop on B),
 # both playing, hot cues set.
 if want platter; then
-  "$BUILD/gridline" demo "$OUT/demo.gridline.json" >/dev/null
+  "$BUILD/gridline" demo "$OUT/demo.gridline" >/dev/null
   "$BUILD/gridline" render "$SONG" -o "$OUT/Showcase.wav" >/dev/null 2>&1
-  "$BUILD/gridline" render "$OUT/demo.gridline.json" -o "$OUT/Gridline Drop.wav" --scope range:65-96 >/dev/null 2>&1
+  "$BUILD/gridline" render "$OUT/demo.gridline" -o "$OUT/Gridline Drop.wav" --scope range:65-96 >/dev/null 2>&1
 fi
 export GRIDLINE_PLATTER_DEMO="$OUT/Showcase.wav" GRIDLINE_PLATTER_DEMO_B="$OUT/Gridline Drop.wav"
 shot platter "GRIDLINE_PLATTER_PROFILE=none GRIDLINE_PLATTER_PLAY=AB GRIDLINE_PLATTER_HOTS=1" "$SONG" --hide rack --plugin gl.platter $S --frames 600
@@ -89,21 +89,21 @@ unset GRIDLINE_PLATTER_DEMO GRIDLINE_PLATTER_DEMO_B
 WEL="$OUT/welcome"
 if want welcome; then
   rm -rf "$WEL" && mkdir -p "$WEL/config/gridline" "$WEL/Projects"
-  "$BUILD/gridline" demo "$WEL/Projects/Gridline.gridline.json" >/dev/null
-  cp "$SONG" "$WEL/Projects/Showcase.gridline.json"
-  cp "$G/tests/fixtures/test_song.gridline.json" "$WEL/Projects/First steps.gridline.json"
-  cp "$G/assets/templates/Basics/Beat starter.gridline.json" "$WEL/Projects/Beat starter.gridline.json"
-  cp "$G/assets/templates/Mixing/Mixing desk.gridline.json" "$WEL/Projects/Mixing desk.gridline.json"
+  "$BUILD/gridline" demo "$WEL/Projects/Gridline.gridline" >/dev/null
+  cp "$SONG" "$WEL/Projects/Showcase.gridline"
+  cp "$G/tests/fixtures/test_song.gridline.json" "$WEL/Projects/First steps.gridline"
+  cp "$G/assets/templates/Basics/Beat starter.gridline" "$WEL/Projects/Beat starter.gridline"
+  cp "$G/assets/templates/Mixing/Mixing desk.gridline" "$WEL/Projects/Mixing desk.gridline"
   now=$(date +%s)
   : > "$WEL/config/gridline/recent.txt"
   : > "$WEL/config/gridline/recent-times.tsv"
   age=600
   for p in Gridline Showcase "First steps" "Beat starter" "Mixing desk"; do
-    printf '%s\n' "$WEL/Projects/$p.gridline.json" >> "$WEL/config/gridline/recent.txt"
-    printf '%s\t%s\n' "$((now - age))" "$WEL/Projects/$p.gridline.json" >> "$WEL/config/gridline/recent-times.tsv"
+    printf '%s\n' "$WEL/Projects/$p.gridline" >> "$WEL/config/gridline/recent.txt"
+    printf '%s\t%s\n' "$((now - age))" "$WEL/Projects/$p.gridline" >> "$WEL/config/gridline/recent-times.tsv"
     age=$((age * 9))
   done
-  printf '%s\n' "$WEL/Projects/Gridline.gridline.json" > "$WEL/config/gridline/favourite-projects.txt"
+  printf '%s\n' "$WEL/Projects/Gridline.gridline" > "$WEL/config/gridline/favourite-projects.txt"
 fi
 export GRIDLINE_CONFIG_HOME="$WEL/config"
 shot welcome "" --show launcher --size 1280x800 --scale 2 --frames 240

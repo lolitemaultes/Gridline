@@ -409,8 +409,67 @@ int TypingKeyboard::positionOfKey(int key) {
 }
 
 std::string TypingKeyboard::keyLabel(int key, int typed) {
-  const int c = typed > 32 && typed < 127 ? typed : key;
-  return std::string(1, static_cast<char>(c >= 'a' && c <= 'z' ? c - 'a' + 'A' : c));
+  const bool ascii = typed > 32 && typed < 127, latin1 = typed >= 0xA1 && typed <= 0xFF && typed != 0xAD;  // (0xAD: soft hyphen)
+  int c = ascii || latin1 ? typed : key;
+  if (c >= 'a' && c <= 'z') c -= 'a' - 'A';
+  else if (c >= 0xE0 && c <= 0xFE && c != 0xF7) c -= 0x20;  // à..þ in capitals (ß and ÿ have none in Latin-1)
+  if (c < 0x80) return std::string(1, static_cast<char>(c));
+  return {static_cast<char>(0xC0 | (c >> 6)), static_cast<char>(0x80 | (c & 0x3F))};  // UTF-8
+}
+
+namespace {
+// K-113: each layout's characters where they differ from US QWERTY, by USB usage (the typing keys only).
+constexpr KeyPosition kQwertz[] = {{29, 'y'}, {28, 'z'}, {51, 0xF6}, {52, 0xE4}, {47, 0xFC}, {48, '+'},
+                                   {45, 0xDF}, {46, 0xB4}, {49, '#'}, {50, '#'}, {56, '-'}};
+constexpr KeyPosition kAzerty[] = {{20, 'a'}, {26, 'z'}, {29, 'w'}, {16, ','}, {54, ';'}, {55, ':'}, {56, '!'}, {51, 'm'},
+                                   {52, 0xF9}, {47, '^'}, {48, '$'}, {45, ')'}, {46, '='}, {49, '*'}, {50, '*'}, {31, 0xE9},
+                                   {32, '"'}, {34, '('}, {35, '-'}, {36, 0xE8}, {38, 0xE7}, {39, 0xE0}};
+constexpr KeyPosition kDvorak[] = {{29, ';'}, {22, 'o'}, {27, 'q'}, {7, 'e'},  {6, 'j'},  {25, 'k'}, {10, 'i'}, {5, 'x'},
+                                   {11, 'd'}, {17, 'b'}, {13, 'h'}, {54, 'w'}, {15, 'n'}, {55, 'v'}, {51, 's'}, {56, 'z'},
+                                   {20, '\''}, {26, ','}, {8, '.'},  {21, 'p'}, {23, 'y'}, {28, 'f'}, {24, 'g'}, {12, 'c'},
+                                   {18, 'r'}, {19, 'l'}, {47, '/'}, {48, '='}, {45, '['}, {46, ']'}, {52, '-'}};
+constexpr KeyPosition kColemak[] = {{22, 'r'}, {7, 's'},  {10, 'd'}, {11, 'h'}, {17, 'k'}, {13, 'n'}, {15, 'i'}, {51, 'o'},
+                                    {8, 'f'},  {21, 'p'}, {23, 'g'}, {28, 'j'}, {24, 'l'}, {12, 'u'}, {18, 'y'}, {19, ';'}};
+
+template <size_t N>
+int lookUp(const KeyPosition (&table)[N], int position) {
+  for (const KeyPosition& k : table)
+    if (k.position == position) return k.key;
+  return 0;
+}
+}  // namespace
+
+int TypingKeyboard::layoutChar(TypingLayout layout, int position) {
+  int c = 0;
+  switch (layout) {
+    case TypingLayout::Standard: break;
+    case TypingLayout::Qwertz: c = lookUp(kQwertz, position); break;
+    case TypingLayout::Azerty: c = lookUp(kAzerty, position); break;
+    case TypingLayout::Dvorak: c = lookUp(kDvorak, position); break;
+    case TypingLayout::Colemak: c = lookUp(kColemak, position); break;
+    default: return 0;  // Computer (the system's layout) or unknown
+  }
+  return c ? c : keyAtPosition(position);
+}
+
+namespace {
+struct LayoutNames {
+  const char* id;
+  const char* name;
+};
+constexpr LayoutNames kLayoutNames[] = {{"standard", "Standard (QWERTY)"}, {"qwertz", "QWERTZ"}, {"azerty", "AZERTY"},
+                                        {"dvorak", "Dvorak"},              {"colemak", "Colemak"}, {"computer", "Follow the computer"}};
+static_assert(sizeof(kLayoutNames) / sizeof(kLayoutNames[0]) == static_cast<size_t>(TypingLayout::Count), "typing layout names");
+}  // namespace
+
+const char* typingLayoutName(TypingLayout l) {
+  return l < TypingLayout::Count ? kLayoutNames[static_cast<size_t>(l)].name : kLayoutNames[0].name;
+}
+const char* typingLayoutId(TypingLayout l) { return l < TypingLayout::Count ? kLayoutNames[static_cast<size_t>(l)].id : kLayoutNames[0].id; }
+TypingLayout typingLayoutFromId(const std::string& id) {
+  for (size_t i = 0; i < static_cast<size_t>(TypingLayout::Count); ++i)
+    if (id == kLayoutNames[i].id) return static_cast<TypingLayout>(i);
+  return TypingLayout::Standard;
 }
 
 std::vector<int> TypingKeyboard::heldNotes() const {

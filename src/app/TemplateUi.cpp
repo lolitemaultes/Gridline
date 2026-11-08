@@ -1,5 +1,6 @@
 // Gridline — template windows (see TemplateUi.h).
 #include "../core/I18n.h"
+#include "Keys.h"
 #include "TemplateUi.h"
 #include <algorithm>
 #include <cmath>
@@ -249,7 +250,7 @@ void newProjectWindow(App& a) {
   }
   ImGui::SameLine();
   ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - ui::ButtonRowWidth(3, 96));
-  bool cancel = ui::TextButton("Cancel", false, 96) || ImGui::IsKeyPressed(ImGuiKey_Escape);
+  bool cancel = ui::TextButton("Cancel", false, 96) || ::gl::keys::escapePressed();
   ImGui::SameLine(0, theme::kS2);
   if (ui::TextButton("Empty", false, 96, "Skip the template: an empty project with your defaults")) {
     a.guardUnsaved([&a]() { a.newFromTemplate(""); });
@@ -331,7 +332,7 @@ void saveTemplateWindow(App& a) {
     ui::PathFit(where, 488, P.textFaint);
   }
   ui::DialogFooter(96 * 2 + theme::kS2);
-  bool cancel = ui::TextButton("Cancel", false, 96) || ImGui::IsKeyPressed(ImGuiKey_Escape);
+  bool cancel = ui::TextButton("Cancel", false, 96) || ::gl::keys::escapePressed();
   ImGui::SameLine(0, theme::kS2);
   bool ok = ui::TextButton("Save", true, 96);
   ImGui::End();

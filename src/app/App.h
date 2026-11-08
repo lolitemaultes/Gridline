@@ -441,6 +441,11 @@ class App {
   void guardUnsaved(std::function<void()> action);  // runs now, or after the user confirms
 
   ObjectId addInstrument(const std::string& pluginType, const std::string& samplePath = "");
+  // K-125: a channel the user just added (or whose instrument they replaced) opens its editor at
+  // once, in front and focused; an installed plugin opens its own window. Called by the user's add
+  // paths only: project loads, undo / redo, collaborators' edits, paste / clone, scripts and test
+  // batches never open windows.
+  void showNewInstrument(ObjectId channel);
   void selectPattern(ObjectId id);
   void selectChannel(ObjectId id, bool additive = false);
   void openPianoRoll(ObjectId channel);

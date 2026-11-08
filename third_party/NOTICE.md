@@ -37,6 +37,13 @@ mapping uses; the mouse's position loop with its throw and release; the ramp bac
 the level curve at low speeds) follows the approach of Mixxx (https://github.com/mixxxdj/mixxx,
 GPL-2.0-or-later). No Mixxx source is included; the code is Gridline's own.
 
+Not vendored, but included as data: the period table that tracker modules use for pitch
+(`src/core/TrackerTables.cpp`, 96 values) is taken from ft2-clone
+(https://github.com/8bitbubsy/ft2-clone, BSD-3-Clause, Copyright (c) 2016-2026, Olav Sørensen),
+because those values cannot be rebuilt from a formula and modules only play in tune with them.
+The full licence text is in that file. ft2-clone and libxmp were also used, outside Gridline, as
+reference players to check that imported modules sound the same; none of their code is included.
+
 ## Programs shipped beside Gridline (Import from URL, J-192)
 
 The release packages carry two separate programs that Gridline runs for File > Import > Import
@@ -50,6 +57,10 @@ package has none (`docs/import-url.md`). Each package's `tools` folder holds the
 |---|---|---|---|
 | yt-dlp | 2026.10.26 (official release binary) | Unlicense (public domain) | https://github.com/yt-dlp/yt-dlp |
 | FFmpeg (`ffmpeg`, `ffprobe`) | 9.0.2, built from the unmodified source, audio only, without GPL or nonfree parts | LGPL-2.1-or-later | https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz |
+
+On Linux and the BSDs Gridline also runs this `ffmpeg` (or the system's) to decode M4A and AAC
+samples, as a separate program; on macOS and Windows the system's own decoders (AudioToolbox,
+Media Foundation) read them. No decoder library is linked or vendored for these formats.
 
 FFmpeg is a trademark of Fabrice Bellard, originator of the FFmpeg project. Gridline is not
 affiliated with the FFmpeg or yt-dlp projects.

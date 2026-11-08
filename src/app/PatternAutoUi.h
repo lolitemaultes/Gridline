@@ -30,7 +30,7 @@ void listMenu(App& a, ObjectId pattern);
 // name button and the curve across the step area. Row geometry from the rack.
 struct RackRows {
   float rowW, rowH, rowGap, cellH;
-  float xLed, nameX, nameW;  // left section (row-relative)
+  float xLeft, nameX, nameW;  // left section (row-relative)
   float stepsX, stepsW, scrollX, viewX0, viewX1;
   double playTick = -1;  // the pattern's playhead (pattern ticks), < 0: not playing it
 };

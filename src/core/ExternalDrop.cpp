@@ -147,6 +147,8 @@ std::string extensionForUti(const std::string& uti) {
       {"public.zip-archive", ".zip"},          {"public.json", ".json"},        {"public.folder", ""},
       {"public.jpeg", ".jpg"},                 {"public.png", ".png"},          {"com.adobe.pdf", ".pdf"},
       {"public.plain-text", ".txt"},
+      {"com.lolitemaultes.gridline.project", ".gridline"},  // K-121: Gridline's own types
+      {"com.lolitemaultes.gridline.zipped-project", ".gridlinez"},
   };
   auto it = m.find(lower(uti));
   if (it != m.end()) return it->second;

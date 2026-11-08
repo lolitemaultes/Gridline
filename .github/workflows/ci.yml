@@ -43,6 +43,9 @@ jobs:
           - { name: Ubuntu 22.04, image: "ubuntu:22.04", pm: apt, werror: "ON", gui: "OFF" }
           - { name: Ubuntu 24.04, image: "ubuntu:24.04", pm: apt, werror: "ON", gui: "ON" }
           - { name: Debian 12, image: "debian:12", pm: apt, werror: "ON", gui: "OFF" }
+          # The system the Linux release is built on (GCC 10, glibc 2.31); its .deb goes on to the
+          # Debian 11, 12 and 13 install checks below.
+          - { name: Debian 11 (release base), image: "debian:11", pm: apt, werror: "ON", gui: "OFF", deb: true }
           - { name: Fedora, image: "fedora:latest", pm: dnf, werror: "OFF", gui: "OFF" }
           - { name: Arch, image: "archlinux:latest", pm: pacman, werror: "OFF", gui: "OFF" }
           - { name: openSUSE Tumbleweed, image: "opensuse/tumbleweed:latest", pm: zypper, werror: "OFF", gui: "OFF" }
@@ -53,9 +56,13 @@ jobs:
         run: apk add --no-cache bash git
       - uses: actions/checkout@v4
       - name: Dependencies
-        run: sh tools/ci/install-deps.sh ${{ matrix.pm }}
+        run: |
+          if [ "${{ matrix.pm }}" = apt ]; then sh tools/ci/debian-archive.sh; fi
+          sh tools/ci/install-deps.sh ${{ matrix.pm }}
       - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DGRIDLINE_WERROR=${{ matrix.werror }} -DGRIDLINE_GUI_TESTS=${{ matrix.gui }}
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DGRIDLINE_WERROR=${{ matrix.werror }} -DGRIDLINE_GUI_TESTS=${{ matrix.gui }} \
+            ${{ matrix.deb && '-DCMAKE_INSTALL_PREFIX=/usr -DGRIDLINE_INSTALL_PLUGINS=ON' || '' }}
       - name: Build
         run: cmake --build build -j4 -- -k 0
       - name: Tests
@@ -75,6 +82,40 @@ jobs:
           xvfb-run -a -s '-screen 0 1280x1024x24' bash tools/ci/check-x11-window.sh build/gridline-app "$PWD/build/wincfg"
           DESTDIR="$PWD/build/inst" cmake --install build --prefix /usr > /dev/null
           bash tools/ci/check-linux-icons.sh build/inst/usr
+      - name: Package (.deb)
+        if: matrix.deb
+        run: |
+          apt-get install -y -q --no-install-recommends dpkg-dev
+          (cd build && cpack -G DEB)
+          mkdir -p dist && mv build/Gridline-*.deb dist/
+          bash tools/release/deb-depends.sh dist/Gridline-*.deb
+      - uses: actions/upload-artifact@v4
+        if: matrix.deb
+        with:
+          name: gridline-deb-debian11
+          path: dist/Gridline-*.deb
+          retention-days: 7
+
+  debian:
+    # The .deb built on Debian 11 above, installed with apt into fresh Debian 11, 12 and 13
+    # containers, then the programs and the app run there (tools/ci/debian-check.sh). The release
+    # workflow does the same for both architectures with the AppImage too.
+    name: Debian ${{ matrix.debian }} install
+    needs: linux
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        debian: ["11", "12", "13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: gridline-deb-debian11
+          path: dist
+      - run: docker run --rm -v "$PWD:/w" -w /w debian:${{ matrix.debian }} bash tools/ci/debian-check.sh dist/Gridline-*-linux-amd64.deb
 
   linux-arm64:
     name: Linux arm64 (Ubuntu 24.04)
