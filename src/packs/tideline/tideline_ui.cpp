@@ -761,7 +761,7 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
     dl->AddText(a.fontRegular, theme::kFontCaption, ImVec2(x + 10, lowY + 46), P.textFaint,
                 i18n::tr("Switch to Audio or MIDI to follow a kick."));
   }
-  ImGui::SetCursorScreenPos(ImVec2(o.x, lowY + panelH + 6));
+  ImGui::SetCursorScreenPos(ImVec2(o.x, lowY + panelH));
   ImGui::Dummy(ImVec2(W, 1));
   return true;
 }

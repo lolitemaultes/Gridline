@@ -20,6 +20,7 @@
 #include <limits>
 #include <map>
 #include <set>
+#include "../../engine/ClipSource.h"
 #include "../ClipRate.h"
 #include "../Fades.h"
 #include "../PluginParams.h"
@@ -222,16 +223,27 @@ void Exporter::writeArrangements() {
           const float old = getF32(r, at);
           if (!(orec && std::isfinite(old) && std::fabs(static_cast<double>(old) / scale - v) <= tol)) putF32(r, at, static_cast<float>(v * scale));
         };
-        keepF(24, c.audioStart, 1000.0);
+        // K-85: FL counts the window from the channel's start handle (in the clip's direction).
+        double from = 0;
+        if (const Channel* tc = s.channel(c.source)) {
+          double ta = 0, tb = 1;
+          channelTrim(*tc, ta, tb);
+          if (ta > 0 || tb < 1)
+            if (const ClipSource src = clipSource(*tc); src.ok()) {
+              double hi = 0;
+              clipLimits(src, clipPlaysReversed(*tc, c), from, hi);
+            }
+        }
+        keepF(24, std::max(0.0, c.audioStart - from), 1000.0);
         if (c.audioEnd > 0) {
-          keepF(28, c.audioEnd, 1000.0);
+          keepF(28, std::max(0.0, c.audioEnd - from), 1000.0);
         } else if (const Channel* fc = s.channel(c.source); fc && c.rateFit != 1.0) {
           // A rate the channel's time does not say lives in the window. K-60: the rate is the one at the
           // tempo where the clip starts, so the file span is the clip's length at that tempo: the end
           // FL derives, the same at any tempo for a clip fitted to it.
           const double bpm = std::max(1.0, songMap.bpmAt(static_cast<double>(c.start)));
           const double seconds = static_cast<double>(len) * 60.0 / (bpm * ppq) * clipRate(*fc, c).speed;
-          putF32(r, 28, static_cast<float>((c.audioStart + seconds) * 1000.0));
+          putF32(r, 28, static_cast<float>((std::max(0.0, c.audioStart - from) + seconds) * 1000.0));
         } else {
           putF32(r, 28, -1.0f);
         }

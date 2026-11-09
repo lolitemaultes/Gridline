@@ -219,6 +219,7 @@ struct ClipVoice {
   bool reverse = false;
   int64_t cursor = 0, endFrame = 0;  // next source frame (clip direction); silence from endFrame on
   int64_t next = -(int64_t{1} << 62);  // clip frame the stream plays next
+  double pos = 0;  // K-85: source seconds (clip direction) of the frame it plays next
   // J-170: a Rubber Band stream begun ahead of the clip's start (next == 0)
   // and primed over the blocks before it: the speed, pitch and source frame
   // it began with, and the start-up work it may do now (input frames).
@@ -272,6 +273,13 @@ struct ProgAudioClip {
   bool resampleSync = false;        // J-193: tempo-locked, resampled: pitch = speed x `pitch`
   stretch::Engine engine = stretch::Engine::Stretch;  // J-157: what keeps the pitch (the channel's time mode)
   bool reverse = false;
+  // K-85: the clip's warp markers (core/TimeWarp.h) in its direction: it
+  // plays source warpSourceAt(warp, warpBase + p) where an unwarped clip
+  // plays srcStart + p. Empty: not warped. Warped clips keep their pitch
+  // (granular) whatever the channel's time mode.
+  std::vector<WarpPoint> warp;
+  double warpBase = 0;
+  uint64_t warpKey = 0;             // identifies `warp` (voice reuse)
   ObjectId clip = kNoId;            // J-196: Clip::id
   // K-114: a looping clip plays as one ProgAudioClip per pass (engine/ClipOps.h,
   // audioLoopPasses): the pass number, and whether the pass holds the clip's
@@ -697,6 +705,7 @@ class ProgramBuilder {
     bool reverse = false, resampleSync = false;
     Tick start = 0;
     double srcStart = 0, srcEnd = 0, speed = 0, secPerTick = 0;
+    uint64_t warpKey = 0;  // K-85
     uint32_t gen = 0;
     bool same(const ClipVoiceSlot& o) const;
     bool inPlace(const ClipVoiceSlot& o) const;

@@ -442,6 +442,17 @@ void clipArrangementToJson(const Clip& c, Json& jc) {
   if (c.fadeOutManual) jc.object["fadeOutManual"] = boolean(true);
   if (c.fadeInDeclick != 0) jc.object["fadeInDeclick"] = num(c.fadeInDeclick);  // J-43
   if (c.fadeOutDeclick != 0) jc.object["fadeOutDeclick"] = num(c.fadeOutDeclick);
+  if (c.kind == ClipKind::Audio && !c.warp.empty()) {  // K-85: warp markers (keyed by id: collaboration merges per marker)
+    Json arr = Json::makeArray();
+    for (const WarpMarker& m : c.warp) {
+      Json jm = Json::makeObject();
+      jm.object["id"] = num(m.id);
+      jm.object["at"] = num(m.at);
+      jm.object["to"] = num(m.to);
+      arr.array.push_back(std::move(jm));
+    }
+    jc.object["warp"] = std::move(arr);
+  }
 }
 
 void clipArrangementFromJson(const Json& jc, Clip& c) {
@@ -482,6 +493,18 @@ void clipArrangementFromJson(const Json& jc, Clip& c) {
   c.fadeOutDeclick = static_cast<uint8_t>(jsonInt<int>(std::clamp(jc.num("fadeOutDeclick", 0), 0.0, 7.0)));
   c.fadeInManual = flag(jc, "fadeInManual");
   c.fadeOutManual = flag(jc, "fadeOutManual");
+  c.warp.clear();  // K-85
+  if (const Json* w = jc.find("warp"); w && w->is(Json::Type::Array) && c.kind == ClipKind::Audio) {
+    for (const Json& e : w->array) {
+      if (!e.is(Json::Type::Object) || c.warp.size() >= 4 * kMaxWarpMarkers) continue;
+      WarpMarker m;
+      m.id = jsonInt<uint32_t>(std::clamp(e.num("id", 0), 0.0, 4294967295.0));
+      m.at = e.num("at", std::nan(""));
+      m.to = e.num("to", std::nan(""));
+      c.warp.push_back(m);
+    }
+    normalizeWarp(c.warp);
+  }
 }
 
 void arrangementToJson(const Song& s, Json& j) {

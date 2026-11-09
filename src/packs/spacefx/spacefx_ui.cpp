@@ -14,6 +14,7 @@
 #include "sfx_common.h"
 #include "sfx_convolver.h"
 #include "../../core/I18n.h"
+#include "../../core/KnobMagnet.h"
 #include "sfx_skin.h"
 #include "sfx_widgets.h"
 #include "sfx_flcurves.h"
@@ -2380,6 +2381,7 @@ void editorBbdChorus(App& a, const PluginTarget& t, float width) {
   chk(a, t, BcSync, F, 437, 160, 60, 17, K, "SYNC", red);
   if (val(st, BcSync) >= 0.5f) {
     if (ref) {
+      pui::nextMagnets(magnet::syncDivisions(1, 6144));  // K-147: magnetic divisions, free in between
       V(a, t, BcSyncTicks, F, 510, 73, 35, 104, KS, "PERIOD");
       int ticks = static_cast<int>(std::lround(val(st, BcSyncTicks)));
       char tb[24];
@@ -2600,6 +2602,7 @@ void editorPhaser(App& a, const PluginTarget& t, float width) {
   W(a, t, VpTension, F, 258, dy + 135, 42, K, "TENSION");
   if (val(st, VpSync) >= 0.5f) {
     if (ref) {
+      pui::nextMagnets(magnet::syncDivisions(1, 6144));  // K-147
       V(a, t, VpSyncTicks, F, 332, dy + 71, 32, 106, KS, "PERIOD");
       std::string tv = ticksText(VpSyncTicks);
       skin::valueStrip(dl, F.p(322, dy + 54), F.p(374, dy + 68), K, tv.c_str(), F.font(7.5f));
@@ -2619,6 +2622,7 @@ void editorPhaser(App& a, const PluginTarget& t, float width) {
   W(a, t, VpDelayStereo, F, 456, dy + 71, 42, K, "STEREO", skin::WheelBigLine | skin::WheelCentered);
   if (val(st, VpDelaySync) >= 0.5f) {
     if (ref) {
+      pui::nextMagnets(magnet::syncDivisions(1, 768));  // K-147
       W(a, t, VpDelayTicks, F, 535, dy + 71, 60, K, nullptr);
       std::string tv = ticksText(VpDelayTicks);
       skin::valueStrip(dl, F.p(540, dy + 133), F.p(590, dy + 146), K, tv.c_str(), F.font(7.5f));

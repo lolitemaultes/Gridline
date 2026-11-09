@@ -32,10 +32,22 @@ namespace gl::edzoomui {
 // at this frame (the remembered or automatic one, capped to the work area; 1 when
 // `zoomable` is false, e.g. an installed plugin's generic page).
 float prepare(App& a, const char* key, const std::string& type, float contentW, bool zoomable = true);
+// K-147: right after prepare(), before Begin(): the window's width, exactly the editor's
+// (contentW at this zoom) plus the padding (and a scrollbar only when the editor is taller
+// than the work area even at the smallest fit size); its height follows the editor. Returns
+// window flags to add.
+int nextWindowSize(const char* key);
 // Right after Begin() (and only when it returned true): the editor's content follows,
 // drawn at its design size. Pair with end().
 void begin(App& a, const char* key);
 void end(App& a, const char* key);
+// K-147: the zoom of the editor being drawn between begin() and end() (1 elsewhere):
+// screen pixels per design pixel, for controls that measure drags on screen.
+float currentZoom();
+// K-147 (fit report): the plugin's own editor, `width` design px wide, starts here.
+void markBody(float width);
+// ... and ends here.
+void markBodyEnd();
 
 // Menu items "Editor size": Automatic, 100 % ... 200 % for `type` (in the plugin window menu).
 void sizeMenu(App& a, const std::string& type, const char* key);

@@ -10,6 +10,7 @@
 //               selectors, 3 × 3 controller wheels, bottom bar).
 #include "../core/I18n.h"
 #include "../engine/Dsp.h"
+#include "../engine/ClipSource.h"
 #include "../engine/TimeStretch.h"
 #include "PluginEditorsFlSynth.h"
 
@@ -256,7 +257,7 @@ void editorSamplerFl(App& a, const PluginTarget& t, float width) {
   auto w = [&](int p, float x, float y, const char* l, int flags = skin::WheelBigLine) { wheelL(a, t, p, F, x, y, 36, K, K, l, flags); };
   if (ui.tab == 0) {
     // Region / loop editor (drag the markers).
-    SamplePtr smp = st.data.empty() ? nullptr : sampleCache().get(st.data);
+    SamplePtr smp = st.data.empty() ? nullptr : sampleCache().request(st.data);  // K-85: never waits for a decode
     ImVec2 p0 = F.p(6, 31), p1 = F.p(674, 131);
     ImGui::SetCursorScreenPos(p0);
     ImGui::InvisibleButton("##swave", ImVec2(p1.x - p0.x, p1.y - p0.y));
@@ -293,8 +294,13 @@ void editorSamplerFl(App& a, const PluginTarget& t, float width) {
       dl->AddLine(ImVec2(x, p0.y), ImVec2(x, p1.y), mks[k].col, ui.drag == k && ImGui::IsItemActive() ? 2.5f : 1.5f);
       if (mks[k].label[0]) skin::text(dl, ImVec2(k == 1 ? x - 30 : x + 3, p0.y + 3 + (k >= 2 ? 12 : 0)), mks[k].col, mks[k].label, lf(F, 7));
     }
-    if (ImGui::IsItemActive() && ui.drag >= 0 && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 1))
-      a.doc.setParam(t.pid(mks[ui.drag].param), std::clamp((io.MousePos.x - p0.x) / sw, 0.0f, 1.0f), true);
+    if (ImGui::IsItemActive() && ui.drag >= 0 && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 1)) {
+      // K-85: start and end (and the loop's two ends) never cross; the dragged one stops at the other.
+      const int k = ui.drag, other = k ^ 1;
+      const double v = clampTrimHandle(k % 2 == 1, (io.MousePos.x - p0.x) / sw, val(st, mks[other].param, other % 2 ? 1.f : 0.f),
+                                       smp ? smp->seconds() : 0.0);
+      a.doc.setParam(t.pid(mks[k].param), v, true);
+    }
     if (ImGui::IsItemDeactivated()) a.doc.endGesture();
     if (ImGui::IsItemHovered()) a.setHint("Drag the start / end and loop markers");
     // PLAYBACK

@@ -33,11 +33,52 @@ strip's height shorter; the minimum and default widths do not change. While the 
 the window follows the content a frame later, docked inside the main window or popped out into
 its own OS window (`src/app/Viewports.cpp` resizes that window like any auto-sized one).
 
+### Plugin window size and fit
+
+Every built-in editor (effect slot windows and channel windows alike) is laid out at its design
+size in a region exactly as wide as the editor (`PluginInfo::editorWidth`; the channel window at
+least 600 px for its own rows), and that region is drawn at the plugin window size (Settings >
+Interface, 75 % by default, 60 % to 150 %; or a plugin's own Editor size, 60 % to 200 %) as one picture (`src/app/EditorZoomUi.cpp`). The
+window is the region at that size plus the window padding: no room is kept for a scrollbar or a
+margin the editor does not draw, so the header's right edge and the editor's right edge agree.
+
+If a window at the size asked for would not fit the work area, the editor is reduced until the
+whole window fits (`edzoom::fitZoom`), down to 60 % (`edzoom::kFitMin`); only an editor still too
+tall at 60 % scrolls. So a large instrument on a small screen, or at interface scale 200 %, is
+never cut off at the bottom or the right. At exactly 100 % the editor is drawn straight into its
+window (no magnified region). The test suite pins every editor at 100 % with
+`GRIDLINE_PLUGIN_WINDOW_SIZE=1`; with it set, a large editor keeps 100 % and scrolls instead of
+being reduced, so tests can click at design positions. The fit test clears it.
+
+`--dev-input` commands: `edzoom <fxeditor|channelsettings>` prints the zoom, the design size and
+the window, followed by an `edfit` line: what the editor drew against its window, in screen
+pixels (clipped past the left, top, right and bottom edges; spare room inside the padding on the
+left, right and bottom; the plugin's own drawing under the header: its width, its left offset and
+the width it was given; and how far any row, the header included, was laid out past the region's
+right edge). `fitall [frames]` opens every built-in plugin in turn and prints both for
+each (`GRIDLINE_FIT_ONLY=<type,type>` limits it), with an optional second argument: a directory
+for one screenshot per plugin. `tests/k147_plugin_fit_app.cmake` runs it at several sizes and
+interface scales and fails on any clipped or spare edge.
+
 Installed plugins (VST3, CLAP, VST2, AU, LV2) that show their own interface open in their own
 plugin window (`src/app/PluginWindow.cpp`: the plugin's view, Gridline's control bar under it).
 That window has no channel strip, so the slide never moves or resizes a native plugin view. A
 hosted plugin shown in Gridline's own panel (generic editor, no interface, sandbox placeholder)
 is drawn by Gridline in the channel window and slides like any built-in editor.
+
+## Magnetic divisions on knobs
+
+A knob or slider can carry soft magnets (`pui::nextMagnets(values)` before it is drawn, in the
+parameter's own units; `core/KnobMagnet.h`). A drag passes its pointer through a curve: within a
+capture zone of 7 drag pixels around a division the value holds on it for the inner 45 % of the
+zone, then eases back to the pointer (continuous, never going back, the same curve both ways, so
+it cannot flicker at the edge). Between divisions every value can be set and kept. Shift drags
+finely without magnets; the mouse wheel steps from one division to the next; typed values and
+automation are never snapped; a drag is one undo step. Ticks outside the ring (or beside a
+slider's track) mark the divisions, brighter on the current one. Used on Tracer's synced Time
+(1/64 to 1 bar, dotted and triplet), Retro Phaser's synced period and echo time, Bucket Chorus's
+synced period, and the delay times of Halftone and Lattice when synced. Tests: `test_k147.cpp`
+(the curve) and `tests/k147_magnet_app.cmake` (a real drag on Tracer).
 
 ## Dev check and test
 

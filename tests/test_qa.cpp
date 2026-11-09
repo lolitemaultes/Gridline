@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <limits>
 #include <filesystem>
 #include <cstdlib>
 #include <cstring>
@@ -449,7 +450,10 @@ std::string flpExportReads(const Song& s) {
 void undoStress(const Song& start, const char* tag, int edits, uint64_t seed) {
   const int checkEvery = std::getenv("GRIDLINE_QA_CHECK_EVERY") ? std::max(1, std::atoi(std::getenv("GRIDLINE_QA_CHECK_EVERY"))) : 25;
   Document d(start);
+  // The whole history is checked step by step: neither of its limits may drop old steps (the
+  // level limit, nor the memory budget, which the test song's later edits come close to).
   d.setMaxUndoLevels(static_cast<size_t>(edits) + 10);
+  d.setMaxUndoBytes(std::numeric_limits<size_t>::max());
   Editor e{d, std::mt19937_64(seed), {}, {}, {}};
   for (const auto& p : pluginCatalog()) {
     if (p.kind == PluginKind::Generator) e.gens.push_back(p.type);

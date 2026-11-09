@@ -37,6 +37,7 @@
 #include "../Params.h"
 #include "../PluginInfo.h"
 #include "../PluginParams.h"
+#include "../../engine/ClipSource.h"
 #include "../../engine/Sample.h"
 #include "../../engine/TimeStretch.h"
 #include "../ClipRate.h"
@@ -246,6 +247,10 @@ void Importer::importAudioChannels() {
           channelFits_[id] = ChannelFit{smp->seconds() / (fitBeats * std::max(1, s_.ppq)) / mulFactor, static_cast<double>(prm[pp::SmpTimeStretch]), tf < 0.25 || tf > 4.0};
     }
     if (const Event* e = find(evs, 70)) set(pp::SmpReverse, (e->value() & 2) ? 1.f : 0.f);
+    // K-85: the sample page (start / end handles, precomputed effects, processing) shapes the
+    // channel's audio clips, as in FL; the clips' windows count from the start handle (below).
+    importSamplePage(evs, find(evs, 215), ch->plugin);
+    normalizePluginState(ch->plugin);
     if (const Event* e = find(evs, 219); e && e->size >= 12 && e->i32(8) != 0) channelCents_[id] = e->i32(8);
     ch->audioClip = true;  // J-39: an audio-clip channel also when no clip uses it
     audioChannels_[idx] = id;
@@ -636,6 +641,28 @@ void Importer::importTracksAndClips() {
   int patClips = 0, audioClips = 0, autoClips = 0, muted = 0, offsets = 0, other = 0, fitClips = 0, fixedRateClips = 0, fitWindows = 0, derivedEnds = 0;
   std::map<int, ObjectId> clipGroups;
   std::vector<size_t> fixedRateAt;  // playlist indexes of clips resampled at a fixed rate
+  // K-85: where a channel's start handle puts the first audio its clips play (seconds, in the
+  // clip's direction: the channel's own reverse against the clip's); 0 without a handle.
+  int trimmedWindows = 0;
+  std::map<std::pair<ObjectId, bool>, double> trimFroms;
+  auto trimOffset = [&](ObjectId chId, bool clipReverse) {
+    const Channel* tc = s_.channel(chId);
+    if (!tc) return 0.0;
+    double a = 0, b = 1;
+    channelTrim(*tc, a, b);
+    if (a <= 0 && b >= 1) return 0.0;
+    Clip probe;
+    probe.reverse = clipReverse;
+    const bool rev = clipPlaysReversed(*tc, probe);
+    auto [it, fresh] = trimFroms.emplace(std::make_pair(chId, rev), 0.0);
+    if (fresh) {
+      const ClipSource src = clipSource(*tc);
+      double lo = 0, hi = 0;
+      if (src.ok()) clipLimits(src, rev, lo, hi);
+      it->second = lo;
+    }
+    return it->second;
+  };
   for (const auto& e : evs) {
     if (e.id != 233) continue;
     const uint32_t k = playlistStride(e);
@@ -712,6 +739,13 @@ void Importer::importTracksAndClips() {
             if (std::isfinite(semis) && std::fabs(semis) <= 48.0f) cl.pitch += semis * 100.0f;
             // PL-13: per-clip reverse, bit 0 of u32 @72 (window stored mirrored).
             cl.reverse = (e.u32(o + 72) & 1u) != 0;
+          }
+          // K-85: FL counts the window from the channel's start handle (in the clip's direction);
+          // Gridline from the file's start. (FL's default window -1 starts at the handle too.)
+          if (const double from = trimOffset(ch->second, cl.reverse); from > 0) {
+            cl.audioStart += from;
+            if (cl.audioEnd > 0) cl.audioEnd += from;
+            ++trimmedWindows;
           }
           // K-132: an automated pitch knob stays on the channel (the automation replaces it); the
           // clip's speed still follows the knob as saved.
@@ -810,6 +844,7 @@ void Importer::importTracksAndClips() {
   if (fixedRateClips) c_.report.counts["audio clips resampled at a fixed rate under tempo automation"] = fixedRateClips;
   if (fitWindows) c_.report.counts["audio clips whose window disagrees with the channel's time (window used)"] = fitWindows;
   if (derivedEnds) c_.report.counts["audio clips ended by their length under tempo automation"] = derivedEnds;
+  if (trimmedWindows) c_.report.counts["audio clips on a channel with a start / end trim"] = trimmedWindows;
   if (autoClips) c_.report.counts["automation clips"] = autoClips;
   if (muted) c_.report.counts["muted clips"] = muted;
   if (offsets) c_.report.counts["clips with a start offset"] = offsets;

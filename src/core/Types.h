@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include "TimeWarp.h"
 
 namespace gl {
 
@@ -188,6 +189,9 @@ struct Clip {
   float fadeInTension = 0, fadeOutTension = 0;   // FL tension unit (core/Fades.h), 0 = plain curve
   uint8_t fadeInDeclick = 0, fadeOutDeclick = 0; // J-43: FL edge declicker mode (0 auto, 1 on, 2 off; kept as read)
   bool fadeInManual = false, fadeOutManual = false;  // set by hand (a zero length then means "no fade")
+  // K-85: warp markers (core/TimeWarp.h): audio clips only; sections between
+  // markers play at their own speed, pitch kept. Empty: not warped.
+  std::vector<WarpMarker> warp;
 
   bool operator==(const Clip& o) const {
     return id == o.id && pattern == o.pattern && track == o.track && start == o.start && length == o.length &&
@@ -199,7 +203,7 @@ struct Clip {
            take == o.take && launched == o.launched && group == o.group && fadeInShape == o.fadeInShape &&
            fadeOutShape == o.fadeOutShape && fadeInTension == o.fadeInTension && fadeOutTension == o.fadeOutTension &&
            fadeInManual == o.fadeInManual && fadeOutManual == o.fadeOutManual &&
-           fadeInDeclick == o.fadeInDeclick && fadeOutDeclick == o.fadeOutDeclick;
+           fadeInDeclick == o.fadeInDeclick && fadeOutDeclick == o.fadeOutDeclick && warp == o.warp;
   }
 };
 

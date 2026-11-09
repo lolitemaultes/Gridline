@@ -1,10 +1,12 @@
 #include "../packs/Packs.h"
 #include "Program.h"
+#include "ClipSource.h"
 #include "ChannelIns.h"
 #include "ClipOps.h"
 #include "../packs/edison/edison.h"
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <cstdio>
 #include <functional>
 #include <set>
@@ -348,8 +350,10 @@ void setClipLevels(const ProgAudioClip& out, const Clip& c, const ClipFades* fad
 
 bool compileAudioClip(const Song& song, const Channel& ch, const Clip& c, const TempoMap& map, ProgAudioClip& out,
                       const ClipFades* fades = nullptr, const ClipRenderCtx* rctx = nullptr) {
-  SamplePtr smp = sampleCache().get(ch.plugin.data);
-  if (!smp || smp->frames() < 2 || smp->sampleRate <= 0) return false;
+  // K-85: the sound the channel's sample page makes (handles, precomputed effects, processing).
+  const ClipSource src = clipSource(ch);
+  if (!src.ok()) return false;
+  const SamplePtr& smp = src.sample;
   auto par = [&](int k, double d) { return k < static_cast<int>(ch.plugin.params.size()) ? static_cast<double>(ch.plugin.params[static_cast<size_t>(k)]) : d; };
   const bool sampler = ch.plugin.type == "gl.sampler";
   // J-164: speed and pitch from the mapping the clip operations and the
@@ -367,12 +371,27 @@ bool compileAudioClip(const Song& song, const Channel& ch, const Clip& c, const 
   out.startSec = map.secondsAt(static_cast<double>(out.start));
   out.durSec = map.secondsAt(static_cast<double>(out.end)) - out.startSec;
   out.sample = smp;
-  out.srcStart = std::max(0.0, c.audioStart);
-  out.srcEnd = c.audioEnd > out.srcStart ? std::min(c.audioEnd, smp->seconds()) : smp->seconds();
   out.reverse = c.reverse != (sampler && par(pp::SmpReverse, 0) >= 0.5);
+  if (!clipWindow(src, out.reverse, c, out.srcStart, out.srcEnd)) return false;
   out.clip = c.id;
   setClipLevels(out, c, fades);
-  if (c.syncBpm > 0 && c.tempoLock && rate.resample) {
+  // K-85: warp markers. The sections stretch through the stretch engine with
+  // the clip's pitch kept, per clip, whatever the channel's time mode.
+  const bool warped = !c.warp.empty() && !warpIsIdentity(c.warp);
+  if (warped) {
+    const double last = static_cast<double>(smp->frames() - 1) / smp->sampleRate;
+    out.warp = warpPoints(c.warp, out.reverse, last);
+    out.warpBase = warpTimeAt(out.warp, out.srcStart);
+    uint64_t h = 1469598103934665603ull;
+    for (const WarpPoint& p : out.warp)
+      for (double v : {p.w, p.s}) {
+        uint64_t b = 0;
+        std::memcpy(&b, &v, sizeof b);
+        h = (h ^ b) * 1099511628211ull;
+      }
+    out.warpKey = h;
+  }
+  if (c.syncBpm > 0 && c.tempoLock && rate.resample && !warped) {
     // J-193: locked to the tempo and resampled: the pitch follows the speed
     // the tempo gives it (a record played faster or slower); `pitch` is the
     // pitch per unit of speed (the clip's pitch apart from its speed).
@@ -384,17 +403,18 @@ bool compileAudioClip(const Song& song, const Channel& ch, const Clip& c, const 
     out.secPerTick = 60.0 / (c.syncBpm * song.ppq) / timeFactor;
     out.granular = true;
     out.pitch = rate.resample ? rate.pitch * timeFactor : rate.pitch;  // the pitch alone (the tempo fit keeps it)
-  } else if (stretchMode) {
+  } else if (stretchMode || warped) {
     out.speed = rate.speed;
     out.pitch = rate.pitch;
-    out.granular = out.pitch != 1.0 || out.speed != 1.0;
+    out.granular = warped || out.pitch != 1.0 || out.speed != 1.0;
   } else {  // resample: the stretch resamples; a pitch apart from the speed goes through the stretch
     out.speed = rate.speed;
     out.pitch = rate.pitch;
     out.granular = std::fabs(rate.pitch / rate.speed - 1.0) > 1e-9;
   }
   double played = out.secPerTick > 0 ? static_cast<double>(out.end - out.start) * out.secPerTick : out.durSec * out.speed;
-  out.cutEnd = out.srcStart + played < out.srcEnd - 1e-6;
+  const double playedTo = warped ? warpSourceAt(out.warp, out.warpBase + played) : out.srcStart + played;
+  out.cutEnd = playedTo < out.srcEnd - 1e-6;
   // J-87: offline-quality render of every pitched / stretched / synced clip.
   // The channel's own pitch (knob + fine + master pitch) is part of it; when
   // it moves at run time (automation), the realtime grains take over.
@@ -456,6 +476,12 @@ bool compileAudioClip(const Song& song, const Channel& ch, const Clip& c, const 
       rq.pitch = out.speed * chanRatio;  // J-164: the speed's pitch times the channel's, as the realtime path plays it
       if (std::fabs(chanRatio - 1.0) > 1e-9) mode = stretch::kStretch;
       need = std::fabs(out.speed - 1.0) > 1e-9 || std::fabs(chanRatio - 1.0) > 1e-9;
+    }
+    if (warped) {  // K-85: always rendered (pitch kept), the warp is part of the request
+      if (mode == stretch::Mode::Resample) mode = keepMode;
+      rq.warp = out.warp;
+      rq.warpBase = out.warpBase;
+      need = true;
     }
     rq.mode = mode;
     if (need && rctx->defer) {  // J-196: no new render while the edit goes on
@@ -1348,6 +1374,7 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     slot.start = ac.start;
     slot.srcStart = ac.srcStart, slot.srcEnd = ac.srcEnd, slot.speed = ac.speed, slot.secPerTick = ac.secPerTick;
     slot.resampleSync = ac.resampleSync;
+    slot.warpKey = ac.warpKey;
     const auto key = std::make_pair(ac.clip, live ? -1 - ac.pass : ac.pass);
     auto old = clipVoices_.find(key);
     // A preview voice (the stretch standing in for Rubber Band) plays on
@@ -1425,8 +1452,10 @@ bool ProgramBuilder::ClipVoiceSlot::same(const ClipVoiceSlot& o) const {
 }
 
 bool ProgramBuilder::ClipVoiceSlot::inPlace(const ClipVoiceSlot& o) const {
+  // K-85: a moved warp marker keeps the stream (it glides onto the new time
+  // map, AudioClips.cpp); warping or unwarping a clip restarts it.
   return start == o.start && srcStart == o.srcStart && srcEnd == o.srcEnd && speed == o.speed && secPerTick == o.secPerTick &&
-         resampleSync == o.resampleSync;
+         resampleSync == o.resampleSync && (warpKey == o.warpKey || (warpKey != 0 && o.warpKey != 0));
 }
 
 bool ProgramBuilder::patchClipLevels(const Song& song) {

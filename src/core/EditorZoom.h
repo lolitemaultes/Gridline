@@ -2,7 +2,7 @@
 //
 // Every built-in editor is laid out in logical pixels at a fixed design size (the
 // interface scale already multiplies those). On top of that each plugin window has its
-// own zoom (75 % to 200 %): the editor is drawn at its design size and magnified (or
+// own zoom (60 % to 200 %): the editor is drawn at its design size and magnified (or
 // reduced) as one picture (app/EditorZoomUi.h), so a fixed design keeps its proportions.
 //
 // K-136: every built-in editor opens at one global size (Settings > Interface, "Plugin
@@ -13,8 +13,8 @@
 // at the automatic size when that is larger: the largest menu step at which the editor still
 // takes no more than kAutoHeight of the work area's height and kAutoWidth of its width (so a
 // large workspace opens small editors bigger). Whatever is asked for, the window never gets
-// larger than the work area: the zoom is capped to what fits (and never below the smaller of
-// the size asked for and 100 %, where the window scrolls as before).
+// larger than the work area: the zoom is capped to what fits (K-147: down to kFitMin, where
+// the window scrolls).
 // Pure functions (tested in tests/test_k19.cpp).
 #pragma once
 #include <algorithm>
@@ -26,12 +26,13 @@
 
 namespace gl::edzoom {
 
-constexpr float kMin = 0.75f, kMax = 2.0f;
-constexpr float kSteps[] = {0.75f, 0.85f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f};  // the size menu
+constexpr float kMin = 0.6f, kMax = 2.0f;  // K-147: down to 60 %
+constexpr float kSteps[] = {0.6f, 0.75f, 0.85f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f};  // the size menu
 constexpr float kAutoHeight = 0.45f, kAutoWidth = 0.6f;
 constexpr float kAutoSteps[] = {1.0f, 1.25f, 1.5f, 1.75f, 2.0f};  // the automatic size grows, never shrinks
-// K-136: the global size of built-in editors (Settings > Interface), in 5 % steps.
-constexpr float kGlobalMin = 0.75f, kGlobalMax = 1.5f, kGlobalDefault = 0.85f;
+// K-136: the global size of built-in editors (Settings > Interface), in 5 % steps. K-147: 75 %
+// by default (knobs and text then sit at about the channel rack's and mixer's density), 60 % to 150 %.
+constexpr float kGlobalMin = 0.6f, kGlobalMax = 1.5f, kGlobalDefault = 0.75f;
 
 inline float globalSize(double setting) {
   if (!std::isfinite(setting) || setting <= 0) return kGlobalDefault;
@@ -52,14 +53,19 @@ inline float autoZoom(float w, float h, float aw, float ah) {
   return best;
 }
 
-// `want` capped so a window of w x h at 100 % (zoomed as a whole) fits the work area;
-// never under the smaller of `want` and 100 % (a window too large for the area scrolls).
+// K-147: the smallest size an editor is reduced to so its whole window fits the work area
+// (below it, the window scrolls).
+constexpr float kFitMin = 0.6f;
+
+// `want` capped so an editor of w x h at 100 % (zoomed as a whole) fits the room aw x ah
+// that the work area leaves for it (K-147: down to kFitMin, so a window never runs past the
+// screen with its controls cut off; under it the window scrolls).
 inline float fitZoom(float want, float w, float h, float aw, float ah) {
   const float asked = clampZoom(want);
   float z = asked;
   if (w > 0 && aw > 0) z = std::min(z, aw / w);
   if (h > 0 && ah > 0) z = std::min(z, ah / h);
-  return std::max(std::min(asked, 1.0f), std::floor(z * 100.0f + 1e-3f) / 100.0f);
+  return std::max(std::min(asked, kFitMin), std::floor(z * 100.0f + 1e-3f) / 100.0f);
 }
 
 // ---- the remembered zooms ("type=zoom;type=zoom")

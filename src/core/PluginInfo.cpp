@@ -1192,7 +1192,7 @@ GL_NOINLINE void addInfo27(std::vector<PluginInfo>& v) {
   p.params[ClpMix] = lin("Mix", "%", 0, 1, 1);
   p.presets = {{"Gentle", {}}, {"Loud master", {{ClpInput, 4.f}, {ClpThreshold, -3.f}, {ClpCeilingMode, 1.f}, {ClpOversample, 2.f}}},
                {"Drum smash", {{ClpInput, 9.f}, {ClpThreshold, -9.f}, {ClpPostGain, 3.f}, {ClpOversample, 1.f}, {ClpCeilingMode, 0.f}}}};
-  p.editorWidth = 560;
+  p.editorWidth = 540;  // K-147: the form at its largest size (270 x 2), no strip at the right
   v.push_back(p);
 }
 
@@ -1335,7 +1335,7 @@ GL_NOINLINE void addInfo33(std::vector<PluginInfo>& v) {
   p.params[WsClassic] = tog("Reference gain staging", 1);
   p.params[WsHq] = tog("HQ (no truncation)", 0);
   p.params[WsSmooth] = tog("Smooth modulation", 0);
-  p.editorWidth = 520;
+  p.editorWidth = 513;  // K-147: the form at its largest size (270 x 1.9), no strip at the right
   auto curve = [](auto f) {
     std::vector<std::pair<int, float>> v;
     for (int k = 0; k < kShapePoints; ++k) v.push_back({k, static_cast<float>(f(-1.0 + 2.0 * k / (kShapePoints - 1)))});
@@ -1610,7 +1610,7 @@ GL_NOINLINE void addInfo41(std::vector<PluginInfo>& v) {
   p.params[UtlMono] = tog("Mono", 0);
   p.presets = {{"Neutral", {}}, {"Mono check", {{UtlMono, 1.f}}}, {"Flip left", {{UtlInvert, 1.f}, {UtlInvertMode, 1.f}}},
                {"Clean DC", {{UtlDcRemove, 1.f}}}};
-  p.editorWidth = 640;
+  p.editorWidth = 590;  // K-147: the form at its largest size (227 x 2.6), no strip at the right
   v.push_back(p);
 }
 

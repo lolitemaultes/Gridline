@@ -25,6 +25,8 @@ namespace {
 constexpr double kDeclick = 0.002;     // minimum fade at clip edges, seconds
 constexpr double kSwitchFade = 0.010;  // seconds: render <-> realtime crossfade
 constexpr double kPrimeAhead = 0.15;   // J-170: seconds ahead a clip's realtime stream begins priming
+constexpr double kWarpCatchUp = 0.03;  // K-85: seconds over which a stream glides onto a moved warp
+constexpr double kWarpRestart = 0.05;  // K-85: source seconds off the time map past which it restarts instead
 
 // The realtime stretch's reader: source frames in clip direction (reverse
 // clips read from the end), silence outside the sound and past the window.
@@ -71,6 +73,12 @@ bool primedFits(const ClipVoice& rv, const Sample& s, const ProgAudioClip& c, do
   return rv.src == &s && rv.reverse == c.reverse && rv.endFrame == static_cast<int64_t>(std::ceil(c.srcEnd * s.sampleRate)) &&
          std::llabs(rv.primeCursor - cursor0) <= 1 && std::fabs(speed - rv.primeSpeed) <= 1e-9 * std::max(1.0, speed) && rv.primePitch > 0 && pitch > 0 &&
          std::fabs(std::log(pitch / rv.primePitch)) < std::log(2.0) / 24.0;
+}
+
+// K-85: the source position `p` source seconds into the clip's unwarped
+// time map (srcStart + p unwarped; through the warp markers when it has them).
+inline double clipSrc(const ProgAudioClip& c, double p) {
+  return c.warp.empty() ? c.srcStart + p : warpSourceAt(c.warp.data(), c.warp.size(), c.warpBase + p);
 }
 
 // The heard pitch (before the channel's) at `secRate` source seconds per
@@ -121,7 +129,7 @@ void renderAudioClips(const std::vector<ProgAudioClip>& clips, const TempoMap& m
     const Sample& s = *c.sample;
     // Source position at playback time u (seconds since the clip start).
     auto srcAt = [&](double u, double tickAtU) {
-      return c.secPerTick > 0 ? c.srcStart + (tickAtU - static_cast<double>(c.start)) * c.secPerTick : c.srcStart + u * c.speed;
+      return clipSrc(c, c.secPerTick > 0 ? (tickAtU - static_cast<double>(c.start)) * c.secPerTick : u * c.speed);
     };
     auto uOf = [&](int64_t i) { return sec0 + static_cast<double>(i) / sr - c.startSec; };
     // Declick only where the clip cuts into the audio (an explicit fade replaces it).
@@ -180,15 +188,28 @@ void renderAudioClips(const std::vector<ProgAudioClip>& clips, const TempoMap& m
         const int64_t m0 = s0 - first;
         const double src0 = srcAt(uOf(s0), tickAt(s0)), src1 = srcAt(uOf(s1), tickAt(s1));
         // Source seconds per playback second over this stretch of the block.
-        const double secRate = c.secPerTick > 0 ? std::max(0.0, (src1 - src0) * sr / n) : c.speed;
+        const double secRate = c.secPerTick > 0 || !c.warp.empty() ? std::max(0.0, (src1 - src0) * sr / n) : c.speed;
         const double toFrames = s.sampleRate / sr;
-        const double speed = secRate * toFrames;
+        double speed = secRate * toFrames;
         const double pitch = pitchOf(c, secRate) * chanRatio * toFrames;
         bool restart = rv->next != m0 || rv->gen != c.rtGen;  // a jump (or the first block, J-196: a new timing): a fresh stream, primed
         const int pre = rv->voice.prerollFor(speed);
         const int64_t cursor0 = static_cast<int64_t>(std::floor(src0 * s.sampleRate)) - pre;
         if (!restart && rv->primed)  // J-170: begun ahead; it plays only if it is the stream starting here would make
           restart = !primedFits(*rv, s, c, speed, pitch, cursor0);
+        // K-85: a warp marker moved under a playing stream (the program keeps
+        // its gen): the stream glides back onto the new time map within
+        // kWarpCatchUp of playback instead of restarting (a restart every
+        // frame of a drag clicks); a jump too far for that restarts it.
+        if (!restart && !c.warp.empty()) {
+          const double err = src0 - rv->pos;
+          if (std::fabs(err) > kWarpRestart) {
+            restart = true;
+          } else {
+            const double lim = 0.25 * speed + 0.01 * toFrames;
+            speed += std::clamp(err * s.sampleRate / (kWarpCatchUp * sr), -lim, lim);
+          }
+        }
         if (restart) {
           rv->gen = c.rtGen;
           rv->src = &s;
@@ -196,11 +217,13 @@ void renderAudioClips(const std::vector<ProgAudioClip>& clips, const TempoMap& m
           rv->endFrame = static_cast<int64_t>(std::ceil(c.srcEnd * s.sampleRate));
           rv->cursor = cursor0;
           rv->voice.start(&readClip, rv, speed, pitch, pre);
+          rv->pos = src0;
         }
         rv->primed = false;
         float* o[2] = {rv->out[0], rv->out[1]};
         rv->voice.render(o, n, speed, pitch, &readClip, rv);
         rv->next = m0 + n;
+        rv->pos += speed * n / s.sampleRate;
       }
       for (int64_t i = s0; i < s1; ++i) {
         const double u = uOf(i);
@@ -259,12 +282,14 @@ void renderAudioClips(const std::vector<ProgAudioClip>& clips, const TempoMap& m
     const Sample& s = *c.sample;
     // As the block it starts in will compute them.
     const double toFrames = s.sampleRate / sr;
-    const double secRate = c.secPerTick > 0 ? std::max(0.0, c.secPerTick * (t1 - t0) * sr / len) : c.speed;
-    const double speed = secRate * toFrames;
-    const double pitch = pitchOf(c, secRate) * chanRatio * toFrames;
+    double secRate = c.secPerTick > 0 ? std::max(0.0, c.secPerTick * (t1 - t0) * sr / len) : c.speed;
     const double u = sec0 + static_cast<double>(first) / sr - c.startSec;
     const double tk = t0 + (t1 - t0) * static_cast<double>(first) / static_cast<double>(len);
-    const double src0 = c.secPerTick > 0 ? c.srcStart + (tk - static_cast<double>(c.start)) * c.secPerTick : c.srcStart + u * c.speed;
+    const double lin = c.secPerTick > 0 ? (tk - static_cast<double>(c.start)) * c.secPerTick : u * c.speed;
+    const double src0 = clipSrc(c, lin);
+    if (!c.warp.empty()) secRate *= warpSpeedAt(c.warp.data(), c.warp.size(), c.warpBase + lin);  // K-85: its first section's speed
+    const double speed = secRate * toFrames;
+    const double pitch = pitchOf(c, secRate) * chanRatio * toFrames;
     const int pre = rv->voice.prerollFor(speed);
     const int64_t cursor0 = static_cast<int64_t>(std::floor(src0 * s.sampleRate)) - pre;
     if (!(rv->primed && rv->next == 0 && rv->gen == c.rtGen && primedFits(*rv, s, c, speed, pitch, cursor0))) {
@@ -274,7 +299,7 @@ void renderAudioClips(const std::vector<ProgAudioClip>& clips, const TempoMap& m
       rv->endFrame = static_cast<int64_t>(std::ceil(c.srcEnd * s.sampleRate));
       rv->cursor = cursor0;
       rv->voice.startLater(&readClip, rv, speed, pitch, pre);
-      rv->primed = true, rv->next = 0;
+      rv->primed = true, rv->next = 0, rv->pos = src0;
       rv->primeSpeed = speed, rv->primePitch = pitch, rv->primeCursor = cursor0, rv->credit = 0;
     }
     const int left = rv->voice.primeLeft(speed);

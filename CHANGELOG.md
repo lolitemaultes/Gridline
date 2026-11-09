@@ -7,18 +7,21 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 
 ### Added
 
-- **Command palette.** Press Ctrl+K (Cmd+K on macOS) or Ctrl+Shift+P, or pick View > Command palette, and type to find any command, menu item (with where it lives in the menus), window, setting or plugin, then press Enter to run it, open it, jump to that setting or add the plugin. It ranks names that start with what you typed first, forgives small typos, shows each command's shortcut, greys out what cannot run right now with the reason, lists your recent picks first, and works in every layout and language (the English names work too). Tab switches between categories. See [docs/command-palette.md](docs/command-palette.md).
 
 ### Changed
 
 - **Loop a cut clip from where it was cut.** Holding Ctrl (Cmd on macOS) and dragging the edge of a pattern, audio or automation clip that shows only part of its content (it was trimmed at either end) now repeats the part the clip showed, whatever the cut point. Dragging the edge back to the cut point in the same drag gives back the plain clip exactly as it was, with no loop; the edge snaps to that point so it is easy to hit, and inside it the clip is simply shorter. With the left edge, dragging out loops the part and sets where its loop starts. Several selected clips loop together, each from its own cut point, and the whole drag is one undo step. FL Studio export writes such a loop as repeated clips of the cut length.
 - **Recordings draw as they record.** Loupe now draws a take while it records, from its first moment, in its own waveform colours with a red line where the recording has got to; Seltmann's recorder draws its take the same way. While the recording still fits, it grows from left to right; once it reaches the right edge, the view keeps fitting the whole recording into its width, smoothly as it grows, so you always see all of it, even on an hour-long take. When recording stops, the finished take shows in the normal view. While Loupe records, the readout under the waveform shows the take's length and peak level.
 
+
 ### Fixed
+
 
 - **M4A samples have their exact length on Linux and the BSDs.** AAC files in .m4a decoded with FFmpeg no longer carry up to a tenth of a second of extra silence at the end, and no longer start late: Gridline now reads the start delay and the real length the file states and trims to the sample, as macOS and Windows do, so loops close cleanly and tempo fitting lines up.
 - **The loop badge by the pointer.** The badge that shows a Ctrl (Cmd) edge drag will loop is now larger, so its loop arrows read as arrows instead of a small ring, sits below and to the right of the pointer, clear of the resize arrows, is drawn crisply at every interface size and stands out in both themes, and appears only where a drag of that edge really loops: not over a clip's body, not on the left edge of a clip at the very start of the song, and during a drag only while the clip loops. It appears and goes the moment the key is pressed or released. The loop mark in the title bar of a looping clip is larger and readable too.
-
+- **A sampler's start and end handles now trim its audio clips.** Moving the START or END handle on the sample page changes what every playlist clip of that channel plays, in playback, renders, exports and bounces, and the clips' waveforms, lengths, loops, trims and slips follow. The handles can no longer be dragged past each other, the waveform at the top of the channel settings is now the one you drag them on, and the sample page no longer waits for a long file to load. The sample page's processing (normalize, remove DC, polarity, swap stereo and the fades over the region) and its precomputed effects now also reach the clips, as they do the notes.
+- **Reversing an audio clip keeps its own audio.** A trimmed clip used to play another part of the file once reversed; it now plays the same audio backwards.
+- **FL Studio projects with trimmed samples.** Audio clips on a channel whose sample start was moved in FL Studio now open at the right place, and export back the same way; warped clips are written to FL Studio as one stretched clip per section.
 
 ## 0.7.4
 

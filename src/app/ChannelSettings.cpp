@@ -28,6 +28,7 @@
 #include "../core/Platform.h"
 #include "ChannelStrip.h"
 #include "ChannelRoute.h"
+#include "../engine/ClipSource.h"
 #include "Viewports.h"
 #include "SmoothScrollUi.h"
 #include <map>
@@ -37,18 +38,48 @@ namespace gl {
 using theme::pal;
 namespace fs = std::filesystem;
 
-static void drawWaveform(App& a, const SamplePtr& smp, ImVec2 size, float startFrac) {
+// K-85: the whole file with the channel's start and end handles. Dragging a
+// handle trims what the channel plays: its notes and its audio clips in the
+// playlist (engine/ClipSource.h), so the page and the playlist agree. The same
+// two parameters as the sampler editor's markers; they never cross.
+static void drawWaveform(App& a, ObjectId channel, const SamplePtr& smp, ImVec2 size) {
   const auto& P = pal();
   ImDrawList* dl = ImGui::GetWindowDrawList();
   ImVec2 p = ImGui::GetCursorScreenPos();
-  ImGui::Dummy(size);
+  ImGui::InvisibleButton("##chwave", size);  // (also the drop target for a new sample)
+  const bool hovered = ImGui::IsItemHovered(), active = ImGui::IsItemActive();
   dl->AddRectFilled(p, ImVec2(p.x + size.x, p.y + size.y), P.surface950, 6);
   if (!smp || smp->frames() == 0) {
-    const char* msg = "Drop an audio file here or click Load";
+    const char* msg = i18n::tr("Drop an audio file here or click Load");
     ImVec2 ts = ImGui::CalcTextSize(msg);
     dl->AddText(ImVec2(p.x + (size.x - ts.x) * 0.5f, p.y + (size.y - ts.y) * 0.5f), P.textFaint, msg);
     return;
   }
+  const Channel* ch = a.doc.song().channel(channel);
+  double startFrac = 0, endFrac = 1;
+  if (ch) channelTrim(*ch, startFrac, endFrac);
+  const PluginTarget target{channel, -1};
+  // Drag: the handle nearest the pointer (within 8 px) moves, kept apart from the other one.
+  static int dragging = -1;
+  const ImGuiIO& io = ImGui::GetIO();
+  const float sx = p.x + static_cast<float>(startFrac) * size.x, ex = p.x + static_cast<float>(endFrac) * size.x;
+  int near = -1;
+  if (hovered || active) {
+    const float ds = std::fabs(io.MousePos.x - sx), de = std::fabs(io.MousePos.x - ex);
+    if (std::min(ds, de) <= 8.0f) near = ds <= de ? 0 : 1;
+  }
+  if (ImGui::IsItemActivated()) dragging = near;
+  if (active && dragging >= 0 && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.5f)) {
+    const double v = clampTrimHandle(dragging == 1, (io.MousePos.x - p.x) / size.x, dragging == 1 ? startFrac : endFrac, smp->seconds());
+    a.doc.setParam(target.pid(dragging == 1 ? pp::SmpEnd : pp::SmpStart), v, true);
+  }
+  if (ImGui::IsItemDeactivated()) {
+    dragging = -1;
+    a.doc.endGesture();
+  }
+  if (near >= 0 || (active && dragging >= 0)) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+  if (hovered)
+    a.setHint(i18n::tr("Drag the start or end handle: the channel's notes and its audio clips in the playlist play only the part between them"));
   float mid = p.y + size.y * 0.5f;
   size_t n = smp->frames();
   int w = static_cast<int>(size.x);
@@ -62,13 +93,26 @@ static void drawWaveform(App& a, const SamplePtr& smp, ImVec2 size, float startF
     }
     dl->AddLine(ImVec2(p.x + x, mid - hi * size.y * 0.46f), ImVec2(p.x + x, mid - lo * size.y * 0.46f + 1), P.text);
   }
-  float sx = p.x + startFrac * size.x;
-  if (startFrac > 0) dl->AddRectFilled(p, ImVec2(sx, p.y + size.y), theme::withAlpha(P.surface950, 0.6f));
-  dl->AddLine(ImVec2(sx, p.y), ImVec2(sx, p.y + size.y), P.accent, 1.5f);
-  char info[96];
-  std::snprintf(info, sizeof info, "%.2f s  ·  %.0f Hz", smp->seconds(), smp->sampleRate);
+  // The parts the handles cut away, dimmed; each handle a line with a small tab at the top.
+  if (startFrac > 0) dl->AddRectFilled(p, ImVec2(sx, p.y + size.y), theme::withAlpha(P.surface950, 0.6f), 6, ImDrawFlags_RoundCornersLeft);
+  if (endFrac < 1) dl->AddRectFilled(ImVec2(ex, p.y), ImVec2(p.x + size.x, p.y + size.y), theme::withAlpha(P.surface950, 0.6f), 6, ImDrawFlags_RoundCornersRight);
+  for (int k = 0; k < 2; ++k) {
+    const float x = k ? ex : sx;
+    const bool lit = near == k || (active && dragging == k);
+    const ImU32 col = lit ? P.accent : theme::withAlpha(P.accent, 0.75f);
+    dl->AddLine(ImVec2(x, p.y), ImVec2(x, p.y + size.y), col, lit ? 2.0f : 1.5f);
+    const float tw = 6.0f, th = 7.0f;
+    if (k == 0) dl->AddTriangleFilled(ImVec2(x, p.y), ImVec2(x + tw, p.y), ImVec2(x, p.y + th), col);
+    else dl->AddTriangleFilled(ImVec2(x, p.y), ImVec2(x - tw, p.y), ImVec2(x, p.y + th), col);
+  }
+  char info[128];
+  const double secs = smp->seconds();
+  if (startFrac > 0 || endFrac < 1)
+    std::snprintf(info, sizeof info, "%.2f s  ·  %.0f Hz  ·  %s %.3f - %.3f s", secs, smp->sampleRate, i18n::tr("plays"), startFrac * secs, endFrac * secs);
+  else
+    std::snprintf(info, sizeof info, "%.2f s  ·  %.0f Hz", secs, smp->sampleRate);
   ImGui::PushFont(a.fontMono, 10.5f);
-  dl->AddText(ImVec2(p.x + 8, p.y + 6), P.textDim, info);
+  dl->AddText(ImVec2(p.x + 10, p.y + 6), P.textDim, info);
   ImGui::PopFont();
 }
 
@@ -505,18 +549,21 @@ void drawChannelSettings(App& a) {
   }
   editorW = std::floor(editorW);
   const float winW = std::max(624.0f, editorW + 24.0f);
+  // K-147: the region the zoomed window holds: the editor's width (the channel's own rows
+  // and the note processors need kChannelMinW at least).
+  constexpr float kChannelMinW = 600.0f;
+  const float regionW = std::max(kChannelMinW, editorW);
   {
     ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.42f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
   }
   // K-19: the window's own size on top of the interface scale (installed plugins keep theirs).
-  const ImGuiStyle& st = ImGui::GetStyle();
-  const float contentW = winW - 2 * st.WindowPadding.x + st.ScrollbarSize;
-  const float zoom = edzoomui::prepare(a, "channelsettings", info ? info->type : std::string("(layer)"), contentW, !info || !isHostedType(info->type));
+  const bool zoomable = !info || !isHostedType(info->type);
+  edzoomui::prepare(a, "channelsettings", info ? info->type : std::string("(layer)"), zoomable ? regionW : winW, zoomable);
   // K-79: the performance preset docks the channel settings in its bottom panel (they scroll there).
   const bool docks = layoutui::active() == layout::Preset::Live;
   const int fitFlags =  // J-158: capped to the work area, the rest scrolls
-      docks ? 0 : ui::NextFloatingWindowSize(zoom != 1.0f ? std::floor(contentW * zoom) + 2 * st.WindowPadding.x - st.ScrollbarSize : winW);
+      docks ? 0 : zoomable ? edzoomui::nextWindowSize("channelsettings") : ui::NextFloatingWindowSize(winW);
   viewports::openAttached(title.c_str());  // opens inside the main window, never popped out by itself
   bool vis = ImGui::Begin(title.c_str(), &open,
                           docks ? ImGuiWindowFlags_HorizontalScrollbar : (ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking | fitFlags));
@@ -573,7 +620,7 @@ void drawChannelSettings(App& a) {
   std::string mlabel = mi == 0 ? "Master" : std::to_string(mi) + "  " + mixerTrackName(s, static_cast<size_t>(mi));
   // J-195: room for the free-track button and the strip eye after the list.
   const bool routeOpen =
-      ui::BeginCombo("##route", ("\xE2\x86\x92 " + mlabel).c_str(), std::max(120.0f, ImGui::GetContentRegionAvail().x - 2 * (fh + theme::kS2)));
+      ui::BeginCombo("##route", ("\xE2\x86\x92 " + mlabel).c_str(), std::max(100.0f, ImGui::GetContentRegionAvail().x - 2 * (fh + theme::kS2)));  // K-147: fits a 600 px window
   devNoteRect("chroute");
   if (routeOpen) {
     if (chanroute::listItem()) pendingFreeRoute(a) = id;
@@ -681,8 +728,7 @@ void drawChannelSettings(App& a) {
   // Sample (sampler only).
   if (info && info->type == "gl.sampler") {  // other sample instruments have their own sample UI
     SamplePtr smp = c->plugin.data.empty() ? nullptr : sampleCache().request(c->plugin.data);  // J-30: non-blocking
-    float startFrac = c->plugin.params.size() > pp::SmpStart ? c->plugin.params[pp::SmpStart] : 0;
-    drawWaveform(a, smp, ImVec2(600, 110), startFrac);
+    drawWaveform(a, id, smp, ImVec2(600, 64));  // K-85: the whole-file overview with the start / end handles (the editor below zooms into the region and its loop)
     if (ImGui::BeginDragDropTarget()) {
       if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("GL_FILE")) {
         std::string path(static_cast<const char*>(pl->Data), static_cast<size_t>(pl->DataSize));

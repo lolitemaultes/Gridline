@@ -1256,6 +1256,13 @@ target_link_libraries(gridline_tests_k19 PRIVATE gridline_core)
 target_include_directories(gridline_tests_k19 PRIVATE tests src)
 target_compile_options(gridline_tests_k19 PRIVATE ${GL_WARN})
 add_test(NAME k19_editor_size COMMAND gridline_tests_k19 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# K-147: magnetic knob detents (soft magnets at the divisions of a synced time knob) and the
+# plugin window fit rules.
+add_executable(gridline_tests_k147 tests/test_k147.cpp)
+target_link_libraries(gridline_tests_k147 PRIVATE gridline_core)
+target_include_directories(gridline_tests_k147 PRIVATE tests src)
+target_compile_options(gridline_tests_k147 PRIVATE ${GL_WARN})
+add_test(NAME k147_magnets COMMAND gridline_tests_k147 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 # K-25: per-note pitch bend lines: shape, save / load, undo, note edits, playback (measured pitch,
 # per voice, block sizes, MIDI Out), MIDI file export / import, FL export report.
 add_executable(gridline_tests_k25 tests/test_k25.cpp)
@@ -1404,6 +1411,12 @@ target_link_libraries(gridline_tests_k140 PRIVATE gridline_core)
 target_include_directories(gridline_tests_k140 PRIVATE tests)
 target_compile_options(gridline_tests_k140 PRIVATE ${GL_WARN})
 add_test(NAME k140_cut_loops COMMAND gridline_tests_k140 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# K-85: sampler start / end handles trim audio clips; warp markers.
+add_executable(gridline_tests_k85 tests/test_k85.cpp)
+target_link_libraries(gridline_tests_k85 PRIVATE gridline_core)
+target_include_directories(gridline_tests_k85 PRIVATE tests src)
+target_compile_options(gridline_tests_k85 PRIVATE ${GL_WARN})
+add_test(NAME k85_clip_trim_warp COMMAND gridline_tests_k85 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 add_executable(gridline_tests_j56 tests/test_j56.cpp)
 target_link_libraries(gridline_tests_j56 PRIVATE gridline_core)
 target_include_directories(gridline_tests_j56 PRIVATE tests)
@@ -2190,7 +2203,21 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -DOUT=${CMAKE_BINARY_DIR}/k19_editor_zoom -P ${CMAKE_SOURCE_DIR}/tests/k19_editor_zoom_app.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(k19_editor_zoom_app PROPERTIES TIMEOUT 300)
-    # K-136: one size for every built-in plugin window (85 % by default, 75 to 150 %), a plugin's
+    # K-147: every built-in plugin window fits its editor (nothing clipped, no spare room) at the
+    # default size, 75, 100 and 150 %, at interface scale 1 and 2.
+    add_test(NAME k147_plugin_fit_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/k147_plugin_fit -P ${CMAKE_SOURCE_DIR}/tests/k147_plugin_fit_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(k147_plugin_fit_app PROPERTIES TIMEOUT 1800)
+    # K-147: Tracer's synced Time knob holds on divisions, is free between them, one undo per
+    # drag; Shift drags past them; the wheel steps from division to division.
+    add_test(NAME k147_magnet_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/k147_magnet -P ${CMAKE_SOURCE_DIR}/tests/k147_magnet_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(k147_magnet_app PROPERTIES TIMEOUT 400)
+    # K-136: one size for every built-in plugin window (K-147: 75 % by default, 60 to 150 %), a plugin's
     # own size remembered, controls working at 75 %; the channel rack as tall as its content.
     add_test(NAME k136_plugin_size_app
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
@@ -2202,6 +2229,13 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -DOUT=${CMAKE_BINARY_DIR}/k136_rack_fit -P ${CMAKE_SOURCE_DIR}/tests/k136_rack_fit_app.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(k136_rack_fit_app PROPERTIES TIMEOUT 300)
+    # K-146: a cut-off rack with a long pattern: one sideways scroll control (the step slider), no
+    # frame-to-frame size or scroll changes, the wheel and the slider scroll by the expected amounts.
+    add_test(NAME k146_rack_scroll_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/k146_rack_scroll -P ${CMAKE_SOURCE_DIR}/tests/k146_rack_scroll_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(k146_rack_scroll_app PROPERTIES TIMEOUT 400)
     # K-15: Loupe pinned into the main layout (a tab next to the playlist, a split below it, a
     # side column), its geometry in each spot, unpinned again, the pin kept with the layout.
     add_test(NAME k15_loupe_dock_app

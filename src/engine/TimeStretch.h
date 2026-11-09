@@ -45,6 +45,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include "../core/TimeWarp.h"
 #include "Sample.h"
 #include "pitch/Kernel.h"
 
@@ -155,6 +156,11 @@ struct ClipRequest {
   const TempoMap* map = nullptr;
   double secPerTick = 0, startTick = 0, startSec = 0;
   std::string mapKey;               // identifies the tempo map (cache key)
+  // K-85: warp markers in the clip's direction: the map above gives a warped
+  // position p, the clip plays source warpSourceAt(warp, warpBase + p)
+  // (empty: srcStart + p).
+  std::vector<WarpPoint> warp;
+  double warpBase = 0;
   double atTick = 0;                // where the song plays it: renders near the song position go first (not part of the key)
 };
 // Returns the rendered clip (cached by content), or null when nothing needs

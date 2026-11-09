@@ -3,7 +3,7 @@
 //  * the automatic zoom follows the work area (a 1440p screen at 130 % opens a small editor
 //    larger, a 1440x900 screen keeps the design size, big editors never grow);
 //  * a picked zoom is capped so the window fits the work area, never under 100 % (or the
-//    smaller size asked for); K-136: one global size (75 % to 150 %, 85 % by default);
+//    smaller size asked for); K-136: one global size (K-147: 60 % to 150 %, 75 % by default);
 //  * the remembered zooms round-trip through the setting string (and junk is ignored);
 //  * the magnified picture and the pointer use one mapping;
 //  * Loupe's layout in every dock spot: wide / compact form, the waveform takes the rest,
@@ -42,23 +42,24 @@ int main() {
   // ---- capped to the work area
   expect(edzoom::fitZoom(2.0f, 914, 355, 1067 - 16, 600 - 90) == 1.14f, "200 % in a 1067x600 workspace: capped to 114 %");
   expect(edzoom::fitZoom(1.5f, 914, 355, 1953, 1018) == 1.5f, "150 % fits a 1440p workspace: kept");
-  expect(edzoom::fitZoom(1.5f, 1200, 700, 1000, 600) == 1.0f, "an editor larger than the area: 100 % (it scrolls, as before)");
+  expect(edzoom::fitZoom(1.5f, 1200, 700, 1000, 600) == 0.83f, "K-147: an editor larger than the area shrinks to fit (83 %)");
+  expect(edzoom::fitZoom(1.0f, 4000, 700, 1000, 600) == edzoom::kFitMin, "K-147: never under the fit floor (then it scrolls)");
   expect(edzoom::fitZoom(5.0f, 100, 100, 5000, 5000) == edzoom::kMax, "never above 200 %");
-  expect(edzoom::fitZoom(0.5f, 100, 100, 5000, 5000) == edzoom::kMin, "never below 75 %");
+  expect(edzoom::fitZoom(0.5f, 100, 100, 5000, 5000) == edzoom::kMin, "never below 60 %");
   // K-136: sizes under 100 %
   expect(edzoom::fitZoom(0.85f, 754, 334, 1904, 990) == 0.85f && edzoom::fitZoom(0.75f, 754, 334, 1904, 990) == 0.75f,
          "85 % and 75 % are kept as asked");
-  expect(edzoom::fitZoom(0.85f, 1200, 700, 1000, 600) == 0.85f, "a reduced editor larger than the area: the size asked (it scrolls)");
-  expect(edzoom::fitZoom(1.25f, 1200, 700, 1000, 600) == 1.0f, "an enlarged editor larger than the area: 100 % (as before)");
+  expect(edzoom::fitZoom(0.85f, 1200, 700, 1000, 600) == 0.83f, "K-147: a reduced editor larger than the area shrinks to fit");
+  expect(edzoom::fitZoom(1.25f, 1200, 700, 1000, 600) == 0.83f, "K-147: an enlarged editor larger than the area shrinks to fit");
   expect(edzoom::globalSize(0) == edzoom::kGlobalDefault && edzoom::globalSize(-1) == edzoom::kGlobalDefault &&
              edzoom::globalSize(std::nan("")) == edzoom::kGlobalDefault,
          "global size: unset or junk is the default");
-  expect(edzoom::globalSize(0.5) == 0.75f && edzoom::globalSize(3) == 1.5f, "global size: 75 % to 150 %");
+  expect(edzoom::globalSize(0.5) == 0.6f && edzoom::globalSize(3) == 1.5f, "global size: 60 % to 150 %");
   expect(edzoom::globalSize(0.87) == 0.85f && edzoom::globalSize(1.13) == 1.15f, "global size: 5 % steps");
   {
     Settings st;
-    expect(st.getNumber("ui.pluginWindowSize") == 0.85 && edzoom::globalSize(st.getNumber("ui.pluginWindowSize")) == edzoom::kGlobalDefault,
-           "setting ui.pluginWindowSize: 85 % by default");
+    expect(st.getNumber("ui.pluginWindowSize") == 0.75 && edzoom::globalSize(st.getNumber("ui.pluginWindowSize")) == edzoom::kGlobalDefault,
+           "setting ui.pluginWindowSize: 75 % by default");
     expect(!st.getBool("ui.pluginWindowFit"), "setting ui.pluginWindowFit: off by default (editors do not grow on large screens)");
   }
   {
@@ -67,7 +68,7 @@ int main() {
       for (float aw : {800.0f, 1200.0f, 2000.0f})
         for (float ah : {500.0f, 900.0f, 1400.0f}) {
           const float z = edzoom::fitZoom(want, 600, 400, aw, ah);
-          if (z > 1.0f && (600 * z > aw + 0.01f || 400 * z > ah + 0.01f)) ok = false;
+          if (z > edzoom::kFitMin && (600 * z > aw + 0.01f || 400 * z > ah + 0.01f)) ok = false;
           if (z > want + 1e-4f) ok = false;
         }
     expect(ok, "a zoomed window always fits the work area and is never larger than asked");

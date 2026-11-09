@@ -45,7 +45,7 @@ class Controller;
 // Editing tools of the piano roll and the playlist. J-11 added Slip (playlist:
 // move a clip's content inside it), Play (audition / scrub while held), Zoom
 // (drag a range, click in, right-click out) and Detune (drag notes' fine pitch).
-enum class Tool { Draw, Paint, Erase, Select, Slice, Mute, Slip, Play, Zoom, Detune, Bend };  // K-25: Bend = the piano roll's pitch bend tool
+enum class Tool { Draw, Paint, Erase, Select, Slice, Mute, Slip, Play, Zoom, Detune, Bend, Warp };  // K-25: Bend = the piano roll's pitch bend tool; K-85: Warp = the playlist's warp markers
 
 struct PianoRollState {
   float pxPerTick = 0.25f;

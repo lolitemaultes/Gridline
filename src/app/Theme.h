@@ -87,7 +87,7 @@ namespace role {
 constexpr uint32_t kDraw = 0xFFBC40, kPaint = 0x77C5F2, kDelete = 0xFF5B53, kMute = 0xFF53A9, kSlip = 0xFFA04A,
                    kSlice = 0x80ACFF, kSelect = 0xFFAB60, kZoom = 0x80ACFF, kPlay = 0xB1E758, kSnap = 0x7AE4A3,
                    kStamp = 0xD963F1, kLoop = 0xA8E44A, kGraph = 0x4ECCFF, kMenu = 0xFF9637, kView = 0xFB9244,
-                   kGhost = 0x80ACFF;
+                   kGhost = 0x80ACFF, kWarp = 0x52D6C2;  // K-85: warp markers
 }  // namespace role
 
 const Palette& pal();

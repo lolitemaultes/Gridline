@@ -380,8 +380,9 @@ std::vector<ChanField> channelFields(int type, const Channel& target, int ppq) {
     }
   }
   const bool sampler = target.plugin.type == "gl.sampler";
-  if (sampler && type == kSampler) {
-    add(spf(SmpRoot), 135, 0, 0, Type::U32, 0, 127);
+  // K-85: the sample page, on sampler and audio clip channels alike (FlpChannels.cpp importSamplePage):
+  // the precomputed effects, the processing switches, the start handle and the length after it.
+  auto samplePage = [&]() {
     add(spf(SmpPreTilt), 69, 0, 0, Type::U16, 0, 256);
     add(spf(SmpPreCutoff), 71, 0, 0, Type::U16, 16, 1024);
     add(spf(SmpPreBoost), 74, 0, 0, Type::U16, 0, 256);
@@ -394,14 +395,22 @@ std::vector<ChanField> channelFields(int type, const Channel& target, int ppq) {
     add(spf(SmpPreReverbType), 139, 0, 2, Type::U16, 0, 1);
     add(spf(SmpPreRampIn), 76, 0, 0, Type::U16, 0, 1024);
     add(spf(SmpPreRampOut), 75, 0, 0, Type::U16, 0, 1024);
-    add(spf(SmpLoop), 20, 0, 0, Type::U8, 0, 1);
     add(spf(SmpRemoveDc), 215, 0, 9, Type::U8, 0, 1);
     add(spf(SmpNormalize), 215, 0, 80, Type::U8, 0, 1);
     add(spf(SmpPolarity), 215, 0, 81, Type::U8, 0, 1);
+    add(spf(SmpStart), 215, 0, 128, Type::F64, 0, 1);
+    add([](const Channel& c) {
+          const double a = sp(c, SmpStart), b = sp(c, SmpEnd);
+          return b >= 1 ? 1.0 : std::clamp(b - a, 0.0, 1.0);
+        },
+        215, 0, 136, Type::F64, 0, 1);
+  };
+  if (sampler && type == kSampler) {
+    add(spf(SmpRoot), 135, 0, 0, Type::U32, 0, 127);
+    samplePage();
+    add(spf(SmpLoop), 20, 0, 0, Type::U8, 0, 1);
     add(spf(SmpDeclick), 215, 0, 83, Type::U8, 0, 5);
     add(spf(SmpLoopXfade), 215, 0, 84, Type::U32, 0, 256);
-    add(spf(SmpStart), 215, 0, 128, Type::F64, 0, 1);
-    add(spf(SmpEnd), 215, 0, 136, Type::F64, 0, 1);
     add(spf(SmpTimeStretch), 215, 0, 104, Type::I32, -20000, 20000);
     add(spf(SmpPitchShift), 215, 0, 100, Type::I32, -1200, 1200);
     // Filter (levels 219: mod X / mod Y / type).
@@ -433,6 +442,7 @@ std::vector<ChanField> channelFields(int type, const Channel& target, int ppq) {
       add(spf(SmpLfoDelay), 218, e, 36, Type::I32, 100, 65536);
     }
   } else if (sampler && type == kAudio) {
+    samplePage();
     // J-87: FL's stretch methods −2 … 9 (stretch::modeFromFl); the solver keeps
     // the stored method when it already imports as the channel's mode.
     // J-157: FL has no Rubber Band: it goes out as FL's stretch (the closest method).

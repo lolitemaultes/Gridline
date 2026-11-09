@@ -635,8 +635,12 @@ void drawMini(App& a, const PluginTarget& t, const PluginInfo& info, const Entry
     pui::knobAt(a, t, lay.knobs[k], pos, nullptr, pui::KnobMedium, cell);
   }
   const size_t rows = (lay.knobs.size() + kColumns - 1) / kColumns;
-  ImGui::SetCursorScreenPos(ImVec2(g0.x, g0.y + rowH * static_cast<float>(rows)));
-  ImGui::Dummy(ImVec2(width, 2));
+  // The editor ends where its last row does: no trailing gap (the window is the editor's size).
+  bool anyOption = false;
+  for (int k : lay.options) anyOption = anyOption || info.params[static_cast<size_t>(k)].kind == ParamKind::Choice ||
+                                        info.params[static_cast<size_t>(k)].kind == ParamKind::Toggle;
+  ImGui::SetCursorScreenPos(ImVec2(g0.x, g0.y + rowH * static_cast<float>(rows) - (anyOption ? 0.f : 6.f)));
+  ImGui::Dummy(ImVec2(width, anyOption ? 2.f : 0.f));
   // Option rows: choices as segmented selectors (two rows when long), then the toggles as pills on one row.
   for (int k : lay.options) {
     const ParamDesc& d = info.params[static_cast<size_t>(k)];
@@ -657,7 +661,6 @@ void drawMini(App& a, const PluginTarget& t, const PluginInfo& info, const Entry
     first = false;
     ImGui::PopID();
   }
-  ImGui::Dummy(ImVec2(width, 4));
 }
 
 }  // namespace

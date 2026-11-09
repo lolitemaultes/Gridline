@@ -450,11 +450,14 @@ bool wheel(App& a, const PluginTarget& t, int param, ImVec2 tl, float size, cons
   ImGui::InvisibleButton("##w", ImVec2(size, size));
   bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
   audit::nextKind(align::kKnob);  // J-128
+  const std::vector<double> mags = pui::pendingMagnets(b.d);  // K-147: ticks at the magnets (dragParamItem takes them)
   bool changed = pui::dragParamItem(a, b.pid, b.d, b.val, 170.0f, false);
   ImDrawList* dl = ImGui::GetWindowDrawList();
   bool centred = (flags & WheelCentered) || (b.d.min < 0 && b.d.max > 0);
   drawWheel(dl, ImVec2(tl.x + size * 0.5f, tl.y + size * 0.5f), size * 0.5f, b.d.toNormalized(b.val), centred, flags & WheelBigLine, hov || act, k,
             act ? (fill ? lighten(fill, 0.2f) : k.fillPressed) : (fill ? fill : k.fill));
+  if (!mags.empty())
+    pui::magnetTicks(dl, ImVec2(tl.x + size * 0.5f, tl.y + size * 0.5f), size * 0.5f, kPi * 0.75f, kPi * 2.25f, mags, k.textDim, b.d.toNormalized(b.val));
   if (pui::paramLinked(a, b.pid)) dl->AddCircleFilled(ImVec2(tl.x + size * 0.9f, tl.y + size * 0.1f), 2.5f, k.fill);
   ImGui::PopID();
   return changed;
@@ -474,8 +477,14 @@ bool vslider(App& a, const PluginTarget& t, int param, ImVec2 tl, ImVec2 size, c
   bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
   float hh = std::max(6.0f, std::min(size.x * 0.55f, 12.0f));  // handle height
   float top = tl.y + hh * 0.5f, bot = tl.y + size.y - hh * 0.5f, travel = bot - top;
+  const std::vector<double> mags = pui::pendingMagnets(b.d);  // K-147: marks at the magnets
   bool changed = pui::dragParamTrack(a, b.pid, b.d, b.val, top, travel, false);  // J-98: handle stays under the pointer
   ImDrawList* dl = ImGui::GetWindowDrawList();
+  if (!mags.empty()) {
+    const float cx = std::round(tl.x + size.x * 0.5f);
+    pui::magnetTicksTrack(dl, ImVec2(cx, bot), ImVec2(cx, top), size.x * 0.5f, mags, k.fill, b.d.toNormalized(b.val));
+    ruler = false;  // the division marks replace the plain ruler
+  }
   if (!fill) fill = k.fill;
   if (look::styled()) {  // J-129 control style
     look::Slider s;

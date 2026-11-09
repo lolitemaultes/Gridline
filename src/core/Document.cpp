@@ -32,6 +32,7 @@ size_t approxOf(const MixerTrack& m) {
   for (const auto& sl : m.slots) n += approxOf(sl.plugin);
   return n;
 }
+size_t approxOf(const Clip& c) { return sizeof(Clip) + c.warp.size() * sizeof(WarpMarker); }  // K-85: its warp markers
 size_t approxOf(const AutomationClip& a) { return sizeof(AutomationClip) + a.points.size() * sizeof(AutoPoint); }
 template <typename T>
 size_t approxOf(const T&) {
@@ -76,8 +77,14 @@ class ObjectEdit final : public Command {
   using Getter = T* (*)(Song&, ObjectId);
   ObjectEdit(std::string label, Getter get, ObjectId id, T before, T after, uint64_t key)
       : label_(std::move(label)), get_(get), id_(id), before_(std::move(before)), after_(std::move(after)), key_(key) {}
-  void apply(Song& s) override { *get_(s, id_) = after_; }
-  void revert(Song& s) override { *get_(s, id_) = before_; }
+  // (The object can be gone: a collaborator deleted it, and a collaborative undo / redo
+  // replays the step on a copy of the song as it is now. Nothing to restore then.)
+  void apply(Song& s) override {
+    if (T* p = get_(s, id_)) *p = after_;
+  }
+  void revert(Song& s) override {
+    if (T* p = get_(s, id_)) *p = before_;
+  }
   std::string label() const override { return label_; }
   uint64_t mergeKey() const override { return key_; }
   size_t approxBytes() const override { return 64 + approxOf(before_) + approxOf(after_); }

@@ -52,7 +52,17 @@ struct Division {
 };
 const Division kDivisions[] = {{"1/64", 12},        {"1/32", 24},       {"1/16", 48},        {"1/8", 96},        {"1/4", 192},
                                {"1/2", 384},        {"1/16 dotted", 72}, {"1/8 dotted", 144}, {"1/4 dotted", 288}, {"1/2 dotted", 576},
-                               {"1/16 triplet", 32}, {"1/8 triplet", 64}, {"1/4 triplet", 128}, {"1/2 triplet", 256}};
+                               {"1/16 triplet", 32}, {"1/8 triplet", 64}, {"1/4 triplet", 128}, {"1/2 triplet", 256}, {"1 bar", 768}};
+
+// K-147: the divisions as soft magnets on the synced Time knob.
+const std::vector<double>& divisionMagnets() {
+  static const std::vector<double> m = [] {
+    std::vector<double> v;
+    for (const Division& d : kDivisions) v.push_back(d.ticks);
+    return v;
+  }();
+  return m;
+}
 
 // Transfer curve of the loop distortion (limit / saturate): the feedback display.
 void distortionVisual(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const PluginState& st, const skin::Skin& k) {
@@ -297,6 +307,7 @@ void editorDelayRef(App& a, const PluginTarget& t, float width) {
   skin::label(dl, F.p(30, 0).x, F.p(0, 182).y, "WET", K.textDim, fsL);
   // Time (67,30) 64 + read-out (79,96) 40×15.
   const bool sync = bval(st, DlySync, true);
+  if (sync) pui::nextMagnets(divisionMagnets());  // K-147: magnetic divisions, free in between
   skin::wheel(a, t, sync ? DlyTicks : DlyTimeMs, F.p(67, 30), 64 * s, K, skin::WheelBigLine);
   {
     char buf[24];

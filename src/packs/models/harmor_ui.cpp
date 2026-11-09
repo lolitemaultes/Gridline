@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <map>
 #include "../../app/ContextMenus.h"
+#include "../../core/KnobMagnet.h"
 #include "../../engine/Sample.h"
 #include "../flc_kit.h"
 #include "harmor.h"
@@ -468,7 +469,14 @@ void fxPage(const flk::Ctx& c, const flk::Ctx& cO, const flk::Ctx& cG, const flk
   flk::chk(c, FxDlDamp, 400, 570, 56, 12, "DAMP");
   const int dl[5] = {FxDlVol, FxDlFeedback, FxDlTime, FxDlOffset, FxDlPan};
   const char* dln[5] = {"VOL", "FB", "TIME", "OFS", "PAN"};
-  for (int i = 0; i < 5; ++i) flk::vsl(cG, dl[i], 470 + i * 26.0f, 524, 17, 80, dln[i]);
+  for (int i = 0; i < 5; ++i) {
+    if (dl[i] == FxDlTime) {  // K-147: the time is in beats: magnetic musical divisions, free in between
+      std::vector<double> beats;
+      for (double tk : magnet::syncDivisions(0.01 * 192, 4 * 192)) beats.push_back(tk / 192);
+      pui::nextMagnets(beats);
+    }
+    flk::vsl(cG, dl[i], 470 + i * 26.0f, 524, 17, 80, dln[i]);
+  }
   flk::section(c, 611, 508, 220, 128, "REVERB");
   flk::chk(c, FxRvOn, 618, 528, 46, 12, "ON");
   const int rv[7] = {FxRvLowCut, FxRvHighCut, FxRvPredelay, FxRvRoom, FxRvDecay, FxRvDamp, FxRvMix};

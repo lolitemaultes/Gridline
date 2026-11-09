@@ -141,6 +141,10 @@ uint64_t fingerprintClip(const Clip& c, const IndexMap& m) {
   h.i(c.fadeInShape).i(c.fadeOutShape).f(c.fadeInTension).f(c.fadeOutTension).i(c.fadeInManual).i(c.fadeOutManual);  // J-43
   if (c.tempoLock) h.tag("tempoLock");  // J-193 (only when set: imported clips keep their fingerprint)
   if (c.rateFit != 1.0) h.tag("rateFit").f(c.rateFit);
+  if (!c.warp.empty()) {  // K-85 (only when set: imported clips keep their fingerprint)
+    h.tag("warp");
+    for (const WarpMarker& m : c.warp) h.f(m.at).f(m.to);
+  }
   return h.h;
 }
 

@@ -1725,11 +1725,11 @@ void drawEffectEditor(App& a) {
     ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.42f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
   }
   // K-19: the editor's own size on top of the interface scale (installed plugins keep theirs).
-  const ImGuiStyle& st = ImGui::GetStyle();
-  const float contentW = width + 24 - 2 * st.WindowPadding.x + st.ScrollbarSize;
-  const float zoom = edzoomui::prepare(a, "fxeditor", info->type, contentW, !isHostedType(info->type));
+  // K-147: the window is exactly the editor's width at its size (plus the padding).
+  const bool zoomable = !isHostedType(info->type);
+  edzoomui::prepare(a, "fxeditor", info->type, width, zoomable);
   const int fitFlags =  // J-158: capped to the work area, the rest scrolls
-      ui::NextFloatingWindowSize(zoom != 1.0f ? std::floor(contentW * zoom) + 2 * st.WindowPadding.x - st.ScrollbarSize : width + 24);
+      zoomable ? edzoomui::nextWindowSize("fxeditor") : ui::NextFloatingWindowSize(width + 24);
   viewports::openAttached(title.c_str());  // opens inside the main window, never popped out by itself
   if (ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking | fitFlags)) {
     ui::KeepWindowInViewport();

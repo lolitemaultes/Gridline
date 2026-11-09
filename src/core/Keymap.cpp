@@ -118,6 +118,7 @@ std::vector<Command> buildCommands() {
       {"playlist.toolSelect", PL, N_("Select tool"), {ch(K::E)}},
       {"playlist.toolZoom", PL, N_("Zoom tool"), {ch(K::Z)}},
       {"playlist.toolPlay", PL, N_("Playback tool"), {ch(K::Y)}},
+      {"playlist.toolWarp", PL, N_("Warp tool"), {ch(K::W)}},  // K-85
       {"playlist.marker", PL, N_("Add a marker at the song position"), {ch(K::T, A)}},
       {"playlist.loopMarkers", PL, N_("Place loop: around the time selection, else a loop marker at the song position"), {ch(K::T, S)}},
       {"playlist.stretchResize", PL, N_("Resizing audio clips stretches them (on / off)"), {ch(K::M, S)}},
@@ -479,7 +480,7 @@ using Rows = std::vector<std::pair<const char*, std::vector<Chord>>>;
 
 // The tools on single letters are left to the toolbars in both sets.
 const char* const kToolCommands[] = {"playlist.toolDraw", "playlist.toolPaint", "playlist.toolDelete", "playlist.toolMute", "playlist.toolSlip",
-                                     "playlist.toolSlice", "playlist.toolSelect", "playlist.toolZoom", "playlist.toolPlay", "piano.toolDraw",
+                                     "playlist.toolSlice", "playlist.toolSelect", "playlist.toolZoom", "playlist.toolPlay", "playlist.toolWarp", "piano.toolDraw",
                                      "piano.toolPaint", "piano.toolDelete", "piano.toolSelect", "piano.toolSlice", "piano.toolMute",
                                      "piano.toolPlay", "piano.toolZoom", "piano.toolDetune", "piano.toolBend", "auto.toolDraw",
                                      "auto.toolSelect", "auto.toolDelete"};

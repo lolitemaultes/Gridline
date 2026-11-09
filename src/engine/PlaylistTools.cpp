@@ -1,5 +1,6 @@
 // Gridline — playlist editing gestures (J-28). See PlaylistTools.h.
 #include "PlaylistTools.h"
+#include "ClipSource.h"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -14,22 +15,28 @@ namespace gl::pltools {
 namespace {
 
 // Seconds of source the clip has from its source start to the end of the
-// audio (or its audioEnd), 0 when the sample is not available.
-double sourceSeconds(const Song& s, const Clip& c, double* total = nullptr) {
+// audio (or its audioEnd), 0 when the sample is not available. K-85: inside
+// the channel's start / end handles; `total` is where the audio ends (the end
+// handle, in the clip's direction), `first` where it begins.
+double sourceSeconds(const Song& s, const Clip& c, double* total = nullptr, double* first = nullptr) {
   const Channel* ch = s.channel(c.source);
   if (!ch) return 0;
-  SamplePtr smp = sampleCache().get(ch->plugin.data);
-  if (!smp || smp->frames() < 2) return 0;
-  if (total) *total = smp->seconds();
-  const double end = c.audioEnd > c.audioStart ? std::min(c.audioEnd, smp->seconds()) : smp->seconds();
-  return std::max(0.0, end - c.audioStart);
+  const ClipSource src = clipSource(*ch);
+  if (!src.ok()) return 0;
+  double lo = 0, hi = 0;
+  clipLimits(src, clipPlaysReversed(*ch, c), lo, hi);
+  if (total) *total = hi;
+  if (first) *first = lo;
+  double a = 0, b = 0;
+  if (!clipWindow(src, clipPlaysReversed(*ch, c), c, a, b)) return 0;
+  return std::max(0.0, b - a);
 }
 
 }  // namespace
 
 double nearestZeroCrossing(const Song& s, const Clip& c, double sec, bool notAfter) {
   const Channel* ch = s.channel(c.source);
-  SamplePtr smp = ch ? sampleCache().get(ch->plugin.data) : nullptr;
+  SamplePtr smp = ch ? clipSource(*ch).sample : nullptr;  // K-85: the sound the clip plays
   if (!smp || smp->frames() < 2 || !(smp->sampleRate > 0)) return sec;
   const double sr = smp->sampleRate;
   const long n = static_cast<long>(smp->frames());
@@ -202,12 +209,15 @@ std::vector<Clip> trimStarts(const Song& s, const TempoMap& tm, const std::vecto
     if (c.kind == ClipKind::Audio) {
       if (stretch) continue;
       // Content may not start before the audio's beginning: the earliest
-      // start whose source position is still >= 0 (the mapping is monotonic).
-      if (clipSourceAt(s, c, tm, static_cast<double>(c.start + d)) < -1e-9) {
-        Tick lo = d, hi = 0;  // source(lo) < 0 <= source(hi)
+      // start whose source position is still >= the first audio (K-85: the
+      // start handle; the mapping is monotonic).
+      double first = 0;
+      sourceSeconds(s, c, nullptr, &first);
+      if (clipSourceAt(s, c, tm, static_cast<double>(c.start + d)) < first - 1e-9) {
+        Tick lo = d, hi = 0;  // source(lo) < first <= source(hi)
         while (hi - lo > 1) {
           const Tick mid = lo + (hi - lo) / 2;
-          (clipSourceAt(s, c, tm, static_cast<double>(c.start + mid)) < -1e-9 ? lo : hi) = mid;
+          (clipSourceAt(s, c, tm, static_cast<double>(c.start + mid)) < first - 1e-9 ? lo : hi) = mid;
         }
         d = hi;
       }
@@ -230,7 +240,9 @@ std::vector<Clip> trimStarts(const Song& s, const TempoMap& tm, const std::vecto
         c.stretch = std::clamp(b.stretch * static_cast<double>(len - d) / static_cast<double>(std::max<Tick>(1, len)), 0.0625, 16.0);
         lockClipToTempo(s, c, tm);  // J-193
       } else {
-        double src = std::max(0.0, clipSourceAt(s, b, tm, static_cast<double>(b.start + d)));
+        double first = 0;
+        sourceSeconds(s, b, nullptr, &first);
+        double src = std::max(first, clipSourceAt(s, b, tm, static_cast<double>(b.start + d)));
         if (zeroCross) src = nearestZeroCrossing(s, b, src);
         c.audioStart = src;
       }
@@ -253,14 +265,15 @@ Clip slipClip(const Song& s, const TempoMap& tm, const Clip& base, Tick d, bool 
   if (base.kind == ClipKind::Audio) {
     // Dragging right shows earlier audio: the source start moves back by the
     // source time the drag spans.
-    const double span = std::fabs(clipSourceAt(s, base, tm, static_cast<double>(base.start + std::llabs(d))) - base.audioStart);
-    double total = 0;
-    sourceSeconds(s, base, &total);
-    double a = base.audioStart + (d > 0 ? -span : span);
-    a = std::max(0.0, a);
-    if (total > 0) a = std::min(a, std::max(0.0, total - 1e-3));
-    if (zeroCross && a > 0) a = nearestZeroCrossing(s, base, a);
-    const double moved = a - base.audioStart;
+    const double from = clipSourceStart(s, base);
+    const double span = std::fabs(clipSourceAt(s, base, tm, static_cast<double>(base.start + std::llabs(d))) - from);
+    double total = 0, first = 0;
+    sourceSeconds(s, base, &total, &first);
+    double a = from + (d > 0 ? -span : span);
+    a = std::max(first, a);  // K-85: never into audio the start / end handles cut away
+    if (total > 0) a = std::min(a, std::max(first, total - 1e-3));
+    if (zeroCross && a > first) a = nearestZeroCrossing(s, base, a);
+    const double moved = a - from;
     c.audioStart = a;
     if (base.audioEnd > base.audioStart) c.audioEnd = std::max(a, base.audioEnd + moved);
     return c;

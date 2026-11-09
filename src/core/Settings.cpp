@@ -76,12 +76,14 @@ Settings::Settings() {
       {"ui.scaleAuto", b(true)},             // J-91: ui.scale is multiplied by the desktop's scale (core/UiScale.h)
       {"ui.detachWindows", b(true)},         // J-113: windows can be dragged out of the main window
       {"ui.editorZoom", Json::makeString("")},  // K-19: plugin editor sizes per type ("gl.eq=1.5;..."), core/EditorZoom.h
-      {"ui.pluginWindowSize", Json::makeNumber(0.85)},  // K-136: built-in plugin editors' size, 0.75 .. 1.5 (edzoom::kGlobalDefault)
+      {"ui.pluginWindowSize", Json::makeNumber(0.75)},  // K-136, K-147: built-in plugin editors' size, 0.6 .. 1.5 (edzoom::kGlobalDefault)
       {"ui.pluginWindowFit", b(false)},                 // K-136: small editors open larger on a large screen (K-19's automatic size)
       {"ui.loupePinned", b(false)},          // K-15: Loupe is a panel of the main layout
       {"ui.animations", b(true)},            // J-91: decorative interface animations (metronome tick, light fades, glides)
       {"ui.showHints", b(true)},
       {"ui.confirmAutoRevert", b(true)},     // J-77: unconfirmed display / audio changes go back after 15 s
+      {"playlist.warpSnapTransients", b(true)},  // K-85: a new warp marker lands on the nearest transient
+      {"playlist.quantizeStrength", Json::makeNumber(1.0)},  // K-85: audio quantize strength (0 .. 1)
       {"ui.autoScroll", b(true)},              // the playlist follows the song position while playing
       {"ui.autoScrollPattern", b(true)},       // K-4: the piano roll and channel rack follow the pattern position
       {"ui.smoothSnap", b(true)},              // J-37: snapped drags glide from cell to cell (drawing only)

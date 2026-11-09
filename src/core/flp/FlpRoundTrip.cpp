@@ -69,6 +69,7 @@ struct Cmp {
       v(q + ".grouped", x.group != kNoId, y.group != kNoId);
       d(q + ".audioStart", x.audioStart, y.audioStart);
       d(q + ".audioEnd", x.audioEnd, y.audioEnd);
+      v(q + ".warpMarkers", static_cast<int>(x.warp.size()), static_cast<int>(y.warp.size()));  // K-85
       d(q + ".fadeIn", x.fadeIn, y.fadeIn);
       d(q + ".fadeOut", x.fadeOut, y.fadeOut);
       v(q + ".fadeInManual", x.fadeInManual, y.fadeInManual);  // J-43

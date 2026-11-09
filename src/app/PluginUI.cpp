@@ -19,11 +19,13 @@
 #include <utility>
 #include "../../third_party/imgui/imgui_internal.h"
 #include "../core/Json.h"
+#include "../core/KnobMagnet.h"
 #include "../core/Project.h"
 #include "../packs/modulation/junction.h"
 #include "App.h"
 #include "AutomationEditor.h"
 #include "BrowserUi.h"
+#include "EditorZoomUi.h"
 #include "LayoutAudit.h"
 #include "PluginSkin.h"
 #include "Theme.h"
@@ -349,7 +351,10 @@ void drawPluginHeader(App& a, const PluginTarget& t) {
     apply(h.presetIndex <= 0 ? static_cast<int>(names.size()) - 1 : h.presetIndex - 1);
   ImGui::SameLine(0, 2);
   std::string label = h.presetName.empty() ? "Default" : h.presetName;
-  if (ui::BeginCombo("##preset", label.c_str(), 170)) {
+  // K-147: in a narrow editor the preset box gives up width first, so the row (next, save, A/B,
+  // copy: about 150 px after it) stays inside the window.
+  const float presetW = std::clamp(std::floor(ImGui::GetContentRegionAvail().x - 150.0f), 96.0f, 170.0f);
+  if (ui::BeginCombo("##preset", label.c_str(), presetW)) {
     static char search[96] = "";
     if (ImGui::IsWindowAppearing()) {
       cachedPresets(a, info->type, true);  // pick up presets saved or imported meanwhile
@@ -771,6 +776,23 @@ std::map<uint32_t, pui::DevTrack>& devTracks() {
 // Interaction shared by knobs and sliders: drag (vertical or horizontal), wheel,
 // Ctrl+click reset, double-click reset (type when already the default, J-136),
 // right-click menu. Item must be the last item.
+std::vector<double>& magnetsNext() {  // K-147: normalised magnets of the next knob (pendingMagnets)
+  static std::vector<double> m;
+  return m;
+}
+std::vector<double>& magnetsRaw() {  // K-147: values in parameter units, set by nextMagnets
+  static std::vector<double> m;
+  return m;
+}
+void normaliseMagnets(const ParamDesc& d) {
+  if (magnetsRaw().empty()) return;
+  std::vector<double>& out = magnetsNext();
+  out.clear();
+  for (double v : magnetsRaw())
+    if (v >= std::min(d.min, d.max) && v <= std::max(d.min, d.max)) out.push_back(d.toNormalized(v));
+  magnetsRaw().clear();
+}
+
 bool dragParam(App& a, ParamId pid, const ParamDesc& d, double& val, float pixels, bool horizontal, const Track* track = nullptr) {
   audit::lastItem("param");
   audit::bindControl(pid);  // J-92 binding audit
@@ -794,9 +816,16 @@ bool dragParam(App& a, ParamId pid, const ParamDesc& d, double& val, float pixel
   };
   static Anchor anchor;
   const float along = horizontal ? io.MousePos.x : io.MousePos.y;
+  // K-147: soft magnets for this knob (pui::nextMagnets), shaped in drag pixels on screen.
+  normaliseMagnets(d);
+  std::vector<double> mags;
+  mags.swap(magnetsNext());
+  const double zone = static_cast<double>(magnet::kZonePx) / (static_cast<double>(std::max(40.0f, pixels)) * std::max(0.1f, edzoomui::currentZoom()));
+  static bool fineDrag = false;
   if (ImGui::IsItemActivated()) {
-    accum[id] = n;
-    anchor = {along, n, io.KeyShift};
+    fineDrag = io.KeyShift;
+    accum[id] = mags.empty() || fineDrag ? n : magnet::unshape(n, mags, zone);
+    anchor = {along, mags.empty() || io.KeyShift ? n : magnet::unshape(n, mags, zone), io.KeyShift};
     if (io.KeyCtrl || io.KeySuper) {
       val = d.def;
       a.doc.setParam(pid, val, false);
@@ -804,11 +833,11 @@ bool dragParam(App& a, ParamId pid, const ParamDesc& d, double& val, float pixel
     }
   }
   if (track && track->len > 1 && act && !(io.KeyCtrl || io.KeySuper)) {
-    if (io.KeyShift != anchor.fine) anchor = {along, n, io.KeyShift};
+    if (io.KeyShift != anchor.fine) anchor = {along, mags.empty() || io.KeyShift ? n : magnet::unshape(n, mags, zone), io.KeyShift};
     if (along != anchor.pos) {
       const double dir = horizontal ? 1.0 : -1.0;  // vertical: up raises the value
       const double nn = std::clamp(anchor.n + dir * (along - anchor.pos) / track->len * (anchor.fine ? 0.125 : 1.0), 0.0, 1.0);
-      const double v = d.fromNormalized(nn);
+      const double v = d.fromNormalized(mags.empty() || anchor.fine ? nn : magnet::shape(nn, mags, zone));  // K-147
       if (v != val) {
         val = v;
         a.doc.setParam(pid, val, true);
@@ -817,11 +846,15 @@ bool dragParam(App& a, ParamId pid, const ParamDesc& d, double& val, float pixel
     }
   } else if (act && !(io.KeyCtrl || io.KeySuper)) {
     float delta = horizontal ? io.MouseDelta.x : -io.MouseDelta.y;
+    double& acc = accum[id];
+    if (!mags.empty() && io.KeyShift != fineDrag) {  // K-147: Shift toggled mid-drag: carry on from the shown value, no jump
+      fineDrag = io.KeyShift;
+      acc = fineDrag ? n : magnet::unshape(n, mags, zone);
+    }
     if (delta != 0) {
       double speed = (io.KeyShift ? 0.12 : 1.0) / std::max(40.0f, pixels);
-      double& acc = accum[id];
       acc = std::clamp(acc + delta * speed, 0.0, 1.0);
-      double v = d.fromNormalized(acc);
+      double v = d.fromNormalized(mags.empty() || fineDrag ? acc : magnet::shape(acc, mags, zone));
       if (v != val) {
         val = v;
         a.doc.setParam(pid, val, true);
@@ -834,6 +867,7 @@ bool dragParam(App& a, ParamId pid, const ParamDesc& d, double& val, float pixel
     double step = d.kind == ParamKind::Choice ? 1.0 / std::max<size_t>(1, d.choices.empty() ? 1 : d.choices.size() - 1)
                                               : (io.KeyShift ? 0.005 : 0.025);
     double v = d.fromNormalized(std::clamp(n + io.MouseWheel * step, 0.0, 1.0));
+    if (!mags.empty() && !io.KeyShift) v = d.fromNormalized(magnet::step(n, mags, io.MouseWheel > 0 ? 1 : -1));  // K-147: magnet to magnet
     if (v != val) {
       val = v;
       a.doc.setParam(pid, val, false);
@@ -891,6 +925,39 @@ void drawDial(ImDrawList* dl, ImVec2 c, float r, double norm, bool bipolar, bool
 }
 
 }  // namespace
+
+void nextMagnets(const std::vector<double>& values) {
+  magnetsRaw() = values;
+  magnetsNext().clear();
+}
+
+const std::vector<double>& pendingMagnets(const ParamDesc& d) {
+  normaliseMagnets(d);
+  return magnetsNext();
+}
+
+void magnetTicks(ImDrawList* dl, ImVec2 c, float r, float a0, float a1, const std::vector<double>& at, ImU32 col, double current) {
+  for (double m : at) {
+    const float an = a0 + static_cast<float>(std::clamp(m, 0.0, 1.0)) * (a1 - a0);
+    const ImVec2 u(std::cos(an), std::sin(an));
+    const bool on = std::fabs(m - current) < 1e-6;
+    const float r0 = r + 1.5f, r1 = r + (on ? 5.0f : 3.5f);
+    dl->AddLine(ImVec2(c.x + u.x * r0, c.y + u.y * r0), ImVec2(c.x + u.x * r1, c.y + u.y * r1), on ? col : theme::withAlpha(col, 0.55f), on ? 1.6f : 1.1f);
+  }
+}
+
+void magnetTicksTrack(ImDrawList* dl, ImVec2 lo, ImVec2 hi, float half, const std::vector<double>& at, ImU32 col, double current) {
+  const float dx = hi.x - lo.x, dy = hi.y - lo.y, len = std::sqrt(dx * dx + dy * dy);
+  if (len < 1) return;
+  const ImVec2 n(-dy / len, dx / len);  // across the track
+  for (double m : at) {
+    const float u = static_cast<float>(std::clamp(m, 0.0, 1.0));
+    const ImVec2 p(std::round(lo.x + dx * u) + 0.5f, std::round(lo.y + dy * u) + 0.5f);
+    const bool on = std::fabs(m - current) < 1e-6;
+    dl->AddLine(ImVec2(p.x - n.x * half, p.y - n.y * half), ImVec2(p.x + n.x * half, p.y + n.y * half), on ? col : theme::withAlpha(col, 0.55f),
+                on ? 1.6f : 1.0f);
+  }
+}
 
 bool dragParamItem(App& a, ParamId pid, const ParamDesc& d, double& val, float pixels, bool horizontal) {
   return dragParam(a, pid, d, val, pixels, horizontal);
@@ -1496,7 +1563,15 @@ double paramValue(App& a, const PluginTarget& t, int param) { return getParam(a.
 
 // -------------------------------------------------------------------- body
 
+static void drawPluginBodyIn(App& a, const PluginTarget& t, float width);
+
 void drawPluginBody(App& a, const PluginTarget& t, float width) {
+  edzoomui::markBody(width);  // K-147: the fit report measures the editor from here ...
+  drawPluginBodyIn(a, t, width);
+  edzoomui::markBodyEnd();  // ... to here
+}
+
+static void drawPluginBodyIn(App& a, const PluginTarget& t, float width) {
   const PluginInfo* info = t.info(a.doc.song());
   if (!info) return;
   skin::resetFrames();  // Q-7: panels of this editor only

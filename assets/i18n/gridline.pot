@@ -809,7 +809,7 @@ msgstr ""
 msgid "Points"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp
+#: src/app/AutomationEditor.cpp src/app/PlaylistWarp.cpp
 msgid "Quantize to the grid"
 msgstr ""
 
@@ -2126,6 +2126,14 @@ msgid "Display group shown by the channel rack's group filter"
 msgstr ""
 
 #: src/app/ChannelSettings.cpp
+msgid "Drag the start or end handle: the channel's notes and its audio clips in the playlist play only the part between them"
+msgstr ""
+
+#: src/app/ChannelSettings.cpp
+msgid "Drop an audio file here or click Load"
+msgstr ""
+
+#: src/app/ChannelSettings.cpp
 msgid "ECHO"
 msgstr ""
 
@@ -2179,6 +2187,10 @@ msgstr ""
 
 #: src/app/ChannelSettings.cpp src/app/PluginManager.cpp src/app/TrackReceiptUi.cpp src/packs/tracker/tracker_ui.cpp src/plugin/PluginFrame.cpp
 msgid "missing"
+msgstr ""
+
+#: src/app/ChannelSettings.cpp
+msgid "plays"
 msgstr ""
 
 #: src/app/ChopUi.cpp
@@ -6323,6 +6335,10 @@ msgstr ""
 
 #: src/app/ContextMenus.cpp
 msgid "Upside down (pitch)"
+msgstr ""
+
+#: src/app/ContextMenus.cpp src/app/Playlist.cpp
+msgid "Warp"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
@@ -11746,6 +11762,10 @@ msgid "click a clip to cut it, drag up / down to cut every clip the line crosses
 msgstr ""
 
 #: src/app/Playlist.cpp
+msgid "click an audio clip to add a warp marker, drag a marker to stretch the audio around it (Alt: off the grid, Shift: slide the audio under it), double-click or right-click removes it"
+msgstr ""
+
+#: src/app/Playlist.cpp
 msgid "click for the grid menu, right-click turns snapping off / on (Alt while dragging bypasses it)"
 msgstr ""
 
@@ -11807,6 +11827,42 @@ msgstr ""
 
 #: src/app/Playlist.cpp
 msgid "stop"
+msgstr ""
+
+#: src/app/PlaylistWarp.cpp
+msgid "Add at transients"
+msgstr ""
+
+#: src/app/PlaylistWarp.cpp
+msgid "Clear warp markers"
+msgstr ""
+
+#: src/app/PlaylistWarp.cpp
+msgid "New markers snap to transients"
+msgstr ""
+
+#: src/app/PlaylistWarp.cpp
+msgid "No transients found"
+msgstr ""
+
+#: src/app/PlaylistWarp.cpp
+msgid "Quantize strength"
+msgstr ""
+
+#: src/app/PlaylistWarp.cpp
+msgid "Section after the marker:"
+msgstr ""
+
+#: src/app/PlaylistWarp.cpp
+msgid "Warp markers"
+msgstr ""
+
+#: src/app/PlaylistWarp.cpp
+msgid "warp markers added"
+msgstr ""
+
+#: src/app/PlaylistWarp.cpp
+msgid "warp markers quantized"
 msgstr ""
 
 #: src/app/PluginEditorsDelayRef.cpp
@@ -16799,6 +16855,10 @@ msgstr ""
 
 #: src/core/Keymap.cpp
 msgid "Unzip all channels"
+msgstr ""
+
+#: src/core/Keymap.cpp
+msgid "Warp tool"
 msgstr ""
 
 #: src/core/Keymap.cpp

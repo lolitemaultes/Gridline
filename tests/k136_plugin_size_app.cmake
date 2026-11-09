@@ -1,7 +1,7 @@
 # Gridline - K-136: one size for every built-in plugin window (Settings > Interface, "Plugin
 # window size") and a size of its own per plugin, in the real app (hidden, off-screen,
 # isolated configs, SDL's dummy audio driver):
-#   1. by default (85 %) an effect and an instrument window are drawn at 85 %, on a large
+#   1. by default (K-147: 75 %) an effect and an instrument window are drawn at 75 %, on a large
 #      screen too (they no longer grow by themselves);
 #   2. at 75 / 100 / 125 / 150 % the editor and its window scale in proportion;
 #   3. a size picked for one plugin (Editor size) wins over the global size and is
@@ -73,18 +73,18 @@ function(near a b tol msg)
   endif()
 endfunction()
 
-# ---- 1. the default: 85 %, also on a large screen
+# ---- 1. the default: 75 %, also on a large screen
 run(def_fx d 2560x1440 gl.comp "38 edzoom fxeditor\n")
 zoom(dfx fxeditor 0)
-if(NOT dfx_z EQUAL 85)
-  fail("Compressor by default on 2560x1440: drawn at ${dfx_z} %, expected 85")
+if(NOT dfx_z EQUAL 75)
+  fail("Compressor by default on 2560x1440: drawn at ${dfx_z} %, expected 75")
 endif()
 run(def_inst i 1920x1080 gl.synth "38 edzoom channelsettings\n")
 zoom(din channelsettings 0)
-if(NOT din_z EQUAL 85)
-  fail("an instrument window by default: drawn at ${din_z} %, expected 85")
+if(NOT din_z EQUAL 75)
+  fail("an instrument window by default: drawn at ${din_z} %, expected 75")
 endif()
-message(STATUS "ok - by default effect and instrument windows are drawn at 85 % (${dfx_w}x${dfx_h}, ${din_w}x${din_h})")
+message(STATUS "ok - by default effect and instrument windows are drawn at 75 % (${dfx_w}x${dfx_h}, ${din_w}x${din_h})")
 
 # ---- 2. every step of the setting: editor and window in proportion
 set(w100 0)

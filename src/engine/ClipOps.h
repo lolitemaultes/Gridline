@@ -15,6 +15,9 @@ namespace gl {
 // Source seconds an audio clip plays at song tick t (follows the engine's
 // mapping: resample, pitch-preserving stretch, tempo sync).
 double clipSourceAt(const Song& song, const Clip& clip, const TempoMap& map, double tick);
+// K-85: where an audio clip's audio starts (its source start inside the
+// channel's start / end handles, engine/ClipSource.h).
+double clipSourceStart(const Song& song, const Clip& clip);
 // Natural length (ticks) of an audio clip's source window at the current settings.
 Tick audioClipNaturalLength(const Song& song, const Clip& clip);
 

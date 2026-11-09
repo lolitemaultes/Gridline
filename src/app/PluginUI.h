@@ -159,6 +159,20 @@ double paramValue(App& a, const PluginTarget& t, int param);
 // wheel, Shift fine, Ctrl+click reset, double-click type, right-click menu,
 // hint + value tooltip). Custom-drawn controls (PluginSkin) build on it.
 bool dragParamItem(App& a, ParamId pid, const ParamDesc& d, double& val, float pixels, bool horizontal);
+// K-147 magnetic detents (core/KnobMagnet.h): the next knob drawn (skin::wheel,
+// pui::knob, flk / iskin wheels) gets soft magnets at these values (parameter units):
+// a coarse drag eases onto each one inside a small capture zone and moves freely
+// between them, the wheel steps from one to the next, the ring shows a tick at each.
+// Fine drags, typed values and automation are never snapped. Cleared by that knob.
+void nextMagnets(const std::vector<double>& values);
+// The magnets set for the next knob, normalised for `d` (empty when none); knob
+// drawers call this before dragParamItem to draw the ticks.
+const std::vector<double>& pendingMagnets(const ParamDesc& d);
+// Ticks on a knob ring at normalised positions `at` (sweep a0 .. a1, screen radians).
+void magnetTicks(ImDrawList* dl, ImVec2 c, float r, float a0, float a1, const std::vector<double>& at, ImU32 col, double current);
+// The same along a slider track from `lo` (value 0) to `hi` (value 1): short marks across
+// the track, `half` px on each side of it.
+void magnetTicksTrack(ImDrawList* dl, ImVec2 lo, ImVec2 hi, float half, const std::vector<double>& at, ImU32 col, double current);
 // J-98: the same interaction for a slider whose handle is drawn along a track
 // (start .. start + len in screen pixels; vertical tracks run bottom = min):
 // dragging keeps the handle under the pointer (grab offset taken at the click,

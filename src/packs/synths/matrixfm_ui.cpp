@@ -13,6 +13,7 @@
 #include <map>
 #include <string>
 #include "../../app/App.h"
+#include "../../core/KnobMagnet.h"
 #include "../../app/DrawSmoothUi.h"
 #include "../../core/PluginBrand.h"
 #include "../../app/InstrumentSkin.h"
@@ -467,7 +468,14 @@ void fxPanel(App& a, const PluginTarget& t, const iskin::Skin& k, UiState& u) {
   iskin::check(a, t, k, DlSerial, X + 316, Y + 50, 56, 12, "SERIAL", 8);
   const int dp[4] = {dly(D, 2), dly(D, 3), dly(D, 4), dly(D, 5)};
   const char* dn[4] = {"FB", "TIME", "OFS", "VOL"};
-  for (int i = 0; i < 4; ++i) sliderCap(a, t, k, dp[i], X + 378 + i * 22, Y + 8, 14, 66, k.c.fill3, dn[i], i >= 2);
+  for (int i = 0; i < 4; ++i) {
+    if (i == 1 && pui::paramValue(a, t, dly(D, 6)) >= 0.5) {  // K-147: synced time in beats: magnetic musical divisions
+      std::vector<double> beats;
+      for (double tk : magnet::syncDivisions(0.01 * 192, 4 * 192)) beats.push_back(tk / 192);
+      pui::nextMagnets(beats);
+    }
+    sliderCap(a, t, k, dp[i], X + 378 + i * 22, Y + 8, 14, 66, k.c.fill3, dn[i], i >= 2);
+  }
   static const char* modes[3] = {"NORM", "INV", "P-P"};
   iskin::selector(a, t, k, dly(D, 1), X + 470, Y + 8, 52, 20, [&](ImDrawList*, ImVec2, ImVec2, int i) {
     iskin::text(k, X + 470, Y + 8, 52, 20, modes[std::clamp(i, 0, 2)], 9, k.c.text, 1, false, true);

@@ -1420,7 +1420,7 @@ void playlistOptionsMenu(App& a) {
                       {i18n::N_("Delete"), "playlist.toolDelete", Tool::Erase},  {i18n::N_("Mute"), "playlist.toolMute", Tool::Mute},
                       {i18n::N_("Slip"), "playlist.toolSlip", Tool::Slip},       {i18n::N_("Slice"), "playlist.toolSlice", Tool::Slice},
                       {i18n::N_("Select"), "playlist.toolSelect", Tool::Select}, {i18n::N_("Zoom"), "playlist.toolZoom", Tool::Zoom},
-                      {i18n::N_("Play"), "playlist.toolPlay", Tool::Play}};
+                      {i18n::N_("Play"), "playlist.toolPlay", Tool::Play},       {i18n::N_("Warp"), "playlist.toolWarp", Tool::Warp}};
     for (const auto& t : list)
       if (ImGui::MenuItem(i18n::tr(t.name), keys::label(t.cmd), a.playlist.tool == t.tool)) a.playlist.tool = t.tool;
     ImGui::EndMenu();

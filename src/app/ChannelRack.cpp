@@ -53,6 +53,9 @@ struct RackShown {
   float originX = 0, row0Y = -1, viewX0 = 0, graphY = -1;  // screen geometry for scripted input
   float rowPitch = 0;                                       // J-97: from one row to the next
   float lastRowBottom = -1;                                 // K-136: the last channel row's bottom (screen)
+  // K-146: the rows pane as ImGui sees it (its own scrollbars, its own sideways scroll, content vs. room)
+  bool barX = false, barY = false;
+  float paneScrollX = 0, paneContentW = 0, paneInnerW = 0, itemsRight = 0, rowRight = 0;
 };
 RackShown gShown;
 // K-136: the rack's height follows its content (racklayout::fitHeight), measured each frame.
@@ -761,9 +764,13 @@ void drawChannelRack(App& a) {
       for (int k = 0; k < total; ++k) {
         ImVec2 q(sp.x + stepPos(k), sp.y);
         if (q.x + stepW <= viewX0 || q.x >= viewX1) continue;  // scrolled out of the step viewport (long patterns)
-        ImGui::SetCursorScreenPos(q);
+        // K-146: a step cut by an edge of the viewport is clickable only where it shows. Its button
+        // must not reach past the row's right edge: that widened the rows pane, which then showed a
+        // second sideways scrollbar of its own (and took sideways swipes, sliding the whole rack).
+        const float bx1 = std::min(q.x + stepW, viewX1), bx0 = std::min(std::max(q.x, viewX0), bx1 - 1.0f);  // (at least a pixel)
+        ImGui::SetCursorScreenPos(ImVec2(bx0, q.y));
         ImGui::PushID(k);
-        ImGui::InvisibleButton("s", ImVec2(stepW, cellH), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+        ImGui::InvisibleButton("s", ImVec2(bx1 - bx0, cellH), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
         bool hov = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
         if (hov) a.rack.hoverChannel = c.id, a.rack.hoverStep = k;
         uint8_t v = row[static_cast<size_t>(k)];
@@ -1039,6 +1046,16 @@ void drawChannelRack(App& a) {
   shown.scroll = a.rack.stepScroll;
   shown.originX = originX;
   shown.viewX0 = viewX0;
+  {  // K-146 dev check: the pane's own scroll state and how far its items reach (vs. the row's right edge)
+    const ImGuiWindow* rw = ImGui::GetCurrentWindow();
+    shown.barX = rw->ScrollbarX, shown.barY = rw->ScrollbarY;
+    shown.paneScrollX = rw->Scroll.x, shown.paneContentW = rw->ContentSize.x, shown.paneInnerW = rw->InnerRect.GetWidth();
+    shown.itemsRight = rw->DC.CursorMaxPos.x, shown.rowRight = originX + rowW;
+  }
+  // K-146: the rows pane is exactly one row wide. Nothing drawn in it may widen it past the row's
+  // right edge (the step viewport's end): its own sideways scrollbar is only for a rack too narrow
+  // for the row itself; long patterns scroll with the step slider in the bar below.
+  if (ImGuiWindow* pw = ImGui::GetCurrentWindow(); pw->DC.CursorMaxPos.x > originX + rowW) pw->DC.CursorMaxPos.x = originX + rowW;
   gShown = shown;
   {  // K-136: the rows' content height (step lamps, rows, automation rows, graph editor, both paddings)
     const ImGuiWindow* rw = ImGui::GetCurrentWindow();
@@ -1182,7 +1199,7 @@ void rackDevDump(App& a, int frame) {
   std::printf("rack frame %d: steps %d avail %.1f nameW %.1f stepW %.1f viewW %.1f scroll %.1f scrollMax %.1f rowsScroll %.1f rowsScrollMax %.1f "
               "wheelScrolls %d rows %d knobRows %d truncated %d undo %zu\n"
               "  geom originX %.1f row0Y %.1f viewX0 %.1f graphY %.1f rowPitch %.1f addbutton %.1f %.1f %.1f %.1f"
-              " docked %d winH %.1f fitH %.1f winBottom %.1f lastRowBottom %.1f addrow %.1f %.1f %.1f %.1f rowsContent %.1f\n",
+              " docked %d winH %.1f fitH %.1f winBottom %.1f lastRowBottom %.1f addrow %.1f %.1f %.1f %.1f rowsContent %.1f",
               frame, L.steps, static_cast<double>(a.rack.lastAvail), static_cast<double>(L.nameW), static_cast<double>(L.stepW),
               static_cast<double>(L.viewW), static_cast<double>(r.scroll), static_cast<double>(L.scrollMax), static_cast<double>(r.rowsScrollY),
               static_cast<double>(r.rowsScrollMaxY), r.wheelScrolls ? 1 : 0, r.rows, r.knobRows, r.truncated, a.doc.history().position(),
@@ -1192,6 +1209,10 @@ void rackDevDump(App& a, int frame) {
               static_cast<double>(gFit.winH), static_cast<double>(gFit.fitH), static_cast<double>(gFit.winBottom),
               static_cast<double>(r.lastRowBottom), static_cast<double>(gFit.addMin.x), static_cast<double>(gFit.addMin.y),
               static_cast<double>(gFit.addMax.x), static_cast<double>(gFit.addMax.y), static_cast<double>(gFit.rowsContent));
+  // K-146: the rows pane's own scroll state, on the same line
+  std::printf(" paneBarX %d paneBarY %d paneScrollX %.1f paneContentW %.1f paneInnerW %.1f itemsRight %.1f rowRight %.1f\n", r.barX ? 1 : 0,
+              r.barY ? 1 : 0, static_cast<double>(r.paneScrollX), static_cast<double>(r.paneContentW), static_cast<double>(r.paneInnerW),
+              static_cast<double>(r.itemsRight), static_cast<double>(r.rowRight));
   const Pattern* pat = s.pattern(a.curPattern);
   for (size_t i = 0; i < s.channels.size(); ++i) {
     const Channel& c = s.channels[i];

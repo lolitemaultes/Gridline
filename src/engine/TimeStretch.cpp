@@ -630,7 +630,16 @@ void renderInto(RenderedClip& rc, const ClipRequest& r) {
   // Output frame j plays frame srcAt(j) of the window.
   std::function<double(int64_t)> srcAt;
   const double offset = r.srcStart * sr - static_cast<double>(a);
-  if (r.map && r.secPerTick > 0) {
+  if (!r.warp.empty()) {  // K-85: through the warp markers
+    const std::vector<WarpPoint> wp = r.warp;
+    const double base = r.warpBase, fa = static_cast<double>(a);
+    const TempoMap* map = r.map && r.secPerTick > 0 ? r.map : nullptr;
+    const double st = r.startSec, t0 = r.startTick, spt = r.secPerTick, rate = r.rate, step = r.speed / r.rate;
+    srcAt = [=](int64_t j) {
+      const double p = map ? (map->tickAtSeconds(st + static_cast<double>(j) / rate) - t0) * spt : static_cast<double>(j) * step;
+      return warpSourceAt(wp, base + p) * sr - fa;
+    };
+  } else if (r.map && r.secPerTick > 0) {
     const TempoMap* map = r.map;
     const double st = r.startSec, t0 = r.startTick, spt = r.secPerTick, rate = r.rate;
     srcAt = [=](int64_t j) {
@@ -694,7 +703,17 @@ std::string keyOf(const ClipRequest& r) {
                 r.sample ? r.sample->frames() : 0, r.srcStart, r.srcEnd, r.reverse ? 1 : 0,
                 r.mode == Mode::Resample ? 0 : r.mode == Mode::RubberBand ? 2 : 1, r.pitch, r.rate,
                 static_cast<long long>(r.frames), r.speed, r.secPerTick, r.startTick, r.startSec);
-  return std::string(buf) + (r.sample ? r.sample->path : std::string()) + "|" + (r.map && r.secPerTick > 0 ? r.mapKey : std::string());
+  std::string key = std::string(buf) + (r.sample ? r.sample->path : std::string()) + "|" + (r.map && r.secPerTick > 0 ? r.mapKey : std::string());
+  if (!r.warp.empty()) {  // K-85
+    char w[64];
+    std::snprintf(w, sizeof w, "|warp%.12f", r.warpBase);
+    key += w;
+    for (const WarpPoint& p : r.warp) {
+      std::snprintf(w, sizeof w, ";%.12g,%.12g", p.w, p.s);
+      key += w;
+    }
+  }
+  return key;
 }
 
 class Renderer {

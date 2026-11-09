@@ -1,4 +1,5 @@
 // Gridline — chop, stutter and time-region editing (PL-13). See Chop.h.
+#include "ClipSource.h"
 #include "Chop.h"
 #include "../core/ClipLoop.h"
 #include <algorithm>
@@ -204,7 +205,7 @@ std::vector<ObjectId> stutterAudio(Song& s, const Clip& base, const std::vector<
   std::vector<ObjectId> out;
   const Channel* ch = s.channel(base.source);
   if (!ch) return out;
-  SamplePtr smp = sampleCache().get(ch->plugin.data);
+  SamplePtr smp = clipSource(*ch).sample;  // K-85: the sound its clips play
   TempoMap map;
   map.build(s);
   const Tick ra = base.start;
@@ -215,7 +216,7 @@ std::vector<ObjectId> stutterAudio(Song& s, const Clip& base, const std::vector<
     k.id = s.allocateId();
     k.start = ra + st.at;
     k.length = st.play;
-    k.audioStart = std::max(0.0, clipSourceAt(s, base, map, static_cast<double>(ra) + st.src));
+    k.audioStart = std::max(clipSourceStart(s, base), clipSourceAt(s, base, map, static_cast<double>(ra) + st.src));
     k.stretch = base.stretch / st.speed;
     k.pitch = base.pitch + static_cast<float>(st.semis * 100.0);
     k.gain = base.gain * static_cast<float>(st.gain);

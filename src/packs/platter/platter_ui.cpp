@@ -1203,7 +1203,7 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
     const float H = wavesH + gap + mainH;
     drawSetup(a, t, e, ImVec2(o.x, y), ImVec2(o.x + W, y + H));
     y += H;
-    ImGui::SetCursorScreenPos(ImVec2(o.x, y + 6));
+    ImGui::SetCursorScreenPos(ImVec2(o.x, y));
     ImGui::Dummy(ImVec2(W, 1));
     trace(a, t, e, "setup", lv);
     return true;
@@ -1240,7 +1240,7 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
   } else {
     e.learn = -1;
   }
-  ImGui::SetCursorScreenPos(ImVec2(o.x, y + 6));
+  ImGui::SetCursorScreenPos(ImVec2(o.x, y));
   ImGui::Dummy(ImVec2(W, 1));
   traceTracks(e);
   bool ready = deckReady(e, 0) || deckReady(e, 1);

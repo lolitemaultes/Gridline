@@ -985,6 +985,62 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
   static int lastFrame = INT_MIN;  // a "waitfor" holds the frame: its commands run once
   const bool fresh = frame != lastFrame;
   lastFrame = frame;
+  // K-147: "fitall [frames]": every built-in plugin's editor opened in turn (effects in the
+  // last slot of insert 1, instruments and note processors on a channel), each one's window
+  // fit report (edfit) after `frames` frames; "edfit done" at the end.
+  static struct {
+    bool on = false;
+    size_t i = 0;
+    int f = 0, per = 8;
+    std::string shots;  // a directory: a screenshot of each one (<n>_<type>.ppm)
+    ObjectId chan = kNoId;
+    std::vector<std::string> types;
+  } fit;
+  for (const DevInputLine& l : script)
+    if (fresh && l.frame == frame && l.cmd == "fitall") {
+      fit = {};
+      fit.on = true;
+      fit.per = std::max(4, l.a0.empty() ? 8 : std::atoi(l.a0.c_str()));
+      fit.shots = l.args.size() > 1 ? l.args[1] : std::string();
+      const char* only = std::getenv("GRIDLINE_FIT_ONLY");  // comma separated types (dev aid)
+      for (const auto& p : pluginCatalog())
+        if (!p.hidden && !isHostedType(p.type) && (!only || (std::string(",") + only + ",").find("," + p.type + ",") != std::string::npos))
+          fit.types.push_back(p.type);
+    }
+  if (fresh && fit.on) {
+    if (fit.i >= fit.types.size()) {
+      std::printf("edfit done %zu\n", fit.types.size());
+      std::fflush(stdout);
+      fit.on = false;
+    } else {
+      const std::string& type = fit.types[fit.i];
+      const PluginInfo* info = findPlugin(type);
+      if (fit.f == 0 && info) {
+        if (fit.chan != kNoId) app.doc.removeChannel(fit.chan);
+        fit.chan = kNoId;
+        app.settingsChannel = kNoId;
+        app.fxEditor = {kNoId, -1};
+        if (info->kind == PluginKind::Generator) {
+          app.settingsChannel = fit.chan = app.addInstrument(type);
+        } else if (info->kind == PluginKind::NoteFx) {
+          app.settingsChannel = fit.chan = app.addInstrument("gl.hat");
+          app.doc.addNoteFx(fit.chan, type);
+        } else if (app.doc.song().mixer.size() > 1) {
+          const ObjectId mt = app.doc.song().mixer[1].id;
+          app.doc.setSlotPlugin(mt, kEffectSlots - 1, type);
+          app.fxEditor = {mt, kEffectSlots - 1};
+        }
+        app.syncEngine();
+      }
+      if (++fit.f >= fit.per) {
+        std::printf("edfit plugin %s kind %d\n", type.c_str(), info ? static_cast<int>(info->kind) : -1);
+        edzoomui::devDump(info && info->kind == PluginKind::Effect ? "fxeditor" : "channelsettings");
+        if (!fit.shots.empty()) devShotPending = fit.shots + "/" + std::to_string(fit.i) + "_" + type + ".ppm";
+        fit.f = 0;
+        ++fit.i;
+      }
+    }
+  }
   if (fresh && devWindowsLeft > 0) {
     --devWindowsLeft;
     devDumpWindows(frame);
@@ -1587,13 +1643,13 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       for (const auto& c : s.playlist)
         std::printf("  clip %u kind %d track %d start %lld len %lld offset %lld audioStart %.6f muted %d pattern %u group %u sel %d"
                     " source %u audioEnd %.6f fadeIn %.6f fadeOut %.6f gain %.4f pitch %.2f stretch %.4f reverse %d syncBpm %.4f tempoLock %d loop %d"
-                    " loopStart %lld loopLength %lld\n",
+                    " loopStart %lld loopLength %lld warp %zu\n",
                     static_cast<unsigned>(c.id), static_cast<int>(c.kind), c.track, static_cast<long long>(c.start),
                     static_cast<long long>(s.clipLength(c)), static_cast<long long>(c.offset), c.audioStart, c.muted ? 1 : 0,
                     static_cast<unsigned>(c.pattern), static_cast<unsigned>(c.group), app.playlist.selected.count(c.id) ? 1 : 0,
                     static_cast<unsigned>(c.source), c.audioEnd, c.fadeIn, c.fadeOut, static_cast<double>(c.gain),
                     static_cast<double>(c.pitch), c.stretch, c.reverse ? 1 : 0, c.syncBpm, c.tempoLock ? 1 : 0, c.loop ? 1 : 0,
-                    static_cast<long long>(c.loopStart), static_cast<long long>(c.loopLength));  // (K-114: loop; K-140: its own loop)
+                    static_cast<long long>(c.loopStart), static_cast<long long>(c.loopLength), c.warp.size());  // (K-114: loop; K-140: its own loop; K-85: warp markers)
       std::fflush(stdout);
     } else if (l.cmd == "builds") {  // J-196: program builds and clip level patches so far, renders waiting for an edit to end
       std::printf("builds frame %d: builds %llu patches %llu deferred %d voices made %llu kept %llu\n", frame,

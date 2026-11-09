@@ -23,6 +23,10 @@
 #include "../Arrangements.h"
 #include "../ClipLoop.h"
 #include "../../engine/ClipOps.h"
+#include "../../engine/ClipSource.h"
+#include "../../engine/WarpOps.h"
+#include "../ClipRate.h"
+#include "../PluginParams.h"
 #include "../Params.h"
 #include "../Project.h"
 #include "FlpExportInternal.h"
@@ -769,6 +773,63 @@ void writeClipLoopsAsFl(Song& s, ExportReport& rep) {
   fix(s.playlist);
   for (Arrangement& a : s.arrangements) fix(a.playlist);
 }
+
+// K-85: FL has no warp markers for audio clips: a warped clip is written as
+// what it plays, one clip per section between its markers, each stretched to
+// its section's length (the clip's own stretch times the section's), grouped,
+// with the clip's fades at its outer edges only.
+void writeWarpsAsFl(Song& s, ExportReport& rep) {
+  TempoMap tm;
+  tm.build(s);
+  auto fix = [&](std::vector<Clip>& list) {
+    std::vector<Clip> out;
+    out.reserve(list.size());
+    for (const Clip& c : list) {
+      const std::vector<WarpPoint> w = c.kind == ClipKind::Audio ? clipWarp(s, c) : std::vector<WarpPoint>();
+      const Channel* ch = c.kind == ClipKind::Audio ? s.channel(c.source) : nullptr;
+      if (w.empty() || !ch) {
+        Clip x = c;
+        x.warp.clear();  // (markers that move nothing)
+        out.push_back(x);
+        continue;
+      }
+      const Tick end = c.start + s.clipLength(c);
+      std::vector<Tick> cuts{c.start};
+      for (const WarpMarkerView& v : warpMarkerViews(s, c, tm)) {
+        const Tick t = static_cast<Tick>(std::llround(v.tick));
+        if (t > cuts.back() && t < end) cuts.push_back(t);
+      }
+      cuts.push_back(end);
+      const ClipRate r = clipRate(*ch, c);
+      const double secPerTick = c.syncBpm > 0 ? 60.0 / (c.syncBpm * s.ppq) / r.timeFactor : 0.0;
+      const ObjectId group = c.group != kNoId ? c.group : (cuts.size() > 2 ? s.allocateId() : kNoId);
+      for (size_t k = 0; k + 1 < cuts.size(); ++k) {
+        const double s0 = clipSourceAt(s, c, tm, static_cast<double>(cuts[k]));
+        const double s1 = clipSourceAt(s, c, tm, static_cast<double>(cuts[k + 1]));
+        Clip x = c;
+        x.warp.clear();
+        if (k > 0) x.id = s.allocateId();
+        x.group = group;
+        x.start = cuts[k];
+        x.length = cuts[k + 1] - cuts[k];
+        x.audioStart = k == 0 ? c.audioStart : s0;
+        if (k + 2 < cuts.size()) x.audioEnd = s1;
+        // The section's source span over its length: its stretch against the clip's own.
+        const double played = secPerTick > 0 ? static_cast<double>(x.length) * secPerTick
+                                             : (tm.secondsAt(static_cast<double>(cuts[k + 1])) - tm.secondsAt(static_cast<double>(cuts[k]))) * r.speed;
+        if (s1 - s0 > 1e-9 && played > 0) x.stretch = std::clamp(c.stretch * played / (s1 - s0), 0.0625, 16.0);
+        if (k > 0) x.fadeIn = 0, x.fadeInManual = true, x.fadeInTension = 0;
+        if (k + 2 < cuts.size()) x.fadeOut = 0, x.fadeOutManual = true, x.fadeOutTension = 0;
+        out.push_back(x);
+      }
+      rep.counts["warped audio clips (written as one stretched clip per section)"]++;
+      if (r.resample) rep.counts["warped audio clips on a channel that resamples: the sections change pitch in FL"]++;
+    }
+    list = std::move(out);
+  };
+  fix(s.playlist);
+  for (Arrangement& a : s.arrangements) fix(a.playlist);
+}
 }
 
 bool exportFlp(const Song& song, Bytes& out, ExportReport& rep, const ExportOptions& opt) {
@@ -799,6 +860,7 @@ namespace {
 bool exportPrepared(const Song& prepared, const StandInResult* standIns, Bytes& out, ExportReport& rep, const ExportOptions& opt) {
   Song song = prepared;
   writeClipLoopsAsFl(song, rep);  // K-114
+  writeWarpsAsFl(song, rep);      // K-85
   xp::Exporter x(song, opt, rep);
   x.standIns = standIns;
   x.ec.tempo = song.tempo;

@@ -40,11 +40,28 @@ struct Slot {
   ImVec2 savedMax{0, 0}, savedIdeal{0, 0};  // K-136: the host's content extent before a reduced editor
   ImDrawList* fg = nullptr;
   int fgStart = 0;
+  // K-147 fit report: the editor's ink (what it drew, screen px) against its window
+  bool inkValid = false, bodyValid = false;
+  bool grouped = false;  // drawn at 100 % straight into the window (no region): measured from hostVtx0
+  unsigned hostVtx0 = 0, hostVtx1 = ~0u;
+  float overflow = 0;  // how far the laid-out items reach past the region on the right (design px)
+  ImRect ink, body, inner, innerClip;
+  // the plugin's editor body (markBody): where it starts and the width it says it has
+  const ImDrawList* bodyDl = nullptr;
+  unsigned bodyVtx = 0, bodyVtxEnd = ~0u;
+  float bodyY = 0, bodyEndY = FLT_MAX, bodyW = 0;
+  int bodyFrame = -1;
+  ImVec2 pad{0, 0};
   // drag-resizing with the corner grip
   bool dragging = false;
   float dragZ0 = 1, liveZ = 1;
   ImVec2 dragM0{0, 0}, dragW0{1, 1};
 };
+
+float& current() {
+  static float z = 1;
+  return z;
+}
 
 std::map<std::string, Slot>& slots() {
   static std::map<std::string, Slot> m;
@@ -78,9 +95,11 @@ float globalZoom(App& a) {
 }
 void remember(App& a, const std::string& type, float z) { a.settings.set("ui.editorZoom", edzoom::withZoom(a.settings.getString("ui.editorZoom"), type, z)); }
 
+// K-147: the window around the editor: its padding on both sides and the title bar (no
+// scrollbar: the window is sized to fit, it only scrolls when even kFitMin is too large).
 ImVec2 chrome() {
   const ImGuiStyle& st = ImGui::GetStyle();
-  return ImVec2(2 * st.WindowPadding.x + st.ScrollbarSize, 2 * st.WindowPadding.y + ImGui::GetFrameHeight());
+  return ImVec2(2 * st.WindowPadding.x, 2 * st.WindowPadding.y + ImGui::GetFrameHeight());
 }
 
 ImVec2 mapIn(const Member& m, ImVec2 q) { return ImVec2(edzoom::toEditor(m.origin.x, q.x, m.z), edzoom::toEditor(m.origin.y, q.y, m.z)); }
@@ -88,6 +107,33 @@ ImVec2 mapOut(ImVec2 o, float z, ImVec2 p) { return ImVec2(edzoom::toScreen(o.x,
 
 void scaleVertices(ImDrawList* dl, int from, ImVec2 o, float z) {
   for (int i = from; i < dl->VtxBuffer.Size; ++i) dl->VtxBuffer[i].pos = mapOut(o, z, dl->VtxBuffer[i].pos);
+}
+
+// K-147: the bounding box of what a draw list shows (screen px). A command clipped only
+// by its window (no clip rectangle of the editor's own) counts unclipped, so content that
+// runs past the window is found; one the editor clipped itself counts as clipped.
+void addInk(ImRect& ink, bool& any, const ImDrawList* dl, int cmd0, int cmd1, const ImRect& wclip, ImVec2 o, float z, unsigned vtxFrom = 0,
+            unsigned vtxTo = ~0u) {
+  cmd1 = std::min(cmd1, dl->CmdBuffer.Size);
+  for (int c = std::max(0, cmd0); c < cmd1; ++c) {
+    const ImDrawCmd& cmd = dl->CmdBuffer[c];
+    if (cmd.UserCallback || cmd.ElemCount == 0) continue;
+    ImRect bb(FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX);
+    for (unsigned i = 0; i < cmd.ElemCount; ++i) {
+      const unsigned vi = dl->IdxBuffer[static_cast<int>(cmd.IdxOffset + i)] + cmd.VtxOffset;
+      if (vi >= static_cast<unsigned>(dl->VtxBuffer.Size) || vi < vtxFrom || vi >= vtxTo) continue;
+      const ImDrawVert& v = dl->VtxBuffer[static_cast<int>(vi)];
+      if ((v.col & IM_COL32_A_MASK) == 0) continue;  // anti-aliasing fringes
+      bb.Add(v.pos);
+    }
+    if (bb.Min.x > bb.Max.x) continue;
+    const ImRect clip(cmd.ClipRect.x, cmd.ClipRect.y, cmd.ClipRect.z, cmd.ClipRect.w);
+    const bool own = clip.Min.x > wclip.Min.x + 0.5f || clip.Min.y > wclip.Min.y + 0.5f || clip.Max.x < wclip.Max.x - 0.5f || clip.Max.y < wclip.Max.y - 0.5f;
+    if (own) bb.ClipWithFull(clip);
+    if (bb.Min.x >= bb.Max.x || bb.Min.y >= bb.Max.y) continue;
+    ink.Add(ImRect(mapOut(o, z, bb.Min), mapOut(o, z, bb.Max)));
+    any = true;
+  }
 }
 
 void grip(App& a, Slot& s) {
@@ -162,7 +208,16 @@ float prepare(App& a, const char* key, const std::string& type, float contentW, 
     if (fit && s.autoZ <= 0 && winH > 0) s.autoZ = edzoom::autoZoom(winW, winH, area.x, area.y);
     want = std::max(globalZoom(a), fit && s.autoZ > 0 ? s.autoZ : 0.0f);
   }
-  const float z = edzoom::fitZoom(want, winW, winH, area.x, area.y);
+  // K-147: the editor (not its chrome) is what scales: it gets the room the chrome leaves.
+  // (a few px to spare: a window exactly as tall as the room would show a scrollbar for a rounding px)
+  float z = edzoom::fitZoom(want, contentW, s.design.y, area.x - ch.x - 4.0f, area.y - ch.y - 4.0f);
+  // Tests that pin the size (GRIDLINE_PLUGIN_WINDOW_SIZE, see globalZoom) click at design
+  // positions: there a large editor keeps its size and scrolls, as before K-147.
+  static const bool pinned = [] {
+    const char* env = std::getenv("GRIDLINE_PLUGIN_WINDOW_SIZE");
+    return env && *env;
+  }();
+  if (pinned) z = std::max(z, std::min(edzoom::clampZoom(want), 1.0f));
   const float prev = s.z;
   s.z = std::fabs(z - 1.0f) > 0.001f ? z : 1.0f;
   ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -186,8 +241,17 @@ void begin(App&, const char* key) {
   ImGuiContext& g = *GImGui;
   s.host = ImGui::GetCurrentWindow();
   s.child = nullptr;
-  s.active = s.z != 1.0f;
+  // K-147: every built-in editor is drawn in its own region of exactly its width (at 100 %
+  // too), so the window, the header and the editor agree at every size.
+  s.active = s.zoomable && s.z != 1.0f;
+  s.grouped = !s.active;
+  s.hostVtx0 = static_cast<unsigned>(s.host->DrawList->VtxBuffer.Size);
+  s.hostVtx1 = ~0u;
   s.origin = ImGui::GetCursorScreenPos();
+  current() = s.z;
+  s.inner = s.host->InnerRect;
+  s.innerClip = s.host->InnerClipRect;
+  s.pad = s.host->WindowPadding;
   if (!s.active) {
     ImGui::BeginGroup();
     return;
@@ -199,8 +263,10 @@ void begin(App&, const char* key) {
     ImGui::PushClipRect(ImVec2(s.origin.x - 4096, s.origin.y - 4096), ImVec2(s.origin.x + 16384, s.origin.y + 16384), false);
   ImGuiViewportP* vp = s.host->Viewport;
   s.savedFb = vp->FramebufferScale;
-  vp->FramebufferScale = ImVec2(s.savedFb.x * s.z, s.savedFb.y * s.z);  // glyphs baked at the magnified density
-  g.DrawListSharedData.InitialFringeScale = 1.0f / s.z;                 // anti-aliasing stays one device pixel wide
+  if (s.z != 1.0f) {
+    vp->FramebufferScale = ImVec2(s.savedFb.x * s.z, s.savedFb.y * s.z);  // glyphs baked at the magnified density
+    g.DrawListSharedData.InitialFringeScale = 1.0f / s.z;                 // anti-aliasing stays one device pixel wide
+  }
   s.fg = ImGui::GetForegroundDrawList(vp);
   s.fgStart = s.fg->VtxBuffer.Size;
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
@@ -210,14 +276,41 @@ void begin(App&, const char* key) {
   s.child = ImGui::GetCurrentWindow();
 }
 
+float currentZoom() { return current(); }
+
+void markBodyEnd() {
+  for (auto& [key, s] : slots())
+    if (s.bodyFrame == ImGui::GetFrameCount() && s.bodyDl == ImGui::GetWindowDrawList() && s.bodyVtxEnd == ~0u) {
+      s.bodyVtxEnd = static_cast<unsigned>(s.bodyDl->VtxBuffer.Size);
+      s.bodyEndY = ImGui::GetCursorScreenPos().y;
+    }
+}
+
+void markBody(float width) {
+  for (auto& [key, s] : slots())
+    if (s.lastFrame == ImGui::GetFrameCount() && s.host && ((s.active && current() == s.z && s.child) || (s.grouped && s.zoomable)) &&
+        ImGui::GetCurrentWindow()->RootWindow == s.host->RootWindow) {
+      s.bodyDl = ImGui::GetWindowDrawList();
+      s.bodyVtx = static_cast<unsigned>(s.bodyDl->VtxBuffer.Size);
+      s.bodyY = ImGui::GetCursorScreenPos().y;
+      s.bodyVtxEnd = ~0u;
+      s.bodyEndY = FLT_MAX;
+      s.bodyW = width;
+      s.bodyFrame = ImGui::GetFrameCount();
+    }
+}
+
 void end(App& a, const char* key) {
   Slot& s = slots()[key];
+  current() = 1;
   ImGuiContext& g = *GImGui;
   if (!s.active) {
     ImGui::EndGroup();
     s.design = ImVec2(std::max(s.contentW, ImGui::GetItemRectSize().x), ImGui::GetItemRectSize().y);
+    s.overflow = s.zoomable ? std::max(0.0f, ImGui::GetItemRectMax().x - (s.origin.x + s.contentW)) : 0.0f;
   } else {
     s.design = s.child ? s.child->Size : ImVec2(s.contentW, 0);
+    s.overflow = s.child ? std::max(0.0f, s.child->DC.CursorMaxPos.x - (s.child->Pos.x + s.contentW)) : 0.0f;
     ImGui::EndChild();
     if (s.z < 1.0f) {  // the window holds only the reduced picture (not the design size laid out above)
       ImGui::PopClipRect();
@@ -230,12 +323,26 @@ void end(App& a, const char* key) {
     ImGui::SetFontRasterizerDensity(s.savedFb.x);
     if (s.fg) scaleVertices(s.fg, s.fgStart, s.origin, s.z);  // overlays the editor drew on the foreground
     s.fg = nullptr;
-    // The window holds the magnified picture.
+    // The window holds the magnified picture (K-147: whole pixels up, never a clipped row).
     ImGui::SetCursorScreenPos(s.origin);
-    ImGui::Dummy(ImVec2(std::floor(s.design.x * s.z), std::floor(s.design.y * s.z)));
+    ImGui::Dummy(ImVec2(std::floor(s.design.x * s.z + 0.01f), std::ceil(s.design.y * s.z - 0.01f)));
   }
   if (s.design.y > 0) designCache()[s.type] = s.design;
+  if (s.host) s.hostVtx1 = static_cast<unsigned>(s.host->DrawList->VtxBuffer.Size);  // (the size grip is not the editor)
   grip(a, s);
+}
+
+int nextWindowSize(const char* key) {
+  const Slot& s = slots()[key];
+  const ImVec2 area = ui::EditorArea(), ch = chrome();
+  const ImGuiStyle& st = ImGui::GetStyle();
+  float w = std::floor(s.contentW * s.z + 0.01f) + ch.x;
+  // Under the fit floor the editor is taller than the room: the window scrolls, with room for the bar.
+  if (s.design.y > 0 && std::ceil(s.design.y * s.z) + ch.y > area.y + 0.5f) w += st.ScrollbarSize;
+  const bool scrollX = w > area.x + 0.5f;
+  w = std::min(w, area.x);
+  ImGui::SetNextWindowSizeConstraints(ImVec2(w, 0), ImVec2(w, std::max(1.0f, area.y)));
+  return scrollX ? ImGuiWindowFlags_HorizontalScrollbar : 0;
 }
 
 void sizeMenu(App& a, const std::string& type, const char* key) {
@@ -329,11 +436,53 @@ void mapPointer() {
       if (m.z < 1.0f) const_cast<ImGuiWindow*>(w)->Flags |= ImGuiWindowFlags_NoMouseInputs;
 }
 
+// K-147: the ink of the editor in `s` this frame (before the magnified picture is scaled).
+void measure(Slot& s, int frame) {
+  ImGuiContext& g = *GImGui;
+  s.inkValid = false;
+  if (!s.host || !s.zoomable || s.lastFrame != frame || (!s.grouped && !(s.active && s.child))) return;  // built-in editors only
+  // At 100 % the editor is drawn straight into its window (from hostVtx0 on): that window's clip is the edge.
+  ImGuiWindow* const top = s.grouped ? s.host : s.child;
+  ImRect ink(FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX), body = ink;
+  bool any = false, anyBody = false;
+  const bool marked = s.bodyFrame == frame && s.bodyDl;
+  const ImVec2 o = s.active ? s.origin : ImVec2(0, 0);
+  const float z = s.active ? s.z : 1.0f;
+  for (ImGuiWindow* w : g.Windows) {  // the child windows inside the editor (sections, the magnified region)
+    if (w->LastFrameActive != frame || !w->DrawList) continue;
+    if (w == s.host ? !s.grouped : !(w->Flags & ImGuiWindowFlags_ChildWindow)) continue;
+    if (w->Flags & (ImGuiWindowFlags_Popup | ImGuiWindowFlags_Tooltip)) continue;
+    bool family = false;
+    for (const ImGuiWindow* p = w; p; p = p->ParentWindow) {
+      if (p == top) {
+        family = true;
+        break;
+      }
+      if (!(p->Flags & ImGuiWindowFlags_ChildWindow) || (p->Flags & ImGuiWindowFlags_Popup)) break;
+    }
+    if (!family && !(s.grouped && w == s.host)) continue;
+    // A child window is clipped by its own rectangle: what runs past it counts as ink too.
+    ImRect wclip = w->InnerClipRect;
+    if (w == s.child) wclip = ImRect(-FLT_MAX, -FLT_MAX, FLT_MAX, FLT_MAX);
+    const unsigned from = s.grouped && w == s.host ? s.hostVtx0 : 0u;
+    addInk(ink, any, w->DrawList, 0, w->DrawList->CmdBuffer.Size, wclip, o, z, from, s.grouped && w == s.host ? s.hostVtx1 : ~0u);
+    // The body: what the editor drew after markBody() (in that window from the mark on; child
+    // windows that start below it).
+    if (marked && w->DrawList == s.bodyDl) addInk(body, anyBody, w->DrawList, 0, w->DrawList->CmdBuffer.Size, wclip, o, z, s.bodyVtx, s.bodyVtxEnd);
+    else if (marked && w != s.child && w != s.host && w->Pos.y >= s.bodyY - 0.5f && w->Pos.y < s.bodyEndY - 0.5f) addInk(body, anyBody, w->DrawList, 0, w->DrawList->CmdBuffer.Size, wclip, o, z);
+  }
+  s.ink = ink;
+  s.inkValid = any;
+  s.body = body;
+  s.bodyValid = anyBody;
+}
+
 void afterRender() {
   ImGuiContext& g = *GImGui;
   members().clear();
   const int frame = g.FrameCount;
   for (auto& [key, s] : slots()) {
+    measure(s, frame);
     if (!s.active || s.lastFrame != frame || !s.child) {
       s.active = false;
       continue;
@@ -374,6 +523,23 @@ void devDump(const char* key) {
                 static_cast<double>(s.z), static_cast<double>(s.design.x), static_cast<double>(s.design.y), static_cast<double>(s.origin.x),
                 static_cast<double>(s.origin.y), h ? static_cast<double>(h->Pos.x) : 0.0, h ? static_cast<double>(h->Pos.y) : 0.0,
                 h ? static_cast<double>(h->Size.x) : 0.0, h ? static_cast<double>(h->Size.y) : 0.0, hw && h && hw->RootWindow == h->RootWindow ? 1 : 0);
+    // K-147: what the editor drew against its window: clipped (past the window's clip, left
+    // top right bottom) and spare room (inside the padding: left, right, bottom), in screen px.
+    if (s.inkValid) {
+      const ImRect& k = s.ink;
+      const float oL = std::max(0.0f, s.innerClip.Min.x - k.Min.x), oT = std::max(0.0f, s.innerClip.Min.y - k.Min.y);
+      const float oR = std::max(0.0f, k.Max.x - s.innerClip.Max.x), oB = std::max(0.0f, k.Max.y - s.innerClip.Max.y);
+      const float eL = k.Min.x - (s.inner.Min.x + s.pad.x), eR = (s.inner.Max.x - s.pad.x) - k.Max.x;
+      const float eB = (s.inner.Max.y - s.pad.y) - k.Max.y;
+      // The body (the plugin's own editor under the header): its ink width and the width it
+      // was given, both at this size (screen px).
+      const float bw = s.bodyValid ? s.body.GetWidth() : 0.0f;
+      std::printf("edfit %s: type %s zoom %.2f inner %.0fx%.0f ink %.0fx%.0f clipped %.0f,%.0f,%.0f,%.0f spare %.0f,%.0f,%.0f body %.0f at %.0f of %.0f region %.0f overflow %.0f\n", key,
+                  s.type.c_str(), static_cast<double>(s.z), static_cast<double>(s.inner.GetWidth()), static_cast<double>(s.inner.GetHeight()),
+                  static_cast<double>(k.GetWidth()), static_cast<double>(k.GetHeight()), static_cast<double>(oL), static_cast<double>(oT),
+                  static_cast<double>(oR), static_cast<double>(oB), static_cast<double>(eL), static_cast<double>(eR), static_cast<double>(eB),
+                  static_cast<double>(bw), static_cast<double>(s.bodyValid ? s.body.Min.x - s.origin.x : 0.0f), static_cast<double>(s.bodyW * s.z), static_cast<double>(s.contentW * s.z), static_cast<double>(s.overflow * s.z));
+    }
   }
   std::fflush(stdout);
 }

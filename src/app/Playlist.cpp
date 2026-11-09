@@ -31,6 +31,7 @@
 #include "../core/PluginParams.h"
 #include "../core/SmoothSnap.h"
 #include "../engine/ClipOps.h"
+#include "../engine/ClipSource.h"
 #include "../engine/PlaylistTools.h"
 #include "../engine/Sample.h"
 #include "App.h"
@@ -38,6 +39,7 @@
 #include "../core/Grouping.h"
 #include "J31Ui.h"
 #include "LiveTakes.h"
+#include "PlaylistWarp.h"
 #include "../core/NoteTools.h"
 #include "AudioRecordUi.h"
 #include "AutomationEditor.h"
@@ -72,7 +74,7 @@ constexpr double kRowZoomStep = 1.1;
 constexpr float kThumbMinV = 18.0f, kThumbMinH = 24.0f;
 
 struct ClipGesture {
-  enum Kind { None, Move, Resize, Trim, Select, Paint, Erase, Scrub, TimeSel, AutoPoint, AutoTension, Mute, Slip, Play, Zoom, SliceLine, MarkerDrag } kind = None;
+  enum Kind { None, Move, Resize, Trim, Select, Paint, Erase, Scrub, TimeSel, AutoPoint, AutoTension, Mute, Slip, Play, Zoom, SliceLine, MarkerDrag, Warp } kind = None;
   // J-85: a marker dragged in the ruler (moved on release; a click jumps to it),
   // and a right-click in the ruler that did not drag (opens the ruler menu).
   int marker = -1;
@@ -457,9 +459,9 @@ struct AudioMap {
   const TempoMap& tm;
   double audioStart = 0, start = 0, startSec = 0, syncScale = 0, speed = 1;
   bool sync = false;
-  AudioMap(const Song& s, const Channel& ch, const Clip& c, const TempoMap& map) : tm(map) {
+  AudioMap(const Song& s, const Channel& ch, const Clip& c, const TempoMap& map, double from) : tm(map) {
     const ClipRate r = clipRate(ch, c);  // J-164: the engine's mapping (pitch never moves the waveform)
-    audioStart = c.audioStart;
+    audioStart = from;  // K-85: where its audio starts (inside the channel's start / end handles)
     start = static_cast<double>(c.start);
     sync = c.syncBpm > 0;
     if (sync) {
@@ -469,7 +471,17 @@ struct AudioMap {
     speed = r.speed;
     startSec = tm.secondsAt(start);
   }
-  double at(double t) const { return sync ? audioStart + (t - start) * syncScale : audioStart + (tm.secondsAt(t) - startSec) * speed; }
+  // K-85: through the clip's warp markers (ClipSource.h clipWarp; empty: none).
+  std::vector<WarpPoint> warp;
+  double warpBase = 0;
+  void setWarp(std::vector<WarpPoint> w) {
+    warp = std::move(w);
+    warpBase = warp.empty() ? 0.0 : warpTimeAt(warp, audioStart);
+  }
+  double at(double t) const {
+    const double p = sync ? (t - start) * syncScale : (tm.secondsAt(t) - startSec) * speed;
+    return warp.empty() ? audioStart + p : warpSourceAt(warp, warpBase + p);
+  }
 };
 
 // J-118: with `xf`, each column's opacity follows the clip's crossfade level
@@ -477,15 +489,18 @@ struct AudioMap {
 // J-217: drawn from a summary of `frames` frames at `rate` (a decoded sample,
 // a committed take whose file is still decoding, or a take still recording).
 void drawWaveformFrom(ImDrawList* dl, const Song& s, const Channel& ch, const Clip& c, const TempoMap& tm, ImVec2 a, ImVec2 b, float clipX0,
-                      float pxPerTick, float visX0, float visX1, ImU32 col, const FadeGeom* xf, const PeakSummary& pk, size_t frames, double rate) {
+                      float pxPerTick, float visX0, float visX1, ImU32 col, const FadeGeom* xf, const PeakSummary& pk, size_t frames, double rate,
+                      const ClipSource* src) {
   if (frames < 2 || pk.bins() == 0 || rate <= 0) return;
-  const bool rev = c.reverse != (ch.plugin.type == "gl.sampler" && ch.plugin.params.size() > pp::SmpReverse &&
-                                 ch.plugin.params[pp::SmpReverse] >= 0.5f);
+  const bool rev = clipPlaysReversed(ch, c);
   const double seconds = static_cast<double>(frames) / rate;
-  const double srcEnd = c.audioEnd > c.audioStart ? std::min(c.audioEnd, seconds) : seconds;
+  // K-85: the window inside the channel's start / end handles (the sound its sample page makes).
+  double srcStart = std::max(0.0, c.audioStart), srcEnd = c.audioEnd > c.audioStart ? std::min(c.audioEnd, seconds) : seconds;
+  if (src && !clipWindow(*src, rev, c, srcStart, srcEnd)) return;
   const float mid = (a.y + b.y) * 0.5f, half = (b.y - a.y) * 0.5f;
   const float x0 = std::max(a.x, visX0), x1 = std::min(b.x, visX1);
-  const AudioMap map(s, ch, c, tm);
+  AudioMap map(s, ch, c, tm, srcStart);
+  if (src) map.setWarp(clipWarp(*src, rev, c));
   const double bin = static_cast<double>(pk.binFrames());
   for (float x = std::floor(x0); x < x1; x += 1.0f) {
     double t0 = static_cast<double>(c.start) + (x - clipX0) / pxPerTick, t1 = t0 + 1.0 / pxPerTick;
@@ -511,13 +526,17 @@ void drawWaveformFrom(ImDrawList* dl, const Song& s, const Channel& ch, const Cl
 
 void drawWaveform(ImDrawList* dl, const Song& s, const Channel& ch, const Clip& c, const TempoMap& tm, ImVec2 a, ImVec2 b, float clipX0,
                   float pxPerTick, float visX0, float visX1, ImU32 col, const FadeGeom* xf = nullptr) {
-  SamplePtr smp = sampleCache().request(ch.plugin.data);  // J-30: never waits for a decode (drawn once ready)
+  // J-30: never waits for a decode (drawn once ready). K-85: the sound the channel's sample page makes.
+  const ClipSource src = clipSourceIfReady(ch);
+  const SamplePtr& smp = src.sample;
   if (smp && smp->frames() >= 2) {
-    drawWaveformFrom(dl, s, ch, c, tm, a, b, clipX0, pxPerTick, visX0, visX1, col, xf, livetake::samplePeaks(smp), smp->frames(), smp->sampleRate);
+    drawWaveformFrom(dl, s, ch, c, tm, a, b, clipX0, pxPerTick, visX0, visX1, col, xf, livetake::samplePeaks(smp), smp->frames(), smp->sampleRate,
+                     &src);
   } else if (!smp) {
     // J-217: a take just recorded draws from its live summary until its file has decoded.
     if (const livetake::Handoff* h = livetake::pending(ch.plugin.data))
-      drawWaveformFrom(dl, s, ch, c, tm, a, b, clipX0, pxPerTick, visX0, visX1, col, xf, h->peaks, static_cast<size_t>(h->frames), h->sampleRate);
+      drawWaveformFrom(dl, s, ch, c, tm, a, b, clipX0, pxPerTick, visX0, visX1, col, xf, h->peaks, static_cast<size_t>(h->frames), h->sampleRate,
+                       nullptr);
   }
 }
 
@@ -809,7 +828,12 @@ void arrangementClipMenu(App& a, ObjectId id) {
     if (!clipui::multiDrag(a, id, Param::FadeOut, i18n::tr("Fade out"), fo, 1.0f, 0.0f, 60000.0f, "%.0f ms", 1000.0, "clip fade out", key + 3) &&
         ImGui::DragFloat(i18n::tr("Fade out"), &fo, 1.0f, 0.0f, 60000.0f, "%.0f ms"))
       a.doc.editClip(id, "clip fade out", [&](Clip& x) { x.fadeOut = std::max(0.0f, fo) / 1000.0, x.fadeOutManual = true; }, key + 3);
-    if (ImGui::MenuItem(i18n::tr("Reverse"), nullptr, c->reverse)) a.doc.editClip(id, "reverse clip", [](Clip& x) { x.reverse = !x.reverse; });
+    if (ImGui::MenuItem(i18n::tr("Reverse"), nullptr, c->reverse)) a.doc.editClip(id, "reverse clip", [&a](Clip& x) { toggleClipReverse(a.doc.song(), x); });  // K-85: keeps its audio
+    {  // K-85: warp markers (transients, audio quantize, clear)
+      TempoMap wtm;
+      wtm.build(s);
+      plwarp::clipMenu(a, id, wtm, timeline::snapGrid(s, a.playlist.snap, a.playlist.pxPerTick, false));
+    }
     // J-193: on, the clip keeps its bars when the tempo changes (a stretch turns it on); off, it keeps its audio and seconds.
     if (ImGui::MenuItem(i18n::tr("Follow the project tempo"), nullptr, c->syncBpm > 0)) {
       const bool on = !(c->syncBpm > 0);
@@ -1198,6 +1222,7 @@ void drawPlaylist(App& a) {
         {ui::Icon::ToolDelete, Tool::Erase, i18n::N_("Delete"), i18n::N_("click or drag over clips to delete them"), "playlist.toolDelete", theme::role::kDelete},
         {ui::Icon::ToolMute, Tool::Mute, i18n::N_("Mute"), i18n::N_("click or drag over clips to mute / unmute them"), "playlist.toolMute", theme::role::kMute},
         {ui::Icon::ToolSlip, Tool::Slip, i18n::N_("Slip"), i18n::N_("drag inside a clip to move its content without moving the clip"), "playlist.toolSlip", theme::role::kSlip},
+        {ui::Icon::Stretch, Tool::Warp, i18n::N_("Warp"), i18n::N_("click an audio clip to add a warp marker, drag a marker to stretch the audio around it (Alt: off the grid, Shift: slide the audio under it), double-click or right-click removes it"), "playlist.toolWarp", theme::role::kWarp},
         {ui::Icon::ToolSlice, Tool::Slice, i18n::N_("Slice"), i18n::N_("click a clip to cut it, drag up / down to cut every clip the line crosses, drag sideways to cut out a region (Shift: all tracks)"), "playlist.toolSlice", theme::role::kSlice},
         {ui::Icon::ToolSelect, Tool::Select, i18n::N_("Select"), i18n::N_("drag a box (Ctrl+drag selects with any tool, Shift adds)"), "playlist.toolSelect", theme::role::kSelect},
         {ui::Icon::ToolZoom, Tool::Zoom, i18n::N_("Zoom"), i18n::N_("drag a range to fill the view, click zooms in, right-click zooms out"), "playlist.toolZoom", theme::role::kZoom},
@@ -2201,13 +2226,15 @@ void drawPlaylist(App& a) {
       }
     } else if (c.kind == ClipKind::Audio) {
       if (b1.y - b0.y > 4) {
+        const Clip& wv = plwarp::shown(s, c, tempoMap, animSnap, animEpsTick);  // K-85: a dragged marker glides as a dragged clip does
         if (c.id == gainGlideClip) {  // J-79: drawn at the gliding gain
-          Clip wc = c;
+          Clip wc = wv;
           wc.gain = clipgain::fromDb(gainGlideDb);
           drawClipWave(dl, s, *s.channel(c.source), wc, tempoMap, b0, b1, x0, st.pxPerTick, gMin.x, gMax.x, ink, xfBelow >= 0 ? &fg : nullptr);
         } else {
-          drawClipWave(dl, s, *s.channel(c.source), c, tempoMap, b0, b1, x0, st.pxPerTick, gMin.x, gMax.x, ink, xfBelow >= 0 ? &fg : nullptr);
+          drawClipWave(dl, s, *s.channel(c.source), wv, tempoMap, b0, b1, x0, st.pxPerTick, gMin.x, gMax.x, ink, xfBelow >= 0 ? &fg : nullptr);
         }
+        plwarp::drawMarkers(dl, s, wv, tempoMap, b0, b1, x0, st.pxPerTick, gMin.x, gMax.x, st.tool == Tool::Warp, ink);  // K-85
       }
       // J-111: the audio file is still arriving from a collaborator: silent placeholder with progress
       if (float pr = 0; collabui::fileLoading(a, s.channel(c.source)->plugin.data, &pr))
@@ -2398,7 +2425,7 @@ void drawPlaylist(App& a) {
         lc.length = v.span.length;
         const ImU32 ink = P.dark ? theme::mix(base, P.paper, muted ? 0.0f : 0.45f) : theme::mix(base, P.ink, muted ? 0.15f : 0.42f);
         drawWaveformFrom(dl, s, liveCh, lc, tempoMap, b0, b1, x0, st.pxPerTick, gMin.x, gMax.x, ink, nullptr, *v.peaks,
-                         static_cast<size_t>(v.fileFrames), v.sampleRate);
+                         static_cast<size_t>(v.fileFrames), v.sampleRate, nullptr);
       }
       dl->PopClipRect();
       // The record head: the take's newest frame.
@@ -2971,6 +2998,8 @@ void drawPlaylist(App& a) {
       ImGui::SetMouseCursor(hoverEdge || hoverLeftEdge ? ImGuiMouseCursor_ResizeEW : ImGuiMouseCursor_ResizeAll);
     else if (st.tool == Tool::Slip && hoverClip != kNoId)
       ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+    else if (st.tool == Tool::Warp && hoverClip != kNoId && plwarp::hovered(hoverClip))  // K-85
+      ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
     std::string where = "Bar " + std::to_string(tickAt(m.x) / std::max<Tick>(1, s.barTicks()) + 1) + " · " +
                         playlistTrackName(s, static_cast<size_t>(trackAt(m.y)));
     if (liveMode && hc && inLiveArea(s, *hc))
@@ -3052,8 +3081,10 @@ void drawPlaylist(App& a) {
   // Q-3: Esc or a right-click during a clip drag (move, Shift+drag copies,
   // resize, trim, slip) cancels it: the clips go back, the copies go away,
   // the selection is restored and nothing is recorded.
-  if ((cg.kind == ClipGesture::Move || cg.kind == ClipGesture::Resize || cg.kind == ClipGesture::Trim || cg.kind == ClipGesture::Slip) &&
+  if ((cg.kind == ClipGesture::Move || cg.kind == ClipGesture::Resize || cg.kind == ClipGesture::Trim || cg.kind == ClipGesture::Slip ||
+       cg.kind == ClipGesture::Warp) &&
       ImGui::IsMouseDown(ImGuiMouseButton_Left) && (keys::pressedHeld("playlist.cancelDrag") || ImGui::IsMouseClicked(ImGuiMouseButton_Right))) {
+    if (cg.kind == ClipGesture::Warp) plwarp::end();
     if (cg.grouped) a.doc.cancelGroup();
     st.selected = cg.selBefore;
     clipAnim.clear();
@@ -3618,12 +3649,27 @@ void drawPlaylist(App& a) {
       ImGui::OpenPopup("##clipmenu");
     } else if (inGrid && rClick && st.tool == Tool::Zoom) {
       st.zoomRequest /= 1.5f;
+    } else if (inGrid && rClick && st.tool == Tool::Warp && hc && plwarp::hovered(hc->id)) {
+      plwarp::removeHovered(a, *hc);  // K-85: a right-click on a warp marker removes it
     } else if (inGrid && rClick) {
       cg.kind = ClipGesture::Erase;  // right-drag deletes with every editing tool (like FL)
       group("delete clips");
     } else if (inGrid && lClick && !io.KeyCtrl && st.tool == Tool::Mute) {
       cg.kind = ClipGesture::Mute;
       if (hc) cg.muteTo = hc->muted ? 0 : 1;
+    } else if (inGrid && lClick && hc && !io.KeyCtrl && st.tool == Tool::Warp) {  // K-85: warp markers
+      if (hc->kind == ClipKind::Audio && !(hc->track >= 0 && hc->track < nTracks && s.tracks[static_cast<size_t>(hc->track)].locked)) {
+        if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && plwarp::removeHovered(a, *hc)) {
+        } else {
+          group("warp audio");
+          if (plwarp::begin(a, *hc, tempoMap, static_cast<double>(std::max<Tick>(0, tickAt(m.x))), io.KeyShift, cg.key)) {
+            cg.kind = ClipGesture::Warp;
+          } else {
+            a.doc.cancelGroup();
+            cg.grouped = false;
+          }
+        }
+      }
     } else if (inGrid && lClick && hc && ((!io.KeyCtrl && st.tool == Tool::Slip) || (st.tool == Tool::Draw && slipDrag && !loopEdgeGrab))) {
       cg.kind = ClipGesture::Slip;  // every clip kind (audio: its sample position)
     } else if (inGrid && lClick && !io.KeyCtrl && st.tool == Tool::Slice) {
@@ -4001,6 +4047,9 @@ void drawPlaylist(App& a) {
         a.doc.editClip(hoverClip, to ? "mute clips" : "unmute clips", [to](Clip& k) { k.muted = to; }, cg.key);
         break;
       }
+      case ClipGesture::Warp:  // K-85: the grabbed warp marker follows the pointer (on the grid unless Alt)
+        plwarp::drag(a, tempoMap, curTick, snapG);
+        break;
       case ClipGesture::Slip: {  // content moves inside the clip (every kind)
         const Clip* an = baseClip();
         if (!an || trackLocked(an->track)) break;
@@ -4121,6 +4170,7 @@ void drawPlaylist(App& a) {
         st.selStart = st.selEnd = 0;
       }
     }
+    if (cg.kind == ClipGesture::Warp) plwarp::end();
     if (cg.grouped) a.doc.endGroup();
     a.doc.endGesture();
     cg = ClipGesture{};
@@ -4332,7 +4382,8 @@ void drawPlaylist(App& a) {
       struct K { const char* cmd; Tool tool; };
       const K toolKeys[] = {{"playlist.toolDraw", Tool::Draw}, {"playlist.toolPaint", Tool::Paint}, {"playlist.toolDelete", Tool::Erase},
                             {"playlist.toolMute", Tool::Mute}, {"playlist.toolSlip", Tool::Slip},   {"playlist.toolSlice", Tool::Slice},
-                            {"playlist.toolSelect", Tool::Select}, {"playlist.toolZoom", Tool::Zoom}, {"playlist.toolPlay", Tool::Play}};
+                            {"playlist.toolSelect", Tool::Select}, {"playlist.toolZoom", Tool::Zoom}, {"playlist.toolPlay", Tool::Play},
+                            {"playlist.toolWarp", Tool::Warp}};
       for (const auto& k : toolKeys)
         if (keys::pressed(k.cmd)) st.tool = k.tool;
     }

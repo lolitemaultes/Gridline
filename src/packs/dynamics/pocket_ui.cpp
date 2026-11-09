@@ -20,7 +20,7 @@ void editorPocket(App& a, const PluginTarget& t, float width) {
     ImGui::PushID(slot);
     const int type = std::clamp(static_cast<int>(std::lround(val(pkParam(slot, PkType)))), 0, kPkTypes - 1);
     std::string title = "Slot " + std::to_string(slot + 1) + " \xE2\x80\x94 " + pocketModuleName(type);
-    pui::beginSection(title.c_str(), width - 16);
+    pui::beginSection(title.c_str(), width);  // K-147: the full width (no strip at the right)
     // Module picker: switching loads the new module's defaults.
     ImGui::SetNextItemWidth(180);
     if (ImGui::BeginCombo("##type", pocketModuleName(type))) {

@@ -234,7 +234,11 @@ std::vector<align::Text> textRuns(ImGuiWindow* root) {
   }
   const ImTextureData* tex = atlas->TexData;
   for (ImGuiWindow* w : g->Windows) {
-    if (w->RootWindow != root || w->LastFrameActive != g->FrameCount || w->Hidden) continue;
+    if (w->LastFrameActive != g->FrameCount || w->Hidden) continue;
+    // `root` and the child windows inside it (K-147: an editor may be drawn in a child region).
+    bool inside = false;
+    for (const ImGuiWindow* p = w; p && !inside; p = (p->Flags & ImGuiWindowFlags_ChildWindow) ? p->ParentWindow : nullptr) inside = p == root;
+    if (!inside) continue;
     const size_t first = out.size();
     scanList(w->DrawList, glyphs, tex, out);
     // A scrolling region cuts the text at its scrolled edge on purpose: only the

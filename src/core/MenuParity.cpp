@@ -10,6 +10,7 @@
 #include "ClipLoop.h"
 #include "NoteTools.h"
 #include "PatternAutomation.h"
+#include "../engine/ClipSource.h"
 #include "../engine/TimeStretch.h"
 #include "PluginParams.h"
 
@@ -127,7 +128,7 @@ int reverseAudioClips(Document& d, const std::set<ObjectId>& clips) {
   if (!n) return 0;
   d.editSong("reverse audio clips", [&](Song& s) {
     for (auto& c : s.playlist)
-      if (c.kind == ClipKind::Audio && clips.count(c.id)) c.reverse = !c.reverse;
+      if (c.kind == ClipKind::Audio && clips.count(c.id)) toggleClipReverse(s, c);  // K-85: the same audio, backwards
   });
   return n;
 }

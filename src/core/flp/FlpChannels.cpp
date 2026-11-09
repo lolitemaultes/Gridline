@@ -78,6 +78,63 @@ double channelFitStretch(const Context& c, const std::string& path, double beats
   return std::isfinite(f) && f > 0 ? f : 0;
 }
 
+// K-85: a sampler's sample page, as sampler channels and audio clip channels
+// (type 4) store it alike: the FX flags (70), the precomputed effects, the
+// processing switches and the start / end handles. FL stores the end handle
+// as a length from the start (215 @136; the shipped demos have start 0.62 with
+// 0.14 there, the sample page labels it the length), so the end is start + length.
+void importSamplePage(const std::vector<Event>& evs, const Event* params, PluginState& sp) {
+  using namespace pp;
+  if (const Event* e = find(evs, 70)) {  // FX flags: 1 stereo fade, 2 reverse, 4 boost clip, 256 swap stereo
+    if (e->value() & 1) setParam(sp, SmpPreFadeStereo, 1);
+    if (e->value() & 2) setParam(sp, SmpReverse, 1);
+    if (e->value() & 4) setParam(sp, SmpPreClip, 1);
+    if (e->value() & 256) setParam(sp, SmpSwapStereo, 1);
+  }
+  // Precomputed effects (J-23, laws in engine/SamplePrecompute.cpp): tilt
+  // (69, 0..256, 128 flat), cutoff (71, 16..1024, 1024 off), boost (74,
+  // 0..256), resonance (83, 0..640), stereo delay (85, 0..4096, 2048 off),
+  // time warp (86, 0..512, 256 off), ring modulation (131: mix low word,
+  // frequency high word, 0..256), reverb (139: mix low word 0..256, type
+  // high word).
+  if (const Event* e = find(evs, 69)) setParam(sp, SmpPreTilt, std::clamp((e->ivalue() - 128) / 128.0, -1.0, 1.0));
+  if (const Event* e = find(evs, 71)) setParam(sp, SmpPreCutoff, std::clamp(e->ivalue() / 1024.0, 1.0 / 64, 1.0));
+  if (const Event* e = find(evs, 74)) setParam(sp, SmpPreBoost, std::clamp(e->ivalue() / 256.0, 0.0, 1.0));
+  if (const Event* e = find(evs, 83)) setParam(sp, SmpPreReso, std::clamp(e->ivalue() / 640.0, 0.0, 1.0));
+  if (const Event* e = find(evs, 85)) setParam(sp, SmpPreStereoDelay, std::clamp((e->ivalue() - 2048) / 44.1, -46.44, 46.44));
+  if (const Event* e = find(evs, 86)) setParam(sp, SmpPreWarp, std::clamp((e->ivalue() - 256) / 256.0, -1.0, 1.0));
+  if (const Event* e = find(evs, 131)) {
+    setParam(sp, SmpPreRingMix, std::clamp((e->value() & 0xFFFF) / 256.0, 0.0, 1.0));
+    setParam(sp, SmpPreRingFreq, std::clamp(((e->value() >> 16) + 8) * 44100.0 / 5760.0, 61.25, 2021.25));
+  }
+  if (const Event* e = find(evs, 139)) {
+    setParam(sp, SmpPreReverbMix, std::clamp((e->value() & 0xFFFF) / 256.0, 0.0, 1.0));
+    setParam(sp, SmpPreReverbType, (e->value() >> 16) ? 1 : 0);
+  }
+  // Quick fades (76 in, 75 out, 0..1024): linear ramps across the whole
+  // sample whose slope is value / 256 (they reach full level only at the
+  // end / start), applied with the precomputed effects.
+  if (const Event* e = find(evs, 76)) setParam(sp, SmpPreRampIn, std::clamp(e->ivalue() / 256.0, 0.0, 4.0));
+  if (const Event* e = find(evs, 75)) setParam(sp, SmpPreRampOut, std::clamp(e->ivalue() / 256.0, 0.0, 4.0));
+  // J-39: the flags, declick mode and crossfade sit at the same offsets in
+  // the shorter records of FL 10..12 (112 / 125 / 156 bytes; the shipped
+  // projects use the same declick values there).
+  if (params && params->size >= 88) {
+    if (params->u8(9)) setParam(sp, SmpRemoveDc, 1);
+    if (params->u8(80)) setParam(sp, SmpNormalize, 1);
+    if (params->u8(81)) setParam(sp, SmpPolarity, 1);
+    static const int kDeclick[6] = {1, 2, 2, 3, 4, 4};
+    setParam(sp, SmpDeclick, kDeclick[std::min<int>(params->u8(83), 5)]);
+    setParam(sp, SmpLoopXfade, std::clamp(params->u32(84) / 256.0, 0.0, 1.0) * 0.5);
+  }
+  if (params && params->size >= 144) {
+    const double start = params->f64(128), len = params->f64(136);
+    const double a = std::isfinite(start) && start > 0 && start < 1 ? start : 0.0;
+    if (a > 0) setParam(sp, SmpStart, a);
+    if (std::isfinite(len) && len > 0 && a + len < 1) setParam(sp, SmpEnd, a + len);
+  }
+}
+
 ChannelIns decodeChannelIns(const std::vector<Event>& evs) {
   ChannelIns ins;
   int k = 0;
@@ -340,32 +397,7 @@ void importChannels(Context& c) {
       PluginState& sp = ch.plugin;
       if (!nativeExport) setParam(sp, SmpVolume, flSamplerVolume(ch.gain));  // K-63
       if (const Event* e = find(evs, 135)) setParam(sp, SmpRoot, std::clamp(e->ivalue(), 0, 127));
-      if (const Event* e = find(evs, 70)) {  // FX flags: 1 stereo fade, 2 reverse, 4 boost clip, 256 swap stereo
-        if (e->value() & 1) setParam(sp, SmpPreFadeStereo, 1);
-        if (e->value() & 2) setParam(sp, SmpReverse, 1);
-        if (e->value() & 4) setParam(sp, SmpPreClip, 1);
-        if (e->value() & 256) setParam(sp, SmpSwapStereo, 1);
-      }
-      // Precomputed effects (J-23, laws in engine/SamplePrecompute.cpp): tilt
-      // (69, 0..256, 128 flat), cutoff (71, 16..1024, 1024 off), boost (74,
-      // 0..256), resonance (83, 0..640), stereo delay (85, 0..4096, 2048 off),
-      // time warp (86, 0..512, 256 off), ring modulation (131: mix low word,
-      // frequency high word, 0..256), reverb (139: mix low word 0..256, type
-      // high word).
-      if (const Event* e = find(evs, 69)) setParam(sp, SmpPreTilt, std::clamp((e->ivalue() - 128) / 128.0, -1.0, 1.0));
-      if (const Event* e = find(evs, 71)) setParam(sp, SmpPreCutoff, std::clamp(e->ivalue() / 1024.0, 1.0 / 64, 1.0));
-      if (const Event* e = find(evs, 74)) setParam(sp, SmpPreBoost, std::clamp(e->ivalue() / 256.0, 0.0, 1.0));
-      if (const Event* e = find(evs, 83)) setParam(sp, SmpPreReso, std::clamp(e->ivalue() / 640.0, 0.0, 1.0));
-      if (const Event* e = find(evs, 85)) setParam(sp, SmpPreStereoDelay, std::clamp((e->ivalue() - 2048) / 44.1, -46.44, 46.44));
-      if (const Event* e = find(evs, 86)) setParam(sp, SmpPreWarp, std::clamp((e->ivalue() - 256) / 256.0, -1.0, 1.0));
-      if (const Event* e = find(evs, 131)) {
-        setParam(sp, SmpPreRingMix, std::clamp((e->value() & 0xFFFF) / 256.0, 0.0, 1.0));
-        setParam(sp, SmpPreRingFreq, std::clamp(((e->value() >> 16) + 8) * 44100.0 / 5760.0, 61.25, 2021.25));
-      }
-      if (const Event* e = find(evs, 139)) {
-        setParam(sp, SmpPreReverbMix, std::clamp((e->value() & 0xFFFF) / 256.0, 0.0, 1.0));
-        setParam(sp, SmpPreReverbType, (e->value() >> 16) ? 1 : 0);
-      }
+      importSamplePage(evs, params, sp);  // K-85: shared with audio clip channels (FlpArrangement.cpp)
       // Sampler flags (143) bit 8 = "use the file's loop points": FL sets it by
       // default and it only loops samples that carry loop markers, which the
       // sample loader does not read — so it does not switch looping on here.
@@ -373,26 +405,7 @@ void importChannels(Context& c) {
         setParam(sp, SmpLoop, 1);
         setParam(sp, SmpLoopMode, 1);
       }
-      // Quick fades (76 in, 75 out, 0..1024): linear ramps across the whole
-      // sample whose slope is value / 256 (they reach full level only at the
-      // end / start), applied with the precomputed effects.
-      if (const Event* e = find(evs, 76)) setParam(sp, SmpPreRampIn, std::clamp(e->ivalue() / 256.0, 0.0, 4.0));
-      if (const Event* e = find(evs, 75)) setParam(sp, SmpPreRampOut, std::clamp(e->ivalue() / 256.0, 0.0, 4.0));
-      // J-39: the flags, declick mode and crossfade sit at the same offsets in
-      // the shorter records of FL 10..12 (112 / 125 / 156 bytes; the shipped
-      // projects use the same declick values there).
-      if (params && params->size >= 88) {
-        if (params->u8(9)) setParam(sp, SmpRemoveDc, 1);
-        if (params->u8(80)) setParam(sp, SmpNormalize, 1);
-        if (params->u8(81)) setParam(sp, SmpPolarity, 1);
-        static const int kDeclick[6] = {1, 2, 2, 3, 4, 4};
-        setParam(sp, SmpDeclick, kDeclick[std::min<int>(params->u8(83), 5)]);
-        setParam(sp, SmpLoopXfade, std::clamp(params->u32(84) / 256.0, 0.0, 1.0) * 0.5);
-      }
       if (params && params->size >= 144) {
-        double start = params->f64(128), end = params->f64(136);
-        if (std::isfinite(start) && start > 0 && start < 1) setParam(sp, SmpStart, start);
-        if (std::isfinite(end) && end > 0 && end < 1) setParam(sp, SmpEnd, end);
         if (stretchMode != 0) {  // time stretch (pitch kept): J-87 the closest Gridline mode of FL's method
           setParam(sp, SmpStretchMode, static_cast<float>(stretch::modeFromFl(stretchMode)));
           setParam(sp, SmpTimeStretch, std::clamp(stretchMul, 0.25, 4.0));
