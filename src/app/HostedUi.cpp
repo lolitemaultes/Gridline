@@ -19,6 +19,7 @@
 #include "Theme.h"
 #include "Widgets.h"
 #include "Windows.h"
+#include "UndoUi.h"
 
 namespace gl {
 
@@ -100,15 +101,16 @@ std::map<uint64_t, uint64_t> gOwnStep;
 // Takes a change the plugin reported (its state, its values read back) into the song:
 //  - right after the plugin's own edits (nothing else edited, undone or redone since): into
 //    that same undo step, so one gesture in its interface stays one undo step;
-//  - while nothing was edited since an undo / redo: without a step of its own (the plugin only
-//    follows what the undo / redo restored; a new step would throw the redo history away);
+//  - while nothing was edited since an undo / redo, and only shortly after it (K-141): without a
+//    step of its own (the plugin only follows what the undo / redo restored; a new step would
+//    throw the redo history away). A change made in its window later is the user's: a step;
 //  - otherwise as an undo step of its own.
 void takeOver(App& a, const PluginTarget& t, const PluginState& ns, const char* label, uint64_t mergeKey) {
   const uint64_t serial = a.doc.history().stateSerial();
   auto own = gOwnStep.find(t.key());
   if (own != gOwnStep.end() && own->second == serial) {
     a.doc.amendStep(serial, [&] { setPluginState(a, t, ns, label); });
-  } else if (a.doc.moveSerial() != 0 && a.doc.moveSerial() == serial) {
+  } else if (a.doc.moveSerial() != 0 && a.doc.moveSerial() == serial && a.now - undoui::lastMoveAt() < undoui::kFollowSeconds) {
     a.doc.patchSong([&](Song& s) {
       if (t.isChannel()) {
         if (Channel* c = s.channel(t.owner)) {

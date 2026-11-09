@@ -14,6 +14,10 @@ int gEscClaimFrame = -10;  // K-124: frame in which something used Esc
 bool gEscBusyAtStart = false;
 int gCaptureFrame = -10;  // capture lapses when the shortcut editor stops refreshing it (window closed)
 int gReleaseFrame = -10;  // frame a capture ended in
+std::string gInjected;    // K-93: a command the command palette runs (as if its key was pressed)
+int gInjectFrame = -10;
+
+bool injectedNow(const char* id) { return gInjectFrame == ImGui::GetFrameCount() && gInjected == id; }
 
 const ImGuiKey kMap[] = {
     ImGuiKey_None,
@@ -80,6 +84,7 @@ void setFocusContext(Context c) { gFocus = c; }
 Context focusContext() { return gFocus; }
 
 bool pressed(const char* id) {
+  if (injectedNow(id)) return true;
   if (capturing() || ImGui::GetIO().WantTextInput) return false;
   const Command* cmd = findCommand(id);
   if (!cmd) return false;
@@ -94,6 +99,7 @@ bool pressed(const char* id) {
 }
 
 bool pressedPastEditor(const char* id) {
+  if (injectedNow(id)) return true;
   if (capturing() || ImGui::GetIO().WantTextInput) return false;
   const Command* cmd = findCommand(id);
   if (!cmd) return false;
@@ -130,6 +136,7 @@ void claimEscape() { gEscClaimFrame = ImGui::GetFrameCount(); }
 bool escapeBusy() { return gEscBusyAtStart || gEscClaimFrame == ImGui::GetFrameCount(); }
 
 bool pressedHeld(const char* id) {
+  if (injectedNow(id)) return true;
   if (capturing() || ImGui::GetIO().WantTextInput) return false;
   const Command* cmd = findCommand(id);
   if (!cmd) return false;
@@ -165,6 +172,19 @@ const char* label(const char* id) {
     it = lc.text.emplace(id, b.empty() ? std::string() : format(b.front())).first;
   }
   return it->second.empty() ? nullptr : it->second.c_str();
+}
+
+const char* commandForLabel(const char* text) {
+  if (!text) return nullptr;
+  const LabelCache& lc = labelCache();
+  for (const auto& [id, t] : lc.text)
+    if (t.c_str() == text) return findCommand(id) ? findCommand(id)->id : nullptr;
+  return nullptr;
+}
+
+void inject(const char* id, int frame) {
+  gInjected = id ? id : "";
+  gInjectFrame = frame;
 }
 
 std::string labels(const char* id) {

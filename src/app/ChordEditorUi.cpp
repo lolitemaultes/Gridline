@@ -21,6 +21,7 @@
 #include "../core/StepNotes.h"
 #include "App.h"
 #include "ContextMenus.h"
+#include "UndoUi.h"
 #include "J31Ui.h"
 #include "RunLatch.h"
 #include "Theme.h"
@@ -667,14 +668,18 @@ void topStrip(App& a) {
   });
   ui::Hint("Grid for resizing chords");
   ImGui::SameLine(0, theme::kS2);
-  if (ui::IconButton("##undo", ui::Icon::Undo, false, theme::kControlH, "Undo the last chord edit") && !S.undo.empty()) {
+  // K-141: while this window is focused, the Undo / Redo shortcuts move its own history first.
+  const bool focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+  const bool keyUndo = focused && !S.undo.empty() && undoui::editorPressed(-1);
+  const bool keyRedo = focused && !S.redo.empty() && undoui::editorPressed(1);
+  if ((ui::IconButton("##undo", ui::Icon::Undo, false, theme::kControlH, "Undo the last chord edit") || keyUndo) && !S.undo.empty()) {
     S.redo.push_back(S.prog);
     S.prog = S.undo.back();
     S.undo.pop_back();
     writeNow(a);
   }
   ImGui::SameLine(0, 2);
-  if (ui::IconButton("##redo", ui::Icon::Redo, false, theme::kControlH, "Redo") && !S.redo.empty()) {
+  if ((ui::IconButton("##redo", ui::Icon::Redo, false, theme::kControlH, "Redo") || keyRedo) && !S.redo.empty()) {
     S.undo.push_back(S.prog);
     S.prog = S.redo.back();
     S.redo.pop_back();

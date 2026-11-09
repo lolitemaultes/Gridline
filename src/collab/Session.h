@@ -16,6 +16,7 @@
 #include <map>
 #include <memory>
 #include <set>
+#include <unordered_map>
 #include <string>
 #include <vector>
 #include "../core/Document.h"
@@ -148,6 +149,44 @@ struct Flash {
   double at = 0;
 };
 
+// K-141: one history step of yours in a collaborative project, as the session recorded it:
+// what it wrote to each register of the shared project (so undo / redo write the inverse as
+// new edits of yours), whether it also changed settings that stay on this computer, and how
+// its last undo / redo went. Attached to the step (Document::stepNote, NoteSlot::Collab).
+struct CollabStep final : StepNote {
+  struct Group {
+    Path path;
+    std::string key;    // joinPath(path) + '#' + class
+    std::string unit;   // fields undone together (a clip's placement, a note): "" = this register alone
+    int cls = 0;        // 0 value, 1 list position, 2 presence
+    Json backVal, fwdVal;
+    std::string backPos, fwdPos;
+    bool backPres = false, fwdPres = false;
+    Json backContent;   // presence: content to re-insert when the node is gone
+    Stamp mine;         // our newest write of this register (the step's, or its latest undo / redo)
+    std::vector<std::string> kids;  // a list only partly removed by the last undo: our elements that went
+  };
+  enum class State : uint8_t { Done, Undone, PartlyUndone, NothingUndone, Redone, PartlyRedone, NothingRedone };
+  std::vector<Group> groups;
+  std::map<std::string, size_t> index;  // key -> group
+  bool local = false;        // also changed settings that stay on this computer (solo, arm ...)
+  Stamp madeAt;              // the first write of the step
+  uint64_t madeAtMs = 0;     // wall time when made
+  State state = State::Done;
+  std::vector<SiteId> keptFor;    // collaborators whose later edits the last undo / redo left alone
+  std::vector<SiteId> changedBy;  // collaborators who have changed what this step (or its undo) wrote since
+  size_t approxBytes() const override;
+};
+
+// K-141: a collaborator's edit, for the history panel (shown greyed when asked for).
+struct PeerEdit {
+  SiteId site = 0;
+  std::string name;          // the author's name when made
+  uint64_t atMs = 0;
+  std::vector<std::string> objects;  // "song/channels/#5" ... (at most 4)
+  size_t ops = 0;
+};
+
 class Session {
  public:
   struct Config {
@@ -161,6 +200,9 @@ class Session {
     // Joining again after being removed (an admin's re-invite): our own removal
     // does not stop the session while the re-add record is on its way.
     bool expectReadmit = false;
+    // K-141: an undo / redo whose step has nothing left of yours moves on to your next step that
+    // still changes something (off: one press, one step of yours, with a message).
+    bool skipEmptyUndo = false;
   };
   // What an invitee knows before the first sync (from the invite code).
   struct Ticket {
@@ -228,6 +270,19 @@ class Session {
   // An invitee completed the handshake: records them as a member (signed op).
   // Returns the slot assigned.
   int admitMember(const Member& m);
+
+  // ---- history (K-141) ----
+  // A collaborator's recent edits (newest last, at most kPeerEditsKept).
+  static constexpr size_t kPeerEditsKept = 200;
+  const std::deque<PeerEdit>& peerEdits() const { return peerEdits_; }
+  // A short, readable name of an object path ("song/channels/#5" -> "Channel Lead").
+  std::string describeObject(const std::string& object) const;
+  // The display name of a member (their profile, else the name they joined with).
+  std::string nameOf(SiteId s) const;
+  // Turns on skipping steps that have nothing left (Config::skipEmptyUndo).
+  void setSkipEmptyUndo(bool on) { cfg_.skipEmptyUndo = on; }
+  // Tests: the newest foreign stamp recorded at or under a path (zero when none).
+  Stamp foreignWithin(const Path& p) const;
 
   // ---- notifications (UI) ----
   std::function<void(const std::string& text, bool error)> onNotice;
@@ -366,6 +421,27 @@ class Session {
   bool makeLocalBatch(std::vector<Op> ops, bool undoable, bool recordStep);
   void recordStep(const std::vector<Op>& ops, const std::vector<Json>& before);
   bool historyStep(int dir);
+  // K-141: one step back / forward; what happened is added to `out` (messages).
+  struct StepOutcome {
+    std::string label;
+    size_t applied = 0, kept = 0;
+    std::set<SiteId> keptFor;
+    std::vector<std::string> keptObjects;  // creates kept because a collaborator used them
+    bool hadRecord = false;
+  };
+  bool stepOnce(int dir, StepOutcome& out);
+  void tellOutcome(int dir, const StepOutcome& out, size_t skipped);
+  CollabStep* topStep(bool create);
+  void noteForeign(const Op& op, SiteId site, const Json& before);
+  bool foreignSince(const CollabStep::Group& g, int dir) const;
+  bool blockedBy(const std::string& key, const Json& expected, const Stamp& mine) const;
+  bool usedByOthers(const Path& p, const Stamp& mine, const Json& expected, std::set<SiteId>& who) const;
+  void seedForeignFromReplica();
+  void pruneForeign();
+  void refreshStepMarks();
+  void writeHistory();
+  void loadHistory();
+  uint64_t sessionHash() const;
   Json localSongJson();
   void refsToReplica(Json& song);
   void refsToLocal(Json& song) const;
@@ -467,21 +543,23 @@ class Session {
   bool reviewRequest_ = false;
   bool previewing_ = false;
   Presence localPresence_, sentPresence_;
-  // undo records by history state serial
-  struct UndoGroup {
-    Path path;
-    int cls = 0;  // 0 value, 1 position, 2 presence
-    Json backVal, fwdVal;
-    std::string backPos, fwdPos;
-    bool backPres = false, fwdPres = false;
-    Json backContent;  // presence: content to re-insert when the node is gone
-    Stamp cur;
+  // K-141: the newest write by someone else of each register ("path#class") and at or under
+  // each path (pruned to what live history steps can still ask about)
+  std::unordered_map<std::string, Stamp> foreignAt_, foreignIn_;
+  // ... and each such write with the state it replaced and left, per register: a collaborator
+  // who changed something of yours and then put it back (their own undo) leaves it yours again
+  struct ForeignWrite {
+    Stamp s;
+    Json before, after;
   };
-  struct StepRec {
-    std::vector<UndoGroup> groups;
-    std::map<std::string, size_t> index;
-  };
-  std::map<uint64_t, StepRec> steps_;
+  std::unordered_map<std::string, std::vector<ForeignWrite>> foreignLog_;
+  double lastForeignPrune_ = -1, lastMarks_ = -1;
+  bool marksDirty_ = false, breakMerge_ = false;
+  uint64_t lastLocalHash_ = 0;
+  uint64_t historySavedSerial_ = ~0ull;
+  size_t historySavedSize_ = ~size_t{0};
+  size_t previewBase_ = 0;  // history size when a review preview started
+  std::deque<PeerEdit> peerEdits_;
   // files
   struct Incoming {
     uint64_t total = 0, have = 0;

@@ -18,12 +18,14 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include "../../app/AudioRecordUi.h"
 #include "../../app/BrowserUi.h"
 #include "../../app/DevSignal.h"
+#include "../../app/LiveWaveUi.h"
 #include "../../app/PluginSkin.h"
 #include "../../app/Theme.h"
 #include "../../app/Widgets.h"
@@ -67,6 +69,11 @@ struct Session {
   std::string lastTrace;
   std::vector<std::pair<std::string, ImVec2>> btns;  // trace: the visible buttons
   std::vector<float> bufL, bufR;
+  // K-145: the take drawn as it records (fed from `take`, from the first frame each append
+  // changed); the fit shows it at ten seconds across while it fits, then the whole take.
+  LiveWave live;
+  LiveFit fit;
+  size_t liveDirty = 0;  // first take frame not (or no longer) in `live`
 };
 
 Session& ses() {
@@ -106,8 +113,23 @@ void closeSession(App& a) {
   devsig::forget("seltmann-rec-open");
 }
 
+// K-145: brings the live waveform up to the take (after appends, a resume's crossfade, a clear).
+void syncLive(Session& s) {
+  const size_t n = s.take.frames();
+  if (s.live.rate() != s.take.rate() || s.live.channels() != (s.take.stereo() ? 2 : 1) || n < s.live.frames()) s.liveDirty = std::min(s.liveDirty, n);
+  if (s.live.levels() == 0 || s.live.rate() != s.take.rate() || s.live.channels() != (s.take.stereo() ? 2 : 1)) {
+    s.live.reset(s.take.rate(), s.take.stereo() ? 2 : 1);
+    s.liveDirty = 0;
+  }
+  const size_t kept = s.live.truncate(std::min(s.liveDirty, s.live.frames()));
+  if (n > kept) s.live.add(s.take.L().data() + kept, s.take.R().data() + kept, n - kept);
+  s.liveDirty = SIZE_MAX;
+}
+
 void startTake(App& a, Session& s) {
   s.take.reset(a.engine.sampleRate(), s.stereo);
+  s.liveDirty = 0;
+  s.fit.begin(s.take.rate() * 10.0, s.take.rate());
   s.ringPos = a.engine.inputTap().written();  // from now on
   s.state = RecRolling;
   s.nextSecond = 1;
@@ -192,43 +214,56 @@ void drawMeter(App& a, Session& s, ImVec2 p0, float w, float h) {
   (void)a;
 }
 
-// The take as it grows: mirrored peaks over a span of at least ten seconds.
+// K-145 dev checks (GRIDLINE_SELTMANN_TRACE): the take's view each frame while it changes.
+void traceTake(const Session& s, float width, double span, float headX) {
+  static const bool on = std::getenv("GRIDLINE_SELTMANN_TRACE") != nullptr;
+  if (!on) return;
+  std::printf("seltmann: take %s frames %zu shown %.0f span %.0f head %.2f width %.2f gap %.3f fit %d live %d\n", kStateNames[s.state],
+              s.live.frames(), s.fit.active ? s.fit.shown : static_cast<double>(s.live.frames()), span, static_cast<double>(headX),
+              static_cast<double>(width), static_cast<double>(width - 8 - headX), span > s.fit.base + 0.5 ? 1 : 0, s.fit.active ? 1 : 0);
+  std::fflush(stdout);
+}
+
+// The take as it grows: mirrored peaks (K-145: the shared live waveform). While recording or
+// paused, ten seconds across while the take fits, then the whole take fitted to the width
+// every frame; finished, the whole take in its normal colours.
 void drawTake(App& a, Session& s, ImVec2 p0, ImVec2 p1) {
   const auto& P = pal();
   ImDrawList* dl = ImGui::GetWindowDrawList();
   skin::insetField(dl, p0, p1, P.well, theme::kRadius);
   const float cy = std::round((p0.y + p1.y) * 0.5f), half = (p1.y - p0.y) * 0.5f - 10;
   const float x0 = p0.x + 12, x1 = p1.x - 12, w = x1 - x0;
-  const double secs = s.take.seconds();
-  const double span = std::max(10.0, s.state == RecRolling ? secs * 1.15 : secs);
+  const double rate = std::max(1.0, s.take.rate());
+  const bool live = s.fit.active;
+  const double frames = static_cast<double>(s.live.frames());
+  const double spanFrames = live ? s.fit.span(w, 8) : std::max(rate * 10.0, frames);
+  const double span = spanFrames / rate;
   // second ticks
-  const double step = span <= 20 ? 1 : span <= 60 ? 5 : span <= 180 ? 15 : 60;
+  const double step = span <= 20 ? 1 : span <= 60 ? 5 : span <= 180 ? 15 : span <= 900 ? 60 : 300;
   for (double t = step; t < span; t += step) {
-    const float x = x0 + static_cast<float>(t / span) * w;
+    const float x = std::round(x0 + static_cast<float>(t / span) * w) + 0.5f;
     dl->AddLine(ImVec2(x, p0.y + 6), ImVec2(x, p1.y - 6), theme::withAlpha(P.text, 0.05f), 1);
   }
   dl->AddLine(ImVec2(x0, cy), ImVec2(x1, cy), theme::withAlpha(P.text, 0.10f), 1);
-  const auto& pk = s.take.peaks();
-  const double framesPerPx = span * s.take.rate() / std::max(1.0f, w);
   const ImU32 col = s.state == RecRolling ? theme::mix(accent(), P.danger, 0.35f) : s.state == RecPaused ? theme::withAlpha(accent(), 0.6f) : accent();
   float headX = x0;
-  if (!pk.empty()) {
-    const auto columns = static_cast<int>(std::ceil(static_cast<double>(s.take.frames()) / framesPerPx));
-    for (int c = 0; c < columns && c < static_cast<int>(w); ++c) {
-      const auto b0 = static_cast<size_t>(c * framesPerPx / static_cast<double>(TakeBuffer::kPeakBlock));
-      const size_t b1 = std::max(b0 + 1, static_cast<size_t>((c + 1) * framesPerPx / static_cast<double>(TakeBuffer::kPeakBlock)));
-      float p = 0;
-      for (size_t b = b0; b < b1 && b < pk.size(); ++b) p = std::max(p, pk[b]);
-      const float hh = std::max(0.5f, std::min(1.0f, p) * half);
-      const float x = x0 + static_cast<float>(c) + 0.5f;
-      dl->AddLine(ImVec2(x, cy - hh), ImVec2(x, cy + hh), col, 1);
-    }
-    headX = x0 + static_cast<float>(secs / span) * w;
+  if (s.live.frames() > 0) {
+    LiveWaveView v;
+    v.start = 0;
+    v.span = spanFrames;
+    v.end = live ? s.fit.shown : frames;
+    v.pxScale = ImGui::GetIO().DisplayFramebufferScale.x;
+    livewaveui::Style st;
+    st.wave = col;
+    st.channel = -2;  // mirrored: the louder channel
+    st.fill = half / std::max(1.0f, p1.y - p0.y);
+    headX = livewaveui::drawLane(dl, s.live, ImVec2(x0, p0.y), ImVec2(x1, p1.y), v, st);
   }
   if (s.state == RecRolling || s.state == RecPaused) {
     const ImU32 hc = s.state == RecRolling ? P.danger : theme::withAlpha(P.textDim, 0.8f);
     dl->AddLine(ImVec2(headX, p0.y + 6), ImVec2(headX, p1.y - 6), hc, 2);
   }
+  traceTake(s, w, spanFrames, headX - x0);
   if (s.take.frames() == 0) {
     const char* hint = s.state == RecRolling ? i18n::tr("Listening...")
                                              : i18n::tr("Press Record and play. When you finish, load the recording and Seltmann analyses it like any file.");
@@ -287,6 +322,37 @@ void openRecorder(App& a, const PluginTarget& t) {
   devsig::reach("seltmann-rec-open");
 }
 
+void devAutoRecord(App& a, const PluginTarget& t) {
+  static const char* v = std::getenv("GRIDLINE_SELTMANN_AUTOREC");
+  if (!v || !*v) return;
+  static double pauseAt = 0, resumeAfter = 0, finishAt = 0, pausedAt = 0;
+  static int stage = -1;
+  if (stage < 0) {
+    if (std::sscanf(v, "%lf %lf %lf", &pauseAt, &resumeAfter, &finishAt) != 3) return;
+    stage = 0;
+  }
+  Session& s = ses();
+  if (stage == 0 && ImGui::GetFrameCount() > 20) {
+    openRecorder(a, t);
+    startTake(a, s);
+    stage = 1;
+  } else if (stage == 1 && pauseAt > 0 && s.take.seconds() >= pauseAt) {
+    s.state = RecPaused;
+    pausedAt = clockNow();
+    stage = 2;
+  } else if (stage == 2 && clockNow() - pausedAt >= resumeAfter) {  // as Resume does
+    s.take.join();
+    s.ringPos = a.engine.inputTap().written();
+    s.lastMove = clockNow();
+    s.state = RecRolling;
+    stage = 3;
+  } else if ((stage == 1 || stage == 3) && s.state == RecRolling && s.take.seconds() >= finishAt) {
+    s.state = RecDone;
+    stage = 4;
+    devsig::reach("seltmann-autorec-done");
+  }
+}
+
 void tick(App& a) {
   Session& s = ses();
   if (!s.open) return;
@@ -322,6 +388,7 @@ void tick(App& a) {
     if (s.state == RecRolling) {
       if (lost && s.take.frames() > 0) s.take.join();
       s.take.append(s.bufL.data(), s.bufR.data(), n);
+      s.liveDirty = std::min(s.liveDirty, s.take.changedFrom());
     }
   }
   if (lost && s.state == RecRolling) setMsg(s, i18n::tr("Some input was lost while Gridline was busy; the gap is crossfaded."), true);
@@ -358,6 +425,14 @@ void tick(App& a) {
   if (s.state == RecRolling && s.take.full()) {
     s.state = RecDone;
     setMsg(s, i18n::tr("The recording reached its ten-minute limit and stopped."), false);
+  }
+  // K-145: the live waveform follows the take; the fit runs while a take is recording or paused
+  syncLive(s);
+  if (s.state == RecRolling || s.state == RecPaused) {
+    if (!s.fit.active) s.fit.begin(s.take.rate() * 10.0, s.take.rate(), static_cast<double>(s.take.frames()));
+    s.fit.step(static_cast<double>(s.live.frames()), dt);
+  } else {
+    s.fit.end();
   }
   // scripted runs: whole seconds of the take
   while (s.state == RecRolling && s.take.seconds() >= s.nextSecond) devsig::reach("seltmann-take-" + std::to_string(s.nextSecond++));

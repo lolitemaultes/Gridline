@@ -25,6 +25,7 @@ void TakeBuffer::reset(double rate, bool stereo) {
   R_.clear();
   peaks_.clear();
   xfAt_ = xfLen_ = xfDone_ = 0;
+  changed_ = 0;
 }
 
 void TakeBuffer::join() {
@@ -50,7 +51,8 @@ size_t TakeBuffer::append(const float* L, const float* R, size_t n) {
   const size_t add = std::min(n - i, room);
   L_.insert(L_.end(), L + i, L + i + add);
   if (stereo_) R_.insert(R_.end(), R + i, R + i + add);
-  repeak(std::min(xfFrom, from));
+  changed_ = std::min(xfFrom, from);
+  repeak(changed_);
   return i + add;
 }
 

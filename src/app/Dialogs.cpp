@@ -19,6 +19,7 @@
 #include <string>
 #include <vector>
 #include "ScriptUi.h"
+#include "UndoUi.h"
 #include "Keys.h"
 #include "J31Ui.h"
 #include "MenuParityUi.h"
@@ -312,6 +313,402 @@ void setDevSettingsSize(float w, float h) { gDevSettingsSize = ImVec2(w, h); }
 
 namespace {
 
+// J-24 appended General, Files and Debug (tab indices 0..4 stay as they were), J-55 Shortcuts and Theme.
+const char* const kSettingsPagesEn[] = {i18n::N_("Audio"), i18n::N_("MIDI"), i18n::N_("Project"), i18n::N_("Backup"), i18n::N_("Interface"), i18n::N_("General"), i18n::N_("Files"), i18n::N_("Debug"), i18n::N_("Shortcuts"), i18n::N_("Theme"), i18n::N_("Integrations"), i18n::N_("Collaboration"), i18n::N_("Plugins")};
+
+// K-93: one settings page's controls (the settings window draws it; the command palette draws
+// each page once, unseen, to find every setting). `page` may change (a button that opens another page).
+void settingsPageBody(App& a, int& page, float fieldW) {
+  const auto& P = pal();
+  Settings& st = a.settings;
+  (void)P;
+  if (page == 0) {
+    ui::BeginSection("INPUT / OUTPUT");
+    const bool asioMode = asioui::backendRow(a, fieldW);  // K-6
+    if (asioMode) asioui::deviceRows(a, fieldW);
+    if (!asioMode) {
+      formLabel("Output device");
+      if (ui::BeginCombo("##dev", a.audioDevice.empty() ? "System default" : a.audioDevice.c_str(), fieldW)) {
+        // J-77: device / rate / buffer changes apply at once and ask Keep / Revert (they can cut the sound).
+        if (ImGui::Selectable(i18n::tr("System default"), a.audioDevice.empty())) ui::confirmAudioDevice(a, "");
+        for (const auto& d : a.audioDevices)
+          if (ImGui::Selectable(d.c_str(), d == a.audioDevice)) ui::confirmAudioDevice(a, d);
+        ImGui::EndCombo();
+      }
+      const int rates[] = {44100, 48000, 88200, 96000};
+      formLabel("Sample rate");
+      for (int r : rates) {
+        if (r != rates[0]) ImGui::SameLine(0, theme::kS1);
+        if (ui::TextButton(std::to_string(r).c_str(), a.audioSampleRate == r) && a.audioSampleRate != r) {
+          const dispconf::Snapshot before = dispconf::take(st, dispconf::audioKeys());
+          st.set("audio.sampleRate", r);
+          ui::confirmAudio(a, before);
+        }
+      }
+      const int bufs[] = {64, 128, 256, 512, 1024, 2048};
+      formLabel("Buffer size");
+      for (int b : bufs) {
+        if (b != bufs[0]) ImGui::SameLine(0, theme::kS1);
+        if (ui::TextButton(std::to_string(b).c_str(), a.audioBuffer == b) && a.audioBuffer != b) {
+          const dispconf::Snapshot before = dispconf::take(st, dispconf::audioKeys());
+          st.set("audio.bufferFrames", b);
+          ui::confirmAudio(a, before);
+        }
+      }
+      char lat[96];
+      std::snprintf(lat, sizeof lat, "%.1f ms", 1000.0 * a.audioBuffer / std::max(1, a.audioSampleRate));
+      formLabel("Output latency");
+      ImGui::PushFont(a.fontMono, theme::kFontNumber + 1);
+      ImGui::TextUnformatted(lat);
+      ImGui::PopFont();
+    }
+    ui::EndSection();
+    if (asioMode) {
+      ui::BeginSection("ASIO CHANNELS");
+      asioui::channelRows(a, fieldW);
+      ui::EndSection();
+    }
+    ui::BeginSection("MIXER");
+    // Mixer processing threads (the output is identical for any count).
+    {
+      const int cur = static_cast<int>(st.getNumber("audio.threads"));
+      formLabel("Processing threads");
+      const int counts[] = {0, 1, 2, 4, 6, 8};
+      for (int c : counts) {
+        if (c != counts[0]) ImGui::SameLine(0, theme::kS1);
+        std::string l = c == 0 ? "Auto (" + std::to_string(a.processingThreads()) + ")" : std::to_string(c);
+        if (c == 0 && cur > 0) l = "Auto";
+        if (ui::TextButton(l.c_str(), cur == c, 0.0f,
+                           c == 0 ? "Half the hardware threads, at most 8" : c == 1 ? "Everything on the audio thread" : nullptr)) {
+          st.set("audio.threads", c);
+          a.syncEngine();
+        }
+      }
+    }
+    formLabel("Delay compensation");
+    {
+      bool pdc = st.getBool("audio.pdc");
+      if (ImGui::Checkbox(i18n::tr("Plugin delay compensation##pdc"), &pdc)) {
+        st.set("audio.pdc", pdc);
+        a.syncEngine();
+      }
+      ui::Hint("Delays faster paths so tracks with latent effects (look-ahead, linear phase, oversampling) stay in time");
+      const int ol = a.engine.outputLatency();
+      if (ol > 0) {
+        ImGui::SameLine(0, theme::kS2);
+        ImGui::TextColored(theme::vec(P.textDim), i18n::tr("%d samples (%.1f ms)"), ol, 1000.0 * ol / std::max(1, a.audioSampleRate));
+      }
+    }
+    ui::EndSection();
+    ui::BeginSection("INPUT & RECORDING");
+    audioInputSettings(a, fieldW);  // J-8
+    ui::EndSection();
+    ImGui::PushTextWrapPos(0);
+    ImGui::TextColored(theme::vec(P.textFaint), "%s", a.audioStatus.c_str());
+    ImGui::PopTextWrapPos();
+  }
+  if (page == 1) midiSettingsPage(a, fieldW);
+  if (page == 2) {
+    ui::BeginSection("NEW PROJECTS");
+    int ppq = static_cast<int>(st.getNumber("project.defaultPpq"));
+    formLabel("Timebase (PPQ)");
+    if (ui::BeginCombo("##ppq", std::to_string(ppq).c_str(), 160)) {
+      for (int p : kPpqChoices)
+        if (ImGui::Selectable(std::to_string(p).c_str(), p == ppq)) st.set("project.defaultPpq", p);
+      ImGui::EndCombo();
+    }
+    double tempo = st.getNumber("project.defaultTempo");
+    formLabel("Tempo (BPM)");
+    ImGui::SetNextItemWidth(160);
+    if (ImGui::InputDouble("##deftempo", &tempo, 1, 10, "%.1f")) st.set("project.defaultTempo", std::clamp(tempo, 10.0, 522.0));
+    projectDefaultsPanel(a);  // J-24
+    ui::EndSection();
+    ui::BeginSection("FL STUDIO IMPORT");
+    {
+      static char flData[512];
+      static bool init = false;
+      if (!init) {
+        std::snprintf(flData, sizeof flData, "%s", st.getString("import.flData").c_str());
+        init = true;
+      }
+      formLabel("FL data folder");
+      ImGui::SetNextItemWidth(fieldW);
+      if (ImGui::InputTextWithHint("##fldata", i18n::tr("Detect automatically"), flData, sizeof flData)) st.set("import.flData", std::string(flData));
+      ui::FocusRing();
+      ui::Hint("Folder that %FLStudioFactoryData% points to (holds the samples FL projects use). Empty = detect.");
+      std::string used = flData[0] ? std::string(flData) : flp::defaultFactoryData();
+      formLabel("In use");
+      ImGui::PushTextWrapPos(0);
+      ImGui::TextColored(theme::vec(pal().textDim), "%s", used.empty() ? "not found: samples from FL's library will be missing" : used.c_str());
+      ImGui::PopTextWrapPos();
+      // Convert FL's presets (plugin, channel and mixer presets) into the local preset library.
+      formLabel("Presets");
+      if (a.presetImport.running) {
+        float fr = a.presetImport.total ? static_cast<float>(a.presetImport.done) / static_cast<float>(a.presetImport.total) : 0.0f;
+        char lbl[64];
+        std::snprintf(lbl, sizeof lbl, "%zu / %zu", a.presetImport.done.load(), a.presetImport.total.load());
+        ImGui::ProgressBar(fr, ImVec2(fieldW - 80, 0), lbl);
+        ImGui::SameLine(0, theme::kS1);
+        if (ui::TextButton("Cancel", false, 72)) a.presetImport.cancel = true;
+      } else {
+        if (ui::TextButton("Import FL Studio presets", false, 0,
+                           "Converts every preset of your FL Studio installation into Gridline presets on this computer"))
+          a.startPresetImport();
+        if (!a.presetImport.summary.empty()) {
+          ImGui::PushTextWrapPos(0);
+          ImGui::TextColored(theme::vec(pal().textDim), "%s", a.presetImport.summary.c_str());
+          ImGui::PopTextWrapPos();
+        }
+      }
+      ui::Hint("Presets appear in each plugin's preset menu under Library \xE2\x96\xB8 FL Studio, effect chains in the mixer track menu");
+    }
+    ui::EndSection();
+    ui::BeginSection("FL STUDIO EXPORT");  // K-110
+    {
+      static const char* keys[] = {"suite+fallback", "suite", "render"};
+      static const char* names[] = {i18n::N_("Gridline Suite plugins, with muted audio copies"), i18n::N_("Gridline Suite plugins only"),
+                                    i18n::N_("Rendered to audio")};
+      auto nameOf = [&](const std::string& k) {
+        for (int i = 0; i < 3; ++i)
+          if (k == keys[i]) return i18n::tr(names[i]);
+        return i18n::tr(names[0]);
+      };
+      formLabel("Gridline plugins");
+      const std::string cur = st.getString("export.flGridlinePlugins");
+      if (ui::BeginCombo("##flgl", nameOf(cur), fieldW)) {
+        for (int i = 0; i < 3; ++i)
+          if (ImGui::Selectable(i18n::tr(names[i]), cur == keys[i])) st.set("export.flGridlinePlugins", std::string(keys[i]));
+        ImGui::EndCombo();
+      }
+      ui::Hint("How Gridline plugins without an exact FL Studio counterpart go into FL Studio projects. Suite plugins open live where the Gridline Suite is installed; muted audio copies play the instruments everywhere else.");
+      formLabel("This project");
+      const std::string pk = a.doc.song().flExportGridline;
+      if (pk.empty()) {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(theme::vec(pal().textDim), "%s", i18n::tr("Uses the default"));
+      } else {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(theme::vec(pal().text), "%s", nameOf(pk));
+        ImGui::SameLine(0, theme::kS2);
+        if (ui::TextButton(i18n::tr("Use the default"), false, 0, "This project's FL Studio exports follow the default above again"))
+          a.doc.editSong("FL Studio export choice", [](Song& s) { s.flExportGridline.clear(); });
+      }
+    }
+    ui::EndSection();
+    ui::BeginSection("UNDO");
+    // K-141: applied on Enter or when the field is left (typing "5" on the way to "500" must not
+    // drop steps), always 10 to 10000.
+    static int levels = 0;
+    formLabel("Maximum levels");
+    ImGui::SetNextItemWidth(96);
+    if (ImGui::GetActiveID() != ImGui::GetID("##levels")) levels = static_cast<int>(st.getNumber("undo.maxLevels"));
+    ImGui::InputInt("##levels", &levels, 0, 0);
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+      levels = std::clamp(levels, static_cast<int>(UndoStack::kMinLevels), static_cast<int>(UndoStack::kMaxLevels));
+      st.set("undo.maxLevels", levels);
+      a.doc.setMaxUndoLevels(static_cast<size_t>(levels));
+    }
+    ui::Hint("Steps kept from 10 to 10000, applied when you press Enter. The oldest steps also go once the history uses 256 MB.");
+    bool skip = st.getBool("undo.skipEmpty");
+    if (ImGui::Checkbox(i18n::tr("In a shared project, skip steps that have nothing left to undo"), &skip)) st.set("undo.skipEmpty", skip);
+    ui::Hint("Off: each press undoes one of your steps, and tells you when a collaborator changed it so nothing was left.");
+    ui::EndSection();
+    collabui::projectSection(a);  // J-111
+  }
+  if (page == 3) {
+    static const char* freq[] = {i18n::N_("Never (remind every 10 minutes)"), i18n::N_("Rarely (every 15 minutes)"), i18n::N_("Occasionally (every 10 minutes)"),
+                                 i18n::N_("Regularly (every 5 minutes)"), i18n::N_("Frequently (5 minutes + before risky edits)"),
+                                 i18n::N_("Very frequently (every minute + before risky edits)")};
+    int f = std::clamp(static_cast<int>(st.getNumber("backup.frequency")), 0, 5);
+    ui::BeginSection("HOW OFTEN");
+    for (int i = 0; i < 6; ++i)
+      if (ImGui::RadioButton(i18n::tr(freq[i]), f == i)) {
+        st.set("backup.frequency", i);
+        BackupPolicy p = a.backups->policy();
+        p.frequency = static_cast<BackupFrequency>(i);
+        a.backups = std::make_unique<BackupManager>(p);
+      }
+    ui::EndSection();
+    ui::BeginSection("STORAGE");
+    int maxCount = static_cast<int>(st.getNumber("backup.maxCount"));
+    formLabel("Backups kept");
+    ImGui::SetNextItemWidth(96);
+    if (ImGui::InputInt("##maxcount", &maxCount, 0, 0)) {
+      maxCount = std::clamp(maxCount, 1, 1000);
+      st.set("backup.maxCount", maxCount);
+      BackupPolicy p = a.backups->policy();
+      p.maxCount = maxCount;
+      a.backups = std::make_unique<BackupManager>(p);
+    }
+    bool inProject = st.getString("backup.location") == "project";
+    if (ImGui::Checkbox(i18n::tr("Save backups next to the project once it has been saved"), &inProject)) {
+      st.set("backup.location", inProject ? "project" : "global");
+      BackupPolicy p = a.backups->policy();
+      p.inProjectFolder = inProject;
+      a.backups = std::make_unique<BackupManager>(p);
+    }
+    ImGui::PushTextWrapPos(0);
+    ImGui::TextColored(theme::vec(P.textFaint), i18n::tr("Global backup folder: %s"), a.backups->policy().globalFolder.c_str());
+    ImGui::PopTextWrapPos();
+    ui::EndSection();
+    backupRestorePanel(a, fieldW);  // J-24
+  }
+  if (page == 4) {
+    ui::BeginSection("LAYOUT");  // K-79: window layout presets
+    {
+      // K-130: the welcome screen's cards at a fitting size, the two options, then the reset.
+      const float w = ImGui::GetContentRegionAvail().x;
+      ImGui::Dummy(ImVec2(0, theme::kS1));
+      layoutui::cards(a, w, 232.0f);
+      ImGui::Dummy(ImVec2(0, theme::kS2));
+      layoutui::linkedOptions(a, std::min(w, 640.0f));
+      ImGui::Dummy(ImVec2(0, theme::kS1));
+      ImGui::Separator();
+      ImGui::Dummy(ImVec2(0, theme::kS1));
+      const char* resetLabel = i18n::tr("Reset this layout");
+      const float resetW = ImGui::CalcTextSize(resetLabel).x + ImGui::GetStyle().FramePadding.x * 2;
+      ImGui::AlignTextToFramePadding();
+      ImGui::PushStyleColor(ImGuiCol_Text, theme::vec(P.textFaint));
+      ImGui::TextUnformatted(i18n::tr("Each layout remembers your own changes to it."));
+      ImGui::PopStyleColor();
+      ImGui::SameLine();
+      alignRight(resetW);
+      if (ui::TextButton("Reset this layout", false, 0, "Builds the default arrangement of the layout in use again")) ui::confirmLayoutReset(a);
+    }
+    ui::EndSection();
+    ui::BeginSection("APPEARANCE");
+    formLabel("Theme");
+    if (ui::TextButton("Theme settings...", false, 0, "Dark, light or follow the system, accent colour, contrast")) page = 9;
+    formLabel("Interface scale");
+    {  // J-77: nothing changes while dragging; the value you let go of asks Keep / Revert.
+      static dispconf::DeferredValue drag;
+      const double committed = st.getNumber("ui.scale");
+      float pct = static_cast<float>(std::round(drag.shown(committed) * 100.0));
+      ImGui::SetNextItemWidth(fieldW);
+      if (ImGui::SliderFloat("##scale", &pct, 75.0f, 200.0f, "%.0f%%")) drag.edit(std::round(pct / 5.0f) * 5.0 / 100.0);
+      double to = 0;
+      if (ImGui::IsItemDeactivated() && drag.release(committed, &to)) ui::confirmScale(a, to);
+      ui::Hint("Scales the whole interface; asks to keep the new size once you let go");
+    }
+#if !defined(__APPLE__)
+    {  // J-91: the desktop's display scale (Xft.dpi, GDK_SCALE, Wayland, Windows DPI) on top of the size above
+      formLabel("");
+      bool follow = st.getBool("ui.scaleAuto");
+      char lbl[96];
+      std::snprintf(lbl, sizeof lbl, i18n::tr("Follow the system's display scale (%d%%)"), static_cast<int>(std::lround(uiscale::detected() * 100.0f)));
+      if (ImGui::Checkbox(lbl, &follow)) st.set("ui.scaleAuto", follow);
+      ui::Hint("On: the interface size is multiplied by the scale set in your system's display settings. Off: the size above is used as it is");
+    }
+#endif
+    // K-136: Gridline's own plugin windows, on top of the interface scale (core/EditorZoom.h).
+    formLabel("Plugin window size");
+    {
+      float pct = std::round(edzoom::globalSize(st.getNumber("ui.pluginWindowSize")) * 100.0f);
+      ImGui::SetNextItemWidth(fieldW);
+      if (ImGui::SliderFloat("##pluginsize", &pct, edzoom::kGlobalMin * 100.0f, edzoom::kGlobalMax * 100.0f, "%.0f%%"))
+        st.set("ui.pluginWindowSize", static_cast<double>(edzoom::globalSize(pct / 100.0)));
+      if (ImGui::IsItemClicked(ImGuiMouseButton_Right))
+        st.set("ui.pluginWindowSize", static_cast<double>(edzoom::kGlobalDefault));
+      ui::Hint("Size of the built-in instrument and effect windows (right-click: default). "
+               "A size picked in a plugin window's menu (Editor size) is kept for that plugin");
+      formLabel("");
+      bool fit = st.getBool("ui.pluginWindowFit");
+      if (ImGui::Checkbox(i18n::tr("Open small plugin windows larger on big screens"), &fit)) st.set("ui.pluginWindowFit", fit);
+      ui::Hint("On: a small plugin window grows to suit a large workspace. Plugins you install keep their own size");
+    }
+    formLabel("Confirm changes");
+    bool autoRevert = st.getBool("ui.confirmAutoRevert");
+    if (ImGui::Checkbox(i18n::tr("Revert size, theme, language and audio changes not kept within 15 s"), &autoRevert))
+      st.set("ui.confirmAutoRevert", autoRevert);
+    ui::Hint("A change that makes the interface hard to use or cuts the sound goes back by itself");
+    bool hints = st.getBool("ui.showHints");
+    formLabel("Status bar");
+    if (ImGui::Checkbox(i18n::tr("Show hints for the control under the mouse"), &hints)) st.set("ui.showHints", hints);
+    hintSettingsPanel(a, fieldW);  // J-24
+    // J-113: windows dragged out of the main window become windows of their own.
+    bool detach = st.getBool("ui.detachWindows") && viewports::available();
+    formLabel("Windows");
+    ImGui::BeginDisabled(!viewports::available());
+    if (ImGui::Checkbox(i18n::tr("Allow windows outside the main window"), &detach)) st.set("ui.detachWindows", detach);
+    ImGui::EndDisabled();
+    ui::Hint("Drag a window by its title bar out of Gridline, onto another monitor if you like. "
+             "Off: every window stays inside the main window");
+    if (!viewports::available()) {
+      formLabel("");
+      ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr(viewports::unavailableReason().c_str()));
+    }
+    ui::EndSection();
+    // J-67: motion (smooth snapping of drags, smooth scrolling, elastic edges).
+    ui::BeginSection("MOTION");
+    const bool reduced = scrollui::systemReducedMotion();
+    ImGui::BeginDisabled(reduced);
+    bool anim = st.getBool("ui.animations") && !reduced;
+    formLabel("Animations");
+    if (ImGui::Checkbox(i18n::tr("Interface animations"), &anim)) st.set("ui.animations", anim);
+    ui::Hint("Decorative motion: the metronome ticking in tempo, key and pad lights fading, gliding drags, scrolling and zooming. "
+             "Off: everything moves at once, which saves a little CPU");
+    ImGui::EndDisabled();
+    ImGui::BeginDisabled(reduced || !anim);
+    bool smoothSnap = st.getBool("ui.smoothSnap") && !reduced;
+    bool smoothScroll = st.getBool("ui.smoothScroll") && !reduced, elastic = st.getBool("ui.elasticEdges") && !reduced;
+    formLabel("Dragging");
+    if (ImGui::Checkbox(i18n::tr("Smooth snapping"), &smoothSnap)) st.set("ui.smoothSnap", smoothSnap);
+    ui::Hint("Snapped drags (clips, notes, selections, points, cut lines) glide from grid line to grid line");
+    formLabel("Scrolling");
+    if (ImGui::Checkbox(i18n::tr("Smooth scrolling"), &smoothScroll)) st.set("ui.smoothScroll", smoothScroll);
+    ui::Hint("Mouse wheel steps glide to their row or step; trackpads follow the fingers directly");
+    formLabel("");
+    if (ImGui::Checkbox(i18n::tr("Elastic edges"), &elastic)) st.set("ui.elasticEdges", elastic);
+    ui::Hint("Scrolling past the start or end of a view stretches a little and springs back");
+    bool smoothZoom = st.getBool("ui.smoothZoom") && !reduced;  // J-188
+    formLabel("Zooming");
+    if (ImGui::Checkbox(i18n::tr("Smooth zooming"), &smoothZoom)) st.set("ui.smoothZoom", smoothZoom);
+    ui::Hint("Zoom steps glide in the playlist, piano roll and automation editor, keeping the point under the pointer in place; "
+             "trackpads follow the fingers directly");
+    ImGui::EndDisabled();
+    if (reduced) {
+      ImGui::PushTextWrapPos(0);
+      ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("Off while the system asks for reduced motion."));
+      ImGui::PopTextWrapPos();
+    }
+    {  // J-83: what the plain wheel does over mixer faders and knobs; J-84: and over the channel rack's steps and knobs
+      static const char* const kWheelModes[] = {i18n::N_("Adjust the control"), i18n::N_("Scroll the pane"),
+                                                i18n::N_("Auto (scroll when the pane scrolls)")};
+      const int cur = static_cast<int>(wheelroute::modeFromSetting(st.getNumber("ui.mixerWheel")));
+      formLabel("Wheel over controls");
+      if (ui::BeginCombo("##mixerwheel", i18n::tr(kWheelModes[cur]), fieldW)) {
+        for (int i = 0; i < 3; ++i)
+          if (ImGui::Selectable(i18n::tr(kWheelModes[i]), cur == i)) st.set("ui.mixerWheel", i);
+        ImGui::EndCombo();
+      }
+      ui::Hint("Mouse wheel over controls in scrolling panes (narrow mixer, channel rack with a long pattern or many channels). "
+               "Scrolling: the wheel scrolls the pane; drag, click then wheel, or hold Ctrl and wheel, to change a control or step");
+    }
+    ui::EndSection();
+    // J-99: smooth freehand drawing (app/DrawSmoothUi.h).
+    ui::BeginSection("DRAWING");
+    {
+      formLabel("Smooth drawing");
+      float amt = static_cast<float>(std::clamp(st.getNumber("draw.smoothAmount"), 0.0, 1.0)) * 100.0f;
+      ImGui::SetNextItemWidth(fieldW);
+      if (ImGui::SliderFloat("##drawsmooth", &amt, 0.0f, 100.0f, amt <= 0 ? i18n::tr("Off") : "%.0f%%"))
+        st.set("draw.smoothAmount", static_cast<double>(std::round(amt)) / 100.0);
+      ui::Hint("How much strokes drawn into EQs, band levels, harmonics, waves and tables are smoothed. "
+               "Each surface has its own on / off switch (the small wave in its corner); hold Alt while drawing for a raw stroke");
+    }
+    ui::EndSection();
+    // J-48 interface sounds: moved to Settings > Theme > Sounds (J-133, SoundThemeUi.cpp).
+  }
+  if (page == 5) generalSettingsPage(a, fieldW);
+  if (page == 8) shortcutSettingsPage(a, fieldW);
+  if (page == 9) themeSettingsPage(a, fieldW);
+  if (page == 6) fileSettingsPage(a, fieldW);
+  if (page == 7) debugSettingsPage(a, fieldW);
+  if (page == 10) mcpui::settingsPage(a, fieldW);  // SC-07
+  if (page == 11) collabui::settingsPage(a, fieldW);  // J-111
+  if (page == kPluginSettingsTab) pluginFoldersSettingsPage(a, fieldW);  // K-13
+}
+
 void settingsWindow(App& a) {
   if (!a.showSettings) return;
   centerNext(ImVec2(860, 560), ImVec2(660, 360));
@@ -325,7 +722,6 @@ void settingsWindow(App& a) {
     return;
   }
   const auto& P = pal();
-  Settings& st = a.settings;
   // Studio settings form: a tab strip across the top (the lit tab is the
   // page), then the page's controls grouped in recessed panels.
   static int page = 0;
@@ -335,7 +731,6 @@ void settingsWindow(App& a) {
   }
   // J-24 appended General, Files and Debug (tab indices 0..4 stay as they were).
   // J-55 appended Shortcuts and Theme.
-  const char* pagesEn[] = {i18n::N_("Audio"), i18n::N_("MIDI"), i18n::N_("Project"), i18n::N_("Backup"), i18n::N_("Interface"), i18n::N_("General"), i18n::N_("Files"), i18n::N_("Debug"), i18n::N_("Shortcuts"), i18n::N_("Theme"), i18n::N_("Integrations"), i18n::N_("Collaboration"), i18n::N_("Plugins")};
   const char* blurbs[] = {i18n::N_("Output and input devices, sample rate, buffer and recording"), i18n::N_("Controllers, keyboards and MIDI out"),
                           i18n::N_("Defaults for new projects"), i18n::N_("Automatic backups, autosave and restoring a backup"), i18n::N_("Theme, size and hints"),
                           i18n::N_("Startup, default template, language and updates"), i18n::N_("Folders and scripting"), i18n::N_("Log and script console"),
@@ -345,392 +740,14 @@ void settingsWindow(App& a) {
                           i18n::N_("Where each plugin format is searched, and scanning")};
   constexpr int kPages = 13;  // K-13 appended Plugins (kPluginSettingsTab)
   const char* pages[kPages];
-  for (int i = 0; i < kPages; ++i) pages[i] = i18n::tr(pagesEn[i]);
+  for (int i = 0; i < kPages; ++i) pages[i] = i18n::tr(kSettingsPagesEn[i]);
   page = std::clamp(page, 0, kPages - 1);
   ui::TabStrip("##settingstabs", pages, kPages, &page);
   ImGui::BeginChild("##page", ImVec2(0, 0), ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground);
   ImGui::TextColored(theme::vec(P.textDim), "%s", i18n::tr(blurbs[page]));
   ImGui::Dummy(ImVec2(0, theme::kS1));
   const float fieldW = std::max(160.0f, std::min(320.0f, ImGui::GetContentRegionAvail().x - 176 - 2 * theme::kS2 - 12));
-  {
-    if (page == 0) {
-      ui::BeginSection("INPUT / OUTPUT");
-      const bool asioMode = asioui::backendRow(a, fieldW);  // K-6
-      if (asioMode) asioui::deviceRows(a, fieldW);
-      if (!asioMode) {
-        formLabel("Output device");
-        if (ui::BeginCombo("##dev", a.audioDevice.empty() ? "System default" : a.audioDevice.c_str(), fieldW)) {
-          // J-77: device / rate / buffer changes apply at once and ask Keep / Revert (they can cut the sound).
-          if (ImGui::Selectable(i18n::tr("System default"), a.audioDevice.empty())) ui::confirmAudioDevice(a, "");
-          for (const auto& d : a.audioDevices)
-            if (ImGui::Selectable(d.c_str(), d == a.audioDevice)) ui::confirmAudioDevice(a, d);
-          ImGui::EndCombo();
-        }
-        const int rates[] = {44100, 48000, 88200, 96000};
-        formLabel("Sample rate");
-        for (int r : rates) {
-          if (r != rates[0]) ImGui::SameLine(0, theme::kS1);
-          if (ui::TextButton(std::to_string(r).c_str(), a.audioSampleRate == r) && a.audioSampleRate != r) {
-            const dispconf::Snapshot before = dispconf::take(st, dispconf::audioKeys());
-            st.set("audio.sampleRate", r);
-            ui::confirmAudio(a, before);
-          }
-        }
-        const int bufs[] = {64, 128, 256, 512, 1024, 2048};
-        formLabel("Buffer size");
-        for (int b : bufs) {
-          if (b != bufs[0]) ImGui::SameLine(0, theme::kS1);
-          if (ui::TextButton(std::to_string(b).c_str(), a.audioBuffer == b) && a.audioBuffer != b) {
-            const dispconf::Snapshot before = dispconf::take(st, dispconf::audioKeys());
-            st.set("audio.bufferFrames", b);
-            ui::confirmAudio(a, before);
-          }
-        }
-        char lat[96];
-        std::snprintf(lat, sizeof lat, "%.1f ms", 1000.0 * a.audioBuffer / std::max(1, a.audioSampleRate));
-        formLabel("Output latency");
-        ImGui::PushFont(a.fontMono, theme::kFontNumber + 1);
-        ImGui::TextUnformatted(lat);
-        ImGui::PopFont();
-      }
-      ui::EndSection();
-      if (asioMode) {
-        ui::BeginSection("ASIO CHANNELS");
-        asioui::channelRows(a, fieldW);
-        ui::EndSection();
-      }
-      ui::BeginSection("MIXER");
-      // Mixer processing threads (the output is identical for any count).
-      {
-        const int cur = static_cast<int>(st.getNumber("audio.threads"));
-        formLabel("Processing threads");
-        const int counts[] = {0, 1, 2, 4, 6, 8};
-        for (int c : counts) {
-          if (c != counts[0]) ImGui::SameLine(0, theme::kS1);
-          std::string l = c == 0 ? "Auto (" + std::to_string(a.processingThreads()) + ")" : std::to_string(c);
-          if (c == 0 && cur > 0) l = "Auto";
-          if (ui::TextButton(l.c_str(), cur == c, 0.0f,
-                             c == 0 ? "Half the hardware threads, at most 8" : c == 1 ? "Everything on the audio thread" : nullptr)) {
-            st.set("audio.threads", c);
-            a.syncEngine();
-          }
-        }
-      }
-      formLabel("Delay compensation");
-      {
-        bool pdc = st.getBool("audio.pdc");
-        if (ImGui::Checkbox(i18n::tr("Plugin delay compensation##pdc"), &pdc)) {
-          st.set("audio.pdc", pdc);
-          a.syncEngine();
-        }
-        ui::Hint("Delays faster paths so tracks with latent effects (look-ahead, linear phase, oversampling) stay in time");
-        const int ol = a.engine.outputLatency();
-        if (ol > 0) {
-          ImGui::SameLine(0, theme::kS2);
-          ImGui::TextColored(theme::vec(P.textDim), i18n::tr("%d samples (%.1f ms)"), ol, 1000.0 * ol / std::max(1, a.audioSampleRate));
-        }
-      }
-      ui::EndSection();
-      ui::BeginSection("INPUT & RECORDING");
-      audioInputSettings(a, fieldW);  // J-8
-      ui::EndSection();
-      ImGui::PushTextWrapPos(0);
-      ImGui::TextColored(theme::vec(P.textFaint), "%s", a.audioStatus.c_str());
-      ImGui::PopTextWrapPos();
-    }
-    if (page == 1) midiSettingsPage(a, fieldW);
-    if (page == 2) {
-      ui::BeginSection("NEW PROJECTS");
-      int ppq = static_cast<int>(st.getNumber("project.defaultPpq"));
-      formLabel("Timebase (PPQ)");
-      if (ui::BeginCombo("##ppq", std::to_string(ppq).c_str(), 160)) {
-        for (int p : kPpqChoices)
-          if (ImGui::Selectable(std::to_string(p).c_str(), p == ppq)) st.set("project.defaultPpq", p);
-        ImGui::EndCombo();
-      }
-      double tempo = st.getNumber("project.defaultTempo");
-      formLabel("Tempo (BPM)");
-      ImGui::SetNextItemWidth(160);
-      if (ImGui::InputDouble("##deftempo", &tempo, 1, 10, "%.1f")) st.set("project.defaultTempo", std::clamp(tempo, 10.0, 522.0));
-      projectDefaultsPanel(a);  // J-24
-      ui::EndSection();
-      ui::BeginSection("FL STUDIO IMPORT");
-      {
-        static char flData[512];
-        static bool init = false;
-        if (!init) {
-          std::snprintf(flData, sizeof flData, "%s", st.getString("import.flData").c_str());
-          init = true;
-        }
-        formLabel("FL data folder");
-        ImGui::SetNextItemWidth(fieldW);
-        if (ImGui::InputTextWithHint("##fldata", i18n::tr("Detect automatically"), flData, sizeof flData)) st.set("import.flData", std::string(flData));
-        ui::FocusRing();
-        ui::Hint("Folder that %FLStudioFactoryData% points to (holds the samples FL projects use). Empty = detect.");
-        std::string used = flData[0] ? std::string(flData) : flp::defaultFactoryData();
-        formLabel("In use");
-        ImGui::PushTextWrapPos(0);
-        ImGui::TextColored(theme::vec(pal().textDim), "%s", used.empty() ? "not found: samples from FL's library will be missing" : used.c_str());
-        ImGui::PopTextWrapPos();
-        // Convert FL's presets (plugin, channel and mixer presets) into the local preset library.
-        formLabel("Presets");
-        if (a.presetImport.running) {
-          float fr = a.presetImport.total ? static_cast<float>(a.presetImport.done) / static_cast<float>(a.presetImport.total) : 0.0f;
-          char lbl[64];
-          std::snprintf(lbl, sizeof lbl, "%zu / %zu", a.presetImport.done.load(), a.presetImport.total.load());
-          ImGui::ProgressBar(fr, ImVec2(fieldW - 80, 0), lbl);
-          ImGui::SameLine(0, theme::kS1);
-          if (ui::TextButton("Cancel", false, 72)) a.presetImport.cancel = true;
-        } else {
-          if (ui::TextButton("Import FL Studio presets", false, 0,
-                             "Converts every preset of your FL Studio installation into Gridline presets on this computer"))
-            a.startPresetImport();
-          if (!a.presetImport.summary.empty()) {
-            ImGui::PushTextWrapPos(0);
-            ImGui::TextColored(theme::vec(pal().textDim), "%s", a.presetImport.summary.c_str());
-            ImGui::PopTextWrapPos();
-          }
-        }
-        ui::Hint("Presets appear in each plugin's preset menu under Library \xE2\x96\xB8 FL Studio, effect chains in the mixer track menu");
-      }
-      ui::EndSection();
-      ui::BeginSection("FL STUDIO EXPORT");  // K-110
-      {
-        static const char* keys[] = {"suite+fallback", "suite", "render"};
-        static const char* names[] = {i18n::N_("Gridline Suite plugins, with muted audio copies"), i18n::N_("Gridline Suite plugins only"),
-                                      i18n::N_("Rendered to audio")};
-        auto nameOf = [&](const std::string& k) {
-          for (int i = 0; i < 3; ++i)
-            if (k == keys[i]) return i18n::tr(names[i]);
-          return i18n::tr(names[0]);
-        };
-        formLabel("Gridline plugins");
-        const std::string cur = st.getString("export.flGridlinePlugins");
-        if (ui::BeginCombo("##flgl", nameOf(cur), fieldW)) {
-          for (int i = 0; i < 3; ++i)
-            if (ImGui::Selectable(i18n::tr(names[i]), cur == keys[i])) st.set("export.flGridlinePlugins", std::string(keys[i]));
-          ImGui::EndCombo();
-        }
-        ui::Hint("How Gridline plugins without an exact FL Studio counterpart go into FL Studio projects. Suite plugins open live where the Gridline Suite is installed; muted audio copies play the instruments everywhere else.");
-        formLabel("This project");
-        const std::string pk = a.doc.song().flExportGridline;
-        if (pk.empty()) {
-          ImGui::AlignTextToFramePadding();
-          ImGui::TextColored(theme::vec(pal().textDim), "%s", i18n::tr("Uses the default"));
-        } else {
-          ImGui::AlignTextToFramePadding();
-          ImGui::TextColored(theme::vec(pal().text), "%s", nameOf(pk));
-          ImGui::SameLine(0, theme::kS2);
-          if (ui::TextButton(i18n::tr("Use the default"), false, 0, "This project's FL Studio exports follow the default above again"))
-            a.doc.editSong("FL Studio export choice", [](Song& s) { s.flExportGridline.clear(); });
-        }
-      }
-      ui::EndSection();
-      ui::BeginSection("UNDO");
-      int levels = static_cast<int>(st.getNumber("undo.maxLevels"));
-      formLabel("Maximum levels");
-      ImGui::SetNextItemWidth(96);
-      if (ImGui::InputInt("##levels", &levels, 0, 0)) {
-        levels = std::clamp(levels, 10, 10000);
-        st.set("undo.maxLevels", levels);
-        a.doc.setMaxUndoLevels(static_cast<size_t>(levels));
-      }
-      ui::EndSection();
-      collabui::projectSection(a);  // J-111
-    }
-    if (page == 3) {
-      static const char* freq[] = {i18n::N_("Never (remind every 10 minutes)"), i18n::N_("Rarely (every 15 minutes)"), i18n::N_("Occasionally (every 10 minutes)"),
-                                   i18n::N_("Regularly (every 5 minutes)"), i18n::N_("Frequently (5 minutes + before risky edits)"),
-                                   i18n::N_("Very frequently (every minute + before risky edits)")};
-      int f = std::clamp(static_cast<int>(st.getNumber("backup.frequency")), 0, 5);
-      ui::BeginSection("HOW OFTEN");
-      for (int i = 0; i < 6; ++i)
-        if (ImGui::RadioButton(i18n::tr(freq[i]), f == i)) {
-          st.set("backup.frequency", i);
-          BackupPolicy p = a.backups->policy();
-          p.frequency = static_cast<BackupFrequency>(i);
-          a.backups = std::make_unique<BackupManager>(p);
-        }
-      ui::EndSection();
-      ui::BeginSection("STORAGE");
-      int maxCount = static_cast<int>(st.getNumber("backup.maxCount"));
-      formLabel("Backups kept");
-      ImGui::SetNextItemWidth(96);
-      if (ImGui::InputInt("##maxcount", &maxCount, 0, 0)) {
-        maxCount = std::clamp(maxCount, 1, 1000);
-        st.set("backup.maxCount", maxCount);
-        BackupPolicy p = a.backups->policy();
-        p.maxCount = maxCount;
-        a.backups = std::make_unique<BackupManager>(p);
-      }
-      bool inProject = st.getString("backup.location") == "project";
-      if (ImGui::Checkbox(i18n::tr("Save backups next to the project once it has been saved"), &inProject)) {
-        st.set("backup.location", inProject ? "project" : "global");
-        BackupPolicy p = a.backups->policy();
-        p.inProjectFolder = inProject;
-        a.backups = std::make_unique<BackupManager>(p);
-      }
-      ImGui::PushTextWrapPos(0);
-      ImGui::TextColored(theme::vec(P.textFaint), i18n::tr("Global backup folder: %s"), a.backups->policy().globalFolder.c_str());
-      ImGui::PopTextWrapPos();
-      ui::EndSection();
-      backupRestorePanel(a, fieldW);  // J-24
-    }
-    if (page == 4) {
-      ui::BeginSection("LAYOUT");  // K-79: window layout presets
-      {
-        // K-130: the welcome screen's cards at a fitting size, the two options, then the reset.
-        const float w = ImGui::GetContentRegionAvail().x;
-        ImGui::Dummy(ImVec2(0, theme::kS1));
-        layoutui::cards(a, w, 232.0f);
-        ImGui::Dummy(ImVec2(0, theme::kS2));
-        layoutui::linkedOptions(a, std::min(w, 640.0f));
-        ImGui::Dummy(ImVec2(0, theme::kS1));
-        ImGui::Separator();
-        ImGui::Dummy(ImVec2(0, theme::kS1));
-        const char* resetLabel = i18n::tr("Reset this layout");
-        const float resetW = ImGui::CalcTextSize(resetLabel).x + ImGui::GetStyle().FramePadding.x * 2;
-        ImGui::AlignTextToFramePadding();
-        ImGui::PushStyleColor(ImGuiCol_Text, theme::vec(P.textFaint));
-        ImGui::TextUnformatted(i18n::tr("Each layout remembers your own changes to it."));
-        ImGui::PopStyleColor();
-        ImGui::SameLine();
-        alignRight(resetW);
-        if (ui::TextButton("Reset this layout", false, 0, "Builds the default arrangement of the layout in use again")) ui::confirmLayoutReset(a);
-      }
-      ui::EndSection();
-      ui::BeginSection("APPEARANCE");
-      formLabel("Theme");
-      if (ui::TextButton("Theme settings...", false, 0, "Dark, light or follow the system, accent colour, contrast")) page = 9;
-      formLabel("Interface scale");
-      {  // J-77: nothing changes while dragging; the value you let go of asks Keep / Revert.
-        static dispconf::DeferredValue drag;
-        const double committed = st.getNumber("ui.scale");
-        float pct = static_cast<float>(std::round(drag.shown(committed) * 100.0));
-        ImGui::SetNextItemWidth(fieldW);
-        if (ImGui::SliderFloat("##scale", &pct, 75.0f, 200.0f, "%.0f%%")) drag.edit(std::round(pct / 5.0f) * 5.0 / 100.0);
-        double to = 0;
-        if (ImGui::IsItemDeactivated() && drag.release(committed, &to)) ui::confirmScale(a, to);
-        ui::Hint("Scales the whole interface; asks to keep the new size once you let go");
-      }
-#if !defined(__APPLE__)
-      {  // J-91: the desktop's display scale (Xft.dpi, GDK_SCALE, Wayland, Windows DPI) on top of the size above
-        formLabel("");
-        bool follow = st.getBool("ui.scaleAuto");
-        char lbl[96];
-        std::snprintf(lbl, sizeof lbl, i18n::tr("Follow the system's display scale (%d%%)"), static_cast<int>(std::lround(uiscale::detected() * 100.0f)));
-        if (ImGui::Checkbox(lbl, &follow)) st.set("ui.scaleAuto", follow);
-        ui::Hint("On: the interface size is multiplied by the scale set in your system's display settings. Off: the size above is used as it is");
-      }
-#endif
-      // K-136: Gridline's own plugin windows, on top of the interface scale (core/EditorZoom.h).
-      formLabel("Plugin window size");
-      {
-        float pct = std::round(edzoom::globalSize(st.getNumber("ui.pluginWindowSize")) * 100.0f);
-        ImGui::SetNextItemWidth(fieldW);
-        if (ImGui::SliderFloat("##pluginsize", &pct, edzoom::kGlobalMin * 100.0f, edzoom::kGlobalMax * 100.0f, "%.0f%%"))
-          st.set("ui.pluginWindowSize", static_cast<double>(edzoom::globalSize(pct / 100.0)));
-        if (ImGui::IsItemClicked(ImGuiMouseButton_Right))
-          st.set("ui.pluginWindowSize", static_cast<double>(edzoom::kGlobalDefault));
-        ui::Hint("Size of the built-in instrument and effect windows (right-click: default). "
-                 "A size picked in a plugin window's menu (Editor size) is kept for that plugin");
-        formLabel("");
-        bool fit = st.getBool("ui.pluginWindowFit");
-        if (ImGui::Checkbox(i18n::tr("Open small plugin windows larger on big screens"), &fit)) st.set("ui.pluginWindowFit", fit);
-        ui::Hint("On: a small plugin window grows to suit a large workspace. Plugins you install keep their own size");
-      }
-      formLabel("Confirm changes");
-      bool autoRevert = st.getBool("ui.confirmAutoRevert");
-      if (ImGui::Checkbox(i18n::tr("Revert size, theme, language and audio changes not kept within 15 s"), &autoRevert))
-        st.set("ui.confirmAutoRevert", autoRevert);
-      ui::Hint("A change that makes the interface hard to use or cuts the sound goes back by itself");
-      bool hints = st.getBool("ui.showHints");
-      formLabel("Status bar");
-      if (ImGui::Checkbox(i18n::tr("Show hints for the control under the mouse"), &hints)) st.set("ui.showHints", hints);
-      hintSettingsPanel(a, fieldW);  // J-24
-      // J-113: windows dragged out of the main window become windows of their own.
-      bool detach = st.getBool("ui.detachWindows") && viewports::available();
-      formLabel("Windows");
-      ImGui::BeginDisabled(!viewports::available());
-      if (ImGui::Checkbox(i18n::tr("Allow windows outside the main window"), &detach)) st.set("ui.detachWindows", detach);
-      ImGui::EndDisabled();
-      ui::Hint("Drag a window by its title bar out of Gridline, onto another monitor if you like. "
-               "Off: every window stays inside the main window");
-      if (!viewports::available()) {
-        formLabel("");
-        ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr(viewports::unavailableReason().c_str()));
-      }
-      ui::EndSection();
-      // J-67: motion (smooth snapping of drags, smooth scrolling, elastic edges).
-      ui::BeginSection("MOTION");
-      const bool reduced = scrollui::systemReducedMotion();
-      ImGui::BeginDisabled(reduced);
-      bool anim = st.getBool("ui.animations") && !reduced;
-      formLabel("Animations");
-      if (ImGui::Checkbox(i18n::tr("Interface animations"), &anim)) st.set("ui.animations", anim);
-      ui::Hint("Decorative motion: the metronome ticking in tempo, key and pad lights fading, gliding drags, scrolling and zooming. "
-               "Off: everything moves at once, which saves a little CPU");
-      ImGui::EndDisabled();
-      ImGui::BeginDisabled(reduced || !anim);
-      bool smoothSnap = st.getBool("ui.smoothSnap") && !reduced;
-      bool smoothScroll = st.getBool("ui.smoothScroll") && !reduced, elastic = st.getBool("ui.elasticEdges") && !reduced;
-      formLabel("Dragging");
-      if (ImGui::Checkbox(i18n::tr("Smooth snapping"), &smoothSnap)) st.set("ui.smoothSnap", smoothSnap);
-      ui::Hint("Snapped drags (clips, notes, selections, points, cut lines) glide from grid line to grid line");
-      formLabel("Scrolling");
-      if (ImGui::Checkbox(i18n::tr("Smooth scrolling"), &smoothScroll)) st.set("ui.smoothScroll", smoothScroll);
-      ui::Hint("Mouse wheel steps glide to their row or step; trackpads follow the fingers directly");
-      formLabel("");
-      if (ImGui::Checkbox(i18n::tr("Elastic edges"), &elastic)) st.set("ui.elasticEdges", elastic);
-      ui::Hint("Scrolling past the start or end of a view stretches a little and springs back");
-      bool smoothZoom = st.getBool("ui.smoothZoom") && !reduced;  // J-188
-      formLabel("Zooming");
-      if (ImGui::Checkbox(i18n::tr("Smooth zooming"), &smoothZoom)) st.set("ui.smoothZoom", smoothZoom);
-      ui::Hint("Zoom steps glide in the playlist, piano roll and automation editor, keeping the point under the pointer in place; "
-               "trackpads follow the fingers directly");
-      ImGui::EndDisabled();
-      if (reduced) {
-        ImGui::PushTextWrapPos(0);
-        ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("Off while the system asks for reduced motion."));
-        ImGui::PopTextWrapPos();
-      }
-      {  // J-83: what the plain wheel does over mixer faders and knobs; J-84: and over the channel rack's steps and knobs
-        static const char* const kWheelModes[] = {i18n::N_("Adjust the control"), i18n::N_("Scroll the pane"),
-                                                  i18n::N_("Auto (scroll when the pane scrolls)")};
-        const int cur = static_cast<int>(wheelroute::modeFromSetting(st.getNumber("ui.mixerWheel")));
-        formLabel("Wheel over controls");
-        if (ui::BeginCombo("##mixerwheel", i18n::tr(kWheelModes[cur]), fieldW)) {
-          for (int i = 0; i < 3; ++i)
-            if (ImGui::Selectable(i18n::tr(kWheelModes[i]), cur == i)) st.set("ui.mixerWheel", i);
-          ImGui::EndCombo();
-        }
-        ui::Hint("Mouse wheel over controls in scrolling panes (narrow mixer, channel rack with a long pattern or many channels). "
-                 "Scrolling: the wheel scrolls the pane; drag, click then wheel, or hold Ctrl and wheel, to change a control or step");
-      }
-      ui::EndSection();
-      // J-99: smooth freehand drawing (app/DrawSmoothUi.h).
-      ui::BeginSection("DRAWING");
-      {
-        formLabel("Smooth drawing");
-        float amt = static_cast<float>(std::clamp(st.getNumber("draw.smoothAmount"), 0.0, 1.0)) * 100.0f;
-        ImGui::SetNextItemWidth(fieldW);
-        if (ImGui::SliderFloat("##drawsmooth", &amt, 0.0f, 100.0f, amt <= 0 ? i18n::tr("Off") : "%.0f%%"))
-          st.set("draw.smoothAmount", static_cast<double>(std::round(amt)) / 100.0);
-        ui::Hint("How much strokes drawn into EQs, band levels, harmonics, waves and tables are smoothed. "
-                 "Each surface has its own on / off switch (the small wave in its corner); hold Alt while drawing for a raw stroke");
-      }
-      ui::EndSection();
-      // J-48 interface sounds: moved to Settings > Theme > Sounds (J-133, SoundThemeUi.cpp).
-    }
-    if (page == 5) generalSettingsPage(a, fieldW);
-    if (page == 8) shortcutSettingsPage(a, fieldW);
-    if (page == 9) themeSettingsPage(a, fieldW);
-    if (page == 6) fileSettingsPage(a, fieldW);
-    if (page == 7) debugSettingsPage(a, fieldW);
-    if (page == 10) mcpui::settingsPage(a, fieldW);  // SC-07
-    if (page == 11) collabui::settingsPage(a, fieldW);  // J-111
-    if (page == kPluginSettingsTab) pluginFoldersSettingsPage(a, fieldW);  // K-13
-  }
+  settingsPageBody(a, page, fieldW);
   ImGui::EndChild();
   ImGui::End();
 }
@@ -850,36 +867,7 @@ void infoWindow(App& a) {
   ImGui::End();
 }
 
-void historyWindow(App& a) {
-  static bool wasShown = false;
-  if (!a.showHistory) {
-    wasShown = false;
-    return;
-  }
-  // J-40: opening it (menu, Alt+Z, --show history) brings it to the front,
-  // also when it is docked behind another tab (the browser by default).
-  const bool opened = !wasShown;
-  wasShown = true;
-  if (opened) ImGui::SetNextWindowFocus();
-  ImGui::SetNextWindowSize(ImVec2(300, 420), ImGuiCond_FirstUseEver);
-  if (!ImGui::Begin(ui::windowTitle("Undo history").c_str(), &a.showHistory)) {
-    ImGui::End();
-    return;
-  }
-  const UndoStack& h = a.doc.history();
-  auto labels = h.labels();
-  if (ImGui::Selectable(i18n::tr("Start of history"), h.position() == 0)) a.doc.jumpTo(0);
-  for (size_t i = 0; i < labels.size(); ++i) {
-    bool applied = i < h.position();
-    ImGui::PushStyleColor(ImGuiCol_Text, theme::vec(applied ? pal().text : pal().textFaint));
-    std::string l = labels[i] + "##" + std::to_string(i);
-    if (ImGui::Selectable(l.c_str(), i + 1 == h.position())) a.doc.jumpTo(i + 1);
-    if (opened && i + 1 == h.position()) ImGui::SetScrollHereY(0.5f);  // show the current step
-    ImGui::PopStyleColor();
-  }
-  if (!opened && ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 4) ImGui::SetScrollHereY(1.0f);
-  ImGui::End();
-}
+void historyWindow(App& a) { undoui::historyWindow(a); }  // K-141
 
 void aboutWindow(App& a) {
   if (!a.showAbout) return;
@@ -1106,6 +1094,13 @@ void devShowPpqWarning(App& a, int ppq) {
   pendingPpq = ppq;
 }
 
+int settingsPageCount() { return static_cast<int>(sizeof kSettingsPagesEn / sizeof kSettingsPagesEn[0]); }
+const char* settingsPageNameEn(int page) { return page >= 0 && page < settingsPageCount() ? kSettingsPagesEn[page] : ""; }
+void drawSettingsPage(App& a, int page, float fieldW) {
+  int p = page;
+  settingsPageBody(a, p, fieldW);
+}
+
 void drawDialogs(App& a) {
   ImGui::GetStyle().HoverDelayNormal = static_cast<float>(std::clamp(a.settings.getNumber("ui.hintDelay"), 0.0, 2.0));
   drawTemplateDialogs(a);  // J-24: new project from template, save as template
@@ -1216,8 +1211,7 @@ void handleGlobalShortcuts(App& a) {
     return keys::pressed(id);
   };
   if (pressed("transport.play")) a.engine.playing() ? menuparity::stopPressed(a) : (void)menuparity::playPressed(a);  // J-109: Stop releases everything; J-112: stops plugin playback first
-  if (pressed("edit.undo")) a.doc.undo();
-  if (pressed("edit.redo")) a.doc.redo();
+  undoui::frame(a);  // K-141: Undo / Redo (not while a menu or dialog is open; waits for an open edit)
   if (pressed("edit.history")) a.showHistory = !a.showHistory;
   if (pressed("file.save")) a.save();
   if (pressed("file.saveAs")) a.saveAs();

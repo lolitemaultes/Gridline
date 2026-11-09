@@ -26,5 +26,10 @@ void shortcutReference(App& a);
 // J-137 dev check (--settings-size WxH): the settings window at this size
 // (logical px; still bounded by the window's minimum), for layout checks.
 void setDevSettingsSize(float w, float h);
+// K-93 (Dialogs.cpp): the settings pages (tab order), their English names, and one page's
+// controls drawn into the current window (the command palette reads every setting from them).
+int settingsPageCount();
+const char* settingsPageNameEn(int page);
+void drawSettingsPage(App& a, int page, float fieldW);
 
 }  // namespace gl

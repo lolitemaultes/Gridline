@@ -9445,6 +9445,10 @@ static bool IsRootOfOpenMenuSet()
 
 bool ImGui::BeginMenuEx(const char* label, const char* icon, bool enabled)
 {
+#ifdef IMGUI_ENABLE_TEST_ENGINE
+    if (GImGuiGridlineMenuWalk)  // Gridline (K-93): the command palette's menu walk
+        return ImGuiGridlineHook_BeginMenu(label, enabled);
+#endif
     ImGuiWindow* window = GetCurrentWindow();
     if (window->SkipItems)
         return false;
@@ -9677,6 +9681,13 @@ bool ImGui::BeginMenu(const char* label, bool enabled)
 
 void ImGui::EndMenu()
 {
+#ifdef IMGUI_ENABLE_TEST_ENGINE
+    if (GImGuiGridlineMenuWalk)  // Gridline (K-93)
+    {
+        ImGuiGridlineHook_EndMenu();
+        return;
+    }
+#endif
     // Nav: When a left move request our menu failed, close ourselves.
     ImGuiContext& g = *GImGui;
     ImGuiWindow* window = g.CurrentWindow;
@@ -9696,6 +9707,10 @@ void ImGui::EndMenu()
 
 bool ImGui::MenuItemEx(const char* label, const char* icon, const char* shortcut, bool selected, bool enabled)
 {
+#ifdef IMGUI_ENABLE_TEST_ENGINE
+    if (GImGuiGridlineMenuWalk)  // Gridline (K-93)
+        return ImGuiGridlineHook_MenuItem(label, shortcut, selected, enabled);
+#endif
     ImGuiWindow* window = GetCurrentWindow();
     if (window->SkipItems)
         return false;

@@ -2,6 +2,7 @@
 // Every model mutation is a Command with apply and revert. The UI, scripts and
 // controllers all edit through Document (Document.h), so they share one history.
 #pragma once
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -26,9 +27,23 @@ class Command {
   // K-64: false when this command can never change the tempo map (Document then skips the tempo
   // map work every edit otherwise pays: a large project with tempo automation spends 10 ms on it).
   virtual bool mayMoveTempo() const { return true; }
+  // K-141: rough memory the command holds (the history's byte budget). Commands that copy
+  // large objects say so; the default is a small closure.
+  virtual size_t approxBytes() const { return 256; }
 };
 
 using CommandPtr = std::unique_ptr<Command>;
+
+// K-141: data a history step carries besides its command, owned by the step (dropped with
+// it when the history is trimmed, cleared or a redo branch is discarded; kept through merges
+// and amends). Slot kCollab: the collaboration session's record of what the step wrote to the
+// shared project; slot kUi: what the interface restores on undo / redo (the selection).
+struct StepNote {
+  virtual ~StepNote() = default;
+  virtual size_t approxBytes() const { return 64; }
+};
+using StepNotePtr = std::shared_ptr<StepNote>;
+enum class NoteSlot : int { Collab = 0, Ui = 1 };
 
 // Generic command from two closures (apply/revert capture their own state).
 class LambdaCommand final : public Command {
@@ -64,6 +79,11 @@ class GroupCommand final : public Command {
   void apply(Song& s) override {
     for (auto& c : parts_) c->apply(s);
   }
+  size_t approxBytes() const override {
+    size_t n = 64;
+    for (const auto& c : parts_) n += c->approxBytes();
+    return n;
+  }
   void revert(Song& s) override {
     for (auto it = parts_.rbegin(); it != parts_.rend(); ++it) (*it)->revert(s);
   }
@@ -78,6 +98,8 @@ class GroupCommand final : public Command {
 class UndoStack {
  public:
   static constexpr size_t kDefaultMaxLevels = 100;
+  static constexpr size_t kMinLevels = 10, kMaxLevels = 10000;  // the settings range
+  static constexpr size_t kDefaultMaxBytes = size_t{256} << 20;   // K-141: memory budget
 
   // Applies `cmd` to `song` and records it (dropping any redo branch).
   void push(Song& song, CommandPtr cmd) {
@@ -92,15 +114,35 @@ class UndoStack {
   bool redo(Song& song);
   // Moves to the state after `n` applied steps (0 = oldest kept state).
   void jumpTo(Song& song, size_t n);
+  // K-141: drops every step from index `n` on (applied or not), without touching the song
+  // (edits that were never kept, e.g. made while a collaboration review previewed a side).
+  void truncate(size_t n);
 
   size_t size() const { return cmds_.size(); }
   size_t position() const { return pos_; }
   std::vector<std::string> labels() const;  // oldest first
   std::string undoLabel() const { return canUndo() ? cmds_[pos_ - 1]->label() : ""; }
+  std::string labelAt(size_t i) const { return i < cmds_.size() ? cmds_[i]->label() : std::string(); }
   std::string redoLabel() const { return canRedo() ? cmds_[pos_]->label() : ""; }
 
   void setMaxLevels(size_t n);
   size_t maxLevels() const { return max_; }
+  // K-141: the oldest steps are dropped while the history holds more than `bytes` (at least
+  // the newest step stays).
+  void setMaxBytes(size_t bytes);
+  size_t maxBytes() const { return maxBytes_; }
+  size_t bytes() const { return bytes_; }
+  // K-141: per-step data (see StepNote), index 0 = oldest kept step.
+  StepNote* note(size_t i, NoteSlot slot) const {
+    return i < notes_.size() ? notes_[i][static_cast<size_t>(slot)].get() : nullptr;
+  }
+  StepNotePtr noteShared(size_t i, NoteSlot slot) const {
+    return i < notes_.size() ? notes_[i][static_cast<size_t>(slot)] : nullptr;
+  }
+  void setNote(size_t i, NoteSlot slot, StepNotePtr n);
+  uint64_t serialAt(size_t i) const { return i < serials_.size() ? serials_[i] : 0; }
+  // Recomputes the byte count of step `i` (its note grew).
+  void touchBytes(size_t i);
   // Stops the next push from merging into the current top (e.g. on mouse-up).
   void breakMerge() { mergeOpen_ = false; }
   void clear();
@@ -109,8 +151,10 @@ class UndoStack {
     return mergeOpen_ && pos_ > 0 && pos_ == cmds_.size() && cmd.mergeKey() != 0 && cmds_[pos_ - 1]->mergeKey() == cmd.mergeKey();
   }
   // J-111: moves the position by one step (-1 undo, +1 redo) without applying or
-  // reverting the command (the collaboration session changes the song itself).
-  bool stepPosition(int dir);
+  // reverting the command in the song (the collaboration session changes the song itself).
+  // K-141: with `scratch`, the command is reverted (undo) or applied (redo) there instead, so
+  // the session can take the parts that stay on this computer from it.
+  bool stepPosition(int dir, Song* scratch = nullptr);
   // Records `cmd` (already applied) as a part of the newest step instead of a step of its own
   // (the later edits of one pointer gesture; Document::beginPointerGesture). Needs the
   // position at the end of the history; the step keeps its label. Like a merge, the state
@@ -126,8 +170,14 @@ class UndoStack {
 
  private:
   void trim();
+  void dropFront();
+  size_t stepBytes(size_t i) const;
   std::vector<CommandPtr> cmds_;
   std::vector<uint64_t> serials_;  // serial of the state after each command
+  std::vector<std::array<StepNotePtr, 2>> notes_;
+  std::vector<size_t> sizes_;      // approxBytes of each step (command + notes)
+  size_t bytes_ = 0;
+  size_t maxBytes_ = kDefaultMaxBytes;
   size_t pos_ = 0;
   size_t max_ = kDefaultMaxLevels;
   bool mergeOpen_ = false;

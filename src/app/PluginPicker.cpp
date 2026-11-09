@@ -152,6 +152,21 @@ bool pluginPickerOpen() { return pickerOpen; }
 
 namespace {
 
+// Every plugin the picker lists, before its filters and search.
+std::vector<const PluginInfo*> listedPlugins(App& a, const std::vector<const PluginInfo*>& dynamic) {
+  std::vector<const PluginInfo*> all;
+  for (const auto& p : pluginCatalog())
+    if (!p.hidden) all.push_back(&p);  // K-23: kept for old projects only
+  for (const PluginInfo* p : dynamic) {
+    std::string fmt, uid;
+    if (host::splitType(p->type, fmt, uid) && !host::formatEnabled(fmt)) continue;
+    if (!host::listedInBrowser(p->type)) continue;  // J-147: one format per plugin, no Gridline Suite builds
+    if (!collabui::pluginAllowed(a, p->type)) continue;  // J-111: not in a collaborative project
+    all.push_back(p);
+  }
+  return all;
+}
+
 // Adds the plugin the usual way (new channel / free slot on the selected
 // insert / note effect on the selected channel).
 void addPlugin(App& a, const PluginInfo& p) {
@@ -189,16 +204,7 @@ struct Group {
 void collectGroups(App& a, const host::PluginPrefs& prefs, const std::vector<const PluginInfo*>& dynamic, std::vector<Group>& groups, int& total) {
   const PickerState& S = st();
   const browse::Query q = browse::parseQuery(S.search);
-  std::vector<const PluginInfo*> all;
-  for (const auto& p : pluginCatalog())
-    if (!p.hidden) all.push_back(&p);  // K-23: kept for old projects only
-  for (const PluginInfo* p : dynamic) {
-    std::string fmt, uid;
-    if (host::splitType(p->type, fmt, uid) && !host::formatEnabled(fmt)) continue;
-    if (!host::listedInBrowser(p->type)) continue;  // J-147: one format per plugin, no Gridline Suite builds
-    if (!collabui::pluginAllowed(a, p->type)) continue;  // J-111: not in a collaborative project
-    all.push_back(p);
-  }
+  const std::vector<const PluginInfo*> all = listedPlugins(a, dynamic);
   groups.clear();
   total = 0;
   std::map<std::string, size_t> at;  // K-73: group key -> index (not a search of the groups per plugin)
@@ -509,5 +515,7 @@ bool pickerAdd(App& a, const std::string& type) {
   addPlugin(a, *p);
   return true;
 }
+
+std::vector<const PluginInfo*> pickerPlugins(App& a) { return listedPlugins(a, dynamicPlugins()); }
 
 }  // namespace gl::browserui

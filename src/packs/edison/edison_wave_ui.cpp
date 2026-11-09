@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include "../../core/I18n.h"
 #include "../../app/Theme.h"
@@ -15,6 +16,8 @@
 #include "edison_style.h"
 #include "edison_ui.h"
 #include "../../app/SmoothScrollUi.h"
+#include "../../app/LiveWaveUi.h"
+#include "../../engine/Dsp.h"
 
 namespace gl::packs::edison {
 
@@ -179,6 +182,52 @@ void drawLanes(App& a, Session& s, ImDrawList* dl, const Geo& g, float scale) {
   (void)a;
 }
 
+// K-145 dev checks: GRIDLINE_EDISON_LIVETRACE=1 prints the live view every frame (frames
+// recorded, drawn head, span, the head's x in the lanes, their width) and the normal view
+// once a take has become the file.
+void devLiveTrace(const Session& s, const Geo& g, bool live, float pad) {
+  static const bool on = std::getenv("GRIDLINE_EDISON_LIVETRACE") != nullptr;
+  if (!on) return;
+  if (live) {
+    const float headX = g.xOf(s.fit.shown) - g.p0.x;
+    // gap: px between the head and the edge less the pad (0 once the take is fitted); fit: past the edge
+    std::printf("loupe: live frames %zu shown %.0f span %.0f base %.0f head %.2f width %.2f pad %.2f gap %.3f fit %d rate %.0f\n", s.live.frames(),
+                s.fit.shown, g.len, s.fit.base, static_cast<double>(headX), static_cast<double>(g.W()), static_cast<double>(pad),
+                static_cast<double>(g.W() - pad - headX), g.len > s.fit.base ? 1 : 0, s.live.rate());
+  } else {
+    static double lastStart = -1, lastLen = -1;
+    static int64_t lastFrames = -1;
+    if (g.start == lastStart && g.len == lastLen && s.frames() == lastFrames) return;
+    lastStart = g.start, lastLen = g.len, lastFrames = s.frames();
+    std::printf("loupe: view start %.0f len %.0f frames %lld spectral %d\n", g.start, g.len, static_cast<long long>(s.frames()), s.spectral ? 1 : 0);
+  }
+  std::fflush(stdout);
+}
+
+// K-145: the take being recorded, one lane per channel, in the lanes' own colours; the
+// head (the drawn end) in the record colour.
+void drawLiveLanes(Session& s, ImDrawList* dl, const Geo& g, float scale) {
+  const float laneH = (g.p1.y - g.p0.y) / 2;
+  LiveWaveView v;
+  v.start = g.start;
+  v.span = g.len;
+  v.end = s.fit.shown;
+  v.pxScale = ImGui::GetIO().DisplayFramebufferScale.x;
+  for (int ln = 0; ln < 2; ++ln) {
+    const float y0 = g.p0.y + ln * laneH, y1 = y0 + laneH, mid = (y0 + y1) * 0.5f, half = laneH * 0.46f * s.vZoom;
+    dl->AddLine(ImVec2(g.p0.x, mid), ImVec2(g.p1.x, mid), C(col::WaveGridHi), 1.f);
+    for (float q : {0.5f, -0.5f}) dl->AddLine(ImVec2(g.p0.x, mid - q * half), ImVec2(g.p1.x, mid - q * half), C(col::WaveGrid), 1.f);
+    if (ln > 0) dl->AddLine(ImVec2(g.p0.x, y0), ImVec2(g.p1.x, y0), C(col::BtnLo), 1.f);
+    livewaveui::Style st;
+    st.wave = C(col::Wave);
+    st.channel = ln;
+    st.gain = s.vZoom;
+    st.head = C(col::Rec);
+    st.headWidth = std::max(1.5f, scale * 2.0f);
+    livewaveui::drawLane(dl, s.live, ImVec2(g.p0.x, y0), ImVec2(g.p1.x, y1), v, st);
+  }
+}
+
 void drawSpectral(Session& s, ImDrawList* dl, const Geo& g, ImFont* fm, float fs) {
   updateSpectrogram(s);
   if (s.tex && s.spec.cols > 0) {
@@ -229,19 +278,24 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, const sty::Metrics& 
   }
   if (s.viewLen <= 0) zoomAll(s);
   const double n = static_cast<double>(s.frames());
+  // K-145: while a take records, the lanes show it from its start: at the normal scale while
+  // it fits, then the whole take, fitted to the width every frame (a few px after the head).
+  const bool live = s.fit.active;
   // Auto-scroll with the playhead.
-  const double pos = playPos(a, s);
+  const double pos = live ? -1.0 : playPos(a, s);
   if (s.autoScroll && pos >= 0 && !s.dragging && (pos < s.viewStart || pos > s.viewStart + s.viewLen * 0.98))
     s.viewStart = std::clamp(pos - s.viewLen * 0.05, 0.0, std::max(0.0, n - s.viewLen));
-  g.start = s.viewStart;
-  g.len = std::max(1.0, s.viewLen);
+  g.start = live ? 0.0 : s.viewStart;
+  g.len = live ? s.fit.span(g.W(), P(8)) : std::max(1.0, s.viewLen);
+  const double vr = viewRate(s);
+  devLiveTrace(s, g, live, P(8));
 
   // ---- backgrounds
   dl->AddRectFilled(r0, r1, C(col::RulerBg));
   dl->AddRectFilled(g.p0, g.p1, C(col::WaveBg));
   dl->AddLine(ImVec2(r0.x, r1.y - 0.5f), ImVec2(r1.x, r1.y - 0.5f), C(col::BtnLo), 1.f);
   // Selection.
-  if (!s.sel.empty()) {
+  if (!s.sel.empty() && !live) {
     float x0 = std::max(g.p0.x, g.xOf(static_cast<double>(s.sel.a))), x1 = std::min(g.p1.x, g.xOf(static_cast<double>(s.sel.b)));
     if (x1 > x0) {
       dl->AddRectFilled(ImVec2(x0, g.p0.y), ImVec2(x1, g.p1.y), C(col::SelBg));
@@ -250,8 +304,8 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, const sty::Metrics& 
     }
   }
   // Time grid + labels (none while empty: there is no time to show).
-  if (s.frames() > 0) {
-    const double secPerPx = g.len / s.rate() / std::max(1.f, g.W());
+  if (s.frames() > 0 || live) {
+    const double secPerPx = g.len / vr / std::max(1.f, g.W());
     const float minStep = P(80);
     double step;
     if (s.barsTime) {
@@ -267,14 +321,14 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, const sty::Metrics& 
           break;
         }
     }
-    const double t0 = g.start / s.rate(), t1 = (g.start + g.len) / s.rate();
+    const double t0 = g.start / vr, t1 = (g.start + g.len) / vr;
     dl->PushClipRect(r0, g.p1, true);
     const float tickCy = r0.y + (rulerH - P(4)) * 0.5f;  // labels centred in the ruler above the region band
     for (double t = std::floor(t0 / step) * step; t <= t1; t += step) {
-      const float x = std::round(g.xOf(t * s.rate())) + 0.5f;
+      const float x = std::round(g.xOf(t * vr)) + 0.5f;
       dl->AddLine(ImVec2(x, r1.y - P(6)), ImVec2(x, r1.y), C(col::RulerText, 0.7f));
       dl->AddLine(ImVec2(x, g.p0.y), ImVec2(x, g.p1.y), C(col::WaveGrid), 1.f);
-      std::string lbl = timeText(a, s, static_cast<int64_t>(std::llround(t * s.rate())), step < 0.1);
+      std::string lbl = timeText(a, s, static_cast<int64_t>(std::llround(t * vr)), step < 0.1);
       sty::textAt(dl, fm, fs, x + P(4), tickCy, C(col::RulerText), lbl.c_str(), 0);
     }
     dl->PopClipRect();
@@ -282,14 +336,16 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, const sty::Metrics& 
 
   // ---- lanes
   dl->PushClipRect(g.p0, g.p1, true);
-  if (s.spectral) {
+  if (live) {
+    drawLiveLanes(s, dl, g, M.s);  // (the spectrogram comes back with the finished take)
+  } else if (s.spectral) {
     drawSpectral(s, dl, g, fm, fs);
     if (!s.sel.empty())
       dl->AddRectFilled(ImVec2(g.xOf(static_cast<double>(s.sel.a)), g.p0.y), ImVec2(g.xOf(static_cast<double>(s.sel.b)), g.p1.y), C(col::SelEdge, 0.18f));
   } else {
     drawLanes(a, s, dl, g, M.s);
   }
-  if (s.frames() == 0 && !s.job.active()) {
+  if (s.frames() == 0 && !s.job.active() && !live) {
     // Empty state: what Loupe is waiting for, centred in the lanes.
     const char* head = s.slot ? i18n::tr("No audio yet") : i18n::tr("This sample is empty");
     const char* sub = s.slot ? i18n::tr("Record from the mixer input (R), load a file from the File menu, or drop one here")
@@ -303,20 +359,22 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, const sty::Metrics& 
   const Content& c = s.cur();
   dl->PopClipRect();
   dl->PushClipRect(r0, g.p1, true);
-  for (const auto& rg : c.regions) {
+  static const Content kNone;
+  const Content& shownC = live ? kNone : c;  // the old file's marks go while a take replaces it
+  for (const auto& rg : shownC.regions) {
     float x0 = g.xOf(static_cast<double>(rg.start)), x1 = g.xOf(static_cast<double>(rg.end));
     dl->AddRectFilled(ImVec2(x0, r1.y - P(4)), ImVec2(x1, r1.y), C(col::Region, 0.9f));
     dl->AddRectFilled(ImVec2(x0, g.p0.y), ImVec2(x1, g.p1.y), C(col::Region, 0.07f));
     sty::textAt(dl, fm, fs, x0 + P(4), g.p1.y - P(4) - fs * 0.5f, C(col::Region), rg.name.c_str(), 0);
   }
-  if (c.hasLoop()) {
+  if (shownC.hasLoop()) {
     float x0 = g.xOf(static_cast<double>(c.loopStart)), x1 = g.xOf(static_cast<double>(c.loopEnd));
     dl->AddRectFilled(ImVec2(x0, r0.y), ImVec2(x1, r0.y + P(3)), C(col::Loop));
     for (float x : {x0, x1}) dl->AddLine(ImVec2(x, r0.y), ImVec2(x, g.p1.y), C(col::Loop, 0.8f), 1.f);
   }
   int hoverMarker = -1;
   const ImVec2 mouse = ImGui::GetIO().MousePos;
-  for (size_t k = 0; k < c.markers.size(); ++k) {
+  for (size_t k = 0; k < shownC.markers.size(); ++k) {
     const auto& m = c.markers[k];
     const float x = std::round(g.xOf(static_cast<double>(m.pos))) + 0.5f;
     if (x < g.p0.x - 50 || x > g.p1.x) continue;
@@ -327,7 +385,7 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, const sty::Metrics& 
     dl->AddTriangleFilled(ImVec2(x, r0.y + 1), ImVec2(x + fh * 0.9f, r0.y + 1 + fh * 0.5f), ImVec2(x, r0.y + 1 + fh), C(col::Marker));
     sty::textAt(dl, fm, fs, x + P(4), g.p0.y + P(4) + fs * 0.5f, C(col::Marker), m.name.c_str(), 0);
   }
-  if (s.cursor >= g.start && s.cursor <= g.start + g.len && s.frames() > 0) {
+  if (s.cursor >= g.start && s.cursor <= g.start + g.len && s.frames() > 0 && !live) {
     const float x = std::round(g.xOf(static_cast<double>(s.cursor))) + 0.5f;
     dl->AddLine(ImVec2(x, r0.y), ImVec2(x, g.p1.y), C(col::Cursor, 0.75f), 1.f);
   }
@@ -337,7 +395,8 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, const sty::Metrics& 
   }
   dl->PopClipRect();
 
-  // ---- interaction: ruler
+  // ---- interaction: ruler (none while a take records: it edits the file it replaces)
+  ImGui::BeginDisabled(live);
   ImGui::SetCursorScreenPos(r0);
   ImGui::InvisibleButton("ruler", ImVec2(std::max(1.f, r1.x - r0.x), std::max(1.f, r1.y - r0.y)), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
   const bool busy = s.job.active();
@@ -557,10 +616,16 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, const sty::Metrics& 
     ImGui::EndPopup();
   }
 
+  ImGui::EndDisabled();
+
   // ---- overview scroller
   dl->AddRectFilled(sc0, sc1, C(col::RulerBg));
   dl->AddLine(ImVec2(sc0.x, sc0.y + 0.5f), ImVec2(sc1.x, sc0.y + 0.5f), C(col::BtnLo), 1.f);
-  if (n > 0) {
+  if (live) {  // the whole take is in view
+    const float in = std::max(2.0f, P(3));
+    const float x1 = sc0.x + static_cast<float>(std::min(1.0, s.fit.shown / std::max(1.0, g.len))) * (sc1.x - sc0.x);
+    dl->AddRectFilled(ImVec2(sc0.x, sc0.y + in), ImVec2(std::max(sc0.x + P(6), x1), sc1.y - in + 1), C(col::BtnHi), (sc1.y - sc0.y) * 0.5f - in);
+  } else if (n > 0) {
     const float x0 = sc0.x + static_cast<float>(s.viewStart / n) * (sc1.x - sc0.x);
     const float x1 = sc0.x + static_cast<float>(std::min(1.0, (s.viewStart + s.viewLen) / n)) * (sc1.x - sc0.x);
     const float in = std::max(2.0f, P(3));
@@ -572,7 +637,7 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, const sty::Metrics& 
   }
   ImGui::SetCursorScreenPos(sc0);
   ImGui::InvisibleButton("overview", ImVec2(std::max(1.f, sc1.x - sc0.x), std::max(1.f, sc1.y - sc0.y)));
-  if (ImGui::IsItemActive() && n > 0) {
+  if (ImGui::IsItemActive() && n > 0 && !live) {
     const double f = (mouse.x - sc0.x) / std::max(1.f, sc1.x - sc0.x) * n;
     s.viewStart = std::clamp(f - s.viewLen * 0.5, 0.0, std::max(0.0, n - s.viewLen));
   }
@@ -665,7 +730,7 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, const sty::Metrics& 
       x += ctl + cg;
       return c2;
     };
-    const bool has = s.frames() > 0;
+    const bool has = s.frames() > 0 && !live;
     if (zb("z_out", ui::Icon::Minus, "Zoom out (-)", has)) zoomBy(s, 2.0, s.viewStart + s.viewLen * 0.5);
     if (zb("z_in", ui::Icon::Plus, "Zoom in (+)", has)) zoomBy(s, 0.5, s.viewStart + s.viewLen * 0.5);
     if (zb("z_sel", ui::Icon::Zoom, "Zoom to the selection", has && !s.sel.empty())) zoomTo(s, s.sel);
@@ -678,7 +743,22 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, const sty::Metrics& 
     const ImVec2 f0(x, by), f1(b1.x - std::round((barH - ctl) * 0.5f), by + ctl);
     if (f1.x - f0.x > P(60)) {
       sty::note("bar.readout", "readout", f0, f1);
-      if (!s.status.empty() && ImGui::GetTime() < s.statusUntil) {
+      if (live) {  // K-145: the take so far, its length and peak
+        float lo = 0, hi = 0, l1 = 0, h1 = 0;
+        const int top = s.live.levels() - 1;
+        if (top >= 0 && s.live.buckets(top) > 0) {
+          s.live.bucket(0, top, 0, lo, hi);
+          s.live.bucket(1, top, 0, l1, h1);
+        }
+        const double pk = std::max(std::max(std::fabs(lo), std::fabs(hi)), std::max(std::fabs(l1), std::fabs(h1)));
+        char b[96];
+        const std::string len = timeText(a, s, static_cast<int64_t>(s.live.frames()));
+        if (pk > 0)
+          std::snprintf(b, sizeof b, "%s   %s %.1f dB", len.c_str(), i18n::tr("PEAK"), dsp::gainToDb(pk));
+        else
+          std::snprintf(b, sizeof b, "%s   %s -inf", len.c_str(), i18n::tr("PEAK"));
+        sty::field(dl, f0, f1, i18n::tr("TAKE"), b, C(col::Rec), fm, fsVal, fsCap, 2);
+      } else if (!s.status.empty() && ImGui::GetTime() < s.statusUntil) {
         sty::field(dl, f0, f1, nullptr, s.status.c_str(), C(col::LcdText), fm, fsVal, fsCap, 2);
       } else if (s.frames() == 0) {
         sty::field(dl, f0, f1, nullptr, "", C(col::LcdText), fm, fsVal, fsCap, 2);

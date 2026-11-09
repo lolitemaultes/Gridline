@@ -14,6 +14,7 @@
 #include "../../app/PluginSkin.h"
 #include "../PacksUi.h"
 #include "../../core/PianoRollScript.h"
+#include "../../engine/LiveWave.h"
 #include "edison.h"
 
 namespace gl::packs::edison {
@@ -113,6 +114,14 @@ struct Session {
   size_t ringPos = 0;
   bool ringStarted = false;
   float inMeter = 0, outMeter = 0;
+  // K-145: the take drawn live while it records (fed from `rec` every frame; the view fits
+  // the whole take into the lanes once it reaches the right edge).
+  LiveWave live;
+  LiveFit fit;
+  size_t liveFed = 0;     // take frames added to `live`
+  size_t liveSeed = 0;    // frames of existing audio before the take (add after the existing audio)
+  bool simArmed = false;  // dev: GRIDLINE_EDISON_SIM feeds a generated input
+  int64_t simPos = 0;
 
   NoiseProfile noise;
   Job job;
@@ -239,5 +248,7 @@ void zoomAll(Session& s);
 void zoomTo(Session& s, Range r);
 void zoomBy(Session& s, double factor, double centreFrame);
 std::string timeText(App& a, const Session& s, int64_t frame, bool precise = true);
+// K-145: the rate the view's times are in (the live take's while it records).
+double viewRate(const Session& s);
 
 }  // namespace gl::packs::edison

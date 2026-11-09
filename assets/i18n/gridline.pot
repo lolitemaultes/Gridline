@@ -945,7 +945,7 @@ msgstr ""
 msgid "This pattern has an automation clip for that control already"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/ContextMenus.cpp src/core/MenuStyle.cpp
+#: src/app/AutomationEditor.cpp src/app/CommandPaletteUi.cpp src/app/ContextMenus.cpp src/core/MenuStyle.cpp
 msgid "Tools"
 msgstr ""
 
@@ -1921,7 +1921,7 @@ msgstr ""
 msgid "All channels"
 msgstr ""
 
-#: src/app/ChannelRack.cpp src/app/DisplayConfirmUi.cpp src/app/Menus.cpp src/app/TopBar.cpp src/core/Keymap.cpp
+#: src/app/ChannelRack.cpp src/app/CommandPaletteUi.cpp src/app/DisplayConfirmUi.cpp src/app/Menus.cpp src/app/TopBar.cpp src/core/Keymap.cpp
 msgid "Channel rack"
 msgstr ""
 
@@ -2193,7 +2193,7 @@ msgstr ""
 msgid "2 beats"
 msgstr ""
 
-#: src/app/ChopUi.cpp src/app/ContextMenus.cpp src/app/PluginManager.cpp src/app/UrlImportUi.cpp src/packs/edison/edison_form_ui.cpp
+#: src/app/ChopUi.cpp src/app/CommandPaletteUi.cpp src/app/ContextMenus.cpp src/app/PluginManager.cpp src/app/UrlImportUi.cpp src/packs/edison/edison_form_ui.cpp
 msgid "All"
 msgstr ""
 
@@ -4342,6 +4342,10 @@ msgid "UPnP-IGD, NAT-PMP or PCP: a temporary mapping while a collaborative proje
 msgstr ""
 
 #: src/app/CollabUi.cpp
+msgid "Undo starts fresh from here: each person then undoes only their own edits."
+msgstr ""
+
+#: src/app/CollabUi.cpp
 msgid "Up to date for collaboration"
 msgstr ""
 
@@ -4477,7 +4481,7 @@ msgstr ""
 msgid "Your code"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/collab/Session.cpp
 msgid "a collaborator"
 msgstr ""
 
@@ -4517,7 +4521,7 @@ msgstr ""
 msgid "click: the Collaboration panel"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/collab/Session.cpp
 msgid "clip"
 msgstr ""
 
@@ -4645,7 +4649,7 @@ msgstr ""
 msgid "the admin"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/UndoUi.cpp
 msgid "the project"
 msgstr ""
 
@@ -4671,6 +4675,126 @@ msgstr ""
 
 #: src/app/CollabUi.cpp
 msgid "you"
+msgstr ""
+
+#: src/app/CommandPaletteUi.cpp
+msgid "%d found"
+msgstr ""
+
+#: src/app/CommandPaletteUi.cpp
+msgid "Adds it"
+msgstr ""
+
+#: src/app/CommandPaletteUi.cpp src/app/PluginManager.cpp src/app/TrackReceiptUi.cpp
+msgid "Category"
+msgstr ""
+
+#: src/app/CommandPaletteUi.cpp
+msgid "EVERYTHING"
+msgstr ""
+
+#: src/app/CommandPaletteUi.cpp src/app/ContextMenus.cpp src/app/PluginEditorsK3Gb.cpp src/core/MenuStyle.cpp src/packs/seltmann/seltmann_ui.cpp
+msgid "Edit"
+msgstr ""
+
+#: src/app/CommandPaletteUi.cpp src/app/ContextMenus.cpp src/app/PluginManager.cpp src/core/TrackIconSet.cpp src/packs/edison/edison_form_ui.cpp src/packs/plasma/plasma_ui.cpp
+msgid "Effects"
+msgstr ""
+
+#: src/app/CommandPaletteUi.cpp src/app/ContextMenus.cpp src/core/MenuStyle.cpp
+msgid "File"
+msgstr ""
+
+#: src/app/CommandPaletteUi.cpp src/core/MenuStyle.cpp
+msgid "Help"
+msgstr ""
+
+#: src/app/CommandPaletteUi.cpp src/app/PluginManager.cpp
+msgid "Instruments"
+msgstr ""
+
+#: src/app/CommandPaletteUi.cpp src/app/DisplayConfirmUi.cpp src/app/MenuStyles.cpp src/app/Menus.cpp src/app/MixerView.cpp src/app/TopBar.cpp src/collab/Session.cpp src/core/Keymap.cpp src/packs/platter/platter_ui.cpp
+msgid "Mixer"
+msgstr ""
+
+#: src/app/CommandPaletteUi.cpp src/app/PluginEditorsInstrSlicer.cpp
+msgid "Move"
+msgstr ""
+
+#: src/app/CommandPaletteUi.cpp
+msgid "Not available now"
+msgstr ""
+
+#: src/app/CommandPaletteUi.cpp
+msgid "Note effects"
+msgstr ""
+
+#: src/app/CommandPaletteUi.cpp
+msgid "Nothing matches"
+msgstr ""
+
+#: src/app/CommandPaletteUi.cpp
+msgid "Open an automation clip first"
+msgstr ""
+
+#: src/app/CommandPaletteUi.cpp
+msgid "Opens Settings at it"
+msgstr ""
+
+#: src/app/CommandPaletteUi.cpp
+msgid "Opens the window"
+msgstr ""
+
+#: src/app/CommandPaletteUi.cpp src/app/PluginEditorsEqRef.cpp src/app/PluginEditorsK3Gb.cpp src/core/MenuStyle.cpp
+msgid "Options"
+msgstr ""
+
+#: src/app/CommandPaletteUi.cpp src/app/Playlist.cpp src/core/MenuStyle.cpp
+msgid "Patterns"
+msgstr ""
+
+#: src/app/CommandPaletteUi.cpp
+msgid "RECENT"
+msgstr ""
+
+#: src/app/CommandPaletteUi.cpp src/app/ScriptUi.cpp
+msgid "Run"
+msgstr ""
+
+#: src/app/CommandPaletteUi.cpp
+msgid "Runs it"
+msgstr ""
+
+#: src/app/CommandPaletteUi.cpp
+msgid "Search commands, menus, windows, settings and plugins"
+msgstr ""
+
+#: src/app/CommandPaletteUi.cpp src/app/Dialogs.cpp src/app/LauncherUi.cpp src/app/Menus.cpp src/app/PluginEditorsInstrSlicer.cpp
+msgid "Settings"
+msgstr ""
+
+#: src/app/CommandPaletteUi.cpp src/app/SettingsPages.cpp src/packs/platter/platter_ui.cpp
+msgid "Transport"
+msgstr ""
+
+#: src/app/CommandPaletteUi.cpp
+msgid "Try fewer letters, or another category (Tab)"
+msgstr ""
+
+#: src/app/CommandPaletteUi.cpp src/app/ContextMenus.cpp src/app/MixerView.cpp src/core/MenuStyle.cpp src/packs/modulation/modulation_patcher_ui.cpp
+msgid "View"
+msgstr ""
+
+#: src/app/CommandPaletteUi.cpp
+msgid "Window"
+msgstr ""
+
+#: src/app/CommandPaletteUi.cpp
+msgid "Works while dragging"
+msgstr ""
+
+#: src/app/CommandPaletteUi.cpp
+msgid "Works with the pointer over a step"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
@@ -5033,10 +5157,6 @@ msgstr ""
 msgid "Dock to"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/PluginEditorsK3Gb.cpp src/core/MenuStyle.cpp src/packs/seltmann/seltmann_ui.cpp
-msgid "Edit"
-msgstr ""
-
 #: src/app/ContextMenus.cpp
 msgid "Edit pattern"
 msgstr ""
@@ -5047,10 +5167,6 @@ msgstr ""
 
 #: src/app/ContextMenus.cpp
 msgid "Effect chain"
-msgstr ""
-
-#: src/app/ContextMenus.cpp src/app/PluginManager.cpp src/core/TrackIconSet.cpp src/packs/edison/edison_form_ui.cpp src/packs/plasma/plasma_ui.cpp
-msgid "Effects"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
@@ -5119,10 +5235,6 @@ msgstr ""
 
 #: src/app/ContextMenus.cpp
 msgid "Fade and volume handles on audio clips"
-msgstr ""
-
-#: src/app/ContextMenus.cpp src/core/MenuStyle.cpp
-msgid "File"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
@@ -6213,10 +6325,6 @@ msgstr ""
 msgid "Upside down (pitch)"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/MixerView.cpp src/core/MenuStyle.cpp src/packs/modulation/modulation_patcher_ui.cpp
-msgid "View"
-msgstr ""
-
 #: src/app/ContextMenus.cpp
 msgid "Whole song"
 msgstr ""
@@ -6614,6 +6722,10 @@ msgid "Import FL Studio presets"
 msgstr ""
 
 #: src/app/Dialogs.cpp
+msgid "In a shared project, skip steps that have nothing left to undo"
+msgstr ""
+
+#: src/app/Dialogs.cpp
 msgid "In use"
 msgstr ""
 
@@ -6703,6 +6815,10 @@ msgstr ""
 
 #: src/app/Dialogs.cpp
 msgid "Off while the system asks for reduced motion."
+msgstr ""
+
+#: src/app/Dialogs.cpp
+msgid "Off: each press undoes one of your steps, and tells you when a collaborator changed it so nothing was left."
 msgstr ""
 
 #: src/app/Dialogs.cpp
@@ -6817,10 +6933,6 @@ msgstr ""
 msgid "Scrolling past the start or end of a view stretches a little and springs back"
 msgstr ""
 
-#: src/app/Dialogs.cpp src/app/LauncherUi.cpp src/app/Menus.cpp src/app/PluginEditorsInstrSlicer.cpp
-msgid "Settings"
-msgstr ""
-
 #: src/app/Dialogs.cpp
 msgid "Shared folders"
 msgstr ""
@@ -6854,15 +6966,15 @@ msgid "Snapped drags (clips, notes, selections, points, cut lines) glide from gr
 msgstr ""
 
 #: src/app/Dialogs.cpp
-msgid "Start of history"
-msgstr ""
-
-#: src/app/Dialogs.cpp
 msgid "Startup, default template, language and updates"
 msgstr ""
 
 #: src/app/Dialogs.cpp
 msgid "Status bar"
+msgstr ""
+
+#: src/app/Dialogs.cpp
+msgid "Steps kept from 10 to 10000, applied when you press Enter. The oldest steps also go once the history uses 256 MB."
 msgstr ""
 
 #: src/app/Dialogs.cpp
@@ -6911,10 +7023,6 @@ msgstr ""
 
 #: src/app/Dialogs.cpp
 msgid "UNDO"
-msgstr ""
-
-#: src/app/Dialogs.cpp src/app/Menus.cpp src/app/TopBar.cpp src/core/Keymap.cpp
-msgid "Undo history"
 msgstr ""
 
 #: src/app/Dialogs.cpp
@@ -7043,10 +7151,6 @@ msgstr ""
 
 #: src/app/DisplayConfirmUi.cpp src/app/SettingsKeysTheme.cpp
 msgid "Lumen"
-msgstr ""
-
-#: src/app/DisplayConfirmUi.cpp src/app/MenuStyles.cpp src/app/Menus.cpp src/app/MixerView.cpp src/app/TopBar.cpp src/collab/Session.cpp src/core/Keymap.cpp src/packs/platter/platter_ui.cpp
-msgid "Mixer"
 msgstr ""
 
 #: src/app/DisplayConfirmUi.cpp src/app/McpUi.cpp src/app/Menus.cpp
@@ -9794,6 +9898,10 @@ msgid "Close plugin windows"
 msgstr ""
 
 #: src/app/Menus.cpp
+msgid "Command palette..."
+msgstr ""
+
+#: src/app/Menus.cpp
 msgid "Composing"
 msgstr ""
 
@@ -9831,6 +9939,10 @@ msgstr ""
 
 #: src/app/Menus.cpp
 msgid "File settings..."
+msgstr ""
+
+#: src/app/Menus.cpp
+msgid "Find and run any command, menu item, window, setting or plugin by typing part of its name"
 msgstr ""
 
 #: src/app/Menus.cpp
@@ -10063,6 +10175,10 @@ msgstr ""
 
 #: src/app/Menus.cpp
 msgid "Trim unused mixer tracks"
+msgstr ""
+
+#: src/app/Menus.cpp src/app/TopBar.cpp src/app/UndoUi.cpp src/core/Keymap.cpp
+msgid "Undo history"
 msgstr ""
 
 #: src/app/Menus.cpp
@@ -11501,10 +11617,6 @@ msgstr ""
 msgid "Overlap another audio clip on the track to crossfade with it"
 msgstr ""
 
-#: src/app/Playlist.cpp src/core/MenuStyle.cpp
-msgid "Patterns"
-msgstr ""
-
 #: src/app/Playlist.cpp
 msgid "Pitch a semitone down"
 msgstr ""
@@ -11731,10 +11843,6 @@ msgstr ""
 
 #: src/app/PluginEditorsEqRef.cpp
 msgid "Histogram"
-msgstr ""
-
-#: src/app/PluginEditorsEqRef.cpp src/app/PluginEditorsK3Gb.cpp src/core/MenuStyle.cpp
-msgid "Options"
 msgstr ""
 
 #: src/app/PluginEditorsEqRef.cpp
@@ -11987,10 +12095,6 @@ msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
 msgid "Modulation X (filter cutoff) and Y (resonance): drag"
-msgstr ""
-
-#: src/app/PluginEditorsInstrSlicer.cpp
-msgid "Move"
 msgstr ""
 
 #: src/app/PluginEditorsInstrSlicer.cpp
@@ -12881,10 +12985,6 @@ msgstr ""
 msgid "CATEGORY"
 msgstr ""
 
-#: src/app/PluginManager.cpp src/app/TrackReceiptUi.cpp
-msgid "Category"
-msgstr ""
-
 #: src/app/PluginManager.cpp
 msgid "Choose a folder to search for plugins"
 msgstr ""
@@ -13003,10 +13103,6 @@ msgstr ""
 
 #: src/app/PluginManager.cpp
 msgid "In and out"
-msgstr ""
-
-#: src/app/PluginManager.cpp
-msgid "Instruments"
 msgstr ""
 
 #: src/app/PluginManager.cpp
@@ -13766,10 +13862,6 @@ msgid "Rescan scripts"
 msgstr ""
 
 #: src/app/ScriptUi.cpp
-msgid "Run"
-msgstr ""
-
-#: src/app/ScriptUi.cpp
 msgid "Run again with new random numbers"
 msgstr ""
 
@@ -14339,10 +14431,6 @@ msgstr ""
 
 #: src/app/SettingsPages.cpp
 msgid "Translations are catalogues in assets/i18n (gettext .po or JSON); Pseudo shows which texts are translatable and where they clip"
-msgstr ""
-
-#: src/app/SettingsPages.cpp src/packs/platter/platter_ui.cpp
-msgid "Transport"
 msgstr ""
 
 #: src/app/SettingsPages.cpp
@@ -15285,6 +15373,54 @@ msgstr ""
 msgid "used"
 msgstr ""
 
+#: src/app/UndoUi.cpp
+msgid "%s changed %s"
+msgstr ""
+
+#: src/app/UndoUi.cpp
+msgid "Lists what others changed between your steps, greyed. Undo only ever goes back through your own steps."
+msgstr ""
+
+#: src/app/UndoUi.cpp
+msgid "Nothing to redo"
+msgstr ""
+
+#: src/app/UndoUi.cpp
+msgid "Nothing to undo"
+msgstr ""
+
+#: src/app/UndoUi.cpp
+msgid "Show collaborators' edits"
+msgstr ""
+
+#: src/app/UndoUi.cpp
+msgid "Start of history"
+msgstr ""
+
+#: src/app/UndoUi.cpp
+msgid "Start of shared history"
+msgstr ""
+
+#: src/app/UndoUi.cpp
+msgid "changed by %s"
+msgstr ""
+
+#: src/app/UndoUi.cpp
+msgid "nothing left to redo"
+msgstr ""
+
+#: src/app/UndoUi.cpp
+msgid "nothing left to undo"
+msgstr ""
+
+#: src/app/UndoUi.cpp
+msgid "partly redone"
+msgstr ""
+
+#: src/app/UndoUi.cpp
+msgid "partly undone"
+msgstr ""
+
 #: src/app/UpdateUi.cpp
 msgid "A beta version."
 msgstr ""
@@ -15930,7 +16066,15 @@ msgid "Changes made to the project file outside a collaboration session were add
 msgstr ""
 
 #: src/collab/Session.cpp
+msgid "Edits made while previewing a side were not kept."
+msgstr ""
+
+#: src/collab/Session.cpp
 msgid "External plugins can't be used in a collaborative project"
+msgstr ""
+
+#: src/collab/Session.cpp
+msgid "Kept %s because %s used it. Delete it yourself if you want it gone."
 msgstr ""
 
 #: src/collab/Session.cpp src/core/TrackIconSet.cpp
@@ -15938,7 +16082,27 @@ msgid "Master"
 msgstr ""
 
 #: src/collab/Session.cpp
+msgid "Nothing left to redo in %s: %s changed it after you."
+msgstr ""
+
+#: src/collab/Session.cpp
+msgid "Nothing left to undo in %s: %s changed it after you."
+msgstr ""
+
+#: src/collab/Session.cpp
 msgid "Only the project admin can resolve conflicts."
+msgstr ""
+
+#: src/collab/Session.cpp
+msgid "Redid %s, except what %s changed after you."
+msgstr ""
+
+#: src/collab/Session.cpp
+msgid "Skipped %zu steps with nothing left to redo."
+msgstr ""
+
+#: src/collab/Session.cpp
+msgid "Skipped %zu steps with nothing left to undo."
 msgstr ""
 
 #: src/collab/Session.cpp
@@ -15966,11 +16130,39 @@ msgid "This project no longer syncs, so it can't be renamed for everyone."
 msgstr ""
 
 #: src/collab/Session.cpp
+msgid "Undid %s, except what %s changed after you."
+msgstr ""
+
+#: src/collab/Session.cpp
+msgid "automation clip"
+msgstr ""
+
+#: src/collab/Session.cpp
+msgid "channel"
+msgstr ""
+
+#: src/collab/Session.cpp
+msgid "item"
+msgstr ""
+
+#: src/collab/Session.cpp
+msgid "mixer track"
+msgstr ""
+
+#: src/collab/Session.cpp
 msgid "note processor"
 msgstr ""
 
 #: src/collab/Session.cpp
+msgid "pattern"
+msgstr ""
+
+#: src/collab/Session.cpp
 msgid "slot"
+msgstr ""
+
+#: src/collab/Session.cpp
+msgid "someone"
 msgstr ""
 
 #: src/core/ExternalDrop.cpp
@@ -16191,6 +16383,10 @@ msgstr ""
 
 #: src/core/Keymap.cpp
 msgid "Close the tool / clear the selection"
+msgstr ""
+
+#: src/core/Keymap.cpp
+msgid "Command palette: find and run any command, menu item, window, setting or plugin"
 msgstr ""
 
 #: src/core/Keymap.cpp
@@ -16643,10 +16839,6 @@ msgstr ""
 
 #: src/core/LayoutPreset.cpp
 msgid "Tracks in the centre, one shared bottom pane, history on the right"
-msgstr ""
-
-#: src/core/MenuStyle.cpp
-msgid "Help"
 msgstr ""
 
 #: src/core/MenuStyle.cpp
@@ -18218,6 +18410,10 @@ msgid "Overview: drag to scroll"
 msgstr ""
 
 #: src/packs/edison/edison_wave_ui.cpp
+msgid "PEAK"
+msgstr ""
+
+#: src/packs/edison/edison_wave_ui.cpp
 msgid "Record from the mixer input (R), load a file from the File menu, or drop one here"
 msgstr ""
 
@@ -18227,6 +18423,10 @@ msgstr ""
 
 #: src/packs/edison/edison_wave_ui.cpp
 msgid "Snap to zero crossing"
+msgstr ""
+
+#: src/packs/edison/edison_wave_ui.cpp
+msgid "TAKE"
 msgstr ""
 
 #: src/packs/edison/edison_wave_ui.cpp
@@ -19267,10 +19467,6 @@ msgstr ""
 
 #: src/packs/platter/platter_tick_ui.cpp
 msgid "All 24 take keys of this setup are used: delete a take to record another"
-msgstr ""
-
-#: src/packs/platter/platter_tick_ui.cpp
-msgid "Record a deck performance"
 msgstr ""
 
 #: src/packs/platter/platter_tick_ui.cpp

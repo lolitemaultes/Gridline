@@ -1710,7 +1710,7 @@ ProjectRunResult runProject(Vm& vm, ProjectHost& h, const std::string& code, con
   h.doc.beginGroup(label);
   r.ok = vm.exec(code, chunk, &r.error);
   if (r.ok) {
-    h.doc.endGroup();
+    h.doc.endGroup(false);  // K-141: never folded into the step of a mouse the user still holds
   } else {
     h.doc.cancelGroup();
     r.limitHit = !vm.abortReason().empty();
@@ -1789,7 +1789,7 @@ ProjectRunResult ProjectScript::run(ProjectHost& h, const std::vector<FormParam>
         },
         &r.error);
   if (ok) {
-    h.doc.endGroup();
+    h.doc.endGroup(false);  // K-141
   } else {
     h.doc.cancelGroup();
     r.limitHit = !vm.abortReason().empty();

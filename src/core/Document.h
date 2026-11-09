@@ -172,6 +172,24 @@ class Document {
   void jumpTo(size_t position);
   const UndoStack& history() const { return undo_; }
   void setMaxUndoLevels(size_t n) { undo_.setMaxLevels(n); }
+  // K-141: the history's memory budget (UndoStack::setMaxBytes).
+  void setMaxUndoBytes(size_t n) { undo_.setMaxBytes(n); }
+  // K-141: per-step data (UndoStack::note); `i` indexes history().labels().
+  StepNote* stepNote(size_t i, NoteSlot slot) const { return undo_.note(i, slot); }
+  void setStepNote(size_t i, NoteSlot slot, StepNotePtr n) { undo_.setNote(i, slot, std::move(n)); }
+  void touchStepNote(size_t i) { undo_.touchBytes(i); }
+  // K-141: forgets the history (the song stays; modified stays as it was). A project that starts
+  // being shared: its solo steps cannot be undone safely for collaborators.
+  void clearHistory();
+  // K-141: drops the steps from index `n` on without touching the song (edits that were never kept).
+  void discardStepsFrom(size_t n) { undo_.truncate(n); }
+  // K-141: rebuilds a history that was saved (collaboration projects): one step per label whose
+  // command does nothing (the session undoes them), the position at `position`, notes in place.
+  // Not marked modified.
+  void restoreHistory(const std::vector<std::string>& labels, size_t position, std::vector<StepNotePtr> collabNotes);
+  // K-141: called after every undo / redo step taken (-1 / +1) with the index of the step it
+  // moved over (the interface restores the selection kept with it).
+  std::function<void(int dir, size_t index)> onHistoryMove;
 
   // --- collaboration (J-111) -------------------------------------------------
   // While a collaboration session is attached: `historyHook(-1 / +1)` replaces
@@ -181,8 +199,9 @@ class Document {
   // session can file the changes made so far under the previous step).
   std::function<bool(int dir)> historyHook;
   std::function<void()> beforeChange;
-  // Moves the history position without applying commands (see historyHook).
-  bool stepHistory(int dir);
+  // Moves the history position without applying commands (see historyHook). K-141: with
+  // `scratch`, the step's command is reverted / applied there (UndoStack::stepPosition).
+  bool stepHistory(int dir, Song* scratch = nullptr);
   // Replaces the song with a merged state from collaborators: not recorded,
   // the history is kept (its steps are undone through historyHook).
   void replaceSong(Song song);

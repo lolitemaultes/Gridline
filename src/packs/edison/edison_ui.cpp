@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <map>
 #include <thread>
@@ -86,8 +87,19 @@ void noteOrigin(const std::string& from, const std::string& path) {
   receipt::writeOrigin(path, o);
 }
 
-// UI thread: points the owner (slot state / channel sample) at the saved version.
+void applySavedNow(App& a, Session& s, const std::string& path, const std::string& hash, const std::string& label);
+
+// UI thread: points the owner (slot state / channel sample) at the saved version. K-141: a save
+// that finishes while the mouse is held (an edit elsewhere) is its own step, never part of that
+// edit; otherwise it merges with this editor's step as before.
 void applySaved(App& a, Session& s, const std::string& path, const std::string& hash, const std::string& label) {
+  if (!ImGui::IsAnyMouseDown()) return applySavedNow(a, s, path, hash, label);
+  a.doc.beginGroup(label);
+  applySavedNow(a, s, path, hash, label);
+  a.doc.endGroup(false);
+}
+
+void applySavedNow(App& a, Session& s, const std::string& path, const std::string& hash, const std::string& label) {
   const Content& c = s.cur();
   s.committed = path;
   if (!s.slot) {
@@ -170,6 +182,81 @@ void startLoad(App& a, Session& s, const State& st) {
   });
 }
 
+// K-145: the live waveform of the take being recorded. Starts with the take (the pre-roll
+// included); with "add after the existing audio" it holds the existing audio first, so the
+// view shows the result as it will be. Ends when the take becomes the file (pump) or when
+// recording stops without one.
+void updateLive(App& a, Session& s) {
+  const bool live = s.rec.recording() || s.rec.takeReady();
+  if (!live) {
+    s.fit.end();
+    return;
+  }
+  const double rate = s.rec.config().rate > 0 ? s.rec.config().rate : a.engine.sampleRate();
+  if (!s.fit.active) {
+    const bool append = param(a, s, EdAppend, 0) >= 0.5 && s.frames() > 0;
+    s.live.reset(rate, 2);
+    s.liveSeed = 0;
+    if (append) {
+      const Audio& au = s.cur().a();
+      s.live.add(au.L.data(), au.channels == 1 ? au.L.data() : au.R.data(), static_cast<size_t>(au.frames()));
+      s.liveSeed = static_cast<size_t>(au.frames());
+    }
+    s.liveFed = 0;
+    // The view's normal scale for a new take: ten seconds across the lanes (after the
+    // existing audio when adding to it).
+    s.fit.begin(static_cast<double>(s.liveSeed) + rate * 10.0, rate, static_cast<double>(s.liveSeed));
+  }
+  const size_t n = static_cast<size_t>(std::max<int64_t>(0, s.rec.recordedFrames()));
+  if (n < s.liveFed) {  // the recorder dropped frames (cut at its maximum length): add again from a bucket boundary
+    const size_t kept = s.live.truncate(s.liveSeed + n);
+    s.liveFed = kept > s.liveSeed ? kept - s.liveSeed : 0;
+  }
+  if (n > s.liveFed) {
+    s.live.add(s.rec.liveL() + s.liveFed, s.rec.liveR() + s.liveFed, n - s.liveFed);
+    s.liveFed = n;
+  }
+  s.fit.step(static_cast<double>(s.live.frames()), ImGui::GetIO().DeltaTime);
+}
+
+// Development / tests: GRIDLINE_EDISON_SIM=<speed> stands in for the slot's input while the
+// recorder is armed (never a microphone): a generated phrase (drum-like hits, a tone that
+// swells, a quiet floor), engine rate x frame time x speed frames per frame, so a fixed frame
+// time records the same take every run. Returns true while it feeds.
+bool devSim(App& a, Session& s) {
+  static const double speed = [] {
+    const char* v = std::getenv("GRIDLINE_EDISON_SIM");
+    return v && *v ? std::max(0.0, std::atof(v)) : 0.0;
+  }();
+  if (speed <= 0) return false;
+  if (!s.rec.armed() && !s.rec.recording()) {
+    s.simPos = 0;
+    return true;
+  }
+  const double rate = s.rec.config().rate > 0 ? s.rec.config().rate : a.engine.sampleRate();
+  const auto n = static_cast<size_t>(std::clamp(rate * static_cast<double>(ImGui::GetIO().DeltaTime) * speed, 1.0, rate * 120.0));
+  static std::vector<float> L, R;
+  L.resize(n), R.resize(n);
+  for (size_t i = 0; i < n; ++i, ++s.simPos) {
+    const double t = static_cast<double>(s.simPos) / rate;
+    const double beat = std::fmod(t, 0.5), bar = std::fmod(t, 4.0);
+    double v = 0.8 * std::exp(-beat * 16) * std::sin(6.2832 * (50 + 80 * std::exp(-beat * 28)) * beat);
+    v += 0.25 * std::sin(6.2832 * 330 * t) * std::sin(3.1416 * bar / 4.0);
+    v *= 0.55 + 0.45 * std::sin(6.2832 * t / 23.0);
+    const double nz = 0.004 * std::sin(t * 9187.1) * std::sin(t * 3301.7);
+    L[i] = static_cast<float>(v + nz);
+    R[i] = static_cast<float>(v * 0.9 - nz);
+  }
+  s.rec.feed(L.data(), R.data(), nullptr, n);
+  // GRIDLINE_EDISON_SIM_STOP=<seconds>: the take stops at that length (as the record button would).
+  static const double stopAt = [] {
+    const char* v = std::getenv("GRIDLINE_EDISON_SIM_STOP");
+    return v && *v ? std::atof(v) : 0.0;
+  }();
+  if (stopAt > 0 && s.rec.recording() && static_cast<double>(s.rec.recordedFrames()) >= stopAt * rate) s.rec.stop();
+  return true;
+}
+
 // Per frame: finishes jobs, follows external state changes (song undo), pumps recording.
 void pump(App& a, Session& s) {
   if (s.job.active() && s.job.fut.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
@@ -198,14 +285,20 @@ void pump(App& a, Session& s) {
       }
       static std::vector<float> L(16384), R(16384);
       static std::vector<uint8_t> P(16384);
+      const bool sim = devSim(a, s);  // dev: a generated input instead of the slot's
       for (;;) {
         size_t n = ring.read(s.ringPos, L.size(), L.data(), R.data(), P.data());
         if (n == 0) break;
-        s.rec.feed(L.data(), R.data(), P.data(), n);
+        if (!sim) s.rec.feed(L.data(), R.data(), P.data(), n);
       }
+      updateLive(a, s);  // K-145: the take drawn as it records
       s.inMeter = std::max(s.inMeter * 0.85f, fx->inputPeak());
       s.outMeter = std::max(s.outMeter * 0.85f, fx->outputPeak());
-      if (s.rec.takeReady() && !s.job.active()) {
+      // K-145: the live view reaches the take's end before the take becomes the file, so the
+      // last live frame and the normal view show the same take.
+      const bool settled = !s.fit.active || s.fit.shown >= static_cast<double>(s.live.frames());
+      if (s.rec.takeReady() && !s.job.active() && settled) {
+        s.fit.end();  // the take becomes the file: the view's normal state from here
         Audio take = s.rec.take(2);
         if (take.frames() > 0) {
           const bool append = param(a, s, EdAppend, 0) >= 0.5 && s.frames() > 0;
@@ -592,9 +685,11 @@ void zoomBy(Session& s, double f, double centre) {
   s.viewLen = len;
 }
 
+double viewRate(const Session& s) { return s.fit.active ? s.live.rate() : s.rate(); }
+
 std::string timeText(App& a, const Session& s, int64_t frame, bool precise) {
   char b[48];
-  const double sec = static_cast<double>(frame) / std::max(1.0, s.rate());
+  const double sec = static_cast<double>(frame) / std::max(1.0, viewRate(s));
   if (s.barsTime) {
     const Song& song = a.doc.song();
     const double beats = sec * song.tempo / 60.0;

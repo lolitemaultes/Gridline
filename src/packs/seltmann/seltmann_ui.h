@@ -173,6 +173,10 @@ void loadAudio(App& a, const PluginTarget& t, const std::string& path, const std
 // ---- J-218 the recorder on the start screen (seltmann_rec_ui.cpp)
 bool recorderOpenFor(const PluginTarget& t);  // this instance shows the recorder
 void openRecorder(App& a, const PluginTarget& t);
+// K-145 dev checks: GRIDLINE_SELTMANN_AUTOREC="<pause at> <resume after> <finish at>" (seconds of the
+// take; 0 = no pause) opens the recorder on an empty instance and records, pauses, resumes and
+// finishes by itself, wherever the window sits.
+void devAutoRecord(App& a, const PluginTarget& t);
 // In place of the drop zone: input, meter, the take, Record / Pause / Resume, Finish, Clear, Load.
 void drawRecorder(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1);
 // Per frame (packs::drawWindows): drains the input tap into the take, watches the device.

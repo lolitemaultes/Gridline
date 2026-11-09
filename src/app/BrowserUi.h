@@ -143,6 +143,8 @@ bool& previewSync();
 
 // ---- plugin picker (F8) ----
 void drawPluginPicker(App& a);
+// K-93: every plugin the picker lists (no filter or search); pickerAdd() adds one.
+std::vector<const PluginInfo*> pickerPlugins(App& a);
 void togglePluginPicker();
 // K-125: what a pick in the plugin picker does with `type` (an instrument: a new channel whose
 // editor opens). False for unknown types.

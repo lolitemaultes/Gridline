@@ -1,3 +1,4 @@
+#include "CommandPaletteUi.h"
 #include "Look.h"
 #include "LookGeom.h"
 #include "Widgets.h"
@@ -89,9 +90,11 @@ WheelGate wheelGate(bool takesWheel) {
 // J-55: hints, tooltips, labels, section captions, button and tab texts are
 // translated here, so callers pass plain English.
 void Hint(const std::string& text) {
+  if (cmdpalette::noting()) cmdpalette::noteHint(text.c_str());  // K-93: a menu item's description
   if (HintHovered()) app().setHint(tr(text.c_str()));
 }
 void Hint(const char* text) {
+  if (text && cmdpalette::noting()) cmdpalette::noteHint(text);
   if (text && HintHovered()) app().setHint(tr(text));
 }
 bool HintHovered() {
@@ -1031,6 +1034,7 @@ constexpr float kSectionPad = theme::kS2;
 }  // namespace
 
 void BeginSection(const char* caption, float width) {
+  if (cmdpalette::noting()) cmdpalette::noteSection(caption);  // K-93: settings groups
   ImGuiWindow* w = ImGui::GetCurrentWindow();
   auto f = std::make_unique<SectionFrame>();
   f->start = ImGui::GetCursorScreenPos();

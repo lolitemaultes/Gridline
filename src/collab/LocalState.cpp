@@ -1,5 +1,6 @@
 // Gridline - J-111 collaboration: session-only state. See LocalState.h.
 #include "LocalState.h"
+#include <cstring>
 #include <algorithm>
 #include <filesystem>
 #include <functional>
@@ -203,6 +204,46 @@ void keepSessionState(Song& in, const Song& cur) {
     in.tracks[i].folded = cur.tracks[i].folded;
     in.tracks[i].height = cur.tracks[i].height;
   }
+}
+
+uint64_t sessionStateHash(const Song& s) {
+  uint64_t h = 1469598103934665603ull;
+  auto mix = [&h](uint64_t v) {
+    h ^= v;
+    h *= 1099511628211ull;
+  };
+  auto plugin = [&](const PluginState& p) {
+    const auto& tab = table();
+    auto it = tab.find(p.type);
+    if (it == tab.end()) return;
+    for (size_t i = 0; i < it->second.size() && i < p.params.size(); ++i)
+      if (it->second[i]) {
+        float v = p.params[i];
+        uint32_t bits = 0;
+        std::memcpy(&bits, &v, sizeof bits);
+        mix(bits);
+      }
+  };
+  for (const auto& c : s.channels) {
+    mix(c.id);
+    plugin(c.plugin);
+    for (const auto& f : c.noteFx) plugin(f);
+  }
+  for (const auto& m : s.mixer) {
+    mix(m.id);
+    mix(static_cast<uint64_t>(m.solo) | static_cast<uint64_t>(m.soloAlone) << 1 | static_cast<uint64_t>(m.armed) << 2 |
+        static_cast<uint64_t>(m.inputStereo) << 3 | static_cast<uint64_t>(m.monitor) << 8 | static_cast<uint64_t>(m.recPoint) << 16 |
+        static_cast<uint64_t>(static_cast<uint32_t>(m.input)) << 24);
+    for (const auto& sl : m.slots) plugin(sl.plugin);
+  }
+  for (const auto& c : s.playlist)
+    if (c.launched) mix(c.id);
+  for (const auto& t : s.tracks) {
+    uint32_t bits = 0;
+    std::memcpy(&bits, &t.height, sizeof bits);
+    mix(bits ^ (t.folded ? 0x80000000u : 0u));
+  }
+  return h;
 }
 
 OwnPlaySig ownPlaySignature(const AudioEngine& e, const Song& s) {

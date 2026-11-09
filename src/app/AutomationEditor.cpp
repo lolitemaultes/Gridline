@@ -1289,6 +1289,7 @@ struct Recording {
   ObjectId autoId = kNoId, placement = kNoId;  // song mode: clip being written (kNoId: create one)
   ae::Points pts;                               // absolute ticks (song or pattern), parameter-normalized values
   double last = 0;
+  uint64_t step = 0;  // K-141: the history step of the knob move recorded (the take joins it: one step)
 };
 std::vector<Recording> recs;
 bool recordOn = false;
@@ -1379,7 +1380,8 @@ void onParamSet(App& a, ParamId pid, double value) {
   for (auto& x : recs)
     if (x.pid == pid) r = &x;
   if (r && !r->pts.empty() && t < r->pts.back().pos) {  // pattern loop wrapped / position jumped: close the take
-    commitRecording(a, *r);
+    Recording& rr = *r;
+    a.doc.amendStep(rr.step, [&] { commitRecording(a, rr); });
     recs.erase(recs.begin() + (r - recs.data()));
     r = nullptr;
   }
@@ -1403,6 +1405,7 @@ void onParamSet(App& a, ParamId pid, double value) {
   p.shape = AutoShape::Hold;
   r->pts.push_back(p);
   r->last = a.now;
+  r->step = a.doc.groupDepth() == 0 ? a.doc.history().stateSerial() : 0;
 }
 
 void recorderTick(App& a) {
@@ -1414,7 +1417,7 @@ void recorderTick(App& a) {
     if (!a.engine.playing() || a.now - recs[i].last > 0.35 || !recordOn) {
       Recording r = recs[i];
       recs.erase(recs.begin() + static_cast<long>(i));
-      commitRecording(a, r);
+      a.doc.amendStep(r.step, [&] { commitRecording(a, r); });  // K-141: with the knob move, one undo step
       a.doc.endGesture();
     } else {
       ++i;

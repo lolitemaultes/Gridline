@@ -788,7 +788,7 @@ void drawScriptConsole(App& a, float height) {
     a.doc.beginGroup("console: " + code.substr(0, 40));
     std::vector<std::string> out = script::runConsole(*vm, code, &err);
     if (err.empty())
-      a.doc.endGroup();
+      a.doc.endGroup(false);  // K-141
     else
       a.doc.cancelGroup();
     for (auto& l : out) lines.push_back({false, l});

@@ -4396,6 +4396,12 @@ extern void         ImGuiTestEngineHook_ItemAdd(ImGuiContext* ctx, ImGuiID id, c
 extern void         ImGuiTestEngineHook_ItemInfo(ImGuiContext* ctx, ImGuiID id, const char* label, ImGuiItemStatusFlags flags);
 extern void         ImGuiTestEngineHook_Log(ImGuiContext* ctx, const char* fmt, ...);
 extern const char*  ImGuiTestEngine_FindItemDebugLabel(ImGuiContext* ctx, ImGuiID id);
+// Gridline (K-93, command palette): the menu walk. While GImGuiGridlineMenuWalk is set, BeginMenu(),
+// EndMenu() and MenuItem() report to these hooks instead of drawing (src/app/imgui_hooks).
+extern bool         GImGuiGridlineMenuWalk;
+extern bool         ImGuiGridlineHook_BeginMenu(const char* label, bool enabled);
+extern void         ImGuiGridlineHook_EndMenu();
+extern bool         ImGuiGridlineHook_MenuItem(const char* label, const char* shortcut, bool selected, bool enabled);
 
 // In IMGUI_VERSION_NUM >= 18934: changed IMGUI_TEST_ENGINE_ITEM_ADD(bb,id) to IMGUI_TEST_ENGINE_ITEM_ADD(id,bb,item_data);
 #define IMGUI_TEST_ENGINE_ITEM_ADD(_ID,_BB,_ITEM_DATA)      if (g.TestEngineHookItems) ImGuiTestEngineHook_ItemAdd(&g, _ID, _BB, _ITEM_DATA)    // Register item bounding box

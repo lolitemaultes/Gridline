@@ -58,6 +58,12 @@ bool escapeBusy();
 const char* label(const char* id);
 // Every chord, "Ctrl+Y / Ctrl+Shift+Z" ("" when unbound).
 std::string labels(const char* id);
+// K-93: the command whose label() returned exactly this pointer (a menu item's shortcut
+// text), nullptr when it is not one (a literal or unbound).
+const char* commandForLabel(const char* text);
+// K-93: pressed(id), pressedPastEditor(id) and pressedHeld(id) are true during ImGui frame
+// `frame` (the command palette runs a command that has no menu item this way).
+void inject(const char* id, int frame);
 
 // Shortcut editor: while capturing, pressed() is always false and
 // captureChord() reports the first non-modifier key pressed with the held

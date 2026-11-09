@@ -39,6 +39,7 @@
 #include "BrowserUi.h"
 #include "MenuParityUi.h"
 #include "TrackReceiptUi.h"
+#include "CommandPaletteUi.h"
 
 namespace gl {
 
@@ -335,6 +336,8 @@ void menuPatterns(App& a) {
 }
 
 void menuView(App& a) {
+  if (ImGui::MenuItem(i18n::tr("Command palette..."), keys::label("view.commandPalette"))) cmdpalette::open(a);  // K-93
+  ui::Hint("Find and run any command, menu item, window, setting or plugin by typing part of its name");
   ImGui::SeparatorText(i18n::tr("Windows"));
   ImGui::MenuItem(i18n::tr("Playlist"), keys::label("view.playlist"), &a.showPlaylist);
   ImGui::MenuItem(i18n::tr("Channel rack"), keys::label("view.channelRack"), &a.showRack);
@@ -604,6 +607,7 @@ bool menuShortcuts(App& a) {
   if (!inPiano && !inRack && key("pattern.moveUp")) movePattern(a, -1);
   if (!inPiano && !inRack && key("pattern.moveDown")) movePattern(a, 1);
   // View / Options.
+  if (key("view.commandPalette")) cmdpalette::toggle(a);  // K-93
   if (key("view.settings")) {
     a.showSettings = !a.showSettings;
     if (a.showSettings) a.settingsTab = 1;  // MIDI tab, like the menu entry

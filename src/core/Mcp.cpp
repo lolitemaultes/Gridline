@@ -808,7 +808,7 @@ Json Session::callTool(const Json& params, bool& ok, int& code, std::string& msg
     if (grouped) {
       while (doc.groupDepth() > depth + 1) doc.endGroup();  // a tool left a group open
       if (r.error.empty())
-        doc.endGroup();
+        doc.endGroup(false);  // K-141: never folded into the step of a mouse the user still holds
       else
         doc.cancelGroup();
       doc.endGesture();

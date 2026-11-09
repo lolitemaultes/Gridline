@@ -90,6 +90,7 @@
 #include "../core/EditorZoom.h"
 #include "AutomationEditor.h"
 #include "BrowserUi.h"
+#include "CommandPaletteUi.h"
 #include "ContextMenus.h"
 #include "EditTools.h"
 #include "J31Ui.h"
@@ -1314,6 +1315,8 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       SDL_PushEvent(&q);
     } else if (l.cmd == "browser") {  // K-17 / K-18: browser rows and file operations (BrowserUi.h)
       browserui::devCommand(app, l.args, frame);
+    } else if (l.cmd == "palette") {  // K-93: the command palette (CommandPaletteUi.h): open, close, dump, state, run <id>
+      cmdpalette::devCommand(app, l.args, frame);
     } else if (l.cmd == "cache") {  // K-45: the unpacked project cache (CacheUi.h)
       cacheui::devCommand(l.args);
     } else if (l.cmd == "collab") {  // J-111: collaboration (CollabUi.h)
@@ -3066,6 +3069,7 @@ int main(int argc, char** argv) {
       drawAutomationEditor(app);
       drawDialogs(app);
       browserui::drawPluginPicker(app);
+      cmdpalette::draw(app);  // K-93: over the windows and dialogs, under collaboration and load pop-ups
       collabui::draw(app);  // J-111
       projloadui::draw(app);  // J-167: last, at the root level (it replaces any popup open when a load starts)
       crashui::draw(app);     // K-39: a failure's pop-up goes over everything

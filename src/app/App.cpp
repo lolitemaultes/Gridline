@@ -43,6 +43,7 @@
 #include "FlpExportUi.h"
 #include "ToastText.h"
 #include "../host/HostedPlugins.h"
+#include "UndoUi.h"
 
 namespace gl {
 
@@ -80,7 +81,10 @@ App::App() {
   pol.inProjectFolder = settings.getString("backup.location") == "project";
   pol.globalFolder = (fs::path(configDir()) / "Backup").string();
   backups = std::make_unique<BackupManager>(pol);
-  doc.setMaxUndoLevels(static_cast<size_t>(std::max(1.0, settings.getNumber("undo.maxLevels"))));
+  doc.setMaxUndoLevels(static_cast<size_t>(std::clamp(settings.getNumber("undo.maxLevels"), static_cast<double>(UndoStack::kMinLevels),
+                                                       static_cast<double>(UndoStack::kMaxLevels))));
+  doc.setMaxUndoBytes(UndoStack::kDefaultMaxBytes);  // K-141
+  undoui::install(*this);
   applySettingsHooks();
   // Recent files (J-141: with the times they were last opened, for the launcher).
   {

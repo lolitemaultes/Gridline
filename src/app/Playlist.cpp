@@ -1135,6 +1135,13 @@ void patternSourceMenu(App& a, ObjectId id) {
 }
 
 void drawPlaylist(App& a) {
+  // K-141: a drag whose window closed or hid before the button came up keeps its undo step open
+  // (and undo waiting): close it once the button is up.
+  if (cg.grouped && !ImGui::IsAnyMouseDown() && !ImGui::IsMouseReleased(ImGuiMouseButton_Left) && !ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
+    a.doc.endGroup();
+    a.doc.endGesture();
+    cg = ClipGesture{};
+  }
   if (!a.showPlaylist) return;
   if (!ui::BeginDockWindow("Playlist", &a.showPlaylist, ImVec2(1000, 480))) {
     ui::EndDockWindow();

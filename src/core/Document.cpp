@@ -11,6 +11,39 @@ namespace gl {
 
 namespace {
 
+// K-141: rough memory of the objects commands copy (the history's byte budget).
+size_t approxOf(const PluginState& p) {
+  return sizeof(PluginState) + p.params.size() * sizeof(float) + p.data.size() + p.ins.size() + p.original.size();
+}
+size_t approxOf(const Channel& c) {
+  size_t n = sizeof(Channel) + approxOf(c.plugin) + c.name.size();
+  for (const auto& f : c.noteFx) n += approxOf(f);
+  return n;
+}
+size_t approxOf(const Pattern& p) {
+  size_t n = sizeof(Pattern) + p.name.size();
+  for (const auto& kv : p.notes) n += 48 + kv.second.size() * sizeof(Note);
+  for (const auto& kv : p.steps) n += 48 + kv.second.size();
+  for (const auto& a : p.automation) n += sizeof(a) + a.points.size() * sizeof(AutoPoint);
+  return n;
+}
+size_t approxOf(const MixerTrack& m) {
+  size_t n = sizeof(MixerTrack) + m.name.size() + m.sends.size() * sizeof(Send);
+  for (const auto& sl : m.slots) n += approxOf(sl.plugin);
+  return n;
+}
+size_t approxOf(const AutomationClip& a) { return sizeof(AutomationClip) + a.points.size() * sizeof(AutoPoint); }
+template <typename T>
+size_t approxOf(const T&) {
+  return sizeof(T);
+}
+template <typename T>
+size_t approxOf(const std::vector<T>& v) {
+  size_t n = sizeof(v);
+  for (const auto& x : v) n += approxOf(x);
+  return n;
+}
+
 // Parameter change; consecutive changes of one parameter merge.
 class ParamCommand final : public Command {
  public:
@@ -19,6 +52,7 @@ class ParamCommand final : public Command {
   void apply(Song& s) override { setParam(s, id_, after_); }
   void revert(Song& s) override { setParam(s, id_, before_); }
   std::string label() const override { return "change parameter"; }
+  size_t approxBytes() const override { return sizeof(*this); }
   bool mayMoveTempo() const override { return !channelOwned_; }
   uint64_t mergeKey() const override { return mergeable_ ? id_.packed() : 0; }
   bool mergeWith(const Command& next) override {
@@ -46,6 +80,7 @@ class ObjectEdit final : public Command {
   void revert(Song& s) override { *get_(s, id_) = before_; }
   std::string label() const override { return label_; }
   uint64_t mergeKey() const override { return key_; }
+  size_t approxBytes() const override { return 64 + approxOf(before_) + approxOf(after_); }
   bool mayMoveTempo() const override { return !std::is_same<T, Channel>::value && !std::is_same<T, MixerTrack>::value; }
   bool mergeWith(const Command& next) override {
     auto* n = dynamic_cast<const ObjectEdit<T>*>(&next);
@@ -70,6 +105,7 @@ class ModLinksCommand final : public Command {
   void apply(Song& s) override { s.modLinks = after_; }
   void revert(Song& s) override { s.modLinks = before_; }
   std::string label() const override { return label_; }
+  size_t approxBytes() const override { return 64 + (before_.size() + after_.size()) * sizeof(ModLink); }
   uint64_t mergeKey() const override { return key_; }
   bool mergeWith(const Command& next) override {
     auto* n = dynamic_cast<const ModLinksCommand*>(&next);
@@ -143,6 +179,7 @@ class TempoRefitCommand final : public Command {
     inner_->revert(s);
   }
   std::string label() const override { return inner_->label(); }
+  size_t approxBytes() const override { return inner_->approxBytes() + patches_.size() * 2 * sizeof(Clip); }
   uint64_t mergeKey() const override { return inner_->mergeKey(); }
   bool mergeWith(const Command& next) override {
     const auto* n = dynamic_cast<const TempoRefitCommand*>(&next);
@@ -306,11 +343,35 @@ void Document::recordMark(const std::string& label) {
   exec(std::make_unique<LambdaCommand>(label, [](Song&) {}, [](Song&) {}), false);
 }
 
-bool Document::stepHistory(int dir) {
-  if (!groups_.empty() || !undo_.stepPosition(dir)) return false;
+bool Document::stepHistory(int dir, Song* scratch) {
+  if (!groups_.empty() || !undo_.stepPosition(dir, scratch)) return false;
   ++revision_;
   moveSerial_ = undo_.stateSerial();
+  if (onHistoryMove) onHistoryMove(dir, dir < 0 ? undo_.position() : undo_.position() - 1);
   return true;
+}
+
+void Document::clearHistory() {
+  const bool wasModified = modified();
+  groups_.clear();
+  undo_.clear();
+  savedSerial_ = wasModified ? ~uint64_t{0} : undo_.stateSerial();
+  pointerGesture_ = false;
+  gestureSerial_ = 0;
+}
+
+void Document::restoreHistory(const std::vector<std::string>& labels, size_t position, std::vector<StepNotePtr> collabNotes) {
+  const bool wasModified = modified();
+  undo_.clear();
+  for (size_t i = 0; i < labels.size(); ++i) {
+    undo_.breakMerge();
+    undo_.pushApplied(std::make_unique<LambdaCommand>(labels[i], [](Song&) {}, [](Song&) {}));
+    if (i < collabNotes.size() && undo_.size() > 0) undo_.setNote(undo_.size() - 1, NoteSlot::Collab, std::move(collabNotes[i]));
+  }
+  undo_.breakMerge();
+  while (undo_.position() > position && undo_.stepPosition(-1)) {
+  }
+  savedSerial_ = wasModified ? ~uint64_t{0} : undo_.stateSerial();
 }
 
 void Document::replaceSong(Song song) {
@@ -324,6 +385,7 @@ bool Document::undo() {
   if (!groups_.empty() || !undo_.undo(song_)) return false;
   ++revision_;
   moveSerial_ = undo_.stateSerial();
+  if (onHistoryMove) onHistoryMove(-1, undo_.position());
   return true;
 }
 
@@ -333,6 +395,7 @@ bool Document::redo() {
   if (!groups_.empty() || !undo_.redo(song_)) return false;
   ++revision_;
   moveSerial_ = undo_.stateSerial();
+  if (onHistoryMove) onHistoryMove(1, undo_.position() - 1);
   return true;
 }
 
@@ -346,9 +409,12 @@ void Document::jumpTo(size_t position) {
     }
     return;
   }
+  if (position > undo_.size()) position = undo_.size();
+  const size_t from = undo_.position();
   undo_.jumpTo(song_, position);
   ++revision_;
   moveSerial_ = undo_.stateSerial();
+  if (onHistoryMove && from != position) onHistoryMove(position < from ? -1 : 1, position < from ? position : position - 1);
 }
 
 // --- generic edits ----------------------------------------------------------------
@@ -441,6 +507,14 @@ class SongDeltaCommand final : public Command {
   void apply(Song& s) override { set(s, restAfter_, true); }
   void revert(Song& s) override { set(s, restBefore_, false); }
   std::string label() const override { return label_; }
+  size_t approxBytes() const override {
+    size_t n = 2 * sizeof(Song);
+#define GL_SIZE(f) \
+  if (f##_.changed) n += approxOf(f##_.before) + approxOf(f##_.after);
+    GL_SONG_BIG_FIELDS(GL_SIZE)
+#undef GL_SIZE
+    return n;
+  }
 
  private:
   template <typename V>

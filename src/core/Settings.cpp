@@ -24,6 +24,8 @@ Json b(bool v) {
 Settings::Settings() {
   defaults_ = {
       {"undo.maxLevels", Json::makeNumber(100)},
+      {"undo.skipEmpty", b(false)},            // K-141 (shared projects)
+      {"undo.showCollaborators", b(false)},    // K-141: history panel
       {"backup.frequency", Json::makeNumber(3)},  // BackupFrequency (Backup.h)
       {"backup.maxCount", Json::makeNumber(100)},
       {"backup.location", Json::makeString("global")},  // "global" | "project"
@@ -114,6 +116,7 @@ Settings::Settings() {
       {"keys.profile", Json::makeString("studio")},
       {"keys.bindings.live", Json::makeString("")},  // shortcut overrides of the other shortcut sets
       {"keys.bindings.logic", Json::makeString("")},
+      {"ui.paletteRecent", Json::makeString("")},  // K-93: the command palette's recent rows (one id per line, newest first)
       // J-24: general, file, project defaults, backup / autosave, hints, debug, scripting.
       {"general.startup", Json::makeString("template")},   // "template" | "empty" | "last"
       {"general.demoShown", b(false)},                       // J-135: the first launch has opened the demo song

@@ -205,9 +205,7 @@ member. Inviting the person again also works (see above).
   picture arrives when you connect and again whenever they change it; it is kept on your computer
   (with their name and colour), so it also shows while they are offline and after you reopen the
   project.
-* **Undo** undoes only your own changes. If a collaborator changed the same thing after you, your
-  undo leaves their change alone. This holds in plugin editors too: a knob drag or a drawn shape
-  is one step, and your undo leaves a collaborator's knob on the same plugin as it is.
+* **Undo** undoes only your own changes (see [Undo and redo in a shared project](#undo-and-redo-in-a-shared-project)).
 * **Playback is your own.** Pressing Play plays the song on your computer only. To listen along,
   right-click a collaborator in the Collaboration panel and choose **Follow their playhead**: your
   transport follows theirs until you choose it again.
@@ -223,6 +221,55 @@ member. Inviting the person again also works (see above).
 * If a collaborator deletes or changes the channel or sample a plugin of yours is playing on its
   own, it stops cleanly. A recording reaches the others when you stop it, as a loading clip until
   the audio has arrived.
+
+### Undo and redo in a shared project
+
+Everyone has an undo history of their own, on their own computer. Undo (Ctrl+Z, Cmd+Z on macOS, or
+whatever you bound it to) and Redo (Ctrl+Y or Ctrl+Shift+Z) only ever move through **your** steps:
+
+* **One press, one of your steps.** Each press takes back exactly the step you made last (or
+  redoes the one you undid last), back to the moment you made it. A collaborator's edits are
+  never undone by your Undo and never become steps in your history; they only change what is
+  left for your Undo to do.
+* **Their later work stays.** When a collaborator changed something of yours after you (moved
+  your clip again, changed the knob you turned, typed a new name), your Undo leaves their change
+  in place and takes back only the rest of your step. A message tells you, for example "Undid
+  move clips, except what Sam changed after you." If they changed everything your step did, the
+  press says "Nothing left to undo in ...: Sam changed it after you." and the history moves on,
+  so the next press goes to your step before it. A collaborator who changes your edit and then
+  undoes their own change gives it back to you: your Undo works on it again.
+* **What you made and they used stays too.** Undoing the creation of a channel, pattern, clip,
+  mixer track or automation clip removes it only when nobody else has used it since. When a
+  collaborator put notes in your new pattern, routed into your new mixer track or placed your new
+  pattern in the playlist, Undo keeps it and says so ("Kept pattern Verse because Sam used it.
+  Delete it yourself if you want it gone."). Inside it, only your own part goes: your notes leave,
+  theirs stay.
+* **A clip's place moves as a whole.** Track, start, length and offset of a clip, or the time,
+  pitch and length of a note, are undone together, so a clip never lands half way between where
+  you put it and where a collaborator moved it.
+* **Redo** puts your step back the same way: whatever a collaborator changed since your Undo stays
+  theirs.
+* **Your own settings undo too.** Solo, record arm, monitoring, a launched live clip, folding and
+  track heights stay on your computer (they are never shared); a step that changed them along with
+  shared things undoes both parts.
+* **Skipping empty steps** is a setting (Settings > Project > Undo, "In a shared project, skip
+  steps that have nothing left to undo"). Off by default: each press is one step, so you always
+  know where you are.
+* **The Undo history panel** (View > Undo history, Alt+Z) lists your steps with a mark on each one
+  that a collaborator has changed since, or that was only partly undone. Tick **Show
+  collaborators' edits** to see what others did between your steps, greyed: they are there to read,
+  not to click. Your history stays while you are offline and after you reconnect, and is kept on
+  your computer when you close the project (next to it, in `.gridline-collab/`), so Undo after
+  reopening still takes back your own last edits. It is never sent to anyone.
+* **History starts when the project is shared.** Making a project collaborative, or joining one,
+  starts a fresh history: steps from before sharing would put back whole objects and overwrite
+  what others did since.
+* **Previewing a side** during a sync review: edits you make while previewing are not kept (a
+  message says so), and Undo never reaches into the preview.
+
+Undo and Redo do nothing while a menu or a dialog is open, and a press made in the middle of a
+drag waits until you let go. Loupe and the chord editor keep histories of their own: while one of
+them is focused and has a step to undo, Undo works there; otherwise it goes to the project.
 
 ### Audio files
 

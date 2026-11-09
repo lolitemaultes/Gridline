@@ -1419,7 +1419,7 @@ ToolResult tUndo(Environment& env, const Json&) {
   if (label.rfind("AI: ", 0) != 0)
     return fail(label.empty() ? "nothing to undo" : "the last change (\"" + label + "\") was not made by an assistant; only assistant changes can be undone here");
   d.endGesture();
-  d.undo();
+  if (!d.undo()) return fail("could not undo \"" + label + "\" now (an edit is still in progress)");  // K-141
   return ok(jobj({{"undone", jstr(label)}}), "undid \"" + label + "\"");
 }
 
@@ -1427,7 +1427,8 @@ ToolResult tRedo(Environment& env, const Json&) {
   Document& d = env.doc;
   const std::string label = d.history().redoLabel();
   if (label.rfind("AI: ", 0) != 0) return fail(label.empty() ? "nothing to redo" : "the next step was not made by an assistant");
-  d.redo();
+  d.endGesture();
+  if (!d.redo()) return fail("could not redo \"" + label + "\" now (an edit is still in progress)");  // K-141
   return ok(jobj({{"redone", jstr(label)}}), "redid \"" + label + "\"");
 }
 

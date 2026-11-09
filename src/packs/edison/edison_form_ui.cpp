@@ -6,6 +6,7 @@
 // filling the rest. Every glyph and label is Gridline's own.
 #include <algorithm>
 #include "../../app/Keys.h"
+#include "../../app/UndoUi.h"
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -469,8 +470,8 @@ void drawMenus(App& a, Session& s, ImVec2 tl, float cellW, float h, const sty::M
         }
         break;
       case 2:  // Edit
-        if (ImGui::MenuItem(i18n::tr("Undo"), "Ctrl+Z", false, s.hist.canUndo() && !busy)) undo(a, s);
-        if (ImGui::MenuItem(i18n::tr("Redo"), "Ctrl+Y", false, s.hist.canRedo() && !busy)) redo(a, s);
+        if (ImGui::MenuItem(i18n::tr("Undo"), keys::label("edit.undo"), false, s.hist.canUndo() && !busy)) undo(a, s);
+        if (ImGui::MenuItem(i18n::tr("Redo"), keys::label("edit.redo"), false, s.hist.canRedo() && !busy)) redo(a, s);
         if (ImGui::BeginMenu(i18n::tr("History"), s.hist.canUndo())) {
           auto l = s.hist.labels();
           for (size_t k = l.size(); k-- > 0;) ImGui::MenuItem(l[k].c_str(), nullptr, false, false);
@@ -629,8 +630,10 @@ void handleKeys(App& a, Session& s) {
   };
   const bool busy = s.job.active();
   if (key(ImGuiKey_Space)) isPlaying(a, s) ? stopPlay(a, s) : play(a, s);
-  if (ctrl && !io.KeyShift && key(ImGuiKey_Z)) undo(a, s);
-  if (ctrl && (key(ImGuiKey_Y) || (io.KeyShift && key(ImGuiKey_Z)))) redo(a, s);
+  // K-141: the Undo / Redo shortcuts (as bound) move this editor's own history while it has a
+  // step to move; with none, they reach the project's history.
+  if (s.hist.canUndo() && undoui::editorPressed(-1)) undo(a, s);
+  if (s.hist.canRedo() && undoui::editorPressed(1)) redo(a, s);
   if (ctrl && key(ImGuiKey_A)) s.sel = {0, s.frames()};
   if (ctrl && key(ImGuiKey_C)) clipboard() = extract(s.cur().a(), target(s));
   if (!busy && ctrl && key(ImGuiKey_X) && !s.sel.empty()) {

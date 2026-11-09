@@ -30,6 +30,9 @@ const std::string& language();
 // languages' texts are kept), so a language change mid-frame is safe.
 const char* tr(const char* english);
 std::string pseudo(const std::string& english);
+// K-93: the English text a pointer returned by tr() was made from (the text itself when it
+// is not one: untranslated or built at run time). Lets a search match both names.
+const char* source(const char* shown);
 // Messages built at run time (App::notify, J-61): the whole text when the
 // catalogue has it, else its longest leading part that the catalogue has and
 // that ends before ": " or a space ("Export failed: disk full", "Saved

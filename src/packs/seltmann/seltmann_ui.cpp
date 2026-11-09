@@ -1238,6 +1238,7 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
   //   action bar 32 (play, chop, take it out) | tools 200 (layouts | pads) | Edit drawer 132..236 (per tab, closed by default)
   const float headH = 36, waveH = 128, seqH = 80, barH = 32, toolsH = 200, gap = 8;
   const float bodyH = headH + gap + waveH + seqH + gap + barH + gap + toolsH;
+  if (!e.hasModel && e.path.empty()) devAutoRecord(a, t);  // K-145 dev checks
   if (!e.hasModel && e.path.empty() && recorderOpenFor(t)) {
     // J-218: the recorder in place of the drop zone, the same height
     drawRecorder(a, t, e, o, ImVec2(o.x + W, o.y + bodyH));

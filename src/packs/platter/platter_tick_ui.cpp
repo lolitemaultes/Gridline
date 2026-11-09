@@ -218,7 +218,7 @@ void closePass(App& a, DeckState& d) {
 // pass becomes a new pattern placed where it is played (J-179), written when it ends.
 void beginPass(App& a, ObjectId ch, DeckState& d) {
   closePass(a, d);
-  a.doc.beginGroup(i18n::tr("Record a deck performance"));
+  a.doc.beginGroup("Record a deck performance");  // K-141: labels stay English (shown translated)
   d.group = true;
   d.passSong = a.engine.mode() == PlayMode::Song;
   d.passPat = d.passSong ? kNoId : choosePass(a, ch, false);
@@ -275,7 +275,7 @@ void storeTake(App& a, ObjectId ch, DeckState& d, Take take) {
   if (take.steps() == 0) return;
   const Tick startTick = take.startTick;
   m.takes.push_back(std::move(take));
-  a.doc.beginGroup(i18n::tr("Record a deck take"));
+  a.doc.beginGroup("Record a deck take");
   const ObjectId pattern = choosePass(a, ch, song);
   const Tick origin = song ? clipOrigin(a.doc, pattern, ch, startTick, len) : 0;
   const Tick start = std::max<Tick>(0, startTick - origin);

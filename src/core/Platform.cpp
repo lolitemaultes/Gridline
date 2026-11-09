@@ -3,6 +3,7 @@
 #include <cerrno>
 #include <chrono>
 #include <clocale>
+#include <cmath>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
@@ -367,8 +368,16 @@ bool writePrivateFile(const std::string& path, const std::string& data) {
 
 int64_t fileTimeSeconds(std::filesystem::file_time_type t) {
   using namespace std::chrono;
-  const auto sys = system_clock::now() + duration_cast<system_clock::duration>(t - std::filesystem::file_time_type::clock::now());
-  return static_cast<int64_t>(duration_cast<seconds>(sys.time_since_epoch()).count());
+  // The two epochs are a whole number of seconds apart, so the offset is read from the two clocks
+  // and rounded to whole seconds: the time between the two now() reads (nanoseconds, or more when
+  // the thread is preempted) never reaches the result. Adding that read gap to `t` itself, as this
+  // did before, moved a file stamped near a second boundary into the next or previous second now and
+  // then, and the plugin scan took such a plugin as changed and scanned it again.
+  using FileClock = std::filesystem::file_time_type::clock;
+  const double fileNow = duration<double>(FileClock::now().time_since_epoch()).count();
+  const double sysNow = duration<double>(system_clock::now().time_since_epoch()).count();
+  const auto offset = static_cast<int64_t>(std::llround(sysNow - fileNow));
+  return static_cast<int64_t>(floor<seconds>(t.time_since_epoch()).count()) + offset;
 }
 
 bool writable(const std::string& path) {

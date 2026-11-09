@@ -53,7 +53,7 @@ std::vector<Command> buildCommands() {
       // ---- global: edit ----
       {"edit.undo", G, N_("Undo"), {ch(K::Z, C)}},
       {"edit.redo", G, N_("Redo"), {ch(K::Y, C), ch(K::Z, C | S)}},
-      {"edit.history", G, N_("Undo history"), {ch(K::Z, A)}},
+      {"edit.history", G, N_("Undo history"), {ch(K::Z, A), ch(K::Z, C | A)}},  // K-141: Alt+Z zips in the channel rack
       {"edit.rename", G, N_("Rename (pattern, channel or mixer track)"), {ch(K::F2)}},
       // ---- global: transport and switches ----
       {"transport.play", G, N_("Play / stop"), {ch(K::Space)}},
@@ -92,6 +92,11 @@ std::vector<Command> buildCommands() {
       {"view.closePlugins", G, N_("Close plugin windows"), {ch(K::F12, A)}},
       {"view.resetLayout", G, N_("Reset window layout"), {ch(K::H, C | S)}},
       {"help.shortcuts", G, N_("Keyboard shortcuts"), {ch(K::F1)}},
+      // K-93: the command palette. Ctrl+K (Cmd+K on macOS) everywhere except the channel rack, whose
+      // Ctrl+K stays the graph editor (the editor wins); Ctrl+Shift+P works there too. The logic set
+      // keeps its own Cmd+K (typing keyboard), so the palette keeps Ctrl+Shift+P there.
+      {"view.commandPalette", G, N_("Command palette: find and run any command, menu item, window, setting or plugin"),
+       {ch(K::K, C), ch(K::P, C | S)}},
       // K-79: layout presets.
       {"view.toggleMain", G, N_("Switch the main view (playlist / live pads)"), {ch(K::Tab, H)}},
       {"view.editors", G, N_("Editors in the bottom pane (show / hide)"), {ch(K::E, H)}},

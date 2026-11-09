@@ -58,7 +58,8 @@ bool writable(const std::string& path);
 // Moves `from` over `to`, replacing it (atomic on POSIX and NTFS). False on failure, `err` set.
 bool replaceFile(const std::string& from, const std::string& to, std::string* err = nullptr);
 // A file time as seconds since 1970 (std::filesystem's clock has a different epoch per
-// standard library: 1970 in libc++, 2174 in libstdc++, 1601 in MSVC's).
+// standard library: 1970 in libc++, 2174 in libstdc++, 1601 in MSVC's). Exact and the same on
+// every call: a stamp is never moved into a neighbouring second (cached plugin times compare equal).
 int64_t fileTimeSeconds(std::filesystem::file_time_type t);
 // Processor time of this process (user + system, seconds) and its peak resident memory (MB).
 double cpuSeconds();

@@ -266,6 +266,7 @@ void Frame::drawSingle(int winW, int winH, int fbW, int fbH) {
   }
   ImGui::End();
   drawDialogs(app);
+  pointerGestureFrameEnd(app);  // K-141: the release ends the gesture (each drag its own undo step)
   if (size.x > 1 && size.y > 1 && inst_.setEditorContent(static_cast<int>(std::ceil(size.x)), static_cast<int>(std::ceil(size.y)))) {
     int w = 0, h = 0;
     inst_.preferredViewSize(w, h);

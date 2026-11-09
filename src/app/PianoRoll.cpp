@@ -405,6 +405,13 @@ std::vector<Note> notesToAdd(const PianoRollState& st, Note n) {
 void drawPianoRoll(App& a) {
   drawEditTools(a);  // J-11 tool windows (quantize, chop, strum, …)
   drawScriptTool(a);  // J-24 piano roll script window
+  // K-141: a drag whose window closed or hid before the button came up keeps its undo step open
+  // (and undo waiting): close it once the button is up.
+  if (g.grouped && !ImGui::IsAnyMouseDown() && !ImGui::IsMouseReleased(ImGuiMouseButton_Left) && !ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
+    a.doc.endGroup();
+    a.doc.endGesture();
+    g = Gesture{};
+  }
   if (!a.showPiano) return;
   if (!ui::BeginDockWindow("Piano roll", &a.showPiano, ImVec2(900, 520))) {
     ui::EndDockWindow();

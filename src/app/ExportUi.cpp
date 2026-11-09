@@ -895,9 +895,10 @@ void drawMidiImport(App& a) {
       MidiImportResult r;
       const std::string name = fs::path(midiDlg.path).stem().string();
       const MidiFileData& data = midiDlg.data;  // already split by channel (the indexes shown)
+      const uint64_t serial0 = a.doc.history().stateSerial();
       a.doc.editSong("import MIDI", [&](Song& s) { r = importMidiIntoSong(s, data, name, o); });
       if (!r.error.empty()) {
-        a.doc.undo();
+        if (a.doc.history().stateSerial() != serial0 && a.doc.undo()) a.doc.discardStepsFrom(a.doc.history().position());  // K-141: only our own step
         a.notify("MIDI import: " + r.error, true);
       } else {
         a.selectPattern(r.pattern);

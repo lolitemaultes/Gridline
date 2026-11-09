@@ -9,6 +9,7 @@
 //   3. one hanging plugin does not hold up the others (scanner children run side by side);
 //   4. Rescan of a folder returns at once, even for a folder that takes long to search (the search
 //      runs on the scan worker), and the scan shows what it is doing meanwhile.
+//   5. a plugin stamped at a second boundary keeps its stamp on every read (no needless rescans).
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -21,6 +22,10 @@
 #include <vector>
 
 #if !defined(_WIN32)
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <time.h>
+
 #include "Check.h"  // (Windows skips the whole test: no unused harness there)
 #endif
 #include "Hermetic.h"
@@ -153,6 +158,46 @@ void writeBigCache(const std::string& cfg, const std::string& folder, int n) {
   c.save();
 }
 
+// A plugin stamped right at the start or the end of a second keeps that second on every read: the
+// cache compares whole seconds, and a stamp that moved into the next second now and then made the
+// scan take a cached plugin as changed and scan it again (one extra plugin in a large collection).
+void testStampsStayPut(const std::string& dir) {
+  const std::string cfg = dir + "/stamps";
+  const time_t sec = 1700000000;
+  std::vector<std::string> bundles;
+  bool stamped = true;
+  for (long ns : {0L, 1L, 999999999L}) {
+    const fs::path p = fs::path(cfg) / "plugins" / ("edge" + std::to_string(ns) + ".clap");
+    fakeClap(p);
+    const timespec ts[2] = {{sec, ns}, {sec, ns}};
+    stamped = stamped && ::utimensat(AT_FDCWD, p.c_str(), ts, 0) == 0;
+    bundles.push_back(p.generic_string());
+  }
+  expect(stamped, "stamps: the test plugins are stamped at the second boundaries");
+  host::initHosting(cfg);
+  host::ScanCache c;
+  for (const auto& b : bundles) {
+    host::ScanResult r;
+    r.format = "clap";
+    r.bundle = b;
+    r.mtime = host::pathMtime(b);
+    r.ok = true;
+    c.put(r);
+  }
+  int wrongStamp = 0, wrongSeconds = 0, rescans = 0;
+  for (const auto& b : bundles) {
+    const auto t = fs::last_write_time(b);
+    for (int i = 0; i < 20000; ++i) {
+      wrongSeconds += platform::fileTimeSeconds(t) != static_cast<int64_t>(sec) ? 1 : 0;
+      wrongStamp += host::pathMtime(b) != static_cast<int64_t>(sec) ? 1 : 0;
+    }
+  }
+  for (int i = 0; i < 5000; ++i) rescans += static_cast<int>(c.stale(bundles, "clap").size());
+  std::printf("stamps: %d file times and %d plugin stamps a second off, %d needless rescans\n", wrongSeconds, wrongStamp, rescans);
+  expect(wrongSeconds == 0, "stamps: a file time near a second boundary converts to the same second every time");
+  expect(wrongStamp == 0 && rescans == 0, "stamps: a cached plugin stamped near a second boundary is never taken as changed");
+}
+
 void testStatusStaysFree(const std::string& dir) {
   const std::string cfg = dir + "/big", folder = dir + "/big/plugins";
   fs::create_directories(folder);
@@ -257,6 +302,7 @@ int main() {
 #else
   const std::string dir = gl::test::hermeticTestEnv("scan-hang");
   testDiscovery(dir);
+  testStampsStayPut(dir);
   testStatusStaysFree(dir);
   testHangingPlugin(dir);
   testRescanFolder(dir);

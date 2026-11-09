@@ -58,6 +58,7 @@
 #include "PatternAutoUi.h"
 #include "TrackPlusUi.h"
 #include "LayoutPresets.h"
+#include "CommandPaletteUi.h"
 #include "../core/Platform.h"
 
 namespace gl {
@@ -187,9 +188,11 @@ void pluginItems(PluginKind kind, const std::function<void(const std::string&)>&
 }  // namespace
 
 void instrumentItems(const std::function<void(const std::string&)>& pick, const std::string& current) {
+  const cmdpalette::SkipRows plugins;  // K-93: the palette lists plugins as plugins
   pluginItems(PluginKind::Generator, pick, current);
 }
 void effectItems(const std::function<void(const std::string&)>& pick, const std::string& current) {
+  const cmdpalette::SkipRows plugins;
   pluginItems(PluginKind::Effect, pick, current);
 }
 
@@ -1795,13 +1798,14 @@ void mixerTrackMenu(App& a, size_t index) {
   if (ImGui::MenuItem(i18n::tr("Insert from state..."))) {
     const int at = master ? 1 : static_cast<int>(index);
     fileDialog(a, "Insert mixer track from state", false, {mixops::kTrackStateExt}, "", [&a, at](const std::string& p) {
+      const uint64_t serial0 = a.doc.history().stateSerial();
       a.doc.beginGroup("insert mixer track from state");
       auto ids = mixops::insertTracks(a.doc, at, 1);
       std::string err;
       const bool ok = !ids.empty() && mixops::loadTrackState(a.doc, ids.front(), p, &err);
       a.doc.endGroup();
       if (!ok) {
-        a.doc.undo();
+        if (a.doc.history().stateSerial() != serial0 && a.doc.undo()) a.doc.discardStepsFrom(a.doc.history().position());  // K-141: only our own step
         a.notify(err.empty() ? std::string("Could not insert the track") : err, true);
       } else {
         a.selMixer = ids.front();

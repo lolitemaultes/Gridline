@@ -5,9 +5,14 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 
 ## Unreleased
 
+### Added
+
+- **Command palette.** Press Ctrl+K (Cmd+K on macOS) or Ctrl+Shift+P, or pick View > Command palette, and type to find any command, menu item (with where it lives in the menus), window, setting or plugin, then press Enter to run it, open it, jump to that setting or add the plugin. It ranks names that start with what you typed first, forgives small typos, shows each command's shortcut, greys out what cannot run right now with the reason, lists your recent picks first, and works in every layout and language (the English names work too). Tab switches between categories. See [docs/command-palette.md](docs/command-palette.md).
+
 ### Changed
 
 - **Loop a cut clip from where it was cut.** Holding Ctrl (Cmd on macOS) and dragging the edge of a pattern, audio or automation clip that shows only part of its content (it was trimmed at either end) now repeats the part the clip showed, whatever the cut point. Dragging the edge back to the cut point in the same drag gives back the plain clip exactly as it was, with no loop; the edge snaps to that point so it is easy to hit, and inside it the clip is simply shorter. With the left edge, dragging out loops the part and sets where its loop starts. Several selected clips loop together, each from its own cut point, and the whole drag is one undo step. FL Studio export writes such a loop as repeated clips of the cut length.
+- **Recordings draw as they record.** Loupe now draws a take while it records, from its first moment, in its own waveform colours with a red line where the recording has got to; Seltmann's recorder draws its take the same way. While the recording still fits, it grows from left to right; once it reaches the right edge, the view keeps fitting the whole recording into its width, smoothly as it grows, so you always see all of it, even on an hour-long take. When recording stops, the finished take shows in the normal view. While Loupe records, the readout under the waveform shows the take's length and peak level.
 
 ### Fixed
 

@@ -502,6 +502,8 @@ class TakeBuffer {
   const std::vector<float>& R() const { return stereo_ ? R_ : L_; }
   // Peak (both channels, absolute) of each kPeakBlock frames: the live waveform.
   const std::vector<float>& peaks() const { return peaks_; }
+  // K-145: the first frame the last append() changed (a resume rewrites the crossfaded tail).
+  size_t changedFrom() const { return changed_; }
   // Writes the take as a WAV (16 / 24-bit PCM, else 32-bit float; mono takes as one channel).
   bool writeWav(const std::string& path, int bits, std::string* err = nullptr) const;
   // Writes it into `dir` as "Seltmann_rec-<hash>.wav" (the recordings' naming: a name and the
@@ -513,6 +515,7 @@ class TakeBuffer {
   double rate_ = 44100;
   bool stereo_ = true;
   std::vector<float> L_, R_, peaks_;
+  size_t changed_ = 0;
   size_t xfAt_ = 0, xfLen_ = 0, xfDone_ = 0;  // the crossfade in progress (xfDone_ < xfLen_)
 };
 

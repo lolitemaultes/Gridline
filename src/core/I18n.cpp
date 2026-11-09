@@ -19,6 +19,8 @@ struct State {
   std::map<std::string, std::string> catalogue;
   Cache cache;               // stable storage for tr()
   std::list<Cache> retired;  // earlier languages' texts: pointers handed out stay valid
+  std::unordered_map<const char*, const char*> reverse;  // K-93: tr() result -> its English text (cache only)
+  size_t reverseSize = 0;
 };
 State& st() {
   static State s;
@@ -180,6 +182,8 @@ bool setLanguage(const std::string& code, const std::string& dir, std::string* e
   State& s = st();
   if (!s.cache.empty()) s.retired.push_back(std::move(s.cache));  // node storage moves: old pointers stay valid
   s.cache = Cache();
+  s.reverse.clear();
+  s.reverseSize = 0;
   s.catalogue.clear();
   s.code = "en";
   if (code.empty() || code == "en") return true;
@@ -246,6 +250,18 @@ const char* tr(const char* english) {
     out = c != s.catalogue.end() ? c->second + id : key;
   }
   return s.cache.emplace(english, std::move(out)).first->second.c_str();
+}
+
+const char* source(const char* shown) {
+  State& s = st();
+  if (!shown || s.code == "en") return shown;
+  if (s.reverseSize != s.cache.size()) {
+    s.reverse.clear();
+    for (const auto& [en, text] : s.cache) s.reverse.emplace(text.c_str(), en.c_str());
+    s.reverseSize = s.cache.size();
+  }
+  auto it = s.reverse.find(shown);
+  return it == s.reverse.end() ? shown : it->second;
 }
 
 }  // namespace gl::i18n

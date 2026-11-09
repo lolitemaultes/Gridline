@@ -1685,6 +1685,9 @@ void shareSection(App& a, bool gateOk) {
   if (u.shareTaken) dim(tr("That folder already holds a collaborative project: choose another place or name."), theme::lit(P.danger));
   else if (u.shareExists) dim(tr("That folder already exists: the project is added to what is in it."), P.hot);
   else dim(tr("A new folder: the project and every audio file it uses are copied into it. Your project file stays as it is."), P.textFaint);
+  label("", x);
+  ImGui::AlignTextToFramePadding();
+  dim(tr("Undo starts fresh from here: each person then undoes only their own edits."), P.textFaint);  // K-141 (D8)
   ImGui::EndDisabled();
   if (!networkBuiltIn()) note(tr("This build of Gridline has no collaboration networking."));
   if (can && !c.profileReady() && noticeBar("##needname", tr("Choose a display name first: collaborators see it."), P.hot, "Settings...", false)) {
@@ -3375,6 +3378,12 @@ bool devCommand(App& a, const std::vector<std::string>& args, int frame, ImVec2*
   } else if (cmd == "edit") {  // collab edit <name>: a channel with that name
     a.doc.addChannel(arg(1), "gl.synth");
     a.syncEngine();
+  } else if (cmd == "rename-channel") {  // K-141: collab rename-channel <name> <new name>: the first channel of that name
+    for (const auto& ch : a.doc.song().channels)
+      if (ch.name == arg(1)) {
+        a.doc.renameChannel(ch.id, arg(2));
+        break;
+      }
   } else if (cmd == "reconnect-code") {  // collab reconnect-code <file>: ours, for the first other member
     u.dev.reconnectOut = arg(1);
   } else if (cmd == "reconnect") {  // collab reconnect <file>: theirs (waits for the file)

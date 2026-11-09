@@ -798,7 +798,10 @@ bool performDrop(App& a, const std::string& path, DropTarget target, const DropP
   }
   const PluginInfo* ti = targetInfo(a, target, place);
   const DropAction act = browse::dropAction(d.item, target, ti ? ti->type : "", takesSample(target, ti));
-  return runAction(a, path, act, target, place, false, nullptr);
+  a.doc.beginGroup("drop from the browser");  // K-141: one undo step, also from the keyboard or a script
+  const bool done = runAction(a, path, act, target, place, false, nullptr);
+  a.doc.endGroup();
+  return done;
 }
 
 bool performItems(App& a, const std::vector<xdrop::Item>& items, DropTarget target, const DropPlace& place, const xdrop::Mods& mods) {

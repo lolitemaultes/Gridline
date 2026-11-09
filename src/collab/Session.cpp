@@ -778,6 +778,7 @@ bool Session::bootstrap(std::string* err) {
   });
   shadow_ = withoutOrigin(doc_.song());
   shadowValid_ = true;
+  doc_.clearHistory();  // K-141 (D8): solo steps cannot be undone safely once others edit too
   attach();
   writeProjectFile();
   saveNow();
@@ -864,6 +865,7 @@ bool Session::loadFromDisk(std::string* err) {
     for (auto& [site, p] : peers_) p.site = site;
   }
   mySeq_ = vv_.count(me_) ? vv_[me_] : 0;
+  seedForeignFromReplica();  // K-141: others' writes the snapshot still shows (the log replay adds the rest)
   for (const auto& text : recs) {
     Batch b;
     if (!Batch::parse(text, b)) continue;
@@ -923,6 +925,8 @@ bool Session::loadFromDisk(std::string* err) {
       if (onNotice) onNotice(i18n::tr("Changes made to the project file outside a collaboration session were added."), false);
     }
   }
+  breakMerge_ = false;
+  loadHistory();  // K-141 (D9): your own steps from the last time, undoable again
   return true;
 }
 
@@ -935,6 +939,7 @@ void Session::attach() {
   lastRev_ = doc_.revision();
   lastPush_ = doc_.pushCount();
   lastSerial_ = doc_.history().stateSerial();
+  lastLocalHash_ = sessionHash();
 }
 
 void Session::detach() {
@@ -1143,25 +1148,26 @@ void Session::flushLocal() {
     floShadow_ = doc_.song().flOrigin;
     floCache_ = floShadow_;
   }
+  // K-141: the changes since the last flush belong to the newest step when the history moved on
+  // (a new step, or the newest one grew: a merge, a gesture's later edits); they are filed on
+  // that step itself (its CollabStep note), so trimming the history drops the record with it.
   const uint64_t serial = doc_.history().stateSerial(), push = doc_.pushCount();
-  const bool newStep = push != lastPush_;
-  const bool merged = !newStep && serial != lastSerial_;
-  if (merged) {
-    auto it = steps_.find(lastSerial_);
-    if (it != steps_.end() && lastSerial_ != serial) {
-      steps_[serial] = std::move(it->second);
-      steps_.erase(lastSerial_);
-    }
-  }
-  if (newStep) steps_.erase(serial);
+  const bool changed = push != lastPush_ || serial != lastSerial_;
   lastPush_ = push;
   lastSerial_ = serial;
   lastRev_ = doc_.revision();
   lastFlush_ = now_;
+  const uint64_t localHash = sessionHash();
+  if (changed)
+    if (CollabStep* st = topStep(true)) {
+      if (localHash != lastLocalHash_) st->local = true;  // solo, arm ... stay here: undone locally
+      if (!st->madeAtMs) st->madeAtMs = wallNowMs();
+    }
+  lastLocalHash_ = localHash;
   if (!ops.empty()) {
     if (gesture_)
       for (const auto& op : ops) gestureObjects_.insert(objectOf(op.path));
-    makeLocalBatch(std::move(ops), true, newStep || merged);
+    makeLocalBatch(std::move(ops), true, changed);
   }
   lastFlushMs_ = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 }
@@ -1189,16 +1195,78 @@ bool Session::makeLocalBatch(std::vector<Op> ops, bool undoable, bool record) {
   return true;
 }
 
+namespace {
+
+int classOf(OpKind k) { return k == OpKind::Set ? 0 : k == OpKind::Mov ? 1 : 2; }
+
+std::string regKey(const Path& p, int cls) { return joinPath(p) + "#" + static_cast<char>('0' + cls); }
+
+bool sameJson(const Json& a, const Json& b) { return jsonCompact(a) == jsonCompact(b); }
+
+// K-141 (D4): fields that are undone together or not at all: a clip's placement, a note, an
+// automation point. "" = the register alone.
+std::string unitOf(const Path& p) {
+  for (size_t k = 0; k < p.size(); ++k) {
+    if (p[k] == "notes" && p.size() >= k + 4) return joinPath(Path(p.begin(), p.begin() + static_cast<std::ptrdiff_t>(k + 3)));
+    if (p[k] == "points" && p.size() >= k + 3) return joinPath(Path(p.begin(), p.begin() + static_cast<std::ptrdiff_t>(k + 2)));
+    if (p[k] == "playlist" && p.size() == k + 3) {
+      const std::string& f = p[k + 2];
+      if (f == "track" || f == "start" || f == "length" || f == "offset")
+        return joinPath(Path(p.begin(), p.begin() + static_cast<std::ptrdiff_t>(k + 2))) + "#place";
+    }
+  }
+  return {};
+}
+
+// An object of one of the project's five lists ("song/channels/#5").
+// The song's id counter: it only ever grows (ids must never be handed out twice), so undo and
+// redo leave it alone and it is never "someone else's change" to a step.
+bool isIdCounter(const Path& p) { return p.size() == 2 && p[0] == "song" && p[1] == "nextId"; }
+
+bool isTopObject(const Path& p) { return p.size() == 3 && p[0] == "song" && isList(p[1]) && !p[2].empty() && p[2][0] == '#'; }
+
+// Fields whose number is the id of another object (clips -> patterns, routes -> inserts ...),
+// and maps keyed by a channel id (a pattern's notes and steps).
+bool isRefField(const std::string& k) {
+  return k == "pattern" || k == "source" || k == "mixerTrack" || k == "to" || k == "mixer" || k == "channel" || k == "owner" ||
+         k == "target";
+}
+bool isChannelMap(const std::string& k) { return k == "notes" || k == "steps" || k == "stepProps" || k == "stepLoop"; }
+
+}  // namespace
+
+size_t CollabStep::approxBytes() const {
+  size_t n = sizeof(*this);
+  for (const auto& g : groups)
+    n += sizeof(g) + g.key.size() * 2 + g.unit.size() + jsonCompact(g.backVal).size() + jsonCompact(g.fwdVal).size() +
+         jsonCompact(g.backContent).size();
+  return n;
+}
+
+CollabStep* Session::topStep(bool create) {
+  const size_t pos = doc_.history().position();
+  if (pos == 0) return nullptr;
+  StepNote* n = doc_.stepNote(pos - 1, NoteSlot::Collab);
+  if (!n && create) {
+    doc_.setStepNote(pos - 1, NoteSlot::Collab, std::make_shared<CollabStep>());
+    n = doc_.stepNote(pos - 1, NoteSlot::Collab);
+  }
+  return dynamic_cast<CollabStep*>(n);
+}
+
 void Session::recordStep(const std::vector<Op>& ops, const std::vector<Json>& before) {
-  StepRec& rec = steps_[lastSerial_];
+  CollabStep* st = topStep(true);
+  if (!st) return;
   for (size_t i = 0; i < ops.size(); ++i) {
     const Op& op = ops[i];
-    const int cls = op.kind == OpKind::Set ? 0 : op.kind == OpKind::Mov ? 1 : 2;
-    const std::string key = joinPath(op.path) + "#" + std::to_string(cls);
-    auto it = rec.index.find(key);
-    if (it == rec.index.end()) {
-      UndoGroup g;
+    const int cls = classOf(op.kind);
+    const std::string key = regKey(op.path, cls);
+    auto it = st->index.find(key);
+    if (it == st->index.end()) {
+      CollabStep::Group g;
       g.path = op.path;
+      g.key = key;
+      g.unit = cls == 2 ? std::string() : unitOf(op.path);
       g.cls = cls;
       if (cls == 0) g.backVal = op.prev;
       if (cls == 1) g.backPos = op.prev.str;
@@ -1207,65 +1275,384 @@ void Session::recordStep(const std::vector<Op>& ops, const std::vector<Json>& be
         g.backPres = op.kind == OpKind::Del || (op.kind == OpKind::Ins && wasThere);
         if (wasThere) g.backContent = before[i];
       }
-      it = rec.index.emplace(key, rec.groups.size()).first;
-      rec.groups.push_back(std::move(g));
+      it = st->index.emplace(key, st->groups.size()).first;
+      st->groups.push_back(std::move(g));
+    } else {
+      // C2: a collaborator wrote this register between two writes of this step (a long
+      // merge): undoing the step gives back their value, not the one from before them.
+      CollabStep::Group& g = st->groups[it->second];
+      if (cls == 0 && !sameJson(op.prev, g.fwdVal)) g.backVal = op.prev;
+      if (cls == 1 && op.prev.str != g.fwdPos) g.backPos = op.prev.str;
     }
-    UndoGroup& g = rec.groups[it->second];
+    CollabStep::Group& g = st->groups[it->second];
     if (cls == 0) g.fwdVal = op.value;
     if (cls == 1) g.fwdPos = op.pos;
     if (cls == 2) {
       g.fwdPres = op.kind != OpKind::Del;
       if (op.kind == OpKind::Ins) g.fwdVal = op.value;  // content to re-insert on redo
     }
-    g.cur = Stamp{op.t, me_};
+    g.mine = Stamp{op.t, me_};
+    if (st->madeAt.zero()) st->madeAt = g.mine;
   }
-  // bounded memory: the history keeps 100 steps; records of dropped steps go
-  while (steps_.size() > 256) steps_.erase(steps_.begin());
+  if (!st->madeAtMs) st->madeAtMs = wallNowMs();
+  st->state = CollabStep::State::Done;
+  doc_.touchStepNote(doc_.history().position() - 1);
 }
 
+// ------------------------------------------------------ others' writes ----
+void Session::noteForeign(const Op& op, SiteId site, const Json& before) {
+  if (op.path.empty() || (op.path[0] != "song" && op.path[0] != "meta" && op.path[0] != "flo")) return;
+  const Stamp s{op.t, site};
+  {
+    ForeignWrite w;
+    w.s = s;
+    w.before = before;
+    const int cls = classOf(op.kind);
+    if (cls == 0) w.after = op.value;
+    else if (cls == 1) w.after = Json::makeString(op.pos);
+    else {
+      w.after.type = Json::Type::Bool;
+      w.after.boolean = op.kind != OpKind::Del;
+    }
+    auto& v = foreignLog_[regKey(op.path, cls)];
+    v.push_back(std::move(w));
+    if (v.size() > 32) v.erase(v.begin());
+  }
+  auto bump = [&](std::unordered_map<std::string, Stamp>& m, const std::string& k) {
+    auto it = m.find(k);
+    if (it == m.end()) m.emplace(k, s);
+    else if (it->second < s) it->second = s;
+  };
+  bump(foreignAt_, regKey(op.path, classOf(op.kind)));
+  std::string k;
+  for (size_t i = 0; i < op.path.size(); ++i) {
+    if (i) k += '\x1f';
+    k += op.path[i];
+    bump(foreignIn_, k);
+  }
+  marksDirty_ = true;
+  // C2: someone wrote what our open (mergeable) step writes: our next write is a step of its own
+  if (const size_t pos = doc_.history().position(); pos > 0 && pos == doc_.history().size())
+    if (auto* top = dynamic_cast<CollabStep*>(doc_.stepNote(pos - 1, NoteSlot::Collab)))
+      if (top->index.count(regKey(op.path, classOf(op.kind)))) breakMerge_ = true;
+}
+
+Stamp Session::foreignWithin(const Path& p) const {
+  auto it = foreignIn_.find(joinPath(p));
+  return it == foreignIn_.end() ? Stamp{} : it->second;
+}
+
+// True when someone else's writes of `key` after `mine` left it otherwise than `expected` (what
+// our step, or its last undo / redo, left there), as far as the writes tell: writes that cancel
+// out leave it ours.
+bool Session::blockedBy(const std::string& key, const Json& expected, const Stamp& mine) const {
+  auto at = foreignAt_.find(key);
+  if (at == foreignAt_.end() || !(at->second > mine)) return false;
+  auto it = foreignLog_.find(key);
+  if (it == foreignLog_.end()) return true;
+  std::vector<const ForeignWrite*> after;
+  for (const auto& w : it->second)
+    if (w.s > mine) after.push_back(&w);
+  if (after.empty()) return true;  // older than the log keeps
+  std::sort(after.begin(), after.end(), [](const ForeignWrite* a, const ForeignWrite* b) { return a->s < b->s; });
+  // Writes that end on the value they started from cancel out (a collaborator who changed it and
+  // undid that, also on top of a later step of ours); whether the register still holds what we
+  // left there is checked on the register itself. An ancestor must be shown again.
+  if (!sameJson(after.front()->before, after.back()->after)) return true;
+  return expected.is(Json::Type::Bool) && !sameJson(after.back()->after, expected);
+}
+
+// True when someone else changed register `g` (or removed an object holding it) since our step
+// wrote it (dir -1, undo) or since our last undo of it (dir +1, redo). Our own later steps and
+// their undos / redos never count.
+bool Session::foreignSince(const CollabStep::Group& g, int dir) const {
+  Json expected;
+  if (g.cls == 0) expected = dir < 0 ? g.fwdVal : g.backVal;
+  else if (g.cls == 1) expected = Json::makeString(dir < 0 ? g.fwdPos : g.backPos);
+  else {
+    expected.type = Json::Type::Bool;
+    expected.boolean = dir < 0 ? g.fwdPres : g.backPres;
+  }
+  if (blockedBy(g.key, expected, g.mine)) return true;
+  if (g.path.size() > 1) {
+    Json shown;
+    shown.type = Json::Type::Bool;
+    shown.boolean = true;
+    Path a;
+    for (size_t i = 0; i + 1 < g.path.size(); ++i) {
+      a.push_back(g.path[i]);
+      if (blockedBy(regKey(a, 2), shown, g.mine)) return true;
+    }
+  }
+  return false;
+}
+
+// True when someone else has, after `mine`, written inside `p` or (an object of the five lists)
+// made something of theirs refer to it: a clip of a pattern, notes for a channel, a route or a
+// send to an insert, a link to a controller.
+bool Session::usedByOthers(const Path& p, const Stamp& mine, const Json& expected, std::set<SiteId>& who) const {
+  bool used = false;
+  if (auto it = foreignIn_.find(joinPath(p)); it != foreignIn_.end() && it->second > mine &&
+      (expected.is(Json::Type::Null) || !sameJson(replica_.materialize(p), expected))) {  // changed and not put back
+    who.insert(it->second.site);
+    used = true;
+  }
+  if (!isTopObject(p)) return used;
+  const std::string id = p[2].substr(1);
+  const Node* song = replica_.find({"song"});
+  if (!song) return used;
+  auto foreignAtPath = [&](const Path& q) {
+    if (auto it = foreignIn_.find(joinPath(q)); it != foreignIn_.end() && it->second > mine) {
+      who.insert(it->second.site);
+      used = true;
+    }
+  };
+  Path path = {"song"};
+  std::function<void(const Node&, const std::string&)> walk = [&](const Node& n, const std::string& key) {
+    if (path.size() >= 2 && path[1] == p[1] && path.size() >= 3 && path[2] == p[2]) return;  // the object itself
+    for (const auto& [k, c] : visibleKids(n, Stamp{})) {
+      path.push_back(*k);
+      if (c->kind == Node::Kind::Value) {
+        if (isRefField(*k) && c->val.is(Json::Type::Number) && std::to_string(static_cast<long long>(c->val.number)) == id)
+          foreignAtPath(Path(path.begin(), path.end() - 1));
+      } else {
+        if (isChannelMap(key) && *k == id) foreignAtPath(path);
+        walk(*c, *k);
+      }
+      path.pop_back();
+    }
+  };
+  walk(*song, "song");
+  return used;
+}
+
+void Session::seedForeignFromReplica() {
+  // A snapshot keeps only the newest write of each register: what others wrote last is the
+  // best record of their edits from before a restart (the op log adds the rest as it replays).
+  const Node* song = replica_.find({"song"});
+  if (!song) return;
+  Path path = {"song"};
+  std::function<void(const Node&)> walk = [&](const Node& n) {
+    for (const auto& [k, c] : n.kids) {
+      path.push_back(k);
+      auto seed = [&](const Stamp& s, int cls) {
+        if (s.zero() || s.site == me_) return;
+        Op op;
+        op.t = s.t;
+        op.path = path;
+        op.kind = cls == 0 ? OpKind::Set : cls == 1 ? OpKind::Mov : OpKind::Ins;
+        noteForeign(op, s.site, Json());
+      };
+      seed(c->valS, 0);
+      seed(c->posS, 1);
+      seed(c->presS, 2);
+      walk(*c);
+      path.pop_back();
+    }
+  };
+  walk(*song);
+  breakMerge_ = false;
+}
+
+void Session::pruneForeign() {
+  Stamp oldest;
+  bool any = false;
+  for (size_t i = 0; i < doc_.history().size(); ++i)
+    if (auto* st = dynamic_cast<const CollabStep*>(doc_.stepNote(i, NoteSlot::Collab)))
+      if (!st->madeAt.zero() && (!any || st->madeAt < oldest)) {
+        oldest = st->madeAt;
+        any = true;
+      }
+  if (!any) {
+    foreignAt_.clear();
+    foreignIn_.clear();
+    foreignLog_.clear();
+    return;
+  }
+  for (auto* m : {&foreignAt_, &foreignIn_})
+    for (auto it = m->begin(); it != m->end();) it = it->second < oldest ? m->erase(it) : std::next(it);
+  for (auto it = foreignLog_.begin(); it != foreignLog_.end();) {
+    auto& v = it->second;
+    v.erase(std::remove_if(v.begin(), v.end(), [&](const ForeignWrite& w) { return w.s < oldest; }), v.end());
+    it = v.empty() ? foreignLog_.erase(it) : std::next(it);
+  }
+}
+
+// Which collaborators have since changed what each step (or its last undo / redo) wrote: the
+// history panel shows it.
+void Session::refreshStepMarks() {
+  const size_t n = doc_.history().size();
+  const size_t from = n > 500 ? n - 500 : 0;
+  for (size_t i = from; i < n; ++i) {
+    auto* st = dynamic_cast<CollabStep*>(doc_.stepNote(i, NoteSlot::Collab));
+    if (!st) continue;
+    const int dir = i < doc_.history().position() ? -1 : 1;  // applied steps: what an undo would meet
+    std::set<SiteId> by;
+    for (const auto& g : st->groups)
+      if (!isIdCounter(g.path) && foreignSince(g, dir))
+        if (auto it = foreignAt_.find(g.key); it != foreignAt_.end()) by.insert(it->second.site);
+    st->changedBy.assign(by.begin(), by.end());
+  }
+}
+
+// A value of this computer's own settings (solo, arm, monitor, input, record point, a clip's
+// launch, a track's fold and height, plugin listen / hold): a step that changed it is undone
+// here too.
+uint64_t Session::sessionHash() const { return sessionStateHash(doc_.song()); }
+
+// --------------------------------------------------------------- history ----
 bool Session::historyStep(int dir) {
   flushLocal();
-  const uint64_t before = doc_.history().stateSerial();
-  if (!doc_.stepHistory(dir)) return false;
-  const uint64_t key = dir < 0 ? before : doc_.history().stateSerial();
+  if (previewing_) return false;  // the review shows a side that is not the project: nothing to undo there
+  StepOutcome out;
+  size_t skipped = 0;
+  for (;;) {
+    out = StepOutcome();
+    if (!stepOnce(dir, out)) {
+      if (skipped == 0) return false;
+      break;
+    }
+    const bool canMore = dir < 0 ? doc_.history().canUndo() : doc_.history().canRedo();
+    if (cfg_.skipEmptyUndo && out.applied == 0 && canMore) {
+      ++skipped;
+      continue;
+    }
+    break;
+  }
+  tellOutcome(dir, out, skipped);
+  return true;
+}
+
+bool Session::stepOnce(int dir, StepOutcome& out) {
+  const UndoStack& h = doc_.history();
+  if (dir < 0 ? !h.canUndo() : !h.canRedo()) return false;
+  const size_t idx = dir < 0 ? h.position() - 1 : h.position();
+  out.label = h.labelAt(idx);
+  auto* st = dynamic_cast<CollabStep*>(doc_.stepNote(idx, NoteSlot::Collab));
+  std::unique_ptr<Song> scratch;
+  if (st && st->local) scratch = std::make_unique<Song>(doc_.song());
+  if (!doc_.stepHistory(dir, scratch.get())) return false;
   lastSerial_ = doc_.history().stateSerial();
   lastPush_ = doc_.pushCount();
   lastRev_ = doc_.revision();
-  auto it = steps_.find(key);
-  if (it == steps_.end() || previewing_) return true;
-  StepRec& rec = it->second;
+  if (!st) return true;
+  out.hadRecord = true;
+  const size_t n = st->groups.size();
+  // 1. which registers are still ours to write (C1: our own later steps never count)
+  std::vector<char> ok(n, 1);
+  for (size_t k = 0; k < n; ++k) {
+    CollabStep::Group& g = st->groups[k];
+    if (foreignSince(g, dir)) {
+      ok[k] = 0;
+      continue;
+    }
+    const Node* node = replica_.find(g.path);
+    if (g.cls == 0) {
+      const Json& want = dir < 0 ? g.fwdVal : g.backVal;  // what this step left there
+      if (!node || !sameJson(node->val, want)) ok[k] = 0;
+    } else if (g.cls == 1) {
+      const std::string& want = dir < 0 ? g.fwdPos : g.backPos;
+      if (!node || node->pos != want) ok[k] = 0;
+    } else if (g.kids.empty()) {
+      const bool want = dir < 0 ? g.fwdPres : g.backPres;
+      if (replica_.visible(g.path) != want) ok[k] = 0;
+    }
+  }
+  // 2. D4: a clip's placement, a note, an automation point: all of it or none
+  std::map<std::string, bool> unitOk;
+  for (size_t k = 0; k < n; ++k)
+    if (!st->groups[k].unit.empty()) {
+      auto [it, fresh] = unitOk.emplace(st->groups[k].unit, true);
+      it->second = it->second && ok[k];
+      (void)fresh;
+    }
+  for (size_t k = 0; k < n; ++k)
+    if (!st->groups[k].unit.empty() && !unitOk[st->groups[k].unit]) ok[k] = 0;
+  // 3. the inverse (undo) or the step again (redo), as new edits of ours
   std::vector<Op> ops;
-  std::vector<size_t> owner;
+  std::vector<std::pair<size_t, size_t>> owner;  // op index -> group
   auto emit = [&](size_t gi, Op op) {
     op.t = hlc_.tick();
+    owner.push_back({ops.size(), gi});
     ops.push_back(std::move(op));
-    owner.push_back(gi);
   };
-  const size_t n = rec.groups.size();
-  for (size_t k = 0; k < n; ++k) {
-    const size_t gi = dir < 0 ? n - 1 - k : k;
-    UndoGroup& g = rec.groups[gi];
+  auto keptBy = [&](const CollabStep::Group& g) {
+    if (auto it = foreignAt_.find(g.key); it != foreignAt_.end() && it->second > g.mine) out.keptFor.insert(it->second.site);
+    else if (const Node* node = replica_.find(g.path)) {
+      const Stamp& s = g.cls == 0 ? node->valS : g.cls == 1 ? node->posS : node->presS;
+      if (s.site != me_ && !s.zero()) out.keptFor.insert(s.site);
+    }
+  };
+  for (size_t step = 0; step < n; ++step) {
+    const size_t gi = dir < 0 ? n - 1 - step : step;
+    CollabStep::Group& g = st->groups[gi];
+    if (isIdCounter(g.path)) continue;  // only ever grows
+    if (!ok[gi]) {
+      ++out.kept;
+      keptBy(g);
+      continue;
+    }
     const Node* node = replica_.find(g.path);
     Op op;
     op.path = g.path;
     if (g.cls == 0) {
-      if (!node || node->valS != g.cur) continue;  // someone changed it since: theirs stays
       op.kind = OpKind::Set;
       op.value = dir < 0 ? g.backVal : g.fwdVal;
       op.prev = node->val;
       if (op.value.is(Json::Type::Object) || op.value.is(Json::Type::Array)) continue;
     } else if (g.cls == 1) {
-      if (!node || node->posS != g.cur) continue;
       op.kind = OpKind::Mov;
       op.pos = dir < 0 ? g.backPos : g.fwdPos;
       op.prev = Json::makeString(node->pos);
       if (op.pos.empty()) continue;
     } else {
-      if (node && node->presS != g.cur) continue;
       const bool target = dir < 0 ? g.backPres : g.fwdPres;
-      if (target) {
+      if (!target) {  // the object goes (undo of a create, redo of a delete)
+        if (!node || !replica_.visible(g.path)) continue;
+        std::set<SiteId> who;
+        if (usedByOthers(g.path, g.mine, dir < 0 ? g.fwdVal : g.backContent, who)) {
+          out.keptFor.insert(who.begin(), who.end());
+          ++out.kept;
+          if (isTopObject(g.path) || node->kind != Node::Kind::List) {  // D3: kept, with a message
+            if (isTopObject(g.path)) out.keptObjects.push_back(describeObject(joinPath(g.path)));
+            continue;
+          }
+          // a list someone else added to (a channel's notes in a pattern): only our elements go
+          g.kids.clear();
+          for (const auto& [kid, c] : visibleKids(*node, Stamp{})) {
+            Path kp = g.path;
+            kp.push_back(*kid);
+            std::set<SiteId> w2;
+            if (c->presS.site != me_ || usedByOthers(kp, g.mine, Json(), w2)) continue;
+            Op d;
+            d.kind = OpKind::Del;
+            d.path = kp;
+            emit(gi, std::move(d));
+            g.kids.push_back(*kid);
+          }
+          if (!g.kids.empty()) ++out.applied;
+          continue;
+        }
+        op.kind = OpKind::Del;
+      } else if (!g.kids.empty()) {  // redo of a list we only partly removed: our elements come back
+        for (const auto& kid : g.kids) {
+          Path kp = g.path;
+          kp.push_back(kid);
+          if (replica_.visible(kp)) continue;
+          Op u;
+          u.kind = OpKind::Undel;
+          u.path = kp;
+          emit(gi, std::move(u));
+        }
+        g.kids.clear();
+        ++out.applied;
+        continue;
+      } else {
         const Json& content = dir < 0 ? g.backContent : g.fwdVal;
-        const bool replace = dir < 0 ? !g.backContent.is(Json::Type::Null) && g.fwdPres : !g.fwdVal.is(Json::Type::Null);
+        // Content goes in again only where the step replaced an object that was there (or the
+        // node is gone); a create undone, or a delete, is brought back as it is (its place, its
+        // elements and what others did in it since).
+        const bool replace = dir < 0 ? !g.backContent.is(Json::Type::Null) && g.fwdPres : g.backPres && !g.fwdVal.is(Json::Type::Null);
         if ((!node || replace) && !content.is(Json::Type::Null)) {
           op.kind = OpKind::Ins;
           op.value = content;
@@ -1275,22 +1662,216 @@ bool Session::historyStep(int dir) {
         } else {
           continue;
         }
-      } else {
-        if (!node) continue;
-        op.kind = OpKind::Del;
       }
     }
+    ++out.applied;
     emit(gi, std::move(op));
   }
-  if (ops.empty()) return true;
-  std::vector<Stamp> stamps;
-  for (const auto& op : ops) stamps.push_back(Stamp{op.t, me_});
-  if (!makeLocalBatch(std::move(ops), false, false)) return true;
-  for (size_t i = 0; i < owner.size(); ++i) rec.groups[owner[i]].cur = stamps[i];
-  remoteDirty_ = true;
-  dirty_.full = true;
-  materialize();
+  if (!ops.empty()) {
+    std::vector<Stamp> stamps;
+    for (const auto& op : ops) stamps.push_back(Stamp{op.t, me_});
+    if (makeLocalBatch(std::move(ops), false, false))
+      for (const auto& [oi, gi] : owner) st->groups[gi].mine = stamps[oi];
+    remoteDirty_ = true;
+    dirty_.full = true;
+    materialize();
+  }
+  if (scratch) {  // C5: what stays on this computer is undone / redone here
+    doc_.patchSong([&](Song& s) { keepSessionState(s, *scratch); });
+    lastRev_ = doc_.revision();
+    lastLocalHash_ = sessionHash();
+    ++out.applied;
+  }
+  using S = CollabStep::State;
+  st->state = dir < 0 ? (out.kept == 0 ? S::Undone : out.applied == 0 ? S::NothingUndone : S::PartlyUndone)
+                      : (out.kept == 0 ? S::Redone : out.applied == 0 ? S::NothingRedone : S::PartlyRedone);
+  st->keptFor.assign(out.keptFor.begin(), out.keptFor.end());
+  doc_.touchStepNote(idx);
+  marksDirty_ = true;
   return true;
+}
+
+void Session::tellOutcome(int dir, const StepOutcome& out, size_t skipped) {
+  if (!onNotice) return;
+  std::string names;
+  for (SiteId s : out.keptFor) {
+    if (!names.empty()) names += ", ";
+    names += nameOf(s);
+  }
+  if (names.empty()) names = i18n::tr("someone");
+  const std::string what = i18n::tr(out.label.c_str());
+  char buf[512];
+  std::string text;
+  if (!out.keptObjects.empty()) {
+    std::string objs;
+    for (const auto& o : out.keptObjects) objs += (objs.empty() ? "" : ", ") + o;
+    std::snprintf(buf, sizeof buf, i18n::tr("Kept %s because %s used it. Delete it yourself if you want it gone."), objs.c_str(),
+                  names.c_str());
+    text = buf;
+  } else if (out.hadRecord && out.applied == 0 && out.kept > 0) {
+    std::snprintf(buf, sizeof buf, dir < 0 ? i18n::tr("Nothing left to undo in %s: %s changed it after you.")
+                                           : i18n::tr("Nothing left to redo in %s: %s changed it after you."),
+                  what.c_str(), names.c_str());
+    text = buf;
+  } else if (out.kept > 0) {
+    std::snprintf(buf, sizeof buf, dir < 0 ? i18n::tr("Undid %s, except what %s changed after you.")
+                                           : i18n::tr("Redid %s, except what %s changed after you."),
+                  what.c_str(), names.c_str());
+    text = buf;
+  }
+  if (skipped > 0) {
+    std::snprintf(buf, sizeof buf, dir < 0 ? i18n::tr("Skipped %zu steps with nothing left to undo.")
+                                           : i18n::tr("Skipped %zu steps with nothing left to redo."),
+                  skipped);
+    text = text.empty() ? std::string(buf) : text + " " + buf;
+  }
+  if (!text.empty()) onNotice(text, false);
+}
+
+std::string Session::nameOf(SiteId s) const {
+  if (auto it = peers_.find(s); it != peers_.end() && !it->second.profile.name.empty()) return it->second.profile.name;
+  if (const Member* m = member(s); m && !m->name.empty()) return m->name;
+  return i18n::tr("a collaborator");
+}
+
+std::string Session::describeObject(const std::string& object) const {
+  const Path p = splitPath(object);
+  if (p.size() < 3 || p[0] != "song") return object;
+  const char* kind = p[1] == "channels" ? i18n::tr("channel")
+                     : p[1] == "patterns" ? i18n::tr("pattern")
+                     : p[1] == "playlist" ? i18n::tr("clip")
+                     : p[1] == "mixer" ? i18n::tr("mixer track")
+                     : p[1] == "automations" ? i18n::tr("automation clip")
+                     : i18n::tr("item");
+  const Json name = replica_.materialize({"song", p[1], p[2], "name"});
+  if (name.is(Json::Type::String) && !name.str.empty()) return std::string(kind) + " " + name.str;
+  return kind;
+}
+
+// --------------------------------------------------- history on disk (D9) ----
+namespace {
+
+Json stampJson(const Stamp& s) {
+  Json j = Json::makeArray();
+  j.array.push_back(Json::makeString(siteHex(s.t)));
+  j.array.push_back(Json::makeString(siteHex(s.site)));
+  return j;
+}
+Stamp stampFrom(const Json& j) {
+  Stamp s;
+  if (j.is(Json::Type::Array) && j.array.size() == 2) {
+    s.t = siteFromHex(j.array[0].str);
+    s.site = siteFromHex(j.array[1].str);
+  }
+  return s;
+}
+Json pathJson(const Path& p) {
+  Json j = Json::makeArray();
+  for (const auto& x : p) j.array.push_back(Json::makeString(x));
+  return j;
+}
+Json boolJson(bool b) {
+  Json j;
+  j.type = Json::Type::Bool;
+  j.boolean = b;
+  return j;
+}
+
+}  // namespace
+
+void Session::writeHistory() {
+  const UndoStack& h = doc_.history();
+  if (h.stateSerial() == historySavedSerial_ && h.size() == historySavedSize_) return;
+  Json j = Json::makeObject();
+  j.object["format"] = Json::makeString("gridline-collab-history");
+  j.object["version"] = Json::makeNumber(1);
+  j.object["position"] = Json::makeNumber(static_cast<double>(h.position()));
+  Json steps = Json::makeArray();
+  for (size_t i = 0; i < h.size(); ++i) {
+    Json s = Json::makeObject();
+    s.object["label"] = Json::makeString(h.labelAt(i));
+    if (auto* st = dynamic_cast<const CollabStep*>(doc_.stepNote(i, NoteSlot::Collab))) {
+      s.object["madeAt"] = stampJson(st->madeAt);
+      s.object["ms"] = Json::makeNumber(static_cast<double>(st->madeAtMs));
+      s.object["state"] = Json::makeNumber(static_cast<double>(static_cast<int>(st->state)));
+      Json gs = Json::makeArray();
+      for (const auto& g : st->groups) {
+        Json x = Json::makeObject();
+        x.object["p"] = pathJson(g.path);
+        x.object["c"] = Json::makeNumber(g.cls);
+        if (!g.unit.empty()) x.object["u"] = Json::makeString(g.unit);
+        if (g.cls == 0 || (g.cls == 2 && !g.fwdVal.is(Json::Type::Null))) x.object["f"] = g.fwdVal;
+        if (g.cls == 0) x.object["b"] = g.backVal;
+        if (g.cls == 1) {
+          x.object["bp"] = Json::makeString(g.backPos);
+          x.object["fp"] = Json::makeString(g.fwdPos);
+        }
+        if (g.cls == 2) {
+          x.object["bv"] = boolJson(g.backPres);
+          x.object["fv"] = boolJson(g.fwdPres);
+          if (!g.backContent.is(Json::Type::Null)) x.object["bc"] = g.backContent;
+          if (!g.kids.empty()) x.object["k"] = pathJson(g.kids);
+        }
+        x.object["m"] = stampJson(g.mine);
+        gs.array.push_back(std::move(x));
+      }
+      s.object["groups"] = std::move(gs);
+    }
+    steps.array.push_back(std::move(s));
+  }
+  j.object["steps"] = std::move(steps);
+  const std::string file = (fs::path(cfg_.folder) / kDir / ("history-" + siteHex(me_) + ".json")).string();
+  if (writeFileDurable(file, jsonCompact(j))) {
+    historySavedSerial_ = h.stateSerial();
+    historySavedSize_ = h.size();
+  }
+}
+
+void Session::loadHistory() {
+  const std::string file = (fs::path(cfg_.folder) / kDir / ("history-" + siteHex(me_) + ".json")).string();
+  std::string text;
+  Json j;
+  if (!readFileText(file, text) || !jsonParse(text, j) || j.text("format") != "gridline-collab-history") return;
+  const Json* steps = j.find("steps");
+  if (!steps || !steps->is(Json::Type::Array)) return;
+  std::vector<std::string> labels;
+  std::vector<StepNotePtr> notes;
+  for (const auto& s : steps->array) {
+    labels.push_back(s.text("label"));
+    auto st = std::make_shared<CollabStep>();
+    st->madeAt = stampFrom(s.find("madeAt") ? *s.find("madeAt") : Json());
+    st->madeAtMs = static_cast<uint64_t>(s.num("ms", 0));
+    st->state = static_cast<CollabStep::State>(std::clamp(static_cast<int>(s.num("state", 0)), 0, 6));
+    if (const Json* gs = s.find("groups"); gs && gs->is(Json::Type::Array))
+      for (const auto& x : gs->array) {
+        CollabStep::Group g;
+        if (const Json* p = x.find("p"); p && p->is(Json::Type::Array))
+          for (const auto& e : p->array) g.path.push_back(e.str);
+        g.cls = std::clamp(static_cast<int>(x.num("c", 0)), 0, 2);
+        g.key = regKey(g.path, g.cls);
+        g.unit = x.text("u");
+        if (const Json* f = x.find("f")) g.fwdVal = *f;
+        if (const Json* b = x.find("b")) g.backVal = *b;
+        g.backPos = x.text("bp");
+        g.fwdPos = x.text("fp");
+        if (const Json* b = x.find("bv")) g.backPres = b->boolean;
+        if (const Json* f = x.find("fv")) g.fwdPres = f->boolean;
+        if (const Json* c = x.find("bc")) g.backContent = *c;
+        if (const Json* k = x.find("k"); k && k->is(Json::Type::Array))
+          for (const auto& e : k->array) g.kids.push_back(e.str);
+        g.mine = stampFrom(x.find("m") ? *x.find("m") : Json());
+        if (g.path.empty()) continue;
+        st->index.emplace(g.key, st->groups.size());
+        st->groups.push_back(std::move(g));
+      }
+    notes.push_back(std::move(st));
+  }
+  const size_t pos = std::min(static_cast<size_t>(std::max(0.0, j.num("position", 0))), labels.size());
+  doc_.restoreHistory(labels, pos, std::move(notes));
+  lastSerial_ = doc_.history().stateSerial();
+  lastPush_ = doc_.pushCount();
+  historySavedSerial_ = doc_.history().stateSerial();
+  historySavedSize_ = doc_.history().size();
 }
 
 // ---------------------------------------------------------------- remote ----
@@ -1407,7 +1988,17 @@ bool Session::tryApply(const Batch& b, bool local) {
     } else if (top != "meta" && top != "song" && top != "flo") {
       continue;
     }
+    Json was;  // K-141: what someone else's write replaces (see noteForeign)
+    if (b.site != me_) {
+      if (op.kind == OpKind::Set || op.kind == OpKind::Mov) {
+        was = op.prev;
+      } else {
+        was.type = Json::Type::Bool;
+        was.boolean = replica_.visible(op.path);
+      }
+    }
     replica_.apply(op, b.site);
+    if (b.site != me_) noteForeign(op, b.site, was);
     if (top == "song") {
       remoteDirty_ = remoteDirty_ || !local;
       // what changed, for the incremental apply: elements of the five lists, a few scalars, else everything
@@ -1429,6 +2020,23 @@ bool Session::tryApply(const Batch& b, bool local) {
       remoteDirty_ = remoteDirty_ || !local;
     } else {
       metaDirty_ = true;
+    }
+  }
+  if (counts && b.site != me_ && !replaying_ && !genesis) {  // K-141: the history panel's greyed rows
+    PeerEdit pe;
+    pe.site = b.site;
+    pe.name = b.name;
+    pe.atMs = Hlc::msOf(b.lastT());
+    pe.ops = b.ops.size();
+    for (const auto& op : b.ops) {
+      if (op.path.empty() || op.path[0] != "song" || isIdCounter(op.path)) continue;
+      const std::string obj = objectOf(op.path);
+      if (obj.empty() || std::find(pe.objects.begin(), pe.objects.end(), obj) != pe.objects.end()) continue;
+      if (pe.objects.size() < 4) pe.objects.push_back(obj);
+    }
+    if (!pe.objects.empty()) {
+      peerEdits_.push_back(std::move(pe));
+      while (peerEdits_.size() > kPeerEditsKept) peerEdits_.pop_front();
     }
   }
   vv_[b.site] = b.seq;
@@ -1467,6 +2075,12 @@ void Session::updateReady() {
   if (replica_.visible({"song"}) && member(me_)) {
     ready_ = true;
     remoteDirty_ = true;
+    // K-141 (C8): edits made before the project arrived were never shared and are replaced by it
+    if (attached_ && !replaying_) {
+      doc_.clearHistory();
+      lastSerial_ = doc_.history().stateSerial();
+      lastPush_ = doc_.pushCount();
+    }
   }
 }
 
@@ -2112,6 +2726,10 @@ void Session::frame(double now) {
   if (gestureEnded) gestureObjects_.clear();
   wasGesture_ = gesture_;
   drainPending();
+  if (breakMerge_) {  // K-141 (C2)
+    breakMerge_ = false;
+    doc_.endGesture();
+  }
   if (exitPending_) {
     finishExit();
     return;
@@ -2170,6 +2788,16 @@ void Session::frame(double now) {
     log_.sync();
   }
   if (projectDirtyAt_ >= 0 && now - projectDirtyAt_ >= kProjectWriteSec) writeProjectFile();
+  if (marksDirty_ && (lastMarks_ < 0 || now - lastMarks_ >= 0.25)) {
+    marksDirty_ = false;
+    lastMarks_ = now;
+    refreshStepMarks();
+  }
+  if (lastForeignPrune_ < 0 || now - lastForeignPrune_ >= 10.0) {
+    lastForeignPrune_ = now;
+    pruneForeign();
+    writeHistory();  // K-141 (D9): your own history survives closing the project
+  }
   maybeCompact();
 }
 
@@ -2331,6 +2959,7 @@ void Session::saveNow() {
   flushLocal();
   log_.sync();
   writeProjectFile();
+  writeHistory();
 }
 
 void Session::leave(bool stopSharing) {
@@ -2411,6 +3040,7 @@ bool Session::preview(const std::string& object, SiteId keepSite) {
   s.flOrigin = floCache_;
   s.idSlot = doc_.song().idSlot;
   s.idStride = kIdStride;
+  if (!previewing_) previewBase_ = doc_.history().size();
   previewing_ = true;
   doc_.replaceSong(std::move(s));
   lastRev_ = doc_.revision();
@@ -2420,6 +3050,13 @@ bool Session::preview(const std::string& object, SiteId keepSite) {
 void Session::endPreview() {
   if (!previewing_) return;
   previewing_ = false;
+  // K-141 (C8): steps made on the preview were never part of the project
+  if (doc_.history().size() > previewBase_) {
+    doc_.discardStepsFrom(previewBase_);
+    lastSerial_ = doc_.history().stateSerial();
+    lastPush_ = doc_.pushCount();
+    if (onNotice) onNotice(i18n::tr("Edits made while previewing a side were not kept."), false);
+  }
   remoteDirty_ = true;
   dirty_.full = true;
   lastRev_ = doc_.revision();
@@ -2977,12 +3614,13 @@ std::vector<std::pair<std::string, uint64_t>> Session::unusedAudio() const {
     for (const auto& [seq, text] : m) audioRefsIn(text, refs);
   for (const auto& [site, m] : pending_)
     for (const auto& [seq, b] : m) audioRefsIn(b.text(), refs);
-  for (const auto& [serial, rec] : steps_)
-    for (const auto& g : rec.groups) {
-      audioRefsIn(jsonCompact(g.backVal), refs);
-      audioRefsIn(jsonCompact(g.fwdVal), refs);
-      audioRefsIn(jsonCompact(g.backContent), refs);
-    }
+  for (size_t i = 0; i < doc_.history().size(); ++i)
+    if (auto* st = dynamic_cast<const CollabStep*>(doc_.stepNote(i, NoteSlot::Collab)))
+      for (const auto& g : st->groups) {
+        audioRefsIn(jsonCompact(g.backVal), refs);
+        audioRefsIn(jsonCompact(g.fwdVal), refs);
+        audioRefsIn(jsonCompact(g.backContent), refs);
+      }
   audioRefsIn(jsonCompact(conflicts_.toJson()), refs);
   for (const auto& [name, inc] : incoming_) refs.insert(name);
   // What a map or a folder manifest in use names beside it is in use too.

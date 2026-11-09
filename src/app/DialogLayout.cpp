@@ -9,6 +9,7 @@
 #include "../../third_party/imgui/imgui_internal.h"
 #include "../core/WindowPlacement.h"
 #include "../core/WindowRubber.h"
+#include "CommandPaletteUi.h"
 #include "Theme.h"
 
 namespace gl::ui {
@@ -348,6 +349,7 @@ bool PathFit(const char* text, float maxW, ImU32 col, bool framed) {
 }
 
 void FormLabelFit(const char* label, float x, ImU32 col, float gap) {
+  if (cmdpalette::noting()) cmdpalette::noteFormLabel(label);  // K-93: a setting's row (found, or highlighted)
   // SameLine(x) counts from the window (or enclosing group) start, not from the indent.
   const ImGuiWindow* w = ImGui::GetCurrentWindow();
   const float colX = w->Pos.x - w->Scroll.x + x + w->DC.GroupOffset.x + w->DC.ColumnsOffset.x;

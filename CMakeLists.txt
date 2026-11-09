@@ -352,11 +352,16 @@ add_test(NAME engine COMMAND gridline_tests WORKING_DIRECTORY ${CMAKE_SOURCE_DIR
 add_test(NAME m1_foundations COMMAND gridline_tests_m1 WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 add_test(NAME plugin_parity COMMAND gridline_tests_parity WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 add_test(NAME menus COMMAND gridline_tests_menus WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+add_executable(gridline_tests_command_palette tests/test_command_palette.cpp)  # K-93
+target_link_libraries(gridline_tests_command_palette PRIVATE gridline_core)
+target_include_directories(gridline_tests_command_palette PRIVATE src tests)
+target_compile_options(gridline_tests_command_palette PRIVATE ${GL_WARN})
 add_executable(gridline_tests_layout_presets tests/test_layout_presets.cpp)  # K-79
 target_link_libraries(gridline_tests_layout_presets PRIVATE gridline_core)
 target_include_directories(gridline_tests_layout_presets PRIVATE src tests)
 target_compile_options(gridline_tests_layout_presets PRIVATE ${GL_WARN})
 add_test(NAME k79_layout_presets COMMAND gridline_tests_layout_presets WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+add_test(NAME k93_command_palette COMMAND gridline_tests_command_palette WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 # K-1: the distribution channel files (packaging/: Flatpak, AUR, Homebrew, Windows package
 # managers, FreeBSD port, COPR, Snap) render for this version and agree with the tree.
 find_package(Python3 COMPONENTS Interpreter QUIET)
@@ -673,6 +678,21 @@ add_test(NAME collab_local COMMAND gridline_tests_collab_local WORKING_DIRECTORY
 set_tests_properties(collab_local PROPERTIES TIMEOUT 600)
 # J-146: presence on the welcome screen (authenticated probes both ways, strangers, removed,
 # hidden, other versions, no answer, transitive), project cards and the list model (in memory).
+# K-141: undo and redo in a collaborative project: your own history, one of your steps per
+# press, collaborators' later edits stay (with a message), redo, local settings, limits, reopening.
+add_executable(gridline_tests_collab_undo tests/test_collab_undo.cpp)
+target_link_libraries(gridline_tests_collab_undo PRIVATE gridline_core)
+target_include_directories(gridline_tests_collab_undo PRIVATE tests)
+target_compile_options(gridline_tests_collab_undo PRIVATE ${GL_WARN})
+add_test(NAME k141_collab_undo COMMAND gridline_tests_collab_undo WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+set_tests_properties(k141_collab_undo PROPERTIES TIMEOUT 900)
+# K-141: the history: notes with each step, levels and memory budget, clearing / rebuilding it,
+# stepping on a scratch song, the move callback, rollbacks that never take an unrelated step.
+add_executable(gridline_tests_undo_history tests/test_undo_history.cpp)
+target_link_libraries(gridline_tests_undo_history PRIVATE gridline_core)
+target_include_directories(gridline_tests_undo_history PRIVATE tests)
+target_compile_options(gridline_tests_undo_history PRIVATE ${GL_WARN})
+add_test(NAME k141_undo_history COMMAND gridline_tests_undo_history WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 add_executable(gridline_tests_collab_presence tests/test_collab_presence.cpp)
 target_link_libraries(gridline_tests_collab_presence PRIVATE gridline_core)
 target_include_directories(gridline_tests_collab_presence PRIVATE tests)
@@ -2315,6 +2335,13 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(j218_seltmann_record PROPERTIES TIMEOUT 400)
 
+    # K-145: a recording's waveform drawn live and fitted to the width, in Loupe and Seltmann's recorder (simulated inputs).
+    add_test(NAME k145_live_wave
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DTESTBIN=$<TARGET_FILE:gridline_test_seltmann>
+                     -DOUT=${CMAKE_BINARY_DIR}/k145_live_wave -P ${CMAKE_SOURCE_DIR}/tests/k145_live_wave.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(k145_live_wave PROPERTIES TIMEOUT 600)
+
     # J-208: the playlist picker's "+" (new pattern) and plugins dropped on playlist tracks (instrument tracks).
     add_test(NAME j208_playlist_app
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
@@ -2450,6 +2477,13 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                        -P ${CMAKE_SOURCE_DIR}/tests/j111_collab_app.cmake
                WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
       set_tests_properties(j111_collab_app PROPERTIES TIMEOUT 900)
+      # K-141: undo / redo through the real shortcuts in two app windows, in each window layout:
+      # each person's undo takes back only their own step, redo puts it back.
+      add_test(NAME k141_collab_undo_app
+               COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DOUT=${CMAKE_BINARY_DIR}/k141_collab_undo_app
+                       -P ${CMAKE_SOURCE_DIR}/tests/k141_collab_undo_app.cmake
+               WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+      set_tests_properties(k141_collab_undo_app PROPERTIES TIMEOUT 1500)
       # J-111e: an admin removes someone whose project is open; private copy; leave > keep / delete.
       add_test(NAME j111e_collab_remove_app
                COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DOUT=${CMAKE_BINARY_DIR}/j111e_collab_remove_app
@@ -2508,6 +2542,13 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                        ${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json ${CMAKE_BINARY_DIR}/k121_single_instance
                WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
       set_tests_properties(k121_single_instance PROPERTIES TIMEOUT 600)
+      # K-93: the command palette in each layout and translated: every menu item once, every keymap
+      # command once, the shortcut, typing + Enter runs commands, settings, plugins; recent rows.
+      add_test(NAME k93_palette_app
+               COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/k93_palette_app.py $<TARGET_FILE:gridline-app>
+                       ${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json ${CMAKE_BINARY_DIR}/k93_palette_app
+               WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+      set_tests_properties(k93_palette_app PROPERTIES TIMEOUT 900)
     endif()
     # J-146: the welcome screen's Collaborative view: rail, tiles, Join, live presence (simulated collaborators).
     add_test(NAME j146_launcher_collab_app

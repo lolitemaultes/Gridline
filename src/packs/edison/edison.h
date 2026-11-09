@@ -351,6 +351,9 @@ class Recorder {
   bool recording() const { return recording_; }
   bool takeReady() const { return ready_; }
   int64_t recordedFrames() const { return static_cast<int64_t>(L_.size()); }
+  // K-145: the take so far, for the live waveform (UI thread; valid until the next feed or take).
+  const float* liveL() const { return L_.data(); }
+  const float* liveR() const { return R_.data(); }
   // Feeds input frames (playing: transport state per frame, may be null).
   void feed(const float* L, const float* R, const uint8_t* playing, size_t n);
   // Moves the finished take out (empty when none).

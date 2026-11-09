@@ -54,6 +54,9 @@ void maskPluginJson(Json& anything);  // every plugin state found inside
 
 // Incoming: keep this computer's session fields (by object id / track index).
 void keepSessionState(Song& incoming, const Song& current);
+// K-141: a hash of every setting keepSessionState carries (what stays on this computer): a step
+// that changed it is undone and redone here, since it never reaches the shared project.
+uint64_t sessionStateHash(const Song& s);
 void keepChannelSession(Channel& incoming, const Channel& current);
 void keepMixerSession(MixerTrack& incoming, const MixerTrack& current);
 void keepClipSession(Clip& incoming, const Clip& current);
