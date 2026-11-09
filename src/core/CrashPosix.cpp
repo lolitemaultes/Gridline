@@ -2,6 +2,7 @@
 // table. Everything from onFatal down runs in signal context: raw system calls and our own
 // formatting only, no allocation, no locks, no stdio.
 #include "CrashInternal.h"
+#include "Platform.h"
 #if !defined(_WIN32)
 #include <dirent.h>
 #include <errno.h>
@@ -657,8 +658,8 @@ void endProcess(int64_t pid) {
 }
 
 bool alive(int64_t pid) {
-  if (pid <= 0) return false;
-  return ::kill(static_cast<pid_t>(pid), 0) == 0 || errno == EPERM;
+  // K-154: a session that ended but was never reaped (a zombie) is not running.
+  return gl::platform::processRunning(pid);
 }
 
 bool spawnDetached(const std::string& exe, const std::vector<std::string>& argsIn) {

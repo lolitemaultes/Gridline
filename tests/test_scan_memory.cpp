@@ -17,6 +17,7 @@
 //      and scanned again when retried by hand.
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -31,6 +32,7 @@
 #else
 #include <signal.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #endif
 
@@ -54,7 +56,11 @@ double since(Clock::time_point t0) { return std::chrono::duration<double>(Clock:
 
 // Touched memory, so it counts as resident.
 std::vector<char*>& kept() {
-  static std::vector<char*> v;
+  static std::vector<char*> v = [] {
+    std::vector<char*> r;
+    r.reserve(1024);  // never grown at the job's memory limit (Windows): a failed allocation is not a crash
+    return r;
+  }();
   return v;
 }
 // In 50 MB pieces, a little at a time (a growing plugin: the watcher sees it pass the cap), filled
@@ -138,19 +144,11 @@ int readPid(const std::string& file, double waitSeconds) {
   }
 }
 
-bool alive(int pid) {
-#if defined(_WIN32)
-  HANDLE h = OpenProcess(SYNCHRONIZE, FALSE, static_cast<DWORD>(pid));
-  if (!h) return false;
-  const bool running = WaitForSingleObject(h, 0) == WAIT_TIMEOUT;
-  CloseHandle(h);
-  return running;
-#else
-  return ::kill(static_cast<pid_t>(pid), 0) == 0;
-#endif
-}
+// Running, not merely present: a killed orphan whose new parent never reaps it (a container's first
+// process) stays a zombie, which kill(pid, 0) still finds.
+bool alive(int pid) { return platform::processRunning(pid); }
 
-// A killed process that was reparented is reaped by the system shortly after.
+// A killed process ends shortly after (and is reaped, or left a zombie, by its new parent).
 bool goneSoon(int pid) {
   for (int i = 0; i < 200 && alive(pid); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(10));
   return !alive(pid);
@@ -200,6 +198,28 @@ void testRules() {
 #endif
 }
 
+// An ended process nobody has reaped (a zombie: in a container whose first process never reaps,
+// every killed orphan stays one) is not running, though kill(pid, 0) still finds it.
+void testZombie() {
+  expect(platform::processRunning(platform::processId()), "running: this process is running");
+#if !defined(_WIN32)
+  const pid_t child = ::fork();
+  if (child == 0) ::_exit(0);
+  expect(child > 0, "running: a child starts");
+  // Ended but not reaped: a zombie until the waitpid below.
+  bool ended = false;
+  for (int i = 0; i < 500 && !ended; ++i) {
+    ended = !platform::processRunning(child);
+    if (!ended) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  expect(::kill(child, 0) == 0, "running: (the unreaped child is still found by kill(pid, 0))");
+  expect(ended, "running: an ended child nobody has reaped yet (a zombie) is not running");
+  int status = 0;
+  ::waitpid(child, &status, 0);
+  expect(!platform::processRunning(child), "running: a reaped child is not running");
+#endif
+}
+
 void testTreeMemory(const std::string& dir) {
   const std::string pidFile = dir + "/tree-helper.pid";
   platform::Process p;
@@ -223,9 +243,60 @@ void testTreeMemory(const std::string& dir) {
   expect(p.treeMemoryBytes() == 0, "tree: nothing is counted once the child has ended");
 }
 
+#if defined(_WIN32)
+void put16(std::vector<unsigned char>& b, size_t at, uint32_t v) {
+  b[at] = static_cast<unsigned char>(v & 0xFF);
+  b[at + 1] = static_cast<unsigned char>((v >> 8) & 0xFF);
+}
+void put32(std::vector<unsigned char>& b, size_t at, uint32_t v) {
+  for (int k = 0; k < 4; ++k) b[at + static_cast<size_t>(k)] = static_cast<unsigned char>((v >> (8 * k)) & 0xFF);
+}
+#endif
+
+// A fake CLAP file the scan's checks let through to the scanner child (this program), which never
+// loads it. Windows checks a plugin is a DLL with the format's entry point before starting a child,
+// so there it is a minimal 64-bit DLL image exporting clap_entry (headers and one section holding
+// the export directory, as in test_scan_stress).
+void fakeClapFile(const fs::path& p) {
+  fs::create_directories(p.parent_path());
+#if defined(_WIN32)
+  std::vector<unsigned char> b(0x1000, 0);
+  b[0] = 'M';
+  b[1] = 'Z';
+  put32(b, 0x3C, 0x80);
+  b[0x80] = 'P';
+  b[0x81] = 'E';
+  put16(b, 0x84, 0x8664);
+  put16(b, 0x86, 1);
+  put16(b, 0x94, 240);
+  put16(b, 0x96, 0x2022);
+  const size_t opt = 0x98;
+  put16(b, opt, 0x20B);
+  put32(b, opt + 108, 16);
+  put32(b, opt + 112, 0x1000);
+  put32(b, opt + 116, 0x200);
+  const size_t sec = opt + 240;
+  std::memcpy(&b[sec], ".edata", 6);
+  put32(b, sec + 8, 0x400);
+  put32(b, sec + 12, 0x1000);
+  put32(b, sec + 16, 0x400);
+  put32(b, sec + 20, 0x400);
+  put32(b, 0x400 + 24, 1);
+  put32(b, 0x400 + 32, 0x1100);
+  put32(b, 0x500, 0x1200);
+  std::memcpy(&b[0x600], "clap_entry", 11);
+  std::ofstream(p, std::ios::binary).write(reinterpret_cast<const char*>(b.data()), static_cast<std::streamsize>(b.size()));
+#else
+  std::ofstream(p) << "x";
+#endif
+}
+
 host::ScanResult scan(const std::string& dir, const std::string& name, double* took) {
   const fs::path entry = fs::path(dir) / name;
-  std::ofstream(entry) << "x";
+  fakeClapFile(entry);
+#if defined(_WIN32)
+  expect(host::peDllPrecheck(entry.string(), {"clap_entry"}).empty(), "(the fake plugin passes the scan's DLL check)");
+#endif
   const auto t0 = Clock::now();
   host::ScanResult r = host::scanIsolated(platform::executablePath(), "clap", entry.string(), 60);
   *took = since(t0);
@@ -282,7 +353,7 @@ void testService(const std::string& dir) {
 #if defined(__APPLE__)
   const auto fakeClap = [](const fs::path& p) { fs::create_directories(p / "Contents"); };
 #else
-  const auto fakeClap = [](const fs::path& p) { std::ofstream(p) << "x"; };
+  const auto fakeClap = [](const fs::path& p) { fakeClapFile(p); };
 #endif
   const fs::path leak = fs::path(folder) / "svc-leak.clap";
   fakeClap(leak);
@@ -337,6 +408,7 @@ int main(int argc, char** argv) {
   }
   const std::string& dir = gl::test::hermeticTestEnv("scanmem");
   testRules();
+  testZombie();
   testTreeMemory(dir);
   testScanIsolated(dir);
   testService(dir);

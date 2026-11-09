@@ -35,6 +35,7 @@ extern char** environ;
 #if defined(__APPLE__)
 #include <libproc.h>
 #include <mach/mach.h>
+#include <sys/sysctl.h>
 #include <pthread.h>
 #include <mach-o/dyld.h>
 #endif
@@ -989,5 +990,78 @@ std::uint64_t Process::treeMemoryBytes() const {
 bool Process::treeMemoryLimitHit() const { return false; }
 
 #endif
+
+namespace {
+#if !defined(_WIN32)
+// K-154: an ended process its parent has not reaped yet (a zombie). A container's first process
+// (`tail -f /dev/null`, `sleep infinity`) never reaps, so a killed orphan stays one for good. No
+// allocation: plain reads.
+bool zombie(pid_t pid) {
+#if defined(__linux__)
+  char path[32];
+  std::snprintf(path, sizeof path, "/proc/%d/stat", static_cast<int>(pid));
+  const int fd = ::open(path, O_RDONLY | O_CLOEXEC);
+  if (fd < 0) return false;
+  char buf[512];
+  const ssize_t n = ::read(fd, buf, sizeof buf - 1);
+  ::close(fd);
+  if (n <= 0) return false;
+  buf[n] = '\0';
+  // "pid (comm) state ...": the state follows the last ')' (a name may hold one).
+  const char* close = std::strrchr(buf, ')');
+  if (!close || close[1] != ' ') return false;
+  return close[2] == 'Z' || close[2] == 'X' || close[2] == 'x';
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
+#if defined(SZOMB)
+  constexpr int kZombie = SZOMB;
+#else
+  constexpr int kZombie = 5;  // the value on every BSD and macOS
+#endif
+#if defined(__APPLE__)
+  int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_PID, static_cast<int>(pid)};
+  kinfo_proc kp{};
+  size_t len = sizeof kp;
+  if (sysctl(mib, 4, &kp, &len, nullptr, 0) != 0 || len == 0) return false;
+  return kp.kp_proc.p_stat == kZombie;
+#elif defined(__FreeBSD__)
+  int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_PID, static_cast<int>(pid)};
+  kinfo_proc kp{};
+  size_t len = sizeof kp;
+  if (sysctl(mib, 4, &kp, &len, nullptr, 0) != 0 || len == 0) return false;
+  return kp.ki_stat == kZombie;
+#elif defined(__OpenBSD__)
+  int mib[6] = {CTL_KERN, KERN_PROC, KERN_PROC_PID, static_cast<int>(pid), static_cast<int>(sizeof(kinfo_proc)), 1};
+  kinfo_proc kp{};
+  size_t len = sizeof kp;
+  if (sysctl(mib, 6, &kp, &len, nullptr, 0) != 0 || len == 0) return false;
+  return kp.p_stat == kZombie || kp.p_stat == kZombie + 1;  // SZOMB, SDEAD
+#else
+  int mib[6] = {CTL_KERN, KERN_PROC2, KERN_PROC_PID, static_cast<int>(pid), static_cast<int>(sizeof(kinfo_proc2)), 1};
+  kinfo_proc2 kp{};
+  size_t len = sizeof kp;
+  if (sysctl(mib, 6, &kp, &len, nullptr, 0) != 0 || len == 0) return false;
+  return kp.p_stat == kZombie || kp.p_stat == kZombie + 1;  // SZOMB, SDEAD
+#endif
+#else
+  (void)pid;
+  return false;
+#endif
+}
+#endif
+}  // namespace
+
+bool processRunning(std::int64_t pid) {
+  if (pid <= 0) return false;
+#if defined(_WIN32)
+  HANDLE h = OpenProcess(SYNCHRONIZE, FALSE, static_cast<DWORD>(pid));
+  if (!h) return GetLastError() == ERROR_ACCESS_DENIED;  // another user's: running
+  const bool running = WaitForSingleObject(h, 0) == WAIT_TIMEOUT;
+  CloseHandle(h);
+  return running;
+#else
+  if (::kill(static_cast<pid_t>(pid), 0) != 0 && errno != EPERM) return false;  // EPERM: another user's
+  return !zombie(static_cast<pid_t>(pid));
+#endif
+}
 
 }  // namespace gl::platform

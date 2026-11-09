@@ -40,6 +40,9 @@ std::string cacheRoot();
 std::string dataRoot();
 
 int processId();
+// K-154: whether process `pid` is still running. A zombie (ended, not yet reaped: its parent never
+// waits, like a container's first process) counts as ended, unlike kill(pid, 0).
+bool processRunning(std::int64_t pid);
 // Child processes that load plugins (scanner, sandbox, plugin check): a crash ends the process
 // at once instead of opening a system error dialog (Windows) that would hang it until its timeout.
 void quietCrashDialogs();
