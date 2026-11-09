@@ -458,7 +458,7 @@ Result runOne(const std::string& exe, const std::shared_ptr<const HostedClass>& 
   if (!editor) args.push_back("--no-editor");
   const double t0 = nowMs();
   platform::Process child;
-  if (!child.start(exe, args)) {
+  if (!child.start(exe, args, platform::Process::kTree)) {  // K-154: ended as one tree
     res.status = "crash";
     res.where = "cannot start the check process";
     return res;
@@ -469,6 +469,7 @@ Result runOne(const std::string& exe, const std::shared_ptr<const HostedClass>& 
     child.wait();
     timedOut = true;
   }
+  child.killTree();
   res.ms = nowMs() - t0;
   bool done = false;
   std::ifstream in(out);

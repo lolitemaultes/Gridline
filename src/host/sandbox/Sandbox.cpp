@@ -988,7 +988,8 @@ class SandboxBackend final : public Backend {
     inherit = {childRpc.r, childRpc.w, childWake.r};
     args[2] += "|" + std::to_string(childRpc.r) + "|" + std::to_string(childRpc.w) + "|" + std::to_string(childWake.r) + "|" +
                std::to_string(platform::processId());
-    const unsigned flags = platform::Process::kInheritStderr;
+    // K-154: a job: whatever the plugin starts (a bridge's host process) ends with the sandbox.
+    const unsigned flags = platform::Process::kInheritStderr | platform::Process::kTree;
 #else
     int sv[2], pp[2];
     if (::socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0 || ::pipe(pp) != 0) {
@@ -1007,7 +1008,10 @@ class SandboxBackend final : public Backend {
     childRpc = Chan{sv[1], sv[1]};
     childWake = Chan{pp[0], -1};
     inherit = {sv[1], pp[0]};  // become descriptors 3 (kRpcFd) and 4 (kWakeFd) in the child
-    const unsigned flags = platform::Process::kInheritStdin | platform::Process::kInheritStderr;
+    // K-154: its own process group: whatever the plugin starts (a bridge's host process) is ended
+    // with the sandbox, never left running. (Standard input is not shared: a process outside the
+    // terminal's foreground group must not read it.)
+    const unsigned flags = platform::Process::kInheritStderr | platform::Process::kTree;
 #endif
     // K-13: the sandbox searches the same plugin folders (LV2 bundles that add to a plugin).
     if (const std::string pf = pluginPrefsFile(); !pf.empty()) args.insert(args.end(), {"--plugin-prefs", pf});
@@ -1023,6 +1027,7 @@ class SandboxBackend final : public Backend {
     // The child opens the block first thing; unlink it once it has.
     watcher_ = std::thread([this]() {
       proc_.wait();
+      proc_.killTree();  // K-154: helpers the plugin left running
       exited_.store(true);
       const platform::ExitStatus& st = proc_.status();
       std::string why = st.crashed ? "the plugin " + st.describe() : "the sandbox process exited (code " + std::to_string(st.code) + ")";

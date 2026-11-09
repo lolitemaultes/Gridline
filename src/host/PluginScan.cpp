@@ -504,6 +504,44 @@ int childMain(int argc, char** argv) {
   std::_Exit(r.ok ? 0 : 2);
 }
 
+namespace {
+std::uint64_t envMegabytes(const char* name) {
+  const char* e = std::getenv(name);
+  if (!e || !*e) return 0;
+  const double mb = std::atof(e);
+  return mb > 0 ? static_cast<std::uint64_t>(mb * 1048576.0) : 0;
+}
+constexpr std::uint64_t kGiB = 1ull << 30, kMiB = 1ull << 20;
+// The tree holds real memory (512 MB, or a quarter of the cap when that is less): not a bystander.
+std::uint64_t lowMemoryFloor(std::uint64_t cap) { return std::min<std::uint64_t>(512ull << 20, cap / 4); }
+}  // namespace
+
+std::uint64_t scanMemoryCap(std::uint64_t physicalBytes) {
+  if (const std::uint64_t e = envMegabytes("GRIDLINE_SCAN_MEMORY_MB")) return e;
+  if (physicalBytes == 0) return 4 * kGiB;
+  return std::clamp<std::uint64_t>(physicalBytes / 4, 2 * kGiB, 8 * kGiB);
+}
+
+std::uint64_t scanMemoryReserve(std::uint64_t physicalBytes) {
+  if (const std::uint64_t e = envMegabytes("GRIDLINE_SCAN_RESERVE_MB")) return e;
+  return std::clamp<std::uint64_t>(physicalBytes / 10, 512 * kMiB, 2 * kGiB);
+}
+
+bool scanMemoryLow(std::uint64_t treeBytes, std::uint64_t availableBytes, std::uint64_t physicalBytes) {
+  if (availableBytes == 0) return false;  // the system does not say: the cap alone
+  return treeBytes >= lowMemoryFloor(scanMemoryCap(physicalBytes)) && availableBytes < scanMemoryReserve(physicalBytes);
+}
+
+std::string scanMemoryError(std::uint64_t treeBytes, bool low) {
+  char buf[160];
+  if (low)
+    std::snprintf(buf, sizeof buf, "used too much memory while loading (%.1f GB, the computer was running out of memory)",
+                  static_cast<double>(treeBytes) / static_cast<double>(kGiB));
+  else
+    std::snprintf(buf, sizeof buf, "used too much memory while loading (more than %.1f GB)", static_cast<double>(treeBytes) / static_cast<double>(kGiB));
+  return buf;
+}
+
 ScanResult scanIsolated(const std::string& exe, const std::string& format, const std::string& entry, double timeoutSeconds,
                         const std::atomic<bool>* cancel) {
   ScanResult r;
@@ -524,12 +562,18 @@ ScanResult scanIsolated(const std::string& exe, const std::string& format, const
   const fs::path progress = scanProgressFile(tmp.string());
   std::vector<std::string> args = {exe, "--scan-plugin", format, entry, "--out", tmp.string()};
   if (const std::string pf = pluginPrefsFile(); !pf.empty()) args.insert(args.end(), {"--plugin-prefs", pf});  // K-13
+  // K-154: the child and whatever it starts (a bridge's host process) form one group / job: its
+  // memory is watched as one, and it is ended as one.
+  const std::uint64_t physical = platform::physicalMemoryBytes();
+  const std::uint64_t cap = scanMemoryCap(physical);
   platform::Process child;
-  if (!child.start(exe, args)) {
+  child.setTreeMemoryLimit(cap + cap / 4);  // Windows: a hard stop past the watched cap
+  if (!child.start(exe, args, platform::Process::kTree)) {
     r.error = "cannot start the scanner process";
     return r;
   }
   auto cleanUp = [&] {
+    child.killTree();  // helpers the plugin left running
     std::error_code ec;
     fs::remove(tmp, ec);
     fs::remove(progress, ec);
@@ -540,6 +584,9 @@ ScanResult scanIsolated(const std::string& exe, const std::string& format, const
     child.kill();
     child.wait(kKillWaitSeconds);
   };
+  auto lastMemoryLook = std::chrono::steady_clock::time_point{};
+  std::uint64_t memoryUsed = 0;
+  bool tooMuchMemory = false, lowMemory = false;
   // Waited for in short steps so a quit (cancel) does not wait for a slow plugin. K-73: the timeout
   // counts from the child's last sign of progress (a shell of hundreds of plugins takes minutes, each
   // of them quick), and kScanLongestSeconds at most in all.
@@ -559,6 +606,20 @@ ScanResult scanIsolated(const std::string& exe, const std::string& format, const
         lastProgress = now;
       }
     }
+    // K-154: four looks a second at the tree's memory (a runaway plugin can take a gigabyte a second;
+    // a look reads each process's status once, a few milliseconds at most).
+    if (now - lastMemoryLook >= std::chrono::milliseconds(250)) {
+      lastMemoryLook = now;
+      memoryUsed = child.treeMemoryBytes();
+      if (memoryUsed > cap) {
+        tooMuchMemory = true;
+        break;
+      }
+      if (memoryUsed >= lowMemoryFloor(cap) && scanMemoryLow(memoryUsed, platform::availableMemoryBytes(), physical)) {
+        tooMuchMemory = lowMemory = true;
+        break;
+      }
+    }
     double left = timeoutSeconds < 0 ? 1.0 : timeoutSeconds - std::chrono::duration<double>(now - lastProgress).count();
     if (timeoutSeconds >= 0 && std::chrono::duration<double>(now - t0).count() > std::max(timeoutSeconds, kScanLongestSeconds)) left = 0;
     if ((done = child.wait(std::clamp(left, 0.0, 0.05))) || left <= 0) break;
@@ -573,6 +634,12 @@ ScanResult scanIsolated(const std::string& exe, const std::string& format, const
     cleanUp();
     return r;
   }
+  if (tooMuchMemory) {
+    stop();
+    r.error = lowMemory ? scanMemoryError(memoryUsed, true) : scanMemoryError(cap, false);
+    cleanUp();
+    return r;
+  }
   if (!done) {
     stop();
     r.error = progressSize > 0 ? "timed out while loading (after " + std::to_string(progressSize) + " plugins)" : "timed out while loading";
@@ -580,13 +647,28 @@ ScanResult scanIsolated(const std::string& exe, const std::string& format, const
     return r;
   }
   std::string text;
+  bool tooLarge = false;
   {
-    std::ifstream f(tmp, std::ios::binary);
-    std::stringstream ss;
-    ss << f.rdbuf();
-    text = ss.str();
+    std::error_code ec;
+    const std::uintmax_t size = fs::file_size(tmp, ec);
+    if (!ec && size > kScanResultMaxBytes) {
+      tooLarge = true;  // K-154: never read into memory
+    } else {
+      std::ifstream f(tmp, std::ios::binary);
+      std::stringstream ss;
+      ss << f.rdbuf();
+      text = ss.str();
+    }
   }
   cleanUp();
+  if (child.treeMemoryLimitHit()) {  // K-154: Windows: the job's limit stopped it
+    r.error = scanMemoryError(cap, false);
+    return r;
+  }
+  if (tooLarge) {
+    r.error = "described itself at a size no plugin has (the scan result was too large)";
+    return r;
+  }
   if (child.status().crashed) {
     r.error = "crashed while loading (" + child.status().describe().substr(9);
     return r;

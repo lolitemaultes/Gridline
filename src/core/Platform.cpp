@@ -33,12 +33,22 @@
 extern char** environ;
 #endif
 #if defined(__APPLE__)
+#include <libproc.h>
+#include <mach/mach.h>
 #include <pthread.h>
 #include <mach-o/dyld.h>
 #endif
 #if defined(__FreeBSD__) || defined(__DragonFly__) || defined(__NetBSD__) || defined(__OpenBSD__)
-#include <sys/sysctl.h>
 #include <sys/types.h>
+#include <sys/param.h>
+#include <sys/sysctl.h>
+#endif
+#if defined(__FreeBSD__)
+#include <sys/user.h>
+#endif
+#if defined(__linux__)
+#include <fstream>
+#include <sstream>
 #endif
 
 #if defined(__linux__) && !defined(__GLIBC__)
@@ -454,6 +464,50 @@ double peakRssMb() {
 #endif
 }
 
+std::uint64_t physicalMemoryBytes() {
+#if defined(_WIN32)
+  MEMORYSTATUSEX ms{};
+  ms.dwLength = sizeof ms;
+  return GlobalMemoryStatusEx(&ms) ? static_cast<std::uint64_t>(ms.ullTotalPhys) : 0;
+#else
+  const long pages = ::sysconf(_SC_PHYS_PAGES), size = ::sysconf(_SC_PAGESIZE);
+  return pages > 0 && size > 0 ? static_cast<std::uint64_t>(pages) * static_cast<std::uint64_t>(size) : 0;
+#endif
+}
+
+std::uint64_t availableMemoryBytes() {
+#if defined(_WIN32)
+  MEMORYSTATUSEX ms{};
+  ms.dwLength = sizeof ms;
+  return GlobalMemoryStatusEx(&ms) ? static_cast<std::uint64_t>(ms.ullAvailPhys) : 0;
+#elif defined(__linux__)
+  std::ifstream f("/proc/meminfo");
+  std::string key;
+  std::uint64_t kb = 0;
+  std::string unit;
+  while (f >> key >> kb) {
+    std::getline(f, unit);
+    if (key == "MemAvailable:") return kb * 1024u;
+  }
+  return 0;
+#elif defined(__APPLE__)
+  vm_statistics64_data_t vs{};
+  mach_msg_type_number_t n = HOST_VM_INFO64_COUNT;
+  if (host_statistics64(mach_host_self(), HOST_VM_INFO64, reinterpret_cast<host_info64_t>(&vs), &n) != KERN_SUCCESS) return 0;
+  const std::uint64_t page = static_cast<std::uint64_t>(::sysconf(_SC_PAGESIZE));
+  return (static_cast<std::uint64_t>(vs.free_count) + vs.inactive_count + vs.purgeable_count) * page;
+#elif defined(__FreeBSD__)
+  unsigned freePages = 0, inactivePages = 0;
+  size_t len = sizeof freePages;
+  if (sysctlbyname("vm.stats.vm.v_free_count", &freePages, &len, nullptr, 0) != 0) return 0;
+  len = sizeof inactivePages;
+  if (sysctlbyname("vm.stats.vm.v_inactive_count", &inactivePages, &len, nullptr, 0) != 0) inactivePages = 0;
+  return (static_cast<std::uint64_t>(freePages) + inactivePages) * static_cast<std::uint64_t>(::sysconf(_SC_PAGESIZE));
+#else
+  return 0;
+#endif
+}
+
 // ---------------------------------------------------------------- numbers
 
 double parseDouble(const char* s, char** end) {
@@ -543,6 +597,7 @@ Process& Process::operator=(Process&& o) noexcept {
     handle_ = o.handle_;
     job_ = o.job_;
     group_ = o.group_;
+    memoryLimit_ = o.memoryLimit_;
     outFile_ = std::move(o.outFile_);
     errFile_ = std::move(o.errFile_);
     status_ = o.status_;
@@ -651,6 +706,10 @@ bool Process::start(const std::string& exe, const std::vector<std::string>& args
     if (job) {
       JOBOBJECT_EXTENDED_LIMIT_INFORMATION li{};
       li.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+      if (memoryLimit_ > 0) {  // K-154: the whole tree's committed memory
+        li.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_JOB_MEMORY;
+        li.JobMemoryLimit = static_cast<SIZE_T>(memoryLimit_);
+      }
       SetInformationJobObject(job, JobObjectExtendedLimitInformation, &li, sizeof li);
     }
   }
@@ -702,6 +761,44 @@ void Process::kill() {
   // Reads only what start() wrote: safe while another thread waits for the child.
   if (started_ && job_) TerminateJobObject(reinterpret_cast<HANDLE>(job_), 0xC000013Au);  // J-192: the whole tree
   if (started_ && handle_) TerminateProcess(reinterpret_cast<HANDLE>(handle_), 0xC000013Au);
+}
+
+void Process::killTree() {
+  if (started_ && job_) TerminateJobObject(reinterpret_cast<HANDLE>(job_), 0xC000013Au);
+}
+
+std::uint64_t Process::treeMemoryBytes() const {
+  if (!started_ || status_.exited) return 0;
+  auto privateBytes = [](HANDLE h) -> std::uint64_t {
+    PROCESS_MEMORY_COUNTERS_EX pmc{};
+    pmc.cb = sizeof pmc;
+    if (!GetProcessMemoryInfo(h, reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&pmc), sizeof pmc)) return 0;
+    return static_cast<std::uint64_t>(std::max(pmc.WorkingSetSize, pmc.PrivateUsage));
+  };
+  if (!job_) return handle_ ? privateBytes(reinterpret_cast<HANDLE>(handle_)) : 0;
+  // The job's process list (a fixed buffer: a scan tree has a handful of processes).
+  struct {
+    JOBOBJECT_BASIC_PROCESS_ID_LIST head;
+    ULONG_PTR more[255];
+  } list{};
+  list.head.NumberOfAssignedProcesses = 256;
+  if (!QueryInformationJobObject(reinterpret_cast<HANDLE>(job_), JobObjectBasicProcessIdList, &list, sizeof list, nullptr)) return 0;
+  std::uint64_t total = 0;
+  for (DWORD i = 0; i < list.head.NumberOfProcessIdsInList && i < 256; ++i) {
+    HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(list.head.ProcessIdList[i]));
+    if (!h) continue;
+    total += privateBytes(h);
+    CloseHandle(h);
+  }
+  return total;
+}
+
+bool Process::treeMemoryLimitHit() const {
+  if (!started_ || !job_ || memoryLimit_ == 0) return false;
+  JOBOBJECT_EXTENDED_LIMIT_INFORMATION li{};
+  if (!QueryInformationJobObject(reinterpret_cast<HANDLE>(job_), JobObjectExtendedLimitInformation, &li, sizeof li, nullptr)) return false;
+  // An allocation that would pass the limit fails, so the peak stays just under it.
+  return static_cast<std::uint64_t>(li.PeakJobMemoryUsed) + (64u << 20) >= memoryLimit_;
 }
 
 #else
@@ -780,6 +877,116 @@ void Process::kill() {
   if (started_ && pid_ > 0 && group_) ::kill(-static_cast<pid_t>(pid_), SIGKILL);  // J-192: the whole group
   if (started_ && pid_ > 0) ::kill(static_cast<pid_t>(pid_), SIGKILL);
 }
+
+void Process::killTree() {
+  // A process group's id is never handed to a new process while the group has members, so
+  // signalling it after the leader was reaped reaches only what is left of this tree.
+  if (started_ && pid_ > 0 && group_) ::kill(-static_cast<pid_t>(pid_), SIGKILL);
+}
+
+namespace {
+// K-154: resident memory of the processes in group `pgid` (or of `pid` alone when pgid <= 0).
+std::uint64_t groupMemory(pid_t pid, pid_t pgid) {
+  const std::uint64_t page = static_cast<std::uint64_t>(::sysconf(_SC_PAGESIZE));
+  (void)page;
+#if defined(__linux__)
+  // /proc/<n>/stat: "pid (comm) state ppid pgrp ...", rss (pages) is field 24.
+  auto read = [&](const std::string& dir, pid_t& group) -> std::uint64_t {
+    std::ifstream f(dir + "/stat");
+    std::string s;
+    if (!std::getline(f, s)) return 0;
+    const size_t close = s.rfind(')');
+    if (close == std::string::npos) return 0;
+    std::istringstream in(s.substr(close + 2));
+    std::string field;
+    std::uint64_t rss = 0;
+    for (int i = 3; in >> field; ++i) {
+      if (i == 5) group = static_cast<pid_t>(std::atol(field.c_str()));
+      if (i == 24) {
+        rss = std::strtoull(field.c_str(), nullptr, 10);
+        break;
+      }
+    }
+    return rss * page;
+  };
+  if (pgid <= 0) {
+    pid_t g = 0;
+    return read("/proc/" + std::to_string(pid), g);
+  }
+  std::uint64_t total = 0;
+  std::error_code ec;
+  for (fs::directory_iterator it("/proc", ec), end; !ec && it != end; it.increment(ec)) {
+    const std::string name = it->path().filename().string();
+    if (name.empty() || name.find_first_not_of("0123456789") != std::string::npos) continue;
+    pid_t g = 0;
+    const std::uint64_t r = read(it->path().string(), g);
+    if (g == pgid) total += r;
+  }
+  return total;
+#elif defined(__APPLE__)
+  auto footprint = [](pid_t p) -> std::uint64_t {
+    rusage_info_v2 ri{};
+    if (proc_pid_rusage(p, RUSAGE_INFO_V2, reinterpret_cast<rusage_info_t*>(&ri)) != 0) return 0;
+    return ri.ri_phys_footprint;
+  };
+  if (pgid <= 0) return footprint(pid);
+  pid_t pids[512] = {};
+  const int n = std::min(512, proc_listpgrppids(pgid, pids, static_cast<int>(sizeof pids)));  // (a count of processes)
+  std::uint64_t total = 0;
+  for (int i = 0; i < n; ++i)
+    if (pids[i] > 0) total += footprint(pids[i]);
+  return total;
+#elif defined(__FreeBSD__)
+  int mib[4] = {CTL_KERN, KERN_PROC, pgid > 0 ? KERN_PROC_PGRP : KERN_PROC_PID, pgid > 0 ? static_cast<int>(pgid) : static_cast<int>(pid)};
+  size_t len = 0;
+  if (sysctl(mib, 4, nullptr, &len, nullptr, 0) != 0 || len == 0) return 0;
+  len += 16 * sizeof(kinfo_proc);
+  std::vector<kinfo_proc> procs(len / sizeof(kinfo_proc) + 1);
+  len = procs.size() * sizeof(kinfo_proc);
+  if (sysctl(mib, 4, procs.data(), &len, nullptr, 0) != 0) return 0;
+  std::uint64_t total = 0;
+  for (size_t i = 0; i < len / sizeof(kinfo_proc); ++i) total += static_cast<std::uint64_t>(procs[i].ki_rssize) * page;
+  return total;
+#elif defined(__OpenBSD__)
+  int mib[6] = {CTL_KERN, KERN_PROC, pgid > 0 ? KERN_PROC_PGRP : KERN_PROC_PID, pgid > 0 ? static_cast<int>(pgid) : static_cast<int>(pid),
+                static_cast<int>(sizeof(kinfo_proc)), 0};
+  size_t len = 0;
+  if (sysctl(mib, 6, nullptr, &len, nullptr, 0) != 0 || len == 0) return 0;
+  len += 16 * sizeof(kinfo_proc);
+  std::vector<kinfo_proc> procs(len / sizeof(kinfo_proc) + 1);
+  len = procs.size() * sizeof(kinfo_proc);
+  mib[5] = static_cast<int>(procs.size());
+  if (sysctl(mib, 6, procs.data(), &len, nullptr, 0) != 0) return 0;
+  std::uint64_t total = 0;
+  for (size_t i = 0; i < len / sizeof(kinfo_proc); ++i) total += static_cast<std::uint64_t>(procs[i].p_vm_rssize) * page;
+  return total;
+#elif defined(__NetBSD__)
+  int mib[6] = {CTL_KERN, KERN_PROC2, pgid > 0 ? KERN_PROC_PGRP : KERN_PROC_PID, pgid > 0 ? static_cast<int>(pgid) : static_cast<int>(pid),
+                static_cast<int>(sizeof(kinfo_proc2)), 0};
+  size_t len = 0;
+  if (sysctl(mib, 6, nullptr, &len, nullptr, 0) != 0 || len == 0) return 0;
+  len += 16 * sizeof(kinfo_proc2);
+  std::vector<kinfo_proc2> procs(len / sizeof(kinfo_proc2) + 1);
+  len = procs.size() * sizeof(kinfo_proc2);
+  mib[5] = static_cast<int>(procs.size());
+  if (sysctl(mib, 6, procs.data(), &len, nullptr, 0) != 0) return 0;
+  std::uint64_t total = 0;
+  for (size_t i = 0; i < len / sizeof(kinfo_proc2); ++i) total += static_cast<std::uint64_t>(procs[i].p_vm_rssize) * page;
+  return total;
+#else
+  (void)pid;
+  (void)pgid;
+  return 0;
+#endif
+}
+}  // namespace
+
+std::uint64_t Process::treeMemoryBytes() const {
+  if (!started_ || status_.exited || pid_ <= 0) return 0;
+  return groupMemory(static_cast<pid_t>(pid_), group_ ? static_cast<pid_t>(pid_) : 0);
+}
+
+bool Process::treeMemoryLimitHit() const { return false; }
 
 #endif
 

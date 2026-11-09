@@ -89,8 +89,27 @@ std::unique_ptr<Backend> createBackend(const std::string& format, const std::str
 // true the child is killed and the result (ok = false) must not be cached (J-103: quit).
 // K-73: the timeout counts from the child's last progress (scanProgress), so a shell of hundreds of
 // plugins is not given up while it describes them; 30 minutes at most in all.
+// K-154: the child runs in its own process group (Windows: a job), and the whole tree (with any
+// helper it starts, such as a bridge's host process) is ended when the scan of the entry ends.
+// While it loads, the tree's memory is watched: past scanMemoryCap(), or while the computer runs
+// low on memory (scanMemoryLow()), it is stopped and the entry fails with "used too much memory
+// while loading", like any broken plugin (kept out of later scans until a Rescan of everything).
 ScanResult scanIsolated(const std::string& exe, const std::string& format, const std::string& entry, double timeoutSeconds = 60,
                         const std::atomic<bool>* cancel = nullptr);
+// K-154: the memory one plugin's scan may use: a quarter of the physical memory, 2 to 8 GB (4 GB
+// when the size is unknown; big sample-based instruments take a gigabyte or two while they load).
+// What keeps the computer out of swap is the reserve below. GRIDLINE_SCAN_MEMORY_MB overrides it (tests).
+std::uint64_t scanMemoryCap(std::uint64_t physicalBytes);
+// K-154: the scan's tree is stopped early when it holds 512 MB or more (a quarter of the cap when
+// that is less: real use, not a bystander's) while the memory still free for new use is under the
+// reserve: a tenth of the physical memory, 512 MB to 2 GB (GRIDLINE_SCAN_RESERVE_MB overrides it).
+// So a scan never pushes the computer into swap, whatever the cap allows.
+std::uint64_t scanMemoryReserve(std::uint64_t physicalBytes);
+bool scanMemoryLow(std::uint64_t treeBytes, std::uint64_t availableBytes, std::uint64_t physicalBytes);
+// The failure text for a stopped scan ("used too much memory while loading (...)").
+std::string scanMemoryError(std::uint64_t treeBytes, bool low);
+// K-154: a scan result file larger than this is not read (a plugin that described itself without end).
+constexpr std::uint64_t kScanResultMaxBytes = 256ull << 20;
 // Entry point of child processes: the scanner (`--scan-plugin`, `--scan-vst3`)
 // and the playback sandbox (`--plugin-sandbox`). Returns the exit code, or -1
 // when the arguments name no child mode.

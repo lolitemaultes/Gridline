@@ -1205,8 +1205,10 @@ ScanResult clapScan(const std::string& path) {
       c.params.push_back(std::move(sp));
     }
     r.classes.push_back(std::move(c));
-    scanProgress();     // K-73: the scan's timeout starts again with each plugin of the file
-    (void)b.release();  // never destroyed in the scanner (plugins that crash on destroy must not fail the scan)
+    scanProgress();  // K-73: the scan's timeout starts again with each plugin of the file
+    // K-154: each instance is ended once described (the module stays loaded), as the VST3 scan does:
+    // kept alive, a file of a hundred plugins held every one of them, prepared, at once (gigabytes).
+    b.reset();
   }
   r.ok = !r.classes.empty();
   if (!r.ok && r.error.empty()) r.error = "no plugins in the factory";

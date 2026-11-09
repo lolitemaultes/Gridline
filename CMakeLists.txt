@@ -849,6 +849,20 @@ target_compile_options(gridline_tests_scan_hang PRIVATE ${GL_WARN})
 add_test(NAME k71_scan_hang COMMAND gridline_tests_scan_hang WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 set_tests_properties(k71_scan_hang PROPERTIES TIMEOUT 240)
 # K-73: a stand-in plugin scanner child (fake plugins that hang, crash, are slow or hold many plugins).
+# K-154: a plugin scan never runs the computer out of memory (the test is its own fake scanner child).
+add_executable(gridline_tests_scan_memory tests/test_scan_memory.cpp)
+target_link_libraries(gridline_tests_scan_memory PRIVATE gridline_core)
+target_include_directories(gridline_tests_scan_memory PRIVATE src tests)
+target_compile_options(gridline_tests_scan_memory PRIVATE ${GL_WARN})
+add_test(NAME k154_scan_memory COMMAND gridline_tests_scan_memory WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+set_tests_properties(k154_scan_memory PROPERTIES TIMEOUT 300)
+add_executable(gridline_tests_demo_memory tests/test_demo_memory.cpp)
+target_link_libraries(gridline_tests_demo_memory PRIVATE gridline_core)
+target_include_directories(gridline_tests_demo_memory PRIVATE src tests)
+target_compile_options(gridline_tests_demo_memory PRIVATE ${GL_WARN})
+add_test(NAME k154_demo_memory COMMAND gridline_tests_demo_memory WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+set_tests_properties(k154_demo_memory PROPERTIES TIMEOUT 600)
+
 add_executable(gridline_fake_plugin_scanner tests/fake_plugin_scanner.cpp)
 target_compile_options(gridline_fake_plugin_scanner PRIVATE ${GL_WARN})
 # K-73: scans at a big collection's scale (1836 fake plugins), shells, hung plugins, VST3 search, Windows DLL check.

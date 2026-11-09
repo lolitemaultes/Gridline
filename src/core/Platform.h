@@ -64,6 +64,11 @@ int64_t fileTimeSeconds(std::filesystem::file_time_type t);
 // Processor time of this process (user + system, seconds) and its peak resident memory (MB).
 double cpuSeconds();
 double peakRssMb();
+// K-154: the computer's physical memory, and how much of it is free for new use now (Linux
+// MemAvailable, macOS free + inactive + purgeable, FreeBSD free + inactive, Windows available);
+// 0 where the system does not say.
+std::uint64_t physicalMemoryBytes();
+std::uint64_t availableMemoryBytes();
 
 // An advisory lock on a small file (created when missing), shared or exclusive, between processes
 // and between holders in one process. It lives in an open file: the system drops it when the process
@@ -141,10 +146,24 @@ class Process {
     outFile_ = outFile;
     errFile_ = errFile;
   }
+  // K-154: (kTree only) the next start() limits the memory the whole tree may commit (Windows: the
+  // job's memory limit, allocations past it fail). POSIX systems have no such limit for a tree that
+  // keeps working with Wine and other bridges: the caller watches treeMemoryBytes() instead.
+  void setTreeMemoryLimit(std::uint64_t bytes) { memoryLimit_ = bytes; }
   bool running() const { return started_ && !status_.exited; }
   // Waits up to `seconds` (< 0: forever); true when the child has exited.
   bool wait(double seconds = -1);
   void kill();
+  // K-154: (kTree) ends what is left of the tree after the child itself has ended: helpers it
+  // started (a bridge's host process) that would otherwise run on. Nothing without kTree.
+  void killTree();
+  // K-154: the memory the child uses now, with everything it started when kTree (its process group:
+  // Linux, macOS, FreeBSD, NetBSD, OpenBSD; its job: Windows): resident memory (macOS: the
+  // physical footprint, which counts compressed memory too). 0 when unknown or not running.
+  std::uint64_t treeMemoryBytes() const;
+  // K-154: Windows: the job's memory limit stopped an allocation of the tree (the child then
+  // usually crashes); always false elsewhere.
+  bool treeMemoryLimitHit() const;
   const ExitStatus& status() const { return status_; }
   int pid() const { return pid_; }
 
@@ -154,6 +173,7 @@ class Process {
   std::intptr_t handle_ = 0;  // Windows process handle
   std::intptr_t job_ = 0;     // Windows job object (kTree)
   bool group_ = false;        // POSIX: the child leads its own process group (kTree)
+  std::uint64_t memoryLimit_ = 0;  // K-154: Windows job memory limit (0: none)
   std::string outFile_, errFile_;
   ExitStatus status_;
 };
