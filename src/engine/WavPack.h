@@ -37,6 +37,20 @@ bool decodeAacFile(const std::string& path, DecodedAudio& out, std::string* err)
 enum class AacRoute { Auto, System, Program };  // tests: only the system's decoder, only FFmpeg
 void setAacRouteForTests(AacRoute r);
 
+// The encoder priming and the real length an MPEG-4 file states for its first audio track,
+// from the iTunes gapless tag (iTunSMPB) or the track's edit list. Units: the track's own
+// samples (the media timescale; iTunSMPB counts the AAC core rate, half the output rate for
+// HE-AAC). Mp4Gapless::found is false for a file that says neither. AudioCodecsAac.cpp.
+struct Mp4Gapless {
+  bool found = false;
+  bool fromTag = false;     // iTunSMPB, else the edit list
+  uint64_t priming = 0;     // samples to drop at the start
+  uint64_t length = 0;      // samples to keep after them
+  uint64_t padding = 0;     // iTunSMPB only: samples after the end
+  uint32_t timescale = 0;   // the audio track's media timescale (mdhd), 0 if unknown
+};
+Mp4Gapless readMp4Gapless(const std::string& path);
+
 // J-51: both decoders give up (false, "cancelled") when the calling thread's
 // DecodeCancelScope flag is set (Sample.h; defined in Sample.cpp).
 bool decodeCancelled();

@@ -5,6 +5,10 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 
 ## Unreleased
 
+### Fixed
+
+- **M4A samples have their exact length on Linux and the BSDs.** AAC files in .m4a decoded with FFmpeg no longer carry up to a tenth of a second of extra silence at the end, and no longer start late: Gridline now reads the start delay and the real length the file states and trims to the sample, as macOS and Windows do, so loops close cleanly and tempo fitting lines up.
+
 ## 0.7.4
 
 ### Added

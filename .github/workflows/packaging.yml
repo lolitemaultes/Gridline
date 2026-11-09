@@ -264,13 +264,24 @@ jobs:
           python3 packaging/render.py --out rendered --fake-sums --dist dist
       - uses: vmactions/freebsd-vm@v1
         with:
-          release: "14.3"
+          # "14": the newest 14.x release, which the ports tree supports (it stops building on a
+          # point release once that release has reached its end of life).
+          release: "14"
           usesh: true
           mem: 8192
           prepare: pkg install -y git portlint bash
           run: |
             set -e
-            git clone --depth 1 https://git.FreeBSD.org/ports.git /usr/ports
+            freebsd-version
+            # The ports tree from the branch the VM's packages are built from: the current
+            # quarterly branch (YYYYQn) for the quarterly package set, main for the latest one.
+            if pkg -vv | grep -q '/quarterly"'; then
+              m="$(date -u +%m)"; branch="$(date -u +%Y)Q$(( (${m#0} + 2) / 3 ))"
+            else
+              branch=main
+            fi
+            echo "ports branch: $branch"
+            git clone --depth 1 -b "$branch" https://git.FreeBSD.org/ports.git /usr/ports
             cp -R rendered/freebsd/audio/gridline /usr/ports/audio/gridline
             git -C /usr/ports add audio/gridline  # (portlint -C wants the port's files in git)
             mkdir -p /usr/ports/distfiles && cp dist/Gridline-*-source.tar.gz /usr/ports/distfiles/

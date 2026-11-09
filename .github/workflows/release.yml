@@ -613,7 +613,7 @@ jobs:
       - if: matrix.os == 'freebsd'
         uses: vmactions/freebsd-vm@v1
         with:
-          release: "14.3"
+          release: "14"  # the newest 14.x release (a pinned point release reaches its end of life)
           usesh: true
           mem: 8192
           envs: "GRIDLINE_PACKAGE GRIDLINE_CMAKE_ARGS GRIDLINE_NO_PLUGIN_SCAN"

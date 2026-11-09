@@ -10,6 +10,7 @@
 // audio thread) and gives up when the decode is cancelled (DecodeCancelScope).
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -210,10 +211,201 @@ bool decodeSystem(const std::string& path, DecodedAudio& out, std::string* err) 
 bool decodeSystem(const std::string&, DecodedAudio&, std::string* err) { return fail(err, "no system decoder"); }
 #endif
 
-// The FFmpeg program: the first audio stream as 32-bit float WAV into a temporary file.
-bool decodeProgram(const std::string& path, DecodedAudio& out, std::string* err) {
-  const mediatools::Tool ff = mediatools::locateFfmpeg();
-  if (!ff.found()) return fail(err, "this format needs FFmpeg, which was not found");
+// ---- MPEG-4 gapless information (the FFmpeg route trims with it itself) ----
+uint64_t be(const uint8_t* p, int n) {
+  uint64_t v = 0;
+  for (int i = 0; i < n; ++i) v = (v << 8) | p[i];
+  return v;
+}
+
+// Calls f(type, body, bodySize) for every box in [p, end); f returns false to stop.
+template <class F>
+void eachBox(const uint8_t* p, const uint8_t* end, F f) {
+  while (end - p >= 8) {
+    uint64_t size = be(p, 4);
+    size_t header = 8;
+    if (size == 1) {
+      if (end - p < 16) return;
+      size = be(p + 8, 8);
+      header = 16;
+    } else if (size == 0) {
+      size = static_cast<uint64_t>(end - p);
+    }
+    if (size < header || size > static_cast<uint64_t>(end - p)) return;
+    if (!f(p + 4, p + header, static_cast<size_t>(size - header))) return;
+    p += size;
+  }
+}
+
+bool isType(const uint8_t* t, const char* want) { return std::memcmp(t, want, 4) == 0; }
+
+// The moov box's body, found by walking the file's top-level boxes (it may sit at the end).
+std::vector<uint8_t> readMoov(const std::string& path) {
+  std::ifstream is(fs::u8path(path), std::ios::binary);
+  if (!is) return {};
+  is.seekg(0, std::ios::end);
+  const uint64_t fileSize = static_cast<uint64_t>(is.tellg());
+  uint64_t at = 0;
+  for (int guard = 0; guard < 4096 && at + 8 <= fileSize; ++guard) {
+    uint8_t h[16];
+    is.seekg(static_cast<std::streamoff>(at));
+    if (!is.read(reinterpret_cast<char*>(h), 8)) return {};
+    uint64_t size = be(h, 4);
+    uint64_t header = 8;
+    if (size == 1) {
+      if (!is.read(reinterpret_cast<char*>(h + 8), 8)) return {};
+      size = be(h + 8, 8);
+      header = 16;
+    } else if (size == 0) {
+      size = fileSize - at;
+    }
+    if (size < header || size > fileSize - at) return {};
+    if (isType(h + 4, "moov")) {
+      const uint64_t body = size - header;
+      if (body > (uint64_t{64} << 20)) return {};
+      std::vector<uint8_t> v(static_cast<size_t>(body));
+      if (!is.read(reinterpret_cast<char*>(v.data()), static_cast<std::streamsize>(body))) return {};
+      return v;
+    }
+    at += size;
+  }
+  return {};
+}
+
+// "iTunSMPB": " 00000000 PPPPPPPP QQQQQQQQ LLLLLLLLLLLLLLLL ..." (hex: priming, padding, length).
+bool parseSmpb(const uint8_t* moov, size_t n, Mp4Gapless& g) {
+  static const char kName[] = "iTunSMPB";
+  const uint8_t* end = moov + n;
+  const uint8_t* hit = std::search(moov, end, kName, kName + 8);
+  if (hit == end) return false;
+  static const char kData[] = "data";
+  const uint8_t* d = std::search(hit + 8, end, kData, kData + 4);
+  if (d == end || d - moov < 4 || end - d < 12) return false;
+  const uint64_t boxSize = be(d - 4, 4);
+  if (boxSize < 16 || boxSize - 4 > static_cast<uint64_t>(end - d)) return false;
+  const std::string text(reinterpret_cast<const char*>(d + 12), static_cast<size_t>(boxSize - 16));
+  uint64_t f[4] = {0, 0, 0, 0};
+  int k = 0;
+  size_t i = 0;
+  while (k < 4 && i < text.size()) {
+    while (i < text.size() && !std::isxdigit(static_cast<unsigned char>(text[i]))) ++i;
+    size_t j = i;
+    uint64_t v = 0;
+    while (j < text.size() && std::isxdigit(static_cast<unsigned char>(text[j])) && j - i < 16) {
+      const char c = static_cast<char>(std::tolower(static_cast<unsigned char>(text[j])));
+      v = (v << 4) | static_cast<uint64_t>(c <= '9' ? c - '0' : c - 'a' + 10);
+      ++j;
+    }
+    if (j == i) break;
+    f[k++] = v;
+    i = j;
+  }
+  if (k < 4 || f[3] == 0) return false;
+  g.priming = f[1];
+  g.padding = f[2];
+  g.length = f[3];
+  g.fromTag = true;
+  return g.found = true;
+}
+
+}  // namespace
+
+Mp4Gapless readMp4Gapless(const std::string& path) {
+  Mp4Gapless g;
+  const std::vector<uint8_t> moov = readMoov(path);
+  if (moov.empty()) return g;
+  const uint8_t* b = moov.data();
+  const uint8_t* e = b + moov.size();
+  uint32_t movieScale = 0;
+  bool haveEdit = false;
+  uint64_t editStart = 0, editLength = 0;
+  bool audioDone = false;
+  eachBox(b, e, [&](const uint8_t* t, const uint8_t* body, size_t n) {
+    if (isType(t, "mvhd") && n >= 24) movieScale = static_cast<uint32_t>(be(body + (body[0] == 1 ? 20 : 12), 4));
+    if (!isType(t, "trak") || audioDone) return true;
+    bool sound = false, edit = false;
+    uint32_t mediaScale = 0;
+    uint64_t start = 0, length = 0;
+    eachBox(body, body + n, [&](const uint8_t* t2, const uint8_t* b2, size_t n2) {
+      if (isType(t2, "mdia")) {
+        eachBox(b2, b2 + n2, [&](const uint8_t* t3, const uint8_t* b3, size_t n3) {
+          if (isType(t3, "hdlr") && n3 >= 12) sound = isType(b3 + 8, "soun");
+          if (isType(t3, "mdhd") && n3 >= 24) mediaScale = static_cast<uint32_t>(be(b3 + (b3[0] == 1 ? 20 : 12), 4));
+          return true;
+        });
+      } else if (isType(t2, "edts")) {
+        eachBox(b2, b2 + n2, [&](const uint8_t* t3, const uint8_t* b3, size_t n3) {
+          if (!isType(t3, "elst") || n3 < 8) return true;
+          const bool v1 = b3[0] == 1;
+          const size_t entry = v1 ? 20 : 12;
+          const uint64_t count = be(b3 + 4, 4);
+          // The first edit that plays media (an empty edit, media time -1, only delays it).
+          for (uint64_t k = 0; k < count && 8 + (k + 1) * entry <= n3; ++k) {
+            const uint8_t* p = b3 + 8 + k * entry;
+            const uint64_t dur = be(p, v1 ? 8 : 4);
+            const uint64_t mt = be(p + (v1 ? 8 : 4), v1 ? 8 : 4);
+            const bool empty = v1 ? mt == ~uint64_t{0} : mt == 0xFFFFFFFFu;
+            if (empty) continue;
+            start = mt, length = dur, edit = true;
+            break;
+          }
+          return true;
+        });
+      }
+      return true;
+    });
+    if (!sound) return true;
+    audioDone = true;
+    g.timescale = mediaScale;
+    if (edit) haveEdit = true, editStart = start, editLength = length;
+    return true;
+  });
+  // The iTunes tag first: it states priming and length outright (an edit list made from it
+  // says the same); else the edit list, whose length is in the movie's timescale.
+  if (parseSmpb(b, moov.size(), g)) return g;
+  if (haveEdit && movieScale > 0 && g.timescale > 0 && editLength > 0) {
+    g.found = true;
+    g.priming = editStart;
+    g.length = static_cast<uint64_t>(static_cast<long double>(editLength) * g.timescale / movieScale + 0.5L);
+  }
+  return g;
+}
+
+namespace {
+
+// Trims the raw FFmpeg decode (priming and end padding kept) to what the file states.
+void trimGapless(DecodedAudio& out, const Mp4Gapless& g) {
+  const uint64_t frames = out.frames();
+  if (!g.found || frames == 0 || out.channels <= 0) return;
+  // Output samples per stated sample: 1, or 2 for HE-AAC (the tag counts the AAC core rate).
+  double scale = 1.0;
+  if (g.fromTag) {
+    const uint64_t sum = g.priming + g.length + g.padding;
+    const double r = sum ? static_cast<double>(frames) / static_cast<double>(sum) : 1.0;
+    if (r > 1.75 && r < 2.25) scale = 2.0;
+    else if (!(r > 0.85 && r < 1.15) && g.timescale > 0) scale = static_cast<double>(out.sampleRate) / g.timescale;
+  } else if (g.timescale > 0) {
+    scale = static_cast<double>(out.sampleRate) / g.timescale;
+  }
+  const uint64_t start = static_cast<uint64_t>(static_cast<double>(g.priming) * scale + 0.5);
+  uint64_t keep = static_cast<uint64_t>(static_cast<double>(g.length) * scale + 0.5);
+  if (start >= frames) return;  // nonsense: keep everything
+  keep = std::min(keep, frames - start);
+  if (keep == 0) return;
+  const size_t ch = static_cast<size_t>(out.channels);
+  out.interleaved.erase(out.interleaved.begin(), out.interleaved.begin() + static_cast<std::ptrdiff_t>(start * ch));
+  out.interleaved.resize(static_cast<size_t>(keep) * ch);
+}
+
+bool isMp4File(const std::string& path) {
+  std::ifstream is(fs::u8path(path), std::ios::binary);
+  uint8_t h[12] = {};
+  return is.read(reinterpret_cast<char*>(h), 12) && std::memcmp(h + 4, "ftyp", 4) == 0;
+}
+
+// One FFmpeg run: the first audio stream as 32-bit float WAV into a temporary file. `raw`:
+// keep the encoder priming and end padding (no edit list, no automatic skipping).
+bool runProgram(const mediatools::Tool& ff, const std::string& path, bool raw, DecodedAudio& out, std::string* err) {
   static std::atomic<unsigned> counter{0};
   std::error_code ec;
   fs::path dir = fs::temp_directory_path(ec);
@@ -227,7 +419,10 @@ bool decodeProgram(const std::string& path, DecodedAudio& out, std::string* err)
     }
   } cleanup{tmp};
   std::vector<std::string> args = ff.argv();
-  for (const char* a : {"-nostdin", "-y", "-hide_banner", "-loglevel", "error", "-i"}) args.push_back(a);
+  for (const char* a : {"-nostdin", "-y", "-hide_banner", "-loglevel", "error"}) args.push_back(a);
+  if (raw)
+    for (const char* a : {"-ignore_editlist", "1", "-flags2", "+skip_manual"}) args.push_back(a);
+  args.push_back("-i");
   args.push_back(path);
   for (const char* a : {"-map", "0:a:0", "-vn", "-c:a", "pcm_f32le", "-rf64", "auto", "-f", "wav"}) args.push_back(a);
   args.push_back(tmp.u8string());
@@ -257,6 +452,25 @@ bool decodeProgram(const std::string& path, DecodedAudio& out, std::string* err)
   drwav_free(data, nullptr);
   if (ch == 0 || sr == 0 || out.interleaved.empty()) return fail(err, "no audio in the file");
   return true;
+}
+
+// The FFmpeg program. An MPEG-4 file that states its priming and length (iTunSMPB or an edit
+// list) is decoded raw and trimmed here, to the sample, the same on every FFmpeg version (they
+// differ in which of the two they apply and none trims the end padding). Raw AAC (ADTS) says
+// neither, so it is decoded as FFmpeg gives it, like the system decoders do.
+bool decodeProgram(const std::string& path, DecodedAudio& out, std::string* err) {
+  const mediatools::Tool ff = mediatools::locateFfmpeg();
+  if (!ff.found()) return fail(err, "this format needs FFmpeg, which was not found");
+  const Mp4Gapless g = isMp4File(path) ? readMp4Gapless(path) : Mp4Gapless{};
+  if (g.found) {
+    if (runProgram(ff, path, true, out, err)) {
+      trimGapless(out, g);
+      return true;
+    }
+    if (decodeCancelled()) return false;
+    out = DecodedAudio{};  // an FFmpeg without the raw options: as it decodes by itself
+  }
+  return runProgram(ff, path, false, out, err);
 }
 
 }  // namespace

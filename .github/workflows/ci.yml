@@ -226,7 +226,7 @@ jobs:
         if: matrix.os == 'freebsd'
         uses: vmactions/freebsd-vm@v1
         with:
-          release: "14.3"
+          release: "14"  # the newest 14.x release (a pinned point release reaches its end of life)
           usesh: true
           copyback: false  # the tests ran in the VM; copying a 4 GB build back can drop the connection
           mem: 8192
