@@ -26,16 +26,35 @@ struct ClipPass {
   int index = 0;  // 0 = the first (possibly partial) pass
 };
 
-// Offset wrapped into [0, loop) (loop <= 0: unchanged).
-Tick wrapLoopOffset(Tick offset, Tick loop);
+// Offset wrapped into the loop [from, from + loop) (loop <= 0: unchanged).
+Tick wrapLoopOffset(Tick offset, Tick loop, Tick from = 0);
 // The passes of a window [offset, offset + len) over content that repeats
-// every `loop` ticks (loop <= 0: a single pass).
-std::vector<ClipPass> loopPasses(Tick offset, Tick len, Tick loop);
+// [from, from + loop) (loop <= 0: a single pass).
+std::vector<ClipPass> loopPasses(Tick offset, Tick len, Tick loop, Tick from = 0);
+// True when a window [offset, offset + len) over that loop reaches a loop point.
+bool loopRepeatsWithin(Tick offset, Tick len, Tick loop, Tick from = 0);
 
-// The loop length of a pattern or automation clip's content (0 = it does not
-// loop: Clip::loop off, an audio clip, a missing pattern, an automation clip
-// without a loop length).
+// K-140: the content a pattern or automation clip repeats: ticks [from,
+// from + len). len 0 = it does not loop (Clip::loop off, an audio clip, a
+// missing pattern, an automation clip without a loop length). A clip with its
+// own loop (Clip::loopLength, a cut clip) repeats that; the others their
+// pattern (from its start) or their curve's loop length.
+struct LoopWindow {
+  Tick from = 0, len = 0;
+};
+LoopWindow clipLoopWindow(const Song& s, const Clip& c);
+// The loop length of a pattern or automation clip's content (clipLoopWindow's len).
 Tick clipLoopLength(const Song& s, const Clip& c);
+// The clip's offset `offset` wrapped into its loop window (unchanged when it does not loop).
+Tick wrapClipOffset(const Song& s, const Clip& c, Tick offset);
+// K-140: the content a pattern or automation clip that does not loop would
+// loop by itself: its pattern [0, length) or its curve [0, loop length or the
+// last point). len 0 = none (audio clips, missing content).
+LoopWindow naturalLoopWindow(const Song& s, const Clip& c);
+// K-140: a pattern or automation clip that shows only part of its content (it
+// was cut at either end): what it shows, [offset, offset + length), lies inside
+// naturalLoopWindow and is shorter. Looping it repeats that part.
+bool clipCutShort(const Song& s, const Clip& c);
 // The clip's passes: several for a looping pattern clip longer than one pass,
 // else one pass [0, len) from the clip's offset.
 std::vector<ClipPass> clipPasses(const Song& s, const Clip& c);

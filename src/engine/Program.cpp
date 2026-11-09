@@ -1166,15 +1166,20 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     const Tick len = std::max<Tick>(1, song.clipLength(c));
     if (c.kind == ClipKind::Pattern) {
       if (const Pattern* p = song.pattern(c.pattern))
-        for (auto& lane : singlePatternLanes(*p, len, c.offset, clipLoopLength(song, c))) prog->hasPatternAutos |= compileLane(std::move(lane), lanes);
+        for (auto& lane : singlePatternLanes(*p, len, c.offset, clipLoopWindow(song, c).len, clipLoopWindow(song, c).from))
+          prog->hasPatternAutos |= compileLane(std::move(lane), lanes);
     } else if (c.kind == ClipKind::Automation) {
       if (const AutomationClip* a = song.automation(c.source); a && !a->points.empty() && a->owner != kNoId) {
         AutomationLane l;
         l.owner = a->owner;
         l.index = a->index;
         AutomationClip k = *a;
-        if (!c.loop) k.loop = 0;  // K-114: only a placement that loops repeats the curve
-        l.inst.push_back({0, len, c.offset, std::make_shared<const AutomationClip>(std::move(k))});
+        if (!c.loop || c.loopLength > 0) k.loop = 0;  // K-114: only a placement that loops repeats the curve
+        auto cv = std::make_shared<const AutomationClip>(std::move(k));
+        if (c.loop && c.loopLength > 0)  // K-140: a cut clip repeats its part, pass by pass
+          for (const ClipPass& ps : clipPasses(song, c)) l.inst.push_back({ps.at, ps.at + ps.len, ps.content, cv});
+        else
+          l.inst.push_back({0, len, c.offset, cv});
         prog->hasPatternAutos |= compileLane(std::move(l), lanes);
       }
     }

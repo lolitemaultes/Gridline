@@ -138,6 +138,13 @@ struct Clip {
   // content plays once: an empty pattern past its end, audio up to the end of
   // its window, automation holding its last value.
   bool loop = false;
+  // K-140: a looping pattern or automation clip that was cut short (it showed
+  // less than its pattern or curve) repeats what it showed: content ticks
+  // [loopStart, loopStart + loopLength). loopLength 0: the content's own loop
+  // (the pattern's length, the curve's loop length). Audio clips keep 0 (their
+  // loop is their audio window). Only meaningful while `loop` is on.
+  Tick loopStart = 0;
+  Tick loopLength = 0;
   bool muted = false;
   // Audio clips (source times in seconds of the sample).
   double audioStart = 0;     // source position at the clip start
@@ -184,7 +191,8 @@ struct Clip {
 
   bool operator==(const Clip& o) const {
     return id == o.id && pattern == o.pattern && track == o.track && start == o.start && length == o.length &&
-           kind == o.kind && source == o.source && offset == o.offset && loop == o.loop && muted == o.muted && audioStart == o.audioStart &&
+           kind == o.kind && source == o.source && offset == o.offset && loop == o.loop && loopStart == o.loopStart &&
+           loopLength == o.loopLength && muted == o.muted && audioStart == o.audioStart &&
            audioEnd == o.audioEnd && fadeIn == o.fadeIn && fadeOut == o.fadeOut && gain == o.gain && pitch == o.pitch &&
            speedPitch == o.speedPitch && rateFit == o.rateFit &&
            stretch == o.stretch && syncBpm == o.syncBpm && tempoLock == o.tempoLock && reverse == o.reverse && takeGroup == o.takeGroup &&

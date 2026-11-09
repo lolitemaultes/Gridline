@@ -41,7 +41,7 @@ std::vector<AutomationLane> patternAutomationLanes(const Song& song) {
   return out;
 }
 
-std::vector<AutomationLane> singlePatternLanes(const Pattern& p, Tick length, Tick offset, Tick loop) {
+std::vector<AutomationLane> singlePatternLanes(const Pattern& p, Tick length, Tick offset, Tick loop, Tick loopFrom) {
   std::vector<AutomationLane> out;
   for (const auto& pa : p.automation) {
     if (pa.points.empty() || pa.owner == kNoId) continue;
@@ -49,7 +49,7 @@ std::vector<AutomationLane> singlePatternLanes(const Pattern& p, Tick length, Ti
     l.owner = pa.owner;
     l.index = pa.index;
     const auto cv = patternLaneCurve(pa);
-    for (const ClipPass& ps : loopPasses(offset, std::max<Tick>(1, length), loop)) l.inst.push_back({ps.at, ps.at + ps.len, ps.content, cv});
+    for (const ClipPass& ps : loopPasses(offset, std::max<Tick>(1, length), loop, loopFrom)) l.inst.push_back({ps.at, ps.at + ps.len, ps.content, cv});
     out.push_back(std::move(l));
   }
   return out;
@@ -162,7 +162,8 @@ PatternAutomation patternClipFromPlaylist(const Song& s, const AutomationClip& s
   // The window one placement plays: its passes over the (looping) content, unrolled.
   c.loop = 0;
   const Tick len = std::max<Tick>(1, s.clipLength(*placement));
-  for (const ClipPass& ps : loopPasses(placement->offset, len, placement->loop ? src.loop : 0)) {
+  const LoopWindow w = clipLoopWindow(s, *placement);  // K-140: a cut clip's own loop
+  for (const ClipPass& ps : loopPasses(placement->offset, len, w.len, w.from)) {
     const Tick base = at + ps.at;
     const Tick c0 = ps.content, c1 = ps.content + ps.len;
     bool startCovered = false;

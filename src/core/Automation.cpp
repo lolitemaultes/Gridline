@@ -1,4 +1,5 @@
 #include "Automation.h"
+#include "ClipLoop.h"
 #include <functional>
 #include <algorithm>
 #include <cmath>
@@ -226,7 +227,9 @@ std::vector<AutomationLane> automationLanes(const Song& song) {
     const AutomationClip* a = song.automation(c.source);
     if (!a || a->points.empty() || a->owner == kNoId) continue;
     // K-114: only a placement that loops repeats the curve (Clip::loop); the others hold its last value.
-    const bool loops = c.loop && a->loop > 0;
+    // K-140: a cut clip that loops repeats its own part of the curve: one instance per pass.
+    const bool own = c.loop && c.loopLength > 0;
+    const bool loops = c.loop && a->loop > 0 && !own;
     auto& cp = copies[{a->id, loops}];
     if (!cp) {
       AutomationClip k = *a;
@@ -236,7 +239,10 @@ std::vector<AutomationLane> automationLanes(const Song& song) {
     AutomationLane& l = lanes[{a->owner, a->index}];
     l.owner = a->owner;
     l.index = a->index;
-    l.inst.push_back({c.start, c.start + song.clipLength(c), c.offset, cp});
+    if (own)
+      for (const ClipPass& ps : clipPasses(song, c)) l.inst.push_back({c.start + ps.at, c.start + ps.at + ps.len, ps.content, cp});
+    else
+      l.inst.push_back({c.start, c.start + song.clipLength(c), c.offset, cp});
   }
   std::vector<AutomationLane> out;
   for (auto& [k, l] : lanes) {

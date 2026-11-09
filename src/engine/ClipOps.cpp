@@ -172,6 +172,13 @@ Clip withClipLoop(const Song& song, const TempoMap& map, Clip c, bool on) {
       if (n > 0) c.audioStart = std::max(0.0, clipSourceAt(song, c, map, static_cast<double>(c.start + wrapLoopOffset(c.offset, n))));
       c.offset = 0;
     }
+  } else if (on) {  // K-140: a cut clip repeats the part it shows
+    c.loopStart = c.loopLength = 0;
+    if (clipCutShort(song, c)) c.loopStart = c.offset, c.loopLength = song.clipLength(c);
+  } else {  // the first pass's content where the clip starts; the window goes
+    const LoopWindow w = clipLoopWindow(song, c);
+    if (c.loopLength > 0 && w.len > 0) c.offset = wrapLoopOffset(c.offset, w.len, w.from);
+    c.loopStart = c.loopLength = 0;
   }
   c.loop = on;
   return c;
@@ -180,7 +187,7 @@ Clip withClipLoop(const Song& song, const TempoMap& map, Clip c, bool on) {
 void prepareAutomationLoops(Song& song, const std::vector<Clip>& clips, const std::set<ObjectId>& sel) {
   std::map<ObjectId, Tick> want;
   for (const Clip& c : clips)
-    if (c.kind == ClipKind::Automation && sel.count(c.id))
+    if (c.kind == ClipKind::Automation && sel.count(c.id) && !(c.loop ? c.loopLength > 0 : clipCutShort(song, c)))  // (K-140: a cut clip loops on its own)
       if (const AutomationClip* a = song.automation(c.source); a && a->loop <= 0)
         want[a->id] = std::max(want[a->id], std::max<Tick>(1, c.offset + song.clipLength(c)));
   for (const auto& [id, len] : want)
@@ -202,8 +209,12 @@ bool setClipsLoop(Song& song, const std::set<ObjectId>& clips, bool on) {
 
 Tick loopFirstPass(const Song& song, const Clip& c, const TempoMap& map) {
   if (!c.loop) return 0;
-  const Tick n = c.kind == ClipKind::Audio ? audioLoopLength(song, c, map) : clipLoopLength(song, c);
-  return n > 0 ? n - wrapLoopOffset(c.offset, n) : 0;
+  if (c.kind == ClipKind::Audio) {
+    const Tick n = audioLoopLength(song, c, map);
+    return n > 0 ? n - wrapLoopOffset(c.offset, n) : 0;
+  }
+  const LoopWindow w = clipLoopWindow(song, c);
+  return w.len > 0 ? w.from + w.len - wrapLoopOffset(c.offset, w.len, w.from) : 0;
 }
 
 int unloopWithinFirstPass(const Song& song, std::vector<Clip>& clips, const std::set<ObjectId>& sel, const TempoMap& map) {
@@ -242,7 +253,7 @@ ObjectId splitClipAt(Song& song, ObjectId id, Tick at) {
     right.fadeInManual = false, right.fadeInShape = 0, right.fadeInTension = 0;  // J-38
   } else {
     right.offset = c->offset + (at - c->start);
-    if (const Tick loop = clipLoopLength(song, *c); loop > 0) right.offset = wrapLoopOffset(right.offset, loop);  // Q-1
+    right.offset = wrapClipOffset(song, *c, right.offset);  // Q-1 (K-140: within the clip's own loop)
   }
   c = song.clip(id);  // (allocateId does not move clips, but keep it obviously valid)
   c->length = at - c->start;

@@ -234,18 +234,21 @@ void testFlImport(const std::string& sample) {
 // A minimal MPEG-4 file for the gapless reader: ftyp, mdat, then moov (at the end, as streamed
 // files have it) with a video track first and the audio track second.
 std::vector<uint8_t> box(const char* type, const std::vector<uint8_t>& body, bool large = false) {
-  std::vector<uint8_t> v;
-  const uint64_t n = body.size() + (large ? 16 : 8);
-  const auto u32 = [&](uint64_t x) {
-    for (int i = 3; i >= 0; --i) v.push_back(static_cast<uint8_t>(x >> (8 * i)));
+  // The header is written into a sized vector by index (GCC 12 and 13 report a false
+  // stringop-overflow for push_back into an empty vector here).
+  const size_t head = large ? 16 : 8;
+  const uint64_t n = body.size() + head;
+  std::vector<uint8_t> v(head + body.size());
+  const auto u32 = [&](size_t at, uint64_t x) {
+    for (int i = 0; i < 4; ++i) v[at + static_cast<size_t>(i)] = static_cast<uint8_t>(x >> (8 * (3 - i)));
   };
-  u32(large ? 1 : n);
-  v.insert(v.end(), type, type + 4);
+  u32(0, large ? 1 : n);
+  for (size_t i = 0; i < 4; ++i) v[4 + i] = static_cast<uint8_t>(type[i]);
   if (large) {
-    u32(n >> 32);
-    u32(n & 0xFFFFFFFFu);
+    u32(8, n >> 32);
+    u32(12, n & 0xFFFFFFFFu);
   }
-  v.insert(v.end(), body.begin(), body.end());
+  std::copy(body.begin(), body.end(), v.begin() + static_cast<std::ptrdiff_t>(head));
   return v;
 }
 std::vector<uint8_t> cat(std::initializer_list<std::vector<uint8_t>> parts) {

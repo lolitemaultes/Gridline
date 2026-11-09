@@ -1583,12 +1583,14 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
                   app.doc.history().position());
       for (const auto& c : s.playlist)
         std::printf("  clip %u kind %d track %d start %lld len %lld offset %lld audioStart %.6f muted %d pattern %u group %u sel %d"
-                    " source %u audioEnd %.6f fadeIn %.6f fadeOut %.6f gain %.4f pitch %.2f stretch %.4f reverse %d syncBpm %.4f tempoLock %d loop %d\n",
+                    " source %u audioEnd %.6f fadeIn %.6f fadeOut %.6f gain %.4f pitch %.2f stretch %.4f reverse %d syncBpm %.4f tempoLock %d loop %d"
+                    " loopStart %lld loopLength %lld\n",
                     static_cast<unsigned>(c.id), static_cast<int>(c.kind), c.track, static_cast<long long>(c.start),
                     static_cast<long long>(s.clipLength(c)), static_cast<long long>(c.offset), c.audioStart, c.muted ? 1 : 0,
                     static_cast<unsigned>(c.pattern), static_cast<unsigned>(c.group), app.playlist.selected.count(c.id) ? 1 : 0,
                     static_cast<unsigned>(c.source), c.audioEnd, c.fadeIn, c.fadeOut, static_cast<double>(c.gain),
-                    static_cast<double>(c.pitch), c.stretch, c.reverse ? 1 : 0, c.syncBpm, c.tempoLock ? 1 : 0, c.loop ? 1 : 0);  // (K-114: loop)
+                    static_cast<double>(c.pitch), c.stretch, c.reverse ? 1 : 0, c.syncBpm, c.tempoLock ? 1 : 0, c.loop ? 1 : 0,
+                    static_cast<long long>(c.loopStart), static_cast<long long>(c.loopLength));  // (K-114: loop; K-140: its own loop)
       std::fflush(stdout);
     } else if (l.cmd == "builds") {  // J-196: program builds and clip level patches so far, renders waiting for an edit to end
       std::printf("builds frame %d: builds %llu patches %llu deferred %d voices made %llu kept %llu\n", frame,
@@ -1627,6 +1629,7 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
                   static_cast<double>(g.gridY1), static_cast<double>(g.vThumb0), static_cast<double>(g.vThumb1), static_cast<double>(g.vBarX),
                   static_cast<double>(g.hThumb0), static_cast<double>(g.hThumb1), static_cast<double>(g.hBarY));  // K-24
       std::printf("  head settings %u renaming %d\n", static_cast<unsigned>(app.settingsChannel), g.renaming);  // header double-clicks
+      std::printf("  loopbadge %d x %.1f y %.1f\n", g.loopBadge ? 1 : 0, static_cast<double>(g.loopBadgeX), static_cast<double>(g.loopBadgeY));  // K-140
       for (size_t i = 0; i < g.trackTop.size(); ++i) {
         const Song& s = app.doc.song();
         const PlaylistTrack* t = i < s.tracks.size() ? &s.tracks[i] : nullptr;  // J-208: the mode, the linked channel, the name

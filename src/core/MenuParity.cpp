@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <map>
 #include "Automation.h"
+#include "ClipLoop.h"
 #include "NoteTools.h"
 #include "PatternAutomation.h"
 #include "../engine/TimeStretch.h"
@@ -240,7 +241,18 @@ ObjectId mergeAutomationClips(Document& d, const std::set<ObjectId>& clips) {
   for (const Clip* c : same) {
     AutomationClip shown = *s.automation(c->source);
     if (!c->loop) shown.loop = 0;  // K-114: a placement that does not loop holds the last value
-    for (auto p : visiblePoints(shown, c->offset, s.clipLength(*c))) {
+    std::vector<AutoPoint> pts;
+    if (c->loop && c->loopLength > 0) {  // K-140: a cut clip's own loop, pass by pass
+      shown.loop = 0;
+      for (const ClipPass& ps : clipPasses(s, *c))
+        for (auto p : visiblePoints(shown, ps.content, ps.len)) {
+          p.pos += ps.at;
+          pts.push_back(p);
+        }
+    } else {
+      pts = visiblePoints(shown, c->offset, s.clipLength(*c));
+    }
+    for (auto p : pts) {
       p.pos += c->start - start;
       // Later clips win where placements overlap.
       merged.points.erase(std::remove_if(merged.points.begin(), merged.points.end(),

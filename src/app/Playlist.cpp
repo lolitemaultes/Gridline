@@ -105,6 +105,7 @@ struct ClipGesture {
   bool placed = false;       // the click just placed this clip: it follows the pointer at once
   bool copied = false;       // the dragged clips are copies
   bool autoLoops = false;    // K-114: the loop drag gave automation curves a loop length
+  std::vector<ObjectId> autoLooped;  // K-140: those curves (back at the cut point, they lose it again)
   bool unique = false;       // Q-3: the copies were made unique (Shift+V)
   pltools::EraseSweep sweep;  // J-79: delete sweep: only the topmost clip at each point
 };
@@ -119,18 +120,91 @@ const char* const kLoopKey = "Cmd";
 const char* const kLoopKey = "Ctrl";
 #endif
 
+// K-140: during a loop-key edge drag the edge's cut point (where it was when the
+// drag started) is a snap target: within a few pixels of the pointer, or nearer
+// than the grid line it would snap to, the edge lands exactly on it (the clip is
+// then exactly as it was).
+Tick snapToCutPoint(Tick pointer, Tick snapped, Tick cut, float pxPerTick) {
+  const Tick far = std::llabs(pointer - cut);
+  const float magnet = std::max(6.0f, ImGui::GetFontSize() * 0.6f);
+  if (static_cast<float>(far) * pxPerTick <= magnet || far <= std::llabs(pointer - snapped)) return cut;
+  return snapped;
+}
+
+// K-140: whether a loop-key drag of a clip's right (or left) edge loops it: its
+// content is there (a pattern, audio that has loaded, a curve with points), and
+// a left edge can move out (the clip loops already, or does not start the song).
+bool edgeCanLoop(const Song& s, const Clip& c, bool right, const TempoMap& tm) {
+  if (c.kind == ClipKind::Pattern && !s.pattern(c.pattern)) return false;
+  if (c.kind == ClipKind::Automation) {
+    const AutomationClip* ac = s.automation(c.source);
+    if (!ac || ac->points.empty()) return false;
+  }
+  if (c.kind == ClipKind::Audio) {
+    const Channel* ch = s.channel(c.source);
+    if (!ch || !sampleCache().request(ch->plugin.data) || audioClipNaturalLength(s, c) <= 0) return false;
+    if (c.loop && audioLoopLength(s, c, tm) <= 0) return false;
+  }
+  return right || c.loop || c.start > 0;
+}
+// K-140: during a loop-key edge drag, whether the anchor clip loops now: it did
+// already, or its edge is out past the cut point. Before the pointer moves, as
+// over the edge.
+bool edgeDragLoops(const Song& s, const std::vector<Clip>& base, ObjectId anchor, bool right, bool moved, const TempoMap& tm) {
+  const Clip* b = nullptr;
+  for (const Clip& c : base)
+    if (c.id == anchor) b = &c;
+  const Clip* now = s.clip(anchor);
+  if (!b || !now) return false;
+  if (!moved) return edgeCanLoop(s, *b, right, tm);
+  if (!now->loop) return false;
+  if (b->loop) return true;
+  return right ? now->start + s.clipLength(*now) > b->start + s.clipLength(*b) : now->start < b->start;
+}
+// K-140: the loop badge at the pointer: a round accent tag below and right of
+// the pointer, clear of the resize cursor's arrows, with the loop arrows large
+// enough to read (they blurred into a ring at 8 px). Whole-pixel geometry at
+// every UI scale; the accent fill reads on the dark and the light grid alike.
+ImVec2 drawLoopBadge(ImDrawList* fg, ImVec2 m, const theme::Palette& P) {
+  const float fs = ImGui::GetFontSize();
+  const float R = std::round(std::max(9.0f, fs * 0.72f));  // badge radius (10 px at the default size)
+  const ImVec2 at(std::round(m.x + fs * 0.85f + R), std::round(m.y + fs * 0.6f + R));  // on a pixel corner: the glyph box lands on whole pixels
+  fg->AddCircleFilled(ImVec2(at.x, at.y + 1.0f), R + 1.0f, IM_COL32(0, 0, 0, P.dark ? 90 : 50), 40);  // soft drop shadow
+  fg->AddCircleFilled(at, R, P.hot, 40);
+  fg->AddCircle(at, R - 0.5f, theme::withAlpha(theme::contrastText(P.hot), 0.25f), 40, 1.0f);
+  ui::drawIconGlyph(fg, ui::Icon::LoopArrows, at, std::round(R * 0.7f), 1.5f, theme::contrastText(P.hot));
+  return at;
+}
+
 // K-114: the clips an edge drag works from this frame: as they were when it
 // started, or with the loop key held, the selected ones looping (automation
 // curves without a loop length get one, once per drag, in its undo step).
+// K-140: `loop` is false while the edge is at or inside its cut point (where the
+// drag started): the clips are plain there, as they were, with no loop length
+// left on their curves.
 std::vector<Clip> loopDragBase(App& a, const std::vector<Clip>& base, const std::set<ObjectId>& sel, bool loop, const TempoMap& tm) {
-  if (!loop) return base;
+  if (!loop) {
+    if (cg.autoLoops && !cg.autoLooped.empty())
+      a.doc.editSong("loop automation", [&](Song& x) {
+        for (ObjectId id : cg.autoLooped)
+          if (AutomationClip* ac = x.automation(id)) ac->loop = 0;
+      });
+    cg.autoLoops = false;
+    cg.autoLooped.clear();
+    return base;
+  }
   if (!cg.autoLoops) {
     cg.autoLoops = true;
+    std::vector<ObjectId> before;
+    for (const AutomationClip& ac : a.doc.song().automations)
+      if (ac.loop <= 0) before.push_back(ac.id);
     bool need = false;
     for (const Clip& c : base)
       if (sel.count(c.id) && c.kind == ClipKind::Automation)
         if (const AutomationClip* ac = a.doc.song().automation(c.source); ac && ac->loop <= 0) need = true;
     if (need) a.doc.editSong("loop automation", [&](Song& x) { prepareAutomationLoops(x, base, sel); });
+    for (ObjectId id : before)
+      if (const AutomationClip* ac = a.doc.song().automation(id); ac && ac->loop > 0) cg.autoLooped.push_back(id);
   }
   std::vector<Clip> out = base;
   const Song& s = a.doc.song();
@@ -149,6 +223,10 @@ std::string resizeHint(const Song& s, const std::vector<Clip>& from, const std::
     if (c.id == anchor) t = &c;
   const std::string key(kLoopKey);
   if (!f || !t) return {};
+  if (loopKey && !f->loop && d <= 0)  // K-140: at or inside the cut point the clip is plain
+    return d == 0 ? std::string(i18n::tr("At the cut point: the clip is as it was, it does not loop (drag further out to loop it)"))
+                  : std::string(i18n::tr("Shorter than the cut point: the clip does not loop (drag past it to loop)"));
+  if (loopKey && !f->loop) return i18n::tr("Looping from the cut point: the part the clip showed repeats as far as you drag") + std::string("  (") + i18n::tr("back to the cut point: no loop") + ")";
   if (loopKey) return i18n::tr("Looping: the content repeats as far as you drag") + std::string("  (") + i18n::tr("release ") + key + i18n::tr(" to extend instead)");
   if (f->loop && !t->loop) return i18n::tr("Back to its own length: the clip stops looping (drag further out to keep the loop)");
   if (f->loop) return i18n::tr("The clip loops: dragging adds or removes repeats (back to its own length, it stops looping)");
@@ -161,9 +239,9 @@ std::string resizeHint(const Song& s, const std::vector<Clip>& from, const std::
 std::string loopEdgeHint(const Clip& c, bool right, bool loopKey, bool stretch) {
   const std::string key(kLoopKey);
   if (!right)
-    return loopKey ? std::string(i18n::tr("(drag: loop the clip and set where its loop starts)"))
+    return loopKey ? std::string(i18n::tr("(drag out: loop the part the clip shows, the edge sets where the loop starts · back to the cut point: no loop)"))
                    : std::string(i18n::tr("(drag: trim the start · ")) + key + i18n::tr("+drag: loop the clip and set where its loop starts)");
-  if (loopKey) return std::string(i18n::tr("(drag: loop the content as far as you drag · release ")) + key + i18n::tr(" to extend instead)");
+  if (loopKey) return std::string(i18n::tr("(drag out: loop the part the clip shows as far as you drag · back to the cut point: no loop · release ")) + key + i18n::tr(" to extend instead)");
   if (c.loop) return std::string(i18n::tr("(drag: more or fewer repeats, the clip loops · back to its own length, it stops looping)"));
   const char* plain = c.kind == ClipKind::Audio ? (stretch ? i18n::tr("(drag: stretch the audio · ") : i18n::tr("(drag: extend, up to the end of the audio · "))
                       : c.kind == ClipKind::Automation ? i18n::tr("(drag: extend, the last value holds · ")
@@ -255,15 +333,15 @@ struct DrawnClip {
   int xfBelow = -1;  // index (drawn list) of the clip this one crossfades on, blended (-1: none)
   // K-26: what a clip lying on this one needs to show it through its body
   // (its length and pattern loop as drawn).
-  Tick len = 0, loop = 0;
+  Tick len = 0, loop = 0, loopFrom = 0;  // (K-140: a cut clip's own loop starts at loopFrom)
 };
 
 // Notes (pitch-scaled) from every channel, then steps as ticks at the bottom,
 // drawn pass by pass: the clip shows pattern ticks [offset, offset + clipLen),
 // and a looping pattern (loop > 0, Q-1) repeats them. Returns the content end
 // (clip ticks) of a pattern that does not loop and ends inside the clip, else -1.
-Tick drawClipPreview(ImDrawList* dl, const Song& s, const Pattern& p, ImVec2 a, ImVec2 b, Tick clipLen, Tick offset, Tick loop, ImU32 col,
-                     float visX0, float visX1, bool notes = true) {
+Tick drawClipPreview(ImDrawList* dl, const Song& s, const Pattern& p, ImVec2 a, ImVec2 b, Tick clipLen, Tick offset, Tick loop, Tick loopFrom,
+                     ImU32 col, float visX0, float visX1, bool notes = true) {
   const Tick patLen = std::max<Tick>(1, s.patternContentLength(p));
   const float w = b.x - a.x;
   if (w < 6 || clipLen <= 0) return -1;
@@ -274,7 +352,7 @@ Tick drawClipPreview(ImDrawList* dl, const Song& s, const Pattern& p, ImVec2 a, 
   const float span = static_cast<float>(std::max(hi - lo, 8));
   auto xAt = [&](Tick t) { return a.x + w * static_cast<float>(t) / static_cast<float>(clipLen); };  // clip ticks
   const Tick stepT = s.ticksPerStep(p);
-  for (const ClipPass& ps : loopPasses(offset, clipLen, loop)) {
+  for (const ClipPass& ps : loopPasses(offset, clipLen, loop, loopFrom)) {
     if (!notes) break;  // J-173: automation only (the content end still counts)
     if (xAt(ps.at) > visX1) break;                                          // later passes start right of the view
     if (xAt(ps.at + ps.len) < visX0) continue;                              // this one ends left of it
@@ -323,11 +401,11 @@ struct PatCurveHit {
 ImU32 patternCurveColor(const AutomationClip& c, size_t k, ImU32 body) {
   return theme::mix(theme::rgb(patautoui::curveRgb(c, k)), theme::contrastText(body), 0.22f);
 }
-void drawPatternCurves(ImDrawList* dl, const Pattern& p, ImVec2 a, ImVec2 b, Tick clipLen, Tick offset, Tick loop, ImU32 body, float visX0,
+void drawPatternCurves(ImDrawList* dl, const Pattern& p, ImVec2 a, ImVec2 b, Tick clipLen, Tick offset, Tick loop, Tick loopFrom, ImU32 body, float visX0,
                        float visX1, ImVec2 mouse, bool mouseIn, float hitR, PatCurveHit* out) {
   const float w = b.x - a.x, h = b.y - a.y;
   if (p.automation.empty() || w < 4 || h < 4 || clipLen <= 0) return;
-  const std::vector<ClipPass> passes = loopPasses(offset, clipLen, loop);
+  const std::vector<ClipPass> passes = loopPasses(offset, clipLen, loop, loopFrom);
   const float x0 = std::floor(std::max(a.x, visX0)), x1 = std::min(b.x, visX1);
   if (x1 <= x0 || passes.empty()) return;
   const float sx = std::round((x0 + x1) * 0.5f);
@@ -365,13 +443,6 @@ void drawPatternCurves(ImDrawList* dl, const Pattern& p, ImVec2 a, ImVec2 b, Tic
     }
     flush();
   }
-}
-
-// Q-1: loop glyph (two arrows chasing round a rounded loop), for the title
-// bar of a clip that repeats its pattern.
-void drawLoopGlyph(ImDrawList* dl, ImVec2 c, float r, ImU32 col) {
-  // SVG (loop-arrows) on the old glyph's grid: r to one unit, 1.3 px arcs.
-  ui::drawIconGlyph(dl, ui::Icon::LoopArrows, c, r / 0.82f, 1.3f, col);
 }
 
 // ---- audio clip waveforms: min/max per block of frames, cached per sample ----
@@ -467,8 +538,9 @@ void drawClipWave(ImDrawList* dl, const Song& s, const Channel& ch, const Clip& 
 }
 
 // K-114: the curve as a placement shows it (a placement that does not loop holds its last value).
+// K-140: a cut clip that loops repeats its own part (AutoGeom's window), not the curve's loop.
 const AutomationClip& shownCurve(const AutomationClip& ac, const Clip& c, AutomationClip& scratch) {
-  if (c.loop || ac.loop <= 0) return ac;
+  if ((c.loop && c.loopLength <= 0) || ac.loop <= 0) return ac;
   scratch = ac;
   scratch.loop = 0;
   return scratch;
@@ -479,11 +551,24 @@ struct AutoGeom {
   ImVec2 a, b;  // body rect
   float clipX0 = 0, pxPerTick = 1;
   Tick start = 0, offset = 0, len = 0;
+  // K-140: a cut clip that loops repeats content [wFrom, wFrom + wLen) (wLen 0: none).
+  Tick wFrom = 0, wLen = 0;
   float x(Tick content) const { return clipX0 + static_cast<float>(content - offset) * pxPerTick; }
   float y(double v) const { return b.y - static_cast<float>(v) * (b.y - a.y); }
   double valueAtY(float yy) const { return std::clamp(static_cast<double>((b.y - yy) / std::max(1.0f, b.y - a.y)), 0.0, 1.0); }
-  bool visible(Tick content) const { return content >= offset && content <= offset + len; }
+  bool visible(Tick content) const { return content >= offset && content <= offset + len && (wLen <= 0 || content <= wFrom + wLen); }
+  double content(double rel) const {  // content shown `rel` ticks into the clip
+    double t = static_cast<double>(offset) + rel;
+    const double e = static_cast<double>(wFrom + wLen);
+    if (wLen > 0 && t >= e) t = static_cast<double>(wFrom) + std::fmod(t - static_cast<double>(wFrom), static_cast<double>(wLen));
+    return t;
+  }
 };
+// K-140: the geometry's loop window for a placement.
+AutoGeom withOwnLoop(AutoGeom g, const Clip& c) {
+  if (c.loop && c.loopLength > 0) g.wFrom = c.loopStart, g.wLen = c.loopLength;
+  return g;
+}
 
 void drawAutomation(ImDrawList* dl, const AutomationClip& ac, const AutoGeom& g, float visX0, float visX1, ImU32 line, ImU32 fill,
                     bool handles, int hotPoint, int hotHandle, ImU32 hot) {
@@ -494,7 +579,7 @@ void drawAutomation(ImDrawList* dl, const AutomationClip& ac, const AutoGeom& g,
   static std::vector<ImVec2> pts;
   pts.clear();
   for (float x = std::floor(x0); x <= x1; x += 1.0f) {
-    double content = static_cast<double>(g.offset) + (x - g.clipX0) / g.pxPerTick;
+    const double content = g.content((x - g.clipX0) / g.pxPerTick);
     pts.emplace_back(x, g.y(automationValue(ac, content)));
   }
   const int n = static_cast<int>(pts.size());
@@ -580,6 +665,7 @@ struct ClipCache {
   size_t count = 0;
   std::vector<Tick> len;
   std::vector<Tick> loop;  // Q-1 / K-114: loop length of a looping pattern or automation clip's content (0 = does not loop)
+  std::vector<Tick> loopFrom;  // K-140: where that loop starts in the content (a cut clip's own loop)
   std::vector<uint8_t> valid;
   std::vector<Rgb> color;
   std::vector<const std::string*> name;
@@ -607,6 +693,7 @@ const ClipCache& clipCache(const App& a) {
   static const std::string kAudio = "Audio", kAuto = "Automation", kUnknown = "?";
   cc.len.assign(cc.count, 0);
   cc.loop.assign(cc.count, 0);
+  cc.loopFrom.assign(cc.count, 0);
   cc.valid.assign(cc.count, 0);
   cc.color.assign(cc.count, 0x7A8696);
   cc.name.assign(cc.count, &kUnknown);
@@ -625,6 +712,7 @@ const ClipCache& clipCache(const App& a) {
       if (cc.valid[i]) cc.color[i] = s.automations[it->second].color, cc.name[i] = &s.automations[it->second].name;
       else cc.name[i] = &kAuto;
       if (cc.valid[i] && c.loop && s.automations[it->second].loop > 0) cc.loop[i] = s.automations[it->second].loop;  // K-114
+      if (cc.valid[i] && c.loop && c.loopLength > 0) cc.loop[i] = c.loopLength, cc.loopFrom[i] = c.loopStart;  // K-140
       cc.len[i] = s.clipLength(c);
     } else {
       auto it = pat.find(c.pattern);
@@ -636,6 +724,7 @@ const ClipCache& clipCache(const App& a) {
         if (pl < 0) pl = s.patternContentLength(pp);
         cc.len[i] = c.length > 0 ? c.length : pl;
         if (c.loop) cc.loop[i] = std::max<Tick>(1, pl);  // K-114: per clip
+        if (c.loop && c.loopLength > 0) cc.loop[i] = c.loopLength, cc.loopFrom[i] = c.loopStart;  // K-140: a cut clip's own loop
       } else {
         cc.len[i] = c.length > 0 ? c.length : 0;
       }
@@ -1779,13 +1868,13 @@ void drawPlaylist(App& a) {
     if (c.kind == ClipKind::Pattern) {
       if (const Pattern* pat = s.pattern(c.pattern))
         if (st.patternPreview != 2 || pat->automation.empty())
-          drawClipPreview(dl, s, *pat, pb0, pb1, p.len, c.offset, p.loop, ghostInk, x0, x1, true);
+          drawClipPreview(dl, s, *pat, pb0, pb1, p.len, c.offset, p.loop, p.loopFrom, ghostInk, x0, x1, true);
     } else if (c.kind == ClipKind::Audio) {
       if (pb1.y - pb0.y > 4)
         if (const Channel* pch = s.channel(c.source)) drawClipWave(dl, s, *pch, c, tempoMap, pb0, pb1, p.clipX0, st.pxPerTick, x0, x1, ghostInk);
     } else if (c.kind == ClipKind::Automation && pb1.y - pb0.y > 6) {
       if (const AutomationClip* ac = s.automation(c.source)) {
-        const AutoGeom g{pb0, pb1, p.clipX0, st.pxPerTick, c.start, c.offset, p.len};
+        const AutoGeom g = withOwnLoop(AutoGeom{pb0, pb1, p.clipX0, st.pxPerTick, c.start, c.offset, p.len}, c);
         AutomationClip scratch;
         drawAutomation(dl, shownCurve(*ac, c, scratch), g, x0, x1, ghostInk, theme::withAlpha(p.ink, 0.06f * k), false, -1, -1, ghostInk);
       }
@@ -1981,7 +2070,7 @@ void drawPlaylist(App& a) {
       dc.track = lc.track, dc.x0 = a0.x, dc.x1 = a1.x, dc.y0 = a0.y, dc.y1 = a1.y, dc.body = a0.y + headH, dc.ci = ci, dc.rim = rim, dc.sel = sel;
       dc.clip = c, dc.clipX0 = x0, dc.bodyCol = body, dc.headCol = head, dc.ink = ink, dc.fade = fg;
       dc.audio = c.kind == ClipKind::Audio, dc.glide = gliding, dc.xfBelow = xfBelow;
-      dc.len = len, dc.loop = c.kind == ClipKind::Pattern ? ccache.loop[ci] : 0;
+      dc.len = len, dc.loop = c.kind == ClipKind::Pattern ? ccache.loop[ci] : 0, dc.loopFrom = c.kind == ClipKind::Pattern ? ccache.loopFrom[ci] : 0;
       drawn.push_back(dc);
     }
     dl->AddLine(ImVec2(a0.x + 1, a0.y + 0.5f), ImVec2(a1.x - 1, a0.y + 0.5f), theme::withAlpha(P.paper, muted ? 0.08f : 0.28f));
@@ -2027,11 +2116,12 @@ void drawPlaylist(App& a) {
     // Q-1: a clip that repeats its content shows a loop glyph at the right of
     // its title bar (the title makes room for it). K-114: every clip kind.
     Tick loopLen = c.kind == ClipKind::Audio ? 0 : ccache.loop[ci];
+    const Tick loopFrom = c.kind == ClipKind::Audio ? 0 : ccache.loopFrom[ci];  // K-140
     if (c.kind == ClipKind::Audio && c.loop)
       if (const Channel* lch = s.channel(c.source); lch && sampleCache().request(lch->plugin.data)) loopLen = audioLoopLength(s, c, tempoMap);
-    const bool repeats = loopLen > 0 && wrapLoopOffset(c.offset, loopLen) + len > loopLen;
+    const bool repeats = loopRepeatsWithin(c.offset, len, loopLen, loopFrom);
     const bool loopGlyph = repeats && headH >= 9 && a1.x - std::max(a0.x, gMin.x) > 30;
-    if (loopGlyph) titleR -= 14;
+    if (loopGlyph) titleR -= 17;
     if (!gliding && ccache.cover[ci] >= 0) {
       const size_t cv = static_cast<size_t>(ccache.cover[ci]);
       if (!(clipAnim.contains(s.playlist[cv].id))) {
@@ -2075,16 +2165,17 @@ void drawPlaylist(App& a) {
     const ImU32 mark = P.dark ? P.paper : theme::mix(base, P.ink, 0.6f);
     bool inside = hovered && io.MousePos.x >= a0.x && io.MousePos.x < a1.x && io.MousePos.y >= a0.y && io.MousePos.y < a1.y && io.MousePos.y >= gMin.y;
     ParamId curveHit{kNoId, 0};  // J-173
-    if (loopGlyph) drawLoopGlyph(dl, ImVec2(std::min(a1.x, gMax.x) - 9, a0.y + headH * 0.5f), std::min(4.0f, headH * 0.32f),
-                                 theme::withAlpha(theme::contrastText(headSolid), 0.85f));
+    if (loopGlyph)  // K-140: large enough to read as loop arrows (at 4 px it read as a ring), on whole pixels
+      ui::drawIconGlyph(dl, ui::Icon::LoopArrows, ImVec2(std::round(std::min(a1.x, gMax.x) - 10), std::round(a0.y + headH * 0.5f)),
+                        std::round(std::min(6.0f, headH * 0.42f)), 1.3f, theme::withAlpha(theme::contrastText(headSolid), 0.85f));
     if (c.kind == ClipKind::Pattern) {
       const Pattern& pat = *s.pattern(c.pattern);
       const int pv = st.patternPreview;  // J-173: 0 notes and automation, 1 notes, 2 automation
-      const Tick contentEnd = drawClipPreview(dl, s, pat, b0, b1, len, c.offset, loopLen, ink, gMin.x, gMax.x, pv != 2 || pat.automation.empty());
+      const Tick contentEnd = drawClipPreview(dl, s, pat, b0, b1, len, c.offset, loopLen, loopFrom, ink, gMin.x, gMax.x, pv != 2 || pat.automation.empty());
       if (pv != 1 && !pat.automation.empty() && b1.y - b0.y >= (pv == 2 ? 4.0f : 7.0f)) {
         PatCurveHit ph;
         const bool inBody = inside && io.MousePos.y > a0.y + headH;
-        drawPatternCurves(dl, pat, b0, b1, len, c.offset, loopLen, theme::mix(base, P.well, 0.43f), gMin.x, gMax.x, io.MousePos, inBody, 5.0f, &ph);
+        drawPatternCurves(dl, pat, b0, b1, len, c.offset, loopLen, loopFrom, theme::mix(base, P.well, 0.43f), gMin.x, gMax.x, io.MousePos, inBody, 5.0f, &ph);
         if (ph.hit >= 0) curveHit = ParamId{pat.automation[static_cast<size_t>(ph.hit)].owner, pat.automation[static_cast<size_t>(ph.hit)].index};
         for (const auto& [k, pt] : ph.sample)
           devGeom.curves.push_back({static_cast<unsigned>(c.id), static_cast<unsigned>(pat.automation[static_cast<size_t>(k)].owner),
@@ -2175,7 +2266,7 @@ void drawPlaylist(App& a) {
     } else if (c.kind == ClipKind::Automation && b1.y - b0.y > 6) {
       AutomationClip shownScratch;
       const AutomationClip& ac = shownCurve(*s.automation(c.source), c, shownScratch);
-      AutoGeom g{b0, b1, x0, st.pxPerTick, c.start, c.offset, len};
+      const AutoGeom g = withOwnLoop(AutoGeom{b0, b1, x0, st.pxPerTick, c.start, c.offset, len}, c);
       int hp = -1, hh = -1;
       if (inside && io.MousePos.y > a0.y + headH) hitAutomation(ac, g, io.MousePos, hp, hh);
       if (cg.kind == ClipGesture::AutoPoint && cg.anchor == c.id) hp = cg.point;
@@ -2196,7 +2287,7 @@ void drawPlaylist(App& a) {
         // grid line next to the real ones seen through the body.
         const ImU32 hair = theme::withAlpha(P.well, P.dark ? 0.34f : 0.30f);
         const float yb0 = a0.y + headH, yb1 = a1.y, hw = ng.width * 0.5f;
-        for (const ClipPass& ps : loopPasses(c.offset, len, loopLen)) {
+        for (const ClipPass& ps : loopPasses(c.offset, len, loopLen, loopFrom)) {
           if (ps.index == 0) continue;
           const float x = std::round(a0.x + pxTick * static_cast<float>(ps.at));
           if (x - hw > gMax.x) break;
@@ -2917,16 +3008,19 @@ void drawPlaylist(App& a) {
     else a.setHint(i18n::tr("Double-click the name to rename the track \xC2\xB7 right-click: track menu \xC2\xB7 drag the bottom edge to resize"));
   }
 
-  // K-114: the loop key over a clip's edge, or during an edge drag: a loop mark
-  // by the pointer, so the drag's mode shows before and while it happens.
-  if (loopMod && ((hovered && inGrid && loopEdgeGrab && hoverPoint < 0 && hoverHandle < 0) ||
-                  ((cg.kind == ClipGesture::Resize || cg.kind == ClipGesture::Trim) && ImGui::IsMouseDown(ImGuiMouseButton_Left)))) {
-    const float r = std::max(3.5f, ImGui::GetFontSize() * 0.3f);
-    const ImVec2 at(std::round(m.x + r * 3.2f), std::round(m.y - r * 2.6f));
-    ImDrawList* fg = ImGui::GetForegroundDrawList();
-    fg->AddCircleFilled(at, r * 1.9f, theme::withAlpha(P.well, 0.92f));
-    fg->AddCircle(at, r * 1.9f, theme::withAlpha(P.hot, 0.9f), 0, 1.0f);
-    drawLoopGlyph(fg, at, r, P.hot);
+  // K-114 / K-140: the loop key over a clip's edge, or during an edge drag: a loop
+  // badge by the pointer, so the drag's mode shows before and while it happens.
+  // Only where a loop-key drag of that edge loops (edgeCanLoop), and in a drag
+  // only while it loops (past the cut point, or a clip that already looped).
+  bool loopBadge = false;
+  if (loopMod && cg.kind == ClipGesture::None && hovered && inGrid && loopEdgeGrab && hoverPoint < 0 && hoverHandle < 0)
+    loopBadge = edgeCanLoop(s, *hc, hoverEdge, tempoMap);
+  if (loopMod && (cg.kind == ClipGesture::Resize || cg.kind == ClipGesture::Trim) && ImGui::IsMouseDown(ImGuiMouseButton_Left))
+    loopBadge = edgeDragLoops(s, cg.base, cg.anchor, cg.kind == ClipGesture::Resize, cg.moved, tempoMap);
+  devGeom.loopBadge = loopBadge;
+  if (loopBadge) {
+    const ImVec2 bc = drawLoopBadge(ImGui::GetForegroundDrawList(), m, P);
+    devGeom.loopBadgeX = bc.x, devGeom.loopBadgeY = bc.y;
   }
 
   // Automation point edits: one undo step per gesture.
@@ -3553,6 +3647,7 @@ void drawPlaylist(App& a) {
       AutoGeom g{ImVec2(xOf(hc->start) + 4, yOf(hc->track) + 2 + headH + 2), ImVec2(xOf(hc->start + s.clipLength(*hc)) - 4, yOf(hc->track) + hOf(hc->track) - 5),
                  xOf(hc->start), st.pxPerTick, hc->start, hc->offset, s.clipLength(*hc)};
       Tick pos = hc->offset + std::max<Tick>(0, snapPos(tickAt(m.x)) - hc->start);
+      if (hc->loop && hc->loopLength > 0) pos = wrapClipOffset(s, *hc, pos);  // K-140: into the part it repeats
       AutoPoint np{pos, static_cast<float>(g.valueAtY(m.y)), 0.0f, AutoShape::Curve};
       ObjectId aid = ac->id;
       int idx = 0;
@@ -3762,7 +3857,8 @@ void drawPlaylist(App& a) {
         if (!an) break;
         if (!cg.moved && !ImGui::IsMouseDragging(ImGuiMouseButton_Left, 3.0f)) break;  // a click on the edge changes nothing
         const Tick oldEnd = an->start + s.clipLength(*an);
-        const Tick end = std::max(timeline::snapTick(curTick, snapG, Snap::Line), an->start + 1);
+        Tick end = std::max(timeline::snapTick(curTick, snapG, Snap::Line), an->start + 1);
+        if (loopMod) end = snapToCutPoint(tickAt(m.x), end, oldEnd, st.pxPerTick);  // K-140 (the pointer itself, not clamped to the view)
         const Tick d = end - oldEnd;
         if (d == 0 && !cg.moved) break;
         cg.moved = true;
@@ -3770,8 +3866,10 @@ void drawPlaylist(App& a) {
         // K-114: a plain drag extends (a clip that loops keeps looping); with the
         // loop key held the selected clips loop, in stretch mode too (they
         // loop instead of stretching). Read every frame, so pressing or
-        // releasing it mid-drag switches between the two.
-        const std::vector<Clip> from = loopDragBase(a, cg.base, st.selected, loopMod, tempoMap);
+        // releasing it mid-drag switches between the two. K-140: they loop from
+        // their cut point (the part they showed repeats) only once the edge is
+        // past it; back at it or inside, they are as they were (plain).
+        const std::vector<Clip> from = loopDragBase(a, cg.base, st.selected, loopMod && d > 0, tempoMap);
         const bool stretchNow = st.stretchResize && !loopMod;
         if (stretchNow) keepPitchWhenStretching(a, cg.base, st.selected);  // J-79
         std::vector<Clip> after = pltools::resizeEnds(a.doc.song(), from, st.selected, d, stretchNow, &tempoMap, st.zeroCross);
@@ -3786,17 +3884,23 @@ void drawPlaylist(App& a) {
         const Clip* an = baseClip();
         if (!an) break;
         if (!cg.moved && !ImGui::IsMouseDragging(ImGuiMouseButton_Left, 3.0f)) break;  // a click on the edge changes nothing
-        const Tick d = timeline::snapTick(curTick, snapG, Snap::Line) - an->start;
+        Tick to = timeline::snapTick(curTick, snapG, Snap::Line);
+        if (loopMod) to = snapToCutPoint(tickAt(m.x), to, an->start, st.pxPerTick);  // K-140 (the pointer itself)
+        const Tick d = to - an->start;
         if (d == 0 && !cg.moved) break;
         cg.moved = true;
         group("trim clips");
         // K-114: with the loop key the clips loop and the edge sets where the loop starts
-        // (the content wraps, so the clip may grow to the left).
-        const std::vector<Clip> from = loopDragBase(a, cg.base, st.selected, loopMod, tempoMap);
+        // (the content wraps, so the clip may grow to the left). K-140: once the edge is
+        // out past the clip's cut point; back at it or inside, a clip that did not loop
+        // is plain (trimmed as without the key).
+        const bool loopNow = loopMod && d < 0;
+        const std::vector<Clip> from = loopDragBase(a, cg.base, st.selected, loopNow, tempoMap);
         const bool stretchNow = st.stretchResize && !loopMod;
         if (stretchNow) keepPitchWhenStretching(a, cg.base, st.selected);  // J-79
-        a.setHint(loopMod ? std::string(i18n::tr("Looping: the left edge sets where the loop starts (release to trim instead)"))
-                          : std::string(i18n::tr("Trimming")) + "  (" + kLoopKey + i18n::tr(": set the loop start instead)"));
+        a.setHint(loopNow ? std::string(i18n::tr("Looping: the left edge sets where the loop starts (back to the cut point: no loop)"))
+                  : loopMod ? std::string(i18n::tr("At or inside the cut point: the clip does not loop (drag further out to loop it)"))
+                            : std::string(i18n::tr("Trimming")) + "  (" + kLoopKey + i18n::tr(": set the loop start instead)"));
         applyClips("trim clips", pltools::trimStarts(a.doc.song(), tempoMap, from, st.selected, d, stretchNow, st.zeroCross));
         break;
       }

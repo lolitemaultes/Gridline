@@ -4,45 +4,78 @@
 
 namespace gl {
 
-Tick wrapLoopOffset(Tick offset, Tick loop) {
+Tick wrapLoopOffset(Tick offset, Tick loop, Tick from) {
   if (loop <= 0) return offset;
-  const Tick r = offset % loop;
-  return r < 0 ? r + loop : r;
+  const Tick r = (offset - from) % loop;
+  return from + (r < 0 ? r + loop : r);
 }
 
-std::vector<ClipPass> loopPasses(Tick offset, Tick len, Tick loop) {
+std::vector<ClipPass> loopPasses(Tick offset, Tick len, Tick loop, Tick from) {
   std::vector<ClipPass> out;
   if (len <= 0) return out;
   if (loop <= 0) {
     out.push_back({0, len, offset, 0});
     return out;
   }
-  Tick content = wrapLoopOffset(offset, loop);
+  Tick content = wrapLoopOffset(offset, loop, from);
   Tick at = 0;
   int index = 0;
   while (at < len) {
-    const Tick n = std::min(loop - content, len - at);
+    const Tick n = std::min(from + loop - content, len - at);
     out.push_back({at, n, content, index++});
     at += n;
-    content = 0;
+    content = from;
   }
   return out;
 }
 
-Tick clipLoopLength(const Song& s, const Clip& c) {
-  if (!c.loop) return 0;
+bool loopRepeatsWithin(Tick offset, Tick len, Tick loop, Tick from) {
+  return loop > 0 && wrapLoopOffset(offset, loop, from) - from + len > loop;
+}
+
+LoopWindow naturalLoopWindow(const Song& s, const Clip& c) {
   if (c.kind == ClipKind::Automation) {
     const AutomationClip* a = s.automation(c.source);
-    return a && a->loop > 0 ? a->loop : 0;
+    if (!a) return {};
+    if (a->loop > 0) return {0, a->loop};
+    return {0, a->points.empty() ? 0 : a->points.back().pos};
   }
-  if (c.kind != ClipKind::Pattern) return 0;
+  if (c.kind != ClipKind::Pattern) return {};
   const Pattern* p = s.pattern(c.pattern);
-  if (!p) return 0;
-  return std::max<Tick>(1, s.patternContentLength(*p));
+  if (!p) return {};
+  return {0, std::max<Tick>(1, s.patternContentLength(*p))};
+}
+
+bool clipCutShort(const Song& s, const Clip& c) {
+  const LoopWindow w = naturalLoopWindow(s, c);
+  if (w.len <= 0) return false;
+  const Tick len = s.clipLength(c);
+  return len > 0 && c.offset >= w.from && c.offset + len <= w.from + w.len && len < w.len;
+}
+
+LoopWindow clipLoopWindow(const Song& s, const Clip& c) {
+  if (!c.loop || c.kind == ClipKind::Audio) return {};
+  if (c.kind == ClipKind::Automation) {
+    const AutomationClip* a = s.automation(c.source);
+    if (!a) return {};
+    if (c.loopLength > 0) return {c.loopStart, c.loopLength};
+    return a->loop > 0 ? LoopWindow{0, a->loop} : LoopWindow{};
+  }
+  if (c.kind != ClipKind::Pattern || !s.pattern(c.pattern)) return {};
+  if (c.loopLength > 0) return {c.loopStart, c.loopLength};
+  return naturalLoopWindow(s, c);
+}
+
+Tick clipLoopLength(const Song& s, const Clip& c) { return clipLoopWindow(s, c).len; }
+
+Tick wrapClipOffset(const Song& s, const Clip& c, Tick offset) {
+  const LoopWindow w = clipLoopWindow(s, c);
+  return wrapLoopOffset(offset, w.len, w.from);
 }
 
 bool clipPastContent(const Song& s, const Clip& c) {
   if (c.kind != ClipKind::Pattern) return false;
+  if (c.loop && c.loopLength > 0) return false;  // K-140: it repeats a part of its pattern, never past its end
   const Pattern* p = s.pattern(c.pattern);
   if (!p) return false;
   const Tick pl = std::max<Tick>(1, s.patternContentLength(*p));
@@ -94,11 +127,14 @@ void adoptPatternLoopModes(Song& s) {
   });
 }
 
-std::vector<ClipPass> clipPasses(const Song& s, const Clip& c) { return loopPasses(c.offset, s.clipLength(c), clipLoopLength(s, c)); }
+std::vector<ClipPass> clipPasses(const Song& s, const Clip& c) {
+  const LoopWindow w = clipLoopWindow(s, c);
+  return loopPasses(c.offset, s.clipLength(c), w.len, w.from);
+}
 
 bool clipRepeats(const Song& s, const Clip& c) {
-  const Tick loop = clipLoopLength(s, c);
-  return loop > 0 && wrapLoopOffset(c.offset, loop) + s.clipLength(c) > loop;
+  const LoopWindow w = clipLoopWindow(s, c);
+  return loopRepeatsWithin(c.offset, s.clipLength(c), w.len, w.from);
 }
 
 std::vector<Note> clipChannelNotes(const Song& s, const Clip& c, const std::vector<Note>& patternNotes, bool keepMuted) {

@@ -412,6 +412,10 @@ void clipArrangementToJson(const Clip& c, Json& jc) {
   if (c.source != kNoId) jc.object["source"] = num(c.source);
   if (c.offset != 0) jc.object["offset"] = num(static_cast<double>(c.offset));
   if (c.loop) jc.object["loop"] = boolean(true);  // K-114
+  if (c.loop && c.loopLength > 0) {  // K-140: a cut clip's own loop
+    jc.object["loopStart"] = num(static_cast<double>(c.loopStart));
+    jc.object["loopLength"] = num(static_cast<double>(c.loopLength));
+  }
   if (c.muted) jc.object["muted"] = boolean(true);
   if (c.audioStart != 0) jc.object["audioStart"] = num(c.audioStart);
   if (c.audioEnd != 0) jc.object["audioEnd"] = num(c.audioEnd);
@@ -446,6 +450,10 @@ void clipArrangementFromJson(const Json& jc, Clip& c) {
   c.source = jsonInt<ObjectId>(std::max(0.0, jc.num("source", 0)));
   c.offset = std::max<Tick>(0, jsonTick(jc.num("offset", 0)));
   c.loop = flag(jc, "loop");  // K-114 (projects saved before it: songFromJson, adoptOldClipLoops)
+  if (c.loop && c.kind != ClipKind::Audio) {  // K-140
+    c.loopLength = std::max<Tick>(0, jsonTick(jc.num("loopLength", 0)));
+    c.loopStart = c.loopLength > 0 ? std::max<Tick>(0, jsonTick(jc.num("loopStart", 0))) : 0;
+  }
   c.muted = flag(jc, "muted");
   c.audioStart = std::max(0.0, jc.num("audioStart", 0));
   c.audioEnd = std::max(0.0, jc.num("audioEnd", 0));

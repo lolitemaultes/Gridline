@@ -19,8 +19,9 @@ std::shared_ptr<const AutomationClip> patternLaneCurve(const PatternAutomation& 
 std::vector<AutomationLane> patternAutomationLanes(const Song& song);
 // Pattern mode / live launches: the lanes of one pattern as a single
 // instance [0, length) starting at content tick `offset` (Q-1: `loop` > 0:
-// the content repeats every `loop` ticks, one instance per pass).
-std::vector<AutomationLane> singlePatternLanes(const Pattern& p, Tick length, Tick offset = 0, Tick loop = 0);
+// the content repeats every `loop` ticks, one instance per pass; K-140: the
+// ticks [loopFrom, loopFrom + loop)).
+std::vector<AutomationLane> singlePatternLanes(const Pattern& p, Tick length, Tick offset = 0, Tick loop = 0, Tick loopFrom = 0);
 // Sets (or replaces) the points of the clip for a target; an empty point list
 // removes the clip. A new clip is unnamed with range 0..1 and the earlier
 // Gridline curves (the event lane, recording and imports make these).

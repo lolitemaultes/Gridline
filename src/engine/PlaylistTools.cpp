@@ -234,8 +234,8 @@ std::vector<Clip> trimStarts(const Song& s, const TempoMap& tm, const std::vecto
         if (zeroCross) src = nearestZeroCrossing(s, b, src);
         c.audioStart = src;
       }
-    } else if (const Tick loop = clipLoopLength(s, b); loop > 0) {
-      c.offset = wrapLoopOffset(b.offset + d, loop);  // Q-1: the loop start follows the edge
+    } else if (clipLoopLength(s, b) > 0) {
+      c.offset = wrapClipOffset(s, b, b.offset + d);  // Q-1: the loop start follows the edge (K-140: within its own loop)
     } else {
       c.offset = std::max<Tick>(0, b.offset + d);
     }
@@ -267,8 +267,8 @@ Clip slipClip(const Song& s, const TempoMap& tm, const Clip& base, Tick d, bool 
   }
   // Q-1: a looping pattern's content wraps (the loop start moves, the clip
   // stays); other content stops at its start and its end.
-  if (const Tick loop = clipLoopLength(s, base); loop > 0) {
-    c.offset = wrapLoopOffset(base.offset - d, loop);
+  if (clipLoopLength(s, base) > 0) {
+    c.offset = wrapClipOffset(s, base, base.offset - d);
     return c;
   }
   Tick hi = std::numeric_limits<Tick>::max() / 4;

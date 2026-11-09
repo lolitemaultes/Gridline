@@ -11186,6 +11186,14 @@ msgid "(automation in this pattern · double-click: edit it in the automation ed
 msgstr ""
 
 #: src/app/Playlist.cpp
+msgid "(drag out: loop the part the clip shows as far as you drag · back to the cut point: no loop · release "
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "(drag out: loop the part the clip shows, the edge sets where the loop starts · back to the cut point: no loop)"
+msgstr ""
+
+#: src/app/Playlist.cpp
 msgid "(drag: extend, empty past the pattern's end · "
 msgstr ""
 
@@ -11195,14 +11203,6 @@ msgstr ""
 
 #: src/app/Playlist.cpp
 msgid "(drag: extend, up to the end of the audio · "
-msgstr ""
-
-#: src/app/Playlist.cpp
-msgid "(drag: loop the clip and set where its loop starts)"
-msgstr ""
-
-#: src/app/Playlist.cpp
-msgid "(drag: loop the content as far as you drag · release "
 msgstr ""
 
 #: src/app/Playlist.cpp
@@ -11243,6 +11243,14 @@ msgstr ""
 
 #: src/app/Playlist.cpp
 msgid "Add 32 tracks"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "At or inside the cut point: the clip does not loop (drag further out to loop it)"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "At the cut point: the clip is as it was, it does not loop (drag further out to loop it)"
 msgstr ""
 
 #: src/app/Playlist.cpp
@@ -11442,11 +11450,15 @@ msgid "Loop"
 msgstr ""
 
 #: src/app/Playlist.cpp
+msgid "Looping from the cut point: the part the clip showed repeats as far as you drag"
+msgstr ""
+
+#: src/app/Playlist.cpp
 msgid "Looping: the content repeats as far as you drag"
 msgstr ""
 
 #: src/app/Playlist.cpp
-msgid "Looping: the left edge sets where the loop starts (release to trim instead)"
+msgid "Looping: the left edge sets where the loop starts (back to the cut point: no loop)"
 msgstr ""
 
 #: src/app/Playlist.cpp
@@ -11550,6 +11562,10 @@ msgid "Select unused patterns"
 msgstr ""
 
 #: src/app/Playlist.cpp
+msgid "Shorter than the cut point: the clip does not loop (drag past it to loop)"
+msgstr ""
+
+#: src/app/Playlist.cpp
 msgid "Snap to"
 msgstr ""
 
@@ -11607,6 +11623,10 @@ msgstr ""
 
 #: src/app/Playlist.cpp
 msgid "audio clips show their fade handles (squares: length, rings: curve) and the volume line (drag up / down for the clip's gain)"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "back to the cut point: no loop"
 msgstr ""
 
 #: src/app/Playlist.cpp

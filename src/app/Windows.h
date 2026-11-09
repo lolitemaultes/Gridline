@@ -73,6 +73,8 @@ struct PlaylistGeometry {
   float plusX = 0, plusY = 0;
   int dropTrack = -1;
   int renaming = -1;  // the track whose name field is open (-1: none)
+  bool loopBadge = false;  // K-140: the loop badge drawn by the pointer last frame (its centre)
+  float loopBadgeX = 0, loopBadgeY = 0;
   // K-24: the scrollers' thumbs (vertical: screen y of its top / bottom end; horizontal: x of its
   // left / right end) and the bars' centre lines (vertical: x, horizontal: y), the vertical
   // scroll, the base track height and the grid's rectangle (screen).

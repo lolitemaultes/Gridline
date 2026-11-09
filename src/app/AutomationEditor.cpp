@@ -19,6 +19,7 @@
 #include <string>
 #include "../core/Automation.h"
 #include "../core/AutomationEdit.h"
+#include "../core/ClipLoop.h"
 #include "../core/PatternAutomation.h"
 #include "../core/Presets.h"
 #include "../core/Timeline.h"
@@ -493,22 +494,29 @@ void sidePanel(App& a, const AutomationClip& ac, float width) {
       ui::Hint("Length of this placement in the playlist (drag or Ctrl+click to type)");
     }
     // K-114: a playlist placement loops on its own (Clip::loop); the loop length is the curve's.
-    bool loop = ac.loop > 0 && (!pl || pl->loop);
+    // K-140: a placement cut short loops the part it shows (Clip::loopLength).
+    bool loop = pl ? clipLoopLength(s, *pl) > 0 : ac.loop > 0;
     if (ImGui::Checkbox(i18n::tr("Loop the content"), &loop)) {
       Tick len = ac.points.empty() ? s.barTicks() : std::max<Tick>(beat, (ac.points.back().pos + beat - 1) / beat * beat);
       if (pl) {
         const ObjectId cid = pl->id, aid = ac.id;
         a.doc.editSong("loop automation", [&](Song& x) {
+          Clip* k = x.clip(cid);
+          const bool cut = k && loop && !k->loop && clipCutShort(x, *k);
           AutomationClip* q = x.automation(aid);
-          if (q && loop && q->loop <= 0) q->loop = len;
-          if (Clip* k = x.clip(cid)) k->loop = loop;
+          if (q && loop && q->loop <= 0 && !cut) q->loop = len;
+          if (k && k->loop != loop) {
+            k->loopStart = k->loopLength = 0;
+            if (cut) k->loopStart = k->offset, k->loopLength = x.clipLength(*k);
+          }
+          if (k) k->loop = loop;
         });
       } else {
         editCur(a, "loop automation", [&](AutomationClip& c) { c.loop = loop ? len : 0; });
       }
     }
     ui::Hint(pl ? "Repeat the points every loop length when this clip is longer" : "Repeat the points every loop length when the clip is longer");
-    if (ac.loop > 0 && loop) {
+    if (ac.loop > 0 && loop && !(pl && pl->loopLength > 0)) {
       int lb = static_cast<int>(std::max<Tick>(1, ac.loop / beat));
       ImGui::SetNextItemWidth(w);
       if (ImGui::DragInt("##loopl", &lb, 0.1f, 1, 1024, "Loop every %d beats"))

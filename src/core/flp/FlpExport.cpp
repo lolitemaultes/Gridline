@@ -705,7 +705,8 @@ bool exportPrepared(const Song& song, const StandInResult* standIns, Bytes& out,
 // mode its clips play (patternLoopMode); a clip that plays otherwise is written
 // as what it plays: a looping clip of a pattern that does not loop as one clip
 // per pass, a clip that does not loop, of a pattern that does, cut at the
-// pattern's end (the rest was silent). A looping audio clip: one clip per pass.
+// pattern's end (the rest was silent). A looping audio clip: one clip per pass;
+// K-140: so is a looping cut clip (its own loop, Clip::loopLength).
 void writeClipLoopsAsFl(Song& s, ExportReport& rep) {
   for (Pattern& p : s.patterns) p.loop = patternLoopMode(s, p);
   TempoMap tm;
@@ -722,6 +723,20 @@ void writeClipLoopsAsFl(Song& s, ExportReport& rep) {
           out.push_back(x);
         }
         rep.counts["looping audio clips (written pass by pass)"]++;
+        continue;
+      }
+      if (c.kind != ClipKind::Audio && c.loop && c.loopLength > 0) {  // K-140: a cut clip's loop: repeated clips of its cut length
+        for (const ClipPass& ps : clipPasses(s, c)) {
+          Clip x = c;
+          if (ps.index > 0) x.id = s.allocateId();
+          x.start = c.start + ps.at;
+          x.length = ps.len;
+          x.offset = ps.content;
+          x.loop = false;
+          x.loopStart = x.loopLength = 0;
+          out.push_back(x);
+        }
+        rep.counts["looping cut clips (written pass by pass)"]++;
         continue;
       }
       const Pattern* p = c.kind == ClipKind::Pattern ? s.pattern(c.pattern) : nullptr;

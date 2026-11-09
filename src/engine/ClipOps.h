@@ -29,8 +29,10 @@ Tick audioLoopLength(const Song& song, const Clip& clip, const TempoMap& map);
 std::vector<Clip> audioLoopPasses(const Song& song, const Clip& clip, const TempoMap& map);
 // K-114: turning a clip's loop on or off (a copy; gestures and the clip menu).
 // On: an audio clip shorter than its audio loops what it shows (its window
-// ends at the clip's end). Off: an audio clip that started inside its loop
-// starts its audio there. Automation curves need a loop length too
+// ends at the clip's end); K-140: so does a pattern or automation clip cut
+// short (clipCutShort: Clip::loopStart / loopLength). Off: an audio clip that
+// started inside its loop starts its audio there; a clip's own loop goes.
+// Automation curves of clips that are not cut short need a loop length too
 // (prepareAutomationLoops).
 Clip withClipLoop(const Song& song, const TempoMap& map, Clip c, bool on);
 // K-114: automation curves of the clips of `clips` listed in `sel` without a

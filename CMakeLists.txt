@@ -1378,6 +1378,12 @@ target_link_libraries(gridline_tests_k114 PRIVATE gridline_core)
 target_include_directories(gridline_tests_k114 PRIVATE tests)
 target_compile_options(gridline_tests_k114 PRIVATE ${GL_WARN})
 add_test(NAME k114_clip_loops COMMAND gridline_tests_k114 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# K-140: a cut clip loops from its cut point (the part it showed repeats).
+add_executable(gridline_tests_k140 tests/test_k140.cpp)
+target_link_libraries(gridline_tests_k140 PRIVATE gridline_core)
+target_include_directories(gridline_tests_k140 PRIVATE tests)
+target_compile_options(gridline_tests_k140 PRIVATE ${GL_WARN})
+add_test(NAME k140_cut_loops COMMAND gridline_tests_k140 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 add_executable(gridline_tests_j56 tests/test_j56.cpp)
 target_link_libraries(gridline_tests_j56 PRIVATE gridline_core)
 target_include_directories(gridline_tests_j56 PRIVATE tests)
@@ -2002,6 +2008,14 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -DOUT=${CMAKE_BINARY_DIR}/k114_clip_loop_app -P ${CMAKE_SOURCE_DIR}/tests/k114_clip_loop_app.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(k114_clip_loop_app PROPERTIES TIMEOUT 300)
+
+    # K-140: Ctrl (Cmd) + edge drag of a cut clip loops the part it showed; back at the cut point it is
+    # the clip it was; the loop badge shows only where a loop-key drag loops.
+    add_test(NAME k140_cut_loop_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/k140_cut_loop_app -P ${CMAKE_SOURCE_DIR}/tests/k140_cut_loop_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(k140_cut_loop_app PROPERTIES TIMEOUT 300)
 
     # A right-click on overlapping notes deletes only the top one, held or with a slight slip.
     add_test(NAME piano_erase_overlap

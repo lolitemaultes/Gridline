@@ -65,6 +65,9 @@ playlist** (one playlist automation clip under every clip of the pattern, soundi
 - **Clone** and **Make unique** copy the pattern's clips; the copies are independent.
 - Splitting, trimming, slipping and looping a pattern's playlist clip moves its automation with
   its notes.
+- A playlist clip that shows only part of its pattern or curve (it was cut at either end) loops
+  that part when you hold Ctrl (Cmd on macOS) and drag its edge out: the part it showed repeats,
+  automation included. Drag the edge back to where it was cut and it is the plain clip again.
 - Projects save every field (name, colour, range, loop, curve law). Patterns from projects made
   before pattern automation clips (their plain event lanes) open as unnamed clips with the
   whole range of the control and play exactly as before; a project that only has such lanes

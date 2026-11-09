@@ -248,7 +248,7 @@ std::vector<ObjectId> stutterPattern(Song& s, const Clip& base, Tick length, con
   // Q-1: the clip's notes as they play (clip ticks; a looping pattern's passes unrolled).
   std::map<ObjectId, std::vector<Note>> notes;
   for (const auto& [ch, ns] : contentNotes(s, *bp)) notes[ch] = clipChannelNotes(s, base, ns, true);
-  const Tick laneOffset = wrapLoopOffset(base.offset, clipLoopLength(s, base));
+  const Tick laneOffset = wrapClipOffset(s, base, base.offset);
   Pattern np;
   np.name = bp->name + " stutter";
   np.color = bp->color;

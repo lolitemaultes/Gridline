@@ -5,9 +5,15 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 
 ## Unreleased
 
+### Changed
+
+- **Loop a cut clip from where it was cut.** Holding Ctrl (Cmd on macOS) and dragging the edge of a pattern, audio or automation clip that shows only part of its content (it was trimmed at either end) now repeats the part the clip showed, whatever the cut point. Dragging the edge back to the cut point in the same drag gives back the plain clip exactly as it was, with no loop; the edge snaps to that point so it is easy to hit, and inside it the clip is simply shorter. With the left edge, dragging out loops the part and sets where its loop starts. Several selected clips loop together, each from its own cut point, and the whole drag is one undo step. FL Studio export writes such a loop as repeated clips of the cut length.
+
 ### Fixed
 
 - **M4A samples have their exact length on Linux and the BSDs.** AAC files in .m4a decoded with FFmpeg no longer carry up to a tenth of a second of extra silence at the end, and no longer start late: Gridline now reads the start delay and the real length the file states and trims to the sample, as macOS and Windows do, so loops close cleanly and tempo fitting lines up.
+- **The loop badge by the pointer.** The badge that shows a Ctrl (Cmd) edge drag will loop is now larger, so its loop arrows read as arrows instead of a small ring, sits below and to the right of the pointer, clear of the resize arrows, is drawn crisply at every interface size and stands out in both themes, and appears only where a drag of that edge really loops: not over a clip's body, not on the left edge of a clip at the very start of the song, and during a drag only while the clip loops. It appears and goes the moment the key is pressed or released. The loop mark in the title bar of a looping clip is larger and readable too.
+
 
 ## 0.7.4
 
