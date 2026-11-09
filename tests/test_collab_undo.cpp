@@ -3,7 +3,9 @@
 // still yours (a collaborator's later edit stays and you are told); redo puts back what you
 // undid. Two and three peers wired together in memory (tests/collab/CollabSim.h), random
 // delays, reordering and partitions with fixed seeds.
+#include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstdio>
 #include <filesystem>
 #include <map>
@@ -617,6 +619,134 @@ void testLocalOnly() {
   expect(!clipOf(t.a, cl)->launched && !t.a.doc.song().tracks[0].folded, "a clip's launch and a track's fold undo too");
 }
 
+// A step's own command is never run on the merged song: the objects it names may be gone. (A
+// step that also changed this computer's settings once replayed its command on a copy of the
+// song; a clip a collaborator had removed since crashed the undo.)
+void testLocalOnRemovedObject() {
+  Trio t(124, "localgone");
+  const ObjectId pat = t.a.doc.song().patterns[0].id;
+  const ObjectId mx = t.a.doc.song().mixer[1].id;
+  const ObjectId cl = t.a.doc.addClip(pat, 0, 0);
+  const ObjectId cl2 = t.a.doc.addClip(pat, 1, 0);
+  t.sync();
+  // one step: the clip launched (stays here) and moved (shared)
+  t.a.doc.editClip(cl, "launch and move", [](Clip& c) {
+    c.launched = true;
+    c.start = 384;
+  });
+  t.sync();
+  t.b.doc.removeClip(cl);
+  t.sync();
+  t.a.doc.undo();
+  t.sync();
+  expect(!clipOf(t.a, cl) && !clipOf(t.b, cl) && t.a.doc.song().playlist.size() == t.b.doc.song().playlist.size(),
+         "undo of a step with a local part on a clip a collaborator removed does nothing to it (and does not crash)");
+  t.a.doc.redo();
+  t.sync();
+  expect(!clipOf(t.a, cl) && clipOf(t.a, cl2), "its redo leaves the removed clip removed");
+  // a collaborator's new channel is not a change of this computer's settings: the next step of
+  // yours has no local part, and its undo touches only what it did
+  t.b.doc.addChannel("New", "gl.kick");
+  t.sync();
+  t.a.doc.moveClip(cl2, 2, 96);
+  t.sync();
+  {
+    const size_t pos = t.a.doc.history().position();
+    const auto* st = pos ? dynamic_cast<const CollabStep*>(t.a.doc.stepNote(pos - 1, NoteSlot::Collab)) : nullptr;
+    expect(st && st->local.empty(), "objects a collaborator adds do not count as your settings changing");
+  }
+  t.b.doc.removeClip(cl2);
+  t.sync();
+  t.a.doc.undo();
+  t.sync();
+  expect(!clipOf(t.a, cl2) && sharedSongDigest(t.a.doc.song()) == sharedSongDigest(t.b.doc.song()), "undo of a move of a clip removed since keeps the projects equal");
+  // a delete of yours, undone, then deleted again by a collaborator: the redo finds nothing to
+  // remove (the old replay ran the step's own "delete clip" on a song without the clip; a
+  // collaborator's channel arriving just before marked the step as having a local part)
+  {
+    const ObjectId cl3 = t.a.doc.addClip(pat, 3, 0);
+    t.sync();
+    t.b.doc.addChannel("Another", "gl.kick");
+    t.sync();
+    t.a.doc.removeClip(cl3);
+    t.sync();
+    t.a.doc.undo();
+    t.sync();
+    const bool back = clipOf(t.a, cl3) && clipOf(t.b, cl3);
+    t.b.doc.removeClip(cl3);
+    t.sync();
+    t.a.doc.redo();
+    t.sync();
+    expect(back && !clipOf(t.a, cl3) && sharedSongDigest(t.a.doc.song()) == sharedSongDigest(t.b.doc.song()),
+           "redo of your delete after a collaborator deleted it again is safe and stays converged");
+    // and the same for a channel and a pattern
+    const ObjectId ch = t.a.doc.addChannel("Gone", "gl.hat");
+    const ObjectId pt = t.a.doc.addPattern("Gone");
+    t.sync();
+    t.b.doc.addChannel("Third", "gl.kick");
+    t.sync();
+    t.a.doc.removeChannel(ch);
+    t.a.doc.removePattern(pt);
+    t.sync();
+    t.a.doc.undo();
+    t.a.doc.undo();
+    t.sync();
+    const bool both = t.b.doc.song().channel(ch) && t.b.doc.song().pattern(pt);
+    t.b.doc.removeChannel(ch);
+    t.b.doc.removePattern(pt);
+    t.sync();
+    t.a.doc.redo();
+    t.a.doc.redo();
+    t.sync();
+    expect(both && !t.a.doc.song().channel(ch) && !t.a.doc.song().pattern(pt) &&
+               sharedSongDigest(t.a.doc.song()) == sharedSongDigest(t.b.doc.song()),
+           "redo of deleting a channel and a pattern a collaborator deleted again is safe");
+  }
+  // and a step that only changes this computer's settings still undoes and redoes here
+  t.a.doc.editMixerTrack(mx, "solo", [](MixerTrack& m) { m.solo = true; });
+  t.sync();
+  t.a.doc.undo();
+  t.a.doc.redo();
+  t.sync();
+  expect(t.a.doc.song().mixerTrack(mx)->solo && !t.b.doc.song().mixerTrack(mx)->solo, "solo still undoes and redoes here only");
+}
+
+// The fuzz that found it: random edits, removals and undos by three people, many seeds. Every
+// undo and redo must be safe whatever the others removed in between.
+void testUndoFuzz() {
+  const char* env = std::getenv("GRIDLINE_UNDO_FUZZ_SEEDS");
+  const int seeds = env ? std::max(1, std::atoi(env)) : 6;
+  bool ok = true;
+  for (int sd = 0; sd < seeds && ok; ++sd) {
+    Trio t(static_cast<uint32_t>(900 + sd), "undofuzz");
+    std::mt19937 r(static_cast<uint32_t>(sd * 31 + 5));
+    Peer* ps[2] = {&t.a, &t.b};
+    for (int step = 0; step < 300; ++step) {
+      Peer& p = *ps[r() % 2];
+      Document& d = p.doc;
+      const Song& s = d.song();
+      const ObjectId clip = s.playlist.empty() ? kNoId : s.playlist[r() % s.playlist.size()].id;
+      const ObjectId mx = s.mixer.size() > 1 ? s.mixer[1 + r() % (s.mixer.size() - 1)].id : kNoId;
+      const ObjectId pat = s.patterns.empty() ? kNoId : s.patterns[0].id;
+      switch (r() % 10) {
+        case 0: if (pat) d.addClip(pat, static_cast<int>(r() % 4), static_cast<Tick>(r() % 16) * 96); break;
+        case 1: if (clip) d.editClip(clip, "launch", [&r](Clip& c) { c.launched = !c.launched; c.start = static_cast<Tick>(r() % 16) * 96; }); break;
+        case 2: if (clip) d.removeClip(clip); break;
+        case 3: if (mx) d.editMixerTrack(mx, "solo", [&r](MixerTrack& m) { m.solo = !m.solo; m.volume = (r() % 100) / 100.0f; }); break;
+        case 4: if (clip) d.moveClip(clip, static_cast<int>(r() % 4), static_cast<Tick>(r() % 16) * 96); break;
+        case 5: d.addChannel("C", "gl.kick"); break;
+        case 6: case 7: d.undo(); break;
+        case 8: d.redo(); break;
+        case 9: d.editPlaylistTrack(static_cast<int>(r() % 3), "fold", [](PlaylistTrack& tr) { tr.folded = !tr.folded; }); break;
+      }
+      if (r() % 3 == 0) t.sync();
+    }
+    t.sync();
+    ok = sharedSongDigest(t.a.doc.song()) == sharedSongDigest(t.b.doc.song());  // solo, launch, fold stay per computer
+  }
+  expect(ok, "random edits, removals, local settings, undos and redos of two people stay safe and converge");
+}
+
 // C6, C7, C8: the records last as long as the steps; the history starts when sharing does.
 void testLimits() {
   {
@@ -889,6 +1019,8 @@ int main() {
   testReconnect();
   testRedoList();
   testLocalOnly();
+  testLocalOnRemovedObject();
+  testUndoFuzz();
   testLimits();
   testSkipSetting();
   testPersistence();

@@ -939,7 +939,7 @@ void Session::attach() {
   lastRev_ = doc_.revision();
   lastPush_ = doc_.pushCount();
   lastSerial_ = doc_.history().stateSerial();
-  lastLocalHash_ = sessionHash();
+  localShadow_ = sessionValues(doc_.song());
 }
 
 void Session::detach() {
@@ -1157,13 +1157,20 @@ void Session::flushLocal() {
   lastSerial_ = serial;
   lastRev_ = doc_.revision();
   lastFlush_ = now_;
-  const uint64_t localHash = sessionHash();
+  SessionValues localNow = sessionValues(doc_.song());
   if (changed)
     if (CollabStep* st = topStep(true)) {
-      if (localHash != lastLocalHash_) st->local = true;  // solo, arm ... stay here: undone locally
+      // solo, arm ... stay here: the step keeps what it changed of them, to undo it here
+      for (const SessionChange& c : sessionChanges(localShadow_, localNow)) {
+        auto it = std::find_if(st->local.begin(), st->local.end(), [&](const SessionChange& x) { return x.key == c.key; });
+        if (it == st->local.end()) st->local.push_back(c);
+        else it->after = c.after;
+      }
+      st->local.erase(std::remove_if(st->local.begin(), st->local.end(), [](const SessionChange& x) { return x.before == x.after; }),
+                      st->local.end());
       if (!st->madeAtMs) st->madeAtMs = wallNowMs();
     }
-  lastLocalHash_ = localHash;
+  localShadow_ = std::move(localNow);
   if (!ops.empty()) {
     if (gesture_)
       for (const auto& op : ops) gestureObjects_.insert(objectOf(op.path));
@@ -1240,7 +1247,7 @@ size_t CollabStep::approxBytes() const {
   for (const auto& g : groups)
     n += sizeof(g) + g.key.size() * 2 + g.unit.size() + jsonCompact(g.backVal).size() + jsonCompact(g.fwdVal).size() +
          jsonCompact(g.backContent).size();
-  return n;
+  return n + local.size() * sizeof(SessionChange);
 }
 
 CollabStep* Session::topStep(bool create) {
@@ -1498,7 +1505,6 @@ void Session::refreshStepMarks() {
 // A value of this computer's own settings (solo, arm, monitor, input, record point, a clip's
 // launch, a track's fold and height, plugin listen / hold): a step that changed it is undone
 // here too.
-uint64_t Session::sessionHash() const { return sessionStateHash(doc_.song()); }
 
 // --------------------------------------------------------------- history ----
 bool Session::historyStep(int dir) {
@@ -1528,10 +1534,11 @@ bool Session::stepOnce(int dir, StepOutcome& out) {
   if (dir < 0 ? !h.canUndo() : !h.canRedo()) return false;
   const size_t idx = dir < 0 ? h.position() - 1 : h.position();
   out.label = h.labelAt(idx);
+  // The step's own command is never run here: it was made on the song as it was then, and the
+  // objects it names may be gone or changed by others since (a removed clip). What it did is in
+  // its record: the shared part as new edits of ours, this computer's settings by object.
   auto* st = dynamic_cast<CollabStep*>(doc_.stepNote(idx, NoteSlot::Collab));
-  std::unique_ptr<Song> scratch;
-  if (st && st->local) scratch = std::make_unique<Song>(doc_.song());
-  if (!doc_.stepHistory(dir, scratch.get())) return false;
+  if (!doc_.stepHistory(dir, nullptr)) return false;
   lastSerial_ = doc_.history().stateSerial();
   lastPush_ = doc_.pushCount();
   lastRev_ = doc_.revision();
@@ -1676,10 +1683,12 @@ bool Session::stepOnce(int dir, StepOutcome& out) {
     dirty_.full = true;
     materialize();
   }
-  if (scratch) {  // C5: what stays on this computer is undone / redone here
-    doc_.patchSong([&](Song& s) { keepSessionState(s, *scratch); });
+  if (!st->local.empty()) {  // C5: what stays on this computer is undone / redone here
+    doc_.patchSong([&](Song& s) {
+      for (const SessionChange& c : st->local) applySessionValue(s, c.key, dir < 0 ? c.before : c.after);
+    });
     lastRev_ = doc_.revision();
-    lastLocalHash_ = sessionHash();
+    localShadow_ = sessionValues(doc_.song());
     ++out.applied;
   }
   using S = CollabStep::State;
@@ -2303,6 +2312,7 @@ void Session::materialize() {
   if (!flashes_.empty() && onRemoteChange) onRemoteChange(flashes_);
   flashes_.clear();
   lastFileScan_ = -1;  // look for new files now
+  localShadow_ = sessionValues(doc_.song());  // objects that came or went
 }
 
 void Session::verifyNow() {

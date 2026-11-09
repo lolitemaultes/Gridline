@@ -23,6 +23,7 @@
 #include "Conflicts.h"
 #include "Crdt.h"
 #include "Crypto.h"
+#include "LocalState.h"
 #include "Log.h"
 #include "Profile.h"
 
@@ -169,7 +170,9 @@ struct CollabStep final : StepNote {
   enum class State : uint8_t { Done, Undone, PartlyUndone, NothingUndone, Redone, PartlyRedone, NothingRedone };
   std::vector<Group> groups;
   std::map<std::string, size_t> index;  // key -> group
-  bool local = false;        // also changed settings that stay on this computer (solo, arm ...)
+  // Settings that stay on this computer (solo, arm ...) the step changed, before and after: undone
+  // and redone here, where their objects still are.
+  std::vector<SessionChange> local;
   Stamp madeAt;              // the first write of the step
   uint64_t madeAtMs = 0;     // wall time when made
   State state = State::Done;
@@ -441,7 +444,6 @@ class Session {
   void refreshStepMarks();
   void writeHistory();
   void loadHistory();
-  uint64_t sessionHash() const;
   Json localSongJson();
   void refsToReplica(Json& song);
   void refsToLocal(Json& song) const;
@@ -555,7 +557,7 @@ class Session {
   std::unordered_map<std::string, std::vector<ForeignWrite>> foreignLog_;
   double lastForeignPrune_ = -1, lastMarks_ = -1;
   bool marksDirty_ = false, breakMerge_ = false;
-  uint64_t lastLocalHash_ = 0;
+  SessionValues localShadow_;  // those settings as of the last flush
   uint64_t historySavedSerial_ = ~0ull;
   size_t historySavedSize_ = ~size_t{0};
   size_t previewBase_ = 0;  // history size when a review preview started

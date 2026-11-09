@@ -77,8 +77,8 @@ class ObjectEdit final : public Command {
   using Getter = T* (*)(Song&, ObjectId);
   ObjectEdit(std::string label, Getter get, ObjectId id, T before, T after, uint64_t key)
       : label_(std::move(label)), get_(get), id_(id), before_(std::move(before)), after_(std::move(after)), key_(key) {}
-  // (The object can be gone: a collaborator deleted it, and a collaborative undo / redo
-  // replays the step on a copy of the song as it is now. Nothing to restore then.)
+  // (A guard: the object should be there whenever the history steps, since a collaborative
+  // undo / redo never runs the step's command; if it is gone, there is nothing to restore.)
   void apply(Song& s) override {
     if (T* p = get_(s, id_)) *p = after_;
   }

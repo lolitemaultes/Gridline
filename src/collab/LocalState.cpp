@@ -6,6 +6,7 @@
 #include <functional>
 #include <map>
 #include <mutex>
+#include <tuple>
 #include <vector>
 #include "../core/PluginInfo.h"
 #include "../core/Project.h"
@@ -244,6 +245,152 @@ uint64_t sessionStateHash(const Song& s) {
     mix(bits ^ (t.folded ? 0x80000000u : 0u));
   }
   return h;
+}
+
+namespace {
+
+uint64_t typeHash(const std::string& t) {
+  uint64_t h = 1469598103934665603ull;
+  for (unsigned char ch : t) {
+    h ^= ch;
+    h *= 1099511628211ull;
+  }
+  return h;
+}
+
+auto keyTuple(const SessionKey& k) { return std::make_tuple(k.kind, k.id, k.a, k.b, k.type); }
+
+enum MixerField : int32_t { kSolo, kSoloAlone, kArmed, kMonitor, kInput, kInputStereo, kRecPoint };
+
+void pluginValues(SessionValues& out, const PluginState& p, SessionKey key) {
+  const auto& tab = table();
+  auto it = tab.find(p.type);
+  if (it == tab.end()) return;
+  key.type = typeHash(p.type);
+  for (size_t i = 0; i < it->second.size() && i < p.params.size(); ++i)
+    if (it->second[i]) {
+      key.b = static_cast<int32_t>(i);
+      out.push_back({key, static_cast<double>(p.params[i])});
+    }
+}
+
+bool setPluginValue(PluginState& p, const SessionKey& key, double v) {
+  if (typeHash(p.type) != key.type || key.b < 0 || static_cast<size_t>(key.b) >= p.params.size()) return false;
+  p.params[static_cast<size_t>(key.b)] = static_cast<float>(v);
+  return true;
+}
+
+}  // namespace
+
+bool SessionKey::operator<(const SessionKey& o) const { return keyTuple(*this) < keyTuple(o); }
+bool SessionKey::operator==(const SessionKey& o) const { return keyTuple(*this) == keyTuple(o); }
+
+SessionValues sessionValues(const Song& s) {
+  SessionValues out;
+  for (const auto& c : s.channels) {
+    SessionKey k;
+    k.id = c.id;
+    k.kind = SessionKey::ChannelPlugin;
+    pluginValues(out, c.plugin, k);
+    k.kind = SessionKey::ChannelNoteFx;
+    for (size_t f = 0; f < c.noteFx.size(); ++f) {
+      k.a = static_cast<int32_t>(f);
+      pluginValues(out, c.noteFx[f], k);
+    }
+  }
+  for (const auto& m : s.mixer) {
+    SessionKey k;
+    k.id = m.id;
+    k.kind = SessionKey::MixerField;
+    const double fields[] = {m.solo ? 1.0 : 0.0, m.soloAlone ? 1.0 : 0.0, m.armed ? 1.0 : 0.0, static_cast<double>(m.monitor),
+                             static_cast<double>(m.input), m.inputStereo ? 1.0 : 0.0, static_cast<double>(m.recPoint)};
+    for (int32_t f = kSolo; f <= kRecPoint; ++f) {
+      k.a = f;
+      out.push_back({k, fields[f]});
+    }
+    k.kind = SessionKey::MixerSlot;
+    for (size_t sl = 0; sl < m.slots.size(); ++sl) {
+      k.a = static_cast<int32_t>(sl);
+      pluginValues(out, m.slots[sl].plugin, k);
+    }
+  }
+  for (const auto& c : s.playlist) {
+    SessionKey k;
+    k.kind = SessionKey::ClipLaunched;
+    k.id = c.id;
+    out.push_back({k, c.launched ? 1.0 : 0.0});
+  }
+  for (size_t i = 0; i < s.tracks.size(); ++i) {
+    SessionKey k;
+    k.id = i;
+    k.kind = SessionKey::TrackFolded;
+    out.push_back({k, s.tracks[i].folded ? 1.0 : 0.0});
+    k.kind = SessionKey::TrackHeight;
+    out.push_back({k, static_cast<double>(s.tracks[i].height)});
+  }
+  std::sort(out.begin(), out.end(), [](const auto& x, const auto& y) { return x.first < y.first; });
+  return out;
+}
+
+std::vector<SessionChange> sessionChanges(const SessionValues& from, const SessionValues& to) {
+  std::vector<SessionChange> out;
+  size_t i = 0, j = 0;
+  while (i < from.size() && j < to.size()) {
+    if (from[i].first < to[j].first) {
+      ++i;
+    } else if (to[j].first < from[i].first) {
+      ++j;
+    } else {
+      if (from[i].second != to[j].second) out.push_back({from[i].first, from[i].second, to[j].second});
+      ++i;
+      ++j;
+    }
+  }
+  return out;
+}
+
+bool applySessionValue(Song& s, const SessionKey& key, double v) {
+  switch (key.kind) {
+    case SessionKey::ChannelPlugin:
+      if (Channel* c = s.channel(static_cast<ObjectId>(key.id))) return setPluginValue(c->plugin, key, v);
+      return false;
+    case SessionKey::ChannelNoteFx:
+      if (Channel* c = s.channel(static_cast<ObjectId>(key.id)); c && key.a >= 0 && static_cast<size_t>(key.a) < c->noteFx.size())
+        return setPluginValue(c->noteFx[static_cast<size_t>(key.a)], key, v);
+      return false;
+    case SessionKey::MixerSlot:
+      if (MixerTrack* m = s.mixerTrack(static_cast<ObjectId>(key.id)); m && key.a >= 0 && static_cast<size_t>(key.a) < m->slots.size())
+        return setPluginValue(m->slots[static_cast<size_t>(key.a)].plugin, key, v);
+      return false;
+    case SessionKey::MixerField: {
+      MixerTrack* m = s.mixerTrack(static_cast<ObjectId>(key.id));
+      if (!m) return false;
+      switch (key.a) {
+        case kSolo: m->solo = v != 0; break;
+        case kSoloAlone: m->soloAlone = v != 0; break;
+        case kArmed: m->armed = v != 0; break;
+        case kMonitor: m->monitor = static_cast<uint8_t>(v); break;
+        case kInput: m->input = static_cast<int>(v); break;
+        case kInputStereo: m->inputStereo = v != 0; break;
+        case kRecPoint: m->recPoint = static_cast<uint8_t>(v); break;
+        default: return false;
+      }
+      return true;
+    }
+    case SessionKey::ClipLaunched:
+      if (Clip* c = s.clip(static_cast<ObjectId>(key.id))) {
+        c->launched = v != 0;
+        return true;
+      }
+      return false;
+    case SessionKey::TrackFolded:
+    case SessionKey::TrackHeight:
+      if (key.id >= s.tracks.size()) return false;
+      if (key.kind == SessionKey::TrackFolded) s.tracks[key.id].folded = v != 0;
+      else s.tracks[key.id].height = static_cast<float>(v);
+      return true;
+  }
+  return false;
 }
 
 OwnPlaySig ownPlaySignature(const AudioEngine& e, const Song& s) {

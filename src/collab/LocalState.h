@@ -57,6 +57,31 @@ void keepSessionState(Song& incoming, const Song& current);
 // K-141: a hash of every setting keepSessionState carries (what stays on this computer): a step
 // that changed it is undone and redone here, since it never reaches the shared project.
 uint64_t sessionStateHash(const Song& s);
+// K-141: each of those settings by itself, keyed by the object it belongs to (a channel, mixer
+// track or clip id, a track index) and, for a plugin parameter, the plugin's type: what one step
+// changed is kept as these values before and after, and undone / redone where the objects still
+// are (never by replaying the step's command on a song it was not made on).
+struct SessionKey {
+  enum Kind : uint8_t { ChannelPlugin, ChannelNoteFx, MixerSlot, MixerField, ClipLaunched, TrackFolded, TrackHeight };
+  uint8_t kind = 0;
+  uint64_t id = 0;    // object id (track index for the track fields)
+  int32_t a = 0;      // note FX / slot index, or the mixer field
+  int32_t b = 0;      // parameter index
+  uint64_t type = 0;  // hash of the plugin type (plugin parameters)
+  bool operator<(const SessionKey& o) const;
+  bool operator==(const SessionKey& o) const;
+};
+struct SessionChange {
+  SessionKey key;
+  double before = 0, after = 0;
+};
+using SessionValues = std::vector<std::pair<SessionKey, double>>;  // sorted by key
+SessionValues sessionValues(const Song& s);
+// The settings found in both whose values differ (objects made or removed in between are no
+// change of a setting).
+std::vector<SessionChange> sessionChanges(const SessionValues& from, const SessionValues& to);
+// Sets one value where its object (and plugin type) still is; false when it is gone.
+bool applySessionValue(Song& s, const SessionKey& key, double value);
 void keepChannelSession(Channel& incoming, const Channel& current);
 void keepMixerSession(MixerTrack& incoming, const MixerTrack& current);
 void keepClipSession(Clip& incoming, const Clip& current);
