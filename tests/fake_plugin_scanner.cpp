@@ -2,12 +2,13 @@
 // --out <file>`), so scan tests never load a real plugin. It answers from the entry's file name:
 //   *hang*   never answers (a plugin stuck in a dialog or a loop): killed by the timeout;
 //   *crash*  crashes (abort);
-//   *slow*   answers after 1.5 s;
+//   *slow*   answers after 1 s (well within the tests' 3 s timeout);
 //   *shell*  a plugin holding 120 others (like a VST 2 shell), 40 ms each, telling the parent after
 //            each one (<out>.progress grows), so a scan that takes longer than the timeout still ends;
 //   *junk*   exits with an error and writes nothing (a file that is not a plugin);
 //   else     one plugin after 20 ms.
 // Every plugin it reports has 120 parameters, so the cache grows like a real collection's.
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -52,7 +53,14 @@ std::string pluginJson(const std::string& format, const std::string& uid, const 
   return j + "]}";
 }
 
-void sleepMs(int ms) { std::this_thread::sleep_for(std::chrono::milliseconds(ms)); }
+// K-150: waits by the clock the parent's timeout reads, in short steps. One long sleep can last
+// far longer than asked on a busy virtual machine (a NetBSD CI VM slept 40 ms steps at 108 ms each),
+// which made a slow but working plugin look hung.
+void sleepMs(int ms) {
+  const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
+  for (auto now = std::chrono::steady_clock::now(); now < end; now = std::chrono::steady_clock::now())
+    std::this_thread::sleep_for(std::min<std::chrono::steady_clock::duration>(end - now, std::chrono::milliseconds(10)));
+}
 
 }  // namespace
 
@@ -84,7 +92,7 @@ int main(int argc, char** argv) {
       std::ofstream(out + ".progress", std::ios::app) << '+';
     }
   } else {
-    sleepMs(name.find("slow") != std::string::npos ? 1500 : 20);
+    sleepMs(name.find("slow") != std::string::npos ? 1000 : 20);
     classes = pluginJson(format, name, name, name.find("inst") != std::string::npos);
   }
   std::ofstream f(out, std::ios::binary);

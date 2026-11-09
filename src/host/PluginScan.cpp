@@ -642,6 +642,12 @@ const ScanResult* ScanCache::find(const std::string& bundle, const std::string& 
   return nullptr;
 }
 
+ScanResult* ScanCache::slot(const std::string& bundle, const std::string& format) {
+  for (auto& e : entries_)
+    if (e.bundle == bundle && e.format == format) return &e;
+  return nullptr;
+}
+
 void ScanCache::put(ScanResult r) {
   for (auto& e : entries_)
     if (e.bundle == r.bundle && e.format == r.format) {

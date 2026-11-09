@@ -1442,6 +1442,19 @@ Service& service() {
   static auto* s = new Service;  // never destroyed (shutdownScan() joins the worker before main returns)
   return *s;
 }
+// K-150: the interface's reads take `lock` through here, which keeps the longest wait for it.
+std::atomic<int64_t> gReadLongestWaitNs{0};
+std::unique_lock<std::mutex> lockForRead(Service& s) {
+  std::unique_lock<std::mutex> g(s.lock, std::try_to_lock);
+  if (g.owns_lock()) return g;
+  const auto t0 = ScanClock::now();
+  g.lock();
+  const int64_t ns = std::chrono::duration_cast<std::chrono::nanoseconds>(ScanClock::now() - t0).count();
+  int64_t prev = gReadLongestWaitNs.load();
+  while (ns > prev && !gReadLongestWaitNs.compare_exchange_weak(prev, ns)) {
+  }
+  return g;
+}
 int countFailed(const ScanCache& c) {
   int n = 0;
   for (const auto& e : c.entries()) n += e.ok ? 0 : 1;
@@ -1503,15 +1516,21 @@ bool sameScan(const ScanResult& a, const ScanResult& b) {
 void finishEntry(Service& sv, ScanResult r) {
   std::lock_guard<std::mutex> w(sv.writeLock);
   // K-71: an unchanged plugin is registered already (the browser's plugin list only grows).
-  const ScanResult* old = sv.cache.find(r.bundle, r.format);
+  ScanResult* old = sv.cache.slot(r.bundle, r.format);
   if (!old || !sameScan(*old, r)) registerScanResult(r);
   const int classes = countClasses();
+  // K-150: the searches and counts over the cache (thousands of plugins) run before `lock` (the
+  // cache changes only with writeLock held, so they stay true); under it the entry changes in
+  // constant time, and the replaced result is freed after it. The less the scan holds `lock`, the
+  // less a busy machine can stop it there while the interface waits.
+  const int failed = countFailed(sv.cache) - (old && !old->ok ? 1 : 0) + (r.ok ? 0 : 1);
   {
     std::lock_guard<std::mutex> g(sv.lock);
-    sv.cache.put(std::move(r));
+    if (old) std::swap(*old, r);  // r: the replaced result
+    else sv.cache.append(std::move(r));
     ++sv.status.cacheChanges;
     sv.status.classes = classes;
-    sv.status.failed = countFailed(sv.cache);
+    sv.status.failed = failed;
     sv.status.generation = gGeneration.load();
     ++sv.status.done;
   }
@@ -1757,7 +1776,7 @@ bool scanRunning() { return service().running.load(); }
 ScanStatus scanStatus() {
   Service& s = service();
   const auto now = ScanClock::now();
-  std::lock_guard<std::mutex> g(s.lock);
+  const auto g = lockForRead(s);
   ScanStatus st = s.status;
   const Service::Slot* longest = nullptr;
   for (const auto& sl : s.slots) {
@@ -1791,11 +1810,16 @@ std::vector<std::pair<std::string, std::string>> blacklist() {
 
 std::vector<CacheEntry> cacheEntries() {
   Service& s = service();
-  std::lock_guard<std::mutex> g(s.lock);
+  const auto g = lockForRead(s);
   std::vector<CacheEntry> out;
   out.reserve(s.cache.entries().size());
   for (const auto& e : s.cache.entries()) out.push_back({e.format, e.bundle, e.error, e.ok, static_cast<int>(e.classes.size())});
   return out;
+}
+
+double scanReadLongestWait(bool reset) {
+  const int64_t ns = reset ? gReadLongestWaitNs.exchange(0) : gReadLongestWaitNs.load();
+  return static_cast<double>(ns) * 1e-9;
 }
 
 void stopScan() {

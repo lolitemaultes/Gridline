@@ -207,6 +207,11 @@ struct CacheEntry {
   int classes = 0;
 };
 std::vector<CacheEntry> cacheEntries();
+// K-150: the longest time scanStatus() / cacheEntries() waited for the scan's status lock (seconds)
+// since the last reset. What the scan holds that lock for is short (never a file write or a child
+// wait), so a long wait here is the interface waiting for the scan; a slow read with no wait is the
+// machine (a busy or virtual computer). Tests read it.
+double scanReadLongestWait(bool reset = false);
 // Waits for a running scan to finish (`gridline scan-plugins`).
 void stopScan();
 // J-103 app quit: cancels a running scan (its scanner child is killed; the entries

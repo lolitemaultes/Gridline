@@ -154,6 +154,11 @@ class ScanCache {
   const std::vector<ScanResult>& entries() const { return entries_; }
   const ScanResult* find(const std::string& bundle, const std::string& format = {}) const;
   void put(ScanResult r);
+  // K-150: the cached result of an entry, to change in place (nullptr: not cached), and a new
+  // entry's result added without a search: a caller that holds a lock while the cache changes finds
+  // the entry first, and changes it in constant time.
+  ScanResult* slot(const std::string& bundle, const std::string& format);
+  void append(ScanResult r) { entries_.push_back(std::move(r)); }
   void remove(const std::string& bundle, const std::string& format = {});
   // K-71: several entries ({format, entry}) in one pass.
   void remove(const std::vector<std::pair<std::string, std::string>>& entries);

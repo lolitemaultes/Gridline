@@ -251,6 +251,7 @@ void testCollection(const std::string& dir) {
   onlyFolders({{"vst3", {(root / "vst3").string()}}, {"vst2", {(root / "vst2").string()}}, {"clap", {(root / "clap").string()}}});
   platform::setEnv("GRIDLINE_SCAN_TIMEOUT", "3");
   const auto t0 = Clock::now();
+  host::scanReadLongestWait(true);
   host::startScan(gScanner, false);
   double worst = 0;
   int frames = 0, slow = 0;
@@ -270,14 +271,24 @@ void testCollection(const std::string& dir) {
   host::stopScan();
   const double wall = since(t0);
   const host::ScanStatus st = host::scanStatus();
-  std::printf("collection: %d of %d scanned in %.1f s, %d failed (%d expected), %d plugins, %d frames, longest read %.1f ms, %d of 250 ms or more\n", st.done,
-              st.total, wall, st.failed, failing, st.classes, frames, worst * 1e3, slow);
+  const double waited = host::scanReadLongestWait();
+  std::printf("collection: %d of %d scanned in %.1f s, %d failed (%d expected), %d plugins, %d frames, longest read %.1f ms, %d of 250 ms or more, "
+              "longest wait for the scan %.2f ms\n",
+              st.done, st.total, wall, st.failed, failing, st.classes, frames, worst * 1e3, slow, waited * 1e3);
   expect(!st.running && st.total == 1836 && st.done == 1836, "collection: the first scan of 1836 plugins ends by itself");
+  // K-150: a failing check names what failed that should not have (and why).
+  for (const auto& e : host::cacheEntries()) {
+    const std::string name = fs::path(e.entry).filename().string();
+    const bool bad = name.find("hang") != std::string::npos || name.find("crash") != std::string::npos || name.find("junk") != std::string::npos;
+    if (e.ok == bad) std::printf("collection: %s %s: %s\n", e.ok ? "listed" : "failed", e.entry.c_str(), e.error.c_str());
+  }
   expect(st.failed == failing, "collection: the hung, crashed and broken plugins are blacklisted, no others");
   expect(st.classes == 1836 - failing - 2 + 240, "collection: every plugin is listed, the shells' 120 each included");
-  // A busy or virtual machine may hold up one or two reads by themselves; the interface waiting for
-  // the scan holds up many, or for seconds (the scan timeout is 3 s).
-  expect(slow <= 2 && worst < 1.0, "collection: what the interface reads every frame stays quick during the scan");
+  // The interface waiting for the scan would wait for seconds (the scan timeout is 3 s) or for the
+  // cache being written. K-150: checked by the reads' wait for the scan's lock; their own time only
+  // has a loose cap, since a busy or virtual machine stops the reading thread now and then (the
+  // plugin list is also grouped again on it twice a second during the scan).
+  expect(waited < 0.1 && worst < 1.0, "collection: what the interface reads every frame stays quick during the scan");
   host::ScanCache disk(dir + "/collection-config/plugin-cache.json");
   expect(disk.load() && disk.entries().size() == 1836, "collection: the cache file holds every plugin at the end");
   // An unchanged rescan scans nothing and is quick.

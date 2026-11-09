@@ -211,6 +211,7 @@ void testStatusStaysFree(const std::string& dir) {
   const std::string exe = fakeScanner(dir + "/big", "0.15", "1");
 
   const auto t0 = Clock::now();
+  host::scanReadLongestWait(true);
   host::startScan(exe, false);
   double worst = 0;
   int frames = 0, slow = 0;
@@ -230,11 +231,17 @@ void testStatusStaysFree(const std::string& dir) {
   host::stopScan();
   const double wall = since(t0);
   const host::ScanStatus st = host::scanStatus();
-  std::printf("status: %d frames, longest status read %.1f ms, %d of 25 ms or more, scan of %d took %.2f s\n", frames, worst * 1e3, slow, st.total, wall);
+  const double waited = host::scanReadLongestWait();
+  std::printf("status: %d frames, longest status read %.1f ms, %d of 25 ms or more, longest wait for the scan %.2f ms, scan of %d took %.2f s\n", frames,
+              worst * 1e3, slow, waited * 1e3, st.total, wall);
   expect(sawRunning && st.total == fresh && st.done == fresh, "status: only the new plugins are scanned");
-  // Waiting for the cache to be written would hold up a read for each of the 12 plugins (writing
-  // 12 MB takes that long); a busy or virtual machine may hold up one or two reads by itself.
-  expect(slow <= 2 && worst < 0.1, "status: the interface's status read never waits for the cache to be written");
+  // K-150: the reads are checked by how long they waited for the scan's lock, not by their own
+  // time: a busy or virtual machine (CI VMs running other tests) stops the reading thread itself for
+  // tens of ms now and then, which says nothing about the scan. A read held up by the cache being
+  // written waits as long as the write (12 MB, tens of ms or more). The read's own time keeps a
+  // loose cap: seconds would be the interface waiting for the scan in some other way.
+  expect(waited < 0.025, "status: the interface's status read never waits for the cache to be written");
+  expect(worst < 1.0, "status: every status read is quick");
   int ok = 0;
   for (const auto& e : host::cacheEntries()) ok += e.ok ? 1 : 0;
   std::printf("status: %d of %zu cached plugins ok\n", ok, host::cacheEntries().size());
