@@ -221,6 +221,34 @@ int iconFromJson(const Json& j, int flIcon) {
   return trackicon::info(ic) ? ic : 0;
 }
 
+// K-87: a freeze record (absent = not frozen).
+Json freezeToJson(const FreezeRecord& f) {
+  Json j = Json::makeObject();
+  j.object["render"] = pluginToJson(f.render);
+  j.object["fingerprint"] = str(f.fingerprint);
+  j.object["sampleRate"] = num(f.sampleRate);
+  if (f.arrangement) j.object["arrangement"] = num(f.arrangement);
+  j.object["seconds"] = num(f.seconds);
+  if (f.latency) j.object["latency"] = num(f.latency);
+  return j;
+}
+
+FreezeRecord freezeFromJson(const Json* j) {
+  FreezeRecord f;
+  if (!j || !j->is(Json::Type::Object)) return f;
+  const Json* r = j->find("render");
+  if (!r || !r->is(Json::Type::Object)) return f;
+  f.render.type = r->text("type");
+  f.render.data = r->text("data");
+  if (f.render.type.empty() || f.render.data.empty()) return {};
+  f.fingerprint = j->text("fingerprint");
+  f.sampleRate = jsonInt<int>(std::clamp(j->num("sampleRate", 0), 0.0, 1e6));
+  f.arrangement = jsonInt<int>(std::clamp(j->num("arrangement", 0), 0.0, 1e6));
+  f.latency = jsonInt<int>(std::clamp(j->num("latency", 0), 0.0, 1e7));
+  f.seconds = std::clamp(j->num("seconds", 0), 0.0, 1e7);
+  return f;
+}
+
 // ---- Channel note settings, layers, display groups and per-note properties.
 // Every field is written only when it differs from its default, so projects
 // that do not use them are unchanged and older readers ignore the extra keys
@@ -265,6 +293,8 @@ void channelExtrasToJson(const Channel& c, Json& jc) {
   if (c.audioClip) jc.object["audioClip"] = boolean(true);  // J-39
   if (c.flIcon) jc.object["flIcon"] = num(c.flIcon);
   if (c.icon || c.flIcon) jc.object["icon"] = num(c.icon);  // J-211
+  if (c.freeze.frozen()) jc.object["freeze"] = freezeToJson(c.freeze);  // K-87
+  if (c.hibernate) jc.object["hibernate"] = boolean(true);
 }
 
 void channelExtrasFromJson(const Json& jc, Channel& c) {
@@ -302,6 +332,8 @@ void channelExtrasFromJson(const Json& jc, Channel& c) {
   c.audioClip = flag(jc, "audioClip");
   c.flIcon = jsonInt<int>(std::clamp(jc.num("flIcon", 0), 0.0, 65535.0));
   c.icon = iconFromJson(jc, c.flIcon);  // J-211
+  c.freeze = freezeFromJson(jc.find("freeze"));  // K-87
+  c.hibernate = flag(jc, "hibernate");
 }
 
 void noteToJson(const Note& n, Json& jn) {
@@ -962,6 +994,8 @@ Json mixerTrackToJson(const MixerTrack& m) {
   if (m.latencyOffset) jm.object["latencyOffset"] = num(m.latencyOffset);
   if (!m.threaded) jm.object["threaded"] = boolean(false);
   if (!m.group.empty()) jm.object["group"] = str(m.group);
+  if (m.freeze.frozen()) jm.object["freeze"] = freezeToJson(m.freeze);  // K-87
+  if (m.hibernate) jm.object["hibernate"] = boolean(true);
   return jm;
 }
 
@@ -1304,6 +1338,8 @@ void mixerTrackFromJson(const Json& jm, MixerTrack& m) {
   m.latencyOffset = jsonInt<int>(std::clamp(jm.num("latencyOffset", 0), 0.0, static_cast<double>(kMaxManualLatency)));
   m.threaded = flag(jm, "threaded", true);
   m.group = jm.text("group");
+  m.freeze = freezeFromJson(jm.find("freeze"));  // K-87
+  m.hibernate = flag(jm, "hibernate");
 }
 
 // ---- J-111: one element at a time. Collaboration applies a collaborator's

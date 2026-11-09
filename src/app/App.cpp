@@ -9,6 +9,7 @@
 #include "../core/Crash.h"
 #include "../core/RemoteFs.h"
 #include "../core/ProjectArchive.h"
+#include "FreezeUi.h"
 #include "CacheUi.h"
 #include "CollabUi.h"
 #include "../collab/Controller.h"
@@ -260,7 +261,7 @@ void App::syncEngine() {
   if (doc.revision() == builtRevision_ && !engineChanged && !settled) return;
   // J-196: only clip levels changed (a volume or fade drag, on one clip or a
   // selection): written into the playing program, no build.
-  if (!engineChanged && !settled && doc.clipLevelsOnlySince(builtRevision_) && builder.patchClipLevels(doc.song())) {
+  if (!engineChanged && !settled && doc.clipLevelsOnlySince(builtRevision_) && builder.patchClipLevels(freezeui::playSong(*this, doc.song()))) {
     builtRevision_ = doc.revision();
     return;
   }
@@ -285,7 +286,7 @@ void App::syncEngine() {
   }
   for (auto it = playlist.selected.begin(); it != playlist.selected.end();)
     it = s.clip(*it) ? std::next(it) : playlist.selected.erase(it);
-  engine.setProgram(builder.build(s));
+  engine.setProgram(builder.build(freezeui::playSong(*this, s)));  // K-87: frozen and hibernating units
   engine.setPattern(curPattern);
 }
 
@@ -295,6 +296,7 @@ void App::tick(double t) {
   now = t;
   pollProjectLoad();  // J-167: a slice of the project load, the swap once it is ready
   cacheui::tick(*this);  // K-45: what a crash left in the unpacked cache
+  freezeui::tick(*this);  // K-87: freeze renders, out-of-date freezes, hibernating plugins waking and sleeping
   {  // J-48: recording start / stop and a user-started plugin scan finishing
     const bool rec = recordArmed && engine.playing() && !engine.countingIn() && engine.mode() != PlayMode::Live;
     if (rec != wasRecording_) uiSound(rec ? uisound::Event::RecordStart : uisound::Event::RecordStop);

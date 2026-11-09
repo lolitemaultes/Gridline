@@ -7,6 +7,8 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 
 ### Added
 
+- **Freeze channels and mixer tracks.** Right click a channel, a mixer track or a linked playlist track and choose **Freeze**: its sound is rendered once and its plugins unload, so it costs no processing time, while its volume, pan, sends and their automation stay live. A mixer track's freeze also unloads the channels and tracks that play only into it. **Unfreeze** brings back the plugins exactly as they were. A snowflake marks a frozen unit and shows the render's progress; an edit the render depends on plays it live and renders it again a second later (or, with the option off, keeps the old render with an amber mark), and opening a frozen plugin asks to unfreeze it first. Pattern mode, live mode and playing it on the keyboard load it live for the moment. Freezes are shared in collaborative projects and go into zipped projects unless **Leave out frozen audio** is on. See [docs/freeze.md](docs/freeze.md).
+- **Hibernate plugins.** **Hibernate** unloads a channel's or mixer track's plugins on this computer without a render (marked with a moon); they load again by themselves when their editor opens, a few seconds before the song plays them, or when you play them, and unload again after 30 seconds unused. **Tools > Macros** can hibernate every unused plugin at once and wake everything again, and an option does it automatically.
 
 ### Changed
 

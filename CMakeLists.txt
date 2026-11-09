@@ -1328,6 +1328,15 @@ target_compile_options(gridline_tests_k63 PRIVATE ${GL_WARN})
 add_test(NAME k63_fl_sampler_note_level COMMAND gridline_tests_k63 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 set_tests_properties(k63_fl_sampler_note_level PROPERTIES TIMEOUT 300)
 
+# K-87: freeze and hibernate: null tests (frozen = live), plugins unloaded, exact unfreeze,
+# out-of-date detection, save / load / zip, hibernate and wake, undo.
+add_executable(gridline_tests_freeze tests/test_freeze.cpp)
+target_link_libraries(gridline_tests_freeze PRIVATE gridline_core)
+target_include_directories(gridline_tests_freeze PRIVATE tests src)
+target_compile_options(gridline_tests_freeze PRIVATE ${GL_WARN})
+add_test(NAME k87_freeze COMMAND gridline_tests_freeze WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+set_tests_properties(k87_freeze PROPERTIES TIMEOUT 600)
+
 add_executable(gridline_tests_k64 tests/test_k64.cpp)
 target_link_libraries(gridline_tests_k64 PRIVATE gridline_core)
 target_include_directories(gridline_tests_k64 PRIVATE tests src)
@@ -2185,6 +2194,13 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -DOUT=${CMAKE_BINARY_DIR}/k77_menu_order -P ${CMAKE_SOURCE_DIR}/tests/k77_menu_order_app.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(k77_menu_order_app PROPERTIES TIMEOUT 600)
+    # K-87: freeze and hibernate in the running app (renders on disk, plugins unloaded and loaded
+    # again, a note by hand plays live, a hibernating track wakes, saved with the project).
+    add_test(NAME k87_freeze_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/k87_freeze -P ${CMAKE_SOURCE_DIR}/tests/k87_freeze_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(k87_freeze_app PROPERTIES TIMEOUT 300)
     # K-79: the window layout never reaches the project: the same project saved under every
     # layout (chosen in settings or switched while running) is byte-identical, and opening it changes nothing.
     add_test(NAME k79_layout_project_app

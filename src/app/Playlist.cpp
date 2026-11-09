@@ -34,6 +34,7 @@
 #include "../engine/ClipSource.h"
 #include "../engine/PlaylistTools.h"
 #include "../engine/Sample.h"
+#include "FreezeUi.h"
 #include "App.h"
 #include "SmoothScrollUi.h"
 #include "../core/Grouping.h"
@@ -2776,6 +2777,10 @@ void drawPlaylist(App& a) {
         nx += box + 4;
       }
       nx += trackui::drawNameGlyph(a, dl, tr, ImVec2(nx, nameY));  // PL-08: audio / instrument track glyph
+      if (freeze::Unit fu; freezeui::trackUnit(s, tr, fu) && freezeui::hasMarker(a, fu)) {  // K-87: its channel / track frozen or asleep
+        freezeui::drawMarker(a, dl, fu, ImVec2(nx + 5, nameY + theme::kFontCaption * 0.5f + 1), 10);
+        nx += 13;
+      }
       iconX1 = nx;
       nameX0 = nx;
       const std::string shownName = playlistTrackName(s, static_cast<size_t>(tr));

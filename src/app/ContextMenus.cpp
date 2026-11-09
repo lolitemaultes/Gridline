@@ -1,6 +1,7 @@
 // Gridline — context menus (channel, pattern, playlist track/clip, piano roll,
 // mixer track/slot, knob, plugin window) and the editing helpers they share
 // with the main menu. Window files open these popups and call the bodies here.
+#include "FreezeUi.h"
 #include "EditorZoomUi.h"
 #include "../core/ClipLoop.h"
 #include "../core/ClipSources.h"
@@ -777,6 +778,7 @@ void channelContextMenu(App& a, ObjectId id) {
   }
   if (chanroute::menuItem(keys::label("rack.routeFree"))) chanroute::routeToFree(a, id);  // J-195
   trackui::channelMenuItems(a, id);  // PL-08: instrument track link
+  freezeui::channelMenuItems(a, id);  // K-87: freeze, hibernate
   if (ImGui::MenuItem(i18n::tr("Render to sampled instrument..."))) j59::openRenderSampler(a, id);  // J-59 (RN-08)
   ui::Hint("Renders the instrument note by note into a multisampled Folio instrument");
   if (ImGui::MenuItem(i18n::tr("Export sample as WAV..."), nullptr, false, hasSample)) exportui::exportChannelSample(a, id);  // J-20
@@ -914,6 +916,7 @@ void rackOptionsMenu(App& a) {
   if (ImGui::MenuItem(i18n::tr("Zip selected"), keys::label("rack.zip"), false, any))
     for (ObjectId c : sel) a.rack.zipped.insert(c);
   if (ImGui::MenuItem(i18n::tr("Route selected to free mixer tracks"), keys::label("rack.routeFree"), false, any)) chanroute::routeToFree(a, sel);
+  freezeui::rackMenuItems(a, sel);  // K-87
   if (ImGui::MenuItem(i18n::tr("Select their mixer tracks"), nullptr, false, any))
     if (const Channel* c = s.channel(sel.front())) a.selMixer = c->mixerTrack, a.showMixer = true;
   if (ImGui::MenuItem(i18n::tr("Move selected up"), keys::label("rack.moveUp"), false, any)) ops::moveChannels(a.doc, sel, -1);
@@ -1095,6 +1098,7 @@ void playlistTrackMenu(App& a, int track) {
   if (ImGui::MenuItem(i18n::tr("Mute"), nullptr, t.muted))
     a.doc.editPlaylistTrack(track, "mute playlist track", [](PlaylistTrack& x) { x.muted = !x.muted; });
   if (ImGui::MenuItem(i18n::tr("Lock"), nullptr, t.locked)) ops::setTrackLocked(a.doc, track, !t.locked);
+  freezeui::trackMenuItems(a, track);  // K-87: the linked channel or mixer track
   if (ImGui::BeginMenu(i18n::tr("Live settings"))) {
     liveTrackMenu(a, track);
     ImGui::EndMenu();
@@ -1862,6 +1866,7 @@ void mixerTrackMenu(App& a, size_t index) {
   if (ImGui::MenuItem(i18n::tr("Solo"), "S", t.solo)) ops::soloMixerTrack(a.doc, id);
   j31::mixerItems(a, id);  // J-31: alt solo, recording point
   if (ImGui::MenuItem(i18n::tr("Disable track"), nullptr, t.disabled)) mixops::setDisabled(a.doc, selIds, !t.disabled);
+  freezeui::mixerMenuItems(a, selIds);  // K-87
   {
     // Disk recording arm (J-8's MixerTrack::armed; toggleArm also picks an input).
     if (ImGui::MenuItem(many ? i18n::tr("Arm selected tracks") : i18n::tr("Arm for disk recording"), nullptr, t.armed && !many, !master))

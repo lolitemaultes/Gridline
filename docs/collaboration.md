@@ -218,6 +218,9 @@ member. Inviting the person again also works (see above).
   you launched, folded tracks and track heights, and listening switches inside Gridline's plugins
   (band solo and listen, Delta, Hold, Latch, display freezes) stay on your computer. Mute is shared,
   because it is part of the mix.
+* **Freezing is shared, hibernating is not.** A frozen channel or mixer track reaches everyone with
+  its render; only the computer that froze it renders it again when it gets out of date. Hibernated
+  plugins stay hibernated on your computer only. See [freeze.md](freeze.md).
 * If a collaborator deletes or changes the channel or sample a plugin of yours is playing on its
   own, it stops cleanly. A recording reaches the others when you stop it, as a loading clip until
   the audio has arrived.

@@ -119,6 +119,10 @@ class AudioEngine {
   void setLoopRange(Tick start, Tick end);
   void noteOn(ObjectId channel, int pitch, float velocity);
   void noteOff(ObjectId channel, int pitch);
+  // K-87: the channel the last live note (noteOn / ownNoteOn, any thread) went to and how many live
+  // notes there were so far: the app wakes a frozen or hibernating channel that is played by hand.
+  ObjectId lastLiveNoteChannel() const { return lastLiveChannel_.load(std::memory_order_relaxed); }
+  uint64_t liveNoteCount() const { return liveNotes_.load(std::memory_order_relaxed); }
   // J-112: a key an editor's own Play holds (Seltmann's pattern button, Kerf's
   // region play, the chord editor's progression preview): a live note like
   // noteOn(), released by noteOff() as usual, that also counts as plugin
@@ -414,6 +418,42 @@ class AudioEngine {
   // Live note on/off (keyboard, MIDI): also plays a layer channel's children.
   void liveOn(const Program* p, const ProgChannel& ch, uint32_t id, float pitch, float velocity, int color);
   void liveOff(const Program* p, const ProgChannel& ch, uint32_t id);
+  // K-87: notes for an unloaded instrument (ProgChannel::unloaded) wait here until a Program with
+  // it loaded arrives, then play on it (audio thread; fixed size, nothing allocated).
+  struct HeldNote {
+    ObjectId ch = kNoId;
+    uint32_t id = 0;
+    float pitch = 0, velocity = 0;
+    int color = 0;
+    bool live = false;      // played by hand / MIDI (else a song note, with its end in `pd`)
+    bool released = false;  // its key came up before the instrument was there
+    int64_t at = 0;         // engine clock when it came in
+    ChannelRuntime::Pending pd{};
+    NoteProps props;
+    bool hasProps = false;
+  };
+  struct HeldOff {
+    ObjectId ch = kNoId;
+    uint32_t id = 0;
+    int64_t due = 0;
+  };
+  static constexpr int kMaxHeld = 64;
+  HeldNote held_[kMaxHeld];
+  int heldCount_ = 0;
+  HeldOff heldOffs_[kMaxHeld];
+  int heldOffCount_ = 0;
+  const Program* heldProg_ = nullptr;
+  std::atomic<uint64_t> heldDelivered_{0};
+  void holdNote(const HeldNote& n);
+  void releaseHeld(ObjectId ch, uint32_t id);
+  void deliverHeld(const Program* p);
+
+ public:
+  // K-87 (tests): notes that waited for an unloaded instrument and were played once it loaded.
+  uint64_t heldNotesDelivered() const { return heldDelivered_.load(std::memory_order_relaxed); }
+  int heldNotesWaiting() const { return heldCount_; }
+
+ private:
   // Sequenced note start with the channel's note settings (cut groups, mono,
   // porta, polyphony) and slide notes. `at` = absolute start sample.
   // `shift`: ticks added to the event's times (live clips play content ticks from their origin).
@@ -554,6 +594,8 @@ class AudioEngine {
   // activity_ (also from the MIDI thread); a Stop with no activity since the
   // previous one while stopped is the second press.
   std::atomic<uint32_t> activity_{0};
+  std::atomic<ObjectId> lastLiveChannel_{kNoId};  // K-87
+  std::atomic<uint64_t> liveNotes_{0};
   uint32_t stopActivity_ = 0;
   bool stopArmed_ = false;
   // Count-in and sync output.

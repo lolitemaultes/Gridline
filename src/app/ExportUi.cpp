@@ -41,6 +41,7 @@
 #include "../engine/Resample.h"
 #include "../engine/Sample.h"
 #include "../packs/PacksUi.h"
+#include "FreezeUi.h"
 #include "App.h"
 #include "CollabUi.h"
 #include "ContextMenus.h"
@@ -1386,7 +1387,7 @@ bool writeFlpZip(App& a, const std::string& path, std::function<void(bool)> done
 
 bool writeGridlineZip(App& a, const std::string& path, std::function<void(const std::string&)> done) {
   captureHostedStates(a);
-  Song song = a.doc.song();
+  Song song = freezeui::zipSong(a, a.doc.song());  // K-87: "Leave out frozen audio"
   return startFileJob(a, i18n::N_("Saving the zipped project"), song, [song, path, done = std::move(done)](const ExportControl& control) -> FileJobDone {
     CollectReport r = exportZippedProject(song, path, projectStemOf(path), &control);
     return [r = std::move(r), path, done](App& app) {

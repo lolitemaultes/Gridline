@@ -21,6 +21,7 @@
 #include "../../third_party/imgui/imgui.h"
 #include "../../third_party/imgui/imgui_internal.h"
 #include "ChannelRoute.h"
+#include "FreezeUi.h"
 #include "App.h"
 #include "HostedUi.h"
 #include "ContextMenus.h"
@@ -704,8 +705,13 @@ void drawChannelRack(App& a) {
       if (iconBox > 0)
         trackicons::draw(dl, c.icon, ImVec2(std::round(np.x + 9 + iconBox * 0.5f), std::round(np.y + cellH * 0.5f)), iconBox,
                          c.muted ? P.textFaint : P.textDim);
+      const freeze::Unit fu = freeze::channelUnit(c.id);  // K-87: frozen / hibernating marker at the right end
+      const float mkBox = freezeui::hasMarker(a, fu) ? std::min(14.0f, cellH - 6) : 0.0f;
       theme::textEllipsis(dl, a.fontRegular, nameFont, ImVec2(np.x + 10 + iconW, std::round(np.y + (cellH - 13) * 0.5f) - 1),
-                          nameTextW, c.muted ? P.textFaint : selected && P.dark ? P.paper : P.text, c.name.c_str());
+                          nameTextW - (mkBox > 0 ? mkBox + 3 : 0.0f), c.muted ? P.textFaint : selected && P.dark ? P.paper : P.text, c.name.c_str());
+      if (mkBox > 0)
+        freezeui::drawMarker(a, dl, fu, ImVec2(std::round(np.x + nameW - 4 - mkBox * 0.5f), std::round(np.y + cellH * 0.5f)), mkBox);
+      freezeui::drawShade(a, dl, fu, np, ImVec2(np.x + nameW, np.y + cellH));
       {  // J-111: a collaborator's change flashes; a sample still arriving shows its progress
         ImU32 fc = 0;
         if (const float fl = collabui::flash(a, "channels/#" + std::to_string(c.id), &fc); fl > 0)
@@ -718,7 +724,8 @@ void drawChannelRack(App& a) {
       }
       if (ui::HintHovered()) {
         const PluginInfo* info = findPlugin(c.plugin.type);
-        ui::Hint(c.name + (info ? "  \xC2\xB7  " + info->name : "") +
+        const std::string fz = freezeui::statusText(a, freeze::channelUnit(c.id));  // K-87
+        ui::Hint(c.name + (info ? "  \xC2\xB7  " + info->name : "") + (fz.empty() ? std::string() : "  \xC2\xB7  " + fz) +
                "   (click: open / close its settings \xC2\xB7 Ctrl+click: add to selection \xC2\xB7 right-click: menu \xC2\xB7 drag: reorder)");
       }
       if (ImGui::BeginPopup("##chmenu")) {

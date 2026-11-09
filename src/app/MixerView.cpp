@@ -19,6 +19,7 @@
 #include "Keys.h"
 #include "Look.h"
 #include "../../third_party/imgui/imgui.h"
+#include "FreezeUi.h"
 #include "App.h"
 #include "AudioRecordUi.h"
 #include "Theme.h"
@@ -573,6 +574,13 @@ void drawStrip(App& a, size_t i, ImVec2 p, float stripW, float stripH, const Str
     trackicons::draw(dl, t.icon, ImVec2(std::round(p.x + stripW - 5 - box * 0.5f), std::round(p.y + 4 + box * 0.5f)), box, isSel ? P.hot : P.textDim);
     rightX = p.x + stripW - 5 - box - 3;
   }
+  if (const freeze::Unit fu = freeze::mixerUnit(t.id); i > 0 && freezeui::hasMarker(a, fu)) {  // K-87: frozen / hibernating
+    const float box = 12.0f;
+    freezeui::drawMarker(a, dl, fu, ImVec2(std::round(rightX - box * 0.5f), std::round(p.y + 4 + 7)), box);
+    rightX -= box + 3;
+    if (ImGui::IsMouseHoveringRect(ImVec2(rightX + 3, p.y + 4), ImVec2(rightX + 3 + box, p.y + 4 + box))) ui::Tooltip(freezeui::statusText(a, fu).c_str());
+  }
+  if (i > 0) freezeui::drawShade(a, dl, freeze::mixerUnit(t.id), ImVec2(p.x + 2, p.y + 2), ImVec2(p.x + stripW - 2, p.y + plateH));  // K-87: covered
   int fxCount = 0;
   for (const auto& sl : t.slots) fxCount += !sl.plugin.empty();
   // Right of the number: the track's own latency when it has some, else its effect count (when it fits).

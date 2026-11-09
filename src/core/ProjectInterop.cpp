@@ -324,9 +324,12 @@ int visitSong(Song& song, const RefFn& fn) {
   for (auto& c : song.channels) {
     changed += visitState(c.plugin, fn) ? 1 : 0;
     for (auto& nf : c.noteFx) changed += visitState(nf, fn) ? 1 : 0;
+    if (c.freeze.frozen()) changed += visitState(c.freeze.render, fn) ? 1 : 0;  // K-87: the frozen audio
   }
-  for (auto& m : song.mixer)
+  for (auto& m : song.mixer) {
     for (auto& sl : m.slots) changed += visitState(sl.plugin, fn) ? 1 : 0;
+    if (m.freeze.frozen()) changed += visitState(m.freeze.render, fn) ? 1 : 0;
+  }
   return changed;
 }
 

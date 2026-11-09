@@ -94,7 +94,12 @@ void maskMixerJson(Json& m) {
       b.boolean = false;
       return b;
     }();
-  for (const char* k : {"soloAlone", "armed", "monitor", "input", "inputStereo", "recPoint"}) m.object.erase(k);
+  for (const char* k : {"soloAlone", "armed", "monitor", "input", "inputStereo", "recPoint", "hibernate"}) m.object.erase(k);
+}
+
+// K-87: a hibernating channel is this computer's choice.
+void maskChannelJson(Json& c) {
+  if (c.is(Json::Type::Object)) c.object.erase("hibernate");
 }
 
 void maskClipJson(Json& c) {
@@ -161,12 +166,14 @@ void maskPluginJson(Json& anything) { maskPlugins(anything, 0); }
 
 void maskElementJson(const std::string& list, Json& e) {
   if (list == "mixer") maskMixerJson(e);
+  if (list == "channels") maskChannelJson(e);
   if (list == "playlist") maskClipJson(e);
   maskPlugins(e, 0);
 }
 
 void maskSessionJson(Json& song) {
   eachIn(song, "mixer", maskMixerJson);
+  eachIn(song, "channels", maskChannelJson);
   eachIn(song, "playlist", maskClipJson);
   eachIn(song, "tracks", maskTrackJson);
   eachIn(song, "arrangements", [](Json& a) {
@@ -177,6 +184,7 @@ void maskSessionJson(Json& song) {
 }
 
 void keepChannelSession(Channel& in, const Channel& cur) {
+  in.hibernate = cur.hibernate;  // K-87
   keepPluginSession(in.plugin, cur.plugin);
   for (size_t i = 0; i < in.noteFx.size() && i < cur.noteFx.size(); ++i) keepPluginSession(in.noteFx[i], cur.noteFx[i]);
 }
@@ -189,6 +197,7 @@ void keepMixerSession(MixerTrack& in, const MixerTrack& cur) {
   in.input = cur.input;
   in.inputStereo = cur.inputStereo;
   in.recPoint = cur.recPoint;
+  in.hibernate = cur.hibernate;  // K-87
   for (size_t k = 0; k < in.slots.size() && k < cur.slots.size(); ++k) keepPluginSession(in.slots[k].plugin, cur.slots[k].plugin);
 }
 
@@ -227,6 +236,7 @@ uint64_t sessionStateHash(const Song& s) {
   };
   for (const auto& c : s.channels) {
     mix(c.id);
+    mix(c.hibernate ? 1u : 0u);  // K-87
     plugin(c.plugin);
     for (const auto& f : c.noteFx) plugin(f);
   }
@@ -234,7 +244,7 @@ uint64_t sessionStateHash(const Song& s) {
     mix(m.id);
     mix(static_cast<uint64_t>(m.solo) | static_cast<uint64_t>(m.soloAlone) << 1 | static_cast<uint64_t>(m.armed) << 2 |
         static_cast<uint64_t>(m.inputStereo) << 3 | static_cast<uint64_t>(m.monitor) << 8 | static_cast<uint64_t>(m.recPoint) << 16 |
-        static_cast<uint64_t>(static_cast<uint32_t>(m.input)) << 24);
+        static_cast<uint64_t>(static_cast<uint32_t>(m.input)) << 24 | static_cast<uint64_t>(m.hibernate) << 56);
     for (const auto& sl : m.slots) plugin(sl.plugin);
   }
   for (const auto& c : s.playlist)

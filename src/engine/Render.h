@@ -9,6 +9,7 @@
 #pragma once
 #include <atomic>
 #include <functional>
+#include <map>
 #include <string>
 #include <vector>
 #include "../core/AudioBuffer.h"
@@ -16,6 +17,13 @@
 #include "AudioEngine.h"
 
 namespace gl {
+
+// K-87: renders of frozen units a render plays (engine/Freeze.h exportView; the song is then that
+// view): channel / mixer track id -> decoded file (ProgramBuilder::setFrozenAudio).
+struct FrozenAudio {
+  std::map<ObjectId, SamplePtr> channels, mixers;
+  bool empty() const { return channels.empty() && mixers.empty(); }
+};
 
 struct RenderOptions {
   int sampleRate = 44100;
@@ -32,6 +40,7 @@ struct RenderOptions {
   // (a cancelled render returns what was rendered so far, zero-padded).
   std::function<void(double)> progress;
   const std::atomic<bool>* cancel = nullptr;
+  FrozenAudio frozen;  // K-87
 };
 
 // Renders the song (or one pattern) from the start, without looping.
@@ -78,6 +87,7 @@ struct RenderJob {
   // Progress (0..1, called from the rendering thread) and cancel flag.
   std::function<void(double)> progress;
   const std::atomic<bool>* cancel = nullptr;
+  FrozenAudio frozen;  // K-87: frozen units play their renders (the song is freeze::exportView's)
 };
 
 struct RenderResult {
@@ -87,6 +97,7 @@ struct RenderResult {
   Tick start = 0, end = 0;    // scope in ticks (song ticks, or pattern ticks)
   bool cancelled = false;
   std::string error;          // non-empty: nothing rendered
+  std::map<ObjectId, int> trackLatency;  // K-87: each mixer track's own effect latency (samples)
 };
 
 // The song as the render switches see it (effects disabled, limits lifted).

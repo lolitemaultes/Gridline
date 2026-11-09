@@ -33,6 +33,26 @@ struct ChannelEcho {
 inline constexpr int kMaxCutGroups = 99;
 inline constexpr int kMaxLayerChildren = 32;
 
+// K-87: a frozen channel or mixer track. Its sound up to its live strip was rendered once to a
+// file (core/Freeze.h); its plugins are unloaded while the record stands and the file plays
+// instead. The unit's own state (instrument, effects, notes) is never changed by a freeze, so
+// clearing the record (unfreeze) brings the plugins back exactly as they were.
+struct FreezeRecord {
+  // The render as a plugin state ("gl.sampler", data = the file): every walk over a project's
+  // files (zipped projects, collected data files, missing files, collaboration) finds it.
+  PluginState render;
+  std::string fingerprint;  // what was rendered (freeze::fingerprint); another value = out of date
+  int sampleRate = 0;       // the file's rate
+  int arrangement = 0;      // the arrangement it was rendered for
+  double seconds = 0;       // the file's length
+  int latency = 0;          // mixer tracks: their effects' latency (samples at sampleRate), kept live
+  bool frozen() const { return !render.data.empty(); }
+  bool operator==(const FreezeRecord& o) const {
+    return render == o.render && fingerprint == o.fingerprint && sampleRate == o.sampleRate && arrangement == o.arrangement &&
+           seconds == o.seconds && latency == o.latency;
+  }
+};
+
 // A channel-rack channel: an instrument plugin plus its strip and routing.
 struct Channel {
   ObjectId id = kNoId;
@@ -88,6 +108,10 @@ struct Channel {
   // export. J-211: `icon` is the Gridline icon (core/TrackIconSet.h) showing it.
   int flIcon = 0;
   int icon = 0;
+  // K-87: frozen (see FreezeRecord), and hibernating: the plugins unloaded without a render,
+  // woken when needed. Hibernate is this computer's choice (collaboration keeps it local).
+  FreezeRecord freeze;
+  bool hibernate = false;
   bool fullKeyRange() const { return keyLo <= 0 && keyHi >= 127; }
 
   bool isLayer() const { return !layer.empty(); }
@@ -98,7 +122,8 @@ struct Channel {
            mono == o.mono && porta == o.porta && portaTime == o.portaTime && cutGroup == o.cutGroup &&
            cutBy == o.cutBy && echo == o.echo && layer == o.layer && layerMode == o.layerMode && group == o.group &&
            auxOuts == o.auxOuts && midiOutPort == o.midiOutPort && midiInPort == o.midiInPort && keyLo == o.keyLo &&
-           keyHi == o.keyHi && swingTruncate == o.swingTruncate && audioClip == o.audioClip && flIcon == o.flIcon && icon == o.icon;
+           keyHi == o.keyHi && swingTruncate == o.swingTruncate && audioClip == o.audioClip && flIcon == o.flIcon && icon == o.icon &&
+           freeze == o.freeze && hibernate == o.hibernate;
   }
 };
 
@@ -431,6 +456,9 @@ struct MixerTrack {
   bool separator = false;
   bool locked = false;
   int flIcon = 0;  // FL's icon number (0 = none), kept for export (`icon` is Gridline's own)
+  // K-87: frozen / hibernating (see Channel::freeze).
+  FreezeRecord freeze;
+  bool hibernate = false;
   bool hasInput() const { return input >= 0; }
   // J-31: an armed track records (its input, or its output after the effects).
   bool records() const { return armed && (input >= 0 || recPoint != 0); }
@@ -442,7 +470,8 @@ struct MixerTrack {
            eqQ == o.eqQ && icon == o.icon && disabled == o.disabled && dock == o.dock &&
            latencyOffset == o.latencyOffset && threaded == o.threaded && group == o.group && input == o.input &&
            inputStereo == o.inputStereo && monitor == o.monitor && armed == o.armed && recPoint == o.recPoint &&
-           soloAlone == o.soloAlone && separator == o.separator && locked == o.locked && flIcon == o.flIcon;
+           soloAlone == o.soloAlone && separator == o.separator && locked == o.locked && flIcon == o.flIcon &&
+           freeze == o.freeze && hibernate == o.hibernate;
   }
 };
 

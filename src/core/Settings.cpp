@@ -38,6 +38,13 @@ Settings::Settings() {
       {"audio.sampleRate", Json::makeNumber(44100)},
       {"audio.bufferFrames", Json::makeNumber(256)},
       {"audio.pdc", b(true)},                  // plugin delay compensation
+      // K-87: freeze and hibernate. An out-of-date frozen unit renders again by itself; plugins the
+      // song does not use hibernate; a woken hibernating plugin sleeps again after this many seconds
+      // (0 = never).
+      {"freeze.autoRefreeze", b(true)},
+      {"freeze.autoHibernate", b(false)},
+      {"freeze.sleepSeconds", Json::makeNumber(30)},
+      {"freeze.zipLeaveOut", b(false)},
       {"audio.threads", Json::makeNumber(0)},  // mixer processing threads (0 = automatic)
       // Audio input & recording (J-8).
       {"audio.inputDevice", Json::makeString("")},     // "" = none, "*" = system default

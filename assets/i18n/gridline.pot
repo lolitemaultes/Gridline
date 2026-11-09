@@ -7885,6 +7885,166 @@ msgstr ""
 msgid "Written as"
 msgstr ""
 
+#: src/app/FreezeUi.cpp
+msgid "10 minutes"
+msgstr ""
+
+#: src/app/FreezeUi.cpp
+msgid "10 seconds"
+msgstr ""
+
+#: src/app/FreezeUi.cpp
+msgid "2 minutes"
+msgstr ""
+
+#: src/app/FreezeUi.cpp
+msgid "30 seconds"
+msgstr ""
+
+#: src/app/FreezeUi.cpp
+msgid "Cannot freeze %s"
+msgstr ""
+
+#: src/app/FreezeUi.cpp
+msgid "Channels without notes and mixer tracks nothing plays into unload their plugins until they are needed"
+msgstr ""
+
+#: src/app/FreezeUi.cpp
+msgid "Could not freeze %s"
+msgstr ""
+
+#: src/app/FreezeUi.cpp src/app/PluginEditorsK3Gb.cpp
+msgid "Freeze"
+msgstr ""
+
+#: src/app/FreezeUi.cpp
+msgid "Freeze %s"
+msgstr ""
+
+#: src/app/FreezeUi.cpp
+msgid "Freeze selected"
+msgstr ""
+
+#: src/app/FreezeUi.cpp
+msgid "Freezing"
+msgstr ""
+
+#: src/app/FreezeUi.cpp
+msgid "Frozen, out of date: plays its old render"
+msgstr ""
+
+#: src/app/FreezeUi.cpp
+msgid "Frozen, out of date: plays live until it is rendered again"
+msgstr ""
+
+#: src/app/FreezeUi.cpp
+msgid "Frozen, playing live for now"
+msgstr ""
+
+#: src/app/FreezeUi.cpp
+msgid "Frozen, rendering again"
+msgstr ""
+
+#: src/app/FreezeUi.cpp
+msgid "Frozen: plays its render, its plugins are unloaded"
+msgstr ""
+
+#: src/app/FreezeUi.cpp
+msgid "Hibernate"
+msgstr ""
+
+#: src/app/FreezeUi.cpp
+msgid "Hibernate selected"
+msgstr ""
+
+#: src/app/FreezeUi.cpp
+msgid "Hibernate unused plugins"
+msgstr ""
+
+#: src/app/FreezeUi.cpp
+msgid "Hibernate unused plugins automatically"
+msgstr ""
+
+#: src/app/FreezeUi.cpp
+msgid "Hibernating, awake for now"
+msgstr ""
+
+#: src/app/FreezeUi.cpp
+msgid "Hibernating: its plugins are unloaded until it is needed"
+msgstr ""
+
+#: src/app/FreezeUi.cpp
+msgid "Its plugins are unloaded while %s is frozen. Unfreezing loads them again; the render stays on disk."
+msgstr ""
+
+#: src/app/FreezeUi.cpp
+msgid "Its sound is in the render of %s: its plugins are unloaded"
+msgstr ""
+
+#: src/app/FreezeUi.cpp
+msgid "Leave out frozen audio"
+msgstr ""
+
+#: src/app/FreezeUi.cpp
+msgid "Loads its plugins again and plays them live; the render stays on disk"
+msgstr ""
+
+#: src/app/FreezeUi.cpp src/app/SuiteUi.cpp src/app/UpdateUi.cpp
+msgid "Never"
+msgstr ""
+
+#: src/app/FreezeUi.cpp
+msgid "On: an edit a freeze depends on plays live and renders again a second later. Off: the old render plays on, marked amber"
+msgstr ""
+
+#: src/app/FreezeUi.cpp
+msgid "Refreeze out-of-date freezes"
+msgstr ""
+
+#: src/app/FreezeUi.cpp
+msgid "Render the freeze again"
+msgstr ""
+
+#: src/app/FreezeUi.cpp
+msgid "Renders its sound once and unloads its plugins; volume, pan and sends stay live"
+msgstr ""
+
+#: src/app/FreezeUi.cpp
+msgid "Unfreeze"
+msgstr ""
+
+#: src/app/FreezeUi.cpp
+msgid "Unfreeze %s"
+msgstr ""
+
+#: src/app/FreezeUi.cpp
+msgid "Unfreeze all"
+msgstr ""
+
+#: src/app/FreezeUi.cpp
+msgid "Unfreeze selected"
+msgstr ""
+
+#: src/app/FreezeUi.cpp
+msgid "Unfreeze to edit?"
+msgstr ""
+
+#: src/app/FreezeUi.cpp
+msgid "Unloads its plugins on this computer until they are needed (an editor, a note, the song about to play it)"
+msgstr ""
+
+#: src/app/FreezeUi.cpp
+msgid "Wake all"
+msgstr ""
+
+#: src/app/FreezeUi.cpp
+msgid "Woken plugins sleep again after"
+msgstr ""
+
+#: src/app/FreezeUi.cpp
+msgid "Zipped projects: frozen units go in unfrozen (smaller; their plugins load when it opens)"
+msgstr ""
+
 #: src/app/HostedUi.cpp
 msgid "%d channel%s listening on port %d"
 msgstr ""
@@ -12582,10 +12742,6 @@ msgid "Force hold: start the bar repeat when this slot starts"
 msgstr ""
 
 #: src/app/PluginEditorsK3Gb.cpp
-msgid "Freeze"
-msgstr ""
-
-#: src/app/PluginEditorsK3Gb.cpp
 msgid "Freeze: lock the envelope against edits"
 msgstr ""
 
@@ -14787,10 +14943,6 @@ msgstr ""
 
 #: src/app/SuiteUi.cpp
 msgid "Installed, from another Gridline version"
-msgstr ""
-
-#: src/app/SuiteUi.cpp src/app/UpdateUi.cpp
-msgid "Never"
 msgstr ""
 
 #: src/app/SuiteUi.cpp

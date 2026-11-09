@@ -15,6 +15,7 @@ AudioBuffer renderSong(const Song& source, const RenderOptions& opt) {
   ProgramBuilder builder;
   builder.setSampleRate(opt.sampleRate);
   builder.setPdc(opt.pdc);
+  builder.setFrozenAudio(opt.frozen.channels, opt.frozen.mixers);
   auto prog = builder.build(song);
   Tick end = opt.patternMode ? (prog->pattern(opt.pattern) ? prog->pattern(opt.pattern)->length : 0) : prog->songEnd;
   if (end <= start) return AudioBuffer(static_cast<size_t>(opt.channels), 0);
@@ -152,6 +153,7 @@ RenderResult renderAudio(const Song& source, const RenderJob& job) {
   ProgramBuilder builder;
   builder.setSampleRate(sr);
   builder.setPdc(job.pdc);
+  builder.setFrozenAudio(job.frozen.channels, job.frozen.mixers);
   auto prog = builder.build(song);
   Tick A = 0, B = 0;
   if (job.scope == RenderScope::Pattern) {
@@ -176,6 +178,7 @@ RenderResult renderAudio(const Song& source, const RenderJob& job) {
   const int loops = std::clamp(job.loops, 1, 64);
   const int64_t body = pass * loops;
   const int64_t lat = std::max(0, prog->outputLatency);
+  for (const auto& m : prog->mixer) res.trackLatency[m.id] = m.latOwn;  // K-87
   const bool tails = job.tail != TailMode::Cut;
   const int64_t tailCap = tails ? static_cast<int64_t>(std::max(0.0, job.maxTailSeconds) * sr) : 0;
 

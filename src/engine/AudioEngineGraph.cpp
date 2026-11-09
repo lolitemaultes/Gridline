@@ -122,6 +122,37 @@ void AudioEngine::runTask(int task, int worker) {
     runMixer(static_cast<size_t>(task - C), worker);
 }
 
+// K-87: a frozen unit's render at the song position: frame k is song sample k (the render starts
+// at the song start, its plugin latency already taken out; a frozen track plays it `delay` frames late,
+// as late as its effects were, and is compensated for that). Another rate is read with linear steps.
+static void addFrozen(const Sample& s, const TempoMap& map, double sr, double anchorTick, int64_t clock, double delay, int from, int len,
+                      float* L, float* R) {
+  const double base = map.samplesBetween(0.0, anchorTick, sr) + static_cast<double>(clock) - delay;
+  const int64_t frames = static_cast<int64_t>(s.frames());
+  if (frames <= 0 || len <= 0) return;
+  const float* sl = s.left.data();
+  const float* sr2 = s.right.data();
+  if (std::fabs(s.sampleRate - sr) < 1e-6) {
+    const int64_t f0 = std::llround(base);
+    const int64_t a = std::max<int64_t>(0, -f0), b = std::min<int64_t>(len, frames - f0);
+    for (int64_t i = a; i < b; ++i) {
+      L[from + i] += sl[f0 + i];
+      R[from + i] += sr2[f0 + i];
+    }
+    return;
+  }
+  const double ratio = s.sampleRate / sr;
+  for (int i = 0; i < len; ++i) {
+    const double pos = (base + i) * ratio;
+    if (pos < 0) continue;
+    const auto k = static_cast<int64_t>(pos);
+    if (k + 1 >= frames) break;
+    const float t = static_cast<float>(pos - static_cast<double>(k));
+    L[from + i] += sl[k] + (sl[k + 1] - sl[k]) * t;
+    R[from + i] += sr2[k] + (sr2[k + 1] - sr2[k]) * t;
+  }
+}
+
 void AudioEngine::runChannel(size_t ci, int worker) {
   const Program* p = bc_.p;
   const int n = bc_.n;
@@ -203,6 +234,9 @@ void AudioEngine::runChannel(size_t ci, int worker) {
     for (int sgi = 0; sgi < segCount_; ++sgi)
       renderAudioClips(ch.audio, songMap(p), sr_, segs_[sgi].anchor, segs_[sgi].clock, segs_[sgi].from, segs_[sgi].len, cL, cR,
                        ch.pitchOffset);
+  if (ch.frozen && tPlaying_ && tMode_ == PlayMode::Song)  // K-87: a frozen unit's render
+    for (int sgi = 0; sgi < segCount_; ++sgi)
+      addFrozen(*ch.frozen, songMap(p), sr_, segs_[sgi].anchor, segs_[sgi].clock, ch.frozenDelay, segs_[sgi].from, segs_[sgi].len, cL, cR);
   if (ch.controller) {
     int k = rt->gen->controlOutputs(rt->ctl, kMaxControllerOutputs);
     for (int q = 0; q < k; ++q) rt->ctlUi[q].store(rt->ctl[q], std::memory_order_relaxed);

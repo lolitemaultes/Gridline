@@ -9,12 +9,23 @@
 #include "../core/Automation.h"
 #include "../core/Crash.h"
 #include "../core/MidiFile.h"
+#include "Freeze.h"
 #include "Loudness.h"
 #include "TrackReceiptPass.h"
 
 namespace fs = std::filesystem;
 
 namespace gl {
+namespace {
+bool hasFrozen(const Song& s) {
+  for (const auto& c : s.channels)
+    if (c.freeze.frozen()) return true;
+  for (const auto& m : s.mixer)
+    if (m.freeze.frozen()) return true;
+  return false;
+}
+}  // namespace
+
 
 MidiFileData exportScopeMidi(const Song& song, const RenderJob& job) {
   switch (job.scope) {
@@ -121,7 +132,20 @@ void runExportInto(ExportOutcome& out, const Song& song, const ExportSettings& s
   job.cancel = cancel;
   if (mix) {
     job.progress = [&](double f) { report(f, "Rendering " + base); };
-    RenderResult r = renderAudio(song, job);
+    // K-87: frozen units play their renders (no plugins load for them) when the file is at the
+    // export's rate; otherwise, and for a pattern, they play live.
+    Song played;
+    const bool frozenView = job.scope != RenderScope::Pattern && hasFrozen(song);
+    if (frozenView) {
+      Song copy = song;
+      for (auto& c : copy.channels)
+        if (c.freeze.frozen() && c.freeze.sampleRate != job.sampleRate) c.freeze = {};
+      for (auto& m : copy.mixer)
+        if (m.freeze.frozen() && m.freeze.sampleRate != job.sampleRate) m.freeze = {};
+      played = freeze::exportView(copy, job.frozen);
+    }
+    RenderResult r = renderAudio(frozenView ? played : song, job);
+    job.frozen = {};
     if (r.cancelled) {
       out.cancelled = true;
       return;

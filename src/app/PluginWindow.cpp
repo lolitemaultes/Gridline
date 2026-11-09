@@ -43,6 +43,7 @@
 #include "../host/HostedPlugins.h"
 #include "../host/PluginPrefs.h"
 #include "../host/ui/NativeView.h"
+#include "FreezeUi.h"
 #include "App.h"
 #include "AppIcon.h"
 #include "HostedUi.h"
@@ -707,6 +708,7 @@ static void notifyOnce(App& a, const std::string& text, const std::string& forma
 }
 
 bool openHostedEditor(App& a, const PluginTarget& t) {
+  if (!freezeui::beforeEditorOpens(a, t)) return false;  // K-87: a frozen plugin is unloaded; a hibernating one wakes
   if (PluginWindow* ex = windowFor(t)) {
     if (ex->win) SDL_RaiseWindow(ex->win);
     return true;

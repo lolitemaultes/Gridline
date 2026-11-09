@@ -1,5 +1,6 @@
 #include "../packs/Packs.h"
 #include "Program.h"
+#include "Freeze.h"
 #include "ClipSource.h"
 #include "ChannelIns.h"
 #include "ClipOps.h"
@@ -881,6 +882,11 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     pm.disabled = m.disabled;
     pm.threaded = m.threaded;
     pm.latencyManual = std::clamp(m.latencyOffset, 0, kMaxManualLatency);
+    if (auto fz = frozenMixers_.find(m.id); fz != frozenMixers_.end() && fz->second && m.freeze.latency > 0 && m.freeze.sampleRate > 0)
+      // K-87: the render plays as late as its effects did, so the track is compensated as before.
+      pm.latencyManual = std::clamp(m.latencyOffset + static_cast<int>(std::lround(static_cast<double>(m.freeze.latency) * sampleRate_ /
+                                                                                     m.freeze.sampleRate)),
+                                    0, kMaxManualLatency);
     pm.soloSilent = !audible.empty() && !audible.count(m.id);
     pm.silent = m.muted || pm.soloSilent;
     pm.muteMod = m.muted;
@@ -1089,6 +1095,19 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
       prog->hasNoteFx = prog->hasNoteFx || nf.rt != nullptr;
       pc.noteFx.push_back(std::move(nf));
     }
+    if (auto fz = frozenChannels_.find(c.id); fz != frozenChannels_.end() && fz->second) {
+      // K-87: the render holds the instrument, its notes and the channel pitch; the strip stays live.
+      pc.frozen = fz->second;
+      pc.restable = false;
+      pc.pitchOffset = 0;
+      pc.pitch = 0;
+      pc.masterPitch = 0;
+      pc.knobFine = 0;
+      pc.pitchMoves = false;
+      if (pc.rt->gen) pc.rt->gen->setClipOnly(true);
+    }
+    pc.unloaded = unloadedChannels_.count(c.id) > 0;  // K-87
+    pc.asleep = pc.unloaded && asleepChannels_.count(c.id) > 0;
     prog->channels.push_back(std::move(pc));
   }
   // Plugin MIDI output ports → channels listening on the same input port.
@@ -1097,6 +1116,27 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     if (port < 0) continue;
     for (size_t j = 0; j < song.channels.size() && j < prog->channels.size(); ++j)
       if (j != i && song.channels[j].midiInPort == port) prog->channels[i].midiTargets.push_back(static_cast<int>(j));
+  }
+  // K-87: frozen mixer tracks: their render plays into them on a channel of its own, at unity.
+  for (const auto& [mid, sample] : frozenMixers_) {
+    const int mi = song.mixerIndex(mid);
+    if (mi < 0 || !sample || song.channel(mid)) continue;
+    ProgChannel pc;
+    pc.id = mid;
+    auto it = channels_.find(mid);
+    pc.rt = it != channels_.end() && it->second->type == "gl.sampler" ? it->second : newChannelRuntime("gl.sampler");
+    if (!pc.rt) continue;
+    chans[mid] = pc.rt;
+    pc.plugin = defaultPluginState("gl.sampler");
+    pc.plugin.data.clear();
+    if (pc.rt->gen) pc.rt->gen->setClipOnly(true);
+    pc.gainL = pc.gainR = 1.0f;
+    pc.volume = pc.modVolume = 0.78f;
+    pc.mixer = mi;
+    pc.frozen = sample;
+    if (const MixerTrack& mt = song.mixer[static_cast<size_t>(mi)]; mt.freeze.latency > 0 && mt.freeze.sampleRate > 0)
+      pc.frozenDelay = std::lround(static_cast<double>(mt.freeze.latency) * sampleRate_ / mt.freeze.sampleRate);
+    prog->channels.push_back(std::move(pc));
   }
 
   // --- internal controller links ---
@@ -1488,11 +1528,12 @@ bool ProgramBuilder::patchClipLevels(const Song& song) {
 
 std::vector<ProgramBuilder::PreloadItem> ProgramBuilder::preloadItems(const Song& song) {
   std::vector<PreloadItem> out;
+  const freeze::Plan plan = freeze::makePlan(song);  // K-87: frozen and hibernating units load nothing
   for (const auto& m : song.mixer)
     for (size_t s = 0; s < m.slots.size(); ++s)
-      if (!m.slots[s].plugin.empty()) out.push_back({true, m.id, static_cast<int>(s), m.slots[s].plugin.type});
+      if (!m.slots[s].plugin.empty() && !plan.unloadMixers.count(m.id)) out.push_back({true, m.id, static_cast<int>(s), m.slots[s].plugin.type});
   for (const auto& c : song.channels)
-    if (!c.plugin.type.empty()) out.push_back({false, c.id, -1, c.plugin.type});
+    if (!c.plugin.type.empty() && !plan.unloadChannels.count(c.id)) out.push_back({false, c.id, -1, c.plugin.type});
   return out;
 }
 

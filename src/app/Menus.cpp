@@ -8,6 +8,7 @@
 #include <cstring>
 #include <filesystem>
 #include <functional>
+#include "FreezeUi.h"
 #include "CollabUi.h"
 #include "DisplayConfirmUi.h"
 #include "J59Ui.h"
@@ -175,6 +176,7 @@ void menuFile(App& a) {
     if (ImGui::MenuItem(i18n::tr("Project data files..."))) exportui::exportDataFilesDialog(a);
     if (ImGui::MenuItem(i18n::tr("Project bones..."))) exportui::exportBonesDialog(a);
     if (ImGui::MenuItem(i18n::tr("Gridline zipped project (.gridlinez)..."))) exportui::exportZipDialog(a);
+    freezeui::exportItems(a);  // K-87
     if (ImGui::MenuItem(i18n::tr("FL Studio project (.flp)..."))) exportui::exportFlpDialog(a);  // J-34
     if (ImGui::MenuItem(i18n::tr("FL Studio zipped loop package (.zip)..."))) exportui::exportFlpZipDialog(a);  // J-52
     if (ImGui::MenuItem(i18n::tr("FL Studio export report..."), nullptr, false, flpexport::hasReport())) flpexport::openReport();  // J-80
@@ -432,6 +434,7 @@ void menuOptions(App& a) {
     }
     ui::Hint("Delays faster paths so tracks with latent effects (look-ahead, linear phase, oversampling) stay in time");
   }
+  freezeui::optionsItems(a);  // K-87: refreeze, hibernate
   menuparity::optionsItems(a);  // J-27: MIDI clock out
   ImGui::SeparatorText(i18n::tr("Recording"));
   ImGui::MenuItem(i18n::tr("Record notes"), nullptr, &a.recordArmed);
@@ -534,6 +537,7 @@ void menuTools(App& a) {
   if (ImGui::MenuItem(i18n::tr("Unsolo all mixer tracks"))) a.doc.editSong("unsolo all", [](Song& s) {
       for (auto& m : s.mixer) m.solo = false;
     });
+  freezeui::toolsMacroItems(a);  // K-87: unfreeze all, hibernate unused plugins, wake all
   menuparity::toolsMacroItems(a);  // J-27: track locks, live area, audio clip channels, declicking
   if (ImGui::MenuItem(i18n::tr("Close plugin windows"), keys::label("view.closePlugins"))) a.closePluginWindows();
   ImGui::SeparatorText(i18n::tr("Clean up"));

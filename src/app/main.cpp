@@ -1,5 +1,6 @@
 // Gridline — application entry: SDL2 window + OpenGL 3 + Dear ImGui, audio
 // device, default layout, typing keyboard, file drops.
+#include "FreezeUi.h"
 #include "CacheUi.h"
 #include "Look.h"
 #include "MidiUi.h"
@@ -1373,6 +1374,8 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       browserui::devCommand(app, l.args, frame);
     } else if (l.cmd == "palette") {  // K-93: the command palette (CommandPaletteUi.h): open, close, dump, state, run <id>
       cmdpalette::devCommand(app, l.args, frame);
+    } else if (l.cmd == "freeze") {  // K-87: freeze / hibernate (FreezeUi.h): state, freeze, unfreeze, hibernate, wait
+      freezeui::devCommand(app, l.args);
     } else if (l.cmd == "cache") {  // K-45: the unpacked project cache (CacheUi.h)
       cacheui::devCommand(l.args);
     } else if (l.cmd == "collab") {  // J-111: collaboration (CollabUi.h)

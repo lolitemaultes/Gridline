@@ -8,6 +8,7 @@
 #include <atomic>
 #include <map>
 #include <memory>
+#include <set>
 #include <tuple>
 #include <unordered_map>
 #include <vector>
@@ -324,6 +325,13 @@ struct ProgChannel {
   ObjectId id = kNoId;
   bool restable = false;  // K-64: an idle channel with nothing near may be left out of a block
   std::vector<ProgAudioClip> audio;  // audio clips played through this channel (song mode), by start
+  // K-87: a frozen channel's render (or, on a channel the builder adds for a frozen mixer track,
+  // the track's render): frame k plays at song sample k, in song mode, instead of an instrument.
+  SamplePtr frozen;
+  double frozenDelay = 0;  // frames (engine rate) the render plays late: the frozen effects' latency, compensated
+  // K-87: the instrument is unloaded (frozen, covered by a frozen track, hibernating): notes played
+  // by hand are held until a build loads it; `asleep` (hibernating): the song's notes are held too.
+  bool unloaded = false, asleep = false;
   std::shared_ptr<ChannelRuntime> rt;
   PluginState plugin;
   ChannelAux aux;
@@ -654,6 +662,19 @@ class ProgramBuilder {
   // True when a hosted instance asks to be replaced (reload after a crash,
   // sandbox or processing options changed): the caller rebuilds.
   bool staleInstances() const;
+  // K-87: renders of frozen units for the next builds (app: freeze::Plan with decoded files):
+  // a frozen channel plays its file instead of an instrument; a frozen mixer track gets one
+  // added channel (id = the track's id, after the song's channels) playing its file into it.
+  void setFrozenAudio(std::map<ObjectId, SamplePtr> channels, std::map<ObjectId, SamplePtr> mixers) {
+    frozenChannels_ = std::move(channels);
+    frozenMixers_ = std::move(mixers);
+  }
+  // K-87: channels whose instrument the next builds leave unloaded (ProgChannel::unloaded), and of
+  // those the hibernating ones (ProgChannel::asleep).
+  void setUnloaded(std::set<ObjectId> channels, std::set<ObjectId> asleep) {
+    unloadedChannels_ = std::move(channels);
+    asleepChannels_ = std::move(asleep);
+  }
   // Runtime access for the UI (meters). May return nullptr.
   std::shared_ptr<ChannelRuntime> channelRuntime(ObjectId id) const;
   std::shared_ptr<MixerRuntime> mixerRuntime(ObjectId id) const;
@@ -674,7 +695,8 @@ class ProgramBuilder {
     int slot = -1;           // effect slot (effects only)
     std::string type;        // plugin type
   };
-  // Every channel instrument and mixer slot effect of `song`, in build order.
+  // Every channel instrument and mixer slot effect of `song`, in build order (K-87: not those a
+  // freeze or hibernate leaves unloaded).
   static std::vector<PreloadItem> preloadItems(const Song& song);
   // Creates the runtime of one item and restores its state (prepareHost), as build() would.
   // False when the plugin could not be created (unknown or unavailable type).
@@ -688,6 +710,8 @@ class ProgramBuilder {
   std::map<std::pair<ObjectId, int>, std::shared_ptr<EffectRuntime>> effects_;
   std::map<std::pair<ObjectId, int>, std::shared_ptr<NoteFxRuntime>> noteFx_;
   std::map<uint64_t, std::shared_ptr<LinkRuntime>> links_;  // by target ParamId
+  std::map<ObjectId, SamplePtr> frozenChannels_, frozenMixers_;  // K-87
+  std::set<ObjectId> unloadedChannels_, asleepChannels_;          // K-87
   double sampleRate_ = 44100.0;
   bool pdc_ = true;
   bool asyncSamples_ = false;

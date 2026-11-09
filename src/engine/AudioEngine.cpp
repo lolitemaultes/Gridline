@@ -386,8 +386,12 @@ void AudioEngine::noteOn(ObjectId channel, int pitch, float velocity) {
   c.value = velocity;
   send(c);
   activity_.fetch_add(1, std::memory_order_relaxed);
+  lastLiveChannel_.store(channel, std::memory_order_relaxed);
+  liveNotes_.fetch_add(1, std::memory_order_relaxed);
 }
 void AudioEngine::ownNoteOn(ObjectId channel, int pitch, float velocity, OwnPlay source) {
+  lastLiveChannel_.store(channel, std::memory_order_relaxed);
+  liveNotes_.fetch_add(1, std::memory_order_relaxed);
   Cmd c{Cmd::NoteOn};
   c.id = channel;
   c.pitch = pitch;
@@ -538,6 +542,8 @@ void AudioEngine::drainMidi(const Program* p) {
     if (kind == 0x90 && m.b > 0) {
       if (midiNoteCh_[pitch] != kNoId) release(pitch);  // retrigger
       ObjectId ch = routed(mch);
+      lastLiveChannel_.store(ch, std::memory_order_relaxed);  // K-87: the app wakes what a controller plays
+      liveNotes_.fetch_add(1, std::memory_order_relaxed);
       if (const ProgChannel* c = chan(ch)) {
         float vel = m.b / 127.0f;
         if (soft_ && softOn_.load(std::memory_order_relaxed)) vel *= softFactor_.load(std::memory_order_relaxed);
@@ -749,6 +755,17 @@ void AudioEngine::routePluginMidi(const Program* p, int n) {
 // channel note settings (cut groups, mono, porta, polyphony, slide notes).
 
 void AudioEngine::liveOn(const Program* p, const ProgChannel& ch, uint32_t id, float pitch, float velocity, int color) {
+  if (ch.unloaded) {  // K-87: the instrument loads in a moment (the app wakes it): the note waits for it
+    HeldNote n;
+    n.ch = ch.id;
+    n.id = id;
+    n.pitch = pitch;
+    n.velocity = velocity;
+    n.color = color;
+    n.live = true;
+    holdNote(n);
+    return;
+  }
   // J-31: a channel's key range limits the notes it plays (layer splits).
   auto inRange = [pitch](const ProgChannel& c) { return pitch > c.keyLo - 0.5f && pitch < c.keyHi + 0.5f; };
   if (inRange(ch)) sendOn(ch, id, pitch, velocity, 0, color);
@@ -763,6 +780,10 @@ void AudioEngine::liveOn(const Program* p, const ProgChannel& ch, uint32_t id, f
 }
 
 void AudioEngine::liveOff(const Program* p, const ProgChannel& ch, uint32_t id) {
+  if (ch.unloaded) {  // K-87
+    releaseHeld(ch.id, id);
+    return;
+  }
   sendOff(ch, id, 0);
   for (int k : ch.layer)
     if (static_cast<size_t>(k) < p->channels.size()) sendOff(p->channels[static_cast<size_t>(k)], id, 0);
@@ -908,6 +929,81 @@ void AudioEngine::startNote(const Program* p, const ProgChannel& ch, const NoteE
   rt->pending[rt->pendingCount++] = pd;
   rt->lastPitch = e.pitch;
   rt->lastPitchColor[color] = e.pitch;
+  if (ch.asleep) {  // K-87: a hibernating instrument: the note also waits for it to load
+    HeldNote n;
+    n.ch = ch.id;
+    n.id = id;
+    n.pitch = e.pitch;
+    n.velocity = e.velocity;
+    n.color = color;
+    n.pd = pd;
+    n.pd.bendSlot = -1;
+    n.hasProps = props != nullptr;
+    if (props) n.props = *props;
+    holdNote(n);
+  }
+}
+
+// ---- K-87: notes held for an unloaded instrument
+
+void AudioEngine::holdNote(const HeldNote& n) {
+  HeldNote h = n;
+  h.at = absClock_;
+  if (heldCount_ == kMaxHeld) {  // full: the oldest goes
+    for (int k = 1; k < heldCount_; ++k) held_[k - 1] = held_[k];
+    --heldCount_;
+  }
+  held_[heldCount_++] = h;
+}
+
+void AudioEngine::releaseHeld(ObjectId ch, uint32_t id) {
+  for (int k = 0; k < heldCount_; ++k)
+    if (held_[k].ch == ch && held_[k].id == id && held_[k].live) held_[k].released = true;
+}
+
+void AudioEngine::deliverHeld(const Program* p) {
+  // Short notes whose key came up before their instrument loaded end a moment after they start.
+  for (int k = 0; k < heldOffCount_;) {
+    if (absClock_ < heldOffs_[k].due) {
+      ++k;
+      continue;
+    }
+    if (p) {
+      const int ci = p->channelIndex(heldOffs_[k].ch);
+      if (ci >= 0) liveOff(p, p->channels[static_cast<size_t>(ci)], heldOffs_[k].id);
+    }
+    heldOffs_[k] = heldOffs_[--heldOffCount_];
+  }
+  if (p == heldProg_ || heldCount_ == 0) {
+    heldProg_ = p;
+    return;
+  }
+  heldProg_ = p;
+  if (!p) return;
+  const int64_t maxAge = static_cast<int64_t>(sr_ * 2.0);  // waited longer than 2 s: too late to play
+  int keep = 0;
+  for (int k = 0; k < heldCount_; ++k) {
+    const HeldNote& n = held_[k];
+    const int ci = p->channelIndex(n.ch);
+    if (ci < 0) continue;  // the channel is gone
+    const ProgChannel& ch = p->channels[static_cast<size_t>(ci)];
+    if (ch.unloaded || !ch.rt || !ch.rt->gen) {  // not loaded yet: keep waiting
+      if (absClock_ - n.at < maxAge || (n.live && !n.released)) held_[keep++] = n;
+      continue;
+    }
+    if (absClock_ - n.at >= maxAge && (!n.live || n.released)) continue;
+    if (n.live) {
+      liveOn(p, ch, n.id, n.pitch, n.velocity, n.color);
+      if (n.released && heldOffCount_ < kMaxHeld) heldOffs_[heldOffCount_++] = {n.ch, n.id, absClock_ + static_cast<int64_t>(sr_ * 0.15)};
+    } else {
+      ChannelRuntime* rt = ch.rt.get();
+      if (rt->pendingCount >= kMaxPendingNotes) continue;
+      sendOn(ch, n.id, n.pitch, n.velocity, 0, n.color, n.hasProps ? &n.props : nullptr);
+      rt->pending[rt->pendingCount++] = n.pd;  // it ends where the song ends it
+    }
+    heldDelivered_.fetch_add(1, std::memory_order_relaxed);
+  }
+  heldCount_ = keep;
 }
 
 // K-25: bend lines. Every sounding note that has one glides, over this block's part of the note,
@@ -1627,6 +1723,8 @@ void AudioEngine::releaseLive(const Program* p) {
 }
 
 void AudioEngine::releaseEverything(const Program* p) {
+  heldCount_ = 0;  // K-87: nothing waits for an instrument any more
+  heldOffCount_ = 0;
   releaseLive(p);
   releaseAll(p, 0, true);  // sequenced notes; note processors drop what they latch / hold
   for (const auto& ch : p->channels) {
@@ -1724,6 +1822,8 @@ void AudioEngine::applyPanicFade(const Program* p, float* L, float* R, int n) {
 }
 
 void AudioEngine::killEverything(const Program* p) {
+  heldCount_ = 0;  // K-87: nothing waits for an instrument any more
+  heldOffCount_ = 0;
   panicLeft_ = 0;
   if (p) {
     for (const auto& ch : p->channels) {
@@ -2283,6 +2383,7 @@ void AudioEngine::processDirect(float* L, float* R, int frames) {
     if (p && p->controlGrid())
       n = std::min(n, kControlBlock - static_cast<int>(absClock_ % kControlBlock));
     hits_.clear();  // J-165: filled by the commands, MIDI and sequencing below
+    deliverHeld(p);  // K-87: notes that waited for an instrument to load
     drain(p);
     drainMidi(p);
     if (done == 0 && hostNew_) followHost(p);
