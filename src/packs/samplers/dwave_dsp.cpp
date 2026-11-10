@@ -474,8 +474,15 @@ class WaveProgramGen final : public Generator {
           // pitched away from their root (rendered instruments, multisamples)
           // neither alias nor dull; the taps follow the loop like the frames do.
           float o[2];
-          pitch::readWith<2>([&](int64_t k, int c) { return readFrame(*sp, c, k, v, z, lp, ls, le); }, v.pos, std::fabs(v.inc),
-                             pitch::table(pitch::Quality::Realtime), o);
+          const pitch::SincTable& kern = pitch::table(pitch::Quality::Realtime);
+          const int reach = pitch::reach(std::fabs(v.inc), kern);
+          const auto nf = static_cast<int64_t>(sp->frames());
+          if (ip - reach >= 0 && ip + reach + 1 < (lp ? std::min(le, nf) : nf)) {  // K-159: clear of the ends and the loop, the fast reader
+            const float* xs[2] = {sp->left.data(), sp->right.data()};
+            pitch::readArrays<2>(xs, nf, v.pos, std::fabs(v.inc), kern, o);
+          } else {
+            pitch::readWith<2>([&](int64_t k, int c) { return readFrame(*sp, c, k, v, z, lp, ls, le); }, v.pos, std::fabs(v.inc), kern, o);
+          }
           x[0] = o[0], x[1] = o[1];
         }
       }

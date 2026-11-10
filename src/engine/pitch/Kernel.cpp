@@ -32,6 +32,34 @@ SincTable build(int zc, int phases, double beta, double guardDown, double guardU
     const double sinc = x == 0 ? 1.0 : std::sin(kPi * x) / (kPi * x);
     t.table[i] = static_cast<float>(sinc * win);
   }
+  // K-159: the reading layouts (Kernel.h). The pairs hold the table's own
+  // values; each polyphase row is the kernel at the fixed cutoff evaluated the
+  // way readWith evaluates it, so a read on a row's fraction weighs its taps
+  // as readWith does.
+  t.pairs.resize(len);
+  for (size_t i = 0; i < len; ++i) t.pairs[i] = {t.table[i], i + 1 < len ? t.table[i + 1] - t.table[i] : 0.0f};
+  const double fc = guardDown, hw = zc / fc, step = fc * phases, last = static_cast<double>(len - 2);
+  t.polyLeft = static_cast<int>(std::floor(hw));
+  const int used = 2 * t.polyLeft + 2;  // frames ic - left .. ic + left + 1 cover [pos - hw, pos + hw]
+  t.polyTaps = (used + 3) / 4 * 4;
+  t.polyRows = 1024;
+  t.poly.assign(static_cast<size_t>(t.polyRows + 1) * static_cast<size_t>(t.polyTaps), 0.0f);
+  t.polySum.assign(static_cast<size_t>(t.polyRows + 1), 0.0);
+  for (int k = 0; k <= t.polyRows; ++k) {
+    const double f = static_cast<double>(k) / t.polyRows;
+    double sum = 0;
+    for (int j = 0; j < used; ++j) {
+      const double d = std::fabs(f + t.polyLeft - j);  // distance of tap j from the read position
+      if (d > hw) continue;
+      const double q = std::min(d * step, last);
+      const auto i = static_cast<size_t>(q);
+      const double w = t.table[i] + (t.table[i + 1] - t.table[i]) * (q - static_cast<double>(i));
+      t.poly[static_cast<size_t>(k) * static_cast<size_t>(t.polyTaps) + static_cast<size_t>(j)] = static_cast<float>(w);
+      sum += w;
+    }
+    t.polySum[static_cast<size_t>(k)] = sum;
+  }
+  if (t.polyTaps > kPolyMaxTaps) t.poly.clear(), t.polySum.clear();  // (too wide for the reader's copy: stepped reads)
   return t;
 }
 

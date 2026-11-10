@@ -236,12 +236,19 @@ class GrainScanGen final : public Generator {
             if (at < 0) at += static_cast<double>(n);
             if (!(at < static_cast<double>(n))) at = 0;  // J-36: fmod(-tiny) + n rounds to n
             float o;
+            const pitch::SincTable& kern = pitch::table(pitch::Quality::Compact);
+            const int reach = pitch::reach(std::fabs(g.rate), kern);
+            if (at - reach >= 0 && at + reach < static_cast<double>(n)) {  // K-159: away from the wrap, the fast reader
+              const float* xs[1] = {ch.data()};
+              pitch::readArrays<1>(xs, n, at, std::fabs(g.rate), kern, &o);
+              return o;
+            }
             pitch::readWith<1>(
                 [&ch, n](int64_t k, int) {
                   k %= n;
                   return ch[static_cast<size_t>(k < 0 ? k + n : k)];
                 },
-                at, std::fabs(g.rate), pitch::table(pitch::Quality::Compact), &o);
+                at, std::fabs(g.rate), kern, &o);
             return o;
           };
           l += rd(smp->left, g.pos) * e * g.panL;

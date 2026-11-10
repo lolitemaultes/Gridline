@@ -123,8 +123,14 @@ struct Reader {
     }
     if (pitch::exactFrame(pos, rate)) return at(i);
     float o;
-    pitch::readWith<1>([this](int64_t k, int) { return at(k); }, pos, std::fabs(rate),
-                       pitch::table(mode == InterpSinc ? pitch::Quality::Realtime : pitch::Quality::Compact), &o);
+    const pitch::SincTable& t = pitch::table(mode == InterpSinc ? pitch::Quality::Realtime : pitch::Quality::Compact);
+    const int reach = pitch::reach(std::fabs(rate), t);
+    if (i - reach >= 0 && i + reach + 1 < (wrap ? std::min(le, n) : n)) {  // K-159: clear of the ends and the loop, the fast reader
+      const float* xs[1] = {d};
+      pitch::readArrays<1>(xs, n, pos, std::fabs(rate), t, &o);
+      return o;
+    }
+    pitch::readWith<1>([this](int64_t k, int) { return at(k); }, pos, std::fabs(rate), t, &o);
     return o;
   }
 };

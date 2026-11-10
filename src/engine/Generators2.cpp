@@ -1400,13 +1400,20 @@ class GranularGen final : public Generator {
         // wrapping round the sample like the grain positions do.
         float o[2];
         const auto n = static_cast<int64_t>(sm.frames());
-        pitch::readWith<2>(
-            [&sm, n](int64_t i, int c) {
-              int64_t k = i % n;
-              if (k < 0) k += n;
-              return (c ? sm.right : sm.left)[static_cast<size_t>(k)];
-            },
-            g.pos, std::fabs(g.rate), pitch::table(pitch::Quality::Compact), o);
+        const pitch::SincTable& kern = pitch::table(pitch::Quality::Compact);
+        const int reach = pitch::reach(std::fabs(g.rate), kern);
+        if (g.pos - reach >= 0 && g.pos + reach < static_cast<double>(n)) {  // K-159: away from the wrap, the fast reader
+          const float* xs[2] = {sm.left.data(), sm.right.data()};
+          pitch::readArrays<2>(xs, n, g.pos, std::fabs(g.rate), kern, o);
+        } else {
+          pitch::readWith<2>(
+              [&sm, n](int64_t i, int c) {
+                int64_t k = i % n;
+                if (k < 0) k += n;
+                return (c ? sm.right : sm.left)[static_cast<size_t>(k)];
+              },
+              g.pos, std::fabs(g.rate), kern, o);
+        }
         outL += o[0] * a * g.gl;
         outR += o[1] * a * g.gr;
         g.pos += g.rate;
