@@ -185,6 +185,7 @@ std::vector<Command> buildCommands() {
       {"piano.toolZoom", PR, N_("Zoom tool"), {ch(K::Z)}},
       {"piano.toolDetune", PR, N_("Detune tool"), {ch(K::U)}},
       {"piano.toolBend", PR, N_("Pitch bend tool"), {ch(K::N)}},  // K-25
+      {"piano.slideMode", PR, N_("Slide mode (new notes are slide notes)"), {ch(K::S, S)}},
       {"piano.zoomIn", PR, N_("Zoom in"), {ch(K::PageUp)}, true},
       {"piano.zoomOut", PR, N_("Zoom out"), {ch(K::PageDown)}, true},
       {"piano.zoomFit", PR, N_("Zoom to fit the pattern"), {ch(K::Home)}},

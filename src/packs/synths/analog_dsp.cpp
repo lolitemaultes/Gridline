@@ -99,6 +99,7 @@ class AnalogGen final : public Generator {
     bool on = false, held = false;
     uint32_t id = 0;
     double pitch = 60, target = 60;
+    PitchGlide slide;  // K-144: slide notes, porta and bend lines
     float vel = 1;
     uint64_t age = 0;
     uint32_t ctr = 0;
@@ -193,6 +194,11 @@ class AnalogGen final : public Generator {
     }
     startNote(id, pitch, vel);
   }
+  bool supportsGlide() const override { return true; }
+  void onGlide(uint32_t id, double pitch, double seconds) override {
+    for (auto& v : voices_)
+      if (v.on && v.id == id) v.slide.start(v.pitch, pitch, seconds, sr_), v.target = pitch;
+  }
   void onNoteOff(uint32_t id) override {
     if (arpOn_) arpRemove(id);
     stopNote(id);  // also releases notes started before the arpeggiator was switched on
@@ -222,6 +228,7 @@ class AnalogGen final : public Generator {
       bool glide = glide_ > 0.002 && v.on && (!glideOverlap_ || hadHeld);
       v.id = id;
       v.target = pitch;
+      v.slide.stop();
       if (!glide) v.pitch = pitch;
       v.vel = vel;
       v.held = true;
@@ -247,6 +254,7 @@ class AnalogGen final : public Generator {
     bool glide = glide_ > 0.002 && lastPitch_ >= 0 && (!glideOverlap_ || anyHeld);
     v.id = id;
     v.target = pitch;
+    v.slide.stop();
     v.pitch = glide ? lastPitch_ : pitch;
     v.vel = vel;
     v.held = true;
@@ -489,7 +497,8 @@ class AnalogGen final : public Generator {
     const double drive = 1.0 + drive_ * 8.0, driveMakeup = 1.0 / (1.0 + drive_ * 2.0);
     for (int i = 0; i < n; ++i) {
       if ((v.ctr++ & 15u) == 0) {
-        v.pitch = v.target + (v.pitch - v.target) * glideCoef;
+        if (v.slide.active()) v.slide.advance(v.pitch, 16);  // K-144: host glide, straight
+        else v.pitch = v.target + (v.pitch - v.target) * glideCoef;
         control(v, i);
       }
       double sl = 0, sr = 0;

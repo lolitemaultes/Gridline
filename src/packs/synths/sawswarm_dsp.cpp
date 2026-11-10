@@ -103,6 +103,8 @@ class SawSwarm final : public Generator {
     for (auto& v : v_)
       if (v.on && v.id == id) v.glide.start(v.pitch, pitch, std::max(seconds, 0.001), sr_);
   }
+  // K-144: the wheel bends through the instrument's own range (never twice).
+  bool handlesPitchBend() const override { return true; }
   void onMidi(uint8_t status, uint8_t d1, uint8_t d2) override {
     switch (status & 0xF0) {
       case 0xB0: cc_[d1 & 127u] = d2 / 127.0f, ccSet_[d1 & 127u] = true; break;

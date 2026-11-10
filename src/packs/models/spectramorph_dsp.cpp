@@ -127,6 +127,7 @@ class SpectraMorphGen final : public Generator {
     bool on = false, released = false;
     uint32_t id = 0;
     double note = 60, cur = 60;
+    PitchGlide host;  // K-144: slide notes, porta and bend lines (reset by `v = Voice{}`)
     float vel = 1;
     uint64_t age = 0;
     double steps = 0;  // analysis position
@@ -197,6 +198,16 @@ class SpectraMorphGen final : public Generator {
     for (int p = 0; p < kSmPrograms; ++p) v.zone[p] = nearestZone(p, pitch);
     lastNote_ = pitch;
   }
+  // K-144: host glides move the current pitch linearly (retuned each control period); the own
+  // glide's target becomes the glide's so it does not pull back afterwards.
+  bool supportsGlide() const override { return true; }
+  void onGlide(uint32_t id, double pitch, double seconds) override {
+    for (auto& v : v_)
+      if (v.on && v.id == id) {
+        v.host.start(v.cur, pitch, seconds, sr_);
+        v.note = pitch;
+      }
+  }
   void onNoteOff(uint32_t id) override {
     for (auto& v : v_)
       if (v.on && v.id == id && !v.released) v.released = true, v.stage = 2;
@@ -226,7 +237,9 @@ class SpectraMorphGen final : public Generator {
 
   void control(Voice& v, double dt) {
     // Glide.
-    if (glide_ > 0 && v.cur != v.note) {
+    if (v.host.active()) {
+      v.host.advance(v.cur, kCtl);  // K-144
+    } else if (glide_ > 0 && v.cur != v.note) {
       const double k = 1.0 - std::exp(-dt / std::max(0.001f, glide_ / 3));
       v.cur += (v.note - v.cur) * k;
       if (std::fabs(v.note - v.cur) < 0.001) v.cur = v.note;

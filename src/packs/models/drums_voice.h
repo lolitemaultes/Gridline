@@ -88,12 +88,14 @@ class MembraneVoice {
   int tag = 0;        // owner tag (pad / channel index)
   uint32_t id = 0;    // note id
   uint64_t age = 0;
+  double notePitch = 60;  // K-144: the pitch it was struck at (slides glide from there)
 
   // Starts a strike. `p` = 38 model values (velocity already applied), `semis` = keyboard offset.
   void strike(const float* p, float velocity, double semis, double sr, uint32_t seed) {
     on = true;
     sr_ = sr;
     t_ = 0;
+    semiNow_ = semiTo_ = semiStep_ = 0, semiLeft_ = 0, hostMul_ = 1.0f;
     const float* R = membraneRatios();
     const double f0 = mdFundamental(p) * std::pow(2.0, semis / 12.0);
     const double ring = mdRingSeconds(p);
@@ -181,6 +183,13 @@ class MembraneVoice {
     quietFor_ = 0;
   }
 
+  // K-144: glides every mode by `semis` from the struck pitch over `seconds` (slide notes).
+  void glideTo(double semis, double seconds) {
+    semiLeft_ = std::max<int64_t>(1, static_cast<int64_t>(seconds * sr_));
+    semiTo_ = semis;
+    semiStep_ = (semis - semiNow_) / static_cast<double>(semiLeft_);
+  }
+
   // One sample (mono).
   float tick() {
     // Excitation.
@@ -200,18 +209,26 @@ class MembraneVoice {
     }
     if (retrig_ > 0 && t_ == retrig_) env_ = 0.5f;
     x = static_cast<float>(excLp_.process(x));
-    // Membrane modes; the tension glide re-tunes them every 32 samples.
-    if (glide_ > 1e-4f && (t_ & 31) == 0) {
-      const float g = glideBase_ + glide_;
+    // Membrane modes; the tension glide (and a slide, K-144) re-tunes them every 32 samples.
+    const bool slide = semiLeft_ > 0 && (t_ & 31) == 0;
+    if (slide) {
+      const int64_t m = std::min<int64_t>(semiLeft_, 32);
+      semiLeft_ -= m;
+      semiNow_ = semiLeft_ == 0 ? semiTo_ : semiNow_ + semiStep_ * static_cast<double>(m);
+      hostMul_ = static_cast<float>(std::exp2(semiNow_ / 12.0));
+    }
+    if ((glide_ > 1e-4f || slide) && (t_ & 31) == 0) {
+      const float g = (glide_ > 1e-4f ? glideBase_ + glide_ : 1.0f) * hostMul_;
       for (int k = 0; k < modes_; ++k) {
         const float w = std::min(w_[k] * g, 3.0f);
         c_[k] = std::cos(w);
         s_[k] = std::sin(w);
       }
-      if (glide_ * glideDec32_ <= 1e-4f)  // settle on the exact tuning
+      if (glide_ > 1e-4f && glide_ * glideDec32_ <= 1e-4f)  // settle on the exact tuning
         for (int k = 0; k < modes_; ++k) {
-          c_[k] = std::cos(w_[k]);
-          s_[k] = std::sin(w_[k]);
+          const float w = hostMul_ == 1.0f ? w_[k] : std::min(w_[k] * hostMul_, 3.0f);
+          c_[k] = std::cos(w);
+          s_[k] = std::sin(w);
         }
     }
     glide_ *= glideDec_;
@@ -281,6 +298,9 @@ class MembraneVoice {
   }
 
   double sr_ = 44100;
+  double semiNow_ = 0, semiTo_ = 0, semiStep_ = 0;  // K-144: slide, semitones off the struck pitch
+  int64_t semiLeft_ = 0;
+  float hostMul_ = 1.0f;
   int64_t t_ = 0;
   int modes_ = 0;
   float w_[kMembraneModes] = {}, c_[kMembraneModes] = {}, s_[kMembraneModes] = {}, rad_[kMembraneModes] = {}, gain_[kMembraneModes] = {};

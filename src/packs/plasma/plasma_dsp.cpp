@@ -455,6 +455,7 @@ struct Note {
   uint32_t id = 0;
   int key = 60, chan = 0;
   double pitch = 60, glideFrom = 60, glideTarget = 60, glideLeft = 0, glideTotal = 0;
+  bool glideLinear = false;  // K-144: a host glide (slide note, bend line): straight, not on the porta curve
   float vel = 0.8f, relVel = 0.5f;
   NoteProps props;
   uint64_t age = 0;
@@ -602,8 +603,10 @@ class PlasmaGen final : public Generator {
   void onNoteOff(uint32_t id) override { noteOutId(id); }
   void onGlide(uint32_t id, double pitch, double seconds) override {
     for (auto& n : notes_)
-      if (n.active && n.id == id) startGlide(n, pitch, seconds);
+      if (n.active && n.id == id) startGlide(n, pitch, seconds), n.glideLinear = true;
   }
+  // K-144: the wheel bends through the instrument's own range (never twice).
+  bool handlesPitchBend() const override { return true; }
   void onMidi(uint8_t status, uint8_t d1, uint8_t d2) override {
     const int type = status & 0xF0, ch = status & 0x0F;
     if (type == 0xE0) {
@@ -869,6 +872,7 @@ class PlasmaGen final : public Generator {
   void startGlide(Note& n, double target, double secs) {
     n.glideFrom = n.pitch;
     n.glideTarget = target;
+    n.glideLinear = false;
     n.glideTotal = n.glideLeft = std::max(0.0, secs);
     if (secs <= 0) n.pitch = target;
   }
@@ -1902,7 +1906,8 @@ class PlasmaGen final : public Generator {
       double t = n.glideTotal > 0 ? 1.0 - n.glideLeft / n.glideTotal : 1.0;
       const float c = G(G_PortaCurve);
       // imported curve law: the remaining distance follows the segment bend of the curve value
-      if (std::fabs(c) > 1e-3f && G(tailP(T_LfoLaw)) >= 0.5f) t = 1.0 - bankBend(1.0 - t, c);
+      if (n.glideLinear) {
+      } else if (std::fabs(c) > 1e-3f && G(tailP(T_LfoLaw)) >= 0.5f) t = 1.0 - bankBend(1.0 - t, c);
       else if (std::fabs(c) > 1e-3f) t = bendCurve(t, c);
       n.pitch = n.glideFrom + (n.glideTarget - n.glideFrom) * t;
     }

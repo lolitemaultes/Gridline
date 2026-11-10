@@ -95,6 +95,8 @@ class PadsGen final : public Generator {
     uint32_t id = 0;
     int pad = 0, group = 0;
     double pos = 0, rate = 1, endPos = 0, startPos = 0;
+    double baseRate = 1, semi = 0, semiTo = 0, semiStep = 0;  // K-144: a slide, semitones off the pad's key
+    int64_t semiLeft = 0;
     float gl = 0, gr = 0, fade = 1, fadeStep = 0;
     float level = 0, pan = 0;
     bool reverse = false;
@@ -223,6 +225,7 @@ class PadsGen final : public Generator {
       v.startPos = st * len, v.endPos = en * len;
       v.reverse = (param(s, padP(pad, PadReverse)) >= 0.5f) != L.reverse;
       v.rate = std::pow(2.0, (param(s, padP(pad, PadTune)) + L.tune) / 12.0) * smp->sampleRate / sr_;
+      v.baseRate = v.rate, v.semi = 0, v.semiLeft = 0;
       v.pos = v.reverse ? v.endPos : v.startPos;
       v.level = param(s, padP(pad, PadLevel), 0.8f) * L.level * (1 - velAmt + velAmt * vel) * param(s, PadsVolume, 0.8f);
       v.pan = static_cast<float>(std::clamp(static_cast<double>(param(s, padP(pad, PadPan))) + L.pan, -1.0, 1.0));
@@ -240,6 +243,16 @@ class PadsGen final : public Generator {
     panGains(std::clamp(static_cast<double>(v.pan) + panMod, -1.0, 1.0), pl, pr);
     v.gl = static_cast<float>(v.level * pl);
     v.gr = static_cast<float>(v.level * pr);
+  }
+  // K-144: a slide plays the pad's sample faster or slower by its interval from the pad's key.
+  bool supportsGlide() const override { return true; }
+  void onGlide(uint32_t id, double pitch, double seconds) override {
+    for (auto& v : voices_)
+      if (v.on && v.id == id) {
+        v.semiTo = pitch - padNote(v.pad);
+        v.semiLeft = std::max<int64_t>(1, static_cast<int64_t>(seconds * sr_));
+        v.semiStep = (v.semiTo - v.semi) / static_cast<double>(v.semiLeft);
+      }
   }
   void onNoteOff(uint32_t id) override {
     for (auto& v : voices_)
@@ -307,6 +320,11 @@ class PadsGen final : public Generator {
         }
         float g = v.fade * static_cast<float>(a);
         float sl, sr;
+        if (v.semiLeft > 0) {  // K-144: the slide retunes every 16 samples
+          --v.semiLeft;
+          v.semi = v.semiLeft == 0 ? v.semiTo : v.semi + v.semiStep;
+          if ((v.semiLeft & 15) == 0) v.rate = v.baseRate * std::exp2(v.semi / 12.0);
+        }
         run.at(v.pos);
         interpBl(sm, v.pos, v.rate, sl, sr);
         L[i] += sl * v.gl * g;
@@ -359,6 +377,7 @@ class FmGen final : public Generator {
     bool on = false, held = false;
     uint32_t id = 0;
     double note = 60, target = 60;
+    PitchGlide slide;  // K-144: slide notes, porta and bend lines (linear, per note)
     float vel = 0;
     uint64_t age = 0;
     double ph[4] = {0, 0, 0, 0};
@@ -400,6 +419,7 @@ class FmGen final : public Generator {
     if (voices_n_ == 1 && voices_[0].on && voices_[0].held && glide_ > 0.002) {  // mono legato glide
       voices_[0].target = pitch;
       voices_[0].id = id;
+      voices_[0].slide.stop();
       return;
     }
     for (int i = 0; i < voices_n_; ++i)
@@ -416,6 +436,7 @@ class FmGen final : public Generator {
     v.on = v.held = true;
     v.id = id;
     v.note = v.target = pitch;
+    v.slide = PitchGlide{};
     v.vel = vel;
     v.age = ++clock_;
     v.lfoPh = 0;
@@ -424,6 +445,11 @@ class FmGen final : public Generator {
       if (init_[o] > 0) v.env[o].level = init_[o];
       v.env[o].gate(true);
     }
+  }
+  bool supportsGlide() const override { return true; }
+  void onGlide(uint32_t id, double pitch, double seconds) override {
+    for (auto& v : voices_)
+      if (v.on && v.id == id) v.slide.start(v.note, pitch, seconds, sr_), v.target = pitch;
   }
   void onNoteOff(uint32_t id) override {
     for (auto& v : voices_)
@@ -499,7 +525,10 @@ class FmGen final : public Generator {
         double k = vol_ / std::max(1, nc);
         L[i] += static_cast<float>(sl * k);
         R[i] += static_cast<float>(sr * k);
-        v.note = v.target + (v.note - v.target) * glideCoef;
+        if (v.slide.active())
+          v.slide.advance(v.note);
+        else
+          v.note = v.target + (v.note - v.target) * glideCoef;
         // Ends when its carriers' envelopes have, on its own clock (J-30: not at a block end).
         bool any = false;
         for (int o = 0; o < 4; ++o)
@@ -567,6 +596,7 @@ class AcidGen final : public Generator {
   }
   void trigger(double pitch, bool accent, bool legato) {
     target_ = pitch;
+    glide_.stop();
     if (!legato) {
       pitch_ = pitch;
       fenv_ = 1;
@@ -583,6 +613,16 @@ class AcidGen final : public Generator {
     }
     trigger(pitch, vel >= accThresh_, gate_);  // overlapping notes slide instead of retriggering
     id_ = id;
+  }
+  // K-144: slide notes, porta and bend lines glide the sounding note (the sequence keeps its own slides).
+  bool supportsGlide() const override { return true; }
+  void onGlide(uint32_t id, double pitch, double seconds) override {
+    if (seqOn_) return;
+    for (int i = 0; i < heldN_; ++i)
+      if (held_[i].id == id) held_[i].pitch = pitch;
+    if (id != id_ || !gate_) return;
+    glide_.start(pitch_, pitch, seconds, sr_);
+    target_ = pitch;
   }
   void onNoteOff(uint32_t id) override {
     for (int i = 0; i < heldN_; ++i)
@@ -652,7 +692,10 @@ class AcidGen final : public Generator {
     const double clickDec = std::exp(-1.0 / (0.002 * sr_));
     for (int i = 0; i < n; ++i) {
       if (seqOn_ && playing_) runSequencer(i);
-      pitch_ = target_ + (pitch_ - target_) * slideCoef;
+      if (glide_.active())
+        glide_.advance(pitch_);
+      else
+        pitch_ = target_ + (pitch_ - target_) * slideCoef;
       double dt = noteToHz(pitch_ + tuning_) / sr_;
       double x;
       if (blend_ > 0.0005 || pwmDepth_ > 0 || std::fabs(pw_ - 0.5) > 0.001 || vintage_) {
@@ -710,6 +753,7 @@ class AcidGen final : public Generator {
   int heldN_ = 0;
   bool gate_ = false, square_ = false, vintage_ = false, seqOn_ = false, playing_ = false;
   uint32_t id_ = 0;
+  PitchGlide glide_;
   double sr_ = 44100, pitch_ = 48, target_ = 48, fenv_ = 0, acc_ = 0, amp_ = 0, click_ = 0;
   double cutoff_ = 500, reso_ = 0.7, envMod_ = 0.5, decay_ = 0.25, accent_ = 0.6, slide_ = 0.06, drive_ = 0.2, vol_ = 0.7;
   double tuning_ = 0, blend_ = 0, pw_ = 0.5, pwmRate_ = 1, pwmDepth_ = 0, pwmPh_ = 0, hp_ = 10, accDecay_ = 0.25, keyFollow_ = 0;
@@ -754,7 +798,24 @@ class KeysGen final : public Generator {
     double knock = 0, knockDec = 0, knockLp = 0;
     uint32_t seed = 1;
     uint32_t ticks = 0;  // samples rendered (piano renormalisation grid)
+    // K-144: glides (slide notes, porta, bend lines): the gliding pitch, retuned every 32 samples.
+    PitchGlide slide;
+    double gnote = 60, hz0 = 440;
+    double w0[2][kPartials] = {};  // piano partials' phase steps at the started pitch
+    uint32_t gtick = 0;
   };
+  // K-144: the voice at its gliding pitch (tine increments come from v.hz; piano phasors rotate faster).
+  void retune(Voice& v, double& dL, double& dR) const {
+    v.slide.advance(v.gnote, 32);
+    const double ratio = std::pow(2.0, (v.gnote - v.note) / 12.0);
+    v.hz = v.hz0 * ratio;
+    dL = v.hz * std::pow(2.0, -detune_ / 1200.0) / sr_, dR = v.hz * std::pow(2.0, detune_ / 1200.0) / sr_;
+    for (int p = 0; p < v.parts; ++p)
+      for (int sd = 0; sd < 2; ++sd) {
+        const double w = std::min(kPi, v.w0[sd][p] * ratio);
+        v.cr[sd][p] = std::cos(w), v.ci[sd][p] = std::sin(w);
+      }
+  }
   static bool pianoModel(int m) { return m >= 4; }
   // Starts the partials of a piano voice (model 4 grand, 5 upright).
   void startPiano(Voice& v) const {
@@ -780,6 +841,7 @@ class KeysGen final : public Generator {
       for (int sd = 0; sd < 2; ++sd) {
         double cents = (sd == 0 ? -1.0 : 1.0) * detune_ * 0.5;
         double w = kTwoPi * fn * std::pow(2.0, cents / 1200.0) / sr_;
+        v.w0[sd][i] = w;
         v.cr[sd][i] = std::cos(w), v.ci[sd][i] = std::sin(w);
         v.re[sd][i] = 0, v.im[sd][i] = 1;  // start at sin phase 0 (no click)
       }
@@ -834,8 +896,8 @@ class KeysGen final : public Generator {
     v = Voice{};
     v.on = v.held = true;
     v.id = id;
-    v.note = pitch;
-    v.hz = noteToHz(pitch + tune_ / 100.0 + stretch_ / 100.0 * (pitch - 60.0) / 12.0);
+    v.note = v.gnote = pitch;
+    v.hz = v.hz0 = noteToHz(pitch + tune_ / 100.0 + stretch_ / 100.0 * (pitch - 60.0) / 12.0);
     if (velCurve_ == 1) vel = std::sqrt(vel);
     if (velCurve_ == 2) vel = vel * vel;
     v.vel = vel;
@@ -850,6 +912,11 @@ class KeysGen final : public Generator {
     panGains(std::clamp(keyPan_ * (pitch - 60.0) / 30.0, -1.0, 1.0), v.panL, v.panR);
     v.seed = id * 2654435761u + 7u;
     if (pianoModel(model_)) startPiano(v);
+  }
+  bool supportsGlide() const override { return true; }
+  void onGlide(uint32_t id, double pitch, double seconds) override {
+    for (auto& v : voices_)
+      if (v.on && v.id == id) v.slide.start(v.gnote, pitch, seconds, sr_), v.gtick = 0;
   }
   void onNoteOff(uint32_t id) override {
     for (auto& v : voices_)
@@ -876,7 +943,9 @@ class KeysGen final : public Generator {
       if (!v.on) continue;
       if (v.parts > 0) {  // piano model
         const double velG = 1 - velSens_ + velSens_ * v.vel;
+        double unusedL = 0, unusedR = 0;
         for (int i = 0; i < n; ++i) {
+          if (v.slide.active() && (v.gtick++ & 31u) == 0) retune(v, unusedL, unusedR);
           double l = 0, r = 0, peak = 0;
           for (int p = 0; p < v.parts; ++p) {
             for (int sd = 0; sd < 2; ++sd) {  // rotate the phasor (recursive sine)
@@ -926,6 +995,7 @@ class KeysGen final : public Generator {
       double index = hard * (0.4 + 1.6 * v.vel);
       double dL = v.hz * std::pow(2.0, -detune_ / 1200.0) / sr_, dR = v.hz * std::pow(2.0, detune_ / 1200.0) / sr_;
       for (int i = 0; i < n; ++i) {
+        if (v.slide.active() && (v.gtick++ & 31u) == 0) retune(v, dL, dR);
         double mod = std::sin(kTwoPi * v.mph) * index * v.modEnv + std::sin(kTwoPi * v.bph) * index * bellAmt[mdl] * v.modEnv * v.modEnv;
         double l = std::sin(kTwoPi * v.ph[0] + mod), r = std::sin(kTwoPi * v.ph[1] + mod);
         double a = v.amp * velG;
@@ -1005,6 +1075,8 @@ class SlicerGen final : public Generator {
     uint32_t id = 0;
     int slice = 0, cut = 0;
     double pos = 0, end = 0, start = 0, rate = 1;
+    double notePitch = 60, baseRate = 1, semi = 0, semiTo = 0, semiStep = 0;  // K-144: a slide off the played pitch
+    int64_t semiLeft = 0;
     float vel = 0, gl = 1, gr = 1, fade = 1, fadeStep = 0;
     bool reverse = false;
     int64_t delayLeft = 0;  // region start delay (samples)
@@ -1129,6 +1201,7 @@ class SlicerGen final : public Generator {
     v.reverse = reverse_ != (!proc_ && param(s, slParam(k, SliceReverse)) >= 0.5f);  // (processed: reversed offline)
     v.pos = v.reverse ? v.end - 1 : v.start;
     v.rate = std::pow(2.0, (pitch_ + semis + param(s, slParam(k, SlicePitch))) / 12.0) * smp->sampleRate / sr_ * speed_;
+    v.notePitch = pitch, v.baseRate = v.rate, v.semi = 0, v.semiLeft = 0;
     double g = dbToGain(param(s, slParam(k, SliceGain))) * (1 - velAmt_ + velAmt_ * vel);
     double pl, pr;
     panGains(param(s, slParam(k, SlicePan)), pl, pr);
@@ -1143,6 +1216,17 @@ class SlicerGen final : public Generator {
     v.env.level = 0;
     v.env.gate(true);
     ra_.started(static_cast<int>(&v - voices_.data()), k);  // J-186
+  }
+  // K-144: a slide plays the slice faster or slower by its interval from the played pitch.
+  bool supportsGlide() const override { return !sx_; }
+  void onGlide(uint32_t id, double pitch, double seconds) override {
+    if (sx_) return;
+    for (auto& v : voices_)
+      if (v.on && v.id == id) {
+        v.semiTo = pitch - v.notePitch;
+        v.semiLeft = std::max<int64_t>(1, static_cast<int64_t>(seconds * sr_));
+        v.semiStep = (v.semiTo - v.semi) / static_cast<double>(v.semiLeft);
+      }
   }
   void onNoteOff(uint32_t id) override {
     if (sx_) {
@@ -1214,6 +1298,11 @@ class SlicerGen final : public Generator {
           procLo = std::min(procLo, rr), procHi = std::max(procHi, rr);
         } else {
           run.at(v.pos);
+        }
+        if (v.semiLeft > 0) {  // K-144: the slide retunes every 16 samples
+          --v.semiLeft;
+          v.semi = v.semiLeft == 0 ? v.semiTo : v.semi + v.semiStep;
+          if ((v.semiLeft & 15) == 0) v.rate = v.baseRate * std::exp2(v.semi / 12.0);
         }
         interpBl(*smp, v.pos, v.rate, bl, br);
         double l = bl, r = br;
@@ -1293,6 +1382,7 @@ class GranularGen final : public Generator {
     double pitch = 60, nextGrain = 0, scan = 0, dwell = 0;
     float vel = 0;
     Adsr env;
+    PitchGlide slide;  // K-144: new grains follow the gliding pitch
   };
   void configure(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx) override {
     using namespace pp;
@@ -1321,6 +1411,7 @@ class GranularGen final : public Generator {
         v.on = v.held = true;
         v.id = id;
         v.pitch = pitch;
+        v.slide = PitchGlide{};
         v.vel = vel;
         v.nextGrain = 0;
         v.scan = 0;
@@ -1331,6 +1422,11 @@ class GranularGen final : public Generator {
         rng_.seed(id * 2654435761u + 17);
         return;
       }
+  }
+  bool supportsGlide() const override { return true; }
+  void onGlide(uint32_t id, double pitch, double seconds) override {
+    for (auto& v : notes_)
+      if (v.on && v.id == id) v.slide.start(v.pitch, pitch, seconds, sr_);
   }
   void onNoteOff(uint32_t id) override {
     for (auto& v : notes_)
@@ -1357,6 +1453,7 @@ class GranularGen final : public Generator {
       for (int ni = 0; ni < static_cast<int>(notes_.size()); ++ni) {  // spawn grains
         NoteV& v = notes_[static_cast<size_t>(ni)];
         if (!v.on) continue;
+        v.slide.advance(v.pitch);
         v.nextGrain -= 1;
         if (v.dwell > 0)
           v.dwell -= 1;
@@ -1552,10 +1649,14 @@ class MidiOutGen final : public Generator {
     if (out_) out_->push(static_cast<uint8_t>(0xB0 | ch_), 123, 0);
   }
   void render(float*, float*, int) override {}
-  // J-92: pitch bend and channel pressure from the keyboard go out on this channel.
+  // J-92: pitch bend and channel pressure from the keyboard go out on this channel; K-144: so do
+  // key pressure and controllers (the pedals stay with Gridline, which holds the notes itself).
+  // Slide notes and bend lines arrive here as pitch bend too.
   void onMidi(uint8_t status, uint8_t d1, uint8_t d2) override {
     const uint8_t kind = status & 0xF0;
-    if (out_ && (kind == 0xE0 || kind == 0xD0)) out_->push(static_cast<uint8_t>(kind | ch_), d1, d2);
+    if (!out_) return;
+    if (kind == 0xB0 && (d1 == 64 || d1 == 66 || d1 == 67 || d1 >= 120)) return;
+    if (kind == 0xE0 || kind == 0xD0 || kind == 0xA0 || kind == 0xB0) out_->push(static_cast<uint8_t>(kind | ch_), d1, d2);
   }
 
  private:

@@ -244,6 +244,10 @@ struct Voice {
   Small<int, kOps> modOps, plainOps;
   Small<int, 9> outList, fxList;
   float* pluckMem[kOps] = {};  // string-loop buffers (string-loop operators only)
+  // Host glides (slide notes, porta, bend lines): cents off the started pitch, per control tick.
+  double bend = 0, bendTo = 0, bendStep = 0;
+  int64_t bendLeft = 0;
+  float bendMul = 1;
 };
 
 struct VoiceInit {
@@ -1029,6 +1033,11 @@ const float kUniEnvVar[9] = {0.987699986f, 1.00689995f, 0.992900014f, 1.01810002
 
 // ------------------------------------------------------------------ rendering
 void controlTick(Engine& e, Voice& v, int n, double dtFlag) {
+  if (v.bendLeft > 0) {
+    if (n >= v.bendLeft) v.bend = v.bendTo, v.bendLeft = 0;
+    else v.bend += v.bendStep * static_cast<double>(n), v.bendLeft -= n;
+    v.bendMul = static_cast<float>(std::exp(v.bend * kCentsLn));
+  }
   if (v.state > 4) v.state = 9;
   for (int u = 0; u < kUnits; ++u) {
     UnitRt& R = e.units[u];
@@ -1098,8 +1107,10 @@ void renderOps(Engine& e, Voice& v, int n) {
     OpVoice& o = v.units[u].op;
     if (!o.active) continue;
     {
-      float nf = o.freqBase * o.pitchMul;
-      if (u > 0 && ((e.patch.main[197] >> 16) & 0xff) != 0) nf = o.freqBase * o.pitchMul * v.units[0].op.pitchMul;
+      const float ofs = e.units[u].freqOfs;
+      const float fb = v.bendMul == 1.0f ? o.freqBase : std::max(0.0f, ofs + (o.freqBase - ofs) * v.bendMul);
+      float nf = fb * o.pitchMul;
+      if (u > 0 && ((e.patch.main[197] >> 16) & 0xff) != 0) nf = fb * o.pitchMul * v.units[0].op.pitchMul;
       if (nf != o.freq) {
         o.freq = nf;
         if (o.pluck) pluckTune(o);
@@ -2101,6 +2112,16 @@ void noteOn(Engine& e, uint32_t id, double pitchCents, double vol, double pan, d
   e.stepDirty = e.waitArts;
   e.hasLast = true;
   e.lastPitch = base.pitch;
+}
+
+void glide(Engine& e, uint32_t id, double pitchCents, int64_t samples) {
+  for (int i = 0; i < e.nOrder; ++i) {
+    Voice& v = e.voices[static_cast<size_t>(e.order[i])];
+    if (v.id != id || v.state >= 10) continue;
+    v.bendTo = static_cast<double>(e.masterPitch) + pitchCents - static_cast<double>(v.pitch);
+    v.bendLeft = std::max<int64_t>(1, samples);
+    v.bendStep = (v.bendTo - v.bend) / static_cast<double>(v.bendLeft);
+  }
 }
 
 void noteOff(Engine& e, uint32_t id) {

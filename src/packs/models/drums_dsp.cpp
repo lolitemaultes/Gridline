@@ -101,6 +101,7 @@ class MembranePadGen final : public Generator {
     applyVelocity(model_, p, velocity);
     v->id = id;
     v->age = ++clock_;
+    v->notePitch = pitch;
     v->strike(p, velocity, pitch - 60.0, sr_, static_cast<uint32_t>(clock_));
     cut_[static_cast<size_t>(v - voices_.data())] = {1, 0};
   }
@@ -111,6 +112,14 @@ class MembranePadGen final : public Generator {
       if (ref_[k].on && ref_[k].id == id && refCut_[k].step == 0) refCut_[k].step = step, ref_[k].held = false;
     for (size_t k = 0; k < voices_.size(); ++k)
       if (voices_[k].on && voices_[k].id == id && cut_[k].step == 0) cut_[k].step = step;
+  }
+  // K-144: the modelled membrane glides (its key transposes it); the reference engine's key does
+  // not transpose, so slides leave it alone as other keys do.
+  bool supportsGlide() const override { return true; }
+  void onGlide(uint32_t id, double pitch, double seconds) override {
+    if (engine_) return;
+    for (auto& v : voices_)
+      if (v.on && v.id == id) v.glideTo(pitch - v.notePitch, seconds);
   }
   void onNoteOff(uint32_t id) override {  // one-shot: the hold control gates the ring
     for (auto& v : ref_)
@@ -382,6 +391,8 @@ class KickSculptGen final : public Generator {
     uint64_t age = 0;
     int64_t t = 0, len = 0;
     double ph = 0, base = 50, peak = 200, slideK = 0.999, sweep = 1, pitchMul = 1;
+    double note = 60, rateMul = 1;  // K-144: key (glides) and the sampling-ratio factor of pitchMul
+    PitchGlide glide;             // K-144: slide notes, porta and bend lines (reset by `*v = Voice{}`)
     float vel = 1, amp = 1, ampStep = 0, attack = 1, attackK = 0;
     float click = 0, clickK = 0, nzPos = 0, nzRate = 1, nzEnv = 0, nzA = 1, nzD = 0.999f, nzS = 0.5f;
     bool nzRise = true;
@@ -413,7 +424,9 @@ class KickSculptGen final : public Generator {
     v->rng.seed(static_cast<uint32_t>(clock_ * 2654435761u));
     const double sr44 = sr_ / 44100.0;
     auto vary = [&](float ctl, double range) { return 1.0 + 0.5 * (v->rng.next() + 1.0) * (2.0 * ctl - 1.0) * range; };
-    v->pitchMul = std::pow(2.0, (pitch - 60.0) / 12.0) * std::pow(2.0, 4.0 * p[KsSampling] - 2.0);
+    v->id = id, v->note = pitch;  // K-144
+    v->rateMul = std::pow(2.0, 4.0 * p[KsSampling] - 2.0);
+    v->pitchMul = std::pow(2.0, (pitch - 60.0) / 12.0) * v->rateMul;
     v->base = std::pow(2.0, 4.0 * p[KsBase] + 4.0) * vary(p[KsVarBase], 0.25);
     const double peakSt = 100.0 * p[KsPeak] * p[KsPeak] * p[KsPeak] * vary(p[KsVarPeak], 0.5);
     v->peak = v->base * std::pow(2.0, std::max(0.0, peakSt) / 12.0);
@@ -444,6 +457,12 @@ class KickSculptGen final : public Generator {
   }
   void onNoteOff(uint32_t) override {}
   void onAllOff() override {}
+  // K-144: glides move the whole pitch sweep (base and peak) with the key, per sample.
+  bool supportsGlide() const override { return true; }
+  void onGlide(uint32_t id, double pitch, double seconds) override {
+    for (auto& v : voices_)
+      if (v.on && v.id == id) v.glide.start(v.note, pitch, seconds, sr_);
+  }
   // K-165: cut groups, mono and the voice limit choke the hit over 4 ms (note-offs are ignored).
   void onCut(uint32_t id) override {
     for (auto& v : voices_)
@@ -462,6 +481,10 @@ class KickSculptGen final : public Generator {
     for (auto& v : voices_) {
       if (!v.on) continue;
       for (int i = 0; i < n; ++i) {
+        if (v.glide.active()) {  // K-144
+          v.glide.advance(v.note);
+          v.pitchMul = std::pow(2.0, (v.note - 60.0) / 12.0) * v.rateMul;
+        }
         const double f = (v.base + (v.peak - v.base) * v.sweep) * v.pitchMul;
         v.sweep *= v.slideK;
         v.ph += kTwoPi * f / sr_;
@@ -547,6 +570,8 @@ class SweepKickGen final : public Generator {
     float amp = 1, ampK = 0.999f, click = 0, vel = 1;
     uint32_t id = 0;
     bool held = false;
+    double key = 60, note = 60, keyMul = 1;  // K-144: struck key, gliding key, 2^((note − key)/12)
+    PitchGlide glide;                        // K-144: reset by `*v = Voice{}`
     InsVoice ins;  // switched on in the envelope page; older states have none
   };
   struct RefVoice {
@@ -555,6 +580,8 @@ class SweepKickGen final : public Generator {
     uint64_t age = 0;
     float step = 0, amp = 1.5f, hostL = 0, hostR = 0;
     int fade = -1;
+    double key = 60, note = 60, keyMul = 1;  // K-144: struck key, gliding key, 2^((note − key)/12)
+    PitchGlide glide;
     InsVoice ins;
   };
   void configure(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx) override {
@@ -598,6 +625,7 @@ class SweepKickGen final : public Generator {
         v = &x;
       }
     v->on = true, v->held = true, v->ending = false, v->id = id, v->age = ++clock_, v->fade = -1;
+    v->key = v->note = pitch, v->keyMul = 1, v->glide.stop();
     v->phase = static_cast<uint32_t>(std::lround(p_[SkClick])) << 24;
     const float lo = std::round(p_[SkMinFreq]) - 3600.0f;
     float cents = static_cast<float>((pitch - 60.0) * 100.0) * 0.5f + std::round(p_[SkMaxFreq]) + 1200.0f;
@@ -635,8 +663,18 @@ class SweepKickGen final : public Generator {
     v->click = p_[SkClick] / 64.0f;
     v->vel = velocity;
     v->id = id, v->held = true;
+    v->key = v->note = pitch;  // K-144
     v->ins.start(ins_.get(), sr_, tempo_, ppq_, 0, 0, tick0_ + static_cast<double>(blockPos_) * tempo_ * ppq_ / (60.0 * sr_));
     if (v->ins.active()) v->ins.setNote(pitch, velocity);
+  }
+  // K-144: both engines follow glides per sample: the whole sweep (and its tail, the 808-style
+  // slide) moves by the slide's interval.
+  bool supportsGlide() const override { return true; }
+  void onGlide(uint32_t id, double pitch, double seconds) override {
+    for (auto& v : voices_)
+      if (v.on && v.id == id) v.glide.start(v.note, pitch, seconds, sr_);
+    for (auto& v : refs_)
+      if (v.on && v.id == id) v.glide.start(v.note, pitch, seconds, sr_);
   }
   void onNoteOnEx(uint32_t id, double pitch, float velocity, const NoteProps& np) override {
     if (model_) return startVoice(id, pitch, velocity, np.pan, (np.modX - 0.5) * 2.0, (np.modY - 0.5) * 2.0);
@@ -671,7 +709,11 @@ class SweepKickGen final : public Generator {
     for (auto& v : voices_) {
       if (!v.on) continue;
       for (int i = 0; i < n; ++i) {
-        const double f = v.f1 + (v.f0 - v.f1) * std::pow(v.fk, static_cast<double>(v.t));
+        if (v.glide.active()) {  // K-144
+          v.glide.advance(v.note);
+          v.keyMul = std::pow(2.0, (v.note - v.key) / 12.0);
+        }
+        const double f = (v.f1 + (v.f0 - v.f1) * std::pow(v.fk, static_cast<double>(v.t))) * v.keyMul;
         v.ph += f / sr_;
         v.ph -= std::floor(v.ph);
         // Click: the start of the sweep with a squared-off edge.
@@ -700,7 +742,12 @@ class SweepKickGen final : public Generator {
       const int fadeLen = static_cast<int>(sr_ * 0.01);
       for (int i = 0; i < n; ++i) {
         float x = sine_[v.phase >> 18] * v.amp;
-        v.phase += static_cast<uint32_t>(static_cast<int64_t>(std::nearbyint(v.step)));
+        if (v.glide.active()) {  // K-144
+          v.glide.advance(v.note);
+          v.keyMul = std::exp2((v.note - v.key) / 12.0);
+        }
+        if (v.keyMul == 1.0) v.phase += static_cast<uint32_t>(static_cast<int64_t>(std::nearbyint(v.step)));
+        else v.phase += static_cast<uint32_t>(static_cast<int64_t>(std::nearbyint(static_cast<double>(v.step) * v.keyMul)));
         v.amp *= ampK_;
         if (minStep_ < v.step) v.step *= sweepK_;
         else v.step = minStep_;

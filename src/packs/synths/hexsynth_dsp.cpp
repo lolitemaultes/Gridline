@@ -101,6 +101,7 @@ class HexSynthGen final : public Generator {
     uint64_t age = 0;
     float gv = 1, vs = 1;
     double glidePos = 60, glideTarget = 60, glideRate = 0;
+    PitchGlide host;  // K-144: slide notes, porta and bend lines (key + fraction, per tick)
     double t = 0, tr = 0;
     float amp = 0, ampTgt = 0, ampRate = 0, A = 0.001f, D = 0.001f, S = 1, R = 0.02f;
     float fenv = 0, fTgt = 0, fRate = 0, fA = 0.001f, fD = 0.001f, fS = 1, fR = 0.001f;
@@ -189,6 +190,18 @@ class HexSynthGen final : public Generator {
     internalOn(key, vel / 127.f);
   }
   // J-92: MIDI pitch bend over the bend range (int(12 x) semitones); the range was never read.
+  // K-144: the wheel bends through the instrument's own range (never twice).
+  bool handlesPitchBend() const override { return true; }
+  bool supportsGlide() const override { return true; }
+  void onGlide(uint32_t id, double pitch, double seconds) override {
+    if (seqOn_) return;  // the sequencer plays its own notes
+    int key = -1;  // voices know their note by its key
+    for (int i = 0; i < idCount_; ++i)
+      if (ids_[static_cast<size_t>(i)].first == id) key = ids_[static_cast<size_t>(i)].second;
+    if (key < 0 || newestId_[static_cast<size_t>(key)] != id) return;
+    for (auto& v : voice_)
+      if (v.active && !v.released && v.key == key) v.host.start(v.glidePos + v.frac, pitch, seconds, sr_);
+  }
   void onMidi(uint8_t status, uint8_t d1, uint8_t d2) override {
     switch (status & 0xF0) {  // J-92: bend, controllers and pressure feed the modulation sources
       case 0xE0: bend_ = ((d2 << 7 | d1) - 8192) / 8192.0; break;
@@ -256,6 +269,7 @@ class HexSynthGen final : public Generator {
       if (v.active && !v.released && v.fadeTicks == 0) {
         v.key = key;
         v.frac = noteFrac_;
+        v.host.stop();
         v.glideTarget = key;
         if (!glide) v.glidePos = key, v.glideRate = 0;
         else v.glideRate = sameTime ? std::fabs(key - v.glidePos) / (tg * sr_) : 12.0 / (tg * sr_);
@@ -337,6 +351,7 @@ class HexSynthGen final : public Generator {
   void beginNote(Voice& v, int key, float vel, double start, double rate) {
     v.active = true;
     v.released = false;
+    v.host.stop();
     v.key = key;
     v.frac = noteFrac_;
     v.age = ++ageClock_;
@@ -596,7 +611,11 @@ class HexSynthGen final : public Generator {
       return;
     }
     // Glide.
-    if (v.glidePos != v.glideTarget) {
+    if (v.host.active()) {
+      double at = v.glidePos + v.frac;
+      v.host.advance(at, kTick);
+      v.glidePos = v.glideTarget = at - v.frac;
+    } else if (v.glidePos != v.glideTarget) {
       const double step = kTick * v.glideRate;
       if (v.glideRate <= 0 || std::fabs(v.glideTarget - v.glidePos) <= step) v.glidePos = v.glideTarget;
       else v.glidePos += v.glideTarget > v.glidePos ? step : -step;

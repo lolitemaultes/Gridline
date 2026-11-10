@@ -138,6 +138,7 @@ class TurntableCore {
     if (keys_ < static_cast<int>(keyIds_.size())) {
       keyIds_[static_cast<size_t>(keys_)] = id;
       keyPitch_[static_cast<size_t>(keys_)] = pitch;
+      keyGlide_[static_cast<size_t>(keys_)] = PitchGlide{};  // K-144
       ++keys_;
     }
     if (deck_ && deck_->src) tap::play(deck_->src.get());  // J-219: Track Receipt
@@ -149,6 +150,11 @@ class TurntableCore {
       pos_ = cue_;
       vel_ = keyTarget(pitch);
     }
+  }
+  // K-144: a glide moves a held key's pitch (and with it the key-tracked motor speed).
+  void onGlide(uint32_t id, double pitch, double seconds) {
+    for (int i = 0; i < keys_; ++i)
+      if (keyIds_[static_cast<size_t>(i)] == id) keyGlide_[static_cast<size_t>(i)].start(keyPitch_[static_cast<size_t>(i)], pitch, seconds, sr_);
   }
   void onNoteOff(uint32_t id) { removeKey(id); }
   void onAllOff() { keys_ = 0; }
@@ -217,6 +223,11 @@ class TurntableCore {
   }
 
   void render(float* L, float* R, int n) {
+    // K-144: held keys' glides advance once per block, except the key driving the motor, which
+    // the motor loop below advances per sample.
+    const int motorKey = deck_ && !hold_ && keys_ > 0 ? keys_ - 1 : -1;
+    for (int k = 0; k < keys_; ++k)
+      if (k != motorKey) keyGlide_[static_cast<size_t>(k)].advance(keyPitch_[static_cast<size_t>(k)], n);
     if (!deck_) {
       publish();
       return;
@@ -277,7 +288,16 @@ class TurntableCore {
         vt = static_cast<float>(vt * rate_);
         a = static_cast<float>(std::pow(static_cast<double>(a), rate_));
       }
+      PitchGlide* kg = keyMotor ? &keyGlide_[static_cast<size_t>(keys_ - 1)] : nullptr;  // K-144
       for (int i = 0; i < n; ++i) {
+        if (kg && kg->active()) {  // K-144: the motor's target follows the gliding key (retargeted every 16 samples)
+          double& kp = keyPitch_[static_cast<size_t>(keys_ - 1)];
+          kg->advance(kp);
+          if ((i & 15) == 0 || !kg->active()) {
+            vt = static_cast<float>(T) * (unit2_ * keySpeed(kp));
+            if (!exactRate_) vt = static_cast<float>(vt * rate_);
+          }
+        }
         vel_ = (vel_ - vt) * a + vt;
         flush(vel_);
         pos_ = wrapped(pos_);
@@ -395,6 +415,7 @@ class TurntableCore {
         for (int j = i + 1; j < keys_; ++j) {
           keyIds_[static_cast<size_t>(j - 1)] = keyIds_[static_cast<size_t>(j)];
           keyPitch_[static_cast<size_t>(j - 1)] = keyPitch_[static_cast<size_t>(j)];
+          keyGlide_[static_cast<size_t>(j - 1)] = keyGlide_[static_cast<size_t>(j)];  // K-144
         }
         --keys_;
         return;
@@ -435,6 +456,7 @@ class TurntableCore {
   // held keys
   std::array<uint32_t, 16> keyIds_{};
   std::array<double, 16> keyPitch_{};
+  std::array<PitchGlide, 16> keyGlide_{};  // K-144
   int keys_ = 0;
   TurntableTelemetry tel_;
   const TurntableLayout& lay_;
@@ -451,6 +473,9 @@ class TurntableGen final : public Generator {
     (void)velocity;
     core_.onNoteOn(id, pitch);
   }
+  // K-144: glides retune the held key that drives the motor (with key tracking on).
+  bool supportsGlide() const override { return true; }
+  void onGlide(uint32_t id, double pitch, double seconds) override { core_.onGlide(id, pitch, seconds); }
   void onNoteOff(uint32_t id) override { core_.onNoteOff(id); }
   void onAllOff() override { core_.onAllOff(); }
   void onKill() override { core_.onKill(); }

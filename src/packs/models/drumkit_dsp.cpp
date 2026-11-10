@@ -36,6 +36,8 @@ class DrumGen final : public Generator {
     float c[kDrumModes] = {}, s[kDrumModes] = {}, r[kDrumModes] = {}, g[kDrumModes] = {};
     int modes = 0;
     double f0 = 100;
+    double key = 60, note = 60;      // K-144: struck key and gliding key (the modes shift by note − key)
+    PitchGlide glide;                // K-144: reset by `v = Voice{}`
     int pulseLen = 1;
     float amp = 1, gl = 1, gr = 1, click = 0, noise = 0, noiseEnv = 0, noiseDec = 0.999f, wires = 0;
     float follow = 0, peak = 0, fade = 1, fadeStep = 0, drive = 0;
@@ -111,6 +113,7 @@ class DrumGen final : public Generator {
     v.id = id;
     v.pad = pad;
     v.group = group;
+    v.id = id, v.key = v.note = pitch;  // K-144
     v.age = ++clock_;
     v.rng.seed(static_cast<uint32_t>(clock_ * 2654435761u + 7u));
     float sens = prmf(s, DmVelocity, 0.7f);
@@ -145,6 +148,13 @@ class DrumGen final : public Generator {
   }
   void onNoteOff(uint32_t) override {}
   void onAllOff() override {}
+  // K-144: a glide shifts the struck pad's modes (rotators retuned each control period, like
+  // the pad's own pitch bend), in both key modes.
+  bool supportsGlide() const override { return true; }
+  void onGlide(uint32_t id, double pitch, double seconds) override {
+    for (auto& v : voices_)
+      if (v.on && v.id == id) v.glide.start(v.note, pitch, seconds, sr_);
+  }
   // K-165: cut groups, mono and the voice limit choke the hit (note-offs are ignored).
   void onCut(uint32_t id) override {
     for (auto& v : voices_)
@@ -160,9 +170,11 @@ class DrumGen final : public Generator {
     for (auto& v : voices_) {
       if (!v.on) continue;
       float bend = prmf(s, drumPad(v.pad, DpBend), 0);
-      if (bend != 0) {
+      const bool glided = v.glide.active() || v.note != v.key;  // K-144
+      v.glide.advance(v.note, kCtl);
+      if (bend != 0 || glided) {
         double t = static_cast<double>(v.n) / sr_;
-        setModes(v, bend * std::exp(-t / std::max(0.003f, prmf(s, drumPad(v.pad, DpBendTime), 0.05f))));
+        setModes(v, bend * std::exp(-t / std::max(0.003f, prmf(s, drumPad(v.pad, DpBendTime), 0.05f))) + (v.note - v.key));
       }
     }
   }

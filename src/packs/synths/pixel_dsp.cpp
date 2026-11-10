@@ -61,6 +61,7 @@ class PixelToneGen final : public Generator {
     bool on = false, released = false;
     uint32_t id = 0;
     double pitch = 60;
+    PitchGlide slide;  // K-144: glides move the picture's pitch once per column
     float vel = 1, fade = 1;
     int column = -1, left = 0;
     uint32_t gamma = 0;
@@ -100,6 +101,7 @@ class PixelToneGen final : public Generator {
       }
     }
     v->on = true, v->released = false, v->id = id, v->pitch = pitch, v->vel = velocity, v->fade = 1;
+    v->slide = PitchGlide{};
     v->column = -1, v->left = 0, v->gamma = 0, v->age = ++clock_;
     v->ins.start(ins_.get(), sr_, tempo_, ppq_, 0, 0, tick0_ + blockPos_ * tempo_ * ppq_ / (60.0 * sr_));
     v->ins.setNote(pitch, velocity);  // J-72: velocity / key tracking
@@ -108,6 +110,11 @@ class PixelToneGen final : public Generator {
       r.phR = widen_ ? (rnd() >> 8) * 256u : 0u;
       r.cL = r.cR = r.dL = r.dR = r.aL = r.aR = 0;
     }
+  }
+  bool supportsGlide() const override { return true; }
+  void onGlide(uint32_t id, double pitch, double seconds) override {
+    for (auto& v : v_)
+      if (v.on && v.id == id) v.slide.start(v.pitch, pitch, seconds, sr_);
   }
   void onNoteOff(uint32_t id) override {
     for (auto& v : v_)
@@ -125,6 +132,7 @@ class PixelToneGen final : public Generator {
     const Picture* pic = aux_ ? &aux_->pic : nullptr;
     const int N = pic ? std::min(pic->h, kMaxRows) : 0, W = pic ? pic->w : 0;
     ++v.column;
+    v.slide.advance(v.pitch, spp_);
     bool silent = W == 0;
     if (v.column >= W) {
       if (loop_ && W > 0) v.column = 0;

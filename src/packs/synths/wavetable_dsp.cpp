@@ -253,6 +253,7 @@ class WavetableGen final : public Generator {
     bool on = false, held = false;
     uint32_t id = 0;
     double pitch = 60, target = 60;
+    PitchGlide slide;  // K-144: slide notes, porta and bend lines
     float vel = 1;
     uint64_t age = 0;
     uint32_t ctr = 0;
@@ -337,6 +338,7 @@ class WavetableGen final : public Generator {
       bool glide = glide_ > 0.002 && v.on;
       v.id = id;
       v.target = pitch;
+      v.slide.stop();
       if (!glide) v.pitch = pitch;
       v.vel = vel;
       v.held = true;
@@ -356,6 +358,7 @@ class WavetableGen final : public Generator {
     Voice& v = *pick;
     v.id = id;
     v.target = pitch;
+    v.slide.stop();
     v.pitch = glide_ > 0.002 && lastPitch_ >= 0 ? lastPitch_ : pitch;
     v.vel = vel;
     v.held = true;
@@ -364,6 +367,11 @@ class WavetableGen final : public Generator {
     lastPitch_ = pitch;
   }
 
+  bool supportsGlide() const override { return true; }
+  void onGlide(uint32_t id, double pitch, double seconds) override {
+    for (auto& v : voices_)
+      if (v.on && v.id == id) v.slide.start(v.pitch, pitch, seconds, sr_), v.target = pitch;
+  }
   void onNoteOff(uint32_t id) override {
     if (playMode_ != PlayPoly) {
       bool wasTop = stack_.top() && stack_.top()->id == id;
@@ -565,7 +573,8 @@ class WavetableGen final : public Generator {
     const double glideCoef = std::pow(std::exp(-1.0 / std::max(1.0, glide_ * sr_ * 0.3)), 16.0);
     for (int i = 0; i < n; ++i) {
       if ((v.ctr++ & 15u) == 0) {
-        v.pitch = v.target + (v.pitch - v.target) * glideCoef;
+        if (v.slide.active()) v.slide.advance(v.pitch, 16);  // K-144: host glide, straight
+        else v.pitch = v.target + (v.pitch - v.target) * glideCoef;
         control(v, i);
       }
       double sl = 0, sr = 0;

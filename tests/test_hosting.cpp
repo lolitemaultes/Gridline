@@ -1255,6 +1255,59 @@ void testLatencyChange() {
   expect(rt->fx->latencySamples() == 64 && b.latencyChanged(), "latency change → restart → new latency → program rebuild for PDC");
 }
 
+// K-144: slide notes and bend lines on a hosted instrument, per its "Per-note pitch" option:
+// automatic (the CLAP note tuning expression), MPE (a member channel per note, its bend; the zone
+// and bend range announced), channel pitch bend (the engine bends the channel) and off.
+void testClapSlides() {
+  auto* cp = probe<GridlineClapProbe>(clapBinary(), "gridline_clap_probe");
+  if (!cp) return;
+  auto glideRise = [&](double to, int& c0, int& c1) {
+    auto g = createGenerator(kClapSynth);
+    PluginState st = defaultPluginState(kClapSynth);
+    g->prepareHost(st, 48000);
+    std::vector<float> L, R;
+    g->noteOn(7, 69.0, 1.0f, 0);
+    runGen(*g, st, L, R, 9600);
+    g->glide(7, to, 0.005, 0);
+    runGen(*g, st, L, R, 960);
+    runGen(*g, st, L, R, 9600);
+    c0 = crossings(L, 0, 9600), c1 = crossings(L, 10560, 20160);
+    return g;
+  };
+  int c0 = 0, c1 = 0;
+  {
+    auto g = glideRise(71.0, c0, c1);
+    std::printf("# hosted slide (tuning): %d -> %d crossings\n", c0, c1);
+    expect(g->supportsGlide() && c1 > c0 + c0 / 12, "hosted slide: automatic glides through the note tuning expression");
+  }
+  host::HostOptions mo;
+  mo.notePitch = host::HostOptions::PitchMpe;
+  mo.mpeBendRange = 2;  // the test synth reads a bend as +-2 semitones
+  host::setHostOptions(kClapSynth, mo);
+  cp->noteChannels = 0, cp->mpeZone = cp->mpeRange = -1;
+  {
+    auto g = glideRise(71.0, c0, c1);
+    std::printf("# hosted slide (MPE): %d -> %d crossings, channels %x, zone %d, range %d\n", c0, c1, cp->noteChannels, cp->mpeZone, cp->mpeRange);
+    expect(g->supportsGlide() && g->noteBendRange() == 2.0f, "hosted MPE: glides, notes bend by the MPE range");
+    expect(cp->mpeZone == 15 && cp->mpeRange == 2, "hosted MPE: the lower zone (15 member channels) and the bend range are announced");
+    expect(cp->noteChannels != 0 && !(cp->noteChannels & 1u), "hosted MPE: notes start on member channels, never the manager channel");
+    expect(c1 > c0 + c0 / 12, "hosted MPE: a slide is the note's own channel bend");
+  }
+  mo.notePitch = host::HostOptions::PitchChannelBend;
+  host::setHostOptions(kClapSynth, mo);
+  {
+    auto g = createGenerator(kClapSynth);
+    expect(g && !g->supportsGlide() && g->noteBendRange() == 2.0f, "hosted channel pitch bend: the engine bends the channel instead");
+  }
+  mo.notePitch = host::HostOptions::PitchOff;
+  host::setHostOptions(kClapSynth, mo);
+  {
+    auto g = glideRise(71.0, c0, c1);
+    expect(g->supportsGlide() && std::abs(c1 - c0) <= 2, "hosted per-note pitch off: slides leave the pitch alone");
+  }
+  host::setHostOptions(kClapSynth, host::HostOptions{});
+}
+
 // CLAP: links / automation as non-destructive modulation.
 void testClapModulation() {
   auto* cp = probe<GridlineClapProbe>(clapBinary(), "gridline_clap_probe");
@@ -2016,6 +2069,7 @@ int main() {
   testSampleAccurate();
   testLatencyChange();
   testClapModulation();
+  testClapSlides();
   testLostPlugin();
   testBridgedClose();
   testSandboxEmbeddedInterface();

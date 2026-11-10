@@ -2075,7 +2075,7 @@ gl.dcosynth	75	Mono	working	1
 gl.dcosynth	76	Legato	combination	1	61=0.5;62=1;63=1;64=0.5;75=1;47=0;173=0
 gl.dcosynth	77	Retrigger envelopes	combination	1	75=1;76=1;47=0
 gl.dcosynth	78	Restart envelopes on release	verified	0		VERIFIED: acts in mono mode on overlapping notes released newest-first
-gl.dcosynth	79	Portamento mode	working	1	
+gl.dcosynth	79	Portamento mode	combination	1	80=1
 gl.dcosynth	80	Portamento	working	0.25	
 gl.dcosynth	81	LFO trigger	verified	0		VERIFIED: pressing it restarts the LFOs (J-92 fix); a static value has nothing to restart
 gl.dcosynth	82	Hold	working	1	
@@ -10425,7 +10425,7 @@ gl.plasma	0	Main Volume	working	1
 gl.plasma	1	Main Tuning	working	-100	
 gl.plasma	2	Amp	working	1	
 gl.plasma	3	Porta Time	combination	1	11=1;12=1
-gl.plasma	4	Porta Curve	working	1	
+gl.plasma	4	Porta Curve	verified	0		VERIFIED: acts with portamento on overlapping notes (parameter coverage test)
 gl.plasma	5	Porta Always	combination	1	11=1;46=1
 gl.plasma	6	Porta Scaled	verified	0		VERIFIED: acts with portamento on overlapping notes (parameter coverage test)
 gl.plasma	7	Bend Up	working	0	

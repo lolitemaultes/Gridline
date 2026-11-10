@@ -19,5 +19,10 @@ struct GridlineClapProbe {
   int allSoundOff = 0;  // CC 120 (any channel)
   int sustainOff = 0;   // CC 64 = 0
   GridlineNoteLog notes;  // what the synth received
+  // K-144: MPE: channels notes started on (bit per channel), the zone message (RPN 6 on
+  // channel 0, -1 = none) and the bend range RPN 0 seen on channel 1 (-1 = none).
+  uint32_t noteChannels = 0;
+  int mpeZone = -1, mpeRange = -1;
+  int rpnMsb[16] = {};
   bool throwInProcess = false;  // K-9: process throws, as a bridge does when its other process is gone
 };

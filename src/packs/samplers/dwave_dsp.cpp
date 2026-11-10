@@ -119,6 +119,7 @@ class WaveProgramGen final : public Generator {
     Env amp, menv[2];
     Lfo lfo[2];
     double glideNote = 60, glideTarget = 60, glideStep = 0;
+    PitchGlide host;  // K-144: slide notes, porta and bend lines (straight, per control block)
     double dest[48] = {};
     double inc = 0;
     double tgL = 0, tgR = 0, gL = 0, gR = 0;
@@ -233,7 +234,10 @@ class WaveProgramGen final : public Generator {
         v.menv[k].tick(1.0 / (R * timeOf(z.menv[k][0])), 1.0 / (R * timeOf(z.menv[k][1])), z.menv[k][2], 1.0 / (R * timeOf(z.menv[k][3])));
       v.followerBlock = v.follower;
       // Glide.
-      if (v.glideNote != v.glideTarget) {
+      if (v.host.active()) {
+        v.host.advance(v.glideNote, block_);
+        v.glideTarget = v.glideNote;
+      } else if (v.glideNote != v.glideTarget) {
         if (std::fabs(v.glideTarget - v.glideNote) <= v.glideStep) v.glideNote = v.glideTarget;
         else v.glideNote += v.glideTarget > v.glideNote ? v.glideStep : -v.glideStep;
       }
@@ -312,6 +316,7 @@ class WaveProgramGen final : public Generator {
     const SamplePtr& sp = a_->samples[static_cast<size_t>(zi)];
     *v = Voice{};
     v->on = true, v->id = id, v->zone = zi, v->note = note, v->vel = vel, v->flFine = flFine, v->age = ++clock_;
+    v->host.stop();
     tap::play(sp.get());  // J-219: Track Receipt
     seed_ = seed_ * 1664525u + 1013904223u;
     v->rnd = (seed_ >> 8) / 16777216.0;
@@ -406,6 +411,11 @@ class WaveProgramGen final : public Generator {
     lastNote_ = note;
   }
 
+  bool supportsGlide() const override { return true; }
+  void onGlide(uint32_t id, double pitch, double seconds) override {
+    for (auto& v : v_)
+      if (v.on && v.id == id) v.host.start(v.glideNote, pitch - v.flFine / 100.0, seconds, sr_);
+  }
   void onNoteOff(uint32_t id) override {
     if (!a_) return;
     int note = -1;

@@ -3,13 +3,16 @@
 Plasma is a wavetable-centred hybrid synthesizer: three main oscillators that each play a
 wavetable, a multisample, a sample, a granular cloud or a spectral resynthesis, plus a sub
 oscillator and a noise layer, two filters, a 64-slot modulation matrix, three effect racks, an
-arpeggiator and a clip player. It also opens presets made for Serum 2 (and Serum 1 `.fxp`
-files) from your own folders and converts them into Plasma sounds, and it plays projects whose
+arpeggiator and a clip player. It can also read presets made for Serum 2 (and Serum 1 `.fxp`
+files) from your own folders and set up a Plasma sound from their settings, and it plays projects whose
 Serum or Serum 2 is not installed (see "Stand-in for a missing Serum" below).
 
 Plasma is in the plugin picker under Synths. Its code, factory wavetables, presets and artwork
 are original. Opening a Serum preset reads your own preset and content files; nothing from
-another product ships with Gridline.
+another product ships with Gridline. Plasma is an independent synth with its own engine: an
+opened preset is Plasma playing the settings it read, not a reproduction of the other synth's
+sound. Gridline is not affiliated with or endorsed by Xfer Records; "Serum" is a trademark of
+Xfer Records and is named only to describe the preset files Plasma can read.
 
 ## Layout
 
@@ -121,7 +124,7 @@ is indexed in the background and kept in a cache, so it lists at once and refres
 change (REFRESH rescans now). Typing in the search field while a Serum folder is selected searches
 the whole library.
 
-Opening a Serum preset maps oscillators, warps, unison, filters, envelopes, LFOs (including drawn
+Opening a Serum preset reads the preset's settings and maps oscillators, warps, unison, filters, envelopes, LFOs (including drawn
 shapes), macros, the matrix, the effect racks, the arpeggiator and clips onto Plasma. Wavetables,
 samples and impulse responses that a preset references are looked up in your Serum content
 folders and the folders you added. When something is approximated or a file was not found, a

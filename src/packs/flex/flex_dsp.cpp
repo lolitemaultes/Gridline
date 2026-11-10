@@ -76,6 +76,25 @@ class FlexGen final : public Generator {
     e.kind = Ev::AllOff, e.offset = eventOffset();
     push(e);
   }
+  // K-144: glides and the keyboard's wheel / pressure / controllers reach the engine playing.
+  bool supportsGlide() const override {
+    const Generator* g = aux_ ? eng_[static_cast<size_t>(aux_->engine)].get() : nullptr;
+    return g && g->supportsGlide();
+  }
+  bool handlesPitchBend() const override {
+    const Generator* g = aux_ ? eng_[static_cast<size_t>(aux_->engine)].get() : nullptr;
+    return g && g->handlesPitchBend();
+  }
+  void onGlide(uint32_t id, double pitch, double seconds) override {
+    Ev e;
+    e.kind = Ev::Glide, e.id = id, e.pitch = mapPitch(pitch), e.time = seconds, e.offset = eventOffset();
+    push(e);
+  }
+  void onMidi(uint8_t status, uint8_t d1, uint8_t d2) override {
+    Ev e;
+    e.kind = Ev::Midi, e.midi[0] = status, e.midi[1] = d1, e.midi[2] = d2, e.offset = eventOffset();
+    push(e);
+  }
   void onKill() override {
     for (auto& g : eng_)
       if (g) g->kill();
@@ -142,6 +161,8 @@ class FlexGen final : public Generator {
           case Ev::Off: g->noteOff(e.id, off); break;
           case Ev::Cut: g->cut(e.id, off); break;
           case Ev::AllOff: g->allNotesOff(off); break;
+          case Ev::Glide: g->glide(e.id, e.pitch, e.time, off); break;
+          case Ev::Midi: g->midi(e.midi[0], e.midi[1], e.midi[2], off); break;
         }
       }
       std::fill(bufL_.begin(), bufL_.begin() + len, 0.0f);
@@ -166,9 +187,11 @@ class FlexGen final : public Generator {
  private:
   static constexpr int kChunk = 1024;
   struct Ev {
-    enum Kind { On, Off, Cut, AllOff } kind = On;
+    enum Kind { On, Off, Cut, AllOff, Glide, Midi } kind = On;
     uint32_t id = 0;
     double pitch = 0;
+    double time = 0;  // Glide: seconds
+    uint8_t midi[3] = {0, 0, 0};
     float vel = 0;
     NoteProps props{};
     int offset = 0;

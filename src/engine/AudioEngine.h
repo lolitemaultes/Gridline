@@ -431,6 +431,10 @@ class AudioEngine {
     ChannelRuntime::Pending pd{};
     NoteProps props;
     bool hasProps = false;
+    // K-144: a slide that moved it while it waited: its pitch then, and the engine clock where the
+    // slide ends (slideTo < 0: none).
+    float slideTo = -1;
+    int64_t slideEnd = 0;
   };
   struct HeldOff {
     ObjectId ch = kNoId;

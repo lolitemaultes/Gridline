@@ -110,6 +110,7 @@ class PatchV2Runtime {
   bool sync(const AuxData* aux);
   void noteOn(uint32_t id, double pitch, float velocity, const NoteProps& props);
   void noteOff(uint32_t id);
+  void glide(uint32_t id, double pitch, double seconds);  // K-144: slide notes reach the instruments inside
   void allOff();
   // J-110: the user's Stop: every note off, hosted effects end their own playback.
   void stopSound();

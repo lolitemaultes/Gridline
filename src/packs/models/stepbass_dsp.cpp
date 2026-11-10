@@ -115,7 +115,7 @@ class StepBassGen final : public Generator {
   }
 
   // ---- notes
-  void startNote(int note, bool accent, bool slide) {
+  void startNote(double note, bool accent, bool slide) {
     target_ = note + 24.0 * (p(SbTune) - 0.5);
     if (slide && gate_) {
       glideLeft_ = static_cast<int>(0.06 * sr_);  // reference-style fixed slide (~60 ms)
@@ -141,7 +141,7 @@ class StepBassGen final : public Generator {
       seqKey_ = key;
       return;
     }
-    startNote(key, velocity > 0.8f, held_ > 1);
+    startNote(pitch, velocity > 0.8f, held_ > 1);  // K-144: fine pitch kept
   }
   void onNoteOff(uint32_t id) override {
     for (int i = 0; i < held_; ++i)
@@ -160,7 +160,10 @@ class StepBassGen final : public Generator {
     else
       gate_ = false;
   }
-  void onGlide(uint32_t, double pitch, double seconds) override {
+  // K-144: the sounding (newest held) note glides; while the sequence runs, keys only transpose
+  // it and its own slides play, so a glide would fight the steps.
+  void onGlide(uint32_t id, double pitch, double seconds) override {
+    if (seqOn_ || held_ == 0 || heldIds_[held_ - 1] != id) return;
     target_ = pitch + 24.0 * (p(SbTune) - 0.5);
     glideLeft_ = std::max(1, static_cast<int>(seconds * sr_));
     glideStep_ = (target_ - pitch_) / glideLeft_;

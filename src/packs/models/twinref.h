@@ -36,6 +36,8 @@ class TwinRef {
   // velocity); `pan` −1..1.
   void noteOn(uint32_t id, double pitch, float vel, float pan = 0.f);
   void noteOff(uint32_t id);
+  // K-144: glides the note to `pitch` (MIDI key + fraction) over `seconds` (slide notes, bend lines).
+  void glide(uint32_t id, double pitch, double seconds);
   void midi(double modWheel, double bend, double pressure);
   void allOff();
   void kill();

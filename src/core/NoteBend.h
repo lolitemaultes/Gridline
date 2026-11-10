@@ -144,4 +144,11 @@ struct SlidePlan {
 };
 SlidePlan toSlides(const std::vector<BendPoint>& b, double length, double tolerance = 0.03, double grid = 0, double base = 0);
 
+// K-144: the other way round, for formats without slide notes (MIDI files): the notes as they
+// play, slide notes gone and every note they glide given the glide as its bend line. A slide moves
+// the sounding notes of its colour (of every colour with `anyColour`, old projects) by the interval
+// from the last note of that colour started before it to its own pitch, straight over its length,
+// and they stay there. A note's own line ends where the first slide over it starts.
+std::vector<Note> slidesAsBends(const std::vector<Note>& notes, bool anyColour = false);
+
 }  // namespace gl::bend

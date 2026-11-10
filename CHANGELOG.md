@@ -8,6 +8,9 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 ### Added
 
 - **Split and layered instruments.** A layer channel now gives each child a key zone and a velocity zone with crossfades, a transpose and a solo, and two more ways to share notes: **Cycle** (round robin) and **No repeat** (random, never the same child twice in a row). Its Plugin tab is a layer editor with a lane per child, zone bars to drag, **Split** and **Reset**, and eight macro knobs that each turn any controls of the children at once. Layers save as `.gllayer` presets with their instruments, effects, zones and macros, and four built-in ones are included; drag one from the browser onto the channel rack. See [docs/layers.md](docs/layers.md).
+- **Slide notes on every instrument.** A slide note now glides the notes it meets on every built-in instrument, drums with a pitch included, and on plugins: the note moves smoothly to the slide's pitch over the slide's length, and a slide never starts a note of its own. Instruments that cannot glide a single note bend their sounding notes instead. In the piano roll, Shift+S turns slide mode on and off (also in the command palette), and a faint arrow shows which notes each slide moves. See [docs/slide-notes.md](docs/slide-notes.md).
+- **Per-note pitch for plugins.** The **Processing** tab of a plugin's window has a **Per-note pitch** choice: Automatic (the plugin's own note tuning where it has one), MPE (each note on a channel of its own, so slides and bend lines move single notes on MPE instruments, with a bend range of 2 to 96 semitones), Channel pitch bend, or Off.
+- **Slides in MIDI files.** Exporting a pattern with slide notes to a MIDI file writes them as pitch bends of the notes they glide.
 - **Freeze channels and mixer tracks.** Right click a channel, a mixer track or a linked playlist track and choose **Freeze**: its sound is rendered once and its plugins unload, so it costs no processing time, while its volume, pan, sends and their automation stay live. A mixer track's freeze also unloads the channels and tracks that play only into it. **Unfreeze** brings back the plugins exactly as they were. A snowflake marks a frozen unit and shows the render's progress; an edit the render depends on plays it live and renders it again a second later (or, with the option off, keeps the old render with an amber mark), and opening a frozen plugin asks to unfreeze it first. Pattern mode, live mode and playing it on the keyboard load it live for the moment. Freezes are shared in collaborative projects and go into zipped projects unless **Leave out frozen audio** is on. See [docs/freeze.md](docs/freeze.md).
 - **Hibernate plugins.** **Hibernate** unloads a channel's or mixer track's plugins on this computer without a render (marked with a moon); they load again by themselves when their editor opens, a few seconds before the song plays them, or when you play them, and unload again after 30 seconds unused. **Tools > Macros** can hibernate every unused plugin at once and wake everything again, and an option does it automatically.
 - **Edit in Loupe from the browser.** Right click an audio file in the browser and choose **Edit in Loupe** to open it in Loupe on its own. The file itself is never changed: your edits stay in Loupe, ready to drag onto the playlist or the channel rack, send to the playlist or save as a new file.
@@ -31,6 +34,7 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 
 ### Fixed
 
+- **Glides on several instruments.** Slides and bend lines now reach the reference models of Tercet and Lattice, Step Bass no longer glides a note while its sequencer runs, DCO Synth and Plasma follow a slide in a straight line as other instruments do, and synths that read pitch bend themselves are no longer bent twice. The sweep and sculpted kicks, the clap, the modelled membrane drum, the pad sampler, the slicer, the slice instrument and the scratch sampler (with pitched keys) now glide with slides too, so long kicks slide like an 808. MIDI Out now passes on pitch bend, channel pressure, key pressure and controllers.
 
 - **Dragging audio out of Loupe onto the channel rack or the playlist.** Loupe's window usually covers much of the channel rack and the playlist, and letting go over it dropped the audio back into Loupe itself, so nothing seemed to happen. While you drag audio out, Loupe now turns see-through and lets the drop reach whatever is under it, and it no longer accepts its own audio.
 - **Edit sample in Loupe on a Kerf channel with named regions.** Loupe opened such a channel's sample empty ("Cannot open"); it now opens the sample, and its edits come back to the channel with the region names kept.
@@ -483,7 +487,7 @@ Released 2026-11-01. Everything that changed since 0.7.0. Projects from 0.7.0 op
 - **Recording into the playlist** draws each take's clip and waveform live while you record.
 - **Track icons**: 139 icons with a searchable picker, on mixer tracks, playlist tracks and
   channels, read from and written to FL Studio projects.
-- **Plasma** plays imported Serum 2 presets much closer to the original.
+- **Plasma** reads and maps many more settings of imported Serum 2 presets.
 - **Loupe**'s interface is redrawn, and smaller things: Stop clicked while stopped goes back to the
   start, a "+" for new patterns in the playlist, instruments dropped onto playlist tracks.
 - **Fixed**: a crash on "Make unique" in a playlist clip's menu, Sampler notes in the Stretch and
@@ -582,7 +586,7 @@ Released 2026-11-01. Everything that changed since 0.7.0. Projects from 0.7.0 op
   show the value in a field beside the track, where the handle never covers it, and a
   double-click on it types one. At 150 and 200 % interface scale the editor shrinks to fit the
   window instead of scrolling sideways.
-- Plasma plays imported Serum 2 presets much closer to the original:
+- Plasma reads and maps many more settings of imported Serum 2 presets:
   - Effects: the delay (times, synced range up to 16 beats, feedback, echo filter, Ping-Pong),
     compressor and limiter, reverb (all five models, the pre-delay on every type), distortion,
     convolution (including the impulse gain), chorus, phaser, flanger, frequency shifter (shift
@@ -677,8 +681,8 @@ from 0.6.1 and from every 0.7.0 beta open as they are.
   region can be pitched right where it is, the sequence can start on any cell, and the result
   goes out as a loop or a pattern.
 - **Plasma**, a wavetable hybrid synth with three oscillators, two filters, a 64-slot modulation
-  matrix and three effect racks, in a calmer editor. It also opens your own Serum 2 and Serum
-  presets (`.SerumPreset`, `.fxp`) as Plasma sounds, with the audio they carry.
+  matrix and three effect racks, in a calmer editor. It can also read your own Serum 2 and Serum
+  presets (`.SerumPreset`, `.fxp`) and set up Plasma sounds from their settings, with the audio they carry.
 - **Split stems** separates an audio clip or a file into vocals, drums, bass and other (or six
   stems with guitar and piano), on your computer, onto new tracks lined up with the clip.
 - **Import from URL** brings the audio of a web page into the project as a lossless WAV clip; the
@@ -917,7 +921,7 @@ from 0.6.1 and from every 0.7.0 beta open as they are.
   with them. A pad pressed while another one previews takes the preview over, so its release
   returns there and stops. A pad set right after a jump stores the place the jump went to, and a
   newly set pad is always saved with the project, even when it was set moments before saving.
-- Plasma plays imported Serum 2 presets closer to the original:
+- Plasma reads and maps more settings of imported Serum 2 presets:
   - Noise pitch and key tracking now match. The noise pitch knob is a playback rate covering 96
     semitones above its centre and 384 below. With key tracking on it spans 128 semitones, with the
     noise's own pitch at key 72 and its stored detune applied. Sample noises are no longer 2 dB too
@@ -940,7 +944,7 @@ from 0.6.1 and from every 0.7.0 beta open as they are.
     7 dB too loud, and at full blend its side voices were too quiet.
   - Filter drive raises the level as the original does, up to 24 dB at full drive, and clips
     about 8 dB later. Before, driven filters and filter effects played up to 19 dB too quiet.
-  - The filter types now sound like the original's in imported presets: the low, high, band,
+  - The filter types in imported presets now map their settings more fully: the low, high, band,
     peak and notch types at 6 to 24 dB, the dual types and the three-way morph types follow the
     original's resonance, level and VAR behaviour across cutoff, resonance and VAR
     (before up to 23 dB apart on average), and the classic ladder low-pass types get back all
@@ -1037,7 +1041,7 @@ from 0.6.1 and from every 0.7.0 beta open as they are.
     and the convolver's wet path has no delay (an empty impulse slot passes the sound unchanged).
   - Hyper with one voice passes the sound untouched, and more voices keep about the same level
     (before, four voices were up to 7 dB too quiet).
-  - The reverb types sound like the original's. Each type has the original's tone (it was up to
+  - The reverb types in imported presets map their settings more fully. Each type has the original's tone (it was up to
     10 dB too dark above 1 kHz), its low cut and high cut now shape the sound as the original's do
     (the plate's low cut reaches far higher, the other types' cuts are gentle slopes), and the
     low, mid and high octaves decay at the original's separate times, per size (and on
@@ -1468,8 +1472,8 @@ from 0.6.1 and from every 0.7.0 beta open as they are.
   roll, automation lanes, recording).
 - A wavetable editor: harmonics and phases, brushes, snap grid, processing, morphing between
   frames, formulas, WAV import and export.
-- Opens Serum 2 presets (`.SerumPreset`) and Serum 1 `.fxp` files from your own folders and turns
-  them into Plasma sounds. There is one Open path for every preset type (the preset menu's Open
+- Reads Serum 2 presets (`.SerumPreset`) and Serum 1 `.fxp` files from your own folders and sets
+  up Plasma sounds from their settings. There is one Open path for every preset type (the preset menu's Open
   preset..., the browser, drag and drop, the plugin header's preset menu); what was approximated
   or not found stays with the sound behind an info mark next to the preset name. The browser's
   Serum library lists the Serum 2 and Serum preset folders found on this computer (and folders you

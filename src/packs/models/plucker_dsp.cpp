@@ -45,6 +45,8 @@ class PluckerGen final : public Generator {
     bool on = false, held = false;
     uint32_t id = 0;
     double note = 60;
+    PitchGlide slide;  // K-144: slide notes, porta and bend lines
+    int slideTick = 0;  // K-144: samples to the next loop retune while gliding
     float vel = 1, env = 1, rel = 1;
     uint64_t age = 0;
     Loop s[2];
@@ -101,6 +103,8 @@ class PluckerGen final : public Generator {
     v.on = v.held = true;
     v.id = id;
     v.note = pitch;
+    v.slide = PitchGlide{};  // K-144
+    v.slideTick = 0;
     v.vel = velocity;
     v.age = ++clock_;
     v.env = 1;
@@ -128,6 +132,15 @@ class PluckerGen final : public Generator {
       for (int i = 0; i < n; ++i) lp.buf[(kLine - n + i) & (kLine - 1)] = (tmp[i] - mean) * gain;
     }
   }
+  // K-144: glides retune both loops every 16 samples (tune() keeps the length inside the line).
+  bool supportsGlide() const override { return true; }
+  void onGlide(uint32_t id, double pitch, double seconds) override {
+    for (int i = 0; i < kVoices; ++i)
+      if (v_[i].on && v_[i].id == id) {
+        v_[i].slide.start(v_[i].note, pitch, seconds, sr_);
+        v_[i].slideTick = 0;
+      }
+  }
   void onNoteOff(uint32_t id) override {
     for (int i = 0; i < kVoices; ++i)
       if (v_[i].on && v_[i].held && v_[i].id == id) v_[i].held = false;
@@ -146,6 +159,14 @@ class PluckerGen final : public Generator {
       if (!v.on) continue;
       const float amp = 0.5f * (0.25f + 0.75f * v.vel);
       for (int i = 0; i < n; ++i) {
+        if (v.slide.active()) {  // K-144
+          v.slide.advance(v.note);
+          if (--v.slideTick <= 0 || !v.slide.active()) {
+            v.slideTick = 16;
+            tune(v, 0);
+            tune(v, 1);
+          }
+        }
         float out[2];
         for (int s = 0; s < 2; ++s) {
           Loop& lp = v.s[s];

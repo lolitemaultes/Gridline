@@ -212,6 +212,9 @@ struct Voice {
   bool live = false;      // a note without cells
   bool released = false;  // (live) key off given
   float detune = 0;       // (live) semitones of fine pitch beyond the key
+  double basePitch = 0;   // K-144: the pitch the detune is counted from (live: the key; else the note)
+  double slideStep = 0, slideTo = 0;  // K-144: detune gliding (slide notes, bend lines)
+  int64_t slideLeft = 0;
   int panOffset = 0;      // (live) the note's pan, in tracker pan steps
   uint8_t lane = 0;
   int transpose = 0;
@@ -334,6 +337,7 @@ class TrackerGen final : public Generator {
       v.inNote = true;
       midiOn(v, noteKey(pitch, props), velocity);
       v.handOver = (h.flags & trk::kHandOver) != 0;
+      v.basePitch = pitch, v.detune = 0, v.slideLeft = 0;
       v.lane = h.lane;
       v.gain = gain;
       v.age = ++clock_;
@@ -411,6 +415,7 @@ class TrackerGen final : public Generator {
     startChannel(v);
     v.first = trk::Cell{static_cast<uint8_t>(std::clamp(noteKey(pitch, props) - trk::kPitchOffset, 1, 96)), 1, 0, 0, 0};
     v.detune = static_cast<float>(pitch - noteKey(pitch, props));
+    v.basePitch = noteKey(pitch, props), v.slideLeft = 0;
     v.panOffset = static_cast<int>(std::lround(std::clamp(props.pan, -1.0f, 1.0f) * 127.0f));
     v.rel = 0;
     v.startSong = now;
@@ -474,10 +479,36 @@ class TrackerGen final : public Generator {
       if (v.used && v.live && v.mix.active) setPitch(v.mix, v.ch.s.finalPeriod, liveRatio(v));
   }
 
+  // K-144: slide notes and bend lines glide every note through its fine pitch (on top of what an
+  // imported note's own effects do with it).
+  bool supportsGlide() const override { return true; }
+  void onGlide(uint32_t id, double pitch, double seconds) override {
+    for (auto& v : voices_) {
+      if (!v.used || v.id != id || v.audition) continue;
+      v.slideTo = pitch - v.basePitch;
+      v.slideLeft = std::max<int64_t>(1, static_cast<int64_t>(seconds * sr_));
+      v.slideStep = (v.slideTo - static_cast<double>(v.detune)) / static_cast<double>(v.slideLeft);
+    }
+  }
+
   void render(float* L, float* R, int n) override {
-    for (auto& v : voices_)
-      if (v.used) renderVoice(v, L, R, n);
-    done_ += n;
+    bool sliding = false;
+    for (const auto& v : voices_) sliding = sliding || (v.used && v.slideLeft > 0);
+    // While a note glides, the pitch moves every 32 samples.
+    for (int pos = 0; pos < n;) {
+      const int m = sliding ? std::min(32, n - pos) : n - pos;
+      for (auto& v : voices_) {
+        if (!v.used || v.slideLeft <= 0) continue;
+        const int64_t k = std::min<int64_t>(v.slideLeft, m);
+        v.slideLeft -= k;
+        v.detune = static_cast<float>(v.slideLeft == 0 ? v.slideTo : static_cast<double>(v.detune) + v.slideStep * static_cast<double>(k));
+        if (v.mix.active) setPitch(v.mix, v.ch.s.finalPeriod, liveRatio(v));
+      }
+      for (auto& v : voices_)
+        if (v.used) renderVoice(v, L + pos, R + pos, m);
+      done_ += m;
+      pos += m;
+    }
   }
 
  private:
@@ -572,7 +603,7 @@ class TrackerGen final : public Generator {
 
   // The pitch ratio of a note played without cells: its fine pitch and the channel's bend.
   double liveRatio(const Voice& v) const {
-    const double semis = static_cast<double>(v.detune) + static_cast<double>(bend_);
+    const double semis = static_cast<double>(v.detune) + (v.live ? static_cast<double>(bend_) : 0.0);
     return semis == 0.0 ? 1.0 : std::exp2(semis / 12.0);
   }
   void setPitch(Mix& m, uint16_t period, double tune = 1.0) {
@@ -624,7 +655,7 @@ class TrackerGen final : public Generator {
     if (st & trk::kUpdVol) m.vol = v.ch.s.finalVol;
     if (st & trk::kUpdPan) m.pan = v.live ? static_cast<uint8_t>(std::clamp(v.ch.s.finalPan + v.panOffset, 0, 255)) : v.ch.s.finalPan;
     if (st & (trk::kUpdVol | trk::kUpdPan)) updateVolumes(v, st);
-    if (st & trk::kUpdPeriod) setPitch(m, v.ch.s.finalPeriod, v.live ? liveRatio(v) : 1.0);
+    if (st & trk::kUpdPeriod) setPitch(m, v.ch.s.finalPeriod, liveRatio(v));
     if (st & trk::kTrigger) {
       const float cl = m.curL, cr = m.curR;
       startSample(m, v.ch.s.smpNum & 15, v.ch.s.smpStartPos, v.audition ? &previewDef_ : nullptr);

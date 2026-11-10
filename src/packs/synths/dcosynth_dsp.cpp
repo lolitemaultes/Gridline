@@ -153,6 +153,7 @@ class DcoSynth final : public Generator {
     uint32_t id = 0;
     double pitch = 60, target = 60, glideFrom = 60;
     double glideT = 1, glideLen = 0;
+    PitchGlide host;  // K-144: slide notes and bend lines play linearly, as drawn (not on the porta curve)
     float vel = 1;
     uint64_t age = 0;
     double ph1 = 0, ph2 = 0, sub1 = 0, sub2 = 0;
@@ -321,6 +322,8 @@ class DcoSynth final : public Generator {
   }
   // J-92: MIDI pitch bend over the bend range (0..1 = 0..12 semitones, whole
   // steps); the range parameter was never read.
+  // K-144: the wheel bends through the instrument's own range (never twice).
+  bool handlesPitchBend() const override { return true; }
   void onMidi(uint8_t status, uint8_t d1, uint8_t d2) override {
     if ((status & 0xF0) == 0xE0) bend_ = ((d2 << 7 | d1) - 8192) / 8192.0;
   }
@@ -330,10 +333,9 @@ class DcoSynth final : public Generator {
   void onGlide(uint32_t id, double pitch, double seconds) override {
     for (auto& v : voices_)
       if (v.on && v.id == id) {
-        v.glideFrom = v.pitch;
-        v.target = pitch;
-        v.glideT = 0;
-        v.glideLen = std::max(1e-3, seconds);
+        v.host.start(v.pitch, pitch, seconds, sr_);
+        v.target = v.glideFrom = pitch;
+        v.glideT = 1;
       }
   }
   void onAllOff() override {
@@ -765,7 +767,9 @@ class DcoSynth final : public Generator {
         else if (d >= 1 && d <= kDcTags) v.modOff[d - 1] += val;
       }
       // Glide.
-      if (ref_ && v.glideT < 1.0) {
+      if (v.host.active()) {
+        v.host.advance(v.pitch, adv);
+      } else if (ref_ && v.glideT < 1.0) {
         const double T = std::max(1e-4, v.glideLen);
         if (ci(DcPortaMode, 2) == 0) {
           v.pitch += (v.target - v.pitch) * (1.0 - std::exp(-std::log(10.0) * adv / (T * sr_)));

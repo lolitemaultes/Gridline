@@ -140,6 +140,9 @@ void setTempo(Engine& e, double bpm);      // audio thread (envelope / LFO speed
 // pan (-1..1), note mod X / Y (-1..1), velocity (0..1), colour group 0..15.
 void noteOn(Engine& e, uint32_t id, double pitchCents, double vol, double pan, double modX, double modY, double velocity, int color);
 void noteOff(Engine& e, uint32_t id);
+// K-144: glides the voices of note `id` to `pitchCents` (as noteOn) over `samples` samples,
+// stepping once per control tick (slide notes, porta, bend lines). Audio thread.
+void glide(Engine& e, uint32_t id, double pitchCents, int64_t samples);
 void allOff(Engine& e);
 void kill(Engine& e);
 // Renders n frames (any n) adding into L / R. The engine works in whole

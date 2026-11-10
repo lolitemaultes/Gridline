@@ -35,10 +35,21 @@ struct BassVoice {
   dsp::Noise noise;
   dsp::Allpass1 tune;  // fractional delay
   float out = 0;
+  double semis = 60;  // K-144: glides retune the string every 16 samples
+  PitchGlide slide;
+  int gt = 0;
+  void retune(double sr) {
+    const double hz = std::clamp(dsp::noteToHz(semis), 20.0, 2000.0);
+    period = std::clamp(sr / hz, 4.0, kLineLen - 8.0);
+    const double frac = period - std::floor(period);
+    tune.a = (1.0 - frac) / (1.0 + frac);
+  }
 
   void start(uint32_t nid, double pitch, float vel, double sr) {
     id = nid;
     on = held = true;
+    semis = pitch;
+    slide = PitchGlide{};
     const double hz = std::clamp(dsp::noteToHz(pitch), 20.0, 2000.0);
     period = std::clamp(sr / hz, 4.0, kLineLen - 8.0);
     amp = 0.35 + 0.65 * vel;
@@ -57,6 +68,10 @@ struct BassVoice {
   }
   double next(double sr) {
     if (!on) return 0;
+    if (slide.active() && (gt++ & 15) == 0) {
+      slide.advance(semis, 16);
+      retune(sr);
+    }
     double ex = 0;
     if (excite > 0) {
       const double ph = 1.0 - static_cast<double>(excite) / exciteLen;
@@ -108,6 +123,11 @@ class FingerBass final : public Generator {
         if (v.age > use->age) use = &v;
     }
     use->start(id, pitch, vel, sr_);
+  }
+  bool supportsGlide() const override { return true; }
+  void onGlide(uint32_t id, double pitch, double seconds) override {
+    for (auto& v : v_)
+      if (v.on && v.id == id) v.slide.start(v.semis, pitch, seconds, sr_), v.gt = 0;
   }
   void onNoteOff(uint32_t id) override {
     for (auto& v : v_)

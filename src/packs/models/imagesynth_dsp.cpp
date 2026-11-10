@@ -39,6 +39,7 @@ class ImageGen final : public Generator {
     bool on = false, held = false, ending = false;
     uint32_t id = 0;
     double pitch = 60, pos = 0;
+    PitchGlide slide;  // K-144: slide notes, porta and bend lines
     float vel = 1;
     uint64_t age = 0;
     Adsr env;
@@ -112,6 +113,7 @@ class ImageGen final : public Generator {
     v.ending = false;
     v.id = id;
     v.pitch = pitch;
+    v.slide = PitchGlide{};  // K-144
     v.vel = vel;
     v.age = ++clock_;
     v.pos = (reverse_ ? 1.0 - start_ : start_) * img_.w;
@@ -125,6 +127,12 @@ class ImageGen final : public Generator {
       v.aL[r] = v.aR[r] = v.dL[r] = v.dR[r] = 0;
     }
     voiceControl(v, false);
+  }
+  // K-144: glides retune the rows (with key tracking) once per control period.
+  bool supportsGlide() const override { return true; }
+  void onGlide(uint32_t id, double pitch, double seconds) override {
+    for (int i = 0; i < kVoices; ++i)
+      if (voices_[i].on && voices_[i].id == id) voices_[i].slide.start(voices_[i].pitch, pitch, seconds, sr_);
   }
   void onNoteOff(uint32_t id) override {
     for (int i = 0; i < kVoices; ++i)
@@ -148,6 +156,7 @@ class ImageGen final : public Generator {
   void voiceControl(Voice& v, bool advance) {
     const int W = img_.w, H = img_.h;
     if (advance) {
+      v.slide.advance(v.pitch, kCtl);  // K-144
       double step = kCtl / (pixel_ * sr_);
       v.pos += reverse_ ? -step : step;
       if (v.pos >= W || v.pos < 0) {

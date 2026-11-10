@@ -583,7 +583,7 @@ void drawPianoRoll(App& a) {
     const float slideNeed = 2 * theme::kS2 + 1 + ImGui::CalcTextSize(i18n::tr("Slide")).x + 2 * ImGui::GetStyle().FramePadding.x + 4 + fh + 2;
     if (roomLeft() > slideNeed) {
       ui::ToolbarDivider();
-      if (ui::TextButton("Slide", newSlide, 0, "Slide mode: new notes glide the channel's sounding notes to their pitch instead of starting a note"))
+      if (ui::TextButton("Slide", newSlide, 0, "Slide mode: new notes glide the channel's sounding notes to their pitch instead of starting a note. Instruments that cannot glide bend their sounding notes instead"))
         newSlide = !newSlide;
       ImGui::SameLine(0, 4);
       const ImU32 chanCol = chan ? theme::rgb(chan->color) : P.textDim;
@@ -931,6 +931,29 @@ void drawPianoRoll(App& a) {
         io.MousePos.y < gridMax.y && io.MousePos.x > gridMin.x) {
       hoverNote = static_cast<int>(i);
       hoverEdge = io.MousePos.x > x1 - std::min(8.0f, (x1 - x0) * 0.35f);
+    }
+  }
+  // Slide notes: a faint arrow from each note the slide moves (sounding at its start, same colour
+  // unless slides take every colour) to the slide's pitch, so it is clear what a slide acts on.
+  {
+    const bool anyColour = a.doc.song().slidesAnyColour;
+    const ImU32 arrowCol = theme::withAlpha(P.text, 0.35f);
+    for (size_t i = 0; i < notes.size(); ++i) {
+      const Note& s = notes[i];
+      if (!s.slide || s.muted) continue;
+      const NoteBox& sb = noteBoxes[i];
+      if (sb.x0 < gridMin.x - 4 || sb.x0 > gridMax.x + 4) continue;
+      const float sy = sb.y + rowH * 0.5f;
+      for (size_t j = 0; j < notes.size(); ++j) {
+        const Note& n = notes[j];
+        if (j == i || n.slide || n.muted || n.pitch == s.pitch) continue;
+        if (!anyColour && n.color != s.color) continue;
+        if (n.start >= s.start || n.start + n.length <= s.start) continue;
+        const float ny = noteBoxes[j].y + rowH * 0.5f, x = sb.x0;
+        const float dir = sy < ny ? -1.0f : 1.0f, h = std::max(2.0f, std::min(4.0f, rowH * 0.3f));
+        dl->AddLine(ImVec2(x, ny), ImVec2(x, sy - dir * h), arrowCol, 1.0f);
+        dl->AddTriangleFilled(ImVec2(x - h * 0.7f, sy - dir * h), ImVec2(x + h * 0.7f, sy - dir * h), ImVec2(x, sy), arrowCol);
+      }
     }
   }
   // K-25 / K-28: pitch bend lines. The drawing order keeps lines and note names readable over
@@ -2286,6 +2309,7 @@ void drawPianoRoll(App& a) {
       if (keys::pressed("piano.toolZoom")) st.tool = Tool::Zoom;
       if (keys::pressed("piano.toolDetune")) st.tool = Tool::Detune;
       if (keys::pressed("piano.toolBend")) st.tool = Tool::Bend;  // K-25
+      if (keys::pressed("piano.slideMode")) newSlide = !newSlide;
     }
   }
   ui::EndDockWindow();

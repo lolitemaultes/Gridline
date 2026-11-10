@@ -1222,6 +1222,33 @@ void testInstrument() {
     expect(std::fabs(r.L[static_cast<size_t>(len + 500)]) < 1e-6, "slice key: stops at the slice end");
     expect(std::fabs(r.L[0]) <= std::fabs(0.8 * src->left[static_cast<size_t>(sl.start)]) * 0.01 + 1e-6, "slice key: declicked start");
   }
+  // A slide note on a held slice key plays the slice faster by its interval: the slice audio is
+  // the same up to the slide and differs after it.
+  {
+    const auto& sl = m.slices[2];
+    const int64_t len = sl.end - sl.start;
+    auto run = [&](bool slide) {
+      auto g = createGenerator(sm::kType);
+      ProcessContext ctx;
+      ctx.sampleRate = 44100, ctx.tempo = 120, ctx.ppq = 96;
+      std::vector<float> L(static_cast<size_t>(len), 0.f), R(static_cast<size_t>(len), 0.f);
+      g->noteOn(1, 62, 1.0f, 0);
+      for (int64_t pos = 0; pos < len; pos += 128) {
+        const int n = static_cast<int>(std::min<int64_t>(128, len - pos));
+        if (slide && pos == 1024) g->glide(1, 74, 0.01, 0);
+        g->process(st, aux, ctx, L.data() + pos, R.data() + pos, n);
+      }
+      return L;
+    };
+    expect(createGenerator(sm::kType)->supportsGlide(), "slide: the instrument takes slides");
+    const auto a = run(false), b = run(true);
+    double before = 0, after = 0;
+    for (int64_t i = 0; i < len; ++i) {
+      double& d = i < 1024 ? before : after;
+      d = std::max(d, static_cast<double>(std::fabs(a[static_cast<size_t>(i)] - b[static_cast<size_t>(i)])));
+    }
+    expect(before == 0 && after > 0.01, "slide: the slice plays as before up to the slide, then moves");
+  }
   // slot letters map
   {
     PluginState s2 = st;

@@ -132,6 +132,7 @@ class PocketSynthGen final : public Generator {
     uint32_t id = 0;
     int note = 60;
     double pitch = 60, frac = 0;
+    PitchGlide host;  // K-144: slide notes, porta and bend lines move `frac` (semitones off the key)
     float vel = 1;
     uint64_t stamp = 0;
     double eAmp = 0, tAmp = 0, cAmp = 1, eFlt = 0, tFlt = 0, cFlt = 1;
@@ -205,6 +206,7 @@ class PocketSynthGen final : public Generator {
     v->id = id;
     v->note = note;
     v->frac = pitch - note;
+    v->host.stop();
     lastNote_ = note;
     v->stamp = ++clock_;
     if (!v->on) v->rng.s = 0x8AEu + static_cast<uint32_t>(clock_) * 0x9E3779B9u;
@@ -223,6 +225,11 @@ class PocketSynthGen final : public Generator {
     if (fresh) setupVoice(*v, lam_, lfoDest_);  // a new voice sounds from its first sample
   }
 
+  bool supportsGlide() const override { return true; }
+  void onGlide(uint32_t id, double pitch, double seconds) override {
+    for (auto& v : v_)
+      if (v.on && v.id == id) v.host.start(v.frac, pitch - v.note, seconds, sr_);
+  }
   void releaseVoice(Voice& v) {
     v.gated = false;
     v.atkAmp = v.atkFlt = false;
@@ -291,6 +298,7 @@ class PocketSynthGen final : public Generator {
   void setupVoice(Voice& v, double lam, int lfoDest) {
     // Drift, glide, pitch.
     v.drift += 0.01 * (uniform(v.rng) - v.drift);
+    v.host.advance(v.frac, kBlock);
     const double c = std::pow(1.0 - x_[PkSlide], 4) * 0.9 + 0.01;
     v.pitch += c * (v.note - v.pitch);
     const int transpose = static_cast<int>(24 * x_[PkTranspose] - 12);

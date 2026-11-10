@@ -209,7 +209,7 @@ msgstr ""
 msgid "None (system input device)"
 msgstr ""
 
-#: src/app/AsioUi.cpp src/app/ChannelEnvelopeUi.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/McpUi.cpp src/app/MixerView.cpp src/app/PluginEditorsEqRef.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/PluginEditorsK3Gb.cpp src/app/PluginFoldersUi.cpp src/packs/modulation/modulation_patcher_ui.cpp src/packs/plasma/plasma_osc_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp src/packs/spectral/turntable_ui.cpp
+#: src/app/AsioUi.cpp src/app/ChannelEnvelopeUi.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/HostedUi.cpp src/app/McpUi.cpp src/app/MixerView.cpp src/app/PluginEditorsEqRef.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/PluginEditorsK3Gb.cpp src/app/PluginFoldersUi.cpp src/packs/modulation/modulation_patcher_ui.cpp src/packs/plasma/plasma_osc_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp src/packs/spectral/turntable_ui.cpp
 msgid "Off"
 msgstr ""
 
@@ -8221,6 +8221,10 @@ msgstr ""
 msgid "%d channel%s listening on port %d"
 msgstr ""
 
+#: src/app/HostedUi.cpp src/app/SamplerRenderUi.cpp
+msgid "%d semitones"
+msgstr ""
+
 #: src/app/HostedUi.cpp
 msgid "%d-channel sidechain input. Fed by: %s"
 msgstr ""
@@ -8233,8 +8237,24 @@ msgstr ""
 msgid "(not used)"
 msgstr ""
 
+#: src/app/HostedUi.cpp src/app/MixerView.cpp src/app/PluginManager.cpp
+msgid "Automatic"
+msgstr ""
+
+#: src/app/HostedUi.cpp
+msgid "Bend range %d st"
+msgstr ""
+
+#: src/app/HostedUi.cpp
+msgid "Channel pitch bend"
+msgstr ""
+
 #: src/app/HostedUi.cpp
 msgid "Detect"
+msgstr ""
+
+#: src/app/HostedUi.cpp
+msgid "Every note plays on its own MIDI channel with its own pitch bend, for plugins that understand MPE."
 msgstr ""
 
 #: src/app/HostedUi.cpp
@@ -8266,6 +8286,10 @@ msgid "MIDI ports apply to plugins on channels."
 msgstr ""
 
 #: src/app/HostedUi.cpp
+msgid "MPE (a channel per note)"
+msgstr ""
+
+#: src/app/HostedUi.cpp
 msgid "Make bridged (run in sandbox)"
 msgstr ""
 
@@ -8278,11 +8302,19 @@ msgid "No parameter matches."
 msgstr ""
 
 #: src/app/HostedUi.cpp
+msgid "Notes keep their pitch: slide notes and bend lines are not sent."
+msgstr ""
+
+#: src/app/HostedUi.cpp
 msgid "Notes this plugin sends (arpeggiators, chord tools) play every channel listening on this port"
 msgstr ""
 
 #: src/app/HostedUi.cpp
 msgid "Output 1 plays through the channel. Send the other outputs to mixer tracks:"
+msgstr ""
+
+#: src/app/HostedUi.cpp
+msgid "Per-note pitch"
 msgstr ""
 
 #: src/app/HostedUi.cpp src/app/PluginWindowBar.cpp
@@ -8311,6 +8343,14 @@ msgstr ""
 
 #: src/app/HostedUi.cpp
 msgid "Sends that track's audio to this track's sidechain input (it is not mixed into the track)"
+msgstr ""
+
+#: src/app/HostedUi.cpp
+msgid "Slide notes and bend lines move the pitch bend of the note's channel (one bend per channel)."
+msgstr ""
+
+#: src/app/HostedUi.cpp
+msgid "Slide notes and bend lines tune each note where the plugin can, otherwise they bend the note's channel."
 msgstr ""
 
 #: src/app/HostedUi.cpp
@@ -11145,10 +11185,6 @@ msgstr ""
 msgid "Allow threaded processing (off: the track always runs on the audio thread)"
 msgstr ""
 
-#: src/app/MixerView.cpp src/app/PluginManager.cpp
-msgid "Automatic"
-msgstr ""
-
 #: src/app/MixerView.cpp
 msgid "Both"
 msgstr ""
@@ -11678,7 +11714,7 @@ msgid "Slide"
 msgstr ""
 
 #: src/app/PianoRoll.cpp
-msgid "Slide mode: new notes glide the channel's sounding notes to their pitch instead of starting a note"
+msgid "Slide mode: new notes glide the channel's sounding notes to their pitch instead of starting a note. Instruments that cannot glide bend their sounding notes instead"
 msgstr ""
 
 #: src/app/PianoRoll.cpp
@@ -14235,10 +14271,6 @@ msgstr ""
 
 #: src/app/SamplerRenderUi.cpp
 msgid "%d samples rendered to %s"
-msgstr ""
-
-#: src/app/SamplerRenderUi.cpp
-msgid "%d semitones"
 msgstr ""
 
 #: src/app/SamplerRenderUi.cpp
@@ -17291,6 +17323,10 @@ msgstr ""
 
 #: src/core/Keymap.cpp
 msgid "Slice tool"
+msgstr ""
+
+#: src/core/Keymap.cpp
+msgid "Slide mode (new notes are slide notes)"
 msgstr ""
 
 #: src/core/Keymap.cpp

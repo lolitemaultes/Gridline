@@ -217,6 +217,7 @@ class MultiSamplerGen final : public Generator {
     uint64_t age = 0;
     const ZoneRt* zr = nullptr;
     double pos = 0, pitch = 60, target = 60, rate = 1;
+    PitchGlide slide;  // K-144: slide notes, porta and bend lines (straight, per sample)
     Env amp, mod;
     double lfoPh = 0, lfoT = 0, lfoRnd = 0, lfoVal = 0;
     dsp::Svf fL, fR;
@@ -345,6 +346,7 @@ class MultiSamplerGen final : public Generator {
         for (auto& v : voices_)
           if (v.on && v.held && !v.fading) {
             v.target = pitch;
+            v.slide.stop();
             v.id = id;
             v.note = key;
           }
@@ -390,6 +392,7 @@ class MultiSamplerGen final : public Generator {
       v.looping = zr.hasLoop;
       v.pitch = startPitch;
       v.target = pitch;
+      v.slide.stop();
       v.rng = 0x9E3779B9u ^ static_cast<uint32_t>(clock_ * 2654435761u);
       setEnvs(v);
       v.amp.on();
@@ -397,6 +400,11 @@ class MultiSamplerGen final : public Generator {
     }
   }
 
+  bool supportsGlide() const override { return true; }
+  void onGlide(uint32_t id, double pitch, double seconds) override {
+    for (auto& v : voices_)
+      if (v.on && v.id == id) v.slide.start(v.pitch, pitch, seconds, sr_), v.target = pitch;
+  }
   void onNoteOff(uint32_t id) override {
     if (mode_ != PlayPoly) {
       int k = 0;
@@ -513,7 +521,9 @@ class MultiSamplerGen final : public Generator {
         control(v);
       }
       // Glide toward the target pitch.
-      if (v.pitch != v.target) {
+      if (v.slide.active()) {
+        v.slide.advance(v.pitch);
+      } else if (v.pitch != v.target) {
         v.pitch += (v.target - v.pitch) * glideCoef_;
         if (std::fabs(v.target - v.pitch) < 1e-4) v.pitch = v.target;
       }
@@ -634,6 +644,8 @@ class ScratchGen final : public Generator {
     float vel = 1;
     uint64_t age = 0;
     double t = 0, tRate = 0, pos = 0, lastPos = 0, muteG = 1, lpL = 0, lpR = 0, fade = 1, ratio = 1, head = 0, spd = 0;
+    double note = 60, ratio0 = 1, tRate0 = 0, semi = 0, semiTo = 0, semiStep = 0;  // K-144: a slide off the played pitch
+    int64_t semiLeft = 0;
     bool fading = false;
     Env amp;
   };
@@ -706,6 +718,7 @@ class ScratchGen final : public Generator {
     v.age = ++clock_;
     v.tRate = speed_ * ratio / (moveSeconds() * sr_);
     v.ratio = ratio;
+    v.note = pitch, v.ratio0 = ratio, v.tRate0 = v.tRate;
     double n = static_cast<double>(map_->smp->frames() - 1);
     v.pos = v.lastPos = (start_ + evalMove(map_->moves[static_cast<size_t>(move)], 0) * (end_ - start_)) * n;
     if (motion_ == MotionSpeed) v.pos = v.lastPos = v.head = start_ * n;
@@ -730,6 +743,18 @@ class ScratchGen final : public Generator {
   void onKill() override {
     for (auto& v : voices_) v = Voice{};
   }
+  // K-144: with pitched keys a slide speeds the move up or slows it down by its interval (as the
+  // key would); with keys that pick moves, slides leave it alone.
+  bool supportsGlide() const override { return keyMode_ == KeyPitched; }
+  void onGlide(uint32_t id, double pitch, double seconds) override {
+    if (keyMode_ != KeyPitched) return;
+    for (auto& v : voices_)
+      if (v.on && v.id == id) {
+        v.semiTo = pitch - v.note;
+        v.semiLeft = std::max<int64_t>(1, static_cast<int64_t>(seconds * sr_));
+        v.semiStep = (v.semiTo - v.semi) / static_cast<double>(v.semiLeft);
+      }
+  }
 
   void render(float* L, float* R, int n) override {
     if (!map_ && !prev_) return;
@@ -748,6 +773,14 @@ class ScratchGen final : public Generator {
       tap::Run run;  // J-219: Track Receipt coverage
       if (tap::active()) run.begin(&s);
       for (int i = 0; i < n; ++i) {
+        if (v.semiLeft > 0) {  // K-144: the slide, every 16 samples
+          --v.semiLeft;
+          v.semi = v.semiLeft == 0 ? v.semiTo : v.semi + v.semiStep;
+          if ((v.semiLeft & 15) == 0) {
+            const double m = std::exp2(follow_ * v.semi / 12.0);
+            v.ratio = v.ratio0 * m, v.tRate = v.tRate0 * m;
+          }
+        }
         if (motion_ == MotionSpeed) {
           // The curve is the platter speed; the head wraps inside the region.
           double target = (evalMove(mv, static_cast<float>(v.t)) * 4.0 - 2.0) * v.ratio * speed_ * s.sampleRate / sr_;

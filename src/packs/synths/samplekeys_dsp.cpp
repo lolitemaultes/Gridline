@@ -40,6 +40,8 @@ class SampleKeysGen final : public Generator {
     double env = 0, mul = 1, kf = 1, gL = 0, gR = 0, vol = 1;
     double prev[2] = {0, 0}, y[2] = {0, 0};
     double n = 60, off = 0;
+    PitchGlide slide;  // K-144: glides retune the voice every 32 samples
+    uint32_t gt = 0;
   };
 
   void configure(const PluginState& st, const ChannelAux& aux, const ProcessContext& ctx) override {
@@ -141,9 +143,11 @@ class SampleKeysGen final : public Generator {
     for (auto& v : v_)
       if (v.on && v.id == id) release(v), v.id = 0;
   }
-  void onGlide(uint32_t id, double pitch, double) override {
+  // K-144: slide notes, porta and bend lines glide each voice (the sample it started on keeps playing).
+  bool supportsGlide() const override { return true; }
+  void onGlide(uint32_t id, double pitch, double seconds) override {
     for (auto& v : v_)
-      if (v.on && v.id == id && set_) v.n = std::clamp(pitch, 0.0, 127.0), setStep(v, v.n);
+      if (v.on && v.id == id && set_) v.slide.start(v.n, std::clamp(pitch, 0.0, 127.0), seconds, sr_), v.gt = 0;
   }
   void onAllOff() override {
     for (auto& v : v_)
@@ -165,6 +169,10 @@ class SampleKeysGen final : public Generator {
       double ol = 0, orr = 0;
       for (auto& v : v_) {
         if (!v.on) continue;
+        if (v.slide.active() && (v.gt++ & 31u) == 0) {
+          v.slide.advance(v.n, 32);
+          setStep(v, v.n);
+        }
         v.frac += v.step;
         v.idx += v.frac >> 16;
         v.frac &= 0xFFFF;

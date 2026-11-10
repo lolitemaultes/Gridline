@@ -661,6 +661,57 @@ void heldNotes() {
   }
 }
 
+// K-144: slide notes. A frozen channel renders its slides as it plays them live, and a song note
+// waiting for a hibernating instrument that a slide moves meanwhile sounds at the slide's pitch.
+int crossingsOf(AudioEngine& eng, int blocks) {
+  std::vector<float> L(256), R(256);
+  int c = 0;
+  float last = 0;
+  for (int b = 0; b < blocks; ++b) {
+    eng.process(L.data(), R.data(), 256);
+    for (float v : L) c += (v < 0) != (last < 0), last = v;
+  }
+  return c;
+}
+
+void slides() {
+  Fixture f = fixture();
+  Song s = f.s;
+  for (auto& c : s.channels) c.muted = c.id != f.lead;
+  Note held;
+  held.start = 0, held.length = 384, held.pitch = 60, held.velocity = 100;
+  Note sl = held;
+  sl.start = 24, sl.length = 24, sl.pitch = 72, sl.slide = true;
+  s.pattern(f.pat)->notes[f.lead] = {held, sl};
+  {
+    Song fz = s;
+    expect(freezeUnit(fz, channelUnit(f.lead)), "slides: frozen");
+    expect(maxDiff(renderPlain(s), renderAsPlayed(fz)) < 1e-6f, "slides: a frozen channel plays its slides as it did live");
+  }
+  int counts[2] = {0, 0};
+  for (int withSlide = 0; withSlide < 2; ++withSlide) {
+    Song h = s;
+    if (!withSlide) h.pattern(f.pat)->notes[f.lead] = {held};
+    freeze::setHibernate(h, channelUnit(f.lead), true);
+    ProgramBuilder b;
+    b.setSampleRate(kSr);
+    AudioEngine eng(kSr);
+    eng.setProgram(buildAs(b, h, {}, {}));
+    eng.setLooping(false);
+    eng.setOffline(true);
+    eng.setFixedBlock(256);
+    eng.setMode(PlayMode::Song);
+    eng.play();
+    runBlocks(eng, 60);  // past the slide's end, still asleep
+    eng.setProgram(buildAs(b, h, {}, {channelUnit(f.lead)}));
+    runBlocks(eng, 8);
+    counts[withSlide] = crossingsOf(eng, 40);
+  }
+  std::printf("# hibernating slide: %d crossings without, %d with the slide\n", counts[0], counts[1]);
+  expect(counts[0] > 0 && counts[1] > counts[0] * 18 / 10 && counts[1] < counts[0] * 22 / 10,
+         "slides: a waiting note a slide moved sounds at the slide's pitch once its instrument loads");
+}
+
 // ---------------------------------------------------------------- undo
 
 void undoRedo() {
@@ -699,6 +750,7 @@ int main() {
   hibernate();
   undoRedo();
   heldNotes();
+  slides();
   cpuDrop();
   collaboration();
   fs::remove_all(scratch);

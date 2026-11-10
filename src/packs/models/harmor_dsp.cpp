@@ -235,6 +235,7 @@ class HarmorGen final : public Generator {
     uint32_t id = 0, serial = 0;
     uint64_t age = 0;
     double note = 60, cur = 60, from = 60, glideT = 1, glideLen = 0;
+    PitchGlide host;  // K-144: slide notes, porta and bend lines from the host
     float vel = 1, rnd = 0;
     double t = 0;
     bool released = false;
@@ -291,6 +292,7 @@ class HarmorGen final : public Generator {
         Voice& v = voices_[i];
         if (v.on && v.held) {
           if (legato_) {
+            v.host.stop();  // K-144
             startGlide(v, v.cur, pitch, vel);
             v.note = pitch;
             v.id = id;
@@ -315,6 +317,7 @@ class HarmorGen final : public Generator {
     v.id = id;
     v.serial = ++serial_;
     v.note = pitch;
+    v.host.stop();  // K-144
     v.vel = vel;
     v.age = ++clock_;
     v.t = 0;
@@ -330,6 +333,18 @@ class HarmorGen final : public Generator {
     h *= 0x2C1B3C6Du;
     h ^= h >> 12;
     return static_cast<float>(h & 0xFFFFFF) / static_cast<float>(0xFFFFFF);
+  }
+  // K-144: host glides move the voice's current pitch linearly; the own porta stops and its
+  // target becomes the glide's, so it does not pull back afterwards.
+  bool supportsGlide() const override { return true; }
+  void onGlide(uint32_t id, double pitch, double seconds) override {
+    for (int i = 0; i < kVoices; ++i) {
+      Voice& v = voices_[i];
+      if (!v.on || v.id != id) continue;
+      v.host.start(v.cur, pitch, seconds, sr_);
+      v.note = pitch;
+      v.glideT = 1;
+    }
   }
   void startGlide(Voice& v, double from, double to, float vel) {
     const PartCfg& c = cfg_[0];
@@ -474,7 +489,9 @@ class HarmorGen final : public Generator {
     const double dt = fresh ? 0.0 : kCtl / sr_;
     if (!fresh) {
       v.t += dt;
-      if (v.glideT < 1) {
+      if (v.host.active()) {
+        v.host.advance(v.cur, kCtl);  // K-144
+      } else if (v.glideT < 1) {
         v.glideT = std::min(1.0, v.glideT + dt / std::max(1e-4, v.glideLen));
         const double u = cfg_[0].portaLog ? 1.0 - std::pow(1.0 - v.glideT, 3.0) : v.glideT;
         v.cur = v.from + (v.note - v.from) * u;

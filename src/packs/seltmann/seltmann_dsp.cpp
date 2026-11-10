@@ -333,6 +333,8 @@ class SeltmannGen final : public Generator {
     const float* R = nullptr;
     int64_t n = 0;
     double pos = 0, lo = 0, hi = 0, rate = 1;
+    double notePitch = -1, baseRate = 1, semi = 0, semiTo = 0, semiStep = 0;  // K-144: a slide off the played pitch
+    int64_t semiLeft = 0;
     int dir = 1;
     bool warped = false;
     double wTempo = 0, wRate = 0;  // J-219: the warped render this voice plays (tempo, source rate)
@@ -404,6 +406,17 @@ class SeltmannGen final : public Generator {
     noteOnImpl(id, pitch, vel, std::round((p.modX - 0.5) * 48.0), p.modY > 0.75f);
   }
   void onNoteOn(uint32_t id, double pitch, float vel) override { noteOnImpl(id, pitch, vel, 0, false); }
+  // K-144: a slide plays the slice faster or slower by its interval from the played pitch (the
+  // pattern's own steps keep theirs).
+  bool supportsGlide() const override { return true; }
+  void onGlide(uint32_t id, double pitch, double seconds) override {
+    for (auto& v : voices_)
+      if (v.on && v.id == id && v.notePitch >= 0) {
+        v.semiTo = pitch - v.notePitch;
+        v.semiLeft = std::max<int64_t>(1, static_cast<int64_t>(seconds * sr_));
+        v.semiStep = (v.semiTo - v.semi) / static_cast<double>(v.semiLeft);
+      }
+  }
 
   void onNoteOff(uint32_t id) override {
     if (patOn_ && id == patId_) {
@@ -493,6 +506,8 @@ class SeltmannGen final : public Generator {
     else slice = k;
     if (slice < 0 || slice >= static_cast<int>(aux_->slices.size())) return;
     startVoice(id, slice, fine + extraSemis, vel, 1.0, extraReverse, 0.0, -1, false);
+    for (auto& v : voices_)
+      if (v.on && v.id == id && v.age == ageCounter_) v.notePitch = pitch;  // K-144
     display_.store(packDisplay(-1, slice), std::memory_order_relaxed);
   }
 
@@ -567,6 +582,7 @@ class SeltmannGen final : public Generator {
     v.hi = std::clamp(mapFrame(s, sl.beatB, static_cast<double>(sl.b)), v.lo + 1, static_cast<double>(s.n));
     if (stepOffset > 0) v.lo = std::min(v.hi - 1, v.lo + (v.hi - v.lo) * stepOffset);
     v.rate = s.rate * std::pow(2.0, (sl.pitch + semis + pitch_) / 12.0);
+    v.baseRate = v.rate;
     const bool rev = (sl.reverse != stepReverse) != reverseAll_;
     v.dir = rev ? -1 : 1;
     v.pos = rev ? v.hi - 1 : v.lo;
@@ -650,6 +666,11 @@ class SeltmannGen final : public Generator {
     outL += l * a;
     outR += r * a;
     v.pos += v.dir * v.rate;
+    if (v.semiLeft > 0) {  // K-144: the slide, retuned every 16 samples
+      --v.semiLeft;
+      v.semi = v.semiLeft == 0 ? v.semiTo : v.semi + v.semiStep;
+      if ((v.semiLeft & 15) == 0) v.rate = v.baseRate * std::exp2(v.semi / 12.0);
+    }
     v.played += 1;
   }
 

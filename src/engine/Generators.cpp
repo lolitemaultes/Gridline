@@ -329,7 +329,7 @@ class SynthGen final : public Generator {
   }
   void onGlide(uint32_t id, double pitch, double seconds) override {
     for (auto& v : voices_)
-      if (v.id == id && v.amp.active()) {
+      if (v.id == id && (ref_ ? v.rOn : v.amp.active())) {  // K-144: reference voices glide too
         v.slide.start(v.pitch, pitch, seconds, sr_);
         v.target = pitch;
       }
@@ -1434,6 +1434,7 @@ class DrumGen : public Generator {
     *pick = Voice{};
     pick->on = true;
     pick->id = id;
+    pick->semis = pitch;
     pick->vel = vel;
     pick->tune = std::pow(2.0, (pitch - 60.0) / 12.0);
     pick->noise.seed(id * 747796405u + 2891336453u);
@@ -1442,6 +1443,19 @@ class DrumGen : public Generator {
     started(*pick);
   }
   virtual void started(Voice&) {}
+  // K-144: pitched drums (kick, snare) glide with slide notes, porta and bend lines.
+  virtual bool pitched() const { return false; }
+  bool supportsGlide() const override { return pitched(); }
+  void onGlide(uint32_t id, double pitch, double seconds) override {
+    for (auto& v : voices_)
+      if (v.on && v.id == id) v.slide.start(v.semis, pitch, seconds, sr_);
+  }
+  // One sample along the voice's glide (the tune ratio follows).
+  static void glideStep(Voice& v) {
+    if (!v.slide.active()) return;
+    v.slide.advance(v.semis);
+    v.tune = std::pow(2.0, (v.semis - 60.0) / 12.0);
+  }
   void onNoteOff(uint32_t) override {}
   void onAllOff() override {}
   // K-165: cut groups, mono and the voice limit choke the hit over 4 ms (note-offs are ignored).
@@ -1475,6 +1489,8 @@ struct DrumVoiceBase {
   }
   bool cutDone() const { return cutStep > 0 && cutGain <= 0; }
   double t = 0, tune = 1, phase = 0;
+  double semis = 60;  // K-144: the voice's pitch (glides)
+  PitchGlide slide;
   double rnd1 = 0, rnd2 = 0;
   Noise noise;
 };
@@ -1506,9 +1522,10 @@ class KickGen final : public DrumGen<KickVoice> {
         v.clickF.set(sr_, clickTone_, 0.1);
         v.tone.setFreq(sr_, tone_);
       }
-      double tune = keyTrack_ ? v.tune : 1.0;
       double p0 = p0_ * (1 + 0.1 * variation_ * v.rnd1), sweep = sweep_ * (1 + 0.3 * variation_ * v.rnd2);
       for (int i = 0; i < n; ++i) {
+        glideStep(v);
+        const double tune = keyTrack_ ? v.tune : 1.0;
         double env = linear_ ? std::max(0.0, 1.0 - v.t / (sweep * 3.0)) : std::exp(-v.t / sweep);
         double f = (p1_ + (p0 - p1_) * env) * tune;
         v.phase += f * dt;
@@ -1540,6 +1557,7 @@ class KickGen final : public DrumGen<KickVoice> {
       }
     }
   }
+  bool pitched() const override { return keyTrack_; }
   double p0_ = 220, p1_ = 48, sweep_ = 0.06, decay_ = 0.45, click_ = 0.3, drive_ = 0.2, vol_ = 0.9;
   double sub_ = 0, clickTone_ = 4000, clickLen_ = 0.004, attack_ = 0, tone_ = 20000, variation_ = 0, noiseLvl_ = 0, noiseDec_ = 0.08;
   bool keyTrack_ = true, linear_ = false;
@@ -1572,6 +1590,7 @@ class SnareGen final : public DrumGen<SnareVoice> {
         v.tilt.set(Biquad::HighShelf, sr_, 1000, 0.6, tilt_ + velTone_ * (v.vel - 0.75) * 6.0);
       }
       for (int i = 0; i < n; ++i) {
+        glideStep(v);
         double f = tuneHz_ * v.tune * (sweep_ > 0 ? std::pow(2.0, sweep_ / 12.0 * std::exp(-v.t / sweepT_)) : 1.0);
         v.phase += f * dt;
         v.phase2 += f * 1.47 * dt;
@@ -1600,6 +1619,7 @@ class SnareGen final : public DrumGen<SnareVoice> {
       }
     }
   }
+  bool pitched() const override { return true; }
   double tone_ = 0.5, snappy_ = 0.6, body_ = 0.12, ndec_ = 0.2, tuneHz_ = 190, vol_ = 0.8;
   double sweep_ = 0, sweepT_ = 0.02, band_ = 1800, width_ = 1, ring_ = 0, harm_ = 0, click_ = 0, tilt_ = 0, velTone_ = 0;
 };
@@ -1698,6 +1718,14 @@ class ClapGen final : public DrumGen<ClapVoice> {
       double tailStart = 0;
       for (int b = 0; b < hits_; ++b) tailStart = std::max(tailStart, b * spread_ * (1 + v.jit[b]));
       for (int i = 0; i < n; ++i) {
+        // K-144: a slide moves the band (retuned every 32 samples while it runs).
+        if (v.slide.active()) {
+          glideStep(v);
+          if ((static_cast<int64_t>(v.t * sr_ + 0.5) & 31) == 0 || !v.slide.active()) {
+            v.bp.set(sr_, tone_ * v.tune, std::clamp(1.1 * (1 - width_), 0.0, 1.0));
+            v.bp2.set(sr_, tone_ * v.tune * 1.07, std::clamp(1.1 * (1 - width_), 0.0, 1.0));
+          }
+        }
         // Bursts, then a decaying tail.
         double envL = 0, envR = 0;
         for (int b = 0; b < hits_; ++b) {
@@ -1730,6 +1758,7 @@ class ClapGen final : public DrumGen<ClapVoice> {
       }
     }
   }
+  bool pitched() const override { return true; }
   double decay_ = 0.25, spread_ = 0.011, tone_ = 1300, vol_ = 0.7, hitDecay_ = 0.0035, falloff_ = 0, width_ = 0.5, stereo_ = 0, humanize_ = 0;
   int hits_ = 3;
 };
@@ -1766,6 +1795,8 @@ class PluckGen final : public Generator {
     double hz = 220;
     uint32_t clock = 0;
     Str s[2];
+    double semis = 60;  // K-144: glides retune the strings' loop lengths
+    PitchGlide slide;
   };
 
   void configure(const PluginState& s, const ChannelAux&, const ProcessContext& ctx) override {
@@ -1802,6 +1833,8 @@ class PluckGen final : public Generator {
     v.amp = 1;
     v.clock = 0;
     v.hz = noteToHz(pitch);
+    v.semis = pitch;
+    v.slide = PitchGlide{};
     Noise nz;
     nz.seed(id * 2246822519u + 3);
     for (int c = 0; c < 2; ++c) {
@@ -1825,6 +1858,25 @@ class PluckGen final : public Generator {
       st.last = 0;
     }
   }
+  bool supportsGlide() const override { return true; }
+  void onGlide(uint32_t id, double pitch, double seconds) override {
+    for (auto& v : voices_)
+      if (v.on && v.id == id) v.slide.start(v.semis, pitch, seconds, sr_);
+  }
+  // K-144: the strings at the voice's gliding pitch. A longer loop grows its buffer within the
+  // capacity reserved up front (the new part is silent: the string's energy is in the old part).
+  void retune(Voice& v) {
+    v.hz = noteToHz(v.semis);
+    for (int c = 0; c < 2; ++c) {
+      Str& st = v.s[c];
+      const double hz = v.hz * std::pow(2.0, (c ? 1 : -1) * width_ * 4.0 / 1200.0);
+      double len = std::max(2.0, sr_ / hz);
+      const size_t want = std::min(kMaxLen, static_cast<size_t>(std::ceil(len)) + 2);
+      if (want > st.buf.size()) st.buf.resize(want, 0.f);  // within reserved capacity
+      st.len = std::min(len, static_cast<double>(st.buf.size() - 2));
+      if (st.pos >= st.len) st.pos = std::fmod(st.pos, st.len);
+    }
+  }
   void onNoteOff(uint32_t id) override {
     for (auto& v : voices_)
       if (v.on && v.id == id && gate_) v.held = false;
@@ -1844,6 +1896,10 @@ class PluckGen final : public Generator {
       double g = std::pow(10.0, -3.0 / (std::max(0.05f, decay_) * (normalize_ ? v.hz : 220.0)));
       double relMul = std::exp(-1.0 / std::max(1.0, rel_ * sr_ * 0.25));
       for (int i = 0; i < n; ++i) {
+        if (v.slide.active() && (v.clock & 7) == 0) {
+          v.slide.advance(v.semis, 8);
+          retune(v);
+        }
         float out[2];
         for (int c = 0; c < 2; ++c) {
           Str& st = v.s[c];

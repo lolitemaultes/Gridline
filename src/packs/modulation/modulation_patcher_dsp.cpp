@@ -117,6 +117,10 @@ class PatchRuntime {
     for (int i = 0; i < kPatchNodes; ++i)
       if (gen_[i]) gen_[i]->noteOff(id, 0);
   }
+  void glide(uint32_t id, double pitch, double seconds) {
+    for (int i = 0; i < kPatchNodes; ++i)
+      if (gen_[i]) gen_[i]->glide(id, pitch, seconds, 0);
+  }
   void allOff() {
     for (int i = 0; i < kPatchNodes; ++i)
       if (gen_[i]) gen_[i]->allNotesOff(0);
@@ -269,6 +273,13 @@ class PatchHostGenerator final : public Generator {
   }
   void onMidi(uint8_t status, uint8_t d1, uint8_t d2) override {
     if (j3on_) j3_.midi(status, d1, d2);
+  }
+  // K-144: slides and bend lines go to the instruments inside, each glides its own notes.
+  bool supportsGlide() const override { return true; }
+  void onGlide(uint32_t id, double pitch, double seconds) override {
+    if (j3on_) j3_.glide(id, pitch, seconds);
+    else if (v2on_) v2_.glide(id, pitch, seconds);
+    else rt_.glide(id, pitch, seconds);
   }
   void onAllOff() override {
     v2_.allOff();

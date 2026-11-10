@@ -598,10 +598,19 @@ class VoltageOut final : public Generator {
   void onNoteOn(uint32_t id, double pitch, float velocity) override {
     if (held_ < kHeld) held_ids_[held_] = id, held_pitch_[held_++] = pitch;
     targetPitch_ = pitch;
+    slide_.stop();
     if (!hasPitch_) pitch_ = pitch;
     hasPitch_ = true;
     velocity_ = velocity;
     trigLeft_ = pulseSamples_;
+  }
+  bool supportsGlide() const override { return true; }
+  void onGlide(uint32_t id, double pitch, double seconds) override {
+    for (int i = 0; i < held_; ++i)
+      if (held_ids_[i] == id) held_pitch_[i] = pitch;
+    if (held_ == 0 || held_ids_[held_ - 1] != id) return;
+    slide_.start(pitch_, pitch, seconds, ctx_.sampleRate);
+    targetPitch_ = pitch;
   }
   void onNoteOff(uint32_t id) override {
     for (int i = 0; i < held_; ++i)
@@ -636,7 +645,8 @@ class VoltageOut final : public Generator {
     double spt = ctx_.sampleRate * 60.0 / (ctx_.tempo * std::max(1, ctx_.ppq));
     double clockTicks = static_cast<double>(std::max(1, ctx_.ppq)) / kPpq[ppqIdx];
     for (int i = 0; i < n; ++i, ++pos_) {
-      pitch_ += (targetPitch_ - pitch_) * glideCoef_;
+      if (slide_.active()) slide_.advance(pitch_);  // K-144: slide notes and bend lines glide the CV
+      else pitch_ += (targetPitch_ - pitch_) * glideCoef_;
       if (ctx_.playing) {  // clock pulse at each clock tick of the song position
         double t0 = ctx_.tick + (pos_ - 1) / spt, t1 = ctx_.tick + pos_ / spt;
         if (pos_ == 0 || std::floor(t1 / clockTicks) != std::floor(t0 / clockTicks)) {
@@ -681,6 +691,7 @@ class VoltageOut final : public Generator {
   ProcessContext ctx_;
   bool enabled_ = false, hasPitch_ = false;
   double pitch_ = 60, targetPitch_ = 60, glideCoef_ = 1;
+  PitchGlide slide_;
   float velocity_ = 0;
   int pulseSamples_ = 441, trigLeft_ = 0, clockLeft_ = 0;
   int64_t pos_ = 0;

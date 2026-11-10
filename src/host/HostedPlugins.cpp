@@ -1046,7 +1046,18 @@ class HostedGenerator final : public Generator {
     aux_.assign(static_cast<size_t>(auxCount_) * 2 * AudioEngine::kMaxBlock, 0.0f);
   }
   bool active() const override { return true; }  // tails are the plugin's business
-  bool supportsGlide() const override { return core_->backend()->supportsTuning(); }
+  // K-144: per-note pitch as the plugin's options say (HostOptions::notePitch): note tuning, MPE
+  // channels (every note its own pitch bend) or nothing; otherwise the engine bends the channel.
+  bool supportsGlide() const override {
+    switch (core_->options().notePitch) {
+      case HostOptions::PitchMpe:
+      case HostOptions::PitchOff: return true;
+      case HostOptions::PitchChannelBend: return false;
+      default: return core_->backend()->supportsTuning();
+    }
+  }
+  bool mpe() const { return core_->options().notePitch == HostOptions::PitchMpe; }
+  float noteBendRange() const override { return mpe() ? static_cast<float>(core_->options().mpeBendRange) : 2.0f; }
   void prepareHost(const PluginState& state, double sampleRate) override { core_->prepareHost(state, sampleRate); }
   int latencySamples() const override { return core_->totalLatency(); }
   bool stale() const override { return core_->stale(); }
@@ -1071,7 +1082,7 @@ class HostedGenerator final : public Generator {
   void onCut(uint32_t id) override { stopNote(id, 0.0f); }
   void onGlide(uint32_t id, double pitch, double seconds) override {
     Note* n = find(id);
-    if (!n || !core_->backend()->supportsTuning()) return;
+    if (!n || core_->options().notePitch == HostOptions::PitchOff || (!mpe() && !core_->backend()->supportsTuning())) return;
     n->glideTo = pitch;
     n->glideLeft = std::max<int64_t>(1, static_cast<int64_t>(seconds * sampleRate_));
     n->glideStep = (pitch - n->cur) / static_cast<double>(n->glideLeft);
@@ -1111,6 +1122,7 @@ class HostedGenerator final : public Generator {
       try {
         core_->beginBlock(ctx);
         core_->sendParams(state);
+        announceMpe();
         for (int i = 0; i < deferredCount_; ++i) core_->queueEvent(deferred_[i], 0);
         deferredCount_ = 0;
       } catch (...) {  // no allocation, lock or I/O here (Backend::markLost)
@@ -1183,6 +1195,7 @@ class HostedGenerator final : public Generator {
       slot = &notes_[0];
     }
     const int key = std::clamp(static_cast<int>(std::lround(pitch)), 0, 127);
+    if (mpe()) channel = mpeChannel();  // K-144: each note on a member channel of its own
     // Most plugins know a note by its key alone, so an earlier note still held on this key ends
     // first: its note-off, due now (clips back to back) or later (overlap), would otherwise end
     // the new note. Notes starting on the same sample stay a stack, as they always were.
@@ -1205,6 +1218,10 @@ class HostedGenerator final : public Generator {
     e.channel = slot->channel;
     e.velocity = std::clamp(velocity, 0.0f, 1.0f);
     e.tuning = pitch - key;
+    if (mpe()) {  // the note's pitch off its key as its channel's bend, before it starts
+      sendBend(slot->channel, e.tuning);
+      e.tuning = 0;
+    }
     if (props) {
       e.hasProps = true;
       e.pan = props->pan;
@@ -1252,6 +1269,10 @@ class HostedGenerator final : public Generator {
         const int64_t step = std::min<int64_t>(nt.glideLeft, std::min(32, n - pos));
         nt.glideLeft -= step;
         nt.cur = nt.glideLeft == 0 ? nt.glideTo : nt.cur + nt.glideStep * static_cast<double>(step);
+        if (mpe()) {  // K-144: the note's own channel bend (its key's offset included)
+          sendBend(nt.channel, nt.cur - nt.key, pos);
+          continue;
+        }
         NoteEvent e;
         e.type = NoteEvent::Tuning;
         e.noteId = nt.noteId;
@@ -1263,6 +1284,58 @@ class HostedGenerator final : public Generator {
       nt.glideFrom = 0;
     }
   }
+
+  // K-144: MPE (lower zone): member channels 1..15 (MIDI channels 2..16), each note on the one
+  // that has been free the longest; the zone (RPN 6 on channel 0) and every member channel's bend
+  // range (RPN 0) are announced once.
+  int mpeChannel() {
+    int best = 1;
+    int64_t bestAt = INT64_MAX;
+    bool bestFree = false;
+    for (int c = 1; c < 16; ++c) {
+      bool busy = false;
+      for (const auto& n : notes_) busy = busy || (n.used && n.channel == c);
+      if (busy && bestFree) continue;
+      if ((!busy && !bestFree) || chanAt_[c] < bestAt) best = c, bestAt = chanAt_[c], bestFree = !busy;
+    }
+    chanAt_[best] = ++chanClock_;
+    return best;
+  }
+  void sendBend(int channel, double semis, int offset = -1) {
+    const double range = std::max(1, core_->options().mpeBendRange);
+    const int v = std::clamp(8192 + static_cast<int>(std::lround(semis / range * 8192.0)), 0, 16383);
+    if (v == lastBend_[channel & 15]) return;
+    lastBend_[channel & 15] = v;
+    NoteEvent e;
+    e.type = NoteEvent::Midi;
+    e.channel = static_cast<int8_t>(channel & 15);
+    e.midi[0] = static_cast<uint8_t>(0xE0 | (channel & 15));
+    e.midi[1] = static_cast<uint8_t>(v & 0x7F);
+    e.midi[2] = static_cast<uint8_t>(v >> 7);
+    queue(e, offset < 0 ? eventOffset() : offset);
+  }
+  void announceMpe() {
+    if (!mpe() || mpeAnnounced_ || !core_->backend()->hasEventInput()) return;
+    mpeAnnounced_ = true;
+    auto cc = [&](int ch, int num, int val) {
+      NoteEvent e;
+      e.type = NoteEvent::Midi;
+      e.channel = static_cast<int8_t>(ch);
+      e.midi[0] = static_cast<uint8_t>(0xB0 | ch), e.midi[1] = static_cast<uint8_t>(num), e.midi[2] = static_cast<uint8_t>(val);
+      core_->queueEvent(e, 0);
+    };
+    auto rpn = [&](int ch, int msb, int value) {
+      cc(ch, 101, 0), cc(ch, 100, msb), cc(ch, 6, value), cc(ch, 38, 0), cc(ch, 101, 127), cc(ch, 100, 127);
+    };
+    rpn(0, 6, 15);  // MPE configuration message: lower zone, 15 member channels
+    const int range = std::clamp(core_->options().mpeBendRange, 1, 96);
+    for (int c = 1; c < 16; ++c) rpn(c, 0, range);
+    for (auto& b : lastBend_) b = 8192;
+  }
+  bool mpeAnnounced_ = false;
+  int64_t chanAt_[16] = {};
+  int64_t chanClock_ = 0;
+  int lastBend_[16] = {8192, 8192, 8192, 8192, 8192, 8192, 8192, 8192, 8192, 8192, 8192, 8192, 8192, 8192, 8192, 8192};
 
   std::unique_ptr<Core> core_;
   double sampleRate_ = 44100;

@@ -486,6 +486,7 @@ class GmsGen final : public Generator {
     uint32_t id = 0;
     uint64_t age = 0;
     double note = 60, cur = 60, target = 60;
+    PitchGlide host;  // K-144: slide notes, porta and bend lines
     float vel = 1;
     int stage = 0;  // 0 off, 1 attack, 2 decay/sustain, 3 release
     double amp = 0;
@@ -584,6 +585,7 @@ class GmsGen final : public Generator {
     v.age = ++clock_;
     if (!wasOn) v.rng.seed(static_cast<uint32_t>(v.age) * 2654435761u + 0x9E3779B9u);
     v.cur = fromPitch;
+    v.host.stop();
     v.stage = 1;
     for (int k = 0; k < 2; ++k) v.egStage[k] = 1, v.eg[k] = fresh ? 0.0 : v.eg[k];
     if (!wasOn || uniRetrig_)
@@ -598,6 +600,13 @@ class GmsGen final : public Generator {
   void onNoteOff(uint32_t id) override {
     for (auto& v : voices_)
       if (v.on && v.held && v.id == id) v.held = false, v.stage = 3;
+  }
+  // K-144: the wheel bends through the instrument's own range (never twice).
+  bool handlesPitchBend() const override { return true; }
+  bool supportsGlide() const override { return true; }
+  void onGlide(uint32_t id, double pitch, double seconds) override {
+    for (auto& v : voices_)
+      if (v.on && v.id == id) v.host.start(v.cur, pitch, seconds, sr_), v.target = pitch;
   }
   void onMidi(uint8_t status, uint8_t d1, uint8_t d2) override {
     if ((status & 0xF0) == 0xE0) bend_ = ((d2 << 7 | d1) - 8192) / 8192.0;  // -1..1 (applied with the next block)
@@ -703,7 +712,8 @@ class GmsGen final : public Generator {
             v.eg[k] -= v.eg[k] * rate(egD_[k] * dScale[k]);
           }
         }
-        if (slide_) v.cur += (v.target - v.cur) * slideK;
+        if (v.host.active()) v.host.advance(v.cur);
+        else if (slide_) v.cur += (v.target - v.cur) * slideK;
         else v.cur = v.target;
         float l = 0, r = 0;
         for (int u = 0; u < uni_; ++u) {

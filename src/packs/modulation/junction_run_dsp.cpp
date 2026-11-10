@@ -617,6 +617,14 @@ void JRuntime::midi(uint8_t status, uint8_t d1, uint8_t d2) {
       if (Generator* g = d_->gen(i)) g->midi(status, d1, d2, 0);
 }
 
+void JRuntime::glide(uint32_t id, double pitch, double seconds) {
+  const Prepared* a = d_->synced;
+  if (!a) return;
+  for (size_t i = 0; i < a->nodes.size() && i < static_cast<size_t>(kJMaxNodes); ++i)
+    if (a->nodes[i].kind == KGen && !a->nodes[i].noteIn.empty())
+      if (Generator* g = d_->gen(i)) g->glide(id, pitch, seconds, 0);
+}
+
 void JRuntime::allOff() {
   d_->hostNotes.clear();
   for (size_t i = 0; i < static_cast<size_t>(kJMaxNodes); ++i)

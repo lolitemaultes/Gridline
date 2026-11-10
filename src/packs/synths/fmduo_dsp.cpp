@@ -66,6 +66,7 @@ class FmDuoGen final : public Generator {
     bool on = false, held = false;
     uint32_t id = 0;
     double pitch = 60;
+    PitchGlide slide;  // K-144: slide notes, porta and bend lines
     float vel = 1;
     uint64_t age = 0;
     double carPh = 0, attEnv = 0, decEnv = 1;
@@ -121,6 +122,7 @@ class FmDuoGen final : public Generator {
     v.on = v.held = true;
     v.id = id;
     v.pitch = pitch;
+    v.slide = PitchGlide{};
     v.vel = std::clamp(vel, 0.f, 1.f);
     v.age = ++clock_;
     for (int k = 0; k < 2; ++k) {
@@ -131,6 +133,11 @@ class FmDuoGen final : public Generator {
     }
     v.ins.start(ins_.get(), sr_, tempo_, ppq_, 0, 0, tick0_ + blockPos_ * tempo_ * ppq_ / (60.0 * sr_));
     v.ins.setNote(pitch, vel);  // J-72: velocity / key tracking
+  }
+  bool supportsGlide() const override { return true; }
+  void onGlide(uint32_t id, double pitch, double seconds) override {
+    for (auto& v : voices_)
+      if (v.on && v.id == id) v.slide.start(v.pitch, pitch, seconds, sr_);
   }
   void onNoteOff(uint32_t id) override {
     for (auto& v : voices_)
@@ -166,6 +173,7 @@ class FmDuoGen final : public Generator {
           v.on = false;
           continue;
         }
+        v.slide.advance(v.pitch);
         const double hz = dsp::noteToHz(v.pitch + 12.0 * octave_ + (v.ins.active() ? v.ins.pitchSemis() : 0.0)) * vib;
         const double inc = hz / sr_;
         double pm = 0, thru = 0;

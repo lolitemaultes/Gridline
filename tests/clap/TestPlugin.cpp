@@ -118,6 +118,7 @@ void synthEvent(Synth* s, const clap_event_header_t* h, const clap_output_events
       auto* n = reinterpret_cast<const clap_event_note_t*>(h);
       if (n->key == 1) std::abort();  // crash on purpose (sandbox tests)
       gProbe.notes.add(true, n->key, n->note_id, static_cast<int>(h->time));
+      if (n->channel >= 0 && n->channel < 16) gProbe.noteChannels |= 1u << n->channel;
       s->noteId = n->note_id;
       s->key = n->key;
       s->tuning = s->expr = 0;
@@ -162,6 +163,13 @@ void synthEvent(Synth* s, const clap_event_header_t* h, const clap_output_events
         ++s->notes;
       }
       if (st == 0x80 || (st == 0x90 && m->data[2] == 0)) s->amp = 0;
+      if (st == 0x90 && m->data[2] > 0) gProbe.noteChannels |= 1u << (m->data[0] & 15);
+      if (st == 0xB0 && m->data[1] == 100) gProbe.rpnMsb[m->data[0] & 15] = m->data[2];
+      if (st == 0xB0 && m->data[1] == 6) {  // data entry: RPN 6 = MPE zone, RPN 0 = bend range
+        const int ch = m->data[0] & 15;
+        if (ch == 0 && gProbe.rpnMsb[0] == 6) gProbe.mpeZone = m->data[2];
+        if (ch == 1 && gProbe.rpnMsb[1] == 0) gProbe.mpeRange = m->data[2];
+      }
       if (st == 0xB0 && m->data[1] == 123) ++gProbe.allNotesOff, s->amp = 0;
       if (st == 0xB0 && m->data[1] == 120) ++gProbe.allSoundOff, s->amp = 0;
       if (st == 0xB0 && m->data[1] == 64 && m->data[2] == 0) ++gProbe.sustainOff;

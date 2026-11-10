@@ -426,7 +426,7 @@ inline LaneOut strings(Voice& v) {
 }
 
 struct Event {
-  enum Kind : uint8_t { On, Off, AllOff } kind = On;
+  enum Kind : uint8_t { On, Off, AllOff, Glide } kind = On;  // Glide: pitch = target off the key, vel = seconds
   int key = 0;
   uint32_t id = 0;
   float vel = 0, l = 0, r = 0, pitch = 0;
@@ -452,6 +452,8 @@ struct TwinRef::Engine {
   float lfoPh = 0, lfoCos = 1;
   float modWheel = 0, bend = 0, pressure = 0;
   float keyL[128] = {}, keyR[128] = {}, keyPitch[128] = {};
+  // K-144: a key's fine pitch gliding (slide notes, bend lines), stepped once per engine block.
+  struct KeySlide { double step = 0, to = 0; int64_t left = 0; } keySlide[128];
   bool keyDown[128] = {};
   Voice voices[kAllVoices];
   Voice dummy;
@@ -1070,7 +1072,13 @@ struct TwinRef::Engine {
         if (keyDown[ev.key]) noteOff(ev.key);
         keyDown[ev.key] = true;
         keyL[ev.key] = ev.l, keyR[ev.key] = ev.r, keyPitch[ev.key] = ev.pitch;
+        keySlide[ev.key].left = 0;
         noteOn(ev.key, ev.vel, ev.id);
+      } else if (ev.kind == Event::Glide) {
+        KeySlide& g = keySlide[ev.key];
+        g.left = std::max<int64_t>(1, static_cast<int64_t>(static_cast<double>(ev.vel) * sr));
+        g.to = ev.pitch;
+        g.step = (g.to - static_cast<double>(keyPitch[ev.key])) / static_cast<double>(g.left);
       } else if (ev.kind == Event::Off) {
         keyDown[ev.key] = false;
         noteOff(ev.key);
@@ -1080,6 +1088,13 @@ struct TwinRef::Engine {
       }
     }
     nQueue = 0;
+    for (int k = 0; k < 128; ++k) {  // K-144: glides move on by one engine block
+      KeySlide& g = keySlide[k];
+      if (g.left <= 0) continue;
+      const int64_t m = std::min<int64_t>(g.left, kBlock);
+      g.left -= m;
+      keyPitch[k] = static_cast<float>(g.left == 0 ? g.to : static_cast<double>(keyPitch[k]) + g.step * static_cast<double>(m));
+    }
   }
   void push(const Event& ev) {
     if (nQueue < kQueue) queue[nQueue++] = ev;
@@ -1142,6 +1157,23 @@ void TwinRef::noteOff(uint32_t id) {
       if (e.newest[ev.key] != id)
         for (int k = 0; k < e.nHeld; ++k)
           if (e.held[k].key == ev.key) return;
+      e.push(ev);
+      return;
+    }
+}
+
+void TwinRef::glide(uint32_t id, double pitch, double seconds) {
+  Engine& e = *e_;
+  for (int i = 0; i < e.nHeld; ++i)
+    if (e.held[i].id == id) {
+      const int key = e.held[i].key;
+      if (e.newest[key] != id) return;  // a newer note holds the key
+      Event ev;
+      ev.kind = Event::Glide;
+      ev.key = key;
+      ev.id = id;
+      ev.pitch = static_cast<float>(pitch - static_cast<double>(key));
+      ev.vel = static_cast<float>(std::max(0.0, seconds));
       e.push(ev);
       return;
     }

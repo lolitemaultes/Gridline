@@ -516,7 +516,9 @@ void AudioEngine::drainMidi(const Program* p) {
   // Built-in instruments follow pitch bend by gliding their MIDI notes
   // (hosted plugins read the raw message instead).
   auto bendable = [&](const ProgChannel* c) {
-    if (!c || !c->rt->gen || !c->rt->gen->supportsGlide() || isHostedType(c->plugin.type)) return false;
+    // K-144: instruments that apply the wheel themselves (their own bend range) read the raw
+    // message only, so the bend is not applied twice.
+    if (!c || !c->rt->gen || !c->rt->gen->supportsGlide() || c->rt->gen->handlesPitchBend() || isHostedType(c->plugin.type)) return false;
     for (const auto& nf : c->noteFx)
       if (nf.rt) return false;
     return true;
@@ -958,19 +960,22 @@ void AudioEngine::cutPending(const ProgChannel& ch, int index, int offset) {
 
 namespace {
 // K-25: a free bend slot of `rt` (no sounding note owns its id) holding `pts` for note `id`; -1 = none free.
-int takeBendSlot(ChannelRuntime& rt, uint32_t id, const std::vector<BendPoint>& pts) {
+int takeBendSlot(ChannelRuntime& rt, uint32_t id, const BendPoint* pts, int count) {
   for (int k = 0; k < ChannelRuntime::kBendSlots; ++k) {
     ChannelRuntime::BendSlot& s = rt.bendSlots[k];
     bool owned = false;
     for (int i = 0; i < rt.pendingCount && s.id != 0 && !owned; ++i) owned = rt.pending[i].bendSlot == k && rt.pending[i].id == s.id;
     if (owned) continue;
     s.id = id;
-    s.count = std::min(static_cast<int>(pts.size()), bend::kMaxPoints);
-    std::copy(pts.begin(), pts.begin() + s.count, s.pts);
+    s.count = std::clamp(count, 0, bend::kMaxPoints);
+    std::copy(pts, pts + s.count, s.pts);
     s.sent = 0;
     return k;
   }
   return -1;
+}
+int takeBendSlot(ChannelRuntime& rt, uint32_t id, const std::vector<BendPoint>& pts) {
+  return takeBendSlot(rt, id, pts.data(), static_cast<int>(pts.size()));
 }
 }  // namespace
 
@@ -989,17 +994,50 @@ void AudioEngine::startNote(const Program* p, const ProgChannel& ch, const NoteE
   // keep their pitch; projects saved before that slide every colour).
   // (Instruments that cannot glide play it as an ordinary note.)
   const int color = e.props.color & 15;
-  if ((e.flags & kNoteSlide) && glides) {
+  if (e.flags & kNoteSlide) {
+    // K-144: a slide never starts a note. Instruments that tune each note glide; the others
+    // (hosted plugins without note tuning, MIDI Out) get the glide as a ramp of their colour
+    // channel's pitch bend (a bend line on the slid notes, played by applyBends); instruments that
+    // can neither (hi-hats, decks) let it pass. Behind note processors it is dropped.
+    if (chain) return;
     const bool any = p->slidesAnyColour;
     const float from = any ? rt->lastPitch : rt->lastPitchColor[color];
     if (rt->pendingCount == 0 || from < 0) return;
-    const float shift = e.pitch - from;
+    const float semis = e.pitch - from;
     const double secs = std::max(1.0, noteOffTick(e) - noteOnTick(e)) * spt / sr_;
-    for (int i = 0; i < rt->pendingCount; ++i)
-      if (any || rt->pending[i].color == color) {
-        gen->glide(rt->pending[i].id, rt->pending[i].pitch + shift + ch.pitchOffset, secs, offset);
-        rt->pending[i].bendSlot = -1;  // K-25: the slide takes over the note's pitch
+    if (ch.asleep)  // K-87: notes waiting for a hibernating instrument slide once it has loaded
+      for (int k = 0; k < heldCount_; ++k) {
+        HeldNote& n = held_[k];
+        if (n.ch != ch.id || n.live || (!any && n.color != color)) continue;
+        n.slideTo = n.pd.pitch + semis;
+        n.slideEnd = absClock_ + offset + static_cast<int64_t>(secs * sr_);
       }
+    if (glides) {
+      for (int i = 0; i < rt->pendingCount; ++i)
+        if (any || rt->pending[i].color == color) {
+          gen->glide(rt->pending[i].id, rt->pending[i].pitch + semis + ch.pitchOffset, secs, offset);
+          rt->pending[i].bendSlot = -1;  // K-25: the slide takes over the note's pitch
+        }
+      return;
+    }
+    const double t0 = noteOnTick(e) + static_cast<double>(shift), t1 = std::max(t0 + 1.0, noteOffTick(e) + static_cast<double>(shift));
+    for (int i = 0; i < rt->pendingCount; ++i) {
+      ChannelRuntime::Pending& pd = rt->pending[i];
+      if (!any && pd.color != color) continue;
+      double now = 0;  // the note's bend where the slide starts
+      if (pd.bendSlot >= 0 && rt->bendSlots[pd.bendSlot].id == pd.id) {
+        const ChannelRuntime::BendSlot& sl = rt->bendSlots[pd.bendSlot];
+        now = bend::value(sl.pts, sl.count, t0 - pd.on);
+      }
+      const BendPoint ramp[2] = {BendPoint(static_cast<float>(t0 - pd.on), static_cast<float>(now)),
+                                 BendPoint(static_cast<float>(t1 - pd.on), semis)};
+      int k = pd.bendSlot >= 0 && rt->bendSlots[pd.bendSlot].id == pd.id ? pd.bendSlot : takeBendSlot(*rt, pd.id, ramp, 0);
+      if (k < 0) continue;
+      ChannelRuntime::BendSlot& sl = rt->bendSlots[k];
+      sl.count = 2;
+      std::copy(ramp, ramp + 2, sl.pts);
+      pd.bendSlot = k;
+    }
     return;
   }
   if (rt->pendingCount >= kMaxPendingNotes) return;
@@ -1140,7 +1178,13 @@ void AudioEngine::deliverHeld(const Program* p) {
     } else {
       ChannelRuntime* rt = ch.rt.get();
       if (rt->pendingCount >= kMaxPendingNotes) continue;
-      sendOn(ch, n.id, n.pitch, n.velocity, 0, n.color, n.hasProps ? &n.props : nullptr);
+      // K-144: a slide that came while it waited: the rest of it glides, or the note starts where
+      // the slide took it (instruments that cannot glide start there too).
+      Generator* g = rt->gen.get();
+      const int64_t left = n.slideTo >= 0 ? n.slideEnd - absClock_ : 0;
+      const bool glideOn = n.slideTo >= 0 && left > 0 && g->supportsGlide();
+      sendOn(ch, n.id, n.slideTo >= 0 && !glideOn ? n.slideTo : n.pitch, n.velocity, 0, n.color, n.hasProps ? &n.props : nullptr);
+      if (glideOn) g->glide(n.id, n.slideTo + ch.pitchOffset, static_cast<double>(left) / sr_, 0);
       rt->pending[rt->pendingCount++] = n.pd;  // it ends where the song ends it
     }
     heldDelivered_.fetch_add(1, std::memory_order_relaxed);

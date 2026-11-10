@@ -173,6 +173,7 @@ class WarmGen final : public Generator {
     bool on = false, held = false;
     uint32_t id = 0;
     double pitch = 60;
+    PitchGlide slide;  // K-144: slide notes, porta and bend lines
     float vel = 1;
     uint64_t age = 0;
     double ph[3] = {0, 0, 0}, ph2[3] = {0, 0, 0};
@@ -269,6 +270,11 @@ class WarmGen final : public Generator {
       v.lfoPh = std::fmod(songPos_ / (2.0 * lfoHalf_), 1.0);
     }
   }
+  bool supportsGlide() const override { return true; }
+  void onGlide(uint32_t id, double pitch, double seconds) override {
+    for (auto& v : voices_)
+      if (v.on && v.id == id) v.slide.start(v.pitch, pitch, seconds, sr_);
+  }
   void onNoteOff(uint32_t id) override {
     for (auto& v : voices_)
       if (v.on && v.held && v.id == id) {
@@ -312,6 +318,7 @@ class WarmGen final : public Generator {
       double out = 0;
       for (auto& v : voices_) {
         if (!v.on) continue;
+        v.slide.advance(v.pitch);
         const double ae = v.amp.tick();
         const double fe = v.flt.tick();
         if (v.amp.stage == 4) {

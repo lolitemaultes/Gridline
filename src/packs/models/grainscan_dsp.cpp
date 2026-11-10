@@ -41,6 +41,7 @@ class GrainScanGen final : public Generator {
     bool on = false, released = false;
     uint32_t id = 0;
     double note = 60, head = 0;  // read head (frames)
+    PitchGlide slide;            // K-144: slide notes, porta and bend lines (reset by `v = Voice{}`)
     double untilNext = 0;        // samples to the next grain
     float vel = 1, env = 0;
     uint64_t age = 0;
@@ -105,6 +106,13 @@ class GrainScanGen final : public Generator {
     v.head = frames > 0 ? std::fmod(head, frames + 1) : 0.0;
     if (p_[GsWaveSpace] < 0 && v.head <= 0) v.head = std::max(0.0, frames - 1);  // backwards from the end
   }
+  // K-144: in pitch mode a glide retunes the voice's grain rate (sounding grains included);
+  // in the start-point key modes the key does not transpose, so a glide changes nothing.
+  bool supportsGlide() const override { return true; }
+  void onGlide(uint32_t id, double pitch, double seconds) override {
+    for (auto& v : v_)
+      if (v.on && v.id == id) v.slide.start(v.note, pitch, seconds, sr_);
+  }
   void onNoteOff(uint32_t id) override {
     for (auto& v : v_)
       if (v.on && v.id == id) v.released = true;
@@ -155,8 +163,17 @@ class GrainScanGen final : public Generator {
     const float eS = std::clamp(p_[GsEnvSustain], 0.0f, 1.0f);
     for (auto& v : v_) {
       if (!v.on) continue;
-      const double rate = (trig == 0 ? std::pow(2.0, (v.note - p_[GsRoot]) / 12.0) : 1.0) * srcRate;
+      double rate = (trig == 0 ? std::pow(2.0, (v.note - p_[GsRoot]) / 12.0) : 1.0) * srcRate;
       for (int i = 0; i < n; ++i) {
+        if (v.slide.active()) {  // K-144: per-sample glide of the grain rate
+          v.slide.advance(v.note);
+          if (trig == 0) {
+            const double nr = std::pow(2.0, (v.note - p_[GsRoot]) / 12.0) * srcRate;
+            for (auto& g : v.g)
+              if (g.on) g.rate = nr;
+            rate = nr;
+          }
+        }
         // Voice envelope (channel volume envelope when enabled, else a gate with a short release).
         float target;
         if (!envOn) {

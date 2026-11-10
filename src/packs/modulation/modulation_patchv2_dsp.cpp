@@ -525,6 +525,13 @@ void PatchV2Runtime::noteOff(uint32_t id) {
     if (a->topo.notes[i] && d_->gens[i]) d_->gens[i]->noteOff(id, 0);
 }
 
+void PatchV2Runtime::glide(uint32_t id, double pitch, double seconds) {
+  const V2Aux* a = d_->synced;
+  if (!a) return;
+  for (size_t i = 0; i < a->graph.nodes.size() && i < static_cast<size_t>(kV2MaxNodes); ++i)
+    if (a->topo.notes[i] && d_->gens[i]) d_->gens[i]->glide(id, pitch, seconds, 0);
+}
+
 void PatchV2Runtime::allOff() {
   for (auto& g : d_->gens)
     if (g) g->allNotesOff(0);

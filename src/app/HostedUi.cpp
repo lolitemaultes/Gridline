@@ -589,6 +589,37 @@ void processingPage(App& a, host::HostedInstance* hi, float width) {
       "One process call per audio block with every note placed inside it at its exact sample. Off: the block is cut at each note (smaller, "
       "varying buffers).");
   row("Notify about rendering mode", o.notifyRender, "Tells the plugin when a song is exported (offline), so it can use its highest quality mode.");
+  {  // K-144: how slide notes, porta and bend lines reach the plugin
+    static const char* const kPitch[] = {i18n::N_("Automatic"), i18n::N_("MPE (a channel per note)"), i18n::N_("Channel pitch bend"), i18n::N_("Off")};
+    const char* const kPitchHint[] = {
+        i18n::N_("Slide notes and bend lines tune each note where the plugin can, otherwise they bend the note's channel."),
+        i18n::N_("Every note plays on its own MIDI channel with its own pitch bend, for plugins that understand MPE."),
+        i18n::N_("Slide notes and bend lines move the pitch bend of the note's channel (one bend per channel)."),
+        i18n::N_("Notes keep their pitch: slide notes and bend lines are not sent.")};
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(i18n::tr("Per-note pitch"));
+    ImGui::SameLine(0, 8);
+    const int cur = std::clamp(o.notePitch, 0, 3);
+    if (ui::BeginCombo("##notepitch", i18n::tr(kPitch[cur]), 200)) {
+      for (int k = 0; k < 4; ++k) {
+        if (ImGui::Selectable(i18n::tr(kPitch[k]), k == cur)) o.notePitch = k;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", i18n::tr(kPitchHint[k]));
+      }
+      ImGui::EndCombo();
+    }
+    if (o.notePitch == host::HostOptions::PitchMpe) {
+      ImGui::SameLine(0, 8);
+      char rng[32];
+      std::snprintf(rng, sizeof rng, i18n::tr("Bend range %d st"), o.mpeBendRange);
+      if (ui::BeginCombo("##mperange", rng, 130)) {
+        for (int n : {2, 12, 24, 48, 96}) {
+          std::snprintf(rng, sizeof rng, i18n::tr("%d semitones"), n);
+          if (ImGui::Selectable(rng, n == o.mpeBendRange)) o.mpeBendRange = n;
+        }
+        ImGui::EndCombo();
+      }
+    }
+  }
   if (cls.format == "clap")
     row("Links modulate parameters", o.modulation,
         "Controller links and automation move modulatable parameters as modulation: the plugin keeps the song's value and shows the movement "

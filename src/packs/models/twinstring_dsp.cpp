@@ -105,6 +105,7 @@ class TwinStringGen final : public Generator {
     bool on = false, held = false;
     uint32_t id = 0;
     double note = 60;
+    PitchGlide slide;  // K-144: slide notes, porta and bend lines
     float vel = 1, relVel = 0.5f;
     uint64_t age = 0;
     Loop s[2];
@@ -283,6 +284,14 @@ class TwinStringGen final : public Generator {
     onNoteOn(id, pitch, velocity);
   }
   bool handlesNotePan() const override { return useRef_; }
+  // K-144: the native strings glide (loop lengths retune each control period), the reference
+  // engine through its key's fine pitch.
+  bool supportsGlide() const override { return true; }
+  void onGlide(uint32_t id, double pitch, double seconds) override {
+    if (useRef_) return ref_->glide(id, pitch, seconds);
+    for (int i = 0; i < kVoices; ++i)
+      if (v_[i].on && v_[i].id == id) v_[i].slide.start(v_[i].note, pitch, seconds, sr_);
+  }
   void onNoteOn(uint32_t id, double pitch, float velocity) override {
     if (useRef_) return ref_->noteOn(id, pitch, velocity);
     int slot = -1;
@@ -300,6 +309,7 @@ class TwinStringGen final : public Generator {
     v.on = v.held = true;
     v.id = id;
     v.note = pitch;
+    v.slide = PitchGlide{};  // K-144
     v.vel = velocity;
     v.age = ++clock_;
     v.rng.seed(0x9E3779B9u ^ (id * 2654435761u) ^ static_cast<uint32_t>(clock_));
@@ -383,6 +393,7 @@ class TwinStringGen final : public Generator {
       any = true;
       float* comb = comb_.get() + static_cast<size_t>(vi) * 2 * kLine;
       for (int i = 0; i < n; ++i) {
+        if (v.slide.active()) v.slide.advance(v.note);  // K-144: retuned at the next control period
         if (v.ctl-- <= 0) {
           v.ctl = kCtl;
           double ph = lfoPh_ + lfoInc_ * i;

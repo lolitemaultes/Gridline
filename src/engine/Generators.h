@@ -190,6 +190,19 @@ struct PitchGlide {
     if (left <= 0) return;
     pitch = --left == 0 ? to : pitch + step;
   }
+  // K-144: moves `pitch` `samples` samples along the glide at once (voices that update their
+  // pitch once per control period).
+  void advance(double& pitch, int64_t samples) {
+    if (left <= 0 || samples <= 0) return;
+    if (samples >= left) {
+      left = 0;
+      pitch = to;
+      return;
+    }
+    left -= samples;
+    pitch += step * static_cast<double>(samples);
+  }
+  void stop() { left = 0; }
 };
 
 class Generator {
@@ -222,6 +235,9 @@ class Generator {
   // K-25: instruments that cannot glide each note get note bend lines as channel pitch bend
   // (midi 0xE0): the semitones a full bend means to them (General MIDI's default: 2).
   virtual float noteBendRange() const { return 2.0f; }
+  // K-144: the instrument applies the live pitch wheel (0xE0 through midi()) itself, with its own
+  // bend range; the engine then does not also glide its held notes by the wheel.
+  virtual bool handlesPitchBend() const { return false; }
   // J-68: the step an instrument's own sequencer is playing (−1 = none), for
   // the editor's running-step display. Read on the UI thread: implementations
   // publish it through an atomic.
@@ -230,7 +246,8 @@ class Generator {
   // (RegionActivity.h), for the editor's lit regions; read on the UI thread.
   virtual const RegionActivity* regionActivity() const { return nullptr; }
   // A raw MIDI channel message for the instrument (controllers, pitch bend,
-  // channel / poly pressure from a MIDI keyboard). Only hosted plugins use it.
+  // channel / poly pressure from a MIDI keyboard). Hosted plugins and the
+  // instruments that override onMidi read it.
   void midi(uint8_t status, uint8_t d1, uint8_t d2, int offset) {
     Ev e = Ev::make(Ev::Midi, static_cast<uint32_t>(status) | (static_cast<uint32_t>(d1) << 8) | (static_cast<uint32_t>(d2) << 16), 0, 0, offset);
     push(e);

@@ -98,6 +98,7 @@ class AdditiveGen final : public Generator {
     uint32_t id = 0, serial = 0;
     double note = 60, cur = 60, glideFrom = 60;
     double glideT = 1, glideLen = 0;  // portamento progress
+    PitchGlide host;                   // K-144: slide notes, porta and bend lines from the host
     float vel = 1, relVel = 0.5f;
     uint64_t age = 0;
     double t = 0, relT = -1;  // seconds since note-on / since release (-1 while held)
@@ -224,6 +225,7 @@ class AdditiveGen final : public Generator {
       for (int i = 0; i < kVoices; ++i) {
         Voice& v = voices_[i];
         if (v.on && v.held) {
+          v.host.stop();  // K-144
           startGlide(v, porta_ ? v.cur : pitch, pitch, vel);
           v.note = pitch;
           v.id = id;
@@ -247,6 +249,7 @@ class AdditiveGen final : public Generator {
     v.id = id;
     v.serial = ++serial_;
     v.note = pitch;
+    v.host.stop();  // K-144
     v.vel = vel;
     v.relVel = relVel;
     v.age = ++clock_;
@@ -283,6 +286,18 @@ class AdditiveGen final : public Generator {
       v.self = Osc{};
     }
     voiceControl(v, true);
+  }
+  // K-144: host glides move the voice's current pitch linearly; the own porta stops and its
+  // target becomes the glide's, so it does not pull back afterwards.
+  bool supportsGlide() const override { return true; }
+  void onGlide(uint32_t id, double pitch, double seconds) override {
+    for (int i = 0; i < kVoices; ++i) {
+      Voice& v = voices_[i];
+      if (!v.on || v.id != id) continue;
+      v.host.start(v.cur, pitch, seconds, sr_);
+      v.note = pitch;
+      v.glideT = 1;
+    }
   }
   void startGlide(Voice& v, double from, double to, float vel) {
     double len = std::max(0.0, static_cast<double>(glide_));
@@ -338,7 +353,9 @@ class AdditiveGen final : public Generator {
     if (!fresh) {
       v.t += dt;
       if (v.relT >= 0) v.relT += dt;
-      if (v.glideT < 1) {
+      if (v.host.active()) {
+        v.host.advance(v.cur, kCtl);  // K-144
+      } else if (v.glideT < 1) {
         v.glideT = std::min(1.0, v.glideT + dt / std::max(1e-4, v.glideLen));
         v.cur = v.glideFrom + (v.note - v.glideFrom) * v.glideT;
       } else {

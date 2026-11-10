@@ -1,5 +1,6 @@
 // Gridline - K-25: per-note pitch bend lines (see NoteBend.h).
 #include "NoteBend.h"
+#include <cstdint>
 #include <algorithm>
 
 namespace gl::bend {
@@ -262,6 +263,53 @@ SlidePlan toSlides(const std::vector<BendPoint>& b, double length, double tolera
   }
   plan.relaxed = relaxed;
   return plan;
+}
+
+std::vector<Note> slidesAsBends(const std::vector<Note>& notes, bool anyColour) {
+  auto pitchOf = [](const Note& n) { return static_cast<double>(n.pitch) + n.fine / 100.0; };
+  auto startOf = [](const Note& n) { return static_cast<double>(n.start) + n.frac; };
+  std::vector<size_t> order(notes.size());
+  for (size_t i = 0; i < order.size(); ++i) order[i] = i;
+  std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return startOf(notes[a]) < startOf(notes[b]); });
+  std::vector<Note> out;
+  std::vector<size_t> where(notes.size(), SIZE_MAX);  // index in `out` of each kept note
+  for (size_t oi = 0; oi < order.size(); ++oi) {
+    const Note& n = notes[order[oi]];
+    if (n.muted) continue;
+    if (!n.slide) {
+      where[order[oi]] = out.size();
+      out.push_back(n);
+      continue;
+    }
+    // The last ordinary note of the slide's colour started at or before it: the interval's base.
+    const double t0 = startOf(n);
+    double from = -1;
+    for (size_t k = 0; k < oi; ++k) {
+      const Note& m = notes[order[k]];
+      if (m.slide || m.muted || (!anyColour && m.color != n.color)) continue;
+      from = pitchOf(m);
+    }
+    if (from < 0) continue;
+    const double semis = pitchOf(n) - from, t1 = t0 + std::max<double>(1.0, static_cast<double>(n.length));
+    for (size_t k = 0; k < oi; ++k) {
+      const size_t src = order[k];
+      if (where[src] == SIZE_MAX) continue;
+      Note& m = out[where[src]];
+      if (!anyColour && m.color != n.color) continue;
+      const double m0 = startOf(m), m1 = m0 + static_cast<double>(m.length) + m.endFrac;
+      if (t0 < m0 || t0 >= m1) continue;  // not sounding when the slide starts
+      const double a = t0 - m0, b = t1 - m0;
+      const double now = value(m.bend, a);  // its own line (or an earlier slide) up to here
+      std::vector<BendPoint> line;
+      for (const auto& p : m.bend)
+        if (p.tick < a) line.push_back(p);
+      line.emplace_back(static_cast<float>(a), static_cast<float>(now));
+      line.emplace_back(static_cast<float>(b), static_cast<float>(semis));
+      m.bend = std::move(line);
+      normalize(m.bend);
+    }
+  }
+  return out;
 }
 
 }  // namespace gl::bend

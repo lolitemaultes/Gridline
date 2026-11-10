@@ -200,6 +200,7 @@ class JRuntime {
   void noteOn(uint32_t id, double pitch, float velocity, const NoteProps& props);
   void noteOff(uint32_t id);
   void midi(uint8_t status, uint8_t d1, uint8_t d2);
+  void glide(uint32_t id, double pitch, double seconds);  // K-144: slide notes reach the instruments inside
   void allOff();
   void stopSound();
   bool ownPlayback() const;

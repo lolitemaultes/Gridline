@@ -619,6 +619,10 @@ class MatrixFmGen final : public Generator {
       if (v.on && v.id == id) v.released = true;
   }
   void onGlide(uint32_t id, double pitch, double seconds) override {
+    if (refOn_) {  // K-144: the reference engine glides its voices too
+      if (ref_) mfmref::glide(*ref_, id, (pitch - 60.0) * 100.0, static_cast<int64_t>(std::llround(seconds * sr_)));
+      return;
+    }
     for (Voice& v : voices_)
       if (v.on && v.id == id) v.glide.start(v.pitch, pitch, seconds, sr_);
   }

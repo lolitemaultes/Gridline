@@ -28,15 +28,24 @@ struct HostOptions {
   bool modulation = false;
   // Open the generic parameter editor instead of the plugin's own interface.
   bool genericEditor = false;
+  // K-144: how per-note pitch (slide notes, porta, bend lines) reaches the plugin.
+  //   Auto: per-note tuning where the format has it (CLAP note expressions, VST3 tuning
+  //         expression), otherwise pitch bend on the note's channel.
+  //   Mpe:  every note on its own MIDI channel (2..16) with its own pitch bend (MPE).
+  //   ChannelBend: pitch bend on the note's channel, even where the format tunes notes.
+  //   Off:  notes keep their pitch (slides are ignored).
+  enum NotePitch : int { PitchAuto = 0, PitchMpe = 1, PitchChannelBend = 2, PitchOff = 3 };
+  int notePitch = PitchAuto;
+  int mpeBendRange = 48;  // semitones of a full MPE bend (the MPE standard's default)
   bool operator==(const HostOptions& o) const {
     return fixedBuffers == o.fixedBuffers && fixedSize == o.fixedSize && maxBuffers == o.maxBuffers && notifyRender == o.notifyRender &&
-           modulation == o.modulation && genericEditor == o.genericEditor;
+           modulation == o.modulation && genericEditor == o.genericEditor && notePitch == o.notePitch && mpeBendRange == o.mpeBendRange;
   }
   bool operator!=(const HostOptions& o) const { return !(*this == o); }
   // Options that need a new instance when they change.
   bool sameStructure(const HostOptions& o) const {
     return fixedBuffers == o.fixedBuffers && (!fixedBuffers || fixedSize == o.fixedSize) && maxBuffers == o.maxBuffers &&
-           modulation == o.modulation;
+           modulation == o.modulation && notePitch == o.notePitch && mpeBendRange == o.mpeBendRange;
   }
 };
 

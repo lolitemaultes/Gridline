@@ -390,13 +390,18 @@ struct Collector {
           const Tick at = static_cast<Tick>(k) * stepT;
           if (it->second[k] && at >= from && at < limit) tr.notes.push_back({offset + at - from, stepT, 60, it->second[k], 0});
         }
-      if (auto it = p.notes.find(c.id); it != p.notes.end())
-        for (const auto& n : it->second)
+      if (auto it = p.notes.find(c.id); it != p.notes.end()) {
+        // K-144: MIDI has no slide notes: they become the pitch bend of the notes they glide.
+        bool slides = false;
+        for (const auto& n : it->second) slides = slides || n.slide;
+        const std::vector<Note> played = slides ? bend::slidesAsBends(it->second, s.slidesAnyColour) : std::vector<Note>{};
+        for (const auto& n : slides ? played : it->second)
           if (n.start >= from && n.start < limit) {
             const Tick len = std::min(n.length, limit - n.start);
             tr.notes.push_back({offset + n.start - from, len, n.pitch, n.velocity, 0});
             if (!n.bend.empty() && !n.slide) addBend(tr, c.id, n, offset + n.start - from, len);
           }
+      }
       if (!o.automation) continue;
       for (const auto& lane : p.automation) {
         if (lane.owner != c.id || lane.points.empty()) continue;

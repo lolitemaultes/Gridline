@@ -61,6 +61,8 @@ class StringGen final : public Generator {
     bool on = false, held = false;
     uint32_t id = 0;
     double pitch = 60;
+    double offs = 0;   // K-144: strum interval above the played key (kept while gliding)
+    PitchGlide slide;  // K-144: slide notes, porta and bend lines
     float vel = 1;
     uint64_t age = 0;
     int delay = 0;      // strum: samples before the string is struck
@@ -223,12 +225,14 @@ class StringGen final : public Generator {
     return *pick;
   }
 
-  void startVoice(uint32_t id, double pitch, float vel, int delay) {
+  void startVoice(uint32_t id, double pitch, float vel, int delay, double offs = 0) {
     Voice& v = allocVoice();
     bool wasOn = v.on;
     v.on = v.held = true;
     v.id = id;
     v.pitch = pitch;
+    v.offs = offs;            // K-144
+    v.slide = PitchGlide{};  // K-144
     v.vel = vel;
     v.age = ++clock_;
     v.rng.seed(static_cast<uint32_t>(clock_ * 2654435761u + 11u));
@@ -265,8 +269,15 @@ class StringGen final : public Generator {
     alt_ = !alt_;
     for (int i = 0; i < n; ++i) {
       int k = up ? n - 1 - i : i;
-      startVoice(id, pitch + semis[k], vel * std::pow(0.94f, static_cast<float>(i)), static_cast<int>(i * strumTime_ * sr_));
+      startVoice(id, pitch + semis[k], vel * std::pow(0.94f, static_cast<float>(i)), static_cast<int>(i * strumTime_ * sr_), semis[k]);
     }
+  }
+  // K-144: glides retune the strings' loops once per control period (lengths stay within the
+  // fixed lines: retune() clamps the frequency); strummed strings keep their chord intervals.
+  bool supportsGlide() const override { return true; }
+  void onGlide(uint32_t id, double pitch, double seconds) override {
+    for (int i = 0; i < kVoices; ++i)
+      if (voices_[i].on && voices_[i].id == id) voices_[i].slide.start(voices_[i].pitch, pitch + voices_[i].offs, seconds, sr_);
   }
   void release(Voice& v) {
     v.held = false;
@@ -298,7 +309,9 @@ class StringGen final : public Generator {
     float hcDec = static_cast<float>(std::exp(-kCtl / (sr_ * std::max(0.005f, hiCutDec_))));
     for (int i = 0; i < kVoices; ++i) {
       Voice& v = voices_[i];
-      if (!v.on || v.delay > 0) continue;
+      if (!v.on) continue;
+      v.slide.advance(v.pitch, kCtl);  // K-144
+      if (v.delay > 0) continue;
       retune(v, semis);
       v.hcEnv *= hcDec;
       double hz = std::clamp(hiCut_ * std::pow(2.0, hiCutEnv_ * v.hcEnv * 4.0), 40.0, sr_ * 0.45);
