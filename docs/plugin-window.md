@@ -56,9 +56,16 @@ pixels (clipped past the left, top, right and bottom edges; spare room inside th
 left, right and bottom; the plugin's own drawing under the header: its width, its left offset and
 the width it was given; and how far any row, the header included, was laid out past the region's
 right edge). `fitall [frames]` opens every built-in plugin in turn and prints both for
-each (`GRIDLINE_FIT_ONLY=<type,type>` limits it), with an optional second argument: a directory
-for one screenshot per plugin. `tests/k147_plugin_fit_app.cmake` runs it at several sizes and
-interface scales and fails on any clipped or spare edge.
+each once its window has kept its size for two frames (at most `frames` frames, 12 by default),
+with the frames and milliseconds it took (`GRIDLINE_FIT_ONLY=<type,type>` limits it). An
+optional second argument names a directory for one screenshot per plugin. After the last one it
+prints `edfit done` and quits the app, so a run never waits on its frame count.
+Without screenshots the sweep only lays the windows out and draws nothing, since the fit
+report needs the layout and not the pixels.
+`tests/k147_plugin_fit_app.cmake` runs it at several sizes and interface scales and fails on any
+clipped or spare edge. Each run has its own time limit and reports how far it got, so the test
+fails within minutes instead of running on; it closes the main windows (playlist, browser, piano
+roll, mixer, channel rack), whose frames cost the most on software-rendered machines.
 
 Installed plugins (VST3, CLAP, VST2, AU, LV2) that show their own interface open in their own
 plugin window (`src/app/PluginWindow.cpp`: the plugin's view, Gridline's control bar under it).

@@ -5,7 +5,7 @@
 # in an effect slot window, instruments and note processors in the channel window) and reports,
 # for each, what the editor drew against its window ("edfit"): how far anything runs past the
 # window's edges (clipped) and how much room is left inside the padding (spare). For every
-# plugin, at the default plugin window size and at 75 %, 100 % and 150 %, at interface scale 1
+# plugin, at the default plugin window size (75 %), 100 % and 150 %, at interface scale 1
 # and 2 (where the work area is half as large and big editors are reduced to fit):
 #   * nothing is clipped (more than 1 px), unless the editor is taller than the work area even
 #     at the smallest fit size (then the window scrolls; reported, allowed only at scale 2);
@@ -25,6 +25,7 @@ unset(ENV{GRIDLINE_PLUGIN_WINDOW_SIZE})  # the real plugin window size setting
 file(READ "${DEMO}" demo)
 file(WRITE "${OUT}/fixture.gridline.json" "${demo}")
 set(kSpare 6)
+set(kRunLimit 150)  # s per sweep (a sweep takes 15 to 60 s; the test's own limit covers all five)
 set(failures "")
 
 function(sweep tag ui size)
@@ -35,18 +36,31 @@ function(sweep tag ui size)
   if(NOT "${size}" STREQUAL "default")
     string(APPEND script "1 setting ui.pluginWindowSize ${size}\n")
   endif()
-  string(APPEND script "4 fitall 8\n")
+  # Each plugin is reported once its window keeps its size for two frames (at most 12 frames),
+  # and the app quits after the last one. The frame count and the time limit only bound a run
+  # that goes wrong (on a slow, software-rendered machine a frame of the full window costs about
+  # 100 ms: the main windows are closed, they play no part here).
+  string(APPEND script "4 fitall 12\n")
   file(WRITE "${OUT}/${tag}.txt" "${script}")
-  execute_process(COMMAND "${APP}" "${OUT}/fixture.gridline.json" --hidden --no-ui-sounds --size 1920x1080 --ui-scale ${ui} --frames 1600 --screenshot "${OUT}/${tag}.ppm"
-                          --dev-input "${OUT}/${tag}.txt"
-                  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 900)
+  string(TIMESTAMP t0 "%s")
+  execute_process(COMMAND "${APP}" "${OUT}/fixture.gridline.json" --hidden --no-ui-sounds --size 1920x1080 --ui-scale ${ui} --frames 2400 --screenshot "${OUT}/${tag}.ppm"
+                          --hide playlist --hide browser --hide piano --hide mixer --hide rack --dev-input "${OUT}/${tag}.txt"
+                  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT ${kRunLimit})
+  string(TIMESTAMP t1 "%s")
+  math(EXPR took "${t1} - ${t0}")
   file(WRITE "${OUT}/${tag}.out" "${out}")
   file(REMOVE "${OUT}/${tag}.ppm")
+  string(REGEX MATCHALL "edfit plugin [^ ]+" opened "${out}")
+  list(LENGTH opened nopened)
+  set(last "none")
+  if(nopened GREATER 0)
+    list(GET opened -1 last)
+  endif()
   if(NOT rc EQUAL 0)
-    message(FATAL_ERROR "${tag}: gridline-app failed (${rc}): ${err}")
+    message(FATAL_ERROR "${tag}: gridline-app failed after ${took} s (${rc}), ${nopened} plugins reported, the last: ${last}\n${err}")
   endif()
   if(NOT out MATCHES "edfit done ([0-9]+)")
-    message(FATAL_ERROR "${tag}: the sweep did not finish")
+    message(FATAL_ERROR "${tag}: the sweep did not finish in ${took} s: ${nopened} plugins reported, the last: ${last}")
   endif()
   set(n ${CMAKE_MATCH_1})
   if(n LESS 150)
@@ -117,11 +131,10 @@ function(sweep tag ui size)
     string(REPLACE ";" "\n  " bad "${bad}")
     set(failures "${failures}\n${tag} (interface scale ${ui}, size ${size}): ${nbad} windows do not fit\n  ${bad}" PARENT_SCOPE)
   endif()
-  message(STATUS "${tag}: ${n} plugin windows checked, ${nbad} do not fit")
+  message(STATUS "${tag}: ${n} plugin windows checked in ${took} s, ${nbad} do not fit")
 endfunction()
 
-sweep(def1 1 default)
-sweep(s75 1 0.75)
+sweep(def1 1 default)  # the default is 75 %
 sweep(s100 1 1)
 sweep(s150 1 1.5)
 sweep(def2 2 default)

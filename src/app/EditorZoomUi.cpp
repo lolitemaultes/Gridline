@@ -511,6 +511,12 @@ void afterRender() {
   }
 }
 
+ImVec2 devWindowSize(const char* key) {
+  const auto it = slots().find(key);
+  if (it == slots().end() || !it->second.host || it->second.lastFrame < ImGui::GetFrameCount() - 1) return ImVec2(0, 0);
+  return it->second.host->Size;
+}
+
 void devDump(const char* key) {
   const auto it = slots().find(key);
   if (it == slots().end() || it->second.lastFrame < ImGui::GetFrameCount() - 1) {

@@ -2267,7 +2267,7 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
                      -DOUT=${CMAKE_BINARY_DIR}/k147_plugin_fit -P ${CMAKE_SOURCE_DIR}/tests/k147_plugin_fit_app.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
-    set_tests_properties(k147_plugin_fit_app PROPERTIES TIMEOUT 1800)
+    set_tests_properties(k147_plugin_fit_app PROPERTIES TIMEOUT 600)  # five sweeps of 15 to 60 s (up to 2 min on a loaded, software-rendered machine); each is cut at 150 s
     # K-147: Tracer's synced Time knob holds on divisions, is free between them, one undo per
     # drag; Shift drags past them; the wheel steps from division to division.
     add_test(NAME k147_magnet_app

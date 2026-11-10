@@ -794,6 +794,7 @@ void releaseTypedNotes(App& app, std::map<SDL_Scancode, HeldNote>& held) {
 //   --dev-input-live <file>: a test harness drives a running app: whenever <file> exists, its lines ("0 <command> <args>")
 //   run on the next frame and the file is removed (tests/yabridge)
 std::string devShotPending;
+bool devFitNoDraw = false;  // K-147: a fitall sweep without screenshots only lays windows out (no GL drawing)
 bool devLoadHold = true;  // J-167: frames do not count while a project loads ("loadhold off")
 bool devTrace = false;
 bool devVideoCursor = false;  // K-10
@@ -999,11 +1000,14 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
   lastFrame = frame;
   // K-147: "fitall [frames]": every built-in plugin's editor opened in turn (effects in the
   // last slot of insert 1, instruments and note processors on a channel), each one's window
-  // fit report (edfit) after `frames` frames; "edfit done" at the end.
+  // fit report (edfit) once its window has kept its size for two frames (at most `frames`
+  // frames); "edfit done" at the end, and the app quits (the run never waits on its frame count).
   static struct {
     bool on = false;
     size_t i = 0;
-    int f = 0, per = 8;
+    int f = 0, per = 12, stable = 0;
+    ImVec2 last{0, 0};
+    Uint32 t0 = 0;
     std::string shots;  // a directory: a screenshot of each one (<n>_<type>.ppm)
     ObjectId chan = kNoId;
     std::vector<std::string> types;
@@ -1012,21 +1016,31 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
     if (fresh && l.frame == frame && l.cmd == "fitall") {
       fit = {};
       fit.on = true;
-      fit.per = std::max(4, l.a0.empty() ? 8 : std::atoi(l.a0.c_str()));
+      fit.per = std::max(4, l.a0.empty() ? 12 : std::atoi(l.a0.c_str()));
       fit.shots = l.args.size() > 1 ? l.args[1] : std::string();
       const char* only = std::getenv("GRIDLINE_FIT_ONLY");  // comma separated types (dev aid)
       for (const auto& p : pluginCatalog())
         if (!p.hidden && !isHostedType(p.type) && (!only || (std::string(",") + only + ",").find("," + p.type + ",") != std::string::npos))
           fit.types.push_back(p.type);
     }
+  devFitNoDraw = fit.on && fit.shots.empty();
   if (fresh && fit.on) {
     if (fit.i >= fit.types.size()) {
       std::printf("edfit done %zu\n", fit.types.size());
       std::fflush(stdout);
       fit.on = false;
+      app.doc.markSaved();  // the plugins it added are not the user's: quit without asking
+      SDL_Event q{};
+      q.type = SDL_QUIT;
+      SDL_PushEvent(&q);
     } else {
       const std::string& type = fit.types[fit.i];
       const PluginInfo* info = findPlugin(type);
+      if (fit.f == 0) {
+        fit.stable = 0;
+        fit.last = ImVec2(0, 0);
+        fit.t0 = SDL_GetTicks();
+      }
       if (fit.f == 0 && info) {
         if (fit.chan != kNoId) app.doc.removeChannel(fit.chan);
         fit.chan = kNoId;
@@ -1044,9 +1058,14 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
         }
         app.syncEngine();
       }
-      if (++fit.f >= fit.per) {
-        std::printf("edfit plugin %s kind %d\n", type.c_str(), info ? static_cast<int>(info->kind) : -1);
-        edzoomui::devDump(info && info->kind == PluginKind::Effect ? "fxeditor" : "channelsettings");
+      const char* key = info && info->kind == PluginKind::Effect ? "fxeditor" : "channelsettings";
+      const ImVec2 size = fit.f > 0 ? edzoomui::devWindowSize(key) : ImVec2(0, 0);
+      fit.stable = size.x > 0 && size.x == fit.last.x && size.y == fit.last.y ? fit.stable + 1 : 0;
+      fit.last = size;
+      if (++fit.f >= fit.per || (fit.f >= 4 && fit.stable >= 2)) {
+        std::printf("edfit plugin %s kind %d frames %d settled %d ms %llu\n", type.c_str(), info ? static_cast<int>(info->kind) : -1, fit.f,
+                    fit.stable >= 2 ? 1 : 0, static_cast<unsigned long long>(SDL_GetTicks() - fit.t0));
+        edzoomui::devDump(key);
         if (!fit.shots.empty()) devShotPending = fit.shots + "/" + std::to_string(fit.i) + "_" + type + ".ppm";
         fit.f = 0;
         ++fit.i;
@@ -3296,7 +3315,7 @@ int main(int argc, char** argv) {
     ImVec4 bg = theme::vec(theme::pal().chrome);
     glClearColor(bg.x, bg.y, bg.z, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
-    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    if (!devFitNoDraw) ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     if (browserui::thumbMode() && !browserui::thumbCapture(app, fbW, fbH)) running = false;
     if (!profilePath.empty() && shotPath.empty() && ++frameNo >= shotFrames + profileWarmup) running = false;
     if (!devInput.empty()) {  // J-112: for "waitfor"

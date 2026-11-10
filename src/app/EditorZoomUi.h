@@ -61,6 +61,8 @@ void afterRender();
 // Dev checks (--dev-input "edzoom"): the zoom drawn last frame for `key` (0 = not drawn),
 // the design size and the window's size and position, to stdout.
 void devDump(const char* key);
+// Dev (fitall): the window's size this frame, or (0, 0) when it was not drawn.
+ImVec2 devWindowSize(const char* key);
 // Development / tests: a point in design coordinates of editor `key` to where it shows.
 ImVec2 toScreen(const char* key, ImVec2 p);
 
