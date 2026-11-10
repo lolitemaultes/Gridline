@@ -120,8 +120,15 @@ std::string toolTip(const char* name, const char* desc, const char* keyId);
 // Q-12: call once a frame per tool strip with the active tool: for a moment
 // after the tool changes (click or shortcut) the status hint names it.
 void noteActiveTool(const char* strip, int tool, const char* name, const char* keyId);
-// Text button with fixed width (0 = fit).
+// Text button with fixed width (0 = fit). `active` is the toggle-on look (a lit
+// inset): only for buttons that switch something on and off. A window's main
+// action is a PrimaryButton (K-172).
 bool TextButton(const char* label, bool active = false, float width = 0.0f, const char* hint = nullptr);
+// K-172: the main action of a window or dialog (Start, OK, Save, Create...):
+// a raised face filled with the lit colour, pressed only while held. One per
+// window. Same size and translation rules as TextButton; `enabled` false draws
+// it disabled and never returns true.
+bool PrimaryButton(const char* label, float width = 0.0f, const char* hint = nullptr, bool enabled = true);
 // Destructive action (leave, stop sharing, reset): the label in the danger
 // colour on the normal face; `armed` (the confirming click) fills the face with
 // the danger colour. Same size and translation rules as TextButton.

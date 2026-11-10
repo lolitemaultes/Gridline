@@ -147,7 +147,7 @@ void askWindow(App& a) {
   const bool keys = !ImGui::IsWindowAppearing();  // (the key that closed the file dialog is not ours)
   if (ui::TextButton(i18n::tr("Cancel"), false, bw) || (keys && ::gl::keys::escapePressed())) cancel = true;
   ImGui::SameLine(0, theme::kS2);
-  if (ui::TextButton(i18n::tr("Export"), true, bw) || (keys && ImGui::IsKeyPressed(ImGuiKey_Enter))) go = true;
+  if (ui::PrimaryButton(i18n::tr("Export"), bw) || (keys && ImGui::IsKeyPressed(ImGuiKey_Enter))) go = true;
   if (go || cancel) {
     ask.open = false;
     ImGui::CloseCurrentPopup();

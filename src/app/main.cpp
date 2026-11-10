@@ -883,7 +883,18 @@ std::vector<DevInputLine> loadDevInput(const std::string& path) {
 void devPianoCommand(App& app, const DevInputLine& l, int frame) {
   const Pattern* pat = app.doc.song().pattern(app.curPattern);
   const ObjectId ch = app.selChannel;
-  if (l.cmd == "lane") {
+  if (l.cmd == "alane") {  // K-171: the automation lane (target, points, selection, rects) to stdout
+    std::printf("alane frame %d: %s\n", frame, automationLaneDump(app, app.curPattern).c_str());
+  } else if (l.cmd == "alanetarget") {  // K-171: alanetarget <owner> <index>: the lane shows that control (none: note properties)
+    pianoAutomationLane() = l.args.size() >= 2 ? ParamId{static_cast<ObjectId>(std::atoi(l.args[0].c_str())), static_cast<uint32_t>(std::atoi(l.args[1].c_str()))}
+                                               : ParamId{};
+  } else if (l.cmd == "alaneshape") {  // K-171: alaneshape 0|1|2: the lane draws stepped / linear / smooth
+    setLaneDrawShape(app, l.a0 == "2" ? AutoShape::Smooth : l.a0 == "1" ? AutoShape::Curve : AutoShape::Hold);
+  } else if (l.cmd == "alanesimplify") {  // K-171: alanesimplify <tolerance %> <0 linear|1 smooth>: the Simplify popover's Apply
+    simplifyAutomationLane(app, app.curPattern, std::atof(l.a0.c_str()) / 100.0, l.a1 == "1" ? AutoShape::Smooth : AutoShape::Curve);
+  } else if (l.cmd == "pianotool") {  // K-171: pianotool draw|select|erase|zoom: the piano roll's tool
+    app.piano.tool = l.a0 == "select" ? Tool::Select : l.a0 == "erase" ? Tool::Erase : l.a0 == "zoom" ? Tool::Zoom : Tool::Draw;
+  } else if (l.cmd == "lane") {
     const PianoLaneGeometry& g = pianoLaneGeometry();
     std::printf("lane frame %d: x0 %.3f pxPerTick %.6f yTop %.2f yBottom %.2f valid %d pitchY0 %.2f rowH %.3f preview %d live %d\n", frame, g.x0,
                 g.pxPerTick, g.yTop, g.yBottom, g.valid ? 1 : 0, g.pitchY0, g.rowH, g.preview, app.engine.liveHeld());
@@ -1632,7 +1643,8 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       devWindowsLeft = std::max(1, std::atoi(l.a0.c_str()));
     } else if (l.cmd == "shot") {
       devShotPending = l.args.empty() ? l.a0 : l.args[0];  // J-97: a quoted path may hold spaces
-    } else if (l.cmd == "mknotes" || l.cmd == "notes" || l.cmd == "selnotes" || l.cmd == "lane" || l.cmd == "pianosnap" || l.cmd == "bendline") {
+    } else if (l.cmd == "mknotes" || l.cmd == "notes" || l.cmd == "selnotes" || l.cmd == "lane" || l.cmd == "pianosnap" || l.cmd == "bendline" ||
+               l.cmd == "alane" || l.cmd == "alanetarget" || l.cmd == "alaneshape" || l.cmd == "alanesimplify" || l.cmd == "pianotool") {
       devPianoCommand(app, l, frame);
     } else if (l.cmd == "launcher") {  // J-141: launcher [home|back|close]: the launcher's state and tiles to stdout
       if (l.a0 == "home") app.home.showHome(app.now);
@@ -2298,6 +2310,7 @@ int main(int argc, char** argv) {
   std::pair<int, int> forcedSize{0, 0};  // --size WxH (window size for layout checks)
   std::pair<int, int> resizeTo{0, 0};    // --resize WxH (applied halfway through --frames)
   std::string devMenu;                    // --menu name: open a menu for screenshots
+  bool devLight = false;                  // --light (kept when --layout re-reads the theme)
   std::string devLayoutPreset;            // K-79 --layout studio|performance|tracks: this run only (nothing saved)
   std::vector<std::string> devPanes;      // K-79 --pane mixer|piano|rack|history|pads|settings: open a window at frame 3
   bool devSwitchCheck = false;
@@ -2619,6 +2632,7 @@ int main(int argc, char** argv) {
       if (look::parseDir(argv[++i], d)) ui::forceControlStyle(d);
     } else if (arg == "--light") {
       theme::apply(false);
+      devLight = true;
     } else if (arg == "--ui-scale" && i + 1 < argc) {
       devUiScale = std::clamp(static_cast<float>(std::atof(argv[++i])), 0.75f, 2.0f);
     } else if (arg == "--scale" && i + 1 < argc) {
@@ -2782,6 +2796,7 @@ int main(int argc, char** argv) {
     layoutui::setDevOverride(layoutPreset);
     layoutui::applyKeyProfile(app);
     theme::applyFromSettings(app.settings);
+    if (devLight) theme::apply(false);
   }
   layoutui::setActive(layoutPreset);
   iniPath = (fs::path(app.configDir()) / layout::iniFileName(layoutPreset)).string();

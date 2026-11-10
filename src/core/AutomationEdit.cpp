@@ -268,42 +268,100 @@ Selection pastePoints(Points& pts, const Points& clip, Tick at, bool replace) {
 
 // --------------------------------------------------------------- thinning ----
 
-Points thin(const Points& in, double tolerance) {
-  if (in.size() <= 2) return in;
-  std::vector<char> keep(in.size(), 0);
-  keep[0] = 1;
-  keep[in.size() - 1] = 1;
-  // Iterative Ramer–Douglas–Peucker on (tick, value); the error is the
-  // vertical distance to the chord.
-  std::vector<std::pair<size_t, size_t>> stack{{0, in.size() - 1}};
+namespace {
+
+// Ramer-Douglas-Peucker on (tick, value); the error is the vertical distance
+// to the segment's curve. Straight: every kept segment is a chord (Curve).
+// Eased: the turning points of the take (moves larger than the tolerance)
+// are kept first; then a segment the eased S fits takes Smooth, one only a
+// chord fits stays straight, and anything else splits at its worst point.
+Points thinPass(const Points& in, double tolerance, bool eased) {
+  const size_t n = in.size();
+  std::vector<char> keep(n, 0);
+  std::vector<AutoShape> shape(n, AutoShape::Curve);  // shape of the segment ending here
+  keep[0] = keep[n - 1] = 1;
+  if (eased) {
+    int dir = 0;
+    size_t turn = 0;
+    for (size_t i = 1; i < n; ++i) {
+      const double v = in[i].value;
+      if (dir == 0) {
+        if (v > in[0].value + tolerance) dir = 1, turn = i;
+        else if (v < in[0].value - tolerance) dir = -1, turn = i;
+      } else if (dir > 0) {
+        if (v >= in[turn].value) turn = i;
+        else if (v < in[turn].value - tolerance) keep[turn] = 1, dir = -1, turn = i;
+      } else {
+        if (v <= in[turn].value) turn = i;
+        else if (v > in[turn].value + tolerance) keep[turn] = 1, dir = 1, turn = i;
+      }
+    }
+  }
+  std::vector<std::pair<size_t, size_t>> stack;
+  for (size_t i = 1, last = 0; i < n; ++i)
+    if (keep[i]) stack.push_back({last, i}), last = i;
   while (!stack.empty()) {
     auto [a, b] = stack.back();
     stack.pop_back();
-    if (b <= a + 1) continue;
     const double t0 = static_cast<double>(in[a].pos), t1 = static_cast<double>(in[b].pos);
-    double worst = -1;
+    const double v0 = in[a].value, dv = in[b].value - in[a].value;
+    double worst = -1, worstEased = 0;
     size_t at = a;
     for (size_t i = a + 1; i < b; ++i) {
-      double f = t1 > t0 ? (static_cast<double>(in[i].pos) - t0) / (t1 - t0) : 0.0;
-      double chord = in[a].value + (in[b].value - in[a].value) * f;
-      double err = std::fabs(in[i].value - chord);
+      const double f = t1 > t0 ? (static_cast<double>(in[i].pos) - t0) / (t1 - t0) : 0.0;
+      const double err = std::fabs(in[i].value - (v0 + dv * f));
+      worstEased = std::max(worstEased, std::fabs(in[i].value - (v0 + dv * (0.5 - 0.5 * std::cos(3.14159265358979323846 * f)))));
       if (err > worst) worst = err, at = i;
     }
-    if (worst > tolerance) {
+    const bool easedFits = eased && worstEased <= tolerance && dv != 0.0;
+    if (easedFits) shape[b] = AutoShape::Smooth;
+    if (b > a + 1 && worst > tolerance && !easedFits) {
       keep[at] = 1;
       stack.push_back({a, at});
       stack.push_back({at, b});
     }
   }
   Points out;
-  for (size_t i = 0; i < in.size(); ++i)
+  for (size_t i = 0; i < n; ++i)
     if (keep[i]) {
       AutoPoint p = in[i];
-      // A jump (two points on one tick) keeps its hold; everything else is a straight line.
-      p.shape = !out.empty() && out.back().pos == p.pos ? AutoShape::Hold : AutoShape::Curve;
+      // A jump (two points on one tick) keeps its hold; everything else gets its fitted curve.
+      p.shape = !out.empty() && out.back().pos == p.pos ? AutoShape::Hold : shape[i];
       p.tension = 0;
       out.push_back(p);
     }
+  return out;
+}
+
+}  // namespace
+
+Points thin(const Points& in, double tolerance, AutoShape result) {
+  if (in.size() <= 2) return in;
+  Points straight = thinPass(in, tolerance, false);
+  if (result != AutoShape::Smooth) return straight;
+  // Eased segments where they fit, straight ones elsewhere; never more points
+  // than straight thinning, and always within the tolerance.
+  Points eased = thinPass(in, tolerance, true);
+  return eased.size() <= straight.size() ? eased : straight;
+}
+
+Selection thinRange(Points& pts, const Selection& sel, double tolerance, AutoShape result) {
+  size_t i0 = 0, i1 = pts.empty() ? 0 : pts.size() - 1;
+  if (sel.size() >= 2) {
+    const int a = *sel.begin(), b = *sel.rbegin();
+    if (a >= 0 && static_cast<size_t>(b) < pts.size()) i0 = static_cast<size_t>(a), i1 = static_cast<size_t>(b);
+  }
+  Selection out;
+  if (pts.empty()) return out;
+  const AutoPoint first = pts[i0];
+  Points mid(pts.begin() + static_cast<std::ptrdiff_t>(i0), pts.begin() + static_cast<std::ptrdiff_t>(i1) + 1);
+  mid = thin(mid, tolerance, result);
+  if (!mid.empty()) mid.front().shape = first.shape, mid.front().tension = first.tension;  // the curve into the span is not ours
+  Points next(pts.begin(), pts.begin() + static_cast<std::ptrdiff_t>(i0));
+  for (size_t k = 0; k < mid.size(); ++k) out.insert(static_cast<int>(next.size() + k));
+  next.insert(next.end(), mid.begin(), mid.end());
+  next.insert(next.end(), pts.begin() + static_cast<std::ptrdiff_t>(i1) + 1, pts.end());
+  pts = std::move(next);
   return out;
 }
 

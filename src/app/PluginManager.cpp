@@ -428,7 +428,7 @@ void scanCard(App& a, const Model& md) {
   }
   const float bw = std::floor((w - 6) * 0.5f);
   ImGui::BeginDisabled(ss.running);
-  if (ui::TextButton("Find plugins", true, bw, "Scans new and updated plugins in the folders below (each in its own process)")) {
+  if (ui::PrimaryButton("Find plugins", bw, "Scans new and updated plugins in the folders below (each in its own process)")) {
     host::startScan(host::selfExecutablePath(), false);
     a.scanByUser = true;
   }
@@ -1188,7 +1188,7 @@ void failedDetails(App& a, const Model& md) {
   ImGui::PopTextWrapPos();
   ImGui::Dummy(ImVec2(0, theme::kS2));
   ImGui::BeginDisabled(host::scanStatus().running);
-  if (ui::TextButton("Retry", true, 0, "Scan this plugin again")) host::rescanEntry(host::selfExecutablePath(), e->format, e->entry);
+  if (ui::TextButton("Retry", false, 0, "Scan this plugin again")) host::rescanEntry(host::selfExecutablePath(), e->format, e->entry);
   ImGui::EndDisabled();
   ImGui::Dummy(ImVec2(0, theme::kS1));
   ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + w);

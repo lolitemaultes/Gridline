@@ -243,7 +243,7 @@ void drawScriptDialog(App& a, Session& s) {
   ui::DialogFooter(ui::ButtonRowWidth(2, 96));
   const bool cancel = ui::TextButton("Cancel", false, 96);
   ImGui::SameLine(0, theme::kS2);
-  const bool accept = ui::TextButton("Accept", true, 96);
+  const bool accept = ui::PrimaryButton("Accept", 96);
   if (accept && (r.sched.needsFull() || !r.have)) {
     runNow(a, s, r, true);
     r.sched.ran(script::PreviewScheduler::Run::Full, wallNow(), r.lastLimitHit);

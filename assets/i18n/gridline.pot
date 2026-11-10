@@ -573,12 +573,8 @@ msgstr ""
 msgid "at %.2f BPM"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp
-msgid "%zu → %zu points"
-msgstr ""
-
-#: src/app/AutomationEditor.cpp
-msgid "(drag: draw values on the grid · right-drag: straight line · Alt: free)"
+#: src/app/AutomationEditor.cpp src/app/AutomationLane.cpp
+msgid "%zu → %zu points (%s)"
 msgstr ""
 
 #: src/app/AutomationEditor.cpp
@@ -589,15 +585,11 @@ msgstr ""
 msgid "Accept"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp
-msgid "Add lane for"
-msgstr ""
-
 #: src/app/AutomationEditor.cpp src/app/MenuParityUi.cpp
 msgid "Automation clip for"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/Browser.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/ExportUi.cpp src/app/FlpExportUi.cpp src/app/LayerEditor.cpp src/app/MidiUi.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/ProjectLoadUi.cpp src/app/SamplerRenderUi.cpp src/app/ScriptUi.cpp src/app/SettingsKeysTheme.cpp src/app/StemsUi.cpp src/app/TemplateUi.cpp src/app/TrackReceiptUi.cpp src/app/UpdateUi.cpp src/app/UrlImportUi.cpp src/packs/edison/edison_script_ui.cpp src/packs/edison/edison_tools_ui.cpp src/packs/flex/flex_ui.cpp src/packs/platter/platter_ui.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/AutomationLane.cpp src/app/Browser.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/ExportUi.cpp src/app/FlpExportUi.cpp src/app/LayerEditor.cpp src/app/MidiUi.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/ProjectLoadUi.cpp src/app/SamplerRenderUi.cpp src/app/ScriptUi.cpp src/app/SettingsKeysTheme.cpp src/app/StemsUi.cpp src/app/TemplateUi.cpp src/app/TrackReceiptUi.cpp src/app/UpdateUi.cpp src/app/UrlImportUi.cpp src/packs/edison/edison_script_ui.cpp src/packs/edison/edison_tools_ui.cpp src/packs/flex/flex_ui.cpp src/packs/platter/platter_ui.cpp src/packs/tracker/tracker_ui.cpp
 msgid "Cancel"
 msgstr ""
 
@@ -617,7 +609,7 @@ msgstr ""
 msgid "Control to start"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/McpUi.cpp src/app/Menus.cpp src/core/Keymap.cpp src/packs/creative/creative_ui.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/samplers/samplers_ui.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/AutomationLane.cpp src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/McpUi.cpp src/app/Menus.cpp src/core/Keymap.cpp src/packs/creative/creative_ui.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/samplers/samplers_ui.cpp src/packs/tracker/tracker_ui.cpp
 msgid "Copy"
 msgstr ""
 
@@ -641,15 +633,15 @@ msgstr ""
 msgid "Create automation clip in pattern"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/MidiUi.cpp
+#: src/app/AutomationEditor.cpp src/app/AutomationLane.cpp src/app/MidiUi.cpp
 msgid "Curve"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp
+#: src/app/AutomationEditor.cpp src/app/AutomationLane.cpp
 msgid "Curve of every point"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp
+#: src/app/AutomationEditor.cpp src/app/AutomationLane.cpp
 msgid "Curve of the selection"
 msgstr ""
 
@@ -657,20 +649,12 @@ msgstr ""
 msgid "Cut"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Menus.cpp src/app/PatternAutoUi.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/modulation/modulation_patcher_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_seq_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/AutomationLane.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Menus.cpp src/app/PatternAutoUi.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/modulation/modulation_patcher_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_seq_ui.cpp
 msgid "Delete"
 msgstr ""
 
 #: src/app/AutomationEditor.cpp
-msgid "Delete this lane"
-msgstr ""
-
-#: src/app/AutomationEditor.cpp
 msgid "Deselect all"
-msgstr ""
-
-#: src/app/AutomationEditor.cpp
-msgid "Drag to draw values · right-drag for a straight line"
 msgstr ""
 
 #: src/app/AutomationEditor.cpp src/app/ContextMenus.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp
@@ -753,6 +737,10 @@ msgstr ""
 msgid "Length of this placement in the playlist (drag or Ctrl+click to type)"
 msgstr ""
 
+#: src/app/AutomationEditor.cpp src/app/AutomationLane.cpp src/packs/platter/platter_mixer_ui.cpp
+msgid "Linear"
+msgstr ""
+
 #: src/app/AutomationEditor.cpp
 msgid "Loop the content"
 msgstr ""
@@ -771,10 +759,6 @@ msgstr ""
 
 #: src/app/AutomationEditor.cpp
 msgid "No target"
-msgstr ""
-
-#: src/app/AutomationEditor.cpp
-msgid "Open in the automation editor"
 msgstr ""
 
 #: src/app/AutomationEditor.cpp
@@ -798,14 +782,10 @@ msgid "Paste value"
 msgstr ""
 
 #: src/app/AutomationEditor.cpp
-msgid "Pattern automation (events)"
-msgstr ""
-
-#: src/app/AutomationEditor.cpp
 msgid "Point value"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp
+#: src/app/AutomationEditor.cpp src/app/AutomationLane.cpp
 msgid "Points"
 msgstr ""
 
@@ -833,7 +813,7 @@ msgstr ""
 msgid "Reset"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/EnvEditor.h
+#: src/app/AutomationEditor.cpp src/app/AutomationLane.cpp src/app/EnvEditor.h
 msgid "Reset tension"
 msgstr ""
 
@@ -917,6 +897,10 @@ msgstr ""
 msgid "Show the pattern"
 msgstr ""
 
+#: src/app/AutomationEditor.cpp src/app/AutomationLane.cpp src/app/PianoRoll.cpp src/packs/dynamics/masterfl_ui.cpp src/packs/tideline/tideline_ui.cpp src/packs/utility/utility_ui.cpp
+msgid "Smooth"
+msgstr ""
+
 #: src/app/AutomationEditor.cpp src/app/ContextMenus.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/app/PluginEditorsK3Gb.cpp src/packs/samplers/samplers_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp src/packs/tideline/tideline_ui.cpp
 msgid "Snap"
 msgstr ""
@@ -979,6 +963,130 @@ msgstr ""
 
 #: src/app/AutomationEditor.cpp src/app/PianoRoll.cpp
 msgid "snap to the grid chosen beside it (hold Alt while dragging to bypass)"
+msgstr ""
+
+#: src/app/AutomationEditor.cpp src/app/AutomationLane.cpp
+msgid "the selection"
+msgstr ""
+
+#: src/app/AutomationEditor.cpp
+msgid "the whole clip"
+msgstr ""
+
+#: src/app/AutomationLane.cpp
+msgid "%zu points selected"
+msgstr ""
+
+#: src/app/AutomationLane.cpp
+msgid "(click or drag a box to select · drag selected points to move · right-click a point: its menu)"
+msgstr ""
+
+#: src/app/AutomationLane.cpp
+msgid "(click: choose; also sets the curve of selected points)"
+msgstr ""
+
+#: src/app/AutomationLane.cpp
+msgid "(drag over points to delete them)"
+msgstr ""
+
+#: src/app/AutomationLane.cpp
+msgid "(this tool does not edit the lane)"
+msgstr ""
+
+#: src/app/AutomationLane.cpp
+msgid "Add lane for"
+msgstr ""
+
+#: src/app/AutomationLane.cpp src/app/ChopUi.cpp src/app/LoopStarterUi.cpp src/packs/tracker/tracker_ui.cpp
+msgid "Apply"
+msgstr ""
+
+#: src/app/AutomationLane.cpp src/core/Keymap.cpp
+msgid "Copy points"
+msgstr ""
+
+#: src/app/AutomationLane.cpp
+msgid "Curve the drawing tools write"
+msgstr ""
+
+#: src/app/AutomationLane.cpp src/core/Keymap.cpp
+msgid "Delete selected points"
+msgstr ""
+
+#: src/app/AutomationLane.cpp
+msgid "Delete this lane"
+msgstr ""
+
+#: src/app/AutomationLane.cpp
+msgid "Drag to draw values · right-drag for a straight line"
+msgstr ""
+
+#: src/app/AutomationLane.cpp
+msgid "Draw with"
+msgstr ""
+
+#: src/app/AutomationLane.cpp
+msgid "Eased curves between the kept points"
+msgstr ""
+
+#: src/app/AutomationLane.cpp
+msgid "Keep the simplified points (one undo step)"
+msgstr ""
+
+#: src/app/AutomationLane.cpp
+msgid "More curves"
+msgstr ""
+
+#: src/app/AutomationLane.cpp
+msgid "Open in the automation editor"
+msgstr ""
+
+#: src/app/AutomationLane.cpp src/core/Keymap.cpp
+msgid "Paste points"
+msgstr ""
+
+#: src/app/AutomationLane.cpp
+msgid "Pattern automation (events)"
+msgstr ""
+
+#: src/app/AutomationLane.cpp src/core/Keymap.cpp
+msgid "Quantize points"
+msgstr ""
+
+#: src/app/AutomationLane.cpp src/core/Keymap.cpp
+msgid "Select all points"
+msgstr ""
+
+#: src/app/AutomationLane.cpp
+msgid "Set the %zu selected points to"
+msgstr ""
+
+#: src/app/AutomationLane.cpp
+msgid "Simplify points"
+msgstr ""
+
+#: src/app/AutomationLane.cpp
+msgid "Simplify points..."
+msgstr ""
+
+#: src/app/AutomationLane.cpp
+msgid "Stepped"
+msgstr ""
+
+#: src/app/AutomationLane.cpp
+msgid "Straight lines between the kept points"
+msgstr ""
+
+#: src/app/AutomationLane.cpp
+msgid "Tolerance  %.1f%%"
+msgstr ""
+
+#: src/app/AutomationLane.cpp
+msgid "drag draws · right-drag: straight line · Ctrl+drag: select · drag a selected point to move · right-click a point: its menu)"
+msgstr ""
+
+#: src/app/AutomationLane.cpp
+msgid "the whole lane"
 msgstr ""
 
 #: src/app/Browser.cpp
@@ -2263,10 +2371,6 @@ msgstr ""
 
 #: src/app/ChopUi.cpp src/app/CommandPaletteUi.cpp src/app/ContextMenus.cpp src/app/PluginManager.cpp src/app/UrlImportUi.cpp src/packs/edison/edison_form_ui.cpp
 msgid "All"
-msgstr ""
-
-#: src/app/ChopUi.cpp src/app/LoopStarterUi.cpp src/packs/tracker/tracker_ui.cpp
-msgid "Apply"
 msgstr ""
 
 #: src/app/ChopUi.cpp
@@ -11474,6 +11578,10 @@ msgid "Drag cancelled"
 msgstr ""
 
 #: src/app/PianoRoll.cpp
+msgid "Drag to resize the lane · double-click: automatic height"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
 msgid "Ease in"
 msgstr ""
 
@@ -11571,10 +11679,6 @@ msgstr ""
 
 #: src/app/PianoRoll.cpp
 msgid "Slide mode: new notes glide the channel's sounding notes to their pitch instead of starting a note"
-msgstr ""
-
-#: src/app/PianoRoll.cpp src/packs/dynamics/masterfl_ui.cpp src/packs/tideline/tideline_ui.cpp src/packs/utility/utility_ui.cpp
-msgid "Smooth"
 msgstr ""
 
 #: src/app/PianoRoll.cpp
@@ -16858,10 +16962,6 @@ msgid "Copy notes"
 msgstr ""
 
 #: src/core/Keymap.cpp
-msgid "Copy points"
-msgstr ""
-
-#: src/core/Keymap.cpp
 msgid "Count-in on / off"
 msgstr ""
 
@@ -16887,10 +16987,6 @@ msgstr ""
 
 #: src/core/Keymap.cpp
 msgid "Delete selected notes"
-msgstr ""
-
-#: src/core/Keymap.cpp
-msgid "Delete selected points"
 msgstr ""
 
 #: src/core/Keymap.cpp
@@ -17050,10 +17146,6 @@ msgid "Paste notes"
 msgstr ""
 
 #: src/core/Keymap.cpp
-msgid "Paste points"
-msgstr ""
-
-#: src/core/Keymap.cpp
 msgid "Paste, replacing points"
 msgstr ""
 
@@ -17075,10 +17167,6 @@ msgstr ""
 
 #: src/core/Keymap.cpp
 msgid "Playback tool"
-msgstr ""
-
-#: src/core/Keymap.cpp
-msgid "Quantize points"
 msgstr ""
 
 #: src/core/Keymap.cpp
@@ -17175,10 +17263,6 @@ msgstr ""
 
 #: src/core/Keymap.cpp
 msgid "Select all notes"
-msgstr ""
-
-#: src/core/Keymap.cpp
-msgid "Select all points"
 msgstr ""
 
 #: src/core/Keymap.cpp
@@ -19863,10 +19947,6 @@ msgstr ""
 
 #: src/packs/platter/platter_mixer_ui.cpp
 msgid "Kill the band (click again to bring it back)"
-msgstr ""
-
-#: src/packs/platter/platter_mixer_ui.cpp
-msgid "Linear"
 msgstr ""
 
 #: src/packs/platter/platter_mixer_ui.cpp

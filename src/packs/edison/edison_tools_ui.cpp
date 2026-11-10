@@ -218,7 +218,7 @@ bool footer(bool enabled = true) {
   if (ui::TextButton("Cancel", false, kBtnW)) ImGui::CloseCurrentPopup();
   ImGui::SameLine(0, theme::kS2);
   ImGui::BeginDisabled(!enabled);
-  const bool ok = ui::TextButton("Accept", true, kBtnW);
+  const bool ok = ui::PrimaryButton("Accept", kBtnW);
   ImGui::EndDisabled();
   if (ok) ImGui::CloseCurrentPopup();
   return ok;

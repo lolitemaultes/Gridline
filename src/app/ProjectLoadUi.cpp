@@ -402,7 +402,7 @@ void drawChoice(App& a, float w) {
     return;
   }
   ImGui::SameLine(0, theme::kS2);
-  if (ui::TextButton("Open", true, bw) || ImGui::IsKeyPressed(ImGuiKey_Enter)) {
+  if (ui::PrimaryButton("Open", bw) || ImGui::IsKeyPressed(ImGuiKey_Enter)) {
     L.choose(selected);
     selected = 0;
   }
@@ -518,7 +518,7 @@ void draw(App& a) {
   }
   ImGui::SetCursorPos(ImVec2(theme::kS6 + w - bw, y));
   if (failed) {
-    if (ui::TextButton("Close", true, bw) || ::gl::keys::escapePressed() || ImGui::IsKeyPressed(ImGuiKey_Enter)) a.dismissProjectLoad();
+    if (ui::PrimaryButton("Close", bw) || ::gl::keys::escapePressed() || ImGui::IsKeyPressed(ImGuiKey_Enter)) a.dismissProjectLoad();
   } else if (ui::TextButton("Cancel", false, bw, "Stop opening and go back to the project as it was") || ::gl::keys::escapePressed()) {
     a.cancelProjectLoad();
   }

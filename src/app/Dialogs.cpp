@@ -277,7 +277,7 @@ void fileDialog(App& a) {
   alignRight(96 + theme::kS2 + okW);
   bool cancel = ui::TextButton("Cancel", false, 96) || ::gl::keys::escapePressed();
   ImGui::SameLine(0, theme::kS2);
-  bool ok = ui::TextButton(okLabel, true, okW);
+  bool ok = ui::PrimaryButton(okLabel, okW);
   if (!fd.confirmOverwrite.empty()) ui::Hint((fd.name + " already exists. Replace it?").c_str());
   if (ImGui::IsKeyPressed(ImGuiKey_Enter) && !fd.name.empty()) ok = true;
   if (ok && chosen.empty()) {
@@ -854,7 +854,7 @@ void infoWindow(App& a) {
     alignRight(ui::ButtonRowWidth(2, 110));
     const bool cancel = ui::TextButton("Cancel", false, 110) || ::gl::keys::escapePressed();
     ImGui::SameLine(0, theme::kS2);
-    if (ui::TextButton("Change PPQ", true, 110)) {
+    if (ui::PrimaryButton("Change PPQ", 110)) {
       a.doc.setPpq(pendingPpq);
       pendingPpq = 0;
       ImGui::CloseCurrentPopup();
@@ -962,7 +962,7 @@ void unsavedPrompt(App& a) {
       ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine(0, theme::kS2);
-    if (ui::TextButton("Save", true, 100)) {
+    if (ui::PrimaryButton("Save", 100)) {
       ImGui::CloseCurrentPopup();
       auto then = a.afterDiscard;
       if (!a.projectPath.empty()) {
@@ -1006,7 +1006,7 @@ void confirmPrompt(App& a) {
     ImGui::CloseCurrentPopup();
   }
   ImGui::SameLine(0, theme::kS2);
-  if (ui::TextButton(c.okLabel.empty() ? "OK" : c.okLabel.c_str(), true, 100) || ImGui::IsKeyPressed(ImGuiKey_Enter) ||
+  if (ui::PrimaryButton(c.okLabel.empty() ? "OK" : c.okLabel.c_str(), 100) || ImGui::IsKeyPressed(ImGuiKey_Enter) ||
       ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) {
     auto run = std::move(c.action);
     c.action = nullptr;
@@ -1087,7 +1087,7 @@ void importReportWindow(App& a) {
     ui::DialogFooter(ui::ButtonRowWidth(2, 96));
     if (ui::TextButton("Close", false, 96)) a.showImportReport = false;
     ImGui::SameLine(0, theme::kS2);
-    if (ui::TextButton("Save as...", true, 96)) {
+    if (ui::PrimaryButton("Save as...", 96)) {
       a.saveAs();
       a.showImportReport = false;
     }

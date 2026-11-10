@@ -308,7 +308,7 @@ void window(App& a) {
     if (ui::TextButton("Cancel", false, bw) || (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ::gl::keys::escapePressed()))
       R.open = false;
     ImGui::SameLine(0, theme::kS2);
-    if (ui::TextButton("Render", true, bw, "Render the notes, write the samples and build the instrument")) start(a);
+    if (ui::PrimaryButton("Render", bw, "Render the notes, write the samples and build the instrument")) start(a);
   }
   ImGui::End();
 }

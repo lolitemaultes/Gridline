@@ -7,6 +7,7 @@
 #include <string>
 #include "../../third_party/imgui/imgui.h"
 #include "../core/Params.h"
+#include "AutomationLane.h"
 
 namespace gl {
 
@@ -55,18 +56,6 @@ bool& automationRecording();
 // its own way, J-159).
 bool& automationRecordHold();
 
-// ---- piano roll: pattern automation lane ------------------------------------------
-// Target shown in the piano roll's lower lane (owner kNoId: note properties).
-ParamId& pianoAutomationLane();
-// Lane-selector popup section (lanes of the pattern, add a lane, delete).
-void patternLaneMenu(App& a, ObjectId pattern, ObjectId channel);
-// Short label for the lane selector.
-std::string patternLaneLabel(App& a);
-// Draws and edits the lane inside [min, max]. `xOf`/`tickAt` map pattern ticks
-// to screen x; `grid` is the snap grid. `canvasHovered` / `canvasActive`
-// describe the piano roll canvas item the lane belongs to.
-void drawPatternAutomationLane(App& a, ImDrawList* dl, ImVec2 min, ImVec2 max, ObjectId pattern,
-                               const std::function<float(double)>& xOf, const std::function<double(float)>& tickAt,
-                               Tick grid, bool canvasHovered, bool canvasActive);
+// ---- piano roll: pattern automation lane: AutomationLane.h (K-171) ----
 
 }  // namespace gl

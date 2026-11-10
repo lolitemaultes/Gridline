@@ -311,7 +311,7 @@ void envArtEditor(EditTarget& e) {
   sk::wheelL(e, artParam(u.art, AfLfoAmt), F, 256, 6, 30, K, "LFO", skin::WheelBigLine | skin::WheelCentered);
   {
     const bool bi = art.bipolar();
-    if (sk::button("##pol", F.p(182, 52), F.sz(140, 20), K, bi ? "SUM (BIPOLAR)" : "PRODUCT (UNIPOLAR)", true)) {
+    if (sk::button("##pol", F.p(182, 52), F.sz(140, 20), K, bi ? "SUM (BIPOLAR)" : "PRODUCT (UNIPOLAR)", false)) {
       art.flags ^= 1;
       // Maps keep their meaning: neutral is 0.5 (sum) / 1.0 (product).
       commit(e, m, "articulator polarity", 0);

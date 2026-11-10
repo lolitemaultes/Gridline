@@ -329,7 +329,7 @@ void window(App& a) {
   ImGui::SameLine(0, theme::kS2);
   if (ui::TextButton("Apply", false, bw, "Replace the current project with this one (undo brings it back)")) applyTo(a, undoLabel);
   ImGui::SameLine(0, theme::kS2);
-  if (ui::TextButton("Create", true, bw, "A new project from these settings")) createProject(a);
+  if (ui::PrimaryButton("Create", bw, "A new project from these settings")) createProject(a);
   ImGui::End();
   // Finished changes re-apply while the project made here is untouched.
   if (commit && s != before && live(a)) applyTo(a, undoLabel);

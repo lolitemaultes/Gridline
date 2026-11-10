@@ -219,7 +219,7 @@ int faceState(bool hov, bool held, bool on) { return (hov ? look::Hover : 0) | (
 // in the current ID stack, `text` what it shows.
 struct StyledButtonFace {
   bool on = false;
-  StyledButtonFace(ImGuiID id, const char* text, float width, bool lit) {
+  StyledButtonFace(ImGuiID id, const char* text, float width, bool lit, bool primary = false) {
     if (!look::styled()) return;
     on = true;
     const ImGuiStyle& st = ImGui::GetStyle();
@@ -229,15 +229,21 @@ struct StyledButtonFace {
     const ImGuiContext& g = *GImGui;
     const bool hov = g.HoveredIdPreviousFrame == id, held = g.ActiveId == id;
     const int dis = (g.CurrentItemFlags & ImGuiItemFlags_Disabled) ? look::Disabled : 0;
-    look::hookFace(ImGui::GetWindowDrawList(), p, ImVec2(p.x + sz.x, p.y + sz.y), theme::kRadius, faceState(hov, held, lit) | dis, pal().hot, true);
+    if (primary)  // K-172: the main action: raised and filled
+      look::hookPrimary(ImGui::GetWindowDrawList(), p, ImVec2(p.x + sz.x, p.y + sz.y), theme::kRadius, faceState(hov, held, false) | dis, pal().hot);
+    else
+      look::hookFace(ImGui::GetWindowDrawList(), p, ImVec2(p.x + sz.x, p.y + sz.y), theme::kRadius, faceState(hov, held, lit) | dis, pal().hot, true);
+    if (primary) ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(look::primaryText(pal().hot, dis)));
+    pushedText = primary;
     const ImVec4 clear(0, 0, 0, 0);
     ImGui::PushStyleColor(ImGuiCol_Button, clear);
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, clear);
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, clear);
   }
   ~StyledButtonFace() {
-    if (on) ImGui::PopStyleColor(3);
+    if (on) ImGui::PopStyleColor(pushedText ? 4 : 3);
   }
+  bool pushedText = false;
   StyledButtonFace(const StyledButtonFace&) = delete;
   StyledButtonFace& operator=(const StyledButtonFace&) = delete;
 };
@@ -264,7 +270,6 @@ bool IconButton(const char* id, Icon icon, bool active, float size, const char* 
     look::hookFace(dl, p, ImVec2(p.x + size, p.y + size), theme::kRadius, faceState(hov, held, active), active ? glyph : 0, false);
   } else {
     if (bg) dl->AddRectFilled(p, ImVec2(p.x + size, p.y + size), bg, theme::kRadius);
-    if (active) dl->AddRect(p, ImVec2(p.x + size, p.y + size), theme::withAlpha(fg, P.dark ? 0.28f : 0.45f), theme::kRadius);
   }
   drawIcon(dl, icon, ImVec2(std::round(p.x + size * 0.5f), std::round(p.y + size * 0.5f)), std::round(size * 0.56f), fg);
   if (hint) {
@@ -332,7 +337,6 @@ bool ToolButton(const char* id, Icon icon, bool active, float size, const char* 
   else if (active) dl->AddRectFilled(p, q1, theme::mix(hov ? P.surface700 : P.surface800, lit, P.dark ? 0.14f : 0.16f), theme::kRadius);
   else if (hov) dl->AddRectFilled(p, q1, P.surface700, theme::kRadius);
   if (active) {
-    if (!look::styled()) dl->AddRect(p, q1, theme::withAlpha(lit, P.dark ? 0.35f : 0.55f), theme::kRadius);
     // lit underline, as the top bar's window toggles draw it (ToggleIcon): 2 px, 36 % of the cell
     const float uw = std::round(size * 0.36f), ux = std::round(p.x + (size - uw) * 0.5f);
     dl->AddRectFilled(ImVec2(ux, q1.y - 4), ImVec2(ux + uw, q1.y - 2), lit, 1.0f);
@@ -406,6 +410,54 @@ bool TextButton(const char* label, bool active, float width, const char* hint) {
     Tooltip(hint);
   }
   return r;
+}
+
+bool PrimaryButton(const char* label, float width, const char* hint, bool enabled) {
+  // K-172: the window's main action. Classic: an ImGui frame filled with the
+  // lit colour (a raised top line drawn over it); a control style draws its own
+  // primary face. Pressed darkens it for the click only; never the toggle look.
+  const auto& P = pal();
+  if (!enabled) ImGui::BeginDisabled();
+  const bool styled = look::styled();
+  if (!styled) {
+    ImGui::PushStyleColor(ImGuiCol_Button, theme::vec(P.hot));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, theme::vec(theme::mix(P.hot, P.paper, 0.12f)));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, theme::vec(theme::mix(P.hot, P.ink, 0.18f)));
+    ImGui::PushStyleColor(ImGuiCol_Text, theme::vec(theme::contrastText(P.hot)));
+    ImGui::PushStyleColor(ImGuiCol_Border, theme::vec(theme::mix(P.hot, P.ink, 0.3f)));
+  }
+  bool r = false;
+  const ImGuiStyle& st = ImGui::GetStyle();
+  if (label && label[0] == '\x1b') {  // icon label
+    const char* text = labelText(label);
+    const ImVec2 ts = ImGui::CalcTextSize(text);
+    ImGui::PushID(label);
+    {
+      const float bw = width > 0 ? width : ts.x + st.FramePadding.x * 2;
+      const StyledButtonFace face(ImGui::GetID("##icon"), "", bw, false, true);
+      r = ImGui::Button("##icon", ImVec2(bw, 0));
+    }
+    ImGui::PopID();
+    const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+    const ImVec2 pos(a.x + std::max(0.0f, (b.x - a.x - ts.x) * st.ButtonTextAlign.x), a.y + std::max(0.0f, (b.y - a.y - ts.y) * st.ButtonTextAlign.y));
+    drawLabel(ImGui::GetWindowDrawList(), pos, styled ? look::primaryText(P.hot, enabled ? 0 : look::Disabled) : ImGui::GetColorU32(ImGuiCol_Text), label);
+  } else {
+    const StyledButtonFace face(ImGui::GetID(tr(label)), tr(label), width, false, true);
+    r = ImGui::Button(tr(label), ImVec2(width, 0));
+  }
+  if (!styled) {
+    ImGui::PopStyleColor(5);
+    if (!ImGui::IsItemActive() && enabled) {  // raised: a light top edge (Classic)
+      const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+      ImGui::GetWindowDrawList()->AddLine(ImVec2(a.x + theme::kRadius, a.y + 1.5f), ImVec2(b.x - theme::kRadius, a.y + 1.5f), theme::withAlpha(P.paper, 0.35f), 1.0f);
+    }
+  }
+  if (!enabled) ImGui::EndDisabled();
+  if (hint) {
+    Hint(hint);
+    Tooltip(hint);
+  }
+  return r && enabled;
 }
 
 bool DangerButton(const char* label, bool armed, float width, const char* hint) {

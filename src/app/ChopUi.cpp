@@ -464,7 +464,7 @@ void draw(App& a) {
   }
   const float bw = 84.0f;
   ImGui::SameLine(ImGui::GetContentRegionMax().x - 2 * bw - theme::kS1);
-  bool applied = ui::TextButton(i18n::tr("Apply"), true, bw, i18n::tr("Keep the result (one undo step)"));
+  bool applied = ui::PrimaryButton(i18n::tr("Apply"), bw, i18n::tr("Keep the result (one undo step)"));
   ImGui::SameLine(0, theme::kS1);
   bool cancel = ui::TextButton(i18n::tr("Cancel"), false, bw);
   // The live preview follows the controls once no control is being dragged.

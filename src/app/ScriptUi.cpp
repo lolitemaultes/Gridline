@@ -629,7 +629,7 @@ void drawScriptTool(App& a) {
     S.sched.changed(wallNow(), false);
   }
   ImGui::SameLine();
-  bool accept = ui::TextButton("Accept", true, 90, "Keep the result (Enter)");
+  bool accept = ui::PrimaryButton("Accept", 90, "Keep the result (Enter)");
   ImGui::SameLine();
   if (ui::TextButton("Reset", false, 90, "Back to the script's default settings")) {
     S.values = S.script.form().params;
@@ -778,7 +778,7 @@ void drawScriptConsole(App& a, float height) {
                                       ImGuiInputTextFlags_EnterReturnsTrue);
   ui::FocusRing();
   ImGui::SameLine();
-  run |= ui::TextButton("Run", true, 80);
+  run |= ui::PrimaryButton("Run", 80);
   if (run && input[0]) {
     std::string code = input, err;
     lines.push_back({true, code});
@@ -893,7 +893,7 @@ void drawProjectScriptWindow(App& a) {
     for (size_t i = from; i < PW.log.size(); ++i) ImGui::TextColored(theme::vec(P.textFaint), "%s", PW.log[i].c_str());
     ImGui::PopTextWrapPos();
   }
-  bool run = ui::TextButton("Run", true, 90, "Apply the script to the project (one undo step, Enter)");
+  bool run = ui::PrimaryButton("Run", 90, "Apply the script to the project (one undo step, Enter)");
   ImGui::SameLine();
   if (ui::TextButton("Undo", false, 90, "Undo the last step")) a.doc.undo();
   ImGui::SameLine();

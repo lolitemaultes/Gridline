@@ -334,7 +334,7 @@ void downloadSection(App& a, float w) {
   } else {
     const std::string label = std::string(i18n::tr("Download")) + " (" + mb(st::modelDownloadBytes(m)) + ")";
     ImGui::BeginDisabled(j.running.load());
-    if (ui::TextButton(label.c_str(), true, 0, i18n::tr("From Meta's server; nothing else is sent"))) startDownload(m);
+    if (ui::PrimaryButton(label.c_str(), 0, i18n::tr("From Meta's server; nothing else is sent"))) startDownload(m);
     ImGui::SameLine(0, theme::kS2);
     if (ui::TextButton(i18n::tr("Import model file..."), false, 0, i18n::tr("A model file you already have (offline computers)")))
       menus::fileDialog(a, i18n::tr("Import a stem model file"), false, {".th"}, "", [&a](const std::string& p) {
@@ -458,14 +458,14 @@ void draw(App& a) {
       if (ui::TextButton(i18n::tr("Cancel"), false, bw) || ::gl::keys::escapePressed()) j.cancel = true;
       ImGui::SameLine(0, theme::kS2);
       ImGui::BeginDisabled(true);
-      ui::TextButton(i18n::tr("Split"), true, bw);
+      ui::PrimaryButton(i18n::tr("Split"), bw);
       ImGui::EndDisabled();
     } else {
       if (ui::TextButton(i18n::tr("Close"), false, bw)) open = false;
       ImGui::SameLine(0, theme::kS2);
       const bool can = have && nKeep > 0 && !j.running.load();
       ImGui::BeginDisabled(!can);
-      const bool go = ui::TextButton(i18n::tr("Split"), true, bw, i18n::tr("Runs in the background on this computer")) ||
+      const bool go = ui::PrimaryButton(i18n::tr("Split"), bw, i18n::tr("Runs in the background on this computer")) ||
                       (can && ImGui::IsWindowFocused() && ImGui::IsKeyPressed(ImGuiKey_Enter));
       ImGui::EndDisabled();
       if (trace()) {

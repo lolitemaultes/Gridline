@@ -140,6 +140,21 @@ void page1(Ctx& c, ImVec2 o, float W) {
     P.check(dl, ImVec2(bx, y + 112), ImVec2(bx + 96, y + 128), "Legato", bfl[i], 0);
     P.toggle(dl, ImVec2(bx, y + 138), ImVec2(bx + 34, y + 156), i == 3 ? 1.0f : 0.0f, bfl[i], 0);
   }
+  {  // K-172: the main action (primary): raised and filled; pressed only while held
+    const float bx = x0 + 110 * 5.0f;
+    P.label(dl, ImVec2(bx, y + 22), ImVec2(bx + 96, y + 36), "Primary", true);
+    const ImVec2 a0(bx, y + 42), a1(bx + 96, y + 66), b0(bx, y + 76), b1(bx + 96, y + 102);
+    P.Painter::button(dl, a0, a1, "Start", Primary, 0);
+    P.Painter::button(dl, b0, b1, "Pressed", Primary | Active, 0);
+    static bool told = false;  // dev geometry for the button-language test (once a run)
+    if (!told) {
+      told = true;
+      const float tx = x0 + 110 * 3.0f;  // the On column's text button
+      std::printf("gallery primary %.0f %.0f %.0f %.0f pressed %.0f %.0f %.0f %.0f on %.0f %.0f %.0f %.0f held %.0f %.0f %.0f %.0f\n", a0.x, a0.y, a1.x, a1.y,
+                  b0.x, b0.y, b1.x, b1.y, tx, y + 42, tx + 96, y + 66, x0 + 220, y + 42, x0 + 316, y + 66);
+      std::fflush(stdout);
+    }
+  }
   rowLabel(c, o.x + 10, y + 46, 130, "Text button");
   rowLabel(c, o.x + 10, y + 82, 130, "Icon buttons");
   rowLabel(c, o.x + 10, y + 113, 130, "Check box");

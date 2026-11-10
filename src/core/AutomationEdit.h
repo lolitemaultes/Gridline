@@ -73,7 +73,14 @@ Tick clipSpan(const Points& clip);
 // Removes points that a straight line through their neighbours already
 // reproduces within `tolerance` (value units). Kept points become straight
 // lines, except that a jump (two points on one tick) keeps its hold.
-Points thin(const Points& pts, double tolerance);
+// K-171: `result` is the curve the kept points get (Curve with no tension = a
+// straight line, Smooth = an eased S); the error is measured against that
+// curve, so a smooth result stays within the tolerance too.
+Points thin(const Points& pts, double tolerance, AutoShape result = AutoShape::Curve);
+// K-171: thins only the span of the selection (its first to last point; the
+// whole list when it has fewer than two points); points outside stay exactly
+// as they were. Returns the kept points of the span as the new selection.
+Selection thinRange(Points& pts, const Selection& sel, double tolerance, AutoShape result = AutoShape::Curve);
 // Replaces the points of [from, to] with `recorded` (absolute ticks, any
 // order), thinned with `tolerance`. Values just before/after the range are kept.
 void mergeRecorded(Points& pts, Points recorded, Tick from, Tick to, double tolerance);

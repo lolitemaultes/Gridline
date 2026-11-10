@@ -227,7 +227,7 @@ void drawDisplayConfirm(App& a) {
   ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), ImGui::GetCursorPosX() + kDialogW - rw - kw - theme::kS2));
   bool revert = ui::TextButton(revertL.c_str(), false, rw) || ::gl::keys::escapePressed();
   ImGui::SameLine(0, theme::kS2);
-  bool keep = ui::TextButton(keepL.c_str(), true, kw) || ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter);
+  bool keep = ui::PrimaryButton(keepL.c_str(), kw) || ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter);
   if (revert) {
     cf.revert();
     ImGui::CloseCurrentPopup();

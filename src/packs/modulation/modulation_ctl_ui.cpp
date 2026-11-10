@@ -186,7 +186,7 @@ void xyEditor(EditTarget& e) {
   dl->AddRectFilled(F.p(0, 240), F.p(kW, kH), K.panelLo, 4 * F.s, ImDrawFlags_RoundCornersBottom);
   dl->AddRectFilled(F.p(0, 240), F.p(kW, 295), K.wellC(), 4 * F.s, ImDrawFlags_RoundCornersBottom);
   int& axis = xyAxis()[e.key];
-  if (sk::button("##axis", F.p(12, 250), F.sz(36, 32), K, axis ? "Y" : "X", true)) axis = 1 - axis;
+  if (sk::button("##axis", F.p(12, 250), F.sz(36, 32), K, axis ? "Y" : "X", false)) axis = 1 - axis;
   if (ImGui::IsItemHovered()) e.a->setHint("Axis shown by the row of wheels (click to switch X / Y)");
   const int lvl = axis ? XyY : XyX, mn = axis ? XyYMin : XyXMin, mx = axis ? XyYMax : XyXMax, ten = axis ? XyYTension : XyXTension;
   sk::wheelL(e, lvl, F, 58, 244, 36, K, "LEVEL");

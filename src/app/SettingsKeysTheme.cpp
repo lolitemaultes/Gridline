@@ -158,7 +158,7 @@ void shortcutSettingsPage(App& a, float fieldW) {
     ImGui::TextColored(theme::vec(P.danger), "%s %s %s. %s %s?", keys::format(E.pendingChord).c_str(), tr("is already used by"), who.c_str(),
                        tr("Use it for"), cmd ? tr(cmd->label) : E.pendingId.c_str());
     ImGui::PopTextWrapPos();
-    if (ui::TextButton(tr("Reassign"), true, 0, tr("Takes the shortcut away from the other command"))) {
+    if (ui::PrimaryButton(tr("Reassign"), 0, tr("Takes the shortcut away from the other command"))) {
       commitChord(a, E.pendingId, E.pendingChord, E.pendingAdd);
       E.pendingId.clear();
     }

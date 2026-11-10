@@ -11,6 +11,7 @@
 #include <vector>
 #include "Check.h"
 #include "core/Document.h"
+#include "core/AutomationEdit.h"
 #include "core/MidiRecord.h"
 #include "core/MidiSync.h"
 #include "core/MidiTemplates.h"
@@ -426,9 +427,26 @@ int main() {
     for (int t = 0; t <= 100; t += 10) r.controller(vol, t / 100.0, t);
     r.end(doc, 110);
     const PatternAutomation* lane = findPatternLane(*doc.song().pattern(pat), vol.owner, vol.index);
-    expect(lane && lane->points.size() == 11 && lane->points[5].pos == 50 && near(lane->points[5].value, 0.5, 1e-6) &&
-               lane->points[5].shape == AutoShape::Hold,
-           "controller recording writes pattern automation (hold points)");
+    // K-171: the take is thinned (0.4 %): a steady ramp keeps only its ends, as a straight line.
+    expect(lane && lane->points.size() == 2 && lane->points[0].pos == 0 && lane->points[1].pos == 100 &&
+               lane->points[1].shape == AutoShape::Curve && near(autoedit::valueAt(lane->points, 50.0), 0.5, 1e-6),
+           "controller recording writes pattern automation (thinned to a line)");
+    {  // K-171: a dense controller sweep (one move a tick) is thinned to few points within 0.4 %
+      const ObjectId p3 = doc.addPattern("CC sweep");
+      NoteRecorder rc;
+      rc.beginPattern(doc, p3, o, bar);
+      std::vector<double> sent;
+      for (int t = 0; t < 960; ++t) {
+        const double v = 0.5 + 0.4 * std::sin(t * 0.013);
+        rc.controller(vol, v, t);
+        sent.push_back(v);
+      }
+      rc.end(doc, 960);
+      const PatternAutomation* l3 = findPatternLane(*doc.song().pattern(p3), vol.owner, vol.index);
+      double worst = 0;
+      for (int t = 0; l3 && t < 960; ++t) worst = std::max(worst, std::fabs(autoedit::valueAt(l3->points, t) - sent[static_cast<size_t>(t)]));
+      expect(l3 && l3->points.size() < 60 && worst < 0.0045, "a dense controller sweep records as few points, within 0.4 %");
+    }
     // Song mode: automation clips + notes into a placed clip.
     NoteRecorder rs;
     RecordOptions os;

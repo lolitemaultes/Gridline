@@ -51,14 +51,44 @@ message.
   the clip menu.
 - **In the browser.** Current project > Automation lists the pattern clips as "in <pattern>";
   double-click one to edit it.
-- **In the piano roll.** The event lane at the bottom of the piano roll still shows and edits a
-  pattern clip's points (as steps), for the selected channel's controls.
+- **In the piano roll.** The lane at the bottom of the piano roll shows and edits a pattern
+  clip's points for the selected channel's controls (choose one from the menu at the lane's
+  name). See [The automation lane in the piano roll](#the-automation-lane-in-the-piano-roll).
 
 The editor's title shows "in <pattern>" for a pattern's clip. Its side panel renames the clip
 and has **Show the pattern**. A clip's menu (rack row, pattern menu) has **Edit in the
 automation editor**, **Show in the piano roll**, **Rename**, **Colour**, **Move to the
 playlist** (one playlist automation clip under every clip of the pattern, sounding the same) and
 **Delete**. Every edit is one undo step; dragging a point is one step however long the drag is.
+
+### The automation lane in the piano roll
+
+The lane works like the automation clip editor, with the piano roll's tools:
+
+- **Draw and Paint** draw values as you drag; **right-drag** draws a straight line. The chip
+  under the lane's name chooses the curve they draw: **Stepped** (a value on every grid step),
+  **Linear** or **Smooth**. A Linear or Smooth stroke keeps only the few points its shape needs,
+  and a Linear or Smooth line is just its two ends.
+- **Select** (or Ctrl+drag with any tool) drags a box around points; Shift+click adds or removes
+  one. Drag a selected point to move the selection (Shift: one direction only, Alt: no snap).
+- **Delete** erases the points you drag over. The last point always stays, so the lane keeps
+  its name, colour and range; use **Delete this lane** in the lane's menu to remove it.
+- **Right-click a point** for its menu: delete, its curve (Stepped, Linear, Smooth or any other
+  curve), reset tension, copy, simplify, open in the automation editor. The chip's menu also
+  sets the curve of the selected points.
+- After a click in the lane, the editing keys act on its points: Delete, Ctrl+A, Ctrl+D,
+  Ctrl+C, Ctrl+X, Ctrl+V (pastes over the copied span after the selection, or at the playhead
+  while the pattern plays) and Q (quantize). A click in the notes gives the keys back to them.
+- **Simplify points...** (the chip's menu, the lane's menu or a point's menu) thins dense
+  points, such as recorded controller moves, to a few Linear or Smooth points within a
+  tolerance you set, with a live preview; it works on the selection, or on the whole lane when
+  nothing is selected. The automation clip editor's **Thin out points...** has the same choice.
+- Drag the bar above the lane to make it taller or shorter; double-click it for the automatic
+  height. The height is remembered.
+
+Points copied in the lane paste in the automation clip editor and the other way round. Recorded
+controller moves are thinned as they are written (within 0.4 %, which you cannot hear), so a
+take holds a few points instead of one per message.
 
 ### Patterns with clips
 

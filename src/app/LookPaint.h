@@ -139,6 +139,10 @@ class Painter {
   virtual void hookInset(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float r, ImU32 hint) { (void)hint, sunken(dl, p0, p1, std::min(r, tk.radiusSm), tk.field); }
   virtual ImU32 hookTint(ImU32 fill) { return fill; }
   virtual void hookFace(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float r, int state, ImU32 role, bool rest);
+  // K-172: a primary (main action) face; token driven (shadow, glow), so a
+  // flat direction draws it flat and a glowing one adds its bloom.
+  virtual void primary(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float r, int state, ImU32 role);
+  virtual ImU32 primaryText(ImU32 role, int state);
 
   // Building blocks the directions share.
   virtual void raised(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float r, int state);   // button face

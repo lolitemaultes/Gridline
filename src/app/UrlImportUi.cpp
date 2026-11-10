@@ -567,7 +567,7 @@ void urlRow(App& a, bool enabled) {
   ImGui::SameLine(0, theme::kS2);
   if (ui::TextButton("Paste", false, pasteW, "Paste a link from the clipboard")) paste();
   ImGui::SameLine(0, theme::kS2);
-  const bool go = ui::TextButton("Fetch", true, fetchW, "Read the link: title, length, playlist items");
+  const bool go = ui::PrimaryButton("Fetch", fetchW, "Read the link: title, length, playlist items");
   ImGui::EndDisabled();
   if (enabled && (enter || go)) fetch(a);
 }
@@ -783,7 +783,7 @@ void drawPreview(App& a) {
   const bool cancel = ui::TextButton("Cancel", false, wc) || ::gl::keys::escapePressed();
   ImGui::SameLine(0, theme::kS2);
   ImGui::BeginDisabled(!ok);
-  const bool go = ui::TextButton("Import", true, wi);
+  const bool go = ui::PrimaryButton("Import", wi);
   ImGui::EndDisabled();
   if (cancel) close();
   else if (go && ok) startImport(a);
@@ -847,7 +847,7 @@ void drawError(App& a) {
   rightAlign(wb + wc + theme::kS2);
   const bool back = ui::TextButton("Back", false, wb);
   ImGui::SameLine(0, theme::kS2);
-  const bool cl = ui::TextButton("Close", true, wc) || ::gl::keys::escapePressed();
+  const bool cl = ui::PrimaryButton("Close", wc) || ::gl::keys::escapePressed();
   if (back) {
     s.screen = s.errorBack;
     s.focusUrl = s.errorBack == Screen::Entry;

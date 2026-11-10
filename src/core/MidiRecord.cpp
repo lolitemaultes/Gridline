@@ -2,11 +2,18 @@
 #include <algorithm>
 #include <cmath>
 #include "Automation.h"
+#include "AutomationEdit.h"
 #include "PatternAutomation.h"
 #include "Timeline.h"
 #include "TrackModes.h"
 
 namespace gl {
+
+namespace {
+// K-171: recorded controller moves are thinned to this error (value units), as
+// recording a knob's moves already is: inaudible, and far fewer points.
+constexpr double kRecordThin = 0.004;
+}  // namespace
 
 const char* autoRecordTargetName(AutoRecordTarget t) {
   static const char* n[] = {"Automatic", "Pattern events", "Automation clips"};
@@ -219,6 +226,7 @@ void NoteRecorder::commitAutomation(Document& doc) {
         c.track = track;
         c.start = start;
         c.length = std::max<Tick>(bar, (last - start + bar) / bar * bar);
+        ac.points = autoedit::thin(ac.points, kRecordThin);  // K-171: a few points, within 0.4 %
         so.automations.push_back(std::move(ac));
         so.playlist.push_back(c);
       });
@@ -229,7 +237,7 @@ void NoteRecorder::commitAutomation(Document& doc) {
       const Tick t0 = static_cast<Tick>(std::floor(pts.front().first)) - origin;
       const Tick t1 = static_cast<Tick>(std::ceil(pts.back().first)) - origin;
       doc.editPattern(pattern_, "record automation", [&](Pattern& p) {
-        std::vector<AutoPoint> out;
+        std::vector<AutoPoint> out, take;
         const PatternAutomation* lane = findPatternLane(p, pid.owner, pid.index);
         if (lane)
           for (const auto& q : lane->points)
@@ -239,8 +247,13 @@ void NoteRecorder::commitAutomation(Document& doc) {
           q.pos = std::max<Tick>(0, static_cast<Tick>(std::llround(t)) - origin);
           q.value = static_cast<float>(lane ? paramToAutomation(*lane, v) : v);  // J-173: into the clip's range
           q.shape = AutoShape::Hold;
-          out.push_back(q);
+          if (!take.empty() && take.back().pos == q.pos)
+            take.back() = q;  // one point per tick (the last value wins)
+          else
+            take.push_back(q);
         }
+        take = autoedit::thin(take, kRecordThin);  // K-171: a few points, within 0.4 %
+        out.insert(out.end(), take.begin(), take.end());
         std::stable_sort(out.begin(), out.end(), [](const AutoPoint& a, const AutoPoint& b) { return a.pos < b.pos; });
         // One point per tick (the last value wins).
         std::vector<AutoPoint> dedup;

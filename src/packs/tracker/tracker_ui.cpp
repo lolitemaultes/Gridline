@@ -465,7 +465,7 @@ void editPopups(App& a, const PluginTarget& t, Ed& ed, Edit& e, const Instrument
   const Span sel = selectionOf(ed, k);
   auto apply = [&](const char* text) {
     ImGui::Dummy(ImVec2(0, 4));
-    const bool go = ui::TextButton(text, true, 96);
+    const bool go = ui::PrimaryButton(text, 96);
     ImGui::SameLine(0, 6);
     if (ui::TextButton(i18n::tr("Cancel"), false, 96)) ImGui::CloseCurrentPopup();
     return go;

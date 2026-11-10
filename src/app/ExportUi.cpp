@@ -706,7 +706,7 @@ void drawRenderDialog(App& a) {
   ui::DialogFooter(96 * 2 + theme::kS2);
   if (ui::TextButton("Cancel", false, 96)) dlg.open = false;
   ImGui::SameLine(0, theme::kS2);
-  if (ui::TextButton("Start", true, 96) || (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) && ImGui::IsKeyPressed(ImGuiKey_Enter)))
+  if (ui::PrimaryButton("Start", 96) || (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) && ImGui::IsKeyPressed(ImGuiKey_Enter)))
     startJob(a);
   ImGui::End();
 }
@@ -785,7 +785,7 @@ void drawProgress(App& a) {
       if (!o.files.empty()) ImGui::TextColored(theme::vec(P.textFaint), "%s", theme::fitText(fs::path(o.files[0]).parent_path().string().c_str(), 420));
       ui::EndSection();
       ui::DialogFooter(96);
-      if (ui::TextButton("OK", true, 96) || ImGui::IsKeyPressed(ImGuiKey_Enter)) open = false;
+      if (ui::PrimaryButton("OK", 96) || ImGui::IsKeyPressed(ImGuiKey_Enter)) open = false;
     }
   }
   ImGui::End();
@@ -880,7 +880,7 @@ void drawMidiImport(App& a) {
     ui::DialogFooter(96 * 2 + theme::kS2);
     if (ui::TextButton("Cancel", false, 96)) midiDlg.open = false;
     ImGui::SameLine(0, theme::kS2);
-    if (ui::TextButton("Accept", true, 96)) {
+    if (ui::PrimaryButton("Accept", 96)) {
       MidiImportOptions o = midiDlg.o;
       o.tracks.clear();
       o.midiChannels.clear();
@@ -1000,7 +1000,7 @@ void drawMissing(App& a) {
     }
     ImGui::SameLine(0, theme::kS2);
     ImGui::BeginDisabled(missing.found.found.empty());
-    if (ui::TextButton(("Relink " + std::to_string(missing.found.found.size())).c_str(), true, 120)) {
+    if (ui::PrimaryButton(("Relink " + std::to_string(missing.found.found.size())).c_str(), 120)) {
       const auto map = missing.found.found;
       int n = 0;
       a.doc.editSong("relink samples", [&](Song& s) { n = relinkFiles(s, map); });

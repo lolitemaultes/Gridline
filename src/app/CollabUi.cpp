@@ -381,7 +381,7 @@ bool noticeBar(const char* id, const std::string& text, ImU32 tone, const char* 
   if (button) {
     ImGui::SameLine();
     ImGui::SetCursorScreenPos(ImVec2(p.x + w - theme::kS1 - bw, p.y + theme::kS1));
-    clicked = ui::TextButton(button, primary, bw);
+    clicked = primary ? ui::PrimaryButton(button, bw) : ui::TextButton(button, false, bw);  // K-172
   }
   ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + h));
   ImGui::Dummy(ImVec2(w, 0));
@@ -906,7 +906,7 @@ void renameEditor(App& a, float x) {
   ui::FocusRing();
   ImGui::SameLine(0, theme::kS2);
   ImGui::BeginDisabled(name.empty() || nothing);
-  const bool go = ui::TextButton("Rename##inline", true, okW, "Renames the project for everyone") || (enter && !name.empty() && !nothing);
+  const bool go = ui::PrimaryButton("Rename##inline", okW, "Renames the project for everyone") || (enter && !name.empty() && !nothing);
   ImGui::EndDisabled();
   ImGui::SameLine(0, theme::kS2);
   if (ui::TextButton("Cancel##rename", false, cw) || escape) {
@@ -1288,7 +1288,7 @@ void drawInvite(App& a, Session& s, Hub& hub) {
     }
     ImGui::SameLine(0, theme::kS2);
     alignRight(ui::TextButtonWidth("Create invite"));
-    if (ui::TextButton("Create invite", true, 0, "Makes a one-time code for one person")) {
+    if (ui::PrimaryButton("Create invite", 0, "Makes a one-time code for one person")) {
       u.inviteId = hub.createInvite(u.inviteMinutes);
       u.reinviteFor.clear();
       a.settings.set("collab.inviteMinutes", u.inviteMinutes);
@@ -1326,7 +1326,7 @@ void drawInvite(App& a, Session& s, Hub& hub) {
     note(tr("Send this code to the person you are inviting. It works once."));
     if (!u.reinviteFor.empty()) note(fmt1(tr("For %s only: they come back as the same member."), u.reinviteFor), P.textDim);
     copyField(a, "##invcode", iv->code, 4);
-    if (ui::TextButton("Copy", true, 0, "Copy the invite code")) ImGui::SetClipboardText(iv->code.c_str());
+    if (ui::TextButton("Copy", false, 0, "Copy the invite code")) ImGui::SetClipboardText(iv->code.c_str());
     ImGui::SameLine(0, theme::kS2);
     if (ui::TextButton("Save as file...")) saveCodeFile(a, iv->code, "Gridline invite.txt");
     ImGui::SameLine(0, theme::kS2);
@@ -1344,7 +1344,7 @@ void drawInvite(App& a, Session& s, Hub& hub) {
     ui::FocusRing();
     ImGui::SameLine(0, theme::kS2);
     ImGui::BeginDisabled(u.replyBuf[0] == 0);
-    if (ui::TextButton("Use reply", true)) {
+    if (ui::TextButton("Use reply")) {
       std::string err;
       if (hub.acceptReply(u.replyBuf, &err)) u.replyBuf[0] = 0;
       else a.notify(err, true);
@@ -1379,7 +1379,7 @@ void drawReconnect(App& a, Session& s, Hub& hub) {
   } else {
     ImGui::BeginGroup();
     copyField(a, "##rccode", code, 3);
-    if (ui::TextButton("Copy##rc", true)) ImGui::SetClipboardText(code.c_str());
+    if (ui::TextButton("Copy##rc")) ImGui::SetClipboardText(code.c_str());
     ImGui::EndGroup();
   }
   label("Their code", x);
@@ -1389,7 +1389,7 @@ void drawReconnect(App& a, Session& s, Hub& hub) {
   ui::FocusRing();
   ImGui::SameLine(0, theme::kS2);
   ImGui::BeginDisabled(u.reconnectBuf[0] == 0);
-  if (ui::TextButton("Connect", true)) {
+  if (ui::PrimaryButton("Connect")) {
     std::string err;
     if (hub.acceptReconnectCode(u.reconnectBuf, &err)) u.reconnectBuf[0] = 0;
     else a.notify(err, true);
@@ -1626,7 +1626,7 @@ void recentProjects(App& a) {
             if (!ctlOf(a).locateProject(id, dir, &err)) a.notify(err, true);
           });
         }
-      } else if (ui::TextButton(b1, true, 0, "A normal project in a new folder: the music and its audio, nothing shared")) {
+      } else if (ui::PrimaryButton(b1, 0, "A normal project in a new folder: the music and its audio, nothing shared")) {
         keepCopyOfFolder(a, k.folder, k.name);
       }
       if (b2) {
@@ -1699,7 +1699,7 @@ void shareSection(App& a, bool gateOk) {
   const float bw = std::max(120.0f, ui::TextButtonWidth("Make collaborative"));
   alignRight(bw);
   ImGui::BeginDisabled(!can || name.empty() || u.shareTaken);
-  if (ui::TextButton("Make collaborative", true, bw, "Copies the project into the folder and shares it from there") || (enter && can && !name.empty() && !u.shareTaken))
+  if (ui::PrimaryButton("Make collaborative", bw, "Copies the project into the folder and shares it from there") || (enter && can && !name.empty() && !u.shareTaken))
     shareNow(a);
   ImGui::EndDisabled();
   ui::EndSection();
@@ -2045,7 +2045,7 @@ void joinWindow(App& a) {
         ImGui::Indent(14);
         note(tr("Send them this reply code; they paste it into their invite."));
         copyField(a, "##replycode", jv.reply, 3);
-        if (ui::TextButton("Copy", true)) ImGui::SetClipboardText(jv.reply.c_str());
+        if (ui::TextButton("Copy")) ImGui::SetClipboardText(jv.reply.c_str());
         ImGui::SameLine(0, theme::kS2);
         if (ui::TextButton("Save as file...")) saveCodeFile(a, jv.reply, "Gridline reply.txt");
         ImGui::Unindent(14);
@@ -2085,7 +2085,7 @@ void joinWindow(App& a) {
     ImGui::EndChild();
     if (failed) {
       ui::DialogFooter(ui::TextButtonWidth("Close"));
-      if (ui::TextButton("Close", true)) {
+      if (ui::PrimaryButton("Close")) {
         u.joining = false;
         c.close();
         a.showJoin = false;
@@ -2187,7 +2187,7 @@ void joinWindow(App& a) {
   if (ui::TextButton("Cancel##joinwin", false, cw)) a.showJoin = false;
   ImGui::SameLine(0, theme::kS2);
   ImGui::BeginDisabled(!u.parsedOk || expired || !gateOk);
-  if (ui::TextButton("Join", true, jw)) {
+  if (ui::PrimaryButton("Join", jw)) {
     if (!c.profileReady()) {
       a.settingsTab = 11;
       a.showSettings = true;
@@ -2267,7 +2267,7 @@ void conflictColumn(App& a, Session& s, const ConflictTracker& ct, const Conflic
   if (s.isAdmin()) {
     ImGui::SetCursorScreenPos(ImVec2(ix, p.y + pad + headH + theme::kS1 + bodyH + theme::kS2));
     ImGui::PushID(static_cast<int>(sd.site & 0x7fffffff));
-    if (ui::TextButton(u.reviewTab == 0 ? "Keep this one" : "Restore this one", true)) {
+    if (ui::PrimaryButton(u.reviewTab == 0 ? "Keep this one" : "Restore this one")) {
       if (s.previewing()) s.endPreview();
       std::string err;
       if (!s.resolve(c.object, sd.site, &err)) a.notify(err, true);
@@ -2452,7 +2452,7 @@ void banner(App& a) {
   ui::StatusDot(P.hot);
   ImGui::TextColored(theme::vec(P.text), "%s", text.c_str());
   ImGui::SameLine(0, theme::kS3);
-  if (ui::TextButton("Update", true)) updui::showRequired(a, fmt1(tr("Update to Gridline %s"), g.latest), g.latest);
+  if (ui::PrimaryButton("Update")) updui::showRequired(a, fmt1(tr("Update to Gridline %s"), g.latest), g.latest);
   ImGui::SameLine(0, theme::kS2);
   if (ui::TextButton("Later")) u.bannerClosed = true;
   ImGui::End();
@@ -2594,7 +2594,7 @@ void exitDialog(App& a) {
     if (a.collab) a.collab->dismissExit();
   }
   ImGui::SameLine(0, theme::kS2);
-  if (ui::TextButton("Keep a private copy...", true, 0, "Choose where the new folder goes")) {
+  if (ui::PrimaryButton("Keep a private copy...", 0, "Choose where the new folder goes")) {
     u.exitErr.clear();
     u.exitChoosing = true;
     ImGui::CloseCurrentPopup();
@@ -2741,7 +2741,7 @@ void leaveDialog(App& a) {
   if (ui::TextButton("Cancel##leave") || ::gl::keys::escapePressed()) close();
   if (waitOffer) {
     ImGui::SameLine(0, theme::kS2);
-    if (ui::TextButton("Wait for sync", true, 0, "Goes on by itself once a collaborator has your changes")) u.leaveWait = true;
+    if (ui::PrimaryButton("Wait for sync", 0, "Goes on by itself once a collaborator has your changes")) u.leaveWait = true;
   }
   ImGui::SameLine(0, theme::kS2);
   if (u.leaveDialog && ui::DangerButton(action, true)) go();
@@ -2780,7 +2780,7 @@ void cleanupDialog(App& a) {
   const char* act = "Delete unused files";
   modalFooter(u.unused.empty() ? ui::TextButtonWidth("Close##clean") : buttonsWidth({"Cancel##clean", act}));
   if (u.unused.empty()) {
-    if (ui::TextButton("Close##clean", true) || ::gl::keys::escapePressed()) {
+    if (ui::PrimaryButton("Close##clean") || ::gl::keys::escapePressed()) {
       u.cleanupOpen = false;
       ImGui::CloseCurrentPopup();
     }
@@ -2819,7 +2819,7 @@ void duplicateDialog(App& a) {
   const float bw = std::max({ui::TextButtonWidth("Open the original"), ui::TextButtonWidth("Make this a private copy"), ui::TextButtonWidth("Use this folder instead")});
   const float cw = std::max(40.0f, ImGui::GetContentRegionAvail().x - bw - theme::kS3);
   std::string open;
-  if (ui::TextButton("Open the original", true, bw)) open = u.dupOf;
+  if (ui::PrimaryButton("Open the original", bw)) open = u.dupOf;
   ImGui::SameLine(0, theme::kS3);
   ImGui::BeginGroup();
   ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + cw);

@@ -389,7 +389,7 @@ void drawAvailable(App& a) {
     midPressed = ui::TextButton(mid, false, wMid);
   }
   ImGui::SameLine(0, theme::kS2);
-  bool go = ui::TextButton("Download", true, wGo) || ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter);
+  bool go = ui::PrimaryButton("Download", wGo) || ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter);
 
   update::Prefs p = update::loadPrefs(a.settings);
   if (cancelRequired) {
@@ -447,7 +447,7 @@ void drawResult(App& a) {
     rightAlign(wc + wp2 + theme::kS2);
     const bool cancel = ui::TextButton("Cancel", false, wc) || ::gl::keys::escapePressed();
     ImGui::SameLine(0, theme::kS2);
-    if (ui::TextButton("Open the releases page", true, wp2)) {
+    if (ui::PrimaryButton("Open the releases page", wp2)) {
       openPage(update::kReleasesPage);
       s.required = false;
       closeDialog();
@@ -469,7 +469,7 @@ void drawResult(App& a) {
   ImGui::Dummy(ImVec2(kDialogW, theme::kS1 + theme::kS2));
   const float w = buttonW("OK");
   rightAlign(w);
-  if (ui::TextButton("OK", true, w) || ::gl::keys::escapePressed() || ImGui::IsKeyPressed(ImGuiKey_Enter) ||
+  if (ui::PrimaryButton("OK", w) || ::gl::keys::escapePressed() || ImGui::IsKeyPressed(ImGuiKey_Enter) ||
       ImGui::IsKeyPressed(ImGuiKey_KeypadEnter))
     closeDialog();
 }

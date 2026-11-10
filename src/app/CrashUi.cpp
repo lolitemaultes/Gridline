@@ -202,7 +202,7 @@ int drawBody(const Content& c, ImFont* bold, ImFont* mono, double& copiedAt, flo
     first = false;
     ImGui::PushID(i);
     const float w = ui::TextButtonWidth(c.buttons[i]);
-    const bool hit = i == c.dangerButton ? ui::DangerButton(c.buttons[i], false, w) : ui::TextButton(c.buttons[i], i == 0, w);
+    const bool hit = i == c.dangerButton ? ui::DangerButton(c.buttons[i], false, w) : (i == 0 ? ui::PrimaryButton(c.buttons[i], w) : ui::TextButton(c.buttons[i], false, w));
     if (hit) clicked = i;
     ImGui::PopID();
   }

@@ -189,7 +189,11 @@ inline void stepper(App& a, const PluginTarget& t, int k) {
   ImGui::PushID(k);
   if (ui::TextButton("<", false, 20)) a.doc.setParam(t.pid(k), std::max(0, cur - 1), false);
   ImGui::SameLine(0, 2);
-  ui::TextButton(d->format(cur).c_str(), true, 58);
+  {  // the current choice: a read-out (an LCD), not a button
+    const ImVec2 at = ImGui::GetCursorScreenPos(), sz(58, ImGui::GetFrameHeight());
+    ImGui::Dummy(sz);
+    ui::Lcd(ImGui::GetWindowDrawList(), at, sz, d->format(cur).c_str(), false, false);
+  }
   ImGui::SameLine(0, 2);
   if (ui::TextButton(">", false, 20)) a.doc.setParam(t.pid(k), std::min(n - 1, cur + 1), false);
   ImGui::PopID();

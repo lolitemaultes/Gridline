@@ -331,6 +331,53 @@ int main() {
     for (const auto& q : lane) inRange = inRange && (q.pos == 0 || q.pos == 2000 || (q.pos >= 100 && q.pos <= 900));
     expect(inRange && lane.front().pos == 0 && lane.back().pos == 2000 && lane.size() > 4, "recorded points replace only the recorded span");
   }
+  // K-171: thinning to a smooth curve stays within the tolerance of the smooth result.
+  {
+    ae::Points rec;
+    for (int t = 0; t <= 960; t += 2) rec.push_back(pt(t, static_cast<float>(0.5 + 0.45 * std::sin(2 * kPi * t / 480.0)), 0, AutoShape::Hold));
+    for (double tol : {0.005, 0.02}) {
+      const ae::Points th = ae::thin(rec, tol, AutoShape::Smooth);
+      double worst = 0;
+      bool shapes = true;
+      size_t eased = 0;
+      for (const auto& r : rec) worst = std::max(worst, std::fabs(ae::valueAt(th, static_cast<double>(r.pos)) - r.value));
+      for (size_t i = 1; i < th.size(); ++i) {
+        shapes = shapes && (th[i].shape == AutoShape::Smooth || th[i].shape == AutoShape::Curve) && th[i].tension == 0;
+        eased += th[i].shape == AutoShape::Smooth;
+      }
+      expect(shapes && eased > 0 && worst <= tol + 1e-4 && th.size() < rec.size() / 10, "thin to Smooth: few eased points within the tolerance");
+      // An eased result never needs more points than straight thinning.
+      expect(th.size() <= ae::thin(rec, tol).size(), "thin to Smooth: never more points than straight segments");
+    }
+    // A sine thins to fewer smooth points than straight ones at a coarse tolerance.
+    expect(ae::thin(rec, 0.02, AutoShape::Smooth).size() < ae::thin(rec, 0.02).size(), "thin to Smooth: an eased curve needs fewer points");
+    // One eased sweep becomes its two ends.
+    ae::Points sweep;
+    for (int t = 0; t <= 480; t += 4) sweep.push_back(pt(t, static_cast<float>(0.2 + 0.6 * (0.5 - 0.5 * std::cos(kPi * t / 480.0))), 0, AutoShape::Hold));
+    const ae::Points sw = ae::thin(sweep, 0.005, AutoShape::Smooth);
+    expect(sw.size() == 2 && sw[1].shape == AutoShape::Smooth, "thin to Smooth: one eased sweep keeps its two ends");
+    // Tolerance 0 keeps every point that is not exactly on the line.
+    ae::Points flat = {pt(0, 0.2f), pt(10, 0.3f), pt(20, 0.1f)};
+    expect(ae::thin(flat, 0.0).size() == 3, "thin: tolerance 0 keeps a point off the line");
+  }
+  {  // thinRange: only the selection's span; points outside are untouched
+    ae::Points p;
+    for (int t = 0; t <= 400; t += 4) p.push_back(pt(t, static_cast<float>(t / 400.0), 0, AutoShape::Hold));
+    const ae::Points before = p;
+    ae::Selection sel;
+    for (int i = 20; i <= 60; ++i) sel.insert(i);
+    const ae::Selection out = ae::thinRange(p, sel, 0.01);
+    bool same = true;
+    for (int i = 0; i < 20; ++i) same = same && p[static_cast<size_t>(i)] == before[static_cast<size_t>(i)];
+    const size_t tail = before.size() - 61;
+    for (size_t k = 0; k < tail; ++k) same = same && p[p.size() - 1 - k] == before[before.size() - 1 - k];
+    expect(same && p.size() == 20 + 2 + tail, "thinRange: the span becomes its ends, everything else stays as it was");
+    expect(out.size() == 2 && *out.begin() == 20 && *out.rbegin() == 21 && p[21].shape == AutoShape::Curve && p[20].shape == AutoShape::Hold,
+           "thinRange: returns the kept points; the curve into the span is kept");
+    ae::Points all = before;
+    const ae::Selection whole = ae::thinRange(all, {}, 0.01);
+    expect(all.size() == 2 && whole.size() == all.size(), "thinRange: no selection thins everything");
+  }
 
   // ---------------------------------------------------------------- shapes ----
   const fs::path root = fs::temp_directory_path() / "gridline-test-autoedit";

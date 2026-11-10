@@ -257,17 +257,49 @@ void Painter::raised(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float r, int state) {
   dl->AddRect(p0, p1, alpha(tk.faceLine, dis ? 0.5f : 1.0f), r, 0, 1.0f);
 }
 void Painter::hookFace(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float r, int state, ImU32 role, bool rest) {
+  if (state & Primary) return primary(dl, p0, p1, r, state & ~Primary, role);
   const bool on = state & On, act = state & Active, hov = state & Hover;
   if (!rest && !on && !act && !hov) return;  // flat buttons have no face at rest
   const float rr = std::min(r, tk.radius);
-  if (act) return sunken(dl, p0, p1, rr, mix(tk.field, tk.faceLo, 0.5f));
+  // K-172: three states that never look alike: held = a neutral inset for the
+  // moment of the click; on = a lit inset (tinted, no outline); held while on
+  // = the lit inset pressed deeper.
   if (on) {
     const ImU32 lit = roleOr(role, tk.hot);
-    sunken(dl, p0, p1, rr, mix(tk.field, lit, hov ? 0.2f : 0.15f));
-    dl->AddRect(p0, p1, alpha(lit, 0.4f), rr);
+    sunken(dl, p0, p1, rr, mix(tk.field, lit, act ? 0.10f : hov ? 0.22f : 0.17f));
+    if (act) innerShadow(dl, p0, p1, rr, 3.0f, tk.shadow * 0.6f);
+    return;
+  }
+  if (act) {
+    sunken(dl, p0, p1, rr, darken(mix(tk.field, tk.faceLo, 0.5f), 0.06f));
+    innerShadow(dl, p0, p1, rr, 3.0f, tk.shadow * 0.5f);
     return;
   }
   raised(dl, p0, p1, rr, state & (Hover | Disabled));
+}
+void Painter::primary(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float r, int state, ImU32 role) {
+  const bool act = state & Active, hov = state & Hover, dis = state & Disabled;
+  const float rr = std::min(r, tk.radius);
+  ImU32 fill = roleOr(role, tk.hot);
+  if (dis) fill = mix(fill, tk.faceLo, 0.6f);
+  if (act) {  // pressed for the click: sunk, no shadow, darker
+    gradRect(dl, p0, p1, darken(fill, 0.16f), darken(fill, 0.06f), rr);
+    innerShadow(dl, p0, p1, rr, 2.0f, 0.35f + 0.3f * tk.shadow);
+    dl->AddRect(p0, p1, darken(fill, 0.3f), rr);
+    return;
+  }
+  if (tk.glow > 0 && !dis) shadowRect(dl, p0, p1, rr, 4.0f, 0.0f, 0.18f * tk.glow);  // a little light around it
+  if (tk.shadow > 0) shadowRect(dl, p0, p1, rr, 2.5f, 1.5f, tk.shadow * (dis ? 0.3f : 1.0f));
+  const ImU32 top = lighten(fill, hov ? 0.2f : 0.12f), bot = hov ? lighten(fill, 0.04f) : darken(fill, 0.06f);
+  if (tk.shadow > 0) gradRect(dl, p0, p1, top, bot, rr);
+  else dl->AddRectFilled(p0, p1, hov ? lighten(fill, 0.08f) : fill, rr);  // a flat direction stays flat
+  if (tk.shadow > 0 && !dis) dl->AddLine(ImVec2(p0.x + rr, p0.y + 0.5f), ImVec2(p1.x - rr, p0.y + 0.5f), alpha(IM_COL32_WHITE, 0.35f), 1.0f);
+  dl->AddRect(p0, p1, darken(fill, 0.25f), rr);
+}
+ImU32 Painter::primaryText(ImU32 role, int state) {
+  const ImU32 fill = roleOr(role, tk.hot);
+  const ImU32 t = theme::contrastText(fill);
+  return (state & Disabled) ? alpha(t, 0.55f) : t;
 }
 void Painter::sunken(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float r, ImU32 fill) {
   dl->AddRectFilled(p0, p1, fill, r);
@@ -433,9 +465,14 @@ void Painter::led(ImDrawList* dl, ImVec2 c, float r, bool on, float level, ImU32
 }
 
 void Painter::button(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const char* lbl, int state, ImU32 role) {
-  raised(dl, p0, p1, tk.radius, state & ~On);
+  if (state & Primary) {
+    primary(dl, p0, p1, tk.radius, state & ~Primary, role);
+    textIn(dl, Font::Bold, 13, p0, ImVec2(p1.x, p1.y + ((state & Active) ? 2 : 0)), primaryText(role, state), lbl);
+    return;
+  }
   const bool on = state & On;
-  if (on) dl->AddRectFilled(ImVec2(p0.x + 1, p0.y + 1), ImVec2(p1.x - 1, p1.y - 1), alpha(roleOr(role, tk.hot), 0.22f), tk.radius);
+  if (on) hookFace(dl, p0, p1, tk.radius, state, role, true);  // K-172: a lit inset, not a raised tint
+  else raised(dl, p0, p1, tk.radius, state);
   const ImU32 tc = (state & Disabled) ? tk.textFaint : on ? roleOr(role, tk.hot) : tk.text;
   textIn(dl, Font::Body, 13, p0, ImVec2(p1.x, p1.y + ((state & Active) ? 2 : 0)), tc, lbl);
 }
@@ -819,7 +856,10 @@ void fader(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Fader& f) { cur().fader(d
 void meter(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Meter& m) { cur().meter(dl, p0, p1, m); }
 void grNeedle(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float g, float i, float o) { cur().grNeedle(dl, p0, p1, g, i, o); }
 void led(ImDrawList* dl, ImVec2 c, float r, bool on, float level, ImU32 role, int state) { cur().led(dl, c, r, on, level, role, state); }
-void button(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const char* l, int s, ImU32 role) { cur().button(dl, p0, p1, l, s, role); }
+void button(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const char* l, int s, ImU32 role) {
+  if (s & Primary) return cur().Painter::button(dl, p0, p1, l, s, role);  // K-172: one primary form, every direction's tokens
+  cur().button(dl, p0, p1, l, s, role);
+}
 void iconButton(ImDrawList* dl, ImVec2 p0, ImVec2 p1, int icon, int s, ImU32 role) { cur().iconButton(dl, p0, p1, icon, s, role); }
 void toggle(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float t, int s, ImU32 role) { cur().toggle(dl, p0, p1, t, s, role); }
 void check(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const char* l, int s, ImU32 role) { cur().check(dl, p0, p1, l, s, role); }
@@ -865,5 +905,7 @@ void hookRaised(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float r, ImU32 hint, int s
 void hookInset(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float r, ImU32 hint) { surf().hookInset(dl, p0, p1, r, hint); }
 ImU32 hookTint(ImU32 fill) { return cur().hookTint(fill); }
 void hookFace(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float r, int state, ImU32 role, bool rest) { surf().hookFace(dl, p0, p1, r, state, role, rest); }
+void hookPrimary(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float r, int state, ImU32 role) { surf().primary(dl, p0, p1, r, state & ~Primary, role); }
+ImU32 primaryText(ImU32 role, int state) { return surf().primaryText(role, state); }
 
 }  // namespace gl::look

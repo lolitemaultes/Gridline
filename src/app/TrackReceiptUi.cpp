@@ -708,7 +708,7 @@ void draw(App& a) {
       ui::DialogFooter(ui::ButtonRowWidth(2, bw));
       if (ui::TextButton(i18n::tr("Close"), false, bw)) open = false;
       ImGui::SameLine(0, theme::kS2);
-      if (ui::TextButton(i18n::tr("Calculate"), true, bw, i18n::tr("Plays the project offline and measures the parts used"))) startMeasure(a);
+      if (ui::PrimaryButton(i18n::tr("Calculate"), bw, i18n::tr("Plays the project offline and measures the parts used"))) startMeasure(a);
     } else if (s.page == 1) {
       ui::DialogFooter(ui::ButtonRowWidth(1, bw));
       if (ui::TextButton(i18n::tr("Cancel"), false, bw) || ::gl::keys::escapePressed()) {
@@ -724,7 +724,7 @@ void draw(App& a) {
         saveOutput(a, receiptFileName(projectName(a)), ".xml", [r]() { return spreadsheetXml(r); }, false);
       }
       ImGui::SameLine(0, theme::kS2);
-      if (ui::TextButton(i18n::tr("View results"), true, bw, i18n::tr("Saves the results as a PDF and opens it"))) {
+      if (ui::PrimaryButton(i18n::tr("View results"), bw, i18n::tr("Saves the results as a PDF and opens it"))) {
         const Report r = s.report;
         saveOutput(a, resultsFileName(projectName(a)), ".pdf", [r]() { return resultsPdf(r); }, true);
       }

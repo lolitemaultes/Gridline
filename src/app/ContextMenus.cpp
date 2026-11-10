@@ -156,7 +156,7 @@ void drawPrompt() {
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + kFieldW - ui::ButtonRowWidth(2, kButtonW));
     const bool cancel = ui::TextButton("Cancel", false, kButtonW) || ::gl::keys::escapePressed();
     ImGui::SameLine(0, theme::kS2);
-    if (ui::TextButton("OK", true, kButtonW) || enter) {
+    if (ui::PrimaryButton("OK", kButtonW) || enter) {
       if (prompt.ok) prompt.ok(prompt.buf);
       prompt.ok = nullptr;
       ImGui::CloseCurrentPopup();
@@ -2055,7 +2055,7 @@ void mixerTrackMenu(App& a, size_t index) {
       ImGui::SetNextItemWidth(200);
       bool go = ImGui::InputText("##chain", buf, sizeof buf, ImGuiInputTextFlags_EnterReturnsTrue);
       ImGui::SameLine();
-      go = ui::TextButton("Save", true) || go;
+      go = ui::PrimaryButton("Save") || go;
       if (go && buf[0]) {
         if (const MixerTrack* m = a.doc.song().mixerTrack(id)) {
           ChainPreset c;

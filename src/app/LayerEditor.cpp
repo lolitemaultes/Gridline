@@ -181,7 +181,7 @@ void toolbar(App& a, const Channel& l, float width) {
     std::vector<std::string> leftOut;
     layer::presetToJson(a.doc.song(), id, &leftOut);
     for (const auto& n : leftOut) ImGui::TextDisabled(i18n::tr("%s shares its mixer track: its effects are not saved"), n.c_str());
-    if (ui::TextButton("Save", true, 80) || enter) {
+    if (ui::PrimaryButton("Save", 80) || enter) {
       const std::string name = safePresetName(gUi.saveName);
       std::string err;
       if (name.empty()) a.notify(i18n::tr("Type a name first"), true);

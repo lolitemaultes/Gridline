@@ -402,7 +402,7 @@ void editorFastDist(App& a, const PluginTarget& t, float width) {
   }
   {  // mode A / B
     int type = ed::ival(st, dy::FdType);
-    if (sk::button(v, "ModeSelect", pal, true, type ? "B" : "A", {}, "Distortion type (click to switch)"))
+    if (sk::button(v, "ModeSelect", pal, false, type ? "B" : "A", {}, "Distortion type (click to switch)"))
       a.doc.setParam(t.pid(dy::FdType), type ? 0 : 1, false);
     sk::textAt(dl, v.p(112, 70), v.p(156, 84), pal.text, "TYPE", std::clamp(v.px(8.f), 9.f, 13.f));
   }

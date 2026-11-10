@@ -1941,6 +1941,22 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(j173_pattern_auto_app PROPERTIES TIMEOUT 300)
 
+    # K-172: the button language (primary / toggle on / pressed) in every control style and both
+    # themes, read from the dev gallery's pixels.
+    add_test(NAME k172_button_language_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DOUT=${CMAKE_BINARY_DIR}/k172_button_language_app
+                     -P ${CMAKE_SOURCE_DIR}/tests/k172_button_language_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(k172_button_language_app PROPERTIES TIMEOUT 300)
+
+    # K-171: the piano roll's automation lane: erase, box select + Delete, move, copy / paste, a linear
+    # line, simplify, the resizable lane and its draw-curve chip.
+    add_test(NAME k171_auto_lane_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/k171_auto_lane_app -P ${CMAKE_SOURCE_DIR}/tests/k171_auto_lane_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(k171_auto_lane_app PROPERTIES TIMEOUT 300)
+
     # K-0: "Make unique" from a playlist clip's menu on a pattern with piano roll notes keeps the app
     # running (a GitHub issue: the menu read the replaced song's pattern).
     add_test(NAME k0_make_unique_app
@@ -2781,6 +2797,9 @@ if(UNIX AND NOT APPLE)
   include(CPack)
 endif()
 
+
+# K-172: no button keeps the toggle-on look switched on for good (a main action is a primary button).
+add_test(NAME k172_primary_audit COMMAND ${CMAKE_COMMAND} -DSRC=${CMAKE_SOURCE_DIR}/src -P ${CMAKE_SOURCE_DIR}/tests/k172_primary_audit.cmake)
 
 # K-136: built-in plugin windows open at 85 % by default (Settings > Interface). The tests that
 # drive editors by their design coordinates run them at 100 %; the plugin window size tests

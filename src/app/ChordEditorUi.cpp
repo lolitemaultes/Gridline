@@ -698,7 +698,7 @@ void generatorRow(App& a) {
   if (ImGui::SliderFloat("##adv", &adv, 0.0f, 1.0f, "%.2f")) S.adventure = adv;
   ui::Hint("How far generated chords stray from the usual moves of the key");
   ImGui::SameLine(0, 4);
-  if (ui::TextButton("Generate", true, 80, "New chords for every unlocked chord")) {
+  if (ui::PrimaryButton("Generate", 80, "New chords for every unlocked chord")) {
     S.seed = S.seed * 1664525u + 1013904223u;
     edit(a, [&](ch::ChordProgression& p) { ch::regenerate(p, {}, S.adventure, S.seed); });
   }
@@ -983,7 +983,7 @@ void drawChordEditor(App& a) {
     }
   }
   ui::DialogFooter(ui::ButtonRowWidth(3, 88));  // J-54: one button width, kS2 apart, like the other dialogs
-  if (ui::TextButton("Accept", true, 88, "Keep the written chords (one undo step) and close")) {
+  if (ui::PrimaryButton("Accept", 88, "Keep the written chords (one undo step) and close")) {
     if (!S.live) {
       S.live = true;
       writeNow(a);

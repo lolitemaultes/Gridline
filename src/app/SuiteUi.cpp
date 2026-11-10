@@ -167,7 +167,7 @@ void drawOffer(App& a) {
   ImGui::SameLine(0, theme::kS2);
   const bool later = ui::TextButton(tr("Not now"), false, wl, tr("Ask again the next time Gridline starts")) || ::gl::keys::escapePressed();
   ImGui::SameLine(0, theme::kS2);
-  const bool install = ui::TextButton(tr("Install"), true, wi);
+  const bool install = ui::PrimaryButton(tr("Install"), wi);
   if (never || install) {
     a.settings.set("suite.install", never ? "no" : "yes");
     a.settings.save(Settings::defaultPath());
@@ -257,7 +257,7 @@ void settingsSection(App& a) {
     if (s.job) {
       ImGui::TextColored(theme::vec(P.textFaint), "%s", tr("Copying..."));
     } else {
-      if (anyNeedsCopy() && ui::TextButton(tr("Install"), true, 0, tr("Copy the suite into your plug-in folders"))) startCopy(false);
+      if (anyNeedsCopy() && ui::PrimaryButton(tr("Install"), 0, tr("Copy the suite into your plug-in folders"))) startCopy(false);
       if (anyUser) {
         if (anyNeedsCopy()) ImGui::SameLine();
         if (ui::TextButton(tr("Remove"), false, 0, tr("Delete the copies in your plug-in folders"))) {

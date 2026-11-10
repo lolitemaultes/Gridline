@@ -187,7 +187,7 @@ void pluginFoldersSettingsPage(App& a, float fieldW) {
       ImGui::PopFont();
     }
     ImGui::BeginDisabled(ss.running);
-    if (ui::TextButton("Scan all", true, 0, "Finds new and changed plugins in every folder that is on (each plugin is loaded in its own process)")) {
+    if (ui::TextButton("Scan all", false, 0, "Finds new and changed plugins in every folder that is on (each plugin is loaded in its own process)")) {
       host::startScan(exe, false);
       a.scanByUser = true;
     }

@@ -30,7 +30,10 @@ inline Dir current() { return ui::controlStyle(); }
 inline bool styled() { return ui::styledControls(); }
 
 // Element state flags.
-enum : int { Hover = 1, Active = 2, Disabled = 4, On = 8, Focus = 16 };
+// K-172: Primary marks a window's main action (a raised face filled with the
+// lit colour), told apart from On (a toggle that is on: a lit inset) and from
+// Active (held for the moment of a click: a neutral inset).
+enum : int { Hover = 1, Active = 2, Disabled = 4, On = 8, Focus = 16, Primary = 32 };
 
 // Colour roles an element may be tinted with (0 = the direction's default).
 struct Tint {
@@ -151,6 +154,11 @@ void hookInset(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float r, ImU32 hint);
 // segments): state Hover / Active (pressed) / On (lit) / Disabled; role = the
 // lit colour (0: the style's); rest = the button has a face at rest too.
 void hookFace(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float r, int state, ImU32 role, bool rest);
+// K-172: face of a primary button (the window's main action): raised and filled
+// with `role` (0: the style's lit colour); Active sinks it for the click only.
+void hookPrimary(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float r, int state, ImU32 role);
+// Text colour on a primary face of `role` (0: the style's lit colour).
+ImU32 primaryText(ImU32 role, int state);
 // Value-colour hint for a knob / slider from a plugin role colour (looks may drop it).
 ImU32 hookTint(ImU32 fill);
 // dB (0 = full scale) to a meter level 0..1 over rangeDb.

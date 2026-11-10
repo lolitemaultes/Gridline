@@ -321,7 +321,7 @@ void drawRemoteDialog(App& a) {
   ImGui::SameLine(ImGui::GetCursorPosX() + right - 96 * 2 - theme::kS2);
   if (ui::TextButton("Cancel", false, 96) || ::gl::keys::escapePressed()) close = true;
   ImGui::SameLine(0, theme::kS2);
-  if (ui::TextButton("Accept", true, 96)) {
+  if (ui::PrimaryButton("Accept", 96)) {
     saveLink(a);
     close = true;
   }

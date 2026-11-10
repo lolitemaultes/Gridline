@@ -10,6 +10,7 @@
 #include "DialogLayout.h"
 #include "Keys.h"
 #include "AutomationEditor.h"
+#include "AutomationLane.h"
 #include "SmoothScrollUi.h"
 #include <algorithm>
 #include <cmath>
@@ -84,7 +85,6 @@ struct Editor {
   bool fit = true;
   Snap snap = Snap::Line;
   Tool tool = Tool::Draw;
-  ae::Points clipboard;
   // Gesture.
   enum Gesture { None, Move, Tension, Box, Erase } g = None;
   ImVec2 start;
@@ -107,6 +107,7 @@ struct Editor {
   double scCentre = 0.5, scMul = 1.0, scOff = 0.0, scTension = 0.0;
   bool thinOpen = false;
   double thinTol = 0.02;
+  int thinShape = 0;  // K-171: 0 linear, 1 smooth
   std::optional<ae::Points> preview;
   char shapeName[96] = "";
   char targetFilter[64] = "";
@@ -220,14 +221,14 @@ void curveModeItems(App& a, const AutomationClip& ac, const ae::Selection& targe
 }
 
 void copySelection(App& a, const AutomationClip& ac) {
-  E.clipboard = ae::copyPoints(ac.points, E.sel);
-  if (!E.clipboard.empty()) a.notify(std::to_string(E.clipboard.size()) + " points copied");
+  automationClipboard() = ae::copyPoints(ac.points, E.sel);
+  if (!automationClipboard().empty()) a.notify(std::to_string(automationClipboard().size()) + " points copied");
 }
 
 void pasteAt(App& a, Tick at, bool replace) {
-  if (E.clipboard.empty()) return;
+  if (automationClipboard().empty()) return;
   ae::Selection added;
-  editPoints(a, replace ? "paste points (replace)" : "paste points", [&](ae::Points& p) { added = ae::pastePoints(p, E.clipboard, at, replace); });
+  editPoints(a, replace ? "paste points (replace)" : "paste points", [&](ae::Points& p) { added = ae::pastePoints(p, automationClipboard(), at, replace); });
   E.sel = added;
 }
 
@@ -268,14 +269,14 @@ void editorMenu(App& a) {
     deleteSelection(a);
   }
   if (ImGui::MenuItem(i18n::tr("Copy"), keys::label("auto.copy"), false, !E.sel.empty())) copySelection(a, *ac);
-  if (ImGui::MenuItem(i18n::tr("Paste (insert)"), keys::label("auto.paste"), false, !E.clipboard.empty())) pasteAt(a, pasteTick(a, *ac), false);
-  if (ImGui::MenuItem(i18n::tr("Paste (replace)"), keys::label("auto.pasteReplace"), false, !E.clipboard.empty())) pasteAt(a, pasteTick(a, *ac), true);
+  if (ImGui::MenuItem(i18n::tr("Paste (insert)"), keys::label("auto.paste"), false, !automationClipboard().empty())) pasteAt(a, pasteTick(a, *ac), false);
+  if (ImGui::MenuItem(i18n::tr("Paste (replace)"), keys::label("auto.pasteReplace"), false, !automationClipboard().empty())) pasteAt(a, pasteTick(a, *ac), true);
   if (ImGui::MenuItem(i18n::tr("Duplicate"), "Ctrl+B", false, E.sel.size() >= 1)) {
     ae::Points c = ae::copyPoints(ac->points, E.sel);
     Tick at = ac->points[static_cast<size_t>(*E.sel.rbegin())].pos + std::max<Tick>(ae::clipSpan(c), s.beatTicks() / 4);
-    std::swap(c, E.clipboard);
+    std::swap(c, automationClipboard());
     pasteAt(a, at, false);
-    std::swap(c, E.clipboard);
+    std::swap(c, automationClipboard());
   }
   if (ImGui::MenuItem(i18n::tr("Delete"), keys::label("auto.delete"), false, !E.sel.empty())) deleteSelection(a);
   ImGui::Separator();
@@ -792,13 +793,16 @@ void drawLevelTools(App& a) {
     float t = static_cast<float>(E.thinTol * 100);
     ImGui::SetNextItemWidth(240);
     if (ImGui::SliderFloat("##tol", &t, 0.1f, 20.0f, "Threshold  %.1f%%")) E.thinTol = t / 100.0;
-    pv = ae::thin(pv, E.thinTol);
-    ImGui::TextDisabled(i18n::tr("%zu \xE2\x86\x92 %zu points"), ac->points.size(), pv.size());
-    sel.clear();
+    // K-171: straight or eased result; only the selection's span when 2+ points are selected.
+    const char* results[2] = {i18n::N_("Linear"), i18n::N_("Smooth")};
+    ui::Segmented("##thinshape", results, 2, &E.thinShape, 120);
+    ae::thinRange(pv, sel, E.thinTol, E.thinShape == 1 ? AutoShape::Smooth : AutoShape::Curve);
+    ImGui::TextDisabled(i18n::tr("%zu \xE2\x86\x92 %zu points (%s)"), ac->points.size(), pv.size(),
+                        sel.size() >= 2 ? i18n::tr("the selection") : i18n::tr("the whole clip"));
     label = "thin out points";
   }
   E.preview = pv;
-  if (ImGui::Button(i18n::tr("Accept"), ImVec2(76, 0))) {
+  if (ui::PrimaryButton("Accept", 76)) {
     editPoints(a, label, [&](ae::Points& p) { p = pv; });
     E.scaleOpen = E.thinOpen = false;
     E.preview.reset();
@@ -1425,27 +1429,12 @@ void recorderTick(App& a) {
   }
 }
 
-// --------------------------------------------------------- pattern lane ----
-
-ParamId laneTarget{kNoId, 0};
-
-struct LaneGesture {
-  bool drawing = false, line = false;  // left drag draws, right drag is the line tool (Q-4, FL)
-  double lastTick = -1;
-  float lastY = 0;
-  double tickA = 0;  // line tool: start point
-  float yA = 0;
-  ae::Points base;   // line tool: the lane at the press
-  uint64_t key = 0;
-} lg;
-
 }  // namespace
 
 // =================================================================== API ====
 
 bool& automationRecording() { return recordOn; }
 bool& automationRecordHold() { return recordHold; }
-ParamId& pianoAutomationLane() { return laneTarget; }
 
 void openAutomationEditor(App& a, ObjectId automation, ObjectId placement) {
   (void)a;
@@ -1640,7 +1629,7 @@ void editPatternEvents(App& a, ParamId pid) {
     AutoPoint pt{0, static_cast<float>(d->toNormalized(*v)), 0, AutoShape::Hold};
     a.doc.editPattern(p->id, "edit events", [&](Pattern& x) { setPatternLane(x, pid.owner, pid.index, {pt}); });
   }
-  laneTarget = pid;
+  pianoAutomationLane() = pid;
   if (s.channel(pid.owner)) a.openPianoRoll(pid.owner);
   a.showPiano = true;
   a.focusWindow = "Piano roll";
@@ -1761,160 +1750,6 @@ void devAutomationEditor(App& a, int mode) {
     E.lfoDivEnd = 6;
     E.lfo.amountStart = 0.35;
     E.lfo.amountEnd = 0.2;
-  }
-}
-
-// --------------------------------------------------------- pattern lane ----
-
-std::string patternLaneLabel(App& a) {
-  if (laneTarget.owner == kNoId) return "";
-  const Song& s = a.doc.song();
-  auto d = describeParam(s, laneTarget);
-  return d ? d->name : "?";
-}
-
-void patternLaneMenu(App& a, ObjectId pattern, ObjectId channel) {
-  const Song& s = a.doc.song();
-  const Pattern* p = s.pattern(pattern);
-  if (!p) return;
-  ImGui::Separator();
-  ImGui::TextDisabled("%s", i18n::tr("Pattern automation (events)"));
-  for (const auto& l : p->automation) {
-    ParamId pid{l.owner, l.index};
-    ImGui::PushID(static_cast<int>(pid.packed() & 0x7FFFFFFF));
-    if (ImGui::Selectable(patternAutoName(s, l).c_str(), laneTarget == pid)) laneTarget = pid;
-    ImGui::PopID();
-  }
-  if (ImGui::BeginMenu(i18n::tr("Add lane for"))) {
-    auto add = [&](ParamId pid) {
-      if (ImGui::MenuItem(paramDisplayName(s, pid).c_str(), nullptr, findPatternLane(*p, pid.owner, pid.index) != nullptr)) editPatternEvents(a, pid);
-    };
-    int shown = 0;
-    for (ParamId pid : listParams(s))
-      if (pid.owner == channel && ++shown < 120) add(pid);
-    ImGui::Separator();
-    for (ParamId pid : listParams(s))
-      if (pid.owner == kSongId) add(pid);
-    if (const Channel* ch = s.channel(channel))
-      if (ch->mixerTrack != kNoId) {
-        ImGui::Separator();
-        int n = 0;
-        for (ParamId pid : listParams(s))
-          if (pid.owner == ch->mixerTrack && ++n < 60) add(pid);
-      }
-    ImGui::EndMenu();
-  }
-  if (laneTarget.owner != kNoId && findPatternLane(*p, laneTarget.owner, laneTarget.index)) {
-    if (ImGui::MenuItem(i18n::tr("Open in the automation editor"))) openPatternAutomation(a, pattern, laneTarget);  // J-173
-    if (ImGui::MenuItem(i18n::tr("Delete this lane"))) {
-      ParamId pid = laneTarget;
-      a.doc.editPattern(pattern, "delete event lane", [&](Pattern& x) { setPatternLane(x, pid.owner, pid.index, {}); });
-      laneTarget = ParamId{};
-    }
-  }
-}
-
-void drawPatternAutomationLane(App& a, ImDrawList* dl, ImVec2 mn, ImVec2 mx, ObjectId pattern, const std::function<float(double)>& xOf,
-                               const std::function<double(float)>& tickAt, Tick grid, bool canvasHovered, bool canvasActive) {
-  const auto& P = pal();
-  const Song& s = a.doc.song();
-  const Pattern* p = s.pattern(pattern);
-  if (!p) return;
-  const ParamId pid = laneTarget;
-  const PatternAutomation* lane = findPatternLane(*p, pid.owner, pid.index);
-  ae::Points pts = lane ? lane->points : ae::Points{};
-  // Q-10: drawn values glide to edits (display only; the lane already holds them).
-  // J-173: drawn and edited as the parameter moves (the clip's range applied; a new lane: 0..1).
-  const AutomationClip rng = lane ? *lane : patternLane(pid.owner, pid.index, {});
-  ae::Points shown = pts;
-  for (auto& q : shown) {
-    q.value = scrollui::glideBar((static_cast<uint64_t>(pattern) << 44) ^ (static_cast<uint64_t>(pid.owner) << 28) ^ (static_cast<uint64_t>(pid.index) << 20) ^
-                                     (static_cast<uint64_t>(q.pos) * 0x9E3779B1ull),
-                                 static_cast<float>(automationToParam(rng, q.value)));
-    q.fine = 0.0;
-  }
-  auto yOf = [&](double v) { return mx.y - static_cast<float>(v) * (mx.y - mn.y); };
-  auto valAt = [&](float y) { return std::clamp(static_cast<double>((mx.y - y) / (mx.y - mn.y)), 0.0, 1.0); };
-  ImGuiIO& io = ImGui::GetIO();
-  const ImVec2 m = io.MousePos;
-  const bool inLane = m.x >= mn.x && m.x < mx.x && m.y >= mn.y - 6 && m.y < mx.y + 4;
-  grid = std::max<Tick>(1, grid);
-
-  // ---- draw: event bars per grid step (like an event editor) + the curve ----
-  dl->PushClipRect(ImVec2(mn.x, mn.y - 4), mx, true);
-  // Event-editor look: graph-role (cyan) fill under the curve, lit stems with
-  // round heads at the points (same role as the channel rack's graph editor).
-  const ImU32 col = theme::litRole(theme::role::kGraph);
-  const ImU32 lineCol = P.dark ? theme::mix(col, P.paper, 0.45f) : col;
-  if (!pts.empty()) {
-    float prevY = 0;
-    for (float x = std::floor(mn.x); x <= mx.x; x += 1.0f) {
-      double t = tickAt(x);
-      float y = yOf(ae::valueAt(shown, t, rng.flCurves));
-      dl->AddLine(ImVec2(x, y), ImVec2(x, mx.y), theme::withAlpha(col, 0.16f));
-      if (x > std::floor(mn.x)) dl->AddLine(ImVec2(x - 1, prevY), ImVec2(x, y), theme::withAlpha(lineCol, 0.9f), 1.3f);
-      prevY = y;
-    }
-    for (const auto& q : shown) {
-      float x = xOf(static_cast<double>(q.pos));
-      if (x < mn.x - 4 || x > mx.x + 4) continue;
-      dl->AddRectFilled(ImVec2(x, yOf(q.value)), ImVec2(x + 2, mx.y), theme::withAlpha(col, 0.7f));
-      dl->AddCircleFilled(ImVec2(x + 1, yOf(q.value)), 3.0f, lineCol, 10);
-    }
-  } else {
-    dl->AddText(a.fontRegular, theme::kFontLabel, ImVec2(mn.x + 8, mn.y + 4), P.textFaint, i18n::tr("Drag to draw values \xC2\xB7 right-drag for a straight line"));
-  }
-  dl->PopClipRect();
-  if (canvasHovered && inLane) {
-    double t = tickAt(m.x);
-    a.setHint(paramDisplayName(s, pid) + ": " + fmtParam(s, pid, valAt(m.y)) + " at " + timeline::rulerLabel(s, std::max<Tick>(0, static_cast<Tick>(t)), grid) +
-              "   " + i18n::tr("(drag: draw values on the grid \xC2\xB7 right-drag: straight line \xC2\xB7 Alt: free)"));
-  }
-
-  // ---- edit ----
-  if (canvasHovered && inLane && (ImGui::IsMouseClicked(ImGuiMouseButton_Left) || ImGui::IsMouseClicked(ImGuiMouseButton_Right))) {
-    lg = LaneGesture{};
-    lg.drawing = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
-    lg.line = !lg.drawing;
-    lg.tickA = tickAt(m.x);
-    lg.yA = m.y;
-    lg.base = pts;
-    lg.key = 0x504C410000000000ull ^ (gestureCounter++ << 8);
-  }
-  if ((lg.drawing || lg.line) && canvasActive) {
-    // Draw: the segment since the last frame (nothing skipped on fast drags).
-    // Line: from the press point to the pointer, on the lane as it was at the press.
-    double t0 = lg.line ? lg.tickA : lg.lastTick < 0 ? tickAt(m.x) : lg.lastTick, t1 = tickAt(m.x);
-    float yA = lg.line ? lg.yA : lg.lastTick < 0 ? m.y : lg.lastY, yB = m.y;
-    if (t1 < t0) std::swap(t0, t1), std::swap(yA, yB);
-    ae::Points next = lg.line ? lg.base : pts;
-    Tick c0 = std::max<Tick>(0, snapDown(static_cast<Tick>(std::floor(t0)), grid)), c1 = std::max<Tick>(0, snapDown(static_cast<Tick>(std::floor(t1)), grid));
-    for (Tick c = c0; c <= c1; c += grid) {
-      next.erase(std::remove_if(next.begin(), next.end(), [&](const AutoPoint& q) { return q.pos >= c && q.pos < c + grid; }), next.end());
-      double f = t1 > t0 ? std::clamp((static_cast<double>(c) - t0) / (t1 - t0), 0.0, 1.0) : 1.0;
-      AutoPoint np;
-      np.pos = c;
-      np.value = static_cast<float>(paramToAutomation(rng, valAt(yA + (yB - yA) * static_cast<float>(f))));
-      np.shape = AutoShape::Hold;
-      ae::addPoint(next, np);
-    }
-    if (next != pts)
-      a.doc.editPattern(pattern, lg.line ? "draw line" : "draw events", [&](Pattern& x) { setPatternLane(x, pid.owner, pid.index, next); }, lg.key);
-    lg.lastTick = tickAt(m.x);
-    lg.lastY = m.y;
-  }
-  if (lg.line && canvasActive) {  // line tool preview
-    const ImVec2 pa(xOf(lg.tickA), std::clamp(lg.yA, mn.y, mx.y)), pb(m.x, std::clamp(m.y, mn.y, mx.y));
-    dl->PushClipRect(ImVec2(mn.x, mn.y - 4), ImVec2(mx.x, mx.y + 4), true);
-    dl->AddLine(pa, pb, theme::withAlpha(P.ink, 0.6f), 3.0f);
-    dl->AddLine(pa, pb, col, 1.5f);
-    dl->AddCircleFilled(pa, 3.0f, col, 10);
-    dl->AddCircleFilled(pb, 3.0f, col, 10);
-    dl->PopClipRect();
-  }
-  if (!canvasActive && (lg.drawing || lg.line)) {
-    lg = LaneGesture{};
-    a.doc.endGesture();
   }
 }
 

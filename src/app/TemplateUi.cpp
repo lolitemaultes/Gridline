@@ -257,7 +257,7 @@ void newProjectWindow(App& a) {
     a.showNewProject = false;
   }
   ImGui::SameLine(0, theme::kS2);
-  bool ok = ui::TextButton("Create", true, 96, "Create the new project (Enter)") ||
+  bool ok = ui::PrimaryButton("Create", 96, "Create the new project (Enter)") ||
             (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Enter));
   ImGui::End();
   if (ok && sel) {
@@ -334,7 +334,7 @@ void saveTemplateWindow(App& a) {
   ui::DialogFooter(96 * 2 + theme::kS2);
   bool cancel = ui::TextButton("Cancel", false, 96) || ::gl::keys::escapePressed();
   ImGui::SameLine(0, theme::kS2);
-  bool ok = ui::TextButton("Save", true, 96);
+  bool ok = ui::PrimaryButton("Save", 96);
   ImGui::End();
   if (ok && T.name[0]) {
     if (a.saveAsTemplate(T.name, T.category, T.desc)) a.showSaveTemplate = false;

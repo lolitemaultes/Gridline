@@ -867,7 +867,7 @@ void drawEditTools(App& a) {
     default: if (steps) stepBody(a); break;
   }
   ImGui::Dummy(ImVec2(0, 6));
-  bool accept = ui::TextButton("Accept", true, 90, "Keep the changes (Enter)");
+  bool accept = ui::PrimaryButton("Accept", 90, "Keep the changes (Enter)");
   ImGui::SameLine();
   if (ui::TextButton("Reset", false, 90, "Back to the default settings")) {
     ToolSettings fresh;

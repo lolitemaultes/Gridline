@@ -9,7 +9,7 @@ src/core/MenuStyle.cpp, src/engine/Chop.cpp,
 src/engine/ProjectLoad.cpp, src/plugin .cpp and .mm):
   * i18n::tr("...") and i18n::N_("...") literals (N_ marks text translated later);
   * the English text handed to the widgets that translate themselves:
-    ui::Hint, ui::Tooltip, ui::Label, ui::BeginSection, ui::TextButton (label, hint),
+    ui::Hint, ui::Tooltip, ui::Label, ui::BeginSection, ui::TextButton / PrimaryButton (label, hint),
     ui::DangerButton (label, hint), ui::IconButton / ui::ToggleIcon (hint), ui::EmptyState, formLabel / label,
     dialogTitle, openPrompt, roleColour, ui::BeginDockWindow / ui::windowTitle (window titles),
     ui::confirmTheme (what changed; confirmation titles are marked N_),
@@ -31,7 +31,7 @@ OUT = os.path.join(ROOT, "assets", "i18n", "gridline.pot")
 
 # function name -> argument indexes holding English text (None = every literal argument)
 HELPERS = {
-    "Hint": [0], "Tooltip": [0], "Label": [0], "BeginSection": [0], "TextButton": [0, 3], "DangerButton": [0, 3], "IconButton": [4],
+    "Hint": [0], "Tooltip": [0], "Label": [0], "BeginSection": [0], "TextButton": [0, 3], "PrimaryButton": [0, 2], "DangerButton": [0, 3], "IconButton": [4],
     "ToggleIcon": [4], "EmptyState": [3, 4], "formLabel": [0], "label": [0], "dialogTitle": [1, 2],
     "openPrompt": [0], "roleColour": [1, 2], "BeginDockWindow": [0], "windowTitle": [0],
     "sectionHeader": [0], "folderSection": [1, 4], "emptyLine": [0], "notify": [0],

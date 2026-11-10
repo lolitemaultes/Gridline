@@ -97,6 +97,11 @@ struct LaneDrag {
   float fracA = 0;
 };
 LaneDrag ld;
+// K-171: the lane splitter being dragged (press y, lane height at the press).
+struct LaneSplit {
+  bool on = false;
+  float y0 = 0, h0 = 0;
+} laneSplit;
 PianoLaneGeometry laneGeo;  // dev check: last drawn lane geometry
 
 // J-37: smooth snapping of a note drag. Every selected note moves by the same
@@ -642,7 +647,11 @@ void drawPianoRoll(App& a) {
   ImVec2 avail = ImGui::GetContentRegionAvail();
   avail.x = std::max(avail.x, 160.0f);
   avail.y = std::max(avail.y, 140.0f);
-  const float keyW = 64.0f, rulerH = 26.0f, velH = std::clamp(avail.y * 0.18f, 48.0f, 96.0f);
+  // K-171: the lower lane's height: dragged on its splitter (saved), 0 = automatic.
+  const float laneMaxH = std::max(40.0f, std::round(avail.y * 0.6f));
+  const float laneSetH = static_cast<float>(a.settings.getNumber("piano.laneHeight"));
+  const float keyW = 64.0f, rulerH = 26.0f,
+              velH = laneSetH > 0 ? std::clamp(laneSetH, 40.0f, laneMaxH) : std::clamp(avail.y * 0.18f, 48.0f, 96.0f);
   ImGui::InvisibleButton("##canvas", avail, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
   if (ImGui::BeginDragDropTarget()) {  // MIDI files from the browser (J-16)
     browserui::acceptFileDrop(a, browse::DropTarget::PianoRoll, {});
@@ -1276,6 +1285,13 @@ void drawPianoRoll(App& a) {
                         autoLabel.empty() ? kLaneShort[static_cast<int>(lane)] : autoLabel.c_str());
     ui::drawIcon(dl, ui::Icon::ChevronDown, ImVec2(l1.x - 6, (l0.y + l1.y) * 0.5f), 9, lh ? P.text : P.textFaint);
   }
+  // K-171: the automation lane's draw-curve chip under the lane name (when there is room).
+  bool chipTook = false;
+  if (pianoAutomationLane().owner != kNoId) {
+    const float cy0 = gridMax.y + 5 + theme::kFontLabel + 6 + 4, cy1 = cy0 + theme::kFontLabel + 6;
+    if (cy1 <= origin.y + avail.y - 3)
+      chipTook = drawLaneCurveChip(a, dl, ImVec2(origin.x + 4, cy0), ImVec2(gridMin.x - 4, cy1), patId, hovered, ImGui::IsMouseClicked(ImGuiMouseButton_Left));
+  }
   const bool bip = laneBipolar(lane);
   for (float f : {0.25f, 0.5f, 0.75f, 1.0f}) {
     float y = std::round(vMax.y - (vMax.y - vMin.y) * f);
@@ -1285,7 +1301,7 @@ void drawPianoRoll(App& a) {
   if (autoLane)
     drawPatternAutomationLane(
         a, dl, vMin, vMax, patId, [&](double t) { return gridMin.x + static_cast<float>(t) * st.pxPerTick - st.scrollX; },
-        [&](float x) { return static_cast<double>((x - gridMin.x + st.scrollX) / st.pxPerTick); }, snapG, hovered, active);
+        [&](float x) { return static_cast<double>((x - gridMin.x + st.scrollX) / st.pxPerTick); }, snapG, hovered && !laneSplit.on, active, st.tool);
   dl->PushClipRect(ImVec2(vMin.x, vMin.y - 4), vMax, true);
   for (size_t i = 0; i < notes.size() && !autoLane; ++i) {
     const Note& n = notes[i];
@@ -1389,6 +1405,32 @@ void drawPianoRoll(App& a) {
 
   bool lClick = hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left);
   bool rClick = hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right);
+  {  // K-171: the splitter above the lane: drag to resize it, double-click for the automatic height
+    const bool onSplit = hovered && m.y >= gridMax.y - 3 && m.y < gridMax.y + 4 && m.x >= origin.x && m.x < gridMax.x;
+    if (onSplit || laneSplit.on) {
+      ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+      if (!laneSplit.on) a.setHint(i18n::tr("Drag to resize the lane \xC2\xB7 double-click: automatic height"));
+    }
+    if (onSplit && lClick && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+      a.settings.set("piano.laneHeight", 0.0);
+      laneSplit.on = false;
+      lClick = rClick = false;
+    } else if (onSplit && lClick) {
+      laneSplit.on = true;
+      laneSplit.y0 = m.y;
+      laneSplit.h0 = velH;
+      lClick = rClick = false;
+    }
+    if (laneSplit.on) {
+      if (active) {
+        const float nh = std::round(std::clamp(laneSplit.h0 - (m.y - laneSplit.y0), 40.0f, laneMaxH));
+        if (nh != velH) a.settings.set("piano.laneHeight", static_cast<double>(nh));
+        lClick = rClick = false;
+      } else {
+        laneSplit.on = false;
+      }
+    }
+  }
   const bool dbl = hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
   static int propsNote = -1;
   // Q-3: Esc or a right-click during a note drag (move, Shift+drag copies,
@@ -1406,6 +1448,7 @@ void drawPianoRoll(App& a) {
   }
 
   if (lClick || rClick) {
+    if (!inVel) automationLaneBlur();  // K-171: the editing keys go back to the notes
     g = Gesture{};
     g.selBefore = st.selected;
     g.start = m;
@@ -1424,7 +1467,7 @@ void drawPianoRoll(App& a) {
         a.rackReveal.quietSwitch(PlayMode::Pattern);
       }
       g.kind = Gesture::Scrub;  // the position follows the pointer until release
-    } else if (inLaneLabel && lClick) {
+    } else if (inLaneLabel && lClick && !chipTook) {
       ImGui::OpenPopup("##lanepop");
     } else if (inVel && (lClick || rClick)) {
       if (!autoLane) {  // automation lane: edited by drawPatternAutomationLane
@@ -2171,6 +2214,8 @@ void drawPianoRoll(App& a) {
 
   // ---------------- keyboard shortcuts (window focused) ----------------
   if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !io.WantTextInput) {
+    // K-171: after a click in the automation lane its points take the editing keys.
+    const bool laneKeys = autoLane && automationLaneKeys(a, patId, std::max<Tick>(1, snapG));
     std::vector<Note> ns = notes;
     auto sel = selVector(a, ns.size());
     bool anySel = !st.selected.empty();
@@ -2180,7 +2225,7 @@ void drawPianoRoll(App& a) {
         if (sel[i]) fn(ns[i]);
       commit(a, patId, chId, ns, sel, label, 0);
     };
-    if (keys::pressed("piano.delete")) {
+    if (!laneKeys && keys::pressed("piano.delete")) {
       if (anySel) {
         std::vector<Note> keep;
         for (size_t i = 0; i < ns.size(); ++i)
@@ -2188,24 +2233,24 @@ void drawPianoRoll(App& a) {
         commit(a, patId, chId, keep, {}, "delete notes", 0);
       }
     }
-    if (keys::pressed("piano.selectAll")) {
+    if (!laneKeys && keys::pressed("piano.selectAll")) {
       st.selected.clear();
       for (size_t i = 0; i < ns.size(); ++i) st.selected.insert(i);
     }
-    if (keys::pressed("piano.deselect")) st.selected.clear();
-    if (keys::pressed("piano.copy") && anySel) {
+    if (!laneKeys && keys::pressed("piano.deselect")) st.selected.clear();
+    if (!laneKeys && keys::pressed("piano.copy") && anySel) {
       st.clipboard.clear();
       for (size_t i = 0; i < ns.size(); ++i)
         if (sel[i]) st.clipboard.push_back(ns[i]);
       a.notify(std::to_string(st.clipboard.size()) + " notes copied");
     }
-    if (keys::pressed("piano.cut") && anySel) {
+    if (!laneKeys && keys::pressed("piano.cut") && anySel) {
       st.clipboard.clear();
       std::vector<Note> keep;
       for (size_t i = 0; i < ns.size(); ++i) (sel[i] ? st.clipboard : keep).push_back(ns[i]);
       commit(a, patId, chId, keep, {}, "cut notes", 0);
     }
-    if (keys::pressed("piano.paste") && !st.clipboard.empty()) {
+    if (!laneKeys && keys::pressed("piano.paste") && !st.clipboard.empty()) {
       // Paste after the end of the copied block.
       Tick lo = st.clipboard[0].start, hi = 0;
       for (const auto& n : st.clipboard) lo = std::min(lo, n.start), hi = std::max(hi, n.start + n.length);
@@ -2219,17 +2264,17 @@ void drawPianoRoll(App& a) {
       for (auto& n : st.clipboard) n.start += shift;  // repeated pastes keep going
       commit(a, patId, chId, ns, nsel, "paste notes", 0);
     }
-    if (keys::pressed("piano.quickQuantize")) {
+    if (!laneKeys && keys::pressed("piano.quickQuantize")) {
       for (size_t i = 0; i < ns.size(); ++i)
         if (!anySel || sel[i]) ns[i].start = snapNearest(ns[i].start, grid);
       commit(a, patId, chId, ns, sel, "quantize notes", 0);
     }
-    if (keys::pressed("piano.transposeUp")) applyToSel([&](Note& n) { n.pitch += 1; }, "transpose notes");
-    if (keys::pressed("piano.transposeDown")) applyToSel([&](Note& n) { n.pitch -= 1; }, "transpose notes");
-    if (keys::pressed("piano.octaveUp")) applyToSel([&](Note& n) { n.pitch += 12; }, "transpose notes");
-    if (keys::pressed("piano.octaveDown")) applyToSel([&](Note& n) { n.pitch -= 12; }, "transpose notes");
-    if (keys::pressed("piano.moveRight")) applyToSel([&](Note& n) { n.start += grid; }, "move notes");
-    if (keys::pressed("piano.moveLeft")) applyToSel([&](Note& n) { n.start = std::max<Tick>(0, n.start - grid); }, "move notes");
+    if (!laneKeys && keys::pressed("piano.transposeUp")) applyToSel([&](Note& n) { n.pitch += 1; }, "transpose notes");
+    if (!laneKeys && keys::pressed("piano.transposeDown")) applyToSel([&](Note& n) { n.pitch -= 1; }, "transpose notes");
+    if (!laneKeys && keys::pressed("piano.octaveUp")) applyToSel([&](Note& n) { n.pitch += 12; }, "transpose notes");
+    if (!laneKeys && keys::pressed("piano.octaveDown")) applyToSel([&](Note& n) { n.pitch -= 12; }, "transpose notes");
+    if (!laneKeys && keys::pressed("piano.moveRight")) applyToSel([&](Note& n) { n.start += grid; }, "move notes");
+    if (!laneKeys && keys::pressed("piano.moveLeft")) applyToSel([&](Note& n) { n.start = std::max<Tick>(0, n.start - grid); }, "move notes");
     if (!a.typingKeyboard) {
       if (keys::pressed("piano.toolDraw")) st.tool = Tool::Draw;
       if (keys::pressed("piano.toolPaint")) st.tool = Tool::Paint;

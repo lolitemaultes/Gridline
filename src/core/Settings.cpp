@@ -77,6 +77,8 @@ Settings::Settings() {
       {"piano.snapIncomingMidi", b(false)},            // played notes land on the highlighted scale
       {"piano.editableGhosts", b(false)},              // clicking a ghost note edits it in place
       {"piano.followKeyMarkers", b(true)},             // scale highlighting follows key markers
+      {"piano.laneHeight", Json::makeNumber(0)},       // K-171: the lower lane's height in px (0 = automatic)
+      {"piano.autoDrawCurve", Json::makeNumber(0)},    // K-171: curve the automation lane draws: 0 stepped, 1 linear, 2 smooth
       {"transport.jumpQuantize", Json::makeNumber(0)}, // ops::jumpGrid mode (0 = jump at once)
       {"transport.rememberSeek", b(true)},             // J-49: Stop returns to the last set song position
       {"ui.scale", Json::makeNumber(1.0)},
