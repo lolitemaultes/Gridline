@@ -597,7 +597,7 @@ msgstr ""
 msgid "Automation clip for"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/Browser.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/ExportUi.cpp src/app/FlpExportUi.cpp src/app/MidiUi.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/ProjectLoadUi.cpp src/app/SamplerRenderUi.cpp src/app/ScriptUi.cpp src/app/SettingsKeysTheme.cpp src/app/StemsUi.cpp src/app/TemplateUi.cpp src/app/TrackReceiptUi.cpp src/app/UpdateUi.cpp src/app/UrlImportUi.cpp src/packs/edison/edison_script_ui.cpp src/packs/edison/edison_tools_ui.cpp src/packs/flex/flex_ui.cpp src/packs/platter/platter_ui.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/Browser.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/ExportUi.cpp src/app/FlpExportUi.cpp src/app/LayerEditor.cpp src/app/MidiUi.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/ProjectLoadUi.cpp src/app/SamplerRenderUi.cpp src/app/ScriptUi.cpp src/app/SettingsKeysTheme.cpp src/app/StemsUi.cpp src/app/TemplateUi.cpp src/app/TrackReceiptUi.cpp src/app/UpdateUi.cpp src/app/UrlImportUi.cpp src/packs/edison/edison_script_ui.cpp src/packs/edison/edison_tools_ui.cpp src/packs/flex/flex_ui.cpp src/packs/platter/platter_ui.cpp src/packs/tracker/tracker_ui.cpp
 msgid "Cancel"
 msgstr ""
 
@@ -677,7 +677,7 @@ msgstr ""
 msgid "Draw"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/ChopUi.cpp src/app/ContextMenus.cpp src/app/Menus.cpp src/packs/modulation/modulation_patcher_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/ChopUi.cpp src/app/ContextMenus.cpp src/app/LayerEditor.cpp src/app/Menus.cpp src/packs/modulation/modulation_patcher_ui.cpp
 msgid "Duplicate"
 msgstr ""
 
@@ -829,7 +829,7 @@ msgstr ""
 msgid "Repeat the points every loop length when this clip is longer"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/ChordEditorUi.cpp src/app/EditTools.cpp src/app/Menus.cpp src/app/MidiUi.cpp src/app/MixerView.cpp src/app/Playlist.cpp src/app/PluginEditorsEqRef.cpp src/app/PluginEditorsK3Gb.cpp src/app/PluginSkin.cpp src/app/ScriptUi.cpp src/app/SettingsKeysTheme.cpp src/packs/platter/platter_ui.cpp src/packs/samplers/samplers_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/ChordEditorUi.cpp src/app/EditTools.cpp src/app/LayerEditor.cpp src/app/Menus.cpp src/app/MidiUi.cpp src/app/MixerView.cpp src/app/Playlist.cpp src/app/PluginEditorsEqRef.cpp src/app/PluginEditorsK3Gb.cpp src/app/PluginSkin.cpp src/app/ScriptUi.cpp src/app/SettingsKeysTheme.cpp src/packs/platter/platter_ui.cpp src/packs/samplers/samplers_ui.cpp
 msgid "Reset"
 msgstr ""
 
@@ -861,7 +861,7 @@ msgstr ""
 msgid "START"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/Menus.cpp src/app/TemplateUi.cpp src/core/Keymap.cpp src/packs/plasma/plasma_browser_ui.cpp src/packs/platter/platter_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/LayerEditor.cpp src/app/Menus.cpp src/app/TemplateUi.cpp src/core/Keymap.cpp src/packs/plasma/plasma_browser_ui.cpp src/packs/platter/platter_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Save"
 msgstr ""
 
@@ -1094,6 +1094,10 @@ msgid "Current project"
 msgstr ""
 
 #: src/app/Browser.cpp
+msgid "Double-click or drag onto the rack: add this layer with its channels"
+msgstr ""
+
+#: src/app/Browser.cpp
 msgid "Double-click or drag onto the rack: import · drag onto the piano roll: add the notes to the pattern"
 msgstr ""
 
@@ -1167,6 +1171,10 @@ msgstr ""
 
 #: src/app/Browser.cpp
 msgid "It can be restored from the system trash."
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Layers"
 msgstr ""
 
 #: src/app/Browser.cpp
@@ -1509,6 +1517,10 @@ msgstr ""
 msgid "%d slices on a new slicer channel, playing in time with the song"
 msgstr ""
 
+#: src/app/BrowserDrop.cpp src/app/LayerEditor.cpp
+msgid "Added the layer "
+msgstr ""
+
 #: src/app/BrowserDrop.cpp src/app/ContextMenus.cpp src/app/MixerView.cpp
 msgid "All effect slots are in use"
 msgstr ""
@@ -1519,6 +1531,10 @@ msgstr ""
 
 #: src/app/BrowserDrop.cpp
 msgid "Audio tracks hold audio: drop the instrument on another track"
+msgstr ""
+
+#: src/app/BrowserDrop.cpp src/app/LayerEditor.cpp
+msgid "Cannot load this layer preset"
 msgstr ""
 
 #: src/app/BrowserDrop.cpp
@@ -2175,6 +2191,10 @@ msgstr ""
 
 #: src/app/ChannelSettings.cpp
 msgid "Hide the channel strip (volume, pan, pitch, keyboard)"
+msgstr ""
+
+#: src/app/ChannelSettings.cpp
+msgid "How the children share the notes"
 msgstr ""
 
 #: src/app/ChannelSettings.cpp src/app/ContextMenus.cpp src/app/PluginManager.cpp src/app/SamplerRenderUi.cpp src/packs/modulation/modulation_patcher_ui.cpp
@@ -3817,7 +3837,7 @@ msgstr ""
 msgid "Only you, the admin, can do this."
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/LauncherCollab.cpp src/app/LauncherUi.cpp src/app/ProjectLoadUi.cpp
+#: src/app/CollabUi.cpp src/app/LauncherCollab.cpp src/app/LauncherUi.cpp src/app/LayerEditor.cpp src/app/ProjectLoadUi.cpp
 msgid "Open"
 msgstr ""
 
@@ -7317,7 +7337,7 @@ msgstr ""
 msgid "Keep the changes (Enter)"
 msgstr ""
 
-#: src/app/EditTools.cpp src/packs/dynamics/masterfl_ui.cpp
+#: src/app/EditTools.cpp src/app/LayerEditor.cpp src/packs/dynamics/masterfl_ui.cpp
 msgid "MODE"
 msgstr ""
 
@@ -8294,7 +8314,7 @@ msgid "Drop silent takes"
 msgstr ""
 
 #: src/app/J31Ui.cpp
-msgid "Each child plays its own key range"
+msgid "Each child plays its own key zone"
 msgstr ""
 
 #: src/app/J31Ui.cpp
@@ -9067,6 +9087,190 @@ msgstr ""
 
 #: src/app/LauncherUi.cpp
 msgid "Zipped project"
+msgstr ""
+
+#: src/app/LayerEditor.cpp
+msgid "%s shares its mixer track: its effects are not saved"
+msgstr ""
+
+#: src/app/LayerEditor.cpp
+msgid "Add a channel of the rack or a new instrument as a child"
+msgstr ""
+
+#: src/app/LayerEditor.cpp
+msgid "Add a saved or built-in layer with its channels"
+msgstr ""
+
+#: src/app/LayerEditor.cpp
+msgid "Add child"
+msgstr ""
+
+#: src/app/LayerEditor.cpp
+msgid "BUILT IN"
+msgstr ""
+
+#: src/app/LayerEditor.cpp
+msgid "Cannot save the layer: "
+msgstr ""
+
+#: src/app/LayerEditor.cpp
+msgid "Click: show the macro's targets below. Double-click: rename"
+msgstr ""
+
+#: src/app/LayerEditor.cpp
+msgid "Drag the bar to move the zone, its ends to resize it, the corner squares to set the fades. Double-click: the whole range"
+msgstr ""
+
+#: src/app/LayerEditor.cpp
+msgid "Drag to reorder the children (the order the Cycle mode follows)"
+msgstr ""
+
+#: src/app/LayerEditor.cpp
+msgid "Drop an instrument or a rack channel here to add a child"
+msgstr ""
+
+#: src/app/LayerEditor.cpp
+msgid "Every child plays the whole keyboard at every velocity again"
+msgstr ""
+
+#: src/app/LayerEditor.cpp
+msgid "Give each child its own part of the keyboard, low to high"
+msgstr ""
+
+#: src/app/LayerEditor.cpp
+msgid "Give each child its own velocity band, soft to hard"
+msgstr ""
+
+#: src/app/LayerEditor.cpp
+msgid "LAYER PRESET NAME"
+msgstr ""
+
+#: src/app/LayerEditor.cpp
+msgid "Learn: move a control now"
+msgstr ""
+
+#: src/app/LayerEditor.cpp
+msgid "Link a parameter: move a control, or pick one from the list"
+msgstr ""
+
+#: src/app/LayerEditor.cpp
+msgid "Load layer"
+msgstr ""
+
+#: src/app/LayerEditor.cpp
+msgid "MACROS"
+msgstr ""
+
+#: src/app/LayerEditor.cpp src/plugin/PluginCore.cpp
+msgid "Macro"
+msgstr ""
+
+#: src/app/LayerEditor.cpp src/packs/modulation/modulation_patcher_ui.cpp
+msgid "Map"
+msgstr ""
+
+#: src/app/LayerEditor.cpp
+msgid "Move a control"
+msgstr ""
+
+#: src/app/LayerEditor.cpp
+msgid "Move any control of the children now; click again to stop"
+msgstr ""
+
+#: src/app/LayerEditor.cpp
+msgid "Mute this child (its channel)"
+msgstr ""
+
+#: src/app/LayerEditor.cpp src/app/TrackModeUi.cpp
+msgid "New instrument"
+msgstr ""
+
+#: src/app/LayerEditor.cpp
+msgid "No instrument"
+msgstr ""
+
+#: src/app/LayerEditor.cpp
+msgid "No saved layers yet"
+msgstr ""
+
+#: src/app/LayerEditor.cpp
+msgid "No targets yet: press Map under the knob and move a control, or pick one from its list"
+msgstr ""
+
+#: src/app/LayerEditor.cpp
+msgid "Open this child's window"
+msgstr ""
+
+#: src/app/LayerEditor.cpp
+msgid "RACK CHANNELS"
+msgstr ""
+
+#: src/app/LayerEditor.cpp
+msgid "Remove from the layer"
+msgstr ""
+
+#: src/app/LayerEditor.cpp
+msgid "Remove this target"
+msgstr ""
+
+#: src/app/LayerEditor.cpp
+msgid "SAVED"
+msgstr ""
+
+#: src/app/LayerEditor.cpp
+msgid "Save layer..."
+msgstr ""
+
+#: src/app/LayerEditor.cpp
+msgid "Save this layer with its children, their instruments, effects, zones and macros"
+msgstr ""
+
+#: src/app/LayerEditor.cpp
+msgid "Saved the layer "
+msgstr ""
+
+#: src/app/LayerEditor.cpp
+msgid "Solo this child inside the layer (the other children go quiet)"
+msgstr ""
+
+#: src/app/LayerEditor.cpp src/app/StemsUi.cpp src/packs/seltmann/seltmann_seq_ui.cpp src/packs/tideline/tideline_ui.cpp
+msgid "Split"
+msgstr ""
+
+#: src/app/LayerEditor.cpp
+msgid "The layer is full (32 children)"
+msgstr ""
+
+#: src/app/LayerEditor.cpp
+msgid "This channel cannot join the layer"
+msgstr ""
+
+#: src/app/LayerEditor.cpp
+msgid "This channel has no children yet: add channels to make it a layer."
+msgstr ""
+
+#: src/app/LayerEditor.cpp
+msgid "This control cannot be linked to a macro"
+msgstr ""
+
+#: src/app/LayerEditor.cpp
+msgid "Transpose: semitones added to the notes this child plays from the layer"
+msgstr ""
+
+#: src/app/LayerEditor.cpp
+msgid "Type a name first"
+msgstr ""
+
+#: src/app/LayerEditor.cpp
+msgid "ZONES"
+msgstr ""
+
+#: src/app/LayerEditor.cpp
+msgid "from %.0f%%"
+msgstr ""
+
+#: src/app/LayerEditor.cpp
+msgid "to %.0f%%"
 msgstr ""
 
 #: src/app/LayoutChooser.cpp
@@ -14833,10 +15037,6 @@ msgstr ""
 msgid "Six stems"
 msgstr ""
 
-#: src/app/StemsUi.cpp src/packs/seltmann/seltmann_seq_ui.cpp src/packs/tideline/tideline_ui.cpp
-msgid "Split"
-msgstr ""
-
 #: src/app/StemsUi.cpp
 msgid "Split into %d stems on new tracks"
 msgstr ""
@@ -15267,10 +15467,6 @@ msgstr ""
 
 #: src/app/TrackModeUi.cpp
 msgid "Make an instrument track for it"
-msgstr ""
-
-#: src/app/TrackModeUi.cpp
-msgid "New instrument"
 msgstr ""
 
 #: src/app/TrackModeUi.cpp
@@ -16466,6 +16662,10 @@ msgid "add %d folders to the browser"
 msgstr ""
 
 #: src/core/ExternalDrop.cpp
+msgid "add %d layers"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
 msgid "add %d sampler channels"
 msgstr ""
 
@@ -16483,6 +16683,10 @@ msgstr ""
 
 #: src/core/ExternalDrop.cpp
 msgid "add the folder %s to the browser"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
+msgid "add the layer %s with its channels"
 msgstr ""
 
 #: src/core/ExternalDrop.cpp
@@ -18907,10 +19111,6 @@ msgstr ""
 
 #: src/packs/modulation/modulation_patcher_ui.cpp
 msgid "Large"
-msgstr ""
-
-#: src/packs/modulation/modulation_patcher_ui.cpp
-msgid "Map"
 msgstr ""
 
 #: src/packs/modulation/modulation_patcher_ui.cpp
@@ -23103,10 +23303,6 @@ msgstr ""
 
 #: src/plugin/PluginCore.cpp
 msgid "Host input"
-msgstr ""
-
-#: src/plugin/PluginCore.cpp
-msgid "Macro"
 msgstr ""
 
 #: src/plugin/PluginFrame.cpp

@@ -1,5 +1,6 @@
 #include "../packs/Packs.h"
 #include "Program.h"
+#include "../core/LayerPick.h"
 #include "Freeze.h"
 #include "ClipSource.h"
 #include "ChannelIns.h"
@@ -252,6 +253,9 @@ bool resolveTarget(const Song& song, Program& prog, ParamId target, ProgLink& pl
       pl.kind = ProgLink::ChanPlugin;
       pl.param = static_cast<int>(target.index - kChannelPluginBase);
       pc.modded = true;
+    } else if (target.index >= kLayerMacroBase && target.index < kLayerMacroBase + static_cast<uint32_t>(kLayerMacros)) {
+      pl.kind = ProgLink::ChanMacro;  // K-169: a layer's macro
+      pl.param = static_cast<int>(target.index - kLayerMacroBase);
     } else {
       switch (static_cast<ChannelParam>(target.index)) {
         case ChannelParam::Volume: pl.kind = ProgLink::ChanVolume; break;
@@ -557,6 +561,57 @@ uint32_t layerHash(const NoteEv& e, ObjectId layer) {
   return h;
 }
 
+// K-169: the child weights of one note of layer `l` (see layer::pick): zone weight, layer solo,
+// the child's mute and own key range (after the transpose). Children beyond 32 never play.
+void rackWeights(const Song& song, const Channel& l, int key, int vel127, float shift, const NoteProps& props, double pitch,
+                 float* w, int* transpose) {
+  bool solo = false;
+  for (const auto& z : l.layerZones) solo = solo || (z.solo && std::find(l.layer.begin(), l.layer.end(), z.child) != l.layer.end());
+  const int n = static_cast<int>(std::min<size_t>(l.layer.size(), 32));
+  for (int i = 0; i < n; ++i) {
+    const ObjectId kid = l.layer[static_cast<size_t>(i)];
+    const Channel* c = song.channel(kid);
+    const LayerZone* z = l.layerZone(kid);
+    const LayerZone full;
+    const LayerZone& zz = z ? *z : full;
+    transpose[i] = zz.transpose;
+    w[i] = 0;
+    if (!c || c->muted || (solo && !zz.solo)) continue;
+    const int own = noteKey(pitch + shift + zz.transpose, props);
+    if (own < c->keyLo || own > c->keyHi) continue;
+    w[i] = layerZoneWeight(zz, key, vel127);
+  }
+}
+
+void addRackNotes(const Song& song, const Channel& l, size_t self, float shift, const std::vector<NoteEv>& src,
+                  std::vector<NoteEv>& out) {
+  if (self >= 32) return;
+  std::vector<size_t> order(src.size());
+  for (size_t i = 0; i < order.size(); ++i) order[i] = i;
+  std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+    const NoteEv &x = src[a], &y = src[b];
+    if (x.on != y.on) return x.on < y.on;
+    if (x.onFrac != y.onFrac) return x.onFrac < y.onFrac;
+    return x.pitch < y.pitch;
+  });
+  layer::PickState st;
+  float w[32];
+  int tr[32];
+  const int n = static_cast<int>(std::min<size_t>(l.layer.size(), 32));
+  for (size_t i : order) {
+    const NoteEv& e = src[i];
+    const int key = noteKey(e.pitch, e.props);
+    const int vel = static_cast<int>(std::lround(std::clamp(e.velocity, 0.0f, 1.0f) * 127.0f));
+    rackWeights(song, l, key, vel, shift, e.props, e.pitch, w, tr);
+    const uint32_t mask = layer::pick(l.layerMode, w, n, layerHash(e, l.id), st);
+    if (!(mask & (1u << self))) continue;
+    NoteEv x = e;
+    x.pitch += shift + static_cast<float>(tr[self]);
+    x.velocity = e.velocity * w[self];  // fades play softer (fade by velocity)
+    out.push_back(x);
+  }
+}
+
 // Notes that reach `target` through layer channels (nested up to 4 deep).
 void addLayerNotes(const Song& song, const Pattern& p, const Channel& target, int depth, std::vector<NoteEv>& out) {
   if (depth > 4) return;
@@ -568,6 +623,10 @@ void addLayerNotes(const Song& song, const Pattern& p, const Channel& target, in
     addLayerNotes(song, p, l, depth + 1, src);
     const float shift = static_cast<float>(l.pitch) + static_cast<float>(l.fine) / 100.0f;
     const size_t self = static_cast<size_t>(pos - l.layer.begin());
+    if (l.layerRack()) {  // K-169: zones, fades, transpose, layer solo, cycle / no-repeat modes
+      addRackNotes(song, l, self, shift, src, out);
+      continue;
+    }
     for (NoteEv e : src) {
       if (l.layerMode == 1 && layerHash(e, l.id) % l.layer.size() != self) continue;
       e.pitch += shift;
@@ -1071,8 +1130,15 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
                                0, MidiPortBus::kPorts - 1);
     for (ObjectId k : c.layer) {
       int ki = song.channelIndex(k);
-      if (ki >= 0 && k != c.id) pc.layer.push_back(ki);
+      if (ki >= 0 && k != c.id) {
+        pc.layer.push_back(ki);
+        const LayerZone* z = c.layerZone(k);  // K-169
+        pc.layerZones.push_back(z ? *z : LayerZone{});
+        pc.layerSolo = pc.layerSolo || (z && z->solo);
+      }
     }
+    pc.layerRack = c.layerRack();
+    for (int k = 0; k < kLayerMacros; ++k) pc.macroLive[k] = c.macros[static_cast<size_t>(k)].value;
     prog->hasCutGroups = prog->hasCutGroups || c.cutGroup > 0;
     for (size_t k = 0; k < c.noteFx.size(); ++k) {
       const PluginState& st = c.noteFx[k];
@@ -1144,7 +1210,11 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
   for (const auto& ml : song.modLinks) {
     if (!ml.enabled) continue;
     ProgLink pl;
-    if (ml.sourceSlot < 0) {
+    if (ml.sourceSlot == kLayerMacroSlot) {  // K-169: a layer's macro
+      pl.srcChannel = song.channelIndex(ml.sourceOwner);
+      pl.srcMacro = std::clamp(ml.sourceOutput, 0, kLayerMacros - 1);
+      if (pl.srcChannel < 0 || prog->channels[static_cast<size_t>(pl.srcChannel)].layer.empty()) continue;
+    } else if (ml.sourceSlot < 0) {
       pl.srcChannel = song.channelIndex(ml.sourceOwner);
       if (pl.srcChannel < 0 || !prog->channels[static_cast<size_t>(pl.srcChannel)].controller) continue;
     } else {

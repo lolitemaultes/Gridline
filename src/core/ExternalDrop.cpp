@@ -441,6 +441,9 @@ Plan plan(const std::vector<Item>& items, const std::vector<browse::DropItem>& k
         parts.push_back(ctx.targetName.empty() ? fmt(i18n::tr("load %s as the picture"), w.c_str())
                                                : fmt(i18n::tr("load the picture %s into %s"), w.c_str(), ctx.targetName.c_str()));
         break;
+      case DropAction::NewLayer:  // K-169
+        parts.push_back(n == 1 ? fmt(i18n::tr("add the layer %s with its channels"), w.c_str()) : fmt(i18n::tr("add %d layers"), n));
+        break;
       case DropAction::OpenProject:
       case DropAction::None: break;
     }

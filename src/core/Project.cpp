@@ -283,6 +283,40 @@ void channelExtrasToJson(const Channel& c, Json& jc) {
     for (ObjectId k : c.layer) l.array.push_back(num(k));
     jc.object["layer"] = std::move(l);
     if (c.layerMode) jc.object["layerMode"] = num(c.layerMode);
+    Json zs = Json::makeArray();  // K-169: zones that differ from the full keyboard
+    for (const LayerZone& z : c.layerZones) {
+      if (z.full() || std::find(c.layer.begin(), c.layer.end(), z.child) == c.layer.end()) continue;
+      const LayerZone d;
+      Json jz = Json::makeObject();
+      jz.object["child"] = num(z.child);
+      auto put = [&](const char* k, int v, int def) {
+        if (v != def) jz.object[k] = num(v);
+      };
+      put("keyLo", z.keyLo, d.keyLo);
+      put("keyHi", z.keyHi, d.keyHi);
+      put("keyFadeLo", z.keyFadeLo, 0);
+      put("keyFadeHi", z.keyFadeHi, 0);
+      put("velLo", z.velLo, d.velLo);
+      put("velHi", z.velHi, d.velHi);
+      put("velFadeLo", z.velFadeLo, 0);
+      put("velFadeHi", z.velFadeHi, 0);
+      put("transpose", z.transpose, 0);
+      if (z.solo) jz.object["solo"] = boolean(true);
+      zs.array.push_back(std::move(jz));
+    }
+    if (!zs.array.empty()) jc.object["layerZones"] = std::move(zs);
+    bool macros = false;
+    for (const LayerMacro& m : c.macros) macros = macros || !m.name.empty() || m.value != 0;
+    if (macros) {
+      Json jm = Json::makeArray();
+      for (const LayerMacro& m : c.macros) {
+        Json o = Json::makeObject();
+        if (!m.name.empty()) o.object["name"] = str(m.name);
+        if (m.value != 0) o.object["value"] = num(m.value);
+        jm.array.push_back(std::move(o));
+      }
+      jc.object["macros"] = std::move(jm);
+    }
   }
   if (c.group >= 0) jc.object["group"] = num(c.group);
   if (!c.fullKeyRange()) {  // J-31 key range
@@ -323,7 +357,35 @@ void channelExtrasFromJson(const Json& jc, Channel& c) {
     for (const auto& v : l->array)
       if (v.is(Json::Type::Number) && v.number >= kFirstObjectId && c.layer.size() < static_cast<size_t>(kMaxLayerChildren))
         c.layer.push_back(jsonInt<ObjectId>(v.number));
-  c.layerMode = jsonInt<int>(std::clamp(jc.num("layerMode", 0), 0.0, 1.0));
+  c.layerMode = jsonInt<int>(std::clamp(jc.num("layerMode", 0), 0.0, static_cast<double>(kLayerModeCount - 1)));
+  if (const Json* zs = jc.find("layerZones"); zs && zs->is(Json::Type::Array))  // K-169
+    for (const auto& jz : zs->array) {
+      if (!jz.is(Json::Type::Object)) continue;
+      LayerZone z;
+      z.child = jsonInt<ObjectId>(std::max(0.0, jz.num("child", 0)));
+      if (z.child < kFirstObjectId || std::find(c.layer.begin(), c.layer.end(), z.child) == c.layer.end() || c.layerZone(z.child)) continue;
+      auto get = [&](const char* k, int def, int lo, int hi) { return jsonInt<int>(std::clamp(jz.num(k, def), static_cast<double>(lo), static_cast<double>(hi))); };
+      z.keyLo = get("keyLo", 0, 0, 127);
+      z.keyHi = get("keyHi", 127, 0, 127);
+      if (z.keyHi < z.keyLo) std::swap(z.keyLo, z.keyHi);
+      z.keyFadeLo = get("keyFadeLo", 0, 0, 127);
+      z.keyFadeHi = get("keyFadeHi", 0, 0, 127);
+      z.velLo = get("velLo", 0, 0, 127);
+      z.velHi = get("velHi", 127, 0, 127);
+      if (z.velHi < z.velLo) std::swap(z.velLo, z.velHi);
+      z.velFadeLo = get("velFadeLo", 0, 0, 127);
+      z.velFadeHi = get("velFadeHi", 0, 0, 127);
+      z.transpose = get("transpose", 0, -48, 48);
+      z.solo = flag(jz, "solo");
+      if (!z.full()) c.layerZones.push_back(z);
+    }
+  if (const Json* jm = jc.find("macros"); jm && jm->is(Json::Type::Array))
+    for (size_t k = 0; k < jm->array.size() && k < static_cast<size_t>(kLayerMacros); ++k) {
+      const Json& o = jm->array[k];
+      if (!o.is(Json::Type::Object)) continue;
+      c.macros[k].name = o.text("name");
+      c.macros[k].value = static_cast<float>(std::clamp(o.num("value", 0), 0.0, 1.0));
+    }
   c.group = jsonInt<int>(std::clamp(jc.num("group", -1), -1.0, 1e6));
   c.keyLo = jsonInt<int>(std::clamp(jc.num("keyLo", 0), 0.0, 127.0));  // J-31
   c.keyHi = jsonInt<int>(std::clamp(jc.num("keyHi", 127), 0.0, 127.0));
@@ -999,6 +1061,33 @@ Json mixerTrackToJson(const MixerTrack& m) {
   return jm;
 }
 
+Json channelToJson(const Channel& c) {
+  Json jc = Json::makeObject();
+  jc.object["id"] = num(c.id);
+  jc.object["name"] = str(c.name);
+  jc.object["color"] = num(c.color);
+  jc.object["plugin"] = pluginToJson(c.plugin);
+  jc.object["gain"] = num(c.gain);
+  jc.object["pan"] = num(c.pan);
+  jc.object["muted"] = boolean(c.muted);
+  jc.object["pitch"] = num(c.pitch);
+  jc.object["mixerTrack"] = num(c.mixerTrack);
+  if (!c.auxOuts.empty()) {
+    Json ao = Json::makeArray();
+    for (ObjectId t : c.auxOuts) ao.array.push_back(num(t));
+    jc.object["auxOuts"] = std::move(ao);
+  }
+  if (c.midiOutPort >= 0) jc.object["midiOutPort"] = num(c.midiOutPort);
+  if (c.midiInPort >= 0) jc.object["midiInPort"] = num(c.midiInPort);
+  if (!c.noteFx.empty()) {
+    Json fx = Json::makeArray();
+    for (const auto& f : c.noteFx) fx.array.push_back(pluginToJson(f));
+    jc.object["noteFx"] = std::move(fx);
+  }
+  channelExtrasToJson(c, jc);
+  return jc;
+}
+
 Json songToJson(const Song& s, bool withFlOrigin) {
   Json j = Json::makeObject();
   j.object["format"] = str(kProjectFormatTag);
@@ -1032,32 +1121,7 @@ Json songToJson(const Song& s, bool withFlOrigin) {
   j.object["nextId"] = num(s.nextId);
 
   Json chans = Json::makeArray();
-  for (const auto& c : s.channels) {
-    Json jc = Json::makeObject();
-    jc.object["id"] = num(c.id);
-    jc.object["name"] = str(c.name);
-    jc.object["color"] = num(c.color);
-    jc.object["plugin"] = pluginToJson(c.plugin);
-    jc.object["gain"] = num(c.gain);
-    jc.object["pan"] = num(c.pan);
-    jc.object["muted"] = boolean(c.muted);
-    jc.object["pitch"] = num(c.pitch);
-    jc.object["mixerTrack"] = num(c.mixerTrack);
-    if (!c.auxOuts.empty()) {
-      Json ao = Json::makeArray();
-      for (ObjectId t : c.auxOuts) ao.array.push_back(num(t));
-      jc.object["auxOuts"] = std::move(ao);
-    }
-    if (c.midiOutPort >= 0) jc.object["midiOutPort"] = num(c.midiOutPort);
-    if (c.midiInPort >= 0) jc.object["midiInPort"] = num(c.midiInPort);
-    if (!c.noteFx.empty()) {
-      Json fx = Json::makeArray();
-      for (const auto& f : c.noteFx) fx.array.push_back(pluginToJson(f));
-      jc.object["noteFx"] = std::move(fx);
-    }
-    channelExtrasToJson(c, jc);
-    chans.array.push_back(std::move(jc));
-  }
+  for (const auto& c : s.channels) chans.array.push_back(channelToJson(c));
   j.object["channels"] = std::move(chans);
 
   Json pats = Json::makeArray();
@@ -1615,7 +1679,7 @@ bool songFromJson(const Json& src, Song& out, std::string* err) {
     for (const auto& jl : mods->array) {
       ModLink l;
       l.sourceOwner = jsonInt<ObjectId>(jl.num("sourceOwner", 0));
-      l.sourceSlot = jsonInt<int>(std::clamp(jl.num("sourceSlot", -1), -1.0, static_cast<double>(kEffectSlots - 1)));
+      l.sourceSlot = jsonInt<int>(std::clamp(jl.num("sourceSlot", -1), static_cast<double>(kLayerMacroSlot), static_cast<double>(kEffectSlots - 1)));  // K-169: -2 = layer macro
       l.sourceOutput = jsonInt<int>(std::clamp(jl.num("sourceOutput", 0), 0.0, static_cast<double>(kMaxControllerOutputs - 1)));
       l.owner = jsonInt<ObjectId>(jl.num("owner", 0));
       l.index = jsonInt<uint32_t>(jl.num("index", 0));

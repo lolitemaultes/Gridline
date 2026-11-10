@@ -274,6 +274,10 @@ const ModLink* findModLink(const Song& song, ObjectId owner, uint32_t index) {
 }
 
 bool isControllerSource(const Song& song, ObjectId owner, int slot) {
+  if (slot == kLayerMacroSlot) {  // K-169: a layer's macros
+    const Channel* c = song.channel(owner);
+    return c && c->isLayer();
+  }
   const PluginState* ps = nullptr;
   if (slot < 0) {
     if (const Channel* c = song.channel(owner)) ps = &c->plugin;

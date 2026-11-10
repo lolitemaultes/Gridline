@@ -768,15 +768,41 @@ void AudioEngine::liveOn(const Program* p, const ProgChannel& ch, uint32_t id, f
     return;
   }
   // J-31: a channel's key range limits the notes it plays (layer splits).
-  auto inRange = [pitch](const ProgChannel& c) { return pitch > c.keyLo - 0.5f && pitch < c.keyHi + 0.5f; };
-  if (inRange(ch)) liveStart(p, ch, id, pitch, velocity, color);
+  auto inRange = [](const ProgChannel& c, float pt) { return pt > c.keyLo - 0.5f && pt < c.keyHi + 0.5f; };
+  if (inRange(ch, pitch)) liveStart(p, ch, id, pitch, velocity, color);
   if (ch.layer.empty()) return;
+  if (ch.layerRack) {  // K-169: zones, fades, transpose, layer solo, cycle / no-repeat modes
+    const int n = static_cast<int>(std::min<size_t>(ch.layer.size(), 32));
+    const int key = static_cast<int>(std::lround(pitch));
+    const int vel = static_cast<int>(std::lround(std::clamp(velocity, 0.0f, 1.0f) * 127.0f));
+    float w[32];
+    for (int k = 0; k < n; ++k) {
+      w[k] = 0;
+      const size_t ci = static_cast<size_t>(ch.layer[static_cast<size_t>(k)]);
+      const LayerZone& z = ch.layerZones[static_cast<size_t>(k)];
+      if (ci >= p->channels.size() || (ch.layerSolo && !z.solo)) continue;
+      const ProgChannel& c = p->channels[ci];
+      if (c.muted || !inRange(c, pitch + static_cast<float>(z.transpose))) continue;
+      w[k] = layerZoneWeight(z, key, vel);
+    }
+    uint32_t h = id * 2654435761u;
+    h ^= h >> 15;
+    ChannelRuntime* lrt = ch.rt.get();
+    layer::PickState scratch;
+    const uint32_t mask = layer::pick(ch.layerMode, w, n, h >> 7, lrt ? lrt->layerPick : scratch);
+    for (int k = 0; k < n; ++k)
+      if (mask & (1u << k)) {
+        const ProgChannel& c = p->channels[static_cast<size_t>(ch.layer[static_cast<size_t>(k)])];
+        liveStart(p, c, id, pitch + static_cast<float>(ch.layerZones[static_cast<size_t>(k)].transpose), velocity * w[k], color);
+      }
+    return;
+  }
   // Layer: the children play too (random layers pick one child per note).
   const size_t pick = ch.layerMode == 1 ? ((id * 2654435761u) >> 7) % ch.layer.size() : 0;
   for (size_t k = 0; k < ch.layer.size(); ++k) {
     if (ch.layerMode == 1 && k != pick) continue;
     const size_t ci = static_cast<size_t>(ch.layer[k]);
-    if (ci < p->channels.size() && inRange(p->channels[ci])) liveStart(p, p->channels[ci], id, pitch, velocity, color);
+    if (ci < p->channels.size() && inRange(p->channels[ci], pitch)) liveStart(p, p->channels[ci], id, pitch, velocity, color);
   }
 }
 
@@ -2145,7 +2171,9 @@ void AudioEngine::evaluateLinks(const Program* p, int n, double blockTick, doubl
   double vars[4] = {0, 0, static_cast<double>(absClock_) / sr_, blockTick / std::max(1, p->ppq)};
   for (const ProgLink& l : p->links) {
     float src = 0;
-    if (l.srcChannel >= 0) {
+    if (l.srcMacro >= 0) {  // K-169: a layer's macro
+      src = p->channels[static_cast<size_t>(l.srcChannel)].macroLive[static_cast<size_t>(l.srcMacro)];
+    } else if (l.srcChannel >= 0) {
       const ChannelRuntime* r = p->channels[static_cast<size_t>(l.srcChannel)].rt.get();
       if (!r) continue;
       src = r->ctl[l.output];
@@ -2309,6 +2337,9 @@ void AudioEngine::applyLinkValue(const Program* p, const ProgLink& l, double nor
       case ProgLink::MixEqFreq: p->mixer[static_cast<size_t>(l.mixer)].eq.freq[static_cast<size_t>(l.param)] = fv; break;
       case ProgLink::MixEqQ: p->mixer[static_cast<size_t>(l.mixer)].eq.q[static_cast<size_t>(l.param)] = fv; break;
       case ProgLink::MixSend: p->mixer[static_cast<size_t>(l.mixer)].sends[static_cast<size_t>(l.param)].second = fv; break;
+      case ProgLink::ChanMacro:  // K-169: a layer's macro (its own links read it in the next control block)
+        p->channels[static_cast<size_t>(l.chan)].macroLive[static_cast<size_t>(l.param)] = fv;
+        break;
     }
   }
 }

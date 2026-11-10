@@ -664,6 +664,10 @@ void Exporter::writeLinks() {
   } else {
     for (const auto& l : s.modLinks) {
       uint32_t target = 0;
+      if (l.sourceSlot == kLayerMacroSlot) {  // K-169: FL layers have no macros
+        rep.counts["layer macro links not written"]++;
+        continue;
+      }
       if (!flTarget(ParamId{l.owner, l.index}, target)) {
         rep.counts["controller links without FL target"]++;
         {

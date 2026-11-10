@@ -1043,6 +1043,12 @@ target_link_libraries(gridline_tests_j31 PRIVATE gridline_core)
 target_include_directories(gridline_tests_j31 PRIVATE tests)
 target_compile_options(gridline_tests_j31 PRIVATE ${GL_WARN})
 add_test(NAME j31 COMMAND gridline_tests_j31 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# K-169: split and layer instrument (zones, modes, macros, layer presets, FLP rules).
+add_executable(gridline_tests_layer_rack tests/test_layer_rack.cpp)
+target_link_libraries(gridline_tests_layer_rack PRIVATE gridline_core)
+target_include_directories(gridline_tests_layer_rack PRIVATE tests src)
+target_compile_options(gridline_tests_layer_rack PRIVATE ${GL_WARN})
+add_test(NAME k169_layer_rack COMMAND gridline_tests_layer_rack WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 # J-77: engine note state (lit keys, pad flashes), Keep / Revert flow, PAT shows the rack.
 add_executable(gridline_tests_j77 tests/test_j77.cpp src/app/DisplayConfirm.cpp)
 target_link_libraries(gridline_tests_j77 PRIVATE gridline_core)
@@ -2433,6 +2439,14 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -DOUT=${CMAKE_BINARY_DIR}/k166_loupe_workflow -P ${CMAKE_SOURCE_DIR}/tests/k166_loupe_workflow.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(k166_loupe_workflow PROPERTIES TIMEOUT 600)
+
+    # Layer editor: every built-in layer drawn without overlapping text (both themes, two sizes), a zone
+    # edge drag as one undo step, a layer preset file saved and loaded back.
+    add_test(NAME k169_layer_editor
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/k169_layer_editor -P ${CMAKE_SOURCE_DIR}/tests/k169_layer_editor.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(k169_layer_editor PROPERTIES TIMEOUT 600)
 
     # K-18: rename, new folder, moves and the trash in the browser; the project's references and undo follow.
     add_test(NAME k18_browser_files

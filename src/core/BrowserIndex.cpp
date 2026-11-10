@@ -147,6 +147,7 @@ Kind kindOf(const std::string& path) {
   if (e == ".fst") return Kind::Fst;
   if (e == ".serumpreset" || e == ".fxp") return Kind::Preset;  // Serum presets: opened by Plasma
   if (e == ".fsc") return Kind::Score;
+  if (e == ".gllayer") return Kind::Layer;  // K-169: layer presets
   if (e == ".png" || e == ".jpg" || e == ".jpeg" || e == ".jpe" || e == ".bmp" || e == ".gif" || e == ".tga" || e == ".psd" || e == ".hdr")
     return Kind::Image;  // J-184: pictures Pixel Tone plays
   if (e == ".json") {
@@ -172,6 +173,7 @@ const char* kindName(Kind k) {
     case Kind::Score: return "score";
     case Kind::Folder: return "folder";
     case Kind::Image: return "image";
+    case Kind::Layer: return "layer";
     case Kind::Other: break;
   }
   return "other";
@@ -187,6 +189,7 @@ bool kindFromName(const std::string& name, Kind& out) {
       {"automation", Kind::Shape}, {"score", Kind::Score}, {"fsc", Kind::Score},
       {"image", Kind::Image},   {"images", Kind::Image},  {"picture", Kind::Image}, {"pictures", Kind::Image},
       {"png", Kind::Image},     {"jpg", Kind::Image},     {"jpeg", Kind::Image},
+      {"layer", Kind::Layer},   {"layers", Kind::Layer},
   };
   auto it = names.find(lower(name));
   if (it == names.end()) return false;
@@ -671,6 +674,8 @@ DropAction dropAction(const DropItem& item, DropTarget target, const std::string
       return target == DropTarget::MixerTrack || target == DropTarget::MixerSlot ? DropAction::ApplyChain : DropAction::None;
     case Kind::Folder:
       return target == DropTarget::Browser || target == DropTarget::Workspace ? DropAction::AddBrowserFolder : DropAction::None;
+    case Kind::Layer:  // K-169: a layer preset makes a new layer with its children
+      return target == DropTarget::Rack || target == DropTarget::Workspace ? DropAction::NewLayer : DropAction::None;
     case Kind::Image:  // J-184: a Pixel Tone window or channel row plays the picture
       return (target == DropTarget::PluginWindow || target == DropTarget::Rack) && targetType == "gl.pixeltone" ? DropAction::LoadPicture : DropAction::None;
     default: break;
@@ -698,6 +703,7 @@ const char* dropActionLabel(DropAction a) {
     case DropAction::ReplaceInstrument: return "Replace with a sampler";
     case DropAction::ReplaceFromPreset: return "Replace instrument from preset";
     case DropAction::LoadPicture: return "Load picture";
+    case DropAction::NewLayer: return "New layer from preset";
   }
   return "";
 }

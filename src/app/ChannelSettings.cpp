@@ -29,6 +29,9 @@
 #include "../core/Platform.h"
 #include "ChannelStrip.h"
 #include "ChannelRoute.h"
+#include "LayerEditor.h"
+#include "../core/LayerRack.h"
+#include "../core/Project.h"
 #include "../engine/ClipSource.h"
 #include "Viewports.h"
 #include "SmoothScrollUi.h"
@@ -347,10 +350,18 @@ static void drawNoteSettings(App& a, ObjectId id) {
   }
   ui::Hint("Layer: this channel's notes also play on the checked channels");
   {
-    const char* modes[] = {"All", "Random"};
+    const char* modes[] = {"All", "Random", "Cycle", "No repeat"};  // K-169: the layer editor has the zones
     int m = c->layerMode;
-    const char* hints[] = {"Every child plays each note", "One child, picked at random, plays each note"};
-    if (ui::Segmented("##lmode", modes, 2, &m, 75, 0, hints)) a.doc.editChannel(id, "layer mode", [&](Channel& ch) { ch.layerMode = m; });
+    const char* hints[] = {"Every child plays each note", "One child, picked at random, plays each note", "The children take turns, one note each",
+                           "A random child each note, never the same one twice in a row"};
+    if (ui::BeginCombo("##lmode", i18n::tr(modes[std::clamp(m, 0, 3)]), 150)) {
+      for (int k = 0; k < 4; ++k) {
+        if (ImGui::Selectable(i18n::tr(modes[k]), k == m) && k != m) a.doc.editChannel(id, "layer mode", [k](Channel& ch) { ch.layerMode = k; });
+        ui::Hint(hints[k]);
+      }
+      ImGui::EndCombo();
+    }
+    ui::Hint("How the children share the notes");
   }
   ImGui::Dummy(ImVec2(0, 2));
   ui::Label("DISPLAY GROUP");
@@ -508,6 +519,59 @@ bool pluginWindowDevCommand(App& a, const std::string& cmd, const std::vector<st
     std::fflush(stdout);
     return true;
   }
+  if (cmd == "layered") {  // K-169: the layer editor's last frame (text boxes, overlaps, lanes, macros) to stdout
+    // layered load <n> | file <.gllayer>: adds a built-in layer / a preset file at the end of the rack (as a
+    // browser drop does) and opens its window; layered view keys|velocity: the zone view.
+    if (!args.empty() && (args[0] == "load" || args[0] == "file") && args.size() > 1) {
+      Json doc;
+      std::string err;
+      if (args[0] == "load") {
+        const auto f = layer::factoryPresets();
+        const size_t n = static_cast<size_t>(std::max(0, std::atoi(args[1].c_str())));
+        if (n < f.size()) doc = f[n].second;
+      } else {
+        layer::readPreset(args[1], doc, &err);
+      }
+      const ObjectId l = doc.is(Json::Type::Object) ? layer::loadPreset(a.doc, doc, -1, &err) : kNoId;
+      if (l != kNoId) {
+        a.selectChannel(l);
+        a.settingsChannel = l;
+      }
+      a.syncEngine();
+      std::printf("layered frame %d: loaded %d index %d %s\n", frame, l != kNoId ? 1 : 0, a.doc.song().channelIndex(l), err.c_str());
+      std::fflush(stdout);
+      return true;
+    }
+    if (!args.empty() && args[0] == "save" && args.size() > 1) {  // layered save <file>: the selected layer as a preset file
+      bool ok = false;
+      for (const auto& c : a.doc.song().channels)
+        if (c.isLayer() && c.id == a.settingsChannel) ok = writeFileAtomic(args[1], jsonStringify(layer::presetToJson(a.doc.song(), c.id)) + "\n");
+      std::printf("layered frame %d: saved %d\n", frame, ok ? 1 : 0);
+      std::fflush(stdout);
+      return true;
+    }
+    const layerui::DevState& d = layerui::devState();
+    std::printf("layered frame %d: drawn %d texts %d overlaps %d box %.0f %.0f %.0f %.0f lanes %zu\n", frame, d.frame, d.texts, d.overlaps, d.minX, d.minY,
+                d.maxX, d.maxY, d.lanes.size());
+    for (const auto& o : d.overlapping) std::printf("  overlap %s\n", o.c_str());
+    for (size_t k = 0; k < d.lanes.size(); ++k)
+      std::printf("  lane %zu %.0f %.0f %.0f %.0f zone %.0f %.0f\n", k, d.lanes[k].x0, d.lanes[k].y0, d.lanes[k].x1, d.lanes[k].y1, d.lanes[k].zx0,
+                  d.lanes[k].zx1);
+    for (int k = 0; k < 8; ++k) std::printf("  macro %d %.0f %.0f\n", k, d.macroX[k], d.macroY[k]);
+    const Song& s = a.doc.song();
+    for (const auto& c : s.channels)
+      if (c.isLayer()) {
+        std::printf("  layer %s mode %d children %zu zones %zu links", c.name.c_str(), c.layerMode, c.layer.size(), c.layerZones.size());
+        int links = 0;
+        for (const auto& l : s.modLinks) links += l.sourceOwner == c.id && l.sourceSlot == kLayerMacroSlot;
+        std::printf(" %d\n", links);
+        for (const auto& z : c.layerZones)
+          std::printf("    zone %llu keys %d %d fades %d %d vel %d %d transpose %d solo %d\n", static_cast<unsigned long long>(z.child), z.keyLo, z.keyHi,
+                      z.keyFadeLo, z.keyFadeHi, z.velLo, z.velHi, z.transpose, z.solo ? 1 : 0);
+      }
+    std::fflush(stdout);
+    return true;
+  }
   if (cmd != "strip") return false;
   // strip [on|off] [frames]: "on" / "off" show or hide the strip at once (no
   // slide) when the window is next drawn, a test set-up; then the state drawn
@@ -544,6 +608,7 @@ void drawChannelSettings(App& a) {
   stripOpened(a, c->id);  // opened (or another channel): the strip starts hidden
   // Wide instrument editors (PluginInfo::editorWidth) widen the window.
   float editorW = info && info->editorWidth > 0 ? info->editorWidth : 600.0f;
+  if (!info) editorW = layerui::editorWidth();  // K-169: an instrument-less channel is a layer: the layer editor
   if (info && info->editorMinWidth > 0) {  // J-151: reflowing editors follow a narrower main window (J-158: as far as they fit)
     const ImVec2 area = ui::EditorArea();
     editorW = place::fitEditor(editorW, info->editorMinWidth, 24.0f + ImGui::GetStyle().ScrollbarSize, area.x, area.y).content;
@@ -775,6 +840,10 @@ void drawChannelSettings(App& a) {
     ImGui::SameLine(0, 8);
     drawPluginHeader(a, target);
     drawPluginBody(a, target, editorW);
+  }
+  if (!info) {  // K-169: the layer editor (children, zones, macros, layer presets)
+    layerui::drawEditor(a, id, editorW);
+    ImGui::Dummy(ImVec2(0, theme::kS1));
   }
   // note processors (arpeggiator, chords, ...); J-151: not for instruments that leave them out (while none is set)
   if (const Channel* cc = a.doc.song().channel(id); !info || info->noteFxPanel || (cc && !cc->noteFx.empty()))

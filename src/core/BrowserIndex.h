@@ -18,7 +18,7 @@
 namespace gl::browse {
 
 // ---------------------------------------------------------------- file kinds
-enum class Kind { Other, Audio, Midi, Project, Flp, Fst, Preset, Chain, Shape, Score, Folder, Image };  // J-184: Image (Pixel Tone pictures)
+enum class Kind { Other, Audio, Midi, Project, Flp, Fst, Preset, Chain, Shape, Score, Folder, Image, Layer };  // J-184: Image (Pixel Tone pictures); K-169: Layer (.gllayer)
 
 // By extension (".gridline" / ".gridlinez" are projects; for .json, by name / location: "*.gridline.json" is a
 // project, files under a "chains" / "automation" folder of the preset library
@@ -158,6 +158,7 @@ enum class DropAction {
   ReplaceInstrument,   // audio → the channel row of another instrument becomes a sampler with it (J-97)
   ReplaceFromPreset,   // instrument preset → the channel row's instrument (J-97, FL "Replace")
   LoadPicture,         // picture → the picture of a Pixel Tone window / channel row (J-184)
+  NewLayer,            // layer preset → a new layer with its children (K-169)
 };
 // What a dragged item is. FL presets (.fst) are decoded first and described
 // by what they contain (plugin preset or chain).

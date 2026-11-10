@@ -639,7 +639,11 @@ bool Document::removeChannel(ObjectId id) {
       auto drop = [&](std::vector<Clip>& v) { v.erase(std::remove_if(v.begin(), v.end(), audioOf), v.end()); };
       drop(s.playlist);
       for (auto& a : s.arrangements) drop(a.playlist);
-      for (auto& ch : s.channels) ch.layer.erase(std::remove(ch.layer.begin(), ch.layer.end(), id), ch.layer.end());
+      for (auto& ch : s.channels) {
+        ch.layer.erase(std::remove(ch.layer.begin(), ch.layer.end(), id), ch.layer.end());
+        ch.layerZones.erase(std::remove_if(ch.layerZones.begin(), ch.layerZones.end(), [id](const LayerZone& z) { return z.child == id; }),
+                            ch.layerZones.end());  // K-169
+      }
       s.links.erase(std::remove_if(s.links.begin(), s.links.end(), linkOf), s.links.end());
       for (auto& p : s.patterns) p.automation.erase(std::remove_if(p.automation.begin(), p.automation.end(), laneOf), p.automation.end());
     });

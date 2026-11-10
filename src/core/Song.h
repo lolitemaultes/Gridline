@@ -1,5 +1,6 @@
 // Gridline — song model: channels, patterns, playlist, mixer.
 #pragma once
+#include <algorithm>
 #include <array>
 #include <map>
 #include <string>
@@ -32,6 +33,53 @@ struct ChannelEcho {
 
 inline constexpr int kMaxCutGroups = 99;
 inline constexpr int kMaxLayerChildren = 32;
+
+// K-169: how one child of a layer plays the layer's notes: a key zone and a velocity zone, each
+// with fade widths at its ends (a note in a fade plays softer: its velocity is scaled down), a
+// transpose for the layer's notes only and a solo inside the layer. Stored on the layer, keyed by
+// the child's id; a child without an entry plays everything (the whole keyboard, all velocities).
+// The child's own key range (Channel::keyLo/keyHi) still applies on top.
+struct LayerZone {
+  ObjectId child = kNoId;
+  int keyLo = 0, keyHi = 127;        // inclusive keys
+  int keyFadeLo = 0, keyFadeHi = 0;  // keys of fade-in above keyLo / fade-out below keyHi
+  int velLo = 0, velHi = 127;        // inclusive velocities (MIDI scale)
+  int velFadeLo = 0, velFadeHi = 0;
+  int transpose = 0;                 // semitones, -48..48, the layer's notes only
+  bool solo = false;                 // soloed inside the layer (other children go quiet)
+  bool full() const {
+    return keyLo <= 0 && keyHi >= 127 && keyFadeLo == 0 && keyFadeHi == 0 && velLo <= 0 && velHi >= 127 &&
+           velFadeLo == 0 && velFadeHi == 0 && transpose == 0 && !solo;
+  }
+  bool operator==(const LayerZone& o) const {
+    return child == o.child && keyLo == o.keyLo && keyHi == o.keyHi && keyFadeLo == o.keyFadeLo &&
+           keyFadeHi == o.keyFadeHi && velLo == o.velLo && velHi == o.velHi && velFadeLo == o.velFadeLo &&
+           velFadeHi == o.velFadeHi && transpose == o.transpose && solo == o.solo;
+  }
+};
+// How loud a zone plays a note (0 = not at all, 1 = fully): the key fade times the velocity fade.
+// `vel127` is the velocity on the MIDI scale. Pure, allocation-free (the audio thread uses it).
+inline float layerZoneWeight(const LayerZone& z, int key, int vel127) {
+  auto ramp = [](int x, int lo, int hi, int fadeLo, int fadeHi) -> float {
+    if (x < lo || x > hi) return 0.0f;
+    float w = 1.0f;
+    if (fadeLo > 0 && x < lo + fadeLo) w = std::min(w, static_cast<float>(x - lo + 1) / static_cast<float>(fadeLo + 1));
+    if (fadeHi > 0 && x > hi - fadeHi) w = std::min(w, static_cast<float>(hi - x + 1) / static_cast<float>(fadeHi + 1));
+    return w;
+  };
+  return ramp(key, z.keyLo, z.keyHi, z.keyFadeLo, z.keyFadeHi) * ramp(vel127, z.velLo, z.velHi, z.velFadeLo, z.velFadeHi);
+}
+// K-169: the layer's macro knobs. Each drives parameters of the layer's children through internal
+// controller links (ModLink with sourceSlot kLayerMacroSlot, sourceOutput = the macro).
+inline constexpr int kLayerMacros = 8;
+inline constexpr int kLayerMacroSlot = -2;
+struct LayerMacro {
+  std::string name;   // empty = "Macro N"
+  float value = 0;    // 0..1
+  bool operator==(const LayerMacro& o) const { return name == o.name && value == o.value; }
+};
+// K-169: layer modes (Channel::layerMode).
+enum LayerMode : int { kLayerAll = 0, kLayerRandom = 1, kLayerCycle = 2, kLayerRandomNoRepeat = 3, kLayerModeCount = 4 };
 
 // K-87: a frozen channel or mixer track. Its sound up to its live strip was rendered once to a
 // file (core/Freeze.h); its plugins are unloaded while the record stands and the file plays
@@ -86,7 +134,23 @@ struct Channel {
   // Layer: notes of this channel also play on these channels (the layer's own
   // instrument, if any, plays too). layerMode 0 = all children, 1 = one random child per note.
   std::vector<ObjectId> layer;
-  int layerMode = 0;
+  int layerMode = 0;  // LayerMode (2 = cycle through the children, 3 = random without repeats)
+  // K-169: per-child zones (see LayerZone; only children that differ from a full zone) and the
+  // layer's macro knobs.
+  std::vector<LayerZone> layerZones;
+  std::array<LayerMacro, kLayerMacros> macros{};
+  const LayerZone* layerZone(ObjectId child) const {
+    for (const auto& z : layerZones)
+      if (z.child == child) return &z;
+    return nullptr;
+  }
+  // True when the layer uses anything beyond the plain all / random children of older versions.
+  bool layerRack() const {
+    if (layerMode >= kLayerCycle) return true;
+    for (const auto& z : layerZones)
+      if (!z.full()) return true;
+    return false;
+  }
   int group = -1;            // display group (index into Song::channelGroups), -1 = none
   // Multi-output instruments (hosted plugins): mixer track of each extra
   // output (output 2, 3, …); kNoId or missing = that output is not used.
@@ -120,7 +184,8 @@ struct Channel {
            pan == o.pan && muted == o.muted && pitch == o.pitch && mixerTrack == o.mixerTrack && noteFx == o.noteFx &&
            fine == o.fine && pitchSmooth == o.pitchSmooth && knobFine == o.knobFine && swingMix == o.swingMix && timeShift == o.timeShift && polyphony == o.polyphony &&
            mono == o.mono && porta == o.porta && portaTime == o.portaTime && cutGroup == o.cutGroup &&
-           cutBy == o.cutBy && echo == o.echo && layer == o.layer && layerMode == o.layerMode && group == o.group &&
+           cutBy == o.cutBy && echo == o.echo && layer == o.layer && layerMode == o.layerMode && layerZones == o.layerZones &&
+           macros == o.macros && group == o.group &&
            auxOuts == o.auxOuts && midiOutPort == o.midiOutPort && midiInPort == o.midiInPort && keyLo == o.keyLo &&
            keyHi == o.keyHi && swingTruncate == o.swingTruncate && audioClip == o.audioClip && flIcon == o.flIcon && icon == o.icon &&
            freeze == o.freeze && hibernate == o.hibernate;

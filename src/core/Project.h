@@ -39,6 +39,7 @@ bool slidesMeetOtherColours(const Song& s);
 // clipFromJson: 0 ok, 1 dropped (its audio / automation source is missing),
 // -2 its pattern is missing, -3 bad position.
 void channelFromJson(const Json& jc, Channel& c, const Song& s);
+Json channelToJson(const Channel& c);  // the project document's channel object (K-169: layer presets)
 bool patternFromJson(const Json& jp, Pattern& p, const Song& s);
 int clipFromJson(const Json& jc, Clip& c, const Song& s);
 void automationClipFromJson(const Json& ja, AutomationClip& a);

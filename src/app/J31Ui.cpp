@@ -12,6 +12,7 @@
 #include "../../third_party/imgui/imgui.h"
 #include "../core/ChordTools.h"
 #include "../core/Grouping.h"
+#include "../core/LayerRack.h"
 #include "../core/NoteTools.h"
 #include "../core/SongTools.h"
 #include "../core/StepNotes.h"
@@ -278,10 +279,15 @@ void channelItems(App& a, ObjectId channel) {
   if (ImGui::MenuItem(i18n::tr("Truncate swung steps"), nullptr, &trunc)) ops::setSwingTruncate(a.doc, {channel}, trunc ? 1 : 0);
   ui::Hint("Swung steps end on their grid line instead of overlapping the next step");
   if (c->isLayer()) {
-    if (ImGui::MenuItem(i18n::tr("Split the layer's children over the keyboard"))) {
-      if (ops::splitLayerChildren(a.doc, channel)) a.notify("Each child plays its own key range");
+    if (ImGui::MenuItem(i18n::tr("Split the layer's children over the keyboard"))) {  // K-169: the layer's zones
+      if (layer::splitKeys(a.doc, channel)) a.notify("Each child plays its own key zone");
     }
-    if (ImGui::MenuItem(i18n::tr("Reset the children's key ranges"))) ops::resetLayerChildren(a.doc, channel);
+    if (ImGui::MenuItem(i18n::tr("Reset the children's key ranges"))) {
+      a.doc.beginGroup("reset layer zones");
+      layer::resetZones(a.doc, channel);
+      ops::resetLayerChildren(a.doc, channel);
+      a.doc.endGroup();
+    }
   }
 }
 

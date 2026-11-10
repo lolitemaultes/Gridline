@@ -680,6 +680,13 @@ void Exporter::writeChannel(int fl) {
     }
   if (type == kLayer) {
     ce.setValue(144, (ce.value(144, 0) & ~1u) | (ch.layerMode == 1 ? 1u : 0u));
+    // K-169: zones, the cycle / no-repeat modes and macros have no FL layer equivalent: the
+    // children are written to play every note (or a random child per note).
+    if (ch.layerMode >= kLayerCycle) rep.warn("layer '" + ch.name + "': its cycle / no-repeat mode is written as all children");
+    if (ch.layerRack() && ch.layerMode < kLayerCycle) rep.warn("layer '" + ch.name + "': key and velocity zones are not written (FL plays every child on every note)");
+    bool macros = false;
+    for (const LayerMacro& m : ch.macros) macros = macros || m.value != 0 || !m.name.empty();
+    if (macros) rep.warn("layer '" + ch.name + "': its macros are not written");
     auto it = std::find_if(ce.ev.begin(), ce.ev.end(), [](const RawEvent& e) { return e.id == 104; });
     size_t at = it == ce.ev.end() ? ce.ev.size() : static_cast<size_t>(it - ce.ev.begin()) + 1;
     for (ObjectId k : ch.layer) {

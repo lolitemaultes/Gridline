@@ -14,6 +14,7 @@
 #include <vector>
 #include "../core/Automation.h"
 #include "../core/Expr.h"
+#include "../core/LayerPick.h"
 #include "../core/Fades.h"
 #include "../core/NoteBend.h"
 #include "../core/Params.h"
@@ -151,6 +152,7 @@ struct ChannelRuntime {
   static constexpr int kLiveHeld = 64;
   LiveHeld live[kLiveHeld];
   int liveCount = 0;
+  layer::PickState layerPick;  // K-169: cycle / no-repeat state of a layer's live notes (audio thread)
   // K-64 (audio thread): an idle channel left outL / outR out of this block: its output is silence.
   bool outZero = false;
   // This block's output after the strip gains (the mixer pulls it).
@@ -374,6 +376,12 @@ struct ProgChannel {
   int cutGroup = 0, cutBy = 0;
   std::vector<int> layer;  // layer children (Program channel indices), for live notes
   int layerMode = 0;
+  // K-169: the zone of each child in `layer` (same order), whether the layer uses zones / the
+  // newer modes (else the older all / random dispatch runs), whether a child is soloed, and the
+  // layer's macro values (set from the song, automation and links; read by the macro links).
+  std::vector<LayerZone> layerZones;
+  bool layerRack = false, layerSolo = false;
+  mutable float macroLive[kLayerMacros] = {};
   int keyLo = 0, keyHi = 127;  // J-31: Channel key range (live notes outside it do not play)
   int midiPort = -1;           // J-165: MIDI Out channels (gl.midiout): their port, else -1
   // Channels listening on this channel's MIDI output port (hosted plugins'
@@ -466,10 +474,12 @@ struct ProgLink {
     MixVolume, MixPan, MixSep, MixMute, SlotParam, SlotMix,
     MixEqGain, MixEqFreq, MixEqQ,  // param = band 0..2
     MixSend,                       // param = index into ProgMixer::sends
-    SlotEnable
+    SlotEnable,
+    ChanMacro                      // K-169: a layer's macro (param = the macro)
   };
-  // source: a channel instrument (srcChannel) or a mixer slot (srcMixer, srcSlot)
-  int srcChannel = -1, srcMixer = -1, srcSlot = -1, output = 0;
+  // source: a channel instrument (srcChannel) or a mixer slot (srcMixer, srcSlot); K-169: a
+  // layer's macro (srcChannel = the layer, srcMacro = the macro)
+  int srcChannel = -1, srcMixer = -1, srcSlot = -1, output = 0, srcMacro = -1;
   Kind kind = ChanPlugin;
   int chan = -1, mixer = -1, slot = -1, fx = -1, param = -1;
   ParamDesc desc;

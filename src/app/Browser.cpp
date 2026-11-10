@@ -319,6 +319,7 @@ ui::Icon iconOf(Kind k) {
     case Kind::Project:
     case Kind::Flp: return ui::Icon::Song;
     case Kind::Chain: return ui::Icon::Mixer;
+    case Kind::Layer: return ui::Icon::Rack;  // K-169: layer presets
     case Kind::Preset:
     case Kind::Fst: return ui::Icon::Settings;
     case Kind::Image: return ui::Icon::Paint;  // J-184: pictures (Pixel Tone)
@@ -334,6 +335,7 @@ ImU32 iconColOf(Kind k) {
     case Kind::Project:
     case Kind::Flp: return roleCol(role::kPlay, 0.85f);
     case Kind::Chain: return roleCol(role::kSlice, 0.85f);
+    case Kind::Layer: return roleCol(role::kStamp, 0.85f);
     case Kind::Preset:
     case Kind::Fst: return roleCol(role::kStamp, 0.85f);
     case Kind::Image: return roleCol(role::kDraw, 0.85f);
@@ -805,7 +807,7 @@ void fileRow(App& a, const fs::path& p, float indent) {
   const std::string ps = p.string();
   const Kind k = browse::kindOf(ps);
   // Presets show their names; files keep their extension.
-  const bool named = k == Kind::Preset || k == Kind::Chain || k == Kind::Shape || k == Kind::Fst;
+  const bool named = k == Kind::Preset || k == Kind::Chain || k == Kind::Shape || k == Kind::Fst || k == Kind::Layer;
   std::string name = named ? p.stem().string() : p.filename().string();
   if (renameRow(a, p, indent, iconOf(k), iconColOf(k))) return;  // K-18
   bool dbl = false;
@@ -829,6 +831,7 @@ void fileRow(App& a, const fs::path& p, float indent) {
       ui::Hint("Double-click: load into the open plugin window (or a new channel / the selected insert) \xC2\xB7 drag onto a plugin window, the rack or a mixer slot");
       break;
     case Kind::Chain: ui::Hint("Double-click: load on the selected mixer track \xC2\xB7 drag onto a mixer strip"); break;
+    case Kind::Layer: ui::Hint("Double-click or drag onto the rack: add this layer with its channels"); break;
     case Kind::Image: ui::Hint("Drag onto a Pixel Tone editor or channel to play this picture \xC2\xB7 double-click: load into the open Pixel Tone"); break;
     default: break;
   }
@@ -1364,7 +1367,7 @@ int searchResults(App& a, const std::string& text) {
       {Kind::Audio, i18n::N_("Samples")}, {Kind::Preset, i18n::N_("Presets")}, {Kind::Fst, i18n::N_("FL Studio presets")},
       {Kind::Chain, i18n::N_("Effect chains")}, {Kind::Midi, i18n::N_("MIDI files")}, {Kind::Score, i18n::N_("Scores")},
       {Kind::Project, i18n::N_("Projects")}, {Kind::Flp, i18n::N_("FL Studio projects")},
-      {Kind::Shape, i18n::N_("Automation shapes")}, {Kind::Image, i18n::N_("Pictures")},
+      {Kind::Shape, i18n::N_("Automation shapes")}, {Kind::Image, i18n::N_("Pictures")}, {Kind::Layer, i18n::N_("Layers")},
   };
   for (const auto& [kind, title] : groups) {
     int n = 0;

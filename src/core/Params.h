@@ -39,6 +39,7 @@ enum class MixerParam : uint32_t {
   Count
 };
 inline constexpr uint32_t kChannelPluginBase = 100;
+inline constexpr uint32_t kLayerMacroBase = 60;  // K-169: a layer's macro knobs, kLayerMacroBase + 0..7
 inline constexpr uint32_t kSlotBase = 1000;
 inline constexpr uint32_t kSlotStride = 1000;  // schema v6 (was 100: effects with 99+ params aliased)
 inline constexpr uint32_t kSlotMix = 999;
@@ -50,6 +51,7 @@ inline constexpr int kMaxNoteFx = 8;  // note processors per channel
 
 inline ParamId songParam(SongParam p) { return {kSongId, static_cast<uint32_t>(p)}; }
 inline ParamId channelParam(ObjectId ch, ChannelParam p) { return {ch, static_cast<uint32_t>(p)}; }
+inline ParamId layerMacroParam(ObjectId layer, int k) { return {layer, kLayerMacroBase + static_cast<uint32_t>(k)}; }
 inline ParamId channelPluginParam(ObjectId ch, int k) { return {ch, kChannelPluginBase + static_cast<uint32_t>(k)}; }
 inline ParamId noteFxParam(ObjectId ch, int fx, int k) {
   return {ch, kNoteFxBase + static_cast<uint32_t>(fx) * kNoteFxStride + static_cast<uint32_t>(k)};

@@ -48,6 +48,14 @@ bool resolve(Song& s, ParamId id, Target& t) {
       t.desc = p->params[k];
       return true;
     }
+    if (id.index >= kLayerMacroBase && id.index < kLayerMacroBase + static_cast<uint32_t>(kLayerMacros)) {  // K-169
+      if (!c->isLayer()) return false;
+      LayerMacro& m = c->macros[id.index - kLayerMacroBase];
+      t.f = &m.value;
+      t.desc = lin("", "%", 0, 1, 0);
+      t.desc.name = m.name.empty() ? "Macro " + std::to_string(id.index - kLayerMacroBase + 1) : m.name;
+      return true;
+    }
     switch (static_cast<ChannelParam>(id.index)) {
       case ChannelParam::Volume: t.f = &c->gain; t.desc = lin("Volume", "%", 0.0, 1.25, 0.78); return true;
       case ChannelParam::Pan: t.f = &c->pan; t.desc = lin("Pan", "pan", -1.0, 1.0, 0.0); return true;
@@ -186,6 +194,8 @@ std::vector<ParamId> listParams(const Song& song) {
   for (uint32_t i = 0; i < static_cast<uint32_t>(SongParam::Count); ++i) out.push_back({kSongId, i});
   for (const auto& c : song.channels) {
     for (uint32_t i = 0; i < static_cast<uint32_t>(ChannelParam::Count); ++i) out.push_back({c.id, i});
+    if (c.isLayer())  // K-169: the layer's macros
+      for (int k = 0; k < kLayerMacros; ++k) out.push_back(layerMacroParam(c.id, k));
     if (const PluginInfo* p = findPlugin(c.plugin.type))
       for (size_t k = 0; k < p->params.size(); ++k) out.push_back(channelPluginParam(c.id, static_cast<int>(k)));
     for (size_t fx = 0; fx < c.noteFx.size(); ++fx)
@@ -237,12 +247,21 @@ std::vector<ControllerOutput> listControllerOutputs(const Song& song) {
       out.push_back({owner, slot, static_cast<int>(k), prefix + " › " + info->name + " › " + info->outputs[k]});
   };
   for (const auto& c : song.channels) add(c.id, -1);
+  for (const auto& c : song.channels)  // K-169: layer macros
+    if (c.isLayer())
+      for (int k = 0; k < kLayerMacros; ++k) out.push_back({c.id, kLayerMacroSlot, k, controllerOutputName(song, c.id, kLayerMacroSlot, k)});
   for (const auto& m : song.mixer)
     for (size_t s = 0; s < m.slots.size(); ++s) add(m.id, static_cast<int>(s));
   return out;
 }
 
 std::string controllerOutputName(const Song& song, ObjectId owner, int slot, int output) {
+  if (slot == kLayerMacroSlot) {  // K-169
+    const Channel* c = song.channel(owner);
+    if (!c || !c->isLayer() || output < 0 || output >= kLayerMacros) return "?";
+    const LayerMacro& m = c->macros[static_cast<size_t>(output)];
+    return c->name + " › " + (m.name.empty() ? "Macro " + std::to_string(output + 1) : m.name);
+  }
   const PluginInfo* info = nullptr;
   std::string prefix = sourcePrefix(song, owner, slot, &info);
   if (!info || output < 0 || static_cast<size_t>(output) >= info->outputs.size()) return "?";

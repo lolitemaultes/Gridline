@@ -10,6 +10,7 @@
 #include <sstream>
 #include "../../third_party/imgui/imgui_internal.h"
 #include "../core/Json.h"
+#include "../core/LayerRack.h"
 #include "../core/TrackModes.h"
 #include "../core/I18n.h"
 #include "../core/MidiFile.h"
@@ -128,6 +129,7 @@ struct Decoded {
   DropItem item;
   PluginState state;
   ChainPreset chain;
+  Json layer;  // K-169: a layer preset
   std::string name;
   bool ok = false;
   std::string error;
@@ -162,6 +164,9 @@ const Decoded& decodeItem(const std::string& path) {
       }
     }
     if (!d.ok) d.item.kind = Kind::Other, d.error = "Unknown preset";
+  } else if (d.item.kind == Kind::Layer) {  // K-169
+    d.ok = layer::readPreset(path, d.layer, &d.error);
+    if (!d.ok) d.item.kind = Kind::Other;
   } else if (d.item.kind == Kind::Chain) {
     d.ok = loadChain(path, d.chain);
     if (!d.ok) d.item.kind = Kind::Other;
@@ -295,6 +300,7 @@ void fileDragSource(const std::string& path, const char* label) {
   const ui::Icon icon = audio ? ui::Icon::Wave
                         : k == Kind::Midi || k == Kind::Score ? ui::Icon::Piano
                         : k == Kind::Chain ? ui::Icon::Mixer
+                        : k == Kind::Layer ? ui::Icon::Rack  // K-169
                         : k == Kind::Project || k == Kind::Flp ? ui::Icon::Song
                         : k == Kind::Image                     ? ui::Icon::Paint  // J-184
                                                                : ui::Icon::Settings;
@@ -857,6 +863,18 @@ bool runAction(App& a, const std::string& path, DropAction act, DropTarget targe
     case DropAction::AddBrowserFolder:
       addBrowserFolder(a, path);
       return true;
+    case DropAction::NewLayer: {  // K-169: the layer and its children, as one undo step
+      std::string err;
+      const ObjectId l = layer::loadPreset(a.doc, d.layer, target == DropTarget::Rack ? place.insertAt : -1, &err);
+      if (l == kNoId) {
+        a.notify(err.empty() ? std::string(i18n::tr("Cannot load this layer preset")) : err, true);
+        return false;
+      }
+      a.selectChannel(l);
+      a.settingsChannel = l;
+      a.notify(std::string(i18n::tr("Added the layer ")) + d.name);
+      return true;
+    }
     case DropAction::LoadPicture: {  // J-184: decoded on a worker, applied as one undo step ("load picture")
       const PluginTarget t = target == DropTarget::Rack ? PluginTarget{place.channel, -1} : PluginTarget{place.owner, place.pluginSlot};
       if (!packs::loadPicture(a, t, path)) return false;
@@ -1245,6 +1263,10 @@ void openFile(App& a, const std::string& path) {
   }
   if (d.item.kind == Kind::Chain) {
     performDrop(a, path, DropTarget::MixerTrack, DropPlace{});
+    return;
+  }
+  if (d.item.kind == Kind::Layer) {  // K-169: a new layer at the end of the rack
+    performDrop(a, path, DropTarget::Rack, DropPlace{});
     return;
   }
   performDrop(a, path, DropTarget::Workspace, DropPlace{});
