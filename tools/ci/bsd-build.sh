@@ -31,6 +31,8 @@ if [ "$(uname -s)" = NetBSD ]; then
     done
   fi
 fi
+# The VM does not inherit the runner environment: tell the tests they run on a shared CI machine.
+export CI="${CI:-true}"
 JOBS="$(sysctl -n hw.ncpu 2>/dev/null || echo 2)"
 # The VMs stop answering SSH under memory pressure (GCC 10 on NetBSD, the large render-cache
 # tests everywhere): two compilers or tests at a time.
