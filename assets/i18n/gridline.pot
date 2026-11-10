@@ -1117,6 +1117,10 @@ msgstr ""
 msgid "Drop to move it into "
 msgstr ""
 
+#: src/app/Browser.cpp src/app/ChannelSettings.cpp src/app/Playlist.cpp
+msgid "Edit in Loupe"
+msgstr ""
+
 #: src/app/Browser.cpp
 msgid "Edited audio"
 msgstr ""
@@ -2135,6 +2139,10 @@ msgstr ""
 
 #: src/app/ChannelSettings.cpp
 msgid "ECHO"
+msgstr ""
+
+#: src/app/ChannelSettings.cpp
+msgid "Edit this sample in Loupe: every edit comes back to this channel"
 msgstr ""
 
 #: src/app/ChannelSettings.cpp
@@ -6678,6 +6686,10 @@ msgid "Folders and scripting"
 msgstr ""
 
 #: src/app/Dialogs.cpp
+msgid "Follow the playhead while playing"
+msgstr ""
+
+#: src/app/Dialogs.cpp
 msgid "Follow the system's display scale (%d%%)"
 msgstr ""
 
@@ -6781,6 +6793,10 @@ msgstr ""
 msgid "Log and script console"
 msgstr ""
 
+#: src/app/Dialogs.cpp src/packs/edison/edison_ui.cpp
+msgid "Loupe"
+msgstr ""
+
 #: src/app/Dialogs.cpp src/app/ExportUi.cpp src/app/Menus.cpp src/app/PluginManager.cpp src/core/TrackIconSet.cpp src/packs/tideline/tideline_ui.cpp src/packs/tracker/tracker_ui.cpp
 msgid "MIDI"
 msgstr ""
@@ -6835,6 +6851,10 @@ msgstr ""
 
 #: src/app/Dialogs.cpp
 msgid "Off: each press undoes one of your steps, and tells you when a collaborator changed it so nothing was left."
+msgstr ""
+
+#: src/app/Dialogs.cpp
+msgid "On: Loupe's waveform scrolls along with playback. Off: the view stays where you put it. The toggle beside Loupe's waveform changes the same setting"
 msgstr ""
 
 #: src/app/Dialogs.cpp
@@ -11679,10 +11699,6 @@ msgstr ""
 
 #: src/app/Playlist.cpp
 msgid "Edit automation..."
-msgstr ""
-
-#: src/app/Playlist.cpp
-msgid "Edit in Loupe"
 msgstr ""
 
 #: src/app/Playlist.cpp
@@ -18558,10 +18574,6 @@ msgid "Left, with the browser"
 msgstr ""
 
 #: src/packs/edison/edison_ui.cpp
-msgid "Loupe"
-msgstr ""
-
-#: src/packs/edison/edison_ui.cpp
 msgid "Move in the layout"
 msgstr ""
 
@@ -18575,6 +18587,14 @@ msgstr ""
 
 #: src/packs/edison/edison_ui.cpp
 msgid "Unpin into its own window"
+msgstr ""
+
+#: src/packs/edison/edison_wave_ui.cpp
+msgid "%s  - click sets the play position, drag selects, Shift-click extends, Alt scrubs, wheel zooms, right-click for edits"
+msgstr ""
+
+#: src/packs/edison/edison_wave_ui.cpp
+msgid "%s  - scrub: drag to hear the audio at the speed you move; the play position stays where you let go"
 msgstr ""
 
 #: src/packs/edison/edison_wave_ui.cpp
@@ -18630,7 +18650,15 @@ msgid "Record from the mixer input (R), load a file from the File menu, or drop 
 msgstr ""
 
 #: src/packs/edison/edison_wave_ui.cpp
+msgid "Ruler: click to set the play position (playing: jump there), drag to scrub"
+msgstr ""
+
+#: src/packs/edison/edison_wave_ui.cpp
 msgid "Select to next marker"
+msgstr ""
+
+#: src/packs/edison/edison_wave_ui.cpp
+msgid "Selection edge: drag to move it (Shift-click elsewhere also extends the selection)"
 msgstr ""
 
 #: src/packs/edison/edison_wave_ui.cpp

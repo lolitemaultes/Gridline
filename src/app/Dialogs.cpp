@@ -637,6 +637,12 @@ void settingsPageBody(App& a, int& page, float fieldW) {
       formLabel("");
       ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr(viewports::unavailableReason().c_str()));
     }
+    // The audio editor's auto-scroll (its own toggle, on the right of its waveform, sets the same thing).
+    formLabel("Loupe");
+    bool loupeFollow = st.getBool("loupe.autoScroll");
+    if (ImGui::Checkbox(i18n::tr("Follow the playhead while playing"), &loupeFollow)) st.set("loupe.autoScroll", loupeFollow);
+    ui::Hint("On: Loupe's waveform scrolls along with playback. Off: the view stays where you put it. "
+             "The toggle beside Loupe's waveform changes the same setting");
     ui::EndSection();
     // J-67: motion (smooth snapping of drags, smooth scrolling, elastic edges).
     ui::BeginSection("MOTION");

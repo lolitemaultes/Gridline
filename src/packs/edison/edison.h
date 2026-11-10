@@ -406,7 +406,13 @@ class EdisonFx : public Effect {
   float meter() const override { return 0.0f; }
 
   // ---- UI thread -------------------------------------------------------------
-  void play(int64_t from, int64_t to, bool loop);  // to <= from: to the end
+  // Plays from..to (to <= from: to the end), starting at `start` (< 0: at `from`); with loop
+  // the playback wraps back to `from`.
+  void play(int64_t from, int64_t to, bool loop, int64_t start = -1);
+  // While playing: the range changes at once (a new selection); the playback keeps its place
+  // when that lies inside the new range, else it goes to the new range's start. Stopped: the
+  // range a following host transport plays, from `start` (< 0: from `from`).
+  void setRange(int64_t from, int64_t to, int64_t start = -1);
   void stop();
   void scrub(bool on, double targetFrame);
   bool isPlaying() const { return playing_.load(); }
@@ -421,7 +427,8 @@ class EdisonFx : public Effect {
   void run(const PluginState& state, const Sample* src, const ProcessContext& ctx, float* L, float* R, int n);
   CaptureRing ring_;
   std::atomic<bool> playing_{false}, loop_{false}, scrubbing_{false}, scrubJump_{false}, startReq_{false}, stopReq_{false};
-  std::atomic<int64_t> from_{0}, to_{0};
+  std::atomic<int64_t> from_{0}, to_{0}, start_{-1};
+  std::atomic<bool> rangeReq_{false};
   std::atomic<double> pos_{0}, scrubTarget_{0};
   std::atomic<float> inPeak_{0}, outPeak_{0};
   std::atomic<int64_t> srcFrames_{0};

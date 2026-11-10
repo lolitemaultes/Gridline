@@ -149,7 +149,8 @@ void drawFormLayout(App& a, Session& s, const dock::Layout& Lo) {
     b.enabled = hasAudio || playing;
     if (cell("play", "play", playing ? ui::Icon::Pause : ui::Icon::Play, b)) playing ? stopPlay(a, s) : play(a, s);
     b = Btn{};
-    b.hint = "Scrub: drag in the waveform to hear it (or hold Alt)";
+    b.hint = "Scrub: drag in the waveform to hear it at the speed you move (or hold Alt, or drag along the ruler). "
+             "The play position stays where you let go";
     b.lit = s.scrubMode;
     if (cell("scrub", "scrub", ui::Icon::Scrub, b)) s.scrubMode = !s.scrubMode;
     b = Btn{};
@@ -357,6 +358,8 @@ void drawFormLayout(App& a, Session& s, const dock::Layout& Lo) {
       name = s.committed.empty() || s.committed[0] == '\x01' ? std::string(i18n::tr("(empty)")) : fs::path(s.committed).stem().string();
       const size_t dash = name.rfind('-');
       if (dash != std::string::npos && name.size() - dash == 13) name.resize(dash);  // drop the version hash
+    } else if (!s.file.empty()) {
+      name = fs::path(s.file).filename().string();
     } else {
       name = a.doc.song().channel(s.channel) ? a.doc.song().channel(s.channel)->name : std::string("?");
     }
@@ -412,6 +415,17 @@ void drawFormLayout(App& a, Session& s, const dock::Layout& Lo) {
   if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) handleKeys(a, s);
   skin::reserve(F);
   sty::frameEnd();
+  // While the audio is dragged out of a floating Loupe, the window turns see-through and lets
+  // the pointer through: the playlist, the channel rack or a sampler under it takes the drop
+  // (Loupe's window covers most of them otherwise, and a drop on its own waveform did nothing).
+  if (!s.dragOut.empty() && ImGui::GetDragDropPayload() && !inPanel(s)) {
+    ImGuiWindow* w = ImGui::GetCurrentWindow()->RootWindow;
+    w->Flags |= ImGuiWindowFlags_NoMouseInputs;  // the next frame's hovering skips it
+    for (ImDrawVert& v : w->DrawList->VtxBuffer) {
+      const ImU32 al = (v.col >> IM_COL32_A_SHIFT) & 0xFF;
+      v.col = (v.col & ~IM_COL32_A_MASK) | (static_cast<ImU32>(al * 0.14f) << IM_COL32_A_SHIFT);
+    }
+  }
   ImGui::PopID();
 }
 
@@ -583,7 +597,7 @@ void drawMenus(App& a, Session& s, ImVec2 tl, float cellW, float h, const sty::M
         ImGui::Separator();
         if (ImGui::MenuItem(i18n::tr("Time as min:sec"), nullptr, !s.barsTime)) s.barsTime = false;
         if (ImGui::MenuItem(i18n::tr("Time as bar:beat (song tempo)"), nullptr, s.barsTime)) s.barsTime = true;
-        if (ImGui::MenuItem(i18n::tr("Auto-scroll"), nullptr, s.autoScroll)) s.autoScroll = !s.autoScroll;
+        if (ImGui::MenuItem(i18n::tr("Auto-scroll"), nullptr, autoScroll(a))) setAutoScroll(a, !autoScroll(a));
         ImGui::Separator();
         dockMenuItems(a, s);  // K-15: pin into the main layout / back into a window of its own
         break;

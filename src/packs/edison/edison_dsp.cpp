@@ -169,12 +169,20 @@ void EdisonFx::stopSound() {
   playing_.store(false);
 }
 
-void EdisonFx::play(int64_t from, int64_t to, bool loop) {
+void EdisonFx::play(int64_t from, int64_t to, bool loop, int64_t start) {
   from_.store(std::max<int64_t>(0, from));
   to_.store(to);
+  start_.store(start);
   loop_.store(loop);
   startReq_.store(true);
   playing_.store(true);
+}
+
+void EdisonFx::setRange(int64_t from, int64_t to, int64_t start) {
+  from_.store(std::max<int64_t>(0, from));
+  to_.store(to);
+  start_.store(start);
+  rangeReq_.store(true);
 }
 
 void EdisonFx::stop() {
@@ -207,13 +215,21 @@ void EdisonFx::run(const PluginState& state, const Sample* src, const ProcessCon
   srcFrames_.store(frames, std::memory_order_relaxed);
   if (stopReq_.exchange(false)) rplaying_ = false;
   if (startReq_.exchange(false)) {
-    rpos_ = static_cast<double>(from_.load());
+    const int64_t st = start_.load();
+    rpos_ = static_cast<double>(st >= 0 ? st : from_.load());
     rplaying_ = true;
+    rangeReq_.store(false);
     tap::play(src);  // J-219: Track Receipt
+  }
+  if (rangeReq_.exchange(false) && rplaying_) {  // a new range while playing: keep the place when it is inside
+    const int64_t f = from_.load(), t = to_.load();
+    const double end = t > f && t <= frames ? static_cast<double>(t) : static_cast<double>(frames);
+    if (rpos_ < static_cast<double>(f) || rpos_ >= end) rpos_ = static_cast<double>(f);
   }
   if (P(EdFollowHost, 0) >= 0.5f) {
     if (ctx.playing && !hostWasPlaying_) {
-      rpos_ = static_cast<double>(from_.load());
+      const int64_t st = start_.load();
+      rpos_ = static_cast<double>(st >= 0 ? st : from_.load());
       rplaying_ = true;
       tap::play(src);
     } else if (!ctx.playing && hostWasPlaying_) {

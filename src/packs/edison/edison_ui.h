@@ -16,6 +16,7 @@
 #include "../../core/PianoRollScript.h"
 #include "../../engine/LiveWave.h"
 #include "edison.h"
+#include "edison_transport.h"
 
 namespace gl::packs::edison {
 
@@ -57,6 +58,7 @@ struct Session {
   bool slot = false;
   PluginTarget target;
   ObjectId channel = kNoId;  // standalone: the channel whose sample is edited
+  std::string file;          // a file opened on its own (the browser's Edit in Loupe): no owner in the project
   bool open = true;          // standalone window shown
   std::string dragOut;       // K-17: the file the drag out of the editor carries (made once per drag)
   bool dragOutUsed = false;  // K-17: the drag handle was dragged since it was pressed
@@ -82,9 +84,14 @@ struct Session {
   bool brushMode = false;
   int snap = 1;          // 0 none, 1 zero crossings, 2 markers, 3 beat grid
   bool barsTime = false; // ruler in bars:beats
-  bool autoScroll = true;
   bool scrubMode = false;
   bool scrubbing = false;
+  transport::ScrubFollow scrub;  // scrubbing outside a mixer slot (grains through the preview)
+  double scrubT = 0;             // time of the last scrub step
+  int edgeDrag = 0;              // the selection edge being dragged (1 start, 2 end)
+  // Dev checks ("loupe state"): the lanes and ruler last frame (screen px) and the view (frames).
+  float devLx0 = 0, devLx1 = 0, devLy0 = 0, devLy1 = 0, devRy0 = 0, devRy1 = 0;
+  double devViewStart = 0, devViewLen = 0;
   float brushHz = 0;     // brush height (octaves fraction) — set on first use
   std::vector<SpectralRect> brush;
 
@@ -108,6 +115,7 @@ struct Session {
   double pvT0 = 0;
   int64_t pvFrom = 0, pvTo = 0;
   SamplePtr pvSample;
+  int64_t playFrom = -1, playTo = -1;  // the range playing (a new selection while playing changes it)
 
   // recording (slot)
   Recorder rec;
@@ -179,6 +187,21 @@ void play(App& a, Session& s);
 void stopPlay(App& a, Session& s);
 bool isPlaying(App& a, Session& s);
 double playPos(App& a, Session& s);  // frames, -1 when stopped
+// What Play plays now (selection, loop points, cursor; edison_transport.h).
+transport::PlayRange playRange(App& a, const Session& s);
+// Per frame: a new selection (or loop) while playing changes the playing range at once; the
+// playback keeps its place when it is inside, else it goes to the new start. Stopped, a mixer
+// slot keeps the range a following song transport starts from (the cursor).
+void syncPlayRange(App& a, Session& s);
+// Scrubbing (the Scrub button, Alt, or a drag along the ruler): in a mixer slot the slot's
+// player follows the pointer; elsewhere grains through the preview do. The cursor stays where
+// the scrub ends.
+void scrubBegin(App& a, Session& s, double frame);
+void scrubMove(App& a, Session& s, double frame);
+void scrubEnd(App& a, Session& s);
+// Loupe follows the playhead (setting loupe.autoScroll, also the editor's own toggle).
+bool autoScroll(App& a);
+void setAutoScroll(App& a, bool on);
 void toggleRecord(App& a, Session& s);
 
 // Actions shared by the toolbar and the menus.
@@ -208,7 +231,9 @@ bool pinned(App& a);
 bool inPanel(const Session& s);  // this session is the one the panel shows
 void pinTo(App& a, Session& s, DockSpot spot);
 void unpin(App& a);              // the panel closes; its session goes back to its own window
-void dockMenuItems(App& a, Session& s);  // View menu: Pin to the layout / Unpin
+void dockMenuItems(App& a, Session& s);
+// An audio file on its own (the browser's Edit in Loupe): its own window, no owner.
+bool openFileInLoupe(App& a, const std::string& path);  // View menu: Pin to the layout / Unpin
 bool claimEffectEditor(App& a, const PluginTarget& t);
 // Dev checks (--dev-input "loupe [pin <spot> | unpin]"): the panel's room and layout last frame.
 struct DockDev {

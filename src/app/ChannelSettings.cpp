@@ -25,6 +25,7 @@
 #include "BrowserUi.h"
 #include "Windows.h"
 #include "../packs/modulation/modulation_ui.h"
+#include "../packs/PacksUi.h"
 #include "../core/Platform.h"
 #include "ChannelStrip.h"
 #include "ChannelRoute.h"
@@ -748,6 +749,12 @@ void drawChannelSettings(App& a) {
       };
     }
     ImGui::SameLine();
+    if (!c->plugin.data.empty() && smp) {
+      // Opens the sample in Loupe; its edits come back to this channel (one undo step each).
+      if (ui::TextButton("Edit in Loupe", false, 0, "Edit this sample in Loupe: every edit comes back to this channel"))
+        packs::openAudioEditor(a, c->plugin.data, id);
+      ImGui::SameLine();
+    }
     if (!c->plugin.data.empty()) {
       ImGui::AlignTextToFramePadding();
       ImGui::TextColored(theme::vec(P.textDim), "%s", fs::path(c->plugin.data).filename().string().c_str());

@@ -21,6 +21,7 @@
 #include "../../core/TrackReceipt.h"
 #include "../../core/I18n.h"
 #include "../../../third_party/imgui/imgui_internal.h"
+#include "../../engine/KerfMarks.h"
 #include "edison_dock.h"
 #include "edison_ui.h"
 
@@ -45,6 +46,7 @@ uint64_t standaloneKey(ObjectId ch) { return 0xED15000000000000ull ^ static_cast
 std::string audioDir(App& a) { return editedDir(a); }
 
 std::string displayName(App& a, const Session& s) {
+  if (!s.file.empty()) return fs::path(s.file).stem().string();
   if (!s.slot) {
     const Channel* c = a.doc.song().channel(s.channel);
     return c ? c->name : "Sample";
@@ -102,8 +104,12 @@ void applySaved(App& a, Session& s, const std::string& path, const std::string& 
 void applySavedNow(App& a, Session& s, const std::string& path, const std::string& hash, const std::string& label) {
   const Content& c = s.cur();
   s.committed = path;
+  if (!s.file.empty()) {  // a file on its own: the versions stay in Loupe (drag out, send, save)
+    noteOrigin(s.file, path);
+    return;
+  }
   if (!s.slot) {
-    if (const Channel* ch = a.doc.song().channel(s.channel)) noteOrigin(ch->plugin.data, path);
+    if (const Channel* ch = a.doc.song().channel(s.channel)) noteOrigin(kerfmarks::pathOf(ch->plugin.data), path);
   } else if (const PluginState* ps = slotState(a, s)) {
     State old;
     decodeState(ps->data, old);
@@ -127,7 +133,10 @@ void applySavedNow(App& a, Session& s, const std::string& path, const std::strin
     next.data = encodeState(st);
     if (next.data != ps->data) setPluginState(a, s.target, next, label, mergeKey(s));
   } else if (!path.empty()) {
-    a.doc.editChannel(s.channel, label, [&](Channel& ch) { ch.plugin.data = path; }, mergeKey(s));
+    a.doc.editChannel(s.channel, label, [&](Channel& ch) {
+      const size_t nl = ch.plugin.data.find('\n');  // a slicer's region names stay after the path
+      ch.plugin.data = nl == std::string::npos ? path : path + ch.plugin.data.substr(nl);
+    }, mergeKey(s));
   }
 }
 
@@ -270,8 +279,10 @@ void pump(App& a, Session& s) {
     State st;
     if (s.slot) {
       if (const PluginState* ps = slotState(a, s)) decodeState(ps->data, st);
+    } else if (!s.file.empty()) {
+      st.path = s.committed == "\x01" ? s.file : s.committed;  // a file on its own: loaded once, then its edits
     } else if (const Channel* c = a.doc.song().channel(s.channel)) {
-      st.path = c->plugin.data;
+      st.path = kerfmarks::pathOf(c->plugin.data);  // a slicer's data keeps its region names after the path
     }
     if (st.path != s.committed) startLoad(a, s, st);
   }
@@ -317,6 +328,7 @@ void pump(App& a, Session& s) {
   // Standalone preview playback ends on its own.
   // J-110: also when Stop (or another preview: the browser's) took the preview over.
   if (s.pvPlaying && !a.engine.previewingSample(s.pvSample.get())) s.pvPlaying = false;
+  syncPlayRange(a, s);  // a new selection while playing plays at once
 }
 
 }  // namespace
@@ -422,25 +434,43 @@ void redo(App& a, Session& s) {
 }
 
 // ------------------------------------------------------------------ transport
-void play(App& a, Session& s) {
-  const int64_t n = s.frames();
-  if (n == 0) return;
-  int64_t from = s.cursor, to = n;
-  if (!s.sel.empty()) from = s.sel.a, to = s.sel.b;
-  else if (s.cur().hasLoop() && param(a, s, EdLoop, 0) >= 0.5) from = s.cur().loopStart, to = s.cur().loopEnd;
-  if (from >= n) from = 0;
-  if (EdisonFx* fx = slotFx(a, s); fx && fx->sourceFrames() == n) {
-    fx->play(from, to, param(a, s, EdLoop, 0) >= 0.5);
-    return;
-  }
-  // Standalone (or the engine has not picked the new version yet): preview.
-  Audio part = extract(s.cur().a(), {from, to});
+transport::PlayRange playRange(App& a, const Session& s) {
+  const Content& c = s.cur();
+  const bool loopOn = s.slot && param(a, s, EdLoop, 0) >= 0.5;  // outside a slot the preview plays once
+  return transport::playRange(s.frames(), s.sel, c.hasLoop(), c.loopStart, c.loopEnd, loopOn, s.cursor);
+}
+
+namespace {
+// The slot's player, when it holds the version shown (else the preview plays).
+EdisonFx* player(App& a, Session& s) {
+  EdisonFx* fx = slotFx(a, s);
+  return fx && fx->sourceFrames() == s.frames() ? fx : nullptr;
+}
+
+// The preview plays [start, to) once.
+void previewFrom(App& a, Session& s, int64_t start, int64_t to) {
+  Audio part = extract(s.cur().a(), {start, to});
   s.pvSample = toSample(part, "");
   a.engine.preview(s.pvSample, true);  // J-112: Loupe's own Play (plugin playback)
   s.pvPlaying = true;
   s.pvT0 = ImGui::GetTime();
-  s.pvFrom = from;
+  s.pvFrom = start;
   s.pvTo = to;
+}
+}  // namespace
+
+void play(App& a, Session& s) {
+  const int64_t n = s.frames();
+  if (n == 0) return;
+  const transport::PlayRange r = playRange(a, s);
+  s.playFrom = r.from;
+  s.playTo = r.to;
+  if (EdisonFx* fx = player(a, s)) {
+    fx->play(r.from, r.to, r.loop, r.start);
+    return;
+  }
+  // Standalone (or the engine has not picked the new version yet): preview.
+  previewFrom(a, s, r.start, r.to);
 }
 
 void stopPlay(App& a, Session& s) {
@@ -451,11 +481,12 @@ void stopPlay(App& a, Session& s) {
 
 bool isPlaying(App& a, Session& s) {
   if (EdisonFx* fx = slotFx(a, s); fx && fx->isPlaying()) return true;
-  return s.pvPlaying;
+  return s.pvPlaying && !s.scrubbing;
 }
 
 double playPos(App& a, Session& s) {
   if (EdisonFx* fx = slotFx(a, s); fx && (fx->isPlaying() || s.scrubbing)) return fx->position();
+  if (s.scrubbing) return s.scrub.pos;
   if (s.pvPlaying) {
     double p = static_cast<double>(s.pvFrom) + (ImGui::GetTime() - s.pvT0) * s.rate();
     if (p >= static_cast<double>(s.pvTo)) return -1;
@@ -463,6 +494,86 @@ double playPos(App& a, Session& s) {
   }
   return -1;
 }
+
+void syncPlayRange(App& a, Session& s) {
+  if (s.dragging || s.scrubbing || s.frames() == 0) return;
+  const transport::PlayRange r = playRange(a, s);
+  EdisonFx* fx = slotFx(a, s);
+  if (!isPlaying(a, s)) {
+    if (fx) fx->setRange(r.from, r.to, r.start);  // a following song transport starts at the cursor
+    return;
+  }
+  if (r.from == s.playFrom && r.to == s.playTo) return;
+  s.playFrom = r.from;
+  s.playTo = r.to;
+  if (fx && fx->isPlaying()) {
+    fx->setRange(r.from, r.to);
+    return;
+  }
+  // The preview: on from where it is when that is inside the new range, else the new start.
+  const double p = playPos(a, s);
+  const auto at = static_cast<int64_t>(transport::keepOrJump(p < 0 ? static_cast<double>(r.from) : p, r.from, r.to));
+  previewFrom(a, s, at, r.to);
+}
+
+void scrubBegin(App& a, Session& s, double frame) {
+  if (s.frames() < 2) return;
+  s.scrubbing = true;
+  if (EdisonFx* fx = player(a, s)) {
+    fx->scrub(true, frame);
+    return;
+  }
+  if (s.pvPlaying) a.engine.preview(nullptr);
+  s.pvPlaying = false;
+  s.scrub = {};
+  s.scrub.pos = std::clamp(frame, 0.0, static_cast<double>(s.frames() - 1));
+  s.scrubT = ImGui::GetTime();
+}
+
+void scrubMove(App& a, Session& s, double frame) {
+  if (!s.scrubbing) return;
+  if (EdisonFx* fx = player(a, s)) {
+    fx->scrub(true, frame);
+    return;
+  }
+  // Grains through the preview: each one starts where the last one has got to by now.
+  const double now = ImGui::GetTime();
+  const double dt = now - s.scrubT;
+  s.scrubT = now;
+  const double rate = s.rate();
+  const bool wasAudible = s.pvPlaying;
+  s.scrub.step(frame, dt, s.frames(), rate);
+  if (!s.scrub.audible(rate)) {
+    if (s.pvPlaying) a.engine.preview(nullptr);
+    s.pvPlaying = false;
+    return;
+  }
+  const Audio g = transport::scrubGrain(s.cur().a(), s.scrub.pos, s.scrub.vel / rate, static_cast<int64_t>(rate * 0.12), !wasAudible);
+  if (g.frames() == 0) return;
+  s.pvSample = toSample(g, "");
+  a.engine.preview(s.pvSample, true);
+  s.pvPlaying = true;
+  s.pvT0 = now;
+  s.pvFrom = static_cast<int64_t>(s.scrub.pos);
+  s.pvTo = s.frames();
+}
+
+void scrubEnd(App& a, Session& s) {
+  if (!s.scrubbing) return;
+  double at = s.scrub.pos;
+  if (EdisonFx* fx = player(a, s)) {
+    at = fx->position();
+    fx->scrub(false, at);
+  } else if (s.pvPlaying) {
+    a.engine.preview(nullptr);
+    s.pvPlaying = false;
+  }
+  s.scrubbing = false;
+  s.cursor = std::clamp<int64_t>(static_cast<int64_t>(std::llround(at)), 0, s.frames());  // the cursor stays where the scrub ended
+}
+
+bool autoScroll(App& a) { return a.settings.getBool("loupe.autoScroll"); }
+void setAutoScroll(App& a, bool on) { a.settings.set("loupe.autoScroll", on); }
 
 void toggleRecord(App& a, Session& s) {
   if (!s.slot) {
@@ -859,6 +970,43 @@ bool openAudioEditor(App& a, const std::string& path, ObjectId channel) {
   return true;
 }
 
+namespace {
+uint64_t fileKey(const std::string& path) {
+  uint64_t h = 1469598103934665603ull;
+  for (unsigned char ch : path) h = (h ^ ch) * 1099511628211ull;
+  return 0xF11E000000000000ull ^ (h & 0x0000FFFFFFFFFFFFull);
+}
+std::string fileWindowId(uint64_t key) {
+  char b[48];
+  std::snprintf(b, sizeof b, "###edison-file-%llx", static_cast<unsigned long long>(key));
+  return b;
+}
+}  // namespace
+
+bool openFileInLoupe(App& a, const std::string& path) {
+  std::error_code ec;
+  if (path.empty() || !fs::is_regular_file(path, ec)) return false;
+  auto& m = sessions();
+  const uint64_t k = fileKey(path);
+  auto it = m.find(k);
+  if (it == m.end()) {
+    auto s = std::make_unique<Session>();
+    s->key = k;
+    s->slot = false;
+    s->file = path;
+    s->committed = "\x01";
+    it = m.emplace(k, std::move(s)).first;
+  }
+  if (pinned(a)) {  // K-15: pinned into the layout: the panel shows it
+    panelKey() = k;
+    a.focusWindow = "Loupe";
+    return true;
+  }
+  it->second->open = true;
+  a.focusWindow = fileWindowId(k);
+  return true;
+}
+
 
 // ---------------------------------------------------------------- K-15: pinned into the layout
 namespace {
@@ -878,7 +1026,10 @@ Session* findSession(uint64_t k) {
 }
 
 // The session still has something to show (its slot holds Loupe, its channel exists).
-bool alive(App& a, const Session& s) { return s.slot ? slotState(a, s) != nullptr : a.doc.song().channel(s.channel) != nullptr; }
+bool alive(App& a, const Session& s) {
+  if (s.slot) return slotState(a, s) != nullptr;
+  return !s.file.empty() || a.doc.song().channel(s.channel) != nullptr;
+}
 
 // The panel's session: the one pinned last, else the project's first Loupe effect.
 Session* panelSession(App& a) {
@@ -1019,6 +1170,40 @@ DockDev& dockDev() {
 bool dockDevCommand(App& a, const std::string& cmd, const std::vector<std::string>& args) {
   if (cmd != "loupe") return false;
   const std::string what = args.empty() ? "" : args[0];
+  if (what == "state") {  // loupe state: every open Loupe (owner, length, cursor, selection, playback, lanes)
+    for (auto& [k, sp] : sessions()) {
+      Session& s = *sp;
+      if (!alive(a, s)) continue;
+      const char* kind = s.slot ? "slot" : !s.file.empty() ? "file" : "channel";
+      const std::string committed = s.committed.empty() || s.committed[0] == '\x01' ? std::string("-") : fs::path(s.committed).filename().string();
+      std::printf("loupe state: key %llx kind %s channel %llu frames %lld cursor %lld sel %lld %lld playing %d pos %.0f range %lld %lld scrubbing %d "
+                  "autoscroll %d lanes %.1f %.1f %.1f %.1f ruler %.1f %.1f view %.0f %.0f committed %s\n",
+                  static_cast<unsigned long long>(k), kind, static_cast<unsigned long long>(s.channel), static_cast<long long>(s.frames()),
+                  static_cast<long long>(s.cursor), static_cast<long long>(s.sel.a), static_cast<long long>(s.sel.b), isPlaying(a, s) ? 1 : 0,
+                  playPos(a, s), static_cast<long long>(s.playFrom), static_cast<long long>(s.playTo), s.scrubbing ? 1 : 0, autoScroll(a) ? 1 : 0,
+                  static_cast<double>(s.devLx0), static_cast<double>(s.devLx1), static_cast<double>(s.devLy0), static_cast<double>(s.devLy1),
+                  static_cast<double>(s.devRy0), static_cast<double>(s.devRy1), s.devViewStart, s.devViewLen, committed.c_str());
+    }
+    std::fflush(stdout);
+    return true;
+  }
+  if (what == "play" || what == "stop" || what == "loop" || what == "follow") {  // loupe play | stop | loop 0|1 | follow 0|1: the first open Loupe
+    for (auto& [k, sp] : sessions()) {
+      Session& s = *sp;
+      if (!alive(a, s)) continue;
+      const bool on = args.size() > 1 && args[1] == "1";
+      if (what == "play") play(a, s);
+      else if (what == "stop") stopPlay(a, s);
+      else setParam(a, s, what == "loop" ? EdLoop : EdFollowHost, on ? 1 : 0);
+      break;
+    }
+    return true;
+  }
+  if (what == "file" && args.size() > 1) {  // loupe file <path>: the browser's Edit in Loupe
+    std::printf("loupe file: %s\n", openFileInLoupe(a, args[1]) ? "opened" : "not opened");
+    std::fflush(stdout);
+    return true;
+  }
   if (what == "pin") {  // loupe pin tab|below|left|right|float: the slot session (first Loupe effect) or the open one
     Session* s = panelSession(a);
     if (!s)
@@ -1079,13 +1264,15 @@ void drawWindows(App& a) {
       continue;
     }
     if (!s.open || (pinned(a) && inPanel(s))) continue;
-    const Channel* ch = a.doc.song().channel(s.channel);
-    if (!ch) {
+    const Channel* ch = s.file.empty() ? a.doc.song().channel(s.channel) : nullptr;
+    if (!ch && s.file.empty()) {
       s.open = false;
       continue;
     }
     pump(a, s);
-    const std::string title = pluginDisplayName(kType) + "  ·  " + ch->name + "###edison-standalone-" + std::to_string(s.channel);
+    const std::string title = s.file.empty()
+                                  ? pluginDisplayName(kType) + "  \xC2\xB7  " + ch->name + "###edison-standalone-" + std::to_string(s.channel)
+                                  : pluginDisplayName(kType) + "  \xC2\xB7  " + fs::path(s.file).filename().string() + fileWindowId(s.key);
     const int fitFlags = ui::NextFloatingWindowSize(1100 + 24);  // J-158: capped to the work area, the rest scrolls
     ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.45f), ImGuiCond_Appearing,

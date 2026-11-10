@@ -283,24 +283,40 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, const sty::Metrics& 
   const bool live = s.fit.active;
   // Auto-scroll with the playhead.
   const double pos = live ? -1.0 : playPos(a, s);
-  if (s.autoScroll && pos >= 0 && !s.dragging && (pos < s.viewStart || pos > s.viewStart + s.viewLen * 0.98))
+  if (autoScroll(a) && pos >= 0 && !s.dragging && (pos < s.viewStart || pos > s.viewStart + s.viewLen * 0.98))
     s.viewStart = std::clamp(pos - s.viewLen * 0.05, 0.0, std::max(0.0, n - s.viewLen));
   g.start = live ? 0.0 : s.viewStart;
   g.len = live ? s.fit.span(g.W(), P(8)) : std::max(1.0, s.viewLen);
   const double vr = viewRate(s);
   devLiveTrace(s, g, live, P(8));
+  s.devLx0 = g.p0.x, s.devLx1 = g.p1.x, s.devLy0 = g.p0.y, s.devLy1 = g.p1.y, s.devRy0 = r0.y, s.devRy1 = r1.y;
+  s.devViewStart = g.start, s.devViewLen = g.len;
 
   // ---- backgrounds
   dl->AddRectFilled(r0, r1, C(col::RulerBg));
   dl->AddRectFilled(g.p0, g.p1, C(col::WaveBg));
   dl->AddLine(ImVec2(r0.x, r1.y - 0.5f), ImVec2(r1.x, r1.y - 0.5f), C(col::BtnLo), 1.f);
-  // Selection.
+  // Selection. Its edges can be dragged: the one under the pointer (or being dragged) lights up.
+  const ImVec2 mouseNow = ImGui::GetIO().MousePos;
+  int hoverEdge = 0;
+  if (!s.sel.empty() && !live && !s.dragging && !s.scrubbing && !s.scrubMode && !(s.spectral && s.brushMode) && !ImGui::GetIO().KeyAlt &&
+      ImGui::IsMouseHoveringRect(g.p0, g.p1) && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows))
+    hoverEdge = transport::edgeAt(mouseNow.x, g.xOf(static_cast<double>(s.sel.a)), g.xOf(static_cast<double>(s.sel.b)), P(5));
   if (!s.sel.empty() && !live) {
-    float x0 = std::max(g.p0.x, g.xOf(static_cast<double>(s.sel.a))), x1 = std::min(g.p1.x, g.xOf(static_cast<double>(s.sel.b)));
+    const float e0 = g.xOf(static_cast<double>(s.sel.a)), e1 = g.xOf(static_cast<double>(s.sel.b));
+    float x0 = std::max(g.p0.x, e0), x1 = std::min(g.p1.x, e1);
     if (x1 > x0) {
       dl->AddRectFilled(ImVec2(x0, g.p0.y), ImVec2(x1, g.p1.y), C(col::SelBg));
       dl->AddRectFilled(ImVec2(x0, r0.y), ImVec2(x1, r1.y - 1), C(col::SelBg, 0.8f));
-      for (float x : {x0, x1}) dl->AddLine(ImVec2(x + 0.5f, g.p0.y), ImVec2(x + 0.5f, g.p1.y), C(col::SelEdge, 0.55f), 1.f);
+      for (int e = 1; e <= 2; ++e) {
+        const float x = std::round(e == 1 ? e0 : e1);
+        if (x < g.p0.x - 1 || x > g.p1.x + 1) continue;
+        const bool hot = hoverEdge == e || s.edgeDrag == e;
+        dl->AddLine(ImVec2(x + 0.5f, g.p0.y), ImVec2(x + 0.5f, g.p1.y), C(col::SelEdge, hot ? 1.f : 0.55f), hot ? std::max(2.f, P(2)) : 1.f);
+        // A small grip on the edge, at the top of the lanes: the edge can be dragged.
+        const float gw = std::max(2.f, P(3)), gh = P(14);
+        dl->AddRectFilled(ImVec2(x + 0.5f - gw * 0.5f, g.p0.y), ImVec2(x + 0.5f + gw * 0.5f, g.p0.y + gh), C(col::SelEdge, hot ? 1.f : 0.8f), 1.f);
+      }
     }
   }
   // Time grid + labels (none while empty: there is no time to show).
@@ -400,15 +416,25 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, const sty::Metrics& 
   ImGui::SetCursorScreenPos(r0);
   ImGui::InvisibleButton("ruler", ImVec2(std::max(1.f, r1.x - r0.x), std::max(1.f, r1.y - r0.y)), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
   const bool busy = s.job.active();
+  static float rulerPressX = 0;  // a drag along the ruler scrubs (a click sets the play position)
   if (ImGui::IsItemActivated() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
     if (hoverMarker >= 0) {
       s.dragMarker = hoverMarker;
     } else {
+      rulerPressX = mouse.x;
       s.cursor = snapFrame(a, s, g, g.frameAt(mouse.x));
       s.sel = {};
-      if (isPlaying(a, s)) play(a, s);
+      if (isPlaying(a, s)) play(a, s);  // playing: it jumps there
     }
   }
+  if (s.dragMarker < 0 && ImGui::IsItemActive() && ImGui::IsMouseDown(ImGuiMouseButton_Left) && s.frames() > 1) {
+    const double f = std::clamp(g.frameAt(mouse.x), 0.0, n);
+    if (!s.scrubbing && std::fabs(mouse.x - rulerPressX) > P(3)) scrubBegin(a, s, f);
+    else if (s.scrubbing) scrubMove(a, s, f);
+  }
+  if (ImGui::IsItemDeactivated() && s.scrubbing) scrubEnd(a, s);
+  if (hoverMarker < 0 && ImGui::IsItemHovered() && s.frames() > 0)
+    a.setHint(i18n::tr("Ruler: click to set the play position (playing: jump there), drag to scrub"));
   if (s.dragMarker >= 0 && ImGui::IsItemActive() && static_cast<size_t>(s.dragMarker) < c.markers.size()) {
     // J-67: previewed where it will land (the snapped frame), gliding between snap points.
     const double to = static_cast<double>(snapFrame(a, s, g, g.frameAt(std::clamp(mouse.x, g.p0.x, g.p1.x))));
@@ -463,7 +489,8 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, const sty::Metrics& 
                          ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
   // J-97: an audio file dragged from the browser (or another application) onto the
   // waveform loads into Loupe, like "Load audio file..." (one step of Loupe's undo).
-  if (!s.job.active() && ImGui::BeginDragDropTarget()) {
+  // Loupe's own drag out never lands back on its own waveform (that only made an undo step).
+  if (!s.job.active() && s.dragOut.empty() && ImGui::BeginDragDropTarget()) {
     if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("GL_FILE", ImGuiDragDropFlags_AcceptBeforeDelivery)) {
       const std::string path(static_cast<const char*>(pl->Data), static_cast<size_t>(pl->DataSize));
       const std::string name = std::filesystem::path(path).filename().string();
@@ -485,28 +512,41 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, const sty::Metrics& 
   const bool hovered = ImGui::IsItemHovered();
   ImGuiIO& io = ImGui::GetIO();
   const double fm0 = std::clamp(g.frameAt(mouse.x), 0.0, n);
-  EdisonFx* fx = slotFx(a, s);
+  if (hoverEdge != 0 && hovered) {
+    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+    a.setHint(i18n::tr("Selection edge: drag to move it (Shift-click elsewhere also extends the selection)"));
+  }
   if (ImGui::IsItemActivated() && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && s.frames() > 0) {
+    s.edgeDrag = 0;
     if (s.spectral && s.brushMode) {
       s.dragging = true;
-    } else if ((s.scrubMode || io.KeyAlt) && fx) {
-      s.scrubbing = true;
-      fx->scrub(true, fm0);
+    } else if (s.scrubMode || io.KeyAlt) {
+      scrubBegin(a, s, fm0);
+    } else if (hoverEdge != 0 && !io.KeyShift) {
+      // Grab a selection edge: the other edge stays where it is.
+      s.edgeDrag = hoverEdge;
+      s.anchor = hoverEdge == 1 ? s.sel.b : s.sel.a;
+      s.dragging = true;
     } else {
       const int64_t f = snapFrame(a, s, g, fm0);
       if (io.KeyShift && !s.sel.empty()) {
         s.anchor = std::llabs(f - s.sel.a) > std::llabs(f - s.sel.b) ? s.sel.a : s.sel.b;
+        s.sel = {std::min(s.anchor, f), std::max(s.anchor, f)};
+      } else if (io.KeyShift && s.sel.empty()) {  // from the cursor to here
+        s.anchor = s.cursor;
+        s.sel = {std::min(s.anchor, f), std::max(s.anchor, f)};
       } else {
         s.anchor = f;
         s.cursor = f;
         s.sel = {};
+        if (isPlaying(a, s)) play(a, s);  // playing: the playback jumps to the click
       }
       s.dragging = true;
     }
   }
   if (ImGui::IsItemActive() && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-    if (s.scrubbing && fx) {
-      fx->scrub(true, fm0);
+    if (s.scrubbing) {
+      scrubMove(a, s, fm0);
     } else if (s.dragging && s.spectral && s.brushMode) {
       // Paint: one cell per ~1/3 octave × 20 ms around the mouse.
       const double hz = hzAtY(s, mouse.y, g.p0.y, g.p1.y);
@@ -534,10 +574,12 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, const sty::Metrics& 
     }
   }
   if (ImGui::IsItemDeactivated()) {
-    if (s.scrubbing && fx) fx->scrub(false, fm0);
-    if (s.dragging && !(s.spectral && s.brushMode) && s.sel.len() < 2) s.sel = {};
-    s.scrubbing = false;
+    if (s.scrubbing) scrubEnd(a, s);
+    // A click (a new selection narrower than 3 px) only sets the play position.
+    const bool tiny = s.sel.len() < 2 || (s.edgeDrag == 0 && !io.KeyShift && g.xOf(static_cast<double>(s.sel.b)) - g.xOf(static_cast<double>(s.sel.a)) < P(3));
+    if (s.dragging && !(s.spectral && s.brushMode) && tiny) s.sel = {};
     s.dragging = false;
+    s.edgeDrag = 0;
   }
   if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && !(s.spectral && s.brushMode)) {
     // Double-click: the region under the mouse, else the span between markers.
@@ -565,13 +607,17 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, const sty::Metrics& 
         zoomBy(s, io.MouseWheel > 0 ? 0.8 : 1.25, fm0);
     }
     if (io.MouseWheelH != 0) wheelFrames += io.MouseWheelH * s.viewLen * 0.1, wheelNotch = smoothscroll::isNotch(io.MouseWheelH);
-    char b[96];
+    char b[256];
     if (s.spectral)
       std::snprintf(b, sizeof b, "%s  %.0f Hz%s", timeText(a, s, static_cast<int64_t>(fm0)).c_str(), hzAtY(s, mouse.y, g.p0.y, g.p1.y),
                     s.brushMode ? "  - brush: paint the area to edit, Tools > Effects > Apply spectral brush" : "");
+    else if (s.scrubMode)
+      std::snprintf(b, sizeof b, i18n::tr("%s  - scrub: drag to hear the audio at the speed you move; the play position stays where you let go"),
+                    timeText(a, s, static_cast<int64_t>(fm0)).c_str());
     else
-      std::snprintf(b, sizeof b, "%s  - drag to select, Shift extends, Alt scrubs, wheel zooms, right-click for edits", timeText(a, s, static_cast<int64_t>(fm0)).c_str());
-    a.setHint(b);
+      std::snprintf(b, sizeof b, i18n::tr("%s  - click sets the play position, drag selects, Shift-click extends, Alt scrubs, wheel zooms, right-click for edits"),
+                    timeText(a, s, static_cast<int64_t>(fm0)).c_str());
+    if (hoverEdge == 0) a.setHint(b);
   }
   if (s.viewLen > 0)  // J-67: wheel scrolling glides; zoom, follow and drags are adopted as they are
     scrollui::stepUnits(s.viewAx, s.viewStart, wheelFrames, wheelNotch, 0.0, std::max(0.0, n - s.viewLen), s.viewLen / std::max(1.0f, g.W()), false);
@@ -646,13 +692,13 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, const sty::Metrics& 
   // ---- auto-scroll strip (right of the ruler, lanes and overview)
   {
     sty::Btn b;
-    b.lit = s.autoScroll;
+    b.lit = autoScroll(a);
     b.mark = false;
     b.flat = true;  // a quiet strip: the glyph says whether it follows
     dl->AddRectFilled(ImVec2(sideX, p0.y), ImVec2(p1.x, barY), C(col::RulerBg));
     b.hint = "Auto-scroll: follow the playback position";
     if (sty::iconButton("autoscroll", ImVec2(sideX, p0.y), ImVec2(p1.x, barY), ui::Icon::ScrollTo, P(sty::kBarIcon), b))
-      s.autoScroll = !s.autoScroll;
+      setAutoScroll(a, !autoScroll(a));
   }
   dl->AddLine(ImVec2(sideX - 0.5f, p0.y), ImVec2(sideX - 0.5f, barY), C(col::BtnLo), 1.f);
 

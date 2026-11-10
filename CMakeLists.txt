@@ -2420,6 +2420,14 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(k17_loupe_drag PROPERTIES TIMEOUT 400)
 
+    # Loupe workflow: selection edges, playback follows the selection and clicks, scrubbing, auto-scroll setting,
+    # the drag handle from a channel's sample, a file opened on its own.
+    add_test(NAME k166_loupe_workflow
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/k166_loupe_workflow -P ${CMAKE_SOURCE_DIR}/tests/k166_loupe_workflow.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(k166_loupe_workflow PROPERTIES TIMEOUT 600)
+
     # K-18: rename, new folder, moves and the trash in the browser; the project's references and undo follow.
     add_test(NAME k18_browser_files
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json

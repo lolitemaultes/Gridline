@@ -43,6 +43,7 @@
 #include "Widgets.h"
 #include "Windows.h"
 #include "../core/Platform.h"
+#include "../packs/PacksUi.h"
 
 namespace gl {
 
@@ -778,6 +779,7 @@ void fileContextMenu(App& a, const std::string& ps) {
   if (ImGui::MenuItem(i18n::tr("Open / add"))) browserui::openFile(a, ps);
   if (browse::kindOf(ps) == Kind::Audio) {
     if (ImGui::MenuItem(i18n::tr("Preview"))) browserui::previewFile(a, ps);
+    if (ImGui::MenuItem(i18n::tr("Edit in Loupe"))) packs::openFileInLoupe(a, ps);  // the file opens on its own; it is never changed
     if (ImGui::MenuItem(i18n::tr("Open in Seltmann"))) {  // J-107: a new Seltmann channel analyses and chops it
       a.showNewInstrument(a.addInstrument("gl.seltmann", ps));
     }

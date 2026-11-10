@@ -86,6 +86,7 @@ Settings::Settings() {
       {"ui.pluginWindowSize", Json::makeNumber(0.75)},  // K-136, K-147: built-in plugin editors' size, 0.6 .. 1.5 (edzoom::kGlobalDefault)
       {"ui.pluginWindowFit", b(false)},                 // K-136: small editors open larger on a large screen (K-19's automatic size)
       {"ui.loupePinned", b(false)},          // K-15: Loupe is a panel of the main layout
+      {"loupe.autoScroll", b(true)},         // Loupe follows the playhead while it plays (its own toggle sets it)
       {"ui.animations", b(true)},            // J-91: decorative interface animations (metronome tick, light fades, glides)
       {"ui.showHints", b(true)},
       {"ui.confirmAutoRevert", b(true)},     // J-77: unconfirmed display / audio changes go back after 15 s

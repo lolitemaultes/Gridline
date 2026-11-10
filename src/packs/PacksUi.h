@@ -16,6 +16,9 @@ bool claimEffectEditor(App& a, const PluginTarget& t);
 bool devCommand(App& a, const std::string& cmd, const std::vector<std::string>& args);
 // Opens the audio editor (gl.edison) on a channel's sample in its own window.
 bool openAudioEditor(App& a, const std::string& path, ObjectId channel);
+// Opens an audio file on its own in the audio editor (the browser's "Edit in Loupe"): the
+// file itself is never changed; edits stay in the editor to drag out, send or save.
+bool openFileInLoupe(App& a, const std::string& path);
 // Record into the audio editor (J-8 record filter): arms the gl.edison slot of
 // a mixer track to record while the transport plays (one is inserted into the
 // first free slot when the track has none). Returns the slot, -1 = no room.
