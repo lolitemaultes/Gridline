@@ -52,6 +52,7 @@ P = {
     'gl.envctl': ('structure', 'envelope', 'Envelope / LFO modulation source'),
     'gl.keyctl': ('structure', 'keyctl', 'Keyboard tracking modulation source'),
     'gl.cvctl': ('structure', 'cv', 'Control voltage output'),
+    'gl.cvin': ('structure', 'cvin', 'Control voltage input: notes and modulation'),
     'gl.patcher': ('structure', 'junction', 'Patch host: plugins wired into one instrument'),
     'gl.additive': ('synth', 'facet', 'Additive synth, harmonic by harmonic'),
     'gl.harmor': ('synth', 'halftone', 'Additive resynthesis and image synth'),

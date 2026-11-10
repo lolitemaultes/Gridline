@@ -413,6 +413,8 @@ class AudioEngine {
   void sendOn(const ProgChannel& ch, uint32_t id, float pitch, float velocity, int offset, int color,
               const NoteProps* props = nullptr);
   void sendOff(const ProgChannel& ch, uint32_t id, int offset);
+  float routedPitch(const ProgChannel& dst, float pitch, int offset, int mch);  // K-170
+  void glideRouted(const ProgChannel& dst, uint32_t id, int key, int velocity, float pitch, float seconds, int offset, int mch);  // K-170
   // Hosted instruments' MIDI output → channels on the same MIDI port.
   void routePluginMidi(const Program* p, int n);
   // Live note on/off (keyboard, MIDI): also plays a layer channel's children.
@@ -750,6 +752,7 @@ class AudioEngine {
   std::atomic<int> inPrefill_{0};
   bool inPrimed_ = false;  // (audio thread) the jitter buffer has filled
   std::vector<std::vector<float>> inBuf_;  // per input channel, this block
+  const float* inPtrs_[kMaxInputChannels] = {};  // K-170: inBuf_ for ProcessContext::deviceIn
   std::vector<float> silence_;
   std::atomic<float> inPeak_[kMaxInputChannels] = {};
   std::shared_ptr<packs::edison::CaptureRing> tapOwn_;  // J-218 input tap (the UI thread creates it)

@@ -108,6 +108,13 @@ struct ProcessContext {
   // whose wantsLanes() is true; the engine still applies them per control block too).
   const ParamLane* lanes = nullptr;
   int laneCount = 0;
+  // K-170: this block's audio device input (one buffer per input channel, the block's n frames,
+  // after the input jitter buffer). Null offline, in previews and with no input device open.
+  const float* const* deviceIn = nullptr;
+  int deviceInCount = 0;
+  // K-170: extra device output pairs a generator may write straight to (Generator::directOutput);
+  // 0 where the audio driver has none (only the ASIO driver opens extra pairs today).
+  int directOutPairs = 0;
 };
 
 // Lock-free ring of outgoing MIDI messages (audio thread → UI thread).
@@ -332,6 +339,15 @@ class Generator {
     (void)max;
     return 0;
   }
+  // K-170: a generator that writes to a device output pair of its own (Voltage Out's direct mode):
+  // pair k of ProcessContext::directOutPairs and its frames of the last process() call. The engine
+  // adds them to that pair, after everything the mixer sends there.
+  virtual bool directOutput(int& pair, const float*& L, const float*& R) const {
+    (void)pair;
+    (void)L;
+    (void)R;
+    return false;
+  }
 
  protected:
   virtual void onNoteOn(uint32_t id, double pitch, float velocity) = 0;
@@ -375,6 +391,12 @@ class Generator {
   struct MidiOutEvent {
     int offset;
     uint8_t s, a, b;
+    // K-170: a note-on's fractional pitch (MIDI semitones; < 0 = the key `a`), or the target pitch of
+    // a kGlide event. Instruments that cannot tune a note get the fraction as channel pitch bend.
+    float pitch = -1.0f;
+    float time = 0.0f;  // kGlide: glide seconds
+    // K-170: status of an engine-only event: glide the note started on key `a` (velocity `b`) to `pitch` over `time`.
+    static constexpr uint8_t kGlide = 0xF4;
   };
   virtual int takeMidiOut(MidiOutEvent* out, int max) {
     (void)out;

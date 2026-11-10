@@ -2058,6 +2058,10 @@ msgid "Volume envelope and tremolo"
 msgstr ""
 
 #: src/app/ChannelRack.cpp
+msgid "AUTOMATION"
+msgstr ""
+
+#: src/app/ChannelRack.cpp
 msgid "Add an instrument channel"
 msgstr ""
 
@@ -4929,7 +4933,7 @@ msgstr ""
 msgid "RECENT"
 msgstr ""
 
-#: src/app/CommandPaletteUi.cpp src/app/ScriptUi.cpp
+#: src/app/CommandPaletteUi.cpp src/app/ScriptUi.cpp src/packs/modulation/modulation_cvin_ui.cpp
 msgid "Run"
 msgstr ""
 
@@ -5605,7 +5609,7 @@ msgstr ""
 msgid "Layout"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/core/TrackIconSet.cpp src/packs/platter/platter_ui.cpp
+#: src/app/ContextMenus.cpp src/core/TrackIconSet.cpp src/packs/modulation/modulation_cvin_ui.cpp src/packs/platter/platter_ui.cpp
 msgid "Left"
 msgstr ""
 
@@ -6121,7 +6125,7 @@ msgstr ""
 msgid "Riff generator..."
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/core/TrackIconSet.cpp src/packs/platter/platter_ui.cpp
+#: src/app/ContextMenus.cpp src/core/TrackIconSet.cpp src/packs/modulation/modulation_cvin_ui.cpp src/packs/platter/platter_ui.cpp
 msgid "Right"
 msgstr ""
 
@@ -6357,7 +6361,7 @@ msgstr ""
 msgid "Stereo separation"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/LoopStarterUi.cpp src/app/SamplerRenderUi.cpp src/packs/edison/edison_script_ui.cpp
+#: src/app/ContextMenus.cpp src/app/LoopStarterUi.cpp src/app/SamplerRenderUi.cpp src/packs/edison/edison_script_ui.cpp src/packs/modulation/modulation_cvin_ui.cpp
 msgid "Stop"
 msgstr ""
 
@@ -6985,7 +6989,7 @@ msgstr ""
 msgid "NO GRIDLINE EQUIVALENT YET"
 msgstr ""
 
-#: src/app/Dialogs.cpp src/app/SamplerRenderUi.cpp src/packs/spectral/turntable_ui.cpp
+#: src/app/Dialogs.cpp src/app/SamplerRenderUi.cpp src/packs/modulation/modulation_cvin_ui.cpp src/packs/spectral/turntable_ui.cpp
 msgid "NOTES"
 msgstr ""
 
@@ -18589,7 +18593,7 @@ msgstr ""
 msgid "Invert polarity"
 msgstr ""
 
-#: src/packs/edison/edison_form_ui.cpp src/packs/spacefx/spacefx_ui.cpp
+#: src/packs/edison/edison_form_ui.cpp src/packs/modulation/modulation_cvin_ui.cpp src/packs/spacefx/spacefx_ui.cpp
 msgid "LENGTH"
 msgstr ""
 
@@ -18813,7 +18817,7 @@ msgstr ""
 msgid "Fast (16 taps)"
 msgstr ""
 
-#: src/packs/edison/edison_tools_ui.cpp
+#: src/packs/edison/edison_tools_ui.cpp src/packs/modulation/modulation_cvin_ui.cpp
 msgid "GATE"
 msgstr ""
 
@@ -19139,6 +19143,314 @@ msgstr ""
 
 #: src/packs/modulation/modulation_ctl_ui.cpp
 msgid "Waves take a phase in cycles (saw(beat) ramps once per beat)."
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "Add a Voltage In channel first."
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "Add a Voltage Out channel first."
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "Apply to this input"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "Apply to this output"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "CALIBRATE"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "CLOCK"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "CV TO PARAMETERS: RIGHT-CLICK A KNOB"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "Calibration needs a DC-coupled audio interface. It is stored on this computer for this audio device, never in the project."
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "Could not save the voltage calibration"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "Coupling check"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "DC IN: DC-COUPLED INTERFACE ONLY"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "DIRECT NEEDS THE ASIO DRIVER: VIA THE MIXER HERE"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "FINE"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "FOLLOW"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "FULL SCALE"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "Forget"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "GLIDE"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "Gain %.4f, offset %+.1f mV, error %.2f mV"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "Gates and held pitches will not work on this path."
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "HYST"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp src/packs/platter/platter_deck_ui.cpp
+msgid "IN"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "INPUT OFF"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "INPUTS"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "INTERFACE"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "Input calibration stored."
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "KEEP THE CHANNEL AND MIXER AT UNITY"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "L FINE"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "L TRIM"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "Measured %.4f octaves per volt"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "NEW NOTE ON PITCH CHANGE"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "NO AUDIO INPUT: CHOOSE ONE IN SETTINGS > AUDIO"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "NO CLOCK"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "NOTE"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "NOTES PLAY ONE AUDIO BLOCK AFTER THE INPUT, TIMED TO THE SAMPLE"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "No clear pitch: route the oscillator's audio to the chosen input."
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "No usable readings: check the cable."
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "None in this project"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "Nothing"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "Nothing arrived at the input: check the cable and the input choice."
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "Nothing calibrated yet."
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "Open the voltage calibration window (coupling check, round trip, tuner)"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "Output calibration stored."
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "PAIRS OPEN"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "PLAY INTO"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "Patch"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "Patch the output into an oscillator's pitch input and the oscillator's audio into the chosen input. Gridline sends 0 to 3 octaves and tunes the output's volts per octave."
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "Patch the output into the input. Gridline steps from -2 V to +5 V and fits what comes back, so the input reads what Voltage Out sends."
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "Patch the output into the input. The output holds 5 V for 2.5 s while Gridline watches the input: a voltage that fades means the output or the input blocks steady voltages."
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "R FINE"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "R TRIM"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "RUN"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "RUNNING"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "Round trip"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "Round trip measured. Apply stores it for this input."
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "Running..."
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp src/packs/spacefx/spacefx_ui.cpp src/packs/spectral/turntable_ui.cpp
+msgid "SMOOTH"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "SNAP"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "Start %.3f V, end %.3f V (%.0f %% held), noise %.1f mV"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "Steady voltages pass: this path is DC-coupled."
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "Step %d: %+.1f cents now, %+.1f cents after"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "Stopped."
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "Stopped: the Voltage Out or Voltage In channel is gone."
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "Stored on this computer"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "THRESH"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp src/packs/platter/platter_mixer_ui.cpp
+msgid "TRIM"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "The channel Voltage In's notes play on (pitch and gate inputs)"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "The output goes to CV gear or back into an input, never to speakers"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "The voltage fades away: this path blocks steady voltages (AC-coupled)."
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "Tuner (V/oct)"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "Tuning measured. Apply stores it for this output."
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "Turn the Voltage Out on first."
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "USE CAL"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "VEL"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "Voltage In"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "Voltage Out"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "Voltage calibration"
+msgstr ""
+
+#: src/packs/modulation/modulation_cvin_ui.cpp
+msgid "channels"
 msgstr ""
 
 #: src/packs/modulation/modulation_envart_ui.cpp
@@ -19786,10 +20098,6 @@ msgid "Hand"
 msgstr ""
 
 #: src/packs/platter/platter_deck_ui.cpp
-msgid "IN"
-msgstr ""
-
-#: src/packs/platter/platter_deck_ui.cpp
 msgid "Its tempo and beats are found and it plays in time. The padlock lets it run free."
 msgstr ""
 
@@ -20027,10 +20335,6 @@ msgstr ""
 
 #: src/packs/platter/platter_mixer_ui.cpp
 msgid "THRU"
-msgstr ""
-
-#: src/packs/platter/platter_mixer_ui.cpp
-msgid "TRIM"
 msgstr ""
 
 #: src/packs/platter/platter_mixer_ui.cpp
@@ -22090,10 +22394,6 @@ msgid "Remove a cut"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_wave_ui.cpp
-msgid "SNAP"
-msgstr ""
-
-#: src/packs/seltmann/seltmann_wave_ui.cpp
 msgid "Sections"
 msgstr ""
 
@@ -22267,10 +22567,6 @@ msgstr ""
 
 #: src/packs/spacefx/spacefx_ui.cpp
 msgid "SELF"
-msgstr ""
-
-#: src/packs/spacefx/spacefx_ui.cpp src/packs/spectral/turntable_ui.cpp
-msgid "SMOOTH"
 msgstr ""
 
 #: src/packs/spacefx/spacefx_ui.cpp

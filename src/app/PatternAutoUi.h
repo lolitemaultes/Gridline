@@ -38,6 +38,8 @@ void drawRackRows(App& a, ObjectId pattern, const RackRows& g);
 // While an automation clip from the playlist's clip sources is dragged: a
 // row that takes it into the pattern (drawn at the cursor, full width).
 void rackDropRow(App& a, ObjectId pattern, float rowW, float rowH);
+// True while rackDropRow draws its row (an automation clip is being dragged).
+bool rackDropRowShown(App& a, ObjectId pattern);
 
 }  // namespace patautoui
 }  // namespace gl

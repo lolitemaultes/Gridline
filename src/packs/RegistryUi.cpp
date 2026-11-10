@@ -28,6 +28,7 @@ bool dockDevCommand(App& a, const std::string& cmd, const std::vector<std::strin
 }  // namespace gl::packs::edison
 namespace gl::packs::modulation {
 bool junctionDevCommand(App& a, const std::string& cmd, const std::vector<std::string>& args);  // K-7
+void tickVoltage(App& a);  // K-170: voltage calibration window, clock follow
 }  // namespace gl::packs::modulation
 namespace gl::packs::synths {
 void tickPictureLoads(App& a);                                              // J-184
@@ -59,6 +60,7 @@ void drawWindows(App& a) {
   platter::tick(a);  // J-150: decks (controller values, cues, takes, LEDs)
   synths::tickPictureLoads(a);  // J-184: Pixel Tone pictures decoded in the background
   seltmann::tick(a);  // J-218: recording into Seltmann (also while its editor is hidden)
+  modulation::tickVoltage(a);  // K-170: voltage calibration and clock follow
 }
 
 bool loadPicture(App& a, const PluginTarget& t, const std::string& path) { return synths::loadPicture(a, t, path); }

@@ -293,6 +293,52 @@ void testInstrument() {
   hi->pumpUi(u);
   expect(u.edits.size() == 1 && u.edits[0].index == 0 && std::fabs(u.edits[0].value - 0.8f) < 1e-6f && u.gestureEnd,
          "performEdit becomes a parameter edit + gesture end");
+  {  // K-168: an edit made in the plugin's interface stays there while the engine catches up
+    vst3::Plugin* pl = vst3::pluginOf(hi->backend());
+    expect(std::fabs(pl->paramNormalized(0) - 0.8) < 1e-9, "the plugin's own edit is not reset by the engine's older value (same pump)");
+    u = host::UiUpdate{};
+    hi->pumpUi(u);  // the song has not sent it yet: the engine still holds 1.0
+    expect(std::fabs(pl->paramNormalized(0) - 0.8) < 1e-9, "the plugin's own edit is not reset while the song catches up");
+    // A drag: the next step comes in while the engine sends the step before it.
+    pl->setParamNormalized(5, 0.6);
+    u = host::UiUpdate{};
+    hi->pumpUi(u);
+    st.params[0] = 0.8f;  // the song sends the previous step
+    runGen(*g, st, L, R, 256);
+    u = host::UiUpdate{};
+    hi->pumpUi(u);
+    expect(std::fabs(pl->paramNormalized(0) - 0.6) < 1e-9, "a drag in the plugin's interface is not pulled back to its previous step");
+    st.params[0] = 0.6f;  // caught up
+    runGen(*g, st, L, R, 256);
+    u = host::UiUpdate{};
+    hi->pumpUi(u);
+    expect(std::fabs(pl->paramNormalized(0) - 0.6) < 1e-9 && u.edits.empty(), "the song's copy of the edit changes nothing in the plugin");
+    st.params[0] = 0.3f;  // automation, a link or a Gridline knob: still reaches the interface
+    runGen(*g, st, L, R, 256);
+    u = host::UiUpdate{};
+    hi->pumpUi(u);
+    expect(std::fabs(pl->paramNormalized(0) - 0.3) < 1e-6, "engine-side values still reach the plugin's interface after its own edit");
+    // An edit the song never sends as such (rounded, refused): the song's value wins after a while.
+    pl->setParamNormalized(5, 0.7);
+    u = host::UiUpdate{};
+    hi->pumpUi(u);
+    st.params[0] = 0.65f;
+    runGen(*g, st, L, R, 256);
+    for (int i = 0; i < 4; ++i) {
+      u = host::UiUpdate{};
+      hi->pumpUi(u);
+    }
+    expect(std::fabs(pl->paramNormalized(0) - 0.7) < 1e-9, "the plugin's edit holds while the song may still send it");
+    for (int i = 0; i < 70; ++i) {
+      u = host::UiUpdate{};
+      hi->pumpUi(u);
+    }
+    expect(std::fabs(pl->paramNormalized(0) - 0.65) < 1e-6, "a song value that never matches the edit reaches the plugin in the end");
+    st.params[0] = 1.0f;  // back to the value the state round trip below expects
+    runGen(*g, st, L, R, 256);
+    u = host::UiUpdate{};
+    hi->pumpUi(u);
+  }
 
   // State round trip: component (incl. notes played) + controller state.
   std::string data;

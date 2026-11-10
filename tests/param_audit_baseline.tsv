@@ -1996,6 +1996,61 @@ gl.cvctl	10	Voltage range	combination	1	0=1
 gl.cvctl	11	Clock rate	combination	0	0=1;1=4
 gl.cvctl	12	Pulse length	combination	0.200000003	0=1;1=4
 gl.cvctl	13	Glide	working	1	
+gl.cvctl	14	Output mode	inert	0		direct mode needs extra device output pairs (ASIO); the audit has none (covered by test_cvin)
+gl.cvctl	15	Output pair	inert	0		the device output pair of direct mode (routing; covered by test_cvin)
+gl.cvctl	16	Interface full scale	combination	20	0=1
+gl.cvctl	17	Left trim	combination	-500	0=1
+gl.cvctl	18	Right trim	combination	-500	0=1
+gl.cvctl	19	Left fine scale	combination	-10	0=1
+gl.cvctl	20	Right fine scale	combination	-10	0=1
+gl.cvctl	21	Left value	combination	0	0=1;1=6
+gl.cvctl	22	Right value	combination	0	0=1;2=6
+gl.cvctl	23	Use calibration	inert	0		applies this computer's calibration; the audit has none (covered by test_cvin)
+gl.cvin	0	Pitch input	working	0	
+gl.cvin	1	Pitch range	working	2	
+gl.cvin	2	Pitch trim	working	500	
+gl.cvin	3	Pitch fine scale	working	10	
+gl.cvin	4	Gate input	working	0	
+gl.cvin	5	Gate range	combination	1	2=250;3=5;6=250;7=5;10=250;11=5;14=250;15=5;18=250;19=5;22=250;23=5;24=1;25=15.25;26=6.025;27=1.5;29=0.447213595;35=0.75;36=1;38=95.5;39=0.0889139705;44=1
+gl.cvin	6	Gate trim	combination	-500	4=1
+gl.cvin	7	Gate fine scale	combination	10	4=1
+gl.cvin	8	CV A input	working	2	
+gl.cvin	9	CV A range	combination	1	8=1
+gl.cvin	10	CV A trim	combination	-500	8=1
+gl.cvin	11	CV A fine scale	combination	-10	8=1
+gl.cvin	12	CV B input	working	2	
+gl.cvin	13	CV B range	combination	1	12=1
+gl.cvin	14	CV B trim	combination	-500	12=1
+gl.cvin	15	CV B fine scale	combination	-10	12=1
+gl.cvin	16	CV C input	working	2	
+gl.cvin	17	CV C range	combination	1	16=1
+gl.cvin	18	CV C trim	combination	-500	16=1
+gl.cvin	19	CV C fine scale	combination	-10	16=1
+gl.cvin	20	CV D input	working	2	
+gl.cvin	21	CV D range	combination	1	20=1
+gl.cvin	22	CV D trim	combination	-500	20=1
+gl.cvin	23	CV D fine scale	combination	-10	20=1
+gl.cvin	24	Input enabled	working	0	
+gl.cvin	25	Interface full scale	working	1	
+gl.cvin	26	Gate threshold	working	0.1	
+gl.cvin	27	Gate hysteresis	combination	2	4=1
+gl.cvin	28	Gate mode	working	1	
+gl.cvin	29	Trigger note length	combination	2	28=1
+gl.cvin	30	Pitch scale	working	1	
+gl.cvin	31	Note at 0 V	working	0	
+gl.cvin	32	Quantise	working	2	
+gl.cvin	33	Scale	combination	0	32=2
+gl.cvin	34	Root	combination	1	32=2
+gl.cvin	35	Glide	working	1	
+gl.cvin	36	Retrigger on pitch change	working	1	
+gl.cvin	37	Velocity source	working	1	
+gl.cvin	38	Velocity	working	1	
+gl.cvin	39	CV smoothing	combination	0.5	8=1
+gl.cvin	40	Clock input	working	4	
+gl.cvin	41	Clock rate	inert	0		the tempo reading clock follow uses (covered by test_cvin)
+gl.cvin	42	Run input	inert	0		the run state clock follow uses (covered by test_cvin)
+gl.cvin	43	Clock follow	inert	0		the app follows the clock's tempo and run state (UI thread; covered by test_cvin's clock readings)
+gl.cvin	44	Use calibration	inert	0		applies this computer's calibration; the audit has none (covered by test_cvin)
 gl.dcosynth	0	DCO 1 LFO 1	working	1	
 gl.dcosynth	1	DCO 1 LFO 1 wide	combination	1	0=1
 gl.dcosynth	2	DCO 1 LFO 2	working	1	

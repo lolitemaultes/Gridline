@@ -407,6 +407,14 @@ const InertDoc kInert[] = {
     {"gl.timegate", "Trigger slots from notes", "GAP: effects get no note input path for it yet"},
     {"gl.timegate", "Latency law", "what the mixer is told: the engine's own delay doesn't change"},
     {"gl.surface", "Control *", "GAP: controls 17-64 output, but links read only 16 controller outputs"},
+    // K-170: control voltages (covered by test_cvin).
+    {"gl.cvctl", "Output mode", "direct mode needs extra device output pairs (ASIO); the audit has none (covered by test_cvin)"},
+    {"gl.cvctl", "Output pair", "the device output pair of direct mode (routing; covered by test_cvin)"},
+    {"gl.cvctl", "Use calibration", "applies this computer's calibration; the audit has none (covered by test_cvin)"},
+    {"gl.cvin", "Use calibration", "applies this computer's calibration; the audit has none (covered by test_cvin)"},
+    {"gl.cvin", "Clock follow", "the app follows the clock's tempo and run state (UI thread; covered by test_cvin's clock readings)"},
+    {"gl.cvin", "Clock rate", "the tempo reading clock follow uses (covered by test_cvin)"},
+    {"gl.cvin", "Run input", "the run state clock follow uses (covered by test_cvin)"},
 };
 // Settings that enable whole sections, tried first by the condition search
 // ("Name=value|Name=value", plugin units): sections that need several
@@ -657,6 +665,9 @@ struct NoteE {
 struct Stim {
   std::vector<float> inL, inR, scL, scR, rcL, rcR;  // two periods
   std::vector<NoteE> notes;
+  // K-170: control voltages on the device inputs (Voltage In): a pitch staircase, a gate, a slow
+  // wave and a 24 PPQ clock (digital, 1.0 = full scale), repeating over In 1..16 a little smaller each time.
+  std::vector<float> cv[4];
 };
 
 uint32_t xs(uint32_t& s) {
@@ -756,6 +767,18 @@ Stim makeStim() {
     }
   }
   std::stable_sort(S.notes.begin(), S.notes.end(), [](const NoteE& x, const NoteE& y) { return x.at < y.at; });
+  {  // K-170: control voltages
+    const int T = 2 * kPeriod;
+    for (auto& v : S.cv) v.assign(static_cast<size_t>(T), 0.f);
+    const double clockIv = kSr * 60.0 / (128.0 * 24);
+    for (int i = 0; i < T; ++i) {
+      const int p = i % kPeriod;
+      S.cv[0][static_cast<size_t>(i)] = static_cast<float>(-0.1 + 0.0437 * (p * 8 / kPeriod));  // 0.437 V steps
+      S.cv[1][static_cast<size_t>(i)] = (p % (kPeriod / 6)) < (kPeriod / 10) ? 0.5f : 0.f;
+      S.cv[2][static_cast<size_t>(i)] = static_cast<float>(0.3 * std::sin(2 * kPi * 3.0 * i / kSr));
+      S.cv[3][static_cast<size_t>(i)] = std::fmod(static_cast<double>(i), clockIv) < 100 ? 0.5f : 0.f;
+    }
+  }
   return S;
 }
 const Stim& stim() {
@@ -820,11 +843,20 @@ Out render(const PluginInfo& info, const RenderSpec& rs) {
     g->setMidiOut(ring.get());
     Generator::MidiOutEvent mo[64];
     size_t ei = 0;
+    std::vector<std::vector<float>> devIn(16);  // K-170: the device inputs (Voltage In)
+    for (int k = 0; k < 16; ++k) {
+      devIn[static_cast<size_t>(k)] = S.cv[k % 4];
+      for (float& x : devIn[static_cast<size_t>(k)]) x *= 1.0f - 0.1f * static_cast<float>(k / 4);
+    }
+    const float* devPtr[16];
     for (int pos = 0; pos < total; pos += kBlock) {
       const int n = std::min(kBlock, total - pos);
       if (rs.second && pos == kPeriod) cur = *rs.second;
       c.tick = pos * (c.tempo * c.ppq / 60.0) / kSr;
       c.jumped = pos == 0;
+      for (int k = 0; k < 16; ++k) devPtr[k] = devIn[static_cast<size_t>(k)].data() + pos;
+      c.deviceIn = devPtr;
+      c.deviceInCount = 16;
       while (ei < S.notes.size() && S.notes[ei].at < pos + n) {
         const NoteE& e = S.notes[ei++];
         if (e.at >= total) continue;

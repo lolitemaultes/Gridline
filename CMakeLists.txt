@@ -1889,6 +1889,12 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -P ${CMAKE_SOURCE_DIR}/tests/j202_plasma_pages.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(j202_plasma_pages PROPERTIES TIMEOUT 600)
+    # K-170: Voltage In / Voltage Out editors (inset and overlap audit) and the calibration window.
+    add_test(NAME k170_cv_editors_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DOUT=${CMAKE_BINARY_DIR}/k170_cv_editors
+                     -P ${CMAKE_SOURCE_DIR}/tests/k170_cv_editors_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(k170_cv_editors_app PROPERTIES TIMEOUT 600)
 
     # K-42: a zipped project on a "web drive" in the real app: frames keep coming while it reads,
     # nothing lands on the drive, the second open needs no read, offline opens the last copy, the
@@ -1940,6 +1946,13 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -DOUT=${CMAKE_BINARY_DIR}/j173_pattern_auto_app -P ${CMAKE_SOURCE_DIR}/tests/j173_pattern_auto_app.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(j173_pattern_auto_app PROPERTIES TIMEOUT 300)
+    # K-173: the separator between the rack's channel rows and its automation rows: place, gap,
+    # caption, hits, a channel dropped on it, display groups, graph editor, themes, scale, looks, layouts.
+    add_test(NAME k173_rack_separator_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/k173_rack_separator -P ${CMAKE_SOURCE_DIR}/tests/k173_rack_separator_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(k173_rack_separator_app PROPERTIES TIMEOUT 600)
 
     # K-172: the button language (primary / toggle on / pressed) in every control style and both
     # themes, read from the dev gallery's pixels.

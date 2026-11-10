@@ -206,11 +206,15 @@ void drawRackRows(App& a, ObjectId pattern, const RackRows& g) {
   if (open.owner != kNoId) openPatternAutomation(a, pattern, open);
 }
 
-void rackDropRow(App& a, ObjectId pattern, float rowW, float rowH) {
+bool rackDropRowShown(App& a, ObjectId pattern) {
   const ImGuiPayload* drag = ImGui::GetDragDropPayload();
-  if (!drag || !drag->IsDataType("GL_CLIPSRC")) return;
+  if (!drag || !drag->IsDataType("GL_CLIPSRC")) return false;
   const auto* src = static_cast<const browserui::ClipSrcPayload*>(drag->Data);
-  if (!src || static_cast<ClipKind>(src->kind) != ClipKind::Automation || !a.doc.song().pattern(pattern)) return;
+  return src && static_cast<ClipKind>(src->kind) == ClipKind::Automation && a.doc.song().pattern(pattern);
+}
+
+void rackDropRow(App& a, ObjectId pattern, float rowW, float rowH) {
+  if (!rackDropRowShown(a, pattern)) return;
   const auto& P = pal();
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const ImVec2 rp = ImGui::GetCursorScreenPos();

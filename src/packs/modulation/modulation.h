@@ -76,12 +76,20 @@ inline constexpr int EcCount = EcModY + 1;
 enum KeyCtl { KcAttack, KcRelease, KcNoteOff, KcNoteOffValue, KcCount };
 // "gl.cvctl" — Voltage Out (instrument): DC control voltages on the audio
 // outputs from the notes it plays. Outputs: Pitch, Gate, Velocity.
+// K-170 (appended; their defaults give the output of older states exactly): output mode (through
+// the mixer / straight to a device output pair), the interface's full-scale voltage, fine trims per
+// side, a linkable value source per side, and whether this computer's calibration applies.
 enum CvCtl {
   CvEnable, CvLeftSrc, CvRightSrc, CvLeftOfs, CvRightOfs, CvLeftScale, CvRightScale, CvLeftBipolar, CvRightBipolar,
   CvPitchScale, CvRange, CvClockPpq, CvPulse, CvGlide,
+  CvOutMode, CvOutPair, CvFullScale, CvLeftTrim, CvRightTrim, CvLeftFine, CvRightFine, CvLeftValue, CvRightValue, CvUseCal,
   CvCount
 };
-enum CvSource { CvsOff, CvsPitch, CvsGate, CvsVelocity, CvsClock, CvsTrigger };
+inline constexpr int CvCountV1 = CvOutMode;  // states saved before K-170
+// Value: the side's Value parameter (link a controller to it) across the voltage range. Run: high
+// while the transport plays. Reset: a pulse when playback starts or jumps.
+enum CvSource { CvsOff, CvsPitch, CvsGate, CvsVelocity, CvsClock, CvsTrigger, CvsValue, CvsRun, CvsReset };
+enum CvOutMode { CvmMixer, CvmDirect };
 // "gl.surface" — Control Surface (mixer effect): 16 user controls; data =
 // one "type label" line per control. Outputs: the 16 control values.
 inline constexpr int kSurfaceControls = 16;

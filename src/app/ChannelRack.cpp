@@ -54,6 +54,12 @@ struct RackShown {
   float originX = 0, row0Y = -1, viewX0 = 0, graphY = -1;  // screen geometry for scripted input
   float rowPitch = 0;                                       // J-97: from one row to the next
   float lastRowBottom = -1;                                 // K-136: the last channel row's bottom (screen)
+  int lastRowIndex = -1;                                    // K-173: the last channel row's index in the song
+  // K-173: the separator between the channel rows and the automation rows (screen; sepY < 0: none)
+  float sepY = -1, sepTop = -1, sepBottom = -1, sepX0 = 0, sepX1 = 0;
+  ImVec4 sepCaption{0, 0, 0, 0};  // the caption's text box (x0 y0 x1 y1)
+  float autoY0 = -1;              // the first automation row's top (-1: no rows)
+  int autoRows = 0;
   // K-146: the rows pane as ImGui sees it (its own scrollbars, its own sideways scroll, content vs. room)
   bool barX = false, barY = false;
   float paneScrollX = 0, paneContentW = 0, paneInnerW = 0, itemsRight = 0, rowRight = 0;
@@ -83,6 +89,8 @@ struct RackDev {
   float w = 0, h = 0, scroll = -1;
   bool dock = false;
   int playStep = -1;  // J-137 "play<k>": the song-position outline on step k (stills of the play highlight)
+  int group = -2;     // K-173 "group<n>": the display group filter (-1: all channels; -2: left as it is)
+  bool graph = false; // K-173 "graph": the graph editor open under the rows
   ImVec2 addMin{0, 0}, addMax{0, 0};  // K-72: the toolbar's "+" (add an instrument) button, last drawn
 } gRackDev;
 
@@ -579,6 +587,7 @@ void drawChannelRack(App& a) {
       ImGui::SetCursorScreenPos(ImVec2(rp.x, rp.y + zh + 2));
       ImGui::Dummy(ImVec2(rowW, 0));
       shown.lastRowBottom = rp.y + zh;
+      shown.lastRowIndex = static_cast<int>(ci);
       ImGui::PopID();
       continue;
     }
@@ -589,6 +598,7 @@ void drawChannelRack(App& a) {
       ImGui::SetCursorScreenPos(ImVec2(rp.x, rp.y + rowH + rowGap));
       ImGui::Dummy(ImVec2(rowW, 0));
       shown.lastRowBottom = rp.y + rowH;
+      shown.lastRowIndex = static_cast<int>(ci);
       ImGui::PopID();
       continue;
     }
@@ -873,12 +883,43 @@ void drawChannelRack(App& a) {
     ImGui::SetCursorScreenPos(ImVec2(rp.x, rp.y + rowH + rowGap));
     ImGui::Dummy(ImVec2(rowW, 0));
     shown.lastRowBottom = rp.y + rowH;
+    shown.lastRowIndex = static_cast<int>(ci);
     ImGui::PopID();
   }
   // J-173: the pattern's automation clips as rows below the channels, and a
   // drop row while an automation clip is dragged from the clip sources.
   if (pat) {
     const ObjectId patId = pat->id;
+    // K-173: one quiet hairline with a small caption between the channel rows and the automation
+    // rows (or the automation drop row), only while both are shown. It adds a small fixed gap only.
+    if (shown.lastRowBottom >= 0 && (!pat->automation.empty() || patautoui::rackDropRowShown(a, patId))) {
+      constexpr float kSepH = 12.0f;  // the gap the separator adds to the rows' rhythm
+      const ImVec2 s0 = ImGui::GetCursorScreenPos();
+      ImGui::SetCursorScreenPos(ImVec2(s0.x, s0.y + kSepH - ImGui::GetStyle().ItemSpacing.y));
+      ImGui::Dummy(ImVec2(rowW, 0));  // the next row starts exactly kSepH lower
+      const float top = shown.lastRowBottom, bottom = ImGui::GetCursorScreenPos().y;
+      const float y = std::floor((top + bottom) * 0.5f) + 0.5f;  // a crisp one-pixel line
+      const char* cap = i18n::tr("AUTOMATION");
+      const float fs = theme::kFontLabel - 1;
+      const ImVec2 ts = a.fontMono->CalcTextSizeA(fs, FLT_MAX, 0, cap);
+      const float cx = std::round(s0.x + xLeft + 2), cyTop = std::round(y - ts.y * 0.5f);
+      const float lx0 = std::round(cx + ts.x + 8), lx1 = s0.x + rowW;
+      dl->AddText(a.fontMono, fs, ImVec2(cx, cyTop), P.textFaint, cap);
+      if (lx1 > lx0) dl->AddLine(ImVec2(lx0, y), ImVec2(lx1, y), P.line, 1.0f);
+      shown.sepY = y, shown.sepTop = top, shown.sepBottom = bottom, shown.sepX0 = lx0, shown.sepX1 = lx1;
+      shown.sepCaption = ImVec4(cx, cyTop, cx + ts.x, cyTop + ts.y);
+      // A channel dragged onto the separator goes last (the end of the channel rows above it).
+      if (shown.lastRowIndex >= 0) {
+        const ImRect band(ImVec2(s0.x, top), ImVec2(s0.x + rowW, bottom));
+        if (ImGui::BeginDragDropTargetCustom(band, ImGui::GetID("##autosep"))) {
+          if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("GL_CHANNEL"))
+            a.doc.moveChannel(*static_cast<const ObjectId*>(pl->Data), shown.lastRowIndex);
+          ImGui::EndDragDropTarget();
+        }
+      }
+    }
+    shown.autoRows = static_cast<int>(pat->automation.size());
+    if (shown.autoRows > 0) shown.autoY0 = ImGui::GetCursorScreenPos().y;
     patautoui::RackRows rr{rowW, rowH, rowGap, cellH, xLeft, nameX, nameW, stepsX, stepsW, scrollX, viewX0, viewX1};
     if (a.engine.playing() && a.engine.mode() == PlayMode::Pattern && a.engine.pattern() == patId) rr.playTick = a.engine.position();
     patautoui::drawRackRows(a, patId, rr);
@@ -1173,6 +1214,8 @@ void rackDevSpec(const std::string& spec) {
     else if (k.rfind("scroll", 0) == 0) gRackDev.scroll = static_cast<float>(std::atof(k.c_str() + 6));
     else if (k == "dock") gRackDev.dock = true;
     else if (k.rfind("play", 0) == 0) gRackDev.playStep = std::atoi(k.c_str() + 4);
+    else if (k.rfind("group", 0) == 0) gRackDev.group = std::atoi(k.c_str() + 5);
+    else if (k == "graph") gRackDev.graph = true;
     else if (k.rfind("w", 0) == 0) gRackDev.w = static_cast<float>(std::atof(k.c_str() + 1));
     else if (k.rfind("h", 0) == 0) gRackDev.h = static_cast<float>(std::atof(k.c_str() + 1));
     i = j + 1;
@@ -1190,6 +1233,8 @@ void rackDevBefore(App& a, int frame) {
     if (ImGuiWindow* bw = ImGui::FindWindowByName("Browser"); bw && bw->DockId) ImGui::SetNextWindowDockID(bw->DockId, ImGuiCond_Always);
   if (gRackDev.dock && frame == 5) a.focusWindow = "Channel rack";  // its tab in front of the browser's
   if (gRackDev.scroll >= 0 && frame == 6) a.rack.stepScroll = gRackDev.scroll;
+  if (gRackDev.group >= -1 && frame == 2) groupFilter = gRackDev.group;
+  if (gRackDev.graph && frame == 2) a.rack.showGraph = true;
 }
 
 void rackDevAfter(App& a, int frame) {
@@ -1243,6 +1288,11 @@ void rackDevDump(App& a, int frame) {
       std::printf("\n");
     }
   }
+  // K-173: the separator above the automation rows and the first automation row
+  std::printf("  autosep y %.1f top %.1f bottom %.1f x %.1f %.1f caption %.1f %.1f %.1f %.1f autoRows %d autoY0 %.1f lastRowIndex %d\n",
+              static_cast<double>(r.sepY), static_cast<double>(r.sepTop), static_cast<double>(r.sepBottom), static_cast<double>(r.sepX0),
+              static_cast<double>(r.sepX1), static_cast<double>(r.sepCaption.x), static_cast<double>(r.sepCaption.y),
+              static_cast<double>(r.sepCaption.z), static_cast<double>(r.sepCaption.w), r.autoRows, static_cast<double>(r.autoY0), r.lastRowIndex);
   std::fflush(stdout);
 }
 

@@ -91,6 +91,10 @@ Settings::Settings() {
       {"loupe.autoScroll", b(true)},         // Loupe follows the playhead while it plays (its own toggle sets it)
       {"ui.animations", b(true)},            // J-91: decorative interface animations (metronome tick, light fades, glides)
       {"ui.showHints", b(true)},
+      {"ui.timeFormat", Json::makeNumber(0)},  // J-27, K-168: the song position shows ops::TimeFormat (0 bars, 1 minutes, 2 timecode)
+      {"ui.timeSteps", b(false)},              // J-27, K-168: bars : steps : ticks instead of beats
+      {"ui.smpteRate", Json::makeNumber(1)},   // J-27, K-168: the timecode's frame rate, an index of ops::smpteRates (24 fps)
+      {"ui.showPlayedChords", b(false)},       // J-27, K-168: the hint bar names the chord held on MIDI input
       {"ui.confirmAutoRevert", b(true)},     // J-77: unconfirmed display / audio changes go back after 15 s
       {"playlist.warpSnapTransients", b(true)},  // K-85: a new warp marker lands on the nearest transient
       {"playlist.quantizeStrength", Json::makeNumber(1.0)},  // K-85: audio quantize strength (0 .. 1)

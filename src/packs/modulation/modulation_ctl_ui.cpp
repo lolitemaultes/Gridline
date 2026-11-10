@@ -680,10 +680,11 @@ void keyEditor(EditTarget& e) {
 
 // --------------------------------------------------------------- Voltage Out
 // Reference panel 302 × 472: two mirrored columns (source, offset wheel,
-// polarity, scale wheel) under the on switch and title strip.
+// polarity, scale wheel) under the on switch and title strip. K-170: the
+// interface section (output mode, full scale, trims, calibration) below it.
 void cvEditor(EditTarget& e) {
   const skin::Skin& K = sk::voltage();
-  constexpr float kW = 302, kH = 472;
+  constexpr float kW = 302, kH = 636;
   skin::Form F = openForm(e, K, kW, kH, 480);
   ImDrawList* dl = ImGui::GetWindowDrawList();
   skin::Scope scope(K);
@@ -714,6 +715,7 @@ void cvEditor(EditTarget& e) {
   sk::readout(dl, F.p(14, 438), F.p(102, 462), K, "PITCH", e.output(0));
   sk::readout(dl, F.p(107, 438), F.p(195, 462), K, "GATE", e.output(1));
   sk::readout(dl, F.p(200, 438), F.p(288, 462), K, "VEL", e.output(2));
+  cvOutInterface(e, F, K, 472);
   F.end(0, kH);
 }
 

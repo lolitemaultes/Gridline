@@ -8,6 +8,7 @@
 #include <cstring>
 #include "../../core/Expr.h"
 #include "../../engine/Dsp.h"
+#include "../../engine/Program.h"
 #include "../Packs.h"
 #include "envc.h"
 #include "modulation.h"
@@ -584,7 +585,11 @@ class KeyboardController final : public Generator {
 };
 
 // ---------------------------------------------------------------- Voltage Out
-class VoltageOut final : public Generator {
+// K-170: the voltage passes the side's fine trims, this computer's calibration and the interface's
+// full scale on its way out (all neutral by default: older states render exactly as before). In
+// direct mode it skips the channel strip and the mixer and goes to a device output pair of its own
+// (ProcessContext::directOutPairs); where the driver has none it stays on the mixer path.
+class VoltageOut final : public Generator, public CvOutTester {
  public:
   bool active() const override { return enabled_; }
   int controlOutputs(float* out, int max) const override {
@@ -592,6 +597,20 @@ class VoltageOut final : public Generator {
     int k = std::min(3, max);
     for (int i = 0; i < k; ++i) out[i] = v[i];
     return k;
+  }
+  bool directOutput(int& pair, const float*& L, const float*& R) const override {
+    if (!direct_) return false;
+    pair = directPair_;
+    L = dirL_;
+    R = dirR_;
+    return true;
+  }
+  // CvOutTester (UI thread): calibration test voltages.
+  void setTest(int side, double volts) override {
+    if (side >= 0 && side < 2) test_[side].store(volts, std::memory_order_relaxed);
+  }
+  void clearTest() override {
+    for (auto& t : test_) t.store(kNoTest, std::memory_order_relaxed);
   }
 
  protected:
@@ -624,9 +643,9 @@ class VoltageOut final : public Generator {
   void onAllOff() override { held_ = 0; }
   void onKill() override {
     held_ = 0;
-    trigLeft_ = clockLeft_ = 0;
+    trigLeft_ = clockLeft_ = resetLeft_ = 0;
   }
-  void configure(const PluginState& s, const ChannelAux&, const ProcessContext& ctx) override {
+  void configure(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx) override {
     st_ = &s;
     ctx_ = ctx;
     enabled_ = prm(s, CvEnable) >= 0.5f;
@@ -634,6 +653,12 @@ class VoltageOut final : public Generator {
     double glide = prm(s, CvGlide);
     glideCoef_ = glide > 0 ? coefFor(glide, ctx.sampleRate) : 1.0;
     pos_ = 0;
+    cal_ = dynamic_cast<const CvAux*>(aux.custom.get());
+    directPair_ = std::clamp(static_cast<int>(prm(s, CvOutPair) + 0.5f), 0, 63);
+    direct_ = enabled_ && prm(s, CvOutMode) >= 0.5f && directPair_ < ctx.directOutPairs;
+    // Reset: a pulse when playback starts or jumps.
+    if (ctx.playing && (!wasPlaying_ || ctx.jumped)) resetLeft_ = pulseSamples_;
+    wasPlaying_ = ctx.playing;
   }
   void render(float* L, float* R, int n) override {
     static const int kPpq[] = {2, 4, 8, 12, 16, 24, 32, 48, 64, 96};
@@ -644,6 +669,19 @@ class VoltageOut final : public Generator {
     int ppqIdx = std::clamp(static_cast<int>(prm(s, CvClockPpq, 5) + 0.5f), 0, 9);
     double spt = ctx_.sampleRate * 60.0 / (ctx_.tempo * std::max(1, ctx_.ppq));
     double clockTicks = static_cast<double>(std::max(1, ctx_.ppq)) / kPpq[ppqIdx];
+    const double fullScale = prm(s, CvFullScale, 10);
+    const bool useCal = prm(s, CvUseCal, 1) >= 0.5f;
+    double trimMv[2], trimPct[2], value[2];
+    CvCal cal[2];
+    int srcOf[2];
+    for (int side = 0; side < 2; ++side) {
+      trimMv[side] = prm(s, side ? CvRightTrim : CvLeftTrim);
+      trimPct[side] = prm(s, side ? CvRightFine : CvLeftFine);
+      value[side] = std::clamp(static_cast<double>(prm(s, side ? CvRightValue : CvLeftValue, 0.5f)), 0.0, 1.0);
+      cal[side] = useCal && cal_ ? cal_->out[side] : CvCal{};
+      srcOf[side] = static_cast<int>(prm(s, side ? CvRightSrc : CvLeftSrc) + 0.5f);
+    }
+    const double test[2] = {test_[0].load(std::memory_order_relaxed), test_[1].load(std::memory_order_relaxed)};
     for (int i = 0; i < n; ++i, ++pos_) {
       if (slide_.active()) slide_.advance(pitch_);  // K-144: slide notes and bend lines glide the CV
       else pitch_ += (targetPitch_ - pitch_) * glideCoef_;
@@ -656,14 +694,16 @@ class VoltageOut final : public Generator {
       double gateV = held_ > 0 ? vMax : 0.0;
       double v[2];
       for (int side = 0; side < 2; ++side) {
-        int src = static_cast<int>(prm(s, side ? CvRightSrc : CvLeftSrc) + 0.5f);
         double volts = 0;
-        switch (src) {
+        switch (srcOf[side]) {
           case CvsPitch: volts = (pitch_ - 60.0) / 12.0 * pitchScale; break;
           case CvsGate: volts = gateV; break;
           case CvsVelocity: volts = held_ > 0 ? velocity_ * vMax : 0.0; break;
           case CvsClock: volts = clockLeft_ > 0 ? vMax : 0.0; break;
           case CvsTrigger: volts = trigLeft_ > 0 ? vMax : 0.0; break;
+          case CvsValue: volts = vMin + value[side] * (vMax - vMin); break;
+          case CvsRun: volts = ctx_.playing ? vMax : 0.0; break;
+          case CvsReset: volts = resetLeft_ > 0 ? vMax : 0.0; break;
           default: volts = 0; break;
         }
         double ofs = prm(s, side ? CvRightOfs : CvLeftOfs);
@@ -671,11 +711,15 @@ class VoltageOut final : public Generator {
         double offV = bip ? ofs * vMax : (ofs * 0.5 + 0.5) * vMax * (ofs != 0 ? 1.0 : 0.0);
         double scale = prm(s, side ? CvRightScale : CvLeftScale, 1);
         volts = std::clamp(volts * scale + offV, vMin, vMax);
-        v[side] = volts / 10.0;  // full scale = 10 V
+        if (test[side] > kNoTest * 0.5) volts = std::clamp(test[side], -12.0, 12.0);  // calibration test voltage
+        v[side] = outputDigital(volts, fullScale, cal[side], trimMv[side], trimPct[side]);
       }
       if (trigLeft_ > 0) --trigLeft_;
       if (clockLeft_ > 0) --clockLeft_;
-      if (enabled_) {
+      if (resetLeft_ > 0) --resetLeft_;
+      if (direct_) {
+        if (pos_ >= 0 && pos_ < kDirMax) dirL_[pos_] = static_cast<float>(v[0]), dirR_[pos_] = static_cast<float>(v[1]);
+      } else if (enabled_) {
         L[i] += static_cast<float>(v[0]);
         R[i] += static_cast<float>(v[1]);
       }
@@ -684,17 +728,23 @@ class VoltageOut final : public Generator {
 
  private:
   static constexpr int kHeld = 64;
+  static constexpr int kDirMax = kEngineMaxBlock;
+  static constexpr double kNoTest = -1000.0;
   uint32_t held_ids_[kHeld] = {};
   double held_pitch_[kHeld] = {};
   int held_ = 0;
   const PluginState* st_ = nullptr;
+  const CvAux* cal_ = nullptr;
   ProcessContext ctx_;
-  bool enabled_ = false, hasPitch_ = false;
+  bool enabled_ = false, hasPitch_ = false, direct_ = false, wasPlaying_ = false;
+  int directPair_ = 0;
   double pitch_ = 60, targetPitch_ = 60, glideCoef_ = 1;
   PitchGlide slide_;
   float velocity_ = 0;
-  int pulseSamples_ = 441, trigLeft_ = 0, clockLeft_ = 0;
+  int pulseSamples_ = 441, trigLeft_ = 0, clockLeft_ = 0, resetLeft_ = 0;
   int64_t pos_ = 0;
+  float dirL_[kDirMax] = {}, dirR_[kDirMax] = {};
+  std::atomic<double> test_[2] = {kNoTest, kNoTest};
 };
 
 // ------------------------------------------------------------ Control Surface
@@ -889,6 +939,7 @@ std::unique_ptr<Generator> createGenerator(const std::string& type) {
   if (type == "gl.envctl") return std::make_unique<EnvelopeController>();
   if (type == "gl.keyctl") return std::make_unique<KeyboardController>();
   if (type == "gl.cvctl") return std::make_unique<VoltageOut>();
+  if (type == "gl.cvin") return createVoltageIn();
   if (type == "gl.patcher") return createPatchHostGenerator();
   return nullptr;
 }
@@ -927,6 +978,10 @@ bool prepareAux(const PluginState& state, ChannelAux& aux) {
   }
   if (state.type == "gl.patcher" || state.type == "gl.patcherfx") {
     preparePatchHost(state, aux);
+    return true;
+  }
+  if (state.type == "gl.cvctl" || state.type == "gl.cvin") {  // K-170: this computer's calibration
+    prepareVoltageAux(state, aux);
     return true;
   }
   return false;

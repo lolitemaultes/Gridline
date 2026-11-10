@@ -312,6 +312,8 @@ class Core final : public HostedInstance {
     sent_.assign(n, std::nanf(""));
     sentMod_.assign(n, 0.0);
     ctrlKnown_.assign(n, std::nanf(""));
+    ownEdit_.assign(n, std::nanf(""));
+    ownEditPump_.assign(n, 0);
     audioVals_.reset(new std::atomic<float>[n == 0 ? 1 : n]);
     base_.reset(new std::atomic<float>[n == 0 ? 1 : n]);
     for (size_t k = 0; k < n; ++k) {
@@ -454,6 +456,7 @@ class Core final : public HostedInstance {
           sent_[k] = std::nanf("");
           sentMod_[k] = 0.0;
           ctrlKnown_[k] = std::nanf("");
+          ownEdit_[k] = std::nanf("");
         }
         readbackPending_ = true;  // reports the song's own values (nothing changes)
         readbackFromSong_ = true;
@@ -468,6 +471,7 @@ class Core final : public HostedInstance {
         sentMod_[k] = 0.0;
         float c = mapped_[k] ? static_cast<float>(cls_->fromNormalized(k, b_->paramNormalized(ids_[k]))) : sent_[k];
         ctrlKnown_[k] = c;
+        ownEdit_[k] = std::nanf("");
         audioVals_[k].store(c, std::memory_order_relaxed);
       }
       // K-78: parameters the moved state left elsewhere than saved get their saved values.
@@ -516,6 +520,8 @@ class Core final : public HostedInstance {
           if (k < 0) break;
           float v = static_cast<float>(cls_->fromNormalized(static_cast<size_t>(k), e.value));
           ctrlKnown_[static_cast<size_t>(k)] = v;
+          ownEdit_[static_cast<size_t>(k)] = v;  // the controller has it; the song takes it after this call
+          ownEditPump_[static_cast<size_t>(k)] = pumps_;
           u.edits.push_back({k, v});
           break;
         }
@@ -550,8 +556,20 @@ class Core final : public HostedInstance {
       if (k >= 0) ctrlKnown_[static_cast<size_t>(k)] = static_cast<float>(cls_->fromNormalized(static_cast<size_t>(k), ov.value));
     }
     // Values the engine sent (automation, links, knob edits) go to the controller.
+    // K-168: not the ones that only lag behind an edit made in the plugin's own interface. The
+    // song takes such an edit after this call and the engine sends it a block or more later, so
+    // until then the engine still holds the value from before the edit (or an earlier step of the
+    // same drag). Handing that back reset the plugin's knob, menu or switch to where it was the
+    // moment it was changed (VST3: the controller takes the value; an AU only rereads its own).
+    // The controller is the truth for that parameter until the engine sends the edit itself, or
+    // for kOwnEditHold pumps when it never does (the song rounded or refused it).
+    ++pumps_;
     for (size_t k = 0; k < ids_.size(); ++k) {
       float a = audioVals_[k].load(std::memory_order_relaxed);
+      if (!std::isnan(ownEdit_[k])) {
+        if (a == ownEdit_[k] || pumps_ - ownEditPump_[k] > kOwnEditHold) ownEdit_[k] = std::nanf("");
+        if (a == ctrlKnown_[k] || !std::isnan(ownEdit_[k])) continue;
+      }
       if (std::isnan(a) || a == ctrlKnown_[k] || !mapped_[k]) continue;
       b_->setParamNormalized(ids_[k], cls_->toNormalized(k, a));
       ctrlKnown_[k] = a;
@@ -1001,6 +1019,12 @@ class Core final : public HostedInstance {
   std::vector<float> sent_;       // audio thread (UI while suspended)
   std::vector<double> sentMod_;   // audio thread: modulation amounts sent
   std::vector<float> ctrlKnown_;  // UI thread
+  // K-168 (UI thread): the last value the plugin's own interface gave each parameter, until the
+  // engine has sent it (NaN: none pending), and the pump it came in.
+  static constexpr uint64_t kOwnEditHold = 60;  // pumps (UI frames): about a second
+  std::vector<float> ownEdit_;
+  std::vector<uint64_t> ownEditPump_;
+  uint64_t pumps_ = 0;
   std::unique_ptr<std::atomic<float>[]> audioVals_;
   std::unique_ptr<std::atomic<float>[]> base_;  // song values of the last program build (modulation)
   std::string lastData_;

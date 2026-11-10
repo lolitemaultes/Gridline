@@ -46,8 +46,8 @@ message.
   curve to see its name; **double-click a curve** to open that clip in the editor. The
   playlist's View menu has **Pattern clips show**: **Notes and automation** (the default),
   **Notes only** or **Automation only**.
-- **In the channel rack.** A pattern's clips are rows below the channels, with the curve drawn
-  across the step area. Click a row's name or its curve to open the clip; right-click it for
+- **In the channel rack.** A pattern's clips are rows below the channels, set apart from them by
+  a thin line with a small "Automation" caption, with the curve drawn across the step area. Click a row's name or its curve to open the clip; right-click it for
   the clip menu.
 - **In the browser.** Current project > Automation lists the pattern clips as "in <pattern>";
   double-click one to edit it.

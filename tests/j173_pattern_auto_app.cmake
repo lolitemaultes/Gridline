@@ -97,9 +97,13 @@ set(pitch "${CMAKE_MATCH_3}")
 string(REGEX REPLACE "\\..*" "" ox "${ox}")
 string(REGEX REPLACE "\\..*" "" oy "${oy}")
 string(REGEX REPLACE "\\..*" "" pitch "${pitch}")
-set(nch 8)  # the demo song's channels (the rack's rows above the clips)
+string(REGEX MATCH "autosep y [-0-9.]+ top [-0-9.]+ bottom [-0-9.]+ x [-0-9.]+ [-0-9.]+ caption [-0-9. ]+ autoRows ([0-9]+) autoY0 ([-0-9.]+)" _
+             "${rackgeo_out}")
+check("the rack lists the two clip rows" CMAKE_MATCH_1 EQUAL 2)
+set(ay "${CMAKE_MATCH_2}")
+string(REGEX REPLACE "\\..*" "" ay "${ay}")
 math(EXPR x "${ox} + 120")
-math(EXPR y "${oy} + (${nch} + 1) * ${pitch}")  # the second clip row: the pan lane
+math(EXPR y "${ay} + ${pitch} + 13")  # the second clip row's middle (rows 26 px tall): the pan lane
 run(rack 30 "4 selpattern 29\n14 move ${x} ${y}\n18 move ${x} ${y}\n20 down 0\n21 up 0\n26 autoedit\n" --rack w1300,h560)
 set(last_out "${rack_out}")
 check("a click on the rack's second clip row opens the pan lane in the editor"

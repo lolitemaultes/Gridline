@@ -1,5 +1,6 @@
 // Gridline — "modulation" pack: editor entry points shared by the pack's UI files.
 #pragma once
+#include "../../app/PluginSkin.h"
 #include "modulation_widgets.h"
 
 namespace gl::packs::modulation {
@@ -13,6 +14,11 @@ void envEditor(EditTarget& e);
 void envArtEditor(EditTarget& e);  // articulator model (modulation_envart_ui.cpp)
 void keyEditor(EditTarget& e);
 void cvEditor(EditTarget& e);
+// K-170: Voltage In and the voltage tools (modulation_cvin_ui.cpp).
+void cvInEditor(EditTarget& e);
+void cvOutInterface(EditTarget& e, const skin::Form& F, const skin::Skin& K, float y0);  // Voltage Out's interface section
+void openCalibration(App& a, ObjectId channel, bool input);
+void tickVoltage(App& a);  // per frame: calibration window, checks, clock follow
 // Routing / surface / sidechain (modulation_route_ui.cpp).
 void surfaceEditor(EditTarget& e);
 void sendEditor(EditTarget& e);

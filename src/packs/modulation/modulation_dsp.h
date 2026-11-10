@@ -9,6 +9,7 @@
 #include "../../core/PluginInfo.h"
 #include "../../engine/Effects.h"
 #include "../../engine/Generators.h"
+#include "cv.h"
 
 namespace gl::packs::modulation {
 
@@ -65,5 +66,17 @@ std::string serializePatchGraph(const PatchGraph& g);
 std::unique_ptr<Generator> createPatchHostGenerator();
 std::unique_ptr<Effect> createPatchHostEffect();
 void preparePatchHost(const PluginState& state, ChannelAux& aux);
+
+// K-170: control voltage in and out (cv.h). Prepared data: this computer's calibration of the
+// device channels a Voltage In reads (in) or a Voltage Out drives (out, per side).
+struct CvAux final : AuxData {
+  CvCal in[kCvDeviceIns];
+  CvCal out[2];
+};
+std::unique_ptr<Generator> createVoltageIn();
+void prepareVoltageAux(const PluginState& state, ChannelAux& aux);
+// Logical output channel of a Voltage Out side for calibration: the main pair 0, 1; direct pair k
+// 2 + 2k, 3 + 2k.
+inline int cvOutputChannel(bool direct, int pair, int side) { return direct ? 2 + 2 * pair + side : side; }
 
 }  // namespace gl::packs::modulation

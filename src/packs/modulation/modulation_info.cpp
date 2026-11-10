@@ -1,5 +1,6 @@
 // Gridline — "modulation" pack: catalogue entries.
 #include "../Packs.h"
+#include "cv.h"
 #include "modulation.h"
 
 namespace gl::packs::modulation {
@@ -244,7 +245,7 @@ void appendInfos(std::vector<PluginInfo>& v) {
   {
     PluginInfo p = make("gl.cvctl", "Voltage Out", "Controller", G);
     p.params.resize(CvCount);
-    std::vector<std::string> src = {"Off", "Pitch", "Gate", "Velocity", "Clock", "Trigger"};
+    std::vector<std::string> src = {"Off", "Pitch", "Gate", "Velocity", "Clock", "Trigger", "Value", "Run", "Reset"};
     p.params[CvEnable] = tog("Output enabled", 0);
     p.params[CvLeftSrc] = ch("Left source", src, CvsPitch);
     p.params[CvRightSrc] = ch("Right source", src, CvsGate);
@@ -259,12 +260,84 @@ void appendInfos(std::vector<PluginInfo>& v) {
     p.params[CvClockPpq] = ch("Clock rate", {"2 PPQ", "4 PPQ", "8 PPQ", "12 PPQ", "16 PPQ", "24 PPQ", "32 PPQ", "48 PPQ", "64 PPQ", "96 PPQ"}, 5);
     p.params[CvPulse] = lg("Pulse length", "s", 0.001, 0.2, 0.01);
     p.params[CvGlide] = lin("Glide", "s", 0, 1, 0);
+    // K-170 (appended, defaults = the output of older states).
+    p.params[CvOutMode] = ch("Output mode", {"Through the mixer", "Direct to outputs"}, CvmMixer);
+    {
+      std::vector<std::string> pairs;
+      for (int k = 0; k < 15; ++k) pairs.push_back("Extra pair " + std::to_string(k + 1));
+      p.params[CvOutPair] = ch("Output pair", pairs, 0);
+    }
+    p.params[CvFullScale] = lin("Interface full scale", "V", 1, 20, 10);
+    p.params[CvLeftTrim] = lin("Left trim", "mV", -500, 500, 0);
+    p.params[CvRightTrim] = lin("Right trim", "mV", -500, 500, 0);
+    p.params[CvLeftFine] = lin("Left fine scale", "%", -10, 10, 0);
+    p.params[CvRightFine] = lin("Right fine scale", "%", -10, 10, 0);
+    p.params[CvLeftValue] = lin("Left value", "%", 0, 1, 0.5);
+    p.params[CvRightValue] = lin("Right value", "%", 0, 1, 0.5);
+    p.params[CvUseCal] = tog("Use calibration", 1);
     p.outputs = {"Pitch", "Gate", "Velocity"};
     p.presets = {{"Pitch + gate", {}},
                  {"Clock + trigger", {{CvLeftSrc, CvsClock}, {CvRightSrc, CvsTrigger}}},
                  {"Velocity + gate", {{CvLeftSrc, CvsVelocity}, {CvLeftBipolar, 0}}},
-                 {"Gliding pitch", {{CvGlide, 0.08f}}}};
+                 {"Gliding pitch", {{CvGlide, 0.08f}}},
+                 {"Run + reset", {{CvLeftSrc, CvsRun}, {CvRightSrc, CvsReset}, {CvLeftBipolar, 0}}}};
     p.editorWidth = 600;
+    v.push_back(std::move(p));
+  }
+  // ---------------------------------------------------------- Voltage In (K-170)
+  {
+    PluginInfo p = make("gl.cvin", "Voltage In", "Controller", G);
+    p.params.resize(CiCount);
+    std::vector<std::string> ins = {"Off"};
+    for (int k = 1; k <= kCvDeviceIns; ++k) ins.push_back("In " + std::to_string(k));
+    const std::vector<std::string> ranges = {"+/-5 V", "+/-10 V", "0 to 10 V"};
+    const char* slotNames[kCvInputs] = {"Pitch", "Gate", "CV A", "CV B", "CV C", "CV D"};
+    const int dflt[kCvInputs] = {1, 2, 0, 0, 0, 0};
+    for (int k = 0; k < kCvInputs; ++k) {
+      const std::string n = slotNames[k];
+      p.params[cvInParam(k, CfSource)] = ch(n + " input", ins, dflt[k]);
+      p.params[cvInParam(k, CfRange)] = ch(n + " range", ranges, 0);
+      p.params[cvInParam(k, CfOffset)] = lin(n + " trim", "mV", -500, 500, 0);
+      p.params[cvInParam(k, CfScale)] = lin(n + " fine scale", "%", -10, 10, 0);
+    }
+    p.params[CiEnable] = tog("Input enabled", 1);
+    p.params[CiFullScale] = lin("Interface full scale", "V", 1, 20, 10);
+    p.params[CiThreshold] = lin("Gate threshold", "V", 0.1, 8, 1.5);
+    p.params[CiHysteresis] = lin("Gate hysteresis", "V", 0, 2, 0.25);
+    p.params[CiGateMode] = ch("Gate mode", {"Gate", "Trigger"}, 0);
+    p.params[CiTrigLen] = lg("Trigger note length", "s", 0.005, 2, 0.05);
+    p.params[CiPitchScale] = ch("Pitch scale", {"1 V/oct", "1.2 V/oct"}, 0);
+    {
+      std::vector<std::string> notes;
+      for (int k = 0; k < 128; ++k) notes.push_back(std::string(kNoteNames[k % 12]) + std::to_string(k / 12 - 1));
+      p.params[CiZeroNote] = ch("Note at 0 V", notes, 60);
+    }
+    p.params[CiQuantise] = ch("Quantise", {"Off", "Semitone", "Scale"}, CqSemitone);
+    {
+      std::vector<std::string> sc;
+      for (const auto& d : scales()) sc.push_back(d.name);
+      p.params[CiScale] = ch("Scale", sc, 1);
+    }
+    p.params[CiRoot] = ch("Root", std::vector<std::string>(kNoteNames, kNoteNames + 12), 0);
+    p.params[CiGlide] = lin("Glide", "s", 0, 1, 0);
+    p.params[CiRetrigger] = tog("Retrigger on pitch change", 0);
+    p.params[CiVelSource] = ch("Velocity source", {"Fixed", "CV A", "CV B", "CV C", "CV D"}, 0);
+    p.params[CiVelocity] = lin("Velocity", "", 1, 127, 100);
+    p.params[CiSmooth] = lg("CV smoothing", "s", 0.0005, 0.5, 0.001);
+    p.params[CiClockIn] = ch("Clock input", ins, 0);
+    p.params[CiClockPpq] = ch("Clock rate", {"2 PPQ", "4 PPQ", "8 PPQ", "12 PPQ", "16 PPQ", "24 PPQ", "32 PPQ", "48 PPQ", "64 PPQ", "96 PPQ"}, 5);
+    p.params[CiRunIn] = ch("Run input", ins, 0);
+    p.params[CiFollow] = ch("Clock follow", {"Off", "Tempo", "Tempo and run"}, CfwOff);
+    p.params[CiUseCal] = tog("Use calibration", 1);
+    p.outputs = {"Pitch", "Gate", "CV A", "CV B", "CV C", "CV D", "Clock", "Velocity"};
+    p.presets = {{"Pitch and gate to notes", {}},
+                 {"Four CV to modulation", {{cvInParam(CisPitch, CfSource), 0}, {cvInParam(CisGate, CfSource), 0},
+                                             {cvInParam(CisA, CfSource), 1}, {cvInParam(CisB, CfSource), 2},
+                                             {cvInParam(CisC, CfSource), 3}, {cvInParam(CisD, CfSource), 4}}},
+                 {"Gate as trigger", {{cvInParam(CisPitch, CfSource), 0}, {CiGateMode, 1}, {CiTrigLen, 0.1f}}},
+                 {"Clock follow", {{cvInParam(CisPitch, CfSource), 0}, {cvInParam(CisGate, CfSource), 0}, {CiClockIn, 1},
+                                    {CiRunIn, 2}, {CiFollow, CfwTempoRun}}}};
+    p.editorWidth = 720;
     v.push_back(std::move(p));
   }
   // ------------------------------------------------------ Control Surface

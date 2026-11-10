@@ -45,6 +45,7 @@ AudioEngine::AudioEngine(double sampleRate) : sr_(sampleRate), queue_(kQueue) {
   clockOut_.out = &syncRing_;
   inQueue_.assign(kInputQueueFrames * kMaxInputChannels, 0.f);
   inBuf_.assign(kMaxInputChannels, std::vector<float>(kMaxBlock, 0.f));
+  for (int c = 0; c < kMaxInputChannels; ++c) inPtrs_[c] = inBuf_[static_cast<size_t>(c)].data();  // K-170
   silence_.assign(kMaxBlock, 0.f);
   tickHist_.assign(kTickHistory, -1.0);
   recTick_.assign(kMaxBlock, -1.0);
@@ -741,9 +742,13 @@ void AudioEngine::routePluginMidi(const Program* p, int n) {
         if (t < 0 || static_cast<size_t>(t) >= p->channels.size()) continue;
         const ProgChannel& dst = p->channels[static_cast<size_t>(t)];
         if (!dst.rt || !dst.rt->gen) continue;
-        if (st == 0x90 && ev[k].b > 0) {
+        if (ev[k].s == Generator::MidiOutEvent::kGlide) {  // K-170: a held note moves to a new pitch
+          glideRouted(dst, id, ev[k].a & 0x7F, ev[k].b & 0x7F, ev[k].pitch, ev[k].time, off, mch);
+        } else if (st == 0x90 && ev[k].b > 0) {
           sendOff(dst, id, off);  // a retrigger ends the previous note of that key
-          sendOn(dst, id, static_cast<float>(ev[k].a & 0x7F), static_cast<float>(ev[k].b & 0x7F) / 127.0f, off, mch);
+          float pitch = static_cast<float>(ev[k].a & 0x7F);
+          if (ev[k].pitch >= 0.0f) pitch = routedPitch(dst, ev[k].pitch, off, mch);  // K-170: fractional pitch
+          sendOn(dst, id, pitch, static_cast<float>(ev[k].b & 0x7F) / 127.0f, off, mch);
         } else if (st == 0x80 || st == 0x90) {
           sendOff(dst, id, off);
         } else if (st == 0xB0 || st == 0xC0 || st == 0xD0 || st == 0xE0 || st == 0xA0) {
@@ -752,6 +757,38 @@ void AudioEngine::routePluginMidi(const Program* p, int n) {
       }
     }
   }
+}
+
+// K-170: the pitch a routed note-on plays at. Instruments that tune each note (built-in ones, hosted
+// plugins with per-note tuning) take the fraction as it is; other hosted plugins play the nearest key
+// with the rest sent as channel pitch bend over their bend range.
+float AudioEngine::routedPitch(const ProgChannel& dst, float pitch, int offset, int mch) {
+  pitch = std::clamp(pitch, 0.0f, 127.0f);
+  if (!isHostedType(dst.plugin.type) || dst.rt->gen->supportsGlide()) return pitch;
+  const float key = std::round(pitch);
+  const float range = std::max(0.5f, dst.rt->gen->noteBendRange());
+  const int v14 = std::clamp(8192 + static_cast<int>(std::lround((pitch - key) / range * 8192.0f)), 0, 16383);
+  dst.rt->gen->midi(static_cast<uint8_t>(0xE0 | (mch & 15)), static_cast<uint8_t>(v14 & 0x7F), static_cast<uint8_t>(v14 >> 7), offset);
+  return key;
+}
+
+// K-170: a routed glide (Voltage In legato): the sounding note `id` (started on `key`) moves to `pitch`.
+// Hosted plugins without glides get channel pitch bend from the key; built-in instruments without
+// glides play the new pitch as a new note (velocity 1..127).
+void AudioEngine::glideRouted(const ProgChannel& dst, uint32_t id, int key, int velocity, float pitch, float seconds, int offset, int mch) {
+  pitch = std::clamp(pitch, 0.0f, 127.0f);
+  if (dst.rt->gen->supportsGlide()) {
+    dst.rt->gen->glide(id, pitch, std::max(0.0f, seconds), offset);
+    return;
+  }
+  if (!isHostedType(dst.plugin.type)) {
+    sendOff(dst, id, offset);
+    sendOn(dst, id, pitch, static_cast<float>(std::clamp(velocity, 1, 127)) / 127.0f, offset, mch);
+    return;
+  }
+  const float range = std::max(0.5f, dst.rt->gen->noteBendRange());
+  const int v14 = std::clamp(8192 + static_cast<int>(std::lround((pitch - static_cast<float>(key)) / range * 8192.0f)), 0, 16383);
+  dst.rt->gen->midi(static_cast<uint8_t>(0xE0 | (mch & 15)), static_cast<uint8_t>(v14 & 0x7F), static_cast<uint8_t>(v14 >> 7), offset);
 }
 
 // ---- Note dispatch: live notes through layers, sequenced notes with the
@@ -1794,6 +1831,12 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
   bc_.ctx.punchOut = punchB_.load(std::memory_order_relaxed);
   bc_.ctx.ports = &ports_;
   bc_.ctx.hits = &hits_;
+  {  // K-170: this block's device input for generators that read it (Voltage In); none offline
+    const int inCh = offline_ ? 0 : inChannels_.load(std::memory_order_relaxed);
+    bc_.ctx.deviceIn = inCh > 0 ? inPtrs_ : nullptr;
+    bc_.ctx.deviceInCount = inCh;
+    bc_.ctx.directOutPairs = taps_ && !offline_ ? taps_->count : 0;
+  }
   ports_.beginBlock();
   {
     const Tick beat = std::max<Tick>(1, p->beatTicks);
@@ -2606,6 +2649,20 @@ void AudioEngine::copyTaps(const Program* p, int offset, int n) {
     } else {
       std::memset(l, 0, bytes);
       std::memset(r, 0, bytes);
+    }
+  }
+  if (!p) return;
+  for (const ProgChannel& c : p->channels) {  // K-170: generators writing straight to a pair (Voltage Out)
+    if (!c.rt || !c.rt->gen) continue;
+    int pair = -1;
+    const float* gl = nullptr;
+    const float* gr = nullptr;
+    if (!c.rt->gen->directOutput(pair, gl, gr) || pair < 0 || pair >= taps_->count || !gl || !gr) continue;
+    float* l = taps_->L[pair] + offset;
+    float* r = taps_->R[pair] + offset;
+    for (int i = 0; i < n; ++i) {
+      l[i] += gl[i];
+      r[i] += gr[i];
     }
   }
 }

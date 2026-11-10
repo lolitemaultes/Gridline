@@ -120,6 +120,7 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
   else if (ty == "gl.envctl") envEditor(e);
   else if (ty == "gl.keyctl") keyEditor(e);
   else if (ty == "gl.cvctl") cvEditor(e);
+  else if (ty == "gl.cvin") cvInEditor(e);
   else if (ty == "gl.surface") surfaceEditor(e);
   else if (ty == "gl.send") sendEditor(e);
   else if (ty == "gl.bussend") busEditor(e, true);

@@ -4,7 +4,11 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <regex>
 #include <set>
+#include <sstream>
 #include <string>
 #include <vector>
 #include "Check.h"
@@ -14,6 +18,7 @@
 #include "core/NoteTools.h"
 #include "core/PatternAutomation.h"
 #include "core/PluginParams.h"
+#include "core/Settings.h"
 #include "engine/NoteFxBurn.h"
 
 using namespace gl;
@@ -526,6 +531,51 @@ void testBurn() {
   expect(d.song().channel(ch)->noteFx.size() == 1 && d.song().pattern(pat)->notes.at(ch).size() == 2, "burn: one undo step");
 }
 
+// K-168: a setting the interface reads or a menu sets must be registered with Settings, whose setters
+// refuse other keys: the song position's time format (bars, minutes, timecode) went back to bars at
+// once whatever was picked, as did "Show played chords". Every literal key the app reads is checked
+// against the registered defaults, with the type it is read as.
+void testSettingsRegistered() {
+  Settings st;
+  expect(st.set("ui.timeFormat", 1) && st.getNumber("ui.timeFormat") == 1.0, "time format setting: minutes and seconds stick");
+  expect(st.set("ui.timeFormat", 2) && st.set("ui.smpteRate", 3) && st.getNumber("ui.timeFormat") == 2.0 && st.getNumber("ui.smpteRate") == 3.0,
+         "time format setting: a timecode rate sticks");
+  expect(st.set("ui.timeSteps", true) && st.getBool("ui.timeSteps"), "time format setting: bars, steps and ticks stick");
+  expect(st.set("ui.showPlayedChords", true) && st.getBool("ui.showPlayedChords"), "show played chords sticks");
+  const Settings fresh;
+  expect(fresh.getNumber("ui.timeFormat") == 0.0 && !fresh.getBool("ui.timeSteps") && !fresh.getBool("ui.showPlayedChords"),
+         "time format defaults: bars, beats and ticks");
+  const std::filesystem::path src = std::filesystem::path(__FILE__).parent_path().parent_path() / "src";
+  std::error_code ec;
+  if (!std::filesystem::is_directory(src / "app", ec)) {
+    std::printf("note: sources not found at %s; the settings key audit is skipped\n", src.string().c_str());
+    return;
+  }
+  const std::regex call(R"re(settings\.(getBool|getNumber|getString)\(\s*"([^"]+)")re");
+  int keys = 0;
+  std::set<std::string> missing;
+  for (const auto& e : std::filesystem::recursive_directory_iterator(src, ec)) {
+    const std::string ext = e.path().extension().string();
+    if (ext != ".cpp" && ext != ".h" && ext != ".mm") continue;
+    std::ifstream in(e.path());
+    std::stringstream ss;
+    ss << in.rdbuf();
+    const std::string text = ss.str();
+    for (std::sregex_iterator it(text.begin(), text.end(), call), end; it != end; ++it) {
+      const std::string kind = (*it)[1], key = (*it)[2];
+      Settings probe;
+      const bool ok = kind == "getBool"     ? probe.set(key, probe.getBool(key))
+                      : kind == "getNumber" ? probe.set(key, probe.getNumber(key))
+                                            : probe.set(key, probe.getString(key));
+      ++keys;
+      if (!ok) missing.insert(key + " (" + kind + ", " + e.path().filename().string() + ")");
+    }
+  }
+  for (const std::string& m : missing) std::printf("unregistered setting: %s\n", m.c_str());
+  expect(keys > 100, "settings key audit: the interface's settings reads were found");
+  expect(missing.empty(), "every setting the interface reads is registered (else choosing it does nothing)");
+}
+
 }  // namespace
 
 int main() {
@@ -539,5 +589,6 @@ int main() {
   testLive();
   testLastTweaked();
   testBurn();
+  testSettingsRegistered();
   return finish();
 }
