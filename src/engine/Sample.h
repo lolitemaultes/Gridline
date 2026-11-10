@@ -1,4 +1,5 @@
-// Gridline — audio sample data and loading (WAV, FLAC, MP3, Ogg Vorbis, WavPack) with a cache.
+// Gridline — audio sample data and loading (WAV, FLAC, MP3, Ogg Vorbis, WavPack, AAC / Apple Lossless,
+// CAF, sliced loops) with a cache.
 #pragma once
 #include <atomic>
 #include <condition_variable>
@@ -116,6 +117,8 @@ using SamplePtr = std::shared_ptr<const Sample>;
 // extension (.mp3). nullptr on failure.
 SamplePtr loadSample(const std::string& path, std::string* err = nullptr);
 bool isAudioFile(const std::string& path);
+// K-161: the audio file name extensions Gridline opens (file dialogs, drops), lower case with the dot.
+const std::vector<std::string>& audioFileExtensions();
 
 // J-51: while a scope is alive, loading on its thread gives up as soon as
 // *flag is true (loadSample returns nullptr, err "cancelled"): the file is read

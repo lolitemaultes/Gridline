@@ -345,6 +345,7 @@ Samples a Gridline Suite plugin uses travel inside its settings, up to 64 MB of 
 - [Windows outside the main window](docs/detachable-windows.md) and [the plugin window's channel strip](docs/plugin-window.md).
 - [The Gridline Suite](docs/gridline-suite.md): Gridline's instruments and effects as plugins for other DAWs, and where they are installed.
 - [Plasma](docs/plugins/plasma.md), [Seltmann](docs/plugins/seltmann.md), [Tideline](docs/plugins/tideline.md), [the synths pack](docs/plugins/synths.md) and [recording Platter performances](docs/plugins/platter-recording.md).
+- [Loop files](docs/loop-files.md): REX2 sliced loops and Apple Loops in the browser, the channel rack and the playlist.
 - [Opening files from the file manager](docs/opening-files.md): double-clicking projects and tracker modules on Linux, macOS and Windows, and choosing Gridline once where the system asks.
 - [Gridline on Debian and Ubuntu](docs/debian.md): installing the `.deb` with apt, the supported versions, Debian 11's archived updates.
 - [Gridline on a Chromebook](docs/chromeos.md): installing in ChromeOS's Linux environment, sound, shared folders, MIDI devices and plugins.

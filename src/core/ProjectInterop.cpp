@@ -623,7 +623,7 @@ bool looksLikeFilePath(const std::string& s) {
   if (s.size() < 5 || s.size() > 4096 || s.find('\n') != std::string::npos) return false;
   static const std::set<std::string> kExt = {".wav", ".wave", ".flac", ".ogg", ".oga", ".mp3", ".aif", ".aiff", ".aifc", ".wv",
                                              ".w64", ".rf64", ".caf", ".m4a", ".mid", ".midi", ".sf2", ".sfz", ".png", ".jpg",
-                                             ".jpeg", ".bmp", ".rx2", ".ir", ".fst", ".zip"};
+                                             ".jpeg", ".bmp", ".rx2", ".rex", ".rcy", ".aac", ".ir", ".fst", ".zip"};
   const size_t dot = s.find_last_of('.');
   if (dot == std::string::npos || dot == 0) return false;
   return kExt.count(lower(s.substr(dot))) > 0;

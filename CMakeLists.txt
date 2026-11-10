@@ -604,6 +604,12 @@ target_link_libraries(gridline_tests_browser PRIVATE gridline_core)
 target_include_directories(gridline_tests_browser PRIVATE tests)
 target_compile_options(gridline_tests_browser PRIVATE ${GL_WARN})
 add_test(NAME browser COMMAND gridline_tests_browser WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# K-161: sliced loops (.rx2), tagged loops (.caf), AIFF / WAV loop chunks, loop files into a project.
+add_executable(gridline_tests_loop_files tests/test_loop_files.cpp)
+target_link_libraries(gridline_tests_loop_files PRIVATE gridline_core)
+target_include_directories(gridline_tests_loop_files PRIVATE tests)
+target_compile_options(gridline_tests_loop_files PRIVATE ${GL_WARN})
+add_test(NAME loop_files COMMAND gridline_tests_loop_files WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 # J-75: drags from other applications (planning, formats, headers; macOS: pasteboards + the window's drag destination).
 add_executable(gridline_tests_external_drop tests/test_external_drop.cpp)
 target_link_libraries(gridline_tests_external_drop PRIVATE gridline_core)

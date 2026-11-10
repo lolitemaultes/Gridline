@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include "../engine/LoopFile.h"
 #include "../engine/Sample.h"
 #include "Json.h"
 #include "PluginBrand.h"
@@ -519,6 +520,8 @@ namespace {
 bool hasTag(const FileMeta& m, const std::string& tag, const std::vector<std::string>& autos) {
   for (const auto& t : m.tags)
     if (t == tag || t.rfind(tag, 0) == 0) return true;
+  for (const auto& t : m.fileTags)
+    if (t == tag || t.rfind(tag, 0) == 0) return true;
   for (const auto& t : autos)
     if (t == tag || t.rfind(tag, 0) == 0) return true;
   return false;
@@ -539,6 +542,7 @@ bool matches(const FileMeta& m, const Query& q) {
     std::string hay;
     for (const std::string& part : tailParts(m.path, 3)) hay += (hay.empty() ? "" : " ") + lower(part);
     for (const auto& t : m.tags) hay += " " + t;
+    for (const auto& t : m.fileTags) hay += " " + t;
     for (const auto& t : autos) hay += " " + t;
     for (const auto& w : q.words)
       if (hay.find(w) == std::string::npos) return false;
@@ -700,8 +704,9 @@ const char* dropActionLabel(DropAction a) {
 
 // ----------------------------------------------------------------- indexer
 
-// Bumped when the analysis changes (2: ACID tempo); older cached analyses are redone.
-constexpr double kCacheVersion = 2;
+// Bumped when the analysis changes (2: ACID tempo, 3: loop files' own tempo, key, tags and
+// slices); older cached analyses are redone.
+constexpr double kCacheVersion = 3;
 
 Index::~Index() { stop(); }
 
@@ -749,6 +754,30 @@ void Index::waitIdle() {
   busy_ = false;
 }
 
+bool applyLoopFacts(const std::string& path, FileMeta& m) {
+  loopfile::Info li;
+  if (remotefs::isRemote(path) || !loopfile::read(path, li)) return false;
+  m.fileTags = li.tags;
+  m.slices = li.format == loopfile::Format::Sliced ? static_cast<int>(li.slices.size()) : 0;
+  if (li.loop && li.bpm > 0) {
+    double bpm = li.bpm;
+    // WAV loops keep the browser's tempo range (as wavAcidTempo folds it).
+    if (li.format == loopfile::Format::Wav) {
+      while (bpm < 70) bpm *= 2;
+      while (bpm > 180) bpm /= 2;
+    }
+    m.bpm = std::round(bpm * 100) / 100;
+  }
+  if (li.format == loopfile::Format::Tagged || li.format == loopfile::Format::Sliced) {
+    if (!li.loop) m.bpm = 0;  // a one-shot: no tempo, whatever its name says
+  }
+  if (li.key >= 0) {
+    m.key = li.key;
+    m.minor = li.minor;
+  }
+  return true;
+}
+
 FileMeta Index::describe(const std::string& path, bool analyse) {
   FileMeta m;
   m.path = path;
@@ -762,6 +791,10 @@ FileMeta Index::describe(const std::string& path, bool analyse) {
   if (m.kind == Kind::Audio) {
     m.bpm = bpmFromName(name);
     keyFromName(name, m.key, m.minor);
+    // K-161: a loop file's own facts win over its name (sliced and tagged loops are small and
+    // read at once; other formats when analysed).
+    const std::string ext = extOf(path);
+    if (analyse || ext == ".rx2" || ext == ".caf") applyLoopFacts(path, m);
   }
   if (analyse && m.kind == Kind::Audio) {
     m.analysed = true;
@@ -771,8 +804,8 @@ FileMeta Index::describe(const std::string& path, bool analyse) {
         m.rate = s->sampleRate;
         m.channels = s->left == s->right ? 1 : 2;
         m.peaks = encodePeaks(computePeaks(s->left, s->right, 64));
-        if (m.bpm <= 0) m.bpm = wavAcidTempo(path);
-        if (m.bpm <= 0) {
+        if (m.bpm <= 0 && m.fileTags.empty()) m.bpm = wavAcidTempo(path);
+        if (m.bpm <= 0 && m.fileTags.empty()) {
           const auto tags = autoTags(path);
           if (std::find(tags.begin(), tags.end(), "loop") != tags.end()) m.bpm = bpmFromLength(m.seconds);
         }
@@ -958,6 +991,12 @@ bool Index::save() const {
       if (m.bpm > 0) e.object["bpm"] = Json::makeNumber(m.bpm);
       if (m.key >= 0) e.object["key"] = Json::makeNumber(m.key + (m.minor ? 12 : 0));
       if (!m.peaks.empty()) e.object["peaks"] = Json::makeString(m.peaks);
+      if (!m.fileTags.empty()) {
+        Json ft = Json::makeArray();
+        for (const auto& x : m.fileTags) ft.array.push_back(Json::makeString(x));
+        e.object["ft"] = std::move(ft);
+      }
+      if (m.slices > 0) e.object["sl"] = Json::makeNumber(m.slices);
       files.object[p] = std::move(e);
     }
     root.object["files"] = std::move(files);
@@ -1009,6 +1048,10 @@ bool Index::load() {
       int k = jsonInt<int>(e.num("key", -1));
       if (k >= 0 && k < 24) m.key = k % 12, m.minor = k >= 12;
       m.peaks = e.text("peaks");
+      if (const Json* ft = e.find("ft"); ft && ft->is(Json::Type::Array))
+        for (const auto& x : ft->array)
+          if (x.is(Json::Type::String)) m.fileTags.push_back(x.str);
+      m.slices = jsonInt<int>(e.num("sl"));
       if (auto t = tags_.find(p); t != tags_.end()) m.tags = t->second;
       entries_[p] = std::move(m);
     }

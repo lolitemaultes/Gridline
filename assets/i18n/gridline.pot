@@ -986,6 +986,14 @@ msgid "%d failed"
 msgstr ""
 
 #: src/app/Browser.cpp
+msgid "%d slice"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "%d slices"
+msgstr ""
+
+#: src/app/Browser.cpp
 msgid "(right-click: new folder, refresh, remove from the browser)"
 msgstr ""
 
@@ -1493,6 +1501,14 @@ msgstr ""
 msgid "project references updated"
 msgstr ""
 
+#: src/app/BrowserDrop.cpp
+msgid "%d slices on a new slicer channel (%d short ones joined to fit the keys)"
+msgstr ""
+
+#: src/app/BrowserDrop.cpp
+msgid "%d slices on a new slicer channel, playing in time with the song"
+msgstr ""
+
 #: src/app/BrowserDrop.cpp src/app/ContextMenus.cpp src/app/MixerView.cpp
 msgid "All effect slots are in use"
 msgstr ""
@@ -1503,6 +1519,10 @@ msgstr ""
 
 #: src/app/BrowserDrop.cpp
 msgid "Audio tracks hold audio: drop the instrument on another track"
+msgstr ""
+
+#: src/app/BrowserDrop.cpp
+msgid "Cut at the file's own %d slices"
 msgstr ""
 
 #: src/app/BrowserDrop.cpp src/core/ExternalDrop.cpp
@@ -1543,6 +1563,10 @@ msgstr ""
 
 #: src/app/BrowserDrop.cpp
 msgid "Effects go onto instrument and audio tracks (their mixer track) or into mixer slots"
+msgstr ""
+
+#: src/app/BrowserDrop.cpp
+msgid "Follows the song tempo from its own %.1f BPM (undo to keep it as it is)"
 msgstr ""
 
 #: src/app/BrowserDrop.cpp
@@ -1591,6 +1615,10 @@ msgstr ""
 
 #: src/app/BrowserDrop.cpp
 msgid "This instrument can't play on that track"
+msgstr ""
+
+#: src/app/BrowserDrop.cpp
+msgid "This loop has no slices"
 msgstr ""
 
 #: src/app/BrowserDrop.cpp

@@ -966,7 +966,7 @@ void drawMissing(App& a) {
       if (ui::TextButton("Locate...", false, 80)) {
         const std::string from = f;
         std::string ext = fs::path(f).extension().string();
-        fileDialog(a, ("Locate " + name).c_str(), false, {".wav", ".flac", ".ogg", ".mp3", ".aif", ".aiff", ".wv", ".m4a", ".aac", ".png", ".jpg", ".mid"}, "",
+        fileDialog(a, ("Locate " + name).c_str(), false, {".wav", ".flac", ".ogg", ".mp3", ".aif", ".aiff", ".wv", ".m4a", ".aac", ".caf", ".rx2", ".rex", ".rcy", ".png", ".jpg", ".mid"}, "",
                    [&a, from](const std::string& p) {
                      a.doc.editSong("relink sample", [&](Song& s) { relinkFiles(s, {{from, p}}); });
                      sampleCache().clear();

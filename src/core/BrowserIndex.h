@@ -46,6 +46,10 @@ struct FileMeta {
   bool minor = false;
   std::string peaks;      // waveform overview, see encodePeaks
   std::vector<std::string> tags;  // user tags (lower case)
+  // K-161: what the file says about itself as a loop (engine/LoopFile.h): its own tags
+  // (format, loop or one-shot, category, genre, descriptors), its slices.
+  std::vector<std::string> fileTags;
+  int slices = 0;
 };
 
 // Tempo from a file name: "120bpm", "120 BPM", "loop_128_", "bpm95"; 0 if none.
@@ -64,6 +68,9 @@ double bpmFromLength(double seconds);
 // sample editors), folded by octaves into [70, 180]; 0 when there is none.
 // Reads chunk headers only.
 double wavAcidTempo(const std::string& path);
+// K-161: a loop file's own tempo, key, tags and slice count (engine/LoopFile.h) into `m`;
+// false when the file says nothing about itself as a loop.
+bool applyLoopFacts(const std::string& path, FileMeta& m);
 // Playback speed ratio for tempo-synced preview: songBpm / sampleBpm, folded
 // by octaves into [1/sqrt2, sqrt2] (a 70 BPM loop previews against 140 at 1x).
 double syncRatio(double sampleBpm, double songBpm);

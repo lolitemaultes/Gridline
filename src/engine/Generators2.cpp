@@ -248,6 +248,11 @@ class PadsGen final : public Generator {
         if (param(*state_, pp::padE(v.pad, pp::PadOneShot), 1) < 0.5f) v.stage = 3;
       }
   }
+  // K-165: the channel's cut groups, mono and voice limit choke the hit over 4 ms (one-shot pads too).
+  void onCut(uint32_t id) override {
+    for (auto& v : voices_)
+      if (v.on && v.id == id && v.fadeStep == 0) v.held = false, v.fadeStep = static_cast<float>(1.0 / std::max(1.0, 0.004 * sr_));
+  }
   void onAllOff() override {
     for (auto& v : voices_) v.held = false;
   }

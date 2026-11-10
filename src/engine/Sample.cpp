@@ -11,6 +11,8 @@
 #include <fstream>
 #include <iterator>
 #include "WavPack.h"
+#include "Caf.h"
+#include "Rex2.h"
 
 #define DR_WAV_IMPLEMENTATION
 #define DR_FLAC_IMPLEMENTATION
@@ -57,7 +59,14 @@ SamplePtr fromInterleaved(const std::string& path, float* data, uint64_t frames,
 bool isAudioFile(const std::string& path) {
   std::string e = lowerExt(path);
   return e == ".wav" || e == ".wave" || e == ".flac" || e == ".mp3" || e == ".ogg" || e == ".wv" || e == ".aif" || e == ".aiff" || e == ".aifc" ||
-         e == ".m4a" || e == ".aac";  // K-51
+         e == ".m4a" || e == ".aac" ||  // K-51
+         e == ".rx2" || e == ".rex" || e == ".rcy" || e == ".caf";  // K-161: sliced and tagged loops
+}
+
+const std::vector<std::string>& audioFileExtensions() {
+  static const std::vector<std::string> v = {".wav", ".wave", ".flac", ".mp3", ".ogg", ".wv", ".aif", ".aiff", ".aifc",
+                                             ".m4a", ".aac", ".caf", ".rx2", ".rex", ".rcy"};
+  return v;
 }
 
 namespace {
@@ -172,7 +181,13 @@ SamplePtr loadSample(const std::string& path, std::string* err) {
   float* data = nullptr;
   SamplePtr out;
   std::string why;
-  if (magic("wvpk")) {
+  if (rex::looksLikeRex2(bytes.data(), bytes.size())) {  // K-161: sliced loop
+    DecodedAudio d;
+    if (rex::decode(bytes.data(), bytes.size(), d, nullptr, &why)) out = fromDecoded(path, d);
+  } else if (caf::looksLikeCaf(bytes.data(), bytes.size())) {  // K-161: CAF (tagged loops)
+    DecodedAudio d;
+    if (caf::decode(path, bytes.data(), bytes.size(), d, &why)) out = fromDecoded(path, d);
+  } else if (magic("wvpk")) {
     DecodedAudio d;
     if (decodeWavPack(bytes.data(), bytes.size(), d, &why)) out = fromDecoded(path, d);
   } else if (magic("OggS")) {

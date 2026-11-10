@@ -1433,6 +1433,7 @@ class DrumGen : public Generator {
     }
     *pick = Voice{};
     pick->on = true;
+    pick->id = id;
     pick->vel = vel;
     pick->tune = std::pow(2.0, (pitch - 60.0) / 12.0);
     pick->noise.seed(id * 747796405u + 2891336453u);
@@ -1443,6 +1444,11 @@ class DrumGen : public Generator {
   virtual void started(Voice&) {}
   void onNoteOff(uint32_t) override {}
   void onAllOff() override {}
+  // K-165: cut groups, mono and the voice limit choke the hit over 4 ms (note-offs are ignored).
+  void onCut(uint32_t id) override {
+    for (auto& v : voices_)
+      if (v.on && v.id == id && v.cutStep == 0) v.cutStep = 1.0 / std::max(1.0, 0.004 * sr_);
+  }
   void onKill() override {
     for (auto& v : voices_) v = Voice{};
   }
@@ -1457,7 +1463,17 @@ class DrumGen : public Generator {
 
 struct DrumVoiceBase {
   bool on = false;
+  uint32_t id = 0;
   float vel = 0;
+  double cutGain = 1, cutStep = 0;  // K-165: choke fade (cutStep 0 = not cut)
+  // The choke gain for this frame, then one step down.
+  double cutTick() {
+    if (cutStep == 0) return 1.0;
+    const double g = std::max(0.0, cutGain);
+    cutGain -= cutStep;
+    return g;
+  }
+  bool cutDone() const { return cutStep > 0 && cutGain <= 0; }
   double t = 0, tune = 1, phase = 0;
   double rnd1 = 0, rnd2 = 0;
   Noise noise;
@@ -1511,8 +1527,12 @@ class KickGen final : public DrumGen<KickVoice> {
         double d = 1.0 + drive_ * 8.0;
         s = std::tanh(s * d) / std::tanh(d);
         if (tone_ < 19900) s = v.tone.process(s);
-        out(L, R, i, s * v.vel * vol_);
+        out(L, R, i, s * v.vel * vol_ * v.cutTick());
         v.t += dt;
+        if (v.cutDone()) {
+          v.on = false;
+          break;
+        }
         if (amp < 1e-4 && v.t > attack_) {
           v.on = false;
           break;
@@ -1567,8 +1587,12 @@ class SnareGen final : public DrumGen<SnareVoice> {
         if (ring_ > 0) s += ring_ * bodyS * nz * 1.5;
         if (click_ > 0 && v.t < 0.0015) s += click_ * (1.0 - v.t / 0.0015);
         if (std::fabs(tilt_) > 0.01 || velTone_ != 0) s = v.tilt.process(s);
-        out(L, R, i, s * v.vel * vol_);
+        out(L, R, i, s * v.vel * vol_ * v.cutTick());
         v.t += dt;
+        if (v.cutDone()) {
+          v.on = false;
+          break;
+        }
         if (ab < 1e-4 && an < 1e-4) {
           v.on = false;
           break;
@@ -1625,8 +1649,12 @@ class HatGen final : public DrumGen<HatVoice> {
         v.hp.process(band, nullptr, &high);
         double amp = std::exp(-v.t / (dec * 0.35));
         if (attack_ > 0 && v.t < attack_) amp *= v.t / attack_;
-        out(L, R, i, high * amp * v.vel * vol_ * 1.6);
+        out(L, R, i, high * amp * v.vel * vol_ * 1.6 * v.cutTick());
         v.t += dt;
+        if (v.cutDone()) {
+          v.on = false;
+          break;
+        }
         if (amp < 1e-4 && v.t > attack_) {
           v.on = false;
           break;
@@ -1691,11 +1719,11 @@ class ClapGen final : public DrumGen<ClapVoice> {
           v.bp2.process(v.noise2.next(), &band2);
           bandR = band * (1 - stereo_) + band2 * stereo_;
         }
-        double g = v.vel * vol_ * 2.2;
+        double g = v.vel * vol_ * 2.2 * v.cutTick();
         L[i] += static_cast<float>(band * envL * g * panL_);
         R[i] += static_cast<float>(bandR * envR * g * panR_);
         v.t += dt;
-        if (tt > 0 && tail < 1e-4) {
+        if (v.cutDone() || (tt > 0 && tail < 1e-4)) {
           v.on = false;
           break;
         }

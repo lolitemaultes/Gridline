@@ -16,6 +16,7 @@
 #include <tuple>
 #include "../engine/KerfGrid.h"
 #include "../engine/KerfMarks.h"
+#include "../engine/LoopFile.h"
 #include "../engine/SlicexEngine.h"
 #include "../core/I18n.h"
 #include "../core/PluginBrand.h"
@@ -445,7 +446,7 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
     a.fileDialog.title = "Load loop";
     const char* h = gl::platform::homeEnv();
     a.fileDialog.dir = file.empty() ? (h ? h : ".") : fs::path(file).parent_path().string();
-    a.fileDialog.exts = {".wav", ".wave", ".flac", ".mp3", ".ogg", ".wv", ".m4a", ".aac"};
+    a.fileDialog.exts = audioFileExtensions();
     a.fileDialog.onOk = [&a, tt](const std::string& p) {
       if (const PluginState* cur = tt.state(a.doc.song())) {
         PluginState ns = *cur;
@@ -539,12 +540,15 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
   const double loopBeats = ed::val(st, SlLoopBeats, 4);
   // Tempo of the loop: at its length in beats (Fit tempo), else the power-of-two
   // beat count that lands between 80 and 160 BPM.
-  const double gridBeats = smp ? kerfmarks::loopBeats(smp->seconds(), classic && ed::bval(st, SlFitTempo), loopBeats) : 0.0;
+  // The part of the file that loops: a loop file's own loop region, else all of it.
+  const double loopLen = smp ? static_cast<double>(loopfile::loopFramesOf(smp->path, static_cast<int64_t>(smp->frames()))) : 0.0;
+  const double loopSecs = smp && smp->sampleRate > 0 ? loopLen / smp->sampleRate : 0.0;
+  const double gridBeats = smp ? kerfmarks::loopBeats(loopSecs, classic && ed::bval(st, SlFitTempo), loopBeats) : 0.0;
   // J-190: on the beat grid, the grid it cuts on (detected beats, or the loop-length grid in its meter).
   const bool detectedGrid = gridMode && kg && kg->source == kerfgrid::SourceDetected;
-  const double tempoEst = gridMode && kg ? kg->bpm : smp && smp->seconds() > 0 ? gridBeats * 60.0 / smp->seconds() : 0.0;
+  const double tempoEst = gridMode && kg ? kg->bpm : loopSecs > 0 ? gridBeats * 60.0 / loopSecs : 0.0;
   // ---- J-182: the loop's grid (4/4 over its beats), snapping, ruler and positions.
-  const kerfmarks::Grid tg = gridMode && kg ? kg->timeGrid() : kerfmarks::straightGrid(smp ? kerfmarks::framesPerBeat(frames, gridBeats) : 0.0);
+  const kerfmarks::Grid tg = gridMode && kg ? kg->timeGrid() : kerfmarks::straightGrid(smp ? kerfmarks::framesPerBeat(loopLen, gridBeats) : 0.0);
   const double fpb = tg.fpb;
   const int bpb = std::max(1, tg.beatsPerBar);
   const int snap = std::clamp(ed::ival(st, SlSnap), 0, kerfmarks::SnapCount - 1);

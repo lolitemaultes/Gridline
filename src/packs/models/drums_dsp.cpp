@@ -31,6 +31,19 @@ inline float pv(const PluginState& s, int i, float d = 0.f) {
   return i >= 0 && static_cast<size_t>(i) < s.params.size() ? s.params[static_cast<size_t>(i)] : d;
 }
 
+// K-165: a voice's choke fade (cut groups, mono, voice limit), and the note that started it.
+struct Cut {
+  float gain = 1, step = 0;  // step 0: not cut
+  uint32_t id = 0;
+  float tick() {
+    if (step == 0) return 1.0f;
+    const float g = std::max(0.0f, gain);
+    gain -= step;
+    return g;
+  }
+  bool done() const { return step > 0 && gain <= 0; }
+};
+
 // ---------------------------------------------------------------- Membrane Pad
 class MembranePadGen final : public Generator {
  public:
@@ -73,6 +86,7 @@ class MembranePadGen final : public Generator {
       v->id = id;
       v->age = ++clock_;
       v->strike(p, pitch - std::round(pitch), sr_);  // the key does not transpose; fine pitch does
+      refCut_[static_cast<size_t>(v - ref_.data())] = {1, 0};
       return;
     }
     MembraneVoice* v = &voices_[0];
@@ -88,6 +102,15 @@ class MembranePadGen final : public Generator {
     v->id = id;
     v->age = ++clock_;
     v->strike(p, velocity, pitch - 60.0, sr_, static_cast<uint32_t>(clock_));
+    cut_[static_cast<size_t>(v - voices_.data())] = {1, 0};
+  }
+  // K-165: cut groups, mono and the voice limit choke the hit over 4 ms (note-offs only gate the ring).
+  void onCut(uint32_t id) override {
+    const float step = static_cast<float>(1.0 / std::max(1.0, 0.004 * sr_));
+    for (size_t k = 0; k < ref_.size(); ++k)
+      if (ref_[k].on && ref_[k].id == id && refCut_[k].step == 0) refCut_[k].step = step, ref_[k].held = false;
+    for (size_t k = 0; k < voices_.size(); ++k)
+      if (voices_[k].on && voices_[k].id == id && cut_[k].step == 0) cut_[k].step = step;
   }
   void onNoteOff(uint32_t id) override {  // one-shot: the hold control gates the ring
     for (auto& v : ref_)
@@ -101,21 +124,30 @@ class MembranePadGen final : public Generator {
     for (auto& v : ref_) v.held = false, v.on = false;
   }
   void render(float* L, float* R, int n) override {
-    for (auto& v : ref_) {
+    for (size_t k = 0; k < ref_.size(); ++k) {
+      auto& v = ref_[k];
       if (!v.on) continue;
+      Cut& c = refCut_[k];
       for (int i = 0; i < n; ++i) {
-        const float y = v.next() * out_;
+        const float y = v.next() * out_ * c.tick();
         L[i] += y;
         R[i] += y;
+        if (c.done()) {
+          v.on = v.held = false;
+          break;
+        }
       }
     }
     const float g = out_ * 0.7f;
-    for (auto& v : voices_) {
+    for (size_t k = 0; k < voices_.size(); ++k) {
+      auto& v = voices_[k];
       if (!v.on) continue;
+      Cut& c = cut_[k];
       for (int i = 0; i < n && v.on; ++i) {
-        float y = v.tick() * g;
+        float y = v.tick() * g * c.tick();
         L[i] += y;
         R[i] += y;
+        if (c.done()) v.on = false;
       }
     }
   }
@@ -123,6 +155,8 @@ class MembranePadGen final : public Generator {
  private:
   std::array<MembraneVoice, kVoices> voices_;
   std::array<RefMembraneVoice, kRefVoices> ref_;
+  std::array<Cut, kVoices> cut_{};  // K-165: per-voice choke fades
+  std::array<Cut, kRefVoices> refCut_{};
   bool engine_ = true, refReady_ = false;
   float model_[MdCount] = {};
   float out_ = 1;
@@ -184,7 +218,7 @@ class MembraneKitGen final : public Generator {
     limGain_ = static_cast<float>(std::pow(10.0, 1.5 * pv(s, KmLimGain)));  // reference: 10^(1.5x)
     limRel_ = static_cast<float>(std::exp(-1.0 / std::max(1.0, 0.01 * std::pow(100.0, pv(s, KmLimRelease, 0.5f)) * sr_)));
   }
-  void strikeChannel(int c, float vel) {
+  void strikeChannel(int c, float vel, uint32_t id) {
     const PluginState& s = *state_;
     MembraneVoice* v = &voices_[0];
     for (auto& x : voices_)
@@ -199,6 +233,7 @@ class MembraneKitGen final : public Generator {
     applyVelocity(in, p, vel);
     v->tag = c;
     v->age = ++clock_;
+    cut_[static_cast<size_t>(v - voices_.data())] = {1, 0, id};
     v->strike(p, vel, 0.0, sr_, static_cast<uint32_t>(clock_ * 7919u + static_cast<uint64_t>(c)));
   }
   // J-180: kit pieces play on the note's written key (fine / channel pitch never pick another piece).
@@ -212,7 +247,13 @@ class MembraneKitGen final : public Generator {
           return;
         }
     for (int c = 0; c < kKitPads; ++c)
-      if (key_[c] == note) strikeChannel(c, velocity);
+      if (key_[c] == note) strikeChannel(c, velocity, id);
+  }
+  // K-165: cut groups, mono and the voice limit choke the note's hits over 4 ms (and its pattern).
+  void onCut(uint32_t id) override {
+    if (seq_.on && seq_.id == id) seq_.on = false, uiStep_.store(-1, std::memory_order_relaxed);
+    for (size_t k = 0; k < voices_.size(); ++k)
+      if (voices_[k].on && cut_[k].id == id && cut_[k].step == 0) cut_[k].step = static_cast<float>(1.0 / std::max(1.0, 0.004 * sr_));
   }
   void onNoteOff(uint32_t id) override {
     if (seq_.on && seq_.id == id) seq_.on = false, uiStep_.store(-1, std::memory_order_relaxed);
@@ -231,11 +272,13 @@ class MembraneKitGen final : public Generator {
       std::fill(br, br + m, 0.0f);
       for (int i = 0; i < m; ++i) {
         if (seq_.on && data_) stepSequencer();
-        for (auto& v : voices_) {
+        for (size_t k = 0; k < voices_.size(); ++k) {
+          auto& v = voices_[k];
           if (!v.on) continue;
-          float y = v.tick();
+          float y = v.tick() * cut_[k].tick();
           bl[i] += y * gl_[v.tag];
           br[i] += y * gr_[v.tag];
+          if (cut_[k].done()) v.on = false;
         }
       }
       for (int i = 0; i < m; ++i) {
@@ -287,7 +330,7 @@ class MembraneKitGen final : public Generator {
       uiStep_.store(seq_.step, std::memory_order_relaxed);
       for (int c = 0; c < kKitPads; ++c) {
         const uint8_t cell = P.cell[c][seq_.step % kKitSteps];
-        if (cell & 0x80) strikeChannel(c, seq_.vel * static_cast<float>(cell & 0x7F) / 127.0f);
+        if (cell & 0x80) strikeChannel(c, seq_.vel * static_cast<float>(cell & 0x7F) / 127.0f, seq_.id);
       }
       if (++seq_.step >= len) {
         seq_.step = 0;
@@ -298,6 +341,7 @@ class MembraneKitGen final : public Generator {
   }
 
   std::array<MembraneVoice, kVoices> voices_;
+  std::array<Cut, kVoices> cut_{};  // K-165: per-voice choke fades and the note that struck it
   const PluginState* state_ = nullptr;
   const KitAux* data_ = nullptr;
   Seq seq_;
@@ -333,6 +377,8 @@ class KickSculptGen final : public Generator {
   static constexpr int kVoices = 4;
   struct Voice {
     bool on = false;
+    uint32_t id = 0;
+    float cut = 1, cutStep = 0;  // K-165: choke fade (cutStep 0 = not cut)
     uint64_t age = 0;
     int64_t t = 0, len = 0;
     double ph = 0, base = 50, peak = 200, slideK = 0.999, sweep = 1, pitchMul = 1;
@@ -350,7 +396,7 @@ class KickSculptGen final : public Generator {
     const int idx = std::clamp(static_cast<int>(std::lround(p_[KsNoiseSample])), 0, kickNoiseCount() - 1);
     noise_ = aux.sample(static_cast<size_t>(idx)).get();
   }
-  void onNoteOn(uint32_t, double pitch, float velocity) override {
+  void onNoteOn(uint32_t id, double pitch, float velocity) override {
     Voice* v = &voices_[0];
     for (auto& x : voices_)
       if (!x.on) {
@@ -362,6 +408,7 @@ class KickSculptGen final : public Generator {
     const float* p = p_;
     *v = Voice{};
     v->on = true;
+    v->id = id;
     v->age = ++clock_;
     v->rng.seed(static_cast<uint32_t>(clock_ * 2654435761u));
     const double sr44 = sr_ / 44100.0;
@@ -397,6 +444,11 @@ class KickSculptGen final : public Generator {
   }
   void onNoteOff(uint32_t) override {}
   void onAllOff() override {}
+  // K-165: cut groups, mono and the voice limit choke the hit over 4 ms (note-offs are ignored).
+  void onCut(uint32_t id) override {
+    for (auto& v : voices_)
+      if (v.on && v.id == id && v.cutStep == 0) v.cutStep = static_cast<float>(1.0 / std::max(1.0, 0.004 * sr_));
+  }
   void onKill() override {
     for (auto& v : voices_) v.on = false;
   }
@@ -444,10 +496,11 @@ class KickSculptGen final : public Generator {
           v.attack += (1.0f - v.attack) * v.attackK + 1e-7f;
         }
         v.amp = std::max(0.0f, v.amp - v.ampStep);
-        const float y = static_cast<float>(x) * level * v.vel;
+        const float y = static_cast<float>(x) * level * v.vel * std::max(0.0f, v.cut);
         L[i] += y;
         R[i] += y;
-        if (++v.t >= v.len) {
+        v.cut -= v.cutStep;
+        if (++v.t >= v.len || v.cut <= 0) {
           v.on = false;
           break;
         }

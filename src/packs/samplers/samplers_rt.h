@@ -420,6 +420,11 @@ class MultiSamplerGen final : public Generator {
     for (auto& v : voices_)
       if (v.on && v.held && v.id == id) release(v);
   }
+  // K-165: cut groups, mono and the voice limit choke the note over 4 ms (one-shots too).
+  void onCut(uint32_t id) override {
+    for (auto& v : voices_)
+      if (v.on && v.id == id) v.held = false, fadeOut(v);
+  }
   void release(Voice& v) {
     v.held = false;
     if (v.zr->z.loop == LoopOneShot) return;

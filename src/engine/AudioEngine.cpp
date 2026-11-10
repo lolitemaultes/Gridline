@@ -688,6 +688,7 @@ double AudioEngine::loopEnd(const Program* p) const {
 void AudioEngine::sendOn(const ProgChannel& ch, uint32_t id, float pitch, float velocity, int offset, int color,
                          const NoteProps* props) {
   if (!ch.rt || !ch.rt->gen) return;
+  forgetGone(*ch.rt, id);  // K-165: the id sounds again (live keys reuse theirs)
   bool chain = false;
   for (const auto& nf : ch.noteFx) chain = chain || nf.rt != nullptr;
   if (!chain) {
@@ -768,15 +769,47 @@ void AudioEngine::liveOn(const Program* p, const ProgChannel& ch, uint32_t id, f
   }
   // J-31: a channel's key range limits the notes it plays (layer splits).
   auto inRange = [pitch](const ProgChannel& c) { return pitch > c.keyLo - 0.5f && pitch < c.keyHi + 0.5f; };
-  if (inRange(ch)) sendOn(ch, id, pitch, velocity, 0, color);
+  if (inRange(ch)) liveStart(p, ch, id, pitch, velocity, color);
   if (ch.layer.empty()) return;
   // Layer: the children play too (random layers pick one child per note).
   const size_t pick = ch.layerMode == 1 ? ((id * 2654435761u) >> 7) % ch.layer.size() : 0;
   for (size_t k = 0; k < ch.layer.size(); ++k) {
     if (ch.layerMode == 1 && k != pick) continue;
     const size_t ci = static_cast<size_t>(ch.layer[k]);
-    if (ci < p->channels.size() && inRange(p->channels[ci])) sendOn(p->channels[ci], id, pitch, velocity, 0, color);
+    if (ci < p->channels.size() && inRange(p->channels[ci])) liveStart(p, p->channels[ci], id, pitch, velocity, color);
   }
+}
+
+// K-165: a live note on one channel, with the channel's note settings as sequenced notes have
+// them: its cut group cuts the channels it cuts, mono ends the channel's other notes (with
+// porta the new note glides in from the last pitch), the voice limit cuts the oldest notes.
+void AudioEngine::liveStart(const Program* p, const ProgChannel& ch, uint32_t id, float pitch, float velocity, int color) {
+  ChannelRuntime* rt = ch.rt.get();
+  if (!rt || !rt->gen) return;
+  const int64_t at = absClock_;
+  for (int i = 0; i < rt->liveCount;)  // pressed again before its release: the new press replaces it
+    if (rt->live[i].id == id) {
+      cutLive(ch, i, 0);
+    } else {
+      ++i;
+    }
+  cutGroupsOf(p, ch, at, 0);
+  if (ch.mono) chokeChannel(ch, std::numeric_limits<int64_t>::max(), 0);
+  limitVoices(ch, 0);
+  bool chain = false;
+  for (const auto& nf : ch.noteFx) chain = chain || nf.rt != nullptr;
+  const bool porta = ch.porta && rt->gen->supportsGlide() && !chain && rt->lastPitch >= 0 &&
+                     std::fabs(rt->lastPitch - pitch) > 1e-4f;
+  if (porta) {
+    sendOn(ch, id, rt->lastPitch, velocity, 0, color);
+    rt->gen->glide(id, pitch + ch.pitchOffset, ch.portaTime, 0);
+    rt->keys.retarget(id, pitch);
+  } else {
+    sendOn(ch, id, pitch, velocity, 0, color);
+  }
+  rt->lastPitch = pitch;
+  if (rt->liveCount == ChannelRuntime::kLiveHeld) cutLive(ch, 0, 0);  // full: the oldest held note ends
+  rt->live[rt->liveCount++] = {id, at};
 }
 
 void AudioEngine::liveOff(const Program* p, const ProgChannel& ch, uint32_t id) {
@@ -784,9 +817,104 @@ void AudioEngine::liveOff(const Program* p, const ProgChannel& ch, uint32_t id) 
     releaseHeld(ch.id, id);
     return;
   }
-  sendOff(ch, id, 0);
+  auto off = [&](const ProgChannel& c) {
+    if (ChannelRuntime* rt = c.rt.get())
+      for (int i = 0; i < rt->liveCount; ++i)
+        if (rt->live[i].id == id) {
+          for (int k = i + 1; k < rt->liveCount; ++k) rt->live[k - 1] = rt->live[k];
+          --rt->liveCount;
+          break;
+        }
+    sendOff(c, id, 0);
+  };
+  off(ch);
   for (int k : ch.layer)
-    if (static_cast<size_t>(k) < p->channels.size()) sendOff(p->channels[static_cast<size_t>(k)], id, 0);
+    if (static_cast<size_t>(k) < p->channels.size()) off(p->channels[static_cast<size_t>(k)]);
+}
+
+// ---- K-165: what cut groups, mono and the voice limit cut
+
+void AudioEngine::forgetGone(ChannelRuntime& rt, uint32_t id) {
+  for (int i = 0; i < rt.goneCount;)
+    if (rt.gone[i] == id) {
+      for (int k = i + 1; k < rt.goneCount; ++k) rt.gone[k - 1] = rt.gone[k];
+      --rt.goneCount;
+    } else {
+      ++i;
+    }
+}
+
+void AudioEngine::addGone(ChannelRuntime& rt, uint32_t id) {
+  forgetGone(rt, id);
+  if (rt.goneCount == ChannelRuntime::kGoneNotes) {  // full: the oldest is forgotten (long finished)
+    for (int k = 1; k < rt.goneCount; ++k) rt.gone[k - 1] = rt.gone[k];
+    --rt.goneCount;
+  }
+  rt.gone[rt.goneCount++] = id;
+}
+
+void AudioEngine::cutLive(const ProgChannel& ch, int index, int offset) {
+  ChannelRuntime* rt = ch.rt.get();
+  if (!rt || index < 0 || index >= rt->liveCount) return;
+  const uint32_t id = rt->live[index].id;
+  bool chain = false;
+  for (const auto& nf : ch.noteFx) chain = chain || nf.rt != nullptr;
+  if (chain)
+    sendOff(ch, id, offset);
+  else if (rt->gen)
+    rt->gen->cut(id, offset), rt->keys.off(id);
+  for (int k = index + 1; k < rt->liveCount; ++k) rt->live[k - 1] = rt->live[k];
+  --rt->liveCount;
+}
+
+void AudioEngine::chokeChannel(const ProgChannel& ch, int64_t before, int offset) {
+  ChannelRuntime* rt = ch.rt.get();
+  if (!rt) return;
+  for (int i = 0; i < rt->pendingCount;)
+    if (rt->pending[i].at < before)
+      cutPending(ch, i, offset);
+    else
+      ++i;
+  for (int i = 0; i < rt->liveCount;)
+    if (rt->live[i].at < before)
+      cutLive(ch, i, offset);
+    else
+      ++i;
+  // Notes already let go: their one-shot sound or release tail ends now as well.
+  if (rt->gen)
+    for (int i = 0; i < rt->goneCount; ++i) rt->gen->cut(rt->gone[i], offset);
+  rt->goneCount = 0;
+}
+
+void AudioEngine::cutGroupsOf(const Program* p, const ProgChannel& ch, int64_t at, int offset) {
+  if (ch.cutGroup <= 0) return;
+  for (const auto& other : p->channels)
+    if (other.cutBy == ch.cutGroup && other.rt) chokeChannel(other, at, offset);
+}
+
+void AudioEngine::limitVoices(const ProgChannel& ch, int offset) {
+  ChannelRuntime* rt = ch.rt.get();
+  if (!rt || ch.polyphony <= 0) return;
+  while (rt->pendingCount + rt->liveCount + rt->goneCount >= ch.polyphony) {
+    if (rt->goneCount > 0) {  // the oldest note let go first
+      if (rt->gen) rt->gen->cut(rt->gone[0], offset);
+      for (int k = 1; k < rt->goneCount; ++k) rt->gone[k - 1] = rt->gone[k];
+      --rt->goneCount;
+      continue;
+    }
+    int old = -1;
+    bool isLive = false;
+    int64_t oldAt = std::numeric_limits<int64_t>::max();
+    for (int i = 0; i < rt->pendingCount; ++i)
+      if (rt->pending[i].at < oldAt) old = i, oldAt = rt->pending[i].at, isLive = false;
+    for (int i = 0; i < rt->liveCount; ++i)
+      if (rt->live[i].at < oldAt) old = i, oldAt = rt->live[i].at, isLive = true;
+    if (old < 0) break;
+    if (isLive)
+      cutLive(ch, old, offset);
+    else
+      cutPending(ch, old, offset);
+  }
 }
 
 void AudioEngine::cutPending(const ProgChannel& ch, int index, int offset) {
@@ -850,52 +978,40 @@ void AudioEngine::startNote(const Program* p, const ProgChannel& ch, const NoteE
   }
   if (rt->pendingCount >= kMaxPendingNotes) return;
   // Cut groups: this note cuts the notes of channels "cut by" its group that
-  // started earlier (notes starting together, e.g. a chord, survive).
-  if (ch.cutGroup > 0)
-    for (const auto& other : p->channels) {
-      if (other.cutBy != ch.cutGroup || !other.rt) continue;
-      for (int i = 0; i < other.rt->pendingCount;)
-        if (other.rt->pending[i].at < at)
-          cutPending(other, i, offset);
-        else
-          ++i;
-    }
+  // started earlier (notes starting together, e.g. a chord, survive), held,
+  // live or already let go (K-165: a one-shot sample rings on after its note).
+  cutGroupsOf(p, ch, at, offset);
   const bool porta = (ch.porta || (e.flags & kNotePorta)) && glides && rt->lastPitch >= 0;
-  if (ch.mono && rt->pendingCount > 0) {
-    if (porta) {  // legato: the sounding note glides to the new pitch and takes over its length
-      int keep = 0;
-      for (int i = 1; i < rt->pendingCount; ++i)
-        if (rt->pending[i].at > rt->pending[keep].at) keep = i;
-      ChannelRuntime::Pending kept = rt->pending[keep];
-      for (int i = rt->pendingCount - 1; i >= 0; --i)
-        if (i != keep) {
-          gen->cut(rt->pending[i].id, offset);
-          rt->keys.off(rt->pending[i].id);
-        }
-      gen->glide(kept.id, e.pitch + ch.pitchOffset, ch.portaTime, offset);
-      rt->keys.retarget(kept.id, e.pitch);
-      kept.off = noteOffTick(e) + static_cast<double>(shift);
-      kept.pitch = e.pitch;
-      kept.at = at;
-      kept.color = color;
-      kept.on = noteOnTick(e) + static_cast<double>(shift);  // K-25: the new note's line, after the glide
-      kept.bendFrom = at + portaSamples;
-      rt->pending[0] = kept;
-      rt->pendingCount = 1;
-      rt->pending[0].bendSlot = bent ? takeBendSlot(*rt, kept.id, *e.bend) : -1;
-      rt->lastPitch = e.pitch;
-      rt->lastPitchColor[color] = e.pitch;
-      return;
-    }
-    while (rt->pendingCount > 0) cutPending(ch, rt->pendingCount - 1, offset);
+  if (ch.mono && porta && rt->pendingCount > 0) {  // legato: the sounding note glides to the new pitch and takes over its length
+    int keep = 0;
+    for (int i = 1; i < rt->pendingCount; ++i)
+      if (rt->pending[i].at > rt->pending[keep].at) keep = i;
+    ChannelRuntime::Pending kept = rt->pending[keep];
+    for (int i = rt->pendingCount - 1; i >= 0; --i)
+      if (i != keep) {
+        gen->cut(rt->pending[i].id, offset);
+        rt->keys.off(rt->pending[i].id);
+      }
+    rt->pendingCount = 0;
+    chokeChannel(ch, std::numeric_limits<int64_t>::max(), offset);  // K-165: live notes, notes let go
+    gen->glide(kept.id, e.pitch + ch.pitchOffset, ch.portaTime, offset);
+    rt->keys.retarget(kept.id, e.pitch);
+    kept.off = noteOffTick(e) + static_cast<double>(shift);
+    kept.pitch = e.pitch;
+    kept.at = at;
+    kept.color = color;
+    kept.on = noteOnTick(e) + static_cast<double>(shift);  // K-25: the new note's line, after the glide
+    kept.bendFrom = at + portaSamples;
+    rt->pending[0] = kept;
+    rt->pendingCount = 1;
+    rt->pending[0].bendSlot = bent ? takeBendSlot(*rt, kept.id, *e.bend) : -1;
+    rt->lastPitch = e.pitch;
+    rt->lastPitchColor[color] = e.pitch;
+    return;
   }
-  if (ch.polyphony > 0)
-    while (rt->pendingCount >= ch.polyphony) {  // voice limit: the oldest note is cut
-      int old = 0;
-      for (int i = 1; i < rt->pendingCount; ++i)
-        if (rt->pending[i].at < rt->pending[old].at) old = i;
-      cutPending(ch, old, offset);
-    }
+  // Mono: every other note of the channel ends (K-165: also one that was let go and rings on).
+  if (ch.mono) chokeChannel(ch, std::numeric_limits<int64_t>::max(), offset);
+  limitVoices(ch, offset);  // voice limit: the oldest notes are cut
   // Ids come from the channel's own counter (J-30): instruments seed their
   // randomness with them, and a global counter numbered notes in a different
   // order for every block size. Range 1 .. 0x10000000 (below note processor ids).
@@ -1110,6 +1226,7 @@ void AudioEngine::sendOff(const ProgChannel& ch, uint32_t id, int offset) {
   if (!chain) {
     ch.rt->gen->noteOff(id, offset);
     ch.rt->keys.off(id);  // J-77
+    addGone(*ch.rt, id);  // K-165: its sound may ring on (one-shot, release): cuts still reach it
     return;
   }
   NoteMsg m;
@@ -1831,6 +1948,7 @@ void AudioEngine::killEverything(const Program* p) {
       ch.rt->gen->kill();  // hosted instruments: note-offs, All Notes Off, All Sound Off
       ch.rt->keys.clear();
       ch.rt->pendingCount = 0;
+      ch.rt->goneCount = ch.rt->liveCount = 0;  // K-165
       ch.rt->inbox.clear();
       for (const auto& nf : ch.noteFx)
         if (nf.rt) nf.rt->fx->reset();

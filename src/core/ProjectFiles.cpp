@@ -82,7 +82,7 @@ const std::vector<FileType>& importMidiTypes() {
 }
 
 const std::vector<FileType>& importAudioTypes() {
-  static const std::vector<FileType> t = {{i18n::N_("Audio file"), {".wav", ".flac", ".mp3", ".ogg", ".aif", ".aiff", ".wv", ".m4a", ".aac"}}};
+  static const std::vector<FileType> t = {{i18n::N_("Audio file"), audioFileExtensions()}};
   return t;
 }
 

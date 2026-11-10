@@ -461,6 +461,15 @@ class AudioEngine {
   // K-25: every sounding note with a bend line follows it to the end of block samples [from, to).
   void applyBends(const Program* p, int from, int to);
   void cutPending(const ProgChannel& ch, int index, int offset);  // cuts and forgets pending note `index`
+  // K-165: cut groups, mono and the voice limit for every kind of note (sequenced, live, let go).
+  void liveStart(const Program* p, const ProgChannel& ch, uint32_t id, float pitch, float velocity, int color);
+  void cutLive(const ProgChannel& ch, int index, int offset);  // cuts and forgets held live note `index`
+  // Cuts the channel's notes that started before sample `before` and every note it let go.
+  void chokeChannel(const ProgChannel& ch, int64_t before, int offset);
+  void cutGroupsOf(const Program* p, const ProgChannel& ch, int64_t at, int offset);  // a note of `ch` starts at `at`
+  void limitVoices(const ProgChannel& ch, int offset);  // room for one more note under the voice limit
+  static void forgetGone(ChannelRuntime& rt, uint32_t id);
+  static void addGone(ChannelRuntime& rt, uint32_t id);
   void runNoteFx(const Program* p, int n);  // note processor chains for this block
   // Internal controller links + automation (`eventTick`: J-210, where lanes of
   // recorded events read, the block's first frame after a loop wrap at its start).

@@ -29,6 +29,7 @@ class DrumGen final : public Generator {
   struct Voice {
     bool on = false;
     int pad = 0, group = 0;
+    uint32_t id = 0;  // K-165: the note that started it (cuts)
     uint64_t age = 0;
     int64_t n = 0;  // samples since strike
     float re[kDrumModes] = {}, im[kDrumModes] = {};
@@ -84,7 +85,7 @@ class DrumGen final : public Generator {
     }
   }
 
-  void onNoteOn(uint32_t, double pitch, float vel) override {
+  void onNoteOn(uint32_t id, double pitch, float vel) override {
     const PluginState& s = *state_;
     int pad = static_cast<int>(std::lround(pitch)) - prmi(s, DmBaseNote, 60);
     double keyShift = 0;  // semitones (pitched key mode)
@@ -107,6 +108,7 @@ class DrumGen final : public Generator {
     Voice& v = *pick;
     v = Voice{};
     v.on = true;
+    v.id = id;
     v.pad = pad;
     v.group = group;
     v.age = ++clock_;
@@ -143,6 +145,11 @@ class DrumGen final : public Generator {
   }
   void onNoteOff(uint32_t) override {}
   void onAllOff() override {}
+  // K-165: cut groups, mono and the voice limit choke the hit (note-offs are ignored).
+  void onCut(uint32_t id) override {
+    for (auto& v : voices_)
+      if (v.on && v.id == id && v.fadeStep == 0) v.fadeStep = static_cast<float>(1.0 / std::max(1.0, 0.004 * sr_));
+  }
   void onKill() override {
     for (auto& v : voices_) v.on = false;
     limEnv_ = 1;

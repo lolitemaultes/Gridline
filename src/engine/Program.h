@@ -137,6 +137,20 @@ struct ChannelRuntime {
   // it) does not depend on how blocks interleave channels (J-30).
   uint32_t noteSeq = 0;
   uint32_t fxIdSeq = 0;
+  // K-165: notes whose note-off went out but whose sound may still ring (one-shot samples,
+  // release tails), oldest first: cut groups, mono and the voice limit cut them too.
+  static constexpr int kGoneNotes = 64;
+  uint32_t gone[kGoneNotes] = {};
+  int goneCount = 0;
+  // K-165: live notes held now (computer keyboard, MIDI, pads), with their start sample, so that
+  // cut groups, mono and the voice limit apply to live playing as well.
+  struct LiveHeld {
+    uint32_t id = 0;
+    int64_t at = 0;
+  };
+  static constexpr int kLiveHeld = 64;
+  LiveHeld live[kLiveHeld];
+  int liveCount = 0;
   // K-64 (audio thread): an idle channel left outL / outR out of this block: its output is silence.
   bool outZero = false;
   // This block's output after the strip gains (the mixer pulls it).

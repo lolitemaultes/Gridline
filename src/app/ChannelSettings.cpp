@@ -742,7 +742,7 @@ void drawChannelSettings(App& a) {
       a.fileDialog.open = true;
       a.fileDialog.title = "Load sample";
       a.fileDialog.dir = c->plugin.data.empty() ? (gl::platform::homeEnv() ? gl::platform::homeEnv() : ".") : fs::path(c->plugin.data).parent_path().string();
-      a.fileDialog.exts = {".wav", ".wave", ".flac", ".mp3"};
+      a.fileDialog.exts = audioFileExtensions();
       a.fileDialog.onOk = [&a, id](const std::string& p) {
         a.doc.editChannel(id, "load sample", [&](Channel& x) { x.plugin.data = p; });
         if (!sampleCache().get(p)) a.notify("Cannot decode " + p, true);

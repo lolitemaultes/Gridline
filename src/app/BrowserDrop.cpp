@@ -14,9 +14,12 @@
 #include "../core/I18n.h"
 #include "../core/MidiFile.h"
 #include "../core/MidiImport.h"
+#include "../core/PluginParams.h"
 #include "../core/Presets.h"
 #include "../core/flp/Flp.h"
 #include "../core/flp/FlpPresets.h"
+#include "../engine/LoopFile.h"
+#include "../engine/LoopImport.h"
 #include "../engine/pitch/Kernel.h"
 #include "../packs/PacksUi.h"
 #include "App.h"
@@ -556,6 +559,43 @@ std::string draggedAudioFile(App& a, const ImGuiPayload* pl, std::string* why) {
 
 namespace {
 
+// K-161: Ctrl held while dropping a sliced loop on the playlist: a plain audio clip instead of
+// a slicer channel and its pattern. Set by performItems for the steps of one drop.
+bool gPlainLoopClip = false;
+
+// K-161: what a dropped file says about itself as a loop (sliced, tagged, AIFF and WAV loops).
+bool loopFacts(const std::string& path, loopfile::Info& li) { return !remotefs::isRemote(path) && loopfile::read(path, li); }
+bool slicedLoop(const loopfile::Info& li) { return li.format == loopfile::Format::Sliced && !li.slices.empty(); }
+
+// K-161: a sliced loop as a slicer channel playing its pattern (and a pattern clip on the playlist
+// when `track` >= 0). One undo step with the rest of the drop.
+bool addSlicedLoop(App& a, const std::string& path, const loopfile::Info& li, int track, Tick start, int insertAt, ObjectId* made) {
+  loopimport::Result r;
+  a.doc.editSong("add sliced loop", [&](Song& sg) { r = loopimport::addSlicedLoop(sg, path, li, track, start); });
+  if (r.channel == kNoId) {
+    a.notify(i18n::tr("This loop has no slices"), true);
+    return false;
+  }
+  if (insertAt >= 0) a.doc.moveChannel(r.channel, std::min(insertAt, static_cast<int>(a.doc.song().channels.size()) - 1));
+  a.selectChannel(r.channel);
+  a.selectPattern(r.pattern);
+  if (made && r.clip != kNoId) *made = r.clip;
+  char msg[160];
+  if (r.joined > 0)
+    std::snprintf(msg, sizeof msg, i18n::tr("%d slices on a new slicer channel (%d short ones joined to fit the keys)"), r.slices, r.joined);
+  else
+    std::snprintf(msg, sizeof msg, i18n::tr("%d slices on a new slicer channel, playing in time with the song"), r.slices);
+  a.notify(msg);
+  return true;
+}
+
+// K-161: the notice for a loop set to follow the song tempo.
+void notifyFollows(App& a, double bpm) {
+  char msg[160];
+  std::snprintf(msg, sizeof msg, i18n::tr("Follows the song tempo from its own %.1f BPM (undo to keep it as it is)"), bpm);
+  a.notify(msg);
+}
+
 // One step of a drop. `made`: the clip an AudioClip / MidiPatternClip step added.
 bool runAction(App& a, const std::string& path, DropAction act, DropTarget target, const DropPlace& place, bool direct, ObjectId* made) {
   const Decoded& d = decodeItem(path);
@@ -565,7 +605,18 @@ bool runAction(App& a, const std::string& path, DropAction act, DropTarget targe
       return false;
     case DropAction::NewSamplerChannel:
     {
+      loopfile::Info li;
+      const bool facts = loopFacts(path, li);
+      if (facts && slicedLoop(li)) {  // K-161: a sliced loop: slicer channel + its pattern
+        if (!addSlicedLoop(a, path, li, -1, 0, target == DropTarget::Rack ? place.insertAt : -1, nullptr)) return false;
+        a.showNewInstrument(a.selChannel);
+        return true;
+      }
       const ObjectId id = addChannelAt(a, "gl.sampler", path, target == DropTarget::Rack ? place.insertAt : -1);
+      if (id != kNoId && facts && li.loop && li.bpm > 0) {  // K-161: a loop that states its tempo follows the song's
+        a.doc.editChannel(id, "follow the song tempo", [&](Channel& c) { loopimport::followTempo(c.plugin, li.bpm); });
+        notifyFollows(a, li.bpm);
+      }
       a.showNewInstrument(id);
       return id != kNoId;
     }
@@ -580,18 +631,28 @@ bool runAction(App& a, const std::string& path, DropAction act, DropTarget targe
       return true;
     }
     case DropAction::AudioClip: {
+      loopfile::Info li;
+      const bool facts = loopFacts(path, li);
+      // K-161: a sliced loop: slicer channel + pattern clip (Ctrl: the audio as one clip).
+      if (facts && slicedLoop(li) && !gPlainLoopClip)
+        return addSlicedLoop(a, path, li, std::clamp(place.track, 0, kMaxPlaylistTracks - 1), std::max<Tick>(0, place.tick), -1, made);
       SamplePtr s = sampleCache().get(path);
       if (!s || s->frames() == 0) {
         a.notify("Cannot decode " + fname, true);
         return false;
       }
       browse::FileMeta meta;
-      const double bpm = index().lookup(path, meta) && meta.bpm > 0 ? meta.bpm : browse::bpmFromName(fname);
+      const bool ownTempo = facts && li.loop && li.bpm > 0;  // K-161: the file states its tempo
+      const double bpm = ownTempo ? li.bpm : index().lookup(path, meta) && meta.bpm > 0 ? meta.bpm : browse::bpmFromName(fname);
       a.doc.beginGroup("add audio clip");
       ObjectId ch = a.addInstrument("gl.sampler", path);
       const int track = std::clamp(place.track, 0, kMaxPlaylistTracks - 1);
       const Tick start = std::max<Tick>(0, place.tick);
-      const bool sync = previewSync() && bpm > 0;
+      const bool sync = ownTempo || (previewSync() && bpm > 0);
+      if (ownTempo)  // K-161: stretched to the song tempo, its pitch kept
+        a.doc.editChannel(ch, "", [](Channel& c) {
+          if (c.plugin.params.size() > static_cast<size_t>(pp::SmpStretchMode)) c.plugin.params[pp::SmpStretchMode] = 1.0f;
+        });
       a.doc.editSong("add audio clip", [&](Song& sg) {
         Clip c;
         c.id = sg.allocateId();
@@ -599,7 +660,14 @@ bool runAction(App& a, const std::string& path, DropAction act, DropTarget targe
         c.source = ch;
         c.track = track;
         c.start = start;
-        const double beats = s->seconds() * (sync ? bpm : sg.tempo) / 60.0;
+        double seconds = s->seconds();
+        // K-161: a sliced loop as one clip: its loop region, as long as its beats.
+        if (facts && li.format == loopfile::Format::Sliced && li.loopEnd > li.loopStart && s->sampleRate > 0) {
+          c.audioStart = static_cast<double>(li.loopStart) / s->sampleRate;
+          c.audioEnd = static_cast<double>(li.loopEnd) / s->sampleRate;
+          seconds = c.audioEnd - c.audioStart;
+        }
+        const double beats = seconds * (sync ? bpm : sg.tempo) / 60.0;
         c.length = std::max<Tick>(1, static_cast<Tick>(std::llround(beats * sg.ppq)));
         if (sync) c.syncBpm = bpm;
         if (!sg.tracks.empty()) c.track = std::min(track, static_cast<int>(sg.tracks.size()) - 1);
@@ -609,6 +677,7 @@ bool runAction(App& a, const std::string& path, DropAction act, DropTarget targe
         if (made) *made = c.id;
       });
       a.doc.endGroup();
+      if (ownTempo) notifyFollows(a, bpm);
       return true;
     }
     case DropAction::ReplaceSample:
@@ -617,6 +686,16 @@ bool runAction(App& a, const std::string& path, DropAction act, DropTarget targe
       if (t.isChannel()) {  // J-97: the channel keeps a name the user gave it
         if (!loadChannelSample(a, t.owner, path, act == DropAction::ReplaceSample ? "replace sample" : "load sample", act == DropAction::LoadSample)) return false;
         if (act == DropAction::ReplaceSample) a.selectChannel(t.owner);
+        // K-161: a slicer takes a loop file's own slices (sliced loops, tagged loops' beat markers).
+        loopfile::Info li;
+        const Channel* c = a.doc.song().channel(t.owner);
+        loopimport::Sliced sl;
+        if (c && c->plugin.type == "gl.slicer" && loopFacts(path, li) && loopimport::slicerFor(path, li, sl)) {
+          a.doc.editChannel(t.owner, "", [&](Channel& x) { x.plugin = sl.state; });
+          char msg[120];
+          std::snprintf(msg, sizeof msg, i18n::tr("Cut at the file's own %d slices"), static_cast<int>(sl.slices.size()));
+          a.notify(msg);
+        }
         return true;
       }
       if (const PluginState* st = t.state(a.doc.song())) {
@@ -843,7 +922,9 @@ bool performItems(App& a, const std::vector<xdrop::Item>& items, DropTarget targ
     // One after another: each clip starts where the one before really ends.
     if (mods.shift && prevEnd >= 0 && (s.action == DropAction::AudioClip || s.action == DropAction::MidiPatternClip)) pl.tick = prevEnd;
     ObjectId made = kNoId;
+    gPlainLoopClip = mods.ctrl;  // K-161
     any = runAction(a, items[s.item].path, s.action, target, pl, midi > 1, &made) || any;
+    gPlainLoopClip = false;
     if (made != kNoId) {
       clips.insert(made);
       const Song& sg = a.doc.song();
@@ -1228,6 +1309,43 @@ void previewFile(App& a, const std::string& path) {
       if (std::find(tags.begin(), tags.end(), "loop") != tags.end()) meta.bpm = browse::bpmFromLength(meta.seconds);
     }
     index().put(meta);
+  }
+  // K-161: a sliced loop previews at the song tempo the way it plays: each slice on its beat, at its own speed.
+  if (previewSync()) {
+    loopfile::Info li;
+    const double songBpm = a.doc.song().tempo;
+    if (loopFacts(path, li) && slicedLoop(li) && li.beats > 0 && songBpm > 0 && s->sampleRate > 0) {
+      static std::string lastKey;
+      static SamplePtr last;
+      const std::string key = path + "@" + std::to_string(songBpm);
+      if (key != lastKey || !last) {
+        const double framesPerBeat = 60.0 / songBpm * 4.0 / (li.sigDen > 0 ? li.sigDen : 4) * s->sampleRate;
+        const size_t total = static_cast<size_t>(std::max(1.0, li.beats * framesPerBeat));
+        auto r = std::make_shared<Sample>();
+        r->path = s->path;
+        r->sampleRate = s->sampleRate;
+        r->left.assign(total, 0.0f);
+        r->right.assign(total, 0.0f);
+        for (size_t k = 0; k < li.slices.size(); ++k) {
+          const loopfile::Slice& sl = li.slices[k];
+          if (sl.muted) continue;
+          const size_t at = static_cast<size_t>(std::max(0.0, sl.beat * framesPerBeat));
+          const size_t until = k + 1 < li.slices.size() ? static_cast<size_t>(std::max(0.0, li.slices[k + 1].beat * framesPerBeat)) : total;
+          const size_t n = std::min({static_cast<size_t>(std::max<int64_t>(0, sl.length)), until > at ? until - at : 0, total - std::min(total, at),
+                                     s->frames() - std::min(s->frames(), static_cast<size_t>(sl.start)) });
+          const size_t fade = std::min<size_t>(n / 2, 64);
+          for (size_t i = 0; i < n; ++i) {
+            const float g = i + fade >= n ? static_cast<float>(n - i) / static_cast<float>(fade + 1) : 1.0f;  // no click where a slice is cut
+            r->left[at + i] += s->left[static_cast<size_t>(sl.start) + i] * g;
+            r->right[at + i] += s->right[static_cast<size_t>(sl.start) + i] * g;
+          }
+        }
+        last = r;
+        lastKey = key;
+      }
+      a.engine.preview(last);
+      return;
+    }
   }
   const double ratio = previewSync() && meta.bpm > 0 ? browse::syncRatio(meta.bpm, a.doc.song().tempo) : 1.0;
   if (std::fabs(ratio - 1.0) < 1e-4) {

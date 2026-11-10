@@ -1444,6 +1444,11 @@ void infoPanel(App& a) {
     add(b);
   }
   if (m.key >= 0) add(browse::keyName(m.key, m.minor));
+  if (m.slices > 0) {  // K-161: a sliced loop
+    char b[32];
+    std::snprintf(b, sizeof b, m.slices == 1 ? i18n::tr("%d slice") : i18n::tr("%d slices"), m.slices);
+    add(b);
+  }
   if (m.rate > 0) {
     char b[24];
     std::snprintf(b, sizeof b, "%.1f kHz", m.rate / 1000.0);
@@ -1475,7 +1480,11 @@ void infoPanel(App& a) {
     if (hov) ui::Hint("Click to remove this tag");
     x += tw + 4;
   }
-  for (const auto& t : browse::autoTags(selPath)) {
+  // K-161: the file's own tags (loop files) come first among the automatic ones.
+  std::vector<std::string> autos = m.fileTags;
+  for (const auto& t : browse::autoTags(selPath))
+    if (std::find(autos.begin(), autos.end(), t) == autos.end()) autos.push_back(t);
+  for (const auto& t : autos) {
     const std::string s = "#" + t;
     float tw = a.fontRegular->CalcTextSizeA(theme::kFontCaption, 1e9f, 0, s.c_str()).x + 12;
     if (x + tw > p0.x + w - pad - 70) break;
