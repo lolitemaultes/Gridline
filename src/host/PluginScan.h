@@ -45,6 +45,12 @@ struct ScannedClass {
   std::vector<ScannedParam> params;
 };
 
+// K-180: one plugin of an entry that did not load while the rest of the entry did (a bundle or
+// file of many plugins, a shell).
+struct ScanFailure {
+  std::string uid, name, error;
+};
+
 struct ScanResult {
   std::string format = "vst3";  // "vst3", "clap", "vst2", "au", "lv2"
   std::string bundle;           // the entry (path or AU key)
@@ -52,6 +58,7 @@ struct ScanResult {
   bool ok = false;
   std::string error;  // why the entry is blacklisted
   std::vector<ScannedClass> classes;
+  std::vector<ScanFailure> failed;  // K-180: its plugins that did not load (each listed as failed on its own)
 };
 
 Json toJson(const ScanResult& r);

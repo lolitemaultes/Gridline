@@ -1882,7 +1882,7 @@ msgid "FL timing"
 msgstr ""
 
 #: src/app/ChannelEnvelopeUi.cpp
-msgid "FL timing: these settings play as FL Studio plays them (stepped once per tick)."
+msgid "FL timing: these settings step once per song tick."
 msgstr ""
 
 #: src/app/ChannelEnvelopeUi.cpp
@@ -1954,7 +1954,7 @@ msgid "On"
 msgstr ""
 
 #: src/app/ChannelEnvelopeUi.cpp
-msgid "On: envelopes and LFOs step once per song tick with FL Studio's exact results (FL imports switch it on). Off: smooth per-sample curves."
+msgid "On: envelopes and LFOs step once per song tick (FL Studio imports switch it on). Off: smooth per-sample curves."
 msgstr ""
 
 #: src/app/ChannelEnvelopeUi.cpp
@@ -2010,7 +2010,7 @@ msgid "Sine"
 msgstr ""
 
 #: src/app/ChannelEnvelopeUi.cpp
-msgid "Smooth timing: per-sample envelopes and LFOs. Switch FL timing on for FL Studio's results."
+msgid "Smooth timing: per-sample envelopes and LFOs. Switch FL timing on to step them once per song tick."
 msgstr ""
 
 #: src/app/ChannelEnvelopeUi.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/tracker/tracker_ui.cpp

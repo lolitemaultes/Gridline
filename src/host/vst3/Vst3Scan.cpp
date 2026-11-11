@@ -77,6 +77,7 @@ ScanResult scanBundleInProcess(const std::string& bundle) {
       }
     } else {
       r.error += (r.error.empty() ? "" : "; ") + ci.name + ": " + perr;
+      r.failed.push_back({ci.uid, ci.name, perr});  // K-180: listed as failed on its own
       continue;
     }
     r.classes.push_back(std::move(c));

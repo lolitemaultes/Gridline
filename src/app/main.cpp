@@ -10,6 +10,7 @@
 #include <SDL_opengl.h>
 #include "SysWm.h"
 #include "VideoDriver.h"
+#include "MainWindowRole.h"
 #include "../core/VideoDriverChoice.h"
 #include "../core/ChromeOs.h"
 #if defined(_WIN32)
@@ -791,6 +792,8 @@ void releaseTypedNotes(App& app, std::map<SDL_Scancode, HeldNote>& held) {
 //   edzoomset <plugin type> <zoom> (the zoom remembered for a plugin type, 0 = automatic; atparam points at the magnified spot)
 //   K-10: cursor 0|1 (hides or shows the --video-cursor pointer)
 //   K-9: save <file> (the project, plugin state included) · rmchan <index> (removes a channel, its plugin window open or not);
+//   K-148: knobs (every knob / plugin editor control drawn last frame: item, window, id, name, value, normalized value and default,
+//   centre, size, to stdout) · atknob <item hex> [dx dy] (the pointer to that knob's centre plus logical px) · closepopups
 //   --dev-input-live <file>: a test harness drives a running app: whenever <file> exists, its lines ("0 <command> <args>")
 //   run on the next frame and the file is removed (tests/yabridge)
 std::string devShotPending;
@@ -1438,6 +1441,23 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       for (size_t i = 0; i + 2 < pa.size() && i + 2 < pb.size(); i += 3) differ += pa[i] != pb[i] || pa[i + 1] != pb[i + 1] || pa[i + 2] != pb[i + 2] ? 1 : 0;
       std::printf("ppmdiff pixels %zu differ %zu\n", pa.size() / 3, pa.size() == pb.size() ? differ : pa.size() / 3);
       std::fflush(stdout);
+    } else if (l.cmd == "knobs") {  // K-148: every knob and plugin editor control of the last frame (window, id, value, centre)
+      std::printf("knobs frame %d undo %zu\n%sknobs end\n", frame, app.doc.history().position(), ui::devKnobReport().c_str());
+      std::fflush(stdout);
+    } else if (l.cmd == "closepopups") {  // K-148: closes every open popup (a knob's type-in or menu) but modal ones
+      ImGui::ClosePopupsExceptModals();
+    } else if (l.cmd == "atknob") {  // K-148: atknob <item hex> [dx dy]: the pointer to that knob's centre (last frame) plus logical px
+      ImVec2 c;
+      std::string win;
+      if (ui::devKnobCentre(static_cast<unsigned>(std::strtoul(l.a0.c_str(), nullptr, 16)), c, &win)) {
+        c = ImVec2(c.x + std::strtof(l.a1.c_str(), nullptr), c.y + std::strtof(l.a2.c_str(), nullptr));  // (the editor's own pixels)
+        if (win == "channelsettings" || win == "fxeditor") c = edzoomui::toScreen(win.c_str(), c);  // K-19: a magnified editor
+        pointer = c;
+        io.AddMousePosEvent(pointer.x, pointer.y);
+      } else {
+        std::printf("atknob frame %d: %s not shown\n", frame, l.a0.c_str());
+        std::fflush(stdout);
+      }
     } else if (l.cmd == "scriptform") {  // the script window's knobs: value and where each one is
       std::printf("scriptform frame %d\n%s", frame, devScriptForm().c_str());
       std::fflush(stdout);
@@ -2109,10 +2129,7 @@ int main(int argc, char** argv) {
     }
     devOptions = devOptions || std::string(argv[i]).rfind("--", 0) == 0;
   }
-  const auto createSplashWindow = [&] {
-    return SDL_CreateWindow("Gridline", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 640, 380,
-                            SDL_WINDOW_OPENGL | SDL_WINDOW_BORDERLESS | SDL_WINDOW_ALLOW_HIGHDPI | (startHidden ? SDL_WINDOW_HIDDEN : 0));
-  };
+  const auto createSplashWindow = [&] { return winrole::createSplash(startHidden); };
   SDL_Window* window = createSplashWindow();
   // An X server that answers but cannot give an OpenGL window: SDL's own choice gets a try.
   if (!window && videodriver::dropRequest()) {
@@ -2386,7 +2403,7 @@ int main(int argc, char** argv) {
     }
     else if (arg == "--tool" && i + 1 < argc) devTool = argv[++i];
     else if (arg == "--script" && i + 1 < argc) devScript = argv[++i];
-    else if (arg == "--dev-input" && i + 1 < argc) devInput = loadDevInput(argv[++i]);
+    else if (arg == "--dev-input" && i + 1 < argc) devInput = loadDevInput(argv[++i]), ui::devKnobsEnable(true);  // K-148: "knobs"
     else if (arg == "--dev-input-live" && i + 1 < argc) {  // K-9: see the command list above runDevInput
       devInputLive = argv[++i];
       devInput.push_back({0, "#", "", "", "", {}});  // the session counts frames from the start
@@ -2705,12 +2722,10 @@ int main(int argc, char** argv) {
       w = forcedSize.first;
       h = forcedSize.second;
     }
-    SDL_SetWindowBordered(window, SDL_TRUE);
-    SDL_SetWindowResizable(window, SDL_TRUE);
-    SDL_SetWindowSize(window, w, h);
-    SDL_SetWindowPosition(window, usable.x + (usable.w - w) / 2, usable.y + (usable.h - h) / 2);
-    SDL_SetWindowMinimumSize(window, 960, 600);
     if (browserui::thumbMode() && !shotPath.empty() && forcedSize.first > 0) SDL_HideWindow(window);  // background thumbnail run
+    // GitHub issue #33: an ordinary resizable top-level window, mapped again so that a tiling window
+    // manager tiles it (MainWindowRole.h). Size and position are requests the manager may ignore.
+    winrole::becomeMain(window, {w, h, usable.x + (usable.w - w) / 2, usable.y + (usable.h - h) / 2});
   }
 
   // Screenshots with an explicit size render off-screen at exactly that size

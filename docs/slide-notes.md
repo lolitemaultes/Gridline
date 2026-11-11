@@ -29,7 +29,7 @@ the next slide moves them on.
 
 Every built-in instrument follows slides note by note: synths, samplers, the multisampler,
 keys, plucks and strings, the granular and spectral instruments, and drums whose sound has a
-pitch: the kicks (the sweep kick and the sculpted kick too, so a long kick glides like an 808),
+pitch: the kicks (the sweep kick and the sculpted kick too, so a long kick glides),
 a kick with key tracking on, the snare, the clap, the modelled membrane drum and the drum kit's
 pitched pads. The pad sampler, the slicer and the slice instrument play the sample faster or
 slower by the slide's interval, and the scratch sampler does when its keys are set to pitch.

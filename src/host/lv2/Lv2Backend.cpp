@@ -1545,11 +1545,17 @@ ScanResult lv2Scan(const std::string& bundle) {
     r.error = err.empty() ? "no plugins in the bundle" : err;
     return r;
   }
+  // K-180: the manifest stays parsed while the bundle is scanned (every plugin's description shares it).
+  const auto manifest = lv2::sharedFile((std::filesystem::path(bundle) / "manifest.ttl").string());
   for (const auto& uri : uris) {
     std::string perr;
     auto b = Lv2Backend::create(bundle, uri, &perr);
     if (!b) {
+      // K-180: listed as failed on its own; the rest of the bundle still scans.
+      auto d = lv2::describe(bundle, uri, nullptr);
+      r.failed.push_back({uri, d ? d->name : std::string(), perr});
       r.error += (r.error.empty() ? "" : "; ") + uri + ": " + perr;
+      scanProgress();
       continue;
     }
     const lv2::PluginDesc& d = b->desc();
@@ -1589,7 +1595,10 @@ ScanResult lv2Scan(const std::string& bundle) {
       c.params.push_back(std::move(sp));
     }
     r.classes.push_back(std::move(c));
-    (void)b.release();  // never destroyed in the scanner (like the other formats)
+    scanProgress();  // K-180: bundles of hundreds of plugins: the scan's timeout starts again with each
+    // K-180: each instance is ended once described (its library stays loaded): kept alive, a bundle
+    // of two hundred plugins held every one of them, prepared, at once (gigabytes).
+    b.reset();
   }
   r.ok = !r.classes.empty();
   return r;

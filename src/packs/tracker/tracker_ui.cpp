@@ -225,6 +225,7 @@ bool valueKnob(App& a, const char* id, double& v, double lo, double hi, double d
   ImGui::BeginGroup();
   const float x = ImGui::GetCursorPosX();
   ImGui::SetCursorPosX(x + (cell - radius * 2) * 0.5f);
+  ui::SetNextKnobStep(1);  // whole numbers: a slow drag adds up, a wheel notch is one
   const bool changed = ui::Knob("k", &v, d, radius, nullptr, lo < 0 && hi > 0);
   ImGui::PushFont(a.fontMono, 10.5f);
   ImVec2 ts = ImGui::CalcTextSize(text.c_str());

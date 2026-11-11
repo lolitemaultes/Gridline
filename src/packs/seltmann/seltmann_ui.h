@@ -147,7 +147,7 @@ bool button(const char* id, ImVec2 p0, ImVec2 size, const char* text, bool on = 
 // Knob over a model value (not a parameter): drag, wheel, double-click resets.
 // `released` is set when a gesture ends (commit then). Returns true while changing.
 bool fieldKnob(App& a, const char* id, ImVec2 tl, float& v, float mn, float mx, float def, const char* label, const char* fmt,
-               bool* released, bool bipolar = false);
+               bool* released, bool bipolar = false, float step = 0);
 // Drag grip (six dots).
 void grip(ImDrawList* dl, ImVec2 c, ImU32 col);
 // A labelled drag handle chip (grip + text) that carries a rendered item; returns its width.

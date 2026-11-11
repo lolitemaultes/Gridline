@@ -7,8 +7,10 @@
 // numbers and booleans — into a flat triple store.
 //
 // Literals keep their lexical form; numbers carry their XSD datatype.
-// Blank node labels are made unique per loaded document.
+// Blank node labels are made unique per loaded document (across the process,
+// so documents parsed once can be shared by several models).
 #pragma once
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -44,6 +46,10 @@ class Model {
   bool loadFile(const std::string& path, std::string* err = nullptr);
   bool loadString(const std::string& text, const std::string& baseIri, std::string* err = nullptr);
   bool loaded(const std::string& path) const;
+  // K-180: adds an already parsed document (see sharedFile) to this model without copying it: the
+  // queries see its triples as if they were loaded here. A part that is already included is skipped.
+  void include(std::shared_ptr<const Model> part);
+  bool includes(const Model* part) const;
 
   // Queries. `s` is a subject key (IRI, or "_:label" for blank nodes).
   std::vector<const Node*> objects(const std::string& s, const std::string& p) const;
@@ -52,7 +58,15 @@ class Model {
   bool has(const std::string& s, const std::string& p, const std::string& oIri) const;
   // Subjects with (p, IRI o).
   std::vector<std::string> subjects(const std::string& p, const std::string& oIri) const;
+  // The triples loaded into this model itself (not those of included parts).
   const std::vector<Triple>& triples() const { return triples_; }
+  // Every triple, this model's own and then each included part's, in order.
+  template <class F>
+  void forEach(F&& f) const {
+    for (const Triple& t : triples_) f(t);
+    for (const auto& part : parts_) part->forEach(f);
+  }
+  size_t size() const;  // every triple, parts included
   // Every (predicate, object) pair of a subject, in document order.
   std::vector<const Triple*> about(const std::string& s) const;
 
@@ -60,10 +74,17 @@ class Model {
   std::vector<Triple> triples_;
   std::unordered_map<std::string, std::vector<size_t>> bySubject_;
   std::vector<std::string> files_;
-  int docs_ = 0;
+  std::vector<std::shared_ptr<const Model>> parts_;
   friend class Parser;
   void add(Node s, std::string p, Node o);
+  // This model's own triples about a subject (nullptr: none).
+  const std::vector<size_t>* own(const std::string& s) const;
 };
+
+// K-180: a Turtle file parsed once and shared while anything uses it (an LV2 bundle's manifest and
+// the files its plugins point to: a bundle of hundreds of plugins is read once, not once a plugin).
+// Parsed again when the file changes on disk. A file that cannot be read gives nullptr and *err.
+std::shared_ptr<const Model> sharedFile(const std::string& path, std::string* err = nullptr);
 
 // file:// URI <-> path (percent-encoding).
 std::string fileUri(const std::string& path);

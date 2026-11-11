@@ -54,7 +54,13 @@ bool wheelScrolling() { return gWheel.scrolling(); }
 bool wheelFocusActive() { return gWheel.focused() != 0; }
 bool wheelModifierHeld() { return keys::modifierIncludes("mixer.wheelAdjust"); }
 void wheelClaim() { gWheel.claim(); }
-void wheelFrameBegin() { gWheel.beginFrame(ImGui::GetTime(), ImGui::GetIO().MouseWheel); }
+namespace {
+void devKnobsFrame();
+}
+void wheelFrameBegin() {
+  gWheel.beginFrame(ImGui::GetTime(), ImGui::GetIO().MouseWheel);
+  devKnobsFrame();  // K-148
+}
 void wheelFrameEnd() { gWheel.endFrame(); }
 const char* wheelHintText() { return tr("Drag to change, Ctrl+wheel to fine-tune"); }
 
@@ -691,8 +697,116 @@ void DrawKnob(ImDrawList* dl, ImVec2 c, float radius, float norm, bool bipolar, 
   }
 }
 
+// ---- K-148: knob dev report ----
+namespace {
+struct DevKnob {
+  std::string kind, win, id, name;
+  ImGuiID item = 0;
+  double value = 0, norm = 0, defNorm = 0, stepNorm = 0;
+  ImVec2 mn, mx;
+};
+bool gDevKnobs = false;
+std::vector<DevKnob> gDevKnobsNow, gDevKnobsLast;  // this frame's controls, the last finished frame's
+}  // namespace
+
+void devKnobsEnable(bool on) { gDevKnobs = on; }
+std::string devKnobReport() {
+  std::string out;
+  int i = 0;
+  for (const DevKnob& k : gDevKnobsLast) {
+    char line[640];
+    std::snprintf(line, sizeof line, "  knob %d %s item %08x win \"%s\" id \"%s\" name \"%s\" value %.6g norm %.6f def %.6f step %.6f at %.1f %.1f size %.0f %.0f\n", i++,
+                  k.kind.c_str(), static_cast<unsigned>(k.item), k.win.c_str(), k.id.c_str(), k.name.c_str(), k.value, k.norm, k.defNorm, k.stepNorm,
+                  static_cast<double>((k.mn.x + k.mx.x) * 0.5f), static_cast<double>((k.mn.y + k.mx.y) * 0.5f), static_cast<double>(k.mx.x - k.mn.x),
+                  static_cast<double>(k.mx.y - k.mn.y));
+    out += line;
+  }
+  return out;
+}
+bool devKnobCentre(unsigned item, ImVec2& out, std::string* window) {
+  for (const DevKnob& k : gDevKnobsLast)
+    if (k.item == item) {
+      out = ImVec2((k.mn.x + k.mx.x) * 0.5f, (k.mn.y + k.mx.y) * 0.5f);
+      if (window) *window = k.win;
+      return true;
+    }
+  return false;
+}
+void devKnobRecord(const char* kind, const std::string& id, const ParamDesc& d, double value, ImVec2 mn, ImVec2 mx, double stepNorm) {
+  if (!gDevKnobs) return;
+  const ImGuiWindow* w = ImGui::GetCurrentWindowRead();
+  DevKnob k;
+  k.kind = kind, k.win = w ? stableWindowName(w->RootWindow ? w->RootWindow->Name : w->Name) : "-", k.id = id, k.name = d.name;
+  k.item = ImGui::GetItemID(), k.value = value, k.norm = d.toNormalized(value), k.defNorm = d.toNormalized(d.def), k.stepNorm = stepNorm, k.mn = mn, k.mx = mx;
+  gDevKnobsNow.push_back(std::move(k));
+}
+namespace {
+void devKnobsFrame() {
+  if (!gDevKnobs) return;
+  gDevKnobsLast.swap(gDevKnobsNow);
+  gDevKnobsNow.clear();
+}
+}  // namespace
+
+// ---- K-148: the shared drag and wheel of the knobs ----
+// A knob used to move from the value its caller handed in each frame. Callers that keep
+// a whole number (or round, or store a float) handed back the rounded value, so a drag
+// slower than one step a frame, and every fine drag, rounded back to where it was and
+// the knob stuck. The drag now runs on its own position, from the grab to the release.
+namespace {
+struct KnobMotion {
+  ImGuiID id = 0;  // the item being dragged
+  double n = 0;    // where the drag has got to, normalized
+} gKnobDrag;
+struct KnobWheel {
+  ImGuiID id = 0;    // the item the wheel last moved (while it stays hovered)
+  double n = 0;      // its unrounded position (continuous knobs)
+  double steps = 0;  // notches not yet a whole step (stepped knobs, trackpads)
+} gKnobWheel;
+double gNextKnobStep = 0;
+
+// Continuous knobs: the wheel moves on from where the last notch left it, unless the value
+// has been moved elsewhere since (by more than a rounding caller could explain).
+double knobWheelPos(ImGuiID id, double norm, double delta) {
+  if (gKnobWheel.id != id || std::fabs(gKnobWheel.n - norm) > 0.1) gKnobWheel = {id, norm, 0};
+  gKnobWheel.n = std::clamp(gKnobWheel.n + delta, 0.0, 1.0);
+  return gKnobWheel.n;
+}
+// Stepped knobs: whole steps of the notches so far (a trackpad's small ones add up).
+double knobWheelSteps(ImGuiID id, double notches) {
+  if (gKnobWheel.id != id) gKnobWheel = {id, 0, 0};
+  gKnobWheel.steps += notches;
+  const double k = std::trunc(gKnobWheel.steps + (gKnobWheel.steps > 0 ? 1e-6 : -1e-6));
+  gKnobWheel.steps -= k;
+  return k;
+}
+}  // namespace
+
+void SetNextKnobStep(double step) { gNextKnobStep = step > 0 ? step : 0; }
+
+double KnobDragPos(double norm) {
+  const ImGuiID id = ImGui::GetItemID();
+  if (!ImGui::IsItemActive()) {
+    if (gKnobDrag.id == id) gKnobDrag.id = 0;
+    return norm;
+  }
+  if (gKnobDrag.id != id || ImGui::IsItemActivated()) gKnobDrag = {id, std::clamp(norm, 0.0, 1.0)};
+  return gKnobDrag.n;
+}
+double KnobDragMove(double delta) {
+  gKnobDrag.n = std::clamp(gKnobDrag.n + delta, 0.0, 1.0);
+  return gKnobDrag.n;
+}
+void KnobDragSet(double norm) {
+  if (gKnobDrag.id == ImGui::GetItemID()) gKnobDrag.n = std::clamp(norm, 0.0, 1.0);
+}
+
 bool Knob(const char* id, double* value, const ParamDesc& d, float radius, const char* label, bool bipolar,
           bool* released, const std::function<void()>& extraMenu) {
+  const double step = d.kind == ParamKind::Choice ? 0.0 : gNextKnobStep;
+  gNextKnobStep = 0;
+  // On the step (whole numbers when 1), inside the range.
+  auto onStep = [&](double v) { return step > 0 ? d.clamp(d.min + std::round((v - d.min) / step) * step) : v; };
   ImGui::PushID(id);
   const auto& P = pal();
   const float labelFs = std::min(theme::kFontCaption, ImGui::GetFontSize());
@@ -707,28 +821,27 @@ bool Knob(const char* id, double* value, const ParamDesc& d, float radius, const
   const double pressed = ValueAtPress(*value);
   const WheelGate wg = wheelGate();  // J-83
   bool changed = false;
-  double n = d.toNormalized(*value);
+  const ImGuiID item = ImGui::GetItemID();
+  const double n = d.toNormalized(*value);
+  KnobDragPos(n);  // K-148: the drag runs on its own position (see above)
+  if (!hov || act) {
+    if (gKnobWheel.id == item) gKnobWheel.id = 0;
+  }
   ImGuiIO& io = ImGui::GetIO();
   if (act && wg.dragOk && io.MouseDelta.y != 0 && !io.KeyAlt) {
-    double speed = io.KeyShift ? 0.0008 : 0.005;
-    double nn = std::clamp(n - io.MouseDelta.y * speed, 0.0, 1.0);
-    if (d.kind == ParamKind::Choice) {
-      static std::map<ImGuiID, double> accum;
-      double& a = accum[ImGui::GetItemID()];
-      a = std::clamp((ImGui::IsItemActivated() ? n : a) - io.MouseDelta.y * 0.01, 0.0, 1.0);
-      nn = a;
-    }
-    double v = d.fromNormalized(nn);
+    const double speed = d.kind == ParamKind::Choice ? 0.01 : io.KeyShift ? 0.0008 : 0.005;
+    const double v = onStep(d.fromNormalized(KnobDragMove(-io.MouseDelta.y * speed)));
     if (v != *value) {
       *value = v;
       changed = true;
     }
   }
   if (wg.scale > 0 && io.MouseWheel != 0 && !act) {
-    double step = d.kind == ParamKind::Choice
-                      ? 1.0 / std::max<size_t>(1, d.choices.empty() ? 1 : d.choices.size() - 1)
-                      : (io.KeyShift ? 0.005 : 0.03) * wg.scale;
-    double v = d.fromNormalized(std::clamp(n + io.MouseWheel * step, 0.0, 1.0));
+    double v = *value;
+    if (d.kind == ParamKind::Choice || step > 0)  // one step (choice) a notch
+      v = d.clamp(onStep(*value + knobWheelSteps(item, io.MouseWheel) * (step > 0 ? step : 1.0)));
+    else
+      v = d.fromNormalized(knobWheelPos(item, n, io.MouseWheel * (io.KeyShift ? 0.005 : 0.03) * wg.scale));
     if (v != *value) {
       *value = v;
       changed = true;
@@ -739,6 +852,7 @@ bool Knob(const char* id, double* value, const ParamDesc& d, float radius, const
   if (DoubleClicked(d, pressed, &dbl)) {  // J-136: reset, or type when already the default
     if (dbl == ParamDoubleClick::Reset) {
       *value = d.def;
+      KnobDragSet(d.toNormalized(d.def));  // a drag that goes on starts from the default
       changed = true;
       if (released) *released = true;
     } else {
@@ -782,10 +896,16 @@ bool Knob(const char* id, double* value, const ParamDesc& d, float radius, const
   }
   if (wantType) ImGui::OpenPopup("##type");
   if (ValueTypePopup(d, value)) {
+    *value = onStep(*value);
     changed = true;
     if (released) *released = true;
   }
   ImGui::PopID();
+  if (gDevKnobs) {  // K-148
+    const double count = d.choices.empty() ? d.max : static_cast<double>(d.choices.size() - 1);
+    const double stepNorm = d.kind == ParamKind::Choice ? 1.0 / std::max(1.0, count) : step > 0 && d.max > d.min ? step / (d.max - d.min) : 0.0;
+    devKnobRecord(d.kind == ParamKind::Choice ? "choice" : step > 0 ? "step" : "knob", id, d, *value, p, ImVec2(p.x + w, p.y + 2.0f * radius), stepNorm);
+  }
   return changed;
 }
 
@@ -869,8 +989,9 @@ bool ParamFader(const char* id, ParamId pid, ImVec2 size) {
   double n = d->toNormalized(*v);
   bool changed = false;
   float capH = 18.0f, travel = size.y - capH;
+  KnobDragPos(n);  // K-148: the shared drag path
   if (act && wg.dragOk && io.MouseDelta.y != 0) {
-    double nn = std::clamp(n - io.MouseDelta.y / travel * (io.KeyShift ? 0.15 : 1.0), 0.0, 1.0);
+    const double nn = KnobDragMove(-io.MouseDelta.y / travel * (io.KeyShift ? 0.15 : 1.0));
     a.doc.setParam(pid, d->fromNormalized(nn), true);
     changed = true;
   }
@@ -880,7 +1001,7 @@ bool ParamFader(const char* id, ParamId pid, ImVec2 size) {
   }
   {  // J-136: double-click resets, or types when already the default
     double cv = *v;
-    if (ParamDoubleClickReset(pid, *d, cv, pressed)) changed = true;
+    if (ParamDoubleClickReset(pid, *d, cv, pressed)) changed = true, KnobDragSet(d->toNormalized(cv));
   }
   if (ImGui::IsItemDeactivated()) a.doc.endGesture();
   bool wantType = false;

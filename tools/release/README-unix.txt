@@ -30,6 +30,8 @@ Wayland: the interfaces of hosted plugins are X11 windows, so Gridline runs thro
 whenever it is available, whatever SDL_VIDEODRIVER says. Without XWayland it runs on Wayland and
 plugins show their parameters in Gridline's own panel. GRIDLINE_VIDEO_DRIVER=wayland keeps it on
 Wayland anyway.
+Tiling window managers: the loading window floats; the main window is an ordinary resizable
+window that the window manager tiles, places and sizes. Gridline does not keep a window position.
 
 Settings live in $XDG_CONFIG_HOME/gridline (~/.config/gridline).
 ========================================================================

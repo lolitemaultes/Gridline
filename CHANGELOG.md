@@ -38,14 +38,17 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 
 ### Fixed
 
-- **Glides on several instruments.** Slides and bend lines now reach the reference models of Tercet and Lattice, Step Bass no longer glides a note while its sequencer runs, DCO Synth and Plasma follow a slide in a straight line as other instruments do, and synths that read pitch bend themselves are no longer bent twice. The sweep and sculpted kicks, the clap, the modelled membrane drum, the pad sampler, the slicer, the slice instrument and the scratch sampler (with pitched keys) now glide with slides too, so long kicks slide like an 808. MIDI Out now passes on pitch bend, channel pressure, key pressure and controllers.
+- **Glides on several instruments.** Slides and bend lines now reach the reference models of Tercet and Lattice, Step Bass no longer glides a note while its sequencer runs, DCO Synth and Plasma follow a slide in a straight line as other instruments do, and synths that read pitch bend themselves are no longer bent twice. The sweep and sculpted kicks, the clap, the modelled membrane drum, the pad sampler, the slicer, the slice instrument and the scratch sampler (with pitched keys) now glide with slides too, so long kicks slide too. MIDI Out now passes on pitch bend, channel pressure, key pressure and controllers.
 
 - **Changes made in an installed plugin's own window now stick.** Turning a knob, dragging a slider, choosing from a menu or flipping a switch in the interface of a VST3 instrument or effect (also one running in the sandbox, and Windows plugins run through a bridge on Linux) could jump straight back to the value it had before: Gridline handed the plugin its previous value again in the moment before the project took the new one, so a drag kept being pulled back and a menu choice was undone. This showed most on Linux and Windows, where plugins are VST3 rather than Audio Units. The plugin's own change now stays, it is still one undo step per change, and automation, controller links and Gridline's own knobs still move the plugin's controls.
 - **The song position's time format and Show played chords now stay as chosen.** Picking minutes and seconds, timecode, a timecode frame rate or bars and steps from the song position's right-click menu went straight back to bars and beats, and turning on Show played chords switched itself off again. The choice now sticks and is remembered the next time Gridline opens.
+- **The main window tiles on tiling window managers (Linux and the BSDs).** Gridline's window opened floating on i3, sway, Hyprland, bspwm and other tiling setups, because it starts as the small fixed size loading window and the window manager kept treating it that way. Once loading is done the window is now handed to the window manager again as an ordinary resizable window, so it is tiled, placed and sized like any other application. The loading window and dialogs still float, as they should. On other desktops nothing changes.
 - **Dragging audio out of Loupe onto the channel rack or the playlist.** Loupe's window usually covers much of the channel rack and the playlist, and letting go over it dropped the audio back into Loupe itself, so nothing seemed to happen. While you drag audio out, Loupe now turns see-through and lets the drop reach whatever is under it, and it no longer accepts its own audio.
 - **Edit sample in Loupe on a Kerf channel with named regions.** Loupe opened such a channel's sample empty ("Cannot open"); it now opens the sample, and its edits come back to the channel with the region names kept.
 - **Cut groups and mono work on the Sampler.** A channel set to be cut by another now stops when that channel plays, and mono now ends the previous note, also when the earlier note was a short step whose one-shot sample was still ringing (before, only notes still held down were cut, so most drum steps rang on). This works the same for notes played live from the computer keyboard, a MIDI keyboard or the pads, which used to ignore cut groups, mono and the voice limit altogether. A cut is exact to the sample and fades out over a few milliseconds, so it never clicks. The voice limit now counts ringing one-shots too. The built-in drum instruments also stop when cut, where before a cut had no effect on them.
 - **Pitched samples cost far less processing time.** Every note the Sampler plays at another pitch than its root, or from a file at another sample rate than the project (a 44.1 kHz sample in a 48 kHz project), now takes about a quarter of the processing time it did, and notes pitched up about half, with exactly the same sound. Holding a few notes on a long sample could push the audio load to 100% on some computers, and one-shot notes played again and again, which each play to the end of the file, added up quickly. The drum sampler, the slicer, the granular instruments, the multisampler and the other sample players, and pitched or stretched audio clips, gain the same way.
+- **Knobs follow every drag.** Knobs over whole numbers or choices no longer stick when you drag slowly or hold Shift for a fine drag: the piano roll tools (Randomize: Octave, Range, Max notes, Bars; Limit; Riff), the channel settings and envelope pages, the step tools, the chop window, the tracker and sampler editors and the slicer's Choke now move with the pointer from where you grabbed them and stay where you let go. Choice knobs no longer jump on the first pixel of a drag, the wheel moves whole-number knobs one step a notch (trackpad scrolling adds up), and a double-click on the piano roll tools' whole-number knobs puts them back on their default.
+- **Large LV2 bundles load.** A bundle that holds hundreds of plugins in one folder used up gigabytes of memory within seconds while Gridline checked it, so its plugins never appeared and the check started again at every launch. Gridline now reads each plugin's own description files once and shares them, closes each plugin as soon as it has been checked, and looks through your other LV2 folders once instead of once per plugin, so the whole bundle is checked in about the memory of one plugin and is remembered afterwards. A plugin in such a bundle that will not start is now listed on its own with the failed plugins, and the rest of the bundle loads. A VST2 shell of many plugins is also checked one plugin at a time.
 - **A plugin that misbehaves while it is scanned can no longer use up the computer's memory.** Gridline checks every installed plugin in a separate helper process the first time it starts, while you work. A plugin that got stuck in a loop while it loaded could make that helper, or a program the plugin started itself (such as a bridge for Windows plugins), grow without limit until the whole computer ran out of memory, often within seconds of opening the demo song. Each plugin's check now has a memory limit that scales with the computer's memory (a quarter of it, between 2 and 8 GB), and it is stopped early if the computer is close to running out of memory, so a check can no longer push the computer into swap. A plugin stopped this way is listed with the other plugins that failed, as "used too much memory while loading", and is skipped by later scans until you retry it or rescan everything. Programs a plugin starts during its check or in the sandbox are now always ended with it, never left running. Checking a CLAP file that holds many plugins also takes far less memory, as each of its plugins is closed once it has been described instead of all of them staying open together.
 - **M4A samples have their exact length on Linux and the BSDs.** AAC files in .m4a decoded with FFmpeg no longer carry up to a tenth of a second of extra silence at the end, and no longer start late: Gridline now reads the start delay and the real length the file states and trims to the sample, as macOS and Windows do, so loops close cleanly and tempo fitting lines up.
 - **The loop badge by the pointer.** The badge that shows a Ctrl (Cmd) edge drag will loop is now larger, so its loop arrows read as arrows instead of a small ring, sits below and to the right of the pointer, clear of the resize arrows, is drawn crisply at every interface size and stands out in both themes, and appears only where a drag of that edge really loops: not over a clip's body, not on the left edge of a clip at the very start of the song, and during a drag only while the clip loops. It appears and goes the moment the key is pressed or released. The loop mark in the title bar of a looping clip is larger and readable too.
@@ -111,8 +114,8 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 - **Plugin windows come back after a graphics driver restart.** A plugin's own interface that was open is closed and opened again, so it draws again instead of staying black.
 - **Track Receipt tells you when a calculation fails.** It used to note the error only in the log and show nothing; it now says that the receipt could not be calculated, with the reason, and that nothing was changed.
 - **Work that stops moving on is reported.** When a render, a background file job or a render to a sampled instrument shows no progress for a long time, Gridline says so with the job's last step, and says again when it moves on, so a plugin or a disk that stopped responding no longer looks like a frozen window.
-- **Pitch Shifter's Music engine in imported projects** now reads its grains one sample sooner and sums them into a soft clip, so denser grains play louder and the timing against the dry signal matches the original. Projects made before keep their sound.
-- **The vocoder's output enhancer in imported projects** no longer gets louder and brighter as its amount goes up; the amount now changes the sound only a little, as it does in the project it came from. Projects made before keep their sound.
+- **Pitch Shifter's Music engine in imported projects** now reads its grains one sample sooner and sums them into a soft clip, so denser grains play louder and sit one sample earlier against the dry signal. Projects made before keep their sound.
+- **The vocoder's output enhancer in imported projects** no longer gets louder and brighter as its amount goes up; the amount now changes the sound only a little. Projects made before keep their sound.
 - **Bucket Chorus and Retro Phaser start their sweep at the start phase when playback starts.** With the transport stopped the sweep runs from its beginning; the start phase applies when you press play.
 - **Imported sampler channels stretched to a time follow the tempo.** In an FL Studio project, a sampler channel whose sample is stretched to a number of beats now keeps that length in beats when tempo automation changes the tempo: a stretch follows the tempo as it changes, and a channel that resamples plays each note at the rate the tempo gives when the note starts. Before, such a channel stayed fitted to the project tempo.
 - **Pitch automation on imported channels plays smoothly and replaces the pitch knob.** Automation or a controller on the pitch knob of a channel in an FL Studio project now moves the pitch in fine steps instead of whole semitones, and it takes the knob's place instead of adding to it, on sampler channels and on audio clip channels alike; the channel's fine tune stays on top. Projects made in Gridline keep their whole-semitone steps, so they sound as before.
@@ -162,7 +165,7 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 - **The typing keyboard follows where keys sit, on any keyboard layout.** On Dvorak, AZERTY, QWERTZ and others the notes came out jumbled, some keys played nothing, and the octave and velocity keys moved, because Gridline read the character a key types. The bottom row now plays C D E F G A B whatever the layout, with plugin windows in focus too, and the hints, the menu and the keys list in Settings name the keys as your layout does.
 - **Builds with assertions on start again.** A build without `NDEBUG`, such as the AUR source package (`CMAKE_BUILD_TYPE=None`), stopped at startup wherever detached windows are available, because the interface's own consistency check failed on the first frame. Release downloads were not affected.
 - **A crash during long mixer edits.** Dragging a send level for a long time, or any fast run of edits, could crash Gridline if a block of audio was taking long at that moment, as when a bridged plugin stops answering for a while. The audio engine could free a compiled copy of the project that the block was still using.
-- FL Studio projects: notes on sampler channels now play at the level FL gives them. They came in up to about 6 dB too loud at usual channel volumes, which pushed drums into the master limiter and made them sound distorted. Import the project again to get the new levels.
+- FL Studio projects: notes on sampler channels now play at the level the project's settings give them, up to about 6 dB quieter than before at usual channel volumes. The louder level pushed drums into the master limiter and made them sound distorted. Import the project again to get the new levels.
 - Hybrid Synth's wave files and Halftone's image source no longer stay missing when the file was still loading as the project opened.
 - The Convolver no longer stays silent after opening a project. If its impulse file was still loading when the project opened, the wet signal stayed off until you changed a setting; it now comes in as soon as the file has loaded.
 - The Convolver in FL Studio projects now sounds as saved. Volume, pan and separation curves spread over the whole impulse instead of being read as seconds, so a reverb tail decays at the right time and level. Separation, pre-delay, stretch, gain at other sample rates and automation of its knobs also follow the stored values more closely.
@@ -213,10 +216,10 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 - **Linux, X11**: the bar of a plugin window now follows the system scale.
 - **FL Studio patches line up parallel paths**: imported patches with a plugin that has latency now
   line up parallel paths at every module's input, by the latency each plugin reports, and report the
-  longest path to the host, as they do in FL Studio. The mixer compensates for it, and uneven parallel
-  paths sum as they do there. A module's level from FL Studio now scales its output too. Hand-wired
+  longest path to the host. The mixer compensates for it, and uneven parallel paths sum lined up.
+  A module's level from FL Studio now scales its output too. Hand-wired
   graphs already worked this way. Projects you imported before keep their sound until you import them again.
-- FL imports report the delay they really have, so the mixer and patches line them up as FL Studio does: Shuttle reports its 15 samples while playing; Retro Phaser delays and reports 44 samples at every rate; Cipher delays and reports 4 ms while its enhancer is on, plus 16 samples when the imported state asks for them. Projects you imported before keep their timing until you import them again, and new instances don't change.
+- FL imports report the delay they really have, so the mixer and patches line them up: Shuttle reports its 15 samples while playing; Retro Phaser delays and reports 44 samples at every rate; Cipher delays and reports 4 ms while its enhancer is on, plus 16 samples when the imported state asks for them. Projects you imported before keep their timing until you import them again, and new instances don't change.
 - Imported patches: an edit that takes a patch's latency from zero to non-zero, or back, no longer restarts the effects inside it. Delays and reverbs keep their tails.
 - Pitch bend export to FL Studio projects: a bend over another sounding note of the same colour is no longer left out. The bent note and its slides move to a colour that's free for the note's whole length, so the other note keeps its pitch. The note reads back in that colour after opening the file, since the file has no place for the old one. A bend is still left out, and counted in the export report, when no colour is free, when the instrument reads note colours (hosted plugins, MIDI Out, the slicer, the FM synth, Junction, channels with note processors, Plasma in MPE mode), or when one of your own slide notes plays over the note or counts from it.
 - Curves in that export now stay within 5 cents of the line, counting the 10 cent steps of FL Studio's fine pitch, for glides of 2 beats and up at any curve amount and range (they reached about 7.7 cents), and with fewer slides (at most 32 for one glide, 64 for one note's line). Glides that are short and sharp at the same time are limited by the project's ticks: at 96 ticks per beat a 2 octave glide with the sharpest curve is off by up to 12.5 cents over half a beat, and more below that. A step is one slide of one tick, the shortest the format has.
@@ -227,9 +230,9 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 - Delay Bank: automating a very long time down to a very short one with a gate on no longer stalls the audio thread for a moment.
 - Multi Delay: FL imports now play the gate in whole slots of its window within each audio block, and very short slots open and close correctly. New instances and existing projects keep their sound. Projects imported before keep theirs until you import them again.
 - FL imports: the newest saved states of DCO Synth and Step Bass no longer fail to load, and Kerf picks up the transpose, detune, cutoff and resonance of an empty slicer.
-- Sweep Kick has a second engine for FL imports and new instances, with a closer start phase, pitch sweep, decays, key tracking, velocity and note-off fade. Imported envelope, LFO and filter settings now work through the channel's Envelope page. Existing projects and factory presets keep the first engine and their sound.
-- Freq Shifter: FL imports and new instances use the exact shift curve and filter tunings. Existing projects keep their sound.
-- Retro Phaser: the echo has a new mode with unfiltered taps, filters in the feedback path, a per-channel stereo balance and closer timing. FL imports and new instances use it; existing projects and factory presets keep the first echo.
+- Sweep Kick has a second engine for FL imports and new instances, with a reworked start phase, pitch sweep, decays, key tracking, velocity and note-off fade. Imported envelope, LFO and filter settings now work through the channel's Envelope page. Existing projects and factory presets keep the first engine and their sound.
+- Freq Shifter: FL imports and new instances use a new shift curve and new filter tunings. Existing projects keep their sound.
+- Retro Phaser: the echo has a new mode with unfiltered taps, filters in the feedback path, a per-channel stereo balance and revised timing. FL imports and new instances use it; existing projects and factory presets keep the first echo.
 - FL Studio automation now imports for Velocity Scale (all 36 controls), Colour Router (the 16
   group outputs), Note Sequencer (steps, rate, both transpose controls), Envelope Mod (base,
   envelope and LFO level of all four envelopes, it was only the first) and Band Delay (all 12
@@ -403,8 +406,8 @@ Released 2026-11-03. Everything that changed since 0.7.1. Projects from 0.7.1 op
   way. The piano roll now follows the pattern position while it plays, as the playlist already
   did; the channel rack's step view follows it as before. Both settings are remembered.
 - **Slide notes glide only the notes of their own colour** (piano roll). A slide
-  note no longer bends notes of other colours playing on the same channel. FL Studio projects
-  now play their slides as they do in FL Studio. Gridline projects saved before this version whose
+  note no longer bends notes of other colours playing on the same channel, in FL Studio projects
+  too. Gridline projects saved before this version whose
   slides met notes of other colours keep sliding every colour, so they sound as they did.
 - **Looping clips show their loop points as small notches** in the clip's top and bottom edges,
   like the loop markers on regions in other arrangers, with a faint line through the clip. The
@@ -427,8 +430,8 @@ Released 2026-11-03. Everything that changed since 0.7.1. Projects from 0.7.1 op
   still indexing files. The indexing now stops first.
 - Linux: Space and Gridline's other shortcuts typed into a plugin's interface no longer get lost; the watch on the interface's windows was switching itself off every second time it was read.
 - **FL import, mastering dynamics**: oversampling and curves of more than eight points now load and export;
-  release times, the low band's all-pass, the master mid detector and two point shapes now match,
-  so imported settings render within -137 dB (median) of the original.
+  release times, the low band's all-pass, the master mid detector and two point shapes are
+  reworked for imported settings.
 - A lit key on the piano roll's keyboard now lights the whole white key, including the parts beside
   the black keys, and its colour blends into the key instead of covering it, so light channel
   colours stay soft. The key you click lights the same way.
@@ -438,12 +441,12 @@ Released 2026-11-03. Everything that changed since 0.7.1. Projects from 0.7.1 op
 - Dragging along the piano roll's keyboard plays and lights only the key under the pointer, one
   key at a time; the key you left stops and no longer stays lit.
 - FL Studio automation that lands halfway between two steps of a switch or a mode list now picks
-  the same step FL Studio does (compressor type, limiter curves and similar controls).
-- Enhance presets from FL Studio no longer import about 13 dB too quiet.
-- Reverb settings imported from FL Studio projects and presets now load the
-  way FL Studio itself loads them, including the oldest preset files without a version number,
-  and the reverb's Full model sounds the same as FL Studio renders those settings: single early
-  reflections per side, the same modulation and the same level ramps when a level moves. A
+  the step the stored value stands for (compressor type, limiter curves and similar controls).
+- Enhance presets from FL Studio now import about 13 dB louder than before.
+- Reverb settings imported from FL Studio projects and presets now load in full, including the
+  oldest preset files without a version number, and the reverb's Full model plays those
+  settings with a new voicing: single early reflections per side, new modulation and new level
+  ramps when a level moves. A
   changed reverb that came from an old preset file exports in the current layout. Projects saved
   with earlier versions keep their sound: their Full model shows V1, new reverbs and new imports
   use V2 (switch in the corner of the room view). The Full model's knobs show seconds,
@@ -453,13 +456,12 @@ Released 2026-11-03. Everything that changed since 0.7.1. Projects from 0.7.1 op
   Retro Phaser's and Bucket Chorus's switches.
 - FL Studio vocoder settings now import: band range, formant, invert, attack, release, hold and
   the three levels, with their automation. They used to fall back to Gridline's defaults.
-- Auto Pan's LFO imported from FL Studio now runs at the speed FL Studio does
-  and moves the same way, so imported pan and tremolo settings sound the same. A slow setting used
-  to run far too fast. New Auto Pans use the same LFO law; projects saved earlier keep their sound
+- Auto Pan's LFO imported from FL Studio now runs at the speed the imported setting gives, with
+  a new LFO law. A slow setting used to run far too fast. New Auto Pans use the same LFO law; projects saved earlier keep their sound
   (their LFO law parameter stays at 1), and the factory presets move at about their former rates.
-- FL Studio projects saved with current versions now import their Keyboard Mod settings, and its attack and release smoothing times match FL Studio's from 0 to 1000 ms.
-- A Multi Delay unit set to the shortest step in an FL Studio project now sounds at zero delay as
-  it does in FL Studio, instead of a few samples late. Projects saved earlier keep their timing.
+- FL Studio projects saved with current versions now import their Keyboard Mod settings, and its attack and release smoothing times follow the stored settings from 0 to 1000 ms.
+- A Multi Delay unit set to the shortest step in an FL Studio project now sounds at zero delay,
+  instead of a few samples late. Projects saved earlier keep their timing.
 - New Multi Delay, Peak Follower and Pitch Shifter instances have revised starting settings that match
   imported units (the Pitch Shifter keeps its Hi-fi engine and no delay). The factory presets and saved
   projects are unchanged.
@@ -487,7 +489,7 @@ Released 2026-11-01. Everything that changed since 0.7.0. Projects from 0.7.0 op
   project actually plays, merged per song across stems, samplers and plugins, and writes a
   spreadsheet and a PDF for filling in sample licenses, for example on Tracklib.
 - **Turntable**, a new instrument: load a sample and scratch it on a platter. FL Studio projects
-  with Fruity Scratcher open with it and sound the same.
+  with its scratch plugin open with it, with their settings.
 - **Seltmann records from an input**, and each step of its sequence can now have its own length
   and its own pitch.
 - **Recording into the playlist** draws each take's clip and waveform live while you record.
@@ -538,8 +540,8 @@ Released 2026-11-01. Everything that changed since 0.7.0. Projects from 0.7.0 op
   (reverse, pause, forward). A new Turntable plays its own built-in sound until you load a sample
   or drop one anywhere on the editor, from the browser or the desktop. Notes can start the motor
   or jump to a cue point, and key tracking sets the speed. A large view gives the waveform more
-  room. Five factory presets. FL Studio projects with Fruity Scratcher open with it and sound the
-  same: every setting, the sample, the timecode options, automation clips and recorded movements
+  room. Five factory presets. FL Studio projects with its scratch plugin open with it: every
+  setting, the sample, the timecode options, automation clips and recorded movements
   come along, and a scratcher without a sample stays silent. Saving to FL Studio writes it back.
   The previous scratch effect is still there as Turntable FX, so projects that use it sound as
   before. Turntable is part of the Gridline Suite too (119 plugins), so it also runs in other DAWs.
@@ -597,36 +599,35 @@ Released 2026-11-01. Everything that changed since 0.7.0. Projects from 0.7.0 op
     compressor and limiter, reverb (all five models, the pre-delay on every type), distortion,
     convolution (including the impulse gain), chorus, phaser, flanger, frequency shifter (shift
     direction per side, delay, blur), the dimension stage of the hyper effect and the multiband
-    compressor (per-band ratios, upward compression, crossovers and switches) follow the
-    original. Each gets a Law setting that imports switch on, so Plasma's own projects keep
-    their sound. The reverb knob labelled as a pre-delay now reads TAIL.
+    compressor (per-band ratios, upward compression, crossovers and switches) now take these
+    settings from the preset. Each gets a Law setting that imports switch on, so Plasma's own
+    projects keep their sound. The reverb knob labelled as a pre-delay now reads TAIL.
   - Filters: the dirty ladder filter grows louder and brighter when driven with the cutoff open,
-    the way the original does, in the voice and in the filter effect. A voice filter's drive now
-    acts on its dry signal too, as the original's does, so a driven filter with its mix turned
-    down keeps the drive's level and colour (most types; the ladders, formants, distorted combs
-    and a few others keep a clean dry signal). Driven filters, combs, phasers, flangers, ring
-    mods and sample and hold run through the original's drive stage, and the comb, flanger and
-    phaser types lower their dry signal as the resonance rises. The acid ladder, Wsp and DistComb 1
-    low-pass filters blend with the dry signal the way the original's do when their mix is turned
-    down, and the DistComb 2 filters play at the original's level. A modulation route that has
-    only its aux curve drawn now reads that curve, so routes whose aux source works in reverse
-    move the filter (or any other target) as far as they do in the original. The distortion
-    effect's Overdrive mode compresses the way the original's does at medium drive.
+    in the voice and in the filter effect. A voice filter's drive now acts on its dry signal too,
+    so a driven filter with its mix turned down keeps the drive's level and colour (most types;
+    the ladders, formants, distorted combs and a few others keep a clean dry signal). Driven
+    filters, combs, phasers, flangers, ring mods and sample and hold run through a new drive
+    stage, and the comb, flanger and phaser types lower their dry signal as the resonance rises.
+    The acid ladder, Wsp and DistComb 1 low-pass filters blend with the dry signal in a new way
+    when their mix is turned down, and the DistComb 2 filters play at the level the preset sets.
+    A modulation route that has only its aux curve drawn now reads that curve, so routes whose aux
+    source works in reverse move the filter (or any other target) as far as the preset sets. The
+    distortion effect's Overdrive mode now compresses at medium drive.
   - Modulation: LFO point modulation, routes to envelope times, curves on LFO segments, routes and
-    envelopes, and tempo-synced LFO divisions follow the original.
+    envelopes, and tempo-synced LFO divisions are read from the preset.
   - Voice: sub oscillator shapes, granular density and length, sources routed past Env 1,
     envelope and LFO time scaling (100 % is neutral), the spectral oscillator's pitch and
     frequency limits, notes that take over a voice, and effect buses that feed each other.
   - Oscillators: the waveshaper warps (tube, sine shaper, stomp box, tape and the others, on every
     oscillator type), random start phase, routes to the main tuning, the spectral oscillator's
-    stereo image from stereo samples, and the loudness of multisample unison follow the original.
+    stereo image from stereo samples, and the loudness of multisample unison are read from the
+    preset.
   - Arpeggiator and clips: launched clips follow the song position, clips that span the keyboard
     play as static, one-shot or one copy per key, clip rates, launch quantize, note chance and the
     octave, semitone and velocity variations, the arpeggiator's dotted and triplet rates and the
-    timing of its first step follow the original.
+    timing of its first step are read from the preset.
   - Spectral oscillator: imported presets keep the same loudness on every key instead of
-    jumping between notes, and a spectral oscillator without a sample stays silent, as in the
-    original.
+    jumping between notes, and a spectral oscillator without a sample stays silent.
 
 ### Fixed
 
@@ -643,11 +644,11 @@ Released 2026-11-01. Everything that changed since 0.7.0. Projects from 0.7.0 op
   panel. Imported presets keep the noise's key range and play the noise at the pitch the preset
   was made with, also for noise samples at other sample rates, for the fine tuning of a noise
   that does not follow the keys and for modulation of its pitch.
-- FL Studio projects with control changes recorded into a pattern (such as scratching recorded
-  on Fruity Scratcher) now play them as FL does: each change lands on its exact sample instead
-  of the next 64-sample step, and the control keeps its own value until the first change of each
-  pass instead of jumping to it at the start. An imported scratch performance now plays its
-  movements exactly as the plugin receives them in FL.
+- FL Studio projects with control changes recorded into a pattern (such as recorded scratching)
+  now play them on time: each change lands on its exact sample instead of the next 64-sample
+  step, and the control keeps its own value until the first change of each pass instead of
+  jumping to it at the start. An imported scratch performance now plays its movements exactly as
+  they were recorded.
 - Importing a link with "Browser only" in a collaborative project now adds the file to the shared
   project audio (as a channel, without a clip), so collaborators receive it too.
 - Replacing a channel's instrument now renames the channel after the new instrument when it still
@@ -705,8 +706,8 @@ from 0.6.1 and from every 0.7.0 beta open as they are.
 
 ### Known limits
 
-- Imported presets from other synths sound close but not always identical; this improves in
-  updates.
+- Plasma does not read every setting an imported preset stores yet; more are read in each
+  update.
 - Collaborative projects use Gridline's own plugins only, and everyone in a session needs the
   same Gridline version.
 - Half-time grooves may still read at half speed in Platter and Seltmann; the /2 and x2 buttons
@@ -808,23 +809,23 @@ from 0.6.1 and from every 0.7.0 beta open as they are.
 ### Changed since 0.7.0-beta.4
 
 - Plasma: changes that also affect existing projects:
-  - Hyper follows the original's voices: 1, 2, 3, 5, 5 and 7 voices per side for unison 2 to 7,
+  - Hyper uses new voice counts: 1, 2, 3, 5, 5 and 7 voices per side for unison 2 to 7,
     each a short swept delay of 1 to 10 samples plus about 10 per detune percent, summed through a
     low cut at 253 Hz; the dry part falls to 4/9 at full mix. Its sweep is slow at low rates (100
     s per cycle at rate 10, 1 s at 100). Projects that use Hyper sound different.
   - Hyper's voices each start at their own point of the sweep and run at their own speed, with
     different values on the left and the right, so a stereo spread is there even at zero detune.
-  - The distorting filter types follow the original: the ring mods (an oscillator at the cutoff,
+  - The distorting filter types are reworked: the ring mods (an oscillator at the cutoff,
     and for the second type a second one set by VAR), the sample and hold types (a new value at
     twice the cutoff, resonance coarsens the steps), the first distorted comb type (its delay set
     by VAR, resonance gives back level), the screamer's feedback loop and the dirty ladder's VAR,
     which now lifts the lows below the cutoff. Projects that use these types sound different.
-  - The X-Shaper follows the original: its curve shapes the input's size (the sign is kept), and
+  - The X-Shaper is reworked: its curve shapes the input's size (the sign is kept), and
     the drive fades from the first curve to the second (a straight line when an imported preset
-    has none) instead of doing nothing. Imported curves bend the way the original's do. Projects
+    has none) instead of doing nothing. Imported curves bend as the preset draws them. Projects
     with a drawn X-Shaper curve sound different.
   - The flanger sweeps over 3.5 ms at full depth (before: 4.5 ms). The comb and flanger filter
-    types with a low cut or high cut in the loop follow the original at mid VAR settings and keep
+    types with a low cut or high cut in the loop are revised at mid VAR settings and keep
     their top end in check at high VAR.
   - The phaser sweeps upward from its resting notches, linearly in frequency, as far as 14 kHz at
     full depth (before: three octaves each way). The vintage reverb's tail ends at 16 kHz.
@@ -832,7 +833,7 @@ from 0.6.1 and from every 0.7.0 beta open as they are.
     before the resonance loop), and a bus output set to the direct out now skips the main effects.
   - The noise has a new Tone control: a filter that darkens or brightens the noise. It is off in
     older projects.
-  - The delay effect's mix, feedback, echo filter and ping-pong now follow the original's laws.
+  - The delay effect's mix, feedback, echo filter and ping-pong now use new laws.
     Projects that use it sound different: at mid mix the dry signal is lower and the echo louder,
     feedback is weaker, and ping-pong repeats are louder.
   - Spectral oscillators play 25 dB louder. Their Low and High band limits now read as
@@ -842,12 +843,12 @@ from 0.6.1 and from every 0.7.0 beta open as they are.
   - The Geiger noise loops.
   - A new Unison Mix setting picks how unison voices share the stereo field: Even (as before) or
     Alternating, which imported presets use. Existing projects keep Even.
-  - The effects follow more of the original's laws. The EQ's Q and shelf slopes are new. The compressor's
+  - More effect laws are new. The EQ's Q and shelf slopes are new. The compressor's
     threshold, release, limiter (ratios from 100 up), makeup and latency compensation are new;
     projects that use it compress less at the same threshold. Each reverb type now has its own
     decay, tone, width, pre-delay and mix laws: a project with a reverb sounds different (the dry
     signal stays louder at mid mix, Hall, Vintage and Abyss are always wide, Space is mono). Imported
-    presets fill effect values they leave unset with the source's own defaults.
+    presets fill effect values they leave unset with the defaults that preset format assumes.
   - A new Filter Drive Mode setting: Leveled (as before) keeps the level about even as the drive
     rises; Boost, which imported presets use, raises it. Existing projects keep Leveled.
   - Two new settings that imported presets use and existing projects keep off: Filter Key Centre
@@ -928,141 +929,129 @@ from 0.6.1 and from every 0.7.0 beta open as they are.
   returns there and stops. A pad set right after a jump stores the place the jump went to, and a
   newly set pad is always saved with the project, even when it was set moments before saving.
 - Plasma reads and maps more settings of imported Serum 2 presets:
-  - Noise pitch and key tracking now match. The noise pitch knob is a playback rate covering 96
-    semitones above its centre and 384 below. With key tracking on it spans 128 semitones, with the
-    noise's own pitch at key 72 and its stored detune applied. Sample noises are no longer 2 dB too
-    loud.
-  - White, pink and brown noise use the knob as a tone filter, as the original does, and play at
-    its level. Geiger keeps clicking on held notes.
+  - Noise pitch and key tracking are read from the preset. The noise pitch knob is a playback rate
+    covering 96 semitones above its centre and 384 below. With key tracking on it spans 128
+    semitones, with the noise's own pitch at key 72 and its stored detune applied. Sample noises
+    play 2 dB quieter than before.
+  - White, pink and brown noise use the knob as a tone filter and play at the level the preset
+    sets. Geiger keeps clicking on held notes.
   - Main tuning covers its full range of plus or minus 64 semitones, where before it moved by less
     than a cent. The oscillator Hz offset only applies in Ratio mode.
   - Spectral oscillators no longer go silent when the preset limits their frequency band. They
-    also play at the original's level, 25 dB louder than before.
-  - Arpeggiator rates follow the original's divisions, and dotted rates play the next faster
+    also play at the level the preset sets, 25 dB louder than before.
+  - Arpeggiator rates use the divisions the preset sets, and dotted rates play the next faster
     division dotted. Pattern steps keep their timing, so gaps between steps are rests. Pattern rows
     beyond the held notes repeat those notes instead of jumping octaves.
   - A clip player with no active clip passes the keys through instead of looping a clip.
-  - The delay effect uses the original's times, mix law, feedback and echo filter. Its ping-pong
-    echoes no longer lose level, and high feedback no longer runs away.
-  - Unison follows the original. Detune spreads the voices as wide as the original does, and the
-    default detune of presets that do not store one is now applied. Voices go hard left and right
-    in turn with the original's blend and voice-count levels: a 3-voice unison at no blend was
-    7 dB too loud, and at full blend its side voices were too quiet.
-  - Filter drive raises the level as the original does, up to 24 dB at full drive, and clips
-    about 8 dB later. Before, driven filters and filter effects played up to 19 dB too quiet.
+  - The delay effect uses the times, mix, feedback and echo filter the preset sets, with new laws.
+    Its ping-pong echoes no longer lose level, and high feedback no longer runs away.
+  - Unison detune spreads the voices as wide as the preset sets, and the default detune of
+    presets that do not store one is now applied. Voices go hard left and right in turn, with new
+    blend and voice-count levels: a 3-voice unison at no blend plays 7 dB quieter than before, and
+    at full blend its side voices are louder.
+  - Filter drive raises the level, up to 24 dB at full drive, and clips about 8 dB later. Driven
+    filters and filter effects play up to 19 dB louder than before.
   - The filter types in imported presets now map their settings more fully: the low, high, band,
-    peak and notch types at 6 to 24 dB, the dual types and the three-way morph types follow the
-    original's resonance, level and VAR behaviour across cutoff, resonance and VAR
-    (before up to 23 dB apart on average), and the classic ladder low-pass types get back all
-    the level the resonance takes at full VAR. The five ladder types (including the diode-style
-    acid and EMS ladders) follow the original's cutoff, resonance, level and drive closely
-    (before 4 to 18 dB apart), and the A and dirty ladders self-oscillate at full resonance as the
-    original does. The combs, flangers and phasers follow the original's feedback, mix and level
-    (a comb at no resonance is now a clean level drop instead of a comb, as in the original), as
-    do the gentle and morphing low/high types, the band reject (VAR sets the width of the
-    rejected band), the ring modulator, the pole-zero type (a straight wire, as in the original)
-    and the diffuser (no colouring). The filter stereo spread follows the original too: small
-    around the centre and up to 32 semitones each way at the ends (before 3 to 6 dB off). This
-    voicing comes with the Boost drive mode that
-    imports set; Plasma's own projects keep the Leveled mode and sound as before.
-  - More filter types now follow the original in imported presets: the allpass chain, the eight-comb bank,
-    the pre-delayed comb, the reverb (with its
-    tail decaying as the original's), the three scream types, the five EQ shelves and bell, the
-    filtered 8-stage phasers, the flange-phase type, the DJ mixer (low-pass below the middle of the
-    knob, high-pass above it) and the three formant types (five vowel bands whose positions follow
-    cutoff and VAR as in the original). Each of these used to be 4 to 18 dB apart on average. The
-    cubic stereo spread now applies to every filter type, combs and phasers included, as in the
-    original.
-  - Multisample kits play at the original's level, about 9 dB louder than before. Velocity follows
-    the kit's own velocity tracking (half tracking at half velocity: 6 dB down), and each kit's
-    own envelope shapes its notes, with the original's half-second release when the kit names
-    none. Imports use this; Plasma's own projects keep their level (new Multisample Level setting).
+    peak and notch types at 6 to 24 dB, the dual types and the three-way morph types take their
+    resonance, level and VAR from the preset across cutoff, resonance and VAR, and the classic
+    ladder low-pass types get back all the level the resonance takes at full VAR. The five ladder
+    types (including the diode-style acid and EMS ladders) have a reworked cutoff, resonance,
+    level and drive, and the A and dirty ladders self-oscillate at full resonance. The combs,
+    flangers and phasers have a reworked feedback, mix and level (a comb at no resonance is now a
+    clean level drop instead of a comb), and so do the gentle and morphing low/high types, the
+    band reject (VAR sets the width of the rejected band), the ring modulator, the pole-zero type
+    (now a straight wire) and the diffuser (no colouring). The filter stereo spread is reworked
+    too: small around the centre and up to 32 semitones each way at the ends. This voicing comes
+    with the Boost drive mode that imports set; Plasma's own projects keep the Leveled mode and
+    sound as before.
+  - More filter types in imported presets now map their settings: the allpass chain, the
+    eight-comb bank, the pre-delayed comb, the reverb (with a reworked tail), the three scream
+    types, the five EQ shelves and bell, the filtered 8-stage phasers, the flange-phase type, the
+    DJ mixer (low-pass below the middle of the knob, high-pass above it) and the three formant
+    types (five vowel bands whose positions follow cutoff and VAR). The cubic stereo spread now
+    applies to every filter type, combs and phasers included.
+  - Multisample kits play at the level the kit sets, about 9 dB louder than before. Velocity
+    follows the kit's own velocity tracking (half tracking at half velocity: 6 dB down), and each
+    kit's own envelope shapes its notes, with a half-second release when the kit names none. Imports use this; Plasma's own projects keep their level (new Multisample Level setting).
   - Multisample kits that were silent now play: kits whose sample folder is written without a
     trailing slash, and presets that carry the kit's map but not its audio (the samples are found
     below the library's multisample folder, also when the kit file has moved).
-  - Filter key tracking centres on the original's key in imported presets: at middle C the cutoff
-    was 28 semitones too low. Filter X and Y are no longer imported, as they have no effect on the
-    original's filters.
+  - Filter key tracking in imported presets centres on G#1: at middle C the cutoff is 28
+    semitones higher than before. Filter X and Y are no longer imported.
   - Mono presets no longer go silent after a chord. Releasing the keys of a mono chord left the
     note held, so later notes joined it without starting again.
-  - Imported envelopes keep the original's curve shapes. Curves bend harder towards the ends of
-    the knob (at curve 90 a 0.3 s decay is now about 45 dB down halfway through, as in the original), and settings a
-    preset leaves unset take the original's own defaults (attack curve 60 on the first envelope
-    and 40 on the others, decay and release curves 60, and a 0.5 ms attack on envelopes 2 to 4).
-  - Wavetable oscillators in imported presets follow the original (new Wavetable Law setting;
-    Plasma's own projects keep the Classic law). The table position spreads the frames evenly and
-    keeps each frame's DC offset (pulse frames were up to 9 dB too quiet). Tables step from frame
-    to frame unless the table file asks for blended frames, as in the original. FM from another
-    oscillator is a fixed deviation in Hz at any pitch, as in the original, and phase distortion
-    has the original's depth. Sync, bend, asymmetry, flip, quantize, even/odd and the low-pass
-    and high-pass warps follow the original's curves, and the tube and soft saturation warps
-    are as gentle as the original's (at half
-    way the tube warp was 4 dB too hot). Ring and amplitude modulation have the original's depth
-    (their sidebands were 6 to 12 dB too quiet), and FM and phase distortion from the sub
-    oscillator are as deep as the original's.
-  - The modulation matrix follows the original in imported presets (new Matrix Law setting;
-    Plasma's own projects keep the Classic law). Bipolar routes swing half their amount each way,
-    input curves bend as steeply as the original's (at curve -50 a route at half way gives 6 % of
-    its amount), a macro moved by another route passes that on, and routes to bus sends and the
-    utility width move them on the original's knob curve. Routes to the voice amp add to its gain
-    in a straight line and can push it past the knob's top or through zero, as the original's do
-    (velocity at full amount lifts a centred amp by 9.5 dB, where it used to hit the 12 dB top
-    already at half velocity). Route smoothing is no longer imported,
-    as it had no audible effect on the original.
-  - Wavetable oscillators in imported presets start at the original's default phase (half a
-    cycle) and a free-running oscillator starts there too. The mirror, quantize and self phase
-    distortion warps follow the original (quantize
-    at 0.7 was a plain saw before). A multisample is silent on keys and velocities no zone covers,
-    as in the original, where it used to play the nearest zone.
-  - LFOs in imported presets follow the original (new LFO Law setting; Plasma's own projects keep
+  - Imported envelopes keep the curve shapes the preset sets. Curves bend harder towards the ends
+    of the knob (at curve 90 a 0.3 s decay is now about 45 dB down halfway through), and settings
+    a preset leaves unset take the defaults that preset format assumes (attack curve 60 on the
+    first envelope and 40 on the others, decay and release curves 60, and a 0.5 ms attack on
+    envelopes 2 to 4).
+  - Wavetable oscillators in imported presets use a new Wavetable Law setting (Plasma's own
+    projects keep the Classic law). The table position spreads the frames evenly and keeps each
+    frame's DC offset (pulse frames play up to 9 dB louder than before). Tables step from frame to
+    frame unless the table file asks for blended frames. FM from another oscillator is a fixed
+    deviation in Hz at any pitch, and phase distortion has a new depth. Sync, bend, asymmetry,
+    flip, quantize, even/odd and the low-pass and high-pass warps have new curves, and the tube
+    and soft saturation warps are gentler (at half way the tube warp plays 4 dB quieter than
+    before). Ring and amplitude modulation are deeper (their sidebands are 6 to 12 dB louder than
+    before), and FM and phase distortion from the sub oscillator have a new depth.
+  - The modulation matrix in imported presets uses a new Matrix Law setting (Plasma's own
+    projects keep the Classic law). Bipolar routes swing half their amount each way, input curves
+    bend more steeply (at curve -50 a route at half way gives 6 % of its amount), a macro moved by
+    another route passes that on, and routes to bus sends and the utility width move them on a new
+    knob curve. Routes to the voice amp add to its gain in a straight line and can push it past
+    the knob's top or through zero (velocity at full amount lifts a centred amp by 9.5 dB, where it
+    used to hit the 12 dB top already at half velocity). Route smoothing is no longer imported.
+  - Wavetable oscillators in imported presets start at half a cycle, the default phase that
+    preset format assumes, and a free-running oscillator starts there too. The mirror, quantize
+    and self phase distortion warps are reworked (quantize at 0.7 was a plain saw before). A
+    multisample is silent on keys and velocities no zone covers, where it used to play the nearest
+    zone.
+  - LFOs in imported presets use a new LFO Law setting (Plasma's own projects keep
     the Classic law). Rise and delay are times, in seconds on a free LFO and in beats on a synced
     one, and smoothing is a fixed time rather than a share
     of the LFO's cycle (at 50 % about 12 ms, where a 2 Hz LFO used to lose most of its swing).
-  - An imported clip player that holds a looping clip across the keyboard stays on, as in the
-    original, when the preset names no active clip.
+  - An imported clip player that holds a looping clip across the keyboard stays on when the
+    preset names no active clip.
   - A macro moved by another route passes that on whatever order the routes are in (before, a
     route into a macro in a later slot never reached the routes reading that macro). Routes to
-    the compressor's gain move it on the original's knob curve (a route at half lifts it by
-    about 19 dB, where it gave 15).
-  - An effect bus whose output is the other bus now feeds that bus, through both bus volumes, as
-    in the original (new Bus Chain setting; before, it went to the main output).
+    the compressor's gain move it on a new knob curve (a route at half lifts it by about 19 dB,
+    where it gave 15).
+  - An effect bus whose output is the other bus now feeds that bus, through both bus volumes (new
+    Bus Chain setting; before, it went to the main output).
   - The voice filters' pad switch is imported (new Filter 1 Pad and Filter 2 Pad settings): a
-    fully driven filter with pad on now plays at the original's level, where it was 3 dB quiet.
-  - The distortion effect follows the original's curves for every mode and drive, its filter
-    (a fade from low-pass through band-pass to high-pass, with the original's resonance), its
-    downsample rates, its mix law and the level knob after the mix. Presets that leave the filter
-    type unset now get the original's low-pass instead of a band-pass.
-  - The multiband compressor follows the original's thresholds, ratios, upward compression,
-    deadbands and band thresholds, catches a note at once as the original does and stops near
-    40 dB of gain change. Before, it was up to 12 dB too loud on the default settings and pushed
-    quiet parts up even with upward compression off.
-  - The frequency shifter puts the down shift on the left and the up shift on the right, as the
-    original does by default, with the original's direction, width and mix laws. Its two shifts
-    are now cleanly apart (before, each side carried both at the same level).
-  - Effects that a preset leaves unset take the original's values: shifter width and direction,
-    phaser feedback, convolver mix and the chorus, phaser and flanger rates.
-  - Chorus, flanger, phaser and convolver share the original's mix law, so half mixes are no
-    longer up to 9 dB too quiet. Flanger and phaser feedback no longer turn negative at low
-    settings, the flanger's shortest delay and the phaser's notch positions follow the original,
-    and the convolver's wet path has no delay (an empty impulse slot passes the sound unchanged).
+    fully driven filter with pad on now plays 3 dB louder than before.
+  - The distortion effect has new curves for every mode and drive, a new filter (a fade from
+    low-pass through band-pass to high-pass, with its own resonance), new downsample rates, a new
+    mix law and the level knob after the mix. Presets that leave the filter type unset now get a
+    low-pass instead of a band-pass.
+  - The multiband compressor takes its thresholds, ratios, upward compression, deadbands and band
+    thresholds from the preset with new laws, catches a note at once and stops near 40 dB of gain
+    change. Before, it was up to 12 dB louder on the default settings and pushed quiet parts up
+    even with upward compression off.
+  - The frequency shifter puts the down shift on the left and the up shift on the right by
+    default, with new direction, width and mix laws. Its two shifts are now cleanly apart
+    (before, each side carried both at the same level).
+  - Effects that a preset leaves unset take the defaults that preset format assumes: shifter
+    width and direction, phaser feedback, convolver mix and the chorus, phaser and flanger rates.
+  - Chorus, flanger, phaser and convolver share a new mix law, so half mixes play up to 9 dB
+    louder than before. Flanger and phaser feedback no longer turn negative at low settings, the
+    flanger's shortest delay and the phaser's notch positions are revised, and the convolver's
+    wet path has no delay (an empty impulse slot passes the sound unchanged).
   - Hyper with one voice passes the sound untouched, and more voices keep about the same level
-    (before, four voices were up to 7 dB too quiet).
-  - The reverb types in imported presets map their settings more fully. Each type has the original's tone (it was up to
-    10 dB too dark above 1 kHz), its low cut and high cut now shape the sound as the original's do
-    (the plate's low cut reaches far higher, the other types' cuts are gentle slopes), and the
-    low, mid and high octaves decay at the original's separate times, per size (and on
-    the hall per size and delay setting): a large plate no longer loses its highs early, and a
-    small hall with a long delay rings in the lows as the original does. The wet level follows
-    the original across sizes (the plate was up to 10 dB too loud at large
-    sizes).
-  - The utility's low cut is as steep as the original's (24 dB per octave instead of 12), and
-    the utility and the filter effect use the original's mix law (a half mix keeps more of the
-    dry sound). A multiband compressor at a part mix no longer cuts deep notches around its
+    (four voices play up to 7 dB louder than before).
+  - The reverb types in imported presets map their settings more fully. Imported presets now set
+    each reverb type's tone, low cut and high cut from the preset's settings (the plate's low cut
+    reaches far higher, the other types' cuts are gentle slopes), and the low, mid and high bands
+    decay at the times the preset sets, per size (and on the hall per size and delay setting): a
+    large plate no longer loses its highs early, and a small hall with a long delay rings in the
+    lows. The wet level follows the preset's size (a large plate plays up to 10 dB quieter than
+    before).
+  - The utility's low cut is steeper (24 dB per octave instead of 12), and the utility and the
+    filter effect use a new mix law (a half mix keeps more of the dry sound). A multiband compressor at a part mix no longer cuts deep notches around its
     crossover points.
-  - Comb and flanger filters ring at the original's pitch at high cutoffs (they were up to 13 %
-    flat near 7 kHz) and keep more of their highs. The filter effect's pad switch keeps the
-    drive's gain and only removes its clipping, as the original's does (it used to switch the
-    drive off, 16 dB too quiet at drive 60).
+  - Comb and flanger filters ring at a higher pitch than before at high cutoffs (most near
+    7 kHz) and keep more of their highs. The filter effect's pad switch keeps the drive's gain and
+    only removes its clipping (it used to switch the drive off, 16 dB quieter at drive 60).
 - Import from URL: a missing downloader or converter is reported as missing on the BSDs too.
 - Platter picks up very quick jog moves from a controller. A flick out and back in 30 ms now
   reaches about 90% of the hand's travel instead of 54% (in 15 ms: 80% instead of 33%), about
@@ -1105,8 +1094,7 @@ from 0.6.1 and from every 0.7.0 beta open as they are.
   settle and still starts moving at once. Switching smooth snapping on in the middle of a drag
   applies to the next step instead of the next drag.
 - FL Studio projects: audio clips whose channel stretches its sample to a set time (a number of
-  beats) now play at that length, so loops and one-shots line up with the beat grid as in FL
-  Studio. Resample channels change the pitch with the stretch, the other modes keep it. Sampler
+  beats) now play at that length, so loops and one-shots line up with the beat grid. Resample channels change the pitch with the stretch, the other modes keep it. Sampler
   channels with a set time are stretched the same way. Saving back to FL Studio keeps the time.
 - Slicex channels from FL Studio projects now open in Kerf with all their chops when the loop's
   stored file path is 255 characters or longer (common in projects that moved between computers):
@@ -1122,10 +1110,9 @@ from 0.6.1 and from every 0.7.0 beta open as they are.
   instead of a "file not found" stand-in, and they are saved with the project, so it plays the same
   on a computer without the preset. A table stored in the preset wins over a file of the same name.
   Files a preset only refers to are also found next to the preset (a pack's own folders). Levels
-  follow the source's volume curve (oscillators, noise, sub, master, amp, direct and bus outputs
-  were too quiet; sends to the effect buses were too loud), the table position spans the whole
-  table, oscillator pans follow the source's
-  pan curve, filter drive keeps its driven level, and a wide unison no longer starts with a click.
+  follow the volume curve the preset format uses (oscillators, noise, sub, master, amp, direct
+  and bus outputs play louder than before; sends to the effect buses are lower), the table
+  position spans the whole table, oscillator pans follow the pan curve the preset format uses, filter drive keeps its driven level, and a wide unison no longer starts with a click.
 - Notes with a fine pitch now keep their pitch in Kerf: a note tuned up or down (up to an octave
   either way) plays the chop of its own key at that pitch, so imported FL Studio projects that pitch
   Slicex chops this way play as written. Before, the tuning moved the note to another key, so it
@@ -1985,7 +1972,7 @@ from 0.6.1 and from every 0.7.0 beta open as they are.
   metronome on or off only shows its rest pose. A new "Interface animations" switch (Settings >
   Interface > Motion) turns decorative animations off and follows the system's reduced motion setting.
 - Channel rack: dropping an audio file or an instrument from the browser (or a file from another
-  application) onto a channel row replaces that channel's content, as FL Studio does. A sample
+  application) onto a channel row replaces that channel's content. A sample
   channel loads the file; any other instrument becomes a sampler holding it; an instrument or
   instrument preset replaces the channel's instrument. The channel keeps its mixer track, volume,
   pan, steps and notes, and its name unless the name was automatic. The row shows "Replace <name>"
@@ -2196,8 +2183,8 @@ were saved with.
 - Drag and drop from other applications: files, file promises, web links and audio data from
   file managers, browsers and sample stores, with the drop target shown under the pointer.
 - New interface icons drawn from SVG geometry at the exact screen size.
-- Channel envelopes, LFOs and filter: exact FL Studio timing for imported projects and smooth
-  timing for new ones, in one system.
+- Channel envelopes, LFOs and filter: imported projects keep the timing their settings store and
+  new ones get smooth timing, in one system.
 - Looping pattern clips, Shift+drag copies, an eye toggle for hidden items, a shared minimum
   inset for every editor with an automatic layout audit, effect reordering with the mouse wheel,
   an interactive reverb room display.

@@ -1,5 +1,6 @@
 #include "Lv2World.h"
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -32,24 +33,54 @@ const std::string kGroup = "http://lv2plug.in/ns/ext/port-groups#group";
 
 std::string manifestOf(const std::string& bundle) { return (fs::path(bundle) / "manifest.ttl").string(); }
 
-// Loads a bundle's manifest and every file it points to with rdfs:seeAlso.
-void loadBundle(Model& m, const std::string& bundle, std::string* err) {
-  const std::string man = manifestOf(bundle);
-  if (m.loaded(man)) return;
+// The bundle path without a trailing separator.
+std::string trimmed(std::string bundle) {
+  while (bundle.size() > 1 && (bundle.back() == '/' || bundle.back() == '\\')) bundle.pop_back();
+  return bundle;
+}
+
+// `path` is a file of `bundle` (seeAlso may point anywhere in principle).
+bool inBundle(const std::string& path, const std::string& bundle) {
+  return path.size() > bundle.size() && path.compare(0, bundle.size(), bundle) == 0 &&
+         (path[bundle.size()] == '/' || path[bundle.size()] == '\\');
+}
+
+void includeFile(Model& m, const std::string& path, std::string* err) {
   std::string e;
-  if (!m.loadFile(man, &e) && err && err->empty()) *err = e;
-  std::vector<std::string> files;
-  for (const auto& t : m.triples()) {
-    if (t.p != kSeeAlso || !t.o.isIri()) continue;
-    std::string path;
-    if (!uriToPath(t.o.value, path)) continue;
-    // Only files of this bundle (seeAlso may point anywhere in principle).
-    if (path.compare(0, bundle.size(), bundle) != 0) continue;
-    if (std::find(files.begin(), files.end(), path) == files.end()) files.push_back(path);
-  }
-  for (const auto& f : files) {
-    std::string fe;
-    if (!m.loadFile(f, &fe) && err && err->empty()) *err = fe;
+  auto part = sharedFile(path, &e);
+  if (part) m.include(std::move(part));
+  if (!e.empty() && err && err->empty()) *err = e;
+}
+
+// K-180: adds to `m` what `bundle` says about plugin `uri`: its manifest, and the files the manifest
+// points to (rdfs:seeAlso) for the plugin, its interfaces and the presets that apply to it, until
+// nothing new turns up. Each file is parsed once and shared (sharedFile): a bundle of two hundred
+// plugins was read whole for every one of them, a full copy each (gigabytes). `everything`: every
+// file the manifest points to, as before (a bundle that describes its plugin some other way).
+void includeFor(Model& m, const std::string& bundle, const std::string& uri, bool everything, std::string* err) {
+  includeFile(m, manifestOf(bundle), err);
+  const std::string uiProp = std::string(kUi) + "ui";
+  for (int round = 0; round < 16; ++round) {
+    std::vector<std::string> about = {uri};
+    for (const Node* n : m.objects(uri, uiProp))
+      if (n->isIri()) about.push_back(n->value);
+    for (std::string& p : m.subjects(L("appliesTo"), uri)) about.push_back(std::move(p));
+    std::vector<std::string> files;
+    auto want = [&](const Node& o) {
+      std::string path;
+      if (!o.isIri() || !uriToPath(o.value, path) || !inBundle(path, bundle) || m.loaded(path)) return;
+      if (std::find(files.begin(), files.end(), path) == files.end()) files.push_back(path);
+    };
+    if (everything) {
+      m.forEach([&](const Triple& t) {
+        if (t.p == kSeeAlso) want(t.o);
+      });
+    } else {
+      for (const std::string& s : about)
+        for (const Node* o : m.objects(s, kSeeAlso)) want(*o);
+    }
+    if (files.empty()) break;
+    for (const auto& f : files) includeFile(m, f, err);
   }
 }
 
@@ -131,10 +162,82 @@ std::vector<std::string> iris(const Model& m, const std::string& s, const std::s
   return out;
 }
 
+// Descriptions in use, by URI. K-180: held only while something uses them (an instance), so the
+// files a scan reads for one plugin are freed before the next; a description is quick to make again.
 std::mutex gCacheLock;
-std::map<std::string, std::shared_ptr<const PluginDesc>>& cache() {
-  static auto* c = new std::map<std::string, std::shared_ptr<const PluginDesc>>;  // never destroyed
+std::map<std::string, std::weak_ptr<const PluginDesc>>& cache() {
+  static auto* c = new std::map<std::string, std::weak_ptr<const PluginDesc>>;  // never destroyed
   return *c;
+}
+
+// K-180: which bundles' manifests mention an IRI (a plugin of another bundle they add presets or
+// interfaces to). Built once for the search folders, not once a plugin: describe() read every
+// bundle's manifest again for each plugin. Made again when the folders change or when bundles are
+// looked for again (pluginBundles).
+struct BundleIndex {
+  std::vector<std::string> folders;
+  bool built = false;
+  std::vector<std::string> bundles, canonical;          // every bundle of the folders
+  std::map<std::string, std::vector<size_t>> mentions;  // IRI -> bundles (indices)
+  std::map<std::string, std::vector<size_t>> declares;  // plugin URI -> bundles declaring it (copies of it)
+};
+std::mutex gIndexLock;
+BundleIndex& bundleIndex() {
+  static auto* x = new BundleIndex;  // never destroyed
+  return *x;
+}
+std::atomic<int> gIndexBuilds{0};
+
+std::string canonicalPath(const std::string& p) {
+  std::error_code ec;
+  fs::path c = fs::weakly_canonical(p, ec);
+  return trimmed(ec ? p : c.string());
+}
+
+void buildIndex(BundleIndex& x, const std::vector<std::string>& folders) {
+  x = BundleIndex{};
+  x.folders = folders;
+  x.built = true;
+  ++gIndexBuilds;
+  const std::string type = kRdfType, binary = L("binary");
+  for (const auto& b : allBundles(folders)) {
+    Model man;
+    if (!man.loadFile(manifestOf(b))) continue;
+    const size_t k = x.bundles.size();
+    x.bundles.push_back(trimmed(b));
+    x.canonical.push_back(canonicalPath(b));
+    auto note = [&](const std::string& iri) {
+      if (iri.rfind("file:", 0) == 0) return;  // the bundle's own files
+      auto& v = x.mentions[iri];
+      if (v.empty() || v.back() != k) v.push_back(k);
+    };
+    const std::string plugin = L("Plugin");
+    for (const auto& t : man.triples()) {
+      if (t.s.isIri() && t.p == type && t.o.isIri() && t.o.value == plugin) x.declares[t.s.value].push_back(k);
+      if (t.s.isIri()) note(t.s.value);
+      if (t.o.isIri() && t.p != type && t.p != kSeeAlso && t.p != binary) note(t.o.value);
+    }
+  }
+}
+
+// The bundles other than `self` whose manifests mention `uri`. A bundle that declares the plugin
+// itself is another copy of it (installed twice, in two folders), not an addition: left out.
+std::vector<std::string> bundlesMentioning(const std::string& uri, const std::string& self) {
+  const std::vector<std::string> folders = host::searchFolders("lv2");  // K-13: the LV2 search folders the user set
+  const std::string selfCanonical = canonicalPath(self);
+  std::lock_guard<std::mutex> g(gIndexLock);
+  BundleIndex& x = bundleIndex();
+  if (!x.built || x.folders != folders) buildIndex(x, folders);
+  std::vector<std::string> out;
+  auto it = x.mentions.find(uri);
+  if (it == x.mentions.end()) return out;
+  const auto copies = x.declares.find(uri);
+  for (size_t k : it->second) {
+    if (x.canonical[k] == selfCanonical || x.bundles[k] == self) continue;
+    if (copies != x.declares.end() && std::find(copies->second.begin(), copies->second.end(), k) != copies->second.end()) continue;
+    out.push_back(x.bundles[k]);
+  }
+  return out;
 }
 
 }  // namespace
@@ -174,12 +277,19 @@ std::vector<std::string> allBundles(const std::vector<std::string>& folders) {
 }
 
 std::vector<std::string> pluginUris(const std::string& bundle, std::string* err) {
-  Model m;
-  m.loadFile(manifestOf(bundle), err);
-  return m.subjects(kRdfType, L("Plugin"));
+  auto m = sharedFile(manifestOf(trimmed(bundle)), err);
+  return m ? m->subjects(kRdfType, L("Plugin")) : std::vector<std::string>{};
 }
 
+void forgetBundleIndex() {
+  std::lock_guard<std::mutex> g(gIndexLock);
+  bundleIndex().built = false;
+}
+
+int bundleIndexBuilds() { return gIndexBuilds.load(); }
+
 std::vector<std::string> pluginBundles(const std::vector<std::string>& folders) {
+  forgetBundleIndex();  // bundles may have come or gone: the next description looks again
   std::vector<std::string> out;
   for (auto& b : allBundles(folders))
     if (!pluginUris(b).empty()) out.push_back(b);
@@ -203,35 +313,24 @@ int64_t bundleMtime(const std::string& bundle) {
 // ---------------------------------------------------------------- description
 
 std::shared_ptr<const PluginDesc> describe(const std::string& bundleIn, const std::string& uri, std::string* err) {
-  std::string bundle = bundleIn;
-  while (bundle.size() > 1 && bundle.back() == '/') bundle.pop_back();
+  const std::string bundle = trimmed(bundleIn);
   {
     std::lock_guard<std::mutex> g(gCacheLock);
     auto it = cache().find(uri);
-    if (it != cache().end() && it->second->bundle == bundle) return it->second;
+    if (it != cache().end())
+      if (auto d = it->second.lock(); d && d->bundle == bundle) return d;
   }
   auto model = std::make_shared<Model>();
   std::string loadErr;
-  loadBundle(*model, bundle, &loadErr);
+  includeFor(*model, bundle, uri, false, &loadErr);
+  // A bundle that describes its plugin in files the manifest ties to something else: all of them.
+  if (model->has(uri, kRdfType, L("Plugin")) && model->objects(uri, L("port")).empty()) includeFor(*model, bundle, uri, true, &loadErr);
   if (!model->has(uri, kRdfType, L("Plugin"))) {
     if (err) *err = loadErr.empty() ? "plugin " + uri + " not described in " + bundle : loadErr;
     return nullptr;
   }
   // Other bundles that add to this plugin (UIs, presets).
-  // K-13: the LV2 search folders the user set (default folders, LV2_PATH, own folders).
-  for (const auto& b : allBundles(host::searchFolders("lv2"))) {
-    std::error_code ec;
-    if (fs::equivalent(b, bundle, ec)) continue;
-    Model man;
-    if (!man.loadFile(manifestOf(b))) continue;
-    bool mentions = false;
-    for (const auto& t : man.triples())
-      if ((t.s.isIri() && t.s.value == uri) || (t.o.isIri() && t.o.value == uri)) {
-        mentions = true;
-        break;
-      }
-    if (mentions) loadBundle(*model, b, nullptr);
-  }
+  for (const auto& b : bundlesMentioning(uri, bundle)) includeFor(*model, b, uri, false, nullptr);
   const Model& m = *model;
   auto d = std::make_shared<PluginDesc>();
   d->uri = uri;
@@ -306,6 +405,7 @@ std::shared_ptr<const PluginDesc> describe(const std::string& bundleIn, const st
   }
   std::stable_sort(d->presets.begin(), d->presets.end(), [](const PresetInfo& a, const PresetInfo& b) { return a.label < b.label; });
   std::lock_guard<std::mutex> g(gCacheLock);
+  for (auto it = cache().begin(); it != cache().end();) it = it->second.expired() ? cache().erase(it) : std::next(it);
   cache()[uri] = d;
   return d;
 }

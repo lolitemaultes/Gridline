@@ -226,8 +226,9 @@ bool button(const char* id, ImVec2 p0, ImVec2 size, const char* text, bool on, c
   return clicked;
 }
 
+// `step` > 0: the value lands on whole steps of it (1: whole numbers), a wheel notch moves one.
 bool fieldKnob(App& a, const char* id, ImVec2 tl, float& v, float mn, float mx, float def, const char* label, const char* fmt, bool* released,
-               bool bipolar) {
+               bool bipolar, float step) {
   const auto& P = pal();
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const float cell = 54, r = 13;
@@ -239,14 +240,19 @@ bool fieldKnob(App& a, const char* id, ImVec2 tl, float& v, float mn, float mx, 
   const double pressed = ui::ValueAtPress(v);
   const bool deactivated = ImGui::IsItemDeactivated();
   bool changed = false;
-  if (ac && ImGui::IsMouseDragging(0, 0)) {
-    const float dy = -ImGui::GetIO().MouseDelta.y;
-    const float span = mx - mn;
-    const float nv = std::clamp(v + dy * span / (ImGui::GetIO().KeyShift ? 600.0f : 150.0f), mn, mx);
+  const float span = mx - mn;
+  auto onStep = [&](float x) { return step > 0 ? std::clamp(mn + std::round((x - mn) / step) * step, mn, mx) : x; };
+  // The shared knob drag (Widgets.h): it runs on its own position, so a value the caller keeps
+  // whole (the choke group) follows a slow drag too.
+  ui::KnobDragPos(span > 0 ? static_cast<double>((v - mn) / span) : 0.0);
+  if (ac && ImGui::IsMouseDragging(0, 0) && ImGui::GetIO().MouseDelta.y != 0) {
+    const double nn = ui::KnobDragMove(-ImGui::GetIO().MouseDelta.y / (ImGui::GetIO().KeyShift ? 600.0 : 150.0));
+    const float nv = onStep(static_cast<float>(mn + nn * span));
     if (nv != v) v = nv, changed = true;
   }
   if (hv && ImGui::GetIO().MouseWheel != 0) {
-    v = std::clamp(v + ImGui::GetIO().MouseWheel * (mx - mn) / 50.0f, mn, mx);
+    const float wheel = ImGui::GetIO().MouseWheel;
+    v = step > 0 ? onStep(v + (wheel > 0 ? step : -step)) : std::clamp(v + wheel * span / 50.0f, mn, mx);
     changed = true;
     if (released) *released = true;
   }
@@ -255,7 +261,7 @@ bool fieldKnob(App& a, const char* id, ImVec2 tl, float& v, float mn, float mx, 
   bool set = false, wantType = false;
   ParamDoubleClick dbl = ParamDoubleClick::Type;
   if (ui::DoubleClicked(d, pressed, &dbl)) {  // reset; at the default, type a value
-    if (dbl == ParamDoubleClick::Reset) dv = def, set = true;
+    if (dbl == ParamDoubleClick::Reset) dv = def, set = true, ui::KnobDragSet(span > 0 ? static_cast<double>((def - mn) / span) : 0.0);
     else wantType = true;
   }
   if (hv && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("##fkmenu");
@@ -270,7 +276,7 @@ bool fieldKnob(App& a, const char* id, ImVec2 tl, float& v, float mn, float mx, 
   if (ui::ValueTypePopup(d, &dv)) set = true;
   ImGui::PopID();
   if (set) {
-    v = static_cast<float>(dv);
+    v = onStep(static_cast<float>(dv));
     changed = true;
     if (released) *released = true;
   }

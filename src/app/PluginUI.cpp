@@ -800,6 +800,9 @@ bool dragParam(App& a, ParamId pid, const ParamDesc& d, double& val, float pixel
     pui::DevItem& di = devItems()[pid.packed()];
     const ImVec2 r0 = ImGui::GetItemRectMin(), r1 = ImGui::GetItemRectMax();
     di = {r0.x, r0.y, r1.x, r1.y, ImGui::GetFrameCount()};
+    char key[32];
+    std::snprintf(key, sizeof key, "p%u.%u", static_cast<unsigned>(pid.owner), static_cast<unsigned>(pid.index));
+    ui::devKnobRecord("param", key, d, val, r0, r1);  // K-148 (the value as the frame starts)
   }
   ImGuiIO& io = ImGui::GetIO();
   bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();

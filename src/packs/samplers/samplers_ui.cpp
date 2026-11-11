@@ -572,9 +572,11 @@ void msSampleTab(App& a, const PluginTarget& t, ZoneMap& m, MsEd& ed, float widt
   double rate = smp ? smp->sampleRate : 44100.0;
   double v;
   v = z.root;
+  ui::SetNextKnobStep(1);
   if (valueKnob(a, "root", v, pd("Root key", "note", 0, 127, 60), "Root", 62)) z.root = static_cast<int>(std::lround(v)), commitMap(a, t, m, "zone root", mergeKey(t, 1));
   ImGui::SameLine(0, 0);
   v = z.tune;
+  ui::SetNextKnobStep(1);
   if (valueKnob(a, "tune", v, pd("Tune", "ct", -1200, 1200, 0), "Tune", 62)) z.tune = static_cast<float>(std::round(v)), commitMap(a, t, m, "zone tune", mergeKey(t, 2));
   ImGui::SameLine(0, 0);
   v = z.gain;

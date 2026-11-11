@@ -142,7 +142,7 @@ void drawChannelEnvelope(App& a, ObjectId id) {
     ui::Segmented("##instarget", targets, noPitch ? InsPitch : InsTargets, &g_target, 72, 0, hints);
     ImGui::SameLine(0, 16);
     if (ui::TextButton("FL timing", st.classic(), 96,
-                       "On: envelopes and LFOs step once per song tick with FL Studio's exact results (FL imports switch it on). "
+                       "On: envelopes and LFOs step once per song tick (FL Studio imports switch it on). "
                        "Off: smooth per-sample curves."))
       edit("switch envelope timing", 0, [](InsSettings& s) { s.timing = s.classic() ? InsTiming::Smooth : InsTiming::Classic; });
   }
@@ -159,6 +159,7 @@ void drawChannelEnvelope(App& a, ObjectId id) {
     ImGui::SetCursorPosX(x + (cell - 28) * 0.5f);
     double v = value;
     bool rel = false;
+    ui::SetNextKnobStep(1);
     if (ui::Knob("k", &v, d, 14, nullptr, bipolar, &rel)) {
       const int nv = static_cast<int>(std::lround(d.clamp(v)));
       edit("change channel envelope", std::hash<std::string>{}(key) + static_cast<uint64_t>(k),
@@ -284,6 +285,7 @@ void drawChannelEnvelope(App& a, ObjectId id) {
     ImGui::SetCursorPosX(x + (cell - 28) * 0.5f);
     double v = value;
     bool rel = false;
+    ui::SetNextKnobStep(1);
     if (ui::Knob("k", &v, d, 14, nullptr, false, &rel)) {
       const int nv = static_cast<int>(std::lround(d.clamp(v)));
       edit("change channel filter", std::hash<std::string>{}(key), [&](InsSettings& s) { set(s, nv); });
@@ -322,6 +324,7 @@ void drawChannelEnvelope(App& a, ObjectId id) {
       ImGui::SetCursorPosX(x + (cell - 28) * 0.5f);
       double v = st.track[row][col];
       bool rel = false;
+      ui::SetNextKnobStep(1);
       if (ui::Knob("k", &v, d, 14, nullptr, col > 0, &rel)) {
         const int nv = static_cast<int>(std::lround(d.clamp(v)));
         edit("change channel tracking", std::hash<std::string>{}(key) + 77, [&](InsSettings& s) { s.track[row][col] = nv; });
@@ -361,8 +364,8 @@ void drawChannelEnvelope(App& a, ObjectId id) {
   }
   ImGui::PushFont(nullptr, 11.0f);
   ImGui::TextColored(theme::vec(P.textFaint), "%s",
-                     st.classic() ? i18n::tr("FL timing: these settings play as FL Studio plays them (stepped once per tick).")
-                                  : i18n::tr("Smooth timing: per-sample envelopes and LFOs. Switch FL timing on for FL Studio's results."));
+                     st.classic() ? i18n::tr("FL timing: these settings step once per song tick.")
+                                  : i18n::tr("Smooth timing: per-sample envelopes and LFOs. Switch FL timing on to step them once per song tick."));
   ImGui::PopFont();
 }
 

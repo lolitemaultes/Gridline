@@ -73,6 +73,7 @@ struct ToolSettings {
   uint32_t stepSeed = 1;
 };
 ToolSettings S;
+const ToolSettings kToolDefaults;  // the defaults the whole-number knobs go back to (double-click)
 
 // Grid sizes offered by the tools (fractions of a beat).
 struct GridDef { const char* name; double beats; };
@@ -137,14 +138,18 @@ std::string fmt(const char* f, double v) {
 std::string pct(double v) { return fmt("%.0f%%", v * 100); }
 std::string spct(double v) { return fmt("%+.0f%%", v * 100); }
 
-// Knob with a label and a value line under it, in a fixed-width cell.
-bool knob(const char* id, double* v, const ParamDesc& d, const char* label, const std::string& text, bool bipolar = false) {
+// Knob with a label and a value line under it, in a fixed-width cell. `step` > 0: the value
+// lands on whole steps of it (1: whole numbers) and a wheel notch moves one step.
+bool knob(const char* id, double* v, const ParamDesc& desc0, const char* label, const std::string& text, bool bipolar = false, double step = 0) {
   const auto& P = pal();
+  ParamDesc d = desc0;
+  if (d.name.empty()) d.name = label;  // the status bar hint and the type-in say what it is
   const float cell = 70;
   ImGui::BeginGroup();
   ImVec2 p = ImGui::GetCursorScreenPos();
   const float r = 16;
   ImGui::SetCursorScreenPos(ImVec2(p.x + (cell - 2 * r) * 0.5f, p.y));
+  ui::SetNextKnobStep(step);
   bool ch = ui::Knob(id, v, d, r, nullptr, bipolar);
   ImDrawList* dl = ImGui::GetWindowDrawList();
   float y = p.y + 2 * r + 4;
@@ -163,9 +168,9 @@ bool knob(const char* id, double* v, const ParamDesc& d, const char* label, cons
   ImGui::EndGroup();
   return ch;
 }
-bool knobInt(const char* id, int* v, int lo, int hi, const char* label, const std::string& text) {
+bool knobInt(const char* id, int* v, int lo, int hi, int def, const char* label, const std::string& text) {
   double d = *v;
-  bool ch = knob(id, &d, desc(lo, hi, *v), label, text);
+  bool ch = knob(id, &d, desc(lo, hi, def), label, text, false, 1);
   *v = std::clamp(static_cast<int>(std::lround(d)), lo, hi);
   return ch;
 }
@@ -413,7 +418,7 @@ void flamBody(App& a) {
       }
   });
   section("OPTIONS");
-  knob("##ft", &S.flamTime48, desc(1, 24, 4), "Time", fmt("%.0f/48 beat", S.flamTime48));
+  knob("##ft", &S.flamTime48, desc(1, 24, 4), "Time", fmt("%.0f/48 beat", S.flamTime48), false, 1);
   same();
   knob("##fv", &S.flam.velocity, desc(0.05, 1, 0.55), "Velocity", pct(S.flam.velocity));
   ImGui::SameLine(0, theme::kS3);
@@ -449,7 +454,7 @@ void articulateBody(App& a) {
   section("OPTIONS");
   knob("##al", &S.art.length, desc(0.05, 2, 1), "Length", pct(S.art.length));
   same();
-  knob("##agap", &S.artGap48, desc(0, 24, 0), "Gap", fmt("%.0f/48 beat", S.artGap48));
+  knob("##agap", &S.artGap48, desc(0, 24, 0), "Gap", fmt("%.0f/48 beat", S.artGap48), false, 1);
   same();
   knob("##av", &S.art.variation, desc(0, 1, 0), "Variation", pct(S.art.variation));
   ImGui::SameLine(0, theme::kS3);
@@ -480,11 +485,11 @@ void randomizeBody(App& a) {
   });
   ImGui::SameLine();
   seedButton("rseed", &S.rnd.seed);
-  knobInt("##roct", &S.rnd.octave, 1, 8, "Octave", std::to_string(S.rnd.octave));
+  knobInt("##roct", &S.rnd.octave, 1, 8, kToolDefaults.rnd.octave, "Octave", std::to_string(S.rnd.octave));
   same();
-  knobInt("##rrng", &S.rnd.octaves, 1, 4, "Range", std::to_string(S.rnd.octaves) + " oct");
+  knobInt("##rrng", &S.rnd.octaves, 1, 4, kToolDefaults.rnd.octaves, "Range", std::to_string(S.rnd.octaves) + " oct");
   same();
-  knobInt("##rpoly", &S.rnd.maxPoly, 1, 6, "Max notes", std::to_string(S.rnd.maxPoly));
+  knobInt("##rpoly", &S.rnd.maxPoly, 1, 6, kToolDefaults.rnd.maxPoly, "Max notes", std::to_string(S.rnd.maxPoly));
   same();
   knob("##rprob", &S.rnd.probability, desc(0, 1, 0.5), "Chance", pct(S.rnd.probability));
   same();
@@ -492,7 +497,7 @@ void randomizeBody(App& a) {
   same();
   knob("##rlv", &S.rnd.lengthVariation, desc(0, 1, 0), "Len. var.", pct(S.rnd.lengthVariation));
   same();
-  knobInt("##rbars", &S.rndBars, 1, 16, "Bars", std::to_string(S.rndBars));
+  knobInt("##rbars", &S.rndBars, 1, 16, kToolDefaults.rndBars, "Bars", std::to_string(S.rndBars));
   section("LEVELS (RANDOM AMOUNT)");
   static const char* const ln[] = {"Velocity", "Pan", "Release", "Fine", "Mod X", "Mod Y"};
   for (int k = 0; k < static_cast<int>(tools::NoteProp::Count); ++k) {
@@ -582,9 +587,9 @@ void scaleLevelsBody(App& a) {
 
 void limitBody(App& a) {
   section("KEY RANGE");
-  knobInt("##llo", &S.limLo, 0, 127, "Lowest", tools::pitchName(S.limLo));
+  knobInt("##llo", &S.limLo, 0, 127, kToolDefaults.limLo, "Lowest", tools::pitchName(S.limLo));
   same();
-  knobInt("##lhi", &S.limHi, 0, 127, "Highest", tools::pitchName(S.limHi));
+  knobInt("##lhi", &S.limHi, 0, 127, kToolDefaults.limHi, "Highest", tools::pitchName(S.limHi));
   ImGui::SameLine(0, theme::kS3);
   ImGui::BeginGroup();
   ui::Label("NOTES OUTSIDE");
@@ -620,13 +625,13 @@ void riffBody(App& a) {
   same();
   knob("##fleap", &S.riff.leap, desc(0, 1, 0.25), "Leaps", pct(S.riff.leap));
   same();
-  knobInt("##frng", &S.riff.range, 2, 14, "Range", std::to_string(S.riff.range) + " deg.");
+  knobInt("##frng", &S.riff.range, 2, 14, kToolDefaults.riff.range, "Range", std::to_string(S.riff.range) + " deg.");
   same();
-  knobInt("##foct", &S.riff.octave, 2, 7, "Octave", std::to_string(S.riff.octave - 1));
+  knobInt("##foct", &S.riff.octave, 2, 7, kToolDefaults.riff.octave, "Octave", std::to_string(S.riff.octave - 1));
   same();
-  knobInt("##fbars", &S.riff.bars, 1, 16, "Bars", std::to_string(S.riff.bars));
+  knobInt("##fbars", &S.riff.bars, 1, 16, kToolDefaults.riff.bars, "Bars", std::to_string(S.riff.bars));
   same();
-  knobInt("##fvel", &S.riff.velocity, 1, 127, "Velocity", std::to_string(S.riff.velocity));
+  knobInt("##fvel", &S.riff.velocity, 1, 127, kToolDefaults.riff.velocity, "Velocity", std::to_string(S.riff.velocity));
   if (ui::TextButton("Chords", S.riff.chords, 0, "Add a chord under the first note of every bar")) S.riff.chords = !S.riff.chords;
   ImGui::SameLine();
   if (ui::TextButton("Replace notes", S.riffReplace, 0, "Replace the notes in the riff's range (off: add to them)")) S.riffReplace = !S.riffReplace;
@@ -702,18 +707,18 @@ void stepBody(App& a) {
     section("SEQUENCE");
     const int total = static_cast<int>(row.size());
     if (S.fillType == 0) {
-      knob("##fe", &S.fillEvery, desc(1, 16, 4), "Every", fmt("%.0f steps", std::round(S.fillEvery)));
+      knob("##fe", &S.fillEvery, desc(1, 16, 4), "Every", fmt("%.0f steps", std::round(S.fillEvery)), false, 1);
       same();
-      knob("##fo", &S.fillOffset, desc(0, 15, 0), "Offset", fmt("%.0f", std::round(S.fillOffset)));
+      knob("##fo", &S.fillOffset, desc(0, 15, 0), "Offset", fmt("%.0f", std::round(S.fillOffset)), false, 1);
     } else {
-      knob("##fh", &S.fillHits, desc(1, 32, 5), "Hits", fmt("%.0f", std::round(S.fillHits)));
+      knob("##fh", &S.fillHits, desc(1, 32, 5), "Hits", fmt("%.0f", std::round(S.fillHits)), false, 1);
       same();
-      knob("##fl", &S.fillLength, desc(2, 32, 16), "Length", fmt("%.0f steps", std::round(S.fillLength)));
+      knob("##fl", &S.fillLength, desc(2, 32, 16), "Length", fmt("%.0f steps", std::round(S.fillLength)), false, 1);
       same();
-      knob("##fr", &S.fillRotation, desc(0, 31, 0), "Rotate", fmt("%.0f", std::round(S.fillRotation)));
+      knob("##fr", &S.fillRotation, desc(0, 31, 0), "Rotate", fmt("%.0f", std::round(S.fillRotation)), false, 1);
     }
     same();
-    knob("##fv", &S.fillVel, desc(1, 127, 100), "Velocity", fmt("%.0f", std::round(S.fillVel)));
+    knob("##fv", &S.fillVel, desc(1, 127, 100), "Velocity", fmt("%.0f", std::round(S.fillVel)), false, 1);
     const auto vel = static_cast<uint8_t>(std::lround(S.fillVel));
     if (S.fillType == 0)
       tools::fillEvery(row, static_cast<int>(std::lround(S.fillEvery)), static_cast<int>(std::lround(S.fillOffset)), vel);
@@ -724,9 +729,9 @@ void stepBody(App& a) {
     section("RANDOM STEPS");
     knob("##rp", &S.rndProb, desc(0, 1, 0.4), "Chance", pct(S.rndProb));
     same();
-    knob("##rl", &S.rndVelLo, desc(1, 127, 70), "Vel. low", fmt("%.0f", std::round(S.rndVelLo)));
+    knob("##rl", &S.rndVelLo, desc(1, 127, 70), "Vel. low", fmt("%.0f", std::round(S.rndVelLo)), false, 1);
     same();
-    knob("##rh", &S.rndVelHi, desc(1, 127, 115), "Vel. high", fmt("%.0f", std::round(S.rndVelHi)));
+    knob("##rh", &S.rndVelHi, desc(1, 127, 115), "Vel. high", fmt("%.0f", std::round(S.rndVelHi)), false, 1);
     ImGui::SameLine(0, theme::kS3);
     seedButton("sseed", &S.stepSeed);
     tools::randomizeSteps(row, S.rndProb, static_cast<int>(std::lround(S.rndVelLo)), static_cast<int>(std::lround(S.rndVelHi)), S.stepSeed);

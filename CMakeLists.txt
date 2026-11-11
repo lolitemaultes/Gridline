@@ -947,6 +947,21 @@ add_test(NAME lv2_host COMMAND gridline_tests_lv2 WORKING_DIRECTORY ${CMAKE_BINA
 # The plugin-check sweep runs the test plugins against real-time block deadlines: run it alone
 # so a busy parallel ctest on a small CI runner cannot turn load into a failure.
 set_tests_properties(lv2_host PROPERTIES RUN_SERIAL TRUE)
+# K-180: a bundle of hundreds of LV2 plugins scans in little memory. The test writes its bundles
+# around this binary of 256 plugins (each instance holds 24 MB).
+add_library(gridline_lv2_manytestplug MODULE tests/lv2/ManyPlugins.cpp)
+target_include_directories(gridline_lv2_manytestplug SYSTEM PRIVATE third_party/lv2/include)
+target_compile_options(gridline_lv2_manytestplug PRIVATE ${GL_WARN})
+set_target_properties(gridline_lv2_manytestplug PROPERTIES PREFIX "" OUTPUT_NAME GridlineManyLv2 SUFFIX "${GL_LV2_EXT}"
+                      LIBRARY_OUTPUT_DIRECTORY ${GRIDLINE_LV2_DIR}/many-bin)
+add_executable(gridline_tests_lv2_many tests/test_lv2_many.cpp)
+target_link_libraries(gridline_tests_lv2_many PRIVATE gridline_core)
+target_include_directories(gridline_tests_lv2_many PRIVATE src tests)
+target_compile_options(gridline_tests_lv2_many PRIVATE ${GL_WARN})
+target_compile_definitions(gridline_tests_lv2_many PRIVATE GRIDLINE_LV2_MANY_BINARY="$<TARGET_FILE:gridline_lv2_manytestplug>")
+add_dependencies(gridline_tests_lv2_many gridline_lv2_manytestplug)
+add_test(NAME k180_lv2_many COMMAND gridline_tests_lv2_many WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+set_tests_properties(k180_lv2_many PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE)
 
 add_executable(gridline_tests_scripting tests/test_scripting.cpp)
 target_link_libraries(gridline_tests_scripting PRIVATE gridline_core)
@@ -1737,6 +1752,22 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
   endif()
 
   if(GRIDLINE_GUI_TESTS)
+    # K-157 (GitHub issue #33): the main window is an ordinary top-level window. On X11 the test
+    # runs its own Xvfb and a minimal window manager that decides floating as tiling managers do.
+    add_executable(gridline_tests_k157 tests/test_k157.cpp)
+    target_link_libraries(gridline_tests_k157 PRIVATE imgui Threads::Threads)
+    target_include_directories(gridline_tests_k157 PRIVATE src tests)
+    target_compile_options(gridline_tests_k157 PRIVATE ${GL_WARN})
+    if(NOT APPLE AND NOT WIN32)
+      find_package(X11 QUIET)
+      if(X11_FOUND)
+        target_compile_definitions(gridline_tests_k157 PRIVATE GRIDLINE_K157_X11=1)
+        target_link_libraries(gridline_tests_k157 PRIVATE X11::X11)
+      endif()
+    endif()
+    add_test(NAME k157_window_hints COMMAND gridline_tests_k157)
+    set_tests_properties(k157_window_hints PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
+
     # Q-7: every built-in editor at widths x1 / x1.5 / x2, no control within
     # inset::kMinInset px of its panel's edge (off-screen run; isolated config).
     # Hidden window: the desktop cursor cannot hover a control and show its readout.
@@ -2077,6 +2108,20 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -DOUT=${CMAKE_BINARY_DIR}/script_knob_drag_app -P ${CMAKE_SOURCE_DIR}/tests/script_knob_drag_app.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(script_knob_drag_app PROPERTIES TIMEOUT 300)
+    # Every knob of the piano roll tools and of one window of each other kind follows a slow drag, a fine drag and a double-click
+    # (three parts that run side by side: the note tools, the step tools with the wheel / type-in / undo checks and the
+    # channel pages, the other windows).
+    foreach(part "tools|quantize,chop,strum,arp,flam,articulate,randomize,lfo,levels,limit,riff,props"
+                 "pages|fill,randsteps,extra,chanmisc,chanenv" "windows|mixer,autolfo,plugin,rack")
+      string(REPLACE "|" ";" part "${part}")
+      list(GET part 0 tag)
+      list(GET part 1 only)
+      add_test(NAME knob_drag_${tag}_app
+               COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                       -DOUT=${CMAKE_BINARY_DIR}/knob_drag_${tag}_app "-DONLY=${only}" -P ${CMAKE_SOURCE_DIR}/tests/knob_drag_app.cmake
+               WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+      set_tests_properties(knob_drag_${tag}_app PROPERTIES TIMEOUT 1800)
+    endforeach()
 
     # The typing keyboard goes by where keys sit: other layouts play the same notes.
     add_test(NAME typing_key_positions_app

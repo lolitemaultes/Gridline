@@ -103,8 +103,8 @@ plugin is installed, the project opens with it again. The plugin window shows a 
 What is read from Kickstart 2's saved state:
 
 - the loop length (1/8, 1/4, 1/2 or a bar) becomes the Rate;
-- the selected curve is redrawn with Tideline's eight custom points (Shape: Custom). This is an
-  approximation: Kickstart's curve segments are not reproduced exactly;
+- the selected curve is redrawn with Tideline's eight custom points (Shape: Custom), an
+  approximation of the curve the state stores;
 - Mix becomes Amount; the band switch and solo become Band (Lows) and Listen, with the band
   frequency on Tideline's 20 Hz to 5.12 kHz scale (approximate);
 - the one-shot end of the curve becomes One-shot end; trigger smoothing becomes 1 ms Smoothing;

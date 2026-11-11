@@ -16,8 +16,7 @@ Xfer Records and is named only to describe the preset files Plasma can read.
 
 ## Layout
 
-The editor follows the familiar arrangement of this kind of synth, so presets and tutorials made
-for it translate directly:
+The editor has four parts, from top to bottom:
 
 - **Header**: OSC, MIX, FX, MATRIX and GLOBAL pages, the preset name with < > and its menu
   (Init, Factory, your library, Open preset, Browse), author and notes, MENU, undo / redo, the MAIN
@@ -150,7 +149,7 @@ is not installed, Plasma plays it instead:
 - the original plugin and its saved state are kept in the project untouched. When the plugin is
   installed again, the project opens with it, its state and its automation as before. Exporting
   to FL Studio writes the original plugin;
-- the plugin window shows a short note ("Serum 2 is not installed: Plasma plays its sound") with
+- the plugin window shows a short note ("Serum 2 is not installed: opens as Plasma") with
   what is approximated on hover, and **Replace with Plasma** keeps Plasma for good (the missing
   plugin and its saved settings are then removed from the project).
 

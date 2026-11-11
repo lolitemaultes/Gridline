@@ -1180,6 +1180,7 @@ ScanResult clapScan(const std::string& path) {
     auto b = ClapBackend::create(path, c.uid, &perr);
     if (!b) {
       r.error += (r.error.empty() ? "" : "; ") + c.name + ": " + perr;
+      r.failed.push_back({c.uid, c.name, perr});  // K-180: listed as failed on its own
       continue;
     }
     c.eventInput = b->hasEventInput();

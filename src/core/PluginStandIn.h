@@ -103,7 +103,7 @@ bool makeStandIn(const PluginState& orig, const std::string& name, const std::st
 bool isStandIn(const PluginState& s);
 // The original state kept by a stand-in (empty when none).
 PluginState originalState(const PluginState& s);
-// UI text: "Serum 2 is not installed: Plasma plays its sound" ("Not installed:
+// UI text: "Serum 2 is not installed: opens as Plasma" ("Not installed:
 // kHs Compressor, using Gridline Suite Mini Press" for Kilohearts) and the notes.
 std::string describe(const PluginState& s);
 std::vector<std::string> notes(const PluginState& s);

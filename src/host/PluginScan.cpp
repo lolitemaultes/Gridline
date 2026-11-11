@@ -99,6 +99,17 @@ Json toJson(const ScanResult& r) {
     classes.array.push_back(std::move(jc));
   }
   j.object["classes"] = std::move(classes);
+  if (!r.failed.empty()) {
+    Json failed = Json::makeArray();
+    for (const auto& f : r.failed) {
+      Json jf = Json::makeObject();
+      jf.object["uid"] = str(f.uid);
+      jf.object["name"] = str(f.name);
+      jf.object["error"] = str(f.error);
+      failed.array.push_back(std::move(jf));
+    }
+    j.object["failed"] = std::move(failed);
+  }
   return j;
 }
 
@@ -142,6 +153,11 @@ bool fromJson(const Json& j, ScanResult& r) {
           c.params.push_back(std::move(p));
         }
       if (!c.uid.empty() && (r.format != "vst3" || c.uid.size() == 32)) r.classes.push_back(std::move(c));
+    }
+  if (const Json* fs = j.find("failed"); fs && fs->is(Json::Type::Array))
+    for (const auto& jf : fs->array) {
+      ScanFailure f{jf.text("uid"), jf.text("name"), jf.text("error")};
+      if (!f.uid.empty() || !f.name.empty()) r.failed.push_back(std::move(f));
     }
   return !r.bundle.empty();
 }

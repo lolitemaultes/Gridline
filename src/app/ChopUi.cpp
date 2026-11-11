@@ -222,9 +222,10 @@ void drawPlan(App& a, float w, float h) {
 }
 
 // One labelled knob in a row.
-bool knob(const char* id, double* v, const ParamDesc& d, const char* label, bool bipolar, bool last = false) {
+bool knob(const char* id, double* v, const ParamDesc& d, const char* label, bool bipolar, bool last = false, double step = 0) {
   ImGui::BeginGroup();
   bool rel = false;
+  ui::SetNextKnobStep(step);
   ui::Knob(id, v, d, 15.0f, label, bipolar, &rel);
   ImGui::EndGroup();
   if (!last) ImGui::SameLine(0, theme::kS3);
@@ -298,13 +299,13 @@ void stutterControls() {
   ui::BeginSection(i18n::tr("Pitch and speed"));
   {
     double ps = p.pitchStart, pe = p.pitchEnd, ss = p.speedStart * 100.0, se = p.speedEnd * 100.0;
-    knob("pst", &ps, lin(i18n::tr("Pitch from"), "st", -24, 24, 0), i18n::tr("Pitch from"), true);
+    knob("pst", &ps, lin(i18n::tr("Pitch from"), "st", -24, 24, 0), i18n::tr("Pitch from"), true, false, 0.1);
     ui::Hint(i18n::tr("Pitch of the first slice, semitones"));
-    knob("pen", &pe, lin(i18n::tr("Pitch to"), "st", -24, 24, 0), i18n::tr("Pitch to"), true);
+    knob("pen", &pe, lin(i18n::tr("Pitch to"), "st", -24, 24, 0), i18n::tr("Pitch to"), true, false, 0.1);
     ui::Hint(i18n::tr("Pitch of the last slice, semitones (ramped in between)"));
-    knob("sst", &ss, lin(i18n::tr("Speed from"), "%", 10, 200, 100), i18n::tr("Speed from"), false);
+    knob("sst", &ss, lin(i18n::tr("Speed from"), "%", 10, 200, 100), i18n::tr("Speed from"), false, false, 1);
     ui::Hint(i18n::tr("Playback speed at the region start"));
-    knob("sen", &se, lin(i18n::tr("Speed to"), "%", 10, 200, 100), i18n::tr("Speed to"), false, true);
+    knob("sen", &se, lin(i18n::tr("Speed to"), "%", 10, 200, 100), i18n::tr("Speed to"), false, true, 1);
     ui::Hint(i18n::tr("Playback speed at the region end (tape stop: down to 10 %)"));
     p.pitchStart = std::round(ps * 10.0) / 10.0, p.pitchEnd = std::round(pe * 10.0) / 10.0;
     p.speedStart = std::round(ss) / 100.0, p.speedEnd = std::round(se) / 100.0;
@@ -330,14 +331,14 @@ void sliceControls() {
     }
   } else if (q.sliceMode == kEqual) {
     double parts = q.parts;
-    knob("parts", &parts, lin(i18n::tr("Parts"), "", 2, 32, 4), i18n::tr("Parts"), false, true);
+    knob("parts", &parts, lin(i18n::tr("Parts"), "", 2, 32, 4), i18n::tr("Parts"), false, true, 1);
     q.parts = std::clamp(static_cast<int>(std::lround(parts)), 2, 32);
     ImGui::SameLine(0, theme::kS3);
     ImGui::AlignTextToFramePadding();
     ImGui::TextColored(theme::vec(pal().textDim), i18n::tr("%d pieces per clip"), q.parts);
   } else {
     double sens = q.sensitivity * 100.0;
-    knob("sens", &sens, lin(i18n::tr("Sensitivity"), "%", 0, 100, 50), i18n::tr("Sensitivity"), false, true);
+    knob("sens", &sens, lin(i18n::tr("Sensitivity"), "%", 0, 100, 50), i18n::tr("Sensitivity"), false, true, 1);
     ui::Hint(i18n::tr("Higher finds softer attacks"));
     q.sensitivity = std::round(sens) / 100.0;
     ImGui::SameLine(0, theme::kS3);

@@ -267,6 +267,7 @@ static void drawNoteSettings(App& a, ObjectId id) {
   // Tuning & time.
   ImGui::BeginGroup();
   ui::Label("TUNE & TIME");
+  ui::SetNextKnobStep(1);
   knob("fine", c->fine, desc("Fine", "ct", -200, 200, 0), true, [](Channel& ch, double v) { ch.fine = static_cast<int>(std::lround(v)); });
   ImGui::SameLine(0, 0);
   std::snprintf(buf, sizeof buf, "%d%%", static_cast<int>(std::lround(c->swingMix * 100)));
@@ -280,6 +281,7 @@ static void drawNoteSettings(App& a, ObjectId id) {
   ImGui::BeginGroup();
   ui::Label("POLYPHONY");
   std::snprintf(buf, sizeof buf, "%s", c->polyphony == 0 ? "all" : std::to_string(c->polyphony).c_str());
+  ui::SetNextKnobStep(1);
   knob("voices", c->polyphony, desc("Voices", "", 0, 64, 0), false, [](Channel& ch, double v) { ch.polyphony = static_cast<int>(std::lround(v)); }, buf);
   ImGui::SameLine(0, 0);
   std::snprintf(buf, sizeof buf, "%.0f ms", c->portaTime * 1000.0);
@@ -297,10 +299,12 @@ static void drawNoteSettings(App& a, ObjectId id) {
   ImGui::BeginGroup();
   ui::Label("CUT GROUP");
   std::snprintf(buf, sizeof buf, "%s", c->cutGroup ? std::to_string(c->cutGroup).c_str() : "off");
+  ui::SetNextKnobStep(1);
   knob("cut", c->cutGroup, desc("Cuts", "", 0, kMaxCutGroups, 0), false, [](Channel& ch, double v) { ch.cutGroup = static_cast<int>(std::lround(v)); }, buf);
   ui::Hint("Notes of this channel cut channels that are cut by this group");
   ImGui::SameLine(0, 0);
   std::snprintf(buf, sizeof buf, "%s", c->cutBy ? std::to_string(c->cutBy).c_str() : "off");
+  ui::SetNextKnobStep(1);
   knob("cutby", c->cutBy, desc("Cut by", "", 0, kMaxCutGroups, 0), false, [](Channel& ch, double v) { ch.cutBy = static_cast<int>(std::lround(v)); }, buf);
   ui::Hint("This channel is cut by notes of channels in this group (same number in both = cuts itself)");
   ImGui::EndGroup();
@@ -310,6 +314,7 @@ static void drawNoteSettings(App& a, ObjectId id) {
   ImGui::BeginGroup();
   ui::Label("ECHO");
   std::snprintf(buf, sizeof buf, "%s", c->echo.count ? std::to_string(c->echo.count).c_str() : "off");
+  ui::SetNextKnobStep(1);
   knob("ecount", c->echo.count, desc("Echoes", "", 0, 10, 0), false, [](Channel& ch, double v) { ch.echo.count = static_cast<int>(std::lround(v)); }, buf);
   ImGui::SameLine(0, 0);
   std::snprintf(buf, sizeof buf, "%d%%", static_cast<int>(std::lround(c->echo.feedback * 100)));
@@ -320,6 +325,7 @@ static void drawNoteSettings(App& a, ObjectId id) {
   ImGui::SameLine(0, 0);
   knob("epan", c->echo.pan, desc("Pan", "pan", -1, 1, 0), true, [](Channel& ch, double v) { ch.echo.pan = static_cast<float>(v); });
   ImGui::SameLine(0, 0);
+  ui::SetNextKnobStep(1);
   knob("epitch", c->echo.pitch, desc("Pitch", "ct", -1200, 1200, 0), true, [](Channel& ch, double v) { ch.echo.pitch = static_cast<int>(std::lround(v)); });
   ImGui::SameLine(0, 0);
   knob("emodx", c->echo.modX, desc("Mod X per echo", "%", -1, 1, 0), true, [](Channel& ch, double v) { ch.echo.modX = static_cast<float>(v); });

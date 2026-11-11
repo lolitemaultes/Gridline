@@ -63,8 +63,14 @@ std::vector<std::string> allBundles(const std::vector<std::string>& folders);
 // Plugins declared by a bundle's manifest.
 std::vector<std::string> pluginUris(const std::string& bundle, std::string* err = nullptr);
 // Full description of `uri` from `bundle` plus every other bundle on the
-// default paths that adds UIs or presets to it. Cached per URI.
+// LV2 search folders that adds UIs or presets to it. K-180: only the files that
+// describe this plugin are read (each file parsed once and shared by the plugins
+// that use it), and the description is kept while it is in use.
 std::shared_ptr<const PluginDesc> describe(const std::string& bundle, const std::string& uri, std::string* err);
+// K-180: which other bundles mention which plugins is learned once for the search
+// folders; this makes the next description look again (pluginBundles does it).
+void forgetBundleIndex();
+int bundleIndexBuilds();  // how often that was learned (tests)
 // Newest modification time (seconds) of a bundle's files.
 int64_t bundleMtime(const std::string& bundle);
 

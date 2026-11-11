@@ -639,6 +639,7 @@ ScanResult vst2Scan(const std::string& path) {
       auto sb = Vst2Backend::create(path, id, &perr);
       if (!sb) {
         r.error += (r.error.empty() ? "" : "; ") + name + ": " + perr;
+        r.failed.push_back({vst2Type(id).substr(5), name, perr});  // K-180: listed as failed on its own
         continue;
       }
       ScannedClass c;
@@ -647,7 +648,9 @@ ScanResult vst2Scan(const std::string& path) {
       describe(*sb, c, path);
       r.classes.push_back(std::move(c));
       scanProgress();  // K-73: a shell of hundreds takes minutes: the scan's timeout starts again
-      (void)sb.release();  // scanner: never closed
+      // K-180: each sub-plugin is closed once described (the shell's library stays loaded): kept
+      // open, a shell of hundreds held every one of them, prepared, at once.
+      sb.reset();
     }
   } else {
     ScannedClass c;

@@ -5,7 +5,12 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <algorithm>
+#include <atomic>
+#include <filesystem>
 #include <fstream>
+#include <map>
+#include <mutex>
 #include <sstream>
 
 namespace gl::host::lv2 {
@@ -187,7 +192,9 @@ std::string resolveIri(const std::string& base, const std::string& ref) {
 class Parser {
  public:
   Parser(Model& m, const std::string& text, const std::string& base) : m_(m), s_(text), base_(base) {
-    doc_ = "b" + std::to_string(m.docs_++) + ".";
+    // Unique in the process: documents parsed apart may later be parts of one model (K-180).
+    static std::atomic<unsigned long long> docs{0};
+    doc_ = "b" + std::to_string(docs++) + ".";
   }
 
   bool run(std::string* err) {
@@ -637,23 +644,51 @@ bool Model::loadFile(const std::string& path, std::string* err) {
 bool Model::loaded(const std::string& path) const {
   for (const auto& f : files_)
     if (f == path) return true;
+  for (const auto& part : parts_)
+    if (part->loaded(path)) return true;
   return false;
+}
+
+void Model::include(std::shared_ptr<const Model> part) {
+  if (!part || part.get() == this || includes(part.get())) return;
+  parts_.push_back(std::move(part));
+}
+
+bool Model::includes(const Model* part) const {
+  for (const auto& x : parts_)
+    if (x.get() == part || x->includes(part)) return true;
+  return false;
+}
+
+size_t Model::size() const {
+  size_t n = triples_.size();
+  for (const auto& part : parts_) n += part->size();
+  return n;
+}
+
+const std::vector<size_t>* Model::own(const std::string& s) const {
+  auto it = bySubject_.find(s);
+  return it == bySubject_.end() ? nullptr : &it->second;
 }
 
 std::vector<const Node*> Model::objects(const std::string& s, const std::string& p) const {
   std::vector<const Node*> out;
-  auto it = bySubject_.find(s);
-  if (it == bySubject_.end()) return out;
-  for (size_t i : it->second)
-    if (triples_[i].p == p) out.push_back(&triples_[i].o);
+  if (const auto* v = own(s))
+    for (size_t i : *v)
+      if (triples_[i].p == p) out.push_back(&triples_[i].o);
+  for (const auto& part : parts_) {
+    std::vector<const Node*> more = part->objects(s, p);
+    out.insert(out.end(), more.begin(), more.end());
+  }
   return out;
 }
 
 const Node* Model::object(const std::string& s, const std::string& p) const {
-  auto it = bySubject_.find(s);
-  if (it == bySubject_.end()) return nullptr;
-  for (size_t i : it->second)
-    if (triples_[i].p == p) return &triples_[i].o;
+  if (const auto* v = own(s))
+    for (size_t i : *v)
+      if (triples_[i].p == p) return &triples_[i].o;
+  for (const auto& part : parts_)
+    if (const Node* n = part->object(s, p)) return n;
   return nullptr;
 }
 
@@ -663,31 +698,75 @@ std::string Model::text(const std::string& s, const std::string& p) const {
 }
 
 bool Model::has(const std::string& s, const std::string& p, const std::string& oIri) const {
-  auto it = bySubject_.find(s);
-  if (it == bySubject_.end()) return false;
-  for (size_t i : it->second)
-    if (triples_[i].p == p && triples_[i].o.kind == Node::Iri && triples_[i].o.value == oIri) return true;
+  if (const auto* v = own(s))
+    for (size_t i : *v)
+      if (triples_[i].p == p && triples_[i].o.kind == Node::Iri && triples_[i].o.value == oIri) return true;
+  for (const auto& part : parts_)
+    if (part->has(s, p, oIri)) return true;
   return false;
 }
 
 std::vector<std::string> Model::subjects(const std::string& p, const std::string& oIri) const {
   std::vector<std::string> out;
-  for (const auto& t : triples_)
+  forEach([&](const Triple& t) {
     if (t.p == p && t.o.kind == Node::Iri && t.o.value == oIri) {
       std::string k = t.s.key();
-      bool dup = false;
-      for (const auto& x : out) dup = dup || x == k;
-      if (!dup) out.push_back(std::move(k));
+      if (std::find(out.begin(), out.end(), k) == out.end()) out.push_back(std::move(k));
     }
+  });
   return out;
 }
 
 std::vector<const Triple*> Model::about(const std::string& s) const {
   std::vector<const Triple*> out;
-  auto it = bySubject_.find(s);
-  if (it != bySubject_.end())
-    for (size_t i : it->second) out.push_back(&triples_[i]);
+  if (const auto* v = own(s))
+    for (size_t i : *v) out.push_back(&triples_[i]);
+  for (const auto& part : parts_) {
+    std::vector<const Triple*> more = part->about(s);
+    out.insert(out.end(), more.begin(), more.end());
+  }
   return out;
+}
+
+// ---------------------------------------------------------------- shared files
+
+std::shared_ptr<const Model> sharedFile(const std::string& path, std::string* err) {
+  struct Entry {
+    std::weak_ptr<const Model> model;
+    std::filesystem::file_time_type time;
+    std::uintmax_t size = 0;
+    std::string error;  // the parse error of a file that loaded in part
+  };
+  static std::mutex lock;
+  static auto* files = new std::map<std::string, Entry>;  // never destroyed (used until the process ends)
+  std::error_code ec;
+  const auto time = std::filesystem::last_write_time(path, ec);
+  const std::uintmax_t size = ec ? 0 : std::filesystem::file_size(path, ec);
+  if (ec) {
+    if (err) *err = "cannot read " + path;
+    return nullptr;
+  }
+  std::lock_guard<std::mutex> g(lock);
+  // Forget entries nobody uses any more (the map stays as small as what is in use).
+  for (auto it = files->begin(); it != files->end();) it = it->second.model.expired() && it->first != path ? files->erase(it) : std::next(it);
+  Entry& e = (*files)[path];
+  if (auto m = e.model.lock(); m && e.time == time && e.size == size) {
+    if (err && !e.error.empty()) *err = e.error;
+    return m;
+  }
+  auto m = std::make_shared<Model>();
+  std::string pe;
+  if (!m->loadFile(path, &pe) && m->triples().empty() && pe.rfind("cannot read", 0) == 0) {
+    if (err) *err = pe;
+    files->erase(path);
+    return nullptr;
+  }
+  e.model = m;
+  e.time = time;
+  e.size = size;
+  e.error = pe;
+  if (err && !pe.empty()) *err = pe;
+  return m;
 }
 
 }  // namespace gl::host::lv2

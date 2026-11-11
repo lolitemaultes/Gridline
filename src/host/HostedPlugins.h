@@ -205,6 +205,9 @@ struct CacheEntry {
   std::string format, entry, error;
   bool ok = false;
   int classes = 0;
+  // K-180: one plugin of an entry that loaded (a bundle of many) that did not: its name, listed as
+  // failed (ok false) on its own row. "" for a row about the whole entry.
+  std::string plugin;
 };
 std::vector<CacheEntry> cacheEntries();
 // K-150: the longest time scanStatus() / cacheEntries() waited for the scan's status lock (seconds)

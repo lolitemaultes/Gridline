@@ -653,7 +653,7 @@ std::string describe(const PluginState& s) {
   if (f == Family::Kilohearts) return khsLine(o.name.empty() ? pluginNameOf(o.type) : o.name, s.type, "");
   const std::string n = f != Family::None ? familyName(f) : o.name;
   const std::string si = f != Family::None ? standInName(f) : s.type;
-  return n + " is not installed: " + si + " plays its sound";
+  return n + " is not installed: opens as " + si;
 }
 
 std::vector<std::string> notes(const PluginState& s) {
@@ -672,8 +672,8 @@ std::vector<std::string> summary(const Song& song) {
       out.push_back(khsLine(o.name.empty() ? pluginNameOf(o.type) : o.name, p.type, where));
       return;
     }
-    out.push_back(std::string(f != Family::None ? familyName(f) : o.name.c_str()) + (where.empty() ? "" : " (" + where + ")") + " is not installed: " +
-                  (f != Family::None ? standInName(f) : p.type.c_str()) + " plays it");
+    out.push_back(std::string(f != Family::None ? familyName(f) : o.name.c_str()) + (where.empty() ? "" : " (" + where + ")") + " is not installed: opens as " +
+                  (f != Family::None ? standInName(f) : p.type.c_str()));
   };
   for (const auto& c : song.channels) add(c.plugin, c.name);
   for (const auto& m : song.mixer)

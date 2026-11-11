@@ -1552,9 +1552,11 @@ std::unique_lock<std::mutex> lockForRead(Service& s) {
   }
   return g;
 }
+// A failed entry counts once; an entry that loaded counts its plugins that did not (K-180).
+int failedOf(const ScanResult& e) { return e.ok ? static_cast<int>(e.failed.size()) : 1; }
 int countFailed(const ScanCache& c) {
   int n = 0;
-  for (const auto& e : c.entries()) n += e.ok ? 0 : 1;
+  for (const auto& e : c.entries()) n += failedOf(e);
   return n;
 }
 int countClasses() {
@@ -1620,7 +1622,7 @@ void finishEntry(Service& sv, ScanResult r) {
   // cache changes only with writeLock held, so they stay true); under it the entry changes in
   // constant time, and the replaced result is freed after it. The less the scan holds `lock`, the
   // less a busy machine can stop it there while the interface waits.
-  const int failed = countFailed(sv.cache) - (old && !old->ok ? 1 : 0) + (r.ok ? 0 : 1);
+  const int failed = countFailed(sv.cache) - (old ? failedOf(*old) : 0) + failedOf(r);
   {
     std::lock_guard<std::mutex> g(sv.lock);
     if (old) std::swap(*old, r);  // r: the replaced result
@@ -1910,7 +1912,11 @@ std::vector<CacheEntry> cacheEntries() {
   const auto g = lockForRead(s);
   std::vector<CacheEntry> out;
   out.reserve(s.cache.entries().size());
-  for (const auto& e : s.cache.entries()) out.push_back({e.format, e.bundle, e.error, e.ok, static_cast<int>(e.classes.size())});
+  for (const auto& e : s.cache.entries()) {
+    out.push_back({e.format, e.bundle, e.error, e.ok, static_cast<int>(e.classes.size()), {}});
+    if (e.ok)  // K-180: the plugins of the entry that did not load, each on its own
+      for (const auto& f : e.failed) out.push_back({e.format, e.bundle, f.error, false, 0, f.name.empty() ? f.uid : f.name});
+  }
   return out;
 }
 

@@ -190,8 +190,31 @@ void wheelFrameBegin();
 void wheelFrameEnd();
 
 // Free knob over a value with descriptor (no document); returns true while changing.
+// A drag follows the pointer pixel by pixel from where it was grabbed, whatever
+// the caller does with the value between frames (rounds it, stores it in a whole
+// number or a float), so a slow drag always adds up.
 bool Knob(const char* id, double* value, const ParamDesc& d, float radius, const char* label, bool bipolar,
           bool* released = nullptr, const std::function<void()>& extraMenu = nullptr);
+// The step of the next Knob (1: whole numbers): its value lands on min + k * step
+// and a wheel notch moves one step (choice knobs always step by one choice).
+void SetNextKnobStep(double step);
+// The one drag path of every knob (Knob, ParamFader and the editors' own dials):
+// right after the control's item, KnobDragPos(norm) gives where the drag has got
+// to while that item is dragged (normalized, unrounded, from where it was grabbed),
+// else `norm`; KnobDragMove(delta) moves it and returns the new position;
+// KnobDragSet(norm) puts it somewhere else mid-drag (a reset).
+double KnobDragPos(double norm);
+double KnobDragMove(double delta);
+void KnobDragSet(double norm);
+
+// Development check (dev command "knobs"): every Knob and plugin editor
+// parameter control drawn in the last frame, its window, id, value and centre.
+void devKnobsEnable(bool on);
+std::string devKnobReport();
+// A plugin editor control (PluginUI dragParam) for the report.
+void devKnobRecord(const char* kind, const std::string& id, const ParamDesc& d, double value, ImVec2 min, ImVec2 max, double stepNorm = 0);
+// The centre of the control with this item id in the last frame ("atknob"), and its window.
+bool devKnobCentre(unsigned item, ImVec2& out, std::string* window = nullptr);
 
 // ---- J-136: reset and type-in, the same on every parameter knob and slider ----
 // Double-click: back to the default when the value differs from it (one undo

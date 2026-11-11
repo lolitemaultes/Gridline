@@ -938,12 +938,20 @@ void pluginTable(App& a, Model& md, host::PluginPrefs& prefs, bool& changed, ImV
   ImGui::PopStyleColor(5);
 }
 
+// A failed row's key ("<format>\n<entry>", "\n<plugin>" for one plugin of an entry, K-180) and the
+// name it shows (the plugin, or the entry's file name).
+std::string failKey(const host::CacheEntry& e) { return e.format + "\n" + e.entry + (e.plugin.empty() ? "" : "\n" + e.plugin); }
+std::string failName(const host::CacheEntry& e) {
+  if (!e.plugin.empty()) return e.plugin;
+  return e.format == "au" ? e.entry : fs::path(e.entry).stem().string();
+}
+
 // Failed plugins whose file name looks like this plugin (another format of it).
 std::vector<const host::CacheEntry*> failedFor(const Model& md, const host::PluginGroup& g) {
   std::vector<const host::CacheEntry*> out;
   const std::string key = host::groupNameKey(g.name);
   for (const auto& e : md.failed)
-    if (host::groupNameKey(fs::path(e.entry).stem().string()) == key) out.push_back(&e);
+    if (host::groupNameKey(e.plugin.empty() ? fs::path(e.entry).stem().string() : e.plugin) == key) out.push_back(&e);
   return out;
 }
 
@@ -1163,14 +1171,14 @@ void failedDetails(App& a, const Model& md) {
   const float w = ImGui::GetContentRegionAvail().x;
   const host::CacheEntry* e = nullptr;
   for (const auto& f : md.failed)
-    if (f.format + "\n" + f.entry == ms.selectedFail) e = &f;
+    if (failKey(f) == ms.selectedFail) e = &f;
   if (!e) {
     const ImVec2 p = ImGui::GetCursorScreenPos(), sz = ImGui::GetContentRegionAvail();
     ui::EmptyState(dl, p, ImVec2(p.x + sz.x, p.y + sz.y), "Failed plugins", "Nothing failed to scan.");
     return;
   }
   const ImVec2 p = ImGui::GetCursorScreenPos();
-  const std::string name = e->format == "au" ? e->entry : fs::path(e->entry).stem().string();
+  const std::string name = failName(*e);
   text(dl, a.fontBold, theme::kFontTitle, p, P.text, name.c_str(), w);
   ImGui::Dummy(ImVec2(w, 22));
   const ImVec2 q = ImGui::GetCursorScreenPos();
@@ -1205,7 +1213,9 @@ void failedTable(App& a, Model& md, ImVec2 size) {
   const std::string q = lower(ms.search);
   std::vector<const host::CacheEntry*> rows;
   for (const auto& e : md.failed)
-    if (q.empty() || lower(e.entry).find(q) != std::string::npos || lower(e.error).find(q) != std::string::npos) rows.push_back(&e);
+    if (q.empty() || lower(e.entry).find(q) != std::string::npos || lower(e.error).find(q) != std::string::npos ||
+        lower(e.plugin).find(q) != std::string::npos)
+      rows.push_back(&e);
   if (rows.empty()) {
     const ImVec2 p = ImGui::GetCursorScreenPos();
     ImGui::GetWindowDrawList()->AddRectFilled(p, ImVec2(p.x + size.x, p.y + size.y), C.panel, theme::kRadiusLg);
@@ -1229,7 +1239,7 @@ void failedTable(App& a, Model& md, ImVec2 size) {
     ImGui::TableSetupColumn("##retry", ImGuiTableColumnFlags_WidthFixed, ui::TextButtonWidth("Retry"));
     headersRow(3);
     for (const host::CacheEntry* e : rows) {
-      const std::string id = e->format + "\n" + e->entry;
+      const std::string id = failKey(*e);
       ImGui::TableNextRow(ImGuiTableRowFlags_None, rowH);
       ImGui::PushID(id.c_str());
       ImGui::TableSetColumnIndex(0);
@@ -1252,7 +1262,7 @@ void failedTable(App& a, Model& md, ImVec2 size) {
       ImGui::TableSetColumnIndex(1);
       const ImVec2 p = ImGui::GetCursorScreenPos();
       const float w = ImGui::GetContentRegionAvail().x;
-      const std::string name = e->format == "au" ? e->entry : fs::path(e->entry).stem().string();
+      const std::string name = failName(*e);
       text(dl, a.fontRegular, ImGui::GetFontSize(), ImVec2(p.x, p.y + 5), P.text, name.c_str(), w);
       text(dl, a.fontRegular, theme::kFontLabel, ImVec2(p.x, p.y + 23), P.danger, e->error.empty() ? i18n::tr("Unknown error") : e->error.c_str(), w);
       ImGui::TableSetColumnIndex(2);
@@ -1284,7 +1294,7 @@ void keyboard(Model& md) {
   // Selectable keys of the current view, in row order.
   std::vector<std::string> keys;
   if (ms.view == kFailed) {
-    for (const auto& e : md.failed) keys.push_back(e.format + "\n" + e.entry);
+    for (const auto& e : md.failed) keys.push_back(failKey(e));
   } else {
     for (const Row& r : md.rows)
       if (r.g) keys.push_back(r.key);
@@ -1331,8 +1341,8 @@ void drawPluginManager(App& a) {
     if (!shown) ms.selected = !md.rows.empty() && md.rows.front().g ? md.rows.front().key : std::string();
   } else {
     bool shown = false;
-    for (const auto& e : md.failed) shown = shown || e.format + "\n" + e.entry == ms.selectedFail;
-    if (!shown && !md.failed.empty()) ms.selectedFail = md.failed.front().format + "\n" + md.failed.front().entry;
+    for (const auto& e : md.failed) shown = shown || failKey(e) == ms.selectedFail;
+    if (!shown && !md.failed.empty()) ms.selectedFail = failKey(md.failed.front());
   }
   keyboard(md);
 

@@ -392,7 +392,7 @@ void drawSlice(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1) {
   changed |= fieldKnob(a, "##kfo", ImVec2(x + 3 * kw, y + 6), s.fadeOut, 0, 400, 0, i18n::N_("Fade out"), "%.0f ms", &rel);
   changed |= fieldKnob(a, "##ko", ImVec2(x + 4 * kw, y + 6), off, 0, 90, 0, i18n::N_("Start"), "%.0f%%", &rel);
   changed |= fieldKnob(a, "##kl", ImVec2(x + 5 * kw, y + 6), len, 5, 100, 100, i18n::N_("Length"), "%.0f%%", &rel);
-  changed |= fieldKnob(a, "##kc", ImVec2(x + 6 * kw, y + 6), choke, 0, 8, 0, i18n::N_("Choke"), "%.0f", &rel);
+  changed |= fieldKnob(a, "##kc", ImVec2(x + 6 * kw, y + 6), choke, 0, 8, 0, i18n::N_("Choke"), "%.0f", &rel, false, 1);
   s.offset = off / 100, s.length = len / 100, s.choke = static_cast<int>(std::lround(choke));
   if (button("##krev", ImVec2(x + 7 * kw + 4, y + 14), ImVec2(70, 28), i18n::N_("Reverse"), s.reverse, i18n::N_("Play this slice backwards"))) {
     s.reverse = !s.reverse;
