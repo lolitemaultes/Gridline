@@ -65,7 +65,13 @@ jobs:
           echo "builds=$b" >> "$GITHUB_OUTPUT"
       - name: Tools
         run: |
-          sudo apt-get update -q && sudo apt-get install -y -q desktop-file-utils libxml2-utils
+          # (a few tries a little apart: the package mirrors are now and then unreachable from a runner for a while)
+          for n in 1 2 3 4; do
+            sudo apt-get update -q -o Acquire::Retries=3 || true
+            sudo apt-get install -y -q -o Acquire::Retries=3 desktop-file-utils libxml2-utils && break
+            [ "$n" = 4 ] && exit 1
+            echo "apt failed; trying again in $((n * 30)) s"; sleep $((n * 30))
+          done
           python3 -m pip install --quiet --user pyyaml jsonschema
       - name: Schemas
         run: |

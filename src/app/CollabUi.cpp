@@ -158,6 +158,8 @@ struct Ui {
   };
   std::map<SiteId, Shown> shownCursors;
   double cursorsAt = -1;
+  double cursorClock = 0;      // the cursors' own time: wall time, but a frame counts at most 0.1 s (as their fades do),
+                               // so a stalled frame does not age a cursor into its idle dim or past its hold
   float pointerH = 0;          // J-111g: the system pointer arrow's height, logical units (setPointerSize)
   std::string pointerSource;
   // J-111g: avatars drawn as pictures this frame (dev reports): hash -> centre and radius of the largest
@@ -4229,6 +4231,7 @@ void drawCursors(App& a) {
   }
   const double dt = u.cursorsAt < 0 ? 0.0 : std::clamp(u.now - u.cursorsAt, 0.0, 0.1);
   u.cursorsAt = u.now;
+  u.cursorClock += dt;
   // Presence arrives up to 20 times a second: the drawn cursor eases towards it so it
   // glides. J-111g: it fades out only once its spot has stayed hidden here for a
   // moment (a gap between windows, a title bar, a window edge do not blink it), and
@@ -4288,7 +4291,7 @@ void drawCursors(App& a) {
     }
     if (!sameSpot(pr, sc.last)) {
       sc.last = pr;
-      sc.movedAt = u.now;
+      sc.movedAt = u.cursorClock;
     }
     if (want) {
       const float dx = target.x - sc.pos.x, dy = target.y - sc.pos.y;
@@ -4318,9 +4321,9 @@ void drawCursors(App& a) {
       sc.vis = std::min(1.0f, sc.vis + (sc.crossing ? cross : fade));
       if (sc.vis >= 1.0f) sc.crossing = false;
     } else {
-      if (sc.hiddenSince < 0) sc.hiddenSince = u.now;
-      sc.longestHidden = std::max(sc.longestHidden, live ? u.now - sc.hiddenSince : 1e9);  // (dev trace; offline: no hold)
-      const bool hold = live && u.now - sc.hiddenSince < kCursorHoldSec;  // a moment away: it stays where it was
+      if (sc.hiddenSince < 0) sc.hiddenSince = u.cursorClock;
+      sc.longestHidden = std::max(sc.longestHidden, live ? u.cursorClock - sc.hiddenSince : 1e9);  // (dev trace; offline: no hold)
+      const bool hold = live && u.cursorClock - sc.hiddenSince < kCursorHoldSec;  // a moment away: it stays where it was
       if (!hold) sc.vis = std::max(0.0f, sc.vis - fade);
       sc.holding = hold && sc.vis > 0;
     }
@@ -4330,7 +4333,7 @@ void drawCursors(App& a) {
     sc.want = want;
     sc.why = why;
     // idle: full for 4 s after the last move, then down to 60% over a second
-    const float idle = static_cast<float>(u.now - sc.movedAt);
+    const float idle = static_cast<float>(u.cursorClock - sc.movedAt);
     sc.idle = idle < 4.0f ? 1.0f : std::max(0.6f, 1.0f - (idle - 4.0f) * 0.4f);
     if (sc.vis <= 0 && sc.ghostVis <= 0) {
       sc.occluded = false;

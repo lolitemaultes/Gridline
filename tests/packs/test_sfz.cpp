@@ -403,6 +403,18 @@ void testFilters() {
     else std::printf("# filter %s\n", t);
   }
   expect(ok == total, "filter: every filter type shapes the sound");
+  {  // an instrument rewritten within one tick of a coarse file clock (the same file time) loads again
+    auto lo = play("f9.sfz", "<region> sample=noise.wav cutoff=500 fil_type=lpf_2p");
+    std::error_code ec;
+    const auto t = std::filesystem::last_write_time(dir() / "f9.sfz", ec);
+    const std::string p = sfzFile("f9.sfz", "<region> sample=noise.wav cutoff=500 fil_type=hpf_2p");  // (same size)
+    std::filesystem::last_write_time(dir() / "f9.sfz", t, ec);
+    Rig hi(p);
+    hi.run(256);
+    hi.on(60, 1.f);
+    hi.run(22050);
+    expect(!ec && brightness(hi.L, 2000, 20000) > 2 * brightness(lo.L, 2000, 20000), "filter: an edit with the same file time loads again");
+  }
   // second filter, cutoff CC, keytrack, veltrack
   auto f2 = play("f4.sfz", "<region> sample=noise.wav cutoff2=300 fil2_type=lpf_2p");
   expect(brightness(f2.L, 2000, 20000) < 0.6 * b0, "filter: cutoff2 / fil2_type");

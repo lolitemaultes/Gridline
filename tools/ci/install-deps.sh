@@ -5,11 +5,23 @@
 # workflows; also a reference for building by hand.
 #   tools/ci/install-deps.sh <apt|dnf|pacman|zypper|apk|brew|freebsd|openbsd|netbsd>
 set -eu
+# apt: a runner whose package mirrors are briefly unreachable (a name that does not resolve, a dropped
+# connection) gets a few more tries, a little apart, with the indexes read again before each.
+apt_retry() {
+  n=1
+  until "$@"; do
+    [ "$n" -ge 4 ] && return 1
+    echo "install-deps: '$*' failed; trying again in $((n * 30)) s" >&2
+    sleep $((n * 30))
+    n=$((n + 1))
+    apt-get update -q -o Acquire::Retries=3 || true
+  done
+}
 case "${1:?platform}" in
   apt)
     export DEBIAN_FRONTEND=noninteractive
-    apt-get update -q
-    apt-get install -y -q --no-install-recommends build-essential cmake ninja-build pkg-config git ca-certificates \
+    apt-get update -q -o Acquire::Retries=3 || true
+    apt_retry apt-get install -y -q -o Acquire::Retries=3 --no-install-recommends build-essential cmake ninja-build pkg-config git ca-certificates \
       libsdl2-dev libgl-dev libx11-dev libasound2-dev libjack-jackd2-dev libgl1-mesa-dri xvfb xauth x11-utils desktop-file-utils file python3
     # Debian 11's CMake (3.18) builds Gridline, but the app tests read JSON with CMake 3.19 or later:
     # there Kitware's official CMake goes to /usr/local (checked against its SHA-256).

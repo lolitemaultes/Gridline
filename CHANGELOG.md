@@ -52,6 +52,9 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 
 ### Fixed
 
+- **Collaboration works on OpenBSD.** Invites made there had no public address, so nobody outside the local network could join: Gridline's network port could not reach IPv4 addresses, which is how home connections and address lookup servers are reached. It now uses IPv4 there.
+- **An SFZ instrument edited twice in quick succession plays the latest edit.** On file systems that keep file times to the second, a second save within that second went unnoticed and the instrument kept playing the earlier version. The file's size and contents now count too.
+- **Collaborators' cursors no longer dim during a long pause in drawing.** A cursor dims after a few seconds without moving; a frame that took seconds to draw (a slow computer, a busy moment) counted as that time and dimmed a cursor that had just moved.
 - **MIDI export of a later part of the song starts in the right meter.** Exporting a range that begins after a time signature change wrote the song's first meter at its start; it now writes the meter in force there.
 - **A stuck MIDI system no longer stops Gridline.** When the computer's MIDI service hangs or refuses to start, Gridline used to freeze at startup or quit. It now starts as usual without MIDI devices, and audio, projects and everything else work. **Settings > MIDI** says what happened, Gridline tries again on its own, and **Retry now** asks again at once; your devices open as soon as the service answers. See [docs/midi-devices.md](docs/midi-devices.md).
 - **Shared projects keep "Swing piano roll notes".** Switching it on or off now reaches everyone in a collaborative project.

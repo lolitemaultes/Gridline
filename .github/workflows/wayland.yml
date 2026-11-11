@@ -66,8 +66,9 @@ jobs:
       - run: tar -xf build.tar && rm build.tar
       - name: ctest -L gui on Weston (${{ matrix.mode }})
         run: |
-          # Shard 1: the slowest tests (k147_plugin_fit_app alone is about 24 min); shard 2: the rest.
-          slow='^(k147_plugin_fit_app|editor_layout_audit|k40_crest_layout_app|k145_live_wave|j103_clean_exit|k48_tap_tempo_app|k38_export_app)$'
+          # Shard 1: the slowest tests (k147_plugin_fit_app alone is about 24 min, k164_plasma_editor about 30);
+          # shard 2: the rest (about 130 tests, which with four at a time ran past the job's limit before).
+          slow='^(k147_plugin_fit_app|editor_layout_audit|k40_crest_layout_app|k145_live_wave|j103_clean_exit|k48_tap_tempo_app|k38_export_app|k164_plasma_editor|k164_plasma_theme_app)$'
           if [ "${{ matrix.shard }}" = 1 ]; then sel="-R $slow"; else sel="-E $slow"; fi
           # Weston in a window of a private Xvfb: its seat has a keyboard and a pointer, as a desktop's has
           # (the headless backend has none). Native mode still hands the tests no DISPLAY.

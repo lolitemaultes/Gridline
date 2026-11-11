@@ -7,6 +7,7 @@
 #include "../../engine/pitch/Kernel.h"
 #include <atomic>
 #include <filesystem>
+#include <fstream>
 #include "../../core/SfzMap.h"
 #include "sfz_fx.h"
 #include "../../engine/RegionActivity.h"
@@ -62,11 +63,29 @@ struct RecentCache {
   }
 };
 
-// K-144: the file time of an .sfz, so an instrument edited on disk loads again.
+// K-144: the file time of an .sfz, so an instrument edited on disk loads again. Its size and (up to
+// 256 KB) a hash of its text too: a file system that keeps times to the second (or two) shows two
+// writes within that time as one, and the second edit would play the instrument as it was.
 std::string sfzStamp(const std::string& path) {
   std::error_code ec;
-  const auto t = std::filesystem::last_write_time(std::filesystem::u8path(path), ec);
-  return ec ? std::string("-") : std::to_string(static_cast<long long>(t.time_since_epoch().count()));
+  const std::filesystem::path fp = std::filesystem::u8path(path);
+  const auto t = std::filesystem::last_write_time(fp, ec);
+  if (ec) return "-";
+  const auto size = std::filesystem::file_size(fp, ec);
+  std::string stamp = std::to_string(static_cast<long long>(t.time_since_epoch().count()));
+  if (ec) return stamp;
+  stamp += " " + std::to_string(static_cast<unsigned long long>(size));
+  if (size <= 256 * 1024) {
+    std::ifstream in(fp, std::ios::binary);
+    uint64_t h = 1469598103934665603ull;  // FNV-1a
+    char buf[4096];
+    while (in.read(buf, sizeof buf) || in.gcount() > 0) {
+      for (std::streamsize i = 0; i < in.gcount(); ++i) h = (h ^ static_cast<unsigned char>(buf[i])) * 1099511628211ull;
+      if (!in) break;
+    }
+    stamp += " " + std::to_string(static_cast<unsigned long long>(h));
+  }
+  return stamp;
 }
 
 std::shared_ptr<const MsRuntime> buildMsRuntime(const std::string& data, int set) {

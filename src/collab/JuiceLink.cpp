@@ -220,6 +220,12 @@ class JuiceEndpoint : public Endpoint {
     juice_config_t c;
     std::memset(&c, 0, sizeof c);
     c.concurrency_mode = JUICE_CONCURRENCY_MODE_POLL;
+#if defined(__OpenBSD__) || defined(__DragonFly__)
+    // These systems have no dual-stack sockets: the IPv6 socket the agent opens by default
+    // can never send to an IPv4 address, so it would reach no STUN server and no IPv4 peer
+    // (no public address in an invite). IPv4 is what home connections and STUN servers have.
+    c.bind_address = "0.0.0.0";
+#endif
     if (useFallback_) {
       c.stun_server_host = settings_.stunFallbackHost.c_str();
       c.stun_server_port = settings_.stunFallbackPort;

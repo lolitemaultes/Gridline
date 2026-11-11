@@ -76,13 +76,15 @@ message(STATUS "ok - quitting during a render ends the app")
 
 # 5: the freeze watchdog (its report goes away when the interface comes back; its log line stays).
 # The render's own instance of the plugin takes longer to load than the watchdog allows a silent frame.
-set(ENV{GRIDLINE_CRASH_TEST_FREEZE_SECONDS} "3")
+# (10 s, not less: on a shared CI runner with software OpenGL an ordinary frame now and then takes
+# 3 to 4 s, which a shorter limit would report as a freeze of its own.)
+set(ENV{GRIDLINE_CRASH_TEST_FREEZE_SECONDS} "10")
 # The user's "log to file" switch, so the test can read what the watchdog said.
 set(appHome "${OUT}/home")
 file(READ "${appHome}/gridline/settings.json" settings)
 string(REPLACE "\"debug.logToFile\": false" "\"debug.logToFile\": true" settings "${settings}")
 file(WRITE "${appHome}/gridline/settings.json" "${settings}")
-set(ENV{GRIDLINE_TEST_SLOW_NEXT_INSTANCE_MS} "7000")
+set(ENV{GRIDLINE_TEST_SLOW_NEXT_INSTANCE_MS} "14000")
 function(app_log outVar)
   set(text "")
   if(EXISTS "${appHome}/gridline/gridline.log")
@@ -119,7 +121,7 @@ message(STATUS "ok - and when leaving the app during the render")
 # The control, which proves the checks above can fail: the interface itself stalls while a render
 # is under way, and the watchdog says so.
 unset(ENV{GRIDLINE_TEST_SLOW_NEXT_INSTANCE_MS})
-set(ENV{GRIDLINE_CRASH_TEST_FORCE} "stall:6@24")
+set(ENV{GRIDLINE_CRASH_TEST_FORCE} "stall:14@24")
 run(stall "${prep}20 exportstart 1 \"${OUT}/stall\"\n21 export\n400 waitfor render-finished 120\n402 export\n410 quit discard\n")
 unset(ENV{GRIDLINE_CRASH_TEST_FORCE})
 unset(ENV{GRIDLINE_CRASH_TEST_FREEZE_SECONDS})

@@ -27,7 +27,9 @@ function(knob_run tag script)
   set(ENV{GRIDLINE_NO_PLUGIN_SCAN} "1")
   set(ENV{GRIDLINE_HIDE_PLUGINS} "all")
   file(WRITE "${OUT}/${tag}.txt" "${script}")
-  execute_process(COMMAND "${APP}" "${SONG}" --hidden --no-ui-sounds --fixed-dt 16 --size 1440x900 ${ARGN} --dev-input "${OUT}/${tag}.txt"
+  # (--no-draw: the checks read the knob reports, not pixels; a software OpenGL spends most of a frame drawing,
+  # which made a long sweep run out of time on a slow runner)
+  execute_process(COMMAND "${APP}" "${SONG}" --hidden --no-ui-sounds --no-draw --fixed-dt 16 --size 1440x900 ${ARGN} --dev-input "${OUT}/${tag}.txt"
                   RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 600)
   file(WRITE "${OUT}/${tag}.log" "${out}\n${err}")
   if(NOT rc EQUAL 0)
