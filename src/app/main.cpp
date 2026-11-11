@@ -36,6 +36,9 @@
 #include <csignal>
 #include <exception>
 #endif
+#if !defined(_WIN32)
+#include <signal.h>  // (sigaction: SIGPIPE)
+#endif
 #include "../engine/ChannelIns.h"
 #include "../engine/Sample.h"
 #include "../engine/TimeStretch.h"
@@ -2125,6 +2128,18 @@ InstancePlan planInstance(int argc, char** argv, bool hiddenRun) {
 
 int main(int argc, char** argv) {
   devInstallBacktrace();
+#if !defined(_WIN32)
+  // Output into a pipe whose reader has gone (gridline-app | less, then q; a launcher that
+  // stopped reading) must not kill Gridline with SIGPIPE: the write just fails. A handler, not
+  // SIG_IGN, so programs Gridline starts get the usual SIGPIPE back.
+  {
+    struct sigaction sa {};
+    sa.sa_handler = [](int) {};
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART;
+    sigaction(SIGPIPE, &sa, nullptr);
+  }
+#endif
 #if defined(_WIN32)
   // A GUI program has no console: --version / --help / errors go to the one it was started from.
   if (AttachConsole(ATTACH_PARENT_PROCESS)) {

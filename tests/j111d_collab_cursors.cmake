@@ -321,7 +321,9 @@ endif()
 pixelCheck("behind a modal" "${D}/modal.json" "${D}/modal-pixel.json" 0 OFF)
 
 # ---- 2: two windows of other sizes and scales, real ICE ----
-# (Sam quits last: Alex's output goes into Sam's input, the pipeline execute_process makes)
+# (Alex's output goes into Sam's input, the pipeline execute_process makes. Either may quit first:
+# on a slow runner each side's waits stretch differently, and Sam used to quit first there; Alex's
+# last output then went into a closed pipe, SIGPIPE killed it, and "cmake -E env" reported 1.)
 set(A "5 collab profile Alex
 6 collab picture #C83CA0
 10 collab new \"${OUT}/Alex/Song\"
@@ -375,11 +377,30 @@ execute_process(
   RESULTS_VARIABLE rcs OUTPUT_FILE "${OUT}/pair.out" ERROR_FILE "${OUT}/pair.err" TIMEOUT 400)
 message(STATUS "two windows: exit codes ${rcs}")
 file(READ "${OUT}/pair.out" log)
+# On a failure, what both sides said last: Sam's output (pair.out; Alex's went into Sam's input)
+# and both sides' errors (pair.err), so a CI log explains itself.
+function(pairTails)
+  foreach(f pair.out pair.err)
+    set(t "")
+    if(EXISTS "${OUT}/${f}")
+      file(STRINGS "${OUT}/${f}" lines)
+      list(LENGTH lines n)
+      if(n GREATER 60)
+        math(EXPR from "${n} - 60")
+        list(SUBLIST lines ${from} 60 lines)
+      endif()
+      list(JOIN lines "\n" t)
+    endif()
+    message(STATUS "---- last lines of ${f}:\n${t}")
+  endforeach()
+endfunction()
 if(log MATCHES "waitfor collab[^\n]*timed out")
-  message(FATAL_ERROR "FAIL (two windows): a waitfor timed out:\n${log}")
+  pairTails()
+  message(FATAL_ERROR "FAIL (two windows): a waitfor timed out")
 endif()
 if(NOT rcs STREQUAL "0;0")
-  message(FATAL_ERROR "FAIL (two windows): exit codes ${rcs}")
+  pairTails()
+  message(FATAL_ERROR "FAIL (two windows): exit codes ${rcs} (Alex;Sam)")
 endif()
 # the playlist: the same track and time, the same height in the track
 readMe("${OUT}/a-playlist.json" M)

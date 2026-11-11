@@ -52,6 +52,7 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 
 ### Fixed
 
+- **Gridline keeps running when the program reading its output stops** (started from a terminal into a pager that was closed, or from a launcher that stopped listening). It used to end at its next message.
 - **Collaboration works on OpenBSD.** Invites made there had no public address, so nobody outside the local network could join: Gridline's network port could not reach IPv4 addresses, which is how home connections and address lookup servers are reached. It now uses IPv4 there.
 - **An SFZ instrument edited twice in quick succession plays the latest edit.** On file systems that keep file times to the second, a second save within that second went unnoticed and the instrument kept playing the earlier version. The file's size and contents now count too.
 - **Collaborators' cursors no longer dim during a long pause in drawing.** A cursor dims after a few seconds without moving; a frame that took seconds to draw (a slow computer, a busy moment) counted as that time and dimmed a cursor that had just moved.
