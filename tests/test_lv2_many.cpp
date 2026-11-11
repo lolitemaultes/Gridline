@@ -193,17 +193,22 @@ void testScanChild(const std::string& dir, const std::string& small, int smallCo
 // description read none of the plugin's own files there.
 void testWindowsPaths() {
   namespace l = host::lv2;
-  const std::string bundle = "C:\\Users\\Ann\\AppData\\Roaming\\LV2\\Many Big.lv2";
+  const std::string bundle = "C:\\Users\\me\\AppData\\Roaming\\LV2\\Many Big.lv2";
   std::string p;
-  const std::string uri = l::resolveIri("file:///C:/Users/Ann/AppData/Roaming/LV2/Many%20Big.lv2/manifest.ttl", "p0.ttl");
+  const std::string uri = l::resolveIri("file:///C:/Users/me/AppData/Roaming/LV2/Many%20Big.lv2/manifest.ttl", "p0.ttl");
   expect(l::uriToPath(uri, p) && l::pathInside(p, bundle, true), "windows: a file URI's path is inside the bundle spelt with '\\'");
-  expect(l::pathKey(bundle + "\\", true) == "c:/users/ann/appdata/roaming/lv2/many big.lv2" && l::pathKey("/C:/Users/Ann", true) == "c:/users/ann",
+  expect(l::pathKey(bundle + "\\", true) == "c:/users/me/appdata/roaming/lv2/many big.lv2" && l::pathKey("/C:/Users/me", true) == "c:/users/me",
          "windows: one spelling (separators, trailing '\\', the URI's '/C:', case)");
   expect(l::pathKey("C:\\x\\tmp/lv2\\ManyBig.lv2\\p0.ttl", true) == l::pathKey("c:/X/TMP/lv2/manybig.lv2/P0.TTL", true),
          "windows: mixed separators and case are the same file");
   expect(l::pathInside("C:\\x\\tmp/lv2\\ManyBig.lv2\\p0.ttl", "c:/x/TMP/lv2/manybig.lv2/", true), "windows: mixed spellings inside the bundle");
-  expect(!l::pathInside("C:/Users/Ann/AppData/Roaming/LV2/Many Big.lv2b/p0.ttl", bundle, true), "windows: a bundle with a longer name is not inside");
+  expect(!l::pathInside("C:/Users/me/AppData/Roaming/LV2/Many Big.lv2b/p0.ttl", bundle, true), "windows: a bundle with a longer name is not inside");
   expect(!l::pathInside(bundle, bundle, true), "windows: the bundle itself is not inside it");
+  // The scan service lists a bundle as discovery spells it ('/'); the same bundle spelt as Windows
+  // gives it to the program (backslashes, a temp folder of mixed separators).
+  expect(l::pathKey("C:\\Users\\me\\AppData\\Local\\Temp\\gridline-lv2many-1/lv2\\ManyBig.lv2", true) ==
+             l::pathKey("C:/Users/me/AppData/Local/Temp/gridline-lv2many-1/lv2/ManyBig.lv2", true),
+         "windows: the scan service's spelling of a bundle and the system's are the same");
   expect(l::pathInside("D:/a.ttl", "D:\\", true), "windows: a drive's root folder");
   expect(!l::pathInside("/x/A.lv2/p.ttl", "/x/a.lv2", false) && l::pathInside("/x/a.lv2/p.ttl", "/x/a.lv2/", false),
          "other systems: case counts, a trailing '/' does not");
@@ -234,7 +239,9 @@ void testService(const std::string& dir, const std::string& folder, const std::s
   int classes = -1, failedRows = 0;
   std::string failedName;
   for (const auto& e : host::cacheEntries()) {
-    if (e.entry != big) continue;
+    // The service lists a bundle as discovery spells it ('/' separators); `big` has this system's
+    // own (backslashes on Windows): the same bundle when compared in one spelling.
+    if (host::lv2::pathKey(e.entry) != host::lv2::pathKey(big)) continue;
     if (e.ok) classes = e.classes;
     if (!e.ok && !e.plugin.empty()) ++failedRows, failedName = e.plugin;
   }

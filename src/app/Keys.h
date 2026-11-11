@@ -17,6 +17,10 @@ Key fromImGui(ImGuiKey k);
 void setFocusContext(Context c);
 Context focusContext();
 
+// K-175: the typing keyboard is on (set once a frame): the chords it plays (playsOnTypingKeyboard)
+// do not run their commands, except the one that switches it off.
+void setTypingKeyboard(bool on);
+
 // True when one of the command's chords was pressed this frame with exactly
 // its modifiers (Ctrl also matches Cmd). Never true while text is typed or
 // while the shortcut editor is capturing a chord.

@@ -529,6 +529,26 @@ std::vector<int> TypingKeyboard::keyUp(int key) {
   return v;
 }
 
+std::vector<int> TypingKeyboard::press(int position, bool repeat) {
+  const int key = keyAtPosition(position);
+  if (key == 0 || repeat || !down_.insert(position).second || settling_) return {};
+  const int before = octave;
+  std::vector<int> on = keyDown(key);
+  if (octave != before) ++octaveSteps_;
+  return on;
+}
+
+std::vector<int> TypingKeyboard::release(int position) {
+  down_.erase(position);
+  const int key = keyAtPosition(position);
+  return key ? keyUp(key) : std::vector<int>{};
+}
+
+std::vector<int> TypingKeyboard::releaseAllKeys() {
+  down_.clear();
+  return releaseAll();
+}
+
 std::vector<int> TypingKeyboard::releaseAll() {
   std::vector<int> v;
   for (const auto& [k, n] : held_) v.insert(v.end(), n.begin(), n.end());

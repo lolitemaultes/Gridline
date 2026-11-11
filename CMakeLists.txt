@@ -420,6 +420,10 @@ add_executable(gridline_tests_midi_workflow tests/test_midi_workflow.cpp)
 target_link_libraries(gridline_tests_midi_workflow PRIVATE gridline_core)
 target_compile_options(gridline_tests_midi_workflow PRIVATE ${GL_WARN})
 add_test(NAME midi_workflow COMMAND gridline_tests_midi_workflow WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+add_executable(gridline_tests_typing_octave tests/test_typing_octave.cpp)
+target_link_libraries(gridline_tests_typing_octave PRIVATE gridline_core)
+target_compile_options(gridline_tests_typing_octave PRIVATE ${GL_WARN})
+add_test(NAME typing_octave COMMAND gridline_tests_typing_octave WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 add_executable(gridline_tests_pdc tests/test_pdc.cpp)
 target_link_libraries(gridline_tests_pdc PRIVATE gridline_core)
 target_compile_options(gridline_tests_pdc PRIVATE ${GL_WARN})
@@ -2135,6 +2139,12 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -DOUT=${CMAKE_BINARY_DIR}/typing_layout_app -P ${CMAKE_SOURCE_DIR}/tests/typing_layout_app.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(typing_layout_app PROPERTIES TIMEOUT 300)
+    # The typing keyboard keeps its octave over a long random session of real key events.
+    add_test(NAME typing_octave_session_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/typing_octave_session_app -P ${CMAKE_SOURCE_DIR}/tests/typing_octave_session_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(typing_octave_session_app PROPERTIES TIMEOUT 900)
 
     # A click on an off-grid clip or note changes nothing; a drag moves it by whole grid steps, keeping its offset.
     add_test(NAME drag_keeps_offset_app

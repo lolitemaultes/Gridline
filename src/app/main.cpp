@@ -727,7 +727,7 @@ void releaseTypedNotes(App& app, std::map<SDL_Scancode, HeldNote>& held) {
       app.engine.noteOff(h.channel, p);
       app.playedNoteOff(h.channel, p);
     }
-  for (int p : app.typing.releaseAll()) {  // (keys not in `held`)
+  for (int p : app.typing.releaseAllKeys()) {  // (keys not in `held`; K-175: every key counts as up)
     app.engine.noteOff(app.selChannel, p);
     app.playedNoteOff(app.selChannel, p);
   }
@@ -755,7 +755,7 @@ void releaseTypedNotes(App& app, std::map<SDL_Scancode, HeldNote>& held) {
 //   Close project); signals launcher-shown / launcher-hidden
 //   quit [discard] (J-103: an SDL_QUIT, the normal quit path: unsaved-changes guard, teardown, settings saved;
 //   "discard" drops unsaved changes first, as the prompt's "Don't save")
-//   J-109: sdlkey <key>[@<position>] down|up [ctrl|super] · focuslost · typing on|off|show · K-113: typing layout <id> · typing labels · noteon|noteoff <channel index> <pitch> ·
+//   J-109: sdlkey <key>[@<position>] down|up [ctrl|super] (K-175: #<scan code> for <key>, "repeat" among the mods: a key repeat) · focuslost · typing on|off|show · K-175: typing octave · K-113: typing layout <id> · typing labels · noteon|noteoff <channel index> <pitch> ·
 //   previewfile <wav> · sound (output peak since the last "sound", live notes held, preview, panics, playing);
 //   waitfor output-silent: the output stayed below 1e-5 for 0.2 s (forget output-silent to wait again)
 //   J-110: stopvia button|menu|remote (the Stop button's action, Tools > Stop all sound, a MIDI controller's /
@@ -1323,13 +1323,22 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
         e.key.keysym.scancode = SDL_GetScancodeFromKey(e.key.keysym.sym);
         if (l.a0.size() == 3 && l.a0[1] == '@')  // ";@z": the key in the Z position types ';' (another layout)
           e.key.keysym.scancode = static_cast<SDL_Scancode>(TypingKeyboard::positionOfKey(l.a0[2]));
+        if (l.a0.size() > 1 && l.a0[0] == '#') {  // K-175: "#86", a key by its scan code (keypad -, a modifier...)
+          e.key.keysym.scancode = static_cast<SDL_Scancode>(std::clamp(std::atoi(l.a0.c_str() + 1), 0, SDL_NUM_SCANCODES - 1));
+          e.key.keysym.sym = SDL_GetKeyFromScancode(e.key.keysym.scancode);
+        }
         e.key.keysym.mod = static_cast<Uint16>(devKeyMods(l.a2));  // "ctrl", "super", "shift", "ctrl+shift"...
+        e.key.repeat = down && l.a2.find("repeat") != std::string::npos ? 1 : 0;  // K-175: "sdlkey ] down repeat"
       }
       SDL_PushEvent(&e);
     } else if (l.cmd == "typing" && l.a0 == "show") {  // the notes held, octave and velocity
       std::printf("typing notes");
       for (int p : app.typing.heldNotes()) std::printf(" %d", p);
       std::printf(" octave %d velocity %d chord %d\n", app.typing.octave, app.typing.velocity, app.typing.chordMode ? 1 : 0);
+      std::fflush(stdout);
+    } else if (l.cmd == "typing" && l.a0 == "octave") {  // K-175: the octave, the steps keys made, the pattern, zoom
+      std::printf("typing octave %d steps %d pattern %d notes %zu\n", app.typing.octave, app.typing.octaveSteps(),
+                  app.doc.song().patternIndex(app.curPattern), app.typing.heldNotes().size());
       std::fflush(stdout);
     } else if (l.cmd == "typing" && l.a0 == "layout") {  // K-113: typing layout <id> (standard, qwertz, azerty, dvorak, colemak, computer)
       setTypingLayout(app, typingLayoutFromId(l.a1));
@@ -2874,6 +2883,9 @@ int main(int argc, char** argv) {
     if (viewports::takeAppFocusLost()) {
       releaseTypedNotes(app, held);
       app.engine.releaseLiveNotes();
+      // K-175: the modifiers' key-ups went to the other application too: none counts as held now
+      // (Caps Lock and Num Lock stay as they are).
+      SDL_SetModState(static_cast<SDL_Keymod>(SDL_GetModState() & (KMOD_NUM | KMOD_CAPS | KMOD_MODE)));
     }
     xdragui::pump(app);  // J-75: drags from other applications
     if (app.quitRequested) {
@@ -3559,10 +3571,40 @@ int main(int argc, char** argv) {
     SDL_Event ev;
     uint64_t statT = fstats::stamp();
     liveresize::pumpBegin();
+    std::vector<SDL_Scancode> pendingUps;  // K-175: typed keys let go in this batch of events
+    auto endTypedKey = [&](SDL_Scancode sc) {
+      const auto h = held.find(sc);
+      const ObjectId chId = h != held.end() ? h->second.channel : app.selChannel;
+      if (h != held.end()) held.erase(h);
+      for (int p : app.typing.release(sc)) {
+        app.engine.noteOff(chId, p);
+        app.playedNoteOff(chId, p);
+      }
+    };
     while (SDL_PollEvent(&ev)) {
       if (gl::opendocs::take(ev)) continue;  // K-119: a file macOS asks the running Gridline to open (below)
       ImGui_ImplSDL2_ProcessEvent(&ev);
       viewports::onEvent(ev);  // J-113: focus over Gridline's windows, minimise
+      // K-175: a held typed key ends on its key-up whatever window gets it (a plugin window took the
+      // focus meanwhile) and whatever changed meanwhile (a modifier pressed, a text field focused,
+      // the typing keyboard switched off, a project loading, no channel selected); at the end of
+      // this batch of events, see below.
+      if (ev.type == SDL_KEYUP && (held.count(ev.key.keysym.scancode) || app.typing.isDown(ev.key.keysym.scancode)) &&
+          std::find(pendingUps.begin(), pendingUps.end(), ev.key.keysym.scancode) == pendingUps.end())
+        pendingUps.push_back(ev.key.keysym.scancode);
+      // K-175: as the keyboard focus moves between windows the system may let go of the keys held and
+      // report them down again in the new window (SDL on X11 does). A key that comes back down that way
+      // never went up: it keeps its notes and is no new press. Other keys reported down then are keys
+      // held from before (pressed in another application): they neither play nor move the octave.
+      if (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_FOCUS_GAINED) app.typing.focusGained();
+      if (ev.type == SDL_KEYDOWN && !ev.key.repeat) {
+        const auto up = std::find(pendingUps.begin(), pendingUps.end(), ev.key.keysym.scancode);
+        if (up != pendingUps.end()) {
+          pendingUps.erase(up);
+          if (app.typing.settling()) continue;
+          endTypedKey(ev.key.keysym.scancode);  // released and pressed again in one batch: both count
+        }
+      }
       if (hostedEditorEvent(app, ev)) continue;  // plugin editor windows
       if (ev.type == SDL_QUIT || (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_CLOSE &&
                                   ev.window.windowID == SDL_GetWindowID(window)))
@@ -3587,50 +3629,34 @@ int main(int argc, char** argv) {
         SDL_GetWindowPosition(window, &wx, &wy);
         xdragui::sdlDropComplete(static_cast<float>(mx - wx), static_cast<float>(my - wy));
       }
-      // A held typed note ends on its key-up whatever changed meanwhile
-      // (a modifier pressed, a text field focused, the typing keyboard switched off).
-      if (ev.type == SDL_KEYUP && held.count(ev.key.keysym.scancode) && !(app.typingKeyboard && !io.WantTextInput &&
-                                                                          !(ev.key.keysym.mod & (KMOD_CTRL | KMOD_GUI | KMOD_ALT)))) {
-        const SDL_Scancode sc = ev.key.keysym.scancode;
-        const ObjectId chId = held[sc].channel;
-        held.erase(sc);
-        for (int p : app.typing.keyUp(typingKey(sc))) {
-          app.engine.noteOff(chId, p);
-          app.playedNoteOff(chId, p);
-        }
-      }
-      // Typing keyboard (key events straight from SDL so key-up is never missed).
-      if ((ev.type == SDL_KEYDOWN || ev.type == SDL_KEYUP) && app.typingKeyboard && !io.WantTextInput && !app.projectLoadBlocking() &&
+      // Typing keyboard (key events straight from SDL so key-up is never missed; key-ups above).
+      // K-175: one press, one step: TypingKeyboard::press ignores repeats and keys already down.
+      if (ev.type == SDL_KEYDOWN && app.typingKeyboard && !io.WantTextInput && !app.projectLoadBlocking() &&
           !(ev.key.keysym.mod & (KMOD_CTRL | KMOD_GUI | KMOD_ALT))) {
         const SDL_Keycode k = ev.key.keysym.sym;
         const SDL_Scancode sc = ev.key.keysym.scancode;
-        int key = typingKey(sc);
-        const bool down = ev.type == SDL_KEYDOWN && !ev.key.repeat;
-        if (down && app.stepRecord && !app.engine.playing() && (k == SDLK_RIGHT || k == SDLK_BACKSPACE)) {
+        if (!ev.key.repeat && app.stepRecord && !app.engine.playing() && (k == SDLK_RIGHT || k == SDLK_BACKSPACE)) {
           if (k == SDLK_RIGHT)
             app.stepRecorder.rest();
           else
             app.stepRecorder.backspace(app.doc, app.curPattern, app.selChannel);
         }
-        if (key > 0 && app.selChannel != kNoId) {
-          if (down) {
-            std::vector<int> on = app.typing.keyDown(key);
-            for (int p : on) {
-              app.engine.noteOn(app.selChannel, p, app.typing.velocity / 127.0f);
-              app.playedNoteOn(app.selChannel, p, app.typing.velocity);
-            }
-            if (!on.empty()) held[sc] = {app.selChannel, 0, 0};
-          } else if (ev.type == SDL_KEYUP) {
-            ObjectId chId = held.count(sc) ? held[sc].channel : app.selChannel;
-            held.erase(sc);
-            for (int p : app.typing.keyUp(key)) {
-              app.engine.noteOff(chId, p);
-              app.playedNoteOff(chId, p);
-            }
+        if (typingKey(sc) > 0 && app.selChannel != kNoId) {
+          std::vector<int> on = app.typing.press(sc, ev.key.repeat != 0);
+          for (int p : on) {
+            app.engine.noteOn(app.selChannel, p, app.typing.velocity / 127.0f);
+            app.playedNoteOn(app.selChannel, p, app.typing.velocity);
           }
+          if (!on.empty()) held[sc] = {app.selChannel, 0, 0};
         }
       }
     }
+    for (SDL_Scancode sc : pendingUps) endTypedKey(sc);
+    pendingUps.clear();
+    app.typing.settle();  // K-175: keys pressed from the next batch of events on are presses again
+    // K-175: while the typing keyboard plays, its keys run no other command (keypad - + also
+    // switching the pattern, - = zooming, a single-key shortcut set's letters).
+    keys::setTypingKeyboard(app.typingKeyboard && app.selChannel != kNoId);
     liveresize::pumpEnd();
     // K-121: a later launch handed its files over (Linux, Windows): they open as macOS's requests do
     // below; a launch without files only brings the window forward.

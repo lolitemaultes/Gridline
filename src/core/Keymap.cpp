@@ -238,6 +238,12 @@ const std::vector<Chord> kNone;
 
 }  // namespace
 
+bool playsOnTypingKeyboard(const Chord& c) {
+  if (c.mods & (kCtrl | kAlt | kCmd)) return false;
+  return (c.key >= Key::A && c.key <= Key::D9) || (c.key >= Key::NumAdd && c.key <= Key::NumDivide) ||
+         (c.key >= Key::Minus && c.key <= Key::Grave);
+}
+
 const char* keyName(Key k) {
   size_t i = static_cast<size_t>(k);
   return i < static_cast<size_t>(Key::Count) ? kKeyNames[i] : "";

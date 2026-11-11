@@ -283,6 +283,10 @@ a window is detached.
 
 - Keys: SDL key events carry the detached window's id; Gridline's shortcuts (Space / the J-112
   play rule, undo, save, …), the typing keyboard and text fields work from every window.
+  A typed key held while the focus moves between Gridline's windows stays held: where the system
+  lets go of it and reports it down again in the new window (SDL on X11), the two cancel out in that
+  batch of events, so the note does not start again and an octave key does not step again
+  (`TypingKeyboard::press` / `focusGained`, the main loop's `pendingUps`).
   Undo / redo typed into a popped-out plugin editor undo its knob drags and drawn edits like in
   the main window (one step per gesture: `Document::beginPointerGesture`, opened by
   `pointerGestureFrame` after `ImGui::NewFrame` and closed after the frame of the release; the

@@ -51,6 +51,11 @@ struct Chord {
   bool operator<(const Chord& o) const { return key != o.key ? key < o.key : mods < o.mods; }
 };
 
+// K-175: a chord the typing keyboard plays while it is on (a letter, digit or punctuation key, or
+// keypad + - * /, with no Ctrl, Cmd or Alt): its command waits until the typing keyboard is off, so
+// one key press does one thing.
+bool playsOnTypingKeyboard(const Chord& c);
+
 // "Ctrl+Alt+Shift+S" (modifier order Ctrl, Cmd, Alt, Shift). Empty for an invalid chord.
 std::string format(const Chord& c);
 // Accepts any modifier order and case ("shift+ctrl+s", "Ctrl+Num +"). Invalid -> Key::None.

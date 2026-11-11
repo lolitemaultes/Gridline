@@ -1,5 +1,6 @@
 // Gridline - keyboard commands in the UI (see Keys.h).
 #include "Keys.h"
+#include <cstring>
 #include <string>
 #include <unordered_map>
 #include "../../third_party/imgui/imgui_internal.h"
@@ -18,6 +19,12 @@ std::string gInjected;    // K-93: a command the command palette runs (as if its
 int gInjectFrame = -10;
 
 bool injectedNow(const char* id) { return gInjectFrame == ImGui::GetFrameCount() && gInjected == id; }
+
+bool gTyping = false;  // K-175
+// The typing keyboard plays this chord: its command does not run.
+bool typingTakes(const char* id, const Chord& c) {
+  return gTyping && playsOnTypingKeyboard(c) && std::strcmp(id, "options.typingKeyboard") != 0;
+}
 
 const ImGuiKey kMap[] = {
     ImGuiKey_None,
@@ -80,6 +87,7 @@ Key fromImGui(ImGuiKey k) {
   return Key::None;
 }
 
+void setTypingKeyboard(bool on) { gTyping = on; }
 void setFocusContext(Context c) { gFocus = c; }
 Context focusContext() { return gFocus; }
 
@@ -91,7 +99,7 @@ bool pressed(const char* id) {
   const uint8_t mods = modsNow();
   const Keymap& km = keymap();
   for (const Chord& c : km.bindings(id)) {
-    if (c.mods != mods || !ImGui::IsKeyPressed(toImGui(c.key), cmd->repeat)) continue;
+    if (c.mods != mods || typingTakes(id, c) || !ImGui::IsKeyPressed(toImGui(c.key), cmd->repeat)) continue;
     if (cmd->context == Context::Global && gFocus != Context::Global && !km.lookup(gFocus, c).empty()) continue;  // the editor wins
     return true;
   }
@@ -106,7 +114,7 @@ bool pressedPastEditor(const char* id) {
   const uint8_t mods = modsNow();
   const Keymap& km = keymap();
   for (const Chord& c : km.bindings(id)) {
-    if (c.mods != mods || !ImGui::IsKeyPressed(toImGui(c.key), cmd->repeat)) continue;
+    if (c.mods != mods || typingTakes(id, c) || !ImGui::IsKeyPressed(toImGui(c.key), cmd->repeat)) continue;
     bool editorTakes = false;
     if (cmd->context == Context::Global && gFocus != Context::Global)
       for (const Command* e : km.lookup(gFocus, c)) {
@@ -141,7 +149,7 @@ bool pressedHeld(const char* id) {
   const Command* cmd = findCommand(id);
   if (!cmd) return false;
   for (const Chord& c : keymap().bindings(id))
-    if (ImGui::IsKeyPressed(toImGui(c.key), cmd->repeat)) return true;
+    if (!typingTakes(id, Chord{c.key, 0}) && ImGui::IsKeyPressed(toImGui(c.key), cmd->repeat)) return true;
   return false;
 }
 

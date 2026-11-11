@@ -156,8 +156,30 @@ class TypingKeyboard {
   bool anyHeld() const { return !held_.empty(); }
   std::vector<int> heldNotes() const;
 
+  // K-175: physical key events, by where the key sits (`position`, its USB usage = SDL scan code).
+  // Only a fresh press acts: a repeat, or a second press of a key already down (a copy of the
+  // event, a held key reported again when the focus comes back), does nothing, so the octave,
+  // velocity and chord keys move one step per press. press() returns the notes started,
+  // release() the notes ended (a release of a key that is not down ends nothing).
+  std::vector<int> press(int position, bool repeat = false);
+  std::vector<int> release(int position);
+  bool isDown(int position) const { return down_.count(position) != 0; }
+  // The keyboard focus came to one of Gridline's windows: keys reported down before settle() are
+  // keys the system reports as still held, not presses. They count as down and do nothing.
+  void focusGained() { settling_ = true; }
+  void settle() { settling_ = false; }
+  bool settling() const { return settling_; }
+  // Gridline lost the keyboard (or the typing keyboard was switched off): every key counts as up
+  // and every note held ends.
+  std::vector<int> releaseAllKeys();
+  // The times the octave changed by a key (for the long-session checks).
+  int octaveSteps() const { return octaveSteps_; }
+
  private:
   std::map<int, std::vector<int>> held_;
+  std::set<int> down_;  // positions down
+  bool settling_ = false;
+  int octaveSteps_ = 0;
 };
 
 }  // namespace gl
