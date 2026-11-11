@@ -10,9 +10,9 @@ Loupe is Gridline's audio editor. It opens in three ways:
 
 - Click the waveform or the ruler to set the play position. **Play** (or Space) starts from there.
 - While Loupe plays, a click jumps playback to that point.
-- With a selection, **Play** plays the selection. With **Loop** on (in a mixer slot) it loops it.
+- With a selection, **Play** plays the selection. With **Loop** on (or L) it loops it, with no gap, wherever Loupe is open: in a mixer slot, on a channel's sample or on a file.
 - Make a new selection while playing and Loupe plays it at once: playback carries on where it is when that is inside the new selection, otherwise it goes to the new selection's start. The old loop never keeps playing.
-- With loop points set and **Loop** on, **Play** loops them, starting at the play position when it is inside them.
+- With loop points set and **Loop** on, **Play** loops them, starting at the play position: from before the loop points it plays on into them and then loops them; from past them it plays on to the end. So a click while looping always jumps where you click.
 - **Follow transport** (in a mixer slot) starts Loupe's playback with the song, from the play position.
 
 ## Selecting

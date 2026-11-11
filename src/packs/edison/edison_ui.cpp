@@ -13,6 +13,7 @@
 #include <map>
 #include <thread>
 #include <utility>
+#include "../../app/DevSignal.h"
 #include "../../app/StemsUi.h"
 #include "../../app/Theme.h"
 #include "../../app/Widgets.h"
@@ -329,6 +330,14 @@ void pump(App& a, Session& s) {
   // J-110: also when Stop (or another preview: the browser's) took the preview over.
   if (s.pvPlaying && !a.engine.previewingSample(s.pvSample.get())) s.pvPlaying = false;
   syncPlayRange(a, s);  // a new selection while playing plays at once
+  // Scripted runs wait for the last play or jump to be heard ("waitfor loupe-settled").
+  if (!s.settleSaid) {
+    EdisonFx* fx = slotFx(a, s);
+    if (s.settleWant == 0 || !fx || fx->handled() >= s.settleWant) {
+      devsig::reach("loupe-settled");
+      s.settleSaid = true;
+    }
+  }
 }
 
 }  // namespace
@@ -368,6 +377,13 @@ double param(App& a, const Session& s, int k, double dflt) {
 
 void setParam(App& a, const Session& s, int k, double v) {
   if (s.slot) pui::setParamValue(a, s.target, k, v, false);
+}
+
+bool loopOn(App& a, const Session& s) { return s.slot ? param(a, s, EdLoop, 0) >= 0.5 : s.loop; }
+
+void setLoop(App& a, Session& s, bool on) {
+  if (s.slot) setParam(a, s, EdLoop, on ? 1 : 0);
+  else s.loop = on;
 }
 
 void say(Session& s, const std::string& text) {
@@ -436,8 +452,7 @@ void redo(App& a, Session& s) {
 // ------------------------------------------------------------------ transport
 transport::PlayRange playRange(App& a, const Session& s) {
   const Content& c = s.cur();
-  const bool loopOn = s.slot && param(a, s, EdLoop, 0) >= 0.5;  // outside a slot the preview plays once
-  return transport::playRange(s.frames(), s.sel, c.hasLoop(), c.loopStart, c.loopEnd, loopOn, s.cursor);
+  return transport::playRange(s.frames(), s.sel, c.hasLoop(), c.loopStart, c.loopEnd, loopOn(a, s), s.cursor);
 }
 
 namespace {
@@ -447,15 +462,23 @@ EdisonFx* player(App& a, Session& s) {
   return fx && fx->sourceFrames() == s.frames() ? fx : nullptr;
 }
 
-// The preview plays [start, to) once.
-void previewFrom(App& a, Session& s, int64_t start, int64_t to) {
-  Audio part = extract(s.cur().a(), {start, to});
+// The preview plays [start, to), then, for a loop, [from, to) over and over with no gap.
+void previewFrom(App& a, Session& s, int64_t start, int64_t from, int64_t to, bool loop) {
+  const transport::PreviewLayout l = transport::previewLayout(start, from, to, loop);
+  Audio part = extract(s.cur().a(), {l.headFrom, l.headTo});
+  if (l.tailTo > l.tailFrom) {
+    const Audio tail = extract(s.cur().a(), {l.tailFrom, l.tailTo});
+    part.L.insert(part.L.end(), tail.L.begin(), tail.L.end());
+    part.R.insert(part.R.end(), tail.R.begin(), tail.R.end());
+  }
   s.pvSample = toSample(part, "");
-  a.engine.preview(s.pvSample, true);  // J-112: Loupe's own Play (plugin playback)
+  a.engine.preview(s.pvSample, true, l.loopFrom);  // J-112: Loupe's own Play (plugin playback)
   s.pvPlaying = true;
   s.pvT0 = ImGui::GetTime();
-  s.pvFrom = start;
+  s.pvFrom = l.headFrom;
   s.pvTo = to;
+  s.pvLoopFrom = from;
+  s.pvLoop = l.loopFrom >= 0;
 }
 }  // namespace
 
@@ -465,12 +488,18 @@ void play(App& a, Session& s) {
   const transport::PlayRange r = playRange(a, s);
   s.playFrom = r.from;
   s.playTo = r.to;
+  s.playLoop = r.loop;
+  s.playStart = r.start;
+  s.settleSaid = false;
+  s.settleWant = 0;
   if (EdisonFx* fx = player(a, s)) {
+    const uint32_t h = fx->handled();
     fx->play(r.from, r.to, r.loop, r.start);
+    s.settleWant = h + 1;
     return;
   }
   // Standalone (or the engine has not picked the new version yet): preview.
-  previewFrom(a, s, r.start, r.to);
+  previewFrom(a, s, r.start, r.from, r.to, r.loop);
 }
 
 void stopPlay(App& a, Session& s) {
@@ -487,11 +516,7 @@ bool isPlaying(App& a, Session& s) {
 double playPos(App& a, Session& s) {
   if (EdisonFx* fx = slotFx(a, s); fx && (fx->isPlaying() || s.scrubbing)) return fx->position();
   if (s.scrubbing) return s.scrub.pos;
-  if (s.pvPlaying) {
-    double p = static_cast<double>(s.pvFrom) + (ImGui::GetTime() - s.pvT0) * s.rate();
-    if (p >= static_cast<double>(s.pvTo)) return -1;
-    return p;
-  }
+  if (s.pvPlaying) return transport::previewPosAt(s.pvFrom, s.pvLoop ? s.pvLoopFrom : s.pvFrom, s.pvTo, s.pvLoop, (ImGui::GetTime() - s.pvT0) * s.rate());
   return -1;
 }
 
@@ -503,17 +528,24 @@ void syncPlayRange(App& a, Session& s) {
     if (fx) fx->setRange(r.from, r.to, r.start);  // a following song transport starts at the cursor
     return;
   }
-  if (r.from == s.playFrom && r.to == s.playTo) return;
+  if (r.from == s.playFrom && r.to == s.playTo && r.loop == s.playLoop) return;
   s.playFrom = r.from;
   s.playTo = r.to;
+  s.playLoop = r.loop;
+  s.settleSaid = false;
+  s.settleWant = 0;
   if (fx && fx->isPlaying()) {
+    const uint32_t h = fx->handled();
     fx->setRange(r.from, r.to);
+    s.settleWant = h + 1;
+    s.playStart = -1;  // the player keeps its place when it is inside the new range
     return;
   }
   // The preview: on from where it is when that is inside the new range, else the new start.
   const double p = playPos(a, s);
   const auto at = static_cast<int64_t>(transport::keepOrJump(p < 0 ? static_cast<double>(r.from) : p, r.from, r.to));
-  previewFrom(a, s, at, r.to);
+  s.playStart = at;
+  previewFrom(a, s, at, r.from, r.to, r.loop);
 }
 
 void scrubBegin(App& a, Session& s, double frame) {
@@ -556,6 +588,7 @@ void scrubMove(App& a, Session& s, double frame) {
   s.pvT0 = now;
   s.pvFrom = static_cast<int64_t>(s.scrub.pos);
   s.pvTo = s.frames();
+  s.pvLoop = false;
 }
 
 void scrubEnd(App& a, Session& s) {
@@ -1177,10 +1210,10 @@ bool dockDevCommand(App& a, const std::string& cmd, const std::vector<std::strin
       const char* kind = s.slot ? "slot" : !s.file.empty() ? "file" : "channel";
       const std::string committed = s.committed.empty() || s.committed[0] == '\x01' ? std::string("-") : fs::path(s.committed).filename().string();
       std::printf("loupe state: key %llx kind %s channel %llu frames %lld cursor %lld sel %lld %lld playing %d pos %.0f range %lld %lld scrubbing %d "
-                  "autoscroll %d lanes %.1f %.1f %.1f %.1f ruler %.1f %.1f view %.0f %.0f committed %s\n",
+                  "autoscroll %d loop %d start %lld lanes %.1f %.1f %.1f %.1f ruler %.1f %.1f view %.0f %.0f committed %s\n",
                   static_cast<unsigned long long>(k), kind, static_cast<unsigned long long>(s.channel), static_cast<long long>(s.frames()),
                   static_cast<long long>(s.cursor), static_cast<long long>(s.sel.a), static_cast<long long>(s.sel.b), isPlaying(a, s) ? 1 : 0,
-                  playPos(a, s), static_cast<long long>(s.playFrom), static_cast<long long>(s.playTo), s.scrubbing ? 1 : 0, autoScroll(a) ? 1 : 0,
+                  playPos(a, s), static_cast<long long>(s.playFrom), static_cast<long long>(s.playTo), s.scrubbing ? 1 : 0, autoScroll(a) ? 1 : 0, loopOn(a, s) ? 1 : 0, static_cast<long long>(s.playStart),
                   static_cast<double>(s.devLx0), static_cast<double>(s.devLx1), static_cast<double>(s.devLy0), static_cast<double>(s.devLy1),
                   static_cast<double>(s.devRy0), static_cast<double>(s.devRy1), s.devViewStart, s.devViewLen, committed.c_str());
     }
@@ -1194,7 +1227,8 @@ bool dockDevCommand(App& a, const std::string& cmd, const std::vector<std::strin
       const bool on = args.size() > 1 && args[1] == "1";
       if (what == "play") play(a, s);
       else if (what == "stop") stopPlay(a, s);
-      else setParam(a, s, what == "loop" ? EdLoop : EdFollowHost, on ? 1 : 0);
+      else if (what == "loop") setLoop(a, s, on);
+      else setParam(a, s, EdFollowHost, on ? 1 : 0);
       break;
     }
     return true;

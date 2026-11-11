@@ -207,7 +207,9 @@ class AudioEngine {
   ObjectId liveQueued(int track) const;
   // Plays a sample directly to the output (browser preview); nullptr stops it.
   // J-112: `own` = an editor's own Play (Loupe standalone), plugin playback.
-  void preview(SamplePtr sample, bool own = false);
+  // `loopFrom` >= 0 (an editor's own loop): at the end the preview goes on from that frame,
+  // with no gap, until it is stopped or replaced.
+  void preview(SamplePtr sample, bool own = false, int64_t loopFrom = -1);
   bool previewing() const { return previewing_.load(); }
   void setMetronome(bool on) { metronome_.store(on); }
   // MIDI input (called from the MIDI driver thread; single producer).
@@ -561,6 +563,7 @@ class AudioEngine {
   std::vector<std::pair<SamplePtr, uint64_t>> retiredSamples_;
   const Sample* pvSample_ = nullptr;  // audio thread
   double pvPos_ = 0;
+  double pvLoop_ = -1;  // frame the preview loops back to (-1 = plays once)
   std::atomic<bool> previewing_{false};
   std::atomic<bool> metronome_{false};
   // MIDI queue (single producer: MIDI thread, single consumer: audio).

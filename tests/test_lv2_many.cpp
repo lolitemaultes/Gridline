@@ -12,7 +12,10 @@
 //   2. the scanner child (this program) scans a bundle of 240 plugins under a 1 GB cap, lists 239
 //      and the one that failed, and its peak memory is no larger than for a bundle of 20;
 //   3. in the scan service: the bundle is cached (in plugin-cache.json too), the plugin that failed
-//      is listed on its own, and a later scan does not scan the bundle again.
+//      is listed on its own, and a later scan does not scan the bundle again;
+//   4. paths spelt the Windows way (a bundle path with '\', a file URI with "/C:/", other case) are
+//      the same file and inside the same bundle (checked on every system). The scanner child
+//      reports its own peak memory, so the memory checks run on Windows too.
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -25,10 +28,6 @@
 #include <thread>
 #include <vector>
 
-#if !defined(_WIN32)
-#include <sys/resource.h>
-#endif
-
 #include "Check.h"
 #include "Hermetic.h"
 #include "core/Platform.h"
@@ -36,6 +35,7 @@
 #include "host/PluginPrefs.h"
 #include "host/PluginScan.h"
 #include "host/lv2/Lv2World.h"
+#include "host/lv2/Turtle.h"
 
 using namespace gl;
 namespace fs = std::filesystem;
@@ -128,18 +128,29 @@ void testDescribe(const std::string& folder, const std::string& bundle, int coun
   expect(host::lv2::bundleIndexBuilds() - builds0 == 2, "describe: looking for bundles again makes the next description look again");
 }
 
-double childrenPeakMb() {
-#if defined(_WIN32)
-  return 0;
-#else
-  rusage ru{};
-  getrusage(RUSAGE_CHILDREN, &ru);
-#if defined(__APPLE__)
-  return static_cast<double>(ru.ru_maxrss) / (1024.0 * 1024.0);
-#else
-  return static_cast<double>(ru.ru_maxrss) / 1024.0;
-#endif
-#endif
+// The scanner child (this program) writes its own peak memory as it goes: every system, Windows too.
+std::string peakFile(const std::string& dir, const std::string& bundle) { return dir + "/peak-" + fs::path(bundle).stem().string() + ".txt"; }
+void reportPeak(const std::string& file) {
+  std::thread([file] {
+    double last = -1;
+    for (;;) {
+      const double now = platform::peakRssMb();
+      if (now > last) {
+        last = now;
+        const std::string tmp = file + ".tmp";
+        std::ofstream(tmp) << now;
+        std::error_code ec;
+        fs::rename(tmp, file, ec);  // whole numbers only, even if the child ends in the middle
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+  }).detach();
+}
+double readPeak(const std::string& file) {
+  std::ifstream f(file);
+  double v = 0;
+  f >> v;
+  return v;
 }
 
 const host::ScannedClass* findClass(const host::ScanResult& r, const std::string& uid) {
@@ -149,15 +160,15 @@ const host::ScannedClass* findClass(const host::ScanResult& r, const std::string
 }
 
 // 2. The scanner child.
-void testScanChild(const std::string& small, int smallCount, const std::string& big, int bigCount) {
+void testScanChild(const std::string& dir, const std::string& small, int smallCount, const std::string& big, int bigCount) {
   const std::string exe = platform::executablePath();
   auto t0 = std::chrono::steady_clock::now();
   host::ScanResult rs = host::scanIsolated(exe, "lv2", small, 120);
-  const double peakSmall = childrenPeakMb();
+  const double peakSmall = readPeak(peakFile(dir, small));
   const double tSmall = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
   t0 = std::chrono::steady_clock::now();
   host::ScanResult rb = host::scanIsolated(exe, "lv2", big, 120);
-  const double peakBig = childrenPeakMb();  // the larger of the two children
+  const double peakBig = readPeak(peakFile(dir, big));
   const double tBig = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
   std::printf("scan: %d plugins %s in %.1f s, %d plugins %s in %.1f s; peak memory of the scanner %.0f MB, then %.0f MB\n", smallCount,
               rs.ok ? "ok" : rs.error.c_str(), tSmall, bigCount, rb.ok ? "ok" : rb.error.substr(0, 200).c_str(), tBig, peakSmall, peakBig);
@@ -172,10 +183,30 @@ void testScanChild(const std::string& small, int smallCount, const std::string& 
   const host::ScannedClass* c = findClass(rb, uriOf(239));
   expect(c && c->inputChannels == 2 && c->outputChannels == 2 && c->programs.size() == 1 && c->programs[0] == "Warm 239" && c->params.size() == 41,
          "scan: a plugin's facts (channels, preset, parameters)");
-#if !defined(_WIN32)
-  expect(peakSmall > 24 && peakBig < peakSmall + 64, "scan: the scanner's peak memory does not grow with the number of plugins");
+  expect(peakSmall > 24 && peakBig > 24, "scan: the scanner's peak memory is known (one plugin's 24 MB at least)");
+  expect(peakBig < peakSmall + 64, "scan: the scanner's peak memory does not grow with the number of plugins");
   expect(peakBig < 400, "scan: the scanner's peak memory stays far under the cap");
-#endif
+}
+
+// 4. Windows spellings of one path, checked on every system (the functions take the Windows rules
+// as a flag). On Windows a bundle's path has '\' separators where its files' URIs give '/', so a
+// description read none of the plugin's own files there.
+void testWindowsPaths() {
+  namespace l = host::lv2;
+  const std::string bundle = "C:\\Users\\Ann\\AppData\\Roaming\\LV2\\Many Big.lv2";
+  std::string p;
+  const std::string uri = l::resolveIri("file:///C:/Users/Ann/AppData/Roaming/LV2/Many%20Big.lv2/manifest.ttl", "p0.ttl");
+  expect(l::uriToPath(uri, p) && l::pathInside(p, bundle, true), "windows: a file URI's path is inside the bundle spelt with '\\'");
+  expect(l::pathKey(bundle + "\\", true) == "c:/users/ann/appdata/roaming/lv2/many big.lv2" && l::pathKey("/C:/Users/Ann", true) == "c:/users/ann",
+         "windows: one spelling (separators, trailing '\\', the URI's '/C:', case)");
+  expect(l::pathKey("C:\\x\\tmp/lv2\\ManyBig.lv2\\p0.ttl", true) == l::pathKey("c:/X/TMP/lv2/manybig.lv2/P0.TTL", true),
+         "windows: mixed separators and case are the same file");
+  expect(l::pathInside("C:\\x\\tmp/lv2\\ManyBig.lv2\\p0.ttl", "c:/x/TMP/lv2/manybig.lv2/", true), "windows: mixed spellings inside the bundle");
+  expect(!l::pathInside("C:/Users/Ann/AppData/Roaming/LV2/Many Big.lv2b/p0.ttl", bundle, true), "windows: a bundle with a longer name is not inside");
+  expect(!l::pathInside(bundle, bundle, true), "windows: the bundle itself is not inside it");
+  expect(l::pathInside("D:/a.ttl", "D:\\", true), "windows: a drive's root folder");
+  expect(!l::pathInside("/x/A.lv2/p.ttl", "/x/a.lv2", false) && l::pathInside("/x/a.lv2/p.ttl", "/x/a.lv2/", false),
+         "other systems: case counts, a trailing '/' does not");
 }
 
 int starts(const std::string& dir, const std::string& bundle) {
@@ -226,8 +257,10 @@ void testService(const std::string& dir, const std::string& folder, const std::s
 int main(int argc, char** argv) {
   // The scanner child (scanIsolated and the scan service run this program).
   if (argc >= 4 && std::strcmp(argv[1], "--scan-plugin") == 0) {
-    if (const char* d = std::getenv("K180_DIR"); d && *d)
+    if (const char* d = std::getenv("K180_DIR"); d && *d) {
       std::ofstream(std::string(d) + "/starts-" + fs::path(argv[3]).stem().string() + ".txt", std::ios::app) << "+";
+      reportPeak(peakFile(d, argv[3]));
+    }
     return host::childMain(argc, argv);
   }
   const std::string& dir = gl::test::hermeticTestEnv("lv2many");
@@ -239,7 +272,8 @@ int main(int argc, char** argv) {
   host::loadPluginPrefs(dir + "/config");
   usePrefs(folder);
   testDescribe(folder, big, 240);
-  testScanChild(small, 20, big, 240);
+  testWindowsPaths();
+  testScanChild(dir, small, 20, big, 240);
   testService(dir, folder, big, 240);
   return finish();
 }

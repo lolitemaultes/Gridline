@@ -422,6 +422,8 @@ class EdisonFx : public Effect {
   const CaptureRing& capture() const { return ring_; }
   // Frames of audio the playback source holds (0 = none).
   int64_t sourceFrames() const { return srcFrames_.load(); }
+  // Start and range requests the audio thread has carried out so far (the editor waits for one).
+  uint32_t handled() const { return handled_.load(); }
 
  private:
   void run(const PluginState& state, const Sample* src, const ProcessContext& ctx, float* L, float* R, int n);
@@ -429,6 +431,7 @@ class EdisonFx : public Effect {
   std::atomic<bool> playing_{false}, loop_{false}, scrubbing_{false}, scrubJump_{false}, startReq_{false}, stopReq_{false};
   std::atomic<int64_t> from_{0}, to_{0}, start_{-1};
   std::atomic<bool> rangeReq_{false};
+  std::atomic<uint32_t> handled_{0};
   std::atomic<double> pos_{0}, scrubTarget_{0};
   std::atomic<float> inPeak_{0}, outPeak_{0};
   std::atomic<int64_t> srcFrames_{0};

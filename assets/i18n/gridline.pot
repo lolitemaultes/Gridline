@@ -1166,15 +1166,15 @@ msgid "Click a plugin's star (or right-click: Add to favourites)"
 msgstr ""
 
 #: src/app/Browser.cpp
+msgid "Click or Up / Down: preview · double-click or Enter: new sampler channel · drag onto the rack, playlist (audio clip), a mixer slot (impulse) or a sampler"
+msgstr ""
+
+#: src/app/Browser.cpp
 msgid "Click to preview · drag like the file row"
 msgstr ""
 
 #: src/app/Browser.cpp
 msgid "Click to remove this tag"
-msgstr ""
-
-#: src/app/Browser.cpp
-msgid "Click: preview · double-click: new sampler channel · drag onto the rack, playlist (audio clip), a mixer slot (impulse) or a sampler"
 msgstr ""
 
 #: src/app/Browser.cpp

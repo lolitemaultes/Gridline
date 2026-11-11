@@ -87,6 +87,21 @@ std::string fileUri(const std::string& pathIn) {
   return out;
 }
 
+std::string pathKey(const std::string& pathIn, bool windows) {
+  std::string p = pathIn;
+  if (windows) {
+    for (char& c : p) c = c == '\\' ? '/' : static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (p.size() > 2 && p[0] == '/' && std::isalpha(static_cast<unsigned char>(p[1])) && p[2] == ':') p.erase(0, 1);  // /C:/x -> c:/x
+  }
+  while (p.size() > 1 && p.back() == '/' && !(windows && p.size() == 3 && p[1] == ':')) p.pop_back();
+  return p;
+}
+
+bool pathInside(const std::string& path, const std::string& folder, bool windows) {
+  const std::string p = pathKey(path, windows), f = pathKey(folder, windows);
+  return !f.empty() && p.size() > f.size() && p.compare(0, f.size(), f) == 0 && (p[f.size()] == '/' || f.back() == '/');
+}
+
 bool uriToPath(const std::string& uri, std::string& path) {
   if (uri.compare(0, 7, "file://") != 0) return false;
   size_t start = 7;
@@ -642,8 +657,9 @@ bool Model::loadFile(const std::string& path, std::string* err) {
 }
 
 bool Model::loaded(const std::string& path) const {
+  const std::string key = pathKey(path);
   for (const auto& f : files_)
-    if (f == path) return true;
+    if (f == path || pathKey(f) == key) return true;
   for (const auto& part : parts_)
     if (part->loaded(path)) return true;
   return false;
@@ -746,10 +762,11 @@ std::shared_ptr<const Model> sharedFile(const std::string& path, std::string* er
     if (err) *err = "cannot read " + path;
     return nullptr;
   }
+  const std::string key = pathKey(path);  // one entry however the path is spelt (Windows: '\' or '/', case)
   std::lock_guard<std::mutex> g(lock);
   // Forget entries nobody uses any more (the map stays as small as what is in use).
-  for (auto it = files->begin(); it != files->end();) it = it->second.model.expired() && it->first != path ? files->erase(it) : std::next(it);
-  Entry& e = (*files)[path];
+  for (auto it = files->begin(); it != files->end();) it = it->second.model.expired() && it->first != key ? files->erase(it) : std::next(it);
+  Entry& e = (*files)[key];
   if (auto m = e.model.lock(); m && e.time == time && e.size == size) {
     if (err && !e.error.empty()) *err = e.error;
     return m;
@@ -758,7 +775,7 @@ std::shared_ptr<const Model> sharedFile(const std::string& path, std::string* er
   std::string pe;
   if (!m->loadFile(path, &pe) && m->triples().empty() && pe.rfind("cannot read", 0) == 0) {
     if (err) *err = pe;
-    files->erase(path);
+    files->erase(key);
     return nullptr;
   }
   e.model = m;

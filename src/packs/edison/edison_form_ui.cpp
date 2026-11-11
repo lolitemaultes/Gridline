@@ -121,7 +121,7 @@ void drawFormLayout(App& a, Session& s, const dock::Layout& Lo) {
 
   // ---- row 1: transport (one group of equal buttons), record options, mute
   const bool playing = isPlaying(a, s);
-  const bool loopOn = param(a, s, EdLoop, 0) >= 0.5;
+  const bool looping = loopOn(a, s);
   const bool hasAudio = s.frames() > 0;
   const bool busy = s.job.active();
   {
@@ -140,9 +140,8 @@ void drawFormLayout(App& a, Session& s, const dock::Layout& Lo) {
     if (cell("follow", "follow", ui::Icon::Follow, b)) setParam(a, s, EdFollowHost, b.lit ? 0 : 1);
     b = Btn{};
     b.hint = "Loop playback (L)";
-    b.lit = loopOn;
-    b.enabled = s.slot;
-    if (cell("loop", "loop", ui::Icon::EdisonLoop, b)) setParam(a, s, EdLoop, loopOn ? 0 : 1);
+    b.lit = looping;
+    if (cell("loop", "loop", ui::Icon::EdisonLoop, b)) setLoop(a, s, !looping);
     b = Btn{};
     b.hint = "Play / pause the selection or from the cursor (Space)";
     b.lit = playing;
@@ -670,7 +669,7 @@ void handleKeys(App& a, Session& s) {
     runEdit(a, s, "Delete", [r](const Content& c) { return deleteRange(c, r); });
   }
   if (!ctrl && key(ImGuiKey_M) && s.frames() > 0) addMarkerAtCursor(a, s);
-  if (!ctrl && key(ImGuiKey_L) && s.slot) setParam(a, s, EdLoop, param(a, s, EdLoop, 0) >= 0.5 ? 0 : 1);
+  if (!ctrl && key(ImGuiKey_L)) setLoop(a, s, !loopOn(a, s));
   if (!ctrl && key(ImGuiKey_R)) toggleRecord(a, s);
   if (!ctrl && key(ImGuiKey_W)) s.spectral = !s.spectral;
   if (!ctrl && key(ImGuiKey_B) && s.spectral) s.brushMode = !s.brushMode;

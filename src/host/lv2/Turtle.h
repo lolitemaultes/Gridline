@@ -89,6 +89,17 @@ std::shared_ptr<const Model> sharedFile(const std::string& path, std::string* er
 // file:// URI <-> path (percent-encoding).
 std::string fileUri(const std::string& path);
 bool uriToPath(const std::string& uri, std::string& path);
+// K-180: a file path in one spelling, for comparing paths: '/' separators and no trailing one; with
+// `windows` (the default on Windows) also no '/' before a drive letter ("/C:/x", as a file URI spells
+// it) and lower case, as Windows paths ignore case: "C:\Lv2\A.lv2" and "c:/lv2/a.lv2/" are the same.
+#if defined(_WIN32)
+inline constexpr bool kWindowsPaths = true;
+#else
+inline constexpr bool kWindowsPaths = false;
+#endif
+std::string pathKey(const std::string& path, bool windows = kWindowsPaths);
+// `path` lies inside the folder `folder` (compared as pathKey spells them).
+bool pathInside(const std::string& path, const std::string& folder, bool windows = kWindowsPaths);
 // Resolves a relative IRI reference against a base IRI (RFC 3986, simplified).
 std::string resolveIri(const std::string& base, const std::string& ref);
 

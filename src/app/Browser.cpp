@@ -174,12 +174,80 @@ std::string devSection;  // dev: the section the rows drawn belong to (K-18 "bro
 
 ImU32 roleCol(uint32_t r, float a = 0.9f) { return theme::litRole(r, a); }
 
+// K-160: browsing with the keyboard. Every row the tree draws (section headers, folders, files,
+// plugins, the project's items) is noted in drawing order; the next frame's keys move a cursor
+// through last frame's rows. Moving onto a file selects it as a click does (a sample previews);
+// other rows only take the cursor, so browsing never changes the pattern or channel. Enter is a
+// double-click (a sample loads into a new sampler channel), Left / Right fold and unfold.
+// The keys only act while the browser has keyboard focus and nothing is being typed; W and S
+// also move while the typing keyboard is off (while it is on, they play notes).
+struct NavRow {
+  ImGuiID id = 0;
+  ImGuiID openId = 0;  // a folder or section: its open state's storage id (0: a plain row)
+  bool open = false;
+  float indent = 0;    // section headers -1; the parent of a row is the nearest folder above with less
+  std::string path;    // a file row's path ("" otherwise)
+};
+struct Nav {
+  std::vector<NavRow> now, last;
+  bool recording = false;  // between the tree's BeginChild and EndChild
+  bool focused = false;    // the browser has keyboard focus this frame
+  ImGuiID cursor = 0;
+  enum Act { None, Select, Activate } act = None;
+  ImGuiID actOn = 0;
+  bool synth = false;      // the row being drawn got its click from the keys
+  bool repeat = false;     // ... from a held key repeating
+  bool scroll = false;     // bring the cursor row into view when it is drawn
+  std::string deferred;    // a sample passed over by a held key: previewed when the key is let go
+  std::string previewed;   // the last sample the keys previewed (dev checks)
+  int moves = 0;           // cursor moves made by the keys (dev checks)
+} nav;
+
+// Notes the item just drawn (the row's button) as a row the keys can move to.
+// `id` 0: the item's own id (a row out of sight drawn as a gap passes the id its row would have).
+void navNote(float indent, ImGuiID openId = 0, bool open = false, const std::string& path = {}, ImGuiID id = 0) {
+  if (!nav.recording) return;
+  if (!id) id = ImGui::GetItemID();
+  nav.now.push_back(NavRow{id, openId, open, indent, path});
+  if (nav.scroll && id == nav.cursor) {
+    ImGui::ScrollToRect(ImGui::GetCurrentWindow(), ImRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax()), ImGuiScrollFlags_KeepVisibleEdgeY);
+    nav.scroll = false;
+  }
+}
+
+// The keyboard cursor's outline on a row that does not show a selection of its own.
+void navOutline(ImDrawList* dl, ImVec2 q, float w, float h, bool selected) {
+  if (!nav.focused || selected || ImGui::GetItemID() != nav.cursor) return;
+  dl->AddRect(ImVec2(q.x + 0.5f, q.y + 0.5f), ImVec2(q.x + w - 0.5f, q.y + h - 0.5f), theme::withAlpha(pal().hot, 0.6f), theme::kRadiusSm);
+}
+
+// A row's click and double-click from the keys (the row just drawn). A file takes the move as a
+// click; Enter on a row that is not a file is the click and the double-click a mouse would make.
+// (Folders and sections are folded by the key handler, never through here.)
+void navClicks(bool& clicked, bool* dbl, bool file) {
+  nav.synth = false;
+  if (nav.act == Nav::None || ImGui::GetItemID() != nav.actOn) return;
+  if (nav.act == Nav::Select && file) clicked = true, nav.synth = true;
+  if (nav.act == Nav::Activate) {
+    nav.synth = true;
+    if (dbl) *dbl = true;
+    if (!file) clicked = true;
+  }
+  nav.act = Nav::None;
+}
+
 // One browser row: icon, name (ellipsised), optional right-aligned detail.
 // Returns true when clicked; `dbl` reports a double-click.
 // K-16: `starHit` (plugin rows): hovering shows the star, a click on it is reported there
 // (the row's own click is not).
+// K-160: `openId` / `open` (folder rows): the row is a folder the keys fold and unfold; `path`: a file row.
+struct RowNav {
+  ImGuiID openId = 0;
+  bool open = false;
+  const char* path = nullptr;
+};
 bool browserRow(const char* id, ui::Icon icon, const char* name, const char* detail, float indent, bool* dbl, ImU32 iconCol = 0,
-                bool selected = false, bool star = false, bool* starHit = nullptr) {
+                bool selected = false, bool star = false, bool* starHit = nullptr, RowNav rn = {}) {
   const auto& P = pal();
   App& a = app();
   ImGui::PushID(id);
@@ -188,10 +256,15 @@ bool browserRow(const char* id, ui::Icon icon, const char* name, const char* det
   bool clicked = ImGui::InvisibleButton("##row", ImVec2(std::max(w, 1.0f), kRowH));
   bool hov = ImGui::IsItemHovered();
   if (dbl) *dbl = hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+  if (clicked) nav.cursor = ImGui::GetItemID();  // K-160: the keys go on from the row clicked
+  navNote(indent, rn.openId, rn.open, rn.path ? rn.path : "");
+  if (!rn.openId) navClicks(clicked, dbl, rn.path != nullptr);
+  else nav.synth = false;
   ImDrawList* dl = ImGui::GetWindowDrawList();
   if (selected) dl->AddRectFilled(q, ImVec2(q.x + w, q.y + kRowH), theme::withAlpha(P.hot, 0.16f), theme::kRadiusSm);
   if (hov || ImGui::IsItemActive()) dl->AddRectFilled(q, ImVec2(q.x + w, q.y + kRowH), ImGui::IsItemActive() ? P.surface700 : P.surface800, theme::kRadiusSm);
   if (selected) dl->AddRectFilled(q, ImVec2(q.x + 2, q.y + kRowH), P.hot);
+  navOutline(dl, q, w, kRowH, selected);
   float x = q.x + indent;
   // Tree guide: dotted stem down the indent with a tick into the row.
   if (indent > 0) {
@@ -214,7 +287,7 @@ bool browserRow(const char* id, ui::Icon icon, const char* name, const char* det
   float detailW = 0;
   if (starHit) {
     const bool sh = hov && ImGui::GetIO().MousePos.x >= q.x + w - 20;
-    *starHit = clicked && sh;
+    *starHit = clicked && sh && !nav.synth;  // K-160: Enter with the pointer resting on the star is not a click on it
     if (*starHit) clicked = false;
     if (star || hov) {
       if (sh) dl->AddCircleFilled(ImVec2(q.x + w - 10, q.y + kRowH * 0.5f), 8.0f, theme::withAlpha(P.surface950, 0.55f), 16);
@@ -260,13 +333,16 @@ bool sectionHeader(const char* title, int count, bool defaultOpen, uint32_t role
   if (ImGui::InvisibleButton("##hdr", ImVec2(std::max(w, 1.0f), 26))) {
     open = !open;
     st->SetBool(id, open);
+    nav.cursor = ImGui::GetItemID();  // K-160
   }
   bool hov = ImGui::IsItemHovered();
   lastHeader = HeaderHit{ImGui::GetItemID(), q, ImVec2(q.x + w, q.y + 26)};
   devSection = title;
-  ImGui::PopID();
+  navNote(-1, id, open);  // K-160
   ImDrawList* dl = ImGui::GetWindowDrawList();
   dl->AddRectFilled(q, ImVec2(q.x + w, q.y + 26), hov ? P.surface700 : theme::withAlpha(P.surface800, 0.6f), theme::kRadiusSm);
+  navOutline(dl, q, w, 26, false);
+  ImGui::PopID();
   ui::drawIcon(dl, open ? ui::Icon::ChevronDown : ui::Icon::Chevron, ImVec2(q.x + 9, q.y + 13), 10, open ? P.hot : P.textDim);
   ui::drawIcon(dl, icon, ImVec2(q.x + 25, q.y + 13), 12, roleCol(roleColour));
   const std::string label = translate ? i18n::tr(title) : title;  // J-61: tree roots are translated
@@ -290,7 +366,8 @@ bool treeNode(const std::string& key, const char* label, int count, float indent
   if (forceOpen.erase(key)) st->SetBool(id, true);
   bool open = st->GetBool(id, devOpen(label));
   std::string c = count >= 0 ? std::to_string(count) : "";
-  if (browserRow(key.c_str(), ui::Icon::Folder, label, c.c_str(), indent, nullptr, roleCol(roleColour, open ? 1.0f : 0.8f))) {
+  if (browserRow(key.c_str(), ui::Icon::Folder, label, c.c_str(), indent, nullptr, roleCol(roleColour, open ? 1.0f : 0.8f), false, false, nullptr,
+                 RowNav{id, open, nullptr})) {
     open = !open;
     st->SetBool(id, open);
   }
@@ -813,15 +890,20 @@ void fileRow(App& a, const fs::path& p, float indent) {
   bool dbl = false;
   const std::string det = fileDetail(p, k);
   const bool sel = ps == selPath;
-  bool clicked = browserRow(ps.c_str(), iconOf(k), name.c_str(), det.c_str(), indent, &dbl, iconColOf(k), sel, isStarred(ps));
+  bool clicked = browserRow(ps.c_str(), iconOf(k), name.c_str(), det.c_str(), indent, &dbl, iconColOf(k), sel, isStarred(ps), nullptr,
+                            RowNav{0, false, ps.c_str()});
+  const bool fromKeys = nav.synth;
   if (clicked) {
     selPath = ps;
-    if (k == Kind::Audio) browserui::previewFile(a, ps);
+    nav.deferred.clear();
+    if (k == Kind::Audio && fromKeys && nav.repeat) nav.deferred = ps;  // K-160: a held key previews where it stops
+    else if (k == Kind::Audio) browserui::previewFile(a, ps);
+    if (k == Kind::Audio && fromKeys && !nav.repeat) nav.previewed = ps;
   }
   if (dbl) browserui::openFile(a, ps);
   switch (k) {
     case Kind::Audio:
-      ui::Hint("Click: preview \xC2\xB7 double-click: new sampler channel \xC2\xB7 drag onto the rack, playlist (audio clip), a mixer slot (impulse) or a sampler");
+      ui::Hint("Click or Up / Down: preview \xC2\xB7 double-click or Enter: new sampler channel \xC2\xB7 drag onto the rack, playlist (audio clip), a mixer slot (impulse) or a sampler");
       break;
     case Kind::Midi: ui::Hint("Double-click or drag onto the rack: import \xC2\xB7 drag onto the piano roll: add the notes to the pattern"); break;
     case Kind::Flp: ui::Hint("Double-click to open this FL Studio project"); break;
@@ -1080,6 +1162,10 @@ void installedPlugins(App& a, float indent) {
       // K-73: a row out of sight takes its place without being drawn (an open group of hundreds).
       if (!ImGui::IsRectVisible(ImVec2(std::max(1.0f, ImGui::GetContentRegionAvail().x), kRowH))) {
         ImGui::Dummy(ImVec2(1, kRowH));
+        ImGui::PushID(p->type.c_str());
+        const ImGuiID rowId = ImGui::GetID("##row");  // K-160: the keys can move onto it (it is then scrolled into view)
+        ImGui::PopID();
+        navNote(indent + 28, 0, false, {}, rowId);
         continue;
       }
       pluginRow(a, *p, indent + 28, label, prefs.favourites.count(p->type) > 0);
@@ -1549,6 +1635,89 @@ void tabStrip(App& a) {
   ImGui::SetCursorScreenPos(ImVec2(p0.x, p0.y + h));
 }
 
+// K-160: the browser's keys (see Nav), read inside the tree before its rows are drawn. A key the
+// browser uses is locked for the rest of the frame, so no shortcut also acts on it.
+void navKeys(App& a) {
+  ImGuiIO& io = ImGui::GetIO();
+  nav.act = Nav::None;
+  nav.focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+  const ImGuiKey moveKeys[] = {ImGuiKey_UpArrow, ImGuiKey_DownArrow, ImGuiKey_PageUp, ImGuiKey_PageDown, ImGuiKey_W, ImGuiKey_S};
+  if (!nav.deferred.empty()) {  // a held key let go: the sample it stopped on plays
+    bool held = false;
+    for (ImGuiKey k : moveKeys) held = held || ImGui::IsKeyDown(k);
+    if (!held) {
+      if (nav.deferred == selPath) browserui::previewFile(a, nav.deferred), nav.previewed = nav.deferred;
+      nav.deferred.clear();
+    }
+  }
+  if (!nav.focused || io.WantTextInput || io.KeyCtrl || io.KeyAlt || io.KeySuper || io.KeyShift || keys::capturing() || !fops.renaming.empty() ||
+      ImGui::GetActiveID() != 0 || ImGui::GetDragDropPayload() || ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel))
+    return;
+  const std::vector<NavRow>& rows = nav.last;
+  const int n = static_cast<int>(rows.size());
+  if (n == 0) return;
+  const ImGuiID owner = ImGui::GetID("##browserkeys");
+  bool repeat = false;
+  auto hit = [&](ImGuiKey k) {
+    if (!ImGui::IsKeyPressed(k, true)) return false;
+    repeat = ImGui::GetKeyData(k)->DownDuration > 0.0f;
+    ImGui::SetKeyOwner(k, owner, ImGuiInputFlags_LockThisFrame);
+    return true;
+  };
+  // W and S only while the typing keyboard is off: while it is on they play notes.
+  const bool letters = !a.typingKeyboard;
+  int cur = -1;
+  for (int i = 0; i < n && cur < 0; ++i) cur = rows[static_cast<size_t>(i)].id == nav.cursor ? i : -1;
+  if (cur < 0)  // the cursor's row went away (folded, another tab): start from the selected file
+    for (int i = 0; i < n && cur < 0; ++i) cur = !selPath.empty() && rows[static_cast<size_t>(i)].path == selPath ? i : -1;
+  const int page = std::max(1, static_cast<int>(ImGui::GetWindowHeight() / kRowH) - 1);
+  int next = cur;
+  auto setOpen = [&](const NavRow& r, bool open) {
+    ImGui::GetStateStorage()->SetBool(r.openId, open);
+    nav.cursor = r.id;
+  };
+  if (hit(ImGuiKey_DownArrow) || (letters && hit(ImGuiKey_S))) next = cur < 0 ? 0 : std::min(n - 1, cur + 1);
+  else if (hit(ImGuiKey_UpArrow) || (letters && hit(ImGuiKey_W))) next = cur < 0 ? 0 : std::max(0, cur - 1);
+  else if (hit(ImGuiKey_PageDown)) next = cur < 0 ? 0 : std::min(n - 1, cur + page);
+  else if (hit(ImGuiKey_PageUp)) next = cur < 0 ? 0 : std::max(0, cur - page);
+  else if (hit(ImGuiKey_Home)) next = 0;
+  else if (hit(ImGuiKey_End)) next = n - 1;
+  else if (cur >= 0 && hit(ImGuiKey_RightArrow)) {
+    const NavRow& r = rows[static_cast<size_t>(cur)];
+    if (r.openId && !r.open) setOpen(r, true);
+    else if (r.openId && cur + 1 < n && rows[static_cast<size_t>(cur + 1)].indent > r.indent) next = cur + 1;
+  } else if (cur >= 0 && hit(ImGuiKey_LeftArrow)) {
+    const NavRow& r = rows[static_cast<size_t>(cur)];
+    if (r.openId && r.open) {
+      setOpen(r, false);
+    } else {
+      for (int i = cur - 1; i >= 0; --i) {
+        const NavRow& p = rows[static_cast<size_t>(i)];
+        if (p.openId && p.indent < r.indent) {
+          next = i;
+          break;
+        }
+      }
+    }
+  } else if (cur >= 0 && (hit(ImGuiKey_Enter) || hit(ImGuiKey_KeypadEnter))) {
+    const NavRow& r = rows[static_cast<size_t>(cur)];
+    if (r.openId) {
+      setOpen(r, !r.open);
+    } else {
+      nav.cursor = r.id;
+      nav.act = Nav::Activate, nav.actOn = r.id;
+    }
+  }
+  if (next != cur && next >= 0) {
+    nav.cursor = rows[static_cast<size_t>(next)].id;
+    nav.act = Nav::Select, nav.actOn = nav.cursor;
+    nav.deferred.clear();  // only the row a held key stops on plays
+    nav.repeat = repeat;
+    nav.scroll = true;
+    ++nav.moves;
+  }
+}
+
 }  // namespace
 
 void drawBrowser(App& a) {
@@ -1655,6 +1824,9 @@ void drawBrowser(App& a) {
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS2, theme::kS2));
   ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
   ImGui::BeginChild("##tree", ImVec2(0, -footerH - (info ? kInfoH : 0)), ImGuiChildFlags_AlwaysUseWindowPadding);
+  navKeys(a);  // K-160
+  nav.recording = true;
+  nav.now.clear();
   if (searching) {
     if (searchResults(a, filter) == 0) {
       ImVec2 mn = ImGui::GetWindowPos(), sz = ImGui::GetWindowSize();
@@ -1700,6 +1872,9 @@ void drawBrowser(App& a) {
     }
     if (tab == TabStarred) sectionStarred(a);
   }
+  nav.recording = false;
+  nav.last.swap(nav.now);
+  nav.act = Nav::None;  // a row the keys acted on that was not drawn this frame
   ImGui::EndChild();
   ImGui::PopStyleVar(2);
   if (info) infoPanel(a);
@@ -1789,6 +1964,7 @@ void browserDropTarget(App& a) {
 //   browser move <path> <dir>         a drop of <path> on folder <dir> inside the browser
 //   browser trash <path>              the trash dialog for <path>; "browser trashok": its Move to trash
 //   browser refs                      the open project's file references (full paths)
+//   browser nav                       K-160: the keyboard cursor (row index, folder, open), the selected file, the last key preview
 //   browser state                     the name field, its error and why <path> is locked ("browser state <path>")
 bool devCommand(App& a, const std::vector<std::string>& args, int frame) {
   if (args.empty()) return false;
@@ -1817,6 +1993,13 @@ bool devCommand(App& a, const std::vector<std::string>& args, int frame) {
   } else if (op == "refs") {
     std::printf("browserrefs frame %d:\n", frame);
     for (const auto& f : referencedFiles(a.doc.song())) std::printf("  ref %s\n", f.c_str());
+  } else if (op == "nav") {  // K-160: the keyboard cursor, the selected file and the last sample the keys previewed
+    int at = -1;
+    for (size_t i = 0; i < nav.last.size() && at < 0; ++i) at = nav.last[i].id == nav.cursor ? static_cast<int>(i) : -1;
+    const NavRow* r = at >= 0 ? &nav.last[static_cast<size_t>(at)] : nullptr;
+    std::printf("browsernav frame %d: rows %zu cursor %d folder %d open %d focused %d moves %d sel \"%s\" previewed \"%s\" previewing %d\n", frame,
+                nav.last.size(), at, r && r->openId ? 1 : 0, r && r->open ? 1 : 0, nav.focused ? 1 : 0, nav.moves, selPath.c_str(),
+                nav.previewed.c_str(), a.engine.previewing() ? 1 : 0);
   } else if (op == "state") {
     std::printf("browserstate frame %d: renaming \"%s\" error \"%s\" trash \"%s\" locked \"%s\" undo %zu \"%s\"\n", frame, fops.renaming.c_str(),
                 fops.error.c_str(), fops.trashAsk.c_str(), p1.empty() ? "" : lockedWhy(a, p1).c_str(), a.doc.history().position(),

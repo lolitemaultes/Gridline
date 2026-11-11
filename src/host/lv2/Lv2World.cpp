@@ -39,11 +39,9 @@ std::string trimmed(std::string bundle) {
   return bundle;
 }
 
-// `path` is a file of `bundle` (seeAlso may point anywhere in principle).
-bool inBundle(const std::string& path, const std::string& bundle) {
-  return path.size() > bundle.size() && path.compare(0, bundle.size(), bundle) == 0 &&
-         (path[bundle.size()] == '/' || path[bundle.size()] == '\\');
-}
+// `path` is a file of `bundle` (seeAlso may point anywhere in principle). K-180: compared as pathKey
+// spells them: on Windows the bundle's path has '\' separators where a file URI gives '/'.
+bool inBundle(const std::string& path, const std::string& bundle) { return pathInside(path, bundle); }
 
 void includeFile(Model& m, const std::string& path, std::string* err) {
   std::string e;

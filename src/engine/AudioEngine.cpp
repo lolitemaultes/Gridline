@@ -612,13 +612,14 @@ void AudioEngine::drainMidi(const Program* p) {
   mTail_.store(t, std::memory_order_release);
 }
 
-void AudioEngine::preview(SamplePtr sample, bool own) {
+void AudioEngine::preview(SamplePtr sample, bool own, int64_t loopFrom) {
   (void)pitch::table(pitch::Quality::Realtime);  // J-140: built here (UI thread), read by the preview
   if (previewOwner_) retiredSamples_.push_back({previewOwner_, blocks_.load() + 2});
   previewOwner_ = std::move(sample);
   previewOwn_.store(own && previewOwner_ != nullptr, std::memory_order_relaxed);
   Cmd c{Cmd::Preview};
   c.sample = previewOwner_.get();
+  c.tick = previewOwner_ && loopFrom >= 0 && static_cast<size_t>(loopFrom) + 1 < previewOwner_->frames() ? static_cast<double>(loopFrom) : -1.0;
   send(c);
   previewing_ = previewOwner_ != nullptr;
   if (previewOwner_) activity_.fetch_add(1, std::memory_order_relaxed);
@@ -1457,6 +1458,7 @@ void AudioEngine::drain(const Program* p) {
       case Cmd::Preview:
         pvSample_ = c.sample;
         pvPos_ = 0;
+        pvLoop_ = c.tick;
         break;
       case Cmd::NoteOn:
       case Cmd::NoteOff: {
@@ -1908,9 +1910,12 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
     // J-140: files at another rate play through the band-limited reader
     // (was linear: dull top, aliasing from 96 kHz files); same rate: exact.
     const pitch::SincTable& tab = pitch::table(pitch::Quality::Realtime);
+    const double end = static_cast<double>(len);
     for (int i = 0; i < n; ++i) {
+      if (pvLoop_ >= 0)  // a loop goes on from its start, the phase kept
+        while (pvPos_ >= end) pvPos_ -= end - pvLoop_;
       size_t p0 = static_cast<size_t>(pvPos_);
-      if (p0 + 1 >= len) {
+      if (p0 >= len || (pvLoop_ < 0 && p0 + 1 >= len)) {
         pvSample_ = nullptr;
         previewing_.store(false);
         break;

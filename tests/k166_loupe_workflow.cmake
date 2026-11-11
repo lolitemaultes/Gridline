@@ -8,12 +8,13 @@
 #   4. a drag along the ruler scrubs, and the play position stays where the scrub ends;
 #   5. the auto-scroll toggle is a setting of its own (loupe.autoScroll), kept for the next run.
 # Loupe on a channel's sample (opened as from the channel rack):
-#   6. Alt-drag scrubs there too (it did nothing outside a mixer slot);
+#   6. Alt-drag scrubs there too (it did nothing outside a mixer slot); Loop plays the selection
+#      over and over there too (it played once), and once with Loop off;
 #   7. the drag handle drops the audio onto a playlist track and onto a channel rack row that
 #      lies under Loupe's window (Loupe turns see-through while dragging; it never takes its own drop).
 # A file opened on its own (the browser's Edit in Loupe):
 #   8. opens with its audio, adds nothing to the project, and the file is never changed.
-# Screenshots: <OUT>/edge.ppm, <OUT>/scrub.ppm (1440x900), <OUT>/file1080.ppm (1920x1080).
+# Screenshots: <OUT>/edge.ppm, <OUT>/scrubbing.ppm (mid-scrub), <OUT>/chloop-playing.ppm (looping) (1440x900), <OUT>/file1080.ppm (1920x1080).
 #   cmake -DAPP=<gridline-app> -DDEMO=<song.gridline.json> -DOUT=<dir> -P k166_loupe_workflow.cmake
 cmake_minimum_required(VERSION 3.16)
 file(REMOVE_RECURSE "${OUT}")
@@ -61,7 +62,7 @@ function(st p n)
   list(GET lines ${n} l)
   # "<label> <v1> [<v2> ...]": the values after each label (CMake keeps only nine matches per regex).
   set(spec "channel:channel" "frames:frames" "cursor:cursor" "sel:sa,sb" "playing:playing" "pos:pos" "range:rf,rt" "scrubbing:scrub"
-           "autoscroll:auto" "lanes:lx0,lx1,ly0,ly1" "ruler:ry0,ry1" "view:vs,vl")
+           "autoscroll:auto" "start:start" "lanes:lx0,lx1,ly0,ly1" "ruler:ry0,ry1" "view:vs,vl")
   foreach(e ${spec})
     string(REPLACE ":" ";" e "${e}")
     list(GET e 0 label)
@@ -149,18 +150,26 @@ check("Shift-click extends the selection to 3.2 s (${e1_sa} .. ${e1_sb})" e1_sa 
 check("screenshot edge.ppm" EXISTS "${OUT}/edge.ppm")
 
 # ---- 2. + 3. playback follows the selection and the clicks
+# Each state is read once the player has carried out the last play or jump ("loupe-settled"),
+# however slow the machine, never after a guessed number of frames.
 run(play 1440x900 200 "10 loupe loop 1
+11 forget loupe-settled
 12 loupe play
+38 waitfor loupe-settled 20
 40 loupe state
+41 forget loupe-settled
 42 sdlmove ${x400} ${ly}
 44 sdldown 0
 46 sdlmove ${x430} ${ly}
 48 sdlmove ${x450} ${ly}
 50 sdlup 0
+78 waitfor loupe-settled 20
 80 loupe state
+81 forget loupe-settled
 82 sdlmove ${x100} ${ly}
 84 sdldown 0
 86 sdlup 0
+87 waitfor loupe-settled 20
 88 loupe state
 92 loupe stop
 94 loupe loop 0
@@ -173,18 +182,22 @@ run(play 1440x900 200 "10 loupe loop 1
 120 loupe state
 140 stopvia
 " --plugin gl.edison)
+check("each play and jump was carried out by the player" NOT out MATCHES "waitfor loupe-settled: timed out")
 st(p0 0 slot)
 check("playing the selection, looped (pos ${p0_pos} in ${g_sa} .. ${g_sb})" p0_playing EQUAL 1 AND NOT p0_pos LESS g_sa AND p0_pos LESS g_sb)
 st(p1 1 slot)
 math(EXPR lo "${f400} - ${rate} / 50")
 math(EXPR hi "${f450} + ${rate} / 50")
 check("a new selection while playing plays at once (range ${p1_rf} .. ${p1_rt}, pos ${p1_pos}, selection ${p1_sa} .. ${p1_sb})"
-      p1_playing EQUAL 1 AND p1_pos GREATER lo AND p1_pos LESS hi AND p1_rf EQUAL p1_sa AND p1_rt EQUAL p1_sb)
+      p1_playing EQUAL 1 AND p1_sa GREATER lo AND p1_sb LESS hi AND NOT p1_pos LESS p1_sa AND p1_pos LESS p1_sb AND p1_rf EQUAL p1_sa AND p1_rt EQUAL p1_sb)
 st(p2 2 slot)
 math(EXPR lo "${f100} - ${rate} / 50")
-math(EXPR hi "${f100} + ${rate} * 3 / 2")
-check("a click while playing jumps there (pos ${p2_pos}, cursor ${p2_cursor}, no selection ${p2_sa} .. ${p2_sb})"
-      p2_playing EQUAL 1 AND p2_pos GREATER lo AND p2_pos LESS hi AND p2_sa EQUAL p2_sb)
+math(EXPR hi "${f100} + ${rate} / 50")
+# Loop is on and the demo has loop points at 2 .. 3 s: from the click (1 s) playback runs on
+# into them and loops them; it used to go straight to the loop start instead.
+check("a click while playing jumps there, before the loop points too (start ${p2_start}, cursor ${p2_cursor}, pos ${p2_pos}, range ${p2_rf} .. ${p2_rt}, no selection ${p2_sa} .. ${p2_sb})"
+      p2_playing EQUAL 1 AND p2_cursor GREATER lo AND p2_cursor LESS hi AND p2_start EQUAL p2_cursor AND NOT p2_pos LESS p2_cursor
+      AND p2_pos LESS f300 AND p2_rf EQUAL f200 AND p2_rt EQUAL f300 AND p2_sa EQUAL p2_sb)
 st(p3 3 slot)
 math(EXPR lo "${f200} - ${rate} / 50")
 math(EXPR hi "${f200} + ${rate} / 50")
@@ -206,7 +219,7 @@ run(scrub 1440x900 90 "10 sdlmove ${x100} ${ry}
 24 sdlmove ${xc} ${ry}
 28 sdlmove ${x200} ${ry}
 30 loupe state
-31 shot \"${OUT}/scrub.ppm\"
+31 shot \"${OUT}/scrubbing.ppm\"
 40 sdlmove ${x200} ${ry}
 50 sdlup 0
 54 loupe state
@@ -226,7 +239,7 @@ check("the auto-scroll toggle turns it off (${s1_auto} -> ${s2_auto})" s1_auto E
 run(scrub2 1440x900 20 "16 loupe state\n" --plugin gl.edison)
 st(s3 0 slot)
 check("... and stays off in the next session (setting loupe.autoScroll)" s3_auto EQUAL 0)
-check("screenshot scrub.ppm" EXISTS "${OUT}/scrub.ppm")
+check("screenshot scrubbing.ppm" EXISTS "${OUT}/scrubbing.ppm")
 unset(ENV{GRIDLINE_EDISON_DEMO})
 
 # ---- 6. + 7. Loupe on a channel's sample: Alt scrub, the drag handle onto the playlist and the rack
@@ -260,6 +273,44 @@ st(cs0 0 channel)
 check("Alt-drag scrubs a channel's sample too (scrubbing ${cs0_scrub}, pos ${cs0_pos})" cs0_scrub EQUAL 1 AND cs0_pos GREATER 0)
 st(cs1 1 channel)
 check("... and stops on release, the play position where it ended (cursor ${cs1_cursor})" cs1_scrub EQUAL 0 AND cs1_cursor GREATER 0)
+# Loop outside a mixer slot: a selection (1.5 .. 2.5 s, dragged) plays over and over, as in a
+# slot (it played once).
+math(EXPR cf150 "${rate} * 3 / 2")
+math(EXPR cf250 "${rate} * 5 / 2")
+xat(cx150 c ${cf150})
+xat(cx250 c ${cf250})
+math(EXPR cx200 "(${cx150} + ${cx250}) / 2")
+run(chloop 1440x900 70 "20 sdlmove ${cx150} ${cy}
+22 sdldown 0
+24 sdlmove ${cx200} ${cy}
+26 sdlmove ${cx250} ${cy}
+28 sdlmove ${cx250} ${cy}
+30 sdlup 0
+32 loupe loop 1
+33 loupe play
+34 loupe state
+36 waitfor never 2.5
+38 loupe state
+39 shot \"${OUT}/chloop-playing.ppm\"
+40 loupe loop 0
+42 loupe stop
+44 loupe play
+46 waitfor never 2.5
+48 loupe state
+")
+st(cl0 0 channel)
+st(cl1 1 channel)
+st(cl2 2 channel)
+string(REGEX MATCH "loupe state: [^\n]* loop ([01]) " _ "${out}")
+set(cl0_loop "${CMAKE_MATCH_1}")
+math(EXPR selLen "(${cl0_sb} - ${cl0_sa}) * 1000 / ${rate}")
+check("a selection dragged on the channel's sample (${cl0_sa} .. ${cl0_sb}, ${selLen} ms)" selLen GREATER 500 AND selLen LESS 1500)
+check("Loop on a channel's sample plays the selection over and over (loop ${cl0_loop}, playing ${cl0_playing} -> ${cl1_playing} after 2.5 s)"
+      cl0_loop EQUAL 1 AND cl0_playing EQUAL 1 AND cl1_playing EQUAL 1)
+check("... the play position stays inside the selection (pos ${cl1_pos} in ${cl0_sa} .. ${cl0_sb}, range ${cl1_rf} .. ${cl1_rt})"
+      NOT cl1_pos LESS cl0_sa AND cl1_pos LESS cl0_sb AND cl1_rf EQUAL cl0_sa AND cl1_rt EQUAL cl0_sb)
+check("... and with Loop off it plays once (playing ${cl2_playing})" cl2_playing EQUAL 0)
+check("screenshot chloop-playing.ppm" EXISTS "${OUT}/chloop-playing.ppm")
 run(chdrag 1440x900 50 "20 channels
 22 sdlat loupedrag
 24 sdldown 0

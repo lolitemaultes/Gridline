@@ -219,12 +219,16 @@ void EdisonFx::run(const PluginState& state, const Sample* src, const ProcessCon
     rpos_ = static_cast<double>(st >= 0 ? st : from_.load());
     rplaying_ = true;
     rangeReq_.store(false);
+    handled_.fetch_add(1);
     tap::play(src);  // J-219: Track Receipt
   }
-  if (rangeReq_.exchange(false) && rplaying_) {  // a new range while playing: keep the place when it is inside
-    const int64_t f = from_.load(), t = to_.load();
-    const double end = t > f && t <= frames ? static_cast<double>(t) : static_cast<double>(frames);
-    if (rpos_ < static_cast<double>(f) || rpos_ >= end) rpos_ = static_cast<double>(f);
+  if (rangeReq_.exchange(false)) {
+    if (rplaying_) {  // a new range while playing: keep the place when it is inside
+      const int64_t f = from_.load(), t = to_.load();
+      const double end = t > f && t <= frames ? static_cast<double>(t) : static_cast<double>(frames);
+      if (rpos_ < static_cast<double>(f) || rpos_ >= end) rpos_ = static_cast<double>(f);
+    }
+    handled_.fetch_add(1);
   }
   if (P(EdFollowHost, 0) >= 0.5f) {
     if (ctx.playing && !hostWasPlaying_) {

@@ -2529,6 +2529,13 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(k18_browser_files PROPERTIES TIMEOUT 400)
 
+    # K-160: browse and preview samples in the browser with the keyboard.
+    add_test(NAME k160_browser_keys
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/k160_browser_keys -P ${CMAKE_SOURCE_DIR}/tests/k160_browser_keys.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(k160_browser_keys PROPERTIES TIMEOUT 400)
+
     # J-191: Split stems from the clip menu (a tiny model): four aligned clips on new tracks, one undo step.
     add_test(NAME j191_stems_app
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DTESTBIN=$<TARGET_FILE:gridline_tests_stems>

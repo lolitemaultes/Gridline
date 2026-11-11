@@ -113,9 +113,16 @@ struct Session {
   // playback (standalone: engine preview of a temporary sample)
   bool pvPlaying = false;
   double pvT0 = 0;
-  int64_t pvFrom = 0, pvTo = 0;
+  int64_t pvFrom = 0, pvTo = 0;     // the preview starts at pvFrom and plays to pvTo
+  int64_t pvLoopFrom = 0;           // ... then, when pvLoop, [pvLoopFrom, pvTo) over and over
+  bool pvLoop = false;
   SamplePtr pvSample;
   int64_t playFrom = -1, playTo = -1;  // the range playing (a new selection while playing changes it)
+  bool playLoop = false;
+  int64_t playStart = -1;   // where the last play or jump started
+  uint32_t settleWant = 0;  // the slot player's handled() count that carries it out (0: at once)
+  bool settleSaid = true;   // reported to scripted runs ("loupe-settled")
+  bool loop = false;  // Loop outside a mixer slot (in a slot it is the plugin's Loop parameter)
 
   // recording (slot)
   Recorder rec;
@@ -169,6 +176,9 @@ Session& sessionFor(App& a, const PluginTarget& t);
 EdisonFx* slotFx(App& a, const Session& s);
 const PluginState* slotState(App& a, const Session& s);
 double param(App& a, const Session& s, int k, double dflt);
+// Loop playback: the slot's Loop parameter, or the session's own Loop outside a slot.
+bool loopOn(App& a, const Session& s);
+void setLoop(App& a, Session& s, bool on);
 void setParam(App& a, const Session& s, int k, double v);
 
 // Edits: run `op` on the worker; its result becomes one undo step.

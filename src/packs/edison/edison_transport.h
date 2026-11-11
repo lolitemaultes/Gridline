@@ -1,6 +1,7 @@
 // Gridline - "edison" pack: Loupe's playback rules, pure (the editor and tests share them).
-//  * what Play plays: the selection; else, looping, the loop points (from the cursor when it
-//    is inside them) or the whole file from the cursor; else the cursor to the end;
+//  * what Play plays: the selection; else, looping, the loop points (from the cursor: before
+//    them it plays on into them, past them it plays on to the end) or the whole file from the
+//    cursor; else the cursor to the end. Playback always starts where you clicked;
 //  * a new range while playing: the playback keeps its place when that lies inside the new
 //    range, else it goes to the range's start (EdisonFx does the same on the audio thread);
 //  * the selection edge under the pointer (dragging an edge moves only that edge);
@@ -32,7 +33,8 @@ inline PlayRange playRange(int64_t frames, Range sel, bool hasLoopPoints, int64_
     r.from = sel.a, r.to = sel.b, r.start = sel.a;
   } else if (loopOn && hasLoopPoints && loopEnd > loopStart && loopStart < n) {
     r.from = std::max<int64_t>(0, loopStart), r.to = std::min(n, loopEnd);
-    r.start = cur >= r.from && cur < r.to ? cur : r.from;
+    r.start = cur;
+    if (cur >= r.to) r.from = cur, r.to = n, r.loop = false;  // past the loop: on to the end
   } else {
     r.from = loopOn ? 0 : cur, r.to = n, r.start = cur;
   }
@@ -42,6 +44,44 @@ inline PlayRange playRange(int64_t frames, Range sel, bool hasLoopPoints, int64_
 // The playback place after the range changed to [from, to) (EdisonFx::setRange).
 inline double keepOrJump(double pos, int64_t from, int64_t to) {
   return pos < static_cast<double>(from) || pos >= static_cast<double>(to) ? static_cast<double>(from) : pos;
+}
+
+// Outside a mixer slot Loupe plays through the engine's preview, which plays one sample and,
+// for a loop, goes back to one frame of it at the end. A loop that starts at `start` inside
+// [from, to) plays [start, to) and then [from, to) over and over: the sample holds
+// [start, to) followed by [from, to) (only [from, to) when start is from; a start before
+// `from` plays on into the loop), and loops back
+// to `loopFrom`, where the second part begins.
+struct PreviewLayout {
+  int64_t headFrom = 0, headTo = 0;  // first part of the sample, in source frames
+  int64_t tailFrom = 0, tailTo = 0;  // second part (empty when start is from or it plays once)
+  int64_t loopFrom = -1;             // sample frame the engine loops back to (-1 = once)
+};
+inline PreviewLayout previewLayout(int64_t start, int64_t from, int64_t to, bool loop) {
+  PreviewLayout l;
+  if (to <= from) return l;
+  start = start < 0 || start >= to ? from : start;  // before `from`: plays on into the loop
+  l.headFrom = start;
+  l.headTo = to;
+  if (!loop || to - from < 2) return l;
+  if (start != from) {
+    l.tailFrom = from;
+    l.tailTo = to;
+  }
+  l.loopFrom = to - start;
+  if (start == from) l.loopFrom = 0;
+  return l;
+}
+
+// Where that preview is in the source after `elapsed` frames (-1 once a single play ended).
+inline double previewPosAt(int64_t start, int64_t from, int64_t to, bool loop, double elapsed) {
+  if (to <= from) return -1;
+  if (start < 0 || start >= to) start = from;
+  const double p = static_cast<double>(start) + elapsed;
+  if (p < static_cast<double>(to)) return p;
+  if (!loop || to - from < 2) return -1;
+  const double len = static_cast<double>(to - from);
+  return static_cast<double>(from) + std::fmod(p - static_cast<double>(from), len);
 }
 
 // Which selection edge is under x: 0 none, 1 the start, 2 the end (the nearer one when both

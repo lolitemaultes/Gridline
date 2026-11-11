@@ -741,7 +741,7 @@ void releaseTypedNotes(App& app, std::map<SDL_Scancode, HeldNote>& held) {
 //   shot <out.ppm> (J-37: this frame is saved once rendered — frame sequences)
 //   text <characters> (J-182: typed into the focused text field)
 //   playmode song|pattern (K-4: the transport's play mode)
-//   key space (J-49) · key escape · key left|right|up|down|enter|delete|tab (J-141), notes (Q-3: piano roll notes to stdout) · transport (J-49: song position / playing / seek position to stdout)
+//   key space (J-49) · key escape · key left|right|up|down|enter|delete|tab (J-141) · key pageup|pagedown|home|end|kpenter · keyhold up|down 1|0 (K-160), notes (Q-3: piano roll notes to stdout) · transport (J-49: song position / playing / seek position to stdout)
 //   scroll dx dy (J-67: one trackpad-style two-axis scroll event, wheel units)
 //   momentum dx dy frames (J-67: a decaying scroll stream over the next frames, like an OS fling)
 //   trace on|off (J-67: per frame, the drawn scroll positions to stdout)
@@ -1251,6 +1251,13 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       const ImGuiKey k = static_cast<ImGuiKey>(ImGuiKey_F1 + (std::atoi(l.a0.c_str() + 1) - 1));
       io.AddKeyEvent(k, true);
       io.AddKeyEvent(k, false);
+    } else if (l.cmd == "key" && (l.a0 == "pageup" || l.a0 == "pagedown" || l.a0 == "home" || l.a0 == "end" || l.a0 == "kpenter")) {  // K-160
+      const ImGuiKey k = l.a0 == "pageup" ? ImGuiKey_PageUp : l.a0 == "pagedown" ? ImGuiKey_PageDown : l.a0 == "home" ? ImGuiKey_Home
+                       : l.a0 == "end" ? ImGuiKey_End : ImGuiKey_KeypadEnter;
+      io.AddKeyEvent(k, true);
+      io.AddKeyEvent(k, false);
+    } else if (l.cmd == "keyhold" && (l.a0 == "up" || l.a0 == "down")) {  // K-160: "keyhold down 1" presses an arrow and keeps it held ("0" lets go)
+      io.AddKeyEvent(l.a0 == "up" ? ImGuiKey_UpArrow : ImGuiKey_DownArrow, l.a1 != "0");
     } else if (l.cmd == "key" && l.a0 == "escape") {  // Q-3: cancel a drag
       io.AddKeyEvent(ImGuiKey_Escape, true);
       io.AddKeyEvent(ImGuiKey_Escape, false);
