@@ -96,7 +96,7 @@ class Slate : public Painter {
     const ImVec2 d(std::cos(an), std::sin(an));
     const float lw = std::clamp(capR * 0.14f, 1.5f, 3.0f);
     const ImVec2 q0(c.x + d.x * capR * 0.3f, c.y + d.y * capR * 0.3f), q1(c.x + d.x * capR * 0.86f, c.y + d.y * capR * 0.86f);
-    dl->PathLineTo(q0), dl->PathLineTo(q1), dl->PathStroke(dis ? tk.textFaint : act ? rgb(0xFFFFFF) : tk.text, 0, lw);
+    dl->PathLineTo(q0), dl->PathLineTo(q1), dl->PathStroke(dis ? tk.textFaint : act ? theme::pal().paper : tk.text, 0, lw);
   }
   void button(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const char* lbl, int state, ImU32 role) override {
     const bool on = state & On;

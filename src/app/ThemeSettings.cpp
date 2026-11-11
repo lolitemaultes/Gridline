@@ -66,6 +66,7 @@ Tweaks tweaksFromSettings(const Settings& s) {
   t.playhead = parseColour(s.getString("theme.playhead"));
   t.contrast = static_cast<float>(std::clamp(s.getNumber("theme.contrast"), -1.0, 1.0));
   t.brightness = static_cast<float>(std::clamp(s.getNumber("theme.brightness"), -1.0, 1.0));
+  t.whiteText = s.getBool("theme.whiteText");
   return t;
 }
 
@@ -76,6 +77,7 @@ void tweaksToSettings(const Tweaks& t, Settings& s) {
   s.set("theme.playhead", colourText(t.playhead));
   s.set("theme.contrast", static_cast<double>(t.contrast));
   s.set("theme.brightness", static_cast<double>(t.brightness));
+  s.set("theme.whiteText", t.whiteText);
 }
 
 ui::ControlStyle controlStyleFromSettings(const Settings& s) { return ui::controlStyleFromText(s.getString("theme.controls")); }

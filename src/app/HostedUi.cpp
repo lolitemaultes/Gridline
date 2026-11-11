@@ -431,11 +431,16 @@ WrapperUi& wrapperFor(const PluginTarget& t, host::HostedInstance* hi) {
 }
 
 // Slate wrapper palette (panel roles of a plugin wrapper; drawn by Gridline).
+// K-177: from the theme's dark faces (the stock dark slate by default, in both modes), so the
+// strip follows brightness down to pitch black, contrast and white text.
 struct WrapLook {
-  ImU32 top = skin::hex(0x4A545A), bottom = skin::hex(0x353D42);
-  ImU32 text = skin::hex(0xE4ECEE), dim = skin::hex(0x9FA8AD);
-  ImU32 btn = skin::hex(0x2F383D), btnOn = skin::hex(0x3D63DD), btnText = skin::hex(0xDDE4E7);
-  ImU32 lcd = skin::hex(0x1A1E21), lcdText = skin::hex(0x9FE0A8);
+  const theme::Palette& D = theme::darkFaces();
+  ImU32 top = theme::mix(D.surface800, D.surface700, 0.4f), bottom = D.surface900;
+  ImU32 text = D.whiteGlyphs ? D.text : theme::mix(D.text, D.paper, 0.35f), dim = D.textDim;
+  ImU32 btn = theme::mix(D.surface900, D.surface950, 0.45f);
+  ImU32 btnOn = theme::tweaks().accent != theme::Tweaks::kKeep ? D.accent : skin::hex(0x3D63DD);  // selection blue unless an accent is chosen
+  ImU32 btnText = D.whiteGlyphs ? D.text : theme::mix(D.text, D.paper, 0.2f);
+  ImU32 lcd = theme::mix(D.field, D.ink, 0.25f), lcdText = D.whiteGlyphs ? D.text : skin::hex(0x9FE0A8);  // LCD green (role)
   ImU32 warn = skin::hex(0xE5484D);
 };
 

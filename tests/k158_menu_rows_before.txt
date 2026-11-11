@@ -1,0 +1,1999 @@
+# The rows of Gridline's menus before they were made compact: "<menu>|<row>" (submenus and items).
+# tests/k77_menu_order_app.cmake checks that each is still in its menu. Taken with --menu <name>.
+add|8 playlist tracks
+add|Audio file as sampler...
+add|Automation clip for the last moved control
+add|Clip of the current pattern at the song end
+add|Controller
+add|Delay & reverb
+add|Distortion
+add|Drums
+add|Dynamics
+add|Effect on Master
+add|Filter
+add|Gridline Suite Mini
+add|Imported
+add|Instrument channel
+add|MIDI
+add|Misc
+add|Mixer track
+add|Modulation
+add|Multi FX
+add|Pattern
+add|Routing
+add|Sampler
+add|Spectral
+add|Synth
+add|Utility
+add|Visual
+arrclip|100%
+arrclip|12 parts
+arrclip|16 parts
+arrclip|2 beats
+arrclip|2 parts
+arrclip|25%
+arrclip|3 parts
+arrclip|4 parts
+arrclip|50%
+arrclip|6 parts
+arrclip|75%
+arrclip|8 parts
+arrclip|Add at transients
+arrclip|Bar
+arrclip|Beat
+arrclip|Beat repeat...
+arrclip|Bounce this track to audio
+arrclip|Channel settings
+arrclip|Chop
+arrclip|Chop and stutter...
+arrclip|Clear warp markers
+arrclip|Clip properties...
+arrclip|Edit in Loupe
+arrclip|Eighth beat
+arrclip|Export clip as WAV...
+arrclip|Fit to tempo
+arrclip|Follow the project tempo
+arrclip|Gentle
+arrclip|Half as long
+arrclip|Half beat
+arrclip|Half-time...
+arrclip|Into equal parts
+arrclip|Loop
+arrclip|Make unique as sample
+arrclip|Medium
+arrclip|Mute clip
+arrclip|New markers snap to transients
+arrclip|Normalize
+arrclip|Original length
+arrclip|Pitch a semitone down
+arrclip|Pitch a semitone up
+arrclip|Quantize strength
+arrclip|Quantize to the grid (100%)
+arrclip|Quarter beat
+arrclip|Rename...
+arrclip|Render clip to audio (consolidate)
+arrclip|Resample
+arrclip|Reverse
+arrclip|Reverse build...
+arrclip|Rubber Band
+arrclip|Sharp
+arrclip|Snap grid
+arrclip|Split stems...
+arrclip|Stretch
+arrclip|Swing to the song's groove (100%)
+arrclip|Take its groove as the song's swing
+arrclip|Tape stop...
+arrclip|Time stretch
+arrclip|Triplet stutter...
+arrclip|Twice as long
+arrclip|Warp markers
+audioclip|12 parts
+audioclip|16 parts
+audioclip|2 beats
+audioclip|2 parts
+audioclip|3 parts
+audioclip|4 parts
+audioclip|6 parts
+audioclip|8 parts
+audioclip|Bar
+audioclip|Beat
+audioclip|Beat repeat...
+audioclip|Bounce this track to audio
+audioclip|Chop
+audioclip|Chop and stutter...
+audioclip|Clip properties...
+audioclip|Eighth beat
+audioclip|Fit to tempo
+audioclip|Gentle
+audioclip|Half as long
+audioclip|Half beat
+audioclip|Half-time...
+audioclip|Into equal parts
+audioclip|Medium
+audioclip|Normalize
+audioclip|Original length
+audioclip|Quarter beat
+audioclip|Render clip to audio (consolidate)
+audioclip|Resample
+audioclip|Reverse build...
+audioclip|Rubber Band
+audioclip|Sharp
+audioclip|Snap grid
+audioclip|Split stems...
+audioclip|Stretch
+audioclip|Tape stop...
+audioclip|Time stretch
+audioclip|Triplet stutter...
+audioclip|Twice as long
+audiosource|Channel settings
+audiosource|Delete unused audio clips
+audiosource|Delete...
+audiosource|Select its clips
+audiosource|Select unused audio clips
+channel|1
+channel|1  Kick
+channel|1 beat (4 steps)
+channel|10
+channel|10  Insert 10
+channel|11
+channel|11  Insert 11
+channel|12
+channel|12  Insert 12
+channel|13
+channel|13  Insert 13
+channel|14
+channel|14  Insert 14
+channel|15
+channel|15  Insert 15
+channel|16  Insert 16
+channel|2
+channel|2  Clap
+channel|2 beats (8 steps)
+channel|3
+channel|3  Hat
+channel|3 beats (12 steps)
+channel|4
+channel|4  Open hat
+channel|5
+channel|5  Snare
+channel|6
+channel|6  Bass
+channel|7
+channel|7  Chords
+channel|8
+channel|8  Perc
+channel|9
+channel|9  Insert 9
+channel|Advanced fill...
+channel|Bake note effects into the pattern
+channel|Burn the loop into the pattern
+channel|C5 and above only
+channel|Channel settings
+channel|Clear steps and notes
+channel|Clone
+channel|Clone with controller links
+channel|Colour
+channel|Controller
+channel|Copy
+channel|Cut
+channel|Cut itself
+channel|Delete
+channel|Delete the first step
+channel|Don't loop
+channel|Drop its instrument track link
+channel|Drums
+channel|Edit sample in Loupe
+channel|Every 2 from step 2
+channel|Every 4 from step 3
+channel|Every 8 from step 5
+channel|Export sample as WAV...
+channel|Fill every 2 steps
+channel|Fill every 4 steps
+channel|Fill every 8 steps
+channel|Fill every step
+channel|Fill offbeats
+channel|Freeze
+channel|Granular
+channel|Graph editor
+channel|Hibernate
+channel|Icon
+channel|Imported
+channel|Insert a step at the start
+channel|Insert instrument below
+channel|Invert
+channel|Kerf
+channel|Key range
+channel|Keyboard editor
+channel|MIDI
+channel|Make an instrument track for it
+channel|Master
+channel|Move down
+channel|Move up
+channel|Mute
+channel|Notes below C5 only
+channel|Open the sample in a new channel
+channel|Paste
+channel|Piano roll
+channel|Piano roll to steps
+channel|Random colour
+channel|Randomize...
+channel|Rename...
+channel|Render to sampled instrument...
+channel|Repeat the first bar of steps
+channel|Replace instrument
+channel|Reset step parameters
+channel|Reverse
+channel|Rotate left
+channel|Rotate right
+channel|Route to a free mixer track
+channel|Route to mixer track
+channel|Sampler
+channel|Select in playlist
+channel|Set to the next bar
+channel|Set to the next beat
+channel|Shift left
+channel|Shift right
+channel|Step loop
+channel|Steps
+channel|Steps to piano roll
+channel|Synth
+channel|Truncate swung steps
+channel|Utility
+channel|Whole keyboard
+channel|Zip
+chop|12 parts
+chop|16 parts
+chop|2 beats
+chop|2 parts
+chop|3 parts
+chop|4 parts
+chop|6 parts
+chop|8 parts
+chop|Bar
+chop|Beat
+chop|Beat repeat...
+chop|Chop and stutter...
+chop|Eighth beat
+chop|Gentle
+chop|Half beat
+chop|Half-time...
+chop|Into equal parts
+chop|Medium
+chop|Quarter beat
+chop|Reverse build...
+chop|Sharp
+chop|Snap grid
+chop|Tape stop...
+chop|Triplet stutter...
+clip|12 parts
+clip|16 parts
+clip|2 beats
+clip|2 parts
+clip|3 parts
+clip|4 parts
+clip|6 parts
+clip|8 parts
+clip|At the note starts
+clip|Bar
+clip|Beat
+clip|Beat repeat...
+clip|Chop
+clip|Chop and stutter...
+clip|Delete
+clip|Duplicate
+clip|Edit pattern
+clip|Eighth beat
+clip|Fit length to pattern
+clip|Half beat
+clip|Half-time...
+clip|Into equal parts
+clip|Make unique
+clip|Merge selected clips
+clip|Pattern colour
+clip|Quarter beat
+clip|Rename pattern...
+clip|Reverse build...
+clip|Select all clips of this pattern
+clip|Slice at the song position
+clip|Snap grid
+clip|Split at pattern repeats
+clip|Split by channel
+clip|Tape stop...
+clip|Triplet stutter...
+edit|Copy
+edit|Cut
+edit|Delete
+edit|Deselect
+edit|Duplicate
+edit|Paste
+edit|Redo
+edit|Rename...
+edit|Select all
+edit|Undo
+edit|Undo history
+file|All playlist track groups...
+file|All playlist tracks...
+file|Audio file as playlist clip...
+file|Audio file into a sampler...
+file|Beat starter
+file|Browse templates...
+file|Clear list
+file|Collaboration...
+file|Demo song
+file|Empty project
+file|Export
+file|FL Studio export report...
+file|FL Studio presets...
+file|FL Studio project (.flp)...
+file|FL Studio zipped loop package (.zip)...
+file|Gridline zipped project (.gridlinez)...
+file|Import
+file|Import from URL...
+file|Join collaborative project...
+file|Leave out frozen audio
+file|Locate missing samples...
+file|MIDI file...
+file|Mixer tracks (stems)...
+file|Mixing desk
+file|New
+file|New collaborative project...
+file|New from loop starter...
+file|New from template
+file|Open collaborative project...
+file|Open recent
+file|Open...
+file|Pattern as MIDI file...
+file|Project bones...
+file|Project data files...
+file|Project info...
+file|Quit
+file|Recent collaborative projects
+file|Render again with the last settings...
+file|Render to file (WAV, FLAC, MP3, Ogg)...
+file|Revert to last backup
+file|Save
+file|Save as template...
+file|Save as...
+file|Save new version
+file|Save to a new project folder...
+file|Song as MIDI file...
+file|Starter kit (drums + synth)
+file|Time selection as MIDI file...
+file|Welcome screen
+file|song.gridline.json
+help|About Gridline
+help|Check for updates...
+help|Keyboard shortcuts
+help|Load demo song
+help|Show settings folder
+help|Track Receipt...
+knob|Centre
+knob|Copy value
+knob|Create automation clip
+knob|Edit automation clip
+knob|Edit events
+knob|Link to controller…
+knob|Maximum
+knob|Minimum
+knob|Multilink to controllers
+knob|Paste value
+knob|Record automation
+knob|Set to
+knob|Start the song at this value
+layouts|Layout settings...
+layouts|Live
+layouts|Logic
+layouts|Studio
+markers|1 bar
+markers|16 bars
+markers|2 bars
+markers|4 bars
+markers|8 bars
+markers|Add a marker every
+markers|Add marker at the time selection
+mixer|1  Kick
+mixer|10  Insert 10
+mixer|11  Insert 11
+mixer|12  Insert 12
+mixer|13  Insert 13
+mixer|14  Insert 14
+mixer|15  Insert 15
+mixer|16  Insert 16
+mixer|2  Clap
+mixer|3  Hat
+mixer|4  Open hat
+mixer|5  Snare
+mixer|6  Bass
+mixer|7  Chords
+mixer|8  Perc
+mixer|9  Insert 9
+mixer|Add to group
+mixer|After the effects (before the fader)
+mixer|All
+mixer|Allow threaded processing
+mixer|Arm for disk recording
+mixer|Audio input (before the effects)
+mixer|Auto colour group
+mixer|Channel routing
+mixer|Channels routed to this track
+mixer|Clear all effects
+mixer|Colour
+mixer|Controller
+mixer|Copy effect chain
+mixer|Create group...
+mixer|Create submix...
+mixer|Delay & reverb
+mixer|Delete
+mixer|Disable track
+mixer|Disarm selected tracks
+mixer|Distortion
+mixer|Dock to
+mixer|Drop its audio track link
+mixer|Dynamics
+mixer|Effect chain
+mixer|Everything but name, effects and routing
+mixer|File
+mixer|Filter
+mixer|Freeze
+mixer|Gradient colour
+mixer|Gridline Suite Mini
+mixer|Group
+mixer|Hibernate
+mixer|Icon
+mixer|Insert effect
+mixer|Insert from state...
+mixer|Insert multiple...
+mixer|Insert one
+mixer|Left
+mixer|Load effect chain
+mixer|Make an audio track for it
+mixer|Make mono
+mixer|Master
+mixer|Merged (mono)
+mixer|Middle
+mixer|Misc
+mixer|Modulation
+mixer|Move left
+mixer|Move right
+mixer|Multi FX
+mixer|Mute
+mixer|Narrow
+mixer|Normal
+mixer|Open mixer track state...
+mixer|Pan
+mixer|Paste effect chain
+mixer|Random colour
+mixer|Record from
+mixer|Remove from group
+mixer|Rename, colour and icon
+mixer|Rename...
+mixer|Render selected tracks to wave files...
+mixer|Reset
+mixer|Reset manual latency on all tracks
+mixer|Reset routing to master
+mixer|Reset track
+mixer|Reverse polarity
+mixer|Right
+mixer|Route only to
+mixer|Route selected channels starting from this track
+mixer|Route selected channels to this track
+mixer|Route selected to this track
+mixer|Route selected to this track only
+mixer|Route this track to selected
+mixer|Route this track to selected only
+mixer|Routing
+mixer|Save effect chain
+mixer|Save mixer track state as...
+mixer|Select
+mixer|Send to
+mixer|Set in beats...
+mixer|Set in ms...
+mixer|Set in samples...
+mixer|Sidechain selected to this track
+mixer|Sidechain selected to this track only
+mixer|Sidechain this track to selected
+mixer|Sidechain this track to selected only
+mixer|Solo
+mixer|Solo alone (without the tracks feeding it)
+mixer|Spectral
+mixer|Stereo separation
+mixer|Strip EQ
+mixer|Swap left and right
+mixer|Track latency
+mixer|Track output (after the fader)
+mixer|Track routing
+mixer|Tracks routed to this one
+mixer|Tracks this one is routed to
+mixer|Trim unused tracks at the end
+mixer|Unroute tracks routed to this track
+mixer|Utility
+mixer|Visual
+mixer|Volume
+mixer|Volume, pan and stereo separation
+mixer|Wide
+mixer|Widest
+options|1 bar
+options|10 minutes
+options|10 seconds
+options|16-bit WAV
+options|2 bars
+options|2 minutes
+options|24-bit WAV
+options|30 seconds
+options|32-bit float WAV
+options|4 bars
+options|AZERTY
+options|Arrangement
+options|Arrangements
+options|At once
+options|Audio file format
+options|Audio settings...
+options|Audio, into Loupe (armed tracks)
+options|Audio, into the playlist as audio clips
+options|Auto scrolling
+options|Auto scrolling in pattern editors
+options|Automatic
+options|Automation (controller moves)
+options|Automation clips
+options|Backup settings...
+options|Chord
+options|Chord mode
+options|Colemak
+options|Controller moves go to
+options|Count-in
+options|Debug log and script console...
+options|Delete arrangement
+options|Disarm tracks after recording
+options|Dominant 7th
+options|Drop silent takes
+options|Duplicate arrangement
+options|Dvorak
+options|Everything
+options|File settings...
+options|Follow the computer
+options|General settings...
+options|Hibernate unused plugins automatically
+options|Interface settings...
+options|Keyboard layout
+options|Keyboard shortcuts...
+options|Link to controller (Record)…
+options|Live mode
+options|Loop recording: new take per pass
+options|MIDI settings...
+options|Major
+options|Major 7th
+options|Metronome
+options|Minor
+options|Minor 7th
+options|Multilink to controllers
+options|Name empty playlist tracks after the take
+options|Name takes after the audio input
+options|Name takes after the mixer track
+options|Never
+options|New arrangement
+options|Next 2 bars
+options|Next 4 bars
+options|Next 8 bars
+options|Next arrangement
+options|Next bar
+options|Next beat
+options|Notes
+options|Octave
+options|Off
+options|Overdub (keep existing notes)
+options|Pattern events
+options|Play notes from the computer keyboard
+options|Plugin delay compensation
+options|Plugin manager...
+options|Power (5th)
+options|Previous arrangement
+options|Project settings...
+options|Punch in/out at the time selection
+options|QWERTZ
+options|Quantize note lengths
+options|Quantize note starts to the snap
+options|Record automation
+options|Record notes
+options|Recording options
+options|Refreeze out-of-date freezes
+options|Rename arrangement
+options|Replace (clear the channel's notes)
+options|Send MIDI clock (master sync)
+options|Smooth snapping
+options|Song mode
+options|Song position jumps
+options|Standard (QWERTY)
+options|Step record
+options|Step record (keyboard enters notes at the step cursor)
+options|Sus 4
+options|Theme...
+options|Typing keyboard options
+options|Typing keyboard to piano
+options|Woken plugins sleep again after
+options|Z = C1
+options|Z = C2
+options|Z = C3
+options|Z = C4
+options|Z = C5
+options|Z = C6
+options|Z = C7
+options|Z = C8
+pattern|+1 semitone
+pattern|+12 (octave)
+pattern|-1 semitone
+pattern|-12 (octave)
+pattern|1 bar
+pattern|12 steps per bar
+pattern|16 bars
+pattern|16 steps per bar
+pattern|2 bars
+pattern|24 steps per bar
+pattern|32 steps per bar
+pattern|4 bars
+pattern|8 bars
+pattern|8 steps per bar
+pattern|Add automation clip for
+pattern|Automation clips
+pattern|Clone
+pattern|Colour
+pattern|Delete
+pattern|Insert one before
+pattern|Kick › Attack
+pattern|Kick › Click
+pattern|Kick › Click length
+pattern|Kick › Click tone
+pattern|Kick › Decay
+pattern|Kick › Drive
+pattern|Kick › EQ high Q
+pattern|Kick › EQ high freq
+pattern|Kick › EQ high gain
+pattern|Kick › EQ low Q
+pattern|Kick › EQ low freq
+pattern|Kick › EQ low gain
+pattern|Kick › EQ mid Q
+pattern|Kick › EQ mid freq
+pattern|Kick › EQ mid gain
+pattern|Kick › End pitch
+pattern|Kick › Key tracking
+pattern|Kick › Mute
+pattern|Kick › Noise
+pattern|Kick › Noise decay
+pattern|Kick › Pan
+pattern|Kick › Pitch
+pattern|Kick › Send level
+pattern|Kick › Start pitch
+pattern|Kick › Stereo separation
+pattern|Kick › Sub
+pattern|Kick › Sweep
+pattern|Kick › Sweep curve
+pattern|Kick › Tone
+pattern|Kick › Variation
+pattern|Kick › Volume
+pattern|Length
+pattern|Master pitch
+pattern|Move down
+pattern|Move up
+pattern|Random colour
+pattern|Rename...
+pattern|Select in playlist
+pattern|Split by channel
+pattern|Swing
+pattern|Tempo
+pattern|Transpose
+patterns|+1 semitone
+patterns|+12 (octave)
+patterns|-1 semitone
+patterns|-12 (octave)
+patterns|1 bar
+patterns|16 bars
+patterns|2 bars
+patterns|4 bars
+patterns|8 bars
+patterns|Add the current pattern to
+patterns|Bassline
+patterns|Beat
+patterns|Chords
+patterns|Clone
+patterns|Colour
+patterns|Delete
+patterns|Delete unused patterns
+patterns|Fill
+patterns|Find first empty
+patterns|Find next empty
+patterns|Go to
+patterns|Insert one before
+patterns|Length
+patterns|Move down
+patterns|Move up
+patterns|New group with the current pattern...
+patterns|New pattern
+patterns|Next pattern
+patterns|Pattern groups
+patterns|Previous pattern
+patterns|Random colour
+patterns|Rename...
+patterns|Render and replace...
+patterns|Render as audio clip...
+patterns|Render pattern to file...
+patterns|Select in playlist
+patterns|Split by channel
+patterns|Take the current pattern out of its group
+patterns|Transpose
+patternsource|+1 semitone
+patternsource|+12 (octave)
+patternsource|-1 semitone
+patternsource|-12 (octave)
+patternsource|1 bar
+patternsource|12 steps per bar
+patternsource|16 bars
+patternsource|16 steps per bar
+patternsource|2 bars
+patternsource|24 steps per bar
+patternsource|32 steps per bar
+patternsource|4 bars
+patternsource|8 bars
+patternsource|8 steps per bar
+patternsource|Add automation clip for
+patternsource|Automation clips
+patternsource|Clone
+patternsource|Colour
+patternsource|Delete
+patternsource|Insert one before
+patternsource|Kick › Attack
+patternsource|Kick › Click
+patternsource|Kick › Click length
+patternsource|Kick › Click tone
+patternsource|Kick › Decay
+patternsource|Kick › Drive
+patternsource|Kick › EQ high Q
+patternsource|Kick › EQ high freq
+patternsource|Kick › EQ high gain
+patternsource|Kick › EQ low Q
+patternsource|Kick › EQ low freq
+patternsource|Kick › EQ low gain
+patternsource|Kick › EQ mid Q
+patternsource|Kick › EQ mid freq
+patternsource|Kick › EQ mid gain
+patternsource|Kick › End pitch
+patternsource|Kick › Key tracking
+patternsource|Kick › Mute
+patternsource|Kick › Noise
+patternsource|Kick › Noise decay
+patternsource|Kick › Pan
+patternsource|Kick › Pitch
+patternsource|Kick › Send level
+patternsource|Kick › Start pitch
+patternsource|Kick › Stereo separation
+patternsource|Kick › Sub
+patternsource|Kick › Sweep
+patternsource|Kick › Sweep curve
+patternsource|Kick › Tone
+patternsource|Kick › Variation
+patternsource|Kick › Volume
+patternsource|Length
+patternsource|Master pitch
+patternsource|Move down
+patternsource|Move up
+patternsource|Random colour
+patternsource|Rename...
+patternsource|Select in playlist
+patternsource|Select unused patterns
+patternsource|Split by channel
+patternsource|Swing
+patternsource|Tempo
+patternsource|Transpose
+piano|1/2 step
+piano|1/3 step
+piano|1/4 step
+piano|1/6 step
+piano|110%
+piano|125%
+piano|150%
+piano|1st inversion
+piano|2nd inversion
+piano|3rd inversion
+piano|50%
+piano|75%
+piano|90%
+piano|A
+piano|A#
+piano|Added 9th
+piano|All other channels
+piano|Anthem  (I V vi IV)
+piano|Arpeggiate...
+piano|Articulate...
+piano|Augmented
+piano|Augmented 7th
+piano|Augmented major 7th
+piano|Auto scrolling in pattern editors
+piano|B
+piano|Background waveform
+piano|Backwards (time)
+piano|Bake note effects into the notes
+piano|Ballad  (vi IV I V)
+piano|Bar
+piano|Bass
+piano|Bass from chords
+piano|Beat
+piano|Beats
+piano|Blues
+piano|C
+piano|C#
+piano|Cell
+piano|Chop...
+piano|Chord progression
+piano|Chord progression editor...
+piano|Chords
+piano|Clap
+piano|Colour group
+piano|Copy
+piano|Copy notes to channel
+piano|Cut
+piano|D
+piano|D#
+piano|Delete
+piano|Delete all notes
+piano|Deselect
+piano|Detune
+piano|Diminished
+piano|Diminished 7th
+piano|Discard lengths
+piano|Dominant 13th
+piano|Dominant 7th
+piano|Dominant 7th sus4
+piano|Dominant 9th
+piano|Dorian
+piano|Draw
+piano|Duplicate
+piano|E
+piano|Edit
+piano|Editable ghost notes
+piano|Euclidean rhythm
+piano|Every other note
+piano|Export pattern as MIDI...
+piano|F
+piano|F#
+piano|Fifties  (I vi IV V)
+piano|File
+piano|Flip
+piano|G
+piano|G#
+piano|Ghost channels
+piano|Ghost notes
+piano|Glue
+piano|Grace notes...
+piano|Group 1
+piano|Group 1 (channel colour)
+piano|Group 10
+piano|Group 11
+piano|Group 12
+piano|Group 13
+piano|Group 14
+piano|Group 15
+piano|Group 16
+piano|Group 2
+piano|Group 3
+piano|Group 4
+piano|Group 5
+piano|Group 6
+piano|Group 7
+piano|Group 8
+piano|Group 9
+piano|Group the selected notes
+piano|Half steps
+piano|Half-diminished 7th
+piano|Half-whole
+piano|Harmonic minor
+piano|Hat
+piano|Humanize
+piano|Import MIDI file as new channels...
+piano|Import MIDI file...
+piano|Into beats
+piano|Into half steps
+piano|Into snap grid
+piano|Into steps
+piano|Invert chords down
+piano|Invert chords up
+piano|Invert selection
+piano|Just the next chord
+piano|Keep notes by beat position
+piano|Keep part 1 of 2
+piano|Keep part 1 of 3
+piano|Keep part 1 of 4
+piano|Keep part 2 of 2
+piano|Keep part 2 of 3
+piano|Keep part 2 of 4
+piano|Keep part 3 of 3
+piano|Keep part 3 of 4
+piano|Keep part 4 of 4
+piano|Key
+piano|Lament  (i iv VI v)
+piano|Limit key range...
+piano|Line
+piano|Locrian
+piano|Lydian
+piano|Major
+piano|Major 11th (#11)
+piano|Major 6th
+piano|Major 7th
+piano|Major 9th
+piano|Major pentatonic
+piano|Make normal notes
+piano|Make slide notes
+piano|Markov melody
+piano|Medium (1/8 step)
+piano|Melodic minor
+piano|Minor
+piano|Minor 11th
+piano|Minor 6th
+piano|Minor 7th
+piano|Minor 9th
+piano|Minor added 9th
+piano|Minor pentatonic
+piano|Minor-major 7th
+piano|Mirror in scale
+piano|Mixolydian
+piano|Move notes to channel
+piano|Mute
+piano|Muted notes
+piano|Natural minor
+piano|Night drive  (i VI III VII)
+piano|None
+piano|Note LFO...
+piano|Note names on every key
+piano|Note properties...
+piano|Notes in the scale
+piano|Notes outside the scale
+piano|Nudge left
+piano|Nudge right
+piano|Octave down
+piano|Octave up
+piano|Octaves
+piano|Of every 2 beats
+piano|Of every bar
+piano|Of every beat
+piano|Off
+piano|Open hat
+piano|Open your scripts folder
+piano|Overlapping notes
+piano|Paint
+piano|Paste
+piano|Perc
+piano|Phrygian
+piano|Phrygian dominant
+piano|Pitch bend
+piano|Play
+piano|Portamento off
+piano|Portamento on
+piano|Power (5th)
+piano|Pulse  (i VII VI VII)
+piano|Quantize starts and ends
+piano|Quantize...
+piano|Quick arpeggio
+piano|Quick chop
+piano|Quick legato
+piano|Quick quantize
+piano|Quick strum
+piano|Random notes
+piano|Randomize...
+piano|Ratchet
+piano|Remove the part instead
+piano|Rescan scripts
+piano|Riff from progression
+piano|Riff generator...
+piano|Root note
+piano|Root position
+piano|Same pitches as selection
+piano|Save the notes as a MIDI file...
+piano|Scale chord, clicked note at the bottom
+piano|Scale chord, clicked note on top
+piano|Scale follows key markers
+piano|Scale highlighting
+piano|Scale highlighting from the notes
+piano|Scale levels...
+piano|Scale velocity
+piano|Scripts
+piano|Select
+piano|Select all
+piano|Select notes
+piano|Shorter rows
+piano|Single notes
+piano|Six-nine
+piano|Slice
+piano|Slide and portamento
+piano|Snap
+piano|Snap notes to the scale
+piano|Snap played MIDI notes to the scale
+piano|Snap to the scale
+piano|Snare
+piano|Stacked notes (chords)
+piano|Stamp
+piano|Step
+piano|Steps
+piano|Strum by velocity
+piano|Strum...
+piano|Suspended 2nd
+piano|Suspended 4th
+piano|Take
+piano|Taller rows
+piano|Tight (1/16 step)
+piano|Toggle
+piano|Tool
+piano|Tools
+piano|Transpose down
+piano|Transpose up
+piano|Turn events into an automation clip
+piano|Turnaround  (ii V I I)
+piano|Twelve-bar seed  (I IV I V)
+piano|Ungroup the selected notes
+piano|Unmute
+piano|Upside down (pitch)
+piano|Velocity shaper
+piano|View
+piano|Whole tone
+piano|Wide (1/4 step)
+piano|Zoom
+piano|Zoom in
+piano|Zoom out
+pianoselect|Colour group
+pianoselect|Deselect
+pianoselect|Every other note
+pianoselect|Group 1
+pianoselect|Group 10
+pianoselect|Group 11
+pianoselect|Group 12
+pianoselect|Group 13
+pianoselect|Group 14
+pianoselect|Group 15
+pianoselect|Group 16
+pianoselect|Group 2
+pianoselect|Group 3
+pianoselect|Group 4
+pianoselect|Group 5
+pianoselect|Group 6
+pianoselect|Group 7
+pianoselect|Group 8
+pianoselect|Group 9
+pianoselect|Invert selection
+pianoselect|Muted notes
+pianoselect|Notes in the scale
+pianoselect|Notes outside the scale
+pianoselect|Overlapping notes
+pianoselect|Random notes
+pianoselect|Same pitches as selection
+pianoselect|Select all
+pianotools|110%
+pianotools|125%
+pianotools|150%
+pianotools|50%
+pianotools|75%
+pianotools|90%
+pianotools|Arpeggiate...
+pianotools|Articulate...
+pianotools|Backwards (time)
+pianotools|Beats
+pianotools|Chop...
+pianotools|Colour group
+pianotools|Discard lengths
+pianotools|Flip
+pianotools|Glue
+pianotools|Grace notes...
+pianotools|Group 1 (channel colour)
+pianotools|Group 10
+pianotools|Group 11
+pianotools|Group 12
+pianotools|Group 13
+pianotools|Group 14
+pianotools|Group 15
+pianotools|Group 16
+pianotools|Group 2
+pianotools|Group 3
+pianotools|Group 4
+pianotools|Group 5
+pianotools|Group 6
+pianotools|Group 7
+pianotools|Group 8
+pianotools|Group 9
+pianotools|Half steps
+pianotools|Humanize
+pianotools|Into beats
+pianotools|Into half steps
+pianotools|Into snap grid
+pianotools|Into steps
+pianotools|Limit key range...
+pianotools|Make normal notes
+pianotools|Make slide notes
+pianotools|Medium (1/8 step)
+pianotools|Mute
+pianotools|Note LFO...
+pianotools|Note properties...
+pianotools|Nudge left
+pianotools|Nudge right
+pianotools|Octave down
+pianotools|Octave up
+pianotools|Portamento off
+pianotools|Portamento on
+pianotools|Quantize starts and ends
+pianotools|Quantize...
+pianotools|Quick arpeggio
+pianotools|Quick chop
+pianotools|Quick legato
+pianotools|Quick quantize
+pianotools|Quick strum
+pianotools|Randomize...
+pianotools|Riff generator...
+pianotools|Scale levels...
+pianotools|Scale velocity
+pianotools|Slide and portamento
+pianotools|Snap to the scale
+pianotools|Steps
+pianotools|Strum...
+pianotools|Tight (1/16 step)
+pianotools|Toggle
+pianotools|Transpose down
+pianotools|Transpose up
+pianotools|Unmute
+pianotools|Upside down (pitch)
+pianotools|Wide (1/4 step)
+playlist|1 bar
+playlist|1/2 step
+playlist|1/3 step
+playlist|1/4 step
+playlist|1/6 step
+playlist|12/8
+playlist|16 bars
+playlist|2 bars
+playlist|2/4
+playlist|3/4
+playlist|4 bars
+playlist|4/4
+playlist|5/4
+playlist|6/8
+playlist|7/8
+playlist|8 bars
+playlist|A
+playlist|A#
+playlist|Add 8 tracks
+playlist|Add a marker every
+playlist|Add jump to next bar
+playlist|Add key marker
+playlist|Add loop marker at the song position
+playlist|Add marker at the song position
+playlist|Add marker at the time selection
+playlist|Add time signature marker
+playlist|Add two (selection start and end)
+playlist|Arrangement
+playlist|Arrangements
+playlist|At every beat
+playlist|At every half beat
+playlist|At every quarter beat
+playlist|At the snap grid
+playlist|At transients
+playlist|Audio clip edits on zero crossings
+playlist|Auto scrolling
+playlist|Automatic crossfades
+playlist|Automation only
+playlist|B
+playlist|Bar
+playlist|Beat
+playlist|Blues
+playlist|By colour
+playlist|By name
+playlist|C
+playlist|C#
+playlist|Cell
+playlist|Chop and stutter...
+playlist|Chop it into a slicer channel
+playlist|Chop selected clips
+playlist|Clip groups
+playlist|Clip source picker
+playlist|Clips of the current pattern
+playlist|Clips with the same source as the selection
+playlist|Collapse all grouped tracks
+playlist|Consolidate to an audio clip
+playlist|Copy
+playlist|Cut
+playlist|D
+playlist|D#
+playlist|Default track height
+playlist|Delete
+playlist|Delete all markers
+playlist|Delete arrangement
+playlist|Delete markers in the time selection
+playlist|Delete space
+playlist|Delete unused patterns
+playlist|Deselect
+playlist|Dorian
+playlist|Draw
+playlist|Duplicate
+playlist|Duplicate arrangement
+playlist|E
+playlist|Edit
+playlist|End it at the song position
+playlist|End it at the time selection end
+playlist|Every 2 beats
+playlist|Every bar
+playlist|Every beat
+playlist|Expand all grouped tracks
+playlist|F
+playlist|F#
+playlist|Fade and volume handles on audio clips
+playlist|G
+playlist|G#
+playlist|Group the selected clips
+playlist|Half-whole
+playlist|Harmonic minor
+playlist|Insert space
+playlist|Invert selection
+playlist|Jump to next marker
+playlist|Jump to previous marker
+playlist|Line
+playlist|Live area
+playlist|Live pads window
+playlist|Locrian
+playlist|Lydian
+playlist|Major
+playlist|Major pentatonic
+playlist|Make selected clips unique
+playlist|Melodic minor
+playlist|Merge selected automation clips
+playlist|Merge selected clips
+playlist|Minor pentatonic
+playlist|Mixolydian
+playlist|Mute
+playlist|Mute / unmute selected clips
+playlist|Muted clips
+playlist|Natural minor
+playlist|New arrangement
+playlist|Next arrangement
+playlist|Next time
+playlist|None
+playlist|Notes and automation
+playlist|Notes only
+playlist|Paint
+playlist|Paste
+playlist|Phrygian
+playlist|Phrygian dominant
+playlist|Piano roll's scale
+playlist|Pitch selected audio clips a semitone down
+playlist|Pitch selected audio clips a semitone up
+playlist|Place loop
+playlist|Play
+playlist|Previous arrangement
+playlist|Previous time
+playlist|Quick zoom 1 (4 bars)
+playlist|Quick zoom 2 (16 bars)
+playlist|Quick zoom 3 (64 bars)
+playlist|Remove the live area
+playlist|Rename arrangement
+playlist|Reset empty track names and colours
+playlist|Reset fades of selected audio clips
+playlist|Reverse selected audio clips
+playlist|Root note
+playlist|Select
+playlist|Select all
+playlist|Select whole groups
+playlist|Slice
+playlist|Slice at the song position
+playlist|Slice the clips at the selection edges
+playlist|Slip
+playlist|Smooth snapping
+playlist|Snap
+playlist|Sort patterns
+playlist|Step
+playlist|Stretch audio clips when resizing
+playlist|Stutter...
+playlist|Time around the selected clips
+playlist|Time markers
+playlist|Time selection
+playlist|Tool
+playlist|Track + button
+playlist|Track height 100%
+playlist|Track height 150%
+playlist|Track height 200%
+playlist|Track height 50%
+playlist|Track height 75%
+playlist|Ungroup the selected clips
+playlist|View
+playlist|Warp
+playlist|Whole song
+playlist|Whole tone
+playlist|Wide track headers
+playlist|Zoom
+playlist|Zoom in
+playlist|Zoom on selection
+playlist|Zoom out
+plugin|100 %
+plugin|125 %
+plugin|150 %
+plugin|175 %
+plugin|200 %
+plugin|60 %
+plugin|75 %
+plugin|85 %
+plugin|Clone channel
+plugin|Close window
+plugin|Colour
+plugin|Controller
+plugin|Copy state
+plugin|Deep 808
+plugin|Default
+plugin|Delete channel
+plugin|Drums
+plugin|Editor size
+plugin|Imported
+plugin|Lo-fi
+plugin|Load preset from file...
+plugin|MIDI
+plugin|Paste state
+plugin|Piano roll
+plugin|Presets
+plugin|Punchy
+plugin|Randomize
+plugin|Rename...
+plugin|Replace instrument
+plugin|Reset to default
+plugin|Route to a free mixer track
+plugin|Same as other plugins (100 %)
+plugin|Sampler
+plugin|Save preset to file...
+plugin|Synth
+plugin|Utility
+rack|+1 semitone
+rack|+12 (octave)
+rack|-1 semitone
+rack|-12 (octave)
+rack|0% of the song swing
+rack|100% of the song swing
+rack|25% of the song swing
+rack|50% of the song swing
+rack|75% of the song swing
+rack|Add automation clip for
+rack|Add channel
+rack|Audio clip channels
+rack|Audio file as sampler...
+rack|Auto scrolling in pattern editors
+rack|Automation clips in this pattern
+rack|Burn every loop
+rack|Burn the selected channels' loops
+rack|Clone selected
+rack|Colour
+rack|Colour selected
+rack|Controller
+rack|Copy selected to a new pattern
+rack|Create layer from selected
+rack|Cut itself (selected)
+rack|Declicking of selected
+rack|Delete selected
+rack|Drums
+rack|Every 2 steps
+rack|Every 4 steps
+rack|Every 8 steps
+rack|Every step
+rack|Fill selected
+rack|Freeze selected
+rack|Generic
+rack|Gradient (first to last)
+rack|Hibernate selected
+rack|Imported
+rack|Instrument
+rack|Kick › Attack
+rack|Kick › Click
+rack|Kick › Click length
+rack|Kick › Click tone
+rack|Kick › Decay
+rack|Kick › Drive
+rack|Kick › EQ high Q
+rack|Kick › EQ high freq
+rack|Kick › EQ high gain
+rack|Kick › EQ low Q
+rack|Kick › EQ low freq
+rack|Kick › EQ low gain
+rack|Kick › EQ mid Q
+rack|Kick › EQ mid freq
+rack|Kick › EQ mid gain
+rack|Kick › End pitch
+rack|Kick › Key tracking
+rack|Kick › Mute
+rack|Kick › Noise
+rack|Kick › Noise decay
+rack|Kick › Pan
+rack|Kick › Pitch
+rack|Kick › Send level
+rack|Kick › Start pitch
+rack|Kick › Stereo separation
+rack|Kick › Sub
+rack|Kick › Sweep
+rack|Kick › Sweep curve
+rack|Kick › Tone
+rack|Kick › Variation
+rack|Kick › Volume
+rack|Loop all channels at their content
+rack|Loop step channels at their content
+rack|MIDI
+rack|Master pitch
+rack|Mixer track
+rack|Move selected down
+rack|Move selected to a new pattern
+rack|Move selected up
+rack|Mute selected
+rack|Name
+rack|Off
+rack|Out only
+rack|Random
+rack|Resample
+rack|Route selected to free mixer tracks
+rack|Rubber Band
+rack|Sampler
+rack|Select all
+rack|Select their mixer tracks
+rack|Select unused channels
+rack|Smooth
+rack|Sort by
+rack|Step loops
+rack|Stop looping the selected channels
+rack|Stretch
+rack|Swing
+rack|Swing mix for selected
+rack|Swing mix for selected (type in)...
+rack|Synth
+rack|Tempo
+rack|Toggle for the selected
+rack|Transient
+rack|Transpose selected
+rack|Truncate swung steps
+rack|Turn off for the selected
+rack|Turn on for the selected
+rack|Unmute selected
+rack|Unzip all
+rack|Utility
+rack|Zip selected
+record|1 bar
+record|16-bit WAV
+record|2 bars
+record|24-bit WAV
+record|32-bit float WAV
+record|4 bars
+record|Audio file format
+record|Audio, into Loupe (armed tracks)
+record|Audio, into the playlist as audio clips
+record|Automatic
+record|Automation (controller moves)
+record|Automation clips
+record|Controller moves go to
+record|Count-in
+record|Disarm tracks after recording
+record|Drop silent takes
+record|Everything
+record|Link to controller (Record)…
+record|Loop recording: new take per pass
+record|Name empty playlist tracks after the take
+record|Name takes after the audio input
+record|Name takes after the mixer track
+record|Notes
+record|Off
+record|Overdub (keep existing notes)
+record|Pattern events
+record|Punch in/out at the time selection
+record|Quantize note lengths
+record|Quantize note starts to the snap
+record|Replace (clear the channel's notes)
+record|Step record (keyboard enters notes at the step cursor)
+slot|1  Kick
+slot|10  Insert 10
+slot|100 %
+slot|11  Insert 11
+slot|12  Insert 12
+slot|125 %
+slot|13  Insert 13
+slot|14  Insert 14
+slot|15  Insert 15
+slot|150 %
+slot|16  Insert 16
+slot|175 %
+slot|200 %
+slot|3  Hat
+slot|4  Open hat
+slot|5  Snare
+slot|6  Bass
+slot|60 %
+slot|7  Chords
+slot|75 %
+slot|8  Perc
+slot|85 %
+slot|9  Insert 9
+slot|Bypass
+slot|Centre
+slot|Close window
+slot|Controller
+slot|Copy state
+slot|Copy value
+slot|Create automation clip
+slot|Dark chamber
+slot|Delay & reverb
+slot|Disable
+slot|Distortion
+slot|Dynamics
+slot|Edit automation clip
+slot|Edit events
+slot|Editor size
+slot|Enable switch
+slot|Filter
+slot|Gridline Suite Mini
+slot|Hall
+slot|Huge ambience
+slot|Link to controller…
+slot|Load preset from file...
+slot|Master
+slot|Maximum
+slot|Minimum
+slot|Misc
+slot|Mix
+slot|Modulation
+slot|Move down
+slot|Move to track
+slot|Move up
+slot|Multi FX
+slot|Multilink to controllers
+slot|Open editor
+slot|Paste state
+slot|Paste value
+slot|Plate
+slot|Presets
+slot|Presets and state
+slot|Randomize
+slot|Record automation
+slot|Remove
+slot|Remove effect
+slot|Replace
+slot|Replace effect
+slot|Reset to default
+slot|Room
+slot|Routing
+slot|Same as other plugins (100 %)
+slot|Save preset to file...
+slot|Set to
+slot|Small room
+slot|Spectral
+slot|Start the song at this value
+slot|Utility
+slot|Visual
+timesel|At every beat
+timesel|At every half beat
+timesel|At every quarter beat
+timesel|At transients
+timesel|Chop it into a slicer channel
+timesel|Consolidate to an audio clip
+timesel|Delete space
+timesel|Duplicate
+timesel|Insert space
+timesel|Slice the clips at the selection edges
+timesel|Stutter...
+tools|1 minute
+tools|10 minutes
+tools|110%
+tools|125%
+tools|150%
+tools|2 minutes
+tools|20 minutes
+tools|30 minutes
+tools|5 minutes
+tools|50%
+tools|60 minutes
+tools|75%
+tools|90%
+tools|A
+tools|A#
+tools|AI assistant activity
+tools|Ahead of the beat
+tools|Anthem  (I V vi IV)
+tools|Armed inputs (before the effects)
+tools|Arpeggiate...
+tools|Articulate...
+tools|Audio clip channels
+tools|Audio logger
+tools|B
+tools|Backbeat accents
+tools|Backwards (time)
+tools|Ballad  (vi IV I V)
+tools|Beats
+tools|Behind the beat
+tools|Build a drum pattern...
+tools|C
+tools|C#
+tools|Cancel recording
+tools|Chop...
+tools|Chord progression
+tools|Clear the log
+tools|Close plugin windows
+tools|Colour group
+tools|Control moved before it
+tools|D
+tools|D#
+tools|Declicking of the selected channels
+tools|Deep pocket
+tools|Delete unused automation clips
+tools|Delete unused patterns
+tools|Deselect
+tools|Discard lengths
+tools|E
+tools|Easy shuffle
+tools|Every other note
+tools|Export current...
+tools|F
+tools|F#
+tools|Fifties  (I vi IV V)
+tools|Flip
+tools|G
+tools|G#
+tools|Generic
+tools|Gentle 16ths
+tools|Glue
+tools|Grace notes...
+tools|Groove editor...
+tools|Group 1
+tools|Group 1 (channel colour)
+tools|Group 10
+tools|Group 11
+tools|Group 12
+tools|Group 13
+tools|Group 14
+tools|Group 15
+tools|Group 16
+tools|Group 2
+tools|Group 3
+tools|Group 4
+tools|Group 5
+tools|Group 6
+tools|Group 7
+tools|Group 8
+tools|Group 9
+tools|Half steps
+tools|Hibernate unused plugins
+tools|Humanize
+tools|Humanize playlist selection...
+tools|Import preset...
+tools|Into beats
+tools|Into half steps
+tools|Into snap grid
+tools|Into steps
+tools|Invert selection
+tools|Keep notes for
+tools|Keep the last minutes of audio
+tools|Key
+tools|Lament  (i iv VI v)
+tools|Last moved control
+tools|Late hats
+tools|Lilting 8ths
+tools|Limit key range...
+tools|Lock every playlist track
+tools|Log MIDI input notes
+tools|Loop starter...
+tools|Loose hands
+tools|Make normal notes
+tools|Make slide notes
+tools|Medium (1/8 step)
+tools|Mute
+tools|Muted notes
+tools|Name tracks after their clips...
+tools|Night drive  (i VI III VII)
+tools|Note LFO...
+tools|Note properties...
+tools|Notes in the scale
+tools|Notes outside the scale
+tools|Nudge left
+tools|Nudge right
+tools|Octave down
+tools|Octave up
+tools|Off
+tools|Open the last minutes in Loupe
+tools|Open the last piano roll script again
+tools|Open your scripts folder
+tools|Out only
+tools|Overlapping notes
+tools|Piano roll selection
+tools|Piano roll tools
+tools|Portamento off
+tools|Portamento on
+tools|Prepare the live area
+tools|Project scripts
+tools|Pulse  (i VII VI VII)
+tools|Put the notes played in the last
+tools|Quantize starts and ends
+tools|Quantize...
+tools|Quick arpeggio
+tools|Quick chop
+tools|Quick legato
+tools|Quick quantize
+tools|Quick strum
+tools|Random notes
+tools|Randomize...
+tools|Render channel to sampled instrument...
+tools|Replace the channel's notes
+tools|Resample
+tools|Rescan scripts
+tools|Riff from progression
+tools|Riff generator...
+tools|Route channels to free mixer tracks
+tools|Route drums to a bus...
+tools|Route every channel to its own mixer track
+tools|Rubber Band
+tools|Same pitches as selection
+tools|Save current as preset...
+tools|Save the last 2 minutes (0 s kept)
+tools|Save the note clipboard as a MIDI file
+tools|Scale levels...
+tools|Scale velocity
+tools|Score logger
+tools|Section markers...
+tools|Select all
+tools|Select unused channels
+tools|Show in Finder
+tools|Slide and portamento
+tools|Smooth
+tools|Snap to the scale
+tools|Steps
+tools|Stop all sound
+tools|Straight
+tools|Stretch
+tools|Strum...
+tools|Swing piano roll notes
+tools|Swing presets
+tools|Tempo ramp...
+tools|Tempo tapper
+tools|The master output (after the effects)
+tools|Tight (1/16 step)
+tools|Toggle
+tools|Transient
+tools|Transpose down
+tools|Transpose up
+tools|Trim unused mixer tracks
+tools|Triplet 16ths
+tools|Triplet 8ths
+tools|Turnaround  (ii V I I)
+tools|Twelve-bar seed  (I IV I V)
+tools|Unfreeze all
+tools|Unlock every playlist track
+tools|Unmute
+tools|Unmute all channels
+tools|Unsolo all mixer tracks
+tools|Upside down (pitch)
+tools|Wake all
+tools|Wide (1/4 step)
+track|(none)
+track|100%
+track|150%
+track|200%
+track|33%
+track|50%
+track|Abacus
+track|Acid Bass
+track|Add 8 tracks
+track|Alloy
+track|Always
+track|Analog Synth
+track|Arm for recording
+track|Audio input
+track|Audio track
+track|Auto (while armed or stopped)
+track|Auto colour group
+track|Bass
+track|Chords
+track|Clap
+track|Clone
+track|Collapse grouped tracks
+track|Colour
+track|DCO Synth
+track|Delete all clips on track
+track|Delete track
+track|Disarm
+track|Drum Model
+track|Envelope Mod
+track|FM Duo
+track|FM Synth
+track|Facet
+track|Finger Bass
+track|Fold
+track|Folio
+track|Freeze
+track|Gate (while held)
+track|Give every track this size
+track|Grain Scanner
+track|Granular
+track|Group
+track|Group with the track above
+track|Halftone
+track|Hat
+track|Hex Synth
+track|Hi-hat
+track|Hibernate
+track|Hold the next 1 track
+track|Hold the next 10 tracks
+track|Hold the next 11 tracks
+track|Hold the next 12 tracks
+track|Hold the next 13 tracks
+track|Hold the next 14 tracks
+track|Hold the next 15 tracks
+track|Hold the next 16 tracks
+track|Hold the next 2 tracks
+track|Hold the next 3 tracks
+track|Hold the next 4 tracks
+track|Hold the next 5 tracks
+track|Hold the next 6 tracks
+track|Hold the next 7 tracks
+track|Hold the next 8 tracks
+track|Hold the next 9 tracks
+track|Hybrid Synth
+track|Icon
+track|Image Synth
+track|Immediately
+track|Input monitoring
+track|Insert 10
+track|Insert 11
+track|Insert 12
+track|Insert 13
+track|Insert 14
+track|Insert 15
+track|Insert 16
+track|Insert 2  Clap
+track|Insert 9
+track|Insert one above
+track|Instrument track
+track|Isoline
+track|Junction
+track|Keep in phase
+track|Kerf
+track|Keyboard Mod
+track|Keys
+track|Kick
+track|Kick Sculptor
+track|Lattice
+track|Launch on
+track|Live settings
+track|Lock
+track|Loop
+track|MIDI Out
+track|Membrane Kit
+track|Membrane Pad
+track|Merge pattern clips
+track|Move down
+track|Move up
+track|Multisampler
+track|Mute
+track|Mute all clips
+track|Name after its first clip
+track|Never
+track|New instrument
+track|Next 2 beats
+track|Next 4 beats
+track|Next beat
+track|Next clip
+track|Next clip length
+track|Next half beat
+track|Next step
+track|Next, hold last
+track|Next, stop after last
+track|No audio input device (Settings → Audio)
+track|Off (start from the clip start)
+track|On the next free mixer track
+track|Open hat
+track|Ordinary track
+track|Perc
+track|Pixel Tone
+track|Plasma
+track|Platter
+track|Play a rack channel
+track|Play once
+track|Pluck
+track|Pluck Model
+track|Pocket Synth
+track|Preset Stand-in
+track|Random clip
+track|Random colour
+track|Random other clip
+track|Rename...
+track|Reset name, colour and icon
+track|Sample Keys
+track|Sampler
+track|Saw Swarm
+track|Scratch Sampler
+track|Select all clips on track
+track|Seltmann
+track|Show its mixer track
+track|Size
+track|Snare
+track|Spectra Morph
+track|Spline Scratch
+track|Step Bass
+track|Stop this track
+track|String Model
+track|Sweep Kick
+track|Take
+track|Tercet
+track|Toggle
+track|Track mode
+track|Tracker Sampler
+track|Trigger
+track|Twin String
+track|Twin VA
+track|Ungroup
+track|Unmute all clips
+track|Voltage In
+track|Voltage Out
+track|Warm Trio
+track|With Next 2 beats grid
+track|With Next 4 beats grid
+track|With Next beat grid
+track|With Next clip length grid
+track|With Next half beat grid
+track|With Next step grid
+typing|AZERTY
+typing|Chord
+typing|Chord mode
+typing|Colemak
+typing|Dominant 7th
+typing|Dvorak
+typing|Follow the computer
+typing|Keyboard layout
+typing|Major
+typing|Major 7th
+typing|Minor
+typing|Minor 7th
+typing|Octave
+typing|Play notes from the computer keyboard
+typing|Power (5th)
+typing|QWERTZ
+typing|Standard (QWERTY)
+typing|Sus 4
+typing|Z = C1
+typing|Z = C2
+typing|Z = C3
+typing|Z = C4
+typing|Z = C5
+typing|Z = C6
+typing|Z = C7
+typing|Z = C8
+view|100%
+view|110%
+view|125%
+view|150%
+view|175%
+view|200%
+view|75%
+view|90%
+view|Bring all windows back into Gridline
+view|Browser
+view|Channel rack
+view|Channel settings
+view|Clear time selection
+view|Close all windows
+view|Close plugin windows
+view|Command palette...
+view|Compact strips
+view|Dark theme
+view|Groove editor
+view|Interface size
+view|Layout settings...
+view|Live
+view|Live pads
+view|Logic
+view|Master chain
+view|Mixer
+view|Mixer layout
+view|Normal strips
+view|Performance
+view|Piano roll
+view|Playlist
+view|Plugin picker
+view|Project picker
+view|Reset window layout
+view|Show played chords in the hint bar
+view|Studio
+view|Theme settings...
+view|Undo history
+view|Wide strips
+view|Window layout
+view|Zoom in
+view|Zoom out
+view|Zoom to fit the song
+view|Zoom to ticks (snap turns free)

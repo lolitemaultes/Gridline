@@ -42,6 +42,10 @@ struct PianoLaneGeometry {
   bool valid = false;
   float pitchY0 = 0, rowH = 0;  // K-20: the note grid: pitch p's row starts at pitchY0 + (127 - p) * rowH
   int preview = -1;  // K-21: the key the mouse is sounding (-1: none)
+  // The view: scroll (px), the grid's box, and the scrollers: the horizontal
+  // thumb's x span at height hBarY, the vertical thumb's y span at vBarX.
+  float scrollX = 0, scrollY = 0, gridX0 = 0, gridY0 = 0, gridX1 = 0, gridY1 = 0;
+  float hThumb0 = 0, hThumb1 = 0, hBarY = 0, vThumb0 = 0, vThumb1 = 0, vBarX = 0;
 };
 const PianoLaneGeometry& pianoLaneGeometry();
 void drawPlaylist(App& a);
@@ -94,6 +98,7 @@ bool mixerWheelScrolls();
 // Dev check (--dev-input "mixer"): where the mixer's strip headers and some menu rows (mixer track,
 // playlist track and pattern menus) were drawn in the last two frames.
 void devMenuItem(const std::string& name);
+void devArrangementClipMenu(App& a, ObjectId clip);  // K-158: a clip's whole playlist menu (--menu arrclip)
 void devMenuRects();
 void drawChannelSettings(App& a);
 // Dev checks (--dev-input): "strip [on|off] [frames]", the channel strip of the

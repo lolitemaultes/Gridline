@@ -406,6 +406,18 @@ void compMenu(App& a, const Clip& c) {
 
 }  // namespace
 
+void audioClipTempoItems(App& a, ObjectId id) {
+  const Clip* c = a.doc.song().clip(id);
+  if (!c || c->kind != ClipKind::Audio) return;
+  if (ImGui::MenuItem(i18n::tr("Fit to tempo"))) {
+    int beats = 0;
+    editSongClip(a, "fit clip to tempo", [&](Song& x) { beats = fitClipToTempo(x, id); });
+    if (beats > 0) a.notify("Fitted to " + std::to_string(beats) + (beats == 1 ? " beat" : " beats") + "; the clip now follows the tempo");
+    return;
+  }
+  if (ImGui::MenuItem(i18n::tr("Normalize"))) editSongClip(a, "normalize clip", [&](Song& x) { normalizeClip(x, id, 0.0); });
+}
+
 void audioClipMenu(App& a, ObjectId id) {
   const Song& s = a.doc.song();
   const Clip* c = s.clip(id);
@@ -432,12 +444,6 @@ void audioClipMenu(App& a, ObjectId id) {
       editSongClip(a, "stretch clip", [&](Song& x) { resetClipStretch(x, id); });  // J-193: unstretched: fixed seconds again
     ImGui::EndMenu();
   }
-  if (ImGui::MenuItem(i18n::tr("Fit to tempo"))) {
-    int beats = 0;
-    editSongClip(a, "fit clip to tempo", [&](Song& x) { beats = fitClipToTempo(x, id); });
-    if (beats > 0) a.notify("Fitted to " + std::to_string(beats) + (beats == 1 ? " beat" : " beats") + "; the clip now follows the tempo");
-  }
-  if (ImGui::MenuItem(i18n::tr("Normalize"))) editSongClip(a, "normalize clip", [&](Song& x) { normalizeClip(x, id, 0.0); });
   stemsui::clipMenuItem(a, id);  // J-191: vocals / drums / bass / other onto new tracks
   chopui::clipMenu(a, id);  // PL-13: slice at the grid / into parts / at transients, stutter presets
   ImGui::Separator();

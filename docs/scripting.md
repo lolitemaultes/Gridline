@@ -5,7 +5,7 @@ Gridline runs Lua 5.4 scripts in a sandbox. There are five places a script can r
 | Kind | Where | Folder (shipped / yours) | Undo |
 |---|---|---|---|
 | Piano roll scripts | Piano roll > Scripts | `assets/scripts/pianoroll`, `<config>/scripts/pianoroll` | one step per Accept |
-| Project scripts | Tools > Project scripts | `assets/scripts/project`, `<config>/scripts/project` | one step per run |
+| Project scripts | Tools > Composing > Project scripts | `assets/scripts/project`, `<config>/scripts/project` | one step per run |
 | Loupe (audio editor) scripts | Loupe > Tools > Scripts | `assets/scripts/audio`, `<config>/scripts/audio` | one step per Accept |
 | Controller scripts | Settings > MIDI, controller type "Script: ..." | `assets/scripts/controllers`, `<config>/scripts/controllers` | controller moves merge |
 | Console | Settings > Debug | `<config>/scripts/console` | one step per line |
@@ -157,7 +157,10 @@ clamped to the parameter ranges.
 
 Note tables: `{time, length, pitch (0..127), velocity (0..127), pan (-64..64), fine (cents),
 release, modx, mody (0..255), color (0..15), slide, porta, muted}`. Missing fields take their
-defaults.
+defaults. A note can also carry its pitch bend line and its expression lanes as point lists:
+`bend = {{time, semis, curve, tension}, ...}`, `pressure = {{time, value}, ...}` (0..1) and
+`timbre = {{time, value}, ...}` (0..1, 0.5 is the centre), with `time` in ticks from the note's
+start (see [mpe.md](mpe.md)).
 
 ### project.playlist
 

@@ -26,13 +26,15 @@ void optionsItems(App& a);   // Options: quantized jumps
 void recordingOptionItems(App& a);  // the record options menu: audio take handling (inside an open menu)
 
 // ---- context menus ----
-void channelItems(App& a, ObjectId channel);                      // channel menu: step loop, key range, layer split
+void channelStepItems(App& a, ObjectId channel);                  // channel menu > Steps: step loop, truncated swing
+void channelKeyItems(App& a, ObjectId channel);                   // channel menu > Instrument and routing: key range, layer split
 void rackItems(App& a, const std::vector<ObjectId>& selection);  // channel rack menu: step loops, truncated swing
 void pianoToolItems(App& a);                                     // piano roll › Tools: chord editor, note groups
 void pianoViewItems(App& a);                                     // piano roll › View: MIDI snap, ghosts, waveform, key markers
 void playlistItems(App& a);                                      // playlist menu: clip groups
 void markerItems(App& a, Tick at);                               // playlist › Time markers: add key marker
-void mixerItems(App& a, ObjectId track);                         // mixer track menu: record point, alt solo
+void mixerSoloItems(App& a, ObjectId track);                     // mixer track menu: alt solo
+void mixerRecordItems(App& a, ObjectId track);                   // mixer track menu: record point
 
 // ---- piano roll hooks ----
 // Scale highlighting the piano roll shows (key markers when following them).

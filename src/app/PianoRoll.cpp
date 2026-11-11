@@ -13,6 +13,7 @@
 #include "../../third_party/imgui/imgui.h"
 #include "../../third_party/imgui/imgui_internal.h"
 #include "App.h"
+#include "ScrollBarUi.h"
 #include "SmoothScrollUi.h"
 #include "AutomationEditor.h"
 #include "EditTools.h"
@@ -103,6 +104,11 @@ struct LaneSplit {
   float y0 = 0, h0 = 0;
 } laneSplit;
 PianoLaneGeometry laneGeo;  // dev check: last drawn lane geometry
+// The view scrollers (time above the ruler, keys left of the keyboard), held
+// across frames, and the key row held at the opposite edge while an end of the
+// vertical one zooms.
+scrollbarui::Drag hBarDrag, vBarDrag;
+smoothzoom::RowAnchor vBarRow;
 
 // J-37: smooth snapping of a note drag. Every selected note moves by the same
 // snapped delta (start ticks, pitch rows, length ticks); the drawing eases
@@ -650,7 +656,11 @@ void drawPianoRoll(App& a) {
   // K-171: the lower lane's height: dragged on its splitter (saved), 0 = automatic.
   const float laneMaxH = std::max(40.0f, std::round(avail.y * 0.6f));
   const float laneSetH = static_cast<float>(a.settings.getNumber("piano.laneHeight"));
-  const float keyW = 64.0f, rulerH = 26.0f,
+  // Left to right: a slim vertical scroller, the keyboard, the grid; above the
+  // grid a slim horizontal scroller with the notes' overview, then the ruler
+  // (the playlist's arrangement).
+  const float vbarW = scrollbarui::kBarW, hbarH = scrollbarui::kBarH;
+  const float keyW = 64.0f, rulerH = hbarH + 26.0f,
               velH = laneSetH > 0 ? std::clamp(laneSetH, 40.0f, laneMaxH) : std::clamp(avail.y * 0.18f, 48.0f, 96.0f);
   ImGui::InvisibleButton("##canvas", avail, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
   if (ImGui::BeginDragDropTarget()) {  // MIDI files from the browser (J-16)
@@ -662,7 +672,8 @@ void drawPianoRoll(App& a) {
   ImDrawList* dl = ImGui::GetWindowDrawList();
   ImGuiIO& io = ImGui::GetIO();
 
-  const ImVec2 gridMin(origin.x + keyW, origin.y + rulerH);
+  const float keysX0 = origin.x + vbarW, rulerTop = origin.y + hbarH;
+  const ImVec2 gridMin(keysX0 + keyW, origin.y + rulerH);
   const ImVec2 gridMax(origin.x + avail.x, origin.y + avail.y - velH);
   const float gridW = gridMax.x - gridMin.x, gridH = gridMax.y - gridMin.y;
   // ---- K-24: row height zoom (Alt+wheel), anchored at the pointer ----
@@ -694,12 +705,22 @@ void drawPianoRoll(App& a) {
       if (notch) to = std::round(to);  // a notch lands on whole pixels: crisp key rows (a trackpad moves freely)
       vg.zoomTo(drawn, to, anchorAt(drawn, std::clamp(io.MousePos.y - gridMin.y, 0.0f, gridH)), notch, zp);
     }
+    // An end of the vertical scroller dragged: the thumb's length sets the key height, the opposite edge's row stays put (1:1).
+    if (vBarDrag.zooming() && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+      const double to = std::clamp(scrollbarui::endZoom(vBarDrag, io.MousePos, scrollbarui::kThumbMinV, gridH), static_cast<double>(kRowHMin),
+                                   static_cast<double>(kRowHMax));
+      if (std::fabs(to - vg.target(drawn)) > 1e-4) vg.zoomTo(drawn, to, vBarRow, false, zp);
+    }
     st.rowHeight = static_cast<float>(vg.step(drawn, io.DeltaTime, zp));
   }
   const float rowH = st.rowHeight;
   layoutKeys(rowH);
   const Tick patLen = s.patternContentLength(*pat);
-  const Tick viewTicks = std::max<Tick>(patLen + s.barTicks() * 4, static_cast<Tick>(gridW / st.pxPerTick) + 1);
+  // The scrollable time: the pattern and eight bars after it (as the playlist's
+  // song), in proportion to the zoom so the scroller's thumb and ends track the
+  // pointer exactly while they scroll and zoom.
+  const Tick contentTicks = patLen + s.barTicks() * 8;
+  auto maxScrollAt = [&](float pxPerTick) { return std::max(0.0f, static_cast<float>(contentTicks) * pxPerTick - gridW); };
   // First open: centre on the notes (C5-ish at the top when there are none).
   // Re-centred for a few frames while the dock layout settles the window size.
   static int settleFrames = 0;
@@ -721,7 +742,7 @@ void drawPianoRoll(App& a) {
   // J-67: outside writes are clamped here; the view's own glide / elastic
   // overscroll is left to scrollui::step below.
   scrollui::clampOuter(st.axY, st.scrollY, 0.0f, std::max(0.0f, 128 * rowH - gridH));
-  scrollui::clampOuter(st.axX, st.scrollX, 0.0f, std::max(0.0f, viewTicks * st.pxPerTick - gridW * 0.5f));
+  scrollui::clampOuter(st.axX, st.scrollX, 0.0f, maxScrollAt(st.pxPerTick));
 
   auto xOf = [&](Tick t) { return gridMin.x + static_cast<float>(t) * st.pxPerTick - st.scrollX; };
   auto yOf = [&](int pitch) { return gridMin.y + (127 - pitch) * rowH - st.scrollY; };
@@ -755,8 +776,17 @@ void drawPianoRoll(App& a) {
   }
   const bool wheelZoom = hovered && io.MouseWheel != 0 && io.KeyCtrl;
   if (wheelZoom) timeline::zoomAt(s, st.pxPerTick, st.scrollX, std::pow(1.2, static_cast<double>(io.MouseWheel)), io.MousePos.x - gridMin.x);
+  // An end of the horizontal scroller dragged: the thumb's length sets the zoom, the opposite edge's tick stays put (1:1).
+  bool barZoom = false;
+  if (hBarDrag.zooming() && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+    const double z = timeline::clampZoom(s, scrollbarui::endZoom(hBarDrag, io.MousePos, scrollbarui::kThumbMinH, gridW));
+    st.pxPerTick = static_cast<float>(z);
+    st.scrollX = static_cast<float>(std::max(0.0, hBarDrag.edgeUnits * z - hBarDrag.edgePx));
+    barZoom = true;
+  }
   st.pxPerTick = static_cast<float>(timeline::clampZoom(s, st.pxPerTick));
-  scrollui::zoomEnd(st.zoomGlide, st.pxPerTick, st.scrollX, wheelZoom && !smoothscroll::isNotch(io.MouseWheel));
+  // A trackpad's Ctrl+scroll and a scroller end follow the pointer 1:1; wheel notches and every other zoom glide.
+  scrollui::zoomEnd(st.zoomGlide, st.pxPerTick, st.scrollX, (wheelZoom && !smoothscroll::isNotch(io.MouseWheel)) || barZoom);
   // K-4: auto scrolling: page along with the pattern position while this pattern plays
   // (not while the user drags or scrolls the view; off: the view stays where it is).
   if (a.engine.playing() && a.engine.mode() == PlayMode::Pattern && a.engine.pattern() == patId && a.settings.getBool("ui.autoScrollPattern") &&
@@ -773,14 +803,17 @@ void drawPianoRoll(App& a) {
   // J-67: wheel / trackpad input goes through the smooth scroller: a notch
   // glides three keys (or 60 px) and lands on them, trackpad deltas stay 1:1,
   // the edges stretch a little and spring back instead of jumping.
+  // Over the time strip (the horizontal scroller and the ruler) the plain wheel
+  // scrolls sideways: that strip has no keys to scroll through.
   float wheelX = 0, wheelY = 0;
   bool notchX = false, notchY = false;
+  const bool overTime = hovered && io.MousePos.x >= gridMin.x && io.MousePos.x < gridMax.x && io.MousePos.y >= origin.y && io.MousePos.y < gridMin.y;
   if (hovered && io.MouseWheel != 0) {
     if (io.KeyCtrl) {
       // zoomed above (J-188)
     } else if (io.KeyAlt) {
       // the row height, zoomed above (K-24)
-    } else if (io.KeyShift) {
+    } else if (io.KeyShift || overTime) {
       wheelX -= io.MouseWheel * 60;
       notchX = smoothscroll::isNotch(io.MouseWheel);
     } else {
@@ -797,15 +830,16 @@ void drawPianoRoll(App& a) {
     wheelY -= io.MouseDelta.y;
     notchX = notchY = false;
   }
-  scrollui::step(st.axX, st.scrollX, wheelX, notchX, 0.0f, std::max(0.0f, viewTicks * st.pxPerTick - gridW * 0.5f));
+  const float maxScrollX = maxScrollAt(st.pxPerTick);
+  scrollui::step(st.axX, st.scrollX, wheelX, notchX, 0.0f, maxScrollX);
   scrollui::step(st.axY, st.scrollY, wheelY, notchY, 0.0f, std::max(0.0f, 128 * st.rowHeight - gridH));
   if (canchor::collecting()) {  // J-111d: collaborators' pointers in pattern time and keys (this pattern and channel)
     const float pxT = std::max(1e-6f, st.pxPerTick), bottom = origin.y + avail.y;
     const ImVec2 o(gridMin.x - st.scrollX, gridMin.y - st.scrollY);
     canchor::publish(canchor::PianoGrid, patId, chId, o, ImVec2(pxT, rowH), gridMin, gridMax);
-    canchor::publish(canchor::PianoKeys, patId, chId, ImVec2(origin.x, o.y), ImVec2(keyW, rowH), ImVec2(origin.x, gridMin.y),
+    canchor::publish(canchor::PianoKeys, patId, chId, ImVec2(keysX0, o.y), ImVec2(keyW, rowH), ImVec2(keysX0, gridMin.y),
                      ImVec2(gridMin.x, gridMax.y));
-    canchor::publish(canchor::PianoRuler, patId, chId, ImVec2(o.x, origin.y), ImVec2(pxT, rulerH), ImVec2(gridMin.x, origin.y),
+    canchor::publish(canchor::PianoRuler, patId, chId, ImVec2(o.x, rulerTop), ImVec2(pxT, gridMin.y - rulerTop), ImVec2(gridMin.x, rulerTop),
                      ImVec2(gridMax.x, gridMin.y));
     canchor::publish(canchor::PianoVelocity, patId, chId, ImVec2(o.x, gridMax.y), ImVec2(pxT, std::max(1.0f, bottom - gridMax.y)),
                      ImVec2(gridMin.x, gridMax.y), ImVec2(gridMax.x, bottom));
@@ -1031,7 +1065,7 @@ void drawPianoRoll(App& a) {
       const ImU32 base = groupColor(n.color, noteCol);
       LineLook L;
       L.dim = bendTool ? (n.muted ? 0.55f : 1.0f) : (n.bend.empty() ? 0.0f : 0.5f);
-      L.line = P.dark ? theme::mix(base, theme::rgb(0xFFFFFF), sel ? 0.86f : 0.74f) : theme::mix(base, P.ink, 0.62f);
+      L.line = P.dark ? theme::mix(base, P.paper, sel ? 0.86f : 0.74f) : theme::mix(base, P.ink, 0.62f);
       L.halo = P.dark ? theme::withAlpha(P.ink, 0.6f * L.dim) : theme::withAlpha(P.paper, 0.8f * L.dim);
       return L;
     };
@@ -1167,13 +1201,13 @@ void drawPianoRoll(App& a) {
 
   // ---------------- keyboard ----------------
   {
-    dl->PushClipRect(ImVec2(origin.x, gridMin.y), ImVec2(gridMin.x, gridMax.y), true);
+    dl->PushClipRect(ImVec2(keysX0, gridMin.y), ImVec2(gridMin.x, gridMax.y), true);
     const ImU32 white = P.keyWhite;
     const ImU32 whiteEdge = theme::mix(P.keyWhite, P.ink, 0.28f);
     const ImU32 black = P.keyBlack;
-    const float kx0 = origin.x, kx1 = gridMin.x - 1, blackW = std::round((kx1 - kx0) * 0.6f);
+    const float kx0 = keysX0, kx1 = gridMin.x - 1, blackW = std::round((kx1 - kx0) * 0.6f);
     const bool gliss = g.kind == Gesture::Keys;  // K-21
-    const int hoverPitch = !gliss && hovered && io.MousePos.x < gridMin.x && io.MousePos.y >= gridMin.y && io.MousePos.y < gridMax.y
+    const int hoverPitch = !gliss && hovered && io.MousePos.x >= keysX0 && io.MousePos.x < gridMin.x && io.MousePos.y >= gridMin.y && io.MousePos.y < gridMax.y
                                ? std::clamp(127 - static_cast<int>(std::floor((io.MousePos.y - gridMin.y + st.scrollY) / rowH)), 0, 127)
                                : -1;
     // White keys: light face shading to a darker tip (left), like a keyboard seen from above.
@@ -1264,7 +1298,7 @@ void drawPianoRoll(App& a) {
 
   // ---------------- ruler ----------------
   {
-    ImVec2 r0(gridMin.x, origin.y), r1(gridMax.x, origin.y + rulerH);
+    ImVec2 r0(gridMin.x, rulerTop), r1(gridMax.x, origin.y + rulerH);
     dl->AddRectFilled(ImVec2(origin.x, origin.y), r1, P.dark ? P.field : P.surface950);
     dl->AddLine(ImVec2(origin.x, r1.y - 1), ImVec2(r1.x, r1.y - 1), P.dark ? P.ink : P.lineStrong);
     dl->PushClipRect(r0, r1, true);
@@ -1277,7 +1311,7 @@ void drawPianoRoll(App& a) {
       dl->AddLine(ImVec2(x, r1.y - len), ImVec2(x, r1.y - 1), major ? P.lineStrong : P.line);
       if (major) {
         std::string lbl = timeline::rulerLabel(s, t, labelGrid);
-        dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(x + 4, origin.y + 4), t % bar == 0 ? P.text : P.textFaint, lbl.c_str());
+        dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(x + 4, rulerTop + 4), t % bar == 0 ? P.text : P.textFaint, lbl.c_str());
       }
     }
     if (a.engine.mode() == PlayMode::Pattern) {  // position marker cap
@@ -1290,7 +1324,57 @@ void drawPianoRoll(App& a) {
     // Corner above the keyboard: pattern name.
     dl->AddRectFilled(origin, ImVec2(gridMin.x, r1.y), P.dark ? P.field : P.surface950);
     dl->AddLine(ImVec2(origin.x, r1.y - 1), ImVec2(gridMin.x, r1.y - 1), P.dark ? P.ink : P.lineStrong);
-    theme::textEllipsis(dl, a.fontMono, theme::kFontLabel, ImVec2(origin.x + 8, origin.y + 4), keyW - 12, P.textFaint, "NOTES");  // J-128: on the bar numbers' line
+    theme::textEllipsis(dl, a.fontMono, theme::kFontLabel, ImVec2(keysX0 + 8, rulerTop + 4), keyW - 12, P.textFaint, "NOTES");  // J-128: on the bar numbers' line
+  }
+
+  // ---------------- view scrollers ----------------
+  // Above the ruler: the time, with every note of the pattern as a short mark at
+  // its pitch (the lowest to the highest note fill the bar's height) and the
+  // playback position. Left of the keyboard: the keys, with a mark at each
+  // pitch in use. Thumbs and ends as in the playlist.
+  using scrollbarui::Part;
+  const scrollbarui::Layout hBar = scrollbarui::layout(ImVec2(gridMin.x, origin.y + 1), ImVec2(gridMax.x, rulerTop - 1), false, gridW,
+                                                       maxScrollX + gridW, st.scrollX, scrollbarui::kThumbMinH);
+  const scrollbarui::Layout vBar =
+      scrollbarui::layout(ImVec2(origin.x, gridMin.y), ImVec2(keysX0 - 2, gridMax.y), true, gridH, 128 * rowH, st.scrollY, scrollbarui::kThumbMinV);
+  const bool barsFree = g.kind == Gesture::None || !active;
+  const Part hOver = hovered && barsFree ? scrollbarui::hit(hBar, io.MousePos) : Part::None;
+  const Part vOver = hovered && barsFree && hOver == Part::None ? scrollbarui::hit(vBar, io.MousePos) : Part::None;
+  {
+    auto lit = [](const scrollbarui::Drag& d, Part over) { return d.zooming() ? d.part : d.held() ? Part::None : over; };
+    dl->AddRectFilled(ImVec2(origin.x, gridMin.y), ImVec2(keysX0, gridMax.y), P.dark ? P.well : P.surface950);
+    scrollbarui::draw(dl, hBar, hOver != Part::None || hBarDrag.held(), lit(hBarDrag, hOver));
+    scrollbarui::draw(dl, vBar, vOver != Part::None || vBarDrag.held(), lit(vBarDrag, vOver));
+    const ImU32 markCol = theme::withAlpha(theme::rgb(chan->color), 0.9f), selCol = P.hot;
+    int lo = 127, hi = 0;
+    std::array<bool, 128> used{};
+    for (const Note& n : notes) {
+      const int p = std::clamp(n.pitch, 0, 127);
+      lo = std::min(lo, p), hi = std::max(hi, p);
+      used[static_cast<size_t>(p)] = true;
+    }
+    dl->PushClipRect(hBar.p0, hBar.p1, true);
+    const float my0 = hBar.p0.y + 3, my1 = hBar.p1.y - 4;  // the marks' tops: lowest note at my1, highest at my0
+    for (size_t i = 0; i < notes.size(); ++i) {
+      const Note& n = notes[i];
+      const float x0 = std::round(hBar.toRail(static_cast<float>(n.start) * st.pxPerTick));
+      const float x1 = std::max(x0 + 1.0f, std::round(hBar.toRail(static_cast<float>(n.start + std::max<Tick>(1, n.length)) * st.pxPerTick)) - 1.0f);
+      const float f = hi > lo ? static_cast<float>(std::clamp(n.pitch, 0, 127) - lo) / static_cast<float>(hi - lo) : 0.5f;
+      const float y = std::round(my1 - f * (my1 - my0));
+      dl->AddRectFilled(ImVec2(x0, y), ImVec2(x1, y + 2), st.selected.count(i) ? selCol : markCol);
+    }
+    if (a.engine.mode() == PlayMode::Pattern && a.engine.pattern() == patId) {
+      const float px = std::round(hBar.toRail(static_cast<float>(a.engine.position()) * st.pxPerTick));
+      dl->AddLine(ImVec2(px, hBar.p0.y), ImVec2(px, hBar.p1.y), P.playhead, 1.0f);
+    }
+    dl->PopClipRect();
+    dl->PushClipRect(vBar.p0, ImVec2(vBar.p1.x + 2, vBar.p1.y), true);
+    for (int p = 0; p < 128; ++p) {
+      if (!used[static_cast<size_t>(p)]) continue;
+      const float y = std::round(vBar.toRail((static_cast<float>(127 - p) + 0.5f) * rowH));
+      dl->AddRectFilled(ImVec2(vBar.p0.x + 3, y), ImVec2(vBar.p1.x - 1, y + 1), markCol);
+    }
+    dl->PopClipRect();
   }
 
   // ---------------- velocity lane ----------------
@@ -1354,12 +1438,16 @@ void drawPianoRoll(App& a) {
     return f;
   };
   laneGeo = PianoLaneGeometry{gridMin.x - st.scrollX, st.pxPerTick, vMin.y, vMax.y, !autoLane, gridMin.y - st.scrollY, rowH, g.previewPitch};
+  laneGeo.scrollX = st.scrollX, laneGeo.scrollY = st.scrollY;
+  laneGeo.gridX0 = gridMin.x, laneGeo.gridY0 = gridMin.y, laneGeo.gridX1 = gridMax.x, laneGeo.gridY1 = gridMax.y;
+  laneGeo.hThumb0 = hBar.t0, laneGeo.hThumb1 = hBar.t1, laneGeo.hBarY = (hBar.p0.y + hBar.p1.y) * 0.5f;
+  laneGeo.vThumb0 = vBar.t0, laneGeo.vThumb1 = vBar.t1, laneGeo.vBarX = (vBar.p0.x + 2 + vBar.p1.x) * 0.5f;
 
   // ---------------- interaction ----------------
   const ImVec2 m = io.MousePos;
   const bool inGrid = m.x >= gridMin.x && m.x < gridMax.x && m.y >= gridMin.y && m.y < gridMax.y;
-  const bool inKeys = m.x >= origin.x && m.x < gridMin.x && m.y >= gridMin.y && m.y < gridMax.y;
-  const bool inRuler = m.y >= origin.y && m.y < gridMin.y && m.x >= gridMin.x;
+  const bool inKeys = m.x >= keysX0 && m.x < gridMin.x && m.y >= gridMin.y && m.y < gridMax.y;
+  const bool inRuler = m.y >= rulerTop && m.y < gridMin.y && m.x >= gridMin.x;
   const bool inVel = m.y >= gridMax.y && m.x >= gridMin.x;
   const bool inLaneLabel = m.y >= gridMax.y && m.x >= origin.x && m.x < gridMin.x;
   // K-25: the other notes a bend edit applies to: a selected note's edit gives every selected
@@ -1372,7 +1460,33 @@ void drawPianoRoll(App& a) {
     return out;
   };
 
-  if (hovered) {
+  {  // the scrollers' hints: at once in the status bar; over an end also a tooltip after the hover delay
+    const bool overBar = hOver != Part::None || vOver != Part::None;
+    const Part end = hOver == Part::LowEnd || hOver == Part::HighEnd ? hOver : vOver == Part::LowEnd || vOver == Part::HighEnd ? vOver : Part::None;
+    const bool v = vOver != Part::None;
+    static double endSince = -1;
+    static int endWas = 0;
+    const int endNow = end == Part::None ? 0 : v ? 2 : 1;
+    if (endNow != endWas) endWas = endNow, endSince = ImGui::GetTime();
+    if (hBarDrag.zooming() || (end != Part::None && !v)) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+    else if (vBarDrag.zooming() || end != Part::None) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+    if (overBar && !hBarDrag.held() && !vBarDrag.held()) {
+      if (end != Part::None) {
+        a.setHint(v ? i18n::tr("Drag the end to zoom the key height (the other end stays put) \xC2\xB7 Alt+wheel: zoom at the pointer")
+                    : i18n::tr("Drag the end to zoom the time (the other end stays put) \xC2\xB7 Ctrl+wheel: zoom at the pointer"));
+        if (ImGui::GetTime() - endSince >= static_cast<double>(ImGui::GetStyle().HoverDelayNormal) && ImGui::BeginTooltip()) {
+          ImGui::TextUnformatted(v ? i18n::tr("Drag to zoom the key height") : i18n::tr("Drag to zoom the time"));
+          ImGui::EndTooltip();
+        }
+      } else {
+        a.setHint(v ? i18n::tr("Drag to scroll through the keys \xC2\xB7 click beside the thumb to page \xC2\xB7 drag an end to zoom \xC2\xB7 "
+                               "double-click: back to the notes")
+                    : i18n::tr("Drag to scroll through the pattern \xC2\xB7 click beside the thumb to page \xC2\xB7 drag an end to zoom \xC2\xB7 "
+                               "double-click: fit the pattern \xC2\xB7 wheel: scroll sideways"));
+      }
+    }
+  }
+  if (hovered && hOver == Part::None && vOver == Part::None) {
     if (inGrid) {
       if (hoverNote >= 0 && st.tool == Tool::Draw)
         ImGui::SetMouseCursor(hoverEdge ? ImGuiMouseCursor_ResizeEW : ImGuiMouseCursor_ResizeAll);
@@ -1453,6 +1567,32 @@ void drawPianoRoll(App& a) {
         laneSplit.on = false;
       }
     }
+  }
+  {  // the view scrollers: drag a thumb, drag an end to zoom, click the rail to page, double-click to fit
+    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) hBarDrag = {}, vBarDrag = {};
+    if (hBarDrag.part == Part::Thumb) st.scrollX = scrollbarui::thumbScroll(hBarDrag, hBar, m);
+    if (vBarDrag.part == Part::Thumb) st.scrollY = scrollbarui::thumbScroll(vBarDrag, vBar, m);
+    const bool barDbl = ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+    if (lClick && hOver != Part::None) {
+      if (barDbl) {
+        hBarDrag = {};
+        st.fitRequest = true;
+      } else if (const int page = scrollbarui::press(hBarDrag, hBar, hOver, m, st.pxPerTick, st.scrollX)) {
+        st.scrollX = std::clamp(st.scrollX + static_cast<float>(page) * gridW * 0.9f, 0.0f, maxScrollX);
+      }
+      lClick = rClick = false;
+    } else if (lClick && vOver != Part::None) {
+      if (barDbl) {
+        vBarDrag = {};
+        st.centred = false;  // centred on the notes again (as at the first open)
+      } else if (const int page = scrollbarui::press(vBarDrag, vBar, vOver, m, rowH, st.scrollY)) {
+        st.scrollY = std::clamp(st.scrollY + static_cast<float>(page) * gridH * 0.9f, 0.0f, std::max(0.0f, 128 * rowH - gridH));
+      } else if (vBarDrag.zooming()) {
+        vBarRow = smoothzoom::rowAnchorAt(keyTop.data(), 128, rowH, static_cast<double>(vBarDrag.edgePx + st.scrollY), vBarDrag.edgePx);
+      }
+      lClick = rClick = false;
+    }
+    if (hOver != Part::None || vOver != Part::None || hBarDrag.held() || vBarDrag.held()) lClick = rClick = false;
   }
   const bool dbl = hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
   static int propsNote = -1;

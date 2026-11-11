@@ -1,6 +1,7 @@
 #include "Midi.h"
 #include <algorithm>
 #include <chrono>
+#include <exception>
 #include <fstream>
 #include <sstream>
 #include "../../third_party/rtmidi/RtMidi.h"
@@ -37,16 +38,20 @@ double MidiManager::clockNow() { return nowSec(); }
 MidiManager::MidiManager(AudioEngine& engine) : engine_(engine) {
   packs::platter::hub::setTapped(true);  // J-150: DJ decks read every input from the hub
   sender_ = std::thread([this] { senderLoop(); });
+  opener_ = std::make_unique<MidiOpener>(probeMidiService);
 }
 
 MidiManager::~MidiManager() {
   quit_ = true;
   if (sender_.joinable()) sender_.join();
-  for (auto& p : ins_)
-    if (p->in) p->in->closePort();
-  ins_.clear();
-  std::lock_guard<std::mutex> lk(outMu_);
-  if (out_) out_->closePort();
+  try {
+    for (auto& p : ins_)
+      if (p->in) p->in->closePort();
+    ins_.clear();
+    std::lock_guard<std::mutex> lk(outMu_);
+    if (out_) out_->closePort();
+  } catch (...) {  // a driver error while closing never ends the process
+  }
 }
 
 MidiInputConfig* MidiManager::inputConfig(const std::string& name) {
@@ -61,17 +66,14 @@ const MidiInputConfig* MidiManager::inputConfig(const std::string& name) const {
 }
 
 void MidiManager::scan() {
-  inputs.clear();
-  outputs.clear();
-  try {
-    auto probe = makeMidiIn();
-    for (unsigned i = 0; i < probe->getPortCount(); ++i) inputs.push_back(probe->getPortName(i));
-    auto probeOut = makeMidiOut();
-    for (unsigned i = 0; i < probeOut->getPortCount(); ++i) outputs.push_back(probeOut->getPortName(i));
-    status = std::to_string(inputs.size()) + " input(s), " + std::to_string(outputs.size()) + " output(s) found (" + midiBackendName() + ")";
-  } catch (const RtMidiError& e) {
-    status = "MIDI unavailable: " + e.getMessage();
-  }
+  opener_->start(clockNow());
+  if (opener_->state() == MidiOpenState::Opening) status = "Looking for MIDI devices (" + midiBackendName() + ")";
+}
+
+void MidiManager::adopt(MidiProbeResult r) {
+  inputs = std::move(r.inputs);
+  outputs = std::move(r.outputs);
+  status = std::to_string(inputs.size()) + " input(s), " + std::to_string(outputs.size()) + " output(s) found (" + midiBackendName() + ")";
   for (const auto& n : inputs)
     if (!inputConfig(n)) {  // a new device: enabled, next free port number
       MidiInputConfig c;
@@ -87,7 +89,44 @@ void MidiManager::scan() {
     }
 }
 
+bool MidiManager::update() {
+  bool changed = false;
+  if (opener_->update(clockNow())) {
+    MidiProbeResult r = opener_->takeResult();
+    if (r.ok) {
+      adopt(std::move(r));
+      apply();
+    } else {  // the ports already open stay as they are: the service is not asked again until it answers
+      inputs.clear();
+      outputs.clear();
+      status = "MIDI unavailable: " + r.error;
+    }
+    changed = true;
+  }
+  const MidiOpenState st = opener_->state();
+  if (st == MidiOpenState::NotResponding && lastState_ != st) {
+    inputs.clear();
+    outputs.clear();
+    status = "MIDI unavailable: the system MIDI service is not responding";
+    changed = true;
+  }
+  lastState_ = st;
+  return changed;
+}
+
+void MidiManager::waitForService(double seconds) {
+  opener_->waitFor(seconds);
+  update();
+}
+
+void MidiManager::retry() {
+  opener_->retryNow(clockNow());
+  update();
+}
+
 void MidiManager::apply() {
+  // Never on a service that has not answered: creating a MIDI client could hang this thread.
+  if (!serviceAvailable()) return;
   for (auto& p : ins_)
     if (p->in) p->in->closePort();
   ins_.clear();
@@ -128,6 +167,10 @@ void MidiManager::apply() {
     status = std::to_string(ins_.size()) + " input(s) open" + (out_ && out_->isPortOpen() ? ", output open" : "");
   } catch (const RtMidiError& e) {
     status = "MIDI error: " + e.getMessage();
+  } catch (const std::exception& e) {
+    status = std::string("MIDI error: ") + e.what();
+  } catch (...) {
+    status = "MIDI error";
   }
 }
 
@@ -146,6 +189,7 @@ void MidiManager::publish(const std::vector<uint32_t>& rack) {
     engine_.setBendRange(c, routing.bendRange[c]);
   }
   engine_.setPedals(routing.sostenuto, routing.soft, routing.softFactor);
+  engine_.setMpeInput(routing.mpe, routing.mpeBendRange);  // K-144
   engine_.setSyncOut(syncOut);
 }
 
@@ -199,6 +243,8 @@ void MidiManager::load(const std::string& file) {
   r.sostenuto = j.num("sostenuto", 1) != 0;
   r.soft = j.num("soft", 1) != 0;
   r.softFactor = static_cast<float>(std::clamp(j.num("softFactor", 0.6), 0.1, 1.0));
+  r.mpe = j.num("mpe", 0) != 0;  // K-144
+  r.mpeBendRange = static_cast<float>(std::clamp(j.num("mpeBendRange", 48), 1.0, 96.0));
   if (const Json* a = j.find("route"); a && a->is(Json::Type::Array))
     for (size_t i = 0; i < a->array.size() && i < 16; ++i) r.route[i] = static_cast<int>(a->array[i].number);
   if (const Json* a = j.find("bendRange"); a && a->is(Json::Type::Array))
@@ -235,6 +281,8 @@ void MidiManager::save(const std::string& file) const {
   j.object["sostenuto"] = Json::makeNumber(r.sostenuto ? 1 : 0);
   j.object["soft"] = Json::makeNumber(r.soft ? 1 : 0);
   j.object["softFactor"] = Json::makeNumber(r.softFactor);
+  j.object["mpe"] = Json::makeNumber(r.mpe ? 1 : 0);  // K-144
+  j.object["mpeBendRange"] = Json::makeNumber(r.mpeBendRange);
   Json route = Json::makeArray(), bend = Json::makeArray();
   for (int i = 0; i < 16; ++i) {
     route.array.push_back(Json::makeNumber(r.route[i]));
@@ -319,12 +367,12 @@ void MidiManager::sendRaw(const std::vector<unsigned char>& m) {
   if (!out_ || !out_->isPortOpen()) return;
   try {
     out_->sendMessage(&m);
-  } catch (const RtMidiError&) {
+  } catch (...) {
   }
 }
 
 void MidiManager::sendTo(const std::string& device, const std::vector<unsigned char>& m) {
-  if (device.empty() || m.empty()) return;
+  if (device.empty() || m.empty() || !serviceAvailable()) return;
   std::lock_guard<std::mutex> lk(outMu_);
   RtMidiOut* o = nullptr;
   for (auto& d : devOuts_)
@@ -344,7 +392,7 @@ void MidiManager::sendTo(const std::string& device, const std::vector<unsigned c
       if (pick >= 0) x->openPort(static_cast<unsigned>(pick), "Gridline Deck Out");
       devOuts_.emplace_back(device, std::move(x));
       o = devOuts_.back().second.get();
-    } catch (const RtMidiError&) {
+    } catch (...) {  // RtMidiError or anything else from the driver
       devOuts_.emplace_back(device, nullptr);
       return;
     }
@@ -352,7 +400,7 @@ void MidiManager::sendTo(const std::string& device, const std::vector<unsigned c
   if (!o || !o->isPortOpen()) return;
   try {
     o->sendMessage(&m);
-  } catch (const RtMidiError&) {
+  } catch (...) {
   }
 }
 

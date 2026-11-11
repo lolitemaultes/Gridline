@@ -546,9 +546,14 @@ void Painter::menu(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const char* const* item
   }
 }
 void Painter::field(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const char* txt, int state, int caret, bool lcd) {
-  sunken(dl, p0, p1, tk.radiusSm, lcd ? darken(tk.field, 0.3f) : tk.field);
+  const ImU32 bg = lcd ? darken(tk.field, 0.3f) : tk.field;
+  sunken(dl, p0, p1, tk.radiusSm, bg);
   if (state & (Active | Focus)) dl->AddRect(p0, p1, alpha(tk.hot, 0.8f), tk.radiusSm, 0, 1.0f);
-  const ImU32 tc = (state & Disabled) ? tk.textFaint : lcd ? tk.fieldText : tk.text;
+  ImU32 tc = (state & Disabled) ? tk.textFaint : lcd ? tk.fieldText : tk.text;
+  // K-177: a field taken to mid grey by the theme brightness: the digits move toward the readable
+  // side until they read (the stock themes are above this floor and keep their colours).
+  if (lcd && theme::contrastRatio(tc, bg) < 1.5f)
+    for (int i = 0; i < 12 && theme::contrastRatio(tc, bg) < 3.0f; ++i) tc = mix(tc, theme::contrastText(bg), 0.15f);
   const float fs = lcd ? std::min(18.0f, (p1.y - p0.y) * 0.62f) : 13;
   textIn(dl, lcd ? Font::MonoBold : Font::Mono, fs, p0, p1, tc, txt);
   if (caret >= 0) {

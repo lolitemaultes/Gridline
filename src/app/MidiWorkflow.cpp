@@ -226,6 +226,7 @@ void App::playedNoteOff(ObjectId channel, int pitch) {
 }
 
 void App::processMidi() {
+  if (midi && midi->update()) publishMidi();  // the MIDI service answered (or stopped answering)
   if (projectLoadBlocking() && midi) {  // J-167: no input reaches the project behind the loading window
     midi->pollActions();
     midi->poll();

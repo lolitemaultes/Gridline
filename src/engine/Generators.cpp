@@ -34,15 +34,124 @@ void Generator::fire(const Ev& e) {
         panTarget_ = 0;
         if (silent) panCur_ = 0;
       }
+      exprNoteOn(e.id, e.pitch, e.hasProps ? &e.props : nullptr);
       break;
-    case Ev::Off: onNoteOff(e.id); break;
-    case Ev::AllOff: onAllOff(); break;
-    case Ev::Glide: onGlide(e.id, e.pitch, e.time); break;
-    case Ev::Cut: onCut(e.id); break;
+    case Ev::Off:
+      onNoteOff(e.id);
+      exprNoteOff(e.id);
+      break;
+    case Ev::AllOff:
+      onAllOff();
+      for (auto& x : exprNotes_) x.on = false;
+      levelTarget_ = brightTarget_ = 0;
+      break;
+    case Ev::Glide:
+      onGlide(e.id, e.pitch, e.time);
+      if (ExprNote* x = exprNote(e.id)) x->pitch = e.pitch;  // K-144: porta and slides move the base of the next MPE bend
+      break;
+    case Ev::Cut:
+      onCut(e.id);
+      exprNoteOff(e.id);
+      break;
     case Ev::Midi:
       onMidi(static_cast<uint8_t>(e.id & 0xFF), static_cast<uint8_t>((e.id >> 8) & 0xFF), static_cast<uint8_t>((e.id >> 16) & 0xFF));
       break;
+    case Ev::Expr: exprEvent(e); break;
   }
+}
+
+// ------------------------------------------------------------------- K-144: per-note expression
+Generator::ExprNote* Generator::exprNote(uint32_t id) {
+  for (auto& x : exprNotes_)
+    if (x.on && x.id == id) return &x;
+  return nullptr;
+}
+
+float Generator::noteExpr(uint32_t id, ExprDim dim) const {
+  for (const auto& x : exprNotes_)
+    if (x.on && x.id == id) return dim == ExprDim::Pitch ? x.bend : dim == ExprDim::Pressure ? x.pressure : x.timbre;
+  return dim == ExprDim::Timbre ? 0.5f : 0.0f;
+}
+
+ExprUse Generator::exprUse(ExprDim d) const {
+  if (d == ExprDim::Pitch) return exprSet_.pitch ? ExprUse::Instrument : ExprUse::Off;
+  const ExprUse u = d == ExprDim::Pressure ? exprSet_.pressure : exprSet_.timbre;
+  if (u != ExprUse::Instrument) return u;
+  if (ownExpression() & (1u << static_cast<unsigned>(d))) return ExprUse::Instrument;
+  return d == ExprDim::Pressure ? ExprUse::Level : ExprUse::Brightness;
+}
+
+void Generator::exprNoteOn(uint32_t id, double pitch, const NoteProps* props) {
+  ExprNote* slot = exprNote(id);
+  for (auto& x : exprNotes_)
+    if (!slot && !x.on) slot = &x;
+  if (!slot) slot = &exprNotes_[id % kExprNotes];  // more held notes than slots: one is forgotten
+  *slot = ExprNote{};
+  slot->id = id;
+  slot->on = true;
+  slot->pitch = pitch;
+  if (props && (props->pressure != 0 || props->timbre != 0.5f)) {  // the note starts with expression
+    for (ExprDim d : {ExprDim::Pressure, ExprDim::Timbre}) {
+      Ev x = Ev::make(Ev::Expr, id, d == ExprDim::Pressure ? props->pressure : props->timbre, 0, 0);
+      x.dim = d;
+      exprEvent(x);
+    }
+  }
+  if (exprUsed_) exprTargets();  // a plain note among expressive ones (or after them) counts as neutral
+}
+
+void Generator::exprNoteOff(uint32_t id) {
+  ExprNote* n = exprNote(id);
+  if (!n) return;
+  n->on = false;
+  exprTargets();
+}
+
+void Generator::exprEvent(const Ev& e) {
+  ExprNote* n = exprNote(e.id);
+  if (!n || !std::isfinite(e.pitch)) return;  // not a held note
+  const float v = static_cast<float>(e.pitch);
+  const float amt = std::clamp(exprSet_.amount, 0.0f, 1.0f);
+  switch (e.dim) {
+    case ExprDim::Pitch:
+      n->bend = std::clamp(v, -96.0f, 96.0f);
+      if (!exprSet_.pitch) return;
+      if (ownExpression() & 1u)
+        onExpr(e.id, ExprDim::Pitch, n->bend);
+      else if (supportsGlide())
+        onGlide(e.id, n->pitch + static_cast<double>(n->bend), 0.004);
+      return;
+    case ExprDim::Pressure: n->pressure = std::clamp(v, 0.0f, 1.0f); break;
+    case ExprDim::Timbre: n->timbre = std::clamp(v, 0.0f, 1.0f); break;
+  }
+  const ExprUse use = exprUse(e.dim);
+  if (use == ExprUse::Instrument)
+    onExpr(e.id, e.dim, e.dim == ExprDim::Pressure ? n->pressure * amt : 0.5f + (n->timbre - 0.5f) * amt);
+  else if (use != ExprUse::Off)
+    exprTargets();
+}
+
+// The generic response follows the held notes together: the strongest pressure, the timbre
+// furthest from its centre. With no note held the last values stay (a release keeps its sound).
+void Generator::exprTargets() {
+  bool any = false;
+  float level = 0, bright = 0;
+  auto add = [&](ExprUse u, float v) {  // v: -1..1 (pressure 0..1)
+    if (u == ExprUse::Level && std::fabs(v) > std::fabs(level)) level = v;
+    if (u == ExprUse::Brightness && std::fabs(v) > std::fabs(bright)) bright = v;
+  };
+  const ExprUse up = exprUse(ExprDim::Pressure), ut = exprUse(ExprDim::Timbre);
+  for (const auto& x : exprNotes_) {
+    if (!x.on) continue;
+    any = true;
+    add(up, x.pressure);
+    add(ut, (x.timbre - 0.5f) * 2.0f);
+  }
+  if (!any) return;
+  const float amt = std::clamp(exprSet_.amount, 0.0f, 1.0f);
+  levelTarget_ = level * amt;
+  brightTarget_ = bright * amt;
+  if (levelTarget_ != 0 || brightTarget_ != 0) exprUsed_ = true;
 }
 
 void Generator::process(const PluginState& state, const ChannelAux& aux, const ProcessContext& ctx, float* L,
@@ -72,6 +181,28 @@ void Generator::process(const PluginState& state, const ChannelAux& aux, const P
     }
     if (panTarget_ == 0 && std::fabs(panCur_) < 1e-5f) panUsed_ = false, panCur_ = 0;
   };
+  // K-144: the generic expression response: level (+6 dB per unit) and a high shelf at about
+  // 1.5 kHz (+-9 dB per unit), each smoothed per sample over ~5 ms.
+  const float shelfA = static_cast<float>(1.0 - std::exp(-2.0 * 3.14159265358979 * 1500.0 / sampleRate_));
+  auto applyExpr = [&](int from, int to) {
+    if (!exprUsed_) return;
+    float g = std::exp2(levelCur_), hg = std::exp2(brightCur_ * 1.5f);
+    for (int i = from; i < to; ++i) {
+      const float dl = (levelTarget_ - levelCur_) * panCoef, db = (brightTarget_ - brightCur_) * panCoef;
+      if (dl != 0 || db != 0) {
+        levelCur_ += dl;
+        brightCur_ += db;
+        g = std::exp2(levelCur_);
+        hg = std::exp2(brightCur_ * 1.5f);
+      }
+      shelfL_ += (L[i] - shelfL_) * shelfA;
+      shelfR_ += (R[i] - shelfR_) * shelfA;
+      L[i] = (shelfL_ + (L[i] - shelfL_) * hg) * g;
+      R[i] = (shelfR_ + (R[i] - shelfR_) * hg) * g;
+    }
+    if (levelTarget_ == 0 && brightTarget_ == 0 && std::fabs(levelCur_) < 1e-5f && std::fabs(brightCur_) < 1e-5f)
+      exprUsed_ = false, levelCur_ = brightCur_ = 0, shelfL_ = shelfR_ = 0;
+  };
   if (wholeBlock()) {
     for (size_t i = 0; i < count_; ++i) {
       evOffset_ = std::clamp(events_[i].offset, 0, std::max(0, n - 1));
@@ -81,6 +212,7 @@ void Generator::process(const PluginState& state, const ChannelAux& aux, const P
     count_ = 0;
     render(L, R, n);
     applyPan(0, n);
+    applyExpr(0, n);
     return;
   }
   int pos = 0;
@@ -91,6 +223,7 @@ void Generator::process(const PluginState& state, const ChannelAux& aux, const P
     if (ei < count_) end = std::min(n, std::max(pos + 1, events_[ei].offset));
     render(L + pos, R + pos, end - pos);
     applyPan(pos, end);
+    applyExpr(pos, end);
     pos = end;
   }
   // Events at or beyond n (should not happen) fire at the block end.

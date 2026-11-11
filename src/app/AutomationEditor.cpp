@@ -11,6 +11,7 @@
 #include "Keys.h"
 #include "AutomationEditor.h"
 #include "AutomationLane.h"
+#include "ScrollBarUi.h"
 #include "SmoothScrollUi.h"
 #include <algorithm>
 #include <cmath>
@@ -82,6 +83,7 @@ struct Editor {
   float pxPerTick = 0.3f, scrollX = 0;
   smoothscroll::Axis axX;  // J-67: smooth scrolling / elastic left edge
   smoothzoom::Glide zoomGlide;  // J-188: smooth zooming
+  scrollbarui::Drag hBar;       // the time scroller above the ruler
   bool fit = true;
   Snap snap = Snap::Line;
   Tool tool = Tool::Draw;
@@ -119,6 +121,7 @@ struct Editor {
   bool toolWasOpen = false;   // a tool dialog was open last frame (focus it when it opens)
 };
 Editor E;
+AutomationEditorView devView;  // dev check: the view as drawn last frame
 uint64_t gestureCounter = 1;
 
 // Tempo-synced LFO speeds: cycle length in bars.
@@ -835,7 +838,9 @@ void drawCanvas(App& a, const AutomationClip& ac) {
   ImGui::InvisibleButton("##aecanvas", avail, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
   const bool hovered = ImGui::IsItemHovered(), active = ImGui::IsItemActive();
   ImDrawList* dl = ImGui::GetWindowDrawList();
-  const float axisW = 64, rulerH = 26, pad = 8;
+  // Above the ruler a slim time scroller with the clip's curve (the piano roll's and the playlist's).
+  const float hbarH = scrollbarui::kBarH, axisW = 64, rulerH = hbarH + 26, pad = 8;
+  const float rulerTop = origin.y + hbarH;
   const ImVec2 gMin(origin.x + axisW, origin.y + rulerH), gMax(origin.x + avail.x, origin.y + avail.y);
   const float gridW = gMax.x - gMin.x;
   const float y0 = gMin.y + pad, y1 = gMax.y - pad;
@@ -853,8 +858,16 @@ void drawCanvas(App& a, const AutomationClip& ac) {
   }
   const bool wheelZoom = hovered && io.MouseWheel != 0 && io.KeyCtrl;
   if (wheelZoom) timeline::zoomAt(s, E.pxPerTick, E.scrollX, std::pow(1.2, static_cast<double>(io.MouseWheel)), io.MousePos.x - gMin.x);
+  // An end of the time scroller dragged: the thumb's length sets the zoom, the opposite edge's tick stays put (1:1).
+  bool barZoom = false;
+  if (E.hBar.zooming() && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+    const double z = timeline::clampZoom(s, scrollbarui::endZoom(E.hBar, io.MousePos, scrollbarui::kThumbMinH, gridW));
+    E.pxPerTick = static_cast<float>(z);
+    E.scrollX = static_cast<float>(std::max(0.0, E.hBar.edgeUnits * z - E.hBar.edgePx));
+    barZoom = true;
+  }
   E.pxPerTick = static_cast<float>(timeline::clampZoom(s, E.pxPerTick));
-  scrollui::zoomEnd(E.zoomGlide, E.pxPerTick, E.scrollX, wheelZoom && !smoothscroll::isNotch(io.MouseWheel));
+  scrollui::zoomEnd(E.zoomGlide, E.pxPerTick, E.scrollX, (wheelZoom && !smoothscroll::isNotch(io.MouseWheel)) || barZoom);
   scrollui::clampOuter(E.axX, E.scrollX, 0.0f, 1e9f);  // J-67: the view's own glide / overscroll is left alone
   auto xOfSong = [&](double t) { return gMin.x + static_cast<float>(t) * E.pxPerTick - E.scrollX; };
   auto xOf = [&](Tick content) { return xOfSong(static_cast<double>(base + content)); };
@@ -873,6 +886,12 @@ void drawCanvas(App& a, const AutomationClip& ac) {
   if (hovered && io.MouseWheelH != 0) wheelX -= io.MouseWheelH * 80, notchX = smoothscroll::isNotch(io.MouseWheelH);
   if (hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) wheelX -= io.MouseDelta.x, notchX = false;
   scrollui::step(E.axX, E.scrollX, wheelX, notchX, 0.0f, 1e9f);
+  // The time scroller: the clip and eight bars after it (the view itself scrolls on freely).
+  const scrollbarui::Layout hBar = scrollbarui::layout(
+      ImVec2(gMin.x, origin.y + 1), ImVec2(gMax.x, rulerTop - 1), false, gridW,
+      std::max(static_cast<float>(vis1 + 8 * std::max<Tick>(1, s.barTicks())) * E.pxPerTick, std::max(0.0f, E.scrollX) + gridW), E.scrollX,
+      scrollbarui::kThumbMinH);
+  const scrollbarui::Part hOver = hovered && (E.g == Editor::None || !active) ? scrollbarui::hit(hBar, io.MousePos) : scrollbarui::Part::None;
   const Tick snapG = timeline::snapGrid(s, E.snap, E.pxPerTick, io.KeyAlt);
   auto snapContent = [&](Tick c) { return timeline::snapTick(base + c, snapG, E.snap) - base; };
 
@@ -1022,7 +1041,7 @@ void drawCanvas(App& a, const AutomationClip& ac) {
       bool major = t % labelGrid == 0;
       dl->AddLine(ImVec2(x, gMin.y - (major ? 10.0f : 4.0f)), ImVec2(x, gMin.y - 1), major ? P.lineStrong : P.line);
       if (major)
-        dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(x + 4, origin.y + 4), t % barT == 0 ? P.textDim : P.textFaint,
+        dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(x + 4, rulerTop + 4), t % barT == 0 ? P.textDim : P.textFaint,
                     timeline::rulerLabel(s, t, labelGrid).c_str());
     }
     // Clip region in the ruler.
@@ -1048,7 +1067,47 @@ void drawCanvas(App& a, const AutomationClip& ac) {
     theme::textEllipsis(dl, a.fontMono, theme::kFontLabel, ImVec2(origin.x + 4, std::clamp(y - 7, gMin.y + 1, std::max(gMin.y + 1, gMax.y - 14))), axisW - 8,
                         k == 2 ? P.textDim : P.textFaint, t.c_str());
   }
-  dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(origin.x + 6, origin.y + 7), P.textFaint, "VALUE");
+  dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(origin.x + 6, rulerTop + 7), P.textFaint, "VALUE");
+  {  // the time scroller, with the clip's curve over the time it covers
+    using scrollbarui::Part;
+    scrollbarui::draw(dl, hBar, hOver != Part::None || E.hBar.held(), E.hBar.zooming() ? E.hBar.part : E.hBar.held() ? Part::None : hOver);
+    const float by0 = hBar.p0.y + 3, by1 = hBar.p1.y - 3, k = hBar.content / std::max(1.0f, hBar.railLen()) / std::max(1e-6f, E.pxPerTick);
+    const float cx0 = std::max(hBar.p0.x, hBar.toRail(static_cast<float>(vis0) * E.pxPerTick)),
+                cx1 = std::min(hBar.p1.x, hBar.toRail(static_cast<float>(vis1) * E.pxPerTick));
+    if (!ac.points.empty() && cx1 > cx0) {
+      ImVec2 line[256];
+      int n = 0;
+      const float step = std::max(1.0f, (cx1 - cx0) / 255.0f);
+      for (float x = cx0; x <= cx1 + 0.01f && n < 256; x += step) {
+        const double t = static_cast<double>((x - hBar.p0.x) * k) - static_cast<double>(base);
+        const double v = std::clamp(ae::valueAt(ac.points, t, ac.flCurves), 0.0, 1.0);
+        line[n++] = ImVec2(x, by1 - static_cast<float>(v) * (by1 - by0));
+      }
+      dl->PushClipRect(hBar.p0, hBar.p1, true);
+      dl->AddPolyline(line, n, theme::withAlpha(col, 0.9f), ImDrawFlags_None, 1.25f);
+      dl->PopClipRect();
+    }
+  }
+  devView = AutomationEditorView{E.scrollX, E.pxPerTick, hBar.t0, hBar.t1, (hBar.p0.y + hBar.p1.y) * 0.5f, gMin.x, gMax.x};
+  {  // the time scroller: drag the thumb, drag an end to zoom, click the rail to page, double-click to fit
+    using scrollbarui::Part;
+    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) E.hBar = {};
+    if (E.hBar.part == Part::Thumb) E.scrollX = scrollbarui::thumbScroll(E.hBar, hBar, m);
+    if (hovered && hOver != Part::None && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+      if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+        E.hBar = {};
+        E.fit = true;
+      } else if (const int page = scrollbarui::press(E.hBar, hBar, hOver, m, E.pxPerTick, E.scrollX)) {
+        E.scrollX = std::max(0.0f, E.scrollX + static_cast<float>(page) * gridW * 0.9f);
+      }
+    }
+    if (hOver == Part::LowEnd || hOver == Part::HighEnd || E.hBar.zooming()) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+    if (hOver != Part::None && !E.hBar.held())
+      a.setHint(hOver == Part::LowEnd || hOver == Part::HighEnd
+                    ? i18n::tr("Drag the end to zoom the time (the other end stays put) \xC2\xB7 Ctrl+wheel: zoom at the pointer")
+                    : i18n::tr("Drag to scroll through the clip \xC2\xB7 click beside the thumb to page \xC2\xB7 drag an end to zoom \xC2\xB7 "
+                               "double-click: fit the clip"));
+  }
 
   // ---- interaction ----
   const Tick curContent = contentAt(std::clamp(m.x, gMin.x, gMax.x));
@@ -1468,6 +1527,8 @@ void openPatternAutomation(App& a, ObjectId pattern, ParamId target) {
   E.preview.reset();
   E.lfoOpen = E.scaleOpen = E.thinOpen = false;
 }
+
+const AutomationEditorView& automationEditorView() { return devView; }
 
 bool automationEditorTarget(ObjectId* automation, ObjectId* pattern, ParamId* target) {
   if (!E.open) return false;

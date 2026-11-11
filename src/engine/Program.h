@@ -48,6 +48,8 @@ struct NoteEv {
   // never copied by the audio thread, which copies the points into a fixed slot of the channel
   // runtime when the note starts (core/NoteBend.h evaluates both).
   std::shared_ptr<const std::vector<BendPoint>> bend;
+  // K-144: the note's pressure and timbre lanes (null = none), the same form (Note::pressure / timbre).
+  std::shared_ptr<const std::vector<BendPoint>> pressure, timbre;
   // K-76: the note's tracker cells (null = none); props.tracker points into them.
   std::shared_ptr<const std::vector<uint8_t>> tracker;
 };
@@ -94,6 +96,7 @@ struct ChannelRuntime {
     double on = 0;      // K-25: start tick (with its fraction): bend line times count from here
     int bendSlot = -1;  // K-25: its bend line in bendSlots (-1 = none)
     int64_t bendFrom = 0;  // K-25: absolute sample the bend starts to apply (after a porta glide)
+    int exprSlot[2] = {-1, -1};  // K-144: its pressure / timbre lanes in exprSlots (-1 = none)
   };
   Pending pending[kMaxPendingNotes];
   int pendingCount = 0;
@@ -108,6 +111,10 @@ struct ChannelRuntime {
   };
   static constexpr int kBendSlots = 32;
   BendSlot bendSlots[kBendSlots];
+  // K-144: the pressure ([0]) and timbre ([1]) lanes of the sounding notes, as the bend lines
+  // (`sent` holds the value last sent).
+  static constexpr int kExprSlots = 16;
+  BendSlot exprSlots[2][kExprSlots];
   // K-25: instruments without per-note pitch (hosted plugins without note tuning, MIDI Out):
   // the channel pitch bend sent per MIDI channel, semitones (0 = centred).
   float chanBend[16] = {};
@@ -373,6 +380,7 @@ struct ProgChannel {
   int polyphony = 0;
   bool mono = false, porta = false;
   float portaTime = 0.1f;
+  ExprSettings expr;  // K-144
   int cutGroup = 0, cutBy = 0;
   std::vector<int> layer;  // layer children (Program channel indices), for live notes
   int layerMode = 0;

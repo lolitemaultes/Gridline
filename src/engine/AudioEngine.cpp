@@ -524,12 +524,48 @@ void AudioEngine::drainMidi(const Program* p) {
       if (nf.rt) return false;
     return true;
   };
+  // K-144: MPE input. Member channels' bend, pressure and CC 74 become per-note expression of the
+  // notes they play, on built-in instruments without note processors (hosted plugins get the raw
+  // messages and do MPE themselves).
+  const bool mpe = mpeInput_.load(std::memory_order_relaxed);
+  const float mpeRange = mpeBendRange_.load(std::memory_order_relaxed);
+  auto expressive = [&](const ProgChannel* c) {
+    if (!c || !c->rt->gen || isHostedType(c->plugin.type) || !c->layer.empty()) return false;
+    for (const auto& nf : c->noteFx)
+      if (nf.rt) return false;
+    return true;
+  };
+  auto memberExpr = [&](int mch, ExprDim d, float v) {  // every note of member channel `mch`
+    for (int n = 0; n < 128; ++n) {
+      if (midiNoteCh_[n] == kNoId || midiNoteSrc_[n] != mch) continue;
+      const ProgChannel* nc = chan(midiNoteCh_[n]);
+      if (expressive(nc)) nc->rt->gen->expr(kMidiBit | static_cast<uint32_t>(n), d, v, 0);
+    }
+  };
   while (t != h) {
     MidiMsg m = mqueue_[t % kMidiQueue];
     ++t;
     int kind = m.s & 0xF0;
     int mch = m.s & 0x0F;
     int pitch = m.a & 0x7F;
+    const bool member = mpe && mch != 0;
+    if (member && (kind == 0xE0 || kind == 0xD0 || (kind == 0xB0 && m.a == 74))) {
+      // The member channel's state (it also sets a note's starting values before its note-on).
+      const ProgChannel* c = chan(routed(mch));
+      if (c && c->rt->gen && isHostedType(c->plugin.type)) c->rt->gen->midi(m.s, m.a, m.b, 0);
+      if (kind == 0xE0) {
+        const int raw = ((m.b & 0x7F) << 7) | (m.a & 0x7F);
+        bend_[mch] = static_cast<float>(raw - 8192) / 8192.0f * mpeRange;
+        memberExpr(mch, ExprDim::Pitch, bend_[mch]);
+      } else if (kind == 0xD0) {
+        mpePressure_[mch] = static_cast<float>(m.a & 0x7F) / 127.0f;
+        memberExpr(mch, ExprDim::Pressure, mpePressure_[mch]);
+      } else {
+        mpeTimbre_[mch] = static_cast<float>(m.b & 0x7F) / 127.0f;
+        memberExpr(mch, ExprDim::Timbre, mpeTimbre_[mch]);
+      }
+      continue;
+    }
     if (kind == 0x90 || kind == 0x80) {  // J-31: snap incoming notes to the scale
       const uint32_t sn = midiSnap_.load(std::memory_order_relaxed);
       if (sn & 0xFFF) pitch = snapToScaleMask(pitch, static_cast<int>(sn >> 12), static_cast<uint16_t>(sn & 0xFFF));
@@ -550,10 +586,16 @@ void AudioEngine::drainMidi(const Program* p) {
       if (const ProgChannel* c = chan(ch)) {
         float vel = m.b / 127.0f;
         if (soft_ && softOn_.load(std::memory_order_relaxed)) vel *= softFactor_.load(std::memory_order_relaxed);
-        float bend = bendable(c) ? bend_[mch] : 0.0f;
+        float bend = bendable(c) && !member ? bend_[mch] : 0.0f;
         liveOn(p, *c, kMidiBit | static_cast<uint32_t>(pitch), static_cast<float>(pitch) + bend, vel, mch);
         midiNoteCh_[pitch] = ch;
         midiNoteSrc_[pitch] = static_cast<uint8_t>(mch);
+        if (member && expressive(c)) {  // K-144: the note starts where its channel's controls are
+          const uint32_t id = kMidiBit | static_cast<uint32_t>(pitch);
+          if (bend_[mch] != 0) c->rt->gen->expr(id, ExprDim::Pitch, bend_[mch], 0);
+          if (mpePressure_[mch] != 0) c->rt->gen->expr(id, ExprDim::Pressure, mpePressure_[mch], 0);
+          if (mpeTimbre_[mch] != 0.5f) c->rt->gen->expr(id, ExprDim::Timbre, mpeTimbre_[mch], 0);
+        }
       }
     } else if (kind == 0x80 || (kind == 0x90 && m.b == 0)) {
       if (midiNoteCh_[pitch] == kNoId) continue;
@@ -1015,6 +1057,21 @@ int takeBendSlot(ChannelRuntime& rt, uint32_t id, const BendPoint* pts, int coun
 int takeBendSlot(ChannelRuntime& rt, uint32_t id, const std::vector<BendPoint>& pts) {
   return takeBendSlot(rt, id, pts.data(), static_cast<int>(pts.size()));
 }
+// K-144: a free slot for the note's pressure (d = 0) or timbre (d = 1) lane; -1 = none free.
+int takeExprSlot(ChannelRuntime& rt, int d, uint32_t id, const std::vector<BendPoint>& pts) {
+  for (int k = 0; k < ChannelRuntime::kExprSlots; ++k) {
+    ChannelRuntime::BendSlot& s = rt.exprSlots[d][k];
+    bool owned = false;
+    for (int i = 0; i < rt.pendingCount && s.id != 0 && !owned; ++i) owned = rt.pending[i].exprSlot[d] == k && rt.pending[i].id == s.id;
+    if (owned) continue;
+    s.id = id;
+    s.count = std::clamp(static_cast<int>(pts.size()), 0, bend::kMaxPoints);
+    std::copy(pts.data(), pts.data() + s.count, s.pts);
+    s.sent = bend::value(s.pts, s.count, 0.0);  // the note-on carried the first value
+    return k;
+  }
+  return -1;
+}
 }  // namespace
 
 void AudioEngine::startNote(const Program* p, const ProgChannel& ch, const NoteEv& e, int offset, int64_t at, double spt, Tick shift) {
@@ -1107,6 +1164,8 @@ void AudioEngine::startNote(const Program* p, const ProgChannel& ch, const NoteE
     rt->pending[0] = kept;
     rt->pendingCount = 1;
     rt->pending[0].bendSlot = bent ? takeBendSlot(*rt, kept.id, *e.bend) : -1;
+    rt->pending[0].exprSlot[0] = e.pressure && !chain ? takeExprSlot(*rt, 0, kept.id, *e.pressure) : -1;  // K-144
+    rt->pending[0].exprSlot[1] = e.timbre && !chain ? takeExprSlot(*rt, 1, kept.id, *e.timbre) : -1;
     rt->lastPitch = e.pitch;
     rt->lastPitchColor[color] = e.pitch;
     return;
@@ -1136,6 +1195,8 @@ void AudioEngine::startNote(const Program* p, const ProgChannel& ch, const NoteE
   pd.on = noteOnTick(e) + static_cast<double>(shift);
   pd.bendFrom = portaGlide ? at + portaSamples : at;
   pd.bendSlot = bent ? takeBendSlot(*rt, id, *e.bend) : -1;
+  pd.exprSlot[0] = e.pressure && !chain ? takeExprSlot(*rt, 0, id, *e.pressure) : -1;  // K-144
+  pd.exprSlot[1] = e.timbre && !chain ? takeExprSlot(*rt, 1, id, *e.timbre) : -1;
   if (pd.bendSlot >= 0 && glides && !portaGlide) {  // K-25: a line that starts off the note's pitch starts there
     ChannelRuntime::BendSlot& sl = rt->bendSlots[pd.bendSlot];
     const double v0 = bend::value(sl.pts, sl.count, 0.0);
@@ -1156,6 +1217,7 @@ void AudioEngine::startNote(const Program* p, const ProgChannel& ch, const NoteE
     n.color = color;
     n.pd = pd;
     n.pd.bendSlot = -1;
+    n.pd.exprSlot[0] = n.pd.exprSlot[1] = -1;  // K-144: it starts with its first values only
     n.hasProps = props != nullptr;
     if (props) n.props = *props;
     holdNote(n);
@@ -1252,6 +1314,27 @@ void AudioEngine::applyBends(const Program* p, int from, int to) {
     for (const auto& nf : ch.noteFx) chain = chain || nf.rt != nullptr;
     if (chain) continue;
     Generator* gen = rt->gen.get();
+    // K-144: the notes' pressure and timbre lanes, in pieces of curvePiece samples (built-in
+    // instruments; hosted plugins keep their own MPE input).
+    if (!isHostedType(ch.plugin.type))
+      for (int i = 0; i < rt->pendingCount; ++i) {
+        ChannelRuntime::Pending& pd = rt->pending[i];
+        for (int d = 0; d < 2; ++d) {
+          if (pd.exprSlot[d] < 0) continue;
+          ChannelRuntime::BendSlot& sl = rt->exprSlots[d][pd.exprSlot[d]];
+          if (sl.id != pd.id) {
+            pd.exprSlot[d] = -1;
+            continue;
+          }
+          const int64_t s0 = std::max(pd.at, b0);
+          for (int off = static_cast<int>(s0 - absClock_); off < to; off += curvePiece) {
+            const double v = bend::value(sl.pts, sl.count, std::max(0.0, tickOf(off) - pd.on));
+            if (std::fabs(v - sl.sent) < 1e-4) continue;
+            sl.sent = v;
+            gen->expr(pd.id, d == 0 ? ExprDim::Pressure : ExprDim::Timbre, static_cast<float>(d == 0 ? v : 0.5 + v), off);
+          }
+        }
+      }
     const bool glides = gen->supportsGlide();
     if (glides) {
       for (int i = 0; i < rt->pendingCount; ++i) {

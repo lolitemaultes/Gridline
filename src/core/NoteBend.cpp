@@ -53,6 +53,10 @@ void split(const Note& n, Tick cut, Note& left, Note& right) {
   const double at = static_cast<double>(cut);
   left.bend = head(n.bend, at);
   right.bend = tail(n.bend, at);
+  left.pressure = head(n.pressure, at);  // K-144: the expression lanes split the same way
+  right.pressure = tail(n.pressure, at);
+  left.timbre = head(n.timbre, at);
+  right.timbre = tail(n.timbre, at);
 }
 
 void append(std::vector<BendPoint>& a, const std::vector<BendPoint>& b, double offset) {

@@ -227,6 +227,14 @@ class AudioEngine {
   void setBendRange(int midiCh, float semitones) {
     if (midiCh >= 0 && midiCh < 16) bendRange_[midiCh].store(semitones);
   }
+  // K-144: MPE input (lower zone): MIDI channel 1 is the master channel (its pitch bend and
+  // controllers act on the whole instrument), channels 2..16 carry one note each, and their pitch
+  // bend (over `bendRange` semitones), channel pressure and CC 74 move that note alone. Built-in
+  // instruments get them as per-note expression; hosted plugins read the raw messages. UI thread.
+  void setMpeInput(bool on, float bendRange) {
+    mpeBendRange_.store(std::clamp(bendRange, 1.0f, 96.0f));
+    mpeInput_.store(on);
+  }
   // Pedals: CC 64 sustain, CC 66 sostenuto, CC 67 soft (velocity × factor).
   void setPedals(bool sostenuto, bool soft, float softFactor) {
     sostenutoOn_.store(sostenuto);
@@ -586,6 +594,9 @@ class AudioEngine {
   bool sostenutoOff_[128] = {};   // their key was released while the pedal was down
   uint8_t midiNoteSrc_[128] = {}; // MIDI channel each sounding MIDI note came from
   float bend_[16] = {};           // current pitch bend per MIDI channel (semitones)
+  std::atomic<bool> mpeInput_{false};       // K-144
+  std::atomic<float> mpeBendRange_{48.0f};
+  float mpePressure_[16] = {}, mpeTimbre_[16] = {0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f};
   // J-109: notes held from the interface (Cmd::NoteOn / NoteOff), by channel
   // id and key, so they can be released together (audio thread).
   struct LiveKey {

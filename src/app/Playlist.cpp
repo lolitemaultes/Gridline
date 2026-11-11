@@ -493,6 +493,7 @@ void drawWaveformFrom(ImDrawList* dl, const Song& s, const Channel& ch, const Cl
                       float pxPerTick, float visX0, float visX1, ImU32 col, const FadeGeom* xf, const PeakSummary& pk, size_t frames, double rate,
                       const ClipSource* src) {
   if (frames < 2 || pk.bins() == 0 || rate <= 0) return;
+  theme::devNote("wave", col);  // K-177 dev: the waveform colour (from the theme's clip ink)
   const bool rev = clipPlaysReversed(ch, c);
   const double seconds = static_cast<double>(frames) / rate;
   // K-85: the window inside the channel's start / end handles (the sound its sample page makes).
@@ -835,20 +836,32 @@ void arrangementClipMenu(App& a, ObjectId id) {
       wtm.build(s);
       plwarp::clipMenu(a, id, wtm, timeline::snapGrid(s, a.playlist.snap, a.playlist.pxPerTick, false));
     }
-    // J-193: on, the clip keeps its bars when the tempo changes (a stretch turns it on); off, it keeps its audio and seconds.
-    if (ImGui::MenuItem(i18n::tr("Follow the project tempo"), nullptr, c->syncBpm > 0)) {
-      const bool on = !(c->syncBpm > 0);
-      a.doc.editSong("follow tempo", [&](Song& x) { setClipFollowsTempo(x, id, on); });
-    }
     if (ImGui::MenuItem(i18n::tr("Channel settings"))) a.settingsChannel = c->source;
-    {  // J-28 (operations: J-27)
-      std::set<ObjectId> sel = a.playlist.selected;
-      if (!sel.count(id)) sel = {id};
-      if (ImGui::MenuItem(i18n::tr("Make unique as sample"))) {
-        if (ObjectId nch = ops::makeAudioClipUnique(a.doc, id)) a.settingsChannel = nch;
+    {  // K-158: the clip's audio tools in one submenu (J-193 tempo follow, J-28 operations)
+      const uint64_t rev = a.doc.revision();
+      const bool openAudio = ImGui::BeginMenu(i18n::tr("Audio"));
+      devRackItem("clipmenu audio");  // K-158: scripted screenshots open it
+      if (openAudio) {
+        // J-193: on, the clip keeps its bars when the tempo changes (a stretch turns it on); off, it keeps its audio and seconds.
+        if (ImGui::MenuItem(i18n::tr("Follow the project tempo"), nullptr, c->syncBpm > 0)) {
+          const bool on = !(c->syncBpm > 0);
+          a.doc.editSong("follow tempo", [&](Song& x) { setClipFollowsTempo(x, id, on); });
+        }
+        audioClipTempoItems(a, id);  // J-8: fit to tempo, normalize
+        ImGui::Separator();
+        std::set<ObjectId> sel = a.playlist.selected;
+        if (!sel.count(id)) sel = {id};
+        if (ImGui::MenuItem(i18n::tr("Make unique as sample"))) {
+          if (ObjectId nch = ops::makeAudioClipUnique(a.doc, id)) a.settingsChannel = nch;
+        }
+        if (ImGui::MenuItem(i18n::tr("Pitch a semitone up"))) ops::pitchAudioClips(a.doc, sel, 100.0f);
+        if (ImGui::MenuItem(i18n::tr("Pitch a semitone down"))) ops::pitchAudioClips(a.doc, sel, -100.0f);
+        ImGui::EndMenu();
       }
-      if (ImGui::MenuItem(i18n::tr("Pitch a semitone up"))) ops::pitchAudioClips(a.doc, sel, 100.0f);
-      if (ImGui::MenuItem(i18n::tr("Pitch a semitone down"))) ops::pitchAudioClips(a.doc, sel, -100.0f);
+      if (a.doc.revision() != rev) {  // the edit replaced the song: `s` and `c` point into the old one
+        a.doc.endGesture();
+        return;
+      }
     }
     a.doc.endGesture();
     ImGui::Separator();
@@ -2042,7 +2055,7 @@ void drawPlaylist(App& a) {
     }
     // Clip content (notes, waveform, curve): lighter than the colour on dark
     // slate, darker than it on the light variant's pastel bodies.
-    const ImU32 ink = P.dark ? theme::mix(base, P.paper, muted ? 0.0f : 0.45f) : theme::mix(base, P.ink, muted ? 0.15f : 0.42f);
+    const ImU32 ink = theme::clipInk(base, muted);  // K-177: follows the theme (white text pushes it)
     // J-118: this clip's share of a crossfade blend with `p` at x (by the levels playing there).
     auto xfWeight = [&](const DrawnClip& p, float x) {
       const float gp = p.fade.xfGain(x), gq = fg.xfGain(x);
@@ -2425,7 +2438,7 @@ void drawPlaylist(App& a) {
         lc.track = tr;
         lc.start = v.span.start;
         lc.length = v.span.length;
-        const ImU32 ink = P.dark ? theme::mix(base, P.paper, muted ? 0.0f : 0.45f) : theme::mix(base, P.ink, muted ? 0.15f : 0.42f);
+        const ImU32 ink = theme::clipInk(base, muted);  // K-177: follows the theme (white text pushes it)
         drawWaveformFrom(dl, s, liveCh, lc, tempoMap, b0, b1, x0, st.pxPerTick, gMin.x, gMax.x, ink, nullptr, *v.peaks,
                          static_cast<size_t>(v.fileFrames), v.sampleRate, nullptr);
       }
@@ -4434,5 +4447,7 @@ void drawPlaylist(App& a) {
   drawClipProperties(a);  // J-8: audio clip properties window
   chopui::draw(a);         // PL-13: chop and stutter window
 }
+
+void devArrangementClipMenu(App& a, ObjectId clip) { arrangementClipMenu(a, clip); }  // K-158: --menu arrclip
 
 }  // namespace gl

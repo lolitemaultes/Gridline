@@ -114,7 +114,8 @@ Settings::Settings() {
       {"theme.led", Json::makeString("")},
       {"theme.playhead", Json::makeString("")},
       {"theme.contrast", Json::makeNumber(0)},       // -1 .. 1
-      {"theme.brightness", Json::makeNumber(0)},     // -1 .. 1
+      {"theme.brightness", Json::makeNumber(0)},     // -1 .. 1 (-1 = pitch black)
+      {"theme.whiteText", b(false)},                 // K-177: white text and glyphs on dark faces
       {"theme.controls", Json::makeString("slate")}, // control style: slate | graphite | hairline | lumen | classic (J-129)
       {"ui.mixerWheel", Json::makeNumber(2)},  // J-83: wheel over mixer controls: 0 adjust, 1 scroll the mixer, 2 auto (scroll when narrow)
       {"ui.mixerLayout", Json::makeNumber(1)},  // mixer strip width: 0 compact, 1 normal, 2 wide

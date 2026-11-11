@@ -32,7 +32,7 @@ Both speak the same protocol and offer the same tools, resources and prompts.
 * Files are written only inside the project's folder and the export folder you choose in
   Settings > Integrations. Paths that leave those folders (`..`, links pointing elsewhere) are refused, and
   each tool only writes its own file types (`.wav`, `.mid`, `.flp`, `.zip`, `.json`).
-* There is no shell access. Lua scripts run in the same sandbox as Tools > Project scripts (no
+* There is no shell access. Lua scripts run in the same sandbox as Tools > Composing > Project scripts (no
   `io`, `os`, file or network access) with the time and instruction limits of Settings > Files.
 * Calls are rate limited (bursts of 60, then 10 per second) and request sizes are bounded
   (8 MB per message, 100 000 notes per call, 256 KB per script).

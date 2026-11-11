@@ -352,14 +352,15 @@ void mixerMenuItems(App& a, ObjectId mixer) {
   if (mixer == s.masterId()) return;
   const int linked = trackmodes::audioTrackOf(s, mixer);
   // (Run at the start of the next frame, App::later: the mixer draws this menu in its strip loop.)
-  if (ImGui::MenuItem(i18n::tr("Make an audio track for it"), nullptr, false, linked < 0))
+  // K-158: only the one of the pair that applies.
+  if (linked < 0 && ImGui::MenuItem(i18n::tr("Make an audio track for it")))
     a.later([&a, mixer] {
       std::string why;
       const int t = trackmodes::assignMixerToNewTrack(a.doc, mixer, &why);
       report(a, t >= 0, why);
       if (t >= 0) a.notify("Audio track on playlist track " + std::to_string(t + 1));
     });
-  if (ImGui::MenuItem(i18n::tr("Drop its audio track link"), nullptr, false, linked >= 0))
+  if (linked >= 0 && ImGui::MenuItem(i18n::tr("Drop its audio track link")))
     a.later([&a, mixer] { trackmodes::unassignMixer(a.doc, mixer); });
 }
 
@@ -367,14 +368,15 @@ void channelMenuItems(App& a, ObjectId channel) {
   const Song& s = a.doc.song();
   const int linked = trackmodes::instrumentTrackOf(s, channel);
   // (Run at the start of the next frame, App::later: a new track can resize the playlist tracks.)
-  if (ImGui::MenuItem(i18n::tr("Make an instrument track for it"), nullptr, false, linked < 0 && trackmodes::channelLinkable(s, channel)))
+  // K-158: only the one of the pair that applies.
+  if (linked < 0 && ImGui::MenuItem(i18n::tr("Make an instrument track for it"), nullptr, false, trackmodes::channelLinkable(s, channel)))
     a.later([&a, channel] {
       std::string why;
       const int t = trackmodes::assignChannelToNewTrack(a.doc, channel, &why);
       report(a, t >= 0, why);
       if (t >= 0) a.notify("Instrument track on playlist track " + std::to_string(t + 1));
     });
-  if (ImGui::MenuItem(i18n::tr("Drop its instrument track link"), nullptr, false, linked >= 0))
+  if (linked >= 0 && ImGui::MenuItem(i18n::tr("Drop its instrument track link")))
     a.later([&a, channel] { trackmodes::unassignChannel(a.doc, channel); });
 }
 

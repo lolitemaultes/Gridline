@@ -1,0 +1,70 @@
+# Light neutral colour literals allowed in UI code (tests/test_k177_colour_audit.cpp).
+# path<TAB>most allowed<TAB>why. Anything new must come from the theme (theme::pal() roles,
+# darkFaces(), tint(), clipInk()); lower a count when a file loses some, never raise it.
+# The palette itself
+src/app/Theme.cpp	23	the palette definition: the stock dark and light role colours, paper, contrast text
+# Brand assets (logo guide: Paper on 950, fixed by the brand, not the theme)
+src/app/Dialogs.cpp	4	About window: brand lockup and its fixed Paper / grey text on the brand black
+src/app/Splash.cpp	1	splash screen: brand lockup in Paper on the brand black
+# Pointer
+src/app/main.cpp	1	the drawn mouse pointer: a white arrow in a black outline, readable on every face
+# Opt-in control styles (Settings > Theme > Controls): fixed material designs; the default style (Slate) is built from the theme
+src/app/Look.cpp	2	shared painter: piano white keys of the control-style keyboard
+src/app/LookGraphite.cpp	28	Graphite control style: the Paper value floor and its light labels are the design
+src/app/LookHairline.cpp	6	Hairline control style: light value strokes and labels on its fixed dark glass
+src/app/LookLumen.cpp	6	Lumen control style: light emitted values and labels on its fixed dark glass
+# Plugin faceplates: each instrument and effect editor reproduces its own panel design (AGENTS.md Look), like a hosted plugin's own interface
+src/app/InstrumentSkin.h	3	instrument faceplate palette and its piano keys
+src/app/PluginSkin.cpp	2	plugin faceplate kit: lit button text and LCD text on the plugin's own panel
+src/app/PluginSkin.h	5	plugin faceplate kit default roles
+src/app/PluginSkinKit.cpp	1	plugin faceplate kit: piano white keys
+src/app/PluginEditorsDelayRef.cpp	1	plugin faceplate
+src/app/PluginEditorsDynFl.cpp	28	plugin faceplates (dynamics)
+src/app/PluginEditorsEqRef.cpp	5	plugin faceplate
+src/app/PluginEditorsFl.cpp	2	plugin faceplates
+src/app/PluginEditorsFlSynth.cpp	10	plugin faceplates (synths)
+src/app/PluginEditorsFlSynth2.cpp	6	plugin faceplates (synths)
+src/app/PluginEditorsInstr.cpp	7	plugin faceplates (instruments)
+src/app/PluginEditorsInstrPads.cpp	13	plugin faceplate (pads)
+src/app/PluginEditorsInstrSlicer.cpp	26	plugin faceplate (slicer)
+src/app/PluginEditorsInstrSlicerKit.cpp	16	plugin faceplate kit (slicer)
+src/app/PluginEditorsK3.cpp	1	plugin faceplate
+src/app/PluginEditorsK3Gb.cpp	1	plugin faceplate
+src/app/PluginEditorsTimeRef.cpp	1	plugin faceplate
+src/packs/creative/creative_ui.cpp	1	plugin faceplate
+src/packs/dynamics/dist_fl_ui.cpp	5	plugin faceplate
+src/packs/dynamics/dist_ui.cpp	2	plugin faceplate
+src/packs/dynamics/masterfl_ui.cpp	11	plugin faceplate
+src/packs/dynamics/rack_ui.cpp	2	plugin faceplate
+src/packs/edison/edison_wave_ui.cpp	1	spectrogram heat map (data colour scale, hottest = white)
+src/packs/flex/flex_ui.cpp	2	plugin faceplate
+src/packs/models/additive_ui.cpp	1	plugin faceplate
+src/packs/models/alloy_ui.cpp	1	plugin faceplate
+src/packs/models/drumkit_ui.cpp	7	plugin faceplate (drum heads)
+src/packs/models/drums_ui.cpp	9	plugin faceplate (drum heads)
+src/packs/models/grainscan_ui.cpp	1	plugin faceplate
+src/packs/models/plucker_ui.cpp	1	plugin faceplate
+src/packs/models/splinescratch_ui.cpp	3	plugin faceplate
+src/packs/models/stepbass_ui.cpp	2	plugin faceplate
+src/packs/models/string_ui.cpp	4	plugin faceplate
+src/packs/models/twinstring_ui.cpp	4	plugin faceplate
+src/packs/modulation/modulation_ctl_ui.cpp	2	plugin faceplate
+src/packs/modulation/modulation_notefx_ui.cpp	2	plugin faceplate
+src/packs/modulation/modulation_patcher_ui.cpp	1	plugin faceplate
+src/packs/modulation/modulation_skin_ui.cpp	5	plugin faceplate palette
+src/packs/plasma/plasma_look_ui.cpp	2	Plasma: the knob centre dot
+src/packs/plasma/plasma_patch_ui.cpp	2	Plasma: piano white keys (dark and light variants)
+src/packs/plasma/plasma_play_ui.cpp	4	Plasma: piano white keys and key dividers (dark and light variants)
+src/packs/plasma/plasma_synth_ui.cpp	1	Plasma: the playhead marker on a waveform
+src/packs/platter/platter_deck_ui.cpp	5	plugin faceplate (deck)
+src/packs/samplers/samplers_ui.cpp	5	plugin faceplate
+src/packs/samplers/sfz_ui.h	1	plugin faceplate: piano white keys
+src/packs/spacefx/spacefx_ui.cpp	27	plugin faceplate
+src/packs/spectral/spectral_ui.cpp	7	plugin faceplate
+src/packs/spectral/turntable_ui.cpp	11	plugin faceplate
+src/packs/synths/fingerbass_ui.cpp	3	plugin faceplate
+src/packs/synths/matrixfm_ui.cpp	2	plugin faceplate
+src/packs/synths/sawswarm_ui.cpp	5	plugin faceplate
+src/packs/synths/twinva_ui.cpp	4	plugin faceplate
+src/packs/utility/utility_bankeq_ui.cpp	1	plugin faceplate
+src/packs/utility/utility_view_ui.cpp	13	plugin faceplate (scopes)

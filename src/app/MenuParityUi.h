@@ -34,7 +34,8 @@ void channelItems(App& a, ObjectId channel);        // create: clone with contro
 void channelStepItems(App& a, ObjectId channel);    // steps: repeat the first bar, bake note effects
 void channelSampleItems(App& a, ObjectId channel);  // instrument: the sample in a new channel
 void channelLayerItems(App& a, ObjectId channel);   // properties: a layer's channels
-void rackItems(App& a, const std::vector<ObjectId>& selection);  // channel rack menu
+void rackItems(App& a, const std::vector<ObjectId>& selection);  // channel rack menu > Selected channels: swing typed in, declicking
+void rackAllItems(App& a);                                        // channel rack menu > All channels: audio clip channels
 void pianoEditItems(App& a);                                    // piano roll › Edit
 void pianoToolItems(App& a);                                    // piano roll › Tools
 void pianoSelectItems(App& a);                                  // piano roll › Select

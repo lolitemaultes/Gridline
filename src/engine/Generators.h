@@ -9,6 +9,7 @@
 #include <memory>
 #include <vector>
 #include "../core/PluginInfo.h"
+#include "../core/Types.h"
 #include "Sample.h"
 
 namespace gl {
@@ -175,8 +176,11 @@ struct NoteProps {
   // note returns, so an instrument that needs them later copies them.
   const uint8_t* tracker = nullptr;
   uint32_t trackerLen = 0;
+  // K-144: the note's starting expression (MPE): pressure 0..1 and timbre 0..1 (0.5 = centre).
+  float pressure = 0, timbre = 0.5f;
   bool neutral() const {
-    return pan == 0 && release == 0.5f && modX == 0.5f && modY == 0.5f && color == 0 && detune == 0 && tracker == nullptr;
+    return pan == 0 && release == 0.5f && modX == 0.5f && modY == 0.5f && color == 0 && detune == 0 && tracker == nullptr && pressure == 0 &&
+           timbre == 0.5f;
   }
 };
 // J-180: the key a note was written on (its pitch without the detune).
@@ -238,6 +242,20 @@ class Generator {
   // Cuts the note `id` quickly (cut groups, polyphony limit, mono) — unlike
   // noteOff this also ends one-shot voices.
   void cut(uint32_t id, int offset) { push(Ev::make(Ev::Cut, id, 0, 0, offset)); }
+  // K-144: per-note expression of the sounding note `id` (MPE input, a note's pressure and
+  // timbre lanes). Pitch moves the note through the instrument's glide unless the instrument
+  // takes it itself (ownExpression). Pressure and timbre go to the instrument's own response, or
+  // to the channel's generic one (level, brightness) as the channel's ExprSettings say.
+  void expr(uint32_t id, ExprDim dim, float value, int offset) {
+    Ev e = Ev::make(Ev::Expr, id, value, 0, offset);
+    e.dim = dim;
+    push(e);
+  }
+  // K-144: the channel's expression setting (Channel::expr). Audio thread, before process().
+  void setExpression(const ExprSettings& s) { exprSet_ = s; }
+  // K-144: an expression value of a held note, as last received (Pitch: semitones; for a note
+  // without any: 0, or 0.5 for timbre). Instruments read it per voice; audio thread.
+  float noteExpr(uint32_t id, ExprDim dim) const;
   virtual bool supportsGlide() const { return false; }
   // K-25: instruments that cannot glide each note get note bend lines as channel pitch bend
   // (midi 0xE0): the semitones a full bend means to them (General MIDI's default: 2).
@@ -262,6 +280,7 @@ class Generator {
   // Silences immediately (stop / panic).
   void kill() {
     count_ = 0;
+    for (auto& x : exprNotes_) x.on = false;  // K-144
     onKill();
   }
 
@@ -373,6 +392,16 @@ class Generator {
     (void)d1;
     (void)d2;
   }
+  // K-144: the expression dimensions the instrument answers per voice itself (bits 1 << ExprDim);
+  // those reach onExpr when the channel leaves them to the instrument. The others get the base
+  // class's response: pitch through onGlide (instruments that glide), pressure on the level and
+  // timbre on the brightness of the instrument's output (following the held notes together).
+  virtual unsigned ownExpression() const { return 0; }
+  virtual void onExpr(uint32_t id, ExprDim dim, float value) {
+    (void)id;
+    (void)dim;
+    (void)value;
+  }
   virtual void onAllOff() = 0;
   virtual void onKill() = 0;
   // Called once per process() before rendering, to read parameters.
@@ -407,8 +436,9 @@ class Generator {
  private:
   int evOffset_ = 0;
   struct Ev {
-    enum Kind { On, Off, AllOff, Glide, Cut, Midi };
+    enum Kind { On, Off, AllOff, Glide, Cut, Midi, Expr };
     Kind kind = On;
+    ExprDim dim = ExprDim::Pitch;  // Expr: the dimension (value in pitch)
     uint32_t id = 0;
     double pitch = 0;
     float velocity = 0;
@@ -436,6 +466,26 @@ class Generator {
   bool panUsed_ = false;
   float panTarget_ = 0, panCur_ = 0;
   double sampleRate_ = 44100;
+  // K-144: expression of the held notes, and the generic level / brightness response.
+  struct ExprNote {
+    uint32_t id = 0;
+    bool on = false;
+    double pitch = 0;  // note-on pitch (the glide's base)
+    float bend = 0, pressure = 0, timbre = 0.5f;
+  };
+  static constexpr int kExprNotes = 64;
+  std::array<ExprNote, kExprNotes> exprNotes_{};
+  ExprSettings exprSet_{};
+  ExprNote* exprNote(uint32_t id);
+  void exprNoteOn(uint32_t id, double pitch, const NoteProps* props);
+  void exprNoteOff(uint32_t id);
+  void exprEvent(const Ev& e);
+  void exprTargets();
+  ExprUse exprUse(ExprDim d) const;
+  bool exprUsed_ = false;
+  float levelTarget_ = 0, levelCur_ = 0;    // 0..1 of +6 dB
+  float brightTarget_ = 0, brightCur_ = 0;  // -1..1 of +-9 dB
+  float shelfL_ = 0, shelfR_ = 0;           // the shelf's low-pass state
 };
 
 // Instance for a catalogue type ("gl.synth", …); nullptr for unknown types.

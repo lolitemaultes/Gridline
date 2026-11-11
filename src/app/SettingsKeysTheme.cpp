@@ -625,9 +625,19 @@ void themeSettingsPage(App& a, float fieldW) {
     ImGui::SetNextItemWidth(fieldW - 56);
     if (ImGui::SliderFloat("##brightness", &b, -100.0f, 100.0f, " ")) t.brightness = b / 100.0f, changed = true;
     dragConfirm("Brightness");
-    ui::Hint(tr("Panels, fields and grids lighter or darker"));
+    ui::Hint(tr("Panels, fields and grids lighter or darker, down to pitch black"));
     ImGui::SameLine(0, theme::kS2);
     ImGui::Text("%+.0f%%", static_cast<double>(b));
+    label("Text");
+    bool white = t.whiteText;
+    if (ImGui::Checkbox(tr("White text and glyphs"), &white)) {
+      const dispconf::Snapshot before = dispconf::take(st, dispconf::themeKeys());
+      t.whiteText = white;
+      theme::tweaksToSettings(t, st);
+      applyTheme(a);
+      ui::confirmTheme(a, before, "White text");
+    }
+    ui::Hint(tr("Text, folders and idle icons in pure white on dark panels (light panels keep dark text)"));
   }
   ui::EndSection();
 

@@ -22,7 +22,7 @@ namespace {
 
 const char* kTypes[] = {"gl.additive", "gl.imagesynth", "gl.string", "gl.drumkit"};
 
-struct Note {
+struct TestNote {
   int64_t on, off;  // frames (off < 0: never)
   double pitch;
   float vel;
@@ -35,7 +35,7 @@ struct Out {
   bool activeAtEnd = false;
 };
 
-Out run(const PluginState& st, const std::vector<Note>& notes, int64_t frames, int block) {
+Out run(const PluginState& st, const std::vector<TestNote>& notes, int64_t frames, int block) {
   auto g = createGenerator(st.type);
   ChannelAux aux;
   packs::prepareAux(st, aux);
@@ -47,7 +47,7 @@ Out run(const PluginState& st, const std::vector<Note>& notes, int64_t frames, i
   for (int64_t pos = 0; pos < frames; pos += block) {
     int n = static_cast<int>(std::min<int64_t>(block, frames - pos));
     for (size_t i = 0; i < notes.size(); ++i) {
-      const Note& nt = notes[i];
+      const TestNote& nt = notes[i];
       if (nt.on >= pos && nt.on < pos + n) g->noteOn(static_cast<uint32_t>(i + 1), nt.pitch, nt.vel, static_cast<int>(nt.on - pos));
       if (nt.off >= pos && nt.off < pos + n) g->noteOff(static_cast<uint32_t>(i + 1), static_cast<int>(nt.off - pos));
     }
@@ -178,7 +178,7 @@ int main() {
         st.params[k] = static_cast<float>(d.fromNormalized(x));
       }
       if (std::string(t) == "gl.drumkit") st.params[DmBaseNote] = 60;
-      std::vector<Note> notes = {{0, 9000, noteFor(t), 1.0f}, {50, 12000, noteFor(t) + 7, 0.3f}, {300, -1, noteFor(t) - 12, 0.6f}, {4000, 6000, 120, 1.0f},
+      std::vector<TestNote> notes = {{0, 9000, noteFor(t), 1.0f}, {50, 12000, noteFor(t) + 7, 0.3f}, {300, -1, noteFor(t) - 12, 0.6f}, {4000, 6000, 120, 1.0f},
                                  {4100, 7000, 0, 1.0f}};
       Out o = run(st, notes, 22050, 300);
       static const char* modes[] = {"min", "max", "random"};
@@ -216,7 +216,7 @@ int main() {
       st = withParam(st, ImLoop, 1);
     }
     double b = noteFor(t);
-    std::vector<Note> notes = {{37, 9000, b, 0.9f}, {1000, 15000, b + 4, 0.7f}, {5003, 20000, b + 7, 0.5f}, {9100, -1, b + 1, 1.0f}};
+    std::vector<TestNote> notes = {{37, 9000, b, 0.9f}, {1000, 15000, b + 4, 0.7f}, {5003, 20000, b + 7, 0.5f}, {9100, -1, b + 1, 1.0f}};
     Out a = run(st, notes, 30000, 64);
     Out c = run(st, notes, 30000, 517);
     Out d = run(st, notes, 30000, 1);
@@ -416,7 +416,7 @@ int main() {
   }
   // ---------------------------------------------------------------- cost (informational)
   {
-    std::vector<Note> chord;
+    std::vector<TestNote> chord;
     for (int i = 0; i < 8; ++i) chord.push_back({0, -1, 48.0 + i * 3, 0.8f});
     auto t0 = std::chrono::steady_clock::now();
     Out o = run(defaultPluginState("gl.additive"), chord, 44100 * 5, 512);
@@ -424,7 +424,7 @@ int main() {
     std::printf("# additive: 8 voices x 128 partials, 5 s of audio in %.0f ms\n", ms);
     expect(o.finite, "additive: 8-voice chord renders");
     t0 = std::chrono::steady_clock::now();
-    std::vector<Note> pads;
+    std::vector<TestNote> pads;
     for (int i = 0; i < 16; ++i) pads.push_back({i * 2000, -1, 60.0 + i, 0.8f});
     run(defaultPluginState("gl.drumkit"), pads, 44100 * 5, 512);
     ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();

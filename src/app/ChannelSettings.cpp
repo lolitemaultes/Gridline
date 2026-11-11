@@ -310,6 +310,35 @@ static void drawNoteSettings(App& a, ObjectId id) {
   ImGui::EndGroup();
 
   ImGui::Dummy(ImVec2(0, theme::kS1));
+  // K-144: per-note expression (MPE controllers, note pressure and timbre lanes).
+  ImGui::BeginGroup();
+  ui::Label(i18n::tr("EXPRESSION"));
+  {
+    static const char* uses[] = {i18n::N_("Instrument's choice"), i18n::N_("Off"), i18n::N_("Level"), i18n::N_("Brightness")};
+    auto useCombo = [&](const char* key, const char* name, ExprUse cur, const char* hint, ExprUse ExprSettings::*field) {
+      ImGui::AlignTextToFramePadding();
+      ImGui::TextColored(theme::vec(P.textDim), "%s", name);
+      ImGui::SameLine(0, theme::kS1);
+      if (ui::BeginCombo(key, i18n::tr(uses[static_cast<int>(cur)]), 150)) {
+        for (int k = 0; k < 4; ++k)
+          if (ImGui::Selectable(i18n::tr(uses[k]), k == static_cast<int>(cur)) && k != static_cast<int>(cur))
+            a.doc.editChannel(id, "change channel expression", [k, field](Channel& ch) { ch.expr.*field = static_cast<ExprUse>(k); });
+        ImGui::EndCombo();
+      }
+      ui::Hint(hint);
+    };
+    toggle(i18n::tr("Note bend"), c->expr.pitch, i18n::tr("Per-note pitch from an MPE controller bends each note on its own"),
+           [](Channel& ch) { ch.expr.pitch = !ch.expr.pitch; });
+    ImGui::SameLine(0, theme::kS2);
+    useCombo("##xpress", i18n::tr("Pressure"), c->expr.pressure, i18n::tr("What pressing harder on a held note does"), &ExprSettings::pressure);
+    ImGui::SameLine(0, theme::kS2);
+    useCombo("##xtimbre", i18n::tr("Timbre"), c->expr.timbre, i18n::tr("What sliding on a held note (CC 74) does"), &ExprSettings::timbre);
+  }
+  ImGui::EndGroup();
+  ImGui::SameLine(0, theme::kS2);
+  std::snprintf(buf, sizeof buf, "%d%%", static_cast<int>(std::lround(c->expr.amount * 100)));
+  knob("xamount", c->expr.amount, desc("Amount", "", 0, 1, 1), false, [](Channel& ch, double v) { ch.expr.amount = static_cast<float>(v); }, buf);
+  ImGui::Dummy(ImVec2(0, theme::kS1));
   // Echo.
   ImGui::BeginGroup();
   ui::Label("ECHO");

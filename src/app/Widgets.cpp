@@ -281,7 +281,7 @@ bool IconButton(const char* id, Icon icon, bool active, float size, const char* 
   // lights its glyph in the tool's role colour (activeCol) or the lit-glyph orange.
   const ImU32 glyph = activeCol ? theme::lit(activeCol) : P.hot;
   ImU32 bg = held ? P.surface600 : active ? theme::mix(hov ? P.surface700 : P.surface800, glyph, P.dark ? 0.10f : 0.14f) : hov ? P.surface700 : 0;
-  ImU32 fg = active ? glyph : hov ? P.text : idleCol ? theme::lit(idleCol) : P.textDim;
+  ImU32 fg = active ? glyph : hov ? P.text : idleCol ? theme::tint(idleCol) : P.whiteGlyphs ? P.text : P.textDim;  // K-177: white glyphs option
   if (look::styled()) {  // J-129 control style
     look::hookFace(dl, p, ImVec2(p.x + size, p.y + size), theme::kRadius, faceState(hov, held, active), active ? glyph : 0, false);
   } else {
@@ -308,7 +308,7 @@ bool ToggleIcon(const char* id, Icon icon, bool on, float size, const char* hint
   const ImU32 lit = theme::litRole(theme::role::kView);
   if (look::styled()) look::hookFace(dl, p, ImVec2(p.x + size, p.y + size), theme::kRadius, faceState(hov, held, on), lit, false);  // J-129 control style
   else if (bg) dl->AddRectFilled(p, ImVec2(p.x + size, p.y + size), bg, theme::kRadius);
-  ImU32 fg = on ? lit : hov ? P.text : P.textFaint;
+  ImU32 fg = on ? lit : hov ? P.text : P.whiteGlyphs ? P.textDim : P.textFaint;  // K-177: white glyphs option
   const ImVec2 ic(std::round(p.x + size * 0.5f), std::round(p.y + size * 0.5f - (on ? 1 : 0)));
   const int v0 = dl->VtxBuffer.Size;
   drawIcon(dl, icon, ic, std::round(size * 0.52f), fg);

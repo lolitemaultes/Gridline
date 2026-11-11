@@ -387,6 +387,16 @@ void menuView(App& a) {
     theme::applyFromSettings(a.settings);
     ui::confirmTheme(a, before, "Theme");
   }
+  {
+    theme::Tweaks t = theme::tweaksFromSettings(a.settings);
+    if (ImGui::MenuItem(i18n::tr("White text and glyphs"), nullptr, t.whiteText)) {  // K-177
+      const dispconf::Snapshot before = dispconf::take(a.settings, dispconf::themeKeys());
+      t.whiteText = !t.whiteText;
+      theme::tweaksToSettings(t, a.settings);
+      theme::applyFromSettings(a.settings);
+      ui::confirmTheme(a, before, "White text");
+    }
+  }
   if (ImGui::MenuItem(i18n::tr("Theme settings..."))) openSettings(a, 9);
   if (ImGui::BeginMenu(i18n::tr("Interface size"))) {
     double cur = a.settings.getNumber("ui.scale");
@@ -487,7 +497,8 @@ void menuTools(App& a) {
     ImGui::EndMenu();
   }
   menuparity::toolsControlItems(a);  // J-27: last moved controls
-  ImGui::SeparatorText(i18n::tr("Composing"));
+  // K-158: each section keeps its most used rows; the rest sit in a submenu named after the section.
+  ImGui::Separator();
   if (ImGui::MenuItem(i18n::tr("Loop starter..."))) j59::openLoopStarter(a);  // J-59 (GEN-01)
   if (ImGui::BeginMenu(i18n::tr("Swing presets"))) {  // K-151
     grooveui::presetMenuItems(a);
@@ -505,39 +516,27 @@ void menuTools(App& a) {
     pianoToolItems(a);
     ImGui::EndMenu();
   }
-  if (ImGui::BeginMenu(i18n::tr("Piano roll selection"))) {
-    pianoSelectItems(a);
+  const bool openComposing = ImGui::BeginMenu(i18n::tr("Composing"));
+  devRackItem("toolsmenu composing");  // K-158: scripted screenshots open it
+  if (openComposing) {
+    if (ImGui::BeginMenu(i18n::tr("Piano roll selection"))) {
+      pianoSelectItems(a);
+      ImGui::EndMenu();
+    }
+    menuparity::toolsNoteItems(a);  // J-27: last piano roll script, note clipboard
+    if (ImGui::BeginMenu(i18n::tr("Project scripts"))) {  // J-57: Lua scripts over the whole project (SC-02)
+      projectScriptsMenuItems(a);
+      ImGui::EndMenu();
+    }
     ImGui::EndMenu();
   }
-  menuparity::toolsNoteItems(a);  // J-27: last piano roll script, note clipboard
-  if (ImGui::BeginMenu(i18n::tr("Project scripts"))) {  // J-57: Lua scripts over the whole project (SC-02)
-    projectScriptsMenuItems(a);
-    ImGui::EndMenu();
-  }
-  ImGui::SeparatorText(i18n::tr("Audio and recording"));
+  ImGui::Separator();
   if (ImGui::MenuItem(i18n::tr("Render channel to sampled instrument..."), nullptr, false, a.doc.song().channel(a.selChannel) != nullptr))
     j59::openRenderSampler(a, a.selChannel);  // J-59 (RN-08)
   j31::toolsItems(a);  // J-31: audio logger, cancel recording
   menuparity::toolsScoreLogItem(a);  // J-27
-  ImGui::SeparatorText(i18n::tr("Macros"));
+  ImGui::Separator();
   if (ImGui::MenuItem(i18n::tr("Route channels to free mixer tracks"), keys::label("rack.routeFree"))) chanroute::routeToFree(a, selectedChannels(a));
-  if (ImGui::MenuItem(i18n::tr("Route every channel to its own mixer track"))) {
-    std::vector<ObjectId> all;
-    for (const auto& c : a.doc.song().channels)
-      if (c.mixerTrack == a.doc.song().masterId()) all.push_back(c.id);
-    auto t = ops::routeToFreeMixerTracks(a.doc, all);
-    a.notify(t.empty() ? std::string("Every channel already has a mixer track") : "Routed " + std::to_string(t.size()) + " channel(s)");
-  }
-  if (ImGui::MenuItem(i18n::tr("Select unused channels"))) {
-    auto u = ops::unusedChannels(a.doc.song());
-    if (u.empty()) {
-      a.notify("Every channel is used in a pattern");
-    } else {
-      a.selChannels = std::set<ObjectId>(u.begin(), u.end());
-      a.selChannel = u.front();
-      a.showRack = true;
-    }
-  }
   if (ImGui::MenuItem(i18n::tr("Unmute all channels"))) {
     std::vector<ObjectId> all;
     for (const auto& c : a.doc.song().channels) all.push_back(c.id);
@@ -546,18 +545,50 @@ void menuTools(App& a) {
   if (ImGui::MenuItem(i18n::tr("Unsolo all mixer tracks"))) a.doc.editSong("unsolo all", [](Song& s) {
       for (auto& m : s.mixer) m.solo = false;
     });
-  freezeui::toolsMacroItems(a);  // K-87: unfreeze all, hibernate unused plugins, wake all
-  menuparity::toolsMacroItems(a);  // J-27: track locks, live area, audio clip channels, declicking
   if (ImGui::MenuItem(i18n::tr("Close plugin windows"), keys::label("view.closePlugins"))) a.closePluginWindows();
-  ImGui::SeparatorText(i18n::tr("Clean up"));
-  if (ImGui::MenuItem(i18n::tr("Trim unused mixer tracks"))) {
-    int n = ops::trimUnusedMixerTracks(a.doc);
-    a.notify(n ? "Removed " + std::to_string(n) + " unused mixer track(s)" : std::string("No unused mixer tracks at the end"));
+  const bool openMacros = ImGui::BeginMenu(i18n::tr("Macros"));
+  devRackItem("toolsmenu macros");  // K-158: scripted screenshots open it
+  if (openMacros) {
+    if (ImGui::MenuItem(i18n::tr("Route every channel to its own mixer track"))) {
+      std::vector<ObjectId> all;
+      for (const auto& c : a.doc.song().channels)
+        if (c.mixerTrack == a.doc.song().masterId()) all.push_back(c.id);
+      auto t = ops::routeToFreeMixerTracks(a.doc, all);
+      a.notify(t.empty() ? std::string("Every channel already has a mixer track") : "Routed " + std::to_string(t.size()) + " channel(s)");
+    }
+    if (ImGui::MenuItem(i18n::tr("Select unused channels"))) {
+      auto u = ops::unusedChannels(a.doc.song());
+      if (u.empty()) {
+        a.notify("Every channel is used in a pattern");
+      } else {
+        a.selChannels = std::set<ObjectId>(u.begin(), u.end());
+        a.selChannel = u.front();
+        a.showRack = true;
+      }
+    }
+    menuparity::toolsMacroItems(a);  // J-27: track locks, live area, audio clip channels, declicking
+    ImGui::EndMenu();
   }
-  menuparity::toolsCleanupItems(a);  // J-27: unused automation clips
-  if (ImGui::MenuItem(i18n::tr("Delete unused patterns"))) {
-    int n = ops::deleteUnusedPatterns(a.doc);
-    a.notify(n ? "Deleted " + std::to_string(n) + " unused pattern(s)" : std::string("No unused patterns"));
+  const bool openFreeze = ImGui::BeginMenu(i18n::tr("Freeze and hibernate"));
+  devRackItem("toolsmenu freeze");  // K-158: scripted screenshots open it
+  if (openFreeze) {
+    freezeui::toolsMacroItems(a);  // K-87: unfreeze all, hibernate unused plugins, wake all
+    ImGui::EndMenu();
+  }
+  ImGui::Separator();
+  const bool openClean = ImGui::BeginMenu(i18n::tr("Clean up"));
+  devRackItem("toolsmenu cleanup");  // K-158: scripted screenshots open it
+  if (openClean) {
+    if (ImGui::MenuItem(i18n::tr("Trim unused mixer tracks"))) {
+      int n = ops::trimUnusedMixerTracks(a.doc);
+      a.notify(n ? "Removed " + std::to_string(n) + " unused mixer track(s)" : std::string("No unused mixer tracks at the end"));
+    }
+    menuparity::toolsCleanupItems(a);  // J-27: unused automation clips
+    if (ImGui::MenuItem(i18n::tr("Delete unused patterns"))) {
+      int n = ops::deleteUnusedPatterns(a.doc);
+      a.notify(n ? "Deleted " + std::to_string(n) + " unused pattern(s)" : std::string("No unused patterns"));
+    }
+    ImGui::EndMenu();
   }
   ImGui::Separator();
   if (ImGui::MenuItem(i18n::tr("AI assistant activity"))) mcpui::showActivity();  // SC-07

@@ -4058,7 +4058,7 @@ ImVec2 drawArrow(ImDrawList* dl, ImVec2 at, ImU32 col, float alpha, float fbScal
   growPoly(kArrow, kArrowN, hairU, hairP);
   roundPoly(hairP, kArrowN, kArrowRound, convex, hairU, s, t, hair);
   // light outline: Gridline's paper white (white on a light theme), the shadow carries it on light panels
-  const ImU32 rimCol = P.dark ? (P.paper | IM_COL32_A_MASK) : IM_COL32(255, 255, 255, 255);
+  const ImU32 rimCol = P.paper | IM_COL32_A_MASK;  // white rim on both faces
   const float shadowK = P.dark ? 1.0f : 0.8f;
   const float oldFringe = dl->_FringeScale;
   dl->_FringeScale = px;  // a one-device-pixel anti-aliased edge (sharp on Retina / HiDPI)

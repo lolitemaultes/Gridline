@@ -2,6 +2,10 @@
 // API and the sndio classes below take its place behind RtMidiIn / RtMidiOut.
 #include "MidiBackend.h"
 #include "../../third_party/rtmidi/RtMidi.h"
+#include <chrono>
+#include <cstdlib>
+#include <exception>
+#include <thread>
 
 #if defined(GRIDLINE_MIDI_SNDIO)
 #include <poll.h>
@@ -265,5 +269,34 @@ std::string midiBackendName() {
 }
 
 #endif
+
+MidiProbeResult probeMidiService() {
+  MidiProbeResult r;
+  const char* test = std::getenv("GRIDLINE_TEST_MIDI");
+  const std::string mode = test ? test : "";
+  if (mode == "fail") {
+    r.error = "error creating the MIDI client (simulated for testing)";
+    return r;
+  }
+  if (mode == "hang")  // a service that never answers
+    for (;;) std::this_thread::sleep_for(std::chrono::seconds(60));
+  try {
+    auto in = makeMidiIn();
+    for (unsigned i = 0, n = in->getPortCount(); i < n; ++i) r.inputs.push_back(in->getPortName(i));
+    auto out = makeMidiOut();
+    for (unsigned i = 0, n = out->getPortCount(); i < n; ++i) r.outputs.push_back(out->getPortName(i));
+    r.ok = true;
+  } catch (const RtMidiError& e) {
+    r = MidiProbeResult{};
+    r.error = e.getMessage();
+  } catch (const std::exception& e) {
+    r = MidiProbeResult{};
+    r.error = e.what();
+  } catch (...) {
+    r = MidiProbeResult{};
+    r.error = "unknown error";
+  }
+  return r;
+}
 
 }  // namespace gl

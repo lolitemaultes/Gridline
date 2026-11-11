@@ -61,6 +61,7 @@
 #include "LayoutPresets.h"
 #include "CommandPaletteUi.h"
 #include "../core/Platform.h"
+#include "imgui_hooks/ImGuiItemHook.h"
 
 namespace gl {
 
@@ -635,6 +636,14 @@ using namespace menus;
 // label column with a hairline, like the studio menus' title rows.
 static void menuTitle(const char* name) { ImGui::SeparatorText(name && *name ? name : " "); }
 
+// K-158: a submenu row of a context menu whose rectangle the "rack" dev dump lists (scripted checks
+// and screenshots open the submenu by its name).
+static bool subMenu(const char* label, const char* dev) {
+  const bool open = ImGui::BeginMenu(label);
+  devRackItem(dev);
+  return open;
+}
+
 void menuButton(const char* id, const char* hint, const std::function<void()>& body) {
   ImGui::PushID(id);
   const bool open = ImGui::IsPopupOpen("##menubtnpop");
@@ -705,6 +714,7 @@ void channelContextMenu(App& a, ObjectId id) {
   auto changed = [&a, rev0] { return a.doc.revision() != rev0; };
   menuTitle(c->name.c_str());
   // K-77: open, edit, steps (with a pattern), instrument and routing, properties, arrange, removals last.
+  // K-158: each section keeps its most used rows; the rest sit in a submenu named after the section.
   const PluginInfo* pi = findPlugin(c->plugin.type);  // J-7: the channel's sample (Loupe, export)
   const bool hasSample = pi && pi->usesSample && !c->plugin.data.empty() && c->plugin.data[0] != '{' &&
                          (c->plugin.data.find('\n') == std::string::npos || kerfmarks::hasNames(c->plugin.data));  // J-182: Kerf's names
@@ -716,7 +726,7 @@ void channelContextMenu(App& a, ObjectId id) {
     if (ImGui::MenuItem(i18n::tr("Keyboard editor"), nullptr, a.rack.showGraph && a.rack.graphLane == static_cast<int>(tools::StepLane::Pitch)))
       a.rack.showGraph = true, a.rack.graphLane = static_cast<int>(tools::StepLane::Pitch), a.selectChannel(id);
   }
-  if (ImGui::MenuItem(i18n::tr("Edit sample in Loupe"), nullptr, false, hasSample)) packs::openAudioEditor(a, kerfmarks::pathOf(c->plugin.data), id);
+  if (hasSample && ImGui::MenuItem(i18n::tr("Edit sample in Loupe"))) packs::openAudioEditor(a, kerfmarks::pathOf(c->plugin.data), id);
 
   ImGui::Separator();
   if (p) {
@@ -743,22 +753,24 @@ void channelContextMenu(App& a, ObjectId id) {
   if (changed()) return;
 
   if (p) {
-    ImGui::SeparatorText(i18n::tr("Steps"));
-    if (ImGui::MenuItem(i18n::tr("Fill every step"))) a.later([&a, pid = p->id, id] { ops::fillSteps(a.doc, pid, id, 1); });
-    if (ImGui::MenuItem(i18n::tr("Fill every 2 steps"))) a.later([&a, pid = p->id, id] { ops::fillSteps(a.doc, pid, id, 2); });
-    if (ImGui::MenuItem(i18n::tr("Fill every 4 steps"))) a.later([&a, pid = p->id, id] { ops::fillSteps(a.doc, pid, id, 4); });
-    if (ImGui::MenuItem(i18n::tr("Fill every 8 steps"))) a.later([&a, pid = p->id, id] { ops::fillSteps(a.doc, pid, id, 8); });
-    if (ImGui::BeginMenu(i18n::tr("Fill offbeats"))) {
-      if (ImGui::MenuItem(i18n::tr("Every 4 from step 3"))) a.later([&a, pid = p->id, id] { ops::fillSteps(a.doc, pid, id, 4, 2); });
-      if (ImGui::MenuItem(i18n::tr("Every 8 from step 5"))) a.later([&a, pid = p->id, id] { ops::fillSteps(a.doc, pid, id, 8, 4); });
-      if (ImGui::MenuItem(i18n::tr("Every 2 from step 2"))) a.later([&a, pid = p->id, id] { ops::fillSteps(a.doc, pid, id, 2, 1); });
+    ImGui::Separator();
+    const ObjectId pid = p->id;
+    if (subMenu(i18n::tr("Fill"), "chmenu fill")) {  // K-158: the fill rows, the offbeats and the fill tool
+      for (int every : {1, 2, 4, 8}) {
+        const char* l = every == 1 ? i18n::tr("Every step") : every == 2 ? i18n::tr("Every 2 steps") : every == 4 ? i18n::tr("Every 4 steps") : i18n::tr("Every 8 steps");
+        if (ImGui::MenuItem(l)) a.later([&a, pid, id, every] { ops::fillSteps(a.doc, pid, id, every); });
+      }
+      ImGui::Separator();
+      if (ImGui::MenuItem(i18n::tr("Every 4 from step 3"))) a.later([&a, pid, id] { ops::fillSteps(a.doc, pid, id, 4, 2); });
+      if (ImGui::MenuItem(i18n::tr("Every 8 from step 5"))) a.later([&a, pid, id] { ops::fillSteps(a.doc, pid, id, 8, 4); });
+      if (ImGui::MenuItem(i18n::tr("Every 2 from step 2"))) a.later([&a, pid, id] { ops::fillSteps(a.doc, pid, id, 2, 1); });
+      ImGui::Separator();
+      if (ImGui::MenuItem(i18n::tr("Advanced fill..."))) openStepTool(a, StepTool::Fill, id);
       ImGui::EndMenu();
     }
-    if (ImGui::MenuItem(i18n::tr("Advanced fill..."))) openStepTool(a, StepTool::Fill, id);
-    if (ImGui::MenuItem(i18n::tr("Rotate left"), keys::label("rack.rotateLeft"))) a.later([&a, pid = p->id, id] { ops::rotateChannel(a.doc, pid, id, -1); });
-    if (ImGui::MenuItem(i18n::tr("Rotate right"), keys::label("rack.rotateRight"))) a.later([&a, pid = p->id, id] { ops::rotateChannel(a.doc, pid, id, 1); });
-    if (ImGui::BeginMenu(i18n::tr("Steps"))) {  // J-11 step tools
-      const ObjectId pid = p->id;
+    if (ImGui::MenuItem(i18n::tr("Rotate left"), keys::label("rack.rotateLeft"))) a.later([&a, pid, id] { ops::rotateChannel(a.doc, pid, id, -1); });
+    if (ImGui::MenuItem(i18n::tr("Rotate right"), keys::label("rack.rotateRight"))) a.later([&a, pid, id] { ops::rotateChannel(a.doc, pid, id, 1); });
+    if (subMenu(i18n::tr("Steps"), "chmenu steps")) {  // J-11 step tools; K-158: with the rest of the steps section
       if (ImGui::MenuItem(i18n::tr("Shift left"))) a.later([&a, pid, id] { ops::editStepRow(a.doc, pid, id, "shift steps left", [](auto& r, auto& pr) { tools::shiftSteps(r, pr, -1); }); });
       if (ImGui::MenuItem(i18n::tr("Shift right"))) a.later([&a, pid, id] { ops::editStepRow(a.doc, pid, id, "shift steps right", [](auto& r, auto& pr) { tools::shiftSteps(r, pr, 1); }); });
       if (ImGui::MenuItem(i18n::tr("Reverse"))) a.later([&a, pid, id] { ops::editStepRow(a.doc, pid, id, "reverse steps", [](auto& r, auto& pr) { tools::reverseSteps(r, pr); }); });
@@ -769,25 +781,27 @@ void channelContextMenu(App& a, ObjectId id) {
       if (ImGui::MenuItem(i18n::tr("Delete the first step"))) a.later([&a, pid, id] { ops::editStepRow(a.doc, pid, id, "delete step", [](auto& r, auto& pr) { tools::deleteStep(r, pr, 0); }); });
       ImGui::TextDisabled("%s", i18n::tr("Insert / Delete over a step: insert or remove it"));
       ImGui::Separator();
+      menuparity::channelStepItems(a, id);  // J-27: repeat the first bar, bake note effects
+      ImGui::Separator();
+      const bool hasSteps = p->steps.count(id) > 0, hasNotes = p->notes.count(id) && !p->notes.at(id).empty();
+      if (ImGui::MenuItem(i18n::tr("Steps to piano roll"), nullptr, false, hasSteps)) a.later([&a, pid, id] { ops::convertStepsToNotes(a.doc, pid, id); });
+      if (ImGui::MenuItem(i18n::tr("Piano roll to steps"), nullptr, false, hasNotes)) {
+        a.later([&a, pid, id] {
+          ops::convertNotesToSteps(a.doc, pid, id);
+          if (const Pattern* q = a.doc.song().pattern(pid); q && q->notes.count(id)) a.notify("Notes off the step grid stay in the piano roll");
+        });
+      }
+      ImGui::Separator();
+      j31::channelStepItems(a, id);  // J-31: step loop, truncated swing
+      ImGui::Separator();
       if (ImGui::MenuItem(i18n::tr("Reset step parameters"), nullptr, false, p->stepProps.count(id) > 0))
         a.later([&a, pid, id] { ops::editStepRow(a.doc, pid, id, "reset step parameters", [](auto&, auto& pr) { std::fill(pr.begin(), pr.end(), StepProps{}); }); });
       ImGui::EndMenu();
     }
-    menuparity::channelStepItems(a, id);  // J-27: repeat the first bar, bake note effects
-    const bool hasSteps = p->steps.count(id) > 0, hasNotes = p->notes.count(id) && !p->notes.at(id).empty();
-    if (ImGui::MenuItem(i18n::tr("Steps to piano roll"), nullptr, false, hasSteps)) a.later([&a, pid = p->id, id] { ops::convertStepsToNotes(a.doc, pid, id); });
-    if (ImGui::MenuItem(i18n::tr("Piano roll to steps"), nullptr, false, hasNotes)) {
-      a.later([&a, pid = p->id, id] {
-        ops::convertNotesToSteps(a.doc, pid, id);
-        if (const Pattern* q = a.doc.song().pattern(pid); q && q->notes.count(id)) a.notify("Notes off the step grid stay in the piano roll");
-      });
-    }
   }
   if (changed()) return;
-  j31::channelItems(a, id);  // J-31: step loop, key range, truncated swing, layer split
-  if (changed()) return;
 
-  ImGui::SeparatorText(i18n::tr("Instrument and routing"));
+  ImGui::Separator();
   if (ImGui::BeginMenu(i18n::tr("Replace instrument"))) {
     instrumentItems([&a, id](const std::string& t) { a.later([&a, id, t] { replaceInstrumentPick(a, id, t); }); }, c->plugin.type);
     ImGui::EndMenu();
@@ -798,16 +812,26 @@ void channelContextMenu(App& a, ObjectId id) {
   }
   if (chanroute::menuItem(keys::label("rack.routeFree"))) a.later([&a, id] { chanroute::routeToFree(a, id); });  // J-195
   if (changed()) return;
-  trackui::channelMenuItems(a, id);  // PL-08: instrument track link
-  if (changed()) return;
-  freezeui::channelMenuItems(a, id);  // K-87: freeze, hibernate (App::later)
-  if (ImGui::MenuItem(i18n::tr("Render to sampled instrument..."))) j59::openRenderSampler(a, id);  // J-59 (RN-08)
-  ui::Hint("Renders the instrument note by note into a multisampled Folio instrument");
-  if (ImGui::MenuItem(i18n::tr("Export sample as WAV..."), nullptr, false, hasSample)) exportui::exportChannelSample(a, id);  // J-20
-  menuparity::channelSampleItems(a, id);  // J-27: the sample in a new channel
+  {  // K-158: the rest of the instrument and routing section
+    const bool open = ImGui::BeginMenu(i18n::tr("Instrument and routing"));
+    devRackItem("chmenu instrument");
+    if (open) {
+      trackui::channelMenuItems(a, id);  // PL-08: instrument track link
+      ImGui::Separator();
+      freezeui::channelMenuItems(a, id);  // K-87: freeze, hibernate (App::later)
+      ImGui::Separator();
+      if (ImGui::MenuItem(i18n::tr("Render to sampled instrument..."))) j59::openRenderSampler(a, id);  // J-59 (RN-08)
+      ui::Hint("Renders the instrument note by note into a multisampled Folio instrument");
+      if (hasSample && ImGui::MenuItem(i18n::tr("Export sample as WAV..."))) exportui::exportChannelSample(a, id);  // J-20
+      menuparity::channelSampleItems(a, id);  // J-27: the sample in a new channel
+      ImGui::Separator();
+      j31::channelKeyItems(a, id);  // J-31: key range, layer split
+      ImGui::EndMenu();
+    }
+  }
   if (changed()) return;
 
-  ImGui::SeparatorText(i18n::tr("Properties"));
+  ImGui::Separator();
   if (ImGui::BeginMenu(i18n::tr("Rename..."), true)) {
     renameField(c->name, [&a, id](const std::string& n) { a.later([&a, id, n] { a.doc.renameChannel(id, n); }); });
     ImGui::EndMenu();
@@ -817,32 +841,34 @@ void channelContextMenu(App& a, ObjectId id) {
     if (colorGrid(&col)) a.later([&a, id, col] { ops::setChannelsColor(a.doc, {id}, col); });
     ImGui::EndMenu();
   }
-  if (ImGui::MenuItem(i18n::tr("Random colour"))) a.later([&a, id, col = randomColor()] { ops::setChannelsColor(a.doc, {id}, col); });
-  if (ImGui::BeginMenu(i18n::tr("Icon"))) {  // J-211: shown on the rack's name button (FL number follows)
-    int ic = c->icon;
-    if (trackicons::picker(c->icon, &ic))
-      a.later([&a, id, ic] { a.doc.editChannel(id, "change channel icon", [ic](Channel& ch) { ch.icon = ic, ch.flIcon = trackicon::toFl(ic); }); });
+  if (ImGui::MenuItem(c->muted ? i18n::tr("Unmute") : i18n::tr("Mute"))) a.later([&a, id, on = !c->muted] { ops::setChannelsMuted(a.doc, {id}, on); });
+  if (subMenu(i18n::tr("Properties"), "chmenu properties")) {  // K-158: the rest of the properties section
+    if (ImGui::MenuItem(i18n::tr("Random colour"))) a.later([&a, id, col = randomColor()] { ops::setChannelsColor(a.doc, {id}, col); });
+    if (ImGui::BeginMenu(i18n::tr("Icon"))) {  // J-211: shown on the rack's name button (FL number follows)
+      int ic = c->icon;
+      if (trackicons::picker(c->icon, &ic))
+        a.later([&a, id, ic] { a.doc.editChannel(id, "change channel icon", [ic](Channel& ch) { ch.icon = ic, ch.flIcon = trackicon::toFl(ic); }); });
+      ImGui::EndMenu();
+    }
+    {
+      const bool self = c->cutGroup > 0 && c->cutGroup == c->cutBy;
+      if (ImGui::MenuItem(i18n::tr("Cut itself"), nullptr, self, !c->plugin.type.empty())) {
+        a.later([&a, id, self] {
+          if (self) a.doc.editChannel(id, "stop cutting itself", [](Channel& ch) { ch.cutGroup = ch.cutBy = 0; });
+          else ops::cutItself(a.doc, {id});
+        });
+      }
+      ui::Hint("A new note stops this channel's previous note (monophonic choke)");
+    }
+    if (ImGui::MenuItem(a.rack.zipped.count(id) ? i18n::tr("Unzip") : i18n::tr("Zip"), keys::label("rack.zip"))) {
+      if (a.rack.zipped.count(id))
+        a.rack.zipped.erase(id);
+      else
+        a.rack.zipped.insert(id);
+    }
+    menuparity::channelLayerItems(a, id);  // J-27: a layer's channels
     ImGui::EndMenu();
   }
-  if (ImGui::MenuItem(c->muted ? i18n::tr("Unmute") : i18n::tr("Mute"))) a.later([&a, id, on = !c->muted] { ops::setChannelsMuted(a.doc, {id}, on); });
-  {
-    const bool self = c->cutGroup > 0 && c->cutGroup == c->cutBy;
-    if (ImGui::MenuItem(i18n::tr("Cut itself"), nullptr, self, !c->plugin.type.empty())) {
-      a.later([&a, id, self] {
-        if (self) a.doc.editChannel(id, "stop cutting itself", [](Channel& ch) { ch.cutGroup = ch.cutBy = 0; });
-        else ops::cutItself(a.doc, {id});
-      });
-    }
-    ui::Hint("A new note stops this channel's previous note (monophonic choke)");
-  }
-  if (ImGui::MenuItem(a.rack.zipped.count(id) ? i18n::tr("Unzip") : i18n::tr("Zip"), keys::label("rack.zip"))) {
-    if (a.rack.zipped.count(id))
-      a.rack.zipped.erase(id);
-    else
-      a.rack.zipped.insert(id);
-  }
-  if (changed()) return;
-  menuparity::channelLayerItems(a, id);  // J-27: a layer's channels
   if (changed()) return;
 
   ImGui::Separator();
@@ -884,27 +910,15 @@ void rackOptionsMenu(App& a) {
     ImGui::EndMenu();
   }
   ImGui::SeparatorText(i18n::tr("Selected channels"));
+  // K-158: the most used rows here, the rest in "Selected channels" and "All channels" submenus.
   if (ImGui::MenuItem(i18n::tr("Clone selected"), keys::label("rack.clone"), false, any)) {
     auto ids = ops::cloneChannels(a.doc, sel);
     if (!ids.empty()) a.selChannel = ids.back(), a.selChannels = std::set<ObjectId>(ids.begin(), ids.end());
   }
-  if (ImGui::MenuItem(i18n::tr("Copy selected to a new pattern"), nullptr, false, any)) {
-    ObjectId np = ops::channelsToNewPattern(a.doc, a.curPattern, sel, false);
-    if (np) a.selectPattern(np);
-  }
-  if (ImGui::MenuItem(i18n::tr("Move selected to a new pattern"), nullptr, false, any)) {
-    ObjectId np = ops::channelsToNewPattern(a.doc, a.curPattern, sel, true);
-    if (np) a.selectPattern(np);
-  }
-  if (ImGui::MenuItem(i18n::tr("Create layer from selected"), nullptr, false, any)) {  // K-77: was listed twice
-    ObjectId l = ops::createLayer(a.doc, sel);
-    if (l) a.selectChannel(l), a.notify("Layer created: its notes play on " + std::to_string(sel.size()) + " channel(s)");
-    else a.notify("Layers can only hold instrument channels", true);
-  }
   if (ImGui::BeginMenu(i18n::tr("Fill selected"), any)) {
     for (int every : {1, 2, 4, 8}) {
-      std::string l = every == 1 ? "Every step" : "Every " + std::to_string(every) + " steps";
-      if (ImGui::MenuItem(l.c_str())) {
+      const char* l = every == 1 ? i18n::tr("Every step") : every == 2 ? i18n::tr("Every 2 steps") : every == 4 ? i18n::tr("Every 4 steps") : i18n::tr("Every 8 steps");
+      if (ImGui::MenuItem(l)) {
         a.doc.beginGroup("fill steps");
         for (ObjectId c : sel) ops::fillSteps(a.doc, a.curPattern, c, every);
         a.doc.endGroup();
@@ -919,15 +933,6 @@ void rackOptionsMenu(App& a) {
     }
     ImGui::EndMenu();
   }
-  if (ImGui::BeginMenu(i18n::tr("Swing mix for selected"), any)) {  // K-77: was listed twice
-    for (int pct : {0, 25, 50, 75, 100}) {
-      std::string l = std::to_string(pct) + "% of the song swing";
-      if (ImGui::MenuItem(l.c_str())) ops::setSwingMix(a.doc, sel, pct / 100.0f);
-    }
-    ImGui::EndMenu();
-  }
-  menuparity::rackItems(a, sel);  // J-27: swing mix typed in, declicking, audio clip channels
-  j31::rackItems(a, sel);         // J-31: step loops, truncated swing
   if (ImGui::BeginMenu(i18n::tr("Colour selected"), any)) {
     uint32_t col;
     if (colorGrid(&col)) ops::setChannelsColor(a.doc, sel, col);
@@ -942,13 +947,41 @@ void rackOptionsMenu(App& a) {
   }
   if (ImGui::MenuItem(i18n::tr("Mute selected"), nullptr, false, any)) ops::setChannelsMuted(a.doc, sel, true);
   if (ImGui::MenuItem(i18n::tr("Unmute selected"), nullptr, false, any)) ops::setChannelsMuted(a.doc, sel, false);
-  if (ImGui::MenuItem(i18n::tr("Cut itself (selected)"), nullptr, false, any)) ops::cutItself(a.doc, sel);
   if (ImGui::MenuItem(i18n::tr("Zip selected"), keys::label("rack.zip"), false, any))
     for (ObjectId c : sel) a.rack.zipped.insert(c);
   if (ImGui::MenuItem(i18n::tr("Route selected to free mixer tracks"), keys::label("rack.routeFree"), false, any)) chanroute::routeToFree(a, sel);
-  freezeui::rackMenuItems(a, sel);  // K-87
-  if (ImGui::MenuItem(i18n::tr("Select their mixer tracks"), nullptr, false, any))
-    if (const Channel* c = s.channel(sel.front())) a.selMixer = c->mixerTrack, a.showMixer = true;
+  if (subMenu(i18n::tr("Selected channels"), "rkmenu selected")) {
+    if (ImGui::MenuItem(i18n::tr("Copy selected to a new pattern"), nullptr, false, any)) {
+      ObjectId np = ops::channelsToNewPattern(a.doc, a.curPattern, sel, false);
+      if (np) a.selectPattern(np);
+    }
+    if (ImGui::MenuItem(i18n::tr("Move selected to a new pattern"), nullptr, false, any)) {
+      ObjectId np = ops::channelsToNewPattern(a.doc, a.curPattern, sel, true);
+      if (np) a.selectPattern(np);
+    }
+    if (ImGui::MenuItem(i18n::tr("Create layer from selected"), nullptr, false, any)) {  // K-77: was listed twice
+      ObjectId l = ops::createLayer(a.doc, sel);
+      if (l) a.selectChannel(l), a.notify("Layer created: its notes play on " + std::to_string(sel.size()) + " channel(s)");
+      else a.notify("Layers can only hold instrument channels", true);
+    }
+    ImGui::Separator();
+    if (ImGui::BeginMenu(i18n::tr("Swing mix for selected"), any)) {  // K-77: was listed twice
+      for (int pct : {0, 25, 50, 75, 100}) {
+        std::string l = std::to_string(pct) + "% of the song swing";
+        if (ImGui::MenuItem(l.c_str())) ops::setSwingMix(a.doc, sel, pct / 100.0f);
+      }
+      ImGui::EndMenu();
+    }
+    menuparity::rackItems(a, sel);  // J-27: swing mix typed in, declicking
+    j31::rackItems(a, sel);         // J-31: step loops, truncated swing
+    if (ImGui::MenuItem(i18n::tr("Cut itself (selected)"), nullptr, false, any)) ops::cutItself(a.doc, sel);
+    ImGui::Separator();
+    freezeui::rackMenuItems(a, sel);  // K-87
+    ImGui::Separator();
+    if (ImGui::MenuItem(i18n::tr("Select their mixer tracks"), nullptr, false, any))
+      if (const Channel* c = s.channel(sel.front())) a.selMixer = c->mixerTrack, a.showMixer = true;
+    ImGui::EndMenu();
+  }
   if (ImGui::MenuItem(i18n::tr("Move selected up"), keys::label("rack.moveUp"), false, any)) ops::moveChannels(a.doc, sel, -1);
   if (ImGui::MenuItem(i18n::tr("Move selected down"), keys::label("rack.moveDown"), false, any)) ops::moveChannels(a.doc, sel, 1);
   if (ImGui::MenuItem(i18n::tr("Delete selected"), keys::label("rack.delete"), false, any)) ops::removeChannels(a.doc, sel);
@@ -974,8 +1007,12 @@ void rackOptionsMenu(App& a) {
     ImGui::EndMenu();
   }
   if (ImGui::MenuItem(i18n::tr("Unzip all"), keys::label("rack.unzipAll"), false, !a.rack.zipped.empty())) a.rack.zipped.clear();
-  if (s.pattern(a.curPattern) && ImGui::BeginMenu(i18n::tr("Automation clips in this pattern"))) {  // J-173
-    patautoui::listMenu(a, a.curPattern);
+  if (subMenu(i18n::tr("All channels"), "rkmenu all")) {
+    menuparity::rackAllItems(a);  // J-27: audio clip channels
+    if (s.pattern(a.curPattern) && ImGui::BeginMenu(i18n::tr("Automation clips in this pattern"))) {  // J-173
+      patautoui::listMenu(a, a.curPattern);
+      ImGui::EndMenu();
+    }
     ImGui::EndMenu();
   }
   ImGui::Separator();
@@ -1082,6 +1119,7 @@ void playlistTrackMenu(App& a, int track) {
   if (ImGui::MenuItem(i18n::tr("Clone"), nullptr, false, n < kMaxPlaylistTracks)) a.later([&a, track] { ops::clonePlaylistTrack(a.doc, track); });
   if (ImGui::MenuItem(i18n::tr("Add 8 tracks"), nullptr, false, n + 8 <= kMaxPlaylistTracks)) a.later([&a, n] { a.doc.setPlaylistTrackCount(n + 8); });
   ImGui::Separator();
+  // K-158: the most used rows of each section here, the rest in a submenu named after the section.
   if (ImGui::BeginMenu(i18n::tr("Rename..."))) {
     renameField(t.name, [&a, track](const std::string& nm) {
       a.doc.editPlaylistTrack(track, "rename playlist track", [&](PlaylistTrack& x) { x.name = nm; });
@@ -1093,46 +1131,50 @@ void playlistTrackMenu(App& a, int track) {
     if (colorGrid(&col)) a.doc.editPlaylistTrack(track, "change track colour", [&](PlaylistTrack& x) { x.color = col; });
     ImGui::EndMenu();
   }
-  if (ImGui::MenuItem(i18n::tr("Random colour"))) {
-    uint32_t col = randomColor();
-    a.doc.editPlaylistTrack(track, "change track colour", [&](PlaylistTrack& x) { x.color = col; });
-  }
-  if (ImGui::BeginMenu(i18n::tr("Icon"))) {  // J-211: the mixer's icon set (FL number follows, see trackicon::exportFl)
-    int ic = t.icon;
-    if (trackicons::picker(t.icon, &ic))
-      a.doc.editPlaylistTrack(track, "change track icon", [ic](PlaylistTrack& x) { x.icon = ic, x.flIcon = trackicon::toFl(ic); });
-    ImGui::EndMenu();
-  }
-  if (ImGui::MenuItem(i18n::tr("Name after its first clip"))) {
-    const Clip* first = nullptr;
-    for (const auto& c : s.playlist)
-      if (c.track == track && (!first || c.start < first->start)) first = &c;
-    if (first)
-      if (const Pattern* p = s.pattern(first->pattern)) {
-        std::string nm = p->name;
-        a.doc.editPlaylistTrack(track, "auto name track", [&](PlaylistTrack& x) { x.name = nm; });
+  if (subMenu(i18n::tr("Properties"), "trmenu properties")) {
+    if (ImGui::MenuItem(i18n::tr("Random colour"))) {
+      uint32_t col = randomColor();
+      a.doc.editPlaylistTrack(track, "change track colour", [&](PlaylistTrack& x) { x.color = col; });
+    }
+    if (ImGui::BeginMenu(i18n::tr("Icon"))) {  // J-211: the mixer's icon set (FL number follows, see trackicon::exportFl)
+      int ic = t.icon;
+      if (trackicons::picker(t.icon, &ic))
+        a.doc.editPlaylistTrack(track, "change track icon", [ic](PlaylistTrack& x) { x.icon = ic, x.flIcon = trackicon::toFl(ic); });
+      ImGui::EndMenu();
+    }
+    if (ImGui::MenuItem(i18n::tr("Name after its first clip"))) {
+      const Clip* first = nullptr;
+      for (const auto& c : s.playlist)
+        if (c.track == track && (!first || c.start < first->start)) first = &c;
+      if (first)
+        if (const Pattern* p = s.pattern(first->pattern)) {
+          std::string nm = p->name;
+          a.doc.editPlaylistTrack(track, "auto name track", [&](PlaylistTrack& x) { x.name = nm; });
+        }
+    }
+    if (ImGui::BeginMenu(i18n::tr("Size"))) {
+      for (int pct : {33, 50, 100, 150, 200}) {
+        const float h = pct / 100.0f;
+        if (ImGui::MenuItem((std::to_string(pct) + "%").c_str(), nullptr, std::fabs(t.height - h) < 0.02f))
+          a.later([&a, track, h] { ops::setTrackHeights(a.doc, {track}, h); });
       }
-  }
-  if (ImGui::BeginMenu(i18n::tr("Size"))) {
-    for (int pct : {33, 50, 100, 150, 200}) {
-      const float h = pct / 100.0f;
-      if (ImGui::MenuItem((std::to_string(pct) + "%").c_str(), nullptr, std::fabs(t.height - h) < 0.02f))
-        a.later([&a, track, h] { ops::setTrackHeights(a.doc, {track}, h); });
+      ImGui::Separator();
+      if (ImGui::MenuItem(i18n::tr("Give every track this size"))) {
+        std::vector<int> all;
+        for (int k = 0; k < n; ++k) all.push_back(k);
+        a.later([&a, all, h = t.height] { ops::setTrackHeights(a.doc, all, h); });
+      }
+      ImGui::EndMenu();
     }
     ImGui::Separator();
-    if (ImGui::MenuItem(i18n::tr("Give every track this size"))) {
-      std::vector<int> all;
-      for (int k = 0; k < n; ++k) all.push_back(k);
-      a.later([&a, all, h = t.height] { ops::setTrackHeights(a.doc, all, h); });
-    }
+    if (ImGui::MenuItem(i18n::tr("Reset name, colour and icon")))
+      a.doc.editPlaylistTrack(track, "reset track", [](PlaylistTrack& x) {
+        PlaylistTrack k;  // the track mode stays (it is changed in its own menu)
+        k.mode = x.mode, k.mixer = x.mixer, k.channel = x.channel;
+        x = k;
+      });
     ImGui::EndMenu();
   }
-  if (ImGui::MenuItem(i18n::tr("Reset name, colour and icon")))
-    a.doc.editPlaylistTrack(track, "reset track", [](PlaylistTrack& x) {
-      PlaylistTrack k;  // the track mode stays (it is changed in its own menu)
-      k.mode = x.mode, k.mixer = x.mixer, k.channel = x.channel;
-      x = k;
-    });
   ImGui::Separator();
   if (ImGui::MenuItem(i18n::tr("Mute"), nullptr, t.muted))
     a.doc.editPlaylistTrack(track, "mute playlist track", [](PlaylistTrack& x) { x.muted = !x.muted; });
@@ -1142,13 +1184,30 @@ void playlistTrackMenu(App& a, int track) {
     liveTrackMenu(a, track);
     ImGui::EndMenu();
   }
-  trackui::trackMenuItems(a, track);  // PL-08: track mode, input, arm, monitoring (a section of its own when set)
-  ImGui::Separator();
-  if (ImGui::BeginMenu(i18n::tr("Group"))) {
+  if (subMenu(i18n::tr("Group"), "trmenu group")) {  // K-158: the whole group section
     for (int k = 1; k <= 16 && track + k < n; ++k) {
       std::string label = "Hold the next " + std::to_string(k) + (k == 1 ? " track" : " tracks");
       if (ImGui::MenuItem(label.c_str(), nullptr, t.groupSize == k))
         a.doc.editPlaylistTrack(track, "group playlist tracks", [k](PlaylistTrack& x) { x.groupSize = k; });
+    }
+    ImGui::Separator();
+    if (ImGui::MenuItem(i18n::tr("Group with the track above"), nullptr, false, track > 0)) {
+      int above = track - 1;  // the nearest group head above that can reach this track, else the track right above
+      for (int k = track - 1; k >= 0; --k)
+        if (s.tracks[static_cast<size_t>(k)].groupSize > 0) {
+          above = k;
+          break;
+        }
+      const int need = track - above;
+      a.doc.editPlaylistTrack(above, "group playlist tracks", [need](PlaylistTrack& x) { x.groupSize = std::max(x.groupSize, need); });
+    }
+    {  // J-28 (operations: J-27)
+      const bool grouped = ops::trackGroupOf(s, track).first >= 0;
+      if (ImGui::MenuItem(i18n::tr("Auto colour group"), nullptr, false, grouped)) ops::autoColorTrackGroup(a.doc, track);
+      if (ImGui::MenuItem(i18n::tr("Collapse grouped tracks"), nullptr, false, grouped)) {
+        const int head = ops::trackGroupOf(s, track).first;
+        a.doc.editPlaylistTrack(head, "fold track group", [](PlaylistTrack& x) { x.folded = !x.folded; });
+      }
     }
     ImGui::Separator();
     if (ImGui::MenuItem(i18n::tr("Fold"), nullptr, t.folded, t.groupSize > 0))
@@ -1157,45 +1216,29 @@ void playlistTrackMenu(App& a, int track) {
       a.doc.editPlaylistTrack(track, "ungroup playlist tracks", [](PlaylistTrack& x) { x.groupSize = 0, x.folded = false; });
     ImGui::EndMenu();
   }
-  if (ImGui::MenuItem(i18n::tr("Group with the track above"), nullptr, false, track > 0)) {
-    int above = track - 1;  // the nearest group head above that can reach this track, else the track right above
-    for (int k = track - 1; k >= 0; --k)
-      if (s.tracks[static_cast<size_t>(k)].groupSize > 0) {
-        above = k;
-        break;
-      }
-    const int need = track - above;
-    a.doc.editPlaylistTrack(above, "group playlist tracks", [need](PlaylistTrack& x) { x.groupSize = std::max(x.groupSize, need); });
-  }
-  {  // J-28 (operations: J-27)
-    const bool grouped = ops::trackGroupOf(s, track).first >= 0;
-    if (ImGui::MenuItem(i18n::tr("Auto colour group"), nullptr, false, grouped)) ops::autoColorTrackGroup(a.doc, track);
-    if (ImGui::MenuItem(i18n::tr("Collapse grouped tracks"), nullptr, false, grouped)) {
-      const int head = ops::trackGroupOf(s, track).first;
-      a.doc.editPlaylistTrack(head, "fold track group", [](PlaylistTrack& x) { x.folded = !x.folded; });
-    }
-  }
+  trackui::trackMenuItems(a, track);  // PL-08: track mode, input, arm, monitoring (a section of its own when set)
   ImGui::Separator();
   if (ImGui::MenuItem(i18n::tr("Select all clips on track"))) {
     a.playlist.selected.clear();
     for (const auto& c : s.playlist)
       if (c.track == track) a.playlist.selected.insert(c.id);
   }
-  {
+  if (subMenu(i18n::tr("Clips"), "trmenu clips")) {  // K-158: the rest of the clips section
     const Pattern* cur = s.pattern(a.curPattern);
     const std::string send = cur ? "Send \"" + cur->name + "\" clips here" : std::string("Send pattern clips here");
     if (ImGui::MenuItem(send.c_str(), nullptr, false, cur != nullptr)) {
       const int n2 = ops::sendPatternClipsToTrack(a.doc, a.curPattern, track);
       if (n2 == 0) a.notify("No clips of this pattern to move");
     }
+    if (ImGui::MenuItem(i18n::tr("Merge pattern clips"))) {
+      ObjectId nc = ops::mergeTrackPatternClips(a.doc, track);
+      if (nc) a.playlist.selected = {nc};
+      else a.notify("Merging needs at least two pattern clips on the track");
+    }
+    if (ImGui::MenuItem(i18n::tr("Mute all clips"))) ops::muteTrackClips(a.doc, track, true);
+    if (ImGui::MenuItem(i18n::tr("Unmute all clips"))) ops::muteTrackClips(a.doc, track, false);
+    ImGui::EndMenu();
   }
-  if (ImGui::MenuItem(i18n::tr("Merge pattern clips"))) {
-    ObjectId nc = ops::mergeTrackPatternClips(a.doc, track);
-    if (nc) a.playlist.selected = {nc};
-    else a.notify("Merging needs at least two pattern clips on the track");
-  }
-  if (ImGui::MenuItem(i18n::tr("Mute all clips"))) ops::muteTrackClips(a.doc, track, true);
-  if (ImGui::MenuItem(i18n::tr("Unmute all clips"))) ops::muteTrackClips(a.doc, track, false);
   ImGui::Separator();
   if (ImGui::MenuItem(i18n::tr("Move up"), nullptr, false, track > 0)) ops::movePlaylistTrack(a.doc, track, -1);
   if (ImGui::MenuItem(i18n::tr("Move down"), nullptr, false, track + 1 < n)) ops::movePlaylistTrack(a.doc, track, 1);
@@ -1825,6 +1868,11 @@ void mixerTrackMenu(App& a, size_t index) {
     if (!err.empty()) a.notify(err, true);
     else if (made == 0) a.notify("Nothing to route: select other tracks first (Ctrl+click their names)");
   };
+  // After an edit in place the menu stops drawing (`t` and `s` point into the song it replaced).
+  const uint64_t rev0 = a.doc.revision();
+  auto changed = [&a, rev0] { return a.doc.revision() != rev0; };
+  bool freezable = false;  // a selected track besides the master (freeze, hibernate)
+  for (ObjectId x : selIds) freezable = freezable || x != s.masterId();
 
   // ---- mixer track ---- (K-77: create, properties, playback switches, then routing, group, effects,
   // layout and CPU; resets and removals last)
@@ -1844,23 +1892,7 @@ void mixerTrackMenu(App& a, size_t index) {
       if (!ids.empty()) a.selMixer = ids.front();
     });
   }
-  if (ImGui::MenuItem(i18n::tr("Insert from state..."))) {
-    const int at = master ? 1 : static_cast<int>(index);
-    fileDialog(a, "Insert mixer track from state", false, {mixops::kTrackStateExt}, "", [&a, at](const std::string& p) {
-      const uint64_t serial0 = a.doc.history().stateSerial();
-      a.doc.beginGroup("insert mixer track from state");
-      auto ids = mixops::insertTracks(a.doc, at, 1);
-      std::string err;
-      const bool ok = !ids.empty() && mixops::loadTrackState(a.doc, ids.front(), p, &err);
-      a.doc.endGroup();
-      if (!ok) {
-        if (a.doc.history().stateSerial() != serial0 && a.doc.undo()) a.doc.discardStepsFrom(a.doc.history().position());  // K-141: only our own step
-        a.notify(err.empty() ? std::string("Could not insert the track") : err, true);
-      } else {
-        a.selMixer = ids.front();
-      }
-    });
-  }
+  // K-158: each section keeps its most used rows; the rest sit in a submenu named after the section.
   if (ImGui::BeginMenu(i18n::tr("Rename, colour and icon"))) {
     if (ImGui::BeginMenu(i18n::tr("Rename..."), !master)) {
       renameField(t.name.empty() ? mixerTrackName(s, index) : t.name,
@@ -1885,9 +1917,8 @@ void mixerTrackMenu(App& a, size_t index) {
     }
     ImGui::EndMenu();
   }
-  if (!master) trackui::mixerMenuItems(a, id);  // PL-08: audio track link
-  else if (ImGui::MenuItem(i18n::tr("Master chain..."))) a.showMaster = true;  // RN-09
-  if (ImGui::BeginMenu(i18n::tr("File"))) {
+  if (master && ImGui::MenuItem(i18n::tr("Master chain..."))) a.showMaster = true;  // RN-09
+  if (subMenu(i18n::tr("File"), "mixmenu file")) {
     if (ImGui::MenuItem(i18n::tr("Open mixer track state..."))) {
       fileDialog(a, "Open mixer track state", false, {mixops::kTrackStateExt}, "", [&a, id](const std::string& p) {
         std::string err;
@@ -1904,14 +1935,35 @@ void mixerTrackMenu(App& a, size_t index) {
         else a.notify("Could not save the track state" + (err.empty() ? std::string() : ": " + err), true);
       });
     }
+    ImGui::Separator();
+    if (ImGui::MenuItem(i18n::tr("Insert from state..."))) {
+      const int at = master ? 1 : static_cast<int>(index);
+      fileDialog(a, "Insert mixer track from state", false, {mixops::kTrackStateExt}, "", [&a, at](const std::string& p) {
+        const uint64_t serial0 = a.doc.history().stateSerial();
+        a.doc.beginGroup("insert mixer track from state");
+        auto ids = mixops::insertTracks(a.doc, at, 1);
+        std::string err;
+        const bool ok = !ids.empty() && mixops::loadTrackState(a.doc, ids.front(), p, &err);
+        a.doc.endGroup();
+        if (!ok) {
+          if (a.doc.history().stateSerial() != serial0 && a.doc.undo()) a.doc.discardStepsFrom(a.doc.history().position());  // K-141: only our own step
+          a.notify(err.empty() ? std::string("Could not insert the track") : err, true);
+        } else {
+          a.selMixer = ids.front();
+        }
+      });
+    }
     ImGui::EndMenu();
   }
+  if (changed()) return;
+
   ImGui::Separator();
   if (ImGui::MenuItem(t.muted ? i18n::tr("Unmute") : i18n::tr("Mute"))) a.doc.editMixerTrack(id, "mute mixer track", [](MixerTrack& m) { m.muted = !m.muted; });
   if (ImGui::MenuItem(i18n::tr("Solo"), "S", t.solo)) a.later([&a, id] { ops::soloMixerTrack(a.doc, id); });
-  j31::mixerItems(a, id);  // J-31: alt solo, recording point
+  if (changed()) return;
+  j31::mixerSoloItems(a, id);  // J-31: alt solo
   if (ImGui::MenuItem(i18n::tr("Disable track"), nullptr, t.disabled)) mixops::setDisabled(a.doc, selIds, !t.disabled);
-  freezeui::mixerMenuItems(a, selIds);  // K-87
+  if (changed()) return;
   {
     // Disk recording arm (J-8's MixerTrack::armed; toggleArm also picks an input).
     if (ImGui::MenuItem(many ? i18n::tr("Arm selected tracks") : i18n::tr("Arm for disk recording"), nullptr, t.armed && !many, !master))
@@ -1919,62 +1971,33 @@ void mixerTrackMenu(App& a, size_t index) {
         const MixerTrack* m = a.doc.song().mixerTrack(x);
         if (m && (many ? !m->armed : true)) toggleArm(a, x);
       }
+    if (changed()) return;
     bool anyArmed = false;
     for (ObjectId x : selIds) anyArmed = anyArmed || (a.doc.song().mixerTrack(x) && a.doc.song().mixerTrack(x)->armed);
-    if (ImGui::MenuItem(i18n::tr("Disarm selected tracks"), nullptr, false, anyArmed))
+    if (anyArmed && ImGui::MenuItem(i18n::tr("Disarm selected tracks")))  // K-158: only while one of them is armed
       for (ObjectId x : selIds)
         if (const MixerTrack* m = a.doc.song().mixerTrack(x); m && m->armed) toggleArm(a, x);
   }
-  if (ImGui::MenuItem(mixops::isMono(t) ? i18n::tr("Make stereo") : i18n::tr("Make mono"))) mixops::setMono(a.doc, selIds, !mixops::isMono(t));
-  if (ImGui::MenuItem(i18n::tr("Swap left and right"), nullptr, t.swapLR)) mixops::setSwap(a.doc, selIds, !t.swapLR);
-  if (ImGui::MenuItem(i18n::tr("Reverse polarity"), nullptr, t.invertPolarity)) mixops::setPolarity(a.doc, selIds, !t.invertPolarity);
-  if (ImGui::BeginMenu(i18n::tr("Stereo separation"))) {
-    static const struct { const char* name; float v; } seps[] = {{i18n::N_("Merged (mono)"), -1.0f}, {i18n::N_("Narrow"), -0.5f}, {i18n::N_("Normal"), 0.0f}, {i18n::N_("Wide"), 0.5f}, {i18n::N_("Widest"), 1.0f}};
-    for (const auto& sp : seps)
-      if (ImGui::MenuItem(i18n::tr(sp.name), nullptr, t.stereoSep == sp.v)) a.doc.setParam(mixerParam(id, MixerParam::StereoSep), sp.v, false);
+  if (changed()) return;
+  j31::mixerRecordItems(a, id);  // J-31: recording point
+  if (subMenu(i18n::tr("Stereo and polarity"), "mixmenu stereo")) {  // K-158
+    if (ImGui::MenuItem(mixops::isMono(t) ? i18n::tr("Make stereo") : i18n::tr("Make mono"))) mixops::setMono(a.doc, selIds, !mixops::isMono(t));
+    if (ImGui::MenuItem(i18n::tr("Swap left and right"), nullptr, t.swapLR)) mixops::setSwap(a.doc, selIds, !t.swapLR);
+    if (ImGui::MenuItem(i18n::tr("Reverse polarity"), nullptr, t.invertPolarity)) mixops::setPolarity(a.doc, selIds, !t.invertPolarity);
+    if (ImGui::BeginMenu(i18n::tr("Stereo separation"))) {
+      static const struct { const char* name; float v; } seps[] = {{i18n::N_("Merged (mono)"), -1.0f}, {i18n::N_("Narrow"), -0.5f}, {i18n::N_("Normal"), 0.0f}, {i18n::N_("Wide"), 0.5f}, {i18n::N_("Widest"), 1.0f}};
+      for (const auto& sp : seps)
+        if (ImGui::MenuItem(i18n::tr(sp.name), nullptr, t.stereoSep == sp.v)) a.doc.setParam(mixerParam(id, MixerParam::StereoSep), sp.v, false);
+      ImGui::EndMenu();
+    }
     ImGui::EndMenu();
   }
+  if (changed()) return;
   if (ImGui::MenuItem(i18n::tr("Render selected tracks to wave files..."), keys::label("mixer.renderSelected"))) renderMixerStems(a, selIds);
 
   // ---- routing ----
-  ImGui::SeparatorText(i18n::tr("Routing"));
+  ImGui::Separator();
   auto chans = selChannelsInOrder(a);
-  if (ImGui::BeginMenu(i18n::tr("Channel routing"))) {
-    if (ImGui::MenuItem(i18n::tr("Route selected channels to this track"), keys::label("mixer.routeHere"), false, !chans.empty())) ops::routeChannels(a.doc, chans, id, false);
-    if (ImGui::MenuItem(i18n::tr("Route selected channels starting from this track"), keys::label("mixer.routeFromHere"), false, !chans.empty() && !master))
-      ops::routeChannels(a.doc, chans, id, true);
-    ImGui::EndMenu();
-  }
-  if (ImGui::BeginMenu(i18n::tr("Track routing"))) {
-    std::string err;
-    ImGui::SeparatorText(i18n::tr("Selected tracks to this track"));
-    if (ImGui::MenuItem(i18n::tr("Route selected to this track"), nullptr, false, !others.empty()))
-      report(mixops::route(a.doc, others, {id}, mixops::RouteMode::Send, &err), err);
-    if (ImGui::MenuItem(i18n::tr("Route selected to this track only"), nullptr, false, !others.empty()))
-      report(mixops::route(a.doc, others, {id}, mixops::RouteMode::Only, &err), err);
-    if (ImGui::MenuItem(i18n::tr("Sidechain selected to this track"), nullptr, false, !others.empty()))
-      report(mixops::route(a.doc, others, {id}, mixops::RouteMode::Sidechain, &err), err);
-    if (ImGui::MenuItem(i18n::tr("Sidechain selected to this track only"), nullptr, false, !others.empty()))
-      report(mixops::route(a.doc, others, {id}, mixops::RouteMode::SidechainOnly, &err), err);
-    if (ImGui::MenuItem(i18n::tr("Create submix..."), nullptr, false, !selIds.empty() && !(selIds.size() == 1 && master))) {
-      std::vector<ObjectId> src = selIds;
-      menus::openPrompt("Submix name", "Submix", [&a, src](const std::string& n) {
-        ObjectId sub = mixops::createSubmix(a.doc, src, n.empty() ? std::string("Submix") : n);
-        if (sub) a.selMixer = sub, a.mixerView.sel = {sub};
-        else a.notify("Could not create the submix", true);
-      });
-    }
-    ImGui::SeparatorText(i18n::tr("This track to selected tracks"));
-    if (ImGui::MenuItem(i18n::tr("Route this track to selected"), nullptr, false, !others.empty() && !master))
-      report(mixops::route(a.doc, {id}, others, mixops::RouteMode::Send, &err), err);
-    if (ImGui::MenuItem(i18n::tr("Route this track to selected only"), nullptr, false, !others.empty() && !master))
-      report(mixops::route(a.doc, {id}, others, mixops::RouteMode::Only, &err), err);
-    if (ImGui::MenuItem(i18n::tr("Sidechain this track to selected"), nullptr, false, !others.empty() && !master))
-      report(mixops::route(a.doc, {id}, others, mixops::RouteMode::Sidechain, &err), err);
-    if (ImGui::MenuItem(i18n::tr("Sidechain this track to selected only"), nullptr, false, !others.empty() && !master))
-      report(mixops::route(a.doc, {id}, others, mixops::RouteMode::SidechainOnly, &err), err);
-    ImGui::EndMenu();
-  }
   if (!master) {
     if (ImGui::BeginMenu(i18n::tr("Send to"))) {
       for (size_t i = 0; i < s.mixer.size(); ++i) {
@@ -1998,57 +2021,106 @@ void mixerTrackMenu(App& a, size_t index) {
       ImGui::EndMenu();
     }
   }
-  if (ImGui::BeginMenu(i18n::tr("Select"))) {
-    if (ImGui::MenuItem(i18n::tr("Channels routed to this track"), "Alt+L")) {
-      a.selChannels.clear();
-      for (const auto& c : s.channels)
-        if (c.mixerTrack == id) a.selChannels.insert(c.id);
-      if (!a.selChannels.empty()) a.selChannel = *a.selChannels.begin();
-      a.showRack = true;
+  if (changed()) return;
+  if (subMenu(i18n::tr("Routing"), "mixmenu routing")) {  // K-158: the rest of the routing section
+    if (ImGui::BeginMenu(i18n::tr("Channel routing"))) {
+      if (ImGui::MenuItem(i18n::tr("Route selected channels to this track"), keys::label("mixer.routeHere"), false, !chans.empty())) ops::routeChannels(a.doc, chans, id, false);
+      if (ImGui::MenuItem(i18n::tr("Route selected channels starting from this track"), keys::label("mixer.routeFromHere"), false, !chans.empty() && !master))
+        ops::routeChannels(a.doc, chans, id, true);
+      ImGui::EndMenu();
     }
-    if (ImGui::MenuItem(i18n::tr("Tracks this one is routed to"))) {
-      auto v = mixops::routedFrom(s, id);
-      a.mixerView.sel = std::set<ObjectId>(v.begin(), v.end());
+    if (ImGui::BeginMenu(i18n::tr("Track routing"))) {
+      std::string err;
+      ImGui::SeparatorText(i18n::tr("Selected tracks to this track"));
+      if (ImGui::MenuItem(i18n::tr("Route selected to this track"), nullptr, false, !others.empty()))
+        report(mixops::route(a.doc, others, {id}, mixops::RouteMode::Send, &err), err);
+      if (ImGui::MenuItem(i18n::tr("Route selected to this track only"), nullptr, false, !others.empty()))
+        report(mixops::route(a.doc, others, {id}, mixops::RouteMode::Only, &err), err);
+      if (ImGui::MenuItem(i18n::tr("Sidechain selected to this track"), nullptr, false, !others.empty()))
+        report(mixops::route(a.doc, others, {id}, mixops::RouteMode::Sidechain, &err), err);
+      if (ImGui::MenuItem(i18n::tr("Sidechain selected to this track only"), nullptr, false, !others.empty()))
+        report(mixops::route(a.doc, others, {id}, mixops::RouteMode::SidechainOnly, &err), err);
+      if (ImGui::MenuItem(i18n::tr("Create submix..."), nullptr, false, !selIds.empty() && !(selIds.size() == 1 && master))) {
+        std::vector<ObjectId> src = selIds;
+        menus::openPrompt("Submix name", "Submix", [&a, src](const std::string& n) {
+          ObjectId sub = mixops::createSubmix(a.doc, src, n.empty() ? std::string("Submix") : n);
+          if (sub) a.selMixer = sub, a.mixerView.sel = {sub};
+          else a.notify("Could not create the submix", true);
+        });
+      }
+      ImGui::SeparatorText(i18n::tr("This track to selected tracks"));
+      if (ImGui::MenuItem(i18n::tr("Route this track to selected"), nullptr, false, !others.empty() && !master))
+        report(mixops::route(a.doc, {id}, others, mixops::RouteMode::Send, &err), err);
+      if (ImGui::MenuItem(i18n::tr("Route this track to selected only"), nullptr, false, !others.empty() && !master))
+        report(mixops::route(a.doc, {id}, others, mixops::RouteMode::Only, &err), err);
+      if (ImGui::MenuItem(i18n::tr("Sidechain this track to selected"), nullptr, false, !others.empty() && !master))
+        report(mixops::route(a.doc, {id}, others, mixops::RouteMode::Sidechain, &err), err);
+      if (ImGui::MenuItem(i18n::tr("Sidechain this track to selected only"), nullptr, false, !others.empty() && !master))
+        report(mixops::route(a.doc, {id}, others, mixops::RouteMode::SidechainOnly, &err), err);
+      ImGui::EndMenu();
     }
-    if (ImGui::MenuItem(i18n::tr("Tracks routed to this one"), "Ctrl+Alt+L")) {
-      auto v = mixops::routedTo(s, id);
-      a.mixerView.sel = std::set<ObjectId>(v.begin(), v.end());
+    if (ImGui::BeginMenu(i18n::tr("Select"))) {
+      if (ImGui::MenuItem(i18n::tr("Channels routed to this track"), "Alt+L")) {
+        a.selChannels.clear();
+        for (const auto& c : s.channels)
+          if (c.mixerTrack == id) a.selChannels.insert(c.id);
+        if (!a.selChannels.empty()) a.selChannel = *a.selChannels.begin();
+        a.showRack = true;
+      }
+      if (ImGui::MenuItem(i18n::tr("Tracks this one is routed to"))) {
+        auto v = mixops::routedFrom(s, id);
+        a.mixerView.sel = std::set<ObjectId>(v.begin(), v.end());
+      }
+      if (ImGui::MenuItem(i18n::tr("Tracks routed to this one"), "Ctrl+Alt+L")) {
+        auto v = mixops::routedTo(s, id);
+        a.mixerView.sel = std::set<ObjectId>(v.begin(), v.end());
+      }
+      if (ImGui::MenuItem(i18n::tr("Group"), nullptr, false, !t.group.empty())) {
+        auto v = mixops::groupMembers(s, t.group);
+        a.mixerView.sel = std::set<ObjectId>(v.begin(), v.end());
+      }
+      if (ImGui::MenuItem(i18n::tr("All"))) {
+        a.mixerView.sel.clear();
+        for (const auto& m : s.mixer) a.mixerView.sel.insert(m.id);
+      }
+      ImGui::EndMenu();
     }
-    if (ImGui::MenuItem(i18n::tr("Group"), nullptr, false, !t.group.empty())) {
-      auto v = mixops::groupMembers(s, t.group);
-      a.mixerView.sel = std::set<ObjectId>(v.begin(), v.end());
+    if (!master) {
+      ImGui::Separator();
+      trackui::mixerMenuItems(a, id);  // PL-08: audio track link
     }
-    if (ImGui::MenuItem(i18n::tr("All"))) {
-      a.mixerView.sel.clear();
-      for (const auto& m : s.mixer) a.mixerView.sel.insert(m.id);
-    }
+    ImGui::Separator();
+    if (ImGui::MenuItem(i18n::tr("Unroute tracks routed to this track"), nullptr, false, !mixops::routedTo(s, id).empty()))
+      mixops::unrouteIncoming(a.doc, id);
+    if (ImGui::MenuItem(many ? i18n::tr("Reset selected tracks' routing") : i18n::tr("Reset routing to master"), nullptr, false, !(master && !many)))
+      mixops::resetRouting(a.doc, selIds);
     ImGui::EndMenu();
   }
-  if (ImGui::MenuItem(i18n::tr("Unroute tracks routed to this track"), nullptr, false, !mixops::routedTo(s, id).empty()))
-    mixops::unrouteIncoming(a.doc, id);
-  if (ImGui::MenuItem(many ? i18n::tr("Reset selected tracks' routing") : i18n::tr("Reset routing to master"), nullptr, false, !(master && !many)))
-    mixops::resetRouting(a.doc, selIds);
+  if (changed()) return;
 
   // ---- group ----
-  ImGui::SeparatorText(i18n::tr("Group"));
-  if (ImGui::MenuItem(i18n::tr("Create group..."))) {
-    std::vector<ObjectId> ids = selIds;
-    menus::openPrompt("Group name", mixops::newGroupName(s), [&a, ids](const std::string& n) {
-      if (!n.empty()) mixops::setGroup(a.doc, ids, n);
-    });
-  }
-  const auto groups = mixops::groupNames(s);
-  if (ImGui::BeginMenu(i18n::tr("Add to group"), !groups.empty())) {
-    for (const auto& g : groups)
-      if (ImGui::MenuItem(g.c_str(), nullptr, t.group == g)) mixops::setGroup(a.doc, selIds, g);
+  if (subMenu(i18n::tr("Group"), "mixmenu group")) {  // K-158: the whole group section
+    if (ImGui::MenuItem(i18n::tr("Create group..."))) {
+      std::vector<ObjectId> ids = selIds;
+      menus::openPrompt("Group name", mixops::newGroupName(s), [&a, ids](const std::string& n) {
+        if (!n.empty()) mixops::setGroup(a.doc, ids, n);
+      });
+    }
+    const auto groups = mixops::groupNames(s);
+    if (ImGui::BeginMenu(i18n::tr("Add to group"), !groups.empty())) {
+      for (const auto& g : groups)
+        if (ImGui::MenuItem(g.c_str(), nullptr, t.group == g)) mixops::setGroup(a.doc, selIds, g);
+      ImGui::EndMenu();
+    }
+    if (ImGui::MenuItem(i18n::tr("Remove from group"), nullptr, false, !t.group.empty())) mixops::setGroup(a.doc, selIds, "");
+    if (ImGui::MenuItem(i18n::tr("Auto colour group"), nullptr, false, mixops::groupMembers(s, t.group).size() >= 3))
+      mixops::gradientColor(a.doc, mixops::groupMembers(s, t.group));
     ImGui::EndMenu();
   }
-  if (ImGui::MenuItem(i18n::tr("Remove from group"), nullptr, false, !t.group.empty())) mixops::setGroup(a.doc, selIds, "");
-  if (ImGui::MenuItem(i18n::tr("Auto colour group"), nullptr, false, mixops::groupMembers(s, t.group).size() >= 3))
-    mixops::gradientColor(a.doc, mixops::groupMembers(s, t.group));
+  if (changed()) return;
 
   // ---- effects ----
-  ImGui::SeparatorText(i18n::tr("Effects"));
+  ImGui::Separator();
   if (ImGui::BeginMenu(i18n::tr("Insert effect"))) {
     effectItems([&a, id](const std::string& type) {
       const MixerTrack* m = a.doc.song().mixerTrack(id);
@@ -2116,26 +2188,30 @@ void mixerTrackMenu(App& a, size_t index) {
     }
     ImGui::EndMenu();
   }
+  if (changed()) return;
 
-  // ---- layout ----
-  ImGui::SeparatorText(i18n::tr("Layout"));
+  // ---- layout and CPU ----
+  ImGui::Separator();
   if (ImGui::BeginMenu(i18n::tr("Dock to"), !master)) {
     static const char* docks[] = {i18n::N_("Left"), i18n::N_("Middle"), i18n::N_("Right")};
     for (int k = 0; k < 3; ++k)
       if (ImGui::MenuItem(i18n::tr(docks[k]), nullptr, t.dock == k - 1)) mixops::setDock(a.doc, selIds, static_cast<MixerDock>(k - 1));
     ImGui::EndMenu();
   }
+  if (subMenu(i18n::tr("CPU"), "mixmenu cpu")) {  // K-158: the CPU section with freeze and hibernate
+    freezeui::mixerMenuItems(a, selIds);  // K-87
+    if (freezable) ImGui::Separator();
+    if (ImGui::MenuItem(i18n::tr("Allow threaded processing"), nullptr, t.threaded)) mixops::setThreaded(a.doc, selIds, !t.threaded);
+    if (ImGui::BeginMenu(i18n::tr("Track latency"))) {
+      mixerLatencyMenu(a, id);
+      ImGui::EndMenu();
+    }
+    ImGui::EndMenu();
+  }
+  if (changed()) return;
   if (ImGui::MenuItem(i18n::tr("Move left"), keys::label("mixer.moveLeft"), false, index > 1)) a.later([&a, id] { ops::moveMixerTrack(a.doc, id, -1); });
   devMenuItem("mixmenu moveleft");
   if (ImGui::MenuItem(i18n::tr("Move right"), keys::label("mixer.moveRight"), false, !master && index + 1 < s.mixer.size())) a.later([&a, id] { ops::moveMixerTrack(a.doc, id, 1); });
-
-  // ---- CPU ----
-  ImGui::SeparatorText(i18n::tr("CPU"));
-  if (ImGui::MenuItem(i18n::tr("Allow threaded processing"), nullptr, t.threaded)) mixops::setThreaded(a.doc, selIds, !t.threaded);
-  if (ImGui::BeginMenu(i18n::tr("Track latency"))) {
-    mixerLatencyMenu(a, id);
-    ImGui::EndMenu();
-  }
 
   ImGui::Separator();
   if (ImGui::BeginMenu(many ? i18n::tr("Reset selected tracks") : i18n::tr("Reset track"))) {
@@ -2401,7 +2477,61 @@ void pluginWindowMenu(App& a, ObjectId owner, int slot) {
 
 namespace {
 void drawDevMenuBody(App& a, const std::string& name);
+
+// K-158: the whole tree of a menu, every submenu entered (nothing runs, nothing is drawn on screen):
+// one line per row, "Parent > Child > Item", submenus end in " >". The menu checks compare it with
+// the rows the menu had before, so a row that moved into a submenu is still found.
+struct TreeWalker : imhook::MenuWalker {
+  std::vector<std::string> path;
+  std::string out;
+  static std::string strip(const char* l) {
+    std::string s = l ? l : "";
+    if (size_t k = s.find("##"); k != std::string::npos) s.resize(k);
+    while (!s.empty() && s.back() == ' ') s.pop_back();
+    return s;
+  }
+  std::string prefix() const {
+    std::string p;
+    for (const auto& x : path) p += x + " > ";
+    return p;
+  }
+  bool beginMenu(const char* label, bool) override {
+    const std::string l = strip(label);
+    out += prefix() + l + " >\n";
+    path.push_back(l);
+    return path.size() < 6;  // deep pickers (folders of folders) stop here
+  }
+  void endMenu() override {
+    if (!path.empty()) path.pop_back();
+  }
+  bool menuItem(const char* label, const char*, bool, bool) override {
+    const std::string l = strip(label);
+    if (!l.empty()) out += prefix() + l + "\n";
+    return false;
+  }
+};
+
+void dumpDevMenuTree(App& a, const std::string& name) {
+  const ImGuiViewport* vp = ImGui::GetMainViewport();
+  ImGui::SetNextWindowPos(vp->Pos);
+  ImGui::SetNextWindowSize(ImVec2(820, 600));
+  ImGui::SetNextWindowViewport(vp->ID);
+  ImGui::SetNextWindowBgAlpha(0.0f);
+  ImGui::Begin("##devmenutree", nullptr,
+               ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoBackground |
+                   ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoBringToFrontOnFocus |
+                   ImGuiWindowFlags_NoDocking);
+  ImGui::PushClipRect(ImVec2(-8, -8), ImVec2(-8, -8), false);
+  TreeWalker w;
+  imhook::setMenuWalker(&w);
+  drawDevMenuBody(a, name);
+  imhook::setMenuWalker(nullptr);
+  ImGui::PopClipRect();
+  ImGui::End();
+  std::printf("MENUTREE BEGIN %s\n%sMENUTREE END\n", name.c_str(), w.out.c_str());
+  std::fflush(stdout);
 }
+}  // namespace
 
 void drawDevMenu(App& a, const std::string& name) {
   static int frames = 0;
@@ -2419,10 +2549,16 @@ void drawDevMenu(App& a, const std::string& name) {
   drawDevMenuBody(a, name);
   if (dump) {
     std::printf("MENUDUMP BEGIN %s\n%s\nMENUDUMP END\n", name.c_str(), GImGui->LogBuffer.c_str());
+    // K-158: the popup's height as it wants to be (its content plus padding, before any clamp to the
+    // screen) and as drawn, in pixels at the current interface size.
+    const ImGuiWindow* w = ImGui::GetCurrentWindow();
+    const float want = w->ContentSizeIdeal.y + w->WindowPadding.y * 2.0f;
+    std::printf("MENUSIZE %s %.0f %.0f %.0f\n", name.c_str(), w->SizeFull.x, want, w->SizeFull.y);
     std::fflush(stdout);
     ImGui::LogFinish();
   }
   ImGui::EndPopup();
+  if (dump) dumpDevMenuTree(a, name);
 }
 
 namespace {
@@ -2439,6 +2575,13 @@ void drawDevMenuBody(App& a, const std::string& name) {
   else if (name == "tools") menuTools(a);
   else if (name == "help") menuHelp(a);
   else if (name == "channel") channelContextMenu(a, ch);
+  else if (name == "chsample") {  // K-158: the first channel playing a sample file (its menu is the longest)
+    for (const auto& c : s.channels)
+      if (const PluginInfo* pi = findPlugin(c.plugin.type); pi && pi->usesSample && !c.plugin.data.empty() && c.plugin.data[0] != '{') {
+        channelContextMenu(a, c.id);
+        break;
+      }
+  }
   else if (name == "rack") rackOptionsMenu(a);
   else if (name == "pattern") patternContextMenu(a, pat);
   else if (name == "track") {  // the first audio track when there is one (PL-08 screenshots)
@@ -2477,6 +2620,13 @@ void drawDevMenuBody(App& a, const std::string& name) {
   else if (name == "plugin") pluginWindowMenu(a, ch, -1);
   else if (name == "record") recordOptionsMenu(a);  // J-8 / J-17
   else if (name == "typing") typingKeyboardMenu(a);  // K-113
+  else if (name == "arrclip") {  // K-158: the whole playlist menu of the first audio clip
+    for (const auto& c : s.playlist)
+      if (c.kind == ClipKind::Audio) {
+        devArrangementClipMenu(a, c.id);
+        break;
+      }
+  }
   else if (name == "audioclip") {                   // J-8: first audio clip
     for (const auto& c : s.playlist)
       if (c.kind == ClipKind::Audio) {

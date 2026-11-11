@@ -217,8 +217,10 @@ void AudioEngine::runChannel(size_t ci, int worker) {
     ProcessContext ctx = bc_.ctx;
     ctx.lanes = lanes;
     ctx.laneCount = nl;
+    rt->gen->setExpression(ch.expr);  // K-144
     rt->gen->process(ch.modded ? ch.live : ch.plugin, ch.aux, ctx, cL, cR, n);
   } else {
+    rt->gen->setExpression(ch.expr);  // K-144
     rt->gen->process(ch.modded ? ch.live : ch.plugin, ch.aux, bc_.ctx, cL, cR, n);
   }
   rt->sounding.store(rt->gen->active(), std::memory_order_relaxed);

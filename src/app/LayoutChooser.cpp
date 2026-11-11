@@ -689,7 +689,7 @@ bool optionSwitch(App& a, const char* id, const char* label, const char* hint, b
   dl->AddRectFilled(s0, s1, theme::mix(theme::mix(P.field, P.surface700, 0.4f * h), P.accent, t), sh * 0.5f);
   if (t < 1) dl->AddRect(s0, s1, theme::withAlpha(P.lineStrong, 1.0f - t), sh * 0.5f);
   const float kx = s0.x + sh * 0.5f + (sw - sh) * t;
-  dl->AddCircleFilled(ImVec2(kx, s0.y + sh * 0.5f), sh * 0.5f - 2.5f, theme::mix(P.textDim, IM_COL32(255, 255, 255, 255), std::max(t, P.dark ? 0.0f : 0.6f)), 16);
+  dl->AddCircleFilled(ImVec2(kx, s0.y + sh * 0.5f), sh * 0.5f - 2.5f, theme::mix(P.textDim, P.paper, std::max(t, P.dark ? 0.0f : 0.6f)), 16);
   const float tx = s1.x + 12;
   theme::textEllipsis(dl, a.fontRegular, theme::kFontBody, ImVec2(tx, std::round(o.y + 2)), o.x + w - tx, P.text, lt);
   theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption, ImVec2(tx, std::round(o.y + 21)), o.x + w - tx, P.textFaint, ht);

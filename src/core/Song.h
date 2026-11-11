@@ -128,6 +128,7 @@ struct Channel {
   bool mono = false;         // one note at a time (a new note replaces the sounding one)
   bool porta = false;        // notes glide from the previous note's pitch
   float portaTime = 0.1f;    // glide time for porta / mono legato, seconds 0..2
+  ExprSettings expr;         // K-144: what per-note expression (MPE) does on this channel
   int cutGroup = 0;          // starting a note cuts channels whose cutBy equals this (0 = none)
   int cutBy = 0;             // this channel is cut by notes of channels in this group (0 = none)
   ChannelEcho echo;
@@ -183,7 +184,7 @@ struct Channel {
     return id == o.id && name == o.name && color == o.color && plugin == o.plugin && gain == o.gain &&
            pan == o.pan && muted == o.muted && pitch == o.pitch && mixerTrack == o.mixerTrack && noteFx == o.noteFx &&
            fine == o.fine && pitchSmooth == o.pitchSmooth && knobFine == o.knobFine && swingMix == o.swingMix && timeShift == o.timeShift && polyphony == o.polyphony &&
-           mono == o.mono && porta == o.porta && portaTime == o.portaTime && cutGroup == o.cutGroup &&
+           mono == o.mono && porta == o.porta && portaTime == o.portaTime && expr == o.expr && cutGroup == o.cutGroup &&
            cutBy == o.cutBy && echo == o.echo && layer == o.layer && layerMode == o.layerMode && layerZones == o.layerZones &&
            macros == o.macros && group == o.group &&
            auxOuts == o.auxOuts && midiOutPort == o.midiOutPort && midiInPort == o.midiInPort && keyLo == o.keyLo &&

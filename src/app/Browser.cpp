@@ -177,7 +177,7 @@ bool devOpen(const std::string& label) {
 constexpr const char* kStarTag = "starred";
 std::string devSection;  // dev: the section the rows drawn belong to (K-18 "browser rows")
 
-ImU32 roleCol(uint32_t r, float a = 0.9f) { return theme::litRole(r, a); }
+ImU32 roleCol(uint32_t r, float a = 0.9f) { return theme::tintRole(r, a); }  // K-177: white with the white text option
 
 // K-160: browsing with the keyboard. Every row the tree draws (section headers, folders, files,
 // plugins, the project's items) is noted in drawing order; the next frame's keys move a cursor
@@ -281,11 +281,11 @@ bool browserRow(const char* id, ui::Icon icon, const char* name, const char* det
   // Icons are tinted by kind (instruments, effects, note effects, folders, audio).
   ImU32 ic = iconCol ? iconCol : P.textFaint;
   if (!iconCol) switch (icon) {
-      case ui::Icon::Plug: ic = theme::litRole(role::kDraw, 0.85f); break;
-      case ui::Icon::Mixer: ic = theme::litRole(role::kSlice, 0.85f); break;
-      case ui::Icon::Piano: ic = theme::litRole(role::kSnap, 0.85f); break;
-      case ui::Icon::Folder: ic = theme::litRole(role::kView, 0.85f); break;
-      case ui::Icon::Wave: ic = theme::litRole(role::kPaint, 0.85f); break;
+      case ui::Icon::Plug: ic = theme::tintRole(role::kDraw, 0.85f); break;
+      case ui::Icon::Mixer: ic = theme::tintRole(role::kSlice, 0.85f); break;
+      case ui::Icon::Piano: ic = theme::tintRole(role::kSnap, 0.85f); break;
+      case ui::Icon::Folder: ic = theme::tintRole(role::kView, 0.85f); break;
+      case ui::Icon::Wave: ic = theme::tintRole(role::kPaint, 0.85f); break;
       default: break;
     }
   ui::drawIcon(dl, icon, ImVec2(x + 8, q.y + kRowH * 0.5f), 12, hov ? P.text : ic);
@@ -350,6 +350,7 @@ bool sectionHeader(const char* title, int count, bool defaultOpen, uint32_t role
   ImGui::PopID();
   ui::drawIcon(dl, open ? ui::Icon::ChevronDown : ui::Icon::Chevron, ImVec2(q.x + 9, q.y + 13), 10, open ? P.hot : P.textDim);
   ui::drawIcon(dl, icon, ImVec2(q.x + 25, q.y + 13), 12, roleCol(roleColour));
+  if (icon == ui::Icon::Folder) theme::devNote("folder", roleCol(roleColour));  // K-177 dev: the folder glyph colour
   const std::string label = translate ? i18n::tr(title) : title;  // J-61: tree roots are translated
   const std::string shown = label.substr(0, label.find("##"));     // "##" suffix: id only
   theme::textEllipsis(dl, a.fontBold, theme::kFontCaption + 1, ImVec2(q.x + 37, q.y + 6), w - 37 - 30, P.text, shown.c_str());

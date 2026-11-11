@@ -764,6 +764,16 @@ std::vector<NoteEv> compileChannelNotes(const Song& song, const Pattern& p, cons
         if (!bendShared || bendOf != &n) bendShared = std::make_shared<const std::vector<BendPoint>>(n.bend), bendOf = &n;
         e.bend = bendShared;
       }
+      if (!n.slide) {  // K-144: expression lanes; the note starts at their first values
+        if (!n.pressure.empty()) {
+          e.pressure = std::make_shared<const std::vector<BendPoint>>(n.pressure);
+          e.props.pressure = static_cast<float>(std::clamp(bend::value(n.pressure, 0.0), 0.0, 1.0));
+        }
+        if (!n.timbre.empty()) {
+          e.timbre = std::make_shared<const std::vector<BendPoint>>(n.timbre);
+          e.props.timbre = static_cast<float>(std::clamp(0.5 + bend::value(n.timbre, 0.0), 0.0, 1.0));
+        }
+      }
       if (!n.tracker.empty()) {  // K-76
         e.tracker = std::make_shared<const std::vector<uint8_t>>(n.tracker);
         e.props.tracker = e.tracker->data();
@@ -1130,6 +1140,7 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     pc.mono = c.mono;
     pc.porta = c.porta;
     pc.portaTime = c.portaTime;
+    pc.expr = c.expr;
     pc.cutGroup = c.cutGroup;
     pc.cutBy = c.cutBy;
     pc.layerMode = c.layerMode;

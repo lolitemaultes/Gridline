@@ -242,7 +242,7 @@ void recordingOptionItems(App& a) {
 
 // ================================================================ context menus
 
-void channelItems(App& a, ObjectId channel) {
+void channelStepItems(App& a, ObjectId channel) {
   const Song& s = a.doc.song();
   const Channel* c = s.channel(channel);
   const Pattern* p = s.pattern(a.curPattern);
@@ -271,6 +271,14 @@ void channelItems(App& a, ObjectId channel) {
     if (ImGui::MenuItem(i18n::tr("Burn the loop into the pattern"), nullptr, false, loop > 0)) a.later([&a, pid, ids] { ops::burnStepLoops(a.doc, pid, ids); });
     ImGui::EndMenu();
   }
+  bool trunc = c->swingTruncate;
+  if (ImGui::MenuItem(i18n::tr("Truncate swung steps"), nullptr, &trunc)) a.later([&a, channel, trunc] { ops::setSwingTruncate(a.doc, {channel}, trunc ? 1 : 0); });
+  ui::Hint("Swung steps end on their grid line instead of overlapping the next step");
+}
+
+void channelKeyItems(App& a, ObjectId channel) {
+  const Channel* c = a.doc.song().channel(channel);
+  if (!c) return;
   if (ImGui::BeginMenu(i18n::tr("Key range"))) {
     ImGui::TextDisabled("%s .. %s", tools::pitchName(c->keyLo).c_str(), tools::pitchName(c->keyHi).c_str());
     if (ImGui::MenuItem(i18n::tr("Whole keyboard"), nullptr, c->fullKeyRange())) a.later([&a, channel] { ops::setKeyRange(a.doc, channel, 0, 127); });
@@ -279,9 +287,6 @@ void channelItems(App& a, ObjectId channel) {
     ImGui::EndMenu();
   }
   ui::Hint("Notes outside the range do not play on this channel (layer splits set it)");
-  bool trunc = c->swingTruncate;
-  if (ImGui::MenuItem(i18n::tr("Truncate swung steps"), nullptr, &trunc)) a.later([&a, channel, trunc] { ops::setSwingTruncate(a.doc, {channel}, trunc ? 1 : 0); });
-  ui::Hint("Swung steps end on their grid line instead of overlapping the next step");
   if (c->isLayer()) {
     if (ImGui::MenuItem(i18n::tr("Split the layer's children over the keyboard")))  // K-169: the layer's zones
       a.later([&a, channel] {
@@ -385,7 +390,7 @@ void markerItems(App& a, Tick at) {
   ImGui::EndMenu();
 }
 
-void mixerItems(App& a, ObjectId track) {
+void mixerRecordItems(App& a, ObjectId track) {
   const MixerTrack* m = a.doc.song().mixerTrack(track);
   if (!m) return;
   if (ImGui::BeginMenu(i18n::tr("Record from"))) {
@@ -397,6 +402,11 @@ void mixerItems(App& a, ObjectId track) {
     ImGui::EndMenu();
   }
   ui::Hint("Where an armed track records from; the output taps record without an audio input");
+}
+
+void mixerSoloItems(App& a, ObjectId track) {
+  const MixerTrack* m = a.doc.song().mixerTrack(track);
+  if (!m) return;
   auto sel = mixerSelection(a);
   if (sel.empty()) sel = {track};
   if (ImGui::MenuItem(i18n::tr("Solo alone (without the tracks feeding it)"), nullptr, m->solo && m->soloAlone))

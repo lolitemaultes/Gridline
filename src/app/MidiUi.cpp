@@ -451,6 +451,35 @@ void typingKeyboardMenu(App& a) {
 
 // ------------------------------------------------------------ settings page ----
 
+namespace {
+// The system MIDI service hung or refused: what happened, that everything else works, and
+// when Gridline tries again (on its own, or now with Retry).
+void midiServiceNotice(MidiManager& m) {
+  const auto& P = pal();
+  const MidiOpenState st = m.serviceState();
+  if (st == MidiOpenState::Ready || st == MidiOpenState::Idle) return;
+  ImGui::Dummy(ImVec2(0, theme::kS1));
+  if (st == MidiOpenState::Opening) {
+    ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("Looking for MIDI devices…"));
+    ImGui::Dummy(ImVec2(0, theme::kS1));
+    return;
+  }
+  const int wait = static_cast<int>(std::ceil(std::max(0.0, m.serviceRetryIn())));
+  ImGui::PushTextWrapPos(0);
+  ImGui::TextColored(theme::vec(P.danger), "%s", i18n::tr("MIDI devices are unavailable."));
+  if (st == MidiOpenState::Failed)
+    ImGui::TextColored(theme::vec(P.textDim), i18n::tr("The system MIDI service refused to open: %s"), m.serviceError().c_str());
+  else
+    ImGui::TextColored(theme::vec(P.textDim), "%s", i18n::tr("The system MIDI service is not responding."));
+  ImGui::TextColored(theme::vec(P.textDim), "%s",
+                     i18n::tr("Gridline carries on without MIDI devices: audio, projects and the typing keyboard work as usual."));
+  ImGui::TextColored(theme::vec(P.textFaint), i18n::tr("It tries again on its own in %d s. Tries so far: %d."), wait, m.serviceAttempts());
+  ImGui::PopTextWrapPos();
+  if (ui::TextButton("Retry now", false, 0, "Asks the system MIDI service again")) m.retry();
+  ImGui::Dummy(ImVec2(0, theme::kS1));
+}
+}  // namespace
+
 void midiSettingsPage(App& a, float fieldW) {
   const auto& P = pal();
   ImGui::Dummy(ImVec2(0, theme::kS2));
@@ -482,7 +511,8 @@ void midiSettingsPage(App& a, float fieldW) {
   // Input devices table.
   ui::BeginSection("INPUT DEVICES");
   ImGui::TextColored(theme::vec(P.textDim), "%s", i18n::tr("Notes play the selected channel; controls drive links and the device template."));
-  if (m.inputs.empty()) {
+  midiServiceNotice(m);
+  if (m.inputs.empty() && m.serviceAvailable()) {
     ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("No MIDI inputs found."));
     if (const char* hint = chromeos::midiHint(chromeos::current()); *hint) {  // K-75
       ImGui::PushTextWrapPos(0);
@@ -573,7 +603,7 @@ void midiSettingsPage(App& a, float fieldW) {
     ImGui::AlignTextToFramePadding();
     ImGui::TextColored(theme::vec(active ? P.text : P.textFaint), active ? "Receiving" : "Idle");
   }
-  ImGui::TextColored(theme::vec(P.textFaint), "%s", m.status.c_str());
+  if (m.serviceAvailable()) ImGui::TextColored(theme::vec(P.textFaint), "%s", m.status.c_str());  // else the notice above says it
 
   ui::EndSection();
 
@@ -616,6 +646,20 @@ void midiSettingsPage(App& a, float fieldW) {
   ImGui::SameLine(0, theme::kS2);
   ImGui::Text("%.0f%%", static_cast<double>(r.softFactor * 100));
   ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("Sustain (CC 64), aftertouch and pitch bend always reach the instrument."));
+  label("MPE", 168);  // K-144
+  if (ImGui::Checkbox(i18n::tr("MPE controller"), &r.mpe)) changed = true;
+  if (r.mpe) {
+    ImGui::SameLine(0, theme::kS3);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(i18n::tr("Note bend range"));
+    ImGui::SameLine(0, theme::kS2);
+    ImGui::SetNextItemWidth(110);
+    if (ImGui::SliderFloat("##mpebend", &r.mpeBendRange, 1, 96, "")) changed = true;
+    ImGui::SameLine(0, theme::kS2);
+    ImGui::Text(i18n::tr("%.0f semitones"), static_cast<double>(r.mpeBendRange));
+  }
+  ImGui::TextColored(theme::vec(P.textFaint), "%s",
+                     i18n::tr("With MPE, channel 1 acts on the whole instrument and channels 2 to 16 each move their own note: bend, pressure and slide (CC 74)."));
   if (ImGui::TreeNodeEx("MIDI channel routing and pitch bend range", r.byChannel ? ImGuiTreeNodeFlags_DefaultOpen : 0)) {
     const Song& s = a.doc.song();
     if (ImGui::BeginTable("##chroute", 3, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg)) {

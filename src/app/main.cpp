@@ -55,6 +55,7 @@
 #include "../core/UiScale.h"
 #include "AlignAudit.h"
 #include "AppIcon.h"
+#include "WindowFrame.h"
 #include "HostedUi.h"
 #include "../host/HostedPlugins.h"
 #include "../host/audio/AsioHost.h"
@@ -140,8 +141,11 @@ uisound::Player* gUiSounds = nullptr;  // J-48: interface sounds, mixed after th
 void initMidi(App& a) {
   a.midi = std::make_unique<MidiManager>(a.engine);
   a.midi->load((fs::path(a.configDir()) / "midi.json").string());
-  a.midi->scan();  // new devices are enabled with the next free port number
-  a.midi->apply();
+  // The system MIDI service is asked on a background thread: it can hang or refuse, and then
+  // Gridline starts without MIDI devices and keeps trying (Settings > MIDI says so). A working
+  // service answers well within this wait, so its devices are open before the first frame.
+  a.midi->scan();  // new devices are enabled with the next free port number (opened on the answer)
+  a.midi->waitForService(0.5);
   a.loadControllerTemplates();
   a.publishMidi();
 }
@@ -906,8 +910,10 @@ void devPianoCommand(App& app, const DevInputLine& l, int frame) {
     app.piano.tool = l.a0 == "select" ? Tool::Select : l.a0 == "erase" ? Tool::Erase : l.a0 == "zoom" ? Tool::Zoom : Tool::Draw;
   } else if (l.cmd == "lane") {
     const PianoLaneGeometry& g = pianoLaneGeometry();
-    std::printf("lane frame %d: x0 %.3f pxPerTick %.6f yTop %.2f yBottom %.2f valid %d pitchY0 %.2f rowH %.3f preview %d live %d\n", frame, g.x0,
-                g.pxPerTick, g.yTop, g.yBottom, g.valid ? 1 : 0, g.pitchY0, g.rowH, g.preview, app.engine.liveHeld());
+    std::printf("lane frame %d: x0 %.3f pxPerTick %.6f yTop %.2f yBottom %.2f valid %d pitchY0 %.2f rowH %.3f preview %d live %d"
+                " view sx %.3f sy %.3f grid %.2f %.2f %.2f %.2f hthumb %.3f %.3f y %.2f vthumb %.3f %.3f x %.2f\n",
+                frame, g.x0, g.pxPerTick, g.yTop, g.yBottom, g.valid ? 1 : 0, g.pitchY0, g.rowH, g.preview, app.engine.liveHeld(), g.scrollX,
+                g.scrollY, g.gridX0, g.gridY0, g.gridX1, g.gridY1, g.hThumb0, g.hThumb1, g.hBarY, g.vThumb0, g.vThumb1, g.vBarX);
   } else if (!pat || ch == kNoId) {
     std::printf("%s frame %d: no pattern / channel\n", l.cmd.c_str(), frame);
   } else if (l.cmd == "pianosnap") {  // K-28: pianosnap <mode name, e.g. Line, None, "1/4 step">: the piano roll's snap
@@ -1285,6 +1291,16 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       ::gl::ui::confirmTheme(app, before, "Theme");
       std::fprintf(stderr, "DEV_THEME %s frame %d\n", l.a0.c_str(), ImGui::GetFrameCount());
     }
+    else if (l.cmd == "theme" && (l.a0 == "brightness" || l.a0 == "whitetext")) {  // K-177: as Settings > Theme does
+      const dispconf::Snapshot before = dispconf::take(app.settings, dispconf::themeKeys());
+      theme::Tweaks t = theme::tweaksFromSettings(app.settings);
+      if (l.a0 == "brightness") t.brightness = std::clamp(std::strtof(l.a1.c_str(), nullptr), -1.0f, 1.0f);
+      else t.whiteText = l.a1 == "on";
+      theme::tweaksToSettings(t, app.settings);
+      theme::applyFromSettings(app.settings);
+      ::gl::ui::confirmTheme(app, before, "Theme");
+      std::fprintf(stderr, "DEV_THEME %s %s frame %d\n", l.a0.c_str(), l.a1.c_str(), ImGui::GetFrameCount());
+    }
     else if (l.cmd == "setting") {  // J-188: "setting <key> on|off": a switch changed as the Settings dialog does (live)
       if (l.a1 == "on" || l.a1 == "off") app.settings.set(l.a0, l.a1 == "on");
       else if (!l.a1.empty()) app.settings.set(l.a0, std::strtod(l.a1.c_str(), nullptr));  // K-136: "setting <key> <number>"
@@ -1431,6 +1447,14 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       std::printf("playstate frame %d: playing %d own %d epoch %u focus \"%s\"\n", frame, app.engine.playing() ? 1 : 0,
                   static_cast<int>(app.engine.pluginPlayback().kind), app.engine.stopEpoch(), nav ? nav->Name : "-");
       std::fflush(stdout);
+    } else if (l.cmd == "midistate") {  // the system MIDI service: answered, refused or hung
+      if (app.midi)
+        std::printf("midistate frame %d: state %s attempts %d inputs %zu outputs %zu retryin %.1f age %.2f error \"%s\"\n", frame,
+                    midiOpenStateName(app.midi->serviceState()), app.midi->serviceAttempts(), app.midi->inputs.size(),
+                    app.midi->outputs.size(), app.midi->serviceRetryIn(), app.midi->serviceAge(), app.midi->serviceError().c_str());
+      std::fflush(stdout);
+    } else if (l.cmd == "midiretry") {  // the Retry button in Settings > MIDI
+      if (app.midi) app.midi->retry();
     } else if (l.cmd == "forget") {
       devsig::forget(l.a0);
     } else if (l.cmd == "epoch") {
@@ -1802,8 +1826,10 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       ObjectId aid = kNoId, pid = kNoId;
       ParamId tgt{};
       const bool open = automationEditorTarget(&aid, &pid, &tgt);
-      std::printf("autoedit frame %d: open %d automation %u pattern %u target %u %u\n", frame, open ? 1 : 0, static_cast<unsigned>(aid),
-                  static_cast<unsigned>(pid), static_cast<unsigned>(tgt.owner), static_cast<unsigned>(tgt.index));
+      const AutomationEditorView& av = automationEditorView();
+      std::printf("autoedit frame %d: open %d automation %u pattern %u target %u %u view sx %.3f pxPerTick %.6f hthumb %.3f %.3f y %.2f grid %.2f %.2f\n",
+                  frame, open ? 1 : 0, static_cast<unsigned>(aid), static_cast<unsigned>(pid), static_cast<unsigned>(tgt.owner),
+                  static_cast<unsigned>(tgt.index), av.scrollX, av.pxPerTick, av.thumb0, av.thumb1, av.barY, av.gridX0, av.gridX1);
       std::fflush(stdout);
     } else if (l.cmd == "selpattern") {  // J-173: selpattern <id>: the current pattern
       app.selectPattern(static_cast<ObjectId>(std::atoi(l.a0.c_str())));
@@ -2511,8 +2537,10 @@ int main(int argc, char** argv) {
       int slot = std::atoi(argv[++i]);
       if (mi < app.doc.song().mixer.size()) app.fxEditor = {app.doc.song().mixer[mi].id, slot};
     } else if (arg == "--chan" && i + 1 < argc) {
-      size_t ci = static_cast<size_t>(std::atoi(argv[++i]));
+      const std::string v = argv[++i];
+      size_t ci = static_cast<size_t>(std::atoi(v.c_str()));
       if (ci < app.doc.song().channels.size()) app.settingsChannel = app.doc.song().channels[ci].id;
+      if (v.find(":misc") != std::string::npos) app.channelTab = 1;  // K-144: "N:misc" opens the channel's Misc page
     } else if (arg == "--edit" && i + 2 < argc) {  // dev check: select pattern <p> and channel <c>, focus the piano roll
       size_t pi = static_cast<size_t>(std::atoi(argv[++i]));
       size_t ci = static_cast<size_t>(std::atoi(argv[++i]));
@@ -3113,6 +3141,15 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "[layout-switch] frame %d to %s took %.2f ms\n", frameNo, layout::id(to), ms);
         devSwitchFrame = frameNo;
       }
+    }
+    winframe::sync();  // K-177: the desktop title bar follows the theme (new windows, theme changes)
+    if (static const char* dumpAt = std::getenv("GL_THEME_DUMP"); dumpAt && std::atoi(dumpAt) == ImGui::GetFrameCount()) {
+      // K-177 tests: the palette and the colours the top bar, browser and playlist drew last frame.
+      static char buf[2048];
+      theme::devDump(buf, sizeof buf);
+      const winframe::Look fl = winframe::lastApplied();
+      std::fprintf(stderr, "THEME_DUMP frame %d %s frame.dark=%d frame.caption=#%06X frame.count=%d\n", ImGui::GetFrameCount(), buf, fl.dark ? 1 : 0,
+                   static_cast<unsigned>(fl.caption), winframe::applyCount());
     }
     ImGui::NewFrame();
     keys::escapeFrameBegin();  // K-124: what Esc may meet this frame (popups, drags, text fields)

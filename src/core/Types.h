@@ -59,6 +59,21 @@ struct BendPoint {
   bool operator==(const BendPoint& o) const { return tick == o.tick && semis == o.semis && curve == o.curve && tension == o.tension; }
 };
 
+// K-144: per-note expression (MPE). Pitch is semitones from the note's own pitch, Pressure 0..1,
+// Timbre 0..1 (centre 0.5: a controller's slide, CC74).
+enum class ExprDim : uint8_t { Pitch = 0, Pressure = 1, Timbre = 2 };
+// What a channel does with pressure or timbre: the instrument's own choice, nothing, the level
+// (up to +6 dB at full amount) or the brightness (a high shelf, up to +-9 dB at full amount).
+enum class ExprUse : uint8_t { Instrument = 0, Off = 1, Level = 2, Brightness = 3 };
+// A channel's expression setting (Channel::expr).
+struct ExprSettings {
+  bool pitch = true;  // per-note pitch (MPE bend) moves each note
+  ExprUse pressure = ExprUse::Instrument, timbre = ExprUse::Instrument;
+  float amount = 1.0f;  // 0..1
+  bool neutral() const { return pitch && pressure == ExprUse::Instrument && timbre == ExprUse::Instrument && amount == 1.0f; }
+  bool operator==(const ExprSettings& o) const { return pitch == o.pitch && pressure == o.pressure && timbre == o.timbre && amount == o.amount; }
+};
+
 // One piano-roll note.
 struct Note {
   Tick start = 0;               // ticks from pattern/clip start
@@ -84,6 +99,11 @@ struct Note {
   // K-25: the note's pitch bend line (core/NoteBend.h), empty = none. Point times count from the
   // note's start, so moves, transposes and copies carry it and a resize keeps its timing.
   std::vector<BendPoint> bend;
+  // K-144: the note's expression lanes (MPE pressure and timbre), the same point shape as `bend`
+  // with `semis` holding the value: pressure 0..1, timbre -0.5..0.5 from its centre (so 0 is
+  // neutral in both, as before a line's first point). Empty = none. Moves, copies and resizes
+  // carry them as they carry `bend`.
+  std::vector<BendPoint> pressure, timbre;
   // K-22: a channel rack step shown in (or moved into) the piano roll, FL's step note (stored with
   // length 0 in .flp files). While it lasts one step of its pattern it plays exactly as the step
   // did: its step's swing, its offset inside the step, one step long (or truncated by the channel's
@@ -104,13 +124,14 @@ struct Note {
 
   bool hasProps() const {
     return pan != 0 || fine != 0 || release != kNoteReleaseDefault || modX != kNoteModCentre || modY != kNoteModCentre ||
-           color != 0 || slide || porta || muted || group != 0 || !bend.empty() || step || !tracker.empty();
+           color != 0 || slide || porta || muted || group != 0 || !bend.empty() || step || !tracker.empty() ||
+           !pressure.empty() || !timbre.empty();
   }
   bool operator==(const Note& o) const {
     return start == o.start && length == o.length && pitch == o.pitch && velocity == o.velocity && pan == o.pan &&
            fine == o.fine && release == o.release && modX == o.modX && modY == o.modY && color == o.color &&
            slide == o.slide && porta == o.porta && muted == o.muted && group == o.group && frac == o.frac && endFrac == o.endFrac &&
-           bend == o.bend && step == o.step && tracker == o.tracker;
+           bend == o.bend && step == o.step && tracker == o.tracker && pressure == o.pressure && timbre == o.timbre;
   }
 };
 

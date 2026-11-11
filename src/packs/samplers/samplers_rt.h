@@ -364,6 +364,16 @@ class MultiSamplerGen final : public Generator {
   void onMidi(uint8_t st, uint8_t d1, uint8_t d2) override {
     if (sfzOn_) sfz_->midi(st, d1, d2);
   }
+  // K-144: an SFZ map hears note pressure as channel aftertouch and timbre as CC 74, as the
+  // map's own opcodes (*_chanaft, *_oncc74) ask; zone maps take the channel's generic response.
+  unsigned ownExpression() const override { return sfzOn_ ? (1u << 1) | (1u << 2) : 0u; }
+  void onExpr(uint32_t id, ExprDim d, float v) override {
+    (void)id;
+    if (!sfzOn_) return;
+    const auto b = static_cast<uint8_t>(std::clamp(std::lround(v * 127.0f), 0L, 127L));
+    if (d == ExprDim::Pressure) sfz_->midi(0xD0, b, 0);
+    else if (d == ExprDim::Timbre) sfz_->midi(0xB0, 74, b);
+  }
   void onNoteOn(uint32_t id, double pitch, float vel) override {
     if (sfzOn_) {
       sfz_->noteOn(id, pitch, vel, 1);

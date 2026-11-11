@@ -270,6 +270,27 @@ void pushNote(lua_State* L, const Note& n, bool selected) {
     }
     lua_setfield(L, -2, "bend");
   }
+  // K-144: expression lanes, { {time = ticks from the note start, value = 0..1, curve, tension}, ... }
+  // (timbre: 0.5 is its centre).
+  auto lane = [&](const std::vector<BendPoint>& pts, const char* key, double base) {
+    if (pts.empty()) return;
+    lua_createtable(L, static_cast<int>(pts.size()), 0);
+    for (size_t i = 0; i < pts.size(); ++i) {
+      lua_createtable(L, 0, 4);
+      lua_pushnumber(L, static_cast<lua_Number>(pts[i].tick));
+      lua_setfield(L, -2, "time");
+      lua_pushnumber(L, static_cast<lua_Number>(base + static_cast<double>(pts[i].semis)));
+      lua_setfield(L, -2, "value");
+      lua_pushinteger(L, pts[i].curve);
+      lua_setfield(L, -2, "curve");
+      lua_pushnumber(L, static_cast<lua_Number>(pts[i].tension));
+      lua_setfield(L, -2, "tension");
+      lua_rawseti(L, -2, static_cast<lua_Integer>(i + 1));
+    }
+    lua_setfield(L, -2, key);
+  };
+  lane(n.pressure, "pressure", 0.0);
+  lane(n.timbre, "timbre", 0.5);
 }
 
 namespace {
@@ -351,6 +372,35 @@ bool readNote(lua_State* L, int t, Note& n, bool& selected, std::string* err) {
   }
   lua_pop(L, 1);
   gl::bend::normalize(n.bend);
+  auto lane = [&](std::vector<BendPoint>& pts, const char* key, double base) {  // K-144
+    pts.clear();
+    lua_getfield(L, t, key);
+    if (lua_istable(L, -1)) {
+      const lua_Integer count = std::min<lua_Integer>(static_cast<lua_Integer>(lua_rawlen(L, -1)), gl::bend::kMaxPoints * 2);
+      for (lua_Integer i = 1; i <= count; ++i) {
+        lua_rawgeti(L, -1, i);
+        if (lua_istable(L, -1)) {
+          auto field = [&](const char* k, double dflt) {
+            lua_getfield(L, -1, k);
+            const double v = lua_isnumber(L, -1) ? lua_tonumber(L, -1) : dflt;
+            lua_pop(L, 1);
+            return std::isfinite(v) ? v : dflt;
+          };
+          BendPoint p;
+          p.tick = static_cast<float>(std::clamp(field("time", 0), 0.0, 1e9));
+          p.semis = static_cast<float>(std::clamp(field("value", base), 0.0, 1.0) - base);
+          p.curve = static_cast<uint8_t>(std::clamp(field("curve", 0), 0.0, static_cast<double>(gl::bend::CurveCount - 1)));
+          p.tension = static_cast<float>(std::clamp(field("tension", 0), -1.0, 1.0));
+          pts.push_back(p);
+        }
+        lua_pop(L, 1);
+      }
+    }
+    lua_pop(L, 1);
+    gl::bend::normalize(pts);
+  };
+  lane(n.pressure, "pressure", 0.0);
+  lane(n.timbre, "timbre", 0.5);
   return true;
 }
 

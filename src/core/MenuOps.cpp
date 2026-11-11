@@ -887,6 +887,8 @@ void chop(std::vector<Note>& notes, NoteSel& sel, Tick len) {
       c.start = n.start + s;
       c.length = std::min(len, n.length - s);
       if (!n.bend.empty()) c.bend = gl::bend::head(gl::bend::tail(n.bend, static_cast<double>(s)), static_cast<double>(c.length));  // K-25: its piece of the line
+      if (!n.pressure.empty()) c.pressure = gl::bend::head(gl::bend::tail(n.pressure, static_cast<double>(s)), static_cast<double>(c.length));  // K-144
+      if (!n.timbre.empty()) c.timbre = gl::bend::head(gl::bend::tail(n.timbre, static_cast<double>(s)), static_cast<double>(c.length));
       out.push_back(c);
       os.push_back(sel[i]);
     }
@@ -907,8 +909,12 @@ void glue(std::vector<Note>& notes, NoteSel& sel) {
       Tick end = notes[i].start + notes[i].length;
       if (notes[j].start > end) break;
       // K-25: the glued note's bend line continues where it started (a note inside keeps none of its own).
-      if ((!notes[i].bend.empty() || !notes[j].bend.empty()) && notes[j].start + notes[j].length > end)
-        gl::bend::append(notes[i].bend, notes[j].bend, static_cast<double>(notes[j].start - notes[i].start));
+      if (notes[j].start + notes[j].length > end) {  // K-144: the expression lanes continue the same way
+        const double at = static_cast<double>(notes[j].start - notes[i].start);
+        if (!notes[i].bend.empty() || !notes[j].bend.empty()) gl::bend::append(notes[i].bend, notes[j].bend, at);
+        if (!notes[i].pressure.empty() || !notes[j].pressure.empty()) gl::bend::append(notes[i].pressure, notes[j].pressure, at);
+        if (!notes[i].timbre.empty() || !notes[j].timbre.empty()) gl::bend::append(notes[i].timbre, notes[j].timbre, at);
+      }
       notes[i].length = std::max(end, notes[j].start + notes[j].length) - notes[i].start;
       gone[j] = true;
     }

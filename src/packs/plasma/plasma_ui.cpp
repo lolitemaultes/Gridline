@@ -108,7 +108,7 @@ Pal makePal(const theme::Palette& T) {
   p.capTop = d ? T.surface600 : T.surface800;
   p.capBot = d ? T.surface700 : T.surface700;
   p.rail = d ? T.field : T.surface600;
-  p.pointer = d ? mix(T.text, rgb(0xFFFFFF), 0.5f) : T.text;
+  p.pointer = d ? mix(T.text, T.paper, 0.5f) : T.text;
   p.keyWhite = T.keyWhite;
   p.keyBlack = T.keyBlack;
   p.keyDown = p.accent;
@@ -165,7 +165,7 @@ skin::Skin makeSkin(const Pal& p) {
 }
 // The palette of the current theme (rebuilt when the theme or its tweaks change).
 struct PalCache {
-  uint32_t key[10] = {};
+  uint32_t key[11] = {};
   Pal pal;
   skin::Skin skin;
   bool init = false;
@@ -173,8 +173,9 @@ struct PalCache {
 PalCache& palCache() {
   static PalCache c;
   const theme::Palette& T = theme::pal();
-  // every theme input (mode, brightness, contrast, accent) shows in one of these roles
-  const uint32_t k[10] = {T.surface900, T.surface800, T.surface700, T.field, T.text, T.textDim, T.well, T.led, T.accent, static_cast<uint32_t>(T.dark)};
+  // every theme input (mode, brightness, contrast, accent, white text) shows in one of these roles
+  const uint32_t k[11] = {T.surface900, T.surface800, T.surface700, T.field, T.text, T.textDim, T.well, T.led, T.accent, static_cast<uint32_t>(T.dark),
+                           static_cast<uint32_t>(T.whiteGlyphs)};  // K-177: the white text option
   // J-202: only the app's own palette drives it. Inside Plasma's skin scope theme::pal() is the
   // palette derived from Plasma's skin, which would rebuild the cache twice per frame (and
   // derive the roles from themselves); there the cached palette stays.

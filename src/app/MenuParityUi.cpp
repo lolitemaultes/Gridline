@@ -314,7 +314,7 @@ void channelSampleItems(App& a, ObjectId channel) {
     const PluginInfo* pi = findPlugin(c->plugin.type);
     const bool hasSample = pi && pi->usesSample && !c->plugin.data.empty() && c->plugin.data[0] != '{' &&
                            (c->plugin.data.find('\n') == std::string::npos || kerfmarks::hasNames(c->plugin.data));  // J-182: Kerf's names
-    if (ImGui::BeginMenu(i18n::tr("Open the sample in a new channel"), hasSample)) {
+    if (hasSample && ImGui::BeginMenu(i18n::tr("Open the sample in a new channel"))) {  // K-158: only a channel with a sample shows it
       const std::string path = kerfmarks::pathOf(c->plugin.data);
       for (const char* type : {"gl.sampler", "gl.granular", "gl.slicer"})
         if (const PluginInfo* ti = findPlugin(type); ti && ImGui::MenuItem(ti->name.c_str()))
@@ -351,6 +351,9 @@ void rackItems(App& a, const std::vector<ObjectId>& sel) {
     declickItems(a, sel);
     ImGui::EndMenu();
   }
+}
+
+void rackAllItems(App& a) {
   if (ImGui::BeginMenu(i18n::tr("Audio clip channels"))) {
     timeModeItems(a);
     ImGui::EndMenu();

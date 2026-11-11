@@ -209,7 +209,7 @@ msgstr ""
 msgid "None (system input device)"
 msgstr ""
 
-#: src/app/AsioUi.cpp src/app/ChannelEnvelopeUi.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/HostedUi.cpp src/app/McpUi.cpp src/app/MixerView.cpp src/app/PluginEditorsEqRef.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/PluginEditorsK3Gb.cpp src/app/PluginFoldersUi.cpp src/packs/modulation/modulation_patcher_ui.cpp src/packs/plasma/plasma_menus_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp src/packs/spectral/turntable_ui.cpp
+#: src/app/AsioUi.cpp src/app/ChannelEnvelopeUi.cpp src/app/ChannelSettings.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/HostedUi.cpp src/app/McpUi.cpp src/app/MixerView.cpp src/app/PluginEditorsEqRef.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/PluginEditorsK3Gb.cpp src/app/PluginFoldersUi.cpp src/packs/modulation/modulation_patcher_ui.cpp src/packs/plasma/plasma_menus_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp src/packs/spectral/turntable_ui.cpp
 msgid "Off"
 msgstr ""
 
@@ -655,6 +655,14 @@ msgstr ""
 
 #: src/app/AutomationEditor.cpp
 msgid "Deselect all"
+msgstr ""
+
+#: src/app/AutomationEditor.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp
+msgid "Drag the end to zoom the time (the other end stays put) · Ctrl+wheel: zoom at the pointer"
+msgstr ""
+
+#: src/app/AutomationEditor.cpp
+msgid "Drag to scroll through the clip · click beside the thumb to page · drag an end to zoom · double-click: fit the clip"
 msgstr ""
 
 #: src/app/AutomationEditor.cpp src/app/ContextMenus.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp
@@ -2333,6 +2341,10 @@ msgstr ""
 msgid "This channel already has a mixer track of its own: click to name the track after the channel"
 msgstr ""
 
+#: src/app/ChannelSettings.cpp src/app/SettingsKeysTheme.cpp
+msgid "Brightness"
+msgstr ""
+
 #: src/app/ChannelSettings.cpp
 msgid "CHANNEL"
 msgstr ""
@@ -2378,6 +2390,10 @@ msgid "ECHO"
 msgstr ""
 
 #: src/app/ChannelSettings.cpp
+msgid "EXPRESSION"
+msgstr ""
+
+#: src/app/ChannelSettings.cpp
 msgid "Edit this sample in Loupe: every edit comes back to this channel"
 msgstr ""
 
@@ -2394,11 +2410,19 @@ msgid "Instrument"
 msgstr ""
 
 #: src/app/ChannelSettings.cpp
+msgid "Instrument's choice"
+msgstr ""
+
+#: src/app/ChannelSettings.cpp
 msgid "LAYER"
 msgstr ""
 
 #: src/app/ChannelSettings.cpp
 msgid "Layer: this channel's notes also play on the checked channels"
+msgstr ""
+
+#: src/app/ChannelSettings.cpp src/packs/tracker/tracker_ui.cpp
+msgid "Level"
 msgstr ""
 
 #: src/app/ChannelSettings.cpp src/packs/plasma/plasma_osc_ui.cpp src/packs/samplers/samplers_ui.cpp src/plugin/PluginFrame.cpp
@@ -2407,6 +2431,10 @@ msgstr ""
 
 #: src/app/ChannelSettings.cpp
 msgid "Mixer track this channel plays through"
+msgstr ""
+
+#: src/app/ChannelSettings.cpp
+msgid "Note bend"
 msgstr ""
 
 #: src/app/ChannelSettings.cpp
@@ -2422,6 +2450,14 @@ msgid "PREVIEW"
 msgstr ""
 
 #: src/app/ChannelSettings.cpp
+msgid "Per-note pitch from an MPE controller bends each note on its own"
+msgstr ""
+
+#: src/app/ChannelSettings.cpp
+msgid "Pressure"
+msgstr ""
+
+#: src/app/ChannelSettings.cpp
 msgid "Show the channel strip (volume, pan, pitch, keyboard)"
 msgstr ""
 
@@ -2431,6 +2467,18 @@ msgstr ""
 
 #: src/app/ChannelSettings.cpp
 msgid "This channel is cut by notes of channels in this group (same number in both = cuts itself)"
+msgstr ""
+
+#: src/app/ChannelSettings.cpp
+msgid "Timbre"
+msgstr ""
+
+#: src/app/ChannelSettings.cpp
+msgid "What pressing harder on a held note does"
+msgstr ""
+
+#: src/app/ChannelSettings.cpp
+msgid "What sliding on a held note (CC 74) does"
 msgstr ""
 
 #: src/app/ChannelSettings.cpp src/app/PluginManager.cpp src/app/TrackReceiptUi.cpp src/packs/tracker/tracker_ui.cpp src/plugin/PluginFrame.cpp
@@ -4989,7 +5037,7 @@ msgstr ""
 msgid "Edit"
 msgstr ""
 
-#: src/app/CommandPaletteUi.cpp src/app/ContextMenus.cpp src/app/PluginManager.cpp src/core/TrackIconSet.cpp src/packs/edison/edison_form_ui.cpp src/packs/plasma/plasma_ui.cpp
+#: src/app/CommandPaletteUi.cpp src/app/PluginManager.cpp src/core/TrackIconSet.cpp src/packs/edison/edison_form_ui.cpp src/packs/plasma/plasma_ui.cpp
 msgid "Effects"
 msgstr ""
 
@@ -5281,6 +5329,10 @@ msgstr ""
 msgid "Clip source picker"
 msgstr ""
 
+#: src/app/ContextMenus.cpp src/packs/platter/platter_ui.cpp
+msgid "Clips"
+msgstr ""
+
 #: src/app/ContextMenus.cpp
 msgid "Clips of the current pattern"
 msgstr ""
@@ -5490,11 +5542,23 @@ msgid "Every 2 from step 2"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
+msgid "Every 2 steps"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
 msgid "Every 4 from step 3"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
+msgid "Every 4 steps"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
 msgid "Every 8 from step 5"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
+msgid "Every 8 steps"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
@@ -5514,6 +5578,10 @@ msgid "Every other note"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
+msgid "Every step"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
 msgid "Expand all grouped tracks"
 msgstr ""
 
@@ -5530,23 +5598,7 @@ msgid "Fade and volume handles on audio clips"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
-msgid "Fill every 2 steps"
-msgstr ""
-
-#: src/app/ContextMenus.cpp
-msgid "Fill every 4 steps"
-msgstr ""
-
-#: src/app/ContextMenus.cpp
-msgid "Fill every 8 steps"
-msgstr ""
-
-#: src/app/ContextMenus.cpp
-msgid "Fill every step"
-msgstr ""
-
-#: src/app/ContextMenus.cpp
-msgid "Fill offbeats"
+msgid "Fill"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
@@ -5719,10 +5771,6 @@ msgstr ""
 
 #: src/app/ContextMenus.cpp
 msgid "Layers can only hold instrument channels"
-msgstr ""
-
-#: src/app/ContextMenus.cpp src/app/LauncherUi.cpp src/app/Menus.cpp src/packs/seltmann/seltmann_ui.cpp
-msgid "Layout"
 msgstr ""
 
 #: src/app/ContextMenus.cpp src/core/TrackIconSet.cpp src/packs/modulation/modulation_cvin_ui.cpp src/packs/platter/platter_ui.cpp
@@ -6471,6 +6519,10 @@ msgstr ""
 
 #: src/app/ContextMenus.cpp
 msgid "Steps to piano roll"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
+msgid "Stereo and polarity"
 msgstr ""
 
 #: src/app/ContextMenus.cpp src/app/MixerView.cpp
@@ -7523,6 +7575,10 @@ msgstr ""
 
 #: src/app/DisplayConfirmUi.cpp
 msgid "contrast"
+msgstr ""
+
+#: src/app/DisplayConfirmUi.cpp
+msgid "white text"
 msgstr ""
 
 #: src/app/DrawSmoothUi.cpp
@@ -9501,6 +9557,10 @@ msgstr ""
 msgid "LIBRARY"
 msgstr ""
 
+#: src/app/LauncherUi.cpp src/app/Menus.cpp src/packs/seltmann/seltmann_ui.cpp
+msgid "Layout"
+msgstr ""
+
 #: src/app/LauncherUi.cpp
 msgid "Mar"
 msgstr ""
@@ -10778,10 +10838,6 @@ msgid "Appearance"
 msgstr ""
 
 #: src/app/Menus.cpp
-msgid "Audio and recording"
-msgstr ""
-
-#: src/app/Menus.cpp
 msgid "Audio file as playlist clip..."
 msgstr ""
 
@@ -10899,6 +10955,10 @@ msgstr ""
 
 #: src/app/Menus.cpp
 msgid "Find next empty"
+msgstr ""
+
+#: src/app/Menus.cpp
+msgid "Freeze and hibernate"
 msgstr ""
 
 #: src/app/Menus.cpp
@@ -11141,6 +11201,14 @@ msgstr ""
 msgid "Unsolo all mixer tracks"
 msgstr ""
 
+#: src/app/Menus.cpp src/app/SettingsKeysTheme.cpp
+msgid "White text"
+msgstr ""
+
+#: src/app/Menus.cpp src/app/SettingsKeysTheme.cpp
+msgid "White text and glyphs"
+msgstr ""
+
 #: src/app/Menus.cpp
 msgid "Zoom (piano roll)"
 msgstr ""
@@ -11158,6 +11226,10 @@ msgid "Zoom to ticks (snap turns free)"
 msgstr ""
 
 #: src/app/MidiUi.cpp
+msgid "%.0f semitones"
+msgstr ""
+
+#: src/app/MidiUi.cpp
 msgid "%s chord mode · %s next chord"
 msgstr ""
 
@@ -11171,6 +11243,10 @@ msgstr ""
 
 #: src/app/MidiUi.cpp
 msgid "Any input"
+msgstr ""
+
+#: src/app/MidiUi.cpp
+msgid "Asks the system MIDI service again"
 msgstr ""
 
 #: src/app/MidiUi.cpp
@@ -11246,11 +11322,19 @@ msgid "Formula"
 msgstr ""
 
 #: src/app/MidiUi.cpp
+msgid "Gridline carries on without MIDI devices: audio, projects and the typing keyboard work as usual."
+msgstr ""
+
+#: src/app/MidiUi.cpp
 msgid "INPUT DEVICES"
 msgstr ""
 
 #: src/app/MidiUi.cpp
 msgid "Input port"
+msgstr ""
+
+#: src/app/MidiUi.cpp
+msgid "It tries again on its own in %d s. Tries so far: %d."
 msgstr ""
 
 #: src/app/MidiUi.cpp
@@ -11282,6 +11366,10 @@ msgid "Listening: move a control…"
 msgstr ""
 
 #: src/app/MidiUi.cpp
+msgid "Looking for MIDI devices…"
+msgstr ""
+
+#: src/app/MidiUi.cpp
 msgid "Loop recording: new take per pass"
 msgstr ""
 
@@ -11302,7 +11390,19 @@ msgid "MIDI channel"
 msgstr ""
 
 #: src/app/MidiUi.cpp
+msgid "MIDI devices are unavailable."
+msgstr ""
+
+#: src/app/MidiUi.cpp
 msgid "MIDI is not available."
+msgstr ""
+
+#: src/app/MidiUi.cpp
+msgid "MPE"
+msgstr ""
+
+#: src/app/MidiUi.cpp
+msgid "MPE controller"
 msgstr ""
 
 #: src/app/MidiUi.cpp
@@ -11327,6 +11427,10 @@ msgstr ""
 
 #: src/app/MidiUi.cpp
 msgid "Note / button"
+msgstr ""
+
+#: src/app/MidiUi.cpp
+msgid "Note bend range"
 msgstr ""
 
 #: src/app/MidiUi.cpp
@@ -11426,6 +11530,10 @@ msgid "Rescan devices"
 msgstr ""
 
 #: src/app/MidiUi.cpp
+msgid "Retry now"
+msgstr ""
+
+#: src/app/MidiUi.cpp
 msgid "Right-click any knob, fader or transport button and choose \"Link to controller…\"."
 msgstr ""
 
@@ -11485,12 +11593,24 @@ msgstr ""
 msgid "Target"
 msgstr ""
 
+#: src/app/MidiUi.cpp
+msgid "The system MIDI service is not responding."
+msgstr ""
+
+#: src/app/MidiUi.cpp
+msgid "The system MIDI service refused to open: %s"
+msgstr ""
+
 #: src/app/MidiUi.cpp src/app/SettingsKeysTheme.cpp src/app/TopBar.cpp
 msgid "Typing keyboard"
 msgstr ""
 
 #: src/app/MidiUi.cpp
 msgid "Waiting for the control to reach the current value…"
+msgstr ""
+
+#: src/app/MidiUi.cpp
+msgid "With MPE, channel 1 acts on the whole instrument and channels 2 to 16 each move their own note: bend, pressure and slide (CC 74)."
 msgstr ""
 
 #: src/app/MidiUi.cpp
@@ -12006,7 +12126,27 @@ msgid "Drag cancelled"
 msgstr ""
 
 #: src/app/PianoRoll.cpp
+msgid "Drag the end to zoom the key height (the other end stays put) · Alt+wheel: zoom at the pointer"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
 msgid "Drag to resize the lane · double-click: automatic height"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
+msgid "Drag to scroll through the keys · click beside the thumb to page · drag an end to zoom · double-click: back to the notes"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
+msgid "Drag to scroll through the pattern · click beside the thumb to page · drag an end to zoom · double-click: fit the pattern · wheel: scroll sideways"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
+msgid "Drag to zoom the key height"
+msgstr ""
+
+#: src/app/PianoRoll.cpp src/app/Playlist.cpp
+msgid "Drag to zoom the time"
 msgstr ""
 
 #: src/app/PianoRoll.cpp
@@ -12442,15 +12582,7 @@ msgid "Double-click: show the track's instrument · double-click the name: renam
 msgstr ""
 
 #: src/app/Playlist.cpp
-msgid "Drag the end to zoom the time (the other end stays put) · Ctrl+wheel: zoom at the pointer"
-msgstr ""
-
-#: src/app/Playlist.cpp
 msgid "Drag the end to zoom the track height (the other end stays put) · Alt+wheel: zoom at the pointer"
-msgstr ""
-
-#: src/app/Playlist.cpp
-msgid "Drag to zoom the time"
 msgstr ""
 
 #: src/app/Playlist.cpp
@@ -14950,10 +15082,6 @@ msgid "Back to the default shortcut"
 msgstr ""
 
 #: src/app/SettingsKeysTheme.cpp
-msgid "Brightness"
-msgstr ""
-
-#: src/app/SettingsKeysTheme.cpp
 msgid "Bypass snap"
 msgstr ""
 
@@ -15078,7 +15206,7 @@ msgid "No shortcut for this command"
 msgstr ""
 
 #: src/app/SettingsKeysTheme.cpp
-msgid "Panels, fields and grids lighter or darker"
+msgid "Panels, fields and grids lighter or darker, down to pitch black"
 msgstr ""
 
 #: src/app/SettingsKeysTheme.cpp
@@ -15151,6 +15279,10 @@ msgstr ""
 
 #: src/app/SettingsKeysTheme.cpp
 msgid "Text and lines against the panels"
+msgstr ""
+
+#: src/app/SettingsKeysTheme.cpp
+msgid "Text, folders and idle icons in pure white on dark panels (light panels keep dark text)"
 msgstr ""
 
 #: src/app/SettingsKeysTheme.cpp
@@ -21774,10 +21906,6 @@ msgid "Clear mapping"
 msgstr ""
 
 #: src/packs/platter/platter_ui.cpp
-msgid "Clips"
-msgstr ""
-
-#: src/packs/platter/platter_ui.cpp
 msgid "Controller..."
 msgstr ""
 
@@ -24743,10 +24871,6 @@ msgstr ""
 
 #: src/packs/tracker/tracker_ui.cpp
 msgid "Lengthen the sample to hold the repeats"
-msgstr ""
-
-#: src/packs/tracker/tracker_ui.cpp
-msgid "Level"
 msgstr ""
 
 #: src/packs/tracker/tracker_ui.cpp

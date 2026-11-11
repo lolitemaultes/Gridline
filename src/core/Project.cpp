@@ -265,6 +265,14 @@ void channelExtrasToJson(const Channel& c, Json& jc) {
   if (c.mono) jc.object["mono"] = boolean(true);
   if (c.porta) jc.object["porta"] = boolean(true);
   if (c.portaTime != d.portaTime) jc.object["portaTime"] = num(c.portaTime);
+  if (!c.expr.neutral()) {  // K-144
+    Json e = Json::makeObject();
+    if (!c.expr.pitch) e.object["pitch"] = boolean(false);
+    if (c.expr.pressure != ExprUse::Instrument) e.object["pressure"] = num(static_cast<int>(c.expr.pressure));
+    if (c.expr.timbre != ExprUse::Instrument) e.object["timbre"] = num(static_cast<int>(c.expr.timbre));
+    if (c.expr.amount != 1.0f) e.object["amount"] = num(c.expr.amount);
+    jc.object["expression"] = e;
+  }
   if (c.cutGroup) jc.object["cutGroup"] = num(c.cutGroup);
   if (c.cutBy) jc.object["cutBy"] = num(c.cutBy);
   if (!(c.echo == d.echo)) {
@@ -342,6 +350,13 @@ void channelExtrasFromJson(const Json& jc, Channel& c) {
   c.mono = flag(jc, "mono");
   c.porta = flag(jc, "porta");
   c.portaTime = static_cast<float>(std::clamp(jc.num("portaTime", 0.1), 0.0, 2.0));
+  if (const Json* e = jc.find("expression"); e && e->is(Json::Type::Object)) {  // K-144
+    auto use = [&](const char* k) { return static_cast<ExprUse>(jsonInt<int>(std::clamp(e->num(k, 0), 0.0, 3.0))); };
+    c.expr.pitch = flag(*e, "pitch", true);
+    c.expr.pressure = use("pressure");
+    c.expr.timbre = use("timbre");
+    c.expr.amount = static_cast<float>(std::clamp(e->num("amount", 1), 0.0, 1.0));
+  }
   c.cutGroup = jsonInt<int>(std::clamp(jc.num("cutGroup", 0), 0.0, static_cast<double>(kMaxCutGroups)));
   c.cutBy = jsonInt<int>(std::clamp(jc.num("cutBy", 0), 0.0, static_cast<double>(kMaxCutGroups)));
   if (const Json* e = jc.find("echo"); e && e->is(Json::Type::Object)) {
@@ -414,9 +429,12 @@ void noteToJson(const Note& n, Json& jn) {
   if (n.frac != 0.f) jn.object["frac"] = num(n.frac);  // J-159
   if (n.endFrac != 0.f) jn.object["endFrac"] = num(n.endFrac);
   if (n.step) jn.object["step"] = boolean(true);  // K-22: a rack step in the piano roll
-  if (!n.bend.empty()) {  // K-25: [[tick, semitones, curve, tension], ...] (curve / tension left out when 0)
+  // K-25: [[tick, semitones, curve, tension], ...] (curve / tension left out when 0); K-144: the
+  // pressure (0..1) and timbre (-0.5..0.5 around the centre) lanes in the same form.
+  auto line = [&](const std::vector<BendPoint>& pts, const char* key) {
+    if (pts.empty()) return;
     Json b = Json::makeArray();
-    for (const auto& p : n.bend) {
+    for (const auto& p : pts) {
       Json jp = Json::makeArray();
       jp.array.push_back(num(p.tick));
       jp.array.push_back(num(p.semis));
@@ -424,8 +442,11 @@ void noteToJson(const Note& n, Json& jn) {
       if (p.tension != 0.f) jp.array.push_back(num(p.tension));  // K-28
       b.array.push_back(std::move(jp));
     }
-    jn.object["bend"] = std::move(b);
-  }
+    jn.object[key] = std::move(b);
+  };
+  line(n.bend, "bend");
+  line(n.pressure, "pressure");
+  line(n.timbre, "timbre");
   if (!n.tracker.empty()) {  // K-76: the note's tracker cells, as hex
     static const char* hex = "0123456789abcdef";
     std::string h;
@@ -452,21 +473,26 @@ void noteFromJson(const Json& e, Note& n) {
   n.frac = std::isfinite(fr) && fr > 0 && fr < 1 ? static_cast<float>(fr) : 0.f;
   n.endFrac = std::isfinite(ef) && ef > -1 && ef < 1 ? static_cast<float>(ef) : 0.f;
   n.frac = std::min(n.frac, 0.99999994f);
-  n.bend.clear();
-  if (const Json* b = e.find("bend"); b && b->is(Json::Type::Array)) {  // K-25
+  auto line = [&](std::vector<BendPoint>& pts, const char* key, double lo, double hi) {  // K-25, K-144
+    pts.clear();
+    const Json* b = e.find(key);
+    if (!b || !b->is(Json::Type::Array)) return;
     for (const auto& jp : b->array) {
       if (!jp.is(Json::Type::Array) || jp.array.size() < 2) continue;
       auto at = [&](size_t i) { return i < jp.array.size() && jp.array[i].is(Json::Type::Number) ? jp.array[i].number : 0.0; };
       BendPoint p;
       p.tick = static_cast<float>(std::clamp(at(0), 0.0, 1e9));
-      p.semis = static_cast<float>(std::clamp(at(1), -1e3, 1e3));
+      p.semis = static_cast<float>(std::clamp(at(1), lo, hi));
       p.curve = static_cast<uint8_t>(std::clamp(at(2), 0.0, 255.0));
       p.tension = static_cast<float>(std::clamp(at(3), -1.0, 1.0));  // K-28 (0 in older files)
-      n.bend.push_back(p);
-      if (n.bend.size() >= static_cast<size_t>(bend::kMaxPoints) * 2) break;
+      pts.push_back(p);
+      if (pts.size() >= static_cast<size_t>(bend::kMaxPoints) * 2) break;
     }
-    bend::normalize(n.bend);
-  }
+    bend::normalize(pts);
+  };
+  line(n.bend, "bend", -1e3, 1e3);
+  line(n.pressure, "pressure", 0.0, 1.0);
+  line(n.timbre, "timbre", -0.5, 0.5);
   n.tracker.clear();
   if (const Json* t = e.find("trk"); t && t->is(Json::Type::String) && t->str.size() % 2 == 0 && t->str.size() <= 2 * 65536) {  // K-76
     auto nib = [](char c) { return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1; };

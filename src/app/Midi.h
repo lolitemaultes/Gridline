@@ -11,6 +11,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include "../core/MidiOpen.h"
 #include "../core/MidiSync.h"
 #include "../core/Remote.h"
 
@@ -47,6 +48,8 @@ struct MidiRouting {
   bool ignoreNoteOff = false;     // one-shot pads: note-offs are dropped
   bool sostenuto = true, soft = true;
   float softFactor = 0.6f;
+  bool mpe = false;               // K-144: MPE controller (channel 1 = master, 2..16 = one note each)
+  float mpeBendRange = 48.0f;     // its per-note pitch bend range, semitones
   MidiRouting() {
     for (int i = 0; i < 16; ++i) {
       route[i] = -1;
@@ -60,8 +63,23 @@ class MidiManager {
   explicit MidiManager(AudioEngine& engine);
   ~MidiManager();
 
-  void scan();  // refresh the port lists (keeps the settings of known devices)
-  // Opens the enabled inputs and the selected output.
+  // Refreshes the port lists (keeps the settings of known devices). The system MIDI service
+  // is asked on a background thread (it can hang or refuse): update() takes the answer.
+  void scan();
+  // Every frame (UI thread): takes the service's answer, opens the ports once it is
+  // available, retries on its own while it is not. True when the port lists changed.
+  bool update();
+  // Startup: gives a working service up to `seconds` to answer, then takes its answer.
+  void waitForService(double seconds);
+  // The Retry button: asks the service again now.
+  void retry();
+  MidiOpenState serviceState() const { return opener_->state(); }
+  const std::string& serviceError() const { return opener_->error(); }
+  int serviceAttempts() const { return opener_->attempts(); }
+  double serviceRetryIn() const { return opener_->nextRetryIn(clockNow()); }
+  bool serviceAvailable() const { return opener_->state() == MidiOpenState::Ready; }
+  double serviceAge() const { return clockNow() - createdAt_; }  // seconds since the service was first asked
+  // Opens the enabled inputs and the selected output (only once the service answered).
   void apply();
   void load(const std::string& configFile);  // midi.json (or the old midi.txt)
   void save(const std::string& configFile) const;
@@ -133,6 +151,10 @@ class MidiManager {
   std::mutex followerMu_;
   std::thread sender_;
   std::atomic<bool> quit_{false};
+  std::unique_ptr<MidiOpener> opener_;
+  MidiOpenState lastState_ = MidiOpenState::Idle;
+  double createdAt_ = clockNow();
+  void adopt(MidiProbeResult r);
 };
 
 }  // namespace gl

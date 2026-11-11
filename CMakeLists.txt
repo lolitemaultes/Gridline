@@ -420,6 +420,11 @@ add_executable(gridline_tests_midi_workflow tests/test_midi_workflow.cpp)
 target_link_libraries(gridline_tests_midi_workflow PRIVATE gridline_core)
 target_compile_options(gridline_tests_midi_workflow PRIVATE ${GL_WARN})
 add_test(NAME midi_workflow COMMAND gridline_tests_midi_workflow WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+# Opening the system MIDI service in the background: timeout, retry, refusals and throws.
+add_executable(gridline_tests_midi_open tests/test_midi_open.cpp)
+target_link_libraries(gridline_tests_midi_open PRIVATE gridline_core)
+target_compile_options(gridline_tests_midi_open PRIVATE ${GL_WARN})
+add_test(NAME midi_open COMMAND gridline_tests_midi_open WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 add_executable(gridline_tests_typing_octave tests/test_typing_octave.cpp)
 target_link_libraries(gridline_tests_typing_octave PRIVATE gridline_core)
 target_compile_options(gridline_tests_typing_octave PRIVATE ${GL_WARN})
@@ -1712,6 +1717,17 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
   target_include_directories(gridline_tests_theme_settings PRIVATE src tests)
   target_compile_options(gridline_tests_theme_settings PRIVATE ${GL_WARN})
   add_test(NAME theme_settings COMMAND gridline_tests_theme_settings WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+  # K-177: brightness down to pitch black and the white text option (mapping, readability, defaults kept), headless.
+  add_executable(gridline_tests_k177_theme tests/test_k177_theme.cpp src/app/Theme.cpp src/app/ThemeSettings.cpp)
+  target_link_libraries(gridline_tests_k177_theme PRIVATE imgui gridline_core)
+  target_include_directories(gridline_tests_k177_theme PRIVATE src tests)
+  target_compile_options(gridline_tests_k177_theme PRIVATE ${GL_WARN})
+  add_test(NAME k177_theme COMMAND gridline_tests_k177_theme WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+  # K-177: no new hard-coded light colours in UI code (allowlist: tests/theme_colour_allowlist.tsv).
+  add_executable(gridline_tests_k177_colour_audit tests/test_k177_colour_audit.cpp)
+  target_include_directories(gridline_tests_k177_colour_audit PRIVATE tests)
+  target_compile_options(gridline_tests_k177_colour_audit PRIVATE ${GL_WARN})
+  add_test(NAME k177_colour_audit COMMAND gridline_tests_k177_colour_audit ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/tests/theme_colour_allowlist.tsv)
   # J-137: the Theme page's control style cards fit, wrap and keep their previews whole, headless.
   add_executable(gridline_tests_theme_layout tests/test_theme_layout.cpp)
   target_include_directories(gridline_tests_theme_layout PRIVATE src tests)
@@ -1891,6 +1907,15 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(k176_mixer_select_app PROPERTIES TIMEOUT 300)
 
+    # A system MIDI service that refuses or hangs: the app starts, plays and says so in Settings > MIDI.
+    foreach(mode fail hang)
+      add_test(NAME midi_unavailable_${mode}_app
+               COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                       -DOUT=${CMAKE_BINARY_DIR}/midi_unavailable_${mode} -DMODE=${mode} -P ${CMAKE_SOURCE_DIR}/tests/midi_unavailable_app.cmake
+               WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+      set_tests_properties(midi_unavailable_${mode}_app PROPERTIES TIMEOUT 180)
+    endforeach()
+
     # J-84: channel rack with long patterns / narrow racks: knobs drawn, steps scroll, Q-15 wheel routing.
     add_test(NAME j84_rack_scroll
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
@@ -1915,6 +1940,14 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -DOUT=${CMAKE_BINARY_DIR}/k24_zoom_anchor -P ${CMAKE_SOURCE_DIR}/tests/k24_zoom_anchor.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(k24_zoom_anchor PROPERTIES TIMEOUT 600)
+    # The piano roll's scrollers (thumbs scroll, ends zoom with the other end fixed, the rail pages, a
+    # double-click fits) and its wheel and trackpad scrolling (sideways over the time strip, gliding notches,
+    # 1:1 trackpad deltas, Ctrl+wheel anchored at the pointer).
+    add_test(NAME k167_piano_scroll_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DSONG=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/k167_piano_scroll -P ${CMAKE_SOURCE_DIR}/tests/k167_piano_scroll_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(k167_piano_scroll_app PROPERTIES TIMEOUT 400)
 
     # K-12: the playlist track "+": a click opens its menu; an existing channel, a new instrument (a favourite)
     # and a new pattern on the track (clip place, piano roll on the track's channel), one undo step each; the
@@ -2355,9 +2388,11 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(k72_popups_app PROPERTIES TIMEOUT 300 SKIP_REGULAR_EXPRESSION "SKIP: ")
     # K-77: the main menus and the context menus in their planned order (open, create, edit,
-    # properties, arrange, removals last), with no empty sections and no item listed twice.
+    # properties, arrange, removals last), with no empty sections and no item listed twice. K-158: no
+    # menu taller than a 1440x900 window, submenu rows in place, every row from before still there.
     add_test(NAME k77_menu_order_app
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DBEFORE=${CMAKE_SOURCE_DIR}/tests/k158_menu_rows_before.txt
                      -DOUT=${CMAKE_BINARY_DIR}/k77_menu_order -P ${CMAKE_SOURCE_DIR}/tests/k77_menu_order_app.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(k77_menu_order_app PROPERTIES TIMEOUT 600)
@@ -2456,6 +2491,14 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -P ${CMAKE_SOURCE_DIR}/tests/k37_sweepkick_env.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(k37_sweepkick_env_app PROPERTIES TIMEOUT 300)
+
+    # K-177: brightness to pitch black and white text: the top bar, browser folders, waveforms and
+    # the desktop title bar take their colours from the theme; a live switch matches a fresh start.
+    add_test(NAME k177_theme_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/k177_theme_app -P ${CMAKE_SOURCE_DIR}/tests/k177_theme_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(k177_theme_app PROPERTIES TIMEOUT 600)
 
     # J-142: relative volume / fade drags across a selection of audio clips (one undo step each),
     # a single clip edited alone, and right-clicks on a clip's title strip: the name box and the

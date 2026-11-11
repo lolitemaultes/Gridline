@@ -24,14 +24,20 @@ namespace lay = host::layout;
 
 namespace {
 
-// Control bar look (slate wrapper roles, drawn by Gridline).
+// Control bar look (slate wrapper roles, drawn by Gridline). K-177: from the theme's dark
+// faces (the stock dark slate by default, in both modes), so the bar follows brightness down
+// to pitch black, contrast and white text instead of staying a fixed slate.
 struct BarLook {
-  ImU32 top = theme::rgb(0x434C52), bottom = theme::rgb(0x323A3F), edge = theme::rgb(0x23292D);
-  ImU32 text = theme::rgb(0xE4ECEE), dim = theme::rgb(0x9FA8AD), faint = theme::rgb(0x6C767C);
-  ImU32 btn = theme::rgb(0x2A3237), btnHov = theme::rgb(0x36404A), btnOn = theme::rgb(0x3D63DD);
-  ImU32 lcd = theme::rgb(0x161A1D), lcdText = theme::rgb(0x9FE0A8);
-  ImU32 led = theme::rgb(0x4CD964), ledOff = theme::rgb(0x55402F), warn = theme::rgb(0xE5484D);
-  ImU32 panel = theme::rgb(0x262C30);
+  const theme::Palette& D = theme::darkFaces();
+  ImU32 top = D.surface800, bottom = theme::mix(D.surface900, D.surface950, 0.2f), edge = theme::mix(D.line, D.ink, 0.15f);
+  ImU32 text = D.whiteGlyphs ? D.text : theme::mix(D.text, D.paper, 0.35f), dim = D.textDim, faint = theme::mix(D.textFaint, D.surface950, 0.15f);
+  ImU32 btn = theme::mix(D.surface950, D.surface900, 0.3f), btnHov = D.surface900;
+  ImU32 btnOn = theme::tweaks().accent != theme::Tweaks::kKeep ? D.accent : theme::rgb(0x3D63DD);  // selection blue unless an accent is chosen
+  ImU32 lcd = theme::mix(D.field, D.ink, 0.35f), lcdText = D.whiteGlyphs ? D.text : theme::rgb(0x9FE0A8);  // LCD green (role)
+  float darker = std::max(0.0f, -theme::brightnessAmount(theme::tweaks().brightness));  // 1 = pitch black
+  ImU32 led = theme::rgb(0x4CD964), ledOff = theme::mix(theme::rgb(0x55402F), D.surface950, darker * 0.6f);  // LED roles
+  ImU32 warn = theme::rgb(0xE5484D);
+  ImU32 panel = D.surface950;
 };
 
 using Key = std::pair<const App*, uint64_t>;
@@ -166,7 +172,7 @@ void drawBar(pluginbar::Bar& w, host::HostedInstance* hi) {
     const bool clicked = barButton(id, B.items[it], 0);
     ui::Hint(hint);
     boxAt(dl, p0, p1, lit ? K.btnOn : ImGui::IsItemHovered() ? K.btnHov : K.btn, K.edge);
-    centredText(dl, fr, 10.5f, p0, p1, lit ? theme::rgb(0xFFFFFF) : K.text, label);
+    centredText(dl, fr, 10.5f, p0, p1, lit ? K.D.paper : K.text, label);
     return clicked;
   };
   const bool sandboxed = hi && hi->sandboxed();

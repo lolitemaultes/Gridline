@@ -172,6 +172,7 @@ void tapButton(App& a, float size) {
 
 void panel(ImDrawList* dl, float x, float w, float top) {
   const auto& P = pal();
+  theme::devNote("topbar.panel", P.surface900);  // K-177 dev
   dl->AddRectFilled(ImVec2(x, top), ImVec2(x + w, top + kPanelH), P.surface900, theme::kRadiusLg);
   if (P.dark) dl->AddLine(ImVec2(x + 3, top + 0.5f), ImVec2(x + w - 3, top + 0.5f), theme::withAlpha(P.paper, 0.07f));
   dl->AddRect(ImVec2(x, top), ImVec2(x + w, top + kPanelH), P.dark ? theme::withAlpha(P.ink, 0.5f) : P.line, theme::kRadiusLg);
@@ -282,6 +283,7 @@ float drawTopBar(App& a) {
   ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0);
   ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0);
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+  theme::devNote("topbar", P.chrome);  // K-177 dev: the top bar background
   ImGui::PushStyleVar(ImGuiStyleVar_WindowMinSize, ImVec2(1, 1));
   ImGui::PushStyleColor(ImGuiCol_WindowBg, theme::vec(P.chrome));
   ImGui::Begin("##topbar", nullptr,

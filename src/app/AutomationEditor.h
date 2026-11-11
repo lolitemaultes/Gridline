@@ -25,6 +25,12 @@ void openPatternAutomation(App& a, ObjectId pattern, ParamId target);
 // What the editor shows (false while closed): a playlist automation clip
 // (`automation`; pattern kNoId) or a pattern's clip (pattern, target).
 bool automationEditorTarget(ObjectId* automation, ObjectId* pattern, ParamId* target);
+// Dev check (--dev-input "autoedit"): the view as drawn last frame: scroll (px), zoom (px per
+// tick), and the time scroller's thumb (x span) at height barY.
+struct AutomationEditorView {
+  float scrollX = 0, pxPerTick = 0, thumb0 = 0, thumb1 = 0, barY = 0, gridX0 = 0, gridX1 = 0;
+};
+const AutomationEditorView& automationEditorView();
 // Development (screenshots): 1 = the editor on a demo clip, 2 = with the LFO
 // tool, 3 = a pattern-automation lane in the piano roll (--show autoedit /
 // autolfo / autolane).

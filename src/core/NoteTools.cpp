@@ -361,6 +361,10 @@ void chopByPattern(std::vector<Note>& notes, NoteSel& sel, const ChopPattern& p,
       if (!p.pitch.empty()) c.pitch = clampPitch(n.pitch + p.pitch[k % p.pitch.size()]);
       if (!n.bend.empty())  // K-25: each piece plays its part of the bend line
         c.bend = gl::bend::head(gl::bend::tail(n.bend, static_cast<double>(c.start - n.start)), static_cast<double>(c.length));
+      if (!n.pressure.empty())  // K-144: and of its expression lanes
+        c.pressure = gl::bend::head(gl::bend::tail(n.pressure, static_cast<double>(c.start - n.start)), static_cast<double>(c.length));
+      if (!n.timbre.empty())
+        c.timbre = gl::bend::head(gl::bend::tail(n.timbre, static_cast<double>(c.start - n.start)), static_cast<double>(c.length));
       out.push_back(c);
       os.push_back(sel[i]);
       pos += piece;

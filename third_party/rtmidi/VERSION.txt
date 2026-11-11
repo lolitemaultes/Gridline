@@ -1,1 +1,4 @@
 RtMidi 6.0.0 (https://github.com/thestk/rtmidi)
+Local change: MidiInCore / MidiOutCore::getCoreMidiClientSingleton lose their throw()
+specification (an error from MIDIClientCreate threw out of it and ended the process) and
+release the client name on that error path.

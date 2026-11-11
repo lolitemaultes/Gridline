@@ -16,9 +16,10 @@ processing time and no memory.
 What stays live: the volume, pan, mute and stereo controls, the track's EQ and every send, with
 their automation. Automation of anything inside the freeze is in the render.
 
-Freeze from the channel's menu (right click its name in the channel rack), from the rack menu for
-the selected channels, from a mixer track's menu, or from a playlist track's menu when the track is
-linked to a channel or a mixer track. A snowflake marks a frozen unit; a ring around it shows the
+Freeze from the channel's menu (right click its name in the channel rack, then **Instrument and
+routing**), from the rack menu for the selected channels (**Selected channels**), from a mixer
+track's menu (**CPU**), or from a playlist track's menu when the track is linked to a channel or a
+mixer track. A snowflake marks a frozen unit; a ring around it shows the
 render's progress. **Unfreeze** loads the plugins again exactly as they were. Freeze, unfreeze and a
 render asked for again are one undo step each.
 
@@ -59,7 +60,7 @@ wakes by itself when it is needed:
 A woken unit hibernates again 30 seconds after it was last needed (**Options > Woken plugins sleep
 again after**; **Never** keeps it awake). A hibernating mixer track that has not woken is silent.
 
-**Tools > Macros > Hibernate unused plugins** hibernates the channels without notes and the mixer
+**Tools > Freeze and hibernate > Hibernate unused plugins** hibernates the channels without notes and the mixer
 tracks nothing plays into; **Options > Hibernate unused plugins automatically** keeps doing so.
 **Wake all** ends hibernation everywhere. Hibernation belongs to this computer: it is not an undo
 step and is not shared with collaborators.

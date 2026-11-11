@@ -3,7 +3,8 @@
 // contrast and brightness (theme::Tweaks). Keys:
 //   theme.mode        "dark" | "light" | "system"  ("" = from ui.darkTheme, older settings)
 //   theme.accent / theme.hot / theme.led / theme.playhead   "#RRGGBB" ("" = theme default)
-//   theme.contrast / theme.brightness                       -1 .. 1
+//   theme.contrast / theme.brightness                       -1 .. 1 (brightness -1 = pitch black)
+//   theme.whiteText   white text and glyphs on dark faces (K-177)
 //   theme.controls    "slate" | "graphite" | "hairline" | "lumen" | "classic" (J-129; unknown = slate)
 #pragma once
 #include <cstdint>

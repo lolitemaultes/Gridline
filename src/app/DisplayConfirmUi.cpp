@@ -266,6 +266,7 @@ std::string themeText(const dispconf::Snapshot& s) {
   char buf[48];
   if (std::fabs(c) > 0.005) std::snprintf(buf, sizeof buf, ", %+.0f%% %s", c * 100, tr("contrast")), t += buf;
   if (std::fabs(b) > 0.005) std::snprintf(buf, sizeof buf, ", %+.0f%% %s", b * 100, tr("brightness")), t += buf;
+  if (tmp.getBool("theme.whiteText")) t += std::string(", ") + tr("white text");
   // J-137: and the control style (a style change read "Dark -> Dark").
   static const char* const kStyles[] = {i18n::N_("Classic"), i18n::N_("Graphite"), i18n::N_("Hairline"), i18n::N_("Lumen"), i18n::N_("Slate")};
   t += std::string(" \xC2\xB7 ") + tr(kStyles[static_cast<int>(theme::controlStyleFromSettings(tmp))]);

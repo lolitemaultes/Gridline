@@ -1,8 +1,10 @@
 #include "Theme.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <string>
+#include <utility>
 
 namespace gl::theme {
 
@@ -75,21 +77,86 @@ ImU32 contrastText(ImU32 bg) {
   return lum > 0.55f ? hex(0x000000) : hex(0xFFFFFF);
 }
 
+ImU32 tint(ImU32 role) { return gPal.whiteGlyphs ? (gPal.text & ~IM_COL32_A_MASK) | (role & IM_COL32_A_MASK) : lit(role); }
+ImU32 tintRole(uint32_t rrggbb, float alpha) { return tint(rgb(rrggbb, alpha)); }
+
+ImU32 clipInk(ImU32 base, bool muted) {
+  const Palette& p = gPal;
+  if (p.dark) return mix(base, p.clipInk, muted ? 0.0f : p.clipInkAmount);
+  return mix(base, p.clipInk, muted ? 0.15f : p.clipInkAmount);
+}
+
+float contrastRatio(ImU32 a, ImU32 b) {
+  auto l = [](ImU32 c) {
+    auto ch = [](uint32_t v) {
+      const float s = static_cast<float>(v & 0xFF) / 255.0f;
+      return s <= 0.04045f ? s / 12.92f : std::pow((s + 0.055f) / 1.055f, 2.4f);
+    };
+    return 0.2126f * ch(c >> IM_COL32_R_SHIFT) + 0.7152f * ch(c >> IM_COL32_G_SHIFT) + 0.0722f * ch(c >> IM_COL32_B_SHIFT);
+  };
+  const float x = l(a), y = l(b);
+  return (std::max(x, y) + 0.05f) / (std::min(x, y) + 0.05f);
+}
+
+float brightnessAmount(float brightness) {
+  const float b = std::clamp(brightness, -1.0f, 1.0f);
+  if (b >= 0.0f) return 0.22f * b;  // at most ~1/5 of the way to white (unchanged)
+  // Darker: as before near 0 (0.22 per unit), then on to the pitch-black faces at -1.
+  const float t = -b;
+  return -(0.22f * t + 0.78f * t * t * t * t);
+}
+
 namespace {
 Tweaks gTweaks;
 
-// Moves a colour toward white (amount > 0) or black (< 0), alpha kept.
-ImU32 lighten(ImU32 c, float amount) {
+// K-177: the pitch-black faces brightness -100% reaches (both modes). The steps between the
+// surfaces stay (chrome, panels, buttons, hover), hairlines and grid lines stay darker than
+// the faces they divide, as on the stock dark faces, so nothing crosses on the way down.
+struct BlackFaces {
+  uint32_t surface950 = 0x000000, surface900 = 0x060707, surface800 = 0x111315, surface700 = 0x1B1E20, surface600 = 0x262A2D;
+  uint32_t line = 0x000000, lineStrong = 0x3A4145, well = 0x121416, field = 0x000000;
+  uint32_t gridBar = 0x000000, gridBeat = 0x060708, gridStep = 0x0B0D0E, stepOff = 0x1C1F22, stepOffAlt = 0x2A1C21;
+};
+
+// Moves a colour toward white (amount > 0) or toward its pitch-black face `black` (< 0), alpha kept.
+ImU32 lighten(ImU32 c, float amount, uint32_t black) {
   if (amount == 0.0f) return c;
-  const ImU32 target = (c & IM_COL32_A_MASK) | (amount > 0 ? (hex(0xFFFFFF) & ~IM_COL32_A_MASK) : 0u);
+  const ImU32 target = (c & IM_COL32_A_MASK) | (amount > 0 ? (hex(0xFFFFFF) & ~IM_COL32_A_MASK) : (hex(black) & ~IM_COL32_A_MASK));
   return mix(c, target, std::min(1.0f, std::fabs(amount)));
 }
 
 void applyTweaks(Palette& p, const Tweaks& t) {
-  const float b = std::clamp(t.brightness, -1.0f, 1.0f) * 0.22f;  // at most ~1/5 of the way to white / black
-  for (ImU32* c : {&p.surface950, &p.surface900, &p.surface800, &p.surface700, &p.surface600, &p.line, &p.lineStrong, &p.well,
-                   &p.field, &p.gridBar, &p.gridBeat, &p.gridStep, &p.stepOff, &p.stepOffAlt, &p.chrome})
-    *c = lighten(*c, b);
+  const float b = brightnessAmount(t.brightness);
+  const BlackFaces K;
+  const std::pair<ImU32*, uint32_t> faces[] = {{&p.surface950, K.surface950}, {&p.surface900, K.surface900}, {&p.surface800, K.surface800},
+                                               {&p.surface700, K.surface700}, {&p.surface600, K.surface600}, {&p.line, K.line},
+                                               {&p.lineStrong, K.lineStrong}, {&p.well, K.well},           {&p.field, K.field},
+                                               {&p.gridBar, K.gridBar},       {&p.gridBeat, K.gridBeat},   {&p.gridStep, K.gridStep},
+                                               {&p.stepOff, K.stepOff},       {&p.stepOffAlt, K.stepOffAlt}};
+  for (const auto& [c, black] : faces) *c = lighten(*c, b, black);
+  if (b < 0.0f) {
+    // K-177: light faces taken down far enough read as dark ones: the text, glyph and knob
+    // roles become the dark theme's once those read better, so nothing dark sits on near-black panels.
+    if (!p.dark) {
+      const Palette d = makePalette(true, Tweaks{});
+      if (contrastRatio(d.text, p.surface900) > contrastRatio(p.text, p.surface900)) {
+        p.dark = true;
+        p.text = d.text, p.textDim = d.textDim, p.textFaint = d.textFaint;
+        p.stepOn = d.stepOn, p.knobFill = d.knobFill, p.logo = d.logo;
+        p.keyWhite = d.keyWhite, p.keyBlack = d.keyBlack;
+        p.clipInk = d.clipInk, p.clipInkAmount = d.clipInkAmount;
+      }
+    }
+    // Readable on the way down: text at least 4.5:1 on the panels, dim text 3:1, faint 2:1
+    // (moved toward paper / ink only as far as needed).
+    const ImU32 strong = p.dark ? p.paper : p.ink;
+    auto keep = [&](ImU32& c, float ratio) {
+      for (int i = 0; i < 20 && contrastRatio(c, p.surface900) < ratio; ++i) c = mix(c, strong, 0.12f);
+    };
+    keep(p.text, 4.5f);
+    keep(p.textDim, 3.0f);
+    keep(p.textFaint, 2.0f);
+  }
   // Contrast: text and lines move away from (or toward) the panel colour.
   const float k = std::clamp(t.contrast, -1.0f, 1.0f);
   if (k != 0.0f) {
@@ -108,10 +175,28 @@ void applyTweaks(Palette& p, const Tweaks& t) {
   if (t.led != Tweaks::kKeep) p.led = hex(t.led & 0xFFFFFF), p.meterLow = p.led;
   if (t.playhead != Tweaks::kKeep) p.playhead = hex(t.playhead & 0xFFFFFF);
   p.chrome = p.surface950;
+  // K-177: white text and glyphs, on dark faces (light faces keep their dark text: white on
+  // them would not read). Dim and faint text stay steps of the same white over the panels.
+  if (t.whiteText && p.dark) {
+    p.text = p.paper;
+    p.textDim = mix(p.paper, p.surface900, 0.30f);
+    p.textFaint = mix(p.paper, p.surface900, 0.52f);
+    p.logo = p.paper;
+    p.stepOn = mix(p.stepOn, p.paper, 0.6f);
+    p.knobFill = mix(p.knobFill, p.paper, 0.6f);
+    p.clipInkAmount = 0.62f;
+    p.whiteGlyphs = true;
+  }
 }
 }  // namespace
 
 const Tweaks& tweaks() { return gTweaks; }
+
+namespace {
+Palette gDarkFaces;
+}  // namespace
+
+const Palette& darkFaces() { return gPal.dark ? gPal : gDarkFaces; }
 
 void setTweaks(const Tweaks& t) {
   gTweaks = t;
@@ -188,6 +273,9 @@ Palette makePalette(bool dark, const Tweaks& t) {
     p.keyWhite = hex(0xFFFFFF);
     p.keyBlack = hex(0x2A3135);
   }
+  p.clipInk = dark ? p.paper : p.ink;
+  p.clipInkAmount = dark ? 0.45f : 0.42f;
+  p.whiteGlyphs = false;
   p.meterLow = dark ? hex(0x86D64A) : hex(0x4CA81C);
   p.meterMid = dark ? hex(0xF2D04A) : hex(0xD9A800);
   // K-79 roles: derived from the palette's own colours (and the user's tweaks) below.
@@ -208,7 +296,9 @@ Palette makePalette(bool dark, const Tweaks& t) {
 void apply(bool dark) {
   gDark = dark;
   gPal = makePalette(dark, gTweaks);
+  gDarkFaces = gPal.dark ? gPal : makePalette(true, gTweaks);
   const Palette& p = gPal;
+  dark = p.dark;  // K-177: light faces taken down to near black are styled as dark ones
 
   ImGuiStyle& s = ImGui::GetStyle();
   s.WindowPadding = ImVec2(kS2, kS2);
@@ -311,6 +401,57 @@ void apply(bool dark) {
   c[ImGuiCol_NavCursor] = acc;
   c[ImGuiCol_NavWindowingHighlight] = acc;
   c[ImGuiCol_ModalWindowDimBg] = ImVec4(0, 0, 0, dark ? 0.6f : 0.3f);
+}
+
+// ------------------------------------------------------------- dev notes ----
+
+namespace {
+struct DevNote {
+  const char* name = nullptr;
+  ImU32 col = 0;
+};
+DevNote gNotes[24];
+}  // namespace
+
+void devNote(const char* element, ImU32 c) {
+  for (DevNote& n : gNotes) {
+    if (!n.name) {
+      n.name = element, n.col = c;
+      return;
+    }
+    if (n.name == element || std::strcmp(n.name, element) == 0) {
+      n.col = c;
+      return;
+    }
+  }
+}
+
+ImU32 devUsed(const char* element) {
+  for (const DevNote& n : gNotes)
+    if (n.name && std::strcmp(n.name, element) == 0) return n.col;
+  return 0;
+}
+
+void devDump(char* out, int outSize) {
+  if (outSize <= 0) return;
+  out[0] = 0;
+  int at = 0;
+  auto put = [&](const char* k, ImU32 c) {
+    if (at >= outSize - 1) return;
+    const int n = std::snprintf(out + at, static_cast<size_t>(outSize - at), "%s%s=#%02X%02X%02X", at ? " " : "", k, (c >> IM_COL32_R_SHIFT) & 0xFF,
+                                (c >> IM_COL32_G_SHIFT) & 0xFF, (c >> IM_COL32_B_SHIFT) & 0xFF);
+    if (n > 0) at = std::min(outSize - 1, at + n);
+  };
+  const Palette& p = gPal;
+  put("chrome", p.chrome), put("surface950", p.surface950), put("surface900", p.surface900), put("surface800", p.surface800);
+  put("surface700", p.surface700), put("field", p.field), put("well", p.well), put("line", p.line), put("text", p.text);
+  put("textDim", p.textDim), put("textFaint", p.textFaint), put("hot", p.hot), put("accent", p.accent);
+  for (const DevNote& n : gNotes)
+    if (n.name) {
+      char k[48];
+      std::snprintf(k, sizeof k, "used.%s", n.name);
+      put(k, n.col);
+    }
 }
 
 // ------------------------------------------------------------------ logo ----

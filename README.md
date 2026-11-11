@@ -235,7 +235,7 @@ ctest --test-dir build
 build\gridline-app.exe
 ```
 
-Audio goes through SDL (Core Audio, WASAPI, ALSA / PulseAudio / PipeWire / JACK, sndio / OSS on the BSDs); MIDI devices through RtMidi (CoreMIDI, Windows Multimedia, ALSA, JACK) and sndio on the BSDs.
+Audio goes through SDL (Core Audio, WASAPI, ALSA / PulseAudio / PipeWire / JACK, sndio / OSS on the BSDs); MIDI devices through RtMidi (CoreMIDI, Windows Multimedia, ALSA, JACK) and sndio on the BSDs. See [docs/midi-devices.md](docs/midi-devices.md).
 
 `./build.sh` is a quicker path for the core alone: it builds the command line tool, runs the core tests and renders the demo song.
 

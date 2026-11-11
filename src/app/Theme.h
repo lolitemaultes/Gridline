@@ -78,7 +78,12 @@ struct Palette {
   ImU32 monitor;           // input monitoring
   ImU32 launch;            // launched / playing clips
   ImU32 selection;         // selected slots, clips and time range (has alpha)
-  bool dark;
+  // K-177: clip content (waveforms, notes, curves) is the clip colour moved this far toward
+  // `clipInk` (paper on dark faces, ink on light ones); white text pushes it further.
+  ImU32 clipInk;
+  float clipInkAmount;
+  bool dark;               // the faces are dark (dark mode, or light mode taken down to near black)
+  bool whiteGlyphs;        // K-177: idle glyphs and kind tints drawn in the text colour (white text option)
 };
 
 // Per-tool glyph colours (the reference editors give each tool its own lit
@@ -108,10 +113,11 @@ struct Tweaks {
   uint32_t led = kKeep;       // LEDs (mute / select lamps, effect enable)
   uint32_t playhead = kKeep;  // song position line
   float contrast = 0.0f;      // -1 .. 1: text and lines against the panels
-  float brightness = 0.0f;    // -1 .. 1: panels and fields lighter / darker
+  float brightness = 0.0f;    // -1 .. 1: panels and fields lighter / darker; -1 = pitch black (K-177)
+  bool whiteText = false;     // K-177: pure white text and glyphs on dark faces
   bool operator==(const Tweaks& o) const {
     return accent == o.accent && hot == o.hot && led == o.led && playhead == o.playhead && contrast == o.contrast &&
-           brightness == o.brightness;
+           brightness == o.brightness && whiteText == o.whiteText;
   }
   bool operator!=(const Tweaks& o) const { return !(*this == o); }
 };
@@ -120,6 +126,15 @@ void setTweaks(const Tweaks& t);
 const Tweaks& tweaks();
 // The dark / light base palette with `t` applied (no global state touched).
 Palette makePalette(bool dark, const Tweaks& t);
+// K-177: the current theme's dark faces: pal() when its faces are dark, else the dark palette
+// with the same tweaks. For parts that stay dark in both modes (plugin window bars, wrapper
+// strips), so they still follow brightness, contrast, white text and the role colours.
+const Palette& darkFaces();
+// K-177: how far a brightness setting moves the panels: > 0 toward white (at most 0.22 of the
+// way), < 0 toward the near-black faces (gentle near 0, 1 = pitch black at -1).
+float brightnessAmount(float brightness);
+// WCAG contrast ratio of two opaque colours (1 .. 21).
+float contrastRatio(ImU32 a, ImU32 b);
 
 ImU32 withAlpha(ImU32 c, float a);
 ImU32 mix(ImU32 a, ImU32 b, float t);
@@ -135,6 +150,20 @@ ImU32 litRole(uint32_t rrggbb, float alpha = 1.0f);
 ImU32 content(uint32_t rrggbb, float alpha = 1.0f);
 // Readable text colour (ink/paper) on a given background.
 ImU32 contrastText(ImU32 bg);
+// K-177: a decorative idle tint (browser kind colours, folder glyphs, idle tool glyphs): the
+// role colour as lit() draws it, or the text colour when the white text option is on.
+ImU32 tint(ImU32 role);
+ImU32 tintRole(uint32_t rrggbb, float alpha = 1.0f);
+// K-177: the content colour (waveform, notes, curve) of a clip / block in colour `base`.
+// muted: drawn quieter.
+ImU32 clipInk(ImU32 base, bool muted = false);
+
+// K-177 dev and tests: drawing code notes the colour it used for a named element ("topbar",
+// "folder", "wave", ...); devUsed() reads it back (0 = not drawn). Cheap; no allocation.
+void devNote(const char* element, ImU32 c);
+ImU32 devUsed(const char* element);
+// One line "key=#RRGGBB ..." with the palette roles and every noted element.
+void devDump(char* out, int outSize);
 
 // Optional provider of rasterised marks (white, true transparent holes) at an
 // exact pixel size, installed by main.cpp once the GL context exists. Without

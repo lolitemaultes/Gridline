@@ -260,6 +260,8 @@ int changePpq(Song& song, int newPpq) {
       for (auto& note : ns) {
         note.length = std::max<Tick>(note.length, 1);
         bend::rescale(note.bend, old, newPpq);  // K-25: bend points count ticks from the note start
+        bend::rescale(note.pressure, old, newPpq);  // K-144: so do the expression lanes
+        bend::rescale(note.timbre, old, newPpq);
       }
   for (size_t i = 0; i < song.playlist.size(); ++i)
     if (explicitLen[i]) song.playlist[i].length = std::max<Tick>(song.playlist[i].length, 1);

@@ -191,7 +191,7 @@ void drawScriptDialog(App& a, Session& s) {
   const std::string& desc = r.script.form().description;
   if (!desc.empty()) {
     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 440);
-    ImGui::TextColored(ImVec4(0.7f, 0.75f, 0.78f, 1), "%s", desc.c_str());
+    ImGui::TextColored(theme::vec(theme::pal().textDim), "%s", desc.c_str());  // K-177: from the theme
     ImGui::PopTextWrapPos();
   }
   ImGui::BeginGroup();
