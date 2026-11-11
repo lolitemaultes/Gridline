@@ -111,7 +111,15 @@ PluginState fresh(const char* type) {
   normalizePluginState(s);
   return s;
 }
-PluginState with(PluginState s, std::vector<std::pair<int, float>> v) {
+// A parameter index and its value, from an enum or a number of any type (std::pair<int, float> would
+// convert an int or an enum to float inside the standard library, which MSVC warns about there).
+struct ParamValue {
+  int index;
+  float value;
+  template <class I, class V>
+  ParamValue(I i, V v) : index(static_cast<int>(i)), value(static_cast<float>(v)) {}
+};
+PluginState with(PluginState s, std::vector<ParamValue> v) {
   for (auto& [i, x] : v) s.params[static_cast<size_t>(i)] = x;
   return s;
 }

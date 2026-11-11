@@ -1152,6 +1152,8 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
     if (pluginWindowDevCommand(app, l.cmd, l.args, frame)) continue;  // plugin windows, their channel strip
     if (packs::devCommand(app, l.cmd, l.args)) continue;  // K-15: loupe [pin <tab|below|left|right|float> | unpin]
     if (livetake::devCommand(app, l.cmd, l.args, frame)) continue;  // J-217: live recording checks
+    // Two chains of commands: one long else-if chain goes past MSVC's nesting limit (C1061).
+    bool secondHalf = false;
     if (l.cmd == "move") {
       pointer = ImVec2(std::strtof(l.a0.c_str(), nullptr), std::strtof(l.a1.c_str(), nullptr));
       io.AddMousePosEvent(pointer.x, pointer.y);
@@ -1631,7 +1633,11 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       const auto& chs = app.doc.song().channels;
       const size_t ci = static_cast<size_t>(std::max(0, std::atoi(l.a0.c_str())));
       if (ci < chs.size()) app.doc.removeChannel(chs[ci].id);
-    } else if (l.cmd == "rackzip") {  // K-136: rackzip <index> [off]: the rack row zipped (a thin strip) or unzipped
+    } else {
+      secondHalf = true;  // the rest of the commands, in a chain of their own
+    }
+    if (secondHalf) {
+    if (l.cmd == "rackzip") {  // K-136: rackzip <index> [off]: the rack row zipped (a thin strip) or unzipped
       const auto& chs = app.doc.song().channels;
       const size_t ci = static_cast<size_t>(std::max(0, std::atoi(l.a0.c_str())));
       if (ci < chs.size()) {
@@ -1901,6 +1907,7 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
         std::printf("  pcurve %u %u %u x %.1f y %.1f\n", c.clip, c.owner, c.index, static_cast<double>(c.x), static_cast<double>(c.y));
       std::fflush(stdout);
     }
+    }  // (end of the second half)
   }
 }
 

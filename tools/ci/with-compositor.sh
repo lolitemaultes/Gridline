@@ -14,7 +14,9 @@
 # WESTON_BACKEND=x11 runs Weston in a window of the X server in WESTON_X11_DISPLAY (an Xvfb of its own)
 # instead of headless: its seat has a keyboard and a pointer (the headless backend has no seat, and
 # SDL 2.0.20 crashes on a compositor without one). The command still gets no DISPLAY in native mode.
-set -euo pipefail
+set -eEuo pipefail
+# Whatever stops the script says so (a bare exit code in a CI log tells nothing).
+trap 'rc=$?; echo "with-compositor: stopped at line $LINENO with exit code $rc: $BASH_COMMAND" >&2' ERR
 
 usage() { sed -n '2,13p' "$0" >&2; exit 2; }
 [ $# -ge 3 ] || usage
@@ -72,7 +74,9 @@ wait_for_display() {  # the X display XWayland listens on, from the compositor's
   exit 1
 }
 
-x_before=$(ls /tmp/.X11-unix 2>/dev/null | tr '\n' ' ')
+# (no /tmp/.X11-unix at all without an X server, as in a mutter or KWin job: ls fails there, and
+# under pipefail that used to end the script at once with ls's exit code 2 and no message)
+x_before=$(ls /tmp/.X11-unix 2>/dev/null | tr '\n' ' ' || true)
 wait_for_new_x_socket() {  # mutter and KWin: XWayland's display is the X socket that was not there before
   for _ in $(seq 1 300); do
     for s in $(ls /tmp/.X11-unix 2>/dev/null); do

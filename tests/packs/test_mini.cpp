@@ -72,7 +72,15 @@ double tone(const std::vector<float>& v, size_t a, size_t b, double hz) {
   return 2 * std::sqrt(re * re + im * im) / static_cast<double>(b - a);
 }
 
-PluginState st(const char* type, std::vector<std::pair<int, float>> v = {}) {
+// A parameter index and its value, from an enum or a number of any type (std::pair<int, float> would
+// convert an int or an enum to float inside the standard library, which MSVC warns about there).
+struct ParamValue {
+  int index;
+  float value;
+  template <class I, class V>
+  ParamValue(I i, V v) : index(static_cast<int>(i)), value(static_cast<float>(v)) {}
+};
+PluginState st(const char* type, std::vector<ParamValue> v = {}) {
   PluginState s = defaultPluginState(type);
   for (auto [k, x] : v) s.params[static_cast<size_t>(k)] = x;
   return s;

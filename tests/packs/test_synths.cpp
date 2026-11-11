@@ -99,7 +99,15 @@ double inharmonicDb(const std::vector<float>& x, int start, int n, double f0, do
   return 10 * std::log10(std::max(bad, 1e-30) / std::max(total, 1e-30));
 }
 
-PluginState withParams(const std::string& type, std::initializer_list<std::pair<int, float>> v) {
+// A parameter index and its value, from an enum or a number of any type (std::pair<int, float> would
+// convert an int or an enum to float inside the standard library, which MSVC warns about there).
+struct ParamValue {
+  int index;
+  float value;
+  template <class I, class V>
+  ParamValue(I i, V v) : index(static_cast<int>(i)), value(static_cast<float>(v)) {}
+};
+PluginState withParams(const std::string& type, std::initializer_list<ParamValue> v) {
   PluginState s = defaultPluginState(type);
   for (auto [k, x] : v) s.params[static_cast<size_t>(k)] = x;
   normalizePluginState(s);

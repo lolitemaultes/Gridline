@@ -311,6 +311,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: mkdir -p snap && cp packaging/snap/snapcraft.yaml snap/
+      - name: LXD and Snapcraft (a few tries, as the snap store is now and then unreachable from a runner)
+        run: |
+          for n in 1 2 3 4; do
+            sudo snap install lxd && sudo snap install --classic snapcraft && break
+            [ "$n" = 4 ] && exit 1
+            echo "the snap store did not answer; trying again in $((n * 30)) s"; sleep $((n * 30))
+          done
       - uses: snapcore/action-build@v1
         id: snap
       - name: The snap installs and runs

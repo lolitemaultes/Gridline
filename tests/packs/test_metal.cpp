@@ -344,7 +344,7 @@ void scratchBehaviour() {
   p.used = true;
   p.beats = 1;
   p.pos = {{0, 0, 0.5f, SsLinear, false}, {0.5f, 0.8f, 0.5f, SsHalfCosine, false}, {1, 0.1f, 0.5f, SsLinear, false}};
-  p.mutes = {{true, 0}, {false, 0.5f}, {true, 0.75f}};
+  p.mutes = {{true, 0.f}, {false, 0.5f}, {true, 0.75f}};
   d.keys[62] = p;
   s.data = serializeScratchSpl(d);
   SsData back;
