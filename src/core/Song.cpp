@@ -58,7 +58,7 @@ void forEachTick(S& song, F&& fn) {
 
 Tick Song::patternContentLength(const Pattern& p) const {
   Tick len = patternLength(p);
-  Tick bar = barTicks();
+  Tick bar = patternBarTicks(p);
   Tick end = 0;
   for (const auto& [ch, ns] : p.notes)
     for (const auto& n : ns) end = std::max(end, n.start + n.length);

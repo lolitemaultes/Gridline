@@ -290,7 +290,9 @@ set(kGone "channel|Fill every step" "channel|Fill every 2 steps" "channel|Fill e
           "channel|Fill offbeats" "channel|Drop its instrument track link" "channel|Edit sample in Loupe" "channel|Export sample as WAV..."
           "channel|Open the sample in a new channel" "channel|Granular" "channel|Kerf" "mixer|Disarm selected tracks" "mixer|Drop its audio track link"
           # moved: into the clip menu's Audio submenu (checked in the arrclip tree above)
-          "audioclip|Fit to tempo" "audioclip|Normalize")
+          "audioclip|Fit to tempo" "audioclip|Normalize"
+          # renamed: meter changes replaced time signature markers ("Add meter change" in the same menu)
+          "playlist|Add time signature marker")
 if(BEFORE AND EXISTS "${BEFORE}")
   file(STRINGS "${BEFORE}" before)
   set(cur "")

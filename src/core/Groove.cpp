@@ -94,7 +94,7 @@ Warp makeWarp(const Song& song, const Pattern* p, const GrooveShape& shapeIn, do
   w.cycle = shape.cycle;
   // The step grid keeps the old swing's bar exactly (whole steps); note grids use the song's bar.
   if (shape.grid == kGridStep && p) w.bar = static_cast<double>(song.ticksPerStep(*p)) * static_cast<double>(p->stepsPerBar);
-  else w.bar = static_cast<double>(song.barTicks());
+  else w.bar = static_cast<double>(p ? song.patternBarTicks(*p) : song.barTicks());  // K-179: the pattern's own bar
   if (!(w.bar > 0)) return w;
   amount = std::isfinite(amount) ? std::clamp(amount, 0.0, 1.0) : 0.0;
   accent = std::isfinite(accent) ? std::clamp(accent, 0.0, 1.0) : 0.0;

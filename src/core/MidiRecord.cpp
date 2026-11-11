@@ -1,4 +1,5 @@
 #include "MidiRecord.h"
+#include "Meter.h"
 #include <algorithm>
 #include <cmath>
 #include "Automation.h"
@@ -90,9 +91,9 @@ Tick NoteRecorder::songOrigin(Document& doc, double tick, ObjectId channel) {
     if (tick >= static_cast<double>(c.start) && tick < static_cast<double>(c.start + len)) return c.start - c.offset;
   }
   // No clip of the pattern here: place one on the bar, on the first free track.
-  const Tick bar = std::max<Tick>(1, s.barTicks());
-  const Tick start = static_cast<Tick>(std::floor(tick / static_cast<double>(bar))) * bar;
-  const Tick len = std::max<Tick>(bar, s.patternLength(*p));
+  const MeterMap mm(s);  // K-179: on a bar line of the meter map
+  const Tick start = mm.barStartAt(static_cast<Tick>(std::floor(std::max(0.0, tick))));
+  const Tick len = std::max<Tick>(mm.barLenAt(start), s.patternLength(*p));
   int track = trackmodes::instrumentTrackOf(s, channel);  // PL-08
   if (track < 0) {
     for (track = 0; track < static_cast<int>(s.tracks.size()); ++track) {
@@ -189,7 +190,7 @@ void NoteRecorder::commitAutomation(Document& doc) {
       const Tick bar = std::max<Tick>(1, s.barTicks());
       const Tick first = static_cast<Tick>(std::floor(pts.front().first));
       const Tick last = static_cast<Tick>(std::ceil(pts.back().first));
-      const Tick start = std::max<Tick>(0, first / bar * bar);
+      const Tick start = std::max<Tick>(0, MeterMap(s).barStartAt(std::max<Tick>(0, first)));  // K-179
       std::string name = paramDisplayName(s, pid);
       doc.editSong("record automation", [&](Song& so) {
         AutomationClip ac;

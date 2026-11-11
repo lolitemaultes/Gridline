@@ -18,6 +18,9 @@ struct MidiImportOptions {
   std::set<int> tracks;            // track indexes (MidiFileData::tracks) to import; empty = all
   bool tempo = true;               // first tempo → song tempo; changes → tempo automation clip
   bool timeSignature = true;       // first meter → song; changes → meter markers
+  // K-179: one pattern per meter section (each with that section's meter and a clip at its start)
+  // instead of one pattern for the whole file. Needs timeSignature and placeInPlaylist.
+  bool splitAtMeterChanges = false;
   bool markers = true;             // marker events → song markers
   bool programNames = true;        // unnamed tracks get their GM program name
   bool controllers = true;         // CC 7 / CC 10 → channel volume / pan pattern automation
@@ -32,6 +35,8 @@ struct MidiImportResult {
   int notes = 0;
   int automationLanes = 0;
   int tempoChanges = 0;
+  int meterChanges = 0;            // K-179: meter changes placed as playlist meter markers
+  std::vector<ObjectId> sections;  // K-179: the patterns per meter section (splitAtMeterChanges)
   int skippedControllers = 0;  // controller events without a Gridline target
   std::string error;
 };

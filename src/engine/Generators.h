@@ -98,6 +98,10 @@ struct ProcessContext {
   const NoteHitBus* hits = nullptr;  // J-165: notes started in this block (null outside the engine)
   // Transport details for hosted plugins (time info).
   int tsNum = 4, tsDen = 4;            // time signature
+  // K-179: the bar line at or before `tick` and its 0-based number (song meter changes, or the
+  // pattern's meter); barStart < 0: not known (one meter, from the start).
+  double barStart = -1;
+  int64_t barIndex = 0;
   bool looping = false;                // playback wraps from loopEnd back to loopStart (ticks)
   double loopStart = 0, loopEnd = 0;
   bool recording = false;

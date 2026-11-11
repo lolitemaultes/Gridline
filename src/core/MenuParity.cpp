@@ -1,5 +1,6 @@
 // Gridline — J-27 menu parity operations (see MenuParity.h).
 #include "MenuParity.h"
+#include "Meter.h"
 #include "ClipSources.h"
 #include "ChordTools.h"
 #include <algorithm>
@@ -537,8 +538,8 @@ int placeLoop(Document& d, Tick selStart, Tick selEnd, Tick pos) {
 }
 
 int songLoopMarker(const Song& s) {
-  const Tick bar = std::max<Tick>(1, s.barTicks());
-  const Tick end = std::max(bar, (s.lengthTicks() + bar - 1) / bar * bar);  // where song playback wraps
+  const MeterMap mm(s);  // K-179: bar lines of the meter map
+  const Tick end = std::max(mm.nextBar(0), mm.roundUpToBar(s.lengthTicks()));  // where song playback wraps
   int best = -1;
   for (size_t i = 0; i < s.markers.size(); ++i)
     if (s.markers[i].action == MarkerAction::SongLoop && s.markers[i].pos < end &&
@@ -549,8 +550,7 @@ int songLoopMarker(const Song& s) {
 
 int addJumpToNextBar(Document& d, Tick pos) {
   if (pos < 0) return -1;
-  const Tick bar = std::max<Tick>(1, d.song().barTicks());
-  const Tick next = (pos / bar + 1) * bar;
+  const Tick next = MeterMap(d.song()).nextBar(pos);  // K-179: the next bar line of the meter map
   d.beginGroup("add jump to next bar");
   int i = addMarker(d, pos, "Jump");
   editMarker(d, i, "add jump to next bar", [](Marker& m) { m.action = MarkerAction::Skip; });
@@ -582,6 +582,14 @@ std::string formatSongTime(const Song& s, double tick, TimeFormat f, bool steps,
     const Tick bar = std::max<Tick>(1, s.barTicks()), beat = std::max<Tick>(1, s.beatTicks());
     const Tick unit = steps ? std::max<Tick>(1, beat / 4) : beat;
     const Tick t = static_cast<Tick>(tick);
+    const MeterMap mm(s);  // K-179: bars and beats of the song's meter changes
+    if (!mm.constant()) {
+      const MeterSeg& g = mm.segAt(t);
+      const Tick u = steps ? std::max<Tick>(1, s.ppq / 4) : g.beat, into = t - mm.barStartAt(t);
+      std::snprintf(buf, sizeof buf, "%03lld:%02lld:%03lld", static_cast<long long>(mm.barIndex(t) + 1), static_cast<long long>(into / u + 1),
+                    static_cast<long long>(into % u));
+      return buf;
+    }
     std::snprintf(buf, sizeof buf, "%03lld:%02lld:%03lld", static_cast<long long>(t / bar + 1),
                   static_cast<long long>((t % bar) / unit + 1), static_cast<long long>(t % unit));
     return buf;
@@ -686,7 +694,7 @@ int dumpScoreLog(Document& d, ObjectId pattern, ObjectId channel, const ScoreLog
   sortNotes(notes, sel);
   Tick end = 0;
   for (const auto& n : notes) end = std::max(end, n.start + n.length);
-  const Tick bar = std::max<Tick>(1, s.barTicks());
+  const Tick bar = std::max<Tick>(1, s.patternBarTicks(*p));  // K-179: the pattern's own bar
   const int bars = static_cast<int>(std::max<Tick>(p->bars, (end + bar - 1) / bar));
   d.beginGroup("score log dump");
   if (bars != p->bars) d.setPatternLength(pattern, bars, p->stepsPerBar);

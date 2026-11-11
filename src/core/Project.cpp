@@ -1,4 +1,5 @@
 #include "Project.h"
+#include "Meter.h"
 #include "ClipLoop.h"
 #include "ClipGain.h"
 #include "Fades.h"
@@ -674,6 +675,7 @@ void arrangementToJson(const Song& s, Json& j) {
         jm.object["keyRoot"] = num(m.keyRoot);
         jm.object["keyScale"] = num(m.keyScale);
       }
+      if (!m.meterForPatterns) jm.object["meterForPatterns"] = boolean(false);  // K-179
       arr.array.push_back(std::move(jm));
     }
     j.object["markers"] = std::move(arr);
@@ -700,6 +702,7 @@ bool arrangementFromJson(const Json& j, Song& s, const std::function<bool(const 
       m.action = static_cast<MarkerAction>(jsonInt<int>(std::clamp(jm.num("action", 0), 0.0, static_cast<double>(static_cast<int>(MarkerAction::Count) - 1))));
       m.keyRoot = jsonInt<int>(std::clamp(jm.num("keyRoot", -1), -1.0, 11.0));  // J-31
       m.keyScale = jsonInt<int>(std::clamp(jm.num("keyScale", 0), 0.0, 64.0));
+      m.meterForPatterns = flag(jm, "meterForPatterns", true);  // K-179
       s.markers.push_back(std::move(m));
     }
   std::stable_sort(s.markers.begin(), s.markers.end(), [](const Marker& x, const Marker& y) { return x.pos < y.pos; });
@@ -796,6 +799,10 @@ void stepPropsFromJson(const Json& jp, Pattern& p, const Song& s) {
 void patternExtrasToJson(const Pattern& p, Json& jp) {
   stepPropsToJson(p, jp);
   if (!p.loop) jp.object["loop"] = boolean(false);  // Q-1: written only when off (the default is on)
+  if (p.ownMeter()) {  // K-179: written only when the pattern has its own meter
+    jp.object["meterNum"] = num(p.meterNum);
+    jp.object["meterDen"] = num(p.meterDen);
+  }
   if (!p.stepLoop.empty()) {  // J-31: per-channel step loop lengths
     Json loops = Json::makeObject();
     for (const auto& [ch, n] : p.stepLoop)
@@ -826,6 +833,9 @@ void patternExtrasToJson(const Pattern& p, Json& jp) {
 void patternExtrasFromJson(const Json& jp, Pattern& p, const Song& s) {
   stepPropsFromJson(jp, p, s);
   if (const Json* lp = jp.find("loop"); lp && lp->is(Json::Type::Bool)) p.loop = lp->boolean;  // Q-1
+  p.meterNum = jsonInt<int>(std::clamp(jp.num("meterNum", 0), 0.0, 32.0));  // K-179
+  p.meterDen = jsonInt<int>(std::clamp(jp.num("meterDen", 0), 0.0, 32.0));
+  if (p.meterNum <= 0 || p.meterDen <= 0 || !normalizeMeter(p.meterNum, p.meterDen, s.ppq)) p.meterNum = p.meterDen = 0;
   if (const Json* loops = jp.find("stepLoop"); loops && loops->is(Json::Type::Object))  // J-31
     for (const auto& [k, v] : loops->object) {
       const ObjectId ch = static_cast<ObjectId>(std::strtoul(k.c_str(), nullptr, 10));
@@ -940,6 +950,7 @@ void songExtrasToJson(const Song& s, Json& j) {
             jm.object["keyRoot"] = num(m.keyRoot);
             jm.object["keyScale"] = num(m.keyScale);
           }
+          if (!m.meterForPatterns) jm.object["meterForPatterns"] = boolean(false);  // K-179
           marks.array.push_back(std::move(jm));
         }
         ja.object["markers"] = std::move(marks);
@@ -1004,6 +1015,7 @@ bool songExtrasFromJson(const Json& j, Song& s, const std::function<bool(const J
           m.action = static_cast<MarkerAction>(jsonInt<int>(std::clamp(jm.num("action", 0), 0.0, static_cast<double>(static_cast<int>(MarkerAction::Count) - 1))));
           m.keyRoot = jsonInt<int>(std::clamp(jm.num("keyRoot", -1), -1.0, 11.0));  // J-31
           m.keyScale = jsonInt<int>(std::clamp(jm.num("keyScale", 0), 0.0, 64.0));
+          m.meterForPatterns = flag(jm, "meterForPatterns", true);  // K-179
           a.markers.push_back(std::move(m));
         }
       std::stable_sort(a.markers.begin(), a.markers.end(), [](const Marker& x, const Marker& y) { return x.pos < y.pos; });

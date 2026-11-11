@@ -30,6 +30,8 @@
 #include "LayoutPresets.h"
 #include "Theme.h"
 #include "Widgets.h"
+#include "MeterUi.h"
+#include "../core/MeterEdit.h"
 #include "Windows.h"
 
 namespace gl {
@@ -678,7 +680,8 @@ float drawTopBar(App& a) {
     const bool ticking = a.metronome && a.engine.playing() && !a.engine.countingIn() && scrollui::animations();
     const double beatTicks = static_cast<double>(std::max<Tick>(1, s.beatTicks()));  // the metronome's beat (time signature)
     static motion::MetronomeTicker ticker;
-    const double beatNow = a.engine.position() / beatTicks;
+    // K-179: in song time the beats of the meter map (each section's own beat).
+    const double beatNow = a.engine.mode() != PlayMode::Pattern ? MeterMap(s).beatCount(a.engine.position()) : a.engine.position() / beatTicks;
     const float mirror = static_cast<float>(ticker.update(beatNow, ticking));
     if (ui::ToggleIcon("metro", ui::Icon::Metronome, a.metronome, kBtn, "Metronome (Ctrl+M)", mirror)) a.metronome = !a.metronome;
     noteRect("metro");
@@ -921,11 +924,13 @@ static float drawTopBarLogic(App& a) {
     if (ui::IconButton("tostart", ui::Icon::ChevronLeft, false, kBtn, hintKey("Go to the start", "transport.toStart").c_str())) a.engine.setPosition(0);
     cx += kBtn + kInner;
     ImGui::SetCursorScreenPos(ImVec2(cx, btnTop));
+    const bool songBars = a.engine.mode() != PlayMode::Pattern;  // K-179: real bars of the song's meter map
     if (ui::IconButton("barback", ui::Icon::Left, false, kBtn, hintKey("Back one bar", "transport.rewindBar").c_str()))
-      a.engine.setPosition(std::max<Tick>(0, (pos - 1) / bar * bar));
+      a.engine.setPosition(std::max<Tick>(0, songBars ? MeterMap(s).barStartAt(std::max<Tick>(0, pos - 1)) : (pos - 1) / bar * bar));
     cx += kBtn + kInner;
     ImGui::SetCursorScreenPos(ImVec2(cx, btnTop));
-    if (ui::IconButton("barfwd", ui::Icon::Right, false, kBtn, hintKey("Forward one bar", "transport.forwardBar").c_str())) a.engine.setPosition((pos / bar + 1) * bar);
+    if (ui::IconButton("barfwd", ui::Icon::Right, false, kBtn, hintKey("Forward one bar", "transport.forwardBar").c_str()))
+      a.engine.setPosition(songBars ? MeterMap(s).nextBar(pos) : (pos / bar + 1) * bar);
     cx += kBtn + kInner;
     menuparity::transportTick(a);
     ImGui::SetCursorScreenPos(ImVec2(cx, btnTop));
@@ -988,12 +993,22 @@ static float drawTopBarLogic(App& a) {
     ImGui::SetCursorScreenPos(ImVec2(cx, btnTop));
     tapButton(a, kBtn);
     cx += kBtn + kInner;
+    // K-179: the meter at the song position (song mode) or the current pattern's meter.
     char sig[16];
-    std::snprintf(sig, sizeof sig, "%d/%d", s.timeSigNum, s.timeSigDen);
+    int sigNum = s.timeSigNum, sigDen = s.timeSigDen;
+    const bool songTime = a.engine.mode() != PlayMode::Pattern;
+    const Tick at = static_cast<Tick>(a.engine.position());
+    if (songTime) {
+      meter::meterAt(s, at, sigNum, sigDen);
+    } else if (const Pattern* cp = s.pattern(a.curPattern)) {
+      sigNum = s.patternMeterNum(*cp);
+      sigDen = s.patternMeterDen(*cp);
+    }
+    std::snprintf(sig, sizeof sig, "%d/%d", sigNum, sigDen);
     ui::Lcd(dl, ImVec2(cx, btnTop), ImVec2(sigW, kBtn), sig, false, false);
     ImGui::SetCursorScreenPos(ImVec2(cx, btnTop));
-    ImGui::InvisibleButton("##sig", ImVec2(sigW, kBtn));
-    ui::Hint("Time signature of the project (Project settings)");
+    if (ImGui::InvisibleButton("##sig", ImVec2(sigW, kBtn))) meterui::openEditor(a, songTime ? meter::changeAt(s, at) : -1);
+    ui::Hint(songTime ? "Meter at the song position (click to edit)" : "Meter of the pattern (click: the song's meter at the start)");
     x += wDisplay + kGap;
   }
   // Modes: metronome, count-in, pattern / song / live.

@@ -32,6 +32,7 @@
 #include "UpdateUi.h"
 #include "UrlImportUi.h"
 #include "Widgets.h"
+#include "MeterUi.h"
 #include "LayoutPresets.h"
 #include "Windows.h"
 #include "Keys.h"
@@ -308,6 +309,7 @@ void menuPatterns(App& a) {
     }
     ImGui::EndMenu();
   }
+  meterui::patternMeterMenu(a, id);  // K-179
   if (ImGui::BeginMenu(i18n::tr("Transpose"), cur != nullptr)) {
     for (int st : {12, 1, -1, -12}) {
       std::string l = (st > 0 ? "+" : "") + std::to_string(st) + (std::abs(st) == 12 ? " (octave)" : " semitone");

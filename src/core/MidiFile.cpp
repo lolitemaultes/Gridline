@@ -1,4 +1,5 @@
 #include "MidiFile.h"
+#include "Meter.h"
 #include <algorithm>
 #include <cmath>
 #include <fstream>
@@ -478,12 +479,16 @@ struct Collector {
       }
     }
     if (shift >= 0) {
+      // K-179: the meter in effect where the export starts (not the song's meter at its start).
+      const MeterSeg lead = MeterMap(s).segAt(shift);
+      d.timeSigNum = lead.num;
+      d.timeSigDen = lead.den;
       for (const auto& m : s.markers) {
         if (m.pos < shift || m.pos >= end) continue;
         if (m.timeSigNum > 0 && m.timeSigDen > 0) d.timeSigs.push_back({m.pos - shift, m.timeSigNum, m.timeSigDen});
         if (o.markers && !m.name.empty()) d.markers.push_back({m.pos - shift, m.name});
       }
-      if (!d.timeSigs.empty() && d.timeSigs[0].tick > 0) d.timeSigs.insert(d.timeSigs.begin(), {0, s.timeSigNum, s.timeSigDen});
+      if (!d.timeSigs.empty() && d.timeSigs[0].tick > 0) d.timeSigs.insert(d.timeSigs.begin(), {0, lead.num, lead.den});
     }
     return d;
   }
@@ -493,8 +498,14 @@ struct Collector {
 
 MidiFileData patternToMidi(const Song& song, ObjectId pattern, const MidiExportOptions& o) {
   Collector c{song, o, {}, {}};
-  if (const Pattern* p = song.pattern(pattern)) c.addPattern(*p, 0, 0, song.patternContentLength(*p));
-  return c.finish(-1, 0);
+  const Pattern* p = song.pattern(pattern);
+  if (p) c.addPattern(*p, 0, 0, song.patternContentLength(*p));
+  MidiFileData d = c.finish(-1, 0);
+  if (p) {  // K-179: the pattern's own meter
+    d.timeSigNum = song.patternMeterNum(*p);
+    d.timeSigDen = song.patternMeterDen(*p);
+  }
+  return d;
 }
 
 MidiFileData songRangeToMidi(const Song& song, Tick start, Tick end, const MidiExportOptions& o) {

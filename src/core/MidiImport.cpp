@@ -1,5 +1,6 @@
 // Gridline — MIDI file import. See MidiImport.h.
 #include "MidiImport.h"
+#include "Meter.h"
 #include <algorithm>
 #include <cmath>
 #include <map>
@@ -64,6 +65,72 @@ struct BendReader {
 
 }  // namespace
 
+namespace {
+// K-179: the imported pattern cut into one pattern per meter section, each in its section's meter
+// with a clip at the section's start. Notes keep their song positions.
+MidiImportResult& splitByMeter(Song& song, const Pattern& whole, Tick end, std::vector<Tick> starts, MidiImportResult& res) {
+  std::sort(starts.begin(), starts.end());
+  starts.erase(std::unique(starts.begin(), starts.end()), starts.end());
+  if (starts.empty() || starts.front() != 0) starts.insert(starts.begin(), 0);
+  const MeterMap map(song);
+  const int track = firstFreeTrack(song);
+  if (static_cast<int>(song.tracks.size()) <= track) song.tracks.resize(static_cast<size_t>(track) + 1);
+  for (size_t i = 0; i < starts.size(); ++i) {
+    const Tick a = starts[i], b = i + 1 < starts.size() ? starts[i + 1] : std::max(end, a + 1);
+    if (a >= end) break;
+    if (static_cast<int>(song.patterns.size()) >= kMaxPatterns) break;
+    Pattern q;
+    q.id = song.allocateId();
+    q.name = whole.name + (starts.size() > 1 ? " " + std::to_string(i + 1) : std::string());
+    q.color = whole.color;
+    Tick qEnd = 0;
+    bool any = false;
+    for (const auto& [ch, ns] : whole.notes) {
+      std::vector<Note> out;
+      for (Note n : ns)
+        if (n.start >= a && n.start < b) {
+          n.start -= a;
+          qEnd = std::max(qEnd, n.start + n.length);
+          out.push_back(n);
+        }
+      if (!out.empty()) q.notes[ch] = std::move(out), any = true;
+    }
+    for (const auto& lane : whole.automation) {
+      std::vector<AutoPoint> pts;
+      const AutoPoint* before = nullptr;
+      for (const auto& pt : lane.points) {
+        if (pt.pos < a) before = &pt;
+        else if (pt.pos < b) pts.push_back(pt), pts.back().pos -= a;
+      }
+      if (before && (pts.empty() || pts.front().pos > 0)) {
+        AutoPoint first = *before;
+        first.pos = 0;
+        pts.insert(pts.begin(), first);
+      }
+      if (!pts.empty()) setPatternLane(q, lane.owner, lane.index, std::move(pts)), any = true;
+    }
+    if (!any) continue;
+    const MeterSeg& g = map.segAt(a);
+    if (g.num != song.timeSigNum || g.den != song.timeSigDen) q.meterNum = g.num, q.meterDen = g.den;
+    const Tick bar = std::max<Tick>(1, song.patternBarTicks(q));
+    const Tick len = std::max(b - a, qEnd);
+    q.bars = static_cast<int>(std::clamp<Tick>((len + bar - 1) / bar, 1, kMaxPatternBars));
+    q.stepsPerBar = sixteenthStepsPerBar(song.patternMeterNum(q), song.patternMeterDen(q));
+    song.patterns.push_back(q);
+    if (res.pattern == kNoId) res.pattern = q.id;
+    res.sections.push_back(q.id);
+    Clip c;
+    c.id = song.allocateId();
+    c.pattern = q.id;
+    c.track = track;
+    c.start = a;
+    if (i + 1 < starts.size()) c.length = b - a;
+    song.playlist.push_back(c);
+  }
+  return res;
+}
+}  // namespace
+
 MidiImportResult importMidiIntoSong(Song& song, const MidiFileData& midiIn, const std::string& name, const MidiImportOptions& o) {
   MidiImportResult res;
   MidiFileData midi = midiIn;
@@ -103,15 +170,26 @@ MidiImportResult importMidiIntoSong(Song& song, const MidiFileData& midiIn, cons
       song.playlist.push_back(c);
     }
   }
+  std::vector<Tick> meterStarts;  // K-179: where the file's meter changes (song ticks)
   if (o.timeSignature && !midi.timeSigs.empty()) {
-    song.timeSigNum = std::clamp(midi.timeSigs[0].num, 1, 32);
-    song.timeSigDen = std::clamp(midi.timeSigs[0].den, 1, 32);
+    const int num = std::clamp(midi.timeSigs[0].num, 1, 32), den = std::clamp(midi.timeSigs[0].den, 1, 32);
+    for (auto& p : song.patterns)  // K-179: patterns already there keep their meter and length
+      if (!p.ownMeter() && (p.meterNum != num || p.meterDen != den) && (song.timeSigNum != num || song.timeSigDen != den)) {
+        p.meterNum = song.timeSigNum;
+        p.meterDen = song.timeSigDen;
+      }
+    song.timeSigNum = num;
+    song.timeSigDen = den;
+    for (auto& p : song.patterns)
+      if (p.meterNum == num && p.meterDen == den) p.meterNum = p.meterDen = 0;
     for (size_t k = 1; k < midi.timeSigs.size(); ++k) {
       Marker m;
       m.pos = T(midi.timeSigs[k].tick);
       m.timeSigNum = std::clamp(midi.timeSigs[k].num, 1, 32);
       m.timeSigDen = std::clamp(midi.timeSigs[k].den, 1, 32);
       song.markers.push_back(m);
+      meterStarts.push_back(m.pos);
+      ++res.meterChanges;
     }
   }
   if (o.markers)
@@ -205,6 +283,8 @@ MidiImportResult importMidiIntoSong(Song& song, const MidiFileData& midiIn, cons
   const Tick bar = std::max<Tick>(1, song.barTicks());
   pat.bars = static_cast<int>(std::max<Tick>(1, (maxEnd + bar - 1) / bar));
   pat.stepsPerBar = 16;
+  if (o.splitAtMeterChanges && o.placeInPlaylist && !meterStarts.empty())
+    return splitByMeter(song, pat, maxEnd, meterStarts, res);
   song.patterns.push_back(pat);
   res.pattern = pat.id;
   if (o.placeInPlaylist) {

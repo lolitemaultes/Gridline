@@ -61,6 +61,8 @@
 #include "LayoutPresets.h"
 #include "CommandPaletteUi.h"
 #include "../core/Platform.h"
+#include "../core/MeterEdit.h"
+#include "MeterUi.h"
 #include "imgui_hooks/ImGuiItemHook.h"
 
 namespace gl {
@@ -1056,6 +1058,7 @@ void patternContextMenu(App& a, ObjectId id) {
     }
     ImGui::EndMenu();
   }
+  meterui::patternMeterMenu(a, id);  // K-179
   if (ImGui::BeginMenu(i18n::tr("Transpose"))) {
     for (int st : {12, 1, -1, -12}) {
       std::string l = (st > 0 ? "+" : "") + std::to_string(st) + (std::abs(st) == 12 ? " (octave)" : " semitone");
@@ -1449,11 +1452,12 @@ void playlistOptionsMenu(App& a) {
       const bool sel = a.playlist.selEnd > a.playlist.selStart;
       if (ImGui::MenuItem(i18n::tr("Add loop marker at the song position"), sel ? nullptr : keys::label("playlist.loopMarkers"))) addLoopMarker(a, pos);
     }
-    if (ImGui::BeginMenu(i18n::tr("Add time signature marker"))) {
-      const int sigs[][2] = {{2, 4}, {3, 4}, {4, 4}, {5, 4}, {6, 8}, {7, 8}, {12, 8}};
-      for (const auto& g : sigs) {
-        std::string l = std::to_string(g[0]) + "/" + std::to_string(g[1]);
-        if (ImGui::MenuItem(l.c_str())) ops::addMarker(a.doc, pos, l, g[0], g[1]);
+    // K-179: a meter change starts on the bar line at or before the song position.
+    if (ImGui::MenuItem(i18n::tr("Add meter change at the song position..."), keys::label("playlist.meterChange"))) meterui::addAndEdit(a, pos);
+    if (ImGui::BeginMenu(i18n::tr("Add meter change"))) {
+      for (const auto& g : meterui::kCommon) {
+        const std::string l = meter::text(g[0], g[1]);
+        if (ImGui::MenuItem(l.c_str())) meter::add(a.doc, pos, g[0], g[1]);
       }
       ImGui::EndMenu();
     }
@@ -1620,6 +1624,7 @@ void rulerMenu(App& a, Tick pos) {
   const Song& s = a.doc.song();
   if (ImGui::MenuItem(i18n::tr("Add loop marker here"))) addLoopMarker(a, pos);
   if (ImGui::MenuItem(i18n::tr("Add marker here"))) ops::addMarker(a.doc, pos, ops::nextMarkerName(s));
+  if (ImGui::MenuItem(i18n::tr("Add meter change here..."))) meterui::addAndEdit(a, pos);  // K-179
   ImGui::Separator();
   if (ImGui::MenuItem(i18n::tr("Move the song position here"))) {
     if (a.engine.mode() != PlayMode::Song) a.engine.setMode(PlayMode::Song);

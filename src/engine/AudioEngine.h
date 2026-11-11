@@ -629,6 +629,7 @@ class AudioEngine {
   bool stopArmed_ = false;
   // Count-in and sync output.
   int64_t countInLeft_ = 0, countInTotal_ = 0, countInBeat_ = 1;
+  int countInBeats_ = 4, countInGroup_ = 0;  // K-179: beats per bar and accent group of the count-in's meter
   std::atomic<bool> countingIn_{false};
   std::atomic<int> syncMode_{0};
   MidiClockOut clockOut_;

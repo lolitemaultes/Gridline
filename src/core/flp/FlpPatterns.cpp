@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cmath>
 #include "Flp.h"
+#include "../Meter.h"
 
 namespace gl::flp {
 
@@ -25,6 +26,7 @@ int velocity127(int v) { return std::clamp(v, 0, 127); }
 void importPatterns(Context& c) {
   Song& s = c.song;
   int notes = 0, slides = 0, panned = 0, fine = 0, release = 0, modX = 0, modY = 0, colored = 0, steps = 0, fixedLengths = 0, loops = 0;
+  int ownMeters = 0, flattened = 0;  // K-179
   const Tick stepLen = std::max<Tick>(1, c.tick(c.file.ppq / 4));
   // FL does not write patterns that hold nothing (no notes, name or colour),
   // but the playlist can still place them: such patterns are created empty.
@@ -46,7 +48,21 @@ void importPatterns(Context& c) {
     p.name = "Pattern " + std::to_string(idx);
     p.loop = false;  // Q-1: FL's pattern loop mode is off unless the file sets it (event 26)
     Tick end = 0, fixedLen = 0;
+    // K-179: the pattern's time signature markers (148 kind 8, then 33 / 34). The earliest is the
+    // pattern's own meter; later ones have no Gridline equivalent and are counted in the report.
+    struct PatSig {
+      Tick pos;
+      int num = 4, den = 4;
+    };
+    std::vector<PatSig> sigs;
+    bool inSig = false;
     for (const auto& e : evs) {
+      if (e.id == 148) {
+        inSig = (e.value() >> 24) == 8;
+        if (inSig) sigs.push_back({c.tick(e.value() & 0x00FFFFFFu)});
+      }
+      if (inSig && e.id == 33) sigs.back().num = std::clamp(static_cast<int>(e.value()), 1, 32);
+      if (inSig && e.id == 34) sigs.back().den = std::clamp(static_cast<int>(e.value()), 1, 32);
       if (e.id == 193) p.name = e.text();
       if (e.id == 164) fixedLen = c.tick(e.value());  // fixed pattern length in ticks (0 = follows its notes)
       if (e.id == 150) p.color = flColor(e.value());
@@ -87,7 +103,17 @@ void importPatterns(Context& c) {
       }
     }
     for (auto& [ch, ns] : p.notes) std::stable_sort(ns.begin(), ns.end(), [](const Note& a, const Note& b) { return a.start < b.start; });
-    const Tick bar = std::max<Tick>(1, s.barTicks());
+    if (!sigs.empty()) {
+      std::stable_sort(sigs.begin(), sigs.end(), [](const PatSig& x, const PatSig& y) { return x.pos < y.pos; });
+      int num = sigs.front().num, den = sigs.front().den;
+      if (normalizeMeter(num, den, s.ppq) && (num != s.timeSigNum || den != s.timeSigDen)) {
+        p.meterNum = num;
+        p.meterDen = den;
+        ++ownMeters;
+      }
+      flattened += static_cast<int>(sigs.size()) - 1;
+    }
+    const Tick bar = std::max<Tick>(1, s.patternBarTicks(p));  // K-179: in the pattern's own meter
     p.bars = static_cast<int>(std::clamp<Tick>(((fixedLen > 0 ? fixedLen : end) + bar - 1) / bar, 1, kMaxPatternBars));  // longer content still plays
     fixedLengths += fixedLen > 0;
     s.patterns.push_back(p);
@@ -108,6 +134,8 @@ void importPatterns(Context& c) {
   count("notes: step (length 0)", steps);
   count("patterns with a fixed length", fixedLengths);
   count("patterns looping (loop mode)", loops);
+  count("patterns with their own time signature", ownMeters);
+  count("pattern time signature changes after the start (not imported: a pattern has one meter)", flattened);
 }
 
 }  // namespace gl::flp

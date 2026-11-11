@@ -432,6 +432,8 @@ void drawPianoRoll(App& a) {
   const Song& s = a.doc.song();
   PianoRollState& st = a.piano;
   const Pattern* pat = s.pattern(a.curPattern);
+  // K-179: pattern time follows the pattern's own meter (grid, bars, ruler, snap).
+  const MeterMap pm = MeterMap::forPattern(s, pat);
   const Channel* chan = s.channel(a.selChannel);
   // J-159: an instrument that names its keys (a deck setup's performance keys) shows the names
   const PluginInfo* chanInfo = chan ? findPlugin(chan->plugin.type) : nullptr;
@@ -520,7 +522,7 @@ void drawPianoRoll(App& a) {
       ImGui::SameLine(0, 2);
       std::string snapLabel = snapName(st.snap);
       if ((st.snap == Snap::Line || st.snap == Snap::Cell) && st.effGrid > 0)
-        snapLabel += " \xC2\xB7 " + timeline::gridName(s, st.effGrid);
+        snapLabel += " \xC2\xB7 " + timeline::gridName(pm, st.effGrid);
       if (ui::BeginCombo("##snap", snapLabel.c_str(), 128)) {
         for (int i = 0; i <= static_cast<int>(Snap::Bar); ++i)
           if (ImGui::Selectable(snapName(static_cast<Snap>(i)), st.snap == static_cast<Snap>(i))) st.snap = static_cast<Snap>(i);
@@ -533,7 +535,7 @@ void drawPianoRoll(App& a) {
       ui::ToolbarDivider();
       if (ui::TextButton("Quantize", false, 0, "Quantize note starts to the snap grid (Ctrl+Q)") && pat && chan) {
         if (std::vector<Note> ns = rollNotes(a, pat->id, chan->id); !ns.empty()) {
-          Tick gsz = st.effGrid > 1 ? st.effGrid : snapTicks(s, st.snap);
+          Tick gsz = st.effGrid > 1 ? st.effGrid : snapTicks(pm, st.snap);
           auto sel = selVector(a, ns.size());
           bool any = !st.selected.empty();
           for (size_t i = 0; i < ns.size(); ++i)
@@ -719,7 +721,7 @@ void drawPianoRoll(App& a) {
   // The scrollable time: the pattern and eight bars after it (as the playlist's
   // song), in proportion to the zoom so the scroller's thumb and ends track the
   // pointer exactly while they scroll and zoom.
-  const Tick contentTicks = patLen + s.barTicks() * 8;
+  const Tick contentTicks = patLen + pm.baseBar() * 8;
   auto maxScrollAt = [&](float pxPerTick) { return std::max(0.0f, static_cast<float>(contentTicks) * pxPerTick - gridW); };
   // First open: centre on the notes (C5-ish at the top when there are none).
   // Re-centred for a few frames while the dock layout settles the window size.
@@ -761,11 +763,11 @@ void drawPianoRoll(App& a) {
     // Default zoom: a 16th note ~20 px wide (readable note blocks and step
     // columns at any timebase), unless the canvas can't show one bar then.
     const float sixteenth = static_cast<float>(std::max(1, s.ppq / 4));
-    st.pxPerTick = std::min(20.0f / sixteenth, std::max(8.0f / sixteenth, gridW / static_cast<float>(std::max<Tick>(1, s.barTicks()))));
+    st.pxPerTick = std::min(20.0f / sixteenth, std::max(8.0f / sixteenth, gridW / static_cast<float>(std::max<Tick>(1, pm.baseBar()))));
     st.zoomInit = true;
   }
   if (st.fitRequest) {
-    st.pxPerTick = static_cast<float>(timeline::fitZoom(s, std::max<Tick>(patLen, s.barTicks()) + s.beatTicks(), gridW));
+    st.pxPerTick = static_cast<float>(timeline::fitZoom(s, std::max<Tick>(patLen, pm.baseBar()) + pm.baseBeat(), gridW));
     st.scrollX = 0;
     st.fitRequest = false;
   }
@@ -793,10 +795,10 @@ void drawPianoRoll(App& a) {
       !ImGui::IsMouseDown(ImGuiMouseButton_Left) && !ImGui::IsMouseDown(ImGuiMouseButton_Middle))
     st.scrollX = ops::followScroll(st.scrollX, static_cast<float>(a.engine.position()) * st.pxPerTick, gridW);
   // ---- snapping: the visible grid (Line/Cell) or a fixed size; Alt inverts ----
-  const Tick visGrid = timeline::visibleGrid(s, st.pxPerTick);
-  st.effGrid = timeline::snapGrid(s, st.snap, st.pxPerTick, false);
+  const Tick visGrid = timeline::visibleGrid(pm, st.pxPerTick);
+  st.effGrid = timeline::snapGrid(pm, st.snap, st.pxPerTick, false);
   const Tick grid = std::max<Tick>(1, st.effGrid);  // keyboard nudges / quantize
-  const Tick snapG = timeline::snapGrid(s, st.snap, st.pxPerTick, io.KeyAlt);
+  const Tick snapG = timeline::snapGrid(pm, st.snap, st.pxPerTick, io.KeyAlt);
   const Tick defLen = st.lastLength > 0 ? st.lastLength : std::max<Tick>(1, s.ppq / 4);
 
   // Scroll & zoom.
@@ -850,7 +852,7 @@ void drawPianoRoll(App& a) {
   // Grid well: black-key rows a step darker, every other bar a step lighter.
   dl->AddRectFilled(gridMin, gridMax, P.well);
   {
-    const Tick bar = std::max<Tick>(1, s.barTicks());
+    const Tick bar = std::max<Tick>(1, pm.baseBar());
     for (Tick t = snapDown(std::max<Tick>(0, tickAt(gridMin.x)), bar); xOf(t) < gridMax.x; t += bar)
       if ((t / bar) % 2 == 1)
         dl->AddRectFilled(ImVec2(xOf(t), gridMin.y), ImVec2(xOf(t + bar), gridMax.y), theme::withAlpha(P.paper, P.dark ? 0.03f : 0.015f));
@@ -872,7 +874,7 @@ void drawPianoRoll(App& a) {
       dl->AddLine(ImVec2(gridMin.x, ly), ImVec2(gridMax.x, ly), P.gridStep);
   }
   {
-    Tick step = std::max<Tick>(1, s.ppq / 4), beat = s.beatTicks(), bar = s.barTicks();
+    Tick step = std::max<Tick>(1, s.ppq / 4), beat = pm.baseBeat(), bar = pm.baseBar();
     // Lines at the visible grid (finer as you zoom in, down to single ticks).
     const ImU32 fine = theme::withAlpha(P.gridStep, 0.55f);
     Tick t0 = snapDown(tickAt(gridMin.x), visGrid);
@@ -1170,14 +1172,14 @@ void drawPianoRoll(App& a) {
     // Record-red cursor: the step the next chord fills is tinted, a 2 px line
     // marks its start and a flag hangs from the top edge.
     float x = std::round(xOf(a.stepRecorder.cursor));
-    const Tick stepG = std::max<Tick>(1, a.piano.effGrid > 0 ? a.piano.effGrid : snapTicks(a.doc.song(), a.piano.snap));
+    const Tick stepG = std::max<Tick>(1, a.piano.effGrid > 0 ? a.piano.effGrid : snapTicks(pm, a.piano.snap));
     const float xs = std::round(xOf(a.stepRecorder.cursor + stepG));
     dl->AddRectFilled(ImVec2(x, gridMin.y), ImVec2(std::max(x + 2, xs), gridMax.y), theme::withAlpha(P.danger, 0.10f));
     dl->AddLine(ImVec2(x, gridMin.y), ImVec2(x, gridMax.y), theme::withAlpha(P.danger, 0.9f), 2.0f);
     dl->AddRectFilled(ImVec2(x, gridMin.y), ImVec2(x + 9, gridMin.y + 8), P.danger, 1.0f);
     dl->AddTriangleFilled(ImVec2(x, gridMin.y + 8), ImVec2(x + 9, gridMin.y + 8), ImVec2(x, gridMin.y + 13), P.danger);
     if (ImGui::IsWindowHovered() && io.KeyAlt && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && io.MousePos.x >= gridMin.x) {
-      Tick g = a.piano.effGrid > 0 ? a.piano.effGrid : snapTicks(a.doc.song(), a.piano.snap);
+      Tick g = a.piano.effGrid > 0 ? a.piano.effGrid : snapTicks(pm, a.piano.snap);
       double t = (io.MousePos.x - xOf(0)) / std::max(1e-6f, xOf(1) - xOf(0));
       a.stepRecorder.cursor = std::max<Tick>(0, snapDown(static_cast<Tick>(t), std::max<Tick>(1, g)));
     }
@@ -1302,15 +1304,15 @@ void drawPianoRoll(App& a) {
     dl->AddRectFilled(ImVec2(origin.x, origin.y), r1, P.dark ? P.field : P.surface950);
     dl->AddLine(ImVec2(origin.x, r1.y - 1), ImVec2(r1.x, r1.y - 1), P.dark ? P.ink : P.lineStrong);
     dl->PushClipRect(r0, r1, true);
-    const Tick bar = std::max<Tick>(1, s.barTicks()), beat = std::max<Tick>(1, s.beatTicks());
-    const Tick labelGrid = timeline::visibleGrid(s, st.pxPerTick, 64.0);
+    const Tick bar = std::max<Tick>(1, pm.baseBar()), beat = std::max<Tick>(1, pm.baseBeat());
+    const Tick labelGrid = timeline::visibleGrid(pm, st.pxPerTick, 64.0);
     for (Tick t = snapDown(std::max<Tick>(0, tickAt(r0.x)), visGrid); xOf(t) < r1.x; t += visGrid) {
       float x = std::round(xOf(t));
       bool major = t % labelGrid == 0;
       float len = major ? 10.0f : t % beat == 0 ? 6.0f : 3.0f;
       dl->AddLine(ImVec2(x, r1.y - len), ImVec2(x, r1.y - 1), major ? P.lineStrong : P.line);
       if (major) {
-        std::string lbl = timeline::rulerLabel(s, t, labelGrid);
+        std::string lbl = timeline::rulerLabel(pm, t, labelGrid);
         dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(x + 4, rulerTop + 4), t % bar == 0 ? P.text : P.textFaint, lbl.c_str());
       }
     }
@@ -1492,7 +1494,7 @@ void drawPianoRoll(App& a) {
         ImGui::SetMouseCursor(hoverEdge ? ImGuiMouseCursor_ResizeEW : ImGuiMouseCursor_ResizeAll);
       char buf[96];
       std::snprintf(buf, sizeof buf, "%s  ·  bar %lld", noteName(pitchAt(m.y)).c_str(),
-                    static_cast<long long>(tickAt(m.x) / std::max<Tick>(1, s.barTicks()) + 1));
+                    static_cast<long long>(tickAt(m.x) / std::max<Tick>(1, pm.baseBar()) + 1));
       if (st.tool == Tool::Bend) {  // K-25
         if (bendHover.kind == BendHit::Point) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
         else if (bendHover.kind > BendHit::None) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);

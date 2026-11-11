@@ -4221,7 +4221,7 @@ msgstr ""
 msgid "Relays the encrypted connection when both networks block direct connections. Only needed for strict networks"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/MasterPanel.cpp src/app/SuiteUi.cpp src/app/TrackReceiptUi.cpp src/packs/edison/edison_wave_ui.cpp src/packs/modulation/modulation_notefx_ui.cpp src/packs/plasma/plasma_fx_ui.cpp src/packs/plasma/plasma_patch_ui.cpp src/packs/plasma/plasma_ui.cpp src/packs/tideline/tideline_ui.cpp
+#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/MasterPanel.cpp src/app/MeterUi.cpp src/app/SuiteUi.cpp src/app/TrackReceiptUi.cpp src/packs/edison/edison_wave_ui.cpp src/packs/modulation/modulation_notefx_ui.cpp src/packs/plasma/plasma_fx_ui.cpp src/packs/plasma/plasma_patch_ui.cpp src/packs/plasma/plasma_ui.cpp src/packs/tideline/tideline_ui.cpp
 msgid "Remove"
 msgstr ""
 
@@ -5186,7 +5186,15 @@ msgid "Add marker here"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
-msgid "Add time signature marker"
+msgid "Add meter change"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
+msgid "Add meter change at the song position..."
+msgstr ""
+
+#: src/app/ContextMenus.cpp
+msgid "Add meter change here..."
 msgstr ""
 
 #: src/app/ContextMenus.cpp
@@ -5741,7 +5749,7 @@ msgstr ""
 msgid "Into steps"
 msgstr ""
 
-#: src/app/ContextMenus.cpp
+#: src/app/ContextMenus.cpp src/app/MeterUi.cpp
 msgid "Jump here"
 msgstr ""
 
@@ -6585,7 +6593,7 @@ msgstr ""
 msgid "Time selection"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/SettingsPages.cpp
+#: src/app/ContextMenus.cpp src/app/SettingsPages.cpp
 msgid "Time signature"
 msgstr ""
 
@@ -6873,6 +6881,10 @@ msgstr ""
 msgid "Allow windows outside the main window"
 msgstr ""
 
+#: src/app/Dialogs.cpp src/app/MeterUi.cpp
+msgid "Also change the meter of existing patterns"
+msgstr ""
+
 #: src/app/Dialogs.cpp
 msgid "Animations"
 msgstr ""
@@ -7150,6 +7162,14 @@ msgid "Maximum levels"
 msgstr ""
 
 #: src/app/Dialogs.cpp
+msgid "Meter at the start"
+msgstr ""
+
+#: src/app/Dialogs.cpp
+msgid "Meter changes later in the song: %d (edit them in the playlist ruler)"
+msgstr ""
+
+#: src/app/Dialogs.cpp
 msgid "Mouse wheel over controls in scrolling panes (narrow mixer, channel rack with a long pattern or many channels). Scrolling: the wheel scrolls the pane; drag, click then wheel, or hold Ctrl and wheel, to change a control or step"
 msgstr ""
 
@@ -7191,6 +7211,10 @@ msgstr ""
 
 #: src/app/Dialogs.cpp
 msgid "Off: each press undoes one of your steps, and tells you when a collaborator changed it so nothing was left."
+msgstr ""
+
+#: src/app/Dialogs.cpp
+msgid "Off: existing patterns keep their meter and length when the meter at the start changes, so nothing moves"
 msgstr ""
 
 #: src/app/Dialogs.cpp
@@ -7986,6 +8010,10 @@ msgid "One file per playlist track that holds clips"
 msgstr ""
 
 #: src/app/ExportUi.cpp
+msgid "One pattern per meter section, each in its section's meter, placed one after another"
+msgstr ""
+
+#: src/app/ExportUi.cpp
 msgid "Oversampling"
 msgstr ""
 
@@ -8083,6 +8111,10 @@ msgstr ""
 
 #: src/app/ExportUi.cpp
 msgid "Select a time range in the playlist ruler"
+msgstr ""
+
+#: src/app/ExportUi.cpp
+msgid "Split into patterns at meter changes"
 msgstr ""
 
 #: src/app/ExportUi.cpp
@@ -8277,7 +8309,7 @@ msgstr ""
 msgid "Not used"
 msgstr ""
 
-#: src/app/FlpExportUi.cpp src/packs/tideline/tideline_ui.cpp
+#: src/app/FlpExportUi.cpp src/app/MeterUi.cpp src/packs/tideline/tideline_ui.cpp
 msgid "Note"
 msgstr ""
 
@@ -11225,6 +11257,90 @@ msgstr ""
 msgid "Zoom to ticks (snap turns free)"
 msgstr ""
 
+#: src/app/MeterUi.cpp
+msgid "Convert to plain marker"
+msgstr ""
+
+#: src/app/MeterUi.cpp src/app/PluginEditorsK3Gb.cpp
+msgid "Done"
+msgstr ""
+
+#: src/app/MeterUi.cpp
+msgid "Edit meter..."
+msgstr ""
+
+#: src/app/MeterUi.cpp
+msgid "Its bars stay, so its length follows the meter"
+msgstr ""
+
+#: src/app/MeterUi.cpp
+msgid "Make pattern meter match here (%s)"
+msgstr ""
+
+#: src/app/MeterUi.cpp src/app/PluginEditorsInstrSlicer.cpp src/packs/seltmann/seltmann_ui.cpp
+msgid "Meter"
+msgstr ""
+
+#: src/app/MeterUi.cpp
+msgid "Meter %s at the song start: click to edit, right-click for more"
+msgstr ""
+
+#: src/app/MeterUi.cpp
+msgid "Meter %s from bar %lld: click to edit, drag to move, right-click for more"
+msgstr ""
+
+#: src/app/MeterUi.cpp
+msgid "Meter at the song start"
+msgstr ""
+
+#: src/app/MeterUi.cpp
+msgid "Meter change"
+msgstr ""
+
+#: src/app/MeterUi.cpp
+msgid "Meter lane: double-click to add a meter change at that bar"
+msgstr ""
+
+#: src/app/MeterUi.cpp
+msgid "Moving the meter change (snaps to bar lines; Alt: free)"
+msgstr ""
+
+#: src/app/MeterUi.cpp
+msgid "New patterns here use this meter"
+msgstr ""
+
+#: src/app/MeterUi.cpp
+msgid "Off: existing patterns keep their meter and length, so nothing moves"
+msgstr ""
+
+#: src/app/MeterUi.cpp
+msgid "Remove meter change"
+msgstr ""
+
+#: src/app/MeterUi.cpp
+msgid "Remove the duplicate"
+msgstr ""
+
+#: src/app/MeterUi.cpp
+msgid "Short bar %lld: %lld of %d beats (a meter change inside the bar)"
+msgstr ""
+
+#: src/app/MeterUi.cpp
+msgid "Song (%s)"
+msgstr ""
+
+#: src/app/MeterUi.cpp
+msgid "The pattern's length is not whole bars of that meter: its bars were kept, so its length changed"
+msgstr ""
+
+#: src/app/MeterUi.cpp
+msgid "inside a bar (short bar before it)"
+msgstr ""
+
+#: src/app/MeterUi.cpp
+msgid "optional"
+msgstr ""
+
 #: src/app/MidiUi.cpp
 msgid "%.0f semitones"
 msgstr ""
@@ -13229,10 +13345,6 @@ msgstr ""
 msgid "Marker of region"
 msgstr ""
 
-#: src/app/PluginEditorsInstrSlicer.cpp src/packs/seltmann/seltmann_ui.cpp
-msgid "Meter"
-msgstr ""
-
 #: src/app/PluginEditorsInstrSlicer.cpp
 msgid "Modulation X (filter cutoff) and Y (resonance): drag"
 msgstr ""
@@ -13627,10 +13739,6 @@ msgstr ""
 
 #: src/app/PluginEditorsK3Gb.cpp
 msgid "Default trigger sync"
-msgstr ""
-
-#: src/app/PluginEditorsK3Gb.cpp
-msgid "Done"
 msgstr ""
 
 #: src/app/PluginEditorsK3Gb.cpp
@@ -16006,6 +16114,14 @@ msgid "Master output level and audio processing load (click: Performance window)
 msgstr ""
 
 #: src/app/TopBar.cpp
+msgid "Meter at the song position (click to edit)"
+msgstr ""
+
+#: src/app/TopBar.cpp
+msgid "Meter of the pattern (click: the song's meter at the start)"
+msgstr ""
+
+#: src/app/TopBar.cpp
 msgid "Metronome (Ctrl+M)"
 msgstr ""
 
@@ -16063,10 +16179,6 @@ msgstr ""
 
 #: src/app/TopBar.cpp
 msgid "Tempo follows the tempo automation clip; dragging changes the base tempo"
-msgstr ""
-
-#: src/app/TopBar.cpp
-msgid "Time signature of the project (Project settings)"
 msgstr ""
 
 #: src/app/TopBar.cpp
@@ -17627,6 +17739,10 @@ msgstr ""
 
 #: src/core/Keymap.cpp
 msgid "Add a marker at the song position"
+msgstr ""
+
+#: src/core/Keymap.cpp
+msgid "Add a meter change at the song position"
 msgstr ""
 
 #: src/core/Keymap.cpp

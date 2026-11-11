@@ -992,6 +992,11 @@ class Core final : public HostedInstance {
     out.projectQn = std::max(0.0, qn);
     out.barNumber = static_cast<int32_t>(std::floor(out.projectQn / barQn + 1e-9));
     out.barQn = out.barNumber * barQn;
+    if (ctx.barStart >= 0 && !out.looping) {  // K-179: bars of the song's meter changes
+      out.barNumber = static_cast<int32_t>(ctx.barIndex);
+      out.barQn = ctx.barStart / ppq;
+      for (int k = 0; k < 64 && out.projectQn >= out.barQn + barQn - 1e-9; ++k) out.barQn += barQn, ++out.barNumber;  // later in the block
+    }
     out.projectSamples = static_cast<int64_t>(std::llround(out.projectQn * 60.0 / tempo * sr));
     out.continuousSamples = clock_;
     out.changed = ctx.jumped && offset <= 0;

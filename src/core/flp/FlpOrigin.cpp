@@ -84,6 +84,7 @@ uint64_t fingerprintChannel(const Channel& c, const IndexMap& m) {
 uint64_t fingerprintPattern(const Pattern& p, const Song& s, const IndexMap& m) {
   Fp h;
   h.tag("pattern").s(p.name).i(p.color).i(p.stepsPerBar).i(p.bars).i(s.barTicks());
+  if (p.ownMeter()) h.tag("meter").i(p.meterNum).i(p.meterDen);  // K-179 (only then: stored fingerprints stay valid)
   for (const auto& [ch, v] : p.steps) {
     h.i(m.ch(ch)).i(static_cast<int64_t>(v.size()));
     for (uint8_t x : v) h.i(x);

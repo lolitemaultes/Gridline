@@ -294,6 +294,8 @@ void repairProjectJson(Json& j) {
     for (auto& p : a->array) {
       clampNum(p, "stepsPerBar", 1, kMaxStepsPerBar, 16);
       clampNum(p, "bars", 1, kMaxPatternBars, 1);
+      if (p.find("meterNum")) clampNum(p, "meterNum", 0, 32, 0);  // K-179: the pattern's own meter
+      if (p.find("meterDen")) clampNum(p, "meterDen", 0, 32, 0);
     }
   auto fixClips = [&](Json* arr) {
     if (!arr || !arr->is(Json::Type::Array)) return;

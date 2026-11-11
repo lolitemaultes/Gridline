@@ -1,5 +1,6 @@
 // Gridline - J-219: Track Receipt measurement (see TrackReceiptPass.h).
 #include "TrackReceiptPass.h"
+#include "../core/Meter.h"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -253,7 +254,7 @@ std::string channelWhere(const Song& s, const Channel& c) {
 std::string clipWhere(const Song& s, const Clip& c) {
   return "Playlist " + playlistTrackName(s, static_cast<size_t>(std::max(0, c.track))) + ", audio clips";
 }
-double clipBar(const Song& s, Tick t) { return std::floor(static_cast<double>(t) / static_cast<double>(std::max<Tick>(1, s.barTicks()))) + 1; }
+double clipBar(const Song& s, Tick t) { return static_cast<double>(MeterMap(s).barIndex(std::max<Tick>(0, t))) + 1; }  // K-179
 
 // Uses of one file from one place (every clip on a playlist track, say) become one.
 void mergeUses(std::vector<Use>& uses) {
@@ -445,7 +446,7 @@ Measurement measure(const Song& song0, const PassOptions& o) {
   pass.end();
   if (pass.pairsFull()) m.warnings.push_back("Very many sample uses: some were not told apart (the totals are still complete).");
   // Uses measured.
-  const Tick bar = std::max<Tick>(1, song0.barTicks());
+  const MeterMap mm0(song0);
   std::set<std::pair<std::string, ObjectId>> measured;
   for (const tap::Use& u : pass.uses()) {
     if (u.file < 0 || static_cast<size_t>(u.file) >= m.files.size()) continue;
@@ -456,8 +457,8 @@ Measurement measure(const Song& song0, const PassOptions& o) {
     for (const tap::Range& r : u.ranges)
       if (r.b - r.a >= kMinHeard) x.ranges.push_back(Range{r.a, r.b});  // see kMinHeard
     if (u.tick1 >= u.tick0) {
-      x.bar0 = std::floor(u.tick0 / static_cast<double>(bar)) + 1;
-      x.bar1 = std::floor(u.tick1 / static_cast<double>(bar)) + 1;
+      x.bar0 = static_cast<double>(mm0.barIndex(static_cast<Tick>(std::max(0.0, u.tick0)))) + 1;  // K-179: meter map bars
+      x.bar1 = static_cast<double>(mm0.barIndex(static_cast<Tick>(std::max(0.0, u.tick1)))) + 1;
       if (m.mode != "song") x.bar0 = x.bar1 = 0;
     }
     if (const Clip* c = song0.clip(u.owner)) {

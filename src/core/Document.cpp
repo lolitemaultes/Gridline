@@ -1,4 +1,5 @@
 #include "Document.h"
+#include "Meter.h"
 #include <type_traits>
 #include "Crash.h"
 #include <algorithm>
@@ -780,7 +781,7 @@ bool Document::setParam(ParamId id, double value, bool merge) {
 
 // --- patterns -----------------------------------------------------------------
 
-ObjectId Document::addPattern(const std::string& name, int bars, int stepsPerBar, int index) {
+ObjectId Document::addPattern(const std::string& name, int bars, int stepsPerBar, int index, int meterNum, int meterDen) {
   if (bars <= 0 || stepsPerBar <= 0 || bars > kMaxPatternBars || stepsPerBar > kMaxStepsPerBar ||
       static_cast<int>(song_.patterns.size()) >= kMaxPatterns)
     return kNoId;
@@ -789,6 +790,11 @@ ObjectId Document::addPattern(const std::string& name, int bars, int stepsPerBar
   p.name = name;
   p.bars = bars;
   p.stepsPerBar = stepsPerBar;
+  if (meterNum > 0 && meterDen > 0 && normalizeMeter(meterNum, meterDen, song_.ppq) &&
+      (meterNum != song_.timeSigNum || meterDen != song_.timeSigDen)) {
+    p.meterNum = meterNum;
+    p.meterDen = meterDen;
+  }
   p.color = paletteColor(song_.patterns.size() + 2);
   ObjectId id = p.id;
   exec(std::make_unique<LambdaCommand>(
@@ -1354,9 +1360,17 @@ bool Document::setPpq(int ppq, int* roundedOut) {
   return true;
 }
 
-bool Document::setTimeSignature(int num, int den) {
+bool Document::setTimeSignature(int num, int den, bool alsoPatterns) {
   if (num < 1 || num > 16 || (den != 2 && den != 4 && den != 8 && den != 16)) return false;
-  editSong("change time signature", [num, den](Song& s) {
+  editSong("change time signature", [num, den, alsoPatterns](Song& s) {
+    const int oldNum = s.timeSigNum, oldDen = s.timeSigDen;
+    for (auto& p : s.patterns) {
+      if (!alsoPatterns && !p.ownMeter() && (oldNum != num || oldDen != den)) {
+        p.meterNum = oldNum;  // K-179: pinned, so its length stays
+        p.meterDen = oldDen;
+      }
+      if (p.meterNum == num && p.meterDen == den) p.meterNum = p.meterDen = 0;  // follows the song again
+    }
     s.timeSigNum = num;
     s.timeSigDen = den;
   });

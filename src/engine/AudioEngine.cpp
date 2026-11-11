@@ -724,6 +724,11 @@ void AudioEngine::landAt(double tick) {
   pastLoop_ = tMode_ == PlayMode::Song && loopB_ > loopA_ && tick >= loopB_;
 }
 
+namespace {
+enum class JumpLevel { Bars, Beat, Ticks };
+double clickFreqFor(int accent) { return accent >= 2 ? 1600.0 : accent == 1 ? 1300.0 : 1000.0; }
+}  // namespace
+
 double AudioEngine::loopEnd(const Program* p) const {
   if (tMode_ == PlayMode::Song) return loopB_ > loopA_ && !hostFollow_ ? loopB_ : static_cast<double>(p->songLoopEnd);
   if (tMode_ == PlayMode::Live) return 1e12;  // free-running transport
@@ -1473,7 +1478,17 @@ void AudioEngine::drain(const Program* p) {
           countInLeft_ = 0;
           if (c.tick2 > 0 && p) {  // count-in: clicks while the transport waits
             countInTotal_ = std::max<int64_t>(1, static_cast<int64_t>(p->flatMap.samplesBetween(0, c.tick2, sr_)));
-            countInBeat_ = std::max<int64_t>(1, static_cast<int64_t>(p->flatMap.samplesBetween(0, static_cast<double>(std::max<Tick>(1, p->beatTicks)), sr_)));
+            // K-179: the count-in clicks the meter in effect where playback starts.
+            Tick ciBeat = std::max<Tick>(1, p->beatTicks), ciBar = std::max<Tick>(1, p->barTicks);
+            if (tMode_ == PlayMode::Song) {
+              const MeterSeg& g = p->meter.segAt(static_cast<Tick>(std::max(0.0, startTick_)));
+              ciBeat = g.beat, ciBar = g.bar;
+            } else if (const ProgPattern* cp = tMode_ == PlayMode::Pattern ? p->pattern(tPattern_) : nullptr) {
+              ciBeat = cp->beat, ciBar = cp->bar;
+            }
+            countInBeats_ = static_cast<int>(std::max<Tick>(1, ciBar / ciBeat));
+            countInGroup_ = meterGroup(countInBeats_, static_cast<int>(static_cast<Tick>(p->ppq) * 4 / ciBeat));
+            countInBeat_ = std::max<int64_t>(1, static_cast<int64_t>(p->flatMap.samplesBetween(0, static_cast<double>(ciBeat), sr_)));
             countInLeft_ = countInTotal_;
           }
           countingIn_.store(countInLeft_ > 0);
@@ -1525,6 +1540,20 @@ void AudioEngine::drain(const Program* p) {
           const double cur = here();
           pendJumpAt_ = std::ceil(cur / c.tick2 - 1e-9) * c.tick2;
           if (pendJumpAt_ < cur) pendJumpAt_ += c.tick2;
+          if (tMode_ == PlayMode::Song && !p->meter.constant()) {  // K-179: beats and bars of the meter map
+            const MeterMap& mm = p->meter;
+            const Tick g = static_cast<Tick>(c.tick2), ct = static_cast<Tick>(std::ceil(cur - 1e-9));
+            const JumpLevel lv = g == p->beatTicks ? JumpLevel::Beat : g % std::max<Tick>(1, p->barTicks) == 0 ? JumpLevel::Bars : JumpLevel::Ticks;
+            if (lv == JumpLevel::Beat) {
+              pendJumpAt_ = static_cast<double>(mm.beatStartAt(ct) == ct ? ct : mm.nextBeat(ct));
+            } else if (lv == JumpLevel::Bars) {
+              const int64_t k = std::max<int64_t>(1, g / std::max<Tick>(1, p->barTicks));
+              int64_t b = mm.barIndex(ct);
+              if (mm.barStart(b) < ct) ++b;
+              b = (b + k - 1) / k * k;
+              pendJumpAt_ = static_cast<double>(mm.barStart(b));
+            }
+          }
           pendJumpTo_ = c.tick;
           pendJump_ = true;
           jumpPendingUi_.store(true);
@@ -1745,11 +1774,11 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
       const int64_t b = (e0 + countInBeat_ - 1) / countInBeat_;
       const int64_t at = b * countInBeat_ - e0;
       if (at >= 0 && at < k) {
-        const int64_t beatsPerBar = std::max<Tick>(1, p->barTicks / std::max<Tick>(1, p->beatTicks));
+        const int64_t beatsPerBar = std::max(1, countInBeats_);
         clickStart_ = static_cast<int>(at);
         clickLeft_ = static_cast<int>(sr_ * 0.03);
         clickPhase_ = 0;
-        clickFreq_ = b % beatsPerBar == 0 ? 1600.0 : 1000.0;
+        clickFreq_ = clickFreqFor(b % beatsPerBar == 0 ? 2 : countInGroup_ > 0 && (b % beatsPerBar) % countInGroup_ == 0 ? 1 : 0);
       }
       countInLeft_ -= k;
       s = k;
@@ -1818,18 +1847,19 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
       }
       dispatch(p, s, s + seg);
       if (metronome_.load(std::memory_order_relaxed)) {  // click on each beat in this segment
-        const Tick beatT = std::max<Tick>(1, p->beatTicks);
         double t0 = tickAt(p, anchorTick_, static_cast<double>(clock_));
         double t1 = tickAt(p, anchorTick_, static_cast<double>(clock_ + seg));
         Tick first = static_cast<Tick>(std::ceil(t0 - 1e-9));
-        Tick b0 = (first + beatT - 1) / beatT * beatT;
+        // K-179: beats and accents of the meter in effect (song meter changes, or the pattern's meter).
+        const MetronomeBeat bl = metronomeBeat(p, tMode_ == PlayMode::Pattern ? p->pattern(tPattern_) : nullptr, tMode_ == PlayMode::Song, first);
+        const Tick b0 = bl.tick;
         if (b0 < t1) {
           int64_t smp = sampleAt(p, anchorTick_, static_cast<double>(b0)) - clock_;
           if (smp >= 0 && smp < seg) {
             clickStart_ = s + static_cast<int>(smp);
             clickLeft_ = static_cast<int>(sr_ * 0.03);
             clickPhase_ = 0;
-            clickFreq_ = (b0 % std::max<Tick>(1, p->barTicks)) == 0 ? 1600.0 : 1000.0;
+            clickFreq_ = clickFreqFor(bl.accent);
           }
         }
       }
@@ -1924,9 +1954,25 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
   }
   ports_.beginBlock();
   {
-    const Tick beat = std::max<Tick>(1, p->beatTicks);
+    // K-179: the meter at the block start (song meter changes, or the playing pattern's meter) and
+    // the bar it is in, for hosted plugins' bar positions.
+    Tick beat = std::max<Tick>(1, p->beatTicks), bar = std::max<Tick>(1, p->barTicks);
+    const Tick bt = static_cast<Tick>(std::floor(std::max(0.0, blockTick)));
+    bc_.ctx.barStart = -1;
+    bc_.ctx.barIndex = 0;
+    if (tMode_ == PlayMode::Song) {
+      const MeterMap& mm = p->meter;
+      const MeterSeg& g = mm.segAt(bt);
+      beat = g.beat, bar = g.bar;
+      if (!mm.constant()) {
+        bc_.ctx.barIndex = mm.barIndex(bt);
+        bc_.ctx.barStart = static_cast<double>(mm.barStart(bc_.ctx.barIndex));
+      }
+    } else if (const ProgPattern* cp = tMode_ == PlayMode::Pattern ? p->pattern(tPattern_) : nullptr) {
+      beat = cp->beat, bar = cp->bar;
+    }
     bc_.ctx.tsDen = std::max(1, static_cast<int>(static_cast<Tick>(p->ppq) * 4 / beat));
-    bc_.ctx.tsNum = std::max(1, static_cast<int>(std::max<Tick>(1, p->barTicks) / beat));
+    bc_.ctx.tsNum = std::max(1, static_cast<int>(bar / beat));
     bc_.ctx.looping = tPlaying_ && tLoop_ && tMode_ != PlayMode::Live;
     bc_.ctx.loopStart = loopStart(p);
     bc_.ctx.loopEnd = tMode_ == PlayMode::Live ? 0.0 : loopEnd(p);

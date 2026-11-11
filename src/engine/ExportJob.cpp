@@ -8,6 +8,7 @@
 #include <new>
 #include "../core/Automation.h"
 #include "../core/Crash.h"
+#include "../core/Meter.h"
 #include "../core/MidiFile.h"
 #include "Freeze.h"
 #include "Loudness.h"
@@ -41,9 +42,15 @@ std::vector<WavMarker> scopeMarkers(const Song& song, const RenderJob& job, Tick
   TempoMap map;
   map.build(song);
   for (const auto& m : song.markers) {
-    if (m.pos < start || m.pos >= end || m.name.empty()) continue;
+    // K-179: a meter change is a cue too, named by its meter ("6/8", or "Verse (6/8)").
+    std::string name = m.name;
+    if (m.isMeter()) {
+      const std::string meter = std::to_string(m.timeSigNum) + "/" + std::to_string(m.timeSigDen);
+      name = name.empty() || name == meter ? meter : name + " (" + meter + ")";
+    }
+    if (m.pos < start || m.pos >= end || name.empty()) continue;
     out.push_back({static_cast<int64_t>(std::llround(map.samplesBetween(static_cast<double>(start), static_cast<double>(m.pos), job.sampleRate))),
-                   m.name});
+                   name});
   }
   return out;
 }
@@ -75,8 +82,12 @@ struct Writer {
       map.build(song);
       meta.tempo = s.render.scope == RenderScope::Pattern ? song.tempo : map.bpmAt(0);
       meta.beats = static_cast<int>((r.end - r.start) * std::max(1, s.render.loops) / std::max<Tick>(1, song.ppq));
-      meta.meterNum = song.timeSigNum;
-      meta.meterDen = song.timeSigDen;
+      // K-179: the meter where the render starts (the chunk holds one meter); a pattern's own meter.
+      const MeterSeg g = MeterMap(song).segAt(r.start);
+      meta.meterNum = g.num;
+      meta.meterDen = g.den;
+      if (s.render.scope == RenderScope::Pattern)
+        if (const Pattern* p = song.pattern(s.render.pattern)) meta.meterNum = song.patternMeterNum(*p), meta.meterDen = song.patternMeterDen(*p);
       meta.loop = s.render.tail == TailMode::Wrap;
     }
     for (ExportFormat f : s.formats) {

@@ -66,6 +66,19 @@ struct Fixture {
   }
 };
 
+// K-179: meter changes from scripts (bars count from 1).
+void testMeter() {
+  Fixture f;
+  expect(f.run("project.song.addMeter(3, 7, 8)").empty(), "meter: addMeter");
+  expect(f.eval("project.song.meterAt(project.song.barToTick(3))") == "7\t8", "meter: meterAt in the new section");
+  expect(f.eval("project.song.meterAt(0)") == "4\t4", "meter: the start keeps its meter");
+  expect(f.eval("project.song.barToTick(4)") == std::to_string(2 * 384 + 336), "meter: barToTick counts 7/8 bars");
+  expect(f.eval("project.song.tickToBar(2 * 384 + 336)") == "4", "meter: tickToBar");
+  expect(contains(f.run("project.song.addMeter(2, 7, 5)"), "2, 4, 8 or 16"), "meter: bad note value refused");
+  expect(f.eval("project.song.removeMeter(3)") == "true" && f.eval("project.song.meterAt(1000)") == "4\t4", "meter: removeMeter");
+  expect(f.eval("project.song.removeMeter(3)") == "false", "meter: nothing left to remove");
+}
+
 void testSong() {
   Fixture f;
   expect(f.eval("project.song.tempo()") == "140.0", "song: tempo read");
@@ -559,6 +572,7 @@ void testConsoleWithBothApis() {
 
 int main() {
   testSong();
+  testMeter();
   testChannels();
   testPatterns();
   testPlaylist();

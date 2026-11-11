@@ -58,6 +58,8 @@
 #include "../core/PatternAutoOps.h"
 #include "../core/PatternAutomation.h"
 #include "PatternAutoUi.h"
+#include "MeterUi.h"
+#include "../core/Meter.h"
 #include "../core/TrackPlus.h"
 #include "TrackPlusUi.h"
 
@@ -778,6 +780,7 @@ void arrangementClipMenu(App& a, ObjectId id) {
   if (!c) return;
   if (c->kind != ClipKind::Pattern) ImGui::TextDisabled("%s", clipName(s, *c).c_str());
   if (ImGui::MenuItem(i18n::tr("Mute clip"), nullptr, c->muted)) a.doc.editClip(id, "mute clip", [](Clip& x) { x.muted = !x.muted; });
+  meterui::clipMeterItems(a, id);  // K-179: a pattern clip in a section of another meter
   {  // K-114: the clip's loop (every selected clip with it, when it is selected)
     std::set<ObjectId> sel = a.playlist.selected;
     if (!sel.count(id)) sel = {id};
@@ -1311,7 +1314,7 @@ void drawPlaylist(App& a) {
     {  // three filter tabs (J-38): one segmented control in the ruler band, so
        // the list starts level with the first track and the corner's divider runs on
       ImDrawList* pdl = ImGui::GetWindowDrawList();
-      const float bandH = 14.0f + 26.0f - theme::kS1;  // the ruler band (rulerH below) minus the child padding
+      const float bandH = 14.0f + 26.0f + meterui::laneHeight(a.doc.song()) - theme::kS1;  // the ruler band (rulerH below) minus the child padding
       const ImVec2 q0 = ImGui::GetCursorScreenPos();
       const float w = ImGui::GetContentRegionAvail().x, th = 22.0f, ty = std::round(q0.y + (bandH - th) * 0.5f) - 1;
       const float tw = std::floor((w - 4) / 3.0f);
@@ -1526,8 +1529,11 @@ void drawPlaylist(App& a) {
   // a slim horizontal scroller, then the ruler.
   const float vbarW = 10.0f, hbarH = 14.0f;
   const float headW = vbarW + (st.wideHeaders ? std::clamp(avail.x * 0.2f, 150.0f, 230.0f) : std::clamp(avail.x * 0.13f, 96.0f, 150.0f));
-  const float rulerH = hbarH + 26.0f;
-  const float rY = origin.y + hbarH;  // ruler top
+  // K-179: a thin meter lane on top of the ruler while the song has meter changes.
+  const float laneH = meterui::laneHeight(s);
+  const float rulerH = hbarH + 26.0f + laneH;
+  const float rLaneY = origin.y + hbarH;  // meter lane top
+  const float rY = rLaneY + laneH;        // ruler top (bar numbers, markers)
   const ImVec2 gMin(origin.x + headW, origin.y + rulerH), gMax(origin.x + avail.x, origin.y + avail.y);
   const int nTracks = static_cast<int>(s.tracks.size());
   // Per-track heights (relative to the zoomable track height): prefix offsets.
@@ -1710,7 +1716,8 @@ void drawPlaylist(App& a) {
   const Tick visGrid = timeline::visibleGrid(s, st.pxPerTick);
   const Tick snapG = timeline::snapGrid(s, st.snap, st.pxPerTick, io.KeyAlt);
   st.effGrid = timeline::snapGrid(s, st.snap, st.pxPerTick, false);
-  auto snapPos = [&](Tick t) { return timeline::snapTick(t, snapG, st.snap); };
+  const MeterMap mm(s);  // K-179: song time follows the meter changes
+  auto snapPos = [&](Tick t) { return timeline::snapTick(mm, t, snapG, st.snap); };
 
   // J-67: wheel / trackpad input goes through the smooth scroller: notches
   // glide a whole track (or 80 px) and land on it, trackpad deltas stay 1:1,
@@ -1761,9 +1768,16 @@ void drawPlaylist(App& a) {
   dl->PushClipRect(gMin, gMax, true);
   dl->AddRectFilled(gMin, gMax, P.well);
   const Tick barT = std::max<Tick>(1, s.barTicks()), beatT = std::max<Tick>(1, s.beatTicks());
-  // Alternate bar shading (every other bar a step lighter), like the reference grid.
-  for (Tick t = snapDown(std::max<Tick>(0, tickAt(gMin.x)), barT); xOf(t) < gMax.x; t += barT)
-    if ((t / barT) % 2 == 1) dl->AddRectFilled(ImVec2(xOf(t), gMin.y), ImVec2(xOf(t + barT), gMax.y), theme::withAlpha(P.paper, P.dark ? 0.035f : 0.018f));
+  // Alternate bar shading (every other bar a step lighter), like the reference grid. K-179: real
+  // bars of the meter map (each section's own bar length).
+  if (mm.constant()) {
+    for (Tick t = snapDown(std::max<Tick>(0, tickAt(gMin.x)), barT); xOf(t) < gMax.x; t += barT)
+      if ((t / barT) % 2 == 1) dl->AddRectFilled(ImVec2(xOf(t), gMin.y), ImVec2(xOf(t + barT), gMax.y), theme::withAlpha(P.paper, P.dark ? 0.035f : 0.018f));
+  } else {
+    for (int64_t b = mm.barIndex(std::max<Tick>(0, tickAt(gMin.x))); xOf(mm.barStart(b)) < gMax.x; ++b)
+      if (b % 2 == 1)
+        dl->AddRectFilled(ImVec2(xOf(mm.barStart(b)), gMin.y), ImVec2(xOf(mm.barStart(b + 1)), gMax.y), theme::withAlpha(P.paper, P.dark ? 0.035f : 0.018f));
+  }
   for (int tr = trackAt(gMin.y); tr < nTracks && yOf(tr) < gMax.y; ++tr) {
     float y = yOf(tr);
     dl->AddLine(ImVec2(gMin.x, y + hOf(tr)), ImVec2(gMax.x, y + hOf(tr)), P.gridBar);
@@ -1771,9 +1785,17 @@ void drawPlaylist(App& a) {
   {
     // Lines at the visible grid: bars strongest, then beats, then finer subdivisions.
     const ImU32 fine = theme::withAlpha(P.gridBeat, 0.45f);
-    for (Tick t = snapDown(std::max<Tick>(0, tickAt(gMin.x)), visGrid); xOf(t) < gMax.x; t += visGrid) {
-      ImU32 c = t % barT == 0 ? P.gridBar : t % beatT == 0 ? P.gridBeat : fine;
-      dl->AddLine(ImVec2(std::round(xOf(t)), gMin.y), ImVec2(std::round(xOf(t)), gMax.y), c);
+    if (mm.constant()) {
+      for (Tick t = snapDown(std::max<Tick>(0, tickAt(gMin.x)), visGrid); xOf(t) < gMax.x; t += visGrid) {
+        ImU32 c = t % barT == 0 ? P.gridBar : t % beatT == 0 ? P.gridBeat : fine;
+        dl->AddLine(ImVec2(std::round(xOf(t)), gMin.y), ImVec2(std::round(xOf(t)), gMax.y), c);
+      }
+    } else {  // K-179: lines of the meter map; compound groups (the 4th eighth in 6/8) between bar and beat
+      const ImU32 group = theme::mix(P.gridBeat, P.gridBar, 0.45f);
+      timeline::forEachLine(mm, std::max<Tick>(0, tickAt(gMin.x)), tickAt(gMax.x) + 1, visGrid, [&](Tick t, int k) {
+        const ImU32 c = k == timeline::kLineBar ? P.gridBar : k == timeline::kLineGroup ? group : k == timeline::kLineBeat ? P.gridBeat : fine;
+        dl->AddLine(ImVec2(std::round(xOf(t)), gMin.y), ImVec2(std::round(xOf(t)), gMax.y), c);
+      });
     }
   }
   // Markers: faint full-height lines (labels in the ruler).
@@ -2208,6 +2230,23 @@ void drawPlaylist(App& a) {
                         theme::kRadiusSm);
     if (nameShown)
       theme::textEllipsis(dl, a.fontBold, nameSize, namePos, nameMaxW, theme::contrastText(headSolid), title);
+    if (nameShown && c.kind == ClipKind::Pattern && !mm.constant() && headH >= 9) {
+      // K-179: the pattern's own meter when it differs from the section the clip starts in.
+      if (const Pattern* bp = s.pattern(c.pattern)) {
+        const MeterSeg& g = mm.segAt(c.start);
+        const int bn = s.patternMeterNum(*bp), bd = s.patternMeterDen(*bp);
+        if (bn != g.num || bd != g.den) {
+          char badge[16];
+          std::snprintf(badge, sizeof badge, "%d/%d", bn, bd);
+          ImFont* nf = a.fontBold ? a.fontBold : ImGui::GetFont();
+          const float nw = std::min(nameMaxW, nf->CalcTextSizeA(nameSize, FLT_MAX, 0.0f, title).x);
+          const float bw = a.fontMono->CalcTextSizeA(nameSize, FLT_MAX, 0.0f, badge).x;
+          const float bx = namePos.x + nw + 6;
+          if (bx + bw + 4 < titleR)
+            dl->AddText(a.fontMono, nameSize, ImVec2(bx, namePos.y), theme::withAlpha(theme::contrastText(headSolid), 0.6f), badge);
+        }
+      }
+    }
     const ImVec2 b0(a0.x + 3, a0.y + headH + 2), b1(a1.x - 3, a1.y - 3);
     const ImU32 mark = P.dark ? P.paper : theme::mix(base, P.ink, 0.6f);
     bool inside = hovered && io.MousePos.x >= a0.x && io.MousePos.x < a1.x && io.MousePos.y >= a0.y && io.MousePos.y < a1.y && io.MousePos.y >= gMin.y;
@@ -2596,7 +2635,7 @@ void drawPlaylist(App& a) {
     const ImU32 sc = theme::rgb(theme::role::kSlice);
     const float dx = std::fabs(io.MousePos.x - cg.start.x), dy = std::fabs(io.MousePos.y - cg.start.y);
     if (dx > 6.0f && dx > dy) {  // horizontal drag: a region cut (both ends), the inside lit
-      const float x2 = sliceX(2, std::max<Tick>(0, timeline::snapTick(std::max<Tick>(0, tickAt(io.MousePos.x)), snapG, Snap::Line)));
+      const float x2 = sliceX(2, std::max<Tick>(0, timeline::snapTick(mm, std::max<Tick>(0, tickAt(io.MousePos.x)), snapG, Snap::Line)));
       dl->AddRectFilled(ImVec2(std::min(x, x2), y0), ImVec2(std::max(x, x2), y1), theme::withAlpha(sc, 0.16f));
       dl->AddLine(ImVec2(x2, y0), ImVec2(x2, y1), sc, 2.0f);
       dl->AddTriangleFilled(ImVec2(x2 - 4, y0), ImVec2(x2 + 4, y0), ImVec2(x2, y0 + 5), sc);
@@ -2604,7 +2643,7 @@ void drawPlaylist(App& a) {
     dl->AddLine(ImVec2(x, y0), ImVec2(x, y1), sc, 2.0f);
     dl->AddTriangleFilled(ImVec2(x - 4, y0), ImVec2(x + 4, y0), ImVec2(x, y0 + 5), sc);
   } else if (st.tool == Tool::Slice && hovered && io.MousePos.x >= gMin.x && io.MousePos.y >= gMin.y && hoverClip != kNoId) {
-    const Tick cut = timeline::snapTick(std::max<Tick>(0, tickAt(io.MousePos.x)), snapG, Snap::Line);
+    const Tick cut = timeline::snapTick(mm, std::max<Tick>(0, tickAt(io.MousePos.x)), snapG, Snap::Line);
     const float x = sliceX(1, cut);
     const Clip* sc = s.clip(hoverClip);
     float y0 = io.KeyShift ? gMin.y : yOf(sc->track), y1 = io.KeyShift ? gMax.y : yOf(sc->track) + hOf(sc->track);
@@ -2629,26 +2668,48 @@ void drawPlaylist(App& a) {
     }
     // Minor ticks on the visible grid; labels on a coarser grid that leaves room for text.
     const Tick labelGrid = timeline::visibleGrid(s, st.pxPerTick, 64.0);
-    for (Tick t = snapDown(std::max<Tick>(0, tickAt(gMin.x)), visGrid); xOf(t) < gMax.x; t += visGrid) {
-      float x = std::round(xOf(t));
-      bool major = t % labelGrid == 0;
-      float len = major ? 10.0f : t % beatT == 0 ? 6.0f : 3.0f;
-      dl->AddLine(ImVec2(x, gMin.y - len), ImVec2(x, gMin.y - 1), major ? P.lineStrong : P.line);
-      if (major) {
-        std::string lbl = timeline::rulerLabel(s, t, labelGrid);
-        dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(x + 4, rY + 4), t % barT == 0 ? P.text : P.textFaint, lbl.c_str());
+    if (mm.constant()) {
+      for (Tick t = snapDown(std::max<Tick>(0, tickAt(gMin.x)), visGrid); xOf(t) < gMax.x; t += visGrid) {
+        float x = std::round(xOf(t));
+        bool major = t % labelGrid == 0;
+        float len = major ? 10.0f : t % beatT == 0 ? 6.0f : 3.0f;
+        dl->AddLine(ImVec2(x, gMin.y - len), ImVec2(x, gMin.y - 1), major ? P.lineStrong : P.line);
+        if (major) {
+          std::string lbl = timeline::rulerLabel(s, t, labelGrid);
+          dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(x + 4, rY + 4), t % barT == 0 ? P.text : P.textFaint, lbl.c_str());
+        }
+      }
+    } else {  // K-179: ticks and numbers of the meter map; a short bar's number is dim
+      std::vector<Tick> majors;
+      timeline::forEachLine(mm, std::max<Tick>(0, tickAt(gMin.x - 40)), tickAt(gMax.x) + 1, labelGrid, [&](Tick t, int) { majors.push_back(t); });
+      timeline::forEachLine(mm, std::max<Tick>(0, tickAt(gMin.x)), tickAt(gMax.x) + 1, visGrid, [&](Tick t, int k) {
+        const bool major = std::binary_search(majors.begin(), majors.end(), t);
+        const float x = std::round(xOf(t));
+        const float len = major ? 10.0f : k >= timeline::kLineBeat ? 6.0f : 3.0f;
+        dl->AddLine(ImVec2(x, gMin.y - len), ImVec2(x, gMin.y - 1), major ? P.lineStrong : P.line);
+      });
+      float lastRight = -1e9f;
+      for (Tick t : majors) {
+        const float x = std::round(xOf(t));
+        if (x + 4 < lastRight) continue;  // bars of a short section crowd: skip numbers that would overlap
+        const std::string lbl = timeline::rulerLabel(mm, t, labelGrid);
+        const bool bar = timeline::lineStrength(mm, t) == timeline::kLineBar;
+        const bool shortBar = bar && mm.shortBar(t);
+        dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(x + 4, rY + 4), bar && !shortBar ? P.text : P.textFaint, lbl.c_str());
+        lastRight = x + 4 + a.fontMono->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, lbl.c_str()).x + 6;
       }
     }
     const int loopMk = ops::songLoopMarker(s);  // J-85: the active song loop marker (lit glyph)
     // Markers: a flag with the name (time signature markers show the meter).
     for (size_t i = 0; i < s.markers.size(); ++i) {
       const Marker& mk = s.markers[i];
+      // K-179: a meter-only marker shows in the meter lane; one with a name or an action keeps its chip.
+      if (mk.isMeter() && mk.name.empty() && mk.action == MarkerAction::None) continue;
       const bool dragged = cg.kind == ClipGesture::MarkerDrag && cg.marker == static_cast<int>(i) && cg.moved;
       float x = std::round(xOf(dragged ? cg.markerTo : mk.pos));
       if (x < gMin.x - 200 || x > gMax.x) continue;
       const bool songLoop = mk.action == MarkerAction::SongLoop;
-      std::string lbl = mk.timeSigNum > 0 ? std::to_string(mk.timeSigNum) + "/" + std::to_string(mk.timeSigDen) : mk.name;
-      if (mk.timeSigNum > 0 && !mk.name.empty() && mk.name != lbl) lbl += "  " + mk.name;
+      std::string lbl = mk.name;
       if (lbl.empty()) lbl = "\xE2\x80\xA2";  // bullet for unnamed markers
       static const char* const acts[] = {"", i18n::N_("marker loop"), i18n::N_("skip"), i18n::N_("pause"), i18n::N_("stop"), ""};
       if (mk.action != MarkerAction::None && !songLoop) lbl += std::string("  \xC2\xB7 ") + i18n::tr(acts[static_cast<int>(mk.action)]);
@@ -2686,6 +2747,9 @@ void drawPlaylist(App& a) {
     }
   }
   dl->PopClipRect();
+  // K-179: the meter lane (its own pointer handling, menu and editor; Delete there removes a change, not clips).
+  const bool inMeterLane =
+      laneH > 0 && meterui::lane(a, dl, mm, ImVec2(gMin.x, rLaneY), ImVec2(gMax.x, rY), gMin.x - st.scrollX, st.pxPerTick, hovered);
 
   // Track headers (FL layout): name top left, "..." handle bottom left (drag:
   // reorder, click: track menu), round switch bottom right (mute; right-click:
@@ -2843,13 +2907,13 @@ void drawPlaylist(App& a) {
   const float gridH = gMax.y - gMin.y;
   const float contentW = std::max(static_cast<float>(songLen + 8 * std::max<Tick>(1, s.barTicks())) * st.pxPerTick, st.scrollX + gridW);
   const ImVec2 vb0(origin.x, gMin.y), vb1(origin.x + vbarW - 2, gMax.y);
-  const ImVec2 hb0(gMin.x, origin.y + 1), hb1(gMax.x, rY - 1);
+  const ImVec2 hb0(gMin.x, origin.y + 1), hb1(gMax.x, rLaneY - 1);
   const float vThumbH = std::max(kThumbMinV, (vb1.y - vb0.y) * std::min(1.0f, gridH / std::max(1.0f, totalH)));
   const float vThumbY = vb0.y + (totalH > gridH ? (vb1.y - vb0.y - vThumbH) * std::clamp(st.scrollY / (totalH - gridH), 0.0f, 1.0f) : 0.0f);  // J-67: overscroll keeps the thumb in its rail
   const float hThumbW = std::max(kThumbMinH, (hb1.x - hb0.x) * std::min(1.0f, gridW / std::max(1.0f, contentW)));
   const float hThumbX = hb0.x + (contentW > gridW ? (hb1.x - hb0.x - hThumbW) * std::clamp(st.scrollX / (contentW - gridW), 0.0f, 1.0f) : 0.0f);
   const bool overV = hovered && io.MousePos.x >= vb0.x && io.MousePos.x < vb1.x + 2 && io.MousePos.y >= vb0.y && io.MousePos.y < vb1.y;
-  const bool overH = hovered && io.MousePos.x >= hb0.x && io.MousePos.x < hb1.x && io.MousePos.y >= origin.y && io.MousePos.y < rY;
+  const bool overH = hovered && io.MousePos.x >= hb0.x && io.MousePos.x < hb1.x && io.MousePos.y >= origin.y && io.MousePos.y < rLaneY;
   // K-24: the thumbs' ends are zoom handles (a third of a short thumb at most).
   const float vCap = std::min(7.0f, vThumbH / 3.0f), hCap = std::min(8.0f, hThumbW / 3.0f);
   int overEnd = 0;
@@ -2861,7 +2925,7 @@ void drawPlaylist(App& a) {
   const bool vBusy = barDrag == 1 || barDrag == 3 || barDrag == 4, hBusy = barDrag == 2 || barDrag == 5 || barDrag == 6;
   dl->AddRectFilled(ImVec2(origin.x, gMin.y), ImVec2(headX0, gMax.y), P.dark ? P.well : P.surface950);
   dl->AddRectFilled(ImVec2(vb0.x + 2, vThumbY), ImVec2(vb1.x, vThumbY + vThumbH), vBusy || overV ? P.surface600 : P.surface700, 3);
-  dl->AddRectFilled(ImVec2(gMin.x, origin.y), ImVec2(gMax.x, rY), P.dark ? P.well : P.surface950);
+  dl->AddRectFilled(ImVec2(gMin.x, origin.y), ImVec2(gMax.x, rLaneY), P.dark ? P.well : P.surface950);
   dl->AddRectFilled(ImVec2(hThumbX, hb0.y + 2), ImVec2(hThumbX + hThumbW, hb1.y - 1), hBusy || overH ? P.surface600 : P.surface700, 3);
   {  // K-24: end handles: a grip line at each end while the scroller is hovered, the end under the pointer (or dragged) lit
     const ImU32 grip = P.dark ? P.textFaint : P.textDim;
@@ -3019,7 +3083,7 @@ void drawPlaylist(App& a) {
       ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
     else if (st.tool == Tool::Warp && hoverClip != kNoId && plwarp::hovered(hoverClip))  // K-85
       ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
-    std::string where = "Bar " + std::to_string(tickAt(m.x) / std::max<Tick>(1, s.barTicks()) + 1) + " · " +
+    std::string where = "Bar " + std::to_string(mm.barIndex(std::max<Tick>(0, tickAt(m.x))) + 1) + " · " +
                         playlistTrackName(s, static_cast<size_t>(trackAt(m.y)));
     if (liveMode && hc && inLiveArea(s, *hc))
       a.setHint(where + "   (live: click to launch on the track's launch grid \xC2\xB7 right-click to stop the track)");
@@ -3097,6 +3161,7 @@ void drawPlaylist(App& a) {
 
   bool lClick = hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left);
   bool rClick = hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right);
+  if (laneH > 0 && m.y >= rLaneY && m.y < rY && m.x >= gMin.x) lClick = rClick = false;  // K-179: the meter lane's own
   // Q-3: Esc or a right-click during a clip drag (move, Shift+drag copies,
   // resize, trim, slip) cancels it: the clips go back, the copies go away,
   // the selection is restored and nothing is recorded.
@@ -3632,7 +3697,7 @@ void drawPlaylist(App& a) {
     } else if (inRuler && lClick) {
       if (a.engine.mode() != PlayMode::Song) a.engine.setMode(PlayMode::Song);  // J-49: no rewind when already in song mode
       cg.kind = ClipGesture::Scrub;  // the position follows the pointer until release
-      cg.lastScrub = std::max<Tick>(0, timeline::snapTick(std::max<Tick>(0, tickAt(m.x)), snapG, Snap::Line));
+      cg.lastScrub = std::max<Tick>(0, timeline::snapTick(mm, std::max<Tick>(0, tickAt(m.x)), snapG, Snap::Line));
       j31::songJump(a, cg.lastScrub);  // J-31: a click while playing waits for the jump grid
     } else if (inHead) {
       int tr = trackAt(m.y);
@@ -3693,10 +3758,10 @@ void drawPlaylist(App& a) {
       cg.kind = ClipGesture::Slip;  // every clip kind (audio: its sample position)
     } else if (inGrid && lClick && !io.KeyCtrl && st.tool == Tool::Slice) {
       cg.kind = ClipGesture::SliceLine;  // cut on release: the clicked clip, or every clip the vertical line crossed
-      cg.startTick = std::max<Tick>(0, timeline::snapTick(std::max<Tick>(0, tickAt(m.x)), snapG, Snap::Line));
+      cg.startTick = std::max<Tick>(0, timeline::snapTick(mm, std::max<Tick>(0, tickAt(m.x)), snapG, Snap::Line));
     } else if (inGrid && lClick && !io.KeyCtrl && st.tool == Tool::Play) {
       a.engine.setMode(PlayMode::Song);
-      a.engine.setPosition(std::max<Tick>(0, timeline::snapTick(std::max<Tick>(0, tickAt(m.x)), snapG, Snap::Line)));
+      a.engine.setPosition(std::max<Tick>(0, timeline::snapTick(mm, std::max<Tick>(0, tickAt(m.x)), snapG, Snap::Line)));
       if (!a.engine.playing()) a.engine.play();
       cg.kind = ClipGesture::Play;
     } else if (inGrid && lClick && !io.KeyCtrl && st.tool == Tool::Zoom) {
@@ -3856,7 +3921,7 @@ void drawPlaylist(App& a) {
     switch (cg.kind) {
       case ClipGesture::Scrub: {
         // Smooth: follows the pointer every frame, landing on the snap grid (Alt = free).
-        Tick t = std::max<Tick>(0, timeline::snapTick(curTick, snapG, Snap::Line));
+        Tick t = std::max<Tick>(0, timeline::snapTick(mm, curTick, snapG, Snap::Line));
         if (t != cg.lastScrub) {
           j31::songJump(a, t);  // J-31: immediate when stopped, quantized while playing
           cg.lastScrub = t;
@@ -3867,14 +3932,14 @@ void drawPlaylist(App& a) {
         if (!cg.moved && !ImGui::IsMouseDragging(ImGuiMouseButton_Left, 3.0f)) break;
         cg.moved = true;
         const Marker* mk = cg.marker >= 0 && cg.marker < static_cast<int>(s.markers.size()) ? &s.markers[static_cast<size_t>(cg.marker)] : nullptr;
-        if (mk) cg.markerTo = std::max<Tick>(0, timeline::snapTick(mk->pos + (curTick - cg.startTick), snapG, Snap::Line));
+        if (mk) cg.markerTo = std::max<Tick>(0, timeline::snapTick(mm, mk->pos + (curTick - cg.startTick), snapG, Snap::Line));
         break;
       }
       case ClipGesture::TimeSel: {
         if (cg.rulerMenu && !cg.moved && !ImGui::IsMouseDragging(ImGuiMouseButton_Right, 3.0f)) break;  // J-85: a click so far
         cg.moved = true;
-        Tick t0 = std::max<Tick>(0, timeline::snapTick(cg.startTick, snapG, Snap::Line));
-        Tick t1 = std::max<Tick>(0, timeline::snapTick(curTick, snapG, Snap::Line));
+        Tick t0 = std::max<Tick>(0, timeline::snapTick(mm, cg.startTick, snapG, Snap::Line));
+        Tick t1 = std::max<Tick>(0, timeline::snapTick(mm, curTick, snapG, Snap::Line));
         st.selStart = std::min(t0, t1);
         st.selEnd = std::max(t0, t1);
         break;
@@ -3886,7 +3951,7 @@ void drawPlaylist(App& a) {
         Tick earliest = an->start;
         for (const auto& c : cg.base)
           if (st.selected.count(c.id)) earliest = std::min(earliest, c.start);
-        const Tick dt = timeline::moveDistance(curTick - cg.startTick, snapG, st.snap, earliest);
+        const Tick dt = timeline::moveDistance(mm, curTick - cg.startTick, snapG, st.snap, earliest);
         const int dtr = curTrack - cg.startTrack;
         if (dt == 0 && dtr == 0 && !cg.moved) break;
         if (cg.copyPending) {
@@ -3929,7 +3994,7 @@ void drawPlaylist(App& a) {
         if (!an) break;
         if (!cg.moved && !ImGui::IsMouseDragging(ImGuiMouseButton_Left, 3.0f)) break;  // a click on the edge changes nothing
         const Tick oldEnd = an->start + s.clipLength(*an);
-        Tick end = std::max(timeline::snapTick(curTick, snapG, Snap::Line), an->start + 1);
+        Tick end = std::max(timeline::snapTick(mm, curTick, snapG, Snap::Line), an->start + 1);
         if (loopMod) end = snapToCutPoint(tickAt(m.x), end, oldEnd, st.pxPerTick);  // K-140 (the pointer itself, not clamped to the view)
         const Tick d = end - oldEnd;
         if (d == 0 && !cg.moved) break;
@@ -3956,7 +4021,7 @@ void drawPlaylist(App& a) {
         const Clip* an = baseClip();
         if (!an) break;
         if (!cg.moved && !ImGui::IsMouseDragging(ImGuiMouseButton_Left, 3.0f)) break;  // a click on the edge changes nothing
-        Tick to = timeline::snapTick(curTick, snapG, Snap::Line);
+        Tick to = timeline::snapTick(mm, curTick, snapG, Snap::Line);
         if (loopMod) to = snapToCutPoint(tickAt(m.x), to, an->start, st.pxPerTick);  // K-140 (the pointer itself)
         const Tick d = to - an->start;
         if (d == 0 && !cg.moved) break;
@@ -4072,7 +4137,7 @@ void drawPlaylist(App& a) {
       case ClipGesture::Slip: {  // content moves inside the clip (every kind)
         const Clip* an = baseClip();
         if (!an || trackLocked(an->track)) break;
-        const Tick d = timeline::snapTick(curTick, snapG, Snap::Line) - timeline::snapTick(cg.startTick, snapG, Snap::Line);
+        const Tick d = timeline::snapTick(mm, curTick, snapG, Snap::Line) - timeline::snapTick(mm, cg.startTick, snapG, Snap::Line);
         if (st.selected.count(an->id) && st.selected.size() > 1) {  // J-187: a selected clip slips every selected clip with it
           std::vector<Clip> all = cg.base;
           for (Clip& c : all)
@@ -4100,7 +4165,7 @@ void drawPlaylist(App& a) {
       }
       case ClipGesture::Play: {  // dragging moves the playback start
         if (ImGui::IsMouseDragging(ImGuiMouseButton_Left, 4.0f)) {
-          Tick t = std::max<Tick>(0, timeline::snapTick(curTick, snapG, Snap::Line));
+          Tick t = std::max<Tick>(0, timeline::snapTick(mm, curTick, snapG, Snap::Line));
           if (t != cg.lastScrub) a.engine.setPosition(t), cg.lastScrub = t;
         }
         break;
@@ -4129,7 +4194,7 @@ void drawPlaylist(App& a) {
       // PL-13: a horizontal drag cuts the clips at both ends of the dragged range
       // (Shift: on every track), selects the inside and makes it the time
       // selection, ready for Chop and stutter (Alt+C) or a time selection command.
-      const Tick e = std::max<Tick>(0, timeline::snapTick(std::max<Tick>(0, tickAt(m.x)), snapG, Snap::Line));
+      const Tick e = std::max<Tick>(0, timeline::snapTick(mm, std::max<Tick>(0, tickAt(m.x)), snapG, Snap::Line));
       const Tick r0 = std::min(cg.startTick, e), r1 = std::max(cg.startTick, e);
       const int t0 = io.KeyShift ? 0 : std::min(cg.startTrack, trackAt(m.y)), t1 = io.KeyShift ? nTracks - 1 : std::max(cg.startTrack, trackAt(m.y));
       std::set<int> trs;
@@ -4179,7 +4244,7 @@ void drawPlaylist(App& a) {
     }
     if (cg.kind == ClipGesture::TimeSel && cg.rulerMenu && !cg.moved) {
       // J-85: right-click in the ruler without dragging: the ruler menu at that position.
-      rulerMenuAt = std::max<Tick>(0, timeline::snapTick(cg.startTick, snapG, Snap::Line));
+      rulerMenuAt = std::max<Tick>(0, timeline::snapTick(mm, cg.startTick, snapG, Snap::Line));
       ImGui::OpenPopup("##rulermenu");
     } else if (cg.kind == ClipGesture::TimeSel) {
       if (st.selEnd > st.selStart) {
@@ -4344,7 +4409,7 @@ void drawPlaylist(App& a) {
     if (keys::pressed("playlist.delete") && st.pickerFocus && st.pickerOpen && !st.pickerSel.empty()) {
       // J-82: Delete in the picker deletes the selected sources (asks when the arrangement uses them).
       requestDeleteSources(a, pickerKind(st.pickerTab), std::vector<ObjectId>(st.pickerSel.begin(), st.pickerSel.end()));
-    } else if (keys::pressed("playlist.delete") && !st.selected.empty()) {
+    } else if (keys::pressed("playlist.delete") && !st.selected.empty() && !inMeterLane) {
       a.doc.beginGroup("delete clips");
       for (ObjectId id : std::set<ObjectId>(st.selected))
         if (const Clip* c = s.clip(id); c && !trackLocked(c->track)) a.doc.removeClip(id);
@@ -4423,6 +4488,7 @@ void drawPlaylist(App& a) {
       a.notify(st.zeroCross ? "Audio clip edits land on zero crossings" : "Audio clip edits land exactly where dropped");
     }
     if (keys::pressed("playlist.picker")) st.pickerOpen = !st.pickerOpen;
+    if (keys::pressed("playlist.meterChange")) meterui::addAndEdit(a, static_cast<Tick>(a.engine.position()));  // K-179
     if (keys::pressed("playlist.loopMarkers")) {  // Shift+T: place loop around the selection (FL), else (J-85) a loop marker at the song position
       if (st.selEnd > st.selStart)
         ops::placeLoop(a.doc, st.selStart, st.selEnd, 0);

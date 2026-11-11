@@ -478,11 +478,11 @@ void Exporter::writePatternNotes() {
 }
 
 void Exporter::writePatternMeta() {
-  const Tick bar = std::max<Tick>(1, s.barTicks());
   const Tick stepLen = std::max<Tick>(1, s.ppq / 4);
   for (const auto& [idx, pid] : patterns) {
     const Pattern* p = s.pattern(pid);
     if (!p) continue;
+    const Tick bar = std::max<Tick>(1, s.patternBarTicks(*p));  // K-179: the pattern's own bar
     const EventList orig = origin(originKey("pat", pid));
     const EventList pe = stripPseudo(orig);
     const bool same = unchanged(orig, fingerprintPattern(*p, s, im));
@@ -537,6 +537,24 @@ void Exporter::writePatternMeta() {
       const Tick fromFixed = std::clamp<Tick>(((fixed > 0 ? fixed : end) + bar - 1) / bar, 1, kMaxPatternBars);
       if (fromFixed != p->bars) fixed = p->bars == content ? 0 : static_cast<Tick>(p->bars) * bar;
       setOrAdd(164, dw(static_cast<uint32_t>(fixed)));
+      // K-179: the pattern's meter as FL's pattern time signature marker at its start (148 kind 8,
+      // 33 / 34). One already there is updated; one is added only for a pattern with its own meter.
+      const int num = s.patternMeterNum(*p), den = s.patternMeterDen(*p);
+      bool found = false;
+      for (size_t i = 0; i < meta.size(); ++i) {
+        if (meta[i].id != 148 || meta[i].value() != (8u << 24)) continue;
+        found = true;
+        for (size_t j = i + 1; j < meta.size() && meta[j].id != 148; ++j) {
+          if (meta[j].id == 33) meta[j].data = Bytes{static_cast<uint8_t>(num)};
+          if (meta[j].id == 34) meta[j].data = Bytes{static_cast<uint8_t>(den)};
+        }
+        break;
+      }
+      if (!found && p->ownMeter()) {
+        meta.push_back(RawEvent{148, dw(8u << 24)});
+        meta.push_back(RawEvent{33, Bytes{static_cast<uint8_t>(num)}});
+        meta.push_back(RawEvent{34, Bytes{static_cast<uint8_t>(den)}});
+      }
     }
     w.word(65, static_cast<uint32_t>(idx));
     for (const auto& e : meta) w.raw(e);

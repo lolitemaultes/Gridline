@@ -97,7 +97,9 @@ class Document {
   uint64_t touchSerial() const { return touchSerial_; }
 
   // --- patterns -----------------------------------------------------------
-  ObjectId addPattern(const std::string& name, int bars = 1, int stepsPerBar = 16, int index = -1);
+  // K-179: meterNum/meterDen > 0 give the new pattern its own meter (0 = follows the song's meter).
+  ObjectId addPattern(const std::string& name, int bars = 1, int stepsPerBar = 16, int index = -1, int meterNum = 0,
+                      int meterDen = 0);
   bool removePattern(ObjectId id);  // also removes its playlist clips
   ObjectId clonePattern(ObjectId id);
   bool renamePattern(ObjectId id, const std::string& name);
@@ -151,7 +153,10 @@ class Document {
   // Returns false for a PPQ outside kPpqChoices. `roundedOut` receives how many
   // tick values did not fit the new grid exactly.
   bool setPpq(int ppq, int* roundedOut = nullptr);
-  bool setTimeSignature(int num, int den);
+  // The song's meter at the start. K-179: nothing moves or resizes: patterns that follow the song's
+  // meter keep the old one as their own (one undo step), unless `alsoPatterns` (they follow the new
+  // meter and change length, as before).
+  bool setTimeSignature(int num, int den, bool alsoPatterns = false);
   void setInfo(const SongInfo& info);
 
   // --- grouping -----------------------------------------------------------

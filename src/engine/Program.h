@@ -15,6 +15,7 @@
 #include "../core/Automation.h"
 #include "../core/Expr.h"
 #include "../core/LayerPick.h"
+#include "../core/Meter.h"
 #include "../core/Fades.h"
 #include "../core/NoteBend.h"
 #include "../core/Params.h"
@@ -515,6 +516,8 @@ struct ProgAutoLane {
 struct ProgPattern {
   ObjectId id = kNoId;
   Tick length = 0;
+  Tick bar = 384, beat = 96;  // K-179: the pattern's own meter (pattern mode metronome and transport)
+  int group = 0;              // compound meter: beats per accent group (else 0)
   std::vector<std::vector<NoteEv>> perChannel;  // index = channel index, sorted by `on`
   std::vector<ProgAutoLane> autos;              // pattern automation (pattern mode), pattern ticks
 };
@@ -567,11 +570,23 @@ struct ProgMarkerEvent {
   Kind kind = Skip;
 };
 
+struct Program;
+// K-179: the metronome's next beat line at or after `first` and its accent (2 bar start, 1 compound
+// group start, 0 other beat): the song's meter map in song time, the pattern's meter in pattern
+// mode (`pat`), the song's meter at the start otherwise. No allocation (audio thread).
+struct MetronomeBeat {
+  Tick tick;
+  int accent;
+};
+MetronomeBeat metronomeBeat(const Program* p, const ProgPattern* pat, bool song, Tick first);
+
 struct Program {
   double tempo = 140;
   int ppq = kDefaultPpq;
-  Tick barTicks = 384;
+  Tick barTicks = 384;   // the song's meter at the start (song time later follows `meter`)
   Tick beatTicks = 96;
+  // K-179: the song's meter changes (built on the UI thread; the audio thread only searches it).
+  MeterMap meter;
   Tick songEnd = 0;      // last clip end (0 = empty)
   Tick songLoopEnd = 0;  // song end rounded up to whole bars (>= one bar)
   // J-85 marker actions: events sorted by tick, and where the song end wraps

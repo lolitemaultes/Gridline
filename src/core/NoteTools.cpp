@@ -1,5 +1,6 @@
 #include "Groove.h"
 #include "NoteTools.h"
+#include "Meter.h"
 #include "StepNotes.h"
 #include "ChordTools.h"
 #include "NoteBend.h"
@@ -1378,6 +1379,7 @@ bool editMarker(Document& d, int index, const std::string& label, const std::fun
 int addMarkersEvery(Document& d, Tick from, Tick to, Tick every) {
   if (every <= 0 || to <= from) return 0;
   int n = 0;
+  const MeterMap mm(d.song());  // K-179: bar numbers of the meter map
   d.editSong("add markers", [&](Song& x) {
     for (Tick t = from; t < to && n < 512; t += every) {
       bool exists = false;
@@ -1385,7 +1387,7 @@ int addMarkersEvery(Document& d, Tick from, Tick to, Tick every) {
       if (exists) continue;
       Marker m;
       m.pos = t;
-      m.name = std::to_string(t / std::max<Tick>(1, x.barTicks()) + 1);
+      m.name = std::to_string(mm.barIndex(t) + 1);
       x.markers.push_back(m);
       ++n;
     }

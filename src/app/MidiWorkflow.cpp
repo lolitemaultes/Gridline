@@ -13,6 +13,7 @@
 #include "ChordEditorUi.h"
 #include "J31Ui.h"
 #include "../core/Automation.h"
+#include "../core/Meter.h"
 #include "../packs/PacksUi.h"
 
 namespace gl {
@@ -125,10 +126,18 @@ void App::startPlayback() {
       engine.setPunch(0, 0);
     engine.setRecording(true);
   }
-  if (recordArmed && countInBars > 0)
-    engine.playWithCountIn(static_cast<double>(countInBars * doc.song().barTicks()));
-  else
+  if (recordArmed && countInBars > 0) {
+    // K-179: whole bars of the meter in effect where recording starts (the pattern's own meter in
+    // pattern mode).
+    const Song& cs = doc.song();
+    Tick bar = cs.barTicks();
+    if (engine.mode() == PlayMode::Song) bar = MeterMap(cs).fullBarLenAt(static_cast<Tick>(std::max(0.0, engine.position())));
+    else if (engine.mode() == PlayMode::Pattern)
+      if (const Pattern* cp = cs.pattern(curPattern)) bar = cs.patternBarTicks(*cp);
+    engine.playWithCountIn(static_cast<double>(countInBars * bar));
+  } else {
     engine.play();
+  }
 }
 
 void App::runAction(RemoteAction action, bool fromMmc) {

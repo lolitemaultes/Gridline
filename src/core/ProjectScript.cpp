@@ -5,6 +5,7 @@
 // after each Document call (edits may reallocate the containers), and charges
 // its work against the VM's budget. Structural edits cost more, which bounds
 // how much undo memory one run can build up.
+#include "MeterEdit.h"
 #include "ProjectScript.h"
 #include <algorithm>
 #include <cmath>
@@ -222,6 +223,42 @@ int s_setTimeSig(lua_State* L) {
   if (d != 2 && d != 4 && d != 8 && d != 16) luaL_argerror(L, 2, "2, 4, 8 or 16");
   charge(L, kCostStruct);
   lua_pushboolean(L, doc(L).setTimeSignature(static_cast<int>(n), static_cast<int>(d)));
+  return 1;
+}
+// K-179: meter changes. Bars are 1-based, ticks absolute.
+int s_meterAt(lua_State* L) {
+  int n = 4, d = 4;
+  meter::meterAt(song(L), std::max<lua_Integer>(0, luaL_checkinteger(L, 1)), n, d);
+  lua_pushinteger(L, n);
+  lua_pushinteger(L, d);
+  return 2;
+}
+int s_barToTick(lua_State* L) {
+  const lua_Integer b = luaL_checkinteger(L, 1);
+  if (b < 1) luaL_argerror(L, 1, "bars count from 1");
+  lua_pushinteger(L, static_cast<lua_Integer>(MeterMap(song(L)).barStart(b - 1)));
+  return 1;
+}
+int s_tickToBar(lua_State* L) {
+  lua_pushinteger(L, static_cast<lua_Integer>(MeterMap(song(L)).barIndex(std::max<lua_Integer>(0, luaL_checkinteger(L, 1))) + 1));
+  return 1;
+}
+int s_addMeter(lua_State* L) {
+  const lua_Integer b = luaL_checkinteger(L, 1), n = luaL_checkinteger(L, 2), d = luaL_checkinteger(L, 3);
+  if (b < 1) luaL_argerror(L, 1, "bars count from 1");
+  if (n < 1 || n > 16) luaL_argerror(L, 2, "1..16");
+  if (d != 2 && d != 4 && d != 8 && d != 16) luaL_argerror(L, 3, "2, 4, 8 or 16");
+  charge(L, kCostStruct);
+  const Tick at = MeterMap(song(L)).barStart(b - 1);
+  const int i = meter::add(doc(L), at, static_cast<int>(n), static_cast<int>(d));
+  lua_pushinteger(L, i >= 0 ? i + 1 : 0);
+  return 1;
+}
+int s_removeMeter(lua_State* L) {
+  const lua_Integer b = luaL_checkinteger(L, 1);
+  charge(L, kCostStruct);
+  const int i = b >= 2 ? meter::changeExactlyAt(song(L), MeterMap(song(L)).barStart(b - 1)) : -1;
+  lua_pushboolean(L, i >= 0 && meter::remove(doc(L), i));
   return 1;
 }
 int s_swing(lua_State* L) {
@@ -1638,6 +1675,11 @@ void openProjectApi(Vm& vm, ProjectHost& h) {
                                      {"ppq", s_ppq},
                                      {"timeSignature", s_timeSig},
                                      {"setTimeSignature", s_setTimeSig},
+                                     {"meterAt", s_meterAt},
+                                     {"barToTick", s_barToTick},
+                                     {"tickToBar", s_tickToBar},
+                                     {"addMeter", s_addMeter},
+                                     {"removeMeter", s_removeMeter},
                                      {"swing", s_swing},
                                      {"setSwing", s_setSwing},
                                      {"swingPreset", s_swingPreset},

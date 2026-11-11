@@ -351,6 +351,11 @@ void toolTests() {
   expect(pat == static_cast<int>(s.patterns.size()) && s.patterns.back().bars == 2, "add_pattern: values");
   f.edit("edit_pattern", jobj({{"pattern", jnum(pat)}, {"bars", jnum(4)}, {"name", jstr("AI beat 2")}}), "edit_pattern");
   expect(s.patterns.back().bars == 4 && s.patterns.back().name == "AI beat 2", "edit_pattern: values");
+  // K-179: a pattern's own meter, and back to the song's.
+  f.edit("edit_pattern", jobj({{"pattern", jnum(pat)}, {"meter", jstr("7/8")}}), "edit_pattern meter");
+  expect(s.patterns.back().meterNum == 7 && s.patterns.back().meterDen == 8, "edit_pattern: meter 7/8");
+  f.edit("edit_pattern", jobj({{"pattern", jnum(pat)}, {"meter", jstr("song")}}), "edit_pattern meter song");
+  expect(!s.patterns.back().ownMeter(), "edit_pattern: meter follows the song again");
   Json notes = Json::makeArray();
   for (int i = 0; i < 3; ++i) notes.array.push_back(jobj({{"start", jnum(i)}, {"length", jnum(0.5)}, {"pitch", jnum(60 + i)}, {"velocity", jnum(90)}}));
   f.edit("set_notes", jobj({{"pattern", jnum(pat)}, {"channel", jnum(newCh)}, {"notes", notes}}), "set_notes replace");

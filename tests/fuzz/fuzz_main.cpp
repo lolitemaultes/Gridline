@@ -130,6 +130,15 @@ Bytes seedProjectGroups() {
     for (size_t i = 0; i < notes.size(); ++i) notes[i].start = static_cast<gl::Tick>(i) * 48, notes[i].group = 1 + static_cast<int>(i % 2);
     d.setNotes(pats[0], chans[0], notes);
   }
+  // K-179: meter changes (one mid-bar, one for the playlist only) and a pattern with its own meter.
+  d.editSong("qa meters", [](gl::Song& song) {
+    gl::Marker a, b;
+    a.pos = song.ppq * 6, a.timeSigNum = 7, a.timeSigDen = 8;
+    b.pos = song.ppq * 13, b.timeSigNum = 6, b.timeSigDen = 8, b.meterForPatterns = false;
+    song.markers.push_back(a);
+    song.markers.push_back(b);
+    if (!song.patterns.empty()) song.patterns.back().meterNum = 5, song.patterns.back().meterDen = 4;
+  });
   std::string t = gl::projectToText(d.song());
   return Bytes(t.begin(), t.end());
 }
@@ -205,6 +214,9 @@ std::vector<Bytes> seedLuaProject() {
       "pcall(project.channels.setParam, 1, 1, 0/0) pcall(project.params.set, project.params.song('swing'), 2) print(project.song.length())\n",
       ("local t = project.playlist.clips() for _, c in ipairs(t) do project.playlist.setClipLength(c.id, c.length * 2) end\n"
        "for i = project.markers.count(), 1, -1 do project.markers.remove(i) end error('stop')\n"),
+      // K-179: meter changes with odd arguments.
+      "local S = project.song pcall(S.addMeter, 3, 7, 8) pcall(S.addMeter, 0, 7, 8) pcall(S.addMeter, 2, 99, 3)\n"
+      "pcall(S.addMeter, 1e12, 5, 4) print(S.meterAt(S.barToTick(4)), S.tickToBar(-5)) pcall(S.removeMeter, 3) pcall(S.removeMeter, -1)\n",
   };
   std::vector<Bytes> v;
   for (const char* x : src) v.emplace_back(x, x + std::strlen(x));

@@ -394,6 +394,17 @@ add_test(NAME editing_tools COMMAND gridline_tests_editing_tools WORKING_DIRECTO
 add_executable(gridline_tests_timeline tests/test_timeline.cpp)
 target_link_libraries(gridline_tests_timeline PRIVATE gridline_core)
 add_test(NAME timeline COMMAND gridline_tests_timeline WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+# K-179: meter changes across the song (meter map, grid and snap, pattern meters, pinning, save and load).
+add_executable(gridline_tests_meter tests/test_meter.cpp)
+target_link_libraries(gridline_tests_meter PRIVATE gridline_core)
+target_compile_options(gridline_tests_meter PRIVATE ${GL_WARN})
+add_test(NAME k179_meter COMMAND gridline_tests_meter WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+# K-179: meter changes in the engine and files (metronome, MIDI, FL project, WAV cues, render identity).
+add_executable(gridline_tests_meter_io tests/test_meter_io.cpp)
+target_link_libraries(gridline_tests_meter_io PRIVATE gridline_core)
+target_include_directories(gridline_tests_meter_io PRIVATE tests src)
+target_compile_options(gridline_tests_meter_io PRIVATE ${GL_WARN})
+add_test(NAME k179_meter_io COMMAND gridline_tests_meter_io WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 add_executable(gridline_tests_playlist_view tests/test_playlist_view.cpp)
 target_link_libraries(gridline_tests_playlist_view PRIVATE gridline_core)
 target_compile_options(gridline_tests_playlist_view PRIVATE ${GL_WARN})

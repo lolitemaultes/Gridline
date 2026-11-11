@@ -53,6 +53,8 @@
 #include "UpdateUi.h"
 #include "UrlImportUi.h"
 #include "Widgets.h"
+#include "MeterUi.h"
+#include "../core/MeterEdit.h"
 #include "Windows.h"
 #include "GrooveUi.h"
 #include "Viewports.h"
@@ -829,11 +831,12 @@ void infoWindow(App& a) {
   }
   ui::EndSection();
   ui::BeginSection("TIMING", 464);
-  formLabel("Time signature", 120);
+  formLabel("Meter at the start", 120);
   int num = s.timeSigNum, den = s.timeSigDen;
+  static bool alsoPatterns = false;  // K-179: opt-in, off: existing patterns keep their meter and length
   if (ui::BeginCombo("##num", std::to_string(num).c_str(), 64)) {
     for (int n = 1; n <= 16; ++n)
-      if (ImGui::Selectable(std::to_string(n).c_str(), n == num)) a.doc.setTimeSignature(n, den);
+      if (ImGui::Selectable(std::to_string(n).c_str(), n == num)) a.doc.setTimeSignature(n, den, alsoPatterns);
     ImGui::EndCombo();
   }
   ImGui::SameLine(0, theme::kS2);
@@ -843,8 +846,18 @@ void infoWindow(App& a) {
   const int dens[] = {2, 4, 8, 16};
   if (ui::BeginCombo("##den", std::to_string(den).c_str(), 64)) {
     for (int d : dens)
-      if (ImGui::Selectable(std::to_string(d).c_str(), d == den)) a.doc.setTimeSignature(num, d);
+      if (ImGui::Selectable(std::to_string(d).c_str(), d == den)) a.doc.setTimeSignature(num, d, alsoPatterns);
     ImGui::EndCombo();
+  }
+  ImGui::Dummy(ImVec2(0, 0));
+  ImGui::SameLine(120);
+  ImGui::Checkbox(i18n::tr("Also change the meter of existing patterns"), &alsoPatterns);
+  ui::Hint("Off: existing patterns keep their meter and length when the meter at the start changes, so nothing moves");
+  if (const int changes = meter::changeCount(s); changes > 0) {
+    ImGui::Dummy(ImVec2(0, 0));
+    ImGui::SameLine(120);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(theme::vec(pal().textFaint), i18n::tr("Meter changes later in the song: %d (edit them in the playlist ruler)"), changes);
   }
   formLabel("Timebase", 120);
   if (ui::BeginCombo("##ppq", (std::to_string(s.ppq) + " PPQ").c_str(), 136)) {
@@ -1134,6 +1147,7 @@ void drawDialogs(App& a) {
   updatePerformance(a);
   drawPerformance(a);
   grooveui::drawEditor(a);  // K-151
+  meterui::drawEditor(a);   // K-179: meter change editor
   settingsWindow(a);
   infoWindow(a);
   exportui::draw(a);

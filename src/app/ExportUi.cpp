@@ -875,6 +875,13 @@ void drawMidiImport(App& a) {
     ImGui::Checkbox(i18n::tr("Volume / pan controllers as pattern automation"), &midiDlg.o.controllers);
     ImGui::Checkbox(i18n::tr("Name channels after GM programs"), &midiDlg.o.programNames);
     ImGui::Checkbox(i18n::tr("Place the pattern in the playlist"), &midiDlg.o.placeInPlaylist);
+    {  // K-179: one pattern per meter section, each in that section's meter
+      const bool can = midiDlg.o.timeSignature && midiDlg.o.placeInPlaylist;
+      ImGui::BeginDisabled(!can);
+      ImGui::Checkbox(i18n::tr("Split into patterns at meter changes"), &midiDlg.o.splitAtMeterChanges);
+      ImGui::EndDisabled();
+      ui::Hint("One pattern per meter section, each in its section's meter, placed one after another");
+    }
     ui::EndSection();
     ui::EndDialogBody();
     ui::DialogFooter(96 * 2 + theme::kS2);
@@ -1241,7 +1248,7 @@ void importMidiAtCursor(App& a, const std::string& path) {
     return;
   }
   // The piano roll's view start, on a bar line.
-  const Tick bar = std::max<Tick>(1, s.barTicks());
+  const Tick bar = std::max<Tick>(1, s.patternBarTicks(*s.pattern(pat)));  // K-179: the pattern's own bar
   const Tick view = a.piano.pxPerTick > 0 ? static_cast<Tick>(std::max(0.0f, a.piano.scrollX) / a.piano.pxPerTick) : 0;
   const Tick at = view / bar * bar;
   int n = 0;

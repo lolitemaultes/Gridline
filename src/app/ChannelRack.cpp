@@ -793,7 +793,7 @@ void drawChannelRack(App& a) {
       for (const auto& n : ns) lo = std::min(lo, n.pitch), hi = std::max(hi, n.pitch);
       float span = static_cast<float>(std::max(hi - lo, 6));
       Tick len = std::max<Tick>(1, s.patternContentLength(*pat));
-      for (Tick b = s.barTicks(); b < len; b += std::max<Tick>(1, s.barTicks())) {
+      for (Tick b = s.patternBarTicks(*pat); b < len; b += std::max<Tick>(1, s.patternBarTicks(*pat))) {  // K-179: its own bars
         float x = std::round(sp.x + stepsW * static_cast<float>(b) / static_cast<float>(len));
         dl->AddLine(ImVec2(x, sp.y + 2), ImVec2(x, sp.y + cellH - 2), theme::withAlpha(P.lineStrong, 0.6f));
       }

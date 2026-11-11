@@ -866,9 +866,15 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
   prog->slidesAnyColour = song.slidesAnyColour;  // K-5
   prog->barTicks = song.barTicks();
   prog->beatTicks = song.beatTicks();
+  prog->meter.build(song);
   prog->songEnd = song.lengthTicks();
   Tick bar = std::max<Tick>(1, prog->barTicks);
   prog->songLoopEnd = std::max(bar, (prog->songEnd + bar - 1) / bar * bar);
+  if (!prog->meter.constant()) {  // K-179: rounded up to a bar line of the meter map
+    const MeterMap& mm = prog->meter;
+    const Tick b = mm.barStartAt(prog->songEnd);
+    prog->songLoopEnd = std::max(mm.nextBar(0), b == prog->songEnd ? b : mm.nextBar(prog->songEnd));
+  }
   {  // J-85: marker actions (FL's marker skip / pause / marker loop, Gridline's stop; FL's loop marker)
     std::vector<Tick> at;
     for (const auto& m : song.markers) at.push_back(m.pos);
@@ -1365,6 +1371,9 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     ProgPattern pp;
     pp.id = p.id;
     pp.length = std::max<Tick>(1, song.patternContentLength(p));
+    pp.bar = std::max<Tick>(1, song.patternBarTicks(p));
+    pp.beat = std::max<Tick>(1, song.patternBeatTicks(p));
+    pp.group = meterGroup(song.patternMeterNum(p), song.patternMeterDen(p));
     for (const auto& c : song.channels) pp.perChannel.push_back(compilePatternChannel(song, p, c.id));
     if (auto it = patternAutos.find(p.id); it != patternAutos.end()) pp.autos = std::move(it->second);
     prog->patterns.push_back(std::move(pp));
@@ -1707,6 +1716,20 @@ float ProgramBuilder::controllerOutput(ObjectId owner, int slot, int output) con
   }
   auto rt = effectRuntime(owner, slot);
   return rt ? rt->ctlUi[output].load(std::memory_order_relaxed) : 0.f;
+}
+
+MetronomeBeat metronomeBeat(const Program* p, const ProgPattern* pat, bool song, Tick first) {
+  if (song) {
+    const MeterMap& m = p->meter;
+    Tick t = m.beatStartAt(first);
+    if (t < first) t = m.nextBeat(first);
+    return {t, m.accentAt(t)};
+  }
+  const Tick bar = std::max<Tick>(1, pat ? pat->bar : p->barTicks), beat = std::max<Tick>(1, pat ? pat->beat : p->beatTicks);
+  const int group = pat ? pat->group : meterGroup(static_cast<int>(bar / beat), static_cast<int>(static_cast<Tick>(p->ppq) * 4 / beat));
+  const Tick t = (std::max<Tick>(0, first) + beat - 1) / beat * beat;
+  const Tick into = t % bar;
+  return {t, into == 0 ? 2 : group > 0 && (into / beat) % group == 0 ? 1 : 0};
 }
 
 }  // namespace gl

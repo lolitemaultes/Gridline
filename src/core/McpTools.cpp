@@ -9,6 +9,7 @@
 #include <cctype>
 #include <cmath>
 #include <filesystem>
+#include "MeterEdit.h"
 #include "Automation.h"
 #include "Groove.h"
 #include "Mcp.h"
@@ -377,6 +378,7 @@ Json patternJson(const Song& s, size_t i) {
                {"name", jstr(p.name)},
                {"bars", jnum(p.bars)},
                {"stepsPerBar", jnum(p.stepsPerBar)},
+               {"meter", jstr(p.ownMeter() ? meter::text(p.meterNum, p.meterDen) : "song")},  // K-179
                {"lengthBeats", beatsJ(s, s.patternLength(p))},
                {"color", jstr(hexColor(p.color))},
                {"channels", chans}});
@@ -452,11 +454,20 @@ Json projectSummary(const Environment& env) {
                  {"masterPitch", jnum(round4(s.masterPitch))},
                  {"beatsPerBar", jnum(round4(static_cast<double>(s.barTicks()) / s.ppq))},
                  {"lengthBeats", beatsJ(s, s.lengthTicks())},
-                 {"lengthBars", jnum(round4(static_cast<double>(s.lengthTicks()) / std::max<Tick>(1, s.barTicks())))},
+                 {"lengthBars", jnum(round4(MeterMap(s).barsAt(s.lengthTicks())))},  // K-179: bars of the meter changes
                  {"lengthSeconds", jnum(round4(songSeconds(s)))},
                  {"modified", jbool(env.doc.modified())},
                  {"projectFile", jstr(env.projectPath)},
                  {"editsAllowed", jbool(env.allowEdits)}});
+  {  // K-179: meter changes later in the song (bar numbers count on across them)
+    const MeterMap mm(s);
+    Json mc = Json::makeArray();
+    for (size_t i = 1; i < mm.segments().size(); ++i) {
+      const MeterSeg& g = mm.segments()[i];
+      mc.array.push_back(jobj({{"bar", jnum(static_cast<double>(g.firstBar + 1))}, {"beat", beatsJ(s, g.start)}, {"meter", jstr(meter::text(g.num, g.den))}}));
+    }
+    j.object["meterChanges"] = std::move(mc);
+  }
   j.object["counts"] = jobj({{"channels", jnum(static_cast<double>(s.channels.size()))},
                              {"patterns", jnum(static_cast<double>(s.patterns.size()))},
                              {"clips", jnum(static_cast<double>(s.playlist.size()))},
@@ -954,6 +965,13 @@ ToolResult tEditPattern(Environment& env, const Json& a) {
     Rgb col;
     if (!parseColor(argStr(a, "color"), col)) return fail("color must be \"#RRGGBB\"");
     d.editPattern(id, "pattern colour", [col](Pattern& x) { x.color = col; });
+  }
+  if (has(a, "meter")) {  // K-179: "6/8", or "song" to follow the song's meter
+    const std::string m = argStr(a, "meter");
+    int num = 0, den = 0;
+    if (m != "song" && (std::sscanf(m.c_str(), "%d/%d", &num, &den) != 2 || num < 1 || num > 16 || (den != 2 && den != 4 && den != 8 && den != 16)))
+      return fail("meter must be \"song\" or like \"6/8\" (1..16 over 2, 4, 8 or 16)");
+    if (!meter::setPatternMeter(d, id, num, den)) return fail("could not set the pattern meter");
   }
   const int n = patternNumber(d.song(), id);
   return ok(patternJson(d.song(), static_cast<size_t>(n - 1)), "edited pattern " + std::to_string(n));
@@ -1637,7 +1655,8 @@ std::vector<Tool> buildTools() {
                  {"name", strP("Pattern name")},
                  {"bars", intP("Length in bars", 1, kMaxPatternBars)},
                  {"stepsPerBar", intP("Step resolution", 1, 64)},
-                 {"color", strP("Colour \"#RRGGBB\"", 7)}},
+                 {"color", strP("Colour \"#RRGGBB\"", 7)},
+                 {"meter", strP("The pattern's own meter, like \"6/8\", or \"song\" to follow the song's meter", 8)}},
                 {"pattern"}),
       false, tEditPattern);
   add("remove_pattern", "remove pattern", "Deletes a pattern and its playlist clips. One undo step.",

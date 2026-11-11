@@ -4,6 +4,7 @@
 //   gridline upgrade <project.gridline> [-o <out.gridline>]   rewrite in the current schema
 //   gridline import-flp <project.flp> -o <out.gridline> [--fl-data DIR]   convert an FL Studio project
 #include "GridlineVersion.h"
+#include "../core/Meter.h"
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -854,8 +855,9 @@ int main(int argc, char** argv) {
       int a = 1, b = 1;
       if (std::sscanf(scope.c_str() + 6, "%d-%d", &a, &b) != 2 || b <= a) { std::fprintf(stderr, "error: --scope range:<bar>-<bar>\n"); return 2; }
       es.render.scope = gl::RenderScope::Range;
-      es.render.start = (a - 1) * song.barTicks();
-      es.render.end = (b - 1) * song.barTicks();
+      const gl::MeterMap mm(song);  // K-179: bars of the song's meter changes
+      es.render.start = mm.barStart(a - 1);
+      es.render.end = mm.barStart(b - 1);
     }
     std::filesystem::path op(out);
     const bool folder = out.back() == '/' || std::filesystem::is_directory(op);

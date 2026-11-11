@@ -307,11 +307,16 @@ struct Pattern {
   // longer than the pattern repeats it (core/ClipLoop.h). Patterns made in
   // Gridline loop; FL imports keep FL's setting (off unless set there).
   bool loop = true;
+  // K-179: the pattern's own meter (0/0 = follows the song's meter at the start). Its length is
+  // `bars` of its own bars, a fixed number of ticks wherever its clips sit, so meter changes in the
+  // song never move or resize a clip.
+  int meterNum = 0, meterDen = 0;
+  bool ownMeter() const { return meterNum > 0 && meterDen > 0; }
 
   bool operator==(const Pattern& o) const {
     return id == o.id && name == o.name && color == o.color && stepsPerBar == o.stepsPerBar && bars == o.bars &&
            steps == o.steps && notes == o.notes && automation == o.automation && stepProps == o.stepProps &&
-           stepLoop == o.stepLoop && loop == o.loop;
+           stepLoop == o.stepLoop && loop == o.loop && meterNum == o.meterNum && meterDen == o.meterDen;
   }
 };
 
@@ -415,10 +420,13 @@ struct Marker {
   // J-31 key marker: the song is in this key from here on (keyRoot 0..11,
   // keyScale = tools::scales() index); keyRoot < 0 = not a key marker.
   int keyRoot = -1, keyScale = 0;
+  // K-179: patterns made while the song position is in this meter section get its meter.
+  bool meterForPatterns = true;
   bool isKey() const { return keyRoot >= 0; }
+  bool isMeter() const { return timeSigNum > 0 && timeSigDen > 0; }
   bool operator==(const Marker& o) const {
     return pos == o.pos && name == o.name && timeSigNum == o.timeSigNum && timeSigDen == o.timeSigDen && action == o.action &&
-           keyRoot == o.keyRoot && keyScale == o.keyScale;
+           keyRoot == o.keyRoot && keyScale == o.keyScale && meterForPatterns == o.meterForPatterns;
   }
 };
 
@@ -750,13 +758,24 @@ struct Song {
     return id;
   }
 
+  // The bar and beat of the song's meter at the start (bar 1). Song time later in the song follows
+  // its meter changes: use MeterMap (core/Meter.h) for grid, bar numbers and snapping there.
   Tick barTicks() const {
     return static_cast<Tick>(ppq) * 4 * timeSigNum / timeSigDen;
   }
   Tick beatTicks() const { return static_cast<Tick>(ppq) * 4 / timeSigDen; }
-  Tick patternLength(const Pattern& p) const { return static_cast<Tick>(p.bars) * barTicks(); }
+  // K-179: a pattern's own bar and beat (its meter, or the song's meter at the start).
+  Tick patternBarTicks(const Pattern& p) const {
+    return p.ownMeter() ? static_cast<Tick>(ppq) * 4 * p.meterNum / p.meterDen : barTicks();
+  }
+  Tick patternBeatTicks(const Pattern& p) const {
+    return p.ownMeter() ? static_cast<Tick>(ppq) * 4 / p.meterDen : beatTicks();
+  }
+  int patternMeterNum(const Pattern& p) const { return p.ownMeter() ? p.meterNum : timeSigNum; }
+  int patternMeterDen(const Pattern& p) const { return p.ownMeter() ? p.meterDen : timeSigDen; }
+  Tick patternLength(const Pattern& p) const { return static_cast<Tick>(p.bars) * patternBarTicks(p); }
   Tick ticksPerStep(const Pattern& p) const {
-    return p.stepsPerBar > 0 ? barTicks() / p.stepsPerBar : 0;
+    return p.stepsPerBar > 0 ? patternBarTicks(p) / p.stepsPerBar : 0;
   }
   // Content length of a pattern: its bar length, extended to cover its notes.
   Tick patternContentLength(const Pattern& p) const;
