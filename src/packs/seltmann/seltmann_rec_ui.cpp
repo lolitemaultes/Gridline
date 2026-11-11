@@ -74,6 +74,7 @@ struct Session {
   LiveWave live;
   LiveFit fit;
   size_t liveDirty = 0;  // first take frame not (or no longer) in `live`
+  int devFitted = 0;     // frames of this take drawn fitted to the width (dev: GRIDLINE_SELTMANN_AUTOREC)
 };
 
 Session& ses() {
@@ -133,6 +134,7 @@ void startTake(App& a, Session& s) {
   s.ringPos = a.engine.inputTap().written();  // from now on
   s.state = RecRolling;
   s.nextSecond = 1;
+  s.devFitted = 0;
   s.msg.clear();
   for (int k = 1; k < 1000; ++k) devsig::forget("seltmann-take-" + std::to_string(k));
 }
@@ -264,6 +266,7 @@ void drawTake(App& a, Session& s, ImVec2 p0, ImVec2 p1) {
     dl->AddLine(ImVec2(headX, p0.y + 6), ImVec2(headX, p1.y - 6), hc, 2);
   }
   traceTake(s, w, spanFrames, headX - x0);
+  if (live && spanFrames > s.fit.base + 0.5) ++s.devFitted;
   if (s.take.frames() == 0) {
     const char* hint = s.state == RecRolling ? i18n::tr("Listening...")
                                              : i18n::tr("Press Record and play. When you finish, load the recording and Seltmann analyses it like any file.");
@@ -326,9 +329,9 @@ void devAutoRecord(App& a, const PluginTarget& t) {
   static const char* v = std::getenv("GRIDLINE_SELTMANN_AUTOREC");
   if (!v || !*v) return;
   static double pauseAt = 0, resumeAfter = 0, finishAt = 0, pausedAt = 0;
-  static int stage = -1;
+  static int stage = -1, minFitted = 0;
   if (stage < 0) {
-    if (std::sscanf(v, "%lf %lf %lf", &pauseAt, &resumeAfter, &finishAt) != 3) return;
+    if (std::sscanf(v, "%lf %lf %lf %d", &pauseAt, &resumeAfter, &finishAt, &minFitted) < 3) return;
     stage = 0;
   }
   Session& s = ses();
@@ -346,7 +349,7 @@ void devAutoRecord(App& a, const PluginTarget& t) {
     s.lastMove = clockNow();
     s.state = RecRolling;
     stage = 3;
-  } else if ((stage == 1 || stage == 3) && s.state == RecRolling && s.take.seconds() >= finishAt) {
+  } else if ((stage == 1 || stage == 3) && s.state == RecRolling && s.take.seconds() >= finishAt && s.devFitted >= minFitted) {
     s.state = RecDone;
     stage = 4;
     devsig::reach("seltmann-autorec-done");

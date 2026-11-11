@@ -53,14 +53,14 @@ foreach(i RANGE 5)
 endforeach()
 
 file(WRITE "${OUT}/script.txt" "20 scan state\n30 forget scan-idle\n30 scan folder clap \"${root}\"\n31 scan state\n32 waitfor scan-idle 120\n34 scan state\n36 quit discard\n")
-execute_process(COMMAND "${APP}" "${DEMO}" --hidden --no-ui-sounds --no-update-check --size 1280x800 --show plugin-folders --dev-input "${OUT}/script.txt"
+execute_process(COMMAND "${APP}" "${DEMO}" --hidden --no-ui-sounds --no-update-check --size 1280x800 --show plugin-folders --no-draw --dev-input "${OUT}/script.txt"
                 RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 200)
 file(WRITE "${OUT}/run.out" "${out}\n${err}")
 if(NOT rc EQUAL 0)
   message(FATAL_ERROR "gridline-app failed (${rc}): ${err}\n${out}")
 endif()
 
-string(REGEX MATCHALL "scan running [0-9]+ done [0-9]+ total [0-9]+ active [0-9]+ searching [0-9]+ failed [0-9]+ classes [0-9]+ longest-frame [0-9.]+ ms average-frame [0-9.]+ ms frames [0-9]+ second-frame [0-9.]+ ms lock-wait [0-9.]+ ms" lines "${out}")
+string(REGEX MATCHALL "scan running [0-9]+ done [0-9]+ total [0-9]+ active [0-9]+ searching [0-9]+ failed [0-9]+ classes [0-9]+ longest-frame [0-9.]+ ms average-frame [0-9.]+ ms frames [0-9]+ second-frame [0-9.]+ ms lock-wait [0-9.]+ ms call [0-9.]+ ms" lines "${out}")
 list(LENGTH lines n)
 # Frames 20, 30 (the Rescan, printed before that frame ends), 31 (covers frame 30) and 34 (covers the scan).
 if(NOT n EQUAL 4)
@@ -77,6 +77,8 @@ string(REGEX REPLACE ".*longest-frame ([0-9.]+) ms.*" "\\1" askedMs "${asked}")
 string(REGEX REPLACE ".*longest-frame ([0-9.]+) ms.*" "\\1" afterMs "${after}")
 string(REGEX REPLACE ".*lock-wait ([0-9.]+) ms.*" "\\1" askedWait "${asked}")
 string(REGEX REPLACE ".*lock-wait ([0-9.]+) ms.*" "\\1" afterWait "${after}")
+string(REGEX REPLACE ".*second-frame ([0-9.]+) ms.*" "\\1" afterSecond "${after}")
+string(REGEX REPLACE ".* call ([0-9.]+) ms.*" "\\1" callMs "${quiet}")  # (the Rescan's line)
 if(NOT asked MATCHES "^scan running 1 ")
   message(FATAL_ERROR "FAIL: the Rescan did not start a scan: ${asked}")
 endif()
@@ -85,21 +87,31 @@ if(askedWait GREATER 150 OR afterWait GREATER 150)
   message(FATAL_ERROR "FAIL: the interface waited ${askedWait} and ${afterWait} ms for the scan")
 endif()
 message(STATUS "ok - the interface never waited for the scan (${askedWait} and ${afterWait} ms)")
+# The Rescan itself: the interface thread hands the folder to the worker and goes on (measured by
+# the app around the call, whatever the machine's speed). A search done on the interface thread
+# fails here on any machine.
+if(callMs GREATER 150)
+  message(FATAL_ERROR "FAIL: the Rescan took ${callMs} ms on the interface thread (the folder was searched there)")
+endif()
+message(STATUS "ok - the Rescan hands the search to the worker (${callMs} ms on the interface thread)")
 # Frame times are judged where the machine draws its quiet frames (frames 21 to 29, before the
-# Rescan) quickly. Software OpenGL on a shared CI runner with other app tests beside it (quiet frames
-# of 30 ms and more on average) holds up frames for seconds at times on its own: reported only.
+# Rescan) quickly. A shared CI runner with software OpenGL and other app tests beside it holds a
+# single frame up for a second now and then, whatever runs in it (quiet frames of 23 ms there, then
+# the Rescan's frame and one during the scan at about 1 s, with no wait for the scan and a call of
+# well under a millisecond): the longest frame is reported; the others must stay short, and no
+# frame may come near a stall. On a machine whose quiet frames average over 30 ms, reported only.
 if(baseline GREATER 30)
   message(STATUS "note - the frame of the Rescan took ${askedMs} ms, the longest during the scan ${afterMs} ms; "
                  "not judged: quiet frames here average ${baseline} ms")
 else()
-  if(askedMs GREATER 150)
-    message(FATAL_ERROR "FAIL: the frame of the Rescan took ${askedMs} ms (the folder was searched on the interface thread)")
+  message(STATUS "note - the frame of the Rescan took ${askedMs} ms, the longest during the scan ${afterMs} ms")
+  if(askedMs GREATER 2000 OR afterMs GREATER 2000)
+    message(FATAL_ERROR "FAIL: a frame took ${askedMs} / ${afterMs} ms (the interface stalled)")
   endif()
-  message(STATUS "ok - the frame of the Rescan stays short (${askedMs} ms)")
-  if(afterMs GREATER 150)
-    message(FATAL_ERROR "FAIL: a frame during the scan took ${afterMs} ms (the interface waited for the scan)")
+  if(afterSecond GREATER 150)
+    message(FATAL_ERROR "FAIL: frames during the scan took ${afterMs} and ${afterSecond} ms (the interface worked on the scan)")
   endif()
-  message(STATUS "ok - every frame during the scan stays short (${afterMs} ms)")
+  message(STATUS "ok - every frame during the scan but one stays short (${afterSecond} ms)")
 endif()
 if(NOT after MATCHES "^scan running 0 done 6 total 6 ")
   message(FATAL_ERROR "FAIL: the scan should end with the six fake plugins: ${after}")

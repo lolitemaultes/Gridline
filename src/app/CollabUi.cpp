@@ -169,6 +169,7 @@ struct Ui {
     int frame = -1;
   };
   std::map<std::string, DrawnAvatar> drawnAvatars;
+  std::map<std::string, std::string> firstPictureDrawn;  // dev: each collaborator's first picture drawn here (hash)
   // follow a collaborator's playhead
   SiteId follow = 0;
   // version refusal waiting to be shown
@@ -3751,6 +3752,8 @@ void devFrame(App& a) {
     const PeerView* pv = s->peer(m.site);
     if (it != u.drawnAvatars.end() && it->second.frame == ImGui::GetFrameCount() && pv) {
       devsig::reach("collab-picture:" + pv->profile.name);
+      const std::string& first = u.firstPictureDrawn.emplace(m.fingerprint(), tmp.avatarHash()).first->second;
+      if (first != tmp.avatarHash()) devsig::reach("collab-picture-changed:" + pv->profile.name);
       const Profile* known = ctlOf(a).profiles().known(m.fingerprint());
       if (known && known->avatarHash() == tmp.avatarHash()) devsig::reach("collab-picture-kept:" + pv->profile.name);
     }

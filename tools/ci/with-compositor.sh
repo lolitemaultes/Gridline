@@ -106,6 +106,12 @@ case $compositor in
     ;;
   mutter)
     # Its own session bus. XWayland (on demand) gets the first free X display: a new X socket.
+    # mutter does not make the X socket folder itself (it stops: "/tmp/.X11-unix is not writable"),
+    # and on a system without any X server yet there is none: make it as an X server would.
+    if [ "$mode" = xwayland ] && [ ! -d /tmp/.X11-unix ]; then
+      mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix ||
+        echo "with-compositor: could not make /tmp/.X11-unix (XWayland needs it)" >&2
+    fi
     args=(--wayland --headless --wayland-display="$socket" --virtual-monitor "${width}x${height}")
     [ "$mode" = native ] && args+=(--no-x11)
     dbus-run-session -- mutter "${args[@]}" >"$log" 2>&1 &

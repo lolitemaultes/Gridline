@@ -794,7 +794,8 @@ void releaseTypedNotes(App& app, std::map<SDL_Scancode, HeldNote>& held) {
 //   collab-cursor-window:<window>:shown|hidden
 //   J-111g: collab picture <file|#RRGGBB> · collab panel · collab pictures <file> (JSON: members' pictures announced,
 //   received, kept, drawn, a pixel) · collab open-editor chN · collab demo-cursor-plugin chN|none · collab trace-reset;
-//   signals collab-picture:<name> (drawn here), collab-picture-kept:<name> (kept on this computer, the one drawn)
+//   signals collab-picture:<name> (drawn here), collab-picture-kept:<name> (kept on this computer, the one drawn),
+//   collab-picture-changed:<name> (a picture other than the first one drawn here for them is drawn)
 //   waitfor <name> <seconds> (J-108: the script and --frames stop counting until the app reports
 //   devsig::reach(name) or the seconds pass; prints "waitfor <name>: reached|timed out after <s> s");
 //   K-B: waitfor "file:<path>" <seconds> waits until that file exists (another app run's report)
@@ -1596,14 +1597,18 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
     } else if (l.cmd == "scan") {  // K-71: scan start|force [scanner] · folder <format|*> <folder> (a Rescan button) · state (and the longest frame since)
       // K-73: tests name a stand-in scanner (fake plugins); the app's own scanner otherwise.
       const std::string scanner = (l.a0 == "start" || l.a0 == "force") && l.args.size() >= 2 ? l.args[1] : host::selfExecutablePath();
+      // call: how long the interface thread spent in the request itself (a search done there, not
+      // on the worker, shows here whatever else holds up the frame on a busy machine)
+      const auto callAt = std::chrono::steady_clock::now();
       if (l.a0 == "start" || l.a0 == "force") host::startScan(scanner, l.a0 == "force");
       else if (l.a0 == "folder" && l.args.size() >= 3) host::rescanFolder(host::selfExecutablePath(), l.args[1], l.args[2]);
+      const double callMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - callAt).count();
       const host::ScanStatus st = host::scanStatus();
       // lock-wait: the longest the interface waited for the scan's lock since the last "scan" (a
       // stall caused by the scan, whatever the machine's speed)
-      std::printf("scan running %d done %d total %d active %d searching %d failed %d classes %d longest-frame %.1f ms average-frame %.2f ms frames %d second-frame %.1f ms lock-wait %.1f ms\n",
+      std::printf("scan running %d done %d total %d active %d searching %d failed %d classes %d longest-frame %.1f ms average-frame %.2f ms frames %d second-frame %.1f ms lock-wait %.1f ms call %.1f ms\n",
                   st.running ? 1 : 0, st.done, st.total, st.active, st.searching.empty() ? 0 : 1, st.failed, st.classes, devLongestFrameMs,
-                  devFrameCount ? devFrameMsSum / devFrameCount : 0.0, devFrameCount, devSecondFrameMs, 1e3 * host::scanReadLongestWait(true));
+                  devFrameCount ? devFrameMsSum / devFrameCount : 0.0, devFrameCount, devSecondFrameMs, 1e3 * host::scanReadLongestWait(true), callMs);
       std::fflush(stdout);
       devLongestFrameMs = 0;
       devSecondFrameMs = 0;

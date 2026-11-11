@@ -25,7 +25,9 @@ function(run tag script)
   set(ENV{SDL_AUDIODRIVER} "dummy")
   set(ENV{GRIDLINE_NO_PLUGIN_SCAN} "1")
   file(WRITE "${OUT}/${tag}.txt" "${script}")
-  execute_process(COMMAND "${APP}" "${OUT}/song.gridline.json" --hidden --no-ui-sounds --no-update-check --fixed-dt 16 ${ARGN}
+  # (--no-draw: every check reads the tapper, bar and click reports, never pixels; on a slow software
+  # OpenGL the drawing alone took the dozen runs past the test's time limit)
+  execute_process(COMMAND "${APP}" "${OUT}/song.gridline.json" --hidden --no-ui-sounds --no-update-check --no-draw --fixed-dt 16 ${ARGN}
                           --dev-input "${OUT}/${tag}.txt"
                   RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 120)
   file(WRITE "${OUT}/${tag}.log" "${out}\n${err}")

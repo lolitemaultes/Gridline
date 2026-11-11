@@ -114,7 +114,12 @@ jobs:
           case "${{ matrix.compositor }}" in
             weston) apt-get install -y -q --no-install-recommends weston ;;
             mutter) apt-get install -y -q --no-install-recommends mutter gnome-settings-daemon-common gsettings-desktop-schemas ;;
-            kwin) apt-get install -y -q --no-install-recommends kwin-wayland kwin-wayland-backend-virtual || apt-get install -y -q --no-install-recommends kwin-wayland ;;
+            kwin)
+              apt-get install -y -q --no-install-recommends kwin-wayland kwin-wayland-backend-virtual || apt-get install -y -q --no-install-recommends kwin-wayland
+              # The package gives kwin_wayland a file capability (cap_sys_nice, for its realtime
+              # thread). A container may not grant it, and then the program cannot start at all
+              # ("failed to exec 'kwin_wayland': Operation not permitted"): run it without.
+              setcap -r "$(command -v kwin_wayland)" || true ;;
           esac
       - uses: actions/download-artifact@v4
         with:

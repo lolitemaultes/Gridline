@@ -321,6 +321,8 @@ endif()
 pixelCheck("behind a modal" "${D}/modal.json" "${D}/modal-pixel.json" 0 OFF)
 
 # ---- 2: two windows of other sizes and scales, real ICE ----
+# (Alex changes its picture once Sam has written the first pictures report, and stays until Sam has
+# the second, taken once the new picture is drawn there: on a slow runner fixed waits were too short.)
 # (Alex's output goes into Sam's input, the pipeline execute_process makes. Either may quit first:
 # on a slow runner each side's waits stretch differently, and Sam used to quit first there; Alex's
 # last output then went into a closed pipe, SIGPIPE killed it, and "cmake -E env" reported 1.)
@@ -343,8 +345,10 @@ set(A "5 collab profile Alex
 61 waitfor never 1
 62 collab cursors \"${OUT}/a-mixer.json\"
 63 waitfor never 6
-64 collab picture #3CA0C8
-65 waitfor never 10
+64 waitfor \"file:${OUT}/b-pictures1.json\" 120
+65 collab picture #3CA0C8
+66 waitfor \"file:${OUT}/b-pictures2.json\" 120
+67 waitfor never 1
 70 quit
 ")
 set(B "5 collab profile Sam
@@ -362,9 +366,10 @@ set(B "5 collab profile Sam
 63 waitfor collab-picture:Alex 30
 64 waitfor collab-picture-kept:Alex 30
 65 collab pictures \"${OUT}/b-pictures1.json\"
-66 waitfor never 9
-67 collab pictures \"${OUT}/b-pictures2.json\"
-68 waitfor never 10
+66 waitfor collab-picture-changed:Alex 120
+67 waitfor never 1
+68 collab pictures \"${OUT}/b-pictures2.json\"
+69 waitfor never 1
 70 quit
 ")
 file(WRITE "${OUT}/a.txt" "${A}")

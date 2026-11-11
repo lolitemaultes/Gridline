@@ -135,8 +135,10 @@ function(srun tag frames script)
   set(out "${out}" PARENT_SCOPE)
 endfunction()
 # record past the edge: pause at 6 s for a second, resume, finish at 15 s (the recorder drives
-# itself through GRIDLINE_SELTMANN_AUTOREC, wherever the window sits); frames along the way
-set(ENV{GRIDLINE_SELTMANN_AUTOREC} "6 1 15")
+# itself through GRIDLINE_SELTMANN_AUTOREC, wherever the window sits); frames along the way. The
+# input runs in real time, so a slow runner draws few frames between the edge (10 s) and 15 s:
+# the take goes on until 10 frames have shown it fitted (the check below wants more than 5).
+set(ENV{GRIDLINE_SELTMANN_AUTOREC} "6 1 15 10")
 srun(s_rec 90 "26 waitfor seltmann-take-4 20\n27 shot \"${OUT}/shot_seltmann_4s.ppm\"\n28 waitfor seltmann-take-12 30\n29 shot \"${OUT}/shot_seltmann_12s.ppm\"\n30 waitfor seltmann-take-14 30\n31 shot \"${OUT}/shot_seltmann_14s.ppm\"\n32 waitfor seltmann-autorec-done 30\n")
 unset(ENV{GRIDLINE_SELTMANN_AUTOREC})
 string(REGEX MATCHALL "seltmann: take (recording|paused) [^\n]*live 1" live "${out}")
