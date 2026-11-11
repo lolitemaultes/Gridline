@@ -651,7 +651,8 @@ std::string describe(const PluginState& s) {
   if (!fromText(s.original, o)) return "";
   const Family f = familyOf(o.type, o.name, o.vendor);
   if (f == Family::Kilohearts) return khsLine(o.name.empty() ? pluginNameOf(o.type) : o.name, s.type, "");
-  const std::string n = f != Family::None ? familyName(f) : o.name;
+  // the note above Plasma names no other product (the saved reference keeps the plugin's own name)
+  const std::string n = isSerum(f) ? "The original instrument" : f != Family::None ? familyName(f) : o.name;
   const std::string si = f != Family::None ? standInName(f) : s.type;
   return n + " is not installed: opens as " + si;
 }

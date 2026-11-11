@@ -13,11 +13,13 @@
 #include <functional>
 #include <map>
 #include "../../core/I18n.h"
+#include "../../core/SfzMap.h"
 #include "../../app/App.h"
 #include "../../app/InstrumentSkin.h"
 #include "../../app/PluginSkin.h"
 #include "../../app/Theme.h"
 #include "../../app/Widgets.h"
+#include "../../engine/RegionActivity.h"
 #include "../../engine/Sample.h"
 #include "../PacksUi.h"
 #include "samplers.h"
@@ -821,6 +823,8 @@ void dwZonePage(App& a, const PluginTarget& t, const iskin::Skin& k, float ox, f
   iskin::text(k, ox + 8, oy + 186, 640, 12, pathTxt.c_str(), 8, k.c.textDim, 0, true, false);
 }
 
+#include "sfz_ui.h"
+
 void editorDirectWave(App& a, const PluginTarget& t, float width) {
   const PluginState* sp = t.state(a.doc.song());
   if (!sp) return;
@@ -850,6 +854,15 @@ void editorDirectWave(App& a, const PluginTarget& t, float width) {
       addFiles(a, tt, files, true, true);
     });
   }
+  if (iskin::button(k, "##dwsfz", 157, 13, 40, 18, "SFZ", !m.sfzPath.empty(), 8.5f)) {  // K-144: an SFZ instrument plays as it is
+    openDialog(a, i18n::tr("Load SFZ instrument"), {".sfz"}, [&a, tt](const std::string& p) {
+      const PluginState* cur = tt.state(a.doc.song());
+      if (!cur) return;
+      PluginState ns = *cur;
+      ns.data = p;
+      setPluginState(a, tt, ns, "load SFZ instrument");
+    });
+  }
   if (iskin::button(k, "##dwsf2", 111, 13, 44, 18, "SF2", false, 8.5f)) {
     openDialog(a, "Load SoundFont", {".sf2"}, [&a, tt](const std::string& p) {
       std::string err;
@@ -866,9 +879,10 @@ void editorDirectWave(App& a, const PluginTarget& t, float width) {
     const bool blank = st.data.find_first_not_of(" \t\r\n") == std::string::npos;
     std::string title;
     if (blank) title = "Factory: " + factorySetNames()[static_cast<size_t>(std::clamp(static_cast<int>(val(st, MsFactorySet) + 0.5f), 0, 4))];
+    else if (!m.sfzPath.empty()) title = fs::u8path(m.sfzPath).stem().u8string() + "  (SFZ)";
     else if (!m.sf2Path.empty()) title = m.sf2Name + "  (" + fs::path(m.sf2Path).filename().string() + ")";
     else title = std::to_string(m.zones.size()) + (m.zones.size() == 1 ? " zone" : " zones");
-    iskin::lcd(k, 159, 13, 250, 18, title.c_str(), k.c.lcdBg, k.c.lcdText, 9);
+    iskin::lcd(k, 201, 13, 208, 18, title.c_str(), k.c.lcdBg, k.c.lcdText, 9);
     if (blank) iskin::digi(a, t, k, MsFactorySet, 415, 13, 100, 18, {}, 8.5f);
     if (!m.sf2Path.empty()) {
       auto f = loadSf2(m.sf2Path);
@@ -897,6 +911,9 @@ void editorDirectWave(App& a, const PluginTarget& t, float width) {
     ns.data.clear();
     setPluginState(a, t, ns, "use factory multisample");
   }
+  if (!m.sfzPath.empty()) {  // K-144: the SFZ view instead of the zone panels
+    sfzPanels(a, t, k, m);
+  } else {
   // ---- zone grid panel: list + map.
   iskin::bevel(k, 7, 40, 722, 352, iskin::rgb(0x282B2E), k.c.panelLine, 3);
   iskin::text(k, 14, 42, 200, 16, "ZONES", 9, k.c.label, 0, false, true);
@@ -931,6 +948,7 @@ void editorDirectWave(App& a, const PluginTarget& t, float width) {
     dwProgramPage(a, t, k, 30, 396);
   } else {
     dwZonePage(a, t, k, 30, 396, m, ed, ui);
+  }
   }
   // ---- output column: master volume + velocity.
   iskin::bevel(k, 691, 396, 38, 225, iskin::rgb(0x25272C), k.c.panelLine, 2);

@@ -45,6 +45,17 @@ bool inModalSizeLoop();
 // An X server answers on this session's display: a real one or XWayland, which may start now (X11
 // systems; false elsewhere). Before SDL starts, to choose its window system (core/VideoDriverChoice.h).
 bool xServerAnswers();
+// K-153: when Gridline's own windows are Wayland windows (SDL's Wayland driver), a plugin's X11
+// interface cannot embed in them; it opens in a window of its own on XWayland instead: a top-level
+// X11 window, on an X connection of Gridline's (X11 systems; nullptr elsewhere or with no X server).
+// `w` x `h` X pixels; a fixed-size window when not `resizable`. Returns the window id to attach to.
+void* sideWindowOpen(const std::string& title, int w, int h, bool resizable);
+// Changes its size (the interface asked for it).
+void sideWindowResize(void* side, int w, int h, bool resizable);
+// Reads the window's events: false once the user closed it; `w`, `h` set to its size when the
+// window manager changed it (else left as they were).
+bool sideWindowPump(void* side, int& w, int& h);
+void sideWindowClose(void* side);
 // Device pixels per logical unit of the window (2 on Retina screens).
 double backingScale(const Window& w);
 // The X resource database of the window's display (XResourceManagerString:

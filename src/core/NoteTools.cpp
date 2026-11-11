@@ -1,3 +1,4 @@
+#include "Groove.h"
 #include "NoteTools.h"
 #include "StepNotes.h"
 #include "ChordTools.h"
@@ -196,17 +197,21 @@ const char* durationModeName(DurationMode m) {
   return i >= 0 && i < static_cast<int>(DurationMode::Count) ? n[i] : "";
 }
 
+Groove grooveOf(const groove::Preset& p) {
+  Groove g;
+  g.name = p.name.c_str();
+  for (float t : p.shape.timing) g.shift.push_back(static_cast<double>(t) * static_cast<double>(p.amount));
+  for (float v : p.shape.velocity) g.velocity.push_back(static_cast<double>(v));
+  return g;
+}
+
 const std::vector<Groove>& grooves() {
-  static const std::vector<Groove> g = {
-      {"Straight", {0.0}, {}},
-      {"Light swing", {0.0, 0.12}, {}},
-      {"Heavy swing", {0.0, 0.26}, {}},
-      {"Triplet shuffle", {0.0, 0.333}, {1.0, 0.8}},
-      {"Laid back", {0.03, 0.08, 0.04, 0.1}, {}},
-      {"Pushed", {-0.03, -0.07, -0.04, -0.08}, {}},
-      {"Loose hands", {0.0, 0.09, -0.04, 0.14, 0.02, 0.07, -0.05, 0.12}, {1.0, 0.82, 0.9, 0.78, 0.96, 0.8, 0.88, 0.76}},
-      {"Backbeat accents", {0.0}, {0.85, 0.7, 0.85, 0.7, 1.0, 0.7, 0.85, 0.7}},
-  };
+  // K-151: the swing presets' factory list (user presets: grooveOf + quantizeWithGroove).
+  static const std::vector<Groove> g = [] {
+    std::vector<Groove> v;
+    for (const groove::Preset& p : groove::factoryPresets()) v.push_back(grooveOf(p));
+    return v;
+  }();
   return g;
 }
 
@@ -303,6 +308,11 @@ std::vector<double> extractGroove(const std::vector<Note>& notes, Tick grid, int
 void quantizeWithShifts(std::vector<Note>& notes, NoteSel& sel, QuantizeOpts o, const std::vector<double>& shift) {
   o.groove = 0;
   quantizeImpl(notes, sel, o, &shift, nullptr);
+}
+
+void quantizeWithGroove(std::vector<Note>& notes, NoteSel& sel, QuantizeOpts o, const Groove& g) {
+  o.groove = 0;
+  quantizeImpl(notes, sel, o, &g.shift, &g.velocity);
 }
 
 // ------------------------------------------------------------------------ chop ----

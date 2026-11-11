@@ -80,6 +80,11 @@ int latencyFromBeats(double beats, double tempo, double sampleRate);
 // Volume, pan, separation, mute, solo, polarity, swap, disable, latency,
 // threading and strip EQ back to defaults (name, colour, effects, routing stay).
 int resetTracks(Document& d, const std::vector<ObjectId>& tracks);
+// These controls back to their defaults on every track (one undo step, none
+// when nothing changes). Returns how many tracks changed.
+int resetParams(Document& d, const std::vector<ObjectId>& tracks, const std::vector<MixerParam>& params);
+// Every insert track (the master is not one).
+std::set<ObjectId> allInserts(const Song& s);
 
 // -------------------------------------------------- layout, groups, looks ----
 bool setDock(Document& d, const std::vector<ObjectId>& tracks, MixerDock dock);

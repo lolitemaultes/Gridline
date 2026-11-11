@@ -144,11 +144,18 @@ std::map<uint64_t, double> gCaptureDue;  // target key → time of the pending s
 
 std::string hostedTargetName(App& a, const PluginTarget& t) { return targetName(a, t); }
 
+namespace {
+void (*gRunLoopGlBracket)(bool) = nullptr;
+}
+void setRunLoopGlBracket(void (*bracket)(bool enter)) { gRunLoopGlBracket = bracket; }
+
 // ---------------------------------------------------------------- per-frame sync
 
 void pumpHostedPlugins(App& a) {
 #if !defined(__APPLE__) && !defined(_WIN32)  // X11 (Linux, the BSDs)
+  if (gRunLoopGlBracket) gRunLoopGlBracket(true);
   vst3::runLoop()->pump();
+  if (gRunLoopGlBracket) gRunLoopGlBracket(false);
 #endif
   hostedui::pluginWindowsIdle(a);
   // Hosted plugin slots, listed again only when the project changes (J-25:

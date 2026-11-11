@@ -679,6 +679,25 @@ target_include_directories(gridline_tests_collab_net PRIVATE tests)
 target_compile_options(gridline_tests_collab_net PRIVATE ${GL_WARN})
 add_test(NAME collab_net COMMAND gridline_tests_collab_net WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 set_tests_properties(collab_net PROPERTIES TIMEOUT 600)
+# K-174: joining between two networks: invite and reply codes as chat apps leave them, ICE
+# agents that give up after 40 s, late and early reply codes, expiry, wrong codes, plain words.
+add_executable(gridline_tests_collab_join tests/test_collab_join.cpp)
+target_link_libraries(gridline_tests_collab_join PRIVATE gridline_core)
+target_include_directories(gridline_tests_collab_join PRIVATE tests)
+target_compile_options(gridline_tests_collab_join PRIVATE ${GL_WARN})
+add_test(NAME k174_collab_join COMMAND gridline_tests_collab_join WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+set_tests_properties(k174_collab_join PROPERTIES TIMEOUT 600)
+# K-174: the real ICE agents behind simulated home routers on 127.0.0.1 (no special rights):
+# a late reply code, an old invite behind a router that forgets idle ports, a symmetric router.
+# Runs in real time (about 8 minutes).
+if(GRIDLINE_COLLAB AND NOT WIN32)
+  add_executable(gridline_tests_collab_nat tests/test_collab_nat.cpp)
+  target_link_libraries(gridline_tests_collab_nat PRIVATE gridline_core gridline_juice)
+  target_include_directories(gridline_tests_collab_nat PRIVATE tests)
+  target_compile_options(gridline_tests_collab_nat PRIVATE ${GL_WARN})
+  add_test(NAME k174_collab_nat COMMAND gridline_tests_collab_nat WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+  set_tests_properties(k174_collab_nat PROPERTIES TIMEOUT 1200)
+endif()
 # J-111: sound and playback stay on each computer (two collaborators with real engines, offline).
 add_executable(gridline_tests_collab_local tests/test_collab_local.cpp)
 target_link_libraries(gridline_tests_collab_local PRIVATE gridline_core)
@@ -741,6 +760,14 @@ add_executable(gridline_tests_swing tests/test_swing.cpp)
 target_link_libraries(gridline_tests_swing PRIVATE gridline_core)
 target_compile_options(gridline_tests_swing PRIVATE ${GL_WARN})
 add_test(NAME swing COMMAND gridline_tests_swing WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# K-151: swing presets and grooves (classic swing unchanged to the bit, presets place notes exactly,
+# preset files, project, undo, collaboration, FLP, groove extraction from notes, audio and score files).
+add_executable(gridline_tests_k151_groove tests/test_k151_groove.cpp)
+target_link_libraries(gridline_tests_k151_groove PRIVATE gridline_core)
+target_include_directories(gridline_tests_k151_groove PRIVATE tests)
+target_compile_options(gridline_tests_k151_groove PRIVATE ${GL_WARN})
+add_test(NAME k151_groove COMMAND gridline_tests_k151_groove WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+set_tests_properties(k151_groove PROPERTIES TIMEOUT 600)
 add_executable(gridline_tests_presets tests/test_presets.cpp)
 target_link_libraries(gridline_tests_presets PRIVATE gridline_core)
 add_test(NAME presets COMMAND gridline_tests_presets WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
@@ -1704,7 +1731,8 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
        ${CMAKE_SOURCE_DIR}/src/app/Viewports.cpp ${CMAKE_SOURCE_DIR}/src/app/LiveResize.cpp
        ${CMAKE_SOURCE_DIR}/src/app/AppIcon.cpp ${CMAKE_SOURCE_DIR}/src/app/AppIconImage.cpp  # K-14: the program only
        ${CMAKE_SOURCE_DIR}/src/app/GlRecovery.cpp ${CMAKE_SOURCE_DIR}/src/app/VideoDriver.cpp  # K-47: the program's own OpenGL context
-       ${CMAKE_SOURCE_DIR}/src/app/OpenDocuments.cpp)  # K-119: the program's SDL events
+       ${CMAKE_SOURCE_DIR}/src/app/OpenDocuments.cpp  # K-119: the program's SDL events
+       ${CMAKE_SOURCE_DIR}/src/app/WindowActivate.cpp)  # K-153: the program's main window
   add_library(gridline_ui OBJECT ${GRIDLINE_APP_SRC})
   target_link_libraries(gridline_ui PRIVATE gridline_core imgui_core rtmidi gridline_sdl_headers)
   target_compile_options(gridline_ui PRIVATE ${GL_WARN_LOOSE})
@@ -1725,7 +1753,7 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
   target_include_directories(gridline_tests_app_icon PRIVATE src tests)
   target_compile_options(gridline_tests_app_icon PRIVATE ${GL_WARN})
   add_test(NAME k14_app_icon COMMAND gridline_tests_app_icon WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-  add_executable(gridline-app src/app/main.cpp src/app/PluginWindow.cpp src/app/Viewports.cpp src/app/LiveResize.cpp src/app/GlRecovery.cpp src/app/VideoDriver.cpp src/app/OpenDocuments.cpp $<TARGET_OBJECTS:gridline_ui> ${GRIDLINE_ICON_OBJS}
+  add_executable(gridline-app src/app/main.cpp src/app/PluginWindow.cpp src/app/Viewports.cpp src/app/LiveResize.cpp src/app/GlRecovery.cpp src/app/VideoDriver.cpp src/app/OpenDocuments.cpp src/app/WindowActivate.cpp $<TARGET_OBJECTS:gridline_ui> ${GRIDLINE_ICON_OBJS}
                               src/app/AppIcon.cpp $<TARGET_OBJECTS:gridline_appicon>)
   target_link_libraries(gridline-app PRIVATE gridline_core imgui rtmidi)
   if(APPLE)
@@ -1772,11 +1800,13 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
     add_test(NAME k157_window_hints COMMAND gridline_tests_k157)
     set_tests_properties(k157_window_hints PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
 
+    get_property(_glGuiBefore DIRECTORY PROPERTY TESTS)  # K-153: the "gui" label (end of this block)
     # Q-7: every built-in editor at widths x1 / x1.5 / x2, no control within
     # inset::kMinInset px of its panel's edge (off-screen run; isolated config).
     # Hidden window: the desktop cursor cannot hover a control and show its readout.
+    # K-164: the window holds the widest editor (Plasma, 1280 px) at x2 with its full height.
     add_test(NAME editor_layout_audit
-             COMMAND gridline-app --hidden --layout-audit ${CMAKE_BINARY_DIR}/layout_audit --size 2400x1600
+             COMMAND gridline-app --hidden --layout-audit ${CMAKE_BINARY_DIR}/layout_audit --size 2600x1700
                      --screenshot ${CMAKE_BINARY_DIR}/layout_audit/frame.ppm --frames 100000 --no-ui-sounds
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     # J-103: a failing exit fails the test (ctest checks the code); an abort message on the way out does too.
@@ -1854,6 +1884,13 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(j83_mixer_wheel PROPERTIES TIMEOUT 300)
 
+    # Mixer selection: Ctrl+A only with the mixer focused, a reset covers the selected tracks, the wheel scrolls the strips (docked and detached).
+    add_test(NAME k176_mixer_select_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/k176_mixer_select -P ${CMAKE_SOURCE_DIR}/tests/k176_mixer_select_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(k176_mixer_select_app PROPERTIES TIMEOUT 300)
+
     # J-84: channel rack with long patterns / narrow racks: knobs drawn, steps scroll, Q-15 wheel routing.
     add_test(NAME j84_rack_scroll
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
@@ -1924,6 +1961,26 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -P ${CMAKE_SOURCE_DIR}/tests/j202_plasma_pages.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(j202_plasma_pages PROPERTIES TIMEOUT 600)
+    # Plasma's editor: every parameter has a control; no overlapping text at 60 / 75 / 100 %, at
+    # 1440x900 and 1920x1080, dark and light.
+    add_test(NAME k164_plasma_editor
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DCLI=$<TARGET_FILE:gridline> -DOUT=${CMAKE_BINARY_DIR}/k164_plasma_editor
+                     -P ${CMAKE_SOURCE_DIR}/tests/k164_plasma_editor.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(k164_plasma_editor PROPERTIES TIMEOUT 2700)
+    # Plasma's Patch view: every node and connection action is one undo step; Undo and Redo.
+    add_test(NAME k164_plasma_patch_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DOUT=${CMAKE_BINARY_DIR}/k164_plasma_patch_app
+                     -P ${CMAKE_SOURCE_DIR}/tests/k164_plasma_patch_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(k164_plasma_patch_app PROPERTIES TIMEOUT 300)
+    # Plasma's theme button and the app's own switch with Plasma open: a live switch both ways gives
+    # the colours of a fresh start in that mode.
+    add_test(NAME k164_plasma_theme_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DOUT=${CMAKE_BINARY_DIR}/k164_plasma_theme_app
+                     -P ${CMAKE_SOURCE_DIR}/tests/k164_plasma_theme_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(k164_plasma_theme_app PROPERTIES TIMEOUT 900)
     # K-170: Voltage In / Voltage Out editors (inset and overlap audit) and the calibration window.
     add_test(NAME k170_cv_editors_app
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DOUT=${CMAKE_BINARY_DIR}/k170_cv_editors
@@ -2169,6 +2226,20 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(k140_cut_loop_app PROPERTIES TIMEOUT 300)
 
+    # Swing presets: the rack's preset chip and menu, a preset in one undo step, the Groove editor's lanes.
+    add_test(NAME k151_swing_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/k151_swing_app -P ${CMAKE_SOURCE_DIR}/tests/k151_swing_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(k151_swing_app PROPERTIES TIMEOUT 400)
+
+    # Deleting a mixer track, channel, playlist track or pattern in the middle of its list from its menu.
+    add_test(NAME k156_delete_middle_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/k156_delete_middle_app -P ${CMAKE_SOURCE_DIR}/tests/k156_delete_middle_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(k156_delete_middle_app PROPERTIES TIMEOUT 400)
+
     # A right-click on overlapping notes deletes only the top one, held or with a slight slip.
     add_test(NAME piano_erase_overlap
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
@@ -2264,7 +2335,7 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
                      -DOUT=${CMAKE_BINARY_DIR}/j117_rubber -P ${CMAKE_SOURCE_DIR}/tests/j117_rubber.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
-    set_tests_properties(j117_rubber_app PROPERTIES TIMEOUT 300)
+    set_tests_properties(j117_rubber_app PROPERTIES TIMEOUT 300 SKIP_REGULAR_EXPRESSION "SKIP: ")
 
     # J-158: big plugin editors (Platter, Seltmann) fit inside the main window: never popped out
     # by themselves (also when saved on a larger main window), the main window keeps its size,
@@ -2532,6 +2603,15 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(k169_layer_editor PROPERTIES TIMEOUT 600)
 
+    # Drum kits (.h2drumkit, a kit folder): loaded as Abacus channels in one undo step, unpacked into
+    # the cache, the import report with the kit's author and licence, the browser's kit summary.
+    add_test(NAME k162_drum_kits
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DMAKEKIT=$<TARGET_FILE:gridline_test_hydrogen>
+                     -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/k162_drum_kits -P ${CMAKE_SOURCE_DIR}/tests/k162_drum_kits.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(k162_drum_kits PROPERTIES TIMEOUT 600)
+
     # K-18: rename, new folder, moves and the trash in the browser; the project's references and undo follow.
     add_test(NAME k18_browser_files
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
@@ -2739,6 +2819,13 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -P ${CMAKE_SOURCE_DIR}/tests/j146_launcher_collab_app.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(j146_launcher_collab_app PROPERTIES TIMEOUT 600)
+    # K-153: every test above opens application windows: label "gui", so a display server's CI job
+    # (Xvfb, Weston, mutter, KWin in either window system mode) runs just these: ctest -L gui.
+    get_property(_glGuiAfter DIRECTORY PROPERTY TESTS)
+    if(_glGuiBefore)
+      list(REMOVE_ITEM _glGuiAfter ${_glGuiBefore})
+    endif()
+    set_property(TEST ${_glGuiAfter} APPEND PROPERTY LABELS gui)
   endif()
 
   include(cmake/GridlinePlugins.cmake)  # PH-09: Gridline.clap / Gridline.vst3

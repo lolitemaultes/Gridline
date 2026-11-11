@@ -1,8 +1,8 @@
-// Gridline — "plasma" pack: editor frame (see plasma_ui.h): palette, shared
-// controls (knobs with modulation rings, value boxes, drop-downs, steppers,
-// tabs, curve editor), modulation drag and drop, menus, the header with the
-// page tabs and preset row, the bottom strip with wheels, CLIP / ARP, scale and
-// keyboard, and the entry point.
+// Gridline — "plasma" pack: editor basics (see plasma_ui.h): palette, shared
+// controls (dials with link bands, value bars, fields, chips, switches, cards,
+// drop-downs, steppers, curve editor), links by drag and drop and Link mode,
+// menus, preset open / apply, and the entry point. The frame (top bar, rail,
+// dock, play bar) is in plasma_frame_ui.cpp.
 #include "plasma_ui.h"
 #include "../../app/Look.h"
 #include "plasma_dsp.h"
@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
 #include <set>
@@ -20,7 +21,11 @@
 #include "../../core/Song.h"
 #include "../../engine/Program.h"
 #include "../PacksUi.h"
+#include "../../app/DisplayConfirm.h"
+#include "../../app/DisplayConfirmUi.h"
+#include "../../app/ThemeSettings.h"
 #include "../../app/Widgets.h"
+#include "../../third_party/imgui/imgui_internal.h"
 
 namespace gl::packs::plasma {
 
@@ -84,11 +89,19 @@ Pal makePal(const theme::Palette& T) {
   p.textFaint = T.textFaint;
   p.label = mix(T.text, T.textDim, 0.45f);
   // the synth family's role (PluginUI brandRole: Synth), deepened on light surfaces
-  p.accent = d ? rgb(theme::role::kStamp) : rgb(0xA53BC4);
+  // K-164: Gridline's own roles: the accent is focus and selection only; values ring in the
+  // knob fill; lit marks are hot; modulation is drawn in the colour of its source's family.
+  p.accent = T.accent;
   p.accentDim = mix(p.accent, T.surface800, 0.45f);
   p.accentSoft = theme::withAlpha(p.accent, d ? 0.2f : 0.14f);
   p.mod = d ? rgb(theme::role::kGraph) : rgb(0x1689C7);
   p.modSoft = theme::withAlpha(p.mod, 0.18f);
+  p.hot = T.hot;
+  p.knob = T.knobFill;
+  {
+    const uint32_t fr[FamCount] = {theme::role::kDraw, theme::role::kStamp, theme::role::kSnap, theme::role::kWarp, theme::role::kSlice};
+    for (int i = 0; i < FamCount; ++i) p.fam[i] = d ? rgb(fr[i]) : theme::lit(rgb(fr[i]));
+  }
   p.warn = d ? rgb(0xFFB84D) : rgb(0xC77A12);
   p.good = T.led;
   p.danger = T.danger;
@@ -115,6 +128,7 @@ Pal makePal(const theme::Palette& T) {
     p.accentText = lift(p.accent, p.text, 4.5f, lit, nl);
     p.modText = lift(p.mod, p.text, 4.5f, body, nb);
     p.warn = lift(p.warn, p.text, 4.5f, body, nb);  // warnings are text too ("sustain loop")
+    for (int i = 0; i < FamCount; ++i) p.famText[i] = lift(p.fam[i], p.text, 4.5f, body, nb);
   }
   if (std::getenv("GL_PLASMA_CONTRAST")) {  // J-202: the contrast table (AUDIT.md)
     const struct {
@@ -151,7 +165,7 @@ skin::Skin makeSkin(const Pal& p) {
 }
 // The palette of the current theme (rebuilt when the theme or its tweaks change).
 struct PalCache {
-  uint32_t key[6] = {};
+  uint32_t key[10] = {};
   Pal pal;
   skin::Skin skin;
   bool init = false;
@@ -159,7 +173,8 @@ struct PalCache {
 PalCache& palCache() {
   static PalCache c;
   const theme::Palette& T = theme::pal();
-  const uint32_t k[6] = {T.surface800, T.field, T.text, T.well, T.led, static_cast<uint32_t>(T.dark)};
+  // every theme input (mode, brightness, contrast, accent) shows in one of these roles
+  const uint32_t k[10] = {T.surface900, T.surface800, T.surface700, T.field, T.text, T.textDim, T.well, T.led, T.accent, static_cast<uint32_t>(T.dark)};
   // J-202: only the app's own palette drives it. Inside Plasma's skin scope theme::pal() is the
   // palette derived from Plasma's skin, which would rebuild the cache twice per frame (and
   // derive the roles from themselves); there the cached palette stays.
@@ -206,11 +221,27 @@ void commit(Ctx& c, const char* label, int what) {
   ns.data = modelToData(c.m);
   if (ns.data != cur->data) setPluginState(c.a, c.t, ns, label, what ? mergeKey(c.t, what) : 0);
 }
+void commitParams(Ctx& c, const char* label, const std::vector<std::pair<int, double>>& ps) {
+  const PluginState* cur = c.t.state(c.a.doc.song());
+  if (!cur) return;
+  PluginState ns = *cur;
+  ns.data = modelToData(c.m);
+  for (const auto& [k, v] : ps) {
+    if (k < 0) continue;
+    if (static_cast<int>(ns.params.size()) <= k) ns.params.resize(static_cast<size_t>(k + 1), 0.f);
+    ns.params[static_cast<size_t>(k)] = static_cast<float>(v);
+  }
+  if (!(ns == *cur)) setPluginState(c.a, c.t, ns, label);
+}
 std::string ptext(const Ctx& c, int k) { return paramText(k, val(c, k), &c.st.params); }
 
 // ================================================================== text
 // J-202: nothing smaller than 8 px (the caption size at 100 %).
-float font(const Ctx& c, float px) { return std::max(8.0f, std::round(px * c.F.s * 2.0f) * 0.5f); }
+// The editor's type is set 15 % above its form sizes, so labels and values read at a glance at
+// the editor's usual sizes (one place: every text, measure and layout check goes through here).
+constexpr float kTypeScale = 1.25f;
+float font(const Ctx& c, float px) { return std::max(9.5f, std::round(px * kTypeScale * c.F.s * 2.0f) * 0.5f); }
+float ctlPx(float h) { return std::clamp(h * 0.44f, 10.0f, 12.0f); }
 namespace {
 int gMono = 0;  // MonoText scopes open: values are set in the mono face
 ImFont* pick(const Ctx& c, bool bold) {
@@ -228,9 +259,27 @@ struct LayoutItem {
   int layer;
   bool knob;
   std::string s;
+  bool box = false;  // a control's body (button, bar, field): boxes must not overlap each other or a knob
 };
 std::vector<LayoutItem> gLayout;
+std::vector<ImVec4> gScrollRects;  // clip rects of scrolling areas: text cut at their edges is scrolled, not cut
+std::vector<std::string> gClipped;  // text cut by the edge of its field or card
 int gLayer = 0;
+}  // namespace
+// Text drawn by ImGui itself (menus, popups): reported when it runs past the right edge of the
+// window it sits in (a popup's edge cuts it).
+void layoutWindowText(ImVec2 at, const char* s, float wrap) {
+  static const bool on = std::getenv("GL_PLASMA_LAYOUT_CHECK") != nullptr;
+  if (!on || !s || !*s) return;
+  ImGuiWindow* w = ImGui::GetCurrentWindow();
+  const ImVec2 sz = ImGui::CalcTextSize(s, nullptr, false, wrap);
+  if (at.x + sz.x > w->InnerClipRect.Max.x + 1.5f) gClipped.push_back(s);
+}
+namespace {
+std::string& layoutViewTag() {
+  static std::string t;
+  return t;
+}
 bool layoutOn() {
   static const bool on = std::getenv("GL_PLASMA_LAYOUT_CHECK") != nullptr;
   return on;
@@ -249,27 +298,59 @@ void put(const Ctx& c, ImVec2 pos, const char* s, ImU32 col, float px, bool bold
   if (layoutOn() && s && *s && (col >> 24) > 0x40) {
     const ImVec2 sz = f->CalcTextSizeA(font(c, px), 1e9f, 0, ::gl::ui::labelText(s));
     // glyph box without the line gap: 15 % of the size top and bottom
-    layoutAdd(c, ImVec2(at.x + 0.5f, at.y + sz.y * 0.18f), ImVec2(at.x + sz.x - 0.5f, at.y + sz.y * 0.85f), false, s);
+    const ImVec2 ga(at.x + 0.5f, at.y + sz.y * 0.18f), gb(at.x + sz.x - 0.5f, at.y + sz.y * 0.85f);
+    layoutAdd(c, ga, gb, false, s);
+    // cut by a clip edge (that is not a scrolling area's edge): a cut word
+    const ImVec2 ca = c.dl->GetClipRectMin(), cb = c.dl->GetClipRectMax();
+    const bool visible = gb.x > ca.x && ga.x < cb.x && gb.y > ca.y && ga.y < cb.y;
+    const float tol = 1.5f;
+    if (visible && (ga.x < ca.x - tol || gb.x > cb.x + tol || ga.y < ca.y - tol || gb.y > cb.y + tol)) {
+      bool scrolled = false;
+      // the edge that cuts it is a scrolling area's edge (also through a field's own clip inside it)
+      for (const auto& r : gScrollRects)
+        if ((ga.y < ca.y - tol && std::fabs(r.y - ca.y) < 1) || (gb.y > cb.y + tol && std::fabs(r.w - cb.y) < 1) ||
+            (ga.x < ca.x - tol && std::fabs(r.x - ca.x) < 1) || (gb.x > cb.x + tol && std::fabs(r.z - cb.x) < 1))
+          scrolled = true;
+      if (!scrolled) gClipped.push_back(s);
+    }
   }
 }
 // Reports intersections (text / text, text / knob) of the frame on stderr, once per pair.
 void layoutReport(const Ctx& c) {
   if (!layoutOn()) return;
+  if (gLayoutSettling) {  // the rows settle in a frame: judge the settled layout only
+    gLayoutSettling = false;
+    gLayout.clear(), gClipped.clear();
+    return;
+  }
   static std::set<std::string> seen;
   static size_t most = 0;
-  const std::string tag = std::getenv("GL_PLASMA_LAYOUT_TAG") ? std::getenv("GL_PLASMA_LAYOUT_TAG") : "";
+  const std::string base = std::getenv("GL_PLASMA_LAYOUT_TAG") ? std::getenv("GL_PLASMA_LAYOUT_TAG") : "";
+  const std::string tag = layoutViewTag().empty() ? base : layoutViewTag() + "@" + base;
+  static std::string lastTag;
+  if (tag != lastTag) lastTag = tag, most = 0;
   if (gLayout.size() > most) most = gLayout.size(), std::fprintf(stderr, "PLASMA_LAYOUT %s: %zu items\n", tag.c_str(), most);
+  for (const auto& t : gClipped) {
+    const std::string key = tag + "|clip|" + t;
+    if (seen.insert(key).second) std::fprintf(stderr, "PLASMA_OVERLAP %s: '%s' is cut by the edge of its field or card\n", tag.c_str(), t.c_str());
+  }
+  gClipped.clear();
+  gScrollRects.clear();
   for (size_t i = 0; i < gLayout.size(); ++i)
     for (size_t j = i + 1; j < gLayout.size(); ++j) {
       const LayoutItem &p = gLayout[i], &q = gLayout[j];
       if (p.layer != q.layer || (p.knob && q.knob)) continue;
+      // text sits inside its own control's box; only box / box and box / knob count
+      if ((p.box && !q.box && !q.knob) || (q.box && !p.box && !p.knob)) continue;
       const float ox = std::min(p.b.x, q.b.x) - std::max(p.a.x, q.a.x), oy = std::min(p.b.y, q.b.y) - std::max(p.a.y, q.a.y);
       if (ox <= c.s(0.6f) || oy <= c.s(0.6f)) continue;
       const std::string key = tag + "|" + p.s + "|" + q.s + "|" + std::to_string(static_cast<int>(p.a.x / c.F.s)) + "," +
                               std::to_string(static_cast<int>(p.a.y / c.F.s));
       if (!seen.insert(key).second) continue;
-      std::fprintf(stderr, "PLASMA_OVERLAP %s: '%s' (%.0f,%.0f) x '%s' (%.0f,%.0f) by %.1fx%.1f px\n", tag.c_str(), p.knob ? "<knob>" : p.s.c_str(),
-                   (p.a.x - c.F.o.x) / c.F.s, (p.a.y - c.F.o.y) / c.F.s, q.knob ? "<knob>" : q.s.c_str(), (q.a.x - c.F.o.x) / c.F.s,
+      std::fprintf(stderr, "PLASMA_OVERLAP %s: '%s' (%.0f,%.0f) x '%s' (%.0f,%.0f) by %.1fx%.1f px\n", tag.c_str(),
+                   p.knob ? "<knob>" : p.box ? ("<" + p.s + ">").c_str() : p.s.c_str(),
+                   (p.a.x - c.F.o.x) / c.F.s, (p.a.y - c.F.o.y) / c.F.s, q.knob ? "<knob>" : q.box ? ("<" + q.s + ">").c_str() : q.s.c_str(),
+                   (q.a.x - c.F.o.x) / c.F.s,
                    (q.a.y - c.F.o.y) / c.F.s, ox / c.F.s, oy / c.F.s);
     }
   gLayout.clear();
@@ -291,6 +372,12 @@ MonoText::MonoText() { ++gMono; }
 MonoText::~MonoText() { --gMono; }
 float textW(const Ctx& c, const char* s, float px, bool bold) { return measure(c, s, px, bold).x / c.F.s; }
 void text(const Ctx& c, float x, float y, const char* s, ImU32 col, float px, bool bold) { put(c, c.p(x, y), s, col, px, bold); }
+void textHeavy(const Ctx& c, float x, float y, const char* s, ImU32 col, float px) {
+  put(c, c.p(x, y), s, col, px, true);
+  // a heavier weight than the bold face: the same glyphs again a third of a pixel to the right
+  const ImVec2 at = c.p(x, y);
+  ::gl::ui::drawLabel(c.dl, pick(c, true), font(c, px), ImVec2(std::round(at.x) + 0.35f, std::round(at.y)), col, s);
+}
 void textC(const Ctx& c, float cx, float y, const char* s, ImU32 col, float px, bool bold) {
   const ImVec2 sz = measure(c, s, px, bold);
   const ImVec2 q = c.p(cx, y);
@@ -358,6 +445,15 @@ void caption(const Ctx& c, float x0, float x1, float y, const char* s) {
 }
 
 void layoutLayer(int layer) { gLayer = layer; }
+void layoutScroll(const Ctx& c) {
+  if (layoutOn()) gScrollRects.push_back(ImVec4(c.dl->GetClipRectMin().x, c.dl->GetClipRectMin().y, c.dl->GetClipRectMax().x, c.dl->GetClipRectMax().y));
+}
+void layoutBox(const Ctx& c, float x, float y, float w, float h, const char* what) {
+  if (!layoutOn()) return;
+  const size_t n = gLayout.size();
+  layoutAdd(c, c.p(x + 1, y + 1), c.p(x + w - 1, y + h - 1), false, what);
+  if (gLayout.size() > n) gLayout.back().box = true;
+}
 
 void frameBox(const Ctx& c, float x, float y, float w, float h, ImU32 fill) {
   const float g = kGutter;
@@ -504,6 +600,29 @@ bool interact(Ctx& c, int k, double& v, float pixels, bool horizontal) {
   }
   return ch;
 }
+// The control's plain sentence, under the pointer once it has rested on control k for a moment.
+void helpTip(Ctx& c, int k) {
+  static int lastK = -1;
+  static double since = 0;
+  const double now = ImGui::GetTime();
+  if (k != lastK) lastK = k, since = now;
+  if (!c.u.prefBubbles || now - since < 0.7 || ImGui::IsMouseDown(0)) return;
+  const std::string s = paramSentence(k);
+  if (s.empty()) return;
+  ImFont* f = c.a.fontRegular;
+  const float fs = font(c, 10.5f), wrap = c.s(260), pad = c.s(7);
+  const ImVec2 ts = f->CalcTextSizeA(fs, 1e9f, wrap, s.c_str());
+  const ImVec2 m = ImGui::GetIO().MousePos;
+  const ImVec2 vp = ImGui::GetMainViewport()->Size;
+  ImVec2 p0(std::min(m.x + c.s(14), vp.x - ts.x - pad * 2 - 4), m.y + c.s(20));
+  if (p0.y + ts.y + pad * 2 > vp.y) p0.y = m.y - c.s(12) - ts.y - pad * 2;
+  const ImVec2 p1(p0.x + ts.x + pad * 2, p0.y + ts.y + pad * 2);
+  ImDrawList* fg = ImGui::GetForegroundDrawList();
+  fg->AddRectFilled(ImVec2(p0.x + 1, p0.y + 2), ImVec2(p1.x + 1, p1.y + 2), IM_COL32(0, 0, 0, 70), c.s(4));
+  fg->AddRectFilled(p0, p1, c.P.head, c.s(4));
+  fg->AddRect(p0, p1, c.P.lineHi, c.s(4));
+  fg->AddText(f, fs, ImVec2(p0.x + pad, p0.y + pad), c.P.text, s.c_str(), nullptr, wrap);
+}
 void bubble(Ctx& c, ImVec2 anchor, const std::string& s) {
   if (!c.u.prefBubbles) return;
   ImFont* f = c.a.fontMono ? c.a.fontMono : c.a.fontRegular;
@@ -550,19 +669,107 @@ void modMenu(Ctx& c, int k, bool& openStd, bool& openType) {
     ImGui::PopID();
   }
   if (!slots.empty()) ImGui::Separator();
-  if (ImGui::BeginMenu(i18n::tr("Add modulation"))) {
+  if (ImGui::BeginMenu(i18n::tr("Link from"))) {
     int src = -1;
-    if (sourceMenuItems(c, src) && src > SrcNone) addModulation(c, src, k, 0.5f);
+    if (sourceMenuItems(c, src) && src > SrcNone) addModulation(c, src, k, 0.25f);
     ImGui::EndMenu();
   }
+  if (k >= kMacroBase && k < kMacroBase + kMacros && ImGui::MenuItem(i18n::tr("Rename..."))) macroRenameRequest() = k - kMacroBase;
+  if (!slots.empty() && ImGui::MenuItem(i18n::tr("Show in Links"))) c.u.linkSel = slots.front(), openView(c.u, VLinks);
   ImGui::Separator();
   if (ImGui::MenuItem(i18n::tr("Automation, MIDI link..."))) openStd = true;
 }
 }  // namespace
 
+// ---- links: Link mode, Alt-drag depth, the focused control, the reach record
+namespace {
+std::vector<char> gReach;  // GL_PLASMA_REACH: parameters a control was drawn for
+struct RouteEnd {
+  int k;
+  ImVec2 at;
+  float r;  // the control's half size, so a line ends at its edge
+};
+std::vector<RouteEnd> gRouteEnds;  // controls drawn this frame
+ImVec2 gGrip[SourceCount];         // grips drawn this frame (x < 0: not drawn)
+ImVec2 gFamAt[8];                  // a family's header row, for its closed sources
+}  // namespace
+void reach(int k) {
+  if (k < 0) return;
+  if (gReach.size() <= static_cast<size_t>(k)) gReach.resize(static_cast<size_t>(k) + 1, 0);
+  gReach[static_cast<size_t>(k)] = 1;
+}
+const std::vector<char>& reachRecord() { return gReach; }
+int& macroRenameRequest() {
+  static int r = -1;
+  return r;
+}
+void reachClear() { std::fill(gReach.begin(), gReach.end(), 0); }
+
+int familyOf(int src) {
+  if (src >= SrcEnv1 && src <= SrcEnv4) return FamEnv;
+  if (src >= SrcLfo1 && src <= SrcLfo10Y) return FamLfo;
+  if (src >= SrcMacro1 && src <= SrcMacro8) return FamMacro;
+  switch (src) {
+    case SrcVelo: case SrcNote: case SrcReleaseVelo: case SrcAftertouch: case SrcPolyAT: case SrcModWheel: case SrcPitchBend:
+    case SrcExprX: case SrcExprY: case SrcExprZ: return FamKey;
+    default: return FamChance;
+  }
+}
+namespace {
+ImU32 famCol(const Ctx& c, int src) { return c.P.fam[familyOf(std::max(src, 0))]; }
+// The link of `src` into k (-1 = none).
+int linkSlot(const Ctx& c, int src, int k) {
+  for (int s = 0; s < kModSlots; ++s)
+    if (vali(c, modP(s, M_Source)) == src && vali(c, modP(s, M_Dest)) == k + 1) return s;
+  return -1;
+}
+// Link mode on the last item (a dial or a bar of parameter k): a drag up / down (or sideways
+// on a bar) sets the depth of the armed source's link into k, made at the press. One pointer
+// gesture, one undo step. True while it owns the item.
+bool linkGesture(Ctx& c, int k, float pixels) {
+  const int src = c.u.linkSrc;
+  if (src < 0 || !modulatable(k)) return false;
+  pui::devItemHere(c.t.pid(k));  // scripted tests find the control in Link mode too
+  static int slot = -1;
+  if (ImGui::IsItemActivated()) {
+    slot = linkSlot(c, src, k);
+    if (slot < 0) slot = addModulation(c, src, k, 0.0f);
+  }
+  if (ImGui::IsItemActive() && slot >= 0) {
+    const ImGuiIO& io = ImGui::GetIO();
+    const float d = io.MouseDelta.x - io.MouseDelta.y;
+    if (d != 0) {
+      const double amt = std::clamp(val(c, modP(slot, M_Amount)) + d / pixels * (io.KeyShift ? 0.15 : 1.0), -1.0, 1.0);
+      setv(c, modP(slot, M_Amount), amt, true);
+    }
+  }
+  if (ImGui::IsItemDeactivated()) c.a.doc.endGesture(), slot = -1;
+  return true;
+}
+// Alt + drag on the last item: the depth of its newest link.
+void altDepth(Ctx& c, int s, float pixels) {
+  const ImGuiIO& io = ImGui::GetIO();
+  const float d = io.MouseDelta.x - io.MouseDelta.y;
+  if (d != 0) {
+    const double amt = std::clamp(val(c, modP(s, M_Amount)) + d / pixels * (io.KeyShift ? 0.15 : 1.0), -1.0, 1.0);
+    setv(c, modP(s, M_Amount), amt, true);
+  }
+  if (ImGui::IsItemDeactivated()) c.a.doc.endGesture();
+}
+// A control that can take the armed source shows it with an outline in the source's colour.
+void linkOutline(const Ctx& c, int k, ImVec2 a, ImVec2 b, float r) {
+  if (c.u.linkSrc < 0 || !modulatable(k)) return;
+  c.dl->AddRect(ImVec2(a.x - c.s(1.5f), a.y - c.s(1.5f)), ImVec2(b.x + c.s(1.5f), b.y + c.s(1.5f)), famCol(c, c.u.linkSrc), c.s(r), 0,
+                std::max(1.0f, c.s(1.2f)));
+}
+const char* kHintFree = "   (drag \xC2\xB7 Shift: fine \xC2\xB7 double-click: type or reset \xC2\xB7 drop a source here to link it \xC2\xB7 right-click: menu)";
+const char* kHintLinked = "   (Alt+drag: depth of the newest link \xC2\xB7 double-click: type or reset \xC2\xB7 right-click: menu)";
+}  // namespace
+
 bool knob(Ctx& c, int k, float cx, float cy, float r, const char* label, int flags) {
   const ParamDesc* d = desc(k);
   if (!d) return false;
+  reach(k);
   ImGuiIO& io = ImGui::GetIO();
   const ImVec2 C = c.p(cx, cy);
   const float R = c.s(r);
@@ -573,15 +780,11 @@ bool knob(Ctx& c, int k, float cx, float cy, float r, const char* label, int fla
   double v = val(c, k);
   bool changed = false;
   auto slots = modSlotsFor(c, k);
+  if (hov && modulatable(k) && (k < kModBase || k >= kFxBase)) c.u.focusK = k;
   const bool rclick = hov && ImGui::IsMouseClicked(ImGuiMouseButton_Right);
-  if (act && io.KeyAlt && !slots.empty()) {
-    // Alt + drag: the amount of the first modulation slot
-    const int s = slots.front();
-    if (io.MouseDelta.y != 0) {
-      const double amt = std::clamp(val(c, modP(s, M_Amount)) - io.MouseDelta.y / 160.0 * (io.KeyShift ? 0.15 : 1.0), -1.0, 1.0);
-      setv(c, modP(s, M_Amount), amt, true);
-    }
-    if (ImGui::IsItemDeactivated()) c.a.doc.endGesture();
+  if (linkGesture(c, k, 160.0f)) {
+  } else if (act && io.KeyAlt && !slots.empty()) {
+    altDepth(c, slots.back(), 160.0f);
   } else if (rclick) {
     ImGui::OpenPopup("##plmod");
   } else {
@@ -595,64 +798,539 @@ bool knob(Ctx& c, int k, float cx, float cy, float r, const char* label, int fla
   }
   if (openStd) ImGui::OpenPopup("##pmenu");
   if (openType) ImGui::OpenPopup("##type");
-  // face
+  // K-164 look: a track, the value arc in the block's colour (a low glow), a light cap with a
+  // dark pointer
   const double n = d->toNormalized(v);
   const bool bip = (flags & KnobBipolar) || (d->min < 0 && d->max > 0);
-  skin::KnobPaint kp;
-  kp.rail = c.P.rail;
-  kp.fill = act ? skin::lighten(c.P.accent, 0.15f) : c.P.accent;
-  kp.cap = c.P.capTop;
-  kp.pointer = c.P.pointer;
-  kp.a0 = kA0, kp.a1 = kA1;
-  kp.an = kA0 + static_cast<float>(n) * (kA1 - kA0);
-  kp.from = bip ? (kA0 + kA1) * 0.5f : kA0;
-  kp.hot = hov, kp.active = act;
-  kp.railTh = std::max(2.0f, R * 0.17f);
-  // bezel: a dark socket around the ring, with min / max tick dots
-  c.dl->AddCircleFilled(C, R + c.s(1.6f), c.P.dark ? theme::withAlpha(c.P.frame, 0.9f) : theme::withAlpha(c.P.lineHi, 0.45f), 40);
-  for (float ta : {kA0, kA1})
-    c.dl->AddCircleFilled(ImVec2(C.x + std::cos(ta) * (R + c.s(3.4f)), C.y + std::sin(ta) * (R + c.s(3.4f))), std::max(0.8f, c.s(0.9f)),
-                          c.P.textFaint, 8);
-  skin::knobFace(c.dl, C, R, kp);
+  const float an = kA0 + static_cast<float>(n) * (kA1 - kA0), from = bip ? (kA0 + kA1) * 0.5f : kA0;
+  const float th = std::max(1.5f, c.s(M(3)) * std::min(1.f, r / M(17)));
+  const ImU32 vc = gKnobCol ? gKnobCol : c.P.accent;
+  c.dl->PathArcTo(C, R, kA0, kA1, 40);
+  c.dl->PathStroke(c.P.dark ? theme::mix(c.P.well, c.P.panel, 0.4f) : theme::mix(c.P.line, c.P.panel, 0.5f), 0, th);
+  if (std::fabs(an - from) > 0.005f) {
+    const float g = glowK(c);
+    if (g > 0.01f) {
+      c.dl->PathArcTo(C, R, std::min(from, an), std::max(from, an), 40);
+      c.dl->PathStroke(theme::withAlpha(vc, 0.18f * g), 0, th + c.s(3) * g);
+    }
+    c.dl->PathArcTo(C, R, std::min(from, an), std::max(from, an), 40);
+    c.dl->PathStroke(vc, 0, th);
+  }
+  {
+    const float dr = R - c.s(M(5.5f)) * std::min(1.f, r / M(17));
+    const ImU32 cap = hov || act ? skin::lighten(c.P.knob, 0.06f) : c.P.knob;
+    c.dl->AddCircleFilled(C, dr, cap, 40);
+    c.dl->AddCircle(C, dr, IM_COL32(0, 0, 0, c.P.dark ? 90 : 64), 40, 1.0f);
+    const ImU32 ptr = c.P.dark ? theme::mix(c.P.well, c.P.frame, 0.3f) : c.P.panel;
+    c.dl->AddLine(ImVec2(C.x + std::cos(an) * dr * 0.25f, C.y + std::sin(an) * dr * 0.25f),
+                  ImVec2(C.x + std::cos(an) * (dr - c.s(2)), C.y + std::sin(an) * (dr - c.s(2))), ptr, std::max(1.4f, c.s(M(2.2f))));
+  }
   layoutAdd(c, ImVec2(C.x - R, C.y - R), ImVec2(C.x + R, C.y + R), true, label);
-  // modulation rings (amount around the value), live value dot
-  float ringR = R + c.s(3.2f);
+  gRouteEnds.push_back({k, C, R + c.s(4)});
+  if (hov || act) c.u.hoverKNext = k;
+  if (c.u.hoverSrc >= 0 && linkSlot(c, c.u.hoverSrc, k) >= 0)  // its source is under the pointer: light it up
+    c.dl->AddCircle(C, R + c.s(6), famCol(c, c.u.hoverSrc), 36, std::max(1.5f, c.s(2.2f)));
+  // link bands: one thin arc per link just outside the ring, in its source's colour
+  float ringR = R + c.s(M(3.6f));
   double live = 0;
-  for (size_t i = 0; i < slots.size() && i < 3; ++i) {
+  for (size_t i = 0; i < slots.size(); ++i) {
     const int s = slots[i];
-    const float amt = valf(c, modP(s, M_Amount)) * valf(c, modP(s, M_Out));
     const bool byp = val(c, modP(s, M_Bypass)) >= 0.5;
-    const float a0 = kp.an, a1 = std::clamp(kp.an + amt * (kA1 - kA0), kA0, kA1);
-    const ImU32 col = byp ? c.P.textFaint : c.P.mod;
+    if (c.hasLive && !byp) live += c.live.mod[s];
+    if (i >= 3) continue;
+    const float amt = valf(c, modP(s, M_Amount)) * valf(c, modP(s, M_Out));
+    const bool cen = val(c, modP(s, M_Bipolar)) >= 0.5;
+    float a0 = an, a1 = std::clamp(an + amt * (kA1 - kA0), kA0, kA1);
+    if (cen) a0 = std::clamp(an - amt * 0.5f * (kA1 - kA0), kA0, kA1), a1 = std::clamp(an + amt * 0.5f * (kA1 - kA0), kA0, kA1);
+    const ImU32 col = byp ? c.P.textFaint : famCol(c, vali(c, modP(s, M_Source)));
     if (std::fabs(a1 - a0) > 0.01f) {
       c.dl->PathArcTo(C, ringR, std::min(a0, a1), std::max(a0, a1), 24);
-      c.dl->PathStroke(col, 0, std::max(1.5f, c.s(2.0f)));
+      c.dl->PathStroke(theme::withAlpha(col, 0.9f), 0, std::max(1.4f, c.s(M(2))));
     }
-    if (c.hasLive && !byp) live += c.live.mod[s];
-    ringR += c.s(2.6f);
+    ringR += c.s(M(3));
   }
-  if (!slots.empty() && c.hasLive && c.live.voices > 0) {
-    const float al = std::clamp(kp.an + static_cast<float>(live) * (kA1 - kA0), kA0, kA1);
-    c.dl->AddCircleFilled(ImVec2(C.x + std::cos(al) * (R - kp.railTh * 0.5f), C.y + std::sin(al) * (R - kp.railTh * 0.5f)), std::max(1.8f, c.s(2.2f)),
-                          c.P.mod);
+  if (slots.size() > 3) c.dl->AddCircleFilled(ImVec2(C.x + R * 0.9f, C.y - R * 0.9f), c.s(1.6f), c.P.textDim, 8);
+  if (!slots.empty() && c.hasLive && c.live.voices > 0) {  // the live value: a dot on the link ring
+    const float al = std::clamp(an + static_cast<float>(live) * (kA1 - kA0), kA0, kA1);
+    const float rr = R + c.s(M(3.6f));
+    glowDot(c, ImVec2(C.x + std::cos(al) * rr, C.y + std::sin(al) * rr), M(2.6f), famCol(c, vali(c, modP(slots.front(), M_Source))));
   }
-  // label / value
+  linkOutline(c, k, ImVec2(C.x - R - c.s(2), C.y - R - c.s(2)), ImVec2(C.x + R + c.s(2), C.y + R + c.s(2)), r + 2);
+  // label (sentence case) under the dial; the value while it moves
   if (!(flags & KnobNoLabel) && label) {
-    const bool showVal = act || (flags & KnobValue);
-    const std::string vs = showVal ? paramText(k, v, &c.st.params) : std::string(label);
-    fitLabel(c, cx, cy + r + 4.5f, r * 2 + 22, vs.c_str(), showVal ? c.P.accentText : (hov ? c.P.text : c.P.label), (flags & KnobSmall) ? 8.0f : 9.0f, true);
+    const float lp = (flags & KnobSmall) ? T(10) : T(11);
+    if (flags & KnobValue) {  // the name, and the value under it
+      fitLabel(c, cx, cy + r + M(2), std::max(r * 2 + 30, M(62)), label, hov ? c.P.text : c.P.label, lp, false);
+      MonoText mono;
+      std::string vs = paramText(k, v, &c.st.params);
+      if (const size_t br = vs.find(" ["); br != std::string::npos && br > 0) vs.resize(br);  // one value under a dial (the rest on hover)
+      fitLabel(c, cx, cy + r + M(2) + M(13), std::max(r * 2 + 30, M(62)), vs.c_str(), act ? c.P.accentText : c.P.text, T(10.5f), false);
+    } else {
+      const std::string vs = act ? paramText(k, v, &c.st.params) : std::string(label);
+      fitLabel(c, cx, cy + r + M(3), std::max(r * 2 + 30, M(62)), vs.c_str(), act ? c.P.accentText : (hov ? c.P.text : c.P.label), lp, false);
+    }
   }
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_NoSharedDelay) || act) {
     std::string s = paramText(k, v, &c.st.params);
-    if (!slots.empty()) s += "   (" + std::to_string(slots.size()) + (slots.size() == 1 ? " mod)" : " mods)");
+    if (!slots.empty()) s += "   (" + std::to_string(slots.size()) + (slots.size() == 1 ? " link)" : " links)");
     bubble(c, ImVec2(C.x, C.y - R - c.s(4)), s);
   }
-  if (hov)
-    c.a.setHint(paramLongName(k) + ": " + paramText(k, v, &c.st.params) +
-                (slots.empty() ? "   (drag \xC2\xB7 double-click reset, at default type \xC2\xB7 drop a source here to modulate \xC2\xB7 right-click: reset, modulation)"
-                               : "   (Alt+drag: modulation amount \xC2\xB7 double-click reset, at default type \xC2\xB7 right-click: reset, modulation)"));
+  if (hov) c.a.setHint(paramLongName(k) + ": " + paramText(k, v, &c.st.params) + (slots.empty() ? kHintFree : kHintLinked)), helpTip(c, k);
   ImGui::PopID();
   return changed;
+}
+
+bool bar(Ctx& c, int k, float x, float y, float w, float h, const char* label, int flags) {
+  layoutBox(c, x, y, w, h, label && *label ? label : "bar");
+  const ParamDesc* d = desc(k);
+  if (!d) return false;
+  reach(k);
+  ImGuiIO& io = ImGui::GetIO();
+  ImGui::PushID(k);
+  ImGui::PushID("bar");
+  ImGui::SetCursorScreenPos(c.p(x, y));
+  ImGui::InvisibleButton("##b", c.F.sz(w, h), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+  const bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
+  double v = val(c, k);
+  bool changed = false;
+  auto slots = modSlotsFor(c, k);
+  if (hov && modulatable(k) && (k < kModBase || k >= kFxBase)) c.u.focusK = k;
+  const float px = std::max(60.0f, c.s(w));
+  if (linkGesture(c, k, px)) {
+  } else if (act && io.KeyAlt && !slots.empty()) {
+    altDepth(c, slots.back(), px);
+  } else if (hov && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+    ImGui::OpenPopup("##plmod");
+  } else {
+    changed = interact(c, k, v, px, true);
+  }
+  dropTarget(c, k);
+  bool openStd = false, openType = false;
+  if (ImGui::BeginPopup("##plmod")) {
+    modMenu(c, k, openStd, openType);
+    ImGui::EndPopup();
+  }
+  if (openStd) ImGui::OpenPopup("##pmenu");
+  if (openType) ImGui::OpenPopup("##type");
+  const float tp = (flags & BarField) ? T(11.5f) : ctlPx(h);
+  const ImVec2 a = c.p(x, y), b = c.p(x + w, y + h);
+  c.dl->AddRectFilled(a, b, act ? c.P.panelLo : c.P.field, c.s(3));
+  const double n = std::clamp(d->toNormalized(v), 0.0, 1.0);
+  const bool cen = (flags & BarCentre) || (d->min < 0 && d->max > 0);
+  const float x0 = a.x + c.s(1), x1 = b.x - c.s(1);
+  const float vx = x0 + static_cast<float>(n) * (x1 - x0), fx = cen ? (x0 + x1) * 0.5f : x0;
+  const bool dim = (flags & BarDim) != 0;
+  const bool plain = (flags & BarField) != 0;
+  if (!plain && std::fabs(vx - fx) > 0.5f)
+    c.dl->AddRectFilled(ImVec2(std::min(fx, vx), a.y + c.s(1)), ImVec2(std::max(fx, vx), b.y - c.s(1)),
+                        theme::withAlpha(act ? c.P.accent : c.P.knob, dim ? 0.10f : (c.P.dark ? 0.20f : 0.30f)), c.s(2));
+  if (!plain) {  // the value mark: two ticks (top and bottom) that leave the text clear
+    const ImU32 mc = act ? c.P.accent : (dim ? c.P.textFaint : c.P.knob);
+    const float tk = std::max(c.s(3.0f), (b.y - a.y) * 0.16f);  // short, so a label under the mark stays readable
+    const float mx = std::clamp(vx, x0 + c.s(4), x1 - c.s(4));  // kept inside the rounded corners at either end
+    c.dl->AddRectFilled(ImVec2(mx - c.s(1), a.y + c.s(2)), ImVec2(mx + c.s(1), a.y + c.s(2) + tk), mc);
+    c.dl->AddRectFilled(ImVec2(mx - c.s(1), b.y - c.s(2) - tk), ImVec2(mx + c.s(1), b.y - c.s(2)), mc);
+  }
+  c.dl->AddRect(a, b, hov || act ? c.P.lineHi : c.P.line, c.s(3));
+  gRouteEnds.push_back({k, ImVec2(b.x, (a.y + b.y) * 0.5f), 0.f});
+  if (hov || act) c.u.hoverKNext = k;
+  if (c.u.hoverSrc >= 0 && linkSlot(c, c.u.hoverSrc, k) >= 0)
+    c.dl->AddRect(ImVec2(a.x - c.s(2), a.y - c.s(2)), ImVec2(b.x + c.s(2), b.y + c.s(2)), famCol(c, c.u.hoverSrc), c.s(4), 0,
+                  std::max(1.5f, c.s(2.0f)));
+  // link bands along the lower edge
+  double live = 0;
+  for (size_t i = 0; i < slots.size(); ++i) {
+    const int s = slots[i];
+    const bool byp = val(c, modP(s, M_Bypass)) >= 0.5;
+    if (c.hasLive && !byp) live += c.live.mod[s];
+    if (i >= 3) continue;
+    const float amt = valf(c, modP(s, M_Amount)) * valf(c, modP(s, M_Out));
+    float e0 = vx, e1 = std::clamp(vx + amt * (x1 - x0), x0, x1);
+    if (val(c, modP(s, M_Bipolar)) >= 0.5) e0 = std::clamp(vx - amt * 0.5f * (x1 - x0), x0, x1), e1 = std::clamp(vx + amt * 0.5f * (x1 - x0), x0, x1);
+    const float by = b.y - c.s(2.2f + 2.4f * static_cast<float>(i));
+    c.dl->AddRectFilled(ImVec2(std::min(e0, e1), by - c.s(1.6f)), ImVec2(std::max(e0, e1) + 1, by),
+                        byp ? c.P.textFaint : famCol(c, vali(c, modP(s, M_Source))));
+  }
+  if (!slots.empty() && c.hasLive && c.live.voices > 0) {
+    const float lx = std::clamp(vx + static_cast<float>(live) * (x1 - x0), x0, x1);
+    c.dl->AddTriangleFilled(ImVec2(lx - c.s(3), a.y), ImVec2(lx + c.s(3), a.y), ImVec2(lx, a.y + c.s(3.5f)), c.P.hot);
+  }
+  linkOutline(c, k, a, b, 3);
+  // label left, value right (the label is clipped before the value)
+  std::string vs = paramText(k, v, &c.st.params);
+  float vw;
+  {
+    MonoText mono;
+    vw = textW(c, vs.c_str(), tp, false);
+    // a narrow bar shows the value's first part ("75%" of "75% [-5.0 dB]"); the hint has it all
+    const std::string full = vs;
+    if (vw > w - 12)
+      if (const size_t cut = vs.find(" ["); cut != std::string::npos) vs = vs.substr(0, cut), vw = textW(c, vs.c_str(), tp, false);
+    if (hov) c.a.setHint(paramLongName(k) + ": " + full + (slots.empty() ? kHintFree : kHintLinked)), helpTip(c, k);
+  }
+  // no room for the label as well: the value alone (the hint names it)
+  const bool narrow = !label || !*label || vw + textW(c, label, tp, false) + 20 > w;
+  if (!(flags & BarNoLabel) && !narrow && label && *label) {
+    const ImVec2 c0 = c.p(x + 2, y), c1 = c.p(x + w - vw - 10, y + h);  // left of the text: a glyph's edge is never cut
+    c.dl->PushClipRect(c0, ImVec2(std::max(c0.x, c1.x), c1.y), true);
+    labelBeside(c, x + 6, y, h, label, dim ? c.P.textFaint : (hov ? c.P.text : c.P.label), tp, false);
+    c.dl->PopClipRect();
+  }
+  {
+    MonoText mono;
+    const ImVec2 c0 = c.p(x + 2, y), c1 = c.p(x + w - 2, y + h);
+    c.dl->PushClipRect(c0, c1, true);
+    labelBeside(c, x + w - 6 - vw, y, h, vs.c_str(), act ? c.P.accentText : (dim ? c.P.textFaint : c.P.text), tp, false);
+    c.dl->PopClipRect();
+  }
+  ImGui::PopID();
+  ImGui::PopID();
+  return changed;
+}
+
+bool chip(Ctx& c, int k, float x, float y, float w, float h, const char* label) {
+  layoutBox(c, x, y, w, h, label && *label ? label : "toggle");
+  reach(k);
+  ImGui::PushID(k);
+  ImGui::PushID("chip");
+  ImGui::SetCursorScreenPos(c.p(x, y));
+  const bool click = ImGui::InvisibleButton("##c", c.F.sz(w, h));
+  const bool on = val(c, k) >= 0.5, hov = ImGui::IsItemHovered();
+  if (click) setv(c, k, on ? 0 : 1);
+  const ImVec2 a = c.p(x, y), b = c.p(x + w, y + h);
+  c.dl->AddRectFilled(a, b, on ? c.P.headOn : (hov ? c.P.panelHi : c.P.field), c.s(3));
+  c.dl->AddRect(a, b, hov ? c.P.lineHi : c.P.line, c.s(3));
+  const ImVec2 dc = c.p(x + 8, y + h * 0.5f);
+  if (on) c.dl->AddCircleFilled(dc, c.s(3.0f), c.P.good, 12);
+  else c.dl->AddCircle(dc, c.s(3.0f), c.P.boxEdge, 12, std::max(1.0f, c.s(1.0f)));
+  {
+    const ImVec2 c0 = c.p(x + 14, y), c1 = c.p(x + w - 3, y + h);
+    c.dl->PushClipRect(c0, c1, true);
+    labelBeside(c, x + 15, y, h, label, on ? c.P.text : c.P.label, ctlPx(h), false);
+    c.dl->PopClipRect();
+  }
+  if (hov) c.a.setHint(paramLongName(k) + (on ? ": on (click: off)" : ": off (click: on)")), helpTip(c, k);
+  ImGui::PopID();
+  ImGui::PopID();
+  return click;
+}
+
+bool segments(Ctx& c, int k, float x, float y, float w, float h, const std::vector<const char*>& labels) {
+  layoutBox(c, x, y, w, h, "segments");
+  reach(k);
+  ImGui::PushID(k);
+  ImGui::PushID("seg");
+  const int n = static_cast<int>(labels.size()), cur = vali(c, k);
+  const float sw = w / std::max(1, n), pad = std::min(2.f, h * 0.08f);
+  c.dl->AddRectFilled(c.p(x, y), c.p(x + w, y + h), c.P.field, c.s(M(4)));
+  bool changed = false;
+  for (int i = 0; i < n; ++i) {
+    ImGui::PushID(i);
+    const float sx = x + sw * i;
+    ImGui::SetCursorScreenPos(c.p(sx, y));
+    if (ImGui::InvisibleButton("##s", c.F.sz(sw, h)) && i != cur) setv(c, k, i), changed = true;
+    const bool hov = ImGui::IsItemHovered(), on = i == cur;
+    if (on) {
+      c.dl->AddRectFilled(c.p(sx + pad, y + pad), c.p(sx + sw - pad, y + h - pad), c.P.accentSoft, c.s(M(3)));
+      c.dl->AddRect(c.p(sx + pad, y + pad), c.p(sx + sw - pad, y + h - pad), c.P.accent, c.s(M(3)));
+    } else if (hov) {
+      c.dl->AddRectFilled(c.p(sx + pad, y + pad), c.p(sx + sw - pad, y + h - pad), c.P.panelHi, c.s(M(3)));
+    }
+    float px = ctlPx(h);  // a long label in a narrow segment steps down a size rather than clip
+    if (const float tw = textW(c, labels[static_cast<size_t>(i)], px, false); tw > sw - 6) px = std::max(9.0f, px * (sw - 6) / tw);
+    textMid(c, sx + 1, sx + sw - 1, y + h * 0.5f, labels[static_cast<size_t>(i)], on ? c.P.accentText : hov ? c.P.text : c.P.label, px, false);
+    if (hov) c.a.setHint(paramLongName(k) + ": " + labels[static_cast<size_t>(i)]), helpTip(c, k);
+    ImGui::PopID();
+  }
+  c.dl->AddRect(c.p(x, y), c.p(x + w, y + h), c.P.line, c.s(3));
+  ImGui::PopID();
+  ImGui::PopID();
+  return changed;
+}
+
+namespace {
+// A labelled choice field: label at the left, the choice at the right, a menu on click.
+bool choiceField(Ctx& c, int k, float x, float y, float w, float h, const char* label) {
+  layoutBox(c, x, y, w, h, label && *label ? label : "choice");
+  const ParamDesc* d = desc(k);
+  if (!d) return false;
+  reach(k);
+  ImGui::PushID(k);
+  ImGui::PushID("cf");
+  const int cur = vali(c, k);
+  const int count = static_cast<int>(d->choices.size());
+  const std::string shown = cur >= 0 && cur < count ? d->choices[static_cast<size_t>(cur)] : ptext(c, k);
+  ImGui::SetCursorScreenPos(c.p(x, y));
+  const bool click = ImGui::InvisibleButton("##f", c.F.sz(w, h));
+  const bool hov = ImGui::IsItemHovered();
+  bool changed = false;
+  if (hov && ImGui::GetIO().MouseWheel != 0 && count > 0) {
+    setv(c, k, std::clamp(cur + (ImGui::GetIO().MouseWheel > 0 ? -1 : 1), 0, count - 1)), changed = true;
+  }
+  if (click) ImGui::OpenPopup("##cfm");
+  const ImVec2 a = c.p(x, y), b = c.p(x + w, y + h);
+  c.dl->AddRectFilled(a, b, hov ? c.P.panelHi : c.P.field, c.s(3));
+  c.dl->AddRect(a, b, hov ? c.P.lineHi : c.P.line, c.s(3));
+  // label and value whole, never a cut word: a size smaller first, then the value alone (the
+  // label stays in the hint), then the value a size smaller again
+  float px = ctlPx(h), lw = 0;
+  const float room = w - 22;
+  const bool hasLabel = label && *label;
+  auto need = [&](float p, bool withLabel) { return (withLabel ? textW(c, label, p, false) + 10 : 0.f) + textW(c, shown.c_str(), p, false); };
+  bool showLabel = hasLabel;
+  if (need(px, showLabel) > room) {
+    const float smaller = std::max(9.0f, px - 1.5f);
+    if (need(smaller, showLabel) <= room) px = smaller;
+    else if (showLabel && need(px, false) <= room) showLabel = false;
+    else showLabel = false, px = std::max(8.5f, std::min(px, px * room / std::max(1.f, need(px, false))));
+  }
+  if (showLabel) {
+    lw = textW(c, label, px, false);
+    labelBeside(c, x + 6, y, h, label, hov ? c.P.text : c.P.label, px, false);
+    lw += 10;
+  }
+  {
+    const float tw = textW(c, shown.c_str(), px, false);
+    const float tx = std::max(x + 6 + lw, x + w - 16 - tw);
+    const ImVec2 c0 = c.p(x + 4 + lw, y), c1 = c.p(x + w - 14, y + h);
+    c.dl->PushClipRect(c0, c1, true);
+    labelBeside(c, tx, y, h, shown.c_str(), c.P.text, px, false);
+    c.dl->PopClipRect();
+  }
+  iconArrow(c.dl, c.p(x + w - 8, y + h * 0.5f), c.s(5.5f), 3, c.P.textDim);
+  ImGui::SetNextWindowSizeConstraints(ImVec2(c.s(std::max(w, 140.0f)), 0), ImVec2(FLT_MAX, c.s(520)));
+  if (ImGui::BeginPopup("##cfm")) {
+    for (int i = 0; i < count; ++i)
+      if (ImGui::Selectable(d->choices[static_cast<size_t>(i)].c_str(), i == cur)) setv(c, k, i), changed = true;
+    ImGui::EndPopup();
+  }
+  if (hov) c.a.setHint(paramLongName(k) + ": " + shown + "   (click: choose \xC2\xB7 wheel: step)"), helpTip(c, k);
+  ImGui::PopID();
+  ImGui::PopID();
+  return changed;
+}
+}  // namespace
+
+bool field(Ctx& c, int k, float x, float y, float w, float h, const char* label) {
+  const ParamDesc* d = desc(k);
+  if (!d) return false;
+  if (d->kind == ParamKind::Toggle) return chip(c, k, x, y, w, h, label);
+  if (d->kind == ParamKind::Choice) return choiceField(c, k, x, y, w, h, label);
+  return bar(c, k, x, y, w, h, label);
+}
+
+float fieldGrid(Ctx& c, float x, float y, float w, int cols, float rowH, const std::vector<FieldItem>& items, float h) {
+  const float gap = 8, cw = (w - gap * (cols - 1)) / cols;
+  int i = 0;
+  for (const auto& it : items) {
+    if (it.k >= 0) field(c, it.k, x + (cw + gap) * (i % cols), y + rowH * (i / cols), cw, h, it.label);
+    ++i;
+  }
+  return y + rowH * ((i + cols - 1) / cols);
+}
+
+float card(Ctx& c, float x, float y, float w, float h, const char* title, int enable) {
+  const ImVec2 a = c.p(x + 3, y + 3), b = c.p(x + w - 3, y + h - 3);
+  gl::audit::group(a, b, "cell");
+  c.dl->AddRectFilled(a, b, c.P.panel, c.s(6));
+  c.dl->AddRect(a, b, theme::withAlpha(c.P.line, 0.7f), c.s(6));
+  float tx = x + 14;
+  if (enable >= 0) {
+    reach(enable);
+    ImGui::PushID(enable);
+    ImGui::PushID("cardon");
+    ImGui::SetCursorScreenPos(c.p(x + 9, y + 8));
+    const bool on = val(c, enable) >= 0.5;
+    if (ImGui::InvisibleButton("##on", c.F.sz(14, 14))) setv(c, enable, on ? 0 : 1);
+    if (ImGui::IsItemHovered()) c.a.setHint(paramLongName(enable) + (on ? ": on (click: off)" : ": off (click: on)"));
+    const ImVec2 dc = c.p(x + 16, y + 15);
+    if (on) c.dl->AddCircleFilled(dc, c.s(4), c.P.good, 14);
+    else c.dl->AddCircle(dc, c.s(4), c.P.boxEdge, 14, std::max(1.0f, c.s(1.2f)));
+    ImGui::PopID();
+    ImGui::PopID();
+    tx = x + 26;
+  }
+  if (title && *title) text(c, tx, y + 8, title, c.P.text, 12.5f, true);
+  return y + 28;
+}
+
+// The design's advanced panel: a block grown to the whole page. Its frame with the family strip,
+// Back, the way back, the part's dot, its name and what it is set to (at kAdvHeadY), a line under
+// the head. Returns the x right of the sub text.
+float advHead(Ctx& c, const char* title, const char* sub, ImU32 fam, int src) {
+  const Pal& P = c.P;
+  const float x0 = kAdvX0, x1 = kAdvX1, y0 = kTopH + M(16), y1 = kPlayY - M(16), cy = kAdvHeadY;
+  c.dl->AddRectFilled(c.p(x0, y0 + M(2)), c.p(x1, y1 + M(2)), IM_COL32(0, 0, 0, P.dark ? 40 : 14), c.s(M(6)));
+  c.dl->AddRectFilled(c.p(x0, y0), c.p(x1, y1), P.panel, c.s(M(6)));
+  c.dl->AddRect(c.p(x0, y0), c.p(x1, y1), P.line, c.s(M(6)));
+  c.dl->AddRectFilled(c.p(x0 + M(16), y0 - M(0.5f)), c.p(x1 - M(16), y0 + M(1.5f)), theme::withAlpha(fam, 0.9f), c.s(M(1)));
+  float x = kAdvIX0;
+  {
+    const float bw = textW(c, "Back", T(12), false) + M(28);
+    if (btnLook(c, "advback", x, cy - M(14), bw, M(28), "", false, false, T(12))) beginClose(c.u);
+    if (ImGui::IsItemHovered()) c.a.setHint("Back (Esc)");
+    const ImVec2 m = c.p(x + M(12), cy);
+    const float d = c.s(M(3));
+    c.dl->AddLine(ImVec2(m.x + d * 0.5f, m.y - d), ImVec2(m.x - d * 0.5f, m.y), P.text, std::max(1.f, c.s(M(1.3f))));
+    c.dl->AddLine(ImVec2(m.x - d * 0.5f, m.y), ImVec2(m.x + d * 0.5f, m.y + d), P.text, std::max(1.f, c.s(M(1.3f))));
+    text(c, x + M(18), cy - T(12) * 0.68f, "Back", P.text, T(12), false);
+    x += bw + M(12);
+  }
+  {
+    const int tab = tabOf(c.u.back);
+    static const char* const tabs[TabCount] = {"Synth", "Effects", "Links", "Play", "Setup"};
+    const char* from = tab >= 0 && tab < TabCount ? tabs[tab] : "Synth";
+    text(c, x, cy - T(11.5f) * 0.68f, from, P.textFaint, T(11.5f), false);
+    x += textW(c, from, T(11.5f), false) + M(4);
+    const ImVec2 m = c.p(x + M(3), cy);
+    const float d = c.s(M(2.5f));
+    c.dl->AddLine(ImVec2(m.x - d * 0.5f, m.y - d), ImVec2(m.x + d * 0.5f, m.y), P.textFaint, std::max(1.f, c.s(M(1.1f))));
+    c.dl->AddLine(ImVec2(m.x + d * 0.5f, m.y), ImVec2(m.x - d * 0.5f, m.y + d), P.textFaint, std::max(1.f, c.s(M(1.1f))));
+    x += M(16);
+  }
+  if (src >= 0) {
+    sourceGrip(c, src, x + M(8), cy, M(8));
+    x += M(16) + M(10);
+  } else {
+    glowDot(c, c.p(x + M(4), cy), M(4), P.good);
+    x += M(8) + M(10);
+  }
+  text(c, x, cy - T(16) * 0.68f, title, P.text, T(16), true);
+  x += textW(c, title, T(16), true) + M(12);
+  if (sub && *sub) {
+    text(c, x, cy - T(11.5f) * 0.68f, sub, P.textFaint, T(11.5f), false);
+    x += textW(c, sub, T(11.5f), false) + M(12);
+  }
+  hline(c, x0, x1, kAdvLineY, P.line);
+  return x;
+}
+
+float stageHead(Ctx& c, const char* title) {
+  // a full-width view: Back first, then its title (the Play tab: its pages as a switch)
+  panelRect(c, 0, kStageHeadY, kStageW, kStageY - kStageHeadY, c.P.frame);
+  const int tab = tabOf(c.u.view);
+  if (tab == TabSynth || c.u.large) {  // a block's advanced panel: Back to the blocks
+    if (button(c, "back", 8, kStageHeadY + 3, 64, 24, "Back", false, 11.0f)) beginClose(c.u);
+    if (ImGui::IsItemHovered()) c.a.setHint("Back to the Synth tab");
+    iconArrow(c.dl, c.p(17, kStageHeadY + 15), c.s(6), 0, c.P.textDim);
+    text(c, 84, kStageHeadY + 6, title, c.P.text, 14.5f, true);
+    return 84 + textW(c, title, 14.5f, true) + 20;
+  }
+  if (tab != TabPlay) {
+    text(c, 12, kStageHeadY + 6, title, c.P.text, 14.5f, true);
+    return 12 + textW(c, title, 14.5f, true) + 20;
+  }
+  static const char* const names[5] = {"Voices", "Key and touch", "Arpeggiator", "Phrases", "Key zones"};
+  static const int views[5] = {VVoices, VKeys, VArp, VPhrases, VZones};
+  float x = 12;
+  for (int i = 0; i < 5; ++i) {
+    ImGui::PushID(i + 4400);
+    const float bw = textW(c, names[i], 11.5f, true) + 28;
+    if (button(c, "pg", x, kStageHeadY + 3, bw, 26, names[i], c.u.view == views[i], 11.5f)) openView(c.u, views[i]);
+    ImGui::PopID();
+    x += bw + 4;
+  }
+  return x + 16;
+}
+
+void display(const Ctx& c, float x, float y, float w, float h, int cols, int rows) {
+  const ImVec2 a = c.p(x, y), b = c.p(x + w, y + h);
+  gl::audit::group(a, b, "inset");
+  c.dl->AddRectFilled(a, b, c.P.well, c.s(4));
+  gridLines(c, x, y, w, h, cols, rows, false);
+  c.dl->AddRect(a, b, c.P.line, c.s(4));
+}
+
+void sourceGrip(Ctx& c, int src, float cx, float cy, float r) {
+  ImGui::PushID(src + 9000);
+  const ImVec2 C = c.p(cx, cy);
+  const float R = c.s(r);
+  ImGui::SetCursorScreenPos(ImVec2(C.x - R - c.s(3), C.y - R - c.s(3)));
+  const bool click = ImGui::InvisibleButton("##grip", ImVec2(R * 2 + c.s(6), R * 2 + c.s(6)));
+  const bool hov = ImGui::IsItemHovered();
+  if (hov || ImGui::IsItemActive()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+  if (hov) c.u.hoverSrcNext = src;
+  if (src > SrcNone && src < SourceCount) gGrip[src] = C;
+  const ImU32 col = famCol(c, src);
+  const bool armed = c.u.linkSrc == src;
+  if (click) c.u.linkSrc = armed ? -1 : src;
+  float raw = 0;
+  bool idle = !c.hasLive;
+  if (c.hasLive && src > SrcNone && src < SourceCount) raw = c.live.source[src];
+  if (src >= SrcMacro1 && src <= SrcMacro8 && !c.hasLive) raw = valf(c, macroP(src - SrcMacro1)), idle = false;
+  bool bip = false;
+  const float mv = sourceMeterValue(src, raw, bip);
+  // the link dot: a ring in the family's colour and its live value as the centre's brightness
+  if (armed) c.dl->AddCircleFilled(C, R + c.s(2.5f), theme::withAlpha(col, 0.35f), 20);
+  (void)bip;
+  c.dl->AddCircle(C, R, hov || armed ? skin::lighten(col, 0.15f) : col, 24, std::max(1.2f, c.s(M(1.5f))));
+  const float lit = idle ? 1.f : 0.55f + 0.45f * std::clamp(std::fabs(mv), 0.f, 1.f);
+  c.dl->AddCircleFilled(C, R * 0.4f, theme::withAlpha(col, lit), 16);
+  if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceNoPreviewTooltip)) {
+    ImGui::SetDragDropPayload("PLASMA_SRC", &src, sizeof(int));
+    const ImVec2 m = ImGui::GetIO().MousePos;
+    ImDrawList* fg = ImGui::GetForegroundDrawList();
+    fg->AddLine(C, m, col, std::max(1.5f, c.s(1.6f)));
+    fg->AddCircleFilled(m, c.s(4), col);
+    const std::string s = sourceLabel(src);
+    fg->AddText(c.a.fontBold, font(c, 10), ImVec2(m.x + c.s(8), m.y - c.s(14)), col, s.c_str());
+    ImGui::EndDragDropSource();
+  }
+  if (hov) c.a.setHint(sourceLabel(src) + (armed ? ": Link mode is on (click or Esc: off)" : ": drag onto a control to link it \xC2\xB7 click: Link mode"));
+  ImGui::PopID();
+}
+
+void routesBegin(Ctx& c) {
+  c.u.hoverSrc = c.u.hoverSrcNext;
+  c.u.hoverSrcNext = -1;
+  c.u.hoverK = c.u.hoverKNext;
+  c.u.hoverKNext = -1;
+  gRouteEnds.clear();
+  for (auto& g : gGrip) g = ImVec2(-1, -1);
+  for (auto& f : gFamAt) f = ImVec2(-1, -1);
+}
+void routeFamily(int fam, float cx, float cy, const Ctx& c) {
+  if (fam >= 0 && fam < 8) gFamAt[fam] = c.p(cx, cy);
+}
+void drawRoutes(Ctx& c) {
+  const int src = c.u.linkSrc >= 0 ? c.u.linkSrc : c.u.hoverSrc;
+  if (src <= SrcNone || src >= SourceCount) return;
+  ImVec2 from = gGrip[src];
+  if (from.x < 0) from = gFamAt[std::clamp(familyOf(src), 0, 7)];
+  if (from.x < 0) return;
+  const ImU32 col = famCol(c, src);
+  std::vector<int> seen;
+  for (const auto& e : gRouteEnds) {
+    if (linkSlot(c, src, e.k) < 0 || std::find(seen.begin(), seen.end(), e.k) != seen.end()) continue;
+    seen.push_back(e.k);
+    const ImVec2 to(e.at.x + e.r, e.at.y);  // the side facing the dock
+    const float dx = std::max(c.s(40), std::fabs(to.x - from.x) * 0.45f);
+    c.dl->AddBezierCubic(from, ImVec2(from.x - dx, from.y), ImVec2(to.x + dx * 0.3f, to.y), to, theme::withAlpha(col, 0.55f),
+                         std::max(1.2f, c.s(1.5f)));
+    c.dl->AddCircleFilled(to, c.s(3), col, 10);
+  }
+}
+
+namespace {
+struct Later {
+  uint64_t key;
+  std::function<void(App&, const PluginTarget&)> fn;
+};
+std::vector<Later>& laterQueue() {
+  static std::vector<Later> q;
+  return q;
+}
+}  // namespace
+void later(Ctx& c, std::function<void(App&, const PluginTarget&)> fn) { laterQueue().push_back({c.t.key(), std::move(fn)}); }
+void runLater(App& a, const PluginTarget& t) {
+  auto& q = laterQueue();
+  if (q.empty()) return;
+  std::vector<Later> mine;
+  for (auto it = q.begin(); it != q.end();) {
+    if (it->key == t.key()) mine.push_back(std::move(*it)), it = q.erase(it);
+    else ++it;
+  }
+  for (auto& l : mine) l.fn(a, t);
 }
 
 bool knobFree(Ctx& c, const char* id, float& v, float cx, float cy, float r, const char* label, bool bipolar, const char* valueText,
@@ -669,8 +1347,10 @@ bool knobFree(Ctx& c, const char* id, float& v, float cx, float cy, float r, con
   auto toV = [&](double value) { return static_cast<float>(lo + d.toNormalized(value) * (1.0 - lo)); };
   auto fromV = [&](float n) { return d.fromNormalized((n - lo) / (1.f - lo)); };
   const double pressed = gl::ui::ValueAtPress(fromV(v));
-  if (act && ImGui::GetIO().MouseDelta.y != 0) {
-    v = std::clamp(v - ImGui::GetIO().MouseDelta.y / 160.f * (1.f - lo) * (ImGui::GetIO().KeyShift ? 0.15f : 1.f), lo, 1.f);
+  // up or to the right turns it up (as the link depths), Shift for fine steps
+  const float kd = ImGui::GetIO().MouseDelta.x - ImGui::GetIO().MouseDelta.y;
+  if (act && kd != 0) {
+    v = std::clamp(v + kd / 160.f * (1.f - lo) * (ImGui::GetIO().KeyShift ? 0.15f : 1.f), lo, 1.f);
     changed = true;
   }
   bool wantType = false;
@@ -707,6 +1387,7 @@ namespace {
 bool fader(Ctx& c, int k, float x, float y, float w, float h, bool vertical) {
   const ParamDesc* d = desc(k);
   if (!d) return false;
+  reach(k);
   ImGui::PushID(k);
   ImGui::SetCursorScreenPos(c.p(x, y));
   ImGui::InvisibleButton("##f", c.F.sz(w, h), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
@@ -747,6 +1428,7 @@ bool fader(Ctx& c, int k, float x, float y, float w, float h, bool vertical) {
   if (hov || act) {
     bubble(c, vertical ? ImVec2((a.x + b.x) * 0.5f, a.y) : ImVec2((a.x + b.x) * 0.5f, a.y), paramText(k, v, &c.st.params));
     c.a.setHint(paramLongName(k) + ": " + paramText(k, v, &c.st.params));
+    helpTip(c, k);
   }
   ImGui::PopID();
   return ch;
@@ -756,26 +1438,31 @@ bool hfader(Ctx& c, int k, float x, float y, float w, float h) { return fader(c,
 bool vfader(Ctx& c, int k, float x, float y, float w, float h) { return fader(c, k, x, y, w, h, true); }
 
 bool led(Ctx& c, int k, float x, float y, float size) {
+  reach(k);
   ImGui::PushID(k);
   ImGui::PushID("led");
   ImGui::SetCursorScreenPos(c.p(x - 2, y - 2));
   const bool click = ImGui::InvisibleButton("##l", c.F.sz(size + 4, size + 4));
   const bool on = val(c, k) >= 0.5;
   if (click) setv(c, k, on ? 0 : 1);
-  const ImVec2 a = c.p(x, y), b = c.p(x + size, y + size);
-  if (on) {
-    c.dl->AddRectFilled(ImVec2(a.x - c.s(1.5f), a.y - c.s(1.5f)), ImVec2(b.x + c.s(1.5f), b.y + c.s(1.5f)), theme::withAlpha(c.P.accent, 0.22f), c.s(3));
-    skin::gradientRect(c.dl, a, b, skin::lighten(c.P.accent, 0.25f), c.P.accent, c.s(2));
-  } else {
-    c.dl->AddRectFilled(a, b, c.P.field, c.s(2));
-    c.dl->AddRect(a, b, c.P.boxEdge, c.s(2));
+  {  // a round light: lit green with a low glow, off grey
+    const ImVec2 C = c.p(x + size * 0.5f, y + size * 0.5f);
+    const float rr = c.s(std::min(size * 0.5f, M(4)));
+    if (on) {
+      const float g = glowK(c);
+      if (g > 0.01f) c.dl->AddCircleFilled(C, rr + c.s(3) * g, theme::withAlpha(c.P.good, 0.22f * g), 16);
+      c.dl->AddCircleFilled(C, rr, c.P.good, 16);
+    } else {
+      c.dl->AddCircleFilled(C, rr, c.P.textFaint, 16);
+    }
   }
-  if (ImGui::IsItemHovered()) c.a.setHint(paramLongName(k) + (on ? ": on (click: off)" : ": off (click: on)"));
+  if (ImGui::IsItemHovered()) c.a.setHint(paramLongName(k) + (on ? ": on (click: off)" : ": off (click: on)")), helpTip(c, k);
   ImGui::PopID();
   ImGui::PopID();
   return click;
 }
 bool checkBox(Ctx& c, int k, float x, float y, const char* label, float px) {
+  reach(k);
   ImGui::PushID(k);
   ImGui::PushID("chk");
   const bool bold = px < 9.0f;  // J-202: caps captions bold, sentence-case labels regular
@@ -788,54 +1475,59 @@ bool checkBox(Ctx& c, int k, float x, float y, const char* label, float px) {
   if (on) skin::gradientRect(c.dl, a, b, skin::lighten(c.P.accent, 0.2f), c.P.accent, c.s(2));
   else c.dl->AddRectFilled(a, b, c.P.field, c.s(2)), c.dl->AddRect(a, b, c.P.boxEdge, c.s(2));
   labelBeside(c, x + 13, y - 4.25f, 18, label, on || !bold ? c.P.text : c.P.textDim, px, bold);  // J-202: on the box's centre line
-  if (ImGui::IsItemHovered()) c.a.setHint(paramLongName(k) + (on ? ": on" : ": off"));
+  if (ImGui::IsItemHovered()) c.a.setHint(paramLongName(k) + (on ? ": on" : ": off")), helpTip(c, k);
   ImGui::PopID();
   ImGui::PopID();
   return click;
 }
 bool button(Ctx& c, const char* id, float x, float y, float w, float h, const char* label, bool on, float px) {
+  layoutBox(c, x, y, w, h, label && *label ? label : id);
   ImGui::PushID(id);
   ImGui::SetCursorScreenPos(c.p(x, y));
   const bool click = ImGui::InvisibleButton("##b", c.F.sz(w, h));
   const bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
   const ImVec2 a = c.p(x, y), b = c.p(x + w, y + h);
-  if (on) {  // J-202: lit = raised fill, accent label, quiet accent edge
-    c.dl->AddRectFilled(a, b, hov ? skin::lighten(c.P.headOn, 0.04f) : c.P.headOn, c.s(3));
-    c.dl->AddRect(a, b, theme::withAlpha(c.P.accent, 0.45f), c.s(3));
+  if (on) {  // lit: the accent's soft fill and edge, accent text
+    c.dl->AddRectFilled(a, b, c.P.accentSoft, c.s(M(4)));
+    c.dl->AddRect(a, b, c.P.accent, c.s(M(4)));
   } else {
-    skin::gradientRect(c.dl, a, b, act ? c.P.panelLo : (hov ? c.P.headOn : c.P.panelHi), act ? c.P.panelLo : c.P.head, c.s(3));
-    c.dl->AddRect(a, b, hov ? c.P.lineHi : c.P.line, c.s(3));
+    c.dl->AddRectFilled(a, b, act ? c.P.panelLo : (hov ? c.P.headOn : c.P.panelHi), c.s(M(4)));
+    c.dl->AddRect(a, b, hov ? c.P.lineHi : c.P.line, c.s(M(4)));
   }
-  if (label && *label) textMid(c, x, x + w, y + h * 0.5f, label, on ? c.P.accentText : (hov ? c.P.text : c.P.textDim), px, true);
+  if (label && *label) textMid(c, x, x + w, y + h * 0.5f, label, on ? c.P.accentText : (hov ? c.P.text : c.P.label), px, false);
   ImGui::PopID();
   return click;
 }
-bool seg2(Ctx& c, const char* id, float x, float y, float w, float h, const char* a, const char* b, bool second, const char* hint) {
+bool seg2(Ctx& c, const char* id, float x, float y, float w, float h, const char* a, const char* b, bool second, const char* hint, float px) {
+  layoutBox(c, x, y, w, h, id);
   ImGui::PushID(id);
   ImGui::SetCursorScreenPos(c.p(x, y));
   const bool click = ImGui::InvisibleButton("##s2", c.F.sz(w, h));
   const bool hov = ImGui::IsItemHovered();
-  c.dl->AddRectFilled(c.p(x, y), c.p(x + w, y + h), c.P.field, c.s(3));
-  c.dl->AddRect(c.p(x, y), c.p(x + w, y + h), hov ? c.P.lineHi : c.P.line, c.s(3));
-  const float hw = w * 0.5f, sx = x + (second ? hw : 0);
-  c.dl->AddRectFilled(c.p(sx + 2, y + 2), c.p(sx + hw - 2, y + h - 2), c.P.headOn, c.s(2));
-  textMid(c, x, x + hw, y + h * 0.5f, a, second ? c.P.textDim : c.P.text, ty::kCap, true);
-  textMid(c, x + hw, x + w, y + h * 0.5f, b, second ? c.P.text : c.P.textDim, ty::kCap, true);
+  c.dl->AddRectFilled(c.p(x, y), c.p(x + w, y + h), c.P.field, c.s(M(4)));
+  c.dl->AddRect(c.p(x, y), c.p(x + w, y + h), hov ? c.P.lineHi : c.P.line, c.s(M(4)));
+  const float hw = w * 0.5f, sx = x + (second ? hw : 0), pd = M(2);
+  c.dl->AddRectFilled(c.p(sx + pd, y + pd), c.p(sx + hw - pd, y + h - pd), c.P.accentSoft, c.s(M(3)));
+  c.dl->AddRect(c.p(sx + pd, y + pd), c.p(sx + hw - pd, y + h - pd), c.P.accent, c.s(M(3)));
+  textMid(c, x, x + hw, y + h * 0.5f, a, second ? c.P.label : c.P.accentText, px, false);
+  textMid(c, x + hw, x + w, y + h * 0.5f, b, second ? c.P.accentText : c.P.label, px, false);
   if (hov && hint) c.a.setHint(hint);
   ImGui::PopID();
   return click;
 }
 bool toggleBtn(Ctx& c, int k, float x, float y, float w, float h, const char* label, float px) {
+  reach(k);
   ImGui::PushID(k);
   const bool on = val(c, k) >= 0.5;
   const bool click = button(c, "tg", x, y, w, h, label, on, px);
   if (click) setv(c, k, on ? 0 : 1);
-  if (ImGui::IsItemHovered()) c.a.setHint(paramLongName(k) + (on ? ": on" : ": off"));
+  if (ImGui::IsItemHovered()) c.a.setHint(paramLongName(k) + (on ? ": on" : ": off")), helpTip(c, k);
   ImGui::PopID();
   return click;
 }
 
 bool valueBox(Ctx& c, int k, float x, float y, float w, float h, const char* label, const char* override) {
+  reach(k);
   ImGui::PushID(k);
   ImGui::PushID("vb");
   ImGui::SetCursorScreenPos(c.p(x, y));
@@ -859,7 +1551,7 @@ bool valueBox(Ctx& c, int k, float x, float y, float w, float h, const char* lab
     textMid(c, vx0, x + w - 2, y + h * 0.5f, s.c_str(), act ? c.P.accentText : c.P.text, ty::kValue, false);
   }
   if (!modSlotsFor(c, k).empty()) c.dl->AddRectFilled(ImVec2(b.x - c.s(4), a.y + c.s(2)), ImVec2(b.x - c.s(2), b.y - c.s(2)), c.P.mod, 1);
-  if (hov) c.a.setHint(paramLongName(k) + ": " + paramText(k, v, &c.st.params) + "   (drag \xC2\xB7 double-click: type \xC2\xB7 right-click: menu)");
+  if (hov) c.a.setHint(paramLongName(k) + ": " + paramText(k, v, &c.st.params) + "   (drag \xC2\xB7 double-click: type \xC2\xB7 right-click: menu)"), helpTip(c, k);
   ImGui::PopID();
   ImGui::PopID();
   return ch;
@@ -867,8 +1559,9 @@ bool valueBox(Ctx& c, int k, float x, float y, float w, float h, const char* lab
 
 bool dropField(Ctx& c, const char* id, float x, float y, float w, float h, const char* shown, const std::function<void()>& items, bool arrows,
                int* step, bool placeholder) {
+  layoutBox(c, x, y, w, h, shown && *shown ? shown : id);
   ImGui::PushID(id);
-  const float aw = arrows ? 13.0f : 0.0f;
+  const float aw = arrows ? std::max(13.0f, h * 0.6f) : 0.0f;
   const float fw = w - aw * 2;
   ImGui::SetCursorScreenPos(c.p(x, y));
   const bool click = ImGui::InvisibleButton("##d", c.F.sz(fw, h));
@@ -876,8 +1569,8 @@ bool dropField(Ctx& c, const char* id, float x, float y, float w, float h, const
   const ImVec2 a = c.p(x, y), b = c.p(x + fw, y + h);
   c.dl->AddRectFilled(a, b, hov ? c.P.panelHi : c.P.field, c.s(2));
   c.dl->AddRect(a, b, hov ? c.P.lineHi : c.P.line, c.s(2));
-  textMid(c, x + 2, x + fw - 12, y + h * 0.5f, shown, placeholder ? c.P.textDim : c.P.text, ty::kValue, false);
-  iconArrow(c.dl, c.p(x + fw - 7, y + h * 0.5f), c.s(6), 3, c.P.textDim);
+  textMid(c, x + 2, x + fw - 12, y + h * 0.5f, shown, placeholder ? c.P.textDim : c.P.text, ctlPx(h), false);
+  iconArrow(c.dl, c.p(x + fw - 8, y + h * 0.5f), c.s(std::max(6.f, h * 0.28f)), 3, c.P.textDim);
   if (click) ImGui::OpenPopup("##dd");
   bool changed = false;
   ImGui::SetNextWindowSizeConstraints(ImVec2(c.s(std::max(w, 140.0f)), 0), ImVec2(FLT_MAX, c.s(520)));
@@ -897,7 +1590,7 @@ bool dropField(Ctx& c, const char* id, float x, float y, float w, float h, const
       c.dl->AddRectFilled(c.p(bx, y), c.p(bx + pw, y + h), ah ? c.P.headOn : c.P.head, c.s(2),
                           i == 0 ? ImDrawFlags_RoundCornersLeft : ImDrawFlags_RoundCornersRight);
       if (i == 1) vline(c, bx, y + 3, y + h - 3, c.P.line);
-      iconArrow(c.dl, c.p(bx + pw * 0.5f, y + h * 0.5f), c.s(6.5f), i == 0 ? 0 : 1, ah ? c.P.text : c.P.textDim);
+      iconArrow(c.dl, c.p(bx + pw * 0.5f, y + h * 0.5f), c.s(std::max(6.5f, h * 0.3f)), i == 0 ? 0 : 1, ah ? c.P.text : c.P.textDim);
       ImGui::PopID();
     }
   }
@@ -908,6 +1601,7 @@ bool dropField(Ctx& c, const char* id, float x, float y, float w, float h, const
 bool choiceBox(Ctx& c, int k, float x, float y, float w, float h, bool arrows, const char* override, const std::vector<std::string>* names) {
   const ParamDesc* d = desc(k);
   if (!d) return false;
+  reach(k);
   ImGui::PushID(k);
   const int cur = vali(c, k);
   const int count = d->kind == ParamKind::Choice ? static_cast<int>(d->choices.size()) : static_cast<int>(d->max) + 1;
@@ -922,7 +1616,7 @@ bool choiceBox(Ctx& c, int k, float x, float y, float w, float h, bool arrows, c
             },
             arrows, &step);
   if (step) setv(c, k, std::clamp(cur + step, 0, count - 1)), changed = true;
-  if (ImGui::IsItemHovered()) c.a.setHint(paramLongName(k) + ": " + shown);
+  if (ImGui::IsItemHovered()) c.a.setHint(paramLongName(k) + ": " + shown), helpTip(c, k);
   ImGui::PopID();
   return changed;
 }
@@ -961,8 +1655,10 @@ bool stepperFree(Ctx& c, const char* id, int& v, int lo, int hi, float x, float 
   return changed;
 }
 bool stepper(Ctx& c, int k, float x, float y, float w, float h, const char* override) {
+  layoutBox(c, x, y, w, h, "stepper");
   const ParamDesc* d = desc(k);
   if (!d) return false;
+  reach(k);
   ImGui::PushID(k);
   int v = vali(c, k);
   const int lo = static_cast<int>(d->min), hi = d->kind == ParamKind::Choice ? static_cast<int>(d->choices.size()) - 1 : static_cast<int>(d->max);
@@ -1038,6 +1734,7 @@ void paramRows(Ctx& c, const std::vector<int>& ks) {
 }
 
 void moreButton(Ctx& c, const char* id, float x, float y, const std::vector<int>& ks, const std::function<void()>& extra, const char* hint) {
+  for (int k : ks) reach(k);  // its popup holds a control for each
   ImGui::PushID(id);
   ImGui::SetCursorScreenPos(c.p(x, y));
   if (ImGui::InvisibleButton("##more", c.F.sz(18, 16))) ImGui::OpenPopup("##morepop");
@@ -1051,6 +1748,325 @@ void moreButton(Ctx& c, const char* id, float x, float y, const std::vector<int>
     ImGui::EndPopup();
   }
   ImGui::PopID();
+}
+
+bool moreLink(Ctx& c, const char* id, float x, float y, float w, float h, const char* label, const std::vector<int>& ks,
+              const std::function<void()>& extra, const char* hint) {
+  for (int k : ks) reach(k);  // its popup holds a control for each
+  ImGui::PushID(id);
+  const bool click = button(c, "##ml", x, y, w, h, label, false, ctlPx(h));
+  if (ImGui::IsItemHovered()) c.a.setHint(hint ? hint : "More settings");
+  if (click) ImGui::OpenPopup("##morepop");
+  bool open = false;
+  if (ImGui::BeginPopup("##morepop")) {
+    open = true;
+    paramRows(c, ks);
+    if (extra) extra();
+    ImGui::EndPopup();
+  }
+  ImGui::PopID();
+  return open;
+}
+
+bool cardMore(Ctx& c, const char* id, float x, float y, float w, float h, const std::vector<FieldItem>& items, const char* hint) {
+  for (const auto& it : items) reach(it.k);
+  ImGui::PushID(id);
+  const unsigned key = ImGui::GetID("turned");
+  bool open = c.u.moreOpen == key;
+  if (button(c, "##cm", x + w - 96, y + 6, 90, 22, open ? "Back" : "More...", open, ctlPx(22))) {
+    open = !open;
+    c.u.moreOpen = open ? key : 0;
+  }
+  if (ImGui::IsItemHovered()) c.a.setHint(open ? std::string("Back to the main settings") : std::string(hint ? hint : "More settings"));
+  if (open) {
+    const int cols = w > 420 ? 2 : (items.size() > 3 ? 2 : 1);
+    const int rows = (static_cast<int>(items.size()) + cols - 1) / cols;
+    fieldGrid(c, x + 12, y + 34, w - 24, cols, std::clamp((h - 44) / static_cast<float>(std::max(1, rows)), 30.f, 40.f), items, 26);
+  }
+  ImGui::PopID();
+  return open;
+}
+
+namespace {
+bool gBlockMore = false;  // the block being drawn shows its details (More, or Full)
+}
+float gPicFit = 0;
+ImU32 gKnobCol = 0;
+bool gLayoutSettling = false, gPicUsed = false;
+float gDialBase = 0, gDialPushed = 0;
+bool showDetails(const Ctx& c) { return c.u.full || gBlockMore; }
+namespace {
+std::vector<ImGuiID> gPictures;
+}
+void markPicture() { gPictures.push_back(ImGui::GetItemID()); }
+bool isPicture(unsigned id) { return std::find(gPictures.begin(), gPictures.end(), id) != gPictures.end(); }
+void clearPictures() { gPictures.clear(); }
+DetailsOn::DetailsOn() : prev(gBlockMore) { gBlockMore = true; }
+DetailsOn::~DetailsOn() { gBlockMore = prev; }
+// A group inside a block: its name and a short summary. Its details show when the block's More is
+// on, or in Full. Moves y below the row.
+bool section(Ctx& c, const char* id, float x, float& y, float w, const char* title, const std::string& summary, bool hasDetails) {
+  (void)id;
+  const bool details = hasDetails && (c.u.full || gBlockMore);
+  text(c, x, y + 4, title, c.P.label, 11.5f, true);
+  if (!summary.empty()) {  // the summary only when it fits whole (never cut)
+    const float tw = textW(c, title, 11.5f, true);
+    if (textW(c, summary.c_str(), 11.0f, false) <= w - tw - 12) textR(c, x + w, y + 5, summary.c_str(), c.P.textDim, 11.0f, false);
+  }
+  y += 24;
+  return details;
+}
+
+// ---- blocks: one synth part each (a layer, a filter, the amp, an effect, a motion source). The
+// same frame and title bar draw the Patch view's boxes.
+void blockFrame(const Ctx& c, float x, float y, float w, float h, ImU32 fam, bool sel, bool dim) {
+  const ImVec2 a = c.p(x, y), b = c.p(x + w, y + h);
+  gl::audit::group(a, b, "cell");
+  const float rr = c.s(M(6));
+  c.dl->AddRectFilled(ImVec2(a.x, a.y + c.s(1)), ImVec2(b.x, b.y + c.s(2)), IM_COL32(0, 0, 0, c.P.dark ? 52 : 16), rr);  // the shadow
+  c.dl->AddRectFilled(a, b, c.P.panel, rr);
+  c.dl->AddLine(ImVec2(a.x + rr, a.y + 1), ImVec2(b.x - rr, a.y + 1), IM_COL32(255, 255, 255, c.P.dark ? 9 : 0));  // the top edge's light
+  if (sel) {
+    const float g = glowK(c);
+    c.dl->AddRect(ImVec2(a.x - c.s(1), a.y - c.s(1)), ImVec2(b.x + c.s(1), b.y + c.s(1)), theme::withAlpha(c.P.accent, 0.3f * g + 0.1f), rr, 0, c.s(1.5f));
+    c.dl->AddRect(a, b, theme::mix(c.P.accent, c.P.line, 0.3f), rr);
+  } else {
+    c.dl->AddRect(a, b, theme::mix(c.P.line, c.P.lineHi, 0.35f), rr);
+  }
+  // the family strip along the top edge (crisp, full strength)
+  c.dl->AddRectFilled(ImVec2(a.x + c.s(M(10)), a.y - c.s(M(1))), ImVec2(b.x - c.s(M(10)), a.y + c.s(M(1.6f))), fam, c.s(M(1.5f)),
+                      ImDrawFlags_RoundCornersBottom);
+  if (dim) c.dl->AddRectFilled(a, b, theme::withAlpha(c.P.frame, 0.45f), rr);
+}
+namespace {
+void moreDots(const Ctx& c, float x, float y, ImU32 col) {  // three dots in a 22 px box
+  for (int i = 0; i < 3; ++i) c.dl->AddCircleFilled(c.p(x + M(6) + i * M(5), y + M(11)), c.s(M(1.3f)), col, 8);
+}
+}  // namespace
+namespace {
+// The block clipboard: Copy and Paste between blocks of one kind (a layer's table travels with it).
+struct BlockClip {
+  int kind = BkNone, n = 0;
+  std::vector<double> v;
+  OscData osc;
+  LfoData lfo;
+};
+BlockClip gBlockClip;
+int blockModelIndex(const BlockOpts& o) {
+  if (o.pKind == BkLayer) return (o.pLo - kOscBase) / O_Count;
+  if (o.pKind == BkLfo) return (o.pLo - kLfoBase) / L_Count;
+  return -1;
+}
+void blockCopy(Ctx& c, const BlockOpts& o) {
+  BlockClip& k = gBlockClip;
+  k.kind = o.pKind, k.n = o.pN, k.v.assign(static_cast<size_t>(o.pN), 0.0);
+  for (int i = 0; i < o.pN; ++i) k.v[static_cast<size_t>(i)] = val(c, o.pLo + i);
+  const int mi = blockModelIndex(o);
+  if (o.pKind == BkLayer) k.osc = c.m.osc[static_cast<size_t>(mi)];
+  if (o.pKind == BkLfo) k.lfo = c.m.lfo[static_cast<size_t>(mi)];
+  c.a.notify(i18n::tr("Copied the settings"), false);
+}
+bool blockCanPaste(const BlockOpts& o) { return o.pKind != BkNone && gBlockClip.kind == o.pKind && gBlockClip.n == o.pN; }
+// Pastes the clipboard (or resets to the start) as one undo step; the block stays on or off.
+void blockApply(Ctx& c, const BlockOpts& o, bool reset) {
+  const BlockClip& k = gBlockClip;
+  const int mi = blockModelIndex(o);
+  editState(c.a, c.t, reset ? "Reset block" : "Paste settings", [&](PluginState& st, Model& m) {
+    for (int i = 0; i < o.pN; ++i) {
+      const int p = o.pLo + i;
+      if (p == o.enable || p < 0 || p >= static_cast<int>(st.params.size())) continue;
+      const ParamDesc* d = pdesc(p);
+      st.params[static_cast<size_t>(p)] = reset ? (d ? d->def : st.params[static_cast<size_t>(p)]) : k.v[static_cast<size_t>(i)];
+    }
+    if (mi < 0) return;
+    if (o.pKind == BkLayer) m.osc[static_cast<size_t>(mi)] = reset ? defaultModel().osc[static_cast<size_t>(mi)] : k.osc;
+    if (o.pKind == BkLfo) m.lfo[static_cast<size_t>(mi)] = reset ? defaultModel().lfo[static_cast<size_t>(mi)] : k.lfo;
+  });
+}
+}  // namespace
+
+bool blockBegin(Ctx& c, Block& b, const char* id, float x, float& y, float w, const char* title, const BlockOpts& o,
+                const std::function<void(float, float, float, float)>& mini) {
+  ImGui::PushID(id);
+  b.x = x, b.y0 = y, b.w = w, b.key = ImGui::GetID("blk"), b.frameH = o.frameH;
+  auto& closed = c.u.blockClosed;
+  auto& more = c.u.blockMore;
+  const bool isClosed = o.forceOpen ? false : o.forceClosed ? true : std::find(closed.begin(), closed.end(), b.key) != closed.end();
+  b.open = !isClosed;
+  b.more = std::find(more.begin(), more.end(), b.key) != more.end();
+  const auto hIt = c.u.blockH.find(b.key);
+  const float headH = M(8 + 24 + 8);
+  const float cachedH = std::max(o.frameH, hIt != c.u.blockH.end() ? hIt->second : headH);
+  const bool on = o.enable < 0 || val(c, o.enable) >= 0.5;
+  blockFrame(c, x, y, w, b.open ? cachedH : headH, o.fam, o.selected, false);
+  const float hy = y + M(8), hh = M(24), cy = hy + hh * 0.5f;
+  float rx = x + w - M(12);
+  // right: "..." (a menu: open large, every setting here, fold, remove), then the block's own tools
+  {
+    rx -= M(22);
+    ImGui::SetCursorScreenPos(c.p(rx, hy + M(1)));
+    bool openMenu = ImGui::InvisibleButton("##more", c.F.sz(M(22), M(22)));
+    if (c.u.devMenu) {  // dev (screenshots): the first block's menu, open once the editor settled
+      static int first = -1;
+      if (first < 0) first = ImGui::GetFrameCount();
+      if (ImGui::GetFrameCount() - first > 4) openMenu = true, c.u.devMenu = false;
+    }  // dev (screenshots): the first block's menu open
+    if (openMenu) ImGui::OpenPopup("##blockmenu");
+    const bool hv = ImGui::IsItemHovered();
+    if (hv) c.a.setHint(std::string(title) + ": open it large, show every setting here, fold or remove it");
+    if (hv || b.more) c.dl->AddRectFilled(c.p(rx, hy + M(1)), c.p(rx + M(22), hy + M(23)), b.more ? c.P.accentSoft : c.P.panelHi, c.s(M(3)));
+    moreDots(c, rx, hy + M(1), b.more ? c.P.accentText : hv ? c.P.text : c.P.textFaint);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(c.s(M(6)), c.s(M(6))));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, c.s(M(1))));
+    ImGui::PushStyleColor(ImGuiCol_PopupBg, c.P.panel);
+    ImGui::PushStyleColor(ImGuiCol_Border, c.P.lineHi);
+    if (openMenu) ImGui::SetNextWindowPos(c.p(rx - M(10), hy + M(26)));  // under its dots
+    if (ImGui::BeginPopup("##blockmenu")) {
+      {  // it sizes itself to its widest row over its first frames: judge its layout once it has
+        static int menuFrames = 0;
+        menuFrames = ImGui::IsWindowAppearing() ? 0 : menuFrames + 1;
+        if (menuFrames < 3) gLayoutSettling = true;
+      }
+      menuHead(c, title);
+      if ((o.view >= 0 || o.ownOpen) && menuItemLook(c, "open", "Open advanced panel", "Double-click", 1)) {
+        if (o.view == VEnv) c.u.envTab = o.viewTab;
+        if (o.view == VLfo) c.u.lfoTab = o.viewTab;
+        b.openClicked = true;
+        ImGui::CloseCurrentPopup();
+      }
+      if (o.enable >= 0 && menuItemLook(c, "onoff", val(c, o.enable) >= 0.5 ? "Turn off" : "Turn on", "Shift-click", 2)) {
+        setv(c, o.enable, val(c, o.enable) >= 0.5 ? 0 : 1);
+        ImGui::CloseCurrentPopup();
+      }
+      if (o.pKind != BkNone && menuItemLook(c, "reset", "Reset to default", "", 8)) blockApply(c, o, true), ImGui::CloseCurrentPopup();
+      if (ImGui::IsItemHovered() && o.pKind != BkNone) c.a.setHint("Its settings go back to the start; Undo brings them back");
+      menuRule(c);
+      if (o.pKind != BkNone) {
+        if (menuItemLook(c, "copy", "Copy settings", "Ctrl C", 9)) blockCopy(c, o), ImGui::CloseCurrentPopup();
+        if (menuItemLook(c, "paste", "Paste settings", "Ctrl V", 10, false, blockCanPaste(o))) blockApply(c, o, false), ImGui::CloseCurrentPopup();
+        if (ImGui::IsItemHovered() && !blockCanPaste(o)) c.a.setHint("Copy a block of the same kind first");
+      }
+      if (o.extraMenu) o.extraMenu();
+      menuRule(c);
+      if (o.canMore && !c.u.full && menuItemLook(c, "more", b.more ? "Show the main controls only" : "Show every setting here", "", 4)) {
+        if (b.more) more.erase(std::remove(more.begin(), more.end(), b.key), more.end());
+        else more.push_back(b.key);
+        b.more = !b.more;
+        ImGui::CloseCurrentPopup();
+      }
+      if (menuItemLook(c, "fold", b.open ? "Fold" : "Unfold", "", 3)) {
+        if (b.open) closed.push_back(b.key);
+        else closed.erase(std::remove(closed.begin(), closed.end(), b.key), closed.end());
+        ImGui::CloseCurrentPopup();
+      }
+      menuRule(c);
+      if (o.patchNode >= 0 && menuItemLook(c, "patch", "Show in Patch view", "Tab", 5)) {
+        c.u.patch = true, c.u.pLink = -1, c.u.pSel = o.patchNode;
+        ImGui::CloseCurrentPopup();
+      }
+      if ((o.about || o.hint) && menuItemLook(c, "what", "What this block does", "?", 6)) c.a.notify(o.about ? o.about : o.hint, false);
+      if (o.canRemove) {
+        menuRule(c);
+        char rl[64];
+        std::snprintf(rl, sizeof rl, i18n::tr("Remove from %s"), o.section ? i18n::tr(o.section) : i18n::tr("the sound"));
+        if (menuItemLook(c, "remove", o.section ? rl : "Remove", "Del", 7, true)) b.removeClicked = true, ImGui::CloseCurrentPopup();
+        if (ImGui::IsItemHovered()) c.a.setHint("Its settings go back to the start; Undo brings them back");
+      }
+      ImGui::EndPopup();
+    }
+    ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar(2);
+  }
+  {  // keys over the block: Copy, Paste, Remove, what it does
+    const float bh = b.open ? cachedH : headH;
+    const bool over = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput &&
+                      !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) && !ImGui::IsAnyItemActive() &&
+                      ImGui::IsMouseHoveringRect(c.p(x, y), c.p(x + w, y + bh));
+    if (over) {
+      if (o.pKind != BkNone && ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_C)) blockCopy(c, o);
+      if (blockCanPaste(o) && ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_V)) blockApply(c, o, false);
+      if (o.canRemove && (ImGui::IsKeyPressed(ImGuiKey_Delete, false) || ImGui::IsKeyPressed(ImGuiKey_Backspace, false))) b.removeClicked = true;
+      if ((o.about || o.hint) && ImGui::GetIO().KeyShift && ImGui::IsKeyPressed(ImGuiKey_Slash, false)) c.a.notify(o.about ? o.about : o.hint, false);
+    }
+  }
+  if (o.tools) rx = o.tools(rx - M(6), hy + M(1));
+  // left: the light (or the link dot), the drag grip, the name and what it is
+  float tx = x + M(12);
+  if (o.enable >= 0) led(c, o.enable, tx, cy - M(4), M(8)), tx += M(8 + 8);
+  else if (o.grip >= 0) sourceGrip(c, o.grip, tx + M(8), cy, M(7)), tx += M(16 + 8);
+  float tpx = T(13.5f);  // the name fits whole: a step smaller when the block is narrow
+  while (tpx > T(11) && textW(c, title, tpx, true) > rx - M(6) - tx) tpx -= 0.25f;
+  const float tw = textW(c, title, tpx, true);
+  textHeavy(c, tx, cy - tpx * 0.68f, title, on ? c.P.text : c.P.textDim, tpx);
+  float subEnd = tx + tw;
+  if (o.sub && *o.sub) {
+    const float sx = tx + tw + M(8), room = rx - M(6) - sx;
+    std::string sub = o.sub;
+    while (!sub.empty() && textW(c, sub.c_str(), T(11.5f), false) > room) sub.pop_back();
+    if (sub.size() < std::string(o.sub).size() && sub.size() > 2) sub.resize(sub.size() - 1), sub += "...";
+    if (room > M(20) && !sub.empty()) {
+      text(c, sx, cy - T(11.5f) * 0.68f, sub.c_str(), c.P.textFaint, T(11.5f), false);
+      subEnd = sx + textW(c, sub.c_str(), T(11.5f), false);
+      if (o.subMenu) {  // what it is: a click chooses (a table, a filter type, a shape)
+        ImGui::SetCursorScreenPos(c.p(sx, hy));
+        if (ImGui::InvisibleButton("##sub", c.F.sz(std::max(M(10), subEnd - sx), hh))) ImGui::OpenPopup("##submenu");
+        if (ImGui::IsItemHovered()) {
+          hline(c, sx, subEnd, cy + M(8), c.P.textFaint);
+          c.a.setHint(std::string(title) + ": click to choose");
+        }
+        if (ImGui::BeginPopup("##submenu")) {
+          o.subMenu();
+          ImGui::EndPopup();
+        }
+      }
+    }
+  }
+  if (!b.open && mini) {
+    const float mx = subEnd + M(10), mw = rx - M(6) - mx;
+    if (mw > 30) {
+      c.dl->AddRectFilled(c.p(mx, hy + 3), c.p(mx + mw, hy + hh - 3), c.P.well, c.s(3));
+      c.dl->PushClipRect(c.p(mx, hy + 3), c.p(mx + mw, hy + hh - 3), true);
+      mini(mx + 2, hy + 5, mw - 4, hh - 10);
+      c.dl->PopClipRect();
+    }
+  }
+  // the name: the drag handle and the double-click target; last, so a caller can make it a drag source
+  ImGui::SetCursorScreenPos(c.p(tx, hy));
+  b.titleClicked = ImGui::InvisibleButton("##title", c.F.sz(std::max(10.f, std::min(tw, rx - M(4) - tx)), hh));
+  markPicture();
+  if (ImGui::IsItemHovered()) c.a.setHint(o.hint ? std::string(o.hint) : std::string(title) + (o.view >= 0 ? ": double-click to open it large" : b.open ? "" : ": click to unfold"));
+  if (o.enable >= 0 && ImGui::IsItemClicked() && ImGui::GetIO().KeyShift) setv(c, o.enable, val(c, o.enable) >= 0.5 ? 0 : 1);  // Shift-click: on / off
+  if (!b.open && ImGui::IsItemClicked()) {  // a folded block unfolds on a click
+    closed.erase(std::remove(closed.begin(), closed.end(), b.key), closed.end());
+    b.open = true;
+  }
+  const bool dbl = ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0);
+  if (o.ownOpen) b.titleClicked = false;  // the caller opens it on a double-click
+  if (b.openClicked || (dbl && !o.ownOpen && o.view >= 0)) {
+    if (o.view == VEnv) c.u.envTab = o.viewTab;
+    if (o.view == VLfo) c.u.lfoTab = o.viewTab;
+    if (!o.ownOpen) openView(c.u, o.view);
+  }
+  b.prevMore = gBlockMore;
+  gBlockMore = c.u.full || b.more;
+  y = y + (b.open ? M(8 + 24 + 4) : headH);
+  if (!on && b.open) b.dimFrom = y;
+  ImGui::PopID();
+  return b.open;
+}
+void blockEnd(Ctx& c, Block& b, float& y) {
+  if (b.open) y += M(8);
+  const float h = std::max(b.open ? b.frameH : 0.f, std::max(M(40), y - b.y0));
+  c.u.blockH[b.key] = h;
+  if (b.dimFrom > 0 && y > b.dimFrom) c.dl->AddRectFilled(c.p(b.x + 4, b.dimFrom), c.p(b.x + b.w, b.y0 + h), theme::withAlpha(c.P.frame, 0.35f), c.s(6));
+  gBlockMore = b.prevMore;
+  y = b.y0 + h + 8;
+}
+
+void sectionEnd(Ctx& c, float x, float& y, float w) {
+  y += 6;
+  hline(c, x, x + w, y, theme::withAlpha(c.P.line, 0.7f));
+  y += 10;
 }
 
 // ================================================================== modulation
@@ -1069,13 +2085,10 @@ const std::vector<SrcGroup>& srcGroups() {
     v.push_back(l);
     v.push_back(ly);
     v.push_back(mc);
-    v.push_back({"Note", {SrcVelo, SrcNote, SrcReleaseVelo, SrcAftertouch, SrcPolyAT}});
-    v.push_back({"Controllers", {SrcModWheel, SrcPitchBend}});
-    v.push_back({"MPE", {SrcExprX, SrcExprY, SrcExprZ}});
-    v.push_back({"Random", {SrcNoise, SrcRand1, SrcRand2, SrcRandDiscrete, SrcAlt1, SrcAlt2}});
-    v.push_back({"Voice", {SrcActiveVoices, SrcVoiceIndex, SrcVoiceMod1, SrcVoiceMod2}});
-    v.push_back({"Audio", {SrcOscA, SrcOscB, SrcOscC, SrcSub, SrcFilter1, SrcFilter2}});
-    v.push_back({"Other", {SrcFixed}});
+    v.push_back({"Key and touch", {SrcVelo, SrcNote, SrcReleaseVelo, SrcAftertouch, SrcPolyAT, SrcModWheel, SrcPitchBend, SrcExprX, SrcExprY, SrcExprZ}});
+    v.push_back({"Chance and voice", {SrcNoise, SrcRand1, SrcRand2, SrcRandDiscrete, SrcAlt1, SrcAlt2, SrcActiveVoices, SrcVoiceIndex, SrcVoiceMod1,
+                                      SrcVoiceMod2, SrcFixed}});
+    v.push_back({"Layers and filters", {SrcOscA, SrcOscB, SrcOscC, SrcSub, SrcFilter1, SrcFilter2}});
     return v;
   }();
   return g;
@@ -1083,8 +2096,42 @@ const std::vector<SrcGroup>& srcGroups() {
 }  // namespace
 
 std::string sourceLabel(int src) {
+  if (src <= SrcNone || src >= SourceCount) return "\xE2\x80\x94";
+  if (src >= SrcEnv1 && src <= SrcEnv4) return "Envelope " + std::to_string(src - SrcEnv1 + 1);
+  if (src >= SrcLfo1 && src <= SrcLfo10) return "LFO " + std::to_string(src - SrcLfo1 + 1);
+  if (src >= SrcLfo1Y && src <= SrcLfo10Y) return "LFO " + std::to_string(src - SrcLfo1Y + 1) + " Y";
+  if (src >= SrcMacro1 && src <= SrcMacro8) return "Macro " + std::to_string(src - SrcMacro1 + 1);
+  switch (src) {
+    case SrcVelo: return "Velocity";
+    case SrcNote: return "Key";
+    case SrcActiveVoices: return "Voices";
+    case SrcAlt1: return "Alternate 1";
+    case SrcAlt2: return "Alternate 2";
+    case SrcRandDiscrete: return "Random steps";
+    case SrcRand1: return "Random 1";
+    case SrcRand2: return "Random 2";
+    case SrcReleaseVelo: return "Release";
+    case SrcVoiceIndex: return "Voice number";
+    case SrcVoiceMod1: return "Voice mod 1";
+    case SrcVoiceMod2: return "Voice mod 2";
+    case SrcNoise: return "Noise";
+    case SrcOscA: return "Layer 1";
+    case SrcOscB: return "Layer 2";
+    case SrcOscC: return "Layer 3";
+    case SrcSub: return "Root";
+    case SrcExprX: return "Slide X";
+    case SrcExprY: return "Slide Y";
+    case SrcExprZ: return "Press Z";
+    case SrcFilter1: return "Filter 1";
+    case SrcFilter2: return "Filter 2";
+    case SrcModWheel: return "Mod wheel";
+    case SrcAftertouch: return "Pressure";
+    case SrcPolyAT: return "Key pressure";
+    case SrcPitchBend: return "Bend";
+    case SrcFixed: return "Constant";
+    default: break;
+  }
   const auto& n = sourceNames();
-  if (src <= SrcNone || src >= static_cast<int>(n.size())) return "\xE2\x80\x94";
   return n[static_cast<size_t>(src)];
 }
 bool sourceMenuItems(Ctx& c, int& out) {
@@ -1111,16 +2158,16 @@ bool destMenuItems(Ctx& c, int& out) {
       ImGui::EndMenu();
     }
   };
-  for (int o = 0; o < kOscs; ++o) group(o == 0 ? "Osc A" : o == 1 ? "Osc B" : "Osc C", oscP(o, 0), oscP(o, O_Count));
-  group("Sub", kSubBase, kNoiseBase);
-  group("Noise", kNoiseBase, kFiltBase);
+  for (int o = 0; o < kOscs; ++o) group(o == 0 ? "Layer 1" : o == 1 ? "Layer 2" : "Layer 3", oscP(o, 0), oscP(o, O_Count));
+  group("Root", kSubBase, kNoiseBase);
+  group("Texture", kNoiseBase, kFiltBase);
   group("Filter 1", filtP(0, 0), filtP(1, 0));
   group("Filter 2", filtP(1, 0), filtP(2, 0));
   group("Routing", kRouteBase, kEnvBase);
   if (ImGui::BeginMenu(i18n::tr("Envelopes"))) {
     for (int e = 0; e < kEnvs; ++e) {
       char b[16];
-      std::snprintf(b, sizeof b, "Env %d", e + 1);
+      std::snprintf(b, sizeof b, "Envelope %d", e + 1);
       if (ImGui::BeginMenu(b)) {
         for (int k = envP(e, 0); k < envP(e + 1, 0); ++k)
           if (modulatable(k) && ImGui::MenuItem(paramLongName(k).c_str())) out = k, chose = true;
@@ -1142,13 +2189,13 @@ bool destMenuItems(Ctx& c, int& out) {
     ImGui::EndMenu();
   }
   group("Macros", kMacroBase, kBusBase);
-  group("LFO busses", kBusBase, kRetrigBase);
-  group("Retriggers", kRetrigBase, kModBase);
+  group("Point motion", kBusBase, kRetrigBase);
+  group("Restarts", kRetrigBase, kModBase);
   if (ImGui::BeginMenu(i18n::tr("Effects"))) {
     for (int s = 0; s < kFxSlots; ++s) {
       const int type = vali(c, fxP(s, X_Type));
       if (type <= FxNone || type >= FxTypeCount) continue;
-      const std::string nm = "FX " + std::to_string(s + 1) + " " + fxTypeNames()[static_cast<size_t>(type)];
+      const std::string nm = "Effect " + std::to_string(s + 1) + " " + i18n::tr(fxDisplayName(type));
       if (ImGui::BeginMenu(nm.c_str())) {
         const auto& defs = fxParams(type);
         for (int q = 0; q < static_cast<int>(defs.size()); ++q)
@@ -1158,7 +2205,7 @@ bool destMenuItems(Ctx& c, int& out) {
     }
     ImGui::EndMenu();
   }
-  group("Global", 0, G_Count);
+  group("Voice and play", 0, G_Count);
   return chose;
 }
 
@@ -1172,122 +2219,33 @@ int addModulation(Ctx& c, int src, int k, float amount) {
   if (!modulatable(k)) return -1;
   for (int s = 0; s < kModSlots; ++s) {
     if (vali(c, modP(s, M_Source)) > SrcNone || vali(c, modP(s, M_Dest)) > 0) continue;
-    setv(c, modP(s, M_Source), src);
-    setv(c, modP(s, M_Dest), k + 1);
-    setv(c, modP(s, M_Amount), amount);
+    commitParams(c, "Add link", {{modP(s, M_Source), src}, {modP(s, M_Dest), k + 1}, {modP(s, M_Amount), amount}});  // one undo step
     return s;
   }
   return -1;
 }
-void sourceHandle(Ctx& c, int src, float cx, float cy, float r) {
-  ImGui::PushID(src + 7000);
-  const ImVec2 C = c.p(cx, cy);
-  const float R = c.s(r);
-  ImGui::SetCursorScreenPos(ImVec2(C.x - R - c.s(2), C.y - R - c.s(2)));
-  ImGui::InvisibleButton("##src", ImVec2(R * 2 + c.s(4), R * 2 + c.s(4)));
-  const bool hov = ImGui::IsItemHovered();
-  if (hov || ImGui::IsItemActive()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);  // a grip, not a button
-  // live meter of the source's output (the lead note, or the global value)
-  float raw = 0;
-  bool idle = !c.hasLive;
-  if (c.hasLive && src > SrcNone && src < SourceCount) raw = c.live.source[src];
-  if (src >= SrcMacro1 && src <= SrcMacro8 && !c.hasLive) raw = valf(c, macroP(src - SrcMacro1)), idle = false;
-  if (c.hasLive && (src >= SrcLfo1 && src <= SrcLfo10Y)) {  // a per-note LFO with no note sounding rests
-    const int l = (src - SrcLfo1) % kLfos;
-    if (c.live.voices == 0 && vali(c, lfoP(l, L_Mode)) != LfoFree && val(c, lfoP(l, L_Mono)) < 0.5) idle = true;
-  }
-  bool bip = false;
-  const float mv = sourceMeterValue(src, raw, bip);
-  iconSourceMeter(c.dl, C, R, mv, bip, idle, hov ? c.P.text : c.P.textDim, c.P.mod);
-  if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceNoPreviewTooltip)) {
-    ImGui::SetDragDropPayload("PLASMA_SRC", &src, sizeof(int));
-    const ImVec2 m = ImGui::GetIO().MousePos;
-    ImDrawList* fg = ImGui::GetForegroundDrawList();
-    fg->AddLine(C, m, c.P.mod, std::max(1.5f, c.s(1.6f)));
-    fg->AddCircleFilled(m, c.s(4), c.P.mod);
-    const std::string s = sourceLabel(src);
-    fg->AddText(c.a.fontBold, font(c, 9), ImVec2(m.x + c.s(8), m.y - c.s(14)), c.P.mod, s.c_str());
-    ImGui::EndDragDropSource();
-  }
-  if (hov) c.a.setHint(sourceLabel(src) + ": drag onto a control to modulate it");
-  ImGui::PopID();
-}
+void sourceHandle(Ctx& c, int src, float cx, float cy, float r) { sourceGrip(c, src, cx, cy, r); }
 void dropTarget(Ctx& c, int k) {
   if (!modulatable(k)) return;
   if (ImGui::BeginDragDropTarget()) {
     const ImGuiPayload* pl = ImGui::GetDragDropPayload();
     if (pl && pl->IsDataType("PLASMA_SRC")) {
       const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
-      ImGui::GetForegroundDrawList()->AddRect(a, b, c.P.mod, c.s(3), 0, std::max(1.5f, c.s(1.5f)));
+      int ps = 0;
+      std::memcpy(&ps, pl->Data, sizeof(int));
+      ImGui::GetForegroundDrawList()->AddRect(a, b, c.P.fam[familyOf(ps)], c.s(3), 0, std::max(1.5f, c.s(1.5f)));
     }
     if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("PLASMA_SRC", ImGuiDragDropFlags_AcceptNoDrawDefaultRect)) {
       int src = 0;
       std::memcpy(&src, p->Data, sizeof(int));
-      addModulation(c, src, k, 0.5f);
+      addModulation(c, src, k, 0.25f);
     }
     ImGui::EndDragDropTarget();
   }
 }
 
-void warpMenuItems(Ctx& c, int o, int slot) {
-  const int type = vali(c, oscP(o, O_Type));
-  const int kmode = oscP(o, slot == 0 ? O_Warp1Mode : O_Warp2Mode);
-  const int cur = vali(c, kmode);
-  const auto& names = warpNames();
-  auto item = [&](int i) {
-    if (i < 0 || i >= static_cast<int>(names.size()) || !warpAllowed(type, i)) return;
-    if (ImGui::MenuItem(names[static_cast<size_t>(i)].c_str(), nullptr, i == cur)) setv(c, kmode, i);
-  };
-  auto range = [&](const char* group, int a, int b) {
-    bool any = false;
-    for (int i = a; i < b; ++i) any = any || warpAllowed(type, i);
-    if (!any) return;
-    if (ImGui::BeginMenu(i18n::tr(group))) {
-      for (int i = a; i < b; ++i) item(i);
-      ImGui::EndMenu();
-    }
-  };
-  item(0);
-  item(1);
-  range("Alt warp", 2, 11);
-  range("Remap", 11, 15);
-  item(15);
-  item(16);
-  range("Filter", 17, 19);
-  range("Distortion", 19, 33);
-  range("FM", 33, 51);
-  range("Phase distortion", 51, 58);
-  range("AM", 58, 64);
-  range("Ring mod", 64, 70);
-  range("Spectral", 70, 92);
-  range("Mask", 92, 98);
-  range("Vocode", 98, 104);
-  ImGui::Separator();
-  if (ImGui::MenuItem(i18n::tr("Swap warps"))) {
-    const int a = vali(c, oscP(o, O_Warp1Mode)), b = vali(c, oscP(o, O_Warp2Mode));
-    const double va = val(c, oscP(o, O_Warp1)), vb = val(c, oscP(o, O_Warp2));
-    setv(c, oscP(o, O_Warp1Mode), b), setv(c, oscP(o, O_Warp2Mode), a);
-    setv(c, oscP(o, O_Warp1), vb), setv(c, oscP(o, O_Warp2), va);
-  }
-}
-void filterMenuItems(Ctx& c, int k) {
-  const auto& names = filterNames();
-  const auto& groups = filterGroups();
-  const int cur = vali(c, k);
-  std::string open;
-  for (size_t i = 0; i < names.size(); ++i) {
-    const std::string& g = i < groups.size() ? groups[i] : std::string("Other");
-    if (g == open) continue;
-    if (ImGui::BeginMenu(g.c_str())) {
-      for (size_t j = i; j < names.size(); ++j)
-        if ((j < groups.size() ? groups[j] : std::string("Other")) == g)
-          if (ImGui::MenuItem(names[j].c_str(), nullptr, static_cast<int>(j) == cur)) setv(c, k, static_cast<double>(j));
-      ImGui::EndMenu();
-    }
-    open = g;
-    // skip the rest of this group (types of a group are contiguous)
-  }
-}
+void warpMenuItems(Ctx& c, int o, int slot) { morphPicker(c, o, slot); }
+void filterMenuItems(Ctx& c, int k) { filterPicker(c, k); }
 
 // ================================================================== graphs
 void gridLines(const Ctx& c, float x, float y, float w, float h, int cols, int rows, bool centre) {
@@ -1311,8 +2269,11 @@ bool curveEditor(Ctx& c, const char* id, Curve& cv, float x, float y, float w, f
                  int* loopPoint) {
   ImGui::PushID(id);
   const ImVec2 a = c.p(x, y), b = c.p(x + w, y + h);
-  ImGui::SetCursorScreenPos(a);
-  ImGui::InvisibleButton("##ce", ImVec2(b.x - a.x, b.y - a.y), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+  {  // the grab area reaches a handle's radius past the plot, so points on its edges are whole to grab
+    const float pad = c.s(6);
+    ImGui::SetCursorScreenPos(ImVec2(a.x - pad, a.y - pad));
+    ImGui::InvisibleButton("##ce", ImVec2(b.x - a.x + 2 * pad, b.y - a.y + 2 * pad), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+  }
   const bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
   ImGuiIO& io = ImGui::GetIO();
   const ImVec2 m = io.MousePos;
@@ -1440,16 +2401,32 @@ void applyPreset(Ctx& c, const std::vector<std::pair<int, float>>& values, const
   setPluginState(c.a, c.t, ns, "Load preset");
 }
 
+namespace {
+// Report text of a sound opened from another format, in neutral words (older
+// saves can hold the source format's own wording).
+std::string neutralWords(std::string t) {
+  static const std::pair<const char*, const char*> kSwap[] = {
+      {"Serum 1 preset (.fxp)", "Imported preset (.fxp)"}, {"Serum 2 preset", "Imported preset (newer format)"},
+      {"Serum preset", "Imported preset"}, {"Serum 2 (", "Imported preset, newer format ("}, {"Serum (", "Imported preset, older format ("},
+      {"Serum 1 shape", "Imported shape"}, {"Serum 1 ", "older-format "}, {"Serum 2 ", ""}, {"Serum", "the imported preset"},
+      {"Xfer Records", ""}, {"Xfer", ""}};
+  for (const auto& [from, to] : kSwap)
+    for (size_t at = t.find(from); at != std::string::npos; at = t.find(from, at + std::strlen(to)))
+      t.replace(at, std::strlen(from), to);
+  return t;
+}
+}  // namespace
+
 std::string openReportText(const Model& m) {
   if (m.openFormat.empty()) return "";
-  std::string t = std::string(i18n::tr("Opened from")) + ": " + m.openFormat;
+  std::string t = std::string(i18n::tr("Opened from")) + ": " + neutralWords(m.openFormat);
   if (!m.openNotes.empty()) {
     t += std::string("\n\n") + i18n::tr("Approximated") + ":";
-    for (const auto& n : m.openNotes) t += "\n  - " + n;
+    for (const auto& n : m.openNotes) t += "\n  - " + neutralWords(n);
   }
   if (!m.openMissing.empty()) {
-    t += std::string("\n\n") + i18n::tr("Files not found (install the content or add its folder in the preset browser)") + ":";
-    for (const auto& n : m.openMissing) t += "\n  - " + n;
+    t += std::string("\n\n") + i18n::tr("Files not found (install the content or add its folder in the Library)") + ":";
+    for (const auto& n : m.openMissing) t += "\n  - " + neutralWords(fs_stem(n));
   }
   return t;
 }
@@ -1516,12 +2493,9 @@ void openPresetDialog(Ctx& c) {
   static std::string lastDir;
   std::error_code ec;
   if (lastDir.empty() || !fs::is_directory(lastDir, ec)) {
-    const auto roots = defaultSerumRoots();
-    lastDir = roots.empty() ? "" : roots.front();
-    if (lastDir.empty() || !fs::is_directory(lastDir, ec)) {
-      const char* h = std::getenv("HOME");
-      lastDir = h ? h : ".";
-    }
+    // the home folder first (the library folders are reached through the Library)
+    const char* h = std::getenv("HOME");
+    lastDir = h ? h : ".";
   }
   a.fileDialog.dir = lastDir;
   a.fileDialog.exts = openableExtensions();  // every type Plasma opens, in one filter
@@ -1578,418 +2552,67 @@ void drawMeter(Ctx& c, float x, float y, float w, float h) {
 }
 
 namespace {
-void presetMenu(Ctx& c) {
-  const PluginInfo* in = info();
-  if (ImGui::MenuItem(i18n::tr("Init"))) applyPreset(c, {}, "", "Init");
-  ImGui::Separator();
-  if (in && ImGui::BeginMenu(i18n::tr("Factory"))) {
-    for (const auto& p : in->presets)
-      if (p.name != "Init" && ImGui::MenuItem(p.name.c_str())) applyPreset(c, p.values, "", p.name);
-    ImGui::Separator();
-    for (const auto& p : factoryDataPresets())
-      if (ImGui::MenuItem(p.name.c_str())) applyPreset(c, p.values, p.data, p.name);
-    ImGui::EndMenu();
-  }
-  ImGui::Separator();
-  if (ImGui::MenuItem(i18n::tr("Open preset..."))) openPresetDialog(c);
-  if (ImGui::MenuItem(i18n::tr("Browse presets..."))) c.u.browser = 1;
-}
-
-void header(Ctx& c) {
-  const Pal& P = c.P;
-  panelRect(c, 0, 0, kW, kHeadH, P.frame);
-  // J-136: the plugin's J-130 wordmark (Tile logo), drawn in form units so it
-  // fits the 68-unit header at any UI scale; the subtitle sits under the name.
-  {
-    const float wmH = 30;  // form units: 30 tall, 105 wide, clear of the page tabs at 165
-    const ImVec2 at = c.p(14, 12);
-    const float w = pui::wordmarkAt(c.dl, kType, ImVec2(std::round(at.x), std::round(at.y)), c.s(wmH));
-    if (w <= 0) {  // no wordmark compiled in: the name as text
-      ImFont* f = c.a.fontBold ? c.a.fontBold : c.a.fontRegular;
-      const float fs = font(c, 25);
-      c.dl->AddText(f, fs, ImVec2(std::round(c.p(14, 0).x), std::round(c.p(0, 28).y - fs * 0.56f)), P.text, "Plasma");
-    }
-    text(c, 14 + wmH * 26.0f / 24.0f, 45, "WAVETABLE SYNTH", P.textDim, ty::kCap, true);
-    if (ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(at, ImVec2(at.x + c.s(wmH * 84.0f / 24.0f), at.y + c.s(wmH))))
-      gl::ui::Hint(pluginDisplayName(kType) + "  \xC2\xB7  " + pluginTagline(kType));
-  }
-  // page tabs (J-202): one segmented control; no segment is lit while an
-  // overlay (browser, clip, table or mapping editor) covers the page.
-  static const char* const kTabs[PgCount] = {"OSC", "MIX", "FX", "MATRIX", "GLOBAL"};
-  {
-    const float tx = 166, ty0 = 21, tw = 66, th = 26;
-    const bool overlay = c.u.clip || c.u.wtEdit || c.u.browser || c.u.mapping;
-    c.dl->AddRectFilled(c.p(tx, ty0), c.p(tx + tw * PgCount, ty0 + th), P.field, c.s(4));
-    c.dl->AddRect(c.p(tx, ty0), c.p(tx + tw * PgCount, ty0 + th), P.line, c.s(4));
-    for (int i = 0; i < PgCount; ++i) {
-      const float x = tx + i * tw;
-      ImGui::PushID(i);
-      ImGui::SetCursorScreenPos(c.p(x, ty0));
-      if (ImGui::InvisibleButton("##pg", c.F.sz(tw, th)))
-        c.u.page = i, c.u.clip = false, c.u.wtEdit = false, c.u.browser = 0, c.u.mapping = false;
-      const bool hov = ImGui::IsItemHovered();
-      const bool on = c.u.page == i && !overlay;
-      const bool prevOn = i > 0 && c.u.page == i - 1 && !overlay;
-      if (on) {
-        c.dl->AddRectFilled(c.p(x + 2, ty0 + 2), c.p(x + tw - 2, ty0 + th - 2), P.headOn, c.s(3));
-        c.dl->AddRectFilled(c.p(x + 22, ty0 + th - 4.5f), c.p(x + tw - 22, ty0 + th - 3), P.accent, c.s(1));
-      } else if (hov) {
-        c.dl->AddRectFilled(c.p(x + 2, ty0 + 2), c.p(x + tw - 2, ty0 + th - 2), P.panel, c.s(3));
-      } else if (i > 0 && !prevOn) {
-        vline(c, x, ty0 + 8, ty0 + th - 8, P.line);
-      }
-      textMid(c, x, x + tw, ty0 + th * 0.5f - 0.5f, kTabs[i], on || hov ? P.text : P.textDim, ty::kLabel, true);
-      ImGui::PopID();
-    }
-  }
-  // preset row
-  // J-202: two rows centred on the tab strip's line: the preset name with its
-  // browse button and previous / next pair, then author and notes fields.
-  const float px = 520, pw = 456;
-  {
-    ImGui::SetCursorScreenPos(c.p(px, 9));
-    if (ImGui::InvisibleButton("##brw", c.F.sz(22, 22))) c.u.browser = c.u.browser ? 0 : 1;
-    const bool bh = ImGui::IsItemHovered();
-    if (bh) c.a.setHint("Preset browser: Plasma presets and your Serum presets");
-    c.dl->AddRectFilled(c.p(px, 9), c.p(px + 22, 31), c.u.browser ? P.accentSoft : (bh ? P.headOn : P.head), c.s(3));
-    iconBrowse(c.dl, c.p(px + 11, 20), c.s(11), bh || c.u.browser ? (c.u.browser ? P.accent : P.text) : P.textDim);
-    std::string name = c.m.presetName.empty() ? std::string("Init") : c.m.presetName;
-    ImGui::SetCursorScreenPos(c.p(px + 26, 9));
-    if (ImGui::InvisibleButton("##pn", c.F.sz(pw - 74, 22))) ImGui::OpenPopup("##presets");
-    const bool hv = ImGui::IsItemHovered();
-    c.dl->AddRectFilled(c.p(px + 26, 9), c.p(px + pw - 48, 31), P.field, c.s(3));
-    c.dl->AddRect(c.p(px + 26, 9), c.p(px + pw - 48, 31), hv ? P.lineHi : P.line, c.s(3));
-    textMid(c, px + 34, px + pw - 82, 20, name.c_str(), P.text, ty::kName, true);
-    if (!c.m.openFormat.empty()) {  // opened from a Serum preset / state: its report on hover
-      const float ix = px + pw - 74;
-      const bool approx = !c.m.openNotes.empty() || !c.m.openMissing.empty();
-      ImGui::SetCursorScreenPos(c.p(ix - 7, 13));
-      ImGui::InvisibleButton("##openinfo", c.F.sz(14, 14));
-      const bool ih = ImGui::IsItemHovered();
-      const ImU32 col = ih ? P.text : (approx ? P.mod : P.textFaint);
-      c.dl->AddCircle(c.p(ix, 20), c.s(5.5f), col, 16, std::max(1.0f, c.s(1.1f)));
-      c.dl->AddLine(c.p(ix, 19), c.p(ix, 23.5f), col, std::max(1.0f, c.s(1.3f)));
-      c.dl->AddCircleFilled(c.p(ix, 16.8f), c.s(0.9f), col);
-      if (ih) {
-        ImGui::BeginTooltip();
-        ImGui::PushTextWrapPos(c.s(420));
-        ImGui::TextUnformatted(openReportText(c.m).c_str());
-        ImGui::PopTextWrapPos();
-        ImGui::EndTooltip();
-      }
-    }
-    iconArrow(c.dl, c.p(px + pw - 58, 20), c.s(7), 3, hv ? P.text : P.textDim);
-    if (ImGui::BeginPopup("##presets")) {
-      presetMenu(c);
-      ImGui::EndPopup();
-    }
-    // previous / next factory preset
-    for (int i = 0; i < 2; ++i) {
-      ImGui::PushID(i);
-      const float bx = px + pw - 44 + i * 22.0f;
-      ImGui::SetCursorScreenPos(c.p(bx, 9));
-      if (ImGui::InvisibleButton("##pv", c.F.sz(22, 22))) {
-        const PluginInfo* in = info();
-        if (in && !in->presets.empty()) {
-          int cur = -1;
-          for (size_t q = 0; q < in->presets.size(); ++q)
-            if (in->presets[q].name == name) cur = static_cast<int>(q);
-          const int n = static_cast<int>(in->presets.size());
-          const int nx = ((cur < 0 ? 0 : cur) + (i == 0 ? -1 : 1) + n) % n;
-          applyPreset(c, in->presets[static_cast<size_t>(nx)].values, "", in->presets[static_cast<size_t>(nx)].name);
-        }
-      }
-      const bool h = ImGui::IsItemHovered();
-      c.dl->AddRectFilled(c.p(bx, 9), c.p(bx + 22, 31), h ? P.headOn : P.head, c.s(3),
-                          i == 0 ? ImDrawFlags_RoundCornersLeft : ImDrawFlags_RoundCornersRight);
-      if (i == 1) vline(c, bx, 13, 27, P.line);
-      iconArrow(c.dl, c.p(bx + 11, 20), c.s(8), i == 0 ? 0 : 1, h ? P.text : P.textDim);
-      if (h) c.a.setHint(i == 0 ? "Previous factory preset" : "Next factory preset");
-      ImGui::PopID();
-    }
-    // author / notes: framed fields whose empty text names them
-    auto field = [&](const char* id, float x, float w, std::string& s, const char* label, const char* hint) {
-      ImGui::SetCursorScreenPos(c.p(x, 37));
-      ImGui::PushID(id);
-      const float fs = font(c, 9.5f);
-      ImGui::PushStyleColor(ImGuiCol_FrameBg, theme::vec(P.field));
-      ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, theme::vec(P.field));
-      ImGui::PushStyleColor(ImGuiCol_FrameBgActive, theme::vec(P.field));
-      ImGui::PushStyleColor(ImGuiCol_Border, theme::vec(P.line));
-      ImGui::PushStyleColor(ImGuiCol_Text, theme::vec(P.text));
-      ImGui::PushStyleColor(ImGuiCol_TextDisabled, theme::vec(P.textDim));
-      ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(c.s(7), std::max(0.0f, (c.s(22) - fs) * 0.5f)));
-      ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, c.s(3));
-      ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
-      ImGui::PushFont(c.a.fontRegular, fs);
-      ImGui::SetNextItemWidth(c.s(w));
-      char buf[256];
-      std::snprintf(buf, sizeof buf, "%s", s.c_str());
-      if (ImGui::InputTextWithHint("##f", hint, buf, sizeof buf)) {
-        s = buf;
-        commit(c, label, 900 + static_cast<int>(id[0]));
-      }
-      if (ImGui::IsItemHovered() && !ImGui::IsItemActive()) {
-        const ImVec2 r0 = ImGui::GetItemRectMin(), r1 = ImGui::GetItemRectMax();
-        c.dl->AddRect(r0, r1, P.lineHi, c.s(3));
-      }
-      ImGui::PopFont();
-      ImGui::PopStyleVar(3);
-      ImGui::PopStyleColor(6);
-      ImGui::PopID();
-    };
-    field("a", px, 160, c.m.author, "Edit author", "Author");
-    field("d", px + 166, pw - 166, c.m.description, "Edit notes", "Notes");
-  }
-  // undo / redo / menu: three icon buttons on the tab strip's line
-  {
-    const float x = 994, y = 21, bw = 26, bh = 26;
-    for (int i = 0; i < 3; ++i) {
-      const float bx = x + i * (bw + 3);
-      ImGui::PushID(100 + i);
-      ImGui::SetCursorScreenPos(c.p(bx, y));
-      const bool clk = ImGui::InvisibleButton("##ur", c.F.sz(bw, bh));
-      if (clk && i == 0) c.a.doc.undo();
-      if (clk && i == 1) c.a.doc.redo();
-      if (clk && i == 2) ImGui::OpenPopup("##mainmenu");
-      const bool h = ImGui::IsItemHovered();
-      c.dl->AddRectFilled(c.p(bx, y), c.p(bx + bw, y + bh), h ? P.headOn : P.head, c.s(3));
-      const ImVec2 q = c.p(bx + bw * 0.5f, y + bh * 0.5f);
-      const ::gl::ui::Icon ic = i == 0 ? ::gl::ui::Icon::Undo : (i == 1 ? ::gl::ui::Icon::Redo : ::gl::ui::Icon::Menu);
-      ::gl::ui::drawIconFit(c.dl, ic, ImVec2(q.x - c.s(6.5f), q.y - c.s(6.5f)), ImVec2(q.x + c.s(6.5f), q.y + c.s(6.5f)),
-                            h ? P.text : P.textDim);
-      if (h) c.a.setHint(i == 0 ? "Undo" : (i == 1 ? "Redo" : "Plasma menu: presets, editors, reset"));
-      if (i == 2 && ImGui::BeginPopup("##mainmenu")) {
-      presetMenu(c);
-      ImGui::Separator();
-      if (ImGui::MenuItem(i18n::tr("Edit wavetable (Osc A)"))) c.u.wtEdit = true, c.u.wtOsc = 0;
-      if (ImGui::MenuItem(i18n::tr("Clip editor"), nullptr, c.u.clip)) c.u.clip = !c.u.clip;
-      if (ImGui::MenuItem(i18n::tr("Arpeggiator panel"), nullptr, c.u.arp)) c.u.arp = !c.u.arp;
-      ImGui::Separator();
-      if (ImGui::MenuItem(i18n::tr("Clear the modulation matrix"))) {
-        for (int s = 0; s < kModSlots; ++s)
-          for (int q = 0; q < M_Count; ++q)
-            if (const ParamDesc* d = desc(modP(s, q))) setv(c, modP(s, q), d->def);
-      }
-      if (ImGui::MenuItem(i18n::tr("Remove all effects"))) {
-        for (int s = 0; s < kFxSlots; ++s) setv(c, fxP(s, X_Type), FxNone);
-        c.m.fx.clear();
-        commit(c, "Remove all effects");
-      }
-      ImGui::EndPopup();
-      }
-      ImGui::PopID();
-    }
-  }
-  // main volume + stereo meter, centred on the same line
-  knob(c, G_MasterVol, 1118, 28, 15, "MAIN");
-  drawMeter(c, 1150, 12, 13, 46);
-  vline(c, 0, 0, kHeadH, P.line);
-  hline(c, 0, kW, kHeadH - 0.5f, P.line);
-}
-
-// ================================================================== bottom strip
-void wheel(Ctx& c, int k, float x, float y, float w, float h, bool spring) {
-  ImGui::PushID(k);
-  ImGui::SetCursorScreenPos(c.p(x, y));
-  ImGui::InvisibleButton("##wh", c.F.sz(w, h));
-  const bool act = ImGui::IsItemActive(), hov = ImGui::IsItemHovered();
-  const ParamDesc* d = desc(k);
-  double v = val(c, k);
-  if (act && d) {
-    const double n = std::clamp(1.0 - (ImGui::GetIO().MousePos.y - c.p(0, y).y) / c.s(h), 0.0, 1.0);
-    v = d->fromNormalized(n);
-    setv(c, k, v, true);
-  } else if (spring && ImGui::IsItemDeactivated() && d) {
-    setv(c, k, d->def, true);
-  }
-  if (ImGui::IsItemDeactivated()) c.a.doc.endGesture();
-  const double n = d ? d->toNormalized(v) : 0;
-  const ImVec2 a = c.p(x, y), b = c.p(x + w, y + h);
-  skin::gradientRect(c.dl, a, b, c.P.panelLo, c.P.well, c.s(4));
-  c.dl->AddRect(a, b, c.P.line, c.s(4));
-  const float ky = b.y - c.s(4) - static_cast<float>(n) * (b.y - a.y - c.s(8));
-  skin::gradientRect(c.dl, ImVec2(a.x + c.s(2), ky - c.s(4)), ImVec2(b.x - c.s(2), ky + c.s(4)), c.P.capTop, c.P.capBot, c.s(2));
-  c.dl->AddLine(ImVec2(a.x + c.s(4), ky), ImVec2(b.x - c.s(4), ky), act || hov ? c.P.accent : c.P.textDim, std::max(1.0f, c.s(1.2f)));
-  if (hov) c.a.setHint(paramLongName(k) + ": " + ptext(c, k));
-  ImGui::PopID();
-}
-
-void keyboard(Ctx& c, float x, float y, float w, float h) {
-  const int lo = 36, hi = 96;  // C2 .. C7
-  int whites = 0;
-  for (int k = lo; k <= hi; ++k) {
-    const int pc = k % 12;
-    if (pc != 1 && pc != 3 && pc != 6 && pc != 8 && pc != 10) ++whites;
-  }
-  const float kw = w / whites;
-  const ImVec2 m = ImGui::GetIO().MousePos;
-  ImGui::SetCursorScreenPos(c.p(x, y));
-  ImGui::InvisibleButton("##kb", c.F.sz(w, h));
-  const bool act = ImGui::IsItemActive(), hov = ImGui::IsItemHovered();
-  int hit = -1;
-  // black keys first (on top)
-  auto isBlack = [](int k) {
-    const int pc = k % 12;
-    return pc == 1 || pc == 3 || pc == 6 || pc == 8 || pc == 10;
-  };
-  std::vector<std::pair<int, ImVec4>> rects;
-  int wi = 0;
-  for (int k = lo; k <= hi; ++k) {
-    if (isBlack(k)) continue;
-    rects.push_back({k, ImVec4(x + wi * kw, y, x + (wi + 1) * kw, y + h)});
-    ++wi;
-  }
-  std::vector<std::pair<int, ImVec4>> blacks;
-  wi = 0;
-  for (int k = lo; k <= hi; ++k) {
-    if (isBlack(k)) {
-      const float bx = x + wi * kw - kw * 0.32f;
-      blacks.push_back({k, ImVec4(bx, y, bx + kw * 0.64f, y + h * 0.6f)});
-    } else {
-      ++wi;
-    }
-  }
-  if (hov || act) {
-    for (const auto& [k, r] : blacks)
-      if (hit < 0 && m.x >= c.p(r.x, 0).x && m.x < c.p(r.z, 0).x && m.y >= c.p(0, r.y).y && m.y < c.p(0, r.w).y) hit = k;
-    for (const auto& [k, r] : rects)
-      if (hit < 0 && m.x >= c.p(r.x, 0).x && m.x < c.p(r.z, 0).x) hit = k;
-  }
-  if (act && hit >= 0 && hit != c.u.heldKey) {
-    if (c.u.heldKey >= 0) previewKey(c, c.u.heldKey, false);
-    previewKey(c, hit, true);
-    c.u.heldKey = hit;
-  }
-  if (!act && c.u.heldKey >= 0) {
-    previewKey(c, c.u.heldKey, false);
-    c.u.heldKey = -1;
-  }
-  for (const auto& [k, r] : rects) {
-    const bool down = k == c.u.heldKey;
-    const ImVec2 a = c.p(r.x, r.y), b = c.p(r.z, r.w);
-    skin::gradientRect(c.dl, ImVec2(a.x + 0.5f, a.y), ImVec2(b.x - 0.5f, b.y), down ? c.P.keyDown : c.P.keyWhite,
-                       down ? c.P.keyDown : theme::mix(c.P.keyWhite, c.P.textFaint, 0.18f), c.s(2), ImDrawFlags_RoundCornersBottom);
-    if (k % 12 == 0 && k == 60) textC(c, (r.x + r.z) * 0.5f, r.w - 12, "C3", c.P.textDim, ty::kCap, true);
-  }
-  // J-202: seams between the white keys in their own colour, so they show on light themes too
-  const ImU32 seam = theme::mix(c.P.keyWhite, c.P.keyBlack, 0.35f);
-  for (size_t i = 1; i < rects.size(); ++i) {
-    const ImVec2 a = c.p(rects[i].second.x, rects[i].second.y), b = c.p(rects[i].second.x, rects[i].second.w);
-    c.dl->AddLine(ImVec2(std::round(a.x) + 0.5f, a.y), ImVec2(std::round(b.x) + 0.5f, b.y), seam, 1.0f);
-  }
-  for (const auto& [k, r] : blacks) {
-    const bool down = k == c.u.heldKey;
-    const ImVec2 a = c.p(r.x, r.y), b = c.p(r.z, r.w);
-    skin::gradientRect(c.dl, a, b, down ? c.P.keyDown : skin::lighten(c.P.keyBlack, 0.12f), down ? c.P.keyDown : c.P.keyBlack, c.s(1.5f),
-                       ImDrawFlags_RoundCornersBottom);
-  }
-  if (hov) c.a.setHint("Click to audition");
-}
-
-void strip(Ctx& c) {
-  const Pal& P = c.P;
-  const float y = kStripY;
-  panelRect(c, 0, y, kW, kH - y, P.frame);
-  // groups, each in its own frame: wheels | CLIP | ARP | transpose + keys | portamento
-  const float fh = kH - y;
-  frameBox(c, 0, y, 164, fh);
-  frameBox(c, 164, y, 113, fh);
-  frameBox(c, 277, y, 114, fh);
-  frameBox(c, 391, y, 650, fh);
-  frameBox(c, 1041, y, 149, fh);
-  // wheels + bend ranges
-  wheel(c, G_PitchWheel, 14, y + 10, 18, 66, true);
-  wheel(c, G_ModWheel, 130, y + 10, 18, 66, false);
-  stepper(c, G_BendUp, 48, y + 12, 66, 20);
-  stepper(c, G_BendDown, 48, y + 38, 66, 20);
-  textC(c, 81, y + 65, "BEND", P.label, ty::kCap, true);
-  // CLIP / ARP
-  auto block = [&](float x, const char* name, int onParam, bool& open, bool isClip) {
-    // J-202: power + name, then one button that opens the editor (no decorative keys)
-    ImGui::PushID(name);
-    ImGui::SetCursorScreenPos(c.p(x + 6, y + 9));
-    if (ImGui::InvisibleButton("##pw", c.F.sz(18, 18))) setv(c, onParam, val(c, onParam) >= 0.5 ? 0 : 1);
-    const bool on = val(c, onParam) >= 0.5;
-    const bool ph = ImGui::IsItemHovered();
-    iconPower(c.dl, c.p(x + 15, y + 18), c.s(5), on ? P.accent : (ph ? P.text : P.textDim));
-    if (ph) c.a.setHint(std::string(isClip ? "Clip player" : "Arpeggiator") + (on ? ": on (click: off)" : ": off (click: on)"));
-    text(c, x + 28, y + 12, name, on ? P.text : P.textDim, ty::kTitle, true);
-    textR(c, x + 101, y + 13, on ? "ON" : "OFF", on ? P.accentText : P.textDim, ty::kCap, true);
-    if (button(c, "ed", x + 6, y + 40, 96, 24, open ? "CLOSE EDITOR" : "OPEN EDITOR", open, ty::kCap)) {
-      open = !open;
-      if (isClip) c.u.wtEdit = false;
-    }
-    if (ImGui::IsItemHovered()) c.a.setHint(std::string(isClip ? "Clip editor" : "Arpeggiator panel") + (open ? ": close" : ": open"));
-    ImGui::PopID();
-  };
-  block(165, "CLIP", G_ClipOn, c.u.clip, true);
-  block(278, "ARP", G_ArpOn, c.u.arp, false);
-  // transpose / key / scale / swing
-  {
-    const float x = 396;
-    labelBeside(c, x + 4, y + 6, 18, "TRANSPOSE", P.label, ty::kCap);
-    stepper(c, G_Transpose, x + 54, y + 6, 46, 18);
-    labelBeside(c, x + 106, y + 6, 18, "KEY", P.label, ty::kCap);
-    choiceBox(c, G_Key, x + 128, y + 6, 48, 18);
-    labelBeside(c, x + 182, y + 6, 18, "SCALE", P.label, ty::kCap);
-    choiceBox(c, G_Scale, x + 214, y + 6, 98, 18);
-    labelBeside(c, x + 318, y + 6, 18, "SWING", P.label, ty::kCap);
-    hfader(c, G_Swing, x + 352, y + 8, 62, 14);
-    choiceBox(c, G_SwingDiv, x + 418, y + 6, 46, 18);
-    labelBeside(c, x + 470, y + 6, 18, "OCTAVE", P.label, ty::kCap);
-    choiceBox(c, G_TrigOctave, x + 506, y + 6, 46, 18);
-    if (ImGui::IsItemHovered()) c.a.setHint("Trigger octave: its twelve keys pick the clip / arp slot while playing");
-    if (button(c, "oscmap", x + 558, y + 6, 79, 18, "OSC MAPPING", c.u.mapping, ty::kCap)) c.u.mapping = !c.u.mapping;
-    if (ImGui::IsItemHovered()) c.a.setHint("Oscillator mapping: the key and velocity range of each oscillator");
-    keyboard(c, x, y + 29, 641, 51);
-  }
-  // portamento
-  {
-    const float x = 1046;
-    checkBox(c, G_PortaAlways, x + 6, y + 9, "ALWAYS", ty::kCap);
-    checkBox(c, G_PortaScaled, x + 74, y + 9, "SCALED", ty::kCap);
-    knob(c, G_PortaTime, x + 34, y + 45, 15.0f, "PORTA");
-    // curve: a small graph that bends with the value
-    const float gx = x + 76, gy = y + 28, gw = 50, gh = 32;
-    wellRect(c, gx, gy, gw, gh, 2);
-    const float cv = valf(c, G_PortaCurve);
-    ImVec2 prev;
-    for (int i = 0; i <= 24; ++i) {
-      const float t = i / 24.f;
-      const float yv = static_cast<float>(bendCurve(t, cv));
-      const ImVec2 q = c.p(gx + 3 + t * (gw - 6), gy + gh - 3 - yv * (gh - 6));
-      if (i) c.dl->AddLine(prev, q, P.accent, std::max(1.2f, c.s(1.4f)));
-      prev = q;
-    }
-    ImGui::SetCursorScreenPos(c.p(gx, gy));
-    ImGui::InvisibleButton("##pc", c.F.sz(gw, gh), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
-    double pv = val(c, G_PortaCurve);
-    interact(c, G_PortaCurve, pv, 120, false);
-    cellLabel(c, gx + gw * 0.5f, gy + gh + 4.5f, "CURVE");  // J-128: on the PORTA label line (knob radius 15)
-  }
-}
-
 // Per-instance editor state.
 Ui& uiFor(const PluginTarget& t) {
   static std::map<uint64_t, Ui> m;
   auto it = m.find(t.key());
   if (it != m.end()) return it->second;
   Ui u;
-  if (const char* e = std::getenv("GL_PLASMA_PAGE")) u.page = std::clamp(std::atoi(e), 0, PgCount - 1);  // dev: screenshots
-  if (const char* e = std::getenv("GL_PLASMA_PRESET")) u.devPreset = e;  // dev: screenshots
-  if (const char* e = std::getenv("GL_PLASMA_VIEW")) {
-    const std::string v = e;
-    u.arp = v == "arp";
-    u.clip = v == "clip";
-    u.wtEdit = v == "wt";
-    u.browser = v == "browser" ? 1 : 0;
-    if (v.rfind("lfo", 0) == 0) u.lfoTab = std::clamp(std::atoi(v.c_str() + 3), 0, kLfos - 1);
-    if (v.rfind("env", 0) == 0) u.envTab = std::clamp(std::atoi(v.c_str() + 3), 0, kEnvs - 1);
-    u.mapping = v == "map";
+  // dev (screenshots, tests): GL_PLASMA_VIEW names a view (the old page / view names map to the
+  // new views); GL_PLASMA_PAGE takes the old page numbers
+  if (const char* e = std::getenv("GL_PLASMA_PAGE")) {
+    static const int kPageView[5] = {VLayer, VRouting, VEffects, VLinks, VSetup};
+    u.view = kPageView[std::clamp(std::atoi(e), 0, 4)];
   }
+  if (const char* e = std::getenv("GL_PLASMA_PRESET")) u.devPreset = e;
+  if (const char* e = std::getenv("GL_PLASMA_VIEW")) devView(u, e);
+  if (const char* e = std::getenv("GL_PLASMA_ENGINE")) u.layerCard = std::atoi(e);  // dev: Grains / Spectral card
   return m[t.key()] = u;
 }
+}  // namespace
+// dev (screenshots, tests): puts the editor on a named view (the old page / view names map to the new views)
+void devView(Ui& u, const std::string& name) {
+  // suffixes: "+full" (Full), "+simple", "+drawer" (the keyboard drawer out)
+  std::string v = name;
+  if (const size_t plus = v.find('+'); plus != std::string::npos) {
+    const std::string sfx = v.substr(plus);
+    u.full = sfx.find("+full") != std::string::npos, u.fullSet = true;
+    if (sfx.find("+drawer") != std::string::npos) u.drawer = true;
+    if (sfx.find("+play") != std::string::npos) u.devPlay = true;
+    if (sfx.find("+3d") != std::string::npos) u.wt3d[0] = u.wt3d[1] = u.wt3d[2] = true;
+    v.resize(plus);
+  }
+  {
+    static const std::map<std::string, int> names = {
+        {"synth", VLayer}, {"voices", VVoices}, {"play", VVoices}, {"layer", VLayer}, {"layer1", VLayer}, {"layer2", VLayer}, {"layer3", VLayer}, {"roottex", VRootTex}, {"filters", VFilters},
+        {"amp", VAmp},     {"routing", VRouting}, {"mix", VRouting}, {"effects", VEffects}, {"fx", VEffects}, {"links", VLinks},
+        {"matrix", VLinks}, {"keys", VKeys},  {"setup", VSetup}, {"global", VSetup}, {"arp", VArp}, {"phrases", VPhrases},
+        {"clip", VPhrases}, {"wt", VTable},   {"table", VTable}, {"browser", VLibrary}, {"library", VLibrary}, {"map", VZones},
+        {"zones", VZones}};
+    if (auto f = names.find(v); f != names.end()) u.view = f->second;
+    if (v.rfind("layer", 0) == 0 && v.size() == 6) u.layer = std::clamp(v[5] - '1', 0, kOscs - 1);
+    if (v.rfind("lfo", 0) == 0) u.view = VLfo, u.lfoTab = std::clamp(std::atoi(v.c_str() + 3), 0, kLfos - 1);
+    if (v.rfind("env", 0) == 0) u.view = VEnv, u.envTab = std::clamp(std::atoi(v.c_str() + 3), 0, kEnvs - 1);
+    if (v == "linkmode") u.linkSrc = SrcLfo1, u.devLinkArm = SrcLfo1;
+    if (v == "drawer") u.drawer = true;
+    if (v == "menu") u.view = VLayer, u.devMenu = true;
+    if (v == "library" || v == "libshapes" || v == "libsounds" || v == "browser") u.view = VLibrary, u.sbLib = v == "libshapes" ? 1 : v == "libsounds" || v == "browser" ? 2 : 0;
+    // the Synth tab with n layers, a part dragged from the sidebar, the Modulation section
+    if (v.rfind("synth", 0) == 0 && v.size() == 6) u.view = VLayer, u.devLayers = std::clamp(v[5] - '0', 1, 3);
+    if (v.rfind("drag", 0) == 0) u.view = v == "dragfx" ? VEffects : VLayer, u.devDrag = v == "dragfx" ? 100 + FxReverb : v == "dragwt" ? 200 + 1 : 0;
+    if (v == "modulation") u.view = VLayer, u.devScrollMod = true;
+    // a block's advanced panel opened by a double-click: "open:layer1", "open:filter1", "open:lfo1", "open:root"
+    if (v == "open:layer1") u.view = VTable, u.wtOsc = 0, u.back = VLayer;
+    if (v == "open:filter1") u.view = VFilters, u.large = true;
+    if (v == "open:root") u.view = VRootTex, u.large = true, u.src = 3;
+    if (v == "open:lfo1") u.view = VLfo, u.lfoTab = 0;
+    if (v == "open:fx") u.view = VEffects, u.large = true;
+    // Panels / Patch, Simple / Full ("patch", "patchlink", "patchadd", "layer1+full", "src4", ...)
+    if (v.rfind("patch", 0) == 0) u.patch = true, u.devPatch = v == "patchlink" ? 1 : v == "patchadd" ? 2 : v == "patchhover" ? 3 : v == "patchsearch" ? 4 : v == "patch" ? 5 : v == "patchsends" ? 6 : 0;
+    if (v.rfind("src", 0) == 0 && v.size() == 4) u.src = std::clamp(v[3] - '1', 0, 4), u.view = u.src < 3 ? VLayer : VRootTex, u.layer = std::min(u.src, 2);
+  }
+}
+namespace {
 
 // Data model cache (parsed once per data change).
 Model& modelFor(const PluginTarget& t, const std::string& data) {
@@ -2013,8 +2636,154 @@ Model& modelFor(const PluginTarget& t, const std::string& data) {
 
 }  // namespace ui
 
+namespace ui {
+// ================================================================== reach driver (GL_PLASMA_REACH=1)
+// Steps through every view and its sub-states (layers x engines x cards, envelope and LFO
+// tabs, each effect slot with the type that has the most controls, each link) two frames a
+// step, then prints the parameters no control was drawn for ("PLASMA_REACH_MISSING k name")
+// and "PLASMA_REACH reached of total".
+namespace {
+bool reachOn() {
+  static const bool on = std::getenv("GL_PLASMA_REACH") != nullptr;
+  return on;
+}
+int bestFxType() {
+  int best = 1;
+  for (int t = 1; t < FxTypeCount; ++t)
+    if (fxParams(t).size() > fxParams(best).size()) best = t;
+  return best;
+}
+void reachDrive(Ctx& c) {
+  using Step = std::function<void(Ctx&)>;
+  static std::vector<Step> steps;
+  if (steps.empty()) {
+    // Full: every control of the columns in place
+    steps.push_back([](Ctx& x) { x.u.full = true, x.u.fullSet = true, x.u.reachAll = true; });
+    for (int v : {VRouting, VKeys, VSetup, VArp, VZones, VPhrases, VLinks, VVoices})
+      steps.push_back([v](Ctx& x) { x.u.view = v; });
+    for (int s = 0; s < 5; ++s) steps.push_back([s](Ctx& x) { x.u.view = s < 3 ? VLayer : VRootTex, x.u.src = s, x.u.layer = std::min(s, 2); });
+    steps.push_back([](Ctx& x) { x.u.view = VLayer, x.u.drawer = true; });
+    steps.push_back([](Ctx& x) { x.u.drawer = false; });
+    for (int o = 0; o < kOscs; ++o)
+      for (int e = 0; e < OscTypeCount; ++e)
+        for (int card = 0; card < 4; ++card)
+          steps.push_back([o, e, card](Ctx& x) {
+            x.u.view = VLayer, x.u.layer = o, x.u.layerCard = card;
+            if (vali(x, oscP(o, O_Type)) != e) setv(x, oscP(o, O_Type), e);
+          });
+    for (int e = 0; e < kEnvs; ++e) steps.push_back([e](Ctx& x) { x.u.view = VEnv, x.u.envTab = e; });
+    for (int l = 0; l < kLfos; ++l) steps.push_back([l](Ctx& x) { x.u.view = VLfo, x.u.lfoTab = l, x.u.lfoAdv = true; });
+    for (int s = 0; s < kFxSlots; ++s)
+      steps.push_back([s](Ctx& x) {
+        x.u.view = VEffects, x.u.fxSel = s;
+        if (vali(x, fxP(s, X_Type)) != bestFxType()) setv(x, fxP(s, X_Type), bestFxType());
+      });
+    for (int s = 0; s < kModSlots; ++s)
+      steps.push_back([s](Ctx& x) {  // a "scaled by" source so its own settings show
+        x.u.view = VLinks, x.u.linkSel = s;
+        if (vali(x, modP(s, M_Aux)) <= SrcNone) setv(x, modP(s, M_Aux), SrcMacro1);
+      });
+    // the Patch view's own boxes: NFilt, NFilt + 1, NAmp, NOut, NSendA, NSendB, the macros (NMove + SrcMacro1; plasma_patch_ui.cpp)
+    for (int id : {10, 11, 20, 21, 22, 23, 200 + SrcMacro1}) steps.push_back([id](Ctx& x) { x.u.view = VLayer, x.u.devPSel = id; });
+    steps.push_back([](Ctx& x) { x.u.devPSel = -1; });
+  }
+  const int frame = ++c.u.reachStep;
+  const int i = frame / 2;
+  if (i < static_cast<int>(steps.size())) {
+    steps[static_cast<size_t>(i)](c);
+    // GL_PLASMA_REACH=patch: the same walk in the Patch view, each step's block selected there
+    static const bool patch = std::string(std::getenv("GL_PLASMA_REACH")) == "patch";
+    if (patch) c.u.full = true, c.u.fullSet = true, c.u.pAll = true, patchSelectFor(c.u);  // every setting of the box unfolded
+    return;
+  }
+  if (i != static_cast<int>(steps.size()) || frame % 2) return;
+  // the report (once): effect parameters past the largest effect's controls have no meaning
+  const int fxUsed = static_cast<int>(fxParams(bestFxType()).size());
+  const auto& r = reachRecord();
+  int total = 0, got = 0;
+  for (int k = 0; k < kParamCount; ++k) {
+    if (k >= kFxBase && k < kFxBase + kFxSlots * X_Count && (k - kFxBase) % X_Count >= X_P0 + fxUsed) continue;
+    ++total;
+    if (static_cast<size_t>(k) < r.size() && r[static_cast<size_t>(k)]) ++got;
+    else std::fprintf(stderr, "PLASMA_REACH_MISSING %d %s\n", k, paramLongName(k).c_str());
+  }
+  std::fprintf(stderr, "PLASMA_REACH %d of %d\n", got, total);
+  // the pickers' display order: every stored index exactly once (morph mode 0, Off, has its own entry)
+  const auto perm = [](const std::vector<MenuGroup>& g, int first, int count, const char* what) {
+    std::vector<int> seen(static_cast<size_t>(count), 0);
+    bool ok = true;
+    for (const auto& grp : g)
+      for (int i : grp.items) {
+        if (i < first || i >= count) ok = false, std::fprintf(stderr, "PLASMA_MENU_BAD %s index %d out of range\n", what, i);
+        else if (seen[static_cast<size_t>(i)]++) ok = false, std::fprintf(stderr, "PLASMA_MENU_BAD %s index %d listed twice\n", what, i);
+      }
+    for (int i = first; i < count; ++i)
+      if (!seen[static_cast<size_t>(i)]) ok = false, std::fprintf(stderr, "PLASMA_MENU_BAD %s index %d missing\n", what, i);
+    return ok;
+  };
+  const bool fOk = perm(filterMenuGroups(), 0, static_cast<int>(filterNames().size()), "filter");
+  const bool mOk = perm(morphMenuGroups(), 1, warpCount(), "morph");
+  std::fprintf(stderr, "PLASMA_MENUS %s\n", fOk && mOk ? "ok" : "bad");
+}
+}  // namespace
+
+}  // namespace ui
+
 // ================================================================== entry point
+namespace ui {
+void drawFrame(Ctx& c);  // plasma_frame_ui.cpp
+
+namespace {
+int gThemeSwitch = -1;  // -1 none, 0 to dark, 1 to light
+int gEditorFrames = 0;  // frames Plasma's editor has drawn (dev hooks)
+int gLastFrame = -1;
+}  // namespace
+void requestThemeSwitch(bool toLight) { gThemeSwitch = toLight ? 1 : 0; }
+void applyThemeSwitch(App& a) {
+  if (ImGui::GetFrameCount() != gLastFrame) gLastFrame = ImGui::GetFrameCount(), ++gEditorFrames;
+  if (gThemeSwitch < 0) return;
+  const bool toLight = gThemeSwitch == 1;
+  gThemeSwitch = -1;
+  const dispconf::Snapshot before = dispconf::take(a.settings, dispconf::themeKeys());
+  theme::modeToSettings(toLight ? theme::Mode::Light : theme::Mode::Dark, a.settings);
+  theme::applyFromSettings(a.settings);
+  ::gl::ui::confirmTheme(a, before, "Theme");
+}
+bool devThemePress() {
+  static const char* at = std::getenv("GL_PLASMA_THEME_AT");  // "60,140": editor frames
+  static int last = -1;
+  if (!at || last == gEditorFrames) return false;
+  for (const char* p = at; *p;) {
+    if (std::atoi(p) == gEditorFrames) {
+      last = gEditorFrames;
+      std::fprintf(stderr, "PLASMA_THEME press %d\n", gEditorFrames);
+      return true;
+    }
+    while (*p && *p != ',') ++p;
+    if (*p == ',') ++p;
+  }
+  return false;
+}
+// dev (GL_PLASMA_THEME_DUMP=<editor frame>): the app palette, Plasma's palette and ImGui's colours
+void devThemeDump(App&) {
+  static const char* at = std::getenv("GL_PLASMA_THEME_DUMP");
+  static bool done = false;
+  if (!at || done || gEditorFrames != std::atoi(at)) return;
+  done = true;
+  const theme::Palette& T = theme::pal();
+  const Pal& P = pal();
+  std::fprintf(stderr, "PLASMA_THEME_DUMP frame %d dark %d app %08x %08x %08x %08x plasma %08x %08x %08x %08x %08x %08x %08x %08x imgui",
+               ImGui::GetFrameCount(), T.dark ? 1 : 0, T.surface900, T.surface800, T.text, T.field, P.frame, P.panel, P.head, P.text, P.label, P.line, P.field, P.well);
+  const ImGuiStyle& st = ImGui::GetStyle();
+  for (int i = 0; i < ImGuiCol_COUNT; ++i) std::fprintf(stderr, " %08x", ImGui::ColorConvertFloat4ToU32(st.Colors[i]));
+  std::fprintf(stderr, "\n");
+}
+}
 bool drawEditor(App& a, const PluginTarget& t, float width) {
+  if (!t.state(a.doc.song())) return false;
+  ui::applyThemeSwitch(a);  // before the palette is read and the skin scope opens
+  ui::devThemeDump(a);
+  ui::runLater(a, t);  // menu edits that replace the sound, made last frame
   const PluginState* sp = t.state(a.doc.song());
   if (!sp || sp->type != kType) return false;
   const PluginState st = *sp;
@@ -2029,6 +2798,7 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
   if (t.isChannel())
     if (auto rt = a.builder.channelRuntime(t.owner); rt && rt->gen) c.hasLive = u.prefLive && liveView(rt->gen.get(), c.live);
   ImGui::PushID("gl.plasma");
+  layoutScroll(c);  // the plugin window itself (smaller than the editor: it scrolls)
   if (!u.devPreset.empty()) {  // dev (screenshots): load a factory preset by name once
     const std::string want = u.devPreset;
     u.devPreset.clear();
@@ -2038,32 +2808,45 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
     for (const auto& p : factoryDataPresets())
       if (p.name == want) applyPreset(c, p.values, p.data, p.name);
   }
-  panelRect(c, 0, 0, kW, kH, c.P.frame);
-  header(c);
-  if (u.browser) {
-    // the browser covers the page and the lower panel: they are not drawn (nor clickable) under it
-  } else if (u.clip) {
-    clipEditor(c);
-  } else if (u.wtEdit) {
-    wtEditor(c);
-  } else {
-    panelRect(c, 0, kPageY, kW, kLowerY - kPageY, c.P.frame);  // modules sit in frames: the gutters show this
-    switch (u.page) {
-      case PgOsc: oscPage(c); break;
-      case PgMix: mixPage(c); break;
-      case PgFx: fxPage(c); break;
-      case PgMatrix: matrixPage(c); break;
-      default: globalPage(c); break;
+  if (reachOn()) reachDrive(c);
+  // dev (tests): GL_PLASMA_VIEWS="a,b,c" shows each named view for eight frames in turn, the
+  // layout check tagged with the view's name
+  static std::vector<std::string> cycle = [] {
+    std::vector<std::string> v;
+    if (const char* e = std::getenv("GL_PLASMA_VIEWS")) {
+      std::string cur;
+      for (const char* q = e;; ++q) {
+        if (*q == ',' || !*q) {
+          if (!cur.empty()) v.push_back(cur);
+          cur.clear();
+          if (!*q) break;
+        } else {
+          cur += *q;
+        }
+      }
     }
-    if (!(u.page == PgMatrix && u.mxExpanded)) {
-      lowerPanel(c);
+    return v;
+  }();
+  static int cycleFrame = 0;
+  if (!cycle.empty()) {
+    const int i = cycleFrame / 8, f = cycleFrame % 8;
+    ++cycleFrame;
+    if (i < static_cast<int>(cycle.size())) {
+      if (f == 0) {
+        const Ui keep = u;
+        u = Ui{};
+        u.prefBubbles = keep.prefBubbles, u.prefLive = keep.prefLive;
+        devView(u, cycle[static_cast<size_t>(i)]);
+        u.devFrames = 0;
+      }
+      layoutViewTag() = cycle[static_cast<size_t>(i)];
+    } else {
+      layoutViewTag() = "done";
     }
   }
-  strip(c);
-  layoutLayer(1);
-  if (u.mapping) mappingPanel(c);
-  layoutLayer(2);
-  if (u.browser) presetBrowser(c);
+  // dev (tests): Link mode armed after six frames, so the controls first draw (and register) as usual
+  if (u.devLinkArm >= 0 && ++u.devFrames <= 6) u.linkSrc = u.devFrames == 6 ? u.devLinkArm : -1;
+  drawFrame(c);
   layoutReport(c);
   c.dl->AddRect(F.o, F.p(kW, kH), c.P.line, 0);
   F.end(kW, kH);

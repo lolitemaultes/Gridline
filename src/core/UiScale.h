@@ -14,6 +14,8 @@
 //      2. QT_SCALE_FACTOR,
 //      3. a window that SDL already scales (Wayland output scale: drawable
 //         larger than the window): 1, the compositor does it,
+//    On SDL's Wayland driver only the compositor counts (1 here): GDK_SCALE and
+//    QT_SCALE_FACTOR are for X11 programs and would scale twice (K-153).
 //      4. Xft.dpi from the X resource database (what GNOME, Zorin, KDE, Xfce
 //         and Cinnamon write for their scale and text-scaling settings;
 //         96 = 100 %),

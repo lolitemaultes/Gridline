@@ -75,6 +75,35 @@ void post(const Event& e);
 std::vector<Event> take();
 uint64_t newToken();
 
+// K-153: when an SDL drop (X11, Wayland, Windows) lands. X11 and Windows: at the pointer when SDL says
+// the drop is complete. SDL's Wayland driver knows no pointer position during a drag (no global
+// position on Wayland, the window's own position reads 0,0, and the drag's motion is not passed on):
+// the drop waits until the pointer is back in the window, which the compositor reports right after the
+// drag ends, and lands there; after `kWaitSeconds` without it, at the last position known.
+struct DropTiming {
+  static constexpr double kWaitSeconds = 0.5;
+  bool waiting = false;
+  double since = 0;
+  // SDL said the drop is complete: true when it lands now (not Wayland), else it waits.
+  bool completed(bool waylandDriver, double now) {
+    if (!waylandDriver) return true;
+    waiting = true, since = now;
+    return false;
+  }
+  // The pointer moved in (or entered) the main window: true when a waiting drop lands now, there.
+  bool pointerMoved() {
+    const bool was = waiting;
+    waiting = false;
+    return was;
+  }
+  // Once a frame: true when a waiting drop gave up waiting and lands at the last position now.
+  bool expired(double now) {
+    if (!waiting || now - since < kWaitSeconds) return false;
+    waiting = false;
+    return true;
+  }
+};
+
 // Where pending items are written: "<project folder>/Dropped", or the config
 // folder's "Dropped" while the project is unsaved. Set by the interface.
 void setDropFolder(const std::string& dir);

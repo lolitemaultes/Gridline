@@ -194,6 +194,9 @@ struct DevItem {
   int frame = -1;
 };
 bool devItem(ParamId pid, DevItem& out);
+// K-164: records the last item as parameter pid's control (for "atparam"), when an editor handles
+// the item itself instead of the drag helpers (Plasma's Link mode).
+void devItemHere(ParamId pid);
 // J-105 dev / test hook (--dev-input "sdlpt" / "pts"): the last drawn point editor of a
 // name ("conv.eq", "conv.env"): its plot rectangle (logical px; x0..x1 = 0..span, y1..y0 =
 // value 0..1), its points (t, v, tension), the point being dragged and the hovered one.

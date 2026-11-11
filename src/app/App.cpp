@@ -615,6 +615,7 @@ void App::startPresetImport() {
       s = std::to_string(rep.converted) + " presets converted (" + std::to_string(rep.exact) + " exact), " + std::to_string(rep.chains) +
           " effect chains";
       if (rep.shapes) s += ", " + std::to_string(rep.shapes) + " automation shapes";
+      if (rep.grooves) s += ", " + std::to_string(rep.grooves) + " swing presets";
       if (rep.failed) s += ", " + std::to_string(rep.failed) + " without a Gridline equivalent yet";
       if (rep.cancelled) s += " (cancelled)";
     }
@@ -1050,7 +1051,7 @@ int App::exportStems(const std::string& dir, int bits, int sampleRate) {
 
 void App::closeAllWindows() {
   showBrowser = showRack = showPiano = showPlaylist = showMixer = false;
-  showSettings = showInfo = showHistory = showAbout = showExport = showShortcuts = showPluginManager = showPerformance = false;
+  showSettings = showInfo = showHistory = showAbout = showExport = showShortcuts = showPluginManager = showPerformance = showGroove = false;
   closePluginWindows();
 }
 

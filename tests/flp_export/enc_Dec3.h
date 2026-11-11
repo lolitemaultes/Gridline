@@ -1,5 +1,6 @@
 // Gridline — FLP export tests: Dec3 plugin encoders (FlpEncDec3.cpp).
 #pragma once
+#include <cstdio>
 #include <functional>
 #include <string>
 #include "enc_common.h"
@@ -33,6 +34,10 @@ inline void dec3Synthetic(const char* flName, const char* glType, const std::str
 inline void dec3Corpus(const char* flName, const std::string& what, int exact = -1) {
   if (!flInstalled()) return;
   Stats s = corpusRoundTrip(flName);
+  if (s.states == 0) {  // a partial factory-data copy without this plugin's states: nothing to compare
+    std::printf("  (%s: no shipped states in this factory data, check skipped)\n", what.c_str());
+    return;
+  }
   const int want = exact < 0 ? s.decoded : exact;
   expect(s.decoded > 0 && s.nativeExact >= want, (what + ": shipped states encode exactly (" + std::to_string(s.nativeExact) + "/" + std::to_string(s.decoded) + ")").c_str());
   expect(s.patchExact == s.decoded, (what + ": unchanged states are written verbatim").c_str());

@@ -156,7 +156,7 @@ check(playlist
 check(piano
       "File" "Edit" "Select" "Tools" "Chord progression" "Riff from progression" "Scripts" "Tool" "Snap" "Stamp" "View")
 check(mixer
-      "Insert one" "Insert multiple..." "Insert from state..." "Rename, colour and icon" "File" "Mute" "Solo" "Disable track" "Freeze" "Hibernate" "Make mono" "Swap left and right" "Reverse polarity" "Stereo separation" "Render selected tracks to wave files..." "Channel routing" "Track routing" "Send to" "Route only to" "Select" "Unroute tracks routed to this track" "Reset routing to master" "Create group..." "Insert effect" "Effect chain" "Dock to" "Move left" "Move right" "Allow threaded processing" "Track latency" "Reset track to default" "Trim unused tracks at the end" "Delete")
+      "Insert one" "Insert multiple..." "Insert from state..." "Rename, colour and icon" "File" "Mute" "Solo" "Disable track" "Freeze" "Hibernate" "Make mono" "Swap left and right" "Reverse polarity" "Stereo separation" "Render selected tracks to wave files..." "Channel routing" "Track routing" "Send to" "Route only to" "Select" "Unroute tracks routed to this track" "Reset routing to master" "Create group..." "Insert effect" "Effect chain" "Dock to" "Move left" "Move right" "Allow threaded processing" "Track latency" "Reset track" "Trim unused tracks at the end" "Delete")
 check(slot
       "Open editor" "Replace" "Presets and state" "Bypass" "Enable switch" "Mix" "Move up" "Move down" "Move to track" "Reset to default" "Remove")
 check(plugin

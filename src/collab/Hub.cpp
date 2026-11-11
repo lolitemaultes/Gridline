@@ -57,32 +57,169 @@ namespace {
 
 std::string encodeCode(const char* prefix, const Json& j) { return std::string(prefix) + crypto::toB64url(jsonCompact(j)); }
 
-bool decodeCode(const std::string& text, const char* prefix, Json& out) {
+// K-174: pasted text as chat apps and mail programs leave it, put back to plain ASCII. `dash`
+// is what an en or em dash stands for (smart punctuation turns "-" or "--" into one).
+std::string cleanPasted(const std::string& text, const char* enDash, const char* emDash) {
+  std::string out;
+  out.reserve(text.size());
+  bool lineStart = true;
+  for (size_t i = 0; i < text.size(); ++i) {
+    const auto b = [&](size_t k) { return i + k < text.size() ? static_cast<unsigned char>(text[i + k]) : 0u; };
+    const unsigned c0 = b(0);
+    char put = 0;
+    const char* puts = nullptr;
+    size_t len = 1;
+    if (c0 == 0xC2 && b(1) == 0xA0) put = ' ', len = 2;                                       // no-break space
+    else if (c0 == 0xC2 && b(1) == 0xAD) len = 2;                                             // soft hyphen
+    else if (c0 == 0xEF && b(1) == 0xBB && b(2) == 0xBF) len = 3;                             // byte order mark
+    else if (c0 == 0xE2 && b(1) == 0x80 && b(2) >= 0x8B && b(2) <= 0x8F) len = 3;             // zero-width, direction marks
+    else if (c0 == 0xE2 && b(1) == 0x81 && b(2) >= 0xA0 && b(2) <= 0xA4) len = 3;             // word joiner, invisible operators
+    else if (c0 == 0xE2 && b(1) == 0x80 && b(2) <= 0x8A) put = ' ', len = 3;                  // typographic spaces
+    else if (c0 == 0xE2 && b(1) == 0x80 && (b(2) == 0xA8 || b(2) == 0xA9)) put = '\n', len = 3;  // line / paragraph separator
+    else if (c0 == 0xE2 && b(1) == 0x80 && b(2) == 0xAF) put = ' ', len = 3;                  // narrow no-break space
+    else if (c0 == 0xE2 && b(1) == 0x81 && b(2) == 0x9F) put = ' ', len = 3;                  // medium mathematical space
+    else if (c0 == 0xE3 && b(1) == 0x80 && b(2) == 0x80) put = ' ', len = 3;                  // ideographic space
+    else if (c0 == 0xE2 && b(1) == 0x80 && b(2) >= 0x90 && b(2) <= 0x92) put = '-', len = 3;  // hyphen, non-breaking hyphen, figure dash
+    else if (c0 == 0xE2 && b(1) == 0x88 && b(2) == 0x92) put = '-', len = 3;                  // minus sign
+    else if (c0 == 0xE2 && b(1) == 0x80 && b(2) == 0x93) puts = enDash, len = 3;
+    else if (c0 == 0xE2 && b(1) == 0x80 && (b(2) == 0x94 || b(2) == 0x95)) puts = emDash, len = 3;
+    else if (c0 == 0xEF && b(1) == 0xBC && b(2) >= 0x81 && b(2) <= 0xBF)                       // full-width ASCII U+FF01..FF3F
+      put = static_cast<char>(b(2) - 0x81 + 0x21), len = 3;
+    else if (c0 == 0xEF && b(1) == 0xBD && b(2) >= 0x80 && b(2) <= 0x9E)                       // U+FF40..FF5E
+      put = static_cast<char>(b(2) - 0x80 + 0x60), len = 3;
+    else if (c0 == '=' && (b(1) == '\n' || (b(1) == '\r' && b(2) == '\n'))) len = b(1) == '\r' ? 3 : 2;  // mail soft line break
+    else put = static_cast<char>(c0);
+    i += len - 1;
+    if (puts) {
+      out += puts;
+      lineStart = false;
+      continue;
+    }
+    if (!put) continue;
+    // mail and chat quoting: "> " at the start of a line
+    if (lineStart && (put == '>' || put == '|')) put = ' ';
+    if (put == '\n' || put == '\r') lineStart = true;
+    else if (put != ' ' && put != '\t') lineStart = false;
+    out += put;
+  }
+  return out;
+}
+
+size_t findNoCase(const std::string& text, const char* what) {
+  const size_t n = std::strlen(what);
+  for (size_t i = 0; i + n <= text.size(); ++i) {
+    size_t k = 0;
+    while (k < n && std::tolower(static_cast<unsigned char>(text[i + k])) == what[k]) ++k;
+    if (k == n) return i;
+  }
+  return std::string::npos;
+}
+
+enum class CodeRead { Ok, Missing, Incomplete, Damaged };
+
+CodeRead decodeClean(const std::string& text, const char* prefix, Json& out) {
   // chat apps wrap long lines and add text around a code: take the longest
   // run of code pieces (split by white space) after the prefix that decodes
-  const size_t at = text.find(prefix);
-  if (at == std::string::npos) return false;
+  size_t at = findNoCase(text, prefix);
+  if (at == std::string::npos) return CodeRead::Missing;
+  at += std::strlen(prefix);
   std::vector<std::string> pieces;
   std::string cur;
-  for (size_t i = at + std::strlen(prefix); i < text.size(); ++i) {
+  for (size_t i = at; i < text.size(); ++i) {
     const char c = text[i];
     if (c == ' ' || c == '\n' || c == '\r' || c == '\t') {
       if (!cur.empty()) pieces.push_back(cur);
       cur.clear();
       continue;
     }
-    if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_')) break;
+    if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_' || c == '+' || c == '/' || c == '=')) break;
     cur += c;
   }
   if (!cur.empty()) pieces.push_back(cur);
+  std::string all;
   for (size_t n = pieces.size(); n > 0; --n) {
     std::string body;
     for (size_t k = 0; k < n; ++k) body += pieces[k];
+    if (n == pieces.size()) all = body;
     std::string raw;
     if (body.size() > 64 * 1024 || !crypto::fromB64url(body, raw)) continue;
-    if (jsonParse(raw, out) && out.is(Json::Type::Object)) return true;
+    if (jsonParse(raw, out) && out.is(Json::Type::Object)) return CodeRead::Ok;
   }
-  return false;
+  // cut off (a chat app shortened the message) or changed on the way?
+  std::string raw;
+  if (all.size() >= 4 && crypto::fromB64url(all, raw) && raw.rfind("{\"", 0) == 0) {
+    // a whole code ends its JSON with "}" (a code cut short ends somewhere inside)
+    return raw.find('}', raw.size() > 3 ? raw.size() - 3 : 0) != std::string::npos ? CodeRead::Damaged : CodeRead::Incomplete;
+  }
+  return all.empty() ? CodeRead::Missing : CodeRead::Damaged;
+}
+
+CodeRead decodeCode(const std::string& text, const char* prefix, Json& out) {
+  // typographic dashes: try them as "-" and as "--" (smart punctuation makes one of either)
+  CodeRead best = CodeRead::Missing;
+  static const char* const kDash[][2] = {{"-", "--"}, {"-", "-"}, {"--", "--"}, {"--", "-"}};
+  const bool dashes = text.find("\xE2\x80\x93") != std::string::npos || text.find("\xE2\x80\x94") != std::string::npos ||
+                      text.find("\xE2\x80\x95") != std::string::npos;
+  for (const auto& d : kDash) {
+    const CodeRead r = decodeClean(cleanPasted(text, d[0], d[1]), prefix, out);
+    if (r == CodeRead::Ok) return r;
+    if (static_cast<int>(r) > static_cast<int>(best)) best = r;
+    if (!dashes) break;
+  }
+  return best;
+}
+
+// K-174: the addresses an ICE description offers ("address port type" per candidate, sorted),
+// to tell a changed public address from a description that only came out in another order.
+// Descriptions of the in-memory test network are compared whole.
+std::set<std::string> candidateSet(const std::string& ice) {
+  std::set<std::string> out;
+  if (ice.find("a=candidate:") == std::string::npos) {
+    if (!ice.empty()) out.insert(ice);
+    return out;
+  }
+  size_t at = 0;
+  while ((at = ice.find("a=candidate:", at)) != std::string::npos) {
+    size_t nl = ice.find('\n', at);
+    if (nl == std::string::npos) nl = ice.size();
+    std::vector<std::string> f;
+    size_t p = at;
+    while (p < nl && f.size() < 8) {
+      size_t sp = ice.find(' ', p);
+      if (sp == std::string::npos || sp > nl) sp = nl;
+      std::string w = ice.substr(p, sp - p);
+      while (!w.empty() && (w.back() == '\r' || w.back() == '\n')) w.pop_back();
+      f.push_back(w);
+      p = sp + 1;
+    }
+    if (f.size() >= 8) out.insert(f[4] + " " + f[5] + " " + f[7]);
+    at = nl;
+  }
+  return out;
+}
+
+// The error for a text that is not the code asked for: another kind of code, or a code that
+// was cut off or damaged on the way.
+std::string codeError(CodeRead r, const std::string& text, char want) {
+  const char got = codeKind(text);
+  if (r == CodeRead::Missing && got && got != want) {
+    if (got == 'i') return i18n::tr("This is an invite code. It goes in the Join window of the person you invite (File > Join collaborative project).");
+    if (got == 'r') return i18n::tr("This is a reply code. It goes back to the person who invited you: they paste it under their invite and press Use reply.");
+    return i18n::tr("This is a reconnect code. Paste it in the Collaboration panel of the open project, under the collaborator it came from.");
+  }
+  if (r == CodeRead::Incomplete) {
+    if (want == 'r') return i18n::tr("Only part of the reply code arrived (it is cut off). Ask them to send all of it, or to use Save as file and send the file.");
+    if (want == 'c') return i18n::tr("Only part of the reconnect code arrived (it is cut off). Ask for all of it, or for the code as a file.");
+    return i18n::tr("Only part of the invite code arrived (it is cut off). Ask them to send all of it, or to use Save as file and send the file.");
+  }
+  if (r == CodeRead::Damaged) {
+    if (want == 'r') return i18n::tr("The reply code was changed on the way. Ask them to copy it again with the Copy button, or to send it as a file.");
+    if (want == 'c') return i18n::tr("The reconnect code was changed on the way. Ask for it again, or as a file.");
+    return i18n::tr("The invite code is damaged. Ask for a new one.");
+  }
+  if (want == 'r') return i18n::tr("This is not a Gridline reply code. It starts with gridline-reply:");
+  if (want == 'c') return i18n::tr("This is not a Gridline reconnect code.");
+  return i18n::tr("This is not a Gridline invite code. It starts with gridline-invite:");
 }
 
 }  // namespace
@@ -127,8 +264,17 @@ std::string makeInviteCode(const InviteInfo& i) {
 
 bool parseInviteCode(const std::string& code, InviteInfo& out, std::string* err) {
   Json j;
-  if (!decodeCode(code, kInvitePrefix, j) || j.num("v", 0) != 1) {
-    if (err) *err = i18n::tr("This is not a Gridline invite code.");
+  const CodeRead r = decodeCode(code, kInvitePrefix, j);
+  if (r != CodeRead::Ok) {
+    if (err) *err = codeError(r, code, 'i');
+    return false;
+  }
+  if (j.num("v", 0) > 1) {
+    if (err) *err = subst(i18n::tr("This invite was made with a newer Gridline (%1). Update Gridline to join."), j.text("av"));
+    return false;
+  }
+  if (j.num("v", 0) != 1) {
+    if (err) *err = i18n::tr("The invite code is damaged. Ask for a new one.");
     return false;
   }
   InviteInfo i;
@@ -153,10 +299,107 @@ bool parseInviteCode(const std::string& code, InviteInfo& out, std::string* err)
 }
 
 char codeKind(const std::string& text) {
-  if (text.find(kInvitePrefix) != std::string::npos) return 'i';
-  if (text.find(kReplyPrefix) != std::string::npos) return 'r';
-  if (text.find(kReconnectPrefix) != std::string::npos) return 'c';
+  const std::string t = cleanPasted(text, "-", "-");
+  if (findNoCase(t, kInvitePrefix) != std::string::npos) return 'i';
+  if (findNoCase(t, kReplyPrefix) != std::string::npos) return 'r';
+  if (findNoCase(t, kReconnectPrefix) != std::string::npos) return 'c';
   return 0;
+}
+
+bool InviteInfo::expiredHere(int64_t nowSec) const { return nowSec > expires + kClockGraceSec; }
+
+std::string makeReplyCode(const ReplyInfo& r) {
+  Json j = Json::makeObject();
+  j.object["v"] = Json::makeNumber(1);
+  j.object["id"] = Json::makeString(r.inviteId);
+  j.object["ice"] = Json::makeString(r.ice);
+  return encodeCode(kReplyPrefix, j);
+}
+
+bool parseReplyCode(const std::string& code, ReplyInfo& out, std::string* err) {
+  Json j;
+  const CodeRead r = decodeCode(code, kReplyPrefix, j);
+  if (r != CodeRead::Ok) {
+    if (err) *err = codeError(r, code, 'r');
+    return false;
+  }
+  std::string id;
+  if (!crypto::fromHex(j.text("id"), id) || id.size() != 16 || j.text("ice").empty()) {
+    if (err) *err = codeError(CodeRead::Damaged, code, 'r');
+    return false;
+  }
+  out.inviteId = j.text("id");
+  out.ice = j.text("ice");
+  return true;
+}
+
+bool descriptionHasPublicPath(const std::string& ice) {
+  size_t at = 0;
+  while ((at = ice.find("a=candidate:", at)) != std::string::npos) {
+    const size_t nl = ice.find('\n', at);
+    const std::string line = ice.substr(at, nl == std::string::npos ? std::string::npos : nl - at);
+    at += 12;
+    if (line.find(" typ srflx") != std::string::npos || line.find(" typ relay") != std::string::npos ||
+        line.find(" typ prflx") != std::string::npos)
+      return true;
+    // a global IPv6 address (not link-local fe80::/10, not unique-local fc00::/7)
+    std::vector<std::string> f;
+    size_t p = 0;
+    while (p < line.size() && f.size() < 6) {
+      const size_t sp = line.find(' ', p);
+      f.push_back(line.substr(p, sp == std::string::npos ? std::string::npos : sp - p));
+      if (sp == std::string::npos) break;
+      p = sp + 1;
+    }
+    if (f.size() >= 5 && f[4].find(':') != std::string::npos) {
+      std::string a = f[4];
+      for (auto& ch : a) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+      const bool local = a.rfind("fe8", 0) == 0 || a.rfind("fe9", 0) == 0 || a.rfind("fea", 0) == 0 || a.rfind("feb", 0) == 0 ||
+                         a.rfind("fc", 0) == 0 || a.rfind("fd", 0) == 0 || a == "::1";
+      if (!local) return true;
+    }
+  }
+  return false;
+}
+
+std::string joinProblemText(JoinProblem p, const std::string& inviter) {
+  const std::string who = inviter.empty() ? std::string(i18n::tr("the inviter")) : inviter;
+  switch (p) {
+    case JoinProblem::NoPublicAddress:
+      return i18n::tr("This computer couldn't find its public internet address (the address servers did not answer), so only a computer on the same network can reach it.");
+    case JoinProblem::NoHandshake:
+      return subst(i18n::tr("The computers reached each other, but %1's Gridline did not answer. The invite may have been cancelled or replaced."), who);
+    case JoinProblem::Expired:
+      return i18n::tr("The invite expired while waiting. Ask for a new one.");
+    case JoinProblem::NoAnswer:
+      break;
+  }
+  return subst(i18n::tr("Couldn't reach %1's computer. If they already used your reply code, a router or firewall on one side blocks direct connections."), who);
+}
+
+std::string joinProblemHelp(JoinProblem p) {
+  switch (p) {
+    case JoinProblem::NoPublicAddress:
+      return i18n::tr("Check that this computer is online. A firewall, VPN or network filter (school, office, public Wi-Fi) may block the address server: try another network, or set a STUN or TURN server in Settings > Collaboration.");
+    case JoinProblem::NoHandshake:
+      return i18n::tr("Ask for a new invite and join with it. Both of you need the same Gridline version.");
+    case JoinProblem::Expired:
+      return i18n::tr("Invites work for the time chosen when they were made. Ask for a new one; if they just made it, check that the date and time on both computers are set automatically.");
+    case JoinProblem::NoAnswer:
+      break;
+  }
+  return i18n::tr("Make sure they pasted your reply code under their invite and pressed Use reply. Turn off VPNs on both computers and allow Gridline through the firewall when asked (private and public networks). Then join again. Test my connection (Settings > Collaboration) on both computers: when it says symmetric NAT on both sides, a direct connection can't work; a collaborator who reaches both of you, or a TURN relay, can carry it.");
+}
+
+std::string refusalText(const std::string& reason, const std::string& by) {
+  if (reason == "expired") return i18n::tr("This invite has expired. Ask for a new one.");
+  if (reason == "used") return i18n::tr("This invite was already used. Ask for a new one.");
+  if (reason == "gone") return i18n::tr("This invite is no longer open on the inviter's computer (it was cancelled or replaced). Ask for a new one.");
+  if (reason == "removed") return subst(i18n::tr("You were removed from this project by %1. Only a new invite from an admin brings you back."), by);
+  if (reason == "ended") return subst(i18n::tr("%1 stopped sharing this project."), by);
+  if (reason == "identity") return i18n::tr("The other computer could not confirm who you are. Ask for a new invite and join again.");
+  if (reason == "noticed") return i18n::tr("The other computer has left this project or stopped sharing it, so it no longer accepts connections.");
+  return i18n::tr("The other computer turned the connection down without saying why. Check that you both run the same Gridline version, then try a new invite.");
 }
 
 // ------------------------------------------------------------------- hub ----
@@ -560,7 +803,7 @@ std::string Hub::createInvite(int minutes, SiteId readmit) {
     const std::string who = cleanName(theirs.find("profile") ? theirs.find("profile")->text("name") : std::string());
     if (it == invites_.end() || it->second.used || it->second.info.expired(wallSec())) {
       ok = false;
-      reply.object["reason"] = Json::makeString(it == invites_.end() || it->second.used ? "used" : "expired");
+      reply.object["reason"] = Json::makeString(it == invites_.end() ? "gone" : it->second.used ? "used" : "expired");
       return reply;
     }
     if (!checkVersion(theirs, who.empty() ? i18n::tr("The invitee") : who, &reply)) {
@@ -637,23 +880,45 @@ void Hub::cancelInvite(const std::string& id) {
 
 bool Hub::acceptReply(const std::string& code, std::string* err) {
   std::lock_guard<std::recursive_mutex> lk(mu_);
-  Json j;
-  if (!decodeCode(code, kReplyPrefix, j)) {
-    if (err) *err = i18n::tr("This is not a Gridline reply code.");
-    return false;
-  }
-  auto it = invites_.find(j.text("id"));
+  ReplyInfo ri;
+  if (!parseReplyCode(code, ri, err)) return false;
+  auto it = invites_.find(ri.inviteId);
   if (it == invites_.end()) {
-    if (err) *err = i18n::tr("This reply belongs to another invite.");
+    if (err)
+      *err = i18n::tr("This reply code answers an invite that is no longer open here (cancelled, replaced, or made before Gridline was restarted). Make a new invite and send them that.");
     return false;
   }
-  auto l = links_.find(it->second.link);
+  InviteRec& r = it->second;
+  if (r.view.status == InviteStatus::Connected) {
+    if (err) *err = i18n::tr("They are connected already: this reply code is not needed any more.");
+    return false;
+  }
+  if (r.view.status == InviteStatus::Expired) {
+    if (err) *err = i18n::tr("This invite has expired. Make a new one and send them that.");
+    return false;
+  }
+  auto l = links_.find(r.link);
   if (l == links_.end()) {
-    if (err) *err = i18n::tr("This invite is no longer open.");
+    if (err) *err = i18n::tr("This invite is no longer open. Make a new one and send them that.");
     return false;
   }
-  l->second->remoteDesc = j.text("ice");
-  l->second->ep->setRemote(l->second->remoteDesc);
+  LinkRec& lr = *l->second;
+  const bool again = lr.remoteDesc == ri.ice;
+  lr.remoteDesc = ri.ice;
+  if (!again) lr.ep->setRemote(lr.remoteDesc);
+  // K-174: a fresh attempt now, while their computer keeps sending towards ours: both
+  // routers then see outgoing packets at the same moment and let the answers in. (An agent
+  // that has given up, or one pasted again, restarts; one that is checking just gets the
+  // new candidates.)
+  if (freshAttempts && (again || lr.ep->state() == Endpoint::State::Failed) && lr.ep->state() != Endpoint::State::Connected && lr.ep->restart()) {
+    ++lr.restarts;
+    lr.restartedAt = now_;
+    lr.descDirty = true;
+  }
+  r.view.replyUsed = true;
+  r.replyAt = now_;
+  r.attemptsAtReply = lr.restarts;
+  debugf("invite %s: reply code used (%s)", ri.inviteId.substr(0, 8).c_str(), again ? "again: fresh attempt" : "their candidates");
   return true;
 }
 
@@ -661,8 +926,9 @@ bool Hub::acceptReply(const std::string& code, std::string* err) {
 bool Hub::join(const InviteInfo& info, std::string* err) {
   std::lock_guard<std::recursive_mutex> lk(mu_);
   if (!session_) return false;
+  // (the message names the clock: a computer whose date is off sees valid invites as expired)
   if (info.expired(wallSec())) {
-    if (err) *err = i18n::tr("This invite has expired. Ask for a new one.");
+    if (err) *err = i18n::tr("This invite has expired. Ask for a new one. If it should still work, check that the date and time on this computer are set automatically.");
     return false;
   }
   joinInfo_ = info;
@@ -725,8 +991,8 @@ std::string Hub::reconnectCode(SiteId peer) {
 bool Hub::acceptReconnectCode(const std::string& code, std::string* err) {
   std::lock_guard<std::recursive_mutex> lk(mu_);
   Json j;
-  if (!decodeCode(code, kReconnectPrefix, j)) {
-    if (err) *err = i18n::tr("This is not a Gridline reconnect code.");
+  if (const CodeRead r = decodeCode(code, kReconnectPrefix, j); r != CodeRead::Ok) {
+    if (err) *err = codeError(r, code, 'c');
     return false;
   }
   if (!session_ || j.text("pid") != session_->projectId()) {
@@ -997,6 +1263,29 @@ void Hub::transportStep(double t) {
       else l.sl->input(d, nowMs());
     }
     if (l.iceAt < 0 && l.ep->state() == Endpoint::State::Connected) l.iceAt = now_;
+    // K-174: an invite or a join whose ICE agent gave up (it sends its checks for about 40 s)
+    // tries again at once on the same port with the same credentials, so the codes already
+    // sent stay valid, this computer's router keeps its outgoing hole open, and a reply code
+    // that arrives minutes later finds both computers sending. That includes an agent that
+    // connected moments before its time ran out and then failed before the handshake got
+    // through (nothing heard from the other side yet): the handshake pauses and starts
+    // again on the new path. (Member links start a fresh agent themselves, see kMemberRetrySec.)
+    if (freshAttempts && l.kind != LinkRec::Kind::Member && !l.up && (l.iceAt < 0 || !l.sl->heardData()) &&
+        (l.sl->state() == SecureLink::State::Handshake || l.sl->state() == SecureLink::State::Open) &&
+        l.ep->state() == Endpoint::State::Failed &&
+        now_ - (l.restartedAt >= 0 ? l.restartedAt : l.created) > 3 && l.ep->restart()) {
+      ++l.restarts;
+      l.restartedAt = now_;
+      l.descDirty = true;
+      if (l.iceAt >= 0) {
+        debugf("%s ICE failed before the handshake finished: fresh attempt %d", l.sl->tag.c_str(), l.restarts + 1);
+        l.iceAt = -1;
+        l.sl->pathLost();
+        if (l.initiator) l.started = false;
+      } else {
+        debugf("%s ICE gave up without a connection: fresh attempt %d", l.sl->tag.c_str(), l.restarts + 1);
+      }
+    }
     if (!l.started && l.initiator && l.ep->state() == Endpoint::State::Connected) {
       debugf("%s ICE connected after %.2f s: handshake starts", l.sl->tag.c_str(), now_ - l.created);
       l.started = true;
@@ -1082,21 +1371,15 @@ void Hub::poll(double nowSec) {
         rf.weAreOlder = c < 0 || (c == 0 && tv.protocol > version_.protocol);
         if (l.initiator && onVersionRefusal) onVersionRefusal(rf);
         msg = rf.weAreOlder ? fmtVersionOlder(rf) : fmtVersionNewer(rf);
-      } else if (reason == "expired") {
-        msg = i18n::tr("This invite has expired. Ask for a new one.");
-      } else if (reason == "used") {
-        msg = i18n::tr("This invite was already used. Ask for a new one.");
-      } else if (reason == "removed" || reason == "ended") {
-        // J-111e: we were removed / the project ended while we were away
-        if (session_) session_->learnNotice(r);
-        const std::string by = cleanName(r.text("byName"));
-        msg = reason == "removed" ? subst(i18n::tr("You were removed from this project by %1. Only a new invite from an admin brings you back."), by)
-                                  : subst(i18n::tr("%1 stopped sharing this project."), by);
-      } else if (reason == "noticed") {
-        net_[l.peer].notified = true;
-        msg = i18n::tr("The connection was refused.");
       } else {
-        msg = i18n::tr("The connection was refused.");
+        // K-174: every refusal in plain words (never a bare "refused")
+        if (reason == "removed" || reason == "ended") {
+          // J-111e: we were removed / the project ended while we were away
+          if (session_) session_->learnNotice(r);
+        } else if (reason == "noticed") {
+          net_[l.peer].notified = true;
+        }
+        msg = refusalText(reason, cleanName(r.text("byName")));
       }
       if (l.kind == LinkRec::Kind::InviteJoin) {
         join_.status = JoinStatus::Refused;
@@ -1108,30 +1391,58 @@ void Hub::poll(double nowSec) {
       l.dead = true;
       l.error = closeWhy;
     }
-    // Links that never open: ICE gets 2 min (kJoinIceSec for a join; a member link
-    // then starts again at once with a fresh agent on the same port, so a
-    // collaborator who comes online finds it), the handshake 35 s after ICE.
+    // Links that never open: a member link's ICE gets 2 min (it then starts again at once
+    // with a fresh agent on the same port, so a collaborator who comes online finds it); a
+    // join keeps trying for joinWaitSec (K-174: fresh attempts whenever one gives up, so a
+    // reply code that comes back late still connects) or until the invite expired; the
+    // handshake gets 35 s after ICE.
     const double age = now_ - l.created;
     const bool handshakeOver = l.started && l.sl->state() != SecureLink::State::Handshake && l.sl->state() != SecureLink::State::Open;
-    const double iceLimit = l.kind == LinkRec::Kind::Member ? kMemberRetrySec : kJoinIceSec;
-    const bool tooLong = handshakeOver || (l.iceAt < 0 ? age > iceLimit : now_ - l.iceAt > 35);
+    const double iceLimit = l.kind == LinkRec::Kind::Member ? kMemberRetrySec : std::max(kJoinIceSec, joinWaitSec);
+    const bool joinExpired = l.kind == LinkRec::Kind::InviteJoin && l.iceAt < 0 && joinInfo_.expiredHere(wallSec());
+    const bool tooLong = handshakeOver || joinExpired || (l.iceAt < 0 ? age > iceLimit : now_ - l.iceAt > 35);
     if (!l.up && !l.dead && l.kind != LinkRec::Kind::InviteHost && l.sl->state() != SecureLink::State::Open && tooLong) {
       l.dead = true;
       PeerNet& pn = net_[l.peer];
       ++pn.failures;
-      debugf("%s gave up after %.0f s (ice %d, handshake %d)", l.sl->tag.c_str(), age, static_cast<int>(l.ep->state()), static_cast<int>(l.sl->state()));
+      debugf("%s gave up after %.0f s (ice %d, handshake %d, %d attempts)", l.sl->tag.c_str(), age, static_cast<int>(l.ep->state()),
+             static_cast<int>(l.sl->state()), l.restarts + 1);
       if (l.kind == LinkRec::Kind::InviteJoin) {
+        const JoinProblem p = joinExpired ? JoinProblem::Expired
+                              : l.iceAt >= 0 ? JoinProblem::NoHandshake
+                              : !join_.publicAddress ? JoinProblem::NoPublicAddress
+                                                     : JoinProblem::NoAnswer;
         join_.status = JoinStatus::Failed;
-        join_.message = i18n::tr("Couldn't connect directly. Your network or theirs blocks peer-to-peer connections.");
+        join_.message = joinProblemText(p, joinInfo_.inviterName);
+        join_.help = joinProblemHelp(p);
+      }
+    }
+    if (l.kind == LinkRec::Kind::InviteJoin && !l.dead) {
+      // K-174: progress for the join window
+      join_.waited = age;
+      join_.attempts = l.restarts + 1;
+      join_.securing = l.iceAt >= 0 && !l.up;
+      if (l.descDirty && l.ep->gathered()) {
+        l.descDirty = false;
+        const std::string desc = l.ep->localDescription();
+        join_.publicAddress = !fabric_->real() || descriptionHasPublicPath(desc);
+        if (join_.status == JoinStatus::NeedReply) {
+          ReplyInfo ri{crypto::toHex(joinInfo_.inviteId.data(), 16), desc};
+          const std::string again = makeReplyCode(ri);
+          ReplyInfo old;
+          if (again != join_.reply && parseReplyCode(join_.reply, old) && candidateSet(old.ice) != candidateSet(desc)) {
+            join_.reply = again;  // the router gave us another public address: the old code no longer reaches us
+            join_.replyChanged = true;
+            debugf("%s our addresses changed: new reply code", l.sl->tag.c_str());
+          }
+        }
       }
     }
     if (l.kind == LinkRec::Kind::InviteJoin && join_.status == JoinStatus::Connecting && age > 5 && l.ep->gathered()) {
       join_.status = JoinStatus::NeedReply;
-      Json j = Json::makeObject();
-      j.object["v"] = Json::makeNumber(1);
-      j.object["id"] = Json::makeString(crypto::toHex(joinInfo_.inviteId.data(), 16));
-      j.object["ice"] = Json::makeString(l.ep->localDescription());
-      join_.reply = encodeCode(kReplyPrefix, j);
+      const std::string desc = l.ep->localDescription();
+      join_.publicAddress = !fabric_->real() || descriptionHasPublicPath(desc);
+      join_.reply = makeReplyCode(ReplyInfo{crypto::toHex(joinInfo_.inviteId.data(), 16), desc});
       debugf("%s not connected after %.1f s: reply code offered", l.sl->tag.c_str(), age);
     }
     // member links that learnt no candidates: send ours through a relay once gathered
@@ -1169,6 +1480,28 @@ void Hub::poll(double nowSec) {
     }
     if (r.view.status == InviteStatus::Ready && l != links_.end() && l->second->ep->state() == Endpoint::State::Connected)
       r.view.status = InviteStatus::Connecting;
+    else if (r.view.status == InviteStatus::Connecting && l != links_.end() && !l->second->up && l->second->ep->state() != Endpoint::State::Connected)
+      r.view.status = InviteStatus::Ready;  // that attempt dropped: still waiting for them
+    if (l != links_.end() && (r.view.status == InviteStatus::Ready || r.view.status == InviteStatus::Connecting)) {
+      LinkRec& lr = *l->second;
+      // K-174: progress, and a renewed code when this computer's public address changed
+      r.view.replyWaited = r.replyAt >= 0 ? now_ - r.replyAt : 0;
+      r.view.attempts = lr.restarts - r.attemptsAtReply + 1;
+      if (lr.descDirty && lr.ep->gathered()) {
+        lr.descDirty = false;
+        const std::string desc = lr.ep->localDescription();
+        r.view.publicAddress = !fabric_->real() || descriptionHasPublicPath(desc);
+        if (candidateSet(desc) != candidateSet(r.info.ice) && !candidateSet(desc).empty()) {
+          const bool first = r.info.ice.empty();
+          r.info.ice = desc;
+          r.view.code = makeInviteCode(r.info);
+          if (!first) {
+            r.view.codeChanged = true;
+            debugf("invite %s: our addresses changed: the code was renewed", k.substr(0, 8).c_str());
+          }
+        }
+      }
+    }
     if ((r.view.status == InviteStatus::Ready || r.view.status == InviteStatus::Preparing || r.view.status == InviteStatus::Connecting) &&
         r.info.expired(wall)) {
       r.view.status = InviteStatus::Expired;

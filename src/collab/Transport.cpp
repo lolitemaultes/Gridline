@@ -75,6 +75,15 @@ void SecureLink::start(uint64_t nowMs) {
   if (hs_.initiator) sendH1();
 }
 
+void SecureLink::pathLost() {
+  // K-174: the datagram path is being replaced (a fresh ICE attempt). An initiator still
+  // waiting for H2 stops repeating H1 until start() is called on the new path, which sends
+  // the same H1 again with a fresh 30 s budget (the responder answers a repeated H1).
+  if (state_ != State::Handshake || !hs_.initiator) return;
+  started_ = false;
+  h1Tries_ = 0;
+}
+
 void SecureLink::sendH1() {
   if (h1_.empty()) {
     const crypto::Key es = crypto::dh(ePriv_, hs_.remoteDh);

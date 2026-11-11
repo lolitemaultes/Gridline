@@ -315,6 +315,7 @@ const WinDef kWindows[] = {
     {"Live pads", "Live pads", &App::showLivePads, nullptr},
     {"Undo history", "Undo history", &App::showHistory, "edit.history"},
     {"Performance", "Performance", &App::showPerformance, nullptr},
+    {"Groove editor", "Groove editor", &App::showGroove, nullptr},  // K-151
     {"Settings", "Settings...", &App::showSettings, nullptr},
     {"Plugin manager", "Plugin manager...", &App::showPluginManager, nullptr},
     {"Keyboard shortcuts", "Keyboard shortcuts", &App::showShortcuts, "help.shortcuts"},

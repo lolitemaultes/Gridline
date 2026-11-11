@@ -1,7 +1,8 @@
-# Gridline — J-202: every page and view of Plasma's editor renders (hidden, off-screen, isolated
-# config, no Serum library). For each page (OSC, MIX, FX, MATRIX, GLOBAL), each overlay (arp,
-# clip, table editor, preset browser, oscillator mapping), an LFO and an envelope tab and three
-# presets with content (effects, matrix rows, arp / clip slots), at 100 % and 150 % UI scale:
+# Gridline — J-202: every view of Plasma's editor renders (hidden, off-screen, isolated config,
+# no preset library). For each view on the stage (the three layers, root and texture, filters,
+# amp, routing, effects, an envelope, an LFO, keys, links, setup, arpeggiator, key zones), each
+# overlay (phrases, table editor, library), Link mode, the keyboard drawer and three presets with
+# content (effects, links, phrases), at 100 % and 150 % UI scale:
 #  - the app exits cleanly (no ImGui assert, no crash) and writes its frame;
 #  - Plasma's own layout check ran (GL_PLASMA_LAYOUT_CHECK prints "PLASMA_LAYOUT") and found no
 #    text / text or text / knob overlap ("PLASMA_OVERLAP").
@@ -18,9 +19,10 @@ set(ENV{GL_PLASMA_LAYOUT_CHECK} "1")
 
 # name | page | view | preset
 set(views
-    "osc|0||" "mix|1||" "fx|2||" "matrix|3||" "global|4||" "arp|0|arp|" "clip|0|clip|" "table|0|wt|"
-    "browser|0|browser|" "mapping|0|map|" "lfo2|0|lfo2|" "env2|0|env2|" "fx-preset|2||Drawn Wobble"
-    "matrix-preset|3||Wobble Bass" "clip-preset|0|clip|Clip Groove")
+    "layer1|0|layer1|" "layer2|0|layer2|" "layer3|0|layer3|" "roottex|0|roottex|" "filters|0|filters|" "amp|0|amp|"
+    "routing|0|routing|" "effects|0|effects|" "env2|0|env2|" "lfo2|0|lfo2|" "keys|0|keys|" "links|0|links|" "setup|0|setup|"
+    "arp|0|arp|" "zones|0|zones|" "phrases|0|phrases|" "table|0|table|" "library|0|library|" "linkmode|0|linkmode|"
+    "drawer|0|drawer|" "effects-preset|0|effects|Drawn Wobble" "links-preset|0|links|Wobble Bass" "phrases-preset|0|phrases|Clip Groove")
 set(count 0)
 foreach(scale 1 1.5)
   foreach(v ${views})
@@ -53,4 +55,4 @@ foreach(scale 1 1.5)
     math(EXPR count "${count} + 1")
   endforeach()
 endforeach()
-message(STATUS "ok - ${count} Plasma pages and views render without overlaps")
+message(STATUS "ok - ${count} Plasma views render without overlaps")

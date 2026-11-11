@@ -2,6 +2,7 @@
 #include "ClipLoop.h"
 #include "ClipGain.h"
 #include "Fades.h"
+#include "Groove.h"
 #include "ProjectInterop.h"
 #include <algorithm>
 #include <atomic>
@@ -987,6 +988,44 @@ bool songExtrasFromJson(const Json& j, Song& s, const std::function<bool(const J
   s.currentArrangement = cur;
   return true;
 }
+
+// K-151: the song's swing shape. Written only when it is not the classic step swing.
+Json grooveToJson(const SongGroove& gIn) {
+  SongGroove g = gIn;
+  groove::normalize(g);
+  Json j = Json::makeObject();
+  j.object["grid"] = Json::makeString(groove::gridKey(g.shape.grid));
+  j.object["cycle"] = num(g.shape.cycle);
+  Json t = Json::makeArray();
+  for (float v : g.shape.timing) t.array.push_back(num(v));
+  j.object["timing"] = std::move(t);
+  if (!g.shape.velocity.empty()) {
+    Json v = Json::makeArray();
+    for (float x : g.shape.velocity) v.array.push_back(num(x));
+    j.object["velocity"] = std::move(v);
+  }
+  if (g.accent != 1.0f) j.object["accent"] = num(g.accent);
+  if (!g.preset.empty()) j.object["preset"] = Json::makeString(g.preset);
+  return j;
+}
+
+SongGroove grooveFromJson(const Json& j) {
+  SongGroove g;
+  g.shape.grid = groove::gridFromKey(j.text("grid", "step"));
+  g.shape.cycle = jsonInt<int>(j.num("cycle", 2));
+  auto floats = [](const Json* a, float dflt) {
+    std::vector<float> v;
+    if (a && a->is(Json::Type::Array))
+      for (const Json& x : a->array) v.push_back(x.is(Json::Type::Number) ? static_cast<float>(x.number) : dflt);
+    return v;
+  };
+  if (const Json* t = j.find("timing"); t && t->is(Json::Type::Array)) g.shape.timing = floats(t, 0.0f);
+  g.shape.velocity = floats(j.find("velocity"), 1.0f);
+  g.accent = static_cast<float>(j.num("accent", 1.0));
+  g.preset = j.text("preset");
+  groove::normalize(g);
+  return g;
+}
 // ---------------------------------------------------- end pattern automation, arrangements, live --
 
 }  // namespace
@@ -1107,6 +1146,7 @@ Json songToJson(const Song& s, bool withFlOrigin) {
   j.object["timeSigDen"] = num(s.timeSigDen);
   j.object["swing"] = num(s.swing);
   if (!s.swingNotes) j.object["swingNotes"] = boolean(false);  // J-138
+  if (!s.groove.isDefault()) j.object["groove"] = grooveToJson(s.groove);  // K-151 (absent: the classic step swing)
   // K-5: always written, so a project saved before slides kept to their colour (no key) is told apart.
   j.object["slidesByColour"] = boolean(!s.slidesAnyColour);
   // K-114: always written, so a project saved before clips looped one by one (no key) is told apart.
@@ -1539,6 +1579,7 @@ bool songFromJson(const Json& src, Song& out, std::string* err) {
   if (s.timeSigNum < 1 || s.timeSigDen < 1) return fail(err, "bad time signature");
   s.swing = static_cast<float>(std::clamp(j.num("swing", 0), 0.0, 1.0));
   s.swingNotes = flag(j, "swingNotes", true);  // J-138
+  if (const Json* g = j.find("groove"); g && g->is(Json::Type::Object)) s.groove = grooveFromJson(*g);  // K-151
   s.masterPitch = static_cast<float>(std::clamp(j.num("masterPitch", 0), -12.0, 12.0));
   s.autoCrossfades = flag(j, "autoCrossfades", true);  // J-38
   if (const Json* tr = j.find("trackReceipt"); tr && tr->type == Json::Type::Object) s.trackReceipt = jsonCompact(*tr);  // J-219

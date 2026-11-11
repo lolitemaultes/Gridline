@@ -1,4 +1,5 @@
 #include "../packs/Packs.h"
+#include "../core/Groove.h"
 #include "Program.h"
 #include "../core/LayerPick.h"
 #include "Freeze.h"
@@ -663,6 +664,14 @@ std::vector<NoteEv> compileChannelNotes(const Song& song, const Pattern& p, cons
     loop = static_cast<size_t>(lt->second);
   // Song swing x the channel's share (J-138: steps and piano-roll notes alike).
   const double swing = std::clamp(static_cast<double>(song.swing) * static_cast<double>(c.swingMix), 0.0, 1.0);
+  // K-151: the song's swing shape (the classic step swing unless a preset or the groove editor
+  // changed it; that one places every step and note exactly as swingWarp does).
+  const groove::Warp gw = groove::makeWarp(song, &p, song.groove.shape, swing,
+                                           std::clamp(static_cast<double>(song.groove.accent) * static_cast<double>(c.swingMix), 0.0, 1.0));
+  auto warpAt = [&gw](double x) { return gw.active ? std::max(0.0, gw.map(x)) : x; };
+  auto accent = [&gw](NoteEv& e, double written) {
+    if (gw.accents) e.velocity = std::clamp(e.velocity * gw.velocityAt(written), 0.0f, 1.0f);
+  };
   if (auto it = p.steps.find(channel); it != p.steps.end() && stepTicks > 0) {
     const auto& row = it->second;
     // J-11: per-step pitch, properties and shift (graph / keyboard editor).
@@ -674,7 +683,7 @@ std::vector<NoteEv> compileChannelNotes(const Song& song, const Pattern& p, cons
       const size_t src = loop ? s % loop : s;
       if (src >= row.size() || row[src] == 0) continue;
       const Tick grid = static_cast<Tick>(s) * stepTicks;
-      double on = swingWarp(static_cast<double>(grid), swing, stepTicks, p.stepsPerBar);
+      double on = warpAt(static_cast<double>(grid));
       const double gridEnd = static_cast<double>(grid + stepTicks);
       auto stepEnd = [&](double start) {
         return c.swingTruncate ? std::max(start + 1.0, gridEnd) : start + static_cast<double>(stepTicks);
@@ -683,6 +692,7 @@ std::vector<NoteEv> compileChannelNotes(const Song& song, const Pattern& p, cons
         NoteEv e = makeEv(0, 0, 60.0f, static_cast<float>(row[src]) / 127.0f);
         setOn(e, on);
         setOff(e, stepEnd(on));
+        accent(e, static_cast<double>(grid));
         out.push_back(e);
         continue;
       }
@@ -699,6 +709,7 @@ std::vector<NoteEv> compileChannelNotes(const Song& song, const Pattern& p, cons
       e.props.modX = sp.modX == kNoteModCentre ? 0.5f : static_cast<float>(sp.modX) / static_cast<float>(kNoteModMax + 1);
       e.props.modY = sp.modY == kNoteModCentre ? 0.5f : static_cast<float>(sp.modY) / static_cast<float>(kNoteModMax + 1);
       e.props.detune = static_cast<float>(sp.fine) / 100.0f;  // J-180: the step keeps its key
+      accent(e, static_cast<double>(grid));
       out.push_back(e);
     }
   }
@@ -719,7 +730,7 @@ std::vector<NoteEv> compileChannelNotes(const Song& song, const Pattern& p, cons
       if (asStep) {
         const Tick at = n.start + rep;
         const Tick grid = at / stepTicks * stepTicks;
-        const double warped = swingWarp(static_cast<double>(grid), swing, stepTicks, p.stepsPerBar);
+        const double warped = warpAt(static_cast<double>(grid));
         const double offset = static_cast<double>(at - grid) + n.frac;
         const double on = warped + offset;
         const double end = c.swingTruncate ? std::max(warped + 1.0, static_cast<double>(grid + stepTicks)) : warped + static_cast<double>(stepTicks);
@@ -730,9 +741,10 @@ std::vector<NoteEv> compileChannelNotes(const Song& song, const Pattern& p, cons
         setOn(e, t0);
         setOff(e, std::max(t0 + 1e-3, static_cast<double>(n.start + rep + n.length) + n.endFrac));
       }
-      if (!asStep && swing > 0 && stepTicks > 0 && song.swingNotes) {  // J-138: notes swing with the steps (written positions stay straight)
-        const double on = swingWarp(noteOnTick(e), swing, stepTicks, p.stepsPerBar);
-        const double end = swingWarp(noteOffTick(e), swing, stepTicks, p.stepsPerBar);
+      if (asStep || song.swingNotes) accent(e, static_cast<double>(n.start + rep) + n.frac);  // K-151: the groove's accents
+      if (!asStep && gw.active && stepTicks > 0 && song.swingNotes) {  // J-138: notes swing with the steps (written positions stay straight)
+        const double on = warpAt(noteOnTick(e));
+        const double end = warpAt(noteOffTick(e));
         // Truncated: the note ends where its warped end falls. Otherwise it is never shorter than written.
         const double minLen = std::min(1.0, static_cast<double>(n.length));
         setOn(e, on);

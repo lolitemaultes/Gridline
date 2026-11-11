@@ -161,6 +161,8 @@ Song restOf(const Song& c) {
   t.timeSigNum = c.timeSigNum;
   t.timeSigDen = c.timeSigDen;
   t.swing = c.swing;
+  t.swingNotes = c.swingNotes;  // K-151: was missing, so "Swing piano roll notes" never reached collaborators
+  t.groove = c.groove;          // K-151: the swing preset / groove
   t.masterPitch = c.masterPitch;
   t.nextId = c.nextId;
   t.tracks = c.tracks;
@@ -178,7 +180,7 @@ Song restOf(const Song& c) {
 
 bool restEqual(const Song& a, const Song& b) {
   return a.info == b.info && a.ppq == b.ppq && a.tempo == b.tempo && a.timeSigNum == b.timeSigNum && a.timeSigDen == b.timeSigDen &&
-         a.swing == b.swing && a.masterPitch == b.masterPitch && a.nextId == b.nextId && a.tracks == b.tracks && a.links == b.links &&
+         a.swing == b.swing && a.swingNotes == b.swingNotes && a.groove == b.groove && a.masterPitch == b.masterPitch && a.nextId == b.nextId && a.tracks == b.tracks && a.links == b.links &&
          a.modLinks == b.modLinks && a.markers == b.markers && a.channelGroups == b.channelGroups && a.patternGroups == b.patternGroups &&
          a.live == b.live && a.arrangements == b.arrangements && a.currentArrangement == b.currentArrangement &&
          a.autoCrossfades == b.autoCrossfades;
@@ -1037,6 +1039,8 @@ bool Session::diffIncremental(std::vector<Op>& ops, std::string* bad) {
     shadow_.timeSigNum = r.timeSigNum;
     shadow_.timeSigDen = r.timeSigDen;
     shadow_.swing = r.swing;
+    shadow_.swingNotes = r.swingNotes;
+    shadow_.groove = r.groove;
     shadow_.masterPitch = r.masterPitch;
     shadow_.nextId = r.nextId;
     shadow_.tracks = r.tracks;

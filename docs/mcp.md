@@ -151,6 +151,7 @@ Reading (always allowed):
 | `get_markers` | song markers |
 | `list_plugin_catalog` | built-in instruments, effects, note processors (and scanned plugins) |
 | `list_presets` | factory and user presets of a plugin type |
+| `list_swing_presets` | swing presets (factory and the user's), the one in use and the song's groove |
 | `get_history` | latest undo steps |
 | `analyze_loudness` | renders in memory and reports LUFS, peak, RMS, clipping |
 
@@ -158,7 +159,7 @@ Editing (one undo step each; needs "Allow assistants to change the project"):
 
 | Tool | What it does |
 |---|---|
-| `set_song` | tempo, time signature, swing, master pitch, title and other song info |
+| `set_song` | tempo, time signature, swing, a swing preset or groove, master pitch, title and other song info |
 | `add_channel`, `edit_channel`, `remove_channel` | channels, instruments, presets, routing |
 | `add_pattern`, `edit_pattern`, `remove_pattern` | patterns |
 | `set_notes` | piano-roll notes of a channel in a pattern (replace or add) |

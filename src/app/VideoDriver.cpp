@@ -9,9 +9,20 @@
 
 namespace gl::videodriver {
 
+std::string currentName() {
+  const char* now = SDL_GetCurrentVideoDriver();
+  if (!now) return "none";
+  const std::string d = now;
+  if (d == "wayland") return "Wayland";
+  if (d == "x11") return "X11";
+  if (d == "windows") return "Windows";
+  if (d == "cocoa") return "macOS";
+  return d;
+}
+
 #if defined(__APPLE__) || defined(_WIN32)
 
-void prepare() {}
+void prepare(const std::string&) {}
 void finish() {}
 bool dropRequest() { return false; }
 std::string interfaceProblem() { return std::string(); }
@@ -51,6 +62,7 @@ const char* whyText(Why w) {
   switch (w) {
     case Why::SdlDecides: return "SDL's choice";
     case Why::UserAsked: return "GRIDLINE_VIDEO_DRIVER";
+    case Why::SettingAsked: return "the Window system setting";
     case Why::UserSdlOther: return "SDL_VIDEODRIVER";
     case Why::NoXServer: return "no X server answers";
     case Why::PluginsNeedX: return "plugin interfaces need X11";
@@ -59,7 +71,7 @@ const char* whyText(Why w) {
 }
 }  // namespace
 
-void prepare() {
+void prepare(const std::string& setting) {
   // K-83: SDL asks X11 compositors to stop compositing its windows (meant for full-screen games).
   // A window the size of the monitor is then shown directly, and the compositor switches back and
   // forth, flashing the screen, whenever a menu, hint or plugin window appears over it. Gridline
@@ -69,6 +81,7 @@ void prepare() {
   remember(kSdl3Name, gSavedSdl3, gHadSdl3);
   Inputs in;
   in.gridlineDriver = std::getenv("GRIDLINE_VIDEO_DRIVER");
+  in.setting = setting.c_str();
   in.sdl2Driver = gHadSdl2 ? gSavedSdl2.c_str() : nullptr;
   in.sdl3Driver = gHadSdl3 ? gSavedSdl3.c_str() : nullptr;
   in.xServerAnswers = host::native::xServerAnswers();

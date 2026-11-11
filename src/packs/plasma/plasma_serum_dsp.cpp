@@ -413,7 +413,7 @@ void addCurve(Json& lfo, const std::vector<double>& xs, const std::vector<double
   c.object["curveVals"] = jc;
   c.object["numPoints"] = Json::makeNumber(static_cast<double>(xs.size()) - 1);
   lfo.object["curveData"] = c;
-  lfo.object["curveDisplayName"] = Json::makeString("Serum 1 shape");
+  lfo.object["curveDisplayName"] = Json::makeString("Imported shape");
 }
 
 // LFO shape points: arrays of `cap` doubles (tension, x, y); the shape ends at the first x = 1.
@@ -449,11 +449,11 @@ bool decodeSerum1(const uint8_t* p, size_t n, Serum1& out, std::string& err) {
   size_t len = n;
   if (n >= 4 && std::memcmp(p, "CcnK", 4) == 0) {
     if (n < 60 || std::memcmp(p + 8, "FPCh", 4) != 0) {
-      err = "not a Serum preset (unsupported .fxp kind)";
+      err = "unsupported .fxp preset";
       return false;
     }
     if (std::memcmp(p + 16, "XfsX", 4) != 0) {
-      err = "not a Serum preset";
+      err = "not a preset Plasma can open";
       return false;
     }
     const uint32_t sz = static_cast<uint32_t>(p[56]) << 24 | static_cast<uint32_t>(p[57]) << 16 | static_cast<uint32_t>(p[58]) << 8 | p[59];
@@ -461,11 +461,11 @@ bool decodeSerum1(const uint8_t* p, size_t n, Serum1& out, std::string& err) {
     len = std::min<size_t>(sz, n - 60);
   }
   if (len < 3 || (chunk[0] & 0x0F) != 8) {
-    err = "damaged Serum 1 data";
+    err = "damaged preset data";
     return false;
   }
   if (!inflateRaw(chunk + 2, len - 2, out.state, 180000) || out.state.size() < 0x4AE0 + 4 * 71) {
-    err = "damaged Serum 1 data";
+    err = "damaged preset data";
     return false;
   }
   const auto& defs = s1Defs();
@@ -568,7 +568,7 @@ void serum1Root(const Serum1& s, Json& meta, Json& root, std::vector<std::string
   for (int o = 0; o < 2; ++o) {
     const int w = std::clamp(static_cast<int>(std::lround(P(168 + o) * 23)), 0, 23);
     putPlain(root, "Oscillator" + std::to_string(o) + "/WTOsc" + std::to_string(o), "kParamWarpMenu", Json::makeString(kS1Warps[w]));
-    if (w == 2 || w == 3 || w == 12) notes.push_back("Serum 1 warp modes Sync Window and Mirror: approximated by Sync and Flip");
+    if (w == 2 || w == 3 || w == 12) notes.push_back("Older-format morph modes Sync Window and Mirror: approximated by Sync and Flip");
     const int st = std::clamp(static_cast<int>(std::lround(P(178 + o) * 8)), 0, 8);
     putPlain(root, "Oscillator" + std::to_string(o), "kParamUnisonStack", Json::makeString(kStacks[st]));
     putPlain(root, "Oscillator" + std::to_string(o), "kParamType", Json::makeString("kOsc_WT"));
@@ -645,7 +645,7 @@ void serum1Root(const Serum1& s, Json& meta, Json& root, std::vector<std::string
       if (sw < d.size()) putPlain(root, "LFO" + std::to_string(l), "kParamBeatSync", Json::makeNumber(d[sw] ? 1 : 0));
     }
   }
-  notes.push_back("Serum 1 LFO trigger modes are not read: free-running retrigger defaults apply");
+  notes.push_back("LFO trigger modes of the older format are not read: free-running retrigger defaults apply");
   // ---- modulation matrix
   bool slotSeen[32] = {};
   int chaos = 0, unmapped = 0;
@@ -700,8 +700,8 @@ void serum1Root(const Serum1& s, Json& meta, Json& root, std::vector<std::string
     pp.object["kParamOut"] = Json::makeNumber(100.0 * P(ampAt + 1));
     pp.object["kParamBipolar"] = Json::makeNumber(d[at + 0x0C] ? 1 : 0);
   }
-  if (chaos) notes.push_back("Serum 1 Chaos modulation sources are not available: their matrix slots were left out");
-  if (unmapped) notes.push_back("Some Serum 1 matrix slots have no Plasma destination and were left out");
+  if (chaos) notes.push_back("Chaos sources of the older format are not available: their link slots were left out");
+  if (unmapped) notes.push_back("Some link slots of the older format have no Plasma target and were left out");
 }
 
 }  // namespace serum
@@ -730,7 +730,7 @@ bool hostedRoot(const PluginState& hosted, Json& meta, Json& root, serum::Serum1
       if (!plist.empty() && plist::topValue(plist, "jucePluginState", bytes)) {
       } else if (!plist.empty() && plist::topValue(plist, "vstdata", bytes)) {
       } else {
-        err = "the Audio Unit state holds no Serum data";
+        err = "the Audio Unit state holds no compatible data";
         return false;
       }
     }
@@ -747,13 +747,13 @@ bool hostedRoot(const PluginState& hosted, Json& meta, Json& root, serum::Serum1
   }
   const auto* p = reinterpret_cast<const uint8_t*>(bytes.data());
   if (bytes.size() >= 9 && std::memcmp(bytes.data(), "XferJson", 8) == 0) {
-    format = std::string("Serum 2 (") + fmt + ")";
+    format = std::string("Imported preset, newer format (") + fmt + ")";
     return serum::decodeXferJson(p, bytes.size(), meta, root, err);
   }
   serum::Serum1 local;
   serum::Serum1& s = s1 ? *s1 : local;
   if (!serum::decodeSerum1(p, bytes.size(), s, err)) return false;
-  format = std::string("Serum (") + fmt + ")";
+  format = std::string("Imported preset, older format (") + fmt + ")";
   std::vector<std::string> notes;
   serum::serum1Root(s, meta, root, notes);
   if (notesOut) *notesOut = notes;
@@ -963,7 +963,7 @@ bool openPresetBytes(const std::vector<uint8_t>& bytes, const std::string& fileN
     rep.ok = true;
     return true;
   }
-  rep.error = "not a Plasma or Serum preset";
+  rep.error = "not a preset Plasma can open";
   return false;
 }
 

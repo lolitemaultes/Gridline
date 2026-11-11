@@ -6,6 +6,8 @@
 #include "../core/I18n.h"
 #include "../engine/WarpOps.h"
 #include "App.h"
+#include "GrooveUi.h"
+#include "Widgets.h"
 #include "SmoothScrollUi.h"
 #include "Theme.h"
 
@@ -183,6 +185,17 @@ void clipMenu(App& a, ObjectId clip, const TempoMap& tm, Tick grid) {
       if (ImGui::MenuItem((std::to_string(pct) + "%").c_str(), nullptr, std::fabs(strength * 100.0 - pct) < 0.5))
         a.settings.set("playlist.quantizeStrength", pct / 100.0);
     ImGui::EndMenu();
+  }
+  // K-151: the song's swing (its preset or groove) on the audio, and the audio's groove as the song's swing.
+  {
+    char sw[128];
+    std::snprintf(sw, sizeof sw, "%s (%.0f%%)", i18n::tr("Swing to the song's groove"), strength * 100.0);
+    if (ImGui::MenuItem(sw)) grooveui::swingClip(a, clip, tm, strength);
+    ui::Hint("Warp markers on the transients, moved onto the song's swung grid (its swing preset or groove)");
+    if (ImGui::MenuItem(i18n::tr("Take its groove as the song's swing"))) {
+      if (grooveui::fromClip(a, clip, tm)) a.showGroove = true;
+    }
+    ui::Hint("The timing and accents of the clip's transients become the song's swing (save it as a preset in the groove editor)");
   }
   bool snap = a.settings.getBool("playlist.warpSnapTransients");
   if (ImGui::MenuItem(i18n::tr("New markers snap to transients"), nullptr, &snap)) a.settings.set("playlist.warpSnapTransients", snap);

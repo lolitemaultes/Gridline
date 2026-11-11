@@ -288,7 +288,7 @@ int quantizeWarpMarkers(const Song& song, Clip& clip, const TempoMap& map, Tick 
     const double g = static_cast<double>(grid);
     const double target = std::round(v.tick / g) * g;
     const double to = v.tick + strength * (target - v.tick);
-    if (std::fabs(to - v.tick) < 1e-6) continue;
+    if (std::fabs(to - v.tick) < 0.02) continue;  // already on its line (a fiftieth of a tick: well under a millisecond)
     if (moveWarpMarker(song, clip, map, v.id, to)) ++moved;  // (the clip passed in)
   }
   return moved;
@@ -297,6 +297,59 @@ int quantizeWarpMarkers(const Song& song, Clip& clip, const TempoMap& map, Tick 
 int quantizeAudioClip(const Song& song, Clip& clip, const TempoMap& map, Tick grid, double strength, double sensitivity) {
   warpMarkersAtTransients(song, clip, map, sensitivity);
   return quantizeWarpMarkers(song, clip, map, grid, strength, nullptr);
+}
+
+std::vector<groove::Onset> clipGrooveOnsets(const Song& song, const Clip& c, const TempoMap& map, double sensitivity) {
+  std::vector<groove::Onset> out;
+  Ctx x;
+  if (!context(song, c, map, x)) return out;
+  const double end = static_cast<double>(c.start + song.clipLength(c));
+  const double hi = std::min(x.b, x.sourceAt(end));
+  const std::vector<WarpPoint> p = x.points();
+  const double w0 = warpTimeAt(p, x.a);
+  const Sample& smp = *x.src.sample;
+  const size_t frames = smp.frames();
+  const size_t span = static_cast<size_t>(std::max(1.0, 0.03 * smp.sampleRate));  // 30 ms after the onset
+  for (double s : onsetsOf(x, x.a, hi, sensitivity)) {
+    groove::Onset o;
+    o.tick = x.tickOf(warpTimeAt(p, s) - w0);
+    if (!std::isfinite(o.tick)) continue;
+    const double fileSec = x.rev ? x.last - s : s;
+    const size_t f0 = static_cast<size_t>(std::clamp(fileSec * smp.sampleRate, 0.0, static_cast<double>(frames)));
+    const size_t a = x.rev ? (f0 > span ? f0 - span : 0) : f0, b = x.rev ? f0 : std::min(frames, f0 + span);
+    float peak = 0;
+    for (size_t i = a; i < b; ++i) peak = std::max({peak, std::fabs(smp.left[i]), std::fabs(smp.right[i])});
+    o.level = peak;
+    out.push_back(o);
+  }
+  return out;
+}
+
+double grooveTarget(const groove::Warp& w, double t) {
+  if (!(w.cell > 0)) return t;
+  const double line = std::round(t / w.cell);
+  double best = t, dist = std::numeric_limits<double>::infinity();
+  for (double k = line - 1; k <= line + 1; k += 1) {
+    if (k < 0) continue;
+    const double g = std::max(0.0, w.map(k * w.cell));
+    if (std::fabs(g - t) < dist) dist = std::fabs(g - t), best = g;
+  }
+  return best;
+}
+
+int grooveAudioClip(const Song& song, Clip& clip, const TempoMap& map, double strength, double sensitivity) {
+  if (!(strength > 0)) return 0;
+  strength = std::min(1.0, strength);
+  warpMarkersAtTransients(song, clip, map, sensitivity);
+  const groove::Warp w = groove::makeWarp(song, nullptr, song.groove.shape, song.swing, 0.0);
+  if (!(w.cell > 0)) return 0;
+  int moved = 0;
+  for (const WarpMarkerView& v : warpMarkerViews(song, clip, map)) {
+    const double to = v.tick + strength * (grooveTarget(w, v.tick) - v.tick);
+    if (std::fabs(to - v.tick) < 0.02) continue;  // already on its line (a fiftieth of a tick: well under a millisecond)
+    if (moveWarpMarker(song, clip, map, v.id, to)) ++moved;
+  }
+  return moved;
 }
 
 double warpDragTick(double markerTick, Tick grabTick, Tick pointerTick, Tick grid) {
@@ -334,6 +387,10 @@ int warpMarkersAtTransients(Song& song, ObjectId clip, const TempoMap& map, doub
 int quantizeWarpMarkers(Song& song, ObjectId clip, const TempoMap& map, Tick grid, double strength, const std::set<uint32_t>* only) {
   Clip* c = song.clip(clip);
   return c ? quantizeWarpMarkers(static_cast<const Song&>(song), *c, map, grid, strength, only) : 0;
+}
+int grooveAudioClip(Song& song, ObjectId clip, const TempoMap& map, double strength, double sensitivity) {
+  Clip* c = song.clip(clip);
+  return c ? grooveAudioClip(song, *c, map, strength, sensitivity) : 0;
 }
 int quantizeAudioClip(Song& song, ObjectId clip, const TempoMap& map, Tick grid, double strength, double sensitivity) {
   Clip* c = song.clip(clip);

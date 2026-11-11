@@ -505,7 +505,7 @@ int main() {
     expect(std::fabs(lvl - 0.6f) < 0.01f && fon > 0.5f, "Serum 2 state mapped onto Plasma's parameters");
     const PluginState o = standin::originalState(st);
     expect(o.type == kSerum2 && o.data == s2.data, "the original plugin and its state are kept, untouched");
-    expect(standin::describe(st).find("Serum 2 is not installed") != std::string::npos, "stand-in description");
+    expect(standin::describe(st).find("The original instrument is not installed") != std::string::npos, "stand-in description");
   }
   {
     const auto& a = opened.automations[0];

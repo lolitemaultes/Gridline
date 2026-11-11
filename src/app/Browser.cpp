@@ -17,7 +17,12 @@
 #include <set>
 #include <string>
 #include <vector>
+#include "GrooveUi.h"
+#include "ContextMenus.h"
+#include <functional>
 #include "CollabUi.h"
+#include "DrumKitUi.h"
+#include "../core/HydrogenKit.h"
 #include "../core/I18n.h"
 #include "../core/PatternAutomation.h"
 #include "Keys.h"
@@ -400,6 +405,8 @@ ui::Icon iconOf(Kind k) {
     case Kind::Preset:
     case Kind::Fst: return ui::Icon::Settings;
     case Kind::Image: return ui::Icon::Paint;  // J-184: pictures (Pixel Tone)
+    case Kind::DrumKit: return ui::Icon::CatDrums;  // K-162: drum kits
+    case Kind::Instrument: return ui::Icon::CatSampler;  // K-144: .sfz / .sf2
     default: return ui::Icon::File;
   }
 }
@@ -416,6 +423,8 @@ ImU32 iconColOf(Kind k) {
     case Kind::Preset:
     case Kind::Fst: return roleCol(role::kStamp, 0.85f);
     case Kind::Image: return roleCol(role::kDraw, 0.85f);
+    case Kind::DrumKit:
+    case Kind::Instrument: return roleCol(role::kPaint, 0.85f);
     default: return pal().textFaint;
   }
 }
@@ -434,6 +443,7 @@ std::string fileDetail(const fs::path& p, Kind k) {
     case Kind::Flp: return "FLP";
     case Kind::Fst: return "FST";
     case Kind::Midi: return "MIDI";
+    case Kind::DrumKit: return i18n::tr("KIT");
     default: return "";
   }
 }
@@ -750,6 +760,10 @@ void folderRowExtras(App& a, const fs::path& dir) {
   ImGui::PushID(d.c_str());
   if (ImGui::BeginPopupContextItem("##dctx")) {
     ImGui::TextDisabled("%s", theme::fitText(dir.filename().string().c_str(), 260));
+    if (hydrogen::isKitFolder(d)) {  // K-162: a drum kit's folder (checked only while the menu is open)
+      if (ImGui::MenuItem(i18n::tr("Load drum kit"))) drumkitui::load(a, d);
+      ImGui::Separator();
+    }
     const std::string why = lockedWhy(a, d);
     if (opItem("New folder", lockedWhy(a, d, true))) newFolderIn(a, d);
     if (opItem("Rename", why)) startRename(d);
@@ -896,9 +910,9 @@ void fileRow(App& a, const fs::path& p, float indent) {
   if (clicked) {
     selPath = ps;
     nav.deferred.clear();
-    if (k == Kind::Audio && fromKeys && nav.repeat) nav.deferred = ps;  // K-160: a held key previews where it stops
-    else if (k == Kind::Audio) browserui::previewFile(a, ps);
-    if (k == Kind::Audio && fromKeys && !nav.repeat) nav.previewed = ps;
+    if ((k == Kind::Audio || k == Kind::Instrument) && fromKeys && nav.repeat) nav.deferred = ps;  // K-160: a held key previews where it stops
+    else if (k == Kind::Audio || k == Kind::Instrument) browserui::previewFile(a, ps);  // K-144: an instrument plays a note
+    if ((k == Kind::Audio || k == Kind::Instrument) && fromKeys && !nav.repeat) nav.previewed = ps;
   }
   if (dbl) browserui::openFile(a, ps);
   switch (k) {
@@ -914,7 +928,13 @@ void fileRow(App& a, const fs::path& p, float indent) {
       break;
     case Kind::Chain: ui::Hint("Double-click: load on the selected mixer track \xC2\xB7 drag onto a mixer strip"); break;
     case Kind::Layer: ui::Hint("Double-click or drag onto the rack: add this layer with its channels"); break;
+    case Kind::DrumKit:
+      ui::Hint("Click: show the kit's instruments below, each one plays with a click \xC2\xB7 double-click or drag onto the rack: load the kit on drum pads");
+      break;
     case Kind::Image: ui::Hint("Drag onto a Pixel Tone editor or channel to play this picture \xC2\xB7 double-click: load into the open Pixel Tone"); break;
+    case Kind::Instrument:
+      ui::Hint("Click: hear a note \xC2\xB7 double-click: new Multisampler channel \xC2\xB7 drag onto the rack, a channel or the Multisampler window");
+      break;
     default: break;
   }
   devRow(ps);
@@ -1323,6 +1343,73 @@ void sectionMixerPresets(App& a) {
   ImGui::Dummy(ImVec2(0, 4));
 }
 
+// K-151: swing presets (factory and the user's); double-click or drag onto the channel rack applies one.
+void swingPresetRow(App& a, const groove::Preset& p, float indent) {
+  const std::string full = p.folder.empty() ? p.name : p.folder + "/" + p.name;
+  const std::string id = (p.factory ? "##swf." : "##swu.") + full;
+  const Song& s = a.doc.song();
+  const bool on = s.groove.preset == full && groove::matches(s, p);
+  bool dbl = false;
+  const std::string feel = groove::feelText(p.shape, p.amount);
+  browserRow(id.c_str(), ui::Icon::Groove, p.name.c_str(), "", indent, &dbl, roleCol(role::kGraph), on);
+  ui::Hint(feel + " \xC2\xB7 double-click or drag onto the channel rack to use it");
+  if (ImGui::BeginDragDropSource()) {
+    ImGui::SetDragDropPayload("GL_SWING", full.data(), full.size());
+    ui::DragPreview(ui::Icon::Groove, p.name.c_str());
+    ImGui::EndDragDropSource();
+  }
+  ImGui::PushID(id.c_str());
+  if (ImGui::BeginPopupContextItem("##swctx")) {
+    if (ImGui::MenuItem(i18n::tr("Use it"))) grooveui::apply(a, p);
+    if (ImGui::MenuItem(i18n::tr("Groove editor..."))) grooveui::apply(a, p), a.showGroove = true;
+    if (!p.factory) {
+      if (ImGui::MenuItem(i18n::tr("Export..."))) {
+        groove::Preset copy = p;
+        menus::fileDialog(a, i18n::tr("Export the swing preset"), true, {".json"}, safePresetName(p.name) + ".json", [&a, copy](const std::string& path) {
+          std::string err;
+          if (groove::savePresetFile(path, copy, &err)) a.notify("Exported swing preset " + fs::u8path(path).filename().u8string());
+          else a.notify("Could not export the swing preset", true, err);
+        });
+      }
+      if (ImGui::MenuItem(i18n::tr("Delete"))) {
+        groove::deleteUserPreset(p);
+        grooveui::refresh();
+      }
+    }
+    ImGui::EndPopup();
+  }
+  ImGui::PopID();
+  if (dbl) grooveui::apply(a, p);
+}
+
+void sectionSwingPresets(App& a) {
+  const auto& list = grooveui::presets(a);
+  if (!sectionHeader("Swing presets", static_cast<int>(list.size()), false, role::kGraph, ui::Icon::Groove)) return;
+  if (treeNode("##sw.factory", "Factory", -1, 12, role::kGraph))
+    for (const groove::Preset& p : list)
+      if (p.factory) swingPresetRow(a, p, 26);
+  std::vector<PresetEntry> user;
+  for (const groove::Preset& p : list)
+    if (!p.factory) user.push_back({p.name, p.folder, p.file});
+  if (!user.empty() && treeNode("##sw.user", "My presets", static_cast<int>(user.size()), 12, role::kGraph)) {
+    static std::pair<size_t, browse::PresetNode> tree;
+    if (tree.first != user.size() || tree.second.count() != user.size()) tree = {user.size(), browse::buildPresetTree(user)};
+    std::function<void(const browse::PresetNode&, const std::string&, float)> rows = [&](const browse::PresetNode& node, const std::string& key,
+                                                                                        float indent) {
+      for (const auto& f : node.folders) {
+        const std::string k = key + "/" + f.name;
+        if (treeNode(k, f.name.c_str(), static_cast<int>(f.count()), indent)) rows(f, k, indent + 14);
+      }
+      for (size_t i : node.presets)
+        for (const groove::Preset& p : list)
+          if (!p.factory && p.file == user[i].file) swingPresetRow(a, p, indent);
+    };
+    rows(tree.second, "##sw.user", 26);
+  }
+  if (user.empty()) emptyLine("Save your own from the swing preset menu beside the rack's Swing knob");
+  ImGui::Dummy(ImVec2(0, 4));
+}
+
 // A folder section (FL content or Gridline's own folders).
 void folderSection(App& a, const char* title, const fs::path& dir, uint32_t roleColour, const char* emptyText, bool create = false) {
   if (!isDirCached(dir, a.now)) {
@@ -1454,6 +1541,7 @@ int searchResults(App& a, const std::string& text) {
       {Kind::Chain, i18n::N_("Effect chains")}, {Kind::Midi, i18n::N_("MIDI files")}, {Kind::Score, i18n::N_("Scores")},
       {Kind::Project, i18n::N_("Projects")}, {Kind::Flp, i18n::N_("FL Studio projects")},
       {Kind::Shape, i18n::N_("Automation shapes")}, {Kind::Image, i18n::N_("Pictures")}, {Kind::Layer, i18n::N_("Layers")},
+      {Kind::Instrument, i18n::N_("Multisample instruments")}, {Kind::DrumKit, i18n::N_("Drum kits")},
   };
   for (const auto& [kind, title] : groups) {
     int n = 0;
@@ -1472,6 +1560,53 @@ int searchResults(App& a, const std::string& text) {
 
 constexpr float kInfoH = 128.0f;
 
+// K-162: a drum kit's instruments in the info panel's preview box, two rows of pads; a click plays
+// the instrument's loudest sample, a drag takes the whole kit.
+void kitPreview(App& a, ImDrawList* dl, ImVec2 w0, ImVec2 w1, const drumkitui::Summary* kit) {
+  const auto& P = pal();
+  auto centred = [&](const char* t, ImU32 col) {
+    const char* f = theme::fitText(t, w1.x - w0.x - 8);
+    const float tw = a.fontRegular->CalcTextSizeA(theme::kFontCaption, 1e9f, 0, f).x;
+    dl->AddText(a.fontRegular, theme::kFontCaption, ImVec2((w0.x + w1.x - tw) * 0.5f, (w0.y + w1.y - theme::kFontCaption) * 0.5f), col, f);
+  };
+  if (!kit) return centred(i18n::tr("Reading the kit..."), P.textFaint);
+  if (!kit->ok) return centred((std::string(i18n::tr("Cannot read this kit")) + ": " + kit->error).c_str(), theme::lit(P.danger));
+  constexpr float kGap = 3.0f, kMinW = 62.0f;
+  const float W = w1.x - w0.x, H = (w1.y - w0.y - kGap) * 0.5f;
+  const int cols = std::max(2, static_cast<int>((W + kGap) / (kMinW + kGap)));
+  const float cw = (W - kGap * static_cast<float>(cols - 1)) / static_cast<float>(cols);
+  const int n = static_cast<int>(kit->instruments.size());
+  const int room = cols * 2;
+  const int shown = n > room ? room - 1 : n;
+  const ImU32 tint = theme::rgb(role::kPaint, 1.0f);
+  for (int i = 0; i <= shown && i < room; ++i) {
+    const bool more = i == shown;
+    if (more && n <= room) break;
+    const float x = w0.x + static_cast<float>(i % cols) * (cw + kGap), y = w0.y + static_cast<float>(i / cols) * (H + kGap);
+    ImGui::SetCursorScreenPos(ImVec2(x, y));
+    ImGui::PushID(i);
+    const bool click = ImGui::InvisibleButton("##kitpad", ImVec2(cw, H));
+    const bool hov = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
+    browserui::fileDragSource(selPath);
+    ImGui::PopID();
+    dl->AddRectFilled(ImVec2(x, y), ImVec2(x + cw, y + H), held ? theme::withAlpha(tint, 0.45f) : hov ? theme::withAlpha(tint, 0.28f) : theme::withAlpha(tint, 0.14f),
+                      theme::kRadiusSm);
+    std::string label;
+    if (more) {
+      label = "+" + std::to_string(n - shown);
+      if (hov) ui::Tooltip(i18n::tr("More instruments: load the kit to see them all"));
+    } else {
+      label = kit->instruments[static_cast<size_t>(i)];
+      const std::string& smp = kit->previews[static_cast<size_t>(i)];
+      if (click && !smp.empty()) browserui::previewFile(a, smp);
+      if (hov) ui::Hint("Click: play this instrument \xC2\xB7 drag: the whole kit");
+    }
+    const char* f = theme::fitText(label.c_str(), cw - 8);
+    const float tw = a.fontRegular->CalcTextSizeA(theme::kFontCaption, 1e9f, 0, f).x;
+    dl->AddText(a.fontRegular, theme::kFontCaption, ImVec2(x + (cw - tw) * 0.5f, y + (H - theme::kFontCaption) * 0.5f), hov ? P.text : P.textDim, f);
+  }
+}
+
 void infoPanel(App& a) {
   const auto& P = pal();
   ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -1484,7 +1619,8 @@ void infoPanel(App& a) {
   if (!known) m = browse::Index::describe(selPath, false);
   const float pad = theme::kS2;
   // Title + star + close.
-  const std::string name = fs::path(selPath).filename().string();
+  const drumkitui::Summary* kit = m.kind == Kind::DrumKit ? drumkitui::summary(selPath) : nullptr;  // K-162: read on a worker
+  const std::string name = kit && kit->ok && !kit->name.empty() ? kit->name : fs::path(selPath).filename().string();
   theme::textEllipsis(dl, a.fontBold, theme::kFontCaption + 1, ImVec2(p0.x + pad, p0.y + 6), w - 2 * pad - 48, P.text, name.c_str());
   ImGui::SetCursorScreenPos(ImVec2(p0.x + w - 46, p0.y + 3));
   {
@@ -1500,7 +1636,9 @@ void infoPanel(App& a) {
   const ImVec2 w0(p0.x + pad, p0.y + 26), w1(p0.x + w - pad, p0.y + 26 + 40);
   dl->AddRectFilled(w0, w1, P.well, theme::kRadiusSm);
   const std::vector<float> peaks = browse::decodePeaks(m.peaks);
-  if (!peaks.empty()) {
+  if (m.kind == Kind::DrumKit) {
+    kitPreview(a, dl, w0, w1, kit);
+  } else if (!peaks.empty()) {
     const float mid = (w0.y + w1.y) * 0.5f, hh = (w1.y - w0.y) * 0.5f - 2;
     const float bw = (w1.x - w0.x) / static_cast<float>(peaks.size());
     const ImU32 wc = theme::rgb(role::kPaint, 0.9f);
@@ -1515,10 +1653,12 @@ void infoPanel(App& a) {
     float tw = a.fontRegular->CalcTextSizeA(theme::kFontCaption, 1e9f, 0, t).x;
     dl->AddText(a.fontRegular, theme::kFontCaption, ImVec2((w0.x + w1.x - tw) * 0.5f, (w0.y + w1.y - theme::kFontCaption) * 0.5f), P.textFaint, t);
   }
-  ImGui::SetCursorScreenPos(w0);
-  if (ImGui::InvisibleButton("##wave", ImVec2(w1.x - w0.x, w1.y - w0.y)) && m.kind == Kind::Audio) browserui::previewFile(a, selPath);
-  browserui::fileDragSource(selPath);
-  ui::Hint("Click to preview \xC2\xB7 drag like the file row");
+  if (m.kind != Kind::DrumKit) {  // (a kit's instruments are buttons of their own)
+    ImGui::SetCursorScreenPos(w0);
+    if (ImGui::InvisibleButton("##wave", ImVec2(w1.x - w0.x, w1.y - w0.y)) && m.kind == Kind::Audio) browserui::previewFile(a, selPath);
+    browserui::fileDragSource(selPath);
+    ui::Hint("Click to preview \xC2\xB7 drag like the file row");
+  }
   // Facts line.
   std::string facts;
   auto add = [&facts](const std::string& s) {
@@ -1544,7 +1684,15 @@ void infoPanel(App& a) {
     add(b);
   }
   if (m.channels > 0) add(m.channels == 1 ? "mono" : "stereo");
-  if (m.kind != Kind::Audio) add(browse::kindName(m.kind));
+  if (kit && kit->ok) {  // K-162: the kit's own facts
+    char b[48];
+    std::snprintf(b, sizeof b, i18n::tr("%d instruments"), static_cast<int>(kit->instruments.size()));
+    add(b);
+    add(kit->license);
+    add(kit->author);
+  } else if (m.kind != Kind::Audio) {
+    add(browse::kindName(m.kind));
+  }
   if (m.size > 0) {
     char b[24];
     std::snprintf(b, sizeof b, m.size >= (1u << 20) ? "%.1f MB" : "%.0f KB", m.size >= (1u << 20) ? m.size / 1048576.0 : m.size / 1024.0);
@@ -1847,6 +1995,7 @@ void drawBrowser(App& a) {
       sectionPluginPresets(a);
       sectionChannelPresets(a);
       sectionMixerPresets(a);
+      sectionSwingPresets(a);  // K-151
     }
     if (all || tab == TabSounds) {
       if (!fl.empty()) {
@@ -1959,6 +2108,7 @@ void browserDropTarget(App& a) {
 // K-17 / K-18 dev checks (--dev-input "browser ..."):
 //   browser tab <0..4>                the tab (All, Project, Plugins, Sounds, Starred)
 //   browser rows [on]                 on: record the drawn rows; else print last frame's rows
+//   browser select <path>             K-162: selects a file (its info panel)
 //   browser rename <path>             the inline name field on that row (type with "text", then "key enter")
 //   browser newfolder <dir>           New folder in <dir> (its name field opens)
 //   browser move <path> <dir>         a drop of <path> on folder <dir> inside the browser
@@ -1979,6 +2129,8 @@ bool devCommand(App& a, const std::vector<std::string>& args, int frame) {
     for (const auto& r : devRowsLast)
       std::printf("  row \"%s\" x %.1f %.1f y %.1f %.1f path %s\n", r.section.c_str(), static_cast<double>(r.x0), static_cast<double>(r.x1),
                   static_cast<double>(r.y0), static_cast<double>(r.y1), r.path.c_str());
+  } else if (op == "select") {  // K-162: a file selected as a click on its row does (the info panel shows it)
+    selPath = p1;
   } else if (op == "rename") {
     startRename(p1);
   } else if (op == "newfolder") {

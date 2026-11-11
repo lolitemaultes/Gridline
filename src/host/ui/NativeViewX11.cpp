@@ -56,11 +56,40 @@ struct XConfigureEv {
   XWin above;
   int overrideRedirect;
 };
+struct XClientMessageEv {
+  int type;
+  unsigned long serial;
+  int sendEvent;
+  void* display;
+  XWin window;
+  unsigned long messageType;
+  int format;
+  long l[5];
+};
+struct XAnyEv {
+  int type;
+  unsigned long serial;
+  int sendEvent;
+  void* display;
+  XWin window;
+};
 union XEv {
   int type;
+  XAnyEv any;
   XKeyEv key;
   XConfigureEv configure;
+  XClientMessageEv client;
   long pad[24];
+};
+struct XSizeHintsRec {  // XSizeHints
+  long flags;
+  int x, y, width, height, minWidth, minHeight, maxWidth, maxHeight, widthInc, heightInc;
+  int minAspectX, minAspectY, maxAspectX, maxAspectY;
+  int baseWidth, baseHeight, winGravity;
+};
+struct XClassHintRec {  // XClassHint
+  char* resName;
+  char* resClass;
 };
 struct XWinAttrs {
   int x, y, width, height, borderWidth, depth;
@@ -79,6 +108,8 @@ using XErrHandler = int (*)(void*, void*);
 
 constexpr long kKeyPressMask = 1L << 0, kKeyReleaseMask = 1L << 1, kStructureNotifyMask = 1L << 17, kSubstructureNotifyMask = 1L << 19;
 constexpr int kKeyPress = 2, kKeyRelease = 3, kCreateNotify = 16, kMapNotify = 19, kReparentNotify = 21, kConfigureNotify = 22;
+constexpr int kClientMessage = 33;
+constexpr long kPMinSize = 1L << 4, kPMaxSize = 1L << 5;
 
 struct Xlib {
   XWin (*createSimpleWindow)(void*, XWin, int, int, unsigned, unsigned, unsigned, unsigned long, unsigned long) = nullptr;
@@ -102,6 +133,16 @@ struct Xlib {
   unsigned long (*keycodeToKeysym)(void*, unsigned char, int, int) = nullptr;  // XkbKeycodeToKeysym
   int (*translateCoordinates)(void*, XWin, XWin, int, int, int*, int*, XWin*) = nullptr;
   int (*sendEvent)(void*, XWin, int, long, XEv*) = nullptr;
+  // Side windows (K-153).
+  unsigned long (*internAtom)(void*, const char*, int) = nullptr;
+  int (*setWMProtocols)(void*, XWin, unsigned long*, int) = nullptr;
+  int (*storeName)(void*, XWin, const char*) = nullptr;
+  int (*changeProperty)(void*, XWin, unsigned long, unsigned long, int, int, const unsigned char*, int) = nullptr;
+  void (*setWMNormalHints)(void*, XWin, XSizeHintsRec*) = nullptr;
+  int (*setClassHint)(void*, XWin, XClassHintRec*) = nullptr;
+  int (*resizeWindow)(void*, XWin, unsigned, unsigned) = nullptr;
+  int (*defaultScreen)(void*) = nullptr;
+  XWin (*rootWindow)(void*, int) = nullptr;
   bool ok = false;
   bool keys = false;
 };
@@ -136,6 +177,15 @@ const Xlib& xlib() {
     l.keycodeToKeysym = reinterpret_cast<decltype(l.keycodeToKeysym)>(sym("XkbKeycodeToKeysym"));
     l.translateCoordinates = reinterpret_cast<decltype(l.translateCoordinates)>(sym("XTranslateCoordinates"));
     l.sendEvent = reinterpret_cast<decltype(l.sendEvent)>(sym("XSendEvent"));
+    l.internAtom = reinterpret_cast<decltype(l.internAtom)>(sym("XInternAtom"));
+    l.setWMProtocols = reinterpret_cast<decltype(l.setWMProtocols)>(sym("XSetWMProtocols"));
+    l.storeName = reinterpret_cast<decltype(l.storeName)>(sym("XStoreName"));
+    l.changeProperty = reinterpret_cast<decltype(l.changeProperty)>(sym("XChangeProperty"));
+    l.setWMNormalHints = reinterpret_cast<decltype(l.setWMNormalHints)>(sym("XSetWMNormalHints"));
+    l.setClassHint = reinterpret_cast<decltype(l.setClassHint)>(sym("XSetClassHint"));
+    l.resizeWindow = reinterpret_cast<decltype(l.resizeWindow)>(sym("XResizeWindow"));
+    l.defaultScreen = reinterpret_cast<decltype(l.defaultScreen)>(sym("XDefaultScreen"));
+    l.rootWindow = reinterpret_cast<decltype(l.rootWindow)>(sym("XRootWindow"));
     l.ok = l.createSimpleWindow && l.mapWindow && l.moveResizeWindow && l.destroyWindow && l.flush;
     l.keys = l.openDisplay && l.queryTree && l.selectInput && l.getWindowAttributes && l.pending && l.nextEvent && l.xfree && l.sync &&
              l.setErrorHandler && l.keycodeToKeysym;
@@ -363,6 +413,133 @@ bool xServerAnswers() {
   if (!d) return false;
   x.closeDisplay(d);
   return true;
+}
+
+// ---- side windows (K-153: plugin interfaces when Gridline's windows are Wayland windows)
+namespace {
+struct Side {
+  bool closed = false;
+  int w = 0, h = 0;
+  bool sized = false;  // the window manager changed the size since the last pump
+};
+struct SideState {
+  void* dpy = nullptr;
+  bool tried = false;
+  unsigned long wmProtocols = 0, wmDelete = 0;
+  std::map<XWin, Side> windows;
+};
+SideState& sideState() {
+  static SideState st;
+  return st;
+}
+bool sideReady() {
+  const Xlib& x = xlib();
+  return x.ok && x.openDisplay && x.internAtom && x.setWMProtocols && x.storeName && x.setWMNormalHints && x.resizeWindow &&
+         x.defaultScreen && x.rootWindow && x.selectInput && x.pending && x.nextEvent;
+}
+void* sideDisplay() {
+  SideState& st = sideState();
+  if (!st.tried) {
+    st.tried = true;
+    const char* name = std::getenv("DISPLAY");
+    if (name && *name && sideReady()) st.dpy = xlib().openDisplay(nullptr);
+    if (st.dpy) {
+      st.wmProtocols = xlib().internAtom(st.dpy, "WM_PROTOCOLS", 0);
+      st.wmDelete = xlib().internAtom(st.dpy, "WM_DELETE_WINDOW", 0);
+    }
+  }
+  return st.dpy;
+}
+void sideHints(void* dpy, XWin w, int width, int height, bool resizable) {
+  XSizeHintsRec hints{};
+  if (!resizable) {
+    hints.flags = kPMinSize | kPMaxSize;
+    hints.minWidth = hints.maxWidth = width;
+    hints.minHeight = hints.maxHeight = height;
+  } else {
+    hints.flags = kPMinSize;
+    hints.minWidth = hints.minHeight = 64;
+  }
+  xlib().setWMNormalHints(dpy, w, &hints);
+}
+void sideDrain() {
+  SideState& st = sideState();
+  const Xlib& x = xlib();
+  while (st.dpy && x.pending(st.dpy) > 0) {
+    XEv e{};
+    x.nextEvent(st.dpy, &e);
+    auto it = st.windows.find(e.any.window);
+    if (it == st.windows.end()) continue;
+    if (e.type == kClientMessage && e.client.messageType == st.wmProtocols && static_cast<unsigned long>(e.client.l[0]) == st.wmDelete)
+      it->second.closed = true;
+    if (e.type == kConfigureNotify && (e.configure.width != it->second.w || e.configure.height != it->second.h)) {
+      it->second.w = e.configure.width, it->second.h = e.configure.height;
+      it->second.sized = true;
+    }
+  }
+}
+}  // namespace
+
+void* sideWindowOpen(const std::string& title, int w, int h, bool resizable) {
+  void* dpy = sideDisplay();
+  if (!dpy) return nullptr;
+  const Xlib& x = xlib();
+  SideState& st = sideState();
+  const XWin root = x.rootWindow(dpy, x.defaultScreen(dpy));
+  const XWin s = x.createSimpleWindow(dpy, root, 0, 0, dim(w), dim(h), 0, 0, 0);
+  if (!s) return nullptr;
+  x.storeName(dpy, s, title.c_str());
+  if (x.changeProperty) {  // the title in UTF-8 (_NET_WM_NAME), for names with accents
+    const unsigned long netName = x.internAtom(dpy, "_NET_WM_NAME", 0), utf8 = x.internAtom(dpy, "UTF8_STRING", 0);
+    x.changeProperty(dpy, s, netName, utf8, 8, 0 /* PropModeReplace */, reinterpret_cast<const unsigned char*>(title.data()), static_cast<int>(title.size()));
+  }
+  if (x.setClassHint) {  // the panel groups it with Gridline: the class its own windows have (app/AppIcon.h)
+    const char* id = std::getenv("SDL_VIDEO_WAYLAND_WMCLASS");
+    std::string name = "gridline-plugin", cls = id && *id ? id : "gridline-app";
+    XClassHintRec ch{&name[0], &cls[0]};
+    x.setClassHint(dpy, s, &ch);
+  }
+  unsigned long protocols[] = {st.wmDelete};
+  x.setWMProtocols(dpy, s, protocols, 1);
+  sideHints(dpy, s, w, h, resizable);
+  x.selectInput(dpy, s, kStructureNotifyMask);
+  x.mapWindow(dpy, s);
+  x.flush(dpy);
+  st.windows[s] = Side{false, w, h, false};
+  watchKeys(ptr(s));  // Gridline's shortcuts typed in the interface (J-91)
+  return ptr(s);
+}
+
+void sideWindowResize(void* side, int w, int h, bool resizable) {
+  SideState& st = sideState();
+  auto it = st.windows.find(win(side));
+  if (!st.dpy || it == st.windows.end()) return;
+  sideHints(st.dpy, it->first, w, h, resizable);
+  xlib().resizeWindow(st.dpy, it->first, dim(w), dim(h));
+  xlib().flush(st.dpy);
+  it->second.w = w, it->second.h = h;
+}
+
+bool sideWindowPump(void* side, int& w, int& h) {
+  sideDrain();
+  SideState& st = sideState();
+  auto it = st.windows.find(win(side));
+  if (it == st.windows.end()) return false;
+  if (it->second.sized) {
+    w = it->second.w, h = it->second.h;
+    it->second.sized = false;
+  }
+  return !it->second.closed;
+}
+
+void sideWindowClose(void* side) {
+  SideState& st = sideState();
+  auto it = st.windows.find(win(side));
+  if (!st.dpy || it == st.windows.end()) return;
+  unwatchKeys(side);
+  xlib().destroyWindow(st.dpy, it->first);
+  xlib().flush(st.dpy);
+  st.windows.erase(it);
 }
 
 double backingScale(const Window&) { return 1.0; }

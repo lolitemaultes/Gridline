@@ -10,6 +10,7 @@
 #include <set>
 #include <vector>
 #include "../core/Automation.h"
+#include "../core/Groove.h"
 #include "../core/Song.h"
 
 namespace gl {
@@ -47,6 +48,18 @@ int quantizeWarpMarkers(Song& song, ObjectId clip, const TempoMap& map, Tick gri
                         const std::set<uint32_t>* only = nullptr);
 // Audio quantize: markers on the transients, then quantized. Returns how many moved.
 int quantizeAudioClip(Song& song, ObjectId clip, const TempoMap& map, Tick grid, double strength, double sensitivity = 0.5);
+
+// K-151: the clip's transients as song ticks with their peak level (a groove
+// taken from audio: groove::extract).
+std::vector<groove::Onset> clipGrooveOnsets(const Song& song, const Clip& c, const TempoMap& map, double sensitivity = 0.5);
+// K-151: the song's swing applied to an audio clip: warp markers on its transients,
+// each moved toward the nearest line of the swung grid (song bars, the groove's
+// grid; the pattern step counts as sixteenths). strength 1 lands them on it.
+// Returns how many moved.
+int grooveAudioClip(Song& song, ObjectId clip, const TempoMap& map, double strength, double sensitivity = 0.5);
+int grooveAudioClip(const Song& song, Clip& c, const TempoMap& map, double strength, double sensitivity = 0.5);
+// The swung grid line nearest song tick t (the song's groove and swing).
+double grooveTarget(const groove::Warp& w, double t);
 
 // The same on a clip of `song` the caller holds (a copy being edited: the
 // playlist edits it and records the result as one clip edit).

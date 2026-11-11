@@ -287,6 +287,8 @@ struct Decim {
   static constexpr int L = 31;
   float z[2 * L] = {};
   int p = 0;
+  int zrun = 0;  // zero samples in a row just pushed (2 L of them: the history is all zero)
+  bool quiet() const { return zrun >= 2 * L; }
   static const float* taps() {
     static const float* h = [] {
       static float t[L];
@@ -309,6 +311,7 @@ struct Decim {
     p = (p + 1) % L;
     z[p] = z[p + L] = b;
     p = (p + 1) % L;
+    zrun = a == 0 && b == 0 ? std::min(zrun + 2, 4 * L) : 0;
     float acc = 0;
     for (int i = 0; i < L; ++i) acc += h[i] * z[p + i];
     return acc;
@@ -316,6 +319,7 @@ struct Decim {
   void reset() {
     std::fill(z, z + 2 * L, 0.f);
     p = 0;
+    zrun = 0;
   }
 };
 
@@ -482,6 +486,10 @@ struct Note {
   double menvT[kOscs] = {};     // seconds in the current delay / hold stage
   float polyAT = 0;
   bool legatoStart = false;
+  // pay for what you use: an LFO or envelope nothing links to is not computed; its clock waits
+  // here (seconds / samples) and it catches up when a link reads it
+  double lfoLag[kLfos] = {};
+  int envLag[kEnvs] = {};
 };
 
 class PlasmaGen final : public Generator {
@@ -814,6 +822,7 @@ class PlasmaGen final : public Generator {
     destCount_ = 0;
     audioSrc_ = false;
     lfoUsed_ = 0;
+    envUsed_ = 0;
     for (int s = 0; s < kModSlots; ++s) {
       const int src = static_cast<int>(std::lround(G(modP(s, M_Source))));
       const int dst = static_cast<int>(std::lround(G(modP(s, M_Dest)))) - 1;
@@ -829,6 +838,7 @@ class PlasmaGen final : public Generator {
       for (int q : {src, static_cast<int>(std::lround(G(modP(s, M_Aux))))}) {
         if (q >= SrcLfo1 && q <= SrcLfo10) lfoUsed_ |= 1u << (q - SrcLfo1);
         if (q >= SrcLfo1Y && q <= SrcLfo10Y) lfoUsed_ |= 1u << (q - SrcLfo1Y);
+        if (q >= SrcEnv1 && q <= SrcEnv4) envUsed_ |= 1u << (q - SrcEnv1);
       }
       Slot& sl = slots_[slotCount_++];
       sl.index = s;
@@ -1221,6 +1231,7 @@ class PlasmaGen final : public Generator {
     const bool fromZero = V(&n, envP(e, E_Steal)) >= 0.5f;
     if (fromZero || s.stage == 0) s.level = p.start;
     envStage(s, 1, p, srv_);
+    n.envLag[e] = 0;
   }
   // Start phase: PHASE, snapped to the horizontal grid when "snap to grid" is on.
   double lfoStartPhase(const Note* n, int l) const {
@@ -1240,6 +1251,7 @@ class PlasmaGen final : public Generator {
       s.phase = lfoStartPhase(&n, l);
     }
     s.t = 0;
+    n.lfoLag[l] = mode == LfoFree ? globalLag_[l] : 0;  // a free LFO copies a waiting clock: it waits as long
     s.done = false;
     s.cycles = 0;
     s.sm = s.smY = 0;
@@ -1534,6 +1546,26 @@ class PlasmaGen final : public Generator {
     if (i <= 0) return 0;
     return lfoRateDivisionBeats(lfoRateDivisionCount() - i) * 60.0 / tempo_;
   }
+  // An LFO that ran unlinked and is read again: its clock moves on by the time it waited. A long
+  // wait goes by in a few coarse steps (the phase, its cycle count, a one-shot's end and the chaos
+  // state move on through stepLfo as usual), the last quarter second in control-period steps, at
+  // most kCatchSteps of them per period (the rest the next periods), so a return costs little.
+  static constexpr double kCatchKeep = 0.25;
+  static constexpr int kCatchCoarse = 16, kCatchSteps = 256;
+  void lfoCatchUp(const Note* n, LfoState& s, int l, double& lag, double step, bool held, bool global) {
+    if (lag <= 0) return;
+    if (lag > kCatchKeep) {
+      const double far = lag - kCatchKeep, d = far / kCatchCoarse;
+      for (int i = 0; i < kCatchCoarse; ++i) stepLfo(n, s, l, d, held, global);
+      lag = kCatchKeep;
+    }
+    for (int i = 0; i < kCatchSteps && lag > 1e-12; ++i) {
+      const double d = std::min(lag, step);
+      stepLfo(n, s, l, d, held, global);
+      lag -= d;
+    }
+    if (lag < 1e-12) lag = 0;
+  }
   void stepLfo(const Note* n, LfoState& s, int l, double dt, bool held, bool global) {
     const int type = static_cast<int>(V(n, lfoP(l, L_Type)));
     const int mode = static_cast<int>(V(n, lfoP(l, L_Mode)));
@@ -1696,6 +1728,19 @@ class PlasmaGen final : public Generator {
     l = pan > 0 ? farG : nearG;
     r = pan > 0 ? nearG : farG;
   }
+  // The scan rate of layer o (granular): the knob, tempo-synced over the sample's start..end, keyed.
+  template <class Src>
+  float scanRate(const Note& n, int o, const Src* src) const {
+    double scan = V(&n, oscP(o, O_ScanRate));
+    if (V(&n, oscP(o, O_ScanSync)) >= 0.5f && src && src->sample) {
+      // tempo scan: the start..end range passes once per division (the rate knob sets direction and multiplies)
+      const double secs = src->sample->seconds() * std::max(0.01, static_cast<double>(V(&n, oscP(o, O_End)) - V(&n, oscP(o, O_Start))));
+      const double divSec = divisionBeats(static_cast<int>(V(&n, oscP(o, O_ScanBpm)))) * 60.0 / tempo_;
+      scan *= secs / std::max(1e-3, divSec);
+    }
+    if (V(&n, oscP(o, O_ScanKey)) >= 0.5f) scan *= std::exp2((n.pitch - 60.0) / 12.0);
+    return static_cast<float>(scan);
+  }
   void oscSettings(const Note& n, int o, OscSet& s) const {
     s.on = V(&n, oscP(o, O_Enable)) >= 0.5f;
     s.silent = false;
@@ -1714,6 +1759,11 @@ class PlasmaGen final : public Generator {
         if (V(&n, oscP(o, O_MapWarp)) >= 0.5f) s.silent = true;
         else s.on = false;
       }
+    }
+    if (!s.on) {  // an off layer plays nothing: its settings are made when it is on again
+      s.type = static_cast<int>(V(&n, oscP(o, O_Type)));
+      if (s.type == OscGranular) s.scan = scanRate(n, o, &aux_->osc[static_cast<size_t>(o)]);  // its scan moves on as before
+      return;
     }
     s.type = static_cast<int>(V(&n, oscP(o, O_Type)));
     s.src = &aux_->osc[static_cast<size_t>(o)];
@@ -1832,15 +1882,7 @@ class PlasmaGen final : public Generator {
     s.start = V(&n, oscP(o, O_Start));
     s.end = V(&n, oscP(o, O_End));
     s.reverse = V(&n, oscP(o, O_Reverse)) >= 0.5f;
-    double scan = V(&n, oscP(o, O_ScanRate));
-    if (V(&n, oscP(o, O_ScanSync)) >= 0.5f && s.src && s.src->sample) {
-      // tempo scan: the start..end range passes once per division (the rate knob sets direction and multiplies)
-      const double secs = s.src->sample->seconds() * std::max(0.01, static_cast<double>(V(&n, oscP(o, O_End)) - V(&n, oscP(o, O_Start))));
-      const double divSec = divisionBeats(static_cast<int>(V(&n, oscP(o, O_ScanBpm)))) * 60.0 / tempo_;
-      scan *= secs / std::max(1e-3, divSec);
-    }
-    if (V(&n, oscP(o, O_ScanKey)) >= 0.5f) scan *= std::exp2((n.pitch - 60.0) / 12.0);
-    s.scan = static_cast<float>(scan);
+    s.scan = scanRate(n, o, s.src);
     s.position = std::clamp(V(&n, oscP(o, O_Position)) + static_cast<float>(n.scan[o]), 0.f, 1.f);
     s.loopMode = static_cast<int>(V(&n, oscP(o, O_LoopMode)));
     s.loopStart = V(&n, oscP(o, O_LoopStart));
@@ -1899,7 +1941,14 @@ class PlasmaGen final : public Generator {
     const double dtSec = static_cast<double>(period) / sr_;
     // LFOs
     for (int l = 0; l < kLfos; ++l)
-      if (G(lfoP(l, L_Mono)) < 0.5f) stepLfo(&n, n.lfo[l], l, dtSec, n.held, false);
+      if (G(lfoP(l, L_Mono)) < 0.5f) {
+        if (viewed_ || (lfoUsed_ >> l & 1u)) {
+          lfoCatchUp(&n, n.lfo[l], l, n.lfoLag[l], dtSec, n.held, false);
+          stepLfo(&n, n.lfo[l], l, dtSec, n.held, false);
+        } else {
+          n.lfoLag[l] += dtSec;  // unlinked: only its clock runs
+        }
+      }
     // glide
     if (n.glideLeft > 0) {
       n.glideLeft = std::max(0.0, n.glideLeft - dtSec);
@@ -2071,8 +2120,28 @@ class PlasmaGen final : public Generator {
     float* outs[8] = {vbuf_[0].data(), vbuf_[1].data(), vbuf_[2].data(), vbuf_[3].data(), vbuf_[4].data(), vbuf_[5].data(), vbuf_[6].data(), vbuf_[7].data()};
     const float ampTarget = c.amp;
     const float ampSlew = G(G_NoSmooth) >= 0.5f ? 1.f : 0.01f;  // "Disable Smoothing": gain changes apply at once
+    // Envelope 1 shapes the amp; the others run only while a link reads them (or the editor shows
+    // them). One that waited catches up, at most 4096 samples a chunk.
+    bool envRun[kEnvs];
+    for (int e = 0; e < kEnvs; ++e) {
+      envRun[e] = e == 0 || viewed_ || (envUsed_ >> e & 1u);
+      if (!envRun[e]) {
+        n.envLag[e] = std::min(n.envLag[e] + vframes, 1 << 26);  // bounded (no overflow on a note held for hours)
+        continue;
+      }
+      if (n.envLag[e] <= 0) continue;
+      int k = std::min(n.envLag[e], 4096);
+      for (; k > 0 && n.env[e].stage != 0 && n.env[e].stage != 4; --k) envTick(n.env[e], es[e], srv_, n.held);
+      if (n.env[e].stage == 0 || n.env[e].stage == 4) {  // resting: nothing left to catch up
+        envTick(n.env[e], es[e], srv_, n.held);
+        n.envLag[e] = 0;
+      } else {
+        n.envLag[e] = std::max(0, n.envLag[e] - 4096);
+      }
+    }
     for (int i = 0; i < vframes; ++i) {
-      for (int e = 0; e < kEnvs; ++e) envTick(n.env[e], es[e], srv_, n.held);
+      for (int e = 0; e < kEnvs; ++e)
+        if (envRun[e]) envTick(n.env[e], es[e], srv_, n.held);
       // fm sources: previous sample outputs
       float sl[5] = {}, sr[5] = {}, mono[5] = {};
       for (int o = 0; o < kOscs; ++o) {
@@ -2313,7 +2382,16 @@ class PlasmaGen final : public Generator {
     // global LFOs (mono LFOs, free-running phases, the global matrix context): on the control grid
     const double dt = period / sr_;
     if (grid)
-      for (int l = 0; l < kLfos; ++l) stepLfo(nullptr, globalLfo_[l], l, dt, true, true);
+      for (int l = 0; l < kLfos; ++l) {
+        // free-running phases are read by notes that start (and mono LFOs by the matrix): an LFO
+        // nothing links to only keeps its clock
+        if (viewed_ || (lfoUsed_ >> l & 1u)) {
+          lfoCatchUp(nullptr, globalLfo_[l], l, globalLag_[l], dt, true, true);
+          stepLfo(nullptr, globalLfo_[l], l, dt, true, true);
+        } else {
+          globalLag_[l] += dt;
+        }
+      }
     // lead note: newest sounding note
     lead_ = nullptr;
     for (auto& n : notes_)
@@ -2332,6 +2410,11 @@ class PlasmaGen final : public Generator {
     float bus[8][kCtl];
     for (int c = 0; c < 8; ++c) {
       const float* src = vbuf_[static_cast<size_t>(c)].data();
+      // an unused bus (no send, nothing direct): silence in, a silent filter, silence out
+      if (os_ > 1 && decim_[c].quiet() && (os_ == 2 || decim_[8 + c].quiet()) && std::all_of(src, src + vframes, [](float v) { return v == 0.f; })) {
+        std::fill(bus[c], bus[c] + m, 0.f);
+        continue;
+      }
       if (os_ == 1) {
         std::copy(src, src + m, bus[c]);
       } else if (os_ == 2) {
@@ -2447,7 +2530,12 @@ class PlasmaGen final : public Generator {
     if (grid) {
       // an LFO no matrix slot reads makes no sound: asleep it runs only for the editor
       for (int l = 0; l < kLfos; ++l)
-        if (viewed_ || (lfoUsed_ >> l & 1u)) stepLfo(nullptr, globalLfo_[l], l, dt, true, true);
+        if (viewed_ || (lfoUsed_ >> l & 1u)) {
+          lfoCatchUp(nullptr, globalLfo_[l], l, globalLag_[l], dt, true, true);
+          stepLfo(nullptr, globalLfo_[l], l, dt, true, true);
+        } else {
+          globalLag_[l] += dt;
+        }
       evalMatrix(nullptr, goff_, static_cast<float>(dt));
     }
     stepGains(m, false);
@@ -2657,7 +2745,8 @@ class PlasmaGen final : public Generator {
   int tailLeft_ = 0, ctlLeft_ = 0;
   bool asleep_ = false, sleepAllowed_ = true, offline_ = false, matrixBuilt_ = false;
   bool viewed_ = false, publishedAsleep_ = false;
-  uint32_t seenViews_ = 0, lfoUsed_ = 0;  // lfoUsed_: LFOs a matrix slot reads (source or aux)
+  uint32_t seenViews_ = 0, lfoUsed_ = 0, envUsed_ = 0;  // envUsed_: envelopes a matrix slot reads
+  double globalLag_[kLfos] = {};  // the free-running LFOs' waiting clocks (see lfoCatchUp)
   int viewLeft_ = 0;
   int quietFrames_ = 0, holdFrames_ = 0;
   std::vector<float> lastParams_ = std::vector<float>(kParamCount, 0.f);  // the parameters the matrix was built from

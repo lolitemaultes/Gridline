@@ -285,7 +285,9 @@ void channelItems(App& a, ObjectId channel) {
   const Song& s = a.doc.song();
   const Channel* c = s.channel(channel);
   if (!c) return;
-  if (ImGui::MenuItem(i18n::tr("Clone with controller links"))) a.selectChannel(ops::cloneChannelWithLinks(a.doc, channel));
+  // (Menu actions that add or remove channels run at the start of the next frame: App::later.)
+  if (ImGui::MenuItem(i18n::tr("Clone with controller links")))
+    a.later([&a, channel] { a.selectChannel(ops::cloneChannelWithLinks(a.doc, channel)); });
   ui::Hint("The copy follows the same MIDI controls and internal controllers as this channel");
 }
 
@@ -295,10 +297,12 @@ void channelStepItems(App& a, ObjectId channel) {
   if (!c) return;
   const Pattern* p = s.pattern(a.curPattern);
   if (p && ImGui::MenuItem(i18n::tr("Repeat the first bar of steps"), nullptr, false, p->bars > 1 && p->steps.count(channel)))
-    ops::autoFillSteps(a.doc, p->id, channel);
+    a.later([&a, pid = p->id, channel] { ops::autoFillSteps(a.doc, pid, channel); });  // next frame: the rack's channel menu
   if (p && ImGui::MenuItem(i18n::tr("Bake note effects into the pattern"), nullptr, false, !c->noteFx.empty())) {
-    if (burnNoteFxToPattern(a.doc, p->id, channel)) a.notify("Note effects baked into " + p->name);
-    else a.notify("Nothing to bake: the channel has no notes or steps here");
+    a.later([&a, pid = p->id, channel, name = p->name] {
+      if (burnNoteFxToPattern(a.doc, pid, channel)) a.notify("Note effects baked into " + name);
+      else a.notify("Nothing to bake: the channel has no notes or steps here");
+    });
   }
   ui::Hint("Plays the channel's note effects (arpeggiator, chords, …) and writes their output as notes");
 }
@@ -313,7 +317,8 @@ void channelSampleItems(App& a, ObjectId channel) {
     if (ImGui::BeginMenu(i18n::tr("Open the sample in a new channel"), hasSample)) {
       const std::string path = kerfmarks::pathOf(c->plugin.data);
       for (const char* type : {"gl.sampler", "gl.granular", "gl.slicer"})
-        if (const PluginInfo* ti = findPlugin(type); ti && ImGui::MenuItem(ti->name.c_str())) a.showNewInstrument(a.addInstrument(type, path));
+        if (const PluginInfo* ti = findPlugin(type); ti && ImGui::MenuItem(ti->name.c_str()))
+          a.later([&a, t = std::string(type), path] { a.showNewInstrument(a.addInstrument(t, path)); });
       ImGui::EndMenu();
     }
   }
@@ -323,11 +328,13 @@ void channelLayerItems(App& a, ObjectId channel) {
   const Channel* c = a.doc.song().channel(channel);
   if (!c) return;
   if (c->isLayer() && ImGui::BeginMenu(i18n::tr("Layer"))) {
-    if (ImGui::MenuItem(i18n::tr("Put its channels in a new group"))) {
-      int g = ops::groupLayerChildren(a.doc, channel, c->name);
-      if (g >= 0) a.notify("Group \"" + a.doc.song().channelGroups[static_cast<size_t>(g)] + "\" created");
-    }
-    if (ImGui::MenuItem(i18n::tr("Delete its channels"))) report(a, ops::deleteLayerChildren(a.doc, channel), "Deleted the layer's channels", "No channels to delete");
+    if (ImGui::MenuItem(i18n::tr("Put its channels in a new group")))
+      a.later([&a, channel, name = c->name] {
+        int g = ops::groupLayerChildren(a.doc, channel, name);
+        if (g >= 0) a.notify("Group \"" + a.doc.song().channelGroups[static_cast<size_t>(g)] + "\" created");
+      });
+    if (ImGui::MenuItem(i18n::tr("Delete its channels")))
+      a.later([&a, channel] { report(a, ops::deleteLayerChildren(a.doc, channel), "Deleted the layer's channels", "No channels to delete"); });
     ImGui::EndMenu();
   }
 }

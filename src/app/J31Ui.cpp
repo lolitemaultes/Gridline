@@ -247,47 +247,53 @@ void channelItems(App& a, ObjectId channel) {
   const Channel* c = s.channel(channel);
   const Pattern* p = s.pattern(a.curPattern);
   if (!c) return;
+  // The edits run at the start of the next frame (App::later): the rack's channel menu draws this.
+  const ObjectId pid = a.curPattern;
   if (p && ImGui::BeginMenu(i18n::tr("Step loop"))) {
     const int total = p->bars * p->stepsPerBar, loop = ops::stepLoop(*p, channel), beat = stepsPerBeat(s, *p);
     const std::vector<ObjectId> ids = {channel};
-    if (ImGui::MenuItem(i18n::tr("Don't loop"), nullptr, loop == 0)) ops::setStepLoop(a.doc, a.curPattern, ids, 0);
+    if (ImGui::MenuItem(i18n::tr("Don't loop"), nullptr, loop == 0)) a.later([&a, pid, ids] { ops::setStepLoop(a.doc, pid, ids, 0); });
     for (int n : {1, 2, 3, 4, 6, 8, 12})
       if (n * beat < total) {
         const std::string l = std::to_string(n) + (n == 1 ? " beat" : " beats") + " (" + std::to_string(n * beat) + " steps)";
-        if (ImGui::MenuItem(l.c_str(), nullptr, loop == n * beat)) ops::setStepLoop(a.doc, a.curPattern, ids, n * beat);
+        if (ImGui::MenuItem(l.c_str(), nullptr, loop == n * beat)) a.later([&a, pid, ids, k = n * beat] { ops::setStepLoop(a.doc, pid, ids, k); });
       }
     if (ImGui::BeginMenu(i18n::tr("Steps"))) {
       for (int n = 1; n < std::min(total, 33); ++n)
-        if (ImGui::MenuItem(std::to_string(n).c_str(), nullptr, loop == n)) ops::setStepLoop(a.doc, a.curPattern, ids, n);
+        if (ImGui::MenuItem(std::to_string(n).c_str(), nullptr, loop == n)) a.later([&a, pid, ids, n] { ops::setStepLoop(a.doc, pid, ids, n); });
       ImGui::EndMenu();
     }
     ImGui::Separator();
-    if (ImGui::MenuItem(i18n::tr("Set to the next beat"))) report(a, ops::loopToContent(a.doc, a.curPattern, ids, beat), "Looping", "The content fills the pattern");
-    if (ImGui::MenuItem(i18n::tr("Set to the next bar"))) report(a, ops::loopToContent(a.doc, a.curPattern, ids, p->stepsPerBar), "Looping", "The content fills the pattern");
-    if (ImGui::MenuItem(i18n::tr("Burn the loop into the pattern"), nullptr, false, loop > 0)) ops::burnStepLoops(a.doc, a.curPattern, ids);
+    if (ImGui::MenuItem(i18n::tr("Set to the next beat")))
+      a.later([&a, pid, ids, beat] { report(a, ops::loopToContent(a.doc, pid, ids, beat), "Looping", "The content fills the pattern"); });
+    if (ImGui::MenuItem(i18n::tr("Set to the next bar")))
+      a.later([&a, pid, ids, bar = p->stepsPerBar] { report(a, ops::loopToContent(a.doc, pid, ids, bar), "Looping", "The content fills the pattern"); });
+    if (ImGui::MenuItem(i18n::tr("Burn the loop into the pattern"), nullptr, false, loop > 0)) a.later([&a, pid, ids] { ops::burnStepLoops(a.doc, pid, ids); });
     ImGui::EndMenu();
   }
   if (ImGui::BeginMenu(i18n::tr("Key range"))) {
     ImGui::TextDisabled("%s .. %s", tools::pitchName(c->keyLo).c_str(), tools::pitchName(c->keyHi).c_str());
-    if (ImGui::MenuItem(i18n::tr("Whole keyboard"), nullptr, c->fullKeyRange())) ops::setKeyRange(a.doc, channel, 0, 127);
-    if (ImGui::MenuItem(i18n::tr("Notes below C5 only"))) ops::setKeyRange(a.doc, channel, 0, 59);
-    if (ImGui::MenuItem(i18n::tr("C5 and above only"))) ops::setKeyRange(a.doc, channel, 60, 127);
+    if (ImGui::MenuItem(i18n::tr("Whole keyboard"), nullptr, c->fullKeyRange())) a.later([&a, channel] { ops::setKeyRange(a.doc, channel, 0, 127); });
+    if (ImGui::MenuItem(i18n::tr("Notes below C5 only"))) a.later([&a, channel] { ops::setKeyRange(a.doc, channel, 0, 59); });
+    if (ImGui::MenuItem(i18n::tr("C5 and above only"))) a.later([&a, channel] { ops::setKeyRange(a.doc, channel, 60, 127); });
     ImGui::EndMenu();
   }
   ui::Hint("Notes outside the range do not play on this channel (layer splits set it)");
   bool trunc = c->swingTruncate;
-  if (ImGui::MenuItem(i18n::tr("Truncate swung steps"), nullptr, &trunc)) ops::setSwingTruncate(a.doc, {channel}, trunc ? 1 : 0);
+  if (ImGui::MenuItem(i18n::tr("Truncate swung steps"), nullptr, &trunc)) a.later([&a, channel, trunc] { ops::setSwingTruncate(a.doc, {channel}, trunc ? 1 : 0); });
   ui::Hint("Swung steps end on their grid line instead of overlapping the next step");
   if (c->isLayer()) {
-    if (ImGui::MenuItem(i18n::tr("Split the layer's children over the keyboard"))) {  // K-169: the layer's zones
-      if (layer::splitKeys(a.doc, channel)) a.notify("Each child plays its own key zone");
-    }
-    if (ImGui::MenuItem(i18n::tr("Reset the children's key ranges"))) {
-      a.doc.beginGroup("reset layer zones");
-      layer::resetZones(a.doc, channel);
-      ops::resetLayerChildren(a.doc, channel);
-      a.doc.endGroup();
-    }
+    if (ImGui::MenuItem(i18n::tr("Split the layer's children over the keyboard")))  // K-169: the layer's zones
+      a.later([&a, channel] {
+        if (layer::splitKeys(a.doc, channel)) a.notify("Each child plays its own key zone");
+      });
+    if (ImGui::MenuItem(i18n::tr("Reset the children's key ranges")))
+      a.later([&a, channel] {
+        a.doc.beginGroup("reset layer zones");
+        layer::resetZones(a.doc, channel);
+        ops::resetLayerChildren(a.doc, channel);
+        a.doc.endGroup();
+      });
   }
 }
 
@@ -394,7 +400,7 @@ void mixerItems(App& a, ObjectId track) {
   auto sel = mixerSelection(a);
   if (sel.empty()) sel = {track};
   if (ImGui::MenuItem(i18n::tr("Solo alone (without the tracks feeding it)"), nullptr, m->solo && m->soloAlone))
-    ops::altSoloMixerTracks(a.doc, sel);
+    a.later([&a, sel] { ops::altSoloMixerTracks(a.doc, sel); });  // next frame: drawn inside the mixer's strip loops
 }
 
 // ================================================================ piano roll hooks

@@ -193,10 +193,10 @@ const char* sourceGroup(int s) {
 }
 
 const std::vector<std::string>& fxTypeNames() {
-  static const std::vector<std::string> v = {"Empty",    "Distortion", "Flanger",    "Phaser",       "Chorus",      "Delay",
-                                             "Compressor", "Reverb",   "Equalizer",  "Filter",       "Hyper/Dimension",
-                                             "Frequency Shifter", "Convolve", "Utility", "Split Low/High",
-                                             "Split Low/Mid/High", "Split Mid/Side"};
+  // the same names as the editor's (plasma_fx_ui.cpp fxDisplayName); the index is what is stored
+  static const std::vector<std::string> v = {"Empty",    "Drive",    "Flanger", "Phaser",          "Chorus",           "Echo",
+                                             "Dynamics", "Space",    "EQ",      "Filter",          "Widen",            "Frequency shift",
+                                             "Impulse space", "Utility", "Split low / high", "Split low / mid / high", "Split mid / side"};
   return v;
 }
 
@@ -1227,7 +1227,8 @@ void appendInfos(std::vector<PluginInfo>& v) {
     for (int q = 0; q < kFxParams; ++q) set(fxP(s, X_P0 + q), lin(n + "Param " + std::to_string(q + 1), "%", 0, 1, 0));
   }
 
-  p.editorWidth = 1190;
+  p.editorWidth = 1280;
+  p.ownPresetBar = true;  // its top bar has the name, the sound picker and Save as
 
   // ---- factory presets (parameter overrides; original sounds)
   auto osc = [](int o, int q) { return oscP(o, q); };

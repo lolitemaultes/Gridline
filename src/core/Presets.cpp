@@ -157,6 +157,7 @@ bool saveChain(const std::string& root, const ChainPreset& chain, const std::str
 }
 
 std::vector<PresetEntry> listAutomationShapes(const std::string& root) { return listDir(fs::path(root) / "automation"); }
+std::vector<PresetEntry> listGrooves(const std::string& root) { return listDir(fs::path(root) / "grooves"); }
 
 bool loadAutomationShape(const std::string& file, int ppq, AutomationShape& out) {
   Json j;

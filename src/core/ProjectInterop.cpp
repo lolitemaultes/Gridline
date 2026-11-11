@@ -266,7 +266,7 @@ bool visitTextState(PluginState& st, const RefFn& fn) {
     });
   }
   if (t == "gl.multisampler") {
-    const bool zones = startsWith(st.data, "#gl-zones") || startsWith(st.data, "z ") || st.data.find("\nz ") != std::string::npos;
+    const bool zones = startsWith(st.data, "#gl-zones") || startsWith(st.data, "z ") || startsWith(st.data, "sfz ") || st.data.find("\nz ") != std::string::npos;
     if (!zones) {  // a bare path (a file dropped on the channel): its first line that is not blank
       bool done = false;
       return editLines(st.data, [&](std::string& l, size_t) {
@@ -275,7 +275,7 @@ bool visitTextState(PluginState& st, const RefFn& fn) {
         return visitRef(l, fn);
       });
     }
-    return editLines(st.data, [&](std::string& l, size_t) { return (startsWith(l, "z ") || startsWith(l, "sf2 ")) && visitAfterBar(l, fn); });
+    return editLines(st.data, [&](std::string& l, size_t) { return (startsWith(l, "z ") || startsWith(l, "sf2 ") || startsWith(l, "sfz ")) && visitAfterBar(l, fn); });  // K-144: an SFZ instrument
   }
   if (t == "gl.waveprogram")
     return editLines(st.data, [&](std::string& l, size_t) { return startsWith(l, "F ") && visitAfter(l, 2, fn); });
@@ -724,7 +724,7 @@ SfzBundle sfzBundle(const std::string& path, const std::function<std::string(con
     if (eq == std::string::npos) break;
     const std::string key = text.substr(i, eq - i);
     size_t ve = eq + 1;
-    if (key == "sample" || key == "default_path") {
+    if (key == "sample" || key == "default_path" || key == "image" || key == "tdfir_impulse") {  // K-144: pictures and impulses travel too
       const size_t next = text.find_first_of("<\n\r", ve);
       ve = next == std::string::npos ? text.size() : next;
       const size_t eq2 = text.find('=', eq + 1);

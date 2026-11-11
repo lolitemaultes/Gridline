@@ -202,6 +202,10 @@ double backingScale(const Window& w) {
 
 std::string xResources(const Window&) { return {}; }  // X11 only
 bool xServerAnswers() { return false; }
+void* sideWindowOpen(const std::string&, int, int, bool) { return nullptr; }
+void sideWindowResize(void*, int, int, bool) {}
+bool sideWindowPump(void*, int&, int&) { return false; }
+void sideWindowClose(void*) {}
 
 PointerSize pointerSize(const Window&) {
   PointerSize r;

@@ -10,6 +10,7 @@
 #include <cmath>
 #include <filesystem>
 #include "Automation.h"
+#include "Groove.h"
 #include "Mcp.h"
 #include "MidiFile.h"
 #include "Params.h"
@@ -446,6 +447,8 @@ Json projectSummary(const Environment& env) {
                  {"timeSignature", jstr(std::to_string(s.timeSigNum) + "/" + std::to_string(s.timeSigDen))},
                  {"ppq", jnum(s.ppq)},
                  {"swing", jnum(round4(s.swing))},
+                 {"swingPreset", jstr(s.groove.preset)},
+                 {"swingFeel", jstr(groove::feelText(s.groove.shape, s.swing))},
                  {"masterPitch", jnum(round4(s.masterPitch))},
                  {"beatsPerBar", jnum(round4(static_cast<double>(s.barTicks()) / s.ppq))},
                  {"lengthBeats", beatsJ(s, s.lengthTicks())},
@@ -757,9 +760,56 @@ ToolResult tHistory(Environment& env, const Json&) {
 
 // ------------------------------------------------------------------ edits ----
 
+// K-151: a groove object as get_song / set_song use it.
+Json grooveJ(const SongGroove& g) {
+  Json t = Json::makeArray(), v = Json::makeArray();
+  for (float x : g.shape.timing) t.array.push_back(jnum(round4(x)));
+  for (float x : g.shape.velocity) v.array.push_back(jnum(round4(x)));
+  return jobj({{"grid", jstr(groove::gridKey(g.shape.grid))}, {"cycle", jnum(g.shape.cycle)}, {"timing", t}, {"velocity", v},
+               {"accent", jnum(round4(g.accent))}});
+}
+
+ToolResult tSwingPresets(Environment& env, const Json&) {
+  Json factory = Json::makeArray(), user = Json::makeArray();
+  for (const auto& p : groove::factoryPresets())
+    factory.array.push_back(jobj({{"name", jstr(p.name)}, {"feel", jstr(groove::feelText(p.shape, p.amount))}}));
+  if (!env.presetRoot.empty())
+    for (const auto& p : groove::listUserPresets(env.presetRoot)) {
+      if (user.array.size() >= 2000) break;
+      user.array.push_back(jobj({{"name", jstr(p.folder.empty() ? p.name : p.folder + "/" + p.name)}, {"feel", jstr(groove::feelText(p.shape, p.amount))}}));
+    }
+  const Song& s = env.doc.song();
+  return ok(jobj({{"current", jstr(s.groove.preset)}, {"groove", grooveJ(s.groove)}, {"factory", factory}, {"user", user}}), "swing presets");
+}
+
 ToolResult tSetSong(Environment& env, const Json& a) {
   Document& d = env.doc;
   std::vector<std::string> done;
+  if (has(a, "swingPreset")) {  // K-151: first, so a swing given too sets the amount after it
+    groove::Preset p;
+    const std::string name = argStr(a, "swingPreset");
+    if (!groove::findPreset(env.presetRoot, name, p)) return fail("no swing preset \"" + name + "\" (see list_swing_presets)");
+    d.editSong("swing preset: " + p.name, [&p](Song& x) { groove::apply(x, p); });
+    done.push_back("swing preset");
+  }
+  if (const Json* g = a.find("groove"); g && g->is(Json::Type::Object)) {
+    SongGroove sg = d.song().groove;
+    if (g->find("grid")) sg.shape.grid = groove::gridFromKey(g->text("grid"));
+    if (g->find("cycle")) sg.shape.cycle = static_cast<int>(argInt(*g, "cycle", sg.shape.cycle));
+    auto floats = [](const Json* arr, std::vector<float>& out) {
+      if (!arr || !arr->is(Json::Type::Array)) return;
+      out.clear();
+      for (const Json& x : arr->array) out.push_back(x.is(Json::Type::Number) ? static_cast<float>(x.number) : 0.0f);
+    };
+    floats(g->find("timing"), sg.shape.timing);
+    floats(g->find("velocity"), sg.shape.velocity);
+    if (g->find("accent")) sg.accent = static_cast<float>(argNum(*g, "accent"));
+    if (!groove::validCycle(sg.shape.cycle)) return fail("groove cycle must be 2, 3, 4, 6, 8, 12 or 16");
+    sg.preset.clear();
+    groove::normalize(sg);
+    d.editSong("swing groove", [&sg](Song& x) { x.groove = sg; });
+    done.push_back("groove");
+  }
   if (has(a, "tempo")) {
     d.setParam(songParam(SongParam::Tempo), argNum(a, "tempo"), false);
     done.push_back("tempo");
@@ -786,11 +836,17 @@ ToolResult tSetSong(Environment& env, const Json& a) {
     d.setInfo(info);
     done.push_back("song info");
   }
-  if (done.empty()) return fail("nothing to change: give tempo, numerator / denominator, swing, masterPitch, title, author, genre or comments");
+  if (done.empty())
+    return fail("nothing to change: give tempo, numerator / denominator, swing, swingPreset, groove, masterPitch, title, author, genre or comments");
   std::string sum;
   for (const auto& x : done) sum += (sum.empty() ? "" : ", ") + x;
   Json j = projectSummary(env);
-  return ok(jobj({{"tempo", j.object["tempo"]}, {"timeSignature", j.object["timeSignature"]}, {"swing", j.object["swing"]}, {"title", j.object["title"]}}),
+  return ok(jobj({{"tempo", j.object["tempo"]},
+                  {"timeSignature", j.object["timeSignature"]},
+                  {"swing", j.object["swing"]},
+                  {"swingPreset", j.object["swingPreset"]},
+                  {"groove", grooveJ(d.song().groove)},
+                  {"title", j.object["title"]}}),
             "set " + sum);
 }
 
@@ -1530,11 +1586,20 @@ std::vector<Tool> buildTools() {
       noArgs, true, tHistory);
 
   // ---- edit
-  add("set_song", "change song settings", "Sets tempo (BPM), time signature, swing (0..1), master pitch (semitones) and song info. One undo step.",
+  add("list_swing_presets", "list swing presets",
+      "The swing presets (factory and the user's), each with its feel, the one applied last and the song's groove "
+      "(grid, cycle, per-cell timing in cells at full swing, per-cell velocity factors, accent).",
+      noArgs, true, tSwingPresets);
+  Json grooveProp = prop("object", "Swing groove: grid (\"step\", \"1/8\", \"1/16\", \"1/32\"), cycle (2, 3, 4, 6, 8, 12, 16 cells), "
+                                   "timing (per cell, -0.5..0.5 of a cell at full swing), velocity (per cell, 0..2; empty: none), accent (0..1)");
+  add("set_song", "change song settings",
+      "Sets tempo (BPM), time signature, swing (0..1), a swing preset or groove, master pitch (semitones) and song info. One undo step.",
       objSchema({{"tempo", numP("Tempo in BPM", 10, 999)},
                  {"numerator", intP("Time signature numerator", 1, 16)},
                  {"denominator", intEnumP("Time signature denominator", {2, 4, 8, 16})},
-                 {"swing", numP("Global swing 0..1", 0, 1)},
+                 {"swing", numP("Global swing 0..1 (the amount of the groove)", 0, 1)},
+                 {"swingPreset", strP("Swing preset name (see list_swing_presets): sets the swing amount and groove")},
+                 {"groove", grooveProp},
                  {"masterPitch", numP("Master pitch in semitones", -12, 12)},
                  {"title", strP("Song title")},
                  {"author", strP("Author")},

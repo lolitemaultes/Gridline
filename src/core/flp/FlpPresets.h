@@ -29,6 +29,7 @@ bool importFlPreset(const std::string& path, PresetResult& out, const std::strin
 
 struct PresetLibraryReport {
   size_t total = 0, converted = 0, exact = 0, chains = 0, shapes = 0, failed = 0;
+  size_t grooves = 0;   // K-151: quantize grooves (score files) saved as swing presets
   size_t standins = 0;  // J-53: FLEX presets saved as Gridline stand-in presets (flagged in their source note)
   bool cancelled = false;
   std::string error;
@@ -40,7 +41,8 @@ struct PresetLibraryReport {
 // Converts every preset of an FL Studio installation (plugin presets, channel
 // presets, packs, mixer presets, presets inside plugin folders) into
 // `presetRootDir` (see Presets.h), under "FL Studio/…". Automation-clip
-// channel presets become automation shapes ("automation/FL Studio/…"). `progress` may cancel
+// channel presets become automation shapes ("automation/FL Studio/…"), quantize grooves swing
+// presets ("grooves/FL Studio/Quantization/…"). `progress` may cancel
 // by returning false.
 PresetLibraryReport importPresetLibrary(const std::string& factoryData, const std::string& presetRootDir,
                                         const std::function<bool(size_t done, size_t total, const std::string& file)>& progress = {});

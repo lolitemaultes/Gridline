@@ -30,7 +30,7 @@ void report(App& a, bool ok, const std::string& why) {
 // Input choices: stereo pairs, then mono inputs (FL lists both).
 void inputItems(App& a, int track, const MixerTrack& m) {
   const int n = inputCount(a);
-  if (ImGui::MenuItem(i18n::tr("(none)"), nullptr, m.input < 0)) trackmodes::setInput(a.doc, track, -1, true);
+  if (ImGui::MenuItem(i18n::tr("(none)"), nullptr, m.input < 0)) a.later([&a, track] { trackmodes::setInput(a.doc, track, -1, true); });
   if (n == 0) {
     ImGui::BeginDisabled();
     ImGui::MenuItem(i18n::tr("No audio input device (Settings \xE2\x86\x92 Audio)"));
@@ -39,10 +39,12 @@ void inputItems(App& a, int track, const MixerTrack& m) {
   }
   ImGui::SeparatorText(i18n::tr("Stereo"));
   for (int i = 0; i + 1 < n; i += 2)
-    if (ImGui::MenuItem(inputName(i, true).c_str(), nullptr, m.input == i && m.inputStereo)) trackmodes::setInput(a.doc, track, i, true);
+    if (ImGui::MenuItem(inputName(i, true).c_str(), nullptr, m.input == i && m.inputStereo))
+      a.later([&a, track, i] { trackmodes::setInput(a.doc, track, i, true); });
   ImGui::SeparatorText(i18n::tr("Mono"));
   for (int i = 0; i < n; ++i)
-    if (ImGui::MenuItem(inputName(i, false).c_str(), nullptr, m.input == i && !m.inputStereo)) trackmodes::setInput(a.doc, track, i, false);
+    if (ImGui::MenuItem(inputName(i, false).c_str(), nullptr, m.input == i && !m.inputStereo))
+      a.later([&a, track, i] { trackmodes::setInput(a.doc, track, i, false); });
 }
 
 std::string mixerLabel(const Song& s, const MixerTrack& m) {
@@ -66,10 +68,18 @@ void trackMenuItems(App& a, int track) {
   const TrackMode mode = trackmodes::modeOf(s, track);
   if (ImGui::BeginMenu(i18n::tr("Track mode"))) {
     if (ImGui::MenuItem(i18n::tr("Ordinary track"), nullptr, mode == TrackMode::Unassigned, mode != TrackMode::Unassigned))
-      trackmodes::unassign(a.doc, track);
+      a.later([&a, track] { trackmodes::unassign(a.doc, track); });
     if (ImGui::BeginMenu(i18n::tr("Audio track"))) {
-      std::string why;
-      if (ImGui::MenuItem(i18n::tr("On the next free mixer track"), nullptr, false)) report(a, trackmodes::makeAudioTrack(a.doc, track, kNoId, &why), why);
+      // Every edit here runs at the start of the next frame: the menu draws inside loops over the song's
+      // tracks, mixer and channels, which an edit replaces.
+      auto makeAudio = [&a, track](ObjectId mixer) {
+        a.later([&a, track, mixer] {
+          std::string why;
+          const bool ok = trackmodes::makeAudioTrack(a.doc, track, mixer, &why);
+          report(a, ok, why);
+        });
+      };
+      if (ImGui::MenuItem(i18n::tr("On the next free mixer track"), nullptr, false)) makeAudio(kNoId);
       ImGui::SeparatorText(i18n::tr("Link to"));
       int listed = 0;
       for (size_t i = 1; i < s.mixer.size() && listed < 40; ++i) {
@@ -77,12 +87,11 @@ void trackMenuItems(App& a, int track) {
         const bool cur = mode == TrackMode::Audio && s.tracks[static_cast<size_t>(track)].mixer == m.id;
         if (!cur && !trackmodes::mixerLinkable(s, m.id, nullptr, track)) continue;
         ++listed;
-        if (ImGui::MenuItem(mixerLabel(s, m).c_str(), nullptr, cur, !cur)) report(a, trackmodes::makeAudioTrack(a.doc, track, m.id, &why), why);
+        if (ImGui::MenuItem(mixerLabel(s, m).c_str(), nullptr, cur, !cur)) makeAudio(m.id);
       }
       ImGui::EndMenu();
     }
     if (ImGui::BeginMenu(i18n::tr("Instrument track"))) {
-      std::string why;
       if (ImGui::BeginMenu(i18n::tr("Play a rack channel"))) {
         int listed = 0;
         for (const auto& c : s.channels) {
@@ -90,7 +99,12 @@ void trackMenuItems(App& a, int track) {
           if (!cur && !trackmodes::channelLinkable(s, c.id, nullptr, track)) continue;
           ++listed;
           ImGui::PushID(static_cast<int>(c.id));
-          if (ImGui::MenuItem(c.name.c_str(), nullptr, cur, !cur)) report(a, trackmodes::makeInstrumentTrack(a.doc, track, c.id, &why), why);
+          if (ImGui::MenuItem(c.name.c_str(), nullptr, cur, !cur))
+            a.later([&a, track, ch = c.id] {
+              std::string why;
+              const bool ok = trackmodes::makeInstrumentTrack(a.doc, track, ch, &why);
+              report(a, ok, why);
+            });
           ImGui::PopID();
         }
         if (listed == 0) {
@@ -103,11 +117,13 @@ void trackMenuItems(App& a, int track) {
       if (ImGui::BeginMenu(i18n::tr("New instrument"))) {
         for (const auto& info : pluginCatalog()) {
           if (info.kind != PluginKind::Generator || info.hidden) continue;
-          if (ImGui::MenuItem(info.name.c_str())) {
-            const ObjectId ch = trackmodes::newInstrumentTrack(a.doc, track, info.type, &why);
-            report(a, ch != kNoId, why);
-            if (ch != kNoId) a.showNewInstrument(ch);  // K-125
-          }
+          if (ImGui::MenuItem(info.name.c_str()))
+            a.later([&a, track, type = info.type] {
+              std::string why;
+              const ObjectId ch = trackmodes::newInstrumentTrack(a.doc, track, type, &why);
+              report(a, ch != kNoId, why);
+              if (ch != kNoId) a.showNewInstrument(ch);  // K-125
+            });
         }
         ImGui::EndMenu();
       }
@@ -122,12 +138,13 @@ void trackMenuItems(App& a, int track) {
       inputItems(a, track, *m);
       ImGui::EndMenu();
     }
-    if (ImGui::MenuItem(i18n::tr("Arm for recording"), nullptr, m->armed, !m->armed)) trackmodes::setArmed(a.doc, track, true);
-    if (ImGui::MenuItem(i18n::tr("Disarm"), nullptr, false, m->armed)) trackmodes::setArmed(a.doc, track, false);
+    if (ImGui::MenuItem(i18n::tr("Arm for recording"), nullptr, m->armed, !m->armed)) a.later([&a, track] { trackmodes::setArmed(a.doc, track, true); });
+    if (ImGui::MenuItem(i18n::tr("Disarm"), nullptr, false, m->armed)) a.later([&a, track] { trackmodes::setArmed(a.doc, track, false); });
     if (ImGui::BeginMenu(i18n::tr("Input monitoring"))) {
       static const char* names[] = {"Auto (while armed or stopped)", "Always", "Never"};
       for (int k = 0; k < static_cast<int>(InputMonitor::Count); ++k)
-        if (ImGui::MenuItem(names[k], nullptr, m->monitor == k)) trackmodes::setMonitor(a.doc, track, static_cast<InputMonitor>(k));
+        if (ImGui::MenuItem(names[k], nullptr, m->monitor == k))
+          a.later([&a, track, k] { trackmodes::setMonitor(a.doc, track, static_cast<InputMonitor>(k)); });
       ImGui::EndMenu();
     }
     if (ImGui::MenuItem(i18n::tr("Show its mixer track"))) {
@@ -216,11 +233,14 @@ void headerClick(App& a, int track, int control) {
   const Song& s = a.doc.song();
   switch (control) {
     case kArm:
-      if (const MixerTrack* m = trackmodes::linkedMixer(s, track)) trackmodes::setArmed(a.doc, track, !m->armed);
+      if (const MixerTrack* m = trackmodes::linkedMixer(s, track))  // next frame: the playlist draws this in its track loop
+        a.later([&a, track, on = !m->armed] { trackmodes::setArmed(a.doc, track, on); });
       break;
     case kMonitor:
       if (const MixerTrack* m = trackmodes::linkedMixer(s, track))  // auto → always → never → auto
-        trackmodes::setMonitor(a.doc, track, static_cast<InputMonitor>((m->monitor + 1) % static_cast<int>(InputMonitor::Count)));
+        a.later([&a, track, next = (m->monitor + 1) % static_cast<int>(InputMonitor::Count)] {
+          trackmodes::setMonitor(a.doc, track, static_cast<InputMonitor>(next));
+        });
       break;
     case kInput: ImGui::OpenPopup("##trackinput"); break;
     case kKeys:
@@ -331,25 +351,31 @@ void mixerMenuItems(App& a, ObjectId mixer) {
   const Song& s = a.doc.song();
   if (mixer == s.masterId()) return;
   const int linked = trackmodes::audioTrackOf(s, mixer);
-  std::string why;
-  if (ImGui::MenuItem(i18n::tr("Make an audio track for it"), nullptr, false, linked < 0)) {
-    const int t = trackmodes::assignMixerToNewTrack(a.doc, mixer, &why);
-    report(a, t >= 0, why);
-    if (t >= 0) a.notify("Audio track on playlist track " + std::to_string(t + 1));
-  }
-  if (ImGui::MenuItem(i18n::tr("Drop its audio track link"), nullptr, false, linked >= 0)) trackmodes::unassignMixer(a.doc, mixer);
+  // (Run at the start of the next frame, App::later: the mixer draws this menu in its strip loop.)
+  if (ImGui::MenuItem(i18n::tr("Make an audio track for it"), nullptr, false, linked < 0))
+    a.later([&a, mixer] {
+      std::string why;
+      const int t = trackmodes::assignMixerToNewTrack(a.doc, mixer, &why);
+      report(a, t >= 0, why);
+      if (t >= 0) a.notify("Audio track on playlist track " + std::to_string(t + 1));
+    });
+  if (ImGui::MenuItem(i18n::tr("Drop its audio track link"), nullptr, false, linked >= 0))
+    a.later([&a, mixer] { trackmodes::unassignMixer(a.doc, mixer); });
 }
 
 void channelMenuItems(App& a, ObjectId channel) {
   const Song& s = a.doc.song();
   const int linked = trackmodes::instrumentTrackOf(s, channel);
-  std::string why;
-  if (ImGui::MenuItem(i18n::tr("Make an instrument track for it"), nullptr, false, linked < 0 && trackmodes::channelLinkable(s, channel))) {
-    const int t = trackmodes::assignChannelToNewTrack(a.doc, channel, &why);
-    report(a, t >= 0, why);
-    if (t >= 0) a.notify("Instrument track on playlist track " + std::to_string(t + 1));
-  }
-  if (ImGui::MenuItem(i18n::tr("Drop its instrument track link"), nullptr, false, linked >= 0)) trackmodes::unassignChannel(a.doc, channel);
+  // (Run at the start of the next frame, App::later: a new track can resize the playlist tracks.)
+  if (ImGui::MenuItem(i18n::tr("Make an instrument track for it"), nullptr, false, linked < 0 && trackmodes::channelLinkable(s, channel)))
+    a.later([&a, channel] {
+      std::string why;
+      const int t = trackmodes::assignChannelToNewTrack(a.doc, channel, &why);
+      report(a, t >= 0, why);
+      if (t >= 0) a.notify("Instrument track on playlist track " + std::to_string(t + 1));
+    });
+  if (ImGui::MenuItem(i18n::tr("Drop its instrument track link"), nullptr, false, linked >= 0))
+    a.later([&a, channel] { trackmodes::unassignChannel(a.doc, channel); });
 }
 
 }  // namespace gl::trackui

@@ -178,8 +178,9 @@ plugin shows as crashed and goes silent, other tracks play on and the project st
 
 **Not covered:**
 
-- With Gridline on the Wayland video driver the plugins scan and load, but the interface does not
-  open. Run in sandbox has not been measured on that driver.
+- With Gridline on the Wayland video driver (Window system: Native Wayland) the interface opens in
+  a window of its own on XWayland ([wayland.md](wayland.md)); bridged Windows plugins have not been
+  measured in that window.
 - XWayland has no clean result yet. XWayland on the headless Weston of the test machine crashes on a
   synthetic click, even on a plain X client with neither Gridline nor Wine, so mouse and keyboard
   there need a person to check.

@@ -338,8 +338,9 @@ void testInviteFlow() {
   // the invite is one-time: a second person with the same code is refused
   Machine c;
   w.make(c, "Kim");
+  c.hub->joinWaitSec = 120;  // (K-174: a join keeps trying for 15 min by default)
   joinWith(w, c, code, "hub_c");
-  w.run(125.0);  // (a join's ICE gets 2 min before it fails)
+  w.run(125.0);  // (a join's ICE gets 2 min here before it fails)
   expect(c.hub->joinView().status == Hub::JoinStatus::Refused || c.hub->joinView().status == Hub::JoinStatus::Failed,
          "a used invite does not let a second person in");
   expect(a.peer.s->members().size() == 2, "the refused person did not become a member");

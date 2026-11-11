@@ -62,6 +62,10 @@ float& current() {
   static float z = 1;
   return z;
 }
+ImVec2& currentOrigin() {  // the top-left of the editor region being drawn (its zoom's fixed point)
+  static ImVec2 o{0, 0};
+  return o;
+}
 
 std::map<std::string, Slot>& slots() {
   static std::map<std::string, Slot> m;
@@ -249,6 +253,7 @@ void begin(App&, const char* key) {
   s.hostVtx1 = ~0u;
   s.origin = ImGui::GetCursorScreenPos();
   current() = s.z;
+  currentOrigin() = s.origin;
   s.inner = s.host->InnerRect;
   s.innerClip = s.host->InnerClipRect;
   s.pad = s.host->WindowPadding;
@@ -277,6 +282,7 @@ void begin(App&, const char* key) {
 }
 
 float currentZoom() { return current(); }
+ImVec2 toScreenHere(ImVec2 p) { return current() == 1.0f ? p : mapOut(currentOrigin(), current(), p); }
 
 void markBodyEnd() {
   for (auto& [key, s] : slots())

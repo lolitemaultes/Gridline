@@ -4,6 +4,7 @@
 //   <root>/<plugin type>/<folder…>/<name>.json      plugin presets
 //   <root>/chains/<folder…>/<name>.json             effect chains
 //   <root>/automation/<folder…>/<name>.json         automation shapes (J-5)
+//   <root>/grooves/<folder…>/<name>.json            swing presets (K-151, core/Groove.h)
 //
 // <root> is "<config dir>/presets". Presets converted from an FL Studio
 // installation live under the folder "FL Studio/<FL plugin name>/…" and are
@@ -54,6 +55,8 @@ struct AutomationShape {
   std::string source;             // optional note (e.g. "FL Studio automation preset")
 };
 std::vector<PresetEntry> listAutomationShapes(const std::string& root);
+// K-151: swing presets, <root>/grooves/<folder…>/<name>.json (core/Groove.h reads them).
+std::vector<PresetEntry> listGrooves(const std::string& root);
 bool loadAutomationShape(const std::string& file, int ppq, AutomationShape& out);
 bool saveAutomationShape(const std::string& root, const AutomationShape& shape, int ppq, const std::string& relName);
 

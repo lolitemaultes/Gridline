@@ -82,12 +82,14 @@ Settings::Settings() {
       {"transport.jumpQuantize", Json::makeNumber(0)}, // ops::jumpGrid mode (0 = jump at once)
       {"transport.rememberSeek", b(true)},             // J-49: Stop returns to the last set song position
       {"ui.scale", Json::makeNumber(1.0)},
+      {"ui.windowSystem", Json::makeString("auto")},  // K-153: "auto" (X11 through XWayland when there is one) or "wayland" (Linux, BSD)
       {"ui.scaleAuto", b(true)},             // J-91: ui.scale is multiplied by the desktop's scale (core/UiScale.h)
       {"ui.detachWindows", b(true)},         // J-113: windows can be dragged out of the main window
       {"ui.editorZoom", Json::makeString("")},  // K-19: plugin editor sizes per type ("gl.eq=1.5;..."), core/EditorZoom.h
       {"ui.pluginWindowSize", Json::makeNumber(0.75)},  // K-136, K-147: built-in plugin editors' size, 0.6 .. 1.5 (edzoom::kGlobalDefault)
       {"ui.pluginWindowFit", b(false)},                 // K-136: small editors open larger on a large screen (K-19's automatic size)
       {"ui.loupePinned", b(false)},          // K-15: Loupe is a panel of the main layout
+      {"ui.plasmaFull", b(false)},           // K-164: Plasma editor shows every control in place (Full) instead of Simple
       {"loupe.autoScroll", b(true)},         // Loupe follows the playhead while it plays (its own toggle sets it)
       {"ui.animations", b(true)},            // J-91: decorative interface animations (metronome tick, light fades, glides)
       {"ui.showHints", b(true)},

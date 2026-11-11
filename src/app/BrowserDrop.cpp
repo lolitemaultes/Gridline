@@ -6,6 +6,8 @@
 #include <fstream>
 #include <cstring>
 #include <map>
+#include <thread>
+#include <mutex>
 #include <set>
 #include <sstream>
 #include "../../third_party/imgui/imgui_internal.h"
@@ -22,12 +24,15 @@
 #include "../engine/LoopFile.h"
 #include "../engine/LoopImport.h"
 #include "../engine/pitch/Kernel.h"
+#include "../packs/Packs.h"
 #include "../packs/PacksUi.h"
 #include "App.h"
 #include "BrowserUi.h"
 #include "../core/RemoteFs.h"
 #include "../core/ProjectFiles.h"
+#include "../core/HydrogenKit.h"
 #include "CollabUi.h"
+#include "DrumKitUi.h"
 #include "ExternalDragUi.h"
 #include "PluginUI.h"
 #include "Theme.h"
@@ -62,6 +67,85 @@ std::string contentDir(App& a, const char* name) { return (fs::path(a.configDir(
 
 namespace {
 bool indexStarted = false;
+
+// K-144: a browser click on an .sfz / .sf2 plays a note of it. The map loads and renders on a
+// worker (big maps take a while); the frame loop hands the result to the preview player.
+struct InstrumentPreview {
+  std::mutex mu;
+  std::string want;   // the latest click
+  SamplePtr ready;    // rendered, not yet played
+  std::string readyFor;
+  bool busy = false;
+};
+InstrumentPreview& instrumentPreview() {
+  static InstrumentPreview p;
+  return p;
+}
+SamplePtr renderInstrumentNote(const std::string& path) {
+  PluginState st = defaultPluginState("gl.multisampler");
+  st.data = path;
+  ChannelAux aux;
+  packs::prepareAux(st, aux);
+  std::unique_ptr<Generator> g = packs::createGenerator("gl.multisampler");
+  if (!g) return nullptr;
+  ProcessContext ctx;
+  ctx.sampleRate = 44100;
+  ctx.tempo = 120;
+  const size_t total = 44100 * 2, held = 44100 * 6 / 5;
+  auto s = std::make_shared<Sample>();
+  s->path = path;
+  s->sampleRate = 44100;
+  s->left.assign(total, 0.0f);
+  s->right.assign(total, 0.0f);
+  g->noteOn(1, 60, 0.8f, 0);
+  for (size_t p = 0; p < total; p += 512) {
+    if (p >= held && p < held + 512) g->noteOff(1, 0);
+    const int n = static_cast<int>(std::min<size_t>(512, total - p));
+    g->process(st, aux, ctx, s->left.data() + p, s->right.data() + p, n);
+  }
+  float peak = 0;
+  for (size_t i = 0; i < total; ++i) peak = std::max({peak, std::fabs(s->left[i]), std::fabs(s->right[i])});
+  return peak > 1e-5f ? s : nullptr;
+}
+void previewInstrument(const std::string& path) {
+  InstrumentPreview& p = instrumentPreview();
+  std::lock_guard<std::mutex> lk(p.mu);
+  p.want = path;
+  if (p.busy) return;  // the worker picks the latest click up when it is done
+  p.busy = true;
+  std::thread([] {
+    InstrumentPreview& q = instrumentPreview();
+    for (;;) {
+      std::string path;
+      {
+        std::lock_guard<std::mutex> lk(q.mu);
+        path = q.want;
+        q.want.clear();
+        if (path.empty()) {
+          q.busy = false;
+          return;
+        }
+      }
+      SamplePtr s = renderInstrumentNote(path);
+      std::lock_guard<std::mutex> lk(q.mu);
+      q.ready = s;
+      q.readyFor = s ? std::string() : path;
+    }
+  }).detach();
+}
+void tickInstrumentPreview(App& a) {
+  InstrumentPreview& p = instrumentPreview();
+  SamplePtr s;
+  std::string failed;
+  {
+    std::lock_guard<std::mutex> lk(p.mu);
+    s = std::move(p.ready);
+    p.ready.reset();
+    failed.swap(p.readyFor);
+  }
+  if (s) a.engine.preview(s);
+  else if (!failed.empty()) a.notify(std::string(i18n::tr("No note to preview in ")) + fs::path(failed).filename().string(), true);
+}
 
 std::vector<std::pair<std::string, bool>> indexRoots(App& a) {
   std::vector<std::pair<std::string, bool>> roots;
@@ -103,6 +187,7 @@ double lastPass = 0;
 }
 
 void tickIndex(App& a) {
+  tickInstrumentPreview(a);
   if (!indexStarted || index().busy()) return;
   if (lastPass <= 0) lastPass = a.now;
   if (a.now - lastPass > 240.0) {
@@ -192,6 +277,10 @@ const Decoded& decodeItem(const std::string& path) {
       d.error = r.error.empty() ? "Cannot read this FL Studio preset" : r.error;
       if (!r.unmapped.empty()) d.error = "No Gridline equivalent for " + r.unmapped.front();
     }
+  } else if (d.item.kind == Kind::Other && hydrogen::isKitFolder(path)) {  // K-162: a drum kit's folder
+    d.item.kind = Kind::DrumKit;
+    d.name = fs::path(path).filename().string();
+    d.ok = true;
   } else {
     d.ok = browse::listable(d.item.kind);
   }
@@ -301,8 +390,10 @@ void fileDragSource(const std::string& path, const char* label) {
                         : k == Kind::Midi || k == Kind::Score ? ui::Icon::Piano
                         : k == Kind::Chain ? ui::Icon::Mixer
                         : k == Kind::Layer ? ui::Icon::Rack  // K-169
+                        : k == Kind::DrumKit ? ui::Icon::CatDrums  // K-162
                         : k == Kind::Project || k == Kind::Flp ? ui::Icon::Song
                         : k == Kind::Image                     ? ui::Icon::Paint  // J-184
+                        : k == Kind::Instrument                ? ui::Icon::CatSampler  // K-144
                                                                : ui::Icon::Settings;
   ui::DragPreview(icon, name.c_str(), audio ? theme::rgb(theme::role::kPaint) : 0);
   ImGui::EndDragDropSource();
@@ -320,7 +411,7 @@ DropAction dropActionFor(App& a, const std::string& path, DropTarget target, con
 browse::DropItem dropItemFor(const xdrop::Item& it) {
   browse::DropItem d;
   if (it.dir) {
-    d.kind = Kind::Folder;
+    d.kind = xdrop::kindOf(it);  // a folder, or a drum kit's folder (K-162)
   } else if (it.pending || it.path.empty()) {
     d.kind = xdrop::kindOf(it);
   } else {
@@ -863,6 +954,32 @@ bool runAction(App& a, const std::string& path, DropAction act, DropTarget targe
     case DropAction::AddBrowserFolder:
       addBrowserFolder(a, path);
       return true;
+    case DropAction::LoadDrumKit: {  // K-162: read on a worker; a plugin window or a channel row takes the kit
+      const ObjectId replace = target == DropTarget::PluginWindow && place.pluginSlot < 0 ? place.owner
+                               : target == DropTarget::Rack                               ? place.channel
+                                                                                          : kNoId;
+      drumkitui::load(a, path, replace, target == DropTarget::Rack ? place.insertAt : -1);
+      return true;
+    }
+    case DropAction::NewInstrumentChannel: {  // K-144: a Multisampler channel playing the map
+      const ObjectId id = addChannelAt(a, "gl.multisampler", path, target == DropTarget::Rack ? place.insertAt : -1);
+      a.showNewInstrument(id);
+      return id != kNoId;
+    }
+    case DropAction::ReplaceWithInstrument:
+      if (!replaceChannel(a, place.channel, "gl.multisampler", nullptr, path, fs::path(path).stem().string(), "replace with Multisampler")) return false;
+      a.showNewInstrument(place.channel);
+      return true;
+    case DropAction::LoadInstrumentMap: {
+      const PluginTarget t = target == DropTarget::Rack ? PluginTarget{place.channel, -1} : PluginTarget{place.owner, place.pluginSlot};
+      const PluginState* cur = t.state(a.doc.song());
+      if (!cur) return false;
+      PluginState ns = *cur;
+      ns.data = path;
+      setPluginState(a, t, ns, "load multisample instrument");
+      if (target == DropTarget::Rack) a.selectChannel(place.channel);
+      return true;
+    }
     case DropAction::NewLayer: {  // K-169: the layer and its children, as one undo step
       std::string err;
       const ObjectId l = layer::loadPreset(a.doc, d.layer, target == DropTarget::Rack ? place.insertAt : -1, &err);
@@ -1225,6 +1342,10 @@ void openFile(App& a, const std::string& path) {
     return;
   }
   const Decoded& d = decodeItem(path);
+  if (d.item.kind == Kind::DrumKit) {  // K-162: a kit file or folder: drum pad channels
+    drumkitui::load(a, path);
+    return;
+  }
   if (fs::is_directory(path)) {
     addBrowserFolder(a, path);
     return;
@@ -1245,6 +1366,17 @@ void openFile(App& a, const std::string& path) {
     a.notify(std::string(i18n::tr("Pictures play in Pixel Tone: drop this one onto a Pixel Tone editor or channel")) + " (" +
                  fs::path(path).filename().string() + ")",
              true);
+    return;
+  }
+  // K-144: .sfz / .sf2 load into the open Multisampler window, else a new Multisampler channel.
+  if (d.item.kind == Kind::Instrument) {
+    DropPlace pw;
+    if (a.settingsChannel != kNoId) pw.owner = a.settingsChannel, pw.pluginSlot = -1;
+    if (pw.owner != kNoId && dropActionFor(a, path, DropTarget::PluginWindow, pw) == DropAction::LoadInstrumentMap) {
+      performDrop(a, path, DropTarget::PluginWindow, pw);
+      return;
+    }
+    performDrop(a, path, DropTarget::Workspace, DropPlace{});
     return;
   }
   // Presets go to the open plugin window when it shows the same plugin.
@@ -1307,6 +1439,10 @@ bool& previewSync() {
 }
 
 void previewFile(App& a, const std::string& path) {
+  if (browse::kindOf(path) == Kind::Instrument && !remotefs::isRemote(path)) {  // K-144: a note of the map, rendered on a worker
+    previewInstrument(path);
+    return;
+  }
   if (remotefs::isRemote(path)) {  // K-42: read on a background decoder and heard when it has arrived
     a.previewWhenReady(path);
     return;

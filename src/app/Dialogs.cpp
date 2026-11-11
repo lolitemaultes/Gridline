@@ -5,6 +5,7 @@
 #include "../core/RemoteFs.h"
 #include "../engine/ProjectLoad.h"
 #include "DisplayConfirmUi.h"
+#include "DrumKitUi.h"
 #include "GridlineVersion.h"
 #include <algorithm>
 #include <chrono>
@@ -53,6 +54,7 @@
 #include "UrlImportUi.h"
 #include "Widgets.h"
 #include "Windows.h"
+#include "GrooveUi.h"
 #include "Viewports.h"
 #include "../core/WheelRoute.h"
 #include "../core/Platform.h"
@@ -600,6 +602,23 @@ void settingsPageBody(App& a, int& page, float fieldW) {
       ui::Hint("On: the interface size is multiplied by the scale set in your system's display settings. Off: the size above is used as it is");
     }
 #endif
+#if !defined(__APPLE__) && !defined(_WIN32)
+    {  // K-153: X11 through XWayland (plugin interfaces inside their windows, detachable panels) or native Wayland
+      static const char* const kSystems[] = {i18n::N_("Automatic (X11 when available)"), i18n::N_("Native Wayland")};
+      const int cur = st.getString("ui.windowSystem") == "wayland" ? 1 : 0;
+      formLabel("Window system");
+      if (ui::BeginCombo("##windowsystem", i18n::tr(kSystems[cur]), fieldW)) {
+        for (int i = 0; i < 2; ++i)
+          if (ImGui::Selectable(i18n::tr(kSystems[i]), cur == i)) st.set("ui.windowSystem", i == 1 ? "wayland" : "auto");
+        ImGui::EndCombo();
+      }
+      ui::Hint("Applies the next time Gridline starts. Automatic runs Gridline through XWayland on a Wayland desktop, so plugin "
+               "interfaces sit inside their plugin windows and panels can be detached. Native Wayland: plugin interfaces open "
+               "in windows of their own and panels stay inside the main window");
+      formLabel("");
+      ImGui::TextColored(theme::vec(P.textFaint), i18n::tr("Now running on: %s"), a.windowSystem.empty() ? "-" : a.windowSystem.c_str());
+    }
+#endif
     // K-136: Gridline's own plugin windows, on top of the interface scale (core/EditorZoom.h).
     formLabel("Plugin window size");
     {
@@ -1114,6 +1133,7 @@ void drawDialogs(App& a) {
   flpexport::draw(a);      // J-80: FL Studio export progress and report
   updatePerformance(a);
   drawPerformance(a);
+  grooveui::drawEditor(a);  // K-151
   settingsWindow(a);
   infoWindow(a);
   exportui::draw(a);
@@ -1132,6 +1152,7 @@ void drawDialogs(App& a) {
   drawPluginManager(a);
   drawRemoteDialog(a);
   j31::drawWindows(a);  // J-31: chord progression editor, audio logger, MIDI scale snap
+  drumkitui::draw(a);   // K-162: drum kits read on a worker, their import report
   drawProjectScriptWindow(a);  // J-57: project script settings / run
   mcpui::tick(a);                // SC-07: AI assistant server (opt-in, loopback only)
   mcpui::drawActivityWindow(a);

@@ -10,6 +10,9 @@
 #include "../core/NoteTools.h"
 #include "../core/StepNotes.h"
 #include "App.h"
+#include "ContextMenus.h"
+#include "GrooveUi.h"
+#include "../core/Presets.h"
 #include "J31Ui.h"
 #include "Theme.h"
 #include "Widgets.h"
@@ -28,6 +31,7 @@ struct ToolSettings {
   double qGrid = 4;        // index into kGrids
   int qDuration = 0;
   int qGrooveChannel = -1; // >= 0: index into the song's channels used as groove
+  std::string qUserGroove;  // K-151: one of the user's swing presets ("": a factory one, q.groove)
   // Chop.
   int chopPattern = 0;
   double chopTime = 1.0, chopGate = 1.0;
@@ -263,13 +267,25 @@ void quantizeBody(App& a) {
   });
   ui::Hint("Grid the notes move to");
   ImGui::SameLine();
+  const groove::Preset* userGroove = S.qUserGroove.empty() ? nullptr : groove::findIn(grooveui::presets(a), S.qUserGroove);
+  if (!S.qUserGroove.empty() && !userGroove) S.qUserGroove.clear();  // deleted meanwhile
   std::string gname = S.qGrooveChannel >= 0 && S.qGrooveChannel < static_cast<int>(s.channels.size())
                           ? "Notes of " + s.channels[static_cast<size_t>(S.qGrooveChannel)].name
-                          : tools::grooves()[static_cast<size_t>(S.q.groove)].name;
+                      : userGroove ? userGroove->name
+                                   : tools::grooves()[static_cast<size_t>(S.q.groove)].name;
   combo("##qgroove", gname.c_str(), 170, [&] {
+    // K-151: the swing presets (factory, then the user's).
     for (size_t i = 0; i < tools::grooves().size(); ++i)
-      if (ImGui::Selectable(tools::grooves()[i].name, S.qGrooveChannel < 0 && S.q.groove == static_cast<int>(i)))
-        S.q.groove = static_cast<int>(i), S.qGrooveChannel = -1;
+      if (ImGui::Selectable(tools::grooves()[i].name, S.qGrooveChannel < 0 && S.qUserGroove.empty() && S.q.groove == static_cast<int>(i)))
+        S.q.groove = static_cast<int>(i), S.qGrooveChannel = -1, S.qUserGroove.clear();
+    bool first = true;
+    for (const groove::Preset& p : grooveui::presets(a)) {
+      if (p.factory) continue;
+      if (first) ImGui::Separator(), ImGui::TextDisabled("%s", i18n::tr("My presets")), first = false;
+      const std::string full = p.folder.empty() ? p.name : p.folder + "/" + p.name;
+      if (ImGui::Selectable((full + "##ug").c_str(), S.qGrooveChannel < 0 && S.qUserGroove == full))
+        S.qUserGroove = full, S.qGrooveChannel = -1;
+    }
     ImGui::Separator();
     ImGui::TextDisabled("%s", i18n::tr("Timing of another channel"));
     const Pattern* p = s.pattern(T.pat);
@@ -277,10 +293,36 @@ void quantizeBody(App& a) {
       const Channel& c = s.channels[i];
       if (c.id == T.ch || !p || !p->notes.count(c.id) || p->notes.at(c.id).empty()) continue;
       std::string l = c.name + "##gc" + std::to_string(i);
-      if (ImGui::Selectable(l.c_str(), S.qGrooveChannel == static_cast<int>(i))) S.qGrooveChannel = static_cast<int>(i);
+      if (ImGui::Selectable(l.c_str(), S.qGrooveChannel == static_cast<int>(i))) S.qGrooveChannel = static_cast<int>(i), S.qUserGroove.clear();
     }
   });
-  ui::Hint("Groove template: shifts (and accents) per grid line; or the timing of another channel's notes");
+  ui::Hint("Groove template: a swing preset's shifts (and accents) per grid line; or the timing of another channel's notes");
+  if (S.qGrooveChannel >= 0 && S.qGrooveChannel < static_cast<int>(s.channels.size())) {  // K-151
+    ImGui::SameLine();
+    if (ui::TextButton(i18n::tr("Save as swing preset"), false, 0, "Keep this channel's timing as one of your swing presets")) {
+      const Pattern* gp = s.pattern(T.pat);
+      const ObjectId gc = s.channels[static_cast<size_t>(S.qGrooveChannel)].id;
+      if (gp && gp->notes.count(gc)) {
+        // The groove's grid: the note value nearest the quantize grid.
+        const double want = static_cast<double>(gridTicks(s, S.qGrid));
+        int grid = groove::kGrid16th;
+        for (int g2 : {groove::kGrid8th, groove::kGrid16th, groove::kGrid32nd})
+          if (std::fabs(groove::cellTicks(s, nullptr, g2) - want) < std::fabs(groove::cellTicks(s, nullptr, grid) - want)) grid = g2;
+        const double cell = groove::cellTicks(s, nullptr, grid);
+        groove::Preset g = groove::extract(groove::onsetsOfNotes(gp->notes.at(gc)), cell, static_cast<double>(s.barTicks()), grid, 16,
+                                           "Notes of " + s.channels[static_cast<size_t>(S.qGrooveChannel)].name);
+        menus::openPrompt(i18n::tr("Save the groove as a swing preset"), g.name, [&a, g](const std::string& name) {
+          std::string err;
+          if (!name.empty() && groove::saveUserPreset(presetRoot(a.configDir()), g, name, nullptr, &err)) {
+            grooveui::refresh();
+            a.notify("Saved swing preset " + name);
+          } else if (!name.empty()) {
+            a.notify("Could not save the swing preset", true, err);
+          }
+        });
+      }
+    }
+  }
   section("STRENGTH");
   knob("##qs", &S.q.startStrength, desc(0, 1, 1), "Start", pct(S.q.startStrength));
   same();
@@ -306,6 +348,8 @@ void quantizeBody(App& a) {
       p->notes.count(s.channels[static_cast<size_t>(S.qGrooveChannel)].id)) {
     auto shifts = tools::extractGroove(p->notes.at(s.channels[static_cast<size_t>(S.qGrooveChannel)].id), o.grid, 4);
     tools::quantizeWithShifts(n, sel, o, shifts);
+  } else if (userGroove) {  // K-151
+    tools::quantizeWithGroove(n, sel, o, tools::grooveOf(*userGroove));
   } else {
     tools::quantizeEx(n, sel, o);
   }
@@ -877,7 +921,7 @@ void drawEditTools(App& a) {
   if (ui::TextButton("Reset", false, 90, "Back to the default settings")) {
     ToolSettings fresh;
     switch (T.tool) {
-      case NoteTool::Quantize: S.q = fresh.q, S.qGrid = fresh.qGrid, S.qDuration = 0, S.qGrooveChannel = -1; break;
+      case NoteTool::Quantize: S.q = fresh.q, S.qGrid = fresh.qGrid, S.qDuration = 0, S.qGrooveChannel = -1, S.qUserGroove.clear(); break;
       case NoteTool::Chop: S.chopPattern = 0, S.chopTime = 1, S.chopGate = 1; break;
       case NoteTool::Strum: S.strum = fresh.strum, S.strumBeats = fresh.strumBeats; break;
       case NoteTool::Arpeggiate: S.arp = fresh.arp, S.arpGrid = fresh.arpGrid; break;

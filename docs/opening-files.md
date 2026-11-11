@@ -56,9 +56,10 @@ How it works: the first Gridline listens on a connection only your user account 
 in your private runtime folder (`$XDG_RUNTIME_DIR`, or Gridline's settings folder when there is
 none) on Linux and the BSDs, a named pipe that admits only your account on Windows. One per
 display on Linux, so two desktops of one user each have their own. If Gridline crashed, the
-socket it left behind is replaced by the next launch. Some desktops (GNOME on Wayland, for
-example) do not let a program come to the front by itself: they show a notice that Gridline is
-ready instead.
+socket it left behind is replaced by the next launch. Some desktops (GNOME and KDE on Wayland,
+for example) do not let a program come to the front by itself; the later launch hands the running
+Gridline the activation token the desktop gave it, so it can come forward (see
+[wayland.md](wayland.md)).
 
 ## Linux
 

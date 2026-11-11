@@ -51,6 +51,7 @@ LEAD = re.compile(r"^\s*(?:std::string\(\s*)?(" + STR + r")\s*\)?\s*\+")
 def source_files():
     files = glob.glob(os.path.join(ROOT, "src", "app", "*.cpp")) + glob.glob(os.path.join(ROOT, "src", "app", "*.h"))
     files += glob.glob(os.path.join(ROOT, "src", "packs", "*", "*_ui.cpp"))
+    files += glob.glob(os.path.join(ROOT, "src", "packs", "*", "*_ui.h"))  # editor parts kept in headers (the SFZ view)
     files += [os.path.join(ROOT, "src", "core", "Keymap.cpp")]
     files += [os.path.join(ROOT, "src", "core", "ExternalDrop.cpp")]  # J-75: drop hints ("Drop to add 3 audio clips ...")
     files += [os.path.join(ROOT, "src", "core", "ProjectFiles.cpp")]  # J-78: open / save dialog file types (N_)
@@ -63,6 +64,7 @@ def source_files():
     files += glob.glob(os.path.join(ROOT, "src", "collab", "*.cpp"))  # J-111: collaboration messages (codes, refusals, connection test)
     files.append(os.path.join(ROOT, "src", "core", "TrackIconSet.cpp"))  # J-211: track icon and category names
     files.append(os.path.join(ROOT, "src", "core", "ProjectInterop.cpp"))  # K-47: what a running export is doing (N_)
+    files.append(os.path.join(ROOT, "src", "core", "HydrogenKit.cpp"))  # K-162: the drum kit import report (N_)
     return sorted(files)
 
 

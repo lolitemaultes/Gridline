@@ -234,6 +234,7 @@ class App {
   void pollPresetImport();
   bool showLivePads = false;    // live mode pads window
   bool showPerformance = false;  // "Performance" window (CPU per channel / insert / effect)
+  bool showGroove = false;       // K-151: the Groove editor (swing presets, app/GrooveUi.h)
   bool showMaster = false;       // RN-09 "Master chain" quick panel
   // CPU use per channel, insert and effect slot, sampled from the engine's
   // profiling counters while the mixer or the Performance window is open
@@ -278,6 +279,16 @@ class App {
     std::function<void()> action;
   } confirm;
   std::function<void()> afterDiscard;
+  // Song edits picked in a menu drawn inside a window that keeps pointers into the song while it
+  // draws (the channel rack's rows): a whole-song edit replaces the song's containers, so they run
+  // at the start of the next frame instead (main loop), in order.
+  void later(std::function<void()> fn) { later_.push_back(std::move(fn)); }
+  void runLater() {
+    std::vector<std::function<void()>> q;
+    q.swap(later_);
+    for (auto& f : q) f();
+  }
+  std::vector<std::function<void()>> later_;
 
   // Audio device (opened by main).
   std::vector<std::string> audioDevices;
@@ -482,6 +493,7 @@ class App {
   uisound::Player uiSounds;          // mixed after the master in the audio callback (main.cpp)
   uisound::Gate uiSoundGate;         // per-event cool-down
   bool uiSoundsDisabled = false;     // --no-ui-sounds, GRIDLINE_NO_UI_SOUNDS, screenshot / profile runs
+  std::string windowSystem;          // K-153: the window system in use, for people ("Wayland", "X11"); set by the program
   bool uiSoundsReady = false;        // set with the startup sound, once the window is up (no sounds while launching)
   bool scanByUser = false;           // the running plugin scan was started from the UI (its end gets a sound)
   // Plays an interface sound if the settings and the muting rules allow it.

@@ -34,6 +34,12 @@ Source decide(const Inputs& in, double& scale) {
       // As before 0.6.1: SDL units are pixels (per-monitor DPI aware); the display's DPI is the scale.
       if (in.drawableW == in.windowW && in.displayDpi > 120) scale = in.displayDpi / 96.0;
       return Source::WindowsDpi;
+    case Desktop::Wayland:
+      // On SDL's Wayland driver the compositor gives the window its density (drawable larger than the
+      // window at 200 %): nothing goes on top. GDK_SCALE and QT_SCALE_FACTOR are for X11 programs
+      // (XWayland ones included); some sessions export them for everything, and taking them here too
+      // scaled the interface twice.
+      return Source::Compositor;
     default: break;
   }
   const double gdk = envNumber(in.gdkScale), gdkDpi = envNumber(in.gdkDpiScale);

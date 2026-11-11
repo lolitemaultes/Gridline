@@ -107,6 +107,9 @@ struct PluginInfo {
   // K-23: kept so old projects open and play the same, but no longer offered
   // (pickers, browser, menus leave it out; projects and FL imports still load it).
   bool hidden = false;
+  // K-164: the editor has its own name, preset picker and save in its top bar: the plugin
+  // window's header leaves out its wordmark, preset arrows, picker and save (A/B stays).
+  bool ownPresetBar = false;
   // K-2: defaults a parameter had before it moved to the reference plugin's default
   // (setReferenceDefaults). A saved state too short to hold the parameter predates the
   // change and keeps the old default (normalizePluginState).

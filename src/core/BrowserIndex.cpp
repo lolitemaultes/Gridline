@@ -147,7 +147,10 @@ Kind kindOf(const std::string& path) {
   if (e == ".fst") return Kind::Fst;
   if (e == ".serumpreset" || e == ".fxp") return Kind::Preset;  // Serum presets: opened by Plasma
   if (e == ".fsc") return Kind::Score;
+  if (e == ".sfz" || e == ".sf2") return Kind::Instrument;  // K-144: multisample maps the Multisampler plays
   if (e == ".gllayer") return Kind::Layer;  // K-169: layer presets
+  if (e == ".h2drumkit") return Kind::DrumKit;  // K-162: a packed drum kit
+  if (e == ".xml" && lower(fs::path(path).filename().string()) == "drumkit.xml") return Kind::DrumKit;  // K-162: an unpacked kit
   if (e == ".png" || e == ".jpg" || e == ".jpeg" || e == ".jpe" || e == ".bmp" || e == ".gif" || e == ".tga" || e == ".psd" || e == ".hdr")
     return Kind::Image;  // J-184: pictures Pixel Tone plays
   if (e == ".json") {
@@ -173,7 +176,9 @@ const char* kindName(Kind k) {
     case Kind::Score: return "score";
     case Kind::Folder: return "folder";
     case Kind::Image: return "image";
+    case Kind::Instrument: return "instrument";
     case Kind::Layer: return "layer";
+    case Kind::DrumKit: return "drum kit";
     case Kind::Other: break;
   }
   return "other";
@@ -189,7 +194,11 @@ bool kindFromName(const std::string& name, Kind& out) {
       {"automation", Kind::Shape}, {"score", Kind::Score}, {"fsc", Kind::Score},
       {"image", Kind::Image},   {"images", Kind::Image},  {"picture", Kind::Image}, {"pictures", Kind::Image},
       {"png", Kind::Image},     {"jpg", Kind::Image},     {"jpeg", Kind::Image},
+      {"instrument", Kind::Instrument}, {"instruments", Kind::Instrument}, {"sfz", Kind::Instrument},
+      {"sf2", Kind::Instrument}, {"soundfont", Kind::Instrument}, {"multisample", Kind::Instrument},
       {"layer", Kind::Layer},   {"layers", Kind::Layer},
+      {"kit", Kind::DrumKit},   {"kits", Kind::DrumKit},  {"drumkit", Kind::DrumKit}, {"drumkits", Kind::DrumKit},
+      {"h2drumkit", Kind::DrumKit},
   };
   auto it = names.find(lower(name));
   if (it == names.end()) return false;
@@ -623,7 +632,7 @@ std::vector<std::string> libraryTypes(const std::string& presetRoot) {
     std::error_code e2;
     if (!it->is_directory(e2)) continue;
     std::string n = it->path().filename().string();
-    if (n.empty() || n[0] == '.' || n == "chains" || n == "automation") continue;
+    if (n.empty() || n[0] == '.' || n == "chains" || n == "automation" || n == "grooves") continue;
     out.push_back(n);
   }
   std::sort(out.begin(), out.end());
@@ -676,8 +685,21 @@ DropAction dropAction(const DropItem& item, DropTarget target, const std::string
       return target == DropTarget::Browser || target == DropTarget::Workspace ? DropAction::AddBrowserFolder : DropAction::None;
     case Kind::Layer:  // K-169: a layer preset makes a new layer with its children
       return target == DropTarget::Rack || target == DropTarget::Workspace ? DropAction::NewLayer : DropAction::None;
+    case Kind::DrumKit:  // K-162: drum pad channels; onto a drum pad window it replaces that kit
+      if (target == DropTarget::Rack || target == DropTarget::Workspace || target == DropTarget::Playlist) return DropAction::LoadDrumKit;
+      return target == DropTarget::PluginWindow && targetType == "gl.pads" ? DropAction::LoadDrumKit : DropAction::None;
     case Kind::Image:  // J-184: a Pixel Tone window or channel row plays the picture
       return (target == DropTarget::PluginWindow || target == DropTarget::Rack) && targetType == "gl.pixeltone" ? DropAction::LoadPicture : DropAction::None;
+    case Kind::Instrument:  // K-144: the Multisampler plays .sfz and .sf2 maps
+      switch (target) {
+        case DropTarget::Rack:
+          if (targetType.empty()) return DropAction::NewInstrumentChannel;
+          return targetType == "gl.multisampler" ? DropAction::LoadInstrumentMap : DropAction::ReplaceWithInstrument;
+        case DropTarget::Workspace:
+        case DropTarget::Playlist: return DropAction::NewInstrumentChannel;
+        case DropTarget::PluginWindow: return targetType == "gl.multisampler" ? DropAction::LoadInstrumentMap : DropAction::None;
+        default: return DropAction::None;
+      }
     default: break;
   }
   return DropAction::None;
@@ -703,7 +725,11 @@ const char* dropActionLabel(DropAction a) {
     case DropAction::ReplaceInstrument: return "Replace with a sampler";
     case DropAction::ReplaceFromPreset: return "Replace instrument from preset";
     case DropAction::LoadPicture: return "Load picture";
+    case DropAction::NewInstrumentChannel: return "New Multisampler channel";
+    case DropAction::LoadInstrumentMap: return "Load into the Multisampler";
+    case DropAction::ReplaceWithInstrument: return "Replace with a Multisampler";
     case DropAction::NewLayer: return "New layer from preset";
+    case DropAction::LoadDrumKit: return "Load drum kit";
   }
   return "";
 }

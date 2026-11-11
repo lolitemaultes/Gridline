@@ -48,6 +48,9 @@ class SecureLink {
   // it until H2 (30 s); responder: answers H1 (repeating H2 until data arrives).
   // Does nothing on a link that already started or closed.
   void start(uint64_t nowMs);
+  // The path went away before the handshake finished (a fresh ICE attempt follows):
+  // an initiator pauses H1 until start() is called again.
+  void pathLost();
   bool started() const { return started_; }
   bool heardData() const { return anyRecv_; }
   void input(const std::string& datagram, uint64_t nowMs);

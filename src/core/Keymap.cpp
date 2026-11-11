@@ -216,6 +216,8 @@ std::vector<Command> buildCommands() {
       {"mixer.renderArmed", MX, N_("Render armed tracks"), {ch(K::R, A)}},
       {"mixer.renderSelected", MX, N_("Render selected tracks"), {ch(K::R, A | S)}},
       {"mixer.waveforms", MX, N_("Show waveforms"), {ch(K::W, A)}},
+      {"mixer.selectAll", MX, N_("Select all insert tracks"), {ch(K::A, C)}},
+      {"mixer.deselect", MX, N_("Deselect tracks (keeps the focused one)"), {ch(K::D, C)}},
       // ---- automation clip editor ----
       {"auto.delete", AU, N_("Delete selected points"), {ch(K::Delete), ch(K::Backspace)}},
       {"auto.selectAll", AU, N_("Select all points"), {ch(K::A, C)}},

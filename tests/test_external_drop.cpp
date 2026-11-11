@@ -382,6 +382,17 @@ int main() {
     xdrop::setHoverAccepted(false);
   }
 
+  {  // K-153: SDL drops land at once on X11 / Windows; on Wayland when the pointer is back, or after a wait
+    xdrop::DropTiming d;
+    expect(d.completed(false, 1.0) && !d.waiting, "X11 / Windows: the drop lands when SDL completes it");
+    expect(!d.completed(true, 2.0) && d.waiting, "Wayland: the drop waits for the pointer");
+    expect(!d.expired(2.3), "Wayland: still waiting after 0.3 s");
+    expect(d.pointerMoved() && !d.waiting, "Wayland: lands where the pointer comes back");
+    expect(!d.pointerMoved(), "an ordinary pointer move drops nothing");
+    expect(!d.completed(true, 5.0) && !d.expired(5.49), "Wayland: a second drop waits again");
+    expect(d.expired(5.5) && !d.waiting && !d.expired(9.0), "Wayland: after 0.5 s without the pointer it lands at the last position, once");
+  }
+
   fs::remove_all(tmp);
   return finish();
 }

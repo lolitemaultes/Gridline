@@ -95,6 +95,11 @@ set(MAXOVER 48)
 
 # ---- 0. geometry ----
 run(geo 12 "8 viewports\n9 titlebtn \"Channel rack\"\n9 closebtn \"Channel rack\"\n")
+if(out MATCHES "available 0")  # no pop-out button where windows cannot be detached (native Wayland)
+  string(REGEX MATCH "unavailable: [^\n]*" why "${out}")
+  message(STATUS "SKIP: windows cannot be detached on this platform (${why})")
+  return()
+endif()
 win(g 8 "Channel rack")
 btns(gb 9 "Channel rack")
 if(NOT g_docked EQUAL 0 OR NOT g_vp EQUAL 0)

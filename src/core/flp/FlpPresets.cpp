@@ -5,6 +5,7 @@
 //   plugin presets   (Plugin presets/…, plugin folders)  one plugin's events
 //   channel presets  (Channel presets/…, Packs/…)         a whole channel (64 …)
 //   mixer presets    (Mixer presets/…)                     an effect chain
+#include "../Groove.h"
 #include <algorithm>
 #include <cstdio>
 #include <filesystem>
@@ -336,6 +337,30 @@ PresetLibraryReport importPresetLibrary(const std::string& factoryData, const st
     } else {
       ++rep.failed;
       rep.errors["could not write preset file"]++;
+    }
+  }
+  // K-151: the quantize grooves (score files) become swing presets ("grooves/FL Studio/Quantization/…"),
+  // read from this computer's installation only.
+  if (!rep.cancelled) {
+    const fs::path q = data / "Scores" / "Quantization";
+    std::vector<fs::path> scores;
+    if (fs::is_directory(q, ec))
+      for (fs::directory_iterator it(q, fs::directory_options::skip_permission_denied, ec), end; !ec && it != end; it.increment(ec)) {
+        std::string ext = it->path().extension().string();
+        std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+        if (it->is_regular_file(ec) && ext == ".fsc") scores.push_back(it->path());
+      }
+    std::sort(scores.begin(), scores.end());
+    for (const fs::path& f : scores) {
+      groove::Preset g;
+      std::string why;
+      if (!groove::fromScoreFile(f.string(), g, &why)) {
+        rep.errors["score file: " + why]++;
+        continue;
+      }
+      g.source = "FL Studio quantize groove";
+      if (groove::saveUserPreset(presetRootDir, g, base + "/Quantization/" + safePresetName(f.stem().string()))) ++rep.grooves;
+      else rep.errors["could not write swing preset file"]++;
     }
   }
   if (progress) progress(files.size(), files.size(), "");

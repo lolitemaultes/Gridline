@@ -103,6 +103,11 @@ clamped to the parameter ranges.
 | `timeSignature()` | returns numerator, denominator |
 | `setTimeSignature(num, den)` | num 1..16, den 2, 4, 8 or 16 |
 | `swing()`, `setSwing(v)` | global swing 0..1 |
+| `swingPreset()` | name of the swing preset in use ("" for none) |
+| `swingPresets()` | names of every swing preset (factory, then yours as `Folder/Name`) |
+| `applySwingPreset(name)` | sets the swing amount and groove of a preset; false when there is none of that name |
+| `groove()` | the swing's shape: `{grid = "step" / "1/8" / "1/16" / "1/32", cycle = n, timing = {...}, velocity = {...}, accent = a}` |
+| `setGroove(t)` | changes the shape (only the fields given); timing per cell -0.5..0.5 of a cell, velocity 0..2 ([swing presets](swing-presets.md)) |
 | `masterPitch()`, `setMasterPitch(semitones)` | master pitch |
 | `length()` | end of the last playlist clip, in ticks |
 | `info()` | table `{title, author, genre, url, comments}` |

@@ -21,6 +21,7 @@
 #include "../engine/Sample.h"
 #include "../host/HostedPlugins.h"
 #include "App.h"
+#include "Windows.h"
 #include "HostedUi.h"
 #include "PluginUI.h"
 #include "Theme.h"
@@ -807,17 +808,23 @@ void unitItems(App& a, const std::vector<Unit>& units, bool many) {
   }
   const bool allFrozen = !units.empty() && frozenOnes.size() == units.size();
   if (allFrozen) {
-    if (ImGui::MenuItem(many ? tr("Unfreeze selected") : tr("Unfreeze"))) unfreezeUnits(a, frozenOnes);
+    // (Each action runs at the start of the next frame: these menus are drawn inside views that hold
+    // references into the song while they draw, and an unfreeze replaces the song. App::later.)
+    if (ImGui::MenuItem(many ? tr("Unfreeze selected") : tr("Unfreeze"))) a.later([&a, frozenOnes] { unfreezeUnits(a, frozenOnes); });
+    devRackItem(many ? "menu unfreeze selected" : "menu unfreeze");
     ui::Hint("Loads its plugins again and plays them live; the render stays on disk");
-    if (!stale.empty() && ImGui::MenuItem(tr("Render the freeze again"))) refreezeUnits(a, stale);
+    if (!stale.empty() && ImGui::MenuItem(tr("Render the freeze again"))) a.later([&a, stale] { refreezeUnits(a, stale); });
   } else {
-    if (ImGui::MenuItem(many ? tr("Freeze selected") : tr("Freeze"), nullptr, false, !canFreeze.empty())) freezeUnits(a, canFreeze);
+    if (ImGui::MenuItem(many ? tr("Freeze selected") : tr("Freeze"), nullptr, false, !canFreeze.empty())) a.later([&a, canFreeze] { freezeUnits(a, canFreeze); });
+    devRackItem(many ? "menu freeze selected" : "menu freeze");
     if (canFreeze.empty() && !why.empty()) ui::Hint(why);
     else ui::Hint("Renders its sound once and unloads its plugins; volume, pan and sends stay live");
   }
   const bool allSleeping = !units.empty() && sleeping.size() == units.size();
-  if (ImGui::MenuItem(many ? tr("Hibernate selected") : tr("Hibernate"), nullptr, allSleeping, allSleeping || !canSleep.empty()))
-    setHibernate(a, allSleeping ? sleeping : canSleep, !allSleeping);
+  if (ImGui::MenuItem(many ? tr("Hibernate selected") : tr("Hibernate"), nullptr, allSleeping, allSleeping || !canSleep.empty())) {
+    std::vector<Unit> which = allSleeping ? sleeping : canSleep;
+    a.later([&a, which, allSleeping] { setHibernate(a, which, !allSleeping); });
+  }
   ui::Hint("Unloads its plugins on this computer until they are needed (an editor, a note, the song about to play it)");
 }
 

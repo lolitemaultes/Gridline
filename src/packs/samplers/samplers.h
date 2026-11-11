@@ -62,12 +62,21 @@ struct ZoneMap {
   std::string sf2Path;  // soundfont the zones came from (for the preset picker)
   int sf2Bank = -1, sf2Program = -1;
   std::string sf2Name;  // preset name
+  // K-144: an SFZ instrument played as it is (read-only map; the zones above stay empty).
+  std::string sfzPath;
+  int sfzFlags = 0;
+  std::vector<std::pair<int, float>> sfzCc;  // controller values set in the editor (0..1)
 };
 
 // Parses PluginState::data. Empty data gives the factory set's map; a bare
 // audio path gives a single full-keyboard zone.
 ZoneMap parseZoneMap(const std::string& data, int factorySet = 0);
 std::string serializeZoneMap(const ZoneMap& m);
+// K-144: true for a path ending in .sfz (any case).
+bool isSfzPath(const std::string& path);
+// K-144: an .sfz as editable zones ("Convert to editable zones"). `dropped` counts the regions
+// whose controllers, filters, modulators, keyswitches or triggers zones cannot hold.
+ZoneMap sfzZoneMap(const std::string& path, int* dropped = nullptr);
 ZoneMap factoryZoneMap(int set);
 const std::vector<std::string>& factorySetNames();
 std::string zoneLabel(const Zone& z);

@@ -2,6 +2,7 @@
 // device, default layout, typing keyboard, file drops.
 #include "FreezeUi.h"
 #include "CacheUi.h"
+#include "DrumKitUi.h"
 #include "Look.h"
 #include "MidiUi.h"
 #include "SettingsPages.h"
@@ -40,11 +41,13 @@
 #include "../engine/TimeStretch.h"
 #include "DevSignal.h"
 #include "FlpExportUi.h"
+#include "GrooveUi.h"
 #include "J59Ui.h"
 #include "FrameProfile.h"
 #include "FrameStats.h"
 #include "McpUi.h"
 #include "ThemeSettings.h"
+#include "DisplayConfirmUi.h"
 #include "LiveResize.h"
 #include "LiveTakes.h"
 #include "Viewports.h"
@@ -85,6 +88,8 @@
 #include "App.h"
 #include "../core/RemoteFs.h"
 #include "../core/SingleInstance.h"
+#include "WindowActivate.h"
+#include "ForeignGl.h"
 #include "CollabUi.h"
 #include "PluginUI.h"
 #include "EditorZoomUi.h"
@@ -791,6 +796,7 @@ void releaseTypedNotes(App& app, std::map<SDL_Scancode, HeldNote>& held) {
 //   K-19: edzoom fxeditor|channelsettings (the plugin window's editor zoom, design size and window to stdout) ·
 //   edzoomset <plugin type> <zoom> (the zoom remembered for a plugin type, 0 = automatic; atparam points at the magnified spot)
 //   K-10: cursor 0|1 (hides or shows the --video-cursor pointer)
+//   groove (the song's swing, the swing preset chip, its menu rows and the Groove editor's lanes and buttons to stdout)
 //   K-9: save <file> (the project, plugin state included) · rmchan <index> (removes a channel, its plugin window open or not);
 //   K-148: knobs (every knob / plugin editor control drawn last frame: item, window, id, name, value, normalized value and default,
 //   centre, size, to stdout) · atknob <item hex> [dx dy] (the pointer to that knob's centre plus logical px) · closepopups
@@ -1085,6 +1091,48 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
   }
   for (const auto& l : script) {
     if (!fresh || l.frame != frame) continue;
+    if (l.cmd == "sdlwin") {  // K-153: the main window as the window system has it (Wayland checks)
+      SDL_Window* w = SDL_GL_GetCurrentWindow();
+      if (!w) continue;
+      if (l.a0 == "size" && l.args.size() >= 3) {
+        SDL_SetWindowSize(w, std::atoi(l.args[1].c_str()), std::atoi(l.args[2].c_str()));
+      } else if (l.a0 == "fullscreen") {
+        SDL_SetWindowFullscreen(w, l.a1 == "1" ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+      } else if (l.a0 == "maximize") {
+        if (l.a1 == "1") SDL_MaximizeWindow(w); else SDL_RestoreWindow(w);
+      } else if (l.a0 == "clipset" && l.args.size() >= 2) {
+        std::printf("sdlwin frame %d: clipset %s\n", frame, SDL_SetClipboardText(l.args[1].c_str()) == 0 ? "ok" : SDL_GetError());
+      } else if (l.a0 == "drop" && l.args.size() >= 2) {  // a file dropped by another program, as SDL reports it
+        const Uint32 id = SDL_GetWindowID(w);
+        SDL_Event e{};
+        e.type = SDL_DROPBEGIN, e.drop.windowID = id;
+        SDL_PushEvent(&e);
+        e = SDL_Event{};
+        e.type = SDL_DROPFILE, e.drop.windowID = id, e.drop.file = SDL_strdup(l.args[1].c_str());
+        SDL_PushEvent(&e);
+        e = SDL_Event{};
+        e.type = SDL_DROPCOMPLETE, e.drop.windowID = id;
+        SDL_PushEvent(&e);
+      } else if (l.a0 == "clipget") {
+        char* t = SDL_GetClipboardText();
+        std::printf("sdlwin frame %d: clip \"%s\"\n", frame, t ? t : "");
+        SDL_free(t);
+      } else {
+        int ww = 0, wh = 0, dw = 0, dh = 0;
+        SDL_GetWindowSize(w, &ww, &wh);
+        SDL_GL_GetDrawableSize(w, &dw, &dh);
+        const Uint32 f = SDL_GetWindowFlags(w);
+        const ImGuiIO& gio = ImGui::GetIO();
+        std::printf("sdlwin frame %d: driver %s window %dx%d drawable %dx%d imgui %.0fx%.0f fb-scale %.2f fullscreen %d maximized %d shown %d "
+                    "focus %d displays %d display %d ui-scale %.2f\n",
+                    frame, SDL_GetCurrentVideoDriver(), ww, wh, dw, dh, static_cast<double>(gio.DisplaySize.x), static_cast<double>(gio.DisplaySize.y),
+                    static_cast<double>(gio.DisplayFramebufferScale.x), (f & SDL_WINDOW_FULLSCREEN) ? 1 : 0, (f & SDL_WINDOW_MAXIMIZED) ? 1 : 0,
+                    (f & SDL_WINDOW_SHOWN) ? 1 : 0, (f & SDL_WINDOW_INPUT_FOCUS) ? 1 : 0, SDL_GetNumVideoDisplays(), SDL_GetWindowDisplayIndex(w),
+                    static_cast<double>(uiscale::detected()));
+      }
+      std::fflush(stdout);
+      continue;
+    }
     if (viewports::devCommand(app, l.cmd, l.args, frame)) continue;  // J-113
     if (pluginWindowDevCommand(app, l.cmd, l.args, frame)) continue;  // plugin windows, their channel strip
     if (packs::devCommand(app, l.cmd, l.args)) continue;  // K-15: loupe [pin <tab|below|left|right|float> | unpin]
@@ -1230,6 +1278,13 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
     else if (l.cmd == "scroll") io.AddMouseWheelEvent(std::strtof(l.a0.c_str(), nullptr), std::strtof(l.a1.c_str(), nullptr));
     else if (l.cmd == "momentum") devMomentum = {std::strtof(l.a0.c_str(), nullptr), std::strtof(l.a1.c_str(), nullptr), std::atoi(l.a2.c_str())};
     else if (l.cmd == "trace") devTrace = l.a0 != "off";
+    else if (l.cmd == "theme" && (l.a0 == "dark" || l.a0 == "light")) {  // "theme dark|light": as View > Dark theme does
+      const dispconf::Snapshot before = dispconf::take(app.settings, dispconf::themeKeys());
+      theme::modeToSettings(l.a0 == "dark" ? theme::Mode::Dark : theme::Mode::Light, app.settings);
+      theme::applyFromSettings(app.settings);
+      ::gl::ui::confirmTheme(app, before, "Theme");
+      std::fprintf(stderr, "DEV_THEME %s frame %d\n", l.a0.c_str(), ImGui::GetFrameCount());
+    }
     else if (l.cmd == "setting") {  // J-188: "setting <key> on|off": a switch changed as the Settings dialog does (live)
       if (l.a1 == "on" || l.a1 == "off") app.settings.set(l.a0, l.a1 == "on");
       else if (!l.a1.empty()) app.settings.set(l.a0, std::strtod(l.a1.c_str(), nullptr));  // K-136: "setting <key> <number>"
@@ -1407,13 +1462,27 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       xdragui::devLeave();
     } else if (l.cmd == "mixer") {  // J-83: mixer track volumes / pans and the strips pane's scroll to stdout
       const Song& s = app.doc.song();
-      std::printf("mixer frame %d: scroll %.1f wheelScrolls %d undo %zu\n", frame, mixerStripsScrollY(), mixerWheelScrolls() ? 1 : 0,
-                  app.doc.history().position());
+      std::string selected;  // K-176: the selected tracks (mixer indexes) and the focused one
+      for (ObjectId id : mixerSelection(app)) selected += (selected.empty() ? "" : ",") + std::to_string(s.mixerIndex(id));
+      std::printf("mixer frame %d: scroll %.1f wheelScrolls %d undo %zu scrollX %.1f sel %s focus %d\n", frame, mixerStripsScrollY(), mixerWheelScrolls() ? 1 : 0,
+                  app.doc.history().position(), mixerStripsScrollX(), selected.empty() ? "-" : selected.c_str(), s.mixerIndex(app.selMixer));
       for (size_t i = 0; i < s.mixer.size(); ++i)
-        std::printf("  track %zu volume %.4f pan %.4f\n", i, static_cast<double>(s.mixer[i].volume), static_cast<double>(s.mixer[i].pan));
+        std::printf("  track %zu volume %.4f pan %.4f sep %.4f eqlow %.4f\n", i, static_cast<double>(s.mixer[i].volume), static_cast<double>(s.mixer[i].pan),
+                    static_cast<double>(s.mixer[i].stereoSep), static_cast<double>(s.mixer[i].eqGain[0]));
+      // The tracks' ids, names and sends, the channels' routing and the strip / menu rects (after the lines above).
+      for (size_t i = 0; i < s.mixer.size(); ++i) {
+        std::printf("  mtrack %zu id %llu name [%s] sends", i, static_cast<unsigned long long>(s.mixer[i].id), s.mixer[i].name.c_str());
+        for (const auto& sd : s.mixer[i].sends) std::printf(" %llu", static_cast<unsigned long long>(sd.to));
+        std::printf("\n");
+      }
+      for (const auto& c : s.channels)
+        std::printf("  mchannel [%s] mixer %llu\n", c.name.c_str(), static_cast<unsigned long long>(c.mixerTrack));
+      devMenuRects();
       std::fflush(stdout);
     } else if (l.cmd == "rack") {  // J-84: channel rack layout, step scroll and values to stdout
       rackDevDump(app, frame);
+    } else if (l.cmd == "groove") {  // the song's swing and the swing preset chip / menu / Groove editor geometry
+      grooveui::devCommand(app, frame);
     } else if (l.cmd == "quit") {  // J-103: the window's close request (SDL_QUIT), like the user quitting Gridline
       if (l.a0 == "discard") app.doc.markSaved();  // "quit discard": unsaved changes dropped (as "Don't save")
       SDL_Event q{};
@@ -1425,6 +1494,8 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       cmdpalette::devCommand(app, l.args, frame);
     } else if (l.cmd == "freeze") {  // K-87: freeze / hibernate (FreezeUi.h): state, freeze, unfreeze, hibernate, wait
       freezeui::devCommand(app, l.args);
+    } else if (l.cmd == "drumkit") {  // K-162: drumkit load <path> / report / close (DrumKitUi.h)
+      drumkitui::devCommand(app, l.args);
     } else if (l.cmd == "cache") {  // K-45: the unpacked project cache (CacheUi.h)
       cacheui::devCommand(l.args);
     } else if (l.cmd == "collab") {  // J-111: collaboration (CollabUi.h)
@@ -1969,7 +2040,8 @@ static int runCrashDialog(SDL_Window* window, SDL_GLContext gl, const std::strin
 // comes forward: each Gridline has the sound card, the MIDI ports and the window layout to
 // itself, so a second one would compete for them. GRIDLINE_SINGLE_INSTANCE=0 starts every launch
 // on its own. Runs with options (tests, tools, --hidden) never meet the user's Gridline; the tests
-// use their own endpoint (GRIDLINE_TEST_INSTANCE_ENDPOINT, only with --hidden).
+// use their own endpoint (GRIDLINE_TEST_INSTANCE_ENDPOINT; K-153: visible runs too, for the Wayland
+// window checks).
 namespace {
 struct InstancePlan {
   std::string endpoint;            // "" = this launch runs on its own
@@ -1981,7 +2053,7 @@ InstancePlan planInstance(int argc, char** argv, bool hiddenRun) {
   InstancePlan p;
   if (const char* o = std::getenv("GRIDLINE_SINGLE_INSTANCE"); o && std::string(o) == "0") return p;
   const char* test = std::getenv("GRIDLINE_TEST_INSTANCE_ENDPOINT");
-  const bool testRun = hiddenRun && test && *test;
+  const bool testRun = test && *test;
   if (hiddenRun && !testRun) return p;
   for (int i = 1; i < argc; ++i) {
     const std::string a = argv[i];
@@ -2095,7 +2167,11 @@ int main(int argc, char** argv) {
   SDL_SetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
   gl::opendocs::setCommandLine(argc, argv);  // K-119: (AppKit repeats them as an open request)
   appicon::prepareIdentity();  // K-14: X11 WM_CLASS / Wayland app_id = the desktop entry id
-  videodriver::prepare();  // X11 where an X server answers: what plugin interfaces can open on
+  {  // X11 where an X server answers: what plugin interfaces can open on (K-153: unless the setting says Wayland)
+    Settings early;
+    early.load(Settings::defaultPath());
+    videodriver::prepare(early.getString("ui.windowSystem"));
+  }
   bool sdlStarted = SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER) == 0;
   if (!sdlStarted && videodriver::dropRequest()) sdlStarted = SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER) == 0;
   videodriver::finish();
@@ -2168,7 +2244,10 @@ int main(int argc, char** argv) {
     return 1;
   }
   SDL_GL_MakeCurrent(window, gl);
-  SDL_GL_SetSwapInterval(1);
+  // K-153: a hidden Wayland window is never shown, so the compositor never says "draw the next one":
+  // with vsync every swap would wait for that (for ever with SDL 2.0's driver, a second with later ones).
+  const char* videoNow = SDL_GetCurrentVideoDriver();
+  SDL_GL_SetSwapInterval(startHidden && videoNow && std::strcmp(videoNow, "wayland") == 0 ? 0 : 1);
   glrecovery::attach();
   glsl = glrecovery::glsl();  // K-75: GLSL 1.20 on an OpenGL 2.x context
   {
@@ -2302,6 +2381,8 @@ int main(int argc, char** argv) {
   // J-48: interface sounds are off for --no-ui-sounds, GRIDLINE_NO_UI_SOUNDS (tests, CI)
   // and automated runs (screenshots, profiling, thumbnails).
   app.uiSoundsDisabled = std::getenv("GRIDLINE_NO_UI_SOUNDS") != nullptr;
+  app.windowSystem = videodriver::currentName();  // K-153: Settings > Interface shows it
+  setRunLoopGlBracket(foreigngl::runLoopBracket);  // K-153: GLX interfaces while Gridline draws with EGL
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
     if (arg == "--no-ui-sounds" || arg == "--screenshot" || arg == "--profile-frames") app.uiSoundsDisabled = true;
@@ -2457,6 +2538,10 @@ int main(int argc, char** argv) {
       } else {
         std::fprintf(stderr, "unknown plugin type: %s\n", type.c_str());
       }
+    } else if (arg == "--plugin-data" && i + 1 < argc) {  // dev check (K-144): the data of the instrument opened by --plugin
+      const std::string data = argv[++i];
+      if (app.settingsChannel != kNoId) app.doc.editChannel(app.settingsChannel, "", [&](Channel& c) { c.plugin.data = data; });
+      app.syncEngine();
     } else if (arg == "--wrapper-page" && i + 1 < argc) {  // dev check: hosted plugin window page
       setHostedWrapperPage(std::atoi(argv[++i]));
     } else if (arg == "--param" && i + 2 < argc) {  // dev check: set a parameter of the plugin opened by --plugin
@@ -2509,6 +2594,7 @@ int main(int argc, char** argv) {
       else if (w == "info") app.showInfo = true;
       else if (w == "history") app.showHistory = true, devFocus = "Undo history";  // docked behind the browser: bring its tab to the front
       else if (w == "performance") app.showPerformance = true;
+      else if (w == "groove") app.showGroove = true;  // K-151: the Groove editor
       else if (w == "plugins") app.showPluginManager = true;
       else if (w == "piano") devFocus = "Piano roll";
       else if (w == "playlist") devPlaylistOnly = true;  // the playlist fills the window
@@ -2745,9 +2831,13 @@ int main(int argc, char** argv) {
   }
 
   // Screenshots with an explicit size render off-screen at exactly that size
-  // (the OS may clamp a real window to the display).
+  // (the OS may clamp a real window to the display). K-153: so do hidden runs with a size on Wayland,
+  // where a window that is never shown keeps the size it was created with (the splash's) whatever
+  // it is resized to, and scripted pictures and pixel checks would read that.
   OffscreenTarget offscreen;
-  const bool useOffscreen = (!shotPath.empty() || !profilePath.empty()) && forcedSize.first > 0 &&
+  const char* driverNow = SDL_GetCurrentVideoDriver();
+  const bool hiddenOnWayland = startHidden && driverNow && std::strcmp(driverNow, "wayland") == 0;
+  const bool useOffscreen = (!shotPath.empty() || !profilePath.empty() || hiddenOnWayland) && forcedSize.first > 0 &&
                             offscreen.create(static_cast<int>(static_cast<float>(forcedSize.first) * shotScale),
                                              static_cast<int>(static_cast<float>(forcedSize.second) * shotScale));
   // J-91: the system's interface scale (core/UiScale.h): the desktop's own
@@ -3026,6 +3116,7 @@ int main(int argc, char** argv) {
     }
     ImGui::NewFrame();
     keys::escapeFrameBegin();  // K-124: what Esc may meet this frame (popups, drags, text fields)
+    app.runLater();  // song edits picked in menus last frame (App::later)
     if (crashTestDirty && !app.doc.song().channels.empty()) {  // K-39 tests: unsaved work to recover
       crashTestDirty = false;
       app.doc.renameChannel(app.doc.song().channels[0].id, "k39-unsaved-marker");
@@ -3566,6 +3657,13 @@ int main(int argc, char** argv) {
     app.notify("The graphics driver restarted. Gridline rebuilt its display, and your project and the sound are as they were.");
   };
   crash::armWatchdog();
+  // K-153: on SDL's Wayland driver a drop waits for the pointer to come back into the window (no
+  // pointer position during a drag there; core/ExternalDrop.h DropTiming).
+  xdrop::DropTiming dropTiming;
+  const bool waylandDriver = [] {
+    const char* d = SDL_GetCurrentVideoDriver();
+    return d && std::strcmp(d, "wayland") == 0;
+  }();
   while (running) {
     prof::beginFrame();
     SDL_Event ev;
@@ -3623,12 +3721,14 @@ int main(int argc, char** argv) {
         if (ev.type == SDL_DROPFILE) xdragui::sdlDropFile(text);
         else xdragui::sdlDropText(text);
       }
-      if (ev.type == SDL_DROPCOMPLETE) {
+      if (ev.type == SDL_DROPCOMPLETE && dropTiming.completed(waylandDriver, SDL_GetTicks() / 1000.0)) {
         int mx = 0, my = 0, wx = 0, wy = 0;
         SDL_GetGlobalMouseState(&mx, &my);
         SDL_GetWindowPosition(window, &wx, &wy);
         xdragui::sdlDropComplete(static_cast<float>(mx - wx), static_cast<float>(my - wy));
       }
+      if (ev.type == SDL_MOUSEMOTION && ev.motion.windowID == SDL_GetWindowID(window) && dropTiming.pointerMoved())
+        xdragui::sdlDropComplete(static_cast<float>(ev.motion.x), static_cast<float>(ev.motion.y));
       // Typing keyboard (key events straight from SDL so key-up is never missed; key-ups above).
       // K-175: one press, one step: TypingKeyboard::press ignores repeats and keys already down.
       if (ev.type == SDL_KEYDOWN && app.typingKeyboard && !io.WantTextInput && !app.projectLoadBlocking() &&
@@ -3658,17 +3758,20 @@ int main(int argc, char** argv) {
     // switching the pattern, - = zooming, a single-key shortcut set's letters).
     keys::setTypingKeyboard(app.typingKeyboard && app.selChannel != kNoId);
     liveresize::pumpEnd();
+    if (dropTiming.expired(SDL_GetTicks() / 1000.0)) {  // K-153: Wayland, the pointer did not come back
+      int mx = 0, my = 0;
+      SDL_GetMouseState(&mx, &my);
+      xdragui::sdlDropComplete(static_cast<float>(mx), static_cast<float>(my));
+    }
     // K-121: a later launch handed its files over (Linux, Windows): they open as macOS's requests do
-    // below; a launch without files only brings the window forward.
+    // below. Every launch brings the window forward (K-153: with the launch's activation token, which
+    // a Wayland compositor wants before it lets a window come forward).
     for (gl::single::Request& r : instance.take()) {
-      if (hiddenRun) std::printf("single instance: request with %zu file(s)\n", r.files.size());
+      std::printf("single instance: request with %zu file(s), activation token %s\n", r.files.size(), r.activation.empty() ? "none" : "received");
+      if (!r.files.empty()) gl::opendocs::queue(r.files);
+      if (!startHidden)
+        std::printf("single instance: brought forward (%s)\n", gl::activate::bringForward(window, r.activation) ? "activation token to the compositor" : "raise");
       std::fflush(stdout);
-      if (!r.files.empty()) {
-        gl::opendocs::queue(r.files);
-      } else if (!startHidden) {
-        if (SDL_GetWindowFlags(window) & SDL_WINDOW_MINIMIZED) SDL_RestoreWindow(window);
-        SDL_RaiseWindow(window);
-      }
     }
     // K-119: files the system asked to open (macOS: a double click in the Finder, Open with, the Dock icon),
     // once no project is loading: as a double click in the browser, the unsaved-changes prompt first.

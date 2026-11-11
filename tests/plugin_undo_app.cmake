@@ -64,7 +64,11 @@ function(drag var k f)
   math(EXPR f3 "${f} + 6")
   math(EXPR f4 "${f} + 8")
   math(EXPR f5 "${f} + 10")
-  set(${var} "${f} atparam ${k}\n${f1} down 0\n${f2} atparam ${k} 0 -10\n${f3} atparam ${k} 0 -20\n${f4} atparam ${k} 0 -30\n${f5} up 0\n" PARENT_SCOPE)
+  if(DRAG_ACROSS)  # a value bar (Plasma): drag to the right
+    set(${var} "${f} atparam ${k}\n${f1} down 0\n${f2} atparam ${k} 10 0\n${f3} atparam ${k} 20 0\n${f4} atparam ${k} 30 0\n${f5} up 0\n" PARENT_SCOPE)
+  else()
+    set(${var} "${f} atparam ${k}\n${f1} down 0\n${f2} atparam ${k} 0 -10\n${f3} atparam ${k} 0 -20\n${f4} atparam ${k} 0 -30\n${f5} up 0\n" PARENT_SCOPE)
+  endif()
 endfunction()
 
 # The knob drag / Ctrl+Z / Ctrl+Shift+Z / Ctrl+Z / Ctrl+Y script for parameter <k> (frames 10 .. 70).
@@ -111,26 +115,28 @@ function(checkknob what k)
   ok("${what}: a knob drag is one undo step; Ctrl+Z undoes it, Ctrl+Shift+Z and Ctrl+Y redo it")
 endfunction()
 
-# ---- 1. Plasma: knob drag, the shortcuts ----
+# ---- 1. Plasma: a drag on its output knob (top bar), the shortcuts ----
 knobscript(ks 0)
 run(plasma 72 "${ks}" --plugin gl.plasma)
 checkknob("Plasma (main window)" 0)
 
 # ---- 2. Plasma: two strokes on LFO 1's shape (the peak point of the default triangle) ----
-run(lfo 80 "10 plug 0
-12 move 923 736
-14 down 0
-16 move 923 745
-18 move 923 752
-20 move 923 760
-22 up 0
+set(ENV{GL_PLASMA_VIEW} "lfo0")
+run(lfo 80 "8 pts plasma.lfo
+10 plug 0
+12 sdlpt plasma.lfo pt 1
+14 sdldown 0
+16 sdlpt plasma.lfo pt 1 0 9
+18 sdlpt plasma.lfo pt 1 0 7
+20 sdlpt plasma.lfo pt 1 0 8
+22 sdlup 0
 26 plug 0
-30 move 923 760
-32 down 0
-34 move 923 770
-36 move 923 780
-38 move 923 790
-40 up 0
+30 sdlpt plasma.lfo pt 1
+32 sdldown 0
+34 sdlpt plasma.lfo pt 1 0 10
+36 sdlpt plasma.lfo pt 1 0 10
+38 sdlpt plasma.lfo pt 1 0 10
+40 sdlup 0
 44 plug 0
 48 sdlkey z down ctrl
 49 sdlkey z up
@@ -139,6 +145,7 @@ run(lfo 80 "10 plug 0
 59 sdlkey z up
 64 plug 0
 " --plugin gl.plasma)
+unset(ENV{GL_PLASMA_VIEW})
 plug(l0 10 0)
 plug(l1 26 0)
 plug(l2 44 0)

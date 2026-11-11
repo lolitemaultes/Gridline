@@ -1,0 +1,142 @@
+name: Wayland
+
+# Gridline on Wayland desktops, both ways it runs there:
+#   xwayland  the default: X11 through XWayland, so plugin interfaces sit inside Gridline's windows;
+#   native    Wayland itself (no X server at all; or the Window system setting with XWayland around).
+# The application test suite (ctest -L gui) runs on a headless Weston in both modes, and the visible
+# window checks (tools/ci/check-wayland-live.py) run on Weston, GNOME's mutter and KDE's KWin.
+# Everything runs on the runner itself: no network services.
+on:
+  push:
+    branches: [main, port-ci]
+    paths-ignore: ["tests/yabridge/**", ".github/workflows/yabridge.yml"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: wayland-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CTEST_OUTPUT_ON_FAILURE: "1"
+  GRIDLINE_NO_PLUGIN_SCAN: "1"
+
+jobs:
+  build:
+    name: Build (Ubuntu 24.04)
+    runs-on: ubuntu-latest
+    container: ubuntu:24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: sh tools/ci/debian-archive.sh && sh tools/ci/install-deps.sh apt
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DGRIDLINE_WERROR=ON -DGRIDLINE_GUI_TESTS=ON
+      - name: Build
+        run: cmake --build build -j4 -- -k 0
+      - name: Pack the build (programs, test files; no object files)
+        run: tar -cf build.tar --exclude='*.o' --exclude='*.a' --exclude='build/_deps/*/src' build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wayland-build
+          path: build.tar
+          retention-days: 2
+
+  gui:
+    name: Tests on Weston, ${{ matrix.mode }} (${{ matrix.shard }}/2)
+    needs: build
+    runs-on: ubuntu-latest
+    container: ubuntu:24.04
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [xwayland, native]
+        shard: [1, 2]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: |
+          sh tools/ci/debian-archive.sh && sh tools/ci/install-deps.sh apt
+          apt-get install -y -q --no-install-recommends weston xwayland
+      - uses: actions/download-artifact@v4
+        with:
+          name: wayland-build
+      - run: tar -xf build.tar && rm build.tar
+      - name: ctest -L gui on Weston (${{ matrix.mode }})
+        run: |
+          # Shard 1: the slowest tests (k147_plugin_fit_app alone is about 24 min); shard 2: the rest.
+          slow='^(k147_plugin_fit_app|editor_layout_audit|k40_crest_layout_app|k145_live_wave|j103_clean_exit|k48_tap_tempo_app|k38_export_app)$'
+          if [ "${{ matrix.shard }}" = 1 ]; then sel="-R $slow"; else sel="-E $slow"; fi
+          # Weston in a window of a private Xvfb: its seat has a keyboard and a pointer, as a desktop's has
+          # (the headless backend has none). Native mode still hands the tests no DISPLAY.
+          COMPOSITOR_LOG_OUT=$PWD/weston.log xvfb-run -a -s "-screen 0 2700x1800x24 -nolisten tcp" env WESTON_BACKEND=x11 \
+            bash tools/ci/with-compositor.sh weston ${{ matrix.mode }} -- \
+            ctest --test-dir build -L gui $sel -j4 --timeout 1800 --output-on-failure
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: wayland-gui-${{ matrix.mode }}-${{ matrix.shard }}-logs
+          path: |
+            weston.log
+            build/Testing/Temporary/LastTest.log
+          retention-days: 7
+
+  live:
+    name: Windows on ${{ matrix.compositor }} (${{ matrix.mode }}${{ matrix.scale != 1 && format(', scale {0}', matrix.scale) || '' }})
+    needs: build
+    runs-on: ubuntu-latest
+    container: ubuntu:24.04
+    timeout-minutes: 30
+    # mutter and KWin headless in a container are new here: they report, and do not block, until they
+    # have run reliably for a while (the reason is in the log when one cannot start).
+    continue-on-error: ${{ matrix.compositor != 'weston' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { compositor: weston, mode: xwayland, scale: 1, outputs: 1 }
+          - { compositor: weston, mode: xwayland, scale: 1, outputs: 1, live: wayland-setting }
+          - { compositor: weston, mode: native, scale: 1, outputs: 2 }
+          - { compositor: weston, mode: native, scale: 2, outputs: 1 }
+          - { compositor: mutter, mode: xwayland, scale: 1, outputs: 1 }
+          - { compositor: mutter, mode: native, scale: 1, outputs: 1 }
+          - { compositor: kwin, mode: xwayland, scale: 1, outputs: 1 }
+          - { compositor: kwin, mode: native, scale: 1.5, outputs: 1 }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: |
+          sh tools/ci/debian-archive.sh && sh tools/ci/install-deps.sh apt
+          apt-get install -y -q --no-install-recommends xwayland dbus dbus-x11 wl-clipboard
+          case "${{ matrix.compositor }}" in
+            weston) apt-get install -y -q --no-install-recommends weston ;;
+            mutter) apt-get install -y -q --no-install-recommends mutter gnome-settings-daemon-common gsettings-desktop-schemas ;;
+            kwin) apt-get install -y -q --no-install-recommends kwin-wayland kwin-wayland-backend-virtual || apt-get install -y -q --no-install-recommends kwin-wayland ;;
+          esac
+      - uses: actions/download-artifact@v4
+        with:
+          name: wayland-build
+      - run: tar -xf build.tar && rm build.tar
+      - name: Live checks
+        run: |
+          set -- ${{ matrix.compositor }} ${{ matrix.mode }} --scale ${{ matrix.scale }} --outputs ${{ matrix.outputs }} -- \
+            python3 tools/ci/check-wayland-live.py build/gridline-app "$PWD/live" ${{ matrix.live || matrix.mode }} \
+              --scale ${{ matrix.scale }} --outputs ${{ matrix.outputs }} --shots "$PWD/shots" --plugin build/gridline "$PWD/build/plugins"
+          export COMPOSITOR_LOG_OUT=$PWD/compositor.log
+          if [ "${{ matrix.compositor }}" = weston ]; then
+            # Weston in a window of a private Xvfb, for a seat with a keyboard and a pointer (mutter and KWin bring their own).
+            xvfb-run -a -s "-screen 0 2700x1800x24 -nolisten tcp" env WESTON_BACKEND=x11 bash tools/ci/with-compositor.sh "$@"
+          else
+            bash tools/ci/with-compositor.sh "$@"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: wayland-live-${{ matrix.compositor }}-${{ matrix.live || matrix.mode }}-${{ matrix.scale }}
+          path: |
+            compositor.log
+            live/*/app.log
+            shots/*.ppm
+          retention-days: 7

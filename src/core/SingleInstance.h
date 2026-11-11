@@ -15,6 +15,10 @@
 // The conversation, in bytes: the server says "GRIDLINE 1 <pid>\n"; the client sends
 // "OPEN <count>\n" and per file "<byte length>\n<UTF-8 path>"; the server answers "OK\n" once the
 // files are queued for the interface thread. A request without files brings the window forward.
+// K-153: a server that takes the launch's activation token says "GRIDLINE 1 <pid> activate\n" (older
+// clients read only the start of the line); a client then puts "ACTIVATE <byte length>\n<token>"
+// before OPEN: the token the desktop gave the later launch (Wayland's XDG_ACTIVATION_TOKEN, X11's
+// DESKTOP_STARTUP_ID), without which a Wayland compositor does not let the window come forward.
 //
 // A socket left behind by a crash answers no connection: the next launch removes it and takes
 // its place (under a lock file, so two launches at once never both take it).
@@ -30,12 +34,16 @@
 namespace gl::single {
 
 // ---- the conversation (pure, for tests) ----
-std::string encodeRequest(const std::vector<std::string>& files);
+std::string encodeRequest(const std::vector<std::string>& files, const std::string& activation = std::string());
 enum class Parse { NeedMore, Done, Bad };
-// Reads a request from the bytes received so far.
-Parse decodeRequest(const std::string& in, std::vector<std::string>& files);
+// Reads a request from the bytes received so far (`activation`: the token, empty when none came).
+Parse decodeRequest(const std::string& in, std::vector<std::string>& files, std::string* activation = nullptr);
 inline constexpr size_t kMaxFiles = 1024;
 inline constexpr size_t kMaxPathBytes = 32 * 1024;
+inline constexpr size_t kMaxTokenBytes = 4096;
+// The activation token this launch was given ("" when none): XDG_ACTIVATION_TOKEN, else
+// DESKTOP_STARTUP_ID. Printable ASCII only, at most kMaxTokenBytes.
+std::string launchActivationToken();
 
 // ---- where ----
 // The endpoint of this user (and display, on Linux): a socket path or a pipe name; "" when none
@@ -48,6 +56,7 @@ std::string testEndpoint(const std::string& value);
 // ---- the running Gridline ----
 struct Request {
   std::vector<std::string> files;  // empty: come to the front
+  std::string activation;          // the later launch's activation token (K-153), "" when none
 };
 
 class Server {

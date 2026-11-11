@@ -39,6 +39,24 @@ int main() {
   expect(pick("x11", "wayland", nullptr, false).driver == "x11", "GRIDLINE_VIDEO_DRIVER=x11 beats everything");
   expect(pick("auto", "wayland", nullptr, true).driver == "x11", "GRIDLINE_VIDEO_DRIVER=auto is the default behaviour");
   expect(pick("", nullptr, nullptr, true).driver == "x11", "an empty setting is no setting");
+  // K-153: Settings > Interface, Window system: native Wayland.
+  {
+    Inputs in;
+    in.setting = "wayland";
+    in.xServerAnswers = true;
+    expect(choose(in).driver == "wayland" && choose(in).why == Why::SettingAsked, "the setting keeps Wayland with XWayland around");
+    in.sdl2Driver = "x11";
+    expect(choose(in).driver == "wayland", "the setting beats the session's SDL variable");
+    in.gridlineDriver = "x11";
+    expect(choose(in).driver == "x11" && choose(in).why == Why::UserAsked, "GRIDLINE_VIDEO_DRIVER beats the setting");
+    in.gridlineDriver = "auto";
+    expect(choose(in).driver.empty() && choose(in).why == Why::UserSdlOther, "GRIDLINE_VIDEO_DRIVER=auto: the session decides, not the setting");
+    in.gridlineDriver = nullptr, in.sdl2Driver = nullptr, in.setting = "auto";
+    expect(choose(in).driver == "x11", "setting Automatic: X11 when an X server answers");
+    in.setting = "something";
+    expect(choose(in).driver == "x11", "an unknown setting is Automatic");
+    expect(interfaceBlock(false, Why::SettingAsked) == Block::WaylandByChoice, "no window, by the Wayland setting");
+  }
   // The message for a refused interface.
   expect(interfaceBlock(true, Why::PluginsNeedX) == Block::None, "an X11 window: nothing in the way");
   expect(interfaceBlock(true, Why::SdlDecides) == Block::None, "SDL's own X11 window: nothing in the way");

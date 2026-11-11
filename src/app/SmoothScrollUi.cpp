@@ -208,6 +208,24 @@ void afterNewFrame() {
   }
 }
 
+void scrollWindow(ImGuiWindow* w, int a, float px, bool notch) {
+  if (!w || px == 0 || w->ScrollMax[a] <= 0) return;
+  const smoothscroll::Params& P = gParams;
+  if (!P.smooth && !P.elastic) {
+    if (a == 0) ImGui::SetScrollX(w, w->Scroll.x + px);
+    else ImGui::SetScrollY(w, w->Scroll.y + px);
+    return;
+  }
+  WinState& st = gWins[w->ID];
+  if (!st.active[a]) {
+    st.ax[a].reset(w->Scroll[a]);
+    st.active[a] = true;
+    st.expect[a] = w->Scroll[a];  // the check for outside writes on the next frame
+    st.setTarget[a] = FLT_MAX;
+  }
+  st.ax[a].scroll(static_cast<double>(px), notch, 0, w->ScrollMax[a], P);
+}
+
 void step(smoothscroll::Axis& ax, float& v, float delta, bool notch, float lo, float hi) {
   if (hi < lo) hi = lo;
   ax.sync(v);

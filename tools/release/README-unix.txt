@@ -27,9 +27,10 @@ Contents (an install tree; extract anywhere, or into /usr/local):
 
 Needs the system's SDL2 (and on Linux ALSA; @DEPS@).
 Wayland: the interfaces of hosted plugins are X11 windows, so Gridline runs through XWayland
-whenever it is available, whatever SDL_VIDEODRIVER says. Without XWayland it runs on Wayland and
-plugins show their parameters in Gridline's own panel. GRIDLINE_VIDEO_DRIVER=wayland keeps it on
-Wayland anyway.
+whenever it is available, whatever SDL_VIDEODRIVER says. Settings > Interface > Window system
+(or GRIDLINE_VIDEO_DRIVER=wayland) keeps it on Wayland itself; plugin interfaces then open in
+windows of their own on XWayland. Without XWayland it runs on Wayland and plugins show their
+parameters in Gridline's own panel. See docs/wayland.md.
 Tiling window managers: the loading window floats; the main window is an ordinary resizable
 window that the window manager tiles, places and sizes. Gridline does not keep a window position.
 

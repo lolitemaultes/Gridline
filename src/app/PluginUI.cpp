@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include "Look.h"
 #include "../core/I18n.h"
 #include "HostedUi.h"
@@ -135,10 +136,22 @@ void drawStandInNote(App& a, const PluginTarget& t, float width) {
     standin::Original o;
     standin::fromText(st.original, o);
     std::string tip = i18n::tr("The plugin and its own settings are kept unchanged: the project opens with it again once it is installed.");
-    if (!o.format.empty()) tip += std::string("\n\n") + i18n::tr("Read from") + ": " + o.format;
+    // Plasma's note names no other product: older saves can hold the source's own wording
+    const bool neutral = st.type == "gl.plasma";
+    const auto words = [neutral](std::string t) {
+      if (!neutral) return t;
+      static const std::pair<const char*, const char*> kSwap[] = {
+          {"Serum 1 preset (.fxp)", "Imported preset (.fxp)"}, {"Serum 2 preset", "Imported preset (newer format)"},
+          {"Serum preset", "Imported preset"}, {"Serum 2 (", "Imported preset, newer format ("}, {"Serum (", "Imported preset, older format ("},
+          {"Serum 1 ", "older-format "}, {"Serum 2 ", ""}, {"Serum", "the imported preset"}};
+      for (const auto& [from, to] : kSwap)
+        for (size_t at = t.find(from); at != std::string::npos; at = t.find(from, at + std::strlen(to))) t.replace(at, std::strlen(from), to);
+      return t;
+    };
+    if (!o.format.empty()) tip += std::string("\n\n") + i18n::tr("Read from") + ": " + words(o.format);
     if (!o.notes.empty()) {
       tip += std::string("\n\n") + i18n::tr("Approximated") + ":";
-      for (const auto& n : o.notes) tip += "\n  - " + n;
+      for (const auto& n : o.notes) tip += "\n  - " + words(n);
     }
     ImGui::SetTooltip("%s", tip.c_str());
   }
@@ -341,6 +354,10 @@ void drawPluginHeader(App& a, const PluginTarget& t) {
   (void)menuOpening;
   if (h.devPick >= 0) apply(std::exchange(h.devPick, -1));
 
+  const bool own = info->ownPresetBar;  // K-164: the editor shows its name, presets and save itself
+  int drewMark = 0, drewPicker = 0;  // K-164: what this header drew, for GL_HEADER_REPORT
+  if (!own) {
+  ++drewMark;
   if (!pui::wordmark(a, info->type, 18.0f)) {  // J-130: every built-in plugin shows its wordmark; hosted plugins their name
     ImGui::PushFont(a.fontBold, 15.0f);
     ImGui::TextUnformatted(info->name.c_str());
@@ -354,6 +371,7 @@ void drawPluginHeader(App& a, const PluginTarget& t) {
   // K-147: in a narrow editor the preset box gives up width first, so the row (next, save, A/B,
   // copy: about 150 px after it) stays inside the window.
   const float presetW = std::clamp(std::floor(ImGui::GetContentRegionAvail().x - 150.0f), 96.0f, 170.0f);
+  ++drewPicker;
   if (ui::BeginCombo("##preset", label.c_str(), presetW)) {
     static char search[96] = "";
     if (ImGui::IsWindowAppearing()) {
@@ -420,6 +438,7 @@ void drawPluginHeader(App& a, const PluginTarget& t) {
     apply(h.presetIndex + 1 >= static_cast<int>(names.size()) ? 0 : h.presetIndex + 1);
   ImGui::SameLine(0, 2);
   if (ui::IconButton("save", ui::Icon::Save, false, 22, "Save as a user preset")) ImGui::OpenPopup("##savepreset");
+  }
   if (ImGui::BeginPopup("##savepreset")) {
     static char buf[96];
     if (ImGui::IsWindowAppearing()) {
@@ -443,8 +462,12 @@ void drawPluginHeader(App& a, const PluginTarget& t) {
     ImGui::EndPopup();
   }
 
+  if (static const bool rep = std::getenv("GL_HEADER_REPORT") != nullptr; rep) {  // K-164: tests check one header only
+    static std::string last;
+    if (last != info->type) last = info->type, std::fprintf(stderr, "PLUGIN_HEADER %s wordmark %d picker %d\n", info->type.c_str(), drewMark, drewPicker);
+  }
   // A/B compare.
-  ImGui::SameLine(0, 12);
+  if (!own) ImGui::SameLine(0, 12);
   if (h.spare.type != st->type) h.spare = *st;
   if (ui::TextButton("A", !h.onB, 26, "Compare: state A") && h.onB) {
     PluginState cur = *st;
@@ -990,6 +1013,10 @@ std::map<std::string, DevPoints>& devPointMap() {
 void devPointsSet(const std::string& name, const DevPoints& p) {
   DevPoints& d = devPointMap()[name];
   d = p;
+  {  // K-164: where the plot shows on screen when its editor is zoomed (sdlpt posts screen positions)
+    const ImVec2 a0 = edzoomui::toScreenHere(ImVec2(p.x0, p.y0)), a1 = edzoomui::toScreenHere(ImVec2(p.x1, p.y1));
+    d.x0 = a0.x, d.y0 = a0.y, d.x1 = a1.x, d.y1 = a1.y;
+  }
   d.frame = ImGui::GetFrameCount();
 }
 bool devPoints(const std::string& name, DevPoints& out) {
@@ -997,6 +1024,10 @@ bool devPoints(const std::string& name, DevPoints& out) {
   if (it == devPointMap().end()) return false;
   out = it->second;
   return true;
+}
+void devItemHere(ParamId pid) {
+  const ImVec2 r0 = ImGui::GetItemRectMin(), r1 = ImGui::GetItemRectMax();
+  devItems()[pid.packed()] = {r0.x, r0.y, r1.x, r1.y, ImGui::GetFrameCount()};
 }
 bool devItem(ParamId pid, DevItem& out) {
   auto it = devItems().find(pid.packed());

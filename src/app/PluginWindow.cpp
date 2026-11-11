@@ -43,6 +43,7 @@
 #include "../host/HostedPlugins.h"
 #include "../host/PluginPrefs.h"
 #include "../host/ui/NativeView.h"
+#include "ForeignGl.h"
 #include "FreezeUi.h"
 #include "App.h"
 #include "AppIcon.h"
@@ -78,6 +79,98 @@ bool gKeyboardToMain = false;  // a closing plugin window had the keyboard
 SDL_GLContext gMainGl = nullptr;
 std::thread::id gUiThread;
 
+
+// K-153: SDL's Wayland driver. A plugin's X11 interface cannot embed in Gridline's Wayland windows, so
+// it opens in a window of its own on XWayland (host/ui/NativeView.h sideWindowOpen), and Gridline's bar
+// for it is a window of its own too, the way the macOS sandbox's interfaces are shown (external
+// editors). Wayland lets no program place or stack its windows, so the two are not docked together.
+class SideWindowEditor final : public host::Editor {
+ public:
+  SideWindowEditor(std::unique_ptr<host::Editor> inner, std::string title, double scale)
+      : inner_(std::move(inner)), title_(std::move(title)), scale_(scale) {}
+  ~SideWindowEditor() override {
+    {
+      foreigngl::ForeignGlScope g;
+      inner_.reset();  // the interface goes before the window it is in
+    }
+    if (side_) native::sideWindowClose(side_);
+  }
+  SideWindowEditor(const SideWindowEditor&) = delete;
+  SideWindowEditor& operator=(const SideWindowEditor&) = delete;
+
+  bool size(int& w, int& h) override { return inner_->size(w, h); }
+  bool canResize() const override { return inner_->canResize(); }
+  void constrain(int& w, int& h) override { inner_->constrain(w, h); }
+  bool external() const override { return true; }
+  bool isOpen() const override { return open_; }
+  bool attach(void*) override {
+    foreigngl::ForeignGlScope g;  // the interface may draw with GLX while Gridline draws with EGL
+    int w = 640, h = 420;
+    inner_->size(w, h);
+    w = std::max(w, 64), h = std::max(h, 64);
+    side_ = native::sideWindowOpen(title_, w, h, inner_->canResize());
+    if (!side_) return false;
+    w_ = w, h_ = h;
+    inner_->setContentScale(scale_);
+    inner_->requestResize = [this](int nw, int nh) {  // any thread: applied on the next idle
+      pendingW_.store(nw);
+      pendingH_.store(nh);
+      return true;
+    };
+    if (!inner_->attach(side_)) {
+      native::sideWindowClose(side_);
+      side_ = nullptr;
+      return false;
+    }
+    int w2 = w_, h2 = h_;  // some interfaces (VST2) know their size only once open
+    if (inner_->size(w2, h2) && (w2 != w_ || h2 != h_)) resizeTo(w2, h2);
+    open_ = true;
+    return true;
+  }
+  void setSize(int w, int h) override {
+    foreigngl::ForeignGlScope g;
+    inner_->setSize(w, h);
+  }
+  void idle() override {
+    foreigngl::ForeignGlScope g;
+    if (open_) {
+      const int pw = pendingW_.exchange(0), ph = pendingH_.exchange(0);
+      if (pw > 0 && ph > 0) resizeTo(pw, ph);
+      int w = w_, h = h_;
+      if (!native::sideWindowPump(side_, w, h)) open_ = false;  // the user closed it
+      if (open_ && (w != w_ || h != h_)) {  // the window manager resized it
+        int cw = w, ch = h;
+        inner_->constrain(cw, ch);
+        w_ = w, h_ = h;
+        inner_->setSize(cw, ch);
+        if (cw != w || ch != h) resizeTo(cw, ch);
+      }
+    }
+    inner_->idle();
+  }
+  bool windowFrame(int& x, int& y, int& w, int& h) const override {
+    if (!open_) return false;
+    x = kNoPlace, y = kNoPlace, w = w_, h = h_;  // the bar is as wide as the interface; Wayland places both
+    return true;
+  }
+  bool popKey(host::KeyEvent& e) override { return side_ && native::popKey(side_, e); }
+  bool hostKey(bool down, int usage, uint32_t ch, uint32_t mods) override { return inner_->hostKey(down, usage, ch, mods); }
+  void detachOffThread() override { inner_->detachOffThread(); }
+
+ private:
+  void resizeTo(int w, int h) {
+    native::sideWindowResize(side_, w, h, inner_->canResize());
+    w_ = w, h_ = h;
+    inner_->setSize(w, h);
+  }
+  std::unique_ptr<host::Editor> inner_;
+  std::string title_;
+  double scale_ = 1.0;
+  void* side_ = nullptr;
+  bool open_ = false;
+  int w_ = 0, h_ = 0;
+  std::atomic<int> pendingW_{0}, pendingH_{0};
+};
 
 native::Window nativeOf(SDL_Window* w) {
   native::Window n;
@@ -307,7 +400,7 @@ struct PluginWindow {
       if (!external) places()[target.key()] = {x, y};
       if (!external && resizable) sizes()[target.key()] = {pw, ph};
     }
-    if (external && extFrame[2] > 0) places()[target.key()] = {extFrame[0], extFrame[1]};
+    if (external && extFrame[2] > 0 && extFrame[0] != host::Editor::kNoPlace) places()[target.key()] = {extFrame[0], extFrame[1]};
     if (backend && backend->lost()) (void)editor.release();  // K-9: closing it would call the lost plugin, and that throws
     if (editor && backend && complete && !external && backend->bridged()) {  // K-37
       backend->setEditorClosing(true);
@@ -729,9 +822,12 @@ bool openHostedEditor(App& a, const PluginTarget& t) {
     if (!b->lost()) a.notify(cls.name + " has no interface of its own: Gridline shows its parameters");
     return false;
   }
-  // On SDL's Wayland driver there is no X11 window to embed an interface in: say why, before asking
+  // K-153: on SDL's Wayland driver there is no X11 window of Gridline's to embed an interface in. With
+  // XWayland the interface opens in a window of its own there (SideWindowEditor); an interface that
+  // opens its own window anyway (LV2 external) opens as it is. Without XWayland: say why, before asking
   // the plugin for a view (Gridline's own panel with its parameters stays).
-  if (const std::string problem = videodriver::interfaceProblem(); !problem.empty()) {
+  const std::string problem = videodriver::interfaceProblem();
+  if (!problem.empty() && !native::xServerAnswers()) {
     notifyOnce(a, cls.name + ": " + problem, b->format());
     return false;
   }
@@ -745,6 +841,11 @@ bool openHostedEditor(App& a, const PluginTarget& t) {
   if (!editor) {
     a.notify(cls.name + ": its interface cannot be shown on this system", true);
     return false;
+  }
+  if (!problem.empty() && !editor->external()) {
+    const std::string sideTitle = cls.name + "  \xC2\xB7  " + hostedTargetName(a, t);
+    editor = std::make_unique<SideWindowEditor>(std::move(editor), sideTitle, std::max(1.0, static_cast<double>(uiscale::detected())));
+    if (gLog) std::printf("plugwin \"%s\": in a window of its own on XWayland (Gridline is on Wayland)\n", cls.name.c_str());
   }
   if (gUiThread == std::thread::id()) gUiThread = std::this_thread::get_id();
   auto pw = std::make_unique<PluginWindow>();
@@ -764,17 +865,23 @@ bool openHostedEditor(App& a, const PluginTarget& t) {
   const std::string title = cls.name + "  \xC2\xB7  " + hostedTargetName(a, t);
   Uint32 flags = SDL_WINDOW_OPENGL | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_HIDDEN;
 
-  if (w.external) {  // sandboxed: the interface opens in the sandbox process' window
+  if (w.external) {  // sandboxed (macOS), LV2 external, or K-153's XWayland window: the interface has its own window
     if (place != places().end()) {
       editor->placeX = place->second.first;
       editor->placeY = place->second.second;
     }
     if (!editor->attach(nullptr)) {
-      a.notify(cls.name + ": the sandboxed interface could not be opened", true);
+      if (!problem.empty())
+        notifyOnce(a, cls.name + ": " + i18n::tr("its interface could not open in a window of its own on XWayland"), b->format());
+      else
+        a.notify(cls.name + ": the sandboxed interface could not be opened", true);
       return false;
     }
     w.computeLayout();
-    w.win = SDL_CreateWindow(title.c_str(), work.x, work.y, w.L.w, w.L.h, flags | SDL_WINDOW_BORDERLESS);
+    // Docked under the interface's window it needs no frame; on Wayland (K-153) nothing docks it, so it
+    // has the desktop's title bar to be moved by. There it is resizable: SDL 2.0's Wayland driver crashes
+    // in the title bar library (libdecor) on a fixed-size window, as it did here on Weston.
+    w.win = SDL_CreateWindow(title.c_str(), work.x, work.y, w.L.w, w.L.h, flags | (problem.empty() ? SDL_WINDOW_BORDERLESS : SDL_WINDOW_RESIZABLE));
   } else {
     int ew = 640, eh = 420;
     editor->size(ew, eh);
@@ -1052,7 +1159,7 @@ void hostedui::pluginWindowsIdle(App& a) {
               w.computeLayout();
               ++w.applying;
               SDL_SetWindowSize(w.win, w.L.w, w.L.h);
-              SDL_SetWindowPosition(w.win, f[0], f[1] + f[3]);  // docked under the sandbox window
+              if (f[0] != host::Editor::kNoPlace) SDL_SetWindowPosition(w.win, f[0], f[1] + f[3]);  // docked under the sandbox window
               --w.applying;
               if (!w.shown) {
                 SDL_ShowWindow(w.win);

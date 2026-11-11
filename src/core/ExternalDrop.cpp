@@ -12,6 +12,7 @@
 #include <map>
 #include <mutex>
 #include <thread>
+#include "HydrogenKit.h"
 #include "I18n.h"
 #include "Platform.h"
 
@@ -71,7 +72,7 @@ std::string percentDecode(const std::string& s) {
 // ------------------------------------------------------------------ items
 
 Kind kindOf(const Item& it) {
-  if (it.dir) return Kind::Folder;
+  if (it.dir) return !it.pending && !it.path.empty() && hydrogen::isKitFolder(it.path) ? Kind::DrumKit : Kind::Folder;  // K-162: a kit folder
   const std::string& p = it.path.empty() ? it.name : it.path;
   const Kind k = browse::kindOf(p);
   if (k == Kind::Other && it.pending && it.guessed) return Kind::Audio;
@@ -332,9 +333,12 @@ Plan plan(const std::vector<Item>& items, const std::vector<browse::DropItem>& k
       continue;
     }
     // On a channel row: Shift (or a second sample / preset) makes new channels instead of replacing.
-    const bool replaces = act == DropAction::ReplaceSample || act == DropAction::ReplaceInstrument || act == DropAction::ReplaceFromPreset;
+    const bool replaces = act == DropAction::ReplaceSample || act == DropAction::ReplaceInstrument || act == DropAction::ReplaceFromPreset ||
+                          (act == DropAction::LoadInstrumentMap && ctx.target == DropTarget::Rack) || act == DropAction::ReplaceWithInstrument;
     if (replaces && (mods.shift || rowTaken))
-      act = act == DropAction::ReplaceFromPreset ? DropAction::NewChannelFromPreset : DropAction::NewSamplerChannel;
+      act = act == DropAction::ReplaceFromPreset                                                ? DropAction::NewChannelFromPreset
+            : act == DropAction::LoadInstrumentMap || act == DropAction::ReplaceWithInstrument ? DropAction::NewInstrumentChannel
+                                                                                                : DropAction::NewSamplerChannel;
     else if (replaces)
       rowTaken = true;
     if (act == DropAction::LoadSample) {
@@ -441,8 +445,25 @@ Plan plan(const std::vector<Item>& items, const std::vector<browse::DropItem>& k
         parts.push_back(ctx.targetName.empty() ? fmt(i18n::tr("load %s as the picture"), w.c_str())
                                                : fmt(i18n::tr("load the picture %s into %s"), w.c_str(), ctx.targetName.c_str()));
         break;
+      case DropAction::NewInstrumentChannel:
+        if (ctx.insertHere)
+          parts.push_back(n == 1 ? fmt(i18n::tr("insert a Multisampler channel playing %s here"), w.c_str()) : fmt(i18n::tr("insert %d Multisampler channels here"), n));
+        else
+          parts.push_back(n == 1 ? fmt(i18n::tr("add a Multisampler channel playing %s"), w.c_str()) : fmt(i18n::tr("add %d Multisampler channels"), n));
+        break;
+      case DropAction::LoadInstrumentMap:
+        parts.push_back(ctx.targetName.empty() ? fmt(i18n::tr("load %s into the Multisampler"), w.c_str())
+                                               : fmt(i18n::tr("load %s into %s"), w.c_str(), ctx.targetName.c_str()));
+        break;
+      case DropAction::ReplaceWithInstrument:
+        parts.push_back(ctx.targetName.empty() ? fmt(i18n::tr("replace the channel's instrument with a Multisampler playing %s"), w.c_str())
+                                               : fmt(i18n::tr("replace %s with a Multisampler playing %s"), ctx.targetName.c_str(), w.c_str()));
+        break;
       case DropAction::NewLayer:  // K-169
         parts.push_back(n == 1 ? fmt(i18n::tr("add the layer %s with its channels"), w.c_str()) : fmt(i18n::tr("add %d layers"), n));
+        break;
+      case DropAction::LoadDrumKit:  // K-162
+        parts.push_back(n == 1 ? fmt(i18n::tr("load the drum kit %s"), w.c_str()) : fmt(i18n::tr("load %d drum kits"), n));
         break;
       case DropAction::OpenProject:
       case DropAction::None: break;

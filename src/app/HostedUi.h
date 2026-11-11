@@ -30,6 +30,10 @@ host::HostedInstance* hostedInstanceFor(App& a, const PluginTarget& t);
 // state changes are captured into the song (throttled), editor windows that
 // lost their plugin close, the Linux plugin run loop runs.
 void pumpHostedPlugins(App& a);
+// Called around the Linux plugin run loop (true before, false after), whose timers let interfaces draw:
+// the application releases its own OpenGL context there when it draws through another API than the
+// interfaces (Wayland, app/ForeignGl.h). Unset: nothing is done.
+void setRunLoopGlBracket(void (*bracket)(bool enter));
 // Writes every hosted plugin's current state into the song (before saving).
 void captureHostedStates(App& a);
 

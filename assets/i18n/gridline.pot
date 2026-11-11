@@ -209,7 +209,7 @@ msgstr ""
 msgid "None (system input device)"
 msgstr ""
 
-#: src/app/AsioUi.cpp src/app/ChannelEnvelopeUi.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/HostedUi.cpp src/app/McpUi.cpp src/app/MixerView.cpp src/app/PluginEditorsEqRef.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/PluginEditorsK3Gb.cpp src/app/PluginFoldersUi.cpp src/packs/modulation/modulation_patcher_ui.cpp src/packs/plasma/plasma_osc_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp src/packs/spectral/turntable_ui.cpp
+#: src/app/AsioUi.cpp src/app/ChannelEnvelopeUi.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/HostedUi.cpp src/app/McpUi.cpp src/app/MixerView.cpp src/app/PluginEditorsEqRef.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/PluginEditorsK3Gb.cpp src/app/PluginFoldersUi.cpp src/packs/modulation/modulation_patcher_ui.cpp src/packs/plasma/plasma_menus_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp src/packs/spectral/turntable_ui.cpp
 msgid "Off"
 msgstr ""
 
@@ -477,7 +477,7 @@ msgstr ""
 msgid "No mixer track is armed for audio"
 msgstr ""
 
-#: src/app/AudioRecordUi.cpp src/app/ChannelSettings.cpp src/app/ContextMenus.cpp src/app/J31Ui.cpp src/app/MidiUi.cpp src/app/TrackIcons.cpp src/app/UrlImportUi.cpp src/packs/edison/edison_form_ui.cpp src/packs/plasma/plasma_ui.cpp
+#: src/app/AudioRecordUi.cpp src/app/ChannelSettings.cpp src/app/ContextMenus.cpp src/app/J31Ui.cpp src/app/MidiUi.cpp src/app/TrackIcons.cpp src/app/UrlImportUi.cpp src/packs/edison/edison_form_ui.cpp src/packs/plasma/plasma_ui.cpp src/packs/samplers/sfz_ui.h
 msgid "None"
 msgstr ""
 
@@ -649,7 +649,7 @@ msgstr ""
 msgid "Cut"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/AutomationLane.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Menus.cpp src/app/PatternAutoUi.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/modulation/modulation_patcher_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_seq_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/AutomationLane.cpp src/app/Browser.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Menus.cpp src/app/PatternAutoUi.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/modulation/modulation_patcher_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_seq_ui.cpp
 msgid "Delete"
 msgstr ""
 
@@ -1094,6 +1094,10 @@ msgid "%d failed"
 msgstr ""
 
 #: src/app/Browser.cpp
+msgid "%d instruments"
+msgstr ""
+
+#: src/app/Browser.cpp
 msgid "%d slice"
 msgstr ""
 
@@ -1154,6 +1158,10 @@ msgid "Browser"
 msgstr ""
 
 #: src/app/Browser.cpp
+msgid "Cannot read this kit"
+msgstr ""
+
+#: src/app/Browser.cpp
 msgid "Channel presets"
 msgstr ""
 
@@ -1178,6 +1186,14 @@ msgid "Click to remove this tag"
 msgstr ""
 
 #: src/app/Browser.cpp
+msgid "Click: hear a note · double-click: new Multisampler channel · drag onto the rack, a channel or the Multisampler window"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Click: play this instrument · drag: the whole kit"
+msgstr ""
+
+#: src/app/Browser.cpp
 msgid "Click: select the mixer track · double-click: open the effect"
 msgstr ""
 
@@ -1190,11 +1206,19 @@ msgid "Click: select · double-click: open the channel"
 msgstr ""
 
 #: src/app/Browser.cpp
+msgid "Click: show the kit's instruments below, each one plays with a click · double-click or drag onto the rack: load the kit on drum pads"
+msgstr ""
+
+#: src/app/Browser.cpp
 msgid "Clipboard files"
 msgstr ""
 
 #: src/app/Browser.cpp
 msgid "Close the file info"
+msgstr ""
+
+#: src/app/Browser.cpp src/app/GrooveUi.cpp
+msgid "Could not export the swing preset"
 msgstr ""
 
 #: src/app/Browser.cpp
@@ -1237,6 +1261,10 @@ msgstr ""
 msgid "Drop to move it into "
 msgstr ""
 
+#: src/app/Browser.cpp
+msgid "Drum kits"
+msgstr ""
+
 #: src/app/Browser.cpp src/app/ChannelSettings.cpp src/app/Playlist.cpp
 msgid "Edit in Loupe"
 msgstr ""
@@ -1253,6 +1281,18 @@ msgstr ""
 msgid "Empty"
 msgstr ""
 
+#: src/app/Browser.cpp src/app/GrooveUi.cpp
+msgid "Export the swing preset"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Export..."
+msgstr ""
+
+#: src/app/Browser.cpp src/app/GrooveUi.cpp
+msgid "Exported swing preset"
+msgstr ""
+
 #: src/app/Browser.cpp
 msgid "FL Studio projects"
 msgstr ""
@@ -1263,6 +1303,10 @@ msgstr ""
 
 #: src/app/Browser.cpp
 msgid "Favourite plugins"
+msgstr ""
+
+#: src/app/Browser.cpp src/app/GrooveUi.cpp
+msgid "Groove editor..."
 msgstr ""
 
 #: src/app/Browser.cpp src/app/BrowserDrop.cpp src/app/UrlImportUi.cpp
@@ -1282,11 +1326,19 @@ msgid "It can be restored from the system trash."
 msgstr ""
 
 #: src/app/Browser.cpp
+msgid "KIT"
+msgstr ""
+
+#: src/app/Browser.cpp
 msgid "Layers"
 msgstr ""
 
 #: src/app/Browser.cpp
 msgid "Load as impulse on the selected insert"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Load drum kit"
 msgstr ""
 
 #: src/app/Browser.cpp
@@ -1314,6 +1366,10 @@ msgid "Mixer presets"
 msgstr ""
 
 #: src/app/Browser.cpp
+msgid "More instruments: load the kit to see them all"
+msgstr ""
+
+#: src/app/Browser.cpp
 msgid "Move to the trash?"
 msgstr ""
 
@@ -1327,6 +1383,10 @@ msgstr ""
 
 #: src/app/Browser.cpp
 msgid "Moved to the trash: "
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Multisample instruments"
 msgstr ""
 
 #: src/app/Browser.cpp
@@ -1450,6 +1510,10 @@ msgid "Read-only here: files can be changed in your own folders and Gridline's f
 msgstr ""
 
 #: src/app/Browser.cpp
+msgid "Reading the kit..."
+msgstr ""
+
+#: src/app/Browser.cpp
 msgid "Reading this folder"
 msgstr ""
 
@@ -1514,6 +1578,10 @@ msgid "Save presets from a plugin window"
 msgstr ""
 
 #: src/app/Browser.cpp
+msgid "Save your own from the swing preset menu beside the rack's Swing knob"
+msgstr ""
+
+#: src/app/Browser.cpp
 msgid "Scores"
 msgstr ""
 
@@ -1569,6 +1637,10 @@ msgstr ""
 msgid "Stop the preview"
 msgstr ""
 
+#: src/app/Browser.cpp src/app/Menus.cpp
+msgid "Swing presets"
+msgstr ""
+
 #: src/app/Browser.cpp src/app/CollabUi.cpp src/packs/platter/platter_ui.cpp
 msgid "Sync"
 msgstr ""
@@ -1603,6 +1675,10 @@ msgstr ""
 
 #: src/app/Browser.cpp
 msgid "Type the new name · Enter: rename · Esc: cancel"
+msgstr ""
+
+#: src/app/Browser.cpp
+msgid "Use it"
 msgstr ""
 
 #: src/app/Browser.cpp src/app/UpdateUi.cpp src/packs/mini/mini_ui.cpp
@@ -1722,6 +1798,10 @@ msgid "No free effect slot on this track"
 msgstr ""
 
 #: src/app/BrowserDrop.cpp
+msgid "No note to preview in "
+msgstr ""
+
+#: src/app/BrowserDrop.cpp
 msgid "Note effects go into a channel's note effect slots"
 msgstr ""
 
@@ -1833,7 +1913,7 @@ msgstr ""
 msgid "Zipped projects open from a copy on this computer, so their folders stay clean. A local project's copy is deleted when it closes; a copy from a web or network drive stays for quick and offline opening."
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/app/GrooveUi.cpp
 msgid "Amount"
 msgstr ""
 
@@ -2049,7 +2129,7 @@ msgstr ""
 msgid "Vel. → pan"
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp src/app/CollabUi.cpp src/app/SoundThemeUi.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/app/CollabUi.cpp src/app/MixerView.cpp src/app/SoundThemeUi.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/tracker/tracker_ui.cpp
 msgid "Volume"
 msgstr ""
 
@@ -2193,7 +2273,7 @@ msgstr ""
 msgid "Swing"
 msgstr ""
 
-#: src/app/ChannelRack.cpp
+#: src/app/ChannelRack.cpp src/app/GrooveUi.cpp
 msgid "Swing piano roll notes"
 msgstr ""
 
@@ -2801,7 +2881,7 @@ msgstr ""
 msgid "Extra notes"
 msgstr ""
 
-#: src/app/ChordEditorUi.cpp
+#: src/app/ChordEditorUi.cpp src/packs/plasma/plasma_patch_ui.cpp
 msgid "Fit"
 msgstr ""
 
@@ -2865,7 +2945,7 @@ msgstr ""
 msgid "Length of one rhythm cycle (it restarts on every chord)"
 msgstr ""
 
-#: src/app/ChordEditorUi.cpp src/app/PluginEditorsK3Gb.cpp src/core/TrackIconSet.cpp src/plugin/PluginFrame.cpp
+#: src/app/ChordEditorUi.cpp src/app/PluginEditorsK3Gb.cpp src/core/TrackIconSet.cpp src/packs/plasma/plasma_patch_ui.cpp src/plugin/PluginFrame.cpp
 msgid "Link"
 msgstr ""
 
@@ -3845,7 +3925,7 @@ msgstr ""
 msgid "NOTE TO THEM (OPTIONAL)"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/PluginManager.cpp src/app/SamplerRenderUi.cpp src/app/TrackReceiptUi.cpp src/packs/modulation/modulation_patcher_ui.cpp src/packs/plasma/plasma_seq_ui.cpp src/packs/plasma/plasma_wted_ui.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/PluginManager.cpp src/app/SamplerRenderUi.cpp src/app/TrackReceiptUi.cpp src/packs/modulation/modulation_patcher_ui.cpp src/packs/plasma/plasma_browser_ui.cpp src/packs/plasma/plasma_seq_ui.cpp src/packs/plasma/plasma_wted_ui.cpp src/packs/tracker/tracker_ui.cpp
 msgid "Name"
 msgstr ""
 
@@ -3934,7 +4014,7 @@ msgid "Online"
 msgstr ""
 
 #: src/app/CollabUi.cpp
-msgid "Only if they can't connect directly: they then get a reply code to send you."
+msgid "Only if they can't connect directly: they then get a reply code to send you. It still works if it takes a few minutes to arrive."
 msgstr ""
 
 #: src/app/CollabUi.cpp
@@ -3989,7 +4069,7 @@ msgstr ""
 msgid "PRESENCE"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/PianoRoll.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/CollabUi.cpp src/app/MixerView.cpp src/app/PianoRoll.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/tracker/tracker_ui.cpp
 msgid "Pan"
 msgstr ""
 
@@ -4058,6 +4138,10 @@ msgid "RECONNECT"
 msgstr ""
 
 #: src/app/CollabUi.cpp
+msgid "Reached %s: securing the connection"
+msgstr ""
+
+#: src/app/CollabUi.cpp
 msgid "Reaching %s"
 msgstr ""
 
@@ -4089,7 +4173,7 @@ msgstr ""
 msgid "Relays the encrypted connection when both networks block direct connections. Only needed for strict networks"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/MasterPanel.cpp src/app/SuiteUi.cpp src/app/TrackReceiptUi.cpp src/packs/edison/edison_wave_ui.cpp src/packs/modulation/modulation_notefx_ui.cpp src/packs/plasma/plasma_ui.cpp src/packs/tideline/tideline_ui.cpp
+#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/MasterPanel.cpp src/app/SuiteUi.cpp src/app/TrackReceiptUi.cpp src/packs/edison/edison_wave_ui.cpp src/packs/modulation/modulation_notefx_ui.cpp src/packs/plasma/plasma_fx_ui.cpp src/packs/plasma/plasma_patch_ui.cpp src/packs/plasma/plasma_ui.cpp src/packs/tideline/tideline_ui.cpp
 msgid "Remove"
 msgstr ""
 
@@ -4133,7 +4217,7 @@ msgstr ""
 msgid "Rename"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/Menus.cpp src/app/PatternAutoUi.cpp src/app/Playlist.cpp src/app/PluginEditorsInstrSlicer.cpp src/packs/edison/edison_wave_ui.cpp
+#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/Menus.cpp src/app/PatternAutoUi.cpp src/app/Playlist.cpp src/app/PluginEditorsInstrSlicer.cpp src/packs/edison/edison_wave_ui.cpp src/packs/plasma/plasma_ui.cpp
 msgid "Rename..."
 msgstr ""
 
@@ -4147,6 +4231,14 @@ msgstr ""
 
 #: src/app/CollabUi.cpp
 msgid "Reply code"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Reply code used: connecting to them now."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Reply code used: reaching them"
 msgstr ""
 
 #: src/app/CollabUi.cpp
@@ -4198,15 +4290,15 @@ msgid "Section probe"
 msgstr ""
 
 #: src/app/CollabUi.cpp
+msgid "Send %s this reply code. They paste it under their invite and press Use reply. Keep this window open: it keeps trying for 15 minutes, so the code can take a while to arrive."
+msgstr ""
+
+#: src/app/CollabUi.cpp
 msgid "Send %s your code and paste theirs. Codes only carry network addresses; your keys check the connection."
 msgstr ""
 
 #: src/app/CollabUi.cpp
 msgid "Send level"
-msgstr ""
-
-#: src/app/CollabUi.cpp
-msgid "Send them this reply code; they paste it into their invite."
 msgstr ""
 
 #: src/app/CollabUi.cpp
@@ -4259,6 +4351,10 @@ msgstr ""
 
 #: src/app/CollabUi.cpp
 msgid "Stays: the project and its audio (%s) in %s, as a normal project."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Still not connected: a router or firewall on one side probably blocks direct connections. Turn off VPNs, allow Gridline through the firewall, and run Test my connection in Settings > Collaboration on both computers."
 msgstr ""
 
 #: src/app/CollabUi.cpp
@@ -4466,6 +4562,18 @@ msgid "This build of Gridline has no collaboration networking."
 msgstr ""
 
 #: src/app/CollabUi.cpp
+msgid "This computer couldn't find its public internet address, so this code only works on the same network. Check the connection, a VPN or firewall, or the STUN server in Settings > Collaboration."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "This computer's network address changed, so the code was renewed. If they have not joined yet, send them this new code."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "This computer's network address changed: send this new reply code instead of the first one."
+msgstr ""
+
+#: src/app/CollabUi.cpp
 msgid "This copy"
 msgstr ""
 
@@ -4507,6 +4615,14 @@ msgstr ""
 
 #: src/app/CollabUi.cpp
 msgid "Try again from another network, ask a collaborator who is online with the inviter to invite you, or set a TURN server in Settings > Collaboration."
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Trying for %s, attempt %s"
+msgstr ""
+
+#: src/app/CollabUi.cpp
+msgid "Trying for %s, attempt %s. Their Join window keeps trying too, so leave both open."
 msgstr ""
 
 #: src/app/CollabUi.cpp
@@ -4681,7 +4797,7 @@ msgstr ""
 msgid "an item"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/packs/samplers/sfz_ui.h
 msgid "and %d more"
 msgstr ""
 
@@ -5861,7 +5977,7 @@ msgstr ""
 msgid "Nudge right"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/ExportUi.cpp src/app/UpdateUi.cpp
+#: src/app/ContextMenus.cpp src/app/DrumKitUi.cpp src/app/ExportUi.cpp src/app/UpdateUi.cpp
 msgid "OK"
 msgstr ""
 
@@ -6089,8 +6205,8 @@ msgstr ""
 msgid "Reset routing to master"
 msgstr ""
 
-#: src/app/ContextMenus.cpp
-msgid "Reset selected tracks to default"
+#: src/app/ContextMenus.cpp src/app/MixerView.cpp
+msgid "Reset selected tracks"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
@@ -6106,7 +6222,7 @@ msgid "Reset to default"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
-msgid "Reset track to default"
+msgid "Reset track"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
@@ -6357,7 +6473,7 @@ msgstr ""
 msgid "Steps to piano roll"
 msgstr ""
 
-#: src/app/ContextMenus.cpp
+#: src/app/ContextMenus.cpp src/app/MixerView.cpp
 msgid "Stereo separation"
 msgstr ""
 
@@ -6713,12 +6829,20 @@ msgstr ""
 msgid "Appearance (dark or light, colours, contrast), control style and sounds"
 msgstr ""
 
+#: src/app/Dialogs.cpp
+msgid "Applies the next time Gridline starts. Automatic runs Gridline through XWayland on a Wayland desktop, so plugin interfaces sit inside their plugin windows and panels can be detached. Native Wayland: plugin interfaces open in windows of their own and panels stay inside the main window"
+msgstr ""
+
 #: src/app/Dialogs.cpp src/app/Menus.cpp src/app/Playlist.cpp src/core/TrackIconSet.cpp src/packs/modulation/modulation_patcher_ui.cpp src/packs/seltmann/seltmann_ui.cpp src/packs/tideline/tideline_ui.cpp
 msgid "Audio"
 msgstr ""
 
 #: src/app/Dialogs.cpp
 msgid "Auto (scroll when the pane scrolls)"
+msgstr ""
+
+#: src/app/Dialogs.cpp
+msgid "Automatic (X11 when available)"
 msgstr ""
 
 #: src/app/Dialogs.cpp
@@ -6994,7 +7118,15 @@ msgid "NOTES"
 msgstr ""
 
 #: src/app/Dialogs.cpp
+msgid "Native Wayland"
+msgstr ""
+
+#: src/app/Dialogs.cpp
 msgid "Never (remind every 10 minutes)"
+msgstr ""
+
+#: src/app/Dialogs.cpp
+msgid "Now running on: %s"
 msgstr ""
 
 #: src/app/Dialogs.cpp
@@ -7169,7 +7301,7 @@ msgstr ""
 msgid "Steps kept from 10 to 10000, applied when you press Enter. The oldest steps also go once the history uses 256 MB."
 msgstr ""
 
-#: src/app/Dialogs.cpp
+#: src/app/Dialogs.cpp src/app/GrooveUi.cpp
 msgid "TIMING"
 msgstr ""
 
@@ -7177,7 +7309,7 @@ msgstr ""
 msgid "Tempo (BPM)"
 msgstr ""
 
-#: src/app/Dialogs.cpp src/app/Menus.cpp src/app/SettingsKeysTheme.cpp
+#: src/app/Dialogs.cpp src/app/Menus.cpp src/app/SettingsKeysTheme.cpp src/app/main.cpp src/packs/plasma/plasma_ui.cpp
 msgid "Theme"
 msgstr ""
 
@@ -7235,6 +7367,10 @@ msgstr ""
 
 #: src/app/Dialogs.cpp
 msgid "Where each plugin format is searched, and scanning"
+msgstr ""
+
+#: src/app/Dialogs.cpp
+msgid "Window system"
 msgstr ""
 
 #: src/app/Dialogs.cpp src/app/DisplayConfirmUi.cpp src/app/Menus.cpp
@@ -7397,6 +7533,38 @@ msgstr ""
 msgid "Smooth drawing: on (click to draw raw here; hold Alt while drawing for one raw stroke)"
 msgstr ""
 
+#: src/app/DrumKitUi.cpp
+msgid "%d instruments, %d sample layers, on %d drum pad channels"
+msgstr ""
+
+#: src/app/DrumKitUi.cpp
+msgid "%d instruments, %d sample layers, on one drum pad channel"
+msgstr ""
+
+#: src/app/DrumKitUi.cpp
+msgid "A drum kit is still loading"
+msgstr ""
+
+#: src/app/DrumKitUi.cpp
+msgid "Cannot load the drum kit"
+msgstr ""
+
+#: src/app/DrumKitUi.cpp
+msgid "Drum kit loaded"
+msgstr ""
+
+#: src/app/DrumKitUi.cpp
+msgid "Loaded"
+msgstr ""
+
+#: src/app/DrumKitUi.cpp
+msgid "Loaded the drum kit "
+msgstr ""
+
+#: src/app/DrumKitUi.cpp
+msgid "Reading the drum kit "
+msgstr ""
+
 #: src/app/EditTools.cpp
 msgid "Add a chord under the first note of every bar"
 msgstr ""
@@ -7407,6 +7575,10 @@ msgstr ""
 
 #: src/app/EditTools.cpp src/app/ScriptUi.cpp
 msgid "Close and restore the notes (Esc)"
+msgstr ""
+
+#: src/app/EditTools.cpp src/app/GrooveUi.cpp
+msgid "Could not save the swing preset"
 msgstr ""
 
 #: src/app/EditTools.cpp
@@ -7434,7 +7606,7 @@ msgid "Grid: the pattern follows the song grid · Chord: it restarts at every ch
 msgstr ""
 
 #: src/app/EditTools.cpp
-msgid "Groove template: shifts (and accents) per grid line; or the timing of another channel's notes"
+msgid "Groove template: a swing preset's shifts (and accents) per grid line; or the timing of another channel's notes"
 msgstr ""
 
 #: src/app/EditTools.cpp
@@ -7445,8 +7617,16 @@ msgstr ""
 msgid "Keep the changes (Enter)"
 msgstr ""
 
+#: src/app/EditTools.cpp
+msgid "Keep this channel's timing as one of your swing presets"
+msgstr ""
+
 #: src/app/EditTools.cpp src/app/LayerEditor.cpp src/packs/dynamics/masterfl_ui.cpp
 msgid "MODE"
+msgstr ""
+
+#: src/app/EditTools.cpp src/app/GrooveUi.cpp
+msgid "My presets"
 msgstr ""
 
 #: src/app/EditTools.cpp
@@ -7487,6 +7667,18 @@ msgstr ""
 
 #: src/app/EditTools.cpp src/packs/platter/platter_deck_ui.cpp
 msgid "SYNC"
+msgstr ""
+
+#: src/app/EditTools.cpp
+msgid "Save as swing preset"
+msgstr ""
+
+#: src/app/EditTools.cpp
+msgid "Save the groove as a swing preset"
+msgstr ""
+
+#: src/app/EditTools.cpp src/app/GrooveUi.cpp
+msgid "Saved swing preset"
 msgstr ""
 
 #: src/app/EditTools.cpp src/app/MenuParityUi.cpp src/app/ScriptUi.cpp
@@ -8221,6 +8413,198 @@ msgstr ""
 msgid "Zipped projects: frozen units go in unfrozen (smaller; their plugins load when it opens)"
 msgstr ""
 
+#: src/app/GrooveUi.cpp
+msgid "16ths"
+msgstr ""
+
+#: src/app/GrooveUi.cpp
+msgid "32nds"
+msgstr ""
+
+#: src/app/GrooveUi.cpp
+msgid "8ths"
+msgstr ""
+
+#: src/app/GrooveUi.cpp
+msgid "A swing preset (.json), or the groove of a MIDI file or a score file"
+msgstr ""
+
+#: src/app/GrooveUi.cpp src/app/SettingsKeysTheme.cpp
+msgid "Accent"
+msgstr ""
+
+#: src/app/GrooveUi.cpp
+msgid "Cells per repeat: 2 = a classic swing pair, 4, 8 or 16 = a groove over a beat, two beats or a bar"
+msgstr ""
+
+#: src/app/GrooveUi.cpp
+msgid "Could not import the swing preset"
+msgstr ""
+
+#: src/app/GrooveUi.cpp src/packs/tideline/tideline_ui.cpp
+msgid "Cycle"
+msgstr ""
+
+#: src/app/GrooveUi.cpp src/packs/seltmann/seltmann_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Eighth notes"
+msgstr ""
+
+#: src/app/GrooveUi.cpp
+msgid "Export current..."
+msgstr ""
+
+#: src/app/GrooveUi.cpp src/app/PluginUI.cpp
+msgid "Factory"
+msgstr ""
+
+#: src/app/GrooveUi.cpp
+msgid "Feel"
+msgstr ""
+
+#: src/app/GrooveUi.cpp
+msgid "From audio clip"
+msgstr ""
+
+#: src/app/GrooveUi.cpp
+msgid "From pattern notes"
+msgstr ""
+
+#: src/app/GrooveUi.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Grid"
+msgstr ""
+
+#: src/app/GrooveUi.cpp src/app/Menus.cpp
+msgid "Groove editor"
+msgstr ""
+
+#: src/app/GrooveUi.cpp
+msgid "Groove taken"
+msgstr ""
+
+#: src/app/GrooveUi.cpp
+msgid "How much of the groove plays (the channel rack's Swing knob)"
+msgstr ""
+
+#: src/app/GrooveUi.cpp
+msgid "How much of the velocity lane plays"
+msgstr ""
+
+#: src/app/GrooveUi.cpp
+msgid "Import a swing preset"
+msgstr ""
+
+#: src/app/GrooveUi.cpp
+msgid "Import preset..."
+msgstr ""
+
+#: src/app/GrooveUi.cpp
+msgid "Imported swing preset"
+msgstr ""
+
+#: src/app/GrooveUi.cpp
+msgid "No accents: draw to add them"
+msgstr ""
+
+#: src/app/GrooveUi.cpp
+msgid "No swing: the classic step swing at 0 %"
+msgstr ""
+
+#: src/app/GrooveUi.cpp src/app/PlaylistWarp.cpp
+msgid "No transients found"
+msgstr ""
+
+#: src/app/GrooveUi.cpp
+msgid "None saved yet"
+msgstr ""
+
+#: src/app/GrooveUi.cpp
+msgid "Not enough notes to take a groove from"
+msgstr ""
+
+#: src/app/GrooveUi.cpp
+msgid "One bar: the straight grid above, where the swing puts each cell below (height = accent)"
+msgstr ""
+
+#: src/app/GrooveUi.cpp
+msgid "Reset to straight"
+msgstr ""
+
+#: src/app/GrooveUi.cpp
+msgid "Save current as preset..."
+msgstr ""
+
+#: src/app/GrooveUi.cpp
+msgid "Save preset..."
+msgstr ""
+
+#: src/app/GrooveUi.cpp
+msgid "Save the swing as a preset (folders with /)"
+msgstr ""
+
+#: src/app/GrooveUi.cpp
+msgid "Save this swing as one of your presets"
+msgstr ""
+
+#: src/app/GrooveUi.cpp
+msgid "Select an audio clip in the playlist first"
+msgstr ""
+
+#: src/app/GrooveUi.cpp src/app/LauncherCollab.cpp src/app/LauncherUi.cpp
+msgid "Show in Explorer"
+msgstr ""
+
+#: src/app/GrooveUi.cpp src/app/LauncherCollab.cpp src/app/LauncherUi.cpp
+msgid "Show in Files"
+msgstr ""
+
+#: src/app/GrooveUi.cpp src/app/LauncherCollab.cpp src/app/LauncherUi.cpp
+msgid "Show in Finder"
+msgstr ""
+
+#: src/app/GrooveUi.cpp
+msgid "Sixteenth notes, whatever the pattern's steps"
+msgstr ""
+
+#: src/app/GrooveUi.cpp src/app/PluginEditorsK3Gb.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_seq_ui.cpp
+msgid "Step"
+msgstr ""
+
+#: src/app/GrooveUi.cpp
+msgid "Swing preset"
+msgstr ""
+
+#: src/app/GrooveUi.cpp
+msgid "Take the groove from the selected audio clip's transients"
+msgstr ""
+
+#: src/app/GrooveUi.cpp
+msgid "Take the groove from the selected channel's notes and steps in the current pattern (all channels when none is selected)"
+msgstr ""
+
+#: src/app/GrooveUi.cpp
+msgid "The pattern's step (16ths in a 16-step pattern)"
+msgstr ""
+
+#: src/app/GrooveUi.cpp src/packs/seltmann/seltmann_wave_ui.cpp
+msgid "Thirty-second notes"
+msgstr ""
+
+#: src/app/GrooveUi.cpp
+msgid "Timing per cell: up = later, down = earlier (half a cell at full swing). Drag to draw, double-click resets"
+msgstr ""
+
+#: src/app/GrooveUi.cpp
+msgid "VELOCITY"
+msgstr ""
+
+#: src/app/GrooveUi.cpp
+msgid "Velocity per cell: up = louder, down = quieter. Drag to draw, double-click clears the accents"
+msgstr ""
+
+#: src/app/GrooveUi.cpp
+msgid "transients moved to the swing"
+msgstr ""
+
 #: src/app/HostedUi.cpp
 msgid "%d channel%s listening on port %d"
 msgstr ""
@@ -8929,18 +9313,6 @@ msgstr ""
 msgid "Share the open project"
 msgstr ""
 
-#: src/app/LauncherCollab.cpp src/app/LauncherUi.cpp
-msgid "Show in Explorer"
-msgstr ""
-
-#: src/app/LauncherCollab.cpp src/app/LauncherUi.cpp
-msgid "Show in Files"
-msgstr ""
-
-#: src/app/LauncherCollab.cpp src/app/LauncherUi.cpp
-msgid "Show in Finder"
-msgstr ""
-
 #: src/app/LauncherCollab.cpp
 msgid "Someone was here %s"
 msgstr ""
@@ -9197,7 +9569,7 @@ msgstr ""
 msgid "Removed missing projects from the list"
 msgstr ""
 
-#: src/app/LauncherUi.cpp src/packs/plasma/plasma_browser_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp
+#: src/app/LauncherUi.cpp src/packs/plasma/plasma_patch_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Search"
 msgstr ""
 
@@ -9853,7 +10225,7 @@ msgstr ""
 msgid "Export folder"
 msgstr ""
 
-#: src/app/McpUi.cpp
+#: src/app/McpUi.cpp src/packs/plasma/plasma_patch_ui.cpp
 msgid "Hide"
 msgstr ""
 
@@ -10590,6 +10962,10 @@ msgid "Mixer tracks (stems)..."
 msgstr ""
 
 #: src/app/Menus.cpp
+msgid "Multisample instrument (.sfz, .sf2)..."
+msgstr ""
+
+#: src/app/Menus.cpp
 msgid "Name the pattern"
 msgstr ""
 
@@ -10809,7 +11185,7 @@ msgstr ""
 msgid "BEHAVIOUR"
 msgstr ""
 
-#: src/app/MidiUi.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/MidiUi.cpp src/packs/plasma/plasma_frame_ui.cpp src/packs/tracker/tracker_ui.cpp
 msgid "Bend range"
 msgstr ""
 
@@ -11249,6 +11625,10 @@ msgstr ""
 msgid "Empty slot"
 msgstr ""
 
+#: src/app/MixerView.cpp
+msgid "Everything but name, effects and routing"
+msgstr ""
+
 #: src/app/MixerView.cpp src/app/PluginFavsUi.cpp src/app/PluginManager.cpp
 msgid "Favourites"
 msgstr ""
@@ -11442,6 +11822,10 @@ msgid "Slots"
 msgstr ""
 
 #: src/app/MixerView.cpp
+msgid "Strip EQ"
+msgstr ""
+
+#: src/app/MixerView.cpp
 msgid "Strip width: compact, wide or extra large"
 msgstr ""
 
@@ -11471,6 +11855,10 @@ msgstr ""
 
 #: src/app/MixerView.cpp
 msgid "Use the arrows under the strips to add sends (right-click an arrow for route-only, sidechain and pre-fader)."
+msgstr ""
+
+#: src/app/MixerView.cpp
+msgid "Volume, pan and stereo separation"
 msgstr ""
 
 #: src/app/MixerView.cpp
@@ -12394,10 +12782,6 @@ msgid "New markers snap to transients"
 msgstr ""
 
 #: src/app/PlaylistWarp.cpp
-msgid "No transients found"
-msgstr ""
-
-#: src/app/PlaylistWarp.cpp
 msgid "Quantize strength"
 msgstr ""
 
@@ -12406,7 +12790,23 @@ msgid "Section after the marker:"
 msgstr ""
 
 #: src/app/PlaylistWarp.cpp
+msgid "Swing to the song's groove"
+msgstr ""
+
+#: src/app/PlaylistWarp.cpp
+msgid "Take its groove as the song's swing"
+msgstr ""
+
+#: src/app/PlaylistWarp.cpp
+msgid "The timing and accents of the clip's transients become the song's swing (save it as a preset in the groove editor)"
+msgstr ""
+
+#: src/app/PlaylistWarp.cpp
 msgid "Warp markers"
+msgstr ""
+
+#: src/app/PlaylistWarp.cpp
+msgid "Warp markers on the transients, moved onto the song's swung grid (its swing preset or groove)"
 msgstr ""
 
 #: src/app/PlaylistWarp.cpp
@@ -13089,7 +13489,7 @@ msgstr ""
 msgid "Click to rename the slot"
 msgstr ""
 
-#: src/app/PluginEditorsK3Gb.cpp src/packs/plasma/plasma_seq_ui.cpp
+#: src/app/PluginEditorsK3Gb.cpp
 msgid "Copy slot"
 msgstr ""
 
@@ -13205,7 +13605,7 @@ msgstr ""
 msgid "POSITION SYNC"
 msgstr ""
 
-#: src/app/PluginEditorsK3Gb.cpp src/packs/plasma/plasma_seq_ui.cpp
+#: src/app/PluginEditorsK3Gb.cpp
 msgid "Paste slot"
 msgstr ""
 
@@ -13263,10 +13663,6 @@ msgstr ""
 
 #: src/app/PluginEditorsK3Gb.cpp
 msgid "Snap: points move on a grid of this many cells per beat"
-msgstr ""
-
-#: src/app/PluginEditorsK3Gb.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_seq_ui.cpp
-msgid "Step"
 msgstr ""
 
 #: src/app/PluginEditorsK3Gb.cpp
@@ -13561,7 +13957,7 @@ msgstr ""
 msgid "A Gridline Suite build of a plugin that is built into Gridline, made for other applications. Use the built-in version in Gridline; the browser does not list these builds."
 msgstr ""
 
-#: src/app/PluginManager.cpp src/app/SettingsKeysTheme.cpp src/core/MenuStyle.cpp src/packs/plasma/plasma_browser_ui.cpp
+#: src/app/PluginManager.cpp src/app/SettingsKeysTheme.cpp src/core/MenuStyle.cpp src/packs/plasma/plasma_browser_ui.cpp src/packs/plasma/plasma_synth_ui.cpp
 msgid "Add"
 msgstr ""
 
@@ -14065,15 +14461,11 @@ msgstr ""
 msgid "Enter to save"
 msgstr ""
 
-#: src/app/PluginUI.cpp src/packs/plasma/plasma_ui.cpp
-msgid "Factory"
-msgstr ""
-
 #: src/app/PluginUI.cpp
 msgid "Keep the built-in plugin for good: the missing plugin and its saved settings are removed from the project"
 msgstr ""
 
-#: src/app/PluginUI.cpp src/core/TrackIconSet.cpp
+#: src/app/PluginUI.cpp src/core/TrackIconSet.cpp src/packs/plasma/plasma_frame_ui.cpp
 msgid "Library"
 msgstr ""
 
@@ -14131,6 +14523,10 @@ msgstr ""
 
 #: src/app/PluginWindow.cpp src/plugin/HostedWindows.cpp
 msgid "This plugin is not loaded"
+msgstr ""
+
+#: src/app/PluginWindow.cpp
+msgid "its interface could not open in a window of its own on XWayland"
 msgstr ""
 
 #: src/app/PluginWindowBar.cpp
@@ -14518,10 +14914,6 @@ msgid "ADJUST"
 msgstr ""
 
 #: src/app/SettingsKeysTheme.cpp
-msgid "Accent"
-msgstr ""
-
-#: src/app/SettingsKeysTheme.cpp
 msgid "Accent colour for selection, focus and value arcs"
 msgstr ""
 
@@ -14845,7 +15237,7 @@ msgstr ""
 msgid "AUTOSAVE"
 msgstr ""
 
-#: src/app/SettingsPages.cpp
+#: src/app/SettingsPages.cpp src/core/HydrogenKit.cpp
 msgid "Author"
 msgstr ""
 
@@ -16369,7 +16761,7 @@ msgstr ""
 msgid "this computer's"
 msgstr ""
 
-#: src/app/UrlImportUi.cpp
+#: src/app/UrlImportUi.cpp src/packs/plasma/plasma_patch_ui.cpp
 msgid "to"
 msgstr ""
 
@@ -16395,6 +16787,10 @@ msgstr ""
 
 #: src/app/Widgets.cpp src/packs/tideline/tideline_ui.cpp
 msgid "Custom"
+msgstr ""
+
+#: src/app/Widgets.cpp
+msgid "Reset selected tracks to default"
 msgstr ""
 
 #: src/app/Widgets.cpp
@@ -16518,7 +16914,27 @@ msgid "%1 stopped sharing this project."
 msgstr ""
 
 #: src/collab/Hub.cpp
+msgid "Ask for a new invite and join with it. Both of you need the same Gridline version."
+msgstr ""
+
+#: src/collab/Hub.cpp
+msgid "Check that this computer is online. A firewall, VPN or network filter (school, office, public Wi-Fi) may block the address server: try another network, or set a STUN or TURN server in Settings > Collaboration."
+msgstr ""
+
+#: src/collab/Hub.cpp
 msgid "Couldn't connect directly. Your network or theirs blocks peer-to-peer connections."
+msgstr ""
+
+#: src/collab/Hub.cpp
+msgid "Couldn't reach %1's computer. If they already used your reply code, a router or firewall on one side blocks direct connections."
+msgstr ""
+
+#: src/collab/Hub.cpp
+msgid "Invites work for the time chosen when they were made. Ask for a new one; if they just made it, check that the date and time on both computers are set automatically."
+msgstr ""
+
+#: src/collab/Hub.cpp
+msgid "Make sure they pasted your reply code under their invite and pressed Use reply. Turn off VPNs on both computers and allow Gridline through the firewall when asked (private and public networks). Then join again. Test my connection (Settings > Collaboration) on both computers: when it says symmetric NAT on both sides, a direct connection can't work; a collaborator who reaches both of you, or a TURN relay, can carry it."
 msgstr ""
 
 #: src/collab/Hub.cpp
@@ -16526,7 +16942,19 @@ msgid "Networking is not available in this build."
 msgstr ""
 
 #: src/collab/Hub.cpp
-msgid "The connection was refused."
+msgid "Only part of the invite code arrived (it is cut off). Ask them to send all of it, or to use Save as file and send the file."
+msgstr ""
+
+#: src/collab/Hub.cpp
+msgid "Only part of the reconnect code arrived (it is cut off). Ask for all of it, or for the code as a file."
+msgstr ""
+
+#: src/collab/Hub.cpp
+msgid "Only part of the reply code arrived (it is cut off). Ask them to send all of it, or to use Save as file and send the file."
+msgstr ""
+
+#: src/collab/Hub.cpp
+msgid "The computers reached each other, but %1's Gridline did not answer. The invite may have been cancelled or replaced."
 msgstr ""
 
 #: src/collab/Hub.cpp
@@ -16534,7 +16962,35 @@ msgid "The invite code is damaged. Ask for a new one."
 msgstr ""
 
 #: src/collab/Hub.cpp
+msgid "The invite expired while waiting. Ask for a new one."
+msgstr ""
+
+#: src/collab/Hub.cpp
 msgid "The invitee"
+msgstr ""
+
+#: src/collab/Hub.cpp
+msgid "The other computer could not confirm who you are. Ask for a new invite and join again."
+msgstr ""
+
+#: src/collab/Hub.cpp
+msgid "The other computer has left this project or stopped sharing it, so it no longer accepts connections."
+msgstr ""
+
+#: src/collab/Hub.cpp
+msgid "The other computer turned the connection down without saying why. Check that you both run the same Gridline version, then try a new invite."
+msgstr ""
+
+#: src/collab/Hub.cpp
+msgid "The reconnect code was changed on the way. Ask for it again, or as a file."
+msgstr ""
+
+#: src/collab/Hub.cpp
+msgid "The reply code was changed on the way. Ask them to copy it again with the Copy button, or to send it as a file."
+msgstr ""
+
+#: src/collab/Hub.cpp
+msgid "They are connected already: this reply code is not needed any more."
 msgstr ""
 
 #: src/collab/Hub.cpp
@@ -16546,11 +17002,27 @@ msgid "This code is from someone who is not a member of this project."
 msgstr ""
 
 #: src/collab/Hub.cpp
+msgid "This computer couldn't find its public internet address (the address servers did not answer), so only a computer on the same network can reach it."
+msgstr ""
+
+#: src/collab/Hub.cpp
 msgid "This invite has expired. Ask for a new one."
 msgstr ""
 
 #: src/collab/Hub.cpp
-msgid "This invite is no longer open."
+msgid "This invite has expired. Ask for a new one. If it should still work, check that the date and time on this computer are set automatically."
+msgstr ""
+
+#: src/collab/Hub.cpp
+msgid "This invite has expired. Make a new one and send them that."
+msgstr ""
+
+#: src/collab/Hub.cpp
+msgid "This invite is no longer open on the inviter's computer (it was cancelled or replaced). Ask for a new one."
+msgstr ""
+
+#: src/collab/Hub.cpp
+msgid "This invite is no longer open. Make a new one and send them that."
 msgstr ""
 
 #: src/collab/Hub.cpp
@@ -16558,7 +17030,23 @@ msgid "This invite was already used. Ask for a new one."
 msgstr ""
 
 #: src/collab/Hub.cpp
-msgid "This is not a Gridline invite code."
+msgid "This invite was made with a newer Gridline (%1). Update Gridline to join."
+msgstr ""
+
+#: src/collab/Hub.cpp
+msgid "This is a reconnect code. Paste it in the Collaboration panel of the open project, under the collaborator it came from."
+msgstr ""
+
+#: src/collab/Hub.cpp
+msgid "This is a reply code. It goes back to the person who invited you: they paste it under their invite and press Use reply."
+msgstr ""
+
+#: src/collab/Hub.cpp
+msgid "This is an invite code. It goes in the Join window of the person you invite (File > Join collaborative project)."
+msgstr ""
+
+#: src/collab/Hub.cpp
+msgid "This is not a Gridline invite code. It starts with gridline-invite:"
 msgstr ""
 
 #: src/collab/Hub.cpp
@@ -16566,11 +17054,11 @@ msgid "This is not a Gridline reconnect code."
 msgstr ""
 
 #: src/collab/Hub.cpp
-msgid "This is not a Gridline reply code."
+msgid "This is not a Gridline reply code. It starts with gridline-reply:"
 msgstr ""
 
 #: src/collab/Hub.cpp
-msgid "This reply belongs to another invite."
+msgid "This reply code answers an invite that is no longer open here (cancelled, replaced, or made before Gridline was restarted). Make a new invite and send them that."
 msgstr ""
 
 #: src/collab/Hub.cpp
@@ -16579,6 +17067,10 @@ msgstr ""
 
 #: src/collab/Hub.cpp
 msgid "Your collaborator"
+msgstr ""
+
+#: src/collab/Hub.cpp
+msgid "the inviter"
 msgstr ""
 
 #: src/collab/Lifecycle.cpp
@@ -16786,6 +17278,10 @@ msgid "Gridline cannot open %s"
 msgstr ""
 
 #: src/core/ExternalDrop.cpp
+msgid "add %d Multisampler channels"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
 msgid "add %d audio clips on tracks %d-%d at bar %d"
 msgstr ""
 
@@ -16807,6 +17303,10 @@ msgstr ""
 
 #: src/core/ExternalDrop.cpp
 msgid "add %d sampler channels"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
+msgid "add a Multisampler channel playing %s"
 msgstr ""
 
 #: src/core/ExternalDrop.cpp
@@ -16846,11 +17346,19 @@ msgid "import %s as a pattern clip on track %d at bar %d"
 msgstr ""
 
 #: src/core/ExternalDrop.cpp
+msgid "insert %d Multisampler channels here"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
 msgid "insert %d channels from presets here"
 msgstr ""
 
 #: src/core/ExternalDrop.cpp
 msgid "insert %d sampler channels here"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
+msgid "insert a Multisampler channel playing %s here"
 msgstr ""
 
 #: src/core/ExternalDrop.cpp
@@ -16874,6 +17382,10 @@ msgid "insert the notes of %s into %s"
 msgstr ""
 
 #: src/core/ExternalDrop.cpp
+msgid "load %d drum kits"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
 msgid "load %s as an impulse response"
 msgstr ""
 
@@ -16890,6 +17402,14 @@ msgid "load %s into %s"
 msgstr ""
 
 #: src/core/ExternalDrop.cpp
+msgid "load %s into the Multisampler"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
+msgid "load the drum kit %s"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
 msgid "load the effect chain %s"
 msgstr ""
 
@@ -16902,11 +17422,19 @@ msgid "load the preset %s"
 msgstr ""
 
 #: src/core/ExternalDrop.cpp
+msgid "replace %s with a Multisampler playing %s"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
 msgid "replace %s with a sampler playing %s"
 msgstr ""
 
 #: src/core/ExternalDrop.cpp
 msgid "replace %s with the preset %s"
+msgstr ""
+
+#: src/core/ExternalDrop.cpp
+msgid "replace the channel's instrument with a Multisampler playing %s"
 msgstr ""
 
 #: src/core/ExternalDrop.cpp
@@ -16923,6 +17451,46 @@ msgstr ""
 
 #: src/core/ExternalDrop.cpp
 msgid "replace the sample of %s with %s"
+msgstr ""
+
+#: src/core/HydrogenKit.cpp
+msgid "Levels above full were set to full: %s"
+msgstr ""
+
+#: src/core/HydrogenKit.cpp
+msgid "Licence"
+msgstr ""
+
+#: src/core/HydrogenKit.cpp
+msgid "More than eight mute groups, these have none: %s"
+msgstr ""
+
+#: src/core/HydrogenKit.cpp
+msgid "Only the first %s instruments were added (the keyboard ends there)"
+msgstr ""
+
+#: src/core/HydrogenKit.cpp
+msgid "Only the first 64 layers play: %s"
+msgstr ""
+
+#: src/core/HydrogenKit.cpp
+msgid "Picture licence"
+msgstr ""
+
+#: src/core/HydrogenKit.cpp
+msgid "Round robin over several sample sets plays one layer at a time: %s"
+msgstr ""
+
+#: src/core/HydrogenKit.cpp
+msgid "Samples that are not there: %s"
+msgstr ""
+
+#: src/core/HydrogenKit.cpp
+msgid "Their filter is not carried over: %s"
+msgstr ""
+
+#: src/core/HydrogenKit.cpp
+msgid "Their random pitch is not carried over: %s"
 msgstr ""
 
 #: src/core/Keymap.cpp
@@ -17031,6 +17599,10 @@ msgstr ""
 
 #: src/core/Keymap.cpp
 msgid "Delete tool"
+msgstr ""
+
+#: src/core/Keymap.cpp
+msgid "Deselect tracks (keeps the focused one)"
 msgstr ""
 
 #: src/core/Keymap.cpp
@@ -17295,6 +17867,10 @@ msgstr ""
 
 #: src/core/Keymap.cpp
 msgid "Select all clips"
+msgstr ""
+
+#: src/core/Keymap.cpp
+msgid "Select all insert tracks"
 msgstr ""
 
 #: src/core/Keymap.cpp
@@ -19710,6 +20286,10 @@ msgid "input = controller (0..1), base = knob value, t, beat"
 msgstr ""
 
 #: src/packs/plasma/plasma_browser_ui.cpp
+msgid "%d sounds"
+msgstr ""
+
+#: src/packs/plasma/plasma_browser_ui.cpp
 msgid "Added folders (click to remove)"
 msgstr ""
 
@@ -19718,7 +20298,7 @@ msgid "Could not save the preset"
 msgstr ""
 
 #: src/packs/plasma/plasma_browser_ui.cpp
-msgid "Folder with Serum presets"
+msgid "Preset folder"
 msgstr ""
 
 #: src/packs/plasma/plasma_browser_ui.cpp
@@ -19730,23 +20310,59 @@ msgid "Saved the preset"
 msgstr ""
 
 #: src/packs/plasma/plasma_browser_ui.cpp
-msgid "Search the Serum library"
+msgid "Show in file manager"
 msgstr ""
 
-#: src/packs/plasma/plasma_browser_ui.cpp
-msgid "Search this folder"
+#: src/packs/plasma/plasma_frame_ui.cpp
+msgid "Dark or light: switch Gridline to the dark theme"
+msgstr ""
+
+#: src/packs/plasma/plasma_frame_ui.cpp
+msgid "Dark or light: switch Gridline to the light theme"
+msgstr ""
+
+#: src/packs/plasma/plasma_frame_ui.cpp
+msgid "Down (semitones)"
+msgstr ""
+
+#: src/packs/plasma/plasma_frame_ui.cpp
+msgid "Factory sounds"
+msgstr ""
+
+#: src/packs/plasma/plasma_frame_ui.cpp
+msgid "Init"
+msgstr ""
+
+#: src/packs/plasma/plasma_frame_ui.cpp
+msgid "Key zones..."
+msgstr ""
+
+#: src/packs/plasma/plasma_frame_ui.cpp
+msgid "Open file..."
+msgstr ""
+
+#: src/packs/plasma/plasma_frame_ui.cpp
+msgid "Up (semitones)"
 msgstr ""
 
 #: src/packs/plasma/plasma_fx_ui.cpp
-msgid "All 24 effect slots are in use"
+msgid "All 24 effect places are in use"
 msgstr ""
 
 #: src/packs/plasma/plasma_fx_ui.cpp
-msgid "Clear this rack"
+msgid "Built-in room"
 msgstr ""
 
 #: src/packs/plasma/plasma_fx_ui.cpp
-msgid "Copy this rack"
+msgid "Copy this lane"
+msgstr ""
+
+#: src/packs/plasma/plasma_fx_ui.cpp
+msgid "Empty this lane"
+msgstr ""
+
+#: src/packs/plasma/plasma_fx_ui.cpp
+msgid "Empty: add an effect or drag one here"
 msgstr ""
 
 #: src/packs/plasma/plasma_fx_ui.cpp src/packs/spacefx/spacefx_ui.cpp
@@ -19758,11 +20374,495 @@ msgid "Load impulse response..."
 msgstr ""
 
 #: src/packs/plasma/plasma_fx_ui.cpp
-msgid "Lock effects (keep them when loading presets)"
+msgid "Main chain first, then the two sends"
 msgstr ""
 
 #: src/packs/plasma/plasma_fx_ui.cpp
-msgid "Paste (adds to this rack)"
+msgid "Move earlier"
+msgstr ""
+
+#: src/packs/plasma/plasma_fx_ui.cpp
+msgid "Move later"
+msgstr ""
+
+#: src/packs/plasma/plasma_fx_ui.cpp
+msgid "No effects in this chain"
+msgstr ""
+
+#: src/packs/plasma/plasma_fx_ui.cpp
+msgid "No effects yet. Use + Add on a chain."
+msgstr ""
+
+#: src/packs/plasma/plasma_fx_ui.cpp
+msgid "Paste at the end of this lane"
+msgstr ""
+
+#: src/packs/plasma/plasma_fx_ui.cpp src/packs/plasma/plasma_patch_ui.cpp
+msgid "Turn off"
+msgstr ""
+
+#: src/packs/plasma/plasma_fx_ui.cpp src/packs/plasma/plasma_patch_ui.cpp
+msgid "Turn on"
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "A macro: one control you can link to many others."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "A second setting some morphs use, such as which wave they blend with."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "A setting of this link between a source and a control."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "A setting that depends on the filter type, such as its slope or vowel."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "A smooth pitch offset in semitones, good for linking to motion."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Bends this part of the envelope: faster at first or slower at first."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Blends the filtered sound with the unfiltered one."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Chooses how this layer makes its sound: a wavetable, a multisample, a sample, grains or spectral bands."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Counts the times in beats so they follow the song's tempo."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Delays every second step for a swung feel."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Delays every second step of the arpeggiator and phrases."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Drives the sound into the filter for grit and warmth."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Fades the motion in over this time after a note starts."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Fine tuning in cents, a hundredth of a semitone."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Free keeps running, Restart starts again on every note, Once plays the shape one time."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Gives each note a random start point in the wave."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Gives each stacked copy its own random start point."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Glide: how long a note takes to slide to the next pitch."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Glides on every note, not only on joined ones."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Glides smoothly between wavetable frames instead of stepping."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Higher quality sounds cleaner and uses more processing."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "How far apart in pitch the stacked copies are."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "How far the pitch wheel bends, in semitones."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "How far this link moves its control."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "How fast the shape repeats."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "How long it stays at the top before falling."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "How long it takes to fade after you let go."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "How long it takes to fall to the sustain level."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "How long the envelope takes to rise when a note starts."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "How loud the Root is."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "How loud the Texture is."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "How loud the filter's output is."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "How loud the outer copies are against the centre ones."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "How loud this layer is."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "How many copies of this layer play at once for each note."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "How many notes can sound at once."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "How much Envelope 1 shapes each note's level."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "How much goes into Filter 1 against Filter 2."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "How much of this sound is sent to a send chain."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "How much the cutoff follows the keys you play."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "How strongly the morph reshapes the wave."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "How the Octave, Semitone and Offset values are counted."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "How the stacked copies are spread: same pitch, octaves, chords and more."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "How wide the stacked copies spread across the stereo field."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Joined notes slide without restarting."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Keeps notes and pitch motion inside this key and scale."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Keeps the wave running between notes."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Lines the shape up with the song position."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Locks the rate to the song's tempo."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Longer jumps take longer to glide."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Makes a synced rate a triplet."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Makes a synced rate one and a half times longer."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Makes every LFO faster or slower at once."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Makes every envelope time shorter or longer at once."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Makes the Texture darker or brighter."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Makes the free rate ten times faster."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Moves everything you play up or down in semitones."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Moves the Root up or down in octaves."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Moves the Root up or down in semitones."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Moves the cutoff apart for the left and right sides."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Moves the filter's character on its morph pad."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Moves this layer up or down in semitones."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Moves this layer up or down in whole octaves."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "One shared motion for all notes instead of one per note."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Places the Root to the left or right."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Places the Texture to the left or right."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Places this layer to the left or right."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Plays one note at a time."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Plays the Texture higher or lower."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Plays the Texture once instead of looping it."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Plays the shape forwards, backwards or back and forth."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Resonance: a peak at the cutoff that makes the filter sing."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Restarts the envelope even when notes are played joined together."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Shifts the pitch by a fixed number of hertz, which makes it beat against other layers."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Snaps the start point to the grid."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Softens sharp corners in the shape."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Spreads the morph amount across the stacked copies."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Spreads the stacked copies across nearby wavetable frames."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "The Root's wave shape."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "The cutoff: where the filter starts to act. Lower is darker."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "The editing grid for drawing the shape."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "The kind of filter: which frequencies it lets through and how it colours them."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "The kind of motion: a drawn shape, a path, a chaotic swirl or random steps."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "The level it holds while you keep the key down."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "The level of the sound that skips the effects."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "The level the envelope ends on after the release."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "The level the envelope starts from."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "The morph that reshapes the wave, such as bending, syncing or folding it."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "The overall output level."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "The pitch as a ratio of the played note (used when Pitch steps is set to Ratio)."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "The shape from the library."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "The shape of the detune spread across the copies."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "The shape of the glide: quick at first or slow at first."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "The wavetable this layer plays."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "The widest detune, in semitones, that the Detune dial reaches."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Tilts the spread so copies lean up or down in pitch."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Tunes the whole instrument up or down in cents."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Turns the Root on or off: a plain wave under the layers."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Turns the Texture on or off: noise or a recorded sound under the layers."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Turns the order of the stacked copies for each new note."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Turns this effect on or off."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Turns this filter on or off."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Turns this layer on or off."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Waits this long after a note starts before moving."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "When on, the Root follows the keys you play."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "When on, the Texture's pitch follows the keys you play."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "When on, the pitch follows the keys you play."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Where a voice taken over by a new note starts its envelope from."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Where in the shape each cycle starts."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Where in the wave each note starts."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Where this sound goes: into the filters, straight out, or past the effects."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Whether each voice starts fresh or keeps running from the last note."
+msgstr ""
+
+#: src/packs/plasma/plasma_help_ui.cpp
+msgid "Which frame of the wavetable plays: sweep it to change the tone."
+msgstr ""
+
+#: src/packs/plasma/plasma_menus_ui.cpp
+msgid "Search filter types"
+msgstr ""
+
+#: src/packs/plasma/plasma_menus_ui.cpp
+msgid "Swap the two morph slots"
 msgstr ""
 
 #: src/packs/plasma/plasma_mod_ui.cpp
@@ -19770,7 +20870,19 @@ msgid "Copy shape"
 msgstr ""
 
 #: src/packs/plasma/plasma_mod_ui.cpp
+msgid "Paint ramps down"
+msgstr ""
+
+#: src/packs/plasma/plasma_mod_ui.cpp
+msgid "Paint ramps up"
+msgstr ""
+
+#: src/packs/plasma/plasma_mod_ui.cpp
 msgid "Paste shape"
+msgstr ""
+
+#: src/packs/plasma/plasma_osc_ui.cpp
+msgid "%d tables"
 msgstr ""
 
 #: src/packs/plasma/plasma_osc_ui.cpp
@@ -19778,27 +20890,7 @@ msgid "Clear (use the wavetable)"
 msgstr ""
 
 #: src/packs/plasma/plasma_osc_ui.cpp
-msgid "Direct out"
-msgstr ""
-
-#: src/packs/plasma/plasma_osc_ui.cpp
-msgid "Edit wavetable..."
-msgstr ""
-
-#: src/packs/plasma/plasma_osc_ui.cpp
-msgid "Factory tables"
-msgstr ""
-
-#: src/packs/plasma/plasma_osc_ui.cpp
-msgid "Filter 1"
-msgstr ""
-
-#: src/packs/plasma/plasma_osc_ui.cpp
-msgid "Filter 1 + 2"
-msgstr ""
-
-#: src/packs/plasma/plasma_osc_ui.cpp
-msgid "Filter 2"
+msgid "Edit the table..."
 msgstr ""
 
 #: src/packs/plasma/plasma_osc_ui.cpp
@@ -19809,12 +20901,12 @@ msgstr ""
 msgid "Load multisample (.sfz)..."
 msgstr ""
 
-#: src/packs/plasma/plasma_osc_ui.cpp
-msgid "Load noise sample"
-msgstr ""
-
 #: src/packs/plasma/plasma_osc_ui.cpp src/packs/spectral/turntable_ui.cpp
 msgid "Load sample"
+msgstr ""
+
+#: src/packs/plasma/plasma_osc_ui.cpp
+msgid "Load texture sample"
 msgstr ""
 
 #: src/packs/plasma/plasma_osc_ui.cpp src/packs/plasma/plasma_wted_ui.cpp
@@ -19826,7 +20918,15 @@ msgid "Load wavetable (.wav)..."
 msgstr ""
 
 #: src/packs/plasma/plasma_osc_ui.cpp
-msgid "Main"
+msgid "No table has that in its name"
+msgstr ""
+
+#: src/packs/plasma/plasma_osc_ui.cpp
+msgid "Read the table folders again"
+msgstr ""
+
+#: src/packs/plasma/plasma_osc_ui.cpp
+msgid "Search every table"
 msgstr ""
 
 #: src/packs/plasma/plasma_osc_ui.cpp
@@ -19834,15 +20934,11 @@ msgid "Without a sample the wavetable plays:"
 msgstr ""
 
 #: src/packs/plasma/plasma_pages_ui.cpp
-msgid "12-TET (clear)"
+msgid "Equal temperament (clear)"
 msgstr ""
 
 #: src/packs/plasma/plasma_pages_ui.cpp
-msgid "Aux source curve"
-msgstr ""
-
-#: src/packs/plasma/plasma_pages_ui.cpp
-msgid "Clear every slot"
+msgid "Find a link"
 msgstr ""
 
 #: src/packs/plasma/plasma_pages_ui.cpp
@@ -19854,11 +20950,167 @@ msgid "Load tuning (.tun)..."
 msgstr ""
 
 #: src/packs/plasma/plasma_pages_ui.cpp
-msgid "Sort: used slots first"
+msgid "Remove every link"
 msgstr ""
 
 #: src/packs/plasma/plasma_pages_ui.cpp
-msgid "Source curve"
+msgid "Response curve"
+msgstr ""
+
+#: src/packs/plasma/plasma_pages_ui.cpp
+msgid "Scale-by curve"
+msgstr ""
+
+#: src/packs/plasma/plasma_pages_ui.cpp
+msgid "Yes, remove them all"
+msgstr ""
+
+#: src/packs/plasma/plasma_patch_ui.cpp
+msgid "A real space from a recorded impulse."
+msgstr ""
+
+#: src/packs/plasma/plasma_patch_ui.cpp
+msgid "A short moving echo that sweeps a metallic whoosh."
+msgstr ""
+
+#: src/packs/plasma/plasma_patch_ui.cpp
+msgid "Add an effect"
+msgstr ""
+
+#: src/packs/plasma/plasma_patch_ui.cpp
+msgid "Also feeds the first send chain (its level is set on the wire)."
+msgstr ""
+
+#: src/packs/plasma/plasma_patch_ui.cpp
+msgid "Also feeds the second send chain (its level is set on the wire)."
+msgstr ""
+
+#: src/packs/plasma/plasma_patch_ui.cpp
+msgid "Bends the wave for grit, warmth or fuzz."
+msgstr ""
+
+#: src/packs/plasma/plasma_patch_ui.cpp
+msgid "Detuned copies that thicken and widen."
+msgstr ""
+
+#: src/packs/plasma/plasma_patch_ui.cpp
+msgid "Enter to link"
+msgstr ""
+
+#: src/packs/plasma/plasma_patch_ui.cpp
+msgid "Evens out the level and adds punch."
+msgstr ""
+
+#: src/packs/plasma/plasma_patch_ui.cpp
+msgid "Filter 1"
+msgstr ""
+
+#: src/packs/plasma/plasma_patch_ui.cpp
+msgid "Filter 2"
+msgstr ""
+
+#: src/packs/plasma/plasma_patch_ui.cpp
+msgid "Goes out as it is: no filters, envelope or main effects."
+msgstr ""
+
+#: src/packs/plasma/plasma_patch_ui.cpp
+msgid "Level, pan, width and phase."
+msgstr ""
+
+#: src/packs/plasma/plasma_patch_ui.cpp
+msgid "Lifts or cuts low, middle and high frequencies."
+msgstr ""
+
+#: src/packs/plasma/plasma_patch_ui.cpp
+msgid "Main chain"
+msgstr ""
+
+#: src/packs/plasma/plasma_patch_ui.cpp
+msgid "Many detuned copies for a huge, wide sound."
+msgstr ""
+
+#: src/packs/plasma/plasma_patch_ui.cpp
+msgid "No control matches"
+msgstr ""
+
+#: src/packs/plasma/plasma_patch_ui.cpp
+msgid "One more filter after the voices."
+msgstr ""
+
+#: src/packs/plasma/plasma_patch_ui.cpp
+msgid "Puts the sound in a room or a hall."
+msgstr ""
+
+#: src/packs/plasma/plasma_patch_ui.cpp
+msgid "Repeats the sound in time, left and right."
+msgstr ""
+
+#: src/packs/plasma/plasma_patch_ui.cpp
+msgid "Search the controls"
+msgstr ""
+
+#: src/packs/plasma/plasma_patch_ui.cpp
+msgid "Send A"
+msgstr ""
+
+#: src/packs/plasma/plasma_patch_ui.cpp
+msgid "Send B"
+msgstr ""
+
+#: src/packs/plasma/plasma_patch_ui.cpp
+msgid "Send the sound of"
+msgstr ""
+
+#: src/packs/plasma/plasma_patch_ui.cpp
+msgid "Shapes its tone with the first filter."
+msgstr ""
+
+#: src/packs/plasma/plasma_patch_ui.cpp
+msgid "Shapes its tone with the second filter."
+msgstr ""
+
+#: src/packs/plasma/plasma_patch_ui.cpp
+msgid "Shifts every frequency by the same amount, for metallic tones."
+msgstr ""
+
+#: src/packs/plasma/plasma_patch_ui.cpp
+msgid "Show a movement source"
+msgstr ""
+
+#: src/packs/plasma/plasma_patch_ui.cpp
+msgid "Skips the filters, then the amp envelope and the main effects."
+msgstr ""
+
+#: src/packs/plasma/plasma_patch_ui.cpp
+msgid "Splits into lows and highs, each with its own effects."
+msgstr ""
+
+#: src/packs/plasma/plasma_patch_ui.cpp
+msgid "Splits into lows, mids and highs, each with its own effects."
+msgstr ""
+
+#: src/packs/plasma/plasma_patch_ui.cpp
+msgid "Splits the middle from the sides, each with its own effects."
+msgstr ""
+
+#: src/packs/plasma/plasma_patch_ui.cpp
+msgid "Straight out"
+msgstr ""
+
+#: src/packs/plasma/plasma_patch_ui.cpp
+msgid "Sweeping notches that swirl through the sound."
+msgstr ""
+
+#: src/packs/plasma/plasma_patch_ui.cpp
+msgid "The amp"
+msgstr ""
+
+#: src/packs/plasma/plasma_patch_ui.cpp
+msgid "Tidy"
+msgstr ""
+
+#: src/packs/plasma/plasma_patch_ui.cpp
+msgid "to a control"
 msgstr ""
 
 #: src/packs/plasma/plasma_seq_ui.cpp
@@ -19870,6 +21122,10 @@ msgid "Copy clip"
 msgstr ""
 
 #: src/packs/plasma/plasma_seq_ui.cpp
+msgid "Copy pattern"
+msgstr ""
+
+#: src/packs/plasma/plasma_seq_ui.cpp
 msgid "Double the length"
 msgstr ""
 
@@ -19878,19 +21134,43 @@ msgid "Paste clip"
 msgstr ""
 
 #: src/packs/plasma/plasma_seq_ui.cpp
-msgid "Reset slot"
+msgid "Paste pattern"
+msgstr ""
+
+#: src/packs/plasma/plasma_seq_ui.cpp
+msgid "Reset pattern"
 msgstr ""
 
 #: src/packs/plasma/plasma_seq_ui.cpp
 msgid "Start offset (beats)"
 msgstr ""
 
-#: src/packs/plasma/plasma_ui.cpp
-msgid "Add modulation"
+#: src/packs/plasma/plasma_synth_ui.cpp
+msgid "Added to My tables"
 msgstr ""
 
-#: src/packs/plasma/plasma_ui.cpp
-msgid "Arpeggiator panel"
+#: src/packs/plasma/plasma_synth_ui.cpp
+msgid "Could not copy the wavetable"
+msgstr ""
+
+#: src/packs/plasma/plasma_synth_ui.cpp
+msgid "Import a wavetable"
+msgstr ""
+
+#: src/packs/plasma/plasma_synth_ui.cpp
+msgid "Macro name"
+msgstr ""
+
+#: src/packs/plasma/plasma_synth_ui.cpp
+msgid "Search %d shapes"
+msgstr ""
+
+#: src/packs/plasma/plasma_synth_ui.cpp
+msgid "Search %d tables by name or folder"
+msgstr ""
+
+#: src/packs/plasma/plasma_synth_ui.cpp
+msgid "Search sounds by name or folder"
 msgstr ""
 
 #: src/packs/plasma/plasma_ui.cpp
@@ -19898,15 +21178,7 @@ msgid "Automation, MIDI link..."
 msgstr ""
 
 #: src/packs/plasma/plasma_ui.cpp
-msgid "Browse presets..."
-msgstr ""
-
-#: src/packs/plasma/plasma_ui.cpp
-msgid "Clear the modulation matrix"
-msgstr ""
-
-#: src/packs/plasma/plasma_ui.cpp
-msgid "Clip editor"
+msgid "Copied the settings"
 msgstr ""
 
 #: src/packs/plasma/plasma_ui.cpp
@@ -19914,19 +21186,11 @@ msgid "Could not open the preset"
 msgstr ""
 
 #: src/packs/plasma/plasma_ui.cpp
-msgid "Edit wavetable (Osc A)"
-msgstr ""
-
-#: src/packs/plasma/plasma_ui.cpp
 msgid "Envelopes"
 msgstr ""
 
 #: src/packs/plasma/plasma_ui.cpp
-msgid "Files not found (install the content or add its folder in the preset browser)"
-msgstr ""
-
-#: src/packs/plasma/plasma_ui.cpp
-msgid "Init"
+msgid "Files not found (install the content or add its folder in the Library)"
 msgstr ""
 
 #: src/packs/plasma/plasma_ui.cpp
@@ -19934,11 +21198,11 @@ msgid "LFOs"
 msgstr ""
 
 #: src/packs/plasma/plasma_ui.cpp
-msgid "Open preset"
+msgid "Link from"
 msgstr ""
 
 #: src/packs/plasma/plasma_ui.cpp
-msgid "Open preset..."
+msgid "Open preset"
 msgstr ""
 
 #: src/packs/plasma/plasma_ui.cpp
@@ -19946,27 +21210,19 @@ msgid "Opened from"
 msgstr ""
 
 #: src/packs/plasma/plasma_ui.cpp
-msgid "Remove all effects"
+msgid "Remove from %s"
 msgstr ""
 
 #: src/packs/plasma/plasma_ui.cpp
-msgid "Swap warps"
+msgid "Show in Links"
 msgstr ""
 
 #: src/packs/plasma/plasma_ui.cpp
 msgid "some settings are approximated (see the info mark)"
 msgstr ""
 
-#: src/packs/plasma/plasma_wted_ui.cpp
-msgid "Apply to this frame only"
-msgstr ""
-
-#: src/packs/plasma/plasma_wted_ui.cpp
-msgid "By brightness"
-msgstr ""
-
-#: src/packs/plasma/plasma_wted_ui.cpp
-msgid "By level"
+#: src/packs/plasma/plasma_ui.cpp
+msgid "the sound"
 msgstr ""
 
 #: src/packs/plasma/plasma_wted_ui.cpp
@@ -19986,11 +21242,31 @@ msgid "Crossfade"
 msgstr ""
 
 #: src/packs/plasma/plasma_wted_ui.cpp
+msgid "Duplicate this frame"
+msgstr ""
+
+#: src/packs/plasma/plasma_wted_ui.cpp
+msgid "Every frame"
+msgstr ""
+
+#: src/packs/plasma/plasma_wted_ui.cpp
+msgid "Examples"
+msgstr ""
+
+#: src/packs/plasma/plasma_wted_ui.cpp
 msgid "Export wavetable"
 msgstr ""
 
 #: src/packs/plasma/plasma_wted_ui.cpp
 msgid "Exported the wavetable"
+msgstr ""
+
+#: src/packs/plasma/plasma_wted_ui.cpp
+msgid "Formula, e.g. sin(x * 3.14)"
+msgstr ""
+
+#: src/packs/plasma/plasma_wted_ui.cpp
+msgid "Formula: x = -1..1 across the cycle, y = 0..1 across the table, in = the current sample"
 msgstr ""
 
 #: src/packs/plasma/plasma_wted_ui.cpp
@@ -20007,6 +21283,14 @@ msgstr ""
 
 #: src/packs/plasma/plasma_wted_ui.cpp
 msgid "Normalize (whole table)"
+msgstr ""
+
+#: src/packs/plasma/plasma_wted_ui.cpp
+msgid "Order by brightness"
+msgstr ""
+
+#: src/packs/plasma/plasma_wted_ui.cpp
+msgid "Order by level"
 msgstr ""
 
 #: src/packs/plasma/plasma_wted_ui.cpp
@@ -20030,11 +21314,19 @@ msgid "Reverse frame order"
 msgstr ""
 
 #: src/packs/plasma/plasma_wted_ui.cpp
-msgid "Reverse order"
+msgid "Reverse the order"
+msgstr ""
+
+#: src/packs/plasma/plasma_wted_ui.cpp
+msgid "Shift this frame by one grid step"
 msgstr ""
 
 #: src/packs/plasma/plasma_wted_ui.cpp
 msgid "Smooth (keep harmonics)"
+msgstr ""
+
+#: src/packs/plasma/plasma_wted_ui.cpp
+msgid "This frame"
 msgstr ""
 
 #: src/packs/platter/platter_deck_ui.cpp
@@ -20986,6 +22278,10 @@ msgid "Full velocity"
 msgstr ""
 
 #: src/packs/samplers/samplers_ui.cpp
+msgid "Load SFZ instrument"
+msgstr ""
+
+#: src/packs/samplers/samplers_ui.cpp
 msgid "Mirror"
 msgstr ""
 
@@ -21031,6 +22327,82 @@ msgstr ""
 
 #: src/packs/samplers/samplers_ui.cpp
 msgid "Unmute all steps"
+msgstr ""
+
+#: src/packs/samplers/sfz_ui.h
+msgid "%d files missing"
+msgstr ""
+
+#: src/packs/samplers/sfz_ui.h
+msgid "%d regions · %d groups · %d samples"
+msgstr ""
+
+#: src/packs/samplers/sfz_ui.h
+msgid "CONTROLS"
+msgstr ""
+
+#: src/packs/samplers/sfz_ui.h
+msgid "CONVERT TO ZONES"
+msgstr ""
+
+#: src/packs/samplers/sfz_ui.h
+msgid "Every opcode in this instrument is played"
+msgstr ""
+
+#: src/packs/samplers/sfz_ui.h
+msgid "KEYSWITCHES (click to show)"
+msgstr ""
+
+#: src/packs/samplers/sfz_ui.h
+msgid "READER NOTES"
+msgstr ""
+
+#: src/packs/samplers/sfz_ui.h
+msgid "SFZ INSTRUMENT"
+msgstr ""
+
+#: src/packs/samplers/sfz_ui.h
+msgid "This instrument has no sample regions to convert"
+msgstr ""
+
+#: src/packs/samplers/sfz_ui.h
+msgid "This instrument names no controllers"
+msgstr ""
+
+#: src/packs/samplers/sfz_ui.h
+msgid "group"
+msgstr ""
+
+#: src/packs/samplers/sfz_ui.h
+msgid "keyswitch"
+msgstr ""
+
+#: src/packs/samplers/sfz_ui.h
+msgid "missing: "
+msgstr ""
+
+#: src/packs/samplers/sfz_ui.h
+msgid "no counterpart: "
+msgstr ""
+
+#: src/packs/samplers/sfz_ui.h
+msgid "not an SFZ opcode: "
+msgstr ""
+
+#: src/packs/samplers/sfz_ui.h
+msgid "plays when the key is let go"
+msgstr ""
+
+#: src/packs/samplers/sfz_ui.h
+msgid "regions used controllers, filters or modulators that zones do not keep"
+msgstr ""
+
+#: src/packs/samplers/sfz_ui.h
+msgid "root"
+msgstr ""
+
+#: src/packs/samplers/sfz_ui.h
+msgid "velocity"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_parts_ui.cpp
@@ -21127,10 +22499,6 @@ msgstr ""
 
 #: src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "FOLLOW THE PROJECT BY"
-msgstr ""
-
-#: src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp
-msgid "Grid"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_parts_ui.cpp
@@ -21957,10 +23325,6 @@ msgstr ""
 msgid "Eb minor"
 msgstr ""
 
-#: src/packs/seltmann/seltmann_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp
-msgid "Eighth notes"
-msgstr ""
-
 #: src/packs/seltmann/seltmann_ui.cpp
 msgid "F major"
 msgstr ""
@@ -22427,10 +23791,6 @@ msgstr ""
 
 #: src/packs/seltmann/seltmann_wave_ui.cpp
 msgid "The sequence starts on region"
-msgstr ""
-
-#: src/packs/seltmann/seltmann_wave_ui.cpp
-msgid "Thirty-second notes"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_wave_ui.cpp
@@ -22955,10 +24315,6 @@ msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp
 msgid "Channels: notes and audio clip starts"
-msgstr ""
-
-#: src/packs/tideline/tideline_ui.cpp
-msgid "Cycle"
 msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp

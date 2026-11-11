@@ -2536,7 +2536,7 @@ bool channelsOf(const Json& j, std::vector<std::vector<float>>& out) {
 
 bool decodeXferJson(const uint8_t* p, size_t n, Json& meta, Json& root, std::string& err) {
   if (n < 17 + 8 || std::memcmp(p, "XferJson", 8) != 0 || p[8] != 0) {
-    err = "not a Serum 2 preset";
+    err = "not a preset Plasma can open";
     return false;
   }
   uint64_t ml = 0;
@@ -2606,7 +2606,7 @@ void runImporter(const Json& meta, const Json& root, PluginState& out, ImportRep
   rep.approximated.insert(rep.approximated.end(), im.notes.begin(), im.notes.end());
   std::sort(rep.approximated.begin(), rep.approximated.end());
   rep.approximated.erase(std::unique(rep.approximated.begin(), rep.approximated.end()), rep.approximated.end());
-  im.m.openFormat = rep.format.empty() ? "Serum preset" : rep.format;
+  im.m.openFormat = rep.format.empty() ? "Imported preset" : rep.format;
   im.m.openNotes = rep.approximated;
   im.m.openMissing = rep.missingFiles;
   if (files) out.data = modelToData(im.m);
@@ -2622,7 +2622,7 @@ bool importSerumBytes(const std::vector<uint8_t>& bytes, PluginState& out, Impor
   Json meta, root;
   std::string err;
   if (n >= 4 && std::memcmp(bytes.data(), "CcnK", 4) == 0) {
-    rep.format = "Serum 1 preset (.fxp)";
+    rep.format = "Imported preset (.fxp)";
     serum::Serum1 s1;
     if (!serum::decodeSerum1(bytes.data(), n, s1, err)) {
       rep.error = err;
@@ -2632,7 +2632,7 @@ bool importSerumBytes(const std::vector<uint8_t>& bytes, PluginState& out, Impor
     serum::serum1Root(s1, meta, root, notes);
     rep.approximated = notes;
   } else {
-    rep.format = "Serum 2 preset";
+    rep.format = "Imported preset (newer format)";
     if (!serum::decodeXferJson(bytes.data(), n, meta, root, err)) {
       rep.error = err;
       return false;

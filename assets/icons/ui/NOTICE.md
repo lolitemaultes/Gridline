@@ -92,6 +92,7 @@ mirror the Lucide chevrons; the ImGui arrow, check, close and step glyphs draw t
 - `flag`: a pennant on a pole (add a marker).
 - `follow`: two linked rings (follow the playhead).
 - `grip-dots`: two columns of three dots (drag handle).
+- `groove`: two beats on a baseline with their off-beats pushed late, an arrow over the first push (swing presets, groove editor).
 - `headphones`: a headband over two ear cups (audition).
 - `heart`: a heart outline (favourite project).
 - `heart-filled`: a heart, filled (favourite project set).

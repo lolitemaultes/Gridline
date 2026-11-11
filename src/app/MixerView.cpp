@@ -19,6 +19,7 @@
 #include "Keys.h"
 #include "Look.h"
 #include "../../third_party/imgui/imgui.h"
+#include "../../third_party/imgui/imgui_internal.h"
 #include "FreezeUi.h"
 #include "App.h"
 #include "AudioRecordUi.h"
@@ -51,10 +52,26 @@ using theme::pal;
 
 namespace {
 float gMixerStripsScroll = 0;     // J-83 dev check: the strips pane's scroll as drawn last
+float gMixerStripsScrollX = 0;
 bool gMixerWheelScrolls = false;  // J-83: the plain wheel scrolls the mixer (thin layout / setting)
+struct MixerDevRect {
+  ImVec2 a, b;
+  int frame = -1;
+};
+std::map<std::string, MixerDevRect> gMixerDevRects;  // strip headers and menu rows as drawn last ("mixer" dev dump)
 }  // namespace
 float mixerStripsScrollY() { return gMixerStripsScroll; }
+float mixerStripsScrollX() { return gMixerStripsScrollX; }
 bool mixerWheelScrolls() { return gMixerWheelScrolls; }
+void devMenuItem(const std::string& name) {
+  gMixerDevRects[name] = {ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), ImGui::GetFrameCount()};
+}
+void devMenuRects() {
+  for (const auto& [name, r] : gMixerDevRects)
+    if (r.frame >= ImGui::GetFrameCount() - 2)
+      std::printf("  rect %s %.1f %.1f %.1f %.1f\n", name.c_str(), static_cast<double>(r.a.x), static_cast<double>(r.a.y),
+                  static_cast<double>(r.b.x), static_cast<double>(r.b.y));
+}
 
 // Generic parameter panel used by effects and instruments: knobs for
 // continuous values, segmented buttons for choices, toggles for switches.
@@ -404,7 +421,7 @@ void stripSlots(App& a, const MixerTrack& t, ImVec2 p, float w) {
     const bool hov = ImGui::IsItemHovered();
     // Q-8: wheel moves the effect. J-83: in a scrolling mixer only after a
     // click on the slot or with the wheel-adjust modifier (the plain wheel scrolls).
-    const ui::WheelGate wg = ui::wheelGate(ui::wheelPaneScrolls() || keys::modifierExact("mixer.slotWheelMove"));
+    const ui::WheelGate wg = ui::wheelGate(info && (ui::wheelPaneScrolls() || keys::modifierExact("mixer.slotWheelMove")));  // an empty slot leaves the wheel to the pane
     if (wg.scale > 0) {
       if (!ui::wheelPaneScrolls()) ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
       if (info && ImGui::GetIO().MouseWheel != 0) wheelSlot(a, t.id, k, ImGui::GetIO());
@@ -512,6 +529,7 @@ void drawStrip(App& a, size_t i, ImVec2 p, float stripW, float stripH, const Str
   // Header (click: select, Ctrl/Shift: multi-select, right-click: menu, drop target for effects).
   ImGui::SetCursorScreenPos(p);
   if (ImGui::InvisibleButton("hdr", ImVec2(stripW, plateH))) selectTrack(a, t.id);
+  devMenuItem("strip " + std::to_string(i));
   if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && i > 0) {
     ObjectId id = t.id;
     menus::openPrompt("Rename mixer track", mixerTrackName(s, i), [&a, id](const std::string& n) {
@@ -700,9 +718,13 @@ void drawStrip(App& a, size_t i, ImVec2 p, float stripW, float stripH, const Str
   // plus a send-level knob once routed; right-click for the send menu.
   if (sel && sel->id != t.id) {
     const Send* send = nullptr;
-    for (const auto& sd : sel->sends)
-      if (sd.to == t.id) send = &sd;
-    const bool routed = send != nullptr;
+    auto findSend = [&] {
+      send = nullptr;
+      for (const auto& sd : sel->sends)
+        if (sd.to == t.id) send = &sd;
+    };
+    findSend();
+    bool routed = send != nullptr;
     const std::string why = routed ? std::string() : mixops::routeProblem(s, sel->id, t.id);
     const bool possible = routed || why.empty();
     const float ry = p.y + stripH - 20;
@@ -718,6 +740,8 @@ void drawStrip(App& a, size_t i, ImVec2 p, float stripW, float stripH, const Str
       mixerSendMenu(a, sel->id, t.id);
       ImGui::EndPopup();
     }
+    findSend();  // the click or the menu may have rewritten the sends (and their buffer)
+    routed = send != nullptr;
     bool hov = ImGui::IsItemHovered();
     bool stripHov = ImGui::IsMouseHoveringRect(p, ImVec2(p.x + stripW, p.y + stripH));
     const bool sc = routed && send->sidechain;
@@ -867,6 +891,61 @@ static std::vector<ObjectId> armedTracks(const Song& s) {
   return out;
 }
 
+void mixerSelectAll(App& a) {
+  const Song& s = a.doc.song();
+  std::set<ObjectId> all = mixops::allInserts(s);
+  if (all.empty()) return;
+  if (!all.count(a.selMixer)) a.selMixer = mixops::inMixerOrder(s, all).front();
+  a.mixerView.sel = std::move(all);
+  a.editFocus = App::EditFocus::Mixer;
+}
+
+void mixerDeselect(App& a) {
+  a.mixerView.sel.clear();
+  if (a.selMixer != kNoId) a.mixerView.sel.insert(a.selMixer);
+}
+
+// The tracks a reset of `pid` covers: empty unless it is a per-track control
+// of one of several selected tracks.
+static std::vector<ObjectId> resetScope(App& a, ParamId pid) {
+  if (pid.index >= static_cast<uint32_t>(MixerParam::Count) || pid.index == static_cast<uint32_t>(MixerParam::Mute)) return {};
+  if (!a.doc.song().mixerTrack(pid.owner)) return {};
+  std::vector<ObjectId> ids = mixerSelection(a);
+  if (ids.size() < 2 || std::find(ids.begin(), ids.end(), pid.owner) == ids.end()) return {};
+  return ids;
+}
+
+bool mixerResetPending(App& a, ParamId pid) {
+  const Song& s = a.doc.song();
+  for (ObjectId id : resetScope(a, pid)) {
+    const ParamId p{id, pid.index};
+    const auto d = describeParam(s, p);
+    const auto v = getParam(s, p);
+    if (d && v && !d->isDefault(*v)) return true;
+  }
+  return false;
+}
+
+bool mixerResetSelected(App& a, ParamId pid) {
+  const std::vector<ObjectId> ids = resetScope(a, pid);
+  if (ids.empty()) return false;
+  mixops::resetParams(a.doc, ids, {static_cast<MixerParam>(pid.index)});
+  return true;
+}
+
+void mixerResetItems(App& a, const std::vector<ObjectId>& tracks) {
+  using P = MixerParam;
+  if (ImGui::MenuItem(i18n::tr("Volume, pan and stereo separation"))) mixops::resetParams(a.doc, tracks, {P::Volume, P::Pan, P::StereoSep});
+  ImGui::Separator();
+  if (ImGui::MenuItem(i18n::tr("Volume"))) mixops::resetParams(a.doc, tracks, {P::Volume});
+  if (ImGui::MenuItem(i18n::tr("Pan"))) mixops::resetParams(a.doc, tracks, {P::Pan});
+  if (ImGui::MenuItem(i18n::tr("Stereo separation"))) mixops::resetParams(a.doc, tracks, {P::StereoSep});
+  if (ImGui::MenuItem(i18n::tr("Strip EQ")))
+    mixops::resetParams(a.doc, tracks, {P::EqLowGain, P::EqMidGain, P::EqHighGain, P::EqLowFreq, P::EqMidFreq, P::EqHighFreq, P::EqLowQ, P::EqMidQ, P::EqHighQ});
+  ImGui::Separator();
+  if (ImGui::MenuItem(i18n::tr("Everything but name, effects and routing"))) mixops::resetTracks(a.doc, tracks);
+}
+
 std::vector<ObjectId> mixerSelection(App& a) {
   const Song& s = a.doc.song();
   std::set<ObjectId> sel = a.mixerView.sel;
@@ -1000,10 +1079,11 @@ void mixerOptionsMenu(App& a) {
     ImGui::EndMenu();
   }
   if (ImGui::BeginMenu(i18n::tr("Add tracks"))) {
-    if (ImGui::MenuItem(i18n::tr("Add one"))) {
-      ObjectId id = a.doc.addMixerTrack();
-      if (id) a.selMixer = id;
-    }
+    if (ImGui::MenuItem(i18n::tr("Add one")))  // next frame (App::later): the mixer still holds its selected track
+      a.later([&a] {
+        ObjectId id = a.doc.addMixerTrack();
+        if (id) a.selMixer = id;
+      });
     if (ImGui::MenuItem(i18n::tr("Add multiple...")))
       menus::openPrompt("Add mixer tracks (how many?)", "4", [&a](const std::string& n) {
         int k = std::atoi(n.c_str());
@@ -1016,10 +1096,15 @@ void mixerOptionsMenu(App& a) {
       });
     ImGui::EndMenu();
   }
-  if (ImGui::MenuItem(i18n::tr("Trim unused tracks"))) {
-    int n = ops::trimUnusedMixerTracks(a.doc);
-    a.notify(n ? "Removed " + std::to_string(n) + " unused track(s)" : std::string("No unused tracks at the end"));
+  if (ImGui::BeginMenu(i18n::tr("Reset selected tracks"))) {
+    mixerResetItems(a, mixerSelection(a));
+    ImGui::EndMenu();
   }
+  if (ImGui::MenuItem(i18n::tr("Trim unused tracks")))
+    a.later([&a] {
+      int n = ops::trimUnusedMixerTracks(a.doc);
+      a.notify(n ? "Removed " + std::to_string(n) + " unused track(s)" : std::string("No unused tracks at the end"));
+    });
 }
 
 // Strip EQ at the bottom of the inspector, laid out after the reference
@@ -1105,7 +1190,8 @@ static void stripEqPanel(App& a, const MixerTrack& t, float iw) {
     float g = t.eqGain[bi];
     if (act && wg.dragOk && ImGui::GetIO().MouseDelta.y != 0)
       edit(bi, 0, std::clamp(g - ImGui::GetIO().MouseDelta.y / travel * 36.0f * (ImGui::GetIO().KeyShift ? 0.2f : 1.0f), -18.0f, 18.0f));
-    if (hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) edit(bi, 0, 0.0f);
+    if (hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && !mixerResetSelected(a, mixerParam(t.id, static_cast<MixerParam>(static_cast<uint32_t>(MixerParam::EqLowGain) + static_cast<uint32_t>(b)))))
+      edit(bi, 0, 0.0f);
     if (wg.scale > 0 && ImGui::GetIO().MouseWheel != 0) edit(bi, 0, std::clamp(g + ImGui::GetIO().MouseWheel * 0.5f * wg.scale, -18.0f, 18.0f));
     if (wg.hint) ui::Tooltip("Drag to change, Ctrl+wheel to fine-tune");
     if (ImGui::IsItemDeactivated()) a.doc.endGesture();
@@ -1132,7 +1218,11 @@ static void stripEqPanel(App& a, const MixerTrack& t, float iw) {
       ImGui::SetCursorScreenPos(ImVec2(kx, y));
       double v = cur;
       bool released = false;
-      if (ui::Knob(id, &v, d, 9.0f, nullptr, false, &released)) edit(bi, field, static_cast<float>(d.clamp(v)));
+      const MixerParam base = field == 1 ? MixerParam::EqLowFreq : MixerParam::EqLowQ;
+      const ParamId pid = mixerParam(t.id, static_cast<MixerParam>(static_cast<uint32_t>(base) + static_cast<uint32_t>(bi)));
+      ui::SetNextKnobParam(pid);
+      if (ui::Knob(id, &v, d, 9.0f, nullptr, false, &released) && !(ui::LastKnobWasReset() && mixerResetSelected(a, pid)))
+        edit(bi, field, static_cast<float>(d.clamp(v)));
       if (released) a.doc.endGesture();
     };
     ParamDesc fd = freqD;
@@ -1232,6 +1322,29 @@ static void mixerToolbar(App& a) {
   ui::EndToolbar();
 }
 
+// The wide mixer's strips, after they are drawn (a fader or knob under the
+// pointer has had its turn): the wheel scrolls them sideways, at the
+// playlist's speed; when they are taller than the pane, the vertical wheel
+// scrolls up and down and Shift goes sideways.
+static void wheelScrollStrips() {
+  constexpr float kSidewaysNotch = 80.0f;
+  const ImGuiIO& io = ImGui::GetIO();
+  if (io.KeyCtrl) return;
+  ImGuiWindow* w = ImGui::GetCurrentWindow();
+  const float vertical = ui::wheelTaken() ? 0.0f : io.MouseWheel;
+  const bool sidewaysWheel = std::fabs(io.MouseWheelH) >= std::fabs(vertical);
+  const float wheel = sidewaysWheel ? io.MouseWheelH : vertical;
+  if (wheel == 0) return;
+  const bool notch = smoothscroll::isNotch(wheel);
+  if (!sidewaysWheel && !io.KeyShift && w->ScrollMax.y > 0) {
+    scrollui::scrollWindow(w, 1, -wheel * std::trunc(std::min(5.0f * w->FontRefSize, w->InnerRect.GetHeight() * 0.67f)), notch);
+    ui::wheelPaneScrolled();
+  } else if (w->ScrollMax.x > 0) {
+    scrollui::scrollWindow(w, 0, -wheel * kSidewaysNotch, notch);
+    ui::wheelPaneScrolled();
+  }
+}
+
 void drawMixer(App& a) {
   if (!a.showMixer) {
     drawRoutingOverview(a);
@@ -1295,10 +1408,11 @@ void drawMixer(App& a) {
   ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 8.0f);
   ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::vec(P.dark ? P.well : P.surface900));
   ImGui::BeginChild("##strips", ImVec2(showInspector && !column ? -inspectorW : 0, showInspector && column ? -inspectorH : 0),
-                    ImGuiChildFlags_AlwaysUseWindowPadding, column ? 0 : ImGuiWindowFlags_HorizontalScrollbar);
+                    ImGuiChildFlags_AlwaysUseWindowPadding, column ? 0 : ImGuiWindowFlags_HorizontalScrollbar | ImGuiWindowFlags_NoScrollWithMouse);  // the wide mixer routes the wheel itself (wheelScrollStrips)
   ImGui::PopStyleColor();
   ImGui::PopStyleVar(2);
   gMixerStripsScroll = ImGui::GetScrollY();
+  gMixerStripsScrollX = ImGui::GetScrollX();
   {
     StripCtx ctx;
     ctx.focus = sel;
@@ -1419,6 +1533,7 @@ void drawMixer(App& a) {
     ImGui::Dummy(ImVec2(x - o.x + 8, static_cast<float>(rows) * (rowH + bandH + 6.0f) - 6.0f));
     }
   }
+  if (!column && ImGui::IsWindowHovered()) wheelScrollStrips();
   ImGui::EndChild();
 
   // ---------------- inspector ----------------

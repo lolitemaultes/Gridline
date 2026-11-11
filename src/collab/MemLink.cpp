@@ -1,5 +1,6 @@
 // Gridline - J-111 collaboration: in-process endpoints for the tests. See Link.h.
 #include <cstdlib>
+#include <functional>
 #include <random>
 #include <set>
 #include "Link.h"
@@ -14,6 +15,9 @@ struct MemFabric::Shared {
   bool natBoth = false;
   double loss = 0;
   std::set<std::pair<std::string, std::string>> blocked;
+  double iceBudget = 0;  // K-174: see MemFabric::setIceBudget
+  std::function<double()> clock;
+  double now() const { return clock ? clock() : 0.0; }
 };
 
 namespace {
@@ -30,7 +34,19 @@ class MemEndpoint : public Endpoint {
       if (m->bound_ == this) m->bound_ = nullptr;
     }
   }
-  void gather() override { gathered_ = true; }
+  void gather() override {
+    gathered_ = true;
+    activeUntil_ = sh_->now() + sh_->iceBudget;
+  }
+  bool restart() override {
+    std::lock_guard<std::mutex> lk(sh_->mu);
+    if (bound_) return false;
+    broken_ = false;
+    activeUntil_ = sh_->now() + sh_->iceBudget;
+    return true;
+  }
+  // K-174: still sending checks (a real agent gives up after its budget)
+  bool activeLocked() const { return sh_->iceBudget <= 0 || sh_->now() <= activeUntil_; }
   bool gathered() const override { return gathered_; }
   // an "address": the computer and its UDP port (stable across restarts when the port is reused)
   std::string localDescription() const override { return "mem:" + label_ + ":" + std::to_string(port_); }
@@ -41,17 +57,22 @@ class MemEndpoint : public Endpoint {
     std::lock_guard<std::mutex> lk(sh_->mu);
     remoteLabel_ = d.substr(4, c - 4);
     remotePort_ = static_cast<uint16_t>(std::atoi(d.c_str() + c + 1));
+    activeUntil_ = sh_->now() + sh_->iceBudget;  // new candidates: fresh checks
   }
   bool knows(const MemEndpoint* m) const { return remotePort_ && remotePort_ == m->port_ && remoteLabel_ == m->label_; }
   // connected when the other side knows us (and, behind "NAT", we know it too); a pair stays bound
   MemEndpoint* peerLocked() {
     if (bound_) return bound_;
+    if (broken_) return nullptr;
     for (const auto& [id, e] : sh_->eps) {
       auto* m = static_cast<MemEndpoint*>(e);
-      if (m == this || m->bound_) continue;
+      if (m == this || m->bound_ || m->broken_) continue;
       if (sh_->blocked.count({label_, m->label_}) || sh_->blocked.count({m->label_, label_})) continue;
       const bool weKnow = knows(m), theyKnow = m->knows(this);
-      if (sh_->natBoth ? (weKnow && theyKnow) : (weKnow || theyKnow)) {
+      // behind NAT both send at the same moment; otherwise the one who knows the other sends
+      // (a given-up agent still answers checks that reach it)
+      const bool weSend = weKnow && activeLocked(), theySend = theyKnow && m->activeLocked();
+      if (sh_->natBoth ? (weSend && theySend) : (weSend || theySend)) {
         bound_ = m;
         m->bound_ = this;
         return m;
@@ -71,6 +92,7 @@ class MemEndpoint : public Endpoint {
   State state() const override {
     std::lock_guard<std::mutex> lk(sh_->mu);
     if (const_cast<MemEndpoint*>(this)->peerLocked()) return State::Connected;
+    if (broken_ || (gathered_ && !activeLocked())) return State::Failed;
     if (remotePort_) return State::Connecting;
     return gathered_ ? State::Gathering : State::New;
   }
@@ -85,6 +107,8 @@ class MemEndpoint : public Endpoint {
   uint16_t remotePort_ = 0;
   MemEndpoint* bound_ = nullptr;
   bool gathered_ = false;
+  bool broken_ = false;  // K-174: see MemFabric::breakPaths
+  double activeUntil_ = 0;
 };
 
 }  // namespace
@@ -94,6 +118,28 @@ std::shared_ptr<MemFabric::Shared> MemFabric::makeNet() { return std::make_share
 void MemFabric::block(const std::shared_ptr<Shared>& net, const std::string& a, const std::string& b) {
   std::lock_guard<std::mutex> lk(net->mu);
   net->blocked.insert({a, b});
+}
+
+void MemFabric::breakPaths(const std::shared_ptr<Shared>& net, const std::string& label) {
+  std::lock_guard<std::mutex> lk(net->mu);
+  for (auto& [id, e] : net->eps) {
+    auto* m = static_cast<MemEndpoint*>(e);
+    if (m->label_ != label) continue;
+    if (m->bound_) m->bound_->bound_ = nullptr;
+    m->bound_ = nullptr;
+    m->broken_ = true;
+  }
+}
+
+void MemFabric::setIceBudget(const std::shared_ptr<Shared>& net, double sec, std::function<double()> clock) {
+  std::lock_guard<std::mutex> lk(net->mu);
+  net->iceBudget = sec;
+  net->clock = std::move(clock);
+}
+
+void MemFabric::setNatBoth(const std::shared_ptr<Shared>& net, bool on) {
+  std::lock_guard<std::mutex> lk(net->mu);
+  net->natBoth = on;
 }
 
 std::shared_ptr<MemFabric::Shared> MemFabric::shared() {

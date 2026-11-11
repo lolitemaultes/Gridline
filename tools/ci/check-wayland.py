@@ -8,7 +8,8 @@ Each case starts its own Weston and opens a native VST3's interface:
     desktop           Weston with XWayland, SDL left to itself (on sdl2-compat with SDL3 this is
                       where SDL may pick Wayland)
     session-variable  the same with SDL_VIDEODRIVER=wayland, as desktops set it for games
-    own-setting       GRIDLINE_VIDEO_DRIVER=wayland: stays on Wayland and says why it cannot open
+    own-setting       GRIDLINE_VIDEO_DRIVER=wayland: stays on Wayland; the interface opens in a window of
+                      its own on XWayland (it cannot embed in a Wayland window)
     no-xwayland       Weston without XWayland and no DISPLAY: stays on Wayland and says why
 
 Prints a line per check and exits non-zero when one fails. The driver in use and the reason come
@@ -160,8 +161,8 @@ def main():
 
         driver, windows, text = run_case("own-setting", app, project, work, weston, {"GRIDLINE_VIDEO_DRIVER": "wayland"})
         check(driver == "wayland", "GRIDLINE_VIDEO_DRIVER=wayland: Gridline is on Wayland", driver)
-        check(windows == 0, "GRIDLINE_VIDEO_DRIVER=wayland: no window", f"{windows} windows")
-        check("GRIDLINE_VIDEO_DRIVER keeps Gridline on Wayland" in text, "GRIDLINE_VIDEO_DRIVER=wayland: the message says why", text[-300:])
+        check(windows == 1 and " external 1 " in text, "GRIDLINE_VIDEO_DRIVER=wayland: the interface opens in a window of its own on XWayland",
+              f"{windows} windows; " + text[-300:])
     finally:
         weston.stop()
 

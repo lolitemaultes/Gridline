@@ -43,6 +43,7 @@ enum class Icon {
   People,  // J-146: collaborators (the welcome screen's Collaborative view)
   RouteFree,  // J-195: route a channel to a free mixer track
   TapTempo,   // K-48: tap the tempo (top bar)
+  Groove,     // K-151: swing presets and the groove editor
   Moon,       // K-87: a hibernating plugin
   Count  // number of icons (not an icon)
 };
@@ -173,6 +174,11 @@ bool wheelFocusActive();
 bool wheelModifierHeld();
 // A control used this frame's wheel (the gesture is not a pane scroll).
 void wheelClaim();
+// A control took this frame's wheel (its gate gave it a scale), in any pane.
+bool wheelTaken();
+// A pane that routes the wheel itself scrolled: until the gesture ends, the
+// controls passing under the pointer leave the wheel alone.
+void wheelPaneScrolled();
 // Per wheel-sensitive control, right after its item. `takesWheel`: the
 // control's own rule in an adjusting pane (e.g. a modifier). `scale` > 0: the
 // control applies this frame's wheel times `scale`; `dragOk`: a drag may move
@@ -229,7 +235,14 @@ double ValueAtPress(double current);
 // default) or Type (when it is the default); false without a double-click.
 bool DoubleClicked(const ParamDesc& d, double pressed, ParamDoubleClick* action);
 // "Reset to default" for a control's right-click menu (greyed at the default).
-bool ResetMenuItem(const ParamDesc& d, double value);
+// `selection`: the reset covers the selected mixer tracks (says so, and stays
+// enabled because one of them is away from its default).
+bool ResetMenuItem(const ParamDesc& d, double value, bool selection = false);
+// The next Knob is the parameter `pid`: a reset on it may cover the selected
+// mixer tracks (ParamKnob does this; for a free Knob over a mixer parameter).
+void SetNextKnobParam(ParamId pid);
+// The last Knob's change this frame was a reset (double-click or menu).
+bool LastKnobWasReset();
 // Bound to a document parameter: the double-click resets pid (one undo step;
 // returns true, `val` = the default) or opens the popup "##type" (false).
 bool ParamDoubleClickReset(ParamId pid, const ParamDesc& d, double& val, double pressed);

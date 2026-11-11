@@ -59,16 +59,49 @@ struct InviteInfo {
   std::string ice;        // the inviter's ICE description
   std::string appVersion;
   bool expired(int64_t nowSec) const { return nowSec > expires; }
+  // K-174: a join that is waiting stops once the invite expired by this computer's clock with
+  // some slack (the clocks may be a few minutes apart; the inviter's own clock decides and
+  // refuses an expired invite in the handshake).
+  bool expiredHere(int64_t nowSec) const;
   std::string inviterFingerprint() const { return crypto::fingerprintOf(inviterSign); }
   Session::Ticket ticket() const;
 };
 inline constexpr const char* kInvitePrefix = "gridline-invite:";
 inline constexpr const char* kReplyPrefix = "gridline-reply:";
 inline constexpr const char* kReconnectPrefix = "gridline-reconnect:";
+// K-174: the slack for a waiting join (InviteInfo::expiredHere).
+inline constexpr int64_t kClockGraceSec = 2 * 60;
 std::string makeInviteCode(const InviteInfo& i);
+// Codes survive what chat apps and mail programs do to pasted text: line breaks and spaces
+// (also non-breaking and invisible ones), text around the code, quote marks, "> " quoting,
+// typographic dashes for hyphens, full-width characters, a capitalised prefix. A code that
+// was cut off is told apart from a damaged one.
 bool parseInviteCode(const std::string& code, InviteInfo& out, std::string* err = nullptr);
 // What kind of code a pasted text is: 'i' invite, 'r' reply, 'c' reconnect, 0 none.
 char codeKind(const std::string& text);
+// K-174: the invitee's answer when the inviter's computer can't be reached directly.
+struct ReplyInfo {
+  std::string inviteId;  // hex, the invite it answers
+  std::string ice;       // the invitee's ICE description
+};
+std::string makeReplyCode(const ReplyInfo& r);
+bool parseReplyCode(const std::string& code, ReplyInfo& out, std::string* err = nullptr);
+// K-174: an ICE description offers a public way in (a public address from the address server,
+// a router port mapping, a relay or a global IPv6 address); without one only computers on the
+// same network can connect.
+bool descriptionHasPublicPath(const std::string& ice);
+// K-174: why a join did not connect, in plain words (the join window), and what to try.
+enum class JoinProblem {
+  NoAnswer,         // ICE never connected: routers or a firewall block the direct path
+  NoPublicAddress,  // this computer found no public address: same network only
+  NoHandshake,      // connected, but the inviter's Gridline did not answer (invite closed)
+  Expired,          // the invite expired while waiting
+};
+std::string joinProblemText(JoinProblem p, const std::string& inviter);
+std::string joinProblemHelp(JoinProblem p);
+// K-174: a refusal from the other computer in plain words (never a bare "refused").
+// `by`: who removed us / stopped sharing (removal notices).
+std::string refusalText(const std::string& reason, const std::string& by);
 
 // J-146: a member link's key, handshake id and ICE credentials. The Hub's member links and
 // the welcome screen's presence probes (Presence.h) build the same ones, so a probe meets
@@ -110,6 +143,12 @@ class Hub {
     std::string joinerName;    // after the handshake
     std::string safety;        // safety code to compare
     std::string error;
+    // K-174: progress
+    bool replyUsed = false;     // their reply code was pasted here
+    double replyWaited = 0;     // seconds since then
+    int attempts = 0;           // fresh connection attempts since the reply
+    bool codeChanged = false;   // this computer's public address changed: the code was renewed
+    bool publicAddress = true;  // the code offers a public way in (else: same network only)
   };
   // `readmit`: an admin's re-invite of someone who was removed (only such an invite lets them back).
   std::string createInvite(int minutes, SiteId readmit = 0);
@@ -125,8 +164,15 @@ class Hub {
     JoinStatus status = JoinStatus::None;
     std::string reply;     // our reply code (shown when the inviter does not see us quickly)
     std::string message;   // refusal / failure in words
+    std::string help;      // K-174: what to try (failures)
     std::string safety;
     double since = 0;
+    // K-174: progress
+    double waited = 0;          // seconds since joining
+    int attempts = 0;           // fresh connection attempts (each sends for about 40 s)
+    bool securing = false;      // the computers reach each other; the encrypted handshake runs
+    bool replyChanged = false;  // this computer's address changed: send the new reply code
+    bool publicAddress = true;  // found a public address (else: same network only)
   };
   bool join(const InviteInfo& info, std::string* err = nullptr);
   const JoinView& joinView() const { return join_; }
@@ -174,6 +220,13 @@ class Hub {
   // Tests: a joiner learns the inviter's candidates only this many seconds
   // after joining (ICE that takes long to connect). From GRIDLINE_COLLAB_TEST_ICE_DELAY.
   double testIceDelaySec = 0;
+  // K-174: how long a join keeps trying (a fresh attempt whenever one gives up, about every
+  // 40 s) before it stops, so a reply code that comes back late through a chat still finds
+  // this computer sending.
+  double joinWaitSec = 15 * 60;
+  // Tests: false keeps an invite's or a join's ICE agent as it was after it gave up (the
+  // behaviour before K-174), to show what the fresh attempts change.
+  bool freshAttempts = true;
   // statistics (tests)
   size_t linkCount() const {
     std::lock_guard<std::recursive_mutex> lk(mu_);
@@ -202,6 +255,9 @@ class Hub {
     std::unique_ptr<SecureLink> sl;
     std::shared_ptr<Inbox> inbox;
     double created = 0, startedAt = -1, iceAt = -1;
+    double restartedAt = -1;  // K-174: the last fresh ICE attempt
+    int restarts = 0;
+    bool descDirty = true;    // our description may have changed (restarts)
     bool started = false, up = false, dead = false, sigSent = false;
     // network thread -> UI thread (poll), under mu_
     std::vector<std::string> uiIn;                // a responder's handshake packets (acceptance admits members)
@@ -217,7 +273,8 @@ class Hub {
     InviteView view;
     InviteInfo info;
     int link = 0;
-    double gatheredAt = -1;
+    double gatheredAt = -1, replyAt = -1;
+    int attemptsAtReply = 0;
     bool used = false;
     SiteId readmit = 0;
   };

@@ -27,6 +27,10 @@ struct NetSettings {
   bool enabled = true;
   std::string stunHost = "stun.l.google.com";
   uint16_t stunPort = 19302;
+  // K-174: when the default address server gives no answer (blocked on some networks), a
+  // fresh attempt asks this one instead. Only used while stunHost is the default.
+  std::string stunFallbackHost = "stun.cloudflare.com";
+  uint16_t stunFallbackPort = 3478;
   std::string turnHost;   // "" = no TURN relay
   uint16_t turnPort = 3478;
   std::string turnUser, turnPass;
@@ -52,6 +56,12 @@ class Endpoint {
   virtual std::string path() const = 0;
   // The local UDP port (0 when not applicable); reused on reconnect.
   virtual uint16_t localPort() const { return 0; }
+  // K-174: a fresh ICE attempt on the same UDP port with the same credentials and the remote
+  // descriptions given so far (the codes already sent stay valid). An ICE agent sends its
+  // checks for about 40 s and then gives up (Failed); a router forgets an outgoing hole about
+  // 30 s after the last packet. A join that waits for a reply code restarts its agent so both
+  // computers are still sending when the code arrives. false: not supported.
+  virtual bool restart() { return false; }
   // Datagrams in, from any thread.
   std::function<void(const std::string&)> onReceive;
 };
@@ -90,6 +100,14 @@ class MemFabric : public Fabric {
   static std::shared_ptr<Shared> makeNet();
   // No direct path between the two computers (both behind strict NATs).
   static void block(const std::shared_ptr<Shared>& net, const std::string& a, const std::string& b);
+  // K-174: ICE timing like a real agent: an endpoint sends checks for `sec` after it starts,
+  // restarts or learns a remote description, then fails; behind NAT both must be sending at
+  // the same time to connect. 0 (default): endpoints never give up. `clock` is the test's time.
+  static void setIceBudget(const std::shared_ptr<Shared>& net, double sec, std::function<double()> clock);
+  static void setNatBoth(const std::shared_ptr<Shared>& net, bool on);
+  // K-174 test hook: every connected path of `label`'s endpoints fails (like an agent that
+  // connected moments before its time ran out); they report Failed until they restart.
+  static void breakPaths(const std::shared_ptr<Shared>& net, const std::string& label);
 
  private:
   std::shared_ptr<Shared> shared_;

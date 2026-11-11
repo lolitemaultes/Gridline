@@ -369,6 +369,10 @@ inline std::vector<Finding> check(const Scene& sc, const Options& o = {}) {
         const Box& B = sc.texts[b].ink;
         const float ow = overlapLen(A.x0, A.x1, B.x0, B.x1), oh = overlapLen(A.y0, A.y1, B.y0, B.y1);
         if (ow < 0.5f || oh < 0.5f) continue;
+        // K-164: the same words drawn again within a pixel are one label in a heavier weight
+        if (sc.texts[a].str == sc.texts[b].str && std::fabs(A.x0 - B.x0) < 1.0f && std::fabs(A.y0 - B.y0) < 1.0f &&
+            std::fabs(A.x1 - B.x1) < 1.0f && std::fabs(A.y1 - B.y1) < 1.0f)
+          continue;
         add("overlap", "text " + quote(sc.texts[a].str) + " overlaps text " + quote(sc.texts[b].str), std::min(ow, oh), A, B);
       }
   }

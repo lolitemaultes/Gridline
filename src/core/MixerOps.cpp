@@ -309,6 +309,32 @@ int resetTracks(Document& d, const std::vector<ObjectId>& tracks) {
   return n;
 }
 
+int resetParams(Document& d, const std::vector<ObjectId>& tracks, const std::vector<MixerParam>& params) {
+  int n = 0;
+  d.endGesture();  // never merged into an earlier change of the same control
+  d.beginGroup("reset mixer tracks");
+  for (ObjectId id : tracks) {
+    bool changed = false;
+    for (MixerParam p : params) {
+      const ParamId pid = mixerParam(id, p);
+      const auto desc = describeParam(d.song(), pid);
+      const auto cur = getParam(d.song(), pid);
+      if (desc && cur && !desc->isDefault(*cur)) changed = d.setParam(pid, desc->def, false) || changed;
+    }
+    n += changed ? 1 : 0;
+  }
+  d.endGroup();
+  d.endGesture();
+  return n;
+}
+
+std::set<ObjectId> allInserts(const Song& s) {
+  std::set<ObjectId> out;
+  for (const auto& m : s.mixer)
+    if (m.id != s.masterId()) out.insert(m.id);
+  return out;
+}
+
 // -------------------------------------------------- layout, groups, looks ----
 
 bool setDock(Document& d, const std::vector<ObjectId>& tracks, MixerDock dock) {

@@ -47,6 +47,11 @@ env.update({"GRIDLINE_CONFIG_HOME": os.path.join(OUT, "cfg"), "HOME": os.path.jo
             "GRIDLINE_NO_PLUGIN_SCAN": "1", "GRIDLINE_HIDE_PLUGINS": "all", "XDG_RUNTIME_DIR": RT,
             "GRIDLINE_TEST_INSTANCE_ENDPOINT": EP})
 env.pop("GRIDLINE_SINGLE_INSTANCE", None)
+# The private runtime folder hides the session's Wayland socket, which is named relative to the real one:
+# name it by its full path, so the instances still reach the compositor (a Wayland session).
+wl = os.environ.get("WAYLAND_DISPLAY", "")
+if wl and not os.path.isabs(wl) and os.environ.get("XDG_RUNTIME_DIR"):
+    env["WAYLAND_DISPLAY"] = os.path.join(os.environ["XDG_RUNTIME_DIR"], wl)
 COMMON = ["--hidden", "--no-ui-sounds", "--no-update-check", "--size", "1280x800", "--ui-scale", "1"]
 
 

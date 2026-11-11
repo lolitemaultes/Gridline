@@ -14,6 +14,7 @@
 #include <sstream>
 #include <type_traits>
 #include <unordered_map>
+#include "Groove.h"
 #include "Params.h"
 #include "lua/src/lauxlib.h"
 #include "lua/src/lua.h"
@@ -229,6 +230,89 @@ int s_swing(lua_State* L) {
 }
 int s_setSwing(lua_State* L) {
   setParamValue(L, songParam(SongParam::Swing), num(L, 1));
+  return 0;
+}
+// K-151: swing presets and the song's groove.
+int s_swingPreset(lua_State* L) {
+  lua_pushstring(L, song(L).groove.preset.c_str());
+  return 1;
+}
+int s_swingPresets(lua_State* L) {
+  const auto list = groove::allPresets(host(L).presetRoot);
+  lua_createtable(L, static_cast<int>(list.size()), 0);
+  int i = 0;
+  for (const auto& p : list) {
+    const std::string n = p.folder.empty() ? p.name : p.folder + "/" + p.name;
+    lua_pushstring(L, n.c_str());
+    lua_rawseti(L, -2, ++i);
+  }
+  return 1;
+}
+int s_applySwingPreset(lua_State* L) {
+  const std::string name = luaL_checkstring(L, 1);
+  groove::Preset p;
+  if (!groove::findPreset(host(L).presetRoot, name, p)) {
+    lua_pushboolean(L, 0);
+    return 1;
+  }
+  charge(L, kCostStruct);
+  doc(L).editSong("swing preset: " + p.name, [&p](Song& x) { groove::apply(x, p); });
+  lua_pushboolean(L, 1);
+  return 1;
+}
+int s_groove(lua_State* L) {
+  const SongGroove& g = song(L).groove;
+  lua_createtable(L, 0, 5);
+  lua_pushstring(L, groove::gridKey(g.shape.grid));
+  lua_setfield(L, -2, "grid");
+  lua_pushinteger(L, g.shape.cycle);
+  lua_setfield(L, -2, "cycle");
+  auto arr = [L](const std::vector<float>& v, const char* key) {
+    lua_createtable(L, static_cast<int>(v.size()), 0);
+    for (size_t i = 0; i < v.size(); ++i) {
+      lua_pushnumber(L, v[i]);
+      lua_rawseti(L, -2, static_cast<lua_Integer>(i + 1));
+    }
+    lua_setfield(L, -2, key);
+  };
+  arr(g.shape.timing, "timing");
+  arr(g.shape.velocity, "velocity");
+  lua_pushnumber(L, g.accent);
+  lua_setfield(L, -2, "accent");
+  return 1;
+}
+int s_setGroove(lua_State* L) {
+  luaL_checktype(L, 1, LUA_TTABLE);
+  SongGroove g = song(L).groove;
+  lua_getfield(L, 1, "grid");
+  if (lua_isstring(L, -1)) g.shape.grid = groove::gridFromKey(lua_tostring(L, -1));
+  lua_pop(L, 1);
+  lua_getfield(L, 1, "cycle");
+  if (lua_isnumber(L, -1)) g.shape.cycle = static_cast<int>(lua_tointeger(L, -1));
+  lua_pop(L, 1);
+  if (!groove::validCycle(g.shape.cycle)) luaL_argerror(L, 1, "cycle must be 2, 3, 4, 6, 8, 12 or 16");
+  auto arr = [L](const char* key, std::vector<float>& out) {
+    lua_getfield(L, 1, key);
+    if (lua_istable(L, -1)) {
+      out.clear();
+      const lua_Integer n = luaL_len(L, -1);
+      for (lua_Integer i = 1; i <= n && i <= groove::kMaxCycle; ++i) {
+        lua_rawgeti(L, -1, i);
+        out.push_back(static_cast<float>(lua_tonumber(L, -1)));
+        lua_pop(L, 1);
+      }
+    }
+    lua_pop(L, 1);
+  };
+  arr("timing", g.shape.timing);
+  arr("velocity", g.shape.velocity);
+  lua_getfield(L, 1, "accent");
+  if (lua_isnumber(L, -1)) g.accent = static_cast<float>(lua_tonumber(L, -1));
+  lua_pop(L, 1);
+  g.preset.clear();
+  groove::normalize(g);
+  charge(L, kCostStruct);
+  doc(L).editSong("swing groove", [&g](Song& x) { x.groove = g; });
   return 0;
 }
 int s_masterPitch(lua_State* L) {
@@ -1556,6 +1640,11 @@ void openProjectApi(Vm& vm, ProjectHost& h) {
                                      {"setTimeSignature", s_setTimeSig},
                                      {"swing", s_swing},
                                      {"setSwing", s_setSwing},
+                                     {"swingPreset", s_swingPreset},
+                                     {"swingPresets", s_swingPresets},
+                                     {"applySwingPreset", s_applySwingPreset},
+                                     {"groove", s_groove},
+                                     {"setGroove", s_setGroove},
                                      {"masterPitch", s_masterPitch},
                                      {"setMasterPitch", s_setMasterPitch},
                                      {"bar", s_bar},

@@ -45,6 +45,10 @@ namespace {
 wheelroute::Router gWheel;
 bool gPaneScrolls = false;    // innermost WheelPolicyScope
 ImGuiID gDragBlocked = 0;     // pressed while the pane was scrolling: no drag until released
+bool gWheelTaken = false;     // a control took this frame's wheel
+double gPaneScrolledAt = -1e9;  // when a pane routing the wheel itself last scrolled
+ParamId gNextKnobParam;       // SetNextKnobParam: owner kNoId = none
+bool gKnobWasReset = false;   // the last Knob's change was a reset
 }  // namespace
 
 WheelPolicyScope::WheelPolicyScope(bool paneScrolls) : prev_(gPaneScrolls) { gPaneScrolls = paneScrolls; }
@@ -54,10 +58,13 @@ bool wheelScrolling() { return gWheel.scrolling(); }
 bool wheelFocusActive() { return gWheel.focused() != 0; }
 bool wheelModifierHeld() { return keys::modifierIncludes("mixer.wheelAdjust"); }
 void wheelClaim() { gWheel.claim(); }
+bool wheelTaken() { return gWheelTaken; }
+void wheelPaneScrolled() { gPaneScrolledAt = ImGui::GetTime(); }
 namespace {
 void devKnobsFrame();
 }
 void wheelFrameBegin() {
+  gWheelTaken = false;
   gWheel.beginFrame(ImGui::GetTime(), ImGui::GetIO().MouseWheel);
   devKnobsFrame();  // K-148
 }
@@ -67,11 +74,14 @@ const char* wheelHintText() { return tr("Drag to change, Ctrl+wheel to fine-tune
 WheelGate wheelGate(bool takesWheel) {
   WheelGate g;
   const bool hov = ImGui::IsItemHovered();
+  const ImGuiIO& io = ImGui::GetIO();
   if (!gPaneScrolls) {  // adjusting pane (the normal mixer, every other view): as before
-    g.scale = hov && takesWheel ? 1.0f : 0.0f;
+    // (a sideways scroll under way carries on over the strips sliding under the pointer)
+    const bool scrolling = ImGui::GetTime() - gPaneScrolledAt < wheelroute::kGestureGap;
+    g.scale = hov && takesWheel && !scrolling ? 1.0f : 0.0f;
+    gWheelTaken = gWheelTaken || (g.scale > 0 && io.MouseWheel != 0);
     return g;
   }
-  const ImGuiIO& io = ImGui::GetIO();
   const ImGuiID id = ImGui::GetItemID();
   const bool act = ImGui::IsItemActive();
   if (ImGui::IsItemActivated() && !gWheel.mayStartDrag(true)) gDragBlocked = id;
@@ -85,7 +95,7 @@ WheelGate wheelGate(bool takesWheel) {
   const wheelroute::Query q{true, wheelModifierHeld(), gWheel.hasFocus(id)};
   if (gWheel.route(q) == wheelroute::Route::Adjust) {
     ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);  // the pane stays put under the control
-    if (io.MouseWheel != 0) gWheel.claim();
+    if (io.MouseWheel != 0) gWheel.claim(), gWheelTaken = true;
     g.scale = wheelroute::Router::scale(q);
   } else {
     g.hint = true;
@@ -593,31 +603,34 @@ bool DoubleClicked(const ParamDesc& d, double pressed, ParamDoubleClick* action)
   return true;
 }
 
-bool ResetMenuItem(const ParamDesc& d, double value) {
-  const std::string label = std::string(i18n::tr("Reset to default")) + "  (" + d.format(d.def) + ")";
-  return ImGui::MenuItem(label.c_str(), nullptr, false, !d.isDefault(value));
+bool ResetMenuItem(const ParamDesc& d, double value, bool selection) {
+  const std::string label = std::string(selection ? i18n::tr("Reset selected tracks to default") : i18n::tr("Reset to default")) + "  (" + d.format(d.def) + ")";
+  return ImGui::MenuItem(label.c_str(), nullptr, false, selection || !d.isDefault(value));
 }
+
+void SetNextKnobParam(ParamId pid) { gNextKnobParam = pid; }
+bool LastKnobWasReset() { return gKnobWasReset; }
 
 bool ParamDoubleClickReset(ParamId pid, const ParamDesc& d, double& val, double pressed) {
   ParamDoubleClick act = ParamDoubleClick::Type;
   if (!DoubleClicked(d, pressed, &act)) return false;
-  if (act == ParamDoubleClick::Type) {
+  App& a = app();
+  if (act == ParamDoubleClick::Type && !mixerResetPending(a, pid)) {
     ImGui::OpenPopup("##type");
     return false;
   }
-  App& a = app();
   a.doc.endGesture();  // the first press is a gesture of its own
   val = d.def;
-  a.doc.setParam(pid, val, false);
+  if (!mixerResetSelected(a, pid)) a.doc.setParam(pid, val, false);
   a.doc.endGesture();
   return true;
 }
 
 bool ParamResetMenuItem(ParamId pid, const ParamDesc& d, double& val) {
-  if (!ResetMenuItem(d, val)) return false;
   App& a = app();
+  if (!ResetMenuItem(d, val, mixerResetPending(a, pid))) return false;
   val = d.def;
-  a.doc.setParam(pid, val, false);
+  if (!mixerResetSelected(a, pid)) a.doc.setParam(pid, val, false);
   a.doc.endGesture();
   return true;
 }
@@ -807,6 +820,11 @@ bool Knob(const char* id, double* value, const ParamDesc& d, float radius, const
   gNextKnobStep = 0;
   // On the step (whole numbers when 1), inside the range.
   auto onStep = [&](double v) { return step > 0 ? d.clamp(d.min + std::round((v - d.min) / step) * step) : v; };
+  const ParamId knobParam = gNextKnobParam;
+  gNextKnobParam = ParamId{};
+  gKnobWasReset = false;
+  // Asked only on a double-click or with the menu open (a mixer draws hundreds of knobs).
+  auto selectionReset = [&knobParam] { return knobParam.owner != kNoId && mixerResetPending(app(), knobParam); };
   ImGui::PushID(id);
   const auto& P = pal();
   const float labelFs = std::min(theme::kFontCaption, ImGui::GetFontSize());
@@ -850,10 +868,11 @@ bool Knob(const char* id, double* value, const ParamDesc& d, float radius, const
   }
   ParamDoubleClick dbl = ParamDoubleClick::Type;
   if (DoubleClicked(d, pressed, &dbl)) {  // J-136: reset, or type when already the default
-    if (dbl == ParamDoubleClick::Reset) {
+    if (dbl == ParamDoubleClick::Reset || selectionReset()) {
       *value = d.def;
       KnobDragSet(d.toNormalized(d.def));  // a drag that goes on starts from the default
       changed = true;
+      gKnobWasReset = true;
       if (released) *released = true;
     } else {
       ImGui::OpenPopup("##type");
@@ -882,9 +901,10 @@ bool Knob(const char* id, double* value, const ParamDesc& d, float radius, const
   if (ImGui::BeginPopup("##kmenu")) {
     ImGui::TextDisabled("%s", d.name.c_str());
     ImGui::Separator();
-    if (ResetMenuItem(d, *value)) {
+    if (ResetMenuItem(d, *value, selectionReset())) {
       *value = d.def;
       changed = true;
+      gKnobWasReset = true;
       if (released) *released = true;
     }
     if (ImGui::MenuItem(i18n::tr("Type a value..."))) wantType = true;
@@ -928,13 +948,14 @@ bool ParamKnob(const char* id, ParamId pid, float radius, const char* label, boo
     knobContextMenu(a, pid);                  // values, MIDI learn, reset
   };
   ImVec2 kp = ImGui::GetCursorScreenPos();
+  SetNextKnobParam(pid);
   bool ch = Knob(id, &val, *d, radius, label, bipolar, &released, menu);
   if (modulated) packs::modulation::drawModulationMarker(a, pid, ImVec2(kp.x + radius, kp.y + radius), radius);
   if (linked || modulated || (a.midiLearning && a.midiLearnTarget == pid)) {  // small dot marks linked / learning knobs
     ImU32 c = a.midiLearning && a.midiLearnTarget == pid ? pal().danger : pal().accent;
     ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(kp.x + radius * 2 - 2, kp.y + 2), 2.5f, c);
   }
-  if (ch) a.doc.setParam(pid, val, true);
+  if (ch && !(gKnobWasReset && mixerResetSelected(a, pid))) a.doc.setParam(pid, val, true);
   if (released) a.doc.endGesture();
   return ch;
 }

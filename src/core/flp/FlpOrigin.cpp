@@ -163,6 +163,11 @@ uint64_t fingerprintProject(const Song& s) {
   Fp h;
   h.tag("project").i(s.ppq).f(s.tempo).i(s.timeSigNum).i(s.timeSigDen).f(s.swing).f(s.masterPitch);
   h.i(s.autoCrossfades);  // J-43
+  if (!s.groove.isDefault()) {  // K-151 (a project without a swing preset keeps its old fingerprint)
+    h.tag("groove").i(s.groove.shape.grid).i(s.groove.shape.cycle).f(s.groove.accent).s(s.groove.preset);
+    for (float t : s.groove.shape.timing) h.f(t);
+    for (float v : s.groove.shape.velocity) h.f(v);
+  }
   h.s(s.info.title).s(s.info.author).s(s.info.genre).s(s.info.url).s(s.info.comments).i(s.info.created).i(s.info.workTime);
   for (const auto& g : s.channelGroups) h.s(g);
   return h.h;

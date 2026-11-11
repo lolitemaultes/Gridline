@@ -34,6 +34,7 @@ namespace {
 
 constexpr const char* kHello = "GRIDLINE 1 ";
 constexpr const char* kOk = "OK\n";
+constexpr const char* kTakesActivation = " activate";  // K-153: the server takes ACTIVATE (see the header)
 constexpr int kServeMs = 3000;  // how long the server waits for one client's request
 
 // A decimal number followed by '\n' at `at`; NeedMore when the line is not complete yet.
@@ -51,6 +52,13 @@ Parse readNumberLine(const std::string& in, size_t& at, size_t& value, size_t ma
   return Parse::Done;
 }
 
+// The server's hello says it takes an activation token (a word at the end of the line).
+bool takesActivation(std::string hello) {
+  while (!hello.empty() && (hello.back() == '\n' || hello.back() == '\r')) hello.pop_back();
+  const std::string w = kTakesActivation;
+  return hello.size() >= w.size() && hello.compare(hello.size() - w.size(), w.size(), w) == 0;
+}
+
 using Clock = std::chrono::steady_clock;
 int msLeft(Clock::time_point until) {
   const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(until - Clock::now()).count();
@@ -59,18 +67,55 @@ int msLeft(Clock::time_point until) {
 
 }  // namespace
 
-std::string encodeRequest(const std::vector<std::string>& files) {
-  std::string out = "OPEN " + std::to_string(files.size()) + "\n";
+std::string encodeRequest(const std::vector<std::string>& files, const std::string& activation) {
+  std::string out;
+  if (!activation.empty()) out = "ACTIVATE " + std::to_string(activation.size()) + "\n" + activation;
+  out += "OPEN " + std::to_string(files.size()) + "\n";
   for (const std::string& f : files) out += std::to_string(f.size()) + "\n" + f;
   return out;
 }
 
-Parse decodeRequest(const std::string& in, std::vector<std::string>& files) {
+namespace {
+// `word` at `at`: Done (skipped), NeedMore (a prefix of it so far), Bad.
+Parse readWord(const std::string& in, size_t& at, const std::string& word) {
+  const size_t have = in.size() - at;
+  if (have < word.size()) return in.compare(at, have, word, 0, have) == 0 ? Parse::NeedMore : Parse::Bad;
+  if (in.compare(at, word.size(), word) != 0) return Parse::Bad;
+  at += word.size();
+  return Parse::Done;
+}
+
+bool printableToken(const std::string& t) {
+  for (const char c : t)
+    if (c < 0x21 || c > 0x7e) return false;
+  return true;
+}
+}  // namespace
+
+std::string launchActivationToken() {
+  for (const char* name : {"XDG_ACTIVATION_TOKEN", "DESKTOP_STARTUP_ID"}) {
+    const char* v = std::getenv(name);
+    if (v && *v && std::strlen(v) <= kMaxTokenBytes && printableToken(v)) return v;
+  }
+  return std::string();
+}
+
+Parse decodeRequest(const std::string& in, std::vector<std::string>& files, std::string* activation) {
   files.clear();
-  const std::string head = "OPEN ";
-  if (in.size() < head.size()) return in.compare(0, in.size(), head, 0, in.size()) == 0 ? Parse::NeedMore : Parse::Bad;
-  if (in.compare(0, head.size(), head) != 0) return Parse::Bad;
-  size_t at = head.size(), count = 0;
+  if (activation) activation->clear();
+  size_t at = 0;
+  if (!in.empty() && in[0] == 'A') {
+    if (const Parse p = readWord(in, at, "ACTIVATE "); p != Parse::Done) return p;
+    size_t len = 0;
+    if (const Parse p = readNumberLine(in, at, len, kMaxTokenBytes); p != Parse::Done) return p;
+    if (in.size() - at < len) return Parse::NeedMore;
+    const std::string token = in.substr(at, len);
+    if (!printableToken(token)) return Parse::Bad;
+    if (activation) *activation = token;
+    at += len;
+  }
+  if (const Parse p = readWord(in, at, "OPEN "); p != Parse::Done) return p;
+  size_t count = 0;
   if (const Parse p = readNumberLine(in, at, count, kMaxFiles); p != Parse::Done) return p;
   for (size_t k = 0; k < count; ++k) {
     size_t len = 0;
@@ -434,13 +479,13 @@ void Server::serve() {
     setFlags(c);
     const Clock::time_point until = Clock::now() + std::chrono::milliseconds(kServeMs);
     if (peerUid(c) == static_cast<long>(::getuid()) &&
-        sendAll(c, kHello + std::to_string(platform::processId()) + "\n", until)) {
-      std::string in;
+        sendAll(c, kHello + std::to_string(platform::processId()) + kTakesActivation + "\n", until)) {
+      std::string in, activation;
       std::vector<std::string> files;
       Parse st = Parse::NeedMore;
-      while (st == Parse::NeedMore && in.size() <= kMaxFiles * (kMaxPathBytes + 8) && recvSome(c, in, until)) st = decodeRequest(in, files);
+      while (st == Parse::NeedMore && in.size() <= kMaxFiles * (kMaxPathBytes + 8) && recvSome(c, in, until)) st = decodeRequest(in, files, &activation);
       if (st == Parse::Done) {
-        push(Request{files});
+        push(Request{files, activation});
         sendAll(c, kOk, until);
       }
     }
@@ -482,7 +527,8 @@ Handover handOver(const std::string& endpoint, const std::vector<std::string>& f
   if (peerUid(fd) != static_cast<long>(::getuid())) return fail("the endpoint belongs to another user");
   std::string line;
   if (!recvLine(fd, line, until) || line.rfind(kHello, 0) != 0) return fail("no answer from the running Gridline");
-  if (!sendAll(fd, encodeRequest(files), until)) return fail("could not send the files");
+  if (!sendAll(fd, encodeRequest(files, takesActivation(line) ? launchActivationToken() : std::string()), until))
+    return fail("could not send the files");
   if (!recvLine(fd, line, until) || line != kOk) return fail("the running Gridline did not take the files");
   closeFd(fd);
   return Handover::Sent;
@@ -616,7 +662,7 @@ void Server::serve() {
       const Clock::time_point until = Clock::now() + std::chrono::milliseconds(kServeMs);
       ULONG clientPid = 0;
       if (GetNamedPipeClientProcessId(h, &clientPid) && processIsMine(clientPid) &&
-          writeAllWin(h, ev, stopEv, kHello + std::to_string(platform::processId()) + "\n", until)) {
+          writeAllWin(h, ev, stopEv, kHello + std::to_string(platform::processId()) + kTakesActivation + "\n", until)) {
         std::string in;
         std::vector<std::string> files;
         Parse st = Parse::NeedMore;
@@ -675,7 +721,7 @@ Handover handOver(const std::string& endpoint, const std::vector<std::string>& f
   std::string line;
   if (!readLineWin(h, ev, line, until) || line.rfind(kHello, 0) != 0) return finish(Handover::Failed, "no answer from the running Gridline");
   AllowSetForegroundWindow(serverPid);  // (the launch the user just made may bring the window forward)
-  if (!writeAllWin(h, ev, nullptr, encodeRequest(files), until)) return finish(Handover::Failed, "could not send the files");
+  if (!writeAllWin(h, ev, nullptr, encodeRequest(files, takesActivation(line) ? launchActivationToken() : std::string()), until)) return finish(Handover::Failed, "could not send the files");
   if (!readLineWin(h, ev, line, until) || line != kOk) return finish(Handover::Failed, "the running Gridline did not take the files");
   return finish(Handover::Sent, nullptr);
 }

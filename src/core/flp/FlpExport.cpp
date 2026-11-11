@@ -26,6 +26,7 @@
 #include "../../engine/ClipSource.h"
 #include "../../engine/WarpOps.h"
 #include "../ClipRate.h"
+#include "../Groove.h"
 #include "../PluginParams.h"
 #include "../Params.h"
 #include "../Project.h"
@@ -515,7 +516,14 @@ void Exporter::writeHeader() {
     w.word(67, cur);
   }
   w.byte(9, pv(9, 0));
-  w.word(11, static_cast<uint32_t>(std::clamp(std::lround(s.swing * 128.0), 0L, 128L)));
+  {  // K-151: FL has one swing amount; a swing preset's groove stays in the Gridline project
+    bool exact = true;
+    const double sw = groove::flSwing(s, &exact);
+    if (!exact)
+      rep.warn("swing" + (s.groove.preset.empty() ? std::string() : " preset '" + s.groove.preset + "'") +
+               ": FL Studio has one swing amount, so the groove's own timing and accents are kept in the Gridline project only");
+    w.word(11, static_cast<uint32_t>(std::clamp(std::lround(sw * 128.0), 0L, 128L)));
+  }
   w.word(80, static_cast<uint32_t>(static_cast<uint16_t>(static_cast<int16_t>(std::lround(s.masterPitch * 100.0)))));
   w.byte(17, static_cast<uint32_t>(s.timeSigNum));
   w.byte(18, static_cast<uint32_t>(s.timeSigDen));

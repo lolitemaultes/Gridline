@@ -11,6 +11,7 @@
 #include <set>
 #include <string>
 #include <unordered_map>
+#include "GrooveUi.h"
 #include "CollabUi.h"
 #include "CursorAnchor.h"
 #include "../core/I18n.h"
@@ -92,7 +93,15 @@ struct RackDev {
   int group = -2;     // K-173 "group<n>": the display group filter (-1: all channels; -2: left as it is)
   bool graph = false; // K-173 "graph": the graph editor open under the rows
   ImVec2 addMin{0, 0}, addMax{0, 0};  // K-72: the toolbar's "+" (add an instrument) button, last drawn
+  struct Rect {
+    ImVec2 a, b;
+    int frame = -1;
+  };
+  std::map<std::string, Rect> rects;  // the group combo and its menu rows, last drawn ("rack" dev dump)
 } gRackDev;
+void devRackRect(const std::string& name) {
+  gRackDev.rects[name] = {ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), ImGui::GetFrameCount()};
+}
 
 // J-186: the play light of each channel row (UI state, per channel; rows not drawn keep theirs).
 struct RackLight {
@@ -238,14 +247,20 @@ void groupMenu(App& a) {
   for (size_t g = 0; g < s.channelGroups.size(); ++g) {
     std::string l = s.channelGroups[g] + "  (" + std::to_string(countIn(static_cast<int>(g))) + ")##g" + std::to_string(g);
     if (ImGui::Selectable(l.c_str(), groupFilter == static_cast<int>(g))) groupFilter = static_cast<int>(g);
+    devRackRect("group " + std::to_string(g));
   }
   ImGui::Separator();
   const bool anySel = !a.selChannels.empty();
+  // (Every edit runs at the start of the next frame: the rack's rows below hold pointers into the
+  // song while they draw, and a whole-song edit replaces its containers. App::later.)
   auto assign = [&](int g, const char* label) {
     std::set<ObjectId> sel = a.selChannels;
-    a.doc.editSong(label, [&](Song& song) {
-      for (auto& c : song.channels)
-        if (sel.count(c.id)) c.group = g;
+    std::string what = label;
+    a.later([&a, g, sel, what] {
+      a.doc.editSong(what, [&](Song& song) {
+        for (auto& c : song.channels)
+          if (sel.count(c.id)) c.group = g;
+      });
     });
   };
   if (ImGui::BeginMenu(i18n::tr("Add selected channels to"), anySel && !s.channelGroups.empty())) {
@@ -260,10 +275,13 @@ void groupMenu(App& a) {
       std::string name = newGroupName;
       std::set<ObjectId> sel = a.selChannels;
       int g = static_cast<int>(s.channelGroups.size());
-      a.doc.editSong("new channel group", [&](Song& song) {
-        song.channelGroups.push_back(name);
-        for (auto& c : song.channels)
-          if (sel.count(c.id)) c.group = g;
+      a.later([&a, g, sel, name] {
+        a.doc.editSong("new channel group", [&](Song& song) {
+          if (static_cast<int>(song.channelGroups.size()) != g) return;  // (changed since the click)
+          song.channelGroups.push_back(name);
+          for (auto& c : song.channels)
+            if (sel.count(c.id)) c.group = g;
+        });
       });
       groupFilter = g;
       newGroupName[0] = 0;
@@ -272,20 +290,25 @@ void groupMenu(App& a) {
     ImGui::EndMenu();
   }
   if (ImGui::MenuItem(i18n::tr("Remove selected from their group"), nullptr, false, anySel)) assign(-1, "ungroup channels");
+  devRackRect("menu ungroup");
   if (groupFilter >= 0 && ImGui::BeginMenu(i18n::tr("Rename this group"))) {
     const int g = groupFilter;
-    menus::renameField(s.channelGroups[static_cast<size_t>(g)], [&a, g](const std::string& n) { ops::renameChannelGroup(a.doc, g, n); });
+    menus::renameField(s.channelGroups[static_cast<size_t>(g)],
+                       [&a, g](const std::string& n) { a.later([&a, g, n] { ops::renameChannelGroup(a.doc, g, n); }); });
     ImGui::EndMenu();
   }
   if (groupFilter >= 0 && ImGui::MenuItem(i18n::tr("Delete this group"), nullptr, false)) {
     int g = groupFilter;
-    a.doc.editSong("delete channel group", [&](Song& song) {
-      if (g < 0 || static_cast<size_t>(g) >= song.channelGroups.size()) return;
-      song.channelGroups.erase(song.channelGroups.begin() + g);
-      for (auto& c : song.channels) c.group = c.group == g ? -1 : (c.group > g ? c.group - 1 : c.group);
+    a.later([&a, g] {
+      a.doc.editSong("delete channel group", [&](Song& song) {
+        if (g < 0 || static_cast<size_t>(g) >= song.channelGroups.size()) return;
+        song.channelGroups.erase(song.channelGroups.begin() + g);
+        for (auto& c : song.channels) c.group = c.group == g ? -1 : (c.group > g ? c.group - 1 : c.group);
+      });
     });
     groupFilter = -1;
   }
+  devRackRect("menu deletegroup");
 }
 
 // Graph editor lanes (J-11): the value each step bar shows and edits.
@@ -355,9 +378,10 @@ void drawChannelRack(App& a) {
     const float W = ImGui::GetContentRegionAvail().x;
     const float fh = ImGui::GetFrameHeight();
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    // Width budget (most important first): add, menu, pattern name, length, group, graph, steps/bar, swing.
+    // Width budget (most important first): add, menu, pattern name, length, group, graph, steps/bar, swing,
+    // swing preset (K-151).
     const float wMenu = fh + 4, wGroup = 92 + 8, wLen = 20 + 50 + 20 + 9, wSpb = 88 + 9, wSwing = 22 + 4 + 40 + 9, wGraph = fh + 9,
-                wAdd = fh + 4, minName = 64;
+                wAdd = fh + 4, minName = 64, wChip = 150 + 9;
     float need = wMenu + minName + wAdd;
     auto fits = [&](float w) {
       if (need + w > W) return false;
@@ -369,13 +393,17 @@ void drawChannelRack(App& a) {
     const bool showSwing = pat && fits(wSwing);
     const bool showGraphBtn = fits(wGraph);
     const bool showSpb = pat && fits(wSpb);
+    const bool showChip = pat && showSwing && fits(wChip);
     const float nameW = std::clamp(W - need + minName, minName, 200.0f);
 
     menuButton("rackmenu", "Channel rack menu: selected channels, sorting, colours", [&a]() { rackOptionsMenu(a); });
     ImGui::SameLine(0, 4);
     if (showGroup) {
       if (groupFilter >= static_cast<int>(s.channelGroups.size())) groupFilter = -1;
-      if (ui::BeginCombo("##group", groupFilter < 0 ? "All" : s.channelGroups[static_cast<size_t>(groupFilter)].c_str(), 92)) {
+      const bool groupOpen =
+          ui::BeginCombo("##group", groupFilter < 0 ? "All" : s.channelGroups[static_cast<size_t>(groupFilter)].c_str(), 92);
+      if (!groupOpen) devRackRect("groupcombo");
+      if (groupOpen) {
         groupMenu(a);
         ImGui::EndCombo();
       }
@@ -447,6 +475,11 @@ void drawChannelRack(App& a) {
       if (ui::IconButton("barsup", ui::Icon::Plus, false, 20, "Longer pattern") && bars < 64)
         a.doc.setPatternLength(pat->id, bars + 1, pat->stepsPerBar);
     }
+    if (pat && showChip) {  // K-151: the swing preset, right of the Swing knob
+      rx -= wChip;
+      ImGui::SetCursorScreenPos(ImVec2(rx, rowY));
+      grooveui::chip(a, wChip - 9);
+    }
     if (pat && showSwing) {
       rx -= wSwing;
       ImGui::SetCursorScreenPos(ImVec2(rx, rowY + (fh - 22) * 0.5f));
@@ -462,12 +495,13 @@ void drawChannelRack(App& a) {
       if (ImGui::BeginPopup("##swingnotes")) {
         const bool notes = a.doc.song().swingNotes;
         if (ImGui::MenuItem(i18n::tr("Swing piano roll notes"), nullptr, notes))
-          a.doc.editSong(notes ? "swing steps only" : "swing notes too", [](Song& x) { x.swingNotes = !x.swingNotes; });
+          grooveui::toggleSwingNotesLater(a);  // next frame: the rows below keep pointers into the song
         ImGui::EndPopup();
       }
     }
   }
   ui::EndToolbar();
+  pat = s.pattern(a.curPattern);  // a header menu may have replaced the song (App::later covers most)
 
   // ---------------- rows ----------------
   // J-84: the left section (mute LED, pan, volume, mixer track, name) keeps
@@ -563,6 +597,10 @@ void drawChannelRack(App& a) {
 
   RackShown shown;
   a.rack.hoverStep = -1;  // set again by the step under the pointer
+  // The channel menu is opened by a row but drawn after the rows (below): its items may replace
+  // the song or add, remove and move channels, and every row holds references into the song.
+  const ImGuiID chMenuId = ImGui::GetID("##chmenu");
+  static ObjectId chMenuChannel = kNoId;
   for (size_t ci = 0; ci < s.channels.size(); ++ci) {
     const Channel& c = s.channels[ci];
     if (groupFilter >= 0 && c.group != groupFilter) continue;  // display group filter
@@ -575,15 +613,12 @@ void drawChannelRack(App& a) {
       if (ImGui::IsItemClicked()) a.rack.zipped.erase(c.id);
       if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
         a.selectChannel(c.id);
-        ImGui::OpenPopup("##chmenu");
+        chMenuChannel = c.id;
+        ImGui::OpenPopup(chMenuId);
       }
       if (ui::HintHovered()) ui::Hint(c.name + " (zipped: click to unzip)");
       dl->AddRectFilled(ImVec2(rp.x + nameX, rp.y + 1), ImVec2(rp.x + L.rowW, rp.y + zh - 1),
                         theme::withAlpha(theme::rgb(c.color), zhov ? 0.75f : 0.45f), 2);
-      if (ImGui::BeginPopup("##chmenu")) {
-        channelContextMenu(a, c.id);
-        ImGui::EndPopup();
-      }
       ImGui::SetCursorScreenPos(ImVec2(rp.x, rp.y + zh + 2));
       ImGui::Dummy(ImVec2(rowW, 0));
       shown.lastRowBottom = rp.y + zh;
@@ -592,9 +627,9 @@ void drawChannelRack(App& a) {
       continue;
     }
     // Rows outside the visible area only take their space (large racks: J-25),
-    // unless one of the row's menus is open or a step paint runs on it.
+    // unless the row's routing menu is open or a step paint runs on it.
     if (!ImGui::IsRectVisible(rp, ImVec2(rp.x + rowW, rp.y + rowH)) && paintRow != c.id &&
-        !ImGui::IsPopupOpen("##chmenu") && !ImGui::IsPopupOpen("##route")) {
+        !ImGui::IsPopupOpen("##route")) {
       ImGui::SetCursorScreenPos(ImVec2(rp.x, rp.y + rowH + rowGap));
       ImGui::Dummy(ImVec2(rowW, 0));
       shown.lastRowBottom = rp.y + rowH;
@@ -677,7 +712,8 @@ void drawChannelRack(App& a) {
         togglePluginWindow(a, PluginTarget{c.id, -1});
       if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
         a.selectChannel(c.id);
-        ImGui::OpenPopup("##chmenu");
+        chMenuChannel = c.id;
+        ImGui::OpenPopup(chMenuId);
       }
       // J-84: a name cut short by a narrow rack shows in full in a tooltip.
       const float nameFont = theme::kFontCaption + 1;
@@ -688,7 +724,7 @@ void drawChannelRack(App& a) {
       const bool truncated = a.fontRegular->CalcTextSizeA(nameFont, 1e9f, 0, c.name.c_str()).x > nameTextW;
       if (truncated) {
         ++shown.truncated;
-        if (!ImGui::IsPopupOpen("##chmenu")) ui::Tooltip(c.name.c_str());
+        if (!ImGui::IsPopupOpen(chMenuId, 0)) ui::Tooltip(c.name.c_str());
       }
       if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {  // reorder
         ImGui::SetDragDropPayload("GL_CHANNEL", &c.id, sizeof c.id);
@@ -737,10 +773,6 @@ void drawChannelRack(App& a) {
         const std::string fz = freezeui::statusText(a, freeze::channelUnit(c.id));  // K-87
         ui::Hint(c.name + (info ? "  \xC2\xB7  " + info->name : "") + (fz.empty() ? std::string() : "  \xC2\xB7  " + fz) +
                "   (click: open / close its settings \xC2\xB7 Ctrl+click: add to selection \xC2\xB7 right-click: menu \xC2\xB7 drag: reorder)");
-      }
-      if (ImGui::BeginPopup("##chmenu")) {
-        channelContextMenu(a, c.id);
-        ImGui::EndPopup();
       }
     }
 
@@ -886,6 +918,12 @@ void drawChannelRack(App& a) {
     shown.lastRowIndex = static_cast<int>(ci);
     ImGui::PopID();
   }
+  if (ImGui::BeginPopupEx(chMenuId, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings)) {
+    channelContextMenu(a, chMenuChannel);
+    ImGui::EndPopup();
+  }
+  pat = s.pattern(a.curPattern);  // the menu may have replaced the song (its patterns too)
+
   // J-173: the pattern's automation clips as rows below the channels, and a
   // drop row while an automation clip is dragged from the clip sources.
   if (pat) {
@@ -1244,6 +1282,8 @@ void rackDevAfter(App& a, int frame) {
       ImGui::SetWindowSize(rw, ImVec2(gRackDev.w > 0 ? gRackDev.w : rw->Size.x, gRackDev.h > 0 ? gRackDev.h : rw->Size.y), ImGuiCond_Always);
 }
 
+void devRackItem(const std::string& name) { devRackRect(name); }
+
 void rackDevDump(App& a, int frame) {
   const Song& s = a.doc.song();
   const RackShown& r = gShown;
@@ -1293,6 +1333,12 @@ void rackDevDump(App& a, int frame) {
               static_cast<double>(r.sepY), static_cast<double>(r.sepTop), static_cast<double>(r.sepBottom), static_cast<double>(r.sepX0),
               static_cast<double>(r.sepX1), static_cast<double>(r.sepCaption.x), static_cast<double>(r.sepCaption.y),
               static_cast<double>(r.sepCaption.z), static_cast<double>(r.sepCaption.w), r.autoRows, static_cast<double>(r.autoY0), r.lastRowIndex);
+  // The display groups and where the group combo and its menu rows were drawn (last).
+  std::printf("  groups %zu filter %d\n", s.channelGroups.size(), groupFilter);
+  for (const auto& [name, rc] : gRackDev.rects)
+    if (rc.frame >= ImGui::GetFrameCount() - 2)
+      std::printf("  rect %s %.1f %.1f %.1f %.1f\n", name.c_str(), static_cast<double>(rc.a.x), static_cast<double>(rc.a.y),
+                  static_cast<double>(rc.b.x), static_cast<double>(rc.b.y));
   std::fflush(stdout);
 }
 

@@ -125,6 +125,56 @@ the join window shows a **reply code** after a few seconds. Send it back to the 
 it under the invite in their Collaboration panel (**Use reply**). Both computers then open the
 connection towards each other at the same moment, which works through most home routers.
 
+The reply code does not have to be quick. A home router keeps a way in open only for about half a
+minute after the computer behind it last sent something, so both sides keep sending: the join
+window tries again on its own every 40 seconds or so for up to 15 minutes (it shows for how long
+and which attempt it is on), and an open invite does the same until it expires. Keep the join
+window and the inviter's Gridline open until it connects. After **Use reply** the invite shows
+"Reply code used: reaching them" with its own time and attempts.
+
+If the join window says the computer's network address changed, send the new reply code it shows
+instead of the first one (this happens when a router hands out a new public port). The invite
+panel says the same when the inviter's address changed: the renewed invite code is then the one
+to send.
+
+#### Pasting codes from chats and mail
+
+Codes may be pasted with whatever a chat app or mail program did to them: line breaks or spaces
+where the text was wrapped, invisible and non-breaking spaces, "> " quoting from a mail reply,
+curly quotes or other text around the code, typographic dashes for its hyphens, full-width
+characters from some keyboards, or a capitalised `Gridline-invite:` at the start. Gridline reads
+past all of that. What it can't repair, it names:
+
+* **Only part of the code arrived (it is cut off).** Some chat apps shorten long messages. Send
+  all of it again, or use **Save as file...** and send the file.
+* **The code was changed on the way** (or **is damaged**). Copy it again with the **Copy** button,
+  or send it as a file.
+* **This is a reply code / an invite code / a reconnect code.** It was pasted in the wrong place:
+  the message says where it belongs.
+
+#### When joining does not connect
+
+The join window always says what happened and what to try:
+
+| What it says | What it means | What to try |
+| --- | --- | --- |
+| This invite has expired | The time chosen for the invite has passed (by the inviter's clock, or by yours). | Ask for a new invite. If they just made it, check that both computers set their date and time automatically. |
+| This invite was already used | An invite works for one person, once. | Ask for a new invite. |
+| This invite is no longer open on the inviter's computer | It was cancelled or replaced, or Gridline was restarted there. | Ask for a new invite. |
+| ... is on Gridline 0.7.x / a different build | Both of you need the same version. | Update the older one (the message says which). |
+| Couldn't reach ...'s computer | No packets got through in 15 minutes. | Check that they pressed **Use reply** with your code, turn off VPNs, allow Gridline through the firewall, then run **Test my connection** on both computers. |
+| This computer couldn't find its public internet address | The address servers did not answer, so only the same network works. | Check the connection; a firewall, VPN or network filter (school, office, public Wi-Fi) may block them. Try another network, or set a STUN or TURN server. |
+| The computers reached each other, but ...'s Gridline did not answer | The invite was closed while you connected. | Ask for a new invite. |
+
+**Firewalls.** The first time Gridline connects, Windows asks whether to allow it on private and
+public networks, and macOS whether to accept incoming connections. Allow both: a denied Gridline
+can still reach out, but the other computer's answers may be blocked.
+
+**Strict routers.** When **Test my connection** says *symmetric NAT* on one side and the other side
+is also strict, or both sides are on mobile or carrier networks that share one public address
+among many customers, a direct connection usually can't work. A collaborator who reaches both of
+you carries the connection, or a TURN relay set in Settings > Collaboration.
+
 ### Joining a project you already have
 
 If you are invited again to a project you already have a copy of (for example because the two of
@@ -541,7 +591,9 @@ Gridline connects the computers directly, in this order:
 1. **Direct, on the same network or with IPv6.** Usually just works.
 2. **Hole punching** (ICE with STUN). Both computers learn their public address from a STUN
    server and send to each other at the same moment. This works through most home routers and no
-   port has to be opened by hand.
+   port has to be opened by hand. When the default STUN server does not answer (some networks
+   block it), the next attempt asks a second one (stun.cloudflare.com); it too sees only your IP
+   address. A STUN server you set yourself is used on its own.
 3. **Automatic port opening.** If allowed (Settings > Collaboration, on by default), Gridline asks
    your router for a temporary port (UPnP-IGD, NAT-PMP or PCP) and removes it again when the
    project closes.
@@ -655,7 +707,9 @@ server (J-146).
   secret and by the inviter's key in the code; later connections between members by their keys.
 * Gridline contacts a **STUN server** (by default `stun.l.google.com`; you can change it or leave it
   empty for the same network only) to learn your public address. That server sees your IP address
-  and nothing else. **Test my connection** additionally asks `stun.cloudflare.com` and your router.
+  and nothing else. **Test my connection** additionally asks `stun.cloudflare.com` and your router;
+  with the default server, a connection attempt that got no answer from it also asks
+  `stun.cloudflare.com` next time.
   A **TURN server**, if you set one, relays the encrypted connection: it sees both IP addresses
   and how much data passes, never the content.
 * The codes you send each other contain network addresses (your local and public IP addresses) and,

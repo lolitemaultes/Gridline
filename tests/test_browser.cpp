@@ -180,6 +180,21 @@ void testPresetTree() {
 }
 
 void testDrop() {
+  // K-144: .sfz and .sf2 are instruments the Multisampler plays
+  {
+    expect(kindOf("/a/Piano.sfz") == Kind::Instrument && kindOf("/a/GM.SF2") == Kind::Instrument, "kind: sfz and sf2 are instruments");
+    Kind k = Kind::Other;
+    expect(kindFromName("sfz", k) && k == Kind::Instrument, "kind: 'sfz' names instruments in a search");
+    DropItem ins{Kind::Instrument, "", PluginKind::Generator};
+    expect(dropAction(ins, DropTarget::Rack) == DropAction::NewInstrumentChannel, "drop instrument -> rack: new Multisampler");
+    expect(dropAction(ins, DropTarget::Rack, "gl.multisampler") == DropAction::LoadInstrumentMap, "drop instrument -> Multisampler row: load");
+    expect(dropAction(ins, DropTarget::Rack, "gl.synth") == DropAction::ReplaceWithInstrument, "drop instrument -> other row: replace");
+    expect(dropAction(ins, DropTarget::PluginWindow, "gl.multisampler") == DropAction::LoadInstrumentMap, "drop instrument -> Multisampler window");
+    expect(dropAction(ins, DropTarget::PluginWindow, "gl.sampler") == DropAction::None, "drop instrument -> other window: nothing");
+    expect(dropAction(ins, DropTarget::Playlist) == DropAction::NewInstrumentChannel, "drop instrument -> playlist: new Multisampler");
+    expect(dropAction(ins, DropTarget::MixerSlot) == DropAction::None, "drop instrument -> mixer: nothing");
+    expect(std::string(dropActionLabel(DropAction::NewInstrumentChannel)).size() > 0, "drop instrument: labelled");
+  }
   DropItem audio{Kind::Audio, "", PluginKind::Generator};
   expect(dropAction(audio, DropTarget::Rack) == DropAction::NewSamplerChannel, "drop audio -> rack: sampler");
   expect(dropAction(audio, DropTarget::Playlist) == DropAction::AudioClip, "drop audio -> playlist: audio clip");

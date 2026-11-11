@@ -12,6 +12,8 @@
 #include "../core/SmoothScroll.h"
 #include "../core/SmoothZoom.h"
 
+struct ImGuiWindow;
+
 namespace gl {
 class Settings;
 }
@@ -53,6 +55,11 @@ void zoomEnd(smoothzoom::Glide& g, float& pxPerTick, float& scrollX, bool precis
 // already changed: playback, undo and saving never wait), exactly `target`
 // when it is off or the system asks for reduced motion. `key`: stable per bar.
 double glideBar(uint64_t key, double target);
+
+// Scrolls an ImGui window by `px` along axis 0 (x) or 1 (y) with the same glide
+// and elastic edge as the wheel over a scroll region, for a window that routes
+// the wheel itself (the mixer's strips). Call while the window is being drawn.
+void scrollWindow(ImGuiWindow* w, int axis, float px, bool notch);
 
 // ImGui scroll regions: call right before and right after ImGui::NewFrame().
 void beforeNewFrame();

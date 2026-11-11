@@ -1053,7 +1053,8 @@ void deleteSourceItems(App& a, ClipKind kind, ObjectId id) {
       std::snprintf(label, sizeof label, i18n::tr("Delete %d selected..."), static_cast<int>(targets.size()));
     else
       std::snprintf(label, sizeof label, "%s", i18n::tr("Delete..."));
-    if (ImGui::MenuItem(label, keys::label("playlist.delete"))) requestDeleteSources(a, kind, targets);
+    if (ImGui::MenuItem(label, keys::label("playlist.delete")))  // next frame: the picker draws this in its source loop
+      a.later([&a, kind, targets] { requestDeleteSources(a, kind, targets); });
     ui::Hint(kind == ClipKind::Audio ? "Removes the audio clip channel and every clip of it from the project (the sample file stays on disk)"
                                      : "Removes the automation clip and every placement of it from the playlist");
   }
@@ -1067,7 +1068,7 @@ void deleteSourceItems(App& a, ClipKind kind, ObjectId id) {
   }
   if (kind == ClipKind::Pattern) return;  // patterns: the project keeps one
   const char* delUnused = kind == ClipKind::Audio ? i18n::N_("Delete unused audio clips") : i18n::N_("Delete unused automation clips");
-  if (ImGui::MenuItem(i18n::tr(delUnused), nullptr, false, !unused.empty())) requestDeleteSources(a, kind, unused);
+  if (ImGui::MenuItem(i18n::tr(delUnused), nullptr, false, !unused.empty())) a.later([&a, kind, unused] { requestDeleteSources(a, kind, unused); });
   ui::Hint("Sources no clip in any arrangement uses (audio: channels that play no pattern either)");
 }
 

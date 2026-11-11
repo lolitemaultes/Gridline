@@ -1,4 +1,5 @@
 // Gridline — scripting in the app (see ScriptUi.h).
+#include "../core/Presets.h"
 #include "../core/I18n.h"
 #include "Keys.h"
 #include "ScriptUi.h"
@@ -415,7 +416,10 @@ std::string scriptIdOf(const std::string& controllerType) {
 
 class AppProjectHost final : public script::ProjectHost {
  public:
-  explicit AppProjectHost(App& a) : ProjectHost(a.doc), a_(a) { allowTransport = a.settings.getBool("scripts.allowTransport"); }
+  explicit AppProjectHost(App& a) : ProjectHost(a.doc), a_(a) {
+    allowTransport = a.settings.getBool("scripts.allowTransport");
+    presetRoot = gl::presetRoot(a.configDir());  // K-151: swing presets by name
+  }
   bool playing() const override { return a_.engine.playing(); }
   bool recording() const override { return a_.recordArmed; }
   bool songMode() const override { return a_.engine.mode() == PlayMode::Song; }

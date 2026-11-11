@@ -397,6 +397,11 @@ void sdlDropText(const std::string& text) {
 void sdlDropComplete(float x, float y) {
   gSdlCollecting = false;
   if (gSdlItems.empty()) return;
+  static const bool trace = std::getenv("GRIDLINE_DEV_DROP_TRACE") != nullptr;  // K-153: where SDL drops land (Wayland check)
+  if (trace) {
+    std::printf("sdl drop at %.0f,%.0f: %zu item(s)\n", static_cast<double>(x), static_cast<double>(y), gSdlItems.size());
+    std::fflush(stdout);
+  }
   xdrop::Event e;
   e.type = xdrop::EventType::Enter;
   e.x = x;

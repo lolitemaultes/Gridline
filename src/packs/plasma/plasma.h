@@ -535,6 +535,26 @@ std::shared_ptr<const Table> factoryTable(int index); // cached
 // a .txt sidecar, else 2048); stereo files use the left channel.
 std::shared_ptr<const Table> loadTableFile(const std::string& path, std::string* err = nullptr, int channel = 0);
 std::shared_ptr<const Table> tableFromFrames(const std::vector<std::vector<float>>& frames, const std::string& name);
+// Every table Plasma can play (plasma_tables_dsp.cpp): the factory tables, then the WAVs below
+// the user's table folders and the installed wavetable library's Tables folders, grouped by
+// folder ("Factory", "My tables", "Library: <folder>"). A file entry's ref is "file:<path>",
+// a factory entry's `factory` is its O_Table value (1..).
+struct TableEntry {
+  std::string name, group, ref;
+  int factory = 0;
+};
+struct TableGroup {
+  std::string name;
+  int count = 0;
+};
+struct TableCatalog {
+  std::vector<TableEntry> entries;  // by group, natural name order
+  std::vector<TableGroup> groups;   // in entry order, with their sizes
+};
+TableCatalog buildTableCatalog(const std::vector<std::string>& userDirs, const std::vector<std::string>& libraryDirs);
+bool tableFileReadable(const std::string& path);  // a WAV header loadTableFile reads
+std::string userTableDir(const std::string& configDir);  // <config>/plasma-tables
+std::vector<std::string> libraryTableDirs(const std::vector<std::string>& roots);  // <root>/Tables that exist
 
 // ------------------------------------------------------------------ arp shapes
 enum ArpShape : int {

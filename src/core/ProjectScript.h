@@ -2,7 +2,7 @@
 //
 // One global table `project` holds the modules (see docs/scripting.md for the
 // full reference):
-//   project.song        tempo, time signature, swing, title, length
+//   project.song        tempo, time signature, swing, swing presets / groove, title, length
 //   project.channels    channel rack: names, colours, strip, instrument,
 //                       plugin parameters, routing, add / remove / clone
 //   project.patterns    patterns: names, lengths, steps, notes
@@ -37,6 +37,8 @@ class ProjectHost {
   explicit ProjectHost(Document& d) : doc(d) {}
   virtual ~ProjectHost() = default;
   Document& doc;
+  // K-151: the user's preset library (swing presets by name); "" = factory presets only.
+  std::string presetRoot;
 
   // Transport. Scripts may only start / stop / move it when allowTransport.
   bool allowTransport = false;

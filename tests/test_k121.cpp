@@ -198,6 +198,20 @@ void testConversation() {
   expect(decodeRequest("OPEN 1\n999999999\n", files) == Parse::Bad, "an overlong path is refused");
   expect(decodeRequest(enc + "x", files) == Parse::Bad, "bytes after the request are refused");
   expect(decodeRequest(std::string("OPEN 1\n3\na") + '\0' + "b", files) == Parse::Bad, "a path with a NUL is refused");
+  // K-153: the later launch's activation token goes before OPEN; older requests (none) still parse.
+  std::string token;
+  const std::string withToken = encodeRequest(in, "gnome-shell/Gridline/1234-0-host_TIME55");
+  expect(decodeRequest(withToken, files, &token) == Parse::Done && files == in && token == "gnome-shell/Gridline/1234-0-host_TIME55",
+         "a request with an activation token round trips");
+  expect(decodeRequest(enc, files, &token) == Parse::Done && token.empty(), "a request without a token has none");
+  bool partialToken = true;
+  for (size_t n = 0; n < withToken.size(); ++n) partialToken = partialToken && decodeRequest(withToken.substr(0, n), files, &token) == Parse::NeedMore;
+  expect(partialToken, "every prefix of a request with a token needs more");
+  expect(decodeRequest("ACTIVATE 3\na b" + encodeRequest({}), files, &token) == Parse::Bad, "a token with a space is refused");
+  expect(decodeRequest("ACTIVATE 99999\n" + encodeRequest({}), files, &token) == Parse::Bad, "an overlong token is refused");
+  expect(decodeRequest("ACTIVATE 1\nx", files, &token) == Parse::NeedMore, "a token alone needs the OPEN after it");
+  expect(decodeRequest("ACTIVATE 1\nxCLOSE", files, &token) == Parse::Bad, "anything but OPEN after the token is refused");
+  expect(decodeRequest(encodeRequest(in, ""), files) == Parse::Done, "an empty token is not sent at all");
 }
 
 #if defined(_WIN32)
@@ -232,14 +246,28 @@ void testServer() {
   Server second;
   expect(second.claim(ep, &err) == Server::Claim::Busy && !second.listening(), "a second one finds it taken");
   const std::vector<std::string> files = {"/p/Song A.gridline", "/p/Été.gridlinez"};
+#if !defined(_WIN32)
+  platform::unsetEnv("XDG_ACTIVATION_TOKEN");  // (a test run started from a desktop launcher)
+  platform::unsetEnv("DESKTOP_STARTUP_ID");
+#endif
   expect(handOver(ep, files, &err) == Handover::Sent, "a later launch hands its files over (" + err + ")");
+#if !defined(_WIN32)
+  platform::setEnv("XDG_ACTIVATION_TOKEN", "token-from-the-desktop_1");  // K-153
+#endif
   expect(handOver(ep, {}, &err) == Handover::Sent, "a launch without files hands over too");
+#if !defined(_WIN32)
+  platform::unsetEnv("XDG_ACTIVATION_TOKEN");
+#endif
   std::vector<Request> got;
   for (int i = 0; i < 200 && got.size() < 2; ++i) {
     for (Request& r : first.take()) got.push_back(r);
     if (got.size() < 2) std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
   expect(got.size() == 2 && got[0].files == files && got[1].files.empty(), "the running one has both requests, in order");
+  expect(got.size() == 2 && got[0].activation.empty(), "a launch without a token hands none over");
+#if !defined(_WIN32)
+  expect(got.size() == 2 && got[1].activation == "token-from-the-desktop_1", "K-153: the launch's activation token reaches the running Gridline");
+#endif
   first.stop();
   expect(!first.listening(), "stopped");
 #if !defined(_WIN32)

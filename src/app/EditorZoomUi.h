@@ -44,6 +44,9 @@ void end(App& a, const char* key);
 // K-147: the zoom of the editor being drawn between begin() and end() (1 elsewhere):
 // screen pixels per design pixel, for controls that measure drags on screen.
 float currentZoom();
+// K-164: a point of the editor being drawn (design coordinates) where it shows on screen (dev /
+// test hooks that post pointer positions; the point itself elsewhere).
+ImVec2 toScreenHere(ImVec2 p);
 // K-147 (fit report): the plugin's own editor, `width` design px wide, starts here.
 void markBody(float width);
 // ... and ends here.

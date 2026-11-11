@@ -655,6 +655,30 @@ struct FlOrigin {
   bool operator==(const FlOrigin& o) const { return blobs == o.blobs; }
 };
 
+// K-151: the song's swing shape (core/Groove.h). Song::swing is its amount: cell k of every
+// cycle starts `timing[k] * swing * channel swing mix` cells late (negative: early), the time
+// between cell starts stretches evenly, and notes starting in cell k get their velocity scaled
+// toward `velocity[k]` by `accent`. The default shape, two pattern steps with the second
+// half a step late at full swing, is the classic step swing, exactly as before.
+struct GrooveShape {
+  int grid = 0;                            // 0 pattern step, 1 eighth, 2 sixteenth, 3 thirty-second note
+  int cycle = 2;                           // cells per repeat (2, 3, 4, 6, 8, 12, 16)
+  std::vector<float> timing = {0.0f, 0.5f};  // per cell, fraction of a cell at full amount, -0.5..0.5
+  std::vector<float> velocity;             // per cell, factor 0..2 (empty: none)
+  bool operator==(const GrooveShape& o) const {
+    return grid == o.grid && cycle == o.cycle && timing == o.timing && velocity == o.velocity;
+  }
+  bool operator!=(const GrooveShape& o) const { return !(*this == o); }
+};
+struct SongGroove {
+  GrooveShape shape;
+  float accent = 1.0f;  // how much of the velocity lane applies, 0..1
+  std::string preset;   // name of the swing preset last applied ("": none), shown in the rack
+  bool isDefault() const { return shape == GrooveShape{} && accent == 1.0f && preset.empty(); }
+  bool operator==(const SongGroove& o) const { return shape == o.shape && accent == o.accent && preset == o.preset; }
+  bool operator!=(const SongGroove& o) const { return !(*this == o); }
+};
+
 inline constexpr int kDefaultInsertTracks = 16;
 inline constexpr int kDefaultPlaylistTracks = 32;
 inline constexpr int kMaxPlaylistTracks = 500;   // reference: 500 [O]
@@ -671,6 +695,7 @@ struct Song {
   // J-138: song swing also moves piano-roll notes (false: steps only, as in projects imported from
   // .flp files, whose source app swings steps alone).
   bool swingNotes = true;
+  SongGroove groove;       // K-151: the swing's shape and accents (core/Groove.h)
   // K-5: slide notes glide the sounding notes of every colour group (projects saved before 0.7.2
   // whose slides met notes of other colours, so they keep playing as they did). False (new
   // projects, FL imports): a slide note glides only the notes of its own colour, as in FL.
@@ -756,7 +781,7 @@ struct Song {
 
   bool operator==(const Song& o) const {
     return info == o.info && ppq == o.ppq && tempo == o.tempo && timeSigNum == o.timeSigNum &&
-           timeSigDen == o.timeSigDen && swing == o.swing && swingNotes == o.swingNotes && slidesAnyColour == o.slidesAnyColour && masterPitch == o.masterPitch && nextId == o.nextId &&
+           timeSigDen == o.timeSigDen && swing == o.swing && swingNotes == o.swingNotes && groove == o.groove && slidesAnyColour == o.slidesAnyColour && masterPitch == o.masterPitch && nextId == o.nextId &&
            channels == o.channels && patterns == o.patterns && playlist == o.playlist && tracks == o.tracks &&
            mixer == o.mixer && links == o.links && modLinks == o.modLinks && automations == o.automations &&
            markers == o.markers && channelGroups == o.channelGroups && patternGroups == o.patternGroups && live == o.live &&

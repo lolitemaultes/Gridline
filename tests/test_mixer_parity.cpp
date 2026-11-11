@@ -134,6 +134,36 @@ void runPair(const Song& s, std::vector<float>& L, std::vector<float>& R, int th
 int main() {
   setTestEffectFactory(&testFactory);
 
+  // ---- resetting a control on several tracks ----
+  {
+    Document d(makeEmptySong());
+    const Song& s = d.song();
+    const ObjectId i1 = s.mixer[1].id, i2 = s.mixer[2].id, i3 = s.mixer[3].id, i4 = s.mixer[4].id;
+    const MixerTrack def;
+    const auto all = mo::allInserts(s);
+    expect(all.size() == s.mixer.size() - 1 && !all.count(s.masterId()) && all.count(i1), "every insert track and not the master");
+    for (ObjectId id : {i1, i2, i3, i4}) {
+      d.setParam(mixerParam(id, MixerParam::Volume), 0.3, false);
+      d.setParam(mixerParam(id, MixerParam::Pan), 0.5, false);
+      d.setParam(mixerParam(id, MixerParam::EqLowGain), 6.0, false);
+    }
+    d.setParam(mixerParam(i2, MixerParam::Volume), def.volume, false);  // one already at the default
+    const size_t before = d.history().position();
+    expect(mo::resetParams(d, {i1, i2, i3}, {MixerParam::Volume}) == 2, "reset: counts the tracks that changed");
+    expect(d.history().position() == before + 1, "reset on three tracks is one undo step");
+    expect(s.mixerTrack(i1)->volume == def.volume && s.mixerTrack(i3)->volume == def.volume, "reset: the selected tracks are back at the default");
+    expect(s.mixerTrack(i4)->volume != def.volume, "reset: a track outside the list stays");
+    expect(s.mixerTrack(i1)->pan != def.pan, "reset: only the control asked for");
+    expect(mo::resetParams(d, {i1, i2, i3}, {MixerParam::Volume}) == 0 && d.history().position() == before + 1, "reset with nothing to do adds no undo step");
+    d.undo();
+    expect(d.history().position() == before && s.mixerTrack(i1)->volume != def.volume && s.mixerTrack(i3)->volume != def.volume &&
+               s.mixerTrack(i2)->volume == def.volume,
+           "one undo restores every track");
+    expect(mo::resetParams(d, {i1, i4}, {MixerParam::Volume, MixerParam::Pan, MixerParam::EqLowGain}) == 2 && s.mixerTrack(i4)->pan == def.pan &&
+               s.mixerTrack(i4)->eqGain[0] == def.eqGain[0] && d.history().position() == before + 1,
+           "several controls on several tracks are still one undo step");
+  }
+
   // ---- routing operations ----
   {
     Document d(makeEmptySong());

@@ -71,6 +71,15 @@ void testUiScale() {
   expect(systemScale(w) == 1.0f && systemScaleSource(w) == "compositor (window pixel density)", "Wayland output scale 2 (drawable 2x window): SDL scales, 100 % here");
   w.drawableW = 1280;
   expect(systemScale(w) == 1.0f, "Wayland at 100 %: 100 %");
+  // K-153: a session exporting GDK_SCALE / QT_SCALE_FACTOR for everything does not scale a native Wayland
+  // window a second time (the compositor already did); on X11 / XWayland the values still count.
+  w.drawableW = 2560, w.gdkScale = "2", w.qtScaleFactor = "2", w.xftDpi = 192;
+  expect(systemScale(w) == 1.0f && systemScaleSource(w) == "compositor (window pixel density)", "Wayland driver: GDK_SCALE=2 on top of output scale 2 stays 100 % here");
+  w.drawableW = 1280;
+  expect(systemScale(w) == 1.0f, "Wayland driver at 100 %: GDK_SCALE / Xft.dpi are not taken (the compositor decides)");
+  Inputs xw = w;
+  xw.desktop = Desktop::X11;
+  expect(systemScale(xw) == 2.0f, "the same session on XWayland: GDK_SCALE=2 still counts (X11 program)");
   // macOS and Windows keep their behaviour.
   Inputs mac;
   mac.desktop = Desktop::MacOS;

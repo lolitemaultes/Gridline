@@ -1,6 +1,6 @@
-// Gridline — "plasma" pack: the oscillator mapping editor (key and velocity
-// zone of each main oscillator, with FOLD and WARP, and the noise oscillator's key
-// zone with FOLD), opened from the strip.
+// Gridline — "plasma" pack: the Key zones view (on the stage). Each layer has
+// a key zone and a velocity zone, the texture a key zone; drag the ends or the
+// middle of a zone. Fold and the "keep feeding" switch sit at the left of a row.
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -10,164 +10,121 @@
 namespace gl::packs::plasma::ui {
 
 namespace {
-constexpr float kPx = 300, kPy = 380, kPw = 740, kPh = kStripY - 6 - kPy;
-constexpr float kLabelW = 150, kRowH = 52;
+constexpr float kLabelW = 236, kRowH = 128;
 
 std::string noteName(int k) {
   static const char* const n[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
   return std::string(n[((k % 12) + 12) % 12]) + std::to_string(k / 12 - 2);
 }
+
+// One zone bar: keys (vel false) or velocities over x0..x1.
+void zoneBar(Ctx& c, int pMin, int pMax, bool vel, bool on, float x0, float x1, float y0, float h, const char* who) {
+  reach(pMin);
+  reach(pMax);
+  const int lo = vel ? 1 : 0, hi = 127;
+  const float bw = x1 - x0;
+  auto xOf = [&](float v) { return x0 + bw * (v - lo) / static_cast<float>(hi - lo + 1); };
+  const float vmin = std::round(valf(c, pMin)), vmax = std::round(valf(c, pMax));
+  display(c, x0, y0, bw, h, 1, 1);
+  if (!vel) {
+    for (int k = 0; k < 128; ++k) {
+      const int pc = k % 12;
+      if (pc == 1 || pc == 3 || pc == 6 || pc == 8 || pc == 10)
+        c.dl->AddRectFilled(c.p(xOf(static_cast<float>(k)), y0 + 1), c.p(xOf(static_cast<float>(k + 1)), y0 + h * 0.4f), theme::withAlpha(c.P.frame, 0.5f));
+      if (pc == 0) vline(c, xOf(static_cast<float>(k)), y0 + 1, y0 + h - 1, c.P.grid);
+    }
+  } else {
+    // a rising wedge: velocity grows to the right
+    c.dl->AddTriangleFilled(c.p(x0 + 1, y0 + h - 2), c.p(x1 - 1, y0 + h - 2), c.p(x1 - 1, y0 + 3), theme::withAlpha(c.P.frame, 0.35f));
+  }
+  const float ax = xOf(vmin), axe = xOf(vmax + 1);
+  const ImU32 col = c.P.knob;
+  c.dl->AddRectFilled(c.p(ax, y0 + 3), c.p(axe, y0 + h - 3), theme::withAlpha(col, on ? 0.22f : 0.08f), c.s(4));
+  c.dl->AddRect(c.p(ax, y0 + 3), c.p(axe, y0 + h - 3), theme::withAlpha(col, on ? 0.8f : 0.3f), c.s(4));
+  c.dl->AddCircleFilled(c.p(ax, y0 + h * 0.5f), c.s(4), on ? col : theme::withAlpha(col, 0.4f), 14);
+  c.dl->AddCircleFilled(c.p(axe, y0 + h * 0.5f), c.s(4), on ? col : theme::withAlpha(col, 0.4f), 14);
+  char t[48];
+  if (vel) std::snprintf(t, sizeof t, "%d to %d", static_cast<int>(vmin), static_cast<int>(vmax));
+  else std::snprintf(t, sizeof t, "%s to %s", noteName(static_cast<int>(vmin)).c_str(), noteName(static_cast<int>(vmax)).c_str());
+  {
+    MonoText mono;
+    textMid(c, ax, axe, y0 + h * 0.5f, t, on ? c.P.text : c.P.textDim, 11.0f, false);
+  }
+  // drag: an end moves that end, the middle moves the zone
+  ImGui::PushID(vel ? 1 : 0);
+  ImGui::SetCursorScreenPos(c.p(x0, y0));
+  ImGui::InvisibleButton("##rng", c.F.sz(bw, h));
+  static int mode = 0;
+  static float grab = 0;
+  const float mx = ImGui::GetIO().MousePos.x;
+  const float val = std::clamp(lo + (mx - c.p(x0, 0).x) / c.s(bw) * static_cast<float>(hi - lo + 1), static_cast<float>(lo), static_cast<float>(hi) + 0.999f);
+  const float edge = 6;
+  const bool nearMin = std::fabs(mx - c.p(ax, 0).x) < c.s(edge), nearMax = std::fabs(mx - c.p(axe, 0).x) < c.s(edge);
+  if (ImGui::IsItemHovered() && (nearMin || nearMax)) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+  if (ImGui::IsItemActivated()) {
+    mode = nearMin ? 1 : nearMax ? 2 : (val >= vmin && val <= vmax + 1) ? 3 : 0;
+    grab = val - vmin;
+    if (mode == 0) mode = std::fabs(val - vmin) < std::fabs(val - vmax) ? 1 : 2;  // outside: the nearer end jumps there
+  }
+  if (ImGui::IsItemActive()) {
+    const float v = std::floor(val);
+    if (mode == 1) setv(c, pMin, std::min(v, vmax), true);
+    if (mode == 2) setv(c, pMax, std::max(v, vmin), true);
+    if (mode == 3) {
+      const float span = vmax - vmin;
+      const float nmin = std::clamp(std::floor(val - grab), static_cast<float>(lo), static_cast<float>(hi) - span);
+      setv(c, pMin, nmin, true);
+      setv(c, pMax, nmin + span, true);
+    }
+  }
+  if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
+    setv(c, pMin, lo);
+    setv(c, pMax, hi);
+  }
+  if (ImGui::IsItemHovered())
+    c.a.setHint(std::string(vel ? "Velocity zone of " : "Key zone of ") + who + ": drag an end or the middle \xC2\xB7 double-click: everything");
+  ImGui::PopID();
+}
 }  // namespace
 
-namespace {
-void mappingBody(Ctx& c);
-}
-
 void mappingPanel(Ctx& c) {
-  // a child window: above the page in z-order, so it gets the pointer first
-  for (int i = 3; i >= 1; --i)  // soft drop shadow
-    c.dl->AddRectFilled(c.p(kPx - i * 2.f, kPy - i * 1.f), c.p(kPx + kPw + i * 2.f, kPy + kPh + i * 3.f), theme::withAlpha(IM_COL32(0, 0, 0, 255), 0.07f), c.s(6 + i * 2.f));
-  ImGui::SetCursorScreenPos(c.p(kPx, kPy));
-  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-  ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(0, 0, 0, 0));
-  bool closeOutside = false;
-  if (ImGui::BeginChild("##plmap", c.F.sz(kPw, kPh), false, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
-    Ctx cc = c;
-    cc.dl = ImGui::GetWindowDrawList();
-    mappingBody(cc);
-  }
-  ImGui::EndChild();
-  ImGui::PopStyleColor();
-  ImGui::PopStyleVar();
-  // a click outside closes the panel
-  if (ImGui::IsMouseClicked(0)) {
-    const ImVec2 m = ImGui::GetIO().MousePos, a = c.p(kPx, kPy), b = c.p(kPx + kPw, kPy + kPh);
-    closeOutside = m.x < a.x || m.x > b.x || m.y < a.y || m.y > b.y;
-  }
-  if (closeOutside && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) c.u.mapping = false;
-}
-
-namespace {
-void mappingBody(Ctx& c) {
-  Ui& u = c.u;
-  panelRect(c, kPx, kPy, kPw, kPh, c.P.panel, 6);
-  c.dl->AddRectFilled(c.p(kPx + 1, kPy + 1), c.p(kPx + kPw - 1, kPy + 29), c.P.head, c.s(5), ImDrawFlags_RoundCornersTop);
-  hline(c, kPx + 1, kPx + kPw - 1, kPy + 29.5f, c.P.frame);
-  c.dl->AddRect(c.p(kPx, kPy), c.p(kPx + kPw, kPy + kPh), c.P.lineHi, c.s(6));
-  // swallow clicks on the panel background
-  ImGui::SetCursorScreenPos(c.p(kPx, kPy));
-  ImGui::InvisibleButton("##mapbg", c.F.sz(kPw, kPh));
-  text(c, kPx + 12, kPy + 10, "OSCILLATOR MAPPING", c.P.text, ty::kTitle, true);
-  labelBeside(c, kPx + 180, kPy + 5, 20, "RANGE", c.P.label, ty::kCap);
-  if (seg2(c, "mkv", kPx + 220, kPy + 5, 96, 20, "KEY", "VELOCITY", u.mapVel, "Edit the key or the velocity range")) u.mapVel = !u.mapVel;
-  ImGui::SetCursorScreenPos(c.p(kPx + kPw - 26, kPy + 6));
-  if (ImGui::InvisibleButton("##mclose", c.F.sz(20, 20))) u.mapping = false;
-  iconClose(c.dl, c.p(kPx + kPw - 16, kPy + 16), c.s(8), ImGui::IsItemHovered() ? c.P.text : c.P.textDim);
-  const float bx0 = kPx + kLabelW, bx1 = kPx + kPw - 12, bw = bx1 - bx0;
-  const int lo = u.mapVel ? 1 : 0, hi = 127;
-  auto xOf = [&](float v) { return bx0 + bw * (v - lo) / static_cast<float>(hi - lo + 1); };
-  // scale: octaves (key) or quarters (velocity)
+  const float hx = stageHead(c, "Key zones");
+  text(c, hx, kStageHeadY + 8, "Which keys and velocities each layer plays", c.P.textDim, 11.0f, false);
+  const float x = 9, w = kStageW - 18;
+  const float bx0 = x + kLabelW, bx1 = x + w - 14;
+  // the key scale along the top
   {
-    const float sy = kPy + 32;
-    if (!u.mapVel) {
-      for (int k = 0; k <= 120; k += 12) {
-        vline(c, xOf(static_cast<float>(k)), sy + 10, sy + 16, c.P.textFaint);
-        MonoText mono;
-        text(c, xOf(static_cast<float>(k)) + 2, sy, noteName(k).c_str(), c.P.textDim, ty::kCap, false);
-      }
-    } else {
-      for (int v : {1, 32, 64, 96, 127}) {
-        vline(c, xOf(static_cast<float>(v)), sy + 10, sy + 16, c.P.textFaint);
-        MonoText mono;
-        text(c, xOf(static_cast<float>(v)) + 2, sy, std::to_string(v).c_str(), c.P.textDim, ty::kCap, false);
-      }
+    const float sy = kStageY + 6, bw = bx1 - bx0;
+    for (int k = 0; k <= 120; k += 12) {
+      const float kx = bx0 + bw * k / 128.f;
+      vline(c, kx, sy + 12, sy + 18, c.P.textFaint);
+      MonoText mono;
+      text(c, kx + 2, sy, noteName(k).c_str(), c.P.textDim, 10.0f, false);
     }
   }
-  for (int o = 0; o <= kOscs; ++o) {  // A, B, C and (J-215) the noise oscillator's key range
+  for (int o = 0; o <= kOscs; ++o) {  // the three layers, then the texture (key zone only)
     const bool noise = o == kOscs;
-    const float ry = kPy + 52 + o * kRowH;
+    const float ry = kStageY + 30 + o * kRowH;
     ImGui::PushID(o + 9500);
-    hline(c, kPx + 8, kPx + kPw - 8, ry - 3, c.P.line);
-    const char* nm[] = {"OSC A", "OSC B", "OSC C", "NOISE"};
+    const char* nm[] = {"Layer 1", "Layer 2", "Layer 3", "Texture"};
+    const float top = card(c, x, ry, w, kRowH - 4, nm[o], noise ? noiseP(N_Enable) : oscP(o, O_Enable));
     const bool on = vali(c, noise ? noiseP(N_Enable) : oscP(o, O_Enable)) != 0;
-    text(c, kPx + 12, ry + 6, nm[o], on ? c.P.text : c.P.textFaint, ty::kTitle, true);
-    checkBox(c, noise ? tailP(T_NKeyFold) : oscP(o, O_MapFold), kPx + 12, ry + 26, "FOLD", ty::kCap);
+    chip(c, noise ? tailP(T_NKeyFold) : oscP(o, O_MapFold), x + 12, top + 2, 140, 26, "Fold into zone");
     if (ImGui::IsItemHovered())
-      c.a.setHint(noise ? "Fold: keys outside the range wrap into it, its width at a time (otherwise the noise is left out)"
-                        : "Fold: keys outside the range move into it by octaves (otherwise they are left out)");
+      c.a.setHint(noise ? "Keys outside the zone wrap into it, its width at a time (otherwise the texture is left out)"
+                        : "Keys outside the zone move into it by octaves (otherwise they are left out)");
     if (!noise) {
-      checkBox(c, oscP(o, O_MapWarp), kPx + 70, ry + 26, "WARP", ty::kCap);
-      if (ImGui::IsItemHovered()) c.a.setHint("Warp: outside its range the oscillator stays silent but still feeds FM / PD / AM / RM warps");
+      chip(c, oscP(o, O_MapWarp), x + 12, top + 34, 140, 26, "Keep feeding");
+      if (ImGui::IsItemHovered()) c.a.setHint("Outside its zones the layer stays silent but still feeds the other layers' morphs");
     }
-    const float y0 = ry + 4, h = kRowH - 14;
-    if (noise && u.mapVel) {  // the noise has a key range only
-      wellRect(c, bx0, y0, bw, h, 3);
-      textMid(c, bx0, bx1, y0 + h * 0.5f, "Key range only", c.P.textFaint, ty::kCap, false);
-      ImGui::PopID();
-      continue;
+    text(c, x + 162, top + 12, "Keys", c.P.label, 11.0f, false);
+    zoneBar(c, noise ? tailP(T_NKeyMin) : oscP(o, O_KeyMin), noise ? tailP(T_NKeyMax) : oscP(o, O_KeyMax), false, on, bx0, bx1, top, 38, nm[o]);
+    if (!noise) {
+      text(c, x + 162, top + 56, "Velocity", c.P.label, 11.0f, false);
+      zoneBar(c, oscP(o, O_VelMin), oscP(o, O_VelMax), true, on, bx0, bx1, top + 44, 40, nm[o]);
     }
-    // range bar
-    const int kMin = u.mapVel ? O_VelMin : O_KeyMin, kMax = u.mapVel ? O_VelMax : O_KeyMax;
-    const int pMin = noise ? tailP(T_NKeyMin) : oscP(o, kMin), pMax = noise ? tailP(T_NKeyMax) : oscP(o, kMax);
-    const float vmin = std::round(valf(c, pMin)), vmax = std::round(valf(c, pMax));
-    wellRect(c, bx0, y0, bw, h, 3);
-    if (!u.mapVel) {
-      for (int k = 0; k < 128; ++k) {
-        const int pc = k % 12;
-        if (pc == 1 || pc == 3 || pc == 6 || pc == 8 || pc == 10) c.dl->AddRectFilled(c.p(xOf(static_cast<float>(k)), y0 + 1), c.p(xOf(static_cast<float>(k + 1)), y0 + h * 0.45f), theme::withAlpha(c.P.frame, 0.6f));
-        if (pc == 0) vline(c, xOf(static_cast<float>(k)), y0 + 1, y0 + h - 1, c.P.grid);
-      }
-    }
-    const float ax = xOf(vmin), axe = xOf(vmax + 1);
-    // J-202: a soft zone with lit end handles; the range reads "from to"
-    c.dl->AddRectFilled(c.p(ax, y0 + 3), c.p(axe, y0 + h - 3), theme::withAlpha(c.P.accent, on ? 0.2f : 0.08f), c.s(3));
-    c.dl->AddRect(c.p(ax, y0 + 3), c.p(axe, y0 + h - 3), theme::withAlpha(c.P.accent, on ? 0.7f : 0.3f), c.s(3));
-    c.dl->AddRectFilled(c.p(ax, y0 + 3), c.p(ax + 3, y0 + h - 3), on ? c.P.accent : c.P.accentDim, c.s(1.5f));
-    c.dl->AddRectFilled(c.p(axe - 3, y0 + 3), c.p(axe, y0 + h - 3), on ? c.P.accent : c.P.accentDim, c.s(1.5f));
-    char t[48];
-    if (u.mapVel) std::snprintf(t, sizeof t, "%d to %d", static_cast<int>(vmin), static_cast<int>(vmax));
-    else std::snprintf(t, sizeof t, "%s to %s", noteName(static_cast<int>(vmin)).c_str(), noteName(static_cast<int>(vmax)).c_str());
-    {
-      MonoText mono;
-      textMid(c, ax, axe, y0 + h * 0.5f, t, on ? c.P.text : c.P.textDim, ty::kValue, false);
-    }
-    // drag: edges move one end, the middle moves the range
-    ImGui::SetCursorScreenPos(c.p(bx0, y0));
-    ImGui::InvisibleButton("##rng", c.F.sz(bw, h));
-    static int mode = 0;
-    static float grab = 0;
-    const float mx = ImGui::GetIO().MousePos.x;
-    const float val = std::clamp(lo + (mx - c.p(bx0, 0).x) / c.s(bw) * static_cast<float>(hi - lo + 1), static_cast<float>(lo), static_cast<float>(hi) + 0.999f);
-    const float edge = 6;
-    const bool nearMin = std::fabs(mx - c.p(ax, 0).x) < c.s(edge), nearMax = std::fabs(mx - c.p(axe, 0).x) < c.s(edge);
-    if (ImGui::IsItemHovered() && (nearMin || nearMax)) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
-    if (ImGui::IsItemActivated()) {
-      mode = nearMin ? 1 : nearMax ? 2 : (val >= vmin && val <= vmax + 1) ? 3 : 0;
-      grab = val - vmin;
-      if (mode == 0) {  // click outside the range: the nearer end jumps there
-        mode = std::fabs(val - vmin) < std::fabs(val - vmax) ? 1 : 2;
-      }
-    }
-    if (ImGui::IsItemActive()) {
-      const float v = std::floor(val);
-      if (mode == 1) setv(c, pMin, std::min(v, vmax), true);
-      if (mode == 2) setv(c, pMax, std::max(v, vmin), true);
-      if (mode == 3) {
-        const float span = vmax - vmin;
-        const float nmin = std::clamp(std::floor(val - grab), static_cast<float>(lo), static_cast<float>(hi) - span);
-        setv(c, pMin, nmin, true);
-        setv(c, pMax, nmin + span, true);
-      }
-    }
-    if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
-      setv(c, pMin, lo);
-      setv(c, pMax, hi);
-    }
-    if (ImGui::IsItemHovered())
-      c.a.setHint(std::string(u.mapVel ? "Velocity" : "Key") + " range of " + nm[o] + ": drag the ends or the range \xC2\xB7 double-click: full range");
     ImGui::PopID();
   }
 }
-}  // namespace
 
 }  // namespace gl::packs::plasma::ui

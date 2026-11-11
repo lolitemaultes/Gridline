@@ -8,6 +8,7 @@
 #include <fstream>
 #include <map>
 #include <mutex>
+#include "../../core/SfzMap.h"
 #include "../../engine/Dsp.h"
 #include "../Packs.h"
 #include "samplers.h"
@@ -174,16 +175,28 @@ bool parseZoneLine(const std::string& line, Zone& z) {
 
 }  // namespace
 
+bool isSfzPath(const std::string& path) {
+  if (path.size() < 4) return false;
+  std::string e = path.substr(path.size() - 4);
+  for (char& c : e) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  return e == ".sfz";
+}
+
 ZoneMap parseZoneMap(const std::string& data, int factorySet) {
   bool blank = data.find_first_not_of(" \t\r\n") == std::string::npos;
   if (blank) return factoryZoneMap(factorySet);
   ZoneMap m;
   auto lines = splitLines(data);
-  bool zoneText = data.rfind("#gl-zones", 0) == 0 || data.rfind("z ", 0) == 0 || data.find("\nz ") != std::string::npos;
+  bool zoneText = data.rfind("#gl-zones", 0) == 0 || data.rfind("z ", 0) == 0 || data.rfind("sfz ", 0) == 0 || data.find("\nz ") != std::string::npos;
   if (!zoneText) {
     // A bare audio path (e.g. a file dropped onto the channel rack).
     for (const auto& l : lines)
-      if (!l.empty()) {
+      if (!l.empty() && isSfzPath(l)) {  // K-144: an .sfz plays as an SFZ instrument
+        m.sfzPath = l;
+        break;
+      } else if (!l.empty() && l.size() > 4 && (l.compare(l.size() - 4, 4, ".sf2") == 0 || l.compare(l.size() - 4, 4, ".SF2") == 0)) {
+        return sf2PresetMap(l, 0);  // K-144: a soundfont dropped from the browser plays its first preset
+      } else if (!l.empty()) {
         Zone z = zoneForFile(l);
         z.lo = 0, z.hi = 127;
         m.zones.push_back(z);
@@ -204,6 +217,18 @@ ZoneMap parseZoneMap(const std::string& data, int factorySet) {
       }
       if (toks.size() >= 4) m.sf2Name = dec(toks[3]);
       if (bar != std::string::npos) m.sf2Path = l.substr(bar + 3);
+    } else if (l.rfind("sfz ", 0) == 0) {
+      size_t bar = l.find(" | ");
+      auto toks = splitWs(l.substr(0, bar));
+      if (toks.size() >= 2) m.sfzFlags = std::atoi(toks[1].c_str());
+      if (bar != std::string::npos) m.sfzPath = l.substr(bar + 3);
+    } else if (l.rfind("sfzcc ", 0) == 0) {
+      for (const auto& t : splitWs(l.substr(6))) {
+        size_t eq = t.find('=');
+        if (eq == std::string::npos) continue;
+        const int cc = std::atoi(t.substr(0, eq).c_str());
+        if (cc >= 0 && cc < 512) m.sfzCc.emplace_back(cc, std::clamp(static_cast<float>(std::atof(t.c_str() + eq + 1)), 0.f, 1.f));
+      }
     }
   }
   return m;
@@ -214,6 +239,14 @@ std::string serializeZoneMap(const ZoneMap& m) {
   if (!m.sf2Path.empty())
     o += "sf2 " + std::to_string(m.sf2Bank) + " " + std::to_string(m.sf2Program) + " " + enc(m.sf2Name.empty() ? "-" : m.sf2Name) +
          " | " + m.sf2Path + "\n";
+  if (!m.sfzPath.empty()) {
+    o += "sfz " + std::to_string(m.sfzFlags) + " | " + m.sfzPath + "\n";
+    if (!m.sfzCc.empty()) {
+      o += "sfzcc";
+      for (const auto& [cc, v] : m.sfzCc) o += " " + std::to_string(cc) + "=" + fmtNum(v);
+      o += "\n";
+    }
+  }
   const Zone d;
   for (const auto& z : m.zones) {
     o += "z lo=" + std::to_string(z.lo) + " hi=" + std::to_string(z.hi) + " vlo=" + std::to_string(z.vlo) +
@@ -1026,6 +1059,58 @@ SamplePtr scratchDefaultSample() {
     smp = s;
   });
   return smp;
+}
+
+// K-144: "Convert to editable zones": the regions' mapping, tuning, level, pan, sample points,
+// loops and amp envelopes become zones. What zones cannot hold (controllers, filters per region,
+// LFOs, keyswitches, release triggers, effects) is counted in `dropped`.
+ZoneMap sfzZoneMap(const std::string& path, int* dropped) {
+  using namespace gl::sfz;
+  ZoneMap m;
+  Instrument ins;
+  if (dropped) *dropped = 0;
+  if (!load(path, ins)) return m;
+  std::map<int64_t, int> groupIds;
+  for (const Region& r : ins.regions) {
+    const bool plain = r.trigger == Trigger::Attack && r.cc.empty() && r.ccRange.empty() && r.swLast < 0 && r.swLolast < 0 &&
+                       r.filter[0].type < 0 && r.lfos.empty() && r.egs.empty() && !r.amplfo.used && !r.fillfo.used && !r.pitchlfo.used;
+    if (!plain && dropped) ++*dropped;
+    if (r.trigger == Trigger::Release || r.trigger == Trigger::ReleaseKey || r.file.empty()) continue;
+    Zone z;
+    z.path = r.file;
+    z.lo = std::clamp(r.lokey, 0, 127), z.hi = std::clamp(r.hikey, 0, 127);
+    z.vlo = std::clamp(r.lovel, 0, 127), z.vhi = std::clamp(r.hivel, 0, 127);
+    z.root = std::clamp(r.pitchKeycenter >= 0 ? r.pitchKeycenter : 60, 0, 127);
+    z.tune = r.tune + static_cast<float>(r.transpose) * 100.f + r.groupTune + r.masterTune + r.globalTune;
+    z.keyTrack = r.pitchKeytrack / 100.f;
+    z.gain = r.volume + r.groupVolume + r.masterVolume + r.globalVolume +
+             20.f * std::log10(std::max(1e-4f, r.amplitude / 100.f * r.groupAmplitude / 100.f * r.masterAmplitude / 100.f * r.globalAmplitude / 100.f));
+    z.pan = std::clamp(r.pan / 100.f, -1.f, 1.f);
+    z.start = r.offsetPercent ? 0 : std::max<int64_t>(0, r.offset);
+    z.end = r.end > 0 ? r.end + 1 : 0;
+    z.loopStart = std::max<int64_t>(0, r.loopStart);
+    z.loopEnd = r.loopEnd > 0 ? r.loopEnd + 1 : 0;
+    switch (r.loopMode) {
+      case gl::sfz::LoopMode::OneShot: z.loop = LoopOneShot; break;
+      case gl::sfz::LoopMode::Continuous: z.loop = r.loopType == gl::sfz::LoopType::Alternate ? LoopBounce : LoopForward; break;
+      case gl::sfz::LoopMode::Sustain: z.loop = LoopSustain; break;
+      default: z.loop = LoopOff; break;
+    }
+    z.reverse = r.reverse;
+    if (r.seqLength > 1) {  // round robin: one zone group per sequence
+      auto it = groupIds.find(r.group * 1000 + r.seqLength);
+      if (it == groupIds.end()) it = groupIds.emplace(r.group * 1000 + r.seqLength, std::min(kMaxGroups - 1, static_cast<int>(groupIds.size()) + 1)).first;
+      z.group = it->second;
+    }
+    if (r.offBy != 0) z.choke = static_cast<int>(std::clamp<int64_t>(r.offBy, 1, 255));
+    if (r.ampeg.used) {
+      z.ownEnv = true;
+      z.attack = std::max(0.001f, r.ampeg.attack), z.hold = r.ampeg.hold, z.decay = std::max(0.001f, r.ampeg.decay);
+      z.sustain = std::clamp(r.ampeg.sustain / 100.f, 0.f, 1.f), z.release = std::max(0.001f, r.ampeg.release);
+    }
+    m.zones.push_back(z);
+  }
+  return m;
 }
 
 }  // namespace gl::packs::samplers

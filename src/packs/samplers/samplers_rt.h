@@ -5,6 +5,11 @@
 #include "samplers.h"
 #include "../../engine/SampleTap.h"
 #include "../../engine/pitch/Kernel.h"
+#include <atomic>
+#include <filesystem>
+#include "../../core/SfzMap.h"
+#include "sfz_fx.h"
+#include "../../engine/RegionActivity.h"
 
 namespace gl::packs::samplers {
 
@@ -21,8 +26,14 @@ struct ZoneRt {
   bool hasLoop = false;
   float gainLin = 1, panL = 1, panR = 1;
 };
+namespace sfzp {
+struct SfzData;
+}
+std::shared_ptr<const sfzp::SfzData> sfzDataFor(const std::string& path);
 struct MsRuntime : Sample {
   std::vector<ZoneRt> zones;
+  std::shared_ptr<const sfzp::SfzData> sfz;  // K-144: an SFZ instrument (zones stay empty)
+  std::vector<std::pair<int, float>> sfzCc;  // controller values from the editor
 };
 struct ScRuntime : Sample {
   SamplePtr smp;
@@ -51,14 +62,27 @@ struct RecentCache {
   }
 };
 
+// K-144: the file time of an .sfz, so an instrument edited on disk loads again.
+std::string sfzStamp(const std::string& path) {
+  std::error_code ec;
+  const auto t = std::filesystem::last_write_time(std::filesystem::u8path(path), ec);
+  return ec ? std::string("-") : std::to_string(static_cast<long long>(t.time_since_epoch().count()));
+}
+
 std::shared_ptr<const MsRuntime> buildMsRuntime(const std::string& data, int set) {
   static RecentCache<MsRuntime> cache;
   std::string key = std::to_string(set) + "\n" + data;
+  if (data.size() < 8192 && (data.find(".sfz") != std::string::npos || data.find(".SFZ") != std::string::npos))
+    if (const ZoneMap probe = parseZoneMap(data, set); !probe.sfzPath.empty()) key += "\n" + sfzStamp(probe.sfzPath);
   std::lock_guard<std::mutex> lk(cache.mu);
   if (auto r = cache.find(key)) return r;
   auto rt = std::make_shared<MsRuntime>();
   rt->path = kMsTag;
   ZoneMap m = parseZoneMap(data, set);
+  if (!m.sfzPath.empty()) {
+    rt->sfz = sfzDataFor(m.sfzPath);
+    rt->sfzCc = m.sfzCc;
+  }
   for (const auto& z : m.zones) {
     SamplePtr s = resolveSample(z.path);
     if (!s || s->frames() < 2) continue;
@@ -196,13 +220,32 @@ uint32_t xorshift(uint32_t& s) {
 
 constexpr int kChunk = 128;
 
+}  // namespace
+}  // namespace gl::packs::samplers
+namespace gl::packs::samplers {
+namespace {
+#include "sfz_rt.h"
+
+// Loaded SFZ instruments by path and file time, so a controller edit (a new zone text) keeps the
+// same data and the samples load once.
+std::shared_ptr<const sfzp::SfzData> sfzDataFor(const std::string& path) {
+  static RecentCache<sfzp::SfzData> cache;
+  const std::string key = path + "\n" + sfzStamp(path);
+  std::lock_guard<std::mutex> lk(cache.mu);
+  if (auto r = cache.find(key)) return r;
+  std::shared_ptr<const sfzp::SfzData> d = sfzp::buildSfz(path);
+  cache.put(key, d);
+  return d;
+}
+
 // =========================================================================
 // Multisampler
 // =========================================================================
 class MultiSamplerGen final : public Generator {
  public:
-  MultiSamplerGen() { (void)pitch::table(pitch::Quality::Realtime); }
+  MultiSamplerGen() : sfz_(std::make_unique<sfzp::Player>()) { (void)pitch::table(pitch::Quality::Realtime); }
   bool active() const override {
+    if (sfzOn_ && sfz_->active()) return true;
     for (const auto& v : voices_)
       if (v.on) return true;
     return false;
@@ -238,6 +281,15 @@ class MultiSamplerGen final : public Generator {
       prev_ = std::move(map_);
       if (rt && rt->path == kMsTag) map_ = std::static_pointer_cast<const MsRuntime>(rt);
       else map_.reset();
+      sfz_->setData(map_ && map_->sfz ? map_->sfz.get() : nullptr, sr_);
+      sfzOn_ = map_ && map_->sfz;
+      if (sfzOn_)
+        for (const auto& [cc, v] : map_->sfzCc) sfz_->setCc(cc, v);
+    }
+    if (sfzOn_) {
+      sfz_->setData(map_->sfz.get(), sr_);
+      sfz_->setTransport(ctx.tempo, ctx.tick / std::max(1, ctx.ppq), ctx.playing);
+      sfz_->setProgramVolume(1.0, prm(s, MsTranspose) + prm(s, MsFine) / 100.0);
     }
     volume_ = prm(s, MsVolume, 0.8f);
     if (volZ_ < 0) volZ_ = volume_;
@@ -299,7 +351,24 @@ class MultiSamplerGen final : public Generator {
     return best;
   }
 
+  // K-144: SFZ notes carry their MIDI channel and release velocity.
+  void onNoteOnEx(uint32_t id, double pitch, float vel, const NoteProps& p) override {
+    if (sfzOn_) {
+      sfz_->noteOn(id, pitch, vel, std::clamp(p.color, 0, 15) + 1, p.release);
+      return;
+    }
+    onNoteOn(id, pitch, vel);
+  }
+  bool handlesPitchBend() const override { return sfzOn_; }
+  const RegionActivity* regionActivity() const override { return sfzOn_ ? &sfz_->activity() : nullptr; }
+  void onMidi(uint8_t st, uint8_t d1, uint8_t d2) override {
+    if (sfzOn_) sfz_->midi(st, d1, d2);
+  }
   void onNoteOn(uint32_t id, double pitch, float vel) override {
+    if (sfzOn_) {
+      sfz_->noteOn(id, pitch, vel, 1);
+      return;
+    }
     if (!map_ || map_->zones.empty()) return;
     const int key = std::clamp(static_cast<int>(std::lround(pitch)), 0, 127);
     const int v127 = std::clamp(static_cast<int>(std::lround(vel * 127.f)), 1, 127);
@@ -402,10 +471,15 @@ class MultiSamplerGen final : public Generator {
 
   bool supportsGlide() const override { return true; }
   void onGlide(uint32_t id, double pitch, double seconds) override {
+    if (sfzOn_) sfz_->glide(id, pitch, seconds);
     for (auto& v : voices_)
       if (v.on && v.id == id) v.slide.start(v.pitch, pitch, seconds, sr_), v.target = pitch;
   }
   void onNoteOff(uint32_t id) override {
+    if (sfzOn_) {
+      sfz_->noteOff(id);
+      return;
+    }
     if (mode_ != PlayPoly) {
       int k = 0;
       for (int i = 0; i < nStack_; ++i)
@@ -430,6 +504,7 @@ class MultiSamplerGen final : public Generator {
   }
   // K-165: cut groups, mono and the voice limit choke the note over 4 ms (one-shots too).
   void onCut(uint32_t id) override {
+    if (sfzOn_) sfz_->cut(id);
     for (auto& v : voices_)
       if (v.on && v.id == id) v.held = false, fadeOut(v);
   }
@@ -441,6 +516,7 @@ class MultiSamplerGen final : public Generator {
     if (v.zr->z.loop == LoopSustain) v.looping = false;
   }
   void onAllOff() override {
+    if (sfzOn_) sfz_->allOff();
     nStack_ = 0;
     for (auto& v : voices_)
       if (v.on) {
@@ -452,6 +528,7 @@ class MultiSamplerGen final : public Generator {
       }
   }
   void onKill() override {
+    sfz_->reset();
     for (auto& v : voices_) v = Voice{};
     nStack_ = 0;
   }
@@ -500,6 +577,11 @@ class MultiSamplerGen final : public Generator {
       int m = std::min(kChunk, n - off);
       float vol[kChunk];
       for (int i = 0; i < m; ++i) vol[i] = static_cast<float>(volZ_ = volume_ + (volZ_ - volume_) * 0.999);
+      if (sfzOn_) {
+        float tl[kChunk] = {}, tr[kChunk] = {};
+        sfz_->render(tl, tr, m);
+        for (int i = 0; i < m; ++i) L[off + i] += tl[i] * vol[i], R[off + i] += tr[i] * vol[i];
+      }
       for (auto& v : voices_)
         if (v.on) renderVoice(v, L + off, R + off, m, vol);
     }
@@ -606,6 +688,8 @@ class MultiSamplerGen final : public Generator {
  private:
   std::array<Voice, kMaxVoices> voices_{};
   std::shared_ptr<const MsRuntime> map_, prev_;
+  std::unique_ptr<sfzp::Player> sfz_;
+  bool sfzOn_ = false;
   double sr_ = 44100, transpose_ = 0, glide_ = 0, glideCoef_ = 1, velAmp_ = 0.7, volume_ = 0.8, volZ_ = -1;
   double env_[5] = {0.002, 0, 1, 1, 0.3}, modEnv_[4] = {0.005, 0.6, 0, 0.3};
   double cutoff_ = 8000, reso_ = 0.1, keyTrack_ = 0, velCut_ = 0, envAmt_ = 0, modPitch_ = 0;

@@ -172,10 +172,48 @@ class JuiceEndpoint : public Endpoint {
   }
 
   bool init() {
+    if (!createAgent(cfg_.localPort)) return false;
+    debugf("%s ice agent on UDP port %u (asked %u)%s", cfg_.tag.c_str(), static_cast<unsigned>(port_), static_cast<unsigned>(cfg_.localPort),
+           cfg_.controlling ? " controlling" : "");
+    if (settings_.portMapping) {
+      plumAcquire();
+      map_ = mapPort(port_);
+    }
+    return true;
+  }
+
+  // K-174: a fresh agent on the same port, credentials and remote descriptions (the router
+  // port mapping stays). When the last attempt found no public address with the default
+  // address server, this one asks the fallback server.
+  bool restart() override {
+    if (!agent_) return false;
+    const bool hadPublic = hasCandidateType("srflx");
+    juice_destroy(agent_);
+    agent_ = nullptr;
+    state_ = JUICE_STATE_DISCONNECTED;
+    gathered_ = false;
+    gatherStarted_ = false;
+    sendFailures_ = 0;
+    if (!hadPublic && settings_.stunHost == NetSettings().stunHost && !settings_.stunFallbackHost.empty()) useFallback_ = !useFallback_;
+    const uint16_t before = port_;
+    if (!createAgent(port_)) return false;
+    ++restarts_;
+    debugf("%s ice restarted (attempt %d) on UDP port %u%s%s", cfg_.tag.c_str(), restarts_ + 1, static_cast<unsigned>(port_),
+           port_ != before ? " (the old port was taken)" : "", useFallback_ ? ", fallback address server" : "");
+    gather();
+    return true;
+  }
+
+  // The agent on `wantPort` (a random one when 0 or taken), with our credentials and every
+  // remote description given so far.
+  bool createAgent(uint16_t wantPort) {
     juice_config_t c;
     std::memset(&c, 0, sizeof c);
     c.concurrency_mode = JUICE_CONCURRENCY_MODE_POLL;
-    if (!settings_.stunHost.empty()) {
+    if (useFallback_) {
+      c.stun_server_host = settings_.stunFallbackHost.c_str();
+      c.stun_server_port = settings_.stunFallbackPort;
+    } else if (!settings_.stunHost.empty()) {
       c.stun_server_host = settings_.stunHost.c_str();
       c.stun_server_port = settings_.stunPort;
     }
@@ -207,25 +245,45 @@ class JuiceEndpoint : public Endpoint {
     };
     c.user_ptr = this;
     for (int attempt = 0; attempt < 8 && !agent_; ++attempt) {
-      port_ = cfg_.localPort && attempt == 0 ? cfg_.localPort : randomPort();
+      port_ = wantPort && attempt < 2 ? wantPort : randomPort();
       c.local_port_range_begin = port_;
       c.local_port_range_end = port_;
       agent_ = juice_create(&c);
     }
     if (!agent_) return false;
-    debugf("%s ice agent on UDP port %u (asked %u)%s", cfg_.tag.c_str(), static_cast<unsigned>(port_), static_cast<unsigned>(cfg_.localPort),
-           cfg_.controlling ? " controlling" : "");
     if (!cfg_.ufrag.empty()) juice_set_local_ice_attributes(agent_, cfg_.ufrag.c_str(), cfg_.pwd.c_str());
+    remoteSet_ = false;
     if (!cfg_.remoteUfrag.empty()) {
       const std::string d = "a=ice-ufrag:" + cfg_.remoteUfrag + "\r\na=ice-pwd:" + cfg_.remotePwd + "\r\n";
       juice_set_remote_description(agent_, d.c_str());
       remoteSet_ = true;
     }
-    if (settings_.portMapping) {
-      plumAcquire();
-      map_ = mapPort(port_);
-    }
+    for (const auto& d : remotes_) applyRemote(d);
     return true;
+  }
+
+  bool hasCandidateType(const char* type) const {
+    char buf[JUICE_MAX_SDP_STRING_LEN];
+    if (!agent_ || juice_get_local_description(agent_, buf, sizeof buf) < 0) return false;
+    return std::strstr(buf, (std::string(" typ ") + type).c_str()) != nullptr;
+  }
+
+  void applyRemote(const std::string& d) {
+    if (!remoteSet_) {
+      juice_set_remote_description(agent_, d.c_str());
+      remoteSet_ = true;
+      return;
+    }
+    size_t at = 0;
+    while (at < d.size()) {
+      size_t nl = d.find('\n', at);
+      if (nl == std::string::npos) nl = d.size();
+      std::string line = d.substr(at, nl - at);
+      at = nl + 1;
+      while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+      if (line.rfind("a=candidate:", 0) == 0) juice_add_remote_candidate(agent_, line.c_str());
+    }
+    juice_set_remote_gathering_done(agent_);
   }
 
   void gather() override {
@@ -247,6 +305,7 @@ class JuiceEndpoint : public Endpoint {
     // loopback candidates only for tests on one computer
     const std::string all = buf;
     size_t at = 0;
+    int hosts = 0;
     while (at < all.size()) {
       size_t nl = all.find('\n', at);
       if (nl == std::string::npos) nl = all.size();
@@ -254,6 +313,12 @@ class JuiceEndpoint : public Endpoint {
       at = nl + 1;
       const bool loop = line.find(" 127.0.0.1 ") != std::string::npos || line.find(" ::1 ") != std::string::npos;
       if (line.rfind("a=end-of-candidates", 0) == 0) continue;
+      // K-174: shorter codes (chat apps cut long messages): link-local IPv6 addresses never
+      // reach another network, and a computer with many interfaces (VPNs, virtual machines)
+      // offers at most 8 of its own addresses
+      const bool host = line.find(" typ host") != std::string::npos;
+      if (host && (line.find(" fe80:") != std::string::npos || line.find(" FE80:") != std::string::npos)) continue;
+      if (host && line.rfind("a=candidate:", 0) == 0 && ++hosts > 8) continue;
       if (!loop || settings_.loopback) out += line;
     }
     if (map_) {
@@ -275,21 +340,8 @@ class JuiceEndpoint : public Endpoint {
       for (size_t at = d.find("a=candidate:"); at != std::string::npos; at = d.find("a=candidate:", at + 1)) ++n;
       debugf("%s remote description: %d candidates%s", cfg_.tag.c_str(), n, remoteSet_ ? " (added)" : "");
     }
-    if (!remoteSet_) {
-      juice_set_remote_description(agent_, d.c_str());
-      remoteSet_ = true;
-      return;
-    }
-    size_t at = 0;
-    while (at < d.size()) {
-      size_t nl = d.find('\n', at);
-      if (nl == std::string::npos) nl = d.size();
-      std::string line = d.substr(at, nl - at);
-      at = nl + 1;
-      while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
-      if (line.rfind("a=candidate:", 0) == 0) juice_add_remote_candidate(agent_, line.c_str());
-    }
-    juice_set_remote_gathering_done(agent_);
+    if (remotes_.size() < 16) remotes_.push_back(d);  // given again to a restarted agent
+    applyRemote(d);
   }
   void send(const std::string& d) override {
     if (!agent_) return;
@@ -333,6 +385,9 @@ class JuiceEndpoint : public Endpoint {
   int sendFailures_ = 0;
   uint16_t port_ = 0;
   std::shared_ptr<MapState> map_;
+  std::vector<std::string> remotes_;  // K-174: every remote description, for restarts
+  bool useFallback_ = false;          // K-174: the fallback address server
+  int restarts_ = 0;
 };
 
 class JuiceFabric : public Fabric {

@@ -60,7 +60,14 @@ struct Groove {
   std::vector<double> shift;     // per grid line (cycled): fraction of a grid cell, -0.5..0.5
   std::vector<double> velocity;  // per grid line (cycled): velocity factor (empty = unchanged)
 };
-const std::vector<Groove>& grooves();  // index 0 = straight
+const std::vector<Groove>& grooves();  // index 0 = straight; the swing presets' factory list (K-151)
+}  // namespace gl::tools
+namespace gl::groove {
+struct Preset;
+}
+namespace gl::tools {
+// A swing preset as a quantize groove (shifts = timing x amount). `name` points into the preset.
+Groove grooveOf(const groove::Preset& p);
 struct QuantizeOpts {
   Tick grid = 24;
   double startStrength = 1.0;  // 0..1 how far starts move to the target
@@ -79,6 +86,7 @@ void quantizeEx(std::vector<Note>& notes, NoteSel& sel, const QuantizeOpts& o);
 // quantizeWithGroove.
 std::vector<double> extractGroove(const std::vector<Note>& notes, Tick grid, int cycle);
 void quantizeWithShifts(std::vector<Note>& notes, NoteSel& sel, QuantizeOpts o, const std::vector<double>& shift);
+void quantizeWithGroove(std::vector<Note>& notes, NoteSel& sel, QuantizeOpts o, const Groove& g);  // shifts and accents
 
 // ------------------------------------------------------------------------ chop ----
 struct ChopPattern {

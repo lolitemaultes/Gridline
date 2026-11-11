@@ -1,5 +1,5 @@
-// Gridline — "plasma" pack: the wavetable editor (replaces the page and the
-// lower panel). Frame strip, a drawable waveform (freehand / line / smooth
+// Gridline — "plasma" pack: the table editor (an overlay over the stage and
+// the dock). Frame list, a drawable waveform (freehand / line / smooth
 // brushes, snap grid), editable harmonics, formulas (x = -1..1 across the
 // cycle, y = 0..1 across the table, in = the current sample) and table
 // processing (normalize, DC, reverse, invert, morph, resize, smooth).
@@ -19,14 +19,10 @@ namespace gl::packs::plasma::ui {
 
 namespace {
 
-// layout (the Serum 2 editor's arrangement): harmonics band on top, brushes
-// on the left, waveform in the centre, table / process / grid on the right,
-// frame strip and the position / clipboard / formula bar at the bottom.
-constexpr float kLeftW = 150, kRightX = 1030;
-constexpr float kHarmY = kPageY, kHarmH = 140, kMagH = 100;
-constexpr float kWaveY = kPageY + kHarmH, kWaveH = 304;
-constexpr float kFramesY = kWaveY + kWaveH, kFramesH = 66;
-constexpr float kBarY = kFramesY + kFramesH;
+// layout: a tool bar across the top (layer, drawing tools, close); the frame
+// list down the left side; the waveform, then the partials under it, then the
+// frame / clipboard / formula line; table, files, processing and grid in the
+// right column.
 constexpr int kHarm = 256;
 constexpr int kMaxFrames = 256;
 const double kTau = 6.283185307179586;
@@ -50,6 +46,25 @@ Frames currentFrames(const Ctx& c, int o) {
   return f;
 }
 
+// Saves frames as a WAV of 2048-sample frames (a save dialog).
+void exportFrames(Ctx& c, const Frames& F, const std::string& name) {
+  App& a = c.a;
+  Frames copy = F;
+  a.fileDialog = {};
+  a.fileDialog.open = true;
+  a.fileDialog.save = true;
+  a.fileDialog.title = i18n::tr("Export wavetable");
+  const char* hm = std::getenv("HOME");
+  a.fileDialog.dir = hm ? hm : ".";
+  a.fileDialog.name = (name.empty() ? std::string("table") : name) + ".wav";
+  a.fileDialog.exts = {".wav"};
+  a.fileDialog.onOk = [&a, copy](const std::string& p) {
+    AudioBuffer b(1, copy.size() * static_cast<size_t>(kFrameSize));
+    for (size_t i = 0; i < copy.size(); ++i) std::copy(copy[i].begin(), copy[i].end(), b.plane(0) + i * static_cast<size_t>(kFrameSize));
+    a.notify(writeWav(p, b, 44100, 24) ? "Exported the wavetable" : "Could not write the file", false);
+  };
+}
+
 // Stores frames as the oscillator's custom table (one undo step).
 void storeFrames(Ctx& c, int o, Frames f, const char* label) {
   if (f.empty()) return;
@@ -67,18 +82,6 @@ void storeFrames(Ctx& c, int o, Frames f, const char* label) {
     d.tableName = name.empty() ? "Custom" : name;
     d.frames = std::move(f);
     st.params[static_cast<size_t>(pk)] = 0;
-  });
-}
-
-// Selects a factory table (no copy: the oscillator plays it by index, one undo step).
-void selectFactory(Ctx& c, int o, int index) {
-  const int pk = oscP(o, O_Table);
-  editState(c.a, c.t, "Load table", [&](PluginState& st, Model& m) {
-    auto& d = m.osc[static_cast<size_t>(o)];
-    d.table.clear();
-    d.tableName.clear();
-    d.frames.clear();
-    st.params[static_cast<size_t>(pk)] = static_cast<float>(index + 1);
   });
 }
 
@@ -346,19 +349,18 @@ const Harm& harmOf(const std::vector<float>& x) {
 
 void wtEditor(Ctx& c) {
   Ui& u = c.u;
+  const Pal& P = c.P;
   const int o = std::clamp(u.wtOsc, 0, kOscs - 1);
-  panelRect(c, 0, kPageY, kW, kStripY - kPageY, c.P.frame);
-  // frames: tools (left), harmonics + zoom (top), waveform, table tools (right), frames strip, bottom bar
-  frameBox(c, kLeftW, kPageY, kW - kLeftW, kFramesY - kPageY);
+  panelRect(c, 0, kTopH, kW, kPlayY - kTopH, P.frame);
   OscData& d = c.m.osc[static_cast<size_t>(o)];
   // A factory or file table is shown from a copy; the first edit stores it as the
   // oscillator's custom table (opening the editor alone changes nothing).
   const bool custom = d.table == "custom" && !d.frames.empty();
-  static Frames view;
-  static std::string viewKey;
-  if (!custom) {
-    const std::string key = std::to_string(o) + "|" + d.table + "|" + std::to_string(vali(c, oscP(o, O_Table)));
-    if (key != viewKey || view.empty()) view = currentFrames(c, o), viewKey = key;
+  Frames& view = u.wtView;
+  if (!custom && !u.wtPending) {  // an undo or redo brings the stored table back into the copy
+    const std::string key = std::to_string(o) + "|" + d.table + "|" + std::to_string(vali(c, oscP(o, O_Table))) + "|" +
+                            std::to_string(c.a.doc.history().stateSerial());
+    if (key != u.wtViewKey || view.empty()) view = currentFrames(c, o), u.wtViewKey = key;
   }
   Frames& F = custom ? d.frames : view;
   std::string shownName = d.tableName;
@@ -367,171 +369,343 @@ void wtEditor(Ctx& c) {
     const int ti = std::max(1, vali(c, oscP(o, O_Table))) - 1;
     if (ti < static_cast<int>(fn.size())) shownName = fn[static_cast<size_t>(ti)];
   }
+  if (shownName.empty()) shownName = "Custom";
   const int nf = static_cast<int>(F.size());
   u.wtFrame = std::clamp(u.wtFrame, 0, nf - 1);
   auto& cur = F[static_cast<size_t>(u.wtFrame)];
-  static bool pending = false;  // edited in place: committed when the gesture ends
+  bool& pending = u.wtPending;  // edited in place: committed when the gesture ends
   const char* did = nullptr;    // a table operation (stored at the end of the frame)
   Frames next;
+  const ImU32 col = partCol(c, o);
+  KnobColour kc(col);
 
-  // ================================================================ left: oscillator + brushes
-  frameBox(c, 0, kPageY, kLeftW, kFramesY - kPageY, c.P.panelLo);
-  textC(c, kLeftW * 0.5f, kPageY + 8, "OSC", c.P.label, ty::kCap, true);
-  for (int i = 0; i < kOscs; ++i) {
-    const char* nm[] = {"A", "B", "C"};
-    ImGui::PushID(i + 9000);
-    if (button(c, "osc", 12, kPageY + 24 + i * 23, kLeftW - 24, 20, nm[i], i == o, 9)) u.wtOsc = i, u.wtFrame = 0;
-    ImGui::PopID();
-  }
-  if (button(c, "close", 12, kPageY + 100, kLeftW - 24, 24, "CLOSE EDITOR", false, 8)) u.wtEdit = false;
-  if (ImGui::IsItemHovered()) c.a.setHint("Back to the oscillator page (the table stays edited)");
+  // ================================================================ head: the layer, its table, the three layers
   {
-    const float by = kWaveY + 8;
-    textC(c, kLeftW * 0.5f, by, "BRUSH", c.P.label, ty::kCap, true);
-    for (int b = 0; b < BrCount; ++b) {
-      const float bx = 14 + (b % 2) * 62, yy = by + 18 + (b / 2) * 34;
-      ImGui::PushID(b + 9200);
-      ImGui::SetCursorScreenPos(c.p(bx, yy));
-      if (ImGui::InvisibleButton("##b", c.F.sz(58, 30))) u.wtBrush = b;
-      const bool on = u.wtBrush == b, hv = ImGui::IsItemHovered();
-      panelRect(c, bx, yy, 58, 30, on ? c.P.headOn : (hv ? c.P.panelHi : c.P.panel), 3);
-      if (on) c.dl->AddRect(c.p(bx, yy), c.p(bx + 58, yy + 30), theme::withAlpha(c.P.accent, 0.45f), c.s(3));
-      brushIcon(c, b, bx + 12, yy + 6, 34, 18, on ? c.P.accent : c.P.textDim);
-      if (hv) c.a.setHint(std::string("Brush: ") + kBrushName[b] + (b >= BrFlat ? " (fills each grid cell the pointer passes)" : ""));
+    char title[16], sub[96];
+    std::snprintf(title, sizeof title, "Layer %d", o + 1);
+    std::snprintf(sub, sizeof sub, "%s, %d frame%s", shownName.c_str(), nf, nf == 1 ? "" : "s");
+    u.back = VLayer;
+    advHead(c, title, sub, col, -1);
+    const float w = M(194), x = kAdvIX1 - w, y = kAdvHeadY - M(14);
+    const int hit = segPick(c, "layers", x, y, w, M(28), {"Layer 1", "Layer 2", "Layer 3"}, o, false, T(12));
+    if (hit >= 0 && hit != o) u.wtOsc = hit, u.wtFrame = 0;
+    textR(c, x - M(14), kAdvHeadY - T(11.5f) * 0.68f, "Esc or Back to return", P.textFaint, T(11.5f), false);
+  }
+  const float lx = kAdvIX0, lr = M(1012), lw = lr - lx, rx = M(1030), rw = kAdvIX1 - rx;
+  const float ty = kAdvBodyY, th = M(28);
+  // ================================================================ tool row: the view, the frame, the clipboard
+  {
+    const int hit = segPick(c, "view", lx, ty, M(152), th, {"Edit frame", "3D view"}, u.wt3dEdit ? 1 : 0, false, T(12));
+    if (hit >= 0) u.wt3dEdit = hit == 1;
+    float x = lx + M(152) + M(16);
+    text(c, x, ty + th * 0.5f - T(12) * 0.68f, "Frame", P.textFaint, T(12), false);
+    x += textW(c, "Frame", T(12), false) + M(10);
+    {
+      char b[24];
+      std::snprintf(b, sizeof b, "%d", u.wtFrame + 1);
+      char of[16];
+      std::snprintf(of, sizeof of, "of %d", nf);
+      MonoText mono;
+      const float fw = textW(c, b, T(12), false) + textW(c, of, T(11), false) + M(28);
+      c.dl->AddRectFilled(c.p(x, ty), c.p(x + fw, ty + th), P.field, c.s(M(4)));
+      c.dl->AddRect(c.p(x, ty), c.p(x + fw, ty + th), P.line, c.s(M(4)));
+      text(c, x + M(10), ty + th * 0.5f - T(12) * 0.68f, b, P.text, T(12), false);
+      text(c, x + M(18) + textW(c, b, T(12), false), ty + th * 0.5f - T(11) * 0.68f, of, P.label, T(11), false);
+      ImGui::SetCursorScreenPos(c.p(x, ty));
+      ImGui::InvisibleButton("##framedrag", c.F.sz(fw, th));
+      if (ImGui::IsItemHovered()) c.a.setHint("Drag up or down to pick a frame (arrow keys too)"), ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+      static float acc = 0;
+      if (ImGui::IsItemActive()) {
+        acc -= ImGui::GetIO().MouseDelta.y / 6.f;
+        const int st = static_cast<int>(acc);
+        if (st) u.wtFrame = std::clamp(u.wtFrame + st, 0, nf - 1), acc -= st;
+      } else {
+        acc = 0;
+      }
+      x += fw + M(10);
+    }
+    for (int i = 0; i < 2; ++i) {
+      ImGui::PushID(i + 9400);
+      if (btnLook(c, "step", x, ty, M(30), th, "", false, false, T(12))) u.wtFrame = std::clamp(u.wtFrame + (i ? 1 : -1), 0, nf - 1);
+      if (ImGui::IsItemHovered()) c.a.setHint(i ? "The next frame" : "The frame before");
+      const ImVec2 m = c.p(x + M(15), ty + th * 0.5f);
+      const float a = c.s(M(3)), sg = i ? -1.f : 1.f;
+      c.dl->AddLine(ImVec2(m.x + a * 0.5f * sg, m.y - a), ImVec2(m.x - a * 0.5f * sg, m.y), P.label, std::max(1.f, c.s(M(1.3f))));
+      c.dl->AddLine(ImVec2(m.x - a * 0.5f * sg, m.y), ImVec2(m.x + a * 0.5f * sg, m.y + a), P.label, std::max(1.f, c.s(M(1.3f))));
+      x += M(30) + M(10);
       ImGui::PopID();
     }
+    // the right end: Copy, Paste, Add frame, more
+    float r = lr;
+    {
+      r -= th;
+      if (btnLook(c, "framemore", r, ty, th, th, "...", false, false, T(12))) ImGui::OpenPopup("##wtframes");
+      if (ImGui::IsItemHovered()) c.a.setHint("Remove frames, put them in order, duplicate this one");
+      if (ImGui::BeginPopup("##wtframes")) {
+        next = F;
+        if (ImGui::MenuItem(i18n::tr("Duplicate this frame"), nullptr, false, nf < kMaxFrames))
+          next.insert(next.begin() + u.wtFrame + 1, cur), did = "Duplicate frame";
+        ImGui::Separator();
+        if (ImGui::MenuItem(i18n::tr("Remove this frame"), nullptr, false, nf > 1)) next.erase(next.begin() + u.wtFrame), did = "Remove frame";
+        if (ImGui::MenuItem(i18n::tr("Remove the frames after this one"), nullptr, false, u.wtFrame + 1 < nf))
+          next.resize(static_cast<size_t>(u.wtFrame) + 1), did = "Remove frames";
+        if (ImGui::MenuItem(i18n::tr("Remove the frames before this one"), nullptr, false, u.wtFrame > 0))
+          next.erase(next.begin(), next.begin() + u.wtFrame), did = "Remove frames", u.wtFrame = 0;
+        if (ImGui::MenuItem(i18n::tr("Keep every second frame"), nullptr, false, nf > 2)) {
+          Frames k;
+          for (int i = 0; i < nf; i += 2) k.push_back(F[static_cast<size_t>(i)]);
+          next = k, did = "Remove frames";
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem(i18n::tr("Order by brightness"))) {
+          std::stable_sort(next.begin(), next.end(), [](const std::vector<float>& p, const std::vector<float>& q) { return brightness(p) < brightness(q); });
+          did = "Sort frames";
+        }
+        if (ImGui::MenuItem(i18n::tr("Order by level"))) {
+          std::stable_sort(next.begin(), next.end(), [](const std::vector<float>& p, const std::vector<float>& q) { return rms(p) < rms(q); });
+          did = "Sort frames";
+        }
+        if (ImGui::MenuItem(i18n::tr("Reverse the order"))) std::reverse(next.begin(), next.end()), did = "Reverse order";
+        ImGui::EndPopup();
+      }
+      r -= M(10);
+    }
+    struct B {
+      const char* id;
+      const char* label;
+      const char* hint;
+    };
+    const B bs[3] = {{"add", "Add frame", "Add a frame after this one (a copy of it)"}, {"paste", "Paste", "Paste the copied frame over this one"}, {"copy", "Copy", "Copy this frame"}};
+    for (int i = 0; i < 3; ++i) {
+      const float w = textW(c, bs[i].label, T(12), false) + M(26);
+      r -= w;
+      if (btnLook(c, bs[i].id, r, ty, w, th, bs[i].label, false, false, T(12))) {
+        if (i == 2) clipFrame() = cur;
+        if (i == 1 && clipFrame().size() == cur.size()) next = F, next[static_cast<size_t>(u.wtFrame)] = clipFrame(), did = "Paste frame";
+        if (i == 0 && nf < kMaxFrames) next = F, next.insert(next.begin() + u.wtFrame + 1, cur), did = "Add frame", u.wtFrame += 1;
+      }
+      if (ImGui::IsItemHovered()) c.a.setHint(bs[i].hint);
+      r -= M(10);
+    }
   }
-
-  // ================================================================ top: harmonics (magnitude + phase)
+  // ================================================================ the frame (or the whole table in depth)
+  const float wy = ty + th + M(15), wb = kTopH + M(572), wh = wb - wy;
   {
-    const float x0 = kLeftW + 4, x1 = kW - 82, w = x1 - x0;
-    displayWellPublic(c, x0, kHarmY + 2, w, kMagH);
-    displayWellPublic(c, x0, kHarmY + kMagH + 6, w, kHarmH - kMagH - 10);
+    wellLook(c, lx, wy, lw, wh);
+    const int gx = std::max(1, u.wtGrid), gy = std::max(1, u.wtGridY);
+    const float x0 = lx + M(10), w = lw - M(20), y0 = wy + M(30), h = wh - M(44);
+    {
+      char b[96];
+      std::snprintf(b, sizeof b, "Frame %d, drawing with %s%s%s", u.wtFrame + 1, kBrushName[u.wtBrush], u.wtGrid > 1 ? ", snap 1/" : "",
+                    u.wtGrid > 1 ? std::to_string(u.wtGrid).c_str() : "");
+      MonoText mono;
+      capsText(c, lx + M(12), wy + M(10), u.wt3dEdit ? "The whole table: drag across it to move through the frames" : b, P.textFaint, T(10), M(0.7f));
+    }
+    if (u.wt3dEdit) {
+      tableDepthAt(c, o, x0, y0, w, h);
+      ImGui::SetCursorScreenPos(c.p(x0, y0));
+      ImGui::InvisibleButton("##depth", c.F.sz(w, h));
+      if (ImGui::IsItemActive()) u.wtFrame = std::clamp(static_cast<int>((ImGui::GetIO().MousePos.x - c.p(x0, 0).x) / c.s(w) * nf), 0, nf - 1);
+      if (ImGui::IsItemHovered()) c.a.setHint("Drag across to pick a frame, then Edit frame to draw it");
+    } else {
+      for (int i = 1; i < gx; ++i) vline(c, x0 + w * i / gx, y0, y0 + h, theme::withAlpha(P.text, 0.05f));
+      for (int i = 1; i < gy; ++i) hline(c, x0, x0 + w, y0 + h * i / gy, theme::withAlpha(P.text, 0.05f));
+      if (gx <= 1) gridLook(c, x0, y0, w, h, 8, 4, false);
+      hline(c, x0, x0 + w, y0 + h * 0.5f, theme::withAlpha(P.text, 0.1f));
+      if (u.wtFrame > 0) wave(c, F[static_cast<size_t>(u.wtFrame - 1)], x0, y0, w, h, theme::withAlpha(P.textFaint, 0.4f), std::max(1.f, c.s(1)), false);
+      {  // this frame: a soft fill, the line with a low glow
+        const int n = std::max(8, static_cast<int>(c.s(w) / 2));
+        std::vector<ImVec2> pts;
+        for (int i = 0; i <= n; ++i) {
+          const size_t s = std::min(cur.size() - 1, static_cast<size_t>(static_cast<double>(i) / n * static_cast<double>(cur.size())));
+          pts.push_back(c.p(x0 + w * i / n, y0 + h * 0.5f - std::clamp(cur[s], -1.2f, 1.2f) * h * 0.46f));
+        }
+        fillUnder(c, pts, c.p(0, y0 + h * 0.5f).y, col, 0.22f, 0.04f, c.p(0, y0).y);
+        glowLine(c, pts, col, M(2));
+      }
+      ImGui::SetCursorScreenPos(c.p(x0, y0));
+      ImGui::InvisibleButton("##wave", c.F.sz(w, h));
+      const ImVec2 m = ImGui::GetIO().MousePos, p0 = c.p(x0, y0);
+      const float fx = std::clamp((m.x - p0.x) / c.s(w), 0.f, 0.99999f);
+      float fy = std::clamp(((p0.y + c.s(h) * 0.5f) - m.y) / (c.s(h) * 0.46f), -1.f, 1.f);
+      if (u.wtGridY > 1) fy = std::round(fy * u.wtGridY * 0.5f) / (u.wtGridY * 0.5f);
+      static float lastX = -1, lastY = 0, lineX = 0, lineY = 0;
+      static uint32_t rng = 1;
+      const size_t n = cur.size();
+      auto fill = [&](float xa, float ya, float xb, float yb) {
+        if (xa > xb) std::swap(xa, xb), std::swap(ya, yb);
+        const size_t a = static_cast<size_t>(xa * static_cast<float>(n)), b = std::min(n, static_cast<size_t>(xb * static_cast<float>(n)) + 1);
+        for (size_t s = a; s < b; ++s) {
+          const float t = xb > xa ? (static_cast<float>(s) / static_cast<float>(n) - xa) / (xb - xa) : 0.f;
+          cur[s] = ya + (yb - ya) * std::clamp(t, 0.f, 1.f);
+        }
+      };
+      const int cells = u.wtGrid > 1 ? u.wtGrid : 8;
+      auto cellFill = [&](int cell, float amp) {
+        const size_t a = n * static_cast<size_t>(cell) / static_cast<size_t>(cells), b = n * static_cast<size_t>(cell + 1) / static_cast<size_t>(cells);
+        for (size_t s = a; s < b; ++s) cur[s] = amp * shapeAt(u.wtBrush, static_cast<float>(s - a) / static_cast<float>(b - a), rng);
+      };
+      if (ImGui::IsItemActivated()) lastX = fx, lastY = fy, lineX = fx, lineY = fy;
+      if (ImGui::IsItemActive()) {
+        if (u.wtBrush == BrFree) {
+          if (u.wtGrid > 1) {
+            const float c0 = std::floor(fx * u.wtGrid) / u.wtGrid;
+            fill(c0, fy, c0 + 1.f / u.wtGrid - 1e-6f, fy);
+          } else {
+            fill(lastX, lastY, fx, fy);
+          }
+          lastX = fx, lastY = fy;
+          pending = true;
+        } else if (u.wtBrush == BrLine) {
+          c.dl->AddLine(c.p(x0 + w * lineX, y0 + h * 0.5f - lineY * h * 0.46f), c.p(x0 + w * fx, y0 + h * 0.5f - fy * h * 0.46f), P.mod, c.s(1.5f));
+        } else {
+          const int ca = static_cast<int>(std::min(lastX, fx) * cells), cb = static_cast<int>(std::max(lastX, fx) * cells);
+          for (int k = ca; k <= cb && k < cells; ++k) cellFill(k, fy);
+          lastX = fx;
+          pending = true;
+        }
+      }
+      if (ImGui::IsItemDeactivated() && u.wtBrush == BrLine) fill(lineX, lineY, fx, fy), pending = true;
+      if (ImGui::IsItemHovered()) {
+        const float vx = x0 + w * fx;
+        for (float yy = y0; yy < y0 + h; yy += M(6)) c.dl->AddLine(c.p(vx, yy), c.p(vx, std::min(y0 + h, yy + M(3))), theme::withAlpha(col, 0.6f));
+        char b[24];
+        std::snprintf(b, sizeof b, "%+.2f", static_cast<double>(fy));
+        MonoText mono;
+        text(c, vx + M(8), y0 + h * 0.5f - fy * h * 0.46f - M(18), b, P.text, T(11), false);
+        c.a.setHint("Draw on the frame \xC2\xB7 \xE2\x86\x90 \xE2\x86\x92 change frame");
+      }
+      // the whole table, small, at the top right (playing)
+      {
+        const float iw = std::min(M(230), w * 0.3f), ih = M(140), ix = lx + lw - iw - M(14), iy = wy + M(12);
+        c.dl->AddRectFilled(c.p(ix, iy), c.p(ix + iw, iy + ih), P.well, c.s(M(4)));
+        c.dl->AddRect(c.p(ix, iy), c.p(ix + iw, iy + ih), P.lineHi, c.s(M(4)));
+        {
+          MonoText mono;
+          capsText(c, ix + M(8), iy + M(8), c.hasLive && c.live.voices > 0 ? "Whole table, playing" : "Whole table", P.textFaint, T(9.5f), M(0.6f));
+        }
+        tableDepthAt(c, o, ix + M(8), iy + M(22), iw - M(16), ih - M(28));
+      }
+    }
+  }
+  // ================================================================ harmonics: drag a bar (levels, or phases)
+  {
+    const float hy = kTopH + M(588);
     const int nh = std::clamp(32 << std::clamp(u.wtZoom, 0, 3), 32, kHarm);
+    char note[24];
+    std::snprintf(note, sizeof note, "%d shown", nh);
+    float r = sectionHead(c, lx, hy, lw, "Harmonics", u.wtPhases ? "drag a mark to change one partial's phase" : "drag a bar to change one partial", "");
+    {  // how many, and levels or phases
+      const float w = M(150);
+      r -= w;
+      MonoText mono;
+      const int hit = segPick(c, "hz", r, hy, w, M(22), {"32", "64", "128", "256"}, std::clamp(u.wtZoom, 0, 3), true, T(10));
+      if (hit >= 0) u.wtZoom = hit;
+      r -= M(8);
+    }
+    {
+      const float w = M(130);
+      r -= w;
+      const int hit = segPick(c, "lp", r, hy, w, M(22), {"Levels", "Phases"}, u.wtPhases ? 1 : 0, false, T(10.5f));
+      if (hit >= 0) u.wtPhases = hit == 1;
+    }
+    const float by = hy + M(26), bh = M(86), x0 = lx, w = lw;
+    wellLook(c, x0, by, w, bh);
     const Harm& H = harmOf(cur);
     float peak = 1e-6f;
     for (int i = 1; i <= nh; ++i) peak = std::max(peak, H.mag(i));
-    const float bw = w / nh;
-    const float my0 = kHarmY + 4, mh = kMagH - 4, py0 = kHarmY + kMagH + 8, ph = kHarmH - kMagH - 14;
+    const float bw = w / nh, my0 = by + M(14), mh = bh - M(18);
+    {
+      MonoText mono;
+      for (int i = 1; i <= nh; i += nh / 8) text(c, x0 + (i - 1) * bw + M(4), by + M(3), std::to_string(i).c_str(), P.textFaint, T(9), false);
+    }
     for (int i = 1; i <= nh; ++i) {
       const float bx = x0 + (i - 1) * bw;
-      const float v = std::sqrt(std::min(1.f, H.mag(i) / std::max(1.f, peak)));
-      if (v > 0.003f)
-        skin::gradientRect(c.dl, c.p(bx + 0.5f, my0 + mh - v * mh), c.p(bx + bw - 0.5f, my0 + mh), skin::lighten(c.P.accent, 0.15f), c.P.accentDim, 0);
-      // J-202: a phase reads as a short mark at its height (no bars: they read as noise)
-      if (H.mag(i) > 1e-4f) {
-        const float pv = phaseOf(H, i) / 6.2831853f;
-        const float yy = py0 + ph - pv * ph;
-        c.dl->AddRectFilled(c.p(bx + 1, yy - 1), c.p(bx + bw - 1, yy + 1), theme::withAlpha(c.P.mod, 0.85f), c.s(0.5f));
+      if (u.wtPhases) {
+        if (H.mag(i) > 1e-4f) {
+          const float pv = phaseOf(H, i) / 6.2831853f, yy = my0 + mh - pv * mh;
+          c.dl->AddRectFilled(c.p(bx + bw * 0.2f, yy - M(1)), c.p(bx + bw * 0.8f, yy + M(1)), theme::withAlpha(P.mod, 0.9f), c.s(M(0.5f)));
+        }
+      } else {
+        const float v = std::sqrt(std::min(1.f, H.mag(i) / std::max(1.f, peak)));
+        const float top = my0 + mh - std::max(v * mh, M(1.5f));
+        c.dl->AddRectFilled(c.p(bx + bw * 0.18f, top), c.p(bx + bw * 0.82f, my0 + mh), v > 0.003f ? col : theme::withAlpha(col, 0.25f), c.s(M(1)));
       }
     }
-    // magnitudes: drag sets, right-drag clears
     ImGui::SetCursorScreenPos(c.p(x0, my0));
-    ImGui::InvisibleButton("##mag", c.F.sz(w, mh), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+    ImGui::InvisibleButton("##harm", c.F.sz(w, mh), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
     const ImVec2 m = ImGui::GetIO().MousePos;
     const int hi = std::clamp(1 + static_cast<int>((m.x - c.p(x0, 0).x) / c.s(bw)), 1, nh);
     if (ImGui::IsItemActive()) {
       const float hv = std::clamp((c.p(0, my0 + mh).y - m.y) / c.s(mh), 0.f, 1.f);
-      setHarm(cur, H, hi, ImGui::IsMouseDown(1) ? 0.f : hv * hv * std::max(1.f, peak));
-      pending = true;
+      if (u.wtPhases) {
+        if (H.mag(hi) > 1e-4f) setPhase(cur, H, hi, hv * 6.2831853f), pending = true;
+      } else {
+        setHarm(cur, H, hi, ImGui::IsMouseDown(1) ? 0.f : hv * hv * std::max(1.f, peak));
+        pending = true;
+      }
     }
     if (ImGui::IsItemHovered()) {
       char b[48];
       std::snprintf(b, sizeof b, "#%d  %.1f dB", hi, 20.0 * std::log10(std::max(1e-6, static_cast<double>(H.mag(hi)))));
       MonoText mono;
-      textR(c, x1 - 6, my0 + 3, b, c.P.textDim, ty::kCap, false);
-      c.a.setHint("Harmonics: drag to set levels (phases kept) \xC2\xB7 right-drag: remove");
-    }
-    ImGui::SetCursorScreenPos(c.p(x0, py0));
-    ImGui::InvisibleButton("##phs", c.F.sz(w, ph));
-    if (ImGui::IsItemActive()) {
-      const int pi = std::clamp(1 + static_cast<int>((m.x - c.p(x0, 0).x) / c.s(bw)), 1, nh);
-      const float pv = std::clamp((c.p(0, py0 + ph).y - m.y) / c.s(ph), 0.f, 1.f);
-      if (H.mag(pi) > 1e-4f) setPhase(cur, H, pi, pv * 6.2831853f), pending = true;
-    }
-    if (ImGui::IsItemHovered()) c.a.setHint("Phases: drag to set the phase of each harmonic");
-    // zoom
-    const float zx = x1 + 6;
-    textC(c, zx + 35, kHarmY + 10, "ZOOM", c.P.label, ty::kCap, true);
-    int z = u.wtZoom;
-    const std::string zt = std::to_string(32 << z);
-    if (stepperFree(c, "zoom", z, 0, 3, zx + 4, kHarmY + 24, 62, 20, zt.c_str())) u.wtZoom = z;
-    if (ImGui::IsItemHovered()) c.a.setHint("Harmonics shown");
-    textC(c, zx + 35, kHarmY + 56, "HARMONICS", c.P.label, ty::kCap, true);
-    textC(c, zx + 35, py0 + ph * 0.5f - 5, "PHASE", c.P.label, ty::kCap, true);
-  }
-
-  // ================================================================ centre: waveform
-  {
-    const float x0 = kLeftW + 4, w = kRightX - x0 - 2, y0 = kWaveY, h = kWaveH - 2;
-    displayWellPublic(c, x0, y0, w, h);
-    const int gx = std::max(1, u.wtGrid), gy = std::max(1, u.wtGridY);
-    for (int i = 1; i < gx; ++i) vline(c, x0 + w * i / gx, y0, y0 + h, c.P.grid);
-    for (int i = 1; i < gy; ++i) hline(c, x0, x0 + w, y0 + h * i / gy, c.P.grid);
-    hline(c, x0, x0 + w, y0 + h * 0.5f, c.P.gridStrong);
-    if (u.wtFrame > 0) wave(c, F[static_cast<size_t>(u.wtFrame - 1)], x0, y0, w, h, theme::withAlpha(c.P.textFaint, 0.45f), std::max(1.f, c.s(1)), false);
-    wave(c, cur, x0, y0, w, h, c.P.accent, std::max(1.5f, c.s(2)), true);
-    ImGui::SetCursorScreenPos(c.p(x0, y0));
-    ImGui::InvisibleButton("##wave", c.F.sz(w, h));
-    const ImVec2 m = ImGui::GetIO().MousePos, p0 = c.p(x0, y0);
-    const float fx = std::clamp((m.x - p0.x) / c.s(w), 0.f, 0.99999f);
-    float fy = std::clamp(((p0.y + c.s(h) * 0.5f) - m.y) / (c.s(h) * 0.46f), -1.f, 1.f);
-    if (u.wtGridY > 1) fy = std::round(fy * u.wtGridY * 0.5f) / (u.wtGridY * 0.5f);
-    static float lastX = -1, lastY = 0, lineX = 0, lineY = 0;
-    static uint32_t rng = 1;
-    const size_t n = cur.size();
-    auto fill = [&](float xa, float ya, float xb, float yb) {
-      if (xa > xb) std::swap(xa, xb), std::swap(ya, yb);
-      const size_t a = static_cast<size_t>(xa * static_cast<float>(n)), b = std::min(n, static_cast<size_t>(xb * static_cast<float>(n)) + 1);
-      for (size_t s = a; s < b; ++s) {
-        const float t = xb > xa ? (static_cast<float>(s) / static_cast<float>(n) - xa) / (xb - xa) : 0.f;
-        cur[s] = ya + (yb - ya) * std::clamp(t, 0.f, 1.f);
-      }
-    };
-    const int cells = u.wtGrid > 1 ? u.wtGrid : 8;
-    auto cellFill = [&](int cell, float amp) {
-      const size_t a = n * static_cast<size_t>(cell) / static_cast<size_t>(cells), b = n * static_cast<size_t>(cell + 1) / static_cast<size_t>(cells);
-      for (size_t s = a; s < b; ++s) cur[s] = amp * shapeAt(u.wtBrush, static_cast<float>(s - a) / static_cast<float>(b - a), rng);
-    };
-    if (ImGui::IsItemActivated()) lastX = fx, lastY = fy, lineX = fx, lineY = fy;
-    if (ImGui::IsItemActive()) {
-      if (u.wtBrush == BrFree) {
-        if (u.wtGrid > 1) {
-          const float c0 = std::floor(fx * u.wtGrid) / u.wtGrid;
-          fill(c0, fy, c0 + 1.f / u.wtGrid - 1e-6f, fy);
-        } else {
-          fill(lastX, lastY, fx, fy);
-        }
-        lastX = fx, lastY = fy;
-        pending = true;
-      } else if (u.wtBrush == BrLine) {
-        c.dl->AddLine(c.p(x0 + w * lineX, y0 + h * 0.5f - lineY * h * 0.46f), c.p(x0 + w * fx, y0 + h * 0.5f - fy * h * 0.46f), c.P.mod, c.s(1.5f));
-      } else {
-        // every cell between the last and the current pointer position
-        const int ca = static_cast<int>(std::min(lastX, fx) * cells), cb = static_cast<int>(std::max(lastX, fx) * cells);
-        for (int k = ca; k <= cb && k < cells; ++k) cellFill(k, fy);
-        lastX = fx;
-        pending = true;
-      }
-    }
-    if (ImGui::IsItemDeactivated() && u.wtBrush == BrLine) fill(lineX, lineY, fx, fy), pending = true;
-    if (ImGui::IsItemHovered()) {
-      char b[48];
-      std::snprintf(b, sizeof b, "%.0f%%   %+.2f", static_cast<double>(fx) * 100.0, static_cast<double>(fy));
-      textR(c, x0 + w - 8, y0 + 6, b, c.P.textDim, 8, true);
-      c.a.setHint("Draw with the brush \xC2\xB7 \xE2\x86\x90 \xE2\x86\x92 change frame");
+      textR(c, x0 + w - M(8), by + M(3), b, P.label, T(10), false);
+      c.a.setHint(u.wtPhases ? "Phases: drag to set the phase of each partial" : "Partials: drag to set levels (phases kept) \xC2\xB7 right-drag: remove");
     }
   }
-
-  // ================================================================ right: table, import / export, process, grid
+  // ================================================================ every frame in a row: click or drag to pick one
   {
-    const float x = kRightX + 10, w = kW - kRightX - 20;
-    frameBox(c, kRightX, kWaveY - 2, kW - kRightX, kWaveH + 2, c.P.panelLo);
-    float y = kWaveY + 8;
-    const auto& names = factoryTableNames();
-    int step = 0;
-    int pick = -1;
-    dropField(c, "tbl", x, y, w, 20, shownName.c_str(), [&] {
+    const float sy = kTopH + M(716), sh = M(50), x0 = lx, w = lw;
+    wellLook(c, x0, sy, w, sh);
+    const float fw = w / std::max(1, nf);
+    const int step = std::max(1, static_cast<int>(std::ceil(nf / std::max(1.f, c.s(w) / 6.f))));
+    for (int i = 0; i < nf; i += step) {
+      const bool sel = u.wtFrame >= i && u.wtFrame < i + step;
+      wave(c, F[static_cast<size_t>(i)], x0 + i * fw + M(1), sy + M(4), fw * step - M(2), sh - M(8), sel ? col : theme::withAlpha(col, 0.55f), std::max(1.f, c.s(M(1))), false);
+    }
+    const float sx = x0 + u.wtFrame * fw;
+    c.dl->AddRect(c.p(sx, sy + M(1)), c.p(sx + std::max(fw, M(10)), sy + sh - M(1)), col, c.s(M(2)), 0, std::max(1.f, c.s(M(1.3f))));
+    const float lp = c.hasLive && c.live.voices > 0 && c.live.oscOn[o] ? c.live.oscPos[o] : -1.f;
+    if (lp >= 0) {  // the frame playing now
+      const float px = x0 + w * std::clamp(lp, 0.f, 1.f);
+      c.dl->AddRectFilled(c.p(px - M(7), sy + sh + M(2)), c.p(px + M(7), sy + sh + M(4)), P.fam[FamLfo], c.s(M(1)));
+    }
+    ImGui::SetCursorScreenPos(c.p(x0, sy));
+    ImGui::InvisibleButton("##strip", c.F.sz(w, sh));
+    if (ImGui::IsItemActive()) u.wtFrame = std::clamp(static_cast<int>((ImGui::GetIO().MousePos.x - c.p(x0, 0).x) / c.s(fw)), 0, nf - 1);
+    if (ImGui::IsItemHovered()) c.a.setHint("Every frame: click or drag to pick one");
+  }
+  // ================================================================ right: table, draw, change frames, voice
+  auto card = [&](float y, float h, const char* title, const char* note) {
+    c.dl->AddRectFilled(c.p(rx, y), c.p(rx + rw, y + h), barBg(c), c.s(M(6)));
+    c.dl->AddRect(c.p(rx, y), c.p(rx + rw, y + h), P.line, c.s(M(6)));
+    text(c, rx + M(14), y + M(22) - T(13) * 0.68f, title, P.text, T(13), true);
+    if (note && *note) textR(c, rx + rw - M(14), y + M(22) - T(11) * 0.68f, note, P.textFaint, T(11), false);
+    return y + M(38);
+  };
+  const float ix = rx + M(14), iw = rw - M(28);
+  float cy = kTopH + M(88);
+  {  // Table
+    char note[48];
+    std::snprintf(note, sizeof note, "%d frames, %d points", nf, static_cast<int>(cur.size()));
+    float y = card(cy, M(122), "Table", note);
+    const float aw = M(30), fw = iw - aw * 2 - M(16);
+    ImGui::SetCursorScreenPos(c.p(ix, y));
+    if (ImGui::InvisibleButton("##tblpick", c.F.sz(fw, M(30)))) ImGui::OpenPopup("##tblmenu");
+    const bool hv = ImGui::IsItemHovered();
+    if (hv) c.a.setHint(shownName + ": click for every table");
+    c.dl->AddRectFilled(c.p(ix, y), c.p(ix + fw, y + M(30)), P.field, c.s(M(4)));
+    c.dl->AddRect(c.p(ix, y), c.p(ix + fw, y + M(30)), hv ? P.lineHi : P.line, c.s(M(4)));
+    {
+      std::string s = shownName;
+      while (s.size() > 3 && textW(c, s.c_str(), T(12), false) > fw - M(36)) s.pop_back();
+      text(c, ix + M(10), y + M(15) - T(12) * 0.68f, s.c_str(), P.text, T(12), false);
+      const ImVec2 m = c.p(ix + fw - M(14), y + M(15));
+      const float a = c.s(M(3.5f));
+      c.dl->AddLine(ImVec2(m.x - a, m.y - a * 0.5f), ImVec2(m.x, m.y + a * 0.5f), P.label, std::max(1.f, c.s(M(1.2f))));
+      c.dl->AddLine(ImVec2(m.x, m.y + a * 0.5f), ImVec2(m.x + a, m.y - a * 0.5f), P.label, std::max(1.f, c.s(M(1.2f))));
+    }
+    if (ImGui::BeginPopup("##tblmenu")) {
       if (custom) {
         char nb[64];
         std::snprintf(nb, sizeof nb, "%s", d.tableName.c_str());
@@ -539,21 +713,48 @@ void wtEditor(Ctx& c) {
         if (ImGui::InputText(i18n::tr("Name"), nb, sizeof nb, ImGuiInputTextFlags_EnterReturnsTrue)) d.tableName = nb, commit(c, "Rename table");
         ImGui::Separator();
       }
-      for (int i = 0; i < static_cast<int>(names.size()); ++i)
-        if (ImGui::MenuItem(names[static_cast<size_t>(i)].c_str(), nullptr, !custom && names[static_cast<size_t>(i)] == shownName)) pick = i;
-    }, true, &step);
-    if (step) {
-      int idx = 0;
-      for (int i = 0; i < static_cast<int>(names.size()); ++i)
-        if (names[static_cast<size_t>(i)] == shownName) idx = i;
-      pick = (idx + step + static_cast<int>(names.size())) % static_cast<int>(names.size());
+      tableMenuPublic(c, o);
+      ImGui::EndPopup();
     }
-    if (pick >= 0) {
-      selectFactory(c, o, pick);
-      return;
+    for (int i = 0; i < 2; ++i) {  // the table before / after in the catalog
+      ImGui::PushID(i + 9500);
+      const float bx = ix + fw + M(8) + i * (aw + M(8));
+      if (btnLook(c, "tstep", bx, y, aw, M(30), "", false, false, T(12))) {
+        const TableCatalog& cat = tableCatalogUi(c);
+        const int n = static_cast<int>(cat.entries.size());
+        int at = -1;
+        for (int e = 0; e < n; ++e) {
+          const TableEntry& te = cat.entries[static_cast<size_t>(e)];
+          if (te.factory > 0 ? (d.table.empty() && vali(c, oscP(o, O_Table)) == te.factory) : d.table == te.ref) at = e;
+        }
+        if (n > 0) {
+          const int nx = at < 0 ? 0 : (at + (i ? 1 : -1) + n) % n;
+          chooseTableEntry(c, o, cat.entries[static_cast<size_t>(nx)]);
+          ImGui::PopID();
+          return;
+        }
+      }
+      if (ImGui::IsItemHovered()) c.a.setHint(i ? "The next table" : "The table before");
+      const ImVec2 m = c.p(bx + aw * 0.5f, y + M(15));
+      const float a = c.s(M(3)), sg = i ? -1.f : 1.f;
+      c.dl->AddLine(ImVec2(m.x + a * 0.5f * sg, m.y - a), ImVec2(m.x - a * 0.5f * sg, m.y), P.label, std::max(1.f, c.s(M(1.3f))));
+      c.dl->AddLine(ImVec2(m.x - a * 0.5f * sg, m.y), ImVec2(m.x + a * 0.5f * sg, m.y + a), P.label, std::max(1.f, c.s(M(1.3f))));
+      ImGui::PopID();
     }
-    y += 30;
-    if (button(c, "imp", x, y, w * 0.5f - 2, 24, "IMPORT", false, 8))
+    y += M(30) + M(10);
+    const float bw = (iw - M(16)) / 3;
+    if (btnLook(c, "load", ix, y, bw, M(30), "Load", false, false, T(12)))
+      openFile(c, i18n::tr("Load wavetable"), {".wav"}, [o](App& a, const PluginTarget& t, const std::string& p) {
+        editState(a, t, "Load wavetable", [&](PluginState& st, Model& m) {
+          auto& od = m.osc[static_cast<size_t>(o)];
+          od.table = "file:" + p;
+          od.tableName = fs_stem(p);
+          od.frames.clear();
+          st.params[static_cast<size_t>(oscP(o, O_Table))] = 0;
+        });
+      });
+    if (ImGui::IsItemHovered()) c.a.setHint("Load: play a WAV from where it is (the sound keeps a link to the file)");
+    if (btnLook(c, "imp", ix + bw + M(8), y, bw, M(30), "Import", false, false, T(12)))
       openFile(c, i18n::tr("Load wavetable"), {".wav"}, [o](App& a, const PluginTarget& t, const std::string& p) {
         auto tb = loadTableFile(p);
         if (!tb) {
@@ -569,30 +770,63 @@ void wtEditor(Ctx& c) {
           st.params[static_cast<size_t>(oscP(o, O_Table))] = 0;
         });
       });
-    if (ImGui::IsItemHovered()) c.a.setHint("Load a WAV as frames (2048 samples each, or the cycle length the file states)");
-    if (button(c, "exp", x + w * 0.5f + 2, y, w * 0.5f - 2, 24, "EXPORT", false, 8)) {
-      App& a = c.a;
-      Frames copy = F;
-      a.fileDialog = {};
-      a.fileDialog.open = true;
-      a.fileDialog.save = true;
-      a.fileDialog.title = i18n::tr("Export wavetable");
-      const char* hm = std::getenv("HOME");
-      a.fileDialog.dir = hm ? hm : ".";
-      a.fileDialog.name = (d.tableName.empty() ? std::string("table") : d.tableName) + ".wav";
-      a.fileDialog.exts = {".wav"};
-      a.fileDialog.onOk = [&a, copy](const std::string& p) {
-        AudioBuffer b(1, copy.size() * static_cast<size_t>(kFrameSize));
-        for (size_t i = 0; i < copy.size(); ++i) std::copy(copy[i].begin(), copy[i].end(), b.plane(0) + i * static_cast<size_t>(kFrameSize));
-        a.notify(writeWav(p, b, 44100, 24) ? "Exported the wavetable" : "Could not write the file", false);
-      };
-    }
+    if (ImGui::IsItemHovered()) c.a.setHint("Import: copy a WAV's frames into the sound to edit them (2048 samples each, or the cycle length the file states)");
+    if (btnLook(c, "exp", ix + (bw + M(8)) * 2, y, bw, M(30), "Export", false, false, T(12))) exportFrames(c, F, d.tableName);
     if (ImGui::IsItemHovered()) c.a.setHint("Save the table as a WAV of 2048-sample frames");
-    y += 36;
-    textC(c, x + w * 0.5f, y, "PROCESS", c.P.label, ty::kCap, true);
-    y += 16;
-    if (button(c, "single", x, y, w, 22, "SINGLE", false, 8)) ImGui::OpenPopup("##wtsingle");
-    iconArrow(c.dl, c.p(x + w - 12, y + 11), c.s(7), 3, c.P.textDim);
+    cy += M(122) + M(10);
+  }
+  {  // Draw: every brush, the snap grid
+    const float h = M(178);
+    float y = card(cy, h, "Draw", "on the frame");
+    const int per = 6;
+    const float bw = (iw - M(6) * (per - 1)) / per, bh = M(34);
+    for (int b = 0; b < BrCount; ++b) {
+      const float bx = ix + (b % per) * (bw + M(6)), by = y + (b / per) * (bh + M(6));
+      ImGui::PushID(b + 9200);
+      const bool on = u.wtBrush == b;
+      if (btnLook(c, "br", bx, by, bw, bh, "", false, on, T(10))) u.wtBrush = b;
+      if (ImGui::IsItemHovered()) c.a.setHint(std::string("Draw: ") + kBrushName[b] + (b >= BrFlat ? " (fills each grid cell the pointer passes)" : ""));
+      brushIcon(c, b, bx + bw * 0.2f, by + M(8), bw * 0.6f, bh - M(16), on ? col : P.label);
+      ImGui::PopID();
+    }
+    y += (bh + M(6)) * 2;
+    static const int snaps[4] = {0, 8, 16, 32};
+    auto snapRow = [&](const char* label, const char* id, int& v, float yy) {
+      text(c, ix, yy + M(11) - T(11.5f) * 0.68f, label, P.label, T(11.5f), false);
+      int cur2 = 0;
+      for (int i = 0; i < 4; ++i)
+        if (snaps[i] == v) cur2 = i;
+      MonoText mono;
+      const int hit = segPick(c, id, ix + iw - M(164), yy, M(164), M(22), {"Off", "1/8", "1/16", "1/32"}, cur2, true, T(10));
+      if (hit >= 0) v = snaps[hit];
+    };
+    snapRow("Snap across", "snapx", u.wtGrid, y);
+    snapRow("Snap up and down", "snapy", u.wtGridY, y + M(26));
+    cy += h + M(10);
+  }
+  {  // Change frames: this one, every one, fill between; the rest folded
+    const float h = M(170);
+    float y = card(cy, h, "Change frames", "");
+    struct Row {
+      const char* name;
+      const char* note;
+      const char* pop;
+    };
+    const Row rows[3] = {{"Change this frame", "this frame", "##wtsingle"}, {"Change every frame", "every frame", "##wtall"}, {"Blend frames between", "", "##wtmorph"}};
+    char between[24];
+    std::snprintf(between, sizeof between, "1 to %d", nf);
+    for (int i = 0; i < 3; ++i) {
+      ImGui::PushID(i + 9600);
+      const float ry = y + i * M(32);
+      ImGui::SetCursorScreenPos(c.p(ix, ry));
+      if (ImGui::InvisibleButton("##row", c.F.sz(iw, M(28)))) ImGui::OpenPopup(rows[i].pop);
+      const bool hv = ImGui::IsItemHovered();
+      c.dl->AddRectFilled(c.p(ix, ry), c.p(ix + iw, ry + M(28)), hv ? P.panelHi : P.panel, c.s(M(4)));
+      c.dl->AddRect(c.p(ix, ry), c.p(ix + iw, ry + M(28)), P.line, c.s(M(4)));
+      text(c, ix + M(12), ry + M(14) - T(12) * 0.68f, rows[i].name, P.text, T(12), false);
+      textR(c, ix + iw - M(12), ry + M(14) - T(10.5f) * 0.68f, i == 2 ? between : rows[i].note, P.textFaint, T(10.5f), false);
+      ImGui::PopID();
+    }
     if (ImGui::BeginPopup("##wtsingle")) {
       next = F;
       auto& fr = next[static_cast<size_t>(u.wtFrame)];
@@ -618,9 +852,6 @@ void wtEditor(Ctx& c) {
       }
       ImGui::EndPopup();
     }
-    y += 26;
-    if (button(c, "all", x, y, w, 22, "ALL", false, 8)) ImGui::OpenPopup("##wtall");
-    iconArrow(c.dl, c.p(x + w - 12, y + 11), c.s(7), 3, c.P.textDim);
     if (ImGui::BeginPopup("##wtall")) {
       next = F;
       if (ImGui::MenuItem(i18n::tr("Normalize (each frame)"))) {
@@ -653,10 +884,6 @@ void wtEditor(Ctx& c) {
       }
       ImGui::EndPopup();
     }
-    y += 26;
-    if (button(c, "morph", x, y, w, 22, "MORPH", false, 8)) ImGui::OpenPopup("##wtmorph");
-    iconArrow(c.dl, c.p(x + w - 12, y + 11), c.s(7), 3, c.P.textDim);
-    if (ImGui::IsItemHovered()) c.a.setHint("Fill the table from the first to the last frame");
     if (ImGui::BeginPopup("##wtmorph")) {
       for (int sp = 0; sp < 2; ++sp)
         if (ImGui::BeginMenu(sp ? i18n::tr("Spectral") : i18n::tr("Crossfade"))) {
@@ -666,192 +893,119 @@ void wtEditor(Ctx& c) {
         }
       ImGui::EndPopup();
     }
-    y += 36;
-    textC(c, x + w * 0.5f, y, "GRID", c.P.label, ty::kCap, true);
-    y += 14;
-    static const int gridSteps[] = {0, 2, 4, 8, 16, 32, 64};
-    auto gridBox = [&](const char* id, int& val, float bx, const char* icon) {
-      int gi = 0;
-      for (int i = 0; i < 7; ++i)
-        if (gridSteps[i] == val) gi = i;
-      textC(c, bx + w * 0.25f, y, icon, c.P.label, ty::kCap, true);
-      if (stepperFree(c, id, gi, 0, 6, bx, y + 12, w * 0.5f - 4, 20, gi ? std::to_string(gridSteps[gi]).c_str() : "Off")) val = gridSteps[gi];
-    };
-    gridBox("gx", u.wtGrid, x, "X");
-    gridBox("gy", u.wtGridY, x + w * 0.5f + 2, "Y");
-    y += 38;
-    // shift the frame by one grid step
-    const char* tips[] = {"Shift left", "Shift right", "Shift up", "Shift down"};
-    const int dirs[] = {0, 1, 2, 3};
-    for (int i = 0; i < 4; ++i) {
-      const float bx = x + i * (w / 4);
-      ImGui::PushID(i + 9300);
-      if (button(c, "sh", bx, y, w / 4 - 3, 20, "", false, 8)) {
+    // the folded tools: a formula, shifting the frame by a grid step
+    const float fy = y + M(3 * 32) + M(2);
+    hline(c, ix, ix + iw, fy, P.line);
+    ImGui::SetCursorScreenPos(c.p(ix, fy + M(4)));
+    if (ImGui::InvisibleButton("##tools", c.F.sz(iw, M(22)))) ImGui::OpenPopup("##wttools");
+    const bool hv = ImGui::IsItemHovered();
+    {
+      const ImVec2 m = c.p(ix + M(4), fy + M(15));
+      const float a = c.s(M(2.6f));
+      c.dl->AddTriangleFilled(ImVec2(m.x - a * 0.5f, m.y - a), ImVec2(m.x - a * 0.5f, m.y + a), ImVec2(m.x + a * 0.7f, m.y), P.label);
+    }
+    text(c, ix + M(14), fy + M(15) - T(12) * 0.68f, "Formula and shifting tools", hv ? P.text : P.label, T(12), false);
+    textR(c, ix + iw, fy + M(15) - T(11) * 0.68f, "6 more", P.textFaint, T(11), false);
+    if (ImGui::BeginPopup("##wttools")) {
+      ImGui::TextDisabled("%s", i18n::tr("Formula: x = -1..1 across the cycle, y = 0..1 across the table, in = the current sample"));
+      char fb[256];
+      std::snprintf(fb, sizeof fb, "%s", u.wtFormula.c_str());
+      ImGui::SetNextItemWidth(c.s(320));
+      const bool enter = ImGui::InputTextWithHint("##wtf", i18n::tr("Formula, e.g. sin(x * 3.14)"), fb, sizeof fb, ImGuiInputTextFlags_EnterReturnsTrue);
+      u.wtFormula = fb;
+      std::string run;
+      bool all = true;
+      if (enter && !u.wtFormula.empty()) run = u.wtFormula;
+      if (ImGui::Button(i18n::tr("Every frame")) && !u.wtFormula.empty()) run = u.wtFormula;
+      ImGui::SameLine();
+      if (ImGui::Button(i18n::tr("This frame")) && !u.wtFormula.empty()) run = u.wtFormula, all = false;
+      if (ImGui::BeginMenu(i18n::tr("Examples"))) {
+        for (const auto& f : kFormulas)
+          if (ImGui::MenuItem(f[0], f[1])) u.wtFormula = f[1], run = f[1];
+        ImGui::EndMenu();
+      }
+      if (!u.wtFormulaErr.empty()) ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(P.danger), "%s", u.wtFormulaErr.c_str());
+      if (!run.empty()) {
         next = F;
-        auto& fr = next[static_cast<size_t>(u.wtFrame)];
-        const int gxs = std::max(2, u.wtGrid > 1 ? u.wtGrid : 16);
-        const float dy = 2.f / std::max(2, u.wtGridY > 1 ? u.wtGridY : 16);
-        const long sh = static_cast<long>(fr.size()) / gxs;
-        if (i == 0) std::rotate(fr.begin(), fr.begin() + sh, fr.end());
-        if (i == 1) std::rotate(fr.begin(), fr.end() - sh, fr.end());
-        if (i == 2)
-          for (float& v : fr) v = std::min(2.f, v + dy);
-        if (i == 3)
-          for (float& v : fr) v = std::max(-2.f, v - dy);
-        did = tips[i];
+        std::string err;
+        if (applyFormula(next, run, all, u.wtFrame, err)) did = "Formula", u.wtFormulaErr.clear();
+        else u.wtFormulaErr = err, next.clear();
       }
-      if (ImGui::IsItemHovered()) c.a.setHint(std::string(tips[i]) + " (one grid step)");
-      iconArrow(c.dl, c.p(bx + (w / 4 - 3) * 0.5f, y + 10), c.s(8), dirs[i], c.P.textDim);
-      ImGui::PopID();
-    }
-  }
-
-  // ================================================================ frames strip
-  {
-    const float x0 = 0, x1 = kW, w = 50;
-    frameBox(c, x0, kFramesY, x1 - x0, kFramesH, c.P.panelLo);
-    const int vis = static_cast<int>((x1 - x0 - 50) / w);
-    int& sc = u.wtScroll;
-    if (u.wtFrame < sc) sc = u.wtFrame;
-    if (u.wtFrame >= sc + vis) sc = u.wtFrame - vis + 1;
-    sc = std::clamp(sc, 0, std::max(0, nf - vis));
-    ImGui::SetCursorScreenPos(c.p(x0, kFramesY + 2));
-    ImGui::InvisibleButton("##strip", c.F.sz(std::min(x1 - x0, 4 + (std::min(nf, vis)) * w), kFramesH - 4));
-    if (ImGui::IsItemHovered() && ImGui::GetIO().MouseWheel != 0) sc = std::clamp(sc - static_cast<int>(ImGui::GetIO().MouseWheel * 4), 0, std::max(0, nf - vis));
-    if (ImGui::IsItemActive()) {
-      const float mx = (ImGui::GetIO().MousePos.x - c.p(x0 + 6, 0).x) / c.s(w);
-      u.wtFrame = std::clamp(sc + static_cast<int>(mx), 0, nf - 1);
-    }
-    if (ImGui::IsItemHovered()) c.a.setHint("Frames: click or drag to select \xC2\xB7 wheel: scroll");
-    for (int i = sc; i < std::min(nf, sc + vis); ++i) {
-      const float tx = x0 + 6 + (i - sc) * w;
-      const bool sel = i == u.wtFrame;
-      panelRect(c, tx, kFramesY + 4, w - 3, kFramesH - 22, sel ? c.P.headOn : c.P.well, 2);
-      if (sel) c.dl->AddRect(c.p(tx, kFramesY + 4), c.p(tx + w - 3, kFramesY + kFramesH - 18), theme::withAlpha(c.P.accent, 0.6f), c.s(2));
-      wave(c, F[static_cast<size_t>(i)], tx + 2, kFramesY + 6, w - 7, kFramesH - 26, sel ? c.P.accent : c.P.textDim, std::max(1.f, c.s(1.2f)), sel);
-      MonoText mono;
-      textC(c, tx + (w - 3) * 0.5f, kFramesY + kFramesH - 14, std::to_string(i + 1).c_str(), sel ? c.P.text : c.P.textDim, ty::kCap, false);
-    }
-    if (nf > vis) {  // J-202: a scroll bar shows there are more frames (wheel scrolls)
-      const float tx0 = x0 + 6, tw = vis * w - 3, ty = kFramesY + kFramesH - 4;
-      c.dl->AddRectFilled(c.p(tx0, ty), c.p(tx0 + tw, ty + 2), c.P.grid, c.s(1));
-      const float th = tw * vis / nf, tp = tx0 + (tw - th) * sc / std::max(1, nf - vis);
-      c.dl->AddRectFilled(c.p(tp, ty), c.p(tp + th, ty + 2), c.P.lineHi, c.s(1));
-    }
-    const float px = x0 + 6 + std::min(nf - sc, vis) * w;
-    if (nf < kMaxFrames && sc + vis >= nf && px + 40 < x1) {
-      if (button(c, "addf", px + 4, kFramesY + 12, 34, 30, GL_ICON_LABEL("plus", "+"), false, 13)) {
-        next = F;
-        next.push_back(F.back());
-        did = "Add frame";
-        u.wtFrame = nf;
-      }
-      if (ImGui::IsItemHovered()) c.a.setHint("Add a frame (a copy of the last)");
-    }
-  }
-
-  // ================================================================ bottom bar: position, clipboard, formula
-  {
-    const float y = kBarY + 8;
-    frameBox(c, 0, kBarY, kW, kStripY - kBarY);
-    int pos = u.wtFrame + 1;
-    if (stepperFree(c, "pos", pos, 1, nf, 14, y, 48, 22)) u.wtFrame = pos - 1;
-    char t[16];
-    std::snprintf(t, sizeof t, "/ %d", nf);
-    text(c, 68, y + 6, t, c.P.text, 9.5f, true);
-    if (button(c, "minus", 104, y, 22, 22, GL_ICON_LABEL("minus", "\xE2\x80\x93"), false, 11) && nf > 1) {
-      next = F;
-      next.erase(next.begin() + u.wtFrame);
-      did = "Remove frame";
-    }
-    if (ImGui::IsItemHovered()) c.a.setHint("Remove this frame");
-    if (button(c, "plus", 128, y, 22, 22, GL_ICON_LABEL("plus", "+"), false, 11) && nf < kMaxFrames) {
-      next = F;
-      next.insert(next.begin() + u.wtFrame + 1, cur);
-      did = "Duplicate frame";
-    }
-    if (ImGui::IsItemHovered()) c.a.setHint("Duplicate this frame");
-    textC(c, 82, y + 30, "WT POS", c.P.textDim, 8, true);
-    vline(c, 166, y - 2, y + 40, c.P.line);
-    struct B {
-      const char* id;
-      const char* label;
-    };
-    const B bs[] = {{"copy", "COPY"}, {"paste", "PASTE"}, {"remove", "REMOVE\xE2\x80\xA6"}, {"sort", "SORT\xE2\x80\xA6"}};
-    for (int i = 0; i < 4; ++i) {
-      const float bx = 182 + i * 80;
-      if (button(c, bs[i].id, bx, y, 62, 22, "", false, 8)) {
-        if (i == 0) clipFrame() = cur;
-        if (i == 1 && clipFrame().size() == cur.size()) next = F, next[static_cast<size_t>(u.wtFrame)] = clipFrame(), did = "Paste frame";
-        if (i == 2) ImGui::OpenPopup("##wtremove");
-        if (i == 3) ImGui::OpenPopup("##wtsort");
-      }
-      textC(c, bx + 31, y + 30, bs[i].label, c.P.textDim, 8, true);
-      // little glyphs: two sheets / arrow-in / cross / swap
-      const ImVec2 q = c.p(bx + 31, y + 11);
-      const float s = c.s(5);
-      const ImU32 gc = c.P.textDim;
-      if (i == 0) ::gl::ui::drawIconFit(c.dl, ::gl::ui::Icon::Clone, ImVec2(q.x - s - 0.5f, q.y - s - 0.5f), ImVec2(q.x + s + 0.5f, q.y + s * 0.8f + 0.5f), gc);
-      if (i == 1) c.dl->AddRect(ImVec2(q.x - s * 0.2f, q.y - s), ImVec2(q.x + s, q.y + s), gc), iconArrow(c.dl, ImVec2(q.x - s * 0.7f, q.y), s * 1.4f, 1, gc);
-      if (i == 2) c.dl->AddRect(ImVec2(q.x - s, q.y - s * 0.8f), ImVec2(q.x + s * 0.4f, q.y + s * 0.8f), gc), iconClose(c.dl, ImVec2(q.x + s * 0.6f, q.y + s * 0.5f), s * 0.9f, gc);
-      if (i == 3) c.dl->AddRect(ImVec2(q.x - s * 1.4f, q.y - s * 0.5f), ImVec2(q.x - s * 0.4f, q.y + s * 0.5f), gc), c.dl->AddRect(ImVec2(q.x + s * 0.4f, q.y - s * 0.5f), ImVec2(q.x + s * 1.4f, q.y + s * 0.5f), gc);
-    }
-    if (ImGui::BeginPopup("##wtremove")) {
-      next = F;
-      if (ImGui::MenuItem(i18n::tr("Remove this frame"), nullptr, false, nf > 1)) next.erase(next.begin() + u.wtFrame), did = "Remove frame";
-      if (ImGui::MenuItem(i18n::tr("Remove the frames after this one"), nullptr, false, u.wtFrame + 1 < nf))
-        next.resize(static_cast<size_t>(u.wtFrame) + 1), did = "Remove frames";
-      if (ImGui::MenuItem(i18n::tr("Remove the frames before this one"), nullptr, false, u.wtFrame > 0))
-        next.erase(next.begin(), next.begin() + u.wtFrame), did = "Remove frames", u.wtFrame = 0;
-      if (ImGui::MenuItem(i18n::tr("Keep every second frame"), nullptr, false, nf > 2)) {
-        Frames k;
-        for (int i = 0; i < nf; i += 2) k.push_back(F[static_cast<size_t>(i)]);
-        next = k, did = "Remove frames";
-      }
-      ImGui::EndPopup();
-    }
-    if (ImGui::BeginPopup("##wtsort")) {
-      next = F;
-      if (ImGui::MenuItem(i18n::tr("By brightness"))) {
-        std::stable_sort(next.begin(), next.end(), [](const std::vector<float>& p, const std::vector<float>& q) { return brightness(p) < brightness(q); });
-        did = "Sort frames";
-      }
-      if (ImGui::MenuItem(i18n::tr("By level"))) {
-        std::stable_sort(next.begin(), next.end(), [](const std::vector<float>& p, const std::vector<float>& q) { return rms(p) < rms(q); });
-        did = "Sort frames";
-      }
-      if (ImGui::MenuItem(i18n::tr("Reverse order"))) std::reverse(next.begin(), next.end()), did = "Reverse order";
-      ImGui::EndPopup();
-    }
-    // formula
-    vline(c, 506, y - 2, y + 40, c.P.line);
-    const float fx = 520, fw = kW - fx - 12;
-    char fb[256];
-    std::snprintf(fb, sizeof fb, "%s", u.wtFormula.c_str());
-    const bool enter = inputField(c, "wtf", fx, y, fw - 26, 22, fb, sizeof fb, "(enter formula)", ImGuiInputTextFlags_EnterReturnsTrue);
-    u.wtFormula = fb;
-    if (ImGui::IsItemHovered())
-      c.a.setHint("Formula (Enter: apply to every frame): x = -1..1 across the cycle, y = 0..1 across the table, in = the current sample");
-    if (button(c, "fmenu", fx + fw - 24, y, 24, 22, "", false, 8)) ImGui::OpenPopup("##wtfmenu");
-    iconArrow(c.dl, c.p(fx + fw - 12, y + 11), c.s(8), 3, c.P.textDim);
-    std::string run;
-    bool all = true;
-    if (ImGui::BeginPopup("##wtfmenu")) {
-      for (const auto& f : kFormulas)
-        if (ImGui::MenuItem(f[0], f[1])) u.wtFormula = f[1], run = f[1];
       ImGui::Separator();
-      if (ImGui::MenuItem(i18n::tr("Apply to this frame only"), nullptr, false, !u.wtFormula.empty())) run = u.wtFormula, all = false;
+      ImGui::TextDisabled("%s", i18n::tr("Shift this frame by one grid step"));
+      const char* tips[] = {"Shift left", "Shift right", "Shift up", "Shift down"};
+      for (int i = 0; i < 4; ++i) {
+        if (i) ImGui::SameLine();
+        if (ImGui::Button(i18n::tr(tips[i]))) {
+          next = F;
+          auto& fr = next[static_cast<size_t>(u.wtFrame)];
+          const int gxs = std::max(2, u.wtGrid > 1 ? u.wtGrid : 16);
+          const float dy = 2.f / std::max(2, u.wtGridY > 1 ? u.wtGridY : 16);
+          const long sh = static_cast<long>(fr.size()) / gxs;
+          if (i == 0) std::rotate(fr.begin(), fr.begin() + sh, fr.end());
+          if (i == 1) std::rotate(fr.begin(), fr.end() - sh, fr.end());
+          if (i == 2)
+            for (float& v : fr) v = std::min(2.f, v + dy);
+          if (i == 3)
+            for (float& v : fr) v = std::max(-2.f, v - dy);
+          did = tips[i];
+        }
+      }
       ImGui::EndPopup();
     }
-    if (enter && !u.wtFormula.empty()) run = u.wtFormula;
-    if (!run.empty()) {
-      next = F;
-      std::string err;
-      if (applyFormula(next, run, all, u.wtFrame, err)) did = "Formula", u.wtFormulaErr.clear();
-      else u.wtFormulaErr = err, next.clear();
+    cy += h + M(10);
+  }
+  {  // Voice: how the layer plays the table
+    const float h = kPlayY - M(18) - cy;
+    float y = card(cy, h, "Voice", "how the layer plays the table");
+    const int ks[4] = {oscP(o, O_Unison), oscP(o, O_UniDetune), oscP(o, O_UniWidth), oscP(o, O_Warp1)};
+    const char* ls[4] = {"Unison", "Detune", "Spread", "Warp"};
+    const float dx = iw / 4;
+    for (int i = 0; i < 4; ++i) knob(c, ks[i], ix + dx * (i + 0.5f), y + M(14), M(15), ls[i], KnobValue | (i == 2 ? KnobBipolar : 0));
+    y += M(64);
+    text(c, ix, y + M(14) - T(12) * 0.68f, "Warp style", P.label, T(12), false);
+    {
+      reach(oscP(o, O_Warp1Mode));
+      const std::string wm = ptext(c, oscP(o, O_Warp1Mode));
+      const float fx = ix + iw * 0.45f, fw = iw * 0.55f;
+      ImGui::SetCursorScreenPos(c.p(fx, y));
+      if (ImGui::InvisibleButton("##warp", c.F.sz(fw, M(28)))) ImGui::OpenPopup("##warpmenu");
+      const bool hv = ImGui::IsItemHovered();
+      c.dl->AddRectFilled(c.p(fx, y), c.p(fx + fw, y + M(28)), P.field, c.s(M(4)));
+      c.dl->AddRect(c.p(fx, y), c.p(fx + fw, y + M(28)), hv ? P.lineHi : P.line, c.s(M(4)));
+      std::string s = wm;
+      while (s.size() > 3 && textW(c, s.c_str(), T(12), false) > fw - M(30)) s.pop_back();
+      text(c, fx + M(10), y + M(14) - T(12) * 0.68f, s.c_str(), P.text, T(12), false);
+      if (ImGui::BeginPopup("##warpmenu")) {
+        warpMenuItems(c, o, 0);
+        ImGui::EndPopup();
+      }
     }
-    textC(c, fx + fw * 0.5f, y + 30, u.wtFormulaErr.empty() ? "FORMULA" : u.wtFormulaErr.c_str(), u.wtFormulaErr.empty() ? c.P.textDim : c.P.danger, 8,
-          true);
+    // the rest of the layer, folded
+    const float fy = cy + h - M(10) - M(22);
+    hline(c, ix, ix + iw, fy - M(4), P.line);
+    ImGui::SetCursorScreenPos(c.p(ix, fy));
+    if (ImGui::InvisibleButton("##voicemore", c.F.sz(iw, M(22)))) ImGui::OpenPopup("##voicemorepop");
+    const bool hv = ImGui::IsItemHovered();
+    {
+      const ImVec2 m = c.p(ix + M(4), fy + M(11));
+      const float a = c.s(M(2.6f));
+      c.dl->AddTriangleFilled(ImVec2(m.x - a * 0.5f, m.y - a), ImVec2(m.x - a * 0.5f, m.y + a), ImVec2(m.x + a * 0.7f, m.y), P.label);
+    }
+    const std::vector<int> more = {oscP(o, O_Phase),     oscP(o, O_RandPhase), oscP(o, O_PhaseMemory), oscP(o, O_Smooth),     oscP(o, O_Octave),
+                                   oscP(o, O_Semi),      oscP(o, O_Fine),      oscP(o, O_PitchMode),   oscP(o, O_UniStack),   oscP(o, O_UniBlend),
+                                   oscP(o, O_UniSpan),   oscP(o, O_UniRange),  oscP(o, O_UniRotate),   oscP(o, O_UniRandStart), oscP(o, O_UniWtPos),
+                                   oscP(o, O_UniWarp1),  oscP(o, O_UniWarp2),  oscP(o, O_DetuneMode),  oscP(o, O_Warp1Var),   oscP(o, O_Warp2Mode),
+                                   oscP(o, O_Warp2),     oscP(o, O_Warp2Var)};
+    char note[16];
+    std::snprintf(note, sizeof note, "%d more", static_cast<int>(more.size()));
+    text(c, ix + M(14), fy + M(11) - T(12) * 0.68f, "Phase, pitch and stack options", hv ? P.text : P.label, T(12), false);
+    textR(c, ix + iw, fy + M(11) - T(11) * 0.68f, note, P.textFaint, T(11), false);
+    for (int k : more) reach(k);
+    if (ImGui::BeginPopup("##voicemorepop")) {
+      paramRows(c, more);
+      ImGui::EndPopup();
+    }
   }
 
   // ================================================================ commit
@@ -871,5 +1025,7 @@ void wtEditor(Ctx& c) {
     if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) u.wtFrame = std::min(nf - 1, u.wtFrame + 1);
   }
 }
+
+void exportTablePublic(Ctx& c, int o) { exportFrames(c, currentFrames(c, o), c.m.osc[static_cast<size_t>(o)].tableName); }
 
 }  // namespace gl::packs::plasma::ui

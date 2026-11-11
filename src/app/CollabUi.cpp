@@ -75,12 +75,12 @@ struct Ui {
   int inviteMinutes = 60;
   std::string inviteId;
   bool scrollToInvite = false;  // "Invite again": bring the invite section into view
-  char replyBuf[8192] = {};
+  char replyBuf[16384] = {};
   // reconnect
   SiteId reconnectPeer = 0;
   char reconnectBuf[8192] = {};
   // join
-  char codeBuf[8192] = {};
+  char codeBuf[16384] = {};
   std::string lastParsed;
   InviteInfo parsed;
   bool parsedOk = false;
@@ -1318,11 +1318,25 @@ void drawInvite(App& a, Session& s, Hub& hub) {
     ImGui::AlignTextToFramePadding();
     ui::StatusDot(connecting ? P.led : P.accent, true);
     const float ew = ImGui::CalcTextSize(exp.c_str()).x;
-    ui::TextFit(connecting ? tr("Someone is connecting...") : tr("Waiting for them to join"), std::max(40.0f, ImGui::GetContentRegionAvail().x - ew - theme::kS3),
-                P.text);
+    const std::string what = connecting      ? std::string(tr("Someone is connecting..."))
+                             : iv->replyUsed ? std::string(tr("Reply code used: reaching them")) + dots()
+                                             : std::string(tr("Waiting for them to join"));
+    ui::TextFit(what.c_str(), std::max(40.0f, ImGui::GetContentRegionAvail().x - ew - theme::kS3), P.text);
     ImGui::SameLine();
     alignRight(ew);
     ImGui::TextColored(theme::vec(left < 120 ? theme::lit(P.hot) : P.textFaint), "%s", exp.c_str());
+    // K-174: progress after their reply code, and why a code may not reach this computer
+    if (iv->replyUsed && !connecting) {
+      note(fmt2(tr("Trying for %s, attempt %s. Their Join window keeps trying too, so leave both open."), countdown(static_cast<int64_t>(iv->replyWaited)),
+                std::to_string(std::max(1, iv->attempts))));
+      if (iv->replyWaited > 90)
+        note(tr("Still not connected: a router or firewall on one side probably blocks direct connections. Turn off VPNs, allow Gridline through the firewall, and run Test my connection in Settings > Collaboration on both computers."),
+             theme::lit(P.hot));
+    }
+    if (iv->codeChanged) note(tr("This computer's network address changed, so the code was renewed. If they have not joined yet, send them this new code."), theme::lit(P.hot));
+    if (!iv->publicAddress)
+      note(tr("This computer couldn't find its public internet address, so this code only works on the same network. Check the connection, a VPN or firewall, or the STUN server in Settings > Collaboration."),
+           theme::lit(P.danger));
     note(tr("Send this code to the person you are inviting. It works once."));
     if (!u.reinviteFor.empty()) note(fmt1(tr("For %s only: they come back as the same member."), u.reinviteFor), P.textDim);
     copyField(a, "##invcode", iv->code, 4);
@@ -1346,13 +1360,18 @@ void drawInvite(App& a, Session& s, Hub& hub) {
     ImGui::BeginDisabled(u.replyBuf[0] == 0);
     if (ui::TextButton("Use reply")) {
       std::string err;
-      if (hub.acceptReply(u.replyBuf, &err)) u.replyBuf[0] = 0;
-      else a.notify(err, true);
+      if (hub.acceptReply(u.replyBuf, &err)) {
+        u.replyBuf[0] = 0;
+        a.notify(tr("Reply code used: connecting to them now."));
+      } else {
+        a.notify(err, true);
+      }
     }
     ImGui::EndDisabled();
     label("", x);
     ImGui::PushTextWrapPos(0);
-    ImGui::TextColored(theme::vec(P.textFaint), "%s", tr("Only if they can't connect directly: they then get a reply code to send you."));
+    ImGui::TextColored(theme::vec(P.textFaint), "%s",
+                       tr("Only if they can't connect directly: they then get a reply code to send you. It still works if it takes a few minutes to arrive."));
     ImGui::PopTextWrapPos();
   }
   (void)s;
@@ -2038,16 +2057,28 @@ void joinWindow(App& a) {
     const bool failed = jv.status == Hub::JoinStatus::Failed || jv.status == Hub::JoinStatus::Refused;
     const bool connected = jv.status == Hub::JoinStatus::Connected;
     // 1. reach the inviter
+    // K-174: what is happening, how long it has been trying, and what the user does next
+    const std::string tried = fmt2(tr("Trying for %s, attempt %s"), countdown(static_cast<int64_t>(jv.waited)), std::to_string(std::max(1, jv.attempts)));
     switch (jv.status) {
-      case Hub::JoinStatus::Connecting: stepRow(fmt1(tr("Reaching %s"), u.parsed.inviterName) + dots(), P.hot, true); break;
+      case Hub::JoinStatus::Connecting:
+        if (jv.securing) stepRow(fmt1(tr("Reached %s: securing the connection"), u.parsed.inviterName) + dots(), P.led, true);
+        else stepRow(fmt1(tr("Reaching %s"), u.parsed.inviterName) + dots(), P.hot, true);
+        break;
       case Hub::JoinStatus::NeedReply:
-        stepRow(fmt1(tr("%s's computer can't be reached directly yet"), u.parsed.inviterName), P.hot, true);
+        if (jv.securing) {
+          stepRow(fmt1(tr("Reached %s: securing the connection"), u.parsed.inviterName) + dots(), P.led, true);
+          break;
+        }
+        stepRow(fmt1(tr("%s's computer can't be reached directly yet"), u.parsed.inviterName), P.hot, true, tried);
         ImGui::Indent(14);
-        note(tr("Send them this reply code; they paste it into their invite."));
+        note(fmt1(tr("Send %s this reply code. They paste it under their invite and press Use reply. Keep this window open: it keeps trying for 15 minutes, so the code can take a while to arrive."),
+                  u.parsed.inviterName));
+        if (jv.replyChanged) note(tr("This computer's network address changed: send this new reply code instead of the first one."), theme::lit(P.hot));
         copyField(a, "##replycode", jv.reply, 3);
         if (ui::TextButton("Copy")) ImGui::SetClipboardText(jv.reply.c_str());
         ImGui::SameLine(0, theme::kS2);
         if (ui::TextButton("Save as file...")) saveCodeFile(a, jv.reply, "Gridline reply.txt");
+        if (!jv.publicAddress) note(joinProblemText(JoinProblem::NoPublicAddress, u.parsed.inviterName), theme::lit(P.danger));
         ImGui::Unindent(14);
         break;
       case Hub::JoinStatus::Connected: stepRow(fmt1(tr("Connected to %s"), u.parsed.inviterName), P.led, false); break;
@@ -2079,7 +2110,8 @@ void joinWindow(App& a) {
     }
     if (jv.status == Hub::JoinStatus::Failed) {
       ui::BeginSection(tr("WHAT YOU CAN DO"));
-      note(tr("Try again from another network, ask a collaborator who is online with the inviter to invite you, or set a TURN server in Settings > Collaboration."));
+      note(jv.help.empty() ? std::string(tr("Try again from another network, ask a collaborator who is online with the inviter to invite you, or set a TURN server in Settings > Collaboration."))
+                           : jv.help);
       ui::EndSection();
     }
     ImGui::EndChild();

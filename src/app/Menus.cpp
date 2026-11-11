@@ -41,6 +41,7 @@
 #include "MenuParityUi.h"
 #include "TrackReceiptUi.h"
 #include "CommandPaletteUi.h"
+#include "GrooveUi.h"
 
 namespace gl {
 
@@ -154,6 +155,9 @@ void menuFile(App& a) {
     if (ImGui::MenuItem(i18n::tr("Audio file into a sampler...")))
       fileDialog(a, "Import audio file", false, importAudioTypes()[0].exts, "",
                  [&a](const std::string& p) { a.showNewInstrument(a.addInstrument("gl.sampler", p)); });
+    if (ImGui::MenuItem(i18n::tr("Multisample instrument (.sfz, .sf2)...")))  // K-144: a Multisampler channel playing it
+      fileDialog(a, "Import multisample instrument", false, {".sfz", ".sf2"}, "",
+                 [&a](const std::string& p) { a.showNewInstrument(a.addInstrument("gl.multisampler", p)); });
     if (ImGui::MenuItem(i18n::tr("Audio file as playlist clip...")))
       fileDialog(a, "Import audio clip", false, importAudioTypes()[0].exts, "",
                  [&a](const std::string& p) { exportui::importAudioAsClip(a, p); });
@@ -216,8 +220,8 @@ void menuEdit(App& a) {
   if (ImGui::MenuItem(i18n::tr("Duplicate"), ek("duplicate"), false, a.editFocus != App::EditFocus::Mixer)) editDuplicate(a);
   if (ImGui::MenuItem(i18n::tr("Delete"), ek("delete"))) editDelete(a);
   ImGui::Separator();
-  if (ImGui::MenuItem(i18n::tr("Select all"), ek("selectAll"), false, a.editFocus != App::EditFocus::Mixer)) editSelectAll(a);
-  if (ImGui::MenuItem(i18n::tr("Deselect"), ek("deselect"), false, a.editFocus != App::EditFocus::Mixer)) editDeselect(a);
+  if (ImGui::MenuItem(i18n::tr("Select all"), ek("selectAll"))) editSelectAll(a);
+  if (ImGui::MenuItem(i18n::tr("Deselect"), ek("deselect"))) editDeselect(a);
   ImGui::Separator();
   if (ImGui::MenuItem(i18n::tr("Rename..."), keys::label("edit.rename"))) renameFocused(a);
 }
@@ -354,6 +358,7 @@ void menuView(App& a) {
   ImGui::MenuItem(i18n::tr("Live pads"), nullptr, &a.showLivePads);
   ImGui::MenuItem(i18n::tr("Undo history"), keys::label("edit.history"), &a.showHistory);
   ImGui::MenuItem(i18n::tr("Performance"), nullptr, &a.showPerformance);
+  ImGui::MenuItem(i18n::tr("Groove editor"), nullptr, &a.showGroove);  // K-151
   // Zoom acts on the piano roll when it was the last editor used, otherwise on the playlist.
   const bool piano = a.editFocus == App::EditFocus::Piano;
   ImGui::SeparatorText(piano ? i18n::tr("Zoom (piano roll)") : i18n::tr("Zoom (playlist)"));
@@ -484,6 +489,10 @@ void menuTools(App& a) {
   menuparity::toolsControlItems(a);  // J-27: last moved controls
   ImGui::SeparatorText(i18n::tr("Composing"));
   if (ImGui::MenuItem(i18n::tr("Loop starter..."))) j59::openLoopStarter(a);  // J-59 (GEN-01)
+  if (ImGui::BeginMenu(i18n::tr("Swing presets"))) {  // K-151
+    grooveui::presetMenuItems(a);
+    ImGui::EndMenu();
+  }
   if (ImGui::BeginMenu(i18n::tr("Chord progression"))) {
     progressionItems(a, false);
     ImGui::EndMenu();
@@ -688,6 +697,8 @@ bool menuShortcuts(App& a) {
     if (key("mixer.moveLeft")) ops::moveMixerTrack(a.doc, a.selMixer, -1);
     if (key("mixer.moveRight")) ops::moveMixerTrack(a.doc, a.selMixer, 1);
     if (!a.typingKeyboard && key("mixer.solo")) ops::soloMixerTrack(a.doc, a.selMixer);
+    if (key("mixer.selectAll")) mixerSelectAll(a);
+    if (key("mixer.deselect")) mixerDeselect(a);
   }
   return used;
 }

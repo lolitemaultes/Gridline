@@ -193,6 +193,8 @@ message(STATUS "ok - after a lost context, twice, the interface looks as it did 
 run(gldetach "8 detach Mixer 1600 120 900 380\n20 viewports\n24 glreset\n30 waitfor graphics-recovered 30\n44 viewports\n46 vpshot Mixer \"${shotDir}/gl_detached.ppm\"\n60 quit discard\n" --fixed-dt 16)
 if(EXISTS "${shotDir}/gl_detached.ppm")
   message(STATUS "ok - a detached window comes back after a lost context")
+elseif(gldetach_out MATCHES "available 0")  # windows cannot be detached here (native Wayland)
+  message(STATUS "skip - no detached windows on this platform, so none to bring back")
 else()
   message(FATAL_ERROR "FAIL: no picture of the detached window after the loss\n${gldetach_out}\n${gldetach_err}")
 endif()

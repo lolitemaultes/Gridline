@@ -453,6 +453,7 @@ std::string fingerprint(const Song& s, Unit u) {
   x.trackReceipt.clear();
   x.flExportGridline.clear();
   x.flOrigin = FlOrigin{};
+  x.groove.preset.clear();  // the swing preset's name (its timing and accents play)
   for (auto& c : x.channels) {
     c.name.clear();
     c.color = 0;

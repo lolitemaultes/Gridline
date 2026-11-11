@@ -31,6 +31,8 @@ void rackDevSpec(const std::string& spec);
 void rackDevBefore(App& a, int frame);  // right before drawChannelRack
 void rackDevAfter(App& a, int frame);   // right after it
 void rackDevDump(App& a, int frame);
+// The last ImGui item's rectangle, listed as "rect <name>" by the "rack" dump (rack menus: scripted checks).
+void devRackItem(const std::string& name);
 void drawPianoRoll(App& a);
 // Q-4 dev check (--dev-input "lane"): the piano roll's event lane as drawn last
 // frame, in logical pixels: x of tick t = x0 + t * pxPerTick; value v (0..1) at
@@ -87,7 +89,12 @@ void drawMixer(App& a);
 // J-83 dev check (--dev-input "mixer"): the strips pane's vertical scroll as
 // drawn last frame, and whether the plain wheel scrolls the mixer there.
 float mixerStripsScrollY();
+float mixerStripsScrollX();  // K-176
 bool mixerWheelScrolls();
+// Dev check (--dev-input "mixer"): where the mixer's strip headers and some menu rows (mixer track,
+// playlist track and pattern menus) were drawn in the last two frames.
+void devMenuItem(const std::string& name);
+void devMenuRects();
 void drawChannelSettings(App& a);
 // Dev checks (--dev-input): "strip [on|off] [frames]", the channel strip of the
 // channel settings window (ChannelStrip.h) as drawn this frame and the next
@@ -168,6 +175,18 @@ void mixerSlotMenu(App& a, ObjectId track, int slot);
 // one when nothing else is selected), the send menu of a route arrow, the
 // mixer options menu, the track latency menu, per-track stem renders.
 std::vector<ObjectId> mixerSelection(App& a);
+// Selects every insert track (never the master; the focus moves to the first
+// insert when it was on the master), or back to just the focused track.
+void mixerSelectAll(App& a);
+void mixerDeselect(App& a);
+// A reset of a mixer control covers the selected tracks when the track acted
+// on is one of several selected. Pending: that applies and one of them is
+// away from the default. Selected: does it (one undo step); false when it
+// does not apply, and the caller resets the one control.
+bool mixerResetPending(App& a, ParamId pid);
+bool mixerResetSelected(App& a, ParamId pid);
+// Items of the "Reset selected tracks" menu for these tracks.
+void mixerResetItems(App& a, const std::vector<ObjectId>& tracks);
 void mixerSendMenu(App& a, ObjectId from, ObjectId to);
 void mixerOptionsMenu(App& a);
 void mixerLatencyMenu(App& a, ObjectId track);
