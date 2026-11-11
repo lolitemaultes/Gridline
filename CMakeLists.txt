@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(gridline VERSION 0.7.4 LANGUAGES C CXX)
+project(gridline VERSION 0.7.5 LANGUAGES C CXX)
 # Prerelease label: "beta.1" makes this Gridline 0.7.0-beta.1 (published as a GitHub pre-release);
 # empty ("") for a release. The version is set only here (cmake/GridlineVersion.cmake, docs/releasing.md).
 set(GRIDLINE_VERSION_PRE "")

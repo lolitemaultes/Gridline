@@ -110,6 +110,12 @@
   </supports>
 
   <releases>
+    <release version="0.7.5" date="2026-11-12">
+      <url type="details">https://github.com/lolitemaultes/Gridline/releases/tag/v0.7.5</url>
+      <description>
+        <p>A redesigned Plasma with a Patch view, meter changes across the song, themes down to black with a white text option, MPE on the built-in instruments, slides on every instrument, SFZ instruments, split and layered instruments, swing presets and grooves, freeze and hibernate, drum kit import, Voltage In and native Wayland.</p>
+      </description>
+    </release>
     <release version="0.7.4" date="2026-11-08">
       <url type="details">https://github.com/lolitemaultes/Gridline/releases/tag/v0.7.4</url>
       <description>

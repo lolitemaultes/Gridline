@@ -375,6 +375,33 @@ void testWarpPlayback(const std::string& path) {
   expect(clearWarp(a.s, a.clip) && a.c().warp.empty(), "warp: markers clear");
 }
 
+// A new marker snaps to a burst within 40 ms, but with a window of a few ticks (the playlist passes
+// 8 pixels) it stays where it was clicked: a deep zoom never pulls it far from the pointer.
+void testWarpSnapWindow(const std::string& path) {
+  auto markerTick = [](Fx& a, const TempoMap& tm, uint32_t id) {
+    for (const WarpMarkerView& v : warpMarkerViews(a.s, a.c(), tm))
+      if (v.id == id) return v.tick;
+    return -1.0;
+  };
+  const double clickAt = 0.47;  // 30 ms before the burst at 0.5 s
+  {
+    Fx a(path);
+    TempoMap tm;
+    tm.build(a.s);
+    const uint32_t id = addWarpMarker(a.s, a.clip, tm, tickAfter(a, clickAt), true);
+    expect(id && std::fabs(markerTick(a, tm, id) - tickAfter(a, 0.5)) < std::fabs(markerTick(a, tm, id) - tickAfter(a, clickAt)),
+           "warp snap: without a window a new marker snaps to the burst 30 ms away");
+  }
+  {
+    Fx a(path);
+    TempoMap tm;
+    tm.build(a.s);
+    const double window = 0.005 * a.s.tempo * a.s.ppq / 60.0;  // 5 ms either side
+    const uint32_t id = addWarpMarker(a.s, a.clip, tm, tickAfter(a, clickAt), true, window);
+    expect(id && near(markerTick(a, tm, id), tickAfter(a, clickAt), 0.5), "warp snap: a small window keeps the marker where it was clicked");
+  }
+}
+
 void testWarpLimits(const std::string& path) {
   Fx a(path);
   TempoMap tm;
@@ -825,6 +852,7 @@ int main() {
   testWarpSaveLoad(path);
   testWarpPlayback(path);
   testWarpLimits(path);
+  testWarpSnapWindow(path);
   testQuantize(path);
   testWarpFlExport(path);
   testWarpUndoCollab(path);

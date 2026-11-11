@@ -481,7 +481,7 @@ VIEWS = [
     ("collab.png", "collaboration.png", (0, 0, 3200, 1324)),
 ]
 # Plasma's editor from its channel window (a 3200x2200 capture), saved 1600 px wide.
-VIEWS.append(("plasma.png", "plasma.png", (390, 454, 2778, 1942)))
+VIEWS.append(("plasma.png", "plasma.png", (640, 464, 2544, 1664)))
 # Platter (the plugin window), the welcome screen (a 2560x1600 capture) and its
 # Collaborative view, the plugin manager window and Seltmann's editor.
 VIEWS += [
@@ -493,22 +493,23 @@ VIEWS += [
 ]
 
 # The release banner and screenshots of this version.
-RELEASE = "0.7.4"
+RELEASE = "0.7.5"
 # The banner: version as set, headline, subline; a prerelease adds its tag and label.
-RELEASE_BANNER = ("0.7.4", "Pick a layout, play a module",
-                  "Chromebooks and Debian, tracker modules, window layouts and double-click projects")
+RELEASE_BANNER = ("0.7.5", "Change the meter, play every note",
+                  "A redesigned Plasma, meter changes, themes to black, MPE, slides and SFZ")
 RELEASE_BANNER_OPTS = {}
 # Plugin editors on one sheet (none in this release).
 RELEASE_EDITORS = []
 # Release screenshots from 3200x2000 captures (UI scale 2), cropped to the part that shows the feature.
 RELEASE_VIEWS = [
-    ("tracker.png", "tracker-sampler.png", (712, 136, 2472, 2144)),  # a 3200x2200 capture
-    ("chooser.png", "layout-chooser.png", (500, 40, 2920, 1120)),
-    ("logic.png", "logic-layout.png", None),
-    ("rack.png", "channel-rack.png", (683, 397, 2080, 1488)),
-    ("notes.png", "see-through-notes.png", (488, 224, 1920, 1440)),
-    ("midi.png", "keyboard-layout.png", (744, 464, 2448, 864)),
-    ("pwsize.png", "plugin-window-size.png", (333, 1222, 1710, 1744)),  # a 3200x3400 capture
+    ("plasma.png", "plasma.png", (640, 464, 2544, 1664)),  # a 3200x2200 capture
+    ("patch.png", "plasma-patch.png", (640, 464, 2544, 1664)),  # a 3200x2200 capture
+    ("meter.png", "meter-lane.png", (768, 224, 2440, 1120)),
+    ("black.png", "black-theme.png", None),
+    ("rollbars.png", "piano-roll-scroll-bars.png", (472, 152, 2440, 1936)),
+    ("menu.png", "compact-menu.png", (120, 144, 736, 1384)),
+    ("mpe.png", "mpe-setting.png", (744, 464, 2448, 1056)),
+    ("swing.png", "swing-presets.png", (680, 392, 2080, 1464)),
 ]
 
 if __name__ == "__main__":

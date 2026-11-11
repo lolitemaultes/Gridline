@@ -156,7 +156,7 @@ std::vector<WarpMarkerView> warpMarkerViews(const Song& song, const Clip& c, con
   return out;
 }
 
-uint32_t addWarpMarker(const Song& song, Clip& clip, const TempoMap& map, double tick, bool snap) {
+uint32_t addWarpMarker(const Song& song, Clip& clip, const TempoMap& map, double tick, bool snap, double snapTicks) {
   Clip* c = &clip;
   Ctx x;
   if (!context(song, *c, map, x)) return 0;
@@ -164,7 +164,13 @@ uint32_t addWarpMarker(const Song& song, Clip& clip, const TempoMap& map, double
   double s = x.sourceAt(tick);
   if (snap) {
     double best = std::numeric_limits<double>::infinity();
-    for (double o : onsetsOf(x, std::max(x.a, s - 0.04), std::min(x.b, s + 0.04), 0.5))
+    double lo = s - 0.04, hi = s + 0.04;
+    if (snapTicks > 0) {  // (the source may run backwards: order the two ends)
+      const double e0 = x.sourceAt(tick - snapTicks), e1 = x.sourceAt(tick + snapTicks);
+      lo = std::max(lo, std::min(e0, e1));
+      hi = std::min(hi, std::max(e0, e1));
+    }
+    for (double o : onsetsOf(x, std::max(x.a, lo), std::min(x.b, hi), 0.5))
       if (std::fabs(o - s) < std::fabs(best - s)) best = o;
     if (std::isfinite(best)) s = best;
   }
@@ -360,9 +366,9 @@ double warpDragTick(double markerTick, Tick grabTick, Tick pointerTick, Tick gri
 
 // ---- by clip id ----
 
-uint32_t addWarpMarker(Song& song, ObjectId clip, const TempoMap& map, double tick, bool snap) {
+uint32_t addWarpMarker(Song& song, ObjectId clip, const TempoMap& map, double tick, bool snap, double snapTicks) {
   Clip* c = song.clip(clip);
-  return c ? addWarpMarker(static_cast<const Song&>(song), *c, map, tick, snap) : 0;
+  return c ? addWarpMarker(static_cast<const Song&>(song), *c, map, tick, snap, snapTicks) : 0;
 }
 bool moveWarpMarker(Song& song, ObjectId clip, const TempoMap& map, uint32_t id, double tick) {
   Clip* c = song.clip(clip);

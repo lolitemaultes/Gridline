@@ -808,6 +808,7 @@ void releaseTypedNotes(App& app, std::map<SDL_Scancode, HeldNote>& held) {
 //   run on the next frame and the file is removed (tests/yabridge)
 std::string devShotPending;
 bool devFitNoDraw = false;  // K-147: a fitall sweep without screenshots only lays windows out (no GL drawing)
+bool devNoDraw = false;     // --no-draw: frames are laid out, not drawn (a slow software OpenGL spends most of a frame drawing)
 bool devLoadHold = true;  // J-167: frames do not count while a project loads ("loadhold off")
 bool devTrace = false;
 bool devVideoCursor = false;  // K-10
@@ -817,7 +818,13 @@ struct DevWait {
   double seconds = 0;
   Uint64 start = 0;
   bool on = false;
+  double uiStart = 0;  // the interface's clock (ImGui::GetTime) when the wait began
 } devWait;
+// A --dev-input script counts frames, and two of its events a frame or two apart mean a quick
+// double-click or one wheel gesture. On a slow machine (software OpenGL on a shared runner) a frame
+// can take a few hundred ms; the interface's clock then moves on at most this much per frame, so
+// the script means the same everywhere. (--fixed-dt sets every frame's step instead.)
+constexpr float kDevInputMaxStep = 0.1f;
 float devSoundPeak = 0;  // J-109: output peak since the last "sound" (also drained each frame for "output-silent")
 double devLongestFrameMs = 0;  // K-71: the longest frame (its work, not the wait for the display) since the last "scan"
 double devSecondFrameMs = 0;   // ... and the next longest (tests tell one outlier on a busy machine from a stall)
@@ -832,7 +839,9 @@ bool devWaitHolds() {
     if (fs::exists(fs::u8path(devWait.name.substr(5)), ec)) devsig::reach(devWait.name);
   }
   const bool reached = devsig::reached(devWait.name);
-  if (!reached && t < devWait.seconds) return true;
+  // A wait that times out gives the interface that much of its own clock too (kDevInputMaxStep):
+  // animations a script waits for get their time on a slow machine as well.
+  if (!reached && (t < devWait.seconds || ImGui::GetTime() - devWait.uiStart < devWait.seconds)) return true;
   std::printf("waitfor %s: %s after %.2f s\n", devWait.name.c_str(), reached ? "reached" : "timed out", t);
   std::fflush(stdout);
   devWait.on = false;
@@ -1585,9 +1594,11 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       if (l.a0 == "start" || l.a0 == "force") host::startScan(scanner, l.a0 == "force");
       else if (l.a0 == "folder" && l.args.size() >= 3) host::rescanFolder(host::selfExecutablePath(), l.args[1], l.args[2]);
       const host::ScanStatus st = host::scanStatus();
-      std::printf("scan running %d done %d total %d active %d searching %d failed %d classes %d longest-frame %.1f ms average-frame %.2f ms frames %d second-frame %.1f ms\n",
+      // lock-wait: the longest the interface waited for the scan's lock since the last "scan" (a
+      // stall caused by the scan, whatever the machine's speed)
+      std::printf("scan running %d done %d total %d active %d searching %d failed %d classes %d longest-frame %.1f ms average-frame %.2f ms frames %d second-frame %.1f ms lock-wait %.1f ms\n",
                   st.running ? 1 : 0, st.done, st.total, st.active, st.searching.empty() ? 0 : 1, st.failed, st.classes, devLongestFrameMs,
-                  devFrameCount ? devFrameMsSum / devFrameCount : 0.0, devFrameCount, devSecondFrameMs);
+                  devFrameCount ? devFrameMsSum / devFrameCount : 0.0, devFrameCount, devSecondFrameMs, 1e3 * host::scanReadLongestWait(true));
       std::fflush(stdout);
       devLongestFrameMs = 0;
       devSecondFrameMs = 0;
@@ -1654,7 +1665,7 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       // (J-111f: a quoted name may hold spaces, "collab-name:Night Drive")
       const std::string& name = l.args.empty() ? l.a0 : l.args[0];
       const std::string& secs = l.args.size() > 1 ? l.args[1] : l.a1;
-      devWait = {name, std::max(0.0, std::strtod(secs.c_str(), nullptr)), SDL_GetPerformanceCounter(), true};
+      devWait = {name, std::max(0.0, std::strtod(secs.c_str(), nullptr)), SDL_GetPerformanceCounter(), true, ImGui::GetTime()};
     } else if (l.cmd == "taptempo") {  // K-48: "taptempo": the shared tapper to stdout; "taptempo action": the controller action; "taptempo bar": where the top bar's groups sit
       if (l.a0 == "action") {
         app.runAction(RemoteAction::TapTempo);
@@ -2595,6 +2606,8 @@ int main(int argc, char** argv) {
       std::string z = argv[++i];
       float f = z == "max" ? 1e9f : static_cast<float>(std::atof(z.c_str()));
       if (f > 0) app.playlist.zoomRequest = app.piano.zoomRequest = f;
+    } else if (arg == "--no-draw") {  // dev check: every frame is laid out but nothing is drawn (long scripted sessions that read state, not pixels)
+      devNoDraw = true;
     } else if (arg == "--fixed-dt" && i + 1 < argc) {  // J-37 dev check: every frame advances UI time by N ms (reproducible animation)
       fixedDt = std::max(0.0, std::atof(argv[++i])) / 1000.0;
     } else if (arg == "--scrollx" && i + 1 < argc) {  // dev check: playlist horizontal scroll (px)
@@ -3065,6 +3078,7 @@ int main(int argc, char** argv) {
     if (winW > 0 && winH > 0) viewports::beginFrame(uiScale, ImVec2(static_cast<float>(winW) / uiScale, static_cast<float>(winH) / uiScale));
     xdragui::feedPointer();  // J-75: the drag position wins over the backend's pointer fallback
     if (fixedDt > 0) io.DeltaTime = static_cast<float>(fixedDt);
+    else if (!devInput.empty()) io.DeltaTime = std::min(io.DeltaTime, kDevInputMaxStep);
     if (winW > 0 && winH > 0) {
       io.DisplaySize = ImVec2(static_cast<float>(winW) / uiScale, static_cast<float>(winH) / uiScale);
       io.DisplayFramebufferScale = ImVec2(static_cast<float>(fbW) / io.DisplaySize.x, static_cast<float>(fbH) / io.DisplaySize.y);
@@ -3477,7 +3491,7 @@ int main(int argc, char** argv) {
     ImVec4 bg = theme::vec(theme::pal().chrome);
     glClearColor(bg.x, bg.y, bg.z, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
-    if (!devFitNoDraw) ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    if (!devFitNoDraw && !devNoDraw) ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     if (browserui::thumbMode() && !browserui::thumbCapture(app, fbW, fbH)) running = false;
     if (!profilePath.empty() && shotPath.empty() && ++frameNo >= shotFrames + profileWarmup) running = false;
     if (!devInput.empty()) {  // J-112: for "waitfor"

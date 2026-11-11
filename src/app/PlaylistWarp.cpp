@@ -91,13 +91,13 @@ uint32_t hovered(ObjectId clip) {
   return hover.clip == clip && hover.frame >= ImGui::GetFrameCount() - 1 ? hover.id : 0;
 }
 
-bool begin(App& a, const Clip& c, const TempoMap& tm, double tick, bool slide, uint64_t key) {
+bool begin(App& a, const Clip& c, const TempoMap& tm, double tick, bool slide, uint64_t key, double snapTicks) {
   dragging = Drag{};
   if (c.kind != ClipKind::Audio) return false;
   uint32_t id = hovered(c.id);
   if (!id) {
     Clip after = c;
-    id = addWarpMarker(a.doc.song(), after, tm, tick, a.settings.getBool("playlist.warpSnapTransients"));
+    id = addWarpMarker(a.doc.song(), after, tm, tick, a.settings.getBool("playlist.warpSnapTransients"), snapTicks);
     if (!id) return false;
     a.doc.editClip(c.id, "add warp marker", [&after](Clip& k) { k.warp = after.warp; }, key);
   }
@@ -118,7 +118,9 @@ void drag(App& a, const TempoMap& tm, Tick pointer, Tick grid) {
     end();
     return;
   }
-  if (!dragging.moved && pointer == dragging.grab) return;  // a grab never jumps
+  // A grab never jumps: the marker stays where it was clicked until the pointer really drags (past
+  // the usual drag threshold), so a pixel of hand movement while clicking can't snap it to a grid line.
+  if (!dragging.moved && (pointer == dragging.grab || !ImGui::IsMouseDragging(ImGuiMouseButton_Left))) return;
   dragging.moved = true;
   const double tick = warpDragTick(dragging.tick0, dragging.grab, pointer, grid);
   Clip after = *live;

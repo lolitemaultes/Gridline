@@ -4,6 +4,7 @@
 #include "Debug.h"
 #if defined(GRIDLINE_COLLAB_NET)
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <random>
@@ -200,7 +201,16 @@ class JuiceEndpoint : public Endpoint {
     ++restarts_;
     debugf("%s ice restarted (attempt %d) on UDP port %u%s%s", cfg_.tag.c_str(), restarts_ + 1, static_cast<unsigned>(port_),
            port_ != before ? " (the old port was taken)" : "", useFallback_ ? ", fallback address server" : "");
-    gather();
+    // The agent opens its socket when it gathers. On Linux the old agent's socket keeps its port
+    // for a moment after it is closed (its network thread may still be waiting on it), so binding
+    // the same port can fail at once: try again shortly, as the codes already sent name this port.
+    for (int tries = 0; !gatherNow() && tries < 10; ++tries) {
+      juice_destroy(agent_);
+      agent_ = nullptr;
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      state_ = JUICE_STATE_DISCONNECTED;
+      if (!createAgent(before)) return false;
+    }
     return true;
   }
 
@@ -286,11 +296,17 @@ class JuiceEndpoint : public Endpoint {
     juice_set_remote_gathering_done(agent_);
   }
 
-  void gather() override {
-    if (agent_ && !gatherStarted_) {
-      gatherStarted_ = true;
-      juice_gather_candidates(agent_);
-    }
+  void gather() override { gatherNow(); }
+  // False when the agent could not open its socket (its port taken): it then counts as failed,
+  // so the hub starts a fresh attempt instead of waiting on an agent that never gathers.
+  bool gatherNow() {
+    if (!agent_ || gatherStarted_) return true;
+    gatherStarted_ = true;
+    if (juice_gather_candidates(agent_) >= 0) return true;
+    gatherStarted_ = false;
+    state_ = JUICE_STATE_FAILED;
+    debugf("%s ice agent could not open UDP port %u", cfg_.tag.c_str(), static_cast<unsigned>(port_));
+    return false;
   }
   bool gathered() const override {
     if (!gathered_) return false;

@@ -30,7 +30,7 @@ double clipTickOfSource(const Song& song, const Clip& c, const TempoMap& map, do
 // A new marker on the audio playing at `tick` (with `snap`: on the nearest
 // transient within 40 ms). Nothing moves yet. Returns its id (0: none, e.g. too
 // close to another marker or outside the clip).
-uint32_t addWarpMarker(Song& song, ObjectId clip, const TempoMap& map, double tick, bool snap);
+uint32_t addWarpMarker(Song& song, ObjectId clip, const TempoMap& map, double tick, bool snap, double snapTicks = -1);
 // The marker's audio moved to play at `tick` (the sections on both sides
 // stretch, within the speed limits). The first drag of a clip pins its start
 // with a marker of its own, so the clip's first sample stays at its left edge.
@@ -63,7 +63,9 @@ double grooveTarget(const groove::Warp& w, double t);
 
 // The same on a clip of `song` the caller holds (a copy being edited: the
 // playlist edits it and records the result as one clip edit).
-uint32_t addWarpMarker(const Song& song, Clip& c, const TempoMap& map, double tick, bool snap);
+// snapTicks > 0 also limits the transient search to that many ticks either side of `tick` (the
+// playlist passes a few pixels, so a deep zoom never pulls a marker far from the pointer).
+uint32_t addWarpMarker(const Song& song, Clip& c, const TempoMap& map, double tick, bool snap, double snapTicks = -1);
 bool moveWarpMarker(const Song& song, Clip& c, const TempoMap& map, uint32_t id, double tick);
 bool slideWarpMarker(const Song& song, Clip& c, const TempoMap& map, uint32_t id, double tick);
 

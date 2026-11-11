@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version 0.7.4" src="https://img.shields.io/badge/version-0.7.4-0B0B0B?style=flat-square&labelColor=1F1F1F">
+  <img alt="Version 0.7.5" src="https://img.shields.io/badge/version-0.7.5-0B0B0B?style=flat-square&labelColor=1F1F1F">
   <img alt="License: GPL-3.0" src="https://img.shields.io/badge/license-GPL--3.0-0B0B0B?style=flat-square&labelColor=1F1F1F">
   <img alt="C++17" src="https://img.shields.io/badge/C%2B%2B-17-0B0B0B?style=flat-square&labelColor=1F1F1F">
   <img alt="Plugins" src="https://img.shields.io/badge/plugins-VST3%20%7C%20CLAP%20%7C%20VST2%20%7C%20AU%20%7C%20LV2-0B0B0B?style=flat-square&labelColor=1F1F1F">
@@ -66,6 +66,8 @@ Every release lists SHA-256 checksums in `Gridline-<version>-SHA256SUMS`. The bu
 
 **Pattern workflow.** Build loops in the channel rack, arrange them as clips in the playlist and mix them on inserts. Patterns, audio and automation all live on the same tracks, and mixer tracks, playlist tracks and channels take icons from a searchable set of 139.
 
+**Meter changes, MPE and slides.** A song can change its meter as it goes, with the grid, snapping and metronome following each section. MPE keyboards play every built-in instrument note by note, slide notes glide on every instrument, the Multisampler plays SFZ instruments, and layer channels split and stack instruments by key and velocity.
+
 **Window layouts and tracker modules.** Arrange the main window as Studio, or try the Live and Logic previews, always in your own theme. Open .xm and .mod modules as projects, played by the Tracker Sampler, which also works as a sampler for your own sounds with a key map, envelopes and sample editing.
 
 **A welcome screen.** Gridline opens on your recent projects, each with a sketch of its arrangement, its tempo and its length. Mark favourites, start from a template or the demo song, and see in the Collaborative view who is working on a shared project right now. Big projects never freeze the window while they open: a loading window counts every sample and plugin as it loads, logs how long each took, and Cancel takes you back to the project you had open.
@@ -78,7 +80,7 @@ Every release lists SHA-256 checksums in `Gridline-<version>-SHA256SUMS`. The bu
 
 **One smooth stretch and pitch engine.** Clips, the sampler, slices, the audio editor, Platter and the pitch and time effects share one continuous engine that sounds the same live and in a render, from half speed to four times and an octave either way. Pick Stretch (time and pitch apart), Resample (like a turntable) or, for clips and the sampler, Rubber Band. A clip keeps its length when you change its pitch, and Rubber Band notes and clips do their start-up work ahead of time, so a chord or several clips on one beat start without crackles.
 
-**Your look, your sounds.** Five control styles (Slate, the default, plus Graphite, Hairline, Lumen and Classic), light and dark themes with your own accent and role colours, and sound themes for the interface sounds, all in Settings > Theme.
+**Your look, your sounds.** Five control styles (Slate, the default, plus Graphite, Hairline, Lumen and Classic), light and dark themes with your own accent and role colours, a brightness that goes down to pitch black, a white text option, and sound themes for the interface sounds, all in Settings > Theme.
 
 **Windows on every monitor.** Pop the mixer, piano roll, browser or any Gridline plugin editor out into a window of its own and put it on another screen. Detached panels come back where you left them; a plugin window opens inside the main window again until you pop it out. Zooming glides and dragged clips and notes glide between grid lines.
 
@@ -201,7 +203,7 @@ An instrument opens in its channel window with the channel strip (volume, pan, p
   <img src="docs/images/plasma.png" alt="Plasma, the wavetable hybrid synth" width="100%">
 </p>
 
-Plasma is Gridline's wavetable hybrid synth: three layers that each play a wavetable, a multisample, a sample, a granular cloud or a spectral resynthesis, with two morph slots each (103 modes, FM, PD, AM and RM between sources among them) and stacks up to 16 voices, plus a root oscillator, a texture layer and two filters with 106 types. Its editor follows the sound from top to bottom: a signal path of tiles, a large stage for the part you pick, a motion dock with 4 envelopes, 10 drawable LFOs, 8 macros and the key, touch and chance sources, and a play bar. Link any source to any control by dragging its grip, or switch on Link mode and set the depth right on the control; 64 links in all. Three effect lanes with up to 24 effects, an arpeggiator, a phrase player and a table editor (partials, drawing tools, morphing, formulas, WAV import and export) complete it.
+Plasma is Gridline's wavetable hybrid synth: three layers that each play a wavetable, a multisample, a sample, a granular cloud or a spectral resynthesis, with two morph slots each (103 modes, FM, PD, AM and RM between sources among them) and stacks up to 16 voices, plus a root oscillator, a texture layer and two filters with 106 types. Its editor shows the sound as blocks in signal order, with the modulation under them (4 envelopes, 10 drawable LFOs, 8 macros and the key, touch and chance sources), a Simple / Full switch, a parts sidebar to drag new layers, LFOs and effects in from, and a Patch view (Tab) that draws the same sound as boxes and wires. Link any source to any control by dragging it there, or switch on Link mode and set the depth right on the control; 64 links in all. Three effect lanes with up to 24 effects, an arpeggiator, a phrase player and a table editor (partials, drawing tools, morphing, formulas, WAV import and export) complete it.
 
 Plasma can also read your own Serum 2 presets (`.SerumPreset`) and Serum `.fxp` files through the same Open path as any preset: it reads the settings stored in the preset, with the wavetables, samples and other audio it carries, and sets up a Plasma sound from them. Plasma is its own synth with its own engine, so the result is Plasma's sound, not a copy of the other synth; anything that could only be approximated or not mapped is listed behind an info mark next to the preset name. Its Library lists the Serum preset folders found on your computer as a folder tree, indexed in the background. Nothing from another product ships with Gridline. See [docs/plugins/plasma.md](docs/plugins/plasma.md).
 

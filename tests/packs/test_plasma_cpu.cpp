@@ -164,13 +164,26 @@ std::vector<Item> corpus() {
 const std::vector<Ev> kNotes = {{0, true, 1, 48, 0.8f}, {0, true, 2, 55, 0.7f}, {2000, true, 3, 60, 0.9f}, {9000, true, 4, 64, 0.6f},
                                 {24000, false, 1, 48, 0}, {24000, false, 2, 55, 0}, {26000, false, 3, 60, 0}, {30000, false, 4, 64, 0}};
 
+// The hashes depend on the C library's maths (sin, exp, pow round their last bit differently in
+// glibc, musl and the BSD libcs), so the key names the library, not only the system: golden
+// hashes made with glibc are never compared with a render made on another library.
 std::string machine() {
 #if defined(__APPLE__)
   std::string os = "mac";
 #elif defined(_WIN32)
   std::string os = "win";
-#else
+#elif defined(__linux__) && defined(__GLIBC__)
   std::string os = "linux";
+#elif defined(__linux__)
+  std::string os = "linux-musl";
+#elif defined(__FreeBSD__)
+  std::string os = "freebsd";
+#elif defined(__NetBSD__)
+  std::string os = "netbsd";
+#elif defined(__OpenBSD__)
+  std::string os = "openbsd";
+#else
+  std::string os = "other";
 #endif
 #if defined(__aarch64__) || defined(_M_ARM64)
   return os + "-arm64";

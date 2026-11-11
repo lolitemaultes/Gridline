@@ -247,9 +247,12 @@ file(WRITE "${OUT}/input.txt" "${script}")
 math(EXPR frames "${f} + 20")
 
 # The session plays a copy: a key that ran a command (a save, an edit) shows as a changed copy.
+# Every frame is laid out (the keys go through the interface as typed) but not drawn: the check
+# reads the octave, not pixels, and a software OpenGL on a CI runner spends most of each of the
+# session's thousands of frames drawing.
 configure_file("${DEMO}" "${OUT}/song.gridline.json" COPYONLY)
 file(MD5 "${OUT}/song.gridline.json" songBefore)
-execute_process(COMMAND "${APP}" "${OUT}/song.gridline.json" --hidden --no-ui-sounds --fixed-dt 16 --size 1440x900 --edit 0 6
+execute_process(COMMAND "${APP}" "${OUT}/song.gridline.json" --hidden --no-ui-sounds --no-draw --fixed-dt 16 --size 1440x900 --edit 0 6
                         --dev-input "${OUT}/input.txt" --frames ${frames}
                 RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 900)
 file(WRITE "${OUT}/app.log" "${out}\n${err}")

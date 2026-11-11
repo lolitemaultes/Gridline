@@ -3746,7 +3746,9 @@ void drawPlaylist(App& a) {
         if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && plwarp::removeHovered(a, *hc)) {
         } else {
           group("warp audio");
-          if (plwarp::begin(a, *hc, tempoMap, static_cast<double>(std::max<Tick>(0, tickAt(m.x))), io.KeyShift, cg.key)) {
+          // A new marker snaps to a transient only within a few pixels of the pointer, at any zoom.
+          const double snapTicks = 8.0 / std::max(1e-6f, st.pxPerTick);
+          if (plwarp::begin(a, *hc, tempoMap, static_cast<double>(std::max<Tick>(0, tickAt(m.x))), io.KeyShift, cg.key, snapTicks)) {
             cg.kind = ClipGesture::Warp;
           } else {
             a.doc.cancelGroup();

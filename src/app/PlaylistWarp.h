@@ -26,7 +26,7 @@ uint32_t hovered(ObjectId clip);
 
 // A click with the warp tool on an audio clip: grabs the marker under the
 // pointer or adds one at `tick` and grabs it. False: nothing to drag.
-bool begin(App& a, const Clip& c, const TempoMap& tm, double tick, bool slide, uint64_t key);
+bool begin(App& a, const Clip& c, const TempoMap& tm, double tick, bool slide, uint64_t key, double snapTicks = -1);
 // The grabbed marker follows the pointer as a clip move does: it keeps its
 // offset from the pointer and lands on the nearest line of `grid` (1: free).
 void drag(App& a, const TempoMap& tm, Tick pointer, Tick grid);

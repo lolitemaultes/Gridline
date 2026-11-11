@@ -1090,7 +1090,11 @@ std::vector<FieldItem> engineItems(int o, int type, const char*& title) {
   const std::vector<FieldItem> loop = {{oscP(o, O_LoopMode), "Loop"},    {oscP(o, O_LoopStart), "Loop start"}, {oscP(o, O_LoopEnd), "Loop end"},
                                        {oscP(o, O_LoopXfade), "Crossfade"}, {oscP(o, O_RelLoop), "Follows start"}};
   std::vector<FieldItem> v;
-  auto add = [&](const std::vector<FieldItem>& a) { v.insert(v.end(), a.begin(), a.end()); };
+  // (one by one: GCC 12 warns falsely, -Wstringop-overflow, on a range insert into a vector it
+  // has just seen empty)
+  auto add = [&](const std::vector<FieldItem>& a) {
+    for (const FieldItem& f : a) v.push_back(f);
+  };
   if (type == OscWavetable) {
     title = "Start and smoothing";
     v = {{oscP(o, O_Phase), "Start phase"}, {oscP(o, O_RandPhase), "Phase scatter"}, {oscP(o, O_PhaseMemory), "Phase memory"},
