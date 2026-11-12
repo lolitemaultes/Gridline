@@ -285,10 +285,12 @@ void testCollection(const std::string& dir) {
   expect(st.failed == failing, "collection: the hung, crashed and broken plugins are blacklisted, no others");
   expect(st.classes == 1836 - failing - 2 + 240, "collection: every plugin is listed, the shells' 120 each included");
   // The interface waiting for the scan would wait for seconds (the scan timeout is 3 s) or for the
-  // cache being written. K-150: checked by the reads' wait for the scan's lock; their own time only
-  // has a loose cap, since a busy or virtual machine stops the reading thread now and then (the
-  // plugin list is also grouped again on it twice a second during the scan).
-  expect(waited < 0.1 && worst < 1.0, "collection: what the interface reads every frame stays quick during the scan");
+  // cache being written. K-150: checked by the reads' wait for the scan's lock, strictly. Their own
+  // time: a busy or virtual machine stops the reading thread now and then (a FreeBSD VM: one read of
+  // 1.2 s among hundreds, no wait for the scan), so one read may be slow, short of a stall; reads that
+  // are slow again and again (the plugin list is also grouped again on this thread twice a second
+  // during the scan) are work done on the interface's thread, and fail.
+  expect(waited < 0.1 && slow <= 1 && worst < 2.5, "collection: what the interface reads every frame stays quick during the scan");
   host::ScanCache disk(dir + "/collection-config/plugin-cache.json");
   expect(disk.load() && disk.entries().size() == 1836, "collection: the cache file holds every plugin at the end");
   // An unchanged rescan scans nothing and is quick.

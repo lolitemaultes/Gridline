@@ -113,9 +113,9 @@ jobs:
           apt-get install -y -q --no-install-recommends xwayland dbus dbus-x11 wl-clipboard
           case "${{ matrix.compositor }}" in
             weston) apt-get install -y -q --no-install-recommends weston ;;
-            mutter) apt-get install -y -q --no-install-recommends mutter gnome-settings-daemon-common gsettings-desktop-schemas ;;
+            mutter) apt-get install -y -q --no-install-recommends mutter gnome-settings-daemon-common gsettings-desktop-schemas x11-utils ;;
             kwin)
-              apt-get install -y -q --no-install-recommends kwin-wayland kwin-wayland-backend-virtual || apt-get install -y -q --no-install-recommends kwin-wayland
+              apt-get install -y -q --no-install-recommends kwin-wayland kwin-wayland-backend-virtual x11-utils || apt-get install -y -q --no-install-recommends kwin-wayland x11-utils
               # The package gives kwin_wayland a file capability (cap_sys_nice, for its realtime
               # thread). A container may not grant it, and then the program cannot start at all
               # ("failed to exec 'kwin_wayland': Operation not permitted"): run it without.

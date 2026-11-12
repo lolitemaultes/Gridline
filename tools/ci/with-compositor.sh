@@ -120,6 +120,19 @@ use_xauthority() {
   return 0
 }
 
+# The X server answers (XWayland started on demand, or after a crash at start, never): an X
+# client connects and leaves. Without xdpyinfo there is no probe and the command finds out itself.
+wait_for_x_answer() {
+  command -v xdpyinfo >/dev/null 2>&1 || return 0
+  for _ in $(seq 1 300); do
+    if xdpyinfo >/dev/null 2>&1; then return 0; fi
+    sleep 0.1
+  done
+  echo "with-compositor: the X server on $DISPLAY of $compositor does not answer (XWayland did not start?)" >&2
+  tail -40 "$log" >&2 || true
+  exit 1
+}
+
 case $compositor in
   weston)
     if [ "${WESTON_BACKEND:-headless}" = x11 ]; then
@@ -142,16 +155,19 @@ case $compositor in
     dbus-run-session -- mutter "${args[@]}" >"$log" 2>&1 &
     pid=$!
     wait_for_socket
-    if [ "$mode" = xwayland ]; then wait_for_new_x_socket; use_xauthority; fi
+    if [ "$mode" = xwayland ]; then wait_for_new_x_socket; use_xauthority; wait_for_x_answer; fi
     ;;
   kwin)
     args=(--virtual --socket "$socket" --width "$width" --height "$height" --scale "$scale")
     [ "$outputs" -gt 1 ] && args+=(--output-count "$outputs")
     [ "$mode" = xwayland ] && args+=(--xwayland)
-    dbus-run-session -- kwin_wayland "${args[@]}" >"$log" 2>&1 &
+    # XWAYLAND_NO_GLAMOR: the virtual backend has no graphics device to offer, and the XWayland
+    # it starts then crashed at once trying to use one ("Segmentation fault at address 0x8").
+    # (kwin_xwl debug lines: how XWayland was started, in the log the job keeps)
+    XWAYLAND_NO_GLAMOR=1 QT_LOGGING_RULES="kwin_xwl.debug=true" dbus-run-session -- kwin_wayland "${args[@]}" >"$log" 2>&1 &
     pid=$!
     wait_for_socket
-    if [ "$mode" = xwayland ]; then wait_for_new_x_socket; use_xauthority; fi
+    if [ "$mode" = xwayland ]; then wait_for_new_x_socket; use_xauthority; wait_for_x_answer; fi
     ;;
   *) usage ;;
 esac
