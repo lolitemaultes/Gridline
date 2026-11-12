@@ -319,7 +319,7 @@ void devPrintPluginWindows(int) {}
 bool hostedEditorOpen(const PluginTarget& t) { return windowFor(&app(), t) != nullptr; }
 bool hostedEditorUnderMouse(PluginTarget&, float&, float&) { return false; }  // J-111g: no collaboration inside a plugin build
 
-void closeHostedEditor(App& a, const PluginTarget& t) {
+void closeHostedEditor(App& a, const PluginTarget& t, const char*) {  // the reason is logged by the app build only
   auto it = windows().find(Key{&a, t.key()});
   if (it == windows().end()) return;
   std::unique_ptr<NestedWindow> w = std::move(it->second);

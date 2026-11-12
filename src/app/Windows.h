@@ -79,6 +79,7 @@ struct PlaylistGeometry {
   float plusX = 0, plusY = 0;
   int dropTrack = -1;
   int renaming = -1;  // the track whose name field is open (-1: none)
+  float cloneX = 0, cloneY = 0;  // a pattern menu's Clone item, the last frame one was drawn (0 0: none yet)
   bool loopBadge = false;  // K-140: the loop badge drawn by the pointer last frame (its centre)
   float loopBadgeX = 0, loopBadgeY = 0;
   // K-24: the scrollers' thumbs (vertical: screen y of its top / bottom end; horizontal: x of its
@@ -89,6 +90,7 @@ struct PlaylistGeometry {
   bool valid = false;
 };
 const PlaylistGeometry& playlistGeometry();
+void notePatternMenuClone(float x, float y);  // dev (plgeom): where a pattern menu drew its Clone item
 void drawMixer(App& a);
 // J-83 dev check (--dev-input "mixer"): the strips pane's vertical scroll as
 // drawn last frame, and whether the plain wheel scrolls the mixer there.

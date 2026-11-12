@@ -16,6 +16,7 @@
 #include "../../core/SfzMap.h"
 #include "../../app/App.h"
 #include "../../app/InstrumentSkin.h"
+#include "../../app/KeyGlide.h"
 #include "../../app/PluginSkin.h"
 #include "../../app/Theme.h"
 #include "../../app/Widgets.h"
@@ -142,6 +143,7 @@ struct MsEd {
   int sel = 0, tab = 0;
   float viewLo = 0, viewKeys = 128;
   int drag = 0, dragZone = -1, heldKey = -1, marker = -1;
+  int kbKey = -1;  // the key the keyboard strip sounds (keyglide)
   Zone orig;
   ImVec2 start;
   bool autoMapOnAdd = true;
@@ -441,7 +443,7 @@ void msZoneMap(App& a, const PluginTarget& t, ZoneMap& m, MsEd& ed, ImVec2 size)
   int sel = ed.sel;
   for (int k = static_cast<int>(ed.viewLo); k <= static_cast<int>(ed.viewLo + ed.viewKeys) && k < 128; ++k) {
     float x0 = kx(k), x1 = kx(k + 1);
-    bool black = isBlack(k), held = ed.heldKey == k;
+    bool black = isBlack(k), held = ed.heldKey == k || ed.kbKey == k;
     ImU32 c = held ? P.accent : black ? P.surface700 : theme::mix(P.text, P.surface900, 0.15f);
     dl->AddRectFilled(ImVec2(x0, kp.y), ImVec2(x1 - 1, kp.y + kbH), c, 1);
     for (size_t i = 0; i < m.zones.size(); ++i)
@@ -457,15 +459,12 @@ void msZoneMap(App& a, const PluginTarget& t, ZoneMap& m, MsEd& ed, ImVec2 size)
     }
   }
   dl->PopClipRect();
-  if (ImGui::IsItemActivated()) {
-    int k = keyAt(io.MousePos.x);
-    float vel = std::clamp(0.35f + 0.65f * (io.MousePos.y - kp.y) / kbH, 0.1f, 1.0f);
-    ed.heldKey = k;
-    preview(a, t, k, vel, true);
-  }
-  if (ImGui::IsItemDeactivated() && ed.heldKey >= 0) {
-    preview(a, t, ed.heldKey, 0, false);
-    ed.heldKey = -1;
+  {  // held, the key under the pointer plays: a drag glides from key to key (lower on a key = louder)
+    const bool over = khov && io.MousePos.x >= kp.x && io.MousePos.x < kp.x + W;
+    const int k = over ? std::clamp(keyAt(io.MousePos.x), 0, 127) : -1;
+    const float vel = std::clamp(0.35f + 0.65f * (io.MousePos.y - kp.y) / kbH, 0.1f, 1.0f);
+    keyglide::follow(a, t.isChannel() ? t.owner : kNoId, ImGui::IsItemActive(), k, ed.kbKey, vel);
+    keyglide::devNote("multisampler", kp, ImVec2(kp.x + W, kp.y + kbH), static_cast<int>(ed.viewLo), 0, ed.kbKey);
   }
   if (khov) a.setHint("Click to play " + noteName(keyAt(io.MousePos.x)) + " (lower = louder) · triangles mark root keys");
 }

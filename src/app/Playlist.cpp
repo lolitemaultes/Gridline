@@ -1091,6 +1091,7 @@ void deleteSourceItems(App& a, ClipKind kind, ObjectId id) {
 }  // namespace
 
 const PlaylistGeometry& playlistGeometry() { return devGeom; }
+void notePatternMenuClone(float x, float y) { devGeom.cloneX = x, devGeom.cloneY = y; }
 
 // J-82: deleting clip sources (picker menus, Delete in the picker). Sources
 // the arrangement uses ask first; unused ones go at once. One undo step.

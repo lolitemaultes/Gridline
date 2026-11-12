@@ -182,5 +182,33 @@ int main() {
     expect(lost.size() == 1 && lost[0] == "view.commandPalette" && user.bindings("view.commandPalette").size() == 1, "a user's own Ctrl+K wins; the palette keeps Ctrl+Shift+P");
   }
 
+  // The plugin pickers' search field (mixer slots, instruments): rows are the plugins, the label
+  // their name, the path their category and the alias their format; the name counts most.
+  {
+    auto plug = [](const char* name, const char* cat, const char* fmt, int order) {
+      cmdpal::Entry e;
+      e.kind = cmdpal::Kind::Plugin;
+      e.label = name;
+      e.path = cat;
+      e.alias = fmt;
+      e.order = order;
+      return e;
+    };
+    const std::vector<cmdpal::Entry> plugs = {plug("Parametric EQ", "Filter", "", 0), plug("Hall Reverb", "Delay and reverb", "", 1),
+                                              plug("Tape Delay", "Delay and reverb", "", 2), plug("Limiter", "Dynamics", "", 3),
+                                              plug("Space Verb", "Effect", "VST3", 4), plug("Compressor", "Dynamics", "CLAP", 5)};
+    auto first = [&](const char* q) {
+      const auto r = cmdpal::rank(plugs, q, {});
+      return r.empty() ? std::string() : plugs[static_cast<size_t>(r.front().index)].label;
+    };
+    expect(first("eq") == "Parametric EQ", "plugin search: a name word finds the plugin");
+    expect(first("rev") == "Hall Reverb", "plugin search: the start of a name word");
+    expect(first("dynam") == "Limiter" && cmdpal::rank(plugs, "dynam", {}).size() == 2, "plugin search: a category lists its plugins in order");
+    expect(first("vst3") == "Space Verb", "plugin search: the format finds installed plugins");
+    expect(first("tape del") == "Tape Delay", "plugin search: every word must match");
+    expect(first("compresor") == "Compressor", "plugin search: one letter missing still finds it");
+    expect(cmdpal::rank(plugs, "zzzz", {}).empty(), "plugin search: no match lists nothing");
+  }
+
   return finish();
 }

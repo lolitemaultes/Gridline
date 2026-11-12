@@ -3,6 +3,27 @@
 All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLINE_VERSION_PRE` in
 `CMakeLists.txt`; the release workflow publishes `docs/releases/<version>.md` as the release notes, or this file's section of the tagged version when there is none.
 
+## Unreleased
+
+### Added
+
+- **The typing keyboard remembers whether it was on.** Gridline now opens with the typing keyboard on if it was on when you closed it. **Settings > MIDI > Typing keyboard > When Gridline starts** can instead always start it **On** or **Off**. See [docs/typing-keyboard.md](docs/typing-keyboard.md).
+- **Search in the plugin pickers.** Clicking a mixer effect slot, or adding or replacing an instrument or effect from a menu, now starts with a search field: type part of a name, a category or a format and the list shows the matching plugins, built-in and installed, best first. Enter loads the first one, Escape closes the picker, and small typing mistakes still find it. See [docs/mixer.md](docs/mixer.md).
+- **Why a plugin window closed.** Each time a plugin's interface window closes, Settings > Debug notes why (its close button, the plugin being reloaded, the interface closing itself, or Gridline), which helps track down a window that opens and closes at once.
+
+### Changed
+
+- **Plasma's blocks have a full coloured border.** Every block in the Synth panels, the Effects lanes, the Play page and the Patch view, and the large editor a block opens into, now has a border in its colour all the way round instead of a coloured line along its top only. A selected block shows a heavier border with a soft glow, and a block that is turned off shows its border quieter.
+
+### Fixed
+
+- **The keyboards in instrument editors follow the mouse.** Dragging across the on-screen keyboard of Lattice, Twin VA, the Multisampler and the other built-in instruments now plays the key under the pointer, one key at a time, as the piano roll's keyboard does; the key you leave stops. The key strips of FM Duo and Warm Trio, which did not play at all, now play too.
+- **Import from URL works again on macOS.** When Gridline.app had been dragged out of the downloaded disk image, macOS stopped the downloader and converter that come with it the moment an import started, and the import failed with an unclear message. Gridline now makes its own copies ready to run (or uses a copy in its own tools folder when the app cannot be changed), so links import as they should.
+- **A video link opened from a playlist imports that video.** Such a link used to show the whole playlist and import its first item instead.
+- **Clearer import errors.** Every failure now says what went wrong and what to try: check the link or the connection, wait and try again, update yt-dlp, or reinstall the tools. A program the system stops is named as such.
+- **Settings > File > Import from URL** has **Reinstall the tools**, and **Set up now** installs both programs when either is missing. **Update yt-dlp now** also reports when the copy that comes with Gridline is already current.
+- Some video sites need a JavaScript runtime for their full list of formats: Gridline now hands an installed one (deno, node or bun, also from Homebrew's folders) to the downloader, which an app started from the Finder or a desktop menu could not find on its own.
+
 ## 0.7.5
 
 ### Added

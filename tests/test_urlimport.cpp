@@ -27,6 +27,9 @@
 #include "core/Update.h"
 #include "core/UrlImport.h"
 #include "engine/Sample.h"
+#if defined(__APPLE__)
+#include <sys/xattr.h>
+#endif
 
 namespace fs = std::filesystem;
 using namespace gl;
@@ -369,6 +372,153 @@ void testTools(const fs::path& dir) {
          "update: once a day, off switch, clock set back");
 }
 
+// Import from URL that did not work: a video link opened from a playlist, a program the system
+// stops (macOS quarantine), unclear failures, the JavaScript runtime for YouTube, set-up hints.
+void testFixes(const fs::path& dir) {
+  std::error_code ec;
+  fs::create_directories(dir, ec);
+  // A video link from inside a playlist means that video (the playlist's own link stays a playlist).
+  const auto info = ul::infoArgs({"yt"}, "https://www.youtube.com/watch?v=a1&list=PL1");
+  const auto dash = std::find(info.begin(), info.end(), "--");
+  expect(std::find(info.begin(), dash, "--no-playlist") != dash, "info: a video link inside a playlist reads that video");
+
+  // Every failure says what to try.
+  for (const char* e : {"This video is DRM protected", "Sign in to confirm your age", "Private video", "Unsupported URL: x",
+                        "Unable to download webpage: <urlopen error [Errno 8] nodename nor servname provided>", "Video unavailable",
+                        "Requested format is not available", "Sign in to confirm you're not a bot",
+                        "Unable to extract initial player response; please report this issue", "HTTP Error 403: Forbidden",
+                        "This live event will begin in 5 minutes"}) {
+    const std::string l = ul::errorLead(e);
+    expect(!l.empty(), (std::string("lead: known failure explained: ") + e).c_str());
+  }
+  expect(ul::errorLead("Sign in to confirm you're not a bot").find("bot") != std::string::npos, "lead: the bot check is named");
+  expect(ul::errorLead("Unable to extract initial player response; please report this issue").find("Update yt-dlp") != std::string::npos,
+         "lead: a changed site says to update yt-dlp");
+  expect(ul::errorLead("Requested format is not available").find("update yt-dlp") != std::string::npos,
+         "lead: no audio stream suggests an update");
+  expect(!ul::fallbackLead().empty() && ul::fallbackLead().find("Settings") != std::string::npos, "lead: a fallback with what to try");
+
+  ul::RunResult r;
+  ul::RunFailure f = ul::explainRun(r, "The downloader (yt-dlp)");
+  expect(f.error.find("could not be started") != std::string::npos && f.lead.find("Reinstall") != std::string::npos,
+         "explain: a program that does not start says to reinstall");
+  r.started = true;
+  r.crashed = true;
+  f = ul::explainRun(r, "The downloader (yt-dlp)");
+  expect(f.error.find("stopped by the system") != std::string::npos && f.lead.find("Reinstall") != std::string::npos,
+         "explain: a program ended by the system says so and what to do");
+  r.crashed = false;
+  r.code = 1;
+  r.err = "ERROR: something new happened\n";
+  f = ul::explainRun(r, "The downloader (yt-dlp)");
+  expect(f.error == "something new happened" && f.lead == ul::fallbackLead(), "explain: an unknown error still says what to try");
+  r.timedOut = true;
+  f = ul::explainRun(r, "The downloader (yt-dlp)");
+  expect(f.error.find("stopped making progress") != std::string::npos && f.lead.find("internet") != std::string::npos,
+         "explain: a stall names the connection");
+
+  // A program ended by a signal before it wrote anything (a blocked program on macOS).
+#if !defined(_WIN32)
+  scenario("killed");
+  auto job = waitJob(ul::startFetch(tools(), "https://example.com/watch?v=abc123", (dir / "killed").u8string()));
+  {
+    std::lock_guard<std::mutex> lk(job->mu);
+    expect(job->get() == ul::Phase::Failed && job->error.find("stopped by the system") != std::string::npos && !job->lead.empty(),
+           "fetch: a program the system stops is explained");
+  }
+#endif
+  scenario("bot");
+  auto bot = waitJob(ul::startFetch(tools(), "https://example.com/watch?v=abc123", (dir / "bot").u8string()));
+  {
+    std::lock_guard<std::mutex> lk(bot->mu);
+    expect(bot->get() == ul::Phase::Failed && bot->lead.find("bot") != std::string::npos, "fetch: the bot check is explained");
+  }
+  scenario("outdated");
+  auto old = waitJob(ul::startFetch(tools(), "https://example.com/watch?v=abc123", (dir / "outdated").u8string()));
+  {
+    std::lock_guard<std::mutex> lk(old->mu);
+    expect(old->get() == ul::Phase::Failed && old->lead.find("Update yt-dlp") != std::string::npos, "fetch: an outdated downloader says to update");
+  }
+  scenario("ok");
+
+  // Set-up failures say what to try.
+  expect(mt::setupLead("could not reach GitHub (the newest yt-dlp release)").find("internet") != std::string::npos, "setup: offline");
+  expect(mt::setupLead("GitHub is limiting requests right now (x)").find("hour") != std::string::npos, "setup: rate limit");
+  expect(mt::setupLead("yt-dlp_macos does not match its published SHA-256 checksum").find("checksum") != std::string::npos,
+         "setup: checksum");
+  expect(mt::setupLead("something else").find("Reinstall") != std::string::npos, "setup: anything else names Reinstall");
+
+  // The JavaScript runtime for YouTube is found where the app's PATH does not reach.
+  {
+    const fs::path bin = dir / "js bin";
+    fs::create_directories(bin, ec);
+    fs::copy_file(fakeTool, bin / mt::exeName("deno"), fs::copy_options::overwrite_existing, ec);
+    const char* oldPath = std::getenv("PATH");
+    const std::string keep = oldPath ? oldPath : "";
+    platform::setEnv("PATH", bin.u8string().c_str());
+    const auto js = mt::jsRuntimeArgs();
+    platform::setEnv("PATH", keep.c_str());
+    expect(js.size() == 2 && js[0] == "--js-runtimes" && js[1] == "deno:" + (bin / mt::exeName("deno")).u8string(),
+           "js runtime: deno handed to yt-dlp with its path");
+  }
+
+  // Two version checks at once (set-up and update) each read their own output.
+  {
+    std::string v1, v2;
+    std::thread t1([&] { v1 = mt::runVersion({fakeTool}); });
+    std::thread t2([&] { v2 = mt::runVersion({fakeTool}); });
+    t1.join();
+    t2.join();
+    expect(v1 == "2099.01.01" && v2 == "2099.01.01", "version checks at the same time both read the version");
+  }
+
+  // macOS: the copies inside a downloaded app carry the quarantine flag; the system stops them.
+#if defined(__APPLE__)
+  {
+    const fs::path app = dir / "Gridline.app tools";
+    const fs::path inst = dir / "installed tools";
+    fs::create_directories(app, ec);
+    for (const char* n : {"yt-dlp", "ffmpeg", "ffprobe"}) {
+      fs::copy_file(fakeTool, app / n, fs::copy_options::overwrite_existing, ec);
+      fs::permissions(app / n, fs::perms::owner_all, fs::perm_options::replace, ec);
+    }
+    {
+      std::ofstream(app / "yt-dlp.version") << "2026.10.26\n";
+    }
+    const char flag[] = "0083;6553a1b0;Browser;";
+    for (const char* n : {"yt-dlp", "ffmpeg", "ffprobe"}) setxattr((app / n).u8string().c_str(), "com.apple.quarantine", flag, sizeof flag - 1, 0, 0);
+    expect(mt::quarantined((app / "yt-dlp").u8string()), "quarantine: the flag is seen");
+    // The folder can be changed: the flag is removed in place (ffprobe with ffmpeg).
+    mt::Tool ff = mt::unblock(mt::Tool{mt::From::Bundled, (app / "ffmpeg").u8string(), {}}, inst.u8string());
+    expect(ff.from == mt::From::Bundled && !mt::quarantined((app / "ffmpeg").u8string()) && !mt::quarantined((app / "ffprobe").u8string()),
+           "quarantine: removed from ffmpeg and ffprobe inside the app");
+    expect(!mt::runVersion(ff.argv()).empty(), "quarantine: the cleared ffmpeg runs");
+    // The app's files cannot be changed (a read-only disk image): a copy without the flag is used.
+    fs::permissions(app / "yt-dlp", fs::perms::owner_read | fs::perms::owner_exec, fs::perm_options::replace, ec);
+    if (!mt::clearQuarantine((app / "yt-dlp").u8string())) {
+      std::string err;
+      mt::Tool yt = mt::unblock(mt::Tool{mt::From::Bundled, (app / "yt-dlp").u8string(), {}}, inst.u8string(), &err);
+      expect(yt.from == mt::From::Installed && yt.path == (inst / "yt-dlp").u8string() && !mt::quarantined(yt.path) && err.empty(),
+             "quarantine: a read-only copy is copied into Gridline's tools folder without the flag");
+      expect(mt::recordedVersion(inst.u8string()) == "2026.10.26", "quarantine: the copy keeps its version");
+      expect(mt::runVersion(yt.argv()) == "2099.01.01", "quarantine: the copy runs");
+      // Next time the same copy is reused.
+      const auto t0 = fs::last_write_time(inst / "yt-dlp", ec);
+      yt = mt::unblock(mt::Tool{mt::From::Bundled, (app / "yt-dlp").u8string(), {}}, inst.u8string());
+      expect(yt.from == mt::From::Installed && fs::last_write_time(inst / "yt-dlp", ec) == t0, "quarantine: the copy is reused");
+    } else {
+      expect(true, "quarantine: read-only case not reproducible here (flag removable)");
+    }
+    fs::permissions(app / "yt-dlp", fs::perms::owner_all, fs::perm_options::replace, ec);
+    // A tool without the flag, or the system's, is left alone.
+    mt::Tool sys{mt::From::System, "/usr/bin/true", {}};
+    expect(mt::unblock(sys, inst.u8string()).path == "/usr/bin/true", "quarantine: the system's tools are left alone");
+  }
+#else
+  expect(!mt::quarantined(fakeTool) && mt::clearQuarantine(fakeTool), "quarantine: nothing to do on this system");
+#endif
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -390,5 +540,6 @@ int main(int argc, char** argv) {
   testProcess(dir);
   testWorker(dir / "work");
   testTools(dir);
+  testFixes(dir / "fixes");
   return finish();
 }

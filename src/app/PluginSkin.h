@@ -275,9 +275,10 @@ struct EnvParams {
 bool envelope(App& a, const PluginTarget& t, const EnvParams& e, ImVec2 tl, ImVec2 size, const Skin& k);
 // Keyboard strip from note lo to hi (inclusive). `lit` marks held notes (128
 // entries or nullptr); [markLo, markHi] is tinted (key ranges); root is
-// outlined. Returns the note clicked this frame, or -1.
+// outlined. Returns the note clicked this frame, or -1. `under` (optional): the key under the pointer
+// while it is over the strip, else -1 (for a keyboard that plays: keyglide::follow).
 int keyboard(const char* id, ImVec2 tl, ImVec2 size, int lo, int hi, const Skin& k, const bool* lit = nullptr, int markLo = -1, int markHi = -1,
-             int root = -1);
+             int root = -1, int* under = nullptr);
 // Segmented LED meter (value in dB, 0 = full scale); reduction grows down.
 void meter(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k, float db, float rangeDb = 48.f, bool reduction = false);
 // Round indicator LED.

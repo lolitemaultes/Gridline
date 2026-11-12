@@ -1155,16 +1155,19 @@ float card(Ctx& c, float x, float y, float w, float h, const char* title, int en
   return y + 28;
 }
 
-// The design's advanced panel: a block grown to the whole page. Its frame with the family strip,
+// The design's advanced panel: a block grown to the whole page. Its frame with the family border,
 // Back, the way back, the part's dot, its name and what it is set to (at kAdvHeadY), a line under
 // the head. Returns the x right of the sub text.
 float advHead(Ctx& c, const char* title, const char* sub, ImU32 fam, int src) {
   const Pal& P = c.P;
   const float x0 = kAdvX0, x1 = kAdvX1, y0 = kTopH + M(16), y1 = kPlayY - M(16), cy = kAdvHeadY;
   c.dl->AddRectFilled(c.p(x0, y0 + M(2)), c.p(x1, y1 + M(2)), IM_COL32(0, 0, 0, P.dark ? 40 : 14), c.s(M(6)));
-  c.dl->AddRectFilled(c.p(x0, y0), c.p(x1, y1), P.panel, c.s(M(6)));
-  c.dl->AddRect(c.p(x0, y0), c.p(x1, y1), P.line, c.s(M(6)));
-  c.dl->AddRectFilled(c.p(x0 + M(16), y0 - M(0.5f)), c.p(x1 - M(16), y0 + M(1.5f)), theme::withAlpha(fam, 0.9f), c.s(M(1)));
+  {  // its panel with the family colour all the way round, as the block it grew from
+    ImVec2 a, b;
+    blockBox(c, x0, y0, x1 - x0, y1 - y0, a, b);
+    c.dl->AddRectFilled(a, b, P.panel, blockRound(c));
+    blockRing(c, a, b, fam ? theme::withAlpha(fam, 0.9f) : P.line, blockBorderW(c, false));
+  }
   float x = kAdvIX0;
   {
     const float bw = textW(c, "Back", T(12), false) + M(28);
@@ -1820,23 +1823,33 @@ bool section(Ctx& c, const char* id, float x, float& y, float w, const char* tit
 
 // ---- blocks: one synth part each (a layer, a filter, the amp, an effect, a motion source). The
 // same frame and title bar draw the Patch view's boxes.
-void blockFrame(const Ctx& c, float x, float y, float w, float h, ImU32 fam, bool sel, bool dim) {
-  const ImVec2 a = c.p(x, y), b = c.p(x + w, y + h);
+// A block's corners in screen pixels, snapped to whole pixels so its border stays crisp.
+void blockBox(const Ctx& c, float x, float y, float w, float h, ImVec2& a, ImVec2& b) {
+  const ImVec2 p0 = c.p(x, y), p1 = c.p(x + w, y + h);
+  a = ImVec2(std::round(p0.x), std::round(p0.y)), b = ImVec2(std::round(p1.x), std::round(p1.y));
+}
+float blockBorderW(const Ctx& c, bool sel) { return std::max(1.f, std::round(c.s(M(1.5f)))) + (sel ? 1.f : 0.f); }
+float blockRound(const Ctx& c) { return c.s(M(6)); }
+void blockRing(const Ctx& c, ImVec2 a, ImVec2 b, ImU32 col, float t) {
+  const float h = t * 0.5f;  // a stroke centred half its width inside: whole pixels stay whole
+  c.dl->PathRect(ImVec2(a.x + h, a.y + h), ImVec2(b.x - h, b.y - h), std::max(0.f, blockRound(c) - h));
+  c.dl->PathStroke(col, ImDrawFlags_Closed, t);
+}
+void blockFrame(const Ctx& c, float x, float y, float w, float h, ImU32 fam, bool sel, bool dim, bool off) {
+  ImVec2 a, b;
+  blockBox(c, x, y, w, h, a, b);
   gl::audit::group(a, b, "cell");
-  const float rr = c.s(M(6));
+  const float rr = blockRound(c), t = blockBorderW(c, sel);
   c.dl->AddRectFilled(ImVec2(a.x, a.y + c.s(1)), ImVec2(b.x, b.y + c.s(2)), IM_COL32(0, 0, 0, c.P.dark ? 52 : 16), rr);  // the shadow
   c.dl->AddRectFilled(a, b, c.P.panel, rr);
-  c.dl->AddLine(ImVec2(a.x + rr, a.y + 1), ImVec2(b.x - rr, a.y + 1), IM_COL32(255, 255, 255, c.P.dark ? 9 : 0));  // the top edge's light
-  if (sel) {
-    const float g = glowK(c);
-    c.dl->AddRect(ImVec2(a.x - c.s(1), a.y - c.s(1)), ImVec2(b.x + c.s(1), b.y + c.s(1)), theme::withAlpha(c.P.accent, 0.3f * g + 0.1f), rr, 0, c.s(1.5f));
-    c.dl->AddRect(a, b, theme::mix(c.P.accent, c.P.line, 0.3f), rr);
-  } else {
-    c.dl->AddRect(a, b, theme::mix(c.P.line, c.P.lineHi, 0.35f), rr);
+  c.dl->AddLine(ImVec2(a.x + rr, a.y + t + 0.5f), ImVec2(b.x - rr, a.y + t + 0.5f), IM_COL32(255, 255, 255, c.P.dark ? 9 : 0));  // the top edge's light
+  if (sel) {  // selected: an accent glow outside its (heavier) border
+    const float g = glowK(c), o = c.s(1.5f);
+    c.dl->AddRect(ImVec2(a.x - o, a.y - o), ImVec2(b.x + o, b.y + o), theme::withAlpha(c.P.accent, 0.3f * g + 0.15f), rr + o, 0, o);
   }
-  // the family strip along the top edge (crisp, full strength)
-  c.dl->AddRectFilled(ImVec2(a.x + c.s(M(10)), a.y - c.s(M(1))), ImVec2(b.x - c.s(M(10)), a.y + c.s(M(1.6f))), fam, c.s(M(1.5f)),
-                      ImDrawFlags_RoundCornersBottom);
+  // the family colour all the way round, evenly (a block that is off shows it quieter)
+  const ImU32 plain = sel ? theme::mix(c.P.accent, c.P.line, 0.3f) : theme::mix(c.P.line, c.P.lineHi, 0.35f);
+  blockRing(c, a, b, fam ? (off ? theme::mix(fam, c.P.line, 0.6f) : fam) : plain, t);
   if (dim) c.dl->AddRectFilled(a, b, theme::withAlpha(c.P.frame, 0.45f), rr);
 }
 namespace {
@@ -1899,7 +1912,7 @@ bool blockBegin(Ctx& c, Block& b, const char* id, float x, float& y, float w, co
   const float headH = M(8 + 24 + 8);
   const float cachedH = std::max(o.frameH, hIt != c.u.blockH.end() ? hIt->second : headH);
   const bool on = o.enable < 0 || val(c, o.enable) >= 0.5;
-  blockFrame(c, x, y, w, b.open ? cachedH : headH, o.fam, o.selected, false);
+  blockFrame(c, x, y, w, b.open ? cachedH : headH, o.fam, o.selected, false, !on);
   const float hy = y + M(8), hh = M(24), cy = hy + hh * 0.5f;
   float rx = x + w - M(12);
   // right: "..." (a menu: open large, every setting here, fold, remove), then the block's own tools
@@ -2059,7 +2072,13 @@ void blockEnd(Ctx& c, Block& b, float& y) {
   if (b.open) y += M(8);
   const float h = std::max(b.open ? b.frameH : 0.f, std::max(M(40), y - b.y0));
   c.u.blockH[b.key] = h;
-  if (b.dimFrom > 0 && y > b.dimFrom) c.dl->AddRectFilled(c.p(b.x + 4, b.dimFrom), c.p(b.x + b.w, b.y0 + h), theme::withAlpha(c.P.frame, 0.35f), c.s(6));
+  if (b.dimFrom > 0 && y > b.dimFrom) {  // an off block's body, inside its border
+    ImVec2 a, e;
+    blockBox(c, b.x, b.dimFrom, b.w, b.y0 + h - b.dimFrom, a, e);
+    const float t = blockBorderW(c, false);
+    c.dl->AddRectFilled(ImVec2(a.x + t, a.y), ImVec2(e.x - t, e.y - t), theme::withAlpha(c.P.frame, 0.35f), std::max(0.f, blockRound(c) - t),
+                        ImDrawFlags_RoundCornersBottom);
+  }
   gBlockMore = b.prevMore;
   y = b.y0 + h + 8;
 }

@@ -86,14 +86,20 @@ struct State {
   char from[16] = "0:00", to[16] = "";
   std::string error, lead;
   Screen errorBack = Screen::Entry;
+  std::string unblockError;    // macOS: a flagged tool that could not be made startable
+  std::vector<std::string> js;  // "--js-runtimes deno:<path>" (YouTube), found with the tools
   // update
   std::shared_ptr<UpdateJob> upd;
   std::string updStatus;
   bool updChecked = false;
+  // Settings: Reinstall the tools
+  std::shared_ptr<SetupJob> reinstall;
+  std::string reinstallStatus;
   // dev
   std::string fakeTool;  // GRIDLINE_URLIMPORT_FAKE_NET: offline tool setup (screenshots, tests)
   int fakeStepMs = 0;
   bool automated = false;
+  bool allowNet = false;  // GRIDLINE_URLIMPORT_ALLOW_NET=1: a scripted run may download (end-to-end checks)
   std::string devClipboard;
   bool devClipboardSet = false;
 };
@@ -176,22 +182,32 @@ void close() {
 void locate() {
   State& s = S();
   const mt::Search se = search();
-  if (usingFake()) {
-    s.yt = mt::locateYtdlp(se);
-    s.ff = mt::locateFfmpeg(se);
-    return;
-  }
   s.yt = mt::locateYtdlp(se);
   s.ff = mt::locateFfmpeg(se);
+  if (usingFake()) {
+    s.js.clear();
+    return;
+  }
+  // macOS: the copies inside a downloaded app carry the quarantine flag, and the system stops
+  // them when they start. Clear it (or use a copy without it).
+  std::string e1, e2;
+  s.yt = mt::unblock(s.yt, mt::installDir(), &e1);
+  s.ff = mt::unblock(s.ff, mt::installDir(), &e2);
+  s.unblockError = !e1.empty() ? e1 : e2;
+  s.js = mt::jsRuntimeArgs();
 }
 
-void startSetup() {
+// yt-dlp's command: the program, then the JavaScript runtime it should use.
+std::vector<std::string> ytdlpArgv() {
   State& s = S();
+  std::vector<std::string> a = s.yt.argv();
+  a.insert(a.end(), s.js.begin(), s.js.end());
+  return a;
+}
+
+// Installs yt-dlp and / or ffmpeg into Gridline's tools folder on a worker thread.
+std::shared_ptr<SetupJob> launchInstall(bool needYt, bool needFf) {
   auto job = std::make_shared<SetupJob>();
-  s.setup = job;
-  s.screen = Screen::Setup;
-  devsig::reach("urlimport-setup");
-  const bool needYt = !s.yt.found(), needFf = !s.ff.found();
   const mt::Net n = net();
   const std::string dir = mt::installDir();
   std::thread([job, needYt, needFf, n, dir] {
@@ -218,6 +234,19 @@ void startSetup() {
     }
     job->done = true;
   }).detach();
+  return job;
+}
+
+void startSetup() {
+  State& s = S();
+  s.setup = launchInstall(!s.yt.found(), !s.ff.found());
+  s.screen = Screen::Setup;
+  devsig::reach("urlimport-setup");
+}
+
+bool mayDownload() {
+  const State& s = S();
+  return !s.automated || usingFake() || s.allowNet;
 }
 
 // The tools are there (true), or are being set up / cannot be (false; the popup shows which).
@@ -228,11 +257,13 @@ bool toolsReady(App& a) {
   const bool overridden = std::getenv("GRIDLINE_YTDLP") || std::getenv("GRIDLINE_FFMPEG");
   if (overridden) {
     showError(std::string("GRIDLINE_YTDLP / GRIDLINE_FFMPEG do not point at a program: ") + (s.yt.found() ? "ffmpeg" : "yt-dlp"),
-              tr("The downloader is not available."), Screen::Entry);
+              tr("The downloader is not available. Point the variable at the program, or remove it to use Gridline's own copy."),
+              Screen::Entry);
     return false;
   }
-  if (s.automated && !usingFake()) {  // scripted runs never touch the network
-    showError("yt-dlp or ffmpeg is missing and this run does not download", tr("The downloader is not available."), Screen::Entry);
+  if (!mayDownload()) {  // scripted runs never touch the network
+    showError("yt-dlp or ffmpeg is missing and this run does not download" + (s.unblockError.empty() ? std::string() : ": " + s.unblockError),
+              tr("The downloader is not available."), Screen::Entry);
     return false;
   }
   (void)a;
@@ -277,6 +308,35 @@ void collectUpdate() {
   if (r.updated && s.screen != Screen::Importing && s.screen != Screen::Fetching) locate();
 }
 
+// Settings: Set up now (what is missing) / Reinstall the tools (yt-dlp, and ffmpeg unless the
+// app's own copy is used) into Gridline's tools folder.
+void startReinstall(App& a, bool all) {
+  State& s = S();
+  if (s.reinstall || s.upd || !mayDownload()) return;
+  locate();
+  const bool needYt = all || !s.yt.found();
+  const bool needFf = all ? s.ff.from != mt::From::Bundled && s.ff.from != mt::From::Override : !s.ff.found();
+  s.reinstallStatus.clear();
+  s.updStatus.clear();
+  a.settings.set("import.urlLastUpdateCheck", static_cast<double>(wallNow()));
+  s.reinstall = launchInstall(needYt, needFf);
+}
+
+void collectReinstall() {
+  State& s = S();
+  if (!s.reinstall || !s.reinstall->done) return;
+  std::string err;
+  {
+    std::lock_guard<std::mutex> lk(s.reinstall->mu);
+    err = s.reinstall->error;
+  }
+  s.reinstall.reset();
+  if (s.screen == Screen::Closed) locate();
+  if (err.empty()) s.reinstallStatus = tr("The tools are installed and checked");
+  else s.reinstallStatus = std::string(tr("Could not install the tools: ")) + err + ". " + mt::setupLead(err);
+  devsig::reach("urlimport-reinstalled");
+}
+
 // ---- actions ----------------------------------------------------------------
 
 void fetch(App& a) {
@@ -298,7 +358,7 @@ void fetch(App& a) {
   s.workDir = workRoot();
   std::error_code ec;
   fs::remove_all(fs::u8path(s.workDir) / "info", ec);
-  s.job = ul::startFetch(ul::Tools{s.yt.argv(), s.ff.path}, u, (fs::u8path(s.workDir) / "info").u8string());
+  s.job = ul::startFetch(ul::Tools{ytdlpArgv(), s.ff.path}, u, (fs::u8path(s.workDir) / "info").u8string());
   s.screen = Screen::Fetching;
 }
 
@@ -347,7 +407,7 @@ void startImport(App& a) {
   const auto reqs = requests();
   if (reqs.empty()) return;
   if (!toolsReady(a)) return;
-  s.job = ul::startImport(ul::Tools{s.yt.argv(), s.ff.path}, reqs, (fs::u8path(s.workDir) / "items").u8string());
+  s.job = ul::startImport(ul::Tools{ytdlpArgv(), s.ff.path}, reqs, (fs::u8path(s.workDir) / "items").u8string());
   s.screen = Screen::Importing;
   devsig::reach("urlimport-importing");
 }
@@ -446,6 +506,7 @@ void finishImport(App& a, const std::vector<ul::Result>& results) {
 void poll(App& a) {
   State& s = S();
   collectUpdate();
+  collectReinstall();
   if (s.setup && s.setup->done) {
     std::string err;
     {
@@ -458,7 +519,8 @@ void poll(App& a) {
     if (cancelled) {
       s.screen = Screen::Entry;
     } else if (!err.empty() || !s.yt.found() || !s.ff.found()) {
-      showError(err.empty() ? std::string("the tools could not be set up") : err, tr("The downloader could not be set up."), Screen::Entry);
+      const std::string e = err.empty() ? (s.unblockError.empty() ? std::string("the tools could not be set up") : s.unblockError) : err;
+      showError(e, std::string(tr("The downloader could not be set up.")) + " " + mt::setupLead(e), Screen::Entry);
     } else {
       s.screen = Screen::Entry;
       if (s.fetchAfterSetup) {
@@ -841,7 +903,8 @@ void drawError(App& a) {
     wrapped(s.error, P.danger);
     ImGui::PopFont();
   }
-  if (S().errorBack == Screen::Entry && (!s.yt.found() || !s.ff.found())) wrapped(mt::systemPackagesHint(), P.textDim);
+  if (S().errorBack == Screen::Entry && (!s.yt.found() || !s.ff.found()) && s.lead.find("yourself") == std::string::npos)
+    wrapped(mt::systemPackagesHint(), P.textDim);
   ImGui::Dummy(ImVec2(kW, theme::kS2));
   const float wb = buttonW("Back"), wc = buttonW("Close");
   rightAlign(wb + wc + theme::kS2);
@@ -860,6 +923,7 @@ void readEnv() {
   State& s = S();
   if (const char* f = std::getenv("GRIDLINE_URLIMPORT_FAKE_NET"); f && *f) s.fakeTool = f;
   if (const char* d = std::getenv("GRIDLINE_URLIMPORT_FAKE_STEP_MS"); d && *d) s.fakeStepMs = std::atoi(d);
+  if (const char* n = std::getenv("GRIDLINE_URLIMPORT_ALLOW_NET"); n && std::strcmp(n, "1") == 0) s.allowNet = true;
 }
 
 }  // namespace
@@ -972,17 +1036,30 @@ void settingsSection(App& a) {
   if (ImGui::Checkbox(tr("Keep yt-dlp up to date automatically"), &on)) st.set("import.urlAutoUpdate", on);
   ui::Hint("Sites change often. At most once a day, when Import from URL is used, Gridline checks yt-dlp's releases on GitHub and "
             "installs a newer one after checking its SHA-256 checksum. Nothing else is sent.");
+  collectReinstall();
   if (s.upd) {
     ImGui::TextColored(theme::vec(P.textFaint), "%s", tr("Checking for a newer yt-dlp..."));
+  } else if (s.reinstall) {
+    const int64_t got = s.reinstall->got.load(), total = s.reinstall->total.load();
+    std::string line = std::string(tr("Downloading and checking")) + "  " + (s.reinstall->step == 0 ? "yt-dlp" : "ffmpeg");
+    if (got > 0) line += "  " + (total > 0 ? mb(got) + " / " + mb(total) : mb(got));
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(theme::vec(P.textFaint), "%s", line.c_str());
   } else {
-    const bool can = !s.automated || usingFake();
-    ImGui::BeginDisabled(!can);
-    if (ui::TextButton(s.yt.found() ? "Update yt-dlp now" : "Set up now", false, 0, "Download and check the newest yt-dlp now")) {
+    ImGui::BeginDisabled(!mayDownload());
+    const bool missing = !s.yt.found() || !s.ff.found();
+    if (missing) {
+      if (ui::TextButton("Set up now", false, 0, "Download yt-dlp and FFmpeg now and check them against their published checksums"))
+        startReinstall(a, false);
+    } else if (ui::TextButton("Update yt-dlp now", false, 0, "Download and check the newest yt-dlp now")) {
       auto job = std::make_shared<UpdateJob>();
       s.upd = job;
       const mt::Net n = net();
       const std::string dir = mt::installDir();
-      const std::string cur = s.yt.from == mt::From::Installed ? mt::recordedVersion(dir) : std::string();
+      // The version of the copy in use (the one inside the app has its version file too).
+      const std::string cur = s.yt.from == mt::From::Installed || s.yt.from == mt::From::Bundled
+                                  ? mt::recordedVersion(fs::u8path(s.yt.path).parent_path().u8string())
+                                  : std::string();
       st.set("import.urlLastUpdateCheck", static_cast<double>(wallNow()));
       std::thread([job, n, dir, cur] {
         mt::UpdateResult r = mt::updateYtdlp(n, dir, cur, nullptr);
@@ -991,11 +1068,20 @@ void settingsSection(App& a) {
         job->done = true;
       }).detach();
     }
+    if (!missing) {
+      ImGui::SameLine(0, theme::kS2);
+      if (ui::TextButton("Reinstall the tools", false, 0,
+                         "Download yt-dlp and FFmpeg again into Gridline's own folder and check them, for example when imports stop "
+                         "with a program that cannot run"))
+        startReinstall(a, true);
+    }
     ImGui::EndDisabled();
-    if (!s.updStatus.empty()) {
+    const std::string& status = !s.reinstallStatus.empty() ? s.reinstallStatus : s.updStatus;
+    if (!status.empty()) {
       ImGui::SameLine(0, theme::kS2);
       ImGui::AlignTextToFramePadding();
-      ui::TextFit(s.updStatus.c_str(), std::max(80.0f, ImGui::GetContentRegionAvail().x), P.textDim);
+      ui::TextFit(status.c_str(), std::max(80.0f, ImGui::GetContentRegionAvail().x), P.textDim);
+      if (status != s.updStatus) ui::Hint(status);
     }
   }
   ui::EndSection();
@@ -1044,6 +1130,7 @@ void start(bool automated) { S().automated = automated; }
 void devCommand(App& a, const std::vector<std::string>& args) {
   State& s = S();
   s.automated = true;
+  readEnv();
   const std::string cmd = args.empty() ? std::string() : args[0];
   const std::string arg = args.size() > 1 ? args[1] : std::string();
   if (cmd == "open") {
@@ -1069,15 +1156,17 @@ void devCommand(App& a, const std::vector<std::string>& args) {
   } else if (cmd == "playlist") {
     s.playlistMode = arg == "all" ? 1 : 0;
     std::fill(s.picked.begin(), s.picked.end(), 1);
+  } else if (cmd == "reinstall" || cmd == "setup") {  // Settings: Reinstall the tools / Set up now
+    startReinstall(a, cmd == "reinstall");
   } else if (cmd == "trim") {
     s.trimOn = true;
     std::snprintf(s.from, sizeof s.from, "%s", arg.c_str());
     std::snprintf(s.to, sizeof s.to, "%s", args.size() > 2 ? args[2].c_str() : "");
   } else if (cmd == "state") {
     static const char* names[] = {"closed", "entry", "setup", "fetching", "preview", "importing", "error"};
-    std::printf("urlimport state %s url \"%s\" title \"%s\" items %d yt-dlp %s ffmpeg %s error \"%s\" lead \"%s\"\n",
+    std::printf("urlimport state %s url \"%s\" title \"%s\" items %d yt-dlp %s ffmpeg %s error \"%s\" lead \"%s\" tools \"%s\"\n",
                 names[static_cast<int>(s.screen)], s.url, s.info.title.c_str(), static_cast<int>(s.info.entries.size()),
-                mt::fromName(s.yt.from), mt::fromName(s.ff.from), s.error.c_str(), s.lead.c_str());
+                mt::fromName(s.yt.from), mt::fromName(s.ff.from), s.error.c_str(), s.lead.c_str(), s.reinstallStatus.c_str());
     std::fflush(stdout);
   }
 }

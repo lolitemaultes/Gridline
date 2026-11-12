@@ -61,7 +61,10 @@ bool parseFfmpegTime(const std::string& line, double& seconds);
 std::string toolError(const std::string& errText);
 // A one-line explanation for well-known failures (sign-in, DRM, private, unsupported, offline,
 // region, removed), "" otherwise. English; the UI translates it.
+// Each explanation also says what to try (update yt-dlp, check the link or the connection).
 std::string errorLead(const std::string& toolErrorText);
+// What to try when no known failure matched.
+std::string fallbackLead();
 
 // ---- times ("83", "1:23", "1:02:03.5") ----
 double parseTime(const std::string& text);  // seconds, < 0 when not a time
@@ -144,10 +147,17 @@ std::shared_ptr<Job> startImport(const Tools& t, const std::vector<Request>& req
 // file nor to `watchDir` (any size change below it) for `stallSeconds` (> 0), or on `cancel`.
 struct RunResult {
   bool started = false, ok = false, timedOut = false, cancelled = false;
+  bool crashed = false;  // ended by a signal (POSIX: stopped by the system, or it crashed)
   int code = -1;
   std::string out, err;  // everything written
 };
 RunResult run(const std::vector<std::string>& argv, const std::string& scratchBase, const std::atomic<bool>* cancel, double seconds,
               double stallSeconds, const std::string& watchDir, const std::function<void(const std::string&)>& onLine);
+// A failed run in words: `error` (the tool's own message, or what happened) and `lead` (what went
+// wrong and what to try; never empty). `what`: "The downloader (yt-dlp)" / "The converter (ffmpeg)".
+struct RunFailure {
+  std::string error, lead;
+};
+RunFailure explainRun(const RunResult& r, const std::string& what);
 
 }  // namespace gl::urlimport

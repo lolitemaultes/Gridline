@@ -50,3 +50,14 @@ In the normal, wide mixer:
 
 In the thin mixer, where the strips stack into rows, the wheel scrolls the rows as before.
 Settings > Interface decides whether the wheel scrolls or adjusts over controls there.
+
+## Adding and arranging effects
+
+Click an empty effect slot (or a slot's arrow) to pick an effect. The picker starts with a search
+field: type part of a name, a category or a format (VST3, CLAP and so on) and it lists the
+matching effects, built-in and installed, best first; Enter loads the first one and Escape closes the picker. Small typing
+mistakes still find the effect. Clear the field to browse the folders again. The instrument
+pickers (adding or replacing an instrument) have the same field.
+
+To change the order of the effects on a track, drag a slot onto another slot (hold Ctrl to copy
+it instead), or turn the mouse wheel over a slot to move it up or down.

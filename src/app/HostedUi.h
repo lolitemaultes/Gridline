@@ -57,7 +57,7 @@ bool hostedEditorOpen(const PluginTarget& t);
 // J-111g: the plugin window the mouse pointer is over (collaborators' cursors):
 // its plugin and the pointer's fraction of the window. False when none.
 bool hostedEditorUnderMouse(PluginTarget& t, float& fx, float& fy);
-void closeHostedEditor(App& a, const PluginTarget& t);
+void closeHostedEditor(App& a, const PluginTarget& t, const char* why = nullptr);  // why: for the debug log
 // K-9 dev: every open plugin window with its native window ids and the plugin's rectangle, to stdout.
 void devPrintPluginWindows(int frame);
 void closeAllHostedEditors(App& a);

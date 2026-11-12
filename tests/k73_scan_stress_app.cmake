@@ -97,41 +97,67 @@ function(run_app tag script)
   if(NOT rc EQUAL 0)
     message(FATAL_ERROR "gridline-app failed (${rc}): ${err}\n${out}")
   endif()
-  string(REGEX MATCHALL "scan running [0-9]+ done [0-9]+ total [0-9]+ active [0-9]+ searching [0-9]+ failed [0-9]+ classes [0-9]+ longest-frame [0-9.]+ ms average-frame [0-9.]+ ms frames [0-9]+ second-frame [0-9.]+ ms lock-wait [0-9.]+ ms" lines "${out}")
+  string(REGEX MATCHALL "scan running [0-9]+ done [0-9]+ total [0-9]+ active [0-9]+ searching [0-9]+ failed [0-9]+ classes [0-9]+ longest-frame [0-9.]+ ms average-frame [0-9.]+ ms frames [0-9]+ second-frame [0-9.]+ ms lock-wait [0-9.]+ ms call [0-9.]+ ms cpu-longest [0-9.]+ ms cpu-second [0-9.]+ ms load [-0-9.]+ cores [0-9]+" lines "${out}")
   set(lines "${lines}" PARENT_SCOPE)
 endfunction()
 
-# A machine that cannot draw this view quickly even before the scan (software OpenGL on a shared CI
-# runner, other app tests beside it: quiet frames of SLOW_BASELINE ms and more on average) holds up
-# frames for reasons of its own, for seconds at times. There the frame times are reported but not
-# judged; what fails there is the interface waiting for the scan itself (its lock, "lock-wait"),
-# which the app measures directly. On any other machine both are judged.
+# What the scan can do to the interface, and what each line judges:
+# - make it wait for the scan's lock: "lock-wait", measured by the app; judged on every machine.
+# - give it work: "cpu-longest" and "cpu-second", the interface thread's own processor time in its two
+#   longest frames; judged on every machine (a busy machine delays that work but does not add to it).
+# - hold it up any other way: the frame times themselves. Those also count every moment the machine
+#   gave the thread no processor (other tests beside it, the scan's own children, software OpenGL
+#   threads), for seconds at times on a shared CI runner. They are judged only on a machine that keeps
+#   up: quiet frames before the scan average under SLOW_BASELINE ms, and its run queue ("load", the
+#   1 minute load average) is no longer than its processors ("cores"). Elsewhere they are reported.
 if(NOT SLOW_BASELINE)
   set(SLOW_BASELINE 30)
 endif()
 set(baseline 0)
 
-# Fails when the frames of a scan state were too long (see FRAME_LIMIT above).
+# Fails when the scan held up the interface in a scan state (see FRAME_LIMIT above).
 function(check_frames what line)
   string(REGEX REPLACE ".*longest-frame ([0-9.]+) ms.*" "\\1" l "${line}")
   string(REGEX REPLACE ".*second-frame ([0-9.]+) ms.*" "\\1" n "${line}")
   string(REGEX REPLACE ".*average-frame ([0-9.]+) ms.*" "\\1" v "${line}")
   string(REGEX REPLACE ".*lock-wait ([0-9.]+) ms.*" "\\1" w "${line}")
+  string(REGEX REPLACE ".*cpu-longest ([0-9.]+) ms.*" "\\1" cl "${line}")
+  string(REGEX REPLACE ".*cpu-second ([0-9.]+) ms.*" "\\1" cn "${line}")
+  string(REGEX REPLACE ".* load ([-0-9.]+) .*" "\\1" load "${line}")
+  string(REGEX REPLACE ".* cores ([0-9]+).*" "\\1" cores "${line}")
+  set(slow FALSE)
+  set(why "")
   if(baseline GREATER ${SLOW_BASELINE})
-    if(w GREATER ${OUTLIER_LIMIT})
-      message(FATAL_ERROR "FAIL: ${what}: the interface waited ${w} ms for the scan (limit ${OUTLIER_LIMIT} ms on this slow machine)")
-    endif()
-    message(STATUS "ok - ${what}: the interface waited at most ${w} ms for the scan; frames took ${l} and ${n} ms (average ${v} ms), "
-                   "not judged: quiet frames here average ${baseline} ms")
+    set(slow TRUE)
+    set(why "quiet frames here average ${baseline} ms")
+  elseif(load GREATER cores)
+    set(slow TRUE)
+    set(why "load ${load} on ${cores} cores")
+  endif()
+  # A slow machine can stop the scan while it holds its lock (a short hold made long): the wait is
+  # given the one-frame limit there.
+  set(wlimit ${FRAME_LIMIT})
+  if(slow)
+    set(wlimit ${OUTLIER_LIMIT})
+  endif()
+  if(w GREATER ${wlimit})
+    message(FATAL_ERROR "FAIL: ${what}: the interface waited ${w} ms for the scan (limit ${wlimit} ms)")
+  endif()
+  if(cn GREATER ${FRAME_LIMIT} OR cl GREATER ${OUTLIER_LIMIT})
+    message(FATAL_ERROR "FAIL: ${what}: the interface thread worked ${cl} and ${cn} ms in its longest frames "
+                        "(limits ${OUTLIER_LIMIT} ms for one frame, ${FRAME_LIMIT} ms for the others; frames took ${l} and ${n} ms)")
+  endif()
+  if(slow)
+    message(STATUS "ok - ${what}: the interface waited at most ${w} ms for the scan and worked at most ${cl} and ${cn} ms a frame; "
+                   "frames took ${l} and ${n} ms (average ${v} ms), not judged: ${why}")
     return()
   endif()
-  if(w GREATER ${FRAME_LIMIT})
-    message(FATAL_ERROR "FAIL: ${what}: the interface waited ${w} ms for the scan (limit ${FRAME_LIMIT} ms)")
-  endif()
   if(n GREATER ${FRAME_LIMIT} OR l GREATER ${OUTLIER_LIMIT})
-    message(FATAL_ERROR "FAIL: ${what}: frames took ${l} and ${n} ms (average ${v} ms; limits ${OUTLIER_LIMIT} ms for one frame, ${FRAME_LIMIT} ms for the others)")
+    message(FATAL_ERROR "FAIL: ${what}: frames took ${l} and ${n} ms (average ${v} ms; limits ${OUTLIER_LIMIT} ms for one frame, "
+                        "${FRAME_LIMIT} ms for the others; the interface thread worked ${cl} and ${cn} ms of them; load ${load} on ${cores} cores)")
   endif()
-  message(STATUS "ok - ${what}: frames stay short: longest ${l} ms, next ${n} ms, average ${v} ms")
+  message(STATUS "ok - ${what}: frames stay short: longest ${l} ms, next ${n} ms, average ${v} ms "
+                 "(work ${cl} and ${cn} ms, lock wait ${w} ms, load ${load} on ${cores} cores)")
 endfunction()
 
 # 1. The first scan of everything, then an unchanged rescan, in one run.

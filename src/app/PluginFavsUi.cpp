@@ -2,11 +2,13 @@
 #include "PluginFavsUi.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <map>
 #include <string>
 #include <vector>
 #include "../../third_party/imgui/imgui.h"
 #include "../../third_party/imgui/imgui_internal.h"
+#include "../core/CommandPalette.h"
 #include "../core/I18n.h"
 #include "../host/HostedPlugins.h"
 #include "../host/PluginGroups.h"
@@ -106,7 +108,80 @@ std::vector<const PluginInfo*> favouritesOfKind(PluginKind kind) {
   return out;
 }
 
+namespace {
+struct DevSearch {
+  int frame = -1;
+  ImVec2 min{}, max{};
+  bool active = false;
+  float rows = 0;
+} gDevSearch;
+}  // namespace
+
+std::string devSearchReport() {
+  char line[200];
+  std::snprintf(line, sizeof line, "plugsearch frame %d x0 %.0f y0 %.0f x1 %.0f y1 %.0f active %d rows %.0f\n", gDevSearch.frame,
+                gDevSearch.min.x, gDevSearch.min.y, gDevSearch.max.x, gDevSearch.max.y, gDevSearch.active ? 1 : 0, gDevSearch.rows);
+  return line;
+}
+
+// The search field at the top of a picker: while it holds text, the menu lists the matching plugins
+// (built-in and installed, best first) instead of its folders. Enter picks the first one.
+bool searchField(PluginKind kind, const std::function<void(const std::string&)>& pick, const std::string& current) {
+  static char buf[2][96] = {};
+  char* q = buf[kind == PluginKind::Effect ? 1 : 0];
+  if (ImGui::IsWindowAppearing()) {
+    q[0] = 0;
+    ImGui::SetKeyboardFocusHere();
+  }
+  ImGui::SetNextItemWidth(std::max(220.0f, ImGui::GetContentRegionAvail().x));
+  const bool enter = ImGui::InputTextWithHint("##plugsearch", i18n::tr(kind == PluginKind::Effect ? "Search effects" : "Search instruments"), q, sizeof buf[0],
+                                              ImGuiInputTextFlags_EnterReturnsTrue);
+  if (ImGui::IsItemHovered()) ui::Hint("Type to find a plugin by name, category or format \xC2\xB7 Enter picks the first match");
+  // Escape in the field (which holds the keyboard while the picker is open) closes the picker, so it
+  // is not a first press that only empties the field.
+  if (ImGui::IsItemDeactivated() && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) ImGui::CloseCurrentPopup();
+  gDevSearch.frame = ImGui::GetFrameCount();
+  gDevSearch.min = ImGui::GetItemRectMin();
+  gDevSearch.max = ImGui::GetItemRectMax();
+  gDevSearch.active = ImGui::IsItemActive();
+  gDevSearch.rows = ImGui::GetCursorScreenPos().y;
+  if (!q[0]) return false;
+  std::vector<const PluginInfo*> all;
+  for (const auto& p : pluginCatalog())
+    if (p.kind == kind && !p.hidden) all.push_back(&p);
+  for (const PluginInfo* p : installedOfKind(kind)) all.push_back(p);
+  std::vector<cmdpal::Entry> rows;
+  rows.reserve(all.size());
+  for (const PluginInfo* p : all) {
+    cmdpal::Entry e;
+    e.kind = cmdpal::Kind::Plugin;
+    e.label = p->name;
+    e.path = p->category;
+    std::string fmt, uid;
+    if (const host::Format* f = host::splitType(p->type, fmt, uid) ? host::findFormat(fmt) : nullptr) e.alias = f->label;
+    e.order = static_cast<int>(rows.size());
+    rows.push_back(std::move(e));
+  }
+  const std::vector<cmdpal::Ranked> found = cmdpal::rank(rows, q, {});
+  ImGui::Separator();
+  if (found.empty()) ImGui::TextDisabled("%s", i18n::tr("No plugin matches"));
+  int shown = 0;
+  for (const cmdpal::Ranked& r : found) {
+    if (++shown > 60) break;
+    const PluginInfo* p = all[static_cast<size_t>(r.index)];
+    std::string fmt, uid;
+    const host::Format* f = host::splitType(p->type, fmt, uid) ? host::findFormat(fmt) : nullptr;
+    if (pickerRow(*p, p->type == current, f ? f->label : p->category.c_str())) pick(p->type);
+  }
+  if (enter && !found.empty()) {
+    pick(all[static_cast<size_t>(found.front().index)]->type);
+    ImGui::ClosePopupsExceptModals();
+  }
+  return true;
+}
+
 void pluginMenu(PluginKind kind, const std::function<void(const std::string&)>& pick, const std::string& current) {
+  if (searchField(kind, pick, current)) return;
   const auto favs = favouritesOfKind(kind);
   if (!favs.empty()) {
     ui::Label(i18n::tr("Favourites"));

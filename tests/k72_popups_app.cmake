@@ -71,18 +71,25 @@ set(open "${setup}20 move ${bx} ${by}
 22 down 0
 23 up 0
 ")
-run(open 32 "${open}28 viewports\n")
+run(open 32 "${open}28 viewports\n29 plugsearch\n")
 string(REGEX MATCH "viewports frame 28:[^\n]*\n(  [^\n]*\n)*" d "${out}")
 if(NOT d MATCHES "  popup \"[^\"]*\" pos ([-0-9]+)[.0-9]* ([-0-9]+)[.0-9]* size ([0-9]+)[.0-9]* ([0-9]+)")
   fail("open: the + menu did not open")
 endif()
 math(EXPR mx "${CMAKE_MATCH_1} + ${CMAKE_MATCH_3} / 2")
 set(my0 "${CMAKE_MATCH_2}")
-math(EXPR step "${CMAKE_MATCH_4} / 9")
+math(EXPR mBottom "${CMAKE_MATCH_2} + ${CMAKE_MATCH_4}")
+# The picker starts with a search field; its rows (the instrument kinds) start below it, where the
+# dev report says, so the pointer goes down the real rows, not the field.
+if(NOT out MATCHES "plugsearch frame [0-9]+ x0 [-0-9]+ y0 [-0-9]+ x1 [-0-9]+ y1 [-0-9]+ active [01] rows ([-0-9]+)")
+  fail("open: the + menu's search field was not reported")
+endif()
+math(EXPR fy "${CMAKE_MATCH_1} + 2")
+math(EXPR step "(${mBottom} - ${CMAKE_MATCH_1} + 8) / 9")
 set(script "${open}28 viewports\n")
 set(f 30)
 foreach(k 0 1 2 3 4 5 6)
-  math(EXPR y "${my0} + 10 + ${k} * ${step}")
+  math(EXPR y "${fy} + ${k} * ${step}")
   math(EXPR f1 "${f} + 1")
   math(EXPR f2 "${f} + 2")
   math(EXPR f6 "${f} + 6")
@@ -138,7 +145,7 @@ if(CMAKE_MATCH_1 STREQUAL "")
 endif()
 math(EXPR sx "${CMAKE_MATCH_1} + ${CMAKE_MATCH_3} / 2")
 math(EXPR sy "${CMAKE_MATCH_2} + 14")
-math(EXPR y0 "${my0} + 10")
+set(y0 "${fy}")
 run(add 60 "${open}30 move ${mx} ${y0}
 40 move ${sx} ${y0}
 44 move ${sx} ${sy}

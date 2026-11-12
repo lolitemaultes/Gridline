@@ -249,6 +249,10 @@ std::string mediaToolsAsset(const std::string& version, const update::Target& t)
   return "Gridline-" + version + "-media-tools-" + t.os + "-" + arch + ".zip";
 }
 
+namespace {
+std::atomic<int> versionRuns{0};  // each run its own output files (set-up and update can run at once)
+}
+
 std::string runVersion(const std::vector<std::string>& argv, double seconds) {
   if (argv.empty()) return "";
   std::vector<std::string> a = argv;
@@ -256,7 +260,8 @@ std::string runVersion(const std::vector<std::string>& argv, double seconds) {
   std::error_code ec;
   const fs::path tmp = fs::temp_directory_path(ec);
   const urlimport::RunResult r =
-      urlimport::run(a, (tmp / ("gridline-ver-" + std::to_string(platform::processId()))).u8string(), nullptr, seconds, 0, "", nullptr);
+      urlimport::run(a, (tmp / ("gridline-ver-" + std::to_string(platform::processId()) + "-" + std::to_string(++versionRuns))).u8string(), nullptr,
+                     seconds, 0, "", nullptr);
   if (!r.ok) return "";
   const std::string first = r.out.substr(0, r.out.find_first_of("\r\n"));
   return first;
@@ -519,6 +524,103 @@ Net fakeNet(const std::string& toolPath, int stepMs) {
     return static_cast<bool>(f);
   };
   return n;
+}
+
+std::string setupLead(const std::string& error) {
+  std::string yourself = systemPackagesHint();  // "... install them with: <command>"
+  const size_t colon = yourself.find(": ");
+  yourself = "install yt-dlp and FFmpeg yourself" + (colon == std::string::npos ? std::string() : " (" + yourself.substr(colon + 2) + ")");
+  if (error.find("could not reach") != std::string::npos)
+    return "The downloads could not start: check the internet connection and try again.";
+  if (error.find("limiting requests") != std::string::npos) return "GitHub is busy right now: try again in an hour.";
+  if (error.find("checksum") != std::string::npos)
+    return "A download did not match its published checksum and was not used. Try again later.";
+  if (error.find("does not run") != std::string::npos || error.find("no download") != std::string::npos ||
+      error.find("no ffmpeg") != std::string::npos || error.find("python3") != std::string::npos)
+    return "Gridline cannot set up the programs on this computer: " + yourself + ".";
+  return "Try again with Reinstall the tools in Settings > File > Import from URL, or " + yourself + ".";
+}
+
+bool quarantined(const std::string& path) {
+#if defined(__APPLE__)
+  return getxattr(fs::u8path(path).u8string().c_str(), "com.apple.quarantine", nullptr, 0, 0, 0) >= 0;
+#else
+  (void)path;
+  return false;
+#endif
+}
+
+bool clearQuarantine(const std::string& path) {
+#if defined(__APPLE__)
+  if (!quarantined(path)) return true;
+  removexattr(fs::u8path(path).u8string().c_str(), "com.apple.quarantine", 0);
+  return !quarantined(path);
+#else
+  (void)path;
+  return true;
+#endif
+}
+
+Tool unblock(const Tool& t, const std::string& installDir, std::string* err) {
+  if (!t.found() || (t.from != From::Bundled && t.from != From::Installed)) return t;
+  const fs::path p = fs::u8path(t.path);
+  const bool isFfmpeg = p.filename().u8string() == exeName("ffmpeg");
+  // ffmpeg's companion: yt-dlp runs ffprobe from the same folder.
+  std::vector<fs::path> files = {p};
+  std::error_code ec;
+  if (isFfmpeg && fs::is_regular_file(p.parent_path() / exeName("ffprobe"), ec)) files.push_back(p.parent_path() / exeName("ffprobe"));
+  bool flagged = false;
+  for (const auto& f : files) flagged = flagged || quarantined(f.u8string());
+  if (!flagged) return t;
+  bool cleared = true;
+  for (const auto& f : files) cleared = clearQuarantine(f.u8string()) && cleared;
+  if (cleared) return t;
+  // The folder cannot be changed: a copy without the flag in Gridline's own tools folder.
+  if (installDir.empty() || fs::u8path(installDir) == p.parent_path()) {
+    if (err) *err = "macOS blocks " + p.filename().u8string() + " (downloaded file) and its flag cannot be removed";
+    return Tool{};
+  }
+  const fs::path d = fs::u8path(installDir);
+  fs::create_directories(d, ec);
+  for (const auto& f : files) {
+    const fs::path to = d / f.filename();
+    std::error_code e2;
+    const bool same = fs::is_regular_file(to, e2) && fs::file_size(to, e2) == fs::file_size(f, e2) && !quarantined(to.u8string());
+    if (same) continue;
+    const fs::path part = d / (f.filename().u8string() + ".copy");
+    fs::remove(part, e2);
+    fs::copy_file(f, part, fs::copy_options::overwrite_existing, e2);
+    if (e2) {
+      if (err) *err = "could not copy " + f.filename().u8string() + " into " + installDir + " (" + e2.message() + ")";
+      fs::remove(part, e2);
+      return Tool{};
+    }
+    makeRunnable(part);
+    if (!clearQuarantine(part.u8string())) {
+      if (err) *err = "could not remove macOS's download flag from " + part.u8string();
+      fs::remove(part, e2);
+      return Tool{};
+    }
+    fs::rename(part, to, e2);
+    if (e2) {
+      if (err) *err = "could not put " + to.u8string() + " in place (" + e2.message() + ")";
+      fs::remove(part, e2);
+      return Tool{};
+    }
+  }
+  if (!isFfmpeg) {  // the copy keeps its version for the update check
+    const std::string v = recordedVersion(p.parent_path().u8string());
+    if (!v.empty() && recordedVersion(installDir).empty()) writeText(d / "yt-dlp.version", v);
+  }
+  return Tool{From::Installed, (d / p.filename()).u8string(), t.prefix};
+}
+
+std::vector<std::string> jsRuntimeArgs() {
+  for (const char* name : {"deno", "node", "bun"}) {
+    const std::string p = findOnSystem(name);
+    if (!p.empty()) return {"--js-runtimes", std::string(name) + ":" + p};
+  }
+  return {};
 }
 
 std::string systemPackagesHint() {

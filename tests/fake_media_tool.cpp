@@ -8,9 +8,11 @@
 //                   last argument, prints "Duration:" on stderr and -progress lines on stdout
 //   --version / -version: a version line.
 // GL_FAKE_SCENARIO picks a case: ok (default), playlist, error, drm, signin, slow, live, noaudio,
-// convertfail, stall, slowdl (only the download is slow). GL_FAKE_LOG appends every argument list to a file.
+// convertfail, stall, slowdl (only the download is slow), killed (ends by a signal before writing
+// anything), bot (a site's bot check), outdated (an extractor that no longer works). GL_FAKE_LOG appends every argument list to a file.
 #include <chrono>
 #include <cmath>
+#include <csignal>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -95,6 +97,21 @@ int main(int argc, char** argv) {
     const std::string url = a.empty() ? "" : a.back();
     if (has(a, "-J")) {
       if (sc == "slow") sleepMs(30000);
+      if (sc == "killed") {  // stopped by the system before it writes anything (macOS: a blocked program)
+#if defined(_WIN32)
+        std::abort();
+#else
+        std::raise(SIGKILL);
+#endif
+      }
+      if (sc == "bot") {
+        std::fprintf(stderr, "ERROR: [youtube] abc123: Sign in to confirm you're not a bot. Use --cookies-from-browser or --cookies\n");
+        return 1;
+      }
+      if (sc == "outdated") {
+        std::fprintf(stderr, "ERROR: [youtube] abc123: Unable to extract initial player response; please report this issue on GitHub\n");
+        return 1;
+      }
       if (sc == "error") {
         std::fprintf(stderr, "WARNING: something minor\nERROR: [generic] Unsupported URL: %s\n", url.c_str());
         return 1;

@@ -209,7 +209,7 @@ msgstr ""
 msgid "None (system input device)"
 msgstr ""
 
-#: src/app/AsioUi.cpp src/app/ChannelEnvelopeUi.cpp src/app/ChannelSettings.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/HostedUi.cpp src/app/McpUi.cpp src/app/MixerView.cpp src/app/PluginEditorsEqRef.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/PluginEditorsK3Gb.cpp src/app/PluginFoldersUi.cpp src/packs/modulation/modulation_patcher_ui.cpp src/packs/plasma/plasma_menus_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp src/packs/spectral/turntable_ui.cpp
+#: src/app/AsioUi.cpp src/app/ChannelEnvelopeUi.cpp src/app/ChannelSettings.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/HostedUi.cpp src/app/McpUi.cpp src/app/MidiUi.cpp src/app/MixerView.cpp src/app/PluginEditorsEqRef.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/PluginEditorsK3Gb.cpp src/app/PluginFoldersUi.cpp src/packs/modulation/modulation_patcher_ui.cpp src/packs/plasma/plasma_menus_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp src/packs/spectral/turntable_ui.cpp
 msgid "Off"
 msgstr ""
 
@@ -11370,6 +11370,10 @@ msgid "Any input"
 msgstr ""
 
 #: src/app/MidiUi.cpp
+msgid "As it was left"
+msgstr ""
+
+#: src/app/MidiUi.cpp
 msgid "Asks the system MIDI service again"
 msgstr ""
 
@@ -11731,6 +11735,14 @@ msgstr ""
 
 #: src/app/MidiUi.cpp
 msgid "Waiting for the control to reach the current value…"
+msgstr ""
+
+#: src/app/MidiUi.cpp
+msgid "When Gridline starts"
+msgstr ""
+
+#: src/app/MidiUi.cpp
+msgid "Whether the typing keyboard plays notes when Gridline opens"
 msgstr ""
 
 #: src/app/MidiUi.cpp
@@ -14043,6 +14055,22 @@ msgstr ""
 
 #: src/app/PluginFavsUi.cpp
 msgid "Installed plugins"
+msgstr ""
+
+#: src/app/PluginFavsUi.cpp
+msgid "No plugin matches"
+msgstr ""
+
+#: src/app/PluginFavsUi.cpp
+msgid "Search effects"
+msgstr ""
+
+#: src/app/PluginFavsUi.cpp
+msgid "Search instruments"
+msgstr ""
+
+#: src/app/PluginFavsUi.cpp
+msgid "Type to find a plugin by name, category or format · Enter picks the first match"
 msgstr ""
 
 #: src/app/PluginFoldersUi.cpp
@@ -16866,7 +16894,23 @@ msgid "Could not import"
 msgstr ""
 
 #: src/app/UrlImportUi.cpp
+msgid "Could not install the tools: "
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
 msgid "Download and check the newest yt-dlp now"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "Download yt-dlp and FFmpeg again into Gridline's own folder and check them, for example when imports stop with a program that cannot run"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "Download yt-dlp and FFmpeg now and check them against their published checksums"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "Downloading and checking"
 msgstr ""
 
 #: src/app/UrlImportUi.cpp
@@ -16937,6 +16981,10 @@ msgstr ""
 msgid "Reading the link"
 msgstr ""
 
+#: src/app/UrlImportUi.cpp
+msgid "Reinstall the tools"
+msgstr ""
+
 #: src/app/UrlImportUi.cpp src/packs/spacefx/spacefx_ui.cpp src/packs/tideline/tideline_ui.cpp
 msgid "SOURCE"
 msgstr ""
@@ -16970,11 +17018,19 @@ msgid "The downloader is not available."
 msgstr ""
 
 #: src/app/UrlImportUi.cpp
+msgid "The downloader is not available. Point the variable at the program, or remove it to use Gridline's own copy."
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
 msgid "The end must come after the start"
 msgstr ""
 
 #: src/app/UrlImportUi.cpp
 msgid "The start is past the end of the media"
+msgstr ""
+
+#: src/app/UrlImportUi.cpp
+msgid "The tools are installed and checked"
 msgstr ""
 
 #: src/app/UrlImportUi.cpp

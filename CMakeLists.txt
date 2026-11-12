@@ -1284,6 +1284,14 @@ target_compile_options(gridline_tests_urlimport PRIVATE ${GL_WARN})
 add_dependencies(gridline_tests_urlimport gridline_fake_media_tool)
 add_test(NAME j192_import_url COMMAND gridline_tests_urlimport $<TARGET_FILE:gridline_fake_media_tool> WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 set_tests_properties(j192_import_url PROPERTIES TIMEOUT 300)
+# Import from URL over the real network (first-use set-up, a public Creative Commons clip); skipped
+# without a network, when GitHub limits requests, or with GRIDLINE_NO_NETWORK=1.
+add_executable(gridline_tests_urlimport_net tests/test_urlimport_net.cpp)
+target_link_libraries(gridline_tests_urlimport_net PRIVATE gridline_core)
+target_include_directories(gridline_tests_urlimport_net PRIVATE tests src)
+target_compile_options(gridline_tests_urlimport_net PRIVATE ${GL_WARN})
+add_test(NAME urlimport_network COMMAND gridline_tests_urlimport_net WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+set_tests_properties(urlimport_network PROPERTIES TIMEOUT 600 SKIP_RETURN_CODE 77 LABELS network)
 # J-109: Stop releases every sound outside the song; Stop twice (panic) silences tails too.
 add_executable(gridline_tests_j109 tests/test_j109.cpp)
 target_link_libraries(gridline_tests_j109 PRIVATE gridline_core)
@@ -2134,6 +2142,17 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -DOUT=${CMAKE_BINARY_DIR}/k21_key_gliss -P ${CMAKE_SOURCE_DIR}/tests/k21_key_gliss.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(k21_key_gliss PROPERTIES TIMEOUT 300)
+    # The instrument editors' keyboards glide the same way: a drag plays the key under the pointer, one at a time.
+    add_test(NAME key_glide_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DOUT=${CMAKE_BINARY_DIR}/key_glide_app -P ${CMAKE_SOURCE_DIR}/tests/key_glide_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(key_glide_app PROPERTIES TIMEOUT 300)
+    # Cloning a pattern from the pattern list's menu, 40 times, then undoing it all (a crash report).
+    add_test(NAME pattern_clone_menu_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/pattern_clone_menu_app -P ${CMAKE_SOURCE_DIR}/tests/pattern_clone_menu_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(pattern_clone_menu_app PROPERTIES TIMEOUT 600)
 
     # K-25: the pitch bend tool: N turns it on, a drag bends one note, the line stays drawn (dimmed) on the pencil.
     add_test(NAME k25_pitch_bend_app
@@ -2247,6 +2266,12 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -DOUT=${CMAKE_BINARY_DIR}/typing_layout_app -P ${CMAKE_SOURCE_DIR}/tests/typing_layout_app.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(typing_layout_app PROPERTIES TIMEOUT 300)
+    # The typing keyboard when Gridline starts: as it was left by default, or always on or off.
+    add_test(NAME typing_start_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/typing_start_app -P ${CMAKE_SOURCE_DIR}/tests/typing_start_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(typing_start_app PROPERTIES TIMEOUT 300)
     # The typing keyboard keeps its octave over a long random session of real key events.
     add_test(NAME typing_octave_session_app
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json

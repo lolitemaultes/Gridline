@@ -71,6 +71,7 @@ App::App() {
   chromeos::applyDefaults(settings, chromeos::current());
   settings.load(Settings::defaultPath(), &err);
   loadTypingLayout(settings);  // K-113
+  typingKeyboard = typingKeyboardAtStart(settings);  // on, off, or as it was left
   if (const std::string sys = chromeos::describe(chromeos::current()); !sys.empty()) logging::info("app", "Running in the " + sys);
   {  // K-24: the playlist's vertical zoom as it was left
     const double h = settings.getNumber("ui.playlistTrackHeight");
@@ -106,6 +107,7 @@ App::~App() {
   flpexport::shutdown();         // J-80: a running FL export is cancelled and waited for
   // J-77: a size / theme / language / audio change still waiting for Keep is not saved.
   dispconf::confirm().abandon();
+  settings.set("keys.typingOn", typingKeyboard);  // for "as it was left" at the next start
   settings.save(Settings::defaultPath());
   if (gApp == this) gApp = nullptr;
 }

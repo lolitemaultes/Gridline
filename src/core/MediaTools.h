@@ -109,4 +109,29 @@ Net fakeNet(const std::string& toolPath, int stepMs = 0);
 // One line for systems Gridline cannot install the programs on ("pkg install yt-dlp ffmpeg").
 std::string systemPackagesHint();
 
+// What to try after a failed set-up or update (`error`: an InstallResult / UpdateResult error):
+// check the connection, wait for GitHub's limit, or install the programs yourself. English.
+std::string setupLead(const std::string& error);
+
+// ---- macOS: the download quarantine ----
+// Gridline.app dragged out of the downloaded disk image carries the system's quarantine flag on
+// every file, and macOS stops a flagged program that is not notarized the moment Gridline starts
+// it (the tools are signed ad hoc). Opening the app once clears the flag of the app only, not of
+// the tools inside it. Elsewhere these do nothing.
+bool quarantined(const std::string& path);
+// Removes the flag (true when the file has none afterwards).
+bool clearQuarantine(const std::string& path);
+// The tool ready to start: a flagged copy inside the app (or a flagged installed copy) gets the
+// flag removed, with ffprobe beside ffmpeg; where the app's folder cannot be changed (a read-only
+// disk image, another user's app) the program is copied into `installDir` without the flag and
+// that copy is used. Other tools come back as they are. `err`: why it could not be done.
+Tool unblock(const Tool& t, const std::string& installDir, std::string* err = nullptr);
+
+// ---- JavaScript runtime (YouTube) ----
+// yt-dlp needs a JavaScript runtime for YouTube's full format list. Apps started from the Finder
+// or a desktop menu do not see the shell's PATH, so the runtime is searched for here (deno, then
+// node, then bun, in the usual places) and handed over as "--js-runtimes <name>:<path>"; empty
+// when there is none.
+std::vector<std::string> jsRuntimeArgs();
+
 }  // namespace gl::mediatools

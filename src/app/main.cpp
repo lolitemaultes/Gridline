@@ -38,6 +38,8 @@
 #endif
 #if !defined(_WIN32)
 #include <signal.h>  // (sigaction: SIGPIPE)
+#include <stdlib.h>  // (getloadavg)
+#include <time.h>    // (clock_gettime: a thread's processor time)
 #endif
 #include "../engine/ChannelIns.h"
 #include "../engine/Sample.h"
@@ -60,6 +62,7 @@
 #include "AppIcon.h"
 #include "WindowFrame.h"
 #include "HostedUi.h"
+#include "PluginFavsUi.h"
 #include "../host/HostedPlugins.h"
 #include "../host/audio/AsioHost.h"
 #include "../host/PluginPrefs.h"
@@ -89,6 +92,7 @@
 #include "TrackReceiptUi.h"
 #include "../core/MidiFile.h"
 #include "Keys.h"
+#include "KeyGlide.h"
 #include "App.h"
 #include "../core/RemoteFs.h"
 #include "../core/SingleInstance.h"
@@ -834,6 +838,30 @@ double devLongestFrameMs = 0;  // K-71: the longest frame (its work, not the wai
 double devSecondFrameMs = 0;   // ... and the next longest (tests tell one outlier on a busy machine from a stall)
 double devFrameMsSum = 0;      // K-73: ... and the sum and count of those frames (their average)
 int devFrameCount = 0;
+// K-192: the interface thread's own processor time in a frame (its work, whatever else the machine
+// runs), the longest two since the last "scan". A frame that is long only because the machine gave
+// this thread no processor shows in the frame times above, not here.
+double devLongestFrameCpuMs = 0;
+double devSecondFrameCpuMs = 0;
+double devThreadCpuMs() {
+#if defined(_WIN32)
+  return -1;  // (not measured here: the scan stress tests run on POSIX systems)
+#else
+  timespec ts{};
+  if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts) != 0) return -1;
+  return 1e3 * static_cast<double>(ts.tv_sec) + 1e-6 * static_cast<double>(ts.tv_nsec);
+#endif
+}
+// K-192: the system's run queue (the 1 minute load average) against its processors: a machine with
+// more runnable threads than processors holds up this thread's frames for reasons of its own.
+double devLoadAverage() {
+#if defined(_WIN32)
+  return -1;
+#else
+  double l[1] = {-1};
+  return getloadavg(l, 1) == 1 ? l[0] : -1;
+#endif
+}
 // J-108: true while a "waitfor" holds the script's frame count (checked once per frame).
 bool devWaitHolds() {
   if (!devWait.on) return false;
@@ -1433,6 +1461,11 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       for (const char* k = "zsxdcvgbhnjm,l.;/q2w3er5t6y7ui9o0p[]-=\\'"; *k; ++k) std::printf(" %s", typingKeyName(*k).c_str());
       std::printf("\n");
       std::fflush(stdout);
+    } else if (l.cmd == "typing" && l.a0 == "state") {  // the typing keyboard on or off, and Settings > MIDI's start choice
+      std::printf("typing state %s atstart %s\n", app.typingKeyboard ? "on" : "off", app.settings.getString("keys.typingAtStart").c_str());
+      std::fflush(stdout);
+    } else if (l.cmd == "typing" && l.a0 == "atstart") {  // typing atstart last|on|off: the start choice, as the settings page sets it
+      app.settings.set("keys.typingAtStart", l.a1);
     } else if (l.cmd == "typing") {  // J-109: the typing keyboard on / off
       app.typingKeyboard = l.a0 != "off";
     } else if (l.cmd == "noteon" || l.cmd == "noteoff") {  // J-109: a live note on channel <index> (pads, preview keys)
@@ -1567,6 +1600,12 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       for (size_t i = 0; i + 2 < pa.size() && i + 2 < pb.size(); i += 3) differ += pa[i] != pb[i] || pa[i + 1] != pb[i + 1] || pa[i + 2] != pb[i + 2] ? 1 : 0;
       std::printf("ppmdiff pixels %zu differ %zu\n", pa.size() / 3, pa.size() == pb.size() ? differ : pa.size() / 3);
       std::fflush(stdout);
+    } else if (l.cmd == "keybeds") {  // the instrument editors' audition keyboards drawn lately (rectangle, keys, the key sounding)
+      std::printf("keybeds frame %d live %d\n%skeybeds end\n", frame, app.engine.liveHeld(), keyglide::devReport().c_str());
+      std::fflush(stdout);
+    } else if (l.cmd == "plugsearch") {  // the plugin pickers' search field (rectangle, focus, first row below it)
+      std::printf("%s", favui::devSearchReport().c_str());
+      std::fflush(stdout);
     } else if (l.cmd == "knobs") {  // K-148: every knob and plugin editor control of the last frame (window, id, value, centre)
       std::printf("knobs frame %d undo %zu\n%sknobs end\n", frame, app.doc.history().position(), ui::devKnobReport().c_str());
       std::fflush(stdout);
@@ -1606,12 +1645,18 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       const host::ScanStatus st = host::scanStatus();
       // lock-wait: the longest the interface waited for the scan's lock since the last "scan" (a
       // stall caused by the scan, whatever the machine's speed)
-      std::printf("scan running %d done %d total %d active %d searching %d failed %d classes %d longest-frame %.1f ms average-frame %.2f ms frames %d second-frame %.1f ms lock-wait %.1f ms call %.1f ms\n",
+      // K-192: cpu: the interface thread's own work in its two longest frames; load: the machine's
+      // run queue and processors (how busy it was with everything else)
+      std::printf("scan running %d done %d total %d active %d searching %d failed %d classes %d longest-frame %.1f ms average-frame %.2f ms frames %d second-frame %.1f ms lock-wait %.1f ms call %.1f ms "
+                  "cpu-longest %.1f ms cpu-second %.1f ms load %.2f cores %u\n",
                   st.running ? 1 : 0, st.done, st.total, st.active, st.searching.empty() ? 0 : 1, st.failed, st.classes, devLongestFrameMs,
-                  devFrameCount ? devFrameMsSum / devFrameCount : 0.0, devFrameCount, devSecondFrameMs, 1e3 * host::scanReadLongestWait(true), callMs);
+                  devFrameCount ? devFrameMsSum / devFrameCount : 0.0, devFrameCount, devSecondFrameMs, 1e3 * host::scanReadLongestWait(true), callMs,
+                  devLongestFrameCpuMs, devSecondFrameCpuMs, devLoadAverage(), std::thread::hardware_concurrency());
       std::fflush(stdout);
       devLongestFrameMs = 0;
       devSecondFrameMs = 0;
+      devLongestFrameCpuMs = 0;
+      devSecondFrameCpuMs = 0;
       devFrameMsSum = 0;
       devFrameCount = 0;
     } else if (l.cmd == "edit") {  // K-47: edit copy|paste <mixer|rack> [mixer index], through the Edit menu's own code
@@ -1880,6 +1925,7 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
                   static_cast<double>(g.gridY1), static_cast<double>(g.vThumb0), static_cast<double>(g.vThumb1), static_cast<double>(g.vBarX),
                   static_cast<double>(g.hThumb0), static_cast<double>(g.hThumb1), static_cast<double>(g.hBarY));  // K-24
       std::printf("  head settings %u renaming %d\n", static_cast<unsigned>(app.settingsChannel), g.renaming);  // header double-clicks
+      std::printf("  patmenu clone %.1f %.1f\n", static_cast<double>(g.cloneX), static_cast<double>(g.cloneY));  // a pattern menu's Clone
       std::printf("  loopbadge %d x %.1f y %.1f\n", g.loopBadge ? 1 : 0, static_cast<double>(g.loopBadgeX), static_cast<double>(g.loopBadgeY));  // K-140
       for (size_t i = 0; i < g.trackTop.size(); ++i) {
         const Song& s = app.doc.song();
@@ -3032,6 +3078,7 @@ int main(int argc, char** argv) {
   const char* graphicsLost = nullptr;  // K-47: why, until it is dealt with
   auto frame = [&](bool live) {
     const Uint64 frameStart = SDL_GetPerformanceCounter();  // K-71: "scan state"
+    const double frameCpuStart = devThreadCpuMs();          // K-192
     liveresize::frameBegin(live);
     uint64_t statT = 0;
     // J-109: Gridline lost focus (another application, a plugin window, a key released
@@ -3537,11 +3584,16 @@ int main(int argc, char** argv) {
       }
       collabui::devFrame(app);  // J-111: collab-connected, collab-joined, collab-synced, ...
       if (!host::scanStatus().running) devsig::reach("scan-idle");  // K-71
+      // K-192: no probe of the MIDI service out (answered, refused or never asked; "waitfor" before a Retry)
+      if (app.midi && app.midi->serviceState() != MidiOpenState::Opening) devsig::reach("midi-settled");
       const double frameMs = 1e3 * static_cast<double>(SDL_GetPerformanceCounter() - frameStart) / static_cast<double>(SDL_GetPerformanceFrequency());
       if (frameMs > devLongestFrameMs) devSecondFrameMs = devLongestFrameMs, devLongestFrameMs = frameMs;
       else devSecondFrameMs = std::max(devSecondFrameMs, frameMs);
       devFrameMsSum += frameMs;
       ++devFrameCount;
+      const double frameCpuMs = frameCpuStart >= 0 ? devThreadCpuMs() - frameCpuStart : -1;
+      if (frameCpuMs > devLongestFrameCpuMs) devSecondFrameCpuMs = devLongestFrameCpuMs, devLongestFrameCpuMs = frameCpuMs;
+      else devSecondFrameCpuMs = std::max(devSecondFrameCpuMs, frameCpuMs);
     }
     // J-108: "waitfor" keeps the script (and --frames) on this frame; J-167: so does a project load
     // (scripts and screenshots see the project loaded; "loadhold off" watches a load frame by frame).

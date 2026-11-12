@@ -557,7 +557,8 @@ bool envelope(App& a, const PluginTarget& t, const EnvParams& e, ImVec2 tl, ImVe
   return changed;
 }
 
-int keyboard(const char* id, ImVec2 tl, ImVec2 size, int lo, int hi, const Skin& k, const bool* lit, int markLo, int markHi, int root) {
+int keyboard(const char* id, ImVec2 tl, ImVec2 size, int lo, int hi, const Skin& k, const bool* lit, int markLo, int markHi, int root, int* under) {
+  if (under) *under = -1;
   if (hi < lo) return -1;
   auto isBlack = [](int n) {
     int m = ((n % 12) + 12) % 12;
@@ -597,6 +598,7 @@ int keyboard(const char* id, ImVec2 tl, ImVec2 size, int lo, int hi, const Skin&
           break;
         }
       }
+  if (under) *under = hovered;
   const ImU32 whiteC = lerpCol(k.text, IM_COL32(255, 255, 255, 255), 0.6f), blackC = darken(k.panel, 0.55f);
   for (int pass = 0; pass < 2; ++pass)
     for (int n = lo; n <= hi; ++n) {

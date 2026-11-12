@@ -144,6 +144,8 @@ Settings::Settings() {
       {"general.language", Json::makeString("en")},        // i18n code ("en", "pseudo", catalogue stem)
       {"keys.bindings", Json::makeString("")},             // J-55: shortcut overrides, JSON (keys::Keymap::serialize)
       {"keys.typingLayout", Json::makeString("standard")},  // K-113: what the typing keys are called (typingLayoutFromId)
+      {"keys.typingAtStart", Json::makeString("last")},  // the typing keyboard when Gridline starts: "last" (as it was left) | "on" | "off"
+      {"keys.typingOn", b(false)},                     // the typing keyboard was on when Gridline last closed
       {"file.scriptEditor", Json::makeString("")},         // command that opens a script ("" = system default)
       {"export.flGridlinePlugins", Json::makeString("suite+fallback")},  // K-110: Gridline-only plugins in FL Studio exports (flp::GridlinePlugins key)
       {"project.defaultNum", Json::makeNumber(4)},

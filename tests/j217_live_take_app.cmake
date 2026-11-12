@@ -150,7 +150,8 @@ endif()
 check("one undo removes the recorded take" ok)
 
 # ---------------------------------------------------------------- 2. loop passes, 200 %
-run(loop 2 40 "4 liverec arm 1
+run(loop 2 40 "3 liverec watch
+4 liverec arm 1
 5 liverec select 0 1
 6 liverec start
 7 waitfor livetake-clips:3 120
@@ -163,6 +164,8 @@ run(loop 2 40 "4 liverec arm 1
 ")
 string(REGEX MATCH "livetakes frame [0-9]+:[^\n]*views ([0-9]+)" _m "${loop_out}")
 set(nv ${CMAKE_MATCH_1})
+# The trace while recording (frame 8) on its own: the last live frame printed later lists the passes too.
+string(REGEX MATCH "livetakes frame [0-9]+:[^\n]*\n(  [^\n]*\n)*" looptrace "${loop_out}")
 set(ok FALSE)
 if(nv GREATER_EQUAL 3)
   set(ok TRUE)
@@ -170,28 +173,37 @@ endif()
 check("loop recording: every pass is a live clip (${nv})" ok)
 check("loop recording: three passes recorded" loop_out MATCHES "waitfor livetake-clips:3: reached")
 set(ok TRUE)
-if(NOT loop_out MATCHES "live take [0-9]+ mixer [0-9]+ pass 0 track 0 start [0-9][0-9]? ")  # (the first pass: after the input latency, longer on a busy machine)
+if(NOT looptrace MATCHES "live take [0-9]+ mixer [0-9]+ pass 0 track 0 start [0-9][0-9]? ")  # (the first pass: after the input latency, longer on a busy machine)
   set(ok FALSE)
 endif()
 foreach(p 1 2)
-  if(NOT loop_out MATCHES "live take [0-9]+ mixer [0-9]+ pass ${p} track ${p} start 0 ")
+  if(NOT looptrace MATCHES "live take [0-9]+ mixer [0-9]+ pass ${p} track ${p} start 0 ")
     set(ok FALSE)
   endif()
 endforeach()
 if(NOT ok)
-  message(STATUS "loop trace:\n${loop_out}")
+  message(STATUS "loop trace:\n${looptrace}")
 endif()
 check("loop recording: the passes stack on the tracks below, later passes from the loop start" ok)
 set(ok FALSE)
-if(loop_out MATCHES "pass 0 track 0 [^\n]* muted 1 " AND loop_out MATCHES "pass 1 track 1 [^\n]* muted 1 ")
+if(looptrace MATCHES "pass 0 track 0 [^\n]* muted 1 " AND looptrace MATCHES "pass 1 track 1 [^\n]* muted 1 ")
   set(ok TRUE)
 endif()
 check("loop recording: earlier passes show muted while the next one records" ok)
+# Against the last live frame (printed as the passes commit, "liverec watch"), not the trace at frame 8:
+# a busy machine's transport can start another pass before the stop at frame 10, and that pass is
+# drawn live and committed like the others.
+string(REGEX MATCHALL "livetakes final:\nlivetakes frame -1: [^\n]* views [0-9]+" finals "${loop_out}")
+if(NOT finals)
+  message(FATAL_ERROR "FAIL: loop recording: no final live frame. Output:\n${loop_out}")
+endif()
+list(GET finals -1 lastfinal)
+string(REGEX REPLACE ".* views ([0-9]+)$" "\\1" nfinal "${lastfinal}")
 string(REGEX MATCHALL "  clip [0-9]+ track [0-9]+ start [0-9]+ length [0-9]+ muted [01] take [0-9]+" lclips "${loop_out}")
 list(LENGTH lclips nlc)
 set(ok FALSE)
-if(nlc EQUAL nv)
+if(nlc EQUAL nfinal AND nfinal GREATER_EQUAL nv)
   set(ok TRUE)
 endif()
-check("loop recording: one committed clip per live pass (${nlc})" ok)
+check("loop recording: one committed clip per live pass (${nlc} committed, ${nfinal} in the last live frame)" ok)
 message(STATUS "screenshots: ${OUT}")

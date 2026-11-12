@@ -375,7 +375,7 @@ bool pluginWindowShown(App& a, const PluginTarget& t) { return hostedEditorOpen(
 
 void togglePluginWindow(App& a, const PluginTarget& t) {
   if (hostedEditorOpen(t)) {
-    closeHostedEditor(a, t);
+    closeHostedEditor(a, t, "its channel or effect button was clicked again");
     return;
   }
   if (panelShowing(a, t)) {

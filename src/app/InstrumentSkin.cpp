@@ -2,6 +2,7 @@
 #include "Look.h"
 #include "KeyLight.h"
 #include "InstrumentSkin.h"
+#include "KeyGlide.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -476,21 +477,14 @@ int keyboard(App& a, const PluginTarget& t, const Skin& k, float x, float y, flo
       }
     if (hoverNote < 0) hoverNote = whiteNote(std::clamp(static_cast<int>((m.x - p.x) / ww), 0, whites - 1));
   }
-  static int playing = -1;
-  static ImGuiID playingId = 0;
+  static keyglide::Held held;
   int clicked = -1;
-  if (ImGui::IsItemActivated() && hoverNote >= 0) {
-    clicked = hoverNote;
-    if (!pickOnly && t.isChannel()) {
-      a.engine.noteOn(t.owner, hoverNote, 0.85f);
-      playing = hoverNote, playingId = ImGui::GetItemID();
-    }
-  }
+  if (ImGui::IsItemActivated() && hoverNote >= 0) clicked = hoverNote;
   const bool act = ImGui::IsItemActive();
-  if (ImGui::IsItemDeactivated() && playing >= 0 && playingId == ImGui::GetItemID()) {
-    a.engine.noteOff(t.owner, playing);
-    playing = -1;
-  }
+  // While held, the key under the pointer sounds: a drag plays one key at a time, as on the piano
+  // roll's keyboard. A pick (Alt+click on a root note) plays nothing.
+  const int playing = keyglide::followItem(a, !pickOnly && t.isChannel() ? t.owner : kNoId, hoverNote, held, 0.85f);
+  keyglide::devNote("iskin", p, q, lowNote, whites, playing);
   ImDrawList* dl = k.dl();
   dl->AddRectFilled(p, q, kc.sep);
   // J-77: without an explicit lit set, the keys sounding on the editor's channel light up.

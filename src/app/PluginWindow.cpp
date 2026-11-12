@@ -37,6 +37,7 @@
 #include <thread>
 #include <vector>
 #include "../core/I18n.h"
+#include "../core/Log.h"
 #include "../core/UiScale.h"
 #include "../host/EditorClose.h"
 #include "../host/EditorLayout.h"
@@ -310,6 +311,7 @@ struct PluginWindow {
   int rootX = 0, rootY = 0;  // K-37: position the interface was last told about (Linux)
   bool rootKnown = false;
   bool complete = false;  // the window finished opening
+  const char* closeWhy = nullptr;  // why it closes, for the debug log (issue reports)
   // K-37: the bridged plugin's interface is closing on a helper thread; the window is hidden.
   std::unique_ptr<host::EditorClose> closing;
   Uint32 closingSince = 0;
@@ -393,6 +395,11 @@ struct PluginWindow {
   void close() {
     if (dead) return;
     if (gLog) std::fprintf(stderr, "[plugin-window] closed | %s\n", name.c_str());
+    if (complete) {  // Settings > Debug: which path closed an interface window (a window that flashes and closes)
+      const std::string why = closeWhy ? closeWhy : "Gridline closed it";
+      logging::info("plugins", name + ": interface window closed (" + why + ")");
+      std::fprintf(stderr, "[plugin-window] %s: interface window closed (%s)\n", name.c_str(), why.c_str());
+    }
     dead = true;
     if (win) {
       int x = 0, y = 0;
@@ -758,9 +765,10 @@ bool hostedEditorUnderMouse(PluginTarget& t, float& fx, float& fy) {
   return false;
 }
 
-void closeHostedEditor(App& a, const PluginTarget& t) {
+void closeHostedEditor(App& a, const PluginTarget& t, const char* why) {
   auto it = windows().find(t.key());
   if (it == windows().end()) return;
+  if (why && !it->second->closeWhy) it->second->closeWhy = why;
   it->second->close();
   auto w = std::move(it->second);
   windows().erase(it);
@@ -961,6 +969,7 @@ bool openHostedEditor(App& a, const PluginTarget& t) {
   w.editor = std::move(editor);
   b->onGoingAway = [raw]() {
     raw->instanceGoing = true;
+    if (!raw->closeWhy) raw->closeWhy = "the plugin was unloaded or loaded again";
     raw->close();
   };
   w.complete = true;
@@ -998,6 +1007,7 @@ bool hostedEditorEvent(App& a, const SDL_Event& ev) {
     }
     if (ev.type == SDL_WINDOWEVENT) {
       if (ev.window.event == SDL_WINDOWEVENT_CLOSE) {
+        w->closeWhy = "its window was closed by its close button or the desktop";
         w->action = Action::Close;
         runAction(*w);
       } else if (ev.window.event == SDL_WINDOWEVENT_SIZE_CHANGED && !w->applying) {
@@ -1146,9 +1156,13 @@ void hostedui::pluginWindowsIdle(App& a) {
         w.rootX = rx, w.rootY = ry, w.rootKnown = true;
       }
 #endif
-      if (!w.external && !w.editor->isOpen()) w.close();  // a sandboxed interface whose process died
+      if (!w.external && !w.editor->isOpen()) {  // a sandboxed interface whose process died
+        w.closeWhy = "its interface closed itself";
+        w.close();
+      }
       if (w.external) {
         if (!w.editor->isOpen()) {
+          w.closeWhy = "its interface closed itself";
           w.close();
         } else {
           int f[4] = {0, 0, 0, 0};

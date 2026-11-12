@@ -240,4 +240,26 @@ list(GET st 0 s0)
 list(GET st 1 s1)
 check("the tools are set up inside the popup" "${s0}" MATCHES "state setup")
 check("then the fetch goes on with the installed tools" "${s1}" MATCHES "state preview .*yt-dlp installed ffmpeg installed")
+
+# ---- Settings: Reinstall the tools (fake GitHub) ----
+run(reinstall 40 "6 urlimport reinstall
+7 waitfor urlimport-reinstalled 60
+10 urlimport state
+")
+check("Reinstall the tools installs both and says so" "${out}"
+      MATCHES "state closed .*yt-dlp installed ffmpeg installed .*tools \"The tools are installed and checked\"")
 unset(ENV{GRIDLINE_URLIMPORT_FAKE_NET})
+
+# ---- a program the system stops (macOS: a blocked program) is explained ----
+if(NOT CMAKE_HOST_WIN32)
+  set(ENV{GRIDLINE_YTDLP} "${TOOL}")
+  set(ENV{GRIDLINE_FFMPEG} "${TOOL}")
+  set(ENV{GL_FAKE_SCENARIO} "killed")
+  run(killed 30 "6 urlimport open
+7 urlimport url ${link}
+8 urlimport fetch
+9 waitfor urlimport-error 60
+12 urlimport state
+")
+  check("a program the system stops says so and what to do" "${out}" MATCHES "state error .*stopped by the system.*Reinstall the tools")
+endif()

@@ -986,10 +986,13 @@ void drawBox(Ctx& g, const Graph& gr, const PNode& n, int links, bool sel, bool 
   const ImVec2 a = g.p(n.x, n.y), b = g.p(n.x + n.w, n.y + n.h);
   const ImU32 fc = nodeColour(g, id);
   blockFrame(g, n.x, n.y, n.w, n.h, fc, sel, false);
-  if (hov) {
+  if (hov) {  // a link dropped here lands on it: its border in the link colour, with a glow
     const ImU32 lc = P.fam[FamLfo];
-    g.dl->AddRect(ImVec2(a.x - g.s(1), a.y - g.s(1)), ImVec2(b.x + g.s(1), b.y + g.s(1)), theme::withAlpha(lc, 0.3f), g.s(6), 0, g.s(1.5f));
-    g.dl->AddRect(a, b, theme::mix(lc, P.line, 0.3f), g.s(6));
+    ImVec2 fa, fb;
+    blockBox(g, n.x, n.y, n.w, n.h, fa, fb);
+    const float o = g.s(1.5f);
+    g.dl->AddRect(ImVec2(fa.x - o, fa.y - o), ImVec2(fb.x + o, fb.y + o), theme::withAlpha(lc, 0.3f), blockRound(g) + o, 0, o);
+    blockRing(g, fa, fb, theme::mix(lc, P.line, 0.3f), blockBorderW(g, sel));
   }
   // the whole box: click to select, drag to move (its own controls sit over it)
   ImGui::SetCursorScreenPos(a);
@@ -1092,8 +1095,12 @@ void drawBox(Ctx& g, const Graph& gr, const PNode& n, int links, bool sel, bool 
       ImGui::PopID();
     }
   }
-  if (!n.on) g.dl->AddRectFilled(a, b, theme::withAlpha(P.frame, 0.4f), g.s(6));
-  if (dim) g.dl->AddRectFilled(a, b, theme::withAlpha(P.frame, 0.62f), g.s(6));
+  if (!n.on || dim) {  // over the whole box, its border too, so the border stays even
+    ImVec2 fa, fb;
+    blockBox(g, n.x, n.y, n.w, n.h, fa, fb);
+    if (!n.on) g.dl->AddRectFilled(fa, fb, theme::withAlpha(P.frame, 0.4f), blockRound(g));
+    if (dim) g.dl->AddRectFilled(fa, fb, theme::withAlpha(P.frame, 0.62f), blockRound(g));
+  }
   ImGui::PopID();
 }
 

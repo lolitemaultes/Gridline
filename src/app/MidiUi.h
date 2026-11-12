@@ -22,6 +22,9 @@ extern int (*typingLayoutKey)(int position);              // what a position typ
 extern TypingLayout typingLayout;
 void loadTypingLayout(const Settings& s);           // from the settings (the app at startup)
 void setTypingLayout(App& a, TypingLayout l);             // and stores it in the settings
+// Whether the typing keyboard is on when Gridline starts: "keys.typingAtStart" is "on", "off" or
+// "last" (the default: as it was left, kept in "keys.typingOn" when Gridline closes).
+bool typingKeyboardAtStart(const Settings& s);
 void midiSettingsPage(App& a, float fieldW);              // Settings → MIDI
 
 }  // namespace gl

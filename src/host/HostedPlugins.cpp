@@ -1905,7 +1905,7 @@ std::string scanCurrentLabel(const ScanStatus& st) {
 
 std::vector<std::pair<std::string, std::string>> blacklist() {
   Service& s = service();
-  std::lock_guard<std::mutex> g(s.lock);
+  const auto g = lockForRead(s);  // K-192: the browser's tip reads it: its wait counts too
   std::vector<std::pair<std::string, std::string>> out;
   for (const auto& e : s.cache.entries())
     if (!e.ok) out.push_back({e.bundle, e.error});

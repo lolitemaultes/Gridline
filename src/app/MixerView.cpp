@@ -171,6 +171,7 @@ void effectList(App& a, ObjectId track, int slot, const std::string& current) {
     if (a.doc.setSlotPlugin(track, slot, type)) pui::pluginReplaced(PluginTarget{track, slot});  // J-213
     a.fxEditor = {track, slot};
   };
+  if (favui::searchField(PluginKind::Effect, pick, current)) return;  // typing lists the matching effects
   if (ImGui::Selectable(i18n::tr("(empty)"), current.empty())) a.doc.setSlotPlugin(track, slot, "");
   const auto favs = favui::favouritesOfKind(PluginKind::Effect);
   if (!favs.empty()) {

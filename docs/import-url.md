@@ -20,7 +20,9 @@ clear message.
      project uses: the file joins the shared project audio for everyone.
 4. **Only part** keeps a range (minutes:seconds, like `1:30` to `2:05`); the rest is never
    written.
-5. Playlists: the first item, or **chosen items** (with All / None).
+5. Playlists: the first item, or **chosen items** (with All / None). A playlist's own link opens
+   the playlist; a video link opened from inside a playlist (it has both the video and the list
+   in it) imports that video only.
 6. **Import** downloads the best audio the site offers and converts it once, without loss, to a
    32-bit float WAV at the source's sample rate (levels above 0 dBFS are kept). All placed clips
    are one undo step.
@@ -58,6 +60,18 @@ yt-dlp prefers the copy Gridline installed over the one that came with it, so up
 the environment variables `GRIDLINE_YTDLP` and `GRIDLINE_FFMPEG` a program of your own is used
 instead (nothing else is tried).
 
+On macOS, an app copied out of a downloaded disk image carries the system's download flag
+(quarantine) on every file inside it, and macOS stops a flagged program that is not notarized
+as soon as it starts. Opening Gridline once clears the flag of the app, not of the programs
+inside it, so Gridline removes it from its own yt-dlp, ffmpeg and ffprobe before it runs them.
+When the app's folder cannot be changed (Gridline started straight from the disk image, or an
+app another user installed), it copies them into its own tools folder without the flag and uses
+those copies.
+
+Some sites need a JavaScript runtime for their full list of formats. Gridline looks for deno,
+then node, then bun, on the `PATH` and in the usual places (Homebrew's folders included, which
+an app started from the Finder does not see) and hands the first one found to yt-dlp.
+
 ### First use without the programs
 
 Builds without them (a self-built Gridline, the BSD packages, a package with the folder removed)
@@ -81,8 +95,30 @@ background at most once a day for a newer yt-dlp release, checks it the same way
 replaces its copy in one step (the previous copy is kept and used again if anything fails). The
 copy that came with Gridline is never changed; the update goes into Gridline's own folder.
 **Settings > File > Import from URL** turns this off ("Keep yt-dlp up to date automatically"),
-shows which copy of each program is used, and has **Update yt-dlp now**. A copy given by
-`GRIDLINE_YTDLP` or the system's copy is never updated by Gridline.
+shows which copy of each program is used, and has **Update yt-dlp now** and **Reinstall the
+tools** (downloads yt-dlp, and FFmpeg unless the copy that came with Gridline is used, again
+into Gridline's own folder, checked the same way). When a program is missing, **Set up now**
+installs what is missing. A copy given by `GRIDLINE_YTDLP` or the system's copy is never updated
+by Gridline.
+
+## When an import fails
+
+The popup says what went wrong and what to try:
+
+* **The link**: not a media page the downloader knows, private, removed, needs a signed-in
+  account, protected (DRM), a live stream, or not available in your region. Check the link, or
+  use one that plays in a browser without signing in.
+* **The connection**: the site could not be reached or stopped answering. Check the internet
+  connection and try again.
+* **The site changed**: sites change often and an older yt-dlp no longer understands them (for
+  example "Unable to extract" or no audio stream found). Press **Update yt-dlp now** in Settings
+  and try again. A site that asks to confirm you are not a bot usually lets you in again after a
+  while.
+* **The programs**: a program that is missing, cannot run on this computer or is stopped by the
+  system. Press **Reinstall the tools** in Settings, or install yt-dlp and FFmpeg yourself (for
+  example `brew install yt-dlp ffmpeg`).
+* **The set-up**: no connection to GitHub, GitHub limiting requests (try again in an hour), or a
+  download that does not match its published checksum (it is never used).
 
 ## For packagers
 

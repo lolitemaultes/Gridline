@@ -398,6 +398,13 @@ TypingLayout typingLayout = TypingLayout::Standard;
 
 void loadTypingLayout(const Settings& s) { typingLayout = typingLayoutFromId(s.getString("keys.typingLayout")); }
 
+bool typingKeyboardAtStart(const Settings& s) {
+  const std::string at = s.getString("keys.typingAtStart");
+  if (at == "on") return true;
+  if (at == "off") return false;
+  return s.getBool("keys.typingOn");  // "last", and anything unknown: as it was left
+}
+
 void setTypingLayout(App& a, TypingLayout l) {
   typingLayout = l;
   a.settings.set("keys.typingLayout", typingLayoutId(l));
@@ -498,6 +505,21 @@ void midiSettingsPage(App& a, float fieldW) {
                        typingKeyName('z').c_str(), typingKeyName('/').c_str(), typingKeyName('[').c_str(), typingKeyName(']').c_str(),
                        typingKeyName('-').c_str(), typingKeyName('=').c_str());
     ImGui::PopTextWrapPos();
+    label(i18n::tr("When Gridline starts"), 168);
+    {
+      static const char* const kIds[3] = {"last", "on", "off"};
+      static const char* const kNames[3] = {i18n::N_("As it was left"), i18n::N_("On"), i18n::N_("Off")};
+      const std::string cur = a.settings.getString("keys.typingAtStart");
+      int sel = 0;
+      for (int i = 0; i < 3; ++i)
+        if (cur == kIds[i]) sel = i;
+      if (ui::BeginCombo("##typingatstart", i18n::tr(kNames[sel]), std::max(240.0f, fieldW))) {
+        for (int i = 0; i < 3; ++i)
+          if (ImGui::Selectable(i18n::tr(kNames[i]), sel == i)) a.settings.set("keys.typingAtStart", std::string(kIds[i]));
+        ImGui::EndCombo();
+      }
+      if (ImGui::IsItemHovered()) a.setHint(i18n::tr("Whether the typing keyboard plays notes when Gridline opens"));
+    }
     ui::EndSection();
   }
   if (!a.midi) {

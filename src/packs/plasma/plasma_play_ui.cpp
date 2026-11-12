@@ -15,7 +15,7 @@ namespace {
 
 // A card: the block frame, its light (or none), the name and what it does; returns the body top.
 float playCard(Ctx& c, float x, float y, float w, float h, ImU32 fam, int enable, const char* name, const char* sub) {
-  blockFrame(c, x, y, w, h, fam, false, false);
+  blockFrame(c, x, y, w, h, fam, false, false, enable >= 0 && val(c, enable) < 0.5);
   float tx = x + M(16);
   const float hy = y + M(24);
   if (enable >= 0) led(c, enable, tx, hy - M(3.5f), M(7)), tx += M(16);

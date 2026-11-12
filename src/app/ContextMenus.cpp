@@ -1035,6 +1035,7 @@ void patternContextMenu(App& a, ObjectId id) {
   if (ImGui::MenuItem(i18n::tr("Insert one before"), keys::label("pattern.insert")))
     a.later([&a, id] { a.selectPattern(ops::insertPattern(a.doc, id, ops::nextPatternName(a.doc.song()))); });
   if (ImGui::MenuItem(i18n::tr("Clone"), keys::label("pattern.clone"))) a.later([&a, id] { a.selectPattern(a.doc.clonePattern(id)); });
+  notePatternMenuClone((ImGui::GetItemRectMin().x + ImGui::GetItemRectMax().x) * 0.5f, (ImGui::GetItemRectMin().y + ImGui::GetItemRectMax().y) * 0.5f);
   ImGui::Separator();
   if (ImGui::BeginMenu(i18n::tr("Rename..."))) {
     renameField(p->name, [&a, id](const std::string& n) { a.doc.renamePattern(id, n); });

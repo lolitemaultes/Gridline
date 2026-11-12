@@ -231,12 +231,12 @@ constexpr float kColX[4] = {8, 368, 600, 792}, kColW[4] = {344, 216, 176, 200};
 // details). Moves y below the row. True when its details show (always in Full).
 bool section(Ctx& c, const char* id, float x, float& y, float w, const char* title, const std::string& summary, bool hasDetails);
 void sectionEnd(Ctx& c, float x, float& y, float w);
-// A block: one synth part as a card with a title bar (family strip, light, name, its live picture
+// A block: one synth part as a card with a title bar (a border in its family colour, light, name, its live picture
 // when folded, More, open large, fold). blockBegin returns true when the body shows; draw the
 // body from y, then blockEnd. Shared by the panels and the Patch view.
 struct BlockOpts {
   int enable = -1;        // its on / off parameter
-  ImU32 fam = 0;          // family colour (the strip)
+  ImU32 fam = 0;          // family colour (its border)
   int view = -1, viewTab = 0;  // the large editor a click on the name opens
   bool canMore = true;    // has details for More
   bool drag = false;      // the name is a drag handle (the caller makes it a drag source)
@@ -268,7 +268,15 @@ struct Block {
 bool blockBegin(Ctx& c, Block& b, const char* id, float x, float& y, float w, const char* title, const BlockOpts& o,
                 const std::function<void(float, float, float, float)>& mini = {});
 void blockEnd(Ctx& c, Block& b, float& y);
-void blockFrame(const Ctx& c, float x, float y, float w, float h, ImU32 fam, bool sel, bool dim);
+// A block's frame: its panel, and a border in its family colour `fam` all the way round (heavier
+// with an accent glow when `sel`, quieter when `off`). 0 = a plain line border.
+void blockFrame(const Ctx& c, float x, float y, float w, float h, ImU32 fam, bool sel, bool dim, bool off = false);
+// Its pieces, for things drawn over a frame: the snapped screen corners, the border width (px),
+// the corner radius (px) and an even border just inside a..b.
+void blockBox(const Ctx& c, float x, float y, float w, float h, ImVec2& a, ImVec2& b);
+float blockBorderW(const Ctx& c, bool sel);
+float blockRound(const Ctx& c);
+void blockRing(const Ctx& c, ImVec2 a, ImVec2 b, ImU32 col, float t);
 // True while a block shows its details (its More, or Full).
 bool showDetails(const Ctx& c);
 // ---- the look (plasma_look_ui.cpp). Sizes in design pixels (a 1440 x 900 window): M() gives form

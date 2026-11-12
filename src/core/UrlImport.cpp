@@ -223,23 +223,39 @@ std::string toolError(const std::string& errText) {
 std::string errorLead(const std::string& e) {
   const std::string l = lower(e);
   if (contains(l, "drm")) return "This media is protected (DRM) and cannot be imported.";
+  // A site's check for automated downloads (often after many requests from one address).
+  if (contains(l, "not a bot"))
+    return "The site asked to confirm that this is not a bot. Wait a while and try again, or update yt-dlp in Settings > File > Import "
+           "from URL.";
   if (contains(l, "sign in") || contains(l, "log in") || contains(l, "login") || contains(l, "cookies") || contains(l, "authenticat") ||
       contains(l, "members-only") || contains(l, "account"))
-    return "This media needs a signed-in account. Gridline does not sign in to sites.";
-  if (contains(l, "private")) return "This media is private.";
-  if (contains(l, "unsupported url")) return "This link is not a media page the downloader knows.";
+    return "This media needs a signed-in account. Gridline does not sign in to sites: use a link that plays without signing in.";
+  if (contains(l, "private")) return "This media is private. Use a public link.";
+  if (contains(l, "unsupported url"))
+    return "This link is not a media page the downloader knows. Check the link, or update yt-dlp in Settings > File > Import from URL.";
   if (contains(l, "your country") || contains(l, "geo restrict") || contains(l, "geo-restrict") || contains(l, "region"))
     return "This media is not available in your region.";
-  if (contains(l, "requested format is not available") || contains(l, "no video formats") || contains(l, "no formats"))
-    return "No audio stream was found on this page.";
   if (contains(l, "unable to download webpage") || contains(l, "getaddrinfo") || contains(l, "name or service not known") ||
       contains(l, "nodename nor servname") || contains(l, "timed out") || contains(l, "network is unreachable") ||
-      contains(l, "connection refused") || contains(l, "connection reset") || contains(l, "failed to resolve"))
+      contains(l, "connection refused") || contains(l, "connection reset") || contains(l, "failed to resolve") ||
+      contains(l, "no route to host"))
     return "The site could not be reached. Check the internet connection and try again.";
+  // The site changed and this yt-dlp does not know it yet.
+  if (contains(l, "unable to extract") || contains(l, "please report this issue") || contains(l, "nsig") || contains(l, "signature") ||
+      contains(l, "http error 403") || contains(l, "forbidden") || contains(l, "is outdated") || contains(l, "update to the latest"))
+    return "The site has changed and the downloader does not understand it yet. Update yt-dlp in Settings > File > Import from URL, "
+           "then try again.";
+  if (contains(l, "requested format is not available") || contains(l, "no video formats") || contains(l, "no formats"))
+    return "No audio stream was found on this page. If the page plays audio in a browser, update yt-dlp in Settings > File > Import "
+           "from URL.";
   if (contains(l, "unavailable") || contains(l, "removed") || contains(l, "404") || contains(l, "not found") || contains(l, "does not exist"))
-    return "This media is not available (removed, or the link is not right).";
-  if (contains(l, "live")) return "Live streams cannot be imported.";
+    return "This media is not available (removed, or the link is not right). Check the link.";
+  if (contains(l, "live")) return "Live streams cannot be imported. Try again once the stream has ended.";
   return "";
+}
+
+std::string fallbackLead() {
+  return "Check the link and the internet connection. If it keeps failing, update yt-dlp in Settings > File > Import from URL.";
 }
 
 // ---------------------------------------------------------------- times ----
@@ -277,7 +293,10 @@ std::string formatTime(double seconds) {
 // -------------------------------------------------------- command lines ----
 std::vector<std::string> infoArgs(const std::vector<std::string>& ytdlp, const std::string& url) {
   std::vector<std::string> a = ytdlp;
-  for (const char* x : {"--ignore-config", "--no-warnings", "--socket-timeout", "30", "--flat-playlist", "-J", "--"}) a.push_back(x);
+  // --no-playlist: a video link opened from a playlist ("watch?v=...&list=...") means that video;
+  // a playlist's own link is still read as the playlist.
+  for (const char* x : {"--ignore-config", "--no-warnings", "--no-playlist", "--socket-timeout", "30", "--flat-playlist", "-J", "--"})
+    a.push_back(x);
   a.push_back(url);
   return a;
 }
@@ -508,6 +527,7 @@ RunResult run(const std::vector<std::string>& argv, const std::string& scratchBa
   }
   if (!pendOut.empty() && onLine) onLine(pendOut);
   if (!pendErr.empty() && onLine) onLine(pendErr);
+  r.crashed = p.status().crashed;
   r.code = p.status().crashed ? -1 : p.status().code;
   r.ok = !r.cancelled && !r.timedOut && p.status().exited && !p.status().crashed && p.status().code == 0;
   fs::remove(outP, ec);
@@ -516,24 +536,43 @@ RunResult run(const std::vector<std::string>& argv, const std::string& scratchBa
 }
 
 // --------------------------------------------------------------- worker ----
+RunFailure explainRun(const RunResult& r, const std::string& what) {
+  RunFailure f;
+  if (!r.started) {
+    f.error = what + " could not be started";
+    f.lead = "The program is missing or cannot run on this computer. Reinstall the tools in Settings > File > Import from URL.";
+    return f;
+  }
+  if (r.timedOut) {
+    f.error = "The download stopped making progress and was given up";
+    f.lead = "The site did not answer in time. Check the internet connection and try again later.";
+    return f;
+  }
+  f.error = toolError(r.err);
+  if (f.error.empty() && r.crashed) {
+    // Ended by the system before it wrote anything: on macOS a blocked program, elsewhere a
+    // broken or incomplete copy.
+    f.error = what + " was stopped by the system before it could start";
+    f.lead = "The program could not run. Reinstall the tools in Settings > File > Import from URL, then try again.";
+    return f;
+  }
+  if (f.error.empty()) f.error = what + " failed (" + (r.code < 0 ? std::string("stopped") : "exit code " + std::to_string(r.code)) + ")";
+  f.lead = errorLead(f.error);
+  if (f.lead.empty()) f.lead = fallbackLead();
+  return f;
+}
+
 namespace {
 
-void fail(Job& j, const RunResult& r, const std::string& fallback) {
+void fail(Job& j, const RunResult& r, const std::string& what) {
   std::lock_guard<std::mutex> lk(j.mu);
   if (r.cancelled) {
     j.phase = static_cast<int>(Phase::Cancelled);
     return;
   }
-  if (!r.started) {
-    j.error = fallback;
-  } else if (r.timedOut) {
-    j.error = "The download stopped making progress and was given up";
-    j.lead = "The site did not answer in time. Try again later.";
-  } else {
-    j.error = toolError(r.err);
-    if (j.error.empty()) j.error = fallback + " (" + (r.code < 0 ? std::string("stopped") : "exit code " + std::to_string(r.code)) + ")";
-    j.lead = errorLead(j.error);
-  }
+  const RunFailure f = explainRun(r, what);
+  j.error = f.error;
+  j.lead = f.lead;
   j.phase = static_cast<int>(Phase::Failed);
 }
 
@@ -572,17 +611,20 @@ std::shared_ptr<Job> startFetch(const Tools& t, const std::string& url, const st
     fs::create_directories(fs::u8path(workDir), ec);
     const RunResult r = run(infoArgs(t.ytdlp, url), (fs::u8path(workDir) / "info").u8string(), &job->cancel, lim.infoSeconds, 0, "", nullptr);
     if (!r.ok) {
-      fail(*job, r, "The downloader could not be started");
+      fail(*job, r, "The downloader (yt-dlp)");
     } else {
       Info info;
       std::string err;
       std::lock_guard<std::mutex> lk(job->mu);
       if (!parseInfo(r.out, info, &err)) {
         job->error = err;
+        job->lead = err.find("playlist") != std::string::npos
+                        ? "Check the link: the playlist may be private or empty."
+                        : "The downloader gave an answer Gridline cannot read. Update yt-dlp in Settings > File > Import from URL, then try again.";
         job->phase = static_cast<int>(Phase::Failed);
       } else if (info.live) {
         job->error = "This is a live stream";
-        job->lead = "Live streams cannot be imported.";
+        job->lead = "Live streams cannot be imported. Try again once the stream has ended.";
         job->phase = static_cast<int>(Phase::Failed);
       } else {
         if (info.url.empty()) info.url = url;
@@ -625,9 +667,10 @@ std::shared_ptr<Job> startImport(const Tools& t, const std::vector<Request>& req
         if (r.ok) {
           std::lock_guard<std::mutex> lk(job->mu);
           job->error = "The downloader finished without an audio file";
+          job->lead = "The page gave no audio file. Check the link, or update yt-dlp in Settings > File > Import from URL.";
           job->phase = static_cast<int>(Phase::Failed);
         } else {
-          fail(*job, r, "The downloader could not be started");
+          fail(*job, r, "The downloader (yt-dlp)");
         }
         job->done = true;
         return;
@@ -661,10 +704,10 @@ std::shared_ptr<Job> startImport(const Tools& t, const std::vector<Request>& req
         if (r.ok) {
           std::lock_guard<std::mutex> lk(job->mu);
           job->error = "The converter wrote no audio";
-          job->lead = "The file has no audio the converter can read.";
+          job->lead = "The file has no audio the converter can read. Try another link, or reinstall the tools in Settings > File > Import from URL.";
           job->phase = static_cast<int>(Phase::Failed);
         } else {
-          fail(*job, r, "The converter could not be started");
+          fail(*job, r, "The converter (ffmpeg)");
         }
         job->done = true;
         return;

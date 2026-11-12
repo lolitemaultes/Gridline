@@ -7,6 +7,7 @@
 // and a key strip. Drawn with the shared skin kit.
 #include <cmath>
 #include "../flc_kit.h"
+#include "../../app/KeyGlide.h"
 #include "dco.h"
 #include "synths_widgets.h"
 
@@ -123,7 +124,17 @@ void drawWarmSynthEditor(App& a, const PluginTarget& t, float W) {
   flk::chk(c, WmChorus, 518, 340, 40, 16, "CHO");
 
   // ---- key strip + name
-  skin::keyboard("##warmkb", F.p(4, 300), F.sz(315, 72), 36, 84, K);
+  {  // the key strip plays the channel; a drag glides from key to key
+    static keyglide::Held held;
+    bool lit[128] = {};
+    if (held.note >= 0 && held.item == ImGui::GetID("##warmkb")) lit[held.note] = true;
+    int under = -1;
+    const ImVec2 kp = F.p(4, 300), ks = F.sz(315, 72);
+    skin::keyboard("##warmkb", kp, ks, 36, 84, K, lit, -1, -1, -1, &under);
+    const int playing = keyglide::followItem(a, t.isChannel() ? t.owner : kNoId, under, held, 0.85f);
+    keyglide::devNote("warmsynth", kp, ImVec2(kp.x + ks.x, kp.y + ks.y), 36, 29, playing);
+    if (ImGui::IsItemHovered()) a.setHint("Click or drag across the keys to play");
+  }
   if (!pui::titleWordmark(dl, "gl.warmsynth", F.p(440, 360), F.font(10), K.text))  // J-136: the wordmark
     skin::text(dl, F.p(440, 360), K.accent2C(), "WARM TRIO", F.font(10));
   F.end(kW, kH);

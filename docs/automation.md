@@ -15,6 +15,21 @@ places:
 Both kinds are edited in the same automation editor, with the same points, curve shapes,
 tension handles, LFO tool, shape library and recording.
 
+## Getting started
+
+1. Right-click the control you want to move (a knob or a fader in a channel, the mixer or a
+   built-in plugin's editor) and pick **Create automation clip**. A clip four bars long appears
+   on the playlist (over the selected time when there is one, or at the playback position in
+   song mode), holding the control's current value, and opens in the automation editor.
+2. In the editor, click to add a point and drag points to shape the curve. Drag the small ring
+   between two points to bend the line, and pick a shape from the side panel to fill the clip
+   or the selected part with it.
+3. Move, stretch or copy the clip on the playlist like any other clip. Wherever it sits, the
+   control follows its curve; outside it, the control keeps the last value it was given.
+
+To turn automation off without deleting it, mute the clip (the playlist's Mute tool, or mute
+its playlist track). A muted clip leaves the control alone and plays again when unmuted.
+
 ## Automation in a pattern
 
 ### Adding a clip

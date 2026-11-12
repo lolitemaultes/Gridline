@@ -5,6 +5,10 @@ keyboard button in the top bar, **Options > Typing keyboard to piano** or Ctrl+T
 Right-click the button for its options: the octave, the velocity, chord mode and the layout the keys
 are named after.
 
+Gridline opens with the typing keyboard on if it was on when you last closed it. To choose instead,
+go to **Settings > MIDI > Typing keyboard > When Gridline starts**: **As it was left** (the default),
+**On** or **Off**. While it is on, shortcuts on single letters and digits wait until it is off.
+
 ## Keys
 
 Keys play by where they sit on the keyboard, whatever layout your computer uses. The names below are
