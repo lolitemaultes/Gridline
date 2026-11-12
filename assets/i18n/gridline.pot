@@ -2190,10 +2190,6 @@ msgid "Display group: show all channels or one group (groups are saved with the 
 msgstr ""
 
 #: src/app/ChannelRack.cpp
-msgid "Glows while the channel plays · click: mute · right-click: solo, again: unsolo · Shift+click: select"
-msgstr ""
-
-#: src/app/ChannelRack.cpp
 msgid "Graph editor (Ctrl+K): step velocity, pan, release, fine pitch, mod X / Y, shift and keyboard (note) of the selected channel"
 msgstr ""
 
@@ -2219,10 +2215,6 @@ msgstr ""
 
 #: src/app/ChannelRack.cpp
 msgid "Muted · click: unmute · right-click: solo this channel, again: back to normal · Shift+click: select"
-msgstr ""
-
-#: src/app/ChannelRack.cpp
-msgid "Muted · click: unmute · right-click: solo, again: unsolo · Shift+click: select"
 msgstr ""
 
 #: src/app/ChannelRack.cpp
@@ -2267,6 +2259,10 @@ msgstr ""
 
 #: src/app/ChannelRack.cpp
 msgid "Shorter pattern"
+msgstr ""
+
+#: src/app/ChannelRack.cpp
+msgid "Shows the channel's sound"
 msgstr ""
 
 #: src/app/ChannelRack.cpp

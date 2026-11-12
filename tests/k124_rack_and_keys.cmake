@@ -5,8 +5,9 @@
 #   K-125: an instrument added from the rack's add menu, "insert below", "replace", a drop on the
 #          rack or the playlist and the plugin picker opens its editor, focused; undo / redo, a
 #          project load and a collaborator's new channel open nothing.
-#   K-126: the channel light: right-click solos (one undo step), again unsolos; undo; click mutes;
-#          Ctrl+click solos; Shift+click selects.
+#   K-126: the headphones button (K-186): right-click solos (one undo step), again unsolos; undo;
+#          click mutes; Ctrl+click solos; Shift+click selects. The sound light before the steps
+#          takes no clicks (K-186: a meter only).
 #   K-127: every row has exactly one light, right of the name button and left of the steps, the
 #          left section's controls (K-186: the headphones button first) do not overlap, at 100% and 200% and in a narrow and a wide rack;
 #          screenshots of the playing rack at 100% and 200%.
@@ -272,6 +273,7 @@ function(centre out x0 y0 x1 y1)
   set(${out} "${cx} ${cy}" PARENT_SCOPE)
 endfunction()
 rowgeom(solo_probe 0 1)
+centre(phonesAt ${g_phones_x0} ${g_phones_y0} ${g_phones_x1} ${g_phones_y1})
 centre(lampAt ${g_lamp_x0} ${g_lamp_y0} ${g_lamp_x1} ${g_lamp_y1})
 string(REGEX MATCH "rack frame 12: [^\n]* rows ([0-9]+)" _ "${solo_probe_out}")
 set(rows "${CMAKE_MATCH_1}")
@@ -280,13 +282,13 @@ if(rows LESS 3)
 endif()
 set(k 3)
 
-# Row 1's light: right-click solo, again unsolo, undo twice; click mutes, again unmutes;
+# Row 1's headphones: right-click solo, again unsolo, undo twice; click mutes, again unmutes;
 # Ctrl+click solo and unsolo; Shift+click selects and deselects (mutes unchanged).
 run(solo 110 "5 toasts clear
 6 closeplugins
 9 focus \"Channel rack\"
 12 rack
-14 move ${lampAt}
+14 move ${phonesAt}
 16 down 1
 17 up 1
 22 rack
@@ -347,7 +349,37 @@ foreach(n RANGE 10)
     fail(solo "a second Shift+click did not restore row 1's selection (${sel})")
   endif()
 endforeach()
-message(STATUS "k126: the light's mute, solo and select paths:${seen}")
+message(STATUS "k126: the headphones' mute, solo and select paths:${seen}")
+
+# The sound light takes no clicks: click, right-click, Ctrl+click and Shift+click change nothing.
+run(lightclicks 60 "5 toasts clear
+6 closeplugins
+9 focus \"Channel rack\"
+12 rack
+14 move ${lampAt}
+16 down 0
+17 up 0
+19 down 1
+20 up 1
+22 mod ctrl 1
+24 down 0
+25 up 0
+26 mod ctrl 0
+28 mod shift 1
+30 down 0
+31 up 0
+32 mod shift 0
+40 rack
+" "${OUT}/fixture.gridline.json")
+mutes(lightclicks 0 ${k} lc0)
+mutes(lightclicks 1 ${k} lc1)
+string(REGEX MATCH "rack frame 12: [^\n]* undo ([0-9]+)" _ "${lightclicks_out}")
+set(lu0 "${CMAKE_MATCH_1}")
+string(REGEX MATCH "rack frame 40: [^\n]* undo ([0-9]+)" _ "${lightclicks_out}")
+if(NOT lc0 STREQUAL lc1 OR NOT lu0 STREQUAL CMAKE_MATCH_1)
+  fail(lightclicks "clicks on the sound light changed something: ${lc0} -> ${lc1}, undo ${lu0} -> ${CMAKE_MATCH_1}")
+endif()
+message(STATUS "k186: the sound light takes no clicks (${lc0})")
 
 # ---------------------------------------------------------------- K-127 ----
 function(checkRows tag n)

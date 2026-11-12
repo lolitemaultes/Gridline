@@ -5,7 +5,7 @@
 #   * right-click solos: every other channel muted, the dump reports "solo" for it;
 #   * right-click again restores the exact earlier states, including a channel muted before the solo;
 #   * each solo and unsolo is one undo step; a moved solo still restores the first states;
-#   * Ctrl+click solos and unsolos; the light between the name and the steps agrees;
+#   * Ctrl+click solos and unsolos;
 #   * another channel unmuted by hand during a solo ends it: the solo ring goes, and a right-click
 #     on the formerly soloed channel starts a new solo.
 #   cmake -DAPP=<gridline-app> -DDEMO=<demo.gridline.json> -DOUT=<dir> -P k186_rack_headphones_app.cmake
