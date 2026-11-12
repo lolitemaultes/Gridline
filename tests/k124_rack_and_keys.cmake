@@ -8,7 +8,7 @@
 #   K-126: the channel light: right-click solos (one undo step), again unsolos; undo; click mutes;
 #          Ctrl+click solos; Shift+click selects.
 #   K-127: every row has exactly one light, right of the name button and left of the steps, the
-#          left section's controls do not overlap, at 100% and 200% and in a narrow and a wide rack;
+#          left section's controls (K-186: the headphones button first) do not overlap, at 100% and 200% and in a narrow and a wide rack;
 #          screenshots of the playing rack at 100% and 200%.
 #   cmake -DAPP=<gridline-app> -DDEMO=<demo.gridline.json> -DOUT=<dir> -P k124_rack_and_keys.cmake
 cmake_minimum_required(VERSION 3.16)
@@ -202,7 +202,7 @@ message(STATUS "k125: a collaborator's new channel opens nothing")
 
 # ---------------------------------------------------------------- K-126 ----
 # Row <i> of the n-th "rack" dump: its light count, selection, mute state and the rectangles of
-# pan vol mix name lamp steps (4 numbers each) -> g_lights, g_selected, g_muted, g_<part>_x0 ...
+# phones pan vol mix name lamp steps (4 numbers each) -> g_lights, g_selected, g_muted, g_<part>_x0 ...
 function(rowgeom tag n i)
   string(REGEX MATCHALL "rack frame [^\n]*" dumps "${${tag}_out}")
   list(LENGTH dumps count)
@@ -230,7 +230,7 @@ function(rowgeom tag n i)
   endif()
   set(g_glow "${CMAKE_MATCH_1}" PARENT_SCOPE)
   set(g_muted "${CMAKE_MATCH_2}" PARENT_SCOPE)
-  foreach(part pan vol mix name lamp steps)
+  foreach(part phones pan vol mix name lamp steps)
     if(NOT line MATCHES " ${part} ([-0-9.]+) ([-0-9.]+) ([-0-9.]+) ([-0-9.]+)")
       fail(${tag} "row ${i}: no ${part} rectangle")
     endif()
@@ -360,7 +360,7 @@ function(checkRows tag n)
       fail(${tag} "row ${i} draws ${g_lights} lights, wanted exactly one")
     endif()
     set(prev "")
-    foreach(part pan vol mix name lamp steps)
+    foreach(part phones pan vol mix name lamp steps)
       if(prev)
         if(g_${prev}_x1 GREATER g_${part}_x0)
           fail(${tag} "row ${i}: ${prev} (to ${g_${prev}_x1}) overlaps ${part} (from ${g_${part}_x0})")

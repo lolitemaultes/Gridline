@@ -1895,6 +1895,13 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -P ${CMAKE_SOURCE_DIR}/tests/k124_rack_and_keys.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(k124_rack_and_keys_app PROPERTIES TIMEOUT 600)
+    # K-186: the rack's headphones button (click mutes, right-click solos, again: back to normal).
+    add_test(NAME k186_rack_headphones_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/k186_rack_headphones
+                     -P ${CMAKE_SOURCE_DIR}/tests/k186_rack_headphones_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(k186_rack_headphones_app PROPERTIES TIMEOUT 600)
 
     # J-109: Stop releases preview keys, typed keys (also on focus loss) and the browser preview; Stop twice = panic.
     add_test(NAME j109_stop_sound_app

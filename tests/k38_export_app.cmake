@@ -21,7 +21,9 @@ set(type "clap:org.gridline.test.synth")
 
 function(run tag script)
   file(WRITE "${OUT}/${tag}.txt" "${script}")
-  execute_process(COMMAND "${APP}" "${OUT}/song.gridline.json" --hidden --no-ui-sounds --size 1440x900 --frames 600 --screenshot "${OUT}/${tag}.ppm"
+  # (--no-draw: the checks read the export and freeze reports, never pixels; on a slow software
+  # OpenGL the drawing alone took the seven runs past the test's time limit)
+  execute_process(COMMAND "${APP}" "${OUT}/song.gridline.json" --hidden --no-ui-sounds --no-draw --size 1440x900 --frames 600
                           --dev-input "${OUT}/${tag}.txt" --plugin gl.patcher
                   RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 200)
   file(WRITE "${OUT}/${tag}.log" "${out}\n${err}")

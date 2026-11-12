@@ -2173,6 +2173,10 @@ msgstr ""
 msgid "Channel rack"
 msgstr ""
 
+#: src/app/ChannelRack.cpp
+msgid "Click: mute this channel · right-click: solo it, again: back to normal · Shift+click: select"
+msgstr ""
+
 #: src/app/ChannelRack.cpp src/app/LauncherUi.cpp src/app/LoopStarterUi.cpp src/app/TemplateUi.cpp src/core/MenuStyle.cpp
 msgid "Create"
 msgstr ""
@@ -2211,6 +2215,10 @@ msgstr ""
 
 #: src/app/ChannelRack.cpp
 msgid "Mixer track: drag up/down to change, right-click to pick (M = master)"
+msgstr ""
+
+#: src/app/ChannelRack.cpp
+msgid "Muted · click: unmute · right-click: solo this channel, again: back to normal · Shift+click: select"
 msgstr ""
 
 #: src/app/ChannelRack.cpp
@@ -2259,6 +2267,10 @@ msgstr ""
 
 #: src/app/ChannelRack.cpp
 msgid "Shorter pattern"
+msgstr ""
+
+#: src/app/ChannelRack.cpp
+msgid "Soloed: every other channel is muted · right-click: back to normal · click: mute"
 msgstr ""
 
 #: src/app/ChannelRack.cpp

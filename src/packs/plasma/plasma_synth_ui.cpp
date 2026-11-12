@@ -825,7 +825,7 @@ float synthGrid(Ctx& c, float x, float y, float w) {
   const float originY = y;
   const int part = draggedPart(u);
   static const char* const names[SecCount] = {"Sources", "Shape", "Movement"};
-  static const char* const subs[SecCount] = {"three wavetable layers, a sub and noise", "filters, then the amp", "drag a dot onto any knob to link it"};
+  static const char* const subs[SecCount] = {"three wavetable layers, a root and a texture", "filters, then the amp", "drag a dot onto any knob to link it"};
   // the rows share the tab's height (the drawer slides over it: the tab then scrolls that far)
   const float avail = (kPlayY - M(16)) - (kTopH + M(16)) - SecCount * kSecHead - (SecCount - 1) * kSecGap;
   const float scale = std::max(1.f, avail / (kSecMinH[0] + kSecMinH[1] + kSecMinH[2]));

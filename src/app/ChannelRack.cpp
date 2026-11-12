@@ -77,14 +77,16 @@ struct RackFit {
 } gFit;
 // K-127 dev check: each row's controls as drawn last frame (screen rectangles: x0 y0 x1 y1).
 struct RowGeom {
-  ImVec4 pan, vol, mix, name, lamp, steps;
+  ImVec4 phones, pan, vol, mix, name, lamp, steps;
+  const char* phonesState = "on";  // K-186: the headphones button as drawn (on, muted, solo)
   int lights = 0;  // K-127: lights drawn on the row (one)
   int frame = -1;
 };
 std::unordered_map<ObjectId, RowGeom> gRowGeom;
 ImVec4 rectOf(ImVec2 p0, ImVec2 p1) { return ImVec4(p0.x, p0.y, p1.x, p1.y); }
-// K-126: the mute states from before the rack's last channel solo (a second solo click brings them back).
-std::map<ObjectId, bool> gSoloBefore;
+// K-126 / K-186: the rack's channel solo (the soloed channel and the mute states from before it;
+// a second right-click on it brings them back).
+ops::ChannelSolo gSolo;
 struct RackDev {
   int steps = 0;
   float w = 0, h = 0, scroll = -1;
@@ -135,7 +137,7 @@ float rackPlayLight(App& a, const Channel& c, size_t index) {
 
 // The channel's one light, between the name button and the steps (K-127): green while the
 // channel is on, dark while it is muted, and glowing brighter while it plays, fading after (J-186).
-void drawRowLamp(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float level, bool muted, bool hovered) {
+void drawRowLamp(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float level, bool muted, bool soloed, bool hovered) {
   const auto& P = pal();
   const ImU32 socket = P.dark ? theme::mix(P.field, P.ink, 0.35f) : theme::mix(P.surface700, P.ink, 0.18f);
   const ImU32 idle = muted ? theme::mix(socket, P.paper, hovered ? 0.10f : 0.0f) : theme::mix(socket, P.led, hovered ? 0.62f : 0.5f);
@@ -146,6 +148,42 @@ void drawRowLamp(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float level, bool muted, 
     dl->AddRectFilled(p0, p1, theme::mix(idle, theme::mix(P.led, P.paper, 0.2f * l * l), l), 2.0f);
   }
   dl->AddRect(p0, p1, theme::withAlpha(P.ink, P.dark ? 0.5f : 0.25f), 2.0f);
+  if (soloed)  // K-186: the soloed channel's light has the solo rim, as its headphones button does
+    dl->AddRect(ImVec2(p0.x - 1.5f, p0.y - 1.5f), ImVec2(p1.x + 1.5f, p1.y + 1.5f), P.solo, 3.0f, 0, 1.2f);
+}
+
+// K-186: the headphones button at the far left of a channel row. A small rounded socket with
+// hover and pressed states; the glyph is lit in the LED colour while the channel is on (with a
+// soft glow while it plays), dark and faint while it is muted, and brighter inside a solo ring
+// while the channel is soloed.
+void drawRowPhones(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float level, bool muted, bool soloed, bool hovered, bool pressed) {
+  const auto& P = pal();
+  const ImU32 base = P.dark ? theme::mix(P.field, P.ink, 0.35f) : theme::mix(P.surface700, P.ink, 0.12f);
+  ImU32 face = pressed ? theme::mix(base, P.ink, 0.25f) : hovered ? theme::mix(base, P.paper, P.dark ? 0.08f : 0.25f) : base;
+  if (soloed) face = theme::mix(face, P.solo, 0.16f);
+  const float r = 3.5f;
+  const float l = muted ? 0.0f : std::clamp(level, 0.0f, 1.0f);
+  if (l > 0.003f)  // activity glow around the socket
+    dl->AddRectFilled(ImVec2(p0.x - 2, p0.y - 2), ImVec2(p1.x + 2, p1.y + 2), theme::withAlpha(P.led, 0.20f * l), r + 2);
+  dl->AddRectFilled(p0, p1, face, r);
+  if (!pressed)  // a faint top edge: the socket's face catches the light
+    dl->AddLine(ImVec2(p0.x + r, p0.y + 0.5f), ImVec2(p1.x - r, p0.y + 0.5f), theme::withAlpha(P.paper, P.dark ? 0.07f : 0.35f));
+  dl->AddRect(p0, p1, theme::withAlpha(P.ink, P.dark ? 0.55f : 0.28f), r);
+  ImU32 glyph;
+  if (muted) glyph = theme::mix(face, P.textFaint, hovered ? 0.75f : 0.5f);
+  else {
+    // Soloed: a stronger glyph (lighter on dark faces, deeper on light ones, where white would fade).
+    glyph = soloed ? theme::mix(P.led, P.dark ? P.paper : P.ink, P.dark ? 0.3f : 0.25f) : theme::mix(P.led, P.paper, hovered ? 0.15f : 0.0f);
+    if (l > 0.003f) glyph = theme::mix(glyph, theme::mix(P.led, P.paper, 0.45f), l);
+  }
+  const ImVec2 c(std::round((p0.x + p1.x) * 0.5f), std::round((p0.y + p1.y) * 0.5f));
+  // The glyph is drawn as vectors for this small size (the icon set's headphones have tiny cups at
+  // 12 px): a bold headband arc over two full ear cups, about 14 x 12 logical px, crisp at any scale.
+  dl->PathArcTo(ImVec2(c.x, c.y + 1.0f), 5.4f, IM_PI * 1.0f, IM_PI * 2.0f, 16);
+  dl->PathStroke(glyph, 0, 1.9f);
+  dl->AddRectFilled(ImVec2(c.x - 7.0f, c.y + 0.5f), ImVec2(c.x - 3.0f, c.y + 6.0f), glyph, 1.3f);
+  dl->AddRectFilled(ImVec2(c.x + 3.0f, c.y + 0.5f), ImVec2(c.x + 7.0f, c.y + 6.0f), glyph, 1.3f);
+  if (soloed) dl->AddRect(ImVec2(p0.x - 1.5f, p0.y - 1.5f), ImVec2(p1.x + 1.5f, p1.y + 1.5f), P.solo, r + 1.5f, 0, 1.5f);
 }
 
 std::vector<uint8_t> rowOf(const Pattern& p, ObjectId ch) {
@@ -531,7 +569,7 @@ void drawChannelRack(App& a) {
   ImGui::PopStyleColor();
   ImGui::PopStyleVar();
   ImDrawList* dl = ImGui::GetWindowDrawList();
-  // Channel button proportions after the reference rack: mute lamp · pan · volume
+  // Channel button proportions after the reference rack: headphones (mute / solo) · pan · volume
   // · mixer track box · name button · activity / select lamp · steps (K-127).
   const float rowH = 26.0f, rowGap = 3.0f, cellH = 20.0f;
   const float avail = ImGui::GetContentRegionAvail().x;
@@ -647,6 +685,31 @@ void drawChannelRack(App& a) {
     RowGeom& geom = gRowGeom[c.id];
     geom.lights = 0;
     geom.frame = ImGui::GetFrameCount();
+    const bool soloed = ops::channelSoloed(s, c.id, gSolo);
+    // K-186: the headphones button at the far left. Click: mute / unmute; right-click or
+    // Ctrl/Cmd+click: solo this channel, again: back to how it was; Shift+click: select.
+    {
+      const ImVec2 b0(rp.x + racklayout::kXLeft, std::round(cy - racklayout::kPhonesW * 0.5f));
+      const ImVec2 b1(b0.x + racklayout::kPhonesW, b0.y + racklayout::kPhonesW);
+      ImGui::SetCursorScreenPos(b0);
+      const bool muted = c.muted;
+      const ObjectId cid = c.id;
+      if (ImGui::InvisibleButton("phones", ImVec2(racklayout::kPhonesW, racklayout::kPhonesW))) {
+        const ImGuiIO& io = ImGui::GetIO();
+        if (io.KeyShift) a.selectChannel(cid, true);
+        else if (io.KeyCtrl || io.KeySuper) ops::toggleChannelSolo(a.doc, cid, gSolo);
+        else a.doc.setParam(channelParam(cid, ChannelParam::Mute), muted ? 0 : 1, false);
+      }
+      if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) ops::toggleChannelSolo(a.doc, cid, gSolo);
+      const bool hov = ImGui::IsItemHovered();
+      const bool pressed = hov && (ImGui::IsItemActive() || ImGui::IsMouseDown(ImGuiMouseButton_Right));
+      geom.phones = rectOf(b0, b1);
+      geom.phonesState = soloed ? "solo" : muted ? "muted" : "on";
+      ui::Hint(soloed  ? i18n::N_("Soloed: every other channel is muted \xC2\xB7 right-click: back to normal \xC2\xB7 click: mute")
+               : muted ? i18n::N_("Muted \xC2\xB7 click: unmute \xC2\xB7 right-click: solo this channel, again: back to normal \xC2\xB7 Shift+click: select")
+                       : i18n::N_("Click: mute this channel \xC2\xB7 right-click: solo it, again: back to normal \xC2\xB7 Shift+click: select"));
+      drawRowPhones(dl, b0, b1, rackPlayLight(a, c, ci), muted, soloed, hov, pressed);
+    }
     // Pan & volume knobs: always shown (J-84).
     {
       ImGui::SetCursorScreenPos(ImVec2(rp.x + xPan, cy - 9));
@@ -898,16 +961,17 @@ void drawChannelRack(App& a) {
       if (ImGui::InvisibleButton("light", ImVec2(racklayout::kSelLampW, cellH))) {
         const ImGuiIO& io = ImGui::GetIO();
         if (io.KeyShift) a.selectChannel(cid, true);
-        else if (io.KeyCtrl || io.KeySuper) ops::toggleChannelSolo(a.doc, cid, gSoloBefore);
+        else if (io.KeyCtrl || io.KeySuper) ops::toggleChannelSolo(a.doc, cid, gSolo);
         else a.doc.setParam(channelParam(cid, ChannelParam::Mute), muted ? 0 : 1, false);
       }
-      if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) ops::toggleChannelSolo(a.doc, cid, gSoloBefore);
+      if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) ops::toggleChannelSolo(a.doc, cid, gSolo);
       const bool hov = ImGui::IsItemHovered();
       geom.lamp = rectOf(l0, l1);
       ++geom.lights;
-      ui::Hint(muted ? "Muted \xC2\xB7 click: unmute \xC2\xB7 right-click: solo, again: unsolo \xC2\xB7 Shift+click: select"
-                     : "Glows while the channel plays \xC2\xB7 click: mute \xC2\xB7 right-click: solo, again: unsolo \xC2\xB7 Shift+click: select");
-      drawRowLamp(dl, l0, l1, rackPlayLight(a, c, ci), muted, hov);
+      ui::Hint(soloed  ? i18n::N_("Soloed: every other channel is muted \xC2\xB7 right-click: back to normal \xC2\xB7 click: mute")
+               : muted ? i18n::N_("Muted \xC2\xB7 click: unmute \xC2\xB7 right-click: solo, again: unsolo \xC2\xB7 Shift+click: select")
+                       : i18n::N_("Glows while the channel plays \xC2\xB7 click: mute \xC2\xB7 right-click: solo, again: unsolo \xC2\xB7 Shift+click: select"));
+      drawRowLamp(dl, l0, l1, rackPlayLight(a, c, ci), muted, soloed, hov);
     }
     rowDropTarget(a, c, static_cast<int>(ci), rp, rowW, rowH, rowGap, stepsX + 6);  // J-97: drop to replace / insert
     // J-111d: a collaborator's pointer on this row (logical px from its start: the row's layout is fixed from the left)
@@ -1320,12 +1384,12 @@ void rackDevDump(App& a, int frame) {
                 static_cast<double>(c.pan), velSum, pitchSum, static_cast<double>(light), c.muted ? 1 : 0);
     if (const auto g = gRowGeom.find(c.id); g != gRowGeom.end()) {  // K-127: the row's controls, left to right
       const RowGeom& r = g->second;
-      const std::pair<const char*, ImVec4> parts[] = {{"pan", r.pan}, {"vol", r.vol}, {"mix", r.mix},
-                                                      {"name", r.name}, {"lamp", r.lamp}, {"steps", r.steps}};
+      const std::pair<const char*, ImVec4> parts[] = {{"pan", r.pan}, {"vol", r.vol}, {"mix", r.mix},       {"name", r.name},
+                                                      {"lamp", r.lamp}, {"steps", r.steps}, {"phones", r.phones}};
       std::printf("  rowgeom %zu lights %d selected %d", i, r.lights, a.selChannels.count(c.id) ? 1 : 0);
       for (const auto& [n, v] : parts)
         std::printf(" %s %.1f %.1f %.1f %.1f", n, static_cast<double>(v.x), static_cast<double>(v.y), static_cast<double>(v.z), static_cast<double>(v.w));
-      std::printf("\n");
+      std::printf(" phonestate %s\n", r.phonesState);  // K-186: the headphones button (on, muted, solo)
     }
   }
   // K-173: the separator above the automation rows and the first automation row

@@ -74,12 +74,26 @@ wait_for_display() {  # the X display XWayland listens on, from the compositor's
   exit 1
 }
 
-# (no /tmp/.X11-unix at all without an X server, as in a mutter or KWin job: ls fails there, and
-# under pipefail that used to end the script at once with ls's exit code 2 and no message)
-x_before=$(ls /tmp/.X11-unix 2>/dev/null | tr '\n' ' ' || true)
+# The X sockets there now (a glob, not ls: no folder at all is an ordinary answer, not an error).
+x_sockets() {
+  local f
+  for f in /tmp/.X11-unix/X*; do
+    if [ -e "$f" ]; then printf '%s ' "${f##*/}"; fi
+  done
+  return 0
+}
+# XWayland needs the X socket folder, and mutter and KWin do not make it ("/tmp/.X11-unix is not
+# writable", "does not exist"); on a system without any X server yet there is none: make it as an
+# X server would.
+if [ "$mode" = xwayland ] && [ ! -d /tmp/.X11-unix ]; then
+  mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix ||
+    echo "with-compositor: could not make /tmp/.X11-unix (XWayland needs it)" >&2
+fi
+x_before=$(x_sockets)
 wait_for_new_x_socket() {  # mutter and KWin: XWayland's display is the X socket that was not there before
+  local s
   for _ in $(seq 1 300); do
-    for s in $(ls /tmp/.X11-unix 2>/dev/null); do
+    for s in $(x_sockets); do
       case " $x_before " in *" $s "*) ;; *) export DISPLAY=":${s#X}"; return 0 ;; esac
     done
     sleep 0.1
@@ -87,6 +101,23 @@ wait_for_new_x_socket() {  # mutter and KWin: XWayland's display is the X socket
   echo "with-compositor: no XWayland display from $compositor" >&2
   tail -40 "$log" >&2 || true
   exit 1
+}
+# mutter and KWin start XWayland with an authority file of their own (in the runtime folder) and
+# hand it only to programs they start themselves: a client from outside needs it in XAUTHORITY, or
+# the X server refuses it (Gridline then reports "no X server answers").
+use_xauthority() {
+  local f
+  for _ in $(seq 1 100); do
+    for f in "$XDG_RUNTIME_DIR"/.mutter-Xwaylandauth.* "$XDG_RUNTIME_DIR"/xauth_*; do
+      if [ -s "$f" ]; then
+        export XAUTHORITY=$f
+        return 0
+      fi
+    done
+    sleep 0.1
+  done
+  echo "with-compositor: no XWayland authority file from $compositor (X clients may be refused)" >&2
+  return 0
 }
 
 case $compositor in
@@ -106,18 +137,12 @@ case $compositor in
     ;;
   mutter)
     # Its own session bus. XWayland (on demand) gets the first free X display: a new X socket.
-    # mutter does not make the X socket folder itself (it stops: "/tmp/.X11-unix is not writable"),
-    # and on a system without any X server yet there is none: make it as an X server would.
-    if [ "$mode" = xwayland ] && [ ! -d /tmp/.X11-unix ]; then
-      mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix ||
-        echo "with-compositor: could not make /tmp/.X11-unix (XWayland needs it)" >&2
-    fi
     args=(--wayland --headless --wayland-display="$socket" --virtual-monitor "${width}x${height}")
     [ "$mode" = native ] && args+=(--no-x11)
     dbus-run-session -- mutter "${args[@]}" >"$log" 2>&1 &
     pid=$!
     wait_for_socket
-    [ "$mode" = xwayland ] && wait_for_new_x_socket
+    if [ "$mode" = xwayland ]; then wait_for_new_x_socket; use_xauthority; fi
     ;;
   kwin)
     args=(--virtual --socket "$socket" --width "$width" --height "$height" --scale "$scale")
@@ -126,7 +151,7 @@ case $compositor in
     dbus-run-session -- kwin_wayland "${args[@]}" >"$log" 2>&1 &
     pid=$!
     wait_for_socket
-    [ "$mode" = xwayland ] && wait_for_new_x_socket
+    if [ "$mode" = xwayland ]; then wait_for_new_x_socket; use_xauthority; fi
     ;;
   *) usage ;;
 esac
@@ -138,7 +163,7 @@ if [ "$mode" = xwayland ]; then
 else
   unset DISPLAY
 fi
-echo "with-compositor: $compositor ($mode) WAYLAND_DISPLAY=$WAYLAND_DISPLAY DISPLAY=${DISPLAY:-} scale $scale, $outputs output(s)" >&2
+echo "with-compositor: $compositor ($mode) WAYLAND_DISPLAY=$WAYLAND_DISPLAY DISPLAY=${DISPLAY:-} XAUTHORITY=${XAUTHORITY:-} scale $scale, $outputs output(s)" >&2
 set +e
 "$@"
 rc=$?

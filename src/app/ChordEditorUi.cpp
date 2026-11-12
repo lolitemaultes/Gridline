@@ -942,8 +942,10 @@ void drawChordEditor(App& a) {
   // the window never needs a scrollbar of its own.
   static float belowLane = 200.0f;
   const float laneH = std::clamp(ImGui::GetContentRegionAvail().y - belowLane, 96.0f, 280.0f);
+  // measured from where the lane ends by its height (not from the cursor after it), so the
+  // spacing under the lane counts too and the buttons end exactly at the bottom
+  const float laneEnd = ImGui::GetCursorScreenPos().y + laneH;
   chordLane(a, laneH);
-  const float laneBottom = ImGui::GetCursorScreenPos().y;
   alternativesRow(a);
   if (ImGui::BeginTable("##panels", 2, ImGuiTableFlags_SizingStretchProp)) {
     ImGui::TableSetupColumn(i18n::tr("perf"), ImGuiTableColumnFlags_WidthFixed, 340);
@@ -1001,7 +1003,7 @@ void drawChordEditor(App& a) {
   }
   ImGui::SameLine(0, theme::kS2);
   if (ui::TextButton("Cancel", false, 88, "Put the pattern back as it was and close")) closeEditor(a, false);
-  belowLane = ImGui::GetItemRectMax().y - laneBottom;
+  belowLane = ImGui::GetItemRectMax().y - laneEnd;
   ImGui::End();
   if (!open) closeEditor(a, true);
 }

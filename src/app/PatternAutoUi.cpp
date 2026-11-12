@@ -9,6 +9,7 @@
 #include "../core/MenuParity.h"
 #include "../core/PatternAutoOps.h"
 #include "../core/PatternAutomation.h"
+#include "../core/RackLayout.h"
 #include "App.h"
 #include "AutomationEditor.h"
 #include "BrowserUi.h"
@@ -142,10 +143,10 @@ void drawRackRows(App& a, ObjectId pattern, const RackRows& g) {
     const float cy = rp.y + g.rowH * 0.5f;
     const ImU32 col = theme::rgb(curveRgb(ac, k));
     const std::string name = patternAutoName(s, ac);
-    // Automation glyph where a channel's lamp is.
-    ui::drawIcon(dl, ui::Icon::ClipAutomation, ImVec2(rp.x + g.xLeft + 8, cy), 13, theme::mix(col, P.paper, 0.2f));
-    // Name button over the knob / mixer / name cells (a clip has none of those).
-    const float nx = rp.x + g.xLeft + 20, nw = g.nameX + g.nameW - (g.xLeft + 20);
+    // Automation glyph where a channel's headphones button is (K-186).
+    ui::drawIcon(dl, ui::Icon::ClipAutomation, ImVec2(rp.x + g.xLeft + racklayout::kPhonesW * 0.5f, cy), 13, theme::mix(col, P.paper, 0.2f));
+    // Name button over the knob / mixer / name cells (a clip has none of those), from where the pan knob starts.
+    const float nx = rp.x + racklayout::kXPan, nw = g.nameX + g.nameW - racklayout::kXPan;
     const ImVec2 np(nx, cy - g.cellH * 0.5f);
     ImGui::SetCursorScreenPos(np);
     ImGui::InvisibleButton("aname", ImVec2(nw, g.cellH));

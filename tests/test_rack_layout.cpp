@@ -70,8 +70,8 @@ int main() {
     float prevName = 0;
     for (float w : widths) {
       const Layout l = compute({w, n});
-      // The left section (LED, pan, volume, mixer box) has a fixed place: nothing is ever dropped.
-      leftFixed = leftFixed && kXLeft <= kXPan && kXPan + kKnobW <= kXVol + 0.01f && kXVol + kKnobW <= kXMix && kXMix + kMixW <= kNameX;
+      // The left section (headphones, pan, volume, mixer box) has a fixed place: nothing is ever dropped.
+      leftFixed = leftFixed && kXLeft + kPhonesW + 2 <= kXPan && kXPan + kKnobW <= kXVol + 0.01f && kXVol + kKnobW <= kXMix && kXMix + kMixW <= kNameX;
       inRow = inRow && l.stepsX >= kNameX + l.nameW + kNameGap - 0.01f;
       stepRange = stepRange && l.stepW >= kStepMin && l.stepW <= kStepMax;
       nameRange = nameRange && l.nameW >= kNameFloor && l.nameW <= kNameMax && l.nameW >= prevName - 0.01f;  // never narrower in a wider rack
@@ -87,7 +87,7 @@ int main() {
       else minimalFits = minimalFits && l.nameW >= kNameFloor;
     }
   }
-  expect(leftFixed, "left section: pan, volume and mixer box have fixed, non-overlapping places at every width");
+  expect(leftFixed, "left section: headphones, pan, volume and mixer box have fixed, non-overlapping places at every width");
   expect(inRow, "the step area starts right of the name button");
   expect(stepRange, "step width stays between the minimum and maximum");
   expect(nameRange, "name width stays in range and never shrinks as the rack widens");

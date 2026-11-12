@@ -28,7 +28,10 @@ function(run tag mode press view)
     file(WRITE "${OUT}/${tag}/input.txt" "${ARGV4}")
     set(script --dev-input "${OUT}/${tag}/input.txt")
   endif()
-  execute_process(COMMAND "${APP}" --hidden ${script} --no-ui-sounds --fixed-dt 16 --plugin gl.plasma --size 1440x900 --frames 260
+  # (--no-draw: the checks compare the colour dumps, never pixels; on a slow software OpenGL the
+  # drawing alone took the sixteen runs past the test's time limit. --screenshot stays: it is what
+  # ends the run after --frames; the picture itself is not drawn.)
+  execute_process(COMMAND "${APP}" --hidden ${script} --no-ui-sounds --no-draw --fixed-dt 16 --plugin gl.plasma --size 1440x900 --frames 260
                           --screenshot "${OUT}/${tag}.ppm" TIMEOUT 240 RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
   if(NOT rc EQUAL 0)
     message(FATAL_ERROR "FAIL: ${tag}: gridline-app failed (${rc}):\n${out}\n${err}")

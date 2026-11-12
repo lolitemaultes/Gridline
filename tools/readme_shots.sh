@@ -62,6 +62,9 @@ shot picker "" "$SONG" --picker $S --frames 400 --dev-input "$OUT/picker-synth.t
 # collaborator (the panel, their cursor over the playlist).
 export GL_PLASMA_PRESET="Reese Growl"  # a name with a space: exported, not passed through shot's env list
 shot plasma "" "$SONG" --hide rack --plugin gl.plasma --size 1600x1100 --scale 2 --frames 90
+# its Patch view (both sends in use, Filter 1 selected) and its Effects tab
+shot patch "GL_PLASMA_VIEW=patchsends" "$SONG" --hide rack --plugin gl.plasma --size 1600x1100 --scale 2 --frames 90
+shot plasmafx "GL_PLASMA_VIEW=effects" "$SONG" --hide rack --plugin gl.plasma --size 1600x1100 --scale 2 --frames 90
 unset GL_PLASMA_PRESET
 printf '200 move 640 203\n202 down 0\n204 move 700 203\n206 move 820 203\n208 move 880 203\n210 up 0\n212 move 1590 990\n' > "$OUT/collab-panel.txt"  # the panel to the right
 shot collab "" "$SONG" --hide rack --show collab-demo-panel $S --frames 400 --dev-input "$OUT/collab-panel.txt"

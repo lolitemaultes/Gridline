@@ -110,12 +110,29 @@ bool moveMixerTrack(Document& d, ObjectId id, int dir);  // never moves the mast
 int trimUnusedMixerTracks(Document& d);
 bool setSlotEnabled(Document& d, ObjectId track, int slot, bool enabled);
 bool soloMixerTrack(Document& d, ObjectId id);  // exclusive solo toggle
-// K-126: the channel rack's solo (right-click or Ctrl+click on a channel's LED), one undo step:
-// channel `id` plays and every other channel is muted; when `id` is already the only one playing,
-// the mute states from before the solo come back (`before`, written by the solo and kept by the
-// caller; channels it does not know play). Returns true when it soloed, false when it unsoloed
-// (or `id` is unknown).
-bool toggleChannelSolo(Document& d, ObjectId id, std::map<ObjectId, bool>& before);
+// K-126 / K-186: the channel rack's solo (right-click on a channel's headphones button or light,
+// or Ctrl+click), one undo step each way:
+//  * a solo: channel `id` plays and every other channel is muted; the mute states from before it
+//    are kept in `ChannelSolo` (UI memory, kept by the caller; mute itself is project state);
+//  * the same channel again: back to normal. Every channel the solo muted (and the soloed one)
+//    gets its state from before the solo; a channel added during the solo is left as it is;
+//  * another channel while one is soloed moves the solo and keeps the states from before the
+//    first solo, so the later "again" still restores them;
+//  * a solo is in effect only while the soloed channel plays and every other channel that existed
+//    at solo time is still muted. A hand change (another channel unmuted, the soloed one muted or
+//    deleted) or an undo of the solo ends it: the memory is dropped, the hand changes stand, and a
+//    right-click starts a new solo. With no memory, an unsolo of the only playing channel lets
+//    every channel play.
+struct ChannelSolo {
+  ObjectId soloed = kNoId;           // the channel the last solo was for
+  std::map<ObjectId, bool> before;   // channel -> muted, before the first solo
+  void clear() { soloed = kNoId, before.clear(); }
+};
+// True while channel `id`'s solo is in effect (a right-click on it would end the solo): the rack's
+// solo ring shows exactly then.
+bool channelSoloed(const Song& s, ObjectId id, const ChannelSolo& memory);
+// Returns true when it soloed, false when it unsoloed (or `id` is unknown).
+bool toggleChannelSolo(Document& d, ObjectId id, ChannelSolo& memory);
 
 // -------------------------------------------------------------------- notes ----
 // All tools act on the selected notes (`sel`, same size as `notes`), or on all

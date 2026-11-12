@@ -200,10 +200,16 @@ An instrument opens in its channel window with the channel strip (volume, pan, p
 ### Plasma
 
 <p align="center">
-  <img src="docs/images/plasma.png" alt="Plasma, the wavetable hybrid synth" width="100%">
+  <img src="docs/images/plasma.png" alt="Plasma's Synth tab: the layers, Root, the filter and the amp as blocks in signal order, the movement row under them and the parts sidebar on the right" width="100%">
 </p>
 
-Plasma is Gridline's wavetable hybrid synth: three layers that each play a wavetable, a multisample, a sample, a granular cloud or a spectral resynthesis, with two morph slots each (103 modes, FM, PD, AM and RM between sources among them) and stacks up to 16 voices, plus a root oscillator, a texture layer and two filters with 106 types. Its editor shows the sound as blocks in signal order, with the modulation under them (4 envelopes, 10 drawable LFOs, 8 macros and the key, touch and chance sources), a Simple / Full switch, a parts sidebar to drag new layers, LFOs and effects in from, and a Patch view (Tab) that draws the same sound as boxes and wires. Link any source to any control by dragging it there, or switch on Link mode and set the depth right on the control; 64 links in all. Three effect lanes with up to 24 effects, an arpeggiator, a phrase player and a table editor (partials, drawing tools, morphing, formulas, WAV import and export) complete it.
+Plasma is Gridline's wavetable hybrid synth: three layers that each play a wavetable, a multisample, a sample, a granular cloud or a spectral resynthesis, with two morph slots each (103 modes, FM, PD, AM and RM between sources among them) and stacks up to 16 voices, plus a Root oscillator, a Texture layer and two filters with 106 types. Its editor has five tabs (Synth, Effects, Links, Play and Setup). The Synth tab shows the sound as blocks in signal order (Sources, then Shape) with the movement under them (4 envelopes, 10 drawable LFOs, 8 macros and the key, touch and chance sources), a Simple / Full switch and a parts sidebar to drag new layers, filters and LFOs in from. Link any source to any control by dragging its dot there, or click the dot for Link mode and set the depth right on the control; 64 links in all. Three effect lanes with up to 24 effects, an arpeggiator, a phrase player and a table editor (partials, drawing tools, morphing, formulas, WAV import and export) complete it.
+
+<p align="center">
+  <img src="docs/images/plasma-patch.png" alt="Plasma's Patch view: the sources, filters, amp, effects and both sends wired to the output, the movement sources below and the inspector on the right" width="100%">
+</p>
+
+The Patch view (Tab) draws the same sound as boxes and wires, left to right in the order it is made: drag from a box's edge to route its sound, drag a movement source's dot onto any control to link it, and click a box to edit it in the inspector. Both views edit the same sound.
 
 Plasma can also read your own Serum 2 presets (`.SerumPreset`) and Serum `.fxp` files through the same Open path as any preset: it reads the settings stored in the preset, with the wavetables, samples and other audio it carries, and sets up a Plasma sound from them. Plasma is its own synth with its own engine, so the result is Plasma's sound, not a copy of the other synth; anything that could only be approximated or not mapped is listed behind an info mark next to the preset name. Its Library lists the Serum preset folders found on your computer as a folder tree, indexed in the background. Nothing from another product ships with Gridline. See [docs/plugins/plasma.md](docs/plugins/plasma.md).
 

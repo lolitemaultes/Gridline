@@ -1,16 +1,17 @@
 // Gridline — J-84: channel rack row layout.
 //
-// A rack row is a fixed left section (pan knob, volume knob, mixer track
-// box, channel name button), the channel's one light right after the name
-// button (K-127: it glows while the channel plays, shows mute, click mutes,
-// right-click solos) and the step area after it. The reference rack keeps its channel buttons whatever
+// A rack row is a fixed left section (K-186: the headphones button, which
+// mutes on click and solos on right-click; pan knob, volume knob, mixer track
+// box, channel name button), the channel's light right after the name
+// button (K-127: it glows while the channel plays and shows mute; its clicks
+// mute and solo too) and the step area after it. The reference rack keeps its channel buttons whatever
 // the pattern length: a long pattern (32 / 64 / 128 steps) or a narrow rack
 // scrolls the step grid sideways under a time scroller in the bottom bar;
 // the pan and volume knobs never disappear (the old layout dropped them in
 // a "compact" mode, so long patterns hid them).
 //
 // Space is given out in this order:
-//   1. the left section's controls (pan, volume, mixer box): always;
+//   1. the left section's controls (headphones, pan, volume, mixer box): always;
 //   2. the name button shrinks from kNameMax towards kNameMin before the
 //      steps shrink below their comfortable width (the full name is then in
 //      a tooltip; kNameSqueeze for patterns of up to 32 steps, which can
@@ -26,7 +27,8 @@
 
 namespace gl::racklayout {
 
-inline constexpr float kXLeft = 2, kXPan = 2, kXVol = 24, kXMix = 48, kNameX = 78;  // left section (row-relative)
+inline constexpr float kXLeft = 2, kXPan = 23, kXVol = 45, kXMix = 69, kNameX = 99;  // left section (row-relative)
+inline constexpr float kPhonesW = 18;          // K-186: the headphones (mute / solo) button at kXLeft
 inline constexpr float kKnobW = 18;            // pan / volume knob cell (radius 9)
 inline constexpr float kMixW = 24;             // mixer track box
 inline constexpr float kNameMax = 150, kNameMin = 64, kNameSqueeze = 48, kNameFloor = 36;

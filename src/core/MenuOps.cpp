@@ -792,35 +792,74 @@ bool soloMixerTrack(Document& d, ObjectId id) {
   return true;
 }
 
-bool toggleChannelSolo(Document& d, ObjectId id, std::map<ObjectId, bool>& before) {
+namespace {
+
+// The solo is still in effect: the soloed channel plays and every other channel that existed at
+// solo time is still muted (channels added since do not count). A hand change (another channel
+// unmuted, the soloed one muted), an undo of the solo or another project ends it.
+bool soloLive(const Song& s, const ChannelSolo& m) {
+  if (m.soloed == kNoId || m.before.empty()) return false;
+  const Channel* x = s.channel(m.soloed);
+  if (!x || x->muted) return false;
+  bool others = false;
+  for (const auto& o : s.channels) {
+    if (o.id == m.soloed || !m.before.count(o.id)) continue;
+    if (!o.muted) return false;
+    others = true;
+  }
+  return others;
+}
+
+// Channel `id` is the only one playing (of two or more).
+bool playsAlone(const Song& s, ObjectId id) {
+  if (s.channels.size() < 2) return false;
+  for (const auto& o : s.channels)
+    if (o.muted != (o.id != id)) return false;
+  return true;
+}
+
+}  // namespace
+
+bool channelSoloed(const Song& s, ObjectId id, const ChannelSolo& m) {
+  const Channel* c = s.channel(id);
+  if (!c || c->muted) return false;
+  return soloLive(s, m) ? m.soloed == id : playsAlone(s, id);
+}
+
+bool toggleChannelSolo(Document& d, ObjectId id, ChannelSolo& m) {
   const Song& s = d.song();
   const Channel* c = s.channel(id);
   if (!c) return false;
-  bool alone = !c->muted && s.channels.size() > 1;
-  for (const auto& o : s.channels) alone = alone && (o.id == id || o.muted);
+  const bool live = soloLive(s, m);
+  if (!live) m.clear();
+  const bool unsolo = channelSoloed(s, id, m);
   std::vector<std::pair<ObjectId, bool>> want;  // channel -> muted
-  if (alone) {
+  if (unsolo) {
     for (const auto& o : s.channels) {
-      const auto it = before.find(o.id);
-      want.emplace_back(o.id, o.id != id && it != before.end() && it->second);
+      if (!live) {  // no memory (another session, a reload): every channel plays
+        want.emplace_back(o.id, false);
+        continue;
+      }
+      const auto it = m.before.find(o.id);
+      if (it == m.before.end()) continue;  // added during the solo: left as it is
+      const bool setBySolo = o.id != m.soloed;  // what the solo made it (muted, or playing for the soloed one)
+      if (o.muted == setBySolo) want.emplace_back(o.id, it->second);  // a change by hand during the solo stays
     }
-    before.clear();
+    m.clear();
   } else {
-    size_t playing = 0;  // another channel soloed now (one plays): keep the states from before that solo
-    for (const auto& o : s.channels) playing += o.muted ? 0 : 1;
-    if (!(playing == 1 && s.channels.size() > 1 && !before.empty())) {
-      before.clear();
-      for (const auto& o : s.channels) before[o.id] = o.muted;
-    }
+    // A new solo remembers the states now; moving a solo that is still in effect keeps the states
+    // from before the first one (channels added since are remembered as they are now).
+    for (const auto& o : s.channels) m.before.emplace(o.id, o.muted);
+    m.soloed = id;
     for (const auto& o : s.channels) want.emplace_back(o.id, o.id != id);
   }
   want.erase(std::remove_if(want.begin(), want.end(), [&s](const auto& w) { return s.channel(w.first)->muted == w.second; }), want.end());
   if (!want.empty()) {
-    d.beginGroup(alone ? "unsolo channel" : "solo channel");
+    d.beginGroup(unsolo ? "unsolo channel" : "solo channel");
     for (const auto& [ch, muted] : want) d.setParam(channelParam(ch, ChannelParam::Mute), muted ? 1 : 0, false);
     d.endGroup();
   }
-  return !alone;
+  return !unsolo;
 }
 
 // -------------------------------------------------------------------- notes ----

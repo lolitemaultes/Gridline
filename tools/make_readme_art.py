@@ -13,7 +13,9 @@
                   release screenshots (--shots): playlist, channel rack,
                   stretch modes and a sheet of effect editors.
   workspace.png, piano-roll.png, chord-editor.png, audio-editor.png,
-  automation.png, plugin-picker.png, plasma.png, collaboration.png
+  automation.png, plugin-picker.png, plasma.png, plasma-patch.png,
+  plasma-effects.png, collaboration.png, collaborative-view.png, platter.png,
+  welcome.png, plugin-manager.png, seltmann.png
                   crops of screenshots taken with gridline-app (see --shots and
                   tools/readme_shots.sh).
   editors.png     a contact sheet of built-in plugin editors (--shots).
@@ -463,33 +465,39 @@ def main():
 # Plugin editors: instruments from 3200x2200 captures (the plugin part of the
 # channel window, channel strip hidden), effects from 2880x1800 captures (the window below its title).
 EDITORS = [
-    ("ed_matrixfm.png", "Lattice", (410, 462, 2756, 1706)),
-    ("ed_wavetable.png", "Isoline", (462, 454, 2706, 1754)),
-    ("ed_harmor.png", "Halftone", (484, 462, 2682, 1830)),
-    ("ed_eq.png", "Parametric EQ", (507, 288, 2373, 1267)),
-    ("ed_hall.png", "Cloister", (550, 302, 2333, 1250)),
-    ("ed_amprack.png", "Pedal Rack", (412, 343, 2468, 1207)),
+    ("ed_matrixfm.png", "Lattice", (715, 596, 2483, 1536)),
+    ("ed_wavetable.png", "Isoline", (762, 580, 2440, 1547)),
+    ("ed_harmor.png", "Halftone", (775, 550, 2422, 1580)),
+    ("ed_eq.png", "Parametric EQ", (748, 458, 2130, 1208)),
+    ("ed_hall.png", "Cloister", (778, 470, 2099, 1196)),
+    ("ed_amprack.png", "Pedal Rack", (675, 498, 2205, 1164)),
 ]
 # Views from 3200x2000 captures (1600x1000 window at UI scale 2), saved 1600 px wide.
 VIEWS = [
     ("main.png", "workspace.png", None),
     ("pr.png", "piano-roll.png", (490, 104, 2440, 1940)),
-    ("edison.png", "audio-editor.png", (467, 104, 2728, 1712)),
-    ("chords.png", "chord-editor.png", (592, 525, 2595, 1520)),
+    ("edison.png", "audio-editor.png", (760, 280, 2440, 1516)),
+    ("chords.png", "chord-editor.png", (590, 523, 2609, 1520)),
     ("autoedit.png", "automation.png", (488, 384, 2730, 1664)),
     ("picker.png", "plugin-picker.png", None),
-    ("collab.png", "collaboration.png", (0, 0, 3200, 1324)),
+    ("collab.png", "collaboration.png", (0, 0, 3200, 1346)),
 ]
-# Plasma's editor from its channel window (a 3200x2200 capture), saved 1600 px wide.
-VIEWS.append(("plasma.png", "plasma.png", (640, 464, 2544, 1664)))
+# Plasma's editor from its channel window (3200x2200 captures), saved 1600 px wide: the Synth
+# tab, the Patch view and the Effects tab.
+PLASMA_BOX = (640, 464, 2556, 1664)
+VIEWS += [
+    ("plasma.png", "plasma.png", PLASMA_BOX),
+    ("patch.png", "plasma-patch.png", PLASMA_BOX),
+    ("plasmafx.png", "plasma-effects.png", PLASMA_BOX),
+]
 # Platter (the plugin window), the welcome screen (a 2560x1600 capture) and its
 # Collaborative view, the plugin manager window and Seltmann's editor.
 VIEWS += [
-    ("platter.png", "platter.png", (328, 104, 2856, 1888)),
+    ("platter.png", "platter.png", (654, 188, 2546, 1610)),
     ("welcome.png", "welcome.png", (0, 0, 2560, 1300)),
     ("collabview.png", "collaborative-view.png", (0, 0, 3200, 1216)),
     ("plugins.png", "plugin-manager.png", (485, 349, 2715, 1688)),
-    ("seltmann.png", "seltmann.png", (448, 128, 2739, 1490)),
+    ("seltmann.png", "seltmann.png", (745, 309, 2455, 1490)),
 ]
 
 # The release banner and screenshots of this version.
@@ -502,8 +510,8 @@ RELEASE_BANNER_OPTS = {}
 RELEASE_EDITORS = []
 # Release screenshots from 3200x2000 captures (UI scale 2), cropped to the part that shows the feature.
 RELEASE_VIEWS = [
-    ("plasma.png", "plasma.png", (640, 464, 2544, 1664)),  # a 3200x2200 capture
-    ("patch.png", "plasma-patch.png", (640, 464, 2544, 1664)),  # a 3200x2200 capture
+    ("plasma.png", "plasma.png", PLASMA_BOX),  # a 3200x2200 capture
+    ("patch.png", "plasma-patch.png", PLASMA_BOX),  # a 3200x2200 capture
     ("meter.png", "meter-lane.png", (768, 224, 2440, 1120)),
     ("black.png", "black-theme.png", None),
     ("rollbars.png", "piano-roll-scroll-bars.png", (472, 152, 2440, 1936)),
