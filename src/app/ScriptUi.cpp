@@ -104,8 +104,8 @@ void runPreview(App& a, bool full) {
   ctx.sel = S.baseSel;
   ctx.markers = S.baseMarkers;
   ctx.ppq = s.ppq;
-  ctx.tsNum = s.timeSigNum;
-  ctx.tsDen = s.timeSigDen;
+  ctx.tsNum = s.patternMeterNum(*p);  // K-193: the pattern's own meter (pattern time)
+  ctx.tsDen = s.patternMeterDen(*p);
   ctx.length = s.patternContentLength(*p);
   ctx.root = a.piano.scaleRoot;
   ctx.scale = a.piano.scale;

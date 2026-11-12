@@ -39,9 +39,20 @@ Open the channel's settings (the gear on its rack row) and find **EXPRESSION**:
   - **Off**: the control does nothing.
 - **Amount** scales pressure and timbre (100% by default).
 
-The level and brightness responses act on the instrument's sound as a whole and follow the
-held notes together: the strongest pressure and the timbre furthest from its centre lead. Pitch
-is always per note.
+The level and brightness responses act on each note by itself: pressing harder on one key of a
+chord lifts that note alone, and the others keep their sound. A released note keeps its last
+values while it fades, and a new note starts from its own values. Pitch is always per note.
+
+A few instruments have no single voice per note to shape, and answer pressure and timbre as a
+whole instead, following the held notes together (the strongest pressure and the timbre furthest
+from its centre lead):
+
+- the drum machines and kits, where a note picks a drum rather than playing a pitch;
+- the decks and scratch players;
+- Step Bass, whose one voice is shared by every key;
+- Plasma, which has its own modulation for expression;
+- Hex Synth while its sequencer plays, Lattice's reference engine, Kerf's Regions engine and the
+  Preset Stand-in, which play notes inside an engine of their own.
 
 ## Expression saved in notes
 

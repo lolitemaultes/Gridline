@@ -1411,7 +1411,7 @@ std::pair<Tick, Tick> markerLoopRange(const Song& s, int index) {
       b = m.pos;
       break;
     }
-  if (b <= a) b = std::max(s.lengthTicks(), a + s.barTicks());
+  if (b <= a) b = std::max(s.lengthTicks(), MeterMap(s).addBars(a, 1));  // K-193: a bar of the meter in force
   return {a, b};
 }
 

@@ -76,6 +76,8 @@ class HexSynthGen final : public Generator {
       if (v.active) return true;
     return false;
   }
+  // K-193: per voice while keys play the voices; the sequencer's own notes keep the shared response.
+  bool perVoiceExpression() const override { return !seqOn_; }
 
  protected:
   struct Copy {
@@ -120,6 +122,8 @@ class HexSynthGen final : public Generator {
     float st[2][4] = {}, inPrev[2][4] = {};
     float w[4] = {0, 0, 0, 1};
     bool wInit = false;
+    uint32_t note = 0, pendNote = 0;  // K-193: the note the voice plays (and the one it starts after its fade)
+    VoiceExpr vx;                     // K-193: the note's own pressure and timbre response
   };
 
   // ---------------------------------------------------------------- params
@@ -187,6 +191,7 @@ class HexSynthGen final : public Generator {
       seqDirty_ = true;
       return;
     }
+    noteId_ = id;  // K-193
     internalOn(key, vel / 127.f);
   }
   // J-92: MIDI pitch bend over the bend range (int(12 x) semitones); the range was never read.
@@ -268,6 +273,7 @@ class HexSynthGen final : public Generator {
       Voice& v = voice_[0];
       if (v.active && !v.released && v.fadeTicks == 0) {
         v.key = key;
+        v.note = v.vx.id = noteId_;  // K-193: the response moves on smoothly to the new key
         v.frac = noteFrac_;
         v.host.stop();
         v.glideTarget = key;
@@ -325,6 +331,7 @@ class HexSynthGen final : public Generator {
       if (h >= 0) {  // legato to the nearest held key, rate-based glide
         const double tg = glideSeconds();
         v.key = h;
+        v.note = v.vx.id = newestId_[static_cast<size_t>(h)];  // K-193: the response moves on to the held key
         v.glideTarget = h;
         if (tg < 0.001) v.glidePos = h, v.glideRate = 0;
         else v.glideRate = 12.0 / (tg * sr_);
@@ -341,10 +348,12 @@ class HexSynthGen final : public Generator {
     if (v.active && (v.t != 0 || v.tr != 0)) {  // fast fade before the restart
       v.fadeTicks = std::max(1, static_cast<int>(sr_ * 4.0 / 44100.0));
       v.pendKey = key, v.pendVel = vel, v.pendStart = start, v.pendRate = rate;
+      v.pendNote = noteId_;  // K-193
       v.age = ++ageClock_;
       return;
     }
     if (!v.active) v.fresh = true;
+    v.note = noteId_;  // K-193
     beginNote(v, key, vel, start, rate);
   }
 
@@ -598,8 +607,10 @@ class HexSynthGen final : public Generator {
     if (v.fadeTicks > 0) {
       if (--v.fadeTicks == 0) {
         noteFrac_ = v.frac;
+        v.note = v.pendNote;  // K-193
         beginNote(v, v.pendKey, v.pendVel, v.pendStart, v.pendRate);
         if (!v.active) return;
+        if (!seqOn_) exprVoice(v.vx, v.note);  // K-193: the new note's response from its first sample
       } else {
         v.ampTgt = 0, v.ampRate = static_cast<float>(147.0 / sr_);
         v.fTgt = 0, v.fRate = v.ampRate;
@@ -804,8 +815,15 @@ class HexSynthGen final : public Generator {
         const float amp = v.amp;
         v.amp += (v.ampTgt - v.amp) * v.ampRate;
         if (v.amp > 1.f) v.amp = 1.f;
-        outL[i] += in2[0] * amp;
-        outR[i] += in2[1] * amp;
+        if (v.vx.on) {  // K-193: the note's own level and brightness
+          float el = in2[0] * amp, er = in2[1] * amp;
+          v.vx.apply(el, er);
+          outL[i] += el;
+          outR[i] += er;
+        } else {
+          outL[i] += in2[0] * amp;
+          outR[i] += in2[1] * amp;
+        }
         ++v.tickPos;
       }
       v.tickLeft -= len;
@@ -813,6 +831,11 @@ class HexSynthGen final : public Generator {
   }
 
   void render(float* L, float* R, int n) override {
+    for (auto& v : voice_) {  // K-193
+      if (!v.active) continue;
+      if (seqOn_) v.vx.on = false;
+      else exprVoice(v.vx, v.note);
+    }
     int i = 0;
     while (i < n) {
       if (grid_ == 0) {
@@ -851,6 +874,7 @@ class HexSynthGen final : public Generator {
   std::array<std::pair<uint32_t, int>, 256> ids_{};
   std::array<uint32_t, 128> newestId_{};  // the note that struck each key last
   int idCount_ = 0;
+  uint32_t noteId_ = 0;  // K-193: the note internalOn is starting (from onNoteOn)
   double noteFrac_ = 0;
   int poly_ = -1, lastNote_ = -1;
   float lastVel_ = 0;

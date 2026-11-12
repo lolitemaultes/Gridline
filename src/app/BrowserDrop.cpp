@@ -15,6 +15,7 @@
 #include "../core/LayerRack.h"
 #include "../core/TrackModes.h"
 #include "../core/I18n.h"
+#include "../core/Meter.h"
 #include "../core/MidiFile.h"
 #include "../core/MidiImport.h"
 #include "../core/PluginParams.h"
@@ -523,6 +524,7 @@ xdrop::Plan planFor(App& a, const std::vector<xdrop::Item>& items, DropTarget ta
   ctx.track = place.track;
   ctx.tick = place.tick;
   ctx.barTicks = std::max<Tick>(1, s.barTicks());
+  ctx.bar = MeterMap(s).barIndex(std::max<Tick>(0, place.tick));  // K-193: bars of the meter in force
   ctx.trackCount = std::max(1, static_cast<int>(s.tracks.size()));
   ctx.fallbackLength = ctx.barTicks;
   std::vector<browse::DropItem> kinds;

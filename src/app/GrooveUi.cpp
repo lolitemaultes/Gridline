@@ -259,7 +259,7 @@ bool fromPattern(App& a, ObjectId pattern, ObjectId channel) {
   }
   const int grid = s.groove.shape.grid == gv::kGridStep ? gv::kGrid16th : s.groove.shape.grid;
   const double cell = gv::cellTicks(s, p, grid);
-  gv::Preset g = gv::extract(on, cell, static_cast<double>(s.barTicks()), grid, 16, "");
+  gv::Preset g = gv::extract(on, cell, static_cast<double>(s.patternBarTicks(*p)), grid, 16, "");  // K-193: the pattern's bar
   const Channel* c = s.channel(channel);
   g.name = c ? "Groove of " + c->name : "Groove of " + p->name;
   a.doc.editSong("groove from the pattern", [&g](Song& x) {
@@ -280,7 +280,8 @@ bool fromClip(App& a, ObjectId clip, const TempoMap& tm) {
     return false;
   }
   const int grid = s.groove.shape.grid == gv::kGridStep ? gv::kGrid16th : s.groove.shape.grid;
-  gv::Preset g = gv::extract(on, gv::cellTicks(s, nullptr, grid), static_cast<double>(s.barTicks()), grid, 16, "");
+  // K-193: the bar of the meter in force where the clip starts (song time).
+  gv::Preset g = gv::extract(on, gv::cellTicks(s, nullptr, grid), static_cast<double>(MeterMap(s).fullBarLenAt(c->start)), grid, 16, "");
   a.doc.editSong("groove from the audio clip", [&g](Song& x) {
     gv::apply(x, g);
     x.groove.preset.clear();

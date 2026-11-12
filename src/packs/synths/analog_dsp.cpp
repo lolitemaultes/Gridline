@@ -93,6 +93,7 @@ class AnalogGen final : public Generator {
       if (v.on) return true;
     return false;
   }
+  bool perVoiceExpression() const override { return true; }  // K-193
 
  protected:
   struct Voice {
@@ -120,6 +121,8 @@ class AnalogGen final : public Generator {
     double gl[kMaxUni] = {}, gr[kMaxUni] = {};
     double noiseLvl = 0, gain = 0, panL = 1, panR = 1;
     bool stereo = false;
+    uint32_t note = 0;  // K-193: the held key whose pressure and timbre the voice follows
+    VoiceExpr vx;       // K-193: the note's own pressure and timbre response
   };
 
   void configure(const PluginState& s, const ChannelAux&, const ProcessContext& ctx) override {
@@ -192,7 +195,7 @@ class AnalogGen final : public Generator {
       arpAdd(id, pitch, vel);
       return;
     }
-    startNote(id, pitch, vel);
+    startNote(id, pitch, vel, id);
   }
   bool supportsGlide() const override { return true; }
   void onGlide(uint32_t id, double pitch, double seconds) override {
@@ -218,7 +221,8 @@ class AnalogGen final : public Generator {
     tail_ = 0;
   }
 
-  void startNote(uint32_t id, double pitch, float vel) {
+  // K-193: `note` is the key the voice follows for expression (the arpeggiator's source key).
+  void startNote(uint32_t id, double pitch, float vel, uint32_t note) {
     ++clock_;
     if (playMode_ != PlayPoly) {
       bool hadHeld = stack_.count > 0;
@@ -227,6 +231,8 @@ class AnalogGen final : public Generator {
       bool legato = playMode_ == PlayLegato && hadHeld && v.on;
       bool glide = glide_ > 0.002 && v.on && (!glideOverlap_ || hadHeld);
       v.id = id;
+      if (v.on) v.vx.id = note;  // K-193: the sounding voice's response moves on smoothly
+      v.note = note;
       v.target = pitch;
       v.slide.stop();
       if (!glide) v.pitch = pitch;
@@ -253,6 +259,7 @@ class AnalogGen final : public Generator {
     Voice& v = *pick;
     bool glide = glide_ > 0.002 && lastPitch_ >= 0 && (!glideOverlap_ || anyHeld);
     v.id = id;
+    v.note = note;  // K-193
     v.target = pitch;
     v.slide.stop();
     v.pitch = glide ? lastPitch_ : pitch;
@@ -271,6 +278,7 @@ class AnalogGen final : public Generator {
       if (!wasTop || !v.on) return;
       if (const auto* t = stack_.top()) {  // fall back to the previous held note
         v.id = t->id;
+        v.vx.id = v.note = t->id;  // K-193: the response moves on smoothly to the held key
         v.target = t->pitch;
         if (glide_ <= 0.002) v.pitch = t->pitch;
         if (playMode_ == PlayMono) trigger(v, true);
@@ -379,7 +387,7 @@ class AnalogGen final : public Generator {
     arpIndex_ = std::clamp(arpIndex_, 0, len - 1);
     const ArpNote& nt = arp_[static_cast<size_t>(order[static_cast<size_t>(arpIndex_ % arpCount_)])];
     arpVoiceId_ = kArpIdBase + (++arpSeq_ & 0xFFFFFu);
-    startNote(arpVoiceId_, nt.pitch + 12.0 * (arpIndex_ / arpCount_), nt.vel);
+    startNote(arpVoiceId_, nt.pitch + 12.0 * (arpIndex_ / arpCount_), nt.vel, nt.id);
     arpNoteOn_ = true;
     arpGateLeft_ = std::max(1.0, arpGate_ * arpStep_);
   }
@@ -495,6 +503,7 @@ class AnalogGen final : public Generator {
     const double glideCoef = std::pow(std::exp(-1.0 / std::max(1.0, glide_ * sr_ * 0.3)), 16.0);
     const int N = uni_;
     const double drive = 1.0 + drive_ * 8.0, driveMakeup = 1.0 / (1.0 + drive_ * 2.0);
+    exprVoice(v.vx, v.note);  // K-193
     for (int i = 0; i < n; ++i) {
       if ((v.ctr++ & 15u) == 0) {
         if (v.slide.active()) v.slide.advance(v.pitch, 16);  // K-144: host glide, straight
@@ -549,8 +558,15 @@ class AnalogGen final : public Generator {
       double a = v.amp.next() * v.gain;
       v.fenv.next();
       v.menv.next();
-      bufL_[static_cast<size_t>(i)] += static_cast<float>(yl * a * v.panL);
-      bufR_[static_cast<size_t>(i)] += static_cast<float>(yr * a * v.panR);
+      if (v.vx.on) {  // K-193: the note's own level and brightness, before its pan
+        double el = yl * a, er = yr * a;
+        v.vx.apply(el, er);
+        bufL_[static_cast<size_t>(i)] += static_cast<float>(el * v.panL);
+        bufR_[static_cast<size_t>(i)] += static_cast<float>(er * v.panR);
+      } else {
+        bufL_[static_cast<size_t>(i)] += static_cast<float>(yl * a * v.panL);
+        bufR_[static_cast<size_t>(i)] += static_cast<float>(yr * a * v.panR);
+      }
       v.ageSec += 1.0 / sr_;
       for (int l = 0; l < 2; ++l)
         if (lfoRetrig_[l]) v.lfo[l].advance(v.lfoInc[l]);

@@ -7,6 +7,7 @@
 #include <map>
 #include "../core/Automation.h"
 #include "../core/I18n.h"
+#include "../core/MeterEdit.h"
 #include "../core/NoteTools.h"
 #include "../core/PluginInfo.h"
 #include "../core/PluginParams.h"
@@ -94,12 +95,36 @@ std::string rangeName(const Song& s, const std::set<ObjectId>& ids) {
 std::vector<ObjectId> sliceAtGrid(Song& s, const std::set<ObjectId>& clips, Tick grid) {
   std::vector<ObjectId> out;
   if (grid <= 0) return out;
+  // K-193: with meter changes a grid of whole bars or beats (of the song's meter at the start)
+  // cuts on the bar or beat lines of the meter in force; a finer grid counts from each section's
+  // start and never steps past the next change.
+  const MeterMap mm(s);
   for (ObjectId id : ordered(s, clips)) {
     const Clip* c = s.clip(id);
     if (!c) continue;
     std::vector<Tick> cuts;
     const Tick e = endOf(s, *c);
-    for (Tick t = (c->start / grid + 1) * grid; t < e; t += grid) cuts.push_back(t);
+    if (mm.constant()) {
+      for (Tick t = (c->start / grid + 1) * grid; t < e; t += grid) cuts.push_back(t);
+    } else if (grid % mm.baseBar() == 0) {
+      const int64_t k = grid / mm.baseBar();
+      for (Tick t = mm.nextBar(c->start); t < e; t = mm.nextBar(t))
+        if (mm.barIndex(t) % k == 0) cuts.push_back(t);
+    } else if (grid % mm.baseBeat() == 0) {
+      const Tick k = grid / mm.baseBeat();
+      for (Tick t = mm.nextBeat(c->start); t < e; t = mm.nextBeat(t)) {
+        const MeterSeg& g = mm.segAt(t);
+        if (((t - g.start) / std::max<Tick>(1, g.beat)) % k == 0) cuts.push_back(t);
+      }
+    } else {
+      const auto& segs = mm.segments();
+      for (size_t i = mm.segIndex(c->start); i < segs.size() && segs[i].start < e; ++i) {
+        const Tick s0 = segs[i].start, s1 = i + 1 < segs.size() ? std::min(e, segs[i + 1].start) : e;
+        for (Tick t = s0 + (std::max(c->start, s0) - s0) / grid * grid; t < s1; t += grid)
+          if (t > c->start && (cuts.empty() || t > cuts.back())) cuts.push_back(t);
+        if (s1 < e && s1 > c->start && (cuts.empty() || s1 > cuts.back())) cuts.push_back(s1);
+      }
+    }
     for (ObjectId k : splitAt(s, id, cuts)) out.push_back(k);
   }
   return out;
@@ -254,7 +279,8 @@ std::vector<ObjectId> stutterPattern(Song& s, const Clip& base, Tick length, con
   np.name = bp->name + " stutter";
   np.color = bp->color;
   np.stepsPerBar = bp->stepsPerBar;
-  const Tick bar = std::max<Tick>(1, s.barTicks());
+  np.meterNum = bp->meterNum, np.meterDen = bp->meterDen;  // K-193: in the source pattern's meter
+  const Tick bar = std::max<Tick>(1, s.patternBarTicks(np));
   np.bars = static_cast<int>(std::clamp<Tick>((length + bar - 1) / bar, 1, kMaxPatternBars));
   for (const auto& lane : bp->automation) {  // parameter lanes follow the region
     PatternAutomation l = lane;
@@ -536,7 +562,11 @@ ChopResult chopRangeToSlicer(Song& s, Tick a, Tick b, const std::set<int>& track
   p.id = s.allocateId();
   p.name = name + " chops";
   p.color = 0x8A9BA8;
-  const Tick bar = std::max<Tick>(1, s.barTicks());
+  {  // K-193: a pattern made at `a` gets the meter of its section there, as new patterns do
+    int steps = 16;
+    meter::newPatternMeter(s, a, p.meterNum, p.meterDen, steps);
+  }
+  const Tick bar = std::max<Tick>(1, s.patternBarTicks(p));
   p.bars = static_cast<int>(std::clamp<Tick>((len + bar - 1) / bar, 1, kMaxPatternBars));
   for (size_t k = 0; k < starts.size(); ++k) {
     const double pos = (map.secondsAt(static_cast<double>(a + starts[k])) - sec0) / std::max(1e-9, secs);

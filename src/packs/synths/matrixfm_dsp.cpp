@@ -347,6 +347,7 @@ struct Voice {
   double age = 0, attackFade = 0;
   int ctl = 0;
   double releaseGate = 1;  // fade for voices without a main volume envelope
+  VoiceExpr vx, vxFx;      // K-193: the note's own pressure and timbre response (dry, effects send)
 };
 
 class MatrixFmGen final : public Generator {
@@ -388,6 +389,9 @@ class MatrixFmGen final : public Generator {
   }
 
   bool supportsGlide() const override { return true; }
+  // K-193: per voice in Gridline's engine; the reference model's voices live inside it, so it
+  // keeps the shared response.
+  bool perVoiceExpression() const override { return !refOn_; }
 
   bool active() const override {
     if (refOn_) return ref_ && mfmref::active(*ref_);
@@ -607,6 +611,7 @@ class MatrixFmGen final : public Generator {
           for (Voice& v : voices_)
             if (v.on && v.id == id) {
               v.id = top->id;
+              v.vx.id = v.vxFx.id = top->id;  // K-193: the response moves on smoothly to the held key
               if (porta_) v.glide.start(v.pitch, top->pitch, portaTime_, sr_);
               else v.pitch = top->pitch;
             }
@@ -724,6 +729,7 @@ class MatrixFmGen final : public Generator {
         for (Voice& v : voices_)
           if (v.on && !v.released) {
             v.id = id;
+            v.vx.id = v.vxFx.id = id;  // K-193: the response moves on smoothly to the new key
             v.glide.start(v.pitch, pitch, portaTime_, sr_);
           }
         monoId_ = id;
@@ -925,6 +931,8 @@ class MatrixFmGen final : public Generator {
   }
 
   void renderVoice(Voice& v, float* dL, float* dR, float* fL, float* fR, int n) {
+    exprVoice(v.vx, v.id);  // K-193
+    exprVoice(v.vxFx, v.id);
     float y[kRows] = {};
     for (int i = 0; i < n; ++i) {
       if (v.ctl <= 0) {
@@ -1025,8 +1033,16 @@ class MatrixFmGen final : public Generator {
         sl += y[r] * out * gl, sr += y[r] * out * gr;
         xl += y[r] * fx * gl, xr += y[r] * fx * gr;
       }
-      dL[i] += sl * g, dR[i] += sr * g;
-      fL[i] += xl * g, fR[i] += xr * g;
+      if (v.vx.on) {  // K-193: the note's own level and brightness on its dry output and its send
+        float el = sl * g, er = sr * g, ex = xl * g, ey = xr * g;
+        v.vx.apply(el, er);
+        v.vxFx.apply(ex, ey);
+        dL[i] += el, dR[i] += er;
+        fL[i] += ex, fR[i] += ey;
+      } else {
+        dL[i] += sl * g, dR[i] += sr * g;
+        fL[i] += xl * g, fR[i] += xr * g;
+      }
       v.age += 1.0 / sr_;
       if (voiceDone(v)) {  // on the voice's own clock, not at a block end (J-30)
         v.on = false;

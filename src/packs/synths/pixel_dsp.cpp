@@ -50,6 +50,7 @@ class PixelToneGen final : public Generator {
       if (v.on) return true;
     return false;
   }
+  bool perVoiceExpression() const override { return true; }  // K-193
 
  protected:
   struct Row {
@@ -68,6 +69,7 @@ class PixelToneGen final : public Generator {
     uint64_t age = 0;
     Row row[kMaxRows];
     InsVoice ins;  // channel instrument envelopes / filter (J-33)
+    VoiceExpr vx;  // K-193: the note's own pressure and timbre response
   };
 
   void configure(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx) override {
@@ -191,6 +193,7 @@ class PixelToneGen final : public Generator {
     const float fadeStep = static_cast<float>(1.0 / (0.005 * sr_));
     for (auto& v : v_) {
       if (!v.on) continue;
+      exprVoice(v.vx, v.id);
       int i = 0;
       while (i < n && v.on) {
         if (v.left <= 0) {
@@ -230,6 +233,7 @@ class PixelToneGen final : public Generator {
             gain *= v.fade;
           }
           sl *= gain, sr *= gain;
+          if (v.vx.on) v.vx.apply(sl, sr);
           if (v.ins.active()) v.ins.process(sl, sr);
           L[i + q] += sl;
           R[i + q] += sr;

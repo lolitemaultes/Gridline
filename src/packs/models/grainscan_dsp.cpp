@@ -24,6 +24,7 @@ constexpr int kGrains = 24;  // per voice
 
 class GrainScanGen final : public Generator {
  public:
+  bool perVoiceExpression() const override { return true; }  // K-193
   bool active() const override {
     for (const auto& v : v_)
       if (v.on) return true;
@@ -51,6 +52,7 @@ class GrainScanGen final : public Generator {
     int stage = 0;   // envelope: 0 attack/hold, 1 decay/sustain, 2 release
     double envT = 0;
     Grain g[kGrains];
+    VoiceExpr vx;  // K-193: the note's own pressure and timbre response
   };
 
   // The n-th transient of the sample (wrapping), the start when none were found.
@@ -164,6 +166,7 @@ class GrainScanGen final : public Generator {
     for (auto& v : v_) {
       if (!v.on) continue;
       double rate = (trig == 0 ? std::pow(2.0, (v.note - p_[GsRoot]) / 12.0) : 1.0) * srcRate;
+      exprVoice(v.vx, v.id);
       for (int i = 0; i < n; ++i) {
         if (v.slide.active()) {  // K-144: per-sample glide of the grain rate
           v.slide.advance(v.note);
@@ -274,8 +277,15 @@ class GrainScanGen final : public Generator {
           if (++g.age >= g.len) g.on = false;
         }
         const float gain = target * v.vel * volume;
-        L[i] += l * gain;
-        R[i] += r * gain;
+        if (v.vx.on) {  // K-193: the note's own response (separate branch keeps other notes bit-exact)
+          float ol = l * gain, orr = r * gain;
+          v.vx.apply(ol, orr);
+          L[i] += ol;
+          R[i] += orr;
+        } else {
+          L[i] += l * gain;
+          R[i] += r * gain;
+        }
       }
     }
   }

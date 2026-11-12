@@ -12314,6 +12314,18 @@ msgid "Glides the channel's sounding notes to this pitch over the note's length 
 msgstr ""
 
 #: src/app/PianoRoll.cpp
+msgid "Meter of this pattern: %s, its own (click to change)"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
+msgid "Meter of this pattern: %s, the song's meter at the start (click to change)"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
+msgid "Meter of this pattern: %s. Its first clip starts in a %s section (click to change)"
+msgstr ""
+
+#: src/app/PianoRoll.cpp
 msgid "No scale"
 msgstr ""
 

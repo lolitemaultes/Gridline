@@ -125,6 +125,7 @@ class PocketSynthGen final : public Generator {
       if (v.on) return true;
     return false;
   }
+  bool perVoiceExpression() const override { return true; }  // K-193
 
  protected:
   struct Voice {
@@ -147,6 +148,7 @@ class PocketSynthGen final : public Generator {
     double M[4][5] = {};
     double dc = 0;
     Lcg rng{0x8AEu, 0x0BB38435u, 0x3619636Bu};  // jitter, noise and drift (per voice: block-size independent)
+    VoiceExpr vx;  // K-193: the note's own pressure and timbre response
   };
 
   void configure(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx) override {
@@ -204,6 +206,7 @@ class PocketSynthGen final : public Generator {
     if (m == 2 && !others) start = note;
     if (!legato || m != 2) v->pitch = start;
     v->id = id;
+    if (v->on) v->vx.id = id;  // K-193: a sounding (mono) voice's response moves on smoothly
     v->note = note;
     v->frac = pitch - note;
     v->host.stop();
@@ -400,7 +403,8 @@ class PocketSynthGen final : public Generator {
       v.s[1] = out[1], v.s[2] = out[2], v.s[3] = out[3];
       const double Y = 5 * out[3];
       v.dc += 0.005 * (Y - v.dc);
-      const double o = Y - v.dc;
+      double o = Y - v.dc;
+      if (v.vx.on) v.vx.apply(o);  // K-193: the note's own level and brightness, before its pan
       v.gL += 0.005 * (v.tgL - v.gL);
       v.gR += 0.005 * (v.tgR - v.gR);
       L[i] += static_cast<float>(v.gL * o);
@@ -502,6 +506,8 @@ class PocketSynthGen final : public Generator {
   double lfoBlockPhase_(int n) { return lfoBlock(n, phPhase_, PkPhaserRate); }
 
   void render(float* L, float* R, int n) override {
+    for (auto& v : v_)
+      if (v.on) exprVoice(v.vx, v.id);  // K-193
     int i = 0;
     while (i < n) {
       const int len = std::min(n - i, kBlock - grid_);

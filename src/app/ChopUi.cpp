@@ -164,10 +164,18 @@ void drawPlan(App& a, float w, float h) {
   // Beat grid.
   const Tick span = q.mode == kStutter ? len : 0;
   if (q.mode == kStutter && span > 0) {
-    const Tick beat = std::max<Tick>(1, s.beatTicks());
-    for (Tick t = beat; t < span; t += beat) {
-      const float x = p0.x + w * static_cast<float>(t) / static_cast<float>(span);
-      dl->AddLine(ImVec2(x, p0.y + 1), ImVec2(x, p1.y - 1), t % s.barTicks() == 0 ? P.gridBar : P.gridBeat);
+    const MeterMap mm(s);  // K-193: the region's beats and bars in the meter map
+    if (mm.constant()) {
+      const Tick beat = std::max<Tick>(1, s.beatTicks());
+      for (Tick t = beat; t < span; t += beat) {
+        const float x = p0.x + w * static_cast<float>(t) / static_cast<float>(span);
+        dl->AddLine(ImVec2(x, p0.y + 1), ImVec2(x, p1.y - 1), t % s.barTicks() == 0 ? P.gridBar : P.gridBeat);
+      }
+    } else {
+      for (Tick t = mm.nextBeat(q.a); t < q.b; t = mm.nextBeat(t)) {
+        const float x = p0.x + w * static_cast<float>(t - q.a) / static_cast<float>(span);
+        dl->AddLine(ImVec2(x, p0.y + 1), ImVec2(x, p1.y - 1), mm.barStartAt(t) == t ? P.gridBar : P.gridBeat);
+      }
     }
     const ImU32 lit = theme::rgb(theme::role::kSlice), hot = P.hot;
     const auto steps = chop::plan(q.p, len, s.ppq);
@@ -428,10 +436,11 @@ void draw(App& a) {
   }
   const Song& s = a.doc.song();
   {  // target line
-    const Tick bar = std::max<Tick>(1, s.barTicks()), beat = std::max<Tick>(1, s.beatTicks());
+    const MeterMap mm(s);  // K-193: bar.beat in the meter in force at each end
     auto pos = [&](Tick t) {
       char b2[48];
-      std::snprintf(b2, sizeof b2, "%lld.%lld", static_cast<long long>(t / bar + 1), static_cast<long long>(t % bar / beat + 1));
+      const MeterMap::Bbt p = mm.toBbt(std::max<Tick>(0, t));
+      std::snprintf(b2, sizeof b2, "%lld.%lld", static_cast<long long>(p.bar + 1), static_cast<long long>(p.beat + 1));
       return std::string(b2);
     };
     char line[160];
@@ -627,10 +636,10 @@ void timeSelectionItems(App& a) {
   if (ImGui::MenuItem(i18n::tr("Consolidate to an audio clip"), keys::label("playlist.consolidateTime"), false, sel)) consolidateTime(a);
   ui::Hint(i18n::tr("Renders the selected time into one audio clip on a free track"));
   if (ImGui::BeginMenu(i18n::tr("Chop it into a slicer channel"), sel)) {
-    const Song& s = a.doc.song();
-    if (ImGui::MenuItem(i18n::tr("At every beat"))) chopTimeToSlicer(a, s.beatTicks());
-    if (ImGui::MenuItem(i18n::tr("At every half beat"))) chopTimeToSlicer(a, std::max<Tick>(1, s.beatTicks() / 2));
-    if (ImGui::MenuItem(i18n::tr("At every quarter beat"))) chopTimeToSlicer(a, std::max<Tick>(1, s.beatTicks() / 4));
+    const Tick beat = MeterMap(a.doc.song()).beatLenAt(a.playlist.selStart);  // K-193: the beat where the selection starts
+    if (ImGui::MenuItem(i18n::tr("At every beat"))) chopTimeToSlicer(a, beat);
+    if (ImGui::MenuItem(i18n::tr("At every half beat"))) chopTimeToSlicer(a, std::max<Tick>(1, beat / 2));
+    if (ImGui::MenuItem(i18n::tr("At every quarter beat"))) chopTimeToSlicer(a, std::max<Tick>(1, beat / 4));
     if (ImGui::MenuItem(i18n::tr("At transients"))) chopTimeToSlicer(a, 0);
     ImGui::EndMenu();
   }
@@ -700,20 +709,20 @@ void devDemo(App& a) {
     c.source = ch.id;
     c.track = track;
     c.start = 0;
-    c.length = s.barTicks() * 4;
+    c.length = MeterMap(s).addBars(0, 4);  // K-193: four bars of the song's meters
     s.playlist.push_back(c);
     clip = c.id;
   });
-  const Tick bar = a.doc.song().barTicks();
+  const MeterMap mm(a.doc.song());  // K-193: bar lines of the song's meters
   a.playlist.selected = {clip};
   if (mode == "slice") {
     open(a, clip, kSlice);
     st().sliceMode = kTransients;
   } else if (mode == "chop") {
-    a.playlist.selStart = bar, a.playlist.selEnd = bar * 3;
+    a.playlist.selStart = mm.barStart(1), a.playlist.selEnd = mm.barStart(3);
     a.playlist.selected.clear();
   } else {
-    a.playlist.selStart = bar, a.playlist.selEnd = bar * 2;
+    a.playlist.selStart = mm.barStart(1), a.playlist.selEnd = mm.barStart(2);
     open(a, clip, kStutter, static_cast<int>(mode == "build" ? chop::Preset::ReverseBuild : chop::Preset::TripletStutter));
   }
 }

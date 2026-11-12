@@ -28,6 +28,7 @@
 #include <cstdio>
 #include <set>
 #include "../../core/Document.h"
+#include "../../core/Meter.h"
 #include "../../core/Params.h"
 #include "../../core/PatternAutomation.h"
 #include "../../core/PluginInfo.h"
@@ -429,9 +430,10 @@ Tick clipOrigin(Document& doc, ObjectId pattern, ObjectId channel, Tick tick, Ti
   const Song& s = doc.song();
   for (const auto& c : s.playlist)
     if (c.kind == ClipKind::Pattern && c.pattern == pattern && tick >= c.start && tick < c.start + s.clipLength(c)) return c.start - c.offset;
-  const Tick bar = std::max<Tick>(1, s.barTicks());
-  const Tick start = tick / bar * bar;
-  const Tick len = std::max<Tick>(bar, (tick + length - start + bar - 1) / bar * bar);
+  // K-193: whole bars of the song's meter map (UI thread: the map may allocate).
+  const MeterMap mm(s);
+  const Tick start = mm.barStartAt(std::max<Tick>(0, tick));
+  const Tick len = std::max<Tick>(mm.nextBar(start) - start, mm.roundUpToBar(std::max<Tick>(0, tick) + length) - start);
   auto busy = [&](int t) {
     for (const auto& c : s.playlist)
       if (c.track == t && c.start < start + len && c.start + s.clipLength(c) > start) return true;
@@ -485,7 +487,8 @@ void writePerformance(Document& doc, ObjectId pattern, ObjectId channel, double 
       });
     }
   }
-  const Tick bar = std::max<Tick>(1, s.barTicks());
+  const Pattern* tp = s.pattern(pattern);  // K-193: pattern bars are the pattern's own (pattern time)
+  const Tick bar = std::max<Tick>(1, tp ? s.patternBarTicks(*tp) : s.barTicks());
   doc.editPattern(pattern, "Record a deck performance", [&](Pattern& p) {
     auto& notes = p.notes[channel];
     performanceNotes(perf, origin, id, notes);
@@ -657,7 +660,7 @@ PassWritten writePass(Document& doc, ObjectId channel, const Performance& perf, 
   if (!playlistClips) {
     const ObjectId pat = passPattern(doc, kNoId, channel, true);
     if (pat != kNoId && doc.song().pattern(pat)) {
-      const Tick bar = std::max<Tick>(1, s.barTicks());
+      const Tick bar = std::max<Tick>(1, doc.song().patternBarTicks(*doc.song().pattern(pat)));  // K-193: the pattern's own bar
       const Tick bars = std::clamp<Tick>((len + bar - 1) / bar, 1, kMaxPatternBars);
       doc.editPattern(pat, "Record a deck performance", [&](Pattern& p) {
         p.bars = static_cast<int>(bars);

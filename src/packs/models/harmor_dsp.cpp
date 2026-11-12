@@ -207,6 +207,7 @@ class HarmorGen final : public Generator {
       if (voices_[i].on) return true;
     return fx_.ringing() || distTail_ > 0;
   }
+  bool perVoiceExpression() const override { return true; }  // K-193
 
  protected:
   struct Osc {
@@ -240,6 +241,7 @@ class HarmorGen final : public Generator {
     double t = 0;
     bool released = false;
     PartVoice part[kParts];
+    VoiceExpr vx;  // K-193: the note's own pressure and timbre response
   };
 
   void configure(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx) override {
@@ -802,6 +804,11 @@ class HarmorGen final : public Generator {
     for (int i = 0; i < kVoices; ++i) {
       Voice& v = voices_[i];
       if (!v.on) continue;
+      // K-193: a note with its own response renders into its own buffer first; the others add
+      // straight into the mix as before (bit-exact).
+      float vl[kCtl] = {}, vr[kCtl] = {};
+      float* ol = v.vx.on ? vl : bl;
+      float* orr = v.vx.on ? vr : br;
       for (int p = 0; p < kParts; ++p) {
         PartVoice& pv = v.part[p];
         if (pv.done) continue;
@@ -836,11 +843,17 @@ class HarmorGen final : public Generator {
             }
           const float tr = pv.trem, gl = pv.panL[u] * (1 - tr * std::min(1.0f, cfg_[p].tremGap * 2)), gr = pv.panR[u] * (1 - tr);
           for (int j = 0; j < n; ++j) {
-            bl[j] += mono[j] * gl;
-            br[j] += mono[j] * gr;
+            ol[j] += mono[j] * gl;
+            orr[j] += mono[j] * gr;
           }
         }
       }
+      if (v.vx.on)  // K-193
+        for (int j = 0; j < n; ++j) {
+          v.vx.apply(vl[j], vr[j]);
+          bl[j] += vl[j];
+          br[j] += vr[j];
+        }
     }
   }
 
@@ -893,6 +906,8 @@ class HarmorGen final : public Generator {
   }
 
   void render(float* L, float* R, int n) override {
+    for (int i = 0; i < kVoices; ++i)  // K-193: each sounding note's own response, once per block
+      if (voices_[i].on) exprVoice(voices_[i].vx, voices_[i].id);
     int pos = 0;
     while (pos < n) {
       if (ctr_ == 0) {

@@ -7,6 +7,7 @@
 #include <fstream>
 #include <map>
 #include <sstream>
+#include "Meter.h"
 #include "Platform.h"
 #include "Project.h"
 
@@ -59,8 +60,8 @@ void arrangement(const Song& s, Sketch& k) {
     k.blocks.push_back(b);
   }
   k.kind = Kind::Arrangement;
-  const Tick bar = std::max<Tick>(1, s.barTicks());
-  k.bars = static_cast<int>((end + bar - 1) / bar);
+  const MeterMap mm(s);  // K-193: bars of the meter in force
+  k.bars = static_cast<int>(mm.barIndex(mm.roundUpToBar(std::max<Tick>(0, end))));
   k.seconds = s.tempo > 0 ? static_cast<double>(end) / std::max(1, s.ppq) * 60.0 / s.tempo : 0;
 }
 

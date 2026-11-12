@@ -131,27 +131,73 @@ void Generator::exprEvent(const Ev& e) {
     exprTargets();
 }
 
-// The generic response follows the held notes together: the strongest pressure, the timbre
-// furthest from its centre. With no note held the last values stay (a release keeps its sound).
-void Generator::exprTargets() {
-  bool any = false;
-  float level = 0, bright = 0;
+// The level and brightness targets of one held note (pressure 0..1; timbre -1..1 around its
+// centre), with the channel's amount.
+void Generator::noteExprTargets(const ExprNote& x, float& level, float& bright) const {
+  level = bright = 0;
   auto add = [&](ExprUse u, float v) {  // v: -1..1 (pressure 0..1)
     if (u == ExprUse::Level && std::fabs(v) > std::fabs(level)) level = v;
     if (u == ExprUse::Brightness && std::fabs(v) > std::fabs(bright)) bright = v;
   };
-  const ExprUse up = exprUse(ExprDim::Pressure), ut = exprUse(ExprDim::Timbre);
+  add(exprUse(ExprDim::Pressure), x.pressure);
+  add(exprUse(ExprDim::Timbre), (x.timbre - 0.5f) * 2.0f);
+  const float amt = std::clamp(exprSet_.amount, 0.0f, 1.0f);
+  level *= amt;
+  bright *= amt;
+}
+
+// The generic response follows the held notes together: the strongest pressure, the timbre
+// furthest from its centre. With no note held the last values stay (a release keeps its sound).
+// K-193: instruments that respond per voice read each note's own targets (exprVoice) instead.
+void Generator::exprTargets() {
+  bool any = false;
+  float level = 0, bright = 0;
   for (const auto& x : exprNotes_) {
     if (!x.on) continue;
     any = true;
-    add(up, x.pressure);
-    add(ut, (x.timbre - 0.5f) * 2.0f);
+    float l, b;
+    noteExprTargets(x, l, b);
+    if (std::fabs(l) > std::fabs(level)) level = l;
+    if (std::fabs(b) > std::fabs(bright)) bright = b;
   }
   if (!any) return;
-  const float amt = std::clamp(exprSet_.amount, 0.0f, 1.0f);
-  levelTarget_ = level * amt;
-  brightTarget_ = bright * amt;
-  if (levelTarget_ != 0 || brightTarget_ != 0) exprUsed_ = true;
+  levelTarget_ = level;
+  brightTarget_ = bright;
+  if (levelTarget_ != 0 || brightTarget_ != 0) exprUsed_ = exprVoiceUsed_ = true;
+}
+
+void Generator::exprVoice(VoiceExpr& vx, uint32_t id) const {
+  if (!exprVoiceUsed_) {  // no note of this instrument had a level or brightness response yet
+    vx.on = false;
+    return;
+  }
+  float lt = 0, bt = 0;
+  bool held = false;
+  for (const auto& x : exprNotes_)
+    if (x.on && x.id == id) {
+      noteExprTargets(x, lt, bt);
+      held = true;
+      break;
+    }
+  if (!vx.seen || vx.id != id) {  // a new note on this voice: start at its values
+    const float sl = vx.sl, sr = vx.sr;  // (a legato note keeps the shelf's state: no click)
+    const bool wasOn = vx.on;
+    vx = VoiceExpr{};
+    if (wasOn) vx.sl = sl, vx.sr = sr, vx.on = true;
+    vx.seen = true;
+    vx.id = id;
+    vx.lc = lt, vx.bc = bt;
+    vx.g = std::exp2(lt), vx.hg = std::exp2(bt * 1.5f);
+  }
+  if (held) vx.lt = lt, vx.bt = bt;  // an ended note keeps its last values for its release
+  vx.coef = exprCoef_;
+  vx.shelfA = exprShelfA_;
+  const bool wasOn = vx.on;
+  vx.on = vx.lt != 0 || vx.bt != 0 || std::fabs(vx.lc) > 1e-5f || std::fabs(vx.bc) > 1e-5f;
+  if (!vx.on)
+    vx.lc = vx.bc = 0, vx.g = vx.hg = 1;
+  else if (!wasOn)
+    vx.sl = vx.sr = 0;
 }
 
 void Generator::process(const PluginState& state, const ChannelAux& aux, const ProcessContext& ctx, float* L,
@@ -184,8 +230,11 @@ void Generator::process(const PluginState& state, const ChannelAux& aux, const P
   // K-144: the generic expression response: level (+6 dB per unit) and a high shelf at about
   // 1.5 kHz (+-9 dB per unit), each smoothed per sample over ~5 ms.
   const float shelfA = static_cast<float>(1.0 - std::exp(-2.0 * 3.14159265358979 * 1500.0 / sampleRate_));
+  exprCoef_ = panCoef;  // K-193: the per-voice response smooths and shelves the same way
+  exprShelfA_ = shelfA;
+  const bool perVoice = perVoiceExpression();
   auto applyExpr = [&](int from, int to) {
-    if (!exprUsed_) return;
+    if (!exprUsed_ || perVoice) return;
     float g = std::exp2(levelCur_), hg = std::exp2(brightCur_ * 1.5f);
     for (int i = from; i < to; ++i) {
       const float dl = (levelTarget_ - levelCur_) * panCoef, db = (brightTarget_ - brightCur_) * panCoef;
@@ -251,9 +300,11 @@ class SynthGen final : public Generator {
   }
 
  protected:
+  bool perVoiceExpression() const override { return true; }  // K-193
   struct Voice {
     uint32_t id = 0;
     bool held = false;
+    VoiceExpr vx;  // K-193: the note's own pressure and timbre response
     // J-65 reference oscillators: phases, release declick position, host note gains.
     packs::synths::trioref::Voice rv;
     bool rOn = false;
@@ -603,6 +654,7 @@ class SynthGen final : public Generator {
     float buf[2 * 64];
     for (auto& v : voices_) {
       if (!v.rOn) continue;
+      exprVoice(v.vx, v.id);
       const bool ins = v.ins.active();
       for (int i = 0; i < n && v.rOn;) {
         int m = std::min(n - i, 64 - static_cast<int>(v.ctr & 63));
@@ -623,6 +675,7 @@ class SynthGen final : public Generator {
             dk = packs::synths::trioref::declick(v.relK++, sr_);
             if (v.relK >= packs::synths::trioref::declickLength(sr_)) v.rOn = false;
           }
+          if (v.vx.on) v.vx.apply(l, r);
           if (ins) {
             v.ins.processWith(l, r, dk);
             L[i + j] += static_cast<float>(static_cast<double>(l) * volume_);
@@ -647,6 +700,7 @@ class SynthGen final : public Generator {
     const double glideCoef = std::exp(-1.0 / std::max(1.0, glide_ * sr_ * 0.3));
     for (auto& v : voices_) {
       if (!v.amp.active()) continue;
+      exprVoice(v.vx, v.id);
       for (int i = 0; i < n; ++i) {
         // Every 16 samples of the voice's own clock (independent of block size):
         // LFO, pitch glide, oscillator increments, filter coefficients.
@@ -706,6 +760,7 @@ class SynthGen final : public Generator {
             v.amp.level = 0;
           }
         }
+        if (v.vx.on) v.vx.apply(outs[0], outs[1]);
         L[i] += static_cast<float>(outs[0] * v.npL);
         R[i] += static_cast<float>(outs[1] * v.npR);
         if (v.slide.active())
@@ -806,6 +861,7 @@ class SamplerGen final : public Generator {
   }
 
  protected:
+  bool perVoiceExpression() const override { return true; }  // K-193
   struct Voice {
     bool on = false, held = false;
     uint32_t id = 0;
@@ -834,6 +890,7 @@ class SamplerGen final : public Generator {
     // Per-note properties: pan gains, cutoff factor (octaves) and resonance offset.
     double npL = 1, npR = 1, cutOct = 0, resoAdd = 0;
     PitchGlide slide;  // slide notes / porta
+    VoiceExpr vx;      // K-193: the note's own pressure and timbre response
   };
 
   void configure(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx) override {
@@ -1148,6 +1205,7 @@ class SamplerGen final : public Generator {
       if (!v.on) continue;
       tap::Run run;
       if (tapOn) run.begin(sample_.get());
+      exprVoice(v.vx, v.id);  // K-193
       for (int i = 0; i < n; ++i) {
         if (v.delayLeft > 0) {
           if (--v.delayLeft == 0) v.env.gate(v.held || oneShot_);
@@ -1308,8 +1366,15 @@ class SamplerGen final : public Generator {
           panGains(std::clamp(v.lfo, -1.0, 1.0), pl, pr);
           pl *= v.npL, pr *= v.npR;
         }
-        L[i] += static_cast<float>(l * g * pl);
-        R[i] += static_cast<float>(r * g * pr);
+        if (v.vx.on) {  // K-193: the note's level / brightness after the envelope, before the pan
+          double el = l * g, er = r * g;
+          v.vx.apply(el, er);
+          L[i] += static_cast<float>(el * pl);
+          R[i] += static_cast<float>(er * pr);
+        } else {
+          L[i] += static_cast<float>(l * g * pl);
+          R[i] += static_cast<float>(r * g * pr);
+        }
         if (v.slide.active())
           v.slide.advance(v.note);
         else
@@ -1920,6 +1985,7 @@ class PluckGen final : public Generator {
     double len = 100, pos = 0;
     float last = 0;
   };
+  bool perVoiceExpression() const override { return true; }  // K-193
   struct Voice {
     bool on = false, held = false;
     uint32_t id = 0;
@@ -1930,6 +1996,7 @@ class PluckGen final : public Generator {
     Str s[2];
     double semis = 60;  // K-144: glides retune the strings' loop lengths
     PitchGlide slide;
+    VoiceExpr vx;  // K-193: the note's own pressure and timbre response
   };
 
   void configure(const PluginState& s, const ChannelAux&, const ProcessContext& ctx) override {
@@ -2028,6 +2095,7 @@ class PluckGen final : public Generator {
       // Normalised: every note rings for `decay`; otherwise higher notes die faster (fixed loop gain).
       double g = std::pow(10.0, -3.0 / (std::max(0.05f, decay_) * (normalize_ ? v.hz : 220.0)));
       double relMul = std::exp(-1.0 / std::max(1.0, rel_ * sr_ * 0.25));
+      exprVoice(v.vx, v.id);  // K-193
       for (int i = 0; i < n; ++i) {
         if (v.slide.active() && (v.clock & 7) == 0) {
           v.slide.advance(v.semis, 8);
@@ -2048,8 +2116,15 @@ class PluckGen final : public Generator {
         }
         if (!v.held) v.amp *= static_cast<float>(relMul);
         float gain = v.vel * vol_ * v.amp;
-        L[i] += out[0] * gain;
-        R[i] += out[1] * gain;
+        if (v.vx.on) {  // K-193: the note's level / brightness on its own output
+          float el = out[0] * gain, er = out[1] * gain;
+          v.vx.apply(el, er);
+          L[i] += el;
+          R[i] += er;
+        } else {
+          L[i] += out[0] * gain;
+          R[i] += out[1] * gain;
+        }
         if ((++v.clock & 255) == 0) {  // end-of-note checks every 256 samples of the voice's own clock
           float e = 0;
           for (float x : v.s[0].buf) e = std::max(e, std::fabs(x));

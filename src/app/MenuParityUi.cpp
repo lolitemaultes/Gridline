@@ -399,7 +399,10 @@ void pianoToolItems(App& a) {
       const char* name;
       Tick t;
     };
-    const Per pers[] = {{"Of every beat", s.beatTicks()}, {"Of every 2 beats", s.beatTicks() * 2}, {"Of every bar", s.barTicks()}};
+    // K-193: the piano roll's notes are pattern time: the pattern's own meter.
+    const Pattern* cp = s.pattern(a.curPattern);
+    const Tick beat = cp ? s.patternBeatTicks(*cp) : s.beatTicks(), bar = cp ? s.patternBarTicks(*cp) : s.barTicks();
+    const Per pers[] = {{"Of every beat", beat}, {"Of every 2 beats", beat * 2}, {"Of every bar", bar}};
     for (const auto& per : pers)
       if (ImGui::BeginMenu(per.name)) {
         for (int parts : {2, 3, 4})

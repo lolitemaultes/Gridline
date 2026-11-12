@@ -257,8 +257,7 @@ void menuAdd(App& a) {
     int track = 0;
     for (const auto& c : s.playlist)
       if (c.pattern == a.curPattern) track = c.track;
-    Tick bar = std::max<Tick>(1, s.barTicks());
-    Tick at = (s.lengthTicks() + bar - 1) / bar * bar;
+    const Tick at = MeterMap(s).roundUpToBar(s.lengthTicks());  // K-193: the next bar line of the song's meters
     ObjectId id = a.doc.addClip(a.curPattern, track, at);
     if (id) a.playlist.selected = {id};
   }

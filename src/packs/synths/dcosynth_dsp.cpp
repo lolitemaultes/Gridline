@@ -146,6 +146,7 @@ class DcoSynth final : public Generator {
     return false;
   }
   bool supportsGlide() const override { return true; }
+  bool perVoiceExpression() const override { return true; }  // K-193
 
  protected:
   struct Voice {
@@ -169,6 +170,8 @@ class DcoSynth final : public Generator {
     double p1Mod = 0, p2Mod = 0;
     bool ctlValid = false;        // control values computed for the current period (J-30)
     double ce1 = 0, ce2 = 0;      // envelope values of the current period
+    uint32_t note = 0;            // K-193: the held key whose pressure and timbre the voice follows
+    VoiceExpr vx;                 // K-193: the note's own pressure and timbre response
   };
 
   double P(int i) const { return static_cast<double>(p_[static_cast<size_t>(i)]); }
@@ -314,7 +317,7 @@ class DcoSynth final : public Generator {
       arpAdd(id, pitch, vel);
       return;
     }
-    startNote(id, pitch, vel);
+    startNote(id, pitch, vel, id);
   }
   void onNoteOff(uint32_t id) override {
     if (arpOn_) arpRemove(id);
@@ -380,7 +383,8 @@ class DcoSynth final : public Generator {
     }
   }
 
-  void startNote(uint32_t id, double pitch, float vel) {
+  // K-193: `note` is the key the voice follows for expression (the arpeggiator's source key).
+  void startNote(uint32_t id, double pitch, float vel, uint32_t note) {
     ++clock_;
     altSign_ = -altSign_;
     triggerLfos();
@@ -393,6 +397,8 @@ class DcoSynth final : public Generator {
       const bool legato = P(DcLegato) >= 0.5 && heldCount_ > 0 && v.on;
       const bool glide = portaSec > 0.002 && v.on;
       v.id = id;
+      if (v.on) v.vx.id = note;  // K-193: the sounding voice's response moves on smoothly
+      v.note = note;
       v.glideFrom = v.on ? v.pitch : pitch;
       v.target = pitch;
       v.glideT = glide ? 0.0 : 1.0;
@@ -422,6 +428,7 @@ class DcoSynth final : public Generator {
     v = Voice{};
     v.on = v.held = true;
     v.id = id;
+    v.note = note;  // K-193
     v.vel = vel;
     v.age = clock_;
     v.target = pitch;
@@ -457,6 +464,7 @@ class DcoSynth final : public Generator {
       if (stack_.count > 0 && v.id == id) {
         const auto& top = stack_.notes[static_cast<size_t>(stack_.count - 1)];
         v.id = top.id;
+        v.note = v.vx.id = top.id;  // K-193: the response moves on smoothly to the held key
         v.glideFrom = v.pitch;
         v.target = top.pitch;
         v.glideT = P(DcPorta) > 0.03 ? 0.0 : 1.0;
@@ -752,6 +760,7 @@ class DcoSynth final : public Generator {
   // `ctl`: compute the voice's control values (matrix, glide, envelopes) for
   // the next `adv` samples; otherwise the chunk reuses them (J-30).
   void renderVoice(Voice& v, int n, double lfo1, double lfo1Sin, double lfo2, bool ctl, int adv) {
+    exprVoice(v.vx, v.note);  // K-193
     const int vca = panelOne_ ? (P(DcVcaSrc) >= 0.5 ? 1 : 0) : ci(DcVcaSrc, 3);
     if (ctl) {
       v.ctlValid = true;
@@ -941,7 +950,8 @@ class DcoSynth final : public Generator {
         v.vcaSmooth += gateCoef * (gateTarget - v.vcaSmooth);
         amp = v.vcaSmooth;
       }
-      const double out = y * amp * vgain;
+      double out = y * amp * vgain;
+      if (v.vx.on) v.vx.apply(out);  // K-193: the note's own level and brightness
       bufL_[static_cast<size_t>(i)] += static_cast<float>(out);
       bufR_[static_cast<size_t>(i)] += static_cast<float>(out);
     }
@@ -1095,7 +1105,8 @@ class DcoSynth final : public Generator {
         v.vcaSmooth2 += (smooth ? gc2 : 1.0) * (v.vcaSmooth - v.vcaSmooth2);
         amp = v.vcaSmooth2;
       }
-      const double out = y * amp * vgain;
+      double out = y * amp * vgain;
+      if (v.vx.on) v.vx.apply(out);  // K-193: the note's own level and brightness
       bufL_[static_cast<size_t>(i)] += static_cast<float>(out);
       bufR_[static_cast<size_t>(i)] += static_cast<float>(out);
     }
@@ -1180,7 +1191,7 @@ class DcoSynth final : public Generator {
     arpIndex_ = k;
     const ArpNote nn = noteAt(k);
     arpVoiceId_ = 0x80000000u | (arpSerial_++ & 0x7fffffffu);
-    startNote(arpVoiceId_, nn.pitch, nn.vel);
+    startNote(arpVoiceId_, nn.pitch, nn.vel, nn.id);
     arpNoteOn_ = true;
     arpGateLeft_ = std::max(1.0, arpStep() * std::clamp(P(DcArpGate), 0.05, 1.0));
   }

@@ -30,6 +30,7 @@
 #include "../collab/VersionGate.h"
 #include "../core/Demo.h"
 #include "../core/I18n.h"
+#include "../core/Meter.h"
 #include "../core/Platform.h"
 #include "../core/Png.h"
 #include "../core/Project.h"
@@ -3273,6 +3274,16 @@ std::string devReport(App& a) {
   return jsonStringify(r, 2);
 }
 
+// K-193: `bars` bars from the song start in song ticks, each bar as long as the meter in force
+// there (one meter: bars * the bar, as before).
+float songBarsToTicks(const Song& s, float bars) {
+  const MeterMap mm(s);
+  if (mm.constant()) return bars * static_cast<float>(s.barTicks());
+  const int64_t n = static_cast<int64_t>(std::floor(bars));
+  const Tick b = mm.barStart(n);
+  return static_cast<float>(b) + (bars - static_cast<float>(n)) * static_cast<float>(mm.barLenAt(b));
+}
+
 // J-111d: dev anchors. "<window> <kind> <a> <b> <cx> <cy>"; a / b may be chN (the id of
 // channel N), mxN (mixer track N), pat (the current pattern), sel (the selected channel);
 // cx / cy may be in bars ("2.5bar").
@@ -3301,7 +3312,9 @@ bool devAnchor(App& a, const std::vector<std::string>& args, size_t at, Presence
   auto coord = [&](const std::string& v) {  // "2.5bar": bars of the song (ticks)
     char* end = nullptr;
     const float f = std::strtof(v.c_str(), &end);
-    return end && std::string(end) == "bar" ? f * static_cast<float>(s.barTicks()) : f;
+    if (!end || std::string(end) != "bar") return f;
+    // K-193: the playlist is song time (the meter map); other windows keep the meter at the start.
+    return p.window == "Playlist" ? songBarsToTicks(s, f) : f * static_cast<float>(s.barTicks());
   };
   p.cx = coord(args[at + 4]);
   p.cy = coord(args[at + 5]);
@@ -3866,8 +3879,9 @@ void demoFrame(App& a, double now) {
         cl.kind = ClipKind::Audio;
         cl.source = ch;
         cl.track = 2;
-        cl.start = x.barTicks();
-        cl.length = x.barTicks() * 4;
+        const MeterMap mm(x);  // K-193: bar 2, four bars long, in the song's meters
+        cl.start = mm.barStart(1);
+        cl.length = mm.addBars(cl.start, 4) - cl.start;
         x.playlist.push_back(cl);
       });
       d.session->fileBudget = 300;  // the file trickles in: the placeholder shows its progress
@@ -3892,7 +3906,7 @@ void demoFrame(App& a, double now) {
         p.y = 0.38f;
         p.kind = canchor::PlaylistTrack;
         p.a = 1;
-        p.cx = static_cast<float>(d.doc.song().barTicks()) * (2.5f + 0.5f * static_cast<float>(std::sin(now * 0.8)));
+        p.cx = songBarsToTicks(d.doc.song(), 2.5f + 0.5f * static_cast<float>(std::sin(now * 0.8)));  // K-193
         p.cy = 0.5f;
       }
       d.session->setPresence(p);

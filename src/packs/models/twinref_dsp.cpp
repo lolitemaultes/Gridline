@@ -323,6 +323,7 @@ struct Voice {
   float dm1[4] = {}, dm2[4] = {}, dc[4] = {}, damp[4] = {}, sharp[4] = {}, decT[4] = {}, dec[4] = {}, gainT[4] = {}, gain[4] = {};
   float noise = 0, dcK1 = 0, dcK2 = 0;
   int quiet = -1;
+  VoiceExpr vx;  // K-193: the note's own pressure and timbre response
 };
 
 void resetVoice(Voice& v) {
@@ -500,6 +501,8 @@ struct TwinRef::Engine {
   float out[2 * kBlock] = {};
   int readPos = kBlock;
   int64_t quiet = INT64_MAX / 2;  // frames since the output was last audible
+  TwinRef::ExprFn exprFn = nullptr;  // K-193
+  const void* exprCtx = nullptr;
 
   Engine() {
     lineMem.reset(static_cast<float*>(std::calloc(static_cast<size_t>(kLineVoices) * 6 * kLine, sizeof(float))));
@@ -871,8 +874,9 @@ struct TwinRef::Engine {
       float sumA = 0, sumB = 0;
       bool any = false;
       for (int k = 0; k < 4; ++k) {
-        const LaneOut o = strings(*lane[k]);
+        LaneOut o = strings(*lane[k]);
         if (!o.on) continue;
+        if (lane[k]->vx.on) lane[k]->vx.apply(o.a, o.b);  // K-193
         if (!any) sumA = o.a, sumB = o.b, any = true;
         else sumB = sumB + o.b, sumA = sumA + o.a;
       }
@@ -1210,6 +1214,11 @@ void TwinRef::kill() {
   e.quiet = INT64_MAX / 2;
 }
 
+void TwinRef::setExpr(ExprFn fn, const void* ctx) {
+  e_->exprFn = fn;
+  e_->exprCtx = ctx;
+}
+
 bool TwinRef::active() const {
   const Engine& e = *e_;
   if (e.nQueue > 0) return true;
@@ -1223,6 +1232,9 @@ void TwinRef::render(float* L, float* R, int n) {
   for (int i = 0; i < n;) {
     if (e.readPos >= kBlock) {
       e.applyEvents();
+      if (e.exprFn)  // K-193: each sounding note's own response, once per engine block
+        for (int v = 0; v < kLineVoices; ++v)
+          if (e.voices[v].active) e.exprFn(e.exprCtx, e.voices[v].vx, e.voices[v].id);
       float* oL = e.out;
       float* oR = e.out + kBlock;
       std::fill(e.out, e.out + 2 * kBlock, 0.0f);

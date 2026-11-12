@@ -56,7 +56,18 @@ many beats it has. The next bar starts at the change.
 - The position display and the meter display in the top bar.
 - The metronome and the count-in. Compound meters click every eighth, with a medium accent on each
   group of three and the strong accent on the bar.
-- The bar position and meter sent to plugins.
+- The bar position and meter sent to plugins, from the first sample of each change.
+- Live mode: the launch grid, the metronome and the count-in. **Next beat**, **Next 2 beats**,
+  **Next 4 beats**, **Next half beat** and **Next step** count beats of the meter at the
+  transport position (in 7/8 a beat is an eighth), and never step past the next change.
+- The tools that place or size things in the playlist: chopping clips every bar or beat,
+  duplicating and pasting by whole bars, painting and dropping clips, a marker every few bars, a
+  new pattern on a track, the free spot after a clip, merged pattern clips, stutters, imported
+  loops, recorded automation clips and a marker loop past the song end use the bars and beats of
+  the section they are in. A pattern made this way at a change takes its meter, as new patterns
+  do. The automation clip editor's grid, ruler and snap follow the meter too.
+- Tools that work on a pattern's notes (chords, riffs, quantize, keeping notes by beat or bar)
+  use the pattern's own meter.
 - WAV export: each change becomes a cue point named by its meter ("6/8", or "Bridge (6/8)").
 
 ## Patterns and meters
@@ -64,7 +75,10 @@ many beats it has. The next bar starts at the change.
 A pattern follows the song's meter by default. Give it a meter of its own from **Meter** in the
 pattern menus (the main **Patterns** menu, or right-click a pattern in the pattern selector or the
 playlist's picker).
-The piano roll and the channel rack show a pattern in its own meter.
+The piano roll and the channel rack show a pattern in its own meter. The piano roll's toolbar
+shows that meter beside the snap choice; it lights up when the pattern's first clip starts in a
+section with a different meter. Click it to give the pattern a meter of its own or the meter of
+that section.
 
 New patterns get steps per bar that keep a step a sixteenth: 16 in 4/4, 14 in 7/8, 12 in 6/8.
 Existing patterns keep their steps.

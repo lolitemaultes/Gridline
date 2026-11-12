@@ -511,7 +511,8 @@ void drawPatternAutomationLane(App& a, ImDrawList* dl, ImVec2 mn, ImVec2 mx, Obj
     else
       how = std::string("(") + i18n::tr(drawShapeName(drawShape)) + ": " +
             i18n::tr("drag draws \xC2\xB7 right-drag: straight line \xC2\xB7 Ctrl+drag: select \xC2\xB7 drag a selected point to move \xC2\xB7 right-click a point: its menu)");
-    a.setHint(paramDisplayName(s, pid) + ": " + fmtValue(s, pid, dispAt(m.y)) + " at " + timeline::rulerLabel(s, std::max<Tick>(0, static_cast<Tick>(t)), grid) +
+    const MeterMap pm = MeterMap::forPattern(s, p);  // K-193: pattern time, the pattern's own meter
+    a.setHint(paramDisplayName(s, pid) + ": " + fmtValue(s, pid, dispAt(m.y)) + " at " + timeline::rulerLabel(pm, std::max<Tick>(0, static_cast<Tick>(t)), grid) +
               "   " + how);
     if (hoverPoint >= 0 && !eraseTool && !passive) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
   }

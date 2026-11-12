@@ -13,6 +13,13 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 
 ### Changed
 
+- **MPE pressure and timbre now act note by note.** On an MPE controller, pressing harder on one key raises that note alone, and sliding one finger up or down brightens that note alone, on nearly every built-in instrument; the notes you hold beside it stay as they are. Notes' pressure and timbre lanes play the same way. A released note keeps its last values while it fades. Drum kits, the decks and scratch players, the mono step bass, Plasma and instruments playing their own sequence still answer pressure and timbre as a whole. Notes without expression sound exactly as before. See [docs/mpe.md](docs/mpe.md).
+- **Everything follows the meter in force.** The live launch grid counts beats of the meter at the transport position, and the metronome, count-in and plugin bar position in Live mode follow the song's meter changes too. In the playlist, chopping clips every bar or beat, duplicating and pasting by whole bars, painting and dropping clips, adding a marker every few bars, placing a new pattern on a track, finding a free spot after a clip, merging pattern clips, stutters, imported loops and recorded automation clips all use the bars and beats of the section they are in, and so do the automation clip editor's grid, ruler and snap, the browser's drop hint and the project preview's bar count. Tools that work on a pattern's notes (chord progressions, the riff and random tools, keeping notes by beat or bar) use the pattern's own meter. The piano roll's toolbar shows the pattern's meter, lit when its first clip starts in a section with another meter; click it to change the meter. Songs without meter changes behave exactly as before.
+
+### Fixed
+
+- **Plugins see a meter change on its first sample.** A meter change in the middle of an audio block used to reach plugins from the next block; the block is now split at the change, so a plugin's bar and time signature are right from the change on.
+
 - **Plasma's blocks have a full coloured border.** Every block in the Synth panels, the Effects lanes, the Play page and the Patch view, and the large editor a block opens into, now has a border in its colour all the way round instead of a coloured line along its top only. A selected block shows a heavier border with a soft glow, and a block that is turned off shows its border quieter.
 
 ### Fixed

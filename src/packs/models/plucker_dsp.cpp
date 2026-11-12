@@ -25,6 +25,7 @@ constexpr int kLine = 8192;
 class PluckerGen final : public Generator {
  public:
   PluckerGen() : v_(new Voice[kVoices]) {}
+  bool perVoiceExpression() const override { return true; }  // K-193
   bool active() const override {
     for (int i = 0; i < kVoices; ++i)
       if (v_[i].on) return true;
@@ -51,6 +52,7 @@ class PluckerGen final : public Generator {
     uint64_t age = 0;
     Loop s[2];
     double silent = 0;
+    VoiceExpr vx;  // K-193: the note's own pressure and timbre response
   };
 
   void configure(const PluginState& st, const ChannelAux&, const ProcessContext& ctx) override {
@@ -158,6 +160,7 @@ class PluckerGen final : public Generator {
       Voice& v = v_[vi];
       if (!v.on) continue;
       const float amp = 0.5f * (0.25f + 0.75f * v.vel);
+      exprVoice(v.vx, v.id);
       for (int i = 0; i < n; ++i) {
         if (v.slide.active()) {  // K-144
           v.slide.advance(v.note);
@@ -184,8 +187,15 @@ class PluckerGen final : public Generator {
         }
         if (gate_ && !v.held) v.env *= relCoef;
         const float e = v.env * amp;
-        L[i] += out[0] * e;
-        R[i] += (widen_ ? out[1] : out[0]) * e;
+        if (v.vx.on) {  // K-193: the note's own response (separate branch keeps other notes bit-exact)
+          float l = out[0] * e, r = (widen_ ? out[1] : out[0]) * e;
+          v.vx.apply(l, r);
+          L[i] += l;
+          R[i] += r;
+        } else {
+          L[i] += out[0] * e;
+          R[i] += (widen_ ? out[1] : out[0]) * e;
+        }
         v.silent = std::fabs(out[0]) * e < 1e-5f ? v.silent + 1 : 0;
         if (v.silent > sr_ * 0.05 || v.env < 1e-4f) {  // on the voice's own clock (J-30: not at a block end)
           v.on = false;

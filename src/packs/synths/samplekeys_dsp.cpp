@@ -28,6 +28,7 @@ class SampleKeysGen final : public Generator {
       if (v.on) return true;
     return tail_ > 0;
   }
+  bool perVoiceExpression() const override { return true; }  // K-193
 
  protected:
   static constexpr int kVoices = 32;
@@ -42,6 +43,8 @@ class SampleKeysGen final : public Generator {
     double n = 60, off = 0;
     PitchGlide slide;  // K-144: glides retune the voice every 32 samples
     uint32_t gt = 0;
+    uint32_t note = 0;  // K-193: the note the voice started with (id is cleared on release)
+    VoiceExpr vx;       // K-193: the note's own pressure and timbre response
   };
 
   void configure(const PluginState& st, const ChannelAux& aux, const ProcessContext& ctx) override {
@@ -105,6 +108,7 @@ class SampleKeysGen final : public Generator {
     if (si >= k.samples.size()) return;
     *v = Voice{};
     v->on = true, v->id = id, v->s = &k.samples[si], v->n = n;
+    v->note = id;  // K-193
     const double kk = std::round((n - 60.0) * (n - 60.0));
     v->off = tune_ + (std::fmod(kk, 13.0) - 6.5) * detune_;
     if (n > 60) v->off += kk * stretch_;
@@ -165,6 +169,8 @@ class SampleKeysGen final : public Generator {
     const int ch = k.channels;
     const int16_t* data = k.data.data();
     bool any = false;
+    for (auto& v : v_)
+      if (v.on) exprVoice(v.vx, v.note);  // K-193
     for (int i = 0; i < n; ++i) {
       double ol = 0, orr = 0;
       for (auto& v : v_) {
@@ -199,8 +205,15 @@ class SampleKeysGen final : public Generator {
           v.prev[c] = s[c];
         }
         v.env *= v.mul;
-        ol += v.vol * v.gL * v.y[0];
-        orr += v.vol * v.gR * v.y[1];
+        if (v.vx.on) {  // K-193: the note's own level and brightness, before the shared master
+          double a = v.vol * v.gL * v.y[0], b = v.vol * v.gR * v.y[1];
+          v.vx.apply(a, b);
+          ol += a;
+          orr += b;
+        } else {
+          ol += v.vol * v.gL * v.y[0];
+          orr += v.vol * v.gR * v.y[1];
+        }
         if (v.env < 1e-4) v.on = false;
         any = true;
       }

@@ -2,6 +2,7 @@
 #include "ClipLoop.h"
 #include "NoteBend.h"
 #include "ChordTools.h"
+#include "MeterEdit.h"
 #include "TrackModes.h"
 #include <algorithm>
 #include <cctype>
@@ -664,7 +665,11 @@ ObjectId mergeClips(Document& d, const std::set<ObjectId>& clips) {
     np.name = x.pattern(sel[0].pattern)->name + " (merged)";
     np.color = x.pattern(sel[0].pattern)->color;
     np.stepsPerBar = 16;
-    Tick bar = std::max<Tick>(1, x.barTicks());
+    {  // K-193: the meter of the section where the merged clip starts, as new patterns get
+      int steps = 16;
+      meter::newPatternMeter(x, lo, np.meterNum, np.meterDen, steps);
+    }
+    Tick bar = std::max<Tick>(1, x.patternBarTicks(np));
     np.bars = static_cast<int>(std::clamp<Tick>((hi - lo + bar - 1) / bar, 1, kMaxPatternBars));  // longer content still plays
     for (const auto& c : sel) {
       const Pattern& p = *x.pattern(c.pattern);

@@ -84,9 +84,10 @@ struct GridDef { const char* name; double beats; };
 const GridDef kGrids[] = {{"1/16 beat", 1.0 / 16}, {"1/8 beat", 1.0 / 8}, {"1/6 beat", 1.0 / 6}, {"1/3 beat", 1.0 / 3},
                           {"1/4 beat (step)", 0.25}, {"1/2 beat", 0.5}, {"Beat", 1.0}, {"2 beats", 2.0}, {"Bar", 4.0}};
 constexpr int kGridCount = static_cast<int>(sizeof kGrids / sizeof kGrids[0]);
+Tick toolBarTicks(const Song& s);
 Tick gridTicks(const Song& s, double idx) {
   const GridDef& g = kGrids[std::clamp(static_cast<int>(std::lround(idx)), 0, kGridCount - 1)];
-  double beats = g.beats == 4.0 ? static_cast<double>(s.barTicks()) / s.ppq : g.beats;
+  double beats = g.beats == 4.0 ? static_cast<double>(toolBarTicks(s)) / s.ppq : g.beats;
   return std::max<Tick>(1, static_cast<Tick>(std::llround(beats * s.ppq)));
 }
 const char* gridName(double idx) { return kGrids[std::clamp(static_cast<int>(std::lround(idx)), 0, kGridCount - 1)].name; }
@@ -118,6 +119,11 @@ struct Session {
 };
 Session T;
 uint64_t sessionCounter = 1;
+// K-193: the tools edit a pattern's notes: its bar is the pattern's own (else the song's at the start).
+Tick toolBarTicks(const Song& s) {
+  const Pattern* p = s.pattern(T.pat);
+  return p ? s.patternBarTicks(*p) : s.barTicks();
+}
 
 ParamDesc desc(double lo, double hi, double def, ParamScale sc = ParamScale::Linear) {
   ParamDesc d;
@@ -309,7 +315,7 @@ void quantizeBody(App& a) {
         for (int g2 : {groove::kGrid8th, groove::kGrid16th, groove::kGrid32nd})
           if (std::fabs(groove::cellTicks(s, nullptr, g2) - want) < std::fabs(groove::cellTicks(s, nullptr, grid) - want)) grid = g2;
         const double cell = groove::cellTicks(s, nullptr, grid);
-        groove::Preset g = groove::extract(groove::onsetsOfNotes(gp->notes.at(gc)), cell, static_cast<double>(s.barTicks()), grid, 16,
+        groove::Preset g = groove::extract(groove::onsetsOfNotes(gp->notes.at(gc)), cell, static_cast<double>(s.patternBarTicks(*gp)), grid, 16,
                                            "Notes of " + s.channels[static_cast<size_t>(S.qGrooveChannel)].name);
         menus::openPrompt(i18n::tr("Save the groove as a swing preset"), g.name, [&a, g](const std::string& name) {
           std::string err;
@@ -553,7 +559,7 @@ void randomizeBody(App& a) {
   if (ui::TextButton("Replace notes", S.rndReplace, 0, "Replace the notes in the generated range (off: add to them)")) S.rndReplace = !S.rndReplace;
   tools::RandomOpts o = S.rnd;
   o.step = gridTicks(s, S.rndGrid);
-  o.span = s.barTicks() * S.rndBars;
+  o.span = toolBarTicks(s) * S.rndBars;  // K-193: the pattern's bars
   o.from = 0;
   auto gen = tools::randomNotes(o);
   tools::NoteSel gs(gen.size(), true);
@@ -680,7 +686,7 @@ void riffBody(App& a) {
   ImGui::SameLine();
   if (ui::TextButton("Replace notes", S.riffReplace, 0, "Replace the notes in the riff's range (off: add to them)")) S.riffReplace = !S.riffReplace;
   tools::RiffOpts o = S.riff;
-  o.barTicks = s.barTicks();
+  o.barTicks = toolBarTicks(s);  // K-193: the pattern's bar
   o.step = gridTicks(s, S.riffGrid);
   auto gen = tools::generateRiff(o);
   const Tick span = o.barTicks * o.bars;

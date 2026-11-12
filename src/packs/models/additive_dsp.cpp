@@ -87,6 +87,7 @@ class AdditiveGen final : public Generator {
       if (voices_[i].on) return true;
     return fx_.ringing() || compTail_ > 0;
   }
+  bool perVoiceExpression() const override { return true; }  // K-193
 
  protected:
   struct Osc {
@@ -109,6 +110,7 @@ class AdditiveGen final : public Generator {
     Osc osc[kAdMaxOsc];
     Osc sub[3];
     Osc self;  // resonance self-oscillation
+    VoiceExpr vx;  // K-193: the note's own pressure and timbre response
   };
 
   void configure(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx) override {
@@ -550,6 +552,13 @@ class AdditiveGen final : public Generator {
           l += mono[c][j] * panL_[c];
           r += mono[c][j] * panR_[c];
         }
+        if (v.vx.on) {  // K-193: the note's own response (separate branch keeps other notes bit-exact)
+          float ol = l * e * vol_ * (tremolo_ > 0 ? tl : 1.0f), orr = r * e * vol_ * (tremolo_ > 0 ? trr : 1.0f);
+          v.vx.apply(ol, orr);
+          bl[j] += ol;
+          br[j] += orr;
+          continue;
+        }
         bl[j] += l * e * vol_ * (tremolo_ > 0 ? tl : 1.0f);
         br[j] += r * e * vol_ * (tremolo_ > 0 ? trr : 1.0f);
       }
@@ -588,6 +597,8 @@ class AdditiveGen final : public Generator {
   }
 
   void render(float* L, float* R, int n) override {
+    for (int i = 0; i < kVoices; ++i)  // K-193: each sounding note's own response, once per block
+      if (voices_[i].on) exprVoice(voices_[i].vx, voices_[i].id);
     int pos = 0;
     while (pos < n) {
       if (ctr_ == 0) {

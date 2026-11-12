@@ -21,6 +21,7 @@
 #pragma once
 #include <cstdint>
 #include <memory>
+#include "../../engine/Generators.h"
 #include "strings.h"
 
 namespace gl::packs::models::strs {
@@ -44,6 +45,10 @@ class TwinRef {
   bool active() const;
   // Adds into L / R.
   void render(float* L, float* R, int n);
+  // K-193: per-note pressure and timbre response. Once per engine block, `fn` refreshes each
+  // sounding voice's response for its note id (the voices run at 48 kHz); null turns it off.
+  using ExprFn = void (*)(const void* ctx, VoiceExpr& vx, uint32_t id);
+  void setExpr(ExprFn fn, const void* ctx);
 
   struct Engine;
 

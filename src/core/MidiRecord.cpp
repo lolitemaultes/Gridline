@@ -187,10 +187,10 @@ void NoteRecorder::commitAutomation(Document& doc) {
     if (clips) {
       // A new automation clip from the bar of the first move.
       const Song& s = doc.song();
-      const Tick bar = std::max<Tick>(1, s.barTicks());
+      const MeterMap mm(s);
       const Tick first = static_cast<Tick>(std::floor(pts.front().first));
       const Tick last = static_cast<Tick>(std::ceil(pts.back().first));
-      const Tick start = std::max<Tick>(0, MeterMap(s).barStartAt(std::max<Tick>(0, first)));  // K-179
+      const Tick start = std::max<Tick>(0, mm.barStartAt(std::max<Tick>(0, first)));  // K-179
       std::string name = paramDisplayName(s, pid);
       doc.editSong("record automation", [&](Song& so) {
         AutomationClip ac;
@@ -226,7 +226,7 @@ void NoteRecorder::commitAutomation(Document& doc) {
         c.source = ac.id;
         c.track = track;
         c.start = start;
-        c.length = std::max<Tick>(bar, (last - start + bar) / bar * bar);
+        c.length = mm.nextBar(std::max(start, last)) - start;  // K-193: to the bar line after the last move, in the meter in force
         ac.points = autoedit::thin(ac.points, kRecordThin);  // K-171: a few points, within 0.4 %
         so.automations.push_back(std::move(ac));
         so.playlist.push_back(c);

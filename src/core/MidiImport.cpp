@@ -280,7 +280,7 @@ MidiImportResult importMidiIntoSong(Song& song, const MidiFileData& midiIn, cons
     res.error = "the MIDI file has no notes on the selected tracks / channels";
     return res;
   }
-  const Tick bar = std::max<Tick>(1, song.barTicks());
+  const Tick bar = std::max<Tick>(1, song.patternBarTicks(pat));  // K-193: the pattern's own bar
   pat.bars = static_cast<int>(std::max<Tick>(1, (maxEnd + bar - 1) / bar));
   pat.stepsPerBar = 16;
   if (o.splitAtMeterChanges && o.placeInPlaylist && !meterStarts.empty())
@@ -320,7 +320,7 @@ int insertMidiNotes(Song& song, ObjectId pattern, ObjectId channel, Tick at, con
   }
   std::stable_sort(dst.begin(), dst.end(), [](const Note& a, const Note& b) { return a.start != b.start ? a.start < b.start : a.pitch < b.pitch; });
   if (dst.empty()) p->notes.erase(channel);
-  const Tick bar = std::max<Tick>(1, song.barTicks());
+  const Tick bar = std::max<Tick>(1, song.patternBarTicks(*p));  // K-193: the pattern's own bar
   p->bars = std::max(p->bars, static_cast<int>((maxEnd + bar - 1) / bar));
   return added;
 }

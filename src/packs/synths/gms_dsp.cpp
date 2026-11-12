@@ -479,6 +479,7 @@ class GmsGen final : public Generator {
       if (v.on) return true;
     return fx_.ringing();
   }
+  bool perVoiceExpression() const override { return true; }  // K-193
 
  protected:
   struct Voice {
@@ -501,6 +502,7 @@ class GmsGen final : public Generator {
     // Noise source of this voice (J-30: one generator shared by all voices handed its
     // values out in an order that depended on how blocks were split).
     dsp::Noise rng;
+    VoiceExpr vx;  // K-193: the note's own pressure and timbre response
   };
 
   void configure(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx) override {
@@ -558,6 +560,7 @@ class GmsGen final : public Generator {
       Voice& v = voices_[0];
       const bool legato = v.on && v.held;
       v.id = id;
+      if (v.on) v.vx.id = id;  // K-193: the sounding voice's response moves on smoothly
       v.target = pitch;
       v.note = pitch;
       v.vel = vel;
@@ -769,8 +772,15 @@ class GmsGen final : public Generator {
           out[c] = static_cast<float>(y * (1 + kRes * 0.25));
         }
         const float a = static_cast<float>(v.amp * v.amp * lvl * volMod) * volume_;
-        L[i0 + j] += out[0] * a;
-        R[i0 + j] += out[1] * a;
+        if (v.vx.on) {  // K-193: the note's own level and brightness
+          float el = out[0] * a, er = out[1] * a;
+          v.vx.apply(el, er);
+          L[i0 + j] += el;
+          R[i0 + j] += er;
+        } else {
+          L[i0 + j] += out[0] * a;
+          R[i0 + j] += out[1] * a;
+        }
         if (!v.on) return;
       }
     }
@@ -778,6 +788,8 @@ class GmsGen final : public Generator {
 
   void render(float* L, float* R, int n) override {
     float bl[256], br[256];
+    for (auto& v : voices_)
+      if (v.on) exprVoice(v.vx, v.id);  // K-193
     for (int pos = 0; pos < n; pos += 256) {
       const int len = std::min(256, n - pos);
       std::fill(bl, bl + len, 0.0f);

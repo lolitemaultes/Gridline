@@ -167,6 +167,7 @@ class WarmGen final : public Generator {
       if (v.on) return true;
     return false;
   }
+  bool perVoiceExpression() const override { return true; }  // K-193
 
  protected:
   struct Voice {
@@ -184,6 +185,7 @@ class WarmGen final : public Generator {
     double lfoRnd = 0;
     uint32_t noise = 22222;
     uint32_t lfoCycle = 0;
+    VoiceExpr vx;  // K-193: the note's own pressure and timbre response
   };
 
   void configure(const PluginState& s, const ChannelAux&, const ProcessContext& ctx) override {
@@ -314,6 +316,8 @@ class WarmGen final : public Generator {
 
   void render(float* L, float* R, int n) override {
     const double lfoInc = 1.0 / (2.0 * lfoHalf_);
+    for (auto& v : voices_)
+      if (v.on) exprVoice(v.vx, v.id);  // K-193
     for (int i = 0; i < n; ++i) {
       double out = 0;
       for (auto& v : voices_) {
@@ -382,7 +386,13 @@ class WarmGen final : public Generator {
         }
         v.ampSmooth += (a * a - v.ampSmooth) * 0.03 * 44100.0 / sr_;
         if (v.ampSmooth < 1e-9) v.ampSmooth = 0;
-        out += sig * v.ampSmooth * velLevel_ * v.vel;
+        if (v.vx.on) {  // K-193: the note's own level and brightness
+          double y = sig * v.ampSmooth * velLevel_ * v.vel;
+          v.vx.apply(y);
+          out += y;
+        } else {
+          out += sig * v.ampSmooth * velLevel_ * v.vel;
+        }
       }
       out *= 0.7;
       double left = out;

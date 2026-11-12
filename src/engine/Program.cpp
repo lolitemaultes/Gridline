@@ -867,6 +867,18 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
   prog->barTicks = song.barTicks();
   prog->beatTicks = song.beatTicks();
   prog->meter.build(song);
+  if (!prog->meter.constant()) {  // K-193: plugins that read the meter get blocks split at its changes
+    auto reads = [](const PluginState& s) {
+      if (isHostedType(s.type)) return true;
+      if (s.type != "gl.patcher" && s.type != "gl.patcherfx") return false;
+      for (const char* k : {"vst3:", "clap:", "vst2:", "au:", "lv2:"})  // a patch that hosts a plugin
+        if (s.data.find(k) != std::string::npos) return true;
+      return false;
+    };
+    for (const auto& c : song.channels) prog->meterReaders = prog->meterReaders || reads(c.plugin);
+    for (const auto& m : song.mixer)
+      for (const auto& es : m.slots) prog->meterReaders = prog->meterReaders || reads(es.plugin);
+  }
   prog->songEnd = song.lengthTicks();
   Tick bar = std::max<Tick>(1, prog->barTicks);
   prog->songLoopEnd = std::max(bar, (prog->songEnd + bar - 1) / bar * bar);

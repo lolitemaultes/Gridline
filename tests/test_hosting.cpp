@@ -1018,6 +1018,41 @@ void testTransport() {
   }
 }
 
+// K-193: a hosted plugin sees a meter change from the change's first sample: the engine splits
+// the block there, so the call that reports the new meter starts exactly on the change.
+void testMeterChangeSplit() {
+  auto* cp = probe<GridlineClapProbe>(clapBinary(), "gridline_clap_probe");
+  expect(cp != nullptr, "meter split: CLAP probe reachable");
+  if (!cp) return;
+  Document d(makeEmptySong());
+  d.addChannel("clap", kClapSynth);
+  Song s = d.song();
+  s.tempo = 120;
+  Marker seven, six;
+  seven.pos = 384, seven.timeSigNum = 7, seven.timeSigDen = 8;  // beat 4
+  six.pos = 384 + 2 * 336, six.timeSigNum = 6, six.timeSigDen = 8;  // beat 11
+  s.markers = {seven, six};
+  Clip c;
+  c.id = s.allocateId();
+  c.pattern = s.patterns[0].id;
+  c.start = 1400;
+  c.length = 96;
+  s.playlist.push_back(c);
+  {
+    ProgramBuilder pb;
+    expect(pb.build(s)->meterReaders, "meter split: a hosted plugin in a song with meter changes asks for split blocks");
+  }
+  cp->tsigChanges = 0, cp->lastTsig = 0;
+  RenderOptions o;
+  o.sampleRate = 44100;
+  renderSong(s, o);
+  const double spb = 1.0 / 22050.0;  // one sample in beats at 120 BPM, 44.1 kHz
+  expect(cp->tsigChanges >= 3 && cp->tsigNum[0] == 4 && cp->tsigNum[1] == 7 && cp->tsigNum[2] == 6,
+         "meter split: the plugin sees 4/4, then 7/8, then 6/8");
+  expect(std::fabs(cp->tsigBeats[1] - 4.0) <= spb && std::fabs(cp->tsigBeats[2] - 11.0) <= spb,
+         "meter split: each new meter arrives on the change's first sample");
+}
+
 // J-109: Stop releases a hosted instrument's notes (note-offs for every note
 // sent, sustain off, All Notes Off on every MIDI channel); the second Stop
 // (panic) adds All Sound Off. The engine plays the plugin as the app does.
@@ -2061,6 +2096,7 @@ int main() {
   testSandbox();
   testWrapper();
   testTransport();
+  testMeterChangeSplit();
   testRenderWorker();
   testSidechainRender();
   testStopReleasesHosted();

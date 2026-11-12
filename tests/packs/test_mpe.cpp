@@ -207,7 +207,7 @@ void testEvent(const std::string& sine) {
     expect(std::fabs(rms(r.L, kSr / 4, kSr / 2) / rms(plain.L, kSr / 4, kSr / 2) - 2.0) < 0.1, "a note's starting pressure applies from its start");
   }
   {
-    // Two notes: the generic response follows the stronger one; releasing it hands over.
+    // Two notes: each voice follows its own note's pressure (K-193: per note, not the strongest).
     Gen r("gl.sampler", sine);
     r.g->noteOn(1, 60, 0.8f, 0);
     r.g->noteOn(2, 67, 0.8f, 0);
@@ -217,7 +217,8 @@ void testEvent(const std::string& sine) {
     r.g->expr(1, ExprDim::Pressure, 0.2f, 0);
     size_t at = r.at();
     r.run(kSr / 4);
-    expect(std::fabs(rms(r.L, at + kSr / 16, r.at()) / b - 2.0) < 0.12, "two notes: the strongest pressure leads");
+    const double each = std::sqrt((std::pow(2.0, 0.4) + 4.0) / 2.0);  // +1.2 dB and +6 dB, summed in power
+    expect(std::fabs(rms(r.L, at + kSr / 16, r.at()) / b - each) < 0.12, "two notes: each note follows its own pressure");
     expect(r.g->noteExpr(1, ExprDim::Pressure) > 0.19f && r.g->noteExpr(2, ExprDim::Pressure) > 0.99f, "each note keeps its own values");
   }
   {

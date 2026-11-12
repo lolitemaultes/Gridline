@@ -271,6 +271,9 @@ class MultiSamplerGen final : public Generator {
   }
 
  protected:
+  // K-193: the zone voices respond per note (an SFZ map takes pressure and timbre itself, so they
+  // get no level / brightness targets then).
+  bool perVoiceExpression() const override { return true; }
   struct Voice {
     bool on = false, held = false, looping = false, fading = false;
     uint32_t id = 0;
@@ -286,6 +289,7 @@ class MultiSamplerGen final : public Generator {
     float gL = 1, gR = 1, lfoAmp = 1, fade = 1, fadeStep = 0;
     int ftype = FiltOff;
     uint32_t rng = 1;
+    VoiceExpr vx;  // K-193: the note's own pressure and timbre response
   };
 
   void configure(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx) override {
@@ -602,6 +606,8 @@ class MultiSamplerGen final : public Generator {
   }
 
   void render(float* L, float* R, int n) override {
+    for (auto& v : voices_)
+      if (v.on) exprVoice(v.vx, v.id);  // K-193
     for (int off = 0; off < n; off += kChunk) {
       int m = std::min(kChunk, n - off);
       float vol[kChunk];
@@ -686,8 +692,15 @@ class MultiSamplerGen final : public Generator {
         }
       }
       float g = static_cast<float>(a) * vg * v.lfoAmp * v.fade * edge * vol[i];
-      L[i] += g * v.gL * l;
-      R[i] += g * v.gR * r;
+      if (v.vx.on) {  // K-193: the note's level / brightness after the envelope, before the pan
+        float el = g * l, er = g * r;
+        v.vx.apply(el, er);
+        L[i] += v.gL * el;
+        R[i] += v.gR * er;
+      } else {
+        L[i] += g * v.gL * l;
+        R[i] += g * v.gR * r;
+      }
       // Advance and loop.
       v.pos += v.rate * v.dir;
       if (v.looping) {

@@ -56,6 +56,7 @@ class FmDuoGen final : public Generator {
       if (v.on) return true;
     return false;
   }
+  bool perVoiceExpression() const override { return true; }  // K-193
 
  protected:
   static constexpr int kVoices = 16;
@@ -72,6 +73,7 @@ class FmDuoGen final : public Generator {
     double carPh = 0, attEnv = 0, decEnv = 1;
     Mod m[2];
     InsVoice ins;  // channel instrument envelopes / filter (J-33)
+    VoiceExpr vx;  // K-193: the note's own pressure and timbre response
   };
 
   void configure(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx) override {
@@ -154,6 +156,8 @@ class FmDuoGen final : public Generator {
 
   void render(float* L, float* R, int n) override {
     blockPos_ += n;
+    for (auto& v : voices_)
+      if (v.on) exprVoice(v.vx, v.id);  // K-193
     for (int i = 0; i < n; ++i) {
       lfoPh_ += lfoInc_;
       if (lfoPh_ >= 1.0) lfoPh_ -= 1.0;
@@ -195,7 +199,8 @@ class FmDuoGen final : public Generator {
         const double th = dsp::kTwoPi * v.carPh + pm;
         const double car = std::sin(th + 2.0 * shape_ * std::sin(th));
         const double velAmp = 0.25 + 0.75 * v.vel;
-        const double o = 0.3 * velAmp * amp * (car + thru_ * thru);
+        double o = 0.3 * velAmp * amp * (car + thru_ * thru);
+        if (v.vx.on) v.vx.apply(o);  // K-193
         if (v.ins.active()) {
           float l = static_cast<float>(o), r = static_cast<float>(o);
           v.ins.process(l, r);

@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include "../core/Automation.h"
+#include "../core/Meter.h"
 #include "../core/PluginParams.h"
 #include "../engine/ClipOps.h"
 #include "../packs/PacksUi.h"
@@ -94,7 +95,7 @@ void devDemo(App& a) {
       RecordedTake g;
       g.mixer = s.mixer[2].id;
       g.pass = pass;
-      g.startTick = static_cast<double>(2 * s.barTicks());
+      g.startTick = static_cast<double>(MeterMap(s).barStart(2));  // K-193: bar 3 of the song's meters
       const auto gn = static_cast<size_t>(8 * spb * sr * (pass == 2 ? 0.75 : 1.0));
       g.L.resize(gn);
       g.R.resize(gn);
@@ -118,15 +119,18 @@ void devDemo(App& a) {
       vc->fadeIn = 0.25, vc->fadeInManual = true;
       vc->fadeOut = 0.6, vc->fadeOutManual = true;
       const ObjectId g = s.clip(r.clips[1])->takeGroup;
-      compTakes(s, g, 2 * s.barTicks() + s.beatTicks() * 2, 2 * s.barTicks() + s.beatTicks() * 4, 0);
+      const MeterMap mm(s);  // K-193: beats 3-4 of bar 3 in the meter in force there
+      const Tick b3 = mm.barStart(2), beat = mm.beatLenAt(b3);
+      compTakes(s, g, b3 + beat * 2, b3 + beat * 4, 0);
       if (mode == "props") propsClip = r.clips[0];
     }
   });
   a.clipProps = propsClip;
   const Song& s = a.doc.song();
   if (s.mixer.size() > 2) a.selMixer = s.mixer[2].id;
-  a.playlist.selStart = 2 * s.barTicks();
-  a.playlist.selEnd = 4 * s.barTicks();
+  const MeterMap mm(s);  // K-193: bars 3-4 of the song's meters
+  a.playlist.selStart = mm.barStart(2);
+  a.playlist.selEnd = mm.barStart(4);
   a.recordArmed = true;
   a.engine.setMode(PlayMode::Song);
 }
@@ -596,9 +600,28 @@ void drawClipProperties(App& a) {
 
   ImGui::Dummy(ImVec2(0, theme::kS1));
   ui::Label("SLICE");
-  if (ui::TextButton("At beats")) a.doc.editSong("slice clip", [&](Song& x) { sliceClipAtGrid(x, id, s.beatTicks()); });
+  // K-193: with meter changes, at the beat / bar lines of the meter map.
+  auto sliceAtLines = [&](bool bars) {
+    a.doc.editSong("slice clip", [&](Song& x) {
+      const MeterMap mm(x);
+      if (mm.constant()) {
+        sliceClipAtGrid(x, id, bars ? x.barTicks() : x.beatTicks());
+        return;
+      }
+      const Clip* c = x.clip(id);
+      if (!c) return;
+      const Tick end = c->start + x.clipLength(*c);
+      ObjectId cur = id;
+      for (Tick t = bars ? mm.nextBar(c->start) : mm.nextBeat(c->start); t < end; t = bars ? mm.nextBar(t) : mm.nextBeat(t)) {
+        const ObjectId r = splitClipAt(x, cur, t);
+        if (r == kNoId) break;
+        cur = r;
+      }
+    });
+  };
+  if (ui::TextButton("At beats")) sliceAtLines(false);
   ImGui::SameLine(0, theme::kS1);
-  if (ui::TextButton("At bars")) a.doc.editSong("slice clip", [&](Song& x) { sliceClipAtGrid(x, id, s.barTicks()); });
+  if (ui::TextButton("At bars")) sliceAtLines(true);
   ImGui::SameLine(0, theme::kS1);
   if (ui::TextButton("At transients")) a.doc.editSong("slice clip at transients", [&](Song& x) { sliceClipAtTransients(x, id, 0.5); });
   ImGui::SameLine(0, theme::kS1);

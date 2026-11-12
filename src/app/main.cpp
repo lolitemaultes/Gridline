@@ -1307,7 +1307,26 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
     }
     else if (l.cmd == "seekbeat") {  // J-91: the song position to a beat of the metronome ("2.5")
       // "seekbeat <beat> seek": also the set position (as a ruler click), where Stop returns
-      app.engine.setPosition(static_cast<Tick>(std::strtod(l.a0.c_str(), nullptr) * static_cast<double>(app.doc.song().beatTicks())), l.a1 == "seek");
+      const double beat = std::strtod(l.a0.c_str(), nullptr);
+      const MeterMap mm(app.doc.song());
+      Tick to = static_cast<Tick>(beat * static_cast<double>(app.doc.song().beatTicks()));
+      if (!mm.constant() && app.engine.mode() != PlayMode::Pattern) {
+        // K-193: the metronome's beats in song time (MeterMap::beatCount): each section counts its
+        // own beats, a short section's rounded up.
+        const auto& segs = mm.segments();
+        double n = 0;
+        for (size_t i = 0; i < segs.size(); ++i) {
+          const MeterSeg& g = segs[i];
+          const double inSeg = i + 1 < segs.size() ? static_cast<double>((segs[i + 1].start - g.start + g.beat - 1) / g.beat) : 1e300;
+          if (beat < n + inSeg) {
+            to = g.start + static_cast<Tick>((beat - n) * static_cast<double>(g.beat));
+            if (i + 1 < segs.size()) to = std::min(to, segs[i + 1].start);
+            break;
+          }
+          n += inSeg;
+        }
+      }
+      app.engine.setPosition(to, l.a1 == "seek");
     }
     else if (l.cmd == "metro") {  // J-91: metronome state and its glyph's pose (J-97: +1 / -1)
       // (the song plays on in real time: "drawn" is the beat the shown pose was drawn for, "beat" the one now)
@@ -1316,7 +1335,10 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       const bool ticked = topBarMetronomeTicking(&anchor);
       std::printf("metro frame %d: on %d playing %d mirror %.3f beat %.3f drawn %.3f ticking %d from %.0f\n", frame, app.metronome ? 1 : 0,
                   app.engine.playing() ? 1 : 0, static_cast<double>(topBarMetronomeMirror()),
-                  app.engine.position() / static_cast<double>(std::max<Tick>(1, app.doc.song().beatTicks())), topBarMetronomeBeat(), ticked ? 1 : 0, anchor);
+                  app.engine.mode() != PlayMode::Pattern  // K-193: song time counts the meter map's beats (as the top bar)
+                      ? MeterMap(app.doc.song()).beatCount(app.engine.position())
+                      : app.engine.position() / static_cast<double>(std::max<Tick>(1, app.doc.song().beatTicks())),
+                  topBarMetronomeBeat(), ticked ? 1 : 0, anchor);
       std::fflush(stdout);
     }
     else if (l.cmd == "recording") {
@@ -1521,7 +1543,7 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       // (J-110: a quoted path may hold spaces)
       const bool q = l.args.size() >= 3;
       place.track = std::atoi((q ? l.args[1] : l.a1).c_str());
-      place.tick = static_cast<Tick>(std::atoi((q ? l.args[2] : l.a2).c_str())) * app.doc.song().barTicks();
+      place.tick = MeterMap(app.doc.song()).barStart(std::atoi((q ? l.args[2] : l.a2).c_str()));  // K-193: a bar of the song's meters
       browserui::performDrop(app, q ? l.args[0] : l.a0, browse::DropTarget::Playlist, place);
     } else if (l.cmd == "dragenter" && l.args.size() >= 3) {  // J-75
       std::vector<std::string> files(l.args.begin() + 2, l.args.end());

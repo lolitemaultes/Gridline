@@ -1289,7 +1289,11 @@ void handleGlobalShortcuts(App& a) {
   if (typed("transport.rewindBar") || typed("transport.forwardBar")) {
     const Tick bar = std::max<Tick>(1, a.doc.song().barTicks());
     const Tick pos = static_cast<Tick>(a.engine.position());
-    const Tick at = keys::pressed("transport.rewindBar") ? std::max<Tick>(0, (pos - 1) / bar * bar) : (pos / bar + 1) * bar;
+    const bool songBars = a.engine.mode() != PlayMode::Pattern;  // K-193: real bars of the song's meter map (as the top bar)
+    const MeterMap mm = songBars ? MeterMap(a.doc.song()) : MeterMap();
+    const Tick at = keys::pressed("transport.rewindBar")
+                        ? std::max<Tick>(0, songBars ? mm.barStartAt(std::max<Tick>(0, pos - 1)) : (pos - 1) / bar * bar)
+                        : (songBars ? mm.nextBar(pos) : (pos / bar + 1) * bar);
     a.engine.setPosition(at);
   }
   if (typed("options.countIn")) a.countInBars = a.countInBars > 0 ? 0 : 1;

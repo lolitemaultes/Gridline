@@ -144,6 +144,7 @@ struct Context {
   int track = 0;                  // Playlist: track under the pointer (0-based)
   Tick tick = 0;                  // Playlist: snapped position
   Tick barTicks = 384;            // one bar
+  int64_t bar = -1;               // K-193: 0-based bar holding `tick` in the meter in force (< 0: tick / barTicks)
   int trackCount = 500;           // playlist tracks
   std::vector<Tick> lengths;      // per item: length in ticks (0 = unknown)
   Tick fallbackLength = 384;      // drawn length of clips of unknown length

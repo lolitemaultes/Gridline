@@ -35,6 +35,7 @@ struct BassVoice {
   dsp::Noise noise;
   dsp::Allpass1 tune;  // fractional delay
   float out = 0;
+  VoiceExpr vx;  // K-193: the note's own pressure and timbre response
   double semis = 60;  // K-144: glides retune the string every 16 samples
   PitchGlide slide;
   int gt = 0;
@@ -108,6 +109,7 @@ class FingerBass final : public Generator {
       if (v.on) return true;
     return false;
   }
+  bool perVoiceExpression() const override { return true; }  // K-193
 
  protected:
   void onNoteOn(uint32_t id, double pitch, float vel) override {
@@ -155,9 +157,16 @@ class FingerBass final : public Generator {
     dc_.setFreq(sr_, 20.0);
   }
   void render(float* L, float* R, int n) override {
+    for (auto& v : v_)
+      if (v.on) exprVoice(v.vx, v.id);  // K-193
     for (int i = 0; i < n; ++i) {
       double x = 0;
-      for (auto& v : v_) x += v.next(sr_);
+      for (auto& v : v_) {
+        const bool on = v.on;
+        double y = v.next(sr_);
+        if (on && v.vx.on) v.vx.apply(y);  // K-193: before the shared tone stack
+        x += y;
+      }
       x = dc_.process(pickupLp_.process(x));
       for (auto& b : eq_) x = b.process(x);
       x = softClip(x * 0.9);

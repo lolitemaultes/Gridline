@@ -3,6 +3,7 @@
 #include <algorithm>
 #include "Document.h"
 #include "MenuOps.h"
+#include "Meter.h"
 #include "TrackModes.h"
 
 namespace gl::trackplus {
@@ -61,7 +62,7 @@ std::string patternName(const Song& s, const std::string& base) {
 }
 
 Tick freeSpot(const Song& s, int track, Tick at, Tick len) {
-  const Tick bar = std::max<Tick>(1, s.barTicks());
+  const MeterMap mm(s);  // K-193: bar lines of the meter in force
   len = std::max<Tick>(1, len);
   Tick start = std::max<Tick>(0, at);
   for (int guard = 0; guard < 100000; ++guard) {
@@ -72,16 +73,15 @@ Tick freeSpot(const Song& s, int track, Tick at, Tick len) {
       if (c0 < start + len && c1 > start) blockEnd = std::max(blockEnd, c1);
     }
     if (blockEnd < 0) return start;
-    start = (blockEnd + bar - 1) / bar * bar;
+    start = mm.roundUpToBar(blockEnd);
   }
   return start;
 }
 
 Tick placeTick(const Song& s, Tick songPos, Tick viewStart, Tick viewEnd) {
-  const Tick bar = std::max<Tick>(1, s.barTicks());
-  if (songPos >= viewStart && songPos < viewEnd && songPos >= 0) return songPos / bar * bar;
-  const Tick v = std::max<Tick>(0, viewStart);
-  return (v + bar - 1) / bar * bar;
+  const MeterMap mm(s);  // K-193: bar lines of the meter in force
+  if (songPos >= viewStart && songPos < viewEnd && songPos >= 0) return mm.barStartAt(songPos);
+  return mm.roundUpToBar(std::max<Tick>(0, viewStart));
 }
 
 Started newPatternOnTrack(Document& d, int track, Tick at, std::string* why) {

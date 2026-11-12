@@ -91,6 +91,15 @@ void noteTransport(const clap_process_t* pr) {
   gProbe.hadTransport = true;
   ++gProbe.transports;
   gProbe.lastFrames = pr->frames_count;
+  const int num = pr->transport->tsig_num;
+  if (num != gProbe.lastTsig) {
+    if (gProbe.tsigChanges < 8) {
+      gProbe.tsigNum[gProbe.tsigChanges] = num;
+      gProbe.tsigBeats[gProbe.tsigChanges] = static_cast<double>(pr->transport->song_pos_beats) / static_cast<double>(CLAP_BEATTIME_FACTOR);
+    }
+    ++gProbe.tsigChanges;
+    gProbe.lastTsig = num;
+  }
 }
 
 // ---------------------------------------------------------------- synth

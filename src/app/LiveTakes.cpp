@@ -8,6 +8,7 @@
 #include <map>
 #include <memory>
 #include <unordered_map>
+#include "../core/Meter.h"
 #include "App.h"
 #include "DevSignal.h"
 
@@ -259,9 +260,9 @@ bool devCommand(App& a, const std::string& cmd, const std::vector<std::string>& 
         m.armed = true;
       });
   } else if (op == "select" && args.size() >= 3) {
-    const Tick bar = a.doc.song().barTicks();
-    a.playlist.selStart = static_cast<Tick>(std::atoi(args[1].c_str())) * bar;
-    a.playlist.selEnd = static_cast<Tick>(std::atoi(args[2].c_str())) * bar;
+    const MeterMap mm(a.doc.song());  // K-193: bar lines of the song's meters
+    a.playlist.selStart = mm.barStart(std::atoi(args[1].c_str()));
+    a.playlist.selEnd = mm.barStart(std::atoi(args[2].c_str()));
   } else if (op == "start") {
     a.engine.setMode(PlayMode::Song);
     a.recordArmed = true;

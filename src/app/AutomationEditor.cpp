@@ -138,6 +138,12 @@ const Clip* placementOf(const Song& s) {
   const Clip* c = E.placement != kNoId ? s.clip(E.placement) : nullptr;
   return c && c->kind == ClipKind::Automation && c->source == E.autoId ? c : nullptr;
 }
+// K-193: the meter map of the editor's time: the song's meter changes for a playlist clip, the
+// song's meter at the start (as before) for a pattern's clip.
+MeterMap editorMeter(const Song& s) {
+  if (E.pattern == kNoId) return MeterMap(s);
+  return MeterMap::forPattern(s, nullptr);
+}
 
 // J-173: the clip being edited (a playlist automation clip or a pattern's) and its edits.
 const AutomationClip* curClip(const Song& s) {
@@ -486,7 +492,8 @@ void sidePanel(App& a, const AutomationClip& ac, float width) {
   section("CLIP");
   {
     const Clip* pl = placementOf(s);
-    const Tick beat = std::max<Tick>(1, s.beatTicks());
+    // K-193: a placement's beats are the beats of the meter in force where it starts.
+    const Tick beat = std::max<Tick>(1, pl ? MeterMap(s).beatLenAt(pl->start) : s.beatTicks());
     if (pl) {
       int beats = static_cast<int>(std::max<Tick>(1, s.clipLength(*pl) / beat));
       ImGui::SetNextItemWidth(w);
@@ -614,7 +621,8 @@ ParamDesc knobDesc(const char* name, double lo, double hi, double def, ParamScal
 // Fills E.lfo's periods from the speed controls.
 void lfoPeriods(App& a) {
   const Song& s = a.doc.song();
-  const double bar = static_cast<double>(s.barTicks());
+  const Clip* pl = placementOf(s);  // K-193: a playlist clip's bar is the one in force where it starts
+  const double bar = static_cast<double>(pl ? MeterMap(s).fullBarLenAt(pl->start) : s.barTicks());
   auto ticksFor = [&](double div, double hz) {
     if (E.lfoSync) return bar * kDivs[std::clamp(static_cast<int>(std::lround(div)), 0, kDivCount - 1)].bars;
     return s.tempo / 60.0 * s.ppq / std::max(0.01, hz);  // ticks per cycle at the song tempo
@@ -893,7 +901,8 @@ void drawCanvas(App& a, const AutomationClip& ac) {
       scrollbarui::kThumbMinH);
   const scrollbarui::Part hOver = hovered && (E.g == Editor::None || !active) ? scrollbarui::hit(hBar, io.MousePos) : scrollbarui::Part::None;
   const Tick snapG = timeline::snapGrid(s, E.snap, E.pxPerTick, io.KeyAlt);
-  auto snapContent = [&](Tick c) { return timeline::snapTick(base + c, snapG, E.snap) - base; };
+  const MeterMap mm = editorMeter(s);  // K-193: song time follows the meter changes
+  auto snapContent = [&](Tick c) { return timeline::snapTick(mm, base + c, snapG, E.snap) - base; };
 
   // ---- background, clip region, grid ----
   dl->PushClipRect(gMin, gMax, true);
@@ -904,14 +913,27 @@ void drawCanvas(App& a, const AutomationClip& ac) {
   dl->AddRectFilled(ImVec2(clipX0, gMin.y), ImVec2(clipX1, gMax.y), P.well);
   const Tick visGrid = timeline::visibleGrid(s, E.pxPerTick);
   const Tick barT = std::max<Tick>(1, s.barTicks()), beatT = std::max<Tick>(1, s.beatTicks());
-  for (Tick t = snapDown(std::max<Tick>(0, static_cast<Tick>(songAt(gMin.x))), barT); xOfSong(static_cast<double>(t)) < gMax.x; t += barT)
-    if ((t / barT) % 2 == 1)
-      dl->AddRectFilled(ImVec2(std::max(clipX0, xOfSong(static_cast<double>(t))), gMin.y), ImVec2(std::min(clipX1, xOfSong(static_cast<double>(t + barT))), gMax.y),
-                        theme::withAlpha(P.paper, P.dark ? 0.03f : 0.02f));
   const ImU32 fine = theme::withAlpha(P.gridBeat, 0.45f);
-  for (Tick t = snapDown(std::max<Tick>(0, static_cast<Tick>(songAt(gMin.x))), visGrid); xOfSong(static_cast<double>(t)) < gMax.x; t += visGrid) {
-    float x = std::round(xOfSong(static_cast<double>(t)));
-    dl->AddLine(ImVec2(x, gMin.y), ImVec2(x, gMax.y), t % barT == 0 ? P.gridBar : t % beatT == 0 ? P.gridBeat : fine);
+  if (mm.constant()) {
+    for (Tick t = snapDown(std::max<Tick>(0, static_cast<Tick>(songAt(gMin.x))), barT); xOfSong(static_cast<double>(t)) < gMax.x; t += barT)
+      if ((t / barT) % 2 == 1)
+        dl->AddRectFilled(ImVec2(std::max(clipX0, xOfSong(static_cast<double>(t))), gMin.y), ImVec2(std::min(clipX1, xOfSong(static_cast<double>(t + barT))), gMax.y),
+                          theme::withAlpha(P.paper, P.dark ? 0.03f : 0.02f));
+    for (Tick t = snapDown(std::max<Tick>(0, static_cast<Tick>(songAt(gMin.x))), visGrid); xOfSong(static_cast<double>(t)) < gMax.x; t += visGrid) {
+      float x = std::round(xOfSong(static_cast<double>(t)));
+      dl->AddLine(ImVec2(x, gMin.y), ImVec2(x, gMax.y), t % barT == 0 ? P.gridBar : t % beatT == 0 ? P.gridBeat : fine);
+    }
+  } else {  // K-193: bars and lines of the meter map, as the playlist draws them
+    for (int64_t b = mm.barIndex(std::max<Tick>(0, static_cast<Tick>(songAt(gMin.x)))); xOfSong(static_cast<double>(mm.barStart(b))) < gMax.x; ++b)
+      if (b % 2 == 1)
+        dl->AddRectFilled(ImVec2(std::max(clipX0, xOfSong(static_cast<double>(mm.barStart(b)))), gMin.y),
+                          ImVec2(std::min(clipX1, xOfSong(static_cast<double>(mm.barStart(b + 1)))), gMax.y), theme::withAlpha(P.paper, P.dark ? 0.03f : 0.02f));
+    const ImU32 group = theme::mix(P.gridBeat, P.gridBar, 0.45f);
+    timeline::forEachLine(mm, std::max<Tick>(0, static_cast<Tick>(songAt(gMin.x))), static_cast<Tick>(songAt(gMax.x)) + 1, visGrid, [&](Tick t, int k) {
+      const ImU32 c = k == timeline::kLineBar ? P.gridBar : k == timeline::kLineGroup ? group : k == timeline::kLineBeat ? P.gridBeat : fine;
+      const float x = std::round(xOfSong(static_cast<double>(t)));
+      dl->AddLine(ImVec2(x, gMin.y), ImVec2(x, gMax.y), c);
+    });
   }
   for (int k = 0; k <= 8; ++k) {
     float y = std::round(yOf(k / 8.0));
@@ -1036,13 +1058,33 @@ void drawCanvas(App& a, const AutomationClip& ac) {
   dl->PushClipRect(ImVec2(gMin.x, origin.y), ImVec2(gMax.x, gMin.y), true);
   {
     const Tick labelGrid = timeline::visibleGrid(s, E.pxPerTick, 64.0);
-    for (Tick t = snapDown(std::max<Tick>(0, static_cast<Tick>(songAt(gMin.x))), visGrid); xOfSong(static_cast<double>(t)) < gMax.x; t += visGrid) {
-      float x = std::round(xOfSong(static_cast<double>(t)));
-      bool major = t % labelGrid == 0;
-      dl->AddLine(ImVec2(x, gMin.y - (major ? 10.0f : 4.0f)), ImVec2(x, gMin.y - 1), major ? P.lineStrong : P.line);
-      if (major)
-        dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(x + 4, rulerTop + 4), t % barT == 0 ? P.textDim : P.textFaint,
-                    timeline::rulerLabel(s, t, labelGrid).c_str());
+    if (mm.constant()) {
+      for (Tick t = snapDown(std::max<Tick>(0, static_cast<Tick>(songAt(gMin.x))), visGrid); xOfSong(static_cast<double>(t)) < gMax.x; t += visGrid) {
+        float x = std::round(xOfSong(static_cast<double>(t)));
+        bool major = t % labelGrid == 0;
+        dl->AddLine(ImVec2(x, gMin.y - (major ? 10.0f : 4.0f)), ImVec2(x, gMin.y - 1), major ? P.lineStrong : P.line);
+        if (major)
+          dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(x + 4, rulerTop + 4), t % barT == 0 ? P.textDim : P.textFaint,
+                      timeline::rulerLabel(s, t, labelGrid).c_str());
+      }
+    } else {  // K-193: ticks and numbers of the meter map (numbers that would overlap are skipped)
+      std::vector<Tick> majors;
+      const Tick t1 = static_cast<Tick>(songAt(gMax.x)) + 1;
+      timeline::forEachLine(mm, std::max<Tick>(0, static_cast<Tick>(songAt(gMin.x - 40))), t1, labelGrid, [&](Tick t, int) { majors.push_back(t); });
+      timeline::forEachLine(mm, std::max<Tick>(0, static_cast<Tick>(songAt(gMin.x))), t1, visGrid, [&](Tick t, int) {
+        const bool major = std::binary_search(majors.begin(), majors.end(), t);
+        const float x = std::round(xOfSong(static_cast<double>(t)));
+        dl->AddLine(ImVec2(x, gMin.y - (major ? 10.0f : 4.0f)), ImVec2(x, gMin.y - 1), major ? P.lineStrong : P.line);
+      });
+      float lastRight = -1e9f;
+      for (Tick t : majors) {
+        const float x = std::round(xOfSong(static_cast<double>(t)));
+        if (x + 4 < lastRight) continue;
+        const std::string lbl = timeline::rulerLabel(mm, t, labelGrid);
+        const bool bar = timeline::lineStrength(mm, t) == timeline::kLineBar && !mm.shortBar(t);
+        dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(x + 4, rulerTop + 4), bar ? P.textDim : P.textFaint, lbl.c_str());
+        lastRight = x + 4 + a.fontMono->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, lbl.c_str()).x + 6;
+      }
     }
     // Clip region in the ruler.
     float rx0 = xOfSong(static_cast<double>(vis0)), rx1 = xOfSong(static_cast<double>(vis1));
@@ -1115,7 +1157,7 @@ void drawCanvas(App& a, const AutomationClip& ac) {
   if (hovered && inGrid) {
     double v = hoverPoint >= 0 ? pts[static_cast<size_t>(hoverPoint)].value : valueAtY(m.y);
     Tick t = hoverPoint >= 0 ? pts[static_cast<size_t>(hoverPoint)].pos : snapContent(curContent);
-    std::string where = timeline::rulerLabel(s, std::max<Tick>(0, base + t), std::max<Tick>(1, s.ppq / 4 / 4));
+    std::string where = timeline::rulerLabel(mm, std::max<Tick>(0, base + t), std::max<Tick>(1, s.ppq / 4 / 4));  // K-193
     std::string text = where + "  \xC2\xB7  " + fmtParam(s, pid, clipToParam(ac, v));
     if (hoverHandle >= 0) {
       char b[48];
@@ -1391,10 +1433,11 @@ void commitRecording(App& a, Recording& r) {
     a.doc.editAutomation(ac->id, "record automation", [&](AutomationClip& c) { ae::mergeRecorded(c.points, rec, cf, ct, tol); });
     return;
   }
-  // New clip from the start of the gesture's beat.
-  const Tick beat = std::max<Tick>(1, s.beatTicks());
-  const Tick start = from / beat * beat;
-  const Tick len = std::max(beat, (to - start + beat - 1) / beat * beat);
+  // New clip from the start of the gesture's beat. K-193: the beats of the meter in force there.
+  const MeterMap mm(s);
+  const Tick start = mm.beatStartAt(std::max<Tick>(0, from));
+  const Tick end = mm.beatStartAt(to) == to ? to : mm.nextBeat(to);
+  const Tick len = std::max(mm.nextBeat(start) - start, end - start);
   ae::Points rec;
   for (auto p : r.pts) {
     p.pos -= start;
@@ -1612,13 +1655,14 @@ ObjectId createAutomationClip(App& a, ParamId pid) {
   auto v = getParam(s, pid);
   if (!d || !v) return kNoId;
   const float n = static_cast<float>(d->toNormalized(*v));
-  const Tick bar = std::max<Tick>(1, s.barTicks());
-  Tick start = 0, len = 4 * bar;
+  const MeterMap mm(s);  // K-193: four bars of the meter in force where the clip starts
+  Tick start = 0, len = mm.addBars(0, 4);
   if (a.playlist.selEnd > a.playlist.selStart) {
     start = a.playlist.selStart;
     len = a.playlist.selEnd - a.playlist.selStart;
   } else if (a.engine.mode() == PlayMode::Song) {
-    start = static_cast<Tick>(a.engine.position()) / bar * bar;  // at the playback position, like FL
+    start = mm.barStartAt(std::max<Tick>(0, static_cast<Tick>(a.engine.position())));  // at the playback position, like FL
+    len = mm.addBars(start, 4) - start;
   }
   // First track (from the bottom of the used ones) that is free over the clip.
   int track = 0;

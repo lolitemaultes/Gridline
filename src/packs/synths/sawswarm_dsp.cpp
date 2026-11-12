@@ -59,6 +59,8 @@ struct Voice {
   double lfoPh = 0, lfoFade = 0, lfoRel = 1;
   uint32_t lfoCycle = 0;
   uint64_t age = 0;
+  uint32_t note = 0;  // K-193: the held key whose pressure and timbre the voice follows
+  VoiceExpr vx;       // K-193: the note's own pressure and timbre response
 };
 
 class SawSwarm final : public Generator {
@@ -68,6 +70,7 @@ class SawSwarm final : public Generator {
     ccSet_.fill(false);
   }
   bool supportsGlide() const override { return true; }
+  bool perVoiceExpression() const override { return true; }  // K-193
   bool active() const override {
     if (tail_ > 0) return true;
     for (const auto& v : v_)
@@ -92,6 +95,7 @@ class SawSwarm final : public Generator {
         Voice& v = v_[0];
         if (v.on && v.held) {
           v.id = n->id;
+          v.note = v.vx.id = n->id;  // K-193: the response moves on smoothly to the held key
           glideTo(v, n->pitch, true);
         }
         return;
@@ -197,6 +201,8 @@ class SawSwarm final : public Generator {
     const int arpMode = pick(P(SwArpMode), 4), arpOct = pick(P(SwArpRange), 4) + 1;
     const double arpStep = kSwArpStep16[pick(P(SwArpSync), kSwArpSteps)] / 4.0;  // 16ths → beats
     const double lfoInc = lfoHz / sr_;
+    for (auto& v : v_)
+      if (v.on) exprVoice(v.vx, v.note);  // K-193
 
     for (int i = 0; i < n; ++i) {
       if (arpOn_) {
@@ -208,6 +214,8 @@ class SawSwarm final : public Generator {
               release(kArpId);
               play(kArpId, arp_.curPitch, arp_.curVel, false);
               arp_.playing = true;
+              for (auto& v : v_)
+                if (v.on && v.id == kArpId) exprVoice(v.vx, v.note);  // K-193: a step starting mid-block
             }
           }
         } else if (arp_.playing) {
@@ -321,8 +329,15 @@ class SawSwarm final : public Generator {
         }
         const double lvl = std::clamp(1.0 + modL[SlLevel], 0.0, 2.0) * a * v.vel * 0.3;
         const double pv2 = std::clamp(pan + modL[SlPan], -1.0, 1.0);
-        oL += sL * lvl * (pv2 > 0 ? 1.0 - pv2 : 1.0);
-        oR += sR * lvl * (pv2 < 0 ? 1.0 + pv2 : 1.0);
+        if (v.vx.on) {  // K-193: the note's own level and brightness, before its pan
+          double el = sL * lvl, er = sR * lvl;
+          v.vx.apply(el, er);
+          oL += el * (pv2 > 0 ? 1.0 - pv2 : 1.0);
+          oR += er * (pv2 < 0 ? 1.0 + pv2 : 1.0);
+        } else {
+          oL += sL * lvl * (pv2 > 0 ? 1.0 - pv2 : 1.0);
+          oR += sR * lvl * (pv2 < 0 ? 1.0 + pv2 : 1.0);
+        }
       }
       L[i] += static_cast<float>(oL * level);
       R[i] += static_cast<float>(oR * level);
@@ -346,6 +361,19 @@ class SawSwarm final : public Generator {
     return std::clamp(x, lo_[static_cast<size_t>(i)], hi_[static_cast<size_t>(i)]);
   }
 
+  // K-193: the key a voice follows for expression; an arpeggiated step follows the held key it plays.
+  uint32_t exprNote(uint32_t id) const {
+    if (id != kArpId) return id;
+    uint32_t best = id;
+    double bestOct = 1e9;
+    for (int i = 0; i < held_.count; ++i) {
+      const Held::N& h = held_.n[static_cast<size_t>(i)];
+      const double oct = (arp_.curPitch - h.pitch) / 12.0;
+      if (oct > -1e-6 && std::fabs(oct - std::round(oct)) < 1e-6 && oct < bestOct) best = h.id, bestOct = oct;
+    }
+    return best;
+  }
+
   void glideTo(Voice& v, double pitch, bool legato) {
     const bool heldOnly = P(SwGlideHeld) >= 0.5f, constTime = P(SwGlideStatic) >= 0.5f;
     const double t = 2.0 * P(SwGlide) * P(SwGlide);
@@ -359,6 +387,7 @@ class SawSwarm final : public Generator {
     const bool was = v.on;
     v.on = v.held = true;
     v.id = id;
+    v.note = exprNote(id);  // K-193
     v.vel = vel;
     v.octave = octave;
     v.age = 0;
@@ -390,6 +419,7 @@ class SawSwarm final : public Generator {
       Voice& v = v_[0];
       if (v.on && v.held) {
         v.id = id;
+        v.note = v.vx.id = exprNote(id);  // K-193: the response moves on smoothly to the new key
         v.vel = vel;
         glideTo(v, pitch, legato);
         if (!legato) v.amp.gate(true), v.eg.gate(true);

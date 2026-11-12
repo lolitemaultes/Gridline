@@ -133,6 +133,7 @@ class AlloyGen final : public Generator {
     return fx_.ringing();
   }
   bool supportsGlide() const override { return true; }
+  bool perVoiceExpression() const override { return true; }  // K-193
 
  protected:
   struct ArtState {
@@ -157,6 +158,7 @@ class AlloyGen final : public Generator {
     float gate = 0;
     dsp::Svf flt[2][4];
     float volSm = 0, volT = 0;
+    VoiceExpr vx;  // K-193: the note's own pressure and timbre response
   };
 
   void configure(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx) override {
@@ -523,6 +525,7 @@ class AlloyGen final : public Generator {
     for (auto& vp : v_) {
       Voice& v = *vp;
       if (!v.on) continue;
+      exprVoice(v.vx, v.id);
       for (int i = 0; i < n; ++i) {
         if (v.ctl <= 0) {
           control(v, dt);
@@ -552,6 +555,7 @@ class AlloyGen final : public Generator {
             }
             out[c] = static_cast<float>(x);
           }
+        if (v.vx.on) v.vx.apply(out[0], out[1]);  // K-193
         L[i] += out[0];
         R[i] += out[1];
       }

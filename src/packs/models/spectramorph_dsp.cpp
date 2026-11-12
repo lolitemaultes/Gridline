@@ -121,6 +121,7 @@ class SpectraMorphGen final : public Generator {
       if (v.on) return true;
     return fx_.ringing();
   }
+  bool perVoiceExpression() const override { return true; }  // K-193
 
  protected:
   struct Voice {
@@ -139,6 +140,7 @@ class SpectraMorphGen final : public Generator {
     int ctl = 0;
     float noiseLp = 0;
     uint32_t rng = 1;
+    VoiceExpr vx;  // K-193: the note's own pressure and timbre response
   };
 
   void configure(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx) override {
@@ -308,6 +310,8 @@ class SpectraMorphGen final : public Generator {
   void render(float* L, float* R, int n) override {
     const SineTable& sine = sineTable();
     const double dt = kCtl / sr_;
+    for (auto& v : v_)  // K-193: each sounding note's own response, once per block
+      if (v.on) exprVoice(v.vx, v.id);
     for (int i = 0; i < n; ++i) {
       float out = 0;
       for (auto& v : v_) {
@@ -336,6 +340,7 @@ class SpectraMorphGen final : public Generator {
           v.noiseLp += (wn - v.noiseLp) * (0.05f + 0.9f * noiseColor_);
           s += v.noiseLp * noise_ * static_cast<float>(v.env) * v.vel * vol_ * 0.2f;
         }
+        if (v.vx.on) v.vx.apply(s);  // K-193
         out += s;
       }
       if (drive_ > 0) out = std::tanh(out * (1 + 6 * drive_)) / (1 + 2 * drive_);

@@ -77,16 +77,27 @@ struct Session {
 Session S;
 uint64_t sessionCounter = 0;
 
+// K-193: the progression is written into a pattern: pattern time, the pattern's own meter (a
+// pattern that follows the song: the song's meter at the start, as before).
+Tick patBeat(const Song& s) {
+  const Pattern* p = s.pattern(S.pat);
+  return std::max<Tick>(1, p ? s.patternBeatTicks(*p) : s.beatTicks());
+}
+Tick patBar(const Song& s) {
+  const Pattern* p = s.pattern(S.pat);
+  return std::max<Tick>(1, p ? s.patternBarTicks(*p) : s.barTicks());
+}
+
 Tick lenTicks(const Song& s, int k) {
   switch (k) {
-    case 0: return s.beatTicks();
-    case 1: return 2 * s.beatTicks();
-    case 3: return 2 * s.barTicks();
-    default: return s.barTicks();
+    case 0: return patBeat(s);
+    case 1: return 2 * patBeat(s);
+    case 3: return 2 * patBar(s);
+    default: return patBar(s);
   }
 }
-Tick snapTicks(const Song& s) { return S.snap == 0 ? std::max<Tick>(1, s.ppq / 4) : S.snap == 2 ? s.barTicks() : s.beatTicks(); }
-Tick startTick(const Song& s) { return s.barTicks() * S.startBar; }
+Tick snapTicks(const Song& s) { return S.snap == 0 ? std::max<Tick>(1, s.ppq / 4) : S.snap == 2 ? patBar(s) : patBeat(s); }
+Tick startTick(const Song& s) { return patBar(s) * S.startBar; }
 
 std::string chordLabel(const ch::Chord& c) {
   return S.roman ? ch::romanName(c, S.prog.key, S.prog.scale) : ch::chordName(c, false);
@@ -316,8 +327,8 @@ void chordMenu(App& a, size_t i) {
       S.altFor = static_cast<int>(i);
       S.alts = ch::alternatives(S.prog, i);
     }
-    if (ImGui::MenuItem(i18n::tr("Add a passing chord after it"), nullptr, false, ch::chordLength(S.prog, i) >= 2 * a.doc.song().beatTicks()))
-      edit(a, [&](ch::ChordProgression& p) { ch::addPassingChord(p, i, a.doc.song().beatTicks()); });
+    if (ImGui::MenuItem(i18n::tr("Add a passing chord after it"), nullptr, false, ch::chordLength(S.prog, i) >= 2 * patBeat(a.doc.song())))
+      edit(a, [&](ch::ChordProgression& p) { ch::addPassingChord(p, i, patBeat(a.doc.song())); });
     if (ImGui::BeginMenu(i18n::tr("Choose the chord"))) {
       ui::Label("ROOT NOTE");
       for (int k = 0; k < 12; ++k) {
@@ -446,12 +457,12 @@ void chordLane(App& a, float height) {
   const ImVec2 p1(p0.x + W, p0.y + height);
   dl->AddRectFilled(p0, p1, P.well, theme::kRadius);
   const Tick total = std::max<Tick>(1, ch::totalLength(S.prog));
-  const Tick viewLen = std::max<Tick>(total, 4 * s.barTicks());
+  const Tick viewLen = std::max<Tick>(total, 4 * patBar(s));
   const float pxPerTick = (W - 8) / static_cast<float>(viewLen);
   auto xOf = [&](Tick t) { return p0.x + 4 + static_cast<float>(t) * pxPerTick; };
   // Beat / bar lines.
-  for (Tick t = 0; t <= viewLen; t += s.beatTicks())
-    dl->AddLine(ImVec2(std::round(xOf(t)), p0.y + 2), ImVec2(std::round(xOf(t)), p1.y - 2), t % s.barTicks() == 0 ? P.gridBar : P.gridBeat);
+  for (Tick t = 0; t <= viewLen; t += patBeat(s))
+    dl->AddLine(ImVec2(std::round(xOf(t)), p0.y + 2), ImVec2(std::round(xOf(t)), p1.y - 2), t % patBar(s) == 0 ? P.gridBar : P.gridBeat);
   const ImGuiIO& io = ImGui::GetIO();
   int hoverChord = -1;
   bool hoverEdge = false;
@@ -790,7 +801,7 @@ void performancePanel(App& a) {
   ui::Hint("Rhythm the chords are played with");
   ImGui::SameLine(0, 4);
   static const char* const cyc[] = {"Per chord", "Beat", "2 beats", "Bar", "2 bars"};
-  const Tick cycTicks[] = {0, s.beatTicks(), 2 * s.beatTicks(), s.barTicks(), 2 * s.barTicks()};
+  const Tick cycTicks[] = {0, patBeat(s), 2 * patBeat(s), patBar(s), 2 * patBar(s)};
   int ci = 0;
   for (int k = 0; k < 5; ++k)
     if (pf.cycle == cycTicks[k]) ci = k;

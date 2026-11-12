@@ -24,5 +24,11 @@ struct GridlineClapProbe {
   uint32_t noteChannels = 0;
   int mpeZone = -1, mpeRange = -1;
   int rpnMsb[16] = {};
+  // K-193: meter changes seen: each process call whose time signature differs from the one
+  // before records its numerator and the transport position (beats) at its first sample.
+  int tsigChanges = 0;
+  int tsigNum[8] = {};
+  double tsigBeats[8] = {};
+  int lastTsig = 0;
   bool throwInProcess = false;  // K-9: process throws, as a bridge does when its other process is gone
 };

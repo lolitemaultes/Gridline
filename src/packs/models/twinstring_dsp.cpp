@@ -99,6 +99,7 @@ class TwinStringGen final : public Generator {
       if (v_[i].on) return true;
     return tail_ > 0;
   }
+  bool perVoiceExpression() const override { return true; }  // K-193
 
  private:
   struct Voice {
@@ -121,6 +122,7 @@ class TwinStringGen final : public Generator {
     double len[2] = {100, 100}, g[2] = {0.99, 0.99}, a1[2] = {0, 0}, a2[2] = {0, 0};
     double combLen = 100, noiseInc = 1, hiHz = 1000, loHz = 20, gain = 1, pan = 0;
     int ctl = 0;
+    VoiceExpr vx;  // K-193: the note's own pressure and timbre response
     void clear() {
       s[0].clear();
       s[1].clear();
@@ -135,7 +137,10 @@ class TwinStringGen final : public Generator {
     for (size_t i = 0; i < static_cast<size_t>(TsCount); ++i) p_[i] = i < st.params.size() ? st.params[i] : def_[i];
     useRef_ = st.params.size() > static_cast<size_t>(TsEngine) && st.params[TsEngine] >= 0.5f;
     if (useRef_) {
-      if (!ref_) ref_ = std::make_unique<TwinRef>();
+      if (!ref_) {
+        ref_ = std::make_unique<TwinRef>();
+        ref_->setExpr(&TwinStringGen::refExpr, this);  // K-193
+      }
       ref_->configure(p_.data(), sr_, tempo_);
     }
     for (int i = 0; i < kVoices; ++i) {
@@ -279,6 +284,17 @@ class TwinStringGen final : public Generator {
     v.pan = std::clamp(mod(v, MdPan, egv), -1.0, 1.0);
   }
 
+  // K-193: the reference engine's voices take their note's own response. They run at 48 kHz, so the
+  // smoothing and shelf coefficients (made for the host rate) are re-derived for that rate.
+  static void refExpr(const void* ctx, VoiceExpr& vx, uint32_t id) {
+    const auto* g = static_cast<const TwinStringGen*>(ctx);
+    g->exprVoice(vx, id);
+    if (!vx.on) return;
+    const double k = g->sr_ / 48000.0;
+    vx.coef = static_cast<float>(1.0 - std::pow(1.0 - static_cast<double>(vx.coef), k));
+    vx.shelfA = static_cast<float>(1.0 - std::pow(1.0 - static_cast<double>(vx.shelfA), k));
+  }
+
   void onNoteOnEx(uint32_t id, double pitch, float velocity, const NoteProps& props) override {
     if (useRef_) return ref_->noteOn(id, pitch, velocity, props.pan);
     onNoteOn(id, pitch, velocity);
@@ -391,6 +407,7 @@ class TwinStringGen final : public Generator {
       Voice& v = v_[vi];
       if (!v.on) continue;
       any = true;
+      exprVoice(v.vx, v.id);  // K-193
       float* comb = comb_.get() + static_cast<size_t>(vi) * 2 * kLine;
       for (int i = 0; i < n; ++i) {
         if (v.slide.active()) v.slide.advance(v.note);  // K-144: retuned at the next control period
@@ -478,8 +495,15 @@ class TwinStringGen final : public Generator {
         }
         double gpan = env * v.gain;
         double pl = v.pan > 0 ? 1.0 - v.pan : 1.0, pr = v.pan < 0 ? 1.0 + v.pan : 1.0;
-        mixL_[i] += static_cast<float>(l * gpan * pl);
-        mixR_[i] += static_cast<float>(r * gpan * pr);
+        if (v.vx.on) {  // K-193: the note's own response (separate branch keeps other notes bit-exact)
+          double ol = l * gpan * pl, orr = r * gpan * pr;
+          v.vx.apply(ol, orr);
+          mixL_[i] += static_cast<float>(ol);
+          mixR_[i] += static_cast<float>(orr);
+        } else {
+          mixL_[i] += static_cast<float>(l * gpan * pl);
+          mixR_[i] += static_cast<float>(r * gpan * pr);
+        }
         if (!v.amp.active()) {
           v.on = false;
           break;

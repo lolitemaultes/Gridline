@@ -109,6 +109,7 @@ class WaveProgramGen final : public Generator {
   }
 
  protected:
+  bool perVoiceExpression() const override { return true; }  // K-193
   struct Voice {
     bool on = false;
     uint32_t id = 0;
@@ -131,6 +132,7 @@ class WaveProgramGen final : public Generator {
     double ringPh = 0, decCount = 0, decL = 0, decR = 0;
     double phS[2][8] = {}, phY[2] = {0, 0};
     uint64_t age = 0;
+    VoiceExpr vx;  // K-193: the note's own pressure and timbre response
   };
 
   void configure(const PluginState& st, const ChannelAux& aux, const ProcessContext& ctx) override {
@@ -553,7 +555,14 @@ class WaveProgramGen final : public Generator {
       // Amp envelope and gains.
       const double env = v.amp.tick(v.aStep, v.dStep, v.sLvl, v.rStep);
       v.gL = v.tgL + (v.gL - v.tgL) * gc, v.gR = v.tgR + (v.gR - v.tgR) * gc;
-      const double oL = x[0] * env * v.gL, oR = x[1] * env * v.gR;
+      double oL, oR;
+      if (v.vx.on) {  // K-193: the note's level / brightness after the envelope, before the pan and sends
+        double el = x[0] * env, er = x[1] * env;
+        v.vx.apply(el, er);
+        oL = el * v.gL, oR = er * v.gR;
+      } else {
+        oL = x[0] * env * v.gL, oR = x[1] * env * v.gR;
+      }
       // Buses: 0/1 main, 2/3 delay, 4/5 chorus, 6/7 reverb.
       if (p.delayOn && s0 > 0) dBus_[0][i] += static_cast<float>(oL * s0 * s0), dBus_[1][i] += static_cast<float>(oR * s0 * s0);
       if (p.choOn && s1 > 0) cBus_[0][i] += static_cast<float>(oL * s1 * s1), cBus_[1][i] += static_cast<float>(oR * s1 * s1);
@@ -659,6 +668,8 @@ class WaveProgramGen final : public Generator {
   }
 
   void render(float* L, float* R, int n) override {
+    for (auto& v : v_)
+      if (v.on) exprVoice(v.vx, v.id);  // K-193
     int i = 0;
     while (i < n) {
       if (grid_ == 0 && a_) {

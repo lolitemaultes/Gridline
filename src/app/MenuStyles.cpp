@@ -6,6 +6,7 @@
 #include "../../third_party/imgui/imgui.h"
 #include "../core/I18n.h"
 #include "../core/MenuStyle.h"
+#include "../core/Meter.h"
 #include "App.h"
 #include "Keys.h"
 #include "LayoutPresets.h"
@@ -19,9 +20,12 @@ namespace {
 void navigateItems(App& a) {
   const Tick bar = std::max<Tick>(1, a.doc.song().barTicks());
   const Tick pos = static_cast<Tick>(a.engine.position());
+  const bool songBars = a.engine.mode() != PlayMode::Pattern;  // K-193: real bars of the song's meter map (as the top bar)
   if (ImGui::MenuItem(i18n::tr("Go to the start"), keys::label("transport.toStart"))) a.engine.setPosition(0);
-  if (ImGui::MenuItem(i18n::tr("Back one bar"), keys::label("transport.rewindBar"))) a.engine.setPosition(std::max<Tick>(0, (pos - 1) / bar * bar));
-  if (ImGui::MenuItem(i18n::tr("Forward one bar"), keys::label("transport.forwardBar"))) a.engine.setPosition((pos / bar + 1) * bar);
+  if (ImGui::MenuItem(i18n::tr("Back one bar"), keys::label("transport.rewindBar")))
+    a.engine.setPosition(std::max<Tick>(0, songBars ? MeterMap(a.doc.song()).barStartAt(std::max<Tick>(0, pos - 1)) : (pos - 1) / bar * bar));
+  if (ImGui::MenuItem(i18n::tr("Forward one bar"), keys::label("transport.forwardBar")))
+    a.engine.setPosition(songBars ? MeterMap(a.doc.song()).nextBar(pos) : (pos / bar + 1) * bar);
   ImGui::Separator();
   const bool live = a.engine.mode() == PlayMode::Live;
   if (ImGui::MenuItem(i18n::tr("Song mode"), keys::label("transport.songMode"), a.engine.mode() == PlayMode::Song)) a.engine.setMode(PlayMode::Song);

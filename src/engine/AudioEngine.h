@@ -497,6 +497,9 @@ class AudioEngine {
   // J-210: frames until the next step of a recorded-events lane or the loop end
   // (at most n), so that the block after it starts on that sample.
   int untilEventStep(const Program* p, int n) const;
+  // K-193: frames until the next meter change in song time (at most n), so that the block after it
+  // starts on the change's first sample and hosted plugins see the new meter from there.
+  int untilMeterChange(const Program* p, int n) const;
   // Live mode: clip launching, follow actions and the launched clips' notes for block samples [from, to).
   void dispatchLive(const Program* p, int from, int to);
   void liveCommand(const Program* p, const Cmd& c);

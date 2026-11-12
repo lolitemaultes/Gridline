@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include "../core/MeterEdit.h"
 #include "../core/PluginInfo.h"
 #include "../core/PluginParams.h"
 #include "SlicexEngine.h"
@@ -131,7 +132,11 @@ Result addSlicedLoop(Song& s, const std::string& path, const loopfile::Info& li,
   p.color = 0x8A9BA8;
   p.notes[ch.id] = sliceNotes(sl, li, s.ppq);
   const Tick len = std::max<Tick>(1, loopTicks(li, s.ppq));
-  const Tick bar = std::max<Tick>(1, s.barTicks());
+  if (track >= 0) {  // K-193: placed in the playlist: the meter of its section, as new patterns get
+    int steps = 16;
+    meter::newPatternMeter(s, std::max<Tick>(0, start), p.meterNum, p.meterDen, steps);
+  }
+  const Tick bar = std::max<Tick>(1, s.patternBarTicks(p));
   p.bars = static_cast<int>(std::clamp<Tick>((len + bar - 1) / bar, 1, kMaxPatternBars));
   s.patterns.push_back(p);
   r.channel = ch.id, r.pattern = p.id, r.slices = static_cast<int>(sl.slices.size()), r.joined = sl.joined;

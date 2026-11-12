@@ -10,6 +10,7 @@
 #include "Keys.h"
 #include "KeyLight.h"
 #include "J31Ui.h"
+#include "MeterUi.h"
 #include "../../third_party/imgui/imgui.h"
 #include "../../third_party/imgui/imgui_internal.h"
 #include "App.h"
@@ -20,6 +21,7 @@
 #include "ScriptUi.h"
 #include "../core/Grouping.h"
 #include "../core/MenuParity.h"
+#include "../core/MeterEdit.h"
 #include "../core/NoteBend.h"
 #include "../core/NoteLaneEdit.h"
 #include "../core/NoteTools.h"
@@ -529,6 +531,36 @@ void drawPianoRoll(App& a) {
         ImGui::EndCombo();
       }
       ui::Hint("Snap: Line and Cell follow the zoom (free at the deepest zoom); hold Alt while dragging to invert snapping");
+    }
+    if (pat && roomLeft() > 56 + 8) {  // K-193: the pattern's meter, and whether it matches where it plays
+      ImGui::SameLine(0, 6);
+      const int pn = s.patternMeterNum(*pat), pd = s.patternMeterDen(*pat);
+      // The pattern's first clip in the playlist, and the meter of the section it starts in.
+      const Clip* first = nullptr;
+      for (const auto& c : s.playlist)
+        if (c.kind == ClipKind::Pattern && c.pattern == pat->id && (!first || c.start < first->start)) first = &c;
+      int sn = pn, sd = pd;
+      if (first && meter::changeCount(s) > 0) meter::meterAt(s, first->start, sn, sd);
+      const bool differs = sn != pn || sd != pd;
+      const std::string lbl = meter::text(pn, pd);
+      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(differs ? P.hot : P.text));
+      const bool clicked = ui::TextButton((lbl + "##prmeter").c_str(), false, 0.0f);
+      ImGui::PopStyleColor();
+      char hint[160];
+      if (differs)
+        std::snprintf(hint, sizeof hint, i18n::tr("Meter of this pattern: %s. Its first clip starts in a %s section (click to change)"), lbl.c_str(),
+                      meter::text(sn, sd).c_str());
+      else if (pat->ownMeter())
+        std::snprintf(hint, sizeof hint, i18n::tr("Meter of this pattern: %s, its own (click to change)"), lbl.c_str());
+      else
+        std::snprintf(hint, sizeof hint, i18n::tr("Meter of this pattern: %s, the song's meter at the start (click to change)"), lbl.c_str());
+      ui::Hint(hint);
+      if (clicked) ImGui::OpenPopup("##prmeterpop");
+      if (ImGui::BeginPopup("##prmeterpop")) {
+        meterui::patternMeterMenu(a, pat->id);
+        if (first) meterui::clipMeterItems(a, first->id);
+        ImGui::EndPopup();
+      }
     }
     float room = roomLeft();
     if (room > 120 + 60) {

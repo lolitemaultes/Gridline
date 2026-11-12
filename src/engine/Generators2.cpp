@@ -50,6 +50,7 @@ class PadsGen final : public Generator {
   }
 
  protected:
+  bool perVoiceExpression() const override { return true; }  // K-193
   // Multi-point envelope runner (see PadEnvelope).
   struct EnvRun {
     int seg = 1;          // segment being run: from point seg-1 to seg
@@ -109,6 +110,7 @@ class PadsGen final : public Generator {
     bool useVolEnv = false, usePanEnv = false;
     EnvRun volEnv, panEnv;
     int ctr = 0;
+    VoiceExpr vx;  // K-193: the note's own pressure and timbre response
   };
   void configure(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx) override {
     using namespace pp;
@@ -287,6 +289,7 @@ class PadsGen final : public Generator {
       const PadEnvelope* pe = v.usePanEnv && view_.pan ? &view_.pan[v.pad] : nullptr;
       tap::Run run;  // J-219: Track Receipt coverage
       if (tap::active()) run.begin(v.smp);
+      exprVoice(v.vx, v.id);  // K-193
       for (int i = 0; i < n; ++i) {
         if (v.pos < v.startPos - 1 || v.pos > v.endPos || v.fade <= 0) {
           v.on = false;
@@ -327,8 +330,15 @@ class PadsGen final : public Generator {
         }
         run.at(v.pos);
         interpBl(sm, v.pos, v.rate, sl, sr);
-        L[i] += sl * v.gl * g;
-        R[i] += sr * v.gr * g;
+        if (v.vx.on) {  // K-193: the note's level / brightness after the envelope, before the pan
+          float el = sl * g, er = sr * g;
+          v.vx.apply(el, er);
+          L[i] += el * v.gl;
+          R[i] += er * v.gr;
+        } else {
+          L[i] += sl * v.gl * g;
+          R[i] += sr * v.gr * g;
+        }
         v.pos += v.reverse ? -v.rate : v.rate;
         v.fade -= v.fadeStep;
       }
@@ -373,6 +383,7 @@ class FmGen final : public Generator {
   }
 
  protected:
+  bool perVoiceExpression() const override { return true; }  // K-193
   struct Voice {
     bool on = false, held = false;
     uint32_t id = 0;
@@ -386,6 +397,7 @@ class FmGen final : public Generator {
     double lfoPh = 0;
     float gain[4] = {0, 0, 0, 0};  // operator gains of the current control period
     uint32_t ctl = 0;              // samples rendered (control grid)
+    VoiceExpr vx;                  // K-193: the note's own pressure and timbre response
   };
   void configure(const PluginState& s, const ChannelAux&, const ProcessContext& ctx) override {
     using namespace pp;
@@ -480,6 +492,7 @@ class FmGen final : public Generator {
     for (auto& v : voices_) {
       if (!v.on) continue;
       float* gain = v.gain;
+      exprVoice(v.vx, v.id);  // K-193
       for (int i = 0; i < n; ++i) {
         // Operator gains (key scaling follows the gliding pitch) every 16
         // samples of the voice's own clock (J-30: once per host block made the
@@ -523,8 +536,15 @@ class FmGen final : public Generator {
           }
         }
         double k = vol_ / std::max(1, nc);
-        L[i] += static_cast<float>(sl * k);
-        R[i] += static_cast<float>(sr * k);
+        if (v.vx.on) {  // K-193: the note's level / brightness on its own output
+          double el = sl * k, er = sr * k;
+          v.vx.apply(el, er);
+          L[i] += static_cast<float>(el);
+          R[i] += static_cast<float>(er);
+        } else {
+          L[i] += static_cast<float>(sl * k);
+          R[i] += static_cast<float>(sr * k);
+        }
         if (v.slide.active())
           v.slide.advance(v.note);
         else
@@ -559,6 +579,7 @@ class AcidGen final : public Generator {
   bool active() const override { return amp_ > 1e-5 || gate_ || (seqOn_ && playing_); }
 
  protected:
+  bool perVoiceExpression() const override { return true; }  // K-193: its one voice follows the sounding note
   void configure(const PluginState& s, const ChannelAux&, const ProcessContext& ctx) override {
     using namespace pp;
     sr_ = ctx.sampleRate;
@@ -609,6 +630,7 @@ class AcidGen final : public Generator {
     held_[heldN_ < 16 ? heldN_++ : 15] = {id, pitch};
     if (seqOn_) {  // keys transpose the sequence
       transpose_ = pitch - 60;
+      id_ = id;  // K-193: the sequence answers the expression of the key that transposes it
       return;
     }
     trigger(pitch, vel >= accThresh_, gate_);  // overlapping notes slide instead of retriggering
@@ -690,6 +712,7 @@ class AcidGen final : public Generator {
     const double fdecAcc = std::exp(-1.0 / std::max(1.0, accDecay_ * sr_ * 0.3));
     const double atk = 1.0 / (0.003 * sr_), rel = std::exp(-1.0 / (0.008 * sr_));
     const double clickDec = std::exp(-1.0 / (0.002 * sr_));
+    exprVoice(vx_, id_);  // K-193
     for (int i = 0; i < n; ++i) {
       if (seqOn_ && playing_) runSequencer(i);
       if (glide_.active())
@@ -738,6 +761,7 @@ class AcidGen final : public Generator {
       y = std::tanh(y * d) / std::tanh(d);
       if (driveTone_ < 19900) y = toneF_.process(y);
       y *= amp_ * (0.8 + acc_ * accent_ * 0.5) * vol_;
+      if (vx_.on) vx_.apply(y);  // K-193
       L[i] += static_cast<float>(y);
       R[i] += static_cast<float>(y);
     }
@@ -753,6 +777,7 @@ class AcidGen final : public Generator {
   int heldN_ = 0;
   bool gate_ = false, square_ = false, vintage_ = false, seqOn_ = false, playing_ = false;
   uint32_t id_ = 0;
+  VoiceExpr vx_;  // K-193: the sounding note's own pressure and timbre response
   PitchGlide glide_;
   double sr_ = 44100, pitch_ = 48, target_ = 48, fenv_ = 0, acc_ = 0, amp_ = 0, click_ = 0;
   double cutoff_ = 500, reso_ = 0.7, envMod_ = 0.5, decay_ = 0.25, accent_ = 0.6, slide_ = 0.06, drive_ = 0.2, vol_ = 0.7;
@@ -781,6 +806,7 @@ class KeysGen final : public Generator {
   }
 
  protected:
+  bool perVoiceExpression() const override { return true; }  // K-193
   struct Voice {
     bool on = false, held = false;
     uint32_t id = 0;
@@ -803,6 +829,7 @@ class KeysGen final : public Generator {
     double gnote = 60, hz0 = 440;
     double w0[2][kPartials] = {};  // piano partials' phase steps at the started pitch
     uint32_t gtick = 0;
+    VoiceExpr vx;  // K-193: the note's own pressure and timbre response
   };
   // K-144: the voice at its gliding pitch (tine increments come from v.hz; piano phasors rotate faster).
   void retune(Voice& v, double& dL, double& dR) const {
@@ -941,6 +968,7 @@ class KeysGen final : public Generator {
     for (int i = 0; i < n; ++i) bufL_[static_cast<size_t>(i)] = bufR_[static_cast<size_t>(i)] = 0;
     for (auto& v : voices_) {
       if (!v.on) continue;
+      exprVoice(v.vx, v.id);  // K-193
       if (v.parts > 0) {  // piano model
         const double velG = 1 - velSens_ + velSens_ * v.vel;
         double unusedL = 0, unusedR = 0;
@@ -968,6 +996,7 @@ class KeysGen final : public Generator {
           double g = velG * 0.9;
           l *= g * v.panL, r *= g * v.panR;
           if (velMuffle_ > 0) l = v.lp[0].process(l), r = v.lp[1].process(r);
+          if (v.vx.on) v.vx.apply(l, r);  // K-193
           bufL_[static_cast<size_t>(i)] += static_cast<float>(l);
           bufR_[static_cast<size_t>(i)] += static_cast<float>(r);
           // Every 256 samples of the voice's life (not per block, J-30):
@@ -1001,6 +1030,7 @@ class KeysGen final : public Generator {
         double a = v.amp * velG;
         l *= a * v.panL, r *= a * v.panR;
         if (velMuffle_ > 0) l = v.lp[0].process(l), r = v.lp[1].process(r);
+        if (v.vx.on) v.vx.apply(l, r);  // K-193
         bufL_[static_cast<size_t>(i)] += static_cast<float>(l);
         bufR_[static_cast<size_t>(i)] += static_cast<float>(r);
         v.ph[0] += dL;
@@ -1070,6 +1100,8 @@ class SlicerGen final : public Generator {
   bool handlesNotePan() const override { return sx_; }
 
  protected:
+  // K-193: the slice voices respond per note; the region engine keeps the channel-wide response.
+  bool perVoiceExpression() const override { return !sx_; }
   struct Voice {
     bool on = false, held = false;
     uint32_t id = 0;
@@ -1082,6 +1114,7 @@ class SlicerGen final : public Generator {
     int64_t delayLeft = 0;  // region start delay (samples)
     Adsr env;
     Svf filt[2];
+    VoiceExpr vx;  // K-193: the note's own pressure and timbre response
   };
   void configure(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx) override {
     using namespace pp;
@@ -1268,6 +1301,7 @@ class SlicerGen final : public Generator {
       tap::Slot* procSlot = tapOn && proc_ ? tap::slotFor(smp.get()) : nullptr;
       double procLo = 2, procHi = -1;
       if (tapOn && !proc_) run.begin(smp.get());
+      exprVoice(v.vx, v.id);  // K-193
       for (int i = 0; i < n; ++i) {
         if (v.delayLeft > 0) {  // region delay: silent until it starts
           --v.delayLeft;
@@ -1314,8 +1348,15 @@ class SlicerGen final : public Generator {
           }
           l = io[0], r = io[1];
         }
-        L[i] += static_cast<float>(l * g * v.gl);
-        R[i] += static_cast<float>(r * g * v.gr);
+        if (v.vx.on) {  // K-193: the note's level / brightness after the envelope, before the slice gain / pan
+          double el = l * g, er = r * g;
+          v.vx.apply(el, er);
+          L[i] += static_cast<float>(el * v.gl);
+          R[i] += static_cast<float>(er * v.gr);
+        } else {
+          L[i] += static_cast<float>(l * g * v.gl);
+          R[i] += static_cast<float>(r * g * v.gr);
+        }
         v.pos += v.reverse ? -v.rate : v.rate;
         v.fade -= v.fadeStep;
       }
@@ -1370,6 +1411,7 @@ class GranularGen final : public Generator {
   }
 
  protected:
+  bool perVoiceExpression() const override { return true; }  // K-193
   struct Grain {
     bool on = false;
     double pos = 0, rate = 1, t = 0, len = 1;
@@ -1383,6 +1425,7 @@ class GranularGen final : public Generator {
     float vel = 0;
     Adsr env;
     PitchGlide slide;  // K-144: new grains follow the gliding pitch
+    VoiceExpr vx;      // K-193: the note's own pressure and timbre response (on its grains)
   };
   void configure(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx) override {
     using namespace pp;
@@ -1449,7 +1492,15 @@ class GranularGen final : public Generator {
     std::array<tap::Run, 96> runs;
     if (tapOn)
       for (auto& r : runs) r.begin(&sm);
+    // K-193: with a note's own response on, each note's grains are mixed apart, then shaped by it.
+    bool anyVx = false;
+    for (auto& v : notes_)
+      if (v.on) {
+        exprVoice(v.vx, v.id);
+        if (v.vx.on) anyVx = true;
+      }
     for (int i = 0; i < n; ++i) {
+      double noteL[kNotes] = {}, noteR[kNotes] = {};  // K-193: each note's grains (while anyVx)
       for (int ni = 0; ni < static_cast<int>(notes_.size()); ++ni) {  // spawn grains
         NoteV& v = notes_[static_cast<size_t>(ni)];
         if (!v.on) continue;
@@ -1516,12 +1567,23 @@ class GranularGen final : public Generator {
               },
               g.pos, std::fabs(g.rate), kern, o);
         }
-        outL += o[0] * a * g.gl;
-        outR += o[1] * a * g.gr;
+        if (anyVx) {  // K-193
+          noteL[g.note] += o[0] * a * g.gl;
+          noteR[g.note] += o[1] * a * g.gr;
+        } else {
+          outL += o[0] * a * g.gl;
+          outR += o[1] * a * g.gr;
+        }
         g.pos += g.rate;
         g.t += 1;
         if (g.t >= g.len) g.on = false;
       }
+      if (anyVx)  // K-193: each note's grains through the note's own response
+        for (size_t ni = 0; ni < notes_.size(); ++ni) {
+          if (notes_[ni].vx.on) notes_[ni].vx.apply(noteL[ni], noteR[ni]);
+          outL += noteL[ni];
+          outR += noteR[ni];
+        }
       for (auto& v : notes_)
         if (v.on) {
           v.env.next();
@@ -1535,7 +1597,8 @@ class GranularGen final : public Generator {
   }
 
  private:
-  std::array<NoteV, 8> notes_{};
+  static constexpr size_t kNotes = 8;
+  std::array<NoteV, kNotes> notes_{};
   std::array<Grain, 96> grains_{};
   const ChannelAux* aux_ = nullptr;
   Noise rng_;

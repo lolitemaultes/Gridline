@@ -1480,7 +1480,7 @@ void AudioEngine::drain(const Program* p) {
             countInTotal_ = std::max<int64_t>(1, static_cast<int64_t>(p->flatMap.samplesBetween(0, c.tick2, sr_)));
             // K-179: the count-in clicks the meter in effect where playback starts.
             Tick ciBeat = std::max<Tick>(1, p->beatTicks), ciBar = std::max<Tick>(1, p->barTicks);
-            if (tMode_ == PlayMode::Song) {
+            if (tMode_ != PlayMode::Pattern) {  // K-193: live mode too
               const MeterSeg& g = p->meter.segAt(static_cast<Tick>(std::max(0.0, startTick_)));
               ciBeat = g.beat, ciBar = g.bar;
             } else if (const ProgPattern* cp = tMode_ == PlayMode::Pattern ? p->pattern(tPattern_) : nullptr) {
@@ -1851,7 +1851,7 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
         double t1 = tickAt(p, anchorTick_, static_cast<double>(clock_ + seg));
         Tick first = static_cast<Tick>(std::ceil(t0 - 1e-9));
         // K-179: beats and accents of the meter in effect (song meter changes, or the pattern's meter).
-        const MetronomeBeat bl = metronomeBeat(p, tMode_ == PlayMode::Pattern ? p->pattern(tPattern_) : nullptr, tMode_ == PlayMode::Song, first);
+        const MetronomeBeat bl = metronomeBeat(p, tMode_ == PlayMode::Pattern ? p->pattern(tPattern_) : nullptr, tMode_ != PlayMode::Pattern, first);
         const Tick b0 = bl.tick;
         if (b0 < t1) {
           int64_t smp = sampleAt(p, anchorTick_, static_cast<double>(b0)) - clock_;
@@ -1957,10 +1957,10 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
     // K-179: the meter at the block start (song meter changes, or the playing pattern's meter) and
     // the bar it is in, for hosted plugins' bar positions.
     Tick beat = std::max<Tick>(1, p->beatTicks), bar = std::max<Tick>(1, p->barTicks);
-    const Tick bt = static_cast<Tick>(std::floor(std::max(0.0, blockTick)));
+    const Tick bt = static_cast<Tick>(std::floor(std::max(0.0, blockTick) + 1e-6));  // (K-193: a block split at a change starts on it)
     bc_.ctx.barStart = -1;
     bc_.ctx.barIndex = 0;
-    if (tMode_ == PlayMode::Song) {
+    if (tMode_ != PlayMode::Pattern) {  // K-193: live mode too
       const MeterMap& mm = p->meter;
       const MeterSeg& g = mm.segAt(bt);
       beat = g.beat, bar = g.bar;
@@ -2217,9 +2217,10 @@ void AudioEngine::killEverything(const Program* p) {
 // ---- Live mode: clip launching ----------------------------------------------
 
 namespace {
-// Launch grid in ticks (0 = immediately); see launchGridTicks (core/Arrangements).
-Tick liveGrid(const Program* p, LaunchGrid g, Tick clipLength) {
-  const Tick beat = std::max<Tick>(1, p->beatTicks);
+// Launch grid in ticks for a beat of `beat` ticks (0 = immediately); see launchGridTicks
+// (core/Arrangements).
+Tick liveGrid(Tick beat, LaunchGrid g, Tick clipLength) {
+  beat = std::max<Tick>(1, beat);
   switch (g) {
     case LaunchGrid::Now: return 0;
     case LaunchGrid::Step: return std::max<Tick>(1, beat / 4);
@@ -2230,7 +2231,23 @@ Tick liveGrid(const Program* p, LaunchGrid g, Tick clipLength) {
     default: return beat * 4;
   }
 }
-Tick nextOnGrid(Tick t, Tick q) { return q > 0 ? (t + q - 1) / q * q : t; }
+// K-193: the launch grid line at or after t (`up`), or at or before it, in the meter in force at t
+// (the song's meter map: the live transport counts song ticks from the song start). Beat grids
+// count from the start of t's meter section and never step past the next section's start (a bar
+// line, on every beat grid); a clip-length grid counts from the start.
+Tick liveGridLine(const Program* p, LaunchGrid g, Tick clipLength, Tick t, bool up) {
+  if (g == LaunchGrid::Now) return t;
+  const MeterMap& mm = p->meter;
+  const size_t si = g == LaunchGrid::ClipLength ? 0 : mm.segIndex(t);
+  const MeterSeg& seg = mm.segments()[si];
+  const Tick q = liveGrid(g == LaunchGrid::ClipLength ? p->beatTicks : seg.beat, g, clipLength);
+  const Tick t0 = g == LaunchGrid::ClipLength ? 0 : std::min(seg.start, t);
+  const Tick down = t0 + (t - t0) / q * q;
+  if (!up || down == t) return down;
+  Tick next = down + q;
+  if (g != LaunchGrid::ClipLength && si + 1 < mm.segments().size()) next = std::min(next, mm.segments()[si + 1].start);
+  return next;
+}
 }  // namespace
 
 void AudioEngine::clearLive() {
@@ -2249,7 +2266,7 @@ void AudioEngine::liveCommand(const Program* p, const Cmd& c) {
     st.queued = kNoId;
     if (st.active == kNoId) return;
     int li = p->liveClipIndex(st.active);
-    st.stopAt = nextOnGrid(now, liveGrid(p, lt.launch, li >= 0 ? p->liveClips[static_cast<size_t>(li)].length : 1));
+    st.stopAt = liveGridLine(p, lt.launch, li >= 0 ? p->liveClips[static_cast<size_t>(li)].length : 1, now, true);
     st.stopQueued = true;
   };
   if (c.kind == Cmd::LiveStopAll) {
@@ -2283,12 +2300,10 @@ void AudioEngine::liveCommand(const Program* p, const Cmd& c) {
     }
   }
   // One clip per track: the new clip replaces the playing one at the launch time.
-  const Tick at = nextOnGrid(now, liveGrid(p, lt.launch, lc.length));
+  const Tick at = liveGridLine(p, lt.launch, lc.length, now, true);
   Tick origin = at;
-  if (lt.syncStart != LaunchGrid::Now) {  // content in phase with the song position
-    Tick s = liveGrid(p, lt.syncStart, lc.length);
-    if (s > 0) origin = at / s * s;
-  }
+  if (lt.syncStart != LaunchGrid::Now)  // content in phase with the song position
+    origin = liveGridLine(p, lt.syncStart, lc.length, at, false);
   st.queued = lc.clip;
   st.queuedAt = at;
   st.queuedOrigin = origin;
@@ -2492,6 +2507,16 @@ int AudioEngine::untilEventStep(const Program* p, int n) const {
   if (tLoop_) next = std::min(next, transportEnd(p));  // the next pass starts on its own block
   if (!std::isfinite(next)) return n;
   const int64_t s = sampleAt(p, anchor, next) - clock;
+  return s >= 1 && s < n ? static_cast<int>(s) : n;
+}
+
+int AudioEngine::untilMeterChange(const Program* p, int n) const {
+  if (!tPlaying_ || countInLeft_ > 0 || tMode_ == PlayMode::Pattern || p->meter.constant()) return n;
+  const double t0 = tickAt(p, anchorTick_, static_cast<double>(clock_)) + kEventTickEps;
+  const auto& segs = p->meter.segments();
+  const size_t i = p->meter.segIndex(static_cast<Tick>(std::floor(std::max(0.0, t0))));
+  if (i + 1 >= segs.size()) return n;
+  const int64_t s = sampleAt(p, anchorTick_, static_cast<double>(segs[i + 1].start)) - clock_;
   return s >= 1 && s < n ? static_cast<int>(s) : n;
 }
 
@@ -2758,6 +2783,7 @@ void AudioEngine::processDirect(float* L, float* R, int frames) {
     drainMidi(p);
     if (done == 0 && hostNew_) followHost(p);
     if (p && p->hasEventLanes) n = untilEventStep(p, n);  // J-210: recorded events step on their samples
+    if (p && p->meterReaders) n = untilMeterChange(p, n);  // K-193: plugins see a meter change on its sample
     processBlock(p, L + done, R + done, n);
     if (taps_) copyTaps(p, done, n);
     absClock_ += n;

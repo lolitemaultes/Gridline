@@ -220,6 +220,47 @@ struct PitchGlide {
   void stop() { left = 0; }
 };
 
+// K-193: one voice's own response to its note's pressure and timbre (the level and brightness
+// responses, per note). A voice keeps one of these; the instrument calls
+// Generator::exprVoice(vx, id) at the start of each render() for each sounding voice, then
+// vx.apply(l, r) (or vx.apply(m)) on the voice's samples while vx.on. Notes without expression
+// leave vx.on false and their samples untouched. A note that ends keeps its last values for its
+// release. Level: up to +6 dB per unit; brightness: a high shelf at about 1.5 kHz, +-9 dB per unit;
+// both smoothed per sample over about 5 ms, as the channel-wide response.
+struct VoiceExpr {
+  bool on = false;
+  bool seen = false;    // tracks a note (id)
+  uint32_t id = 0;
+  float lt = 0, bt = 0;  // targets: level 0..1, brightness -1..1
+  float lc = 0, bc = 0;  // current
+  float g = 1, hg = 1;   // gains of lc, bc
+  float coef = 0, shelfA = 0;
+  float sl = 0, sr = 0;  // the shelf's low-pass state
+  void step() {
+    const float dl = (lt - lc) * coef, db = (bt - bc) * coef;
+    if (dl != 0 || db != 0) {
+      lc += dl;
+      bc += db;
+      g = std::exp2(lc);
+      hg = std::exp2(bc * 1.5f);
+    }
+  }
+  template <class T>
+  void apply(T& l, T& r) {
+    step();
+    sl += (static_cast<float>(l) - sl) * shelfA;
+    sr += (static_cast<float>(r) - sr) * shelfA;
+    l = static_cast<T>((sl + (static_cast<float>(l) - sl) * hg) * g);
+    r = static_cast<T>((sr + (static_cast<float>(r) - sr) * hg) * g);
+  }
+  template <class T>
+  void apply(T& m) {
+    step();
+    sl += (static_cast<float>(m) - sl) * shelfA;
+    m = static_cast<T>((sl + (static_cast<float>(m) - sl) * hg) * g);
+  }
+};
+
 class Generator {
  public:
   virtual ~Generator() = default;
@@ -406,6 +447,13 @@ class Generator {
     (void)dim;
     (void)value;
   }
+  // K-193: the instrument applies the level and brightness responses to each voice itself
+  // (exprVoice / VoiceExpr), so the base class does not apply them to its whole output.
+  virtual bool perVoiceExpression() const { return false; }
+  // K-193: brings a voice's expression response up to date with its note `id` (call at the start
+  // of render() for each sounding voice). A new id restarts the response at the note's values.
+  // Until any note of this instrument has had pressure or timbre, vx.on stays false.
+  void exprVoice(VoiceExpr& vx, uint32_t id) const;
   virtual void onAllOff() = 0;
   virtual void onKill() = 0;
   // Called once per process() before rendering, to read parameters.
@@ -487,6 +535,9 @@ class Generator {
   void exprTargets();
   ExprUse exprUse(ExprDim d) const;
   bool exprUsed_ = false;
+  bool exprVoiceUsed_ = false;               // K-193: some note had a level / brightness response
+  float exprCoef_ = 0, exprShelfA_ = 0;      // K-193: the smoothing and shelf coefficients
+  void noteExprTargets(const ExprNote& x, float& level, float& bright) const;
   float levelTarget_ = 0, levelCur_ = 0;    // 0..1 of +6 dB
   float brightTarget_ = 0, brightCur_ = 0;  // -1..1 of +-9 dB
   float shelfL_ = 0, shelfR_ = 0;           // the shelf's low-pass state

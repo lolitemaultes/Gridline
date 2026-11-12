@@ -620,6 +620,9 @@ struct Program {
   bool hasCutGroups = false;    // some channel cuts channels (cut groups)
   bool hasPatternAutos = false;  // some pattern or live clip carries automation
   bool hasEventLanes = false;    // J-210: some lane plays recorded events (blocks split on their steps)
+  // K-193: the meter changes and a hosted plugin reads the meter: blocks split at each change, so
+  // the plugin sees the new meter from the change's first sample. Built-in plugins never read it.
+  bool meterReaders = false;
   // K-5: slide notes glide the sounding notes of every colour (Song::slidesAnyColour, projects
   // saved before slides kept to their colour group); false: only the notes of their own colour.
   bool slidesAnyColour = false;

@@ -229,6 +229,7 @@ class WavetableGen final : public Generator {
       if (v.on) return true;
     return false;
   }
+  bool perVoiceExpression() const override { return true; }  // K-193
 
  protected:
   struct O {
@@ -265,6 +266,7 @@ class WavetableGen final : public Generator {
     LfoPhase lfo[4];
     double lfoInc[4] = {};
     double rnd = 0, gain = 0, panL = 1, panR = 1;
+    VoiceExpr vx;  // K-193: the note's own pressure and timbre response
   };
 
   void configure(const PluginState& s, const ChannelAux&, const ProcessContext& ctx) override {
@@ -337,6 +339,7 @@ class WavetableGen final : public Generator {
       bool legato = playMode_ == PlayLegato && hadHeld && v.on;
       bool glide = glide_ > 0.002 && v.on;
       v.id = id;
+      if (v.on) v.vx.id = id;  // K-193: the sounding voice's response moves on smoothly
       v.target = pitch;
       v.slide.stop();
       if (!glide) v.pitch = pitch;
@@ -379,7 +382,7 @@ class WavetableGen final : public Generator {
       Voice& v = voices_[0];
       if (!wasTop || !v.on) return;
       if (const auto* t = stack_.top()) {
-        v.id = t->id;
+        v.id = v.vx.id = t->id;  // K-193: the response moves on smoothly to the held key
         v.target = t->pitch;
         if (glide_ <= 0.002) v.pitch = t->pitch;
         if (playMode_ == PlayMono) trigger(v);
@@ -571,6 +574,7 @@ class WavetableGen final : public Generator {
 
   void renderVoice(Voice& v, int n) {
     const double glideCoef = std::pow(std::exp(-1.0 / std::max(1.0, glide_ * sr_ * 0.3)), 16.0);
+    exprVoice(v.vx, v.id);  // K-193
     for (int i = 0; i < n; ++i) {
       if ((v.ctr++ & 15u) == 0) {
         if (v.slide.active()) v.slide.advance(v.pitch, 16);  // K-144: host glide, straight
@@ -638,8 +642,15 @@ class WavetableGen final : public Generator {
       }
       double a = v.env[0].next() * v.gain;
       for (int e = 1; e < 4; ++e) v.env[e].next();
-      bufL_[static_cast<size_t>(i)] += static_cast<float>(ol * a * v.panL);
-      bufR_[static_cast<size_t>(i)] += static_cast<float>(orr * a * v.panR);
+      if (v.vx.on) {  // K-193: the note's own level and brightness, before its pan
+        double el = ol * a, er = orr * a;
+        v.vx.apply(el, er);
+        bufL_[static_cast<size_t>(i)] += static_cast<float>(el * v.panL);
+        bufR_[static_cast<size_t>(i)] += static_cast<float>(er * v.panR);
+      } else {
+        bufL_[static_cast<size_t>(i)] += static_cast<float>(ol * a * v.panL);
+        bufR_[static_cast<size_t>(i)] += static_cast<float>(orr * a * v.panR);
+      }
       for (int l = 0; l < 4; ++l)
         if (lfoRetrig_[l]) v.lfo[l].advance(v.lfoInc[l]);
       if (!v.env[0].active()) {

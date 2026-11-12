@@ -378,7 +378,7 @@ Plan plan(const std::vector<Item>& items, const std::vector<browse::DropItem>& k
   std::map<DropAction, std::vector<size_t>> by;
   for (const Step& s : p.steps) by[s.action].push_back(s.item);
   std::vector<std::string> parts;
-  const int bar = static_cast<int>(std::max<Tick>(0, ctx.tick) / std::max<Tick>(1, ctx.barTicks)) + 1;
+  const int bar = static_cast<int>(ctx.bar >= 0 ? ctx.bar : std::max<Tick>(0, ctx.tick) / std::max<Tick>(1, ctx.barTicks)) + 1;
   for (const auto& [act, idx] : by) {
     const int n = static_cast<int>(idx.size());
     const std::string w = what(items, idx);

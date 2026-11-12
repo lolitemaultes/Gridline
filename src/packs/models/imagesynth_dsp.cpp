@@ -33,6 +33,7 @@ class ImageGen final : public Generator {
       if (voices_[i].on) return true;
     return false;
   }
+  bool perVoiceExpression() const override { return true; }  // K-193
 
  protected:
   struct Voice {
@@ -45,6 +46,7 @@ class ImageGen final : public Generator {
     Adsr env;
     uint32_t phL[kImgMaxRows], phR[kImgMaxRows], incL[kImgMaxRows], incR[kImgMaxRows];
     float aL[kImgMaxRows], aR[kImgMaxRows], dL[kImgMaxRows], dR[kImgMaxRows];
+    VoiceExpr vx;  // K-193: the note's own pressure and timbre response
   };
 
   void configure(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx) override {
@@ -202,6 +204,8 @@ class ImageGen final : public Generator {
 
   void render(float* L, float* R, int n) override {
     const SineTable& st = sineTable();
+    for (int i = 0; i < kVoices; ++i)  // K-193: each sounding note's own response, once per block
+      if (voices_[i].on) exprVoice(voices_[i].vx, voices_[i].id);
     int pos = 0;
     while (pos < n) {
       if (ctr_ == 0) {
@@ -242,6 +246,13 @@ class ImageGen final : public Generator {
         }
         for (int j = 0; j < len; ++j) {
           float e = static_cast<float>(v.env.next());
+          if (v.vx.on) {  // K-193: the note's own response (separate branch keeps other notes bit-exact)
+            float l = bl[j] * e, r = br[j] * e;
+            v.vx.apply(l, r);
+            L[pos + j] += l;
+            R[pos + j] += r;
+            continue;
+          }
           L[pos + j] += bl[j] * e;
           R[pos + j] += br[j] * e;
         }

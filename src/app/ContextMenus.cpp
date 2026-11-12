@@ -220,6 +220,12 @@ ops::NoteSel pianoSel(const App& a, size_t n) {
 }
 Tick pianoGrid(const App& a) { return std::max<Tick>(1, snapTicks(a.doc.song(), a.piano.snap)); }
 Tick stepTicks(const App& a) { return std::max<Tick>(1, a.doc.song().ppq / 4); }
+// K-193: the piano roll's pattern beat and bar (the pattern's own meter; else the song's at the start).
+Tick pianoBeat(const App& a) {
+  const Song& s = a.doc.song();
+  const Pattern* p = s.pattern(a.curPattern);
+  return std::max<Tick>(1, p ? s.patternBeatTicks(*p) : s.beatTicks());
+}
 }  // namespace
 
 size_t pianoSelectionCount(const App& a) {
@@ -256,7 +262,7 @@ void pianoToolItems(App& a) {
   if (ImGui::BeginMenu(i18n::tr("Quick chop"), ok)) {
     if (ImGui::MenuItem(i18n::tr("Into steps"), keys::label("piano.chopSteps"))) pianoEdit(a, "chop notes", [&](auto& n, auto& s) { ops::chop(n, s, step); });
     if (ImGui::MenuItem(i18n::tr("Into half steps"))) pianoEdit(a, "chop notes", [&](auto& n, auto& s) { ops::chop(n, s, std::max<Tick>(1, step / 2)); });
-    if (ImGui::MenuItem(i18n::tr("Into beats"))) pianoEdit(a, "chop notes", [&](auto& n, auto& s) { ops::chop(n, s, a.doc.song().beatTicks()); });
+    if (ImGui::MenuItem(i18n::tr("Into beats"))) pianoEdit(a, "chop notes", [&](auto& n, auto& s) { ops::chop(n, s, pianoBeat(a)); });
     if (ImGui::MenuItem(i18n::tr("Into snap grid"))) pianoEdit(a, "chop notes", [&](auto& n, auto& s) { ops::chop(n, s, grid); });
     ImGui::EndMenu();
   }
@@ -277,7 +283,7 @@ void pianoToolItems(App& a) {
   if (ImGui::BeginMenu(i18n::tr("Quick arpeggio"), ok)) {
     if (ImGui::MenuItem(i18n::tr("Steps"))) pianoEdit(a, "arpeggiate", [&](auto& n, auto& s) { ops::arpeggiate(n, s, step); });
     if (ImGui::MenuItem(i18n::tr("Half steps"))) pianoEdit(a, "arpeggiate", [&](auto& n, auto& s) { ops::arpeggiate(n, s, std::max<Tick>(1, step / 2)); });
-    if (ImGui::MenuItem(i18n::tr("Beats"))) pianoEdit(a, "arpeggiate", [&](auto& n, auto& s) { ops::arpeggiate(n, s, a.doc.song().beatTicks()); });
+    if (ImGui::MenuItem(i18n::tr("Beats"))) pianoEdit(a, "arpeggiate", [&](auto& n, auto& s) { ops::arpeggiate(n, s, pianoBeat(a)); });
     ImGui::EndMenu();
   }
   if (ImGui::BeginMenu(i18n::tr("Flip"), ok)) {
@@ -380,8 +386,9 @@ void progressionItems(App& a, bool riff) {
     const Song& s = a.doc.song();
     const Pattern* pat = s.pattern(a.curPattern);
     int bars = std::max(4, pat->bars);
-    auto add = riff ? ops::progressionRiff(p, root, s.barTicks(), stepTicks(a) * 2, bars)
-                    : ops::progressionNotes(p, root, s.barTicks(), bars);
+    const Tick barT = s.patternBarTicks(*pat);  // K-193: the pattern's own bar
+    auto add = riff ? ops::progressionRiff(p, root, barT, stepTicks(a) * 2, bars)
+                    : ops::progressionNotes(p, root, barT, bars);
     a.doc.beginGroup(riff ? "insert riff" : "insert chord progression");
     if (pat->bars < bars) a.doc.setPatternLength(pat->id, bars, pat->stepsPerBar);
     pianoEdit(a, riff ? "insert riff" : "insert chord progression", [&](auto& n, auto& sel) {
@@ -523,6 +530,10 @@ void editPaste(App& a) {
       for (const auto& c : src) lo = std::min(lo, c.start), hi = std::max(hi, c.start + s.clipLength(c));
       Tick bar = std::max<Tick>(1, s.barTicks());
       Tick shift = std::max(bar, (hi - lo + bar / 2) / bar * bar);
+      if (const MeterMap mm(s); !mm.constant()) {  // K-193: whole bars of the meter map from where the clips start
+        const Tick target = mm.nearestBar(hi - (lo - mm.barStartAt(lo)));
+        shift = mm.addBars(lo, std::max<int64_t>(1, mm.barIndex(target) - mm.barIndex(lo))) - lo;
+      }
       std::set<ObjectId> added;
       a.doc.beginGroup("paste clips");
       for (auto& c : src) {
@@ -1605,15 +1616,38 @@ void markerAddItems(App& a) {
     ops::addMarker(a.doc, a.playlist.selStart, ops::nextMarkerName(s));
   if (ImGui::BeginMenu(i18n::tr("Add a marker every"))) {
     const Tick bar = s.barTicks(), end = std::max(s.lengthTicks(), bar * 16);
-    for (int b : {1, 2, 4, 8, 16})
-      if (ImGui::MenuItem((std::to_string(b) + " " + (b == 1 ? i18n::tr("bar") : i18n::tr("bars"))).c_str())) ops::addMarkersEvery(a.doc, 0, end, bar * b);
+    for (int b : {1, 2, 4, 8, 16}) {
+      if (!ImGui::MenuItem((std::to_string(b) + " " + (b == 1 ? i18n::tr("bar") : i18n::tr("bars"))).c_str())) continue;
+      const MeterMap mm(s);
+      if (mm.constant()) {
+        ops::addMarkersEvery(a.doc, 0, end, bar * b);
+        continue;
+      }
+      // K-193: on the bar lines of the meter map (as ops::addMarkersEvery does in one meter).
+      const Tick mEnd = std::max(s.lengthTicks(), mm.barStart(16));
+      a.doc.editSong("add markers", [&](Song& x) {
+        int n = 0;
+        for (int64_t k = 0; mm.barStart(k) < mEnd && n < 512; k += b) {
+          const Tick t = mm.barStart(k);
+          bool exists = false;
+          for (const auto& m : x.markers) exists = exists || m.pos == t;
+          if (exists) continue;
+          Marker m;
+          m.pos = t;
+          m.name = std::to_string(k + 1);
+          x.markers.push_back(m);
+          ++n;
+        }
+        std::stable_sort(x.markers.begin(), x.markers.end(), [](const Marker& p, const Marker& q) { return p.pos < q.pos; });
+      });
+    }
     ImGui::EndMenu();
   }
 }
 
 void addLoopMarker(App& a, Tick pos) {
   const Tick grid = a.playlist.effGrid > 0 ? a.playlist.effGrid : snapTicks(a.doc.song(), a.playlist.snap);
-  const Tick at = std::max<Tick>(0, grid > 0 ? timeline::snapTick(pos, grid, Snap::Line) : pos);
+  const Tick at = std::max<Tick>(0, grid > 0 ? timeline::snapTick(MeterMap(a.doc.song()), pos, grid, Snap::Line) : pos);  // K-193
   const bool had = ops::songLoopMarker(a.doc.song()) >= 0;
   if (ops::addSongLoopMarker(a.doc, at) >= 0)
     a.notify(i18n::tr("Loop marker placed: at the song end playback goes on from it"));

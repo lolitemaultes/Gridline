@@ -1664,7 +1664,8 @@ void drawPlaylist(App& a) {
   if (st.quickZoom > 0) {  // J-28: quick zooms (FL Zoom menu): 4 / 16 / 64 bars across the view
     const Tick bars = st.quickZoom == 1 ? 4 : st.quickZoom == 2 ? 16 : 64;
     const float playTick = static_cast<float>(a.engine.position());
-    st.pxPerTick = static_cast<float>(timeline::fitZoom(s, bars * std::max<Tick>(1, s.barTicks()), gridW));
+    const Tick from = std::max<Tick>(0, static_cast<Tick>(playTick));  // K-193: bars of the meter map from the song position
+    st.pxPerTick = static_cast<float>(timeline::fitZoom(s, std::max<Tick>(1, MeterMap(s).addBars(from, bars) - from), gridW));
     st.scrollX = std::max(0.0f, playTick * st.pxPerTick - gridW * 0.25f);
     st.quickZoom = 0;
   }
@@ -1874,10 +1875,23 @@ void drawPlaylist(App& a) {
     x0 = std::max(x0, gMin.x), x1 = std::min(x1, gMax.x), y0 = std::max(y0, gMin.y), y1 = std::min(y1, gMax.y);
     if (x1 - x0 < 0.5f || y1 - y0 < 0.5f) return;
     dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y1), P.well);
+    const ImU32 fine = theme::withAlpha(P.gridBeat, 0.45f);
+    if (!mm.constant()) {  // K-193: the meter map's bars and lines, as the grid behind
+      for (int64_t b = mm.barIndex(std::max<Tick>(0, tickAt(x0))); xOf(mm.barStart(b)) < x1; ++b)
+        if (b % 2 == 1)
+          dl->AddRectFilled(ImVec2(std::max(x0, xOf(mm.barStart(b))), y0), ImVec2(std::min(x1, xOf(mm.barStart(b + 1))), y1),
+                            theme::withAlpha(P.paper, P.dark ? 0.035f : 0.018f));
+      const ImU32 group = theme::mix(P.gridBeat, P.gridBar, 0.45f);
+      timeline::forEachLine(mm, std::max<Tick>(0, tickAt(x0)), tickAt(x1) + 1, visGrid, [&](Tick t, int k) {
+        const float gx = std::round(xOf(t));
+        const ImU32 c = k == timeline::kLineBar ? P.gridBar : k == timeline::kLineGroup ? group : k == timeline::kLineBeat ? P.gridBeat : fine;
+        if (gx >= x0) dl->AddLine(ImVec2(gx, y0), ImVec2(gx, y1), c);
+      });
+      return;
+    }
     for (Tick t = snapDown(std::max<Tick>(0, tickAt(x0)), barT); xOf(t) < x1; t += barT)
       if ((t / barT) % 2 == 1)
         dl->AddRectFilled(ImVec2(std::max(x0, xOf(t)), y0), ImVec2(std::min(x1, xOf(t + barT)), y1), theme::withAlpha(P.paper, P.dark ? 0.035f : 0.018f));
-    const ImU32 fine = theme::withAlpha(P.gridBeat, 0.45f);
     for (Tick t = snapDown(std::max<Tick>(0, tickAt(x0)), visGrid); xOf(t) < x1; t += visGrid) {
       const float gx = std::round(xOf(t));
       if (gx >= x0) dl->AddLine(ImVec2(gx, y0), ImVec2(gx, y1), t % barT == 0 ? P.gridBar : t % beatT == 0 ? P.gridBeat : fine);
@@ -3824,7 +3838,7 @@ void drawPlaylist(App& a) {
           cg.paintKind = ps.kind;
           cg.paintId = ps.id;
           cg.paintLen = pltools::brushLength(s, ps, currentBrush(a, ps));
-          cg.paintAnchor = hc ? hc->start : std::max<Tick>(0, snapDown(tickAt(m.x), snapG));
+          cg.paintAnchor = hc ? hc->start : std::max<Tick>(0, timeline::snapTick(mm, tickAt(m.x), snapG, Snap::Cell));
           group("paint clips");
         }
       } else if (hoverClip != kNoId) {
@@ -3842,7 +3856,7 @@ void drawPlaylist(App& a) {
       } else if (pltools::sourceValid(s, src) && !trackmodes::clipAllowed(s, pltools::makeClip(s, src, trackAt(m.y), 0).kind, trackAt(m.y))) {
         a.notify("Instrument tracks take pattern clips only", true);  // PL-08
       } else if (pltools::sourceValid(s, src)) {
-        const Tick at = std::max<Tick>(0, snapDown(tickAt(m.x), snapG));
+        const Tick at = std::max<Tick>(0, timeline::snapTick(mm, tickAt(m.x), snapG, Snap::Cell));
         const int tr = trackAt(m.y);
         ObjectId id = kNoId;
         group("add clip");
@@ -4267,14 +4281,14 @@ void drawPlaylist(App& a) {
   if (ImGui::BeginDragDropTarget()) {
     if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("GL_PATTERN")) {
       ObjectId pid = *static_cast<const ObjectId*>(pl->Data);
-      ObjectId id = a.doc.addClip(pid, trackAt(m.y), std::max<Tick>(0, snapDown(tickAt(m.x), snapG)));
+      ObjectId id = a.doc.addClip(pid, trackAt(m.y), std::max<Tick>(0, timeline::snapTick(mm, tickAt(m.x), snapG, Snap::Cell)));
       if (id) st.selected = {id};
     }
     if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("GL_CLIPSRC")) {
       const ClipSrcPayload ps = *static_cast<const ClipSrcPayload*>(pl->Data);
       const pltools::Source dsrc{static_cast<ClipKind>(ps.kind), ps.id};
       const int tr = trackAt(m.y);
-      const Tick at = std::max<Tick>(0, snapDown(tickAt(m.x), snapG));
+      const Tick at = std::max<Tick>(0, timeline::snapTick(mm, tickAt(m.x), snapG, Snap::Cell));
       if (pltools::sourceValid(s, dsrc) && !trackLocked(tr) && !trackmodes::clipAllowed(s, pltools::makeClip(s, dsrc, tr, at).kind, tr)) {
         a.notify("Instrument tracks take pattern clips only", true);  // PL-08
       } else if (pltools::sourceValid(s, dsrc) && !trackLocked(tr)) {
@@ -4292,7 +4306,7 @@ void drawPlaylist(App& a) {
     // Browser files (J-16): samples become audio clips at the drop point.
     browserui::DropPlace place;
     place.track = trackAt(m.y);
-    place.tick = std::max<Tick>(0, snapDown(tickAt(m.x), snapG));
+    place.tick = std::max<Tick>(0, timeline::snapTick(mm, tickAt(m.x), snapG, Snap::Cell));  // K-193: cells of the meter map
     browserui::acceptFileDrop(a, browse::DropTarget::Playlist, place);
     // J-75: ghost clips where the dropped files will land (sized to the audio
     // when its length is known), gliding from cell to cell like a clip drag.
@@ -4431,6 +4445,10 @@ void drawPlaylist(App& a) {
       for (const auto& c : src) lo = std::min(lo, c.start), hi = std::max(hi, c.start + s.clipLength(c));
       Tick shift = snapNearest(hi - lo, std::max<Tick>(s.barTicks(), 1));
       if (shift <= 0) shift = s.barTicks();
+      if (!mm.constant()) {  // K-193: whole bars of the meter map from where the clips start
+        const Tick target = mm.nearestBar(hi - (lo - mm.barStartAt(lo)));
+        shift = mm.addBars(lo, std::max<int64_t>(1, mm.barIndex(target) - mm.barIndex(lo))) - lo;
+      }
       std::set<ObjectId> added;
       a.doc.editSong(label, [&](Song& x) {
         std::vector<Clip> copies = src;

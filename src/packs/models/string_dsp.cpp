@@ -55,6 +55,7 @@ class StringGen final : public Generator {
       if (voices_[i].on) return true;
     return fx_.ringing() || tail_ > 0;
   }
+  bool perVoiceExpression() const override { return true; }  // K-193
 
  protected:
   struct Voice {
@@ -75,6 +76,7 @@ class StringGen final : public Generator {
     double silent = 0;
     float lpBreath = 0;
     Noise rng;
+    VoiceExpr vx;  // K-193: the note's own pressure and timbre response
   };
 
   void configure(const PluginState& s, const ChannelAux&, const ProcessContext& ctx) override {
@@ -370,8 +372,10 @@ class StringGen final : public Generator {
         sum += k == 0 ? out : out * level2_;
       }
       float o = static_cast<float>(v.hicut.process(sum)) * (exciter_ >= ExBow ? 1.0f : env);
-      bl[j] += o * v.panL;
-      br[j] += o * v.panR;
+      float ov = o;  // K-193: the note's own response (the voice end still listens to the string itself)
+      if (v.vx.on) v.vx.apply(ov);
+      bl[j] += ov * v.panL;
+      br[j] += ov * v.panR;
       float a = std::fabs(o);
       v.quiet = a > v.quiet ? a : v.quiet * 0.9995f;
       // Voice ends when released/inaudible, on its own clock (J-30: not at a block end).
@@ -384,6 +388,8 @@ class StringGen final : public Generator {
   }
 
   void render(float* L, float* R, int n) override {
+    for (int i = 0; i < kVoices; ++i)  // K-193: each sounding note's own response, once per block
+      if (voices_[i].on) exprVoice(voices_[i].vx, voices_[i].id);
     int pos = 0;
     while (pos < n) {
       if (ctr_ == 0) {

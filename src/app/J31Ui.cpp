@@ -49,7 +49,7 @@ void report(App& a, int n, const std::string& done, const std::string& none) {
 // The pattern's ticks per step / beat / bar in steps.
 int stepsPerBeat(const Song& s, const Pattern& p) {
   const Tick st = s.ticksPerStep(p);
-  return st > 0 ? static_cast<int>(std::max<Tick>(1, s.beatTicks() / st)) : 4;
+  return st > 0 ? static_cast<int>(std::max<Tick>(1, s.patternBeatTicks(p) / st)) : 4;  // K-193: the pattern's own beat
 }
 
 // ------------------------------------------------------------------ audio logger
