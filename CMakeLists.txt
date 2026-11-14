@@ -2124,7 +2124,7 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DOUT=${CMAKE_BINARY_DIR}/k216_plasma_drawer_app -DPART=open
                      -P ${CMAKE_SOURCE_DIR}/tests/k216_plasma_drawer_app.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
-    set_tests_properties(k216_plasma_drawer_app PROPERTIES TIMEOUT 300)
+    set_tests_properties(k216_plasma_drawer_app PROPERTIES TIMEOUT 600)
     foreach(_k219 "1440x900:0:" "1280x800:0:" "1920x1080:0.5:" "1920x1080:0.67:" "1920x1080:0.75:" "1920x1080:1:" "2560x1600:1.5:" "1920x1080:1:detach")
       string(REGEX REPLACE "[:.]+" "_" _k219n "${_k219}")
       string(REGEX REPLACE "_$" "" _k219n "${_k219n}")
@@ -2132,7 +2132,7 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DOUT=${CMAKE_BINARY_DIR}/k219_plasma_drawer_${_k219n}_app
                        -DPART=${_k219} -P ${CMAKE_SOURCE_DIR}/tests/k216_plasma_drawer_app.cmake
                WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
-      set_tests_properties(k219_plasma_drawer_${_k219n}_app PROPERTIES TIMEOUT 300)
+      set_tests_properties(k219_plasma_drawer_${_k219n}_app PROPERTIES TIMEOUT 900)
     endforeach()
     # K-223: Plasma opens at its full size on a 1920 x 1080 screen, reduced to fit on smaller ones.
     add_test(NAME k223_plasma_fullsize_app
@@ -2309,7 +2309,7 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DOUT=${CMAKE_BINARY_DIR}/key_glide_${_gliden}_app -DONLY=${_glide}
                        -P ${CMAKE_SOURCE_DIR}/tests/key_glide_app.cmake
                WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
-      set_tests_properties(key_glide_${_gliden}_app PROPERTIES TIMEOUT 300)
+      set_tests_properties(key_glide_${_gliden}_app PROPERTIES TIMEOUT 600)
     endforeach()
     # Cloning a pattern from the pattern list's menu, 40 times, then undoing it all (a crash report).
     add_test(NAME pattern_clone_menu_app

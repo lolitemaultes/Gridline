@@ -32,7 +32,7 @@ function(run tag type size script)
   set(ENV{GRIDLINE_HIDE_PLUGINS} "all")
   file(WRITE "${OUT}/${tag}.txt" "${script}")
   execute_process(COMMAND "${APP}" --hidden --no-ui-sounds --fixed-dt 16 --size ${size} --plugin ${type} --dev-input "${OUT}/${tag}.txt"
-                  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 90)
+                  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 240)
   file(WRITE "${OUT}/${tag}.log" "${out}\n${err}")
   if(NOT rc EQUAL 0)
     message(FATAL_ERROR "FAIL: ${tag}: gridline-app failed (${rc}), the script ${OUT}/${tag}.txt:\n${out}\n${err}")

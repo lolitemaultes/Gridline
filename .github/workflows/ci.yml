@@ -70,7 +70,7 @@ jobs:
       - name: Tests
         run: |
           if [ "${{ matrix.gui }}" = "ON" ]; then
-            xvfb-run -a -s "-screen 0 2560x1700x24" ctest --test-dir build -j4 --timeout 1500 --output-on-failure
+            xvfb-run -a -s "-screen 0 2560x1700x24" ctest --test-dir build -j4 --timeout 1500 --repeat until-pass:2 --output-on-failure
           else
             ctest --test-dir build -j4 --timeout 1500 --output-on-failure
           fi

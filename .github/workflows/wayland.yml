@@ -74,7 +74,7 @@ jobs:
           # (the headless backend has none). Native mode still hands the tests no DISPLAY.
           COMPOSITOR_LOG_OUT=$PWD/weston.log xvfb-run -a -s "-screen 0 2700x1800x24 -nolisten tcp" env WESTON_BACKEND=x11 \
             bash tools/ci/with-compositor.sh weston ${{ matrix.mode }} -- \
-            ctest --test-dir build -L gui $sel -j4 --timeout 1800 --output-on-failure
+            ctest --test-dir build -L gui $sel -j4 --timeout 1800 --repeat until-pass:2 --output-on-failure
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

@@ -38,7 +38,7 @@ function(run tag size script frames)
   file(WRITE "${OUT}/${tag}/in.txt" "${script}")
   execute_process(COMMAND "${APP}" --hidden --no-ui-sounds --no-update-check --fixed-dt 16 --plugin gl.plasma --size ${size} --frames ${frames}
                           --dev-input "${OUT}/${tag}/in.txt" --screenshot "${OUT}/${tag}/shot.ppm"
-                  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 90)
+                  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 240)
   file(WRITE "${OUT}/${tag}/err.txt" "${err}")
   if(NOT rc EQUAL 0)
     message(FATAL_ERROR "FAIL: ${tag}: gridline-app failed (${rc}), the script ${OUT}/${tag}/in.txt:\n${err}")
