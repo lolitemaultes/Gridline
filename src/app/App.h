@@ -114,6 +114,7 @@ struct PlaylistState {
   bool fitRequest = false;       // zoom to fit the song
   Tick selStart = 0, selEnd = 0; // time selection (selEnd <= selStart: none)
   std::set<ObjectId> selected;  // clip ids
+  std::set<int> trackSel;       // GitHub #46: selected track headers (indexes; Ctrl / Shift+click), moved together
   std::vector<Clip> clipboard;
   // J-28: FL-style playlist controls.
   ClipKind srcKind = ClipKind::Pattern;  // current clip source (what draw / paint place);
@@ -201,6 +202,7 @@ class App {
   launcher::State home;
 
   void syncEngine();  // rebuild the engine program after edits
+  Song playedSong(const Song& s);  // K-87 frozen units, K-270 soloed Stage rooms
   void forceRebuild() { builtRevision_ = ~0ull; }  // the next syncEngine() rebuilds (PH-09: macro links)
   void tick(double now);  // per-frame housekeeping (backups, toasts, GC)
 
@@ -235,6 +237,7 @@ class App {
   bool showLivePads = false;    // live mode pads window
   bool showPerformance = false;  // "Performance" window (CPU per channel / insert / effect)
   bool showGroove = false;       // K-151: the Groove editor (swing presets, app/GrooveUi.h)
+  bool showStage = false;        // the mixer window shows the Stage view (app/StageView.h, setting ui.mixerView)
   bool showMaster = false;       // RN-09 "Master chain" quick panel
   // CPU use per channel, insert and effect slot, sampled from the engine's
   // profiling counters while the mixer or the Performance window is open

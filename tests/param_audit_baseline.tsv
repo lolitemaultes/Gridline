@@ -1878,6 +1878,183 @@ gl.busreturn	2	Own signal	working	0
 gl.bussend	0	Bus	inert	0	
 gl.bussend	1	Send level	working	0	
 gl.bussend	2	Dry level	working	0	
+gl.chater	0	Sparkle	working	1	
+gl.chater	1	Haze	working	0	
+gl.chater	2	Memory	working	0	
+gl.chater	3	Drift	working	1	
+gl.chater	4	Shine	working	1	
+gl.chater	5	Glitch	working	1	
+gl.chater	6	Space	working	1	
+gl.chater	7	Mix	working	1	
+gl.chater	8	Catch length	combination	0	14=1
+gl.chater	9	Catch quantise	combination	0	14=1;16=2
+gl.chater	10	Catch smooth	combination	0.5	5=1
+gl.chater	11	Hold capture	working	1	
+gl.chater	12	Trigger	combination	1	16=1
+gl.chater	13	Grid	combination	0	16=1
+gl.chater	14	Density	working	0.5	
+gl.chater	15	Variation	combination	1	14=1
+gl.chater	16	Lean	working	1	
+gl.chater	17	Span	combination	0	16=1
+gl.chater	18	Hit sensitivity	combination	1	12=1
+gl.chater	19	Hit gap	combination	1000	12=1;18=1
+gl.chater	20	Hit chance	combination	0	12=1;18=1
+gl.chater	21	Seed	working	500	
+gl.chater	22	Reserved 22	inert	0		reserved slot, never read
+gl.chater	23	Reserved 23	inert	0		reserved slot, never read
+gl.chater	24	Repeat odds	combination	100	1048590=0.5
+gl.chater	25	Reverse odds	combination	100	1048590=0.5
+gl.chater	26	Tape odds	combination	100	1048590=0.5
+gl.chater	27	Scrub odds	combination	100	16=1
+gl.chater	28	Jump odds	combination	100	16=1
+gl.chater	29	Skip odds	combination	100	16=1
+gl.chater	30	Reserved 30	inert	0		reserved slot, never read
+gl.chater	31	Reserved 31	inert	0		reserved slot, never read
+gl.chater	32	Division	combination	0	14=1
+gl.chater	33	Accel	combination	-1	14=1
+gl.chater	34	Pitch ramp	combination	-24	14=1
+gl.chater	35	Gate	combination	0.100000001	14=1
+gl.chater	36	Tape time	combination	0	14=1;27=100
+gl.chater	37	Tape curve	combination	0	14=1;27=100
+gl.chater	38	Scrub depth	combination	1	1048590=0.5
+gl.chater	39	Scrub rate	combination	0	1048590=0.5
+gl.chater	40	Damp	working	1000	
+gl.chater	41	Warmth	working	1	
+gl.chater	42	Soft edges	combination	1	16=1
+gl.chater	43	Wash	combination	1	16=1
+gl.chater	44	Wow	working	0.25	
+gl.chater	45	Flutter	working	1	
+gl.chater	46	Tape age	working	1	
+gl.chater	47	Ensemble	working	1	
+gl.chater	48	Grain density	working	200	
+gl.chater	49	Grain size	working	0.0353553391	
+gl.chater	50	Scatter	working	0	
+gl.chater	51	Grain reverse	working	1	
+gl.chater	52	Glitter level	working	1	
+gl.chater	53	Window	working	2	
+gl.chater	54	Intervals	working	127.5	
+gl.chater	55	Reach	working	1	
+gl.chater	56	Detune	combination	50	57=0
+gl.chater	57	Scale	working	0	
+gl.chater	58	Root	combination	1	4=1
+gl.chater	59	Snap	working	0	
+gl.chater	60	Hiss	working	1	
+gl.chater	61	Crackle	working	1	
+gl.chater	62	Wow rate	working	2	
+gl.chater	63	Reserved 63	inert	0		reserved slot, never read
+gl.chater	64	Shimmer feedback	working	0.95	
+gl.chater	65	Shimmer interval	working	2	
+gl.chater	66	Shimmer tone	combination	1000	0=1
+gl.chater	67	Shimmer spread	combination	0	0=1
+gl.chater	68	Chord	combination	0	4=1
+gl.chater	69	Crystal decay	combination	0.0500000007	4=1
+gl.chater	70	Brightness	working	1	
+gl.chater	71	Strike	working	1	
+gl.chater	72	Crystal spread	combination	1	4=1
+gl.chater	73	Crystal mix	working	1	
+gl.chater	74	Halo lift	working	1	
+gl.chater	75	Halo from	working	1000	
+gl.chater	76	Twinkle	working	1	
+gl.chater	77	Smear	working	1	
+gl.chater	78	Freeze halo	working	1	
+gl.chater	79	Halo mix	working	0	
+gl.chater	80	Bits	working	2	
+gl.chater	81	Rate	working	1565.08458	
+gl.chater	82	Grit smooth	combination	0	5=1
+gl.chater	83	Jitter	combination	1	5=1
+gl.chater	84	Drive	working	24	
+gl.chater	85	Grit mix	combination	0	5=1
+gl.chater	86	Width	working	0	
+gl.chater	87	Pan scatter	working	0	
+gl.chater	88	Micro delay	working	22.5	
+gl.chater	89	Orbit	working	3	
+gl.chater	90	Room size	working	0	
+gl.chater	91	Room decay	working	0.2	
+gl.chater	92	Damping	working	1	
+gl.chater	93	Room mix	working	1	
+gl.chater	94	Echo time	working	0	
+gl.chater	95	Echo feedback	combination	0.949999988	94=0
+gl.chater	96	Echo tone	combination	500	94=0
+gl.chater	97	Echo mix	working	1	
+gl.chater	98	Ping-pong	working	0	
+gl.chater	99	Low cut	working	376.060309	
+gl.chater	100	High cut	working	1000	
+gl.chater	101	Tilt	working	-6	
+gl.chater	102	Duck	working	1	
+gl.chater	103	Output	working	12	
+gl.chater	104	Safety limit	combination	0	7=0
+gl.chater	105	Room shimmer	working	1	
+gl.chater	106	Freeze space	working	1	
+gl.chater	107	Room mod	working	1	
+gl.chater	108	Echo diffuse	combination	1	94=0
+gl.chater	109	Reserved 109	inert	0		reserved slot, never read
+gl.chater	110	Reserved 110	inert	0		reserved slot, never read
+gl.chater	111	Reserved 111	inert	0		reserved slot, never read
+gl.chater	112	Sway A shape	combination	1	57=0
+gl.chater	113	Sway A rate	combination	0	57=0
+gl.chater	114	Sway A depth	combination	0	57=0
+gl.chater	115	Sway A phase	combination	180	57=0
+gl.chater	116	Sway A smooth	combination	1	57=0
+gl.chater	117	Sway B shape	combination	0	128=2;129=88;130=1
+gl.chater	118	Sway B rate	combination	0	128=2;129=88;130=1
+gl.chater	119	Sway B depth	combination	0	128=2;129=88;130=1
+gl.chater	120	Sway B phase	combination	360	128=2;129=88;130=1
+gl.chater	121	Sway B smooth	combination	1	128=2;129=88;130=1
+gl.chater	122	Follower attack	combination	0.100000001	128=3;129=88;130=1
+gl.chater	123	Follower release	combination	10	128=3;129=88;130=1
+gl.chater	124	Follower gain	combination	24	128=3;129=88;130=1
+gl.chater	125	Follower floor	combination	-12	128=3;129=88;130=1
+gl.chater	126	Reserved 126	inert	0		reserved slot, never read
+gl.chater	127	Reserved 127	inert	0		reserved slot, never read
+gl.chater	128	Link 1 source	combination	1	129=88;130=1
+gl.chater	129	Link 1 target	inert	0		the knob a Motion link moves; acts only once the link has a source and a depth (no link by default)
+gl.chater	130	Link 1 depth	combination	1	128=1
+gl.chater	131	Link 2 source	combination	1	132=88;133=1
+gl.chater	132	Link 2 target	inert	0		the knob a Motion link moves; acts only once the link has a source and a depth (no link by default)
+gl.chater	133	Link 2 depth	combination	1	131=1
+gl.chater	134	Link 3 source	combination	1	135=88;136=1
+gl.chater	135	Link 3 target	inert	0		the knob a Motion link moves; acts only once the link has a source and a depth (no link by default)
+gl.chater	136	Link 3 depth	combination	1	134=1
+gl.chater	137	Link 4 source	combination	1	138=88;139=1
+gl.chater	138	Link 4 target	inert	0		the knob a Motion link moves; acts only once the link has a source and a depth (no link by default)
+gl.chater	139	Link 4 depth	combination	1	137=1
+gl.chater	140	Link 5 source	combination	1	141=88;142=1
+gl.chater	141	Link 5 target	inert	0		the knob a Motion link moves; acts only once the link has a source and a depth (no link by default)
+gl.chater	142	Link 5 depth	combination	1	140=1
+gl.chater	143	Link 6 source	combination	1	144=88;145=1
+gl.chater	144	Link 6 target	inert	0		the knob a Motion link moves; acts only once the link has a source and a depth (no link by default)
+gl.chater	145	Link 6 depth	combination	1	143=1
+gl.chater	146	Link 7 source	combination	1	147=88;148=1
+gl.chater	147	Link 7 target	inert	0		the knob a Motion link moves; acts only once the link has a source and a depth (no link by default)
+gl.chater	148	Link 7 depth	combination	1	146=1
+gl.chater	149	Link 8 source	combination	1	150=88;151=1
+gl.chater	150	Link 8 target	inert	0		the knob a Motion link moves; acts only once the link has a source and a depth (no link by default)
+gl.chater	151	Link 8 depth	combination	1	149=1
+gl.chater	152	Reserved 152	inert	0		reserved slot, never read
+gl.chater	153	Reserved 153	inert	0		reserved slot, never read
+gl.chater	154	Reserved 154	inert	0		reserved slot, never read
+gl.chater	155	Reserved 155	inert	0		reserved slot, never read
+gl.chater	156	Reserved 156	inert	0		reserved slot, never read
+gl.chater	157	Reserved 157	inert	0		reserved slot, never read
+gl.chater	158	Reserved 158	inert	0		reserved slot, never read
+gl.chater	159	Reserved 159	inert	0		reserved slot, never read
+gl.chater	160	Quality	combination	0	48=200
+gl.chater	161	Halo engine	working	2	
+gl.chater	162	Capture up to	inert	0		size of the capture history; acts only on breaks that reach further back than the audit's notes
+gl.chater	163	Tempo	working	1	
+gl.chater	164	Free tempo	combination	240	163=1
+gl.chater	165	Restart on play	combination	0	21=999
+gl.chater	166	Dice keeps the vibe	inert	0		keeps the dice inside the preset's bank character; read by the editor's dice, not the sound
+gl.chater	167	Reserved 167	inert	0		reserved slot, never read
+gl.chater	168	Dice locks 1	inert	0		which knob groups the dice leaves alone; read by the editor's dice, not the sound
+gl.chater	169	Dice locks 2	inert	0		which knob groups the dice leaves alone; read by the editor's dice, not the sound
+gl.chater	170	Dice locks 3	inert	0		which knob groups the dice leaves alone; read by the editor's dice, not the sound
+gl.chater	171	Dice locks 4	inert	0		which knob groups the dice leaves alone; read by the editor's dice, not the sound
+gl.chater	172	Dice locks 5	inert	0		which knob groups the dice leaves alone; read by the editor's dice, not the sound
+gl.chater	173	Dice locks 6	inert	0		which knob groups the dice leaves alone; read by the editor's dice, not the sound
+gl.chater	174	Dice locks 7	inert	0		which knob groups the dice leaves alone; read by the editor's dice, not the sound
+gl.chater	175	Dice locks 8	inert	0		which knob groups the dice leaves alone; read by the editor's dice, not the sound
+gl.chater	176	Version	working	0	
 gl.chord	0	Chord	working	2	
 gl.chord	1	Inversion	working	3	
 gl.chord	2	Voicing	working	3	

@@ -7,6 +7,7 @@
 #include <string>
 #include "../core/I18n.h"
 #include "App.h"
+#include "KeyGlide.h"
 #include "PluginUI.h"
 #include "Theme.h"
 
@@ -534,20 +535,12 @@ int padKeyboard(App& a, const PluginTarget& t, const iskin::Skin& k, float x, fl
     }
     if (hv < 0 && m.y >= p.y + rowB) hv = whiteNote(std::clamp(static_cast<int>((m.x - p.x) / pitch), 0, whites - 1));
   }
-  static int playing = -1;
-  static ImGuiID playingId = 0;
   int clicked = -1;
-  if (ImGui::IsItemActivated() && hv >= 0) {
-    clicked = hv;
-    if (t.isChannel()) {
-      a.engine.noteOn(t.owner, hv, 0.85f);
-      playing = hv, playingId = ImGui::GetItemID();
-    }
-  }
-  if (ImGui::IsItemDeactivated() && playing >= 0 && playingId == ImGui::GetItemID()) {
-    a.engine.noteOff(t.owner, playing);
-    playing = -1;
-  }
+  if (ImGui::IsItemActivated() && hv >= 0) clicked = hv;
+  // While held, the pad under the pointer sounds: a drag plays one key at a time (KeyGlide.h).
+  static keyglide::Held glide;
+  const int playing = keyglide::followItem(a, t.isChannel() ? t.owner : kNoId, hv, glide, 0.85f);
+  keyglide::devNote("kerf", p, q, low, whites, playing);
   const ImU32 accent = rgb(0xFFA830);
   auto pad = [&](ImVec2 a0, ImVec2 a1, int note, bool black) {
     ImU32 c = black ? rgb(0x2C353C) : rgb(0xC9D0D6);

@@ -566,9 +566,12 @@ DialogState* dialogOpen(const std::string& configDir, const std::string& reportP
 void dialogClose(DialogState* s) {
   if (!s) return;
   markShowing(s->reportPath, false);
+  // Ask whether the watched process lives before the view is closed: closeSession frees it.
+  const bool alive = s->session && crash::processAlive(crash::sessionPid(s->session));
   crash::closeSession(s->session);
+  s->session = nullptr;
   std::error_code ec;
-  if (!s->sessionFile.empty() && !(s->session && crash::processAlive(crash::sessionPid(s->session)))) fs::remove(fs::u8path(s->sessionFile), ec);
+  if (!s->sessionFile.empty() && !alive) fs::remove(fs::u8path(s->sessionFile), ec);
   delete s;
 }
 

@@ -35,6 +35,16 @@ Settings::Settings() {
       {"import.urlAutoUpdate", b(true)},           // J-192: keep yt-dlp current (checked at most once a day, when used)
       {"import.urlLastUpdateCheck", Json::makeNumber(0)},  // J-192: seconds since 1970 of the last yt-dlp check
       {"import.urlPlacement", Json::makeNumber(0)},  // J-192: 0 = clip on a new track at the playhead, 1 = browser only
+      // The Open / Save dialog: pinned folders, recent folders, the last folder per dialog ("title\tfolder"
+      // lines), hidden files, the sort column (0 name, 1 size, 2 kind, 3 modified) and its size (0 = default).
+      {"files.dialogFavourites", Json::makeString("")},
+      {"files.dialogRecent", Json::makeString("")},
+      {"files.dialogLast", Json::makeString("")},
+      {"files.dialogHidden", b(false)},
+      {"files.dialogSort", Json::makeNumber(0)},
+      {"files.dialogSortDesc", b(false)},
+      {"files.dialogW", Json::makeNumber(0)},
+      {"files.dialogH", Json::makeNumber(0)},
       {"audio.sampleRate", Json::makeNumber(44100)},
       {"audio.bufferFrames", Json::makeNumber(256)},
       {"audio.pdc", b(true)},                  // plugin delay compensation
@@ -77,8 +87,9 @@ Settings::Settings() {
       {"piano.snapIncomingMidi", b(false)},            // played notes land on the highlighted scale
       {"piano.editableGhosts", b(false)},              // clicking a ghost note edits it in place
       {"piano.followKeyMarkers", b(true)},             // scale highlighting follows key markers
+      {"piano.recentChords", Json::makeString("")},    // the chord stamp's recent chords (chord indices, most recent first)
       {"piano.laneHeight", Json::makeNumber(0)},       // K-171: the lower lane's height in px (0 = automatic)
-      {"piano.autoDrawCurve", Json::makeNumber(0)},    // K-171: curve the automation lane draws: 0 stepped, 1 linear, 2 smooth
+      {"piano.autoDrawCurve", Json::makeNumber(1)},    // K-171/K-202: curve the lane and the clip editor draw: 0 stepped, 1 linear (default), 2 smooth
       {"transport.jumpQuantize", Json::makeNumber(0)}, // ops::jumpGrid mode (0 = jump at once)
       {"transport.rememberSeek", b(true)},             // J-49: Stop returns to the last set song position
       {"ui.scale", Json::makeNumber(1.0)},
@@ -119,6 +130,16 @@ Settings::Settings() {
       {"theme.controls", Json::makeString("slate")}, // control style: slate | graphite | hairline | lumen | classic (J-129)
       {"ui.mixerWheel", Json::makeNumber(2)},  // J-83: wheel over mixer controls: 0 adjust, 1 scroll the mixer, 2 auto (scroll when narrow)
       {"ui.mixerLayout", Json::makeNumber(1)},  // mixer strip width: 0 compact, 1 normal, 2 wide
+      // Stage (app/StageView.cpp, docs/stage-view.md): view options per user, never in a project.
+      {"ui.mixerView", Json::makeNumber(0)},       // the mixer window shows 0 the strips (Mix), 1 the Stage
+      {"ui.stage.tracks", Json::makeNumber(0)},    // tracks on the stage: 0 used tracks, 1 every insert track
+      {"ui.stage.snap", b(true)},                  // drags snap to the five distances and the centre
+      {"ui.stage.labels", b(true)},                // track names under the tokens
+      {"ui.stage.welcomed", b(false)},             // the first-run card was answered
+      {"ui.stage.roomHinted", b(false)},           // "Pick a room to hear depth" was shown once
+      {"ui.stage.roomsList", Json::makeNumber(1)},  // K-224 / K-270: the rooms panel beside the stage is open
+      {"ui.stage.roomsWidth", Json::makeNumber(264)},  // K-270: the rooms column's width (px); under 150 the slim rail
+      {"ui.mix.roomFilter", Json::makeNumber(0)},   // K-224: the Mix view shows 0 every track, 1 the Stage's shown room only
       {"ui.playlistTrackHeight", Json::makeNumber(46)},  // K-24: the playlist's vertical zoom (base track height, px; 24 .. 120)
       {"ui.playlistTrackPlus", b(true)},  // K-12: the "+" on a hovered playlist track header (View menu)
       {"ui.trackPlusPattern", b(true)},   // K-12: an instrument given to an empty track from the "+" starts a pattern
@@ -167,6 +188,15 @@ Settings::Settings() {
       {"mcp.port", Json::makeNumber(47390)},     // loopback port (0 = any free port)
       {"mcp.token", Json::makeString("")},       // bearer token ("" = generated on first start)
       {"mcp.exportFolder", Json::makeString("")},  // extra folder assistants may write renders / exports to
+      // OSC (Settings > MIDI, docs/osc.md): off until switched on, this computer only by default.
+      {"osc.enabled", b(false)},                       // receive OSC
+      {"osc.port", Json::makeNumber(9000)},            // UDP (and TCP) port, 0 = any free port
+      {"osc.network", b(false)},                       // listen on the network, not only 127.0.0.1
+      {"osc.allowedHosts", Json::makeString("")},      // network on: addresses or a.b.c.d/nn ranges ("" = any)
+      {"osc.tcp", b(false)},                           // also accept OSC over TCP
+      {"osc.feedback", b(false)},                      // send state and values back to a surface
+      {"osc.feedbackHost", Json::makeString("127.0.0.1")},
+      {"osc.feedbackPort", Json::makeNumber(9001)},    // 0 = reply to the address the last message came from
       // J-48: interface sounds (engine/UiSounds.h); per-event switches "sounds.<event>".
       {"sounds.enabled", b(true)},
       {"sounds.volume", Json::makeNumber(0.7)},

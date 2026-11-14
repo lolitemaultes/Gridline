@@ -1,5 +1,5 @@
 // Gridline — the one translation unit that compiles nanosvg + nanosvgrast
-// (third_party/nanosvg, zlib licence, vendored unmodified). Its target builds
+// (third_party/nanosvg, zlib licence, one marked local guard in nanosvgrast.h). Its target builds
 // it with warnings off (vendored code), like the other third-party sources.
 #include <cmath>
 #include <cstdio>

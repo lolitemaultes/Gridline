@@ -56,6 +56,7 @@ src/packs/plasma/plasma_look_ui.cpp	2	Plasma: the knob centre dot
 src/packs/plasma/plasma_patch_ui.cpp	2	Plasma: piano white keys (dark and light variants)
 src/packs/plasma/plasma_play_ui.cpp	4	Plasma: piano white keys and key dividers (dark and light variants)
 src/packs/plasma/plasma_synth_ui.cpp	1	Plasma: the playhead marker on a waveform
+src/packs/chater/chater_pages_ui.cpp	1	Chater: the white keys of the scale keyboard (the tiles keep their colours in every theme)
 src/packs/platter/platter_deck_ui.cpp	5	plugin faceplate (deck)
 src/packs/samplers/samplers_ui.cpp	5	plugin faceplate
 src/packs/samplers/sfz_ui.h	1	plugin faceplate: piano white keys

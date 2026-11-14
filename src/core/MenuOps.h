@@ -87,7 +87,7 @@ bool routeChannels(Document& d, const std::vector<ObjectId>& channels, ObjectId 
 // ----------------------------------------------------------------- playlist ----
 bool insertPlaylistTrack(Document& d, int index);   // shifts later clips down
 bool deletePlaylistTrack(Document& d, int index);   // deletes its clips, shifts the rest up
-bool movePlaylistTrack(Document& d, int index, int dir);  // swaps with a neighbour (and their clips)
+bool movePlaylistTrack(Document& d, int index, int dir);  // past a neighbour, with its clips (core/TrackOrder.h)
 // Copies the track (name, colour, clips) into a new track right below it.
 bool clonePlaylistTrack(Document& d, int index);
 bool removeClips(Document& d, const std::set<ObjectId>& clips);

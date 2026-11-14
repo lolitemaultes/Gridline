@@ -85,6 +85,12 @@ const Event* find(const std::vector<Event>& evs, uint8_t id);
 inline constexpr uint32_t kPlaylistStrides[] = {88, 80, 60, 32};
 uint32_t playlistStride(const Event& e);
 bool playlistStrideKnown(uint32_t k);
+// A playlist record stores its track counted up from the last track: track = base - stored.
+// The playlist had 99 tracks up to FL 10, 199 from FL 11 to 12.8 and 500 from 12.9 on, so the
+// base is 98, 198 or 499. Chosen from the saved version ("10.0.0", "12.3.0.71"; empty when the file
+// has none), then raised when a stored value would not fit under it. Without a version the
+// largest stored value picks the smallest playlist that holds every clip.
+int playlistTrackBase(const std::string& version, int maxStored);
 
 struct Report {
   std::vector<std::string> warnings;    // things that could not be imported exactly

@@ -281,7 +281,7 @@ bool fromClip(App& a, ObjectId clip, const TempoMap& tm) {
   }
   const int grid = s.groove.shape.grid == gv::kGridStep ? gv::kGrid16th : s.groove.shape.grid;
   // K-193: the bar of the meter in force where the clip starts (song time).
-  gv::Preset g = gv::extract(on, gv::cellTicks(s, nullptr, grid), static_cast<double>(MeterMap(s).fullBarLenAt(c->start)), grid, 16, "");
+  gv::Preset g = gv::extract(on, gv::cellTicks(s, nullptr, grid, c->start), static_cast<double>(MeterMap(s).fullBarLenAt(c->start)), grid, 16, "");
   a.doc.editSong("groove from the audio clip", [&g](Song& x) {
     gv::apply(x, g);
     x.groove.preset.clear();

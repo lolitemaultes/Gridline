@@ -50,6 +50,12 @@ struct State {
   ImVec2 display{0, 0};  // main window, logical
   ImVec2 mainOs{0, 0};   // main window's client origin, OS units
   bool haveMainOs = false;
+  // GitHub issue #50: the main window's size while it was last neither maximised nor full screen,
+  // and its state (OS units), saved in [Main].
+  bool haveMainSize = false;
+  int mainW = 0, mainH = 0;
+  bool mainMax = false, mainFull = false;
+  bool mainVirtualMax = false;  // a hidden run left unmaximised what was saved maximised
   ImGuiID lastEvent = 0;  // mouse input events up to this id are main-window relative already
   ImGuiID dockspace = 0;  // the main window's dock space (GridlineDock)
   // The backend's platform callbacks, wrapped below.
@@ -590,9 +596,12 @@ void iniApply(ImGuiContext*, ImGuiSettingsHandler*) {
   gIni.clear();
 }
 void iniWrite(ImGuiContext*, ImGuiSettingsHandler* h, ImGuiTextBuffer* buf) {
-  if (S.haveMainOs)
-    buf->appendf("[%s][Main]\nMainOs=%d,%d\nScale=%.4f\n\n", h->TypeName, static_cast<int>(S.mainOs.x), static_cast<int>(S.mainOs.y),
-                 static_cast<double>(S.scale));
+  if (S.haveMainOs || S.haveMainSize) {
+    place::SavedMain m;
+    m.have = S.haveMainOs, m.x = S.mainOs.x, m.y = S.mainOs.y, m.scale = S.scale;
+    m.haveSize = S.haveMainSize, m.w = S.mainW, m.h = S.mainH, m.maximized = S.mainMax, m.fullscreen = S.mainFull;
+    buf->appendf("[%s][Main]\n%s\n", h->TypeName, place::savedMainLines(m).c_str());
+  }
   for (const auto& [name, home] : S.homes)
     if (home.have) buf->appendf("[%s][Home:%s]\n%s\n", h->TypeName, name.c_str(), place::homeLines(home).c_str());
   for (const auto& [name, r] : S.lastOut)
@@ -921,6 +930,13 @@ void backendRestarted(SDL_GLContext gl) {
   if (S.installed && S.available) hookBackend();
 }
 
+void mainWindowRestored(int w, int h, bool maximized, bool fullscreen, bool virtualMax) {
+  if (w > 0 && h > 0) S.mainW = w, S.mainH = h, S.haveMainSize = true;
+  S.mainMax = maximized;
+  S.mainFull = fullscreen;
+  S.mainVirtualMax = virtualMax && maximized;
+}
+
 void install(SDL_Window* mainWindow, SDL_GLContext gl, const Options& o) {
   ImGuiIO& io = ImGui::GetIO();
   ImGuiPlatformIO& pio = ImGui::GetPlatformIO();
@@ -995,6 +1011,19 @@ void beginFrame(float uiScale, ImVec2 mainLogicalSize) {
     mainMoved(ImVec2((nowPos.x - S.mainOs.x) / S.scale, (nowPos.y - S.mainOs.y) / S.scale));
   S.mainOs = nowPos;
   S.haveMainOs = true;
+  {  // GitHub issue #50: the size to come back at, and whether it was maximised or full screen
+    const Uint32 f = SDL_GetWindowFlags(S.main);
+    if (!(f & SDL_WINDOW_MINIMIZED)) {
+      const bool max = (f & SDL_WINDOW_MAXIMIZED) != 0, full = (f & SDL_WINDOW_FULLSCREEN) != 0;
+      S.mainMax = max || (S.mainVirtualMax && !full);
+      S.mainFull = full;
+      if (!max && !full) {
+        int w = 0, h = 0;
+        SDL_GetWindowSize(S.main, &w, &h);
+        if (w > 0 && h > 0) S.mainW = w, S.mainH = h, S.haveMainSize = true;
+      }
+    }
+  }
   if (!on()) {
     if (S.reanchorPending) {  // detaching off (or unavailable): windows saved outside come back in
       S.reanchorPending = false;

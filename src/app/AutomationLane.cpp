@@ -140,17 +140,15 @@ void setSelShape(App& a, ObjectId pattern, AutoShape sh, const ae::Selection& t)
 
 // The curve items of a menu for the points `t`: the three common ones, then every curve.
 void curveItems(App& a, ObjectId pattern, AutoShape cur, const ae::Selection& t) {
-  for (AutoShape sh : {AutoShape::Hold, AutoShape::Curve, AutoShape::Smooth})
-    if (ImGui::MenuItem(i18n::tr(drawShapeName(sh)), nullptr, sh == cur)) setSelShape(a, pattern, sh, t);
-  if (ImGui::BeginMenu(i18n::tr("More curves"))) {
-    for (AutoShape sh : ae::menuOrder())
-      if (ImGui::MenuItem(autoShapeName(sh), nullptr, sh == cur)) setSelShape(a, pattern, sh, t);
-    ImGui::EndMenu();
-  }
+  AutoShape picked = AutoShape::Hold;
+  if (curveMenuItems(cur, &picked)) setSelShape(a, pattern, picked, t);
 }
 
 // The common curve of the points `t` (Count: mixed or none).
-AutoShape selShape(const ae::Points& pts, const ae::Selection& t) {
+AutoShape selShape(const ae::Points& pts, const ae::Selection& t) { return commonPointShape(pts, t); }
+}  // namespace
+
+AutoShape commonPointShape(const std::vector<AutoPoint>& pts, const std::set<int>& t) {
   AutoShape cur = AutoShape::Count;
   bool first = true;
   for (int i : t) {
@@ -160,6 +158,8 @@ AutoShape selShape(const ae::Points& pts, const ae::Selection& t) {
   }
   return cur;
 }
+
+namespace {
 
 void simplifyPopup(App& a, ObjectId pattern, const ae::Points& pts) {
   if (L.openSimplify) {
@@ -248,6 +248,86 @@ AutoShape laneDrawShape(App& a) {
 }
 void setLaneDrawShape(App& a, AutoShape s) { a.settings.set("piano.autoDrawCurve", s == AutoShape::Curve ? 1 : s == AutoShape::Smooth ? 2 : 0); }
 
+namespace {
+// Dev check: the centres of the chooser's items as drawn last (0..2: draw with stepped, linear,
+// smooth; 3..5: set the selection to them) and the frame they were drawn on.
+ImVec2 chooserItems[6];
+int chooserFrame = -1;
+void noteItem(int i) {
+  if (i < 0 || i >= 6) return;
+  const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+  chooserItems[i] = ImVec2((a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f);
+  chooserFrame = ImGui::GetFrameCount();
+}
+bool curveItemsAt(AutoShape cur, AutoShape* picked, int devBase) {
+  bool hit = false;
+  int k = 0;
+  for (AutoShape sh : {AutoShape::Hold, AutoShape::Curve, AutoShape::Smooth}) {
+    if (ImGui::MenuItem(i18n::tr(drawShapeName(sh)), nullptr, sh == cur)) *picked = sh, hit = true;
+    if (devBase >= 0) noteItem(devBase + k);
+    ++k;
+  }
+  if (ImGui::BeginMenu(i18n::tr("More curves"))) {
+    for (AutoShape sh : ae::menuOrder())
+      if (ImGui::MenuItem(autoShapeName(sh), nullptr, sh == cur)) *picked = sh, hit = true;
+    ImGui::EndMenu();
+  }
+  return hit;
+}
+}  // namespace
+
+bool curveChooserItemCenter(int i, ImVec2* c) {
+  if (i < 0 || i >= 6 || chooserFrame < 0 || ImGui::GetFrameCount() - chooserFrame > 1) return false;
+  *c = chooserItems[i];
+  return true;
+}
+
+bool curveMenuItems(AutoShape cur, AutoShape* picked) { return curveItemsAt(cur, picked, -1); }
+
+void drawCurveChooserFace(App& a, ImDrawList* dl, ImVec2 mn, ImVec2 mx, AutoShape ds, bool lit) {
+  const auto& P = pal();
+  dl->AddRectFilled(mn, mx, lit ? P.surface800 : theme::withAlpha(P.surface800, 0.55f), theme::kRadius);
+  dl->AddRect(mn, mx, lit ? P.lineStrong : P.line, theme::kRadius);
+  // A small vector glyph of the curve, then its name and a chevron.
+  const float gh = std::round((mx.y - mn.y) * 0.5f), gx = mn.x + 5, gy = std::round((mn.y + mx.y) * 0.5f);
+  const ImU32 gc = theme::litRole(theme::role::kGraph);
+  const ImVec2 g0(gx, gy + gh * 0.5f), g1(gx + 9, gy - gh * 0.5f);
+  if (ds == AutoShape::Hold) {
+    const ImVec2 q[4] = {g0, ImVec2(gx + 4.5f, g0.y), ImVec2(gx + 4.5f, g1.y), g1};
+    dl->AddPolyline(q, 4, gc, 0, 1.4f);
+  } else if (ds == AutoShape::Smooth) {
+    ImVec2 q[9];
+    for (int i = 0; i < 9; ++i) {
+      const float f = static_cast<float>(i) / 8.0f;
+      q[i] = ImVec2(gx + 9 * f, g0.y - (g0.y - g1.y) * (0.5f - 0.5f * std::cos(3.14159265f * f)));
+    }
+    dl->AddPolyline(q, 9, gc, 0, 1.4f);
+  } else {
+    dl->AddLine(g0, g1, gc, 1.4f);
+  }
+  theme::textEllipsis(dl, a.fontMono, theme::kFontLabel, ImVec2(gx + 13, mn.y + (mx.y - mn.y - theme::kFontLabel) * 0.5f), mx.x - gx - 13 - 12,
+                      lit ? P.text : P.textDim, drawShapeShort(ds));
+  ui::drawIcon(dl, ui::Icon::ChevronDown, ImVec2(mx.x - 7, gy), 8, lit ? P.text : P.textFaint);
+}
+
+void drawCurveChooserItems(App& a, size_t selCount, AutoShape selCur, const std::function<void(AutoShape)>& setSel) {
+  const AutoShape ds = laneDrawShape(a);
+  ImGui::TextDisabled("%s", i18n::tr("Draw with"));
+  int k = 0;
+  for (AutoShape sh : {AutoShape::Hold, AutoShape::Curve, AutoShape::Smooth}) {
+    if (ImGui::MenuItem(i18n::tr(drawShapeName(sh)), nullptr, sh == ds)) setLaneDrawShape(a, sh);
+    noteItem(k++);
+  }
+  if (selCount > 0) {
+    ImGui::Separator();
+    ImGui::TextDisabled(i18n::tr("Set the %zu selected points to"), selCount);
+    ImGui::PushID("sel");
+    AutoShape picked = AutoShape::Hold;
+    if (curveItemsAt(selCur, &picked, 3)) setSel(picked);
+    ImGui::PopID();
+  }
+}
+
 std::string patternLaneLabel(App& a) {
   if (laneTarget.owner == kNoId) return "";
   const Song& s = a.doc.song();
@@ -322,34 +402,11 @@ void patternLaneMenu(App& a, ObjectId pattern, ObjectId channel) {
 }
 
 bool drawLaneCurveChip(App& a, ImDrawList* dl, ImVec2 mn, ImVec2 mx, ObjectId pattern, bool canvasHovered, bool clicked) {
-  const auto& P = pal();
   L.chip0 = mn, L.chip1 = mx;
   const AutoShape ds = laneDrawShape(a);
   const ImVec2 m = ImGui::GetIO().MousePos;
   const bool hov = canvasHovered && m.x >= mn.x && m.x < mx.x && m.y >= mn.y && m.y < mx.y;
-  const bool open = ImGui::IsPopupOpen("##lanecurve");
-  dl->AddRectFilled(mn, mx, hov || open ? P.surface800 : theme::withAlpha(P.surface800, 0.55f), theme::kRadius);
-  dl->AddRect(mn, mx, hov || open ? P.lineStrong : P.line, theme::kRadius);
-  // A small vector glyph of the curve, then its name and a chevron.
-  const float gh = std::round((mx.y - mn.y) * 0.5f), gx = mn.x + 5, gy = std::round((mn.y + mx.y) * 0.5f);
-  const ImU32 gc = theme::litRole(theme::role::kGraph);
-  const ImVec2 g0(gx, gy + gh * 0.5f), g1(gx + 9, gy - gh * 0.5f);
-  if (ds == AutoShape::Hold) {
-    const ImVec2 q[4] = {g0, ImVec2(gx + 4.5f, g0.y), ImVec2(gx + 4.5f, g1.y), g1};
-    dl->AddPolyline(q, 4, gc, 0, 1.4f);
-  } else if (ds == AutoShape::Smooth) {
-    ImVec2 q[9];
-    for (int i = 0; i < 9; ++i) {
-      const float f = static_cast<float>(i) / 8.0f;
-      q[i] = ImVec2(gx + 9 * f, g0.y - (g0.y - g1.y) * (0.5f - 0.5f * std::cos(3.14159265f * f)));
-    }
-    dl->AddPolyline(q, 9, gc, 0, 1.4f);
-  } else {
-    dl->AddLine(g0, g1, gc, 1.4f);
-  }
-  theme::textEllipsis(dl, a.fontMono, theme::kFontLabel, ImVec2(gx + 13, mn.y + (mx.y - mn.y - theme::kFontLabel) * 0.5f), mx.x - gx - 13 - 12,
-                      hov || open ? P.text : P.textDim, drawShapeShort(ds));
-  ui::drawIcon(dl, ui::Icon::ChevronDown, ImVec2(mx.x - 7, gy), 8, hov || open ? P.text : P.textFaint);
+  drawCurveChooserFace(a, dl, mn, mx, ds, hov || ImGui::IsPopupOpen("##lanecurve"));
   if (hov) a.setHint(std::string(i18n::tr("Curve the drawing tools write")) + ": " + i18n::tr(drawShapeName(ds)) + "   " +
                      i18n::tr("(click: choose; also sets the curve of selected points)"));
   bool took = false;
@@ -361,16 +418,8 @@ bool drawLaneCurveChip(App& a, ImDrawList* dl, ImVec2 mn, ImVec2 mx, ObjectId pa
     const Song& s = a.doc.song();
     const ae::Points pts = lanePoints(s, pattern, laneTarget);
     syncSelection(pattern, pts.size());
-    ImGui::TextDisabled("%s", i18n::tr("Draw with"));
-    for (AutoShape sh : {AutoShape::Hold, AutoShape::Curve, AutoShape::Smooth})
-      if (ImGui::MenuItem(i18n::tr(drawShapeName(sh)), nullptr, sh == ds)) setLaneDrawShape(a, sh);
-    if (!L.sel.empty()) {
-      ImGui::Separator();
-      ImGui::TextDisabled(i18n::tr("Set the %zu selected points to"), L.sel.size());
-      ImGui::PushID("sel");
-      curveItems(a, pattern, selShape(pts, L.sel), L.sel);
-      ImGui::PopID();
-    }
+    const ae::Selection sel = L.sel;
+    drawCurveChooserItems(a, sel.size(), selShape(pts, sel), [&](AutoShape sh) { setSelShape(a, pattern, sh, sel); });
     ImGui::Separator();
     if (ImGui::MenuItem(i18n::tr("Simplify points..."), nullptr, false, pts.size() > 2)) L.openSimplify = true;
     ImGui::EndPopup();

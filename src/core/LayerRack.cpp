@@ -273,6 +273,7 @@ Json presetToJson(const Song& s, ObjectId layer, std::vector<std::string>* leftO
       if (const MixerTrack* m = s.mixerTrack(c->mixerTrack)) {
         Json jm = mixerTrackToJson(*m);
         jm.object.erase("sends");  // a loaded insert sends to the master
+        jm.object.erase("roomId");  // K-224: the Stage room is the project's, never part of the preset
         jm.object["id"] = Json::makeNumber(static_cast<double>(m->id));
         e.object["insert"] = std::move(jm);
         inserts.push_back(m->id);
@@ -368,6 +369,7 @@ ObjectId loadPreset(Document& d, const Json& preset, int at, std::string* err) {
           fresh.id = m->id;
           fresh.sends = m->sends;  // the free track's own routing (to the master)
           fresh.input = -1, fresh.armed = false;
+          fresh.room = m->room;  // K-224: the free track stays in its room (old presets may still carry one)
           if (fresh.name.empty()) fresh.name = c.name;
           *m = std::move(fresh);
           c.mixerTrack = t;

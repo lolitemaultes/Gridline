@@ -1931,15 +1931,18 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
   runNoteFx(p, n);
 
   // --- generators → mixer graph (serial or on the worker pool) ---
+  // K-203: plugins read the position, tempo and meter at the block's first frame: after a loop
+  // wrap at the block's start, the new pass's (equal to blockTick in every other block).
+  const double frameTick = tPlaying_ && segCount_ > 0 && segs_[0].from == 0 ? tickAt(p, segs_[0].anchor, static_cast<double>(segs_[0].clock)) : blockTick;
   bc_.p = p;
   bc_.n = n;
   bc_.grid = grid;
   bc_.gpos = gpos;
   bc_.nb = std::min(p->mixer.size(), busL_.size());
   bc_.ctx.sampleRate = sr_;
-  bc_.ctx.tempo = clockMap(p).bpmAt(blockTick);
+  bc_.ctx.tempo = clockMap(p).bpmAt(frameTick);
   bc_.ctx.ppq = p->ppq;
-  bc_.ctx.tick = blockTick;
+  bc_.ctx.tick = frameTick;
   bc_.ctx.playing = tPlaying_;
   bc_.ctx.recording = recOn && tPlaying_ && countInLeft_ <= 0;
   bc_.ctx.punchIn = punchA_.load(std::memory_order_relaxed);
@@ -1957,7 +1960,7 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
     // K-179: the meter at the block start (song meter changes, or the playing pattern's meter) and
     // the bar it is in, for hosted plugins' bar positions.
     Tick beat = std::max<Tick>(1, p->beatTicks), bar = std::max<Tick>(1, p->barTicks);
-    const Tick bt = static_cast<Tick>(std::floor(std::max(0.0, blockTick) + 1e-6));  // (K-193: a block split at a change starts on it)
+    const Tick bt = static_cast<Tick>(std::floor(std::max(0.0, frameTick) + 1e-6));  // (K-193: a block split at a change starts on it)
     bc_.ctx.barStart = -1;
     bc_.ctx.barIndex = 0;
     if (tMode_ != PlayMode::Pattern) {  // K-193: live mode too
@@ -1978,7 +1981,7 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
     bc_.ctx.loopEnd = tMode_ == PlayMode::Live ? 0.0 : loopEnd(p);
     bc_.ctx.offline = offline_;
     bc_.ctx.interp = interp_;
-    bc_.ctx.jumped = tPlaying_ != ctxWasPlaying_ || std::fabs(blockTick - ctxNextTick_) > 1e-6 * std::max(1.0, blockTick);
+    bc_.ctx.jumped = tPlaying_ != ctxWasPlaying_ || std::fabs(frameTick - ctxNextTick_) > 1e-6 * std::max(1.0, frameTick);
     ctxWasPlaying_ = tPlaying_;
     ctxNextTick_ = curTick_;
   }
@@ -2512,11 +2515,23 @@ int AudioEngine::untilEventStep(const Program* p, int n) const {
 
 int AudioEngine::untilMeterChange(const Program* p, int n) const {
   if (!tPlaying_ || countInLeft_ > 0 || tMode_ == PlayMode::Pattern || p->meter.constant()) return n;
-  const double t0 = tickAt(p, anchorTick_, static_cast<double>(clock_)) + kEventTickEps;
+  double anchor = anchorTick_;
+  int64_t clock = clock_;
+  // K-203: a block that starts with the loop wrap plays from where the wrap lands (as untilEventStep).
+  const bool loops = tLoop_ && tMode_ == PlayMode::Song;
+  if (loops && sampleAt(p, anchor, transportEnd(p)) <= clock) {
+    anchor = pendJump_ ? pendJumpTo_ : loopStart(p);
+    clock = 0;
+  }
+  const double t0 = tickAt(p, anchor, static_cast<double>(clock)) + kEventTickEps;
   const auto& segs = p->meter.segments();
   const size_t i = p->meter.segIndex(static_cast<Tick>(std::floor(std::max(0.0, t0))));
-  if (i + 1 >= segs.size()) return n;
-  const int64_t s = sampleAt(p, anchorTick_, static_cast<double>(segs[i + 1].start)) - clock_;
+  double next = i + 1 < segs.size() ? static_cast<double>(segs[i + 1].start) : std::numeric_limits<double>::infinity();
+  // K-203: a loop wrap ends the block too, so the next pass starts on a block of its own and
+  // plugins see the meter where the wrap lands from its first sample.
+  if (loops) next = std::min(next, transportEnd(p));
+  if (!std::isfinite(next)) return n;
+  const int64_t s = sampleAt(p, anchor, next) - clock;
   return s >= 1 && s < n ? static_cast<int>(s) : n;
 }
 
@@ -2531,10 +2546,14 @@ void AudioEngine::updateStripGains(const Program* p) {
   }
   for (const auto& m : p->mixer) {
     if (!m.stripLinked) continue;
-    double g = dsp::faderGain(m.modVolume, 0.8), lg, rg;
-    dsp::panGains(m.modPan, lg, rg);
-    m.gainL = static_cast<float>(g * lg);
-    m.gainR = static_cast<float>(g * rg);
+    double g = dsp::faderGain(m.modVolume, 0.8);
+    const ProgRoom& room = p->roomOf(m);
+    if (room.on && m.depth > 0) g *= depth::gain(m.depth, room.depthK);  // Stage distance (a space chosen)
+    const depth::PanGains pg = depth::panGains(p->panLaw, g, roomPan(m.modPan, m.roomW), roomSep(m.sep, m.roomW));
+    m.gainL = static_cast<float>(pg.gl);
+    m.gainR = static_cast<float>(pg.gr);
+    m.xlr = static_cast<float>(pg.xlr);
+    m.xrl = static_cast<float>(pg.xrl);
   }
 }
 
@@ -2571,6 +2590,8 @@ void AudioEngine::applyLinkValue(const Program* p, const ProgLink& l, double nor
       case ProgLink::MixVolume: p->mixer[static_cast<size_t>(l.mixer)].modVolume = fv; break;
       case ProgLink::MixPan: p->mixer[static_cast<size_t>(l.mixer)].modPan = fv; break;
       case ProgLink::MixSep: p->mixer[static_cast<size_t>(l.mixer)].sep = fv; break;
+      case ProgLink::MixDepth: p->mixer[static_cast<size_t>(l.mixer)].depth = p->roomOf(p->mixer[static_cast<size_t>(l.mixer)]).on ? fv : 0.0f; break;
+      case ProgLink::MixFocus: p->mixer[static_cast<size_t>(l.mixer)].focus = p->roomOf(p->mixer[static_cast<size_t>(l.mixer)]).on ? fv : 0.0f; break;
       case ProgLink::MixMute: p->mixer[static_cast<size_t>(l.mixer)].muteMod = v >= 0.5; break;
       case ProgLink::SlotParam: {
         const ProgSlot& s = p->mixer[static_cast<size_t>(l.mixer)].slots[static_cast<size_t>(l.slot)];

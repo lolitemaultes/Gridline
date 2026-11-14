@@ -593,6 +593,7 @@ DrawStats takeDrawStats() { return {}; }
 void devDrag(const Window&, void*, int, int, double) {}
 void devPostMouse(const Window&, int, double, double) {}
 void orderAbove(const Window&, const Window&) {}
+void raiseChild(const Window&, const Window&) {}  // the window manager raises a clicked transient
 void devLiveResize(const Window&, double, double, int) {}
 void devPerformClose(const Window&) {}
 // J-116: X11 has no modal resize loop: ConfigureNotify arrives in the event pump, which returns.

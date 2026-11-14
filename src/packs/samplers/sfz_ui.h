@@ -120,12 +120,12 @@ void sfzRegionMap(App& a, const PluginTarget& t, const gl::sfz::Instrument& ins,
   }
   ImGui::SetCursorScreenPos(ImVec2(p0.x, ky0));
   ImGui::InvisibleButton("##sfzkeys", ImVec2(std::max(1.f, p1.x - p0.x), std::max(1.f, ky1 - ky0)));
-  static int held = -1;
-  if (ImGui::IsItemActivated()) {
-    held = std::clamp(lo + static_cast<int>((ImGui::GetIO().MousePos.x - p0.x) / kw), 0, 127);
-    preview(a, t, held, 0.8f, true);
+  {  // held, the key under the pointer plays: a drag glides from key to key (KeyGlide.h)
+    static keyglide::Held glide;
+    const int under = std::clamp(lo + static_cast<int>(std::floor((ImGui::GetIO().MousePos.x - p0.x) / kw)), lo, hi);
+    const int held = keyglide::followItem(a, t.isChannel() ? t.owner : kNoId, under, glide, 0.8f);
+    keyglide::devNoteStrip("sfz", ImVec2(p0.x, ky0), ImVec2(p1.x, ky1), lo, p0.x, kw, held);
   }
-  if (held >= 0 && ImGui::IsItemDeactivated()) preview(a, t, held, 0, false), held = -1;
   if (ImGui::IsItemHovered()) {
     const int n = std::clamp(lo + static_cast<int>((mouse.x - p0.x) / kw), 0, 127);
     auto it = ins.swLabels.find(n);

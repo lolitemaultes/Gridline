@@ -1,6 +1,7 @@
 // Gridline — VST3 hosting tests. Uses only the in-tree test plugin
 // (GridlineTest.vst3, built from tests/vst3/TestPlugin.cpp).
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -10,12 +11,14 @@
 #include "Hermetic.h"
 #include "core/Document.h"
 #include "core/Project.h"
+#include "engine/AudioEngine.h"
 #include "engine/Render.h"
 #include "host/HostedPlugins.h"
 #include "host/vst3/Vst3HostObjects.h"
 #include "host/vst3/Vst3Module.h"
 #include "host/vst3/Vst3Plugin.h"
 #include "host/vst3/Vst3Scan.h"
+#include "packs/modulation/modulation.h"
 
 namespace fs = std::filesystem;
 using namespace gl;
@@ -432,6 +435,50 @@ void testProjectAndRender() {
          "missing plugin: no instance, error reported");
 }
 
+// "Link to controller" on a hosted plugin's parameter: an X-Y pad's X output drives the test effect's
+// Level (0.5 = unity, 1 = double), so the linked render is twice as loud; undo removes the link and
+// redo brings it back.
+void testControllerLink() {
+  namespace mod = gl::packs::modulation;
+  Document d(makeEmptySong());
+  d.setParam(songParam(SongParam::Tempo), 120.0, false);
+  ObjectId pat = d.song().patterns[0].id;
+  ObjectId ch = d.addChannel("vst", kSynth);
+  d.addNote(pat, ch, {0, 96, 69, 127});
+  d.addClip(pat, 0, 0);
+  ObjectId track = d.song().mixer[1].id;
+  d.routeChannel(ch, track);
+  expect(d.setSlotPlugin(track, 0, "gl.xyctl") && d.setSlotPlugin(track, 1, kGain), "X-Y pad and hosted effect in one track");
+  d.setParam(slotParam(track, 0, mod::XyX), 1.0, false);
+  d.setParam(slotParam(track, 0, mod::XySmooth), 0.0, false);
+  const ParamId level = slotParam(track, 1, 0);
+  expect(describeParam(d.song(), level).has_value(), "the hosted Level parameter is described");
+  RenderOptions o;
+  o.blockSize = 256;
+  const float plain = renderSong(d.song(), o).peak();
+  expect(plain > 0.05f, "the hosted chain plays");
+
+  ModLink l;
+  l.sourceOwner = track, l.sourceSlot = 0, l.sourceOutput = 0, l.owner = level.owner, l.index = level.index;
+  expect(d.setModLink(l), "a hosted parameter accepts a controller link");
+  expect(isModulated(d.song(), level), "the hosted parameter shows as linked");
+  const float linked = renderSong(d.song(), o).peak();
+  std::printf("# peak plain %.5f linked %.5f\n", static_cast<double>(plain), static_cast<double>(linked));
+  expect(std::fabs(linked - 2 * plain) < 0.02f * plain, "the link moves the hosted parameter (Level 1 = twice as loud)");
+  ProgramBuilder b;
+  AudioEngine eng{48000.0};
+  eng.setProgram(b.build(d.song()));
+  std::vector<float> L(512), R(512);
+  for (int k = 0; k < 4; ++k) eng.process(L.data(), R.data(), 512);
+  double v = 0;
+  expect(b.modulatedValue(level, v) && std::fabs(v - 1.0) < 1e-3, "the engine reports the hosted parameter at the pad's X");
+
+  expect(d.undo() && !isModulated(d.song(), level) && d.song().modLinks.empty(), "undo removes the controller link");
+  expect(std::fabs(renderSong(d.song(), o).peak() - plain) < 1e-4f, "after undo the hosted parameter is back at its own value");
+  expect(d.redo() && isModulated(d.song(), level), "redo brings the link back");
+  expect(std::fabs(renderSong(d.song(), o).peak() - linked) < 1e-4f, "after redo the link drives the parameter again");
+}
+
 }  // namespace
 
 int main() {
@@ -442,5 +489,6 @@ int main() {
   testInstrument();
   testEffect();
   testProjectAndRender();
+  testControllerLink();
   return finish();
 }

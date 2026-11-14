@@ -316,7 +316,7 @@ void chipLook(const Ctx& c, float x, float y, float w, float h, const char* labe
   const float dx = x + M(11) + M(3.5f);
   if (dotOn) glowDot(c, c.p(dx, y + h * 0.5f), M(3.5f), c.P.good);
   else c.dl->AddCircleFilled(c.p(dx, y + h * 0.5f), c.s(M(3.5f)), c.P.textFaint, 12);
-  text(c, x + M(11 + 7 + 7), y + h * 0.5f - T(11.5f) * 0.68f, label, c.P.label, T(11.5f), false);
+  labelBeside(c, x + M(11 + 7 + 7), y, h, label, c.P.label, T(11.5f), false);  // on the row's baseline
 }
 
 void modChip(const Ctx& c, float rx, float y, const char* label, ImU32 col) {

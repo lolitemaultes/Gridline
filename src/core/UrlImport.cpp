@@ -1,6 +1,7 @@
 // Gridline - J-192: Import from URL, pure logic and the worker (see UrlImport.h).
 #include "UrlImport.h"
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -102,10 +103,44 @@ std::string hostOf(const std::string& url) {
 }
 
 // ----------------------------------------------------------------- info ----
+std::string plainText(const std::string& in) {
+  // Tags out (some sites hand over a title as HTML, such as a Wikimedia Commons file page's
+  // '<div class="fn">...</div>'), the common entities decoded, white space collapsed.
+  std::string t;
+  for (size_t i = 0; i < in.size(); ++i) {
+    if (in[i] == '<') {
+      const size_t close = in.find('>', i);
+      // a tag: '<' then a letter, '/' or '!' (a lone "<3" or "a < b" stays)
+      if (close != std::string::npos && i + 1 < in.size() &&
+          (std::isalpha(static_cast<unsigned char>(in[i + 1])) || in[i + 1] == '/' || in[i + 1] == '!')) {
+        t.push_back(' ');
+        i = close;
+        continue;
+      }
+    }
+    t.push_back(in[i]);
+  }
+  static const std::pair<const char*, const char*> ents[] = {{"&amp;", "&"},  {"&lt;", "<"},   {"&gt;", ">"},  {"&quot;", "\""},
+                                                             {"&#39;", "'"},  {"&#039;", "'"}, {"&apos;", "'"}, {"&nbsp;", " "}};
+  for (const auto& [e, r] : ents)
+    for (size_t p = t.find(e); p != std::string::npos; p = t.find(e, p + std::char_traits<char>::length(r)))
+      t.replace(p, std::char_traits<char>::length(e), r);
+  std::string out;
+  for (char c : t) {
+    const bool space = c == ' ' || c == '\t' || c == '\n' || c == '\r';
+    if (space) {
+      if (!out.empty() && out.back() != ' ') out.push_back(' ');
+    } else {
+      out.push_back(c);
+    }
+  }
+  return trim(out);
+}
+
 namespace {
 std::string uploaderOf(const Json& j) {
   for (const char* k : {"uploader", "channel", "artist", "creator", "uploader_id"}) {
-    const std::string v = j.text(k);
+    const std::string v = plainText(j.text(k));
     if (!v.empty()) return v;
   }
   return "";
@@ -121,7 +156,7 @@ bool parseInfo(const std::string& json, Info& out, std::string* err) {
     if (err) *err = "The downloader's answer could not be read";
     return false;
   }
-  out.title = j.text("title");
+  out.title = plainText(j.text("title"));
   out.uploader = uploaderOf(j);
   out.site = j.text("extractor_key", j.text("extractor"));
   out.url = j.text("webpage_url", j.text("original_url"));
@@ -135,7 +170,7 @@ bool parseInfo(const std::string& json, Info& out, std::string* err) {
         if (!x.is(Json::Type::Object)) continue;
         Item it;
         it.id = x.text("id");
-        it.title = x.text("title");
+        it.title = plainText(x.text("title"));
         it.uploader = uploaderOf(x);
         it.url = x.text("url", x.text("webpage_url"));
         if (it.url.empty() || !validUrl(it.url)) it.url = x.text("webpage_url", x.text("original_url"));
@@ -235,6 +270,21 @@ std::string errorLead(const std::string& e) {
     return "This link is not a media page the downloader knows. Check the link, or update yt-dlp in Settings > File > Import from URL.";
   if (contains(l, "your country") || contains(l, "geo restrict") || contains(l, "geo-restrict") || contains(l, "region"))
     return "This media is not available in your region.";
+  if (contains(l, "ip address is blocked") || contains(l, "blocked from accessing"))
+    return "The site blocks downloads from this connection (your network or region). It cannot be imported from here.";
+  // The site answered, but there is no such page ("Unable to download webpage: HTTP Error 404").
+  if (contains(l, "http error 404") || contains(l, "http error 410"))
+    return "This page was not found on the site (removed, or the link is not right). Check the link.";
+  // The site refused one stream link: often passes on a fresh try (the worker already retried).
+  if (contains(l, "http error 403") || contains(l, "forbidden"))
+    return "The site refused the download (HTTP 403). This often passes: try again in a minute. If it keeps failing, update yt-dlp in "
+           "Settings > File > Import from URL.";
+  if (contains(l, "http error 429") || contains(l, "too many requests"))
+    return "The site is limiting requests from this connection. Wait a while (an hour at most) and try again.";
+  // The site was reached but answered with an error of its own.
+  if (contains(l, "http error 5"))
+    return "The site answered with an error of its own. Try again later; if it keeps failing, update yt-dlp in Settings > File > Import "
+           "from URL.";
   if (contains(l, "unable to download webpage") || contains(l, "getaddrinfo") || contains(l, "name or service not known") ||
       contains(l, "nodename nor servname") || contains(l, "timed out") || contains(l, "network is unreachable") ||
       contains(l, "connection refused") || contains(l, "connection reset") || contains(l, "failed to resolve") ||
@@ -242,9 +292,14 @@ std::string errorLead(const std::string& e) {
     return "The site could not be reached. Check the internet connection and try again.";
   // The site changed and this yt-dlp does not know it yet.
   if (contains(l, "unable to extract") || contains(l, "please report this issue") || contains(l, "nsig") || contains(l, "signature") ||
-      contains(l, "http error 403") || contains(l, "forbidden") || contains(l, "is outdated") || contains(l, "update to the latest"))
+      contains(l, "challenge") || contains(l, "is outdated") || contains(l, "update to the latest"))
     return "The site has changed and the downloader does not understand it yet. Update yt-dlp in Settings > File > Import from URL, "
            "then try again.";
+  // The Internet Archive's page without a player: an item for signed-in users only, one limited to
+  // some regions, or one without media.
+  if (contains(l, "play-av tag"))
+    return "No playable audio was found on this page. Some Internet Archive items play only for signed-in users or in some regions, "
+           "and some have no media at all.";
   if (contains(l, "requested format is not available") || contains(l, "no video formats") || contains(l, "no formats"))
     return "No audio stream was found on this page. If the page plays audio in a browser, update yt-dlp in Settings > File > Import "
            "from URL.";
@@ -252,6 +307,18 @@ std::string errorLead(const std::string& e) {
     return "This media is not available (removed, or the link is not right). Check the link.";
   if (contains(l, "live")) return "Live streams cannot be imported. Try again once the stream has ended.";
   return "";
+}
+
+bool retryableError(const std::string& e) {
+  const std::string l = lower(e);
+  if (contains(l, "drm") || contains(l, "sign in") || contains(l, "private") || contains(l, "unsupported url") || contains(l, "http error 404") ||
+      contains(l, "http error 429"))
+    return false;
+  return contains(l, "http error 403") || contains(l, "forbidden") || contains(l, "unable to download video data") ||
+         contains(l, "http error 500") || contains(l, "http error 502") || contains(l, "http error 503") || contains(l, "http error 504") ||
+         contains(l, "connection reset") || contains(l, "remote end closed") || contains(l, "incompleteread") ||
+         contains(l, "incomplete read") || contains(l, "timed out") || contains(l, "did not get any data blocks") ||
+         contains(l, "fragment") || contains(l, "content too short");
 }
 
 std::string fallbackLead() {
@@ -301,10 +368,15 @@ std::vector<std::string> infoArgs(const std::vector<std::string>& ytdlp, const s
   return a;
 }
 
+// The best audio-only stream with at most two channels (a surround track, such as a film's 5.1
+// mix, is a stereo mix away from what a DAW wants: the stereo stream is the producer's own), else
+// the best audio-only stream, else the best single file.
+const char* const kAudioFormat = "bestaudio[audio_channels<=?2]/bestaudio/best";
+
 std::vector<std::string> downloadArgs(const std::vector<std::string>& ytdlp, const std::string& ffmpeg, const std::string& url,
                                       const std::string& workDir) {
   std::vector<std::string> a = ytdlp;
-  for (const char* x : {"--ignore-config", "--no-playlist", "-f", "bestaudio/best", "--newline", "--progress", "--progress-template",
+  for (const char* x : {"--ignore-config", "--no-playlist", "-f", kAudioFormat, "--newline", "--progress", "--progress-template",
                         "download:GLPROG %(progress.downloaded_bytes)s %(progress.total_bytes,progress.total_bytes_estimate)s "
                         "%(progress.fragment_index)s %(progress.fragment_count)s",
                         "--no-mtime", "--socket-timeout", "30", "--retries", "3", "--fragment-retries", "3"})
@@ -315,6 +387,11 @@ std::vector<std::string> downloadArgs(const std::vector<std::string>& ytdlp, con
   }
   a.push_back("-o");
   a.push_back((fs::u8path(workDir) / "media.%(ext)s").u8string());
+  // What the item is (item.info.json): a playlist read flat may not name its items (SoundCloud
+  // sets give only numbers), and the file and the clip are named after the title.
+  a.push_back("--write-info-json");
+  a.push_back("-o");
+  a.push_back("infojson:" + (fs::u8path(workDir) / "item").u8string());
   a.push_back("--");
   a.push_back(url);
   return a;
@@ -331,7 +408,11 @@ std::vector<std::string> convertArgs(const std::string& ffmpeg, const std::strin
     a.push_back("-t");
     a.push_back(platform::formatDouble("%.3f", std::max(0.001, trim.end - std::max(0.0, trim.start))));
   }
-  for (const char* x : {"-map", "0:a:0", "-vn", "-sn", "-dn", "-map_metadata", "-1", "-c:a", "pcm_f32le", "-rf64", "auto"}) a.push_back(x);
+  // Mono and stereo are kept as they are; more channels (surround) are mixed down to stereo, which
+  // the sampler and clips play in full (they use two channels).
+  for (const char* x : {"-map", "0:a:0", "-vn", "-sn", "-dn", "-map_metadata", "-1", "-af", "aformat=channel_layouts=mono|stereo", "-c:a", "pcm_f32le",
+                        "-rf64", "auto"})
+    a.push_back(x);
   auto meta = [&](const char* key, const std::string& v) {
     if (v.empty()) return;
     a.push_back("-metadata");
@@ -358,6 +439,15 @@ std::string safeFileName(const std::string& title) {
     size_t n = 120;
     while (n > 0 && (static_cast<unsigned char>(s[n]) & 0xC0) == 0x80) --n;  // not inside a UTF-8 sequence
     s.resize(n);
+  }
+  // A title that is a file name ("morning bell.wav", common on sound libraries) loses its audio
+  // extension: the file gets ".wav" of its own.
+  for (const char* ext : {".wav", ".wave", ".mp3", ".flac", ".ogg", ".oga", ".opus", ".m4a", ".aac", ".aif", ".aiff", ".wma"}) {
+    const size_t n = std::char_traits<char>::length(ext);
+    if (s.size() > n && lower(s.substr(s.size() - n)) == ext) {
+      s.resize(s.size() - n);
+      break;
+    }
   }
   while (!s.empty() && (s.back() == ' ' || s.back() == '.')) s.pop_back();
   while (!s.empty() && (s.front() == ' ' || s.front() == '.' || s.front() == '-')) s.erase(s.begin());
@@ -562,9 +652,22 @@ RunFailure explainRun(const RunResult& r, const std::string& what) {
   return f;
 }
 
+std::string runLog(const std::vector<std::string>& argv, const RunResult& r, size_t maxBytes) {
+  std::string s = "$";
+  for (const auto& x : argv) s += " " + (x.find_first_of(" \t\"'") == std::string::npos && !x.empty() ? x : "\"" + x + "\"");
+  s += "\n";
+  if (!r.started) s += "(the program could not be started)\n";
+  else if (r.timedOut) s += "(stopped: no progress within the time limit)\n";
+  else if (r.crashed) s += "(ended by a signal)\n";
+  else s += "(exit code " + std::to_string(r.code) + ")\n";
+  const std::string& e = r.err;
+  s += e.size() > maxBytes ? "...\n" + e.substr(e.size() - maxBytes) : e;
+  return s;
+}
+
 namespace {
 
-void fail(Job& j, const RunResult& r, const std::string& what) {
+void fail(Job& j, const RunResult& r, const std::string& what, const std::vector<std::string>& argv) {
   std::lock_guard<std::mutex> lk(j.mu);
   if (r.cancelled) {
     j.phase = static_cast<int>(Phase::Cancelled);
@@ -573,6 +676,7 @@ void fail(Job& j, const RunResult& r, const std::string& what) {
   const RunFailure f = explainRun(r, what);
   j.error = f.error;
   j.lead = f.lead;
+  j.log = runLog(argv, r);
   j.phase = static_cast<int>(Phase::Failed);
 }
 
@@ -609,9 +713,10 @@ std::shared_ptr<Job> startFetch(const Tools& t, const std::string& url, const st
   std::thread([job, t, url, workDir, lim] {
     std::error_code ec;
     fs::create_directories(fs::u8path(workDir), ec);
-    const RunResult r = run(infoArgs(t.ytdlp, url), (fs::u8path(workDir) / "info").u8string(), &job->cancel, lim.infoSeconds, 0, "", nullptr);
+    const std::vector<std::string> argv = infoArgs(t.ytdlp, url);
+    const RunResult r = run(argv, (fs::u8path(workDir) / "info").u8string(), &job->cancel, lim.infoSeconds, 0, "", nullptr);
     if (!r.ok) {
-      fail(*job, r, "The downloader (yt-dlp)");
+      fail(*job, r, "The downloader (yt-dlp)", argv);
     } else {
       Info info;
       std::string err;
@@ -643,7 +748,7 @@ std::shared_ptr<Job> startImport(const Tools& t, const std::vector<Request>& req
   job->items = static_cast<int>(reqs.size());
   std::thread([job, t, reqs, workDir, lim] {
     for (size_t i = 0; i < reqs.size(); ++i) {
-      const Request& rq = reqs[i];
+      Request rq = reqs[i];
       job->item = static_cast<int>(i);
       job->fraction = -1;
       job->phase = static_cast<int>(Phase::Downloading);
@@ -651,29 +756,65 @@ std::shared_ptr<Job> startImport(const Tools& t, const std::vector<Request>& req
       std::error_code ec;
       fs::remove_all(dir, ec);
       fs::create_directories(dir, ec);
-      // 1. the best audio as it is
-      RunResult r = run(downloadArgs(t.ytdlp, t.ffmpeg, rq.item.url, dir.u8string()), (fs::u8path(workDir) / "dl").u8string(), &job->cancel,
-                        0, lim.stallSeconds, dir.u8string(), [&](const std::string& line) {
-                          DownloadProgress p;
-                          if (!parseDownloadLine(line, p)) return;
-                          if (p.fraction >= 0) job->fraction = p.fraction;
-                          if (p.got >= 0) {
-                            std::lock_guard<std::mutex> lk(job->mu);
-                            job->detail = p.total > 0 ? mbText(p.got) + " / " + mbText(p.total) : mbText(p.got);
-                          }
-                        });
+      // 1. the best audio as it is. A refused stream link (HTTP 403) or a broken connection often
+      // passes on a fresh try: yt-dlp reads the page again and gets new links.
+      const std::vector<std::string> dlArgv = downloadArgs(t.ytdlp, t.ffmpeg, rq.item.url, dir.u8string());
+      RunResult r;
+      for (int attempt = 1;; ++attempt) {
+        job->attempt = attempt;
+        r = run(dlArgv, (fs::u8path(workDir) / "dl").u8string(), &job->cancel, 0, lim.stallSeconds, dir.u8string(), [&](const std::string& line) {
+          DownloadProgress p;
+          if (!parseDownloadLine(line, p)) return;
+          if (p.fraction >= 0) job->fraction = p.fraction;
+          if (p.got >= 0) {
+            std::lock_guard<std::mutex> lk(job->mu);
+            job->detail = p.total > 0 ? mbText(p.got) + " / " + mbText(p.total) : mbText(p.got);
+          }
+        });
+        if (r.ok || r.cancelled || !r.started || attempt >= std::max(1, lim.downloadTries)) break;
+        if (!r.timedOut && !retryableError(toolError(r.err))) break;
+        job->fraction = -1;
+        {
+          std::lock_guard<std::mutex> lk(job->mu);
+          job->detail.clear();
+        }
+        // a short pause (cancellable), then a clean folder for the next try
+        for (int k = 0; k < static_cast<int>(lim.retryPauseSeconds * 20) && !job->cancel; ++k)
+          std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        if (job->cancel) {
+          r.cancelled = true;
+          break;
+        }
+        fs::remove_all(dir, ec);
+        fs::create_directories(dir, ec);
+      }
       const std::string media = r.ok ? findMedia(dir) : std::string();
       if (!r.ok || media.empty()) {
         if (r.ok) {
           std::lock_guard<std::mutex> lk(job->mu);
           job->error = "The downloader finished without an audio file";
           job->lead = "The page gave no audio file. Check the link, or update yt-dlp in Settings > File > Import from URL.";
+          job->log = runLog(dlArgv, r);
           job->phase = static_cast<int>(Phase::Failed);
         } else {
-          fail(*job, r, "The downloader (yt-dlp)");
+          fail(*job, r, "The downloader (yt-dlp)", dlArgv);
         }
         job->done = true;
         return;
+      }
+      // The item's own title, uploader and length where the link's listing had none.
+      {
+        std::ifstream jf(dir / "item.info.json", std::ios::binary);
+        std::stringstream js;
+        js << jf.rdbuf();
+        Info own;
+        if (jf && parseInfo(js.str(), own) && !own.playlist) {
+          if ((rq.item.title.empty() || rq.item.title == rq.item.id) && !own.title.empty()) rq.item.title = own.title;
+          if (rq.item.uploader.empty()) rq.item.uploader = own.uploader;
+          if (rq.item.duration <= 0) rq.item.duration = own.duration;
+        }
+        jf.close();
+        fs::remove(dir / "item.info.json", ec);
       }
       // 2. decoded once into a float WAV (the decoder's output exactly)
       job->phase = static_cast<int>(Phase::Converting);
@@ -686,7 +827,8 @@ std::shared_ptr<Job> startImport(const Tools& t, const std::vector<Request>& req
       const std::string wav = (dir / "audio.wav").u8string();
       double seconds = 0;
       Tags tags{rq.item.title, rq.item.uploader, rq.item.url};
-      r = run(convertArgs(t.ffmpeg, media, wav, rq.trim, tags, ""), (fs::u8path(workDir) / "cv").u8string(), &job->cancel, 0, lim.stallSeconds,
+      const std::vector<std::string> cvArgv = convertArgs(t.ffmpeg, media, wav, rq.trim, tags, "");
+      r = run(cvArgv, (fs::u8path(workDir) / "cv").u8string(), &job->cancel, 0, lim.stallSeconds,
               dir.u8string(), [&](const std::string& line) {
                 double s = 0;
                 const size_t d = line.find("Duration: ");
@@ -707,7 +849,7 @@ std::shared_ptr<Job> startImport(const Tools& t, const std::vector<Request>& req
           job->lead = "The file has no audio the converter can read. Try another link, or reinstall the tools in Settings > File > Import from URL.";
           job->phase = static_cast<int>(Phase::Failed);
         } else {
-          fail(*job, r, "The converter (ffmpeg)");
+          fail(*job, r, "The converter (ffmpeg)", cvArgv);
         }
         job->done = true;
         return;

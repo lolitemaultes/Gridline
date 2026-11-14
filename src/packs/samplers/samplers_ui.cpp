@@ -13,6 +13,7 @@
 #include <functional>
 #include <map>
 #include "../../core/I18n.h"
+#include "../../core/SafeCast.h"
 #include "../../core/SfzMap.h"
 #include "../../app/App.h"
 #include "../../app/InstrumentSkin.h"
@@ -464,7 +465,7 @@ void msZoneMap(App& a, const PluginTarget& t, ZoneMap& m, MsEd& ed, ImVec2 size)
     const int k = over ? std::clamp(keyAt(io.MousePos.x), 0, 127) : -1;
     const float vel = std::clamp(0.35f + 0.65f * (io.MousePos.y - kp.y) / kbH, 0.1f, 1.0f);
     keyglide::follow(a, t.isChannel() ? t.owner : kNoId, ImGui::IsItemActive(), k, ed.kbKey, vel);
-    keyglide::devNote("multisampler", kp, ImVec2(kp.x + W, kp.y + kbH), static_cast<int>(ed.viewLo), 0, ed.kbKey);
+    keyglide::devNoteStrip("multisampler", kp, ImVec2(kp.x + W, kp.y + kbH), 0, kx(0), keyW, ed.kbKey);
   }
   if (khov) a.setHint("Click to play " + noteName(keyAt(io.MousePos.x)) + " (lower = louder) · triangles mark root keys");
 }
@@ -1219,16 +1220,11 @@ void editorScratch(App& a, const PluginTarget& t, float width) {
       pr = q;
     }
   }
-  if (ImGui::IsItemActivated()) {
-    ed.move = hk;
-    int root = static_cast<int>(val(st, ScRoot, 60) + 0.5f);
-    int key = (root / 12) * 12 + hk;
-    ed.heldKey = key;
-    preview(a, t, key, 0.9f, true);
-  }
-  if (ImGui::IsItemDeactivated() && ed.heldKey >= 0) {
-    preview(a, t, ed.heldKey, 0, false);
-    ed.heldKey = -1;
+  {  // held, the key under the pointer plays its move and selects it: a drag glides from move to move (KeyGlide.h)
+    const int octave = (static_cast<int>(val(st, ScRoot, 60) + 0.5f) / 12) * 12;
+    const int under = gl::toIntClamped(std::floor((io.MousePos.x - kp.x) / kW), 0, 11);  // no mouse: -FLT_MAX
+    if (keyglide::follow(a, t.isChannel() ? t.owner : kNoId, ImGui::IsItemActive(), octave + under, ed.heldKey, 0.9f) || ImGui::IsItemActivated()) ed.move = under;
+    keyglide::devNoteStrip("scratch", kp, ImVec2(kp.x + leftW, kp.y + kH), octave, kp.x, kW, ed.heldKey);
   }
   if (khov) a.setHint(std::string("Move ") + noteName((static_cast<int>(val(st, ScRoot, 60) + 0.5f) / 12) * 12 + hk) + ": " + factoryMoveName(hk) +
                       "   click: select and play");

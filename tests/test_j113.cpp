@@ -211,9 +211,114 @@ void testFitEditor() {
   const auto n = fitEditor(600, 900, 38, 400, 300);
   expect(n.content == 600 && n.window == 400 && n.scrollX, "a minimum above the natural width never widens it");
 }
+// GitHub issue #50: the main window's size and state in layout.ini [Main], and where it opens.
+void testMainWindowIni() {
+  place::SavedMain m;
+  m.have = true, m.x = 1500, m.y = -100, m.scale = 1.5f;
+  m.haveSize = true, m.w = 1800, m.h = 1000, m.maximized = true, m.fullscreen = false;
+  const std::string body = place::savedMainLines(m);
+  const std::string ini = "[Window][Mixer]\nPos=1,2\n\n[GridlineViewports][Main]\r\n" + body + "\n[GridlineViewports][Out:Mixer]\nRect=1,2,3,4\n";
+  place::SavedMain back;
+  expect(place::readSavedMainSection(ini, back), "the [Main] section is found in a whole layout.ini");
+  expect(back.have && back.x == 1500 && back.y == -100 && std::fabs(back.scale - 1.5f) < 1e-4f, "MainOs and Scale round-trip");
+  expect(back.haveSize && back.w == 1800 && back.h == 1000 && back.maximized && !back.fullscreen, "MainSize, MainMax and MainFull round-trip");
+  place::SavedMain full;
+  expect(place::readSavedMainLine("MainFull=1", full) && full.fullscreen && !full.haveSize, "MainFull read");
+  // An older file: only MainOs and Scale. Nothing about the window itself.
+  place::SavedMain old;
+  expect(place::readSavedMainSection("[GridlineViewports][Main]\nMainOs=10,20\nScale=1.0000\n\n", old) && old.have && !old.haveSize &&
+             !old.maximized,
+         "an older [Main] has no size and no state");
+  // The old format is written byte for byte as before when there is no size.
+  place::SavedMain noSize;
+  noSize.have = true, noSize.x = 10, noSize.y = 20, noSize.scale = 1;
+  expect(place::savedMainLines(noSize) == "MainOs=10,20\nScale=1.0000\n", "without a size: the lines an older Gridline wrote");
+  place::SavedMain none;
+  expect(!place::readSavedMainSection("[Window][Mixer]\nPos=1,2\n", none) && !none.haveSize, "no [Main] section: nothing read");
+  // Strict lines.
+  place::SavedMain bad;
+  expect(!place::readSavedMainLine("MainSize=0,700", bad) && !place::readSavedMainLine("MainSize=900,700x", bad) &&
+             !place::readSavedMainLine("MainSize=40000,700", bad) && !place::readSavedMainLine("MainMax=2", bad) && !bad.haveSize && !bad.maximized,
+         "bad MainSize / MainMax lines are ignored");
+}
+
+void testMainWindowPlan() {
+  using place::planMainWindow;
+  constexpr int kMinW = 960, kMinH = 600;
+  // Usable areas: a laptop panel with a menu bar and, to its right, a large display (offset upwards).
+  const Rect laptop{0, 25, 1440, 875};
+  const Rect big{1440, -400, 2560, 1415};
+  const std::vector<Rect> two{laptop, big};
+  // Nothing saved: today's behaviour (1600 x 960 at most, display less 40 x 60, centred).
+  place::SavedMain none;
+  auto p = planMainWindow(none, two, 0, kMinW, kMinH);
+  expect(!p.restored && !p.maximize && p.w == 1400 && p.h == 815 && p.x == 20 && p.y == 25 + 30, "nothing saved: the default, centred");
+  p = planMainWindow(none, two, 1, kMinW, kMinH);
+  expect(p.w == 1600 && p.h == 960 && p.x == 1440 + 480 && p.display == 1, "nothing saved on the big display: 1600 x 960, centred there");
+  // An older file (MainOs only) keeps the default too.
+  place::SavedMain old;
+  old.have = true, old.x = 2000, old.y = 0;
+  p = planMainWindow(old, two, 0, kMinW, kMinH);
+  expect(!p.restored && p.w == 1400 && p.display == 0, "an older layout.ini (MainOs, no size): as before");
+  // Saved on the big display: comes back there, at that size and place.
+  place::SavedMain s;
+  s.have = true, s.x = 1600, s.y = -300, s.haveSize = true, s.w = 2200, s.h = 1200;
+  p = planMainWindow(s, two, 0, kMinW, kMinH);
+  expect(p.restored && p.display == 1 && p.w == 2200 && p.h == 1200 && p.x == 1600 && p.y == -300, "saved size and place come back on their display");
+  // Too big for its display now (a lower resolution, a larger interface scale saved elsewhere): shrunk to fit, title bar room above.
+  s.w = 3000, s.h = 2000;
+  p = planMainWindow(s, two, 0, kMinW, kMinH);
+  expect(p.w == 2560 && p.h == 1415 - 32 && p.x == 1440 && p.y == -400 + 32, "larger than the display: the largest size that fits");
+  // The big display is gone: on the laptop, fitted.
+  const std::vector<Rect> one{laptop};
+  s.w = 2200, s.h = 1200;
+  p = planMainWindow(s, one, 0, kMinW, kMinH);
+  expect(p.display == 0 && p.w == 1440 && p.h == 875 - 32 && p.x == 0 && p.y == 25 + 32 && inside(Rect{float(p.x), float(p.y), float(p.w), float(p.h)}, laptop),
+         "its display gone: fitted into the one that is left");
+  // A small saved size is raised to the minimum; a tiny display wins over the minimum.
+  place::SavedMain small;
+  small.haveSize = true, small.w = 400, small.h = 300;
+  p = planMainWindow(small, one, 0, kMinW, kMinH);
+  expect(p.w == kMinW && p.h == kMinH, "never below the minimum size where the display has room");
+  const std::vector<Rect> tiny{Rect{0, 0, 800, 500}};
+  p = planMainWindow(small, tiny, 0, kMinW, kMinH);
+  expect(p.w == 800 && p.h == 468 && p.x == 0 && p.y == 32, "a display smaller than the minimum: the display's size");
+  // No saved place: centred on the current display.
+  place::SavedMain sizeOnly;
+  sizeOnly.haveSize = true, sizeOnly.w = 1200, sizeOnly.h = 800;
+  p = planMainWindow(sizeOnly, two, 0, kMinW, kMinH);
+  expect(p.w == 1200 && p.h == 800 && p.x == 120 && p.y == 79, "a size without a place: centred");
+  // A place half off the display: moved inside.
+  place::SavedMain off;
+  off.have = true, off.x = 1000, off.y = 500, off.haveSize = true, off.w = 1200, off.h = 800;
+  p = planMainWindow(off, one, 0, kMinW, kMinH);
+  expect(inside(Rect{float(p.x), float(p.y), float(p.w), float(p.h)}, laptop) && p.w == 1200 && p.h == 800, "partly off the display: moved inside");
+  // Maximised and full screen.
+  s.maximized = true;
+  p = planMainWindow(s, two, 0, kMinW, kMinH);
+  expect(p.maximize && p.w == 2200 && p.display == 1, "maximised: maximised again, with its old size kept to go back to");
+  place::SavedMain fs;
+  fs.haveSize = true, fs.w = 1200, fs.h = 800, fs.fullscreen = true;
+  expect(planMainWindow(fs, two, 0, kMinW, kMinH).maximize, "full screen comes back maximised");
+  place::SavedMain maxOnly;
+  maxOnly.maximized = true;
+  p = planMainWindow(maxOnly, two, 0, kMinW, kMinH);
+  expect(p.maximize && !p.restored && p.w == 1400, "maximised without a size: the default size under it");
+  // No display information at all.
+  p = planMainWindow(s, {}, 0, kMinW, kMinH);
+  expect(p.w == 2200 && p.h == 1200 && p.maximize, "no displays known: the saved size as it is");
+  // HiDPI: everything is in window units; a 4K display at 150 % reports 2560 x 1440 of them.
+  const std::vector<Rect> hidpi{Rect{0, 0, 2560, 1400}};
+  place::SavedMain h4;
+  h4.have = true, h4.x = 100, h4.y = 80, h4.haveSize = true, h4.w = 2400, h4.h = 1300, h4.scale = 1.5f;
+  p = planMainWindow(h4, hidpi, 0, kMinW, kMinH);
+  expect(p.w == 2400 && p.h == 1300 && p.x == 100 && p.y == 80, "a large window on a scaled display comes back the same (the interface scale does not enter)");
+}
 }  // namespace
 
 int main() {
+  testMainWindowIni();
+  testMainWindowPlan();
   testRecover();
   testKeepTitle();
   testReanchor();

@@ -1,5 +1,6 @@
 // Gridline: files on mounted web and network drives. See RemoteFs.h.
 #include "RemoteFs.h"
+#include "Platform.h"
 #include <algorithm>
 #include <cctype>
 #include <cerrno>
@@ -494,7 +495,7 @@ Probe probeWithin(const std::string& path, int ms) {
   return r;
 }
 
-Listing listNow(const std::string& dir) {
+Listing listNow(const std::string& dir, unsigned flags) {
   Listing l;
   countWalk();
   std::error_code ec;
@@ -507,9 +508,20 @@ Listing listNow(const std::string& dir) {
   for (; !ec && it != end && l.entries.size() < kMaxListed; it.increment(ec)) {
     DirEntry e;
     e.name = it->path().filename().u8string();
-    if (e.name.empty() || e.name[0] == '.') continue;
+    if (e.name.empty() || e.name == "." || e.name == "..") continue;
+    e.hidden = e.name[0] == '.';
+    if (e.hidden && !(flags & kListHidden)) continue;
     std::error_code e2;
     e.isDir = it->is_directory(e2);
+    if (flags & kListDetails) {
+      if (!e.isDir) {
+        const auto sz = it->file_size(e2);
+        if (!e2) e.size = static_cast<int64_t>(sz);
+      }
+      e2.clear();
+      const auto t = it->last_write_time(e2);
+      if (!e2) e.mtime = gl::platform::fileTimeSeconds(t);
+    }
     l.entries.push_back(std::move(e));
   }
   l.ok = !ec;
@@ -517,11 +529,11 @@ Listing listNow(const std::string& dir) {
   return l;
 }
 
-DirState listAsync(const std::string& dir, double maxAge) {
+DirState listAsync(const std::string& dir, double maxAge, unsigned flags) {
   std::shared_ptr<ListCell> c;
   {
     std::lock_guard<std::mutex> lk(gCellsMu);
-    auto& slot = gLists[dir];
+    auto& slot = gLists[flags ? dir + '\n' + std::to_string(flags) : dir];
     if (!slot) slot = std::make_shared<ListCell>();
     c = slot;
   }
@@ -529,11 +541,11 @@ DirState listAsync(const std::string& dir, double maxAge) {
   const double now = nowSeconds();
   if (!c->running && now - c->at > maxAge) {
     c->started = now;
-    c->running = startThread([c, dir] {
+    c->running = startThread([c, dir, flags] {
       auto l = std::make_shared<Listing>();
       if (const char* d = std::getenv("GRIDLINE_DEV_SLOW_LIST_MS")) std::this_thread::sleep_for(std::chrono::milliseconds(std::atoi(d)));  // dev / tests
       try {
-        *l = listNow(dir);
+        *l = listNow(dir, flags);
       } catch (const std::exception&) {
         l->errnum = EIO;
       }

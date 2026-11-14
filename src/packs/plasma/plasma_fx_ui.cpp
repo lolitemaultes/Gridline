@@ -131,6 +131,12 @@ std::string niceLabel(const char* s) {
   if (o == "BPM") return "Tempo sync";
   if (o == "FREQ") return "Frequency";
   if (o == "MIX") return "Mix";
+  // a channel's own control ("TIME L" -> "Left time")
+  if (o.size() > 2 && o[o.size() - 2] == ' ' && (o.back() == 'L' || o.back() == 'R')) {
+    std::string base = o.substr(0, o.size() - 2);
+    for (char& ch : base) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    return (o.back() == 'L' ? "Left " : "Right ") + base;
+  }
   for (size_t i = 1; i < o.size(); ++i) o[i] = static_cast<char>(std::tolower(static_cast<unsigned char>(o[i])));
   return o;
 }
@@ -891,7 +897,33 @@ float effectsColumn(Ctx& c, float x, float y, float w) {
 void fxAddMenu(Ctx& c, int rack) { addMenu(c, rack, -1, 0); }
 void fxRemove(Ctx& c, int slot) { removeFx(c, slot); }
 void fxDropOn(Ctx& c, int slot) { acceptFxDrop(c, slot); }
-void fxToRack(Ctx& c, int slot, int rack) { moveToLane(c, slot, rack); }
+void fxOrderMain(Ctx& c, const std::vector<int>& slots) {
+  // the main chain's top effects in the given order, each followed by its bands' modules; every
+  // other node keeps its place
+  const auto nodes = resolvedFx(c.m, c.st.params);
+  auto topOf = [&](const FxNode& n) {
+    int top = n.slot, parent = n.parent;
+    for (int guard = 0; guard < kFxSlots && parent >= 0; ++guard) {
+      top = parent, parent = -1;
+      for (const auto& q : nodes)
+        if (q.slot == top) parent = q.parent;
+    }
+    return top;
+  };
+  std::vector<FxNode> out;
+  for (const auto& n : nodes)
+    if (n.rack != 0) out.push_back(n);
+  for (int s : slots)
+    for (const auto& n : nodes)
+      if (n.rack == 0 && topOf(n) == s && n.parent < 0) {
+        out.push_back(n);
+        for (const auto& q : nodes)
+          if (q.rack == 0 && q.parent >= 0 && topOf(q) == s) out.push_back(q);
+      }
+  for (const auto& n : nodes)  // anything not named (never expected) stays at the end
+    if (n.rack == 0 && std::find(slots.begin(), slots.end(), topOf(n)) == slots.end()) out.push_back(n);
+  c.m.fx = out;
+}
 bool fxAdd(Ctx& c, int type, int rack) {
   if (freeSlot(c) < 0) return false;
   addFx(c, type, rack, -1, 0);
@@ -907,7 +939,7 @@ float fxBody(Ctx& c0, int s, float x, float y, float w) {
   const int type = vali(c0, fxP(s, X_Type));
   Pal pal2 = c0.P;  // the picture in the effect's colour
   pal2.accent = fxCol(c0, type);
-  Ctx c{c0.a, c0.t, c0.F, c0.dl, c0.st, c0.m, c0.u, pal2, c0.live, c0.hasLive};
+  Ctx c{c0.a, c0.t, c0.F, c0.dl, c0.st, c0.m, c0.u, pal2, c0.live, c0.hasLive, c0.graph};
   const auto& defs = fxParams(type);
   const int mixQ = mixIndex(type);
   std::vector<int> dials, rest;

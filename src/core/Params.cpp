@@ -122,6 +122,8 @@ bool resolve(Song& s, ParamId id, Target& t) {
       case MixerParam::Pan: t.f = &m->pan; t.desc = lin("Pan", "pan", -1.0, 1.0, 0.0); return true;
       case MixerParam::StereoSep: t.f = &m->stereoSep; t.desc = lin("Stereo separation", "", -1.0, 1.0, 0.0); return true;
       case MixerParam::Mute: t.b = &m->muted; t.desc = tog("Mute"); return true;
+      case MixerParam::Depth: t.f = &m->depth; t.desc = lin("Distance", "%", 0.0, 1.0, 0.0); return true;
+      case MixerParam::Focus: t.f = &m->focus; t.desc = lin("Focus", "", -1.0, 1.0, 0.0); return true;
       default: return false;
     }
   }

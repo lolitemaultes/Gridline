@@ -120,12 +120,37 @@ std::array<double, 128> parseTun(const std::string& text, bool& ok) {
 
 FxInputHook gFxInputHook = nullptr;
 
+// The cache key of a sound's prepared data: its data without the Patch view's box places (moving
+// a box changes nothing the sound needs, so it must not prepare the tables and samples again).
+// The writer puts white space after the colon (`"patchPos": [`), so it is skipped here.
+std::string auxKeyOf(const std::string& data) {
+  const size_t at = data.find("\"patchPos\"");
+  if (at == std::string::npos) return data;
+  auto ws = [&](size_t i) {
+    while (i < data.size() && (data[i] == ' ' || data[i] == '\n' || data[i] == '\r' || data[i] == '\t')) ++i;
+    return i;
+  };
+  size_t e = ws(at + 10);
+  if (e >= data.size() || data[e] != ':') return data;
+  e = ws(e + 1);
+  if (e >= data.size() || data[e] != '[') return data;
+  for (int depth = 0; e < data.size(); ++e) {
+    if (data[e] == '[') ++depth;
+    else if (data[e] == ']' && --depth == 0) break;
+  }
+  if (e >= data.size()) return data;
+  size_t a0 = at, a1 = e + 1;
+  if (a1 < data.size() && data[a1] == ',') a1 = ws(a1 + 1);  // the field, its comma and the white space up to the next field
+  else if (a0 > 0 && data[a0 - 1] == ',') --a0;
+  return data.substr(0, a0) + data.substr(a1);
+}
+
 std::shared_ptr<const Aux> buildAux(const PluginState& state) {
   (void)pmaps();
   (void)factoryMips();
   (void)factoryNoises();
   (void)fft2048();
-  std::string key = state.data;
+  std::string key = auxKeyOf(state.data);
   {
     std::lock_guard<std::mutex> lk(auxMu());
     auto it = auxCache().find(key);

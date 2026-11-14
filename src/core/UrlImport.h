@@ -29,6 +29,9 @@ bool validUrl(const std::string& url, std::string* why = nullptr);
 std::string linkInText(const std::string& text);
 // "youtube.com" from "https://www.youtube.com/watch?v=..." (no "www.", lower case).
 std::string hostOf(const std::string& url);
+// A title as plain text: HTML tags removed (some sites give titles as HTML), the common entities
+// decoded, runs of white space made one space, trimmed.
+std::string plainText(const std::string& text);
 
 // ---- what the link holds (yt-dlp -J --flat-playlist) ----
 struct Item {
@@ -65,6 +68,10 @@ std::string toolError(const std::string& errText);
 std::string errorLead(const std::string& toolErrorText);
 // What to try when no known failure matched.
 std::string fallbackLead();
+// True for a download failure that often passes on a fresh try: the site refused one stream link
+// (HTTP 403, common on video sites whose links expire or are checked per request), a server error,
+// or a connection that broke off. The worker reads the link again and retries.
+bool retryableError(const std::string& toolErrorText);
 
 // ---- times ("83", "1:23", "1:02:03.5") ----
 double parseTime(const std::string& text);  // seconds, < 0 when not a time
@@ -107,8 +114,10 @@ struct Tools {
   std::string ffmpeg;
 };
 struct Limits {
-  double infoSeconds = 90;    // reading the link
+  double infoSeconds = 180;   // reading the link (a long playlist takes a while)
   double stallSeconds = 120;  // download / conversion without any sign of life
+  int downloadTries = 3;      // a download that fails with a retryableError() is tried again
+  double retryPauseSeconds = 2;
 };
 enum class Phase { Idle, Info, Downloading, Converting, Done, Failed, Cancelled };
 const char* phaseName(Phase p);  // "info", "downloading", ... (logs, dev output)
@@ -132,6 +141,8 @@ struct Job {
   std::mutex mu;  // guards the fields below
   std::string error, lead;  // Failed: the tool's error and a short explanation
   std::string detail;       // e.g. "3.1 MB of 5.0 MB"
+  std::string log;          // Failed: the command that failed and the end of its error output (Copy details)
+  std::atomic<int> attempt{1};  // the download's try (1 = the first)
   Info info;                // fetch: what the link holds
   std::vector<Result> results;
   Phase get() const { return static_cast<Phase>(phase.load()); }
@@ -159,5 +170,8 @@ struct RunFailure {
   std::string error, lead;
 };
 RunFailure explainRun(const RunResult& r, const std::string& what);
+// A failed run for the details a user can copy: the command line (each argument quoted when it
+// has spaces) and the last `maxBytes` of its error output.
+std::string runLog(const std::vector<std::string>& argv, const RunResult& r, size_t maxBytes = 4000);
 
 }  // namespace gl::urlimport

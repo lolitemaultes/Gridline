@@ -857,6 +857,17 @@ static int nsvg__cmpEdge(const void *p, const void *q)
 }
 
 
+// Gridline local change: a near-flat edge gives a slope too large for an int, and the float to int
+// conversion was undefined. Clamp the fixed-point value (2^28 is 262144 pixels at NSVG__FIX 1024).
+static int nsvg__fixToInt(float v)
+{
+	const float lim = (float)(1 << 28);
+	if (v != v) return 0;
+	if (v > lim) return 1 << 28;
+	if (v < -lim) return -(1 << 28);
+	return (int)v;
+}
+
 static NSVGactiveEdge* nsvg__addActive(NSVGrasterizer* r, NSVGedge* e, float startPoint)
 {
 	 NSVGactiveEdge* z;
@@ -875,10 +886,10 @@ static NSVGactiveEdge* nsvg__addActive(NSVGrasterizer* r, NSVGedge* e, float sta
 //	STBTT_assert(e->y0 <= start_point);
 	// round dx down to avoid going too far
 	if (dxdy < 0)
-		z->dx = (int)(-nsvg__roundf(NSVG__FIX * -dxdy));
+		z->dx = nsvg__fixToInt(-nsvg__roundf(NSVG__FIX * -dxdy));
 	else
-		z->dx = (int)nsvg__roundf(NSVG__FIX * dxdy);
-	z->x = (int)nsvg__roundf(NSVG__FIX * (e->x0 + dxdy * (startPoint - e->y0)));
+		z->dx = nsvg__fixToInt(nsvg__roundf(NSVG__FIX * dxdy));
+	z->x = nsvg__fixToInt(nsvg__roundf(NSVG__FIX * (e->x0 + dxdy * (startPoint - e->y0))));
 //	z->x -= off_x * FIX;
 	z->ey = e->y1;
 	z->next = 0;

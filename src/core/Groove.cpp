@@ -8,6 +8,7 @@
 #include <fstream>
 #include <sstream>
 #include "Json.h"
+#include "Meter.h"
 #include "MidiFile.h"
 #include "Presets.h"
 #include "Project.h"
@@ -72,29 +73,35 @@ bool isPairSwing(const GrooveShape& s) {
   return s.cycle == 2 && s.timing.size() == 2 && s.timing[0] == 0.0f && s.timing[1] == 0.5f && s.velocity.empty();
 }
 
-double cellTicks(const Song& song, const Pattern* p, int grid) {
+double cellTicks(const Song& song, const Pattern* p, int grid, Tick at) {
   const double q = static_cast<double>(song.ppq);
   switch (grid) {
     case kGrid8th: return q / 2.0;
     case kGrid16th: return q / 4.0;
     case kGrid32nd: return q / 8.0;
-    default: return p ? static_cast<double>(song.ticksPerStep(*p)) : q / 4.0;
+    default: break;
   }
+  if (p) return static_cast<double>(song.ticksPerStep(*p));
+  // K-203: the step of a new pattern in the meter in force at `at` (as Song::ticksPerStep counts it).
+  const MeterMap mm(song);
+  const MeterSeg& g = mm.segAt(std::max<Tick>(0, at));
+  const Tick step = g.bar / std::max(1, sixteenthStepsPerBar(g.num, g.den));
+  return step > 0 ? static_cast<double>(step) : q / 4.0;
 }
 
 // ------------------------------------------------------------------- warp ----
 
-Warp makeWarp(const Song& song, const Pattern* p, const GrooveShape& shapeIn, double amount, double accent) {
+Warp makeWarp(const Song& song, const Pattern* p, const GrooveShape& shapeIn, double amount, double accent, Tick at) {
   Warp w;
   GrooveShape shape = shapeIn;
   normalize(shape);
-  const double cell = cellTicks(song, p, shape.grid);
+  const double cell = cellTicks(song, p, shape.grid, at);
   if (!(cell > 0)) return w;
   w.cell = cell;
   w.cycle = shape.cycle;
   // The step grid keeps the old swing's bar exactly (whole steps); note grids use the song's bar.
   if (shape.grid == kGridStep && p) w.bar = static_cast<double>(song.ticksPerStep(*p)) * static_cast<double>(p->stepsPerBar);
-  else w.bar = static_cast<double>(p ? song.patternBarTicks(*p) : song.barTicks());  // K-179: the pattern's own bar
+  else w.bar = static_cast<double>(p ? song.patternBarTicks(*p) : MeterMap(song).fullBarLenAt(std::max<Tick>(0, at)));  // K-179 / K-203: the pattern's own bar, or the song's bar at `at`
   if (!(w.bar > 0)) return w;
   amount = std::isfinite(amount) ? std::clamp(amount, 0.0, 1.0) : 0.0;
   accent = std::isfinite(accent) ? std::clamp(accent, 0.0, 1.0) : 0.0;

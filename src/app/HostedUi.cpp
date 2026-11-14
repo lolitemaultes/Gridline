@@ -13,6 +13,7 @@
 #include "../host/PluginPrefs.h"
 #include "../host/vst3/Vst3Editor.h"
 #include "../packs/modulation/junction.h"
+#include "../packs/modulation/modulation_ui.h"
 #include "HostedUiPages.h"
 #include "App.h"
 #include "PluginSkin.h"
@@ -290,7 +291,8 @@ void paramRow(App& a, const PluginTarget& t, host::HostedInstance* hi, int k, co
     if (dx != 0) a.doc.setParam(pid, d.fromNormalized(std::clamp(n0 + dx / barW * fine, 0.0, 1.0)), true);
   }
   if (ImGui::IsItemDeactivated()) a.doc.endGesture();
-  if (ImGui::BeginPopupContextItem("##ctx")) {  // reset, type a value, MIDI link, automation clip…
+  if (ImGui::BeginPopupContextItem("##ctx")) {  // controller link, then reset, type a value, MIDI link, automation clip…
+    packs::modulation::drawLinkMenu(a, pid);
     knobContextMenu(a, pid);
     ImGui::EndPopup();
   }

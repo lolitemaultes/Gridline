@@ -19,12 +19,14 @@
 #include "../../app/BrowserUi.h"
 #include "../../app/ContextMenus.h"
 #include "../../app/ExternalDragUi.h"
+#include "../../app/KeyGlide.h"
 #include "../../app/KeyLight.h"
 #include "../../app/Theme.h"
 #include "../../app/Widgets.h"
 #include "../../core/BrowserIndex.h"
 #include "../../core/ExternalDrop.h"
 #include "../../core/I18n.h"
+#include "../../core/SafeCast.h"
 #include "../../engine/Sample.h"
 #include "../../third_party/imgui/imgui_internal.h"
 #include "../PacksUi.h"
@@ -1446,33 +1448,22 @@ void keyMapPanel(App& a, const PluginTarget& t, Ed& ed, Edit& e, const Instrumen
   ImGui::InvisibleButton("##keys", ImVec2(kw * 96, kh));
   const bool hov = ImGui::IsItemHovered();
   const ImVec2 m = ImGui::GetIO().MousePos;
-  const int under = std::clamp(static_cast<int>((m.x - p0.x) / kw), 0, 95);
+  const int under = gl::toIntClamped((m.x - p0.x) / kw, 0, 95);  // no mouse: -FLT_MAX
   const bool canMap = hasSample(e, ed.sel);
   if (ImGui::IsItemActivated() && canMap) ed.keyFrom = ed.keyTo = under;
-  // K-129: pressing a key also plays it (the strip lights it like every sounding key).
-  if (ImGui::IsItemActivated() && t.isChannel()) {
-    ed.keyHeld = stripKeyPitch(under);
-    ensureSweep(a);
-    gHeld.hold(NoteGuard::kStrip, t.key(), t.owner, ed.keyHeld, 0, frameNow());
-    a.engine.noteOn(t.owner, ed.keyHeld, 100.0f / 127.0f);
-  }
-  // The key sounds while it is pressed, the strip is in view and the editor has the focus; the
-  // frame sweep ends it when the editor is not drawn at all.
-  if (ed.keyHeld >= 0) {
-    if (ImGui::IsItemActive() && ImGui::IsItemVisible() && editorFocused()) {
-      gHeld.seen(NoteGuard::kStrip, frameNow());
-    } else {
-      a.engine.noteOff(t.owner, ed.keyHeld);
-      ed.keyHeld = -1;
-      gHeld.drop(NoteGuard::kStrip);
-    }
-  }
+  // K-129: pressing a key also plays it (the strip lights it like every sounding key). Held, the key
+  // under the pointer sounds, so a drag plays one key at a time (KeyGlide.h), while the strip is in
+  // view and the editor has the focus; the frame sweep ends it when the editor is not drawn at all.
+  const bool sounding = ImGui::IsItemActive() && ImGui::IsItemVisible() && editorFocused();
+  keyglide::follow(a, t.isChannel() ? t.owner : kNoId, sounding, stripKeyPitch(under), ed.keyHeld, 100.0f / 127.0f);
+  keyglide::devNoteStrip("tracker", p0, ImVec2(p0.x + kw * 96, p0.y + kh), stripKeyPitch(0), p0.x, kw, ed.keyHeld);
   if (ImGui::IsItemActive() && ed.keyFrom >= 0) ed.keyTo = under;
   if (ImGui::IsItemDeactivated() && ed.keyFrom >= 0) {
     mapKeys(e, ed.keyFrom, ed.keyTo, ed.sel);
     commit(a, t, e, "map keys");
     ed.keyFrom = ed.keyTo = -1;
   }
+  if (!ImGui::IsItemActive() && ed.keyFrom >= 0) ed.keyFrom = ed.keyTo = -1;  // a drag the editor lost (closed mid-drag)
   const int lo = std::min(ed.keyFrom, ed.keyTo), hi = std::max(ed.keyFrom, ed.keyTo);
   const bool builtin = inst.builtin > 0 && sampleCount(e) == 0;
   for (int n = 0; n < 96; ++n) {

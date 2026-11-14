@@ -3,6 +3,7 @@
 #include "FreezeUi.h"
 #include "CacheUi.h"
 #include "DrumKitUi.h"
+#include "FileDialogUi.h"
 #include "Look.h"
 #include "MidiUi.h"
 #include "SettingsPages.h"
@@ -11,6 +12,7 @@
 #include <SDL_opengl.h>
 #include "SysWm.h"
 #include "VideoDriver.h"
+#include "KeyFocus.h"
 #include "MainWindowRole.h"
 #include "../core/VideoDriverChoice.h"
 #include "../core/ChromeOs.h"
@@ -47,6 +49,7 @@
 #include "DevSignal.h"
 #include "FlpExportUi.h"
 #include "GrooveUi.h"
+#include "StageView.h"
 #include "J59Ui.h"
 #include "FrameProfile.h"
 #include "FrameStats.h"
@@ -86,6 +89,8 @@
 #include "GlEpoch.h"
 #include "GlRecovery.h"
 #include <fstream>
+#include <sstream>
+#include "../core/WindowPlacement.h"
 #include "../core/Log.h"
 #include "DevStress.h"
 #include "StemsUi.h"
@@ -97,6 +102,8 @@
 #include "../core/RemoteFs.h"
 #include "../core/SingleInstance.h"
 #include "WindowActivate.h"
+#include "WindowRaise.h"
+#include "ChordStampUi.h"
 #include "ForeignGl.h"
 #include "CollabUi.h"
 #include "PluginUI.h"
@@ -138,6 +145,9 @@ using namespace gl::shell;
 namespace gl {
 void drawSplash(ImFont* bold, ImFont* mono, float progress, const char* status, double time);
 }
+
+// The usable area of the display the main window was last planned on (the "sdlwin show" dev line).
+static SDL_Rect gPlannedIn{};
 
 namespace {
 
@@ -771,7 +781,7 @@ void releaseTypedNotes(App& app, std::map<SDL_Scancode, HeldNote>& held) {
 //   Close project); signals launcher-shown / launcher-hidden
 //   quit [discard] (J-103: an SDL_QUIT, the normal quit path: unsaved-changes guard, teardown, settings saved;
 //   "discard" drops unsaved changes first, as the prompt's "Don't save")
-//   J-109: sdlkey <key>[@<position>] down|up [ctrl|super] (K-175: #<scan code> for <key>, "repeat" among the mods: a key repeat) · focuslost · typing on|off|show · K-175: typing octave · K-113: typing layout <id> · typing labels · noteon|noteoff <channel index> <pitch> ·
+//   J-109: sdlkey <key>[@<position>] down|up [ctrl|super] (K-175: #<scan code> for <key>, "repeat" among the mods: a key repeat; #52: "orphan": naming no window) · sdltext <text> [orphan] · focuslost · typing on|off|show · K-175: typing octave · K-113: typing layout <id> · typing labels · noteon|noteoff <channel index> <pitch> ·
 //   previewfile <wav> · sound (output peak since the last "sound", live notes held, preview, panics, playing);
 //   waitfor output-silent: the output stayed below 1e-5 for 0.2 s (forget output-silent to wait again)
 //   J-110: stopvia button|menu|remote (the Stop button's action, Tools > Stop all sound, a MIDI controller's /
@@ -808,6 +818,8 @@ void releaseTypedNotes(App& app, std::map<SDL_Scancode, HeldNote>& held) {
 //   K-19: edzoom fxeditor|channelsettings (the plugin window's editor zoom, design size and window to stdout) ·
 //   edzoomset <plugin type> <zoom> (the zoom remembered for a plugin type, 0 = automatic; atparam points at the magnified spot)
 //   K-10: cursor 0|1 (hides or shows the --video-cursor pointer)
+//   stampstate (the chord stamp to stdout), zorder (the floating windows back to front, the focused window and the last one a press raised, to stdout)
+//   stage (the Stage window: each shown pill's centre, span, thickness, stored and live values, the selection, undo position)
 //   groove (the song's swing, the swing preset chip, its menu rows and the Groove editor's lanes and buttons to stdout)
 //   K-9: save <file> (the project, plugin state included) · rmchan <index> (removes a channel, its plugin window open or not);
 //   K-148: knobs (every knob / plugin editor control drawn last frame: item, window, id, name, value, normalized value and default,
@@ -815,6 +827,8 @@ void releaseTypedNotes(App& app, std::map<SDL_Scancode, HeldNote>& held) {
 //   --dev-input-live <file>: a test harness drives a running app: whenever <file> exists, its lines ("0 <command> <args>")
 //   run on the next frame and the file is removed (tests/yabridge)
 std::string devShotPending;
+// Tests: GRIDLINE_NO_RAISE_ON_PRESS=1 runs without ui::raiseOnPress (the behaviour before it, for comparison).
+const bool noRaiseOnPress = std::getenv("GRIDLINE_NO_RAISE_ON_PRESS") != nullptr;
 bool devFitNoDraw = false;  // K-147: a fitall sweep without screenshots only lays windows out (no GL drawing)
 bool devNoDraw = false;     // --no-draw: frames are laid out, not drawn (a slow software OpenGL spends most of a frame drawing)
 bool devLoadHold = true;  // J-167: frames do not count while a project loads ("loadhold off")
@@ -1170,12 +1184,14 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
         SDL_GL_GetDrawableSize(w, &dw, &dh);
         const Uint32 f = SDL_GetWindowFlags(w);
         const ImGuiIO& gio = ImGui::GetIO();
+        SDL_Rect usableNow{};  // the display's usable area now, beside the one the start planned in
+        SDL_GetDisplayUsableBounds(std::max(0, SDL_GetWindowDisplayIndex(w)), &usableNow);
         std::printf("sdlwin frame %d: driver %s window %dx%d drawable %dx%d imgui %.0fx%.0f fb-scale %.2f fullscreen %d maximized %d shown %d "
-                    "focus %d displays %d display %d ui-scale %.2f\n",
+                    "focus %d displays %d display %d ui-scale %.2f planned-in %dx%d usable-now %dx%d\n",
                     frame, SDL_GetCurrentVideoDriver(), ww, wh, dw, dh, static_cast<double>(gio.DisplaySize.x), static_cast<double>(gio.DisplaySize.y),
                     static_cast<double>(gio.DisplayFramebufferScale.x), (f & SDL_WINDOW_FULLSCREEN) ? 1 : 0, (f & SDL_WINDOW_MAXIMIZED) ? 1 : 0,
                     (f & SDL_WINDOW_SHOWN) ? 1 : 0, (f & SDL_WINDOW_INPUT_FOCUS) ? 1 : 0, SDL_GetNumVideoDisplays(), SDL_GetWindowDisplayIndex(w),
-                    static_cast<double>(uiscale::detected()));
+                    static_cast<double>(uiscale::detected()), gPlannedIn.w, gPlannedIn.h, usableNow.w, usableNow.h);
       }
       std::fflush(stdout);
       continue;
@@ -1379,6 +1395,10 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       ImGuiKey k = static_cast<ImGuiKey>(ImGuiKey_A + (l.a0[0] - 'a'));
       io.AddKeyEvent(k, true);
       io.AddKeyEvent(k, false);
+    } else if (l.cmd == "key" && l.a0.size() == 1 && l.a0[0] >= '0' && l.a0[0] <= '9') {  // the digit row (the Stage's 0: reset)
+      ImGuiKey k = static_cast<ImGuiKey>(ImGuiKey_0 + (l.a0[0] - '0'));
+      io.AddKeyEvent(k, true);
+      io.AddKeyEvent(k, false);
     } else if (l.cmd == "key" && l.a0 == "space") {
       io.AddKeyEvent(ImGuiKey_Space, true);
       io.AddKeyEvent(ImGuiKey_Space, false);
@@ -1397,6 +1417,9 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
     } else if (l.cmd == "key" && l.a0 == "escape") {  // Q-3: cancel a drag
       io.AddKeyEvent(ImGuiKey_Escape, true);
       io.AddKeyEvent(ImGuiKey_Escape, false);
+    } else if (l.cmd == "key" && l.a0 == "backslash") {  // K-270: the Stage's rooms column
+      io.AddKeyEvent(ImGuiKey_Backslash, true);
+      io.AddKeyEvent(ImGuiKey_Backslash, false);
     } else if (l.cmd == "key" && (l.a0 == "left" || l.a0 == "right" || l.a0 == "up" || l.a0 == "down" || l.a0 == "enter" || l.a0 == "delete" || l.a0 == "tab")) {
       // J-141: launcher keyboard checks
       const ImGuiKey k = l.a0 == "left" ? ImGuiKey_LeftArrow : l.a0 == "right" ? ImGuiKey_RightArrow : l.a0 == "up" ? ImGuiKey_UpArrow
@@ -1465,7 +1488,17 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
         }
         e.key.keysym.mod = static_cast<Uint16>(devKeyMods(l.a2));  // "ctrl", "super", "shift", "ctrl+shift"...
         e.key.repeat = down && l.a2.find("repeat") != std::string::npos ? 1 : 0;  // K-175: "sdlkey ] down repeat"
+        // GitHub issue #52: "orphan" among the mods sends the key naming no window, as SDL does while
+        // the system never said which window has the keyboard focus.
+        if (l.a2.find("orphan") != std::string::npos) e.key.windowID = 0;
       }
+      SDL_PushEvent(&e);
+    } else if (l.cmd == "sdltext") {  // GitHub issue #52: "sdltext <text> [orphan]": typed text as SDL sends it
+      SDL_Event e{};
+      e.type = SDL_TEXTINPUT;
+      SDL_Window* w = SDL_GL_GetCurrentWindow();
+      e.text.windowID = l.a1 == "orphan" || !w ? 0 : SDL_GetWindowID(w);
+      std::snprintf(e.text.text, sizeof e.text.text, "%s", l.a0.c_str());
       SDL_PushEvent(&e);
     } else if (l.cmd == "typing" && l.a0 == "show") {  // the notes held, octave and velocity
       std::printf("typing notes");
@@ -1526,7 +1559,7 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
     } else if (l.cmd == "midiretry") {  // the Retry button in Settings > MIDI
       if (app.midi) app.midi->retry();
     } else if (l.cmd == "forget") {
-      devsig::forget(l.a0);
+      devsig::forget(l.args.empty() ? l.a0 : l.args[0]);  // (a quoted name may hold spaces)
     } else if (l.cmd == "epoch") {
       std::printf("epoch frame %d: %u playing %d\n", frame, app.engine.stopEpoch(), app.engine.playing() ? 1 : 0);
       std::fflush(stdout);
@@ -1572,9 +1605,12 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       for (const auto& c : s.channels)
         std::printf("  mchannel [%s] mixer %llu\n", c.name.c_str(), static_cast<unsigned long long>(c.mixerTrack));
       devMenuRects();
+      std::printf("  %s\n", mixerDragDev().c_str());
       std::fflush(stdout);
     } else if (l.cmd == "rack") {  // J-84: channel rack layout, step scroll and values to stdout
       rackDevDump(app, frame);
+    } else if (l.cmd == "stage") {  // the Stage: pills, values, selection, undo position
+      stageui::devCommand(app, frame, l.args);
     } else if (l.cmd == "groove") {  // the song's swing and the swing preset chip / menu / Groove editor geometry
       grooveui::devCommand(app, frame);
     } else if (l.cmd == "quit") {  // J-103: the window's close request (SDL_QUIT), like the user quitting Gridline
@@ -1728,6 +1764,8 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       app.doc.markSaved();
       app.openDialog();
       app.fileDialog.devAccept = l.args.empty() ? l.a0 : l.args[0];
+    } else if (l.cmd == "filedialog") {  // the Open / Save dialog (FileDialogUi.h): open, place, go, sort, path, select, accept, state ...
+      filedlgui::devCommand(app, l.args, frame);
     } else if (l.cmd == "dialogok") {  // J-184: OK with <file> on the file dialog that is (or next) open, whoever opened it
       app.fileDialog.devAccept = l.args.empty() ? l.a0 : l.args[0];
     } else if (l.cmd == "loadchoose") {  // K-42: answers the "which project in this archive" question
@@ -1883,6 +1921,15 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       app.settings.set("ui.editorZoom", edzoom::withZoom(app.settings.getString("ui.editorZoom"), l.a0, std::strtof(l.a1.c_str(), nullptr)));
     } else if (l.cmd == "windows") {  // J-111h: windows [frames]
       devWindowsLeft = std::max(1, std::atoi(l.a0.c_str()));
+    } else if (l.cmd == "zorder") {  // the floating windows back to front and the focused one (WindowRaise.h)
+      ui::devDumpZOrder(frame);
+    } else if (l.cmd == "stampstate") {  // the piano roll's chord stamp: chord, inversion, scale chord, recent chords
+      std::string rec;
+      for (int c : stampui::recent(app)) rec += (rec.empty() ? "" : ",") + std::to_string(c);
+      std::printf("stampstate frame %d: on %d chord %d inversion %d auto %d label \"%s\" recent \"%s\" tool %d\n", frame, stampui::on(app.piano) ? 1 : 0,
+                  app.piano.stampChord, app.piano.stampInversion, app.piano.stampAuto, stampui::shortLabel(app.piano).c_str(), rec.c_str(),
+                  static_cast<int>(app.piano.tool));
+      std::fflush(stdout);
     } else if (l.cmd == "shot") {
       devShotPending = l.args.empty() ? l.a0 : l.args[0];  // J-97: a quoted path may hold spaces
     } else if (l.cmd == "mknotes" || l.cmd == "notes" || l.cmd == "selnotes" || l.cmd == "lane" || l.cmd == "pianosnap" || l.cmd == "bendline" ||
@@ -1923,6 +1970,20 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
                   frame, open ? 1 : 0, static_cast<unsigned>(aid), static_cast<unsigned>(pid), static_cast<unsigned>(tgt.owner),
                   static_cast<unsigned>(tgt.index), av.scrollX, av.pxPerTick, av.thumb0, av.thumb1, av.barY, av.gridX0, av.gridX1);
       std::fflush(stdout);
+    } else if (l.cmd == "aepoints") {  // K-202: the editor's draw-curve chooser, value area and points
+      const AutomationEditorView& av = automationEditorView();
+      std::string items;
+      for (int i = 0; i < 6; ++i) {  // the open chooser's items (-1 -1: not shown)
+        ImVec2 c(-1, -1);
+        curveChooserItemCenter(i, &c);
+        char b[48];
+        std::snprintf(b, sizeof b, " %.0f %.0f", static_cast<double>(c.x), static_cast<double>(c.y));
+        items += b;
+      }
+      std::printf("aepoints frame %d: chip %.1f %.1f %.1f %.1f gridy %.1f %.1f gridx %.1f %.1f shape %d undo %zu items%s %s\n", frame, av.chipX0,
+                  av.chipY0, av.chipX1, av.chipY1, av.gridY0, av.gridY1, av.gridX0, av.gridX1, av.drawShape, app.doc.history().position(),
+                  items.c_str(), automationEditorPointsDump(app).c_str());
+      std::fflush(stdout);
     } else if (l.cmd == "selpattern") {  // J-173: selpattern <id>: the current pattern
       app.selectPattern(static_cast<ObjectId>(std::atoi(l.a0.c_str())));
     } else if (l.cmd == "patauto") {  // J-173: every pattern's automation clips to stdout
@@ -1947,6 +2008,12 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
                   static_cast<double>(g.gridY1), static_cast<double>(g.vThumb0), static_cast<double>(g.vThumb1), static_cast<double>(g.vBarX),
                   static_cast<double>(g.hThumb0), static_cast<double>(g.hThumb1), static_cast<double>(g.hBarY));  // K-24
       std::printf("  head settings %u renaming %d\n", static_cast<unsigned>(app.settingsChannel), g.renaming);  // header double-clicks
+      {  // GitHub #46: the header column, a header drag's drop point and the selected headers
+        std::string sel;
+        for (int k : app.playlist.trackSel) sel += (sel.empty() ? "" : ",") + std::to_string(k);
+        std::printf("  headcol %.1f %.1f dragbefore %d tracksel %s\n", static_cast<double>(g.headX0), static_cast<double>(g.headX1), g.dragBefore,
+                    sel.empty() ? "-" : sel.c_str());
+      }
       std::printf("  patmenu clone %.1f %.1f\n", static_cast<double>(g.cloneX), static_cast<double>(g.cloneY));  // a pattern menu's Clone
       std::printf("  loopbadge %d x %.1f y %.1f\n", g.loopBadge ? 1 : 0, static_cast<double>(g.loopBadgeX), static_cast<double>(g.loopBadgeY));  // K-140
       for (size_t i = 0; i < g.trackTop.size(); ++i) {
@@ -2011,6 +2078,60 @@ static void devInstallBacktrace() {
 #else
 static void devInstallBacktrace() {}
 #endif
+
+// GitHub issue #50: the size, place and state the main window was left at (layout.ini [Main] of
+// the layout preset this run reads), fitted to the displays there are now; a file without them:
+// the default size, centred. `forcedSize` (--size): that size, centred on the display. Read before
+// the main window exists on X11 and Wayland (it is created at this size, issue #33) and again when
+// the splash becomes the main window elsewhere.
+static place::MainWindowPlan planMainWindowNow(const Settings& settings, const std::string& devLayoutPreset, std::pair<int, int> forcedSize,
+                                               int display, place::SavedMain& savedMain) {
+  savedMain = place::SavedMain{};
+  if (forcedSize.first <= 0) {
+    const layout::Preset p = devLayoutPreset.empty() ? layout::current(settings) : layout::fromId(devLayoutPreset);
+    std::ifstream in(fs::u8path(Settings::defaultPath()).parent_path() / layout::iniFileName(p), std::ios::binary);
+    if (in) {
+      std::stringstream ss;
+      ss << in.rdbuf();
+      place::readSavedMainSection(ss.str(), savedMain);
+    }
+  }
+  std::vector<place::Rect> work;
+  for (int n = 0, count = SDL_GetNumVideoDisplays(); n < count; ++n) {
+    SDL_Rect u{};
+    if (SDL_GetDisplayUsableBounds(n, &u) != 0 || u.w <= 0 || u.h <= 0)
+      if (SDL_GetDisplayBounds(n, &u) != 0 || u.w <= 0 || u.h <= 0) continue;
+    work.push_back(place::Rect{static_cast<float>(u.x), static_cast<float>(u.y), static_cast<float>(u.w), static_cast<float>(u.h)});
+  }
+  const int current = display >= 0 && display < static_cast<int>(work.size()) ? display : 0;
+  if (!work.empty()) {
+    const place::Rect& u = work[static_cast<size_t>(current)];
+    gPlannedIn = SDL_Rect{static_cast<int>(u.x), static_cast<int>(u.y), static_cast<int>(u.w), static_cast<int>(u.h)};
+  }
+  place::MainWindowPlan plan = place::planMainWindow(savedMain, work, current, winrole::kMainMinW, winrole::kMainMinH);
+  if (work.empty()) plan.x = plan.y = static_cast<int>(SDL_WINDOWPOS_CENTERED);  // no display information: centred by the system
+  if (forcedSize.first > 0) {
+    plan.w = forcedSize.first;
+    plan.h = forcedSize.second;
+    plan.maximize = false;
+    if (!work.empty()) {  // centred on the display, as before
+      const place::Rect& m = work[static_cast<size_t>(current)];
+      plan.x = static_cast<int>(m.x) + (static_cast<int>(m.w) - plan.w) / 2;
+      plan.y = static_cast<int>(m.y) + (static_cast<int>(m.h) - plan.h) / 2;
+    }
+  }
+  return plan;
+}
+
+// GitHub issue #52 (KeyFocus.h): a key or typed text that names no window goes to the main window;
+// said once in the log, so a report shows the system never told SDL which window had the focus.
+static void adoptUnfocusedKeys(SDL_Event& ev, SDL_Window* window) {
+  static bool said = false;
+  if (!keyfocus::adopt(ev, SDL_GetWindowID(window)) || said) return;
+  said = true;
+  logging::info("app", "keyboard: keys arrive while no window has the keyboard focus; they go to the main window");
+  std::fprintf(stderr, "[keyboard] keys arrive while no window has the keyboard focus; they go to the main window\n");
+}
 
 // K-133: a lost OpenGL context while one window draws alone (the splash, the crash pop-up): what the
 // main window's recovery does (K-47), without what exists only later (plugin windows, the detached
@@ -2248,6 +2369,16 @@ int main(int argc, char** argv) {
   }
   bool hiddenRun = false;
   for (int i = 1; i < argc; ++i) hiddenRun = hiddenRun || std::string(argv[i]) == "--hidden";
+  // Automated --hidden runs are silent: they use SDL's dummy audio driver, so tests and tools never
+  // play through the speakers. A run that sets SDL_AUDIODRIVER itself, or GRIDLINE_HIDDEN_AUDIO=1,
+  // keeps the real device.
+  if (hiddenRun && !std::getenv("SDL_AUDIODRIVER") && !std::getenv("GRIDLINE_HIDDEN_AUDIO")) {
+#ifdef _WIN32
+    _putenv_s("SDL_AUDIODRIVER", "dummy");
+#else
+    setenv("SDL_AUDIODRIVER", "dummy", 1);
+#endif
+  }
   // Forced failures for the crash tests: a --hidden run with the variable set, and nothing else.
   std::string crashForce;
   int crashForceFrame = 5;
@@ -2337,7 +2468,7 @@ int main(int argc, char** argv) {
     SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
   };
   setGlAttributes();
-  // Start as a compact borderless splash; becomes the main window once loaded.
+  // Start as a compact borderless splash (macOS, Windows); becomes the main window once loaded.
   // J-78: --hidden (automated off-screen runs with --size / --screenshot): the
   // window is never shown on the user's desktop.
   bool startHidden = false;
@@ -2353,7 +2484,27 @@ int main(int argc, char** argv) {
     }
     devOptions = devOptions || std::string(argv[i]).rfind("--", 0) == 0;
   }
-  const auto createSplashWindow = [&] { return winrole::createSplash(startHidden); };
+  // GitHub issue #33 / #52: on X11 and Wayland the program starts in the main window itself, at its
+  // planned size, with the loading screen drawn inside it (MainWindowRole.h); elsewhere in the splash.
+  const auto createSplashWindow = [&]() -> SDL_Window* {
+    if (!winrole::loadsInMainWindow()) return winrole::createSplash(startHidden);
+    std::pair<int, int> size{0, 0};
+    std::string layoutArg;
+    for (int i = 1; i + 1 < argc; ++i) {
+      const std::string a = argv[i];
+      if (a == "--size") {
+        int w = 0, h = 0;
+        if (std::sscanf(argv[i + 1], "%dx%d", &w, &h) == 2 && w > 0 && h > 0) size = {w, h};
+      } else if (a == "--layout") {
+        layoutArg = argv[i + 1];
+      }
+    }
+    Settings s;
+    s.load(Settings::defaultPath());
+    place::SavedMain saved;
+    const place::MainWindowPlan plan = planMainWindowNow(s, layoutArg, size, 0, saved);
+    return winrole::createMain(startHidden, {plan.w, plan.h, plan.x, plan.y, plan.maximize && !startHidden});
+  };
   SDL_Window* window = createSplashWindow();
   // An X server that answers but cannot give an OpenGL window: SDL's own choice gets a try.
   if (!window && videodriver::dropRequest()) {
@@ -2457,7 +2608,10 @@ int main(int argc, char** argv) {
     for (int f = 0; f < 60; ++f) {
       SDL_Event e;
       while (SDL_PollEvent(&e))
-        if (!gl::opendocs::take(e)) ImGui_ImplSDL2_ProcessEvent(&e);  // K-119: a file macOS asks to open is kept
+        if (!gl::opendocs::take(e)) {  // K-119: a file macOS asks to open is kept
+          adoptUnfocusedKeys(e, window);  // GitHub issue #52
+          ImGui_ImplSDL2_ProcessEvent(&e);
+        }
       shown += (target - shown) * 0.35f;
       double tt = static_cast<double>(SDL_GetPerformanceCounter() - splashT0) / static_cast<double>(SDL_GetPerformanceFrequency());
       ImGui_ImplOpenGL3_NewFrame();
@@ -2577,7 +2731,7 @@ int main(int argc, char** argv) {
   std::string devMenu;                    // --menu name: open a menu for screenshots
   bool devLight = false;                  // --light (kept when --layout re-reads the theme)
   std::string devLayoutPreset;            // K-79 --layout studio|performance|tracks: this run only (nothing saved)
-  std::vector<std::string> devPanes;      // K-79 --pane mixer|piano|rack|history|pads|settings: open a window at frame 3
+  std::vector<std::string> devPanes;      // K-79 --pane mixer|stage|piano|rack|history|pads|settings: open a window at frame 3
   bool devSwitchCheck = false;
   int devSwitchFrame = -100;  // the frame a layout switch was applied on (for --switch-check)
   std::vector<std::pair<int, std::string>> devSwitches;  // K-79 --switch-layout <id>@<frame>: choose a preset while running
@@ -2731,6 +2885,7 @@ int main(int argc, char** argv) {
       else if (w == "history") app.showHistory = true, devFocus = "Undo history";  // docked behind the browser: bring its tab to the front
       else if (w == "performance") app.showPerformance = true;
       else if (w == "groove") app.showGroove = true;  // K-151: the Groove editor
+      else if (w == "stage") app.showStage = true, devFocus = "Mixer";  // the mixer window in its Stage view
       else if (w == "plugins") app.showPluginManager = true;
       else if (w == "piano") devFocus = "Piano roll";
       else if (w == "playlist") devPlaylistOnly = true;  // the playlist fills the window
@@ -2953,17 +3108,18 @@ int main(int argc, char** argv) {
 
   // ---- become the main window ----
   {
-    SDL_Rect usable{0, 0, 1600, 960};
-    SDL_GetDisplayUsableBounds(SDL_GetWindowDisplayIndex(window), &usable);
-    int w = std::min(1600, usable.w - 40), h = std::min(960, usable.h - 60);
-    if (forcedSize.first > 0) {
-      w = forcedSize.first;
-      h = forcedSize.second;
-    }
+    place::SavedMain savedMain;
+    place::MainWindowPlan plan = planMainWindowNow(app.settings, devLayoutPreset, forcedSize, SDL_GetWindowDisplayIndex(window), savedMain);
+    // A hidden run never maximises a window it does not show; it still saves it as maximised.
+    const bool maximize = plan.maximize && !startHidden;
+    if (plan.restored || plan.maximize) viewports::mainWindowRestored(savedMain.w, savedMain.h, savedMain.maximized, savedMain.fullscreen, plan.maximize && !maximize);
+    if (startHidden && (plan.restored || plan.maximize))
+      std::printf("mainwin plan: %dx%d at %d,%d display %d maximize %d (saved %dx%d max %d full %d)\n", plan.w, plan.h, plan.x, plan.y, plan.display,
+                  plan.maximize ? 1 : 0, savedMain.w, savedMain.h, savedMain.maximized ? 1 : 0, savedMain.fullscreen ? 1 : 0);
     if (browserui::thumbMode() && !shotPath.empty() && forcedSize.first > 0) SDL_HideWindow(window);  // background thumbnail run
-    // GitHub issue #33: an ordinary resizable top-level window, mapped again so that a tiling window
-    // manager tiles it (MainWindowRole.h). Size and position are requests the manager may ignore.
-    winrole::becomeMain(window, {w, h, usable.x + (usable.w - w) / 2, usable.y + (usable.h - h) / 2});
+    // GitHub issue #33: macOS and Windows turn the splash into the main window here; on X11 and
+    // Wayland the window has been the main window since it was first mapped (MainWindowRole.h).
+    winrole::becomeMain(window, {plan.w, plan.h, plan.x, plan.y, maximize});
   }
 
   // Screenshots with an explicit size render off-screen at exactly that size
@@ -3278,6 +3434,7 @@ int main(int argc, char** argv) {
     if (alignFrame) alignaudit::begin();  // J-128
     pointerGestureFrame(app);  // one undo step per pointer gesture, in every editor
     viewports::afterNewFrame();
+    if (!noRaiseOnPress) ui::raiseOnPress();  // a press anywhere on a window brings it forward (WindowRaise.h)
     scrollui::afterNewFrame();
     collabui::beginFrame(app);  // J-111d: pointer anchors collected while the windows draw
     ui::ClampTrackedWindows();  // J-91 / J-117: floating windows kept in the work area (elastic) before they are laid out
@@ -3420,6 +3577,7 @@ int main(int argc, char** argv) {
     }
     {
       prof::Scope ps("mixer");
+      stageui::sync(app);  // the Stage asked for elsewhere: the mixer shows it
       drawMixer(app);
     }
     {
@@ -3447,6 +3605,7 @@ int main(int argc, char** argv) {
     if (frameNo == 3)
       for (const std::string& w : devPanes) {  // K-79: screenshots of the presets' panes
         if (w == "mixer") app.showMixer = true;
+        else if (w == "stage") stageui::setView(app, true);
         else if (w == "piano") app.showPiano = true;
         else if (w == "rack") app.showRack = true;
         else if (w == "history") app.showHistory = true;
@@ -3833,6 +3992,7 @@ int main(int argc, char** argv) {
     };
     while (SDL_PollEvent(&ev)) {
       if (gl::opendocs::take(ev)) continue;  // K-119: a file macOS asks the running Gridline to open (below)
+      adoptUnfocusedKeys(ev, window);        // GitHub issue #52: keys that name no window are the main window's
       ImGui_ImplSDL2_ProcessEvent(&ev);
       viewports::onEvent(ev);  // J-113: focus over Gridline's windows, minimise
       // K-175: a held typed key ends on its key-up whatever window gets it (a plugin window took the

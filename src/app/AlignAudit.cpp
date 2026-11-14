@@ -32,7 +32,11 @@ void onItem(ImGuiID id, ImVec2 a, ImVec2 b) {
   it.kind = kind;
   it.root = w->RootWindow, it.win = w;
   it.r = align::Box{a.x, a.y, b.x, b.y};
-  const ImVec2 c0 = w->DrawList->GetClipRectMin(), c1 = w->DrawList->GetClipRectMax();
+  // An item can be submitted while its draw list has no clip rect pushed (between frames, or before the window's
+  // first push): the window's own clip rect stands in, as GetClipRectMin would read past an empty stack.
+  const ImDrawList* dl = w->DrawList;
+  const bool hasClip = dl && dl->_ClipRectStack.Size > 0;
+  const ImVec2 c0 = hasClip ? dl->GetClipRectMin() : w->ClipRect.Min, c1 = hasClip ? dl->GetClipRectMax() : w->ClipRect.Max;
   it.clip = align::Box{c0.x, c0.y, c1.x, c1.y};
   items.push_back(it);
 }

@@ -937,14 +937,18 @@ void partTile(Ctx& c, int part, float x, float y, float w, float h) {
   }
   char cnt[16];
   std::snprintf(cnt, sizeof cnt, "%d of %d", n, of);
-  const float lh = M(12.6f), ch = M(13), tot = lh * (l2.empty() ? 1 : 2) + ch;
+  // lines as tall as their text; a two-line name steps down a little (to 80 %) when the tile is short
+  const auto lineOf = [&](float px) { return std::max(M(12.6f) * px / T(11.5f), font(c, px) / std::max(1e-3f, c.F.s) * 0.92f); };
+  float npx = T(11.5f), cpx = T(10);
+  float lh = lineOf(npx), ch = std::max(M(13) * 0.85f, lineOf(cpx)), tot = lh * (l2.empty() ? 1 : 2) + ch;
+  while (tot > h - M(3) && npx > T(11.5f) * 0.8f) npx -= 0.25f, cpx = std::max(T(9), cpx - 0.2f), lh = lineOf(npx), ch = lineOf(cpx), tot = lh * (l2.empty() ? 1 : 2) + ch;
   float ty = y + (h - tot) * 0.5f;
-  text(c, tx, ty + lh * 0.5f - T(11.5f) * 0.68f, l1.c_str(), fade(c.P.text), T(11.5f), false);
-  if (!l2.empty()) ty += lh, text(c, tx, ty + lh * 0.5f - T(11.5f) * 0.68f, l2.c_str(), fade(c.P.text), T(11.5f), false);
+  text(c, tx, ty + lh * 0.5f - npx * 0.68f, l1.c_str(), fade(c.P.text), npx, false);
+  if (!l2.empty()) ty += lh, text(c, tx, ty + lh * 0.5f - npx * 0.68f, l2.c_str(), fade(c.P.text), npx, false);
   ty += lh;
   {
     MonoText mono;
-    text(c, tx, ty + ch * 0.5f - T(10) * 0.68f, cnt, fade(c.P.textFaint), T(10), false);
+    text(c, tx, ty + ch * 0.5f - cpx * 0.68f, cnt, fade(c.P.textFaint), cpx, false);
   }
   ImGui::PopID();
 }
@@ -1973,7 +1977,10 @@ void sidebar(Ctx& c) {
     if (hit >= 0 && hit != u.sbLib) u.sbLib = hit, u.sbScroll = 0;
     y += M(28) + M(12);
   }
-  scrollBody(c, ix - 12, y - 4, iw + 24, sb - M(8), u.sbScroll, u.sbContent, [](Ctx& cc, float bx, float by, float bw) { return libraryList(cc, bx, by, bw); });
+  // the list ends under a whole row (its first group's head, then rows of M(30) + M(2)): no name is cut at the start
+  float lb = sb - M(8);
+  if (const float rows = std::floor((lb - (y - 4) - 4 - M(24) + M(2)) / M(32)); rows > 0) lb = (y - 4) + 4 + M(24) + rows * M(32) - M(2) + 2;
+  scrollBody(c, ix - 12, y - 4, iw + 24, lb, u.sbScroll, u.sbContent, [](Ctx& cc, float bx, float by, float bw) { return libraryList(cc, bx, by, bw); });
 }
 
 }  // namespace gl::packs::plasma::ui

@@ -12,6 +12,7 @@
 #include "../../engine/Dsp.h"
 #include "models_widgets.h"
 #include "../../core/Platform.h"
+#include "../../core/SafeCast.h"
 
 namespace gl::packs::models {
 
@@ -127,8 +128,8 @@ void imageView(App& a, const PluginTarget& t, const PluginState& st, ImVec2 size
   if (src == SrcCanvas) {
     static int lx = -1, ly = -1;
     ImVec2 m = ImGui::GetIO().MousePos;
-    int x = std::clamp(static_cast<int>((m.x - p.x) / cw), 0, kCanvasW - 1);
-    int y = std::clamp(static_cast<int>((m.y - p.y) / rh), 0, kCanvasH - 1);
+    int x = gl::toIntClamped((m.x - p.x) / cw, 0, kCanvasW - 1);  // no mouse: -FLT_MAX
+    int y = gl::toIntClamped((m.y - p.y) / rh, 0, kCanvasH - 1);
     if (act) {
       if (ImGui::IsItemActivated()) lx = -1;
       int level = ImGui::IsMouseDown(ImGuiMouseButton_Right) ? 0 : brushes()[t.key()];

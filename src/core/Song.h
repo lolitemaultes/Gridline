@@ -466,8 +466,12 @@ struct Send {
   // Pre-fader send: taps the track after its effects and strip EQ, before
   // its volume and pan (default: post-fader).
   bool preFader = false;
+  // Stage room send (Song::stage.room): the track's feed into the shared Room. Its tap is
+  // post-fader but before the distance gain, so the room sound does not fall with distance while the
+  // dry sound does; with the room's pre-delay and early reflections (engine/DepthStage.h).
+  bool stageRoom = false;
   bool operator==(const Send& o) const {
-    return to == o.to && level == o.level && sidechain == o.sidechain && preFader == o.preFader;
+    return to == o.to && level == o.level && sidechain == o.sidechain && preFader == o.preFader && stageRoom == o.stageRoom;
   }
 };
 
@@ -494,6 +498,12 @@ struct MixerTrack {
   float volume = 0.8f;      // linear 0..1.25   (MixerParam::Volume)
   float pan = 0.0f;         // -1..1            (MixerParam::Pan)
   float stereoSep = 0.0f;   // -1 (mono) .. 1 (wide)
+  // Stage distance (MixerParam::Depth): 0 = the front row (no processing at all) .. 1 = the back of
+  // the stage (quieter, softer highs, a little narrower; engine/DepthStage.h).
+  float depth = 0.0f;
+  // Stage focus (MixerParam::Focus): -1 soft (a gentle presence dip, more room) .. 0 neutral (no
+  // processing at all) .. +1 present (a presence lift, drier).
+  float focus = 0.0f;
   bool muted = false;
   bool solo = false;
   bool invertPolarity = false;
@@ -533,19 +543,22 @@ struct MixerTrack {
   // K-87: frozen / hibernating (see Channel::freeze).
   FreezeRecord freeze;
   bool hibernate = false;
+  // K-224: the Stage room this track stands in (StageSettings::id; kNoId: the project's first room,
+  // core/StageRoomOps.h). A track is in exactly one room.
+  ObjectId room = kNoId;
   bool hasInput() const { return input >= 0; }
   // J-31: an armed track records (its input, or its output after the effects).
   bool records() const { return armed && (input >= 0 || recPoint != 0); }
 
   bool operator==(const MixerTrack& o) const {
     return id == o.id && name == o.name && color == o.color && volume == o.volume && pan == o.pan &&
-           stereoSep == o.stereoSep && muted == o.muted && solo == o.solo && invertPolarity == o.invertPolarity &&
+           stereoSep == o.stereoSep && depth == o.depth && focus == o.focus && muted == o.muted && solo == o.solo && invertPolarity == o.invertPolarity &&
            swapLR == o.swapLR && slots == o.slots && sends == o.sends && eqGain == o.eqGain && eqFreq == o.eqFreq &&
            eqQ == o.eqQ && icon == o.icon && disabled == o.disabled && dock == o.dock &&
            latencyOffset == o.latencyOffset && threaded == o.threaded && group == o.group && input == o.input &&
            inputStereo == o.inputStereo && monitor == o.monitor && armed == o.armed && recPoint == o.recPoint &&
            soloAlone == o.soloAlone && separator == o.separator && locked == o.locked && flIcon == o.flIcon &&
-           freeze == o.freeze && hibernate == o.hibernate;
+           freeze == o.freeze && hibernate == o.hibernate && room == o.room;
   }
 };
 
@@ -561,7 +574,8 @@ inline constexpr int kMaxControllerOutputs = 16;
 // MIDI remote control link ("link to controller"): a hardware control (CC,
 // note/button, pitch bend, aftertouch, program change) drives a parameter or
 // a global action (transport, record, …).
-enum class RemoteSource : uint8_t { CC = 0, Note, PitchBend, ChannelPressure, KeyPressure, Program, Count };
+// Osc: an Open Sound Control address (ControllerLink::oscAddress) instead of a MIDI message.
+enum class RemoteSource : uint8_t { CC = 0, Note, PitchBend, ChannelPressure, KeyPressure, Program, Osc, Count };
 // How a link takes over a parameter whose value differs from the hardware position.
 enum class RemoteTakeover : uint8_t {
   Jump = 0,  // the parameter jumps to the control's position
@@ -608,11 +622,12 @@ struct ControllerLink {
   float sensitivity = 1.0f;            // relative encoders: 1/128 of the range per detent × this
   RemoteButton button = RemoteButton::Value;
   RemoteAction action = RemoteAction::None;  // != None: triggers the action, (owner, index) unused
+  std::string oscAddress;              // RemoteSource::Osc: the address (or address pattern) it listens to
   bool operator==(const ControllerLink& o) const {
     return cc == o.cc && midiChannel == o.midiChannel && owner == o.owner && index == o.index && min == o.min &&
            max == o.max && source == o.source && port == o.port && curve == o.curve && formula == o.formula &&
            invert == o.invert && takeover == o.takeover && encoder == o.encoder && sensitivity == o.sensitivity &&
-           button == o.button && action == o.action;
+           button == o.button && action == o.action && oscAddress == o.oscAddress;
   }
 };
 
@@ -694,6 +709,38 @@ inline constexpr int kMaxPlaylistTracks = 500;   // reference: 500 [O]
 inline constexpr int kMaxMixerInserts = 500;     // reference: 500 inserts + master [O]
 inline constexpr int kMaxPatterns = 999;         // reference: 999 [O]
 
+// How the mixer pans a track (Song::panLaw, project setting). Balance is the law of every project made
+// before the Stage and stays theirs; new projects use Stage placement (engine/DepthStage.h).
+enum class PanLaw : uint8_t { Balance = 0, ConstantPower = 1, Stage = 2 };
+
+// One Stage room and its settings (K-224: a project has one or more rooms, Song::stage the first and
+// Song::stageRooms the others; core/StageRoomOps.h). The room's space ("roomType") plays through an
+// ordinary mixer track with a reverb, created the first time the user picks a space. With "No room"
+// (the default) the tracks' distance and focus are kept but change nothing in the sound: no level
+// drop, air shelf, narrowing, room send scaling, pre-delay or reflections. Pan and width work in
+// every case.
+struct StageSettings {
+  ObjectId id = kNoId;         // K-224: the room's own id (kNoId: the first room of a one-room project)
+  std::string name;            // K-224: the room's name ("" = the default name)
+  Rgb color = 0;               // K-224: the room's colour (0 = the default)
+  float width = 1.0f;          // K-224: the room's stage width, 0 .. 1.5 (1: as placed, engine/DepthStage.h)
+  ObjectId room = kNoId;       // the room's space track (kNoId: none yet)
+  float depthStrength = 0.5f;  // how far back the back of the stage sounds: 0 gentle (-6 dB) .. 0.5 natural (-9) .. 1 strong (-12)
+  uint8_t roomType = 0;        // 0 no room, then the room types (core/MixerOps.h kRoomTypes, saved by name)
+  bool hasRoom() const { return roomType != 0; }  // distance and focus are heard
+  bool preDelay = true;        // the room's pre-delay follows distance (2 .. 20 ms)
+  bool early = true;           // early reflections from the stage's walls
+  bool frontQuiet = true;      // the front row sends 6 dB less into the room
+  // The settings a project written before rooms could hold (the sound of the room, not its identity).
+  bool isDefault() const { return room == kNoId && depthStrength == 0.5f && roomType == 0 && preDelay && early && frontQuiet && width == 1.0f; }
+  // No name, colour or id of its own either (a one-room project saves exactly as before rooms).
+  bool isPlain() const { return isDefault() && id == kNoId && name.empty() && color == 0; }
+  bool operator==(const StageSettings& o) const {
+    return id == o.id && name == o.name && color == o.color && width == o.width && room == o.room && depthStrength == o.depthStrength &&
+           roomType == o.roomType && preDelay == o.preDelay && early == o.early && frontQuiet == o.frontQuiet;
+  }
+};
+
 struct Song {
   SongInfo info;
   int ppq = kDefaultPpq;   // ticks per quarter note (CORE-01)
@@ -733,6 +780,10 @@ struct Song {
   // J-38: overlapping audio clips on a track crossfade automatically (project
   // setting; core/Fades.h).
   bool autoCrossfades = true;
+  // The Stage: the pan law and the shared room (engine/DepthStage.h).
+  PanLaw panLaw = PanLaw::Balance;
+  StageSettings stage;                    // the first Stage room
+  std::vector<StageSettings> stageRooms;  // K-224: the other rooms, in order (core/StageRoomOps.h)
   // J-219: what the user typed in Track Receipt (song categories, shares, release
   // details, writers, ticked files; compact JSON, core/TrackReceipt.h). Empty = none.
   std::string trackReceipt;
@@ -746,6 +797,9 @@ struct Song {
   // song allocates is congruent to idSlot modulo idStride. Session state, not
   // saved and not compared (operator== ignores it).
   uint32_t idSlot = 0, idStride = 1;
+  // K-224: the Stage room a new mixer track joins (the room shown on this computer; kNoId: the first).
+  // Session state, not saved and not compared.
+  ObjectId newTrackRoom = kNoId;
   // The id allocateId() would return next (nextId itself when not partitioned).
   ObjectId peekId() const {
     if (idStride <= 1) return nextId;
@@ -806,7 +860,7 @@ struct Song {
            mixer == o.mixer && links == o.links && modLinks == o.modLinks && automations == o.automations &&
            markers == o.markers && channelGroups == o.channelGroups && patternGroups == o.patternGroups && live == o.live &&
            arrangements == o.arrangements &&
-           currentArrangement == o.currentArrangement && trackReceipt == o.trackReceipt && flExportGridline == o.flExportGridline && flOrigin == o.flOrigin;
+           currentArrangement == o.currentArrangement && panLaw == o.panLaw && stage == o.stage && stageRooms == o.stageRooms && trackReceipt == o.trackReceipt && flExportGridline == o.flExportGridline && flOrigin == o.flOrigin;
   }
   bool operator!=(const Song& o) const { return !(*this == o); }
 };

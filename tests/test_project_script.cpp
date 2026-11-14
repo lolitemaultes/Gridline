@@ -74,6 +74,12 @@ void testMeter() {
   expect(f.eval("project.song.meterAt(0)") == "4\t4", "meter: the start keeps its meter");
   expect(f.eval("project.song.barToTick(4)") == std::to_string(2 * 384 + 336), "meter: barToTick counts 7/8 bars");
   expect(f.eval("project.song.tickToBar(2 * 384 + 336)") == "4", "meter: tickToBar");
+  // K-203: bar(tick) / beat(tick) give the meter in force there; bar() / beat() keep the start's.
+  expect(f.eval("project.song.bar(project.song.barToTick(3))") == "336" && f.eval("project.song.beat(2 * 384 + 10)") == "48",
+         "meter: bar(tick) and beat(tick) in the 7/8 section");
+  expect(f.eval("project.song.bar(0)") == "384" && f.eval("project.song.beat(100)") == "96", "meter: bar(tick) and beat(tick) before the change");
+  expect(f.eval("project.song.bar()") == "384" && f.eval("project.song.beat()") == "96", "meter: bar() and beat() keep the song's base meter");
+  expect(f.eval("project.song.bar(-5)") == "384", "meter: a negative tick reads the start");
   expect(contains(f.run("project.song.addMeter(2, 7, 5)"), "2, 4, 8 or 16"), "meter: bad note value refused");
   expect(f.eval("project.song.removeMeter(3)") == "true" && f.eval("project.song.meterAt(1000)") == "4\t4", "meter: removeMeter");
   expect(f.eval("project.song.removeMeter(3)") == "false", "meter: nothing left to remove");

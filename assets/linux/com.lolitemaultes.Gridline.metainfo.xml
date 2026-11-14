@@ -110,6 +110,12 @@
   </supports>
 
   <releases>
+    <release version="0.7.6" date="2026-11-14">
+      <url type="details">https://github.com/lolitemaultes/Gridline/releases/tag/v0.7.6</url>
+      <description>
+        <p>A Stage view in the mixer that places tracks on a stage, with rooms that each have their own stage and space; Chater, a glitch and sparkle effect; stepped, linear and smooth automation drawing; OSC control; a new Open and Save dialog; dependable Import from URL; mixer and playlist tracks reordered by dragging; a redone Plasma Patch view with larger text; Linux window and keyboard fixes; and crash fixes.</p>
+      </description>
+    </release>
     <release version="0.7.5" date="2026-11-12">
       <url type="details">https://github.com/lolitemaultes/Gridline/releases/tag/v0.7.5</url>
       <description>

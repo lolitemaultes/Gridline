@@ -615,9 +615,65 @@ Tool unblock(const Tool& t, const std::string& installDir, std::string* err) {
   return Tool{From::Installed, (d / p.filename()).u8string(), t.prefix};
 }
 
+namespace {
+
+// The folders the runtimes' own installers and version managers use in the home folder, which an
+// app started from the Finder or a desktop menu does not have on its PATH.
+std::vector<fs::path> homeRuntimeDirs(const std::string& name) {
+  std::vector<fs::path> d;
+  const std::string home = envStr("HOME").empty() ? envStr("USERPROFILE") : envStr("HOME");
+  if (home.empty()) return d;
+  const fs::path h = fs::u8path(home);
+  if (name == "deno") d.push_back(h / ".deno" / "bin");
+  if (name == "bun") d.push_back(h / ".bun" / "bin");
+  if (name == "node") {
+    // nvm: the newest installed version (by its major, minor, patch numbers)
+    std::error_code ec;
+    fs::path best;
+    std::vector<long> bestV;
+    for (fs::directory_iterator it(h / ".nvm" / "versions" / "node", ec), end; !ec && it != end; it.increment(ec)) {
+      std::string v = it->path().filename().u8string();
+      if (!v.empty() && v[0] == 'v') v.erase(0, 1);
+      std::vector<long> nums;
+      std::stringstream ss(v);
+      for (std::string part; std::getline(ss, part, '.');) nums.push_back(std::strtol(part.c_str(), nullptr, 10));
+      if (best.empty() || nums > bestV) best = it->path(), bestV = nums;
+    }
+    if (!best.empty()) d.push_back(best / "bin");
+    d.push_back(h / ".volta" / "bin");
+    d.push_back(h / ".local" / "share" / "fnm" / "aliases" / "default" / "bin");
+  }
+  d.push_back(h / ".local" / "bin");
+  d.push_back(h / ".local" / "share" / "mise" / "shims");
+  d.push_back(h / ".asdf" / "shims");
+#if defined(_WIN32)
+  if (name == "node")
+    if (const std::string pf = envStr("ProgramFiles"); !pf.empty()) d.push_back(fs::u8path(pf) / "nodejs");
+#endif
+  return d;
+}
+
+// `name` on the PATH, then in the home folder's runtime folders, then in the usual system places.
+std::string findRuntime(const std::string& name) {
+  const std::string path = envStr("PATH");
+#if defined(_WIN32)
+  const char sep = ';';
+#else
+  const char sep = ':';
+#endif
+  std::stringstream ss(path);
+  for (std::string d; std::getline(ss, d, sep);)
+    if (!d.empty() && runnable(fs::u8path(d) / exeName(name))) return (fs::u8path(d) / exeName(name)).u8string();
+  for (const fs::path& d : homeRuntimeDirs(name))
+    if (runnable(d / exeName(name))) return (d / exeName(name)).u8string();
+  return findOnSystem(name);
+}
+
+}  // namespace
+
 std::vector<std::string> jsRuntimeArgs() {
   for (const char* name : {"deno", "node", "bun"}) {
-    const std::string p = findOnSystem(name);
+    const std::string p = findRuntime(name);
     if (!p.empty()) return {"--js-runtimes", std::string(name) + ":" + p};
   }
   return {};

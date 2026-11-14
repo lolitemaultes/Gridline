@@ -38,6 +38,8 @@ caret-up, caret-down, caret-left, caret-right (filled).
 - `link-slots`: two open chain halves joined by a bar (Shuttle linked volume slot).
 - `curve-smooth`: a rounded curve through three points (Convolver smooth curve mode).
 - `curve-straight`: straight segments joining three points (Convolver straight curve mode).
+- `chord-stamp`: a hand stamp (knob, neck, wide pad) over the three notes of the chord it prints (piano roll chord stamp button).
+- `collapse-all`: two arrows closing onto a line from above and below (the browser's Collapse all folders).
 - `route-free`: an arrow running into a mixer strip that holds a plus (route a channel to a free mixer track).
 - `track-*` (J-211, the track icon set beyond the first sixteen listed below): 123 icons for mixer
   tracks, playlist tracks and channels, from `track-acoustic` to `track-wrench`. Each file's first
@@ -119,6 +121,13 @@ mirror the Lucide chevrons; the ImGui arrow, check, close and step glyphs draw t
 - `speaker-small`: a small loudspeaker with one wave (sound on).
 - `speaker-small-off`: a small loudspeaker with a cross (sound off).
 - `speaker-waves`: a loudspeaker with two sound waves (monitoring on).
+- `drive`: a disk drive seen from the front with its light (a drive or volume).
+- `drive-usb`: a memory stick with its plug at the top (a removable drive).
+- `drive-network`: a drive on a cable to a line (a network drive).
+- `house`: a house with a door (the home folder).
+- `monitor`: a screen on a stand (the desktop folder).
+- `download`: an arrow down into a tray (the downloads folder).
+- `stage`: a room outline with two placed tracks (rounded bars) and a listener mark at the front (the Stage).
 - `star`: a five-pointed star outline (favourite).
 - `star-filled`: a five-pointed star, filled (favourite set).
 - `store-tray`: an arrow down into a tray (store in the spare state).

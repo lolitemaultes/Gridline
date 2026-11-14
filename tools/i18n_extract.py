@@ -64,7 +64,9 @@ def source_files():
     files += glob.glob(os.path.join(ROOT, "src", "collab", "*.cpp"))  # J-111: collaboration messages (codes, refusals, connection test)
     files.append(os.path.join(ROOT, "src", "core", "TrackIconSet.cpp"))  # J-211: track icon and category names
     files.append(os.path.join(ROOT, "src", "core", "ProjectInterop.cpp"))  # K-47: what a running export is doing (N_)
+    files.append(os.path.join(ROOT, "src", "core", "StageRoomOps.cpp"))  # Stage rooms: default room and space track names
     files.append(os.path.join(ROOT, "src", "core", "HydrogenKit.cpp"))  # K-162: the drum kit import report (N_)
+    files += [os.path.join(ROOT, "src", "core", n) for n in ("StageMap.cpp", "StageArrange.cpp", "MixerOps.cpp")]  # the Stage: words, roles, presets (N_)
     return sorted(files)
 
 

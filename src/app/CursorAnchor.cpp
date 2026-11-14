@@ -70,7 +70,8 @@ void onItem(ImGuiID id, ImVec2 mn, ImVec2 mx) {
 }
 
 const char* const kNames[KindCount] = {"window",      "item",       "playlist", "playlist-header", "playlist-ruler", "piano",
-                                       "piano-keys", "piano-ruler", "piano-velocity", "rack-row",   "mixer-strip"};
+                                       "piano-keys", "piano-ruler", "piano-velocity", "rack-row",   "mixer-strip",
+                                       "stage-track"};
 
 }  // namespace
 

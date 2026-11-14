@@ -89,6 +89,12 @@ std::vector<Uint32> windowIds();
 // project) or where it was when it was closed. Open, it is left where it is.
 void openAttached(const char* name);
 
+// GitHub issue #50: the main window's size and state as they were saved (layout.ini [Main], read
+// before the window became the main one), so a save before the first frame keeps them. `virtualMax`:
+// it was left maximised but this run does not maximise it (a hidden run): it still counts as
+// maximised. Later the main window itself is followed every frame.
+void mainWindowRestored(int w, int h, bool maximized, bool fullscreen, bool virtualMax);
+
 // View > Bring all windows back into Gridline.
 void gatherAll();
 // Detached windows (own OS windows) right now.

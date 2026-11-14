@@ -263,7 +263,7 @@ const std::vector<std::pair<const char*, MixerParam>>& mixerParamNames() {
       {"mute", MixerParam::Mute},             {"eqLowGain", MixerParam::EqLowGain}, {"eqMidGain", MixerParam::EqMidGain},
       {"eqHighGain", MixerParam::EqHighGain}, {"eqLowFreq", MixerParam::EqLowFreq}, {"eqMidFreq", MixerParam::EqMidFreq},
       {"eqHighFreq", MixerParam::EqHighFreq}, {"eqLowQ", MixerParam::EqLowQ},       {"eqMidQ", MixerParam::EqMidQ},
-      {"eqHighQ", MixerParam::EqHighQ}};
+      {"eqHighQ", MixerParam::EqHighQ}, {"depth", MixerParam::Depth}, {"focus", MixerParam::Focus}};
   return v;
 }
 // Every parameter of a target with its API name.

@@ -929,6 +929,14 @@ bool Knob(const char* id, double* value, const ParamDesc& d, float radius, const
   return changed;
 }
 
+// A mixer track's own control (fader, pan, separation, depth, EQ, sends) while automation or a
+// link plays it: the live value, so the strips and the Stage agree during playback. Edits
+// still write the stored value.
+static bool liveMixerValue(App& a, ParamId pid, double& v) {
+  if (!a.engine.playing() || pid.index >= kSlotBase || !a.doc.song().mixerTrack(pid.owner)) return false;
+  return a.builder.modulatedValue(pid, v);
+}
+
 bool ParamKnob(const char* id, ParamId pid, float radius, const char* label, bool bipolar) {
   App& a = app();
   auto d = describeParam(a.doc.song(), pid);
@@ -943,6 +951,13 @@ bool ParamKnob(const char* id, ParamId pid, float radius, const char* label, boo
   bool linked = false;
   for (const auto& l : a.doc.song().links) linked = linked || (l.owner == pid.owner && l.index == pid.index);
   bool modulated = isModulated(a.doc.song(), pid);  // internal controller link
+  {
+    ImGui::PushID(id);
+    const ImGuiID kid = ImGui::GetID("##knob");
+    ImGui::PopID();
+    double live = 0;
+    if (ImGui::GetActiveID() != kid && liveMixerValue(a, pid, live)) val = live;
+  }
   auto menu = [&a, pid]() {
     packs::modulation::drawLinkMenu(a, pid);  // controller links (modulation pack)
     knobContextMenu(a, pid);                  // values, MIDI learn, reset
@@ -1038,8 +1053,9 @@ bool ParamFader(const char* id, ParamId pid, ImVec2 size) {
   }
   if (wantType) ImGui::OpenPopup("##type");
   ParamTypePopup(pid, *d);
-  DrawFader(ImGui::GetWindowDrawList(), p, size, static_cast<float>(d->toNormalized(*getParam(a.doc.song(), pid))),
-            static_cast<float>(d->toNormalized(d->def)), hov, act);
+  double shown = *getParam(a.doc.song(), pid);
+  if (double live = 0; !act && liveMixerValue(a, pid, live)) shown = live;  // automation playing
+  DrawFader(ImGui::GetWindowDrawList(), p, size, static_cast<float>(d->toNormalized(shown)), static_cast<float>(d->toNormalized(d->def)), hov, act);
   if (hov || act) {
     std::string txt = d->name + ": " + d->format(*getParam(a.doc.song(), pid)) + "   (" + ParamControlHint() + ")";
     if (wg.hint) txt += std::string("   ") + wheelHintText();
@@ -1493,5 +1509,47 @@ int NextFloatingWindowSize(float width) {
 }
 
 void KeepWindowInViewport() { TrackWindowInViewport(); }  // J-91: clamped before layout (DialogLayout.h)
+
+// K-186: the headphones button at the far left of a channel row (and, K-270, on each Stage room row). A small rounded socket with
+// hover and pressed states and subtle tints from the theme's roles: on, a soft green glyph on a
+// faintly green socket; muted, a grey glyph on a plain socket; solo, an amber glyph on an amber
+// socket. A soft glow while the channel plays.
+void PhonesFace(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float level, bool muted, bool soloed, bool hovered, bool pressed) {
+  const auto& P = pal();
+  const ImU32 base = P.dark ? theme::mix(P.field, P.ink, 0.35f) : theme::mix(P.surface700, P.ink, 0.12f);
+  const ImU32 deep = P.dark ? P.paper : P.ink;  // toward more contrast against the panels
+  const float r = 3.5f;
+  const float l = muted ? 0.0f : std::clamp(level, 0.0f, 1.0f);
+  ImU32 face = base, border = theme::withAlpha(P.ink, P.dark ? 0.55f : 0.28f), glyph;
+  if (soloed) {
+    face = theme::mix(base, P.solo, P.dark ? 0.22f : 0.18f);
+    border = theme::withAlpha(P.solo, 0.75f);
+    glyph = theme::mix(P.solo, deep, P.dark ? 0.12f : 0.15f);
+  } else if (muted) {
+    glyph = theme::mix(base, P.textFaint, 0.55f);
+  } else {
+    face = theme::mix(base, P.led, P.dark ? 0.14f : 0.16f);
+    border = theme::withAlpha(P.led, P.dark ? 0.35f : 0.45f);
+    glyph = theme::mix(P.led, deep, P.dark ? 0.12f : 0.1f);
+  }
+  if (hovered && !pressed) face = theme::mix(face, P.dark ? P.paper : P.ink, P.dark ? 0.08f : 0.06f);
+  if (pressed) face = theme::mix(face, P.ink, 0.25f);
+  if (l > 0.003f) {  // activity: a soft glow around the socket, the glyph brighter on dark faces
+    dl->AddRectFilled(ImVec2(p0.x - 2, p0.y - 2), ImVec2(p1.x + 2, p1.y + 2), theme::withAlpha(soloed ? P.solo : P.led, 0.20f * l), r + 2);
+    if (P.dark) glyph = theme::mix(glyph, P.paper, 0.35f * l);
+  }
+  dl->AddRectFilled(p0, p1, face, r);
+  if (!pressed)  // a faint top edge: the socket's face catches the light
+    dl->AddLine(ImVec2(p0.x + r, p0.y + 0.5f), ImVec2(p1.x - r, p0.y + 0.5f), theme::withAlpha(P.paper, P.dark ? 0.07f : 0.35f));
+  dl->AddRect(p0, p1, border, r);
+  const ImVec2 c(std::round((p0.x + p1.x) * 0.5f), std::round((p0.y + p1.y) * 0.5f));
+  // The glyph is drawn as vectors for this small size (the icon set's headphones have tiny cups at
+  // 12 px): a bold headband arc over two full ear cups, about 14 x 12 logical px, crisp at any scale.
+  dl->PathArcTo(ImVec2(c.x, c.y + 1.0f), 5.4f, IM_PI * 1.0f, IM_PI * 2.0f, 16);
+  dl->PathStroke(glyph, 0, 1.9f);
+  dl->AddRectFilled(ImVec2(c.x - 7.0f, c.y + 0.5f), ImVec2(c.x - 3.0f, c.y + 6.0f), glyph, 1.3f);
+  dl->AddRectFilled(ImVec2(c.x + 3.0f, c.y + 0.5f), ImVec2(c.x + 7.0f, c.y + 6.0f), glyph, 1.3f);
+}
+
 
 }  // namespace gl::ui

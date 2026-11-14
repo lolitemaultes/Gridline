@@ -125,36 +125,72 @@ files play the way they were made; new sounds leave them as they are).
 
 The play bar at the bottom holds Poly / Mono / Legato and the notes at once, glide, transpose, the
 Arpeggiator and Phrases switches, More and Keyboard. The keyboard drawer (Alt+K) slides up over the
-bottom of any tab: bend and mod wheels (the bend wheel springs back to the centre), the bend range
-(click it to edit), the trigger octave and a playable keyboard.
+bottom of any tab, and the small bar at its top closes it again. It holds:
+
+- the bend and mod wheels: drag them up or down. The bend wheel springs back to the centre when you
+  let go; the mod wheel stays where you leave it. Double-click resets a wheel, right-click gives the
+  usual control menu (links, automation, MIDI link);
+- Bend up, Bend down and Trigger octave: drag up or down on a field, turn the mouse wheel over it,
+  or click its minus and plus;
+- a keyboard to play the sound: click a key, or hold the button and slide across the keys to play
+  each in turn (the one you leave stops as the next starts). Letting go, Escape, closing the drawer
+  or the window, or switching to another application stops the key.
+  Lower on a key plays louder. Keys light up as they sound, from the mouse, MIDI or the song; a
+  layer that plays only part of the keyboard shows its key zone as a coloured line above the keys,
+  and while the arpeggiator or the phrases are on, a bracket marks the trigger octave.
+
+While the pointer is over the drawer, nothing under it reacts.
 
 ### Patch
 
-![Plasma's Patch view: the sources, filters, amp, effects and both sends wired to the output, the movement sources below and the inspector on the right](../images/plasma-patch.png)
+![Plasma's Patch view: the sources, filters, amp, effects and both sends wired to the output, with the movement tiles below](../images/plasma-patch.png)
 
-The Patch view draws the sound as boxes and wires in columns, left to right: **Play** (what plays
-the notes: click it for glide, transpose, bend and fine tune), the five sources, the two filters,
-the amp, the effects of the main chain and both sends, and **Out**. The movement sources sit in a
-row below: LFO 1, Envelope 2 and the Macros, plus every source in use.
+The Patch view draws the sound as boxes on a calm canvas. By default they read left to right in
+the order the sound flows: the sources, the filters (Shape), the amp, the effects of the main
+chain and **Out**, with the two sends under the amp. Every movement source in use (LFOs,
+envelopes, macros, velocity and the rest) is a small tile below the sound, grouped by family.
+Nothing else is written on the canvas: hints show in the hint bar and in tooltips.
 
-- **Sound wires** (thick, orange) are where each part's sound goes; a source feeding both filters
-  shows two wires whose thickness is the balance. **Send wires** are dashed. **Movement wires** are
-  dotted in the source's family colour, one per link, and show when you hover or select a box.
-- Drag from a box's right edge onto another box to route its sound. Only the places the sound can
-  go light up; anything else is refused with the reason. Drop on empty space for a search menu
-  (where it can go, or an effect to add). Alt+click a wire to take it away.
-- Drag a movement box's dot onto any control or pin to link it. Drag a depth label sideways to set
-  the depth (Shift for fine), click it to edit the link on the right, Alt+click to remove it.
-  The toolbar counts the links in use (64 at most).
-- Click a box to edit it in the **inspector** on the right: its picture and main controls, what
-  feeds it and where it goes (**Fed by**, **Then goes to**), the links that move it (**Moved by**)
-  and all its settings, each with a pin. Right-click a box to turn it on or off, open it in the
-  panels or remove an effect; right-click the background to show another movement source, add an
-  effect to a lane, Tidy or Fit. Delete removes the selected effect or link, or turns a box off.
-- The **Show** chips at the top choose the wires on view: Sound, Movement, Sends and Notes. Tidy
-  puts the boxes back in their columns; Fit (F) fits the whole patch; the wheel and the - / +
-  buttons zoom, and the map at the bottom right shows where you are. Box places and zoom belong to
-  the editor and are not saved in the sound.
+- **At rest** the lines are quiet: thin orange **sound lines** for where each part's sound goes
+  (a source feeding both filters shows two lines whose thickness is the balance). Every line leaves
+  a box at a dot on its right edge and arrives at its own ring on the left edge of the next box, so
+  each one can be followed from end to end; it takes the shortest way round the other boxes and
+  never runs through one. A part that also feeds a send shows a branch from the same dot to the
+  send (as thick as its send level), and the send's line goes on into the effects or Out. A box shows how many links move it, with one dot per link in the source's family
+  colour; a tile shows how many controls it moves. In **Full**, a box also names the controls
+  that are moved.
+- **Point at a tile** to see what it moves: one curve runs from the dot at the top of the tile to
+  the bottom edge of each box it moves (one curve per box, however many of its controls move), and
+  each box shows the control and the amount (for example "Cutoff +40%"); everything else fades.
+  **Point at a box** to see what moves it, the same way. Click a tile to keep its paths on view:
+  drag an amount up or down to change it, Alt+click it to remove the link, or drag a path's end off
+  its box onto empty canvas to unlink it.
+- **Link** by dragging the dot at the top of a tile onto a box: a short list of that box's main
+  controls (and the ones already moved) opens; pick one. A new link starts at 25 %; picking a
+  control that is already linked selects that link so you can change how far it goes. **All controls** shows the rest with a
+  search. Drop the dot on empty canvas to search every control.
+- **Route** a part's sound by dragging from the right edge of a source or filter onto another box.
+  Only the places the sound can go light up; anything else is refused with the reason. Drop on
+  empty space for a search menu (where it can go, or an effect to add). Alt+click a line to take
+  it away.
+- **Move** any box or tile by dragging it. It snaps to the grid and lines up with its neighbours'
+  edges and middles. A box let go on another slides to the nearest free place. The effects of the
+  main chain run in the order they stand from left to right, so moving an effect past another
+  changes the chain to match (in the same undo step) and the lines always read forward. Where you put the boxes is saved with the sound (in presets and projects), and each move
+  is one undo step. A part you add later lands in a free spot next to what it connects to.
+- **Clean up** at the top left sorts every box into the flow again (sources, shape, amp, effects,
+  out from left to right, the sends under the amp, the movement tiles under the sound by
+  family) evenly on the grid, with no box over another and no line through a box. It keeps your
+  order within a column where that reads well, and the boxes glide into place in one undo step.
+  **Fit** (F) frames the whole patch; the wheel zooms and dragging the background looks around.
+  The link count (64 at most) is at the top right.
+- The dashed **add tiles** turn on a hidden layer, root, texture or filter, add an effect to the
+  main chain or a send, or show another movement source.
+- Click a box to edit it in the **inspector** on the right (it shows only while something is
+  selected): its picture and main controls, what feeds it and where it goes, the links that move
+  it and all its settings. Double-click a box, or right-click it, to open it in the panels;
+  right-click also turns it on or off and removes an effect. Delete removes the selected effect or
+  link, or turns a box off; Esc clears the selection.
 
 Both views edit the same sound, one undo step per gesture, so switch back and forth at any time.
 

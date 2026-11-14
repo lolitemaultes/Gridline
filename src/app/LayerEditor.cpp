@@ -327,6 +327,15 @@ void zoneBar(App& a, const Channel& l, const Channel& c, ImVec2 p, float w, floa
   }
 }
 
+// A new instrument channel as a child of the layer `lid`, one undo step. Run through App::later:
+// adding a channel may move the rack's channels, and the editor holds the layer's.
+void addNewChild(App& a, ObjectId lid, const std::string& name, const std::string& type) {
+  a.doc.beginGroup("add layer child");
+  const ObjectId nc = a.doc.addChannel(name, type, a.doc.song().channelIndex(lid));
+  if (nc != kNoId) layer::addChild(a.doc, lid, nc);
+  a.doc.endGroup();
+}
+
 void lanes(App& a, const Channel& l, float width) {
   const auto& P = pal();
   const Song& s = a.doc.song();
@@ -431,17 +440,18 @@ void lanes(App& a, const Channel& l, float width) {
     if (ImGui::BeginPopupContextItem("##lanemenu")) {
       if (ImGui::MenuItem(i18n::tr("Open"))) a.settingsChannel = kid;
       if (ImGui::MenuItem(i18n::tr("Remove from the layer"))) layer::removeChild(a.doc, l.id, kid);
-      if (ImGui::MenuItem(i18n::tr("Duplicate"))) {
-        a.doc.beginGroup("duplicate layer child");
-        const ObjectId cl = a.doc.cloneChannel(kid);
-        if (cl != kNoId) {
-          layer::addChild(a.doc, l.id, cl);
-          LayerZone nz = z;
-          nz.child = cl;
-          layer::setZone(a.doc, l.id, nz);
-        }
-        a.doc.endGroup();
-      }
+      if (ImGui::MenuItem(i18n::tr("Duplicate")))  // next frame: a new channel may move the rack's channels, `l` among them
+        a.later([&a, lid = l.id, kid, z] {
+          a.doc.beginGroup("duplicate layer child");
+          const ObjectId cl = a.doc.cloneChannel(kid);
+          if (cl != kNoId) {
+            layer::addChild(a.doc, lid, cl);
+            LayerZone nz = z;
+            nz.child = cl;
+            layer::setZone(a.doc, lid, nz);
+          }
+          a.doc.endGroup();
+        });
       ImGui::EndPopup();
     }
     ImGui::SetCursorScreenPos(ImVec2(r0.x, r0.y + kRowH));
@@ -463,12 +473,8 @@ void lanes(App& a, const Channel& l, float width) {
     if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("GL_PLUGIN")) {
       const std::string type(static_cast<const char*>(pl->Data), static_cast<size_t>(pl->DataSize));
       const PluginInfo* pi = findPlugin(type);
-      if (pi && pi->kind == PluginKind::Generator && !full) {
-        a.doc.beginGroup("add layer child");
-        const ObjectId nc = a.doc.addChannel(pi->name, type, s.channelIndex(l.id));
-        if (nc != kNoId) layer::addChild(a.doc, l.id, nc);
-        a.doc.endGroup();
-      }
+      if (pi && pi->kind == PluginKind::Generator && !full)
+        a.later([&a, lid = l.id, name = pi->name, type] { addNewChild(a, lid, name, type); });  // next frame, as above
     }
     ImGui::EndDragDropTarget();
   }
@@ -492,12 +498,8 @@ void lanes(App& a, const Channel& l, float width) {
           cat = p.category;
           ui::Label(cat.c_str());
         }
-        if (ImGui::MenuItem((p.name + "##n" + p.type).c_str())) {
-          a.doc.beginGroup("add layer child");
-          const ObjectId nc = a.doc.addChannel(p.name, p.type, a.doc.song().channelIndex(l.id));
-          if (nc != kNoId) layer::addChild(a.doc, l.id, nc);
-          a.doc.endGroup();
-        }
+        if (ImGui::MenuItem((p.name + "##n" + p.type).c_str()))
+          a.later([&a, lid = l.id, name = p.name, type = p.type] { addNewChild(a, lid, name, type); });  // next frame, as above
       }
       ImGui::EndMenu();
     }

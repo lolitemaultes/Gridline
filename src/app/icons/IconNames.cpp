@@ -175,6 +175,18 @@ const char* iconSvgName(Icon icon) {
     case Icon::TapTempo: return "tap-tempo";
     case Icon::Groove: return "groove";
     case Icon::Moon: return "moon";
+    case Icon::Stage: return "stage";
+    case Icon::Drive: return "drive";
+    case Icon::DriveUsb: return "drive-usb";
+    case Icon::DriveNetwork: return "drive-network";
+    case Icon::Home: return "house";
+    case Icon::Monitor: return "monitor";
+    case Icon::Download: return "download";
+    case Icon::Disc: return "track-disc";
+    case Icon::Clock: return "track-clock";
+    case Icon::ProjectFile: return "track-project";
+    case Icon::ChordStamp: return "chord-stamp";
+    case Icon::CollapseAll: return "collapse-all";
     case Icon::Count: break;
   }
   return nullptr;

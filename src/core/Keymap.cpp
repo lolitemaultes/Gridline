@@ -36,7 +36,7 @@ constexpr uint8_t C = kCtrl, S = kShift, A = kAlt, H = C | A | S;  // H: the fre
 std::vector<Command> buildCommands() {
   using K = Key;
   const Context G = Context::Global, PL = Context::Playlist, PR = Context::PianoRoll, CR = Context::ChannelRack,
-                MX = Context::Mixer, AU = Context::Automation;
+                MX = Context::Mixer, AU = Context::Automation, ST = Context::Stage;
   return {
       // ---- global: file ----
       {"file.new", G, N_("New project"), {ch(K::N, C)}},
@@ -86,6 +86,7 @@ std::vector<Command> buildCommands() {
       {"view.pluginPicker", G, N_("Plugin picker"), {ch(K::F8)}},
       {"view.browser", G, N_("Browser"), {ch(K::F8, A)}},
       {"view.mixer", G, N_("Mixer"), {ch(K::F9)}},
+      {"view.stage", G, N_("Stage (place the mixer tracks in a room)"), {}},  // no default key (bind one in the shortcut editor)
       {"view.settings", G, N_("Settings (MIDI page)"), {ch(K::F10)}},
       {"view.backToPlaylist", G, N_("Back to the playlist (from an editor or plugin window)"), {ch(K::Escape)}},  // K-124
       {"view.closeAll", G, N_("Close all windows"), {ch(K::F12)}},
@@ -143,6 +144,8 @@ std::vector<Command> buildCommands() {
       {"playlist.zoomFit", PL, N_("Zoom to fit the song"), {ch(K::Home)}},
       {"playlist.uniqueCopy", PL, N_("While Shift+dragging copies: make them unique (new patterns)"), {ch(K::V, S)}},  // Q-3 (FL: drag + Shift+V)
       {"playlist.cancelDrag", PL, N_("Cancel the clip drag (copies, moves, resizes)"), {ch(K::Escape)}},  // Q-3
+      {"playlist.moveTrackUp", PL, N_("Move selected tracks up"), {ch(K::Up, A)}, true},      // GitHub #46
+      {"playlist.moveTrackDown", PL, N_("Move selected tracks down"), {ch(K::Down, A)}, true},
       // ---- piano roll ----
       {"piano.delete", PR, N_("Delete selected notes"), {ch(K::Delete), ch(K::Backspace)}},
       {"piano.selectAll", PR, N_("Select all notes"), {ch(K::A, C)}},
@@ -187,6 +190,7 @@ std::vector<Command> buildCommands() {
       {"piano.toolDetune", PR, N_("Detune tool"), {ch(K::U)}},
       {"piano.toolBend", PR, N_("Pitch bend tool"), {ch(K::N)}},  // K-25
       {"piano.slideMode", PR, N_("Slide mode (new notes are slide notes)"), {ch(K::S, S)}},
+      {"piano.chordStamp", PR, N_("Chord stamp: pick a chord to stamp"), {ch(K::C, A)}},
       {"piano.zoomIn", PR, N_("Zoom in"), {ch(K::PageUp)}, true},
       {"piano.zoomOut", PR, N_("Zoom out"), {ch(K::PageDown)}, true},
       {"piano.zoomFit", PR, N_("Zoom to fit the pattern"), {ch(K::Home)}},
@@ -219,6 +223,26 @@ std::vector<Command> buildCommands() {
       {"mixer.waveforms", MX, N_("Show waveforms"), {ch(K::W, A)}},
       {"mixer.selectAll", MX, N_("Select all insert tracks"), {ch(K::A, C)}},
       {"mixer.deselect", MX, N_("Deselect tracks (keeps the focused one)"), {ch(K::D, C)}},
+      {"mixer.selectRoutedChannels", MX, N_("Select the channels routed to the focused track"), {ch(K::L, A)}},
+      {"mixer.selectRoutedTo", MX, N_("Select the tracks routed to the focused track"), {ch(K::L, C | A)}},
+      // ---- Stage (app/StageView.cpp): the arrows take Shift (fine) and Ctrl (coarse) as they are pressed ----
+      {"stage.left", ST, N_("Pan the selected tracks left"), {ch(K::Left)}, true},
+      {"stage.right", ST, N_("Pan the selected tracks right"), {ch(K::Right)}, true},
+      {"stage.up", ST, N_("Move the selected tracks one row further back"), {ch(K::Up)}, true},
+      {"stage.down", ST, N_("Move the selected tracks one row nearer"), {ch(K::Down)}, true},
+      {"stage.levelUp", ST, N_("Level of the selected tracks up"), {ch(K::Up, A)}, true},
+      {"stage.levelDown", ST, N_("Level of the selected tracks down"), {ch(K::Down, A)}, true},
+      {"stage.narrower", ST, N_("Narrower (stereo width)"), {ch(K::LeftBracket)}, true},
+      {"stage.wider", ST, N_("Wider (stereo width)"), {ch(K::RightBracket)}, true},
+      {"stage.next", ST, N_("Focus the next track"), {ch(K::Tab)}, true},
+      {"stage.previous", ST, N_("Focus the previous track"), {ch(K::Tab, S)}, true},
+      {"stage.mute", ST, N_("Mute the selected tracks"), {ch(K::M)}},
+      {"stage.solo", ST, N_("Solo the selected tracks"), {ch(K::S)}},
+      {"stage.reset", ST, N_("Reset the position of the selected tracks"), {ch(K::D0)}},
+      {"stage.rename", ST, N_("Rename the focused track"), {ch(K::Enter)}},
+      {"stage.selectAll", ST, N_("Select every track shown"), {ch(K::A, C)}},
+      {"stage.deselect", ST, N_("Deselect tracks (keeps the focused one)"), {ch(K::D, C)}},
+      {"stage.roomsPanel", ST, N_("Open or close the rooms column"), {ch(K::Backslash)}},
       // ---- automation clip editor ----
       {"auto.delete", AU, N_("Delete selected points"), {ch(K::Delete), ch(K::Backspace)}},
       {"auto.selectAll", AU, N_("Select all points"), {ch(K::A, C)}},
@@ -307,6 +331,7 @@ const char* contextName(Context c) {
     case Context::ChannelRack: return N_("Channel rack");
     case Context::Mixer: return N_("Mixer");
     case Context::Automation: return N_("Automation clip editor");
+    case Context::Stage: return N_("Stage");
     default: return "";
   }
 }

@@ -5,6 +5,7 @@
 // by the engine while internal controller links drive them; the UI never reads
 // them.
 #pragma once
+#include <algorithm>
 #include <atomic>
 #include <map>
 #include <memory>
@@ -20,6 +21,7 @@
 #include "../core/NoteBend.h"
 #include "../core/Params.h"
 #include "../core/Song.h"
+#include "DepthStage.h"
 #include "Effects.h"
 #include "Generators.h"
 #include "NoteActivity.h"
@@ -211,6 +213,8 @@ struct MixerRuntime {
   std::atomic<float> rmsL{0}, rmsR{0};    // max block RMS since the UI last read it (RMS meters)
   ScopeTap tap;  // post-fader output
   StripEqState eq;  // strip EQ filter memory (audio thread)
+  depth::ShelfState depthShelf;  // Stage distance air shelf and focus bell (audio thread, DepthStage.h)
+  float curXL = 0, curXR = 0;    // Stage placement cross gains (left in -> right out, right in -> left out), smoothed
   bool sent = false;  // (audio thread) processed and audible this block (destinations pull its output)
   int64_t quiet = 0;  // K-64 (audio thread): frames in a row of exact silence through the strip
   CpuStat cpu;        // inputs, strip and sends (slots count separately)
@@ -438,7 +442,20 @@ struct ProgSlot {
   std::vector<ProgInput> auxIn;
 };
 
+// K-224: one Stage room as the engine plays it.
+struct ProgRoom {
+  double depthK = 0.75;  // the distance gain's exponent (the room's depth strength)
+  bool front = true, preDelay = true, earlyOn = true;
+  bool on = false;  // a space is chosen (StageSettings::roomType): without one, distance and focus change nothing
+  double halfW = 6, depth = 8, wall = 0.5;  // the space's walls (core/StageRooms.h)
+};
+// The room's width on a track's pan and stereo separation (exactly the track's own at width 1).
+inline float roomPan(float pan, float w) { return w == 1.0f ? pan : std::clamp(pan * w, -1.0f, 1.0f); }
+inline float roomSep(float sep, float w) { return w == 1.0f ? sep : std::clamp((1.0f + sep) * w - 1.0f, -1.0f, 1.0f); }
+
 struct ProgMixer {
+  size_t room = 0;      // K-224: Program::rooms index
+  float roomW = 1.0f;   // K-224: the room's width (1: as the track says)
   ObjectId id = kNoId;
   std::shared_ptr<MixerRuntime> rt;
   mutable float gainL = 0, gainR = 0;  // (audio thread when linked)
@@ -446,6 +463,9 @@ struct ProgMixer {
   float volume = 0.8f, pan = 0, sepBase = 0;  // unlinked values
   bool invert = false, swap = false;
   mutable StripEqSettings eq;  // strip EQ (MixerTrack::eqGain/eqFreq/eqQ); linked bands change it (audio thread)
+  mutable float depth = 0;     // Stage distance (MixerTrack::depth); a link changes it (audio thread)
+  mutable float focus = 0;     // Stage focus (MixerTrack::focus); a link changes it (audio thread)
+  mutable float xlr = 0, xrl = 0;  // Stage placement law: cross gains (left in -> right out, right in -> left out)
   bool silent = false;      // muted, or silenced by another track's solo
   bool soloSilent = false;  // silenced by another track's solo
   mutable bool muteMod = false;  // mute state set by a link (audio thread)
@@ -456,6 +476,9 @@ struct ProgMixer {
   mutable std::vector<std::pair<int, float>> sends;  // (mixer index, level); linked levels change (audio thread, no resize)
   std::vector<std::pair<int, float>> sidechain;  // sidechain-only sends (mixer index, level)
   std::vector<uint8_t> sendPre, sidechainPre;    // per send: taps the pre-fader signal (Send::preFader)
+  std::vector<uint8_t> sendRoom;                 // per send: the Stage room send (Send::stageRoom)
+  std::shared_ptr<depth::RoomTap> roomTap;       // the room send's pre-delay and reflections (UI-allocated, audio state)
+  std::shared_ptr<depth::RoomEarly> roomEarly;   // the Stage room track: its senders' reflections, added after its effects
   bool hasPreSend = false;   // some send taps the pre-fader signal (the engine keeps a copy)
   bool disabled = false;     // MixerTrack::disabled: input passes straight through
   bool threaded = true;      // MixerTrack::threaded: off = runs on the audio thread only
@@ -484,7 +507,9 @@ struct ProgLink {
     MixEqGain, MixEqFreq, MixEqQ,  // param = band 0..2
     MixSend,                       // param = index into ProgMixer::sends
     SlotEnable,
-    ChanMacro                      // K-169: a layer's macro (param = the macro)
+    ChanMacro,                     // K-169: a layer's macro (param = the macro)
+    MixDepth,                      // Stage distance (MixerTrack::depth)
+    MixFocus                       // Stage focus (MixerTrack::focus)
   };
   // source: a channel instrument (srcChannel) or a mixer slot (srcMixer, srcSlot); K-169: a
   // layer's macro (srcChannel = the layer, srcMacro = the macro)
@@ -603,6 +628,11 @@ struct Program {
   int outputLatency = 0;  // samples from the transport to the master output (PDC on); renders skip them
   std::vector<std::shared_ptr<PdcDelay>> pdcLines;  // owners of the delay lines the inputs use
   std::vector<ProgLink> links;  // internal controller links
+  // The Stage (Song::panLaw, Song::stage; engine/DepthStage.h).
+  int panLaw = 0;             // 0 Balance, 1 Constant power, 2 Stage placement
+  // K-224: the Stage rooms (Song::stage, Song::stageRooms), never empty; ProgMixer::room indexes it.
+  std::vector<ProgRoom> rooms = std::vector<ProgRoom>(1);
+  const ProgRoom& roomOf(const ProgMixer& m) const { return rooms[m.room < rooms.size() ? m.room : 0]; }
   bool hasNoteFx = false;       // some channel has note processors
   // Arrangement: automation clips, tempo map (song mode), constant map (pattern mode).
   std::vector<ProgAutoLane> autos;
@@ -757,6 +787,8 @@ class ProgramBuilder {
  private:
   std::map<ObjectId, std::shared_ptr<ChannelRuntime>> channels_;
   std::map<ObjectId, std::shared_ptr<MixerRuntime>> mixers_;
+  std::map<ObjectId, std::shared_ptr<depth::RoomTap>> roomTaps_;  // the Stage room sends' delay lines
+  std::map<ObjectId, std::shared_ptr<depth::RoomEarly>> roomEarly_;
   std::map<std::pair<ObjectId, int>, std::shared_ptr<EffectRuntime>> effects_;
   std::map<std::pair<ObjectId, int>, std::shared_ptr<NoteFxRuntime>> noteFx_;
   std::map<uint64_t, std::shared_ptr<LinkRuntime>> links_;  // by target ParamId

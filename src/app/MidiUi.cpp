@@ -13,6 +13,8 @@
 #include "../../third_party/imgui/imgui.h"
 #include "App.h"
 #include "MidiUi.h"
+#include "../core/Osc.h"
+#include "OscUi.h"
 #include "ScriptUi.h"
 #include "AudioRecordUi.h"
 #include "J31Ui.h"
@@ -176,13 +178,14 @@ void drawRemoteDialog(App& a) {
   ImGui::Dummy(ImVec2(0, theme::kS1));
 
   // Controller.
-  ui::BeginSection("MIDI CONTROLLER");
+  ui::BeginSection("CONTROLLER");
   {
     ImVec2 lp = ImGui::GetCursorScreenPos();
     bool blink = a.remoteListening && std::fmod(a.now, 0.8) < 0.4;
     ui::Led(ImGui::GetWindowDrawList(), ImVec2(lp.x + 5, lp.y + ImGui::GetFrameHeight() * 0.5f), 4.0f, blink, 1.0f);
     ImGui::SetCursorScreenPos(ImVec2(lp.x + 16, lp.y));
-    if (ui::TextButton(a.remoteListening ? "Listening: move a control…" : "Learn from controller", a.remoteListening, 220))
+    if (ui::TextButton(a.remoteListening ? "Listening: move a control…" : "Learn from controller", a.remoteListening, 220,
+                       oscui::listening() ? "Move a control on a MIDI device, or send an OSC message" : "Move a control on a MIDI device"))
       a.remoteListening = !a.remoteListening;
     ImGui::SameLine(0, theme::kS3);
     ImGui::AlignTextToFramePadding();
@@ -190,6 +193,28 @@ void drawRemoteDialog(App& a) {
   }
   label("Source");
   enumCombo("##src", &l.source, static_cast<int>(RemoteSource::Count), remoteSourceName, w);
+  if (l.source == RemoteSource::Osc) {  // OSC: an address instead of a MIDI message
+    static char buf[256];
+    static const ControllerLink* last = nullptr;
+    static std::string shown;
+    if (last != &l || shown != l.oscAddress || ImGui::IsWindowAppearing()) std::snprintf(buf, sizeof buf, "%s", l.oscAddress.c_str());
+    last = &l;
+    label("OSC address");
+    ImGui::SetNextItemWidth(w + 140);
+    if (ImGui::InputTextWithHint("##oscaddr", "/1/fader1", buf, sizeof buf)) l.oscAddress = buf;
+    shown = l.oscAddress;
+    ui::Hint("The address the surface sends. Patterns such as /1/fader* are allowed. The first number of the message is used");
+    if (!l.oscAddress.empty() && !osc::validAddress(l.oscAddress)) {
+      ImGui::Dummy(ImVec2(150, 0));
+      ImGui::SameLine();
+      ImGui::TextColored(theme::vec(P.danger), "%s", i18n::tr("An OSC address starts with / and has no spaces."));
+    }
+    if (!oscui::listening()) {
+      ImGui::Dummy(ImVec2(150, 0));
+      ImGui::SameLine();
+      ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("OSC is off: switch it on in Settings > MIDI."));
+    }
+  }
   if (l.source == RemoteSource::CC || l.source == RemoteSource::Note || l.source == RemoteSource::KeyPressure ||
       l.source == RemoteSource::Program) {
     label(l.source == RemoteSource::CC ? "Controller number" : l.source == RemoteSource::Program ? "Program number" : "Note");
@@ -200,17 +225,19 @@ void drawRemoteDialog(App& a) {
       ImGui::TextColored(theme::vec(P.textDim), "%s", midiNoteName(l.cc).c_str());
     }
   }
-  label("MIDI channel");
-  midiChannelCombo("##ch", &l.midiChannel, w);
-  label("Input port");
-  {
-    std::string prev = l.port < 0 ? "Any device" : "Port " + std::to_string(l.port);
-    if (ui::BeginCombo("##port", prev.c_str(), w)) {
-      if (ImGui::Selectable(i18n::tr("Any device"), l.port < 0)) l.port = -1;
-      if (a.midi)
-        for (const auto& c : a.midi->inputCfg)
-          if (ImGui::Selectable(("Port " + std::to_string(c.port) + "  " + c.name).c_str(), l.port == c.port)) l.port = c.port;
-      ImGui::EndCombo();
+  if (l.source != RemoteSource::Osc) {
+    label("MIDI channel");
+    midiChannelCombo("##ch", &l.midiChannel, w);
+    label("Input port");
+    {
+      std::string prev = l.port < 0 ? "Any device" : "Port " + std::to_string(l.port);
+      if (ui::BeginCombo("##port", prev.c_str(), w)) {
+        if (ImGui::Selectable(i18n::tr("Any device"), l.port < 0)) l.port = -1;
+        if (a.midi)
+          for (const auto& c : a.midi->inputCfg)
+            if (ImGui::Selectable(("Port " + std::to_string(c.port) + "  " + c.name).c_str(), l.port == c.port)) l.port = c.port;
+        ImGui::EndCombo();
+      }
     }
   }
 
@@ -312,6 +339,7 @@ void drawRemoteDialog(App& a) {
     d.source = l.source;
     d.midiChannel = l.midiChannel;
     d.port = l.port;
+    d.oscAddress = l.oscAddress;
     d.owner = l.owner;
     d.index = l.index;
     d.action = l.action;
@@ -321,7 +349,8 @@ void drawRemoteDialog(App& a) {
   ImGui::SameLine(ImGui::GetCursorPosX() + right - 96 * 2 - theme::kS2);
   if (ui::TextButton("Cancel", false, 96) || ::gl::keys::escapePressed()) close = true;
   ImGui::SameLine(0, theme::kS2);
-  if (ui::PrimaryButton("Accept", 96)) {
+  const bool oscOk = l.source != RemoteSource::Osc || osc::validAddress(l.oscAddress);
+  if (ui::PrimaryButton("Accept", 96, oscOk ? nullptr : "Enter or learn an OSC address first", oscOk)) {
     saveLink(a);
     close = true;
   }
@@ -524,6 +553,7 @@ void midiSettingsPage(App& a, float fieldW) {
   }
   if (!a.midi) {
     ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("MIDI is not available."));
+    oscui::settingsSection(a, fieldW);  // OSC works without MIDI devices
     return;
   }
   MidiManager& m = *a.midi;
@@ -838,6 +868,8 @@ void midiSettingsPage(App& a, float fieldW) {
     ImGui::EndPopup();
   }
   ui::EndSection();
+
+  oscui::settingsSection(a, fieldW);
 
   if (reopen) m.apply();
   if (changed) {

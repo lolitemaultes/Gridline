@@ -85,6 +85,8 @@ struct State {
   bool trimOn = false;
   char from[16] = "0:00", to[16] = "";
   std::string error, lead;
+  std::string errorLog;  // the failed command and its error output (Copy details)
+  double copiedAt = -10;
   Screen errorBack = Screen::Entry;
   std::string unblockError;    // macOS: a flagged tool that could not be made startable
   std::vector<std::string> js;  // "--js-runtimes deno:<path>" (YouTube), found with the tools
@@ -154,13 +156,29 @@ std::string workRoot() {
   return (t / ("gridline-url-import-" + std::to_string(platform::processId()))).u8string();
 }
 
-void showError(const std::string& error, const std::string& lead, Screen back) {
+void showError(const std::string& error, const std::string& lead, Screen back, const std::string& log = "") {
   State& s = S();
   s.error = error;
   s.lead = lead;
+  s.errorLog = log;
   s.errorBack = back;
   s.screen = Screen::Error;
   devsig::reach("urlimport-error");
+  devsig::reach("urlimport-settled");  // (dev checks: a fetch or an import has ended, either way)
+}
+
+// Everything a report about a failed import needs, for the clipboard: the link, the programs used
+// and the failed command with its error output.
+std::string errorDetails() {
+  const State& s = S();
+  std::string d = "Gridline: Import from URL failed\n";
+  d += "Link: " + std::string(s.url) + "\n";
+  d += "yt-dlp: " + (s.yt.found() ? s.yt.path + " (" + mt::fromName(s.yt.from) + ")" : std::string("not found")) + "\n";
+  d += "ffmpeg: " + (s.ff.found() ? s.ff.path + " (" + mt::fromName(s.ff.from) + ")" : std::string("not found")) + "\n";
+  d += "JavaScript runtime: " + (s.js.size() == 2 ? s.js[1] : std::string("none found")) + "\n";
+  d += "Error: " + s.error + "\n";
+  if (!s.errorLog.empty()) d += "\n" + s.errorLog + "\n";
+  return d;
 }
 
 void stopJobs() {
@@ -303,9 +321,37 @@ void collectUpdate() {
   }
   s.upd.reset();
   if (r.updated) s.updStatus = std::string(tr("Updated yt-dlp to ")) + r.version;
-  else if (r.checked) s.updStatus = std::string(tr("yt-dlp is up to date")) + (r.version.empty() ? "" : " (" + r.version + ")");
-  else s.updStatus = std::string(tr("Could not check for a newer yt-dlp: ")) + r.error;
+  else if (r.checked && r.error.empty()) s.updStatus = std::string(tr("yt-dlp is up to date")) + (r.version.empty() ? "" : " (" + r.version + ")");
+  // (Checked with an error: a newer release was found, but it could not be installed.)
+  else if (r.checked) s.updStatus = std::string(tr("Could not update yt-dlp: ")) + r.error + ". " + mt::setupLead(r.error);
+  else s.updStatus = std::string(tr("Could not check for a newer yt-dlp: ")) + r.error + ". " + mt::setupLead(r.error);
   if (r.updated && s.screen != Screen::Importing && s.screen != Screen::Fetching) locate();
+  devsig::reach("urlimport-updated");
+}
+
+// Settings: Update yt-dlp now. The newest release, checked against its SHA2-256SUMS and run once,
+// into Gridline's own tools folder (the copy inside the app is never changed).
+void startUpdateNow(App& a) {
+  State& s = S();
+  if (s.upd || s.reinstall || !mayDownload()) return;
+  locate();
+  auto job = std::make_shared<UpdateJob>();
+  s.upd = job;
+  s.updStatus.clear();
+  s.reinstallStatus.clear();
+  const mt::Net n = net();
+  const std::string dir = mt::installDir();
+  // The version of the copy in use (the one inside the app has its version file too).
+  const std::string cur = s.yt.from == mt::From::Installed || s.yt.from == mt::From::Bundled
+                              ? mt::recordedVersion(fs::u8path(s.yt.path).parent_path().u8string())
+                              : std::string();
+  a.settings.set("import.urlLastUpdateCheck", static_cast<double>(wallNow()));
+  std::thread([job, n, dir, cur] {
+    mt::UpdateResult r = mt::updateYtdlp(n, dir, cur, nullptr);
+    std::lock_guard<std::mutex> lk(job->mu);
+    job->result = std::move(r);
+    job->done = true;
+  }).detach();
 }
 
 // Settings: Set up now (what is missing) / Reinstall the tools (yt-dlp, and ffmpeg unless the
@@ -358,6 +404,7 @@ void fetch(App& a) {
   s.workDir = workRoot();
   std::error_code ec;
   fs::remove_all(fs::u8path(s.workDir) / "info", ec);
+  devsig::forget("urlimport-settled");
   s.job = ul::startFetch(ul::Tools{ytdlpArgv(), s.ff.path}, u, (fs::u8path(s.workDir) / "info").u8string());
   s.screen = Screen::Fetching;
 }
@@ -407,6 +454,7 @@ void startImport(App& a) {
   const auto reqs = requests();
   if (reqs.empty()) return;
   if (!toolsReady(a)) return;
+  devsig::forget("urlimport-settled");
   s.job = ul::startImport(ul::Tools{ytdlpArgv(), s.ff.path}, reqs, (fs::u8path(s.workDir) / "items").u8string());
   s.screen = Screen::Importing;
   devsig::reach("urlimport-importing");
@@ -503,6 +551,16 @@ void finishImport(App& a, const std::vector<ul::Result>& results) {
   a.uiSound(uisound::Event::Import);
 }
 
+// YouTube gives its full list of formats only to a downloader with a JavaScript runtime: a failure
+// there without one says so.
+std::string withRuntimeHint(const std::string& lead) {
+  const State& s = S();
+  const std::string h = ul::hostOf(s.url);
+  const bool youtube = h == "youtube.com" || h == "youtu.be" || h == "m.youtube.com" || h == "music.youtube.com";
+  if (!youtube || !s.js.empty() || usingFake()) return lead;
+  return lead + " " + tr("No JavaScript runtime was found: installing deno or Node.js helps the downloader with YouTube.");
+}
+
 void poll(App& a) {
   State& s = S();
   collectUpdate();
@@ -532,13 +590,14 @@ void poll(App& a) {
   if (!s.job || !s.job->done) return;
   const ul::Phase ph = s.job->get();
   std::vector<ul::Result> results;
-  std::string error, lead;
+  std::string error, lead, log;
   ul::Info info;
   {
     std::lock_guard<std::mutex> lk(s.job->mu);
     results = s.job->results;
     error = s.job->error;
     lead = s.job->lead;
+    log = s.job->log;
     info = s.job->info;
   }
   const bool fetching = s.screen == Screen::Fetching;
@@ -553,22 +612,26 @@ void poll(App& a) {
       std::snprintf(s.to, sizeof s.to, "%s", s.info.duration > 0 ? ul::formatTime(s.info.duration).c_str() : "");
       s.screen = Screen::Preview;
       devsig::reach("urlimport-preview");
+      devsig::reach("urlimport-settled");
     } else if (ph == ul::Phase::Cancelled) {
       s.screen = Screen::Entry;
+      devsig::reach("urlimport-settled");
     } else {
-      showError(error, lead, Screen::Entry);
+      showError(error, withRuntimeHint(lead), Screen::Entry, log);
     }
     return;
   }
   if (!results.empty()) finishImport(a, results);
   if (ph == ul::Phase::Done) {
     devsig::reach("urlimport-done");
+    devsig::reach("urlimport-settled");
     close();
   } else if (ph == ul::Phase::Cancelled) {
     s.screen = Screen::Preview;
     devsig::reach("urlimport-cancelled");
+    devsig::reach("urlimport-settled");
   } else {
-    showError(error, lead, Screen::Preview);
+    showError(error, withRuntimeHint(lead), Screen::Preview, log);
   }
 }
 
@@ -867,6 +930,11 @@ void drawImporting(App& a) {
   const auto reqs = requests();
   if (item >= 0 && item < static_cast<int>(reqs.size())) name = reqs[static_cast<size_t>(item)].item.title;
   std::string line = ph == ul::Phase::Converting ? tr("Converting to WAV") : tr("Downloading the best audio");
+  if (const int attempt = s.job->attempt.load(); attempt > 1 && ph == ul::Phase::Downloading) {
+    char b[64];
+    std::snprintf(b, sizeof b, tr(", trying again (%d of %d)"), attempt, ul::Limits{}.downloadTries);
+    line += b;
+  }
   if (items > 1) {
     char b[48];
     std::snprintf(b, sizeof b, "  (%d / %d)", item + 1, items);
@@ -906,8 +974,19 @@ void drawError(App& a) {
   if (S().errorBack == Screen::Entry && (!s.yt.found() || !s.ff.found()) && s.lead.find("yourself") == std::string::npos)
     wrapped(mt::systemPackagesHint(), P.textDim);
   ImGui::Dummy(ImVec2(kW, theme::kS2));
-  const float wb = buttonW("Back"), wc = buttonW("Close");
-  rightAlign(wb + wc + theme::kS2);
+  const float wd = buttonW("Copy details"), wb = buttonW("Back"), wc = buttonW("Close");
+  const float x0 = ImGui::GetCursorPosX();
+  if (ui::TextButton("Copy details", false, wd, "Copy the link, the programs used and their error output, for a bug report")) {
+    ImGui::SetClipboardText(errorDetails().c_str());
+    s.copiedAt = ImGui::GetTime();
+  }
+  if (ImGui::GetTime() - s.copiedAt < 2.0) {
+    ImGui::SameLine(0, theme::kS2);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(theme::vec(P.textDim), "%s", tr("Copied"));
+  }
+  ImGui::SameLine();
+  ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), x0 + kW - (wb + wc + theme::kS2)));
   const bool back = ui::TextButton("Back", false, wb);
   ImGui::SameLine(0, theme::kS2);
   const bool cl = ui::PrimaryButton("Close", wc) || ::gl::keys::escapePressed();
@@ -956,6 +1035,7 @@ void open(App& a) {
   devsig::forget("urlimport-importing");
   devsig::forget("urlimport-setup");
   devsig::forget("urlimport-cancelled");
+  devsig::forget("urlimport-settled");
 }
 
 void draw(App& a) {
@@ -1052,21 +1132,7 @@ void settingsSection(App& a) {
       if (ui::TextButton("Set up now", false, 0, "Download yt-dlp and FFmpeg now and check them against their published checksums"))
         startReinstall(a, false);
     } else if (ui::TextButton("Update yt-dlp now", false, 0, "Download and check the newest yt-dlp now")) {
-      auto job = std::make_shared<UpdateJob>();
-      s.upd = job;
-      const mt::Net n = net();
-      const std::string dir = mt::installDir();
-      // The version of the copy in use (the one inside the app has its version file too).
-      const std::string cur = s.yt.from == mt::From::Installed || s.yt.from == mt::From::Bundled
-                                  ? mt::recordedVersion(fs::u8path(s.yt.path).parent_path().u8string())
-                                  : std::string();
-      st.set("import.urlLastUpdateCheck", static_cast<double>(wallNow()));
-      std::thread([job, n, dir, cur] {
-        mt::UpdateResult r = mt::updateYtdlp(n, dir, cur, nullptr);
-        std::lock_guard<std::mutex> lk(job->mu);
-        job->result = std::move(r);
-        job->done = true;
-      }).detach();
+      startUpdateNow(a);
     }
     if (!missing) {
       ImGui::SameLine(0, theme::kS2);
@@ -1081,7 +1147,7 @@ void settingsSection(App& a) {
       ImGui::SameLine(0, theme::kS2);
       ImGui::AlignTextToFramePadding();
       ui::TextFit(status.c_str(), std::max(80.0f, ImGui::GetContentRegionAvail().x), P.textDim);
-      if (status != s.updStatus) ui::Hint(status);
+      ui::Hint(status);  // (cut short when the row is narrow)
     }
   }
   ui::EndSection();
@@ -1156,17 +1222,24 @@ void devCommand(App& a, const std::vector<std::string>& args) {
   } else if (cmd == "playlist") {
     s.playlistMode = arg == "all" ? 1 : 0;
     std::fill(s.picked.begin(), s.picked.end(), 1);
+  } else if (cmd == "update") {  // Settings: Update yt-dlp now (signal urlimport-updated)
+    devsig::forget("urlimport-updated");
+    startUpdateNow(a);
   } else if (cmd == "reinstall" || cmd == "setup") {  // Settings: Reinstall the tools / Set up now
     startReinstall(a, cmd == "reinstall");
   } else if (cmd == "trim") {
     s.trimOn = true;
     std::snprintf(s.from, sizeof s.from, "%s", arg.c_str());
     std::snprintf(s.to, sizeof s.to, "%s", args.size() > 2 ? args[2].c_str() : "");
+  } else if (cmd == "details") {  // what Copy details puts on the clipboard
+    std::printf("urlimport details begin\n%surlimport details end\n", errorDetails().c_str());
+    std::fflush(stdout);
   } else if (cmd == "state") {
     static const char* names[] = {"closed", "entry", "setup", "fetching", "preview", "importing", "error"};
     std::printf("urlimport state %s url \"%s\" title \"%s\" items %d yt-dlp %s ffmpeg %s error \"%s\" lead \"%s\" tools \"%s\"\n",
                 names[static_cast<int>(s.screen)], s.url, s.info.title.c_str(), static_cast<int>(s.info.entries.size()),
-                mt::fromName(s.yt.from), mt::fromName(s.ff.from), s.error.c_str(), s.lead.c_str(), s.reinstallStatus.c_str());
+                mt::fromName(s.yt.from), mt::fromName(s.ff.from), s.error.c_str(), s.lead.c_str(),
+                (s.reinstallStatus.empty() ? s.updStatus : s.reinstallStatus).c_str());
     std::fflush(stdout);
   }
 }

@@ -62,7 +62,12 @@ Probe probeWithin(const std::string& path, int ms);
 struct DirEntry {
   std::string name;  // file name, UTF-8
   bool isDir = false;
+  bool hidden = false;   // a dot name (listed only with kListHidden)
+  int64_t size = -1;     // bytes (files, with kListDetails), -1 = not known
+  int64_t mtime = 0;     // seconds since 1970 (with kListDetails), 0 = not known
 };
+// listNow / listAsync options: hidden entries too, and each entry's size and time (a stat each).
+inline constexpr unsigned kListHidden = 1, kListDetails = 2;
 struct Listing {
   bool ok = false;                // the folder could be read
   int errnum = 0;                 // when not ok
@@ -70,7 +75,7 @@ struct Listing {
 };
 inline constexpr size_t kMaxListed = 20000;
 // One folder, on this thread. Counted by walksStarted().
-Listing listNow(const std::string& dir);
+Listing listNow(const std::string& dir, unsigned flags = 0);
 // The folder's last listing, from another thread. `listing` is null until the first has finished;
 // `pending` is true while one runs, for `waited` seconds so far.
 struct DirState {
@@ -78,7 +83,7 @@ struct DirState {
   bool pending = false;
   double waited = 0;
 };
-DirState listAsync(const std::string& dir, double maxAge = 5.0);
+DirState listAsync(const std::string& dir, double maxAge = 5.0, unsigned flags = 0);
 void forgetListings();
 
 // How many folder reads Gridline has started (listNow, and every recursive walk through

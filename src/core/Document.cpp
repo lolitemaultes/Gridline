@@ -1,4 +1,5 @@
 #include "Document.h"
+#include "TrackOrder.h"
 #include "Meter.h"
 #include <type_traits>
 #include "Crash.h"
@@ -486,7 +487,10 @@ namespace {
   X(modLinks)                 \
   X(automations)              \
   X(markers)                  \
-  X(arrangements)
+  X(arrangements)             \
+  X(channelGroups)            \
+  X(patternGroups)            \
+  X(stageRooms)
 
 class SongDeltaCommand final : public Command {
  public:
@@ -532,7 +536,14 @@ class SongDeltaCommand final : public Command {
   };
   void set(Song& s, const Song& rest, bool after) const {
     Song next = rest;
-#define GL_SET(f) next.f = f##_.changed ? (after ? f##_.after : f##_.before) : std::move(s.f);
+    // Issue 58: an unchanged container is moved over, so it keeps its buffer and every pointer into
+    // it stays valid across the edit. (A `changed ? stored : std::move(s.f)` expression made a copy:
+    // a conditional between a const lvalue and an xvalue is a prvalue, so every container was copied,
+    // and an editor holding a pattern or channel across a whole-song edit read freed memory.)
+#define GL_SET(f)                                         \
+  if (f##_.changed) next.f = after ? f##_.after : f##_.before; \
+  else                                                    \
+    next.f = std::move(s.f);
     GL_SONG_BIG_FIELDS(GL_SET)
 #undef GL_SET
     s = std::move(next);
@@ -1082,6 +1093,11 @@ ObjectId Document::addMixerTrack() {
     MixerTrack t;
     t.id = s.allocateId();
     t.sends.push_back({s.masterId(), 1.0f, false});
+    // K-224: a new track stands in the room this computer is looking at (one that still exists).
+    if (s.newTrackRoom != kNoId && s.newTrackRoom != s.stage.id)
+      for (const auto& r : s.stageRooms)
+        if (r.id == s.newTrackRoom) t.room = r.id;
+    if (s.newTrackRoom != kNoId && s.newTrackRoom == s.stage.id) t.room = s.stage.id;
     s.mixer.push_back(t);
   });
   return song_.mixerTrack(id) ? id : song_.mixer.back().id;
@@ -1103,6 +1119,9 @@ bool Document::removeMixerTrack(ObjectId id) {
                     t.sends.end());
       if (had && t.sends.empty() && t.id != m) t.sends.push_back({m, 1.0f, false});
     }
+    // Moved to the end first: send levels and plugin targets that name later tracks by their
+    // number keep naming them (core/TrackOrder.h).
+    trackorder::reorderMixer(s, trackorder::mixerOrderAfterMove(s, {id}, static_cast<int>(s.mixer.size())));
     s.mixer.erase(s.mixer.begin() + s.mixerIndex(id));
     s.modLinks.erase(std::remove_if(s.modLinks.begin(), s.modLinks.end(),
                                     [&](const ModLink& l) { return l.owner == id || (l.sourceOwner == id && l.sourceSlot >= 0); }),

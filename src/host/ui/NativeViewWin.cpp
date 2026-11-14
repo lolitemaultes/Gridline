@@ -222,6 +222,7 @@ DrawStats takeDrawStats() { return {}; }
 void devDrag(const Window&, void*, int, int, double) {}
 void devPostMouse(const Window&, int, double, double) {}
 void orderAbove(const Window&, const Window&) {}
+void raiseChild(const Window&, const Window&) {}  // an activated owned window comes to the top of its owner's windows
 void devLiveResize(const Window&, double, double, int) {}
 void devPerformClose(const Window&) {}
 

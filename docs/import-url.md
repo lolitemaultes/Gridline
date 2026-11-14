@@ -24,14 +24,21 @@ clear message.
    the playlist; a video link opened from inside a playlist (it has both the video and the list
    in it) imports that video only.
 6. **Import** downloads the best audio the site offers and converts it once, without loss, to a
-   32-bit float WAV at the source's sample rate (levels above 0 dBFS are kept). All placed clips
-   are one undo step.
+   32-bit float WAV at the source's sample rate (levels above 0 dBFS are kept). Mono and stereo
+   stay as they are. Where a site offers a surround track (a film's 5.1 mix, for example) beside a
+   stereo one, the stereo one is taken; a source with only a surround track is mixed down to
+   stereo, so the clip plays all of it. A playlist item is named by its own title, also where
+   the playlist lists its items only by number. All placed clips are one undo step.
 
 The popup shows the progress of each step (reading the link, downloading the best audio,
 converting to WAV) with the sizes and the item number of a playlist. **Cancel** stops at once:
 the programs Gridline started are ended, together with any programs they started, and the
 unfinished files are deleted. A step that hangs is stopped after a time limit (reading the link:
-90 seconds; downloading or converting: two minutes without progress).
+three minutes; downloading or converting: two minutes without progress).
+
+Some sites, video sites above all, now and then refuse a download link they gave out a moment
+before (HTTP 403), or a connection breaks off. Gridline then reads the page again and tries once
+more, up to three tries in all; the popup shows "trying again (2 of 3)".
 
 ## Where the files go
 
@@ -68,9 +75,13 @@ When the app's folder cannot be changed (Gridline started straight from the disk
 app another user installed), it copies them into its own tools folder without the flag and uses
 those copies.
 
-Some sites need a JavaScript runtime for their full list of formats. Gridline looks for deno,
-then node, then bun, on the `PATH` and in the usual places (Homebrew's folders included, which
-an app started from the Finder does not see) and hands the first one found to yt-dlp.
+Some sites need a JavaScript runtime for their full list of formats (YouTube most of all: without
+one, yt-dlp warns that some formats may be missing). Gridline looks for deno, then node, then bun,
+on the `PATH`, in the folders their own installers and version managers use in your home folder
+(`~/.deno/bin`, `~/.bun/bin`, the newest nvm version, Volta, fnm, mise, asdf, `~/.local/bin`) and
+in the usual system places (Homebrew's folders included), none of which an app started from the
+Finder or a desktop menu sees, and hands the first one found to yt-dlp. None is needed for most
+sites, and Gridline does not install one; installing deno or Node.js helps with YouTube.
 
 ### First use without the programs
 
@@ -105,9 +116,14 @@ by Gridline.
 
 The popup says what went wrong and what to try:
 
-* **The link**: not a media page the downloader knows, private, removed, needs a signed-in
-  account, protected (DRM), a live stream, or not available in your region. Check the link, or
-  use one that plays in a browser without signing in.
+* **The link**: not a media page the downloader knows, private, removed or not found (HTTP 404),
+  needs a signed-in account, protected (DRM), a live stream, or not available in your region.
+  Check the link, or use one that plays in a browser without signing in. Some sites let the
+  downloader in only with a signed-in account (Vimeo, at the time of writing, for every video):
+  Gridline does not sign in, so those links stop with that message. Some Internet Archive items
+  play only for signed-in users or in some regions; their pages show no playable audio.
+* **Refused**: the site refused the download (HTTP 403) on every try, or is limiting requests
+  from your connection (HTTP 429). Wait a minute (or up to an hour) and try again.
 * **The connection**: the site could not be reached or stopped answering. Check the internet
   connection and try again.
 * **The site changed**: sites change often and an older yt-dlp no longer understands them (for
@@ -119,6 +135,10 @@ The popup says what went wrong and what to try:
   example `brew install yt-dlp ffmpeg`).
 * **The set-up**: no connection to GitHub, GitHub limiting requests (try again in an hour), or a
   download that does not match its published checksum (it is never used).
+
+**Copy details** on the error screen puts the link, the programs used (with their folders and
+the JavaScript runtime) and the failed command with the end of its error output on the
+clipboard, for a bug report. Nothing is sent anywhere.
 
 ## For packagers
 

@@ -124,7 +124,7 @@ void applyRemotePreset(ControllerLink& l, const RemotePreset& p) {
 
 const char* remoteSourceName(RemoteSource s) {
   static const char* n[] = {"Controller (CC)", "Note / pad", "Pitch bend", "Channel pressure", "Key pressure",
-                            "Program change"};
+                            "Program change", "OSC address"};
   int i = static_cast<int>(s);
   return i >= 0 && i < static_cast<int>(RemoteSource::Count) ? n[i] : "?";
 }
@@ -166,6 +166,7 @@ std::string remoteSourceLabel(const ControllerLink& l) {
     case RemoteSource::ChannelPressure: s = "Ch. pressure"; break;
     case RemoteSource::KeyPressure: s = "Key pressure " + midiNoteName(l.cc); break;
     case RemoteSource::Program: s = "Program " + std::to_string(l.cc + 1); break;
+    case RemoteSource::Osc: return "OSC " + (l.oscAddress.empty() ? std::string("(no address)") : l.oscAddress);
     default: s = "?";
   }
   s += l.midiChannel >= 0 ? " · ch " + std::to_string(l.midiChannel + 1) : " · any ch";
@@ -190,6 +191,8 @@ uint64_t RemoteMapper::key(const ControllerLink& l) {
   mix(static_cast<uint64_t>(l.cc));
   mix(static_cast<uint64_t>(l.midiChannel + 1));
   mix(static_cast<uint64_t>(l.port + 1));
+  if (l.source == RemoteSource::Osc)
+    for (char c : l.oscAddress) mix(static_cast<unsigned char>(c));
   return h;
 }
 
@@ -273,7 +276,17 @@ bool RemoteMapper::process(const ControllerLink& l, const MidiMessage& m, double
   }
 
   // Absolute controls.
-  const double n = remoteRange(l, remoteCurve(l, remoteInput(l, m), f));
+  return absolute(l, s, remoteRange(l, remoteCurve(l, remoteInput(l, m), f)), cur, out);
+}
+
+bool RemoteMapper::absolute(const ControllerLink& l, State& s, double n, double cur, double* out) {
+  const double lo = std::min(l.min, l.max), hi = std::max(l.min, l.max);
+  auto write = [&](double v) {
+    v = std::clamp(v, 0.0, 1.0);
+    s.lastOut = v;
+    *out = v;
+    return true;
+  };
   switch (l.takeover) {
     case RemoteTakeover::Pickup: {
       if (!s.picked) {
@@ -310,6 +323,66 @@ bool RemoteMapper::process(const ControllerLink& l, const MidiMessage& m, double
       s.picked = true;
       return write(n);
   }
+}
+
+bool RemoteMapper::triggerOsc(const ControllerLink& l, double value, bool impulse) {
+  State& s = st_[key(l)];
+  if (impulse) {
+    s.down = false;
+    return true;
+  }
+  const bool down = value >= 0.5;
+  const bool rising = down && !s.down;
+  s.down = down;
+  return rising;
+}
+
+bool RemoteMapper::processOsc(const ControllerLink& l, double value, bool impulse, double cur, double* out, double step) {
+  State& s = st_[key(l)];
+  const double lo = std::min(l.min, l.max), hi = std::max(l.min, l.max);
+  if (s.lastOut >= 0 && std::fabs(cur - s.lastOut) > 1e-4) s.picked = false;
+  auto write = [&](double v) {
+    v = std::clamp(v, 0.0, 1.0);
+    s.lastOut = v;
+    *out = v;
+    return true;
+  };
+  const Expr* f = l.curve == ModCurve::Formula ? formula(l.formula) : nullptr;
+  if (!(value == value)) return false;  // NaN
+
+  // Relative: the value is a signed number of steps (1/128 of the range each, x sensitivity).
+  if (l.encoder != RemoteEncoder::Absolute) {
+    if (impulse || value == 0) return false;
+    double delta = std::clamp(value, -1024.0, 1024.0) * static_cast<double>(l.sensitivity) / 128.0 * (hi - lo);
+    if (l.invert != (l.max < l.min)) delta = -delta;
+    s.picked = true;
+    return write(std::clamp(cur + delta, lo, hi));
+  }
+  // Buttons: 1 (or an impulse) presses, 0 releases.
+  if (impulse || l.button != RemoteButton::Value) {
+    const bool down = impulse || value >= 0.5;
+    const bool rising = down && (!s.down || impulse);
+    s.down = impulse ? false : down;
+    switch (l.button) {
+      case RemoteButton::Momentary:
+        if (impulse) return false;
+        if (down && !rising) return false;
+        return write(remoteRange(l, remoteCurve(l, down ? 1.0 : 0.0, f)));
+      case RemoteButton::Toggle:
+        if (!rising) return false;
+        s.toggled = !s.toggled;
+        return write(remoteRange(l, remoteCurve(l, s.toggled ? 1.0 : 0.0, f)));
+      case RemoteButton::Increment: {
+        if (!rising) return false;
+        double v = cur + (step > 0 ? step : 0.125);
+        if (v > hi + 1e-9) v = lo;
+        return write(std::clamp(v, lo, hi));
+      }
+      default:  // an impulse on a value link: the top of the range
+        return write(remoteRange(l, remoteCurve(l, 1.0, f)));
+    }
+  }
+  return absolute(l, s, remoteRange(l, remoteCurve(l, value, f)), cur, out);
 }
 
 // ---------------------------------------------------------------- velocity ----

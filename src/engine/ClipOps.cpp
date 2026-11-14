@@ -619,6 +619,8 @@ bool renderSpan(const Song& song, const std::set<ObjectId>& keep, Tick a, Tick b
     m.volume = 0.8f;
     m.pan = 0;
     m.stereoSep = 0;
+    m.depth = 0;
+    m.focus = 0;
     m.muted = false;
     m.eqGain = {0.0f, 0.0f, 0.0f};
     for (auto& s : m.slots) s.enabled = false;

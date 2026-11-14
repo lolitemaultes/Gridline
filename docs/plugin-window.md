@@ -3,7 +3,9 @@
 A Gridline instrument opens in its channel window (`src/app/ChannelSettings.cpp`): a header row
 (colour, name, instrument, mixer track), the channel strip, then the Plugin / Envelope / Misc
 tabs with the instrument's editor. The channel strip holds the channel's volume, pan and pitch
-knobs and a two-octave preview keyboard.
+knobs and a two-octave preview keyboard. Hold a key and slide to play the keys in turn, one at a
+time, as on the piano roll's keyboard and every built-in instrument keyboard (`src/app/KeyGlide.h`);
+letting go, Escape, leaving the window, switching apps or closing the window stops the key.
 
 ## Showing and hiding
 
@@ -41,6 +43,15 @@ least 600 px for its own rows), and that region is drawn at the plugin window si
 Interface, 75 % by default, 60 % to 150 %; or a plugin's own Editor size, 60 % to 200 %) as one picture (`src/app/EditorZoomUi.cpp`). The
 window is the region at that size plus the window padding: no room is kept for a scrollbar or a
 margin the editor does not draw, so the header's right edge and the editor's right edge agree.
+
+A plugin whose editor is designed for 100 % (`PluginInfo::editorFullSize`; Plasma) opens at
+100 % instead, whatever the global size, unless a size was picked for it in its window menu; its
+menu's first Editor size entry reads "Full size, fitted to the screen". On a 1920 x 1080 screen
+Plasma's window then fits at 100 %, because the channel window's own rows are kept short: the
+plugin header (menu, presets, A/B) sits on the tab row after the tabs whenever it fits there (its
+width as drawn last time; otherwise, and for the sampler, it keeps its own row), and a channel
+without note processors shows one slim row (title, Add note processor, a hint) instead of the
+note processor panel, which appears once one is added.
 
 If a window at the size asked for would not fit the work area, the editor is reduced until the
 whole window fits (`edzoom::fitZoom`), down to 60 % (`edzoom::kFitMin`); only an editor still too
@@ -101,6 +112,14 @@ index> <slot>` and `plugwin close` open and close plugin windows.
 several frames, the window size is stable after the slide and taller by the strip's height,
 hidden again after a restart (and not in settings.json), the keyboard plays and the volume knob
 turns, hiding slides it back to the hidden size, and shown, closed and opened again it is hidden.
+
+## Several windows open
+
+Click anywhere on a plugin window, its editor, a knob or its keyboard included, with any mouse
+button, and it comes in front of the other windows and takes the keyboard. Installed plugins'
+own windows do the same among themselves (see `docs/detachable-windows.md`, "Input"). They stay
+above the main window, so a Gridline panel inside the main window cannot come in front of them.
+A plugin that shows its interface from its sandbox process on macOS raises its own window there.
 
 ## Popped out
 

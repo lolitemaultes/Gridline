@@ -295,6 +295,20 @@ a window is detached.
   drags across windows). Files from other applications arrive through `SDL_DROPFILE` on any
   Gridline window; the macOS native drop target (hover highlight, promises, links) stays on the
   main window.
+- A press brings a window to the front: any mouse press (left, right or middle) anywhere on a
+  floating window, on a canvas, a knob or an editor too, focuses it and raises it above the other
+  windows (`ui::raiseOnPress`, `src/app/WindowRaise.cpp`, right after `ImGui::NewFrame`). ImGui
+  alone raised a window only on a left press over empty space or on its own buttons. A docked
+  panel stays docked and takes the keyboard. Left alone: a press while another button is held (a
+  drag under way), during a drag and drop, inside a menu or tooltip, and under a modal dialog
+  (the dialog stays on top). A press outside an open menu or popup only closes it: the window under
+  it comes forward on the next frame, so its buttons never take that press too (test
+  `k48_tap_tempo_app`: the click that closes the Tools menu does not tap). Installed plugins' windows: a click (or the window gaining the focus)
+  puts that window in front of the other plugin windows (`native::raiseChild`; on macOS they are
+  child windows of the main window, which AppKit otherwise keeps in the order they opened; X11
+  window managers and Windows raise a clicked owned window themselves). Dev: `zorder` prints the
+  floating windows back to front and the focused one; `GRIDLINE_NO_RAISE_ON_PRESS=1` turns the
+  rule off for comparison (test `k221_focus_app`).
 - J-109 focus rule: live keys are released only when **the whole application** loses the focus:
   a focus loss is acted on only if no Gridline window gains it within 80 ms.
 
@@ -305,6 +319,15 @@ a window is detached.
   `[GridlineViewports]` sections:
   - `[Main]` `MainOs=x,y` `Scale=s`: the main window's OS position and the interface scale the
     coordinates are relative to; at start-up they are re-anchored to the current main window.
+    `MainSize=w,h` `MainMax=0|1` `MainFull=0|1`: the main window itself, its size when it was last
+    neither maximised nor full screen (OS window units) and its state. They are read before the
+    main window takes its size (`place::readSavedMainSection`) and fitted to the displays there
+    are now (`place::planMainWindow`): on the display the saved place belongs to (else the
+    nearest), shrunk to its usable area with room for the title bar, never below the 960 x 600
+    minimum where the display has room. Maximised comes back maximised with the saved size under
+    it; full screen comes back maximised. A file without these lines (an older Gridline) opens the
+    main window at the default size, centred, as before; `--size` always wins. Each layout preset
+    has its own file; the size a start uses is the one its preset last saved.
   - `[Home:<window>]` `Dock=0xnode,0xparent,dir,share` or `Float=x,y,w,h`: where it docks back.
   - `[Out:<window>]` `Rect=x,y,w,h` (OS units): its last place outside, for "Pop out".
 - Monitor loss: a window whose title bar would not be on a current monitor is moved onto the

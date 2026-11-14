@@ -87,6 +87,8 @@ void neutralMaster(MixerTrack& m) {
   m.volume = 0.8f;  // unity on the fader law
   m.pan = 0;
   m.stereoSep = 0;
+  m.depth = 0;
+  m.focus = 0;
   m.invertPolarity = false;
   m.swapLR = false;
   m.eqGain = {0.0f, 0.0f, 0.0f};

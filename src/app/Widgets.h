@@ -45,6 +45,10 @@ enum class Icon {
   TapTempo,   // K-48: tap the tempo (top bar)
   Groove,     // K-151: swing presets and the groove editor
   Moon,       // K-87: a hibernating plugin
+  Stage,      // the Stage: mixer tracks placed in a room
+  Drive, DriveUsb, DriveNetwork, Home, Monitor, Download, Disc, Clock, ProjectFile,  // the file dialog's drives, places and files
+  ChordStamp,   // the piano roll's chord stamp button
+  CollapseAll,  // the browser's Collapse all folders button
   Count  // number of icons (not an icon)
 };
 // Q-12: true for the tool family (playlist / piano roll / automation editor strips).
@@ -72,6 +76,9 @@ inline void drawIconFitC(ImDrawList* dl, Icon icon, ImVec2 c, ImVec2 ink, ImU32 
 // of `unitPx` logical px is 10 SVG units around the centre `c`; fitted to the
 // old glyph's ink (its geometry plus half `oldStroke`), never bigger.
 void drawIconGlyph(ImDrawList* dl, Icon icon, ImVec2 c, float unitPx, float oldStroke, ImU32 col);
+// The headphones button's face (the channel rack's rows, the Stage's rooms): on (soft green), muted
+// (grey) or soloed (amber), with hover and pressed states and a glow from `level` (0..1) while it plays.
+void PhonesFace(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float level, bool muted, bool soloed, bool hovered, bool pressed);
 // Icon labels: a text button caption that is an icon. GL_ICON_LABEL("chevron-left", "<")
 // is the SVG chevron-left, laid out and sized like the text "<" in the button's font
 // (it fits the character's ink bounds). Button helpers that draw a caption take

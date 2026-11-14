@@ -175,6 +175,9 @@ Song restOf(const Song& c) {
   t.arrangements = c.arrangements;
   t.currentArrangement = c.currentArrangement;
   t.autoCrossfades = c.autoCrossfades;
+  t.panLaw = c.panLaw;  // the Stage's pan law and room
+  t.stage = c.stage;
+  t.stageRooms = c.stageRooms;  // K-224
   return t;
 }
 
@@ -183,7 +186,7 @@ bool restEqual(const Song& a, const Song& b) {
          a.swing == b.swing && a.swingNotes == b.swingNotes && a.groove == b.groove && a.masterPitch == b.masterPitch && a.nextId == b.nextId && a.tracks == b.tracks && a.links == b.links &&
          a.modLinks == b.modLinks && a.markers == b.markers && a.channelGroups == b.channelGroups && a.patternGroups == b.patternGroups &&
          a.live == b.live && a.arrangements == b.arrangements && a.currentArrangement == b.currentArrangement &&
-         a.autoCrossfades == b.autoCrossfades;
+         a.autoCrossfades == b.autoCrossfades && a.panLaw == b.panLaw && a.stage == b.stage && a.stageRooms == b.stageRooms;
 }
 
 template <typename T>
@@ -1055,6 +1058,9 @@ bool Session::diffIncremental(std::vector<Op>& ops, std::string* bad) {
     shadow_.arrangements = r.arrangements;
     shadow_.currentArrangement = r.currentArrangement;
     shadow_.autoCrossfades = r.autoCrossfades;
+    shadow_.panLaw = r.panLaw;
+    shadow_.stage = r.stage;
+    shadow_.stageRooms = r.stageRooms;  // K-224
   }
   for (auto& c : commit) c();
   return true;

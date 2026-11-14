@@ -132,7 +132,9 @@ void drawRackRows(App& a, ObjectId pattern, const RackRows& g) {
   if (!pat || pat->automation.empty()) return;
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const Tick len = std::max<Tick>(1, s.patternContentLength(*pat));
-  // Copies: a menu item may replace the pattern while the rows draw.
+  const Tick barLen = std::max<Tick>(1, s.patternBarTicks(*pat));  // K-179: its own bars
+  // Copies: a menu item may replace the pattern while the rows draw ("Move to the playlist" is a
+  // whole-song edit), so `pat` is not read inside the loop.
   const std::vector<AutomationClip> clips = pat->automation;
   ParamId open{kNoId, 0};
   for (size_t k = 0; k < clips.size(); ++k) {
@@ -178,7 +180,7 @@ void drawRackRows(App& a, ObjectId pattern, const RackRows& g) {
       ImGui::EndPopup();
     }
     dl->AddRectFilled(sp, ImVec2(sp.x + g.stepsW, sp.y + g.cellH), chov ? theme::mix(P.field, P.surface700, 0.4f) : P.field, theme::kRadiusSm);
-    for (Tick b = s.patternBarTicks(*pat); b < len; b += std::max<Tick>(1, s.patternBarTicks(*pat))) {  // K-179: its own bars
+    for (Tick b = barLen; b < len; b += barLen) {  // K-179: its own bars
       const float x = std::round(sp.x + g.stepsW * static_cast<float>(b) / static_cast<float>(len));
       dl->AddLine(ImVec2(x, sp.y + 2), ImVec2(x, sp.y + g.cellH - 2), theme::withAlpha(P.lineStrong, 0.6f));
     }

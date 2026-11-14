@@ -24,12 +24,14 @@
 #include "../ClipLoop.h"
 #include "../../engine/ClipOps.h"
 #include "../../engine/ClipSource.h"
+#include "../../engine/DepthStage.h"
 #include "../../engine/WarpOps.h"
 #include "../ClipRate.h"
 #include "../Groove.h"
 #include "../PluginParams.h"
 #include "../Params.h"
 #include "../Project.h"
+#include "../StageRoomOps.h"
 #include "FlpExportInternal.h"
 #include "FlpWrapper.h"
 #include "../SuiteState.h"
@@ -844,6 +846,52 @@ void writeWarpsAsFl(Song& s, ExportReport& rep) {
 }
 }
 
+// Stage depth (MixerTrack::depth): FL has no depth, so a track's static depth is written as
+// what it does: the fader lower by the distance gain, the air shelf in the strip EQ's high band
+// when that band is unused, the side narrowed, and a depth send as a plain send at its level
+// for that depth. Depth automation and links are not carried over (reported).
+static void writeDepthAsFl(Song& s, ExportReport& rep) {
+  const uint32_t di = static_cast<uint32_t>(MixerParam::Depth), fi = static_cast<uint32_t>(MixerParam::Focus);
+  if (s.panLaw != PanLaw::Balance) rep.counts["mixer: the Stage pan law written as plain pans"]++;
+  if (!s.stageRooms.empty()) rep.counts["mixer: Stage rooms written as plain tracks (room width left out)"]++;
+  for (MixerTrack& m : s.mixer) {
+    const StageSettings& room = roomops::roomAt(s, roomops::trackRoom(s, m));  // K-224: each track's own room
+    const double k = depth::strengthK(room.depthStrength);
+    const bool on = room.hasRoom();  // with no room, distance and focus are not heard: nothing to write
+    if (on && m.focus != 0) {
+      rep.counts["mixer: track focus left out"]++;
+    }
+    for (Send& sd : m.sends) {  // the room send at its level for this distance and focus
+      if (on && sd.stageRoom && !sd.sidechain)
+        sd.level = static_cast<float>(std::min(1.25, sd.level * depth::roomScale(m.depth, m.focus, k, room.frontQuiet)));
+      sd.stageRoom = false;
+    }
+    m.focus = 0;
+    if (on && m.depth > 0) {
+      const double d = m.depth;
+      m.volume = static_cast<float>(std::min(1.25, m.volume * std::sqrt(depth::gain(d, k))));
+      if (m.eqGain[2] == 0.0f) {
+        m.eqGain[2] = static_cast<float>(depth::shelfDb(d));
+        m.eqFreq[2] = static_cast<float>(depth::shelfHz(d));
+        m.eqQ[2] = kStripEqDefQ;
+      } else {
+        rep.counts["mixer: depth high shelf left out (the track's high EQ band is in use)"]++;
+      }
+      m.stereoSep = static_cast<float>(std::clamp((1.0 + m.stereoSep) * depth::narrow(d) - 1.0, -1.0, 1.0));
+      rep.counts["mixer: track depth written as level, EQ and width"]++;
+    }
+    m.depth = 0;
+  }
+  int autos = 0;
+  auto isDepth = [&](ObjectId owner, uint32_t index) { return (index == di || index == fi) && s.mixerTrack(owner) != nullptr; };
+  for (const AutomationClip& a : s.automations) autos += isDepth(a.owner, a.index);
+  for (const Pattern& p : s.patterns)
+    for (const auto& lane : p.automation) autos += isDepth(lane.owner, lane.index);
+  for (const ModLink& l : s.modLinks) autos += isDepth(l.owner, l.index);
+  for (const ControllerLink& l : s.links) autos += isDepth(l.owner, l.index);
+  if (autos) rep.counts["mixer: distance and focus automation and links not carried over"] += autos;
+}
+
 bool exportFlp(const Song& song, Bytes& out, ExportReport& rep, const ExportOptions& opt) {
   // J-80: Gridline-only plugins → their stand-ins, on a copy.
   Song work = song;
@@ -873,6 +921,7 @@ bool exportPrepared(const Song& prepared, const StandInResult* standIns, Bytes& 
   Song song = prepared;
   writeClipLoopsAsFl(song, rep);  // K-114
   writeWarpsAsFl(song, rep);      // K-85
+  writeDepthAsFl(song, rep);      // Stage depth
   xp::Exporter x(song, opt, rep);
   x.standIns = standIns;
   x.ec.tempo = song.tempo;

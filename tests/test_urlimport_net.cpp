@@ -5,6 +5,7 @@
 // clip from Wikimedia Commons (a direct link to an audio file).
 // Skipped (exit code 77) without a network, when GitHub limits requests, or with
 // GRIDLINE_NO_NETWORK=1. Requests carry Gridline's generic User-Agent and nothing else.
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -77,8 +78,16 @@ int main() {
   check(fs::exists(tools / mt::exeName("ffprobe")), "ffprobe beside ffmpeg");
   if (!y.ok || !f.ok) return finish();
   // The update check finds the copy current.
+  // (A second unauthenticated request to GitHub's API: a shared runner may be limited by now, and that
+  // check alone is skipped. A release published between the two requests is installed: also right.)
   const mt::UpdateResult u = mt::updateYtdlp(net, tools.u8string(), y.version, nullptr);
-  check(u.checked && !u.updated, "update: the fresh copy is current");
+  if (!u.checked && u.error.find("limiting") != std::string::npos) {
+    std::printf("skipped: update check (%s)\n", u.error.c_str());
+  } else {
+    const bool current = u.checked && !u.updated && u.error.empty() && u.version == y.version;
+    const bool newer = u.checked && u.updated && u.error.empty() && u.version > y.version;
+    check(current || newer, "update: the fresh copy is current (" + y.version + " -> " + u.version + ") " + u.error);
+  }
 
   // 2. Read the link and import it, as the popup does.
   mt::Search se{tools.u8string(), "", false};
@@ -113,5 +122,70 @@ int main() {
   SamplePtr smp = wav.empty() ? nullptr : loadSample(wav);
   check(smp && smp->seconds() > 1.0 && smp->sampleRate > 8000, "a WAV the engine decodes");
   if (smp) std::printf("imported %.2f s at %.0f Hz\n", smp->seconds(), static_cast<double>(smp->sampleRate));
+
+  // 3. One stable, freely licensed link per main kind of site, up to ten seconds of each from 1 s on
+  // (the whole stream is downloaded, only the range is converted). A site that limits or refuses this
+  // computer right now (a bot check, HTTP 403 / 429 on every try) is reported and skipped.
+  struct Source {
+    const char* name;
+    const char* url;
+  };
+  const Source sources[] = {
+      // Blender Foundation, "Big Buck Bunny" (CC BY 3.0): a 5.1 film mix next to stereo streams
+      {"YouTube", "https://www.youtube.com/watch?v=aqz-KE-bpKQ"},
+      // Kevin MacLeod, "Parisian" (CC BY), as uploaded to SoundCloud
+      {"SoundCloud", "https://soundcloud.com/user-231592479/kevin-macleod-parisian"},
+      // Internet Archive item "Never To Appear Again" (CC BY-ND 4.0), about 40 seconds
+      {"Internet Archive", "https://archive.org/details/NeverToAppearAgain"},
+      // Wikimedia Commons file page (CC BY-SA 3.0), whose title the site gives as HTML
+      {"Wikimedia Commons", "https://commons.wikimedia.org/wiki/File:Example.ogg"},
+  };
+  for (const Source& src : sources) {
+    std::this_thread::sleep_for(std::chrono::seconds(2));  // gentle with the sites
+    const std::string tag = src.name;
+    auto f = waitJob(ul::startFetch(t, src.url, (work / ("info " + tag)).u8string()), 200);
+    ul::Info in;
+    std::string err;
+    {
+      std::lock_guard<std::mutex> lk(f->mu);
+      in = f->info;
+      err = f->error;
+    }
+    auto limited = [](const std::string& e) {
+      return e.find("not a bot") != std::string::npos || e.find("429") != std::string::npos || e.find("403") != std::string::npos;
+    };
+    if (f->get() != ul::Phase::Done && limited(err)) {
+      std::printf("skipped: %s limits this computer right now (%s)\n", src.name, err.c_str());
+      continue;
+    }
+    check(f->get() == ul::Phase::Done && !in.title.empty() && in.title.find('<') == std::string::npos && in.duration > 3,
+          tag + ": read, a plain title and a length: " + in.title + " " + err);
+    if (f->get() != ul::Phase::Done) continue;
+    ul::Request r;
+    r.item.title = in.title;
+    r.item.url = in.url;
+    r.item.duration = in.duration;
+    r.site = in.site;
+    r.trim = ul::Trim{1, std::min(11.0, in.duration)};
+    const double want = r.trim.end - r.trim.start;
+    auto im = waitJob(ul::startImport(t, {r}, (work / ("items " + tag)).u8string()), 400);
+    std::string w, ierr;
+    {
+      std::lock_guard<std::mutex> lk(im->mu);
+      if (!im->results.empty()) w = im->results[0].wav;
+      ierr = im->error;
+    }
+    if (im->get() != ul::Phase::Done && limited(ierr)) {
+      std::printf("skipped: %s refused the download on every try (%s)\n", src.name, ierr.c_str());
+      continue;
+    }
+    SamplePtr s = w.empty() ? nullptr : loadSample(w);
+    float peak = 0;
+    if (s)
+      for (size_t i = 0; i < s->left.size(); ++i) peak = std::max(peak, std::fabs(s->left[i]));
+    check(im->get() == ul::Phase::Done && s && std::fabs(s->seconds() - want) < 0.1 && peak > 1e-3,
+          tag + ": the range imported, not silent: " + ierr);
+    if (s) std::printf("%s: %.2f s at %.0f Hz, peak %.3f\n", src.name, s->seconds(), static_cast<double>(s->sampleRate), static_cast<double>(peak));
+  }
   return finish();
 }

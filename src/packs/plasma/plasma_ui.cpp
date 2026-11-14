@@ -23,6 +23,7 @@
 #include "../PacksUi.h"
 #include "../../app/DisplayConfirm.h"
 #include "../../app/DisplayConfirmUi.h"
+#include "../../app/EditorZoomUi.h"
 #include "../../app/ThemeSettings.h"
 #include "../../app/Widgets.h"
 #include "../../third_party/imgui/imgui_internal.h"
@@ -238,10 +239,10 @@ std::string ptext(const Ctx& c, int k) { return paramText(k, val(c, k), &c.st.pa
 
 // ================================================================== text
 // J-202: nothing smaller than 8 px (the caption size at 100 %).
-// The editor's type is set 15 % above its form sizes, so labels and values read at a glance at
-// the editor's usual sizes (one place: every text, measure and layout check goes through here).
-constexpr float kTypeScale = 1.25f;
-float font(const Ctx& c, float px) { return std::max(9.5f, std::round(px * kTypeScale * c.F.s * 2.0f) * 0.5f); }
+// The editor's type is set above its form sizes (kTypeScale, plasma_ui.h), so labels and values
+// read at a glance at the editor's usual sizes (one place: every text, measure and layout check
+// goes through here).
+float font(const Ctx& c, float px) { return std::max(kTypeFloor, std::round(px * (c.graph ? 1.25f : kTypeScale) * c.F.s * 2.0f) * 0.5f); }
 float ctlPx(float h) { return std::clamp(h * 0.44f, 10.0f, 12.0f); }
 namespace {
 int gMono = 0;  // MonoText scopes open: values are set in the mono face
@@ -393,10 +394,19 @@ void labelBeside(const Ctx& c, float x, float boxY, float boxH, const char* s, I
   const float base = refBaseline(c, c.p(0, boxY + boxH * 0.5f).y, ty::kValue);
   put(c, ImVec2(c.p(x, 0).x, topFor(c, base, px, bold)), s, col, px, bold);
 }
+float capMid(const Ctx& c, float boxY, float boxH, float px, bool bold) {
+  const float base = refBaseline(c, c.p(0, boxY + boxH * 0.5f).y, ty::kValue);
+  ImFontBaked* fb = pick(c, bold)->GetFontBaked(font(c, px));
+  const float top = std::round(base - fb->Ascent);
+  if (const ImFontGlyph* g = fb->FindGlyph('H')) return top + (g->Y0 + g->Y1) * 0.5f;
+  return base - fb->Ascent * 0.36f;
+}
 void textMid(const Ctx& c, float x0, float x1, float cy, const char* s, ImU32 col, float px, bool bold) {
-  const ImVec2 sz = measure(c, s, px, bold);
   const ImVec2 a = c.p(x0, cy), b = c.p(x1, cy);
   const float w = b.x - a.x;
+  ImVec2 sz = measure(c, s, px, bold);
+  // a name a little wider than its field steps down (to 78 % of its size) before it is cut
+  for (const float lo = px * 0.78f; sz.x > w - 2 && px > lo;) px -= 0.25f, sz = measure(c, s, px, bold);
   const float top = topFor(c, refBaseline(c, a.y, px), px, bold);  // J-202: on the field's baseline
   if (sz.x > w - 2) {  // clip long names to the field
     c.dl->PushClipRect(ImVec2(a.x + 1, a.y - sz.y), ImVec2(b.x - 1, a.y + sz.y), true);
@@ -506,6 +516,18 @@ void fitLabel(const Ctx& c, float cx, float y, float maxW, const char* s, ImU32 
   if (textW(c, s, p, bold) <= maxW) {
     textC(c, cx, y + (px - p) * 0.5f, s, col, p, bold);
     return;
+  }
+  // still too wide at the smallest size (a dial on a zoomed-out canvas): shortened with a full stop
+  // rather than cut at the edge ("Resonance" -> "Reson.")
+  for (std::string t = s; t.size() > 2;) {
+    t.pop_back();
+    while (!t.empty() && (static_cast<unsigned char>(t.back()) & 0xC0) == 0x80) t.pop_back();  // whole characters only
+    while (!t.empty() && t.back() == ' ') t.pop_back();
+    const std::string sh = t + ".";
+    if (t.size() >= 2 && textW(c, sh.c_str(), p, bold) <= maxW) {
+      textC(c, cx, y + (px - p) * 0.5f, sh.c_str(), col, p, bold);
+      return;
+    }
   }
   textMid(c, cx - maxW * 0.5f, cx + maxW * 0.5f, y + px * 0.6f, s, col, p, bold);
 }
@@ -827,6 +849,11 @@ bool knob(Ctx& c, int k, float cx, float cy, float r, const char* label, int fla
                   ImVec2(C.x + std::cos(an) * (dr - c.s(2)), C.y + std::sin(an) * (dr - c.s(2))), ptr, std::max(1.4f, c.s(M(2.2f))));
   }
   layoutAdd(c, ImVec2(C.x - R, C.y - R), ImVec2(C.x + R, C.y + R), true, label);
+  if (drawerReport()) {  // dev: a dial whose centre lies under the open drawer (the click-through test)
+    DrawerDev& dd = drawerDev();
+    if (dd.underK < 0 && dd.rect.w > dd.rect.y && C.x > dd.rect.x + 4 && C.x < dd.rect.z - 4 && C.y > dd.rect.y + c.s(16) && C.y < dd.rect.w - 4)
+      dd.underK = k, dd.under = edzoomui::toScreenHere(C);
+  }
   gRouteEnds.push_back({k, C, R + c.s(4)});
   if (hov || act) c.u.hoverKNext = k;
   if (c.u.hoverSrc >= 0 && linkSlot(c, c.u.hoverSrc, k) >= 0)  // its source is under the pointer: light it up
@@ -879,6 +906,48 @@ bool knob(Ctx& c, int k, float cx, float cy, float r, const char* label, int fla
   if (hov) c.a.setHint(paramLongName(k) + ": " + paramText(k, v, &c.st.params) + (slots.empty() ? kHintFree : kHintLinked)), helpTip(c, k);
   ImGui::PopID();
   return changed;
+}
+
+bool paramItem(Ctx& c, int k, double& v, float pixels, bool horizontal, float trackStart, float trackLen) {
+  const ParamDesc* d = desc(k);
+  if (!d) return false;
+  reach(k);
+  const bool hov = ImGui::IsItemHovered();
+  bool changed = false;
+  if (hov && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+    ImGui::OpenPopup("##plmod");
+  } else if (trackLen > 0) {  // as interact(), along a track (the handle stays under the pointer)
+    const bool menuOpen = ImGui::IsPopupOpen("##pmenu") || ImGui::IsPopupOpen("##type");
+    if (!menuOpen) {
+      ImGui::PushStyleColor(ImGuiCol_PopupBg, IM_COL32(0, 0, 0, 0));
+      ImGui::PushStyleColor(ImGuiCol_Border, IM_COL32(0, 0, 0, 0));
+      ImGui::PushStyleColor(ImGuiCol_BorderShadow, IM_COL32(0, 0, 0, 0));
+      ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(0, 0, 0, 0));
+    }
+    changed = pui::dragParamTrack(c.a, c.t.pid(k), *d, v, trackStart, trackLen, horizontal);
+    if (!menuOpen) ImGui::PopStyleColor(4);
+  } else {
+    changed = interact(c, k, v, pixels, horizontal);
+  }
+  dropTarget(c, k);
+  bool openStd = false, openType = false;
+  if (ImGui::BeginPopup("##plmod")) {
+    modMenu(c, k, openStd, openType);
+    ImGui::EndPopup();
+  }
+  if (openStd) ImGui::OpenPopup("##pmenu");
+  if (openType) ImGui::OpenPopup("##type");
+  if (hov || ImGui::IsItemActive()) c.u.hoverKNext = k;
+  return changed;
+}
+
+DrawerDev& drawerDev() {
+  static DrawerDev d;
+  return d;
+}
+bool drawerReport() {
+  static const bool on = std::getenv("GL_PLASMA_DRAWER_REPORT") != nullptr;
+  return on;
 }
 
 bool bar(Ctx& c, int k, float x, float y, float w, float h, const char* label, int flags) {
@@ -1007,7 +1076,9 @@ bool chip(Ctx& c, int k, float x, float y, float w, float h, const char* label) 
   {
     const ImVec2 c0 = c.p(x + 14, y), c1 = c.p(x + w - 3, y + h);
     c.dl->PushClipRect(c0, c1, true);
-    labelBeside(c, x + 15, y, h, label, on ? c.P.text : c.P.label, ctlPx(h), false);
+    float px = ctlPx(h);  // a step smaller before it is cut (never under 85 %)
+    for (const float lo = px * 0.85f; px > lo && textW(c, label, px, false) > w - 15 - 4;) px -= 0.25f;
+    labelBeside(c, x + 15, y, h, label, on ? c.P.text : c.P.label, px, false);
     c.dl->PopClipRect();
   }
   if (hov) c.a.setHint(paramLongName(k) + (on ? ": on (click: off)" : ": off (click: on)")), helpTip(c, k);
@@ -1755,10 +1826,10 @@ void moreButton(Ctx& c, const char* id, float x, float y, const std::vector<int>
 }
 
 bool moreLink(Ctx& c, const char* id, float x, float y, float w, float h, const char* label, const std::vector<int>& ks,
-              const std::function<void()>& extra, const char* hint) {
+              const std::function<void()>& extra, const char* hint, float px) {
   for (int k : ks) reach(k);  // its popup holds a control for each
   ImGui::PushID(id);
-  const bool click = button(c, "##ml", x, y, w, h, label, false, ctlPx(h));
+  const bool click = button(c, "##ml", x, y, w, h, label, false, px > 0 ? px : ctlPx(h));
   if (ImGui::IsItemHovered()) c.a.setHint(hint ? hint : "More settings");
   if (click) ImGui::OpenPopup("##morepop");
   bool open = false;
@@ -2016,11 +2087,13 @@ bool blockBegin(Ctx& c, Block& b, const char* id, float x, float& y, float w, co
   if (o.sub && *o.sub) {
     const float sx = tx + tw + M(8), room = rx - M(6) - sx;
     std::string sub = o.sub;
-    while (!sub.empty() && textW(c, sub.c_str(), T(11.5f), false) > room) sub.pop_back();
+    float spx = T(11.5f);  // a step smaller before it is cut (never under 85 %)
+    while (spx > T(11.5f) * 0.85f && textW(c, sub.c_str(), spx, false) > room) spx -= 0.25f;
+    while (!sub.empty() && textW(c, sub.c_str(), spx, false) > room) sub.pop_back();
     if (sub.size() < std::string(o.sub).size() && sub.size() > 2) sub.resize(sub.size() - 1), sub += "...";
     if (room > M(20) && !sub.empty()) {
-      text(c, sx, cy - T(11.5f) * 0.68f, sub.c_str(), c.P.textFaint, T(11.5f), false);
-      subEnd = sx + textW(c, sub.c_str(), T(11.5f), false);
+      text(c, sx, cy - spx * 0.68f, sub.c_str(), c.P.textFaint, spx, false);
+      subEnd = sx + textW(c, sub.c_str(), spx, false);
       if (o.subMenu) {  // what it is: a click chooses (a table, a filter type, a shape)
         ImGui::SetCursorScreenPos(c.p(sx, hy));
         if (ImGui::InvisibleButton("##sub", c.F.sz(std::max(M(10), subEnd - sx), hh))) ImGui::OpenPopup("##submenu");
@@ -2392,9 +2465,9 @@ bool curveEditor(Ctx& c, const char* id, Curve& cv, float x, float y, float w, f
 }
 
 // ================================================================== presets / open
-void previewKey(Ctx& c, int key, bool on) {
+void previewKey(Ctx& c, int key, bool on, float vel) {
   if (!c.t.isChannel()) return;
-  if (on) c.a.engine.noteOn(c.t.owner, key, 0.8f);
+  if (on) c.a.engine.noteOn(c.t.owner, key, std::clamp(vel, 0.05f, 1.f));
   else c.a.engine.noteOff(c.t.owner, key);
 }
 
@@ -2528,7 +2601,7 @@ void openPresetDialog(Ctx& c) {
     modelFromData(st->data, m);
     PluginState copy = *st;
     const skin::Form F;
-    Ctx c2{a, t, F, ImGui::GetWindowDrawList(), copy, m, *u, pal(), {}, false};
+    Ctx c2{a, t, F, ImGui::GetWindowDrawList(), copy, m, *u, pal(), {}, false, false};
     openPreset(c2, p);
   };
 }
@@ -2814,7 +2887,7 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
   skin::Scope scope(K);
   Ui& u = uiFor(t);
   Model& m = modelFor(t, st.data);
-  Ctx c{a, t, F, dl, st, m, u, ui::pal(), {}, false};
+  Ctx c{a, t, F, dl, st, m, u, ui::pal(), {}, false, false};
   if (t.isChannel())
     if (auto rt = a.builder.channelRuntime(t.owner); rt && rt->gen) c.hasLive = u.prefLive && liveView(rt->gen.get(), c.live);
   ImGui::PushID("gl.plasma");

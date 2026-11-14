@@ -247,6 +247,15 @@ void testKeys() {
       std::snprintf(name, sizeof name, "%s set (Cmd %s) has no same-context clashes", keys::profileId(p), sep ? "separate" : "folded");
       expect(clashes.empty(), name);
       expect(keys::profileDefaults(p, sep).size() == keys::commands().size(), "every command has an entry in every set");
+      // The mixer track menu's Select items show Alt+L and Ctrl+Alt+L (Cmd+Alt+L where Cmd is its own key):
+      // every set keeps both, so the labels never name a key that does nothing.
+      std::snprintf(name, sizeof name, "%s set (Cmd %s): Alt+L and Ctrl+Alt+L select what is routed to the mixer track",
+                    keys::profileId(p), sep ? "separate" : "folded");
+      const bool cmd = km.separateCmd();
+      expect(first(km, "mixer.selectRoutedChannels") == "Alt+L" && first(km, "mixer.selectRoutedTo") == (cmd ? "Cmd+Alt+L" : "Ctrl+Alt+L") &&
+                 km.lookup(keys::Context::Mixer, keys::parse("Alt+L")).size() == 1 &&
+                 km.lookup(keys::Context::Mixer, keys::parse(cmd ? "Cmd+Alt+L" : "Ctrl+Alt+L")).size() == 1,
+             name);
     }
   expect(!hasCmd(keys::profileDefaults(keys::Profile::Logic, false)), "logic on Linux and Windows: no Cmd chords");
   expect(!hasCmd(keys::profileDefaults(keys::Profile::Live, false)) && !hasCmd(keys::profileDefaults(keys::Profile::Live, true)),

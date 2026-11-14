@@ -1,0 +1,7 @@
+<!-- Gridline original (GPL-3.0), drawn on the Lucide 24-unit grid and stroke rules: a room seen from above with two placed tracks and the listener at the front (the Stage) -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M3 18 V5 a2 2 0 0 1 2 -2 h14 a2 2 0 0 1 2 2 v13" />
+  <path d="M6.5 8 h4" />
+  <path d="M13.5 12 h4" />
+  <path d="M9.5 21 L12 17.5 L14.5 21 Z" />
+</svg>

@@ -18,6 +18,7 @@ GL_DECLARE_PACK_UI(plasma)
 GL_DECLARE_PACK_UI(mini)
 GL_DECLARE_PACK_UI(platter)
 GL_DECLARE_PACK_UI(trackerpack)
+GL_DECLARE_PACK_UI(chater)
 namespace gl::packs::edison {
 void drawWindows(App& a);
 bool openAudioEditor(App& a, const std::string& path, ObjectId channel);
@@ -37,13 +38,16 @@ bool loadPicture(App& a, const PluginTarget& t, const std::string& path);  // J-
 namespace gl::packs::seltmann {
 void tick(App& a);  // J-218: the start screen recorder drains the input tap
 }  // namespace gl::packs::seltmann
+namespace gl::packs::chater {
+bool devCommand(App& a, const std::string& cmd, const std::vector<std::string>& args);  // "chater state|click x y|menu"
+}  // namespace gl::packs::chater
 namespace gl::packs::platter {
 void tick(App& a);
 bool claimMidi(App& a, const std::string& device);
 bool recordsWithTransport(App& a);
 }  // namespace gl::packs::platter
 
-#define GL_PACK_LIST X(synths) X(samplers) X(spacefx) X(spectral) X(dynamics) X(modulation) X(models) X(utility) X(creative) X(edison) X(flexpack) X(tideline) X(seltmann) X(plasma) X(mini) X(platter) X(trackerpack)
+#define GL_PACK_LIST X(synths) X(samplers) X(spacefx) X(spectral) X(dynamics) X(modulation) X(models) X(utility) X(creative) X(edison) X(flexpack) X(tideline) X(seltmann) X(plasma) X(mini) X(platter) X(trackerpack) X(chater)
 
 namespace gl::packs {
 
@@ -75,7 +79,7 @@ bool openFileInLoupe(App& a, const std::string& path) { return edison::openFileI
 
 bool claimEffectEditor(App& a, const PluginTarget& t) { return edison::claimEffectEditor(a, t); }
 
-bool devCommand(App& a, const std::string& cmd, const std::vector<std::string>& args) { return edison::dockDevCommand(a, cmd, args) || modulation::junctionDevCommand(a, cmd, args); }
+bool devCommand(App& a, const std::string& cmd, const std::vector<std::string>& args) { return edison::dockDevCommand(a, cmd, args) || modulation::junctionDevCommand(a, cmd, args) || chater::devCommand(a, cmd, args); }
 
 int armAudioEditorRecording(App& a, ObjectId track) { return edison::armTransportRecording(a, track); }
 

@@ -44,8 +44,9 @@ void normalize(SongGroove& g);
 bool isPairSwing(const GrooveShape& s);
 
 // Length of one cell in ticks: the pattern's step (grid 0) or a note value.
-// Without a pattern, grid 0 counts as sixteenths.
-double cellTicks(const Song& song, const Pattern* p, int grid);
+// Without a pattern, grid 0 is the step a new pattern gets in the meter in force at song tick
+// `at` (a sixteenth in every meter whose note value is 16 or less).
+double cellTicks(const Song& song, const Pattern* p, int grid, Tick at = 0);
 
 // The groove ready to place notes: no allocation, cheap to copy.
 struct Warp {
@@ -63,8 +64,9 @@ struct Warp {
   float velocityAt(double x) const;
 };
 // `amount` is Song::swing x the channel's swing mix (0..1); `accent` the accent
-// share (SongGroove::accent x the channel's swing mix). `p` null: song bars.
-Warp makeWarp(const Song& song, const Pattern* p, const GrooveShape& shape, double amount, double accent);
+// share (SongGroove::accent x the channel's swing mix). `p` null: song bars, those of the meter
+// in force at song tick `at`.
+Warp makeWarp(const Song& song, const Pattern* p, const GrooveShape& shape, double amount, double accent, Tick at = 0);
 
 // ---- presets ----
 struct Preset {

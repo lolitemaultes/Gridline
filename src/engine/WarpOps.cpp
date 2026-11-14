@@ -347,7 +347,7 @@ int grooveAudioClip(const Song& song, Clip& clip, const TempoMap& map, double st
   if (!(strength > 0)) return 0;
   strength = std::min(1.0, strength);
   warpMarkersAtTransients(song, clip, map, sensitivity);
-  const groove::Warp w = groove::makeWarp(song, nullptr, song.groove.shape, song.swing, 0.0);
+  const groove::Warp w = groove::makeWarp(song, nullptr, song.groove.shape, song.swing, 0.0, clip.start);  // K-203: the meter where the clip starts
   if (!(w.cell > 0)) return 0;
   int moved = 0;
   for (const WarpMarkerView& v : warpMarkerViews(song, clip, map)) {

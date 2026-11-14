@@ -167,6 +167,8 @@ void neutralStrip(MixerTrack& m) {
   m.volume = d.volume;
   m.pan = 0;
   m.stereoSep = 0;
+  m.depth = 0;
+  m.focus = 0;
   m.invertPolarity = m.swapLR = false;
   m.eqGain = d.eqGain;
   m.muted = false;

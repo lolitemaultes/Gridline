@@ -1,5 +1,6 @@
 // Gridline — mixer track operations (J-12). See MixerOps.h.
 #include "MixerOps.h"
+#include "TrackOrder.h"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -8,9 +9,12 @@
 #include <functional>
 #include <map>
 #include <sstream>
+#include "I18n.h"
 #include "Json.h"
 #include "Params.h"
+#include "PluginParams.h"
 #include "Project.h"
+#include "StageRoomOps.h"
 #include "TrackIconSet.h"
 
 namespace gl::mixops {
@@ -198,6 +202,210 @@ bool setSendPreFader(Document& d, ObjectId from, ObjectId to, bool pre) {
   });
 }
 
+bool setSendRoom(Document& d, ObjectId from, ObjectId to, bool on) {
+  const MixerTrack* t = d.song().mixerTrack(from);
+  const Send* sd = t ? findSend(*t, to) : nullptr;
+  if (!sd || sd->sidechain || sd->stageRoom == on) return false;
+  return d.editMixerTrack(from, on ? "room send" : "plain send", [&](MixerTrack& m) {
+    for (auto& x : m.sends)
+      if (x.to == to) x.stageRoom = on;
+  });
+}
+
+const MixerTrack* stageRoom(const Song& s, int room) {
+  const StageSettings& st = roomops::roomAt(s, room);
+  if (st.room == kNoId || st.room == s.masterId()) return nullptr;
+  return s.mixerTrack(st.room);
+}
+
+namespace {
+const StageSettings& stg(const Song& s, int room) { return roomops::roomAt(s, room); }
+// Edits room `room`'s settings (one step of the song).
+void editStage(Document& d, const std::string& label, int room, const std::function<void(StageSettings&)>& fn) {
+  d.editSong(label, [room, &fn](Song& s) {
+    if (StageSettings* st = roomops::roomAtMut(s, room)) fn(*st);
+  });
+}
+// The room's decay (seconds) at `size`: the room type's own decay at its own size, longer or shorter
+// with the size (x14 from 0 to 1).
+double decayOfSize(const Song& s, double size, int room) {
+  const StageSettings& st = stg(s, room);
+  const rooms::Room& r = rooms::get(st.hasRoom() ? st.roomType : rooms::kStudio);
+  return std::clamp(r.decay * std::pow(14.0, std::clamp(size, 0.0, 1.0) - r.size), 0.1, 20.0);
+}
+int roomSlot(const MixerTrack& m) {
+  for (size_t k = 0; k < m.slots.size(); ++k)
+    if (m.slots[k].plugin.type == "gl.reverb") return static_cast<int>(k);
+  return -1;
+}
+}  // namespace
+
+int spaceSlot(const MixerTrack& m) { return roomSlot(m); }
+
+const char* roomTypeName(int type) { return rooms::get(type).name; }
+const char* roomTypeHint(int type) { return rooms::get(type).hint; }
+float roomSendLevel(const Song& s, int room) {
+  const StageSettings& st = stg(s, room);
+  return static_cast<float>(std::pow(10.0, rooms::get(st.hasRoom() ? st.roomType : rooms::kStudio).sendDb / 20.0));
+}
+
+double roomSize(const Song& s, int room) {
+  const MixerTrack* r = stageRoom(s, room);
+  const int k = r ? roomSlot(*r) : -1;
+  const StageSettings& st = stg(s, room);
+  if (k < 0) return rooms::get(st.hasRoom() ? st.roomType : rooms::kStudio).size;
+  const auto& ps = r->slots[static_cast<size_t>(k)].plugin.params;
+  return static_cast<size_t>(pp::RvbSize) < ps.size() ? ps[static_cast<size_t>(pp::RvbSize)] : 0.5;
+}
+
+int addRoomSends(Document& d, const std::vector<ObjectId>& tracks, int room) {
+  const MixerTrack* sp = stageRoom(d.song(), room);
+  if (!sp) return 0;
+  const ObjectId rid = sp->id, master = d.song().masterId();
+  int n = 0;
+  for (ObjectId id : tracks) {
+    const MixerTrack* t = d.song().mixerTrack(id);
+    if (!t || id == master || id == rid || roomops::isSpaceTrack(d.song(), id)) continue;
+    if (const Send* sd = findSend(*t, rid)) {
+      if (!sd->stageRoom && !sd->sidechain) n += setSendRoom(d, id, rid, true) ? 1 : 0;
+      continue;
+    }
+    if (!routeProblem(d.song(), id, rid).empty()) continue;  // the room feeds this track: no loop
+    if (d.setSend(id, rid, roomSendLevel(d.song(), room)) && setSendRoom(d, id, rid, true)) ++n;
+  }
+  return n;
+}
+
+// The chosen room type's reverb settings on the room's space track (inside a group).
+bool applyRoom(Document& d, int room);
+
+ObjectId ensureStageRoom(Document& d, const std::vector<ObjectId>& tracks, const std::string& label, int room) {
+  d.endGesture();
+  d.beginGroup(label);
+  ObjectId sp = stageRoom(d.song(), room) ? stg(d.song(), room).room : kNoId;
+  if (!stg(d.song(), room).hasRoom()) {  // a room is asked for: the studio unless one is chosen
+    const float strength = rooms::get(rooms::kStudio).depthStrength;
+    editStage(d, label, room, [strength](StageSettings& st) {
+      st.roomType = static_cast<uint8_t>(rooms::kStudio);
+      st.depthStrength = strength;
+    });
+  }
+  if (sp == kNoId) {
+    sp = d.addMixerTrack();
+    if (sp == kNoId || !d.song().mixerTrack(sp)) {
+      d.endGroup();
+      return kNoId;
+    }
+    const std::string name = roomops::spaceTrackName(d.song(), room);
+    const ObjectId rid = roomops::roomIdAt(d.song(), room);
+    d.editMixerTrack(sp, label, [&name, rid](MixerTrack& m) {
+      m.name = name;
+      m.color = 0x5E7A8C;
+      m.room = rid;
+    });
+    if (d.setSlotPlugin(sp, 0, "gl.reverb")) {
+      d.setParam(slotParam(sp, 0, pp::RvbDry), 0.0, false);
+      d.setParam(slotParam(sp, 0, pp::RvbWet), 1.0, false);
+      d.setParam(slotParam(sp, 0, pp::RvbPreDelay), 0.0, false);  // each track brings its own pre-delay
+    }
+    editStage(d, label, room, [sp](StageSettings& st) { st.room = sp; });
+    applyRoom(d, room);
+  }
+  if (const MixerTrack* r = stageRoom(d.song(), room); r && r->muted) d.setParam(mixerParam(sp, MixerParam::Mute), 0.0, false);
+  addRoomSends(d, tracks, room);
+  d.endGroup();
+  d.endGesture();
+  return sp;
+}
+
+bool applyRoom(Document& d, int room) {
+  const MixerTrack* r = stageRoom(d.song(), room);
+  const int k = r ? roomSlot(*r) : -1;
+  if (k < 0 || !stg(d.song(), room).hasRoom()) return false;
+  const rooms::Room& rt = rooms::get(stg(d.song(), room).roomType);
+  const ObjectId id = r->id;
+  bool changed = false;
+  const std::pair<pp::Reverb, double> values[] = {
+      {pp::RvbModel, rt.model},     {pp::RvbSize, rt.size},       {pp::RvbDecayTime, rt.decay}, {pp::RvbLowCut, rt.lowCut},
+      {pp::RvbHighCut, rt.highCut}, {pp::RvbDampHz, rt.dampHz},   {pp::RvbBassMult, rt.bass},   {pp::RvbDiffusion, rt.diffusion},
+      {pp::RvbEarly, rt.er},        {pp::RvbModDepth, rt.mod}};
+  for (const auto& [p, v] : values) changed = d.setParam(slotParam(id, k, p), v, false) || changed;
+  return changed;
+}
+
+bool setRoomType(Document& d, int type, const std::vector<ObjectId>& tracks, int room) {
+  type = std::clamp(type, 0, kRoomTypes - 1);
+  const Song& s0 = d.song();
+  const bool same = stg(s0, room).roomType == type && (type == 0 || (stageRoom(s0, room) && !stageRoom(s0, room)->muted));
+  if (same) return false;
+  d.endGesture();
+  d.beginGroup("room type");
+  const float before = roomSendLevel(d.song(), room);
+  const float strength = rooms::get(type).depthStrength;
+  editStage(d, "room type", room, [type, strength](StageSettings& st) {
+    st.roomType = static_cast<uint8_t>(type);
+    if (type != 0) st.depthStrength = strength;
+  });
+  if (type == 0) {
+    if (const MixerTrack* r = stageRoom(d.song(), room); r && !r->muted) d.setParam(mixerParam(r->id, MixerParam::Mute), 1.0, false);
+  } else {
+    const bool made = stageRoom(d.song(), room) != nullptr;
+    const ObjectId sp = ensureStageRoom(d, tracks, "room type", room);
+    if (made) applyRoom(d, room);
+    // Room sends nobody changed follow the room's own level.
+    const float after = roomSendLevel(d.song(), room);
+    if (sp != kNoId && after != before) {
+      std::vector<ObjectId> follow;
+      for (const auto& m : d.song().mixer)
+        for (const auto& sd : m.sends)
+          if (sd.to == sp && sd.stageRoom && std::fabs(sd.level - before) < 1e-6f) follow.push_back(m.id);
+      for (ObjectId id : follow) d.setSend(id, sp, after);
+    }
+  }
+  d.endGroup();
+  d.endGesture();
+  return true;
+}
+
+bool setRoomSize(Document& d, double size, bool merge, int room) {
+  const MixerTrack* r = stageRoom(d.song(), room);
+  const int k = r ? roomSlot(*r) : -1;
+  if (k < 0) return false;
+  const ObjectId id = r->id;
+  size = std::clamp(size, 0.0, 1.0);
+  bool changed = d.setParam(slotParam(id, k, pp::RvbSize), size, merge);
+  changed = d.setParam(slotParam(id, k, pp::RvbDecayTime), decayOfSize(d.song(), size, room), merge) || changed;
+  return changed;
+}
+
+bool setRoomOn(Document& d, bool on, int room) {
+  const MixerTrack* r = stageRoom(d.song(), room);
+  if (!r || r->muted == !on) return false;
+  return d.setParam(mixerParam(r->id, MixerParam::Mute), on ? 0.0 : 1.0, false);
+}
+
+bool setPanLaw(Document& d, PanLaw law) {
+  if (d.song().panLaw == law) return false;
+  d.editSong("pan law", [law](Song& s) { s.panLaw = law; });
+  return true;
+}
+
+bool setDepthStrength(Document& d, double strength, bool merge, int room) {
+  const float v = static_cast<float>(std::clamp(strength, 0.0, 1.0));
+  if (stg(d.song(), room).depthStrength == v) return false;
+  if (!merge) d.endGesture();
+  editStage(d, "stage depth", room, [v](StageSettings& st) { st.depthStrength = v; });
+  return true;
+}
+
+bool setRoomWidth(Document& d, double width, bool merge, int room) {
+  const float v = static_cast<float>(std::clamp(width, 0.0, 1.5));
+  if (stg(d.song(), room).width == v) return false;
+  if (!merge) d.endGesture();
+  editStage(d, "room width", room, [v](StageSettings& st) { st.width = v; });
+  return true;
+}
+
 std::vector<ObjectId> routedFrom(const Song& s, ObjectId track) {
   std::vector<ObjectId> out;
   const MixerTrack* t = s.mixerTrack(track);
@@ -300,7 +508,7 @@ int resetTracks(Document& d, const std::vector<ObjectId>& tracks) {
   for (ObjectId id : tracks)
     n += editEach(d, {id}, "reset mixer track", [](MixerTrack& m) {
       const MixerTrack def;
-      m.volume = def.volume, m.pan = def.pan, m.stereoSep = def.stereoSep;
+      m.volume = def.volume, m.pan = def.pan, m.stereoSep = def.stereoSep, m.depth = def.depth, m.focus = def.focus;
       m.muted = def.muted, m.solo = def.solo, m.invertPolarity = def.invertPolarity, m.swapLR = def.swapLR;
       m.disabled = def.disabled, m.latencyOffset = def.latencyOffset, m.threaded = def.threaded;
       m.eqGain = def.eqGain, m.eqFreq = def.eqFreq, m.eqQ = def.eqQ;
@@ -426,9 +634,12 @@ std::vector<ObjectId> insertTracks(Document& d, int index, int count) {
       MixerTrack t;
       t.id = x.allocateId();
       t.sends.push_back({x.masterId(), 1.0f, false, false});
-      x.mixer.insert(x.mixer.begin() + index + k, t);
+      x.mixer.push_back(t);
       out.push_back(t.id);
     }
+    // Added at the end, then moved into place: send levels and plugin targets that name later
+    // tracks by their number follow them (core/TrackOrder.h).
+    trackorder::reorderMixer(x, trackorder::mixerOrderAfterMove(x, out, index));
   });
   return out;
 }
@@ -510,6 +721,7 @@ std::string trackStateText(const MixerTrack& t) {
   j.object.erase("dock");
   j.object.erase("group");
   j.object.erase("armed");
+  j.object.erase("roomId");  // K-224: a track's Stage room belongs to the project, not to the sound
   j.object["format"] = Json::makeString(kTrackStateTag);
   j.object["version"] = Json::makeNumber(1);
   return jsonStringify(j) + "\n";
@@ -534,6 +746,7 @@ bool applyTrackState(Document& d, ObjectId track, const std::string& text, std::
   loaded.dock = cur->dock;
   loaded.group = cur->group;
   loaded.armed = cur->armed;
+  loaded.room = cur->room;  // K-224: loading a sound never moves the track to another room
   d.beginGroup("load mixer track state");
   for (int k = 0; k < kEffectSlots; ++k)  // links into the replaced effects no longer apply
     if (cur->slots[static_cast<size_t>(k)].plugin.type != loaded.slots[static_cast<size_t>(k)].plugin.type)
@@ -586,7 +799,7 @@ Song stemSong(const Song& s, ObjectId track) {
     if (m.id == master) {  // neutral master: unity, no effects, no EQ
       MixerTrack def;
       m.slots.assign(kEffectSlots, EffectSlot{});
-      m.volume = def.volume, m.pan = def.pan, m.stereoSep = def.stereoSep;
+      m.volume = def.volume, m.pan = def.pan, m.stereoSep = def.stereoSep, m.depth = def.depth, m.focus = def.focus;
       m.muted = false, m.invertPolarity = false, m.swapLR = false, m.disabled = false, m.latencyOffset = 0;
       m.eqGain = def.eqGain;
     } else if (m.id == track) {

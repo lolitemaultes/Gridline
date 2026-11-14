@@ -70,14 +70,26 @@ inline bool VV(App& a, const PluginTarget& t, int k, const Form& F, float x, flo
                    F.font(7.5f));
   return V(a, t, k, F, x, y, w, h, K, lbl, fill);
 }
-// Switch selector over a choice parameter (labels default to the choice names).
-inline bool sel(App& a, const PluginTarget& t, int k, const Form& F, float x, float y, float w, float h, const Skin& K, bool horizontal = false,
-                const char* const* labels = nullptr) {
+// Switch selector over a choice parameter (labels default to the choice names). With labels, the switch shows the first
+// nLabels choices only: an editor may offer fewer positions than the parameter has (the classic Hall engine has three
+// freeze modes, the parameter four), and a label list is never read past its end.
+inline bool selN(App& a, const PluginTarget& t, int k, const Form& F, float x, float y, float w, float h, const Skin& K, bool horizontal,
+                 const char* const* labels, size_t nLabels) {
   const ParamDesc* d = pdesc(a, t, k);
   if (!d || d->choices.empty()) return false;
+  const size_t n = labels ? std::min(nLabels, d->choices.size()) : d->choices.size();
+  if (n == 0) return false;
   std::vector<const char*> ls;
-  for (size_t i = 0; i < d->choices.size(); ++i) ls.push_back(labels ? labels[i] : d->choices[i].c_str());
+  for (size_t i = 0; i < n; ++i) ls.push_back(labels && labels[i] ? labels[i] : d->choices[i].c_str());
   return skin::switchSel(a, t, k, F.p(x, y), F.sz(w, h), K, ls.data(), static_cast<int>(ls.size()), horizontal);
+}
+inline bool sel(App& a, const PluginTarget& t, int k, const Form& F, float x, float y, float w, float h, const Skin& K, bool horizontal = false) {
+  return selN(a, t, k, F, x, y, w, h, K, horizontal, nullptr, 0);
+}
+template <size_t N>
+inline bool sel(App& a, const PluginTarget& t, int k, const Form& F, float x, float y, float w, float h, const Skin& K, bool horizontal,
+                const char* const (&labels)[N]) {
+  return selN(a, t, k, F, x, y, w, h, K, horizontal, labels, N);
 }
 inline bool chk(App& a, const PluginTarget& t, int k, const Form& F, float x, float y, float w, float h, const Skin& K, const char* s, ImU32 on = 0) {
   return skin::check(a, t, k, F.p(x, y), F.sz(w, h), K, s, on);

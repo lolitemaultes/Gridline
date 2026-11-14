@@ -65,6 +65,18 @@ bool playlistStrideKnown(uint32_t k) {
   return std::find(std::begin(kPlaylistStrides), std::end(kPlaylistStrides), k) != std::end(kPlaylistStrides);
 }
 
+int playlistTrackBase(const std::string& version, int maxStored) {
+  int major = 0, minor = 0;
+  if (std::sscanf(version.c_str(), "%d.%d", &major, &minor) < 1) major = 0;
+  int base = 98;  // no version: the smallest playlist that holds every stored value
+  if (major >= 13 || (major == 12 && minor >= 9))
+    base = 499;
+  else if (major >= 11)
+    base = 198;
+  if (maxStored > base) base = maxStored > 198 ? 499 : 198;
+  return base;
+}
+
 namespace {
 Rgb flColor(uint32_t v) { return ((v & 0xFF) << 16) | (v & 0xFF00) | ((v >> 16) & 0xFF); }
 
@@ -628,14 +640,14 @@ void Importer::importTracksAndClips() {
     lastNamed = std::max(lastNamed, t + n);
     ++groups;
   }
-  // Track field = last track index − track. FL before 12.9 had 199 tracks.
+  // Track field = last track index − track: 99 tracks up to FL 10, 199 up to 12.8, 500 since.
   int trackBase = 499;
   if (c_.sec.legacyArrangement) {
-    trackBase = 198;
+    int maxStored = -1;
     for (const auto& e : evs)
       if (uint32_t k = e.id == 233 ? playlistStride(e) : 0)
-        for (uint32_t o = 0; o + k <= e.size; o += k)
-          if (e.u16(o + 12) > 198) trackBase = 499;
+        for (uint32_t o = 0; o + k <= e.size; o += k) maxStored = std::max(maxStored, static_cast<int>(e.u16(o + 12)));
+    trackBase = playlistTrackBase(c_.file.version, maxStored);
   }
   int lastUsed = -1;
   int patClips = 0, audioClips = 0, autoClips = 0, muted = 0, offsets = 0, other = 0, fitClips = 0, fixedRateClips = 0, fitWindows = 0, derivedEnds = 0;

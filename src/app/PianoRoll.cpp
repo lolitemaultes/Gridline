@@ -31,6 +31,7 @@
 #include "Widgets.h"
 #include "Windows.h"
 #include "BrowserUi.h"
+#include "ChordStampUi.h"
 
 namespace gl {
 
@@ -456,7 +457,18 @@ void drawPianoRoll(App& a) {
   {
     const float fh = ImGui::GetFrameHeight();
     const float W = ImGui::GetContentRegionAvail().x;
-    menuButton("prmenu", "Piano roll menu: tools, selection, chords, snap, view", [&a]() { pianoRollMenu(a); });
+    {
+      // Some items are whole-song edits (events into a playlist automation clip replace the patterns):
+      // look the pattern and channel up again rather than read the old ones.
+      const uint64_t rev = a.doc.revision();
+      menuButton("prmenu", "Piano roll menu: tools, selection, chords, snap, view", [&a]() { pianoRollMenu(a); });
+      if (a.doc.revision() != rev) {
+        pat = s.pattern(a.curPattern);
+        chan = s.channel(a.selChannel);
+      }
+    }
+    ImGui::SameLine(0, 2);
+    stampui::button(a, W >= 760.0f);  // the chord stamp, beside the menu (its chord's name shows on wide windows)
     ImGui::SameLine(0, 4);
     // Channel picker (colour chip + name).
     const float chanW = std::clamp(W * 0.22f, 110.0f, 180.0f);
@@ -489,7 +501,7 @@ void drawPianoRoll(App& a) {
     ui::ToolbarDivider();
     // Q-12: the shared tool family; tooltips "Name (key): what it does" from the keymap.
     struct T { ui::Icon icon; Tool tool; const char* name; const char* desc; const char* key; uint32_t role; };
-    const T tools[] = {{ui::Icon::ToolDraw, Tool::Draw, i18n::N_("Draw"), i18n::N_("click to add, drag to move, drag the end to resize, right-click deletes"), "piano.toolDraw", theme::role::kDraw},
+    const T tools[] = {{ui::Icon::ToolDraw, Tool::Draw, i18n::N_("Draw"), i18n::N_("click to add, Shift+click and drag to set the new note's length, drag to move, drag the end to resize, right-click deletes"), "piano.toolDraw", theme::role::kDraw},
                        {ui::Icon::ToolBend, Tool::Bend, i18n::N_("Pitch bend"), i18n::N_("drag anywhere on a note to bend its pitch like an automation line (semitone steps, Alt: free); right-click a point: its curve menu, Shift+click: its next curve; double-click a point to remove it, a curve to straighten it, the note to reset its line"), "piano.toolBend", theme::role::kGraph},
                        {ui::Icon::ToolPaint, Tool::Paint, i18n::N_("Paint"), i18n::N_("paint notes while dragging"), "piano.toolPaint", theme::role::kPaint},
                        {ui::Icon::ToolDelete, Tool::Erase, i18n::N_("Delete"), i18n::N_("click or drag over notes to delete them"), "piano.toolDelete", theme::role::kDelete},
@@ -580,25 +592,8 @@ void drawPianoRoll(App& a) {
                          theme::rgb(theme::role::kGhost)))
         st.ghostNotes = !st.ghostNotes;
     }
-    if (roomLeft() > 110 + 120 + 30) {  // J-11: chord stamp + scale helper
+    if (roomLeft() > 120 + 30) {  // J-11: scale helper (the chord stamp has its own button beside the menu)
       ui::ToolbarDivider();
-      if (ui::IconButton("stampicon", ui::Icon::Stamp, st.stampChord >= 0, fh, "Chord stamp: Draw and Paint place this chord",
-                         theme::rgb(theme::role::kStamp)))
-        st.stampChord = st.stampChord >= 0 ? -1 : 0;
-      ImGui::SameLine(0, 2);
-      const auto& ch = tools::chords();
-      if (ui::BeginCombo("##stamp", st.stampChord >= 0 ? ch[static_cast<size_t>(st.stampChord)].name : "No stamp", 110)) {
-        if (ImGui::Selectable(i18n::tr("No stamp"), st.stampChord < 0)) st.stampChord = -1;
-        for (size_t i = 0; i < ch.size(); ++i)
-          if (ImGui::Selectable(ch[i].name, st.stampChord == static_cast<int>(i))) st.stampChord = static_cast<int>(i);
-        ImGui::Separator();
-        static const char* const inv[] = {"Root position", "1st inversion", "2nd inversion", "3rd inversion"};
-        for (int k = 0; k < 4; ++k)
-          if (ImGui::Selectable(inv[k], st.stampInversion == k)) st.stampInversion = k;
-        ImGui::EndCombo();
-      }
-      ui::Hint("Chord stamp: the chord Draw and Paint place (root = the clicked key)");
-      ImGui::SameLine(0, 4);
       static const char* const keys[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
       const auto& sc = tools::scales();
       std::string sl = st.scale > 0 ? std::string(keys[st.scaleRoot]) + " " + sc[static_cast<size_t>(st.scale)].name : "No scale";
@@ -666,6 +661,7 @@ void drawPianoRoll(App& a) {
     }
   }
   ui::EndToolbar();
+  stampui::escapeTurnsOff(a);  // Esc over the piano roll turns a chord stamp off
 
   if (!pat || !chan) {
     ImVec2 mn = ImGui::GetCursorScreenPos(), av = ImGui::GetContentRegionAvail();

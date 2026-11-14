@@ -26,6 +26,7 @@
 #include "core/Document.h"
 #include "core/BrowserIndex.h"
 #include "core/Groove.h"
+#include "core/Meter.h"
 #include "core/Mcp.h"
 #include "core/NoteTools.h"
 #include "core/PluginInfo.h"
@@ -300,6 +301,27 @@ void testGrids() {
   s.groove.shape.timing = {-0.5f, 0.0f};
   v = onTicks(s, p);
   expect(v.size() == 16 && v[0] == 0 && near(v[2], 48 - 12, 1e-9), "early cells: the first note stays at 0, later downbeats come early");
+}
+
+// K-203: without a pattern, the step grid and the swing's bar follow the meter in force.
+void testCellTicksMeterInForce() {
+  Song s = makeEmptySong();  // ppq 96, 4/4
+  expect(gv::cellTicks(s, nullptr, gv::kGridStep) == 24.0 && gv::cellTicks(s, nullptr, gv::kGridStep, 5000) == 24.0,
+         "meter in force: no meter changes, the step is a sixteenth as before");
+  Marker seven, tiny;
+  seven.pos = 4 * 384, seven.timeSigNum = 7, seven.timeSigDen = 8;          // bar 5: 7/8
+  tiny.pos = 4 * 384 + 4 * 336, tiny.timeSigNum = 3, tiny.timeSigDen = 32;  // after four bars of 7/8: 3/32
+  s.markers = {seven, tiny};
+  expect(gv::cellTicks(s, nullptr, gv::kGridStep, 0) == 24.0 && gv::cellTicks(s, nullptr, gv::kGridStep, seven.pos + 10) == 24.0,
+         "meter in force: 4/4 and 7/8 steps stay sixteenths");
+  // 3/32: a bar of 36 ticks holds 2 steps (a new pattern there gets 2), so a step is 18 ticks.
+  expect(gv::cellTicks(s, nullptr, gv::kGridStep, tiny.pos + 1) == 18.0, "meter in force: a 3/32 section steps by its own new-pattern step");
+  expect(gv::cellTicks(s, nullptr, gv::kGrid8th, tiny.pos + 1) == 48.0, "meter in force: note grids stay note values");
+  const Pattern& p = s.patterns[0];
+  expect(gv::cellTicks(s, &p, gv::kGridStep, tiny.pos + 1) == static_cast<double>(s.ticksPerStep(p)), "meter in force: a pattern keeps its own step");
+  GrooveShape sh;
+  const gv::Warp w0 = gv::makeWarp(s, nullptr, sh, 0.5, 0.0), w7 = gv::makeWarp(s, nullptr, sh, 0.5, 0.0, seven.pos);
+  expect(w0.bar == 384.0 && w7.bar == 336.0 && w7.cell == 24.0, "meter in force: the song-time swing's bar is the bar of the meter at its position");
 }
 
 // ------------------------------------------------------------------------------------------
@@ -746,6 +768,7 @@ int main() {
   testClassicIsBitIdentical();
   testFactoryPresetsPlaceNotes();
   testGrids();
+  testCellTicksMeterInForce();
   testPresetFiles(root);
   testProjectAndUndo();
   testCollab();

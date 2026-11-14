@@ -6,6 +6,7 @@
 #include "../engine/ProjectLoad.h"
 #include "DisplayConfirmUi.h"
 #include "DrumKitUi.h"
+#include "FileDialogUi.h"
 #include "GridlineVersion.h"
 #include <algorithm>
 #include <chrono>
@@ -46,6 +47,7 @@
 #include "PluginFoldersUi.h"
 #include "SmoothScrollUi.h"
 #include "McpUi.h"
+#include "OscUi.h"
 #include "TemplateUi.h"
 #include "FlpExportUi.h"
 #include "J59Ui.h"
@@ -68,18 +70,6 @@ namespace fs = std::filesystem;
 
 namespace {
 
-std::string lower(std::string s) {
-  std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-  return s;
-}
-
-bool matches(const std::string& name, const std::vector<std::string>& exts) {
-  std::string l = lower(name);
-  for (const auto& e : exts)
-    if (l.size() >= e.size() && l.compare(l.size() - e.size(), e.size(), e) == 0) return true;
-  return false;
-}
-
 // J-54: centred in the work area, size clamped to the screen (short screens / large interface scale).
 void centerNext(ImVec2 size, ImVec2 minSize = ImVec2(0, 0)) { ui::PlaceNextDialog(size, ImGuiCond_Appearing, minSize); }
 
@@ -99,214 +89,6 @@ void dialogTitle(App& a, const char* title, const char* subtitle = nullptr) {
   ImGui::PopFont();
   if (subtitle) ImGui::TextColored(theme::vec(pal().textDim), "%s", i18n::tr(subtitle));
   ImGui::Dummy(ImVec2(0, theme::kS1));
-}
-
-void fileDialog(App& a) {
-  FileDialogState& fd = a.fileDialog;
-  const auto& P = pal();
-  if (fd.open) {
-    ImGui::OpenPopup("##filedialog");
-    fd.open = false;
-  }
-  {
-    ImGuiViewport* vp = ImGui::GetMainViewport();
-    ImVec2 sz(std::min(680.0f, vp->WorkSize.x - 80), std::min(480.0f, vp->WorkSize.y - 80));
-    centerNext(sz);
-  }
-  bool keep = true;
-  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS4, theme::kS4));
-  bool open = ImGui::BeginPopupModal("##filedialog", &keep, ImGuiWindowFlags_NoTitleBar);
-  ImGui::PopStyleVar();
-  if (!open) return;
-  if (!fd.devAccept.empty() && !ImGui::IsWindowAppearing()) {  // J-167 dev check: as if this file were picked and OK clicked
-    const std::string chosen = std::move(fd.devAccept);
-    fd.devAccept.clear();
-    auto cb = fd.onOk;
-    ImGui::CloseCurrentPopup();
-    if (cb) cb(chosen);
-    ImGui::EndPopup();
-    return;
-  }
-  const bool folderMode = fd.exts.size() == 1 && fd.exts[0] == "/";
-  dialogTitle(a, fd.title.c_str());
-  std::error_code ec;
-  // K-42: a folder on a web drive is never looked at on this thread: it is read in the background
-  // (below), and an offline drive shows as such instead of jumping back home.
-  const auto dirRemote = [](const std::string& d) { return gl::remotefs::isRemote(d); };
-  if (fd.dir.empty() || (!dirRemote(fd.dir) && !fs::is_directory(fd.dir, ec))) fd.dir = gl::platform::homeEnv() ? gl::platform::homeEnv() : ".";
-  const float fh = ImGui::GetFrameHeight();
-  if (ui::IconButton("up", ui::Icon::Up, false, fh, "Parent folder")) fd.dir = fs::path(fd.dir).parent_path().string();
-  ImGui::SameLine(0, theme::kS1);
-  if (ui::IconButton("home", ui::Icon::Folder, false, fh, "Home folder")) fd.dir = gl::platform::homeEnv() ? gl::platform::homeEnv() : ".";
-  ImGui::SameLine(0, theme::kS1);
-  // K-75: in a Chromebook's (or the Android terminal's) Linux environment, the folders shared from
-  // the host; until one is shared, the button says how.
-  const std::string shared = chromeos::sharedFolder(chromeos::current());
-  if (!shared.empty()) {
-    if (ui::IconButton("shared", ui::Icon::Open, false, fh, "Shared folders")) {
-      if (fs::is_directory(shared, ec)) fd.dir = shared;
-      else a.notify(chromeos::shareHint(chromeos::current()));
-    }
-    ImGui::SameLine(0, theme::kS1);
-  }
-  static char dirBuf[1024];
-  std::snprintf(dirBuf, sizeof dirBuf, "%s", fd.dir.c_str());
-  ImGui::SetNextItemWidth(-1);
-  if (ImGui::InputText("##dir", dirBuf, sizeof dirBuf, ImGuiInputTextFlags_EnterReturnsTrue) && (dirRemote(dirBuf) || fs::is_directory(dirBuf, ec))) fd.dir = dirBuf;
-  if (ImGui::CalcTextSize(fd.dir.c_str()).x > ImGui::GetItemRectSize().x - 2 * ImGui::GetStyle().FramePadding.x) ui::Tooltip(fd.dir.c_str());
-  ui::FocusRing();
-
-  // J-54: kS1, name field, kS1, buttons under the list; reserved exactly, so
-  // the dialog itself never shows a scrollbar.
-  const float footer = ui::DialogFooterHeight(2);
-  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS1, theme::kS1));
-  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
-  ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::vec(P.surface950));
-  ImGui::BeginChild("##list", ImVec2(0, -footer), ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
-  ImGui::PopStyleColor();
-  std::vector<fs::path> dirs, files;
-  const char* noteTitle = nullptr;  // why the list is empty, or a wait
-  const char* noteBody = "";
-  {
-    // A local folder is listed here, at most twice a second (it used to be every frame).
-    static std::string localDir;
-    static double localAt = -1.0;
-    static gl::remotefs::Listing local;
-    const gl::remotefs::Listing* l = nullptr;
-    gl::remotefs::DirState st;
-    if (dirRemote(fd.dir)) {
-      st = gl::remotefs::listAsync(fd.dir, 15.0);
-      l = st.listing.get();
-      if (st.pending && !l) {
-        const bool stalled = st.waited >= gl::projload::kStallSeconds;
-        noteTitle = stalled ? "The drive is not answering" : "Reading this folder";
-        noteBody = stalled ? "It may be offline. Go up a folder, or keep waiting" : "On a web drive this can take a moment";
-      }
-    } else {
-      if (localDir != fd.dir || a.now - localAt >= 0.5 || a.now < localAt) {
-        local = gl::remotefs::listNow(fd.dir);
-        localDir = fd.dir;
-        localAt = a.now;
-      }
-      l = &local;
-    }
-    if (l) {
-      if (!l->ok && l->entries.empty()) {
-        noteTitle = "This folder cannot be read";
-        noteBody = "If it is on a drive, check that the drive is connected and online";
-      }
-      for (const auto& e : l->entries) {
-        if (e.isDir) dirs.push_back(fs::u8path(fd.dir) / fs::u8path(e.name));
-        else if (!folderMode && matches(e.name, fd.exts)) files.push_back(fs::u8path(fd.dir) / fs::u8path(e.name));
-      }
-    }
-  }
-  auto byName = [](const fs::path& x, const fs::path& y) { return lower(x.filename().string()) < lower(y.filename().string()); };
-  std::sort(dirs.begin(), dirs.end(), byName);
-  std::sort(files.begin(), files.end(), byName);
-  std::string chosen;
-  auto row = [&](const fs::path& f, bool dir) {
-    std::string n = f.filename().string();
-    ImGui::PushID(n.c_str());
-    ImVec2 q = ImGui::GetCursorScreenPos();
-    float w = ImGui::GetContentRegionAvail().x;
-    bool sel = !dir && fd.name == n;
-    bool clicked = ImGui::InvisibleButton("##r", ImVec2(w, 24));
-    bool hov = ImGui::IsItemHovered();
-    bool dbl = hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    if (sel || hov) dl->AddRectFilled(q, ImVec2(q.x + w, q.y + 24), sel ? theme::withAlpha(P.accent, 0.3f) : P.surface800, theme::kRadiusSm);
-    ui::drawIcon(dl, dir ? ui::Icon::Folder : isAudioFile(f.string()) ? ui::Icon::Wave : ui::Icon::File, ImVec2(q.x + 14, q.y + 12), 12,
-                 dir ? P.textDim : P.textFaint);
-    theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption + 1, ImVec2(q.x + 30, q.y + 5), w - 40, P.text, n.c_str());
-    if (dir && dbl) fd.dir = f.string();
-    if (!dir && clicked) {
-      fd.name = n;
-      if (isAudioFile(f.string())) a.previewSample(f.string());
-    }
-    if (!dir && dbl) chosen = f.string();
-    ImGui::PopID();
-  };
-  for (const auto& d : dirs) row(d, true);
-  for (const auto& f : files) row(f, false);
-  if (dirs.empty() && files.empty() && !noteTitle && !shared.empty() && fs::path(fd.dir).lexically_normal() == fs::path(shared)) {
-    noteTitle = "Nothing is shared with Linux yet";  // K-75
-    noteBody = chromeos::shareHint(chromeos::current());
-  }
-  if (dirs.empty() && files.empty()) {
-    ImVec2 mn = ImGui::GetWindowPos(), sz = ImGui::GetWindowSize();
-    ui::EmptyState(ImGui::GetWindowDrawList(), mn, ImVec2(mn.x + sz.x, mn.y + sz.y), noteTitle ? noteTitle : "This folder is empty",
-                   noteTitle ? noteBody : folderMode ? "Choose it, or open a sub-folder" : "No matching files here");
-  }
-  ImGui::PopStyleVar();  // rows sit flush inside the list; the list itself keeps the normal gap below it
-  ImGui::EndChild();
-  ImGui::PopStyleVar();
-  ImGui::Dummy(ImVec2(0, theme::kS1));
-  if (!folderMode) {
-    static char nameBuf[512];
-    std::snprintf(nameBuf, sizeof nameBuf, "%s", fd.name.c_str());
-    ImGui::SetNextItemWidth(-1);
-    if (ImGui::InputTextWithHint("##name", i18n::tr("File name"), nameBuf, sizeof nameBuf)) fd.name = nameBuf;
-    ui::FocusRing();
-  } else {
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextColored(theme::vec(P.textDim), "%s", theme::fitText(fd.dir.c_str(), ImGui::GetContentRegionAvail().x));
-  }
-  ImGui::Dummy(ImVec2(0, theme::kS1));
-  // Save dialogs with types: the name always carries the chosen type's extension.
-  const std::string target = fd.name.empty() ? std::string()
-                             : (fs::path(fd.dir) / (fd.save && fd.nameForType ? fd.nameForType(fd.name, fd.typeIndex) : fd.name)).string();
-  if (!fd.confirmOverwrite.empty() && fd.confirmOverwrite != target) fd.confirmOverwrite.clear();
-  const char* okLabel = !fd.confirmOverwrite.empty() ? "Replace" : fd.save ? "Save" : folderMode ? "Choose this folder" : "Open";
-  float okW = std::max(96.0f, ImGui::CalcTextSize(okLabel).x + 24);
-  // J-52: file types (Open: all projects / one format; Save as: the format written).
-  if (!fd.types.empty()) {
-    fd.typeIndex = std::clamp(fd.typeIndex, 0, static_cast<int>(fd.types.size()) - 1);
-    const float typeW = std::max(120.0f, ImGui::GetContentRegionAvail().x - (96 + okW + theme::kS2 * 3));
-    if (ui::BeginCombo("##types", i18n::tr(fd.types[static_cast<size_t>(fd.typeIndex)].label.c_str()), typeW)) {  // J-78: translated labels
-      for (size_t i = 0; i < fd.types.size(); ++i)
-        if (ImGui::Selectable(i18n::tr(fd.types[i].label.c_str()), static_cast<int>(i) == fd.typeIndex)) {
-          fd.typeIndex = static_cast<int>(i);
-          fd.exts = fd.types[i].exts;
-          if (fd.save && fd.nameForType && !fd.name.empty()) fd.name = fd.nameForType(fd.name, fd.typeIndex);
-        }
-      ImGui::EndCombo();
-    }
-    ImGui::SameLine(0, theme::kS2);
-  } else if (!fd.confirmOverwrite.empty()) {
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextColored(theme::vec(P.hot), "%s", "Already exists");
-    ImGui::SameLine(0, theme::kS2);
-  }
-  alignRight(96 + theme::kS2 + okW);
-  bool cancel = ui::TextButton("Cancel", false, 96) || ::gl::keys::escapePressed();
-  ImGui::SameLine(0, theme::kS2);
-  bool ok = ui::PrimaryButton(okLabel, okW);
-  if (!fd.confirmOverwrite.empty()) ui::Hint((fd.name + " already exists. Replace it?").c_str());
-  if (ImGui::IsKeyPressed(ImGuiKey_Enter) && !fd.name.empty()) ok = true;
-  if (ok && chosen.empty()) {
-    if (folderMode)
-      chosen = fd.dir;
-    else if (!fd.name.empty())
-      chosen = target;
-  }
-  // Saving over an existing file asks once (the button turns into Replace).
-  if (fd.save && ok && !chosen.empty() && chosen != fd.confirmOverwrite &&
-      (dirRemote(chosen) ? gl::remotefs::probeWithin(chosen, 2000).exists : fs::exists(chosen, ec))) {
-    fd.confirmOverwrite = chosen;
-    fd.name = fs::path(chosen).filename().string();
-    chosen.clear();
-  }
-  if (!chosen.empty() && (ok || !fd.save)) {
-    auto cb = fd.onOk;
-    ImGui::CloseCurrentPopup();
-    a.stopPreview();
-    if (cb) cb(chosen);
-  } else if (cancel || !keep) {
-    a.stopPreview();
-    ImGui::CloseCurrentPopup();
-  }
-  ImGui::EndPopup();
 }
 
 ImVec2 gDevSettingsSize(0, 0);  // --settings-size (J-137)
@@ -1169,8 +951,9 @@ void drawDialogs(App& a) {
   drumkitui::draw(a);   // K-162: drum kits read on a worker, their import report
   drawProjectScriptWindow(a);  // J-57: project script settings / run
   mcpui::tick(a);                // SC-07: AI assistant server (opt-in, loopback only)
+  oscui::tick(a);                // OSC server (opt-in, this computer only unless the network is switched on)
   mcpui::drawActivityWindow(a);
-  fileDialog(a);
+  filedlgui::draw(a);  // the Open / Save dialog (FileDialogUi.h)
 }
 
 namespace {
@@ -1279,6 +1062,7 @@ void handleGlobalShortcuts(App& a) {
   if (typed("view.pianoRoll")) toggle(a.showPiano, "Piano roll");
   if (typed("view.browser")) toggle(a.showBrowser, "Browser");
   if (typed("view.mixer")) toggle(a.showMixer, "Mixer");
+  if (typed("view.stage")) toggle(a.showStage, "Mixer");  // the mixer window's Stage view (stageui::sync opens the mixer)
   // K-124: Esc in an editor or plugin window brings the playlist (the main window) to the front,
   // once nothing else used the key this frame: a popup, menu or dialog, a drag, a text field, a tool.
   if (!keys::escapeBusy() && editorWindowFocused() && keys::pressedPastEditor("view.backToPlaylist")) layoutui::showPlaylist(a);

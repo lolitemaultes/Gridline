@@ -624,6 +624,15 @@ std::string modelToData(const Model& m) {
   Json mn = Json::makeArray();
   for (const auto& n : m.macroName) mn.array.push_back(str(n));
   r.object["macroNames"] = mn;
+  if (!m.patchPos.empty()) {
+    Json pp = Json::makeArray();
+    for (const auto& [id, xy] : m.patchPos) {
+      Json e = Json::makeArray();
+      e.array = {num(id), num(xy[0]), num(xy[1])};
+      pp.array.push_back(e);
+    }
+    r.object["patchPos"] = pp;
+  }
   if (!m.tuning.empty()) {
     r.object["tuning"] = str(m.tuning);
     r.object["tuningName"] = str(m.tuningName);
@@ -896,6 +905,15 @@ bool modelFromData(const std::string& data, Model& m) {
   if (const Json* mn = r.find("macroNames"); mn && mn->is(Json::Type::Array))
     for (size_t i = 0; i < std::min<size_t>(mn->array.size(), kMacros); ++i)
       if (mn->array[i].is(Json::Type::String)) m.macroName[i] = mn->array[i].str.substr(0, 64);
+  if (const Json* pp = r.find("patchPos"); pp && pp->is(Json::Type::Array))
+    for (const auto& e : pp->array) {
+      if (!e.is(Json::Type::Array) || e.array.size() < 3) continue;
+      bool ok = true;
+      for (size_t k = 0; k < 3; ++k) ok = ok && e.array[k].is(Json::Type::Number) && std::isfinite(e.array[k].number);
+      if (!ok || e.array[0].number < 0 || e.array[0].number > 899) continue;
+      m.patchPos[static_cast<int>(e.array[0].number)] = {static_cast<float>(std::clamp(e.array[1].number, -20000.0, 20000.0)),
+                                                         static_cast<float>(std::clamp(e.array[2].number, -20000.0, 20000.0))};
+    }
   m.tuning = r.text("tuning");
   m.tuningName = r.text("tuningName");
   m.presetName = r.text("name");

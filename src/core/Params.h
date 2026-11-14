@@ -36,6 +36,8 @@ enum class MixerParam : uint32_t {
   Volume = 0, Pan, StereoSep, Mute,
   // Strip EQ (MixerTrack::eqGain / eqFreq / eqQ), bands low · mid · high.
   EqLowGain, EqMidGain, EqHighGain, EqLowFreq, EqMidFreq, EqHighFreq, EqLowQ, EqMidQ, EqHighQ,
+  Depth,  // Stage distance (MixerTrack::depth), 0..1
+  Focus,  // Stage focus (MixerTrack::focus), -1..1
   Count
 };
 inline constexpr uint32_t kChannelPluginBase = 100;

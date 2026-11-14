@@ -17,6 +17,9 @@
 #include "../core/Platform.h"
 #include "ExportUi.h"
 #include "Keys.h"
+#include "MixerMeters.h"
+#include "StageView.h"
+#include "../core/StageRoomOps.h"
 #include "Look.h"
 #include "../../third_party/imgui/imgui.h"
 #include "../../third_party/imgui/imgui_internal.h"
@@ -35,6 +38,7 @@
 #include "../core/MixerLayout.h"
 #include "../core/LevelMeter.h"
 #include "../core/MixerOps.h"
+#include "../core/TrackOrder.h"
 #include "../core/WindowPlacement.h"
 #include "../core/PluginStandIn.h"
 #include "../core/WheelRoute.h"
@@ -59,7 +63,40 @@ struct MixerDevRect {
   int frame = -1;
 };
 std::map<std::string, MixerDevRect> gMixerDevRects;  // strip headers and menu rows as drawn last ("mixer" dev dump)
+// GitHub #46: strips dragged by their name plate to a new place. The press is seen while the strip
+// draws; once the pointer moves the selected strips go along, an insertion line shows where they
+// land (after the strips are drawn, from their rectangles), Esc or a right-click cancels and the
+// release moves them (one undo step, core/TrackOrder.h).
+struct StripRect {
+  size_t i;
+  ImVec2 a, b;
+};
+std::vector<StripRect> gStripRects;  // the strips drawn this frame (mixer index, screen rectangle)
+struct StripDrag {
+  ObjectId pressed = kNoId;  // the strip whose plate was pressed
+  ImVec2 at;                 // where
+  bool active = false, cancelled = false;
+  std::vector<ObjectId> ids;  // what moves (mixer order)
+  int before = -1;            // drop point: before mixer index (-1: none)
+  int dock = trackorder::kKeepDock;
+};
+StripDrag gStripDrag;
 }  // namespace
+std::string mixerDragDev() {
+  const StripDrag& d = gStripDrag;
+  char b[96];
+  std::snprintf(b, sizeof b, "stripdrag active %d cancelled %d before %d dock %d moving %zu", d.active ? 1 : 0, d.cancelled ? 1 : 0, d.before,
+                d.dock == trackorder::kKeepDock ? 9 : d.dock, d.ids.size());
+  std::string out = b;
+  out += "\n  strips";  // K-224: the strips drawn last frame (mixer indexes), so a test sees the room filter
+  for (size_t k = 0; k < gStripRects.size(); ++k) out += (k ? "," : " ") + std::to_string(gStripRects[k].i);
+  for (const StripRect& r : gStripRects) {
+    std::snprintf(b, sizeof b, "\n  srect %zu %.0f %.0f %.0f %.0f", r.i, static_cast<double>(r.a.x), static_cast<double>(r.a.y), static_cast<double>(r.b.x),
+                  static_cast<double>(r.b.y));
+    out += b;
+  }
+  return out;
+}
 float mixerStripsScrollY() { return gMixerStripsScroll; }
 float mixerStripsScrollX() { return gMixerStripsScrollX; }
 bool mixerWheelScrolls() { return gMixerWheelScrolls; }
@@ -281,10 +318,14 @@ float slotGlideOffset(ObjectId track, int k) {
 void dropSlot(App& a, const SlotDrag& from, ObjectId track, int slot) {
   const bool copy = ImGui::GetIO().KeyCtrl;
   if (from.track == track && from.slot == slot) return;
-  if (!mixops::moveSlotTo(a.doc, from.track, from.slot, track, slot, copy))
-    a.notify("No room: every effect slot below that one is taken", true);
-  else
-    a.selMixer = track;
+  // Next frame (App::later): a move to another track is a whole-song edit that replaces the mixer,
+  // and the strips and the inspector drawing now hold references to its tracks and slots.
+  a.later([&a, from, track, slot, copy] {
+    if (!mixops::moveSlotTo(a.doc, from.track, from.slot, track, slot, copy))
+      a.notify("No room: every effect slot below that one is taken", true);
+    else
+      a.selMixer = track;
+  });
 }
 
 // First free slot of a track (-1 = full).
@@ -474,6 +515,18 @@ struct StripCtx {
   bool masterScale = true;  // J-38: the master's dB scale (dropped first in a very thin mixer)
 };
 
+// K-224: the strips the mixer shows, in display order: all of them, or with the
+// room filter on the master plus the Stage's shown room's tracks and its space track.
+std::vector<size_t> visibleOrder(App& a) {
+  const Song& s = a.doc.song();
+  std::vector<size_t> order = mixops::displayOrder(s);
+  if (roomops::roomCount(s) > 1 && a.settings.getNumber("ui.mix.roomFilter") >= 0.5) {
+    const int r = stageui::currentRoom(a);
+    order.erase(std::remove_if(order.begin(), order.end(), [&](size_t i) { return i != 0 && roomops::trackRoom(s, s.mixer[i]) != r; }), order.end());
+  }
+  return order;
+}
+
 void selectTrack(App& a, ObjectId id) {
   MixerViewState& v = a.mixerView;
   const ImGuiIO& io = ImGui::GetIO();
@@ -482,7 +535,7 @@ void selectTrack(App& a, ObjectId id) {
     if (!v.sel.erase(id)) v.sel.insert(id);
   } else if (io.KeyShift && a.selMixer != kNoId) {
     const Song& s = a.doc.song();
-    std::vector<size_t> order = mixops::displayOrder(s);
+    std::vector<size_t> order = visibleOrder(a);  // K-224: never range over tracks the room filter hides
     int i0 = -1, i1 = -1;
     for (size_t k = 0; k < order.size(); ++k) {
       if (s.mixer[order[k]].id == a.selMixer) i0 = static_cast<int>(k);
@@ -529,7 +582,14 @@ void drawStrip(App& a, size_t i, ImVec2 p, float stripW, float stripH, const Str
 
   // Header (click: select, Ctrl/Shift: multi-select, right-click: menu, drop target for effects).
   ImGui::SetCursorScreenPos(p);
-  if (ImGui::InvisibleButton("hdr", ImVec2(stripW, plateH))) selectTrack(a, t.id);
+  gStripRects.push_back({i, p, ImVec2(p.x + stripW, p.y + stripH)});
+  // (a release that ends a drag is not a click: the selection that moved stays selected)
+  if (ImGui::InvisibleButton("hdr", ImVec2(stripW, plateH)) && !gStripDrag.active) selectTrack(a, t.id);
+  if (ImGui::IsItemActivated() && i > 0 && gStripDrag.pressed == kNoId) {  // GitHub #46: maybe a drag
+    gStripDrag = StripDrag{};
+    gStripDrag.pressed = t.id;
+    gStripDrag.at = ImGui::GetIO().MouseClickedPos[0];
+  }
   devMenuItem("strip " + std::to_string(i));
   if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && i > 0) {
     ObjectId id = t.id;
@@ -558,7 +618,7 @@ void drawStrip(App& a, size_t i, ImVec2 p, float stripW, float stripH, const Str
     }
     if (t.disabled) h += "   (disabled: input passes through)";
     if (!t.group.empty()) h += "   group " + t.group;
-    ui::Hint(h + "   (click: select \xC2\xB7 Ctrl/Shift: add to selection \xC2\xB7 double-click: rename \xC2\xB7 right-click: track menu \xC2\xB7 drop an effect here)");
+    ui::Hint(h + "   (click: select \xC2\xB7 Ctrl/Shift: add to selection \xC2\xB7 double-click: rename \xC2\xB7 drag: move \xC2\xB7 right-click: track menu \xC2\xB7 drop an effect here)");
   }
   if (ImGui::BeginDragDropTarget()) {
     {  // J-97: effects into the first free slot (instruments refused with a reason)
@@ -636,8 +696,7 @@ void drawStrip(App& a, size_t i, ImVec2 p, float stripW, float stripH, const Str
     if (ImGui::InvisibleButton("m", ImVec2(18, 16))) a.doc.setParam(mixerParam(t.id, MixerParam::Mute), t.muted ? 0 : 1, false);
     ui::Hint(t.muted ? "Track is muted: click to unmute" : "Track is on: click to mute");
     ui::Tooltip(t.muted ? "Unmute" : "Mute");
-    float lvl = 0;
-    if (auto rt = a.builder.mixerRuntime(t.id)) lvl = std::max(rt->peakL.load(), rt->peakR.load());
+    const float lvl = mixmeters::get(a, t.id).peak();  // read once per frame (the Stage shares it)
     ui::Led(dl, ImVec2(p.x + 12, lampY), 4.5f, !t.muted, std::min(1.0f, lvl * 2));
   }
   if (i > 0) {
@@ -668,13 +727,8 @@ void drawStrip(App& a, size_t i, ImVec2 p, float stripW, float stripH, const Str
   const bool scale = i == 0 && v.masterScale && cx0.masterScale;
   const float fy = y + 2, bottomH = 44;
   const float fh = std::max(40.0f, p.y + stripH - fy - bottomH);
-  float pl = 0, pr = 0, rl = 0, rr = 0;
-  if (auto rt = a.builder.mixerRuntime(t.id)) {
-    pl = rt->peakL.exchange(0);
-    pr = rt->peakR.exchange(0);
-    rl = rt->rmsL.exchange(0);
-    rr = rt->rmsR.exchange(0);
-  }
+  const mixmeters::Reading mr = mixmeters::get(a, t.id);
+  const float pl = mr.peakL, pr = mr.peakR, rl = mr.rmsL, rr = mr.rmsR;
   const float meterW = D.meterW, faderW = D.faderW, groupW = meterW + 5 + faderW;
   const float gx = std::round(cx - groupW * 0.5f - (scale ? 8.0f : 0.0f));
   dl->AddRectFilled(ImVec2(gx - 3, fy - 4), ImVec2(gx + groupW + 3, fy + fh + 4), P.dark ? P.field : theme::mix(P.surface600, P.lineStrong, 0.4f), theme::kRadiusSm);
@@ -906,6 +960,21 @@ void mixerDeselect(App& a) {
   if (a.selMixer != kNoId) a.mixerView.sel.insert(a.selMixer);
 }
 
+void mixerSelectRoutedChannels(App& a, ObjectId track) {
+  if (track == kNoId) return;
+  a.selChannels.clear();
+  for (const auto& c : a.doc.song().channels)
+    if (c.mixerTrack == track) a.selChannels.insert(c.id);
+  if (!a.selChannels.empty()) a.selChannel = *a.selChannels.begin();
+  a.showRack = true;
+}
+
+void mixerSelectRoutedTo(App& a, ObjectId track) {
+  if (track == kNoId) return;
+  auto v = mixops::routedTo(a.doc.song(), track);
+  a.mixerView.sel = std::set<ObjectId>(v.begin(), v.end());
+}
+
 // The tracks a reset of `pid` covers: empty unless it is a per-track control
 // of one of several selected tracks.
 static std::vector<ObjectId> resetScope(App& a, ParamId pid) {
@@ -941,6 +1010,7 @@ void mixerResetItems(App& a, const std::vector<ObjectId>& tracks) {
   if (ImGui::MenuItem(i18n::tr("Volume"))) mixops::resetParams(a.doc, tracks, {P::Volume});
   if (ImGui::MenuItem(i18n::tr("Pan"))) mixops::resetParams(a.doc, tracks, {P::Pan});
   if (ImGui::MenuItem(i18n::tr("Stereo separation"))) mixops::resetParams(a.doc, tracks, {P::StereoSep});
+  if (ImGui::MenuItem(i18n::tr("Stage distance and focus"))) mixops::resetParams(a.doc, tracks, {P::Depth, P::Focus});
   if (ImGui::MenuItem(i18n::tr("Strip EQ")))
     mixops::resetParams(a.doc, tracks, {P::EqLowGain, P::EqMidGain, P::EqHighGain, P::EqLowFreq, P::EqMidFreq, P::EqHighFreq, P::EqLowQ, P::EqMidQ, P::EqHighQ});
   ImGui::Separator();
@@ -1029,6 +1099,8 @@ void mixerSendMenu(App& a, ObjectId from, ObjectId to) {
   if (ImGui::MenuItem(i18n::tr("Sidechain to this track only"))) go(mixops::RouteMode::SidechainOnly);
   ImGui::Separator();
   if (ImGui::MenuItem(i18n::tr("Pre-fader send"), nullptr, sd && sd->preFader, sd != nullptr)) mixops::setSendPreFader(a.doc, from, to, !sd->preFader);
+  if (ImGui::MenuItem(i18n::tr("Stage room send (keeps its level with distance)"), nullptr, sd && sd->stageRoom, sd != nullptr && !sd->sidechain))
+    mixops::setSendRoom(a.doc, from, to, !sd->stageRoom);
   if (ImGui::MenuItem(i18n::tr("Remove route"), nullptr, false, sd != nullptr)) a.doc.setSend(from, to, 0.0f);
 }
 
@@ -1261,6 +1333,15 @@ static void mixerToolbar(App& a) {
   ui::BeginToolbar("##mixtb");
   menuButton("mixmenu", "Mixer menu: disk recording, delay compensation, view, tracks", [&a]() { mixerOptionsMenu(a); });
   ImGui::SameLine(0, 6);
+  stageui::viewSwitch(a);  // Mix | Stage
+  ImGui::SameLine(0, 6);
+  if (roomops::roomCount(a.doc.song()) > 1) {  // K-224: only the Stage's shown room
+    const bool on = a.settings.getNumber("ui.mix.roomFilter") >= 0.5;
+    const std::string label = on ? roomops::roomName(a.doc.song(), stageui::currentRoom(a)) : std::string(i18n::tr("All rooms"));
+    if (ui::TextButton(label.c_str(), on, 0, "Show every room's tracks, or only the room the Stage shows (pick it on the Stage)"))
+      a.settings.set("ui.mix.roomFilter", on ? 0 : 1);
+    ImGui::SameLine(0, 6);
+  }
   // J-28: as a thin column the strips are compact and wrap by themselves;
   // strip width and rows stay in the mixer menu.
   const bool column = ImGui::GetWindowWidth() < mixlayout::kColumnBelow;
@@ -1346,6 +1427,90 @@ static void wheelScrollStrips() {
   }
 }
 
+// GitHub #46: the strip drag after the strips are drawn (see StripDrag): the drop point from the
+// strips' rectangles, the insertion line, Esc, the edges scrolling the pane, the move on release.
+static void updateStripDrag(App& a, bool column) {
+  StripDrag& d = gStripDrag;
+  if (d.pressed == kNoId) return;
+  const Song& s = a.doc.song();
+  const ImGuiIO& io = ImGui::GetIO();
+  const bool down = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+  if (!s.mixerTrack(d.pressed)) {
+    d = StripDrag{};
+    return;
+  }
+  if (down && !d.active && !d.cancelled && !ImGui::GetDragDropPayload() &&
+      std::hypot(io.MousePos.x - d.at.x, io.MousePos.y - d.at.y) > 5.0f) {
+    d.active = true;
+    const std::set<ObjectId>& sel = a.mixerView.sel;
+    std::set<ObjectId> moving = sel.count(d.pressed) ? sel : std::set<ObjectId>{d.pressed};
+    moving.erase(s.masterId());
+    d.ids = mixops::inMixerOrder(s, moving);
+  }
+  if (down && d.active && !d.cancelled && (ImGui::IsKeyPressed(ImGuiKey_Escape) || ImGui::IsMouseClicked(ImGuiMouseButton_Right))) {
+    d.cancelled = true;
+    a.setHint(i18n::tr("Move cancelled"));
+  }
+  if (down && d.active && !d.cancelled && !gStripRects.empty()) {
+    const auto& P = pal();
+    const ImVec2 m = io.MousePos;
+    const float gap = 2.0f;
+    // The strip the drop is next to: one in the pointer's row whose span (with the gaps) holds it,
+    // else the nearest one in that row, else the nearest one.
+    const StripRect* best = nullptr;
+    float bestD = 1e30f;
+    bool inRow = false;
+    for (const StripRect& r : gStripRects) {
+      const bool row = m.y >= r.a.y && m.y < r.b.y;
+      const float dx = m.x < r.a.x - gap ? r.a.x - gap - m.x : m.x > r.b.x + gap ? m.x - r.b.x - gap : 0.0f;
+      const float dy = row ? 0.0f : std::min(std::fabs(m.y - r.a.y), std::fabs(m.y - r.b.y));
+      const float dist = row ? dx : 1e6f + dx + dy;
+      if ((row && !inRow) || dist < bestD) best = &r, bestD = dist, inRow = inRow || row;
+    }
+    const bool after = best->i == 0 || m.x >= (best->a.x + best->b.x) * 0.5f;
+    d.before = best->i == 0 ? 1 : static_cast<int>(best->i) + (after ? 1 : 0);
+    d.dock = best->i == 0 ? trackorder::kKeepDock : std::clamp(s.mixer[best->i].dock, -1, 1);
+    if (column && d.dock > 0) d.dock = trackorder::kKeepDock;  // the thin mixer shows no right dock
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    for (const StripRect& r : gStripRects)  // the strips that move, lit
+      if (std::find(d.ids.begin(), d.ids.end(), s.mixer[r.i].id) != d.ids.end())
+        dl->AddRectFilled(r.a, r.b, theme::withAlpha(P.hot, 0.14f), theme::kRadius);
+    const float x = std::round(after ? best->b.x + gap * 0.5f : best->a.x - gap * 0.5f);
+    dl->AddRectFilled(ImVec2(x - 1.5f, best->a.y), ImVec2(x + 1.5f, best->b.y), P.hot, 1.0f);
+    dl->AddTriangleFilled(ImVec2(x - 5, best->a.y), ImVec2(x + 5, best->a.y), ImVec2(x, best->a.y + 6), P.hot);
+    dl->AddTriangleFilled(ImVec2(x - 5, best->b.y), ImVec2(x + 5, best->b.y), ImVec2(x, best->b.y - 6), P.hot);
+    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+    a.setHint(d.ids.size() > 1 ? i18n::tr("Drop to move the tracks here \xC2\xB7 Esc: cancel") : i18n::tr("Drop to move the track here \xC2\xB7 Esc: cancel"));
+    // Near an edge of the pane the strips scroll along.
+    const ImVec2 w0 = ImGui::GetWindowPos(), ws = ImGui::GetWindowSize();
+    if (!column) {
+      if (m.x < w0.x + 24) ImGui::SetScrollX(std::max(0.0f, ImGui::GetScrollX() - 10.0f));
+      else if (m.x > w0.x + ws.x - 24) ImGui::SetScrollX(std::min(ImGui::GetScrollMaxX(), ImGui::GetScrollX() + 10.0f));
+    } else {
+      if (m.y < w0.y + 24) ImGui::SetScrollY(std::max(0.0f, ImGui::GetScrollY() - 10.0f));
+      else if (m.y > w0.y + ws.y - 24) ImGui::SetScrollY(std::min(ImGui::GetScrollMaxY(), ImGui::GetScrollY() + 10.0f));
+    }
+  }
+  if (!down) {
+    if (d.active && !d.cancelled && d.before >= 1 && !d.ids.empty()) {
+      const std::vector<ObjectId> ids = d.ids;
+      if (trackorder::moveMixerTracks(a.doc, ids, d.before, d.dock)) {
+        a.mixerView.sel = std::set<ObjectId>(ids.begin(), ids.end());
+        a.selMixer = d.pressed;
+      }
+    }
+    d = StripDrag{};
+  }
+}
+
+// K-224: a thin line in the colour of the strip's Stage room along its foot (projects with rooms).
+static void roomLine(App& a, size_t i, ImVec2 p, float w, float h) {
+  const Song& s = a.doc.song();
+  const int r = roomops::trackRoom(s, s.mixer[i]);
+  ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(p.x + 2, p.y + h - 3), ImVec2(p.x + w - 2, p.y + h - 1), theme::content(roomops::roomColor(s, r)), 1.0f);
+  if (ImGui::IsMouseHoveringRect(ImVec2(p.x, p.y + h - 5), ImVec2(p.x + w, p.y + h + 1))) ui::Tooltip(roomops::roomName(s, r).c_str());
+}
+
 void drawMixer(App& a) {
   if (!a.showMixer) {
     drawRoutingOverview(a);
@@ -1361,6 +1526,12 @@ void drawMixer(App& a) {
   MixerViewState& v = a.mixerView;
   if (!s.mixerTrack(a.selMixer) && !s.mixer.empty()) a.selMixer = s.masterId();
   for (auto it = v.sel.begin(); it != v.sel.end();) it = s.mixerTrack(*it) ? std::next(it) : v.sel.erase(it);
+  if (a.showStage) {  // the Stage view: the same tracks on a stage (app/StageView.h)
+    stageui::drawBody(a);
+    ui::EndDockWindow();
+    drawRoutingOverview(a);
+    return;
+  }
   if (!v.layoutOverride) v.layout = std::clamp(static_cast<int>(a.settings.getNumber("ui.mixerLayout")), 0, 2);  // View > Mixer layout
   const MixerTrack* sel = s.mixerTrack(a.selMixer);
   // Mixer shortcuts while the window has focus.
@@ -1370,6 +1541,7 @@ void drawMixer(App& a) {
     if (keys::pressed("mixer.waveforms")) v.waveforms = !v.waveforms;
   }
   mixerToolbar(a);
+  sel = s.mixerTrack(a.selMixer);  // the toolbar's menus may have replaced the mixer
   const float W = ImGui::GetContentRegionAvail().x, Hm = ImGui::GetContentRegionAvail().y;
   // J-28: docked as a thin column (the default workspace) the mixer stacks:
   // compact strips wrap into as many rows as needed (vertical scrolling, every
@@ -1381,7 +1553,8 @@ void drawMixer(App& a) {
   // below when there is room for it.
   const bool column = W < mixlayout::kColumnBelow;
   const bool groups = !mixops::groupNames(s).empty();
-  const std::vector<size_t> order = mixops::displayOrder(s);
+  const std::vector<size_t> order = visibleOrder(a);  // K-224: with the room filter applied
+  const bool rooms = roomops::roomCount(s) > 1;
   mixlayout::Layout ml;
   if (column) {
     mixlayout::Input in;
@@ -1414,6 +1587,7 @@ void drawMixer(App& a) {
   ImGui::PopStyleVar(2);
   gMixerStripsScroll = ImGui::GetScrollY();
   gMixerStripsScrollX = ImGui::GetScrollX();
+  gStripRects.clear();
   {
     StripCtx ctx;
     ctx.focus = sel;
@@ -1448,12 +1622,14 @@ void drawMixer(App& a) {
           }
         }
         if (!cull || ImGui::IsRectVisible(p, ImVec2(p.x + c.w, p.y + ml.rowH))) drawStrip(a, flow[k], p, c.w, ml.rowH, ctx);
+        if (rooms && flow[k] != 0) roomLine(a, flow[k], p, c.w, ml.rowH);
       }
       ImGui::SetCursorScreenPos(ImVec2(o.x + ml.addX + 4, o.y + static_cast<float>(ml.addRow) * ml.rowPitch + bandH));
-      if (ui::IconButton("addtrack", ui::Icon::Plus, false, 28, "Add a mixer track")) {
-        ObjectId id = a.doc.addMixerTrack();
-        if (id) a.selMixer = id;
-      }
+      if (ui::IconButton("addtrack", ui::Icon::Plus, false, 28, "Add a mixer track"))
+        a.later([&a] {  // next frame: the inspector still holds the selected track
+          ObjectId id = a.doc.addMixerTrack();
+          if (id) a.selMixer = id;
+        });
       ImGui::SetCursorScreenPos(o);
       const int rowsAll = std::max(ml.rows, ml.addRow + 1);
       ImGui::Dummy(ImVec2(ml.contentW, static_cast<float>(rowsAll) * ml.rowPitch - mixlayout::kRowGap));
@@ -1465,7 +1641,7 @@ void drawMixer(App& a) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     // Sections: left dock (master first), middle (wraps into rows), right dock.
     std::vector<size_t> left, middle, right;
-    for (size_t i : mixops::displayOrder(s)) {
+    for (size_t i : order) {
       const int dock = i == 0 ? -1 : std::clamp(s.mixer[i].dock, -1, 1);
       (dock < 0 ? left : dock > 0 && !column ? right : middle).push_back(i);
     }
@@ -1498,10 +1674,11 @@ void drawMixer(App& a) {
     x = midEnd + gap;
     // Add-track button after the middle section.
     ImGui::SetCursorScreenPos(ImVec2(x + theme::kS1, o.y + bandH));
-    if (ui::IconButton("addtrack", ui::Icon::Plus, false, 28, "Add a mixer track")) {
-      ObjectId id = a.doc.addMixerTrack();
-      if (id) a.selMixer = id;
-    }
+    if (ui::IconButton("addtrack", ui::Icon::Plus, false, 28, "Add a mixer track"))
+      a.later([&a] {  // next frame: the strips and the inspector still hold the mixer's tracks
+        ObjectId id = a.doc.addMixerTrack();
+        if (id) a.selMixer = id;
+      });
     x += 40;
     if (!right.empty()) {
       dl->AddLine(ImVec2(x - 6.5f, o.y + bandH + 8), ImVec2(x - 6.5f, o.y + bandH + rowH - 8), P.line);
@@ -1529,11 +1706,16 @@ void drawMixer(App& a) {
     // a menu is open (it may belong to one of them) or a drag is under way.
     const bool cull = !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) && !ImGui::GetDragDropPayload();
     for (const auto& pl : placed)
-      if (!cull || ImGui::IsRectVisible(pl.p, ImVec2(pl.p.x + pl.w, pl.p.y + rowH))) drawStrip(a, pl.i, pl.p, pl.w, rowH, ctx);
+      if (!cull || ImGui::IsRectVisible(pl.p, ImVec2(pl.p.x + pl.w, pl.p.y + rowH))) {
+        drawStrip(a, pl.i, pl.p, pl.w, rowH, ctx);
+        if (rooms && pl.i != 0) roomLine(a, pl.i, pl.p, pl.w, rowH);
+      }
     ImGui::SetCursorScreenPos(o);
     ImGui::Dummy(ImVec2(x - o.x + 8, static_cast<float>(rows) * (rowH + bandH + 6.0f) - 6.0f));
     }
   }
+  updateStripDrag(a, column);
+  sel = s.mixerTrack(a.selMixer);  // a strip dropped in a new place is a whole-song edit that replaces the mixer
   if (!column && ImGui::IsWindowHovered()) wheelScrollStrips();
   ImGui::EndChild();
 
@@ -1718,7 +1900,8 @@ void drawMixer(App& a) {
       if (si > 0) {
         ImGui::Dummy(ImVec2(0, theme::kS2));
         ui::Label("SENDS");
-        for (const auto& sd : sel->sends) {
+        const std::vector<Send> sends = sel->sends;  // a copy: "Remove send" shrinks the track's list mid-loop
+        for (const auto& sd : sends) {
           int ti = s.mixerIndex(sd.to);
           if (ti < 0) continue;
           ImGui::PushID(static_cast<int>(sd.to));
@@ -1851,21 +2034,22 @@ void drawEffectEditor(App& a) {
   // K-19: the editor's own size on top of the interface scale (installed plugins keep theirs).
   // K-147: the window is exactly the editor's width at its size (plus the padding).
   const bool zoomable = !isHostedType(info->type);
-  edzoomui::prepare(a, "fxeditor", info->type, width, zoomable);
+  edzoomui::prepare(a, "fxeditor", info->type, width, zoomable);  // K-210b: the header row keeps the interface size (the window holds it)
   const int fitFlags =  // J-158: capped to the work area, the rest scrolls
       zoomable ? edzoomui::nextWindowSize("fxeditor") : ui::NextFloatingWindowSize(width + 24);
   viewports::openAttached(title.c_str());  // opens inside the main window, never popped out by itself
   if (ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking | fitFlags)) {
     ui::KeepWindowInViewport();
     ui::MarkDetachable();  // J-114: pops out / docks back like the panels
+    edzoomui::markRows("fxeditor");  // K-216: the header row (fit report)
     if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) || ImGui::IsWindowAppearing()) {
       a.focusPluginOwner = target.owner;  // controller template knobs follow the focused plugin
       a.focusPluginSlot = target.slot;
     }
-    edzoomui::begin(a, "fxeditor");
     menuButton("fxmenu", "Effect menu: presets, state, slot", [&a, target]() { pluginWindowMenu(a, target.owner, target.slot); });
     ImGui::SameLine(0, 8);
     drawPluginHeader(a, target);
+    edzoomui::begin(a, "fxeditor");  // K-210b: only the editor zooms, its header row keeps the interface size
     drawPluginBody(a, target, width);
     edzoomui::end(a, "fxeditor");
   }

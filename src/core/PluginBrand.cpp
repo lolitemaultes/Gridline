@@ -32,6 +32,9 @@ const std::vector<PluginBrand>& pluginBrands() {
       {"gl.delay", F::Space, "Echoes that trace the beat, from tape to digital.", "delay, echo, ping pong, tape delay"},
       {"gl.hall", F::Space, "Long algorithmic halls with a quiet floor.", "hall, reverb, hall reverb, space"},
       {"gl.timegate", F::Space, "Redraws time and volume on the grid.", "time gate, stutter, gater, tape stop, volume shaper, glitch"},
+      {"gl.chater", F::Space, "Dreamy breaks, glitter and tape haze in a long hall.",
+       "chater, glitch, stutter, repeat, glitter, sparkle, granular, shimmer, tape stop, reverse, bitcrush, halo, dreamy, reverb, hall, "
+       "lofi, tape, wow, flutter, haze, ambient, freeze"},
       // ---- flagships: dynamics
       {"gl.master", F::Dynamics, "Multiband loudness for the master.", "mastering dynamics, maximizer, multiband, mastering, loudness"},
       {"gl.tideline", F::Dynamics, "Pumps the mix on the beat, no sidechain needed.",

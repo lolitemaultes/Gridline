@@ -3,6 +3,34 @@
 The piano roll shows the notes of one channel in one pattern. These are the ways to move through
 the notes and zoom in and out.
 
+## Drawing notes
+
+With the Draw tool, a click adds a note at the default length. **Shift+click and drag** adds the
+note and sets its length as you drag (a Shift+click without a drag keeps the default length).
+Drag a note to move it, drag its end to resize it, and right-click to delete it.
+
+## The chord stamp
+
+The stamp button sits right after the menu button at the left of the piano roll's toolbar (a
+hand stamp over three stacked notes). It stays there however narrow the window gets; other
+toolbar groups give way first.
+
+- **Click it** to open the chord picker: your recent chords at the top, then every chord type in
+  groups (triads; sixths and sevenths; extended chords; octaves), two chords built from the scale
+  (when a scale is chosen in the toolbar), the inversion (root, 1st, 2nd, 3rd) and
+  **Just the next chord**. Hover a chip for the chord's full name.
+- **Pick a chord** and the stamp turns on with it: the Draw and Paint tools then place that chord,
+  its root on the key you click (if another tool was chosen, Draw is chosen for you). Each placed
+  chord is one undo step.
+- While stamping, the button is lit and, on a wide piano roll, shows the chord's symbol beside it
+  (for example `m7`, `maj7 /1` for a first inversion). Click the symbol, or right-click the stamp,
+  to pick another chord.
+- **Click the stamp again, or press Esc** over the piano roll, to turn it off.
+- The piano roll menu's **Stamp** submenu has the same choices. **Alt+C** opens the picker from
+  the keyboard (shortcut editor: **Chord stamp: pick a chord to stamp**).
+
+The recent chords are kept between sessions (`piano.recentChords`, up to six).
+
 ## The scroll bars
 
 - **The time bar** is the slim bar above the ruler. It shows the whole pattern: every note is a
@@ -42,3 +70,12 @@ reduced motion.
 
 The **auto scrolling** button beside the tools makes the view follow the playback position while
 the pattern plays.
+
+## The automation lane
+
+The lane under the notes edits a pattern's automation with the piano roll's tools: draw values,
+select, move, delete, copy and paste points, and thin out dense ones with **Simplify points...**.
+The curve chooser under the lane's name sets whether drawing writes stepped, linear or smooth
+values, and its menu sets the curve of the selected points; the automation clip editor shares
+the same choice. Drag the bar above the lane to resize it. See
+[Automation](automation.md#the-automation-lane-in-the-piano-roll) for every gesture and key.

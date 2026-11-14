@@ -38,6 +38,41 @@ Templates, backups, crash recovery copies, exported project folders and collabor
 folders use the new name too. A collaborative project made by an earlier version renames its
 own project file to the new name the next time it opens (its folder keeps its name).
 
+## The Open and Save dialog
+
+Gridline's own Open and Save dialog (File > Open, Save as, importing, exporting, loading samples
+and every other "choose a file" in Gridline) has three parts:
+
+- **On the left, places.** **Drives** lists this computer's drives and volumes with an icon for
+  their kind (the system disk, other disks, USB sticks and card readers, network drives, discs)
+  and the free space where it can be read without delay. A drive you plug in or take out shows up
+  or goes within a couple of seconds while the dialog is open. **Places** has Home, Desktop,
+  Documents, Music and Downloads (on Linux the folders your desktop names in its user folder
+  settings), and Gridline's own folders when they exist: the project's folder, **Recorded** and
+  **Rendered**. **Favourites** are folders you pin with the star above the list; hover a favourite
+  and click its x to remove it. **Recent folders** are the folders you last opened or saved in.
+- **In the middle, the folder.** The path bar shows where you are: click a part to go there, or
+  click the free end of the bar (or press Ctrl+L, or start typing a path with `/` or `~`) to type a
+  path. Tab completes a folder or file name; Enter opens a folder, or opens the file (in a Save
+  dialog it names it). Back, Forward and Up are beside it. The list has **Name**, **Size**, **Kind**
+  and **Modified** columns: click a column to sort by it, again to reverse; folders stay on top. The
+  filter box shows only names that contain what you type, the eye shows or hides hidden files, and
+  the file types list chooses which files are shown.
+- **At the bottom,** the file name, the type list, **Cancel** and **Open** or **Save**. When saving, the
+  name box holds the name alone; the chosen type's extension shows faintly at its end and is added
+  to the file, and picking another type changes it. Saving over
+  a file that exists asks once: the button turns into **Replace**.
+
+Keys: the arrows, Page Up / Page Down, Home and End move through the list; typing the start of a
+name jumps to it; Enter opens a folder or the selected file; Backspace or Alt+Up goes up a folder;
+Alt+Left and Alt+Right go back and forward; Esc closes the dialog. Clicking a sound plays it, and
+the play button at the start of its row starts or stops it.
+
+The dialog remembers its size, the sort, whether hidden files show, and for each kind of dialog
+the folder it was last used in. Drives are looked at in the background and network drives are
+never asked for their free space, so a slow or offline drive never holds up the dialog; a folder
+on a web or network drive is read in the background too, and shows when it has arrived.
+
 ## When Gridline is already running
 
 A file you open while Gridline is running opens in that Gridline, which comes to the front, on

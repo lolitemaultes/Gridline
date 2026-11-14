@@ -692,7 +692,7 @@ void lfoView(Ctx& c) {
     ImGui::PushClipRect(c.p(x, y), c.p(x + cw - M(16), cardsY + cardsH), true);
     const ImVec2 at = c.p(x + M(16), y + M(40));
     ImFont* f = ImGui::GetFont();
-    c.dl->AddText(f, c.s(T(11.5f)) * 1.25f, at, P.textFaint, i18n::tr(d), nullptr, c.s(cw - M(32)));
+    c.dl->AddText(f, c.s(T(11.5f)) * kTypeScale, at, P.textFaint, i18n::tr(d), nullptr, c.s(cw - M(32)));
     layoutWindowText(at, "", 0);
     ImGui::PopClipRect();
   }
@@ -899,8 +899,7 @@ void keysView(Ctx& c) {
     const float y = card(c, x, kStageY + 10, w, 384, "Wheels");
     wheel(c, G_PitchWheel, x + 40, y + 10, 26, 200, true);
     wheel(c, G_ModWheel, x + 128, y + 10, 26, 200, false);
-    textC(c, x + 53, y + 216, "Bend", c.P.label, 11.0f, false);
-    textC(c, x + 141, y + 216, "Mod", c.P.label, 11.0f, false);
+    // (each wheel names itself under its slot, and shows its value while it moves)
     fieldGrid(c, x + 12, y + 238, w - 24, 1, 32, {{G_BendUp, "Bend up"}, {G_BendDown, "Bend down"}}, 26);
     float ry = y + 304;
     auto flag = [&](const char* id, bool& f, const char* label) {
@@ -913,7 +912,9 @@ void keysView(Ctx& c) {
       const ImVec2 dc = c.p(x + 18, ry + 8);
       if (f) c.dl->AddCircleFilled(dc, c.s(3.5f), c.P.good, 12);
       else c.dl->AddCircle(dc, c.s(3.5f), c.P.boxEdge, 12, std::max(1.0f, c.s(1.0f)));
-      labelBeside(c, x + 28, ry, 16, label, f ? c.P.text : c.P.label, 10.5f, false);
+      float lpx = 10.5f;  // a step smaller before it would run past the card
+      while (lpx > 8.0f && textW(c, label, lpx, false) > w - 28 - 6) lpx -= 0.25f;
+      labelBeside(c, x + 28, ry, 16, label, f ? c.P.text : c.P.label, lpx, false);
       ImGui::PopID();
       ry += 20;
     };

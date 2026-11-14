@@ -1,4 +1,6 @@
-# Mixer: selecting tracks, resetting and scrolling
+# Mixer: selecting, moving, resetting and scrolling
+
+The mixer window has two views: **Mix** (the strips, described here) and **Stage**, where your tracks stand on a stage seen from where you sit. Switch with **Mix | Stage** at the left of the toolbar. See [stage-view.md](stage-view.md).
 
 ## Selecting tracks
 
@@ -9,13 +11,34 @@
 | Shift+click a name | Select every track from the focused one to this one |
 | Ctrl+A (Cmd+A) with the mixer focused | Select every insert track |
 | Ctrl+D (Cmd+D) with the mixer focused | Go back to just the focused track |
+| Alt+L with the mixer focused | Select the channels routed to the focused track (in the channel rack) |
+| Ctrl+Alt+L (Cmd+Alt+L) with the mixer focused | Select the tracks routed to the focused track |
 
 Ctrl+A selects the insert tracks and leaves the master out, so a reset or a routing change on
 everything never touches the master by accident. To include the master, Ctrl+click its name
 afterwards. If the master was the focused track, the focus moves to the first insert. The
 shortcuts act only while the mixer has the focus, so the playlist, piano roll and channel rack
-keep their own, and both can be changed under Options > Keyboard shortcuts. **Edit > Select all**
+keep their own, and all of them can be changed under Options > Keyboard shortcuts. **Edit > Select all**
 and **Deselect** do the same while the mixer is the last editor you used.
+
+## Moving tracks
+
+Drag a track by its name plate to put it somewhere else in the mixer. If the track is one of
+several selected tracks, they all go together and keep their order. While you drag, an orange
+line shows where the tracks will land; let go to move them, or press Esc (or right-click) to
+cancel. Dropping a track among the strips docked to the left or right docks it there too. The
+master always stays first; every other track can move, the Stage's Room track included.
+
+**Move left** and **Move right** in a track's right-click menu, or Alt+Left and Alt+Right with the
+mixer focused, move the selected tracks one place.
+
+Routing follows the tracks, not their numbers: channels, sends, sidechains, the Room, audio tracks
+in the playlist, effects that send to another track (such as Mixer Send, band splitters and
+transient splitters) or listen to one as their sidechain, automation of a send level, and MIDI,
+OSC and internal controller links all keep pointing at the same tracks. The project sounds exactly
+as it did. Tracks you never named show their new number (Insert 5 dragged to the front becomes
+Insert 1). Each move is one undo step, is saved with the project, reaches collaborators, and an FL
+Studio export writes the new order with the same routing.
 
 ## Resetting a control on several tracks
 

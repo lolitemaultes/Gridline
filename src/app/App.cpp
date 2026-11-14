@@ -3,7 +3,9 @@
 #include "../core/Platform.h"
 #include "HostedUi.h"
 #include "McpUi.h"
+#include "OscUi.h"
 #include "App.h"
+#include "StageView.h"
 #include "../core/ChromeOs.h"
 #include "LayoutPresets.h"
 #include "../core/Crash.h"
@@ -102,6 +104,7 @@ App::~App() {
   collabui::closeSession(*this);  // J-111: the log is synced, collaborators are told
   shutdownControllerScripts();  // onDeinit while the app still exists
   mcpui::shutdown();             // SC-07: stop the assistant server, remove its endpoint file
+  oscui::shutdown();             // OSC server, notes it holds
   presetImport.cancel = true;
   if (presetImport.worker.joinable()) presetImport.worker.join();
   flpexport::shutdown();         // J-80: a running FL export is cancelled and waited for
@@ -263,7 +266,7 @@ void App::syncEngine() {
   if (doc.revision() == builtRevision_ && !engineChanged && !settled) return;
   // J-196: only clip levels changed (a volume or fade drag, on one clip or a
   // selection): written into the playing program, no build.
-  if (!engineChanged && !settled && doc.clipLevelsOnlySince(builtRevision_) && builder.patchClipLevels(freezeui::playSong(*this, doc.song()))) {
+  if (!engineChanged && !settled && doc.clipLevelsOnlySince(builtRevision_) && builder.patchClipLevels(playedSong(doc.song()))) {
     builtRevision_ = doc.revision();
     return;
   }
@@ -288,10 +291,18 @@ void App::syncEngine() {
   }
   for (auto it = playlist.selected.begin(); it != playlist.selected.end();)
     it = s.clip(*it) ? std::next(it) : playlist.selected.erase(it);
-  engine.setProgram(builder.build(freezeui::playSong(*this, s)));  // K-87: frozen and hibernating units
+  engine.setProgram(builder.build(playedSong(s)));  // K-87: frozen and hibernating units
   engine.setPattern(curPattern);
 }
 
+
+// The song the engine plays: frozen and hibernating units (K-87), and the Stage's soloed rooms (K-270)
+// (this computer only).
+Song App::playedSong(const Song& s) {
+  Song p = freezeui::playSong(*this, s);
+  stageui::listenFilter(*this, p);
+  return p;
+}
 
 void App::tick(double t) {
   pollPresetImport();
@@ -433,6 +444,7 @@ void App::newProject() {
 Song App::starterSong() const {
   Song s = makeEmptySong();
   applyProjectDefaults(s);
+  s.panLaw = PanLaw::Stage;  // new projects place each channel on the Stage (older ones keep the Balance law)
   Document doc(s);
   // Starter kit: four drum voices on inserts 1-4 and a synth on insert 5.
   struct Starter { const char* name; const char* type; uint32_t color; };

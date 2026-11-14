@@ -1,17 +1,20 @@
 // Gridline K-157 (GitHub issue #33): the main window is an ordinary top-level window that a tiling
 // window manager tiles, not a floating one.
 //
-// Every platform: the splash turned main window (src/app/MainWindowRole.h, the program's own calls)
-// ends resizable, decorated, with a minimum and no maximum size, and none of the flags that make a
+// Every platform: the main window (src/app/MainWindowRole.h, the program's own calls) ends
+// resizable, decorated, with a minimum and no maximum size, and none of the flags that make a
 // window manager treat it as a tool window; a hidden window stays hidden.
 //
 // X11 (Linux and the BSDs, where X11 development files exist): the test starts its own Xvfb (never
 // the desktop's display) and a minimal window manager of its own on it, which, like i3, sway's
-// XWayland support, Hyprland and bspwm, decides at each map request whether the window floats:
-// fixed size (minimum == maximum), transient for another window, a dialog / utility / splash type
-// or a modal state. The splash must float; the main window, mapped again by becomeMain, must not.
-// The old sequence (hints changed while mapped, never mapped again) is run too, to show the model
-// sees the reported fault.
+// XWayland support, Hyprland and bspwm, decides at a map request whether the window floats: fixed
+// size (minimum == maximum), transient for another window, a dialog / utility / splash type or a
+// modal state. Two readings of its records: "each map" (i3: decided again at every map) and
+// "first map" (Hyprland's XWayland windows: decided once, at the X window's first map, and kept
+// when it is unmapped and mapped again). The sequences up to 0.7.4 (hints changed on the mapped
+// splash) and of 0.7.5 (the splash unmapped and mapped again) are run too, to show the model sees
+// both reported faults; the main window from its first map (createMain) tiles under both readings
+// and is mapped exactly once.
 #ifndef SDL_MAIN_HANDLED
 #define SDL_MAIN_HANDLED
 #endif
@@ -298,12 +301,16 @@ int main() {
 
   // ---- hidden (automated runs): never shown, ends a normal main window
   {
-    SDL_Window* w = winrole::createSplash(true);
-    expect(w != nullptr, "hidden splash created");
+    SDL_Window* w = winrole::loadsInMainWindow() ? winrole::createMain(true, {1200, 800, 40, 40}) : winrole::createSplash(true);
+    expect(w != nullptr, "hidden window created");
     if (w) {
       const Uint32 f = SDL_GetWindowFlags(w);
-      expect((f & SDL_WINDOW_HIDDEN) != 0 && (f & SDL_WINDOW_BORDERLESS) != 0 && (f & SDL_WINDOW_RESIZABLE) == 0,
-             "splash: hidden, borderless, fixed size");
+      if (winrole::loadsInMainWindow())
+        expect((f & SDL_WINDOW_HIDDEN) != 0 && (f & SDL_WINDOW_BORDERLESS) == 0 && (f & SDL_WINDOW_RESIZABLE) != 0,
+               "X11 / Wayland: the start window is the main window already (hidden, decorated, resizable)");
+      else
+        expect((f & SDL_WINDOW_HIDDEN) != 0 && (f & SDL_WINDOW_BORDERLESS) != 0 && (f & SDL_WINDOW_RESIZABLE) == 0,
+               "macOS / Windows: splash hidden, borderless, fixed size");
       winrole::becomeMain(w, {1200, 800, 40, 40});
       checkFlags(w);
       expect((SDL_GetWindowFlags(w) & SDL_WINDOW_HIDDEN) != 0, "hidden run: the main window stays hidden");
@@ -315,13 +322,13 @@ int main() {
     }
   }
 #if defined(__APPLE__) || defined(_WIN32)
-  expect(!winrole::remapsOnRoleChange(), "macOS / Windows: the window is not mapped again");
+  expect(!winrole::loadsInMainWindow(), "macOS / Windows: a splash first, turned into the main window in place");
 #else
-  expect(winrole::remapsOnRoleChange(), "X11 / Wayland: the window is mapped again as the main window");
+  expect(winrole::loadsInMainWindow(), "X11 / Wayland: the program starts in the main window itself");
 #endif
 
 #if defined(GRIDLINE_K157_X11)
-  // ---- before: the sequence up to 0.7.4 (hints changed on the mapped splash, never mapped again)
+  // ---- up to 0.7.4: hints changed on the mapped splash, never mapped again
   {
     SDL_Window* w = winrole::createSplash(false);
     pump(100);
@@ -332,38 +339,60 @@ int main() {
     SDL_SetWindowMinimumSize(w, winrole::kMainMinW, winrole::kMainMinH);
     pump(150);
     const auto maps = mapsOf(xwindowOf(w));
-    printMaps("before (old sequence)", maps);
-    expect(maps.size() == 1 && maps.back().floats(), "model check: the old sequence leaves the main window floating");
+    printMaps("0.7.4 (hints changed while mapped)", maps);
+    expect(maps.size() == 1 && maps.back().floats(), "model check: the 0.7.4 sequence leaves the main window floating");
     SDL_DestroyWindow(w);
   }
-  // ---- after: becomeMain maps the window again as an ordinary top-level window
+  // ---- 0.7.5: the splash unmapped and mapped again as a normal window
   {
     SDL_Window* w = winrole::createSplash(false);
     pump(100);
-    const Window xw = xwindowOf(w);
-    expect(xw != 0, "X11 window of the splash");
-    auto maps = mapsOf(xw);
-    expect(maps.size() == 1 && maps.front().fixed() && maps.front().floats(), "splash: fixed size, floats (as a loading window should)");
-    winrole::becomeMain(w, {1200, 800, 40, 40});
+    SDL_HideWindow(w);
+    SDL_SetWindowBordered(w, SDL_TRUE);
+    SDL_SetWindowResizable(w, SDL_TRUE);
+    SDL_SetWindowSize(w, 1200, 800);
+    SDL_SetWindowPosition(w, 40, 40);
+    SDL_SetWindowMinimumSize(w, winrole::kMainMinW, winrole::kMainMinH);
+    SDL_ShowWindow(w);
     pump(150);
-    checkFlags(w);
-    maps = mapsOf(xw);
-    printMaps("after (becomeMain)", maps);
-    expect(maps.size() == 2, "main window: mapped again once");
+    const auto maps = mapsOf(xwindowOf(w));
+    printMaps("0.7.5 (splash mapped again)", maps);
+    expect(maps.size() == 2 && !maps.back().floats(), "model check: the 0.7.5 sequence tiles where the manager decides at each map (i3)");
+    expect(!maps.empty() && maps.front().floats(), "model check: the 0.7.5 sequence floats where the first map decides (Hyprland, issue #33)");
+    SDL_DestroyWindow(w);
+  }
+  // ---- now: the main window from its first map
+  {
+    SDL_Window* w = winrole::createMain(false, {1200, 800, 40, 40});
+    pump(150);
+    const Window xw = xwindowOf(w);
+    expect(xw != 0, "X11 window of the main window");
+    auto maps = mapsOf(xw);
+    printMaps("first map (createMain)", maps);
+    expect(maps.size() == 1, "main window: one map request");
     if (!maps.empty()) {
-      const MapRecord& m = maps.back();
-      expect(!m.floats(), "main window: a tiling window manager tiles it");
-      expect(m.hasMin && m.minW == winrole::kMainMinW && m.minH == winrole::kMainMinH, "main window hints: minimum 960x600");
-      expect(!m.hasMax || (m.maxW > m.minW && m.maxH > m.minH), "main window hints: maximum above the minimum");
+      const MapRecord& m = maps.front();
+      expect(!m.floats(), "main window: tiled at its first map (managers that decide once tile it too)");
+      expect(m.hasMin && m.minW == winrole::kMainMinW && m.minH == winrole::kMainMinH, "main window hints at the first map: minimum 960x600");
+      expect(!m.hasMax || (m.maxW > m.minW && m.maxH > m.minH), "main window hints at the first map: maximum above the minimum");
       expect(m.type.empty() || m.type == "_NET_WM_WINDOW_TYPE_NORMAL", "main window hints: normal window type");
       expect(!m.transient, "main window hints: not transient for another window");
       expect(!m.undecorated, "main window hints: decorations on");
     }
+    winrole::becomeMain(w, {1200, 800, 40, 40});
+    pump(150);
+    checkFlags(w);
+    expect(mapsOf(xw).size() == 1, "main window: never unmapped and mapped again once loaded (issues #33, #52)");
+    winrole::becomeMain(w, {1300, 820, 40, 40});  // a dev run's --size after the start
+    pump(150);
+    int cw = 0, ch = 0;
+    SDL_GetWindowSize(w, &cw, &ch);
+    expect(cw == 1300 && ch == 820 && mapsOf(xw).size() == 1, "a changed size is applied in place");
     Display* d = XOpenDisplay(display.c_str());
     if (d) {
       XWindowAttributes a{};
       XGetWindowAttributes(d, xw, &a);
-      expect(a.map_state == IsViewable, "main window: on screen after the role change");
+      expect(a.map_state == IsViewable, "main window: on screen");
       XCloseDisplay(d);
     }
     SDL_DestroyWindow(w);

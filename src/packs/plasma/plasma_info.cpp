@@ -1229,6 +1229,7 @@ void appendInfos(std::vector<PluginInfo>& v) {
 
   p.editorWidth = 1280;
   p.ownPresetBar = true;  // its top bar has the name, the sound picker and Save as
+  p.editorFullSize = true;  // opens at 100 % (its type sizes are set for it), smaller only on a small screen
 
   // ---- factory presets (parameter overrides; original sounds)
   auto osc = [](int o, int q) { return oscP(o, q); };

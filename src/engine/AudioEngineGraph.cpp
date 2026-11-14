@@ -288,7 +288,7 @@ void AudioEngine::runChannel(size_t ci, int worker) {
   if (bc_.profile) rt->cpu.add(nowNs() - t0);
 }
 
-void AudioEngine::pullInput(const ProgInput& in, float* accL, float* accR) const {
+void AudioEngine::pullInput(const ProgInput& in, float* accL, float* accR, depth::RoomEarly* early) const {
   const Program* p = bc_.p;
   const int n = bc_.n;
   switch (in.kind) {
@@ -313,11 +313,27 @@ void AudioEngine::pullInput(const ProgInput& in, float* accL, float* accR) const
       const bool live = !src.rt || src.rt->sent;
       const size_t k = static_cast<size_t>(in.index);
       const bool send = in.kind == ProgInput::Send;
-      const float level = send ? src.sends[k].second : src.sidechain[k].second;
+      float level = send ? src.sends[k].second : src.sidechain[k].second;
+      const bool room = send && k < src.sendRoom.size() && src.sendRoom[k];  // the Stage room send
+      const ProgRoom& sroom = p->roomOf(src);
+      if (room) level *= static_cast<float>(depth::roomScale(src.depth, src.focus, sroom.depthK, sroom.front));
       const auto& preFlags = send ? src.sendPre : src.sidechainPre;
       const bool pre = k < preFlags.size() && preFlags[k];  // pre-fader tap
       const float* sL = (pre ? preL_ : busL_)[static_cast<size_t>(in.src)].data();
       const float* sR = (pre ? preR_ : busR_)[static_cast<size_t>(in.src)].data();
+      if (room && src.roomTap) {  // pre-delay that follows distance, reflections from the stage's walls
+        depth::RoomTap& rt = *src.roomTap;
+        const int dly = sroom.preDelay ? static_cast<int>(std::lround(depth::preDelaySec(src.depth) * sr_)) : 0;
+        rt.run(live ? sL : nullptr, live ? sR : nullptr, n, dly);
+        in.tap.run(rt.outL, rt.outR, level, accL, accR, n);
+        if (early && sroom.earlyOn) {
+          depth::EarlyTap taps[3];
+          depth::earlyTaps(roomPan(src.modPan, src.roomW), src.depth, taps, sroom.halfW, sroom.depth, sroom.wall);
+          rt.early(taps, sr_, level, early->L, early->R, n);
+          early->any = true;
+        }
+        break;
+      }
       in.tap.run(live ? sL : nullptr, live ? sR : nullptr, level, accL, accR, n);
       break;
     }
@@ -357,7 +373,13 @@ void AudioEngine::runMixer(size_t idx, int worker) {
   const size_t bytes = sizeof(float) * static_cast<size_t>(n);
   std::memset(bL, 0, bytes);
   std::memset(bR, 0, bytes);
-  for (const auto& in : m.inputs) pullInput(in, bL, bR);
+  depth::RoomEarly* early = m.roomEarly.get();  // the Stage room track: its senders' reflections
+  if (early) {
+    std::memset(early->L, 0, bytes);
+    std::memset(early->R, 0, bytes);
+    early->any = false;
+  }
+  for (const auto& in : m.inputs) pullInput(in, bL, bR, early);
   if (m.inFirst >= 0) {  // audio input (J-8): meter, and monitoring through the track
     const float* iL = inputL(m);
     const float* iR = inputR(m);
@@ -514,6 +536,11 @@ void AudioEngine::runMixer(size_t idx, int worker) {
       slotNs += d;
     }
   }
+  if (early && early->any)  // the Stage room: reflections join after the reverb (they are not reverberated twice)
+    for (int i = 0; i < n; ++i) {
+      bL[i] += early->L[i];
+      bR[i] += early->R[i];
+    }
   // K-64: silence through a settled strip stays silence (the strip EQ's memory is gone after a second).
   const bool stripQuiet = bc_.rest && rt && allZero(bL, n) && allZero(bR, n);
   if (stripQuiet && rt->quiet >= static_cast<int64_t>(sr_)) {
@@ -539,16 +566,31 @@ void AudioEngine::runMixer(size_t idx, int worker) {
   }
   // Strip: EQ, stereo separation, swap, polarity, volume/pan (smoothed).
   if (rt) rt->eq.process(m.eq, sr_, bL, bR, n);
+  const float dep = m.depth, foc = m.focus;  // the Stage: air shelf and focus bell (nothing at all at 0)
+  if (rt) {
+    if (dep > 0 || foc != 0) rt->depthShelf.process(dep, foc, sr_, bL, bR, n);
+    else rt->depthShelf.off();
+  }
   if (rt && !rt->primed) {
     rt->curL = m.gainL;
     rt->curR = m.gainR;
+    rt->curXL = m.xlr;
+    rt->curXR = m.xrl;
     rt->primed = true;
   }
   const bool grid = bc_.grid;
   const int gpos = bc_.gpos;
   float gL = rt ? rt->curL : m.gainL, gR = rt ? rt->curR : m.gainR;
   float dL = (m.gainL - gL) / static_cast<float>(n), dR = (m.gainR - gR) / static_cast<float>(n);
-  float width = 1.0f + m.sep, sign = m.invert ? -1.f : 1.f;
+  // Stage placement (Song::panLaw): the channels are placed by the cross gains, so the side gain only
+  // widens (narrowing is the placement's own half width).
+  const bool cross = p->panLaw == 2;
+  const float sep = roomSep(m.sep, m.roomW);  // K-224: the room's width
+  float width = 1.0f + (cross ? std::max(sep, 0.0f) : sep), sign = m.invert ? -1.f : 1.f;
+  const bool ms = (cross ? sep > 0 : sep != 0) || dep > 0;
+  if (dep > 0) width *= static_cast<float>(depth::narrow(dep));  // far sources narrow a little
+  float xl = rt ? rt->curXL : m.xlr, xr = rt ? rt->curXR : m.xrl;
+  const float dxl = (m.xlr - xl) / static_cast<float>(n), dxr = (m.xrl - xr) / static_cast<float>(n);
   const bool gridRamp = grid && rt;
   float* preL = m.hasPreSend ? preL_[idx].data() : nullptr;
   float* preR = m.hasPreSend ? preR_[idx].data() : nullptr;
@@ -558,7 +600,7 @@ void AudioEngine::runMixer(size_t idx, int worker) {
   }
   for (int i = 0; i < n; ++i) {
     float l = bL[i], r = bR[i];
-    if (m.sep != 0) {
+    if (ms) {
       float mid = (l + r) * 0.5f, side = (l - r) * 0.5f * width;
       l = mid + side;
       r = mid - side;
@@ -576,9 +618,17 @@ void AudioEngine::runMixer(size_t idx, int worker) {
       gL += dL;
       gR += dR;
     }
-    bL[i] = l * gL * sign;
-    bR[i] = r * gR * sign;
+    if (cross) {
+      xl += dxl;
+      xr += dxr;
+      bL[i] = (l * gL + r * xr) * sign;
+      bR[i] = (r * gR + l * xl) * sign;
+    } else {
+      bL[i] = l * gL * sign;
+      bR[i] = r * gR * sign;
+    }
   }
+  if (rt) rt->curXL = m.xlr, rt->curXR = m.xrl;
   if (rt) {
     if (gridRamp && gpos + n < kControlBlock) {
       rt->curL = gL;

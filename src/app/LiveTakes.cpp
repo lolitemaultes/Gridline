@@ -207,12 +207,15 @@ void devTrace(App& a, int frame) {
                 full.checksum() == v.peaks->checksum() ? 1 : 0, v.done ? 1 : 0, v.place.muted ? 1 : 0, f.stereo ? 1 : 0, v.drawn ? 1 : 0,
                 static_cast<double>(v.x0), static_cast<double>(v.x1), static_cast<double>(v.y0), static_cast<double>(v.y1),
                 v.place.name.c_str());
-    // The amplitude envelope: the peak of every 1/8 of the take (dev checks of the signal).
+    // The amplitude envelope (dev checks of the signal): the peak of every whole quarter second
+    // after the latency pad, at most 64. A fixed window, not a share of the take: on a slow machine
+    // the take is longer and a share of it would span both amplitudes every time.
     std::printf("    env");
-    const size_t nb = v.peaks->bins();
-    for (size_t k = 0; k < 8 && nb >= 8; ++k) {
+    const size_t nb = v.peaks->bins(), bf = std::max<size_t>(1, v.peaks->binFrames());
+    const size_t win = std::max<size_t>(1, static_cast<size_t>(std::max(1, a.audioSampleRate)) / 4 / bf);
+    for (size_t b = (static_cast<size_t>(std::max<int64_t>(0, f.pad)) + bf - 1) / bf, k = 0; b + win <= nb && k < 64; b += win, ++k) {
       float l = 0, h = 0;
-      v.peaks->range(nb * k / 8, nb * (k + 1) / 8, l, h);
+      v.peaks->range(b, b + win, l, h);
       std::printf(" %.3f", static_cast<double>(std::max(h, -l)));
     }
     std::printf("\n");

@@ -67,7 +67,7 @@ void keymapTests() {
   bool unique = true, labelled = true;
   for (const auto& c : keys::commands()) {
     unique &= ids.insert(c.id).second;
-    labelled &= c.label && *c.label && !c.defaults.empty();
+    labelled &= c.label && *c.label && (!c.defaults.empty() || std::string(c.id) == "view.stage");  // the Stage opens from the View menu (bind a key if wanted)
   }
   expect(unique, "command ids are unique");
   expect(labelled, "every command has a label and a default chord");

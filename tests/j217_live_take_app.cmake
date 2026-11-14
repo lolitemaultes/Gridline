@@ -99,7 +99,8 @@ if(c0_drawn AND c1_drawn AND c0_rescan AND c1_rescan)
   set(ok TRUE)
 endif()
 check("drawn every check; the incremental summary equals a rescan of the take" ok)
-# The envelope: the peak is the louder amplitude; every 1/8 window reads 0.200 or 0.700.
+# The envelope: the peak is the louder amplitude; every quarter-second window reads 0.200 or 0.700
+# (fixed windows: a slow machine's take is longer, and windows of a share of it all spanned both).
 string(REGEX MATCH "env ([0-9. ]+)" envl "${t1}")
 set(ok FALSE)
 if(c1_hi STREQUAL "0.7000" AND envl MATCHES "0\\.200" AND envl MATCHES "0\\.700" AND NOT envl MATCHES "0\\.[013-689]")

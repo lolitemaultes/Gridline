@@ -110,6 +110,10 @@ struct PluginInfo {
   // K-164: the editor has its own name, preset picker and save in its top bar: the plugin
   // window's header leaves out its wordmark, preset arrows, picker and save (A/B stays).
   bool ownPresetBar = false;
+  // K-223: a large editor whose type is designed for 100 %: its window opens at full size
+  // whatever the global plugin window size (Settings > Interface), smaller only when the screen
+  // has no room for it. A size picked for the plugin in its window menu still wins.
+  bool editorFullSize = false;
   // K-2: defaults a parameter had before it moved to the reference plugin's default
   // (setReferenceDefaults). A saved state too short to hold the parameter predates the
   // change and keeps the old default (normalizePluginState).

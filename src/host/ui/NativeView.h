@@ -38,6 +38,11 @@ void keepAbove(const Window& child, const Window& parent, bool on);
 // Gridline window kept above the main window when that comes forward). Elsewhere a no-op:
 // keepAbove's ownership does it.
 void orderAbove(const Window& w, const Window& ref);
+// A click went to `child`, a window kept above `parent` (keepAbove): it comes in front of the other
+// windows kept above that parent. macOS: AppKit keeps a parent's child windows in the order they
+// were added, whichever one is clicked, so the child is taken off and added again on top. X11 and
+// Windows: the window manager / the owned-window rules raise a clicked window already (no-op).
+void raiseChild(const Window& child, const Window& parent);
 // J-116: the window system runs a modal size / move loop of one of this application's windows
 // right now (macOS: a window is in live resize; Windows: the UI thread is in move / size mode).
 // The main loop is blocked inside the event pump then. False where no such loop exists (X11).

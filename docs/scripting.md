@@ -99,7 +99,8 @@ clamped to the parameter ranges.
 |---|---|
 | `tempo()`, `setTempo(bpm)` | song tempo |
 | `ppq()` | ticks per quarter note |
-| `bar()`, `beat()` | ticks per bar and per beat |
+| `bar()`, `beat()` | ticks per bar and per beat of the song's meter at its start (its time signature) |
+| `bar(tick)`, `beat(tick)` | ticks per bar and per beat of the meter in force at `tick` (a [meter change](meter-changes.md) changes them) |
 | `timeSignature()` | returns numerator, denominator |
 | `setTimeSignature(num, den)` | num 1..16, den 2, 4, 8 or 16 |
 | `swing()`, `setSwing(v)` | global swing 0..1 |
@@ -209,7 +210,7 @@ parameter value into a point value.
 | `id(m)`, `name(m)`, `setName(m, s)`, `color(m)`, `setColor(m, rgb)` | track identity |
 | `volume(m)`, `setVolume(m, v)`, `pan(m)`, `setPan(m, v)` | strip |
 | `muted(m)`, `setMuted(m, b)`, `solo(m)`, `setSolo(m, b)` | mute and solo |
-| `param(m, name)`, `setParam(m, name, v)` | `volume`, `pan`, `stereo`, `mute`, `eqLowGain`, `eqMidGain`, `eqHighGain`, `eqLowFreq`, `eqMidFreq`, `eqHighFreq`, `eqLowQ`, `eqMidQ`, `eqHighQ` |
+| `param(m, name)`, `setParam(m, name, v)` | `volume`, `pan`, `stereo`, `mute`, `eqLowGain`, `eqMidGain`, `eqHighGain`, `eqLowFreq`, `eqMidFreq`, `eqHighFreq`, `eqLowQ`, `eqMidQ`, `eqHighQ`, `depth` (Stage depth, 0 to 1) |
 | `add()`, `remove(m)` | new insert (returns its index); the master cannot be removed |
 | `sends(m)` | list of `{to, level, sidechain}` |
 | `setSend(from, to, level)` | adds or changes a send (level 0 removes it); returns false for a loop |

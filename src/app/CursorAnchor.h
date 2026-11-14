@@ -42,6 +42,7 @@ enum Kind : int {
   PianoVelocity = 8,   // a, b as above; c: tick, fraction of the lane height
   RackRow = 9,         // a: channel; c: logical px from the row's left edge, fraction of the row height
   MixerStrip = 10,     // a: mixer track; c: fraction of the strip
+  StageTrack = 11,     // a: mixer track; c: fraction of its pill on the Stage
   KindCount
 };
 const char* kindName(int kind);

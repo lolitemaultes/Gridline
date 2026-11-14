@@ -497,7 +497,7 @@ class AudioEngine {
   // J-210: frames until the next step of a recorded-events lane or the loop end
   // (at most n), so that the block after it starts on that sample.
   int untilEventStep(const Program* p, int n) const;
-  // K-193: frames until the next meter change in song time (at most n), so that the block after it
+  // K-193: frames until the next meter change in song time or (K-203) the song loop's wrap (at most n), so that the block after it
   // starts on the change's first sample and hosted plugins see the new meter from there.
   int untilMeterChange(const Program* p, int n) const;
   // Live mode: clip launching, follow actions and the launched clips' notes for block samples [from, to).
@@ -541,7 +541,8 @@ class AudioEngine {
   void runTask(int task, int worker);
   void runChannel(size_t channel, int worker);
   void runMixer(size_t mixer, int worker);
-  void pullInput(const ProgInput& in, float* accL, float* accR) const;
+  // `early`: the Stage room track's reflections input (its room senders add their reflections there).
+  void pullInput(const ProgInput& in, float* accL, float* accR, depth::RoomEarly* early = nullptr) const;
   void readDeviceInput(int n);                        // input queue → inBuf_ (start of a block)
   // Armed tracks → capture rings: before the graph (inputs) or after it (post = tracks recording their output).
   void captureRecording(const Program* p, int n, bool post = false);

@@ -150,47 +150,6 @@ void drawRowLamp(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float level) {
   dl->AddRect(p0, p1, theme::withAlpha(P.ink, P.dark ? 0.5f : 0.25f), 2.0f);
 }
 
-// K-186: the headphones button at the far left of a channel row. A small rounded socket with
-// hover and pressed states and subtle tints from the theme's roles: on, a soft green glyph on a
-// faintly green socket; muted, a grey glyph on a plain socket; solo, an amber glyph on an amber
-// socket. A soft glow while the channel plays.
-void drawRowPhones(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float level, bool muted, bool soloed, bool hovered, bool pressed) {
-  const auto& P = pal();
-  const ImU32 base = P.dark ? theme::mix(P.field, P.ink, 0.35f) : theme::mix(P.surface700, P.ink, 0.12f);
-  const ImU32 deep = P.dark ? P.paper : P.ink;  // toward more contrast against the panels
-  const float r = 3.5f;
-  const float l = muted ? 0.0f : std::clamp(level, 0.0f, 1.0f);
-  ImU32 face = base, border = theme::withAlpha(P.ink, P.dark ? 0.55f : 0.28f), glyph;
-  if (soloed) {
-    face = theme::mix(base, P.solo, P.dark ? 0.22f : 0.18f);
-    border = theme::withAlpha(P.solo, 0.75f);
-    glyph = theme::mix(P.solo, deep, P.dark ? 0.12f : 0.15f);
-  } else if (muted) {
-    glyph = theme::mix(base, P.textFaint, 0.55f);
-  } else {
-    face = theme::mix(base, P.led, P.dark ? 0.14f : 0.16f);
-    border = theme::withAlpha(P.led, P.dark ? 0.35f : 0.45f);
-    glyph = theme::mix(P.led, deep, P.dark ? 0.12f : 0.1f);
-  }
-  if (hovered && !pressed) face = theme::mix(face, P.dark ? P.paper : P.ink, P.dark ? 0.08f : 0.06f);
-  if (pressed) face = theme::mix(face, P.ink, 0.25f);
-  if (l > 0.003f) {  // activity: a soft glow around the socket, the glyph brighter on dark faces
-    dl->AddRectFilled(ImVec2(p0.x - 2, p0.y - 2), ImVec2(p1.x + 2, p1.y + 2), theme::withAlpha(soloed ? P.solo : P.led, 0.20f * l), r + 2);
-    if (P.dark) glyph = theme::mix(glyph, P.paper, 0.35f * l);
-  }
-  dl->AddRectFilled(p0, p1, face, r);
-  if (!pressed)  // a faint top edge: the socket's face catches the light
-    dl->AddLine(ImVec2(p0.x + r, p0.y + 0.5f), ImVec2(p1.x - r, p0.y + 0.5f), theme::withAlpha(P.paper, P.dark ? 0.07f : 0.35f));
-  dl->AddRect(p0, p1, border, r);
-  const ImVec2 c(std::round((p0.x + p1.x) * 0.5f), std::round((p0.y + p1.y) * 0.5f));
-  // The glyph is drawn as vectors for this small size (the icon set's headphones have tiny cups at
-  // 12 px): a bold headband arc over two full ear cups, about 14 x 12 logical px, crisp at any scale.
-  dl->PathArcTo(ImVec2(c.x, c.y + 1.0f), 5.4f, IM_PI * 1.0f, IM_PI * 2.0f, 16);
-  dl->PathStroke(glyph, 0, 1.9f);
-  dl->AddRectFilled(ImVec2(c.x - 7.0f, c.y + 0.5f), ImVec2(c.x - 3.0f, c.y + 6.0f), glyph, 1.3f);
-  dl->AddRectFilled(ImVec2(c.x + 3.0f, c.y + 0.5f), ImVec2(c.x + 7.0f, c.y + 6.0f), glyph, 1.3f);
-}
-
 std::vector<uint8_t> rowOf(const Pattern& p, ObjectId ch) {
   std::vector<uint8_t> row;
   if (auto it = p.steps.find(ch); it != p.steps.end()) row = it->second;
@@ -222,9 +181,12 @@ void rowDropTarget(App& a, const Channel& c, int index, ImVec2 rp, float rowW, f
   rowGap += ImGui::GetStyle().ItemSpacing.y;  // the rows' pitch: no dead band between two rows
   const ImRect r(ImVec2(rp.x, rp.y - rowGap * 0.5f), ImVec2(rp.x + rowW, rp.y + rowH + rowGap * 0.5f));
   if (!ImGui::BeginDragDropTargetCustom(r, ImGui::GetID("##rowdrop"))) return;
+  // Copies: a drop below adds channels or imports notes (whole-song edits) and `c` may not survive it.
+  const ObjectId cid = c.id;
+  const std::string cname = c.name;
   const xdrop::RowZone zone = xdrop::rowZone(ImGui::GetIO().MousePos.y, r.Min.y, r.GetHeight());
   browserui::DropPlace place;
-  if (zone == xdrop::RowZone::Replace) place.channel = c.id;
+  if (zone == xdrop::RowZone::Replace) place.channel = cid;
   else place.insertAt = zone == xdrop::RowZone::Before ? index : index + 1;
   browserui::DropFeedback fb;
   fb.highlight = false;
@@ -234,9 +196,9 @@ void rowDropTarget(App& a, const Channel& c, int index, ImVec2 rp, float rowW, f
   if (!fb.hovering) return;
   // What the row shows: replace (the default), the notes going in, or new channels below (Shift / extra files).
   bool replace = zone == xdrop::RowZone::Replace, below = zone == xdrop::RowZone::After;
-  auto named = [&c](const char* f) {
+  auto named = [&cname](const char* f) {
     char buf[256];
-    std::snprintf(buf, sizeof buf, f, c.name.c_str());
+    std::snprintf(buf, sizeof buf, f, cname.c_str());
     return std::string(buf);
   };
   std::string badge;
@@ -433,13 +395,20 @@ void drawChannelRack(App& a) {
     };
     const bool showLen = pat && fits(wLen);
     const bool showGroup = fits(wGroup);
-    const bool showSwing = pat && fits(wSwing);
+    bool showSwing = pat && fits(wSwing);
     const bool showGraphBtn = fits(wGraph);
-    const bool showSpb = pat && fits(wSpb);
-    const bool showChip = pat && showSwing && fits(wChip);
+    bool showSpb = pat && fits(wSpb);
+    bool showChip = pat && showSwing && fits(wChip);
     const float nameW = std::clamp(W - need + minName, minName, 200.0f);
 
-    menuButton("rackmenu", "Channel rack menu: selected channels, sorting, colours", [&a]() { rackOptionsMenu(a); });
+    {
+      // The menu's items may replace the song's patterns (move lanes to the playlist, a new pattern
+      // from the selection, deleting channels): look the pattern up again rather than read the old one.
+      const uint64_t rev = a.doc.revision();
+      const ObjectId patId = pat ? pat->id : kNoId;
+      menuButton("rackmenu", "Channel rack menu: selected channels, sorting, colours", [&a]() { rackOptionsMenu(a); });
+      if (a.doc.revision() != rev && (pat = s.pattern(patId)) == nullptr) showSwing = showSpb = showChip = false;
+    }
     ImGui::SameLine(0, 4);
     if (showGroup) {
       if (groupFilter >= static_cast<int>(s.channelGroups.size())) groupFilter = -1;
@@ -713,7 +682,7 @@ void drawChannelRack(App& a) {
       ui::Hint(soloed  ? i18n::N_("Soloed: every other channel is muted \xC2\xB7 right-click: back to normal \xC2\xB7 click: mute")
                : muted ? i18n::N_("Muted \xC2\xB7 click: unmute \xC2\xB7 right-click: solo this channel, again: back to normal \xC2\xB7 Shift+click: select")
                        : i18n::N_("Click: mute this channel \xC2\xB7 right-click: solo it, again: back to normal \xC2\xB7 Shift+click: select"));
-      drawRowPhones(dl, b0, b1, rackPlayLight(a, c, ci), muted, soloed, hov, pressed);
+      ui::PhonesFace(dl, b0, b1, rackPlayLight(a, c, ci), muted, soloed, hov, pressed);
     }
     // Pan & volume knobs: always shown (J-84).
     {
@@ -746,7 +715,8 @@ void drawChannelRack(App& a) {
       if (ImGui::IsItemDeactivated()) a.doc.endGesture();
       if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("##route");
       if (ImGui::BeginPopup("##route")) {
-        if (chanroute::menuItem(keys::label("rack.routeFree"))) chanroute::routeToFree(a, c.id);  // J-195
+        if (chanroute::menuItem(keys::label("rack.routeFree")))  // J-195; next frame: a whole-song edit, and the row holds `c`
+          a.later([&a, cid = c.id] { chanroute::routeToFree(a, cid); });
         ImGui::Separator();
         for (size_t i = 0; i < s.mixer.size(); ++i) {
           std::string label = (i == 0 ? std::string("Master") : std::to_string(i) + "  " + mixerTrackName(s, i)) + "##" + std::to_string(i);
@@ -801,8 +771,9 @@ void drawChannelRack(App& a) {
       }
       if (ImGui::BeginDragDropTarget()) {
         if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("GL_CHANNEL")) {
-          ObjectId moving = *static_cast<const ObjectId*>(pl->Data);
-          a.doc.moveChannel(moving, static_cast<int>(ci));
+          const ObjectId moving = *static_cast<const ObjectId*>(pl->Data);
+          const int to = static_cast<int>(ci);
+          a.later([&a, moving, to] { a.doc.moveChannel(moving, to); });  // next frame: the row still reads `c`
         }
         ImGui::EndDragDropTarget();  // browser files / plugins: the whole row (rowDropTarget, J-97)
       }
@@ -966,14 +937,20 @@ void drawChannelRack(App& a) {
       ui::Hint("Shows the channel's sound");
       drawRowLamp(dl, l0, l1, rackPlayLight(a, c, ci));
     }
+    const ObjectId rowId = c.id;
+    const uint64_t dropRev = a.doc.revision();
     rowDropTarget(a, c, static_cast<int>(ci), rp, rowW, rowH, rowGap, stepsX + 6);  // J-97: drop to replace / insert
+    // A drop that edited the song (new channels, imported notes) may have replaced the channels and
+    // patterns this loop holds: the rows after this one are drawn next frame.
+    const bool dropped = a.doc.revision() != dropRev;
     // J-111d: a collaborator's pointer on this row (logical px from its start: the row's layout is fixed from the left)
-    canchor::publish(canchor::RackRow, c.id, 0, rp, ImVec2(1.0f, rowH), rp, ImVec2(rp.x + rowW, rp.y + rowH));
+    canchor::publish(canchor::RackRow, rowId, 0, rp, ImVec2(1.0f, rowH), rp, ImVec2(rp.x + rowW, rp.y + rowH));
     ImGui::SetCursorScreenPos(ImVec2(rp.x, rp.y + rowH + rowGap));
     ImGui::Dummy(ImVec2(rowW, 0));
     shown.lastRowBottom = rp.y + rowH;
     shown.lastRowIndex = static_cast<int>(ci);
     ImGui::PopID();
+    if (dropped) break;
   }
   if (ImGui::BeginPopupEx(chMenuId, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings)) {
     channelContextMenu(a, chMenuChannel);
@@ -1207,6 +1184,7 @@ void drawChannelRack(App& a) {
   }
   ImGui::EndChild();
   acceptDrops(a);
+  pat = s.pattern(a.curPattern);  // a drop on the free area may have imported notes (a whole-song edit)
   // Bottom bar: add-channel button under the names, time scroller under the
   // steps (bar ticks, the playing position and a thumb for the visible part).
   float restTop = 0;  // K-136: the top of the space under the add button bar

@@ -2,6 +2,7 @@
 // sample loading and waveform for the sampler.
 #include <algorithm>
 #include "EditorZoomUi.h"
+#include "KeyGlide.h"
 #include "KeyLight.h"
 #include <cmath>
 #include <cstdio>
@@ -432,7 +433,7 @@ static void drawStripContent(App& a, ObjectId id, StripDev& sd) {
   ui::Label("PREVIEW");
   {
     // Two octaves (C3..B4) filling the remaining width; click or drag to audition.
-    static int held = -1;
+    int held = -1;
     constexpr int kWhite = 14, kBase = 48;
     const int whiteSemis[] = {0, 2, 4, 5, 7, 9, 11};
     const float kw = std::floor(std::clamp((ImGui::GetContentRegionAvail().x - 2) / kWhite, 14.0f, 28.0f));
@@ -456,15 +457,10 @@ static void drawStripContent(App& a, ObjectId id, StripDev& sd) {
             if (m.x >= bx && m.x < bx + bw) hit = kBase + o * 12 + blackSemi[k];
           }
     }
-    if (ImGui::IsItemActive() && hit >= 0 && held != hit) {
-      if (held >= 0) a.engine.noteOff(id, held);
-      a.engine.noteOn(id, hit, 0.8f);
-      held = hit;
-    }
-    if (!ImGui::IsItemActive() && held >= 0) {
-      a.engine.noteOff(id, held);
-      held = -1;
-    }
+    // While held, the key under the pointer sounds: a drag plays one key at a time (KeyGlide.h).
+    static keyglide::Held glide;
+    held = keyglide::followItem(a, id, hit, glide, 0.8f);
+    keyglide::devNote("chstrip", p, ImVec2(p.x + kw * kWhite, p.y + kh), kBase, kWhite, held);
     const ImU32 white = P.keyWhite, whiteHov = theme::mix(P.keyWhite, P.paper, 0.6f), black = P.keyBlack;
     // J-77: keys sounding on the channel (playback, MIDI, editors) light up and fade out.
     const keylight::ChannelLights* lit = keylight::lights(a, id);
@@ -517,6 +513,16 @@ bool pluginWindowDevCommand(App& a, const std::string& cmd, const std::vector<st
       a.closePluginWindows();
     } else if (what == "info") {  // K-9: open plugin windows and their native windows to stdout
       devPrintPluginWindows(frame);
+    } else if (what == "toggle" && args.size() > 1) {  // toggle <plugin type>: the channel button of the first channel with it clicked
+      for (const auto& c : s.channels)
+        if (c.plugin.type == args[1]) {
+          togglePluginWindow(a, PluginTarget{c.id, -1});
+          break;
+        }
+    } else if (what == "drag" && args.size() > 3) {  // drag <x> <y> <seconds>: the mouse dragged in the first one's interface
+      const bool ok = devDragHostedEditor(std::atoi(args[1].c_str()), std::atoi(args[2].c_str()), std::atof(args[3].c_str()));
+      std::printf("plugwin frame %d: drag %s\n", frame, ok ? "started" : "not supported here");
+      std::fflush(stdout);
     }
     return true;
   }
@@ -650,17 +656,18 @@ void drawChannelSettings(App& a) {
   }
   editorW = std::floor(editorW);
   const float winW = std::max(624.0f, editorW + 24.0f);
-  // K-147: the region the zoomed window holds: the editor's width (the channel's own rows
-  // and the note processors need kChannelMinW at least).
+  // K-147: the channel's own rows and the note processors need kChannelMinW at least (K-210b: at the
+  // interface size; the zoomed region holds the editor alone).
   constexpr float kChannelMinW = 600.0f;
-  const float regionW = std::max(kChannelMinW, editorW);
+  const float regionW = std::max(kChannelMinW, editorW);  // (an editor narrower than that keeps the region it had)
   {
     ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.42f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
   }
   // K-19: the window's own size on top of the interface scale (installed plugins keep theirs).
   const bool zoomable = !info || !isHostedType(info->type);
-  edzoomui::prepare(a, "channelsettings", info ? info->type : std::string("(layer)"), zoomable ? regionW : winW, zoomable);
+  // K-210b: only the editor itself zooms; the channel's own rows above and below it (kChannelMinW wide) keep the interface size
+  edzoomui::prepare(a, "channelsettings", info ? info->type : std::string("(layer)"), zoomable ? regionW : winW, zoomable, kChannelMinW);
   // K-79: the performance preset docks the channel settings in its bottom panel (they scroll there).
   const bool docks = layoutui::active() == layout::Preset::Live;
   const int fitFlags =  // J-158: capped to the work area, the rest scrolls
@@ -675,8 +682,8 @@ void drawChannelSettings(App& a) {
     if (!open) a.settingsChannel = kNoId;
     return;
   }
-  edzoomui::begin(a, "channelsettings");
   const ObjectId id = c->id;
+  edzoomui::markRows("channelsettings");  // K-216: the window's own rows (fit report)
   if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) || ImGui::IsWindowAppearing()) {
     a.focusPluginOwner = id;  // controller template knobs follow the focused plugin
     a.focusPluginSlot = -1;
@@ -796,6 +803,10 @@ void drawChannelSettings(App& a) {
   // (tab 2, shown between the instrument and the misc page).
   const bool envPage = info && insSupported(info->type);
   if (!envPage && tab == 2) tab = 0;
+  // K-223: the tab row's start, its width and where its tabs end: the plugin page's header row
+  // (menu, presets, A/B) sits on it, after the tabs, when it fits there (one row less in height).
+  const ImVec2 tabRow = ImGui::GetCursorScreenPos();
+  const float tabRowRight = tabRow.x + ImGui::GetContentRegionAvail().x;
   {
     const char* tabs[] = {"Plugin", "Envelope", "Misc"};
     const char* hints[] = {"The instrument's editor, its sample and note processors",
@@ -811,16 +822,15 @@ void drawChannelSettings(App& a) {
       ui::TabStrip("##chtabs", two, 2, &tab, twoHints);
     }
   }
+  const float tabsEnd = ImGui::GetItemRectMax().x;  // (the strip ends with a spacer as wide as its tabs)
   if (tab == 2) {
     drawChannelEnvelope(a, id);
-    edzoomui::end(a, "channelsettings");
     ImGui::End();
     if (!open) a.settingsChannel = kNoId;
     return;
   }
   if (tab == 1) {
     drawNoteSettings(a, id);
-    edzoomui::end(a, "channelsettings");
     ImGui::End();
     if (!open) a.settingsChannel = kNoId;
     return;
@@ -871,19 +881,32 @@ void drawChannelSettings(App& a) {
   // Instrument editor.
   if (info) {
     PluginTarget target{id, -1};
+    // K-223: the header row goes on the tab row when it fits beside the tabs (the menu button and
+    // the header's own width, known before it is drawn so the window keeps one height from its first
+    // frame; the sampler's sample row comes between them, so it keeps its own row).
+    const float need = ImGui::GetFrameHeight() + 8 + pluginHeaderWidth(a, *info);
+    const bool onTabs = info->type != "gl.sampler" && tabsEnd + theme::kS6 + need <= tabRowRight;
+    const ImVec2 below = ImGui::GetCursorScreenPos();
+    if (onTabs) ImGui::SetCursorScreenPos(ImVec2(tabsEnd + theme::kS6, tabRow.y + std::floor((28.0f - ImGui::GetFrameHeight()) * 0.5f)));
+    ImGui::BeginGroup();
     menuButton("plmenu", "Instrument menu: presets, state, channel", [&a, id]() { pluginWindowMenu(a, id, -1); });
     ImGui::SameLine(0, 8);
-    drawPluginHeader(a, target);
+    drawPluginHeader(a, target, !onTabs);
+    ImGui::EndGroup();
+    if (onTabs) ImGui::SetCursorScreenPos(below);
+    edzoomui::begin(a, "channelsettings");  // K-210b: the editor's region (the only part the editor size zooms)
     drawPluginBody(a, target, editorW);
+    edzoomui::end(a, "channelsettings");
   }
   if (!info) {  // K-169: the layer editor (children, zones, macros, layer presets)
+    edzoomui::begin(a, "channelsettings");
     layerui::drawEditor(a, id, editorW);
+    edzoomui::end(a, "channelsettings");
     ImGui::Dummy(ImVec2(0, theme::kS1));
   }
   // note processors (arpeggiator, chords, ...); J-151: not for instruments that leave them out (while none is set)
   if (const Channel* cc = a.doc.song().channel(id); !info || info->noteFxPanel || (cc && !cc->noteFx.empty()))
     packs::modulation::drawChannelNoteFx(a, id, 600.0f);
-  edzoomui::end(a, "channelsettings");
   ImGui::End();
   if (!open) a.settingsChannel = kNoId;
 }

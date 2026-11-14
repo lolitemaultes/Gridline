@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -18,6 +19,9 @@
 #include <string>
 #include <vector>
 #include "GrooveUi.h"
+#include "StageView.h"
+#include "../core/MixerOps.h"
+#include "../core/StageRoomOps.h"
 #include "ContextMenus.h"
 #include <functional>
 #include "CollabUi.h"
@@ -162,6 +166,16 @@ void saveFolders(App& a) {
 enum Tab { TabAll, TabProject, TabPlugins, TabSounds, TabStarred, TabCount };
 int tab = TabAll;
 std::string selPath;  // file shown in the info panel
+char filterBuf[128] = "";  // the search field's text
+
+// Collapse all folders (the toolbar button, the tree's right-click menu). Every open state the tree
+// uses lives in its window's storage, kept for the session like any fold made by hand: every id a
+// section or folder has used is noted here, so Collapse all can close them all, nested ones and
+// sections on other tabs included. Search result sections open again for each search.
+std::set<ImGuiID> openIds;    // every section / folder open state the tree has used
+std::set<ImGuiID> resultIds;  // the search result sections among them
+bool collapseAsked = false;
+bool collapsedDefaults = false;  // after a Collapse all, sections first drawn later start closed too
 
 constexpr float kRowH = 24.0f;
 
@@ -331,6 +345,9 @@ bool sectionHeader(const char* title, int count, bool defaultOpen, uint32_t role
   App& a = app();
   ImGuiStorage* st = ImGui::GetStateStorage();
   ImGuiID id = ImGui::GetID(title);
+  const bool result = std::strstr(title, "##res") != nullptr;
+  if (result) resultIds.insert(id);
+  if (openIds.insert(id).second && collapsedDefaults && !result && st->GetInt(id, -1) == -1) st->SetBool(id, false);
   bool open = st->GetBool(id, defaultOpen || devOpen(title));
   ImVec2 q = ImGui::GetCursorScreenPos();
   float w = ImGui::GetContentRegionAvail().x;
@@ -369,6 +386,7 @@ std::set<std::string> forceOpen;  // K-18: folders to open (a new folder made in
 bool treeNode(const std::string& key, const char* label, int count, float indent, uint32_t roleColour = role::kView) {
   ImGuiStorage* st = ImGui::GetStateStorage();
   ImGuiID id = ImGui::GetID(key.c_str());
+  openIds.insert(id);
   if (forceOpen.erase(key)) st->SetBool(id, true);
   bool open = st->GetBool(id, devOpen(label));
   std::string c = count >= 0 ? std::to_string(count) : "";
@@ -378,6 +396,32 @@ bool treeNode(const std::string& key, const char* label, int count, float indent
     st->SetBool(id, open);
   }
   return open;
+}
+
+// Collapse all: runs inside the tree's window, before its rows are drawn. The keyboard cursor (and
+// the selection) on a row that folds away moves to the section that held it.
+void collapseAll(bool searching) {
+  ImGuiStorage* st = ImGui::GetStateStorage();
+  for (ImGuiID id : openIds)
+    if (searching || !resultIds.count(id)) st->SetBool(id, false);
+  forceOpen.clear();
+  collapsedDefaults = true;
+  const std::vector<NavRow>& rows = nav.last;
+  int at = -1;
+  for (size_t i = 0; i < rows.size() && at < 0; ++i) at = nav.cursor != 0 && rows[i].id == nav.cursor ? static_cast<int>(i) : -1;
+  for (size_t i = 0; i < rows.size() && at < 0; ++i) at = !selPath.empty() && rows[i].path == selPath ? static_cast<int>(i) : -1;
+  if (at < 0 || rows[static_cast<size_t>(at)].indent < 0) return;  // nothing selected, or a section header (stays shown)
+  for (int i = at - 1; i >= 0; --i) {
+    const NavRow& h = rows[static_cast<size_t>(i)];
+    if (h.indent >= 0) continue;
+    if (!selPath.empty() && rows[static_cast<size_t>(at)].path == selPath) selPath.clear();  // the file is hidden now
+    nav.cursor = h.id;
+    nav.deferred.clear();
+    break;
+  }
+}
+void collapseAllItem() {
+  if (ImGui::MenuItem(i18n::tr("Collapse all folders"))) collapseAsked = true;
 }
 
 void emptyLine(const char* text, float indent = 20) {
@@ -769,6 +813,8 @@ void folderRowExtras(App& a, const fs::path& dir) {
     if (opItem("New folder", lockedWhy(a, d, true))) newFolderIn(a, d);
     if (opItem("Rename", why)) startRename(d);
     if (opItem("Move to the trash...", why)) fops.trashAsk = d, fops.trashOpen = true;
+    ImGui::Separator();
+    collapseAllItem();
     ImGui::EndPopup();
   }
   ImGui::PopID();
@@ -1411,6 +1457,44 @@ void sectionSwingPresets(App& a) {
   ImGui::Dummy(ImVec2(0, 4));
 }
 
+// K-224: Stage room templates (factory and the user's own): double-click applies one to the room the
+// Stage shows; the menu also starts a new room from it.
+void stageRoomRow(App& a, const roomops::RoomTemplate& t, float indent) {
+  const std::string id = (t.factory ? "##srf." : "##sru.") + t.folder + "/" + t.name;
+  bool dbl = false;
+  const char* name = t.factory ? i18n::tr(t.name.c_str()) : t.name.c_str();
+  browserRow(id.c_str(), ui::Icon::Stage, name, "", indent, &dbl, roleCol(role::kGraph), false);
+  {
+    const std::string what = t.hint.empty() ? std::string(i18n::tr(mixops::roomTypeName(t.roomType))) : std::string(i18n::tr(t.hint.c_str()));
+    std::vector<char> b(what.size() + 256);
+    std::snprintf(b.data(), b.size(), i18n::tr("%s \xC2\xB7 double-click: apply it to the room the Stage shows"), what.c_str());
+    ui::Hint(std::string(b.data()));
+  }
+  ImGui::PushID(id.c_str());
+  if (ImGui::BeginPopupContextItem("##srctx")) {
+    if (ImGui::MenuItem(i18n::tr("Apply to the room shown"))) stageui::applyRoomTemplate(a, t);
+    if (ImGui::MenuItem(i18n::tr("New room from it"))) stageui::newRoomFrom(a, t);
+    if (!t.factory && ImGui::MenuItem(i18n::tr("Delete..."))) stageui::confirmDeleteTemplate(a, t);
+    ImGui::EndPopup();
+  }
+  ImGui::PopID();
+  if (dbl) stageui::applyRoomTemplate(a, t);
+}
+
+void sectionStageRooms(App& a) {
+  static std::vector<roomops::RoomTemplate> mine;
+  static double listed = -10;
+  if (a.now - listed > 2.0) mine = roomops::listUserTemplates(presetRoot(a.configDir())), listed = a.now;
+  const auto& f = roomops::factoryTemplates();
+  if (!sectionHeader("Stage rooms", static_cast<int>(f.size() + mine.size()), false, role::kGraph, ui::Icon::Stage)) return;
+  if (treeNode("##sr.factory", "Factory", -1, 12, role::kGraph))
+    for (const auto& t : f) stageRoomRow(a, t, 26);
+  if (!mine.empty() && treeNode("##sr.user", "My templates", static_cast<int>(mine.size()), 12, role::kGraph))
+    for (const auto& t : mine) stageRoomRow(a, t, 26);
+  if (mine.empty()) emptyLine("Save your own from the Stage's rooms list (Templates)");
+  ImGui::Dummy(ImVec2(0, 4));
+}
+
 // A folder section (FL content or Gridline's own folders).
 void folderSection(App& a, const char* title, const fs::path& dir, uint32_t roleColour, const char* emptyText, bool create = false) {
   if (!isDirCached(dir, a.now)) {
@@ -1428,6 +1512,8 @@ void folderSection(App& a, const char* title, const fs::path& dir, uint32_t role
   if (rootHeaderMenu(hh, "##rootctx")) {
     ImGui::TextDisabled("%s", theme::fitText(dir.string().c_str(), 300));
     if (opItem("New folder", lockedWhy(a, dir.string(), true))) newFolderIn(a, dir.string());
+    ImGui::Separator();
+    collapseAllItem();
     ImGui::EndPopup();
   }
   ImGui::PopID();
@@ -1473,6 +1559,8 @@ void sectionUserFolders(App& a) {
         ImGui::PopID();
         break;
       }
+      ImGui::Separator();
+      collapseAllItem();
       ImGui::EndPopup();
     }
     if (open) dirTree(a, f, 0);
@@ -1882,7 +1970,6 @@ void drawBrowser(App& a) {
   browserui::tickIndex(a);
   if (!ImGui::GetDragDropPayload()) fops.browserDrag.clear();  // K-18
   if (devRowsOn) devRowsLast = std::move(devRowsNow), devRowsNow.clear();
-  static char filterBuf[128] = "";
   if (!a.browserSearch.empty()) {
     std::snprintf(filterBuf, sizeof filterBuf, "%s", a.browserSearch.c_str());
     a.browserSearch.clear();
@@ -1936,7 +2023,8 @@ void drawBrowser(App& a) {
   ui::BeginToolbar("##brtb");
   {
     ImVec2 p = ImGui::GetCursorScreenPos();
-    float w = ImGui::GetContentRegionAvail().x - 26;
+    const float bw = ImGui::GetFrameHeight() + 4;  // each button right of the field, with its gap
+    float w = ImGui::GetContentRegionAvail().x - 2 * bw;
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(28, ImGui::GetStyle().FramePadding.y));
     ImGui::SetNextItemWidth(w);
     static bool refocus = false;  // after the clear button: typing goes on in the empty field
@@ -1959,6 +2047,9 @@ void drawBrowser(App& a) {
       devNoteRect("brclear");
     }
     ImGui::SetCursorScreenPos(ImVec2(p.x + w + 4, p.y));
+    if (ui::IconButton("collapse", ui::Icon::CollapseAll, false, ImGui::GetFrameHeight(), "Collapse all folders")) collapseAsked = true;
+    devNoteRect("brcollapse");
+    ImGui::SetCursorScreenPos(ImVec2(p.x + w + bw + 4, p.y));
     if (ui::IconButton("picker", ui::Icon::Plug, browserui::pluginPickerOpen(), ImGui::GetFrameHeight(), "Plugin picker (F8)"))
       browserui::togglePluginPicker();
   }
@@ -1973,6 +2064,10 @@ void drawBrowser(App& a) {
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS2, theme::kS2));
   ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
   ImGui::BeginChild("##tree", ImVec2(0, -footerH - (info ? kInfoH : 0)), ImGuiChildFlags_AlwaysUseWindowPadding);
+  if (collapseAsked) {
+    collapseAsked = false;
+    collapseAll(searching);
+  }
   navKeys(a);  // K-160
   nav.recording = true;
   nav.now.clear();
@@ -1997,6 +2092,7 @@ void drawBrowser(App& a) {
       sectionChannelPresets(a);
       sectionMixerPresets(a);
       sectionSwingPresets(a);  // K-151
+      sectionStageRooms(a);    // K-224
     }
     if (all || tab == TabSounds) {
       if (!fl.empty()) {
@@ -2025,6 +2121,10 @@ void drawBrowser(App& a) {
   nav.recording = false;
   nav.last.swap(nav.now);
   nav.act = Nav::None;  // a row the keys acted on that was not drawn this frame
+  if (ImGui::BeginPopupContextWindow("##treectx", ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
+    collapseAllItem();  // the tree's empty space
+    ImGui::EndPopup();
+  }
   ImGui::EndChild();
   ImGui::PopStyleVar(2);
   if (info) infoPanel(a);
@@ -2116,6 +2216,9 @@ void browserDropTarget(App& a) {
 //   browser trash <path>              the trash dialog for <path>; "browser trashok": its Move to trash
 //   browser refs                      the open project's file references (full paths)
 //   browser nav                       K-160: the keyboard cursor (row index, folder, open), the selected file, the last key preview
+//   browser search [text]             the search field's text (no text: cleared)
+//   browser collapse                  Collapse all folders (the toolbar button's action)
+//   browser tree                      the rows drawn last frame: folders, how many are open, the cursor, the selection, the search text
 //   browser state                     the name field, its error and why <path> is locked ("browser state <path>")
 bool devCommand(App& a, const std::vector<std::string>& args, int frame) {
   if (args.empty()) return false;
@@ -2153,6 +2256,21 @@ bool devCommand(App& a, const std::vector<std::string>& args, int frame) {
     std::printf("browsernav frame %d: rows %zu cursor %d folder %d open %d focused %d moves %d sel \"%s\" previewed \"%s\" previewing %d\n", frame,
                 nav.last.size(), at, r && r->openId ? 1 : 0, r && r->open ? 1 : 0, nav.focused ? 1 : 0, nav.moves, selPath.c_str(),
                 nav.previewed.c_str(), a.engine.previewing() ? 1 : 0);
+  } else if (op == "search") {  // browser search [text]: the search field's text (none: cleared)
+    std::snprintf(filterBuf, sizeof filterBuf, "%s", p1.c_str());
+  } else if (op == "collapse") {  // the Collapse all button's action
+    collapseAsked = true;
+  } else if (op == "tree") {  // the rows drawn last frame: how many folders are open, the cursor, the search text
+    int open = 0, folders = 0, at = -1;
+    for (size_t i = 0; i < nav.last.size(); ++i) {
+      const NavRow& r = nav.last[i];
+      if (r.openId) ++folders, open += r.open ? 1 : 0;
+      if (r.id == nav.cursor) at = static_cast<int>(i);
+    }
+    std::printf("browsertree frame %d: rows %zu folders %d open %d cursor %d cursor-indent %.0f sel \"%s\" search \"%s\"\n", frame, nav.last.size(),
+                folders, open, at, at >= 0 ? static_cast<double>(nav.last[static_cast<size_t>(at)].indent) : -2.0, selPath.c_str(), filterBuf);
+    for (const NavRow& r : nav.last)
+      std::printf("  treerow indent %.0f folder %d open %d path %s\n", static_cast<double>(r.indent), r.openId ? 1 : 0, r.open ? 1 : 0, r.path.c_str());
   } else if (op == "state") {
     std::printf("browserstate frame %d: renaming \"%s\" error \"%s\" trash \"%s\" locked \"%s\" undo %zu \"%s\"\n", frame, fops.renaming.c_str(),
                 fops.error.c_str(), fops.trashAsk.c_str(), p1.empty() ? "" : lockedWhy(a, p1).c_str(), a.doc.history().position(),

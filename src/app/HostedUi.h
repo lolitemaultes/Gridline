@@ -60,6 +60,9 @@ bool hostedEditorUnderMouse(PluginTarget& t, float& fx, float& fy);
 void closeHostedEditor(App& a, const PluginTarget& t, const char* why = nullptr);  // why: for the debug log
 // K-9 dev: every open plugin window with its native window ids and the plugin's rectangle, to stdout.
 void devPrintPluginWindows(int frame);
+// Dev (GitHub issue 7): a drag inside the first open plugin window's interface (container point x, y,
+// up and down for `seconds`), as the mouse does it (macOS). False when there is none or no support.
+bool devDragHostedEditor(int x, int y, double seconds);
 void closeAllHostedEditors(App& a);
 // K-37: at quit, before the system windows go: interfaces still closing are given a last, bounded
 // wait and their windows are destroyed now (later, the plugin instance going away would do that

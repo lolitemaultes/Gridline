@@ -316,6 +316,7 @@ const WinDef kWindows[] = {
     {"Undo history", "Undo history", &App::showHistory, "edit.history"},
     {"Performance", "Performance", &App::showPerformance, nullptr},
     {"Groove editor", "Groove editor", &App::showGroove, nullptr},  // K-151
+    {"Mixer", "Stage", &App::showStage, "view.stage"},  // the mixer window's Stage view
     {"Settings", "Settings...", &App::showSettings, nullptr},
     {"Plugin manager", "Plugin manager...", &App::showPluginManager, nullptr},
     {"Keyboard shortcuts", "Keyboard shortcuts", &App::showShortcuts, "help.shortcuts"},
@@ -323,6 +324,8 @@ const WinDef kWindows[] = {
     {"About Gridline", "About Gridline", &App::showAbout, nullptr},
 };
 constexpr int kWindowCount = static_cast<int>(sizeof kWindows / sizeof kWindows[0]);
+// A window's row: its name, or for a view of a shared window (the mixer's Stage) the view's own name.
+const char* rowName(const WinDef& w) { return w.flag == &App::showStage ? w.menuEn : w.name; }
 
 // Where a keymap command without a menu item lives.
 const char* commandHomeEn(const keys::Command& c) {
@@ -345,6 +348,7 @@ const char* contextWindow(keys::Context c) {
     case keys::Context::ChannelRack: return "Channel rack";
     case keys::Context::Mixer: return "Mixer";
     case keys::Context::Automation: return "autoedit";
+    case keys::Context::Stage: return "Mixer";
     default: return nullptr;
   }
 }
@@ -355,6 +359,7 @@ bool App::*contextFlag(keys::Context c) {
     case keys::Context::PianoRoll: return &App::showPiano;
     case keys::Context::ChannelRack: return &App::showRack;
     case keys::Context::Mixer: return &App::showMixer;
+    case keys::Context::Stage: return &App::showStage;
     default: return nullptr;
   }
 }
@@ -414,13 +419,13 @@ void build(App& a) {
       if (r.labelEn == kWindows[k].menuEn || (r.cmd && kWindows[k].cmd && std::strcmp(r.cmd, kWindows[k].cmd) == 0)) win = k;
     if (win >= 0) {
       const WinDef& w = kWindows[win];
-      const std::string id = std::string("win:") + w.name;
+      const std::string id = std::string("win:") + rowName(w);
       if (winRow[static_cast<size_t>(win)] < 0) {
         Entry e;
         e.id = id;
         e.kind = Kind::Window;
-        e.label = i18n::tr(w.name);
-        e.labelEn = w.name;
+        e.label = i18n::tr(rowName(w));
+        e.labelEn = rowName(w);
         e.path = join(r.shown, kSep);
         e.pathEn = join(r.en, kSep);
         if (w.cmd) {
@@ -487,10 +492,10 @@ void build(App& a) {
     if (winRow[static_cast<size_t>(k)] >= 0) continue;
     const WinDef& w = kWindows[k];
     Entry e;
-    e.id = std::string("win:") + w.name;
+    e.id = std::string("win:") + rowName(w);
     e.kind = Kind::Window;
-    e.label = i18n::tr(w.name);
-    e.labelEn = w.name;
+    e.label = i18n::tr(rowName(w));
+    e.labelEn = rowName(w);
     e.path = i18n::tr("Window");
     e.pathEn = "Window";
     if (w.cmd) {

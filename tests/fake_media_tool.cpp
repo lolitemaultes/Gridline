@@ -9,7 +9,10 @@
 //   --version / -version: a version line.
 // GL_FAKE_SCENARIO picks a case: ok (default), playlist, error, drm, signin, slow, live, noaudio,
 // convertfail, stall, slowdl (only the download is slow), killed (ends by a signal before writing
-// anything), bot (a site's bot check), outdated (an extractor that no longer works). GL_FAKE_LOG appends every argument list to a file.
+// anything), bot (a site's bot check), outdated (an extractor that no longer works), untitled (a
+// playlist whose items have only numbers; the download's info JSON names them), flaky403 (the first
+// download in a work folder is refused with HTTP 403, a fresh try works), always403 (every download
+// is refused). The download writes "-o infojson:<path>" as <path>.info.json. GL_FAKE_LOG appends every argument list to a file.
 #include <chrono>
 #include <cmath>
 #include <csignal>
@@ -125,6 +128,14 @@ int main(int argc, char** argv) {
                     url.c_str());
         return 0;
       }
+      if (sc == "untitled") {
+        std::printf(
+            "{\"_type\": \"playlist\", \"id\": \"S1\", \"title\": \"Fake Set\", \"extractor_key\": \"SoundcloudSet\", "
+            "\"webpage_url\": \"%s\", \"entries\": [{\"_type\": \"url\", \"id\": \"291144360\", "
+            "\"url\": \"https://example.com/tracks/291144360\"}]}\n",
+            url.c_str());
+        return 0;
+      }
       if (sc == "playlist") {
         std::printf(
             "{\"_type\": \"playlist\", \"id\": \"PL1\", \"title\": \"Fake Playlist\", \"uploader\": \"List Owner\", "
@@ -150,6 +161,22 @@ int main(int argc, char** argv) {
     std::string out = after(a, "-o");
     const size_t at = out.find("%(ext)s");
     if (at != std::string::npos) out.replace(at, 7, "webm");
+    if (sc == "flaky403" || sc == "always403") {
+      // The item folder's parent keeps a mark: the first try in it is refused.
+      const std::string dir = out.substr(0, out.find_last_of("/\\"));
+      const std::string mark = dir.substr(0, dir.find_last_of("/\\")) + "/fake-403-mark";
+      std::ifstream seen(mark);
+      if (sc == "always403" || !seen) {
+        std::ofstream(mark) << "1";
+        std::fprintf(stderr, "ERROR: unable to download video data: HTTP Error 403: Forbidden\n");
+        return 1;
+      }
+    }
+    for (size_t i = 0; i + 1 < a.size(); ++i)
+      if (a[i] == "-o" && a[i + 1].rfind("infojson:", 0) == 0) {
+        std::ofstream j(a[i + 1].substr(9) + ".info.json", std::ios::binary);
+        j << "{\"id\": \"291144360\", \"title\": \"Named Track\", \"uploader\": \"Set Owner\", \"duration\": 2.0}\n";
+      }
     const int steps = 10, total = 10 * 4096;
     std::ofstream part(out + ".part", std::ios::binary);
     for (int i = 1; i <= steps; ++i) {

@@ -1,10 +1,12 @@
-// Gridline — "plasma" pack: the Patch view. The same sound as boxes and wires in strict columns, left
-// to right in signal order: what plays the notes, the five sources, the two filters, the amp, the
-// main effects and the two sends, the output; the movement sources in a row below. Wires run
-// square in the gaps between the columns; movement wires show on hover, select or Show Movement. A sound wire is a route
-// setting, a motion wire is one link slot: the graph is a picture of the fixed engine, so it can
-// only draw (and make) what the engine can do. Every edit is the same parameter edit the panels
-// make (one undo step a gesture). Node places, zoom and the selection are editor state only.
+// Gridline — "plasma" pack: the Patch view. The sound as boxes on a calm canvas: the parts in use
+// left to right in signal order (sources, shape, amp, effects, out; the sends under the effects),
+// quiet lines for where the sound goes, and one tile per movement source in use under the sound.
+// Nothing else is drawn at rest: a box shows how many links move it; pointing at a tile (or a box)
+// draws one path to what it moves (or what moves it) with the amounts. Boxes and tiles move freely
+// (snapped to the grid and to their neighbours); their places are saved with the sound, Clean up
+// sorts them back into the flow. The model and the layout live in plasma_patch_dsp.cpp. A sound
+// line is a route setting, a link is one link slot: every edit is the same parameter edit the panels
+// make (one undo step a gesture).
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -12,18 +14,36 @@
 #include <cstring>
 #include <map>
 #include <set>
+#include "../../app/EditorZoomUi.h"
 #include "../../core/I18n.h"
 #include "../../third_party/imgui/imgui_internal.h"
+#include "plasma_patch.h"
 #include "plasma_ui.h"
 
 namespace gl::packs::plasma::ui {
 namespace {
 
-// Node ids.
-enum : int { NSrc = 0, NFilt = 10, NAmp = 20, NOut = 21, NSendA = 22, NSendB = 23, NVoices = 30, NArp = 31, NPhrase = 32, NFx = 100, NMove = 200 };
-// Where a sound wire ends.
-enum : int { DF1 = 0, DF2, DAmp, DOut, DSendA, DSendB, DChain };
-
+using patch::NSrc;
+using patch::NFilt;
+using patch::NAmp;
+using patch::NOut;
+using patch::NSendA;
+using patch::NSendB;
+using patch::NVoices;
+using patch::NFx;
+using patch::NMove;
+using patch::NAddSrc;
+using patch::NAddFilt;
+using patch::NAddFx;
+using patch::NAddMove;
+using patch::DF1;
+using patch::DF2;
+using patch::DAmp;
+using patch::DOut;
+using patch::DSendA;
+using patch::DSendB;
+using patch::DChain;
+enum : int { NArp = 31, NPhrase = 32 };  // the arpeggiator and phrases (opened from the play bar)
 
 struct PNode {
   int id = 0, col = 0;
@@ -164,25 +184,16 @@ std::string plainName(int k) {
   return n;
 }
 
-// ---- the layout: strict columns (graph units are design pixels at 100%), rows 100 apart, compact
-// boxes; the selected box grows a dial row and pushes its column down
-struct ColDef {
-  float x, w;
-};
-constexpr ColDef kCols[6] = {{24, 96}, {168, 168}, {384, 168}, {600, 150}, {798, 160}, {1006, 52}};
-enum : int { CPlay = 0, CSrc, CShape, CAmp, CFx, COut };
-constexpr float kRow0 = 44, kRowStep = 100, kBoxH = 86, kKnobRowH = 66, kPinMid = 43, kPinLow = 65, kMoveRow0 = 616;
-float TG(float px) { return px / 1.25f; }  // a text size in graph units
-float rowY(int i) { return kRow0 + kRowStep * static_cast<float>(i); }
 
-// Movement boxes: the macros share one box, an LFO's second output is the LFO's box.
-int moveNodeOf(int src) {
-  if (src >= SrcMacro1 && src <= SrcMacro8) return NMove + SrcMacro1;
-  if (src >= SrcLfo1Y && src <= SrcLfo10Y) return NMove + SrcLfo1 + (src - SrcLfo1Y);
-  return NMove + src;
-}
+float TG(float px) { return px / 1.25f; }  // a text size in graph units
+constexpr float kAnimSecs = 0.28f;          // Clean up: the boxes glide into place
+
+int moveNodeOf(int src) { return patch::moveTileOf(src); }
+bool isTile(int id) { return id >= NMove && id < NMove + SourceCount; }
+bool isAdd(int id) { return id >= NAddSrc && id <= NAddMove; }
 ImU32 nodeColour(const Ctx& c, int id) {
-  if (id >= NMove) return c.P.fam[familyOf(id - NMove)];
+  if (isTile(id)) return c.P.fam[familyOf(id - NMove)];
+  if (isAdd(id)) return c.P.textFaint;
   if (id == NVoices) return c.P.textDim;
   if (id == NOut) return c.P.accent;
   if (id >= NFx && id < NFx + kFxSlots) return fxCol(c, vali(c, fxP(id - NFx, X_Type)));
@@ -194,212 +205,72 @@ ImU32 nodeColour(const Ctx& c, int id) {
   return partCol(c, id);
 }
 
-// ---- the graph of the current sound
+// ---- the graph of the current sound: the model's boxes at their places (the saved ones, else the
+// default flow), the one being moved under the pointer, Clean up's glide
 struct Graph {
+  patch::Patch P;
   std::vector<PNode> nodes;
   std::vector<PWire> wires;
   std::map<int, size_t> at;  // id -> index
   std::map<int, int> fxBox;  // effect slot -> the box that shows it
   std::vector<int> chain[3];
-  int mainHead = NOut;  // where the main chain starts: its first effect, or Out
-  float mainB = 0, sendY = 0, busY = 0, moveY = 0, maxX = 0, maxY = 0;
+  int mainHead = NOut;
+  float minX = 0, minY = 0, maxX = 0, maxY = 0;
+  std::vector<patch::Line> lines;  // the sound lines, routed for where the boxes are now
   PNode* find(int id) {
     auto it = at.find(id);
     return it == at.end() ? nullptr : &nodes[it->second];
   }
+  const PNode* find(int id) const {
+    auto it = at.find(id);
+    return it == at.end() ? nullptr : &nodes[it->second];
+  }
 };
-Ui* gPatchUi = nullptr;  // the editor whose Patch view is drawing (each editor keeps its own layout)
-std::map<int, std::pair<float, float>>& offsets() {  // the user's moves of boxes (Tidy clears them)
-  static std::map<int, std::pair<float, float>> none;
-  return gPatchUi ? gPatchUi->pOffsets : none;
-}
+Ui* gPatchUi = nullptr;  // the editor whose Patch view is drawing
 std::set<int>& shownMoves() {  // movement sources added by hand (shown though unused)
   static std::set<int> none;
   return gPatchUi ? gPatchUi->pShownMoves : none;
 }
-// The box a parameter shows on (a link to it counts there).
-int ownerBox(const Graph& g, int k) {
-  if (k == G_Bus1Vol || k == G_Bus1Dest || k == tailP(T_BusChain)) return NSendA;
-  if (k == G_Bus2Vol || k == G_Bus2Dest) return NSendB;
-  const int n = ownerNode(k);
-  if (n >= NFx && n < NFx + kFxSlots) {
-    auto it = g.fxBox.find(n - NFx);
-    return it == g.fxBox.end() ? n : it->second;
-  }
-  if (n >= NMove) return moveNodeOf(n - NMove);
-  return n;
+int ownerBox(const Graph& g, int k) { return patch::ownerBox(g.P, k); }
+
+// The boxes to show although nothing needs them: the selected one, a link's ends, sources added by hand.
+std::set<int> keepShown(const Ctx& c) {
+  std::set<int> keep;
+  for (int s : shownMoves()) keep.insert(NMove + s);
+  if (c.u.pSel >= 0) keep.insert(c.u.pSel);
+  if (c.u.pLink >= 0 && vali(c, modP(c.u.pLink, M_Source)) > SrcNone) keep.insert(NMove + vali(c, modP(c.u.pLink, M_Source)));
+  return keep;
 }
 
 Graph buildGraph(const Ctx& c) {
   Graph g;
-  const auto fx = resolvedFx(c.m, c.st.params);
-  for (const auto& n : fx)
-    if (n.parent < 0 && vali(c, fxP(n.slot, X_Type)) != FxNone) g.chain[n.rack].push_back(n.slot);
-  for (const auto& n : fx) {  // every slot, a split's bands too, shows on its top box
-    int top = n.slot;
-    for (int guard = 0; guard < kFxSlots; ++guard) {
-      int up = -1;
-      for (const auto& q : fx)
-        if (q.slot == top) up = q.parent;
-      if (up < 0) break;
-      top = up;
-    }
-    g.fxBox[n.slot] = n.rack == 0 ? NFx + top : n.rack == 1 ? NSendA : NSendB;
+  g.P = patch::buildPatch(c.st.params, c.m, keepShown(c));
+  patch::place(g.P, c.m.patchPos);
+  // the bounds (Fit) of the places the boxes go to, before the move and the glide
+  g.minX = g.minY = 1e9f, g.maxX = g.maxY = -1e9f;
+  for (const auto& b : g.P.boxes)
+    g.minX = std::min(g.minX, b.x), g.minY = std::min(g.minY, b.y), g.maxX = std::max(g.maxX, b.x + b.w), g.maxY = std::max(g.maxY, b.y + b.h);
+  if (g.P.boxes.empty()) g.minX = g.minY = g.maxX = g.maxY = 0;
+  const Ui& u = c.u;
+  if (u.pMove >= 0)
+    if (patch::Box* b = g.P.find(u.pMove)) b->x = u.pMoveX, b->y = u.pMoveY;
+  if (u.pAnimT >= 0) {  // Clean up: from the old places into the new ones
+    const float t = std::clamp((static_cast<float>(ImGui::GetTime()) - u.pAnimT) / kAnimSecs, 0.f, 1.f), e = 1 - (1 - t) * (1 - t) * (1 - t);
+    for (auto& b : g.P.boxes)
+      if (auto it = u.pAnimFrom.find(b.id); it != u.pAnimFrom.end() && t < 1)
+        b.x = it->second[0] + (b.x - it->second[0]) * e, b.y = it->second[1] + (b.y - it->second[1]) * e;
   }
-  float colB[6] = {};
-  auto add = [&](int id, int col, float y, float x = -1) {
+  g.fxBox = g.P.fxBox, g.mainHead = g.P.mainHead;
+  for (int r = 0; r < 3; ++r) g.chain[r] = g.P.chain[r];
+  for (const auto& b : g.P.boxes) {
     PNode n;
-    n.id = id, n.col = col;
-    n.x = x >= 0 ? x : kCols[col].x, n.w = kCols[col].w;
-    n.y = x >= 0 ? y : std::max(y, colB[col]);
-    n.h = kBoxH + (c.u.pSel == id && id != NOut ? kKnobRowH : 0.f);
-    const int en = enableOf(id);
-    n.on = en < 0 || val(c, en) >= 0.5;
-    if (auto o = offsets().find(id); o != offsets().end()) n.x += o->second.first, n.y += o->second.second;
-    if (x < 0) colB[col] = std::max(colB[col], n.y + n.h + 14);
-    g.at[id] = g.nodes.size();
+    n.id = b.id, n.col = b.col, n.x = b.x, n.y = b.y, n.w = b.w, n.h = b.h, n.on = b.on;
+    g.at[n.id] = g.nodes.size();
     g.nodes.push_back(n);
-  };
-  add(NVoices, CPlay, rowY(2));
-  for (int i = 0; i < 5; ++i) add(NSrc + i, CSrc, rowY(i));
-  add(NFilt, CShape, rowY(0));
-  add(NFilt + 1, CShape, rowY(2));
-  add(NAmp, CAmp, rowY(2));
-  const int nMain = static_cast<int>(g.chain[0].size());
-  for (int i = 0; i < nMain; ++i) add(NFx + g.chain[0][static_cast<size_t>(i)], CFx, rowY(i));
-  add(NSendA, CFx, rowY(std::max(3, nMain)));
-  add(NSendB, CFx, rowY(std::max(4, nMain + 1)));
-  add(NOut, COut, rowY(2));
-  for (float b : colB) g.mainB = std::max(g.mainB, b - 14);
-  g.sendY = g.mainB + 40;
-  g.moveY = std::max(kMoveRow0, g.mainB + 86);
-  g.busY = g.moveY - 20;
-  g.mainHead = nMain > 0 ? NFx + g.chain[0][0] : NOut;
-  // movement: the sources in use, the ones shown by hand and three to start from
-  std::set<int> mv = {NMove + SrcLfo1, NMove + SrcEnv2, NMove + SrcMacro1};
-  for (int s = 0; s < kModSlots; ++s) {
-    const int src = vali(c, modP(s, M_Source)), dest = vali(c, modP(s, M_Dest));
-    if (src <= SrcNone || dest <= 0) continue;
-    mv.insert(moveNodeOf(src));
-    const int o = ownerBox(g, dest - 1);
-    if (o >= NMove) mv.insert(o);
   }
-  for (int s : shownMoves()) mv.insert(moveNodeOf(s));
-  if (c.u.pSel >= NMove + SrcEnv2 && c.u.pSel < NMove + SourceCount) mv.insert(c.u.pSel);  // the one opened from the panels
-  if (c.u.pLink >= 0 && vali(c, modP(c.u.pLink, M_Source)) > SrcNone) mv.insert(moveNodeOf(vali(c, modP(c.u.pLink, M_Source))));
-  std::vector<int> order;
-  for (int s = SrcLfo1; s <= SrcLfo10; ++s) order.push_back(NMove + s);
-  for (int s = SrcEnv2; s <= SrcEnv4; ++s) order.push_back(NMove + s);
-  order.push_back(NMove + SrcMacro1);
-  for (int s = SrcNone + 1; s < SourceCount; ++s)
-    if (!(s >= SrcLfo1 && s <= SrcLfo10Y) && !(s >= SrcEnv1 && s <= SrcEnv4) && !(s >= SrcMacro1 && s <= SrcMacro8)) order.push_back(NMove + s);
-  int i = 0;
-  for (int id : order) {
-    if (!mv.count(id)) continue;
-    const int col = CSrc + i % 4;
-    add(id, col, g.moveY + kRowStep * static_cast<float>(i / 4), kCols[col].x);
-    g.nodes.back().col = col;
-    ++i;
-  }
-  for (const auto& n : g.nodes) g.maxX = std::max(g.maxX, n.x + n.w), g.maxY = std::max(g.maxY, n.y + n.h);
-  // sound: the routes as the engine plays them
-  auto wire = [&](int from, int to, int kind, float wt, int r, int dest) { g.wires.push_back({from, to, kind, wt, r, dest}); };
-  for (int r = 0; r < kRoutes; ++r) {
-    const int from = nodeOfRoute(r);
-    const int d = vali(c, routeP(r, R_Dest));
-    const float b2 = (static_cast<float>(valf(c, routeP(r, R_Balance))) + 1.f) * 0.5f;
-    const bool filterNode = r == RtF1 || r == RtF2;
-    if (d == RouteFilter) {
-      if (filterNode) wire(from, r == RtF1 ? NFilt + 1 : NFilt, 0, 1.f, r, r == RtF1 ? DF2 : DF1);
-      else {
-        if (b2 < 0.995f) wire(from, NFilt, 0, 1.f - b2, r, DF1);
-        if (b2 > 0.005f) wire(from, NFilt + 1, 0, b2, r, DF2);
-      }
-    } else if (d == RouteMain) {
-      wire(from, NAmp, 0, 1.f, r, DAmp);
-    } else if (d == RouteDirect) {
-      wire(from, NOut, 0, 1.f, r, DOut);
-    }
-    if (valf(c, routeP(r, R_Bus1)) > 0.001f) wire(from, NSendA, 1, static_cast<float>(valf(c, routeP(r, R_Bus1))), r, DSendA);
-    if (valf(c, routeP(r, R_Bus2)) > 0.001f) wire(from, NSendB, 1, static_cast<float>(valf(c, routeP(r, R_Bus2))), r, DSendB);
-  }
-  // the main chain: the amp into its first effect, each effect into the next, the last one out
-  wire(NAmp, g.mainHead, 0, 1.f, -1, -1);
-  for (int k = 0; k + 1 < nMain; ++k) wire(NFx + g.chain[0][static_cast<size_t>(k)], NFx + g.chain[0][static_cast<size_t>(k + 1)], 3, 1.f, -1, -1);
-  if (nMain > 0) wire(NFx + g.chain[0].back(), NOut, 0, 1.f, -1, -1);
-  // the sends' returns, as the engine mixes them: into the main chain or straight out; a chained
-  // send feeds the other one instead (both ways: Send B feeds Send A and neither returns)
-  // (a send nothing is sent to has nothing to return)
-  const int chainMode = vali(c, tailP(T_BusChain));
-  bool fedA = false, fedB = false;
-  for (int r = 0; r < kRoutes; ++r) fedA = fedA || valf(c, routeP(r, R_Bus1)) > 0.001f, fedB = fedB || valf(c, routeP(r, R_Bus2)) > 0.001f;
-  const bool getsA = fedA || (chainMode >= 2 && fedB), getsB = fedB || (chainMode == 1 && fedA);
-  if (chainMode == 1) wire(NSendA, NSendB, 3, 1.f, -1, DChain);
-  if (chainMode >= 2) wire(NSendB, NSendA, 3, 1.f, -1, DChain);
-  if ((chainMode == 0 || chainMode == 2) && getsA) wire(NSendA, vali(c, G_Bus1Dest) == 0 ? g.mainHead : NOut, 0, 1.f, -1, -1);
-  if (chainMode <= 1 && getsB) wire(NSendB, vali(c, G_Bus2Dest) == 0 ? g.mainHead : NOut, 0, 1.f, -1, -1);
-  // notes: what plays the notes into each source that is on
-  for (int k = 0; k < 5; ++k)
-    if (g.find(NSrc + k)->on) wire(NVoices, NSrc + k, 2, 1.f, -1, -1);
+  for (const auto& e : g.P.edges) g.wires.push_back({e.from, e.to, e.kind, e.weight, e.r, e.dest});
+  g.lines = patch::soundLines(g.P);
   return g;
-}
-
-// ---- orthogonal routes. A wire leaves its box sideways, runs up or down a lane in the gap between
-// two columns and enters its target sideways; wires into one target share its lane (a bus). A wire
-// that has to cross a column crosses it where no box is.
-struct RP {
-  float x, y;
-  int gap = -1, key = 0;  // gap >= 0: x is that lane
-};
-struct Lanes {
-  std::map<int, std::vector<int>> keys;
-  void use(int gap, int key) {
-    auto& v = keys[gap];
-    if (std::find(v.begin(), v.end(), key) == v.end()) v.push_back(key);
-  }
-  float x(int gap, int key) const {
-    if (gap < 0) return kCols[0].x - 12;
-    const float l = kCols[gap].x + kCols[gap].w, r = kCols[std::min(gap + 1, 5)].x, mid = (l + r) * 0.5f;
-    auto it = keys.find(gap);
-    if (it == keys.end()) return mid;
-    const auto& v = it->second;
-    const int n = static_cast<int>(v.size());
-    const int i = static_cast<int>(std::find(v.begin(), v.end(), key) - v.begin());
-    const float sp = n > 1 ? std::min(8.f, (r - l - 16) / static_cast<float>(n - 1)) : 0.f;
-    return mid + (static_cast<float>(i) - static_cast<float>(n - 1) * 0.5f) * sp;
-  }
-};
-bool freeAt(const Graph& g, float y, float x1, float x2) {
-  for (const auto& n : g.nodes)
-    if (n.x < x2 && n.x + n.w > x1 && y > n.y - 6 && y < n.y + n.h + 6) return false;
-  return true;
-}
-ImVec2 outAt(const PNode& n) { return ImVec2(n.x + n.w, n.y + kPinMid); }
-ImVec2 inAt(const PNode& n) { return ImVec2(n.x, n.y + kPinMid); }
-std::vector<RP> planSound(const Graph& g, const PNode& A, const PNode& B, ImVec2 a, ImVec2 b, int exitKey, int inKey) {
-  if (B.col == A.col + 1) return {{a.x, a.y}, {0, a.y, A.col, inKey}, {0, b.y, A.col, inKey}, {b.x, b.y}};
-  if (B.col > A.col + 1) {
-    const float x1 = kCols[A.col].x + kCols[A.col].w, x2 = kCols[B.col].x;
-    std::vector<float> cand;
-    for (const auto& n : g.nodes)
-      if (n.col > A.col && n.col < B.col && n.id < NMove) cand.push_back(n.y - 7), cand.push_back(n.y + n.h + 7);
-    std::sort(cand.begin(), cand.end(), [&](float p, float q) { return std::fabs(p - b.y) + 0.5f * std::fabs(p - a.y) < std::fabs(q - b.y) + 0.5f * std::fabs(q - a.y); });
-    cand.insert(cand.begin(), {b.y, a.y});
-    float cy = b.y;
-    for (float y : cand)
-      if (y >= 30 && freeAt(g, y, x1 + 1, x2 - 1)) {
-        cy = y;
-        break;
-      }
-    const int gA = A.col, gB = B.col - 1;
-    if (cy == a.y && cy == b.y) return {{a.x, a.y}, {b.x, b.y}};
-    if (cy == a.y) return {{a.x, a.y}, {0, a.y, gB, inKey}, {0, b.y, gB, inKey}, {b.x, b.y}};
-    if (cy == b.y) return {{a.x, a.y}, {0, a.y, gA, exitKey}, {0, b.y, gA, exitKey}, {b.x, b.y}};
-    return {{a.x, a.y}, {0, a.y, gA, exitKey}, {0, cy, gA, exitKey}, {0, cy, gB, inKey}, {0, b.y, gB, inKey}, {b.x, b.y}};
-  }
-  // the same column (a send returning into the main chain): over the top of the column
-  const float top = 30;
-  return {{a.x, a.y}, {0, a.y, A.col, exitKey}, {0, top, A.col, exitKey}, {0, top, B.col - 1, inKey}, {0, b.y, B.col - 1, inKey}, {b.x, b.y}};
 }
 
 // ---- wire paths (screen points). A wire to the next column runs along a lane in the gutter
@@ -576,7 +447,7 @@ float allSettings(Ctx& c, float x, float y, float w) {
   const int id = u.pSel;
   if (id < 0) {
     y = wrapped(c, x, y, w, "Click a box to edit it here.", c.P.textDim, 11.5f) + 8;
-    y = wrapped(c, x, y, w, "Drag from a box's right edge to send its sound somewhere else. Drag a motion box's dot onto any control or pin to link it.", c.P.textDim, 11.5f) + 8;
+    y = wrapped(c, x, y, w, "Drag from a box's right edge to send its sound somewhere else. Drag a movement tile's dot onto a box to link it.", c.P.textDim, 11.5f) + 8;
     return wrapped(c, x, y, w, "Tab switches back to the panels.", c.P.textDim, 11.5f);
   }
   DetailsOn every;  // the inspector shows each control of the box
@@ -830,12 +701,6 @@ std::string boxSub(const Ctx& c, const Graph& g, int id) {
   if (id >= NMove) {
     const int src = id - NMove;
     if (src >= SrcLfo1 && src <= SrcLfo10) return ptext(c, lfoP(src - SrcLfo1, L_Rate));
-    if (src == SrcMacro1) {
-      int top = 4;
-      for (int s = 0; s < kModSlots; ++s)
-        if (vali(c, modP(s, M_Source)) > SrcMacro1 + 3 && vali(c, modP(s, M_Source)) <= SrcMacro8) top = 8;
-      return top == 4 ? "1 to 4" : "1 to 8";
-    }
   }
   return {};
 }
@@ -843,7 +708,8 @@ std::string boxName(const Ctx& c, int id) {
   char buf[48];
   if (id >= NFx && id < NFx + kFxSlots) return i18n::tr(fxDisplayName(vali(c, fxP(id - NFx, X_Type))));
   if (id == NVoices) return "Play";
-  if (id == NMove + SrcMacro1) return "Macros";
+  if (id >= NMove + SrcMacro1 && id <= NMove + SrcMacro8 && !c.m.macroName[static_cast<size_t>(id - NMove - SrcMacro1)].empty())
+    return c.m.macroName[static_cast<size_t>(id - NMove - SrcMacro1)];
   if (id >= NMove + SrcEnv1 && id <= NMove + SrcEnv4) return "Envelope " + std::to_string(id - NMove - SrcEnv1 + 1);
   return nodeTitle(id, buf, sizeof buf);
 }
@@ -892,7 +758,7 @@ std::vector<Dial> boxDials(const Ctx& c, int id) {
       const int e = src - SrcEnv1;
       return {{envP(e, E_Attack), "Attack", 0}, {envP(e, E_Decay), "Decay", 0}, {envP(e, E_Sustain), "Sustain", 0}, {envP(e, E_Release), "Release", 0}};
     }
-    if (src == SrcMacro1) return {{macroP(0), "Macro 1", 0}, {macroP(1), "Macro 2", 0}, {macroP(2), "Macro 3", 0}, {macroP(3), "Macro 4", 0}};
+    if (src >= SrcMacro1 && src <= SrcMacro8) return {{macroP(src - SrcMacro1), "Amount", 0}};
   }
   return {};
 }
@@ -929,7 +795,7 @@ void boxPicture(Ctx& c, const Graph& g, int id, float x, float y, float w, float
     if (s >= 0) {
       Pal pal2 = c.P;
       pal2.accent = fxCol(c, vali(c, fxP(s, X_Type)));
-      Ctx cc{c.a, c.t, c.F, c.dl, c.st, c.m, c.u, pal2, c.live, c.hasLive};
+      Ctx cc{c.a, c.t, c.F, c.dl, c.st, c.m, c.u, pal2, c.live, c.hasLive, c.graph};
       fxPicture(cc, s, px, py, pw, ph, big);
     } else {
       textMid(c, x, x + w, y + h * 0.5f, textW(c, "No effects yet", TG(10.5f), false) < w - 8 ? "No effects yet" : "Empty", c.P.textFaint, TG(10.5f), false);
@@ -938,13 +804,11 @@ void boxPicture(Ctx& c, const Graph& g, int id, float x, float y, float w, float
     const int src = id - NMove;
     if (src >= SrcLfo1 && src <= SrcLfo10) lfoMini(c, src - SrcLfo1, px, py, pw, ph);
     else if (src >= SrcEnv1 && src <= SrcEnv4) envMini(c, src - SrcEnv1, px, py, pw, ph);
-    else if (src == SrcMacro1) {
+    else if (src >= SrcMacro1 && src <= SrcMacro8) {  // how far the macro is turned
       const ImU32 fc = c.P.fam[FamMacro];
-      for (int i = 0; i < 4; ++i) {
-        const float bw = pw / 4, bx = px + i * bw + bw * 0.25f, v = static_cast<float>(valf(c, macroP(i)));
-        c.dl->AddRectFilled(c.p(bx, py + 2), c.p(bx + bw * 0.5f, py + ph - 2), theme::withAlpha(c.P.line, 0.6f));
-        c.dl->AddRectFilled(c.p(bx, py + ph - 2 - v * (ph - 4)), c.p(bx + bw * 0.5f, py + ph - 2), theme::withAlpha(fc, 0.8f));
-      }
+      const float v = static_cast<float>(valf(c, macroP(src - SrcMacro1)));
+      c.dl->AddRectFilled(c.p(px + pw * 0.3f, py + 1), c.p(px + pw * 0.7f, py + ph - 1), theme::withAlpha(c.P.line, 0.6f), c.s(1));
+      c.dl->AddRectFilled(c.p(px + pw * 0.3f, py + ph - 1 - v * (ph - 2)), c.p(px + pw * 0.7f, py + ph - 1), theme::withAlpha(fc, 0.85f), c.s(1));
     } else {
       float raw = c.hasLive ? c.live.source[src] : 0.f;
       bool bip = false;
@@ -957,71 +821,126 @@ void boxPicture(Ctx& c, const Graph& g, int id, float x, float y, float w, float
   }
   c.dl->PopClipRect();
 }
-// A count badge: how many links move this box.
-void badge(Ctx& c, float rx, float cy, int n) {
-  char b[16];
-  std::snprintf(b, sizeof b, "%d", n);
-  MonoText mono;
-  const float tw = textW(c, b, TG(9.5f), true), w = tw + 17, h = 16;
-  const ImU32 lc = c.P.fam[FamLfo];
-  c.dl->AddRectFilled(c.p(rx - w, cy - h * 0.5f), c.p(rx, cy + h * 0.5f), theme::withAlpha(lc, 0.16f), c.s(8));
-  c.dl->AddCircleFilled(c.p(rx - w + 8, cy), c.s(3), lc, 10);
-  text(c, rx - w + 13, cy - TG(9.5f) * 0.68f, b, c.P.textDim, TG(9.5f), true);
+
+void openInPanels(Ctx& c, int id) {
+  Ui& u = c.u;
+  u.patch = false;
+  if (id >= NSrc && id < NSrc + 5) u.src = id - NSrc, u.view = id - NSrc < 3 ? VLayer : VRootTex, u.layer = std::min(id - NSrc, 2);
+  else if (id == NFilt || id == NFilt + 1) u.view = VFilters;
+  else if (id == NAmp || id == NVoices) u.view = VAmp;
+  else if (id >= NMove + SrcLfo1 && id <= NMove + SrcLfo10) u.lfoTab = id - NMove - SrcLfo1, openView(u, VLfo);
+  else if (id >= NMove + SrcEnv1 && id <= NMove + SrcEnv4) u.envTab = id - NMove - SrcEnv1, openView(u, VEnv);
+  else if (id >= NMove) u.view = VLinks;
+  else u.view = VEffects;
 }
-// The open link search (a movement source dropped on a box or on the canvas).
+
+// The open link list (a movement source dropped on a box or on the canvas): the box's main controls
+// and the ones already moved first; `all`: every control, with a search.
 struct LinkAsk {
   int src = -1, box = -1;
   ImVec2 at;
+  bool all = false;
 };
 LinkAsk& linkAsk() {
   static LinkAsk a;
   return a;
 }
+// Popups asked for inside a box (its own ID scope) open at the canvas's level, where they are drawn.
+bool gOpenLink = false, gOpenAdd = false;
 
-void drawBox(Ctx& g, const Graph& gr, const PNode& n, int links, bool sel, bool dim, bool hov) {
-  const Pal& P = g.P;
-  const int id = n.id;
-  const std::string name = boxName(g, id);
-  ImGui::PushID(id + 40000);
-  const ImVec2 a = g.p(n.x, n.y), b = g.p(n.x + n.w, n.y + n.h);
-  const ImU32 fc = nodeColour(g, id);
-  blockFrame(g, n.x, n.y, n.w, n.h, fc, sel, false);
-  if (hov) {  // a link dropped here lands on it: its border in the link colour, with a glow
-    const ImU32 lc = P.fam[FamLfo];
-    ImVec2 fa, fb;
-    blockBox(g, n.x, n.y, n.w, n.h, fa, fb);
-    const float o = g.s(1.5f);
-    g.dl->AddRect(ImVec2(fa.x - o, fa.y - o), ImVec2(fb.x + o, fb.y + o), theme::withAlpha(lc, 0.3f), blockRound(g) + o, 0, o);
-    blockRing(g, fa, fb, theme::mix(lc, P.line, 0.3f), blockBorderW(g, sel));
+// How a box looks this frame.
+struct BoxLook {
+  int links = 0;              // links that move it
+  std::vector<ImU32> dots;    // their families (one dot each)
+  std::string label;          // pointing: the moved control and how far (in its header)
+  ImU32 labelCol = 0;
+  int labelSlot = -1;         // the link the label stands for (drag it to change how far)
+  bool sel = false, dim = false, lit = false, drop = false;
+};
+
+// ---- moving a box: snapped to the grid, or to a neighbour's edge or middle when close to one
+float snapAxis(float v, float size, const std::vector<std::pair<float, float>>& others, float& guide) {
+  float best = 1e9f, out = std::round(v / patch::kGrid) * patch::kGrid;
+  guide = NAN;
+  for (const auto& [o, os] : others) {
+    const float cand[3][2] = {{o, o}, {o + os - size, o + os}, {o + os * 0.5f - size * 0.5f, o + os * 0.5f}};
+    for (const auto& cg : cand)
+      if (std::fabs(cg[0] - v) < 6 && std::fabs(cg[0] - v) < best) best = std::fabs(cg[0] - v), out = cg[0], guide = cg[1];
   }
-  // the whole box: click to select, drag to move (its own controls sit over it)
+  return out;
+}
+void moveTo(Ui& u, const Graph& gr, const PNode& n, float rx, float ry) {
+  std::vector<std::pair<float, float>> xs, ys;
+  for (const auto& o : gr.nodes)
+    if (o.id != n.id && !isAdd(o.id)) xs.push_back({o.x, o.w}), ys.push_back({o.y, o.h});
+  u.pMoveX = snapAxis(rx, n.w, xs, u.pGuideX);
+  u.pMoveY = snapAxis(ry, n.h, ys, u.pGuideY);
+}
+// The move ends: the box stays where it was put, clear of the others (every place is saved with the
+// sound: one undo step); a moved effect puts the main chain in its boxes' left-to-right order.
+void finishMove(Ctx& c, const Graph& gr, const PNode& n) {
+  Ui& u = c.u;
+  const int from = n.id;
+  (void)u;
+  // let go on another box: it slides to the nearest free place below (or beside) it
+  patch::Patch p = gr.P;
+  if (patch::Box* b = p.find(from)) {
+    auto hits = [&] {
+      for (const auto& o : p.boxes)
+        if (o.id != from && b->x < o.x + o.w + 8 && o.x < b->x + b->w + 8 && b->y < o.y + o.h + 8 && o.y < b->y + b->h + 8) return true;
+      return false;
+    };
+    const float x0 = b->x, y0 = b->y;
+    for (int t = 0; t < 400 && hits(); ++t) {
+      const int ring = t / 2 + 1;
+      if (t % 2 == 0) b->x = x0, b->y = y0 + patch::kGrid * 2 * static_cast<float>(ring);
+      else b->x = x0 + patch::kGrid * 2 * static_cast<float>(ring), b->y = y0;
+    }
+  }
+  c.m.patchPos = patch::positions(p);
+  if (from >= NFx && from < NFx + kFxSlots) {  // the main chain plays in its boxes' left-to-right order
+    std::vector<int> order = p.chain[0];
+    std::stable_sort(order.begin(), order.end(), [&](int a, int b) { return p.find(NFx + a)->x < p.find(NFx + b)->x; });
+    if (order != p.chain[0]) {
+      fxOrderMain(c, order);  // the model only: the commit below makes the move and the order one step
+      commit(c, "Move effect");
+      return;
+    }
+  }
+  commit(c, "Move box");
+}
+// Click to select, drag to move (snapped), right-click for its menu, a movement source dropped on it
+// to link one of its controls.
+void boxGestures(Ctx& g, const Graph& gr, const PNode& n, const std::string& name) {
+  Ui& u = g.u;
+  const int id = n.id;
+  const ImVec2 a = g.p(n.x, n.y), b = g.p(n.x + n.w, n.y + n.h);
   ImGui::SetCursorScreenPos(a);
   ImGui::SetNextItemAllowOverlap();
   ImGui::InvisibleButton("##box", ImVec2(b.x - a.x, b.y - a.y), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
-  if (ImGui::IsItemClicked(0)) g.u.pSel = id, g.u.pLink = -1;
+  if (ImGui::IsItemActivated()) u.pMoveStartX = n.x, u.pMoveStartY = n.y, u.pMoveDX = 0, u.pMoveDY = 0;
+  if (ImGui::IsItemClicked(0)) u.pSel = id, u.pLink = -1;
   if (ImGui::IsItemActive() && ImGui::IsMouseDragging(0, 3) && !ImGui::GetDragDropPayload()) {
-    auto& o = offsets()[id];
-    o.first += ImGui::GetIO().MouseDelta.x / g.F.s, o.second += ImGui::GetIO().MouseDelta.y / g.F.s;
+    u.pMove = id;
+    u.pMoveDX += ImGui::GetIO().MouseDelta.x / g.F.s, u.pMoveDY += ImGui::GetIO().MouseDelta.y / g.F.s;
+    moveTo(u, gr, n, u.pMoveStartX + u.pMoveDX, u.pMoveStartY + u.pMoveDY);
+  }
+  if (ImGui::IsItemDeactivated() && u.pMove == id) {
+    finishMove(g, gr, n);
+    u.pMove = -1, u.pGuideX = u.pGuideY = NAN;
   }
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenOverlappedByItem)) {
-    g.u.pHover = id;
-    g.a.setHint(name + (id >= NMove ? ": hover to see what it moves, drag its pin onto a box to link it" : ": click to edit it on the right, drag to move it"));
-  }
-  if (id >= NFx && id < NFx + kFxSlots) {  // effects: drag onto another effect to reorder
-    if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
-      const int s = id - NFx;
-      ImGui::SetDragDropPayload("PLASMA_FX", &s, sizeof(int));
-      ImGui::TextUnformatted(name.c_str());
-      ImGui::EndDragDropSource();
-    }
-    fxDropOn(g, id - NFx);
+    u.pHover = id;
+    if (isTile(id)) g.a.setHint(name + ": point to see what it moves; drag its dot onto a box to link it; drag the tile to move it");
+    else g.a.setHint(name + ": click to edit it, drag to move it, double-click to open it in the panels");
+    if (ImGui::IsMouseDoubleClicked(0)) openInPanels(g, id);
   }
   if (ImGui::BeginDragDropTarget()) {  // a movement source dropped here: pick which control it moves
     if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("PLASMA_SRC")) {
       int src = 0;
       std::memcpy(&src, pl->Data, sizeof(int));
-      linkAsk() = {src, id, ImGui::GetIO().MousePos};
-      ImGui::OpenPopup("##patchlink");
+      linkAsk() = {src, id, ImGui::GetIO().MousePos, false};
+      gOpenLink = true;
     }
     ImGui::EndDragDropTarget();
   }
@@ -1029,37 +948,81 @@ void drawBox(Ctx& g, const Graph& gr, const PNode& n, int links, bool sel, bool 
     const int en = enableOf(id);
     ImGui::TextDisabled("%s", name.c_str());
     ImGui::Separator();
+    if (ImGui::MenuItem(i18n::tr("Open in the panels"))) openInPanels(g, id);
     if (en >= 0 && ImGui::MenuItem(val(g, en) >= 0.5 ? i18n::tr("Turn off") : i18n::tr("Turn on"))) setv(g, en, val(g, en) >= 0.5 ? 0 : 1);
     if (id >= NFx && id < NFx + kFxSlots && ImGui::MenuItem(i18n::tr("Remove"))) fxRemove(g, id - NFx);
-    if (id >= NMove && ImGui::MenuItem(i18n::tr("Hide"))) shownMoves().erase(id - NMove);
+    if (isTile(id) && shownMoves().count(id - NMove) && ImGui::MenuItem(i18n::tr("Hide"))) shownMoves().erase(id - NMove);
     ImGui::EndPopup();
   }
-  // the head: light (or the link dot of a movement box), name, what it is, the link count
-  const float hy = n.y + 18;
-  float tx = n.x + 9;
+}
+// The count of links that move a box: one dot per link (its family), then the number.
+float countLook(Ctx& g, float rx, float cy, const BoxLook& L) {
+  if (L.links <= 0) return rx;
+  char b[16];
+  std::snprintf(b, sizeof b, "%d", L.links);
+  float w;
+  {
+    MonoText mono;
+    w = textW(g, b, TG(10.5f), true);
+    text(g, rx - w, cy - TG(10.5f) * 0.68f, b, g.P.textDim, TG(10.5f), true);
+  }
+  float x = rx - w - 5;
+  const int nd = std::min(4, static_cast<int>(L.dots.size()));
+  for (int i = nd - 1; i >= 0; --i) {
+    g.dl->AddCircleFilled(g.p(x - 3, cy), g.s(3), L.dots[static_cast<size_t>(i)], 10);
+    x -= 8;
+  }
+  return x - 2;
+}
+// A label in a box's header: the moved control and how far (pointing). Drag it to change how far.
+float labelLook(Ctx& g, float rx, float cy, const BoxLook& L, const char* id) {
+  const float w = textW(g, L.label.c_str(), TG(11), false);
+  if (L.labelSlot >= 0 && g.u.pSel >= 0) {  // the selected source's links: the amount follows the pointer
+    ImGui::SetCursorScreenPos(g.p(rx - w - 4, cy - 9));
+    ImGui::InvisibleButton(id, ImVec2(g.s(w + 8), g.s(18)));
+    if (ImGui::IsItemHovered()) g.a.setHint("Drag up or down to change how far it moves; Alt+click takes the link away");
+    if (ImGui::IsItemActive() && ImGui::GetIO().MouseDelta.y != 0) {
+      const int k = modP(L.labelSlot, M_Amount);
+      setv(g, k, std::clamp(val(g, k) - ImGui::GetIO().MouseDelta.y * 0.005, -1.0, 1.0), true);
+    }
+    if (ImGui::IsItemClicked(0) && ImGui::GetIO().KeyAlt) removeLink(g, L.labelSlot);
+  }
+  text(g, rx - w, cy - TG(11) * 0.68f, L.label.c_str(), L.labelCol, TG(11), false);
+  return rx - w - 8;
+}
+
+void drawBox(Ctx& g, const Graph& gr, const PNode& n, const BoxLook& L) {
+  const Pal& P = g.P;
+  const int id = n.id;
+  const std::string name = boxName(g, id);
+  ImGui::PushID(id + 40000);
+  const ImU32 fc = nodeColour(g, id);
+  blockFrame(g, n.x, n.y, n.w, n.h, fc, L.sel, false);
+  if (L.drop || L.lit) {  // a link lands here, or pointing lights it: its border in the colour, with a glow
+    const ImU32 lc = L.drop ? P.fam[FamLfo] : fc;
+    ImVec2 fa, fb;
+    blockBox(g, n.x, n.y, n.w, n.h, fa, fb);
+    const float o = g.s(1.5f);
+    g.dl->AddRect(ImVec2(fa.x - o, fa.y - o), ImVec2(fb.x + o, fb.y + o), theme::withAlpha(lc, 0.3f), blockRound(g) + o, 0, o);
+    blockRing(g, fa, fb, theme::mix(lc, P.line, 0.3f), blockBorderW(g, L.sel));
+  }
+  boxGestures(g, gr, n, name);
+  // the head: light, name, what it is; the link count (or, pointing, what moves and how far)
+  const float hy = n.y + 16;
+  float tx = n.x + 10;
   const int en = enableOf(id);
-  if (id >= NMove) {
-    g.dl->AddCircle(g.p(tx + 6, hy), g.s(5), fc, 16, g.s(1.4f));
-    g.dl->AddCircleFilled(g.p(tx + 6, hy), g.s(2.2f), fc, 10);
-    tx += 18;
-  } else if (en >= 0) {
+  if (en >= 0) {
     led(g, en, tx, hy - 3.5f, 7);
     tx += 14;
   }
-  float rx = n.x + n.w - 8;
-  if (links > 0) {
-    badge(g, rx, hy, links);
-    char b[16];
-    std::snprintf(b, sizeof b, "%d", links);
-    MonoText mono;
-    rx -= textW(g, b, TG(9.5f), true) + 17 + 6;
-  }
+  float rx = n.x + n.w - 9;
+  rx = L.label.empty() ? countLook(g, rx, hy, L) : labelLook(g, rx, hy, L, "##amt");
   {
     const float nw = textW(g, name.c_str(), TG(12.5f), true);
-    g.dl->PushClipRect(g.p(tx, n.y + 4), g.p(rx, n.y + 32), true);
+    g.dl->PushClipRect(g.p(tx, n.y + 1), g.p(rx, n.y + n.h - 1), true);
     textHeavy(g, tx, hy - TG(12.5f) * 0.68f, name.c_str(), n.on ? P.text : P.textDim, TG(12.5f));
     const std::string sub = id == NOut ? std::string() : boxSub(g, gr, id);
-    if (!sub.empty() && n.w > 120 && tx + nw + 7 < rx) {  // what it is, shortened to the room left (never cut by the box)
+    if (!sub.empty() && L.label.empty() && tx + nw + 7 < rx) {  // what it is, shortened to the room left
       std::string s2 = sub;
       const float room = rx - 3 - (tx + nw + 7);
       if (textW(g, s2.c_str(), TG(11), false) > room) {
@@ -1073,34 +1036,102 @@ void drawBox(Ctx& g, const Graph& gr, const PNode& n, int links, bool sel, bool 
     g.dl->PopClipRect();
   }
   if (id == NOut) {  // two level meters
-    const float mh = n.h - 42, my = n.y + 34, mx = n.x + n.w * 0.5f;
     const float lv[2] = {g.hasLive ? std::sqrt(std::clamp(g.live.outL, 0.f, 1.f)) : 0.f, g.hasLive ? std::sqrt(std::clamp(g.live.outR, 0.f, 1.f)) : 0.f};
     for (int i = 0; i < 2; ++i) {
-      const float x0 = mx + (i ? 2.f : -9.f);
-      g.dl->AddRectFilled(g.p(x0, my), g.p(x0 + 7, my + mh), P.well, g.s(2));
-      if (lv[i] > 0.001f) g.dl->AddRectFilled(g.p(x0, my + mh * (1 - lv[i])), g.p(x0 + 7, my + mh), lv[i] > 0.95f ? P.danger : P.good, g.s(2));
+      const float my = n.y + 36 + i * 13.f, mx0 = n.x + 10, mx1 = n.x + n.w - 10;
+      g.dl->AddRectFilled(g.p(mx0, my), g.p(mx1, my + 7), P.well, g.s(2));
+      if (lv[i] > 0.001f) g.dl->AddRectFilled(g.p(mx0, my), g.p(mx0 + (mx1 - mx0) * lv[i], my + 7), lv[i] > 0.95f ? P.danger : P.good, g.s(2));
     }
   } else {
-    boxPicture(g, gr, id, n.x + 9, n.y + 34, n.w - 18, 44, false);
+    boxPicture(g, gr, id, n.x + 9, n.y + 30, n.w - 18, n.h - 39, false);
   }
-  // the selected box: its two main dials
-  if (sel && n.h > kBoxH) {
-    const auto d = boxDials(g, id);
-    KnobColour kc(fc);
-    const int nd = std::min(2, static_cast<int>(d.size()));
-    for (int i = 0; i < nd; ++i) {
-      ImGui::PushID(i + 300);
-      const float cx = nd == 1 ? n.x + n.w * 0.5f : n.x + n.w * (i ? 0.73f : 0.27f);
-      knob(g, d[static_cast<size_t>(i)].k, cx, n.y + kBoxH + 14, 13, d[static_cast<size_t>(i)].label, KnobValue | d[static_cast<size_t>(i)].flags);
-      ImGui::PopID();
-    }
-  }
-  if (!n.on || dim) {  // over the whole box, its border too, so the border stays even
+  if (!n.on || L.dim) {  // over the whole box, its border too, so the border stays even
     ImVec2 fa, fb;
     blockBox(g, n.x, n.y, n.w, n.h, fa, fb);
     if (!n.on) g.dl->AddRectFilled(fa, fb, theme::withAlpha(P.frame, 0.4f), blockRound(g));
-    if (dim) g.dl->AddRectFilled(fa, fb, theme::withAlpha(P.frame, 0.62f), blockRound(g));
+    if (L.dim) g.dl->AddRectFilled(fa, fb, theme::withAlpha(P.frame, 0.62f), blockRound(g));
   }
+  ImGui::PopID();
+}
+
+// A movement tile: its live picture, its name, how many links; the dot at its right end is what
+// you drag onto a box to link it.
+void drawTile(Ctx& g, const Graph& gr, const PNode& n, const BoxLook& L, int nLinks) {
+  const Pal& P = g.P;
+  const int id = n.id, src = id - NMove;
+  const std::string name = boxName(g, id);
+  ImGui::PushID(id + 40000);
+  const ImU32 fc = nodeColour(g, id);
+  blockFrame(g, n.x, n.y, n.w, n.h, fc, L.sel, false);
+  if (L.lit || L.drop) {
+    ImVec2 fa, fb;
+    blockBox(g, n.x, n.y, n.w, n.h, fa, fb);
+    g.dl->AddRectFilled(fa, fb, theme::withAlpha(fc, 0.12f), blockRound(g));
+    blockRing(g, fa, fb, fc, blockBorderW(g, true));
+  }
+  boxGestures(g, gr, n, name);
+  // its link port on the top edge's middle: where its modulation lines leave, the dot you drag to link
+  const float dx = n.x + n.w * 0.5f, dy = n.y;
+  ImGui::SetCursorScreenPos(g.p(dx - 8, dy - 8));
+  ImGui::InvisibleButton("##dot", ImVec2(g.s(16), g.s(16)));
+  const bool hv = ImGui::IsItemHovered();
+  if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceNoPreviewTooltip)) {
+    ImGui::SetDragDropPayload("PLASMA_SRC", &src, sizeof(int));
+    g.u.pDragPin = id;
+    ImGui::EndDragDropSource();
+  }
+  if (hv) g.u.pHover = id, g.a.setHint(name + ": drag this dot onto a box to link it to one of its controls");
+  g.dl->AddCircleFilled(g.p(dx, dy), g.s(hv ? 5.5f : 4.5f), theme::mix(P.frame, P.well, 0.5f), 16);
+  g.dl->AddCircle(g.p(dx, dy), g.s(hv ? 5.5f : 4.5f), fc, 16, g.s(1.5f));
+  g.dl->AddCircleFilled(g.p(dx, dy), g.s(2), fc, 10);
+  // picture, name, what it is (or, pointing, what it moves there), the link count
+  boxPicture(g, gr, id, n.x + 7, n.y + 7, 32, n.h - 14, false);
+  const float tx = n.x + 47, cy = n.y + n.h * 0.5f;
+  float rx = n.x + n.w - 10;
+  char cnt[24];
+  std::snprintf(cnt, sizeof cnt, "%d", nLinks);
+  {
+    MonoText mono;
+    const float w = textW(g, cnt, TG(10.5f), true);
+    text(g, rx - w, cy - TG(10.5f) * 0.68f, cnt, P.textFaint, TG(10.5f), true);
+    rx -= w + 8;
+  }
+  const float lw = L.label.empty() ? 0.f : textW(g, L.label.c_str(), TG(11), false) + 8;
+  g.dl->PushClipRect(g.p(tx, n.y + 2), g.p(std::max(tx, rx - lw), n.y + n.h - 2), true);
+  const float nw = textW(g, name.c_str(), TG(12), true);
+  textHeavy(g, tx, cy - TG(12) * 0.68f, name.c_str(), P.text, TG(12));
+  g.dl->PopClipRect();
+  if (!L.label.empty()) {
+    BoxLook l2 = L;
+    labelLook(g, rx, cy, l2, "##amt");
+  } else {
+    const std::string sub = boxSub(g, gr, id);
+    if (!sub.empty() && tx + nw + 7 + textW(g, sub.c_str(), TG(10.5f), false) < rx) text(g, tx + nw + 7, cy - TG(10.5f) * 0.68f, sub.c_str(), P.textFaint, TG(10.5f), false);
+  }
+  if (L.dim) {
+    ImVec2 fa, fb;
+    blockBox(g, n.x, n.y, n.w, n.h, fa, fb);
+    g.dl->AddRectFilled(fa, fb, theme::withAlpha(P.frame, 0.62f), blockRound(g));
+  }
+  ImGui::PopID();
+  (void)src;
+}
+
+// A dashed "add" tile: a part, an effect or a movement source to add.
+void drawAdd(Ctx& g, const PNode& n) {
+  const char* label = n.id == NAddSrc ? "Layer, root or texture" : n.id == NAddFilt ? "Filter" : n.id == NAddFx ? "Effect" : "Add movement";
+  ImGui::PushID(n.id + 40000);
+  ImGui::SetCursorScreenPos(g.p(n.x, n.y));
+  const bool hit = ImGui::InvisibleButton("##add", ImVec2(g.s(n.w), g.s(n.h)));
+  const bool hv = ImGui::IsItemHovered();
+  if (hv) g.a.setHint(n.id == NAddMove ? "Add a movement source (an LFO, an envelope, a macro, ...)" : "Add one to the sound");
+  const ImU32 col = hv ? g.P.textDim : theme::withAlpha(g.P.textFaint, 0.8f);
+  const ImVec2 a = g.p(n.x, n.y), b = g.p(n.x + n.w, n.y + n.h);
+  drawPath(g.dl, {a, ImVec2(b.x, a.y), b, ImVec2(a.x, b.y), a}, col, std::max(1.f, g.s(1)), 1, g.F.s * 0.6f);
+  const std::string s = std::string("+  ") + i18n::tr(label);
+  if (textW(g, s.c_str(), TG(11.5f), false) < n.w - 12) textMid(g, n.x, n.x + n.w, n.y + n.h * 0.5f, s.c_str(), col, TG(11.5f), false);
+  else textMid(g, n.x, n.x + n.w, n.y + n.h * 0.5f, "+", col, TG(13), false);
+  if (hit) g.u.pAddTile = n.id, gOpenAdd = true;
   ImGui::PopID();
 }
 
@@ -1118,36 +1149,27 @@ float tagLook(Ctx& c, float x, float y, const std::string& s, ImU32 dot) {
   return w;
 }
 // A card whose height is known only after its content: the content draws first (channel 1), the
-// card under it (channel 0).
+// card under it (channel 0). Its own splitter: the frame may already have split the draw list (the
+// keyboard drawer sits on a channel of its own), and splitting it again would wipe that channel.
 template <class F>
 float cardAround(Ctx& c, float x, float y, float w, ImU32 strip, F&& body) {
-  c.dl->ChannelsSplit(2);
-  c.dl->ChannelsSetCurrent(1);
+  ImDrawListSplitter split;
+  split.Split(c.dl, 2);
+  split.SetCurrentChannel(c.dl, 1);
   const float end = body(x + M(16), y + M(14), w - M(32));
-  c.dl->ChannelsSetCurrent(0);
+  split.SetCurrentChannel(c.dl, 0);
   if (strip) blockFrame(c, x, y, w, end + M(14) - y, strip, false, false);
   else {
     c.dl->AddRectFilled(c.p(x, y), c.p(x + w, end + M(14)), c.P.panel, c.s(M(6)));
     c.dl->AddRect(c.p(x, y), c.p(x + w, end + M(14)), c.P.line, c.s(M(6)));
   }
-  c.dl->ChannelsMerge();
+  split.Merge(c.dl);
   return end + M(14);
 }
 float cardTitle(Ctx& c, float x, float y, float w, const char* t, const std::string& note) {
   text(c, x, y + M(9) - T(13) * 0.68f, t, c.P.text, T(13), true);
   if (!note.empty()) textR(c, x + w, y + M(9) - T(11) * 0.68f, note.c_str(), c.P.textFaint, T(11), false);
   return y + M(18) + M(12);
-}
-void openInPanels(Ctx& c, int id) {
-  Ui& u = c.u;
-  u.patch = false;
-  if (id >= NSrc && id < NSrc + 5) u.src = id - NSrc, u.view = id - NSrc < 3 ? VLayer : VRootTex, u.layer = std::min(id - NSrc, 2);
-  else if (id == NFilt || id == NFilt + 1) u.view = VFilters;
-  else if (id == NAmp || id == NVoices) u.view = VAmp;
-  else if (id >= NMove + SrcLfo1 && id <= NMove + SrcLfo10) u.lfoTab = id - NMove - SrcLfo1, openView(u, VLfo);
-  else if (id >= NMove + SrcEnv1 && id <= NMove + SrcEnv4) u.envTab = id - NMove - SrcEnv1, openView(u, VEnv);
-  else if (id >= NMove) u.view = VLinks;
-  else u.view = VEffects;
 }
 std::string wireWords(const Ctx& c, int id, float weight) {
   std::string s = boxName(c, id);
@@ -1172,7 +1194,7 @@ float inspector(Ctx& c, float x, float y, float w) {
     return cardAround(c, x, y, w, 0, [&](float ix, float iy, float iw) {
       iy = cardTitle(c, ix, iy, iw, "Nothing selected", "");
       iy = wrapped(c, ix, iy, iw, "Click a box to edit it here.", c.P.textDim, T(11.5f)) + M(4);
-      iy = wrapped(c, ix, iy, iw, "Drag from a box's right edge to send its sound somewhere else. Drag a movement box's pin onto a box to link it to one of its controls.",
+      iy = wrapped(c, ix, iy, iw, "Drag from a box's right edge to send its sound somewhere else. Drag a movement tile's dot onto a box to link it to one of its controls.",
                    c.P.textDim, T(11.5f)) + M(4);
       return wrapped(c, ix, iy, iw, "Tab switches back to the panels.", c.P.textFaint, T(11.5f)) - M(6);
     });
@@ -1294,9 +1316,9 @@ float inspector(Ctx& c, float x, float y, float w) {
     }
     if (!slots.empty()) iy += M(4);
     return wrapped(c, ix, iy, iw,
-                   id >= NMove ? "Drag its pin onto a box to link it to one of that box's controls."
+                   isTile(id) ? "Drag its dot onto a box to link it to one of that box's controls."
                                : slots.empty() ? "Nothing moves it yet. Drag a movement box's pin onto it to link one."
-                                               : "Hover a movement box to see its wires, or turn on Movement above.",
+                                               : "Point at a movement tile to see its links.",
                    c.P.textFaint, T(11.5f)) -
            M(6);
   });
@@ -1322,58 +1344,82 @@ float inspector(Ctx& c, float x, float y, float w) {
   return y;
 }
 
-// ---- the link search: which control of a box (or of any box) a movement source moves
+
+// ---- the link list: which control of a box (or of any box) a movement source moves. Dropped on a
+// box it is short: that box's main controls and the ones already moved; "All controls" opens the
+// full list with a search.
 struct Cand {
   int k, box;
   std::string name, where, sentence;
   int slot;  // already linked from this source (-1 no)
 };
+int gDevPick = -1;  // dev: the row the open link list takes
 void linkSearch(Ctx& c, const Graph& gr) {
   LinkAsk& ask = linkAsk();
   static char q[64] = "";
   static int hot = 0;
-  if (ImGui::IsWindowAppearing()) q[0] = 0, hot = 0, ImGui::SetKeyboardFocusHere(1);
+  static bool focus = false;
+  const bool shortList = ask.box >= 0 && !ask.all;
+  if (ImGui::IsWindowAppearing()) q[0] = 0, hot = 0, focus = !shortList;
   {
-    const std::string head = std::string(i18n::tr("Link")) + " " + sourceLabel(ask.src) + " " + i18n::tr("to a control");
+    const std::string head = shortList ? std::string(i18n::tr("Link")) + " " + sourceLabel(ask.src) + " " + i18n::tr("to") + " " + boxName(c, ask.box)
+                                        : std::string(i18n::tr("Link")) + " " + sourceLabel(ask.src) + " " + i18n::tr("to a control");
     ImGui::TextDisabled("%s", head.c_str());
-    const char* enter = i18n::tr("Enter to link");
-    ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - ImGui::CalcTextSize(enter).x);
-    ImGui::TextDisabled("%s", enter);
+    if (!shortList) {
+      const char* enter = i18n::tr("Enter to link");
+      ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - ImGui::CalcTextSize(enter).x);
+      ImGui::TextDisabled("%s", enter);
+    }
   }
-  ImGui::SetNextItemWidth(-1);
-  if (ImGui::InputTextWithHint("##q", i18n::tr("Search the controls"), q, sizeof q)) hot = 0;
-  std::string ql = q;
+  if (!shortList) {
+    if (focus) ImGui::SetKeyboardFocusHere(), focus = false;
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::InputTextWithHint("##q", i18n::tr("Search the controls"), q, sizeof q)) hot = 0;
+  }
+  std::string ql = shortList ? std::string() : std::string(q);
   for (auto& ch : ql) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-  // the candidates: the box it was dropped on first, then every box (unless a box was asked)
+  // the short list: the box's dials, then its controls something already moves
+  std::set<int> few;
+  int allOfBox = 0;
+  if (ask.box >= 0) {
+    for (const auto& d : boxDials(c, ask.box)) few.insert(d.k);
+    for (int s = 0; s < kModSlots; ++s)
+      if (vali(c, modP(s, M_Source)) > SrcNone && vali(c, modP(s, M_Dest)) > 0 && ownerBox(gr, vali(c, modP(s, M_Dest)) - 1) == ask.box)
+        few.insert(vali(c, modP(s, M_Dest)) - 1);
+    for (int k : nodeParams(c, ask.box))
+      if (const ParamDesc* d = pdesc(k); d && d->kind == ParamKind::Continuous) ++allOfBox;
+  }
   std::vector<Cand> sound, fxs, moves;
   std::set<int> seen;
   auto addBox = [&](int box) {
     for (int k : nodeParams(c, box)) {
-      if (seen.count(k)) continue;
+      if (seen.count(k) || (shortList && !few.count(k))) continue;
       const ParamDesc* d = pdesc(k);
       if (!d || d->kind != ParamKind::Continuous) continue;
       seen.insert(k);
-      Cand cd{k, box, boxName(c, box) + " " + plainName(k), "", paramSentence(k), -1};
+      Cand cd{k, box, shortList ? plainName(k) : boxName(c, box) + " " + plainName(k), "", paramSentence(k), -1};
       std::string l = cd.name + " " + cd.sentence;
       for (auto& ch : l) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
       if (!ql.empty() && l.find(ql) == std::string::npos) continue;
       for (int s : modSlotsFor(c, k))
         if (vali(c, modP(s, M_Source)) == ask.src) cd.slot = s;
-      const PNode* n = gr.at.count(box) ? &gr.nodes[gr.at.at(box)] : nullptr;
-      static const char* const cols[6] = {"Play", "Sources", "Shape", "Amp", "Effects", "Out"};
-      cd.where = box >= NFx && box < NFx + kFxSlots ? "Main" : box == NSendA ? "Send A" : box == NSendB ? "Send B" : n && box < NMove ? cols[n->col] : "Movement";
+      const PNode* n = gr.find(box);
+      static const char* const cols[8] = {"Sources", "Shape", "Amp", "Effects", "Out", "Sends", "Movement", ""};
+      cd.where = box >= NFx && box < NFx + kFxSlots ? "Main" : box == NSendA ? "Send A" : box == NSendB ? "Send B" : n ? cols[std::clamp(n->col, 0, 7)] : "Movement";
       if (cd.slot >= 0) {
         char b[32];
         std::snprintf(b, sizeof b, "linked, %+.0f%%", valf(c, modP(cd.slot, M_Amount)) * 100.0);
         cd.where = b, cd.sentence = "Already linked. Pick it to change how far.";
+      } else if (shortList) {
+        cd.where.clear();
       }
-      ((box >= NFx && box < NFx + kFxSlots) || box == NSendA || box == NSendB ? fxs : box >= NMove ? moves : sound).push_back(cd);
+      ((box >= NFx && box < NFx + kFxSlots) || box == NSendA || box == NSendB ? fxs : isTile(box) ? moves : sound).push_back(cd);
     }
   };
   if (ask.box >= 0) addBox(ask.box);
-  if (ask.box < 0 || !ql.empty()) {
+  if (!shortList && (ask.box < 0 || !ql.empty())) {
     for (const auto& n : gr.nodes)
-      if (n.id != moveNodeOf(ask.src) && n.id != NVoices) addBox(n.id);
+      if (n.id != moveNodeOf(ask.src) && n.id != NVoices && !isAdd(n.id)) addBox(n.id);
     addBox(NVoices);  // what plays the notes last
   }
   std::vector<const Cand*> all;
@@ -1383,27 +1429,33 @@ void linkSearch(Ctx& c, const Graph& gr) {
   if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) hot = std::max(hot - 1, 0);
   const Cand* chosen = nullptr;
   if (ImGui::IsKeyPressed(ImGuiKey_Enter) && hot < static_cast<int>(all.size())) chosen = all[static_cast<size_t>(hot)];
-  ImGui::BeginChild("##list", ImVec2(0, std::min(c.s(M(380)), ImGui::GetTextLineHeightWithSpacing() * 2.6f * static_cast<float>(all.size() + 3))));
+  if (gDevPick >= 0) {
+    if (gDevPick < static_cast<int>(all.size())) chosen = all[static_cast<size_t>(gDevPick)];
+    gDevPick = -1;
+  }
+  const float lh = ImGui::GetTextLineHeight();
+  const float rowGuess = shortList ? lh * 1.7f : ImGui::GetTextLineHeightWithSpacing() * 2.6f;
+  ImGui::BeginChild("##list", ImVec2(0, std::min(c.s(M(380)), rowGuess * static_cast<float>(all.size() + (shortList ? 0 : 3)) + (shortList ? lh * 0.4f : 0.f))));
   int idx = 0;
   const char* heads[3] = {"Sound", "Effects", "Movement"};
   int hi = 0;
   for (auto* v : {&sound, &fxs, &moves}) {
-    if (!v->empty()) ImGui::SeparatorText(i18n::tr(heads[hi]));
+    if (!v->empty() && !shortList) ImGui::SeparatorText(i18n::tr(heads[hi]));
     ++hi;
     for (const auto& cd : *v) {
       ImGui::PushID(cd.k);
-      const float lh = ImGui::GetTextLineHeight(), pic = lh * 2.4f, w = ImGui::GetContentRegionAvail().x;
+      const float pic = shortList ? lh * 1.6f : lh * 2.4f, w = ImGui::GetContentRegionAvail().x;
       const ImVec2 at = ImGui::GetCursorScreenPos();
       const float tx = at.x + pic + 10, wrap = std::max(40.f, at.x + w - tx - 6);
-      const float sentH = ImGui::CalcTextSize(cd.sentence.c_str(), nullptr, false, wrap).y;
-      const float rowH = std::max(lh * 2.2f, lh + 3 + sentH + 6);
+      const float sentH = shortList ? 0.f : ImGui::CalcTextSize(cd.sentence.c_str(), nullptr, false, wrap).y;
+      const float rowH = shortList ? lh * 1.6f : std::max(lh * 2.2f, lh + 3 + sentH + 6);
       const bool isHot = idx == hot;
       if (ImGui::Selectable("##c", isHot, 0, ImVec2(w, rowH))) chosen = &cd;
       if (ImGui::IsItemHovered()) hot = idx;
       ImDrawList* dl = ImGui::GetWindowDrawList();
       const ImU32 bc = nodeColour(c, cd.box);
-      const ImVec2 p0(at.x + 2, at.y + 3), p1(at.x + pic, at.y + lh * 1.8f);
-      if (cd.box >= NFx && cd.box < NFx + kFxSlots) fxTypeGlyph(dl, vali(c, fxP(cd.box - NFx, X_Type)), p0, p1, bc, c.P.well);
+      const ImVec2 p0(at.x + 2, at.y + 3), p1(at.x + pic, at.y + (shortList ? rowH - 3 : lh * 1.8f));
+      if (cd.box >= NFx && cd.box < NFx + kFxSlots && !shortList) fxTypeGlyph(dl, vali(c, fxP(cd.box - NFx, X_Type)), p0, p1, bc, c.P.well);
       else {
         dl->AddRectFilled(p0, p1, c.P.well, 3.f);
         const float v = static_cast<float>(std::clamp((val(c, cd.k) - pdesc(cd.k)->min) / std::max(1e-9, pdesc(cd.k)->max - pdesc(cd.k)->min), 0.0, 1.0));
@@ -1411,41 +1463,37 @@ void linkSearch(Ctx& c, const Graph& gr) {
         dl->AddRect(p0, p1, c.P.line, 3.f);
       }
       const ImU32 tc = cd.slot >= 0 ? ImGui::GetColorU32(ImGuiCol_TextDisabled) : ImGui::GetColorU32(ImGuiCol_Text);
-      dl->AddText(ImVec2(tx, at.y + 2), tc, cd.name.c_str());
-      const ImVec2 ws = ImGui::CalcTextSize(cd.where.c_str());
-      dl->AddText(ImVec2(at.x + w - ws.x - 6, at.y + 2), ImGui::GetColorU32(ImGuiCol_TextDisabled), cd.where.c_str());
-      dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(tx, at.y + lh + 4), ImGui::GetColorU32(ImGuiCol_TextDisabled), cd.sentence.c_str(), nullptr, wrap);
-      layoutWindowText(ImVec2(tx, at.y + 2), cd.name.c_str(), 0);
-      layoutWindowText(ImVec2(tx, at.y + lh + 4), cd.sentence.c_str(), wrap);
+      const float ty = shortList ? at.y + (rowH - lh) * 0.5f : at.y + 2;
+      dl->AddText(ImVec2(tx, ty), tc, cd.name.c_str());
+      layoutWindowText(ImVec2(tx, ty), cd.name.c_str(), 0);
+      if (!cd.where.empty()) {
+        const ImVec2 ws = ImGui::CalcTextSize(cd.where.c_str());
+        dl->AddText(ImVec2(at.x + w - ws.x - 6, ty), ImGui::GetColorU32(ImGuiCol_TextDisabled), cd.where.c_str());
+      }
+      if (!shortList) {
+        dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(tx, at.y + lh + 4), ImGui::GetColorU32(ImGuiCol_TextDisabled), cd.sentence.c_str(), nullptr, wrap);
+        layoutWindowText(ImVec2(tx, at.y + lh + 4), cd.sentence.c_str(), wrap);
+      }
       ImGui::PopID();
       ++idx;
     }
   }
   if (all.empty()) ImGui::TextDisabled("%s", i18n::tr("No control matches"));
   ImGui::EndChild();
+  if (shortList) {  // the rest of the box's controls, with a search
+    ImGui::Separator();
+    char b[64];
+    std::snprintf(b, sizeof b, "%s (%d)", i18n::tr("All controls"), allOfBox);
+    if (ImGui::Selectable(b)) ask.all = true, hot = 0, focus = true;
+  }
   if (chosen) {  // Enter or a click: one undo step either way
     int s = chosen->slot;
-    if (s < 0) s = addModulation(c, ask.src, chosen->k, 0.5f);
+    if (s >= 0) c.u.pLink = s, c.u.pSel = -1;  // already linked: its row says so, so show that link
+    else s = addModulation(c, ask.src, chosen->k, 0.25f);  // a new link starts at 25 %, as in the Panels
     if (s < 0) c.u.pWhy = "All 64 links are in use", c.u.pWhyT = static_cast<float>(ImGui::GetTime());
-    else c.u.pLink = s, c.u.pSel = -1;
     ImGui::CloseCurrentPopup();
   }
 }
-
-// A toolbar chip: a colour dash and a word, lit when on.
-bool showChip(Ctx& c, const char* id, float x, float y, float w, const char* label, bool on, ImU32 col) {
-  const float h = M(28);
-  ImGui::SetCursorScreenPos(c.p(x, y));
-  const bool hit = ImGui::InvisibleButton(id, c.F.sz(w, h));
-  const bool hv = ImGui::IsItemHovered();
-  layoutBox(c, x, y, w, h, label);
-  if (on) c.dl->AddRectFilled(c.p(x, y), c.p(x + w, y + h), c.P.panelHi, c.s(M(4)));
-  c.dl->AddRect(c.p(x, y), c.p(x + w, y + h), on || hv ? c.P.lineHi : c.P.line, c.s(M(4)));
-  c.dl->AddRectFilled(c.p(x + M(10), y + h * 0.5f - M(1.5f)), c.p(x + M(22), y + h * 0.5f + M(1.5f)), on ? col : theme::withAlpha(col, 0.5f), c.s(M(1.5f)));
-  text(c, x + M(29), y + h * 0.5f - T(11.5f) * 0.68f, label, on ? c.P.text : c.P.textFaint, T(11.5f), false);
-  return hit;
-}
-float chipW(Ctx& c, const char* label) { return textW(c, label, T(11.5f), false) + M(39); }
 
 }  // namespace
 
@@ -1465,18 +1513,155 @@ void patchSelectFor(Ui& u) {
   if (u.devPSel >= 0) u.pSel = u.devPSel;
 }
 
+namespace {
+
+// ---- dev / tests: pointer moves fed to the app one a frame (a drag as the hand makes it)
+struct DevEv {
+  float x, y;
+  int btn;  // -1 move only, 1 press, 0 release
+};
+std::vector<DevEv>& devMouse() {
+  static std::vector<DevEv> q;
+  return q;
+}
+skin::Form gLastG;              // the canvas transform (last frame)
+bool gHaveG = false;
+ImVec2 gFreeSpot(-1, -1);       // an empty place on the canvas (last frame)
+int gDevPoint = -1;             // dev: the box shown as pointed at (screenshots)
+std::map<int, ImVec2> gEnds;    // each drawn link's end handle (last frame), by slot
+void devDrag(ImVec2 a, ImVec2 b, bool release) {  // a, b: the editor's own coordinates
+  auto& q = devMouse();
+  q.push_back({a.x, a.y, -1});
+  q.push_back({a.x, a.y, 1});
+  for (int i = 1; i <= 10; ++i) q.push_back({a.x + (b.x - a.x) * static_cast<float>(i) / 10.f, a.y + (b.y - a.y) * static_cast<float>(i) / 10.f, -1});
+  q.push_back({b.x, b.y, -1});
+  if (release) q.push_back({b.x, b.y, 0}), q.push_back({-1e9f, -1e9f, -1});
+}
+// One queued pointer event a frame. The editor is drawn at its design size and zoomed as one
+// picture, and the window maps the pointer back: post where the point shows, then correct by
+// what arrived (a press or a release waits until the pointer is where it should be).
+void devMouseFrame() {
+  auto& q = devMouse();
+  static ImVec2 corr(0, 0), last(-1, -1);
+  static int tries = 0;
+  if (q.empty()) {
+    last = ImVec2(-1, -1);
+    return;
+  }
+  ImGuiIO& io = ImGui::GetIO();
+  const float z = std::max(0.1f, edzoomui::currentZoom());
+  if (last.x > -1e8f && last.x >= 0 && io.MousePos.x > -1e8f) corr.x += (last.x - io.MousePos.x) * z, corr.y += (last.y - io.MousePos.y) * z;
+  const DevEv e = q.front();
+  const bool there = std::fabs(io.MousePos.x - e.x) < 1.5f && std::fabs(io.MousePos.y - e.y) < 1.5f;
+  if (e.btn >= 0 && !there && tries++ < 6) {  // not there yet: move again
+    const ImVec2 at = edzoomui::toScreenHere(ImVec2(e.x, e.y));
+    io.AddMousePosEvent(at.x + corr.x, at.y + corr.y);
+    last = ImVec2(e.x, e.y);
+    return;
+  }
+  tries = 0;
+  q.erase(q.begin());
+  if (e.x < -1e8f) {
+    io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
+    last = ImVec2(-1, -1);
+  } else if (e.btn < 0) {
+    const ImVec2 at = edzoomui::toScreenHere(ImVec2(e.x, e.y));
+    io.AddMousePosEvent(at.x + corr.x, at.y + corr.y);
+    last = ImVec2(e.x, e.y);
+  } else {
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, e.btn == 1);
+    last = ImVec2(-1, -1);
+  }
+}
+
+// Clean up: every box into the flow (the user's order kept where it reads well), gliding there.
+// One undo step; false (and nothing changes) when it is already clean.
+bool cleanUpNow(Ctx& c) {
+  patch::Patch p = patch::buildPatch(c.st.params, c.m, keepShown(c));
+  patch::place(p, c.m.patchPos);
+  std::map<int, std::array<float, 2>> from;
+  for (const auto& b : p.boxes) from[b.id] = {b.x, b.y};
+  const auto before = patch::positions(p);
+  patch::cleanUp(p);
+  const auto to = patch::positions(p);
+  if (to == before) return false;
+  c.u.pAnimFrom = from, c.u.pAnimT = static_cast<float>(ImGui::GetTime());
+  c.m.patchPos = to;
+  commit(c, "Clean up");
+  return true;
+}
+
+// The layout as the saved sound has it (read back from the data, as a reload would): its score and
+// a signature of every place.
+void printLayout(const Ctx& c, int n) {
+  Model m2;
+  modelFromData(c.st.data, m2);
+  patch::Patch p = patch::buildPatch(c.st.params, m2, {});
+  patch::place(p, m2.patchPos);
+  const patch::Score s = patch::score(p);
+  unsigned long long h = 1469598103934665603ull;
+  for (const auto& b : p.boxes)
+    for (long v : {static_cast<long>(b.id), std::lround(b.x * 4), std::lround(b.y * 4)}) h = (h ^ static_cast<unsigned long long>(v)) * 1099511628211ull;
+  std::fprintf(stderr, "PLASMA_PATCH_LAYOUT %d saved %zu boxes %zu overlaps %d through %d offgrid %d backward %d crossings %d total %d sig %016llx\n", n,
+               m2.patchPos.size(), p.boxes.size(), s.overlaps, s.through, s.offGrid, s.backward, s.crossings, static_cast<int>(s.total()), h);
+}
+
+// Messy layouts (dev / tests): 0 a pile in one corner, 1 boxes over each other, 2 the flow reversed,
+// 3 scattered far off, 4 every box in another's place.
+std::map<int, std::array<float, 2>> messy(const patch::Patch& p0, int kind) {
+  patch::Patch p = p0;
+  patch::defaultLayout(p);
+  std::map<int, std::array<float, 2>> v;
+  float maxX = 0;
+  for (const auto& b : p.boxes) maxX = std::max(maxX, b.x + b.w);
+  std::vector<std::array<float, 2>> places;
+  for (const auto& b : p.boxes)
+    if (patch::movable(b.id)) places.push_back({b.x, b.y});
+  unsigned seed = 7u + static_cast<unsigned>(kind);
+  auto rnd = [&] {
+    seed = seed * 1664525u + 1013904223u;
+    return static_cast<float>((seed >> 8) & 0xffff) / 65535.f;
+  };
+  for (size_t i = places.size(); i > 1; --i) std::swap(places[i - 1], places[static_cast<size_t>(rnd() * static_cast<float>(i - 1) + 0.5f) % i]);
+  int i = 0;
+  for (const auto& b : p.boxes) {
+    if (!patch::movable(b.id)) continue;
+    std::array<float, 2> at = {b.x, b.y};
+    switch (kind) {
+      case 0: at = {static_cast<float>(i % 4) * 8, static_cast<float>(i) * 8}; break;
+      case 1: at = {b.x * 0.45f + 13, b.y * 0.4f + 5}; break;
+      case 2: at = {maxX - b.x - b.w, b.y}; break;
+      case 3: at = {(rnd() - 0.5f) * 6000, (rnd() - 0.5f) * 6000}; break;
+      default: at = places[static_cast<size_t>(i)]; break;
+    }
+    v[b.id] = at;
+    ++i;
+  }
+  return v;
+}
+
 // Dev / tests (GL_PLASMA_PATCH_DEV="<action> <args>;..."): the Patch view's own actions, in order,
-// one every 8 frames once the view has settled, through the same calls as the mouse and keys:
-// "connect <from> <to>", "cut <route> <dest>" (Alt+click on a wire), "select <node>" then
-// "delete" (the Delete key), "unlink <slot>", "addfx <type> <rack>", "tidy", "undo", "redo".
-// Before each action (and once after the last) it prints PLASMA_PATCH_STATE <n> undo <position>
-// then the plain values of Layer 1's route (destination, balance, Send A), Layer 1's light and
-// effect slot 0's type; after it, PLASMA_PATCH <n> <action> ok|refused[: why].
-void patchDevActions(Ctx& c) {
+// one every 8 frames once the view has settled (a drag waits for its pointer moves), through the
+// same calls as the mouse and keys: "connect <from> <to>", "cut <route> <dest>" (Alt+click on a
+// line), "select <box>" then "delete" (the Delete key), "unlink <slot>", "addfx <type> <rack>",
+// "link" (LFO 1 onto Layer 1's level), "undo", "redo", "big" (the 25-link sound), "messy <kind>",
+// "cleanup" (the button), "where <box>", "pick <row>" (the open link list), and real pointer
+// drags: "drag <box> <dx> <dy>" (moves it), "linkdrag <source> <box>" (a tile's dot onto a box),
+// "unlinkdrag <slot>" (a selected tile's link end onto empty canvas), "draghold"/"linkhold" (the
+// same, never let go: screenshots). Before each action (and once after the last) it prints
+// PLASMA_PATCH_STATE <n> undo <position> then Layer 1's route (destination, balance, Send A),
+// Layer 1's light, effect slot 0's type and the link count, and PLASMA_PATCH_LAYOUT <n> with the
+// saved layout read back from the data; after it, PLASMA_PATCH <n> <action> ok|refused[: why].
+void patchDevActions(Ctx& c, const Graph& gr) {
   static const char* script = std::getenv("GL_PLASMA_PATCH_DEV");
   if (!script) return;
-  static int frames = 0, next = 0;
-  if (++frames < 40 || frames % 8) return;
+  devMouseFrame();
+  static int frames = 0, next = 0, quiet = 0;
+  if (!devMouse().empty()) {
+    quiet = 0;
+    return;
+  }
+  if (++quiet < 4 || ++frames < 40 || frames % 8) return;
   std::vector<std::string> steps;
   {
     std::string all = script;
@@ -1492,17 +1677,19 @@ void patchDevActions(Ctx& c) {
   std::fprintf(stderr, "PLASMA_PATCH_STATE %d undo %zu dest %g bal %g sendA %g on %g fx %g links %d\n", next, c.a.doc.history().position(),
                val(c, routeP(RtA, R_Dest)), val(c, routeP(RtA, R_Balance)), val(c, routeP(RtA, R_Bus1)), val(c, oscP(0, O_Enable)),
                val(c, fxP(0, X_Type)), nLinks);
+  printLayout(c, next);
   if (next == static_cast<int>(steps.size())) {
     ++next;
     return;
   }
-  int a1 = -1, a2 = -1;
+  int a1 = -1, a2 = -1, a3 = 0;
   char act[16] = {};
-  std::sscanf(steps[static_cast<size_t>(next)].c_str(), "%15s %d %d", act, &a1, &a2);
+  std::sscanf(steps[static_cast<size_t>(next)].c_str(), "%15s %d %d %d", act, &a1, &a2, &a3);
   const std::string A = act;
   bool ok = true;
   std::string why;
   c.a.doc.endGesture();  // its own undo step, as a click is
+  auto centre = [&](const PNode& n) { return gLastG.p(n.x + n.w * 0.5f, n.y + n.h * 0.5f); };
   if (A == "connect") ok = connect(c, a1, a2, why);
   else if (A == "cut") disconnect(c, PWire{0, 0, 0, 1.f, a1 < 0 ? -1 : a1, a2});
   else if (A == "select") c.u.pSel = a1, c.u.pLink = -1;
@@ -1511,130 +1698,141 @@ void patchDevActions(Ctx& c) {
     else if (c.u.pSel >= NFx && c.u.pSel < NFx + kFxSlots) fxRemove(c, c.u.pSel - NFx), c.u.pSel = -1;
     else if (c.u.pSel >= 0 && enableOf(c.u.pSel) >= 0) setv(c, enableOf(c.u.pSel), 0);
     else ok = false;
-  } else if (A == "link") {  // LFO 1 onto Layer 1's level, as the link picker does
-    const int last = addModulation(c, SrcLfo1, oscP(0, O_Level), 0.5f);
+  } else if (A == "link") {  // LFO 1 onto Layer 1's level, as the link list does
+    const int last = addModulation(c, SrcLfo1, oscP(0, O_Level), 0.25f);
     ok = last >= 0;
     if (ok) c.u.pLink = last, c.u.pSel = -1;
   } else if (A == "unlink") removeLink(c, a1);
   else if (A == "addfx") ok = fxAdd(c, a1, a2);
-  else if (A == "tidy") offsets().clear(), c.u.pzoom = -1;
   else if (A == "undo") ok = c.a.doc.undo();
   else if (A == "redo") ok = c.a.doc.redo();
-  else ok = false;
+  else if (A == "big") {  // the big sound: every part, both sends, six effects, 25 links
+    std::vector<float> ps = c.st.params;
+    Model m2 = c.m;
+    patch::bigSound(ps, m2);
+    std::vector<std::pair<int, double>> changed;
+    for (size_t k = 0; k < ps.size(); ++k)
+      if (k >= c.st.params.size() || ps[k] != c.st.params[k]) changed.push_back({static_cast<int>(k), ps[k]});
+    c.m = m2;
+    commitParams(c, "Load a sound", changed);
+    c.u.pzoom = -1;
+  } else if (A == "messy") {
+    c.m.patchPos = messy(gr.P, a1);
+    commit(c, "Move box");
+    c.u.pzoom = -1;
+  } else if (A == "cleanup") ok = cleanUpNow(c), c.u.pzoom = -1;
+  else if (A == "fit") c.u.pzoom = -1;
+  else if (A == "point") gDevPoint = a1;
+  else if (A == "where") {
+    Model m2;
+    modelFromData(c.st.data, m2);
+    patch::Patch p = patch::buildPatch(c.st.params, m2, {});
+    patch::place(p, m2.patchPos);
+    const patch::Box* b = p.find(a1);
+    ok = b != nullptr;
+    if (b) std::fprintf(stderr, "PLASMA_PATCH_BOX %d %d %g %g saved %d\n", next, a1, b->x, b->y, m2.patchPos.count(a1) ? 1 : 0);
+  } else if (A == "pick") gDevPick = a1, ok = ImGui::IsPopupOpen("##patchlink");
+  else if (A == "drag" || A == "draghold") {
+    const PNode* n = gr.find(a1);
+    ok = n && gHaveG;
+    if (ok) devDrag(centre(*n), ImVec2(centre(*n).x + gLastG.u(static_cast<float>(a2)), centre(*n).y + gLastG.u(static_cast<float>(a3))), A == "drag");
+  } else if (A == "linkdrag" || A == "linkhold") {
+    const PNode *t = gr.find(moveNodeOf(a1)), *b = gr.find(a2);
+    ok = t && b && gHaveG;
+    if (ok) devDrag(gLastG.p(t->x + t->w * 0.5f, t->y + 1), centre(*b), A == "linkdrag");
+  } else if (A == "unlinkdrag") {
+    auto it = gEnds.find(a1);
+    ok = it != gEnds.end() && gFreeSpot.x >= 0;
+    if (ok) devDrag(it->second, gFreeSpot, true);
+  } else ok = false;
   c.a.doc.endGesture();
   std::fprintf(stderr, "PLASMA_PATCH %d %s %s%s%s\n", next, act, ok ? "ok" : "refused", why.empty() ? "" : ": ", why.c_str());
   ++next;
 }
 
+}  // namespace
+
 void patchView(Ctx& c) {
   Ui& u = c.u;
   const Pal& P = c.P;
-  const float cx0 = M(20), cx1 = kW - M(334), cy0 = kTopH + M(56), ix = kW - M(320), iw = M(300);
+  const bool inspect = u.pSel >= 0 || u.pLink >= 0;
+  const float cx0 = M(20), cx1 = inspect ? kW - M(334) : kW - M(20), cy0 = kTopH + M(56), ix = kW - M(320), iw = M(300);
   gPatchUi = &u;
-  patchDevActions(c);
+  if (u.pAnimT >= 0 && ImGui::GetTime() - u.pAnimT > kAnimSecs) u.pAnimT = -1, u.pAnimFrom.clear();
   Graph gr = buildGraph(c);
+  patchDevActions(c, gr);
   gGraph = &gr;
-  int links = 0;
-  std::map<int, int> boxLinks;
+  // the links of the sound
+  struct Lk {
+    int slot, src, k, tile, box;
+  };
+  std::vector<Lk> lks;
   for (int s = 0; s < kModSlots; ++s) {
     const int src = vali(c, modP(s, M_Source)), dest = vali(c, modP(s, M_Dest));
     if (src <= SrcNone || dest <= 0) continue;
-    ++links, ++boxLinks[ownerBox(gr, dest - 1)];
+    lks.push_back({s, src, dest - 1, moveNodeOf(src), ownerBox(gr, dest - 1)});
   }
-  // ---- toolbar: what to show, Tidy; zoom and the link count at the right
+  // ---- the header: Clean up and Fit at the left, the link count at the right
   {
     const float ty = kTopH + M(16), h = M(28);
-    {
-      MonoText mono;
-      capsText(c, cx0, ty + h * 0.5f - T(9.5f) * 0.62f, "Show", P.textFaint, T(9.5f), M(1));
-    }
-    float x = cx0 + capsW(c, "Show", T(9.5f), M(1)) + M(10);
-    struct Ch {
-      const char* id;
-      const char* label;
-      bool* on;
-      ImU32 col;
-      const char* hint;
-    };
-    const Ch chs[4] = {{"##shs", "Sound", &u.pShowSound, P.accent, "Show the sound wires"},
-                       {"##shm", "Movement", &u.pShowMove, P.fam[FamLfo], "Show every movement wire (else only on hover or select)"},
-                       {"##shf", "Sends", &u.pShowFx, P.textDim, "Show the send wires"},
-                       {"##shn", "Notes", &u.pShowNotes, P.textFaint, "Show where the notes go"}};
-    for (const auto& ch : chs) {
-      const float w = chipW(c, ch.label);
-      if (showChip(c, ch.id, x, ty, w, ch.label, *ch.on, ch.col)) *ch.on = !*ch.on;
-      if (ImGui::IsItemHovered()) c.a.setHint(ch.hint);
-      x += w + M(10);
-    }
-    vline(c, x, ty + M(4), ty + h - M(4), P.line);
-    x += M(10);
-    if (btnLook(c, "tidy", x, ty, M(50), h, "Tidy", false, false, T(12))) offsets().clear(), u.pzoom = -1;
-    if (ImGui::IsItemHovered()) c.a.setHint("Put every box back in its column");
-    // right: the link count, Fit, + zoom -
+    float x = cx0;
+    const float cw = textW(c, "Clean up", T(12), false) + M(28);
+    if (btnLook(c, "cleanup", x, ty, cw, h, "Clean up", false, false, T(12))) cleanUpNow(c);
+    if (ImGui::IsItemHovered()) c.a.setHint("Sort the boxes into the flow: sources, shape, amp, effects, out, with the movement below (one undo step)");
+    x += cw + M(8);
+    const float fw = textW(c, "Fit", T(12), false) + M(24);
+    if (btnLook(c, "fit", x, ty, fw, h, "Fit", true, false, T(12))) u.pzoom = -1;
+    if (ImGui::IsItemHovered()) c.a.setHint("Fit the whole patch in view (F)");
     char b[32];
-    std::snprintf(b, sizeof b, "%d", links);
-    float rx = cx1;
+    std::snprintf(b, sizeof b, "%d", static_cast<int>(lks.size()));
+    float rx = kW - M(20);
     const float lw = textW(c, " of 64", T(11.5f), false);
     float nw;
     {
       MonoText mono;
       nw = textW(c, b, T(11.5f), true);
-      text(c, rx - lw - nw, ty + h * 0.5f - T(11.5f) * 0.68f, b, links >= kModSlots ? P.hot : P.text, T(11.5f), true);
+      text(c, rx - lw - nw, ty + h * 0.5f - T(11.5f) * 0.68f, b, static_cast<int>(lks.size()) >= kModSlots ? P.hot : P.text, T(11.5f), true);
     }
     text(c, rx - lw, ty + h * 0.5f - T(11.5f) * 0.68f, " of 64", P.textFaint, T(11.5f), false);
     rx -= lw + nw + textW(c, "Links ", T(11.5f), false);
     text(c, rx, ty + h * 0.5f - T(11.5f) * 0.68f, "Links ", P.textFaint, T(11.5f), false);
-    rx -= M(14);
-    const float bh = M(26), by = ty + (h - bh) * 0.5f;
-    const float fw = textW(c, "Fit", T(12), false) + M(20);
-    rx -= fw;
-    if (btnLook(c, "fit", rx, by, fw, bh, "Fit", false, false, T(12))) u.pzoom = -1;
-    if (ImGui::IsItemHovered()) c.a.setHint("Fit the whole patch in view (F)");
-    auto zoomBy = [&](float f) {  // around the canvas centre
-      const float z = std::max(0.4f, u.pzoom), nz = std::clamp(z * f, 0.4f, 2.0f);
-      const float mx = (cx1 - cx0) * 0.5f, my = (kPlayY - M(16) - cy0) * 0.5f;
-      u.ppanX = mx - (mx - u.ppanX) * nz / z, u.ppanY = my - (my - u.ppanY) * nz / z, u.pzoom = nz;
-    };
-    rx -= M(4) + bh;
-    if (btnLook(c, "zin", rx, by, bh, bh, "+", false, false, T(12))) zoomBy(1.12f);
-    rx -= M(4) + M(52);
-    {
-      char zb[16];
-      std::snprintf(zb, sizeof zb, "%d%%", static_cast<int>(std::lround(std::max(0.4f, u.pzoom) * 100)));
-      c.dl->AddRectFilled(c.p(rx, by), c.p(rx + M(52), by + bh), P.field, c.s(M(4)));
-      c.dl->AddRect(c.p(rx, by), c.p(rx + M(52), by + bh), P.line, c.s(M(4)));
-      MonoText mono;
-      textMid(c, rx, rx + M(52), by + bh * 0.5f, zb, P.text, T(11.5f), true);
-    }
-    rx -= M(4) + bh;
-    if (btnLook(c, "zout", rx, by, bh, bh, "-", false, false, T(12))) zoomBy(1 / 1.12f);
   }
   // ---- the canvas: graph units zoomed and panned
   const float cB = kPlayY - M(16) - drawerH(u);
   const ImVec2 c0 = c.p(cx0, cy0), c1 = c.p(cx1, cB);
   ++u.pFrames;  // a sound loaded with the editor arrives a frame later: fit and the dev hooks wait for it
-  if (u.pzoom < 0 && u.pFrames >= 3) {  // fit (never larger than 100%)
-    const float cw = (cx1 - cx0) / kMk, ch = (cB - cy0) / kMk;
-    u.pzoom = std::clamp(std::min(cw / std::max(1.f, gr.maxX + 24), ch / std::max(1.f, gr.maxY + 20)), 0.4f, 1.0f);
-    u.ppanX = 0, u.ppanY = 0;
+  if (u.pzoom < 0 && u.pFrames >= 3) {  // fit the whole patch in the full width (never larger than 100%)
+    const std::vector<patch::Line> modAll = patch::modLines(gr.P, c.st.params);
+    const float cw = (kW - M(20) - cx0) / kMk, ch = (cB - cy0) / kMk;
+    float fx0 = gr.minX, fy0 = gr.minY, fx1 = gr.maxX, fy1 = gr.maxY;  // the boxes and every line, sound and links
+    for (const std::vector<patch::Line>* set : {static_cast<const std::vector<patch::Line>*>(&gr.lines), &modAll})
+      for (const auto& l : *set)
+        for (const auto& q : l.pts) fx0 = std::min(fx0, q.x), fy0 = std::min(fy0, q.y), fx1 = std::max(fx1, q.x), fy1 = std::max(fy1, q.y);
+    const float gw = fx1 - fx0 + 48, gh = fy1 - fy0 + 40;
+    const float z = std::clamp(std::min(cw / std::max(1.f, gw), ch / std::max(1.f, gh)), 0.4f, 1.0f);
+    u.pzoom = z;
+    u.ppanX = (gw * z < cw ? (cw - gw * z) * 0.5f : 0.f) * kMk - (fx0 - 24) * kMk * z;
+    u.ppanY = -(fy0 - 20) * kMk * z;
   }
   const float zoom = std::max(0.4f, u.pzoom);
   skin::Form G = c.F;
   G.s = c.F.s * kMk * zoom;
   G.o = ImVec2(c0.x + u.ppanX * c.F.s, c0.y + u.ppanY * c.F.s);
-  Ctx g{c.a, c.t, G, c.dl, c.st, c.m, c.u, c.P, c.live, c.hasLive};
+  gLastG = G, gHaveG = true;
+  Ctx g{c.a, c.t, G, c.dl, c.st, c.m, c.u, c.P, c.live, c.hasLive, c.graph};
+  g.graph = true;  // the boxes zoom: their text keeps its proportion to them
   ImGuiWindow* win = ImGui::GetCurrentWindow();
   const ImVec2 keepMax = win->DC.CursorMaxPos;  // boxes panned out of view must not grow the window
   c.dl->AddRectFilled(c0, c1, theme::mix(P.frame, P.well, 0.5f), c.s(M(6)));
   c.dl->AddRect(c0, c1, P.line, c.s(M(6)));
   ImGui::PushClipRect(c0, c1, true);
   layoutScroll(c);  // the canvas pans: a box half out of view is not a cut
-  {  // the dot grid
+  {  // the dot grid (every 24 units; boxes snap to 8)
     const float step = 24 * G.s;
     if (step > 6) {
       const float sx = std::fmod(G.o.x - c0.x, step), sy = std::fmod(G.o.y - c0.y, step);
       for (float yy = c0.y + sy; yy < c1.y; yy += step)
-        for (float xx = c0.x + sx; xx < c1.x; xx += step) c.dl->AddCircleFilled(ImVec2(xx, yy), std::max(0.8f, G.s * 0.9f), theme::withAlpha(P.line, 0.7f), 6);
+        for (float xx = c0.x + sx; xx < c1.x; xx += step) c.dl->AddCircleFilled(ImVec2(xx, yy), std::max(0.8f, G.s * 0.9f), theme::withAlpha(P.line, 0.55f), 6);
     }
   }
   // the background: pan by dragging, zoom by the wheel (submitted first, everything overlaps it)
@@ -1645,11 +1843,12 @@ void patchView(Ctx& c) {
   if (ImGui::IsItemActive() && (ImGui::IsMouseDragging(0, 2) || ImGui::IsMouseDragging(2, 2)))
     u.ppanX += ImGui::GetIO().MouseDelta.x / c.F.s, u.ppanY += ImGui::GetIO().MouseDelta.y / c.F.s;
   if (ImGui::IsItemClicked()) u.pSel = -1, u.pLink = -1;
+  if (canvasHot) c.a.setHint("Drag the background to look around, the wheel zooms; right-click to add");
   if (ImGui::BeginDragDropTarget()) {  // a movement source dropped on the canvas: any control
     if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("PLASMA_SRC")) {
       int src = 0;
       std::memcpy(&src, pl->Data, sizeof(int));
-      linkAsk() = {src, -1, ImGui::GetIO().MousePos};
+      linkAsk() = {src, -1, ImGui::GetIO().MousePos, true};
       ImGui::OpenPopup("##patchlink");
     }
     ImGui::EndDragDropTarget();
@@ -1661,191 +1860,204 @@ void patchView(Ctx& c) {
     u.ppanX = mfx - (mfx - u.ppanX) * nz / zoom, u.ppanY = mfy - (mfy - u.ppanY) * nz / zoom, u.pzoom = nz;
   }
   if (canvasHot && ImGui::IsKeyPressed(ImGuiKey_F, false) && !ImGui::GetIO().WantTextInput) u.pzoom = -1;
-  // column heads
-  {
-    MonoText mono;
-    static const char* const heads[6] = {"Play", "Sources", "Shape", "Amp", "Effects", "Out"};
-    for (int i = 0; i < 6; ++i) capsText(g, kCols[i].x, 12, heads[i], theme::withAlpha(P.textFaint, 0.75f), TG(9.5f), 1);
-    capsText(g, kCols[0].x, gr.moveY + 4, "Movement", theme::withAlpha(P.textFaint, 0.75f), TG(9.5f), 1);
-  }
-  // hover: a movement box lights what it moves and dims the rest
-  const int hover = u.devPatch == 3 ? NMove + SrcLfo1 : u.pHover;
+  const ImVec2 mouse = ImGui::GetIO().MousePos;
+  // ---- pointing: a tile (what it moves) or a box (what moves it); nothing while a box moves
+  const ImGuiPayload* dragPl = ImGui::GetDragDropPayload();
+  const bool linkDrag = dragPl && dragPl->IsDataType("PLASMA_SRC");
+  int point = u.devPatch == 3 ? NMove + SrcLfo1 : gDevPoint >= 0 ? gDevPoint : u.pHover;
+  if (point < 0 && u.pSel >= 0) point = u.pSel;
+  if (u.pMove >= 0 || linkDrag || u.pEndDrag >= 0) point = u.pEndDrag >= 0 ? u.pSel : -1;
   u.pHover = -1;
-  std::set<int> related;
-  const bool moveHover = hover >= NMove;
-  if (moveHover) {
-    related.insert(hover);
-    for (int s = 0; s < kModSlots; ++s) {
-      const int src = vali(c, modP(s, M_Source)), dest = vali(c, modP(s, M_Dest));
-      if (src > SrcNone && dest > 0 && moveNodeOf(src) == hover) related.insert(ownerBox(gr, dest - 1));
-    }
+  std::map<int, BoxLook> looks;
+  std::map<int, int> tileLinks;
+  for (const auto& l : lks) {
+    auto& L = looks[l.box];
+    ++L.links;
+    L.dots.push_back(val(c, modP(l.slot, M_Bypass)) >= 0.5 ? P.textFaint : P.fam[familyOf(l.src)]);
+    ++tileLinks[l.tile];
   }
-  // ---- the wires: plan every route (lanes first), then draw
-  struct Drawn {
-    std::vector<RP> plan;
-    int kind;  // 0 sound, 1 send, 2 notes, 3 a step down the column, 4 movement
-    size_t wire;
-    int slot;
-    bool lit;
+  auto amountText = [&](const Lk& l) {
+    char b[24];
+    std::snprintf(b, sizeof b, " %+.0f%%", valf(c, modP(l.slot, M_Amount)) * 100.0);
+    return plainName(l.k) + b;
   };
-  std::vector<Drawn> ds;
-  Lanes lanes;
-  auto visible = [&](int kind) { return kind == 1 ? u.pShowFx : kind == 2 ? u.pShowNotes : kind == 4 ? true : u.pShowSound; };
-  for (size_t i = 0; i < gr.wires.size(); ++i) {
-    const auto& w = gr.wires[i];
-    const PNode *A = gr.find(w.from), *B = gr.find(w.to);
-    if (!A || !B || !visible(w.kind)) continue;
-    Drawn d{{}, w.kind, i, -1, !moveHover};
-    if (w.kind == 3) {
-      const bool down = B->y > A->y;
-      const PNode& U = down ? *A : *B;
-      const PNode& D = down ? *B : *A;
-      d.plan = {{U.x + U.w * 0.5f, U.y + U.h}, {D.x + D.w * 0.5f, D.y}};
-    } else if (w.kind == 1) {
-      const ImVec2 a(A->x + A->w, A->y + kPinLow), b = inAt(*B);
-      const float ly = gr.sendY + (w.to == NSendB ? 6.f : 0.f);
-      d.plan = {{a.x, a.y}, {0, a.y, A->col, 200000 + w.from}, {0, ly, A->col, 200000 + w.from}, {0, ly, CFx - 1, 300000 + w.to}, {0, b.y, CFx - 1, 300000 + w.to}, {b.x, b.y}};
-    } else if (w.kind == 2) {
-      d.plan = planSound(gr, *A, *B, outAt(*A), inAt(*B), 0, 700000);
-    } else {
-      d.plan = planSound(gr, *A, *B, outAt(*A), inAt(*B), 100000 + w.from, w.to);
+  std::vector<const Lk*> shown;  // the links drawn now
+  if (point >= 0) {
+    std::map<int, std::vector<const Lk*>> at;  // the box the label goes on -> its links
+    for (const auto& l : lks) {
+      if (l.tile == point) at[l.box].push_back(&l), shown.push_back(&l);
+      else if (l.box == point) at[l.tile].push_back(&l), shown.push_back(&l);
     }
-    ds.push_back(d);
+    if (!shown.empty()) {
+      for (const auto& n : gr.nodes) looks[n.id].dim = !isAdd(n.id);
+      looks[point].dim = false, looks[point].lit = true;
+      for (auto& [id, v] : at) {
+        auto& L = looks[id];
+        L.dim = false, L.lit = true;
+        L.label = amountText(*v[0]);
+        if (v.size() > 1) L.label += " +" + std::to_string(v.size() - 1);
+        L.labelCol = P.fam[familyOf(v[0]->src)];
+        L.labelSlot = v.size() == 1 && u.pSel == point ? v[0]->slot : -1;
+      }
+    }
+  } else if (u.full) {  // Full: each box names what moves it
+    std::map<int, std::string> names;
+    for (const auto& l : lks)
+      if (!isTile(l.box)) names[l.box] += (names[l.box].empty() ? "" : ", ") + plainName(l.k);
+    for (auto& [id, s] : names) looks[id].label = s, looks[id].labelCol = P.textDim;
   }
-  for (int s = 0; s < kModSlots; ++s) {  // movement: only on hover, select or Show Movement
-    const int src = vali(c, modP(s, M_Source)), dest = vali(c, modP(s, M_Dest));
-    if (src <= SrcNone || dest <= 0) continue;
-    const int mid = moveNodeOf(src), tid = ownerBox(gr, dest - 1);
-    const bool show = u.pShowMove || hover == mid || u.pSel == mid || u.pLink == s;
-    const PNode *A = gr.find(mid), *B = gr.find(tid);
-    if (!show || !A || !B) continue;
-    const ImVec2 b(B->x, B->y + kPinLow);
-    const int gB = B->col - 1;
-    // out of the side that faces the target; into the lane before the target's column
-    const bool left = gB < A->col;
-    const ImVec2 a = left ? inAt(*A) : outAt(*A);
-    const int gA = left ? A->col - 1 : A->col;
-    Drawn d{{}, 4, 0, s, true};
-    if (gA == gB) d.plan = {{a.x, a.y}, {0, a.y, gB, 500000 + tid}, {0, b.y, gB, 500000 + tid}, {b.x, b.y}};
-    else d.plan = {{a.x, a.y}, {0, a.y, gA, 400000 + mid}, {0, gr.busY, gA, 400000 + mid}, {0, gr.busY, gB, 500000 + tid}, {0, b.y, gB, 500000 + tid}, {b.x, b.y}};
-    ds.push_back(d);
-  }
-  for (const auto& d : ds)
-    for (const auto& p : d.plan)
-      if (p.gap >= 0) lanes.use(p.gap, p.key);
+  for (auto& [id, L] : looks) L.sel = u.pSel == id;
+  // ---- the sound lines: one per connection, out of a right edge into its own in-port on a left edge;
+  // calm at rest, faded while pointing (the ports are drawn over the boxes' edges, after them)
   const float t = static_cast<float>(ImGui::GetTime());
   const bool playing = c.hasLive && c.live.voices > 0;
-  std::vector<std::pair<ImVec2, int>> pins;  // screen point, 0 sound 1 movement
-  const ImVec2 mouse = ImGui::GetIO().MousePos;
   int hotWire = -1;
-  for (int pass = 0; pass < 2; ++pass)  // sends and notes under the sound
-    for (size_t i = 0; i < ds.size(); ++i) {
-      const auto& d = ds[i];
-      if ((pass == 0) != (d.kind == 1 || d.kind == 2)) continue;
-      if (d.kind == 4) continue;
-      std::vector<ImVec2> pts;
-      for (const auto& p : d.plan) pts.push_back(g.p(p.gap >= 0 ? lanes.x(p.gap, p.key) : p.x, p.y));
-      const auto path = lanePath(pts, G.u(8));
-      const auto& w = gr.wires[d.wire];
-      const PNode *A = gr.find(w.from), *B = gr.find(w.to);
-      float alpha = d.lit ? 1.f : 0.3f;
-      if (!A->on || !B->on) alpha *= 0.35f;
-      if (d.kind != 2 && canvasHot && pathDist(path, mouse) < G.u(4)) hotWire = static_cast<int>(d.wire);
-      const bool hotOne = hotWire == static_cast<int>(d.wire);
-      if (d.kind == 1) drawPath(c.dl, path, theme::withAlpha(hotOne ? P.hot : P.textDim, 0.45f * alpha + (hotOne ? 0.4f : 0.f)), std::max(1.f, G.u(1.3f)), 1, G.s * 0.75f);
-      else if (d.kind == 2) drawPath(c.dl, path, theme::withAlpha(P.textFaint, 0.6f * alpha), std::max(1.f, G.u(1.2f)), 2, G.s);
-      else {
-        drawPath(c.dl, path, theme::withAlpha(hotOne ? P.hot : P.accent, 0.7f * alpha + (hotOne ? 0.3f : 0.f)), std::max(1.2f, G.u(w.kind == 0 ? 1.2f + 0.8f * w.weight : 2.f)), 0, G.s);
-        if (playing && A->on && B->on) {  // dots that move with the sound
-          const float L = pathLen(path), gap = G.u(46);
-          for (float dd = std::fmod((t + static_cast<float>(i) * 0.13f) * G.u(50), gap); dd < L; dd += gap)
-            c.dl->AddCircleFilled(pathAt(path, dd / std::max(1.f, L)), std::max(1.f, G.u(1.4f)), theme::withAlpha(P.text, 0.8f * alpha), 6);
-        }
-      }
-      pins.push_back({path.front(), 0}), pins.push_back({path.back(), 0});
+  struct PortMark {
+    ImVec2 at;
+    bool out;
+    float alpha;
+  };
+  std::vector<PortMark> ports;
+  for (const auto& l : gr.lines) {
+    const auto& w = gr.wires[static_cast<size_t>(l.edge)];
+    const PNode *A = gr.find(w.from), *B = gr.find(w.to);
+    if (!A || !B || l.pts.size() < 2) continue;
+    std::vector<ImVec2> path;
+    for (const auto& q : l.pts) path.push_back(g.p(q.x, q.y));
+    float alpha = shown.empty() ? 1.f : 0.25f;
+    if (!A->on || !B->on) alpha *= 0.4f;
+    if (canvasHot && pathDist(path, mouse) < G.u(4)) hotWire = l.edge;
+    const bool hotOne = hotWire == l.edge;
+    const float th = w.kind == 1 ? 0.9f + 0.9f * std::clamp(w.weight, 0.f, 1.f) : 1.1f + 0.8f * w.weight;
+    drawPath(c.dl, path, theme::withAlpha(hotOne ? P.hot : P.accent, 0.55f * alpha + (hotOne ? 0.45f : 0.f)), std::max(1.f, G.u(th)), 0, G.s);
+    if (playing && A->on && B->on && shown.empty()) {  // dots that move with the sound
+      const float L = pathLen(path), gap = G.u(46);
+      for (float dd = std::fmod((t + static_cast<float>(l.edge) * 0.13f) * G.u(50), gap); dd < L; dd += gap)
+        c.dl->AddCircleFilled(pathAt(path, dd / std::max(1.f, L)), std::max(1.f, G.u(1.4f)), theme::withAlpha(P.text, 0.7f * alpha), 6);
     }
+    ports.push_back({path.front(), true, alpha}), ports.push_back({path.back(), false, alpha});
+  }
   if (hotWire >= 0) {
     c.a.setHint("Alt+click: take this connection away");
     if (ImGui::GetIO().KeyAlt && ImGui::IsMouseClicked(0)) disconnect(c, gr.wires[static_cast<size_t>(hotWire)]);
   }
-  // ---- the boxes
+  // ---- snapping guides while a box moves
+  if (u.pMove >= 0) {
+    const ImU32 gc = theme::withAlpha(P.accent, 0.35f);
+    if (!std::isnan(u.pGuideX)) c.dl->AddLine(ImVec2(G.p(u.pGuideX, 0).x, c0.y), ImVec2(G.p(u.pGuideX, 0).x, c1.y), gc, 1);
+    if (!std::isnan(u.pGuideY)) c.dl->AddLine(ImVec2(c0.x, G.p(0, u.pGuideY).y), ImVec2(c1.x, G.p(0, u.pGuideY).y), gc, 1);
+  }
+  // ---- the boxes, the tiles, the add tiles
   for (const auto& n : gr.nodes) {
-    auto it = boxLinks.find(n.id);
-    drawBox(g, gr, n, it == boxLinks.end() ? 0 : it->second, u.pSel == n.id, moveHover && !related.count(n.id), hover == n.id && moveHover);
+    BoxLook L = looks.count(n.id) ? looks[n.id] : BoxLook{};
+    L.sel = u.pSel == n.id;
+    if (linkDrag && !isTile(n.id) && !isAdd(n.id) && ImGui::IsMouseHoveringRect(g.p(n.x, n.y), g.p(n.x + n.w, n.y + n.h), false)) L.drop = true;
+    if (isAdd(n.id)) drawAdd(g, n);
+    else if (isTile(n.id)) drawTile(g, gr, n, L, tileLinks.count(n.id) ? tileLinks[n.id] : 0);
+    else drawBox(g, gr, n, L);
   }
-  // ---- movement wires over the boxes' edges, with their pins
-  for (const auto& d : ds) {
-    if (d.kind != 4) continue;
-    std::vector<ImVec2> pts;
-    for (const auto& p : d.plan) pts.push_back(g.p(p.gap >= 0 ? lanes.x(p.gap, p.key) : p.x, p.y));
-    const auto path = lanePath(pts, G.u(8));
-    const int src = vali(c, modP(d.slot, M_Source));
-    const bool byp = val(c, modP(d.slot, M_Bypass)) >= 0.5;
+  // the sound ports, over the boxes' edges: a dot where a line leaves, a ring where it arrives
+  for (const auto& pm : ports) {
+    const ImU32 col = theme::withAlpha(P.accent, 0.85f * pm.alpha);
+    if (pm.out) c.dl->AddCircleFilled(pm.at, std::max(1.5f, G.u(3)), col, 12);
+    else {
+      c.dl->AddCircleFilled(pm.at, std::max(1.5f, G.u(3)), theme::mix(P.frame, P.well, 0.5f), 12);
+      c.dl->AddCircle(pm.at, std::max(1.5f, G.u(3)), col, 12, std::max(1.f, G.u(1.2f)));
+    }
+  }
+  // ---- the links being pointed at: one curve per tile and box, from the tile's top port to the
+  // box's bottom edge, in the source's colour, over the faded rest
+  gEnds.clear();
+  const std::vector<patch::Line> mlines = shown.empty() ? std::vector<patch::Line>{} : patch::modLines(gr.P, c.st.params, point);
+  for (const auto& ml : mlines) {
+    if (ml.slots.empty() || ml.pts.size() < 2) continue;
+    const int slot0 = ml.slots[0], src = vali(c, modP(slot0, M_Source));
+    bool byp = true;
+    for (int s2 : ml.slots) byp = byp && val(c, modP(s2, M_Bypass)) >= 0.5;
     const ImU32 col = byp ? P.textFaint : P.fam[familyOf(src)];
-    const bool sel = u.pLink == d.slot;
-    drawPath(c.dl, path, col, std::max(1.2f, G.u(sel ? 2.2f : 1.6f)), sel ? 0 : 2, G.s);
-    if (!byp) {
-      const float L = pathLen(path), gap = G.u(64);
-      for (float dd = std::fmod((t + static_cast<float>(d.slot) * 0.3f) * G.u(40), gap); dd < L; dd += gap) glowDot(g, pathAt(path, dd / std::max(1.f, L)), 2.2f, col);
-    }
-    pins.push_back({path.front(), 1}), pins.push_back({path.back(), 1});
-  }
-  for (const auto& [at, kind] : pins) {
-    const float r = G.u(4);
-    if (kind == 0) {
-      c.dl->AddCircleFilled(at, r, theme::mix(P.frame, P.well, 0.5f), 12);
-      c.dl->AddCircle(at, r, theme::withAlpha(P.accent, 0.8f), 12, std::max(1.f, G.u(1.5f)));
+    bool endDrag = false;
+    for (int s2 : ml.slots) endDrag = endDrag || u.pEndDrag == s2;
+    std::vector<ImVec2> path;
+    if (endDrag) {  // its end follows the pointer: let go on the canvas to take the link away
+      const ImVec2 a = g.p(ml.a.x, ml.a.y), m = mouse;
+      const float k = std::max(G.u(24), std::fabs(m.y - a.y) * 0.5f);
+      for (int i = 0; i <= 24; ++i) {
+        const float tt = static_cast<float>(i) / 24.f, uu = 1 - tt;
+        const ImVec2 p1(a.x, a.y - k), p2(m.x, m.y + k);
+        path.push_back(ImVec2(uu * uu * uu * a.x + 3 * uu * uu * tt * p1.x + 3 * uu * tt * tt * p2.x + tt * tt * tt * m.x,
+                              uu * uu * uu * a.y + 3 * uu * uu * tt * p1.y + 3 * uu * tt * tt * p2.y + tt * tt * tt * m.y));
+      }
     } else {
-      const ImU32 lc = P.fam[FamLfo];
-      c.dl->AddQuadFilled(ImVec2(at.x, at.y - r), ImVec2(at.x + r, at.y), ImVec2(at.x, at.y + r), ImVec2(at.x - r, at.y), theme::mix(P.frame, P.well, 0.5f));
-      c.dl->AddQuad(ImVec2(at.x, at.y - r), ImVec2(at.x + r, at.y), ImVec2(at.x, at.y + r), ImVec2(at.x - r, at.y), lc, std::max(1.f, G.u(1.5f)));
+      for (const auto& q : ml.pts) path.push_back(g.p(q.x, q.y));
+    }
+    drawPath(c.dl, path, theme::withAlpha(col, endDrag ? 0.6f : 0.95f), std::max(1.2f, G.u(1.7f)), endDrag ? 2 : 0, G.s);
+    if (!byp && !endDrag) {  // a dot that runs from the source to what it moves
+      const float L = pathLen(path), gap = G.u(64);
+      for (float dd = std::fmod((t + static_cast<float>(slot0) * 0.3f) * G.u(40), gap); dd < L; dd += gap) glowDot(g, pathAt(path, dd / std::max(1.f, L)), 2.f, col);
+    }
+    const ImVec2 sPort = path.front(), e = g.p(ml.b.x, ml.b.y);
+    c.dl->AddCircleFilled(sPort, G.u(2.5f), col, 12);
+    for (int s2 : ml.slots) gEnds[s2] = e;
+    if (endDrag) continue;
+    if (u.pSel == ml.from && ml.slots.size() == 1) {  // the selected tile's link ends: drag one off its box to unlink
+      ImGui::PushID(slot0 + 47000);
+      ImGui::SetCursorScreenPos(ImVec2(e.x - G.u(7), e.y - G.u(7)));
+      ImGui::InvisibleButton("##end", ImVec2(G.u(14), G.u(14)));
+      const bool hv = ImGui::IsItemHovered();
+      if (hv) c.a.setHint("Drag this end off the box to take the link away");
+      if (ImGui::IsItemActive() && ImGui::IsMouseDragging(0, 3)) u.pEndDrag = slot0;
+      c.dl->AddCircleFilled(e, G.u(hv ? 4.5f : 3.5f), col, 12);
+      ImGui::PopID();
+    } else {
+      c.dl->AddCircleFilled(e, G.u(3), col, 12);
     }
   }
-  // ---- the pins you drag: a source or filter's sound out, a movement box's link
+  if (u.pEndDrag >= 0 && !ImGui::IsMouseDown(0)) {  // let go: off every box takes the link away
+    bool onBox = false;
+    for (const auto& n : gr.nodes)
+      if (ImGui::IsMouseHoveringRect(g.p(n.x, n.y), g.p(n.x + n.w, n.y + n.h), false)) onBox = true;
+    if (!onBox && ImGui::IsMouseHoveringRect(c0, c1, false)) removeLink(c, u.pEndDrag);
+    u.pEndDrag = -1;
+  }
+  // ---- the sound pins you drag: a source's or a filter's sound out (shown on the box under the pointer)
   for (const auto& n : gr.nodes) {
     const bool soundOut = (n.id >= NSrc && n.id < NSrc + 5) || n.id == NFilt || n.id == NFilt + 1 || n.id == NSendA;
-    if (!soundOut && n.id < NMove) continue;
-    const ImVec2 o = g.p(n.x + n.w, n.y + kPinMid);
+    if (!soundOut) continue;
+    const ImVec2 o = g.p(n.x + n.w, n.y + n.h * 0.5f);
     ImGui::PushID(n.id + 46000);
     ImGui::SetCursorScreenPos(ImVec2(o.x - G.u(7), o.y - G.u(7)));
     ImGui::InvisibleButton("##pin", ImVec2(G.u(14), G.u(14)));
     const bool hv = ImGui::IsItemHovered();
-    if (n.id >= NMove) {
-      const int src = n.id == NMove + SrcMacro1 ? SrcMacro1 : n.id - NMove;
-      if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceNoPreviewTooltip)) {
-        ImGui::SetDragDropPayload("PLASMA_SRC", &src, sizeof(int));
-        u.pDragPin = n.id;
-        ImGui::EndDragDropSource();
-      }
-      if (hv) c.a.setHint(boxName(c, n.id) + ": drag onto a box to link it to one of its controls");
-      const float r = G.u(hv ? 5 : 4);
-      const ImU32 lc = P.fam[familyOf(src)];
-      c.dl->AddQuadFilled(ImVec2(o.x, o.y - r), ImVec2(o.x + r, o.y), ImVec2(o.x, o.y + r), ImVec2(o.x - r, o.y), hv ? lc : theme::mix(P.frame, P.well, 0.5f));
-      c.dl->AddQuad(ImVec2(o.x, o.y - r), ImVec2(o.x + r, o.y), ImVec2(o.x, o.y + r), ImVec2(o.x - r, o.y), theme::withAlpha(lc, hv || moveHover ? 1.f : 0.55f),
-                    std::max(1.f, G.u(1.5f)));
-    } else {
-      if (ImGui::IsItemActivated()) u.pDragNode = n.id;
-      if (hv) {
-        c.a.setHint(boxName(c, n.id) + ": drag from here to where its sound should go");
-        c.dl->AddCircleFilled(o, G.u(5), P.hot, 12);
-      }
+    if (ImGui::IsItemActivated()) u.pDragNode = n.id;
+    const bool near = ImGui::IsMouseHoveringRect(g.p(n.x, n.y), g.p(n.x + n.w + 8, n.y + n.h), false) && u.pMove < 0 && !linkDrag;
+    if (hv) c.a.setHint(boxName(c, n.id) + ": drag from here to where its sound should go");
+    if (hv || near || u.pDragNode == n.id) {
+      c.dl->AddCircleFilled(o, G.u(4.5f), hv ? P.hot : theme::mix(P.frame, P.well, 0.5f), 12);
+      c.dl->AddCircle(o, G.u(4.5f), hv ? P.hot : theme::withAlpha(P.accent, 0.9f), 12, std::max(1.f, G.u(1.5f)));
     }
     ImGui::PopID();
   }
-  // a movement link being dragged: a dotted wire from its pin to the pointer
-  if (const ImGuiPayload* pl = ImGui::GetDragDropPayload(); pl && pl->IsDataType("PLASMA_SRC") && u.pDragPin >= 0) {
+  // a movement link being dragged: a dotted line from its tile's dot to the pointer
+  if (linkDrag && u.pDragPin >= 0) {
     if (const PNode* A = gr.find(u.pDragPin)) {
-      const ImVec2 a = g.p(A->x + A->w, A->y + kPinMid);
-      drawPath(c.dl, lanePath({a, ImVec2(a.x + G.u(12), a.y), ImVec2(a.x + G.u(12), mouse.y), mouse}, G.u(8)), P.fam[FamLfo], std::max(1.2f, G.u(1.8f)), 2, G.s);
+      const ImVec2 a = g.p(A->x + A->w * 0.5f, A->y);
+      std::vector<ImVec2> cable;
+      const float k = std::max(G.u(24), std::fabs(mouse.y - a.y) * 0.5f);
+      for (int i = 0; i <= 24; ++i) {
+        const float tt = static_cast<float>(i) / 24.f, uu = 1 - tt;
+        cable.push_back(ImVec2(uu * uu * uu * a.x + 3 * uu * uu * tt * a.x + 3 * uu * tt * tt * mouse.x + tt * tt * tt * mouse.x,
+                               uu * uu * uu * a.y + 3 * uu * uu * tt * (a.y - k) + 3 * uu * tt * tt * (mouse.y + k) + tt * tt * tt * mouse.y));
+      }
+      drawPath(c.dl, cable, nodeColour(c, u.pDragPin), std::max(1.2f, G.u(1.8f)), 2, G.s);
     }
-  } else {
+  } else if (!linkDrag) {
     u.pDragPin = -1;
   }
-  // a sound wire being dragged out of a box
+  // a sound line being dragged out of a box
   if (u.pDragNode >= 0) {
     PNode* A = gr.find(u.pDragNode);
     if (A && ImGui::IsMouseDown(0)) {
-      const ImVec2 a = g.p(A->x + A->w, A->y + kPinMid);
+      const ImVec2 a = g.p(A->x + A->w, A->y + A->h * 0.5f);
       drawPath(c.dl, lanePath({a, ImVec2(a.x + G.u(14), a.y), ImVec2(a.x + G.u(14), mouse.y), mouse}, G.u(8)), P.hot, std::max(1.5f, G.u(2)), 0, G.s);
       for (const auto& n : gr.nodes) {  // light the boxes it can go to
         const bool ok = n.id != u.pDragNode && ((routeOfNode(u.pDragNode) >= 0 && (n.id == NFilt || n.id == NFilt + 1 || n.id == NAmp || n.id == NOut ||
@@ -1856,7 +2068,7 @@ void patchView(Ctx& c) {
     } else {
       int target = -1;
       for (const auto& n : gr.nodes)
-        if (ImGui::IsMouseHoveringRect(g.p(n.x, n.y), g.p(n.x + n.w, n.y + n.h), false)) target = n.id;
+        if (!isAdd(n.id) && ImGui::IsMouseHoveringRect(g.p(n.x, n.y), g.p(n.x + n.w, n.y + n.h), false)) target = n.id;
       if (target >= 0 && target != u.pDragNode) {
         std::string why;
         if (!connect(c, u.pDragNode, target, why)) u.pWhy = why, u.pWhyT = static_cast<float>(ImGui::GetTime());
@@ -1868,51 +2080,38 @@ void patchView(Ctx& c) {
       u.pDragNode = -1;
     }
   }
-  // ---- the map of the whole patch (bottom right): click or drag to look somewhere else
-  {
-    const float mw = M(112), mh = M(66), mx = cx1 - M(8) - mw, my = cB - M(8) - mh;
-    const ImVec2 ma = c.p(mx, my), mb = c.p(mx + mw, my + mh);
-    c.dl->AddRectFilled(ma, mb, theme::withAlpha(P.frame, 0.6f), c.s(M(4)));
-    c.dl->AddRect(ma, mb, theme::withAlpha(P.line, 0.6f), c.s(M(4)));
-    const float pad = M(6), sx = (mw - pad * 2) / std::max(1.f, gr.maxX + 24), sy = (mh - pad * 2) / std::max(1.f, gr.maxY + 20);
-    const float sc = std::min(sx, sy);
-    for (const auto& n : gr.nodes)
-      c.dl->AddRectFilled(c.p(mx + pad + n.x * sc, my + pad + n.y * sc), c.p(mx + pad + (n.x + n.w) * sc, my + pad + (n.y + n.h) * sc), theme::withAlpha(nodeColour(c, n.id), 0.28f));
-    // the part in view
-    const float vx0 = -u.ppanX / (kMk * zoom), vy0 = -u.ppanY / (kMk * zoom), vw = (cx1 - cx0) / (kMk * zoom), vh = (cB - cy0) / (kMk * zoom);
-    const ImVec2 va = c.p(mx + pad + std::max(0.f, vx0) * sc, my + pad + std::max(0.f, vy0) * sc);
-    const ImVec2 vb = c.p(std::min(mx + mw - 2, mx + pad + (vx0 + vw) * sc), std::min(my + mh - 2, my + pad + (vy0 + vh) * sc));
-    c.dl->AddRect(va, vb, theme::withAlpha(P.accent, 0.45f), c.s(M(2)));
-    ImGui::SetCursorScreenPos(ma);
-    ImGui::InvisibleButton("##map", ImVec2(mb.x - ma.x, mb.y - ma.y));
-    if (ImGui::IsItemActive()) {  // centre the view on the point
-      const ImVec2 m = ImGui::GetIO().MousePos;
-      const float gx = ((m.x - ma.x) / c.F.s - pad) / sc, gy = ((m.y - ma.y) / c.F.s - pad) / sc;
-      u.ppanX = (cx1 - cx0) * 0.5f - gx * kMk * zoom, u.ppanY = (cB - cy0) * 0.5f - gy * kMk * zoom;
-    }
-    if (ImGui::IsItemHovered()) c.a.setHint("The whole patch: click or drag to look there");
+  {  // an empty place on the canvas (dev: where a link end is let go)
+    gFreeSpot = ImVec2(-1, -1);
+    for (float yy = c1.y - c.s(M(30)); yy > c0.y + c.s(M(30)) && gFreeSpot.x < 0; yy -= c.s(M(24)))
+      for (float xx = c0.x + c.s(M(30)); xx < c1.x - c.s(M(30)) && gFreeSpot.x < 0; xx += c.s(M(24))) {
+        bool free = true;
+        for (const auto& n : gr.nodes)
+          if (xx > g.p(n.x, 0).x - 24 && xx < g.p(n.x + n.w, 0).x + 24 && yy > g.p(0, n.y).y - 24 && yy < g.p(0, n.y + n.h).y + 24) free = false;
+        if (free) gFreeSpot = ImVec2(xx, yy);
+      }
   }
   if (u.devPatch == 6 && u.pFrames >= 4 && u.pFrames <= 6) {  // dev: both sends in use (a room on A, a chorus on B), Layer 1 and Root sending
     if (u.pFrames == 4) setv(c, routeP(RtA, R_Bus1), 0.4), setv(c, routeP(RtSub, R_Bus2), 0.3), fxAdd(c, FxReverb, 1);
     if (u.pFrames == 5) fxAdd(c, FxChorus, 2);
-    if (u.pFrames == 6) fxAdd(c, FxEq, 2), u.devPatch = 5;
+    if (u.pFrames == 6) fxAdd(c, FxEq, 2), u.devPatch = 5, u.pzoom = -1;
   }
-  if (u.devPatch >= 3 && u.pFrames >= 6 && u.pSel < 0) u.pSel = NFilt;  // dev: Filter 1 selected (as the design)
   if (u.devPatch == 1 && u.pFrames >= 6) {  // dev: the first link selected
     for (int s = 0; s < kModSlots && u.pLink < 0; ++s)
       if (vali(c, modP(s, M_Source)) > SrcNone && vali(c, modP(s, M_Dest)) > 0) u.pLink = s;
     u.devPatch = 0;
   }
-  if (u.devPatch == 2 && u.pFrames >= 6) {  // dev: the search menu, as after a wire from Layer 1 is dropped
+  if (u.devPatch == 2 && u.pFrames >= 6) {  // dev: the search menu, as after a line from Layer 1 is let go on the canvas
     u.pAddFrom = NSrc, u.devPatch = 0;
-    if (PNode* A = gr.find(NSrc)) addMenuAt(g, *A, g.p(A->x + A->w, A->y + kPinMid), c0, c1);
+    if (PNode* A = gr.find(NSrc)) addMenuAt(g, *A, g.p(A->x + A->w, A->y + A->h * 0.5f), c0, c1);
     ImGui::OpenPopup("##patchadd");
   }
-  if (u.devPatch == 4 && u.pFrames >= 6) {  // dev: the link search, as after LFO 1 is dropped on the canvas
+  if (u.devPatch == 4 && u.pFrames >= 6) {  // dev: the full link list, as after LFO 1 is let go on the canvas
     u.devPatch = 0;
-    if (const PNode* A = gr.find(NMove + SrcLfo1)) linkAsk() = {SrcLfo1, -1, g.p(kCols[CShape].x + 16, gr.mainB - 160)}, (void)A;
+    if (const PNode* A = gr.find(NAmp)) linkAsk() = {SrcLfo1, -1, g.p(A->x, A->y), true};
     ImGui::OpenPopup("##patchlink");
   }
+  if (gOpenLink) ImGui::OpenPopup("##patchlink"), gOpenLink = false;
+  if (gOpenAdd) ImGui::OpenPopup("##addtile"), gOpenAdd = false;
   ImGui::SetNextWindowPos(gAddMenuPos, ImGuiCond_Appearing);
   ImGui::SetNextWindowSize(ImVec2(c.s(kAddMenuW), 0), ImGuiCond_Appearing);
   ImGui::SetNextWindowSizeConstraints(ImVec2(c.s(kAddMenuW), 0), ImVec2(c.s(kAddMenuW), c.s(620)));
@@ -1922,23 +2121,43 @@ void patchView(Ctx& c) {
   }
   {
     const LinkAsk& ask = linkAsk();
-    const float w = c.s(M(330));
+    const float w = c.s(M(ask.box >= 0 && !ask.all ? 280 : 330));
     ImVec2 at(ask.at.x + c.s(M(14)), ask.at.y - c.s(M(24)));
     if (at.x + w > c1.x) at.x = ask.at.x - c.s(M(14)) - w;
     at.x = std::max(c0.x, at.x);
     at.y = std::clamp(at.y, c0.y, std::max(c0.y, c1.y - c.s(M(470))));
     ImGui::SetNextWindowPos(at, ImGuiCond_Appearing);
-    ImGui::SetNextWindowSize(ImVec2(w, 0), ImGuiCond_Appearing);
+    ImGui::SetNextWindowSize(ImVec2(w, 0), ImGuiCond_Always);
     ImGui::SetNextWindowSizeConstraints(ImVec2(w, 0), ImVec2(w, c.s(M(470))));
     if (ImGui::BeginPopup("##patchlink")) {
       linkSearch(c, gr);
       ImGui::EndPopup();
     }
   }
-  // right-click the background: show movement sources, add effects
+  // an add tile: what can be added there
+  if (ImGui::BeginPopup("##addtile")) {
+    char buf[48];
+    if (u.pAddTile == NAddSrc || u.pAddTile == NAddFilt) {
+      const int from = u.pAddTile == NAddSrc ? NSrc : NFilt, n = u.pAddTile == NAddSrc ? 5 : 2;
+      for (int i = 0; i < n; ++i)
+        if (!gr.find(from + i) && enableOf(from + i) >= 0 && ImGui::MenuItem(i18n::tr(nodeTitle(from + i, buf, sizeof buf)))) setv(c, enableOf(from + i), 1);
+    } else if (u.pAddTile == NAddFx) {
+      static const char* const rk[3] = {"To the main chain", "To Send A", "To Send B"};
+      for (int r = 0; r < 3; ++r)
+        if (ImGui::BeginMenu(i18n::tr(rk[r]))) {
+          fxAddMenu(c, r);
+          ImGui::EndMenu();
+        }
+    } else {
+      int src = -1;
+      if (sourceMenuItems(c, src) && src > SrcNone) shownMoves().insert(src);
+    }
+    ImGui::EndPopup();
+  }
+  // right-click the background: add, Clean up, Fit
   if (canvasHot && ImGui::IsMouseClicked(1) && !ImGui::IsAnyItemHovered()) ImGui::OpenPopup("##canvasmenu");
   if (ImGui::BeginPopup("##canvasmenu")) {
-    if (ImGui::BeginMenu(i18n::tr("Show a movement source"))) {
+    if (ImGui::BeginMenu(i18n::tr("Add a movement source"))) {
       int src = -1;
       if (sourceMenuItems(c, src) && src > SrcNone) shownMoves().insert(src);
       ImGui::EndMenu();
@@ -1949,19 +2168,22 @@ void patchView(Ctx& c) {
         fxAddMenu(c, r);
         ImGui::EndMenu();
       }
-    if (ImGui::MenuItem(i18n::tr("Tidy"))) offsets().clear(), u.pzoom = -1;
+    ImGui::Separator();
+    if (ImGui::MenuItem(i18n::tr("Clean up"))) cleanUpNow(c);
     if (ImGui::MenuItem(i18n::tr("Fit"))) u.pzoom = -1;
     ImGui::EndPopup();
   }
-  // Delete: an effect goes, a box with a light turns off; a selected link goes
+  // Delete: an effect goes, a box with a light turns off; a selected link goes. Escape: nothing selected.
   if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput && !ImGui::IsAnyItemActive() &&
-      !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) && (u.pLink >= 0 || u.pSel >= 0) &&
-      (ImGui::IsKeyPressed(ImGuiKey_Delete, false) || ImGui::IsKeyPressed(ImGuiKey_Backspace, false))) {  // Backspace: the Mac delete key
-    c.a.doc.beginGroup("Delete");  // a key press is not a pointer gesture: keep it one undo step
-    if (u.pLink >= 0) removeLink(c, u.pLink);
-    else if (u.pSel >= NFx && u.pSel < NFx + kFxSlots) fxRemove(c, u.pSel - NFx), u.pSel = -1;
-    else if (u.pSel >= 0 && enableOf(u.pSel) >= 0) setv(c, enableOf(u.pSel), 0);
-    c.a.doc.endGroup();
+      !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) {
+    if ((u.pLink >= 0 || u.pSel >= 0) && (ImGui::IsKeyPressed(ImGuiKey_Delete, false) || ImGui::IsKeyPressed(ImGuiKey_Backspace, false))) {  // Backspace: the Mac delete key
+      c.a.doc.beginGroup("Delete");  // a key press is not a pointer gesture: keep it one undo step
+      if (u.pLink >= 0) removeLink(c, u.pLink);
+      else if (u.pSel >= NFx && u.pSel < NFx + kFxSlots) fxRemove(c, u.pSel - NFx), u.pSel = -1;
+      else if (u.pSel >= 0 && enableOf(u.pSel) >= 0) setv(c, enableOf(u.pSel), 0);
+      c.a.doc.endGroup();
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) u.pSel = -1, u.pLink = -1;
   }
   ImGui::PopClipRect();
   win->DC.CursorMaxPos = keepMax;
@@ -1972,8 +2194,8 @@ void patchView(Ctx& c) {
     c.dl->AddRect(c.p(cx0 + M(12), cB - M(44)), c.p(cx0 + M(12) + w, cB - M(14)), P.hot, c.s(M(5)));
     text(c, cx0 + M(24), cB - M(29) - T(11.5f) * 0.68f, u.pWhy.c_str(), P.text, T(11.5f), false);
   }
-  // ---- the inspector
-  scrollBody(c, ix - 12, cy0 - M(40), iw + 24, kPlayY - M(16) - drawerH(u), u.pScroll, u.pContent, inspector);
+  // ---- the inspector: only while something is selected
+  if (inspect) scrollBody(c, ix - 12, cy0 - M(40), iw + 24, kPlayY - M(16) - drawerH(u), u.pScroll, u.pContent, inspector);
   gGraph = nullptr;
   gPatchUi = nullptr;
 }

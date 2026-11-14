@@ -1375,8 +1375,9 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
     }
     if (tile("##medit", 216, ui::Icon::Clone, "Edit", 0, true)) ImGui::OpenPopup("##kedit");
     if (ImGui::BeginPopup("##kedit")) {
-      if (ImGui::MenuItem(i18n::tr("Undo"))) a.doc.undo();
-      if (ImGui::MenuItem(i18n::tr("Redo"))) a.doc.redo();
+      // Next frame (App::later): the step may replace the channels, and this editor holds its plugin state.
+      if (ImGui::MenuItem(i18n::tr("Undo"))) a.later([&a] { a.doc.undo(); });
+      if (ImGui::MenuItem(i18n::tr("Redo"))) a.later([&a] { a.doc.redo(); });
       ImGui::Separator();
       if (ImGui::MenuItem(i18n::tr("Edit the cuts by hand"), nullptr, manual, classic && smp)) makeManual(a, t, st, starts, smp.get());
       if (ImGui::MenuItem(i18n::tr("Clear the markers"), nullptr, false, manual)) clearMarkers();
@@ -1469,8 +1470,8 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
     }
     traceRect("menu_regions", sk.at(264, 298), sk.at(288, 330));
     // Tools: undo, redo, the marker one snap step left / right, the marker's name and position.
-    if (tile("##undo", 428, ui::Icon::Undo, "Undo")) a.doc.undo();
-    if (tile("##redo", 452, ui::Icon::Redo, "Redo")) a.doc.redo();
+    if (tile("##undo", 428, ui::Icon::Undo, "Undo")) a.later([&a] { a.doc.undo(); });  // next frame, as in the Edit menu
+    if (tile("##redo", 452, ui::Icon::Redo, "Redo")) a.later([&a] { a.doc.redo(); });
     ImGui::BeginDisabled(!canMove(k));
     if (tile("##nudgel", 476, ui::Icon::Left, "Nudge the marker left by one snap step (Left arrow over the wave)")) nudge(k, -1);
     if (tile("##nudger", 500, ui::Icon::Right, "Nudge the marker right by one snap step (Right arrow over the wave)")) nudge(k, 1);

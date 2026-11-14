@@ -23,6 +23,9 @@ class Document {
   explicit Document(Song song) : song_(std::move(song)) {}
 
   const Song& song() const { return song_; }
+  // K-224: the Stage room new mixer tracks stand in (the room this computer shows). Session state:
+  // not an edit, not saved, not shared.
+  void setNewTrackRoom(ObjectId room) { song_.newTrackRoom = room; }
   // Replaces the whole song (open/new project): history is cleared, state is "saved".
   void reset(Song song);
   // Increments on every change of the song (edit, undo, redo, reset).

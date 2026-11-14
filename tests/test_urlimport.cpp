@@ -122,20 +122,85 @@ void testProgressAndErrors() {
   expect(ul::formatTime(83) == "1:23" && ul::formatTime(3723) == "1:02:03", "times formatted");
 }
 
+// Error output captured from real yt-dlp runs (2026.10.26, November 2026) against the sites named:
+// each maps to the right explanation, and only the passing ones are retried.
+void testCapturedErrors() {
+  struct Sample {
+    const char* name;
+    const char* stderrText;
+    const char* leadHas;
+    bool retry;
+  };
+  const Sample samples[] = {
+      {"youtube 403", "WARNING: Unknown codec iamf.001.001.Opus\nERROR: unable to download video data: HTTP Error 403: Forbidden\n", "HTTP 403",
+       true},
+      {"vimeo login",
+       "ERROR: [vimeo] 56015672: The web client only works when logged-in. Use --cookies, --cookies-from-browser, --username and "
+       "--password, --netrc-cmd, or --netrc (vimeo) to provide account credentials. See  https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-"
+       "i-pass-cookies-to-yt-dlp  for how to manually pass cookies\n",
+       "signed-in", false},
+      {"bandcamp 404", "ERROR: [Bandcamp:album] youtube-dl-test-album: Unable to download webpage: HTTP Error 404: Not Found (caused by "
+                       "<HTTPError 404: Not Found>)\n",
+       "not found on the site", false},
+      {"archive.org empty item", "ERROR: [archive.org] mikho: opening play-av tag not found\n", "signed-in users", false},
+      {"offline", "ERROR: [generic] Unable to download webpage: <urlopen error [Errno 8] nodename nor servname provided, or not known>\n",
+       "could not be reached", false},
+      {"rate limit", "ERROR: [youtube] abc: HTTP Error 429: Too Many Requests\n", "limiting requests", false},
+      {"server error", "ERROR: unable to download video data: HTTP Error 503: Service Unavailable\n", "error of its own", true},
+      {"twitter 500",
+       "ERROR: [twitter] 665052190608723968: Unable to download webpage: HTTP Error 500: Domain Not Found (caused by <HTTPError 500: "
+       "Domain Not Found>)\n",
+       "error of its own", true},
+      {"broken connection", "ERROR: [download] Got error: Remote end closed connection without response\n", "", true},
+      {"tiktok blocked", "ERROR: [TikTok] 6748451240264420610: Your IP address is blocked from accessing this post\n", "blocks downloads",
+       false},
+      {"reddit login",
+       "ERROR: [Reddit] 6rrwyj: Account authentication is required. Use --cookies-from-browser or --cookies for the authentication.\n",
+       "signed-in", false},
+      {"youtube removed", "ERROR: [youtube] zzzzzzzzzz0: This video is unavailable\n", "not available", false},
+      {"drm", "ERROR: [DRM] The requested site is known to use DRM protection. It will NOT be supported.\n", "DRM", false},
+  };
+  for (const auto& s : samples) {
+    const std::string e = ul::toolError(s.stderrText);
+    const std::string lead = ul::errorLead(e);
+    if (*s.leadHas) expect(lead.find(s.leadHas) != std::string::npos, (std::string("captured error explained: ") + s.name + " -> " + lead).c_str());
+    expect(ul::retryableError(e) == s.retry, (std::string("captured error retried only when it may pass: ") + s.name).c_str());
+  }
+  // A title that is a file name (sound libraries) does not end up as "name.wav.wav".
+  expect(ul::safeFileName("morning bell.wav") == "morning bell" && ul::safeFileName("Kick 01.FLAC") == "Kick 01" &&
+             ul::safeFileName("v1.2 final") == "v1.2 final",
+         "file name: an audio extension in the title is dropped");
+  // Titles some sites give as HTML (a Wikimedia Commons file page) become plain text.
+  expect(ul::plainText("<div class=\"fn\">\nAire, Second Music, The Fairy Queen, Z.629.\n</div>") ==
+             "Aire, Second Music, The Fairy Queen, Z.629.",
+         "title: HTML tags removed");
+  expect(ul::plainText("Tom &amp; Jerry &lt;live&gt;") == "Tom & Jerry <live>", "title: entities decoded");
+  expect(ul::plainText("I <3 synths, a < b") == "I <3 synths, a < b", "title: a lone < is kept");
+  ul::Info in;
+  expect(ul::parseInfo("{\"id\":\"x\",\"title\":\"<div class=\\\"fn\\\">\\nAire\\n</div>\"}", in) && in.title == "Aire",
+         "info: an HTML title is read as plain text");
+}
+
 void testArgsAndFiles(const fs::path& dir) {
   const auto info = ul::infoArgs({"py", "yt.pyz"}, "https://a.com/x");
   expect(info.size() > 3 && info[0] == "py" && info[1] == "yt.pyz" && info[info.size() - 2] == "--" && info.back() == "https://a.com/x",
          "info: prefix, the link last after --");
   expect(std::find(info.begin(), info.end(), "--ignore-config") != info.end(), "info: the user's yt-dlp config is ignored");
   const auto dl = ul::downloadArgs({"yt"}, "/x/ffmpeg", "https://a.com/x", "/w");
-  expect(std::find(dl.begin(), dl.end(), "bestaudio/best") != dl.end(), "download: best audio");
+  expect(std::find(dl.begin(), dl.end(), "bestaudio[audio_channels<=?2]/bestaudio/best") != dl.end(),
+         "download: best audio, a stereo or mono stream before a surround one");
+  expect(std::find(dl.begin(), dl.end(), "--write-info-json") != dl.end() &&
+             std::find_if(dl.begin(), dl.end(), [](const std::string& x) { return x.rfind("infojson:", 0) == 0; }) != dl.end(),
+         "download: the item's own info is written (titles of playlist items)");
   expect(std::find(dl.begin(), dl.end(), "--no-playlist") != dl.end(), "download: one item");
   expect(std::find(dl.begin(), dl.end(), "/x/ffmpeg") != dl.end(), "download: our ffmpeg");
   expect(dl.back() == "https://a.com/x" && dl[dl.size() - 2] == "--", "download: the link last after --");
   const auto cv = ul::convertArgs("ff", "in.webm", "out.wav", ul::Trim{10, 20}, ul::Tags{"T", "A", "https://u"}, "");
   auto at = [&](const std::string& k) { return std::find(cv.begin(), cv.end(), k); };
   expect(at("pcm_f32le") != cv.end(), "convert: 32-bit float PCM");
-  expect(at("-ar") == cv.end() && at("-ac") == cv.end(), "convert: source rate and channels kept");
+  expect(at("-ar") == cv.end() && at("-ac") == cv.end(), "convert: source rate kept");
+  expect(at("-af") != cv.end() && *(at("-af") + 1) == "aformat=channel_layouts=mono|stereo",
+         "convert: mono and stereo kept, surround mixed down to stereo");
   expect(at("-ss") != cv.end() && *(at("-ss") + 1) == "10.000" && at("-t") != cv.end() && *(at("-t") + 1) == "10.000", "convert: trim");
   expect(at("title=T") != cv.end() && at("artist=A") != cv.end() && at("comment=https://u") != cv.end(), "convert: metadata");
   expect(cv.back() == "out.wav", "convert: output last");
@@ -248,6 +313,30 @@ void testWorker(const fs::path& dir) {
   job = waitJob(ul::startImport(tools(), {rq, rq2}, (dir / "i3").u8string()));
   expect(job->get() == ul::Phase::Done && job->results.size() == 2 && job->items == 2 && job->results[1].request.item.title == "Second",
          "import: several items in turn");
+  // A refused stream link (HTTP 403) is tried again with a fresh read of the page, and works.
+  scenario("flaky403");
+  job = waitJob(ul::startImport(tools(), {rq}, (dir / "i3b").u8string()));
+  expect(job->get() == ul::Phase::Done && job->results.size() == 1 && job->attempt == 2, "import: a 403 is retried and the retry works");
+  scenario("always403");
+  ul::Limits fast;
+  fast.retryPauseSeconds = 0.05;
+  job = waitJob(ul::startImport(tools(), {rq}, (dir / "i3c").u8string(), fast));
+  expect(job->get() == ul::Phase::Failed && job->attempt == fast.downloadTries && job->lead.find("403") != std::string::npos &&
+             job->log.find("HTTP Error 403") != std::string::npos && job->log.find("--ignore-config") != std::string::npos,
+         "import: a 403 every time stops after the tries, explained, with the command and its output in the details");
+  // A playlist item known only by its number gets its title from the download's own info.
+  scenario("untitled");
+  auto fj = waitJob(ul::startFetch(tools(), "https://example.com/sets/s1", (dir / "f7").u8string()));
+  expect(fj->get() == ul::Phase::Done && fj->info.entries.size() == 1 && fj->info.entries[0].title == "291144360",
+         "fetch: a set whose items have only numbers");
+  if (!fj->info.entries.empty()) {
+    ul::Request rn;
+    rn.item = fj->info.entries[0];
+    job = waitJob(ul::startImport(tools(), {rn}, (dir / "i3d").u8string()));
+    expect(job->get() == ul::Phase::Done && !job->results.empty() && job->results[0].request.item.title == "Named Track" &&
+               job->results[0].request.item.uploader == "Set Owner" && std::fabs(job->results[0].request.item.duration - 2.0) < 1e-9,
+           "import: the item is named by its own title, not its number");
+  }
   scenario("signin");
   job = waitJob(ul::startImport(tools(), {rq}, (dir / "i4").u8string()));
   expect(job->get() == ul::Phase::Failed && job->lead.find("signed-in") != std::string::npos, "import: sign-in needed is explained");
@@ -367,6 +456,18 @@ void testTools(const fs::path& dir) {
   u = mt::updateYtdlp(n, target.u8string(), "2020.01.01", nullptr);
   expect(u.checked && u.updated && u.version == "2099.01.01" && fs::exists(target / (mt::exeName("yt-dlp") + ".previous")),
          "update: newer one installed, previous kept");
+  // GitHub limiting requests: not checked, and the error says so (what the network test skips on).
+  for (int status : {403, 429}) {
+    mt::Net limited = n;
+    limited.fetch = [status](const std::string&) {
+      update::HttpResult h;
+      h.status = status;
+      return h;
+    };
+    u = mt::updateYtdlp(limited, target.u8string(), "2020.01.01", nullptr);
+    expect(!u.checked && !u.updated && u.error.find("limiting") != std::string::npos && mt::setupLead(u.error).find("hour") != std::string::npos,
+           ("update: GitHub limiting requests is explained (" + std::to_string(status) + "): " + u.error).c_str());
+  }
   expect(mt::updateDue(true, 0, 1000) && !mt::updateDue(false, 0, 1000) && !mt::updateDue(true, 1000, 1000 + 3600) &&
              mt::updateDue(true, 1000, 1000 + 24 * 3600) && mt::updateDue(true, 5000, 1000),
          "update: once a day, off switch, clock set back");
@@ -461,6 +562,34 @@ void testFixes(const fs::path& dir) {
     expect(js.size() == 2 && js[0] == "--js-runtimes" && js[1] == "deno:" + (bin / mt::exeName("deno")).u8string(),
            "js runtime: deno handed to yt-dlp with its path");
   }
+  // ...also where the runtimes' own installers put them in the home folder (not on an app's PATH):
+  // deno's installer (~/.deno/bin), and node from nvm (the newest version).
+  {
+    const fs::path home = dir / "js home", empty = dir / "js empty";
+    fs::create_directories(home / ".deno" / "bin", ec);
+    fs::create_directories(empty, ec);
+    fs::copy_file(fakeTool, home / ".deno" / "bin" / mt::exeName("deno"), fs::copy_options::overwrite_existing, ec);
+    for (const char* v : {"v9.11.2", "v22.3.0", "v20.18.1"}) {
+      fs::create_directories(home / ".nvm" / "versions" / "node" / v / "bin", ec);
+      fs::copy_file(fakeTool, home / ".nvm" / "versions" / "node" / v / "bin" / mt::exeName("node"), fs::copy_options::overwrite_existing, ec);
+    }
+    const char* oldPath = std::getenv("PATH");
+    const char* oldHome = std::getenv("HOME");
+    const std::string keepPath = oldPath ? oldPath : "", keepHome = oldHome ? oldHome : "";
+    platform::setEnv("PATH", empty.u8string().c_str());
+    platform::setEnv("HOME", home.u8string().c_str());
+    const auto js = mt::jsRuntimeArgs();
+    fs::remove(home / ".deno" / "bin" / mt::exeName("deno"), ec);
+    const auto js2 = mt::jsRuntimeArgs();
+    const std::string systemDeno = mt::findOnSystem("deno");  // (this computer's own deno, in /usr/local/bin and the like)
+    platform::setEnv("PATH", keepPath.c_str());
+    platform::setEnv("HOME", keepHome.c_str());
+    expect(js.size() == 2 && js[1] == "deno:" + (home / ".deno" / "bin" / mt::exeName("deno")).u8string(),
+           "js runtime: deno from its installer's folder in the home folder");
+    const std::string nvmNode = "node:" + (home / ".nvm" / "versions" / "node" / "v22.3.0" / "bin" / mt::exeName("node")).u8string();
+    expect(js2.size() == 2 && (systemDeno.empty() ? js2[1] == nvmNode : js2[1] == "deno:" + systemDeno),
+           "js runtime: node from nvm, the newest version (deno first where the system has one)");
+  }
 
   // Two version checks at once (set-up and update) each read their own output.
   {
@@ -536,6 +665,7 @@ int main(int argc, char** argv) {
   testLinks();
   testInfo();
   testProgressAndErrors();
+  testCapturedErrors();
   testArgsAndFiles(dir / "files");
   testProcess(dir);
   testWorker(dir / "work");

@@ -792,7 +792,8 @@ void pianoRoll(Ctx& c, ClipSlot& cs) {
       char t[16];
       std::snprintf(t, sizeof t, "%d.%d", b / 16 + 1, (b / 4) % 4 + 1);
       MonoText mono;
-      text(c, bx + 3, kRollY + 3, t, c.P.textDim, ty::kCap, false);
+      if (bx + 3 + textW(c, t, ty::kCap, false) <= kRollR - 2)  // (a bar number past the roll's end is left out)
+        text(c, bx + 3, kRollY + 3, t, c.P.textDim, ty::kCap, false);
     } else {
       vline(c, bx, kRollY + 12, kRollY + kRulerH, c.P.textFaint);
     }

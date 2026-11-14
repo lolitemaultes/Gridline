@@ -19,5 +19,14 @@ The search box works with the keys too: after a search, click a result and move 
 Moving through the list only selects files. Patterns, channels and mixer tracks in the Current project
 section take the cursor without changing what is selected in the song; press Enter to select or open one.
 
+## Collapse all folders
+
+The button between the search field and the plugin button (two arrows closing onto a line)
+folds every open folder in the browser at once: nested folders and every section (Current
+project, Plugin database, presets, your own folders and the rest), on every tab. The search text
+stays. If the selected item is folded away, its top folder takes the selection instead. The same
+command is in the right-click menu of a folder, a section and the empty space under the list.
+Folding this way is kept like any fold made by hand. It has no key of its own.
+
 The keys only act while the browser has focus and you are not typing in a text field. While the typing
 keyboard is on, W and S play notes as usual, and the arrow keys keep browsing.

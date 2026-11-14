@@ -27,9 +27,15 @@ void openPatternAutomation(App& a, ObjectId pattern, ParamId target);
 bool automationEditorTarget(ObjectId* automation, ObjectId* pattern, ParamId* target);
 // Dev check (--dev-input "autoedit"): the view as drawn last frame: scroll (px), zoom (px per
 // tick), and the time scroller's thumb (x span) at height barY.
+// K-202: also the value area's top and bottom (gridY0 / gridY1: values 1 and 0), the draw-curve
+// chooser's rect and the curve the Draw tool writes (an AutoShape).
 struct AutomationEditorView {
   float scrollX = 0, pxPerTick = 0, thumb0 = 0, thumb1 = 0, barY = 0, gridX0 = 0, gridX1 = 0;
+  float gridY0 = 0, gridY1 = 0, chipX0 = 0, chipY0 = 0, chipX1 = 0, chipY1 = 0;
+  int drawShape = 0;
 };
+// K-202: the points of the clip the editor shows ("pos:value:shape", "*" when selected).
+std::string automationEditorPointsDump(App& a);
 const AutomationEditorView& automationEditorView();
 // Development (screenshots): 1 = the editor on a demo clip, 2 = with the LFO
 // tool, 3 = a pattern-automation lane in the piano roll (--show autoedit /

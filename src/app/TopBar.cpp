@@ -242,7 +242,7 @@ struct DevRect {
   ImVec2 a, b;
   int frame = -1;
 };
-DevRect gDevRects[] = {{"play", {}, {}}, {"stop", {}, {}}, {"rec", {}, {}}, {"metro", {}, {}}, {"brsearch", {}, {}}, {"brclear", {}, {}}, {"chroute", {}, {}}, {"chroutefree", {}, {}}, {"chroutelist", {}, {}}, {"tempoint", {}, {}}, {"tempofrac", {}, {}}, {"loupedrag", {}, {}}, {"taptempo", {}, {}}, {"tapmenu", {}, {}}, {"tapmenutap", {}, {}}, {"menutools", {}, {}}, {"bar_transport", {}, {}}, {"bar_tempo", {}, {}}, {"bar_pos", {}, {}}, {"bar_pattern", {}, {}}, {"bar_master", {}, {}}, {"bar_monitor", {}, {}}, {"bar_windows", {}, {}}, {"bar_more", {}, {}}};
+DevRect gDevRects[] = {{"play", {}, {}}, {"stop", {}, {}}, {"rec", {}, {}}, {"metro", {}, {}}, {"brsearch", {}, {}}, {"brclear", {}, {}}, {"chroute", {}, {}}, {"chroutefree", {}, {}}, {"chroutelist", {}, {}}, {"tempoint", {}, {}}, {"tempofrac", {}, {}}, {"loupedrag", {}, {}}, {"taptempo", {}, {}}, {"tapmenu", {}, {}}, {"tapmenutap", {}, {}}, {"menutools", {}, {}}, {"bar_transport", {}, {}}, {"bar_tempo", {}, {}}, {"bar_pos", {}, {}}, {"bar_pattern", {}, {}}, {"bar_master", {}, {}}, {"bar_monitor", {}, {}}, {"bar_windows", {}, {}}, {"bar_more", {}, {}}, {"prstamp", {}, {}}, {"prstamplbl", {}, {}}, {"prstampchip", {}, {}}, {"brcollapse", {}, {}}};
 float gMetroMirror = 1.0f;
 double gMetroBeat = 0;  // (dev: the song position, in beats, the glyph's pose was drawn for)
 bool gMetroTicking = false;  // (dev: ... whether it ticked then, and from which beat)

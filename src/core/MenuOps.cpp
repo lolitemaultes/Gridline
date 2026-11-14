@@ -4,6 +4,7 @@
 #include "ChordTools.h"
 #include "MeterEdit.h"
 #include "TrackModes.h"
+#include "TrackOrder.h"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -528,20 +529,8 @@ bool deletePlaylistTrack(Document& d, int index) {
 }
 
 bool movePlaylistTrack(Document& d, int index, int dir) {
-  const Song& s = d.song();
-  int j = index + dir;
-  int n = static_cast<int>(s.tracks.size());
-  if (index < 0 || index >= n || j < 0 || j >= n || dir == 0) return false;
-  d.editSong(dir < 0 ? "move playlist track up" : "move playlist track down", [&](Song& x) {
-    std::swap(x.tracks[static_cast<size_t>(index)], x.tracks[static_cast<size_t>(j)]);
-    for (auto& c : x.playlist) {
-      if (c.track == index)
-        c.track = j;
-      else if (c.track == j)
-        c.track = index;
-    }
-  });
-  return true;
+  // GitHub #46: past the neighbour (a folded group as a whole); a group header brings its group.
+  return trackorder::stepPlaylistTracks(d, {index}, dir < 0 ? -1 : dir > 0 ? 1 : 0);
 }
 
 bool clonePlaylistTrack(Document& d, int index) {
@@ -764,11 +753,8 @@ std::vector<ObjectId> chopClip(Document& d, ObjectId clip, Tick every) {
 // -------------------------------------------------------------------- mixer ----
 
 bool moveMixerTrack(Document& d, ObjectId id, int dir) {
-  const Song& s = d.song();
-  int i = s.mixerIndex(id), j = i + dir;
-  if (i < 1 || j < 1 || j >= static_cast<int>(s.mixer.size()) || dir == 0) return false;
-  d.editSong("move mixer track", [&](Song& x) { std::swap(x.mixer[static_cast<size_t>(i)], x.mixer[static_cast<size_t>(j)]); });
-  return true;
+  // GitHub #46: the routing (send levels, plugin targets, side inputs) follows the track.
+  return trackorder::stepMixerTracks(d, {id}, dir < 0 ? -1 : dir > 0 ? 1 : 0);
 }
 
 int trimUnusedMixerTracks(Document& d) {

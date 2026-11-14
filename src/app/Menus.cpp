@@ -20,6 +20,7 @@
 #include "../../third_party/imgui/imgui_internal.h"
 #include "../core/Demo.h"
 #include "../core/MenuOps.h"
+#include "../core/TrackOrder.h"
 #include "../core/MenuOpsExtra.h"
 #include "ChannelRoute.h"
 #include "App.h"
@@ -360,6 +361,7 @@ void menuView(App& a) {
   ImGui::MenuItem(i18n::tr("Undo history"), keys::label("edit.history"), &a.showHistory);
   ImGui::MenuItem(i18n::tr("Performance"), nullptr, &a.showPerformance);
   ImGui::MenuItem(i18n::tr("Groove editor"), nullptr, &a.showGroove);  // K-151
+  ImGui::MenuItem(i18n::tr("Stage"), keys::label("view.stage"), &a.showStage);
   // Zoom acts on the piano roll when it was the last editor used, otherwise on the playlist.
   const bool piano = a.editFocus == App::EditFocus::Piano;
   ImGui::SeparatorText(piano ? i18n::tr("Zoom (piano roll)") : i18n::tr("Zoom (playlist)"));
@@ -628,10 +630,13 @@ bool menuShortcuts(App& a) {
   const char* focused = nav ? (nav->RootWindow ? nav->RootWindow->Name : nav->Name) : "";
   const char* focusedId = ui::stableWindowName(focused);  // J-61: titles are translated, ids are English
   const bool inPiano = !std::strcmp(focusedId, "Piano roll"), inPlaylist = !std::strcmp(focusedId, "Playlist");
-  const bool inRack = !std::strcmp(focusedId, "Channel rack"), inMixer = !std::strcmp(focusedId, "Mixer");
+  const bool inRack = !std::strcmp(focusedId, "Channel rack"), inMixerWindow = !std::strcmp(focusedId, "Mixer");
+  const bool inMixer = inMixerWindow && !a.showStage;
   const bool inAuto = std::strstr(focused, "###autoedit") != nullptr;
+  const bool inStage = inMixerWindow && a.showStage;  // the mixer window's Stage view
   keys::setFocusContext(inPiano ? keys::Context::PianoRoll : inPlaylist ? keys::Context::Playlist : inRack ? keys::Context::ChannelRack
-                        : inMixer ? keys::Context::Mixer : inAuto ? keys::Context::Automation : keys::Context::Global);
+                        : inMixer ? keys::Context::Mixer : inAuto ? keys::Context::Automation : inStage ? keys::Context::Stage
+                        : keys::Context::Global);
   if (io.WantTextInput || ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) return false;
   bool used = false;  // a handled key stops handleGlobalShortcuts from also acting on it
   auto key = [&used](const char* id) { bool p = keys::pressed(id); used |= p; return p; };
@@ -721,16 +726,23 @@ bool menuShortcuts(App& a) {
     ObjectId nc = ops::mergeClips(a.doc, a.playlist.selected);
     if (nc) a.playlist.selected = {nc};
   }
+  if (inPlaylist && !a.playlist.trackSel.empty()) {  // GitHub #46: the selected track headers
+    const std::vector<int> sel(a.playlist.trackSel.begin(), a.playlist.trackSel.end());
+    if (key("playlist.moveTrackUp")) stepPlaylistSelection(a, sel, -1);
+    if (key("playlist.moveTrackDown")) stepPlaylistSelection(a, sel, 1);
+  }
   // Mixer.
   if (inMixer) {
     auto chans = selectedChannels(a);
     if (key("mixer.routeHere") && !chans.empty()) ops::routeChannels(a.doc, chans, a.selMixer, false);
     if (key("mixer.routeFromHere") && !chans.empty()) ops::routeChannels(a.doc, chans, a.selMixer, true);
-    if (key("mixer.moveLeft")) ops::moveMixerTrack(a.doc, a.selMixer, -1);
-    if (key("mixer.moveRight")) ops::moveMixerTrack(a.doc, a.selMixer, 1);
+    if (key("mixer.moveLeft")) trackorder::stepMixerTracks(a.doc, mixerSelection(a), -1);  // GitHub #46: the selection moves
+    if (key("mixer.moveRight")) trackorder::stepMixerTracks(a.doc, mixerSelection(a), 1);
     if (!a.typingKeyboard && key("mixer.solo")) ops::soloMixerTrack(a.doc, a.selMixer);
     if (key("mixer.selectAll")) mixerSelectAll(a);
     if (key("mixer.deselect")) mixerDeselect(a);
+    if (key("mixer.selectRoutedChannels")) mixerSelectRoutedChannels(a, a.selMixer);
+    if (key("mixer.selectRoutedTo")) mixerSelectRoutedTo(a, a.selMixer);
   }
   return used;
 }

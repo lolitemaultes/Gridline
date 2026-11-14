@@ -23,7 +23,8 @@ tension handles, LFO tool, shape library and recording.
    song mode), holding the control's current value, and opens in the automation editor.
 2. In the editor, click to add a point and drag points to shape the curve. Drag the small ring
    between two points to bend the line, and pick a shape from the side panel to fill the clip
-   or the selected part with it.
+   or the selected part with it. The curve chooser beside the tools sets the curve a new point
+   gets (see [Drawing curves](#drawing-curves)).
 3. Move, stretch or copy the clip on the playlist like any other clip. Wherever it sits, the
    control follows its curve; outside it, the control keeps the last value it was given.
 
@@ -80,21 +81,22 @@ playlist** (one playlist automation clip under every clip of the pattern, soundi
 
 The lane works like the automation clip editor, with the piano roll's tools:
 
-- **Draw and Paint** draw values as you drag; **right-drag** draws a straight line. The chip
-  under the lane's name chooses the curve they draw: **Stepped** (a value on every grid step),
-  **Linear** or **Smooth**. A Linear or Smooth stroke keeps only the few points its shape needs,
-  and a Linear or Smooth line is just its two ends.
+- **Draw and Paint** draw values as you drag; **right-drag** draws a straight line. The curve
+  chooser under the lane's name (shared with the automation clip editor, see
+  [Drawing curves](#drawing-curves)) sets the curve they draw: **Stepped** (a value on every grid
+  step), **Linear** (the default) or **Smooth**. A Linear or Smooth stroke keeps only the few points its shape
+  needs, and a Linear or Smooth line is just its two ends.
 - **Select** (or Ctrl+drag with any tool) drags a box around points; Shift+click adds or removes
   one. Drag a selected point to move the selection (Shift: one direction only, Alt: no snap).
 - **Delete** erases the points you drag over. The last point always stays, so the lane keeps
   its name, colour and range; use **Delete this lane** in the lane's menu to remove it.
 - **Right-click a point** for its menu: delete, its curve (Stepped, Linear, Smooth or any other
-  curve), reset tension, copy, simplify, open in the automation editor. The chip's menu also
-  sets the curve of the selected points.
+  curve), reset tension, copy, simplify, open in the automation editor. The curve chooser's
+  menu also sets the curve of the selected points.
 - After a click in the lane, the editing keys act on its points: Delete, Ctrl+A, Ctrl+D,
   Ctrl+C, Ctrl+X, Ctrl+V (pastes over the copied span after the selection, or at the playhead
   while the pattern plays) and Q (quantize). A click in the notes gives the keys back to them.
-- **Simplify points...** (the chip's menu, the lane's menu or a point's menu) thins dense
+- **Simplify points...** (the curve chooser's menu, the lane's menu or a point's menu) thins dense
   points, such as recorded controller moves, to a few Linear or Smooth points within a
   tolerance you set, with a live preview; it works on the selection, or on the whole lane when
   nothing is selected. The automation clip editor's **Thin out points...** has the same choice.
@@ -104,6 +106,22 @@ The lane works like the automation clip editor, with the piano roll's tools:
 Points copied in the lane paste in the automation clip editor and the other way round. Recorded
 controller moves are thinned as they are written (within 0.4 %, which you cannot hear), so a
 take holds a few points instead of one per message.
+
+### Drawing curves
+
+The automation clip editor and the piano roll's automation lane share one curve chooser: in the
+editor it sits in the toolbar beside the tools, in the lane under the lane's name. It shows the
+curve you draw with, as a small picture and a short name:
+
+- **Stepped** holds each value until the next point.
+- **Linear** goes from point to point in a straight line.
+- **Smooth** eases in and out between points.
+
+Click the chooser for its menu. **Draw with** picks the curve for new points and strokes, in the
+editor and the lane alike, and Gridline remembers it for next time. With points selected, the
+menu also lists **Set the selected points to**: Stepped, Linear, Smooth, or any other curve
+under **More curves**, as one undo step. The same curves are in a point's right-click menu and,
+for every point at once, in the editor's and the lane's menus.
 
 ### Patterns with clips
 

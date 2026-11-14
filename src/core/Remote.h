@@ -77,6 +77,11 @@ class RemoteMapper {
   bool process(const ControllerLink& l, const MidiMessage& m, double cur, double* out, double step = 0.0);
   // Action links: true on the press of the control (rising edge).
   bool trigger(const ControllerLink& l, const MidiMessage& m);
+  // OSC links (RemoteSource::Osc): `value` is the message's number (0..1 for absolute controls,
+  // a signed step count for relative encoders, 1 / 0 for buttons); `impulse` for a message
+  // without a value (a press). Same takeover, curve, range and button rules as MIDI links.
+  bool processOsc(const ControllerLink& l, double value, bool impulse, double cur, double* out, double step = 0.0);
+  bool triggerOsc(const ControllerLink& l, double value, bool impulse);
   // Pickup mode: true while the link waits for the control to reach the value.
   bool waiting(const ControllerLink& l) const;
   void forget(const ControllerLink& l);
@@ -94,6 +99,7 @@ class RemoteMapper {
     bool down = false;
   };
   const Expr* formula(const std::string& text);
+  bool absolute(const ControllerLink& l, State& s, double n, double cur, double* out);
   std::map<uint64_t, State> st_;
   std::map<std::string, Expr> exprs_;
 };

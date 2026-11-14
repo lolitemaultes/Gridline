@@ -1,6 +1,7 @@
 #include "../packs/Packs.h"
 #include "../core/Groove.h"
 #include "Program.h"
+#include "../core/StageRoomOps.h"
 #include "../core/LayerPick.h"
 #include "Freeze.h"
 #include "ClipSource.h"
@@ -18,6 +19,7 @@
 #include "../core/Arrangements.h"
 #include "../core/ClipGain.h"
 #include "../core/ClipLoop.h"
+#include "../core/StageRooms.h"
 #include "../core/ClipRate.h"
 #include "../core/PatternAutomation.h"
 #include "../core/PluginParams.h"
@@ -222,7 +224,11 @@ std::vector<int> orderWithEdges(const Song& song, const std::vector<std::pair<in
     state[static_cast<size_t>(x)] = 2;
     out.push_back(x);
   };
-  for (size_t i = 0; i < n; ++i) visit(static_cast<int>(i));
+  // Started in id order (see mixerOrder in core/Song.cpp): a reordered mixer sums in the same order.
+  std::vector<int> roots;
+  for (size_t i = 0; i < n; ++i) roots.push_back(static_cast<int>(i));
+  std::stable_sort(roots.begin(), roots.end(), [&](int a, int b) { return song.mixer[static_cast<size_t>(a)].id < song.mixer[static_cast<size_t>(b)].id; });
+  for (int i : roots) visit(i);
   std::reverse(out.begin(), out.end());
   auto it = std::find(out.begin(), out.end(), master);
   if (it != out.end()) {
@@ -292,7 +298,7 @@ bool resolveTarget(const Song& song, Program& prog, ParamId target, ProgLink& pl
         if (pm.sends[i].first == dest) pl.param = static_cast<int>(i);
       if (pl.param < 0) return false;
     } else if (target.index >= static_cast<uint32_t>(MixerParam::EqLowGain) &&
-               target.index < static_cast<uint32_t>(MixerParam::Count)) {
+               target.index <= static_cast<uint32_t>(MixerParam::EqHighQ)) {
       uint32_t r = target.index - static_cast<uint32_t>(MixerParam::EqLowGain);
       pl.kind = r < 3 ? ProgLink::MixEqGain : r < 6 ? ProgLink::MixEqFreq : ProgLink::MixEqQ;
       pl.param = static_cast<int>(r % 3);
@@ -306,7 +312,15 @@ bool resolveTarget(const Song& song, Program& prog, ParamId target, ProgLink& pl
           pl.kind = ProgLink::MixPan;
           pm.stripLinked = true;
           break;
-        case MixerParam::StereoSep: pl.kind = ProgLink::MixSep; break;
+        case MixerParam::StereoSep:
+          pl.kind = ProgLink::MixSep;
+          if (prog.panLaw == 2) pm.stripLinked = true;  // Stage placement: the width is part of the strip gains
+          break;
+        case MixerParam::Depth:  // the distance gain is part of the strip gains
+          pl.kind = ProgLink::MixDepth;
+          pm.stripLinked = true;
+          break;
+        case MixerParam::Focus: pl.kind = ProgLink::MixFocus; break;
         case MixerParam::Mute:
           pl.kind = ProgLink::MixMute;
           pm.muteLinked = true;
@@ -953,16 +967,39 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
   }
   std::map<ObjectId, std::shared_ptr<MixerRuntime>> mixers;
   std::map<std::pair<ObjectId, int>, std::shared_ptr<EffectRuntime>> effects;
+  prog->panLaw = static_cast<int>(song.panLaw);
+  prog->rooms.clear();
+  for (int r = 0; r < roomops::roomCount(song); ++r) {
+    const StageSettings& st = roomops::roomAt(song, r);
+    ProgRoom pr;
+    pr.depthK = depth::strengthK(st.depthStrength);
+    pr.front = st.frontQuiet;
+    pr.preDelay = st.preDelay;
+    pr.earlyOn = st.early;
+    pr.on = st.hasRoom();
+    const rooms::Room& rm = rooms::get(st.roomType);
+    pr.halfW = rm.halfWidth, pr.depth = rm.depth, pr.wall = rm.wall;
+    prog->rooms.push_back(pr);
+  }
   for (const auto& m : song.mixer) {
     ProgMixer pm;
     pm.id = m.id;
     auto it = mixers_.find(m.id);
     pm.rt = it != mixers_.end() ? it->second : std::make_shared<MixerRuntime>();
     mixers[m.id] = pm.rt;
-    double g = dsp::faderGain(m.volume, 0.8), l, r;
-    dsp::panGains(m.pan, l, r);
-    pm.gainL = static_cast<float>(g * l);
-    pm.gainR = static_cast<float>(g * r);
+    pm.room = static_cast<size_t>(roomops::trackRoom(song, m));
+    pm.roomW = m.id == song.masterId() ? 1.0f : roomops::roomAt(song, static_cast<int>(pm.room)).width;
+    const ProgRoom& room = prog->roomOf(pm);
+    double g = dsp::faderGain(m.volume, 0.8);
+    // Stage distance (none at 0 or with no room: old projects render as before)
+    if (room.on && m.depth > 0) g *= depth::gain(m.depth, room.depthK);
+    const depth::PanGains pg = depth::panGains(prog->panLaw, g, roomPan(m.pan, pm.roomW), roomSep(m.stereoSep, pm.roomW));
+    pm.gainL = static_cast<float>(pg.gl);
+    pm.gainR = static_cast<float>(pg.gr);
+    pm.xlr = static_cast<float>(pg.xlr);
+    pm.xrl = static_cast<float>(pg.xrl);
+    pm.depth = room.on ? m.depth : 0.0f;  // kept on the track, not heard without a room
+    pm.focus = room.on ? m.focus : 0.0f;
     pm.volume = pm.modVolume = m.volume;
     pm.pan = pm.modPan = m.pan;
     pm.sep = pm.sepBase = m.stereoSep;
@@ -1024,6 +1061,8 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     }
     prog->mixer.push_back(std::move(pm));
   }
+  std::map<ObjectId, std::shared_ptr<depth::RoomTap>> roomTaps;
+  std::map<ObjectId, std::shared_ptr<depth::RoomEarly>> roomEarly;
   for (size_t i = 0; i < song.mixer.size(); ++i)
     for (const auto& s : song.mixer[i].sends) {
       int to = song.mixerIndex(s.to);
@@ -1035,6 +1074,18 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
       } else {
         prog->mixer[i].sends.push_back({to, s.level});
         prog->mixer[i].sendPre.push_back(s.preFader ? 1 : 0);
+        prog->mixer[i].sendRoom.push_back(s.stageRoom ? 1 : 0);
+        const ProgRoom& sroom = prog->roomOf(prog->mixer[i]);
+        if (s.stageRoom && sroom.on && (sroom.preDelay || sroom.earlyOn)) {  // the room tap (pre-delay, reflections)
+          const ObjectId src = song.mixer[i].id, dst = s.to;
+          auto t = roomTaps_.find(src);
+          prog->mixer[i].roomTap = roomTaps.emplace(src, t != roomTaps_.end() ? t->second : std::make_shared<depth::RoomTap>()).first->second;
+          if (sroom.earlyOn) {
+            auto e = roomEarly_.find(dst);
+            prog->mixer[static_cast<size_t>(to)].roomEarly =
+                roomEarly.emplace(dst, e != roomEarly_.end() ? e->second : std::make_shared<depth::RoomEarly>()).first->second;
+          }
+        }
       }
       prog->mixer[i].hasPreSend = prog->mixer[i].hasPreSend || s.preFader;
     }
@@ -1076,6 +1127,9 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
         }
       }
     size_t slotEdges = extra.size();
+    auto byId = [&](size_t x, size_t y) { return song.mixer[x].id < song.mixer[y].id; };  // independent of the mixer's order
+    for (auto& v : busSenders) std::stable_sort(v.begin(), v.end(), byId);
+    for (auto& v : busReceivers) std::stable_sort(v.begin(), v.end(), byId);
     for (int b = 0; b < kAudioBuses; ++b)
       for (size_t a : busSenders[static_cast<size_t>(b)])
         for (size_t r : busReceivers[static_cast<size_t>(b)])
@@ -1593,6 +1647,8 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
   // once the last Program that references them is retired.
   channels_ = std::move(chans);
   mixers_ = std::move(mixers);
+  roomTaps_ = std::move(roomTaps);
+  roomEarly_ = std::move(roomEarly);
   effects_ = std::move(effects);
   noteFx_ = std::move(noteFx);
   links_ = std::move(linkRts);

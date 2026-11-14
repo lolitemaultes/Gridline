@@ -6,6 +6,7 @@
 // pattern edit.
 #pragma once
 #include <functional>
+#include <set>
 #include <string>
 #include <vector>
 #include "../../third_party/imgui/imgui.h"
@@ -42,9 +43,24 @@ bool drawLaneCurveChip(App& a, ImDrawList* dl, ImVec2 min, ImVec2 max, ObjectId 
 bool automationLaneKeys(App& a, ObjectId pattern, Tick grid);
 // A click elsewhere in the piano roll: the lane gives the keyboard back.
 void automationLaneBlur();
-// The curve the drawing tools write (Hold = stepped, Curve = linear, Smooth).
+// The curve the drawing tools write (Hold = stepped, Curve = linear, Smooth), in the lane and in
+// the automation clip editor alike; remembered in the settings.
 AutoShape laneDrawShape(App& a);
 void setLaneDrawShape(App& a, AutoShape s);
+// The draw-curve chooser shared by the lane's chip and the clip editor's toolbar (K-202):
+// its face (curve glyph, short name, chevron) in [min, max], lit while hovered or open, and
+// its menu items: "Draw with" the three curves, then, with `selCount` points selected, the
+// curves to set them to (`selCur`: their common curve, Count when mixed), which call `setSel`.
+void drawCurveChooserFace(App& a, ImDrawList* dl, ImVec2 min, ImVec2 max, AutoShape shape, bool lit);
+void drawCurveChooserItems(App& a, size_t selCount, AutoShape selCur, const std::function<void(AutoShape)>& setSel);
+// Menu items for a curve: stepped, linear, smooth, then every curve under "More curves"
+// (`cur` checked). True with the picked curve in `*picked`.
+bool curveMenuItems(AutoShape cur, AutoShape* picked);
+// Dev check: the centre of the open chooser's item `i` (0..2: draw with stepped, linear, smooth;
+// 3..5: set the selection to them); false when the chooser was not open last frame.
+bool curveChooserItemCenter(int i, ImVec2* c);
+// The common curve of points `sel` (Count: mixed or none).
+AutoShape commonPointShape(const std::vector<AutoPoint>& pts, const std::set<int>& sel);
 // The automation point clipboard shared by the lane and the clip editor
 // (positions relative to the first point).
 std::vector<AutoPoint>& automationClipboard();

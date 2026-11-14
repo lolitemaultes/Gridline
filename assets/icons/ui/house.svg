@@ -1,0 +1,6 @@
+<!-- Gridline original (GPL-3.0), drawn on the Lucide 24-unit grid and stroke rules: a house with a door (the home folder) -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M3 10.5 L12 3 L21 10.5" />
+  <path d="M5 9 V19 A2 2 0 0 0 7 21 H17 A2 2 0 0 0 19 19 V9" />
+  <path d="M10 21 V15 h4 v6" />
+</svg>

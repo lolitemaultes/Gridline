@@ -507,6 +507,32 @@ PluginWindow* windowFor(const PluginTarget& t) {
   return it != windows().end() && !it->second->dead ? it->second.get() : nullptr;
 }
 
+// GitHub issue #47: a plugin window is shown on top of the main window and stays there. On X11 the
+// window manager reads WM_TRANSIENT_FOR when it maps a window: set after mapping, a window manager
+// with focus stealing prevention (Xfce's, KDE's) may map the new window under the main window the
+// click went to, and keep it there. It looked as if the window flashed and closed; it was open
+// behind the main window, so the next click on its channel closed it. So on X11 and Windows the
+// owner is set before the window is shown. macOS: a child window can only be added once the
+// window is on screen (adding it orders it in), so there it stays after.
+void showAboveMain(PluginWindow& w) {
+  const bool keep = gMainWin && !(SDL_GetWindowFlags(gMainWin) & SDL_WINDOW_HIDDEN);
+#if defined(__APPLE__)
+  SDL_ShowWindow(w.win);
+  if (keep) native::keepAbove(w.nw, nativeOf(gMainWin), true);
+#else
+  if (keep) native::keepAbove(w.nw, nativeOf(gMainWin), true);
+  SDL_ShowWindow(w.win);
+#endif
+  w.shown = true;
+  static const bool trace = std::getenv("GRIDLINE_DEV_PLUGIN_WINDOWS") != nullptr;  // tests
+  if (gLog || trace) std::fprintf(stderr, "[plugin-window] shown | %s: owner %s\n", w.name.c_str(), !keep ? "none (main window hidden)"
+#if defined(__APPLE__)
+                                                                                        : "set after it was shown (child window)");
+#else
+                                                                                        : "set before it was shown");
+#endif
+}
+
 // GL + ImGui context of a plugin window (shares the main context's GL
 // objects and font atlas). The main contexts are current again afterwards.
 bool createSurface(PluginWindow& w) {
@@ -748,6 +774,20 @@ void devPrintPluginWindows(int frame) {
   std::fflush(stdout);
 }
 
+bool devDragHostedEditor(int x, int y, double seconds) {
+  for (const auto& [k, w] : windows()) {
+    if (!w || w->dead || !w->container || !w->win) continue;
+#if defined(__APPLE__)
+    native::devDrag(w->nw, w->container, x, y, seconds);
+    return true;
+#else
+    (void)x, (void)y, (void)seconds;
+    return false;
+#endif
+  }
+  return false;
+}
+
 bool hostedEditorUnderMouse(PluginTarget& t, float& fx, float& fy) {
   SDL_Window* f = SDL_GetMouseFocus();
   if (!f) return false;
@@ -961,9 +1001,7 @@ bool openHostedEditor(App& a, const PluginTarget& t) {
       editor->setSize(w.pw, w.ph);
     }
     SDL_SetWindowMinimumSize(w.win, static_cast<int>(std::lround(lay::kMinWindowW * w.scale)), w.L.bar.h + lay::kMinPluginH);
-    SDL_ShowWindow(w.win);
-    w.shown = true;
-    if (gMainWin && !(SDL_GetWindowFlags(gMainWin) & SDL_WINDOW_HIDDEN)) native::keepAbove(w.nw, nativeOf(gMainWin), true);
+    showAboveMain(w);
     SDL_RaiseWindow(w.win);
   }
   w.editor = std::move(editor);
@@ -1001,6 +1039,11 @@ bool hostedEditorEvent(App& a, const SDL_Event& ev) {
       ImGui::SetCurrentContext(prev);
     }
     if (ev.type == SDL_KEYDOWN || ev.type == SDL_KEYUP) routeKey(*w, ev);
+    // A click on the window (its interface or its bar) brings it in front of the other plugin
+    // windows: on macOS they are all child windows of the main window, which AppKit keeps in the
+    // order they opened unless one is put on top again.
+    if (gMainWin && (ev.type == SDL_MOUSEBUTTONDOWN || (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_FOCUS_GAINED)))
+      native::raiseChild(w->nw, nativeOf(gMainWin));
     if (ev.type == SDL_WINDOWEVENT && w->container) {
       if (ev.window.event == SDL_WINDOWEVENT_FOCUS_GAINED) native::restoreKeyFocus(w->container);
       if (ev.window.event == SDL_WINDOWEVENT_FOCUS_LOST) native::saveKeyFocus(w->container);
@@ -1176,9 +1219,7 @@ void hostedui::pluginWindowsIdle(App& a) {
               if (f[0] != host::Editor::kNoPlace) SDL_SetWindowPosition(w.win, f[0], f[1] + f[3]);  // docked under the sandbox window
               --w.applying;
               if (!w.shown) {
-                SDL_ShowWindow(w.win);
-                w.shown = true;
-                if (gMainWin && !(SDL_GetWindowFlags(gMainWin) & SDL_WINDOW_HIDDEN)) native::keepAbove(w.nw, nativeOf(gMainWin), true);
+                showAboveMain(w);
                 w.log("sandbox window docked");
               }
             }

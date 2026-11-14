@@ -1053,6 +1053,44 @@ void testMeterChangeSplit() {
          "meter split: each new meter arrives on the change's first sample");
 }
 
+// K-203: a loop that wraps from a 7/8 section back into 4/4 splits the block at the wrap too, so
+// the plugin sees 4/4 (and the loop start's position) from the new pass's first sample.
+void testMeterLoopWrapSplit() {
+  auto* cp = probe<GridlineClapProbe>(clapBinary(), "gridline_clap_probe");
+  expect(cp != nullptr, "meter loop split: CLAP probe reachable");
+  if (!cp) return;
+  Document d(makeEmptySong());
+  d.addChannel("clap", kClapSynth);
+  Song s = d.song();
+  s.tempo = 120;
+  Marker seven;
+  seven.pos = 384, seven.timeSigNum = 7, seven.timeSigDen = 8;  // beat 4
+  s.markers = {seven};
+  Clip c;
+  c.id = s.allocateId();
+  c.pattern = s.patterns[0].id;
+  c.start = 0;
+  c.length = 2000;
+  s.playlist.push_back(c);
+  ProgramBuilder builder;
+  builder.setSampleRate(44100);
+  AudioEngine eng{44100};
+  eng.setProgram(builder.build(s));
+  eng.setMode(PlayMode::Song);
+  eng.setLoopRange(0, 384 + 336);  // four beats of 4/4 and one bar of 7/8: wraps at beat 7.5
+  eng.setLooping(true);
+  cp->tsigChanges = 0, cp->lastTsig = 0;
+  eng.togglePlay();
+  // Blocks of 400 frames: the wrap (sample 165375) falls 175 frames into a block.
+  std::vector<float> L(400), R(400);
+  for (int b = 0; b < 2 * 165375 / 400 + 40; ++b) eng.process(L.data(), R.data(), 400);
+  const double spb = 1.0 / 22050.0;
+  expect(cp->tsigChanges >= 4 && cp->tsigNum[0] == 4 && cp->tsigNum[1] == 7 && cp->tsigNum[2] == 4 && cp->tsigNum[3] == 7,
+         "meter loop split: 4/4, 7/8, then 4/4 again after the wrap, then 7/8");
+  expect(std::fabs(cp->tsigBeats[2]) <= spb, "meter loop split: 4/4 arrives on the wrap's first sample, at the loop start");
+  expect(std::fabs(cp->tsigBeats[3] - 4.0) <= spb, "meter loop split: the second pass's 7/8 arrives on the change's first sample");
+}
+
 // J-109: Stop releases a hosted instrument's notes (note-offs for every note
 // sent, sustain off, All Notes Off on every MIDI channel); the second Stop
 // (panic) adds All Sound Off. The engine plays the plugin as the app does.
@@ -2097,6 +2135,7 @@ int main() {
   testWrapper();
   testTransport();
   testMeterChangeSplit();
+  testMeterLoopWrapSplit();
   testRenderWorker();
   testSidechainRender();
   testStopReleasesHosted();

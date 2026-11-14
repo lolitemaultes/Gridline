@@ -18,6 +18,7 @@
 // Parameter edits go through pui (undo, automation, MIDI link); data edits
 // (tables, shapes, racks, phrases) through commit() as one undo step.
 #pragma once
+#include <array>
 #include <functional>
 #include <map>
 #include <memory>
@@ -115,7 +116,13 @@ struct Ui {
   int pSel = -1;          // selected node (PatchNode id), -1 none
   int pLink = -1;         // selected link slot, -1 none
   int pHover = -1;        // node under the pointer (last frame): follow the sound
-  bool pShowSound = true, pShowMove = false, pShowFx = true, pShowNotes = false;  // Patch: what to show (pShowFx: the sends)
+  int pMove = -1;         // the box being moved (its place follows the pointer, snapped)
+  float pMoveX = 0, pMoveY = 0, pMoveStartX = 0, pMoveStartY = 0, pMoveDX = 0, pMoveDY = 0;
+  float pGuideX = 0, pGuideY = 0;  // a neighbour's edge the moved box snapped to (NAN none)
+  int pAddTile = -1;      // the add tile whose menu is open
+  int pEndDrag = -1;      // a link's end being dragged off its box (let go on the canvas: unlinked)
+  std::map<int, std::array<float, 2>> pAnimFrom;  // Clean up: where the boxes glide from
+  float pAnimT = -1;      // Clean up: when the glide started (-1 none)
   bool pAll = false;      // Patch inspector: every setting of the box unfolded
   int pDragPin = -1, pDragNode = -1;  // a wire being dragged out of a pin or a box
   int pAddFrom = -1;      // the box a wire was dropped from onto empty canvas (the search menu)
@@ -125,7 +132,7 @@ struct Ui {
   int pFrames = 0;        // frames the Patch view has drawn
   bool devMenu = false;  // dev (screenshots): open the first block's menu
   int devPSel = -1;      // dev (reach driver): the Patch box to select
-  int devPatch = 0;       // dev (screenshots): 1 first link, 2 add menu, 3 LFO 1 hovered, 4 link search, 5 Filter 1 selected
+  int devPatch = 0;       // dev (screenshots): 1 first link, 2 add menu, 3 LFO 1 pointed, 4 link search, 5 at rest, 6 sends, 7 a box mid-move
   bool drawer = false;   // the keyboard drawer is open
   float drawerT = 0;      // its slide, 0 (in) .. 1 (out)
   float stageScroll = 0;  // a full-width view's scroll while the drawer shortens it
@@ -156,7 +163,8 @@ struct Ui {
   bool closing = false;
   float expandT = 1;              // 0 at the block .. 1 the whole area
   ImVec4 expandFrom{0, 0, 0, 0};  // the block's screen rectangle (x0, y0, x1, y1), zero when none
-  bool devPlay = false;           // dev: hold a note, LFO 1 moving Layer 1's position (live displays)
+  float devDrawerDrawn = 0;       // dev: the keyboard drawer's height drawn this frame (GL_PLASMA_DRAWER_REPORT)
+  bool devPlay = false;         // dev: hold a note, LFO 1 moving Layer 1's position (live displays)
   std::map<int, bool> wt3d;       // a layer's display shows the frames in depth
   int devDrag = -1;               // dev (screenshots): draw a part being dragged from the sidebar
   int devLayers = 0;              // dev: the Synth tab with this many layers on
@@ -175,12 +183,12 @@ struct Ui {
   std::vector<std::vector<float>> wtView;
   std::string wtViewKey;
   bool wtPending = false;
-  std::map<int, std::pair<float, float>> pOffsets;  // Patch view: the user's moves of boxes (Tidy clears them)
   std::set<int> pShownMoves;                        // Patch view: movement sources added by hand
   int envZoom = 0;
   std::string browserDir;
   std::string browserFilter;
   int heldKey = -1;
+  float heldVel = 0.8f;  // the velocity the drawer's keyboard plays the held key at
   std::string devPreset;  // dev (screenshots): factory preset applied on the first frame
   bool prefBubbles = true, prefLive = true;  // editor preferences (Setup)
   int modDragSlot = -1;  // link slot being dragged on a dial ring
@@ -219,6 +227,7 @@ struct Ctx {
   const Pal& P;
   LiveView live;
   bool hasLive = false;
+  bool graph = false;  // the Patch graph's canvas (it zooms with its boxes): text at the first design's scale
   ImVec2 p(float x, float y) const { return F.p(x, y); }
   float s(float v) const { return F.u(v); }
 };
@@ -284,6 +293,12 @@ bool showDetails(const Ctx& c);
 constexpr float kMk = 8.0f / 9.0f;
 constexpr float M(float px) { return px * kMk; }
 constexpr float T(float px) { return px * kMk / 1.25f; }
+// The type's size over its form size: one step above the first design (1.25), so every label,
+// value, block title and heading reads clearly at 1440 x 900 and 1280 x 800 (the editor usually
+// shows at two thirds of its design size there). The layout keeps its proportions; text that
+// needs it gets room where it sits. kTypeFloor: the smallest size (form px).
+constexpr float kTypeScale = 1.25f * 1.3f;
+constexpr float kTypeFloor = 9.5f;
 void layoutBox(const Ctx& c, float x, float y, float w, float h, const char* what);
 float glowK(const Ctx& c);              // how much glow (lower than the design, less in light)
 ImU32 partCol(const Ctx& c, int id);    // a block's family colour (block ids, effects 400+)
@@ -423,13 +438,32 @@ void routeToggleFeed(Ctx& c, int r, int f);
 void fxAddMenu(Ctx& c, int rack);
 void fxRemove(Ctx& c, int slot);
 void fxDropOn(Ctx& c, int slot);
+void fxOrderMain(Ctx& c, const std::vector<int>& slots);  // the main chain in this order (the model only: the caller commits)
 void fxToRack(Ctx& c, int slot, int rack);
 bool fxAdd(Ctx& c, int type, int rack);  // false when every effect place is in use
 void patchView(Ctx& c);
 void stageView(Ctx& c);
 // The keyboard drawer's height as it slides (form units, 0 when in).
-constexpr float kDrawerH = 112;
+constexpr float kDrawerH = 124;
 inline float drawerH(const Ui& u) { return kDrawerH * u.drawerT; }
+// The drawer's width: under the blocks and the sidebar (the Patch inspector keeps its height).
+// the full width in every view (in Patch it covers the side list while it is out; user 2026-11-13)
+inline float drawerW(const Ui&) { return kW; }
+// dev (GL_PLASMA_DRAWER_REPORT): what the drawer drew this frame, for the scripted tests.
+struct DrawerDev {
+  ImVec4 rect{0, 0, 0, 0};    // the drawer (editor coordinates; zero size when closed)
+  int underK = -1;            // a dial drawn this frame with its centre under the drawer
+  ImVec2 under{0, 0};         // its centre (screen)
+  ImVec4 pitch{}, mod{}, up{}, down{}, oct{}, keys{}, gap{};  // the drawer's parts on screen (x0, y0, x1, y1)
+  bool hot = false;           // one of the drawer's own items has the pointer this frame
+  bool pop = false;           // a popup is open (it may lie over the drawer)
+  ImVec2 at{0, 0};            // the pointer (screen) as the drawer saw it
+  ImVec4 screen{};            // the drawer on screen
+  int lastKey = -1;           // the key last played from the drawer, and its velocity
+  float lastVel = 0;
+};
+DrawerDev& drawerDev();
+bool drawerReport();  // GL_PLASMA_DRAWER_REPORT is set
 // The editor of link slot s (the Links view's, reused by the Patch inspector); returns the y under it.
 float linkEditor(Ctx& c, int s, float x, float y, float w);
 // dev (reach driver): selects in the Patch view the block that panel view u.view shows.
@@ -481,6 +515,8 @@ void textR(const Ctx& c, float rx, float y, const char* s, ImU32 col, float px =
 void textMid(const Ctx& c, float x0, float x1, float cy, const char* s, ImU32 col, float px = 9.0f, bool bold = false);
 // J-128: bold text at form x beside a field box (boxY, boxH), on the baseline
 // of the field's own value (9 px bold, centred in the box).
+// The screen y of the middle of the capitals labelBeside sets in that box (icons beside a label line up on it).
+float capMid(const Ctx& c, float boxY, float boxH, float px, bool bold = false);
 void labelBeside(const Ctx& c, float x, float boxY, float boxH, const char* s, ImU32 col, float px = 8.5f, bool bold = true);
 float textW(const Ctx& c, const char* s, float px = 9.0f, bool bold = false);  // form units
 
@@ -553,8 +589,9 @@ void paramRows(Ctx& c, const std::vector<int>& ks);
 void moreButton(Ctx& c, const char* id, float x, float y, const std::vector<int>& ks, const std::function<void()>& extra = {},
                 const char* hint = nullptr);
 // A labelled button ("More") that opens the same popup; returns true while the popup is open.
+// px: its label's size (0: the size for its height).
 bool moreLink(Ctx& c, const char* id, float x, float y, float w, float h, const char* label, const std::vector<int>& ks,
-              const std::function<void()>& extra = {}, const char* hint = nullptr);
+              const std::function<void()>& extra = {}, const char* hint = nullptr, float px = 0);
 
 // ---- modulation
 // Drag handle that drops a modulation source on knobs. It draws as a small live
@@ -677,7 +714,8 @@ std::string morphDisplayName(int mode);
 void topBar(Ctx& c);
 
 void playBar(Ctx& c);
-void drawer(Ctx& c);
+// The keyboard drawer (plasma_drawer_ui.cpp); true while one of its controls is held.
+bool drawer(Ctx& c);
 void layerView(Ctx& c);
 void rootTextureView(Ctx& c);
 void filtersView(Ctx& c);
@@ -697,15 +735,24 @@ void presetBrowser(Ctx& c);
 void mappingPanel(Ctx& c);
 // The envelope editor (graph + values) of envelope e in the rectangle (Envelope and Amp views).
 void envEditor(Ctx& c, int e, float x, float y, float w, float h, bool compact);
-// A wheel (pitch: springs back) and the audition keyboard.
+// The keyboard drawer's parts (plasma_drawer_ui.cpp): a performance wheel in its slot (pitch
+// springs back to the centre), a stepper field of an integer parameter, the playing keyboard.
 void wheel(Ctx& c, int k, float x, float y, float w, float h, bool spring);
+bool stepField(Ctx& c, int k, float x, float y, float w, float h, const char* label, const char* shown = nullptr);
 void keyboard(Ctx& c, float x, float y, float w, float h);
+// The small piano glyph of the Keyboard button (centred on `at`, screen), crisp at any size.
+void pianoGlyph(const Ctx& c, ImVec2 at, ImU32 col);
+// The standard interaction of the last item for parameter k as Plasma's dials have it (drag over
+// `pixels`, or along a track from `trackStart` over `trackLen` screen px when trackLen > 0; the wheel,
+// double-click, Ctrl+click reset), with the right-click menu of a dial (reset, type, links,
+// automation and MIDI link). True when the value changed.
+bool paramItem(Ctx& c, int k, double& v, float pixels, bool horizontal, float trackStart = 0, float trackLen = 0);
 // The live mini display of a rail tile.
 void cycleMini(Ctx& c, int o, float x, float y, float w, float h);
 void filterCurve(Ctx& c, int f, float x, float y, float w, float h, bool interactive);
 
-// Keyboard preview (channel instruments).
-void previewKey(Ctx& c, int key, bool on);
+// Keyboard preview (channel instruments), at velocity vel (0..1).
+void previewKey(Ctx& c, int key, bool on, float vel = 0.8f);
 // The one Open path for preset files: Plasma presets, Serum 2 (.SerumPreset)
 // and Serum 1 (.fxp) presets, detected by content. What Serum presets only
 // approximate stays with the sound (the info mark next to the preset name).

@@ -27,6 +27,7 @@
 #include "../host/CrossFormat.h"
 #include "TrackIconSet.h"
 #include "TrackModes.h"
+#include "StageRooms.h"
 
 namespace gl {
 
@@ -1071,6 +1072,37 @@ SongGroove grooveFromJson(const Json& j) {
 Json pluginStateToJson(const PluginState& p) { return pluginToJson(p); }
 PluginState pluginStateFromJson(const Json& j) { return pluginFromJson(&j); }
 
+// K-224: one Stage room's settings (Song::stage and each of Song::stageRooms share the shape).
+Json stageToJson(const StageSettings& r) {
+  Json st = Json::makeObject();
+  if (r.id != kNoId) st.object["id"] = num(static_cast<double>(r.id));
+  if (!r.name.empty()) st.object["name"] = str(r.name);
+  if (r.color != 0) st.object["color"] = num(r.color);
+  if (r.width != 1.0f) st.object["width"] = num(r.width);
+  if (r.room != kNoId) st.object["room"] = num(static_cast<double>(r.room));
+  st.object["depthStrength"] = num(r.depthStrength);
+  st.object["roomKind"] = Json::makeString(rooms::key(r.roomType));
+  if (!r.preDelay) st.object["preDelay"] = boolean(false);
+  if (!r.early) st.object["early"] = boolean(false);
+  if (!r.frontQuiet) st.object["frontQuiet"] = boolean(false);
+  return st;
+}
+
+void stageFromJson(const Json& st, StageSettings& r) {
+  if (const double v = st.num("id", 0); std::isfinite(v) && v >= kFirstObjectId && v <= 4e9) r.id = static_cast<ObjectId>(v);
+  r.name = st.text("name");
+  if (const double v = st.num("color", 0); std::isfinite(v) && v > 0 && v <= 0xFFFFFF) r.color = static_cast<Rgb>(v);
+  if (const double v = st.num("width", 1); std::isfinite(v)) r.width = static_cast<float>(std::clamp(v, 0.0, 1.5));
+  r.room = jsonInt<ObjectId>(st.num("room", 0));
+  if (const double v = st.num("depthStrength", 0.5); std::isfinite(v)) r.depthStrength = static_cast<float>(std::clamp(v, 0.0, 1.0));
+  if (st.find("roomKind")) r.roomType = static_cast<uint8_t>(rooms::ofKey(st.text("roomKind")));
+  else if (const double v = st.num("roomType", 1); std::isfinite(v))  // an early Stage build: 0 small room .. 4 plate
+    r.roomType = static_cast<uint8_t>(rooms::ofEarly(static_cast<int>(v)));
+  r.preDelay = flag(st, "preDelay", true);
+  r.early = flag(st, "early", true);
+  r.frontQuiet = flag(st, "frontQuiet", true);
+}
+
 Json mixerTrackToJson(const MixerTrack& m) {
   Json jm = Json::makeObject();
   jm.object["id"] = num(m.id);
@@ -1079,6 +1111,9 @@ Json mixerTrackToJson(const MixerTrack& m) {
   jm.object["volume"] = num(m.volume);
   jm.object["pan"] = num(m.pan);
   jm.object["stereoSep"] = num(m.stereoSep);
+  if (m.room != kNoId) jm.object["roomId"] = num(static_cast<double>(m.room));  // K-224: its Stage room
+  if (m.depth != 0.0f) jm.object["depth"] = num(m.depth);  // Stage distance (absent: 0, older projects)
+  if (m.focus != 0.0f) jm.object["focus"] = num(m.focus);  // Stage focus (absent: 0)
   jm.object["muted"] = boolean(m.muted);
   jm.object["solo"] = boolean(m.solo);
   jm.object["invertPolarity"] = boolean(m.invertPolarity);
@@ -1108,6 +1143,7 @@ Json mixerTrackToJson(const MixerTrack& m) {
     js.object["level"] = num(sd.level);
     if (sd.sidechain) js.object["sidechain"] = boolean(true);
     if (sd.preFader) js.object["preFader"] = boolean(true);
+    if (sd.stageRoom) js.object["stageRoom"] = boolean(true);  // the Stage room send
     sends.array.push_back(std::move(js));
   }
   jm.object["sends"] = std::move(sends);
@@ -1168,7 +1204,8 @@ Json channelToJson(const Channel& c) {
 Json songToJson(const Song& s, bool withFlOrigin) {
   Json j = Json::makeObject();
   j.object["format"] = str(kProjectFormatTag);
-  j.object["version"] = num(kProjectSchemaVersion);
+  // K-224: version 9 adds Stage rooms; a project with one room stays version 8 (older builds open it).
+  j.object["version"] = num(s.stageRooms.empty() ? 8 : kProjectSchemaVersion);
   Json info = Json::makeObject();
   info.object["title"] = str(s.info.title);
   info.object["author"] = str(s.info.author);
@@ -1191,6 +1228,20 @@ Json songToJson(const Song& s, bool withFlOrigin) {
   j.object["clipLoops"] = boolean(true);
   j.object["masterPitch"] = num(s.masterPitch);
   if (!s.autoCrossfades) j.object["autoCrossfades"] = boolean(false);  // J-38
+  if (s.panLaw != PanLaw::Balance) j.object["panLaw"] = num(static_cast<double>(s.panLaw));  // the Stage (absent: Balance)
+  // The stage is written when it differs from the default, and also when tracks stand on it with no
+  // room chosen: "none" is then said outright (a load without it reads distance as the studio's).
+  bool stageUsed = false;
+  for (const auto& m : s.mixer) {
+    stageUsed = stageUsed || m.depth != 0 || m.focus != 0;
+    for (const auto& sd : m.sends) stageUsed = stageUsed || sd.stageRoom;
+  }
+  if (!s.stage.isPlain() || stageUsed || !s.stageRooms.empty()) j.object["stage"] = stageToJson(s.stage);
+  if (!s.stageRooms.empty()) {  // K-224: the other Stage rooms (a project with one room has none)
+    Json a = Json::makeArray();
+    for (const auto& r : s.stageRooms) a.array.push_back(stageToJson(r));
+    j.object["stageRooms"] = std::move(a);
+  }
   if (!s.flExportGridline.empty()) j.object["flExportGridline"] = Json::makeString(s.flExportGridline);  // K-110
   if (!s.trackReceipt.empty()) {  // J-219: the Track Receipt's typed fields
     Json tr;
@@ -1290,6 +1341,7 @@ Json songToJson(const Song& s, bool withFlOrigin) {
     if (l.sensitivity != 1.0f) jl.object["sensitivity"] = num(l.sensitivity);
     if (l.button != RemoteButton::Value) jl.object["button"] = num(static_cast<int>(l.button));
     if (l.action != RemoteAction::None) jl.object["action"] = num(static_cast<int>(l.action));
+    if (!l.oscAddress.empty()) jl.object["osc"] = Json::makeString(l.oscAddress);  // OSC links
     links.array.push_back(std::move(jl));
   }
   j.object["links"] = std::move(links);
@@ -1372,6 +1424,7 @@ bool migrateProjectJson(Json& j, std::string* err) {
   if (v == 5) migrateV5(j), v = 6;
   if (v == 6) j.object["version"] = num(7), v = 7;  // v7: see bitsLawV7 (applied to the loaded song)
   if (v == 7) j.object["version"] = num(8), v = 8;  // v8: see rateLawV8 (applied to the loaded song)
+  if (v == 8) j.object["version"] = num(9), v = 9;  // v9 adds optional "stageRooms" and mixer "roomId"
   return true;
 }
 
@@ -1440,6 +1493,9 @@ void mixerTrackFromJson(const Json& jm, MixerTrack& m) {
   m.volume = static_cast<float>(std::clamp(jm.num("volume", 0.8), 0.0, 1.25));
   m.pan = static_cast<float>(std::clamp(jm.num("pan", 0), -1.0, 1.0));
   m.stereoSep = static_cast<float>(std::clamp(jm.num("stereoSep", 0), -1.0, 1.0));
+  if (const double r = jm.num("roomId", 0); std::isfinite(r) && r >= kFirstObjectId && r <= 4e9) m.room = static_cast<ObjectId>(r);  // K-224
+  if (const double dp = jm.num("depth", 0); std::isfinite(dp)) m.depth = static_cast<float>(std::clamp(dp, 0.0, 1.0));  // Stage distance
+  if (const double fc = jm.num("focus", 0); std::isfinite(fc)) m.focus = static_cast<float>(std::clamp(fc, -1.0, 1.0));  // Stage focus
   m.muted = flag(jm, "muted");
   m.solo = flag(jm, "solo");
   m.invertPolarity = flag(jm, "invertPolarity");
@@ -1465,7 +1521,8 @@ void mixerTrackFromJson(const Json& jm, MixerTrack& m) {
   if (const Json* sd = jm.find("sends"); sd && sd->is(Json::Type::Array))
     for (const auto& js : sd->array)
       m.sends.push_back({jsonInt<ObjectId>(js.num("to", 0)), static_cast<float>(std::clamp(js.num("level", 1), 0.0, 1.25)),
-                         flag(js, "sidechain"), flag(js, "preFader")});
+                         flag(js, "sidechain"), flag(js, "preFader"),
+                         flag(js, "stageRoom") || flag(js, "depthScaled")});  // depthScaled: an unreleased early Stage build
   // --- strip EQ (0.5 FL import cycle; absent = defaults) ---
   if (const Json* eq = jm.find("eq"); eq && eq->is(Json::Type::Array))
     for (size_t b = 0; b < eq->array.size() && b < 3; ++b) {
@@ -1620,6 +1677,22 @@ bool songFromJson(const Json& src, Song& out, std::string* err) {
   if (const Json* g = j.find("groove"); g && g->is(Json::Type::Object)) s.groove = grooveFromJson(*g);  // K-151
   s.masterPitch = static_cast<float>(std::clamp(j.num("masterPitch", 0), -12.0, 12.0));
   s.autoCrossfades = flag(j, "autoCrossfades", true);  // J-38
+  if (const double pl = j.num("panLaw", 0); std::isfinite(pl)) s.panLaw = static_cast<PanLaw>(std::clamp(static_cast<int>(pl), 0, 2));
+  s.stage = StageSettings{};
+  bool roomKnown = false;  // the project says which room it plays in (else: from its tracks, below)
+  s.stageRooms.clear();
+  if (const Json* st = j.find("stage"); st && st->is(Json::Type::Object)) {
+    stageFromJson(*st, s.stage);
+    roomKnown = true;
+  }
+  if (const Json* sr = j.find("stageRooms"); sr && sr->is(Json::Type::Array))  // K-224
+    for (const Json& r : sr->array) {
+      if (!r.is(Json::Type::Object) || s.stageRooms.size() >= 255) continue;
+      StageSettings room;
+      stageFromJson(r, room);
+      if (room.id == kNoId) continue;  // a room the tracks cannot name
+      s.stageRooms.push_back(std::move(room));
+    }
   if (const Json* tr = j.find("trackReceipt"); tr && tr->type == Json::Type::Object) s.trackReceipt = jsonCompact(*tr);  // J-219
   s.flExportGridline = j.text("flExportGridline");  // K-110
 
@@ -1646,6 +1719,40 @@ bool songFromJson(const Json& src, Song& out, std::string* err) {
     for (const auto& sd : m.sends)
       if (!s.mixerTrack(sd.to)) return fail(err, "mixer send references missing track");
   }
+  {
+    // K-224: room ids live in the same id space (never handed out again); a room whose id clashes
+    // with another object or room loses it, so its tracks fall back to the first room.
+    auto keepRoomId = [&](StageSettings& r) {
+      if (r.id == kNoId) return;
+      if (!ids.insert(r.id).second) {
+        r.id = kNoId;
+        return;
+      }
+      maxId = std::max(maxId, r.id);
+    };
+    keepRoomId(s.stage);
+    for (auto& r : s.stageRooms) keepRoomId(r);
+    s.stageRooms.erase(std::remove_if(s.stageRooms.begin(), s.stageRooms.end(), [](const StageSettings& r) { return r.id == kNoId; }),
+                       s.stageRooms.end());
+    if (!s.stageRooms.empty() && s.stage.id == kNoId) s.stage.id = ++maxId;  // never: written by every room-aware save
+    // A track naming a room that is gone stands in the first room.
+    for (auto& m : s.mixer) {
+      bool known = m.room == kNoId || m.room == s.stage.id;
+      for (const auto& r : s.stageRooms) known = known || r.id == m.room;
+      if (!known) m.room = kNoId;
+    }
+  }
+  // A project from an early Stage build that placed tracks without choosing a room plays in the room
+  // its distance was made for (the studio, natural depth), so it sounds as it did.
+  if (!roomKnown)
+    for (const auto& m : s.mixer) {
+      bool used = m.depth != 0 || m.focus != 0;
+      for (const auto& sd : m.sends) used = used || sd.stageRoom;
+      if (used) {
+        s.stage.roomType = static_cast<uint8_t>(rooms::kStudio);
+        break;
+      }
+    }
   {
     // Refuse routing cycles (the engine needs a DAG).
     for (auto& m : s.mixer) {
@@ -1751,6 +1858,8 @@ bool songFromJson(const Json& src, Song& out, std::string* err) {
       l.sensitivity = static_cast<float>(std::clamp(jl.num("sensitivity", 1), 0.01, 64.0));
       l.button = static_cast<RemoteButton>(en("button", static_cast<int>(RemoteButton::Count)));
       l.action = static_cast<RemoteAction>(en("action", static_cast<int>(RemoteAction::Count)));
+      l.oscAddress = jl.text("osc");
+      if (l.source == RemoteSource::Osc && l.oscAddress.empty()) continue;  // an OSC link without an address
       // Drop links to deleted targets (action links have no target).
       if (l.action != RemoteAction::None || describeParam(s, {l.owner, l.index})) s.links.push_back(l);
     }

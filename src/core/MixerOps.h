@@ -9,6 +9,7 @@
 #include <vector>
 #include "Document.h"
 #include "Song.h"
+#include "StageRooms.h"
 
 namespace gl::mixops {
 
@@ -41,6 +42,48 @@ int resetRouting(Document& d, const std::vector<ObjectId>& tracks);
 int unrouteIncoming(Document& d, ObjectId dest);
 // Pre-fader (after effects and EQ, before volume / pan) or post-fader send.
 bool setSendPreFader(Document& d, ObjectId from, ObjectId to, bool pre);
+// ---------------------------------------------------------------- the Stage ----
+// A Stage room send on or off (Send::stageRoom): tapped before the track's distance gain, with the
+// room's pre-delay and reflections.
+bool setSendRoom(Document& d, ObjectId from, ObjectId to, bool on);
+// K-224: every function below takes the Stage room `room` (an index, core/StageRoomOps.h: 0 the first).
+// The room's space track (StageSettings::room), or nullptr when there is none (never made, or deleted).
+const MixerTrack* stageRoom(const Song& s, int room = 0);
+// The space track's reverb slot (-1: none).
+int spaceSlot(const MixerTrack& m);
+// The room types (StageSettings::roomType, core/StageRooms.h): 0 "No room", then the spaces. Names and
+// hints in English, marked for translation.
+constexpr int kRoomTypes = rooms::kCount;
+const char* roomTypeName(int type);
+const char* roomTypeHint(int type);
+// The room's size 0 .. 1 as the space's reverb has it (the space type's own with no space track).
+double roomSize(const Song& s, int room = 0);
+// Creates the room's space track the first time (an ordinary insert with the reverb fully wet, routed to
+// the master; "Room" in a one-room project, else "<room> space") and gives every track in `tracks` that
+// has none a room send at the space's level. With "No room" chosen it picks the studio. One undo step
+// (labelled `label`). Returns the space track's id (kNoId when no track could be added).
+ObjectId ensureStageRoom(Document& d, const std::vector<ObjectId>& tracks, const std::string& label = "add the room", int room = 0);
+// Room sends at the space's level for the tracks in `tracks` that have none (the space track must exist).
+// Returns how many were added. Not a step of its own (call it inside a group).
+int addRoomSends(Document& d, const std::vector<ObjectId>& tracks, int room = 0);
+// Picks the room's space (StageSettings::roomType), one undo step. A space creates the space track the
+// first time (with sends from `tracks`), unmutes it, sets its reverb, the depth strength and moves room
+// sends still at the previous space's level to the new one's. "No room" (0) mutes the space track (it is
+// never deleted); distance and focus then change nothing in the sound.
+bool setRoomType(Document& d, int type, const std::vector<ObjectId>& tracks = {}, int room = 0);
+// The level of a new room send in the space chosen now (the studio's -12 dB with no room).
+float roomSendLevel(const Song& s, int room = 0);
+// The room's size (0 small .. 1 hall): the reverb's size and decay together. `merge` joins a drag.
+bool setRoomSize(Document& d, double size, bool merge = true, int room = 0);
+// The space on (unmuted) or off (muted; nothing is deleted). One undo step.
+bool setRoomOn(Document& d, bool on, int room = 0);
+// The pan law (project setting) and the room's depth strength (0 gentle .. 1 strong). One step each.
+bool setPanLaw(Document& d, PanLaw law);
+bool setDepthStrength(Document& d, double strength, bool merge = true, int room = 0);
+// K-224: the room's stage width (0 .. 1.5; 1 as placed). One step (a drag with `merge`).
+bool setRoomWidth(Document& d, double width, bool merge = true, int room = 0);
+// The room's level in the room send of a new track (-12 dB).
+constexpr float kRoomSendLevel = 0.25118864f;
 // Destinations of a track's sends / tracks that send to it, in mixer order.
 std::vector<ObjectId> routedFrom(const Song& s, ObjectId track);
 std::vector<ObjectId> routedTo(const Song& s, ObjectId track);

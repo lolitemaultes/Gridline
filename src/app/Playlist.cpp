@@ -26,6 +26,7 @@
 #include "ClipMultiUi.h"
 #include "../core/Fades.h"
 #include "../core/TrackModes.h"
+#include "../core/TrackOrder.h"
 #include "../core/MenuOpsExtra.h"
 #include "../core/MenuParity.h"
 #include "../core/PluginParams.h"
@@ -1177,6 +1178,20 @@ void patternSourceMenu(App& a, ObjectId id) {
   deleteSourceItems(a, ClipKind::Pattern, id);
 }
 
+// GitHub #46: the tracks a header gesture moves (Windows.h).
+std::vector<int> playlistTrackSelection(App& a, int track) {
+  const std::set<int>& sel = a.playlist.trackSel;
+  if (sel.count(track)) return std::vector<int>(sel.begin(), sel.end());
+  return {track};
+}
+
+bool stepPlaylistSelection(App& a, const std::vector<int>& tracks, int dir) {
+  std::vector<int> now;
+  if (!trackorder::stepPlaylistTracks(a.doc, tracks, dir, &now)) return false;
+  a.playlist.trackSel = std::set<int>(now.begin(), now.end());
+  return true;
+}
+
 void drawPlaylist(App& a) {
   // K-141: a drag whose window closed or hid before the button came up keeps its undo step open
   // (and undo waiting): close it once the button is up.
@@ -1350,7 +1365,8 @@ void drawPlaylist(App& a) {
     static ObjectId anchor = kNoId;  // Shift+click range start
     const std::vector<ObjectId> rows = pickerRows(s, st.pickerTab);
     devGeom.rows.clear();
-    auto pickerRow = [&](const pltools::Source& ps, const std::string& name, Rgb color, const char* hint, const std::function<void()>& menu) {
+    // `name` is a copy: a row's menu may make a whole-song edit that replaces the list it came from.
+    auto pickerRow = [&](const pltools::Source& ps, const std::string name, Rgb color, const char* hint, const std::function<void()>& menu) {
       ImVec2 q = ImGui::GetCursorScreenPos();
       const bool sel = currentSource(a) == ps || st.pickerSel.count(ps.id) > 0;
       float w = ImGui::GetContentRegionAvail().x;
@@ -1448,8 +1464,10 @@ void drawPlaylist(App& a) {
         pdl->ChannelsSetCurrent(0);
       }
     }
+    const uint64_t pickRev = a.doc.revision();
     if (st.pickerTab == 0) {
-      for (const auto& p : s.patterns) {
+      for (size_t i = 0, n = s.patterns.size(); i < n && a.doc.revision() == pickRev; ++i) {  // a menu's edit: the rest next frame
+        const auto& p = s.patterns[i];
         ImGui::PushID(static_cast<int>(p.id));
         const ObjectId pid = p.id;
         pickerRow({ClipKind::Pattern, p.id}, p.name, p.color, "Click: current source \xC2\xB7 drag into the playlist \xC2\xB7 double-click: edit \xC2\xB7 right-click: menu",
@@ -1458,7 +1476,8 @@ void drawPlaylist(App& a) {
         ++shown;
       }
     } else if (st.pickerTab == 1) {
-      for (const auto& ch : s.channels) {
+      for (size_t i = 0, n = s.channels.size(); i < n && a.doc.revision() == pickRev; ++i) {  // a menu's edit: the rest next frame
+        const auto& ch = s.channels[i];
         if (!isAudioSource(ch)) continue;
         ImGui::PushID(static_cast<int>(ch.id));
         const ObjectId cid = ch.id;
@@ -1469,7 +1488,8 @@ void drawPlaylist(App& a) {
         ++shown;
       }
     } else {
-      for (const auto& ac : s.automations) {
+      for (size_t i = 0, n = s.automations.size(); i < n && a.doc.revision() == pickRev; ++i) {  // a menu's edit: the rest next frame
+        const auto& ac = s.automations[i];
         ImGui::PushID(static_cast<int>(ac.id));
         const ObjectId aid = ac.id;
         pickerRow({ClipKind::Automation, ac.id}, ac.name, ac.color,
@@ -1633,6 +1653,8 @@ void drawPlaylist(App& a) {
   devGeom.trackTop.clear(), devGeom.trackH.clear(), devGeom.clips.clear(), devGeom.curves.clear();
   devGeom.dropTrack = -1;
   devGeom.renaming = -1;
+  devGeom.dragBefore = -1;
+  devGeom.headX0 = origin.x + vbarW, devGeom.headX1 = gMin.x;
   for (int i = 0; i < nTracks; ++i) devGeom.trackTop.push_back(yOf(i)), devGeom.trackH.push_back(hOf(i));
   auto tickAt = [&](float x) { return timeline::tickAtPx(x - gMin.x + st.scrollX, st.pxPerTick); };
   auto trackAt = [&](float y) {
@@ -2781,7 +2803,25 @@ void drawPlaylist(App& a) {
   static int inputTrack = -1;               // track whose input popup is open
   static int renaming = -1;
   static ObjectId menuClip = kNoId;
-  static int dragTrack = -1;  // header being dragged to a new place
+  // GitHub #46: a header pressed (its "..." handle or its body) and, once the pointer moves, dragged
+  // with the selected headers to a new place: an insertion line shows where they land, Esc or a
+  // right-click cancels, the release moves them (one undo step). A click on the handle opens the
+  // track menu; a click on the body selects the track (Ctrl: adds or removes it, Shift: a range).
+  struct HeadDrag {
+    int track = -1;          // the header pressed (-1: none)
+    bool handle = false;     // pressed on the "..." handle
+    bool active = false;     // the pointer moved: dragging
+    bool cancelled = false;  // Esc / right-click: nothing happens on release
+    ImVec2 at;               // where it was pressed
+    std::vector<int> tracks; // what moves (the selection, groups included at the drop)
+    std::set<int> moving;    // ... with the groups they head (drawn lit)
+    int before = -1;         // the insertion point (0 .. nTracks)
+  };
+  static HeadDrag hd;
+  static int selAnchor = -1;  // Shift+click ranges start here
+  for (auto it = st.trackSel.begin(); it != st.trackSel.end();) it = *it < nTracks ? std::next(it) : st.trackSel.erase(it);
+  const int dragTrack = hd.active && !hd.cancelled ? hd.track : -1;
+  auto headLit = [&](int tr) { return hd.active && !hd.cancelled && hd.moving.count(tr) > 0; };
   // K-12: the track "+" (View > Track + button): on the hovered header, left of the mute switch on its line.
   int headPlus = -1;            // track whose "+" is under the pointer
   ImVec2 headPlusAnchor(0, 0);  // its menu's corner (under the button)
@@ -2802,12 +2842,14 @@ void drawPlaylist(App& a) {
     ImVec2 h0(headX0 + 2, y + 1), h1(gMin.x - 3, y + th - 1);
     const bool coloured = t.color != PlaylistTrack{}.color;
     const ImU32 tc = theme::content(t.color);
-    ImU32 face = theme::mix(hovHead || dragTrack == tr ? P.surface700 : P.surface800, tc, t.muted ? 0.04f : coloured ? 0.16f : 0.06f);
+    const bool selHead = st.trackSel.count(tr) > 0;
+    ImU32 face = theme::mix(hovHead || headLit(tr) || selHead ? P.surface700 : P.surface800, tc, t.muted ? 0.04f : coloured ? 0.16f : 0.06f);
     dl->AddRectFilled(h0, h1, theme::mix(face, P.ink, 0.35f), theme::kRadiusSm);
     dl->AddRectFilled(h0, ImVec2(h1.x, h1.y - 1), face, theme::kRadiusSm);
     dl->AddLine(ImVec2(h0.x + 6, h0.y + 0.5f), ImVec2(h1.x - 2, h0.y + 0.5f), theme::withAlpha(P.paper, P.dark ? 0.10f : 0.5f));
     if (coloured) dl->AddRectFilled(h0, ImVec2(h0.x + 4, h1.y), tc, theme::kRadiusSm, ImDrawFlags_RoundCornersLeft);
-    if (dragTrack == tr) dl->AddRect(h0, h1, theme::withAlpha(P.hot, 0.7f), theme::kRadiusSm, 0, 1.5f);
+    if (headLit(tr)) dl->AddRect(h0, h1, theme::withAlpha(P.hot, 0.7f), theme::kRadiusSm, 0, 1.5f);
+    else if (selHead) dl->AddRect(h0, h1, theme::withAlpha(P.hot, 0.45f), theme::kRadiusSm, 0, 1.0f);
     bool nearEdge = hovered && io.MousePos.x >= headX0 && io.MousePos.x < gMin.x && std::fabs(io.MousePos.y - (y + th)) < 3.0f &&
                     io.MousePos.y >= gMin.y;
     const bool roomy = th >= 30;  // two lines: name above, handle + switch below
@@ -3177,6 +3219,7 @@ void drawPlaylist(App& a) {
   bool lClick = hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left);
   bool rClick = hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right);
   if (laneH > 0 && m.y >= rLaneY && m.y < rY && m.x >= gMin.x) lClick = rClick = false;  // K-179: the meter lane's own
+  if (lClick && inGrid) st.trackSel.clear();  // GitHub #46: a click among the clips ends the header selection
   // Q-3: Esc or a right-click during a clip drag (move, Shift+drag copies,
   // resize, trim, slip) cancels it: the clips go back, the copies go away,
   // the selection is restored and nothing is recorded.
@@ -3280,31 +3323,67 @@ void drawPlaylist(App& a) {
       }
     }
   }
-  {  // Track reorder: drag the "..." handle (one undo step); a click opens the track menu.
-    static bool dragMoved = false;
-    if (dragTrack >= 0) {
-      ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
-      if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-        const int to = trackAt(std::clamp(m.y, gMin.y, gMax.y - 1));
-        if (to != dragTrack && to >= 0 && to < nTracks) {
-          const int from = dragTrack;
-          a.doc.editSong("move playlist track", [from, to](Song& x) { pltools::moveTrack(x, from, to); });
-          dragTrack = to;
-          dragMoved = true;
-        }
-      } else {
-        a.doc.endGroup();
-        if (!dragMoved) {
-          renaming = dragTrack;
+  {  // GitHub #46: track reorder (see HeadDrag above).
+    // Where a drop at screen y lands: before the track under the pointer, or after it from its middle
+    // on (past the members of a folded group).
+    auto dropBefore = [&](float y) {
+      if (nTracks == 0 || y >= yOf(nTracks)) return nTracks;
+      const int k = trackAt(y);
+      int before = y >= yOf(k) + hOf(k) * 0.5f ? k + 1 : k;
+      while (before < nTracks && hOf(before) < 1) ++before;
+      return before;
+    };
+    if (hd.track >= 0) {
+      if (hd.track >= nTracks) hd = HeadDrag{};
+    }
+    if (hd.track >= 0) {
+      const bool down = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+      if (down && !hd.active && !hd.cancelled && std::hypot(m.x - hd.at.x, m.y - hd.at.y) > 4.0f) {
+        hd.active = true;
+        hd.tracks = playlistTrackSelection(a, hd.track);
+        hd.moving = trackorder::withGroups(s, hd.tracks);
+      }
+      if (down && hd.active && !hd.cancelled &&
+          (keys::pressedHeld("playlist.cancelDrag") || ImGui::IsKeyPressed(ImGuiKey_Escape) || ImGui::IsMouseClicked(ImGuiMouseButton_Right))) {
+        hd.cancelled = true;
+        rClick = false;
+        a.setHint(i18n::tr("Move cancelled"));
+      }
+      if (down && hd.active && !hd.cancelled) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+        if (m.y < gMin.y + 14) st.scrollY = std::max(0.0f, st.scrollY - 6.0f);  // near an edge: the view follows
+        else if (m.y > gMax.y - 14) st.scrollY += 6.0f;
+        hd.before = dropBefore(std::clamp(m.y, gMin.y, gMax.y - 1));
+        devGeom.dragBefore = hd.before;
+        const float ly = std::round(hd.before >= nTracks ? yOf(nTracks) : yOf(hd.before));
+        ImDrawList* fg = ImGui::GetWindowDrawList();
+        fg->PushClipRect(ImVec2(headX0, gMin.y - 2), ImVec2(gMax.x, gMax.y + 2), true);
+        fg->AddRectFilled(ImVec2(headX0 + 2, ly - 1.5f), ImVec2(gMax.x, ly + 1.5f), P.hot, 1.0f);
+        fg->AddTriangleFilled(ImVec2(headX0 + 2, ly - 5), ImVec2(headX0 + 8, ly), ImVec2(headX0 + 2, ly + 5), P.hot);
+        fg->PopClipRect();
+        const int count = static_cast<int>(hd.moving.size());
+        a.setHint(count > 1 ? i18n::tr("Drop to move the tracks here \xC2\xB7 Esc: cancel") : i18n::tr("Drop to move the track here \xC2\xB7 Esc: cancel"));
+      }
+      if (!down) {
+        if (hd.active && !hd.cancelled && hd.before >= 0) {
+          std::vector<int> now;
+          if (trackorder::movePlaylistTracks(a.doc, hd.tracks, hd.before, &now)) {
+            st.trackSel = std::set<int>(now.begin(), now.end());
+            if (!now.empty()) selAnchor = now.front();
+          }
+        } else if (!hd.active && !hd.cancelled && hd.handle) {
+          renaming = hd.track;
           ImGui::OpenPopup("##trmenu");
+        } else if (!hd.active && !hd.cancelled && !io.KeyCtrl && !io.KeySuper && !io.KeyShift) {
+          st.trackSel = {hd.track};  // a plain click on one of several selected headers keeps just it
         }
-        dragTrack = -1;
+        hd = HeadDrag{};
       }
       lClick = false;
     } else if (lClick && headHandle >= 0) {
-      dragTrack = headHandle;
-      dragMoved = false;
-      a.doc.beginGroup("move playlist track");
+      hd = HeadDrag{};
+      hd.track = headHandle, hd.handle = true, hd.at = m;
+      if (!st.trackSel.count(headHandle)) st.trackSel = {headHandle}, selAnchor = headHandle;
       lClick = false;
     }
   }
@@ -3349,6 +3428,25 @@ void drawPlaylist(App& a) {
       a.doc.editPlaylistTrack(tr, "fold track group", [](PlaylistTrack& x) { x.folded = !x.folded; });
       lClick = false;
     }
+  }
+  // GitHub #46: a press on a header's body selects it and may start a drag (see HeadDrag); a
+  // double-click on the name still renames (the double-click handling below sees the click).
+  if (lClick && inHead && hd.track < 0 && headResize < 0 && headLed < 0 && headPlus < 0 && !headModeCtl && m.y >= gMin.y && m.y < yOf(nTracks)) {
+    const int tr = trackAt(m.y);
+    if (io.KeyCtrl || io.KeySuper) {
+      if (!st.trackSel.erase(tr)) st.trackSel.insert(tr);
+      selAnchor = tr;
+    } else if (io.KeyShift && selAnchor >= 0 && selAnchor < nTracks) {
+      for (int k = std::min(selAnchor, tr); k <= std::max(selAnchor, tr); ++k)
+        if (hOf(k) >= 1) st.trackSel.insert(k);
+    } else if (!st.trackSel.count(tr)) {
+      st.trackSel = {tr};
+      selAnchor = tr;
+    }
+    hd = HeadDrag{};
+    hd.track = tr, hd.at = m;
+    if (io.KeyCtrl || io.KeySuper || io.KeyShift) hd.cancelled = true;  // a selection click, never a drag
+    if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) hd = HeadDrag{};  // renames / shows the instrument below
   }
   // J-11: locked tracks keep their clips (only selection, play, zoom and menus work there).
   std::vector<char> lockedTracks(static_cast<size_t>(nTracks), 0);

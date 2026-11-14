@@ -49,7 +49,12 @@ void keepStandIn(App& a, const PluginTarget& t);
 void drawStandInNote(App& a, const PluginTarget& t, float width);
 
 // Header bar: preset navigation/menu, A/B compare, reset (+ bypass/mix for effects).
-void drawPluginHeader(App& a, const PluginTarget& t);
+// K-223: `rule` false leaves out the line under the row (the channel window draws the row on
+// its tab row, whose own line already separates it from the editor).
+void drawPluginHeader(App& a, const PluginTarget& t, bool rule = true);
+// K-223b: the width drawPluginHeader takes for an instrument of `info` (its preset box at full
+// width), known before it is drawn, so the channel window puts it on its tab row from the first frame.
+float pluginHeaderWidth(App& a, const PluginInfo& info);
 // Editor body: the custom editor for the type, or a grouped knob grid.
 void drawPluginBody(App& a, const PluginTarget& t, float width);
 

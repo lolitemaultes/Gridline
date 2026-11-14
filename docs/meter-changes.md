@@ -100,7 +100,9 @@ section's meter while keeping its length.
 ## Scripts and the MCP tools
 
 Project scripts have `project.song.meterAt(tick)`, `barToTick(bar)`, `tickToBar(tick)`,
-`addMeter(bar, beats, note)` and `removeMeter(bar)`, with bars counted from 1. The MCP tools report
+`addMeter(bar, beats, note)` and `removeMeter(bar)`, with bars counted from 1. `bar(tick)` and
+`beat(tick)` give the length of a bar and a beat in the meter in force at a tick; without a tick,
+`bar()` and `beat()` still give the song's meter at its start. The MCP tools report
 the song's meter changes in `get_song` and take a `meter` for `edit_pattern` ("7/8", or "song" to
 follow the song's meter).
 

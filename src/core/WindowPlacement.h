@@ -130,12 +130,19 @@ inline void reanchor(float& x, float& y, float savedMainX, float savedMainY, flo
 // layout.ini [GridlineViewports][Main]: the main window (OS units) and interface scale that the
 // saved positions of detached windows are relative to. One line "MainOs=x,y" / "Scale=s" at a
 // time; false for a line it does not know (ignored, so older / newer files still load).
+// GitHub issue #50: also the main window itself, "MainSize=w,h" (its size when it was last
+// neither maximised nor full screen, OS units), "MainMax=0|1" and "MainFull=0|1". A file without
+// them (an older Gridline) opens the main window as before.
 struct SavedMain {
   bool have = false;  // MainOs was read: positions can be re-anchored
   float x = 0, y = 0, scale = 1;
+  bool haveSize = false;  // MainSize was read
+  int w = 0, h = 0;
+  bool maximized = false, fullscreen = false;
 };
 inline bool readSavedMainLine(const char* line, SavedMain& m) {
   float a = 0, b = 0;
+  int iw = 0, ih = 0;
   char tail = 0;
   if (std::sscanf(line, "MainOs=%f,%f%c", &a, &b, &tail) == 2 && std::isfinite(a) && std::isfinite(b)) {
     m.x = a, m.y = b, m.have = true;
@@ -145,7 +152,111 @@ inline bool readSavedMainLine(const char* line, SavedMain& m) {
     m.scale = a;
     return true;
   }
+  if (std::sscanf(line, "MainSize=%d,%d%c", &iw, &ih, &tail) == 2 && iw > 0 && ih > 0 && iw < 32768 && ih < 32768) {
+    m.w = iw, m.h = ih, m.haveSize = true;
+    return true;
+  }
+  if (std::sscanf(line, "MainMax=%d%c", &iw, &tail) == 1 && (iw == 0 || iw == 1)) {
+    m.maximized = iw == 1;
+    return true;
+  }
+  if (std::sscanf(line, "MainFull=%d%c", &iw, &tail) == 1 && (iw == 0 || iw == 1)) {
+    m.fullscreen = iw == 1;
+    return true;
+  }
   return false;
+}
+// The body of the [Main] section (each line ending in a newline); MainOs only when `have`, the
+// window lines only when `haveSize`.
+inline std::string savedMainLines(const SavedMain& m) {
+  char b[200];
+  std::string s;
+  if (m.have) {
+    std::snprintf(b, sizeof b, "MainOs=%d,%d\nScale=%.4f\n", static_cast<int>(m.x), static_cast<int>(m.y), static_cast<double>(m.scale));
+    s += b;
+  }
+  if (m.haveSize) {
+    std::snprintf(b, sizeof b, "MainSize=%d,%d\nMainMax=%d\nMainFull=%d\n", m.w, m.h, m.maximized ? 1 : 0, m.fullscreen ? 1 : 0);
+    s += b;
+  }
+  return s;
+}
+// The [GridlineViewports][Main] section of a whole layout.ini text, read before the ImGui context
+// loads the file (the main window gets its size before the layout is read). False when the text
+// has no such section.
+inline bool readSavedMainSection(const std::string& ini, SavedMain& m) {
+  bool in = false, found = false;
+  size_t at = 0;
+  while (at < ini.size()) {
+    size_t end = ini.find('\n', at);
+    if (end == std::string::npos) end = ini.size();
+    std::string line = ini.substr(at, end - at);
+    at = end + 1;
+    while (!line.empty() && (line.back() == '\r' || line.back() == ' ' || line.back() == '\t')) line.pop_back();
+    if (!line.empty() && line[0] == '[') {
+      in = line == "[GridlineViewports][Main]";
+      found = found || in;
+      continue;
+    }
+    if (in && !line.empty()) readSavedMainLine(line.c_str(), m);
+  }
+  return found;
+}
+
+// GitHub issue #50: where and how big the main window opens. `work`: the usable area of each
+// display (OS units, the menu bar and panels left out); `current`: the display the window is on now
+// (the splash's). Units are SDL's window units throughout, the same ones the size was saved in (points
+// on macOS, pixels on Windows and X11, logical pixels on Wayland), so the interface scale does not
+// enter: it sizes what is drawn inside the window, never the window.
+//  * nothing saved (an older layout.ini, a first start): `def` x `defH`, at most the display less
+//    40 x 60, centred on the current display (as before);
+//  * a saved size: on the display the saved place belongs to (most overlap, else the nearest: a
+//    display that has gone hands over to the nearest one left), shrunk to fit its usable area with
+//    `osTitle` above it for the desktop's title bar, never below the minimum size where the display
+//    is large enough, at the saved place moved inside that area, or centred when no place was saved;
+//  * maximised or full screen when it was left so. Full screen comes back maximised (the size the
+//    window fills is the display's either way, and a window that comes back maximised keeps the
+//    desktop's title bar and the way back to its old size).
+struct MainWindowPlan {
+  int x = 0, y = 0, w = 0, h = 0;
+  bool maximize = false;
+  bool restored = false;  // a saved size was used
+  int display = -1;       // index into `work`
+};
+inline MainWindowPlan planMainWindow(const SavedMain& s, const std::vector<Rect>& work, int current, int minW, int minH, int defW = 1600,
+                                     int defH = 960, float osTitle = 32.0f) {
+  MainWindowPlan p;
+  p.maximize = s.maximized || s.fullscreen;
+  if (work.empty()) {  // no display information: the default size, where the system puts it
+    p.w = s.haveSize ? std::max(s.w, minW) : defW;
+    p.h = s.haveSize ? std::max(s.h, minH) : defH;
+    p.restored = s.haveSize;
+    return p;
+  }
+  current = std::clamp(current, 0, static_cast<int>(work.size()) - 1);
+  if (!s.haveSize) {
+    const Rect& m = work[static_cast<size_t>(current)];
+    p.w = std::min(defW, static_cast<int>(m.w) - 40);
+    p.h = std::min(defH, static_cast<int>(m.h) - 60);
+    p.x = static_cast<int>(m.x) + (static_cast<int>(m.w) - p.w) / 2;
+    p.y = static_cast<int>(m.y) + (static_cast<int>(m.h) - p.h) / 2;
+    p.display = current;
+    return p;
+  }
+  int mi = current;
+  if (s.have) mi = std::max(0, monitorFor(Rect{s.x, s.y, static_cast<float>(s.w), static_cast<float>(s.h)}, work));
+  const Rect& m = work[static_cast<size_t>(mi)];
+  const float top = std::min(osTitle, std::max(0.0f, m.h - 1.0f));
+  const Rect area{m.x, m.y + top, m.w, std::max(1.0f, m.h - top)};
+  const float w = std::clamp(static_cast<float>(s.w), std::min(static_cast<float>(minW), area.w), area.w);
+  const float h = std::clamp(static_cast<float>(s.h), std::min(static_cast<float>(minH), area.h), area.h);
+  Rect r = s.have ? Rect{s.x, s.y, w, h} : Rect{area.x + (area.w - w) * 0.5f, area.y + (area.h - h) * 0.5f, w, h};
+  r = fitInside(r, area);
+  p.x = static_cast<int>(std::lround(r.x)), p.y = static_cast<int>(std::lround(r.y));
+  p.w = static_cast<int>(std::lround(r.w)), p.h = static_cast<int>(std::lround(r.h));
+  p.restored = true;
+  p.display = mi;
+  return p;
 }
 
 // J-114: a window placed outside the main window (dropped there, popped out) keeps room for

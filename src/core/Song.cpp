@@ -227,7 +227,13 @@ std::vector<ObjectId> mixerOrder(const Song& song) {
     done.insert(id);
     out.push_back(id);
   };
-  for (const auto& t : song.mixer) visit(t.id);
+  // Started from the tracks in id order, not mixer order: the order (and so the engine's summing
+  // order) does not change when tracks are moved in the mixer, so a reordered mixer renders bit for
+  // bit the same (GitHub #46). Tracks made in order have rising ids: the same order as before.
+  std::vector<ObjectId> roots;
+  for (const auto& t : song.mixer) roots.push_back(t.id);
+  std::sort(roots.begin(), roots.end());
+  for (ObjectId id : roots) visit(id);
   std::reverse(out.begin(), out.end());
   // Keep the master last even if nothing routes to it.
   ObjectId m = song.masterId();

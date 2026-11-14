@@ -118,6 +118,7 @@ struct Editor {
   std::vector<PresetEntry> shapes;
   double shapesLoaded = -1;
   ImVec2 winMin, winMax;      // editor window rect (tool dialogs open over its lower right)
+  ImVec2 chip0, chip1;        // K-202: the draw-curve chooser in the toolbar (dev check)
   bool toolWasOpen = false;   // a tool dialog was open last frame (focus it when it opens)
 };
 Editor E;
@@ -219,14 +220,23 @@ void applyShapeFile(App& a, const PresetEntry& e) {
 
 // ---------------------------------------------------------------- menus ----
 
+// K-202: the curve of points `t` (every point when empty), as the piano roll's lane sets it: the
+// stepped, linear and smooth curves start with no tension.
+void setCurve(App& a, AutoShape sh, const ae::Selection& t) {
+  editPoints(a, "curve mode", [&](ae::Points& p) {
+    ae::setShape(p, t, sh);
+    if (sh == AutoShape::Hold || sh == AutoShape::Curve || sh == AutoShape::Smooth) ae::setTension(p, t, 0.0f);
+  });
+}
+
+// The curve items for the points `target` (every point when empty): stepped, linear, smooth,
+// then every curve (the lane's menu).
 void curveModeItems(App& a, const AutomationClip& ac, const ae::Selection& target) {
-  AutoShape cur = AutoShape::Count;
-  if (target.size() == 1 && *target.begin() < static_cast<int>(ac.points.size())) cur = ac.points[static_cast<size_t>(*target.begin())].shape;
-  for (AutoShape sh : ae::menuOrder())
-    if (ImGui::MenuItem(autoShapeName(sh), nullptr, sh == cur)) {
-      ae::Selection t = target;
-      editPoints(a, "curve mode", [&](ae::Points& p) { ae::setShape(p, t, sh); });
-    }
+  ae::Selection all = target;
+  if (all.empty())
+    for (int i = 0; i < static_cast<int>(ac.points.size()); ++i) all.insert(i);
+  AutoShape picked = AutoShape::Hold;
+  if (curveMenuItems(commonPointShape(ac.points, all), &picked)) setCurve(a, picked, target);
 }
 
 void copySelection(App& a, const AutomationClip& ac) {
@@ -1130,7 +1140,8 @@ void drawCanvas(App& a, const AutomationClip& ac) {
       dl->PopClipRect();
     }
   }
-  devView = AutomationEditorView{E.scrollX, E.pxPerTick, hBar.t0, hBar.t1, (hBar.p0.y + hBar.p1.y) * 0.5f, gMin.x, gMax.x};
+  devView = AutomationEditorView{E.scrollX, E.pxPerTick, hBar.t0, hBar.t1, (hBar.p0.y + hBar.p1.y) * 0.5f, gMin.x, gMax.x, y0, y1,
+                                 E.chip0.x, E.chip0.y, E.chip1.x, E.chip1.y, static_cast<int>(laneDrawShape(a))};
   {  // the time scroller: drag the thumb, drag an end to zoom, click the rail to page, double-click to fit
     using scrollbarui::Part;
     if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) E.hBar = {};
@@ -1216,7 +1227,7 @@ void drawCanvas(App& a, const AutomationClip& ac) {
       AutoPoint np;
       np.pos = std::max<Tick>(0, snapContent(curContent));
       np.value = static_cast<float>(valueAtY(m.y));
-      np.shape = pts.empty() ? AutoShape::Curve : pts.back().shape == AutoShape::Hold ? AutoShape::Hold : AutoShape::Curve;
+      np.shape = laneDrawShape(a);  // K-202: the curve chosen in the toolbar (shared with the piano roll's lane)
       int idx = 0;
       editPoints(a, "add automation point", [&](ae::Points& p) { idx = ae::addPoint(p, np); }, E.key);
       E.sel = {idx};
@@ -1306,6 +1317,23 @@ void drawToolbar(App& a, const AutomationClip& ac) {
     if (ui::ToolButton(t.key, t.icon, E.tool == t.tool, fh, t.name, t.desc, t.key, theme::rgb(t.role))) E.tool = t.tool;
     if (E.tool == t.tool) ui::noteActiveTool("autoedit", static_cast<int>(t.tool), t.name, t.key);
     ImGui::SameLine(0, 2);
+  }
+  ImGui::SameLine(0, 4);
+  {  // K-202: the curve the Draw tool writes (shared with the piano roll's lane), and the selection's curve
+    const ImVec2 c0 = ImGui::GetCursorScreenPos(), c1(c0.x + 92, c0.y + fh);
+    const bool clicked = ImGui::InvisibleButton("##aedrawcurve", ImVec2(c1.x - c0.x, fh));
+    const bool hov = ImGui::IsItemHovered();
+    drawCurveChooserFace(a, ImGui::GetWindowDrawList(), c0, c1, laneDrawShape(a), hov || ImGui::IsPopupOpen("##aedrawcurvem"));
+    E.chip0 = c0, E.chip1 = c1;
+    if (hov)
+      ui::Hint(E.sel.empty() ? "Curve the Draw tool writes (shared with the piano roll's automation lane)"
+                             : "Curve the Draw tool writes; its menu also sets the curve of the selected points");
+    if (clicked) ImGui::OpenPopup("##aedrawcurvem");
+    if (ImGui::BeginPopup("##aedrawcurvem")) {
+      const ae::Selection sel = E.sel;
+      drawCurveChooserItems(a, sel.size(), commonPointShape(ac.points, sel), [&](AutoShape sh) { setCurve(a, sh, sel); });
+      ImGui::EndPopup();
+    }
   }
   ui::ToolbarDivider();
   ui::ToolButton("aesnap", ui::Icon::ToolSnap, E.snap != Snap::None, fh, i18n::N_("Snap"),
@@ -1572,6 +1600,20 @@ void openPatternAutomation(App& a, ObjectId pattern, ParamId target) {
 }
 
 const AutomationEditorView& automationEditorView() { return devView; }
+
+std::string automationEditorPointsDump(App& a) {
+  const AutomationClip* ac = E.open ? curClip(a.doc.song()) : nullptr;
+  if (!ac) return "none";
+  std::string out = "points " + std::to_string(ac->points.size()) + " sel " + std::to_string(E.sel.size()) + " pts";
+  char b[96];
+  for (size_t i = 0; i < ac->points.size() && i < 80; ++i) {
+    const AutoPoint& q = ac->points[i];
+    std::snprintf(b, sizeof b, " %lld:%.4f:%d%s", static_cast<long long>(q.pos), static_cast<double>(q.value), static_cast<int>(q.shape),
+                  E.sel.count(static_cast<int>(i)) ? "*" : "");
+    out += b;
+  }
+  return out;
+}
 
 bool automationEditorTarget(ObjectId* automation, ObjectId* pattern, ParamId* target) {
   if (!E.open) return false;

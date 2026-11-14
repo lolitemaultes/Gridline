@@ -73,6 +73,7 @@ const Exclusion kExcluded[] = {
     {"gl.busreturn", "returns audio from a Gridline audio bus"},
     {"gl.splitter", "splits bands to other Gridline mixer tracks"},
     {"gl.flex", "stand-in for a third-party preset format in imported projects"},
+    {"gl.chater", "Gridline only for now (not yet offered in the suites)"},
 };
 
 // Effects with a sidechain input: the DSP reads the slot's sidechain buffer

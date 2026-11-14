@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version 0.7.5" src="https://img.shields.io/badge/version-0.7.5-0B0B0B?style=flat-square&labelColor=1F1F1F">
+  <img alt="Version 0.7.6" src="https://img.shields.io/badge/version-0.7.6-0B0B0B?style=flat-square&labelColor=1F1F1F">
   <img alt="License: GPL-3.0" src="https://img.shields.io/badge/license-GPL--3.0-0B0B0B?style=flat-square&labelColor=1F1F1F">
   <img alt="C++17" src="https://img.shields.io/badge/C%2B%2B-17-0B0B0B?style=flat-square&labelColor=1F1F1F">
   <img alt="Plugins" src="https://img.shields.io/badge/plugins-VST3%20%7C%20CLAP%20%7C%20VST2%20%7C%20AU%20%7C%20LV2-0B0B0B?style=flat-square&labelColor=1F1F1F">
@@ -57,7 +57,7 @@ Every release lists SHA-256 checksums in `Gridline-<version>-SHA256SUMS`. The bu
 
 **Junction.** Wire instruments, effects and note processors by hand on a map of modules and cables: parallel paths, sidechains, several outputs, feedback, and eight macros on a panel of their own.
 
-**178 built-in instruments and effects.** A family of flagships with their own names: Plasma (wavetable hybrid), Platter (two DJ decks and a mixer), Lattice (six-operator FM), Isoline (wavetable), Facet (additive), Halftone (resynthesis), Tercet, Abacus (drum pads), Kerf (a region slicer that cuts on the beat grid), Pixel Tone (plays your own pictures), Turntable (scratch a sample on a platter), Folio (sampler), Loupe (audio editor), Shuttle (time and volume), Tracer (delay), Cloister (reverb), Crest (mastering), Cipher (vocoder), Plumb (pitch correction), Junction (patching), Graticule (scope), Tideline (tempo-synced ducking, triggered by a mixer track, a channel's notes and clips or MIDI) and Seltmann (drop in any audio and it finds the tempo, chops it and flips it with ready-made layouts). Around them, plain-named studio tools: EQs, dynamics, modulation, physical models and utilities, and Gridline Suite Mini, 35 compact single-purpose effects. Every one has its own editor with its own wordmark, and every gesture in it (a knob drag, a wheel turn, a drawn stroke, a preset load) is one undo step. Double-click any knob to reset it, or to type a value when it is already at its default.
+**179 built-in instruments and effects.** A family of flagships with their own names: Plasma (wavetable hybrid), Platter (two DJ decks and a mixer), Lattice (six-operator FM), Isoline (wavetable), Facet (additive), Halftone (resynthesis), Tercet, Abacus (drum pads), Kerf (a region slicer that cuts on the beat grid), Pixel Tone (plays your own pictures), Turntable (scratch a sample on a platter), Folio (sampler), Loupe (audio editor), Shuttle (time and volume), Tracer (delay), Chater (dreamy, spacey glitch: soft breaks, glitter, tape haze and a long shimmering hall, firing by chance on the beat or on the input's hits), Cloister (reverb), Crest (mastering), Cipher (vocoder), Plumb (pitch correction), Junction (patching), Graticule (scope), Tideline (tempo-synced ducking, triggered by a mixer track, a channel's notes and clips or MIDI) and Seltmann (drop in any audio and it finds the tempo, chops it and flips it with ready-made layouts). Around them, plain-named studio tools: EQs, dynamics, modulation, physical models and utilities, and Gridline Suite Mini, 35 compact single-purpose effects. Every one has its own editor with its own wordmark, and every gesture in it (a knob drag, a wheel turn, a drawn stroke, a preset load) is one undo step. Double-click any knob to reset it, or to type a value when it is already at its default.
 
 **Real plugins, real interfaces.** VST3, CLAP, VST2, AU and LV2 instruments and effects open with their own interface, can run sandboxed in a separate process, and are checked by a built-in compatibility sweep. Edits made in a plugin's own interface can be undone too.
 
@@ -72,7 +72,7 @@ Every release lists SHA-256 checksums in `Gridline-<version>-SHA256SUMS`. The bu
 
 **A welcome screen.** Gridline opens on your recent projects, each with a sketch of its arrangement, its tempo and its length. Mark favourites, start from a template or the demo song, and see in the Collaborative view who is working on a shared project right now. Big projects never freeze the window while they open: a loading window counts every sample and plugin as it loads, logs how long each took, and Cancel takes you back to the project you had open.
 
-**A mixer that keeps time.** Smooth swing for steps and notes alike, plugin delay compensation, parallel processing on several cores, sends, sidechains, groups, stems and a per-track EQ. Offline renders are bit-identical whatever the buffer size.
+**A mixer that keeps time.** Smooth swing for steps and notes alike, plugin delay compensation, parallel processing on several cores, sends, sidechains, groups, stems and a per-track EQ. Offline renders are bit-identical whatever the buffer size. Switch the mixer to **Stage** to place your tracks on a stage seen from where you sit: left and right, near and far, how wide; drop one track on another to group them, or let Arrange by sound place them for you. A big project can split its tracks into rooms, each with its own stage and space. See [docs/stage-view.md](docs/stage-view.md).
 
 **Recording and editing.** Audio input with latency compensation, takes drawn with their waveform live as they record, comping, Loupe (the audio editor) with spectral view, automation clips with curves and an LFO tool, on the playlist or inside patterns, MIDI learn on every control. Several selected audio clips change together: a level, fade or pitch change moves each of them by the same amount. Stretched clips follow the project tempo, and clips you never stretched keep their audio when the tempo changes.
 
@@ -84,7 +84,7 @@ Every release lists SHA-256 checksums in `Gridline-<version>-SHA256SUMS`. The bu
 
 **Windows on every monitor.** Pop the mixer, piano roll, browser or any Gridline plugin editor out into a window of its own and put it on another screen. Detached panels come back where you left them; a plugin window opens inside the main window again until you pop it out. Zooming glides and dragged clips and notes glide between grid lines.
 
-**Scripting, templates and AI assistants.** Sandboxed Lua scripts for the piano roll and for hardware controllers, project templates, a background sample browser with tempo and key search, and an optional, off by default MCP server so AI assistants can read and edit a project.
+**Scripting, templates and AI assistants.** Sandboxed Lua scripts for the piano roll and for hardware controllers, project templates, a background sample browser with tempo and key search, and an optional, off by default MCP server so AI assistants can read and edit a project, and OSC in and out so touch surfaces and other music software can play and mix it.
 
 </td>
 </tr>
@@ -203,7 +203,7 @@ An instrument opens in its channel window with the channel strip (volume, pan, p
   <img src="docs/images/plasma.png" alt="Plasma's Synth tab: the layers, Root, the filter and the amp as blocks in signal order, the movement row under them and the parts sidebar on the right" width="100%">
 </p>
 
-Plasma is Gridline's wavetable hybrid synth: three layers that each play a wavetable, a multisample, a sample, a granular cloud or a spectral resynthesis, with two morph slots each (103 modes, FM, PD, AM and RM between sources among them) and stacks up to 16 voices, plus a Root oscillator, a Texture layer and two filters with 106 types. Its editor has five tabs (Synth, Effects, Links, Play and Setup). The Synth tab shows the sound as blocks in signal order (Sources, then Shape) with the movement under them (4 envelopes, 10 drawable LFOs, 8 macros and the key, touch and chance sources), a Simple / Full switch and a parts sidebar to drag new layers, filters and LFOs in from. Link any source to any control by dragging its dot there, or click the dot for Link mode and set the depth right on the control; 64 links in all. Three effect lanes with up to 24 effects, an arpeggiator, a phrase player and a table editor (partials, drawing tools, morphing, formulas, WAV import and export) complete it.
+Plasma is Gridline's wavetable hybrid synth: three layers that each play a wavetable, a multisample, a sample, a granular cloud or a spectral resynthesis, with two morph slots each (103 modes, FM, PD, AM and RM between sources among them) and stacks up to 16 voices, plus a Root oscillator, a Texture layer and two filters with 106 types. Its editor has five tabs (Synth, Effects, Links, Play and Setup). The Synth tab shows the sound as blocks in signal order (Sources, then Shape) with the movement under them (4 envelopes, 10 drawable LFOs, 8 macros and the key, touch and chance sources), a Simple / Full switch and a parts sidebar to drag new layers, filters and LFOs in from. Press Tab for the Patch view, which draws the same sound as boxes joined by lines from port to port, with the movement sources as tiles below. Link any source to any control by dragging its dot there, or click the dot for Link mode and set the depth right on the control; 64 links in all. Three effect lanes with up to 24 effects, an arpeggiator, a phrase player and a table editor (partials, drawing tools, morphing, formulas, WAV import and export) complete it.
 
 <p align="center">
   <img src="docs/images/plasma-patch.png" alt="Plasma's Patch view: the sources, filters, amp, effects and both sends wired to the output, the movement sources below and the inspector on the right" width="100%">
@@ -352,13 +352,13 @@ Samples a Gridline Suite plugin uses travel inside its settings, up to 64 MB of 
 - [Collaborative projects](docs/collaboration.md): inviting, joining, connections, offline work, removing someone, privacy.
 - [Windows outside the main window](docs/detachable-windows.md) and [the plugin window's channel strip](docs/plugin-window.md).
 - [The Gridline Suite](docs/gridline-suite.md): Gridline's instruments and effects as plugins for other DAWs, and where they are installed.
-- [Plasma](docs/plugins/plasma.md), [Seltmann](docs/plugins/seltmann.md), [Tideline](docs/plugins/tideline.md), [the synths pack](docs/plugins/synths.md) and [recording Platter performances](docs/plugins/platter-recording.md).
+- [Plasma](docs/plugins/plasma.md), [Chater](docs/plugins/chater.md), [Seltmann](docs/plugins/seltmann.md), [Tideline](docs/plugins/tideline.md), [the synths pack](docs/plugins/synths.md) and [recording Platter performances](docs/plugins/platter-recording.md).
 - [Loop files](docs/loop-files.md): REX2 sliced loops and Apple Loops in the browser, the channel rack and the playlist.
 - [Opening files from the file manager](docs/opening-files.md): double-clicking projects and tracker modules on Linux, macOS and Windows, and choosing Gridline once where the system asks.
 - [Gridline on Debian and Ubuntu](docs/debian.md): installing the `.deb` with apt, the supported versions, Debian 11's archived updates.
 - [Gridline on a Chromebook](docs/chromeos.md): installing in ChromeOS's Linux environment, sound, shared folders, MIDI devices and plugins.
 - [ASIO on Windows](docs/asio.md): using an audio interface's ASIO driver, its buffer sizes, sample rates, inputs and outputs.
-- [Lua scripting](docs/scripting.md), [AI assistants (MCP)](docs/mcp.md) and [the update check](docs/updates.md).
+- [Lua scripting](docs/scripting.md), [AI assistants (MCP)](docs/mcp.md), [OSC (Open Sound Control)](docs/osc.md) and [the update check](docs/updates.md).
 - [CHANGELOG.md](CHANGELOG.md) lists what changed in each version.
 
 ## Architecture

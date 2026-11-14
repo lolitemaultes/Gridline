@@ -15,7 +15,7 @@ float drawTopBar(App& a);      // menu + transport; returns height used
 // Dev checks (J-91): where the top bar drew a button last frame ("play", "stop", "rec", "metro"), in
 // logical pixels; false when it is not shown. `mirror`: the metronome glyph's last horizontal scale.
 bool topBarButtonRect(const char* name, float& x0, float& y0, float& x1, float& y1);
-void devNoteRect(const char* name);  // the last item's rectangle as an "sdlat" target (browser: "brsearch", "brclear"; channel window: "chroute", "chroutefree", "chroutelist")
+void devNoteRect(const char* name);  // the last item's rectangle as an "sdlat" target (browser: "brsearch", "brclear", "brcollapse"; channel window: "chroute", "chroutefree", "chroutelist"; piano roll: "prstamp", "prstamplbl", "prstampchip")
 void devTopBarFitWidth(float w);  // K-132: dev, the top bar fits its groups into w px (0 = the window's width)
 float topBarMetronomeMirror();
 double topBarMetronomeBeat();  // dev: the beat that pose was drawn for
@@ -87,6 +87,8 @@ struct PlaylistGeometry {
   // scroll, the base track height and the grid's rectangle (screen).
   float vThumb0 = 0, vThumb1 = 0, hThumb0 = 0, hThumb1 = 0, vBarX = 0, hBarY = 0;
   float scrollY = 0, trackHeight = 0, gridX0 = 0, gridY0 = 0, gridY1 = 0;
+  float headX0 = 0, headX1 = 0;  // GitHub #46: the track headers' column (screen x)
+  int dragBefore = -1;           // ... and where a header drag would drop now (-1: none)
   bool valid = false;
 };
 const PlaylistGeometry& playlistGeometry();
@@ -102,6 +104,7 @@ bool mixerWheelScrolls();
 void devMenuItem(const std::string& name);
 void devArrangementClipMenu(App& a, ObjectId clip);  // K-158: a clip's whole playlist menu (--menu arrclip)
 void devMenuRects();
+std::string mixerDragDev();  // GitHub #46: the strip drag ("mixer" dev dump)
 void drawChannelSettings(App& a);
 // Dev checks (--dev-input): "strip [on|off] [frames]", the channel strip of the
 // channel settings window (ChannelStrip.h) as drawn this frame and the next
@@ -167,6 +170,11 @@ void automationSourceMenu(App& a, ObjectId automation);
 void patternSourceMenu(App& a, ObjectId pattern);
 void requestDeleteSources(App& a, ClipKind kind, std::vector<ObjectId> ids);
 void playlistTrackMenu(App& a, int track);
+// GitHub #46 (Playlist.cpp): the tracks a header gesture on `track` moves (the header selection when
+// it holds `track`, else the track alone), and moving them one place (dir -1 up, 1 down; the
+// selection follows them).
+std::vector<int> playlistTrackSelection(App& a, int track);
+bool stepPlaylistSelection(App& a, const std::vector<int>& tracks, int dir);
 void clipContextMenu(App& a, ObjectId clip);
 void playlistOptionsMenu(App& a);
 void pianoRollMenu(App& a);
@@ -186,6 +194,10 @@ std::vector<ObjectId> mixerSelection(App& a);
 // insert when it was on the master), or back to just the focused track.
 void mixerSelectAll(App& a);
 void mixerDeselect(App& a);
+// Mixer track menu Select items (also Alt+L and Ctrl+Alt+L on the focused track): the channels
+// routed to `track` (shown in the channel rack), or the mixer tracks routed to it.
+void mixerSelectRoutedChannels(App& a, ObjectId track);
+void mixerSelectRoutedTo(App& a, ObjectId track);
 // A reset of a mixer control covers the selected tracks when the track acted
 // on is one of several selected. Pending: that applies and one of them is
 // away from the default. Selected: does it (one undo step); false when it

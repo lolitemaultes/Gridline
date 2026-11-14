@@ -501,23 +501,21 @@ VIEWS += [
 ]
 
 # The release banner and screenshots of this version.
-RELEASE = "0.7.5"
+RELEASE = "0.7.6"
 # The banner: version as set, headline, subline; a prerelease adds its tag and label.
-RELEASE_BANNER = ("0.7.5", "Change the meter, play every note",
-                  "A redesigned Plasma, meter changes, themes to black, MPE, slides and SFZ")
+RELEASE_BANNER = ("0.7.6", "Put your mix on a stage",
+                  "A Stage view with rooms for the mixer, Chater, automation modes, OSC and a new file dialog")
 RELEASE_BANNER_OPTS = {}
 # Plugin editors on one sheet (none in this release).
 RELEASE_EDITORS = []
-# Release screenshots from 3200x2000 captures (UI scale 2), cropped to the part that shows the feature.
+# Release screenshots from captures at UI scale 2 (3200x2000 unless noted), cropped to the part that shows the feature.
 RELEASE_VIEWS = [
-    ("plasma.png", "plasma.png", PLASMA_BOX),  # a 3200x2200 capture
-    ("patch.png", "plasma-patch.png", PLASMA_BOX),  # a 3200x2200 capture
-    ("meter.png", "meter-lane.png", (768, 224, 2440, 1120)),
-    ("black.png", "black-theme.png", None),
-    ("rollbars.png", "piano-roll-scroll-bars.png", (472, 152, 2440, 1936)),
-    ("menu.png", "compact-menu.png", (120, 144, 736, 1384)),
-    ("mpe.png", "mpe-setting.png", (744, 464, 2448, 1056)),
-    ("swing.png", "swing-presets.png", (680, 392, 2080, 1464)),
+    ("r_stage.png", "stage-rooms.png", None),  # the mixer in its Stage view, three rooms
+    ("r_rail.png", "stage-rail.png", None),  # ... with the rooms column as the slim rail
+    ("r_patch.png", "plasma-patch.png", (328, 365, 2872, 1955)),  # a 3200x2200 capture
+    ("r_chater.png", "chater.png", (602, 216, 2272, 1397)),  # a 2880x1800 capture
+    ("r_curve.png", "automation-modes.png", (324, 288, 2558, 1560)),  # a 2880x1800 capture
+    ("r_dialog.png", "file-dialog.png", (480, 302, 2400, 1540)),  # a 2880x1800 capture
 ]
 
 if __name__ == "__main__":

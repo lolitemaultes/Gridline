@@ -19,6 +19,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -496,6 +497,7 @@ struct Model {
   bool mpeXYZtoMacros = false, mpeYZtoMacros = false, mpeYtoModWheel = false, mpeBendToX = false;
   bool lockFx = false;
   std::vector<Media> media;              // embedded audio (see Media)
+  std::map<int, std::array<float, 2>> patchPos;  // Patch view: where the user put boxes (graph units, by box id)
 };
 
 // Stores audio in m.media (deduplicated by content); returns its "media:<id>" reference.

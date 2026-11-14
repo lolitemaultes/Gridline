@@ -34,7 +34,7 @@ void curvePopup(Ctx& c, int s, bool aux) {
   const ImVec2 o = ImGui::GetCursorScreenPos();
   skin::Form F2 = c.F;
   F2.o = o;
-  Ctx cc{c.a, c.t, F2, ImGui::GetWindowDrawList(), c.st, c.m, c.u, c.P, c.live, c.hasLive};
+  Ctx cc{c.a, c.t, F2, ImGui::GetWindowDrawList(), c.st, c.m, c.u, c.P, c.live, c.hasLive, c.graph};
   displayWellPublic(cc, 0, 0, 220, 140);
   gridLines(cc, 0, 0, 220, 140, 4, 4, false);
   Curve edit = cv.empty() ? Curve{} : cv;
@@ -653,7 +653,7 @@ void linksView(Ctx& c) {
         "Drag the dot on any movement block onto a knob. The knob gets a coloured ring that shows how far it will move. Or press New link and pick both ends here.";
     ImGui::PushClipRect(c.p(tx, helpY), c.p(x0 + lw - M(16), bottom), true);
     const ImVec2 at = c.p(tx, helpY + M(42));
-    c.dl->AddText(ImGui::GetFont(), c.s(T(12)) * 1.25f, at, P.label, i18n::tr(d), nullptr, c.s(x0 + lw - M(32) - tx));
+    c.dl->AddText(ImGui::GetFont(), c.s(T(12)) * kTypeScale, at, P.label, i18n::tr(d), nullptr, c.s(x0 + lw - M(32) - tx));
     layoutWindowText(at, "", 0);
     ImGui::PopClipRect();
   }
@@ -900,7 +900,7 @@ void setupRow(const Ctx& c, float x, float y, float h, const char* name, const c
 // Wrapped text inside a width.
 void wrapped(const Ctx& c, float x, float y, float w, const char* s, ImU32 col, float px) {
   const ImVec2 at = c.p(x, y);
-  c.dl->AddText(ImGui::GetFont(), c.s(px) * 1.25f, at, col, i18n::tr(s), nullptr, c.s(w));
+  c.dl->AddText(ImGui::GetFont(), c.s(px) * kTypeScale, at, col, i18n::tr(s), nullptr, c.s(w));
   layoutWindowText(at, "", 0);
 }
 }  // namespace

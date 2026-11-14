@@ -1,6 +1,6 @@
 # Gridline - K-47, in the real app (hidden, isolated config, HOME and cache, dummy audio):
 #   1. zip save, project data files, project bones, WAV of a sample and of a clip run off the interface
-#      thread: the frame right after the start finds the job running and frames go on, the result is
+#      thread: right after the start the job is running and frames go on, the result is
 #      there at the end; Cancel leaves no target; an earlier archive stays; the project stays editable
 #      and edits made during a save stay unsaved;
 #   2. Edit > Copy of an effect chain from a zipped project, that project closed and its copy swept,
@@ -58,8 +58,19 @@ foreach(job IN ITEMS "zip;${OUT}/res/Song.gridline.zip" "data;${OUT}/res/data" "
   list(GET job 0 kind)
   list(GET job 1 target)
   file(MAKE_DIRECTORY "${OUT}/res")
-  run(${kind} "5 forget file-job-finished\n6 filejob ${kind} \"${target}\"\n7 filejob state\n8 filejob state\n40 waitfor file-job-finished 60\n42 filejob state\n44 quit discard\n")
-  must(${kind} "filejob running 1 finished 0 count 0" "${kind}: the frame after the start finds it running")
+  # The state right after the start, in the same frame: a job run on the interface thread would be
+  # over by then. (Not the next frame: a fast runner can finish a small job before a slow frame ends.)
+  run(${kind} "5 forget file-job-finished\n6 filejob ${kind} \"${target}\"\n6 filejob state\n7 filejob state\n8 filejob state\n40 waitfor file-job-finished 60\n42 filejob state\n44 quit discard\n")
+  string(REGEX MATCH "filejob running [^\n]*" first "${${kind}_out}")
+  if(NOT first MATCHES "^filejob running 1 finished 0 count 0")
+    message(FATAL_ERROR "FAIL (${kind}): right after the start it should run: ${first}\n${${kind}_out}\n${${kind}_err}")
+  endif()
+  string(REGEX MATCHALL "filejob running [01] finished [01]" states "${${kind}_out}")
+  list(LENGTH states nStates)
+  if(NOT nStates EQUAL 4)
+    message(FATAL_ERROR "FAIL (${kind}): the frames after the start did not all come (${nStates} states)\n${${kind}_out}")
+  endif()
+  message(STATUS "ok - ${kind}: right after the start it runs, off the interface thread, and frames go on")
   must(${kind} "filejob running 0 finished 0 count 1" "${kind}: it ends by itself")
 endforeach()
 foreach(f "${OUT}/res/Song.gridline.zip" "${OUT}/res/sample.wav" "${OUT}/res/clip.wav" "${OUT}/res/data/Gridline Demo/Gridline Demo.gridline" "${OUT}/res/bones/Gridline Demo bones/Gridline Demo.gridline")

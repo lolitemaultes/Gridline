@@ -186,6 +186,16 @@ void orderAbove(const Window& w, const Window& ref) {
   [c orderWindow:NSWindowAbove relativeTo:[(NSWindow*)ref.handle windowNumber]];
 }
 
+void raiseChild(const Window& child, const Window& parent) {
+  if (!child.handle || !parent.handle || child.handle == parent.handle) return;
+  NSWindow* c = (NSWindow*)child.handle;
+  NSWindow* p = (NSWindow*)parent.handle;
+  if ([c parentWindow] != p || ![c isVisible]) return;
+  if ([[p childWindows] lastObject] == c) return;  // already the top one
+  [p removeChildWindow:c];
+  [p addChildWindow:c ordered:NSWindowAbove];  // added last: above the parent's other child windows
+}
+
 bool inModalSizeLoop() {
   // J-116: AppKit's live-resize tracking runs inside the event pump (the mouse-down on a window
   // edge does not return until the release); SDL reports windowDidResize: and its 60 Hz

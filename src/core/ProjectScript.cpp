@@ -160,7 +160,7 @@ ParamId mixerParamRef(lua_State* L, ObjectId t, int arg) {
       {"mute", MixerParam::Mute},           {"eqLowGain", MixerParam::EqLowGain}, {"eqMidGain", MixerParam::EqMidGain},
       {"eqHighGain", MixerParam::EqHighGain}, {"eqLowFreq", MixerParam::EqLowFreq}, {"eqMidFreq", MixerParam::EqMidFreq},
       {"eqHighFreq", MixerParam::EqHighFreq}, {"eqLowQ", MixerParam::EqLowQ},   {"eqMidQ", MixerParam::EqMidQ},
-      {"eqHighQ", MixerParam::EqHighQ}};
+      {"eqHighQ", MixerParam::EqHighQ}, {"depth", MixerParam::Depth}, {"focus", MixerParam::Focus}};
   std::string w = luaL_checkstring(L, arg);
   for (const auto& [n, p] : names)
     if (w == n) return mixerParam(t, p);
@@ -360,12 +360,24 @@ int s_setMasterPitch(lua_State* L) {
   setParamValue(L, songParam(SongParam::MasterPitch), num(L, 1));
   return 0;
 }
+// bar() / beat(): the song's base meter (its meter at the start), as always. K-203: bar(tick) /
+// beat(tick): the full bar and the beat of the meter in force at that tick.
 int s_bar(lua_State* L) {
-  lua_pushinteger(L, song(L).barTicks());
+  if (lua_isnoneornil(L, 1)) {
+    lua_pushinteger(L, song(L).barTicks());
+  } else {
+    charge(L, kCostRead + song(L).markers.size() / 8);
+    lua_pushinteger(L, static_cast<lua_Integer>(MeterMap(song(L)).fullBarLenAt(std::max<lua_Integer>(0, luaL_checkinteger(L, 1)))));
+  }
   return 1;
 }
 int s_beat(lua_State* L) {
-  lua_pushinteger(L, song(L).beatTicks());
+  if (lua_isnoneornil(L, 1)) {
+    lua_pushinteger(L, song(L).beatTicks());
+  } else {
+    charge(L, kCostRead + song(L).markers.size() / 8);
+    lua_pushinteger(L, static_cast<lua_Integer>(MeterMap(song(L)).beatLenAt(std::max<lua_Integer>(0, luaL_checkinteger(L, 1)))));
+  }
   return 1;
 }
 int s_length(lua_State* L) {

@@ -74,6 +74,7 @@ P = {
     'gl.seltmann': ('sample', 'chop', 'Finds the beat in a song and chops it into loops'),
     'gl.platter': ('sample', 'platter', 'DJ deck: scratch, cue and sync any track'),
     'gl.plasma': ('synth', 'plasma', 'Wavetable / granular / spectral hybrid synth'),
+    'gl.chater': ('space', 'glint', 'Dreamy glitch, glitter and sparkle effect'),
     'gl.eq': ('tone', 'eqbell', 'Parametric EQ'),
     'gl.filter': ('tone', 'lowpass', 'Multimode filter'),
     'gl.comp': ('dynamics', 'comp', 'Compressor'),

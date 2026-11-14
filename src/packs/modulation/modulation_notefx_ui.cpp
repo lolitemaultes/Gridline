@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdio>
 #include <map>
+#include "../../core/I18n.h"
 #include "../../core/PluginBrand.h"
 #include "../../engine/NoteFx.h"
 #include "modulation.h"
@@ -540,6 +541,47 @@ void drawNoteFxEditor(App& a, ObjectId channel, int index, float width) {
   ImGui::PopID();
 }
 
+namespace {
+// K-223: the note processor panel of a channel without any: one slim row (the panel's title, the
+// add list and a hint, as far as it fits) in the panel's colours, so a tall editor above it keeps
+// its room in the window.
+void drawEmptyNoteFxRow(App& a, ObjectId channel, float width) {
+  const auto& P = pal();
+  const float fh = ImGui::GetFrameHeight(), padY = 4.0f;
+  ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::vec(P.surface800));
+  ImGui::PushStyleColor(ImGuiCol_Border, theme::vec(theme::mix(P.surface800, P.text, 0.07f)));
+  ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 7);
+  ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.0f);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, padY));
+  ImGui::BeginChild("##notefxrow", ImVec2(width, fh + 2 * padY), ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_Borders,
+                    ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  constexpr float kSmall = 10.5f;
+  const auto small = [&](const char* text, float maxW) {  // faint mono text, centred on the row
+    ImGui::PushFont(a.fontMono, kSmall);
+    const float w = std::min(maxW, ImGui::CalcTextSize(text).x);
+    ImGui::PopFont();
+    const ImVec2 c = ImGui::GetCursorScreenPos();
+    theme::textEllipsis(dl, a.fontMono, kSmall, ImVec2(c.x, std::round(c.y + (fh - kSmall) * 0.5f)), w + 1, P.textFaint, text);
+    ImGui::Dummy(ImVec2(std::max(1.0f, w), fh));
+  };
+  small("NOTE FX", 200);
+  ImGui::SameLine(0, theme::kS3);
+  ImGui::SetNextItemWidth(220);
+  if (ImGui::BeginCombo("##add", i18n::tr("Add note processor..."))) {
+    for (const auto& p : pluginCatalog())
+      if (p.kind == PluginKind::NoteFx && ImGui::Selectable(p.name.c_str())) a.doc.addNoteFx(channel, p.type);
+    ImGui::EndCombo();
+  }
+  ImGui::SameLine(0, theme::kS3);
+  const float room = ImGui::GetContentRegionAvail().x;
+  if (room > 60) small(i18n::tr("Arpeggiator, chords, step sequencer, key mapping..."), room);
+  ImGui::EndChild();
+  ImGui::PopStyleVar(3);
+  ImGui::PopStyleColor(2);
+}
+}  // namespace
+
 void drawChannelNoteFx(App& a, ObjectId channel, float width) {
   const auto& P = pal();
   const Channel* c = a.doc.song().channel(channel);
@@ -548,6 +590,11 @@ void drawChannelNoteFx(App& a, ObjectId channel, float width) {
   int n = static_cast<int>(c->noteFx.size());
   sel = n ? std::clamp(sel, 0, n - 1) : 0;
   ImGui::PushID("notefx");
+  if (n == 0) {  // K-223: none yet: one slim row with the add button inline (the full box once one is added)
+    drawEmptyNoteFxRow(a, channel, width);
+    ImGui::PopID();
+    return;
+  }
   pui::beginSection("NOTE FX", width);
   ImGui::PushFont(a.fontMono, 10.5f);
   ImGui::TextColored(theme::vec(P.textFaint), n ? "Notes pass through these processors, top to bottom, before the instrument."

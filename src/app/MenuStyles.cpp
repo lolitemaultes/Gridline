@@ -60,6 +60,7 @@ void recordItems(App& a) {
 
 void mixItems(App& a) {
   ImGui::MenuItem(i18n::tr("Mixer"), keys::label("view.mixer"), &a.showMixer);
+  ImGui::MenuItem(i18n::tr("Stage"), keys::label("view.stage"), &a.showStage);
   ImGui::MenuItem(i18n::tr("Master chain"), nullptr, &a.showMaster);
   ImGui::MenuItem(i18n::tr("Performance"), nullptr, &a.showPerformance);
   ImGui::Separator();

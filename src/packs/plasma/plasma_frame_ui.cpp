@@ -5,7 +5,9 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <cstdlib>
 #include <map>
+#include "../../app/EditorZoomUi.h"
 #include "../../app/ThemeSettings.h"
 #include "../../app/Keys.h"
 #include "../../app/Widgets.h"
@@ -382,141 +384,6 @@ void sourceRow(Ctx& c, int src, float x, float y, float w, bool sel, int view, c
 }
 
 // ================================================================== play bar and drawer
-// A performance wheel: a rounded body with a ridged grip that rolls with the value, the value lit
-// in the accent colour (from the centre detent for the bend wheel, from the bottom for the mod
-// wheel). The bend wheel springs back to the centre with a short glide when released.
-void wheel(Ctx& c, int k, float x, float y, float w, float h, bool spring) {
-  ImGui::PushID(k);
-  ImGui::SetCursorScreenPos(c.p(x, y));
-  ImGui::InvisibleButton("##wh", c.F.sz(w, h));
-  const bool act = ImGui::IsItemActive(), hov = ImGui::IsItemHovered();
-  reach(k);
-  const ParamDesc* d = pdesc(k);
-  struct Back {
-    double from = 0;
-    float t = -1;
-  };
-  static std::map<std::pair<const Ui*, int>, Back> back;  // a released bend wheel on its way back, per editor
-  Back& bk = back[{&c.u, k}];
-  double v = val(c, k);
-  if (act && d) {
-    bk.t = -1;
-    const double n = std::clamp(1.0 - (ImGui::GetIO().MousePos.y - c.p(0, y).y) / c.s(h), 0.0, 1.0);
-    v = d->fromNormalized(n);
-    setv(c, k, v, true);
-  } else if (spring && ImGui::IsItemDeactivated() && d) {
-    bk.from = v, bk.t = 0;
-  } else if (ImGui::IsItemDeactivated()) {
-    c.a.doc.endGesture();
-  }
-  if (bk.t >= 0 && d) {  // the glide back: 0.12 s, easing out
-    bk.t = std::min(1.f, bk.t + ImGui::GetIO().DeltaTime / 0.12f);
-    const float e = 1 - (1 - bk.t) * (1 - bk.t);
-    v = bk.from + (d->def - bk.from) * e;
-    setv(c, k, bk.t >= 1 ? d->def : v, true);
-    if (bk.t >= 1) bk.t = -1, c.a.doc.endGesture();
-  }
-  const double n = d ? d->toNormalized(v) : 0;
-  const ImVec2 a = c.p(x, y), b = c.p(x + w, y + h);
-  const float r = c.s(std::min(w * 0.5f, 9.f));
-  // the slot and the wheel's body
-  c.dl->AddRectFilled(ImVec2(a.x - c.s(3), a.y - c.s(3)), ImVec2(b.x + c.s(3), b.y + c.s(3)), c.P.well, r + c.s(3));
-  skin::gradientRect(c.dl, a, b, c.P.capTop, c.P.capBot, r);
-  // the lit value
-  const float cy = spring ? (a.y + b.y) * 0.5f : b.y, vy = b.y - static_cast<float>(n) * (b.y - a.y);
-  const ImU32 lit = theme::withAlpha(c.P.accent, act ? 0.55f : 0.38f);
-  if (std::fabs(vy - cy) > 0.5f) c.dl->AddRectFilled(ImVec2(a.x + c.s(2), std::min(vy, cy)), ImVec2(b.x - c.s(2), std::max(vy, cy)), lit, c.s(2));
-  // the grip: ridges that roll with the value, fainter towards the wheel's top and bottom edges
-  c.dl->PushClipRect(a, b, true);
-  const float pitch = c.s(5), off = std::fmod(static_cast<float>(n) * (b.y - a.y) * 1.6f, pitch);
-  for (float ry = a.y + off; ry < b.y; ry += pitch) {
-    const float t = (ry - a.y) / (b.y - a.y), fade = std::sin(t * 3.14159265f);
-    c.dl->AddLine(ImVec2(a.x + c.s(3), ry), ImVec2(b.x - c.s(3), ry), theme::withAlpha(c.P.frame, 0.35f * fade), std::max(1.f, c.s(1.f)));
-  }
-  c.dl->PopClipRect();
-  if (spring) c.dl->AddLine(ImVec2(a.x - c.s(5), cy), ImVec2(a.x - c.s(1), cy), c.P.textDim, std::max(1.f, c.s(1.2f)));  // the centre detent
-  // the value line
-  c.dl->AddLine(ImVec2(a.x + c.s(1), vy), ImVec2(b.x - c.s(1), vy), act || hov ? c.P.hot : c.P.accent, std::max(1.5f, c.s(2.f)));
-  c.dl->AddRect(a, b, act ? c.P.accent : hov ? c.P.lineHi : c.P.line, r, 0, std::max(1.f, c.s(act ? 1.5f : 1.f)));
-  if (hov) c.a.setHint(paramLongName(k) + ": " + ptext(c, k) + (spring ? "  (drag; it springs back to the centre)" : "  (drag)"));
-  ImGui::PopID();
-}
-
-void keyboard(Ctx& c, float x, float y, float w, float h) {
-  const int lo = 36, hi = 96;  // C2 .. C7
-  int whites = 0;
-  for (int k = lo; k <= hi; ++k) {
-    const int pc = k % 12;
-    if (pc != 1 && pc != 3 && pc != 6 && pc != 8 && pc != 10) ++whites;
-  }
-  const float kw = w / whites;
-  const ImVec2 m = ImGui::GetIO().MousePos;
-  ImGui::SetCursorScreenPos(c.p(x, y));
-  ImGui::InvisibleButton("##kb", c.F.sz(w, h));
-  const bool act = ImGui::IsItemActive(), hov = ImGui::IsItemHovered();
-  int hit = -1;
-  // black keys first (on top)
-  auto isBlack = [](int k) {
-    const int pc = k % 12;
-    return pc == 1 || pc == 3 || pc == 6 || pc == 8 || pc == 10;
-  };
-  std::vector<std::pair<int, ImVec4>> rects;
-  int wi = 0;
-  for (int k = lo; k <= hi; ++k) {
-    if (isBlack(k)) continue;
-    rects.push_back({k, ImVec4(x + wi * kw, y, x + (wi + 1) * kw, y + h)});
-    ++wi;
-  }
-  std::vector<std::pair<int, ImVec4>> blacks;
-  wi = 0;
-  for (int k = lo; k <= hi; ++k) {
-    if (isBlack(k)) {
-      const float bx = x + wi * kw - kw * 0.32f;
-      blacks.push_back({k, ImVec4(bx, y, bx + kw * 0.64f, y + h * 0.6f)});
-    } else {
-      ++wi;
-    }
-  }
-  if (hov || act) {
-    for (const auto& [k, r] : blacks)
-      if (hit < 0 && m.x >= c.p(r.x, 0).x && m.x < c.p(r.z, 0).x && m.y >= c.p(0, r.y).y && m.y < c.p(0, r.w).y) hit = k;
-    for (const auto& [k, r] : rects)
-      if (hit < 0 && m.x >= c.p(r.x, 0).x && m.x < c.p(r.z, 0).x) hit = k;
-  }
-  if (act && hit >= 0 && hit != c.u.heldKey) {
-    if (c.u.heldKey >= 0) previewKey(c, c.u.heldKey, false);
-    previewKey(c, hit, true);
-    c.u.heldKey = hit;
-  }
-  if (!act && c.u.heldKey >= 0) {
-    previewKey(c, c.u.heldKey, false);
-    c.u.heldKey = -1;
-  }
-  for (const auto& [k, r] : rects) {
-    const bool down = k == c.u.heldKey;
-    const ImVec2 a = c.p(r.x, r.y), b = c.p(r.z, r.w);
-    skin::gradientRect(c.dl, ImVec2(a.x + 0.5f, a.y), ImVec2(b.x - 0.5f, b.y), down ? c.P.keyDown : c.P.keyWhite,
-                       down ? c.P.keyDown : theme::mix(c.P.keyWhite, c.P.textFaint, 0.18f), c.s(2), ImDrawFlags_RoundCornersBottom);
-    if (k % 12 == 0 && k == 60) textC(c, (r.x + r.z) * 0.5f, r.w - 12, "C3", c.P.textDim, ty::kCap, true);
-  }
-  // J-202: seams between the white keys in their own colour, so they show on light themes too
-  const ImU32 seam = theme::mix(c.P.keyWhite, c.P.keyBlack, 0.35f);
-  for (size_t i = 1; i < rects.size(); ++i) {
-    const ImVec2 a = c.p(rects[i].second.x, rects[i].second.y), b = c.p(rects[i].second.x, rects[i].second.w);
-    c.dl->AddLine(ImVec2(std::round(a.x) + 0.5f, a.y), ImVec2(std::round(b.x) + 0.5f, b.y), seam, 1.0f);
-  }
-  for (const auto& [k, r] : blacks) {
-    const bool down = k == c.u.heldKey;
-    const ImVec2 a = c.p(r.x, r.y), b = c.p(r.z, r.w);
-    skin::gradientRect(c.dl, a, b, down ? c.P.keyDown : skin::lighten(c.P.keyBlack, 0.12f), down ? c.P.keyDown : c.P.keyBlack, c.s(1.5f),
-                       ImDrawFlags_RoundCornersBottom);
-  }
-  if (hov) c.a.setHint("Click to audition");
-}
-
-namespace {
-}  // namespace
-
 namespace {
 // A switch chip: its dot turns `onK` on and off, its name opens `view`.
 void playChip(Ctx& c, const char* id, float x, float y, float w, float h, int onK, const char* name, int view, const char* hint) {
@@ -600,7 +467,7 @@ void playBar(Ctx& c) {
                ImGui::Separator();
                if (ImGui::MenuItem(i18n::tr("Key zones..."))) c.u.view = VZones;
              },
-             "Glide curve and options, bend range, key and scale, groove, key zones");
+             "Glide curve and options, bend range, key and scale, groove, key zones", T(11.5f));  // the bar's text size
   }
   {  // the keyboard drawer
     const float w = textW(c, "Keyboard", T(11.5f), false) + M(11 + 16 + 7 + 7 + 10 + 11);
@@ -612,69 +479,51 @@ void playBar(Ctx& c) {
     c.dl->AddRectFilled(c.p(kx, fy), c.p(kx + w, fy + fh), c.u.drawer ? P.accentSoft : (hv ? P.headOn : P.panelHi), c.s(M(4)));
     c.dl->AddRect(c.p(kx, fy), c.p(kx + w, fy + fh), c.u.drawer ? P.accent : (hv ? P.lineHi : P.line), c.s(M(4)));
     const ImU32 ic = c.u.drawer ? P.accentText : P.label;
-    {  // a small keyboard
-      const float gx = kx + M(11), gy = cy - M(5), gw = M(16), gh = M(10);
-      c.dl->AddRect(c.p(gx, gy), c.p(gx + gw, gy + gh), ic, c.s(M(1.5f)), 0, std::max(1.f, c.s(M(1))));
-      for (int i = 1; i < 4; ++i) vline(c, gx + gw * i / 4, gy + M(1), gy + gh * 0.6f, ic);
-    }
-    text(c, kx + M(11 + 16 + 7), cy - T(11.5f) * 0.68f, "Keyboard", ic, T(11.5f), false);
-    {  // which way it slides
-      const ImVec2 m = c.p(kx + w - M(11) - M(4), cy);
-      const float d = c.s(M(3.2f)), s = c.u.drawer ? 1.f : -1.f;
-      c.dl->AddLine(ImVec2(m.x - d, m.y - d * 0.5f * s), ImVec2(m.x, m.y + d * 0.5f * s), P.textFaint, std::max(1.f, c.s(M(1.2f))));
-      c.dl->AddLine(ImVec2(m.x, m.y + d * 0.5f * s), ImVec2(m.x + d, m.y - d * 0.5f * s), P.textFaint, std::max(1.f, c.s(M(1.2f))));
-    }
+    // the glyph, the name and the arrow on one line: the middle of the name's capitals
+    const float my = capMid(c, fy, fh, T(11.5f), false);
+    pianoGlyph(c, ImVec2(c.p(kx + M(11 + 8), 0).x, my), ic);
+    labelBeside(c, kx + M(11 + 16 + 7), fy, fh, "Keyboard", ic, T(11.5f), false);  // on the row's baseline
+    iconArrow(c.dl, ImVec2(std::round(c.p(kx + w - M(11) - M(4), 0).x), my), std::round(c.s(M(9))), c.u.drawer ? 3 : 2, P.textDim);  // which way it slides
     if (click) c.u.drawer = !c.u.drawer;
     if (hv) c.a.setHint("Keyboard drawer (Alt+K): the wheels, the bend range and a keyboard to play the sound");
-  }
-}
-
-// The keyboard drawer: slides up from the play bar under the columns (x 0..kStageW); the view
-// above it gets shorter (the columns and the patch reflow, a full-width view scrolls). Drawn
-// first, so it takes the pointer over its own area.
-void drawer(Ctx& c) {
-  const float dw = c.u.patch ? 1000.f : kW;  // under the blocks and the sidebar (the Patch inspector keeps its height)
-  const float dh = drawerH(c.u);
-  if (dh < 1) return;
-  const float y = kPlayY - dh, h = kDrawerH;  // the drawer's own layout, slid down by what is not yet out
-  // a soft shadow above its top edge: it slides over the view
-  for (int i = 0; i < 6; ++i)
-    c.dl->AddRectFilled(c.p(0, y - 6 + i), c.p(dw, y - 5 + i), IM_COL32(0, 0, 0, 10 + i * 9));
-  ImGui::PushClipRect(c.p(0, y), c.p(dw, kPlayY), true);
-  panelRect(c, 0, y, dw, dh, c.P.frame);
-  c.dl->AddRectFilled(c.p(8, y + 6), c.p(dw - 8, y + h - 2), c.P.panel, c.s(6));
-  c.dl->AddRectFilled(c.p(0, y), c.p(dw, y + 1.5f), c.P.lineHi);  // its edge
-  wheel(c, G_PitchWheel, 24, y + 18, 24, 64, true);
-  wheel(c, G_ModWheel, 64, y + 18, 24, 64, false);
-  textMid(c, 16, 56, y + 92, "Bend", c.P.label, 10.5f, false);
-  textMid(c, 56, 96, y + 92, "Mod", c.P.label, 10.5f, false);
-  {  // the bend range, a readout that opens its two values
-    char b[24];
-    const int up = vali(c, G_BendUp), dn = vali(c, G_BendDown);
-    if (up == dn) std::snprintf(b, sizeof b, "\xC2\xB1%d st", up);
-    else std::snprintf(b, sizeof b, "+%d / -%d st", up, dn);
-    text(c, 112, y + 18, "Bend range", c.P.label, 11.0f, false);
-    if (button(c, "bendrange", 112, y + 36, 92, 26, b, false, 11.5f)) ImGui::OpenPopup("##bendr");
-    if (ImGui::IsItemHovered()) c.a.setHint("Bend range: how far the bend wheel moves the pitch up and down (click to change)");
-    if (ImGui::BeginPopup("##bendr")) {
-      ImGui::TextDisabled("%s", i18n::tr("Bend range"));
-      int u2 = up, d2 = dn;
-      ImGui::SetNextItemWidth(c.s(120));
-      if (ImGui::InputInt(i18n::tr("Up (semitones)"), &u2)) setv(c, G_BendUp, std::clamp(u2, -48, 48));
-      ImGui::SetNextItemWidth(c.s(120));
-      if (ImGui::InputInt(i18n::tr("Down (semitones)"), &d2)) setv(c, G_BendDown, std::clamp(d2, -48, 48));
-      ImGui::EndPopup();
+    // dev (tests): where the Keyboard button is on screen, whether the drawer is open and how much of it was drawn
+    if (static const bool rep = std::getenv("GL_PLASMA_DRAWER_REPORT") != nullptr; rep) {
+      const ImVec2 a = edzoomui::toScreenHere(c.p(kx, fy)), b = edzoomui::toScreenHere(c.p(kx + w, fy + fh));
+      static std::string last;
+      char line[160];
+      std::snprintf(line, sizeof line, "PLASMA_DRAWER open %d drawn %.0f button %.0f %.0f %.0f %.0f", c.u.drawer ? 1 : 0,
+                    static_cast<double>(c.u.devDrawerDrawn), static_cast<double>((a.x + b.x) * 0.5f), static_cast<double>((a.y + b.y) * 0.5f),
+                    static_cast<double>(b.x - a.x), static_cast<double>(b.y - a.y));
+      if (last != line) last = line, std::fprintf(stderr, "%s\n", line);
+      // the drawer's parts on screen, a dial under it, and the values (the rest of the sound as one checksum)
+      const DrawerDev& dd = drawerDev();
+      double sum = 0;
+      for (size_t i = 0; i < c.st.params.size(); ++i) {
+        const int k = static_cast<int>(i);
+        if (k == G_PitchWheel || k == G_ModWheel || k == G_BendUp || k == G_BendDown || k == G_TrigOctave) continue;
+        sum += static_cast<double>(c.st.params[i]) * static_cast<double>(i % 97 + 1);
+      }
+      static std::string lastDev;
+      char dev[640];
+      auto mid = [](const ImVec4& r) { return ImVec2((r.x + r.z) * 0.5f, (r.y + r.w) * 0.5f); };
+      const ImVec2 pw = mid(dd.pitch), mw = mid(dd.mod);
+      std::snprintf(dev, sizeof dev,
+                    "PLASMA_DRAWER_DEV under %d %.0f %.0f gap %.0f %.0f pitch %.0f %.0f %.0f %.0f mod %.0f %.0f %.0f %.0f "
+                    "up %.0f %.0f %.0f %.0f down %.0f %.0f %.0f %.0f oct %.0f %.0f %.0f %.0f keys %.0f %.0f %.0f %.0f "
+                    "vals sum %.6f pw %.4f mw %.4f bu %d bd %d to %d key %d vel %.3f hot %d pop %d at %.0f %.0f rect %.0f %.0f %.0f %.0f",
+                    dd.underK, static_cast<double>(dd.under.x), static_cast<double>(dd.under.y), static_cast<double>(dd.gap.x), static_cast<double>(dd.gap.y),
+                    static_cast<double>(pw.x), static_cast<double>(pw.y), static_cast<double>(dd.pitch.z - dd.pitch.x), static_cast<double>(dd.pitch.w - dd.pitch.y),
+                    static_cast<double>(mw.x), static_cast<double>(mw.y), static_cast<double>(dd.mod.z - dd.mod.x), static_cast<double>(dd.mod.w - dd.mod.y),
+                    static_cast<double>(dd.up.x), static_cast<double>(dd.up.y), static_cast<double>(dd.up.z), static_cast<double>(dd.up.w),
+                    static_cast<double>(dd.down.x), static_cast<double>(dd.down.y), static_cast<double>(dd.down.z), static_cast<double>(dd.down.w),
+                    static_cast<double>(dd.oct.x), static_cast<double>(dd.oct.y), static_cast<double>(dd.oct.z), static_cast<double>(dd.oct.w),
+                    static_cast<double>(dd.keys.x), static_cast<double>(dd.keys.y), static_cast<double>(dd.keys.z), static_cast<double>(dd.keys.w), sum,
+                    val(c, G_PitchWheel), val(c, G_ModWheel), vali(c, G_BendUp), vali(c, G_BendDown), vali(c, G_TrigOctave), dd.lastKey,
+                    static_cast<double>(dd.lastVel), dd.hot ? 1 : 0, dd.pop ? 1 : 0, static_cast<double>(dd.at.x), static_cast<double>(dd.at.y),
+                    static_cast<double>(dd.screen.x), static_cast<double>(dd.screen.y), static_cast<double>(dd.screen.z), static_cast<double>(dd.screen.w));
+      if (c.u.drawer && lastDev != dev) lastDev = dev, std::fprintf(stderr, "%s\n", dev);
     }
-    reach(G_BendUp), reach(G_BendDown);
   }
-  field(c, G_TrigOctave, 112, y + 70, 192, 24, "Trigger octave");
-  if (ImGui::IsItemHovered()) c.a.setHint("Trigger octave: its twelve keys pick the arpeggiator pattern or phrase while playing");
-  keyboard(c, 320, y + 14, dw - 336, h - 24);
-  // the drawer owns the pointer over all of it
-  ImGui::SetCursorScreenPos(c.p(0, y));
-  ImGui::SetNextItemAllowOverlap();
-  ImGui::InvisibleButton("##drawerbg", c.F.sz(dw, dh));
-  ImGui::PopClipRect();
 }
 
 // The whole editor.
@@ -708,13 +557,37 @@ void drawFrame(Ctx& c) {
   panelRect(c, 0, 0, kW, kH, P.frame);
   const bool overlay = isOverlay(u.view);
   const bool drawerOn = drawerH(u) >= 1 && !overlay;
+  u.devDrawerDrawn = 0;  // (drawer() sets the height it drew)
+  drawerDev().rect = ImVec4(0, 0, 0, 0), drawerDev().underK = -1;
+  // While the pointer is over the drawer, the editor under it must not see it: no hover, click,
+  // drag or wheel reaches the controls it covers. The drawer is drawn first; then the pointer is
+  // moved off for the rest of the frame (and put back when drawFrame returns) unless a control
+  // outside the drawer is held (a drag that started above it carries on).
+  struct PointerOff {
+    bool on = false;
+    ImVec2 pos{0, 0};
+    float wheel = 0, wheelH = 0;
+    ~PointerOff() {
+      if (!on) return;
+      ImGuiIO& io = ImGui::GetIO();
+      io.MousePos = pos, io.MouseWheel = wheel, io.MouseWheelH = wheelH;
+    }
+  } pointerOff;
   if (drawerOn) {
     c.dl->ChannelsSplit(2);
     c.dl->ChannelsSetCurrent(1);
     layoutLayer(3);
-    drawer(c);
+    const bool held = drawer(c);
     c.dl->ChannelsSetCurrent(0);
     layoutLayer(0);
+    ImGuiIO& io = ImGui::GetIO();
+    const ImVec2 a = c.p(0, kPlayY - drawerH(u)), b = c.p(drawerW(u), kPlayY);
+    const bool over = ImGui::IsMousePosValid() && io.MousePos.x >= a.x && io.MousePos.x < b.x && io.MousePos.y >= a.y && io.MousePos.y < b.y;
+    const bool otherHeld = ImGui::GetActiveID() != 0 && !held;
+    if (over && !otherHeld && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByActiveItem)) {
+      pointerOff.on = true, pointerOff.pos = io.MousePos, pointerOff.wheel = io.MouseWheel, pointerOff.wheelH = io.MouseWheelH;
+      io.MousePos = ImVec2(-FLT_MAX, -FLT_MAX), io.MouseWheel = 0, io.MouseWheelH = 0;
+    }
   }
   routesBegin(c);
   topBar(c);
@@ -787,7 +660,7 @@ void drawFrame(Ctx& c) {
       u.stageScroll = std::clamp(u.stageScroll - ImGui::GetIO().MouseWheel * 48.f, 0.f, dh);
     skin::Form G = c.F;
     G.o.y -= u.stageScroll * G.s;
-    Ctx sc{c.a, c.t, G, c.dl, c.st, c.m, c.u, c.P, c.live, c.hasLive};
+    Ctx sc{c.a, c.t, G, c.dl, c.st, c.m, c.u, c.P, c.live, c.hasLive, c.graph};
     ImGui::PushClipRect(c.p(0, kStageHeadY), c.p(kStageW, kPlayY - dh), true);
     if (dh > 0) layoutScroll(c);
     stageView(sc);
@@ -839,7 +712,7 @@ void scrollBody(Ctx& c, float x, float y0, float w, float y1, float& sc, float& 
   layoutScroll(c);
   skin::Form G = c.F;
   G.o.y -= sc * G.s;
-  Ctx cc{c.a, c.t, G, c.dl, c.st, c.m, c.u, c.P, c.live, c.hasLive};
+  Ctx cc{c.a, c.t, G, c.dl, c.st, c.m, c.u, c.P, c.live, c.hasLive, c.graph};
   // the hidden part of the body must not grow the window's content (the host would shrink the editor)
   ImGuiWindow* win = ImGui::GetCurrentWindow();
   const ImVec2 keepMax = win->DC.CursorMaxPos;

@@ -1,0 +1,6 @@
+<!-- Gridline original (GPL-3.0), drawn on the Lucide 24-unit grid and stroke rules: a screen on a stand (the desktop folder) -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="3" y="4" width="18" height="12" rx="2" />
+  <path d="M12 16 v4" />
+  <path d="M8 20 h8" />
+</svg>

@@ -313,7 +313,20 @@ uint32_t brandRole(BrandFamily f) {
 
 }  // namespace pui
 
-void drawPluginHeader(App& a, const PluginTarget& t) {
+float pluginHeaderWidth(App& a, const PluginInfo& info) {
+  constexpr float kAB = 26 + 2 + 26 + 2 + 22;  // A, B and copy (the effects' bypass and mix are not in a channel window)
+  if (info.ownPresetBar) return kAB;
+  // the wordmark (24 px tall, as wordmark(a, type, 18) draws it) or the name, then the preset row
+  float mark = pui::wordmarkSize(info.type, std::min(std::max(ImGui::GetFrameHeight(), 22.0f), 24.0f)).x;
+  if (mark <= 0) {
+    ImGui::PushFont(a.fontBold, 15.0f);
+    mark = ImGui::CalcTextSize(info.name.c_str()).x;
+    ImGui::PopFont();
+  }
+  return std::ceil(mark + 14 + 22 + 2 + 170 + 2 + 22 + 2 + 22 + 12 + kAB);
+}
+
+void drawPluginHeader(App& a, const PluginTarget& t, bool rule) {
   const Song& s = a.doc.song();
   const PluginState* st = t.state(s);
   const PluginInfo* info = t.info(s);
@@ -500,12 +513,15 @@ void drawPluginHeader(App& a, const PluginTarget& t) {
                            [k](MixerTrack& mt) { mt.slots[static_cast<size_t>(k)].enabled = !mt.slots[static_cast<size_t>(k)].enabled; });
     }
     ImGui::SameLine(0, 6);
-    float y = ImGui::GetCursorPosY();
-    ImGui::SetCursorPosY(y - 2);
+    // K-216: the mix knob sits on the button's middle, never above the row (where the window's
+    // top edge would cut its ring)
+    const float y = ImGui::GetCursorPosY();
+    ImGui::SetCursorPosY(y + std::max(0.0f, (ImGui::GetFrameHeight() - 22.0f) * 0.5f));
     ui::ParamKnob("mix", slotMixParam(t.owner, t.slot), 11.0f);
   }
   browserui::pluginWindowDropTarget(a, t);  // presets / samples from the browser (J-16)
   ImGui::PopID();
+  if (!rule) return;
   ImGui::Dummy(ImVec2(0, 2));
   ImVec2 p = ImGui::GetCursorScreenPos();
   ImGui::GetWindowDrawList()->AddLine(p, ImVec2(p.x + ImGui::GetContentRegionAvail().x, p.y), P.line);

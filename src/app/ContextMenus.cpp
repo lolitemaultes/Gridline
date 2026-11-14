@@ -34,6 +34,7 @@
 #include "../core/Timeline.h"
 #include "../core/Presets.h"
 #include "../core/MixerOps.h"
+#include "../core/TrackOrder.h"
 #include "../core/StepNotes.h"
 #include "../engine/PlaylistTools.h"
 #include "../engine/KerfMarks.h"
@@ -1255,8 +1256,15 @@ void playlistTrackMenu(App& a, int track) {
     ImGui::EndMenu();
   }
   ImGui::Separator();
-  if (ImGui::MenuItem(i18n::tr("Move up"), nullptr, false, track > 0)) ops::movePlaylistTrack(a.doc, track, -1);
-  if (ImGui::MenuItem(i18n::tr("Move down"), nullptr, false, track + 1 < n)) ops::movePlaylistTrack(a.doc, track, 1);
+  {  // GitHub #46: the selected tracks move together (a group header brings its group)
+    const std::vector<int> sel = playlistTrackSelection(a, track);
+    const std::set<int> moving = trackorder::withGroups(s, sel);
+    const bool up = !moving.empty() && *moving.begin() > 0, down = !moving.empty() && *moving.rbegin() + 1 < n;
+    if (ImGui::MenuItem(i18n::tr("Move up"), keys::label("playlist.moveTrackUp"), false, up)) a.later([&a, sel] { stepPlaylistSelection(a, sel, -1); });
+    devMenuItem("trmenu moveup");
+    if (ImGui::MenuItem(i18n::tr("Move down"), keys::label("playlist.moveTrackDown"), false, down)) a.later([&a, sel] { stepPlaylistSelection(a, sel, 1); });
+    devMenuItem("trmenu movedown");
+  }
   ImGui::Separator();
   if (ImGui::MenuItem(i18n::tr("Delete all clips on track"))) ops::clearPlaylistTrack(a.doc, track);
   if (ImGui::MenuItem(i18n::tr("Delete track"), nullptr, false, n > 1)) a.later([&a, track] { ops::deletePlaylistTrack(a.doc, track); });
@@ -2100,21 +2108,13 @@ void mixerTrackMenu(App& a, size_t index) {
       ImGui::EndMenu();
     }
     if (ImGui::BeginMenu(i18n::tr("Select"))) {
-      if (ImGui::MenuItem(i18n::tr("Channels routed to this track"), "Alt+L")) {
-        a.selChannels.clear();
-        for (const auto& c : s.channels)
-          if (c.mixerTrack == id) a.selChannels.insert(c.id);
-        if (!a.selChannels.empty()) a.selChannel = *a.selChannels.begin();
-        a.showRack = true;
-      }
+      if (ImGui::MenuItem(i18n::tr("Channels routed to this track"), keys::label("mixer.selectRoutedChannels")))
+        mixerSelectRoutedChannels(a, id);
       if (ImGui::MenuItem(i18n::tr("Tracks this one is routed to"))) {
         auto v = mixops::routedFrom(s, id);
         a.mixerView.sel = std::set<ObjectId>(v.begin(), v.end());
       }
-      if (ImGui::MenuItem(i18n::tr("Tracks routed to this one"), "Ctrl+Alt+L")) {
-        auto v = mixops::routedTo(s, id);
-        a.mixerView.sel = std::set<ObjectId>(v.begin(), v.end());
-      }
+      if (ImGui::MenuItem(i18n::tr("Tracks routed to this one"), keys::label("mixer.selectRoutedTo"))) mixerSelectRoutedTo(a, id);
       if (ImGui::MenuItem(i18n::tr("Group"), nullptr, false, !t.group.empty())) {
         auto v = mixops::groupMembers(s, t.group);
         a.mixerView.sel = std::set<ObjectId>(v.begin(), v.end());
@@ -2249,9 +2249,17 @@ void mixerTrackMenu(App& a, size_t index) {
     ImGui::EndMenu();
   }
   if (changed()) return;
-  if (ImGui::MenuItem(i18n::tr("Move left"), keys::label("mixer.moveLeft"), false, index > 1)) a.later([&a, id] { ops::moveMixerTrack(a.doc, id, -1); });
-  devMenuItem("mixmenu moveleft");
-  if (ImGui::MenuItem(i18n::tr("Move right"), keys::label("mixer.moveRight"), false, !master && index + 1 < s.mixer.size())) a.later([&a, id] { ops::moveMixerTrack(a.doc, id, 1); });
+  {  // GitHub #46: the selected tracks move together; their routing follows them (core/TrackOrder.h)
+    int lo = -1, hi = -1;
+    for (ObjectId x : selIds)
+      if (const int i = s.mixerIndex(x); i >= 1) lo = lo < 0 ? i : std::min(lo, i), hi = std::max(hi, i);
+    if (ImGui::MenuItem(i18n::tr("Move left"), keys::label("mixer.moveLeft"), false, lo > 1))
+      a.later([&a, selIds] { trackorder::stepMixerTracks(a.doc, selIds, -1); });
+    devMenuItem("mixmenu moveleft");
+    if (ImGui::MenuItem(i18n::tr("Move right"), keys::label("mixer.moveRight"), false, hi >= 1 && hi + 1 < static_cast<int>(s.mixer.size())))
+      a.later([&a, selIds] { trackorder::stepMixerTracks(a.doc, selIds, 1); });
+    devMenuItem("mixmenu moveright");
+  }
 
   ImGui::Separator();
   if (ImGui::BeginMenu(many ? i18n::tr("Reset selected tracks") : i18n::tr("Reset track"))) {
