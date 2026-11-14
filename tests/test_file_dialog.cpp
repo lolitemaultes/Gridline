@@ -117,7 +117,7 @@ int main() {
   expect(xdgUserDir(userDirs, "MUSIC", "/home/me") == "/data/Musik", "XDG: an absolute music folder");
   expect(xdgUserDir(userDirs, "DOCUMENTS", "/home/me") == "", "XDG: a folder set to home counts as not set");
   const auto pl = standardPlaces("/home/me", userDirs);
-  expect(pl.size() == 5 && pl[0].path == "/home/me" && pl[1].path == "/home/me/Schreibtisch" && pl[2].path == fs::path("/home/me/Documents").u8string() &&
+  expect(pl.size() == 5 && pl[0].path == "/home/me" && pl[1].path == "/home/me/Schreibtisch" && pl[2].path == (fs::u8path("/home/me") / "Documents").u8string() &&
              pl[3].path == "/data/Musik",
          "Home, Desktop, Documents, Music, Downloads (XDG names where set)");
   expect(standardPlaces("", "").empty(), "no home: no places");
