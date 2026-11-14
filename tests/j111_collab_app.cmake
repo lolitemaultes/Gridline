@@ -82,6 +82,7 @@ set(A1 "5 collab profile Alex
 43 waitfor never 3
 44 collab links
 45 collab report \"${OUT}/a1.json\"
+46 waitfor \"file:${OUT}/b1.json\" 90
 50 quit
 ")
 set(B1 "5 collab profile Sam
@@ -94,6 +95,7 @@ set(B1 "5 collab profile Sam
 43 waitfor never 3
 44 collab links
 45 collab report \"${OUT}/b1.json\"
+46 waitfor \"file:${OUT}/a1.json\" 90
 50 quit
 ")
 runPair(1 "${A1}" "${B1}" 300)
@@ -113,6 +115,7 @@ set(A2 "10 collab open \"${OUT}/Alex/Song/Song.gridline\"
 42 waitfor collab-synced 60
 43 waitfor never 3
 45 collab report \"${OUT}/a2.json\"
+46 waitfor \"file:${OUT}/b2.json\" 90
 50 quit
 ")
 set(B2 "5 waitfor never 15
@@ -125,6 +128,7 @@ set(B2 "5 waitfor never 15
 42 waitfor collab-synced 60
 43 waitfor never 3
 45 collab report \"${OUT}/b2.json\"
+46 waitfor \"file:${OUT}/a2.json\" 90
 50 quit
 ")
 # (the configs of phase 1: the same people on the same computers)
@@ -156,6 +160,7 @@ file(WRITE "${OUT}/4-a.txt" "10 collab open \"${OUT}/Alex/Song\"
 42 waitfor collab-synced 60
 43 waitfor never 3
 45 collab report \"${OUT}/a4.json\"
+46 waitfor \"file:${OUT}/b4.json\" 90
 50 quit
 ")
 file(WRITE "${OUT}/4-b.txt" "10 collab join \"${OUT}/invite4.txt\" \"${OUT}/Sam/Other folder\"
@@ -165,6 +170,7 @@ file(WRITE "${OUT}/4-b.txt" "10 collab join \"${OUT}/invite4.txt\" \"${OUT}/Sam/
 42 waitfor collab-synced 60
 43 waitfor never 3
 45 collab report \"${OUT}/b4.json\"
+46 waitfor \"file:${OUT}/a4.json\" 90
 50 quit
 ")
 execute_process(
@@ -189,6 +195,7 @@ set(A3 "5 collab profile Alex
 42 waitfor collab-synced 60
 43 waitfor never 3
 45 collab report \"${OUT}/a3.json\"
+46 waitfor \"file:${OUT}/b3.json\" 90
 50 quit
 ")
 set(B3 "5 collab profile Sam
@@ -199,6 +206,7 @@ set(B3 "5 collab profile Sam
 42 waitfor collab-synced 60
 43 waitfor never 3
 45 collab report \"${OUT}/b3.json\"
+46 waitfor \"file:${OUT}/a3.json\" 90
 50 quit
 ")
 runPair(3 "${A3}" "${B3}" 300 GRIDLINE_COLLAB_TEST_ICE_DELAY=32)
