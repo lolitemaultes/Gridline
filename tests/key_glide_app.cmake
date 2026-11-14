@@ -10,12 +10,19 @@
 # the log of the notes the keyboards started and stopped. Every check: the keyboard sounds the key
 # under the pointer and at most one live note is held; after each release nothing sounds; the log
 # alternates on, off of the same key, on of the next.
-#   cmake -DAPP=<gridline-app> -DOUT=<dir> -P key_glide_app.cmake
+#   cmake -DAPP=<gridline-app> -DOUT=<dir> [-DONLY=<editor type>] -P key_glide_app.cmake
+# ONLY checks one editor (ctest runs one test per editor: on a shared CI runner the nine together
+# took longer than one test's time limit). Each app run has its own time limit and says when it
+# starts, so a run that stalls is named in the output.
 cmake_minimum_required(VERSION 3.16)
 file(REMOVE_RECURSE "${OUT}")
 file(MAKE_DIRECTORY "${OUT}")
+string(TIMESTAMP t0 "%s")
 
 function(run tag type size script)
+  string(TIMESTAMP now "%s")
+  math(EXPR at "${now} - ${t0}")
+  message(STATUS "run ${tag} (${at} s in)")
   file(REMOVE_RECURSE "${OUT}/cfg_${tag}")
   file(MAKE_DIRECTORY "${OUT}/cfg_${tag}")
   set(ENV{GRIDLINE_CONFIG_HOME} "${OUT}/cfg_${tag}")
@@ -25,10 +32,10 @@ function(run tag type size script)
   set(ENV{GRIDLINE_HIDE_PLUGINS} "all")
   file(WRITE "${OUT}/${tag}.txt" "${script}")
   execute_process(COMMAND "${APP}" --hidden --no-ui-sounds --fixed-dt 16 --size ${size} --plugin ${type} --dev-input "${OUT}/${tag}.txt"
-                  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 120)
+                  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 90)
   file(WRITE "${OUT}/${tag}.log" "${out}\n${err}")
   if(NOT rc EQUAL 0)
-    message(FATAL_ERROR "${tag}: gridline-app failed (${rc}): ${err}")
+    message(FATAL_ERROR "FAIL: ${tag}: gridline-app failed (${rc}), the script ${OUT}/${tag}.txt:\n${out}\n${err}")
   endif()
   set(${tag}_out "${out}" PARENT_SCOPE)
 endfunction()
@@ -40,6 +47,9 @@ foreach(entry "gl.matrixfm|iskin|-|1600x1100" "gl.twinva|iskin|-|1600x1100" "gl.
               "gl.scratch|scratch|-|1600x1100" "gl.hat|chstrip|strip on|1600x1100")
   string(REPLACE "|" ";" f "${entry}")
   list(GET f 0 type)
+  if(ONLY AND NOT type STREQUAL ONLY)
+    continue()
+  endif()
   list(GET f 1 bed)
   list(GET f 2 setup)
   list(GET f 3 size)
@@ -215,5 +225,9 @@ foreach(entry "gl.matrixfm|iskin|-|1600x1100" "gl.twinva|iskin|-|1600x1100" "gl.
     message(FATAL_ERROR "FAIL: ${type}: keys played ${seen}, want ${ons}")
   endif()
   math(EXPR checked "${checked} + 1")
+  message(STATUS "ok - ${type}: the ${bed} keyboard plays the key under the pointer, one at a time")
 endforeach()
+if(checked EQUAL 0)
+  message(FATAL_ERROR "FAIL: no editor named ${ONLY}")
+endif()
 message(STATUS "ok - ${checked} keyboards play the key under the pointer, one at a time, and leave no key sounding")

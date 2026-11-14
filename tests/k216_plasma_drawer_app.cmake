@@ -11,9 +11,14 @@
 #   5. its own controls work: the bend wheel moves while held and springs back, the mod wheel
 #      stays, the bend range and trigger octave step with minus and plus, and the keys play
 #      with a velocity by where they are pressed (louder lower on a key).
-#   cmake -DAPP=<gridline-app> -DOUT=<dir> -P k216_plasma_drawer_app.cmake
+#   cmake -DAPP=<gridline-app> -DOUT=<dir> [-DPART=open|<K-219 case>] -P k216_plasma_drawer_app.cmake
+# PART=open runs steps 1-3 only; PART=<case> (such as 1280x800:0: or 1920x1080:1:detach) runs that
+# K-219 case only. ctest runs one test per part: on a shared CI runner the 52 app runs together took
+# longer than one test's time limit. Each app run has its own time limit and says when it starts, so
+# a run that stalls is named in the output.
 cmake_minimum_required(VERSION 3.16)
 file(REMOVE_RECURSE "${OUT}")
+string(TIMESTAMP t0 "%s")
 file(MAKE_DIRECTORY "${OUT}/no-library")
 set(ENV{GRIDLINE_NO_PLUGIN_SCAN} "1")
 set(ENV{GRIDLINE_HIDE_PLUGINS} "all")
@@ -24,16 +29,19 @@ set(kDrawerH 124)
 
 # Runs the app with a script; sets `rep` to the last drawer report line in the parent scope.
 function(run tag size script frames)
+  string(TIMESTAMP now "%s")
+  math(EXPR at "${now} - ${t0}")
+  message(STATUS "run ${tag} (${at} s in)")
   file(MAKE_DIRECTORY "${OUT}/${tag}/cfg" "${OUT}/${tag}/home")
   set(ENV{GRIDLINE_CONFIG_HOME} "${OUT}/${tag}/cfg")
   set(ENV{HOME} "${OUT}/${tag}/home")
   file(WRITE "${OUT}/${tag}/in.txt" "${script}")
   execute_process(COMMAND "${APP}" --hidden --no-ui-sounds --no-update-check --fixed-dt 16 --plugin gl.plasma --size ${size} --frames ${frames}
                           --dev-input "${OUT}/${tag}/in.txt" --screenshot "${OUT}/${tag}/shot.ppm"
-                  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 120)
+                  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 90)
   file(WRITE "${OUT}/${tag}/err.txt" "${err}")
   if(NOT rc EQUAL 0)
-    message(FATAL_ERROR "FAIL: ${tag}: gridline-app failed (${rc}):\n${err}")
+    message(FATAL_ERROR "FAIL: ${tag}: gridline-app failed (${rc}), the script ${OUT}/${tag}/in.txt:\n${err}")
   endif()
   string(REGEX MATCHALL "PLASMA_DRAWER [^\n]*" reps "${err}")
   list(LENGTH reps n)
@@ -47,7 +55,7 @@ function(run tag size script frames)
 endfunction()
 
 set(first "1440x900:0" "1280x800:0" "1920x1080:1")
-if(ONLY219)
+if(ONLY219 OR (PART AND NOT PART STREQUAL "open"))
   set(first "")
 endif()
 foreach(case ${first})
@@ -120,6 +128,14 @@ function(r v out)  # a report number to an integer
 endfunction()
 
 set(cases "1440x900:0:" "1280x800:0:" "1920x1080:0.5:" "1920x1080:0.67:" "1920x1080:0.75:" "1920x1080:1:" "2560x1600:1.5:" "1920x1080:1:detach")
+if(PART STREQUAL "open")
+  set(cases "")
+elseif(PART)
+  if(NOT PART IN_LIST cases)
+    message(FATAL_ERROR "FAIL: no K-219 case ${PART} (the cases: ${cases})")
+  endif()
+  set(cases "${PART}")
+endif()
 foreach(case ${cases})
   string(REPLACE ":" ";" parts "${case}")
   list(GET parts 0 size)
@@ -419,4 +435,6 @@ foreach(case ${cases})
   endif()
   message(STATUS "ok - ${tag}: a slide plays ${slide} one at a time (the engine held ${most} at most); Escape, focus loss, Alt+K and closing the window each stop the key")
 endforeach()
-message(STATUS "ok - the keyboard drawer opens from its button and from Alt+K at every window size")
+if(NOT PART)
+  message(STATUS "ok - the keyboard drawer opens from its button and from Alt+K at every window size")
+endif()
