@@ -107,6 +107,8 @@ int main() {
   expect(keepMount("/dev/da0s1", "/media/usb", "msdosfs", &k) && k == VolumeKind::Removable, "BSD: a FAT stick under /media");
   expect(keepMount("/dev/ada0p2", "/", "ufs", &k) && k == VolumeKind::System, "BSD: the UFS root");
   expect(!keepMount("devfs", "/dev", "devfs", &k) && !keepMount("procfs", "/proc", "procfs", &k), "BSD: devfs and procfs dropped");
+  expect(keepMount("overlay", "/", "overlay", &k) && k == VolumeKind::System, "an overlay root (container, live session) is still the file system");
+  expect(keepMount("tmpfs", "/", "tmpfs", &k) && k == VolumeKind::System, "a tmpfs root (sandbox) is still the file system");
 
   // ---- places ----
   const std::string userDirs = "# written by xdg-user-dirs-update\nXDG_DESKTOP_DIR=\"$HOME/Schreibtisch\"\nXDG_DOWNLOAD_DIR=\"$HOME/Downloads\"\n"

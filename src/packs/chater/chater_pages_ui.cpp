@@ -1135,7 +1135,7 @@ void drawPresets(Ctx& c, float y0) {
       }
       y += h + 6;
     }
-    char n[8];
+    char n[12];
     std::snprintf(n, sizeof n, "%d", count);
     textR(c, fMono(), 10, x + colW, y0 + 57, L.text3, n);
   }

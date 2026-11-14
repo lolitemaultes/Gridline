@@ -645,7 +645,7 @@ void topBar(Ctx& c) {
     if (hit(c, "##motion", 795, 8, 94, 30, &hov)) c.u.page = on ? PgMain : PgMotion, c.u.presets = c.u.settings = c.u.dice = false;
     rect(c, 795, 8, 94, 30, on ? L.text : (hov ? theme::mix(L.panel2, L.text, 0.08f) : L.panel2), 6);
     text(c, fBold(), 12, ImVec2(807, 15), on ? L.ink : L.text, tr("Motion"));
-    char n[8];
+    char n[12];
     std::snprintf(n, sizeof n, "%d", links);
     rect(c, 855, 14, 22, 18, theme::withAlpha(L.ink, on ? 0.25f : 0.2f), 4);
     textC(c, fMono(), 10, 866, 16, on ? L.ink : L.text2, n);
@@ -950,7 +950,7 @@ void quick(Ctx& c) {
       ImGui::PopID();
     }
     text(c, fBold(), 11, ImVec2(cx, by + bh + 6), L.text, breakName(i + 1));
-    char n[8];
+    char n[12];
     std::snprintf(n, sizeof n, "%d", static_cast<int>(std::lround(val)));
     textR(c, fMono(), 10.5f, cx + colW, by + bh + 7, L.text2, n);
   }

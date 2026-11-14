@@ -27,6 +27,9 @@
 #include <sys/mount.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#if defined(__NetBSD__)
+#include <sys/statvfs.h>
+#endif
 #else
 #include <sys/statvfs.h>
 #include <unistd.h>
@@ -85,6 +88,12 @@ bool keepMount(const std::string& device, const std::string& point, const std::s
   static const std::set<std::string> optical = {"iso9660", "udf", "cd9660"};
   static const std::set<std::string> network = {"nfs", "nfs4", "cifs", "smb3", "smbfs", "fuse.sshfs", "fuse.rclone", "davfs", "fuse.davfs2",
                                                 "9p", "afs", "ceph", "glusterfs", "fuse.gvfsd-fuse", "fuse.s3fs", "sshfs"};
+  // The root is always this computer's file system, whatever holds it (an overlay in containers and
+  // live sessions, tmpfs in some sandboxes).
+  if (point == "/") {
+    if (kind) *kind = VolumeKind::System;
+    return true;
+  }
   VolumeKind k;
   if (local.count(type)) k = VolumeKind::Internal;
   else if (optical.count(type)) k = VolumeKind::Optical;
@@ -224,11 +233,16 @@ std::vector<Volume> detectVolumes() {
     return naturalLess(a.name, b.name);
   });
 #elif defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
-  struct statfs* table = nullptr;
+#if defined(__NetBSD__)
+  using MountInfo = struct statvfs;  // NetBSD's getmntinfo fills statvfs records
+#else
+  using MountInfo = struct statfs;
+#endif
+  MountInfo* table = nullptr;
   const int got = getmntinfo(&table, MNT_NOWAIT);
   std::set<std::string> seen;
   for (int i = 0; i < got; ++i) {
-    const struct statfs& m = table[i];
+    const MountInfo& m = table[i];
     VolumeKind k;
     if (!keepMount(m.f_mntfromname, m.f_mntonname, m.f_fstypename, &k) || !seen.insert(m.f_mntonname).second) continue;
     Volume vol;

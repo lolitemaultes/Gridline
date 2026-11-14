@@ -177,7 +177,7 @@ double norm(const Document& d, ParamId p) {
   return desc && v ? desc->toNormalized(*v) : -1;
 }
 
-bool near(double a, double b, double eps = 1e-3) { return std::fabs(a - b) <= eps; }
+bool nearly(double a, double b, double eps = 1e-3) { return std::fabs(a - b) <= eps; }
 
 const osc::Message* find(const std::vector<osc::Message>& v, const std::string& a) {
   for (const auto& m : v)
@@ -448,13 +448,13 @@ void testControl() {
   c.handle(msg("/transport/record/toggle", {I(0)}));
   expect(!h.rec, "transport: record/toggle flips on the press");
   c.handle(msg("/transport/tempo", {F(133)}));
-  expect(near(s.tempo, 133, 1e-3), "transport: tempo in BPM");
+  expect(nearly(s.tempo, 133, 1e-3), "transport: tempo in BPM");
   c.handle(msg("/transport/position", {F(3)}));
-  expect(near(h.pos, 2.0 * s.barTicks()), "transport: position in bars (bar 3 starts after two bars)");
+  expect(nearly(h.pos, 2.0 * s.barTicks()), "transport: position in bars (bar 3 starts after two bars)");
   c.handle(msg("/transport/position/beats", {F(6)}));
-  expect(near(h.pos, 6.0 * s.ppq), "transport: position in beats");
+  expect(nearly(h.pos, 6.0 * s.ppq), "transport: position in beats");
   c.handle(msg("/transport/position/seconds", {F(2)}));
-  expect(near(h.pos, 2.0 * s.tempo / 60.0 * s.ppq), "transport: position in seconds");
+  expect(nearly(h.pos, 2.0 * s.tempo / 60.0 * s.ppq), "transport: position in seconds");
   c.handle(msg("/transport/loop", {I(2), I(3)}));
   expect(h.loopA == s.barTicks() && h.loopB == 3 * s.barTicks(), "transport: loop bars 2 to 3");
   c.handle(msg("/transport/loop/off"));
@@ -463,9 +463,9 @@ void testControl() {
   expect(h.song, "transport: mode song");
 
   const ObjectId t1 = s.mixer[1].id, t2 = s.mixer[2].id;
-  expect(c.handle(msg("/mixer/1/volume", {F(0.25)})) == R::Handled && near(norm(h.d, mixerParam(t1, MixerParam::Volume)), 0.25), "mixer: volume");
+  expect(c.handle(msg("/mixer/1/volume", {F(0.25)})) == R::Handled && nearly(norm(h.d, mixerParam(t1, MixerParam::Volume)), 0.25), "mixer: volume");
   c.handle(msg("/mixer/1/pan", {F(0.75)}));
-  expect(near(norm(h.d, mixerParam(t1, MixerParam::Pan)), 0.75), "mixer: pan");
+  expect(nearly(norm(h.d, mixerParam(t1, MixerParam::Pan)), 0.75), "mixer: pan");
   c.handle(msg("/mixer/[1-2]/mute", {I(1)}));
   expect(s.mixerTrack(t1)->muted && s.mixerTrack(t2)->muted && !s.mixer[3].muted, "mixer: mute through an address pattern");
   c.handle(msg("/mixer/1/mute"));
@@ -475,19 +475,19 @@ void testControl() {
   c.handle(msg("/mixer/2/solo/toggle", {I(1)}));
   expect(!s.mixerTrack(t2)->solo, "mixer: solo/toggle");
   c.handle(msg("/mixer/2/send/5", {F(0.4)}));
-  expect(near(norm(h.d, sendParam(t2, 5)), 0.4), "mixer: a send (made when missing)");
+  expect(nearly(norm(h.d, sendParam(t2, 5)), 0.4), "mixer: a send (made when missing)");
   const ObjectId t7 = s.mixer[7].id;
   c.handle(msg("/mixer/7/slot/2/bypass", {I(1)}));
   expect(!s.mixerTrack(t7)->slots[1].enabled, "mixer: slot bypass");
   c.handle(msg("/mixer/7/slot/2/bypass", {I(0)}));
   expect(s.mixerTrack(t7)->slots[1].enabled, "mixer: slot bypass off");
   c.handle(msg("/mixer/7/slot/2/mix", {F(0.5)}));
-  expect(near(s.mixerTrack(t7)->slots[1].mix, 0.5), "mixer: slot mix");
+  expect(nearly(s.mixerTrack(t7)->slots[1].mix, 0.5), "mixer: slot mix");
   expect(c.handle(msg("/mixer/99/volume", {F(1)})) == R::Unknown, "mixer: a track that does not exist");
 
   const ObjectId ch1 = s.channels[0].id;
   c.handle(msg("/channel/1/volume", {F(0.5)}));
-  expect(near(norm(h.d, channelParam(ch1, ChannelParam::Volume)), 0.5), "channel: volume");
+  expect(nearly(norm(h.d, channelParam(ch1, ChannelParam::Volume)), 0.5), "channel: volume");
   c.handle(msg("/channel/1/mute", {I(1)}));
   expect(s.channels[0].muted, "channel: mute");
   c.handle(msg("/channel/1/note", {I(60), I(100)}));
@@ -500,22 +500,22 @@ void testControl() {
   expect(h.notes.back() == std::make_pair(64, 0) && c.heldNotes() == 0, "channel: held notes are released when OSC stops");
   h.sel = s.channels[2].id;
   c.handle(msg("/channel/selected/pan", {F(0.1)}));
-  expect(near(norm(h.d, channelParam(s.channels[2].id, ChannelParam::Pan)), 0.1), "channel: the selected channel");
+  expect(nearly(norm(h.d, channelParam(s.channels[2].id, ChannelParam::Pan)), 0.1), "channel: the selected channel");
 
   // Plugin parameters: the bass synth (channel 6) by number and by name (continuous ones: 2 is "Osc 1 level",
   // 4 "Osc 2 level"); a mixer slot.
   const ObjectId bass = s.channels[5].id;
   c.handle(msg("/param/channel/6/0/2", {F(0.3)}));
-  expect(near(norm(h.d, channelPluginParam(bass, 1)), 0.3, 0.01), "param: a channel's instrument parameter by number");
+  expect(nearly(norm(h.d, channelPluginParam(bass, 1)), 0.3, 0.01), "param: a channel's instrument parameter by number");
   const std::string pname = describeParam(s, channelPluginParam(bass, 3))->name;
   std::string spaced = pname;
   for (char& ch : spaced)
     if (ch == ' ') ch = '_';
   c.handle(msg("/param/channel/6/instrument/" + spaced, {F(0.6)}));
-  expect(near(norm(h.d, channelPluginParam(bass, 3)), 0.6, 0.02), "param: by name (case and spaces ignored)");
+  expect(nearly(norm(h.d, channelPluginParam(bass, 3)), 0.6, 0.02), "param: by name (case and spaces ignored)");
   const ObjectId clapT = s.mixer[2].id;
   c.handle(msg("/param/mixer/2/1/1", {F(0.8)}));
-  expect(near(norm(h.d, slotParam(clapT, 0, 0)), 0.8, 0.02), "param: a mixer slot's parameter");
+  expect(nearly(norm(h.d, slotParam(clapT, 0, 0)), 0.8, 0.02), "param: a mixer slot's parameter");
   expect(c.handle(msg("/param/mixer/2/1/9999", {F(0.8)})) == R::Unknown, "param: a parameter that does not exist");
 
   // Patterns and markers.
@@ -536,11 +536,11 @@ void testControl() {
   });
   h.song = false;
   c.handle(msg("/marker/jump", {I(2)}));
-  expect(near(h.pos, 8.0 * s.barTicks()) && h.song, "marker: jump by number (song mode)");
+  expect(nearly(h.pos, 8.0 * s.barTicks()) && h.song, "marker: jump by number (song mode)");
   c.handle(msg("/marker/jump", {osc::Arg::Str("drop")}));
-  expect(near(h.pos, 4.0 * s.barTicks()), "marker: jump by name");
+  expect(nearly(h.pos, 4.0 * s.barTicks()), "marker: jump by name");
   c.handle(msg("/marker/next", {I(1)}));
-  expect(near(h.pos, 8.0 * s.barTicks()), "marker: next");
+  expect(nearly(h.pos, 8.0 * s.barTicks()), "marker: next");
 
   expect(c.handle(msg("/stage/scene/1")) == R::Reserved, "stage: reserved for the Stage view");
   expect(c.handle(msg("/nothing/here")) == R::Unknown, "unknown addresses are reported");
@@ -552,14 +552,14 @@ void testControl() {
   h.learnTarget = target;
   expect(c.handle(msg("/1/fader3", {F(0.1)})) == R::Learned, "learn: the next address is learned");
   expect(!s.links.empty() && s.links.back().source == RemoteSource::Osc && s.links.back().oscAddress == "/1/fader3", "learn: an OSC link is saved");
-  expect(c.handle(msg("/1/fader3", {F(0.9)})) == R::Linked && near(norm(h.d, target), 0.9, 0.01), "link: moves the parameter");
+  expect(c.handle(msg("/1/fader3", {F(0.9)})) == R::Linked && nearly(norm(h.d, target), 0.9, 0.01), "link: moves the parameter");
   h.d.editSong("range", [](Song& x) {
     x.links.back().min = 0.2f;
     x.links.back().max = 0.6f;
     x.links.back().invert = true;
   });
   c.handle(msg("/1/fader3", {F(0.0)}));
-  expect(near(norm(h.d, target), 0.6, 0.01), "link: range and invert like MIDI links");
+  expect(nearly(norm(h.d, target), 0.6, 0.01), "link: range and invert like MIDI links");
   // An action link (button).
   h.d.editSong("act", [](Song& x) {
     ControllerLink l;
@@ -585,10 +585,10 @@ void testControl() {
   std::vector<osc::Message> fb;
   c.resetFeedback();
   c.feedback(10.0, fb);
-  expect(find(fb, "/transport/tempo") && near(find(fb, "/transport/tempo")->args[0].f, 133, 1e-3), "feedback: tempo");
+  expect(find(fb, "/transport/tempo") && nearly(find(fb, "/transport/tempo")->args[0].f, 133, 1e-3), "feedback: tempo");
   expect(find(fb, "/transport/play") && find(fb, "/transport/record") && find(fb, "/transport/position/bars"), "feedback: transport state and position");
-  expect(find(fb, "/1/fader3") && near(find(fb, "/1/fader3")->args[0].f, 0.0, 0.02), "feedback: a linked value as the control's position");
-  expect(find(fb, "/mixer/1/volume") && near(find(fb, "/mixer/1/volume")->args[0].f, 0.25, 1e-3), "feedback: a fixed address received before");
+  expect(find(fb, "/1/fader3") && nearly(find(fb, "/1/fader3")->args[0].f, 0.0, 0.02), "feedback: a linked value as the control's position");
+  expect(find(fb, "/mixer/1/volume") && nearly(find(fb, "/mixer/1/volume")->args[0].f, 0.25, 1e-3), "feedback: a fixed address received before");
   fb.clear();
   c.feedback(10.001, fb);
   expect(fb.empty(), "feedback: nothing when nothing changed");
@@ -605,7 +605,7 @@ void testControl() {
   fb.clear();
   c.feedback(11.01, fb);
   expect(find(fb, "/gridline/pong") != nullptr, "feedback: ping answers pong");
-  expect(near(OscControl::linkPosition(h.d.song().links[h.d.song().links.size() - 2], 0.4), 0.5, 0.01), "feedback: inverse of range and invert");
+  expect(nearly(OscControl::linkPosition(h.d.song().links[h.d.song().links.size() - 2], 0.4), 0.5, 0.01), "feedback: inverse of range and invert");
 }
 
 // ---------------------------------------------------------------- loopback ----
@@ -628,21 +628,21 @@ void testLoopback() {
   pump(4);
   const Song& s = h.d.song();
   expect(h.isPlaying, "loopback: transport plays");
-  expect(near(s.tempo, 128, 1e-3), "loopback: tempo");
-  expect(near(norm(h.d, mixerParam(s.mixer[3].id, MixerParam::Volume)), 0.4), "loopback: mixer volume");
-  expect(near(norm(h.d, channelPluginParam(s.channels[5].id, 1)), 0.7, 0.01), "loopback: a plugin parameter");
+  expect(nearly(s.tempo, 128, 1e-3), "loopback: tempo");
+  expect(nearly(norm(h.d, mixerParam(s.mixer[3].id, MixerParam::Volume)), 0.4), "loopback: mixer volume");
+  expect(nearly(norm(h.d, channelPluginParam(s.channels[5].id, 1)), 0.7, 0.01), "loopback: a plugin parameter");
   h.learning = true;
   h.learnTarget = channelParam(s.channels[1].id, ChannelParam::Volume);
   surface.send(srv.port(), osc::encode(msg("/surface/knob", {F(0.2)})));
   pump(1);
   surface.send(srv.port(), osc::encode(msg("/surface/knob", {F(0.65)})));
   pump(1);
-  expect(near(norm(h.d, channelParam(s.channels[1].id, ChannelParam::Volume)), 0.65, 0.01), "loopback: a learned link drives the parameter");
+  expect(nearly(norm(h.d, channelParam(s.channels[1].id, ChannelParam::Volume)), 0.65, 0.01), "loopback: a learned link drives the parameter");
   std::vector<osc::Message> fb;
   c.feedback(1.0, fb);
   for (const auto& m : fb) srv.sendTo(0x7F000001u, surface.port, osc::encode(m));
   const auto got = surface.receive(0.5);
-  expect(find(got, "/transport/tempo") && near(find(got, "/transport/tempo")->args[0].f, 128, 1e-3) && find(got, "/transport/play"),
+  expect(find(got, "/transport/tempo") && nearly(find(got, "/transport/tempo")->args[0].f, 128, 1e-3) && find(got, "/transport/play"),
          "loopback: the surface receives feedback");
   srv.stop();
 }
@@ -677,7 +677,7 @@ int appHelper() {
   const auto end = std::chrono::steady_clock::now() + std::chrono::seconds(30);
   while (!(tempo && play) && std::chrono::steady_clock::now() < end)
     for (const auto& m : u.receive(0.2)) {
-      if (m.address == "/transport/tempo" && !m.args.empty() && near(m.args[0].f, 133, 1e-3)) tempo = true;
+      if (m.address == "/transport/tempo" && !m.args.empty() && nearly(m.args[0].f, 133, 1e-3)) tempo = true;
       if (m.address == "/transport/play" && !m.args.empty() && m.args[0].f > 0.5) play = true;
     }
   std::cout << "helper: feedback tempo " << (tempo ? "yes" : "no") << " play " << (play ? "yes" : "no") << "\n";
