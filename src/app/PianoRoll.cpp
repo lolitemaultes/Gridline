@@ -5,6 +5,8 @@
 #include <cstdio>
 #include <unordered_map>
 #include "../core/MenuOpsExtra.h"
+#include "PixelGrid.h"
+#include "Viewports.h"
 #include "../core/I18n.h"
 #include "CursorAnchor.h"
 #include "Keys.h"
@@ -28,10 +30,13 @@
 #include "../core/SmoothSnap.h"
 #include "../core/StepNotes.h"
 #include "Theme.h"
+#include "LiveLook.h"
 #include "Widgets.h"
 #include "Windows.h"
 #include "BrowserUi.h"
 #include "ChordStampUi.h"
+#include "LayoutPresets.h"
+#include "LayoutShellUi.h"
 
 namespace gl {
 
@@ -416,6 +421,228 @@ std::vector<Note> notesToAdd(const PianoRollState& st, Note n) {
   return tools::stampChord(n, st.stampChord, st.stampInversion);
 }
 
+// K-112 (Live): the editor's slim toolbar. Left: the menu, the tool (one dropdown, the keys as
+// before), the channel, Fold, the scale and its highlighting; the middle: what the lower lane shows
+// (Notes: velocity, Envelopes: the pattern's automation, MPE: each note's own expression and the
+// pitch bend tool); right: More (follow, quantize, ghost notes, slide, note colour, meter, zoom)
+// and the grid. Nothing the full toolbar offers is lost; Studio keeps the full toolbar.
+static void liveToolbar(App& a, const Pattern*& pat, const Channel*& chan, const MeterMap& pm) {
+  const auto& P = pal();
+  const Song& s = a.doc.song();
+  PianoRollState& st = a.piano;
+  const float fh = ImGui::GetFrameHeight();
+  const float x0 = ImGui::GetCursorScreenPos().x, W = ImGui::GetContentRegionAvail().x;
+  {
+    const uint64_t rev = a.doc.revision();
+    menuButton("prmenu", "Piano roll menu: tools, selection, chords, snap, view", [&a]() { pianoRollMenu(a); });
+    if (a.doc.revision() != rev) {
+      pat = s.pattern(a.curPattern);
+      chan = s.channel(a.selChannel);
+    }
+  }
+  // The tool: its icon lit in its colour, a chevron; the list names each tool and its key.
+  struct T { ui::Icon icon; Tool tool; const char* name; const char* key; uint32_t role; };
+  static const T tools[] = {{ui::Icon::ToolDraw, Tool::Draw, i18n::N_("Draw"), "piano.toolDraw", theme::role::kDraw},
+                            {ui::Icon::ToolBend, Tool::Bend, i18n::N_("Pitch bend"), "piano.toolBend", theme::role::kGraph},
+                            {ui::Icon::ToolPaint, Tool::Paint, i18n::N_("Paint"), "piano.toolPaint", theme::role::kPaint},
+                            {ui::Icon::ToolDelete, Tool::Erase, i18n::N_("Delete"), "piano.toolDelete", theme::role::kDelete},
+                            {ui::Icon::ToolSelect, Tool::Select, i18n::N_("Select"), "piano.toolSelect", theme::role::kSelect},
+                            {ui::Icon::ToolSlice, Tool::Slice, i18n::N_("Slice"), "piano.toolSlice", theme::role::kSlice},
+                            {ui::Icon::ToolMute, Tool::Mute, i18n::N_("Mute"), "piano.toolMute", theme::role::kMute},
+                            {ui::Icon::ToolPlay, Tool::Play, i18n::N_("Playback"), "piano.toolPlay", theme::role::kPlay},
+                            {ui::Icon::ToolZoom, Tool::Zoom, i18n::N_("Zoom"), "piano.toolZoom", theme::role::kZoom},
+                            {ui::Icon::ToolDetune, Tool::Detune, i18n::N_("Detune"), "piano.toolDetune", theme::role::kSlip}};
+  const T* cur = &tools[0];
+  for (const T& t : tools)
+    if (t.tool == st.tool) cur = &t;
+  ImGui::SameLine(0, 4);
+  {
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const float bw = fh + 14;
+    const bool open = ImGui::IsPopupOpen("##livetools");
+    if (ImGui::InvisibleButton("##livetool", ImVec2(bw, fh))) ImGui::OpenPopup("##livetools");
+    const bool hov = ImGui::IsItemHovered();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(p, ImVec2(p.x + bw, p.y + fh), open || hov ? P.surface700 : P.field, theme::kRadiusSm);
+    ui::drawIconFit(dl, cur->icon, ImVec2(p.x + 4, p.y + 3), ImVec2(p.x + fh - 4, p.y + fh - 3), theme::rgb(cur->role));
+    ui::drawIcon(dl, ui::Icon::ChevronDown, ImVec2(p.x + bw - 7, p.y + fh * 0.5f), 9, P.textDim);
+    ui::Hint(ui::toolTip(cur->name, "the tool in use: click for the others (their keys work as before)", cur->key).c_str());
+    ui::noteActiveTool("piano", static_cast<int>(cur->tool), cur->name, cur->key);
+    ImGui::SetNextWindowPos(ImVec2(p.x, p.y + fh + 2));
+    if (ImGui::BeginPopup("##livetools")) {
+      for (const T& t : tools)
+        if (ImGui::MenuItem(i18n::tr(t.name), keys::label(t.key), st.tool == t.tool)) st.tool = t.tool;
+      ImGui::EndPopup();
+    }
+  }
+  // The channel whose notes are edited.
+  ImGui::SameLine(0, 4);
+  if (ui::BeginCombo("##chanlive", chan ? chan->name.c_str() : i18n::tr("No channel"), std::clamp(W * 0.12f, 90.0f, 140.0f))) {
+    for (const auto& c : s.channels)
+      if (ImGui::Selectable((c.name + "##" + std::to_string(c.id)).c_str(), c.id == a.selChannel)) a.selectChannel(c.id);
+    ImGui::EndCombo();
+  }
+  ui::Hint("Channel being edited");
+  ui::ToolbarDivider();
+  if (ui::TextButton("Fold", st.fold, 0, "Fold: only the rows that hold notes (click again for every key)")) {
+    st.fold = !st.fold;
+    st.scrollY = 0;
+  }
+  ImGui::SameLine(0, 4);
+  {
+    static const char* const keys[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+    const auto& sc = tools::scales();
+    const std::string sl = st.scale > 0 ? std::string(keys[st.scaleRoot]) + " " + sc[static_cast<size_t>(st.scale)].name : i18n::tr("Scale");
+    if (ui::BeginCombo("##scalelivepr", sl.c_str(), std::clamp(W * 0.1f, 80.0f, 120.0f))) {
+      if (ImGui::Selectable(i18n::tr("No scale"), st.scale == 0)) st.scale = 0;
+      for (size_t i = 1; i < sc.size(); ++i)
+        if (ImGui::Selectable(sc[i].name, st.scale == static_cast<int>(i))) st.scale = static_cast<int>(i);
+      ImGui::Separator();
+      for (int k = 0; k < 12; ++k) {
+        if (k % 6) ImGui::SameLine(0, 2);
+        ImGui::PushID(k);
+        if (ui::TextButton(keys[k], st.scaleRoot == k, 26)) st.scaleRoot = k;
+        ImGui::PopID();
+      }
+      ImGui::Separator();
+      ImGui::Checkbox(i18n::tr("Snap notes to the scale"), &st.snapToScale);
+      ImGui::EndCombo();
+    }
+    ui::Hint("The clip's scale: its key and scale (rows outside it can be shaded, drawn notes can snap to it)");
+  }
+  const float leftEnd = ImGui::GetItemRectMax().x;
+  // Right: More, then the grid.
+  // K-112c (round 24): the pop-out button at the far right (the clip band shows no tab bar).
+  const bool pop = viewports::poppable();
+  const float gridW = std::clamp(W * 0.1f, 84.0f, 120.0f), moreW = fh, popW = pop ? fh + 4 : 0.0f;
+  const float rightX = x0 + W - gridW - moreW - 4 - popW;
+  // Middle: the lane tabs, centred in the toolbar when they fit, else after the left group.
+  static const char* const tabs[] = {i18n::N_("Notes"), i18n::N_("Envelopes"), i18n::N_("MPE")};
+  const bool autoLane = pianoAutomationLane().owner != kNoId;
+  int tab = autoLane ? 1 : lane != Lane::Velocity || st.tool == Tool::Bend ? 2 : 0;
+  float segW = 76.0f;
+  // Highlight scale sits after the scale when the row has room for it and the tabs.
+  const float hlW = ImGui::CalcTextSize(i18n::tr("Highlight scale")).x + fh + 8;
+  const bool hlHere = rightX - (leftEnd + 8 + hlW) >= segW * 3 + 4 + 16;
+  float after = leftEnd;
+  if (hlHere) {
+    ImGui::SameLine(0, 8);
+    ImGui::Checkbox(i18n::tr("Highlight scale"), &st.highlightScale);
+    ui::Hint("Shade the rows outside the scale (the scale stays chosen either way)");
+    after = ImGui::GetItemRectMax().x;
+  }
+  const float room = rightX - after - 16;
+  segW = std::clamp(room / 3.0f - 2, 56.0f, 76.0f);
+  const float tabsW = segW * 3 + 4;
+  float tx = std::round(x0 + (W - tabsW) * 0.5f);
+  tx = std::clamp(tx, after + 8, std::max(after + 8, rightX - 8 - tabsW));
+  if (tx + tabsW <= rightX - 4) {
+    ImGui::SameLine(0, 0);
+    ImGui::SetCursorScreenPos(ImVec2(tx, ImGui::GetCursorScreenPos().y));
+    const ImVec2 tp = ImGui::GetCursorScreenPos();
+    if (ui::Segmented("##lanetabs", tabs, 3, &tab, segW)) {
+      if (tab == 0) {
+        lane = Lane::Velocity;
+        pianoAutomationLane() = ParamId{};
+        if (st.tool == Tool::Bend) st.tool = Tool::Draw;
+      } else if (tab == 1) {
+        ImGui::OpenPopup("##envlive");
+      } else {
+        ImGui::OpenPopup("##mpelive");
+      }
+    }
+    ui::Hint("The lower lane: Notes (velocity), Envelopes (the pattern's automation), MPE (each note's own expression)");
+    ImGui::SetNextWindowPos(ImVec2(tp.x + segW, tp.y + fh + 2));
+    if (ImGui::BeginPopup("##envlive")) {
+      if (pat && chan) patternLaneMenu(a, pat->id, chan->id);
+      ImGui::EndPopup();
+    }
+    ImGui::SetNextWindowPos(ImVec2(tp.x + segW * 2, tp.y + fh + 2));
+    if (ImGui::BeginPopup("##mpelive")) {
+      for (int k = 1; k < static_cast<int>(Lane::Count); ++k)
+        if (ImGui::MenuItem(i18n::tr(kLaneNames[k]), nullptr, !autoLane && static_cast<int>(lane) == k)) lane = static_cast<Lane>(k), pianoAutomationLane() = ParamId{};
+      ImGui::Separator();
+      if (ImGui::MenuItem(i18n::tr("Pitch bend tool"), keys::label("piano.toolBend"), st.tool == Tool::Bend)) st.tool = Tool::Bend;
+      ImGui::EndPopup();
+    }
+  }
+  // More: the rest of the full toolbar.
+  ImGui::SameLine(0, 0);
+  ImGui::SetCursorScreenPos(ImVec2(rightX, ImGui::GetCursorScreenPos().y));
+  if (ui::IconButton("prmorelive", ui::Icon::More, false, fh, "More: follow, quantize, ghost notes, slide, note colour, meter, zoom"))
+    ImGui::OpenPopup("##morelive");
+  if (ImGui::BeginPopup("##morelive")) {
+    if (!hlHere) ImGui::MenuItem(i18n::tr("Highlight scale"), nullptr, &st.highlightScale);
+    const bool follow = a.settings.getBool("ui.autoScrollPattern");
+    if (ImGui::MenuItem(i18n::tr("Follow the pattern position"), nullptr, follow)) a.settings.set("ui.autoScrollPattern", !follow);
+    if (ImGui::MenuItem(i18n::tr("Quantize"), "Ctrl+Q", false, pat && chan)) {
+      if (std::vector<Note> ns = rollNotes(a, pat->id, chan->id); !ns.empty()) {
+        const Tick gsz = st.effGrid > 1 ? st.effGrid : snapTicks(pm, st.snap);
+        auto sel = selVector(a, ns.size());
+        const bool any = !st.selected.empty();
+        for (size_t i = 0; i < ns.size(); ++i)
+          if (!any || sel[i]) ns[i].start = snapNearest(ns[i].start, gsz);
+        commit(a, pat->id, chan->id, ns, sel, "quantize notes", 0);
+      }
+    }
+    if (ImGui::MenuItem(i18n::tr("Ghost notes"), nullptr, st.ghostNotes)) st.ghostNotes = !st.ghostNotes;
+    if (ImGui::MenuItem(i18n::tr("Slide notes"), nullptr, newSlide)) newSlide = !newSlide;
+    if (ImGui::BeginMenu(i18n::tr("Note colour"))) {
+      const ImU32 chanCol = chan ? theme::rgb(chan->color) : P.textDim;
+      for (int k = 0; k < kNoteColors; ++k) {
+        if (k % 8) ImGui::SameLine(0, 4);
+        const ImVec2 q = ImGui::GetCursorScreenPos();
+        ImGui::PushID(k);
+        if (ImGui::InvisibleButton("##c", ImVec2(20, 20))) {
+          newColor = k;
+          if (pat && chan && !st.selected.empty())
+            if (std::vector<Note> ns = rollNotes(a, pat->id, chan->id); !ns.empty()) {
+              auto sel = selVector(a, ns.size());
+              for (size_t i = 0; i < ns.size(); ++i)
+                if (sel[i]) ns[i].color = k;
+              commit(a, pat->id, chan->id, ns, sel, "colour notes", 0);
+            }
+          ImGui::CloseCurrentPopup();
+        }
+        ImGui::PopID();
+        ImDrawList* pdl = ImGui::GetWindowDrawList();
+        pdl->AddRectFilled(q, ImVec2(q.x + 20, q.y + 20), groupColor(k, chanCol), 3);
+        if (k == newColor) pdl->AddRect(ImVec2(q.x - 1, q.y - 1), ImVec2(q.x + 21, q.y + 21), P.accent, 3.0f, 2.0f, 0);
+      }
+      ImGui::EndMenu();
+    }
+    if (pat && ImGui::BeginMenu(i18n::tr("Meter"))) {
+      meterui::patternMeterMenu(a, pat->id);
+      ImGui::EndMenu();
+    }
+    ImGui::Separator();
+    if (ImGui::MenuItem(i18n::tr("Zoom in"), "PgUp")) st.zoomRequest *= 1.5f;
+    if (ImGui::MenuItem(i18n::tr("Zoom out"), "PgDn")) st.zoomRequest /= 1.5f;
+    ImGui::EndPopup();
+  }
+  // The grid: the snap and its value.
+  ImGui::SameLine(0, 4);
+  std::string snapLabel = snapName(st.snap);
+  if ((st.snap == Snap::Line || st.snap == Snap::Cell) && st.effGrid > 0) {
+    // As a note value (1/16) when it is one, as the refs show the grid; else its name (bar, step...).
+    const Tick whole = static_cast<Tick>(s.ppq) * 4;
+    snapLabel = st.effGrid <= whole && whole % st.effGrid == 0 ? "1/" + std::to_string(whole / st.effGrid) : timeline::gridName(pm, st.effGrid);
+  }
+  if (ui::BeginCombo("##snaplive", snapLabel.c_str(), gridW)) {
+    for (int i = 0; i <= static_cast<int>(Snap::Bar); ++i)
+      if (ImGui::Selectable(snapName(static_cast<Snap>(i)), st.snap == static_cast<Snap>(i))) st.snap = static_cast<Snap>(i);
+    ImGui::EndCombo();
+  }
+  ui::Hint("The grid: notes snap to it (Line and Cell follow the zoom); hold Alt while dragging to bypass");
+  if (pop) {
+    ImGui::SameLine(0, 4);
+    const bool docked = ImGui::IsWindowDocked();
+    if (ui::IconButton("prpopout", docked ? ui::Icon::WindowPopout : ui::Icon::WindowDockin, false, fh,
+                       docked ? "Pop out: the piano roll in a window of its own" : "Dock back: the piano roll into the clip band"))
+      viewports::togglePopOut("Piano roll");
+  }
+}
+
 void drawPianoRoll(App& a) {
   drawEditTools(a);  // J-11 tool windows (quantize, chop, strum, …)
   drawScriptTool(a);  // J-24 piano roll script window
@@ -431,6 +658,17 @@ void drawPianoRoll(App& a) {
     ui::EndDockWindow();
     return;
   }
+  // K-112 (Live): an audio clip selected: the band shows that clip (its sample), not the notes.
+  if (livelook::active(a))
+    if (const ObjectId ac = livelook::focusedAudioClip(a); ac != kNoId) {
+      drawLiveAudioClip(a, ac);
+      ui::EndDockWindow();
+      return;
+    }
+  // K-112c: the Live layout's clip column on the left; the piano roll indents itself past it and
+  // stays one window (no child), so its focus, hover, popups and shortcuts are as everywhere else.
+  const float clipColW = livelook::active(a) ? livelook::clipColumn(a) : 0.0f;
+  if (clipColW > 0) ImGui::Indent(clipColW);
   const auto& P = pal();
   const Song& s = a.doc.song();
   PianoRollState& st = a.piano;
@@ -453,21 +691,39 @@ void drawPianoRoll(App& a) {
   j31::pianoKey(a, st.scaleRoot, st.scale);  // J-31: scale highlighting follows key markers
 
   // ---------------- toolbar ----------------
-  ui::BeginToolbar("##prtb");
-  {
+  // K-112c (round 24): Live's toolbar is 20 px with 18 px controls, as the refs' clip view strip.
+  const bool liveBar = livelook::active(a);
+  if (liveBar) {
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, std::max(0.0f, std::floor((18.0f - ImGui::GetFontSize()) * 0.5f))));
+    ui::BeginToolbar("##prtb", 20.0f);
+  } else {
+    ui::BeginToolbar("##prtb");
+  }
+  if (liveBar) liveToolbar(a, pat, chan, pm);  // K-112: the slim toolbar
+  else {
     const float fh = ImGui::GetFrameHeight();
     const float W = ImGui::GetContentRegionAvail().x;
     {
       // Some items are whole-song edits (events into a playlist automation clip replace the patterns):
       // look the pattern and channel up again rather than read the old ones.
       const uint64_t rev = a.doc.revision();
-      menuButton("prmenu", "Piano roll menu: tools, selection, chords, snap, view", [&a]() { pianoRollMenu(a); });
+      // K-112b (checkpoint 24): the Tracks layout heads the piano roll with the same three text menus as
+      // the tracks area (Edit, Functions, View), as 144, 152 and 127 do; the other layouts keep the menu button.
+      const bool textMenus = layoutui::active() == layout::Preset::Logic && layoutui::shellBuilt(a, layout::Preset::Logic);
+      if (textMenus) {
+        static const char* const names[] = {i18n::N_("Edit"), i18n::N_("Functions"), i18n::N_("View")};
+        static const char* const hints[] = {i18n::N_("Edit and select notes"), i18n::N_("Import and export, note tools, chords, scripts and the stamp"),
+                                            i18n::N_("Tool, snap, zoom and what the piano roll shows")};
+        ui::MenuGroup("##prmenus", names, hints, 3, [&a](int k) { pianoRollMenu(a, k); });
+      } else {
+        menuButton("prmenu", "Piano roll menu: tools, selection, chords, snap, view", [&a]() { pianoRollMenu(a); });
+      }
       if (a.doc.revision() != rev) {
         pat = s.pattern(a.curPattern);
         chan = s.channel(a.selChannel);
       }
     }
-    ImGui::SameLine(0, 2);
+    ImGui::SameLine(0, layoutui::active() == layout::Preset::Logic && layoutui::shellBuilt(a, layout::Preset::Logic) ? 6.0f : 2.0f);
     stampui::button(a, W >= 760.0f);  // the chord stamp, beside the menu (its chord's name shows on wide windows)
     ImGui::SameLine(0, 4);
     // Channel picker (colour chip + name).
@@ -511,7 +767,46 @@ void drawPianoRoll(App& a) {
                        {ui::Icon::ToolPlay, Tool::Play, i18n::N_("Playback"), i18n::N_("hold and move to hear the notes under the pointer"), "piano.toolPlay", theme::role::kPlay},
                        {ui::Icon::ToolZoom, Tool::Zoom, i18n::N_("Zoom"), i18n::N_("drag a range to fill the view, click zooms in, right-click zooms out"), "piano.toolZoom", theme::role::kZoom},
                        {ui::Icon::ToolDetune, Tool::Detune, i18n::N_("Detune"), i18n::N_("drag a note up / down to change its fine pitch (Shift: finer)"), "piano.toolDetune", theme::role::kSlip}};
-    for (size_t i = 0; i < sizeof tools / sizeof tools[0]; ++i) {
+    // K-112b: the Logic layout's calmer bar: one tool button (the tool in use, a click lists them
+    // all) instead of the row, and only snap, quantise and zoom after it; the rest stay in the menu.
+    const bool calm = layoutui::active() == layout::Preset::Logic && layoutui::shellBuilt(a, layout::Preset::Logic);
+    if (calm) {
+      size_t cur = 0;
+      for (size_t i = 0; i < sizeof tools / sizeof tools[0]; ++i)
+        if (st.tool == tools[i].tool) cur = i;
+      const T& t = tools[cur];
+      const ImVec2 p = ImGui::GetCursorScreenPos();
+      const float bw = fh + 16;
+      ImGui::InvisibleButton("##prtoolmenu", ImVec2(bw, fh));
+      const bool hov = ImGui::IsItemHovered(), open = ImGui::IsPopupOpen("##prtoolpop");
+      if (ImGui::IsItemClicked()) ImGui::OpenPopup("##prtoolpop");
+      ImDrawList* tdl = ImGui::GetWindowDrawList();
+      tdl->AddRectFilled(p, ImVec2(p.x + bw, p.y + fh), open || hov ? theme::mix(P.field, P.surface700, 0.5f) : P.field, theme::kRadius);
+      ui::drawIcon(tdl, t.icon, ImVec2(p.x + fh * 0.5f + 1, p.y + fh * 0.5f), fh - 10, theme::rgb(t.role));
+      ui::drawIcon(tdl, ui::Icon::ChevronDown, ImVec2(p.x + bw - 9, p.y + fh * 0.5f), 10, P.textDim);
+      const char* k = keys::label(t.key);
+      ui::Hint(std::string(i18n::tr(t.name)) + (k ? std::string(" (") + k + ")" : std::string()) + ": " + i18n::tr(t.desc) + "  " + i18n::tr("(click: all tools)"));
+      ui::noteActiveTool("piano", static_cast<int>(t.tool), t.name, t.key);
+      ImGui::SetNextWindowPos(ImVec2(p.x, p.y + fh + 2));
+      if (ImGui::BeginPopup("##prtoolpop")) {
+        for (size_t i = 0; i < sizeof tools / sizeof tools[0]; ++i) {
+          ImGui::PushID(static_cast<int>(i));
+          const ImVec2 q = ImGui::GetCursorScreenPos();
+          const float lh = ImGui::GetTextLineHeight();
+          if (ImGui::Selectable("##t", st.tool == tools[i].tool, 0, ImVec2(200, 0))) st.tool = tools[i].tool;
+          ImDrawList* pdl = ImGui::GetWindowDrawList();
+          ui::drawIcon(pdl, tools[i].icon, ImVec2(q.x + 8, q.y + lh * 0.5f), lh - 2, theme::rgb(tools[i].role));
+          pdl->AddText(ImVec2(q.x + 22, q.y), P.text, i18n::tr(tools[i].name));
+          if (const char* kk = keys::label(tools[i].key)) {
+            const float kw = ImGui::CalcTextSize(kk).x;
+            pdl->AddText(ImVec2(q.x + 200 - kw, q.y), P.textDim, kk);
+          }
+          ImGui::PopID();
+        }
+        ImGui::EndPopup();
+      }
+    }
+    for (size_t i = 0; i < sizeof tools / sizeof tools[0] && !calm; ++i) {
       if (i) ImGui::SameLine(0, 2);
       if (ui::ToolButton(tools[i].key, tools[i].icon, st.tool == tools[i].tool, fh, tools[i].name, tools[i].desc, tools[i].key,
                          theme::rgb(tools[i].role)))
@@ -544,7 +839,7 @@ void drawPianoRoll(App& a) {
       }
       ui::Hint("Snap: Line and Cell follow the zoom (free at the deepest zoom); hold Alt while dragging to invert snapping");
     }
-    if (pat && roomLeft() > 56 + 8) {  // K-193: the pattern's meter, and whether it matches where it plays
+    if (pat && !calm && roomLeft() > 56 + 8) {  // K-193: the pattern's meter, and whether it matches where it plays
       ImGui::SameLine(0, 6);
       const int pn = s.patternMeterNum(*pat), pd = s.patternMeterDen(*pat);
       // The pattern's first clip in the playlist, and the meter of the section it starts in.
@@ -588,11 +883,11 @@ void drawPianoRoll(App& a) {
         }
       }
       ImGui::SameLine(0, 4);
-      if (ui::IconButton("ghosts", ui::Icon::Clone, st.ghostNotes, fh, "Ghost notes: show other channels' notes (double-click a ghost note to edit its channel)",
+      if (!calm && ui::IconButton("ghosts", ui::Icon::Clone, st.ghostNotes, fh, "Ghost notes: show other channels' notes (double-click a ghost note to edit its channel)",
                          theme::rgb(theme::role::kGhost)))
         st.ghostNotes = !st.ghostNotes;
     }
-    if (roomLeft() > 120 + 30) {  // J-11: scale helper (the chord stamp has its own button beside the menu)
+    if (!calm && roomLeft() > 120 + 30) {  // J-11: scale helper (the chord stamp has its own button beside the menu)
       ui::ToolbarDivider();
       static const char* const keys[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
       const auto& sc = tools::scales();
@@ -616,7 +911,7 @@ void drawPianoRoll(App& a) {
     }
     // Slide button and note colour: shown when both fit (divider, button, swatch).
     const float slideNeed = 2 * theme::kS2 + 1 + ImGui::CalcTextSize(i18n::tr("Slide")).x + 2 * ImGui::GetStyle().FramePadding.x + 4 + fh + 2;
-    if (roomLeft() > slideNeed) {
+    if (!calm && roomLeft() > slideNeed) {
       ui::ToolbarDivider();
       if (ui::TextButton("Slide", newSlide, 0, "Slide mode: new notes glide the channel's sounding notes to their pitch instead of starting a note. Instruments that cannot glide bend their sounding notes instead"))
         newSlide = !newSlide;
@@ -648,7 +943,7 @@ void drawPianoRoll(App& a) {
           ImGui::PopID();
           ImDrawList* pdl = ImGui::GetWindowDrawList();
           pdl->AddRectFilled(q, ImVec2(q.x + 20, q.y + 20), groupColor(k, chanCol), 3);
-          if (k == newColor) pdl->AddRect(ImVec2(q.x - 1, q.y - 1), ImVec2(q.x + 21, q.y + 21), P.accent, 3.0f, 0, 2.0f);
+          if (k == newColor) pdl->AddRect(ImVec2(q.x - 1, q.y - 1), ImVec2(q.x + 21, q.y + 21), P.accent, 3.0f, 2.0f, 0);
         }
         ImGui::EndPopup();
       }
@@ -661,6 +956,7 @@ void drawPianoRoll(App& a) {
     }
   }
   ui::EndToolbar();
+  if (liveBar) ImGui::PopStyleVar();
   stampui::escapeTurnsOff(a);  // Esc over the piano roll turns a chord stamp off
 
   if (!pat || !chan) {
@@ -668,30 +964,187 @@ void drawPianoRoll(App& a) {
     ImGui::Dummy(av);
     ui::EmptyState(ImGui::GetWindowDrawList(), mn, ImVec2(mn.x + av.x, mn.y + av.y), "Nothing to edit",
                    "Select a pattern and a channel to edit its notes");
+    if (clipColW > 0) ImGui::Unindent(clipColW);
     ui::EndDockWindow();
     return;
   }
 
   const ObjectId patId = pat->id, chId = chan->id;
   std::vector<Note> notes = rollNotes(a, patId, chId);  // K-22: rack steps show as step notes
+  // K-112 (Live): Fold shows only the rows that hold notes (top to bottom, highest first): foldRow
+  // gives each pitch its row (-1: folded away), foldPitch each row its pitch. Studio never folds.
+  const bool fold = st.fold && livelook::active(a) && !notes.empty();
+  std::array<int, 128> foldRow{};
+  std::vector<int> foldPitch;
+  if (fold) {
+    std::array<bool, 128> used{};
+    for (const auto& n : notes) used[static_cast<size_t>(std::clamp(n.pitch, 0, 127))] = true;
+    for (int p = 127; p >= 0; --p) {
+      foldRow[static_cast<size_t>(p)] = used[static_cast<size_t>(p)] ? static_cast<int>(foldPitch.size()) : -1;
+      if (used[static_cast<size_t>(p)]) foldPitch.push_back(p);
+    }
+  }
+  const float rowsN = fold ? static_cast<float>(foldPitch.size()) : 128.0f;  // rows the view scrolls through
   const bool rackSteps = stepnotes::hasSteps(s, *pat, chId);
   for (auto it = st.selected.begin(); it != st.selected.end();)
     it = *it < notes.size() ? std::next(it) : st.selected.erase(it);
+
+  // K-112b: the Logic layout's editor inspector on the left: what is edited, quantise with strength
+  // and swing, the scale, and the selected notes' velocity.
+  if (layoutui::active() == layout::Preset::Logic && layoutui::shellBuilt(a, layout::Preset::Logic) && ImGui::GetContentRegionAvail().x >= 760) {
+    const float iw = 196;
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::vec(P.surface800));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 8));
+    ImGui::BeginChild("##prinsp", ImVec2(iw, 0), ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoScrollbar);
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
+    ImDrawList* idl = ImGui::GetWindowDrawList();
+    {  // the pattern, and the channel that plays it
+      const ImVec2 q = ImGui::GetCursorScreenPos();
+      const float w = ImGui::GetContentRegionAvail().x;
+      idl->AddRectFilled(ImVec2(q.x, q.y + 2), ImVec2(q.x + 4, q.y + 34), theme::content(chan->color), 2.0f);
+      theme::textEllipsis(idl, a.fontBold, theme::kFontBody, ImVec2(q.x + 10, q.y + 2), w - 10, P.text, pat->name.c_str());
+      const std::string on = std::string(i18n::tr("plays on")) + " " + chan->name;
+      theme::textEllipsis(idl, a.fontRegular, theme::kFontCaption, ImVec2(q.x + 10, q.y + 20), w - 10, P.textDim, on.c_str());
+      ImGui::Dummy(ImVec2(w, 40));
+    }
+    auto section = [&](const char* title) {
+      ImGui::Dummy(ImVec2(0, 4));
+      const ImVec2 q = ImGui::GetCursorScreenPos();
+      idl->AddLine(ImVec2(q.x - 10, q.y), ImVec2(q.x + ImGui::GetContentRegionAvail().x + 10, q.y), P.line);
+      ImGui::Dummy(ImVec2(0, 6));
+      if (title) ImGui::TextColored(theme::vec(P.textDim), "%s", i18n::tr(title));
+    };
+    auto valueSlider = [&](const char* id, const char* label, int* v, int lo, int hi, const char* hint) {
+      const float w = ImGui::GetContentRegionAvail().x;
+      const ImVec2 q = ImGui::GetCursorScreenPos();
+      const char* l = i18n::tr(label);
+      char val[16];
+      std::snprintf(val, sizeof val, "%d", *v);
+      idl->AddText(q, P.text, l);
+      idl->AddText(ImVec2(q.x + w - ImGui::CalcTextSize(val).x, q.y), P.text, val);
+      ImGui::Dummy(ImVec2(w, ImGui::GetTextLineHeight() + 2));
+      const ImVec2 t0 = ImGui::GetCursorScreenPos();
+      ImGui::InvisibleButton(id, ImVec2(w, 16));
+      const bool act = ImGui::IsItemActive(), hov = ImGui::IsItemHovered();
+      bool changed = false;
+      if (act) {
+        const float f = std::clamp((ImGui::GetIO().MousePos.x - t0.x - 6) / std::max(1.0f, w - 12), 0.0f, 1.0f);
+        const int nv = lo + static_cast<int>(std::lround(f * static_cast<float>(hi - lo)));
+        if (nv != *v) *v = nv, changed = true;
+      }
+      const float f = static_cast<float>(*v - lo) / static_cast<float>(std::max(1, hi - lo));
+      const float tx = std::round(t0.x + 6 + (w - 12) * f), cy = t0.y + 8;
+      idl->AddRectFilled(ImVec2(t0.x, cy - 2), ImVec2(t0.x + w, cy + 2), theme::mix(P.surface800, P.ink, 0.45f), 2.0f);
+      idl->AddRectFilled(ImVec2(t0.x, cy - 2), ImVec2(tx, cy + 2), P.hot, 2.0f);
+      idl->AddCircleFilled(ImVec2(tx, cy), 6.0f, hov || act ? P.text : theme::mix(P.text, P.surface800, 0.15f), 16);
+      if (hint && hov) ui::Hint(hint);
+      return changed;
+    };
+    // Quantise: the snap grid, with a strength (how far notes move) and a swing (every second
+    // grid position later or earlier).
+    static int strength = 100, swing = 50;
+    section("Quantize");
+    valueSlider("##prqstr", "Strength", &strength, 0, 100, "How far the notes move toward the grid, in percent");
+    valueSlider("##prqswing", "Swing", &swing, 0, 100, "50: straight; higher: every second grid position later, lower: earlier");
+    if (ui::TextButton("Quantize notes", false, ImGui::GetContentRegionAvail().x, "Quantize the selected notes (none selected: every note) to the snap grid")) {
+      std::vector<Note> ns = notes;
+      const Tick gsz = std::max<Tick>(1, st.effGrid > 1 ? st.effGrid : snapTicks(pm, st.snap == Snap::None ? Snap::Line : st.snap));
+      auto sel = selVector(a, ns.size());
+      const bool any = !st.selected.empty();
+      for (size_t i = 0; i < ns.size(); ++i) {
+        if (any && !sel[i]) continue;
+        Tick target = snapNearest(ns[i].start, gsz);
+        if ((target / gsz) % 2 == 1) target += static_cast<Tick>(std::lround(static_cast<double>(swing - 50) / 100.0 * static_cast<double>(gsz)));
+        ns[i].start += static_cast<Tick>(std::lround(static_cast<double>(target - ns[i].start) * strength / 100.0));
+      }
+      commit(a, patId, chId, ns, sel, "quantize notes", 0);
+      notes = rollNotes(a, patId, chId);
+    }
+    section("Scale");
+    {
+      static const char* const keyNames[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+      const auto& sc = tools::scales();
+      const float w = ImGui::GetContentRegionAvail().x;
+      if (ui::BeginCombo("##prroot", keyNames[std::clamp(st.scaleRoot, 0, 11)], 52)) {
+        for (int k = 0; k < 12; ++k)
+          if (ImGui::Selectable(keyNames[k], st.scaleRoot == k)) st.scaleRoot = k;
+        ImGui::EndCombo();
+      }
+      ImGui::SameLine(0, 4);
+      const char* scName = st.scale > 0 && st.scale < static_cast<int>(sc.size()) ? sc[static_cast<size_t>(st.scale)].name : i18n::tr("No scale");
+      if (ui::BeginCombo("##prscale", scName, w - 56)) {
+        if (ImGui::Selectable(i18n::tr("No scale"), st.scale == 0)) st.scale = 0;
+        for (size_t i = 1; i < sc.size(); ++i)
+          if (ImGui::Selectable(sc[i].name, st.scale == static_cast<int>(i))) st.scale = static_cast<int>(i);
+        ImGui::EndCombo();
+      }
+      ui::Hint("Rows outside the scale are shaded");
+      ImGui::BeginDisabled(st.scale == 0);
+      ImGui::Checkbox(i18n::tr("Snap drawn notes to it"), &st.snapToScale);
+      ImGui::EndDisabled();
+    }
+    section(nullptr);  // K-112b (second pass): the velocity row is its own heading (144), not "Velocity" twice
+    {
+      int vel = st.lastVelocity;
+      if (!st.selected.empty()) {
+        int sum = 0;
+        for (size_t i : st.selected) sum += notes[i].velocity;
+        vel = sum / static_cast<int>(st.selected.size());
+      }
+      const int before = vel;
+      if (valueSlider("##prvel", "Velocity", &vel, 1, 127, "The selected notes' velocity (none selected: the velocity new notes get)") && vel != before) {
+        if (st.selected.empty()) {
+          st.lastVelocity = vel;
+        } else {
+          std::vector<Note> ns = notes;
+          auto sel = selVector(a, ns.size());
+          for (size_t i = 0; i < ns.size(); ++i)
+            if (sel[i]) ns[i].velocity = vel;
+          commit(a, patId, chId, ns, sel, "note velocity", 0x112B0310);
+          notes = rollNotes(a, patId, chId);
+        }
+      }
+      if (ImGui::IsItemDeactivated()) a.doc.endGesture();
+    }
+    ImGui::EndChild();
+    ImGui::SameLine(0, 0);
+  }
 
   // ---------------- canvas geometry ----------------
   ImVec2 origin = ImGui::GetCursorScreenPos();
   ImVec2 avail = ImGui::GetContentRegionAvail();
   avail.x = std::max(avail.x, 160.0f);
-  avail.y = std::max(avail.y, 140.0f);
+  // K-112 (Live): the stacked band can be short (1280 x 800); a lower floor keeps the lane or the
+  // envelope choosers inside the window instead of cut off at its foot.
+  avail.y = std::max(avail.y, livelook::active(a) ? 96.0f : 140.0f);
   // K-171: the lower lane's height: dragged on its splitter (saved), 0 = automatic.
   const float laneMaxH = std::max(40.0f, std::round(avail.y * 0.6f));
   const float laneSetH = static_cast<float>(a.settings.getNumber("piano.laneHeight"));
+  // K-112c (round 25): Live's lane is 32 px by default and can be dragged down to it (Studio: 40).
+  constexpr float kLiveVelH = 32.0f;
+  const float laneMinH = livelook::active(a) ? kLiveVelH : 40.0f;
   // Left to right: a slim vertical scroller, the keyboard, the grid; above the
   // grid a slim horizontal scroller with the notes' overview, then the ruler
   // (the playlist's arrangement).
   const float vbarW = scrollbarui::kBarW, hbarH = scrollbarui::kBarH;
-  const float keyW = 64.0f, rulerH = hbarH + 26.0f,
-              velH = laneSetH > 0 ? std::clamp(laneSetH, 40.0f, laneMaxH) : std::clamp(avail.y * 0.18f, 48.0f, 96.0f);
+  // K-112 (Live): an envelope (the Envelopes tab: the pattern's automation) is drawn across the
+  // notes, as the refs draw it; the band under the grid then holds only its device and parameter
+  // choosers (kEnvFootH).
+  const bool liveEnvelope = livelook::active(a) && pianoAutomationLane().owner != kNoId;
+  constexpr float kEnvFootH = 34.0f;
+  // K-112 (Live): a loop brace row under the ruler (the pattern's length in its colour).
+  // K-112c (round 24): Live's ruler is one 16 px row of bar numbers over a 10 px brace (the refs'
+  // 35 to 40 px with the scroller).
+  const float braceH = livelook::active(a) ? 10.0f : 0.0f, numDy = livelook::active(a) ? 2.0f : 4.0f;
+  // K-112b (checkpoint 24): the Tracks layout's keyboard is 44 px, as 144, 127 and 152 draw it (the plan's
+  // size; it was the other layouts' 64).
+  const bool lgKeys = layoutui::active() == layout::Preset::Logic && layoutui::shellBuilt(a, layout::Preset::Logic);
+  const float keyW = lgKeys ? 44.0f : 64.0f, rulerH = hbarH + (livelook::active(a) ? 16.0f : 26.0f) + braceH,
+              velH = liveEnvelope ? kEnvFootH
+                     : laneSetH > 0 ? std::clamp(laneSetH, laneMinH, laneMaxH)
+                     : livelook::active(a) ? std::min(kLiveVelH, std::round(avail.y * 0.3f))  // K-112c (round 25): 32 px, the refs' slim lane
+                                           : std::clamp(avail.y * 0.18f, 48.0f, 96.0f);
   ImGui::InvisibleButton("##canvas", avail, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
   if (ImGui::BeginDragDropTarget()) {  // MIDI files from the browser (J-16)
     browserui::acceptFileDrop(a, browse::DropTarget::PianoRoll, {});
@@ -766,19 +1219,29 @@ void drawPianoRoll(App& a) {
   }
   if (st.rowGlide.anchored()) {  // K-24: the anchored point back under the pointer (the range's edges hold)
     const smoothzoom::RowAnchor& an = st.rowGlide.anchor();
-    st.scrollY = std::clamp(static_cast<float>(smoothzoom::rowAnchorPos(keyTop.data(), 128, rowH, an) - an.px), 0.0f, std::max(0.0f, 128 * rowH - gridH));
+    st.scrollY = std::clamp(static_cast<float>(smoothzoom::rowAnchorPos(keyTop.data(), 128, rowH, an) - an.px), 0.0f, std::max(0.0f, rowsN * rowH - gridH));
     st.rowGlide.scrollOut = st.scrollY;
   }
   // J-67: outside writes are clamped here; the view's own glide / elastic
   // overscroll is left to scrollui::step below.
-  scrollui::clampOuter(st.axY, st.scrollY, 0.0f, std::max(0.0f, 128 * rowH - gridH));
+  scrollui::clampOuter(st.axY, st.scrollY, 0.0f, std::max(0.0f, rowsN * rowH - gridH));
   scrollui::clampOuter(st.axX, st.scrollX, 0.0f, maxScrollAt(st.pxPerTick));
 
   auto xOf = [&](Tick t) { return gridMin.x + static_cast<float>(t) * st.pxPerTick - st.scrollX; };
-  auto yOf = [&](int pitch) { return gridMin.y + (127 - pitch) * rowH - st.scrollY; };
+  auto yOf = [&](int pitch) {
+    if (fold) {
+      const int r = foldRow[static_cast<size_t>(std::clamp(pitch, 0, 127))];
+      return r < 0 ? -1.0e6f : gridMin.y + static_cast<float>(r) * rowH - st.scrollY;  // folded away: off the view
+    }
+    return gridMin.y + (127 - pitch) * rowH - st.scrollY;
+  };
   auto tickAt = [&](float x) { return timeline::tickAtPx(x - gridMin.x + st.scrollX, st.pxPerTick); };
   // J-46: clamped before the conversion (the pointer is -FLT_MAX outside the window).
-  auto pitchAt = [&](float y) { return 127 - static_cast<int>(std::clamp(std::floor((y - gridMin.y + st.scrollY) / rowH), 0.0f, 127.0f)); };
+  auto pitchAt = [&](float y) {
+    if (fold)
+      return foldPitch[static_cast<size_t>(std::clamp(std::floor((y - gridMin.y + st.scrollY) / rowH), 0.0f, rowsN - 1))];
+    return 127 - static_cast<int>(std::clamp(std::floor((y - gridMin.y + st.scrollY) / rowH), 0.0f, 127.0f));
+  };
   // ---- zoom: Ctrl+wheel at the pointer, PgUp/PgDn, Home = fit the pattern ----
   // J-188: on the logical zoom and scroll; zoomEnd below makes them glide.
   scrollui::zoomBegin(st.zoomGlide, st.pxPerTick, st.scrollX);
@@ -862,7 +1325,7 @@ void drawPianoRoll(App& a) {
   }
   const float maxScrollX = maxScrollAt(st.pxPerTick);
   scrollui::step(st.axX, st.scrollX, wheelX, notchX, 0.0f, maxScrollX);
-  scrollui::step(st.axY, st.scrollY, wheelY, notchY, 0.0f, std::max(0.0f, 128 * st.rowHeight - gridH));
+  scrollui::step(st.axY, st.scrollY, wheelY, notchY, 0.0f, std::max(0.0f, rowsN * st.rowHeight - gridH));
   if (canchor::collecting()) {  // J-111d: collaborators' pointers in pattern time and keys (this pattern and channel)
     const float pxT = std::max(1e-6f, st.pxPerTick), bottom = origin.y + avail.y;
     const ImVec2 o(gridMin.x - st.scrollX, gridMin.y - st.scrollY);
@@ -876,42 +1339,60 @@ void drawPianoRoll(App& a) {
   }
 
   // ---------------- draw: grid ----------------
+  // K-276: note edges, grid lines and row lines on whole device pixels (PixelGrid.h): touching notes
+  // show one gap at every zoom and interface scale, and a note on a beat starts on its line.
+  const float dpp = pixelgrid::frameScale();
+  auto snapX = [&](Tick t) { return pixelgrid::edge(xOf(t), dpp); };
+  auto rowY0 = [&](int pitch) { return pixelgrid::edge(yOf(pitch), dpp); };
+  auto rowY1 = [&](int pitch) { return pixelgrid::edge(yOf(pitch) + rowH, dpp); };
   dl->PushClipRect(gridMin, gridMax, true);
   // Grid well: black-key rows a step darker, every other bar a step lighter.
-  dl->AddRectFilled(gridMin, gridMax, P.well);
+  // K-112b (checkpoint 21): in the Tracks layout (dark faces) the tracks area's near-black ground,
+  // black-key rows clearly darker still and time lines lighter than the ground, as 144, 127 and 152
+  // draw the piano roll (white-key rows #232323, black-key rows #0E0E0E, light lines).
+  const bool lgDark = P.dark && layoutui::active() == layout::Preset::Logic && layoutui::shellBuilt(a, layout::Preset::Logic);
+  const ImU32 well = lgDark ? P.surface950 : P.well;
+  const ImU32 blackRow = lgDark ? theme::mix(well, P.ink, 0.5f) : theme::withAlpha(P.ink, P.dark ? 0.16f : 0.05f);
+  const ImU32 lineBar = lgDark ? theme::mix(well, P.text, 0.15f) : P.gridBar, lineBeat = lgDark ? theme::mix(well, P.text, 0.08f) : P.gridBeat,
+              lineStep = lgDark ? theme::mix(well, P.text, 0.04f) : P.gridStep;
+  dl->AddRectFilled(gridMin, gridMax, well);
   {
     const Tick bar = std::max<Tick>(1, pm.baseBar());
+    // K-112 (Live): the bar blocks read clearly (each ref shows them at a glance).
+    const float barA = livelook::active(a) ? (P.dark ? 0.06f : 0.035f) : (P.dark ? 0.03f : 0.015f);
     for (Tick t = snapDown(std::max<Tick>(0, tickAt(gridMin.x)), bar); xOf(t) < gridMax.x; t += bar)
       if ((t / bar) % 2 == 1)
-        dl->AddRectFilled(ImVec2(xOf(t), gridMin.y), ImVec2(xOf(t + bar), gridMax.y), theme::withAlpha(P.paper, P.dark ? 0.03f : 0.015f));
+        dl->AddRectFilled(ImVec2(snapX(t), gridMin.y), ImVec2(snapX(t + bar), gridMax.y), theme::withAlpha(P.paper, barA));
   }
   for (int p = 0; p < 128; ++p) {
     float y = yOf(p);
     if (y > gridMax.y || y + rowH < gridMin.y) continue;
-    if (isBlack(p)) dl->AddRectFilled(ImVec2(gridMin.x, y), ImVec2(gridMax.x, y + rowH), theme::withAlpha(P.ink, P.dark ? 0.16f : 0.05f));
-    if (st.scale > 0) {  // J-11 scale highlighting: out-of-scale rows shaded, root rows tinted
+    const ImVec2 r0(gridMin.x, rowY0(p)), r1(gridMax.x, rowY1(p));
+    if (isBlack(p)) dl->AddRectFilled(r0, r1, blackRow);
+    if (st.scale > 0 && (st.highlightScale || !livelook::active(a))) {  // J-11 scale highlighting (K-112: Live can turn it off): out-of-scale rows shaded, root rows tinted
       if (!tools::inScale(p, st.scaleRoot, st.scale))
-        dl->AddRectFilled(ImVec2(gridMin.x, y), ImVec2(gridMax.x, y + rowH), theme::withAlpha(P.ink, P.dark ? 0.22f : 0.08f));
+        dl->AddRectFilled(r0, r1, theme::withAlpha(P.ink, P.dark ? 0.22f : 0.08f));
       else if ((p - st.scaleRoot) % 12 == 0)
-        dl->AddRectFilled(ImVec2(gridMin.x, y), ImVec2(gridMax.x, y + rowH), theme::withAlpha(theme::rgb(theme::role::kStamp), 0.07f));
+        dl->AddRectFilled(r0, r1, theme::withAlpha(theme::rgb(theme::role::kStamp), 0.07f));
     }
-    float ly = std::round(y + rowH);
+    const pixelgrid::Span ly = pixelgrid::line(y + rowH, dpp);
     if (p % 12 == 0)
-      dl->AddLine(ImVec2(gridMin.x, ly), ImVec2(gridMax.x, ly), P.gridBar);
+      dl->AddRectFilled(ImVec2(gridMin.x, ly.x0), ImVec2(gridMax.x, ly.x1), P.gridBar);
     else if (rowH >= 10)
-      dl->AddLine(ImVec2(gridMin.x, ly), ImVec2(gridMax.x, ly), P.gridStep);
+      dl->AddRectFilled(ImVec2(gridMin.x, ly.x0), ImVec2(gridMax.x, ly.x1), P.gridStep);
   }
   {
     Tick step = std::max<Tick>(1, s.ppq / 4), beat = pm.baseBeat(), bar = pm.baseBar();
     // Lines at the visible grid (finer as you zoom in, down to single ticks).
-    const ImU32 fine = theme::withAlpha(P.gridStep, 0.55f);
+    const ImU32 fine = theme::withAlpha(lineStep, 0.55f);
     Tick t0 = snapDown(tickAt(gridMin.x), visGrid);
     for (Tick t = std::max<Tick>(0, t0); xOf(t) < gridMax.x; t += visGrid) {
-      ImU32 c = t % bar == 0 ? P.gridBar : t % beat == 0 ? P.gridBeat : t % step == 0 ? P.gridStep : fine;
-      dl->AddLine(ImVec2(std::round(xOf(t)), gridMin.y), ImVec2(std::round(xOf(t)), gridMax.y), c);
+      ImU32 c = t % bar == 0 ? lineBar : t % beat == 0 ? lineBeat : t % step == 0 ? lineStep : fine;
+      const pixelgrid::Span l = pixelgrid::line(xOf(t), dpp);
+      dl->AddRectFilled(ImVec2(l.x0, gridMin.y), ImVec2(l.x1, gridMax.y), c);
     }
     // Pattern end shading.
-    float xe = xOf(patLen);
+    float xe = snapX(patLen);
     if (xe < gridMax.x) dl->AddRectFilled(ImVec2(std::max(xe, gridMin.x), gridMin.y), gridMax, theme::withAlpha(P.surface950, 0.55f));
   }
   j31::drawPianoBackground(a, gridMin.x, gridMin.y, gridMax.x, gridMax.y, static_cast<double>(tickAt(gridMin.x)),
@@ -926,7 +1407,8 @@ void drawPianoRoll(App& a) {
       const ImU32 gcol = oc ? theme::rgb(oc->color) : P.text;
       for (const auto& n : ns) {
         float y = yOf(n.pitch);
-        ImVec2 g0(xOf(n.start), y + 1), g1(xOf(n.start + n.length) - 1, y + rowH - 1);
+        const pixelgrid::Span gsx = pixelgrid::block(xOf(n.start), xOf(n.start + n.length), dpp, 0.0f, 1.0f), gsy = pixelgrid::block(y, y + rowH, dpp);
+        ImVec2 g0(gsx.x0, gsy.x0), g1(gsx.x1, gsy.x1);
         dl->AddRectFilled(g0, g1, theme::withAlpha(gcol, 0.13f), 2);
         dl->AddRect(g0, g1, theme::withAlpha(gcol, 0.32f), 2);
         if (hovered && io.MousePos.x >= g0.x && io.MousePos.x < g1.x && io.MousePos.y >= g0.y && io.MousePos.y < g1.y) ghostHover = {cid, n.pitch};
@@ -934,6 +1416,16 @@ void drawPianoRoll(App& a) {
     }
   // Notes.
   const ImU32 noteCol = theme::rgb(chan->color);
+  // K-112b: the Logic layout colours notes by velocity (soft: cool, loud: warm), as all the
+  // reference editors do; notes in a colour group keep the group's colour.
+  const bool velColours = layoutui::active() == layout::Preset::Logic && layoutui::shellBuilt(a, layout::Preset::Logic);
+  auto velocityColour = [](float v) {
+    static const ImU32 stops[] = {theme::rgb(0x6A63E8), theme::rgb(0x3AA7D8), theme::rgb(0x3FBF6A), theme::rgb(0xD9C13A), theme::rgb(0xE07A32),
+                                  theme::rgb(0xE0453A)};
+    const float t = std::clamp(v, 0.0f, 1.0f) * 5.0f;
+    const int k = std::min(4, static_cast<int>(t));
+    return theme::mix(stops[k], stops[k + 1], t - static_cast<float>(k));
+  };
   int hoverNote = -1;
   bool hoverEdge = false;
   smooth::Tracker<3>::Vec noteOff{};  // J-37: drawn minus logical delta of the selected notes
@@ -951,6 +1443,7 @@ void drawPianoRoll(App& a) {
   std::vector<NoteBox> noteBoxes(notes.size());
   struct NoteLabel { size_t note; float x0, x1, y; ImU32 fill; std::string text; };
   std::vector<NoteLabel> labels;  // K-28
+  const bool liveNotes = livelook::active(a);
   for (size_t i = 0; i < notes.size(); ++i) {
     const Note& n = notes[i];
     bool sel = st.selected.count(i) > 0;
@@ -967,21 +1460,31 @@ void drawPianoRoll(App& a) {
     const ImU32 col = groupColor(n.color, noteCol);
     // Note: colour-group body whose brightness follows velocity, a darker
     // "title" cap on the left (name lives there), lit rim when selected.
-    ImU32 fill = theme::mix(theme::mix(col, P.well, 0.55f), theme::mix(col, P.paper, 0.12f), vel);
+    ImU32 fill = velColours && n.color == 0 ? velocityColour(vel)
+                                            : theme::mix(theme::mix(col, P.well, 0.55f), theme::mix(col, P.paper, 0.12f), vel);
     if (sel) fill = theme::mix(fill, P.paper, 0.45f);
+    if (liveEnvelope && !sel) fill = theme::mix(P.ink, P.surface700, 0.35f);  // K-112c: under an envelope the notes go neutral and dark (the refs)
     if (n.slide) fill = theme::withAlpha(fill, 0.55f);  // slide notes: lighter body + glide mark
     if (n.muted) fill = theme::withAlpha(theme::mix(fill, P.well, 0.6f), 0.6f);  // muted: dim, hollow look
     // K-81: the body (and its cap) is slightly see-through, so a note lying under or over another
     // on the same key shows through, and the overlap reads denser. Rim, names and marks stay
     // opaque; slide and muted notes are lighter already.
     const ImU32 body = n.slide || n.muted ? fill : theme::withAlpha(fill, noteBodyAlpha(P.dark));
-    const ImVec2 n0(x0, y + 1), n1(x1 - 1, y + rowH - 1);
-    dl->AddRectFilled(n0, n1, body, theme::kRadiusSm);
+    // K-276: the drawn box on whole device pixels; a note ends 1 px before the next one starts.
+    const pixelgrid::Span nsx = pixelgrid::block(x0, x1, dpp, 0.0f, 1.0f, 2.0f), nsy = pixelgrid::block(y, y + rowH, dpp);
+    const ImVec2 n0(nsx.x0, nsy.x0), n1(nsx.x1, nsy.x1);
+    // K-112c: Live's notes are flat square bars with a dark rim (no cap, no top light), as every ref.
+    const float nr = liveNotes ? 0.0f : theme::kRadiusSm;
+    dl->AddRectFilled(n0, n1, body, nr);
     if (n.muted && x1 - x0 > 6) dl->AddLine(ImVec2(n0.x + 2, n1.y - 2), ImVec2(n1.x - 2, n0.y + 2), theme::withAlpha(theme::rgb(theme::role::kMute), 0.7f), 1.2f);
-    if (x1 - x0 > 10 && rowH >= 9)
+    if (x1 - x0 > 10 && rowH >= 9 && !liveNotes)
       dl->AddRectFilled(n0, ImVec2(std::min(n1.x, n0.x + 4), n1.y), theme::mix(body, P.ink, 0.25f), theme::kRadiusSm, ImDrawFlags_RoundCornersLeft);
-    dl->AddLine(ImVec2(n0.x + 1, n0.y + 0.5f), ImVec2(n1.x - 1, n0.y + 0.5f), theme::withAlpha(P.paper, 0.35f));
-    dl->AddRect(n0, n1, sel ? P.hot : theme::withAlpha(P.ink, 0.55f), theme::kRadiusSm, 0, sel ? 1.5f : 1.0f);
+    if (!liveNotes) dl->AddLine(ImVec2(n0.x + 1, n0.y + 0.5f), ImVec2(n1.x - 1, n0.y + 0.5f), theme::withAlpha(P.paper, 0.35f));
+    {  // K-276: the rim stroked wholly inside the note (a selected one reached into the gap)
+      const float rimIn = pixelgrid::strokeIn(sel ? 1.5f : 1.0f);
+      dl->AddRect(ImVec2(n0.x + rimIn, n0.y + rimIn), ImVec2(n1.x - rimIn, n1.y - rimIn), sel ? P.hot : theme::withAlpha(P.ink, liveNotes ? 0.75f : 0.55f), nr,
+                  sel ? 1.5f : 1.0f, 0);
+    }
     if (n.slide && x1 - x0 > 8) {
       float h = (rowH - 2) * 0.5f, cy = y + rowH * 0.5f, tx = x1 - 3;
       dl->AddTriangleFilled(ImVec2(tx - h, cy - h * 0.8f), ImVec2(tx, cy), ImVec2(tx - h, cy + h * 0.8f), theme::contrastText(fill));
@@ -992,7 +1495,7 @@ void drawPianoRoll(App& a) {
       labels.push_back({i, x0, x1, y, fill, kn ? *kn : noteName(n.pitch)});
     }
     if (hovered && io.MousePos.x >= x0 && io.MousePos.x < x1 && io.MousePos.y >= y && io.MousePos.y < y + rowH &&
-        io.MousePos.y < gridMax.y && io.MousePos.x > gridMin.x) {
+        io.MousePos.y < gridMax.y && io.MousePos.x > gridMin.x && !liveEnvelope) {
       hoverNote = static_cast<int>(i);
       hoverEdge = io.MousePos.x > x1 - std::min(8.0f, (x1 - x0) * 0.35f);
     }
@@ -1134,7 +1637,7 @@ void drawPianoRoll(App& a) {
         if (n.bend[j].curve == bend::Step) {  // a step (hold, then jump) ends in a square: the shape reads at a glance
           dl->AddRectFilled(ImVec2(q.x - r - 1.5f, q.y - r - 1.5f), ImVec2(q.x + r + 1.5f, q.y + r + 1.5f), L.halo, 2.0f);
           dl->AddRectFilled(ImVec2(q.x - r, q.y - r), ImVec2(q.x + r, q.y + r), hot ? L.line : (P.dark ? P.well : P.paper), 1.5f);
-          dl->AddRect(ImVec2(q.x - r, q.y - r), ImVec2(q.x + r, q.y + r), L.line, 1.5f, 0, 1.5f);
+          dl->AddRect(ImVec2(q.x - r, q.y - r), ImVec2(q.x + r, q.y + r), L.line, 1.5f, 1.5f, 0);
           continue;
         }
         dl->AddCircleFilled(q, r + 1.5f, L.halo, 16);
@@ -1215,7 +1718,7 @@ void drawPianoRoll(App& a) {
   // Selection rectangle / slice line.
   if (g.kind == Gesture::Select && active)
     dl->AddRectFilled(g.start, io.MousePos, theme::withAlpha(P.accent, 0.12f)),
-        dl->AddRect(g.start, io.MousePos, P.accent, 0, 0, 1.5f);
+        dl->AddRect(g.start, io.MousePos, P.accent, 0, 1.5f, 0);
   if (g.kind == Gesture::Slice && active) {  // J-67: drawn on the snapped cut, gliding between grid lines (smooth motion)
     const Tick cut = std::max<Tick>(0, snapNearest(tickAt(io.MousePos.x), snapG));
     const float x = std::round(gridMin.x + static_cast<float>(scrollui::glide(0x50525343ull, static_cast<double>(cut), snapG > 1, 0.5)) * st.pxPerTick - st.scrollX);
@@ -1224,7 +1727,7 @@ void drawPianoRoll(App& a) {
   if (g.kind == Gesture::Zoom && active) {
     const ImU32 zc = theme::rgb(theme::role::kZoom);
     dl->AddRectFilled(ImVec2(g.start.x, gridMin.y), ImVec2(io.MousePos.x, gridMax.y), theme::withAlpha(zc, 0.10f));
-    dl->AddRect(ImVec2(g.start.x, gridMin.y), ImVec2(io.MousePos.x, gridMax.y), zc, 0, 0, 1.2f);
+    dl->AddRect(ImVec2(g.start.x, gridMin.y), ImVec2(io.MousePos.x, gridMax.y), zc, 0, 1.2f, 0);
   }
   if (g.kind == Gesture::Play && active) dl->AddLine(ImVec2(io.MousePos.x, gridMin.y), ImVec2(io.MousePos.x, gridMax.y), theme::rgb(theme::role::kPlay), 1.5f);
   dl->PopClipRect();
@@ -1235,14 +1738,35 @@ void drawPianoRoll(App& a) {
     const ImU32 white = P.keyWhite;
     const ImU32 whiteEdge = theme::mix(P.keyWhite, P.ink, 0.28f);
     const ImU32 black = P.keyBlack;
-    const float kx0 = keysX0, kx1 = gridMin.x - 1, blackW = std::round((kx1 - kx0) * 0.6f);
+    // K-112 (Live): a column of octave names (C1, C2, ...) left of a narrow keyboard.
+    const bool liveKeys = livelook::active(a);
+    const float nameW = liveKeys ? 34.0f : 0.0f;
+    if (liveKeys) {
+      dl->AddRectFilled(ImVec2(keysX0, gridMin.y), ImVec2(keysX0 + nameW, gridMax.y), P.surface800);
+      dl->AddLine(ImVec2(keysX0 + nameW - 1, gridMin.y), ImVec2(keysX0 + nameW - 1, gridMax.y), P.line);
+      for (int p = 0; p < 128; p += fold ? 1 : 12) {  // folded: every row shows its note's name
+        const float y = yOf(p);
+        if (y > gridMax.y || y + rowH < gridMin.y) continue;
+        const float by = std::round(y + rowH);  // the octave's (or row's) bottom edge, as the grid's line
+        dl->AddLine(ImVec2(keysX0, by), ImVec2(keysX0 + nameW - 1, by), P.line);
+        const float fs = theme::kFontLabel;
+        const float ty = fold ? theme::textTop(a.fontMono, fs, y, rowH) : std::round(by - fs - 3);
+        if (!fold || rowH >= fs) dl->AddText(a.fontMono, fs, ImVec2(keysX0 + 5, ty), P.textDim, noteName(p).c_str());
+      }
+    }
+    // K-112c: Live's keys are plates a row tall: black keys run the keyboard's whole width (every ref).
+    const float kx0 = keysX0 + nameW, kx1 = gridMin.x - 1, blackW = liveKeys ? kx1 - kx0 : std::round((kx1 - kx0) * 0.6f);
     const bool gliss = g.kind == Gesture::Keys;  // K-21
     const int hoverPitch = !gliss && hovered && io.MousePos.x >= keysX0 && io.MousePos.x < gridMin.x && io.MousePos.y >= gridMin.y && io.MousePos.y < gridMax.y
-                               ? std::clamp(127 - static_cast<int>(std::floor((io.MousePos.y - gridMin.y + st.scrollY) / rowH)), 0, 127)
+                               ? pitchAt(io.MousePos.y)
                                : -1;
     // White keys: light face shading to a darker tip (left), like a keyboard seen from above.
-    dl->AddRectFilledMultiColor(ImVec2(kx0, gridMin.y), ImVec2(kx1, gridMax.y), theme::mix(white, P.ink, 0.12f), white, white,
-                                theme::mix(white, P.ink, 0.12f));
+    if (fold) dl->AddRectFilled(ImVec2(kx0, gridMin.y), ImVec2(kx1, gridMax.y), P.surface800);  // below the last folded row
+    else if (liveKeys)
+      dl->AddRectFilled(ImVec2(kx0, gridMin.y), ImVec2(kx1, gridMax.y), white);
+    else
+      dl->AddRectFilledMultiColor(ImVec2(kx0, gridMin.y), ImVec2(kx1, gridMax.y), theme::mix(white, P.ink, 0.12f), white, white,
+                                  theme::mix(white, P.ink, 0.12f));
     // J-77: keys sounding on this channel (playback, MIDI, typing keyboard, previews) light in the
     // channel colour while held and fade out smoothly on release.
     const keylight::ChannelLights* lit = keylight::lights(a, chId);
@@ -1266,7 +1790,16 @@ void drawPianoRoll(App& a) {
       if (p < 127 && isBlack(p + 1)) strip(y - rowH * 0.5f, y);         // lower half of the black row above
       if (p > 0 && isBlack(p - 1)) strip(y + rowH, y + rowH * 1.5f);    // upper half of the black row below
     };
-    for (int p = 0; p < 128; ++p) {
+    if (fold)  // K-112 (Live): folded rows are flat key plates, white or black, lit and hovered as keys
+      for (int p : foldPitch) {
+        const float y = yOf(p);
+        if (y > gridMax.y || y + rowH < gridMin.y) continue;
+        const float lv = keyLevel(p);
+        const ImU32 face = isBlack(p) ? black : white;
+        dl->AddRectFilled(ImVec2(kx0, y), ImVec2(kx1, y + rowH), lv > 0.004f ? litTint(face, lv) : hoverPitch == p ? P.accent : face);
+        dl->AddLine(ImVec2(kx0, std::round(y + rowH)), ImVec2(kx1, std::round(y + rowH)), whiteEdge);
+      }
+    for (int p = 0; p < 128 && !fold; ++p) {
       const float y = yOf(p);
       if (isBlack(p) || y - rowH > gridMax.y || y + rowH * 2 < gridMin.y) continue;
       const float lv = keyLevel(p);
@@ -1277,7 +1810,7 @@ void drawPianoRoll(App& a) {
         fillWhiteKey(p, y, P.accent, P.accent);  // the accent chosen in Settings, as it is
       }
     }
-    for (int p = 0; p < 128; ++p) {
+    for (int p = 0; p < 128 && !fold; ++p) {
       float y = yOf(p);
       if (y > gridMax.y || y + rowH < gridMin.y) continue;
       bool isB = isBlack(p);
@@ -1292,16 +1825,18 @@ void drawPianoRoll(App& a) {
       } else {
         // The white-key seam continues to the right of the black key.
         dl->AddLine(ImVec2(kx0 + blackW, std::round(y + rowH * 0.5f)), ImVec2(kx1, std::round(y + rowH * 0.5f)), whiteEdge);
-        dl->AddRectFilled(ImVec2(kx0, y), ImVec2(kx0 + blackW, y + rowH), tint ? tint : black, 2.0f, ImDrawFlags_RoundCornersRight);
-        if (!tint && rowH >= 6)  // highlight along the black key's top face
+        dl->AddRectFilled(ImVec2(kx0, y), ImVec2(kx0 + blackW, y + rowH), tint ? tint : black, liveKeys ? 0.0f : 2.0f, ImDrawFlags_RoundCornersRight);
+        if (!tint && rowH >= 6 && !liveKeys)  // highlight along the black key's top face
           dl->AddRectFilled(ImVec2(kx0 + 2, y + 1.5f), ImVec2(kx0 + blackW - 3, y + 3), theme::withAlpha(P.paper, 0.14f), 1.0f);
       }
-      if ((p % 12 == 0 || st.keyNames) && rowH >= 9 && !keyLabel(p)) {
+      if (((p % 12 == 0 && !liveKeys) || st.keyNames) && rowH >= 9 && !keyLabel(p)) {
         float fs = std::min(theme::kFontLabel, rowH - 1);
         std::string nn = noteName(p);
-        ImVec2 ts = a.fontMono->CalcTextSizeA(fs, 1e9f, 0, nn.c_str());
-        dl->AddText(a.fontMono, fs, ImVec2(kx1 - ts.x - 5, std::round(y + (rowH - ts.y) * 0.5f)),
-                    lv <= 0.004f && hoverPitch == p ? theme::contrastText(P.accent) : theme::mix(P.keyWhite, P.ink, 0.6f), nn.c_str());
+        // The Tracks layout: the octave's name in the bold face, near the ink, at the key's right end (144, 127).
+        ImFont* const kf = lgKeys ? a.fontBold : a.fontMono;
+        ImVec2 ts = kf->CalcTextSizeA(fs, 1e9f, 0, nn.c_str());
+        dl->AddText(kf, fs, ImVec2(kx1 - ts.x - (lgKeys ? 3 : 5), std::round(y + (rowH - ts.y) * 0.5f)),
+                    lv <= 0.004f && hoverPitch == p ? theme::contrastText(P.accent) : theme::mix(P.keyWhite, P.ink, lgKeys ? 0.78f : 0.6f), nn.c_str());
       }
     }
     // J-159: named keys are flat name plates over the keyboard (a drum-map look)
@@ -1332,29 +1867,59 @@ void drawPianoRoll(App& a) {
     dl->AddRectFilled(ImVec2(origin.x, origin.y), r1, P.dark ? P.field : P.surface950);
     dl->AddLine(ImVec2(origin.x, r1.y - 1), ImVec2(r1.x, r1.y - 1), P.dark ? P.ink : P.lineStrong);
     dl->PushClipRect(r0, r1, true);
+    if (layoutui::active() == layout::Preset::Logic && layoutui::shellBuilt(a, layout::Preset::Logic)) {
+      // K-112b: the edited pattern as a band along the ruler's foot, in its colour, with its name
+      // (solid, as every reference editor shows the region: a coloured bar with its name)
+      const float bx0 = snapX(0), bx1 = snapX(patLen), by0 = r1.y - 13, by1 = r1.y - 1;  // K-276: on the notes' edges
+      const ImU32 pc = theme::mix(P.surface700, theme::content(pat->color), 0.85f);
+      dl->AddRectFilled(ImVec2(bx0, by0), ImVec2(bx1, by1), pc, 2.0f);
+      const float nf = theme::kFontLabel - 1;
+      theme::textEllipsis(dl, a.fontBold, nf, ImVec2(std::max(bx0, r0.x) + 4, std::round(by0 + (by1 - by0 - nf) * 0.5f) - 1),
+                          std::max(0.0f, bx1 - std::max(bx0, r0.x) - 8), theme::contrastText(pc), pat->name.c_str());
+    }
     const Tick bar = std::max<Tick>(1, pm.baseBar()), beat = std::max<Tick>(1, pm.baseBeat());
     const Tick labelGrid = timeline::visibleGrid(pm, st.pxPerTick, 64.0);
     for (Tick t = snapDown(std::max<Tick>(0, tickAt(r0.x)), visGrid); xOf(t) < r1.x; t += visGrid) {
-      float x = std::round(xOf(t));
+      const pixelgrid::Span l = pixelgrid::line(xOf(t), dpp);  // K-276: on the grid line's pixel
+      const float x = l.x0;
       bool major = t % labelGrid == 0;
       float len = major ? 10.0f : t % beat == 0 ? 6.0f : 3.0f;
-      dl->AddLine(ImVec2(x, r1.y - len), ImVec2(x, r1.y - 1), major ? P.lineStrong : P.line);
+      if (major && livelook::active(a))  // K-112c: the numbered tick at the number's left, from the top (the refs)
+        dl->AddLine(ImVec2(x + 0.5f, rulerTop + numDy), ImVec2(x + 0.5f, rulerTop + numDy + 12), P.textFaint);
+      else
+        dl->AddRectFilled(ImVec2(l.x0, r1.y - braceH - len), ImVec2(l.x1, r1.y - braceH - 1), major ? P.lineStrong : P.line);
       if (major) {
         std::string lbl = timeline::rulerLabel(pm, t, labelGrid);
-        dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(x + 4, rulerTop + 4), t % bar == 0 ? P.text : P.textFaint, lbl.c_str());
+        // K-112b (checkpoint 25): the Tracks layout's numbers in the interface face at caption size, as the
+        // tracks area's ruler and 144, 152 set them.
+        if (lgKeys) dl->AddText(a.fontRegular, theme::kFontCaption, ImVec2(x + 4, rulerTop + numDy - 1), t % bar == 0 ? P.text : P.textFaint, lbl.c_str());
+        else dl->AddText(livelook::numFont(a), theme::kFontLabel, ImVec2(x + 4, rulerTop + numDy), t % bar == 0 ? P.text : P.textFaint, lbl.c_str());
       }
     }
     if (a.engine.mode() == PlayMode::Pattern) {  // position marker cap
-      float px = std::round(xOf(static_cast<Tick>(a.engine.position())));
-      dl->AddTriangleFilled(ImVec2(px - 5, r1.y - 9), ImVec2(px + 5, r1.y - 9), ImVec2(px, r1.y - 1), P.playhead);
+      float px = snapX(static_cast<Tick>(a.engine.position()));
+      dl->AddTriangleFilled(ImVec2(px - 5, r1.y - braceH - 9), ImVec2(px + 5, r1.y - braceH - 9), ImVec2(px, r1.y - braceH - 1), P.playhead);
     }
-    float xe = std::round(xOf(patLen));
-    dl->AddTriangleFilled(ImVec2(xe - 5, r1.y - 9), ImVec2(xe + 5, r1.y - 9), ImVec2(xe, r1.y - 2), P.textFaint);
+    float xe = snapX(patLen);
+    if (braceH > 0) {
+      // K-112 (Live): the loop brace: a bar in the pattern's colour from its start to its end, with a
+      // flag at each end, on its own row under the bar numbers.
+      const float by0 = r1.y - braceH + 1, by1 = r1.y - 2, xs = snapX(0);
+      const ImU32 bc = theme::rgb(pat->color);
+      dl->AddRectFilled(ImVec2(xs, by0), ImVec2(xe, by1), theme::withAlpha(bc, 0.85f));
+      dl->AddTriangleFilled(ImVec2(xs, by0), ImVec2(xs + 5, (by0 + by1) * 0.5f), ImVec2(xs, by1), theme::contrastText(bc));
+      dl->AddTriangleFilled(ImVec2(xe, by0), ImVec2(xe - 5, (by0 + by1) * 0.5f), ImVec2(xe, by1), theme::contrastText(bc));
+      if (hovered && io.MousePos.y >= by0 - 2 && io.MousePos.y < by1 + 2 && io.MousePos.x >= xs && io.MousePos.x < xe)
+        a.setHint(i18n::tr("The pattern's loop: its length is set in the clip column"));
+    } else {
+      dl->AddTriangleFilled(ImVec2(xe - 5, r1.y - 9), ImVec2(xe + 5, r1.y - 9), ImVec2(xe, r1.y - 2), P.textFaint);
+    }
     dl->PopClipRect();
     // Corner above the keyboard: pattern name.
     dl->AddRectFilled(origin, ImVec2(gridMin.x, r1.y), P.dark ? P.field : P.surface950);
     dl->AddLine(ImVec2(origin.x, r1.y - 1), ImVec2(gridMin.x, r1.y - 1), P.dark ? P.ink : P.lineStrong);
-    theme::textEllipsis(dl, a.fontMono, theme::kFontLabel, ImVec2(keysX0 + 8, rulerTop + 4), keyW - 12, P.textFaint, "NOTES");  // J-128: on the bar numbers' line
+    theme::textEllipsis(dl, livelook::numFont(a), theme::kFontLabel, ImVec2(keysX0 + 8, rulerTop + numDy), keyW - 12, P.textFaint,
+                        livelook::active(a) ? i18n::tr("Notes") : "NOTES");  // K-112c: sans, sentence case in Live  // J-128: on the bar numbers' line
   }
 
   // ---------------- view scrollers ----------------
@@ -1366,7 +1931,7 @@ void drawPianoRoll(App& a) {
   const scrollbarui::Layout hBar = scrollbarui::layout(ImVec2(gridMin.x, origin.y + 1), ImVec2(gridMax.x, rulerTop - 1), false, gridW,
                                                        maxScrollX + gridW, st.scrollX, scrollbarui::kThumbMinH);
   const scrollbarui::Layout vBar =
-      scrollbarui::layout(ImVec2(origin.x, gridMin.y), ImVec2(keysX0 - 2, gridMax.y), true, gridH, 128 * rowH, st.scrollY, scrollbarui::kThumbMinV);
+      scrollbarui::layout(ImVec2(origin.x, gridMin.y), ImVec2(keysX0 - 2, gridMax.y), true, gridH, rowsN * rowH, st.scrollY, scrollbarui::kThumbMinV);
   const bool barsFree = g.kind == Gesture::None || !active;
   const Part hOver = hovered && barsFree ? scrollbarui::hit(hBar, io.MousePos) : Part::None;
   const Part vOver = hovered && barsFree && hOver == Part::None ? scrollbarui::hit(vBar, io.MousePos) : Part::None;
@@ -1401,7 +1966,7 @@ void drawPianoRoll(App& a) {
     dl->PushClipRect(vBar.p0, ImVec2(vBar.p1.x + 2, vBar.p1.y), true);
     for (int p = 0; p < 128; ++p) {
       if (!used[static_cast<size_t>(p)]) continue;
-      const float y = std::round(vBar.toRail((static_cast<float>(127 - p) + 0.5f) * rowH));
+      const float y = std::round(vBar.toRail((static_cast<float>(fold ? foldRow[static_cast<size_t>(p)] : 127 - p) + 0.5f) * rowH));
       dl->AddRectFilled(ImVec2(vBar.p0.x + 3, y), ImVec2(vBar.p1.x - 1, y + 1), markCol);
     }
     dl->PopClipRect();
@@ -1413,44 +1978,92 @@ void drawPianoRoll(App& a) {
   dl->AddRectFilled(ImVec2(origin.x, gridMax.y), ImVec2(gridMax.x, origin.y + avail.y), P.dark ? P.field : P.surface950);
   dl->AddRectFilled(ImVec2(origin.x, gridMax.y), ImVec2(gridMax.x, gridMax.y + 3), P.dark ? P.surface800 : P.lineStrong);
   dl->AddLine(ImVec2(origin.x, gridMax.y + 3), ImVec2(gridMax.x, gridMax.y + 3), P.dark ? P.ink : P.lineStrong);
-  {  // lane selector: the property shown and edited in the lane
-    const ImVec2 l0(origin.x + 4, gridMax.y + 5), l1(gridMin.x - 4, gridMax.y + 5 + theme::kFontLabel + 6);
+  // K-112 (Live): the velocity lane's scale (127, 64, 1) at the right of its header column.
+  const bool liveScale = livelook::active(a) && lane == Lane::Velocity && pianoAutomationLane().owner == kNoId && vMax.y - vMin.y >= 2 * theme::kFontLabel - 2;  // round 25: kept in the 32 px lane
+  if (liveScale) {
+    const float fs = theme::kFontLabel;
+    const struct { const char* t; float f; } marks[] = {{"127", 1.0f}, {"64", 0.5f}, {"1", 0.0f}};
+    const bool slim = vMax.y - vMin.y < 3 * theme::kFontLabel;  // round 25: a slim lane shows 127 and 1 only (041, 112)
+    for (const auto& m : marks) {
+      if (slim && m.f == 0.5f) continue;
+      const float y = vMax.y - (vMax.y - vMin.y) * m.f;
+      const ImVec2 ts = livelook::numFont(a)->CalcTextSizeA(fs, 1e9f, 0, m.t);
+      const float ty = std::clamp(std::round(y - ts.y * 0.5f), vMin.y - 4, vMax.y - ts.y + 2);
+      dl->AddText(livelook::numFont(a), fs, ImVec2(gridMin.x - 6 - ts.x, ty), P.textFaint, m.t);
+      dl->AddLine(ImVec2(gridMin.x - 4, std::round(y)), ImVec2(gridMin.x, std::round(y)), P.line);
+    }
+  }
+  bool chipTook = false;
+  if (liveEnvelope) {
+    // K-112 (Live): the notes stay visible under a veil, the envelope is drawn and edited across
+    // the whole grid, and the band below holds the choosers and the draw-curve chip.
+    dl->AddRectFilled(gridMin, gridMax, theme::withAlpha(P.dark ? P.surface950 : P.paper, 0.45f));
+    const bool envHover = hovered && !laneSplit.on && io.MousePos.y >= gridMin.y;
+    drawPatternAutomationLane(
+        a, dl, ImVec2(gridMin.x, gridMin.y + 6), ImVec2(gridMax.x, gridMax.y - 6), patId,
+        [&](double t) { return gridMin.x + static_cast<float>(t) * st.pxPerTick - st.scrollX; },
+        [&](float x) { return static_cast<double>((x - gridMin.x + st.scrollX) / st.pxPerTick); }, snapG, envHover, active, st.tool, true);
+    const float fy0 = gridMax.y + 4, ch = 22, cy0 = std::round(fy0 + (origin.y + avail.y - fy0 - ch) * 0.5f);
+    const bool click = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+    chipTook = drawPatternLaneChoosers(a, dl, ImVec2(origin.x + 6, cy0), ImVec2(std::min(gridMax.x - 110, origin.x + 6 + 366), cy0 + ch), patId, chId,
+                                       hovered, click);
+    const float chipX = std::min(gridMax.x - 104, origin.x + 6 + 366 + 6);
+    chipTook = drawLaneCurveChip(a, dl, ImVec2(chipX, cy0), ImVec2(chipX + 96, cy0 + ch), patId, hovered, click) || chipTook;
+  }
+  if (!liveEnvelope) {  // lane selector: the property shown and edited in the lane
+    const ImVec2 l0(origin.x + 4, gridMax.y + 5), l1(gridMin.x - (liveScale ? 30 : 4), gridMax.y + 5 + theme::kFontLabel + 6);
     const bool lh = hovered && io.MousePos.x >= l0.x && io.MousePos.x < l1.x && io.MousePos.y >= l0.y && io.MousePos.y < l1.y;
     if (lh) dl->AddRectFilled(l0, l1, P.surface800, theme::kRadius);
     const std::string autoLabel = patternLaneLabel(a);  // J-5: pattern automation lane shown instead
-    theme::textEllipsis(dl, a.fontMono, theme::kFontLabel, ImVec2(l0.x + 4, l0.y + 3), l1.x - l0.x - 16, lh ? P.text : P.textFaint,
-                        autoLabel.empty() ? kLaneShort[static_cast<int>(lane)] : autoLabel.c_str());
+    // K-112c (Live): the lane's name in the sans face and sentence case, as the refs label it.
+    const bool liveL = livelook::active(a);
+    static const char* const kLaneLive[] = {"Velocity", "Pan", "Release", "Fine pitch", "Mod X", "Mod Y"};
+    const char* laneName = autoLabel.empty() ? (liveL ? i18n::tr(kLaneLive[static_cast<int>(lane)]) : kLaneShort[static_cast<int>(lane)]) : autoLabel.c_str();
+    theme::textEllipsis(dl, livelook::numFont(a), theme::kFontLabel, ImVec2(l0.x + 4, l0.y + 3), l1.x - l0.x - 16, lh ? P.text : P.textFaint, laneName);
     ui::drawIcon(dl, ui::Icon::ChevronDown, ImVec2(l1.x - 6, (l0.y + l1.y) * 0.5f), 9, lh ? P.text : P.textFaint);
   }
   // K-171: the automation lane's draw-curve chip under the lane name (when there is room).
-  bool chipTook = false;
-  if (pianoAutomationLane().owner != kNoId) {
+  if (pianoAutomationLane().owner != kNoId && !liveEnvelope) {
     const float cy0 = gridMax.y + 5 + theme::kFontLabel + 6 + 4, cy1 = cy0 + theme::kFontLabel + 6;
     if (cy1 <= origin.y + avail.y - 3)
       chipTook = drawLaneCurveChip(a, dl, ImVec2(origin.x + 4, cy0), ImVec2(gridMin.x - 4, cy1), patId, hovered, ImGui::IsMouseClicked(ImGuiMouseButton_Left));
   }
   const bool bip = laneBipolar(lane);
   for (float f : {0.25f, 0.5f, 0.75f, 1.0f}) {
+    if (liveEnvelope) break;
     float y = std::round(vMax.y - (vMax.y - vMin.y) * f);
     dl->AddLine(ImVec2(vMin.x, y), ImVec2(vMax.x, y), f == 1.0f || (bip && f == 0.5f) ? P.line : P.gridStep);
   }
   const bool autoLane = pianoAutomationLane().owner != kNoId;
-  if (autoLane)
+  if (autoLane && !liveEnvelope)
     drawPatternAutomationLane(
         a, dl, vMin, vMax, patId, [&](double t) { return gridMin.x + static_cast<float>(t) * st.pxPerTick - st.scrollX; },
         [&](float x) { return static_cast<double>((x - gridMin.x + st.scrollX) / st.pxPerTick); }, snapG, hovered && !laneSplit.on, active, st.tool);
   dl->PushClipRect(ImVec2(vMin.x, vMin.y - 4), vMax, true);
+  const bool liveVel = livelook::active(a);
   for (size_t i = 0; i < notes.size() && !autoLane; ++i) {
     const Note& n = notes[i];
     // Q-10: the bar glides to its new height (display only; the note already has the value).
     const uint64_t barKey = (static_cast<uint64_t>(chId) << 40) ^ (static_cast<uint64_t>(n.start) << 12) ^ (static_cast<uint64_t>(n.pitch) << 4) ^
                             static_cast<uint64_t>(lane);
     const float span = vMax.y - vMin.y, v = static_cast<float>(scrollui::glideBar(barKey, laneValue(n, lane)));
-    float x = std::round(xOf(n.start)), yv = vMax.y - span * v, y0 = bip ? vMax.y - span * 0.5f : vMax.y;
+    float x = snapX(n.start), yv = vMax.y - span * v, y0 = bip ? vMax.y - span * 0.5f : vMax.y;  // K-276: the note's own edge
     const bool lsel = st.selected.count(i) > 0;
     ImU32 c = lsel ? P.hot : theme::mix(groupColor(n.color, noteCol), P.paper, 0.15f);
     // Lollipop stem: a translucent bar to the note's length, a solid stem and a round head.
-    float xe = std::round(xOf(n.start + n.length));
+    float xe = snapX(n.start + n.length);
+    if (liveVel) {
+      // K-112c (round 21): Live draws a velocity as every ref's lane does (058, 038, 041, 112): a line at
+      // its height for the note's length and a hollow ring at the note's start, no stem.
+      const float ly = std::round(yv) + 0.5f;
+      // Round 22: a note starting at the lane's left edge keeps a whole ring, drawn just inside the
+      // edge (the lane never draws over its scale); its line still starts at the note, level with the roll.
+      const float rx = x < vMin.x + 4.5f && x > vMin.x - 4.5f ? vMin.x + 4.5f : x + 0.5f;
+      if (xe - x > 4) dl->AddLine(ImVec2(std::max(x + 4, rx + 3.5f), ly), ImVec2(xe - 1, ly), c, 1.5f);
+      dl->AddCircleFilled(ImVec2(rx, ly), 3.5f, theme::mix(c, P.ink, 0.55f), 12);
+      dl->AddCircle(ImVec2(rx, ly), 3.5f, c, 12, 1.5f);
+      continue;
+    }
     if (xe - x > 4) dl->AddRectFilled(ImVec2(x + 2, std::min(yv, y0)), ImVec2(xe - 1, std::max(yv, y0)), theme::withAlpha(c, 0.12f));
     dl->AddRectFilled(ImVec2(x, std::min(yv, y0)), ImVec2(x + 2, std::max(yv, y0)), c);
     dl->AddCircleFilled(ImVec2(x + 1, yv), 3.5f, c, 12);
@@ -1475,11 +2088,12 @@ void drawPianoRoll(App& a) {
 
   // ---------------- interaction ----------------
   const ImVec2 m = io.MousePos;
-  const bool inGrid = m.x >= gridMin.x && m.x < gridMax.x && m.y >= gridMin.y && m.y < gridMax.y;
+  const bool overGrid = m.x >= gridMin.x && m.x < gridMax.x && m.y >= gridMin.y && m.y < gridMax.y;
+  const bool inGrid = overGrid && !liveEnvelope;  // K-112 (Live): the envelope over the notes takes the grid
   const bool inKeys = m.x >= keysX0 && m.x < gridMin.x && m.y >= gridMin.y && m.y < gridMax.y;
   const bool inRuler = m.y >= rulerTop && m.y < gridMin.y && m.x >= gridMin.x;
   const bool inVel = m.y >= gridMax.y && m.x >= gridMin.x;
-  const bool inLaneLabel = m.y >= gridMax.y && m.x >= origin.x && m.x < gridMin.x;
+  const bool inLaneLabel = m.y >= gridMax.y && m.x >= origin.x && m.x < gridMin.x && !liveEnvelope;
   // K-25: the other notes a bend edit applies to: a selected note's edit gives every selected
   // note the same line (a chord bends as one); an unselected note bends alone.
   auto bendTargets = [&](size_t ni) {
@@ -1573,7 +2187,7 @@ void drawPianoRoll(App& a) {
   bool lClick = hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left);
   bool rClick = hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right);
   {  // K-171: the splitter above the lane: drag to resize it, double-click for the automatic height
-    const bool onSplit = hovered && m.y >= gridMax.y - 3 && m.y < gridMax.y + 4 && m.x >= origin.x && m.x < gridMax.x;
+    const bool onSplit = hovered && !liveEnvelope && m.y >= gridMax.y - 3 && m.y < gridMax.y + 4 && m.x >= origin.x && m.x < gridMax.x;
     if (onSplit || laneSplit.on) {
       ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
       if (!laneSplit.on) a.setHint(i18n::tr("Drag to resize the lane \xC2\xB7 double-click: automatic height"));
@@ -1590,7 +2204,7 @@ void drawPianoRoll(App& a) {
     }
     if (laneSplit.on) {
       if (active) {
-        const float nh = std::round(std::clamp(laneSplit.h0 - (m.y - laneSplit.y0), 40.0f, laneMaxH));
+        const float nh = std::round(std::clamp(laneSplit.h0 - (m.y - laneSplit.y0), laneMinH, laneMaxH));
         if (nh != velH) a.settings.set("piano.laneHeight", static_cast<double>(nh));
         lClick = rClick = false;
       } else {
@@ -1616,7 +2230,7 @@ void drawPianoRoll(App& a) {
         vBarDrag = {};
         st.centred = false;  // centred on the notes again (as at the first open)
       } else if (const int page = scrollbarui::press(vBarDrag, vBar, vOver, m, rowH, st.scrollY)) {
-        st.scrollY = std::clamp(st.scrollY + static_cast<float>(page) * gridH * 0.9f, 0.0f, std::max(0.0f, 128 * rowH - gridH));
+        st.scrollY = std::clamp(st.scrollY + static_cast<float>(page) * gridH * 0.9f, 0.0f, std::max(0.0f, rowsN * rowH - gridH));
       } else if (vBarDrag.zooming()) {
         vBarRow = smoothzoom::rowAnchorAt(keyTop.data(), 128, rowH, static_cast<double>(vBarDrag.edgePx + st.scrollY), vBarDrag.edgePx);
       }
@@ -1641,7 +2255,7 @@ void drawPianoRoll(App& a) {
   }
 
   if (lClick || rClick) {
-    if (!inVel) automationLaneBlur();  // K-171: the editing keys go back to the notes
+    if (!inVel && !(liveEnvelope && overGrid)) automationLaneBlur();  // K-171: the editing keys go back to the notes
     g = Gesture{};
     g.selBefore = st.selected;
     g.start = m;
@@ -2482,6 +3096,7 @@ void drawPianoRoll(App& a) {
       if (keys::pressed("piano.slideMode")) newSlide = !newSlide;
     }
   }
+  if (clipColW > 0) ImGui::Unindent(clipColW);
   ui::EndDockWindow();
 }
 

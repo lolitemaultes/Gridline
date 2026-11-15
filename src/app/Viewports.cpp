@@ -980,6 +980,12 @@ bool available() { return S.available; }
 std::string unavailableReason() { return S.reason; }
 bool enabled() { return S.available && on(); }
 
+void togglePopOut(const char* name) {
+  if (!enabled() || !buttonsOn()) return;
+  if (ImGuiWindow* w = ImGui::FindWindowByName(name)) S.toggles.push_back(w->ID);
+}
+bool poppable() { return enabled() && buttonsOn(); }
+
 void setAllowed(bool allowed) {
   if (!S.installed) return;
   ImGuiIO& io = ImGui::GetIO();

@@ -9,6 +9,7 @@
 #include <functional>
 #include <map>
 #include <set>
+#include "LayoutStyleUi.h"
 #include "EditorZoomUi.h"
 #include "../packs/PacksUi.h"
 #include "CollabUi.h"
@@ -36,6 +37,10 @@
 #include "HostedUi.h"
 #include "TrackIcons.h"
 #include "../core/MixerLayout.h"
+#include "LayoutParts.h"
+#include "LayoutPresets.h"
+#include "LayoutShellUi.h"
+#include "LogicPlugins.h"
 #include "../core/LevelMeter.h"
 #include "../core/MixerOps.h"
 #include "../core/TrackOrder.h"
@@ -49,6 +54,7 @@
 #include "../core/SmoothSnap.h"
 #include "SmoothScrollUi.h"
 #include "Viewports.h"
+#include "HostedBodies.h"
 
 namespace gl {
 
@@ -1526,6 +1532,16 @@ void drawMixer(App& a) {
   MixerViewState& v = a.mixerView;
   if (!s.mixerTrack(a.selMixer) && !s.mixer.empty()) a.selMixer = s.masterId();
   for (auto it = v.sel.begin(); it != v.sel.end();) it = s.mixerTrack(*it) ? std::next(it) : v.sel.erase(it);
+  if (layoutui::active() == layout::Preset::Logic && layoutui::shellBuilt(a, layout::Preset::Logic) && !a.showStage) {  // K-112b
+    if (!a.settings.getBool("ui.logicMixerDetail")) {
+      layoutparts::logicMixer(a);
+      ui::EndDockWindow();
+      drawRoutingOverview(a);
+      return;
+    }
+    if (ui::TextButton("Channel strips", false, 0, "Back to the channel strips with a legend")) a.settings.set("ui.logicMixerDetail", false);
+    ImGui::SameLine(0, 6);
+  }
   if (a.showStage) {  // the Stage view: the same tracks on a stage (app/StageView.h)
     stageui::drawBody(a);
     ui::EndDockWindow();
@@ -2002,9 +2018,42 @@ void mixerLatencyMenu(App& a, ObjectId id) {
   if (ImGui::MenuItem(i18n::tr("Reset manual latency on all tracks"))) mixops::resetManualLatency(a.doc);
 }
 
+// K-112 (R3): one effect slot's menu, header and editor, drawn by the effect editor window or by
+// a layout part's own frame (a device chain, a lower frame).
+void effectPickerList(App& a, ObjectId track, int slot, const std::string& current) { effectList(a, track, slot, current); }
+
+void drawEffectEditorBody(App& a, ObjectId mixerTrack, int slot, const BodyFrame& f) {
+  const layoutui::BaseBorderScope border;  // K-112b: plugin windows keep their outlined controls
+  const Song& s = a.doc.song();
+  const MixerTrack* t = s.mixerTrack(mixerTrack);
+  if (!t || slot < 0 || slot >= kEffectSlots) return;
+  if (!findPlugin(t->slots[static_cast<size_t>(slot)].plugin.type)) return;
+  hostbody::drawn(hostbody::Body::EffectEditor, t->id, slot);
+  const PluginTarget target{t->id, slot};
+  if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) || ImGui::IsWindowAppearing()) {
+    a.focusPluginOwner = target.owner;  // controller template knobs follow the focused plugin
+    a.focusPluginSlot = target.slot;
+  }
+  menuButton("fxmenu", "Effect menu: presets, state, slot", [&a, target]() { pluginWindowMenu(a, target.owner, target.slot); });
+  ImGui::SameLine(0, 8);
+  drawPluginHeader(a, target);
+  if (logicplug::controlsView(a, t->slots[static_cast<size_t>(slot)].plugin.type)) {  // K-112b: the plain controls list
+    logicplug::drawControls(a, target, std::floor(f.width));
+    return;
+  }
+  if (f.zoom) edzoomui::begin(a, "fxeditor");  // K-210b: only the editor zooms, its header row keeps the interface size
+  drawPluginBody(a, target, std::floor(f.width));
+  if (f.zoom) edzoomui::end(a, "fxeditor");
+}
+
 void drawEffectEditor(App& a) {
+  logicplug::frame(a);    // K-112b: linked windows follow the selected track; hidden windows
   routePluginWindows(a);  // installed plugins open as themselves
-  if (a.fxEditor.first == kNoId) return;
+  logicplug::drawMoreFx(a);  // K-112b: Off keeps earlier built-in effects open in their own windows
+  if (a.fxEditor.first == kNoId) {
+    logicplug::drawEmptyRow(a);  // K-112b: a followed row with nothing on the selected strip
+    return;
+  }
   const Song& s = a.doc.song();
   const MixerTrack* t = s.mixerTrack(a.fxEditor.first);
   int k = a.fxEditor.second;
@@ -2019,8 +2068,11 @@ void drawEffectEditor(App& a) {
   }
   PluginTarget target{t->id, k};
   if (packs::claimEffectEditor(a, target)) return;  // K-15: Loupe pinned into the layout shows it there
-  std::string title = info->name + "  \u00b7  " + mixerTrackName(s, static_cast<size_t>(s.mixerIndex(t->id))) + "  \u00b7  slot " +
-                      std::to_string(k + 1) + "###fxeditor";
+  if (hostbody::claimed(hostbody::Body::EffectEditor)) return;  // K-112: a layout part draws it in its own frame
+  if (logicplug::hidden()) return;  // K-112b: hidden (V), still open
+  std::string title = logicplug::active(a) ? logicplug::fxWindowTitle(s, *t)
+                                           : info->name + "  \u00b7  " + mixerTrackName(s, static_cast<size_t>(s.mixerIndex(t->id))) + "  \u00b7  slot " +
+                                                 std::to_string(k + 1) + "###fxeditor";
   float width = info->editorWidth > 0 ? info->editorWidth : (info->type == "gl.eq" ? 780.0f : 600.0f);
   if (info->editorMinWidth > 0) {  // J-158: reflowing editors narrow to fit the main window first
     const ImVec2 area = ui::EditorArea();
@@ -2038,20 +2090,17 @@ void drawEffectEditor(App& a) {
   const int fitFlags =  // J-158: capped to the work area, the rest scrolls
       zoomable ? edzoomui::nextWindowSize("fxeditor") : ui::NextFloatingWindowSize(width + 24);
   viewports::openAttached(title.c_str());  // opens inside the main window, never popped out by itself
-  if (ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking | fitFlags)) {
+  // K-112b: the title bar's underline (drawn by Begin from the frame outline) stays as in every layout
+  bool vis = false;
+  {
+    const layoutui::BaseBorderScope border;
+    vis = ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking | fitFlags);
+  }
+  if (vis) {
     ui::KeepWindowInViewport();
     ui::MarkDetachable();  // J-114: pops out / docks back like the panels
     edzoomui::markRows("fxeditor");  // K-216: the header row (fit report)
-    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) || ImGui::IsWindowAppearing()) {
-      a.focusPluginOwner = target.owner;  // controller template knobs follow the focused plugin
-      a.focusPluginSlot = target.slot;
-    }
-    menuButton("fxmenu", "Effect menu: presets, state, slot", [&a, target]() { pluginWindowMenu(a, target.owner, target.slot); });
-    ImGui::SameLine(0, 8);
-    drawPluginHeader(a, target);
-    edzoomui::begin(a, "fxeditor");  // K-210b: only the editor zooms, its header row keeps the interface size
-    drawPluginBody(a, target, width);
-    edzoomui::end(a, "fxeditor");
+    drawEffectEditorBody(a, target.owner, target.slot, BodyFrame{width, true, ""});
   }
   ImGui::End();
   if (!open) a.fxEditor = {kNoId, -1};

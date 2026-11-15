@@ -1,5 +1,6 @@
 #include "Song.h"
 #include "NoteBend.h"
+#include "PluginParams.h"
 #include <algorithm>
 #include <cmath>
 #include <functional>
@@ -346,6 +347,45 @@ std::string mixerTrackName(const Song& song, size_t index) {
 std::string playlistTrackName(const Song& song, size_t index) {
   if (index < song.tracks.size() && !song.tracks[index].name.empty()) return song.tracks[index].name;
   return "Track " + std::to_string(index + 1);
+}
+
+int channelMidiOutPort(const Channel& c) {
+  if (c.plugin.type != "gl.midiout") return c.midiOutPort;
+  const size_t k = static_cast<size_t>(pp::MoPort);
+  return std::clamp(static_cast<int>(std::lround(k < c.plugin.params.size() ? c.plugin.params[k] : 0.0f)), 0, 255);
+}
+
+std::vector<std::vector<int>> midiPortListeners(const Song& s, std::vector<std::pair<ObjectId, ObjectId>>* loops) {
+  const size_t n = s.channels.size();
+  std::vector<std::vector<int>> out(n);
+  std::vector<int> seen(n, 0), stack;
+  int mark = 0;
+  auto reaches = [&](int from, int to) {  // a path from -> to over the links kept so far
+    ++mark;
+    stack.assign(1, from);
+    seen[static_cast<size_t>(from)] = mark;
+    while (!stack.empty()) {
+      const int c = stack.back();
+      stack.pop_back();
+      if (c == to) return true;
+      for (int t : out[static_cast<size_t>(c)])
+        if (seen[static_cast<size_t>(t)] != mark) seen[static_cast<size_t>(t)] = mark, stack.push_back(t);
+    }
+    return false;
+  };
+  for (size_t i = 0; i < n; ++i) {
+    const int port = channelMidiOutPort(s.channels[i]);
+    if (port < 0) continue;
+    for (size_t j = 0; j < n; ++j) {
+      if (j == i || s.channels[j].midiInPort != port) continue;
+      if (reaches(static_cast<int>(j), static_cast<int>(i))) {
+        if (loops) loops->emplace_back(s.channels[i].id, s.channels[j].id);
+        continue;
+      }
+      out[i].push_back(static_cast<int>(j));
+    }
+  }
+  return out;
 }
 
 }  // namespace gl

@@ -1,0 +1,74 @@
+Cut ( Ctrl+X )
+Copy ( Ctrl+C )
+Paste ( Ctrl+V )
+--------------------------------
+Fold
+Show its whole editor above
+Open in a window
+--------------------------------
+Compare: switch to B ( P )
+Compare: copy to the other side
+--------------------------------
+Presets >
+Load preset from file...
+Save preset to file...
+Copy state
+Paste state
+Randomize
+Reset to default
+--------------------------------
+Piano roll ( Ctrl+Alt+3 )
+Replace instrument >
+Route to a free mixer track ( Ctrl+L )
+Clone channel
+Rename... >
+Colour >
+Delete channel
+--------------------------------
+Editor size >
+Close window
+==== tree ====
+Cut
+Copy
+Paste
+Fold
+Show its whole editor above
+Open in a window
+Compare: switch to B
+Compare: copy to the other side
+Presets >
+Presets > Default
+Presets > Deep 808
+Presets > Punchy
+Presets > Lo-fi
+Load preset from file...
+Save preset to file...
+Copy state
+Paste state
+Randomize
+Reset to default
+Piano roll
+Replace instrument >
+Replace instrument > Synth >
+Replace instrument > Sampler >
+Replace instrument > Drums >
+Replace instrument > MIDI >
+Replace instrument > Controller >
+Replace instrument > Utility >
+Replace instrument > Imported >
+Route to a free mixer track
+Clone channel
+Rename... >
+Colour >
+Delete channel
+Editor size >
+Editor size > Same as other plugins (100 %)
+Editor size > 60 %
+Editor size > 75 %
+Editor size > 85 %
+Editor size > 100 %
+Editor size > 125 %
+Editor size > 150 %
+Editor size > 175 %
+Editor size > 200 %
+Close window

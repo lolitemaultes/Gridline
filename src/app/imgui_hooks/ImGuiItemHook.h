@@ -28,6 +28,8 @@ struct MenuWalker {
   virtual bool beginMenu(const char* label, bool enabled) = 0;
   virtual void endMenu() = 0;
   virtual bool menuItem(const char* label, const char* shortcut, bool selected, bool enabled) = 0;
+  // K-112: a separator between items (`text` for a titled one, else nullptr); drawn unseen as before.
+  virtual void separator(const char*) {}
 };
 void setMenuWalker(MenuWalker* w);
 MenuWalker* menuWalker();

@@ -36,9 +36,13 @@ function(run tag size script frames)
   set(ENV{GRIDLINE_CONFIG_HOME} "${OUT}/${tag}/cfg")
   set(ENV{HOME} "${OUT}/${tag}/home")
   file(WRITE "${OUT}/${tag}/in.txt" "${script}")
-  execute_process(COMMAND "${APP}" --hidden --no-ui-sounds --no-update-check --fixed-dt 16 --plugin gl.plasma --size ${size} --frames ${frames}
+  # (--no-draw: the checks read the drawer reports, never pixels; only the last frame, shot.ppm, is
+  # drawn. A software OpenGL on a shared runner spent over a second drawing each 2560 x 1600 frame.
+  # --video-clock: the engine runs a frame's worth of samples at the end of every frame, so the held
+  # key count the sound report reads has taken the frame's key presses in, however slow the machine.)
+  execute_process(COMMAND "${APP}" --hidden --no-ui-sounds --no-update-check --no-draw --video-clock 60 --plugin gl.plasma --size ${size} --frames ${frames}
                           --dev-input "${OUT}/${tag}/in.txt" --screenshot "${OUT}/${tag}/shot.ppm"
-                  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 240)
+                  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 120)
   file(WRITE "${OUT}/${tag}/err.txt" "${err}")
   if(NOT rc EQUAL 0)
     message(FATAL_ERROR "FAIL: ${tag}: gridline-app failed (${rc}), the script ${OUT}/${tag}/in.txt:\n${err}")

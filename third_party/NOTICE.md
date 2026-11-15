@@ -32,10 +32,12 @@ Not vendored, but credited: the layout of Serum 1 `.fxp` / VST2 chunks that Plas
 follows the format notes of serum2vital (https://github.com/btesser/serum2vital, GPL-3.0).
 
 Not vendored, but credited: Platter's scratch model (`src/packs/platter/platter_dsp.cpp`: the
-jog wheel's speed from an alpha-beta filter on its ticks, with the filter values each controller
-mapping uses; the mouse's position loop with its throw and release; the ramp back to the motor;
-the level curve at low speeds) follows the approach of Mixxx (https://github.com/mixxxdj/mixxx,
-GPL-2.0-or-later). No Mixxx source is included; the code is Gridline's own.
+hand's speed estimated from the timing of the jog wheel's ticks and the mouse's moves, after
+Mixxx's alpha-beta filter on the tick rate, whose filter values each controller mapping uses for
+the record's tracker; the mouse's throw and release; the ramp back to the motor; the level curve
+at low speeds) follows the approach of Mixxx (https://github.com/mixxxdj/mixxx,
+GPL-2.0-or-later), studied from its scratch controllers, its wheel filter and its engine's rate
+ramping. No Mixxx source is included; the code is Gridline's own.
 
 Not vendored, but included as data: the period table that tracker modules use for pitch
 (`src/core/TrackerTables.cpp`, 96 values) is taken from ft2-clone

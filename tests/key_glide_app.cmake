@@ -4,7 +4,7 @@
 # sounding when Escape is pressed, the pointer leaves the window, the app loses the focus or the
 # editor is closed while a key is held.
 #
-# Runs the app hidden (isolated config and HOME, fixed frame time, dummy audio) with each editor open
+# Runs the app hidden (isolated config and HOME, the engine run from the frame loop: no audio device) with each editor open
 # on a new channel. The app reports each keyboard it drew (`keybeds`): its rectangle, the key it sounds
 # and eight points to drag through (8 white keys of a piano, or 8 neighbouring keys of a strip), plus
 # the log of the notes the keyboards started and stopped. Every check: the keyboard sounds the key
@@ -31,8 +31,11 @@ function(run tag type size script)
   set(ENV{GRIDLINE_NO_PLUGIN_SCAN} "1")
   set(ENV{GRIDLINE_HIDE_PLUGINS} "all")
   file(WRITE "${OUT}/${tag}.txt" "${script}")
-  execute_process(COMMAND "${APP}" --hidden --no-ui-sounds --fixed-dt 16 --size ${size} --plugin ${type} --dev-input "${OUT}/${tag}.txt"
-                  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 240)
+  # --video-clock: the engine runs a frame's worth of samples at the end of every frame (no audio
+  # device), so the held note count a check reads two frames after a press or release has taken it in
+  # on any machine. --no-draw: the checks read the keyboard reports, never pixels.
+  execute_process(COMMAND "${APP}" --hidden --no-ui-sounds --no-draw --video-clock 60 --size ${size} --plugin ${type} --dev-input "${OUT}/${tag}.txt"
+                  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 120)
   file(WRITE "${OUT}/${tag}.log" "${out}\n${err}")
   if(NOT rc EQUAL 0)
     message(FATAL_ERROR "FAIL: ${tag}: gridline-app failed (${rc}), the script ${OUT}/${tag}.txt:\n${out}\n${err}")
@@ -91,10 +94,12 @@ foreach(entry "gl.matrixfm|iskin|-|1600x1100" "gl.twinva|iskin|-|1600x1100" "gl.
   set(frame 60)  # (a scrolled editor glides to its place first)
   set(wants "")  # per check: the key the keyboard must sound (-1: none), "closed" / "gone": its editor closed / no longer drawn
   set(ons "")    # the keys the log must start, in order
+  # (the check three frames on: a key a closed editor held is ended at the start of the frame after its
+  # last drawn one, and the engine takes that in at the end of that frame, under --video-clock)
   macro(step cmd want)
     math(EXPR frame "${frame} + 2")
     string(APPEND script "${frame} ${cmd}\n")
-    math(EXPR frame "${frame} + 2")
+    math(EXPR frame "${frame} + 3")
     string(APPEND script "${frame} keybeds\n")
     list(APPEND wants ${want})
   endmacro()

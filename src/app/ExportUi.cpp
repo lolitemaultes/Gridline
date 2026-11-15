@@ -7,8 +7,10 @@
 // progress window that can cancel; the summary lists the files written.
 #include "../core/I18n.h"
 #include "Keys.h"
+#include "LiveLook.h"
 #include "../core/TrackReceipt.h"
 #include "ExportUi.h"
+#include "LogicPlugins.h"
 #include "../core/Crash.h"
 #include "../core/ProjectArchive.h"
 #include "../core/RemoteFs.h"
@@ -498,6 +500,7 @@ void drawRenderDialog(App& a) {
   }
   ExportSettings& s = dlg.s;
   const float colW = 360;
+  ui::SetFormColumn(logicplug::active(a) ? 132.0f : 0.0f, false);  // K-112b: the Tracks layout's labels end at the controls
   const bool files = dlg.dest == static_cast<int>(Dest::Files);
   // J-54: on a short screen the two columns scroll; the footer stays visible.
   ui::BeginDialogBody("##renderbody");
@@ -544,7 +547,7 @@ void drawRenderDialog(App& a) {
     s.render.loops = std::clamp(s.render.loops, 1, 64);
     const double sec = scopeSeconds(a) * s.render.loops;
     formLabel("Length");
-    ImGui::PushFont(a.fontMono, theme::kFontNumber + 1);
+    ImGui::PushFont(livelook::numFont(a), theme::kFontNumber + 1);  // K-112c: sans in Live
     ImGui::Text("%d:%05.2f", static_cast<int>(sec / 60), std::fmod(sec, 60.0));
     ImGui::PopFont();
     if (!song.mixer.empty() && song.mixer[0].muted) {
@@ -703,6 +706,8 @@ void drawRenderDialog(App& a) {
   ui::EndSection();
   ImGui::EndGroup();
   ui::EndDialogBody();
+  ui::SetFormColumn(0);
+  ui::SectionMarksReset();
   ui::DialogFooter(96 * 2 + theme::kS2);
   if (ui::TextButton("Cancel", false, 96)) dlg.open = false;
   ImGui::SameLine(0, theme::kS2);

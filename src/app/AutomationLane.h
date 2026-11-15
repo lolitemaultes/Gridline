@@ -29,13 +29,19 @@ std::string patternLaneLabel(App& a);
 // to screen x; `grid` is the snap grid (1: no snap). `canvasHovered` /
 // `canvasActive` describe the piano roll canvas item the lane belongs to;
 // `tool` is the piano roll's tool (Delete erases points, Select selects, the
-// drawing tools draw; Zoom and Playback leave the lane alone).
+// drawing tools draw; Zoom and Playback leave the lane alone). `overlay` (K-112, Live): drawn over
+// the notes as a plain line with hollow points (no fill or stems, so the notes show through).
 void drawPatternAutomationLane(App& a, ImDrawList* dl, ImVec2 min, ImVec2 max, ObjectId pattern,
                                const std::function<float(double)>& xOf, const std::function<double(float)>& tickAt,
-                               Tick grid, bool canvasHovered, bool canvasActive, Tool tool);
+                               Tick grid, bool canvasHovered, bool canvasActive, Tool tool, bool overlay = false);
 // The draw-curve chip in the key column under the lane name ([min, max]); opens
 // its menu on a click. Returns true when it took the click.
 bool drawLaneCurveChip(App& a, ImDrawList* dl, ImVec2 min, ImVec2 max, ObjectId pattern, bool canvasHovered, bool clicked);
+// K-112 (Live): the envelope choosers at the foot of the notes editor, in [min, max]: the device
+// (the channel, its note processors, its mixer track and effects, the song) and its parameter.
+// Picking a parameter shows its lane, or adds one. Returns true when it took the click.
+bool drawPatternLaneChoosers(App& a, ImDrawList* dl, ImVec2 min, ImVec2 max, ObjectId pattern, ObjectId channel, bool canvasHovered,
+                             bool clicked);
 // While the lane has the keyboard (after a click in it, while it has a
 // selection), the piano roll's editing keys act on its points: delete, select
 // all, deselect, copy, cut, paste, quantize, Esc. Returns true while the lane

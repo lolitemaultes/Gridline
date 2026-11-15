@@ -111,6 +111,7 @@ struct Channel {
   float pan = 0.0f;             // -1..1            (ChannelParam::Pan)
   bool muted = false;           //                  (ChannelParam::Mute)
   int pitch = 0;                // semitones -24..24 (ChannelParam::Pitch)
+  bool sustainPedal = false;    // the sustain pedal is down (ChannelParam::Sustain; automation moves it)
   ObjectId mixerTrack = kNoId;  // MixerTrack::id; kNoId = master
   // Note processors run on this channel's notes before the instrument
   // (arpeggiator, chords, key mapping, …), in order. PluginKind::NoteFx types.
@@ -159,6 +160,7 @@ struct Channel {
   // MIDI ports (hosted plugins): notes / MIDI a plugin sends on its output
   // port play on every channel whose input port matches (arpeggiators,
   // chord generators). -1 = none; 0..255.
+  // MIDI Out channels (gl.midiout) send on their Port parameter instead (channelMidiOutPort).
   int midiOutPort = -1;
   int midiInPort = -1;
   // J-31: key range (MIDI notes, inclusive): notes outside it do not play on
@@ -177,19 +179,22 @@ struct Channel {
   // woken when needed. Hibernate is this computer's choice (collaboration keeps it local).
   FreezeRecord freeze;
   bool hibernate = false;
+  // K-277: the instrument keeps running while silent (Rest silent instruments leaves it alone):
+  // for plugins that make sound on their own.
+  bool keepRunning = false;
   bool fullKeyRange() const { return keyLo <= 0 && keyHi >= 127; }
 
   bool isLayer() const { return !layer.empty(); }
   bool operator==(const Channel& o) const {
     return id == o.id && name == o.name && color == o.color && plugin == o.plugin && gain == o.gain &&
-           pan == o.pan && muted == o.muted && pitch == o.pitch && mixerTrack == o.mixerTrack && noteFx == o.noteFx &&
+           pan == o.pan && muted == o.muted && pitch == o.pitch && sustainPedal == o.sustainPedal && mixerTrack == o.mixerTrack && noteFx == o.noteFx &&
            fine == o.fine && pitchSmooth == o.pitchSmooth && knobFine == o.knobFine && swingMix == o.swingMix && timeShift == o.timeShift && polyphony == o.polyphony &&
            mono == o.mono && porta == o.porta && portaTime == o.portaTime && expr == o.expr && cutGroup == o.cutGroup &&
            cutBy == o.cutBy && echo == o.echo && layer == o.layer && layerMode == o.layerMode && layerZones == o.layerZones &&
            macros == o.macros && group == o.group &&
            auxOuts == o.auxOuts && midiOutPort == o.midiOutPort && midiInPort == o.midiInPort && keyLo == o.keyLo &&
            keyHi == o.keyHi && swingTruncate == o.swingTruncate && audioClip == o.audioClip && flIcon == o.flIcon && icon == o.icon &&
-           freeze == o.freeze && hibernate == o.hibernate;
+           freeze == o.freeze && hibernate == o.hibernate && keepRunning == o.keepRunning;
   }
 };
 
@@ -906,6 +911,15 @@ int pruneModLinks(Song& song);
 // formula; ModCurve::Formula returns x unchanged here).
 double applyModCurve(ModCurve c, double x);
 const char* modCurveName(ModCurve c);
+
+// The MIDI port a channel sends on to other channels (-1 = none): a MIDI Out channel's Port
+// parameter, else Channel::midiOutPort (hosted plugins' MIDI output).
+int channelMidiOutPort(const Channel& c);
+// For each channel (by index), the channels (indices) that play what it sends on its MIDI output
+// port: those whose midiInPort is that port. A channel never listens to itself, and a link that
+// would bring a channel's MIDI back to it through other channels is left out (listed in `loops`
+// as (sender id, listener id)), so MIDI can never go round in a circle.
+std::vector<std::vector<int>> midiPortListeners(const Song& s, std::vector<std::pair<ObjectId, ObjectId>>* loops = nullptr);
 
 // Display names.
 std::string mixerTrackName(const Song& song, size_t index);

@@ -335,6 +335,35 @@ class Generator {
   virtual bool active() const = 0;  // any voice sounding
   // K-64: no voice sounding and no event waiting for the next block.
   bool idle() const { return count_ == 0 && !active(); }
+  // K-277 (audio thread): events wait for the next block.
+  bool hasEvents() const { return count_ > 0; }
+  // K-277 (audio thread): drops the events waiting (a muted channel at rest never hears them).
+  void dropEvents() { count_ = 0; }
+  // K-277 (audio thread): a raw MIDI message waits (a controller, pitch bend, program change:
+  // state the instrument keeps, so a muted channel at rest still takes it).
+  bool hasMidi() const {
+    for (size_t i = 0; i < count_; ++i)
+      if (events_[i].kind == Ev::Midi) return true;
+    return false;
+  }
+  // K-277: the channel's own output pan and expression response have reached their targets
+  // (leaving blocks out then changes nothing they would do later).
+  bool smoothersSettled() const {
+    return std::fabs(panTarget_ - panCur_) < 1e-7f && (!exprUsed_ || (std::fabs(levelTarget_ - levelCur_) < 1e-7f && std::fabs(brightTarget_ - brightCur_) < 1e-7f &&
+                                                                     levelTarget_ == 0 && brightTarget_ == 0));
+  }
+  // K-277: may the engine leave this instrument out of blocks while it is silent, no note plays
+  // and nothing arrives for it (Rest silent instruments)? False for instruments that make sound
+  // without notes (an audio input, a deck, a module player, their own sequence).
+  virtual bool mayRest() const { return true; }
+  // K-277: true when active() reports the sound itself (built-in instruments); false when the
+  // engine must listen for the end of the tail (hosted plugins, which keep it to themselves).
+  virtual bool tailKnown() const { return true; }
+  // K-277: notes this instrument still holds (hosted plugins: notes sent without their note-off).
+  virtual bool notesHeld() const { return false; }
+  // K-277: `n` frames went by at rest (the block was not run): free-running state (a tremolo's
+  // phase) moves on as if it had, so the next note sounds as it would have.
+  virtual void rested(int n) { (void)n; }
   // J-112: the instrument plays on its own (its own sequence, not notes it is
   // given: Seltmann's latched pattern). Audio thread, after a block; the
   // engine publishes it as plugin playback (AudioEngine::pluginPlayback).
@@ -476,6 +505,9 @@ class Generator {
     // a kGlide event. Instruments that cannot tune a note get the fraction as channel pitch bend.
     float pitch = -1.0f;
     float time = 0.0f;  // kGlide: glide seconds
+    // MIDI Out channels: a note-on's tuning beyond its written key (the note's fine pitch plus the
+    // sending channel's pitch, NoteProps::detune), so a listener keeps the key the note was written on.
+    float detune = 0.0f;
     // K-170: status of an engine-only event: glide the note started on key `a` (velocity `b`) to `pitch` over `time`.
     static constexpr uint8_t kGlide = 0xF4;
   };

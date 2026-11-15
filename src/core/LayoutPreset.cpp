@@ -19,6 +19,7 @@ const char* id(Preset p) {
   switch (p) {
     case Preset::Live: return "live";
     case Preset::Logic: return "logic";
+    case Preset::Tracker: return "tracker";
     default: return "studio";
   }
 }
@@ -27,14 +28,17 @@ Preset fromId(const std::string& text) {
   const std::string t = lower(text);
   if (t == "live" || t == "performance") return Preset::Live;
   if (t == "logic" || t == "tracks") return Preset::Logic;
+  if (t == "tracker") return Preset::Tracker;
   return Preset::Studio;
 }
 
-// The display names are not confirmed yet: change them here only.
+// The display names: change them here only. The saved ids above stay "live" and "logic", so a
+// saved choice keeps its layout under its new name (Clips, Smooth).
 const char* displayName(Preset p) {
   switch (p) {
-    case Preset::Live: return i18n::N_("Live");
-    case Preset::Logic: return i18n::N_("Logic");
+    case Preset::Live: return i18n::N_("Clips");
+    case Preset::Logic: return i18n::N_("Smooth");
+    case Preset::Tracker: return i18n::N_("Tracker");
     default: return i18n::N_("Studio");
   }
 }
@@ -43,12 +47,32 @@ const char* blurb(Preset p) {
   switch (p) {
     case Preset::Live: return i18n::N_("Playlist or pads above the mixer, editors along the bottom");
     case Preset::Logic: return i18n::N_("Tracks in the centre, one shared bottom pane, history on the right");
+    case Preset::Tracker: return i18n::N_("Rows of notes and effects in pages, a header of song boxes above");
     default: return i18n::N_("Channel rack floating over the playlist, mixer on the right");
   }
 }
 
 bool isPreview(Preset p) { return p != Preset::Studio; }
 const char* previewTag() { return i18n::N_("Preview"); }
+
+bool devSetting(const Settings& s) {
+#ifdef GRIDLINE_DEV_LAYOUTS
+  return s.getBool("ui.layoutDev");
+#else
+  (void)s;
+  return false;
+#endif
+}
+
+bool available(Preset p, const Settings& s) {
+  if (p == Preset::Tracker) return devSetting(s);
+  return p >= Preset::Studio && p < Preset::Count;
+}
+
+Preset shown(const Settings& s) {
+  const Preset p = current(s);
+  return available(p, s) ? p : Preset::Studio;
+}
 
 std::string iniFileName(Preset p) { return p == Preset::Studio ? std::string("layout.ini") : std::string("layout-") + id(p) + ".ini"; }
 

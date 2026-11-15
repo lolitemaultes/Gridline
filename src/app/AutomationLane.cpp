@@ -1,8 +1,10 @@
 // Gridline - the piano roll's pattern automation lane (see AutomationLane.h).
 #include "AutomationLane.h"
 #include <algorithm>
+#include <cfloat>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <optional>
 #include "../core/Automation.h"
 #include "../core/AutomationEdit.h"
@@ -12,6 +14,7 @@
 #include "App.h"
 #include "AutomationEditor.h"
 #include "Keys.h"
+#include "LiveLook.h"
 #include "SmoothScrollUi.h"
 #include "Theme.h"
 #include "Widgets.h"
@@ -290,7 +293,8 @@ void drawCurveChooserFace(App& a, ImDrawList* dl, ImVec2 mn, ImVec2 mx, AutoShap
   dl->AddRect(mn, mx, lit ? P.lineStrong : P.line, theme::kRadius);
   // A small vector glyph of the curve, then its name and a chevron.
   const float gh = std::round((mx.y - mn.y) * 0.5f), gx = mn.x + 5, gy = std::round((mn.y + mx.y) * 0.5f);
-  const ImU32 gc = theme::litRole(theme::role::kGraph);
+  const bool lv = livelook::active(a);
+  const ImU32 gc = lv ? livelook::envelopeColour() : theme::litRole(theme::role::kGraph);
   const ImVec2 g0(gx, gy + gh * 0.5f), g1(gx + 9, gy - gh * 0.5f);
   if (ds == AutoShape::Hold) {
     const ImVec2 q[4] = {g0, ImVec2(gx + 4.5f, g0.y), ImVec2(gx + 4.5f, g1.y), g1};
@@ -305,8 +309,12 @@ void drawCurveChooserFace(App& a, ImDrawList* dl, ImVec2 mn, ImVec2 mx, AutoShap
   } else {
     dl->AddLine(g0, g1, gc, 1.4f);
   }
-  theme::textEllipsis(dl, a.fontMono, theme::kFontLabel, ImVec2(gx + 13, mn.y + (mx.y - mn.y - theme::kFontLabel) * 0.5f), mx.x - gx - 13 - 12,
-                      lit ? P.text : P.textDim, drawShapeShort(ds));
+  if (lv)  // K-112c: Live names the curve in sentence case, sans, as its other choosers
+    theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption, ImVec2(gx + 14, theme::textTop(a.fontRegular, theme::kFontCaption, mn.y, mx.y - mn.y)),
+                        mx.x - gx - 14 - 12, lit ? P.text : P.textDim, i18n::tr(drawShapeName(ds)));
+  else
+    theme::textEllipsis(dl, a.fontMono, theme::kFontLabel, ImVec2(gx + 13, mn.y + (mx.y - mn.y - theme::kFontLabel) * 0.5f), mx.x - gx - 13 - 12,
+                        lit ? P.text : P.textDim, drawShapeShort(ds));
   ui::drawIcon(dl, ui::Icon::ChevronDown, ImVec2(mx.x - 7, gy), 8, lit ? P.text : P.textFaint);
 }
 
@@ -427,6 +435,174 @@ bool drawLaneCurveChip(App& a, ImDrawList* dl, ImVec2 mn, ImVec2 mx, ObjectId pa
   return took;
 }
 
+namespace {
+// K-112: the parameters the envelope choosers offer, grouped by device: the channel (its own
+// controls and its instrument, named as the channel), each note processor, the mixer track's own
+// controls ("Mixer"), each effect in its slots, and the song. A group's key is its owner and part
+// (two effects of one kind stay apart); its name is what the chooser shows.
+struct LaneGroup {
+  std::string key, name;
+  std::vector<ParamId> params;
+};
+const char* const kNameSep = " \xE2\x80\xBA ";
+
+std::string groupOf(const Song& s, ParamId pid) {  // the key
+  int part = 0;
+  if (s.channel(pid.owner) && pid.index >= kNoteFxBase) part = 1 + static_cast<int>((pid.index - kNoteFxBase) / kNoteFxStride);
+  else if (s.mixerIndex(pid.owner) >= 0 && pid.index >= kSlotBase) part = 1 + static_cast<int>((pid.index - kSlotBase) / kSlotStride);
+  return std::to_string(pid.owner) + ":" + std::to_string(part);
+}
+
+std::string groupName(const Song& s, ParamId pid) {
+  if (pid.owner == kSongId) return i18n::tr("Song");
+  const std::string n = paramDisplayName(s, pid);
+  const size_t k0 = n.find(kNameSep), k1 = n.rfind(kNameSep);
+  const std::string first = n.substr(0, k0);
+  const std::string middle = k0 != k1 ? n.substr(k0 + std::strlen(kNameSep), k1 - k0 - std::strlen(kNameSep)) : std::string();
+  if (!middle.empty()) return middle;  // a note processor or an effect: its own name
+  if (s.mixerIndex(pid.owner) >= 0) return i18n::tr("Mixer");
+  return first;
+}
+
+std::string leafOf(const Song& s, ParamId pid) {
+  const std::string n = paramDisplayName(s, pid);
+  const size_t k = n.rfind(kNameSep);
+  return k == std::string::npos ? n : n.substr(k + std::strlen(kNameSep));
+}
+
+std::vector<LaneGroup> laneGroups(const Song& s, const Pattern& p, ObjectId channel) {
+  std::vector<LaneGroup> out;
+  auto add = [&](ParamId pid) {
+    if (!describeParam(s, pid)) return;
+    const std::string g = groupOf(s, pid);
+    auto it = std::find_if(out.begin(), out.end(), [&](const LaneGroup& x) { return x.key == g; });
+    if (it == out.end()) {
+      out.push_back({g, groupName(s, pid), {}});
+      it = std::prev(out.end());
+    }
+    if (std::find(it->params.begin(), it->params.end(), pid) == it->params.end()) it->params.push_back(pid);
+  };
+  const Channel* ch = s.channel(channel);
+  const ObjectId mix = ch ? ch->mixerTrack : kNoId;
+  const std::vector<ParamId> all = listParams(s);
+  for (ParamId pid : all)
+    if (pid.owner == channel) add(pid);
+  for (ParamId pid : all)
+    if (mix != kNoId && pid.owner == mix) add(pid);
+  for (ParamId pid : all)
+    if (pid.owner == kSongId) add(pid);
+  for (const auto& l : p.automation) add(ParamId{l.owner, l.index});  // a lane of another owner keeps its device
+  return out;
+}
+
+std::string pendingGroup, pendingName;  // a device picked that has no envelope yet (key, name): its parameters are on offer
+
+void chooserFace(ImDrawList* dl, ImVec2 mn, ImVec2 mx, const std::string& text, bool lit, bool faint) {
+  const auto& P = pal();
+  dl->AddRectFilled(mn, mx, lit ? P.surface800 : theme::withAlpha(P.surface800, 0.55f), theme::kRadius);
+  dl->AddRect(mn, mx, lit ? P.lineStrong : P.line, theme::kRadius);
+  ImFont* f = ImGui::GetFont();
+  const float fs = ImGui::GetFontSize();
+  theme::textEllipsis(dl, f, fs, ImVec2(mn.x + 8, theme::textTop(f, fs, mn.y, mx.y - mn.y)), mx.x - mn.x - 26,
+                      faint ? P.textFaint : lit ? P.text : P.textDim, text.c_str());
+  ui::drawIcon(dl, ui::Icon::ChevronDown, ImVec2(mx.x - 10, std::round((mn.y + mx.y) * 0.5f)), 9, lit ? P.text : P.textFaint);
+}
+}  // namespace
+
+bool drawPatternLaneChoosers(App& a, ImDrawList* dl, ImVec2 mn, ImVec2 mx, ObjectId pattern, ObjectId channel, bool canvasHovered,
+                             bool clicked) {
+  const Song& s = a.doc.song();
+  const Pattern* p = s.pattern(pattern);
+  if (!p) return false;
+  const ImVec2 m = ImGui::GetIO().MousePos;
+  const float w = mx.x - mn.x, gap = 6;
+  const float dw = std::round(std::min(170.0f, (w - gap) * 0.45f)), pw = std::round(std::min(190.0f, w - dw - gap));
+  const ImVec2 d0 = mn, d1(mn.x + dw, mx.y), p0(d1.x + gap, mn.y), p1(d1.x + gap + pw, mx.y);
+  auto over = [&](ImVec2 a0, ImVec2 a1) { return canvasHovered && m.x >= a0.x && m.x < a1.x && m.y >= a0.y && m.y < a1.y; };
+  const bool hd = over(d0, d1), hp = over(p0, p1);
+  const std::string cur = laneTarget.owner != kNoId ? groupOf(s, laneTarget) : std::string();
+  const std::string shownGroup = pendingGroup.empty() ? cur : pendingGroup;
+  const bool pending = !pendingGroup.empty() && pendingGroup != cur;
+  chooserFace(dl, d0, d1, pending ? pendingName : laneTarget.owner != kNoId ? groupName(s, laneTarget) : std::string(),
+              hd || ImGui::IsPopupOpen("##envdevice"), false);
+  chooserFace(dl, p0, p1, pending ? std::string(i18n::tr("Choose a parameter")) : leafOf(s, laneTarget), hp || ImGui::IsPopupOpen("##envparam"),
+              pending);
+  if (hd) a.setHint(i18n::tr("The device whose parameter the envelope draws (click: choose)"));
+  if (hp) a.setHint(i18n::tr("The parameter the envelope draws (click: choose; a parameter without an envelope gets one)"));
+  bool took = false;
+  if (clicked && hd) {
+    ImGui::OpenPopup("##envdevice");
+    took = true;
+  }
+  if (clicked && hp) {
+    ImGui::OpenPopup("##envparam");
+    took = true;
+  }
+  const bool devOpen = ImGui::IsPopupOpen("##envdevice"), parOpen = ImGui::IsPopupOpen("##envparam");
+  if (!devOpen && !parOpen) {
+    pendingGroup.clear();  // closed without a choice: back to the shown envelope's device
+    return took;
+  }
+  const std::vector<LaneGroup> groups = laneGroups(s, *p, channel);
+  bool openParam = false;
+  // A long list scrolls inside a popup of at most 22 rows (it never runs off the window).
+  const float maxH = std::round(ImGui::GetFrameHeightWithSpacing() * 22);
+  ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(FLT_MAX, maxH));
+  if (ImGui::BeginPopup("##envdevice")) {
+    for (const auto& g : groups) {
+      ImGui::PushID(g.key.c_str());
+      const bool picked = ImGui::Selectable(g.name.c_str(), g.key == shownGroup);
+      ImGui::PopID();
+      if (!picked) continue;
+      auto lane = std::find_if(g.params.begin(), g.params.end(), [&](ParamId pid) { return findPatternLane(*p, pid.owner, pid.index) != nullptr; });
+      if (g.key == cur) {
+        pendingGroup.clear();
+      } else if (lane != g.params.end()) {
+        laneTarget = *lane;
+        pendingGroup.clear();
+      } else {
+        pendingGroup = g.key;
+        pendingName = g.name;
+        openParam = true;
+      }
+    }
+    ImGui::EndPopup();
+  }
+  if (openParam) ImGui::OpenPopup("##envparam");
+  ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(FLT_MAX, maxH));
+  if (ImGui::BeginPopup("##envparam")) {
+    const std::string want = pendingGroup.empty() ? cur : pendingGroup;
+    auto g = std::find_if(groups.begin(), groups.end(), [&](const LaneGroup& x) { return x.key == want; });
+    if (g != groups.end()) {
+      bool any = false;
+      for (ParamId pid : g->params)  // the parameters with an envelope first
+        if (findPatternLane(*p, pid.owner, pid.index)) {
+          ImGui::PushID(static_cast<int>(pid.packed() & 0x7FFFFFFF));
+          if (ImGui::MenuItem(leafOf(s, pid).c_str(), nullptr, pid == laneTarget)) {
+            laneTarget = pid;
+            pendingGroup.clear();
+          }
+          ImGui::PopID();
+          any = true;
+        }
+      int n = 0;
+      for (ParamId pid : g->params) {
+        if (findPatternLane(*p, pid.owner, pid.index)) continue;
+        if (any && n == 0) ImGui::Separator();
+        if (++n > 120) break;
+        ImGui::PushID(static_cast<int>(pid.packed() & 0x7FFFFFFF));
+        if (ImGui::MenuItem(leafOf(s, pid).c_str())) {
+          editPatternEvents(a, pid);
+          pendingGroup.clear();
+        }
+        ImGui::PopID();
+      }
+    }
+    ImGui::EndPopup();
+  }
+  return took;
+}
+
 bool automationLaneKeys(App& a, ObjectId pattern, Tick grid) {
   if (!L.focus || laneTarget.owner == kNoId) return false;
   const Song& s = a.doc.song();
@@ -458,7 +634,8 @@ bool automationLaneKeys(App& a, ObjectId pattern, Tick grid) {
 }
 
 void drawPatternAutomationLane(App& a, ImDrawList* dl, ImVec2 mn, ImVec2 mx, ObjectId pattern, const std::function<float(double)>& xOf,
-                               const std::function<double(float)>& tickAt, Tick grid, bool canvasHovered, bool canvasActive, Tool tool) {
+                               const std::function<double(float)>& tickAt, Tick grid, bool canvasHovered, bool canvasActive, Tool tool,
+                               bool overlay) {
   const auto& P = pal();
   const Song& s = a.doc.song();
   const Pattern* p = s.pattern(pattern);
@@ -507,15 +684,18 @@ void drawPatternAutomationLane(App& a, ImDrawList* dl, ImVec2 mn, ImVec2 mx, Obj
   dl->PushClipRect(ImVec2(mn.x, mn.y - 4), mx, true);
   // Event-editor look: graph-role (cyan) fill under the curve, lit stems with
   // round heads at the points (same role as the channel rack's graph editor).
-  const ImU32 col = theme::litRole(theme::role::kGraph);
+  // K-112c: Live's envelope over the notes is the refs' red line (each ref draws it so).
+  const ImU32 col = overlay ? livelook::envelopeColour() : theme::litRole(theme::role::kGraph);
   const ImU32 lineCol = P.dark ? theme::mix(col, P.paper, 0.45f) : col;
   if (!pts.empty()) {
     float prevY = 0;
     for (float x = std::floor(mn.x); x <= mx.x; x += 1.0f) {
       const double t = tickAt(x);
       const float y = yOf(ae::valueAt(shown, t, rng.flCurves));
-      dl->AddLine(ImVec2(x, y), ImVec2(x, mx.y), theme::withAlpha(col, L.preview ? 0.08f : 0.16f));
-      if (x > std::floor(mn.x)) dl->AddLine(ImVec2(x - 1, prevY), ImVec2(x, y), theme::withAlpha(lineCol, L.preview ? 0.4f : 0.9f), 1.3f);
+      if (!overlay) dl->AddLine(ImVec2(x, y), ImVec2(x, mx.y), theme::withAlpha(col, L.preview ? 0.08f : 0.16f));
+      if (x > std::floor(mn.x))
+        dl->AddLine(ImVec2(x - 1, prevY), ImVec2(x, y), theme::withAlpha(overlay ? col : lineCol, L.preview ? 0.4f : overlay ? 1.0f : 0.9f),
+                    overlay ? 2.0f : 1.3f);
       prevY = y;
     }
     for (size_t i = 0; i < shown.size(); ++i) {
@@ -524,6 +704,12 @@ void drawPatternAutomationLane(App& a, ImDrawList* dl, ImVec2 mn, ImVec2 mx, Obj
       if (x < mn.x - 6 || x > mx.x + 6) continue;
       const bool sel = L.sel.count(static_cast<int>(i)) > 0, hot = static_cast<int>(i) == hoverPoint;
       const ImU32 c = sel ? P.hot : lineCol;
+      if (overlay) {  // a hollow ring on the line (filled while selected)
+        const float rr = hot ? 4.5f : 3.5f;
+        dl->AddCircleFilled(ImVec2(x + 1, yOf(q.value)), rr, sel ? P.hot : P.surface950, 12);
+        dl->AddCircle(ImVec2(x + 1, yOf(q.value)), rr, sel ? P.hot : col, 12, 1.4f);
+        continue;
+      }
       dl->AddRectFilled(ImVec2(x, yOf(q.value)), ImVec2(x + 2, mx.y), theme::withAlpha(sel ? P.hot : col, 0.7f));
       dl->AddCircleFilled(ImVec2(x + 1, yOf(q.value)), hot ? 4.5f : sel ? 4.0f : 3.0f, c, 12);
       if (sel || hot) dl->AddCircle(ImVec2(x + 1, yOf(q.value)), hot ? 4.5f : 4.0f, theme::withAlpha(P.paper, 0.8f), 12, 1.2f);

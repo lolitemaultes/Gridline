@@ -66,6 +66,15 @@ class Module {
 std::string bundleBinaryPath(const std::string& bundlePath);
 // Contents/<folder> holding this platform's binary: "x86_64-win", "arm64-win", "x86_64-linux", ...
 std::string bundleArchFolder();
+// K-267: the folders searched in order (Windows on ARM: arm64-win, then arm64x-win and arm64ec-win).
+std::vector<std::string> bundleArchFolders();
+// K-267: the binary of a bundle (UTF-8 paths): Contents/<arch>/<bundle name> (`ext` ".vst3": the
+// bundle's file name; else its stem + `ext`), else the one file with extension `ext` there (the first
+// by name), for each arch folder in order. "" when none.
+std::string findBundleBinary(const std::string& bundlePath, const std::vector<std::string>& archFolders, const std::string& ext);
+// K-267: Windows search, as the SDK's: entries named *.vst3 that are folders without Contents and
+// without a binary are folders of plugins, replaced by the *.vst3 entries inside them.
+std::vector<std::string> packagesOrInside(const std::vector<std::string>& found, const std::vector<std::string>& archFolders);
 // Default VST3 search folders for this platform (existing or not).
 std::vector<std::string> defaultSearchPaths();
 // Every *.vst3 bundle below the folders (bundles are not searched inside).

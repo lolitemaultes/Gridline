@@ -465,6 +465,7 @@ class TurntableCore {
 // The 0.7.1 instrument: the deck played by notes (and its motor).
 class TurntableGen final : public Generator {
  public:
+  bool mayRest() const override { return false; }  // K-277: sound without notes
   bool active() const override { return core_.active(); }
   const TurntableTelemetry& tel() const { return core_.tel(); }
 

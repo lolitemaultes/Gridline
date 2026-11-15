@@ -18,6 +18,7 @@
 
 #if defined(_WIN32)
 #include <windows.h>
+#include <ole2.h>
 #include <process.h>
 #include <psapi.h>
 #else
@@ -265,6 +266,8 @@ void FileLock::unlock() {
   handle_ = kNone;
 }
 
+std::string getEnv(const char* name) { return env(name); }
+
 bool setEnv(const char* name, const char* value, bool overwrite) {
 #if defined(_WIN32)
   if (!overwrite && !env(name).empty()) return true;
@@ -465,6 +468,30 @@ double peakRssMb() {
 #endif
 }
 
+double currentMemoryMb() {
+#if defined(_WIN32)
+  PROCESS_MEMORY_COUNTERS_EX pmc{};
+  pmc.cb = sizeof pmc;
+  if (!GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&pmc), sizeof pmc)) return 0;
+  return static_cast<double>(pmc.PrivateUsage) / (1024.0 * 1024.0);
+#elif defined(__APPLE__)
+  task_vm_info_data_t vi{};
+  mach_msg_type_number_t n = TASK_VM_INFO_COUNT;
+  if (task_info(mach_task_self(), TASK_VM_INFO, reinterpret_cast<task_info_t>(&vi), &n) != KERN_SUCCESS) return 0;
+  return static_cast<double>(vi.phys_footprint) / (1024.0 * 1024.0);
+#elif defined(__linux__)
+  long pages = 0, resident = 0;
+  if (FILE* f = std::fopen("/proc/self/statm", "r")) {
+    if (std::fscanf(f, "%ld %ld", &pages, &resident) != 2) resident = 0;
+    std::fclose(f);
+  }
+  const long size = ::sysconf(_SC_PAGESIZE);
+  return resident > 0 && size > 0 ? static_cast<double>(resident) * static_cast<double>(size) / (1024.0 * 1024.0) : 0;
+#else
+  return 0;
+#endif
+}
+
 std::uint64_t physicalMemoryBytes() {
 #if defined(_WIN32)
   MEMORYSTATUSEX ms{};
@@ -571,6 +598,38 @@ const char* nullDevice() {
 #else
   return "/dev/null";
 #endif
+}
+
+bool initPluginThread() {
+#if defined(_WIN32)
+  // S_OK, or S_FALSE when the thread has it already; RPC_E_CHANGED_MODE: a multithreaded apartment.
+  static thread_local const bool ok = SUCCEEDED(OleInitialize(nullptr));
+  return ok;
+#else
+  return true;
+#endif
+}
+
+void pumpThreadMessages(double budgetSeconds) {
+#if defined(_WIN32)
+  const ULONGLONG end = GetTickCount64() + static_cast<ULONGLONG>(std::max(0.0, budgetSeconds) * 1000.0);
+  MSG msg;
+  while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
+    TranslateMessage(&msg);
+    DispatchMessageW(&msg);
+    if (GetTickCount64() >= end) break;
+  }
+#else
+  (void)budgetSeconds;
+#endif
+}
+
+void exitNow(int code) {
+  std::fflush(nullptr);
+#if defined(_WIN32)
+  TerminateProcess(GetCurrentProcess(), static_cast<UINT>(code));
+#endif
+  std::_Exit(code);
 }
 
 // ---------------------------------------------------------------- processes

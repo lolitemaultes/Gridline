@@ -77,7 +77,7 @@ bool takeKey(int pitch) { return pitch >= kTakeKeyFirst && pitch < kTakeKeyFirst
 // The pattern a pass records into (J-159): the selected one (or the recorder's) while it
 // holds no pass of this setup, else a new one, selected in pattern mode.
 ObjectId choosePass(App& a, ObjectId channel, bool song) {
-  const ObjectId want = a.recorder.active() ? a.recorder.pattern() : a.curPattern;
+  const ObjectId want = a.recorder.active() && !a.recorder.songMode() ? a.recorder.pattern() : a.curPattern;  // (song mode: the takes are the recorder's own)
   const ObjectId target = passPattern(a.doc, want, channel, song);
   if (!song && target != a.curPattern && a.doc.song().pattern(target)) {
     a.recorder.retarget(target);
@@ -242,7 +242,7 @@ void endPass(App& a, ObjectId ch, DeckState& d, const Performance& perf) {
 void storeTake(App& a, ObjectId ch, DeckState& d, Take take) {
   if (!d.hasModel || take.steps() == 0) return;
   const bool song = a.engine.mode() == PlayMode::Song;
-  const ObjectId want = a.recorder.active() ? a.recorder.pattern() : a.curPattern;
+  const ObjectId want = a.recorder.active() && !a.recorder.songMode() ? a.recorder.pattern() : a.curPattern;  // (song mode: the takes are the recorder's own)
   if (!a.doc.song().pattern(want)) return;
   const Tick len = std::max<Tick>(1, take.lengthTicks);
   // which take keys stay in use (a pass never replaces another: it goes into a new pattern)
@@ -395,7 +395,7 @@ void tick(App& a) {
       pui::setParamValue(a, t, k, mr.value[i], true);
       automationRecordHold() = false;
       if (info && a.recorder.active() && !automationRecording() && !lvA.capturing)
-        a.recorder.controller(t.pid(k), info->params[i].toNormalized(mr.value[i]), a.engine.position());
+        a.recorder.controller(t.pid(k), info->params[i].toNormalized(mr.value[i]), a.recordTick());
     }
     // cues a deck set -> the model
     for (int k = 0; k < kDecks; ++k) {

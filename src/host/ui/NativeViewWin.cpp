@@ -204,9 +204,22 @@ void restoreKeyFocus(void* container) {
   {
     std::lock_guard<std::mutex> g(k.mu);
     auto it = k.savedFocus.find(hwndOf(container));
-    if (it != k.savedFocus.end()) f = it->second;
+    if (it != k.savedFocus.end()) {
+      f = it->second;
+      k.savedFocus.erase(it);  // once: a later activation must not take the keyboard back again
+    }
   }
-  if (f && IsWindow(f)) SetFocus(f);
+  // K-268 (GitHub #46): this runs when Gridline handles the window's activation, after the click
+  // that activated it has reached the plugin. That click may have opened one of the plugin's pop-up
+  // menus or put the keyboard on another of its controls: moving the focus then closed the menu
+  // (pop-ups close when their owner loses the keyboard), so its menus worked only in a fresh window.
+  // The keyboard goes back only while nothing else has it: the window itself (or nothing) has the
+  // focus, and the window is still the active one.
+  if (!f || !IsWindow(f) || !IsChild(hwndOf(container), f)) return;
+  const HWND top = GetAncestor(hwndOf(container), GA_ROOT);
+  const HWND now = GetFocus();
+  if (GetForegroundWindow() != top || (now && now != top)) return;
+  SetFocus(f);
 }
 void* devTestKeyView(void*, int) { return nullptr; }
 bool devSendKey(void*, uint16_t, bool, uint32_t, const char*) { return false; }

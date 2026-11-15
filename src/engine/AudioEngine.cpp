@@ -213,6 +213,7 @@ void AudioEngine::captureRecording(const Program* p, int n, bool post) {
 void AudioEngine::playWithCountIn(double ticks) {
   Cmd c{Cmd::Play};
   c.tick2 = std::max(0.0, ticks);
+  c.pitch = static_cast<int>(playSerial_.fetch_add(1, std::memory_order_relaxed) + 1);  // K-226
   send(c);
   playing_ = true;
   if (ticks > 0) countingIn_ = true;
@@ -322,7 +323,9 @@ void AudioEngine::setInterpolation(int quality) {
   if (interp_ >= 2) sincKernel(samplerSincPoints(interp_));
 }
 void AudioEngine::play() {
-  send({Cmd::Play});
+  Cmd c{Cmd::Play};
+  c.pitch = static_cast<int>(playSerial_.fetch_add(1, std::memory_order_relaxed) + 1);  // K-226
+  send(c);
   playing_ = true;
   activity_.fetch_add(1, std::memory_order_relaxed);
 }
@@ -619,8 +622,8 @@ void AudioEngine::drainMidi(const Program* p) {
       if (const ProgChannel* c = chan(routed(mch)); c && c->rt->gen) c->rt->gen->midi(m.s, m.a, m.b, 0);
     } else if (kind == 0xB0) {
       if (const ProgChannel* c = chan(routed(mch)); c && c->rt->gen) c->rt->gen->midi(m.s, m.a, m.b, 0);
-      if (m.a == 64) {  // sustain pedal
-        sustain_ = m.b >= 64;
+      if (m.a == 64) {  // sustain pedal (the instrument has it above; Gridline holds the notes when set to)
+        sustain_ = m.b >= 64 && sustainOn_.load(std::memory_order_relaxed);
         if (!sustain_)
           for (int n = 0; n < 128; ++n)
             if (sustained_[n] && !sostenutoHeld_[n]) release(n);
@@ -774,36 +777,130 @@ void AudioEngine::sendOn(const ProgChannel& ch, uint32_t id, float pitch, float 
 
 // MIDI hosted instruments sent during the previous block (their MIDI output
 // port) plays on the channels listening on that port, one block later at
-// the same offsets. Note ids are derived from the source channel, MIDI
-// channel and key, so the matching note-off finds its note.
+// the same offsets. MIDI Out channels deliver theirs in the same block
+// (runMidiOut).
 void AudioEngine::routePluginMidi(const Program* p, int n) {
   for (size_t ci = 0; ci < p->channels.size(); ++ci) {
     const ProgChannel& src = p->channels[ci];
-    if (src.midiTargets.empty() || !src.rt || !src.rt->gen) continue;
+    if (src.midiTargets.empty() || src.midiFirst || !src.rt || !src.rt->gen) continue;
     Generator::MidiOutEvent ev[256];
     const int count = src.rt->gen->takeMidiOut(ev, 256);
-    for (int k = 0; k < count; ++k) {
-      const uint8_t st = ev[k].s & 0xF0, mch = ev[k].s & 0x0F;
-      const int off = std::clamp(ev[k].offset, 0, std::max(0, n - 1));
-      const uint32_t id = 0xE0000000u | ((static_cast<uint32_t>(ci) & 0x1FFFu) << 11) | (static_cast<uint32_t>(mch) << 7) | (ev[k].a & 0x7Fu);
-      for (int t : src.midiTargets) {
-        if (t < 0 || static_cast<size_t>(t) >= p->channels.size()) continue;
-        const ProgChannel& dst = p->channels[static_cast<size_t>(t)];
-        if (!dst.rt || !dst.rt->gen) continue;
-        if (ev[k].s == Generator::MidiOutEvent::kGlide) {  // K-170: a held note moves to a new pitch
-          glideRouted(dst, id, ev[k].a & 0x7F, ev[k].b & 0x7F, ev[k].pitch, ev[k].time, off, mch);
-        } else if (st == 0x90 && ev[k].b > 0) {
-          sendOff(dst, id, off);  // a retrigger ends the previous note of that key
-          float pitch = static_cast<float>(ev[k].a & 0x7F);
-          if (ev[k].pitch >= 0.0f) pitch = routedPitch(dst, ev[k].pitch, off, mch);  // K-170: fractional pitch
-          sendOn(dst, id, pitch, static_cast<float>(ev[k].b & 0x7F) / 127.0f, off, mch);
-        } else if (st == 0x80 || st == 0x90) {
-          sendOff(dst, id, off);
-        } else if (st == 0xB0 || st == 0xC0 || st == 0xD0 || st == 0xE0 || st == 0xA0) {
-          dst.rt->gen->midi(ev[k].s, ev[k].a, ev[k].b, off);
+    deliverMidi(p, ci, ev, count, n);
+  }
+}
+
+// Note ids are derived from the source channel, MIDI channel and key, so the
+// matching note-off finds its note.
+void AudioEngine::deliverMidi(const Program* p, size_t ci, const Generator::MidiOutEvent* ev, int count, int n) {
+  const ProgChannel& src = p->channels[ci];
+  for (int k = 0; k < count; ++k) {
+    const uint8_t st = ev[k].s & 0xF0, mch = ev[k].s & 0x0F;
+    const int off = std::clamp(ev[k].offset, 0, std::max(0, n - 1));
+    const uint32_t id = 0xE0000000u | ((static_cast<uint32_t>(ci) & 0x1FFFu) << 11) | (static_cast<uint32_t>(mch) << 7) | (ev[k].a & 0x7Fu);
+    for (int t : src.midiTargets) {
+      if (t < 0 || static_cast<size_t>(t) >= p->channels.size()) continue;
+      const ProgChannel& dst = p->channels[static_cast<size_t>(t)];
+      if (!dst.rt || !dst.rt->gen || dst.frozen || dst.unloaded) continue;  // (a frozen render has these notes)
+      if (ev[k].s == Generator::MidiOutEvent::kGlide) {  // K-170: a held note moves to a new pitch
+        glideRouted(dst, id, ev[k].a & 0x7F, ev[k].b & 0x7F, ev[k].pitch, ev[k].time, off, mch);
+      } else if (st == 0x90 && ev[k].b > 0) {
+        ChannelRuntime& rt = *dst.rt;
+        for (int h = 0; h < rt.pedalHeldCount; ++h)  // a retrigger ends the previous note of that key, held or not
+          if (rt.pedalHeld[h] == id) {
+            rt.pedalHeld[h] = rt.pedalHeld[--rt.pedalHeldCount];
+            break;
+          }
+        sendOff(dst, id, off);
+        float pitch = static_cast<float>(ev[k].a & 0x7F);
+        const float vel = static_cast<float>(ev[k].b & 0x7F) / 127.0f;
+        if (src.midiFirst) {
+          // A MIDI Out channel's note plays as if it were written on the listener: the song's
+          // master pitch is in it already (the listener adds it again), its fine pitch is exact,
+          // and key-mapped instruments keep the key it was written on (NoteProps::detune).
+          const float full = ev[k].pitch >= 0.0f ? ev[k].pitch : pitch;
+          const float shift = src.pitchOffset - p->masterPitch;  // the MIDI Out channel's own pitch
+          NoteProps np;
+          np.color = mch;
+          np.detune = (ev[k].detune - src.pitchOffset) + (shift - std::round(shift));
+          pitch = full - p->masterPitch;
+          if (std::fabs(pitch - std::round(pitch)) > 1e-5f) pitch = routedPitch(dst, pitch, off, mch);
+          sendOn(dst, id, pitch, vel, off, mch, np.detune != 0.0f ? &np : nullptr);
+          continue;
         }
+        if (ev[k].pitch >= 0.0f) pitch = routedPitch(dst, ev[k].pitch, off, mch);  // K-170: fractional pitch
+        sendOn(dst, id, pitch, vel, off, mch);
+      } else if (st == 0x80 || st == 0x90) {
+        if (!holdForPedal(dst, id)) sendOff(dst, id, off);
+      } else if (st == 0xB0 || st == 0xC0 || st == 0xD0 || st == 0xE0 || st == 0xA0) {
+        dst.rt->gen->midi(ev[k].s, ev[k].a, ev[k].b, off);
+        if (st == 0xB0 && ev[k].a == 64) setChannelPedal(dst, false, ev[k].b >= 64, off);
+        else if (st == 0xB0 && (ev[k].a == 120 || ev[k].a == 123)) setChannelPedal(dst, false, false, off);
       }
     }
+  }
+}
+
+// MIDI Out channels that feed other channels play first: each one's messages reach its
+// listeners at their offsets in this block, before those run (a listener's note processors
+// run once everything feeding it has arrived). Program::midiOrder has no loops.
+void AudioEngine::runMidiOut(const Program* p, int n) {
+  for (int ci : p->midiOrder) {
+    if (ci < 0 || static_cast<size_t>(ci) >= p->channels.size()) continue;
+    const ProgChannel& ch = p->channels[static_cast<size_t>(ci)];
+    if (ch.midiFed) runNoteFxOf(p, static_cast<size_t>(ci), n);
+    if (!ch.midiFirst || !ch.rt || !ch.rt->gen) continue;
+    float* L = scratch_[0].chL;  // (MIDI Out makes no sound)
+    float* R = scratch_[0].chR;
+    std::memset(L, 0, sizeof(float) * static_cast<size_t>(n));
+    std::memset(R, 0, sizeof(float) * static_cast<size_t>(n));
+    ch.rt->gen->process(ch.modded ? ch.live : ch.plugin, ch.aux, bc_.ctx, L, R, n);
+    Generator::MidiOutEvent ev[1024];
+    const int count = ch.rt->gen->takeMidiOut(ev, 1024);
+    deliverMidi(p, static_cast<size_t>(ci), ev, count, n);
+  }
+}
+
+// ---- the sustain pedal of a channel (audio thread)
+
+bool AudioEngine::holdForPedal(const ProgChannel& ch, uint32_t id) {
+  ChannelRuntime* rt = ch.rt.get();
+  if (!rt || !(rt->pedalParam || rt->pedalMidi) || !sustainOn_.load(std::memory_order_relaxed)) return false;
+  for (int h = 0; h < rt->pedalHeldCount; ++h)
+    if (rt->pedalHeld[h] == id) return true;
+  if (rt->pedalHeldCount >= ChannelRuntime::kPedalHeld) return false;  // full: this one ends now
+  rt->pedalHeld[rt->pedalHeldCount++] = id;
+  return true;
+}
+
+void AudioEngine::setChannelPedal(const ProgChannel& ch, bool fromParam, bool down, int offset) {
+  ChannelRuntime* rt = ch.rt.get();
+  if (!rt) return;
+  bool& state = fromParam ? rt->pedalParam : rt->pedalMidi;
+  if (state == down) return;
+  state = down;
+  if (fromParam && rt->gen) rt->gen->midi(0xB0, 64, down ? 127 : 0, offset);  // the instrument gets the pedal
+  if (rt->pedalParam || rt->pedalMidi) return;
+  for (int h = 0; h < rt->pedalHeldCount; ++h) sendOff(ch, rt->pedalHeld[h], offset);
+  rt->pedalHeldCount = 0;
+}
+
+// The Sustain parameter (its value, automation, links) moves the pedal at the control block.
+// Stopped, the pedal is where the parameter is set (automation moves it while playing).
+void AudioEngine::applySustainParams(const Program* p) {
+  for (const ProgChannel& ch : p->channels)
+    if (ch.rt && (ch.sustainMoves || ch.sustain || ch.rt->pedalParam))
+      setChannelPedal(ch, true, tPlaying_ && ch.sustainMoves ? ch.sustainLive : ch.sustain, 0);
+}
+
+void AudioEngine::releasePedals(const Program* p, int offset, bool hard) {
+  for (const ProgChannel& ch : p->channels) {
+    ChannelRuntime* rt = ch.rt.get();
+    if (!rt) continue;
+    for (int h = 0; h < rt->pedalHeldCount; ++h) sendOff(ch, rt->pedalHeld[h], offset);
+    rt->pedalHeldCount = 0;
+    if (!hard) continue;
+    if (rt->pedalParam && rt->gen) rt->gen->midi(0xB0, 64, 0, offset);
+    rt->pedalParam = rt->pedalMidi = false;
   }
 }
 
@@ -1451,6 +1548,7 @@ void AudioEngine::releaseAll(const Program* p, int offset, bool hard) {
       c.rt->inbox.push(m);
     }
   }
+  releasePedals(p, offset, hard);  // notes the sustain pedal held end too
 }
 
 void AudioEngine::drain(const Program* p) {
@@ -1470,6 +1568,7 @@ void AudioEngine::drain(const Program* p) {
     ++t;
     switch (c.kind) {
       case Cmd::Play:
+        heardRun_ = static_cast<uint32_t>(c.pitch);  // K-226: what is rendered from now on is this request's playback
         if (!tPlaying_) {
           startTick_ = here();
           anchorTick_ = startTick_;
@@ -1490,6 +1589,7 @@ void AudioEngine::drain(const Program* p) {
             countInGroup_ = meterGroup(countInBeats_, static_cast<int>(static_cast<Tick>(p->ppq) * 4 / ciBeat));
             countInBeat_ = std::max<int64_t>(1, static_cast<int64_t>(p->flatMap.samplesBetween(0, static_cast<double>(ciBeat), sr_)));
             countInLeft_ = countInTotal_;
+            countInTps_ = c.tick2 * sr_ / static_cast<double>(countInTotal_);
           }
           countingIn_.store(countInLeft_ > 0);
         }
@@ -1687,7 +1787,7 @@ void AudioEngine::dispatch(const Program* p, int from, int to) {
         int64_t s = sampleOf(rt->pending[i].off);
         if (s < lim) {
           int off = s < c0 ? from : from + static_cast<int>(s - c0);
-          sendOff(ch, rt->pending[i].id, off);
+          if (!holdForPedal(ch, rt->pending[i].id)) sendOff(ch, rt->pending[i].id, off);
           rt->pending[i] = rt->pending[--rt->pendingCount];
         } else {
           ++i;
@@ -1780,6 +1880,8 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
         clickPhase_ = 0;
         clickFreq_ = clickFreqFor(b % beatsPerBar == 0 ? 2 : countInGroup_ > 0 && (b % beatsPerBar) % countInGroup_ == 0 ? 1 : 0);
       }
+      // K-226: the count-in heard as the ticks before the start (pickups played in it are kept).
+      heard_.push(blockWall_, anchorTick_ - static_cast<double>(countInLeft_) * countInTps_ / sr_, countInTps_, static_cast<double>(k) / sr_, heardRun_);
       countInLeft_ -= k;
       s = k;
       if (countInLeft_ <= 0) countingIn_.store(false);
@@ -1834,6 +1936,12 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
         }
       }
       if (segCount_ < kMaxSegments) segs_[segCount_++] = {s, seg, anchorTick_, clock_};
+      if (seg > 0) {  // K-226: this stretch, for the tick heard when a key was played
+        const double h0 = tickAt(p, anchorTick_, static_cast<double>(clock_));
+        const double h1 = tickAt(p, anchorTick_, static_cast<double>(clock_ + seg));
+        const double secs = static_cast<double>(seg) / sr_;
+        heard_.push(blockWall_ + static_cast<double>(s) / sr_, h0, (h1 - h0) / secs, secs, heardRun_);
+      }
       if (syncMode != SyncOut::Off) {  // clock / MTC for this stretch, at exact sample positions
         const TempoMap& map = clockMap(p);
         const double t0 = tickAt(p, anchorTick_, static_cast<double>(clock_));
@@ -1927,6 +2035,7 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
     applyAutomation(p, blockTick, eventTick, true);
     updateStripGains(p);
   }
+  applySustainParams(p);
   routePluginMidi(p, n);
   runNoteFx(p, n);
 
@@ -1987,6 +2096,7 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
   }
   bc_.profile = profiling_.load(std::memory_order_relaxed);
   bc_.rest = !offline_;
+  bc_.restInstruments = restInstruments_.load(std::memory_order_relaxed);
   if (bc_.rest && tPlaying_ && tMode_ == PlayMode::Song) {
     const TempoMap& map = songMap(p);
     const double ahead = audioClipLookahead() * sr_;
@@ -1995,6 +2105,7 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
       segTA_[k] = map.tickAfterSamples(segs_[k].anchor, static_cast<double>(segs_[k].clock + segs_[k].len) + ahead, sr_);
     }
   }
+  if (!p->midiOrder.empty()) runMidiOut(p, n);  // MIDI Out channels reach their listeners in this block
   runGraph(p, n);
   captureRecording(p, n, true);  // J-31: tracks recording their output (closes their takes too)
   const float* mL = busL_[static_cast<size_t>(p->master)].data();
@@ -2065,7 +2176,9 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
   }
   applyPanicFade(p, L, R, n);
   publishOwn(p);  // J-112
-  storeMax(outPeakRecent_, std::max(peakOf(L, n), peakOf(R, n)));
+  const float outPeak = std::max(peakOf(L, n), peakOf(R, n));
+  storeMax(outPeakRecent_, outPeak);
+  if (outPeak > 1e-5f) audibleBlocks_.fetch_add(1, std::memory_order_relaxed);  // K-277
 }
 
 // ---- J-109: Stop releases everything; the second Stop (panic) silences ------
@@ -2200,6 +2313,8 @@ void AudioEngine::killEverything(const Program* p) {
       ch.rt->pendingCount = 0;
       ch.rt->goneCount = ch.rt->liveCount = 0;  // K-165
       ch.rt->inbox.clear();
+      ch.rt->pedalHeldCount = 0;
+      ch.rt->pedalParam = ch.rt->pedalMidi = false;
       for (const auto& nf : ch.noteFx)
         if (nf.rt) nf.rt->fx->reset();
     }
@@ -2580,6 +2695,7 @@ void AudioEngine::applyLinkValue(const Program* p, const ProgLink& l, double nor
       case ProgLink::ChanVolume: p->channels[static_cast<size_t>(l.chan)].modVolume = fv; break;
       case ProgLink::ChanPan: p->channels[static_cast<size_t>(l.chan)].modPan = fv; break;
       case ProgLink::ChanMute: p->channels[static_cast<size_t>(l.chan)].modMuted = v >= 0.5; break;
+      case ProgLink::ChanSustain: p->channels[static_cast<size_t>(l.chan)].sustainLive = v >= 0.5; break;
       case ProgLink::ChanPitch: {
         const ProgChannel& c = p->channels[static_cast<size_t>(l.chan)];
         // K-132: an FL channel's pitch knob moves in cents and its automation replaces the knob's
@@ -2640,95 +2756,98 @@ void AudioEngine::applyHostBank(const Program* p) {
 }
 
 void AudioEngine::runNoteFx(const Program* p, int n) {
-  for (size_t ci = 0; ci < p->channels.size(); ++ci) {
-    const ProgChannel& ch = p->channels[ci];
-    ChannelRuntime* rt = ch.rt.get();
-    if (!rt || !rt->gen) continue;
-    uintptr_t sig = 0;
-    for (const auto& nf : ch.noteFx) sig = sig * 31u + reinterpret_cast<uintptr_t>(nf.rt.get());
-    if (sig != rt->chainSig) {  // chain added, removed or rebuilt: release what it was holding
-      if (rt->chainSig != 0) rt->gen->allNotesOff(0), rt->keys.clear();
-      for (const auto& nf : ch.noteFx)
-        if (nf.rt) nf.rt->fx->reset();
-      rt->chainSig = sig;
-    }
-    if (sig == 0) {
-      rt->inbox.clear();
-      continue;
-    }
-    const double spt = sr_ * 60.0 / (flatBpm(p) * p->ppq);
-    for (int sgi = 0; sgi < segCount_; ++sgi) {
-      const Segment& sg = segs_[sgi];
-      bool last = sgi == segCount_ - 1;
-      NoteBuffer* in = &fxA_;
-      NoteBuffer* out = &fxB_;
-      in->clear();
-      for (int e = 0; e < rt->inbox.count; ++e) {
-        const NoteMsg& m = rt->inbox.ev[e];
-        if (m.offset >= sg.from && (last || m.offset < sg.from + sg.len)) {
-          NoteMsg x = m;
-          x.offset = std::clamp(x.offset, sg.from, std::max(sg.from, sg.from + sg.len - 1));
-          in->push(x);
-        }
-      }
-      in->sort();
-      NoteFxContext ctx;
-      ctx.sampleRate = sr_;
-      ctx.tempo = flatBpm(p);
-      ctx.ppq = p->ppq;
-      ctx.from = sg.from;
-      ctx.len = sg.len;
-      ctx.anchorTick = sg.anchor;
-      ctx.clock = sg.clock;
-      ctx.spt = spt;
-      if (!clockMap(p).constant()) {  // tempo map: the processors see the local tempo of this segment
-        ctx.anchorTick = tickAt(p, sg.anchor, static_cast<double>(sg.clock));
-        ctx.clock = 0;
-        ctx.tempo = clockMap(p).bpmAt(ctx.anchorTick);
-        ctx.spt = sr_ * 60.0 / (ctx.tempo * p->ppq);
-      }
-      ctx.playing = tPlaying_;
-      // Per-channel id range (J-30): 1M ids per channel before ranges meet.
-      if (rt->fxIdSeq == 0) rt->fxIdSeq = ((static_cast<uint32_t>(ci) & 0xFFu) << 20) | 1u;
-      ctx.idCounter = &rt->fxIdSeq;
-      for (const auto& nf : ch.noteFx) {
-        if (!nf.rt) continue;
-        out->clear();
-        nf.rt->fx->process(nf.modded ? nf.live : nf.state, nf.aux, ctx, *in, *out);
-        out->sort();
-        nf.rt->position.store(nf.rt->fx->position(), std::memory_order_relaxed);
-        std::swap(in, out);
-      }
-      for (int e = 0; e < in->count; ++e) {
-        const NoteMsg& m = in->ev[e];
-        const ProgChannel* tc = &ch;
-        if (m.target >= 0 && static_cast<size_t>(m.target) < p->channels.size()) tc = &p->channels[static_cast<size_t>(m.target)];
-        Generator* g = tc->rt && tc->rt->gen ? tc->rt->gen.get() : nullptr;
-        if (!g) continue;
-        int off = std::clamp(m.offset, 0, n - 1);
-        if (m.kind == NoteMsg::On) {
-          NoteProps np;
-          np.pan = m.pan;
-          np.release = m.release;
-          np.modX = m.modX;
-          np.modY = m.modY;
-          np.color = m.color;
-          np.detune = m.detune + tc->pitchOffset;  // J-180
-          if (np.neutral())
-            g->noteOn(m.id, m.pitch + tc->pitchOffset, m.velocity, off);
-          else
-            g->noteOn(m.id, m.pitch + tc->pitchOffset, m.velocity, off, np);
-          tc->rt->keys.on(m.id, m.pitch - m.detune, m.velocity);  // J-77: the notes the chain plays light up
-          hits_.add(tc->id, off, static_cast<int>(std::lround(m.pitch - m.detune)), tc->midiPort, NoteHitBus::Note);  // J-165
-        }
-        else if (m.kind == NoteMsg::Off)
-          g->noteOff(m.id, off), tc->rt->keys.off(m.id);
-        else
-          g->allNotesOff(off), tc->rt->keys.clear();
-      }
-    }
-    rt->inbox.clear();
+  for (size_t ci = 0; ci < p->channels.size(); ++ci)
+    if (!p->channels[ci].midiFed) runNoteFxOf(p, ci, n);  // (channels fed by MIDI Out: in runMidiOut)
+}
+
+void AudioEngine::runNoteFxOf(const Program* p, size_t ci, int n) {
+  const ProgChannel& ch = p->channels[ci];
+  ChannelRuntime* rt = ch.rt.get();
+  if (!rt || !rt->gen) return;
+  uintptr_t sig = 0;
+  for (const auto& nf : ch.noteFx) sig = sig * 31u + reinterpret_cast<uintptr_t>(nf.rt.get());
+  if (sig != rt->chainSig) {  // chain added, removed or rebuilt: release what it was holding
+    if (rt->chainSig != 0) rt->gen->allNotesOff(0), rt->keys.clear();
+    for (const auto& nf : ch.noteFx)
+      if (nf.rt) nf.rt->fx->reset();
+    rt->chainSig = sig;
   }
+  if (sig == 0) {
+    rt->inbox.clear();
+    return;
+  }
+  const double spt = sr_ * 60.0 / (flatBpm(p) * p->ppq);
+  for (int sgi = 0; sgi < segCount_; ++sgi) {
+    const Segment& sg = segs_[sgi];
+    bool last = sgi == segCount_ - 1;
+    NoteBuffer* in = &fxA_;
+    NoteBuffer* out = &fxB_;
+    in->clear();
+    for (int e = 0; e < rt->inbox.count; ++e) {
+      const NoteMsg& m = rt->inbox.ev[e];
+      if (m.offset >= sg.from && (last || m.offset < sg.from + sg.len)) {
+        NoteMsg x = m;
+        x.offset = std::clamp(x.offset, sg.from, std::max(sg.from, sg.from + sg.len - 1));
+        in->push(x);
+      }
+    }
+    in->sort();
+    NoteFxContext ctx;
+    ctx.sampleRate = sr_;
+    ctx.tempo = flatBpm(p);
+    ctx.ppq = p->ppq;
+    ctx.from = sg.from;
+    ctx.len = sg.len;
+    ctx.anchorTick = sg.anchor;
+    ctx.clock = sg.clock;
+    ctx.spt = spt;
+    if (!clockMap(p).constant()) {  // tempo map: the processors see the local tempo of this segment
+      ctx.anchorTick = tickAt(p, sg.anchor, static_cast<double>(sg.clock));
+      ctx.clock = 0;
+      ctx.tempo = clockMap(p).bpmAt(ctx.anchorTick);
+      ctx.spt = sr_ * 60.0 / (ctx.tempo * p->ppq);
+    }
+    ctx.playing = tPlaying_;
+    // Per-channel id range (J-30): 1M ids per channel before ranges meet.
+    if (rt->fxIdSeq == 0) rt->fxIdSeq = ((static_cast<uint32_t>(ci) & 0xFFu) << 20) | 1u;
+    ctx.idCounter = &rt->fxIdSeq;
+    for (const auto& nf : ch.noteFx) {
+      if (!nf.rt) continue;
+      out->clear();
+      nf.rt->fx->process(nf.modded ? nf.live : nf.state, nf.aux, ctx, *in, *out);
+      out->sort();
+      nf.rt->position.store(nf.rt->fx->position(), std::memory_order_relaxed);
+      std::swap(in, out);
+    }
+    for (int e = 0; e < in->count; ++e) {
+      const NoteMsg& m = in->ev[e];
+      const ProgChannel* tc = &ch;
+      if (m.target >= 0 && static_cast<size_t>(m.target) < p->channels.size()) tc = &p->channels[static_cast<size_t>(m.target)];
+      Generator* g = tc->rt && tc->rt->gen ? tc->rt->gen.get() : nullptr;
+      if (!g) continue;
+      int off = std::clamp(m.offset, 0, n - 1);
+      if (m.kind == NoteMsg::On) {
+        NoteProps np;
+        np.pan = m.pan;
+        np.release = m.release;
+        np.modX = m.modX;
+        np.modY = m.modY;
+        np.color = m.color;
+        np.detune = m.detune + tc->pitchOffset;  // J-180
+        if (np.neutral())
+          g->noteOn(m.id, m.pitch + tc->pitchOffset, m.velocity, off);
+        else
+          g->noteOn(m.id, m.pitch + tc->pitchOffset, m.velocity, off, np);
+        tc->rt->keys.on(m.id, m.pitch - m.detune, m.velocity);  // J-77: the notes the chain plays light up
+        hits_.add(tc->id, off, static_cast<int>(std::lround(m.pitch - m.detune)), tc->midiPort, NoteHitBus::Note);  // J-165
+      }
+      else if (m.kind == NoteMsg::Off)
+        g->noteOff(m.id, off), tc->rt->keys.off(m.id);
+      else
+        g->allNotesOff(off), tc->rt->keys.clear();
+    }
+  }
+  rt->inbox.clear();
 }
 
 void AudioEngine::setFixedBlock(int frames) {
@@ -2781,7 +2900,9 @@ void AudioEngine::processDirect(float* L, float* R, int frames) {
   const ScopedFlushDenormals ftz;  // J-25: denormal tails cost ~100x on x86
   auto t0 = std::chrono::steady_clock::now();
   blockSampleUi_.store(absClock_, std::memory_order_relaxed);
-  blockTimeUi_.store(std::chrono::duration<double>(t0.time_since_epoch()).count(), std::memory_order_relaxed);
+  const double testWall = testWall_.load(std::memory_order_relaxed);
+  const double wall0 = testWall >= 0 ? testWall : std::chrono::duration<double>(t0.time_since_epoch()).count();
+  blockTimeUi_.store(wall0, std::memory_order_relaxed);
   int done = 0;
   while (done < frames) {
     int n = std::min(kMaxBlock, frames - done);
@@ -2805,6 +2926,7 @@ void AudioEngine::processDirect(float* L, float* R, int frames) {
     if (done == 0 && hostNew_) followHost(p);
     if (p && p->hasEventLanes) n = untilEventStep(p, n);  // J-210: recorded events step on their samples
     if (p && p->meterReaders) n = untilMeterChange(p, n);  // K-193: plugins see a meter change on its sample
+    blockWall_ = wall0 + static_cast<double>(done) / sr_;
     processBlock(p, L + done, R + done, n);
     if (taps_) copyTaps(p, done, n);
     absClock_ += n;
@@ -2886,6 +3008,7 @@ void AudioEngine::followHost(const Program* p) {
     landAt(target);
     startTick_ = target;
     tPlaying_ = true;
+    heardRun_ = playSerial_.load(std::memory_order_relaxed);  // K-226: (a host's start: the newest request)
     countInLeft_ = 0;
     countingIn_.store(false);
     pendJump_ = false;

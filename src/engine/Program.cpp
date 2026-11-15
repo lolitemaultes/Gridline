@@ -1,3 +1,4 @@
+#include "../core/ClipPlayback.h"
 #include "../packs/Packs.h"
 #include "../core/Groove.h"
 #include "Program.h"
@@ -103,6 +104,7 @@ double restSeconds(const PluginState& p) {
   using namespace pp;
   const auto is = [&](int i, float def) { return static_cast<size_t>(i) < p.params.size() ? p.params[static_cast<size_t>(i)] : def; };
   if (p.type == "gl.eq") return is(EqListen, 0) > 0.5f ? 0.0 : 3.0;  // (linear phase: its FIR is shorter)
+  if (p.type == "gl.clipper") return 1.0;  // K-277: no state but its oversampling filters and a 64-sample delay
   if (p.type == "gl.delay") {
     const int model = static_cast<int>(std::lround(is(DlyModel, 0)));
     if (model == 0 && (is(DlyModDepth, 0) != 0 || is(DlyModCutoff, 0) != 0)) return 0.0;
@@ -269,9 +271,11 @@ bool resolveTarget(const Song& song, Program& prog, ParamId target, ProgLink& pl
         case ChannelParam::Pan: pl.kind = ProgLink::ChanPan; break;
         case ChannelParam::Pitch: pl.kind = ProgLink::ChanPitch; break;
         case ChannelParam::Mute: pl.kind = ProgLink::ChanMute; break;
+        case ChannelParam::Sustain: pl.kind = ProgLink::ChanSustain; break;
         default: return false;
       }
-      if (pl.kind != ProgLink::ChanPitch) pc.stripLinked = true;
+      if (pl.kind == ProgLink::ChanSustain) pc.sustainMoves = true;
+      else if (pl.kind != ProgLink::ChanPitch) pc.stripLinked = true;
       else pc.pitchMoves = true;
     }
   } else if (mi >= 0) {
@@ -650,6 +654,37 @@ void addLayerNotes(const Song& song, const Pattern& p, const Channel& target, in
   }
 }
 
+// Channel MIDI output ports -> channels listening on the same input port: hosted plugins' MIDI
+// output (played one block later) and MIDI Out channels (the same block, in Program::midiOrder).
+// Links that would bring a channel's MIDI back to it are left out (midiPortListeners).
+void linkMidiPorts(const Song& song, Program& prog) {
+  const size_t n = std::min(song.channels.size(), prog.channels.size());
+  std::vector<std::vector<int>> out = midiPortListeners(song, &prog.midiLoops);
+  out.resize(n);
+  for (auto& o : out) o.erase(std::remove_if(o.begin(), o.end(), [n](int t) { return static_cast<size_t>(t) >= n; }), o.end());
+  std::vector<int> feeders(n, 0);
+  for (size_t i = 0; i < n; ++i) {
+    ProgChannel& pc = prog.channels[i];
+    pc.midiTargets = out[i];
+    pc.midiFirst = !out[i].empty() && song.channels[i].plugin.type == "gl.midiout" && pc.rt && pc.rt->gen;
+    if (pc.midiFirst)
+      for (int t : out[i]) ++feeders[static_cast<size_t>(t)];
+  }
+  // Delivery order (Kahn): a channel comes after every MIDI Out channel that feeds it.
+  std::vector<int> ready;
+  for (size_t i = 0; i < n; ++i) {
+    prog.channels[i].midiFed = feeders[i] > 0;
+    if (feeders[i] == 0 && prog.channels[i].midiFirst) ready.push_back(static_cast<int>(i));
+  }
+  for (size_t k = 0; k < ready.size(); ++k) {
+    const int c = ready[k];
+    prog.midiOrder.push_back(c);
+    if (!prog.channels[static_cast<size_t>(c)].midiFirst) continue;
+    for (int t : out[static_cast<size_t>(c)])
+      if (--feeders[static_cast<size_t>(t)] == 0) ready.push_back(t);
+  }
+}
+
 }  // namespace
 
 double swingWarp(double x, double swing, Tick stepTicks, int stepsPerBar) {
@@ -876,6 +911,7 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
   }
   auto prog = std::make_shared<Program>();
   prog->tempo = song.tempo;
+  prog->masterPitch = song.masterPitch;
   prog->ppq = song.ppq;
   prog->slidesAnyColour = song.slidesAnyColour;  // K-5
   prog->barTicks = song.barTicks();
@@ -1218,6 +1254,7 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     pc.layerMode = c.layerMode;
     pc.keyLo = c.keyLo;
     pc.keyHi = c.keyHi;
+    pc.sustain = pc.sustainLive = c.sustainPedal;
     if (c.plugin.type == "gl.midiout")  // J-165: the port its notes go out on (note triggers)
       pc.midiPort = std::clamp(static_cast<int>(std::lround(c.plugin.params.size() > static_cast<size_t>(pp::MoPort)
                                                                   ? c.plugin.params[static_cast<size_t>(pp::MoPort)]
@@ -1269,15 +1306,16 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     }
     pc.unloaded = unloadedChannels_.count(c.id) > 0;  // K-87
     pc.asleep = pc.unloaded && asleepChannels_.count(c.id) > 0;
+    // K-277: Rest silent instruments (completed below, once links and MIDI routes are known).
+    if (!c.keepRunning && pc.rt->gen && !pc.frozen && !pc.controller && !pc.aux.ins) {
+      const Generator& g = *pc.rt->gen;
+      bool extraOut = false;
+      for (int k : pc.auxMixer) extraOut = extraOut || k >= 0;
+      pc.restSilent = g.mayRest() && !g.wantsLanes() && !g.rawMidi() && !extraOut && c.layer.empty();
+    }
     prog->channels.push_back(std::move(pc));
   }
-  // Plugin MIDI output ports → channels listening on the same input port.
-  for (size_t i = 0; i < song.channels.size() && i < prog->channels.size(); ++i) {
-    const int port = song.channels[i].midiOutPort;
-    if (port < 0) continue;
-    for (size_t j = 0; j < song.channels.size() && j < prog->channels.size(); ++j)
-      if (j != i && song.channels[j].midiInPort == port) prog->channels[i].midiTargets.push_back(static_cast<int>(j));
-  }
+  linkMidiPorts(song, *prog);
   // K-87: frozen mixer tracks: their render plays into them on a channel of its own, at unity.
   for (const auto& [mid, sample] : frozenMixers_) {
     const int mi = song.mixerIndex(mid);
@@ -1419,6 +1457,9 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
   }
   // Live copies for the states that links rewrite.
   for (auto& pc : prog->channels) {
+    // K-277: an instrument whose parameters links or automation move, or whose MIDI output other
+    // channels play, keeps running.
+    if (pc.modded || !pc.midiTargets.empty()) pc.restSilent = false;
     if (pc.modded) pc.live = pc.plugin;
     for (auto& nf : pc.noteFx)
       if (nf.modded) nf.live = nf.state;
@@ -1477,6 +1518,7 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     // pattern repeats them pass by pass (Q-1, core/ClipLoop.h).
     const Tick len = song.clipLength(clip);
     const std::vector<ClipPass> passes = clipPasses(song, clip);
+    const bool play = clipplay::active(clip);
     for (size_t ci = 0; ci < pp->perChannel.size(); ++ci)
       for (const ClipPass& ps : passes)
         for (const auto& e : pp->perChannel[ci]) {
@@ -1484,6 +1526,7 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
           NoteEv x = e;
           x.on = clip.start + ps.at + (e.on - ps.content);
           x.off = clip.start + ps.at + (e.off - ps.content);
+          if (play) clipplay::apply(clip, clip.start, x.on, x.off, x.onFrac, x.offFrac, x.pitch, x.velocity);  // K-112b3
           if (noteOffTick(x) > static_cast<double>(clip.start + len)) x.off = clip.start + len, x.offFrac = 0;
           prog->channels[ci].song.push_back(x);
         }
@@ -1507,6 +1550,7 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
               x.e = e;
               x.e.on = ps.at + (e.on - ps.content);
               x.e.off = ps.at + (e.off - ps.content);
+              if (clipplay::active(clip)) clipplay::apply(clip, 0, x.e.on, x.e.off, x.e.onFrac, x.e.offFrac, x.e.pitch, x.e.velocity);  // K-112b3
               if (noteOffTick(x.e) > static_cast<double>(lc.length)) x.e.off = lc.length, x.e.offFrac = 0;
               lc.notes.push_back(x);
             }

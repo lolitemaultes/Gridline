@@ -807,6 +807,10 @@ class KeysGen final : public Generator {
 
  protected:
   bool perVoiceExpression() const override { return true; }  // K-193
+  void rested(int n) override {  // K-277: the tremolo keeps its phase
+    tph_ += tremRate_ / sr_ * n;
+    tph_ -= std::floor(tph_);
+  }
   struct Voice {
     bool on = false, held = false;
     uint32_t id = 0;
@@ -1612,13 +1616,25 @@ class GranularGen final : public Generator {
 // ============================================================ MIDI Out
 class MidiOutGen final : public Generator {
  public:
+  bool mayRest() const override { return false; }  // K-277: sound without notes
   bool active() const override { return false; }
   void setMidiOut(MidiOutRing* r) override { out_ = r; }
   float noteBendRange() const override { return static_cast<float>(std::max(1, bendRange_)); }  // K-25
+  // Every message of the last process(), at its sample offset in the block, for the channels
+  // listening on this channel's port (the engine delivers them in the same block).
+  int takeMidiOut(MidiOutEvent* out, int max) override {
+    const int k = std::min(sentCount_, max);
+    for (int i = 0; i < k; ++i) out[i] = sent_[static_cast<size_t>(i)];
+    sentCount_ = 0;
+    return k;
+  }
 
  protected:
+  // Every event of the block fires first with its offset (eventOffset()): the messages keep it.
+  bool wholeBlock() const override { return true; }
   void configure(const PluginState& s, const ChannelAux&, const ProcessContext& ctx) override {
     using namespace pp;
+    sentCount_ = 0;  // a new block (messages nobody took are gone)
     ch_ = std::clamp(static_cast<int>(param(s, MoChannel, 1) + 0.5f), 1, 16) - 1;
     port_ = std::clamp(static_cast<int>(param(s, MoPort) + 0.5f), 0, MidiPortBus::kPorts - 1);
     bus_ = ctx.ports;
@@ -1627,18 +1643,18 @@ class MidiOutGen final : public Generator {
         if (h.id) bus_->set(port_, h.pitch, h.vel);
     int prog = static_cast<int>(param(s, MoProgram) + 0.5f);
     int msb = static_cast<int>(std::lround(param(s, MoBankMsb, -1))), lsb = static_cast<int>(std::lround(param(s, MoBankLsb, -1)));
-    if ((prog != prog_ || msb != msb_ || lsb != lsb_) && out_ && prog > 0) {  // bank select before the program change
-      if (msb >= 0) out_->push(static_cast<uint8_t>(0xB0 | ch_), 0, static_cast<uint8_t>(msb));
-      if (lsb >= 0) out_->push(static_cast<uint8_t>(0xB0 | ch_), 32, static_cast<uint8_t>(lsb));
-      out_->push(static_cast<uint8_t>(0xC0 | ch_), static_cast<uint8_t>(prog - 1), 0);
+    if ((prog != prog_ || msb != msb_ || lsb != lsb_) && prog > 0) {  // bank select before the program change
+      if (msb >= 0) emit(static_cast<uint8_t>(0xB0 | ch_), 0, static_cast<uint8_t>(msb));
+      if (lsb >= 0) emit(static_cast<uint8_t>(0xB0 | ch_), 32, static_cast<uint8_t>(lsb));
+      emit(static_cast<uint8_t>(0xC0 | ch_), static_cast<uint8_t>(prog - 1), 0);
     }
     prog_ = prog, msb_ = msb, lsb_ = lsb;
     // J-92: the pitch bend range reaches the receiver as RPN 0 (it was never sent).
     const int range = std::clamp(static_cast<int>(std::lround(param(s, MoBendRange, 2))), 0, 127);
-    if (range != bendRange_ && out_) {
+    if (range != bendRange_) {
       const uint8_t cc = static_cast<uint8_t>(0xB0 | ch_);
-      out_->push(cc, 101, 0), out_->push(cc, 100, 0), out_->push(cc, 6, static_cast<uint8_t>(range)), out_->push(cc, 38, 0);
-      out_->push(cc, 101, 127), out_->push(cc, 100, 127);  // RPN null
+      emit(cc, 101, 0), emit(cc, 100, 0), emit(cc, 6, static_cast<uint8_t>(range)), emit(cc, 38, 0);
+      emit(cc, 101, 127), emit(cc, 100, 127);  // RPN null
     }
     bendRange_ = range;
     velScale_ = param(s, MoVelocity, 1);
@@ -1648,7 +1664,6 @@ class MidiOutGen final : public Generator {
       int value = static_cast<int>(std::lround(param(s, moKnob(k, MoKnobValue))));
       if (value == knobLast_[k]) continue;
       knobLast_[k] = value;
-      if (!out_) continue;
       int type = static_cast<int>(param(s, moKnob(k, MoKnobType)) + 0.5f);
       int num = static_cast<int>(std::lround(param(s, moKnob(k, MoKnobNumber), 20 + k)));
       double lo = param(s, moKnob(k, MoKnobMin)), hi = param(s, moKnob(k, MoKnobMax), 127);
@@ -1658,44 +1673,53 @@ class MidiOutGen final : public Generator {
       switch (type) {
         case 1:  // RPN
         case 2: {  // NRPN
-          out_->push(static_cast<uint8_t>(0xB0 | c), type == 1 ? 101 : 99, static_cast<uint8_t>((num >> 7) & 127));
-          out_->push(static_cast<uint8_t>(0xB0 | c), type == 1 ? 100 : 98, static_cast<uint8_t>(num & 127));
-          out_->push(static_cast<uint8_t>(0xB0 | c), 6, static_cast<uint8_t>(std::clamp(scaled >> 7, 0, 127)));
-          out_->push(static_cast<uint8_t>(0xB0 | c), 38, static_cast<uint8_t>(scaled & 127));
+          emit(static_cast<uint8_t>(0xB0 | c), type == 1 ? 101 : 99, static_cast<uint8_t>((num >> 7) & 127));
+          emit(static_cast<uint8_t>(0xB0 | c), type == 1 ? 100 : 98, static_cast<uint8_t>(num & 127));
+          emit(static_cast<uint8_t>(0xB0 | c), 6, static_cast<uint8_t>(std::clamp(scaled >> 7, 0, 127)));
+          emit(static_cast<uint8_t>(0xB0 | c), 38, static_cast<uint8_t>(scaled & 127));
           break;
         }
-        case 3: out_->push(static_cast<uint8_t>(0xD0 | c), static_cast<uint8_t>(std::clamp(scaled, 0, 127)), 0); break;
+        case 3: emit(static_cast<uint8_t>(0xD0 | c), static_cast<uint8_t>(std::clamp(scaled, 0, 127)), 0); break;
         case 4:
           if (scaled > 0)
-            out_->push(static_cast<uint8_t>(0x90 | c), static_cast<uint8_t>(num & 127), static_cast<uint8_t>(std::clamp(scaled, 1, 127)));
+            emit(static_cast<uint8_t>(0x90 | c), static_cast<uint8_t>(num & 127), static_cast<uint8_t>(std::clamp(scaled, 1, 127)));
           else
-            out_->push(static_cast<uint8_t>(0x80 | c), static_cast<uint8_t>(num & 127), 0);
+            emit(static_cast<uint8_t>(0x80 | c), static_cast<uint8_t>(num & 127), 0);
           break;
-        default: out_->push(static_cast<uint8_t>(0xB0 | c), static_cast<uint8_t>(num & 127), static_cast<uint8_t>(std::clamp(scaled, 0, 127)));
+        default: emit(static_cast<uint8_t>(0xB0 | c), static_cast<uint8_t>(num & 127), static_cast<uint8_t>(std::clamp(scaled, 0, 127)));
       }
     }
   }
-  void onNoteOn(uint32_t id, double pitch, float vel) override {
+  void onNoteOn(uint32_t id, double pitch, float vel) override { startNote(id, pitch, vel, NoteProps{}); }
+  void onNoteOnEx(uint32_t id, double pitch, float vel, const NoteProps& np) override { startNote(id, pitch, vel, np); }
+  // MIDI carries the key, the velocity and the release velocity (in the note-off). The channels on
+  // this channel's port also get the note's exact pitch (fine pitch): an external device gets the
+  // nearest key. Per-note pan and mod X / Y have no MIDI message and stay behind.
+  void startNote(uint32_t id, double pitch, float vel, const NoteProps& np) {
     int p = std::clamp(static_cast<int>(std::lround(pitch)), 0, 127);
     double v = velCurve_ == 1 ? std::sqrt(vel) : velCurve_ == 2 ? vel * vel : velCurve_ == 3 ? 100.0 / 127.0 : vel;
-    const int v7 = std::clamp(static_cast<int>(v * 127 * velScale_), 1, 127);
+    // (rounded: a note of velocity v (v / 127) goes out as v; truncating sent most as v - 1)
+    const int v7 = std::clamp(static_cast<int>(std::lround(v * 127 * static_cast<double>(velScale_))), 1, 127);
+    const int r7 = std::clamp(static_cast<int>(std::lround(static_cast<double>(np.release) * 127)), 0, 127);
     // The receiver knows a note by its key: an earlier note on this key ends first, or its
     // note-off would end the new one.
     for (auto& h : held_)
       if (h.id != 0 && h.pitch == p) onNoteOff(h.id);
     for (auto& h : held_)
       if (h.id == 0) {
-        h = {id, p, v7};
+        h = {id, p, v7, r7};
         break;
       }
     if (bus_) bus_->set(port_, p, v7);
-    if (out_) out_->push(static_cast<uint8_t>(0x90 | ch_), static_cast<uint8_t>(p), static_cast<uint8_t>(std::clamp(static_cast<int>(v * 127 * velScale_), 1, 127)));
+    const bool exact = std::fabs(pitch - static_cast<double>(p)) <= 1e-6;
+    emit(static_cast<uint8_t>(0x90 | ch_), static_cast<uint8_t>(p), static_cast<uint8_t>(v7), exact ? -1.0f : static_cast<float>(pitch),
+         np.detune);
   }
   void onNoteOff(uint32_t id) override {
     for (auto& h : held_)
       if (h.id == id && id != 0) {
         if (bus_) bus_->set(port_, h.pitch, 0);
-        if (out_) out_->push(static_cast<uint8_t>(0x80 | ch_), static_cast<uint8_t>(h.pitch), 0);
+        emit(static_cast<uint8_t>(0x80 | ch_), static_cast<uint8_t>(h.pitch), static_cast<uint8_t>(h.release));
         h = {};
       }
   }
@@ -1703,31 +1727,47 @@ class MidiOutGen final : public Generator {
     for (auto& h : held_)
       if (h.id) {
         if (bus_) bus_->set(port_, h.pitch, 0);
-        if (out_) out_->push(static_cast<uint8_t>(0x80 | ch_), static_cast<uint8_t>(h.pitch), 0);
+        emit(static_cast<uint8_t>(0x80 | ch_), static_cast<uint8_t>(h.pitch), static_cast<uint8_t>(h.release));
         h = {};
       }
   }
   void onKill() override {
     onAllOff();
-    if (out_) out_->push(static_cast<uint8_t>(0xB0 | ch_), 123, 0);
+    emit(static_cast<uint8_t>(0xB0 | ch_), 123, 0);
   }
   void render(float*, float*, int) override {}
   // J-92: pitch bend and channel pressure from the keyboard go out on this channel; K-144: so do
-  // key pressure and controllers (the pedals stay with Gridline, which holds the notes itself).
-  // Slide notes and bend lines arrive here as pitch bend too.
+  // key pressure, program changes it is sent and controllers, the pedals (CC 64, 66, 67) included: the receiver decides what
+  // they do (with Sustain holds notes on, Gridline also holds this channel's note-offs). Slide
+  // notes and bend lines arrive here as pitch bend too.
   void onMidi(uint8_t status, uint8_t d1, uint8_t d2) override {
     const uint8_t kind = status & 0xF0;
-    if (!out_) return;
-    if (kind == 0xB0 && (d1 == 64 || d1 == 66 || d1 == 67 || d1 >= 120)) return;
-    if (kind == 0xE0 || kind == 0xD0 || kind == 0xA0 || kind == 0xB0) out_->push(static_cast<uint8_t>(kind | ch_), d1, d2);
+    if (kind == 0xB0 && d1 >= 120) return;
+    if (kind == 0xE0 || kind == 0xD0 || kind == 0xA0 || kind == 0xB0 || kind == 0xC0) emit(static_cast<uint8_t>(kind | ch_), d1, d2);
   }
 
  private:
+  // A message to the device (MIDI output) and to the channels on this channel's port.
+  // (a note-on's `pitch` when it is not the key, and its NoteProps::detune: for the listeners)
+  void emit(uint8_t s, uint8_t a, uint8_t b, float pitch = -1.0f, float detune = 0.0f) {
+    if (out_) out_->push(s, a, b);
+    if (sentCount_ < static_cast<int>(sent_.size())) {
+      MidiOutEvent& e = sent_[static_cast<size_t>(sentCount_++)];
+      e.offset = eventOffset();
+      e.s = s, e.a = a, e.b = b;
+      e.pitch = pitch;
+      e.time = 0.0f;
+      e.detune = detune;
+    }
+  }
   struct Held {
     uint32_t id = 0;
     int pitch = 0;
     int vel = 100;
+    int release = 64;
   };
+  std::array<MidiOutEvent, 1024> sent_{};
+  int sentCount_ = 0;
   std::array<Held, 128> held_{};
   int bendRange_ = 2;  // the receiver's default (General MIDI): announced only when it differs
   MidiOutRing* out_ = nullptr;

@@ -10,6 +10,7 @@
 #include "../core/PluginInfo.h"
 #include "../packs/utility/utility_rt.h"
 #include "App.h"
+#include "HostedBodies.h"
 #include "HostedUi.h"
 #include "PluginUI.h"
 #include "Theme.h"
@@ -48,12 +49,10 @@ void readout(App& a, const char* caption, const std::string& value, const char* 
 
 }  // namespace
 
-void drawMasterPanel(App& a) {
-  if (!a.showMaster) return;
-  if (!ui::BeginDockWindow("Master chain", &a.showMaster, ImVec2(820, 300))) {
-    ui::EndDockWindow();
-    return;
-  }
+// K-112 (R3): the chain's content, drawn by the Master chain window or by a layout part's own
+// frame (the room it has is the frame's; the body fills its width).
+void drawMasterChainBody(App& a, const BodyFrame&) {
+  hostbody::drawn(hostbody::Body::MasterChain, kNoId, -1);
   const auto& P = pal();
   const Song& s = a.doc.song();
   const int first = mastering::chainSlot(s);
@@ -96,7 +95,6 @@ void drawMasterPanel(App& a) {
     ui::EmptyState(ImGui::GetWindowDrawList(), p0, ImVec2(p0.x + av.x, p0.y + std::max(av.y, 90.0f)), "No master chain",
                    "Choose a preset or \"Add to master\": five of Gridline's effects on the master, driven by the knobs here");
     ImGui::Dummy(av);
-    ui::EndDockWindow();
     return;
   }
 
@@ -227,6 +225,16 @@ void drawMasterPanel(App& a) {
     ImGui::PopID();
   }
   pui::endPanel();
+}
+
+void drawMasterPanel(App& a) {
+  if (!a.showMaster) return;
+  if (hostbody::claimed(hostbody::Body::MasterChain)) return;  // K-112: a layout part draws it in its own frame
+  if (!ui::BeginDockWindow("Master chain", &a.showMaster, ImVec2(820, 300))) {
+    ui::EndDockWindow();
+    return;
+  }
+  drawMasterChainBody(a, BodyFrame{ImGui::GetContentRegionAvail().x, false, ""});
   ui::EndDockWindow();
 }
 

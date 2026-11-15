@@ -2,9 +2,11 @@
 #include "Look.h"
 #include "LookGeom.h"
 #include "Widgets.h"
+#include "LayoutStyleUi.h"
 #include "DialogLayout.h"
 #include "../core/WindowPlacement.h"
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -21,6 +23,7 @@
 #include "Keys.h"
 #include "Windows.h"
 #include "Theme.h"
+#include "LiveLook.h"
 #include "icons/IconTexture.h"
 #include "../core/I18n.h"
 #include "../core/LevelMeter.h"
@@ -36,7 +39,7 @@ constexpr float kPi = 3.14159265f;
 
 void arc(ImDrawList* dl, ImVec2 c, float r, float a0, float a1, ImU32 col, float th) {
   dl->PathArcTo(c, r, a0, a1, 32);
-  dl->PathStroke(col, 0, th);
+  dl->PathStroke(col, th, 0);
 }
 }  // namespace
 
@@ -122,6 +125,10 @@ bool HintHovered() {
 }
 
 void Label(const char* text) {
+  if (FormColumnIndent() > 0) {  // K-112b: the Logic layout's forms: a dim line in sentence case
+    ImGui::TextColored(theme::vec(pal().textDim), "%s", SectionHeading(tr(text)).c_str());
+    return;
+  }
   ImGui::PushFont(app().fontMono, theme::kFontLabel);
   ImGui::TextColored(theme::vec(pal().textFaint), "%s", tr(text));
   ImGui::PopFont();
@@ -143,8 +150,15 @@ void FocusRing() {
   ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
   // J-137: drawn over the field's own border (inside its rectangle), so a field against a pane
   // or section edge keeps its whole ring.
+  // K-112b (checkpoint 22): in the Tracks layout's own windows (not plugin editors) a quiet ring, one
+  // pixel inside the field at 70 % of the accent, so a focused field reads without shouting.
+  if (GImGuiGridlineMenuRight) {
+    ImGui::GetWindowDrawList()->AddRect(ImVec2(a.x + 0.5f, a.y + 0.5f), ImVec2(b.x - 0.5f, b.y - 0.5f), theme::withAlpha(pal().accent, 0.7f),
+                                        ImGui::GetStyle().FrameRounding, 0, 1.0f);
+    return;
+  }
   ImGui::GetWindowDrawList()->AddRect(ImVec2(a.x + 0.75f, a.y + 0.75f), ImVec2(b.x - 0.75f, b.y - 0.75f), pal().accent,
-                                      ImGui::GetStyle().FrameRounding, 0, 1.5f);
+                                      ImGui::GetStyle().FrameRounding, 1.5f, 0);
 }
 
 namespace {
@@ -237,6 +251,11 @@ struct StyledButtonFace {
   bool on = false;
   StyledButtonFace(ImGuiID id, const char* text, float width, bool lit, bool primary = false) {
     if (!look::styled()) return;
+    // K-112c (round 23): in Live an unlit text button outside a dialog footer is the plain flat
+    // frame with its 1 px rim (as the clip column's - and +), the face every ref draws (038, 041,
+    // 045, 112, 211); no raised control-style face.
+    if (layoutui::styled() && !layoutui::inBaseStyle() && layoutui::style().preset == layout::Preset::Live && !lit && !primary && !InDialogFooter())
+      return;
     on = true;
     const ImGuiStyle& st = ImGui::GetStyle();
     const ImVec2 ts = ImGui::CalcTextSize(text, nullptr, true);
@@ -245,12 +264,27 @@ struct StyledButtonFace {
     const ImGuiContext& g = *GImGui;
     const bool hov = g.HoveredIdPreviousFrame == id, held = g.ActiveId == id;
     const int dis = (g.CurrentItemFlags & ImGuiItemFlags_Disabled) ? look::Disabled : 0;
-    if (primary)  // K-172: the main action: raised and filled
-      look::hookPrimary(ImGui::GetWindowDrawList(), p, ImVec2(p.x + sz.x, p.y + sz.y), theme::kRadius, faceState(hov, held, false) | dis, pal().hot);
+    // K-112c: in Live a chosen option is filled in the lit colour with dark text, square cornered
+    // (the layout's own rounding), as every ref draws a switch that is on.
+    const bool live = layoutui::styled() && !layoutui::inBaseStyle() && layoutui::style().preset == layout::Preset::Live;  // a plugin body keeps its look
+    const bool filled = primary || (live && lit);
+    const float r = live ? ImGui::GetStyle().FrameRounding : theme::kRadius;
+    if (live && InDialogFooter()) {  // a dialog's footer buttons are pills with a rim (each ref dialog's Cancel / OK row)
+      const auto& P = pal();
+      ImDrawList* dl = ImGui::GetWindowDrawList();
+      const ImVec2 q(p.x + sz.x, p.y + sz.y);
+      ImU32 fill = filled ? P.hot : P.surface700;
+      if (held) fill = theme::mix(fill, IM_COL32(0, 0, 0, 255), 0.15f);
+      else if (hov) fill = theme::mix(fill, P.paper, 0.08f);
+      if (dis) fill = theme::withAlpha(fill, 0.5f);
+      dl->AddRectFilled(p, q, fill, sz.y * 0.5f);
+      dl->AddRect(ImVec2(p.x + 0.5f, p.y + 0.5f), ImVec2(q.x - 0.5f, q.y - 0.5f), theme::mix(fill, IM_COL32(0, 0, 0, 255), 0.45f), sz.y * 0.5f, 1.0f);
+    } else if (filled)  // K-172: the main action: raised and filled
+      look::hookPrimary(ImGui::GetWindowDrawList(), p, ImVec2(p.x + sz.x, p.y + sz.y), r, faceState(hov, held, false) | dis, pal().hot);
     else
-      look::hookFace(ImGui::GetWindowDrawList(), p, ImVec2(p.x + sz.x, p.y + sz.y), theme::kRadius, faceState(hov, held, lit) | dis, pal().hot, true);
-    if (primary) ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(look::primaryText(pal().hot, dis)));
-    pushedText = primary;
+      look::hookFace(ImGui::GetWindowDrawList(), p, ImVec2(p.x + sz.x, p.y + sz.y), r, faceState(hov, held, lit) | dis, pal().hot, true);
+    if (filled) ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(look::primaryText(pal().hot, dis)));
+    pushedText = filled;
     const ImVec4 clear(0, 0, 0, 0);
     ImGui::PushStyleColor(ImGuiCol_Button, clear);
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, clear);
@@ -407,15 +441,29 @@ bool TextButton(const char* label, bool active, float width, const char* hint) {
     const ImVec2 ts = ImGui::CalcTextSize(text);
     const ImGuiStyle& st = ImGui::GetStyle();
     ImGui::PushID(label);
+    ImU32 labelCol = 0;
     {
       const float bw = width > 0 ? width : ts.x + st.FramePadding.x * 2;
       const StyledButtonFace face(ImGui::GetID("##icon"), "", bw, active);  // J-129 control style
       r = ImGui::Button("##icon", ImVec2(bw, 0));
+      labelCol = ImGui::GetColorU32(ImGuiCol_Text);  // K-112c: the face's own text colour (Live fills a lit face)
     }
     ImGui::PopID();
     const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
     const ImVec2 pos(a.x + std::max(0.0f, (b.x - a.x - ts.x) * st.ButtonTextAlign.x), a.y + std::max(0.0f, (b.y - a.y - ts.y) * st.ButtonTextAlign.y));
-    drawLabel(ImGui::GetWindowDrawList(), pos, ImGui::GetColorU32(ImGuiCol_Text), label);
+    drawLabel(ImGui::GetWindowDrawList(), pos, labelCol, label);
+  } else if (layoutui::styled()) {
+    // K-112: a layout style draws the label itself, centred by the font's ink and capital height
+    // (the button keeps its label, id and size; ImGui's own text is drawn clear).
+    const char* t = tr(label);
+    const StyledButtonFace face(ImGui::GetID(t), t, width, active);  // J-129 control style
+    const ImU32 textCol = ImGui::GetColorU32(ImGuiCol_Text);
+    ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(0, 0, 0, 0));
+    r = ImGui::Button(t, ImVec2(width, 0));
+    ImGui::PopStyleColor();
+    const std::string shown(t, ImGui::FindRenderedTextEnd(t));
+    theme::centreText(ImGui::GetWindowDrawList(), ImGui::GetFont(), ImGui::GetFontSize(), ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), textCol,
+                      shown.c_str());
   } else {
     const StyledButtonFace face(ImGui::GetID(tr(label)), tr(label), width, active);  // J-129 control style
     r = ImGui::Button(tr(label), ImVec2(width, 0));
@@ -504,6 +552,55 @@ float TextButtonWidth(const char* label) {
   return ImGui::CalcTextSize(t, nullptr, true).x + ImGui::GetStyle().FramePadding.x * 2;
 }
 
+void MenuGroup(const char* id, const char* const* names, const char* const* hints, int count, const std::function<void(int)>& body) {
+  ImGui::PushID(id);
+  ImGuiStorage* store = ImGui::GetStateStorage();
+  const ImGuiID openKey = ImGui::GetID("##openpart");
+  const int openPart = store->GetInt(openKey, 0);
+  const auto& P = pal();
+  const float fh = ImGui::GetFrameHeight(), padX = 9, chevS = 7, chevGap = 4;
+  std::vector<float> segW(static_cast<size_t>(std::max(0, count)));
+  float groupW = 0;
+  for (int i = 0; i < count; ++i) groupW += segW[static_cast<size_t>(i)] = std::round(ImGui::CalcTextSize(tr(names[i])).x + padX * 2 + chevGap + chevS);
+  ImDrawList* gdl = ImGui::GetWindowDrawList();
+  const ImVec2 g0 = ImGui::GetCursorScreenPos();
+  const float gr = ImGui::GetStyle().FrameRounding;
+  const ImU32 groupBg = ImGui::GetColorU32(ImGuiCol_FrameBg);
+  gdl->AddRectFilled(g0, ImVec2(g0.x + groupW, g0.y + fh), groupBg, gr);
+  bool anyOpen = false;
+  for (int k = 1; k <= count; ++k) {
+    ImGui::PushID(k);
+    const ImGuiID pid = ImGui::GetID("##pop");
+    const bool isOpen = ImGui::IsPopupOpen(pid, 0);
+    const ImVec2 bp = ImGui::GetCursorScreenPos();
+    const float sw = segW[static_cast<size_t>(k - 1)];
+    const bool clicked = ImGui::InvisibleButton("##m", ImVec2(sw, fh));
+    const bool hov = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup);
+    if (hov && hints && hints[k - 1]) Hint(hints[k - 1]);
+    if (isOpen || hov)  // the quiet hover: 8 % toward the text, 14 % while open
+      gdl->AddRectFilled(bp, ImVec2(bp.x + sw, bp.y + fh), theme::mix(groupBg, P.text, isOpen ? 0.14f : 0.08f), gr,
+                         count == 1 ? ImDrawFlags_RoundCornersAll : k == 1 ? ImDrawFlags_RoundCornersLeft : k == count ? ImDrawFlags_RoundCornersRight : ImDrawFlags_RoundCornersNone);
+    if (k > 1)  // the hairline between two menus, inset from the group's top and bottom
+      gdl->AddRectFilled(ImVec2(bp.x, std::round(bp.y + fh * 0.25f)), ImVec2(bp.x + 1, std::round(bp.y + fh * 0.75f)), theme::mix(groupBg, P.text, 0.18f));
+    const char* nm = tr(names[k - 1]);
+    const ImVec2 ts = ImGui::CalcTextSize(nm);
+    gdl->AddText(ImVec2(bp.x + padX, std::round(bp.y + (fh - ts.y) * 0.5f)), P.text, nm);
+    drawIcon(gdl, Icon::ChevronDown, ImVec2(std::round(bp.x + padX + ts.x + chevGap + chevS * 0.5f), std::round(bp.y + fh * 0.5f)), chevS, P.textDim);
+    if ((clicked && !isOpen) || (openPart && openPart != k && hov && !isOpen)) ImGui::OpenPopupEx(pid);
+    ImGui::SetNextWindowPos(ImVec2(bp.x, bp.y + fh + 2));
+    if (ImGui::BeginPopupEx(pid, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings)) {
+      anyOpen = true;
+      store->SetInt(openKey, k);
+      body(k);
+      ImGui::EndPopup();
+    }
+    ImGui::PopID();
+    ImGui::SameLine(0, 0);
+  }
+  if (!anyOpen) store->SetInt(openKey, 0);
+  ImGui::PopID();
+}
+
 void StatusDot(ImU32 col, bool pulse) {
   const float h = ImGui::GetTextLineHeight(), r = 3.5f;
   const ImVec2 p = ImGui::GetCursorScreenPos();
@@ -564,6 +661,9 @@ bool Segmented(const char* id, const char* const* labels, int count, int* index,
       theme::textEllipsis(dl, ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(std::round(q.x + 3), std::round(q.y + (height - 4 - ts.y) * 0.5f)),
                           w - 6, on ? onFg : hov ? P.text : P.textDim, shown.c_str());
       if (!(hints && hints[i])) Tooltip(shown.c_str());
+    } else if (layoutui::styled()) {  // K-112: a layout style centres by the font's ink and capital height
+      const std::string shown(labels[i], ImGui::FindRenderedTextEnd(labels[i]));
+      theme::centreText(dl, ImGui::GetFont(), ImGui::GetFontSize(), q, ImVec2(q.x + w, q.y + height - 4), on ? onFg : hov ? P.text : P.textDim, shown.c_str());
     } else {
       dl->AddText(ImVec2(std::round(q.x + (w - ts.x) * 0.5f), std::round(q.y + (height - 4 - ts.y) * 0.5f)),
                   on ? onFg : hov ? P.text : P.textDim, labels[i], ImGui::FindRenderedTextEnd(labels[i]));
@@ -706,7 +806,7 @@ void DrawKnob(ImDrawList* dl, ImVec2 c, float radius, float norm, bool bipolar, 
   ImVec2 dir(std::cos(an), std::sin(an));
   dl->PathLineTo(ImVec2(c.x + dir.x * radius * 0.15f, c.y + dir.y * radius * 0.15f));  // a path: AddLine is half a pixel off centre
   dl->PathLineTo(ImVec2(c.x + dir.x * (radius - th - 3.0f), c.y + dir.y * (radius - th - 3.0f)));
-  dl->PathStroke(hov || act ? P.paper : P.text, 0, 2.0f);
+  dl->PathStroke(hov || act ? P.paper : P.text, 2.0f, 0);
   }
 }
 
@@ -975,12 +1075,35 @@ bool ParamKnob(const char* id, ParamId pid, float radius, const char* label, boo
   return ch;
 }
 
+namespace {
+bool gFaderPointer = false;  // K-112c: see setFaderPointer
+}  // namespace
+void setFaderPointer(bool on) { gFaderPointer = on; }
+namespace {
+const float* gFaderTicks = nullptr;
+int gFaderTickCount = 0;
+}  // namespace
+void setFaderTicks(const float* norms, int count) { gFaderTicks = count > 0 ? norms : nullptr, gFaderTickCount = gFaderTicks ? count : 0; }
+
 // J-137: the drawing of ParamFader alone (norm / defNorm 0..1: the value and the default mark).
 void DrawFader(ImDrawList* dl, ImVec2 p, ImVec2 size, float norm, float defNorm, bool hov, bool act) {
   const auto& P = pal();
+  if (gFaderPointer) {
+    // K-112c (Live): a thin line with a triangle pointing at the meter beside it, at the value.
+    const float capH = 18.0f;
+    const look::geom::ClassicFader g = look::geom::classicFader(p.x, p.y, size.x, size.y, norm, capH);
+    const float cx = g.cx, yc = g.yc;
+    dl->AddLine(ImVec2(cx + 0.5f, g.t0), ImVec2(cx + 0.5f, g.t1), P.line, 1.0f);
+    const float uy = g.tickY(defNorm);
+    dl->AddLine(ImVec2(cx - 2, uy), ImVec2(cx + 3, uy), P.textFaint, 1.0f);
+    const ImU32 col = act ? P.hot : hov ? P.paper : P.text;
+    dl->AddTriangleFilled(ImVec2(g.left + 2, yc - 5), ImVec2(g.right - 1, yc), ImVec2(g.left + 2, yc + 5), col);
+    return;
+  }
   if (look::styled()) {  // J-129 control style (the painter's rect: the control plus 8 / 4 px, LookGeom.h)
     look::Fader lf;
     lf.norm = norm, lf.state = (hov ? look::Hover : 0) | (act ? look::Active : 0);
+    lf.marks = gFaderTicks, lf.markCount = gFaderTickCount;
     look::fader(dl, ImVec2(p.x - 8, p.y - 4), ImVec2(p.x + size.x + 8, p.y + size.y + 4), lf);
     return;
   }
@@ -993,8 +1116,8 @@ void DrawFader(ImDrawList* dl, ImVec2 p, ImVec2 size, float norm, float defNorm,
   dl->AddRectFilled(ImVec2(cx - 2, g.t0), ImVec2(cx + 2, g.t1), P.surface950, 2);
   dl->AddRectFilled(ImVec2(cx - 1, yc), ImVec2(cx + 1, g.t1), act || hov ? theme::withAlpha(P.hot, 0.9f) : P.lineStrong, 1);
   // Scale ticks every eighth of the travel + the default (unity) mark.
-  for (int i = 0; i <= 8; ++i) {
-    float ty = g.tickY(static_cast<float>(i) / 8.0f);
+  for (int i = 0; i <= (gFaderTicks ? gFaderTickCount - 1 : 8); ++i) {
+    float ty = g.tickY(gFaderTicks ? gFaderTicks[i] : static_cast<float>(i) / 8.0f);
     dl->AddLine(ImVec2(L + 1, ty), ImVec2(L + 4, ty), P.line, 1);
     dl->AddLine(ImVec2(R - 4, ty), ImVec2(R - 1, ty), P.line, 1);
   }
@@ -1161,13 +1284,15 @@ bool BeginDockWindow(const char* name, bool* open, ImVec2 firstSize) {
 
 void EndDockWindow() { ImGui::End(); }
 
-void BeginToolbar(const char* id) {
+void BeginToolbar(const char* id) { BeginToolbar(id, theme::kToolbarH); }
+
+void BeginToolbar(const char* id, float height) {
   const auto& P = pal();
-  const float padY = std::floor((theme::kToolbarH - ImGui::GetFrameHeight()) * 0.5f);
+  const float padY = std::max(0.0f, std::floor((height - ImGui::GetFrameHeight()) * 0.5f));
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS2, padY));
   ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(theme::kS1, theme::kS1));
   ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::vec(P.surface900));
-  ImGui::BeginChild(id, ImVec2(0, theme::kToolbarH), ImGuiChildFlags_AlwaysUseWindowPadding,
+  ImGui::BeginChild(id, ImVec2(0, height), ImGuiChildFlags_AlwaysUseWindowPadding,
                     ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
   ImGui::PopStyleColor();
 }
@@ -1237,11 +1362,74 @@ struct SectionFrame {
   ImVec2 start;
   float right = 0, workMaxX = 0, contentMaxX = 0;
   float width = 0;  // the width it takes in the layout (its border is drawn 1 px inside)
+  float column = 0;  // K-112b: the extra indent to the form column (FormColumnIndent)
+  bool heading = false;  // K-112b: the caption as a bold heading (the Logic layout's forms)
   std::string caption;
+  bool live = false;  // K-112: the Live way, a heading and a rule (no panel)
+  float toggleW = 0;  // the check box field width before this group (restored at its end)
 };
+std::vector<SectionMark> gSectionMarks;
 std::vector<std::unique_ptr<SectionFrame>> gSections;
 constexpr float kSectionPad = theme::kS2;
+
+// K-112: a caption written in capitals ("FILE NAME AND LOCATION") as a sentence ("File name and
+// location"), keeping the names and abbreviations that are always written so.
+// K-112: a Live settings row's switch: an On / Off field, lit while on (as the refs draw them).
+void drawToggleFieldHook(ImDrawList* dl, const ImVec2& a, const ImVec2& b, int state, bool hovered, bool held) {
+  ui::drawToggleField(dl, a, b, state, hovered, held);
+}
+
+std::string sentenceCase(const std::string& in) {
+  bool caps = false;
+  for (char c : in) {
+    if ((c >= 'a' && c <= 'z') || (static_cast<unsigned char>(c) & 0x80)) return in;  // mixed case, or a translation
+    caps = caps || (c >= 'A' && c <= 'Z');
+  }
+  if (!caps) return in;
+  static const char* const keep[] = {"MIDI", "MCP", "AI", "FL", "ASIO", "OSC", "VST", "VST3", "CLAP", "LV2", "AU", "MP3",
+                                     "WAV", "FLAC", "URL", "CPU", "UI", "PPQ", "BPM", "MPE", "LFO", "EQ", "ID"};
+  static const char* const proper[][2] = {{"STUDIO", "Studio"}, {"GRIDLINE", "Gridline"}, {"OPEN", "Open"}, {"SOUND", "Sound"}, {"CONTROL", "Control"}};
+  std::string out;
+  size_t i = 0;
+  bool first = true;
+  while (i < in.size()) {
+    size_t j = i;
+    while (j < in.size() && ((in[j] >= 'A' && in[j] <= 'Z') || (in[j] >= '0' && in[j] <= '9'))) ++j;
+    if (j == i) {
+      out += in[i++];
+      continue;
+    }
+    std::string w = in.substr(i, j - i), o;
+    for (const char* k : keep)
+      if (w == k) o = w;
+    for (const auto& pr : proper)
+      if (o.empty() && w == pr[0]) o = pr[1];
+    if (o.empty()) {
+      o = w;
+      for (size_t k = first ? 1 : 0; k < o.size(); ++k)
+        if (o[k] >= 'A' && o[k] <= 'Z') o[k] = static_cast<char>(o[k] - 'A' + 'a');
+    }
+    out += o;
+    first = false;
+    i = j;
+  }
+  return out;
+}
 }  // namespace
+
+void drawToggleField(ImDrawList* dl, ImVec2 a, ImVec2 b, int state, bool hovered, bool held) {
+  const auto& P = pal();
+  const bool on = state != 0;
+  const ImU32 face = on ? (held ? theme::mix(P.accent, P.ink, 0.15f) : hovered ? theme::mix(P.accent, P.paper, 0.12f) : P.accent)
+                        : (held ? P.surface600 : hovered ? P.surface700 : P.field);
+  // GetColorU32 applies the style's alpha (a disabled row dims as every other control does).
+  dl->AddRectFilled(a, b, ImGui::GetColorU32(face), 2.0f);
+  if (!on) dl->AddRect(a, b, ImGui::GetColorU32(P.dark ? P.lineStrong : P.line), 2.0f);
+  const char* t = state == 2 ? "-" : on ? tr("On") : tr("Off");
+  theme::centreText(dl, ImGui::GetFont(), ImGui::GetFontSize(), a, b, ImGui::GetColorU32(on ? theme::contrastText(P.accent) : P.textDim), t);
+}
+
+bool toggleFields() { return GImGuiGridlineToggleW > 0 && !layoutui::inBaseStyle(); }
 
 void BeginSection(const char* caption, float width) {
   if (cmdpalette::noting()) cmdpalette::noteSection(caption);  // K-93: settings groups
@@ -1254,14 +1442,88 @@ void BeginSection(const char* caption, float width) {
   f->caption = caption ? tr(caption) : "";
   f->workMaxX = w->WorkRect.Max.x;
   f->contentMaxX = w->ContentRegionRect.Max.x;
+  if (livelook::active(app()) && !layoutui::inBaseStyle()) {
+    // K-112: as the Live refs draw a group of settings: its name, then a rule to the right edge;
+    // the rows under it on the window's own face, flush with the name.
+    f->live = true;
+    f->toggleW = GImGuiGridlineToggleW;
+    GImGuiGridlineToggleDraw = drawToggleFieldHook;
+    GImGuiGridlineToggleW = layoutui::inBaseStyle() ? 0.0f : kToggleFieldW;
+    w->WorkRect.Max.x = w->ContentRegionRect.Max.x = f->right;
+    ImGui::BeginGroup();
+    if (!f->caption.empty()) {
+      App& a = app();
+      const auto& P = pal();
+      const std::string head = sentenceCase(f->caption);
+      const float fs = theme::kFontBody, hh = std::round(fs + 10);
+      const ImVec2 p = f->start;
+      const float ty = theme::textTop(a.fontBold, fs, p.y, hh);
+      const float tw = std::min(a.fontBold->CalcTextSizeA(fs, 1e9f, 0, head.c_str()).x, f->width - 40);
+      theme::textEllipsis(w->DrawList, a.fontBold, fs, ImVec2(p.x, ty), tw + 1, P.text, head.c_str());
+      // The rule through the capitals' middle (from the pen, so it never drifts a pixel from them).
+      const ImFontBaked* fb = a.fontBold->GetFontBaked(fs);
+      const ImFontGlyph* capH = fb ? const_cast<ImFontBaked*>(fb)->FindGlyph('H') : nullptr;
+      const float ry = capH ? std::floor(ty + (capH->Y0 + capH->Y1) * 0.5f) + 0.5f : std::floor(p.y + hh * 0.5f) + 0.5f;
+      if (p.x + tw + theme::kS3 < f->right)
+        w->DrawList->AddLine(ImVec2(p.x + tw + theme::kS3, ry), ImVec2(f->right, ry), P.dark ? theme::withAlpha(P.textFaint, 0.75f) : P.line);
+      ImGui::Dummy(ImVec2(0, hh - ImGui::GetStyle().ItemSpacing.y));
+    }
+    gSections.push_back(std::move(f));
+    return;
+  }
   f->split.Split(w->DrawList, 2);
   f->split.SetCurrentChannel(w->DrawList, 1);
-  // Children use GetContentRegionAvail(): end the work rect at the panel's inner edge.
-  w->WorkRect.Max.x = w->ContentRegionRect.Max.x = f->right - kSectionPad;
+  f->heading = FormColumnIndent() > 0 && !f->caption.empty();
+  // Children use GetContentRegionAvail(): end the work rect at the panel's inner edge. K-112b: an
+  // unboxed group (heading) has no inner edge, so its controls run to the hairline's end.
+  w->WorkRect.Max.x = w->ContentRegionRect.Max.x = f->right - (f->heading ? 0.0f : kSectionPad);
   ImGui::BeginGroup();
-  ImGui::Dummy(ImVec2(0, f->caption.empty() ? kSectionPad - ImGui::GetStyle().ItemSpacing.y : theme::kFontLabel + 4));
+  if (f->heading) {
+    f->caption = SectionHeading(f->caption.c_str());
+    gSectionMarks.push_back({f->caption, f->start.y - w->Pos.y + w->Scroll.y});
+  }
+  ImGui::Dummy(ImVec2(0, f->caption.empty() ? kSectionPad - ImGui::GetStyle().ItemSpacing.y
+                         : f->heading         ? theme::kFontBody + 12
+                                              : theme::kFontLabel + 4));
   ImGui::Indent(kSectionPad);
+  // K-112b: the Logic layout's forms start every row at the control column.
+  if (const float c = FormRowsIndented() ? FormColumnIndent() : 0.0f; c > kSectionPad) f->column = c - kSectionPad, ImGui::Indent(f->column);
   gSections.push_back(std::move(f));
+}
+
+std::string SectionHeading(const char* caption) {
+  // Words kept in capitals: abbreviations the captions use.
+  static const char* const kKeep[] = {"MIDI", "FL", "MCP", "AI", "PPQ", "ASIO", "VST", "VST2", "VST3", "CLAP", "LV2", "AU", "OSC",
+                                      "URL", "UI", "CPU", "WAV", "MP3", "BPM", "ID", "OS", "AAC", "DJ", "MPE", "I/O", "LFO"};
+  std::string out = caption ? caption : "";
+  bool first = true;
+  for (size_t i = 0; i < out.size();) {
+    size_t j = i;
+    while (j < out.size() && out[j] != ' ') ++j;
+    const std::string word = out.substr(i, j - i);
+    bool keep = false;
+    for (const char* k : kKeep) keep = keep || word == k;
+    for (size_t c = i; c < j; ++c) {
+      unsigned char ch = static_cast<unsigned char>(out[c]);
+      if (ch >= 0x80 || keep) continue;  // ASCII only; other scripts are left as translated
+      if (std::isalpha(ch)) {
+        out[c] = static_cast<char>(first ? std::toupper(ch) : std::tolower(ch));
+        first = false;
+      }
+    }
+    if (keep) first = false;
+    i = j + 1;
+  }
+  return out;
+}
+
+void SectionMarksReset() { gSectionMarks.clear(); }
+const std::vector<SectionMark>& SectionMarks() { return gSectionMarks; }
+
+void SectionFullWidth() {
+  if (gSections.empty() || gSections.back()->column <= 0) return;
+  ImGui::Unindent(gSections.back()->column);
+  gSections.back()->column = 0;
 }
 
 void EndSection() {
@@ -1269,6 +1531,16 @@ void EndSection() {
   std::unique_ptr<SectionFrame> f = std::move(gSections.back());
   gSections.pop_back();
   ImGuiWindow* w = ImGui::GetCurrentWindow();
+  if (f->live) {  // K-112: no panel; a gap before the next group's name
+    GImGuiGridlineToggleW = f->toggleW;
+    ImGui::EndGroup();
+    w->WorkRect.Max.x = f->workMaxX;
+    w->ContentRegionRect.Max.x = f->contentMaxX;
+    ImGui::SetCursorScreenPos(ImVec2(f->start.x, ImGui::GetItemRectMax().y));
+    ImGui::Dummy(ImVec2(f->width, theme::kS3));
+    return;
+  }
+  if (f->column > 0) ImGui::Unindent(f->column);
   ImGui::Unindent(kSectionPad);
   ImGui::Dummy(ImVec2(0, std::max(0.0f, kSectionPad - ImGui::GetStyle().ItemSpacing.y)));
   ImGui::EndGroup();
@@ -1284,14 +1556,38 @@ void EndSection() {
   const auto& P = pal();
   ImDrawList* dl = w->DrawList;
   const ImU32 face = P.dark ? theme::mix(P.surface900, P.field, 0.38f) : theme::mix(P.surface900, P.surface800, 0.55f);
-  if (look::styled()) look::hookSection(dl, f->start, mx, face);  // J-129 control style
+  if (f->heading) {
+    // K-112b (second pass): the Logic layout's forms are not boxed. 098, 099 and 031 all set their
+    // groups straight on the window, a bold heading over each, with one hairline between a group and
+    // the one above it in the same column (none over the first).
+    struct Ended {
+      ImGuiID window;
+      int frame;
+      float x0, x1, y1;
+    };
+    static std::vector<Ended> ended;
+    const int frame = ImGui::GetFrameCount();
+    ended.erase(std::remove_if(ended.begin(), ended.end(), [&](const Ended& e) { return e.frame != frame; }), ended.end());
+    float above = -1;
+    for (const Ended& e : ended)
+      if (e.window == w->ID && e.x0 < mx.x && e.x1 > f->start.x && e.y1 <= f->start.y + 1) above = std::max(above, e.y1);
+    if (above >= 0) {
+      const float y = std::round((above + f->start.y) * 0.5f);  // AddLine adds the half pixel
+      dl->AddLine(ImVec2(f->start.x, y), ImVec2(mx.x, y), P.dark ? theme::withAlpha(P.paper, 0.10f) : P.line, 1.0f);
+    }
+    ended.push_back({w->ID, frame, f->start.x, mx.x, mx.y});
+  } else if (look::styled()) look::hookSection(dl, f->start, mx, face);  // J-129 control style
   else {
     dl->AddRectFilled(f->start, mx, face, theme::kRadiusLg);
     dl->AddRect(f->start, mx, P.dark ? theme::withAlpha(P.ink, 0.45f) : P.line, theme::kRadiusLg);
     if (P.dark)  // lower lip catches the light: the box reads as recessed into the slate
       dl->AddLine(ImVec2(f->start.x + 3, mx.y), ImVec2(mx.x - 3, mx.y), theme::withAlpha(P.paper, 0.06f));
   }
-  if (!f->caption.empty()) {
+  if (!f->caption.empty() && f->heading) {  // K-112b: a bold heading
+    App& a = app();
+    theme::textEllipsis(dl, a.fontBold, theme::kFontBody, ImVec2(f->start.x, f->start.y + 8),
+                        mx.x - f->start.x - kSectionPad * 2, P.text, f->caption.c_str());
+  } else if (!f->caption.empty()) {
     App& a = app();
     theme::textEllipsis(dl, a.fontMono, theme::kFontLabel, ImVec2(f->start.x + kSectionPad, f->start.y + 5),
                         mx.x - f->start.x - kSectionPad * 2, P.textFaint, f->caption.c_str());
@@ -1389,7 +1685,7 @@ void Led(ImDrawList* dl, ImVec2 c, float r, bool on, float level) {
 void StepPlayOutline(ImDrawList* dl, ImVec2 a, ImVec2 b) {
   constexpr float kTh = 1.5f;  // the stroke straddles its path: inset by half of it
   dl->AddRect(ImVec2(a.x + kTh * 0.5f, a.y + kTh * 0.5f), ImVec2(b.x - kTh * 0.5f, b.y - kTh * 0.5f), pal().playhead,
-              std::min(theme::kRadius, (b.x - a.x) * 0.25f), 0, kTh);
+              std::min(theme::kRadius, (b.x - a.x) * 0.25f), kTh, 0);
 }
 
 void StepPad(ImDrawList* dl, ImVec2 a, ImVec2 b, bool on, bool alt, bool hovered, ImU32 tint, float vel) {
@@ -1476,7 +1772,7 @@ bool ColorSwatch(const char* id, uint32_t* rgb, ImVec2 size) {
         ImGui::CloseCurrentPopup();
       }
       ImGui::GetWindowDrawList()->AddRectFilled(q, ImVec2(q.x + 22, q.y + 22), theme::rgb(cols[i]), 4);
-      if (cols[i] == *rgb) ImGui::GetWindowDrawList()->AddRect(q, ImVec2(q.x + 22, q.y + 22), pal().text, 4, 2);
+      if (cols[i] == *rgb) ImGui::GetWindowDrawList()->AddRect(q, ImVec2(q.x + 22, q.y + 22), pal().text, 4, 2.0f);
       ImGui::PopID();
     }
     float f[3] = {((*rgb >> 16) & 0xFF) / 255.f, ((*rgb >> 8) & 0xFF) / 255.f, (*rgb & 0xFF) / 255.f};
@@ -1546,7 +1842,7 @@ void PhonesFace(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float level, bool muted, b
   // The glyph is drawn as vectors for this small size (the icon set's headphones have tiny cups at
   // 12 px): a bold headband arc over two full ear cups, about 14 x 12 logical px, crisp at any scale.
   dl->PathArcTo(ImVec2(c.x, c.y + 1.0f), 5.4f, IM_PI * 1.0f, IM_PI * 2.0f, 16);
-  dl->PathStroke(glyph, 0, 1.9f);
+  dl->PathStroke(glyph, 1.9f, 0);
   dl->AddRectFilled(ImVec2(c.x - 7.0f, c.y + 0.5f), ImVec2(c.x - 3.0f, c.y + 6.0f), glyph, 1.3f);
   dl->AddRectFilled(ImVec2(c.x + 3.0f, c.y + 0.5f), ImVec2(c.x + 7.0f, c.y + 6.0f), glyph, 1.3f);
 }

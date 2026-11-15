@@ -1,6 +1,7 @@
 // Gridline — Q-13 interface icons on screen (see IconTexture.h).
 #include "IconTexture.h"
 #include <algorithm>
+#include <chrono>
 #include <array>
 #include <cmath>
 #include <memory>
@@ -23,6 +24,7 @@ struct State {
   std::unordered_map<uint64_t, Fit> fits;
   std::unordered_map<int, std::pair<float, float>> refInk;  // icon -> ink fraction (w, h) of a 48 px raster
   int fitsReset = -1;
+  std::vector<uint64_t> pending;  // fits asked for while deferring, worked out later (serviceDeferred)
   std::unordered_map<int, std::array<float, 5>> geom;  // icon -> geometry bounds (viewBox units), stroked flag
 };
 
@@ -138,6 +140,74 @@ void draw(ImDrawList* dl, const char* svgName, ImVec2 c, float logicalPx, ImU32 
   if (svgName) draw(dl, state().atlas.indexOf(svgName), c, logicalPx, col);
 }
 
+namespace {
+// The largest box whose ink fits `tw` x `th` device px (the search rasterises the icon at the
+// sizes it tries: costly the first time an icon is asked for at a new size).
+State::Fit computeFit(State& st, int svgIndex, int tw, int th, float d) {
+  float box = 0, thin = 0;
+  bool fits = false;
+  auto ref = st.refInk.find(svgIndex);
+  if (ref == st.refInk.end()) {
+    int n = 0;
+    const SvgSource* src = embeddedSvgs(&n);
+    std::vector<uint8_t> a;
+    float fx = 1, fy = 1;
+    if (svgIndex < n && rasterize(src[svgIndex].svg, 48, strokePx(48, 1), a)) {
+      int x0 = 48, y0 = 48, x1 = 0, y1 = 0;
+      for (int y = 0; y < 48; ++y)
+        for (int x = 0; x < 48; ++x)
+          if (a[static_cast<size_t>(y) * 48 + x] >= Atlas::kInkAlpha) x0 = std::min(x0, x), y0 = std::min(y0, y), x1 = std::max(x1, x + 1), y1 = std::max(y1, y + 1);
+      if (x1 > x0) fx = static_cast<float>(x1 - x0) / 48.0f, fy = static_cast<float>(y1 - y0) / 48.0f;
+    }
+    ref = st.refInk.emplace(svgIndex, std::make_pair(fx, fy)).first;
+  }
+  // Largest device box whose ink fits: start one step above the estimate, step
+  // down. A target too small for the stroke rule (a glyph a few pixels across,
+  // a 1 px bar) is tried again with 1 device px strokes, as thin as it was.
+  const int start = std::clamp(static_cast<int>(std::ceil(std::min(tw / ref->second.first, th / ref->second.second))) + 1, 3,
+                               Atlas::kPage - 2 * Atlas::kPad);
+  int px = start;
+  for (float stroke : {0.0f, 1.0f}) {
+    for (px = start; px >= 3 && !fits; --px) {
+      const Atlas::Rect* r = st.atlas.get(svgIndex, static_cast<float>(px) / d, stroke);
+      if (!r) break;
+      fits = r->inkX1 - r->inkX0 <= tw && r->inkY1 - r->inkY0 <= th;
+    }
+    if (fits) ++px;
+    thin = stroke;
+    if (fits) break;
+  }
+  px = std::max(px, 3);
+  box = static_cast<float>(px) / d;
+  return {box, thin, fits};
+}
+
+// K-112: while deferring (a layout switch frame), a fit not worked out yet is queued and the icon
+// drawn from a size already rasterised, scaled into its box, until serviceDeferred() has the
+// exact one (a frame or two later, under the switch snapshot).
+bool gDefer = false;
+
+bool drawApprox(State& st, ImDrawList* dl, int svgIndex, float bx0, float by0, int tw, int th, float d, ImU32 col) {
+  const Atlas::Rect* best = nullptr;
+  for (const auto& kv : st.fits)
+    if (static_cast<int>(kv.first >> 40) == svgIndex && kv.second.box > 0)
+      if (const Atlas::Rect* r = st.atlas.get(svgIndex, kv.second.box, kv.second.stroke); r && (!best || r->size > best->size)) best = r;
+  if (!best || best->inkX1 <= best->inkX0 || best->inkY1 <= best->inkY0) return false;
+  sync(st);
+  ImTextureData* t = st.tex[static_cast<size_t>(best->page)];
+  const float iw = static_cast<float>(best->inkX1 - best->inkX0), ih = static_cast<float>(best->inkY1 - best->inkY0);
+  const float k = std::min(static_cast<float>(tw) / iw, static_cast<float>(th) / ih);
+  const float n = static_cast<float>(best->size) * k;
+  const float x0 = (bx0 + (static_cast<float>(tw) - iw * k) * 0.5f - static_cast<float>(best->inkX0) * k) / d;
+  const float y0 = (by0 + (static_cast<float>(th) - ih * k) * 0.5f - static_cast<float>(best->inkY0) * k) / d;
+  const float inv = 1.0f / static_cast<float>(Atlas::kPage);
+  dl->AddImage(t->GetTexRef(), ImVec2(x0, y0), ImVec2(x0 + n / d, y0 + n / d), ImVec2(static_cast<float>(best->x) * inv, static_cast<float>(best->y) * inv),
+               ImVec2((static_cast<float>(best->x) + static_cast<float>(best->size)) * inv, (static_cast<float>(best->y) + static_cast<float>(best->size)) * inv), col);
+  return true;
+}
+
+}  // namespace
+
 bool drawFit(ImDrawList* dl, int svgIndex, ImVec2 inkMin, ImVec2 inkMax, ImU32 col, bool onlyIfFits) {
   if (!dl || svgIndex < 0) return false;
   if ((col & IM_COL32_A_MASK) == 0) return true;
@@ -147,6 +217,7 @@ bool drawFit(ImDrawList* dl, int svgIndex, ImVec2 inkMin, ImVec2 inkMax, ImU32 c
   st.atlas.setDensity(d);
   if (st.fitsReset != st.atlas.resetCount()) {
     st.fits.clear();
+    st.pending.clear();
     st.fitsReset = st.atlas.resetCount();
   }
   // Target: the device pixels the old glyph's box covers three quarters of (a
@@ -156,47 +227,17 @@ bool drawFit(ImDrawList* dl, int svgIndex, ImVec2 inkMin, ImVec2 inkMax, ImU32 c
   const int tw = std::max(1, static_cast<int>(std::round(inkMax.x * d - 0.25f) - bx0));
   const int th = std::max(1, static_cast<int>(std::round(inkMax.y * d - 0.25f) - by0));
   const uint64_t key = (static_cast<uint64_t>(svgIndex) << 40) | (static_cast<uint64_t>(tw) << 20) | static_cast<uint64_t>(th);
-  float box = 0, thin = 0;
-  bool fits = false;
   auto it = st.fits.find(key);
-  if (it != st.fits.end()) {
-    box = it->second.box, thin = it->second.stroke, fits = it->second.fits;
-  } else {
-    auto ref = st.refInk.find(svgIndex);
-    if (ref == st.refInk.end()) {
-      int n = 0;
-      const SvgSource* src = embeddedSvgs(&n);
-      std::vector<uint8_t> a;
-      float fx = 1, fy = 1;
-      if (svgIndex < n && rasterize(src[svgIndex].svg, 48, strokePx(48, 1), a)) {
-        int x0 = 48, y0 = 48, x1 = 0, y1 = 0;
-        for (int y = 0; y < 48; ++y)
-          for (int x = 0; x < 48; ++x)
-            if (a[static_cast<size_t>(y) * 48 + x] >= Atlas::kInkAlpha) x0 = std::min(x0, x), y0 = std::min(y0, y), x1 = std::max(x1, x + 1), y1 = std::max(y1, y + 1);
-        if (x1 > x0) fx = static_cast<float>(x1 - x0) / 48.0f, fy = static_cast<float>(y1 - y0) / 48.0f;
-      }
-      ref = st.refInk.emplace(svgIndex, std::make_pair(fx, fy)).first;
+  if (it == st.fits.end()) {
+    if (gDefer) {
+      if (std::find(st.pending.begin(), st.pending.end(), key) == st.pending.end()) st.pending.push_back(key);
+      const bool drawn = drawApprox(st, dl, svgIndex, bx0, by0, tw, th, d, col);
+      return drawn || !onlyIfFits;
     }
-    // Largest device box whose ink fits: start one step above the estimate, step
-    // down. A target too small for the stroke rule (a glyph a few pixels across,
-    // a 1 px bar) is tried again with 1 device px strokes, as thin as it was.
-    const int start = std::clamp(static_cast<int>(std::ceil(std::min(tw / ref->second.first, th / ref->second.second))) + 1, 3,
-                                 Atlas::kPage - 2 * Atlas::kPad);
-    int px = start;
-    for (float stroke : {0.0f, 1.0f}) {
-      for (px = start; px >= 3 && !fits; --px) {
-        const Atlas::Rect* r = st.atlas.get(svgIndex, static_cast<float>(px) / d, stroke);
-        if (!r) break;
-        fits = r->inkX1 - r->inkX0 <= tw && r->inkY1 - r->inkY0 <= th;
-      }
-      if (fits) ++px;
-      thin = stroke;
-      if (fits) break;
-    }
-    px = std::max(px, 3);
-    box = static_cast<float>(px) / d;
-    st.fits[key] = {box, thin, fits};
+    it = st.fits.emplace(key, computeFit(st, svgIndex, tw, th, d)).first;
   }
+  const float box = it->second.box, thin = it->second.stroke;
+  const bool fits = it->second.fits;
   if (!fits && onlyIfFits) return false;
   const Atlas::Rect* r = st.atlas.get(svgIndex, box, thin);
   if (!r) return false;
@@ -211,6 +252,33 @@ bool drawFit(ImDrawList* dl, int svgIndex, ImVec2 inkMin, ImVec2 inkMax, ImU32 c
                ImVec2((static_cast<float>(r->x) + n) * inv, (static_cast<float>(r->y) + n) * inv), col);
   return true;
 }
+
+void setDeferFits(bool on) { gDefer = on; }
+
+int serviceDeferred(double budgetMs) {
+  State& st = state();
+  if (st.pending.empty() || st.fitsReset != st.atlas.resetCount()) {
+    if (st.fitsReset != st.atlas.resetCount()) st.pending.clear();
+    return 0;
+  }
+  const ImGuiIO& io = ImGui::GetIO();
+  const float d = io.DisplayFramebufferScale.x > 0 ? io.DisplayFramebufferScale.x : 1.0f;
+  const auto t0 = std::chrono::steady_clock::now();
+  int done = 0;
+  while (!st.pending.empty()) {
+    const uint64_t key = st.pending.front();
+    st.pending.erase(st.pending.begin());
+    if (!st.fits.count(key)) {
+      const int svg = static_cast<int>(key >> 40), tw = static_cast<int>((key >> 20) & 0xFFFFF), th = static_cast<int>(key & 0xFFFFF);
+      st.fits.emplace(key, computeFit(st, svg, tw, th, d));
+      ++done;
+    }
+    if (std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() >= budgetMs) break;
+  }
+  return done;
+}
+
+int deferredCount() { return static_cast<int>(state().pending.size()); }
 
 bool glyphInk(ImFont* font, float size, ImWchar ch, ImVec2 pos, ImVec2* inkMin, ImVec2* inkMax) {
   ImFontBaked* baked = font ? font->GetFontBaked(size) : nullptr;

@@ -41,6 +41,7 @@ constexpr int kOutBuses = 16;  // main + 15 extra outputs
 constexpr int kMaxParams = 2048, kMaxEvents = 1024, kMaxMidiOut = 512;
 #if !defined(_WIN32)
 constexpr int kRpcFd = 3, kWakeFd = 4;  // descriptors in the child
+constexpr int kDoneFd = 5;  // K-277: the child's "block done" byte (the parent sleeps on it instead of spinning)
 #endif
 
 struct ParamChange {
@@ -498,6 +499,7 @@ class SandboxBackend final : public Backend {
     if (editor_) editor_->b_ = nullptr;
     closeChan(rpc_);
     closeChan(wake_);
+    closeChan(done_);
     // The child exits on EOF; give it a moment, then make sure.
     for (int i = 0; i < 100 && !exited_.load(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(10));
     if (!exited_.load()) proc_.kill();
@@ -908,6 +910,7 @@ class SandboxBackend final : public Backend {
     shm_->nEvents = nEvents_;
     std::memcpy(static_cast<void*>(shm_->events), events_.get(), sizeof(NoteEvent) * static_cast<size_t>(nEvents_));
     nParams_ = nEvents_ = 0;
+    drainDone();
     const uint32_t seq = ++seq_;
     stSent_.store(seq, std::memory_order_relaxed);
     stBudgetUs_.store(static_cast<uint32_t>(budget * 1e6), std::memory_order_relaxed);
@@ -932,13 +935,26 @@ class SandboxBackend final : public Backend {
       }
       if (crashed_.load()) return false;
       if ((spin & 63) == 63) {
-        if (std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() > budget) {
+        const double waited = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+        if (waited > budget) {
           inflight_ = true;  // keep waiting next block; output silence now
           stWaitUs_.store(static_cast<uint32_t>(budget * 1e6), std::memory_order_relaxed);
           stMissed_.fetch_add(1, std::memory_order_relaxed);
           stInflight_.store(true, std::memory_order_relaxed);
           return false;
         }
+#if !defined(_WIN32)
+        // K-277: past a short spin, sleep until the child's "done" byte (or the budget) instead of
+        // spinning for the whole time the plugin computes: that doubled a sandboxed plugin's cost.
+        // (Whole milliseconds only: with less than one left it goes on spinning to the budget.)
+        const int leftMs = static_cast<int>((budget - waited) * 1000.0);
+        if (waited > kSpinSeconds && leftMs >= 1 && done_.r >= 0) {
+          pollfd pf{static_cast<int>(done_.r), POLLIN, 0};
+          ::poll(&pf, 1, leftMs);
+          drainDone();
+          continue;
+        }
+#endif
         std::this_thread::yield();
       }
     }
@@ -946,6 +962,18 @@ class SandboxBackend final : public Backend {
 
  private:
   SandboxBackend() : silence_(kBlock, 0.0f), params_(new ParamChange[kMaxParams]), events_(new NoteEvent[kMaxEvents]), midiBuf_(new MidiOut[kMaxMidiOut]) {}
+
+  // K-277: how long the audio thread spins for the child's answer before it sleeps on the pipe.
+  static constexpr double kSpinSeconds = 50e-6;
+  // K-277 (audio thread): the "done" bytes waiting (non-blocking reads).
+  void drainDone() {
+#if !defined(_WIN32)
+    if (done_.r < 0) return;
+    char buf[64];
+    while (::read(static_cast<int>(done_.r), buf, sizeof buf) > 0) {
+    }
+#endif
+  }
 
   bool spawn(const std::string& exe, std::string* err) {
     static std::atomic<int> serial{0};
@@ -969,7 +997,7 @@ class SandboxBackend final : public Backend {
 
     std::vector<std::string> args = {exe, "--plugin-sandbox", shmName_};
     std::vector<std::intptr_t> inherit;
-    Chan childRpc, childWake;
+    Chan childRpc, childWake, childDone;
 #if defined(_WIN32)
     // Three anonymous pipes (requests, replies, wake-ups); the child's ends are passed on its
     // command line with the block's name, and only they are inherited.
@@ -991,8 +1019,8 @@ class SandboxBackend final : public Backend {
     // K-154: a job: whatever the plugin starts (a bridge's host process) ends with the sandbox.
     const unsigned flags = platform::Process::kInheritStderr | platform::Process::kTree;
 #else
-    int sv[2], pp[2];
-    if (::socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0 || ::pipe(pp) != 0) {
+    int sv[2], pp[2], dp[2];
+    if (::socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0 || ::pipe(pp) != 0 || ::pipe(dp) != 0) {
       if (err) *err = "cannot create the sandbox channels";
       ShmMap::unlinkName(shmName_);
       return false;
@@ -1002,12 +1030,15 @@ class SandboxBackend final : public Backend {
     ::setsockopt(sv[0], SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
 #endif
     ::fcntl(pp[1], F_SETFL, ::fcntl(pp[1], F_GETFL) | O_NONBLOCK);
-    for (int f : {sv[0], pp[1]}) ::fcntl(f, F_SETFD, FD_CLOEXEC);
+    for (int f : {dp[0], dp[1]}) ::fcntl(f, F_SETFL, ::fcntl(f, F_GETFL) | O_NONBLOCK);  // K-277: neither end ever blocks
+    for (int f : {sv[0], pp[1], dp[0]}) ::fcntl(f, F_SETFD, FD_CLOEXEC);
     rpc_ = Chan{sv[0], sv[0]};
     wake_ = Chan{-1, pp[1]};
+    done_ = Chan{dp[0], -1};
     childRpc = Chan{sv[1], sv[1]};
     childWake = Chan{pp[0], -1};
-    inherit = {sv[1], pp[0]};  // become descriptors 3 (kRpcFd) and 4 (kWakeFd) in the child
+    childDone = Chan{-1, dp[1]};
+    inherit = {sv[1], pp[0], dp[1]};  // become descriptors 3 (kRpcFd), 4 (kWakeFd) and 5 (kDoneFd) in the child
     // K-154: its own process group: whatever the plugin starts (a bridge's host process) is ended
     // with the sandbox, never left running. (Standard input is not shared: a process outside the
     // terminal's foreground group must not read it.)
@@ -1018,6 +1049,7 @@ class SandboxBackend final : public Backend {
     const bool started = proc_.start(exe, args, flags, inherit);
     closeChan(childRpc);
     closeChan(childWake);
+    closeChan(childDone);
     if (!started) {
       ShmMap::unlinkName(shmName_);
       exited_.store(true);
@@ -1092,7 +1124,7 @@ class SandboxBackend final : public Backend {
   bool unlinked_ = false;
   Shm* shm_ = nullptr;
   ShmMap map_;
-  Chan rpc_, wake_;
+  Chan rpc_, wake_, done_;  // (done_: POSIX only, K-277)
   platform::Process proc_;
   std::thread watcher_;
   std::atomic<bool> exited_{false}, crashed_{false};
@@ -1485,23 +1517,34 @@ int sandboxChildMain(const std::string& arg) {
   auto* child = new Child;  // never destroyed: the process leaves with _exit
   child->shm = static_cast<Shm*>(map.mem);
   if (child->shm->magic != kShmMagic || child->shm->version != kShmVersion) return 5;
-  std::thread audio([child, wake]() {
+#if !defined(_WIN32)
+  const int doneFd = ::fcntl(kDoneFd, F_GETFD) != -1 ? kDoneFd : -1;  // K-277
+#else
+  const int doneFd = -1;
+#endif
+  std::thread audio([child, wake, doneFd]() {
     char buf[64];
     uint32_t last = 0;
     for (;;) {
 #if defined(_WIN32)
       DWORD got = 0;
-      if (!ReadFile(handleOf(wake.r), buf, sizeof buf, &got, nullptr) || got == 0) std::_Exit(0);  // parent gone
+      if (!ReadFile(handleOf(wake.r), buf, sizeof buf, &got, nullptr) || got == 0) platform::exitNow(0);  // parent gone
 #else
       auto got = ::read(static_cast<int>(wake.r), buf, sizeof buf);
       if (got < 0 && errno == EINTR) continue;
-      if (got <= 0) std::_Exit(0);  // parent gone
+      if (got <= 0) platform::exitNow(0);  // parent gone
 #endif
       const uint32_t seq = child->shm->request.load(std::memory_order_acquire);
       if (seq == last) continue;
       last = seq;
       child->run();
       child->shm->done.store(seq, std::memory_order_release);
+#if !defined(_WIN32)
+      if (doneFd >= 0) {  // K-277: wakes the parent (non-blocking: a full pipe means it is awake anyway)
+        const char one = 1;
+        (void)!::write(doneFd, &one, 1);
+      }
+#endif
     }
   });
   audio.detach();
@@ -1519,9 +1562,12 @@ int sandboxChildMain(const std::string& arg) {
     }
     if (ready) {
       std::string msg;
-      if (!recvMsg(rpc, msg, 10000)) std::_Exit(0);
-      if (!sendMsg(rpc, child->handle(msg))) std::_Exit(0);
+      if (!recvMsg(rpc, msg, 10000)) platform::exitNow(0);
+      if (!sendMsg(rpc, child->handle(msg))) platform::exitNow(0);
     }
+    // K-267: Windows: the plugin's hidden windows, timers and posted work run on this thread, which
+    // has no other message loop (Gridline's own interface thread dispatches them through SDL).
+    platform::pumpThreadMessages(0.02);
     if (child->editor) {
       sandboxPumpEvents();
 #if !defined(__APPLE__) && !defined(_WIN32)  // the timers and connections of VST3 interfaces on X11

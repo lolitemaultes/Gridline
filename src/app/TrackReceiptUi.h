@@ -16,6 +16,7 @@ class App;
 namespace receiptui {
 
 void open(App& a);
+void close();  // K-112 (dev): the layout inventory closes it again
 // Every frame (from drawDialogs).
 void draw(App& a);
 // App exit: a running measurement is cancelled and joined.

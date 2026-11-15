@@ -19,6 +19,7 @@ constexpr int kVoices = 8;
 
 class SplineScratchGen final : public Generator {
  public:
+  bool mayRest() const override { return false; }  // K-277: sound without notes
   bool active() const override {
     for (const auto& v : v_)
       if (v.on) return true;

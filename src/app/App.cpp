@@ -8,6 +8,7 @@
 #include "StageView.h"
 #include "../core/ChromeOs.h"
 #include "LayoutPresets.h"
+#include "../core/LayoutShell.h"
 #include "../core/Crash.h"
 #include "../core/RemoteFs.h"
 #include "../core/ProjectArchive.h"
@@ -74,10 +75,30 @@ App::App() {
   settings.load(Settings::defaultPath(), &err);
   loadTypingLayout(settings);  // K-113
   typingKeyboard = typingKeyboardAtStart(settings);  // on, off, or as it was left
+  loadRecordOptions(settings, recOptions, countInBars, recPunch);  // K-226: as they were left
+  recAudio = settings.getBool("record.audio");
+  recAudioEditor = settings.getBool("record.audioEditor");
   if (const std::string sys = chromeos::describe(chromeos::current()); !sys.empty()) logging::info("app", "Running in the " + sys);
+  // K-112b: the Tracks layout now starts with its library and right pane closed. Someone who has
+  // used the layout had them open by the old default without that being stored: keep them open
+  // (unless they had closed them), once.
+  if (!settings.getBool("layout.logic.panesKept")) {
+    if (settings.getNumber("ui.layoutVersion.logic.shell") > 0 || settings.getNumber("ui.layoutVersion.logic") > 0) {
+      const layout::Shell& sh = layout::shell(layout::Preset::Logic);
+      layout::State st = layout::fromJson(layout::Preset::Logic, settings.getString(layout::stateKey(layout::Preset::Logic)));
+      for (const char* r : {"logic.library", "logic.right"})
+        if (!st.hidden.count(r)) layout::setVisible(sh, st, r, true);
+      st.hidden.erase("logic.library");
+      st.hidden.erase("logic.right");
+      settings.set(layout::stateKey(layout::Preset::Logic), layout::toJson(st));
+    }
+    settings.set("layout.logic.panesKept", true);
+  }
   {  // K-24: the playlist's vertical zoom as it was left
     const double h = settings.getNumber("ui.playlistTrackHeight");
     if (std::isfinite(h)) playlist.trackHeight = static_cast<float>(std::clamp(h, 24.0, 120.0));
+    // K-112b: a height saved before the flag existed was the person's own if it is not the old default.
+    if (std::isfinite(h) && std::fabs(h - 46.0) > 1e-3) settings.set("ui.playlistTrackHeightSet", true);
   }
   BackupPolicy pol;
   pol.frequency = static_cast<BackupFrequency>(static_cast<int>(settings.getNumber("backup.frequency")));
@@ -111,6 +132,9 @@ App::~App() {
   // J-77: a size / theme / language / audio change still waiting for Keep is not saved.
   dispconf::confirm().abandon();
   settings.set("keys.typingOn", typingKeyboard);  // for "as it was left" at the next start
+  saveRecordOptions(settings, recOptions, countInBars, recPunch);  // K-226
+  settings.set("record.audio", recAudio);
+  settings.set("record.audioEditor", recAudioEditor);
   settings.save(Settings::defaultPath());
   if (gApp == this) gApp = nullptr;
 }
@@ -227,6 +251,19 @@ int App::processingThreads() const {
 
 void App::syncEngine() {
   if (const int th = processingThreads(); th != engine.threads()) engine.setThreads(th);
+  engine.setRestInstruments(settings.getBool("freeze.restSilent"));  // K-277
+  {  // K-277: an instrument whose own editor is open never rests (the editor may play notes itself)
+    static std::set<ObjectId> was;
+    std::set<ObjectId> open;
+    for (const PluginTarget& t : openHostedEditorTargets())
+      if (t.isChannel()) open.insert(t.owner);
+    for (ObjectId id : was)
+      if (!open.count(id))
+        if (auto rt = builder.channelRuntime(id)) rt->editorOpen.store(false, std::memory_order_relaxed);
+    for (ObjectId id : open)  // (every frame: a rebuild may have made a new runtime)
+      if (auto rt = builder.channelRuntime(id)) rt->editorOpen.store(true, std::memory_order_relaxed);
+    was = std::move(open);
+  }
   stretch::setRenderFocus(engine.position());  // K-64: the renders about to play first
   // Hosted plugins prepare for the engine's sample rate: rebuild when it
   // changes, when delay compensation is switched, and when a hosted plugin

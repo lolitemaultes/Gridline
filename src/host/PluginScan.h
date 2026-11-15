@@ -101,8 +101,35 @@ std::unique_ptr<Backend> createBackend(const std::string& format, const std::str
 // While it loads, the tree's memory is watched: past scanMemoryCap(), or while the computer runs
 // low on memory (scanMemoryLow()), it is stopped and the entry fails with "used too much memory
 // while loading", like any broken plugin (kept out of later scans until a Rescan of everything).
+// K-267: what happened in a scan child, for the scan log and the retry pass (scanIsolated's report).
+struct ScanReport {
+  enum class Outcome { Listed, Failed, NotForThisComputer, TimedOut, Crashed, TooMuchMemory, Cancelled };
+  Outcome outcome = Outcome::Failed;
+  double seconds = 0;              // the child's run
+  int progress = 0;                // plugins of the entry it described
+  std::uint64_t peakMemory = 0;    // the most the tree held, as watched (bytes; 0 unknown)
+  std::string exit;                // how the child ended ("exited (code 2)", "crashed (exception 0xC0000005)")
+  std::string note;                // e.g. "the result was written, then it crashed while unloading"
+  std::string childLog;            // the end of what the child wrote on stderr (its steps)
+};
+// K-267: crashes and timeouts are tried once more, alone, after the other entries (a plugin that
+// fails only while others load at the same time, or the first time it starts).
+bool scanRetryable(const ScanReport& r);
+
+// K-267: the timeouts of one entry's scan child, from the base timeout (60 s; GRIDLINE_SCAN_TIMEOUT in
+// tests). `first`: until the child shows its first plugin (loading the module and the first plugin:
+// a first start checks a licence, builds a database, unpacks content); `each`: from one plugin to the
+// next (shells); `longest`: the whole entry at most. A retry (attempt 1) waits longer.
+struct ScanTimeouts {
+  double first = 120, each = 60, longest = 1800;
+};
+ScanTimeouts scanTimeouts(double baseSeconds, int attempt);
+// Whether the child is given up: `sinceStart` seconds after it started, `sinceProgress` after its last
+// progress (equal to sinceStart when it showed none), `progress` plugins described so far.
+bool scanTimedOut(const ScanTimeouts& t, double sinceStart, double sinceProgress, int progress);
+
 ScanResult scanIsolated(const std::string& exe, const std::string& format, const std::string& entry, double timeoutSeconds = 60,
-                        const std::atomic<bool>* cancel = nullptr);
+                        const std::atomic<bool>* cancel = nullptr, ScanReport* report = nullptr, int attempt = 0);
 // K-154: the memory one plugin's scan may use: a quarter of the physical memory, 2 to 8 GB (4 GB
 // when the size is unknown; big sample-based instruments take a gigabyte or two while they load).
 // What keeps the computer out of swap is the reserve below. GRIDLINE_SCAN_MEMORY_MB overrides it (tests).
@@ -130,7 +157,18 @@ std::string scanProgressFile(const std::string& outFile);
 // exported for this computer; else why it is not (not a DLL, built for another processor such as a
 // 32-bit DLL in a 64-bit Gridline, no plugin entry point). Unreadable files give "" (the scan decides).
 // `hostMachine` is a PE machine code (0x8664 x64, 0xAA64 ARM64, 0x14C x86), 0 for this build's.
+// K-267: only what certainly cannot load is told: not a PE file, or built for another processor. The
+// export table is not read: protected plugins (licence wrappers) fill or decrypt it while they load,
+// so a DLL whose file shows no entry point may still be a plugin (the scan decides). `entryPoints`
+// is kept for the callers' documentation of what the scan looks for.
 std::string peDllPrecheck(const std::string& path, const std::vector<std::string>& entryPoints, uint16_t hostMachine = 0);
+// K-267: why a PE image of `machine` cannot load into a process of `hostMachine` ("" = it can).
+std::string peMachineMismatch(uint16_t machine, uint16_t hostMachine);
+// K-267: the scanner child's step, written to its stderr (kept in the scan log when the entry fails).
+void scanStep(const std::string& what);
+// K-267: the file every failed scan is written to (<config>/plugin-scan.log; "" before initHosting).
+// Written whatever the debug log setting, so a user can always send it.
+std::string scanLogFile();
 // Path of the running executable ("" when unknown).
 std::string selfExecutablePath();
 // Newest modification time (seconds) of a path and, for bundles, its binaries.

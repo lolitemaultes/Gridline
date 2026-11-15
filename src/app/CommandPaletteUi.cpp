@@ -1,5 +1,6 @@
 // Gridline - K-93 command palette (see CommandPaletteUi.h).
 #include "CommandPaletteUi.h"
+#include "MenuTreeUi.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -80,113 +81,30 @@ struct MenuRec {
   std::string rowId;  // the palette row it became
 };
 
-// The keymap command behind a menu item's shortcut text.
-const char* commandOf(const char* shortcut) {
-  if (!shortcut || !*shortcut) return nullptr;
-  if (const char* c = keys::commandForLabel(shortcut)) return c;
-  const keys::Chord ch = keys::parse(shortcut);
-  if (!ch.valid()) return nullptr;
-  const auto v = keys::keymap().lookup(keys::Context::Global, ch);
-  return v.size() == 1 ? v[0]->id : nullptr;
-}
-
-struct ListWalker : imhook::MenuWalker {
-  struct Level {
-    std::string raw, shown, en;
-    bool enabled = true;
-  };
-  std::vector<MenuRec>* out = nullptr;
-  int root = 0;
-  std::vector<Level> stack;  // [0] is the root menu
-  std::map<std::string, int> seen;
-  bool lastWasItem = false;
-  ImGuiID lastItem = 0;
-
-  bool beginMenu(const char* label, bool enabled) override {
-    const char* en = i18n::source(label);
-    stack.push_back({label, cmdpal::stripId(label), cmdpal::stripId(en ? en : label), enabled && stack.back().enabled});
-    lastWasItem = false;
-    return true;
-  }
-  void endMenu() override {
-    if (stack.size() > 1) stack.pop_back();
-    lastWasItem = false;
-  }
-  bool menuItem(const char* label, const char* shortcut, bool selected, bool enabled) override {
-    lastWasItem = false;
-    if (gSkip > 0 || !label) return false;
-    MenuRec r;
-    r.root = root;
-    for (size_t i = 0; i < stack.size(); ++i) {
-      if (i > 0) r.raw.push_back(stack[i].raw);
-      r.shown.push_back(stack[i].shown);
-      r.en.push_back(stack[i].en);
-    }
-    r.label = label;
-    r.labelShown = cmdpal::stripId(label);
-    const char* en = i18n::source(label);
-    r.labelEn = cmdpal::stripId(en ? en : label);
-    if (r.labelShown.empty()) return false;
-    r.shortcut = shortcut ? shortcut : "";
-    r.cmd = commandOf(shortcut);
-    r.selected = selected;
-    r.enabled = enabled && stack.back().enabled;
-    const std::string key = std::to_string(root) + "\x1f" + join(r.raw, "\x1f") + "\x1f" + label;
-    r.occ = seen[key]++;
-    out->push_back(std::move(r));
-    lastWasItem = true;
-    lastItem = ImGui::GetItemID();
-    return false;
-  }
-};
-
-struct RunWalker : imhook::MenuWalker {
-  std::vector<std::string> raw;
-  std::string label;
-  int occ = 0, seen = 0;
-  size_t depth = 0;
-  bool done = false, blocked = false;
-  bool beginMenu(const char* l, bool) override {
-    if (done || depth >= raw.size() || raw[depth] != l) return false;
-    ++depth;
-    return true;
-  }
-  void endMenu() override {
-    if (depth > 0) --depth;
-  }
-  bool menuItem(const char* l, const char*, bool, bool enabled) override {
-    if (done || gSkip > 0 || !l || depth != raw.size() || label != l) return false;
-    if (seen++ != occ) return false;
-    done = true;
-    if (!enabled) {
-      blocked = true;
-      return false;
-    }
-    return true;
-  }
-};
-
-ListWalker* gListing = nullptr;  // the walk noteHint() belongs to
-
-const char* rootName(const menustyle::Menu& m) { return m.name ? m.name : "Gridline"; }
-
+// K-112: the palette reads the menu tree (MenuTreeUi.h), the same one the system menu bars use.
 void walkMenus(App& a, std::vector<MenuRec>& out) {
-  const auto& menus = menustyle::menus(layoutui::menuStyle(a));
-  unseen("##cmdpalette_menus", [&] {
-    for (size_t i = 0; i < menus.size(); ++i) {
-      ListWalker w;
-      w.out = &out;
-      w.root = static_cast<int>(i);
-      const char* name = rootName(menus[i]);
-      w.stack.push_back({name, cmdpal::stripId(i18n::tr(name)), name, true});
-      gListing = &w;
-      detail::noting = true;
-      imhook::setMenuWalker(&w);
-      drawStyleMenu(a, menus[i]);
-      imhook::setMenuWalker(nullptr);
-      gListing = nullptr;
+  const menutree::Tree t = menutreeui::build(a);
+  for (const menutree::Ref& ref : menutree::items(t)) {
+    const menutree::Node& n = *ref.item;
+    if (n.shown.empty() || n.paletteSkip) continue;  // plugin lists: the plugins are rows of their own
+    MenuRec r;
+    r.root = ref.root;
+    for (size_t i = 0; i < ref.path.size(); ++i) {
+      if (i > 0) r.raw.push_back(ref.path[i]->raw);
+      r.shown.push_back(ref.path[i]->shown);
+      r.en.push_back(ref.path[i]->en);
     }
-  });
+    r.label = n.raw;
+    r.labelShown = n.shown;
+    r.labelEn = n.en;
+    r.shortcut = n.shortcut;
+    if (const keys::Command* c = n.command.empty() ? nullptr : keys::findCommand(n.command)) r.cmd = c->id;  // the tree's command
+    r.selected = n.checked;
+    r.enabled = n.enabled;
+    r.hint = n.hint;
+    r.occ = n.occ;
+    out.push_back(std::move(r));
+  }
 }
 
 // --------------------------------------------------------- settings walk ----
@@ -628,19 +546,9 @@ void build(App& a) {
 
 // ------------------------------------------------------------- running ----
 void runMenu(App& a, const Action& act) {
-  const auto& menus = menustyle::menus(layoutui::menuStyle(a));
-  if (act.root < 0 || act.root >= static_cast<int>(menus.size())) return;
-  RunWalker w;
-  w.raw = act.raw;
-  w.label = act.label;
-  w.occ = act.occ;
-  unseen("##cmdpalette_run", [&] {
-    imhook::setMenuWalker(&w);
-    drawStyleMenu(a, menus[static_cast<size_t>(act.root)]);
-    imhook::setMenuWalker(nullptr);
-  });
-  if (!w.done) a.notify(i18n::trMessage("That menu item is no longer there"), true);
-  else if (w.blocked) a.notify(i18n::trMessage("That menu item cannot run right now"), true);
+  const menutreeui::RunResult r = menutreeui::run(a, layoutui::menuStyle(a), act.root, act.raw, act.label, act.occ);
+  if (r == menutreeui::RunResult::Gone) a.notify(i18n::trMessage("That menu item is no longer there"), true);
+  else if (r == menutreeui::RunResult::Disabled) a.notify(i18n::trMessage("That menu item cannot run right now"), true);
 }
 
 void showWindow(App& a, bool App::*flag, const char* name) {
@@ -1122,15 +1030,11 @@ void devStateLine(App& a, int frame) {
 // ------------------------------------------------------------- public ----
 SkipRows::SkipRows() { ++gSkip; }
 SkipRows::~SkipRows() { --gSkip; }
+bool skippingRows() { return gSkip > 0; }
 
 namespace {
 
-void takeHint(const char* text) {
-  if (!gListing || !gListing->out || !gListing->lastWasItem || gListing->out->empty()) return;
-  if (ImGui::GetItemID() != gListing->lastItem) return;
-  MenuRec& r = gListing->out->back();
-  if (r.hint.empty()) r.hint = i18n::tr(text);
-}
+void takeHint(const char* text) { menutreeui::noteHint(text); }
 
 void takeSection(const char* captionEn) {
   if (gSet.on) gSet.section = captionEn ? captionEn : "";

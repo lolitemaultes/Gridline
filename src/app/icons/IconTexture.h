@@ -37,6 +37,12 @@ void draw(ImDrawList* dl, const char* svgName, ImVec2 c, float logicalPx, ImU32 
 // `onlyIfFits` nothing, and false is returned so the caller draws the old glyph.
 bool drawFit(ImDrawList* dl, int svgIndex, ImVec2 inkMin, ImVec2 inkMax, ImU32 col, bool onlyIfFits = false);
 bool drawFit(ImDrawList* dl, const char* svgName, ImVec2 inkMin, ImVec2 inkMax, ImU32 col, bool onlyIfFits = false);
+// K-112: while on (a layout switch frame), a drawFit box not worked out yet is queued and the
+// icon drawn from a size already rasterised, scaled into its box; serviceDeferred() works the
+// queue out on later frames within `budgetMs` and returns how many it did.
+void setDeferFits(bool on);
+int serviceDeferred(double budgetMs);
+int deferredCount();
 // The ink of font glyph `ch` drawn at `pos` (as AddText places it), logical px:
 // the texels of the font atlas at least half covered. False when not visible.
 bool glyphInk(ImFont* font, float size, ImWchar ch, ImVec2 pos, ImVec2* inkMin, ImVec2* inkMax);

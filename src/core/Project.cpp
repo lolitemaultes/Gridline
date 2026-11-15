@@ -212,6 +212,11 @@ Json pluginToJson(const PluginState& p) {
   }
   // K-78: who a third-party plugin is, in every format it was installed in (host/CrossFormat.h).
   if (Json id = host::xformat::identityForSave(p); id.is(Json::Type::Object)) j.object["ident"] = std::move(id);
+  if (!p.shown.empty()) {  // K-112c: the parameters a device row shows (only when chosen)
+    Json sh = Json::makeArray();
+    for (int k : p.shown) sh.array.push_back(num(k));
+    j.object["shown"] = std::move(sh);
+  }
   return j;
 }
 
@@ -340,6 +345,7 @@ void channelExtrasToJson(const Channel& c, Json& jc) {
   if (c.icon || c.flIcon) jc.object["icon"] = num(c.icon);  // J-211
   if (c.freeze.frozen()) jc.object["freeze"] = freezeToJson(c.freeze);  // K-87
   if (c.hibernate) jc.object["hibernate"] = boolean(true);
+  if (c.keepRunning) jc.object["keepRunning"] = boolean(true);  // K-277
 }
 
 void channelExtrasFromJson(const Json& jc, Channel& c) {
@@ -414,6 +420,7 @@ void channelExtrasFromJson(const Json& jc, Channel& c) {
   c.icon = iconFromJson(jc, c.flIcon);  // J-211
   c.freeze = freezeFromJson(jc.find("freeze"));  // K-87
   c.hibernate = flag(jc, "hibernate");
+  c.keepRunning = flag(jc, "keepRunning");  // K-277
 }
 
 void noteToJson(const Note& n, Json& jn) {
@@ -520,6 +527,9 @@ PluginState pluginFromJson(const Json* j) {
   if (const Json* o = j->find("ident"); o && o->is(Json::Type::Object)) p.ident = jsonCompact(*o);
   if (const Json* a = j->find("params"); a && a->is(Json::Type::Array))
     for (const auto& v : a->array) p.params.push_back(static_cast<float>(v.is(Json::Type::Number) ? v.number : 0));
+  if (const Json* a = j->find("shown"); a && a->is(Json::Type::Array))  // K-112c
+    for (const auto& v : a->array)
+      if (v.is(Json::Type::Number) && v.number >= -1 && v.number < 1e6) p.shown.push_back(static_cast<int>(v.number));
   normalizePluginState(p);
   return p;
 }
@@ -565,6 +575,11 @@ void clipArrangementToJson(const Clip& c, Json& jc) {
   if (c.fadeOutManual) jc.object["fadeOutManual"] = boolean(true);
   if (c.fadeInDeclick != 0) jc.object["fadeInDeclick"] = num(c.fadeInDeclick);  // J-43
   if (c.fadeOutDeclick != 0) jc.object["fadeOutDeclick"] = num(c.fadeOutDeclick);
+  // K-112b3: pattern clip playback (written only when set).
+  if (c.playTranspose != 0) jc.object["playTranspose"] = num(c.playTranspose);
+  if (c.playVelocity != 0) jc.object["playVelocity"] = num(c.playVelocity);
+  if (c.playDelay != 0) jc.object["playDelay"] = num(static_cast<double>(c.playDelay));
+  if (c.playQuantize != 0) jc.object["playQuantize"] = num(static_cast<double>(c.playQuantize));
   if (c.kind == ClipKind::Audio && !c.warp.empty()) {  // K-85: warp markers (keyed by id: collaboration merges per marker)
     Json arr = Json::makeArray();
     for (const WarpMarker& m : c.warp) {
@@ -616,6 +631,10 @@ void clipArrangementFromJson(const Json& jc, Clip& c) {
   c.fadeOutDeclick = static_cast<uint8_t>(jsonInt<int>(std::clamp(jc.num("fadeOutDeclick", 0), 0.0, 7.0)));
   c.fadeInManual = flag(jc, "fadeInManual");
   c.fadeOutManual = flag(jc, "fadeOutManual");
+  c.playTranspose = static_cast<int>(std::lround(std::clamp(jc.num("playTranspose", 0), -48.0, 48.0)));  // K-112b3
+  c.playVelocity = static_cast<int>(std::lround(std::clamp(jc.num("playVelocity", 0), -127.0, 127.0)));
+  c.playDelay = static_cast<Tick>(std::llround(std::clamp(jc.num("playDelay", 0), -1.0e6, 1.0e6)));
+  c.playQuantize = static_cast<Tick>(std::llround(std::clamp(jc.num("playQuantize", 0), 0.0, 1.0e6)));
   c.warp.clear();  // K-85
   if (const Json* w = jc.find("warp"); w && w->is(Json::Type::Array) && c.kind == ClipKind::Audio) {
     for (const Json& e : w->array) {
@@ -1184,6 +1203,7 @@ Json channelToJson(const Channel& c) {
   jc.object["pan"] = num(c.pan);
   jc.object["muted"] = boolean(c.muted);
   jc.object["pitch"] = num(c.pitch);
+  if (c.sustainPedal) jc.object["sustainPedal"] = boolean(true);
   jc.object["mixerTrack"] = num(c.mixerTrack);
   if (!c.auxOuts.empty()) {
     Json ao = Json::makeArray();
@@ -1553,6 +1573,7 @@ void channelFromJson(const Json& jc, Channel& c, const Song& s) {
   c.pan = static_cast<float>(std::clamp(jc.num("pan", 0.0), -1.0, 1.0));
   c.muted = flag(jc, "muted");
   c.pitch = jsonInt<int>(std::clamp(jc.num("pitch", 0), -24.0, 24.0));
+  c.sustainPedal = flag(jc, "sustainPedal");
   c.mixerTrack = jsonInt<ObjectId>(jc.num("mixerTrack", 0));
   if (!s.mixerTrack(c.mixerTrack)) c.mixerTrack = s.masterId();
   if (const Json* ao = jc.find("auxOuts"); ao && ao->is(Json::Type::Array))

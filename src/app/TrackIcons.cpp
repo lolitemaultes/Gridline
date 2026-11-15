@@ -6,7 +6,10 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
+#include <map>
 #include <string>
+#include <vector>
 #include "../core/I18n.h"
 #include "../core/TrackIconSet.h"
 #include "Theme.h"
@@ -139,6 +142,49 @@ bool picker(int current, int* out) {
     std::snprintf(line, sizeof line, "%s", i18n::tr("No icon"));
   ImGui::TextColored(theme::vec(hovered ? P.text : P.textDim), "%s", line);
   return picked;
+}
+
+int guess(const std::string& name, const char* fallback) {
+  static std::map<std::string, int> known;
+  const std::string key = name + "\n" + (fallback ? fallback : "");
+  if (const auto g = known.find(key); g != known.end()) return g->second;
+  auto lower = [](std::string x) {
+    for (char& ch : x) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    return x;
+  };
+  std::vector<std::string> words;
+  {
+    std::string w;
+    for (char ch : lower(name) + " ") {
+      if (std::isalnum(static_cast<unsigned char>(ch))) w += ch;
+      else if (!w.empty()) words.push_back(w == "vox" ? "vocal" : w == "perc" ? "percussion" : w == "hat" ? "hats" : w), w.clear();
+    }
+  }
+  int count = 0;
+  const trackicon::Info* all = trackicon::all(&count);
+  // The icons' names and search words, lower case and padded, made once (a big project asks for
+  // every track's icon on the first frame).
+  static std::vector<std::string> hays[2];
+  if (hays[0].empty())
+    for (int k = 0; k < count; ++k) {
+      hays[0].push_back(" " + lower(all[k].name) + " ");
+      hays[1].push_back(" " + lower(all[k].keywords) + " ");
+    }
+  std::vector<std::string> spaced, dashed;
+  for (const std::string& w : words)
+    if (w.size() >= 3) spaced.push_back(" " + w + " "), dashed.push_back("-" + w + " ");
+  int found = 0;
+  for (int pass = 0; pass < 2 && !found && !spaced.empty(); ++pass)  // names first, then the search words
+    for (int k = 0; k < count && !found; ++k) {
+      if (all[k].category == trackicon::Numbers || all[k].category == trackicon::Faces) continue;
+      const std::string& hay = hays[pass][static_cast<size_t>(k)];
+      for (size_t j = 0; j < spaced.size() && !found; ++j)
+        if (hay.find(spaced[j]) != std::string::npos || hay.find(dashed[j]) != std::string::npos) found = all[k].id;
+    }
+  for (int k = 0; k < count && !found && fallback; ++k)
+    if (std::strcmp(all[k].name, fallback) == 0) found = all[k].id;
+  known[key] = found;
+  return found;
 }
 
 }  // namespace gl::trackicons

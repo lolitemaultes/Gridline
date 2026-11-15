@@ -37,6 +37,8 @@ HELPERS = {
     "sectionHeader": [0], "folderSection": [1, 4], "emptyLine": [0], "notify": [0],
     # J-77: Keep / Revert confirmations (title, row caption; what changed).
     "confirmTheme": [2],
+    # K-112b: layout parts (LayoutParts.cpp): strip slot hints, inspector card labels and hints.
+    "stripSlot": [5], "cardRow": [1, 3], "cardStepper": [1, 7],
 }
 # Helpers called on an object (a.notify(...)).
 MEMBER_HELPERS = {"notify"}

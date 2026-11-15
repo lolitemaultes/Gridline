@@ -21,6 +21,7 @@
 #include "../engine/Dsp.h"
 #include "../engine/EqDesign.h"
 #include "../engine/LiveGraph.h"
+#include "DeviceViews.h"
 #include "PluginEditorsCommon.h"
 #include "PluginSkin.h"
 
@@ -230,6 +231,13 @@ void headerCell(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const char* text, const sk
 }
 
 }  // namespace
+
+// The band the EQ's editor has selected, shared with the device row's compact view (K-112c).
+int devview::eqSelectedBand(const PluginTarget& t) {
+  const auto it = eqUis.find(t.key());
+  return it == eqUis.end() ? -1 : it->second.selected;
+}
+void devview::eqSelectBand(const PluginTarget& t, int band) { eqUis[t.key()].selected = band; }
 
 void editorEqRef(App& a, const PluginTarget& t, float width) {
   const Song& song = a.doc.song();

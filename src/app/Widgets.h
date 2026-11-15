@@ -143,6 +143,11 @@ bool PrimaryButton(const char* label, float width = 0.0f, const char* hint = nul
 bool DangerButton(const char* label, bool armed = false, float width = 0.0f, const char* hint = nullptr);
 // Width a TextButton / DangerButton with this English label takes (0 = fit).
 float TextButtonWidth(const char* label);
+// K-112b: a group of flat menu labels with down chevrons and hairlines between them (the Tracks
+// layout's local "Edit | Functions | View" menus). `names` and `hints` are untranslated (N_);
+// `body(k)` fills menu k (1-based) while its popup is open. One menu open at a time; hovering a
+// neighbour while one is open moves to it.
+void MenuGroup(const char* id, const char* const* names, const char* const* hints, int count, const std::function<void(int)>& body);
 // Small status lamp (8 px) on the text line, then SameLine: "online", "offline" rows.
 void StatusDot(ImU32 col, bool pulse = false);
 // Segmented control (one of n). Returns true when *index changed.
@@ -270,6 +275,12 @@ void Meter(ImGuiID key, float peakL, float peakR, ImVec2 size, bool vertical = t
 // style previews draw with these, so a preview is the real control.
 void DrawKnob(ImDrawList* dl, ImVec2 centre, float radius, float norm, bool bipolar, bool hov, bool act);
 void DrawFader(ImDrawList* dl, ImVec2 p, ImVec2 size, float norm, float defNorm, bool hov, bool act);
+// K-112c: while on, faders draw as a thin line with a triangle pointer at the value (the Live
+// layout's mixer strips set it around their faders; off again after).
+void setFaderPointer(bool on);
+// K-112b (checkpoint 25): the next faders draw their ruler ticks at these normalised positions (the
+// strip's dB marks) instead of every eighth of the travel; nullptr or count 0 restores the eighths.
+void setFaderTicks(const float* norms, int count);
 void DrawMeter(ImDrawList* dl, ImVec2 p, ImVec2 size, float gainL, float gainR, float holdL, float holdR, bool vertical = true);
 
 // Small coloured swatch that opens a palette popup; returns true when changed.
@@ -324,6 +335,8 @@ const char* stableWindowName(const char* name);
 // Full-width toolbar strip (theme::kToolbarH) with a hairline under it. Controls
 // are vertically centred; text should use ImGui::AlignTextToFramePadding().
 void BeginToolbar(const char* id);
+// K-112c (round 24): a toolbar `height` px tall (the Live clip view's slim one).
+void BeginToolbar(const char* id, float height);
 void EndToolbar();
 // Thin vertical divider between toolbar groups.
 void ToolbarDivider();
@@ -334,6 +347,24 @@ void EmptyState(ImDrawList* dl, ImVec2 min, ImVec2 max, const char* title, const
 // a small caption): contents are laid out inside with kS2 padding. `width` 0 =
 // the remaining width of the window. Nestable; always pair with EndSection().
 void BeginSection(const char* caption, float width = 0.0f);
+// K-112 (Live): inside a group of settings a switch is an On / Off field kToggleFieldW wide, lit
+// while on (check boxes become one through ImGui's hook). toggleFields(): such a field is wanted here.
+constexpr float kToggleFieldW = 48.0f;
+void drawToggleField(ImDrawList* dl, ImVec2 a, ImVec2 b, int state, bool hovered, bool held);
+bool toggleFields();
+// K-112b: the rest of the current section uses the whole width (a table, cards), not the
+// Logic layout's form column.
+void SectionFullWidth();
+// K-112b: while the Logic layout's form column is set, a section's caption is a bold heading in
+// sentence case ("INPUT / OUTPUT" reads "Input / output"; known abbreviations stay capitals), and
+// each section is noted with its heading and its y in the window's content (for a jump bar).
+struct SectionMark {
+  std::string heading;
+  float y = 0;
+};
+std::string SectionHeading(const char* caption);
+void SectionMarksReset();
+const std::vector<SectionMark>& SectionMarks();
 void EndSection();
 // Studio tab strip (settings / channel windows): text tabs on a baseline, the
 // selected one raised with a lit-orange overline. Returns true when changed.

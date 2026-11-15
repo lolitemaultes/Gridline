@@ -140,7 +140,7 @@ static void buildLogicLayout(ImGuiID dockspace, ImVec2 size, const char* alsoLef
 }
 
 workspace::Rect buildLayout(layout::Preset preset, ImGuiID dockspace, ImVec2 size, int channels, const char* alsoLeft) {
-  if (preset == layout::Preset::Studio) {
+  if (preset == layout::Preset::Studio || preset == layout::Preset::Tracker) {
     gBuilt = {};
     return buildDefaultLayout(dockspace, size, channels, alsoLeft);
   }

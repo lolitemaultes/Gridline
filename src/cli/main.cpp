@@ -35,6 +35,7 @@
 #include "core/flp/FlpCoverage.h"
 #include "core/flp/FlpPresets.h"
 #include "core/flp/FlpWrapper.h"
+#include "core/Platform.h"
 #include "core/Settings.h"
 #include "host/HostedPlugins.h"
 #include "host/net/Http.h"
@@ -194,6 +195,7 @@ int main(int argc, char** argv) {
   // Child processes: plugin scanner (--scan-plugin / --scan-vst3) and the
   // plugin sandbox (--plugin-sandbox).
   if (int rc = gl::host::childMain(argc, argv); rc >= 0) return rc;
+  gl::platform::initPluginThread();  // K-267: plugins load on this thread (renders, checks): OLE first (Windows)
   if (argc >= 2 && (std::strcmp(argv[1], "--version") == 0 || std::strcmp(argv[1], "version") == 0)) {
     std::printf("Gridline " GRIDLINE_VERSION "\n");
     return 0;

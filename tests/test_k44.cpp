@@ -630,7 +630,7 @@ void testNoFalseAlarms() {
   // A note processor's state is walked too.
   {
     Song n = s;
-    n.channels.front().noteFx.push_back(PluginState{"gl.sampler", {}, "/somewhere/note.wav", "", "", ""});
+    n.channels.front().noteFx.push_back(PluginState{"gl.sampler", {}, "/somewhere/note.wav", "", "", "", {}});
     expect(contains(referencedFiles(n), "/somewhere/note.wav"), "a note processor's file is listed");
   }
   const auto refs = referencedFiles(s);

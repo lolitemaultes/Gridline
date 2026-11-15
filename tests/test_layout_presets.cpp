@@ -76,8 +76,8 @@ void testLayoutFiles() {
     expect(layout::displayName(p) && *layout::displayName(p) && layout::blurb(p) && *layout::blurb(p), "every preset has a name and a line");
   }
   expect(files.size() == 3 && versions.size() == 3 && bindings.size() == 3, "each preset has its own layout file, version and overrides");
-  expect(std::string(layout::displayName(Preset::Studio)) == "Studio" && std::string(layout::displayName(Preset::Live)) == "Live" &&
-             std::string(layout::displayName(Preset::Logic)) == "Logic",
+  expect(std::string(layout::displayName(Preset::Studio)) == "Studio" && std::string(layout::displayName(Preset::Live)) == "Clips" &&
+             std::string(layout::displayName(Preset::Logic)) == "Smooth",
          "display names");
   // Until each becomes a whole style (K-112), Live and Logic are shown as previews.
   expect(!layout::isPreview(Preset::Studio) && layout::isPreview(Preset::Live) && layout::isPreview(Preset::Logic) &&
@@ -102,6 +102,59 @@ void testNormalise() {
   expect(!layout::normalize(st), "a normal file is left alone");
   Settings fresh;
   expect(!layout::normalize(fresh), "defaults need no repair");
+}
+
+// The layout names people see are Studio, Clips, Smooth and Tracker; the saved ids stay
+// "studio", "live", "logic" and "tracker", so a layout chosen under an earlier name loads as
+// the same layout under its new one.
+void testLayoutNames() {
+  const char* const want[] = {"Studio", "Clips", "Smooth", "Tracker"};
+  expect(layout::kLayoutCount == 4, "four layouts");
+  std::string listed;
+  for (int i = 0; i < layout::kLayoutCount; ++i) {
+    const std::string name = layout::displayName(static_cast<Preset>(i));
+    listed += (i ? ", " : "") + name;
+    expect(name == want[i], (std::string("layout ") + std::to_string(i) + " is named " + want[i] + " (got " + name + ")").c_str());
+    expect(name != "Live" && name != "Logic" && name != "Tracks", "no layout keeps an earlier name");
+  }
+  expect(listed == "Studio, Clips, Smooth, Tracker", ("the layouts in order: " + listed).c_str());
+  // The chooser cards, View > Window layout and the shortcut set list show the first kPresetCount;
+  // Tracker is a development layout until its phase ships (available()).
+  expect(layout::kPresetCount == 3, "the chooser shows Studio, Clips and Smooth today");
+  Settings plain;
+  for (int i = 0; i < layout::kPresetCount; ++i)
+    expect(layout::available(static_cast<Preset>(i), plain), (std::string(want[i]) + " can be chosen").c_str());
+
+  // An earlier saved value for each layout (and the research notes' working names) loads that layout.
+  struct Old {
+    const char* saved;
+    Preset p;
+    const char* name;
+    const char* id;
+  };
+  const Old olds[] = {{"studio", Preset::Studio, "Studio", "studio"}, {"live", Preset::Live, "Clips", "live"},
+                      {"performance", Preset::Live, "Clips", "live"}, {"logic", Preset::Logic, "Smooth", "logic"},
+                      {"tracks", Preset::Logic, "Smooth", "logic"},   {"tracker", Preset::Tracker, "Tracker", "tracker"}};
+  const std::string dir = tempDir("gridline_k283_names");
+  const std::string path = (fs::path(dir) / "settings.json").string();
+  for (const Old& o : olds) {
+    {
+      std::ofstream f(path);
+      f << R"({"format":"gridline-settings","version":1,"values":{"ui.layout":")" << o.saved << R"(","keys.profile":")" << o.saved
+        << R"(","ui.menuStyle":")" << o.saved << R"("}})";
+    }
+    Settings st;
+    const std::string what = std::string("saved '") + o.saved + "': ";
+    expect(st.load(path), (what + "loads").c_str());
+    layout::normalize(st);
+    expect(layout::current(st) == o.p && layout::keyProfile(st) == o.p && layout::menuStyle(st) == o.p,
+           (what + "the same layout, shortcut set and menus").c_str());
+    expect(std::string(layout::displayName(layout::current(st))) == o.name, (what + "shown as " + o.name).c_str());
+    expect(st.getString("ui.layout") == o.id && st.getString("keys.profile") == o.id && st.getString("ui.menuStyle") == o.id,
+           (what + "stored under the unchanged id " + o.id).c_str());
+    const std::string keys = o.p == Preset::Studio ? std::string("keys.bindings") : std::string("keys.bindings.") + o.id;
+    expect(layout::bindingsKey(o.p) == keys, (what + "its shortcut changes keep their key").c_str());
+  }
 }
 
 // The settings file as text without the keys a preset is allowed to change.
@@ -213,7 +266,7 @@ void testMenus() {
     return s;
   };
   expect(names(Preset::Live) == "File Edit Create View Options Tools Help", "live menu order");
-  expect(names(Preset::Logic) == "File Edit Track Patterns Navigate Record Mix View Tools Help", "logic menu order");
+  expect(names(Preset::Logic) == "File Edit Track Patterns Navigate Record Mix View Tools Window Help", "logic menu order");
   int programs = 0;
   for (const auto& m : menustyle::menus(Preset::Logic)) programs += m.name ? 0 : 1;
   expect(programs == 1, "logic has one program menu (on the mark)");
@@ -336,6 +389,7 @@ int main() {
   testSettingRoundTrip();
   testLayoutFiles();
   testNormalise();
+  testLayoutNames();
   testLayoutsKeepTheme();
   testOldPaletteLink();
   testMenus();

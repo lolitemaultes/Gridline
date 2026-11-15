@@ -1,5 +1,6 @@
 // Gridline - window layout presets in the interface (K-79). See LayoutPresets.h.
 #include "LayoutPresets.h"
+#include "LiveLook.h"
 #include <cfloat>
 #include <cmath>
 #include <cstring>
@@ -8,10 +9,12 @@
 #include "../../third_party/imgui/imgui_internal.h"
 #include "../core/I18n.h"
 #include "../core/Keymap.h"
+#include "../core/LayoutShell.h"
 #include "../core/Log.h"
 #include "../core/Settings.h"
 #include "App.h"
 #include "Keys.h"
+#include "LayoutShellUi.h"
 #include "Theme.h"
 #include "ThemeSettings.h"
 #include "Widgets.h"
@@ -35,7 +38,12 @@ constexpr bool kSeparateCmd = false;
 #endif
 
 keys::Profile toProfile(Preset p) {
-  return p == Preset::Live ? keys::Profile::Live : p == Preset::Logic ? keys::Profile::Logic : keys::Profile::Studio;
+  switch (p) {
+    case Preset::Live: return keys::Profile::Live;
+    case Preset::Logic: return keys::Profile::Logic;
+    case Preset::Tracker: return keys::Profile::Tracker;  // K-112: F1 to F8 pick the typing octave
+    default: return keys::Profile::Studio;
+  }
 }
 
 ImGuiWindow* findWindow(const char* stable) {
@@ -83,6 +91,8 @@ void choose(App& a, Preset p, const layout::Linked& linked) {
     gSwitchTo = p;
   }
 }
+
+bool switchPending() { return gSwitchPending; }
 
 bool takeSwitch(Preset* out) {
   if (!gSwitchPending) return false;
@@ -136,6 +146,7 @@ void showPresetWindows(App& a, Preset p) {
 }
 
 void enterPreset(App& a, Preset p) {
+  if (shellBuilt(a, p)) return;  // K-112: the region shell places the windows by their homes
   if (p == Preset::Live && !a.showLivePads) {
     a.showLivePads = true;  // the second main view, a tab behind the playlist
     if (ImGuiWindow* w = findWindow("Playlist")) ImGui::FocusWindow(w);
@@ -220,6 +231,7 @@ void paneGroupsFrame(App& a) {
   static int shownKind = -1;
   static bool closedByGroup[3] = {false, false, false};  // open before, closed only because the pane is shared
   constexpr int n = 3;
+  if (gActive == Preset::Logic && shellBuilt(a, gActive)) return;  // K-112: the shell's exclusive regions do this
   if (gActive != Preset::Logic) {
     if (prevPreset == Preset::Logic)  // leaving: what the shared pane hid comes back
       for (int i = 0; i < n; ++i)
@@ -288,6 +300,17 @@ void toggleEditors(App& a) {
 }
 
 void toggleMainView(App& a) {
+  if (livelook::active(a)) {  // K-112c: the Live layout shows one main view at a time
+    livelook::showView(a, !livelook::gridView(a));
+    return;
+  }
+  if (gActive == Preset::Logic && shellBuilt(a, Preset::Logic)) {  // K-112b8: the pads grid beside the tracks, shown or hidden
+    const bool shown = a.showLivePads && layout::visible(layout::shell(Preset::Logic), regionState(a, Preset::Logic), "logic.grid");
+    a.showLivePads = !shown;
+    setRegionVisible(a, "logic.grid", !shown);
+    if (!shown) a.focusWindow = "Live pads";
+    return;
+  }
   ImGuiWindow* pads = findWindow("Live pads");
   ImGuiWindow* list = findWindow("Playlist");
   if (!a.showLivePads || !pads) {

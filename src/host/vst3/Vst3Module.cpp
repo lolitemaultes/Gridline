@@ -1,11 +1,13 @@
 #include "Vst3Module.h"
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <map>
 #include <mutex>
 #include "../Dylib.h"
 #include "../PluginScan.h"
 #include "../../core/Platform.h"
+#include "Vst3HostObjects.h"
 #if defined(__APPLE__)
 #include <CoreFoundation/CoreFoundation.h>
 #elif defined(_WIN32)
@@ -60,24 +62,53 @@ std::string bundleArchFolder() {
 #endif
 }
 
-std::string bundleBinaryPath(const std::string& bundlePath) {
-  fs::path b(bundlePath);
-#if defined(__APPLE__)
-  return (b / "Contents" / "MacOS" / b.stem()).string();
-#elif defined(_WIN32)
-  // Windows on ARM: arm64x / arm64ec binaries run too.
+std::string findBundleBinary(const std::string& bundlePath, const std::vector<std::string>& archFolders, const std::string& ext) {
+  const fs::path b = fs::u8path(bundlePath);
   std::error_code ec;
-  const std::string own = (b / "Contents" / bundleArchFolder() / b.filename()).string();
-#if defined(_M_ARM64) || defined(__aarch64__)
-  if (!fs::exists(own, ec))
-    for (const char* alt : {"arm64x-win", "arm64ec-win"}) {
-      const std::string p = (b / "Contents" / alt / b.filename()).string();
-      if (fs::exists(p, ec)) return p;
+  auto lower = [](std::string s) {
+    for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return s;
+  };
+  for (const std::string& arch : archFolders) {
+    const fs::path dir = b / "Contents" / fs::u8path(arch);
+    // The SDK's layout: the binary has the bundle's name (Windows: with .vst3; Linux: .so).
+    const fs::path named = dir / fs::u8path(ext == ".vst3" ? b.filename().u8string() : b.stem().u8string() + ext);
+    if (fs::is_regular_file(named, ec)) return named.u8string();
+    // K-267: a bundle whose binary has another name (renamed bundle folder, a vendor's own naming):
+    // the one file of the platform's kind in the folder, the first by name when there are more.
+    std::vector<std::string> found;
+    for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
+      std::error_code e2;
+      if (it->is_regular_file(e2) && lower(it->path().extension().u8string()) == ext) found.push_back(it->path().u8string());
     }
-#endif
-  return own;
+    ec.clear();
+    if (!found.empty()) return *std::min_element(found.begin(), found.end());
+  }
+  return {};
+}
+
+std::vector<std::string> bundleArchFolders() {
+#if defined(_WIN32)
+#if defined(_M_ARM64) || defined(__aarch64__)
+  return {"arm64-win", "arm64x-win", "arm64ec-win"};  // Windows on ARM: arm64x / arm64ec binaries run too
 #else
-  return (b / "Contents" / bundleArchFolder() / (b.stem().string() + ".so")).string();
+  return {bundleArchFolder()};
+#endif
+#else
+  return {bundleArchFolder()};
+#endif
+}
+
+std::string bundleBinaryPath(const std::string& bundlePath) {
+  const fs::path b = fs::u8path(bundlePath);
+#if defined(__APPLE__)
+  return (b / "Contents" / "MacOS" / b.stem()).u8string();
+#elif defined(_WIN32)
+  if (std::string found = findBundleBinary(bundlePath, bundleArchFolders(), ".vst3"); !found.empty()) return found;
+  return (b / "Contents" / fs::u8path(bundleArchFolder()) / b.filename()).u8string();  // (missing: named in the error)
+#else
+  if (std::string found = findBundleBinary(bundlePath, bundleArchFolders(), ".so"); !found.empty()) return found;
+  return (b / "Contents" / fs::u8path(bundleArchFolder()) / fs::u8path(b.stem().u8string() + ".so")).u8string();
 #endif
 }
 
@@ -90,9 +121,10 @@ std::vector<std::string> defaultSearchPaths() {
 #elif defined(_WIN32)
   // %LOCALAPPDATA%\Programs\Common\VST3 (per user) and %COMMONPROGRAMFILES%\VST3.
   (void)home;
-  if (const char* la = std::getenv("LOCALAPPDATA")) v.push_back(std::string(la) + "\\Programs\\Common\\VST3");
-  if (const char* cf = std::getenv("CommonProgramFiles"))
-    v.push_back(std::string(cf) + "\\VST3");
+  // K-267: read as UTF-8 (a user name with letters outside the system's code page).
+  if (const std::string la = platform::getEnv("LOCALAPPDATA"); !la.empty()) v.push_back(la + "\\Programs\\Common\\VST3");
+  if (const std::string cf = platform::getEnv("CommonProgramFiles"); !cf.empty())
+    v.push_back(cf + "\\VST3");
   else
     v.push_back("C:\\Program Files\\Common Files\\VST3");
 #else
@@ -110,10 +142,31 @@ std::vector<std::string> findBundles(const std::vector<std::string>& folders) {
   // K-73: the shared search (each real folder once, links followed, stops on quit, shows where it is).
   // Bundles are folders; on Windows a VST 3.6 or older plugin can be a single .vst3 DLL too.
 #if defined(_WIN32)
-  return host::findEntries(folders, ".vst3", true, true);
+  return packagesOrInside(host::findEntries(folders, ".vst3", true, true), bundleArchFolders());
 #else
   return host::findEntries(folders, ".vst3", true, false);
 #endif
+}
+
+std::vector<std::string> packagesOrInside(const std::vector<std::string>& found, const std::vector<std::string>& archFolders) {
+  // K-267: as the VST3 SDK's own search on Windows: a folder named *.vst3 that holds no binary for
+  // this computer is not a bundle but a folder of plugins (an installer's vendor folder): its
+  // plugins are listed instead.
+  std::vector<std::string> out;
+  for (const std::string& e : found) {
+    std::error_code ec;
+    const fs::path p = fs::u8path(e);
+    if (!fs::is_directory(p, ec) || fs::exists(p / "Contents", ec) || !findBundleBinary(e, archFolders, ".vst3").empty()) {
+      out.push_back(e);
+      continue;
+    }
+    std::vector<std::string> inner = host::findEntries({e}, ".vst3", true, true);
+    if (inner.empty()) out.push_back(e);  // nothing inside either: listed (and fails with the reason)
+    for (auto& i : inner) out.push_back(std::move(i));
+  }
+  std::sort(out.begin(), out.end());
+  out.erase(std::unique(out.begin(), out.end()), out.end());
+  return out;
 }
 
 Module::~Module() {
@@ -179,8 +232,8 @@ std::unique_ptr<Module> Module::load(const std::string& bundlePath, std::string*
 #else
   std::string bin = bundleBinaryPath(bundlePath);
   std::error_code ec;
-  if (!fs::exists(bin, ec)) {
-    if (fs::is_regular_file(bundlePath, ec))
+  if (!fs::exists(fs::u8path(bin), ec)) {
+    if (fs::is_regular_file(fs::u8path(bundlePath), ec))
       bin = bundlePath;  // single-file plugin
     else
       return fail("no binary for this platform (" + bin + ")");
@@ -210,6 +263,9 @@ std::unique_ptr<Module> Module::load(const std::string& bundlePath, std::string*
   sb::IPluginFactory* f = toFunction<sb::IPluginFactory* (*)()>(factorySym)();
   if (!f) return fail("GetPluginFactory returned null");
   m->factory_ = Ptr<sb::IPluginFactory>(f);
+  // K-267: the host context, as hosts give it to a factory of version 3 before anything else of it
+  // (plugins that need it to create their classes fail "cannot create the component" without it).
+  if (auto f3 = Ptr<sb::IPluginFactory3>::query<sb::IPluginFactory3>(f)) f3->setHostContext(static_cast<sv::IHostApplication*>(hostContext()));
   sb::PFactoryInfo fi{};
   if (f->getFactoryInfo(&fi) == sb::kResultOk) m->vendor_ = fixed(fi.vendor, sizeof fi.vendor);
   m->readClasses();
@@ -249,6 +305,10 @@ void Module::readClasses() {
       c.uid = uidToHex(i1.cid);
       c.name = fixed(i1.name, sizeof i1.name);
       c.category = fixed(i1.category, sizeof i1.category);
+    }
+    if (c.name.empty()) {  // K-267: a factory whose wide-text info leaves the name out
+      sb::PClassInfo i1{};
+      if (factory_->getClassInfo(i, &i1) == sb::kResultOk) c.name = fixed(i1.name, sizeof i1.name);
     }
     if (c.vendor.empty()) c.vendor = vendor_;
     classes_.push_back(std::move(c));

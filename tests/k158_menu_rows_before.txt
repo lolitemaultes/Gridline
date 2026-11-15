@@ -381,8 +381,8 @@ knob|Record automation
 knob|Set to
 knob|Start the song at this value
 layouts|Layout settings...
-layouts|Live
-layouts|Logic
+layouts|Clips
+layouts|Smooth
 layouts|Studio
 markers|1 bar
 markers|16 bars
@@ -1974,9 +1974,9 @@ view|Dark theme
 view|Groove editor
 view|Interface size
 view|Layout settings...
-view|Live
+view|Clips
 view|Live pads
-view|Logic
+view|Smooth
 view|Master chain
 view|Mixer
 view|Mixer layout

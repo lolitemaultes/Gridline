@@ -121,6 +121,13 @@ struct ChannelRuntime {
   // K-25: instruments without per-note pitch (hosted plugins without note tuning, MIDI Out):
   // the channel pitch bend sent per MIDI channel, semitones (0 = centred).
   float chanBend[16] = {};
+  // The channel's sustain pedal (audio thread): down from its Sustain parameter (automation, a
+  // recorded pedal) or from CC 64 that another channel's MIDI output sent it. While either is
+  // down and Settings > MIDI > Sustain holds notes is on, its note-offs wait here for the pedal.
+  bool pedalParam = false, pedalMidi = false;
+  static constexpr int kPedalHeld = 128;
+  uint32_t pedalHeld[kPedalHeld] = {};
+  int pedalHeldCount = 0;
   std::atomic<float> level{0};  // recent output peak, for the UI
   // J-186: the last block's output peak after the strip gains (overwritten every block, so any
   // number of UI readers; the channel rack's play light follows it).
@@ -165,6 +172,18 @@ struct ChannelRuntime {
   layer::PickState layerPick;  // K-169: cycle / no-repeat state of a layer's live notes (audio thread)
   // K-64 (audio thread): an idle channel left outL / outR out of this block: its output is silence.
   bool outZero = false;
+  // K-277 (audio thread): Rest silent instruments. Frames in a row the instrument was silent
+  // (below kRestFloor) with no note and no event; resting: left out of the blocks until a note, an
+  // event, a transport jump or an open editor wakes it; mutedRest: a muted channel at rest (its
+  // voices were stopped when it began, events are dropped until it is heard again); selfSound: it
+  // sounded without being given anything (it makes sound on its own: never rests).
+  int64_t quietFrames = 0;
+  bool resting = false, mutedRest = false, selfSound = false;
+  // K-277: blocks left out / processed while the channel may rest (tests, the interface).
+  std::atomic<uint64_t> restBlocks{0}, runBlocks{0};
+  std::atomic<bool> restingUi{false};  // (relaxed) resting now
+  // K-277 (UI thread writes): its plugin's own editor is open (the editor may play notes itself).
+  std::atomic<bool> editorOpen{false};
   // This block's output after the strip gains (the mixer pulls it).
   std::vector<float> outL = std::vector<float>(kEngineMaxBlock, 0.f), outR = std::vector<float>(kEngineMaxBlock, 0.f);
   CpuStat cpu;
@@ -352,6 +371,9 @@ void renderAudioClips(const std::vector<ProgAudioClip>& clips, const TempoMap& m
 struct ProgChannel {
   ObjectId id = kNoId;
   bool restable = false;  // K-64: an idle channel with nothing near may be left out of a block
+  // K-277: Rest silent instruments: the instrument may rest once silent with nothing playing it
+  // (an instrument channel, not kept running, nothing reads its outputs or drives its parameters).
+  bool restSilent = false;
   std::vector<ProgAudioClip> audio;  // audio clips played through this channel (song mode), by start
   // K-87: a frozen channel's render (or, on a channel the builder adds for a frozen mixer track,
   // the track's render): frame k plays at song sample k, in song mode, instead of an instrument.
@@ -398,8 +420,18 @@ struct ProgChannel {
   int keyLo = 0, keyHi = 127;  // J-31: Channel key range (live notes outside it do not play)
   int midiPort = -1;           // J-165: MIDI Out channels (gl.midiout): their port, else -1
   // Channels listening on this channel's MIDI output port (hosted plugins'
-  // MIDI out, see Channel::midiOutPort): Program channel indices.
+  // MIDI out, see Channel::midiOutPort; MIDI Out channels' Port): Program channel indices.
+  // Links that would close a loop are left out (ProgramBuilder).
   std::vector<int> midiTargets;
+  // A MIDI Out channel with listeners: it runs before the other instruments of the block and
+  // its messages reach them in the same block, at their sample offsets (Program::midiOrder).
+  bool midiFirst = false;
+  // The channel listens to a MIDI Out channel: its note processors run after the delivery.
+  bool midiFed = false;
+  // Sustain pedal (ChannelParam::Sustain): its unlinked value, whether automation or a link
+  // moves it, and its value now (audio thread).
+  bool sustain = false, sustainMoves = false;
+  mutable bool sustainLive = false;
 };
 
 
@@ -509,7 +541,8 @@ struct ProgLink {
     SlotEnable,
     ChanMacro,                     // K-169: a layer's macro (param = the macro)
     MixDepth,                      // Stage distance (MixerTrack::depth)
-    MixFocus                       // Stage focus (MixerTrack::focus)
+    MixFocus,                      // Stage focus (MixerTrack::focus)
+    ChanSustain                    // the channel's sustain pedal (ChannelParam::Sustain)
   };
   // source: a channel instrument (srcChannel) or a mixer slot (srcMixer, srcSlot); K-169: a
   // layer's macro (srcChannel = the layer, srcMacro = the macro)
@@ -619,6 +652,15 @@ struct Program {
   std::vector<ProgMarkerEvent> markerEvents;
   double songLoopStart = -1;
   std::vector<ProgChannel> channels;
+  // MIDI Out delivery order: MIDI Out channels with listeners and the channels they feed, each
+  // after every MIDI Out channel that feeds it (Program channel indices).
+  std::vector<int> midiOrder;
+  // The song's master pitch (semitones): MIDI Out channels send notes with it, so the channels
+  // they feed (which add it again) get notes without it.
+  float masterPitch = 0;
+  // Links between MIDI ports left out because they would feed a channel's MIDI back to itself
+  // (for the interface: which channels, as (sender, listener) channel ids).
+  std::vector<std::pair<ObjectId, ObjectId>> midiLoops;
   std::vector<ProgPattern> patterns;
   std::vector<ProgMixer> mixer;
   std::vector<int> order;  // mixer processing order (indices), master last

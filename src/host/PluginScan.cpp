@@ -208,10 +208,10 @@ int64_t pathMtime(const std::string& path) {
     if (ec) return;
     best = std::max<int64_t>(best, platform::fileTimeSeconds(t));
   };
-  stamp(path);
+  stamp(fs::u8path(path));
   // Bundles: the binaries change on updates even when the folder does not.
-  if (fs::is_directory(path, ec)) {
-    fs::path contents = fs::path(path) / "Contents";
+  if (fs::is_directory(fs::u8path(path), ec)) {
+    fs::path contents = fs::u8path(path) / "Contents";
     for (const char* sub : {"MacOS", "x86_64-linux", "aarch64-linux", "i386-linux", "x86_64-win", "arm64-win", "arm64x-win", "arm64ec-win"}) {
       fs::path d = contents / sub;
       if (!fs::is_directory(d, ec)) continue;
@@ -265,33 +265,33 @@ std::vector<std::string> findEntries(const std::vector<std::string>& folders, co
   size_t searched = 0;
   for (const auto& f : folders) {
     std::error_code ec;
-    if (!fs::is_directory(f, ec)) continue;
-    fs::path real = fs::canonical(f, ec);
-    if (ec || specialFolder(real.generic_string()) || !visited.insert(real.generic_string()).second) continue;
-    todo.push_back({fs::path(f), real, 0});
+    if (!fs::is_directory(fs::u8path(f), ec)) continue;
+    fs::path real = fs::canonical(fs::u8path(f), ec);
+    if (ec || specialFolder(real.generic_u8string()) || !visited.insert(real.generic_u8string()).second) continue;
+    todo.push_back({fs::u8path(f), real, 0});
     while (!todo.empty()) {
       if (tDiscoveryCancel && tDiscoveryCancel->load()) return out;
       const Dir d = std::move(todo.back());
       todo.pop_back();
-      if (tDiscoveryProgress && searched++ % 64 == 0) (*tDiscoveryProgress)(d.path.generic_string());
+      if (tDiscoveryProgress && searched++ % 64 == 0) (*tDiscoveryProgress)(d.path.generic_u8string());
       ec.clear();
       for (fs::directory_iterator it(d.path, fs::directory_options::skip_permission_denied, ec), end; !ec && it != end; it.increment(ec)) try {
         const fs::path& p = it->path();
         std::error_code e2;
         const bool dir = it->is_directory(e2);  // follows a symlink
-        std::string e = p.extension().string();
+        std::string e = p.extension().u8string();
         for (char& ch : e) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
         if (!dir) {
-          if (e == ext && files) out.push_back(p.generic_string());
+          if (e == ext && files) out.push_back(p.generic_u8string());
           continue;
         }
-        if (e == ext && directories) out.push_back(p.generic_string());
+        if (e == ext && directories) out.push_back(p.generic_u8string());
         // Never look inside bundles (of any format).
         const bool bundle = e == ".vst3" || e == ".vst" || e == ".clap" || e == ".component" || e == ".lv2" || e == ".app" || e == ".bundle" || e == ".framework";
         if (bundle || d.depth > 6) continue;
         fs::path sub = it->is_symlink(e2) ? fs::canonical(p, e2) : d.real / p.filename();
         if (e2) continue;
-        std::string key = sub.generic_string();
+        std::string key = sub.generic_u8string();
         if (specialFolder(key) || !visited.insert(std::move(key)).second) continue;
         todo.push_back({p, std::move(sub), d.depth + 1});
       } catch (const std::exception&) {
@@ -327,9 +327,8 @@ std::string vst2Type(uint32_t uniqueId) {
 }
 
 void addEnvPaths(std::vector<std::string>& v, const char* var) {
-  const char* e = std::getenv(var);
-  if (!e) return;
-  std::string s = e;
+  const std::string s = platform::getEnv(var);  // K-267: UTF-8
+  if (s.empty()) return;
   size_t a = 0;
   while (a <= s.size()) {
 #if defined(_WIN32)
@@ -345,9 +344,9 @@ void addEnvPaths(std::vector<std::string>& v, const char* var) {
 }
 
 std::string envFolder(const char* var, const char* sub) {
-  const char* e = std::getenv(var);
-  if (!e || !*e) return {};
-  return (fs::path(e) / sub).string();
+  const std::string e = platform::getEnv(var);  // K-267: UTF-8
+  if (e.empty()) return {};
+  return (fs::u8path(e) / fs::u8path(sub)).u8string();
 }
 
 void addSystemPluginFolders(std::vector<std::string>& v, const char* winCommon, const char* unixLib) {
@@ -369,8 +368,8 @@ std::string selfExecutablePath() {
   const std::string p = platform::executablePath();
   if (p.empty()) return p;
   std::error_code ec;
-  auto canon = fs::canonical(p, ec);
-  return ec ? p : canon.string();
+  auto canon = fs::canonical(fs::u8path(p), ec);
+  return ec ? p : canon.u8string();
 }
 
 // ---------------------------------------------------------------- child processes
@@ -385,12 +384,26 @@ std::string& progressFile() {
 
 void scanProgress() {
   if (progressFile().empty()) return;
-  std::ofstream(progressFile(), std::ios::binary | std::ios::app) << '+';
+  std::ofstream(fs::u8path(progressFile()), std::ios::binary | std::ios::app) << '+';
+  platform::pumpThreadMessages(0.02);  // K-267: work the plugin posted to this thread (Windows)
 }
 
 std::string scanProgressFile(const std::string& outFile) { return outFile + ".progress"; }
 
+std::string peMachineMismatch(uint16_t machine, uint16_t hostMachine) {
+  constexpr uint16_t kX86 = 0x14C, kX64 = 0x8664, kArm64 = 0xAA64;
+  if (machine == hostMachine) return {};
+  if (machine == kX86) return "a 32-bit plugin (this Gridline loads 64-bit plugins only)";
+  if (hostMachine == kX86 && (machine == kX64 || machine == kArm64)) return "a 64-bit plugin (this Gridline loads 32-bit plugins only)";
+  // An x64 or ARM64EC image (both carry the x64 machine) cannot load into a native ARM64 process.
+  // An ARM64X image carries the ARM64 machine and loads into an x64 process on ARM computers: the
+  // scan decides, as for any other kind.
+  if (hostMachine == kArm64 && machine == kX64) return "an x64 plugin (this Gridline runs natively on ARM and loads ARM64 plugins only)";
+  return {};
+}
+
 std::string peDllPrecheck(const std::string& path, const std::vector<std::string>& entryPoints, uint16_t hostMachine) {
+  (void)entryPoints;  // K-267: the export table is not trusted (see the header)
   if (hostMachine == 0) {
 #if defined(_M_ARM64) || defined(__aarch64__)
     hostMachine = 0xAA64;
@@ -400,7 +413,7 @@ std::string peDllPrecheck(const std::string& path, const std::vector<std::string
     hostMachine = 0x8664;
 #endif
   }
-  std::ifstream f(path, std::ios::binary);
+  std::ifstream f(fs::u8path(path), std::ios::binary);
   if (!f) return {};
   f.seekg(0, std::ios::end);
   const std::streamoff size = f.tellg();
@@ -425,52 +438,19 @@ std::string peDllPrecheck(const std::string& path, const std::vector<std::string
   };
   const std::string notDll = "not a plugin (not a Windows DLL)";
   char mz[2];
-  uint32_t peAt = 0, sig = 0, machine = 0, sections = 0, optSize = 0, magic = 0;
+  uint32_t peAt = 0, sig = 0, machine = 0, magic = 0;
   if (!read(0, mz, 2) || mz[0] != 'M' || mz[1] != 'Z' || !u32(0x3C, peAt) || !u32(peAt, sig) || sig != 0x00004550) return notDll;
-  if (!u16(peAt + 4, machine) || !u16(peAt + 6, sections) || !u16(peAt + 20, optSize)) return notDll;
-  const bool host64 = hostMachine != 0x14C;
-  if (host64 && machine == 0x14C) return "a 32-bit plugin (this Gridline loads 64-bit plugins only)";
-  if (!host64 && (machine == 0x8664 || machine == 0xAA64)) return "a 64-bit plugin (this Gridline loads 32-bit plugins only)";
-  const std::streamoff opt = static_cast<std::streamoff>(peAt) + 24;
-  if (!u16(opt, magic) || (magic != 0x10B && magic != 0x20B)) return notDll;
-  // The export directory (data directory 0).
-  const std::streamoff dirs = opt + (magic == 0x20B ? 112 : 96);
-  uint32_t dirCount = 0, expRva = 0, expSize = 0;
-  if (!u32(opt + (magic == 0x20B ? 108 : 92), dirCount) || dirCount < 1 || !u32(dirs, expRva) || !u32(dirs + 4, expSize) || expRva == 0) return {};
-  // Virtual addresses to file offsets through the section table.
-  const std::streamoff table = opt + optSize;
-  auto fileOffset = [&](uint32_t rva, std::streamoff& out) {
-    for (uint32_t i = 0; i < sections && i < 96; ++i) {
-      uint32_t vsize = 0, va = 0, rawSize = 0, raw = 0;
-      const std::streamoff s = table + 40 * static_cast<std::streamoff>(i);
-      if (!u32(s + 8, vsize) || !u32(s + 12, va) || !u32(s + 16, rawSize) || !u32(s + 20, raw)) return false;
-      const uint32_t span = std::max(vsize, rawSize);
-      if (rva >= va && rva - va < span) {
-        out = static_cast<std::streamoff>(raw) + (rva - va);
-        return true;
-      }
-    }
-    return false;
-  };
-  std::streamoff exp = 0;
-  uint32_t names = 0, namesRva = 0;
-  if (!fileOffset(expRva, exp) || !u32(exp + 24, names) || !u32(exp + 32, namesRva) || names == 0) return {};  // packed: the scan decides
-  std::streamoff nameTable = 0;
-  if (!fileOffset(namesRva, nameTable)) return {};
-  for (uint32_t i = 0; i < names && i < 65536; ++i) {
-    uint32_t rva = 0;
-    std::streamoff at = 0;
-    if (!u32(nameTable + 4 * static_cast<std::streamoff>(i), rva) || !fileOffset(rva, at)) return {};
-    char name[64] = {};
-    const std::streamoff n = std::min<std::streamoff>(static_cast<std::streamoff>(sizeof name) - 1, size - at);
-    if (n <= 0 || !read(at, name, static_cast<size_t>(n))) return {};
-    name[sizeof name - 1] = '\0';
-    for (const auto& e : entryPoints)
-      if (e == name) return {};
-  }
-  std::string list;
-  for (const auto& e : entryPoints) list += (list.empty() ? "" : " or ") + e;
-  return "not a plugin (no " + list + " in it)";
+  if (!u16(peAt + 4, machine)) return notDll;
+  if (std::string why = peMachineMismatch(static_cast<uint16_t>(machine), hostMachine); !why.empty()) return why;
+  if (!u16(static_cast<std::streamoff>(peAt) + 24, magic) || (magic != 0x10B && magic != 0x20B)) return notDll;
+  return {};
+}
+
+void scanStep(const std::string& what) {
+  if (progressFile().empty()) return;  // only in the scanner child
+  std::fprintf(stderr, "scan: %s\n", what.c_str());
+  std::fflush(stderr);
+  platform::pumpThreadMessages(0.02);  // K-267: work the plugin posted to this thread (Windows)
 }
 
 int childMain(int argc, char** argv) {
@@ -494,30 +474,47 @@ int childMain(int argc, char** argv) {
   if (!prefsFile.empty() && (!sandbox.empty() || !entry.empty())) loadPluginPrefsFile(prefsFile);
   if (!sandbox.empty()) {
     platform::quietCrashDialogs();
+    platform::initPluginThread();  // K-267: the plugin's thread, as Gridline's own interface thread
     return sandboxChildMain(sandbox);
   }
   if (entry.empty()) return -1;
   platform::quietCrashDialogs();
+  // K-267: plugins load on a thread with OLE (a single-threaded apartment) and a message loop
+  // (scanStep dispatches the thread's waiting messages), as on the interface thread of a host.
+  const bool ole = platform::initPluginThread();
   ScanResult r;
   r.format = format;
   r.bundle = entry;
   if (!out.empty()) progressFile() = scanProgressFile(out);
+  scanStep("start: " + format + " " + entry + (ole ? "" : " (the thread has no OLE)"));
   if (const Format* f = findFormat(format))
     r = f->scanInProcess(entry);
   else
     r.error = "unsupported plugin format " + format;
+  scanStep("described " + std::to_string(r.classes.size()) + " plugins" + (r.error.empty() ? "" : " (" + r.error + ")") + ", writing the result");
   std::string text = jsonStringify(toJson(r), 0);
   if (out.empty()) {
     std::fwrite(text.data(), 1, text.size(), stdout);
     std::fflush(stdout);
   } else {
-    std::ofstream f(out, std::ios::binary);
-    f << text;
-    if (!f) return 3;
+    // K-267: written under another name and renamed: a result file the parent sees is complete, so
+    // it can take it even when the plugin then hangs or crashes while the process ends.
+    const fs::path final = fs::u8path(out), part = fs::u8path(out + ".part");
+    {
+      std::ofstream f(part, std::ios::binary);
+      f << text;
+      f.flush();
+      if (!f) platform::exitNow(3);
+    }
+    std::error_code ec;
+    fs::rename(part, final, ec);
+    if (ec) platform::exitNow(3);
   }
-  // Leave without static destructors or module exit calls (plugins that crash
-  // while unloading must not fail the scan).
-  std::_Exit(r.ok ? 0 : 2);
+  scanStep("result written");
+  // Leave without static destructors or module exit calls. K-267: on Windows also without the DLL
+  // unload notifications a normal exit sends every loaded plugin: plugins that hang or crash while
+  // unloading must not fail the scan.
+  platform::exitNow(r.ok ? 0 : 2);
 }
 
 namespace {
@@ -558,42 +555,96 @@ std::string scanMemoryError(std::uint64_t treeBytes, bool low) {
   return buf;
 }
 
+bool scanRetryable(const ScanReport& r) { return r.outcome == ScanReport::Outcome::TimedOut || r.outcome == ScanReport::Outcome::Crashed; }
+
+ScanTimeouts scanTimeouts(double baseSeconds, int attempt) {
+  ScanTimeouts t;
+  const double base = std::max(0.1, baseSeconds);
+  // The first plugin: loading the module and its first start (licence checks, content unpacked,
+  // databases built) take longer than the next plugin of a shell. A retry (alone) waits twice as long.
+  const double factor = attempt > 0 ? 2.0 : 1.0;
+  t.first = 2 * base * factor;
+  t.each = base * factor;
+  t.longest = std::max(kScanLongestSeconds, t.first);
+  return t;
+}
+
+bool scanTimedOut(const ScanTimeouts& t, double sinceStart, double sinceProgress, int progress) {
+  if (sinceStart > t.longest) return true;
+  return progress > 0 ? sinceProgress > t.each : sinceStart > t.first;
+}
+
+namespace {
+// The last lines of a child's stderr file (its steps), at most `maxBytes`.
+std::string tailOf(const fs::path& file, size_t maxBytes) {
+  std::ifstream f(file, std::ios::binary);
+  if (!f) return {};
+  f.seekg(0, std::ios::end);
+  const std::streamoff size = f.tellg();
+  const std::streamoff from = std::max<std::streamoff>(0, size - static_cast<std::streamoff>(maxBytes));
+  f.seekg(from);
+  std::string s(static_cast<size_t>(size - from), '\0');
+  f.read(s.data(), static_cast<std::streamsize>(s.size()));
+  s.resize(static_cast<size_t>(f.gcount()));
+  if (from > 0)
+    if (const size_t nl = s.find('\n'); nl != std::string::npos) s.erase(0, nl + 1);  // whole lines only
+  while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) s.pop_back();
+  return s;
+}
+}  // namespace
+
 ScanResult scanIsolated(const std::string& exe, const std::string& format, const std::string& entry, double timeoutSeconds,
-                        const std::atomic<bool>* cancel) {
+                        const std::atomic<bool>* cancel, ScanReport* report, int attempt) {
+  ScanReport rep;
   ScanResult r;
   r.format = format;
   r.bundle = entry;
   const Format* fmt = findFormat(format);
   r.mtime = fmt ? fmt->mtime(entry) : 0;
-  // K-73: what is plainly not a plugin for this computer (a 32-bit DLL in a 64-bit Gridline, a DLL
-  // without a plugin entry point) is told without loading it in a child.
+  auto done = [&](ScanResult res, ScanReport::Outcome o) {
+    rep.outcome = o;
+    if (report) *report = rep;
+    return res;
+  };
+  // K-73: what is plainly not a plugin for this computer (a 32-bit DLL in a 64-bit Gridline) is told
+  // without loading it in a child.
   if (fmt && fmt->precheck) {
     if (std::string why = fmt->precheck(entry); !why.empty()) {
       r.error = why;
-      return r;
+      return done(std::move(r), ScanReport::Outcome::NotForThisComputer);
     }
   }
   static std::atomic<int> serial{0};
-  fs::path tmp = fs::temp_directory_path() / ("gridline-plugin-scan-" + std::to_string(platform::processId()) + "-" + std::to_string(serial++) + ".json");
-  const fs::path progress = scanProgressFile(tmp.string());
-  std::vector<std::string> args = {exe, "--scan-plugin", format, entry, "--out", tmp.string()};
+  // K-267: paths are UTF-8 everywhere (a user folder with letters outside the system's code page).
+  const fs::path tmp = fs::temp_directory_path() / fs::u8path("gridline-plugin-scan-" + std::to_string(platform::processId()) + "-" +
+                                                              std::to_string(serial++) + ".json");
+  const std::string tmpName = tmp.u8string();
+  const fs::path progress = fs::u8path(scanProgressFile(tmpName)), part = fs::u8path(tmpName + ".part"), errLog = fs::u8path(tmpName + ".log");
+  std::vector<std::string> args = {exe, "--scan-plugin", format, entry, "--out", tmpName};
   if (const std::string pf = pluginPrefsFile(); !pf.empty()) args.insert(args.end(), {"--plugin-prefs", pf});  // K-13
   // K-154: the child and whatever it starts (a bridge's host process) form one group / job: its
   // memory is watched as one, and it is ended as one.
   const std::uint64_t physical = platform::physicalMemoryBytes();
   const std::uint64_t cap = scanMemoryCap(physical);
   platform::Process child;
-  child.setTreeMemoryLimit(cap + cap / 4);  // Windows: a hard stop past the watched cap
-  if (!child.start(exe, args, platform::Process::kTree)) {
-    r.error = "cannot start the scanner process";
-    return r;
-  }
+  // Windows: a hard stop well past the watched cap. K-267: it counts committed memory, which plugins
+  // reserve far beyond what they use (sample streaming, graphics drivers); a failed allocation crashes
+  // the plugin, which looked like a broken plugin. The watched cap below stops a runaway plugin first.
+  child.setTreeMemoryLimit(2 * cap);
+  child.redirectOutput({}, errLog.u8string());  // K-267: the child's steps, kept for the scan log
+  const auto t0 = std::chrono::steady_clock::now();
   auto cleanUp = [&] {
     child.killTree();  // helpers the plugin left running
+    rep.childLog = tailOf(errLog, 2048);
     std::error_code ec;
-    fs::remove(tmp, ec);
-    fs::remove(progress, ec);
+    for (const fs::path& p : {tmp, progress, part, errLog}) fs::remove(p, ec);
+    rep.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
   };
+  if (!child.start(exe, args, platform::Process::kTree)) {
+    r.error = "cannot start the scanner process";
+    cleanUp();
+    return done(std::move(r), ScanReport::Outcome::Failed);
+  }
   // K-73: a killed child that does not end soon after (stuck in a driver) is left behind: a scan
   // never waits for it for good.
   auto stop = [&] {
@@ -603,17 +654,18 @@ ScanResult scanIsolated(const std::string& exe, const std::string& format, const
   auto lastMemoryLook = std::chrono::steady_clock::time_point{};
   std::uint64_t memoryUsed = 0;
   bool tooMuchMemory = false, lowMemory = false;
-  // Waited for in short steps so a quit (cancel) does not wait for a slow plugin. K-73: the timeout
-  // counts from the child's last sign of progress (a shell of hundreds of plugins takes minutes, each
-  // of them quick), and kScanLongestSeconds at most in all.
+  // Waited for in short steps so a quit (cancel) does not wait for a slow plugin. K-73 / K-267: the
+  // timeouts count per plugin (scanTimeouts): the first plugin may take longer than the next one of
+  // a shell, which shows its progress plugin by plugin.
   using Clock = std::chrono::steady_clock;
-  const auto t0 = Clock::now();
+  const ScanTimeouts limits = scanTimeouts(timeoutSeconds, attempt);
   auto lastProgress = t0, lastLook = t0;
   std::uintmax_t progressSize = 0;
-  bool done = false, cancelled = false;
+  bool exited = false, cancelled = false, timedOut = false, resultFirst = false;
+  Clock::time_point resultSeen{};
   for (;;) {
     const auto now = Clock::now();
-    if (timeoutSeconds >= 0 && now - lastLook >= std::chrono::milliseconds(250)) {
+    if (now - lastLook >= std::chrono::milliseconds(250)) {
       lastLook = now;
       std::error_code ec;
       const std::uintmax_t n = fs::file_size(progress, ec);
@@ -621,12 +673,19 @@ ScanResult scanIsolated(const std::string& exe, const std::string& format, const
         progressSize = n;
         lastProgress = now;
       }
+      // K-267: the complete result is there (written, then renamed) while the child still runs: the
+      // plugin hangs on its way out (unloading). Given a moment to end, then ended; the result counts.
+      if (!resultFirst && fs::exists(tmp, ec)) {
+        resultFirst = true;
+        resultSeen = now;
+      }
     }
     // K-154: four looks a second at the tree's memory (a runaway plugin can take a gigabyte a second;
     // a look reads each process's status once, a few milliseconds at most).
     if (now - lastMemoryLook >= std::chrono::milliseconds(250)) {
       lastMemoryLook = now;
       memoryUsed = child.treeMemoryBytes();
+      rep.peakMemory = std::max(rep.peakMemory, memoryUsed);
       if (memoryUsed > cap) {
         tooMuchMemory = true;
         break;
@@ -636,31 +695,41 @@ ScanResult scanIsolated(const std::string& exe, const std::string& format, const
         break;
       }
     }
-    double left = timeoutSeconds < 0 ? 1.0 : timeoutSeconds - std::chrono::duration<double>(now - lastProgress).count();
-    if (timeoutSeconds >= 0 && std::chrono::duration<double>(now - t0).count() > std::max(timeoutSeconds, kScanLongestSeconds)) left = 0;
-    if ((done = child.wait(std::clamp(left, 0.0, 0.05))) || left <= 0) break;
+    if ((exited = child.wait(0.05))) break;
+    if (resultFirst && now - resultSeen > std::chrono::seconds(3)) break;
+    if (timeoutSeconds >= 0) {
+      const double sinceStart = std::chrono::duration<double>(now - t0).count();
+      const double sinceProgress = std::chrono::duration<double>(now - lastProgress).count();
+      if (scanTimedOut(limits, sinceStart, sinceProgress, static_cast<int>(progressSize))) {
+        timedOut = true;
+        break;
+      }
+    }
     if (cancel && cancel->load()) {
       cancelled = true;
       break;
     }
   }
+  rep.progress = static_cast<int>(progressSize);
   if (cancelled) {
     stop();
     r.error = "cancelled";
     cleanUp();
-    return r;
+    return done(std::move(r), ScanReport::Outcome::Cancelled);
   }
   if (tooMuchMemory) {
     stop();
+    rep.exit = "stopped by Gridline";
     r.error = lowMemory ? scanMemoryError(memoryUsed, true) : scanMemoryError(cap, false);
     cleanUp();
-    return r;
+    return done(std::move(r), ScanReport::Outcome::TooMuchMemory);
   }
-  if (!done) {
+  if (!exited) {
     stop();
-    r.error = progressSize > 0 ? "timed out while loading (after " + std::to_string(progressSize) + " plugins)" : "timed out while loading";
-    cleanUp();
-    return r;
+    rep.exit = "stopped by Gridline";
+    if (resultFirst) rep.note = "the result was written, then the plugin did not let the process end (ended by Gridline)";
+  } else {
+    rep.exit = child.status().describe();
   }
   std::string text;
   bool tooLarge = false;
@@ -669,36 +738,46 @@ ScanResult scanIsolated(const std::string& exe, const std::string& format, const
     const std::uintmax_t size = fs::file_size(tmp, ec);
     if (!ec && size > kScanResultMaxBytes) {
       tooLarge = true;  // K-154: never read into memory
-    } else {
+    } else if (!ec) {
       std::ifstream f(tmp, std::ios::binary);
       std::stringstream ss;
       ss << f.rdbuf();
       text = ss.str();
     }
   }
+  const bool limitHit = child.treeMemoryLimitHit();
   cleanUp();
-  if (child.treeMemoryLimitHit()) {  // K-154: Windows: the job's limit stopped it
-    r.error = scanMemoryError(cap, false);
-    return r;
-  }
   if (tooLarge) {
     r.error = "described itself at a size no plugin has (the scan result was too large)";
-    return r;
-  }
-  if (child.status().crashed) {
-    r.error = "crashed while loading (" + child.status().describe().substr(9);
-    return r;
+    return done(std::move(r), ScanReport::Outcome::Failed);
   }
   Json j;
   ScanResult parsed;
-  if (text.empty() || !jsonParse(text, j) || !fromJson(j, parsed)) {
-    r.error = "scanner exited with code " + std::to_string(child.status().code);
-    return r;
+  const bool haveResult = !text.empty() && jsonParse(text, j) && fromJson(j, parsed);
+  // K-267: a complete result counts however the child then ended: a plugin that crashes or hangs while
+  // its process ends (Windows sends every loaded DLL an unload notification) still loaded and was described.
+  if (haveResult) {
+    if (exited && child.status().crashed) rep.note = "the result was written, then the process " + child.status().describe();
+    parsed.format = format;
+    parsed.bundle = entry;
+    parsed.mtime = r.mtime;
+    const ScanReport::Outcome o = parsed.ok ? ScanReport::Outcome::Listed : ScanReport::Outcome::Failed;
+    return done(std::move(parsed), o);
   }
-  parsed.format = format;
-  parsed.bundle = entry;
-  parsed.mtime = r.mtime;
-  return parsed;
+  if (limitHit) {  // K-154: Windows: the job's limit stopped it
+    r.error = scanMemoryError(2 * cap, false);
+    return done(std::move(r), ScanReport::Outcome::TooMuchMemory);
+  }
+  if (!exited || timedOut) {
+    r.error = progressSize > 0 ? "timed out while loading (after " + std::to_string(progressSize) + " plugins)" : "timed out while loading";
+    return done(std::move(r), ScanReport::Outcome::TimedOut);
+  }
+  if (child.status().crashed) {
+    r.error = "crashed while loading (" + child.status().describe().substr(9);
+    return done(std::move(r), ScanReport::Outcome::Crashed);
+  }
+  r.error = "scanner exited with code " + std::to_string(child.status().code);
+  return done(std::move(r), ScanReport::Outcome::Failed);
 }
 
 // ---------------------------------------------------------------- cache

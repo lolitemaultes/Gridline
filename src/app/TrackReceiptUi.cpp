@@ -1,5 +1,6 @@
 // Gridline - J-219: the Track Receipt window (see TrackReceiptUi.h).
 #include "TrackReceiptUi.h"
+#include "LayoutShellUi.h"
 #include "Keys.h"
 #include <algorithm>
 #include <atomic>
@@ -658,6 +659,8 @@ void open(App& a) {
   rebuild(a);
 }
 
+void close() { S().open = false; }
+
 void draw(App& a) {
   finish(a);
   if (J().running.load()) workerstall::watch(a, J().watch, J().beat, "Track Receipt", "");
@@ -688,7 +691,8 @@ void draw(App& a) {
   if (s.focus) ImGui::SetNextWindowFocus(), s.focus = false;
   bool open = true;
   const std::string title = std::string(i18n::tr("Track Receipt")) + "###trackreceipt";
-  const bool vis = ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking);
+  const bool vis = ImGui::Begin(title.c_str(), &open,  // K-112: docked in its region in a layout
+                                layoutui::dockFlags(title.c_str(), ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking));
   ui::TrackWindowInViewport();
   if (vis) {
     {  // steps

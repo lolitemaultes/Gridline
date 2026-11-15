@@ -672,7 +672,8 @@ bool optionSwitch(App& a, const char* id, const char* label, const char* hint, b
   const auto& P = pal();
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const ImVec2 o = ImGui::GetCursorScreenPos();
-  const float sw = 30, sh = 16, rowH = 38;
+  const bool field = ui::toggleFields();  // K-112 (Live): an On / Off field, as the settings refs draw a switch
+  const float sw = field ? ui::kToggleFieldW : 30, sh = field ? 20 : 16, rowH = 38;
   const char* lt = i18n::tr(label);
   const char* ht = i18n::tr(hint);
   const float textW = std::max(a.fontRegular->CalcTextSizeA(theme::kFontBody, FLT_MAX, 0, lt).x, a.fontRegular->CalcTextSizeA(theme::kFontCaption, FLT_MAX, 0, ht).x);
@@ -685,11 +686,15 @@ bool optionSwitch(App& a, const char* id, const char* label, const char* hint, b
   ImGui::PopID();
   if (clicked) *on = !*on;
   gOpt[std::string(id) == "keys" ? 0 : 1] = {ImGui::GetFrameCount(), o, ImVec2(o.x + w, o.y + rowH), *on};
-  const ImVec2 s0(o.x, std::round(o.y + 3)), s1(s0.x + sw, s0.y + sh);
-  dl->AddRectFilled(s0, s1, theme::mix(theme::mix(P.field, P.surface700, 0.4f * h), P.accent, t), sh * 0.5f);
-  if (t < 1) dl->AddRect(s0, s1, theme::withAlpha(P.lineStrong, 1.0f - t), sh * 0.5f);
-  const float kx = s0.x + sh * 0.5f + (sw - sh) * t;
-  dl->AddCircleFilled(ImVec2(kx, s0.y + sh * 0.5f), sh * 0.5f - 2.5f, theme::mix(P.textDim, P.paper, std::max(t, P.dark ? 0.0f : 0.6f)), 16);
+  const ImVec2 s0(o.x, std::round(o.y + (field ? 1 : 3))), s1(s0.x + sw, s0.y + sh);
+  if (field) {
+    ui::drawToggleField(dl, s0, s1, *on ? 1 : 0, hov, hov && ImGui::IsMouseDown(ImGuiMouseButton_Left));
+  } else {
+    dl->AddRectFilled(s0, s1, theme::mix(theme::mix(P.field, P.surface700, 0.4f * h), P.accent, t), sh * 0.5f);
+    if (t < 1) dl->AddRect(s0, s1, theme::withAlpha(P.lineStrong, 1.0f - t), sh * 0.5f);
+    const float kx = s0.x + sh * 0.5f + (sw - sh) * t;
+    dl->AddCircleFilled(ImVec2(kx, s0.y + sh * 0.5f), sh * 0.5f - 2.5f, theme::mix(P.textDim, P.paper, std::max(t, P.dark ? 0.0f : 0.6f)), 16);
+  }
   const float tx = s1.x + 12;
   theme::textEllipsis(dl, a.fontRegular, theme::kFontBody, ImVec2(tx, std::round(o.y + 2)), o.x + w - tx, P.text, lt);
   theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption, ImVec2(tx, std::round(o.y + 21)), o.x + w - tx, P.textFaint, ht);

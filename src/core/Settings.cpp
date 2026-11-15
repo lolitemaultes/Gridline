@@ -55,6 +55,7 @@ Settings::Settings() {
       {"freeze.autoHibernate", b(false)},
       {"freeze.sleepSeconds", Json::makeNumber(30)},
       {"freeze.zipLeaveOut", b(false)},
+      {"freeze.restSilent", b(true)},  // K-277: silent instruments rest (Options > Rest silent instruments)
       {"audio.threads", Json::makeNumber(0)},  // mixer processing threads (0 = automatic)
       // Audio input & recording (J-8).
       {"audio.inputDevice", Json::makeString("")},     // "" = none, "*" = system default
@@ -76,6 +77,18 @@ Settings::Settings() {
       {"record.ignoreSilent", b(false)},               // takes quieter than -60 dBFS are not kept
       {"record.naming", Json::makeNumber(0)},          // clip names: 0 insert name, 1 input name
       {"record.nameTracks", b(true)},                  // name empty playlist tracks after the take
+      // K-226: the record options, kept between runs (loadRecordOptions / saveRecordOptions).
+      {"record.midi.overdub", b(true)},                // notes: merge (off: replace what a pass plays over)
+      {"record.midi.quantize", b(true)},               // note starts snap to the piano roll grid
+      {"record.midi.quantizeLength", b(false)},        // note lengths snap too
+      {"record.midi.takes", b(false)},                 // loop recording: a new take per pass
+      {"record.midi.notes", b(true)},                  // what records: notes
+      {"record.midi.automation", b(true)},             // what records: linked controller moves
+      {"record.midi.autoTarget", Json::makeNumber(0)}, // controller moves into: 0 automatic, 1 pattern events, 2 automation clips
+      {"record.countInBars", Json::makeNumber(0)},     // count-in before recording: 0 (off), 1, 2 or 4 bars
+      {"record.punch", b(true)},                       // punch in and out at the playlist time selection
+      {"record.audio", b(true)},                       // what records: audio into the playlist (armed tracks)
+      {"record.audioEditor", b(false)},                // what records: audio into the audio editor
       {"logger.enabled", b(false)},                    // audio logger keeps the last minutes
       {"logger.minutes", Json::makeNumber(2)},         // 1 / 2 / 5 / 10
       {"logger.source", Json::makeNumber(0)},          // AudioLogger::Source: 0 armed inputs, 1 master
@@ -104,6 +117,13 @@ Settings::Settings() {
       {"loupe.autoScroll", b(true)},         // Loupe follows the playhead while it plays (its own toggle sets it)
       {"ui.animations", b(true)},            // J-91: decorative interface animations (metronome tick, light fades, glides)
       {"ui.showHints", b(true)},
+      {"ui.cbar.nav", b(true)},     // K-112b: the Tracks layout control bar parts shown (customise menu)
+      {"ui.cbar.cycle", b(true)},
+      {"ui.cbar.countIn", b(true)},
+      {"ui.cbar.click", b(true)},
+      {"ui.cbar.typing", b(true)},
+      {"ui.cbar.master", b(true)},
+      {"ui.lcdMode", Json::makeNumber(0)},     // K-112b: the Tracks layout display (0 beats and project, 1 custom)
       {"ui.timeFormat", Json::makeNumber(0)},  // J-27, K-168: the song position shows ops::TimeFormat (0 bars, 1 minutes, 2 timecode)
       {"ui.timeSteps", b(false)},              // J-27, K-168: bars : steps : ticks instead of beats
       {"ui.smpteRate", Json::makeNumber(1)},   // J-27, K-168: the timecode's frame rate, an index of ops::smpteRates (24 fps)
@@ -141,16 +161,42 @@ Settings::Settings() {
       {"ui.stage.roomsWidth", Json::makeNumber(264)},  // K-270: the rooms column's width (px); under 150 the slim rail
       {"ui.mix.roomFilter", Json::makeNumber(0)},   // K-224: the Mix view shows 0 every track, 1 the Stage's shown room only
       {"ui.playlistTrackHeight", Json::makeNumber(46)},  // K-24: the playlist's vertical zoom (base track height, px; 24 .. 120)
+      // K-112b: whether that height is one the person chose; until then each layout's own default
+      // applies (the Tracks layout's rows are lower). Not shown in Settings.
+      {"ui.playlistTrackHeightSet", b(false)},
       {"ui.playlistTrackPlus", b(true)},  // K-12: the "+" on a hovered playlist track header (View menu)
       {"ui.trackPlusPattern", b(true)},   // K-12: an instrument given to an empty track from the "+" starts a pattern
       {"ui.layoutVersion", Json::makeNumber(0)},  // J-28: default workspace version the saved layout.ini was built with
       // K-79: window layout presets (core/LayoutPreset.h): "studio" | "live" | "logic". Per user, never in a project.
       {"ui.layout", Json::makeString("studio")},
       {"ui.layoutChosen", b(false)},                 // the welcome screen has offered the choice once
+      {"ui.logicToolbar", b(false)},                 // K-112b: the Logic layout shows the tracks area toolbar (its TB switch)
+      {"ui.logicMixerDetail", b(false)},             // K-112b: the Logic layout shows the detailed mixer instead of its strips
+      {"ui.logicPluginLink", Json::makeNumber(0)},   // K-112b: plugin windows: 0 off, 1 single window, 2 follow the selected strip
+      {"ui.logicControlsTypes", Json::makeString("")},  // K-112b: plugin types whose window shows the parameter list (one per line)
+      {"ui.logicPluginHeaderCompact", b(false)},     // K-112b: the plugin header's second row folded away
       {"ui.layoutLinkKeys", b(true)},                // choosing a layout also switches the shortcut set ...
       {"ui.layoutLinkMenus", b(true)},               // ... and the menu bar style (never the theme or colours, K-122)
       {"ui.layoutVersion.live", Json::makeNumber(0)},  // like ui.layoutVersion, per preset layout file
       {"ui.layoutVersion.logic", Json::makeNumber(0)},
+      {"ui.layoutVersion.tracker", Json::makeNumber(0)},
+      {"ui.layoutVersion.live.shell", Json::makeNumber(0)},   // K-112: the region shell's own layout file
+      {"ui.layoutVersion.logic.shell", Json::makeNumber(0)},
+      // K-112b: the Tracks layout's library and right pane start closed; set once a person who had
+      // them open by the old default has had that kept as their own choice.
+      {"layout.logic.panesKept", b(false)},
+      {"ui.layoutDev", b(false)},  // K-112: development layouts (Tracker, region shells) before their phase ships
+      {"ui.systemMenuBar", b(true)},
+      // K-112: installed plugins' windows in the Live layout (HostedUi.h PluginWindowPolicy).
+      {"live.pluginWindowsOnLoad", b(true)},        // a plugin put on a track opens its window
+      {"live.pluginWindowsSeveral", b(true)},       // several plugin windows at once
+      {"live.pluginWindowsSelectedOnly", b(true)},  // only the selected track's plugin windows show  // K-112: layouts with a menu row put their menus in the system menu bar (macOS, Linux global menu)
+      // K-112: what each layout's dock file cannot hold (core/LayoutShell.h: hidden regions, group members
+      // shown, member sizes), a small JSON object per layout. Per person, never in a project.
+      {"layout.studio.state", Json::makeString("")},
+      {"layout.live.state", Json::makeString("")},
+      {"layout.logic.state", Json::makeString("")},
+      {"layout.tracker.state", Json::makeString("")},
       {"ui.layout.live.view", Json::makeString("playlist")},  // main view in front: "playlist" | "pads"
       {"ui.menuStyle", Json::makeString("studio")},
       {"keys.profile", Json::makeString("studio")},

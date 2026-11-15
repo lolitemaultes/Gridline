@@ -7,15 +7,15 @@ item, every window, every setting and every plugin. Open it, type a few letters,
 
 | Shortcut set | Opens the palette |
 |---|---|
-| Studio, Live | Ctrl+K (Cmd+K on macOS), or Ctrl+Shift+P |
-| Logic | Ctrl+Shift+P (Cmd+Shift+P on macOS) |
+| Studio, Clips | Ctrl+K (Cmd+K on macOS), or Ctrl+Shift+P |
+| Smooth | Ctrl+Shift+P (Cmd+Shift+P on macOS) |
 
 It is also the first item of the **View** menu, and it can be given any other key in
 Settings > Shortcuts ("Command palette").
 
 - In the channel rack, Ctrl+K stays the rack's own shortcut for the graph editor (a window's own
   shortcut wins while that window has the focus), so use Ctrl+Shift+P there.
-- The Logic set uses Ctrl+K (Cmd+K) for the typing keyboard, so in that set the palette keeps only
+- The Smooth set uses Ctrl+K (Cmd+K) for the typing keyboard, so in that set the palette keeps only
   Ctrl+Shift+P.
 - If you give Ctrl+K to another command yourself, that command gets it and the palette keeps
   Ctrl+Shift+P.

@@ -133,6 +133,12 @@ struct HoverPlan {
 const HoverPlan* hoverPlan(browse::DropTarget target);
 // Adds a folder to the browser's user folders (and indexes it).
 void addBrowserFolder(App& a, const std::string& dir);
+// K-112b: the plugin database as a list of its own (the Logic layout's Library): favourites,
+// instruments, audio and note effects by category, installed plugins; `filter` lists the matches.
+// Draw it inside a child window (its rows are the browser's: drag, double-click, star, menu).
+void drawLibrary(App& a, const std::string& filter);
+// K-112b: the Library's sounds (factory presets of the built-in instruments, by kind of sound).
+void drawSounds(App& a, const std::string& filter);
 // Browser window drop zone (folders); call inside the browser window.
 void browserDropTarget(App& a);
 

@@ -31,7 +31,10 @@ struct ParamId {
 //   mixer track  MixerParam, then slot params at kSlotBase + slot*kSlotStride + k,
 //                slot mix at kSlotBase + slot*kSlotStride + kSlotMix
 enum class SongParam : uint32_t { Tempo = 0, Swing, MasterPitch, Count };
-enum class ChannelParam : uint32_t { Volume = 0, Pan, Mute, Pitch, Count };
+// Sustain: the channel's sustain pedal (CC 64), down at 1. Recorded from a keyboard's pedal and
+// automatable: the instrument gets CC 64 when it moves, and while it is down Gridline holds the
+// channel's note-offs (Settings > MIDI > Pedals > Sustain holds notes).
+enum class ChannelParam : uint32_t { Volume = 0, Pan, Mute, Pitch, Sustain, Count };
 enum class MixerParam : uint32_t {
   Volume = 0, Pan, StereoSep, Mute,
   // Strip EQ (MixerTrack::eqGain / eqFreq / eqQ), bands low · mid · high.

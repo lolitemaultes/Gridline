@@ -25,7 +25,11 @@ function(run tag frames script)
   set(ENV{GRIDLINE_CONFIG_HOME} "${OUT}/cfg_${tag}")
   set(ENV{HOME} "${OUT}/cfg_${tag}")
   file(WRITE "${OUT}/${tag}.txt" "${script}")
-  execute_process(COMMAND "${APP}" "${OUT}/fixture.gridline.json" --hidden --no-ui-sounds --fixed-dt 16 --size 1440x900 ${ARGN}
+  # --video-clock: the song moves on by exactly one 60 Hz frame of samples a frame (no audio device),
+  # so where playback is at a given script frame never depends on how fast the machine draws. (With a
+  # real-time device a slow runner played past the 64-step pattern's end and back to its first page
+  # before the rack's check frame: "rack follow 0 -> 0".)
+  execute_process(COMMAND "${APP}" "${OUT}/fixture.gridline.json" --hidden --no-ui-sounds --video-clock 60 --size 1440x900 ${ARGN}
                           --frames ${frames} --screenshot "${OUT}/${tag}.ppm" --dev-input "${OUT}/${tag}.txt"
                   RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 120)
   if(NOT rc EQUAL 0)

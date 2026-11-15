@@ -102,8 +102,8 @@ expectMatch(settings "${SET_settings}" "\"ui.layout\": \"live\"" "ui.layout save
 run(menu "12 quit discard\n" "${DEMO}" --menu layouts)
 string(REGEX MATCH "MENUDUMP BEGIN layouts\n([^\n]*\n)*MENUDUMP END" dump "${OUT_menu}")
 expectMatch(menu "${dump}" "Studio" "the menu lists Studio")
-expectMatch(menu "${dump}" "Live[^\n]*Preview" "Live, marked as a preview")
-expectMatch(menu "${dump}" "Logic[^\n]*Preview" "Logic, marked as a preview")
+expectMatch(menu "${dump}" "Clips[^\n]*Preview" "Clips (saved as live), marked as a preview")
+expectMatch(menu "${dump}" "Smooth[^\n]*Preview" "Smooth (saved as logic), marked as a preview")
 expectMatch(menu "${dump}" "Layout settings" "and the settings item")
 
 message(STATUS "k130_layout_chooser_app: OK")

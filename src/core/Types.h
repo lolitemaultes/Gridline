@@ -213,6 +213,12 @@ struct Clip {
   // K-85: warp markers (core/TimeWarp.h): audio clips only; sections between
   // markers play at their own speed, pitch kept. Empty: not warped.
   std::vector<WarpMarker> warp;
+  // K-112b3: playback of a pattern clip's notes, applied as it plays (the pattern stays as written).
+  // All 0: plays as written (and nothing is saved). See core/ClipPlayback.h.
+  int playTranspose = 0;   // semitones, -48 .. 48
+  int playVelocity = 0;    // added to each note's velocity, MIDI steps -127 .. 127
+  Tick playDelay = 0;      // ticks, earlier (< 0) or later (> 0)
+  Tick playQuantize = 0;   // ticks of the grid the notes' starts snap to (0 = off)
 
   bool operator==(const Clip& o) const {
     return id == o.id && pattern == o.pattern && track == o.track && start == o.start && length == o.length &&
@@ -224,7 +230,8 @@ struct Clip {
            take == o.take && launched == o.launched && group == o.group && fadeInShape == o.fadeInShape &&
            fadeOutShape == o.fadeOutShape && fadeInTension == o.fadeInTension && fadeOutTension == o.fadeOutTension &&
            fadeInManual == o.fadeInManual && fadeOutManual == o.fadeOutManual &&
-           fadeInDeclick == o.fadeInDeclick && fadeOutDeclick == o.fadeOutDeclick && warp == o.warp;
+           fadeInDeclick == o.fadeInDeclick && fadeOutDeclick == o.fadeOutDeclick && warp == o.warp &&
+           playTranspose == o.playTranspose && playVelocity == o.playVelocity && playDelay == o.playDelay && playQuantize == o.playQuantize;
   }
 };
 

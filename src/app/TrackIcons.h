@@ -1,6 +1,7 @@
 // Gridline — track icons on screen (mixer tracks, playlist tracks, channels):
 // the set itself (ids, names, categories, FL numbers) is core/TrackIconSet.h.
 #pragma once
+#include <string>
 #include "../../third_party/imgui/imgui.h"
 
 namespace gl::trackicons {
@@ -13,6 +14,10 @@ const char* name(int icon);
 void draw(ImDrawList* dl, int icon, ImVec2 c, float box, ImU32 col);
 // The box to use for an icon in a row `rowH` px tall (never larger than `maxBox`).
 float boxFor(float rowH, float maxBox = 16.0f);
+// K-112b: an icon for something named `name` that has none of its own: the first whose name (then
+// whose search words) holds a word of it, else the icon called `fallback` ("Synth", "Audio", ...;
+// 0 when that is missing too). Remembered per name.
+int guess(const std::string& name, const char* fallback);
 // Categorised icon picker (search field, category list, icon grid) inside a
 // menu or popup; returns true and sets *out (0 = none) when one is picked.
 bool picker(int current, int* out);

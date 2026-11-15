@@ -198,6 +198,26 @@ class Document {
   // K-141: called after every undo / redo step taken (-1 / +1) with the index of the step it
   // moved over (the interface restores the selection kept with it).
   std::function<void(int dir, size_t index)> onHistoryMove;
+  // K-112: called when the person at this computer puts one plugin on a channel (owner, slot -1)
+  // or a mixer slot (owner, slot) by hand: addChannel, setChannelPlugin, and setSlotPlugin with a
+  // plugin type. Inside a group it is called when the outermost group ends, and only when the
+  // whole action put exactly one plugin on a track (an action that adds several at once, such as
+  // a drum kit, calls nothing); a slot moved meanwhile is followed (a copy moved into place). Not
+  // called while a QuietPlacements scope is alive (scripts, AI tools, drum kits), for undo or redo
+  // (they replay the recorded steps), nor for a collaborator's edits (they arrive through
+  // patchSong and replaceSong). The Live layout opens an installed plugin's window from it.
+  std::function<void(ObjectId owner, int slot, const std::string& type)> onPluginPlaced;
+  // Placements made while one of these lives are never reported (scripts, AI tools, drum kits).
+  class QuietPlacements {
+   public:
+    explicit QuietPlacements(Document& d) : d_(d) { ++d_.quietPlacements_; }
+    ~QuietPlacements() { --d_.quietPlacements_; }
+    QuietPlacements(const QuietPlacements&) = delete;
+    QuietPlacements& operator=(const QuietPlacements&) = delete;
+
+   private:
+    Document& d_;
+  };
 
   // --- collaboration (J-111) -------------------------------------------------
   // While a collaboration session is attached: `historyHook(-1 / +1)` replaces
@@ -248,6 +268,17 @@ class Document {
   Song song_;
   UndoStack undo_;
   std::vector<std::unique_ptr<GroupCommand>> groups_;
+  // K-112: plugins put on a track in the open group (onPluginPlaced), told when it ends.
+  struct Placement {
+    ObjectId owner = kNoId;
+    int slot = -1;
+    std::string type;
+    bool quiet = false;  // made in a QuietPlacements scope (or a cancelled group)
+  };
+  std::vector<Placement> placed_;
+  int quietPlacements_ = 0;
+  void notePlaced(ObjectId owner, int slot, const std::string& type);
+  void flushPlaced();
   uint64_t savedSerial_ = 0;
   uint64_t revision_ = 0;
   uint64_t tempoMapBuilds_ = 0;

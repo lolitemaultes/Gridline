@@ -2,6 +2,7 @@
 #include "../engine/TimeStretch.h"
 #include "../core/I18n.h"
 #include "J31Ui.h"
+#include "LiveLook.h"
 #include "LiveTakes.h"
 #include "AudioRecordUi.h"
 #include "AsioUi.h"
@@ -672,7 +673,7 @@ void audioInputSettings(App& a, float fieldW) {
   label("Recording offset");
   {
     const int autoLat = a.audioInputLatency + a.engine.outputLatency();
-    ImGui::PushFont(a.fontMono, theme::kFontNumber + 1);
+    ImGui::PushFont(livelook::numFont(a), theme::kFontNumber + 1);
     ImGui::Text(i18n::tr("%d smp (%.1f ms) auto"), autoLat, 1000.0 * autoLat / sr);
     ImGui::PopFont();
     ui::Hint("Input + output buffers and plugin delay compensation: recorded audio is moved this much earlier");
@@ -690,7 +691,7 @@ void audioInputSettings(App& a, float fieldW) {
   ImGui::SameLine(0, theme::kS1);
   if (ui::TextButton("16-bit", bits == 16)) st.set("audio.recordBits", 16);
   label("Recorded files");
-  ImGui::PushFont(a.fontMono, theme::kFontLabel + 1);
+  ImGui::PushFont(livelook::numFont(a), theme::kFontLabel + 1);
   ImGui::TextColored(theme::vec(P.textDim), "%s", recordedDir(a).c_str());
   ImGui::PopFont();
   if (!a.audioInputStatus.empty()) {

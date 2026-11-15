@@ -1,0 +1,1278 @@
+studio	file.new	0	Ctrl+N;
+studio	file.open	0	Ctrl+O;
+studio	file.save	0	Ctrl+S;
+studio	file.saveAs	0	Ctrl+Shift+S;
+studio	file.saveNewVersion	0	Ctrl+Alt+S;
+studio	file.render	0	Ctrl+R;
+studio	file.renderStems	0	Ctrl+Shift+R;
+studio	file.exportMidi	0	Ctrl+Shift+M;
+studio	file.importUrl	0	Ctrl+Shift+U;
+studio	file.projectInfo	0	F11;
+studio	file.quit	0	Ctrl+Q;
+studio	edit.undo	0	Ctrl+Z;
+studio	edit.redo	0	Ctrl+Y;Ctrl+Shift+Z;
+studio	edit.history	0	Alt+Z;Ctrl+Alt+Z;
+studio	edit.rename	0	F2;
+studio	transport.play	0	Space;
+studio	transport.songMode	0	L;
+studio	transport.tapTempo	0	Ctrl+Shift+T;
+studio	options.typingKeyboard	0	Ctrl+T;
+studio	options.metronome	0	Ctrl+M;
+studio	tools.stopSound	0	Ctrl+H;
+studio	transport.record	0	Ctrl+Alt+Shift+R;
+studio	transport.toStart	0	Ctrl+Alt+Shift+Home;
+studio	transport.rewindBar	0	Ctrl+Alt+Shift+Left;
+studio	transport.forwardBar	0	Ctrl+Alt+Shift+Right;
+studio	options.countIn	0	Ctrl+Alt+Shift+K;
+studio	pattern.new	0	F4;
+studio	pattern.findFirstEmpty	0	Shift+F4;
+studio	pattern.findNextEmpty	0	Ctrl+F4;
+studio	pattern.clone	0	Ctrl+Shift+C;
+studio	pattern.insert	0	Ctrl+Shift+Ins;
+studio	pattern.delete	0	Ctrl+Shift+Del;
+studio	pattern.moveUp	0	Ctrl+Shift+Up;
+studio	pattern.moveDown	0	Ctrl+Shift+Down;
+studio	pattern.next	0	Num +;
+studio	pattern.previous	0	Num -;
+studio	view.playlist	0	F5;
+studio	view.channelRack	0	F6;
+studio	view.pianoRoll	0	F7;
+studio	view.pluginPicker	0	F8;
+studio	view.browser	0	Alt+F8;
+studio	view.mixer	0	F9;
+studio	view.stage	0	
+studio	view.settings	0	F10;
+studio	view.backToPlaylist	0	Esc;
+studio	view.closeAll	0	F12;
+studio	view.closePlugins	0	Alt+F12;
+studio	view.hidePlugins	0	
+studio	view.resetLayout	0	Ctrl+Shift+H;
+studio	help.shortcuts	0	F1;
+studio	view.commandPalette	0	Ctrl+K;Ctrl+Shift+P;
+studio	view.toggleMain	0	Ctrl+Alt+Shift+Tab;
+studio	view.editors	0	Ctrl+Alt+Shift+E;
+studio	view.library	0	
+studio	view.inspector	0	
+studio	view.quickHelp	0	
+studio	view.toolbar	0	
+studio	view.lists	0	
+studio	view.notes	0	
+studio	playlist.delete	1	Del;Backspace;
+studio	playlist.selectAll	1	Ctrl+A;
+studio	playlist.deselect	1	Ctrl+D;
+studio	playlist.copy	1	Ctrl+C;
+studio	playlist.paste	1	Ctrl+V;
+studio	playlist.duplicate	1	Ctrl+B;
+studio	playlist.merge	1	Ctrl+G;
+studio	playlist.mute	1	M;
+studio	playlist.toolDraw	1	P;
+studio	playlist.toolPaint	1	B;
+studio	playlist.toolDelete	1	D;
+studio	playlist.toolMute	1	T;
+studio	playlist.toolSlip	1	S;
+studio	playlist.toolSlice	1	C;
+studio	playlist.toolSelect	1	E;
+studio	playlist.toolZoom	1	Z;
+studio	playlist.toolPlay	1	Y;
+studio	playlist.toolWarp	1	W;
+studio	playlist.marker	1	Alt+T;
+studio	playlist.loopMarkers	1	Shift+T;
+studio	playlist.meterChange	1	Alt+Shift+T;
+studio	playlist.stretchResize	1	Shift+M;
+studio	playlist.fades	1	Shift+F;
+studio	playlist.zeroCross	1	Shift+X;
+studio	playlist.picker	1	Alt+P;
+studio	playlist.quickZoom1	1	Shift+1;
+studio	playlist.quickZoom2	1	Shift+2;
+studio	playlist.quickZoom3	1	Shift+3;
+studio	playlist.zoomSelection	1	Shift+4;
+studio	playlist.splitAtSongPos	1	Ctrl+Alt+Shift+T;
+studio	playlist.chopWindow	1	Alt+C;
+studio	playlist.sliceGrid	1	Shift+C;
+studio	playlist.duplicateTime	1	Alt+B;
+studio	playlist.insertSpace	1	Ctrl+Ins;
+studio	playlist.deleteSpace	1	Ctrl+Del;
+studio	playlist.consolidateTime	1	Ctrl+Alt+C;
+studio	playlist.zoomIn	1	PgUp;
+studio	playlist.zoomOut	1	PgDn;
+studio	playlist.zoomFit	1	Home;
+studio	playlist.uniqueCopy	1	Shift+V;
+studio	playlist.cancelDrag	1	Esc;
+studio	playlist.moveTrackUp	1	Alt+Up;
+studio	playlist.moveTrackDown	1	Alt+Down;
+studio	piano.delete	2	Del;Backspace;
+studio	piano.selectAll	2	Ctrl+A;
+studio	piano.deselect	2	Ctrl+D;
+studio	piano.copy	2	Ctrl+C;
+studio	piano.cut	2	Ctrl+X;
+studio	piano.paste	2	Ctrl+V;
+studio	piano.duplicate	2	Ctrl+B;
+studio	piano.cancelDrag	2	Esc;
+studio	piano.quickQuantize	2	Ctrl+Q;
+studio	piano.transposeUp	2	Up;
+studio	piano.transposeDown	2	Down;
+studio	piano.octaveUp	2	Shift+Up;
+studio	piano.octaveDown	2	Shift+Down;
+studio	piano.moveRight	2	Right;
+studio	piano.moveLeft	2	Left;
+studio	piano.legato	2	Ctrl+L;
+studio	piano.chopSteps	2	Ctrl+U;
+studio	piano.glue	2	Ctrl+G;
+studio	piano.quantize	2	Alt+Q;
+studio	piano.randomize	2	Alt+R;
+studio	piano.chop	2	Alt+U;
+studio	piano.strum	2	Alt+S;
+studio	piano.arpeggiate	2	Alt+A;
+studio	piano.articulate	2	Alt+L;
+studio	piano.limit	2	Alt+K;
+studio	piano.lfo	2	Alt+O;
+studio	piano.scaleLevels	2	Alt+X;
+studio	piano.flam	2	Alt+G;
+studio	piano.properties	2	Alt+N;
+studio	piano.humanize	2	Alt+Shift+R;
+studio	piano.invertSelection	2	Shift+I;
+studio	piano.selectRandom	2	Shift+R;
+studio	piano.toolDraw	2	P;
+studio	piano.toolPaint	2	B;
+studio	piano.toolDelete	2	D;
+studio	piano.toolSelect	2	E;
+studio	piano.toolSlice	2	C;
+studio	piano.toolMute	2	T;
+studio	piano.toolPlay	2	Y;
+studio	piano.toolZoom	2	Z;
+studio	piano.toolDetune	2	U;
+studio	piano.toolBend	2	N;
+studio	piano.chordStamp	2	Alt+C;
+studio	piano.slideMode	2	Shift+S;
+studio	piano.chordStamp	2	Alt+C;
+studio	piano.zoomIn	2	PgUp;
+studio	piano.zoomOut	2	PgDn;
+studio	piano.zoomFit	2	Home;
+studio	rack.clone	3	Alt+C;
+studio	rack.randomColours	3	Ctrl+Alt+C;
+studio	rack.delete	3	Alt+Del;
+studio	rack.moveUp	3	Alt+Up;
+studio	rack.moveDown	3	Alt+Down;
+studio	rack.routeFree	3	Ctrl+L;
+studio	rack.zip	3	Alt+Z;
+studio	rack.unzipAll	3	Alt+U;
+studio	rack.rotateLeft	3	Ctrl+Shift+Left;
+studio	rack.rotateRight	3	Ctrl+Shift+Right;
+studio	rack.copy	3	Ctrl+C;
+studio	rack.cut	3	Ctrl+X;
+studio	rack.paste	3	Ctrl+V;
+studio	rack.selectAll	3	Ctrl+A;
+studio	rack.graphEditor	3	Ctrl+K;
+studio	rack.insertStep	3	Ins;
+studio	rack.deleteStep	3	Del;
+studio	mixer.routeHere	4	Ctrl+L;
+studio	mixer.routeFromHere	4	Ctrl+Shift+L;
+studio	mixer.selectRoutedChannels	4	Alt+L;
+studio	mixer.selectRoutedTo	4	Ctrl+Alt+L;
+studio	mixer.moveLeft	4	Alt+Left;
+studio	mixer.moveRight	4	Alt+Right;
+studio	mixer.solo	4	S;
+studio	mixer.renderArmed	4	Alt+R;
+studio	mixer.renderSelected	4	Alt+Shift+R;
+studio	mixer.waveforms	4	Alt+W;
+studio	mixer.selectAll	4	Ctrl+A;
+studio	mixer.deselect	4	Ctrl+D;
+studio	mixer.selectRoutedChannels	4	Alt+L;
+studio	mixer.selectRoutedTo	4	Ctrl+Alt+L;
+studio	stage.left	6	Left;
+studio	stage.right	6	Right;
+studio	stage.up	6	Up;
+studio	stage.roomsPanel	6	\;
+studio	stage.down	6	Down;
+studio	stage.levelUp	6	Alt+Up;
+studio	stage.levelDown	6	Alt+Down;
+studio	stage.narrower	6	[;
+studio	stage.wider	6	];
+studio	stage.next	6	Tab;
+studio	stage.previous	6	Shift+Tab;
+studio	stage.mute	6	M;
+studio	stage.solo	6	S;
+studio	stage.reset	6	0;
+studio	stage.rename	6	Enter;
+studio	stage.selectAll	6	Ctrl+A;
+studio	stage.roomsPanel	6	\;
+studio	stage.deselect	6	Ctrl+D;
+studio	auto.delete	5	Del;Backspace;
+studio	auto.selectAll	5	Ctrl+A;
+studio	auto.deselect	5	Ctrl+D;
+studio	auto.invertSelection	5	Ctrl+I;
+studio	auto.copy	5	Ctrl+C;
+studio	auto.cut	5	Ctrl+X;
+studio	auto.paste	5	Ctrl+V;
+studio	auto.pasteReplace	5	Ctrl+R;
+studio	auto.toolDraw	5	P;
+studio	auto.toolSelect	5	E;
+studio	auto.toolDelete	5	D;
+studio	auto.lfo	5	L;
+studio	auto.quantize	5	Q;
+studio	auto.cancel	5	Esc;
+live	file.new	0	Ctrl+N;
+live	file.open	0	Ctrl+O;
+live	file.save	0	Ctrl+S;
+live	file.saveAs	0	Ctrl+Shift+S;
+live	file.saveNewVersion	0	Ctrl+Alt+S;
+live	file.render	0	Ctrl+Shift+R;
+live	file.renderStems	0	
+live	file.exportMidi	0	Ctrl+Shift+E;
+live	file.importUrl	0	Ctrl+Shift+U;
+live	file.projectInfo	0	F11;
+live	file.quit	0	Ctrl+Q;
+live	edit.undo	0	Ctrl+Z;
+live	edit.redo	0	Ctrl+Y;Ctrl+Shift+Z;
+live	edit.history	0	Ctrl+Alt+Z;
+live	edit.rename	0	Ctrl+R;F2;
+live	transport.play	0	Space;
+live	transport.songMode	0	
+live	transport.tapTempo	0	Ctrl+Shift+T;
+live	options.typingKeyboard	0	M;
+live	options.metronome	0	O;
+live	tools.stopSound	0	Ctrl+H;
+live	transport.record	0	F9;
+live	transport.toStart	0	Ctrl+Alt+Shift+Home;
+live	transport.rewindBar	0	Ctrl+Alt+Shift+Left;
+live	transport.forwardBar	0	Ctrl+Alt+Shift+Right;
+live	options.countIn	0	Ctrl+Alt+Shift+K;
+live	pattern.new	0	F4;
+live	pattern.findFirstEmpty	0	Shift+F4;
+live	pattern.findNextEmpty	0	Ctrl+F4;
+live	pattern.clone	0	Ctrl+Shift+C;
+live	pattern.insert	0	Ctrl+Shift+Ins;
+live	pattern.delete	0	Ctrl+Shift+Del;
+live	pattern.moveUp	0	Ctrl+Shift+Up;
+live	pattern.moveDown	0	Ctrl+Shift+Down;
+live	pattern.next	0	Num +;
+live	pattern.previous	0	Num -;
+live	view.playlist	0	F5;
+live	view.channelRack	0	F6;
+live	view.pianoRoll	0	Ctrl+Alt+3;
+live	view.pluginPicker	0	F8;
+live	view.browser	0	Ctrl+Alt+B;
+live	view.mixer	0	Ctrl+Alt+M;
+live	view.stage	0	
+live	view.settings	0	Ctrl+,;
+live	view.backToPlaylist	0	Esc;
+live	view.closeAll	0	F12;
+live	view.closePlugins	0	Alt+F12;
+live	view.hidePlugins	0	Ctrl+Alt+P;
+live	view.resetLayout	0	Ctrl+Shift+H;
+live	help.shortcuts	0	F1;Ctrl+/;
+live	view.commandPalette	0	Ctrl+K;Ctrl+Shift+P;
+live	view.toggleMain	0	Tab;
+live	view.editors	0	Ctrl+Alt+E;
+live	view.library	0	
+live	view.inspector	0	
+live	view.quickHelp	0	
+live	view.toolbar	0	
+live	view.lists	0	
+live	view.notes	0	
+live	playlist.delete	1	Del;Backspace;
+live	playlist.selectAll	1	Ctrl+A;
+live	playlist.deselect	1	Ctrl+Shift+A;
+live	playlist.copy	1	Ctrl+C;
+live	playlist.paste	1	Ctrl+V;
+live	playlist.duplicate	1	Ctrl+D;
+live	playlist.merge	1	Ctrl+J;
+live	playlist.mute	1	0;
+live	playlist.toolDraw	1	B;
+live	playlist.toolPaint	1	
+live	playlist.toolDelete	1	
+live	playlist.toolMute	1	
+live	playlist.toolSlip	1	
+live	playlist.toolSlice	1	
+live	playlist.toolSelect	1	
+live	playlist.toolZoom	1	
+live	playlist.toolPlay	1	
+live	playlist.toolWarp	1	
+live	playlist.marker	1	Alt+T;
+live	playlist.loopMarkers	1	Ctrl+L;
+live	playlist.meterChange	1	Alt+Shift+T;
+live	playlist.stretchResize	1	Shift+M;
+live	playlist.fades	1	Shift+F;
+live	playlist.zeroCross	1	Shift+X;
+live	playlist.picker	1	Alt+P;
+live	playlist.quickZoom1	1	Shift+1;
+live	playlist.quickZoom2	1	Shift+2;
+live	playlist.quickZoom3	1	Shift+3;
+live	playlist.zoomSelection	1	Z;
+live	playlist.splitAtSongPos	1	Ctrl+E;
+live	playlist.chopWindow	1	Alt+C;
+live	playlist.sliceGrid	1	Shift+C;
+live	playlist.duplicateTime	1	Ctrl+Shift+D;
+live	playlist.insertSpace	1	Ctrl+I;
+live	playlist.deleteSpace	1	Ctrl+Shift+Del;
+live	playlist.consolidateTime	1	Ctrl+Alt+C;
+live	playlist.zoomIn	1	=;PgUp;
+live	playlist.zoomOut	1	-;PgDn;
+live	playlist.zoomFit	1	Home;
+live	playlist.uniqueCopy	1	Shift+V;
+live	playlist.cancelDrag	1	Esc;
+live	playlist.moveTrackUp	1	Alt+Up;
+live	playlist.moveTrackDown	1	Alt+Down;
+live	piano.delete	2	Del;Backspace;
+live	piano.selectAll	2	Ctrl+A;
+live	piano.deselect	2	Ctrl+Shift+A;
+live	piano.copy	2	Ctrl+C;
+live	piano.cut	2	Ctrl+X;
+live	piano.paste	2	Ctrl+V;
+live	piano.duplicate	2	Ctrl+D;
+live	piano.cancelDrag	2	Esc;
+live	piano.quickQuantize	2	Ctrl+U;
+live	piano.transposeUp	2	Up;
+live	piano.transposeDown	2	Down;
+live	piano.octaveUp	2	Shift+Up;
+live	piano.octaveDown	2	Shift+Down;
+live	piano.moveRight	2	Right;
+live	piano.moveLeft	2	Left;
+live	piano.legato	2	Ctrl+L;
+live	piano.chopSteps	2	Ctrl+E;
+live	piano.glue	2	Ctrl+J;
+live	piano.quantize	2	Alt+Q;
+live	piano.randomize	2	Alt+R;
+live	piano.chop	2	Alt+U;
+live	piano.strum	2	Alt+S;
+live	piano.arpeggiate	2	Alt+A;
+live	piano.articulate	2	Alt+L;
+live	piano.limit	2	Alt+K;
+live	piano.lfo	2	Alt+O;
+live	piano.scaleLevels	2	Alt+X;
+live	piano.flam	2	Alt+G;
+live	piano.properties	2	Alt+N;
+live	piano.humanize	2	Alt+Shift+R;
+live	piano.invertSelection	2	Shift+I;
+live	piano.selectRandom	2	Shift+R;
+live	piano.toolDraw	2	B;
+live	piano.toolPaint	2	
+live	piano.toolDelete	2	
+live	piano.toolSelect	2	
+live	piano.toolSlice	2	
+live	piano.toolMute	2	
+live	piano.toolPlay	2	
+live	piano.toolZoom	2	
+live	piano.toolDetune	2	
+live	piano.toolBend	2	
+live	piano.chordStamp	2	Alt+C;
+live	piano.slideMode	2	Shift+S;
+live	piano.chordStamp	2	Alt+C;
+live	piano.zoomIn	2	=;PgUp;
+live	piano.zoomOut	2	-;PgDn;
+live	piano.zoomFit	2	Home;
+live	rack.clone	3	Alt+C;
+live	rack.randomColours	3	Ctrl+Alt+C;
+live	rack.delete	3	Alt+Del;
+live	rack.moveUp	3	Alt+Up;
+live	rack.moveDown	3	Alt+Down;
+live	rack.routeFree	3	Ctrl+L;
+live	rack.zip	3	Alt+Z;
+live	rack.unzipAll	3	Alt+U;
+live	rack.rotateLeft	3	Ctrl+Shift+Left;
+live	rack.rotateRight	3	Ctrl+Shift+Right;
+live	rack.copy	3	Ctrl+C;
+live	rack.cut	3	Ctrl+X;
+live	rack.paste	3	Ctrl+V;
+live	rack.selectAll	3	Ctrl+A;
+live	rack.graphEditor	3	Ctrl+K;
+live	rack.insertStep	3	Ins;
+live	rack.deleteStep	3	Del;
+live	mixer.routeHere	4	Ctrl+L;
+live	mixer.routeFromHere	4	Ctrl+Shift+L;
+live	mixer.selectRoutedChannels	4	Alt+L;
+live	mixer.selectRoutedTo	4	Ctrl+Alt+L;
+live	mixer.moveLeft	4	Alt+Left;
+live	mixer.moveRight	4	Alt+Right;
+live	mixer.solo	4	S;
+live	mixer.renderArmed	4	Alt+R;
+live	mixer.renderSelected	4	Alt+Shift+R;
+live	mixer.waveforms	4	Alt+W;
+live	mixer.selectAll	4	Ctrl+A;
+live	mixer.deselect	4	Ctrl+D;
+live	mixer.selectRoutedChannels	4	Alt+L;
+live	mixer.selectRoutedTo	4	Ctrl+Alt+L;
+live	stage.left	6	Left;
+live	stage.right	6	Right;
+live	stage.up	6	Up;
+live	stage.roomsPanel	6	\;
+live	stage.down	6	Down;
+live	stage.levelUp	6	Alt+Up;
+live	stage.levelDown	6	Alt+Down;
+live	stage.narrower	6	[;
+live	stage.wider	6	];
+live	stage.next	6	
+live	stage.previous	6	Shift+Tab;
+live	stage.mute	6	
+live	stage.solo	6	S;
+live	stage.reset	6	0;
+live	stage.rename	6	Enter;
+live	stage.selectAll	6	Ctrl+A;
+live	stage.roomsPanel	6	\;
+live	stage.deselect	6	Ctrl+D;
+live	auto.delete	5	Del;Backspace;
+live	auto.selectAll	5	Ctrl+A;
+live	auto.deselect	5	Ctrl+D;
+live	auto.invertSelection	5	Ctrl+I;
+live	auto.copy	5	Ctrl+C;
+live	auto.cut	5	Ctrl+X;
+live	auto.paste	5	Ctrl+V;
+live	auto.pasteReplace	5	
+live	auto.toolDraw	5	B;
+live	auto.toolSelect	5	
+live	auto.toolDelete	5	
+live	auto.lfo	5	L;
+live	auto.quantize	5	Q;
+live	auto.cancel	5	Esc;
+logic	file.new	0	Ctrl+N;
+logic	file.open	0	Ctrl+O;
+logic	file.save	0	Ctrl+S;
+logic	file.saveAs	0	Ctrl+Shift+S;
+logic	file.saveNewVersion	0	Ctrl+Alt+S;
+logic	file.render	0	Ctrl+B;
+logic	file.renderStems	0	Ctrl+Shift+E;
+logic	file.exportMidi	0	Ctrl+Alt+E;
+logic	file.importUrl	0	Ctrl+Shift+U;
+logic	file.projectInfo	0	F11;
+logic	file.quit	0	Ctrl+Q;
+logic	edit.undo	0	Ctrl+Z;
+logic	edit.redo	0	Ctrl+Y;Ctrl+Shift+Z;
+logic	edit.history	0	Alt+Z;
+logic	edit.rename	0	Shift+Enter;F2;
+logic	transport.play	0	Space;Num Enter;Num 0;
+logic	transport.songMode	0	L;
+logic	transport.tapTempo	0	Ctrl+Shift+T;
+logic	options.typingKeyboard	0	Ctrl+K;
+logic	options.metronome	0	K;
+logic	tools.stopSound	0	Ctrl+H;
+logic	transport.record	0	R;
+logic	transport.toStart	0	Enter;
+logic	transport.rewindBar	0	,;
+logic	transport.forwardBar	0	.;
+logic	options.countIn	0	Shift+K;
+logic	pattern.new	0	F4;
+logic	pattern.findFirstEmpty	0	Shift+F4;
+logic	pattern.findNextEmpty	0	Ctrl+F4;
+logic	pattern.clone	0	Ctrl+Shift+C;
+logic	pattern.insert	0	Ctrl+Shift+Ins;
+logic	pattern.delete	0	Ctrl+Shift+Del;
+logic	pattern.moveUp	0	Ctrl+Shift+Up;
+logic	pattern.moveDown	0	Ctrl+Shift+Down;
+logic	pattern.next	0	Num +;
+logic	pattern.previous	0	Num -;
+logic	view.playlist	0	F5;
+logic	view.channelRack	0	Ctrl+3;
+logic	view.pianoRoll	0	P;Ctrl+4;
+logic	view.pluginPicker	0	F8;
+logic	view.browser	0	B;
+logic	view.mixer	0	X;Ctrl+2;
+logic	view.stage	0	
+logic	view.settings	0	Ctrl+,;
+logic	view.backToPlaylist	0	Esc;
+logic	view.closeAll	0	F12;
+logic	view.closePlugins	0	Alt+F12;
+logic	view.hidePlugins	0	V;
+logic	view.resetLayout	0	Ctrl+Shift+H;
+logic	help.shortcuts	0	Alt+K;
+logic	view.commandPalette	0	Ctrl+Shift+P;
+logic	view.toggleMain	0	Ctrl+Alt+Shift+Tab;
+logic	view.editors	0	E;
+logic	view.library	0	Y;
+logic	view.inspector	0	I;
+logic	view.quickHelp	0	Shift+/;
+logic	view.toolbar	0	Ctrl+Alt+Shift+T;
+logic	view.lists	0	D;
+logic	view.notes	0	Ctrl+Alt+P;
+logic	playlist.delete	1	Del;Backspace;
+logic	playlist.selectAll	1	Ctrl+A;
+logic	playlist.deselect	1	Shift+D;
+logic	playlist.copy	1	Ctrl+C;
+logic	playlist.paste	1	Ctrl+V;
+logic	playlist.duplicate	1	Ctrl+R;
+logic	playlist.merge	1	Ctrl+J;
+logic	playlist.mute	1	Ctrl+Alt+M;
+logic	playlist.toolDraw	1	
+logic	playlist.toolPaint	1	
+logic	playlist.toolDelete	1	
+logic	playlist.toolMute	1	
+logic	playlist.toolSlip	1	
+logic	playlist.toolSlice	1	
+logic	playlist.toolSelect	1	
+logic	playlist.toolZoom	1	
+logic	playlist.toolPlay	1	
+logic	playlist.toolWarp	1	
+logic	playlist.marker	1	Alt+';
+logic	playlist.loopMarkers	1	Ctrl+U;
+logic	playlist.meterChange	1	Alt+Shift+T;
+logic	playlist.stretchResize	1	Shift+M;
+logic	playlist.fades	1	Shift+F;
+logic	playlist.zeroCross	1	Shift+X;
+logic	playlist.picker	1	Alt+P;
+logic	playlist.quickZoom1	1	Shift+1;
+logic	playlist.quickZoom2	1	Shift+2;
+logic	playlist.quickZoom3	1	Shift+3;
+logic	playlist.zoomSelection	1	Shift+4;
+logic	playlist.splitAtSongPos	1	Ctrl+T;
+logic	playlist.chopWindow	1	Alt+C;
+logic	playlist.sliceGrid	1	Shift+C;
+logic	playlist.duplicateTime	1	Alt+B;
+logic	playlist.insertSpace	1	Ctrl+Ins;
+logic	playlist.deleteSpace	1	Ctrl+Del;
+logic	playlist.consolidateTime	1	Ctrl+Alt+C;
+logic	playlist.zoomIn	1	Ctrl+Right;PgUp;
+logic	playlist.zoomOut	1	Ctrl+Left;PgDn;
+logic	playlist.zoomFit	1	Z;
+logic	playlist.uniqueCopy	1	Shift+V;
+logic	playlist.cancelDrag	1	Esc;
+logic	playlist.moveTrackUp	1	Alt+Up;
+logic	playlist.moveTrackDown	1	Alt+Down;
+logic	piano.delete	2	Del;Backspace;
+logic	piano.selectAll	2	Ctrl+A;
+logic	piano.deselect	2	Shift+D;
+logic	piano.copy	2	Ctrl+C;
+logic	piano.cut	2	Ctrl+X;
+logic	piano.paste	2	Ctrl+V;
+logic	piano.duplicate	2	
+logic	piano.cancelDrag	2	Esc;
+logic	piano.quickQuantize	2	Q;
+logic	piano.transposeUp	2	Up;Alt+Up;
+logic	piano.transposeDown	2	Down;Alt+Down;
+logic	piano.octaveUp	2	Shift+Up;Alt+Shift+Up;
+logic	piano.octaveDown	2	Shift+Down;Alt+Shift+Down;
+logic	piano.moveRight	2	Right;
+logic	piano.moveLeft	2	Left;
+logic	piano.legato	2	Ctrl+L;
+logic	piano.chopSteps	2	Ctrl+U;
+logic	piano.glue	2	Ctrl+G;
+logic	piano.quantize	2	Alt+Q;
+logic	piano.randomize	2	Alt+R;
+logic	piano.chop	2	Alt+U;
+logic	piano.strum	2	Alt+S;
+logic	piano.arpeggiate	2	Alt+A;
+logic	piano.articulate	2	Alt+L;
+logic	piano.limit	2	
+logic	piano.lfo	2	Alt+O;
+logic	piano.scaleLevels	2	Alt+X;
+logic	piano.flam	2	Alt+G;
+logic	piano.properties	2	Alt+N;
+logic	piano.humanize	2	Alt+Shift+R;
+logic	piano.invertSelection	2	Shift+I;
+logic	piano.selectRandom	2	Shift+R;
+logic	piano.toolDraw	2	
+logic	piano.toolPaint	2	
+logic	piano.toolDelete	2	
+logic	piano.toolSelect	2	
+logic	piano.toolSlice	2	
+logic	piano.toolMute	2	
+logic	piano.toolPlay	2	
+logic	piano.toolZoom	2	
+logic	piano.toolDetune	2	
+logic	piano.toolBend	2	
+logic	piano.chordStamp	2	Alt+C;
+logic	piano.slideMode	2	Shift+S;
+logic	piano.chordStamp	2	Alt+C;
+logic	piano.zoomIn	2	Ctrl+Right;PgUp;
+logic	piano.zoomOut	2	Ctrl+Left;PgDn;
+logic	piano.zoomFit	2	Home;
+logic	rack.clone	3	Alt+C;
+logic	rack.randomColours	3	Ctrl+Alt+C;
+logic	rack.delete	3	Alt+Del;
+logic	rack.moveUp	3	Alt+Up;
+logic	rack.moveDown	3	Alt+Down;
+logic	rack.routeFree	3	Ctrl+L;
+logic	rack.zip	3	
+logic	rack.unzipAll	3	Alt+U;
+logic	rack.rotateLeft	3	Ctrl+Shift+Left;
+logic	rack.rotateRight	3	Ctrl+Shift+Right;
+logic	rack.copy	3	Ctrl+C;
+logic	rack.cut	3	Ctrl+X;
+logic	rack.paste	3	Ctrl+V;
+logic	rack.selectAll	3	Ctrl+A;
+logic	rack.graphEditor	3	
+logic	rack.insertStep	3	Ins;
+logic	rack.deleteStep	3	Del;
+logic	mixer.routeHere	4	Ctrl+L;
+logic	mixer.routeFromHere	4	Ctrl+Shift+L;
+logic	mixer.selectRoutedChannels	4	Alt+L;
+logic	mixer.selectRoutedTo	4	Ctrl+Alt+L;
+logic	mixer.moveLeft	4	Alt+Left;
+logic	mixer.moveRight	4	Alt+Right;
+logic	mixer.solo	4	S;
+logic	mixer.renderArmed	4	Alt+R;
+logic	mixer.renderSelected	4	Alt+Shift+R;
+logic	mixer.waveforms	4	Alt+W;
+logic	mixer.selectAll	4	Ctrl+A;
+logic	mixer.deselect	4	Ctrl+D;
+logic	mixer.selectRoutedChannels	4	Alt+L;
+logic	mixer.selectRoutedTo	4	Ctrl+Alt+L;
+logic	stage.left	6	Left;
+logic	stage.right	6	Right;
+logic	stage.up	6	Up;
+logic	stage.roomsPanel	6	\;
+logic	stage.down	6	Down;
+logic	stage.levelUp	6	Alt+Up;
+logic	stage.levelDown	6	Alt+Down;
+logic	stage.narrower	6	[;
+logic	stage.wider	6	];
+logic	stage.next	6	Tab;
+logic	stage.previous	6	Shift+Tab;
+logic	stage.mute	6	M;
+logic	stage.solo	6	S;
+logic	stage.reset	6	0;
+logic	stage.rename	6	
+logic	stage.selectAll	6	Ctrl+A;
+logic	stage.roomsPanel	6	\;
+logic	stage.deselect	6	Ctrl+D;
+logic	auto.delete	5	Del;Backspace;
+logic	auto.selectAll	5	Ctrl+A;
+logic	auto.deselect	5	Ctrl+D;
+logic	auto.invertSelection	5	Ctrl+I;
+logic	auto.copy	5	Ctrl+C;
+logic	auto.cut	5	Ctrl+X;
+logic	auto.paste	5	Ctrl+V;
+logic	auto.pasteReplace	5	Ctrl+R;
+logic	auto.toolDraw	5	
+logic	auto.toolSelect	5	
+logic	auto.toolDelete	5	
+logic	auto.lfo	5	
+logic	auto.quantize	5	Q;
+logic	auto.cancel	5	Esc;
+studio+cmd	file.new	0	Ctrl+N;
+studio+cmd	file.open	0	Ctrl+O;
+studio+cmd	file.save	0	Ctrl+S;
+studio+cmd	file.saveAs	0	Ctrl+Shift+S;
+studio+cmd	file.saveNewVersion	0	Ctrl+Alt+S;
+studio+cmd	file.render	0	Ctrl+R;
+studio+cmd	file.renderStems	0	Ctrl+Shift+R;
+studio+cmd	file.exportMidi	0	Ctrl+Shift+M;
+studio+cmd	file.importUrl	0	Ctrl+Shift+U;
+studio+cmd	file.projectInfo	0	F11;
+studio+cmd	file.quit	0	Ctrl+Q;
+studio+cmd	edit.undo	0	Ctrl+Z;
+studio+cmd	edit.redo	0	Ctrl+Y;Ctrl+Shift+Z;
+studio+cmd	edit.history	0	Alt+Z;Ctrl+Alt+Z;
+studio+cmd	edit.rename	0	F2;
+studio+cmd	transport.play	0	Space;
+studio+cmd	transport.songMode	0	L;
+studio+cmd	transport.tapTempo	0	Ctrl+Shift+T;
+studio+cmd	options.typingKeyboard	0	Ctrl+T;
+studio+cmd	options.metronome	0	Ctrl+M;
+studio+cmd	tools.stopSound	0	Ctrl+H;
+studio+cmd	transport.record	0	Ctrl+Alt+Shift+R;
+studio+cmd	transport.toStart	0	Ctrl+Alt+Shift+Home;
+studio+cmd	transport.rewindBar	0	Ctrl+Alt+Shift+Left;
+studio+cmd	transport.forwardBar	0	Ctrl+Alt+Shift+Right;
+studio+cmd	options.countIn	0	Ctrl+Alt+Shift+K;
+studio+cmd	pattern.new	0	F4;
+studio+cmd	pattern.findFirstEmpty	0	Shift+F4;
+studio+cmd	pattern.findNextEmpty	0	Ctrl+F4;
+studio+cmd	pattern.clone	0	Ctrl+Shift+C;
+studio+cmd	pattern.insert	0	Ctrl+Shift+Ins;
+studio+cmd	pattern.delete	0	Ctrl+Shift+Del;
+studio+cmd	pattern.moveUp	0	Ctrl+Shift+Up;
+studio+cmd	pattern.moveDown	0	Ctrl+Shift+Down;
+studio+cmd	pattern.next	0	Num +;
+studio+cmd	pattern.previous	0	Num -;
+studio+cmd	view.playlist	0	F5;
+studio+cmd	view.channelRack	0	F6;
+studio+cmd	view.pianoRoll	0	F7;
+studio+cmd	view.pluginPicker	0	F8;
+studio+cmd	view.browser	0	Alt+F8;
+studio+cmd	view.mixer	0	F9;
+studio+cmd	view.stage	0	
+studio+cmd	view.settings	0	F10;
+studio+cmd	view.backToPlaylist	0	Esc;
+studio+cmd	view.closeAll	0	F12;
+studio+cmd	view.closePlugins	0	Alt+F12;
+studio+cmd	view.hidePlugins	0	
+studio+cmd	view.resetLayout	0	Ctrl+Shift+H;
+studio+cmd	help.shortcuts	0	F1;
+studio+cmd	view.commandPalette	0	Ctrl+K;Ctrl+Shift+P;
+studio+cmd	view.toggleMain	0	Ctrl+Alt+Shift+Tab;
+studio+cmd	view.editors	0	Ctrl+Alt+Shift+E;
+studio+cmd	view.library	0	
+studio+cmd	view.inspector	0	
+studio+cmd	view.quickHelp	0	
+studio+cmd	view.toolbar	0	
+studio+cmd	view.lists	0	
+studio+cmd	view.notes	0	
+studio+cmd	playlist.delete	1	Del;Backspace;
+studio+cmd	playlist.selectAll	1	Ctrl+A;
+studio+cmd	playlist.deselect	1	Ctrl+D;
+studio+cmd	playlist.copy	1	Ctrl+C;
+studio+cmd	playlist.paste	1	Ctrl+V;
+studio+cmd	playlist.duplicate	1	Ctrl+B;
+studio+cmd	playlist.merge	1	Ctrl+G;
+studio+cmd	playlist.mute	1	M;
+studio+cmd	playlist.toolDraw	1	P;
+studio+cmd	playlist.toolPaint	1	B;
+studio+cmd	playlist.toolDelete	1	D;
+studio+cmd	playlist.toolMute	1	T;
+studio+cmd	playlist.toolSlip	1	S;
+studio+cmd	playlist.toolSlice	1	C;
+studio+cmd	playlist.toolSelect	1	E;
+studio+cmd	playlist.toolZoom	1	Z;
+studio+cmd	playlist.toolPlay	1	Y;
+studio+cmd	playlist.toolWarp	1	W;
+studio+cmd	playlist.marker	1	Alt+T;
+studio+cmd	playlist.loopMarkers	1	Shift+T;
+studio+cmd	playlist.meterChange	1	Alt+Shift+T;
+studio+cmd	playlist.stretchResize	1	Shift+M;
+studio+cmd	playlist.fades	1	Shift+F;
+studio+cmd	playlist.zeroCross	1	Shift+X;
+studio+cmd	playlist.picker	1	Alt+P;
+studio+cmd	playlist.quickZoom1	1	Shift+1;
+studio+cmd	playlist.quickZoom2	1	Shift+2;
+studio+cmd	playlist.quickZoom3	1	Shift+3;
+studio+cmd	playlist.zoomSelection	1	Shift+4;
+studio+cmd	playlist.splitAtSongPos	1	Ctrl+Alt+Shift+T;
+studio+cmd	playlist.chopWindow	1	Alt+C;
+studio+cmd	playlist.sliceGrid	1	Shift+C;
+studio+cmd	playlist.duplicateTime	1	Alt+B;
+studio+cmd	playlist.insertSpace	1	Ctrl+Ins;
+studio+cmd	playlist.deleteSpace	1	Ctrl+Del;
+studio+cmd	playlist.consolidateTime	1	Ctrl+Alt+C;
+studio+cmd	playlist.zoomIn	1	PgUp;
+studio+cmd	playlist.zoomOut	1	PgDn;
+studio+cmd	playlist.zoomFit	1	Home;
+studio+cmd	playlist.uniqueCopy	1	Shift+V;
+studio+cmd	playlist.cancelDrag	1	Esc;
+studio+cmd	playlist.moveTrackUp	1	Alt+Up;
+studio+cmd	playlist.moveTrackDown	1	Alt+Down;
+studio+cmd	piano.delete	2	Del;Backspace;
+studio+cmd	piano.selectAll	2	Ctrl+A;
+studio+cmd	piano.deselect	2	Ctrl+D;
+studio+cmd	piano.copy	2	Ctrl+C;
+studio+cmd	piano.cut	2	Ctrl+X;
+studio+cmd	piano.paste	2	Ctrl+V;
+studio+cmd	piano.duplicate	2	Ctrl+B;
+studio+cmd	piano.cancelDrag	2	Esc;
+studio+cmd	piano.quickQuantize	2	Ctrl+Q;
+studio+cmd	piano.transposeUp	2	Up;
+studio+cmd	piano.transposeDown	2	Down;
+studio+cmd	piano.octaveUp	2	Shift+Up;
+studio+cmd	piano.octaveDown	2	Shift+Down;
+studio+cmd	piano.moveRight	2	Right;
+studio+cmd	piano.moveLeft	2	Left;
+studio+cmd	piano.legato	2	Ctrl+L;
+studio+cmd	piano.chopSteps	2	Ctrl+U;
+studio+cmd	piano.glue	2	Ctrl+G;
+studio+cmd	piano.quantize	2	Alt+Q;
+studio+cmd	piano.randomize	2	Alt+R;
+studio+cmd	piano.chop	2	Alt+U;
+studio+cmd	piano.strum	2	Alt+S;
+studio+cmd	piano.arpeggiate	2	Alt+A;
+studio+cmd	piano.articulate	2	Alt+L;
+studio+cmd	piano.limit	2	Alt+K;
+studio+cmd	piano.lfo	2	Alt+O;
+studio+cmd	piano.scaleLevels	2	Alt+X;
+studio+cmd	piano.flam	2	Alt+G;
+studio+cmd	piano.properties	2	Alt+N;
+studio+cmd	piano.humanize	2	Alt+Shift+R;
+studio+cmd	piano.invertSelection	2	Shift+I;
+studio+cmd	piano.selectRandom	2	Shift+R;
+studio+cmd	piano.toolDraw	2	P;
+studio+cmd	piano.toolPaint	2	B;
+studio+cmd	piano.toolDelete	2	D;
+studio+cmd	piano.toolSelect	2	E;
+studio+cmd	piano.toolSlice	2	C;
+studio+cmd	piano.toolMute	2	T;
+studio+cmd	piano.toolPlay	2	Y;
+studio+cmd	piano.toolZoom	2	Z;
+studio+cmd	piano.toolDetune	2	U;
+studio+cmd	piano.toolBend	2	N;
+studio+cmd	piano.chordStamp	2	Alt+C;
+studio+cmd	piano.slideMode	2	Shift+S;
+studio+cmd	piano.chordStamp	2	Alt+C;
+studio+cmd	piano.zoomIn	2	PgUp;
+studio+cmd	piano.zoomOut	2	PgDn;
+studio+cmd	piano.zoomFit	2	Home;
+studio+cmd	rack.clone	3	Alt+C;
+studio+cmd	rack.randomColours	3	Ctrl+Alt+C;
+studio+cmd	rack.delete	3	Alt+Del;
+studio+cmd	rack.moveUp	3	Alt+Up;
+studio+cmd	rack.moveDown	3	Alt+Down;
+studio+cmd	rack.routeFree	3	Ctrl+L;
+studio+cmd	rack.zip	3	Alt+Z;
+studio+cmd	rack.unzipAll	3	Alt+U;
+studio+cmd	rack.rotateLeft	3	Ctrl+Shift+Left;
+studio+cmd	rack.rotateRight	3	Ctrl+Shift+Right;
+studio+cmd	rack.copy	3	Ctrl+C;
+studio+cmd	rack.cut	3	Ctrl+X;
+studio+cmd	rack.paste	3	Ctrl+V;
+studio+cmd	rack.selectAll	3	Ctrl+A;
+studio+cmd	rack.graphEditor	3	Ctrl+K;
+studio+cmd	rack.insertStep	3	Ins;
+studio+cmd	rack.deleteStep	3	Del;
+studio+cmd	mixer.routeHere	4	Ctrl+L;
+studio+cmd	mixer.routeFromHere	4	Ctrl+Shift+L;
+studio+cmd	mixer.selectRoutedChannels	4	Alt+L;
+studio+cmd	mixer.selectRoutedTo	4	Ctrl+Alt+L;
+studio+cmd	mixer.moveLeft	4	Alt+Left;
+studio+cmd	mixer.moveRight	4	Alt+Right;
+studio+cmd	mixer.solo	4	S;
+studio+cmd	mixer.renderArmed	4	Alt+R;
+studio+cmd	mixer.renderSelected	4	Alt+Shift+R;
+studio+cmd	mixer.waveforms	4	Alt+W;
+studio+cmd	mixer.selectAll	4	Ctrl+A;
+studio+cmd	mixer.deselect	4	Ctrl+D;
+studio+cmd	mixer.selectRoutedChannels	4	Alt+L;
+studio+cmd	mixer.selectRoutedTo	4	Ctrl+Alt+L;
+studio+cmd	stage.left	6	Left;
+studio+cmd	stage.right	6	Right;
+studio+cmd	stage.up	6	Up;
+studio+cmd	stage.roomsPanel	6	\;
+studio+cmd	stage.down	6	Down;
+studio+cmd	stage.levelUp	6	Alt+Up;
+studio+cmd	stage.levelDown	6	Alt+Down;
+studio+cmd	stage.narrower	6	[;
+studio+cmd	stage.wider	6	];
+studio+cmd	stage.next	6	Tab;
+studio+cmd	stage.previous	6	Shift+Tab;
+studio+cmd	stage.mute	6	M;
+studio+cmd	stage.solo	6	S;
+studio+cmd	stage.reset	6	0;
+studio+cmd	stage.rename	6	Enter;
+studio+cmd	stage.selectAll	6	Ctrl+A;
+studio+cmd	stage.roomsPanel	6	\;
+studio+cmd	stage.deselect	6	Ctrl+D;
+studio+cmd	auto.delete	5	Del;Backspace;
+studio+cmd	auto.selectAll	5	Ctrl+A;
+studio+cmd	auto.deselect	5	Ctrl+D;
+studio+cmd	auto.invertSelection	5	Ctrl+I;
+studio+cmd	auto.copy	5	Ctrl+C;
+studio+cmd	auto.cut	5	Ctrl+X;
+studio+cmd	auto.paste	5	Ctrl+V;
+studio+cmd	auto.pasteReplace	5	Ctrl+R;
+studio+cmd	auto.toolDraw	5	P;
+studio+cmd	auto.toolSelect	5	E;
+studio+cmd	auto.toolDelete	5	D;
+studio+cmd	auto.lfo	5	L;
+studio+cmd	auto.quantize	5	Q;
+studio+cmd	auto.cancel	5	Esc;
+live+cmd	file.new	0	Ctrl+N;
+live+cmd	file.open	0	Ctrl+O;
+live+cmd	file.save	0	Ctrl+S;
+live+cmd	file.saveAs	0	Ctrl+Shift+S;
+live+cmd	file.saveNewVersion	0	Ctrl+Alt+S;
+live+cmd	file.render	0	Ctrl+Shift+R;
+live+cmd	file.renderStems	0	
+live+cmd	file.exportMidi	0	Ctrl+Shift+E;
+live+cmd	file.importUrl	0	Ctrl+Shift+U;
+live+cmd	file.projectInfo	0	F11;
+live+cmd	file.quit	0	Ctrl+Q;
+live+cmd	edit.undo	0	Ctrl+Z;
+live+cmd	edit.redo	0	Ctrl+Y;Ctrl+Shift+Z;
+live+cmd	edit.history	0	Ctrl+Alt+Z;
+live+cmd	edit.rename	0	Ctrl+R;F2;
+live+cmd	transport.play	0	Space;
+live+cmd	transport.songMode	0	
+live+cmd	transport.tapTempo	0	Ctrl+Shift+T;
+live+cmd	options.typingKeyboard	0	M;
+live+cmd	options.metronome	0	O;
+live+cmd	tools.stopSound	0	Ctrl+H;
+live+cmd	transport.record	0	F9;
+live+cmd	transport.toStart	0	Ctrl+Alt+Shift+Home;
+live+cmd	transport.rewindBar	0	Ctrl+Alt+Shift+Left;
+live+cmd	transport.forwardBar	0	Ctrl+Alt+Shift+Right;
+live+cmd	options.countIn	0	Ctrl+Alt+Shift+K;
+live+cmd	pattern.new	0	F4;
+live+cmd	pattern.findFirstEmpty	0	Shift+F4;
+live+cmd	pattern.findNextEmpty	0	Ctrl+F4;
+live+cmd	pattern.clone	0	Ctrl+Shift+C;
+live+cmd	pattern.insert	0	Ctrl+Shift+Ins;
+live+cmd	pattern.delete	0	Ctrl+Shift+Del;
+live+cmd	pattern.moveUp	0	Ctrl+Shift+Up;
+live+cmd	pattern.moveDown	0	Ctrl+Shift+Down;
+live+cmd	pattern.next	0	Num +;
+live+cmd	pattern.previous	0	Num -;
+live+cmd	view.playlist	0	F5;
+live+cmd	view.channelRack	0	F6;
+live+cmd	view.pianoRoll	0	Ctrl+Alt+3;
+live+cmd	view.pluginPicker	0	F8;
+live+cmd	view.browser	0	Ctrl+Alt+B;
+live+cmd	view.mixer	0	Ctrl+Alt+M;
+live+cmd	view.stage	0	
+live+cmd	view.settings	0	Ctrl+,;
+live+cmd	view.backToPlaylist	0	Esc;
+live+cmd	view.closeAll	0	F12;
+live+cmd	view.closePlugins	0	Alt+F12;
+live+cmd	view.hidePlugins	0	Ctrl+Alt+P;
+live+cmd	view.resetLayout	0	Ctrl+Shift+H;
+live+cmd	help.shortcuts	0	F1;Ctrl+/;
+live+cmd	view.commandPalette	0	Ctrl+K;Ctrl+Shift+P;
+live+cmd	view.toggleMain	0	Tab;
+live+cmd	view.editors	0	Ctrl+Alt+E;
+live+cmd	view.library	0	
+live+cmd	view.inspector	0	
+live+cmd	view.quickHelp	0	
+live+cmd	view.toolbar	0	
+live+cmd	view.lists	0	
+live+cmd	view.notes	0	
+live+cmd	playlist.delete	1	Del;Backspace;
+live+cmd	playlist.selectAll	1	Ctrl+A;
+live+cmd	playlist.deselect	1	Ctrl+Shift+A;
+live+cmd	playlist.copy	1	Ctrl+C;
+live+cmd	playlist.paste	1	Ctrl+V;
+live+cmd	playlist.duplicate	1	Ctrl+D;
+live+cmd	playlist.merge	1	Ctrl+J;
+live+cmd	playlist.mute	1	0;
+live+cmd	playlist.toolDraw	1	B;
+live+cmd	playlist.toolPaint	1	
+live+cmd	playlist.toolDelete	1	
+live+cmd	playlist.toolMute	1	
+live+cmd	playlist.toolSlip	1	
+live+cmd	playlist.toolSlice	1	
+live+cmd	playlist.toolSelect	1	
+live+cmd	playlist.toolZoom	1	
+live+cmd	playlist.toolPlay	1	
+live+cmd	playlist.toolWarp	1	
+live+cmd	playlist.marker	1	Alt+T;
+live+cmd	playlist.loopMarkers	1	Ctrl+L;
+live+cmd	playlist.meterChange	1	Alt+Shift+T;
+live+cmd	playlist.stretchResize	1	Shift+M;
+live+cmd	playlist.fades	1	Shift+F;
+live+cmd	playlist.zeroCross	1	Shift+X;
+live+cmd	playlist.picker	1	Alt+P;
+live+cmd	playlist.quickZoom1	1	Shift+1;
+live+cmd	playlist.quickZoom2	1	Shift+2;
+live+cmd	playlist.quickZoom3	1	Shift+3;
+live+cmd	playlist.zoomSelection	1	Z;
+live+cmd	playlist.splitAtSongPos	1	Ctrl+E;
+live+cmd	playlist.chopWindow	1	Alt+C;
+live+cmd	playlist.sliceGrid	1	Shift+C;
+live+cmd	playlist.duplicateTime	1	Ctrl+Shift+D;
+live+cmd	playlist.insertSpace	1	Ctrl+I;
+live+cmd	playlist.deleteSpace	1	Ctrl+Shift+Del;
+live+cmd	playlist.consolidateTime	1	Ctrl+Alt+C;
+live+cmd	playlist.zoomIn	1	=;PgUp;
+live+cmd	playlist.zoomOut	1	-;PgDn;
+live+cmd	playlist.zoomFit	1	Home;
+live+cmd	playlist.uniqueCopy	1	Shift+V;
+live+cmd	playlist.cancelDrag	1	Esc;
+live+cmd	playlist.moveTrackUp	1	Alt+Up;
+live+cmd	playlist.moveTrackDown	1	Alt+Down;
+live+cmd	piano.delete	2	Del;Backspace;
+live+cmd	piano.selectAll	2	Ctrl+A;
+live+cmd	piano.deselect	2	Ctrl+Shift+A;
+live+cmd	piano.copy	2	Ctrl+C;
+live+cmd	piano.cut	2	Ctrl+X;
+live+cmd	piano.paste	2	Ctrl+V;
+live+cmd	piano.duplicate	2	Ctrl+D;
+live+cmd	piano.cancelDrag	2	Esc;
+live+cmd	piano.quickQuantize	2	Ctrl+U;
+live+cmd	piano.transposeUp	2	Up;
+live+cmd	piano.transposeDown	2	Down;
+live+cmd	piano.octaveUp	2	Shift+Up;
+live+cmd	piano.octaveDown	2	Shift+Down;
+live+cmd	piano.moveRight	2	Right;
+live+cmd	piano.moveLeft	2	Left;
+live+cmd	piano.legato	2	Ctrl+L;
+live+cmd	piano.chopSteps	2	Ctrl+E;
+live+cmd	piano.glue	2	Ctrl+J;
+live+cmd	piano.quantize	2	Alt+Q;
+live+cmd	piano.randomize	2	Alt+R;
+live+cmd	piano.chop	2	Alt+U;
+live+cmd	piano.strum	2	Alt+S;
+live+cmd	piano.arpeggiate	2	Alt+A;
+live+cmd	piano.articulate	2	Alt+L;
+live+cmd	piano.limit	2	Alt+K;
+live+cmd	piano.lfo	2	Alt+O;
+live+cmd	piano.scaleLevels	2	Alt+X;
+live+cmd	piano.flam	2	Alt+G;
+live+cmd	piano.properties	2	Alt+N;
+live+cmd	piano.humanize	2	Alt+Shift+R;
+live+cmd	piano.invertSelection	2	Shift+I;
+live+cmd	piano.selectRandom	2	Shift+R;
+live+cmd	piano.toolDraw	2	B;
+live+cmd	piano.toolPaint	2	
+live+cmd	piano.toolDelete	2	
+live+cmd	piano.toolSelect	2	
+live+cmd	piano.toolSlice	2	
+live+cmd	piano.toolMute	2	
+live+cmd	piano.toolPlay	2	
+live+cmd	piano.toolZoom	2	
+live+cmd	piano.toolDetune	2	
+live+cmd	piano.toolBend	2	
+live+cmd	piano.chordStamp	2	Alt+C;
+live+cmd	piano.slideMode	2	Shift+S;
+live+cmd	piano.chordStamp	2	Alt+C;
+live+cmd	piano.zoomIn	2	=;PgUp;
+live+cmd	piano.zoomOut	2	-;PgDn;
+live+cmd	piano.zoomFit	2	Home;
+live+cmd	rack.clone	3	Alt+C;
+live+cmd	rack.randomColours	3	Ctrl+Alt+C;
+live+cmd	rack.delete	3	Alt+Del;
+live+cmd	rack.moveUp	3	Alt+Up;
+live+cmd	rack.moveDown	3	Alt+Down;
+live+cmd	rack.routeFree	3	Ctrl+L;
+live+cmd	rack.zip	3	Alt+Z;
+live+cmd	rack.unzipAll	3	Alt+U;
+live+cmd	rack.rotateLeft	3	Ctrl+Shift+Left;
+live+cmd	rack.rotateRight	3	Ctrl+Shift+Right;
+live+cmd	rack.copy	3	Ctrl+C;
+live+cmd	rack.cut	3	Ctrl+X;
+live+cmd	rack.paste	3	Ctrl+V;
+live+cmd	rack.selectAll	3	Ctrl+A;
+live+cmd	rack.graphEditor	3	Ctrl+K;
+live+cmd	rack.insertStep	3	Ins;
+live+cmd	rack.deleteStep	3	Del;
+live+cmd	mixer.routeHere	4	Ctrl+L;
+live+cmd	mixer.routeFromHere	4	Ctrl+Shift+L;
+live+cmd	mixer.selectRoutedChannels	4	Alt+L;
+live+cmd	mixer.selectRoutedTo	4	Ctrl+Alt+L;
+live+cmd	mixer.moveLeft	4	Alt+Left;
+live+cmd	mixer.moveRight	4	Alt+Right;
+live+cmd	mixer.solo	4	S;
+live+cmd	mixer.renderArmed	4	Alt+R;
+live+cmd	mixer.renderSelected	4	Alt+Shift+R;
+live+cmd	mixer.waveforms	4	Alt+W;
+live+cmd	mixer.selectAll	4	Ctrl+A;
+live+cmd	mixer.deselect	4	Ctrl+D;
+live+cmd	mixer.selectRoutedChannels	4	Alt+L;
+live+cmd	mixer.selectRoutedTo	4	Ctrl+Alt+L;
+live+cmd	stage.left	6	Left;
+live+cmd	stage.right	6	Right;
+live+cmd	stage.up	6	Up;
+live+cmd	stage.roomsPanel	6	\;
+live+cmd	stage.down	6	Down;
+live+cmd	stage.levelUp	6	Alt+Up;
+live+cmd	stage.levelDown	6	Alt+Down;
+live+cmd	stage.narrower	6	[;
+live+cmd	stage.wider	6	];
+live+cmd	stage.next	6	
+live+cmd	stage.previous	6	Shift+Tab;
+live+cmd	stage.mute	6	
+live+cmd	stage.solo	6	S;
+live+cmd	stage.reset	6	0;
+live+cmd	stage.rename	6	Enter;
+live+cmd	stage.selectAll	6	Ctrl+A;
+live+cmd	stage.roomsPanel	6	\;
+live+cmd	stage.deselect	6	Ctrl+D;
+live+cmd	auto.delete	5	Del;Backspace;
+live+cmd	auto.selectAll	5	Ctrl+A;
+live+cmd	auto.deselect	5	Ctrl+D;
+live+cmd	auto.invertSelection	5	Ctrl+I;
+live+cmd	auto.copy	5	Ctrl+C;
+live+cmd	auto.cut	5	Ctrl+X;
+live+cmd	auto.paste	5	Ctrl+V;
+live+cmd	auto.pasteReplace	5	
+live+cmd	auto.toolDraw	5	B;
+live+cmd	auto.toolSelect	5	
+live+cmd	auto.toolDelete	5	
+live+cmd	auto.lfo	5	L;
+live+cmd	auto.quantize	5	Q;
+live+cmd	auto.cancel	5	Esc;
+logic+cmd	file.new	0	Cmd+N;
+logic+cmd	file.open	0	Cmd+O;
+logic+cmd	file.save	0	Cmd+S;
+logic+cmd	file.saveAs	0	Cmd+Shift+S;
+logic+cmd	file.saveNewVersion	0	Cmd+Alt+S;
+logic+cmd	file.render	0	Cmd+B;
+logic+cmd	file.renderStems	0	Cmd+Shift+E;
+logic+cmd	file.exportMidi	0	Cmd+Alt+E;
+logic+cmd	file.importUrl	0	Cmd+Shift+U;
+logic+cmd	file.projectInfo	0	F11;
+logic+cmd	file.quit	0	Cmd+Q;
+logic+cmd	edit.undo	0	Cmd+Z;
+logic+cmd	edit.redo	0	Cmd+Y;Cmd+Shift+Z;
+logic+cmd	edit.history	0	Ctrl+Cmd+Alt+Z;
+logic+cmd	edit.rename	0	Shift+Enter;F2;
+logic+cmd	transport.play	0	Space;Num Enter;Num 0;
+logic+cmd	transport.songMode	0	L;
+logic+cmd	transport.tapTempo	0	Cmd+Shift+T;
+logic+cmd	options.typingKeyboard	0	Cmd+K;
+logic+cmd	options.metronome	0	K;
+logic+cmd	tools.stopSound	0	Ctrl+Cmd+Alt+.;
+logic+cmd	transport.record	0	R;
+logic+cmd	transport.toStart	0	Enter;
+logic+cmd	transport.rewindBar	0	,;
+logic+cmd	transport.forwardBar	0	.;
+logic+cmd	options.countIn	0	Shift+K;
+logic+cmd	pattern.new	0	F4;
+logic+cmd	pattern.findFirstEmpty	0	Shift+F4;
+logic+cmd	pattern.findNextEmpty	0	Cmd+F4;
+logic+cmd	pattern.clone	0	Cmd+Shift+C;
+logic+cmd	pattern.insert	0	Cmd+Shift+Ins;
+logic+cmd	pattern.delete	0	Cmd+Shift+Del;
+logic+cmd	pattern.moveUp	0	Cmd+Shift+Up;
+logic+cmd	pattern.moveDown	0	Cmd+Shift+Down;
+logic+cmd	pattern.next	0	Num +;
+logic+cmd	pattern.previous	0	Num -;
+logic+cmd	view.playlist	0	F5;
+logic+cmd	view.channelRack	0	Cmd+3;
+logic+cmd	view.pianoRoll	0	P;Cmd+4;
+logic+cmd	view.pluginPicker	0	F8;
+logic+cmd	view.browser	0	B;
+logic+cmd	view.mixer	0	X;Cmd+2;
+logic+cmd	view.stage	0	
+logic+cmd	view.settings	0	Cmd+,;
+logic+cmd	view.backToPlaylist	0	Esc;
+logic+cmd	view.closeAll	0	F12;
+logic+cmd	view.closePlugins	0	Alt+F12;
+logic+cmd	view.hidePlugins	0	V;
+logic+cmd	view.resetLayout	0	Cmd+Shift+H;
+logic+cmd	help.shortcuts	0	Alt+K;
+logic+cmd	view.commandPalette	0	Cmd+Shift+P;
+logic+cmd	view.toggleMain	0	Cmd+Alt+Shift+Tab;
+logic+cmd	view.editors	0	E;
+logic+cmd	view.library	0	Y;
+logic+cmd	view.inspector	0	I;
+logic+cmd	view.quickHelp	0	Shift+/;
+logic+cmd	view.toolbar	0	Ctrl+Cmd+Alt+T;
+logic+cmd	view.lists	0	D;
+logic+cmd	view.notes	0	Cmd+Alt+P;
+logic+cmd	playlist.delete	1	Del;Backspace;
+logic+cmd	playlist.selectAll	1	Cmd+A;
+logic+cmd	playlist.deselect	1	Shift+D;
+logic+cmd	playlist.copy	1	Cmd+C;
+logic+cmd	playlist.paste	1	Cmd+V;
+logic+cmd	playlist.duplicate	1	Cmd+R;
+logic+cmd	playlist.merge	1	Cmd+J;
+logic+cmd	playlist.mute	1	Ctrl+M;
+logic+cmd	playlist.toolDraw	1	
+logic+cmd	playlist.toolPaint	1	
+logic+cmd	playlist.toolDelete	1	
+logic+cmd	playlist.toolMute	1	
+logic+cmd	playlist.toolSlip	1	
+logic+cmd	playlist.toolSlice	1	
+logic+cmd	playlist.toolSelect	1	
+logic+cmd	playlist.toolZoom	1	
+logic+cmd	playlist.toolPlay	1	
+logic+cmd	playlist.toolWarp	1	
+logic+cmd	playlist.marker	1	Alt+';
+logic+cmd	playlist.loopMarkers	1	Cmd+U;
+logic+cmd	playlist.meterChange	1	Alt+Shift+T;
+logic+cmd	playlist.stretchResize	1	Shift+M;
+logic+cmd	playlist.fades	1	Shift+F;
+logic+cmd	playlist.zeroCross	1	Shift+X;
+logic+cmd	playlist.picker	1	Alt+P;
+logic+cmd	playlist.quickZoom1	1	Shift+1;
+logic+cmd	playlist.quickZoom2	1	Shift+2;
+logic+cmd	playlist.quickZoom3	1	Shift+3;
+logic+cmd	playlist.zoomSelection	1	Shift+4;
+logic+cmd	playlist.splitAtSongPos	1	Cmd+T;
+logic+cmd	playlist.chopWindow	1	Alt+C;
+logic+cmd	playlist.sliceGrid	1	Shift+C;
+logic+cmd	playlist.duplicateTime	1	Alt+B;
+logic+cmd	playlist.insertSpace	1	Cmd+Ins;
+logic+cmd	playlist.deleteSpace	1	Cmd+Del;
+logic+cmd	playlist.consolidateTime	1	Cmd+Alt+C;
+logic+cmd	playlist.zoomIn	1	Cmd+Right;PgUp;
+logic+cmd	playlist.zoomOut	1	Cmd+Left;PgDn;
+logic+cmd	playlist.zoomFit	1	Z;
+logic+cmd	playlist.uniqueCopy	1	Shift+V;
+logic+cmd	playlist.cancelDrag	1	Esc;
+logic+cmd	playlist.moveTrackUp	1	Alt+Up;
+logic+cmd	playlist.moveTrackDown	1	Alt+Down;
+logic+cmd	piano.delete	2	Del;Backspace;
+logic+cmd	piano.selectAll	2	Cmd+A;
+logic+cmd	piano.deselect	2	Shift+D;
+logic+cmd	piano.copy	2	Cmd+C;
+logic+cmd	piano.cut	2	Cmd+X;
+logic+cmd	piano.paste	2	Cmd+V;
+logic+cmd	piano.duplicate	2	
+logic+cmd	piano.cancelDrag	2	Esc;
+logic+cmd	piano.quickQuantize	2	Q;
+logic+cmd	piano.transposeUp	2	Up;Alt+Up;
+logic+cmd	piano.transposeDown	2	Down;Alt+Down;
+logic+cmd	piano.octaveUp	2	Shift+Up;Alt+Shift+Up;
+logic+cmd	piano.octaveDown	2	Shift+Down;Alt+Shift+Down;
+logic+cmd	piano.moveRight	2	Right;
+logic+cmd	piano.moveLeft	2	Left;
+logic+cmd	piano.legato	2	Cmd+L;
+logic+cmd	piano.chopSteps	2	Cmd+U;
+logic+cmd	piano.glue	2	Cmd+G;
+logic+cmd	piano.quantize	2	Alt+Q;
+logic+cmd	piano.randomize	2	Alt+R;
+logic+cmd	piano.chop	2	Alt+U;
+logic+cmd	piano.strum	2	Alt+S;
+logic+cmd	piano.arpeggiate	2	Alt+A;
+logic+cmd	piano.articulate	2	Alt+L;
+logic+cmd	piano.limit	2	
+logic+cmd	piano.lfo	2	Alt+O;
+logic+cmd	piano.scaleLevels	2	Alt+X;
+logic+cmd	piano.flam	2	Alt+G;
+logic+cmd	piano.properties	2	Alt+N;
+logic+cmd	piano.humanize	2	Alt+Shift+R;
+logic+cmd	piano.invertSelection	2	Shift+I;
+logic+cmd	piano.selectRandom	2	Shift+R;
+logic+cmd	piano.toolDraw	2	
+logic+cmd	piano.toolPaint	2	
+logic+cmd	piano.toolDelete	2	
+logic+cmd	piano.toolSelect	2	
+logic+cmd	piano.toolSlice	2	
+logic+cmd	piano.toolMute	2	
+logic+cmd	piano.toolPlay	2	
+logic+cmd	piano.toolZoom	2	
+logic+cmd	piano.toolDetune	2	
+logic+cmd	piano.toolBend	2	
+logic+cmd	piano.chordStamp	2	Alt+C;
+logic+cmd	piano.slideMode	2	Shift+S;
+logic+cmd	piano.chordStamp	2	Alt+C;
+logic+cmd	piano.zoomIn	2	Cmd+Right;PgUp;
+logic+cmd	piano.zoomOut	2	Cmd+Left;PgDn;
+logic+cmd	piano.zoomFit	2	Home;
+logic+cmd	rack.clone	3	Alt+C;
+logic+cmd	rack.randomColours	3	Cmd+Alt+C;
+logic+cmd	rack.delete	3	Alt+Del;
+logic+cmd	rack.moveUp	3	Alt+Up;
+logic+cmd	rack.moveDown	3	Alt+Down;
+logic+cmd	rack.routeFree	3	Cmd+L;
+logic+cmd	rack.zip	3	Alt+Z;
+logic+cmd	rack.unzipAll	3	Alt+U;
+logic+cmd	rack.rotateLeft	3	Cmd+Shift+Left;
+logic+cmd	rack.rotateRight	3	Cmd+Shift+Right;
+logic+cmd	rack.copy	3	Cmd+C;
+logic+cmd	rack.cut	3	Cmd+X;
+logic+cmd	rack.paste	3	Cmd+V;
+logic+cmd	rack.selectAll	3	Cmd+A;
+logic+cmd	rack.graphEditor	3	
+logic+cmd	rack.insertStep	3	Ins;
+logic+cmd	rack.deleteStep	3	Del;
+logic+cmd	mixer.routeHere	4	Cmd+L;
+logic+cmd	mixer.routeFromHere	4	Cmd+Shift+L;
+logic+cmd	mixer.selectRoutedChannels	4	Alt+L;
+logic+cmd	mixer.selectRoutedTo	4	Cmd+Alt+L;
+logic+cmd	mixer.moveLeft	4	Alt+Left;
+logic+cmd	mixer.moveRight	4	Alt+Right;
+logic+cmd	mixer.solo	4	S;
+logic+cmd	mixer.renderArmed	4	Alt+R;
+logic+cmd	mixer.renderSelected	4	Alt+Shift+R;
+logic+cmd	mixer.waveforms	4	Alt+W;
+logic+cmd	mixer.selectAll	4	Cmd+A;
+logic+cmd	mixer.deselect	4	Cmd+D;
+logic+cmd	mixer.selectRoutedChannels	4	Alt+L;
+logic+cmd	mixer.selectRoutedTo	4	Cmd+Alt+L;
+logic+cmd	stage.left	6	Left;
+logic+cmd	stage.right	6	Right;
+logic+cmd	stage.up	6	Up;
+logic+cmd	stage.roomsPanel	6	\;
+logic+cmd	stage.down	6	Down;
+logic+cmd	stage.levelUp	6	Alt+Up;
+logic+cmd	stage.levelDown	6	Alt+Down;
+logic+cmd	stage.narrower	6	[;
+logic+cmd	stage.wider	6	];
+logic+cmd	stage.next	6	Tab;
+logic+cmd	stage.previous	6	Shift+Tab;
+logic+cmd	stage.mute	6	M;
+logic+cmd	stage.solo	6	S;
+logic+cmd	stage.reset	6	0;
+logic+cmd	stage.rename	6	
+logic+cmd	stage.selectAll	6	Cmd+A;
+logic+cmd	stage.roomsPanel	6	\;
+logic+cmd	stage.deselect	6	Cmd+D;
+logic+cmd	auto.delete	5	Del;Backspace;
+logic+cmd	auto.selectAll	5	Cmd+A;
+logic+cmd	auto.deselect	5	Cmd+D;
+logic+cmd	auto.invertSelection	5	Cmd+I;
+logic+cmd	auto.copy	5	Cmd+C;
+logic+cmd	auto.cut	5	Cmd+X;
+logic+cmd	auto.paste	5	Cmd+V;
+logic+cmd	auto.pasteReplace	5	Cmd+R;
+logic+cmd	auto.toolDraw	5	
+logic+cmd	auto.toolSelect	5	
+logic+cmd	auto.toolDelete	5	
+logic+cmd	auto.lfo	5	
+logic+cmd	auto.quantize	5	Q;
+logic+cmd	auto.cancel	5	Esc;

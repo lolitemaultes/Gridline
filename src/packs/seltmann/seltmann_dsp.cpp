@@ -307,6 +307,7 @@ bool modelOf(const PluginState& st, SamplePtr src, std::string& path, Model& m) 
 // ================================================================== instrument
 class SeltmannGen final : public Generator {
  public:
+  bool mayRest() const override { return false; }  // K-277: sound without notes
   SeltmannGen() { (void)stretch::sincTable(stretch::Quality::Realtime); }
 
   bool active() const override {

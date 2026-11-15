@@ -993,6 +993,24 @@ void Index::movePath(const std::string& fromIn, const std::string& toIn) {
   save();
 }
 
+std::vector<std::pair<std::string, int>> Index::tagCounts(size_t limit) const {
+  std::map<std::string, int> n;
+  {
+    std::lock_guard<std::mutex> lk(mu_);
+    for (const auto& [p, m] : entries_) {
+      std::set<std::string> mine(m.fileTags.begin(), m.fileTags.end());
+      if (auto t = tags_.find(p); t != tags_.end()) mine.insert(t->second.begin(), t->second.end());
+      for (std::string& t : autoTags(m.path)) mine.insert(std::move(t));
+      for (const std::string& t : mine)
+        if (!t.empty() && t != "starred") ++n[t];
+    }
+  }
+  std::vector<std::pair<std::string, int>> out(n.begin(), n.end());
+  std::stable_sort(out.begin(), out.end(), [](const auto& x, const auto& y) { return x.second > y.second; });
+  if (out.size() > limit) out.resize(limit);
+  return out;
+}
+
 std::vector<std::string> Index::allTags() const {
   std::set<std::string> s;
   {

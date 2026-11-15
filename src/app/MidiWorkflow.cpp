@@ -214,16 +214,26 @@ bool App::tapListening() const { return !tapper.taps.empty() && ImGui::GetTime()
 
 double App::tapAge() const { return tapper.taps.empty() ? 1e9 : ImGui::GetTime() - tapper.taps.back(); }
 
-void App::playedNoteOn(ObjectId channel, int pitch, int velocity) {
+double App::recordTick(double stamp) const {
+  if (stamp < 0) stamp = MidiManager::clockNow();
+  // What the performer hears left the engine this long ago: the device buffer plus the plugin delay.
+  const double sr = engine.sampleRate() > 0 ? engine.sampleRate() : 44100.0;
+  const double latency = static_cast<double>(std::max(0, audioBuffer) + std::max(0, engine.outputLatency())) / sr;
+  double t = 0;
+  return engine.heardTick(stamp, latency, &t) ? t : engine.position();
+}
+
+void App::playedNoteOn(ObjectId channel, int pitch, int velocity, double stamp) {
   j31::chordEditorNote(*this, pitch, true);  // J-31: learn chords from MIDI input
   if (stepRecord && !engine.playing()) {
     stepRecorder.press(pitch, velocity);
     return;
   }
-  if (recorder.active()) recorder.noteOn(doc, channel, pitch, velocity, engine.position());
+  if (recorder.active()) recorder.noteOn(doc, channel, pitch, velocity, recordTick(stamp));
+  else capture.noteOn(channel, pitch, velocity, now);  // K-112c: kept for Capture
 }
 
-void App::playedNoteOff(ObjectId channel, int pitch) {
+void App::playedNoteOff(ObjectId channel, int pitch, double stamp) {
   j31::chordEditorNote(*this, pitch, false);
   if (stepRecord && !engine.playing()) {
     Tick g = piano.effGrid > 0 ? piano.effGrid : snapTicks(doc.song(), piano.snap);
@@ -231,7 +241,8 @@ void App::playedNoteOff(ObjectId channel, int pitch) {
     stepRecorder.release(doc, curPattern, selChannel, pitch);
     return;
   }
-  if (recorder.active()) recorder.noteOff(doc, channel, pitch, engine.position());
+  if (recorder.active()) recorder.noteOff(doc, channel, pitch, recordTick(stamp));
+  else capture.noteOff(channel, pitch, now);
 }
 
 void App::processMidi() {
@@ -242,27 +253,38 @@ void App::processMidi() {
     return;
   }
   engine.setMidiTarget(selChannel);
-  const double pos = engine.position();
 
   // ---- recording session follows the transport ----
-  const bool recNow = recordArmed && engine.playing() && !engine.countingIn() && engine.mode() != PlayMode::Live;
+  // K-226: from the count-in on, so notes played in its last beat (pickups) are kept.
+  const bool recNow = recordArmed && engine.playing() && engine.mode() != PlayMode::Live;
   if (recNow && !recorder.active()) {
     RecordOptions o = recOptions;
     Tick g = piano.effGrid > 0 ? piano.effGrid : snapTicks(doc.song(), piano.snap);
     o.grid = std::max<Tick>(1, g);
+    const Song& s = doc.song();
+    RecordSetup st;
+    // Where it starts: the transport waits there during a count-in; armed while playing, the tick heard now.
+    const double at = engine.countingIn() ? engine.position() : recordTick();
+    st.start = std::max<Tick>(0, static_cast<Tick>(std::llround(std::max(0.0, at))));
     if (engine.mode() == PlayMode::Song) {
-      recorder.beginSong(doc, curPattern, o);
-    } else if (const Pattern* p = doc.song().pattern(curPattern)) {
-      recorder.beginPattern(doc, curPattern, o, std::max<Tick>(1, doc.song().patternContentLength(*p)));
+      st.pickup = MeterMap(s).segAt(st.start).beat;
+      const bool sel = playlist.selEnd > playlist.selStart;
+      if (sel) {
+        st.loopStart = playlist.selStart;
+        st.loopEnd = playlist.selEnd;
+        if (recPunch) {
+          st.punchIn = playlist.selStart;
+          st.punchOut = playlist.selEnd;
+        }
+      }
+      recorder.beginSong(doc, curPattern, o, st);
+    } else if (const Pattern* p = s.pattern(curPattern)) {
+      st.pickup = std::max<Tick>(1, s.patternBarTicks(*p) / std::max(1, p->meterNum > 0 ? p->meterNum : s.timeSigNum));
+      recorder.beginPattern(doc, curPattern, o, std::max<Tick>(1, s.patternContentLength(*p)), st);
     }
-  } else if (!recNow && recorder.active()) {
-    recorder.end(doc, lastRecPos_);
+  } else if (recorder.active() && (!recNow || recorder.songMode() != (engine.mode() == PlayMode::Song))) {
+    recorder.end(doc, lastRecPos_);  // stopped, disarmed, or the play mode changed (a new take starts next frame)
   }
-  if (recorder.active()) {
-    recorder.position(doc, pos);
-    if (!recorder.songMode() && recorder.pattern() != curPattern) selectPattern(recorder.pattern());  // new take
-  }
-  lastRecPos_ = pos;
 
   // ---- multilink: remember the controls touched in Gridline ----
   if (multilink && doc.touchSerial() != multilinkSerial_) {
@@ -274,6 +296,7 @@ void App::processMidi() {
 
   if (!midi) {
     multilinkSerial_ = doc.touchSerial();
+    followRecording();
     return;
   }
   for (const auto& c : doc.song().channels)  // MIDI Out channels → device (K-129: and Tracker Samplers sending their notes)
@@ -387,9 +410,13 @@ void App::processMidi() {
       if (!d || !v) continue;
       double out = 0;
       if (remote.process(l, m, d->toNormalized(*v), &out, stepOf(*d))) {
-        doc.setParam(pid, d->fromNormalized(out), true);
+        const double value = d->fromNormalized(out);
+        if (recorder.active())  // K-226: part of the recording's undo step
+          recorder.edit(doc, [&] { doc.setParam(pid, value, true); });
+        else
+          doc.setParam(pid, value, true);
         lastCcTime_ = now;
-        if (recorder.active() && !automationRecording()) recorder.controller(pid, out, engine.position());  // else captured by the automation recorder
+        if (recorder.active() && !automationRecording()) recorder.controller(pid, out, recordTick(e.time));  // else captured by the automation recorder
       }
     }
 
@@ -452,9 +479,13 @@ void App::processMidi() {
             if (h.kind == TemplateHit::Knob) l.encoder = tpl->knobEncoder;
             double out = 0;
             if (remote.process(l, m, d->toNormalized(*v), &out, stepOf(*d))) {
-              doc.setParam(pid, d->fromNormalized(out), true);
+              const double value = d->fromNormalized(out);
+              if (recorder.active())  // K-226: part of the recording's undo step
+                recorder.edit(doc, [&] { doc.setParam(pid, value, true); });
+              else
+                doc.setParam(pid, value, true);
               lastCcTime_ = now;
-              if (recorder.active() && !automationRecording()) recorder.controller(pid, out, engine.position());  // else captured by the automation recorder
+              if (recorder.active() && !automationRecording()) recorder.controller(pid, out, recordTick(e.time));  // else captured by the automation recorder
             }
           }
           handled = true;
@@ -463,8 +494,8 @@ void App::processMidi() {
     }
     if (handled) continue;
 
-    // Notes: recording / step record.
-    if (kind == 0x90 || kind == 0x80) {
+    // Notes and the sustain pedal: recording / step record.
+    if (kind == 0x90 || kind == 0x80 || (kind == 0xB0 && m.d1 == 64)) {
       const MidiInputConfig* cfg = midi->inputConfig(e.port);
       if (cfg && !cfg->notes) continue;
       ObjectId ch = selChannel;
@@ -472,10 +503,12 @@ void App::processMidi() {
       if (r.byChannel && m.channel() != r.omniChannel && r.route[m.channel()] >= 0 &&
           r.route[m.channel()] < static_cast<int>(song.channels.size()))
         ch = song.channels[static_cast<size_t>(r.route[m.channel()])].id;
-      if (m.noteOn())
-        playedNoteOn(ch, j31::incomingPitch(*this, m.d1), m.d2);  // J-31: snap incoming MIDI to the scale
+      if (kind == 0xB0) {  // the pedal as played (the notes keep the lengths the keys were held)
+        if (recorder.active()) recorder.pedal(ch, m.d2 >= 64, recordTick(e.time));
+      } else if (m.noteOn())
+        playedNoteOn(ch, j31::incomingPitch(*this, m.d1), m.d2, e.time);  // J-31: snap incoming MIDI to the scale
       else if (!r.ignoreNoteOff)
-        playedNoteOff(ch, j31::incomingPitch(*this, m.d1));
+        playedNoteOff(ch, j31::incomingPitch(*this, m.d1), e.time);
     }
   }
   // A controller gesture ends after a short pause: one undo step per move.
@@ -484,6 +517,30 @@ void App::processMidi() {
     lastCcTime_ = -1;
   }
   multilinkSerial_ = doc.touchSerial();
+  followRecording();
+}
+
+void App::followRecording() {
+  if (!recorder.active()) return;
+  // After this frame's input: the notes were placed where they were heard, then the position moves on
+  // (a loop wraps after the notes played before it).
+  const Song& s = doc.song();
+  if (recorder.songMode()) {
+    if (playlist.selEnd > playlist.selStart)
+      recorder.setSongLoop(playlist.selStart, playlist.selEnd);
+    else
+      recorder.setSongLoop(0, 0);
+  } else if (const Pattern* p = s.pattern(recorder.pattern())) {
+    recorder.setLoopLength(std::max<Tick>(1, s.patternContentLength(*p)));  // the loop follows the pattern
+  }
+  const double pos = recordTick();
+  recorder.position(doc, pos);
+  lastRecPos_ = pos;
+  // A new take is shown (pattern mode: it is what plays, so it stays selected; song mode: once, the
+  // pattern can be changed while recording goes on).
+  const ObjectId take = recorder.pattern();
+  if (take != kNoId && take != curPattern && (!recorder.songMode() || take != recTakeShown_)) selectPattern(take);
+  recTakeShown_ = take;
 }
 
 }  // namespace gl

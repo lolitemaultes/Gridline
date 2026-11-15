@@ -63,11 +63,29 @@ int AudioEngine::outputLatency() const { return current_ ? current_->outputLaten
 
 void AudioEngine::runGraph(const Program* p, int n) {
   const ProgGraph& g = p->graph;
-  const int threads = std::min(threads_.load(std::memory_order_relaxed), pool_.threads() + 1);
+  int threads = std::min(threads_.load(std::memory_order_relaxed), pool_.threads() + 1);
+  // K-277: realtime playback wakes only as many pool threads as the block has heavy tasks to share:
+  // the tasks that took a while in the last blocks, or channels given events now. Waiting workers
+  // spin until the graph is done, so one heavy plugin among light tasks (or a silent project) on
+  // every thread cost each of them that plugin's time. Offline renders use every thread.
+  if (!offline_ && threads > 1) {
+    heavyNs_ = static_cast<uint64_t>(std::max(kHeavyTaskMinSec, kHeavyTaskShare * n / std::max(1.0, sr_)) * 1e9);
+    int heavy = heavyNow_.exchange(0, std::memory_order_relaxed);
+    if (heavy >= heavyEst_ || --heavyHold_ <= 0) heavyEst_ = heavy, heavyHold_ = kHeavyHoldBlocks;
+    const uint64_t work = workNow_.exchange(0, std::memory_order_relaxed);
+    if (work >= workEst_ || --workHold_ <= 0) workEst_ = work, workHold_ = kHeavyHoldBlocks;
+    int waking = 0;
+    for (const ProgChannel& ch : p->channels)
+      if (ch.rt && ch.rt->resting && ch.rt->gen && ch.rt->gen->hasEvents()) ++waking;  // (a resting plugin's cost is not in the count)
+    const bool worth = static_cast<double>(workEst_) > kParallelWorkShare * 1e9 * n / std::max(1.0, sr_);
+    threads = std::min(threads, std::max(worth ? heavyEst_ : 1, waking));
+  }
   if (threads <= 1 || n < kParallelMinFrames || g.active < 2) {
+    serialBlocks_.fetch_add(1, std::memory_order_relaxed);
     for (int t : g.serial) runTask(t, 0);
     return;
   }
+  parallelBlocks_.fetch_add(1, std::memory_order_relaxed);
   for (int t : g.serial) g.pending[static_cast<size_t>(t)].store(g.deps[static_cast<size_t>(t)], std::memory_order_relaxed);
   int initial = 0;
   for (int t : g.serial)
@@ -116,10 +134,16 @@ void AudioEngine::claimTasks(int worker) {
 
 void AudioEngine::runTask(int task, int worker) {
   const int C = bc_.p->graph.channels;
+  const uint64_t t0 = offline_ ? 0 : nowNs();
   if (task < C)
     runChannel(static_cast<size_t>(task), worker);
   else
     runMixer(static_cast<size_t>(task - C), worker);
+  if (!offline_) {  // K-277
+    const uint64_t d = nowNs() - t0;
+    workNow_.fetch_add(d, std::memory_order_relaxed);
+    if (d > heavyNs_) heavyNow_.fetch_add(1, std::memory_order_relaxed);
+  }
 }
 
 // K-87: a frozen unit's render at the song position: frame k is song sample k (the render starts
@@ -169,11 +193,64 @@ void AudioEngine::runChannel(size_t ci, int worker) {
   // K-64: a sampler channel with no voice, no event and no clip near this block makes silence:
   // nothing to run. (Most channels of a large arrangement, most of the time.)
   rt->outZero = false;
-  if (bc_.rest && ch.restable && rt->gen->idle() && !rt->gen->wantsNoteLookahead() && !(livePieceCount_ > 0 && tMode_ == PlayMode::Live)) {
+  const bool liveAudio = livePieceCount_ > 0 && tMode_ == PlayMode::Live;
+  auto clipsNear = [&] {
     bool near = false;
     if (!ch.audio.empty() && tPlaying_ && tMode_ == PlayMode::Song)
       for (int sgi = 0; sgi < segCount_ && !near; ++sgi) near = audioClipsNear(ch.audio, segT0_[sgi], segTA_[sgi]);
-    if (!near) {
+    return near;
+  };
+  // K-277: Rest silent instruments. `calm`: nothing plays the instrument this block (no event, no
+  // note held, no clip near, no transport jump, its editor closed) and its own smoothing has settled.
+  // A muted strip (its gain at zero, not driven by a link) rests whatever plays; a MIDI message
+  // for it (a controller, bend or program change routed from a MIDI Out channel) runs it for that
+  // block, inaudibly, so it keeps that state for when it is heard again.
+  const bool mayRest = bc_.rest && bc_.restInstruments && ch.restSilent;
+  bool calm = false, mutedStrip = false;
+  if (mayRest) {
+    const Generator& g = *rt->gen;
+    calm = !g.hasEvents() && rt->pendingCount == 0 && rt->liveCount == 0 && !g.notesHeld() && !g.ownPlayback() &&
+           !g.wantsNoteLookahead() && !(g.tailKnown() && g.active()) && g.smoothersSettled() &&
+           !rt->editorOpen.load(std::memory_order_relaxed) && !bc_.ctx.jumped && !liveAudio && !clipsNear();
+    mutedStrip = !ch.stripLinked && ch.gainL == 0.f && ch.gainR == 0.f && rt->primed && rt->curL == 0.f && rt->curR == 0.f &&
+                 !rt->editorOpen.load(std::memory_order_relaxed) && !g.ownPlayback() && !(rt->mutedRest && g.hasMidi());
+    if (rt->resting && !(rt->mutedRest ? mutedStrip : calm)) {  // woken: this block runs (its events at their offsets)
+      rt->resting = rt->mutedRest = false;
+      rt->quietFrames = 0;
+    }
+  } else if (rt->resting) {
+    rt->resting = rt->mutedRest = false;
+    rt->quietFrames = 0;
+  }
+  if (mayRest && rt->resting) {  // at rest: the block is silence, nothing runs
+    if (rt->mutedRest) rt->gen->dropEvents();
+    rt->gen->rested(n);
+    rt->sounding.store(false, std::memory_order_relaxed);
+    rt->restBlocks.fetch_add(1, std::memory_order_relaxed);
+    rt->restingUi.store(true, std::memory_order_relaxed);
+    if (!rt->primed) {
+      rt->curL = ch.gainL, rt->curR = ch.gainR;
+      rt->primed = true;
+    } else if (bc_.grid) {
+      if (bc_.gpos == 0) rt->fromL = rt->curL, rt->fromR = rt->curR;
+      const float k = static_cast<float>(bc_.gpos + n) / static_cast<float>(kControlBlock);
+      rt->curL = bc_.gpos + n >= kControlBlock ? ch.gainL : rt->fromL + (ch.gainL - rt->fromL) * k;
+      rt->curR = bc_.gpos + n >= kControlBlock ? ch.gainR : rt->fromR + (ch.gainR - rt->fromR) * k;
+    } else {
+      rt->curL = ch.gainL, rt->curR = ch.gainR;
+    }
+    rt->outZero = true;
+    rt->peak.store(0.f, std::memory_order_relaxed);
+    rt->tap.write(cL, cR, n);
+    if (bc_.profile) rt->cpu.add(nowNs() - t0);
+    return;
+  }
+  if (mayRest) {
+    rt->runBlocks.fetch_add(1, std::memory_order_relaxed);
+    rt->restingUi.store(false, std::memory_order_relaxed);
+  }
+  if (bc_.rest && ch.restable && rt->gen->idle() && !rt->gen->wantsNoteLookahead() && !liveAudio) {
+    if (!clipsNear()) {
       rt->sounding.store(false, std::memory_order_relaxed);
       if (!rt->primed) {
         rt->curL = ch.gainL, rt->curR = ch.gainR;
@@ -193,7 +270,9 @@ void AudioEngine::runChannel(size_t ci, int worker) {
       return;
     }
   }
-  if (tPlaying_ && rt->gen->wantsLanes()) {
+  if (ch.midiFirst) {
+    // A MIDI Out channel with listeners ran before the graph (runMidiOut); it makes no sound.
+  } else if (tPlaying_ && rt->gen->wantsLanes()) {
     // J-159: the lanes on this instrument's own parameters (it evaluates them itself)
     ParamLane lanes[kMaxParamLanes];
     int nl = 0;
@@ -285,7 +364,27 @@ void AudioEngine::runChannel(size_t ci, int worker) {
   storeMax(rt->level, pk);
   rt->peak.store(pk, std::memory_order_relaxed);  // J-186
   rt->tap.write(cL, cR, n);
+  if (mayRest) noteQuiet(*rt, mutedStrip ? 0.f : std::max(peakOf(cL, n), peakOf(cR, n)), calm || mutedStrip, mutedStrip, n);
   if (bc_.profile) rt->cpu.add(nowNs() - t0);
+}
+
+// K-277: after a block the instrument ran. Counts the frames in a row it stayed below the floor
+// with nothing playing it; it rests once that lasted its hold time (longer when only the sound
+// tells the tail has ended). Sound that comes out of silence with nothing to cause it marks an
+// instrument that plays by itself: it never rests.
+void AudioEngine::noteQuiet(ChannelRuntime& rt, float peak, bool calm, bool muted, int n) {
+  const Generator& g = *rt.gen;
+  const double hold = (muted ? kRestHoldMuted : g.tailKnown() ? kRestHoldKnown : kRestHoldListened) * sr_;
+  if (peak > kRestFloor) {
+    if (calm && static_cast<double>(rt.quietFrames) >= kRestSelfAfter * sr_) rt.selfSound = true;
+    rt.quietFrames = 0;
+    return;
+  }
+  rt.quietFrames = calm ? rt.quietFrames + n : 0;
+  if (!calm || (rt.selfSound && !muted) || static_cast<double>(rt.quietFrames) < hold) return;
+  rt.resting = true;
+  rt.mutedRest = muted;
+  if (muted) rt.gen->kill();  // (inaudible: the strip is at zero) its voices end; it starts clean when heard again
 }
 
 void AudioEngine::pullInput(const ProgInput& in, float* accL, float* accR, depth::RoomEarly* early) const {

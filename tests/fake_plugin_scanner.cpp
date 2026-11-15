@@ -6,6 +6,8 @@
 //   *shell*  a plugin holding 120 others (like a VST 2 shell), 40 ms each, telling the parent after
 //            each one (<out>.progress grows), so a scan that takes longer than the timeout still ends;
 //   *junk*   exits with an error and writes nothing (a file that is not a plugin);
+//   *once*   crashes the first time it is scanned, answers the next time (K-267);
+//   *linger* answers, then never ends; *exitcrash* answers, then crashes (K-267);
 //   else     one plugin after 20 ms.
 // Every plugin it reports has 120 parameters, so the cache grows like a real collection's.
 #include <algorithm>
@@ -81,7 +83,16 @@ int main(int argc, char** argv) {
   if (const size_t dot = name.rfind('.'); dot != std::string::npos && dot > 0) name.resize(dot);  // the same plugin in each format
   if (name.find("hang") != std::string::npos)
     for (;;) sleepMs(1000);
-  if (name.find("crash") != std::string::npos) std::abort();
+  // K-267: crashes the first time it is scanned only (a marker file beside it), like a plugin that fails
+  // while another loads at the same time, or on its first start.
+  if (name.find("once") != std::string::npos) {
+    const std::string marker = entry + ".tried";
+    if (!std::ifstream(marker)) {
+      std::ofstream(marker) << "1";
+      std::abort();
+    }
+  }
+  if (name.find("crash") != std::string::npos && name.find("exitcrash") == std::string::npos) std::abort();
   if (name.find("junk") != std::string::npos) return 2;
   std::string classes;
   if (name.find("shell") != std::string::npos) {
@@ -95,7 +106,15 @@ int main(int argc, char** argv) {
     sleepMs(name.find("slow") != std::string::npos ? 1000 : 20);
     classes = pluginJson(format, name, name, name.find("inst") != std::string::npos);
   }
-  std::ofstream f(out, std::ios::binary);
-  f << "{\"format\":\"" << escape(format) << "\",\"bundle\":\"" << escape(entry) << "\",\"ok\":true,\"classes\":[" << classes << "]}";
-  return f ? 0 : 3;
+  {
+    std::ofstream f(out, std::ios::binary);
+    f << "{\"format\":\"" << escape(format) << "\",\"bundle\":\"" << escape(entry) << "\",\"ok\":true,\"classes\":[" << classes << "]}";
+    if (!f) return 3;
+  }
+  // K-267: plugins that misbehave only after their scan is done, while the process ends (Windows sends
+  // every loaded DLL an unload notification): one never lets it end, one crashes.
+  if (name.find("linger") != std::string::npos)
+    for (;;) sleepMs(1000);
+  if (name.find("exitcrash") != std::string::npos) std::abort();
+  return 0;
 }

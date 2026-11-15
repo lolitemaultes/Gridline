@@ -374,6 +374,10 @@ void routePluginWindows(App& a) {
 bool pluginWindowShown(App& a, const PluginTarget& t) { return hostedEditorOpen(t) || panelShowing(a, t); }
 
 void togglePluginWindow(App& a, const PluginTarget& t) {
+  if (hostedEditorOpen(t) && hostedEditorHidden(t)) {  // K-112: set aside: it comes back
+    setHostedEditorHidden(t, false, kHideAny);
+    return;
+  }
   if (hostedEditorOpen(t)) {
     closeHostedEditor(a, t, "its channel or effect button was clicked again");
     return;

@@ -1249,6 +1249,11 @@ bool ImGui::ImageButton(ImTextureID user_texture_id, const ImVec2& size, const I
 */
 #endif // #ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS
 
+// Gridline (K-112, Live): see imgui_internal.h.
+float GImGuiGridlineToggleW = 0.0f;
+bool GImGuiGridlineMenuLive = false;  // GRIDLINE PATCH (K-112c round 25)
+void (*GImGuiGridlineToggleDraw)(ImDrawList* dl, const ImVec2& a, const ImVec2& b, int state, bool hovered, bool held) = NULL;
+
 bool ImGui::Checkbox(const char* label, bool* v)
 {
     ImGuiWindow* window = GetCurrentWindow();
@@ -1262,8 +1267,10 @@ bool ImGui::Checkbox(const char* label, bool* v)
     const ImVec2 label_size = CalcTextSize(label, label_end, false);
 
     const float square_sz = GetFrameHeight();
+    const bool as_field = GImGuiGridlineToggleW > 0.0f && GImGuiGridlineToggleDraw != NULL;  // GRIDLINE PATCH (K-112)
+    const float lead_w = as_field ? GImGuiGridlineToggleW : square_sz;
     const ImVec2 pos = window->DC.CursorPos;
-    const ImRect total_bb(pos, pos + ImVec2(square_sz + (label_size.x > 0.0f ? style.ItemInnerSpacing.x + label_size.x : 0.0f), label_size.y + style.FramePadding.y * 2.0f));
+    const ImRect total_bb(pos, pos + ImVec2(lead_w + (label_size.x > 0.0f ? style.ItemInnerSpacing.x + label_size.x : 0.0f), label_size.y + style.FramePadding.y * 2.0f));
     ItemSize(total_bb, style.FramePadding.y);
     const bool is_visible = ItemAdd(total_bb, id);
     const bool is_multi_select = (g.LastItemData.ItemFlags & ImGuiItemFlags_IsMultiSelect) != 0;
@@ -1299,9 +1306,15 @@ bool ImGui::Checkbox(const char* label, bool* v)
     // frame-height row; the item keeps its frame-height layout.
     const float box_sz = ImMin(square_sz, IM_TRUNC(g.FontSize * 1.15f));
     const float box_off = IM_TRUNC((square_sz - box_sz) * 0.5f);
-    const ImRect check_bb(pos + ImVec2(0.0f, box_off), pos + ImVec2(box_sz, box_off + box_sz));
+    const ImRect check_bb = as_field ? ImRect(pos + ImVec2(0.0f, 1.0f), pos + ImVec2(lead_w, square_sz - 1.0f))
+                                     : ImRect(pos + ImVec2(0.0f, box_off), pos + ImVec2(box_sz, box_off + box_sz));
     const bool mixed_value = (g.LastItemData.ItemFlags & ImGuiItemFlags_MixedValue) != 0;
-    if (is_visible)
+    if (is_visible && as_field)
+    {
+        RenderNavCursor(total_bb, id);
+        GImGuiGridlineToggleDraw(window->DrawList, check_bb.Min, check_bb.Max, mixed_value ? 2 : *v ? 1 : 0, hovered, held);
+    }
+    else if (is_visible)
     {
         RenderNavCursor(total_bb, id);
         ImU32 bg_col = GetColorU32((held && hovered) ? ImGuiCol_FrameBgActive : hovered ? ImGuiCol_FrameBgHovered : (mixed_value || checked) ? ImGuiCol_CheckboxSelectedBg : ImGuiCol_FrameBg);
@@ -1715,10 +1728,21 @@ void ImGui::SeparatorEx(ImGuiSeparatorFlags flags, float thickness)
         ////float thickness_for_layout = (thickness == 1.0f) ? 0.0f : thickness; // FIXME: See 1.70/1.71 Separator() change: makes legacy 1-px separator not affect layout yet. Should change.
         const ImRect bb(ImVec2(x1, window->DC.CursorPos.y), ImVec2(x2, window->DC.CursorPos.y + thickness));
         ItemSize(ImVec2(0.0f, thickness));
+        // GRIDLINE PATCH (K-112c round 25): in Live a popup menu's separator runs edge to edge (inside its border)
+        const bool live_menu_sep = GImGuiGridlineMenuLive && !columns && (window->Flags & ImGuiWindowFlags_Popup) && !(window->Flags & (ImGuiWindowFlags_Tooltip | ImGuiWindowFlags_Modal));
 
         if (ItemAdd(bb, 0))
         {
             // Draw
+            if (live_menu_sep)
+            {
+                const float b = window->WindowBorderSize;
+                const ImVec2 e0(window->Pos.x + b, bb.Min.y), e1(window->Pos.x + window->Size.x - b, bb.Max.y);
+                window->DrawList->PushClipRect(ImVec2(e0.x, window->Pos.y), ImVec2(e1.x, window->Pos.y + window->Size.y), false);
+                window->DrawList->AddRectFilled(e0, e1, GetColorU32(ImGuiCol_Separator));
+                window->DrawList->PopClipRect();
+            }
+            else
             window->DrawList->AddRectFilled(bb.Min, bb.Max, GetColorU32(ImGuiCol_Separator));
             if (g.LogEnabled)
                 LogRenderedText(&bb.Min, "--------------------------------\n");
@@ -1736,6 +1760,8 @@ void ImGui::Separator()
 {
     ImGuiContext& g = *GImGui;
     ImGuiWindow* window = g.CurrentWindow;
+    if (GImGuiGridlineMenuWalk)  // Gridline (K-112): the menu tree keeps the menus' separators
+        ImGuiGridlineHook_Separator(NULL);
     if (window->SkipItems)
         return;
 
@@ -1809,6 +1835,8 @@ void ImGui::SeparatorTextEx(ImGuiID id, const char* label, const char* label_end
 void ImGui::SeparatorText(const char* label)
 {
     ImGuiWindow* window = GetCurrentWindow();
+    if (GImGuiGridlineMenuWalk)  // Gridline (K-112)
+        ImGuiGridlineHook_Separator(label);
     if (window->SkipItems)
         return;
 
@@ -9761,7 +9789,7 @@ bool ImGui::MenuItemEx(const char* label, const char* icon, const char* shortcut
         const float gutter_w = IM_TRUNC(g.FontSize * 1.35f);
         float icon_w = ImMax(gutter_w, (icon && icon[0]) ? CalcTextSize(icon, NULL).x : 0.0f);
         float shortcut_w = (shortcut && shortcut[0]) ? CalcTextSize(shortcut, NULL).x : 0.0f;
-        float checkmark_w = IM_TRUNC(g.FontSize * 1.20f); // FIXME: Always accounted for, even in a menu with none, because 'selected' has no neutral setting.
+        float checkmark_w = IM_TRUNC(g.FontSize * (GImGuiGridlineMenuLive ? 0.40f : 1.20f)); // FIXME: Always accounted for, even in a menu with none, because 'selected' has no neutral setting. GRIDLINE PATCH (K-112c): Live keeps a slim right margin
         float min_w = offsets->DeclColumns(icon_w, label_size.x, shortcut_w, checkmark_w); // Feedback for next frame
         float stretch_w = ImMax(0.0f, GetContentRegionAvail().x - min_w);
         ImVec2 text_pos(pos.x, pos.y + window->DC.CurrLineTextBaseOffset);
@@ -9775,11 +9803,17 @@ bool ImGui::MenuItemEx(const char* label, const char* icon, const char* shortcut
             {
                 PushStyleColor(ImGuiCol_Text, style.Colors[ImGuiCol_TextDisabled]);
                 LogSetNextTextDecoration("(", ")");
-                RenderText(text_pos + ImVec2(offsets->OffsetShortcut + stretch_w, 0.0f), shortcut, NULL, false);
+                // GRIDLINE PATCH (K-112b): in the Tracks layout flush right, ending where a submenu's arrow ends
+                // (BeginMenuEx draws it from OffsetMark + 0.30 em, 0.80 em wide at 0.80 scale: about 0.80 em)
+                // GRIDLINE PATCH (K-112c round 25): in Live each shortcut ends at the column's right edge (right-aligned)
+                const float short_x = GImGuiGridlineMenuRight ? IM_TRUNC(offsets->OffsetMark + g.FontSize * 0.80f - shortcut_w)
+                                      : GImGuiGridlineMenuLive ? ImMax((float)offsets->OffsetShortcut, (float)offsets->OffsetMark - (float)offsets->Spacing - shortcut_w)
+                                                               : (float)offsets->OffsetShortcut;
+                RenderText(text_pos + ImVec2(short_x + stretch_w, 0.0f), shortcut, NULL, false);
                 PopStyleColor();
             }
             if (selected) // GRIDLINE PATCH: lit check mark in the left gutter
-                RenderCheckMark(window->DrawList, text_pos + ImVec2(offsets->OffsetIcon + IM_TRUNC((gutter_w - g.FontSize * 0.80f) * 0.5f), g.FontSize * 0.10f), GetColorU32(ImGuiCol_CheckMark), g.FontSize * 0.80f);
+                RenderCheckMark(window->DrawList, text_pos + ImVec2(offsets->OffsetIcon + IM_TRUNC((gutter_w - g.FontSize * 0.80f) * 0.5f), g.FontSize * 0.10f), GetColorU32(GImGuiGridlineMenuRight ? ImGuiCol_Text : ImGuiCol_CheckMark), g.FontSize * 0.80f);
         }
     }
     style.SelectableRounding = backup_rounding;

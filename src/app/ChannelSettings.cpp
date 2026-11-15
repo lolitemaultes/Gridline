@@ -1,6 +1,7 @@
 // Gridline — channel settings window: strip, routing, instrument parameters,
 // sample loading and waveform for the sampler.
 #include <algorithm>
+#include "LayoutStyleUi.h"
 #include "EditorZoomUi.h"
 #include "KeyGlide.h"
 #include "KeyLight.h"
@@ -17,6 +18,7 @@
 #include "../core/PluginParams.h"
 #include "../engine/ChannelIns.h"
 #include "App.h"
+#include "LogicPlugins.h"
 #include "LayoutPresets.h"
 #include "../host/HostedPlugins.h"
 #include "HostedUi.h"
@@ -29,6 +31,7 @@
 #include "../packs/PacksUi.h"
 #include "../core/Platform.h"
 #include "ChannelStrip.h"
+#include "HostedBodies.h"
 #include "ChannelRoute.h"
 #include "LayerEditor.h"
 #include "../core/LayerRack.h"
@@ -411,6 +414,42 @@ static void drawNoteSettings(App& a, ObjectId id) {
   }
   ui::Hint("Display group shown by the channel rack's group filter");
   ImGui::EndGroup();
+  ImGui::Dummy(ImVec2(0, theme::kS1));
+  // MIDI input port: the channel plays what MIDI Out channels and plugins send on that port.
+  ImGui::BeginGroup();
+  ui::Label(i18n::tr("MIDI INPUT"));
+  {
+    auto portName = [](int p) { return p < 0 ? std::string(i18n::tr("None")) : i18n::tr("Port") + std::string(" ") + std::to_string(p); };
+    if (ui::BeginCombo("##midiin", portName(c->midiInPort).c_str(), 150)) {
+      for (int p = -1; p < 64; ++p)
+        if (ImGui::Selectable(portName(p).c_str(), p == c->midiInPort) && p != c->midiInPort)
+          a.doc.editChannel(id, "MIDI input port", [p](Channel& ch) { ch.midiInPort = p; });
+      ImGui::EndCombo();
+    }
+    ui::Hint(i18n::tr("This channel plays what MIDI Out channels and plugins send on this port: notes, controllers, pitch bend and program changes"));
+    if (c->midiInPort >= 0) {
+      std::vector<std::pair<ObjectId, ObjectId>> loops;
+      const auto listeners = midiPortListeners(s, &loops);
+      const int me = s.channelIndex(id);
+      std::string from;
+      for (size_t i = 0; i < listeners.size(); ++i)
+        if (std::find(listeners[i].begin(), listeners[i].end(), me) != listeners[i].end())
+          from += (from.empty() ? "" : ", ") + s.channels[i].name;
+      bool loop = false;
+      for (const auto& l : loops) loop = loop || l.second == id;
+      ImGui::SameLine(0, theme::kS2);
+      ImGui::AlignTextToFramePadding();
+      ImGui::PushTextWrapPos(0);
+      if (loop)
+        ImGui::TextColored(theme::vec(P.danger), "%s", i18n::tr("A sender on this port also listens to this channel: that link is left out"));
+      else if (from.empty())
+        ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("Nothing sends on this port yet"));
+      else
+        ImGui::TextColored(theme::vec(P.textDim), i18n::tr("From: %s"), from.c_str());
+      ImGui::PopTextWrapPos();
+    }
+  }
+  ImGui::EndGroup();
 }
 
 // The strip's content: volume / pan / pitch knobs and a two-octave preview
@@ -629,61 +668,17 @@ bool pluginWindowDevCommand(App& a, const std::string& cmd, const std::vector<st
   return true;
 }
 
-void drawChannelSettings(App& a) {
-  routePluginWindows(a);  // installed plugins open as themselves
-  // J-195: the free-track route asked for last frame (run before the window
-  // takes its pointers into the song, which the route changes).
-  if (const ObjectId r = std::exchange(pendingFreeRoute(a), kNoId); r != kNoId && r == a.settingsChannel) chanroute::routeToFree(a, r);
-  stripDev().open = false;
+// K-112 (R3): the channel settings' content, drawn by its window or by a layout part's own frame.
+void drawChannelSettingsBody(App& a, ObjectId channel, const BodyFrame& f) {
+  const layoutui::BaseBorderScope border;  // K-112b: plugin windows keep their outlined controls
   const Song& s = a.doc.song();
-  const Channel* c = a.settingsChannel == kNoId ? nullptr : s.channel(a.settingsChannel);
-  if (!c) {
-    a.settingsChannel = kNoId;
-    stripState(a).open = false;  // closed: the strip is hidden when it opens again
-    stripDevFrame();             // (dev) "window closed"
-    return;
-  }
+  const Channel* c = s.channel(channel);
+  if (!c) return;
+  hostbody::drawn(hostbody::Body::ChannelSettings, c->id, -1);
   const PluginInfo* info = findPlugin(c->plugin.type);
-  std::string title = c->name + "###channelsettings";
-  bool open = true;
-  stripOpened(a, c->id);  // opened (or another channel): the strip starts hidden
-  // Wide instrument editors (PluginInfo::editorWidth) widen the window.
-  float editorW = info && info->editorWidth > 0 ? info->editorWidth : 600.0f;
-  if (!info) editorW = layerui::editorWidth();  // K-169: an instrument-less channel is a layer: the layer editor
-  if (info && info->editorMinWidth > 0) {  // J-151: reflowing editors follow a narrower main window (J-158: as far as they fit)
-    const ImVec2 area = ui::EditorArea();
-    editorW = place::fitEditor(editorW, info->editorMinWidth, 24.0f + ImGui::GetStyle().ScrollbarSize, area.x, area.y).content;
-  }
-  editorW = std::floor(editorW);
-  const float winW = std::max(624.0f, editorW + 24.0f);
-  // K-147: the channel's own rows and the note processors need kChannelMinW at least (K-210b: at the
-  // interface size; the zoomed region holds the editor alone).
-  constexpr float kChannelMinW = 600.0f;
-  const float regionW = std::max(kChannelMinW, editorW);  // (an editor narrower than that keeps the region it had)
-  {
-    ImGuiViewport* vp = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.42f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-  }
-  // K-19: the window's own size on top of the interface scale (installed plugins keep theirs).
-  const bool zoomable = !info || !isHostedType(info->type);
-  // K-210b: only the editor itself zooms; the channel's own rows above and below it (kChannelMinW wide) keep the interface size
-  edzoomui::prepare(a, "channelsettings", info ? info->type : std::string("(layer)"), zoomable ? regionW : winW, zoomable, kChannelMinW);
-  // K-79: the performance preset docks the channel settings in its bottom panel (they scroll there).
-  const bool docks = layoutui::active() == layout::Preset::Live;
-  const int fitFlags =  // J-158: capped to the work area, the rest scrolls
-      docks ? 0 : zoomable ? edzoomui::nextWindowSize("channelsettings") : ui::NextFloatingWindowSize(winW);
-  viewports::openAttached(title.c_str());  // opens inside the main window, never popped out by itself
-  bool vis = ImGui::Begin(title.c_str(), &open,
-                          docks ? ImGuiWindowFlags_HorizontalScrollbar : (ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking | fitFlags));
-  ui::KeepWindowInViewport();
-  ui::MarkDetachable();  // J-114: pops out / docks back like the panels
-  if (!vis) {
-    ImGui::End();
-    if (!open) a.settingsChannel = kNoId;
-    return;
-  }
+  const float editorW = std::floor(f.width);
   const ObjectId id = c->id;
-  edzoomui::markRows("channelsettings");  // K-216: the window's own rows (fit report)
+  if (f.zoom) edzoomui::markRows("channelsettings");  // K-216: the window's own rows (fit report; not in a layout part)
   if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) || ImGui::IsWindowAppearing()) {
     a.focusPluginOwner = id;  // controller template knobs follow the focused plugin
     a.focusPluginSlot = -1;
@@ -825,14 +820,10 @@ void drawChannelSettings(App& a) {
   const float tabsEnd = ImGui::GetItemRectMax().x;  // (the strip ends with a spacer as wide as its tabs)
   if (tab == 2) {
     drawChannelEnvelope(a, id);
-    ImGui::End();
-    if (!open) a.settingsChannel = kNoId;
     return;
   }
   if (tab == 1) {
     drawNoteSettings(a, id);
-    ImGui::End();
-    if (!open) a.settingsChannel = kNoId;
     return;
   }
 
@@ -894,19 +885,85 @@ void drawChannelSettings(App& a) {
     drawPluginHeader(a, target, !onTabs);
     ImGui::EndGroup();
     if (onTabs) ImGui::SetCursorScreenPos(below);
-    edzoomui::begin(a, "channelsettings");  // K-210b: the editor's region (the only part the editor size zooms)
-    drawPluginBody(a, target, editorW);
-    edzoomui::end(a, "channelsettings");
+    if (logicplug::controlsView(a, info->type)) {  // K-112b: the plain controls list
+      logicplug::drawControls(a, target, editorW);
+    } else {
+      if (f.zoom) edzoomui::begin(a, "channelsettings");  // K-210b: the editor's region (the only part the editor size zooms)
+      drawPluginBody(a, target, editorW);
+      if (f.zoom) edzoomui::end(a, "channelsettings");
+    }
   }
   if (!info) {  // K-169: the layer editor (children, zones, macros, layer presets)
-    edzoomui::begin(a, "channelsettings");
+    if (f.zoom) edzoomui::begin(a, "channelsettings");
     layerui::drawEditor(a, id, editorW);
-    edzoomui::end(a, "channelsettings");
+    if (f.zoom) edzoomui::end(a, "channelsettings");
     ImGui::Dummy(ImVec2(0, theme::kS1));
   }
   // note processors (arpeggiator, chords, ...); J-151: not for instruments that leave them out (while none is set)
   if (const Channel* cc = a.doc.song().channel(id); !info || info->noteFxPanel || (cc && !cc->noteFx.empty()))
     packs::modulation::drawChannelNoteFx(a, id, 600.0f);
+}
+
+void drawChannelSettings(App& a) {
+  routePluginWindows(a);  // installed plugins open as themselves
+  // J-195: the free-track route asked for last frame (run before the window
+  // takes its pointers into the song, which the route changes).
+  if (const ObjectId r = std::exchange(pendingFreeRoute(a), kNoId); r != kNoId && r == a.settingsChannel) chanroute::routeToFree(a, r);
+  stripDev().open = false;
+  const Song& s = a.doc.song();
+  const Channel* c = a.settingsChannel == kNoId ? nullptr : s.channel(a.settingsChannel);
+  if (!c) {
+    a.settingsChannel = kNoId;
+    stripState(a).open = false;  // closed: the strip is hidden when it opens again
+    stripDevFrame();             // (dev) "window closed"
+    return;
+  }
+  if (hostbody::claimed(hostbody::Body::ChannelSettings)) return;  // K-112: a layout part draws it in its own frame
+  if (logicplug::hidden()) return;  // K-112b: hidden (V), still open
+  const PluginInfo* info = findPlugin(c->plugin.type);
+  std::string title = c->name + "###channelsettings";
+  bool open = true;
+  stripOpened(a, c->id);  // opened (or another channel): the strip starts hidden
+  // Wide instrument editors (PluginInfo::editorWidth) widen the window.
+  float editorW = info && info->editorWidth > 0 ? info->editorWidth : 600.0f;
+  if (!info) editorW = layerui::editorWidth();  // K-169: an instrument-less channel is a layer: the layer editor
+  if (info && info->editorMinWidth > 0) {  // J-151: reflowing editors follow a narrower main window (J-158: as far as they fit)
+    const ImVec2 area = ui::EditorArea();
+    editorW = place::fitEditor(editorW, info->editorMinWidth, 24.0f + ImGui::GetStyle().ScrollbarSize, area.x, area.y).content;
+  }
+  editorW = std::floor(editorW);
+  const float winW = std::max(624.0f, editorW + 24.0f);
+  // K-147: the channel's own rows and the note processors need kChannelMinW at least (K-210b: at the
+  // interface size; the zoomed region holds the editor alone).
+  constexpr float kChannelMinW = 600.0f;
+  const float regionW = std::max(kChannelMinW, editorW);  // (an editor narrower than that keeps the region it had)
+  {
+    ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.42f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+  }
+  // K-19: the window's own size on top of the interface scale (installed plugins keep theirs).
+  const bool zoomable = !info || !isHostedType(info->type);
+  // K-210b: only the editor itself zooms; the channel's own rows above and below it (kChannelMinW wide) keep the interface size
+  edzoomui::prepare(a, "channelsettings", info ? info->type : std::string("(layer)"), zoomable ? regionW : winW, zoomable, kChannelMinW);
+  // K-79: the performance preset docks the channel settings in its bottom panel (they scroll there).
+  const bool docks = layoutui::active() == layout::Preset::Live;
+  const int fitFlags =  // J-158: capped to the work area, the rest scrolls
+      docks ? 0 : zoomable ? edzoomui::nextWindowSize("channelsettings") : ui::NextFloatingWindowSize(winW);
+  viewports::openAttached(title.c_str());  // opens inside the main window, never popped out by itself
+  // K-112b: the title bar's underline (drawn by Begin from the frame outline) stays as in every layout
+  bool vis = false;
+  {
+    const layoutui::BaseBorderScope border;
+    vis = ImGui::Begin(title.c_str(), &open, docks ? ImGuiWindowFlags_HorizontalScrollbar : (ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking | fitFlags));
+  }
+  ui::KeepWindowInViewport();
+  ui::MarkDetachable();  // J-114: pops out / docks back like the panels
+  if (!vis) {
+    ImGui::End();
+    if (!open) a.settingsChannel = kNoId;
+    return;
+  }
+  drawChannelSettingsBody(a, c->id, BodyFrame{editorW, true, ""});
   ImGui::End();
   if (!open) a.settingsChannel = kNoId;
 }

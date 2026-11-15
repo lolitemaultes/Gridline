@@ -13,6 +13,9 @@
 namespace gl {
 class App;
 }
+namespace gl::imhook {
+struct MenuWalker;
+}
 
 namespace gl::layoutui {
 
@@ -29,6 +32,7 @@ layout::Preset menuStyle(const App& a);
 // arrangement at the start of the next frame (main.cpp: takeSwitch).
 void choose(App& a, layout::Preset p, const layout::Linked& linked);
 bool takeSwitch(layout::Preset* out);
+bool switchPending();  // K-112: a switch is chosen and applies next frame (the snapshot is taken now)
 
 // The shortcut set of the settings (or the override) with its own overrides loaded.
 void applyKeyProfile(App& a);
@@ -95,5 +99,6 @@ void showPlaylist(App& a);
 
 namespace gl {
 // MenuStyles.cpp: the items of one menu of a menu bar style.
-void drawStyleMenu(App& a, const menustyle::Menu& m);
+// Draws the menu (walker nullptr) or reports it to `w` without drawing (the menu tree, a run).
+void drawStyleMenu(App& a, const menustyle::Menu& m, imhook::MenuWalker* w = nullptr);
 }  // namespace gl

@@ -9,6 +9,7 @@
 #include "../../third_party/imgui/imgui_internal.h"
 #include "../core/Arrangements.h"
 #include "App.h"
+#include "LiveLook.h"
 #include "Theme.h"
 #include "Widgets.h"
 #include "Windows.h"
@@ -151,6 +152,11 @@ void drawLivePads(App& a) {
     ++shownFrames;
   }
   if (!vis) {
+    ui::EndDockWindow();
+    return;
+  }
+  if (livelook::active(a)) {  // K-112c: in the Live layout the pads are the clip grid (tracks as columns, scenes as rows)
+    livelook::drawClipGrid(a);
     ui::EndDockWindow();
     return;
   }

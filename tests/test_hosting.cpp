@@ -17,6 +17,8 @@
 #include "NoteRetrigger.h"
 #include "core/Crash.h"
 #include "core/Document.h"
+#include "core/PatternAutomation.h"
+#include "core/PluginParams.h"
 #include "core/Project.h"
 #include "core/flp/Flp.h"
 #include "core/flp/FlpWrapper.h"
@@ -1262,6 +1264,100 @@ void testMidiOutRouting() {
   expect(hi->hasMidiOutput() && hi->midiOutCount() == 1 && hi->hostedClass().eventOutput, "MIDI output detected and counted");
 }
 
+// A MIDI Out channel playing the CLAP test synth on its port, with Rest silent instruments on
+// (realtime playback): the synth rests between the routed notes, wakes for them and sounds as
+// the same notes sequenced on it; the sustain pedal from the MIDI Out channel holds its notes
+// with Sustain holds notes on, and with it off the note ends when its key lifts (the test synth
+// has no pedal of its own) and the synth rests again.
+struct HostedRun {
+  std::vector<float> L, R;
+  uint64_t rested = 0;
+};
+HostedRun playHostedPattern(const Song& s, ObjectId pat, ObjectId watch, int frames, bool rest, bool holds) {
+  ProgramBuilder b;
+  b.setSampleRate(44100);
+  AudioEngine e{44100};
+  e.setRestInstruments(rest);
+  e.setSustainHolds(holds);
+  e.setProgram(b.build(s));
+  e.setMode(PlayMode::Pattern);
+  e.setPattern(pat);
+  e.setLooping(false);
+  e.play();
+  HostedRun r;
+  r.L.assign(static_cast<size_t>(frames), 0.f);
+  r.R.assign(static_cast<size_t>(frames), 0.f);
+  for (int at = 0; at < frames; at += 256) e.process(r.L.data() + at, r.R.data() + at, std::min(256, frames - at));
+  if (auto rt = b.channelRuntime(watch)) r.rested = rt->restBlocks.load();
+  return r;
+}
+double hostedDiff(const HostedRun& a, const HostedRun& b) {
+  double w = 0;
+  for (size_t i = 0; i < a.L.size(); ++i)
+    w = std::max({w, std::fabs(static_cast<double>(a.L[i]) - b.L[i]), std::fabs(static_cast<double>(a.R[i]) - b.R[i])});
+  return w;
+}
+void testMidiOutHostedListener() {
+  auto* cp = probe<GridlineClapProbe>(clapBinary(), "gridline_clap_probe");
+  expect(cp != nullptr, "MIDI Out to a hosted listener: CLAP probe reachable");
+  if (!cp) return;
+  const auto secs = [](const Song& s, Tick t) { return static_cast<double>(t) / s.ppq * 60.0 / s.tempo; };
+  {
+    Document ref(makeEmptySong()), d(makeEmptySong());
+    const Tick bar = ref.song().barTicks();
+    const ObjectId r = ref.addChannel("synth", kClapSynth), rp = ref.song().patterns[0].id;
+    const ObjectId out = d.addChannel("out", "gl.midiout"), l = d.addChannel("synth", kClapSynth), pat = d.song().patterns[0].id;
+    d.editChannel(l, "port", [](Channel& c) { c.midiInPort = 0; });
+    for (const Note& n : {Note{0, 48, 69, 100}, Note{2 * bar, 48, 72, 64}, Note{4 * bar + 7, 24, 64, 127}}) ref.addNote(rp, r, n), d.addNote(pat, out, n);
+    const int frames = static_cast<int>(secs(d.song(), 5 * bar) * 44100);
+    const HostedRun direct = playHostedPattern(ref.song(), rp, r, frames, true, true);
+    const HostedRun on = playHostedPattern(d.song(), pat, l, frames, true, true);
+    const HostedRun off = playHostedPattern(d.song(), pat, l, frames, false, true);
+    std::printf("MIDI Out to CLAP: rested %llu blocks, worst difference to sequenced %.3g, rest on / off %.3g\n",
+                static_cast<unsigned long long>(on.rested), hostedDiff(on, direct), hostedDiff(on, off));
+    expect(peak(on.L) > 0.2f, "MIDI Out to a hosted listener: it sounds");
+    expect(on.rested > 0, "MIDI Out to a hosted listener: it rests between the routed notes");
+    expect(hostedDiff(on, off) <= 1e-6, "MIDI Out to a hosted listener: resting changes nothing");
+    expect(hostedDiff(on, direct) <= 1e-5, "MIDI Out to a hosted listener: it sounds as the notes sequenced on it (-100 dB)");
+  }
+  {  // the pedal: down at tick 2, a short key press at tick 4, up at two bars
+    Document d(makeEmptySong());
+    const Tick bar = d.song().barTicks();
+    const ObjectId out = d.addChannel("out", "gl.midiout"), l = d.addChannel("synth", kClapSynth), pat = d.song().patterns[0].id;
+    d.editChannel(l, "port", [](Channel& c) { c.midiInPort = 0; });
+    d.addNote(pat, out, {4, 24, 69, 100});
+    d.addNote(pat, out, {4 * bar, 24, 72, 100});
+    d.setParam(channelPluginParam(out, pp::moKnob(0, pp::MoKnobNumber)), 64, false);
+    d.editPattern(pat, "lane", [&](Pattern& p) {
+      std::vector<AutoPoint> v;
+      for (const auto& [t, x] : std::vector<std::pair<Tick, float>>{{0, 0.f}, {2, 1.f}, {2 * bar, 0.f}}) {
+        AutoPoint a;
+        a.pos = t, a.value = x, a.shape = AutoShape::Hold;
+        v.push_back(a);
+      }
+      const ParamId id = channelPluginParam(out, pp::moKnob(0, pp::MoKnobValue));
+      setPatternLane(p, id.owner, id.index, v);
+    });
+    const int frames = static_cast<int>(secs(d.song(), 5 * bar) * 44100);
+    const size_t held = static_cast<size_t>(secs(d.song(), bar) * 44100);  // a bar after the key lifted, pedal down
+    const size_t gap = static_cast<size_t>(secs(d.song(), 3 * bar) * 44100);
+    for (bool holds : {true, false}) {
+      const HostedRun on = playHostedPattern(d.song(), pat, l, frames, true, holds);
+      const HostedRun off = playHostedPattern(d.song(), pat, l, frames, false, holds);
+      const std::string m = holds ? "MIDI Out pedal to a hosted listener, Sustain holds notes on: " : "MIDI Out pedal to a hosted listener, holds off: ";
+      std::printf("%sheld %.3f, gap %.3g, rested %llu\n", m.c_str(), static_cast<double>(peak(on.L, held, held + 4096)),
+                  static_cast<double>(peak(on.L, gap, gap + 4096)), static_cast<unsigned long long>(on.rested));
+      if (holds)
+        expect(peak(on.L, held, held + 4096) > 0.2f, (m + "the note sounds a bar after its key lifted").c_str());
+      else
+        expect(peak(on.L, held, held + 4096) == 0.f, (m + "the note ends when its key lifts (the plugin decides about the pedal)").c_str());
+      expect(peak(on.L, gap, gap + 4096) == 0.f && peak(on.L, gap + 4096) > 0.2f, (m + "silent after the pedal lifts, the next note sounds").c_str());
+      expect(on.rested > 0, (m + "the listener rests once nothing sounds").c_str());
+      expect(hostedDiff(on, off) <= 1e-6, (m + "resting changes nothing").c_str());
+    }
+  }
+}
+
 // Parameter changes reach the plugin at their sample position.
 void testSampleAccurate() {
   auto* cp = probe<GridlineClapProbe>(clapBinary(), "gridline_clap_probe");
@@ -2141,6 +2237,7 @@ int main() {
   testStopReleasesHosted();
   testNoteRetrigger();
   testMidiOutRouting();
+  testMidiOutHostedListener();
   testSampleAccurate();
   testLatencyChange();
   testClapModulation();

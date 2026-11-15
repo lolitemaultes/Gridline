@@ -22,19 +22,21 @@ const std::vector<Menu>& menus(layout::Preset style) {
       {N_("Tools"), {{B::Tools}}},
       {N_("Help"), {{B::Help}}},
   };
-  // Logic: the program menu on the mark (with the studio options), then File, Edit, Track,
-  // Patterns, Navigate, Record, Mix, View, Tools, Help.
+  // Logic: the program menu on the mark (with the studio options), then File, Edit, Track (the
+  // track commands, then everything Add has), Patterns, Navigate, Record, Mix, View, Tools, Window,
+  // Help.
   static const std::vector<Menu> logic = {
       {nullptr, {{B::Program}, {B::Options, N_("Options")}}},
       {N_("File"), {{B::File}}},
-      {N_("Edit"), {{B::Edit}}},
-      {N_("Track"), {{B::Add}}},
+      {N_("Edit"), {{B::TracksEdit}}},
+      {N_("Track"), {{B::Track}, {B::Add, N_("Add")}}},
       {N_("Patterns"), {{B::Patterns}}},
       {N_("Navigate"), {{B::Navigate}}},
-      {N_("Record"), {{B::Record}}},
+      {N_("Record"), {{B::TracksRecord}}},
       {N_("Mix"), {{B::Mix}}},
       {N_("View"), {{B::View}}},
       {N_("Tools"), {{B::Tools}}},
+      {N_("Window"), {{B::Window}}},
       {N_("Help"), {{B::Help}}},
   };
   switch (style) {
@@ -52,7 +54,9 @@ const std::vector<Block>& studioBlocks() {
 bool reaches(layout::Preset style, Block block) {
   for (const Menu& m : menus(style))
     for (const Item& i : m.items)
-      if (i.block == block) return true;
+      if (i.block == block || (i.block == Block::TracksEdit && block == Block::Edit) ||  // K-112b: the same commands, regrouped
+          (i.block == Block::TracksRecord && block == Block::Record))
+        return true;
   return false;
 }
 

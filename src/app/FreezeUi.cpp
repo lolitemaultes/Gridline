@@ -826,6 +826,21 @@ void unitItems(App& a, const std::vector<Unit>& units, bool many) {
     a.later([&a, which, allSleeping] { setHibernate(a, which, !allSleeping); });
   }
   ui::Hint("Unloads its plugins on this computer until they are needed (an editor, a note, the song about to play it)");
+  // K-277: channels whose instrument may rest while silent (Rest silent instruments) can be kept running.
+  std::vector<ObjectId> chans;
+  bool allKept = true;
+  for (Unit u : units)
+    if (const Channel* c = !u.mixer ? s.channel(u.id) : nullptr) {
+      chans.push_back(c->id);
+      allKept = allKept && c->keepRunning;
+    }
+  if (!chans.empty()) {
+    if (ImGui::MenuItem(tr("Keep running when silent"), nullptr, allKept))
+      a.later([&a, chans, allKept] {
+        for (ObjectId id : chans) a.doc.editChannel(id, "Keep running when silent", [&](Channel& c) { c.keepRunning = !allKept; });
+      });
+    ui::Hint("Never rests, even while silent: for instruments that make sound without notes");
+  }
 }
 
 }  // namespace
@@ -872,6 +887,9 @@ void optionsItems(App& a) {
   ui::Hint("On: an edit a freeze depends on plays live and renders again a second later. Off: the old render plays on, marked amber");
   const bool hib = a.settings.getBool("freeze.autoHibernate");
   if (ImGui::MenuItem(tr("Hibernate unused plugins automatically"), nullptr, hib)) a.settings.set("freeze.autoHibernate", !hib);
+  const bool rest = a.settings.getBool("freeze.restSilent");  // K-277
+  if (ImGui::MenuItem(tr("Rest silent instruments"), nullptr, rest)) a.settings.set("freeze.restSilent", !rest);
+  ui::Hint("Instruments that are silent with no notes to play stop using the processor until a note comes");
   if (ImGui::BeginMenu(tr("Woken plugins sleep again after"))) {
     const double cur = sleepAfter(a);
     const struct {

@@ -47,6 +47,9 @@
 #include "StemsUi.h"
 #include "ExternalDragUi.h"
 #include "HostedUi.h"
+#include "LiveLook.h"
+#include "LayoutPresets.h"
+#include "LayoutShellUi.h"
 #include "Theme.h"
 #include "UrlImportUi.h"
 #include "Widgets.h"
@@ -191,7 +194,9 @@ bool devOpen(const std::string& label) {
 constexpr const char* kStarTag = "starred";
 std::string devSection;  // dev: the section the rows drawn belong to (K-18 "browser rows")
 
-ImU32 roleCol(uint32_t r, float a = 0.9f) { return theme::tintRole(r, a); }  // K-177: white with the white text option
+// K-177: white with the white text option. K-112c (round 19): Live draws the browser's glyphs in one
+// quiet ink, as every ref's browser does (211, 094, 329); the role colours stay Studio's.
+ImU32 roleCol(uint32_t r, float a = 0.9f) { return livelook::active(app()) ? theme::withAlpha(pal().textDim, a) : theme::tintRole(r, a); }
 
 // K-160: browsing with the keyboard. Every row the tree draws (section headers, folders, files,
 // plugins, the project's items) is noted in drawing order; the next frame's keys move a cursor
@@ -206,6 +211,7 @@ struct NavRow {
   bool open = false;
   float indent = 0;    // section headers -1; the parent of a row is the nearest folder above with less
   std::string path;    // a file row's path ("" otherwise)
+  std::string item;    // K-112c: the file or folder on disk the row shows (the Delete key's), "" for other rows
 };
 struct Nav {
   std::vector<NavRow> now, last;
@@ -227,7 +233,7 @@ struct Nav {
 void navNote(float indent, ImGuiID openId = 0, bool open = false, const std::string& path = {}, ImGuiID id = 0) {
   if (!nav.recording) return;
   if (!id) id = ImGui::GetItemID();
-  nav.now.push_back(NavRow{id, openId, open, indent, path});
+  nav.now.push_back(NavRow{id, openId, open, indent, path, path});
   if (nav.scroll && id == nav.cursor) {
     ImGui::ScrollToRect(ImGui::GetCurrentWindow(), ImRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax()), ImGuiScrollFlags_KeepVisibleEdgeY);
     nav.scroll = false;
@@ -362,7 +368,9 @@ bool sectionHeader(const char* title, int count, bool defaultOpen, uint32_t role
   devSection = title;
   navNote(-1, id, open);  // K-160
   ImDrawList* dl = ImGui::GetWindowDrawList();
-  dl->AddRectFilled(q, ImVec2(q.x + w, q.y + 26), hov ? P.surface700 : theme::withAlpha(P.surface800, 0.6f), theme::kRadiusSm);
+  const bool liveRow = livelook::active(a);  // K-112c (round 19): a flat list row, as the refs' browser lists (211, 094)
+  if (!liveRow) dl->AddRectFilled(q, ImVec2(q.x + w, q.y + 26), hov ? P.surface700 : theme::withAlpha(P.surface800, 0.6f), theme::kRadiusSm);
+  else if (hov) dl->AddRectFilled(q, ImVec2(q.x + w, q.y + 26), P.surface700, 0.0f);
   navOutline(dl, q, w, 26, false);
   ImGui::PopID();
   ui::drawIcon(dl, open ? ui::Icon::ChevronDown : ui::Icon::Chevron, ImVec2(q.x + 9, q.y + 13), 10, open ? P.hot : P.textDim);
@@ -370,7 +378,11 @@ bool sectionHeader(const char* title, int count, bool defaultOpen, uint32_t role
   if (icon == ui::Icon::Folder) theme::devNote("folder", roleCol(roleColour));  // K-177 dev: the folder glyph colour
   const std::string label = translate ? i18n::tr(title) : title;  // J-61: tree roots are translated
   const std::string shown = label.substr(0, label.find("##"));     // "##" suffix: id only
-  theme::textEllipsis(dl, a.fontBold, theme::kFontCaption + 1, ImVec2(q.x + 37, q.y + 6), w - 37 - 30, P.text, shown.c_str());
+  if (liveRow)
+    theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption + 1, ImVec2(q.x + 37, theme::textTop(a.fontRegular, theme::kFontCaption + 1, q.y, 26)), w - 37 - 30, P.text,
+                        shown.c_str());
+  else
+    theme::textEllipsis(dl, a.fontBold, theme::kFontCaption + 1, ImVec2(q.x + 37, q.y + 6), w - 37 - 30, P.text, shown.c_str());
   if (count >= 0) {
     std::string c = std::to_string(count);
     float cw = a.fontMono->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, c.c_str()).x;
@@ -383,12 +395,12 @@ bool sectionHeader(const char* title, int count, bool defaultOpen, uint32_t role
 // Expandable folder row inside a section (state kept per key).
 std::set<std::string> forceOpen;  // K-18: folders to open (a new folder made in them)
 
-bool treeNode(const std::string& key, const char* label, int count, float indent, uint32_t roleColour = role::kView) {
+bool treeNode(const std::string& key, const char* label, int count, float indent, uint32_t roleColour = role::kView, bool defaultOpen = false) {
   ImGuiStorage* st = ImGui::GetStateStorage();
   ImGuiID id = ImGui::GetID(key.c_str());
   openIds.insert(id);
   if (forceOpen.erase(key)) st->SetBool(id, true);
-  bool open = st->GetBool(id, devOpen(label));
+  bool open = st->GetBool(id, defaultOpen || devOpen(label));
   std::string c = count >= 0 ? std::to_string(count) : "";
   if (browserRow(key.c_str(), ui::Icon::Folder, label, c.c_str(), indent, nullptr, roleCol(roleColour, open ? 1.0f : 0.8f), false, false, nullptr,
                  RowNav{id, open, nullptr})) {
@@ -804,12 +816,27 @@ void folderRowExtras(App& a, const fs::path& dir) {
   }
   ImGui::PushID(d.c_str());
   if (ImGui::BeginPopupContextItem("##dctx")) {
-    ImGui::TextDisabled("%s", theme::fitText(dir.filename().string().c_str(), 260));
+    const std::string why = lockedWhy(a, d);
+    const bool live = livelook::active(a);
+    if (live) {  // K-112 (Live): delete, rename, the folder's own rows, new folder, view. No title row.
+      if (opItem("Move to the trash...", why, "Del")) fops.trashAsk = d, fops.trashOpen = true;
+      ImGui::Separator();
+      if (opItem("Rename", why)) startRename(d);
+      ImGui::Separator();
+    } else {
+      ImGui::TextDisabled("%s", theme::fitText(dir.filename().string().c_str(), 260));
+    }
     if (hydrogen::isKitFolder(d)) {  // K-162: a drum kit's folder (checked only while the menu is open)
       if (ImGui::MenuItem(i18n::tr("Load drum kit"))) drumkitui::load(a, d);
       ImGui::Separator();
     }
-    const std::string why = lockedWhy(a, d);
+    if (live) {
+      if (opItem("New folder", lockedWhy(a, d, true))) newFolderIn(a, d);
+      collapseAllItem();
+      ImGui::EndPopup();
+      ImGui::PopID();
+      return;
+    }
     if (opItem("New folder", lockedWhy(a, d, true))) newFolderIn(a, d);
     if (opItem("Rename", why)) startRename(d);
     if (opItem("Move to the trash...", why)) fops.trashAsk = d, fops.trashOpen = true;
@@ -914,8 +941,19 @@ void trashDialog(App& a) {
 
 void fileContextMenu(App& a, const std::string& ps) {
   if (!ImGui::BeginPopupContextItem("##fctx")) return;
-  ImGui::TextDisabled("%s", theme::fitText(fs::path(ps).filename().string().c_str(), 260));
-  if (ImGui::MenuItem(isStarred(ps) ? i18n::tr("Remove star") : i18n::tr("Star"))) toggleStar(ps);
+  const std::string why = lockedWhy(a, ps);
+  const std::string parent = fs::path(ps).parent_path().string();
+  if (livelook::active(a)) {
+    // K-112 (Live): the object menu skeleton: delete, rename, the item's own rows, star and the
+    // folder last. No title row.
+    if (opItem("Move to the trash...", why, "Del")) fops.trashAsk = ps, fops.trashOpen = true;
+    ImGui::Separator();
+    if (opItem("Rename", why)) startRename(ps);
+    ImGui::Separator();
+  } else {
+    ImGui::TextDisabled("%s", theme::fitText(fs::path(ps).filename().string().c_str(), 260));
+    if (ImGui::MenuItem(isStarred(ps) ? i18n::tr("Remove star") : i18n::tr("Star"))) toggleStar(ps);
+  }
   if (ImGui::MenuItem(i18n::tr("Open / add"))) browserui::openFile(a, ps);
   if (browse::kindOf(ps) == Kind::Audio) {
     if (ImGui::MenuItem(i18n::tr("Preview"))) browserui::previewFile(a, ps);
@@ -933,8 +971,12 @@ void fileContextMenu(App& a, const std::string& ps) {
   }
   // K-18: rename, new folder beside it, the trash (only in writable user / Gridline folders).
   ImGui::Separator();
-  const std::string why = lockedWhy(a, ps);
-  const std::string parent = fs::path(ps).parent_path().string();
+  if (livelook::active(a)) {
+    if (ImGui::MenuItem(isStarred(ps) ? i18n::tr("Remove star") : i18n::tr("Star"))) toggleStar(ps);
+    if (opItem("New folder", lockedWhy(a, parent, true))) newFolderIn(a, parent);
+    ImGui::EndPopup();
+    return;
+  }
   if (opItem("Rename", why)) startRename(ps);
   if (opItem("New folder", lockedWhy(a, parent, true))) newFolderIn(a, parent);
   if (opItem("Move to the trash...", why)) fops.trashAsk = ps, fops.trashOpen = true;
@@ -1001,6 +1043,7 @@ void dirTree(App& a, const fs::path& dir, int depth, float baseIndent = 12.0f) {
     std::string key = sub.string();
     if (renameRow(a, sub, indent, ui::Icon::Folder, roleCol(role::kView))) continue;  // K-18
     const bool open = treeNode(key, sub.filename().string().c_str(), -1, indent);
+    if (nav.recording && !nav.now.empty()) nav.now.back().item = key;  // K-112c: the Delete key's folder
     devRow(key);
     folderRowExtras(a, sub);  // K-18: drag, drop into, menu
     if (open) dirTree(a, sub, depth + 1, baseIndent);
@@ -1356,6 +1399,38 @@ void sectionPluginDatabase(App& a) {
   if (treeNode("##pdb.fx", "Effects", -1, 12, role::kSlice)) builtinPlugins(a, PluginKind::Effect, 26, "##pdb.e.");
   if (treeNode("##pdb.nfx", "Note effects", -1, 12, role::kSnap)) builtinPlugins(a, PluginKind::NoteFx, 26, "##pdb.n.");
   ImGui::Dummy(ImVec2(0, 4));
+}
+
+// K-112b: the Logic layout's Library (the plugin database, out of the browser there): every
+// instrument and effect, built-in and installed, with the favourites first; `filter` lists the
+// plugins that match it instead. The rows are the browser's (drag, double-click, star, menu).
+void libraryTree(App& a, const std::string& filter) {
+  const host::PluginPrefs prefs = host::pluginPrefs();
+  if (filter.find_first_not_of(' ') != std::string::npos) {
+    const browse::Query q = browse::parseQuery(filter);
+    std::vector<const PluginInfo*> plugs;
+    for (const auto& p : pluginCatalog())
+      if (!p.hidden && browse::matchesPlugin(p, q, prefs.favourites.count(p.type) > 0)) plugs.push_back(&p);
+    for (const PluginInfo* p : dynamicPlugins()) {
+      std::string fmt, uid;
+      if (host::splitType(p->type, fmt, uid) && !host::formatEnabled(fmt)) continue;
+      if (!host::listedInBrowser(p->type) || !collabui::pluginAllowed(a, p->type)) continue;
+      if (browse::matchesPlugin(*p, q, prefs.favourites.count(p->type) > 0)) plugs.push_back(p);
+    }
+    for (const PluginInfo* p : plugs) pluginRow(a, *p, 4, p->category.c_str(), prefs.favourites.count(p->type) > 0);
+    if (plugs.empty()) emptyLine("No instrument or effect has that name", 8);
+    return;
+  }
+  std::vector<const PluginInfo*> favs;
+  for (const auto& t : prefs.favourites)
+    if (const PluginInfo* p = findPlugin(t); p && collabui::pluginAllowed(a, p->type)) favs.push_back(p);
+  std::sort(favs.begin(), favs.end(), [](const PluginInfo* x, const PluginInfo* y) { return x->name < y->name; });
+  if (!favs.empty() && treeNode("##lib.fav", "Favourites", static_cast<int>(favs.size()), 0, role::kStamp))
+    for (const PluginInfo* p : favs) pluginRow(a, *p, 14, nullptr, true);
+  if (treeNode("##lib.gen", "Instruments", -1, 0, role::kDraw)) builtinPlugins(a, PluginKind::Generator, 14, "##lib.g.");
+  if (treeNode("##lib.fx", "Audio effects", -1, 0, role::kSlice)) builtinPlugins(a, PluginKind::Effect, 14, "##lib.e.");
+  if (treeNode("##lib.nfx", "Note effects", -1, 0, role::kSnap)) builtinPlugins(a, PluginKind::NoteFx, 14, "##lib.n.");
+  installedPlugins(a, 0);
 }
 
 void sectionPluginPresets(App& a) {
@@ -1872,6 +1947,181 @@ void tabStrip(App& a) {
   ImGui::SetCursorScreenPos(ImVec2(p0.x, p0.y + h));
 }
 
+// K-112c: the Live layout's browser: a flat list of categories (and places) in place of the tabs;
+// the chosen one's contents show under it, drawn by the same sections as everywhere else.
+enum LiveCat { LcStarred, LcSounds, LcDrums, LcInstruments, LcAudioFx, LcNoteFx, LcPlugins, LcClips, LcSamples, LcGrooves,
+               LcRecent, LcProjects, LcFolders, LcCount };
+int liveCat = LcInstruments;
+
+// The places: three headed groups (what you starred, the content, places on this computer), each
+// row with its icon. Two panes where the browser is wide enough (the list beside them), else the
+// rows sit above the list.
+void liveSidebar(App& a, bool twoPane) {
+  const auto& P = pal();
+  struct Row {
+    int cat;  // -1: a group heading
+    const char* label;
+    const char* hint;
+    ui::Icon icon;
+  };
+  static const Row rows[] = {
+      {-1, i18n::N_("Favourites"), nullptr, ui::Icon::Star},
+      {LcStarred, i18n::N_("Starred"), i18n::N_("Favourite plugins and starred files"), ui::Icon::Star},
+      {-1, i18n::N_("Content"), nullptr, ui::Icon::Star},
+      {LcSounds, i18n::N_("Sounds"), i18n::N_("Instrument and channel presets"), ui::Icon::Speaker},
+      {LcDrums, i18n::N_("Drums"), i18n::N_("Drum sounds and kits"), ui::Icon::CatDrums},
+      {LcInstruments, i18n::N_("Instruments"), i18n::N_("Built-in and installed instruments"), ui::Icon::CatSynth},
+      {LcAudioFx, i18n::N_("Audio effects"), i18n::N_("Built-in effects"), ui::Icon::TrackEffects},
+      {LcNoteFx, i18n::N_("Note effects"), i18n::N_("Effects that change the notes before the instrument"), ui::Icon::CatMidi},
+      {LcPlugins, i18n::N_("Plugins"), i18n::N_("The plugin database: favourites, installed plugins, built-in plugins"), ui::Icon::Plug},
+      {LcClips, i18n::N_("Clips"), i18n::N_("The current project's patterns, audio and automation"), ui::Icon::ClipPattern},
+      {LcSamples, i18n::N_("Samples"), i18n::N_("Recorded, rendered, imported and edited audio, and your folders"), ui::Icon::Wave},
+      {LcGrooves, i18n::N_("Grooves"), i18n::N_("Swing and groove presets"), ui::Icon::Groove},
+      {-1, i18n::N_("On this computer"), nullptr, ui::Icon::Star},
+      {LcRecent, i18n::N_("Recent"), i18n::N_("Recently opened files"), ui::Icon::Clock},
+      {LcProjects, i18n::N_("Projects"), i18n::N_("Your projects"), ui::Icon::ProjectFile},
+      {LcFolders, i18n::N_("Folders"), i18n::N_("The folders you added to the browser"), ui::Icon::Folder}};
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const ImVec2 p0 = ImGui::GetCursorScreenPos();
+  const float w = ImGui::GetContentRegionAvail().x, rh = 20, headH = 20;
+  const float fs = theme::kFontBody - 1;
+  float y = p0.y + 4;
+  for (const Row& r : rows) {
+    if (r.cat < 0) {  // a group heading
+      if (y > p0.y + 8) y += 6;
+      dl->AddText(a.fontBold, theme::kFontCaption, ImVec2(p0.x + 10, std::round(y + (headH - theme::kFontCaption) * 0.5f)), P.textFaint,
+                  i18n::tr(r.label));
+      y += headH;
+      continue;
+    }
+    const ImVec2 q(p0.x, y);
+    ImGui::SetCursorScreenPos(q);
+    ImGui::PushID(r.cat);
+    if (ImGui::InvisibleButton("##cat", ImVec2(w, rh))) liveCat = r.cat;
+    const bool hov = ImGui::IsItemHovered();
+    ImGui::PopID();
+    if (hov) ui::Hint(r.hint);
+    const bool on = liveCat == r.cat;
+    if (on || hov) dl->AddRectFilled(q, ImVec2(q.x + w, q.y + rh), on ? P.surface700 : P.surface800);
+    const float cy = q.y + rh * 0.5f;
+    ui::drawIconFit(dl, r.icon, ImVec2(q.x + 12, cy - 6), ImVec2(q.x + 24, cy + 6), on ? P.text : P.textDim);
+    const ImVec4 clip(q.x, q.y, q.x + w - 4, q.y + rh);
+    dl->AddText(a.fontRegular, fs, ImVec2(q.x + 31, std::round(q.y + (rh - fs) * 0.5f)), P.text, i18n::tr(r.label), nullptr, 0, &clip);
+    y += rh;
+  }
+  if (twoPane) {
+    ImGui::SetCursorScreenPos(ImVec2(p0.x, y + 4));
+    ImGui::Dummy(ImVec2(w, 1));
+  } else {
+    dl->AddLine(ImVec2(p0.x, y + 3.5f), ImVec2(p0.x + w, y + 3.5f), P.lineStrong);
+    ImGui::SetCursorScreenPos(ImVec2(p0.x, y + 4));
+  }
+}
+
+// The list pane's heading: the chosen category, as a column head.
+// K-112c: the filter rows under the list's head: the tags the browser's files carry most (the
+// index's tag counts), as chips that wrap onto two rows at most. A chip searches for its tag
+// (tag:<name>); the lit one clears the search again. Only for the places that list files.
+std::vector<std::pair<std::string, int>> filterTags;
+uint64_t filterTagsGen = ~0ull;
+int devFilterChips = 0;  // chips drawn last frame (dev checks)
+void liveFilterRows(App& a, float w) {
+  const auto& P = pal();
+  devFilterChips = 0;
+  const bool files = liveCat == LcSamples || liveCat == LcFolders || liveCat == LcDrums || liveCat == LcRecent || liveCat == LcStarred;
+  if (!files) return;
+  const uint64_t gen = browserui::index().generation();
+  static double countedAt = -100;  // recounted at most every 2 s while the index changes (a pass bumps it often)
+  if (gen != filterTagsGen && (filterTags.empty() || a.now - countedAt > 2.0))
+    filterTags = browserui::index().tagCounts(24), filterTagsGen = gen, countedAt = a.now;
+  if (filterTags.empty()) return;
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const ImVec2 o = ImGui::GetCursorScreenPos();
+  const float fs = theme::kFontLabel, ch = 16, gap = 4, pad = 6;
+  float x = o.x + 6, y = o.y + 1;
+  int rowsUsed = 1;
+  for (size_t i = 0; i < filterTags.size(); ++i) {
+    const std::string& t = filterTags[i].first;
+    const float cw = std::ceil(a.fontRegular->CalcTextSizeA(fs, 1e9f, 0, t.c_str()).x) + pad * 2;
+    if (x + cw > o.x + w - 6) {
+      if (rowsUsed == 2) break;
+      ++rowsUsed, x = o.x + 6, y += ch + gap;
+    }
+    const std::string q = "tag:" + t;
+    const bool on = q == filterBuf;
+    ImGui::SetCursorScreenPos(ImVec2(x, y));
+    ImGui::PushID(static_cast<int>(i));
+    if (ImGui::InvisibleButton("##chip", ImVec2(cw, ch))) std::snprintf(filterBuf, sizeof filterBuf, "%s", on ? "" : q.c_str());
+    const bool hov = ImGui::IsItemHovered();
+    if (i == 0) devNoteRect("brchip");
+    ImGui::PopID();
+    ui::Hint((std::to_string(filterTags[i].second) + " " + i18n::tr("files") + " \xC2\xB7 " + i18n::tr("click to show only these")).c_str());
+    // K-112c (round 19): flat chips, no outline, nearly square, the tag in the text colour (211, 094).
+    dl->AddRectFilled(ImVec2(x, y), ImVec2(x + cw, y + ch), on ? P.hot : hov ? P.surface600 : P.surface700, 1.0f);
+    theme::centreText(dl, a.fontRegular, fs, ImVec2(x, y), ImVec2(x + cw, y + ch), on ? theme::contrastText(P.hot) : hov ? P.text : theme::mix(P.textDim, P.text, 0.5f), t.c_str());
+    x += cw + gap;
+    ++devFilterChips;
+  }
+  ImGui::SetCursorScreenPos(ImVec2(o.x, o.y));
+  ImGui::Dummy(ImVec2(w, y + ch + 3 - o.y));
+  dl->AddLine(ImVec2(o.x, y + ch + 2.5f), ImVec2(o.x + w, y + ch + 2.5f), P.line);
+}
+
+void liveListHead(App& a) {
+  const auto& P = pal();
+  static const char* names[LcCount] = {i18n::N_("Starred"), i18n::N_("Sounds"), i18n::N_("Drums"), i18n::N_("Instruments"),
+                                       i18n::N_("Audio effects"), i18n::N_("Note effects"), i18n::N_("Plugins"), i18n::N_("Clips"),
+                                       i18n::N_("Samples"), i18n::N_("Grooves"), i18n::N_("Recent"), i18n::N_("Projects"),
+                                       i18n::N_("Folders")};
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const ImVec2 p0 = ImGui::GetCursorScreenPos();
+  const float w = ImGui::GetContentRegionAvail().x, hh = 20;
+  dl->AddRectFilled(p0, ImVec2(p0.x + w, p0.y + hh), P.surface800);
+  dl->AddLine(ImVec2(p0.x, p0.y + hh - 0.5f), ImVec2(p0.x + w, p0.y + hh - 0.5f), P.line);
+  const char* n = liveCat >= 0 && liveCat < LcCount ? i18n::tr(names[liveCat]) : "";
+  dl->AddText(a.fontBold, theme::kFontCaption, ImVec2(p0.x + 8, std::round(p0.y + (hh - theme::kFontCaption) * 0.5f)), P.textDim, n);
+  ImGui::Dummy(ImVec2(w, hh + 2));
+  liveFilterRows(a, w);
+}
+
+void liveContent(App& a) {
+  const std::string fl = browserui::flDataDir();
+  const fs::path patches = fl.empty() ? fs::path() : fs::path(fl) / "Patches";
+  switch (liveCat) {
+    case LcStarred: sectionStarred(a); break;
+    case LcSounds:
+      sectionPluginPresets(a);
+      sectionChannelPresets(a);
+      break;
+    case LcDrums:
+      if (!fl.empty()) folderSection(a, "Packs", patches / "Packs", role::kMenu, "No packs");
+      else emptyLine("No drum folders yet: add one with Add folder below", 12);
+      break;
+    case LcInstruments:
+      builtinPlugins(a, PluginKind::Generator, 12, "##lc.g.");
+      installedPlugins(a, 12);
+      break;
+    case LcAudioFx: builtinPlugins(a, PluginKind::Effect, 12, "##lc.e."); break;
+    case LcNoteFx: builtinPlugins(a, PluginKind::NoteFx, 12, "##lc.n."); break;
+    case LcPlugins: sectionPluginDatabase(a); break;
+    case LcClips: sectionCurrentProject(a); break;
+    case LcSamples:
+      folderSection(a, "Recorded", recordedDir(a), role::kDelete, "Nothing recorded yet", true);
+      folderSection(a, "Rendered", renderedDir(a), role::kSelect, "Nothing rendered yet", true);
+      folderSection(a, "Imported", urlimportui::importedDir(a), role::kLoop, "Nothing imported from links yet", true);
+      folderSection(a, "Stems", stemsDir(a), role::kGraph, "No stems yet", true);
+      folderSection(a, "Edited audio", editedDir(a), role::kSlip, "No edited audio", true);
+      folderSection(a, "Sliced audio", browserui::contentDir(a, "Sliced audio"), role::kSlip, "No sliced audio", true);
+      folderSection(a, "Clipboard files", browserui::contentDir(a, "Clipboard files"), role::kGhost, "Empty", true);
+      break;
+    case LcGrooves: sectionSwingPresets(a); break;
+    case LcRecent: sectionRecent(a); break;
+    case LcProjects: sectionProjects(a); break;
+    case LcFolders: sectionUserFolders(a); break;
+    default: break;
+  }
+}
+
 // K-160: the browser's keys (see Nav), read inside the tree before its rows are drawn. A key the
 // browser uses is locked for the rest of the frame, so no shortcut also acts on it.
 void navKeys(App& a) {
@@ -1944,6 +2194,15 @@ void navKeys(App& a) {
       nav.cursor = r.id;
       nav.act = Nav::Activate, nav.actOn = r.id;
     }
+  } else if (cur >= 0 && livelook::active(a) && !rows[static_cast<size_t>(cur)].item.empty() &&
+             (hit(ImGuiKey_Delete) || hit(ImGuiKey_Backspace))) {
+    // K-112c (Live): Delete (Backspace on a laptop) moves the file or folder under the cursor to
+    // the trash, asked first as the menu's item is; a locked one says why instead.
+    const NavRow& r = rows[static_cast<size_t>(cur)];
+    nav.cursor = r.id;
+    const std::string why = lockedWhy(a, r.item);
+    if (why.empty()) fops.trashAsk = r.item, fops.trashOpen = true;
+    else a.notify(i18n::tr(why.c_str()));
   }
   if (next != cur && next >= 0) {
     nav.cursor = rows[static_cast<size_t>(next)].id;
@@ -2025,7 +2284,10 @@ void drawBrowser(App& a) {
     ImVec2 p = ImGui::GetCursorScreenPos();
     const float bw = ImGui::GetFrameHeight() + 4;  // each button right of the field, with its gap
     float w = ImGui::GetContentRegionAvail().x - 2 * bw;
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(28, ImGui::GetStyle().FramePadding.y));
+    // K-112c (round 20): Live's search field has no glyph, its text at the field's own inset, as every
+    // ref's browser search (211, 094, 329, 214, 216).
+    const bool searchGlyph = !livelook::active(a);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(searchGlyph ? 28.0f : ImGui::GetStyle().FramePadding.x, ImGui::GetStyle().FramePadding.y));
     ImGui::SetNextItemWidth(w);
     static bool refocus = false;  // after the clear button: typing goes on in the empty field
     if (refocus) ImGui::SetKeyboardFocusHere(), refocus = false;
@@ -2036,7 +2298,7 @@ void drawBrowser(App& a) {
     ImGui::PopStyleVar();
     ui::FocusRing();
     ui::Hint("Search plugins, presets and files \xC2\xB7 filters: type:audio|midi|preset|project|effect  tag:kick  bpm:120-130  key:Am  len:<2");
-    ui::drawIcon(ImGui::GetWindowDrawList(), ui::Icon::Search, ImVec2(p.x + 14, p.y + ImGui::GetFrameHeight() * 0.5f), 12, P.textFaint);
+    if (searchGlyph) ui::drawIcon(ImGui::GetWindowDrawList(), ui::Icon::Search, ImVec2(p.x + 14, p.y + ImGui::GetFrameHeight() * 0.5f), 12, P.textFaint);
     if (filterBuf[0]) {
       ImGui::SetCursorScreenPos(ImVec2(p.x + w - 22, p.y + 2));
       if (ui::IconButton("clear", ui::Icon::Close, false, 20, "Clear search")) {
@@ -2054,15 +2316,37 @@ void drawBrowser(App& a) {
       browserui::togglePluginPicker();
   }
   ui::EndToolbar();
-  tabStrip(a);
+  const bool liveLook = livelook::active(a);  // K-112c: categories in place of the tabs
+  const float footerH = theme::kToolbarH;
+  const bool info = !selPath.empty() && tab != TabPlugins;
+  // K-112c: two panes (the places beside the list) once the browser is wide enough for both.
+  const float paneW = ImGui::GetContentRegionAvail().x;
+  const bool twoPane = liveLook && paneW >= 250;
+  if (twoPane) {
+    const float sideW = std::clamp(std::floor(paneW * 0.42f), 120.0f, 190.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::BeginChild("##lcside", ImVec2(sideW, -footerH - (info ? kInfoH : 0)), ImGuiChildFlags_None);
+    liveSidebar(a, true);
+    ImGui::EndChild();
+    ImGui::PopStyleVar();
+    const ImVec2 r0 = ImGui::GetItemRectMin(), r1 = ImGui::GetItemRectMax();
+    ImGui::GetWindowDrawList()->AddLine(ImVec2(r1.x + 0.5f, r0.y), ImVec2(r1.x + 0.5f, r1.y), pal().line);
+    ImGui::SameLine(0, 1);
+  } else if (liveLook) {
+    liveSidebar(a, false);
+  } else {
+    tabStrip(a);
+  }
   const std::string filter = filterBuf;
   const bool searching = filter.find_first_not_of(' ') != std::string::npos;
 
   // ---- tree ----
-  const float footerH = theme::kToolbarH;
-  const bool info = !selPath.empty() && tab != TabPlugins;
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS2, theme::kS2));
   ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
+  if (twoPane) {  // the list's column head, outside its scrolling
+    ImGui::BeginGroup();
+    liveListHead(a);
+  }
   ImGui::BeginChild("##tree", ImVec2(0, -footerH - (info ? kInfoH : 0)), ImGuiChildFlags_AlwaysUseWindowPadding);
   if (collapseAsked) {
     collapseAsked = false;
@@ -2077,6 +2361,8 @@ void drawBrowser(App& a) {
       ui::EmptyState(ImGui::GetWindowDrawList(), ImVec2(mn.x, mn.y + 30), ImVec2(mn.x + sz.x, mn.y + sz.y), "No matches",
                      browserui::index().busy() ? "Still indexing \xE2\x80\x94 more results may appear" : "Try fewer words or filters");
     }
+  } else if (liveLook) {
+    liveContent(a);
   } else {
     const std::string fl = browserui::flDataDir();
     const fs::path patches = fl.empty() ? fs::path() : fs::path(fl) / "Patches";
@@ -2087,7 +2373,8 @@ void drawBrowser(App& a) {
       sectionProjects(a);
     }
     if (all || tab == TabPlugins) {
-      sectionPluginDatabase(a);
+      // K-112b: the Logic layout lists the plugin database in its Library (left), not here.
+      if (!(layoutui::active() == layout::Preset::Logic && layoutui::shellBuilt(a, layout::Preset::Logic))) sectionPluginDatabase(a);
       sectionPluginPresets(a);
       sectionChannelPresets(a);
       sectionMixerPresets(a);
@@ -2126,6 +2413,7 @@ void drawBrowser(App& a) {
     ImGui::EndPopup();
   }
   ImGui::EndChild();
+  if (twoPane) ImGui::EndGroup();
   ImGui::PopStyleVar(2);
   if (info) infoPanel(a);
 
@@ -2178,6 +2466,87 @@ void drawBrowser(App& a) {
 }
 
 namespace browserui {
+// K-112b: the Library's sounds. Gridline's own instruments' factory presets, sorted into kinds
+// of sound (bass, drum kit, keys, ...) by the instrument and the preset's name. A double-click
+// adds a channel with that instrument set to the preset.
+namespace {
+const char* soundKind(const PluginInfo& p, const std::string& preset) {
+  std::string n = preset;
+  for (char& c : n) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  auto has = [&n](const char* w) { return n.find(w) != std::string::npos; };
+  if (p.type == "gl.pads") return "Drum kit";
+  if (p.category == "Drums") return "Drums";
+  if (p.type == "gl.acid" || has("bass") || has("808") || has("sub ")) return "Bass";
+  if (p.type == "gl.keys" || has("piano") || has("organ") || has("keys") || has("rhodes")) return "Keys";
+  if (has("bell") || has("mallet") || has("marimba") || has("vibe")) return "Bells and mallets";
+  if (p.type == "gl.pluck" || has("pluck") || has("nylon") || has("harp") || has("guitar")) return "Plucked";
+  if (has("pad") || has("strings") || has("choir")) return "Pads and strings";
+  if (has("lead")) return "Leads";
+  if (p.type == "gl.granular") return "Textures";
+  return "Synth";
+}
+}  // namespace
+
+void drawSounds(App& a, const std::string& filter) {
+  struct Sound {
+    const PluginInfo* p;
+    size_t preset;
+  };
+  static const char* kOrder[] = {i18n::N_("Bass"), i18n::N_("Drum kit"), i18n::N_("Drums"), i18n::N_("Keys"), i18n::N_("Plucked"), i18n::N_("Bells and mallets"),
+                                 i18n::N_("Pads and strings"), i18n::N_("Leads"), i18n::N_("Synth"), i18n::N_("Textures")};
+  std::map<std::string, std::vector<Sound>> byKind;
+  std::string f = filter;
+  for (char& c : f) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  while (!f.empty() && f.back() == ' ') f.pop_back();
+  while (!f.empty() && f.front() == ' ') f.erase(f.begin());
+  for (const PluginInfo& p : pluginCatalog()) {
+    if (p.hidden || p.kind != PluginKind::Generator || p.usesSample || !collabui::pluginAllowed(a, p.type)) continue;
+    for (size_t i = 0; i < p.presets.size(); ++i) {
+      if (!f.empty()) {
+        std::string n = p.presets[i].name + " " + p.name;
+        for (char& c : n) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (n.find(f) == std::string::npos) continue;
+      }
+      byKind[soundKind(p, p.presets[i].name)].push_back({&p, i});
+    }
+  }
+  if (byKind.empty()) return;
+  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
+  if (!f.empty() || treeNode("##lib.snd", "Sounds", -1, 0, role::kLoop, true))  // open at first: the sounds are what the Library is for
+    for (const char* kind : kOrder) {
+      auto it = byKind.find(kind);
+      if (it == byKind.end()) continue;
+      const float indent = f.empty() ? 14.0f : 0.0f;
+      if (!f.empty() || treeNode(std::string("##lib.snd.") + kind, kind, static_cast<int>(it->second.size()), indent, role::kLoop))
+        for (const Sound& sd : it->second) {
+          const PluginInfo::Preset& pr = sd.p->presets[sd.preset];
+          bool dbl = false;
+          const std::string key = sd.p->type + "/" + pr.name;
+          browserRow(key.c_str(), ui::Icon::Wave, pr.name.c_str(), sd.p->name.c_str(), indent + 14, &dbl);
+          ui::Hint(pr.name + " \xC2\xB7 " + sd.p->name + "   (double-click: add a channel with this sound)");
+          if (dbl) {
+            const ObjectId id = a.addInstrument(sd.p->type);
+            if (id != kNoId) {
+              PluginState ps = presetState(*sd.p, sd.preset);
+              const std::string name = pr.name;
+              a.doc.editChannel(id, "load preset", [&ps, &name](Channel& c) {
+                c.plugin = ps;
+                c.name = name;
+              });
+              a.showNewInstrument(id);
+            }
+          }
+        }
+    }
+  ImGui::PopStyleVar();
+}
+
+void drawLibrary(App& a, const std::string& filter) {
+  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
+  libraryTree(a, filter);
+  ImGui::PopStyleVar();
+}
+
 void addBrowserFolder(App& a, const std::string& dir) {
   loadFolders(a);
   std::error_code ec;
@@ -2208,6 +2577,7 @@ void browserDropTarget(App& a) {
 
 // K-17 / K-18 dev checks (--dev-input "browser ..."):
 //   browser tab <0..4>                the tab (All, Project, Plugins, Sounds, Starred)
+//   browser cat <0..12>               K-112c: the Live browser's category (12: Folders)
 //   browser rows [on]                 on: record the drawn rows; else print last frame's rows
 //   browser select <path>             K-162: selects a file (its info panel)
 //   browser rename <path>             the inline name field on that row (type with "text", then "key enter")
@@ -2226,6 +2596,12 @@ bool devCommand(App& a, const std::vector<std::string>& args, int frame) {
   const std::string p1 = args.size() > 1 ? args[1] : std::string(), p2 = args.size() > 2 ? args[2] : std::string();
   if (op == "tab") {
     tab = std::clamp(std::atoi(p1.c_str()), 0, TabCount - 1);
+  } else if (op == "chips") {  // K-112c: the Live filter rows: chips drawn last frame, the search text, the top tags
+    std::printf("browserchips frame %d: chips %d search \"%s\"", frame, devFilterChips, filterBuf);
+    for (size_t i = 0; i < filterTags.size() && i < 6; ++i) std::printf(" %s=%d", filterTags[i].first.c_str(), filterTags[i].second);
+    std::printf("\n");
+  } else if (op == "cat") {  // K-112c: the Live browser's category (LiveCat order: 12 is Folders)
+    liveCat = std::clamp(std::atoi(p1.c_str()), 0, LcCount - 1);
   } else if (op == "rows" && p1 == "on") {
     devRowsOn = true;
   } else if (op == "rows") {

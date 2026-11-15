@@ -23,6 +23,7 @@ void storeD(std::atomic<double>& a, double v) { a.store(v, std::memory_order_rel
 
 class VoltageIn final : public Generator, public CvInMonitor {
  public:
+  bool mayRest() const override { return false; }  // K-277: sound without notes
   bool active() const override { return enabled_; }
   // One render per block: event offsets and device input indices are block positions.
   bool wholeBlock() const override { return true; }

@@ -20,6 +20,9 @@ float DialogFooterHeight(int rows = 1);
 // Dialog footer: kS1, hairline, kS1, then the cursor right-aligned for
 // `buttonsWidth` px of buttons (one row; DialogFooterHeight(1) reserves it).
 void DialogFooter(float buttonsWidth);
+// K-112c: true for an item placed in the current window below its DialogFooter this frame (Live
+// draws the footer's buttons as pills, as its dialogs do).
+bool InDialogFooter();
 // Width of `count` buttons of `width` px each, kS2 apart (for DialogFooter).
 float ButtonRowWidth(int count, float width);
 
@@ -79,6 +82,12 @@ float FormColumn(const char* const* labels, int count, float minX, float maxX, f
 // Dim form label fitted to end `gap` before column `x` (ellipsis + full-text
 // tooltip when cut), then SameLine(x) so the control starts on the column.
 void FormLabelFit(const char* label, float x, ImU32 col, float gap = 12.0f);
+// K-112b: the Logic layout's forms. While set, FormLabelFit ends each label at the column
+// (right-aligned), and every row of a section (BeginSection) starts at `column`, so a row without
+// a label (a checkbox, a note) lines up with the controls. 0 turns it off.
+void SetFormColumn(float column, bool indentRows = true);  // indentRows false: labels only
+bool FormRowsIndented();
+float FormColumnIndent();  // the column while set, else 0
 // Text fitted to `maxW` with an ellipsis; when cut, hovering shows the full
 // text. Uses the frame-padding baseline when `framed`. Returns true when cut.
 bool TextFit(const char* text, float maxW, ImU32 col, bool framed = false);

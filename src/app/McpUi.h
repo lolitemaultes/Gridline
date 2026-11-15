@@ -19,6 +19,7 @@ void shutdown();
 void settingsPage(App& a, float fieldW);
 // Tools > AI assistant activity.
 void showActivity();
+void hideActivity();  // K-112 (dev): the layout inventory closes it again
 void drawActivityWindow(App& a);
 // Status bar lamp right of the other lamps; moves rx left by its width.
 void statusLamp(App& a, ImDrawList* dl, float& rx, float ty, float fs);

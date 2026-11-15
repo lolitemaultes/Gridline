@@ -15,6 +15,8 @@
 #include <utility>
 #include "../../app/DevSignal.h"
 #include "../../app/StemsUi.h"
+#include "../../app/HostedBodies.h"
+#include "../../app/LayoutShellUi.h"
 #include "../../app/Theme.h"
 #include "../../app/Widgets.h"
 #include "../../core/Params.h"
@@ -1111,35 +1113,15 @@ void placePanel(DockSpot spot) {
 
 void drawPanel(App& a) {
   if (!pinned(a)) return;
+  if (hostbody::claimed(hostbody::Body::Loupe)) return;  // K-112: a layout part draws it in its own frame
   const int spot = std::exchange(pendingSpot(), -1);
+  layoutui::dockFlags("Loupe", 0);  // K-112: a layout docks the panel in its region when it opens
   if (spot >= 0) placePanel(static_cast<DockSpot>(spot));
   bool open = true;
   ImGui::PushStyleColor(ImGuiCol_WindowBg, ImGui::ColorConvertU32ToFloat4(C(col::PanelLo)));
   const bool vis = ui::BeginDockWindow("Loupe", &open, ImVec2(1100, 560));
   ImGui::PopStyleColor();
-  if (vis) {
-    Session* s = panelSession(a);
-    const ImVec2 avail = ImGui::GetContentRegionAvail();
-    if (!s) {
-      const ImVec2 p0 = ImGui::GetCursorScreenPos();
-      ui::EmptyState(ImGui::GetWindowDrawList(), p0, ImVec2(p0.x + avail.x, p0.y + avail.y), "Loupe",
-                     "Edit a sample in Loupe, or open a Loupe effect: it shows here.");
-      ImGui::Dummy(avail);
-    } else {
-      pump(a, *s);
-      devDemo(a, *s);
-      devState(a, *s);
-      // A dock smaller than the form's minimum scrolls (never squeezed below it).
-      const dock::Layout l = dock::layoutFor(avail.x, avail.y);
-      const bool scroll = l.formW > avail.x + 0.5f || l.headH + l.waveH + l.pad > avail.y + 0.5f;
-      if (scroll)
-        ImGui::BeginChild("##loupescroll", avail, ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar | ImGuiWindowFlags_NoBackground);
-      const ImVec2 room = scroll ? ImGui::GetContentRegionAvail() : avail;
-      dockDev() = {room.x, room.y, l.compact, l.scale, l.formW, l.headH, l.waveH};
-      drawFormDocked(a, *s, room);
-      if (scroll) ImGui::EndChild();
-    }
-  }
+  if (vis) drawPanelBody(a, ImGui::GetContentRegionAvail());
   ui::EndDockWindow();
   if (!open) unpin(a);
 }
@@ -1147,6 +1129,31 @@ void drawPanel(App& a) {
 }  // namespace
 
 bool pinned(App& a) { return a.settings.getBool("ui.loupePinned"); }
+
+// K-112 (R3): the panel's content in `avail`, drawn by the Loupe panel or a layout part's frame.
+void drawPanelBody(App& a, ImVec2 avail) {
+  Session* s = panelSession(a);
+  if (!s) {
+    const ImVec2 p0 = ImGui::GetCursorScreenPos();
+    ui::EmptyState(ImGui::GetWindowDrawList(), p0, ImVec2(p0.x + avail.x, p0.y + avail.y), "Loupe",
+                   "Edit a sample in Loupe, or open a Loupe effect: it shows here.");
+    ImGui::Dummy(avail);
+    return;
+  }
+  hostbody::drawn(hostbody::Body::Loupe, s->slot ? s->target.owner : kNoId, s->slot ? s->target.slot : -1);
+  pump(a, *s);
+  devDemo(a, *s);
+  devState(a, *s);
+  // A dock smaller than the form's minimum scrolls (never squeezed below it).
+  const dock::Layout l = dock::layoutFor(avail.x, avail.y);
+  const bool scroll = l.formW > avail.x + 0.5f || l.headH + l.waveH + l.pad > avail.y + 0.5f;
+  if (scroll)
+    ImGui::BeginChild("##loupescroll", avail, ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar | ImGuiWindowFlags_NoBackground);
+  const ImVec2 room = scroll ? ImGui::GetContentRegionAvail() : avail;
+  dockDev() = {room.x, room.y, l.compact, l.scale, l.formW, l.headH, l.waveH};
+  drawFormDocked(a, *s, room);
+  if (scroll) ImGui::EndChild();
+}
 
 bool inPanel(const Session& s) { return panelKey() == s.key; }
 
@@ -1182,6 +1189,14 @@ void dockMenuItems(App& a, Session& s) {
     ImGui::EndMenu();
   }
   if (ImGui::MenuItem(i18n::tr("Unpin into its own window"), nullptr, false, here)) unpin(a);
+}
+
+bool showInPanel(App& a, const PluginTarget& t) {
+  if (!pinned(a)) return false;
+  const PluginState* sp = t.state(a.doc.song());
+  if (!sp || sp->type != kType) return false;
+  panelKey() = sessionFor(a, t).key;
+  return true;
 }
 
 bool claimEffectEditor(App& a, const PluginTarget& t) {

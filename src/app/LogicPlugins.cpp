@@ -1,0 +1,674 @@
+// Gridline - K-112b: plugin windows in the Tracks layout (see LogicPlugins.h).
+#include "LogicPlugins.h"
+#include "LayoutStyleUi.h"
+#include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <cstdio>
+#include <map>
+#include <sstream>
+#include <string>
+#include <vector>
+#include "../../third_party/imgui/imgui.h"
+#include "../../third_party/imgui/imgui_internal.h"
+#include "../core/I18n.h"
+#include "../core/Params.h"
+#include "../core/PluginInfo.h"
+#include "../core/TrackModes.h"
+#include "App.h"
+#include "EditorZoomUi.h"
+#include "HostedBodies.h"
+#include "HostedUi.h"
+#include "LayoutPresets.h"
+#include "LayoutShellUi.h"
+#include "PluginUI.h"
+#include "Theme.h"
+#include "Widgets.h"
+
+namespace gl::logicplug {
+
+namespace {
+
+const theme::Palette& pal() { return theme::pal(); }
+
+// The track the layout is about: the first selected region's, else the first selected track.
+int focusTrack(const App& a) {
+  const Song& s = a.doc.song();
+  for (const Clip& c : s.playlist)
+    if (a.playlist.selected.count(c.id)) return c.track;
+  if (!a.playlist.trackSel.empty()) return *a.playlist.trackSel.begin();
+  return -1;
+}
+
+const MixerTrack* mixerOf(const Song& s, int track) {
+  if (track < 0 || track >= static_cast<int>(s.tracks.size())) return nullptr;
+  if (const MixerTrack* m = trackmodes::linkedMixer(s, track)) return m;
+  if (const Channel* c = trackmodes::linkedChannel(s, track)) return s.mixerTrack(c->mixerTrack);
+  return nullptr;
+}
+
+// Installed plugins whose own windows are open (instruments and effect slots).
+std::vector<PluginTarget> openNative(const Song& s) {
+  std::vector<PluginTarget> out;
+  for (const Channel& c : s.channels)
+    if (isHostedType(c.plugin.type) && hostedEditorOpen(PluginTarget{c.id, -1})) out.push_back(PluginTarget{c.id, -1});
+  for (const MixerTrack& m : s.mixer)
+    for (int k = 0; k < kEffectSlots; ++k)
+      if (isHostedType(m.slots[static_cast<size_t>(k)].plugin.type) && hostedEditorOpen(PluginTarget{m.id, k})) out.push_back(PluginTarget{m.id, k});
+  return out;
+}
+
+// Multi: the open windows follow the selected strip, row by row (each effect slot, the
+// instrument). A built-in row with nothing on the new strip stays open, empty, naming the track
+// and the slot; an installed plugin's window closes and its row comes back with a strip that has
+// a plugin there.
+int gEmptyRow = -1;            // the built-in effect window's row while it shows the empty state
+ObjectId gEmptyTrack = kNoId;  // and the mixer track it names
+std::vector<int> gNativeRows;  // installed plugins' rows waiting for a strip with a plugin there
+
+void follow(App& a, int track) {
+  const Song& s = a.doc.song();
+  const MixerTrack* to = mixerOf(s, track);
+  const Channel* inst = trackmodes::linkedChannel(s, track);
+  std::vector<int> builtinRows, nativeRows = gNativeRows;
+  bool instrument = a.settingsChannel != kNoId;
+  if (a.fxEditor.first != kNoId) builtinRows.push_back(a.fxEditor.second);
+  if (gEmptyRow >= 0) builtinRows.push_back(gEmptyRow);
+  for (const PluginTarget& t : openNative(s)) {
+    if (t.isChannel()) {
+      if (inst && t.owner == inst->id) continue;  // already the new strip's
+      instrument = true;
+    } else {
+      if (to && t.owner == to->id) continue;
+      nativeRows.push_back(t.slot);
+    }
+    closeHostedEditor(a, t, "the selected strip changed (linked plugin windows)");
+  }
+  gNativeRows.clear();
+  if (instrument && inst && a.settingsChannel != inst->id) a.settingsChannel = inst->plugin.type.empty() ? kNoId : inst->id;
+  auto has = [&](int k) { return to && k >= 0 && k < kEffectSlots && !to->slots[static_cast<size_t>(k)].plugin.type.empty(); };
+  for (int k : nativeRows) {
+    if (has(k) && isHostedType(to->slots[static_cast<size_t>(k)].plugin.type)) {
+      a.fxEditor = {to->id, k};
+      routePluginWindows(a);  // opens its own window
+    } else if (!has(k)) {
+      gNativeRows.push_back(k);  // back when a strip has a plugin in this row
+    }
+  }
+  for (int k : builtinRows) {
+    if (has(k)) {
+      a.fxEditor = {to->id, k};
+      gEmptyRow = -1;
+      if (isHostedType(to->slots[static_cast<size_t>(k)].plugin.type)) routePluginWindows(a);
+    } else {
+      a.fxEditor = {kNoId, -1};
+      gEmptyRow = k;
+      gEmptyTrack = to ? to->id : kNoId;
+    }
+  }
+}
+
+// Single: one window, which switches to each plugin opened. Built-in effects already share one
+// window; an installed plugin's window opening closes the others (and the built-in window).
+std::vector<uint64_t> gNativeSeen;
+std::pair<ObjectId, int> gLastFx{kNoId, -1};
+
+void single(App& a) {
+  const Song& s = a.doc.song();
+  const std::vector<PluginTarget> open = openNative(s);
+  const PluginTarget* fresh = nullptr;
+  for (const PluginTarget& t : open)
+    if (std::find(gNativeSeen.begin(), gNativeSeen.end(), t.key()) == gNativeSeen.end()) fresh = &t;
+  const bool fxChanged = a.fxEditor != gLastFx && a.fxEditor.first != kNoId;
+  if (fresh) {  // the newest native window stays
+    const PluginTarget keep = *fresh;
+    for (const PluginTarget& t : open)
+      if (t.key() != keep.key()) closeHostedEditor(a, t, "another plugin was opened (single plugin window)");
+    if (a.fxEditor.first != kNoId && !(keep.owner == a.fxEditor.first && keep.slot == a.fxEditor.second)) {
+      const MixerTrack* m = s.mixerTrack(a.fxEditor.first);
+      if (m && a.fxEditor.second >= 0 && a.fxEditor.second < kEffectSlots && !isHostedType(m->slots[static_cast<size_t>(a.fxEditor.second)].plugin.type))
+        a.fxEditor = {kNoId, -1};
+    }
+  } else if (fxChanged) {  // a built-in effect window opened: the native ones close
+    for (const PluginTarget& t : open)
+      if (!(t.owner == a.fxEditor.first && t.slot == a.fxEditor.second)) closeHostedEditor(a, t, "another plugin was opened (single plugin window)");
+  }
+  gLastFx = a.fxEditor;
+  gNativeSeen.clear();
+  for (const PluginTarget& t : openNative(s)) gNativeSeen.push_back(t.key());
+}
+
+// ---- hide / show ----
+// The built-in windows skip drawing while hidden (their targets stay). Installed plugins' own
+// windows go through the shared, layout-neutral hide / show the Live branch (k112c-live) is
+// writing; this branch does not have it yet, so nativeHide is a stub wired to it at the merge.
+bool gHidden = false;
+ObjectId gHiddenChannel = kNoId;
+std::pair<ObjectId, int> gHiddenFx{kNoId, -1};
+
+// At the merge with k112c-live (482f48e3, HostedUi.h), the body becomes:
+//   for (const PluginTarget& t : openHostedEditorTargets()) setHostedEditorHidden(t, hide, kHideAll);
+// and frame() calls setPluginWindowPolicy every frame while the layout is on screen:
+//   {managed = true, openOnLoad = true, several = link != 1, selectedOnly = false,
+//    channel / mixer = the focus track's}
+// so Single's "opening one closes the others" for installed plugins moves to the policy (single()
+// keeps the built-in window's side), and Follow keeps its row-by-row rule here.
+void nativeHide(App& a, bool hide) {
+  (void)a;
+  (void)hide;
+}
+
+void show(App& a) {
+  gHidden = false;
+  nativeHide(a, false);
+}
+
+// ---- the saved states (Compare) ----
+std::map<uint64_t, PluginState> gSaved;  // by PluginTarget::key()
+uint64_t gSavedRev = ~0ull;
+const Song* gSavedSong = nullptr;
+// Compare runs on the A/B machinery (D4): the spare slot holds the saved state, and "on B" means
+// the saved state is showing.
+
+void snapshot(const App& a) {
+  const Song& s = a.doc.song();
+  gSaved.clear();
+  for (const Channel& c : s.channels) gSaved[PluginTarget{c.id, -1}.key()] = c.plugin;
+  for (const MixerTrack& m : s.mixer)
+    for (int k = 0; k < kEffectSlots; ++k)
+      if (!m.slots[static_cast<size_t>(k)].plugin.type.empty()) gSaved[PluginTarget{m.id, k}.key()] = m.slots[static_cast<size_t>(k)].plugin;
+}
+
+// ---- the plugin clipboard ----
+PluginState gClip;
+bool gHasClip = false;
+
+std::vector<std::string> controlsTypes(const App& a) {
+  std::vector<std::string> out;
+  std::istringstream in(a.settings.getString("ui.logicControlsTypes"));
+  for (std::string l; std::getline(in, l);)
+    if (!l.empty()) out.push_back(l);
+  return out;
+}
+
+void setControlsView(App& a, const std::string& type, bool on) {
+  std::vector<std::string> v = controlsTypes(a);
+  v.erase(std::remove(v.begin(), v.end(), type), v.end());
+  if (on) v.push_back(type);
+  std::string joined;
+  for (const std::string& t : v) joined += t + "\n";
+  a.settings.set("ui.logicControlsTypes", joined);
+}
+
+}  // namespace
+
+bool active(const App& a) { return layoutui::active() == layout::Preset::Logic && layoutui::shellBuilt(a, layout::Preset::Logic); }
+
+int link(const App& a) { return std::clamp(static_cast<int>(a.settings.getNumber("ui.logicPluginLink")), 0, 2); }
+void setLink(App& a, int mode) { a.settings.set("ui.logicPluginLink", std::clamp(mode, 0, 2)); }
+
+// Off (D5): each built-in effect stays in a window of its own. The effect window shows the newest
+// one (App::fxEditor, as in every layout); the ones it showed before stay open here. Never in
+// another layout (Studio keeps exactly one effect window).
+namespace {
+std::vector<std::pair<ObjectId, int>> gMoreFx;
+std::pair<ObjectId, int> gPrevFx{kNoId, -1};
+
+void trackMoreFx(App& a, int mode) {
+  if (mode != 0) {
+    gMoreFx.clear();
+    gPrevFx = a.fxEditor;
+    return;
+  }
+  const Song& s = a.doc.song();
+  auto builtIn = [&](const std::pair<ObjectId, int>& f) {
+    const MixerTrack* m = s.mixerTrack(f.first);
+    return m && f.second >= 0 && f.second < kEffectSlots && !m->slots[static_cast<size_t>(f.second)].plugin.type.empty() &&
+           !isHostedType(m->slots[static_cast<size_t>(f.second)].plugin.type);
+  };
+  if (a.fxEditor.first != kNoId && gPrevFx.first != kNoId && a.fxEditor != gPrevFx && builtIn(gPrevFx) &&
+      std::find(gMoreFx.begin(), gMoreFx.end(), gPrevFx) == gMoreFx.end())
+    gMoreFx.push_back(gPrevFx);
+  gMoreFx.erase(std::remove_if(gMoreFx.begin(), gMoreFx.end(), [&](const auto& f) { return f == a.fxEditor || !builtIn(f); }), gMoreFx.end());
+  gPrevFx = a.fxEditor;
+}
+}  // namespace
+
+void drawMoreFx(App& a) {
+  if (gMoreFx.empty() || gHidden || !active(a) || link(a) != 0) return;
+  const Song& s = a.doc.song();
+  for (size_t i = 0; i < gMoreFx.size();) {
+    const auto f = gMoreFx[i];
+    const MixerTrack* m = s.mixerTrack(f.first);
+    const PluginInfo* info = m ? findPlugin(m->slots[static_cast<size_t>(f.second)].plugin.type) : nullptr;
+    if (!info) {
+      gMoreFx.erase(gMoreFx.begin() + static_cast<long>(i));
+      continue;
+    }
+    const std::string title = mixerTrackName(s, static_cast<size_t>(std::max(0, s.mixerIndex(m->id)))) + "###fxmore" + std::to_string(m->id) + "_" +
+                              std::to_string(f.second);
+    const float width = info->editorWidth > 0 ? info->editorWidth : (info->type == "gl.eq" ? 780.0f : 600.0f);
+    bool open = true;
+    {
+      const ImGuiViewport* vp = ImGui::GetMainViewport();
+      const float step = 28.0f * static_cast<float>(i + 1);
+      ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f - step, vp->WorkPos.y + vp->WorkSize.y * 0.42f - step), ImGuiCond_Appearing,
+                              ImVec2(0.5f, 0.5f));
+    }
+    // An earlier window goes behind the effect window (the newest stays in front), cascaded.
+    const bool appearing = ImGui::FindWindowByName(title.c_str()) == nullptr || !ImGui::FindWindowByName(title.c_str())->WasActive;
+    bool vis = false;
+    {  // K-112b: the title bar's underline (drawn by Begin from the frame outline) stays as in every layout
+      const layoutui::BaseBorderScope border;
+      vis = ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoFocusOnAppearing);
+    }
+    if (vis) {
+      drawEffectEditorBody(a, f.first, f.second, BodyFrame{width, false, ""});
+    }
+    ImGui::End();
+    if (appearing)
+      if (ImGuiWindow* front = ImGui::FindWindowByName("###fxeditor")) ImGui::BringWindowToDisplayFront(front);
+    if (!open) {
+      gMoreFx.erase(gMoreFx.begin() + static_cast<long>(i));
+      continue;
+    }
+    ++i;
+  }
+}
+
+void frame(App& a) {
+  if (!active(a)) {  // another layout: nothing of this runs (hidden windows come back)
+    if (gHidden) show(a);
+    gMoreFx.clear();
+    gPrevFx = a.fxEditor;
+    return;
+  }
+  // The saved states: taken whenever the project is in its saved state (opened, saved, or undone back to it).
+  if (!a.doc.modified() && (a.doc.revision() != gSavedRev || &a.doc.song() != gSavedSong)) {
+    snapshot(a);
+    gSavedRev = a.doc.revision();
+    gSavedSong = &a.doc.song();
+  }
+  if (gHidden && (a.settingsChannel != gHiddenChannel || a.fxEditor != gHiddenFx)) show(a);  // a plugin was opened: windows back
+  const int mode = link(a);
+  trackMoreFx(a, mode);
+  if (mode != 2) gEmptyRow = -1, gNativeRows.clear();
+  if (mode == 1 && !gHidden) single(a);
+  static int last = -2;
+  const int tr = focusTrack(a);
+  if (tr == last) return;
+  const bool first = last == -2;
+  last = tr;
+  if (first || tr < 0 || mode != 2 || gHidden) return;
+  follow(a, tr);
+}
+
+void drawEmptyRow(App& a) {
+  if (gEmptyRow < 0 || a.fxEditor.first != kNoId || gHidden || !active(a) || link(a) != 2) return;
+  const Song& s = a.doc.song();
+  const MixerTrack* m = s.mixerTrack(gEmptyTrack);
+  const std::string track = m ? mixerTrackName(s, static_cast<size_t>(std::max(0, s.mixerIndex(m->id)))) : std::string(i18n::tr("No track"));
+  bool open = true;
+  ImGui::SetNextWindowSize(ImVec2(360, 160), ImGuiCond_Appearing);
+  if (ImGui::Begin((track + "###fxeditor").c_str(), &open, ImGuiWindowFlags_NoDocking)) {
+    char line[160];
+    std::snprintf(line, sizeof line, i18n::tr("Insert %d of %s is empty"), gEmptyRow + 1, track.c_str());
+    const ImVec2 p0 = ImGui::GetCursorScreenPos(), av = ImGui::GetContentRegionAvail();
+    ui::EmptyState(ImGui::GetWindowDrawList(), p0, ImVec2(p0.x + av.x, p0.y + std::max(av.y, 80.0f)), line,
+                   "Linked window: select a track with a plugin in this slot, or close the window");
+    ImGui::Dummy(ImVec2(av.x, std::max(av.y, 80.0f)));
+  }
+  ImGui::End();
+  if (!open) gEmptyRow = -1;
+}
+
+bool hidden() { return gHidden; }
+
+void toggleHidden(App& a) {
+  if (gHidden) {
+    show(a);
+    return;
+  }
+  nativeHide(a, true);
+  gHidden = true;
+  gHiddenChannel = a.settingsChannel;
+  gHiddenFx = a.fxEditor;
+}
+
+std::string fxWindowTitle(const Song& s, const MixerTrack& t) {
+  return mixerTrackName(s, static_cast<size_t>(std::max(0, s.mixerIndex(t.id)))) + "###fxeditor";
+}
+
+void compareButton(App& a, const PluginTarget& t) {
+  const Song& s = a.doc.song();
+  const PluginState* st = t.state(s);
+  const auto it = gSaved.find(t.key());
+  const bool known = st && it != gSaved.end() && it->second.type == st->type;
+  const bool differs = known && !(it->second == *st);
+  bool on = known && pui::compareOnB(t);
+  if (on && differs) {  // edited while showing the saved state: that is the edit now
+    pui::compareSetSpare(a, t, it->second);
+    on = false;
+  }
+  ImGui::BeginDisabled(!known || (!differs && !on));
+  if (ui::TextButton(i18n::tr("Compare"), differs || on, 0,
+                     on ? "Showing the settings as saved with the project: click to go back to your edit"
+                        : "Lit when the settings differ from the project as saved: click to hear the saved settings")) {
+    if (!on) pui::compareSetSpare(a, t, it->second);  // the other slot: the saved state
+    pui::compareFlip(a, t);
+  }
+  ImGui::EndDisabled();
+}
+
+// K-112b: Compare for a whole track (the Smart controls bar): every plugin on it flips together
+// between the edit and the project as saved. Lit when any of them differs from the saved state.
+void compareTrackButton(App& a, const std::vector<PluginTarget>& ts, float width) {
+  const Song& s = a.doc.song();
+  bool anyKnown = false, anyDiffers = false, anyOn = false;
+  for (const PluginTarget& t : ts) {
+    const PluginState* st = t.state(s);
+    const auto it = gSaved.find(t.key());
+    if (!st || it == gSaved.end() || it->second.type != st->type) continue;
+    anyKnown = true;
+    const bool differs = !(it->second == *st);
+    bool on = pui::compareOnB(t);
+    if (on && differs) {  // edited while showing the saved state: that is the edit now
+      pui::compareSetSpare(a, t, it->second);
+      on = false;
+    }
+    anyDiffers = anyDiffers || differs;
+    anyOn = anyOn || on;
+  }
+  ImGui::BeginDisabled(!anyKnown || (!anyDiffers && !anyOn));
+  if (ui::TextButton(i18n::tr("Compare"), anyDiffers || anyOn, width,
+                     anyOn ? "Showing this track's plugins as saved with the project: click to go back to your edits"
+                           : "Lit when this track's plugins differ from the project as saved: click to hear them as saved")) {
+    for (const PluginTarget& t : ts) {
+      const PluginState* st = t.state(s);
+      const auto it = gSaved.find(t.key());
+      if (!st || it == gSaved.end() || it->second.type != st->type) continue;
+      if (anyOn) {
+        if (pui::compareOnB(t)) pui::compareFlip(a, t);
+      } else if (!(it->second == *st)) {
+        pui::compareSetSpare(a, t, it->second);
+        pui::compareFlip(a, t);
+      }
+    }
+  }
+  ImGui::EndDisabled();
+}
+
+void copyPasteButtons(App& a, const PluginTarget& t) {
+  const PluginState* st = t.state(a.doc.song());
+  if (!st) return;
+  if (ui::TextButton(i18n::tr("Copy"), false, 0, "Copy these settings (whole plugin state) to the plugin clipboard")) gClip = *st, gHasClip = true;
+  ImGui::SameLine(0, 2);
+  const bool fits = gHasClip && gClip.type == st->type;
+  ImGui::BeginDisabled(!fits);
+  if (ui::TextButton(i18n::tr("Paste"), false, 0, "Paste the copied settings (the same plugin only)") && fits) {
+    PluginState ns = gClip;
+    if (ns.data.empty()) ns.data = st->data;
+    setPluginState(a, t, ns, "paste plugin settings");
+  }
+  ImGui::EndDisabled();
+}
+
+void viewButton(App& a, const PluginTarget& t) {
+  const PluginState* st = t.state(a.doc.song());
+  if (!st) return;
+  const bool hosted = isHostedType(st->type);
+  const bool ctl = controlsView(a, st->type);
+  if (ui::TextButton(ctl ? i18n::tr("Controls") : i18n::tr("Editor"), false, 0, "The window shows the plugin's editor or a plain list of its controls; its size")) ImGui::OpenPopup("##lgview");
+  if (ImGui::BeginPopup("##lgview")) {
+    if (!hosted) {
+      if (ImGui::MenuItem(i18n::tr("Editor"), nullptr, !ctl)) setControlsView(a, st->type, false);
+      if (ImGui::MenuItem(i18n::tr("Controls"), nullptr, ctl)) setControlsView(a, st->type, true);
+      ImGui::Separator();
+      edzoomui::sizeMenu(a, st->type, t.isChannel() ? "channelsettings" : "fxeditor");
+    } else {
+      ImGui::TextDisabled("%s", i18n::tr("An installed plugin shows its own interface"));
+    }
+    ImGui::EndPopup();
+  }
+}
+
+void linkButton(App& a) {
+  const int m = link(a);
+  const char* names[] = {i18n::N_("Link: off"), i18n::N_("Link: single"), i18n::N_("Link: follow")};
+  if (ui::TextButton(i18n::tr(names[m]), m != 0, 0,
+                     "Single: one plugin window, showing each plugin you open. Off: each plugin stays in its window. Follow (right-click): "
+                     "the windows follow the selected track, slot by slot"))
+    setLink(a, m == 1 ? 0 : 1);
+  if (ImGui::BeginPopupContextItem("##lglink")) {
+    if (ImGui::MenuItem(i18n::tr("Off"), nullptr, m == 0)) setLink(a, 0);
+    if (ImGui::MenuItem(i18n::tr("Single window"), nullptr, m == 1)) setLink(a, 1);
+    if (ImGui::MenuItem(i18n::tr("Follow the selected track"), nullptr, m == 2)) setLink(a, 2);
+    ImGui::EndPopup();
+  }
+}
+
+bool controlsView(const App& a, const std::string& type) {
+  if (!active(a) || isHostedType(type)) return false;
+  const std::vector<std::string> v = controlsTypes(a);
+  return std::find(v.begin(), v.end(), type) != v.end();
+}
+
+void drawControls(App& a, const PluginTarget& t, float width) {
+  const Song& s = a.doc.song();
+  const PluginInfo* info = t.info(s);
+  if (!info) return;
+  const auto& P = pal();
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const float rowH = 22, nameW = std::floor(width * 0.36f), valW = 84;
+  const float barW = std::max(60.0f, width - nameW - valW - 16);
+  for (int k = 0; k < static_cast<int>(info->params.size()); ++k) {
+    const ParamId pid = t.pid(k);
+    const auto d = describeParam(s, pid);
+    const auto v = getParam(s, pid);
+    if (!d || !v) continue;
+    ImGui::PushID(k);
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const float fs = ImGui::GetFontSize(), ty = std::round(p.y + (rowH - fs) * 0.5f);
+    theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(p.x, ty), nameW - 8, P.textDim, d->name.c_str());
+    const ImVec2 b0(p.x + nameW, p.y + 4);
+    ImGui::SetCursorScreenPos(b0);
+    ImGui::InvisibleButton("##bar", ImVec2(barW, rowH - 8));
+    const bool act = ImGui::IsItemActive(), hov = ImGui::IsItemHovered();
+    double n = d->toNormalized(*v);
+    if (act && ImGui::GetIO().MouseDelta.x != 0) {
+      n = std::clamp(n + ImGui::GetIO().MouseDelta.x / barW * (ImGui::GetIO().KeyShift ? 0.15 : 1.0), 0.0, 1.0);
+      a.doc.setParam(pid, d->fromNormalized(n), true);
+    }
+    if (hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) a.doc.setParam(pid, d->def, false);
+    if (ImGui::IsItemDeactivated()) a.doc.endGesture();
+    const ImVec2 b1(b0.x + barW, b0.y + rowH - 8);
+    dl->AddRectFilled(b0, b1, theme::mix(P.surface800, P.ink, 0.4f), 3.0f);
+    dl->AddRectFilled(b0, ImVec2(b0.x + barW * static_cast<float>(n), b1.y), hov || act ? theme::withAlpha(P.hot, 0.8f) : theme::withAlpha(P.hot, 0.55f), 3.0f);
+    const std::string val = d->format(*v);
+    theme::textEllipsis(dl, a.fontMono, fs, ImVec2(b1.x + 8, ty), valW, act ? P.hot : P.text, val.c_str());
+    ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + rowH));
+    ImGui::Dummy(ImVec2(width, 0));
+    ImGui::PopID();
+  }
+}
+
+// ---- Smart controls (G7) ----
+
+namespace {
+struct SmartKnob {
+  PluginTarget t;
+  int k;
+};
+bool gSmartMaster = false;  // the master track's chain instead of the selected track's
+int gSmartView = 0;         // 0 the knobs, 1 the EQ
+
+// Up to `most` of a plugin's controls (built-ins: the continuous ones, in their own order;
+// installed plugins: the first ones, which are the main ones in most plugins). A stand-in until
+// the merge with the Live branch: there, built-ins take devview::mainParams and installed plugins
+// their shown-parameter list (PluginState::shown) when it is set (decision D8).
+void mapPlugin(const Song& s, const PluginTarget& t, int most, std::vector<SmartKnob>& out) {
+  const PluginInfo* info = t.info(s);
+  if (!info) return;
+  const bool hosted = isHostedType(info->type);
+  int n = 0;
+  for (int k = 0; k < static_cast<int>(info->params.size()) && n < most && out.size() < 8; ++k) {
+    if (!hosted && info->params[static_cast<size_t>(k)].kind != ParamKind::Continuous) continue;
+    out.push_back({t, k});
+    ++n;
+  }
+}
+}  // namespace
+
+void smartControls(App& a) {
+  const Song& s = a.doc.song();
+  const auto& P = pal();
+  const int tr = focusTrack(a);
+  const MixerTrack* m = gSmartMaster ? (s.mixer.empty() ? nullptr : &s.mixer[0]) : mixerOf(s, tr);
+  const Channel* inst = gSmartMaster ? nullptr : trackmodes::linkedChannel(s, tr);
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  {  // the bar: the target, the view, the master switch
+    const std::string name = m ? mixerTrackName(s, static_cast<size_t>(std::max(0, s.mixerIndex(m->id)))) : std::string(i18n::tr("No track selected"));
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(name.c_str());
+    ImGui::SameLine(0, theme::kS3);
+    const char* views[] = {i18n::tr("Controls"), i18n::tr("EQ")};
+    const char* hints[] = {i18n::tr("The track's main controls as knobs"), i18n::tr("The track's EQ, editable here")};
+    ui::Segmented("##smview", views, 2, &gSmartView, 72, 0, hints);
+    ImGui::SameLine(0, theme::kS3);
+    if (ui::TextButton(i18n::tr("Master"), gSmartMaster, 0, "Show the master track's controls instead of the selected track's")) gSmartMaster = !gSmartMaster;
+    if (m) {  // Compare at the bar's right end, for every plugin on the track
+      std::vector<PluginTarget> ts;
+      if (inst && !inst->plugin.type.empty()) ts.push_back(PluginTarget{inst->id, -1});
+      for (int k = 0; k < kEffectSlots; ++k)
+        if (!m->slots[static_cast<size_t>(k)].plugin.type.empty()) ts.push_back(PluginTarget{m->id, k});
+      const float cw = 84.0f;
+      ImGui::SameLine(0, theme::kS3);
+      ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - cw));
+      compareTrackButton(a, ts, cw);
+    }
+  }
+  ImGui::Spacing();
+  const ImVec2 p0 = ImGui::GetCursorScreenPos(), av = ImGui::GetContentRegionAvail();
+  const ImVec2 p1(p0.x + av.x, p0.y + std::max(av.y, 60.0f));
+  if (!m) {
+    ui::EmptyState(dl, p0, p1, i18n::tr("No track selected"), i18n::tr("Select a track: its controls show here"));
+    return;
+  }
+  if (gSmartView == 1) {  // the EQ view: the track's first EQ, its own display
+    int eq = -1;
+    for (int k = 0; k < kEffectSlots && eq < 0; ++k)
+      if (m->slots[static_cast<size_t>(k)].plugin.type == "gl.eq") eq = k;
+    if (eq < 0) {
+      ui::EmptyState(dl, p0, ImVec2(p1.x, p0.y + std::min(av.y, 90.0f)), i18n::tr("No EQ on this track"), i18n::tr("Add one: it goes in the first free effect slot"));
+      ImGui::SetCursorScreenPos(ImVec2(std::round(p0.x + av.x * 0.5f - 50), p0.y + std::min(av.y, 90.0f)));
+      if (ui::TextButton(i18n::tr("Add an EQ"), false, 100, "Put an EQ in this track's first free effect slot")) {
+        int free = -1;
+        for (int k = 0; k < kEffectSlots && free < 0; ++k)
+          if (m->slots[static_cast<size_t>(k)].plugin.type.empty()) free = k;
+        if (free < 0) a.notify("No free effect slot for an EQ", true);
+        else a.doc.setSlotPlugin(m->id, free, "gl.eq");
+      }
+      return;
+    }
+    if (a.fxEditor == std::make_pair(m->id, eq)) {  // one body, one place: the window has it now
+      ui::EmptyState(dl, p0, ImVec2(p1.x, p0.y + std::min(av.y, 90.0f)), i18n::tr("The EQ is open in its window"), i18n::tr("Close the window to edit it here"));
+      ImGui::SetCursorScreenPos(ImVec2(std::round(p0.x + av.x * 0.5f - 60), p0.y + std::min(av.y, 90.0f)));
+      if (ui::TextButton(i18n::tr("Edit it here"), false, 120, "Closes the EQ's window and shows it in this pane")) a.fxEditor = {kNoId, -1};
+      return;
+    }
+    ImGui::BeginChild("##smeq", ImVec2(0, 0));
+    drawEffectEditorBody(a, m->id, eq, BodyFrame{ImGui::GetContentRegionAvail().x, false, "Smart controls"});
+    ImGui::EndChild();
+    return;
+  }
+  // The knobs: the instrument's main controls, then the first effects'. Grouped in boxes, one per
+  // plugin; a box's name opens that plugin's window.
+  std::vector<SmartKnob> knobs;
+  if (inst && !inst->plugin.type.empty()) mapPlugin(s, PluginTarget{inst->id, -1}, 4, knobs);
+  for (int k = 0; k < kEffectSlots && knobs.size() < 8; ++k)
+    if (!m->slots[static_cast<size_t>(k)].plugin.type.empty()) mapPlugin(s, PluginTarget{m->id, k}, knobs.empty() ? 4 : 2, knobs);
+  if (knobs.empty()) {
+    ui::EmptyState(dl, p0, p1, i18n::tr("No controls yet"), i18n::tr("Put an instrument or an effect on this track: its main controls show here"));
+    return;
+  }
+  // K-112b: the panel fills the pane (every reference shows it across the whole pane): a tinted
+  // panel, one titled box per plugin, the knobs sized to the room, in two rows when it is tall.
+  const float gap = theme::kS2, pad = 10, headH = 22;
+  dl->AddRectFilled(p0, p1, theme::mix(P.surface800, theme::rgb(0x2E5E92), 0.30f), 6.0f);
+  struct Box {
+    size_t i, j;
+    int cols, rows;
+  };
+  std::vector<Box> boxes;
+  for (size_t i = 0; i < knobs.size();) {
+    size_t j = i;
+    while (j < knobs.size() && knobs[j].t.key() == knobs[i].t.key()) ++j;
+    boxes.push_back({i, j, 0, 0});
+    i = j;
+  }
+  const float innerH = (p1.y - p0.y) - pad * 2;
+  const bool twoRows = innerH >= headH + 2 * 86.0f;
+  int totalCols = 0;
+  for (Box& b : boxes) {
+    const int n = static_cast<int>(b.j - b.i);
+    b.rows = twoRows && n > 2 ? 2 : 1;
+    b.cols = (n + b.rows - 1) / b.rows;
+    totalCols += b.cols;
+  }
+  const float roomW = (p1.x - p0.x) - pad * 2 - gap * static_cast<float>(boxes.size() - 1) - 16.0f * static_cast<float>(boxes.size());
+  const float cellW = std::clamp(roomW / static_cast<float>(std::max(1, totalCols)), 64.0f, 150.0f);
+  const float rowRoom = (innerH - headH - 8) / (twoRows ? 2.0f : 1.0f);
+  const float knobR = std::clamp(std::min(cellW * 0.26f, (rowRoom - 30) * 0.5f), 12.0f, 28.0f);
+  const float cellH = std::min(rowRoom, knobR * 2 + 30);  // name (16) above, the knob, then a gap
+  float used = 0;
+  for (const Box& b : boxes) used += cellW * static_cast<float>(b.cols) + 16;
+  used += gap * static_cast<float>(boxes.size() - 1);
+  float x = std::round(p0.x + std::max(pad, ((p1.x - p0.x) - used) * 0.5f));  // the boxes centred in the panel
+  const float boxH = headH + cellH * static_cast<float>(twoRows ? 2 : 1) + 8;
+  const float y0 = std::round(p0.y + std::max(pad, ((p1.y - p0.y) - boxH) * 0.5f));
+  for (const Box& b : boxes) {
+    const float bw = cellW * static_cast<float>(b.cols) + 16;
+    if (x + bw > p1.x - 2 && &b != &boxes.front()) break;  // no room for another box
+    const ImVec2 b0(x, y0), b1(x + bw, y0 + headH + cellH * static_cast<float>(b.rows) + 8);
+    dl->AddRect(b0, b1, theme::withAlpha(P.text, 0.35f), 4.0f);
+    const PluginInfo* info = knobs[b.i].t.info(s);
+    ImGui::PushID(static_cast<int>(b.i));
+    {  // the title: the plugin's name, a click opens its window
+      ImGui::SetCursorScreenPos(b0);
+      if (ImGui::InvisibleButton("##title", ImVec2(bw, headH))) togglePluginWindow(a, knobs[b.i].t);
+      const bool shown = pluginWindowShown(a, knobs[b.i].t), hov = ImGui::IsItemHovered();
+      if (hov) ui::Hint("Open this plugin's window");
+      std::string title = info ? info->name : std::string("?");
+      for (char& ch : title) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+      const float tf = theme::kFontCaption;
+      const float tw = std::min(a.fontBold->CalcTextSizeA(tf, 1e9f, 0, title.c_str()).x, bw - 12);
+      theme::textEllipsis(dl, a.fontBold, tf, ImVec2(std::round(b0.x + (bw - tw) * 0.5f), std::round(b0.y + (headH - tf) * 0.5f)), bw - 12,
+                          shown ? P.hot : hov ? P.text : theme::mix(P.text, P.textDim, 0.3f), title.c_str());
+    }
+    for (size_t k = b.i; k < b.j; ++k) {
+      const int idx = static_cast<int>(k - b.i), col = idx % b.cols, row = idx / b.cols;
+      const ParamId pid = knobs[k].t.pid(knobs[k].k);
+      const auto d = describeParam(s, pid);
+      const float cx = b0.x + 8 + cellW * (static_cast<float>(col) + 0.5f);
+      const float cy0 = std::round(b0.y + headH + 2 + cellH * static_cast<float>(row));
+      // The control's name above its knob (as the references show), small capitals, centred.
+      if (d) {
+        std::string label = d->name;
+        for (char& ch : label) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+        const float lf = theme::kFontLabel - 1;
+        const float lw = std::min(a.fontRegular->CalcTextSizeA(lf, 1e9f, 0, label.c_str()).x, cellW - 8);
+        theme::textEllipsis(dl, a.fontRegular, lf, ImVec2(std::round(cx - lw * 0.5f), cy0), cellW - 8, P.textDim, label.c_str());
+      }
+      ImGui::SetCursorScreenPos(ImVec2(std::round(cx - knobR), cy0 + 16));
+      ImGui::PushID(static_cast<int>(k));
+      ui::ParamKnob("##sk", pid, knobR, nullptr);
+      ImGui::PopID();
+    }
+    ImGui::PopID();
+    x = b1.x + gap;
+  }
+  ImGui::SetCursorScreenPos(ImVec2(p0.x, p1.y));
+  ImGui::Dummy(ImVec2(av.x, 0));
+}
+
+}  // namespace gl::logicplug

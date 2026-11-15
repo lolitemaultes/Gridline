@@ -1,6 +1,9 @@
 // Gridline — dialogs (file, settings, project info, export, history, about,
 // shortcuts, unsaved changes) and global keyboard shortcuts.
+#include "LayoutShellUi.h"
+#include "LiveLook.h"
 #include "../core/ChromeOs.h"
+#include "../core/LayoutShell.h"
 #include "CollabUi.h"
 #include "../core/RemoteFs.h"
 #include "../engine/ProjectLoad.h"
@@ -33,6 +36,8 @@
 #include "../core/UiScale.h"
 #include "../core/flp/Flp.h"
 #include "App.h"
+#include "LogicPlugins.h"
+#include "LogicNewTracks.h"
 #include "LayoutPresets.h"
 #include "../engine/PlaylistTools.h"
 #include "AudioRecordUi.h"
@@ -144,7 +149,7 @@ void settingsPageBody(App& a, int& page, float fieldW) {
       char lat[96];
       std::snprintf(lat, sizeof lat, "%.1f ms", 1000.0 * a.audioBuffer / std::max(1, a.audioSampleRate));
       formLabel("Output latency");
-      ImGui::PushFont(a.fontMono, theme::kFontNumber + 1);
+      ImGui::PushFont(livelook::numFont(a), theme::kFontNumber + 1);  // K-112c: sans in Live, as the refs' values
       ImGui::TextUnformatted(lat);
       ImGui::PopFont();
     }
@@ -341,6 +346,7 @@ void settingsPageBody(App& a, int& page, float fieldW) {
   }
   if (page == 4) {
     ui::BeginSection("LAYOUT");  // K-79: window layout presets
+    ui::SectionFullWidth();      // K-112b: the cards use the whole width
     {
       // K-130: the welcome screen's cards at a fitting size, the two options, then the reset.
       const float w = ImGui::GetContentRegionAvail().x;
@@ -440,6 +446,30 @@ void settingsPageBody(App& a, int& page, float fieldW) {
       formLabel("");
       ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr(viewports::unavailableReason().c_str()));
     }
+    // K-112: the layouts with a menu row of their own (development layouts for now) can put their
+    // menus in the system's menu bar. Studio keeps its menus in its top bar either way.
+    if (layoutui::devLayouts(a)) {
+      bool sysMenu = st.getBool("ui.systemMenuBar");
+      formLabel("Menu bar");
+      if (ImGui::Checkbox(i18n::tr("Put the menus in the system menu bar"), &sysMenu)) st.set("ui.systemMenuBar", sysMenu);
+      ui::Hint("In the layouts with a menu row of their own, the menus move to the menu bar at the top of the screen (macOS) or "
+               "the desktop's global menu (Linux) where there is one. Off: they stay in the window. Studio keeps its menus in its top bar");
+    }
+    // K-112: installed plugins' windows in the Live layout (shown as Clips).
+    if (layoutui::devLayouts(a)) {
+      formLabel("Plugin windows (Clips)");
+      bool onLoad = st.getBool("live.pluginWindowsOnLoad"), several = st.getBool("live.pluginWindowsSeveral"),
+           selOnly = st.getBool("live.pluginWindowsSelectedOnly");
+      if (ImGui::Checkbox(i18n::tr("Open a plugin's window when it is put on a track"), &onLoad)) st.set("live.pluginWindowsOnLoad", onLoad);
+      ui::Hint("Installed plugins you add by hand, one at a time. Opening a project, drum kits, scripts, AI tools, undo, redo and a collaborator's additions never open a window");
+      formLabel("");
+      if (ImGui::Checkbox(i18n::tr("Several plugin windows at once"), &several)) st.set("live.pluginWindowsSeveral", several);
+      ui::Hint("Off: opening a plugin's window closes the other plugin windows");
+      formLabel("");
+      if (ImGui::Checkbox(i18n::tr("Show only the selected track's plugin windows"), &selOnly)) st.set("live.pluginWindowsSelectedOnly", selOnly);
+      ui::Hint("Selecting another track hides the other tracks' plugin windows (they stay open) and shows its own again. "
+               "Ctrl+Alt+P hides or shows every plugin window");
+    }
     // The audio editor's auto-scroll (its own toggle, on the right of its waveform, sets the same thing).
     formLabel("Loupe");
     bool loupeFollow = st.getBool("loupe.autoScroll");
@@ -518,12 +548,103 @@ void settingsPageBody(App& a, int& page, float fieldW) {
   if (page == kPluginSettingsTab) pluginFoldersSettingsPage(a, fieldW);  // K-13
 }
 
+// K-112b: the Logic layout's settings tabs: a toolbar band of icon-over-label tiles, centred;
+// the lit page is a raised tile with its icon and label in the accent colour.
+void iconSettingsTabs(const char* const* labels, const ui::Icon* icons, int count, int* index) {
+  const auto& P = pal();
+  ImGuiWindow* w = ImGui::GetCurrentWindow();
+  ImDrawList* dl = w->DrawList;
+  const ImVec2 q0 = ImGui::GetCursorScreenPos();
+  const float full = ImGui::GetContentRegionAvail().x, fs = theme::kFontCaption;
+  const float tileH = 46.0f, bandPad = theme::kS2, minW = 56.0f, padX = theme::kS2 + 2, gap = 2.0f;
+  const float gaps = gap * static_cast<float>(std::max(0, count - 1));
+  ImGui::PushFont(nullptr, fs);
+  std::vector<float> tw(static_cast<size_t>(count));
+  float sum = 0;
+  for (int i = 0; i < count; ++i) {
+    tw[static_cast<size_t>(i)] = std::max(minW, std::ceil(ImGui::CalcTextSize(i18n::tr(labels[i])).x) + 2 * padX);
+    sum += tw[static_cast<size_t>(i)];
+  }
+  if (sum + gaps > full) {  // too many tiles for the window: every tile narrows, labels fit with an ellipsis
+    const float squeeze = std::max(0.3f, (full - gaps) / std::max(1.0f, sum));
+    sum = 0;
+    for (auto& v : tw) sum += (v = std::floor(v * squeeze));
+  }
+  sum += gaps;
+  // The band runs edge to edge under the title bar; the tiles sit centred in it.
+  const ImU32 bg = ImGui::GetColorU32(ImGuiCol_WindowBg);
+  const float bandY0 = q0.y - ImGui::GetStyle().WindowPadding.y, bandY1 = q0.y + tileH + bandPad;
+  dl->AddRectFilled(ImVec2(w->Pos.x, bandY0), ImVec2(w->Pos.x + w->Size.x, bandY1), theme::mix(bg, P.text, 0.045f));
+  dl->AddLine(ImVec2(w->Pos.x, bandY1), ImVec2(w->Pos.x + w->Size.x, bandY1), P.dark ? theme::withAlpha(P.ink, 0.6f) : P.lineStrong);
+  float x = std::round(q0.x + std::max(0.0f, (full - sum) * 0.5f));
+  for (int i = 0; i < count; ++i) {
+    const float wi = tw[static_cast<size_t>(i)];
+    ImGui::SetCursorScreenPos(ImVec2(x, q0.y));
+    ImGui::PushID(i);
+    if (ImGui::InvisibleButton("##itab", ImVec2(wi, tileH))) *index = i;
+    const bool hov = ImGui::IsItemHovered(), on = *index == i;
+    ImGui::PopID();
+    if (on || hov) dl->AddRectFilled(ImVec2(x, q0.y), ImVec2(x + wi, q0.y + tileH), theme::mix(bg, P.text, on ? 0.13f : 0.07f), 6.0f);
+    const ImU32 col = on ? P.hot : hov ? P.text : P.textDim;
+    ui::drawIconBox(dl, icons[i], ImVec2(std::round(x + wi * 0.5f), std::round(q0.y + 16.0f)), 20.0f, col);
+    const char* t = i18n::tr(labels[i]);
+    const char* shown = theme::fitText(t, wi - 4);
+    const float lw = ImGui::CalcTextSize(shown).x;
+    dl->AddText(ImVec2(std::round(x + (wi - lw) * 0.5f), std::round(q0.y + tileH - fs - 5.0f)), col, shown);
+    if (hov && std::strcmp(shown, t) != 0) ui::Tooltip(labels[i]);
+    x += wi + gap;
+  }
+  ImGui::PopFont();
+  ImGui::SetCursorScreenPos(ImVec2(q0.x, bandY1 + theme::kS3));
+  ImGui::Dummy(ImVec2(full, 0));
+}
+
+// K-112b: the Logic layout's settings: a row of segments under the tabs, one per section of the
+// page (the references split each page into sub-tabs); a click scrolls to that section, and the
+// segment of the section at the top is lit. Returns the y to scroll to, or -1.
+float sectionJumpBar(const std::vector<ui::SectionMark>& marks, float scrollY) {
+  if (marks.size() < 2) return -1;
+  const auto& P = pal();
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const float full = ImGui::GetContentRegionAvail().x, h = 24.0f;
+  float padX = theme::kS3, sum = 0;
+  for (const auto& m : marks) sum += ImGui::CalcTextSize(m.heading.c_str()).x;
+  const float n = static_cast<float>(marks.size());
+  if (sum + 2 * padX * n + 4 > full) padX = std::floor((full - 4 - sum) / (2 * n));
+  if (padX < theme::kS1) return -1;  // no room: the page scrolls as it is
+  int cur = 0;
+  for (size_t i = 0; i < marks.size(); ++i)
+    if (marks[i].y <= scrollY + 8) cur = static_cast<int>(i);
+  const ImVec2 q = ImGui::GetCursorScreenPos();
+  const float total = sum + 2 * padX * n + 4;
+  float x = std::round(q.x + (full - total) * 0.5f);
+  const ImU32 bg = ImGui::GetColorU32(ImGuiCol_WindowBg);
+  dl->AddRectFilled(ImVec2(x, q.y), ImVec2(x + total, q.y + h), theme::mix(bg, P.text, 0.06f), 7.0f);
+  x += 2;
+  float jump = -1;
+  for (size_t i = 0; i < marks.size(); ++i) {
+    const char* t = marks[i].heading.c_str();
+    const float tw = ImGui::CalcTextSize(t).x, sw = tw + 2 * padX;
+    ImGui::SetCursorScreenPos(ImVec2(x, q.y));
+    ImGui::PushID(static_cast<int>(i));
+    if (ImGui::InvisibleButton("##jump", ImVec2(sw, h))) jump = marks[i].y;
+    const bool hov = ImGui::IsItemHovered(), on = static_cast<int>(i) == cur;
+    ImGui::PopID();
+    if (on || hov) dl->AddRectFilled(ImVec2(x, q.y + 2), ImVec2(x + sw, q.y + h - 2), theme::mix(bg, P.text, on ? 0.16f : 0.10f), 5.0f);
+    dl->AddText(ImVec2(std::round(x + padX), std::round(q.y + (h - ImGui::GetFontSize()) * 0.5f)), on || hov ? P.text : P.textDim, t);
+    x += sw;
+  }
+  ImGui::SetCursorScreenPos(ImVec2(q.x, q.y + h + theme::kS2));
+  ImGui::Dummy(ImVec2(full, 0));
+  return jump;
+}
+
 void settingsWindow(App& a) {
   if (!a.showSettings) return;
   centerNext(ImVec2(860, 560), ImVec2(660, 360));
   if (gDevSettingsSize.x > 0) ImGui::SetNextWindowSize(gDevSettingsSize, ImGuiCond_Always);
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS4, theme::kS3));
-  bool vis = ImGui::Begin(ui::windowTitle("Settings").c_str(), &a.showSettings, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse);
+  bool vis = ImGui::Begin(ui::windowTitle("Settings").c_str(), &a.showSettings, layoutui::dockFlags("Settings", ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse));
   ui::KeepWindowInViewport();
   ImGui::PopStyleVar();
   if (!vis) {
@@ -551,12 +672,64 @@ void settingsWindow(App& a) {
   const char* pages[kPages];
   for (int i = 0; i < kPages; ++i) pages[i] = i18n::tr(kSettingsPagesEn[i]);
   page = std::clamp(page, 0, kPages - 1);
-  ui::TabStrip("##settingstabs", pages, kPages, &page);
+  // K-112b: the Logic layout's settings: icon tabs in a toolbar band, labels right-aligned to the controls.
+  const bool iconTabs = layoutui::active() == layout::Preset::Logic && layoutui::shellBuilt(a, layout::Preset::Logic);
+  if (livelook::active(a)) {
+    // K-112: the Live way: the pages listed down the left, the open one on a lighter face, a line
+    // between the list and the page.
+    const float fs = theme::kFontBody, rowH = 30;
+    float listW = 0;
+    for (int i = 0; i < kPages; ++i) listW = std::max(listW, a.fontRegular->CalcTextSizeA(fs, 1e9f, 0, pages[i]).x);
+    listW = std::clamp(std::round(listW + 2 * theme::kS4), 140.0f, 220.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
+    ImGui::BeginChild("##pagelist", ImVec2(listW, 0), ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground);
+    ImDrawList* ldl = ImGui::GetWindowDrawList();
+    for (int i = 0; i < kPages; ++i) {
+      const ImVec2 q = ImGui::GetCursorScreenPos();
+      ImGui::PushID(i);
+      const bool click = ImGui::InvisibleButton("##pg", ImVec2(listW, rowH));
+      const bool hov = ImGui::IsItemHovered();
+      ImGui::PopID();
+      if (i == page) ldl->AddRectFilled(q, ImVec2(q.x + listW, q.y + rowH), P.surface700);
+      else if (hov) ldl->AddRectFilled(q, ImVec2(q.x + listW, q.y + rowH), P.surface800);
+      ImFont* lf = i == page ? a.fontBold : a.fontRegular;
+      theme::textEllipsis(ldl, lf, fs, ImVec2(q.x + theme::kS4, theme::textTop(lf, fs, q.y, rowH)),
+                          listW - 2 * theme::kS4 + 4, i == page || hov ? P.text : P.textDim, pages[i]);
+      ui::Hint(blurbs[i]);
+      if (click) page = i;
+    }
+    ImGui::EndChild();
+    ImGui::PopStyleVar();
+    const ImVec2 lmax = ImGui::GetItemRectMax(), lmin = ImGui::GetItemRectMin();
+    ImGui::GetWindowDrawList()->AddLine(ImVec2(lmax.x + 0.5f, lmin.y), ImVec2(lmax.x + 0.5f, lmax.y), P.dark ? P.ink : P.line);
+    ImGui::SameLine(0, theme::kS4);
+  } else if (iconTabs) {
+    using I = ui::Icon;
+    static const I kIcons[kPages] = {I::Wave, I::CatMidi, I::ProjectFile, I::Clock,     I::Monitor, I::Settings, I::Folder,
+                                     I::Info, I::Keyboard, I::Paint,      I::LinkSlots, I::People,  I::Plug};
+    iconSettingsTabs(kSettingsPagesEn, kIcons, kPages, &page);
+  } else {
+    ui::TabStrip("##settingstabs", pages, kPages, &page);
+  }
+  static std::vector<ui::SectionMark> marks;  // the page's sections, as last drawn
+  static int marksPage = -1;
+  static float pageScroll = 0, jumpTo = -1;
+  if (iconTabs && marksPage == page)
+    if (const float y = sectionJumpBar(marks, pageScroll); y >= 0) jumpTo = y;
   ImGui::BeginChild("##page", ImVec2(0, 0), ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground);
-  ImGui::TextColored(theme::vec(P.textDim), "%s", i18n::tr(blurbs[page]));
-  ImGui::Dummy(ImVec2(0, theme::kS1));
+  if (jumpTo >= 0) ImGui::SetScrollY(jumpTo), jumpTo = -1;
+  pageScroll = ImGui::GetScrollY();
+  if (!livelook::active(a)) {  // K-112: Live starts at the first group's name (the list rows say what each page holds)
+    ImGui::TextColored(theme::vec(P.textDim), "%s", i18n::tr(blurbs[page]));
+    ImGui::Dummy(ImVec2(0, theme::kS1));
+  }
   const float fieldW = std::max(160.0f, std::min(320.0f, ImGui::GetContentRegionAvail().x - 176 - 2 * theme::kS2 - 12));
+  ui::SetFormColumn(iconTabs ? 168.0f : 0.0f);  // formLabel's column
+  ui::SectionMarksReset();
   settingsPageBody(a, page, fieldW);
+  if (iconTabs) marks = ui::SectionMarks(), marksPage = page;
+  ui::SetFormColumn(0);
+  ui::SectionMarksReset();
   ImGui::EndChild();
   ImGui::End();
 }
@@ -565,9 +738,18 @@ int pendingPpq = 0;  // Project info: a lower timebase waiting for confirmation
 
 void infoWindow(App& a) {
   if (!a.showInfo) return;
+  // K-112b: in the Tracks layout this is the project's settings window, as the references have it
+  // (098, 096, 132, 215): titled with the project's name, its pages under icon tabs.
+  const bool lg = logicplug::active(a);
   centerNext(ImVec2(480, 0));
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS4, theme::kS3));
-  bool vis = ImGui::Begin(ui::windowTitle("Project info").c_str(), &a.showInfo, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
+  std::string title = ui::windowTitle("Project info");
+  if (lg) {
+    const std::string proj = a.projectFile().empty() ? i18n::tr("Untitled project") : fs::path(a.projectFile()).stem().string();
+    title = proj + " - " + i18n::tr("Project settings") + "###Project info";
+    ImGui::SetNextWindowSizeConstraints(ImVec2(500, 0), ImVec2(900, 2000));
+  }
+  bool vis = ImGui::Begin(title.c_str(), &a.showInfo, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
   ui::KeepWindowInViewport();
   ImGui::PopStyleVar();
   if (!vis) {
@@ -576,17 +758,29 @@ void infoWindow(App& a) {
   }
   const Song& s = a.doc.song();
   SongInfo info = s.info;
+  static int page = 0;
+  if (lg) {
+    static const char* const kPagesEn[] = {i18n::N_("General"), i18n::N_("Timing"), i18n::N_("Contents")};
+    static const ui::Icon kPageIcons[] = {ui::Icon::ProjectFile, ui::Icon::Metronome, ui::Icon::ListBullets};
+    iconSettingsTabs(kPagesEn, kPageIcons, 3, &page);
+  }
+  const bool showGeneral = !lg || page == 0, showTiming = !lg || page == 1, showContents = !lg || page == 2;
+  ui::SetFormColumn(lg ? 120.0f : 0.0f);  // K-112b: the Tracks layout's form (labels end at the controls)
   bool changed = false;
   auto field = [&](const char* label, std::string& v, bool multiline = false) {
     char buf[2048];
     std::snprintf(buf, sizeof buf, "%s", v.c_str());
     formLabel(label, 120);
     std::string id = std::string("##") + label;
-    bool ch = multiline ? ImGui::InputTextMultiline(id.c_str(), buf, sizeof buf, ImVec2(324, 90))
-                        : (ImGui::SetNextItemWidth(324), ImGui::InputText(id.c_str(), buf, sizeof buf));
+    // K-112b (second pass): in the Tracks layout the fields run to the group's right edge, so the
+    // form's right margin matches its left one.
+    const float fw = lg ? std::floor(ImGui::GetContentRegionAvail().x) : 324.0f;
+    bool ch = multiline ? ImGui::InputTextMultiline(id.c_str(), buf, sizeof buf, ImVec2(fw, 90))
+                        : (ImGui::SetNextItemWidth(fw), ImGui::InputText(id.c_str(), buf, sizeof buf));
     ui::FocusRing();
     if (ch) v = buf, changed = true;
   };
+  if (showGeneral) {
   ui::BeginSection("PROJECT", 464);
   collabui::projectNameRow(a, 120);  // J-111f: a collaborative project's shared name (Rename...)
   field("Title", info.title);
@@ -612,6 +806,8 @@ void infoWindow(App& a) {
     }
   }
   ui::EndSection();
+  }
+  if (showTiming) {
   ui::BeginSection("TIMING", 464);
   formLabel("Meter at the start", 120);
   int num = s.timeSigNum, den = s.timeSigDen;
@@ -679,11 +875,45 @@ void infoWindow(App& a) {
     ImGui::EndPopup();
   }
   ui::EndSection();
+  }
   size_t notes = 0;
   for (const auto& p : s.patterns)
     for (const auto& [c, ns] : p.notes) notes += ns.size();
-  ImGui::TextDisabled(i18n::tr("%zu channels · %zu patterns · %zu clips · %zu notes · %zu mixer tracks"), s.channels.size(),
-                      s.patterns.size(), s.playlist.size(), notes, s.mixer.size());
+  if (!lg) {
+    ImGui::TextDisabled(i18n::tr("%zu channels · %zu patterns · %zu clips · %zu notes · %zu mixer tracks"), s.channels.size(),
+                        s.patterns.size(), s.playlist.size(), notes, s.mixer.size());
+  } else if (showContents) {
+    // K-112b: what the project holds, one row a kind, the counts right-aligned (ref 215), in the
+    // same section box as the other pages.
+    const float x0 = ImGui::GetCursorPosX();
+    ui::BeginSection("CONTENTS", 464);
+    // The table spans the box: it starts at the box's padding, not at the form's control column.
+    const float back = std::max(0.0f, ImGui::GetCursorPosX() - x0 - theme::kS2);
+    if (back > 0) ImGui::Unindent(back);
+    if (ImGui::BeginTable("##projcount", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH)) {
+    ImGui::TableSetupColumn("##kind", ImGuiTableColumnFlags_WidthStretch);
+    ImGui::TableSetupColumn("##count", ImGuiTableColumnFlags_WidthFixed, 90);
+    const std::pair<const char*, size_t> rows[] = {{i18n::N_("Channels"), s.channels.size()}, {i18n::N_("Patterns"), s.patterns.size()},
+                                                   {i18n::N_("Clips"), s.playlist.size()},       {i18n::N_("Notes"), notes},
+                                                   {i18n::N_("Mixer tracks"), s.mixer.size()},   {i18n::N_("Markers"), s.markers.size()}};
+    for (const auto& [name, n] : rows) {
+      ImGui::TableNextRow(ImGuiTableRowFlags_None, 24);
+      ImGui::TableNextColumn();
+      ImGui::AlignTextToFramePadding();
+      ImGui::TextUnformatted(i18n::tr(name));
+      ImGui::TableNextColumn();
+      const std::string v = std::to_string(n);
+      ImGui::AlignTextToFramePadding();
+      ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(v.c_str()).x - 6);
+      ImGui::TextUnformatted(v.c_str());
+    }
+    ImGui::EndTable();
+    }
+    if (back > 0) ImGui::Indent(back);
+    ui::EndSection();
+  }
+  ui::SetFormColumn(0);
+  ui::SectionMarksReset();  // only the settings window uses them
   ImGui::End();
 }
 
@@ -741,7 +971,7 @@ void shortcutsWindow(App& a) {
   if (!a.showShortcuts) return;
   centerNext(ImVec2(560, 600), ImVec2(420, 300));
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS4, theme::kS3));
-  bool vis = ImGui::Begin(ui::windowTitle("Keyboard shortcuts").c_str(), &a.showShortcuts, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse);
+  bool vis = ImGui::Begin(ui::windowTitle("Keyboard shortcuts").c_str(), &a.showShortcuts, layoutui::dockFlags("Keyboard shortcuts", ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse));
   ui::KeepWindowInViewport();
   ImGui::PopStyleVar();
   if (!vis) {
@@ -936,6 +1166,7 @@ void drawDialogs(App& a) {
   stemsui::draw(a);  // J-191: Split stems
   receiptui::draw(a);  // J-219: Track Receipt
   historyWindow(a);
+  newtracks::draw(a);  // K-112b: the Tracks layout's New tracks dialog
   aboutWindow(a);
   shortcutsWindow(a);
   unsavedPrompt(a);
@@ -1081,10 +1312,33 @@ void handleGlobalShortcuts(App& a) {
     a.engine.setPosition(at);
   }
   if (typed("options.countIn")) a.countInBars = a.countInBars > 0 ? 0 : 1;
+  for (int o = 1; o <= 8; ++o)  // K-112: the typing keyboard's octave picked directly (the Tracker set: F1 to F8)
+    if (typed(("typing.octave" + std::to_string(o)).c_str())) a.typing.octave = o;
   if (typed("view.toggleMain")) layoutui::toggleMainView(a);
   if (typed("view.editors")) {
     if (layoutui::active() == layout::Preset::Studio) toggle(a.showPiano, "Piano roll");
     else layoutui::toggleEditors(a);
+  }
+  if (layoutui::active() == layout::Preset::Logic && layoutui::shellBuilt(a, layout::Preset::Logic)) {  // K-112b: the layout's panes
+    const layout::Preset lp = layout::Preset::Logic;
+    auto shown = [&](const char* region) { return layout::visible(layout::shell(lp), layoutui::regionState(a, lp), region); };
+    auto pane = [&](const char* cmd, const char* region) {
+      if (typed(cmd)) layoutui::setRegionVisible(a, region, !shown(region));
+    };
+    pane("view.library", "logic.library");
+    pane("view.inspector", "logic.inspector");
+    pane("view.quickHelp", "logic.help");
+    if (typed("view.toolbar")) a.settings.set("ui.logicToolbar", !a.settings.getBool("ui.logicToolbar"));
+    auto side = [&](const char* cmd, const char* window) {  // a panel of the right pane: shows it there, or hides the pane
+      if (!typed(cmd)) return;
+      bool* f = layoutui::windowOpenFlag(a, window);
+      if (!f) return;
+      if (*f && shown("logic.right")) layoutui::setRegionVisible(a, "logic.right", false);
+      else layoutui::setRegionVisible(a, "logic.right", true), *f = true;
+    };
+    side("view.lists", "Lists");
+    side("view.notes", "Notes");
+    if (typed("view.hidePlugins")) logicplug::toggleHidden(a);
   }
   if (keys::focusContext() == keys::Context::Playlist && typed("playlist.splitAtSongPos")) {
     const Song& s = a.doc.song();

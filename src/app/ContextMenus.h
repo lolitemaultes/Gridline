@@ -3,9 +3,11 @@
 #pragma once
 #include <cstdint>
 #include <functional>
+#include <set>
 #include <string>
 #include <vector>
 #include "../core/MenuOps.h"
+#include "../core/Params.h"
 
 namespace gl {
 
@@ -60,4 +62,12 @@ bool replaceInstrumentPick(App& a, ObjectId channel, const std::string& type);
 void renameFocused(App& a);
 
 }  // namespace menus
+
+// K-112c: the Live knob menu's rows. knobNewLane: an automation clip for `pid` on a new playlist
+// track; knobMutedAutomation: `pid`'s muted automation clips on the playlist; knobReenable: unmutes
+// them (how many); knobCopyName: the control's name to the clipboard.
+ObjectId knobNewLane(App& a, ParamId pid);
+std::set<ObjectId> knobMutedAutomation(const App& a, ParamId pid);
+int knobReenable(App& a, ParamId pid);
+void knobCopyName(App& a, ParamId pid);
 }  // namespace gl

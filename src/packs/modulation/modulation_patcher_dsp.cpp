@@ -239,6 +239,7 @@ int patchV2Latency(const JRuntime& j3, const PluginState& s, double sr) {
 
 class PatchHostGenerator final : public Generator {
  public:
+  bool mayRest() const override { return false; }  // K-277: sound without notes
   bool active() const override { return j3on_ ? j3_.active() : v2on_ ? v2_.active() : rt_.active(); }
   bool ownPlayback() const override { return j3on_ ? j3_.ownPlayback() : v2on_ ? v2_.ownPlayback() : rt_.ownPlayback(); }  // J-112
   void stopOwnPlayback() override {

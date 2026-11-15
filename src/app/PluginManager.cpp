@@ -7,6 +7,9 @@
 // Gridline's own Suite builds sit in a collapsed group: the native plugins
 // are built in, so the browser never lists them.
 #include <algorithm>
+#include <cctype>
+#include "LayoutPresets.h"
+#include "LayoutShellUi.h"
 #include "Keys.h"
 #include <cstdio>
 #include <filesystem>
@@ -22,6 +25,7 @@
 #include "App.h"
 #include "PluginFoldersUi.h"
 #include "BrowserUi.h"
+#include "CollabUi.h"
 #include "HostedUi.h"
 #include "PluginUI.h"
 #include "Theme.h"
@@ -154,12 +158,17 @@ void caption(App& a, const char* label, const char* note = nullptr) {
   const ImVec2 p = ImGui::GetCursorScreenPos();
   const float w = ImGui::GetContentRegionAvail().x;
   const char* t = i18n::tr(label);
-  text(dl, a.fontBold, theme::kFontLabel, p, P.textDim, t);
+  // K-112b (second pass): in the Tracks layout a group's caption is a bold heading in sentence
+  // case, as the layout's other forms and dialogs have them.
+  const bool lg = layoutui::active() == layout::Preset::Logic && layoutui::shellBuilt(a, layout::Preset::Logic);
+  const std::string heading = lg ? ui::SectionHeading(t) : std::string();
+  const float fs = lg ? theme::kFontBody : theme::kFontLabel;
+  text(dl, a.fontBold, fs, p, lg ? P.text : P.textDim, lg ? heading.c_str() : t);
   if (note) {
     const float nw = textW(a.fontMono, 10.5f, note);
-    text(dl, a.fontMono, 10.5f, ImVec2(p.x + w - nw, p.y + 0.5f), P.textFaint, note);
+    text(dl, a.fontMono, 10.5f, ImVec2(p.x + w - nw, lg ? std::round(p.y + (fs - 10.5f) * 0.5f + 0.5f) : p.y + 0.5f), P.textFaint, note);
   }
-  ImGui::Dummy(ImVec2(w, theme::kFontLabel + theme::kS2));
+  ImGui::Dummy(ImVec2(w, fs + theme::kS2));
 }
 
 // Translated "%d" text.
@@ -1204,6 +1213,37 @@ void failedDetails(App& a, const Model& md) {
   ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("Every scan runs in its own process, so a plugin that crashes here cannot take Gridline down."));
   ImGui::PopFont();
   ImGui::PopTextWrapPos();
+  // K-267: the scan log, written for every failed scan whatever the debug log setting.
+  const std::string logFile = host::scanLogFile();
+  if (logFile.empty()) return;
+  caption(a, i18n::N_("SCAN LOG"));
+  ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + w);
+  ImGui::PushFont(a.fontRegular, theme::kFontLabel);
+  ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("What Gridline saw during each failed scan is written to this file. Attach it to a bug report."));
+  ImGui::PopFont();
+  ImGui::PushFont(a.fontMono, 10.5f);
+  ImGui::TextColored(theme::vec(P.textDim), "%s", logFile.c_str());
+  ImGui::PopFont();
+  ImGui::PopTextWrapPos();
+  ImGui::Dummy(ImVec2(0, theme::kS1));
+  if (ui::TextButton("Copy path", false, 0, "Copy the location of the scan log")) ImGui::SetClipboardText(logFile.c_str());
+  ImGui::SameLine();
+  if (ui::TextButton("Open folder", false, 0, "Open the folder that holds the scan log")) {
+    std::string url = "file://";
+    for (unsigned char ch : std::filesystem::u8path(logFile).parent_path().generic_u8string()) {
+      if (std::isalnum(ch) || ch == '/' || ch == '-' || ch == '_' || ch == '.' || ch == '~' || ch == ':') {
+        url += static_cast<char>(ch);
+      } else {
+        char b[4];
+        std::snprintf(b, sizeof b, "%%%02X", ch);
+        url += b;
+      }
+    }
+#if defined(_WIN32)
+    url.insert(7, "/");  // file:///C:/path/...
+#endif
+    collabui::openUrl(url);
+  }
 }
 
 void failedTable(App& a, Model& md, ImVec2 size) {
@@ -1325,7 +1365,7 @@ void drawPluginManager(App& a) {
   ManagerState& ms = state();
   const Colors C = colors();
   ui::PlaceNextDialog(ImVec2(1120, 680), ImGuiCond_Appearing, ImVec2(720, 420));  // J-54: fits short / scaled screens
-  if (!ImGui::Begin(ui::windowTitle("Plugin manager").c_str(), &a.showPluginManager, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse)) {
+  if (!ImGui::Begin(ui::windowTitle("Plugin manager").c_str(), &a.showPluginManager, layoutui::dockFlags("Plugin manager", ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse))) {
     ImGui::End();
     return;
   }

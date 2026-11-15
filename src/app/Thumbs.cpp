@@ -102,6 +102,7 @@ struct ThumbRun {
 };
 constexpr float kAuditFactors[3] = {1.0f, 1.5f, 2.0f};
 ThumbRun run;
+int auditRepeat = 1;  // K-155: GRIDLINE_AUDIT_REPEAT rounds of the editor list
 
 }  // namespace
 
@@ -186,6 +187,12 @@ void beginAuditMode(App& a, const std::string& dir) {
     run.types.erase(std::remove_if(run.types.begin(), run.types.end(), [&](const std::string& t) { return list.find("," + t + ",") == std::string::npos; }),
                     run.types.end());
   }
+  // K-155: every editor opened and closed n times (memory.tsv shows whether each round costs more).
+  if (const char* rep = std::getenv("GRIDLINE_AUDIT_REPEAT"); rep && std::atoi(rep) > 1) {
+    const std::vector<std::string> once = run.types;
+    auditRepeat = std::min(std::atoi(rep), 50);
+    for (int k = 1; k < auditRepeat; ++k) run.types.insert(run.types.end(), once.begin(), once.end());
+  }
   run.bindTsv = "type\tindex\tparam\treads\tcontrols\tstate_reads\n";
   run.auditDir = dir;
   std::error_code ec;
@@ -247,8 +254,40 @@ void mergeBindings(const audit::Bindings& b) {
   for (const auto& [k, n] : b.stateReads) run.bind.stateReads[k] += n;
 }
 
+// K-155: a point in a draw list to roll back to. The variants below only count parameter reads;
+// what they draw is thrown away, so their vertices never pile up. Commands, vertices and indices
+// are only ever appended, except the last command or two (merged, popped when empty): those are
+// kept as they were and put back.
+struct DrawMark {
+  int vtx = 0, idx = 0, cmd = 0;
+  ImDrawCmd tail[2];
+  int tailCount = 0;
+  ImDrawCmdHeader header{};
+};
+DrawMark markOf(const ImDrawList* dl) {
+  DrawMark m;
+  m.vtx = dl->VtxBuffer.Size, m.idx = dl->IdxBuffer.Size, m.cmd = dl->CmdBuffer.Size;
+  m.tailCount = std::min(2, m.cmd);
+  for (int i = 0; i < m.tailCount; ++i) m.tail[i] = dl->CmdBuffer[m.cmd - m.tailCount + i];
+  m.header = dl->_CmdHeader;
+  return m;
+}
+void rollBack(ImDrawList* dl, const DrawMark& m) {
+  if (dl->VtxBuffer.Size < m.vtx || dl->IdxBuffer.Size < m.idx || m.cmd == 0) return;  // not what was marked: leave it
+  dl->VtxBuffer.resize(m.vtx);
+  dl->IdxBuffer.resize(m.idx);
+  dl->CmdBuffer.resize(m.cmd);
+  for (int i = 0; i < m.tailCount; ++i) dl->CmdBuffer[m.cmd - m.tailCount + i] = m.tail[i];
+  dl->_CmdHeader = m.header;
+  dl->_VtxWritePtr = dl->VtxBuffer.Data + m.vtx;
+  dl->_IdxWritePtr = dl->IdxBuffer.Data + m.idx;
+  dl->_VtxCurrentIdx = static_cast<unsigned int>(m.vtx) - dl->CmdBuffer.back().VtxOffset;
+}
+
 // J-92: the editor once more for every value of each choice / switch
 // parameter (pages, modes, sections shown on demand), off-screen.
+// K-155: all in one child window (not a window per variant, each keeping its draw buffers: 11 GB
+// over the audit), its drawing rolled back after each variant.
 void drawVariants(App& a, const PluginInfo& info, float width) {
   ImGuiViewport* vp = ImGui::GetMainViewport();
   ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x + 50, vp->Pos.y));
@@ -257,6 +296,8 @@ void drawVariants(App& a, const PluginInfo& info, float width) {
                    ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
                        ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav)) {
     int drawn = 0;
+    ImGui::BeginChild("##v", ImVec2(width + 8, vp->Size.y), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
     for (size_t k = 0; k < info.params.size() && drawn < 1500; ++k) {
       const ParamDesc& d = info.params[k];
       if (d.kind == ParamKind::Continuous) continue;
@@ -268,16 +309,18 @@ void drawVariants(App& a, const PluginInfo& info, float width) {
         if (v == static_cast<int>(*cur + 0.5)) continue;
         a.doc.setParam(pid, v, false);
         ImGui::PushID(static_cast<int>(k * 64 + static_cast<size_t>(v)));
-        ImGui::BeginChild("##v", ImVec2(width + 8, vp->Size.y), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar);
+        ImGui::SetCursorPos(ImVec2(0, 0));
+        const DrawMark mark = markOf(dl);
         audit::bindBegin();
         drawBody(a, width);
         mergeBindings(audit::bindEnd());
-        ImGui::EndChild();
+        rollBack(dl, mark);
         ImGui::PopID();
         ++drawn;
       }
       a.doc.setParam(pid, *cur, false);
     }
+    ImGui::EndChild();
   }
   ImGui::End();
 }
@@ -390,6 +433,63 @@ int& auditIssues() {
 }
 constexpr int kCellW = 420, kCellMaxH = 360, kSheetCols = 4, kSheetRows = 6, kGap = 6;
 
+// K-112c (pre-merge, dev only): with GRIDLINE_DEV_ATLAS set, the audit prints the font atlas's
+// texture size and baked glyphs as each editor is captured (to compare runs in different layouts).
+void devAtlasLine(const std::string& type) {
+  static const bool on = std::getenv("GRIDLINE_DEV_ATLAS") != nullptr;
+  if (!on) return;
+  ImFontAtlas* at = ImGui::GetIO().Fonts;
+  int baked = 0, glyphs = 0;
+  if (at->Builder)
+    for (int i = 0; i < at->Builder->BakedPool.Size; ++i) ++baked, glyphs += at->Builder->BakedPool[i].Glyphs.Size;
+  std::printf("atlas %s: tex %dx%d, %d baked sizes, %d glyphs\n", type.c_str(), at->TexData ? at->TexData->Width : 0,
+              at->TexData ? at->TexData->Height : 0, baked, glyphs);
+  std::fflush(stdout);
+}
+
+// K-155: memory and the caches that could grow, after each editor of the audit has been drawn
+// and closed (memory.tsv; with GRIDLINE_AUDIT_MEMLOG set, also a line per editor on stderr).
+struct MemRow {
+  std::string type;
+  double mb = 0;
+  int atlasW = 0, atlasH = 0, baked = 0, glyphs = 0, windows = 0, textures = 0;
+  size_t drawBytes = 0, undoSteps = 0, undoBytes = 0;
+  size_t channels = 0;
+};
+std::vector<MemRow> memRows;
+MemRow memNow(App& a, const std::string& type) {
+  MemRow r;
+  r.type = type;
+  r.mb = platform::currentMemoryMb();
+  ImFontAtlas* at = ImGui::GetIO().Fonts;
+  if (at->TexData) r.atlasW = at->TexData->Width, r.atlasH = at->TexData->Height;
+  if (at->Builder)
+    for (int i = 0; i < at->Builder->BakedPool.Size; ++i) ++r.baked, r.glyphs += at->Builder->BakedPool[i].Glyphs.Size;
+  ImGuiContext* g = ImGui::GetCurrentContext();
+  r.windows = g ? g->Windows.Size : 0;
+  if (g)
+    for (ImGuiWindow* w : g->Windows)
+      if (w->DrawList)
+        r.drawBytes += static_cast<size_t>(w->DrawList->VtxBuffer.Capacity) * sizeof(ImDrawVert) +
+                       static_cast<size_t>(w->DrawList->IdxBuffer.Capacity) * sizeof(ImDrawIdx) +
+                       static_cast<size_t>(w->DrawList->CmdBuffer.Capacity) * sizeof(ImDrawCmd);
+  r.textures = ImGui::GetPlatformIO().Textures.Size;
+  r.undoSteps = a.doc.history().size();
+  r.undoBytes = a.doc.history().bytes();
+  r.channels = a.doc.song().channels.size();
+  return r;
+}
+void noteMemory(App& a, const std::string& type) {
+  if (run.auditDir.empty()) return;
+  memRows.push_back(memNow(a, type));
+  static const bool log = std::getenv("GRIDLINE_AUDIT_MEMLOG") != nullptr;
+  if (!log) return;
+  const MemRow& r = memRows.back();
+  std::fprintf(stderr, "audit memory %zu %s: %.1f MB, atlas %dx%d (%d sizes, %d glyphs), %d windows (draw lists %.1f MB), %d textures, undo %zu (%.1f MB)\n",
+               memRows.size(), type.c_str(), r.mb, r.atlasW, r.atlasH, r.baked, r.glyphs, r.windows, static_cast<double>(r.drawBytes) / 1048576.0,
+               r.textures, r.undoSteps, static_cast<double>(r.undoBytes) / 1048576.0);
+}
+
 // The editor window's pixels (rows top to bottom).
 bool grab(int fbW, int fbH, png::Image& img) {
   const ImVec2 sc = ImGui::GetIO().DisplayFramebufferScale;
@@ -444,6 +544,16 @@ void finishAudit() {
     std::fwrite(run.bindTsv.data(), 1, run.bindTsv.size(), f);
     std::fclose(f);
   }
+  if (FILE* f = std::fopen((dir / "memory.tsv").string().c_str(), "wb")) {  // K-155
+    std::fprintf(f, "n\ttype\tmemory_mb\tatlas\tbaked_sizes\tglyphs\twindows\tdraw_list_mb\ttextures\tundo_steps\tundo_mb\tchannels\n");
+    for (size_t i = 0; i < memRows.size(); ++i) {
+      const MemRow& r = memRows[i];
+      std::fprintf(f, "%zu\t%s\t%.1f\t%dx%d\t%d\t%d\t%d\t%.2f\t%d\t%zu\t%.2f\t%zu\n", i + 1, r.type.c_str(), r.mb, r.atlasW, r.atlasH, r.baked, r.glyphs,
+                   r.windows, static_cast<double>(r.drawBytes) / 1048576.0, r.textures, r.undoSteps, static_cast<double>(r.undoBytes) / 1048576.0,
+                   r.channels);
+    }
+    std::fclose(f);
+  }
   if (FILE* f = std::fopen((dir / "alignment_counts.tsv").string().c_str(), "wb")) {  // J-128: a baseline candidate
     const std::string s = align::countsTsv(run.alignCounts);
     std::fwrite(s.data(), 1, s.size(), f);
@@ -454,6 +564,35 @@ void finishAudit() {
                run.issueCount);
   std::fprintf(stderr, "alignment audit: %d editors with findings at width x1; findings x1 %d, x1.5 %d, x2 %d\n", run.alignEditors, run.alignCount[0],
                run.alignCount[1], run.alignCount[2]);
+  // K-155 memory gate. GRIDLINE_AUDIT_DRAW_MAX_MB: the windows' draw buffers stay under that
+  // after every editor. With GRIDLINE_AUDIT_REPEAT (3 rounds or more), the rounds after the second
+  // add no windows, no draw buffers and at most GRIDLINE_AUDIT_MEM_GROWTH_MB (default 48) of memory:
+  // an editor opened and closed again costs nothing more.
+  {
+    int bad = 0;
+    if (const char* lim = std::getenv("GRIDLINE_AUDIT_DRAW_MAX_MB"); lim && !memRows.empty()) {
+      const double limit = std::atof(lim);
+      double most = 0;
+      std::string at;
+      for (const MemRow& r : memRows)
+        if (static_cast<double>(r.drawBytes) / 1048576.0 > most) most = static_cast<double>(r.drawBytes) / 1048576.0, at = r.type;
+      std::fprintf(stderr, "memory gate: draw buffers at most %.1f MB (after %s), limit %.0f MB\n", most, at.c_str(), limit);
+      if (most > limit) ++bad;
+    }
+    const size_t n = auditRepeat >= 3 ? memRows.size() / static_cast<size_t>(auditRepeat) : 0;
+    if (n > 0 && memRows.size() == n * static_cast<size_t>(auditRepeat)) {
+      const MemRow& a2 = memRows[2 * n - 1];
+      const MemRow& z = memRows.back();
+      const char* g = std::getenv("GRIDLINE_AUDIT_MEM_GROWTH_MB");
+      const double growth = g ? std::atof(g) : 48.0;
+      const double drawGrowth = (static_cast<double>(z.drawBytes) - static_cast<double>(a2.drawBytes)) / 1048576.0;
+      std::fprintf(stderr, "memory gate: rounds 3-%d after round 2: memory %+.1f MB (limit %.0f), windows %+d, draw buffers %+.1f MB\n", auditRepeat,
+                   z.mb - a2.mb, growth, z.windows - a2.windows, drawGrowth);
+      if (z.mb - a2.mb > growth || z.windows > a2.windows || drawGrowth > 1.0) ++bad;
+    }
+    if (bad) std::fprintf(stderr, "memory regression: see memory.tsv\n");
+    auditIssues() += bad;
+  }
   // J-128 regression gate: GRIDLINE_ALIGN_BASELINE / GRIDLINE_ALIGN_ALLOW (AlignCheck.h gate()).
   if (const char* base = std::getenv("GRIDLINE_ALIGN_BASELINE"); base && !fs::exists(fs::path(base))) {
     std::fprintf(stderr, "alignment gate: no baseline at %s (skipped)\n", base);
@@ -473,6 +612,12 @@ void teardown(App& a) {
   else if (run.setup) a.doc.setSlotPlugin(run.target.owner, run.target.slot, "");
   run.setup = false;
   a.syncEngine();
+  // K-155: windows the closed editor left (child regions inside its variants) give their draw
+  // buffers back now, as ImGui does by itself only after a minute without use.
+  if (ImGuiContext* g = ImGui::GetCurrentContext())
+    for (ImGuiWindow* w : g->Windows)
+      if (w->LastFrameActive < g->FrameCount - 1 && !w->MemoryCompacted) ImGui::GcCompactTransientWindowBuffers(w);
+  noteMemory(a, run.types[run.idx]);
   run.phase = 0;
   ++run.idx;
 }
@@ -523,6 +668,7 @@ bool thumbCapture(App& a, int fbW, int fbH) {
     if (run.factor == 0) {
       if (!r.issues.empty()) ++run.editorsWithIssues;
       png::Image img;
+      devAtlasLine(type);
       if (grab(fbW, fbH, img)) {
         run.cells.push_back(png::resize(img, kCellW, std::max(1, img.height * kCellW / img.width)));
         if (std::getenv("GRIDLINE_AUDIT_FULL")) {  // J-128 dev aid: each editor at full size (review sheets)

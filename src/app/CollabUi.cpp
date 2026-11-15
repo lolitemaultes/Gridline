@@ -1,4 +1,6 @@
 // Gridline - J-111: collaboration in the app. See CollabUi.h.
+#include "LayoutPresets.h"
+#include "LayoutShellUi.h"
 #include "CollabUi.h"
 #include "Keys.h"
 #include "GlEpoch.h"
@@ -49,6 +51,7 @@
 #include "Theme.h"
 #include "UpdateUi.h"
 #include "Widgets.h"
+#include "../core/SemanticAnchor.h"
 
 namespace fs = std::filesystem;
 
@@ -173,6 +176,11 @@ struct Ui {
   std::map<std::string, std::string> firstPictureDrawn;  // dev: each collaborator's first picture drawn here (hash)
   // follow a collaborator's playhead
   SiteId follow = 0;
+  // K-112: go to what a collaborator is on (their target), in this layout, on the next frame
+  SiteId gotoPeer = 0;
+  // K-112 dev: this user's target, as if the pointer were on that object (collab target-dev)
+  bool devTargetSet = false;
+  anchor::Target devTarget;
   // version refusal waiting to be shown
   bool refusalPending = false;
   Hub::Refusal refusal;
@@ -1111,6 +1119,8 @@ void memberMenu(Session& s, Hub* hub, const Member& m, bool me, bool inviteItem)
   if (ImGui::MenuItem(tr("Copy fingerprint"))) ImGui::SetClipboardText(m.fingerprint().c_str());
   if (!me && s.isAdmin() && ImGui::MenuItem(tr("Make admin"))) s.transferAdmin(m.site);
   if (!me && ImGui::MenuItem(tr("Follow their playhead"), nullptr, u.follow == m.site)) u.follow = u.follow == m.site ? 0 : m.site;
+  if (!me && ImGui::MenuItem(tr("Go to what they are on"))) u.gotoPeer = m.site;  // K-112: in any layout
+  ui::Hint("Selects the channel, mixer track, pattern or clip under their pointer and shows it in your layout");
   if (!me && ImGui::MenuItem(tr("Reconnect with a code..."))) u.reconnectPeer = m.site;
   if (inviteItem && hub && ImGui::MenuItem(tr("Invite again"))) inviteAgain(*hub);
   // J-111e: the admin removes someone (not themselves: they leave, after handing admin over)
@@ -1768,7 +1778,7 @@ void panelWindow(App& a) {
   const auto& P = pal();
   ui::PlaceNextDialog(ImVec2(kPanelW, 640), ImGuiCond_Appearing, ImVec2(kPanelMinW, 320));
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS4, theme::kS3));
-  const bool vis = ImGui::Begin(ui::windowTitle("Collaboration").c_str(), &a.showCollab, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse);
+  const bool vis = ImGui::Begin(ui::windowTitle("Collaboration").c_str(), &a.showCollab, layoutui::dockFlags("Collaboration", ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse));
   ImGui::PopStyleVar();
   if (!vis) {
     ImGui::End();
@@ -2340,7 +2350,7 @@ void reviewWindow(App& a) {
   }
   ui::PlaceNextDialog(ImVec2(780, 560), ImGuiCond_Appearing, ImVec2(kPanelMinW, 360));
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS4, theme::kS3));
-  const bool vis = ImGui::Begin(ui::windowTitle("Sync review").c_str(), &a.showSyncReview, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse);
+  const bool vis = ImGui::Begin(ui::windowTitle("Sync review").c_str(), &a.showSyncReview, layoutui::dockFlags("Sync review", ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse));
   ImGui::PopStyleVar();
   if (!vis) {
     if (!a.showSyncReview && s->previewing()) s->endPreview();
@@ -3186,6 +3196,14 @@ void frame(App& a, double now) {
     a.showSyncReview = true;
     a.notify(tr("Some changes made while you were apart touch the same things. Review them in Sync review."));
   }
+  // K-112: go to what a collaborator is on (selection and view only)
+  if (const SiteId g = std::exchange(u.gotoPeer, 0)) {
+    const PeerView* pv = s->peer(g);
+    anchor::Target t;
+    if (pv) t = {static_cast<anchor::Kind>(pv->presence.targetKind), pv->presence.targetId, pv->presence.targetSub};
+    if (!pv || t.kind == anchor::Kind::None || t.kind >= anchor::Kind::Count || !layoutui::reveal(a, t))
+      a.notify(tr("They are not on a channel, track, pattern or clip right now"));
+  }
   // follow a collaborator's playhead
   if (u.follow) {
     const PeerView* pv = s->peer(u.follow);
@@ -3521,11 +3539,51 @@ bool devCommand(App& a, const std::vector<std::string>& args, int frame, ImVec2*
   } else if (cmd == "share-folder") {  // collab share-folder <dir>: where its folder is made (Choose...)
     shareDefaults(a, false);
     u.shareParent = arg(1);
-  } else if (cmd == "section-probe") {  // collab section-probe: J-111h, an auto-sizing window with a full-width section
-    u.dev.sectionProbe = true;
+  } else if (cmd == "section-probe") {  // collab section-probe [off]: J-111h, an auto-sizing window with a full-width section
+    u.dev.sectionProbe = arg(1) != "off";
   } else if (cmd == "share") {  // collab share: its Make collaborative button
     shareDefaults(a, false);
     if (!shareNow(a)) std::printf("collab frame %d: share failed: %s\n", frame, u.makeErr.c_str());
+  } else if (cmd == "target-dev") {  // K-112: collab target-dev <kind> <ref>|none: this user's target (ref: chN, mxN, last, an id)
+    const Song& s = a.doc.song();
+    const std::string ref = arg(2);
+    uint32_t id = 0;
+    if (ref == "last" && !s.channels.empty()) id = s.channels.back().id;
+    else if (ref.rfind("ch", 0) == 0 && static_cast<size_t>(std::atoi(ref.c_str() + 2)) < s.channels.size()) id = s.channels[static_cast<size_t>(std::atoi(ref.c_str() + 2))].id;
+    else if (ref.rfind("mx", 0) == 0 && static_cast<size_t>(std::atoi(ref.c_str() + 2)) < s.mixer.size()) id = s.mixer[static_cast<size_t>(std::atoi(ref.c_str() + 2))].id;
+    else id = static_cast<uint32_t>(std::strtoul(ref.c_str(), nullptr, 10));
+    u.devTargetSet = arg(1) != "none";
+    u.devTarget = {anchor::kindByName(arg(1)) < anchor::Kind::Count ? anchor::kindByName(arg(1)) : anchor::Kind::None, id, 0};
+    std::printf("collab frame %d: target %s\n", frame, anchor::toText(u.devTarget).c_str());
+    std::fflush(stdout);
+  } else if (cmd == "targets") {  // K-112: collab targets <file>: each collaborator's target as received, and its name here
+    Json r = Json::makeObject();
+    Json list = Json::makeArray();
+    if (Session* ss = session(a))
+      for (const auto& [site, pv] : ss->peers()) {
+        const anchor::Target t{static_cast<anchor::Kind>(pv.presence.targetKind), pv.presence.targetId, pv.presence.targetSub};
+        Json j = Json::makeObject();
+        j.object["name"] = Json::makeString(pv.profile.name);
+        j.object["target"] = Json::makeString(anchor::toText(t));
+        j.object["id"] = Json::makeNumber(t.id);
+        j.object["shows"] = Json::makeString(anchor::describe(a.doc.song(), t));
+        j.object["window"] = Json::makeString(pv.presence.window);
+        list.array.push_back(std::move(j));
+      }
+    r.object["peers"] = std::move(list);
+    r.object["layout"] = Json::makeString(layout::id(layoutui::active()));
+    // what is selected here (after "collab goto": the collaborator's target)
+    r.object["channel"] = Json::makeNumber(a.selChannel);
+    r.object["mixer"] = Json::makeNumber(a.selMixer);
+    r.object["pattern"] = Json::makeNumber(a.curPattern);
+    writeFileAtomic(arg(1), jsonStringify(r, 2));
+  } else if (cmd == "goto") {  // K-112: collab goto: what the first collaborator is on, shown in this layout
+    if (Session* ss = session(a))
+      for (const auto& [site, pv] : ss->peers())
+        if (pv.connected) {
+          u.gotoPeer = site;
+          break;
+        }
   } else if (cmd == "report") {  // collab report <file>
     writeFileAtomic(arg(1), devReport(a));
   } else if (cmd == "cursors") {  // collab cursors <file>: J-111d, collaborators' cursors as shown here (JSON)
@@ -3934,7 +3992,9 @@ void demoFrame(App& a, double now) {
 void sectionProbe() {
   if (!U().dev.sectionProbe) return;
   ui::PlaceNextDialog(ImVec2(520, 0), ImGuiCond_Appearing, ImVec2(300, 0));
-  if (ImGui::Begin(ui::windowTitle("Section probe").c_str(), &U().dev.sectionProbe, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize)) {
+  const std::string title = ui::windowTitle("Section probe");
+  if (ImGui::Begin(title.c_str(), &U().dev.sectionProbe,
+                   layoutui::dockFlags(title.c_str(), ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize))) {
     ui::BeginSection(tr("SECTION"));
     note("A caption that wraps at the section's edge, so the window's height follows its width.");
     ui::EndSection();
@@ -4204,6 +4264,42 @@ void beginFrame(App& a) {
   canchor::beginFrame(s != nullptr, probes, wanted);
 }
 
+// K-112: the object a window of the layouts is about when the pointer names no surface there
+// (the parts that show the selected channel or clips).
+static anchor::Target windowTarget(App& a, const std::string& window) {
+  const Song& s = a.doc.song();
+  if (window == "Inspector" || window == "Device chain" || window == "channelsettings") {
+    const ObjectId ch = a.settingsChannel != kNoId ? a.settingsChannel : a.selChannel;
+    if (s.channel(ch)) return {anchor::Kind::Channel, ch, 0};
+  }
+  if (window == "Clip panel" && !a.playlist.selected.empty()) return {anchor::Kind::Clip, *a.playlist.selected.begin(), 0};
+  return {};
+}
+
+// A peer's window is not one this layout has ever drawn (another layout's part): their cursor
+// goes to their target where it shows here (a rack row, a mixer strip, a playlist track header).
+static bool placeAtTarget(App& a, const Presence& pr, ImVec2& at, ImGuiWindow*& root) {
+  if (!pr.targetKind || pr.window.empty() || pr.window == kPluginWindow || isPluginEditor(pr.window)) return false;
+  for (ImGuiWindow* w : ImGui::GetCurrentContext()->Windows)
+    if (pr.window == ui::stableWindowName(w->Name)) return false;  // a window of this layout too, only closed: no
+  const anchor::Target t{static_cast<anchor::Kind>(pr.targetKind), pr.targetId, pr.targetSub};
+  if (!anchor::exists(a.doc.song(), t)) return false;
+  canchor::Anchor an;
+  switch (t.kind) {
+    case anchor::Kind::Channel: an = {canchor::RackRow, t.id, 0, 24.0f, 0.5f}; break;
+    case anchor::Kind::MixerTrack: an = {canchor::MixerStrip, t.id, 0, 0.5f, 0.5f}; break;
+    case anchor::Kind::PlaylistTrack: an = {canchor::PlaylistHeader, t.id, 0, 0.5f, 0.5f}; break;
+    default: return false;
+  }
+  bool inView = false;
+  return canchor::resolve(an, at, inView, &root) && inView;
+}
+
+// The cursor anchor kinds the semantic anchors read (core/SemanticAnchor.cpp keeps the numbers).
+static_assert(canchor::PlaylistTrack == 2 && canchor::PlaylistHeader == 3 && canchor::PianoGrid == 5 && canchor::PianoVelocity == 8 &&
+                  canchor::RackRow == 9 && canchor::MixerStrip == 10 && canchor::StageTrack == 11,
+              "core/SemanticAnchor.cpp mirrors these");
+
 void drawCursors(App& a) {
   Ui& u = U();
   if (a.embedded) return;
@@ -4239,6 +4335,13 @@ void drawCursors(App& a) {
     }
     p.playing = a.engine.playing();
     p.songTick = static_cast<double>(a.engine.position());
+    // K-112: the object under the pointer by (kind, id), the same in every layout
+    anchor::Target t = anchor::fromCursor(p.kind, p.a, p.b, p.plugin, p.pluginSlot);
+    if (t.kind == anchor::Kind::None) t = windowTarget(a, p.window);
+    if (u.devTargetSet) t = u.devTarget;
+    p.targetKind = static_cast<int>(t.kind);
+    p.targetId = t.id;
+    p.targetSub = t.sub;
     u.presence = p;
   }
   Session* s = session(a);
@@ -4285,6 +4388,9 @@ void drawCursors(App& a) {
       t.owner = pr.plugin;
       t.slot = pr.pluginSlot;
       why = pr.plugin && hostedEditorOpen(t) ? "plugin-window" : "other-plugin";
+    } else if (!w && placeAtTarget(a, pr, target, root)) {
+      // K-112: a window this layout does not have (a part of another layout): at the object, where it shows here
+      want = true, why = "target";
     } else if (!w) {
       why = "window-hidden";  // closed, collapsed or another tab here
     } else if (isPluginEditor(pr.window) && (hereOwner != pr.plugin || hereSlot != pr.pluginSlot)) {

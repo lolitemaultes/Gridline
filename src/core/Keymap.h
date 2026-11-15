@@ -81,8 +81,8 @@ const Command* findCommand(const std::string& id);
 // claims (in its context, or globally) is dropped from the command that had
 // it. separateCmd: the macOS Command key is its own modifier (kCmd) and the
 // set's command chords use it (the tracks set on macOS only).
-enum class Profile : uint8_t { Studio, Live, Logic, Count };
-const char* profileId(Profile p);  // "studio" | "live" | "logic" ("performance", "tracks": the working names)
+enum class Profile : uint8_t { Studio, Live, Logic, Tracker, Count };
+const char* profileId(Profile p);  // "studio" | "live" | "logic" | "tracker" ("performance", "tracks": the working names)
 Profile profileFromId(const std::string& id);  // unknown = Studio
 // Default chords of every command in a set (ids of commands(), all present).
 const std::map<std::string, std::vector<Chord>>& profileDefaults(Profile p, bool separateCmd);
@@ -138,6 +138,17 @@ class Keymap {
 
 // The app's keymap.
 Keymap& keymap();
+
+// K-112: the macOS menu bar's own key equivalents (AppKit runs them before the app sees the key).
+// A key equivalent is given only when no command of the keymap's set (its overrides included) is
+// bound to that chord, Command read as the set reads it (kCmd where the set tells it apart, else
+// Ctrl, which Command is folded into): the app's keys always win, so Command+H stops all sound in
+// a set that binds it there, and Hide then has no key.
+struct SystemMenuKey {
+  const char* item;  // "hide" (Hide Gridline: Command+H), "hideOthers" (Command+Alt+H)
+  Chord chord;       // as the keymap reads it
+};
+std::vector<SystemMenuKey> systemMenuKeys(const Keymap& km);
 
 // Mouse gesture modifiers (Q-4): the modifier keys that switch what a mouse
 // drag does (FL's defaults), kept in this table next to the keyboard commands

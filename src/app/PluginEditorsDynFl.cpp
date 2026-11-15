@@ -4,6 +4,7 @@
 #include "../core/I18n.h"
 #include "../core/PluginBrand.h"
 #include "PluginEditorsDynFl.h"
+#include "DeviceViews.h"
 #include <map>
 #include "../engine/Dsp.h"
 #include "../engine/GraphModels.h"
@@ -803,6 +804,15 @@ void editorTransient(App& a, const PluginTarget& t, float width) {
 }
 
 }  // namespace
+
+// The soft clipper's transfer (linear in to out) as its editor draws it (K-112c: the Live device band too).
+double devview::clipperTransfer(const PluginState& st, double x) {
+  using namespace pp;
+  const double T = dsp::dbToGain(ed::val(st, ClpThreshold, -2.144f));
+  const bool full = ed::ival(st, ClpCeilingMode, 1) == 1;
+  const double inG = dsp::dbToGain(ed::val(st, ClpInput)), post = dsp::dbToGain(ed::val(st, ClpPostGain));
+  return clipCurve(x * inG, T, full) * post;
+}
 
 bool drawDynamicsFlEditor(App& a, const PluginTarget& t, float width) {
   const PluginState* st = t.state(a.doc.song());

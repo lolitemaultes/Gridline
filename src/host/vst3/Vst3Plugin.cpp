@@ -264,6 +264,16 @@ bool Plugin::setupBuses() {
       inArr = in2;
     }
   }
+  // K-211: the channels are what the plugin reports now, so the buffers match its layout even when
+  // it took the request but kept a bus as it was (some plugins output silence on any mismatch).
+  for (int i = 0; i < nIn; ++i) {
+    SpeakerArrangement a = inArr[static_cast<size_t>(i)];
+    if (processor_->getBusArrangement(kInput, i, a) == sb::kResultOk) inArr[static_cast<size_t>(i)] = a;
+  }
+  for (int i = 0; i < nOut; ++i) {
+    SpeakerArrangement a = outArr[static_cast<size_t>(i)];
+    if (processor_->getBusArrangement(kOutput, i, a) == sb::kResultOk) outArr[static_cast<size_t>(i)] = a;
+  }
   inCh_.assign(static_cast<size_t>(std::max(0, nIn)), 0);
   outCh_.assign(static_cast<size_t>(std::max(0, nOut)), 0);
   size_t total = 0;

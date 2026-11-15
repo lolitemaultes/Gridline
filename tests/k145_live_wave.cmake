@@ -9,7 +9,11 @@
 #      is the normal one: the whole file, no live look. At 100 % and 200 %, dark and light.
 #   2. Seltmann: the same while recording, through a pause and a resume; finished, the whole take.
 # Frame sequences of both in <OUT> (shot_*.ppm).
-#   cmake -DAPP=<gridline-app> -DTESTBIN=<gridline_test_seltmann> -DOUT=<dir> -P k145_live_wave.cmake
+#   cmake -DAPP=<gridline-app> -DTESTBIN=<gridline_test_seltmann> -DOUT=<dir> [-DPART=<part>] -P k145_live_wave.cmake
+# PART runs one part: a Loupe case (loupe_1440x900_x1, loupe_1920x1080_x1, loupe_2880x1800_x2,
+# loupe_1440x900_x1_light) or seltmann; ctest runs one test per part. The runs lay every frame out
+# but draw only the frames they save (--no-draw): the checks read the traces, and a software
+# OpenGL on a shared runner spent minutes drawing the 2880 x 1800 frames.
 cmake_minimum_required(VERSION 3.16)
 file(REMOVE_RECURSE "${OUT}")
 file(MAKE_DIRECTORY "${OUT}/cfg" "${OUT}/home")
@@ -82,6 +86,9 @@ foreach(v "1;1440x900;" "1;1920x1080;" "2;2880x1800;" "1;1440x900;--light")
   list(GET v 2 light)
   set(tag "loupe_${size}_x${scale}${light}")
   string(REPLACE "--" "_" tag "${tag}")
+  if(PART AND NOT PART STREQUAL tag)
+    continue()
+  endif()
   # frames: ~0.1 s of take each; the edge (10 s) near frame 105, the stop (36 s) near 375
   set(script "")
   foreach(f 30 80 120 200 300 360)
@@ -92,9 +99,9 @@ foreach(v "1;1440x900;" "1;1920x1080;" "2;2880x1800;" "1;1440x900;--light")
   if(light)
     list(APPEND extra --light)
   endif()
-  execute_process(COMMAND "${APP}" --hidden --no-ui-sounds --fixed-dt 16 --plugin gl.edison --size ${size} --ui-scale ${scale} ${extra}
+  execute_process(COMMAND "${APP}" --hidden --no-ui-sounds --no-draw --fixed-dt 16 --plugin gl.edison --size ${size} --ui-scale ${scale} ${extra}
                           --frames 420 --screenshot "${OUT}/shot_${tag}_after.ppm" --dev-input "${OUT}/${tag}.txt"
-                  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 240)
+                  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 150)
   file(WRITE "${OUT}/${tag}.log" "${out}\n${err}")
   set(tail "${err}")
   check("${tag}: gridline-app ran (${rc})" rc EQUAL 0)
@@ -118,6 +125,12 @@ endforeach()
 unset(ENV{GRIDLINE_EDISON_STATE})
 unset(ENV{GRIDLINE_EDISON_SIM})
 unset(ENV{GRIDLINE_EDISON_SIM_STOP})
+if(PART AND NOT PART STREQUAL "seltmann")
+  if(NOT PART MATCHES "^loupe_(1440x900_x1|1920x1080_x1|2880x1800_x2|1440x900_x1_light)$")
+    message(FATAL_ERROR "FAIL: no part ${PART}")
+  endif()
+  return()
+endif()
 
 # ---- 2. Seltmann's recorder (real-time test input)
 execute_process(COMMAND "${TESTBIN}" writeloop "${OUT}/input.wav" RESULT_VARIABLE rc)
@@ -126,9 +139,9 @@ set(ENV{GRIDLINE_TEST_INPUT} "${OUT}/input.wav")
 set(ENV{GRIDLINE_SELTMANN_TRACE} "1")
 function(srun tag frames script)
   file(WRITE "${OUT}/${tag}.txt" "${script}")
-  execute_process(COMMAND "${APP}" --hidden --no-ui-sounds --fixed-dt 16 --plugin gl.seltmann --size 1440x960 --frames ${frames}
+  execute_process(COMMAND "${APP}" --hidden --no-ui-sounds --no-draw --fixed-dt 16 --plugin gl.seltmann --size 1440x960 --frames ${frames}
                           --screenshot "${OUT}/shot_${tag}.ppm" --dev-input "${OUT}/${tag}.txt"
-                  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 240)
+                  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 180)
   file(WRITE "${OUT}/${tag}.log" "${out}\n${err}")
   set(tail "${err}")
   check("${tag}: gridline-app ran (${rc})" rc EQUAL 0)

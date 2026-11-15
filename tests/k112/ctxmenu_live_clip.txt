@@ -1,0 +1,46 @@
+Duplicate ( Ctrl+B )
+Delete ( Del )
+--------------------------------
+Rename pattern... >
+Edit pattern
+Make unique
+Select all clips of this pattern
+--------------------------------
+Fit length to pattern
+--------------------------------
+Split at pattern repeats
+Slice at the song position
+Chop >
+Split by channel
+Merge selected clips ( Ctrl+J )
+--------------------------------
+Pattern colour >
+==== tree ====
+Duplicate
+Delete
+Rename pattern... >
+Edit pattern
+Make unique
+Select all clips of this pattern
+Fit length to pattern
+Split at pattern repeats
+Slice at the song position
+Chop >
+Chop > Bar
+Chop > 2 beats
+Chop > Beat
+Chop > Half beat
+Chop > Quarter beat
+Chop > Eighth beat
+Chop > Snap grid
+Chop > Into equal parts >
+Chop > At the note starts
+Chop > Beat repeat...
+Chop > Tape stop...
+Chop > Half-time...
+Chop > Triplet stutter...
+Chop > Reverse build...
+Chop > Chop and stutter...
+Split by channel
+Merge selected clips
+Pattern colour >

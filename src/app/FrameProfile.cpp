@@ -118,6 +118,15 @@ void add(State& s, const char* name, int64_t cpuNs, int64_t wallNs, uint64_t all
 
 }  // namespace
 
+namespace {
+bool gTrace = false;
+int gTraceFrame = -1;
+}
+void setTrace(bool on, int frame) {
+  gTrace = on;
+  gTraceFrame = frame;
+}
+long long threadCpuNow() { return threadCpuNs(); }
 void enable(bool on) { st().on = on; }
 bool enabled() { return st().on; }
 uint64_t threadAllocs() { return tAllocs; }
@@ -125,7 +134,7 @@ void setWarmup(int frames) { st().warmup = std::max(0, frames); }
 int recordedFrames() { return static_cast<int>(st().frames.size()); }
 
 Scope::Scope(const char* name) : name_(name) {
-  if (!st().on) return;
+  if (!st().on && !gTrace) return;
   cpu0_ = threadCpuNs();
   wall0_ = wallNs();
   alloc0_ = tAllocs;
@@ -133,8 +142,10 @@ Scope::Scope(const char* name) : name_(name) {
 
 Scope::~Scope() {
   State& s = st();
-  if (!s.on) return;
+  if (!s.on && !gTrace) return;
   const int64_t cpu1 = threadCpuNs(), wall1 = wallNs();
+  if (gTrace && wall0_ != 0) std::fprintf(stderr, "[frame-trace] frame %d %s %.2f ms\n", gTraceFrame, name_, static_cast<double>(wall1 - wall0_) * 1e-6);
+  if (!s.on) return;
   const uint64_t alloc1 = tAllocs;
   add(s, name_, cpu1 - cpu0_, wall1 - wall0_, alloc1 - alloc0_);
 }

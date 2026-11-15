@@ -18,6 +18,7 @@ namespace j31 {
 // ---- windows and per-frame work (from drawDialogs) ----
 void drawWindows(App& a);
 void openChordEditor(App& a);
+void closeChordEditor(App& a);  // K-112 (dev): keeps the changes, as its close button
 
 // ---- main menu ----
 void patternsItems(App& a);  // Patterns: pattern groups

@@ -11,6 +11,7 @@
 #include "../engine/GraphModels.h"
 #include "../engine/LiveGraph.h"
 #include "../engine/Program.h"
+#include "DeviceViews.h"
 #include "PluginEditorsCommon.h"
 #include "PluginSkin.h"
 
@@ -840,25 +841,7 @@ void editorDistFl(App& a, const PluginTarget& t, float width) {
   skin::well(dl, F.p(424, 4), F.p(596, 176), K, 4 * F.s);
   static const char* modes[8] = {"SOFT", "HARD", "FOLD", "TUBE", "FAST A", "FAST B", "DRIVE", "RECT"};
   gridSel(a, t, DstMode, F.p(430, 9), F.sz(160, 36), K, modes, 8, 4);
-  const int mode = ival(st, DstMode);
-  const double drive = dsp::dbToGain(val(st, DstDrive, 12) + (bval(st, DstExtreme) ? 40 : 0)), thr = dsp::dbToGain(val(st, DstThreshold));
-  const double bias = val(st, DstColor) * 0.3;
-  auto curve = [&](double x) {
-    double v = x * std::min(drive, 40.0) + bias;
-    switch (mode) {
-      case 1: return std::clamp(v, -thr, thr);
-      case 2: return thr * std::sin(v / thr);
-      case 3: return v >= 0 ? 1 - std::exp(-v) : -(1 - std::exp(v * 1.4)) / 1.2;
-      case 4: return thr * std::tanh(v / thr);
-      case 5: {
-        double av = std::fabs(v), f = std::fmod(av, 4 * thr), r = f < thr ? f : f < 3 * thr ? 2 * thr - f : f - 4 * thr;
-        return v < 0 ? -r : r;
-      }
-      case 6: return v >= 0 ? std::tanh(v * 1.2) : std::tanh(v * 0.6) * 0.8;
-      case 7: return std::fabs(v);
-      default: return std::tanh(v);
-    }
-  };
+  auto curve = [&](double x) { return devview::distTransfer(st, x); };
   {
     ImVec2 p0 = F.p(430, 50), p1 = F.p(512, 132);
     skin::graphWell(dl, p0, p1, K);
@@ -886,7 +869,7 @@ void editorDistFl(App& a, const PluginTarget& t, float width) {
 // runs the engine's own core (engine/Bitcrush.h) on a test wave, so the staircase
 // shows exactly what Rate, Bits, the converter filters and dither do. Dragging
 // the display sideways sets Rate, up / down sets Bits.
-void crushPreview(App& a, const PluginTarget& t, const PluginState& st, ImVec2 p0, ImVec2 sz, double sr) {
+void crushPreview(App& a, const PluginTarget& t, const PluginState& st, ImVec2 p0, ImVec2 sz, double sr, bool compact = false) {
   const auto& P = theme::pal();
   ImDrawList* dl = ImGui::GetWindowDrawList();
   ImGui::SetCursorScreenPos(p0);
@@ -915,7 +898,7 @@ void crushPreview(App& a, const PluginTarget& t, const PluginState& st, ImVec2 p
       core.frame(l, r, period, steps, sq, dith);
       out[static_cast<size_t>(i)] = static_cast<float>(l);
     }
-  const float pad = 10, x0 = p0.x + pad, w = sz.x - 2 * pad, yc = (p0.y + p1.y) * 0.5f, hh = sz.y * 0.5f - 18;
+  const float pad = 10, x0 = p0.x + pad, w = sz.x - 2 * pad, yc = (p0.y + p1.y) * 0.5f, hh = sz.y * 0.5f - (compact ? 6 : 18);
   auto X = [&](double i) { return x0 + static_cast<float>(i / n) * w; };
   auto Y = [&](double v) { return yc - static_cast<float>(std::clamp(v, -1.2, 1.2)) * hh; };
   dl->PushClipRect(ImVec2(p0.x + 1, p0.y + 1), ImVec2(p1.x - 1, p1.y - 1), true);
@@ -955,19 +938,21 @@ void crushPreview(App& a, const PluginTarget& t, const PluginState& st, ImVec2 p
   dl->AddPolyline(edge.data(), static_cast<int>(edge.size()), theme::withAlpha(P.accent, 0.35f), 0, 4.0f);
   dl->AddPolyline(edge.data(), static_cast<int>(edge.size()), P.text, 0, 1.6f);
   dl->PopClipRect();
-  // Captions: holds in the window, levels, the time span.
-  char b[64];
-  const double holds = kWindow * sr / period;
-  if (period <= 1.0) std::snprintf(b, sizeof b, "NO HOLD  \xC2\xB7  %.1f kHz HOST", sr / 1000.0);
-  else std::snprintf(b, sizeof b, "%.1f HOLDS / 6 ms  \xC2\xB7  1 PER %.2f SAMPLES", holds, period);
-  monoText(dl, ImVec2(p0.x + 10, p0.y + 7), P.textDim, b, 10.0f);
-  if (bits < 16) std::snprintf(b, sizeof b, "%.0f LEVELS", std::min(2 * steps + 1, 1e9));
-  else std::snprintf(b, sizeof b, "%.1f BITS", bits);
-  ImGui::PushFont(app().fontMono, 10.0f);
-  const float tw = ImGui::CalcTextSize(b).x;
-  ImGui::PopFont();
-  monoText(dl, ImVec2(p1.x - 10 - tw, p0.y + 7), P.textDim, b, 10.0f);
-  monoText(dl, ImVec2(p0.x + 10, p1.y - 18), hot ? P.textDim : P.textFaint, hot ? "DRAG \xE2\x86\x94 RATE  \xE2\x86\x95 BITS" : "6 ms", 10.0f);
+  // Captions: holds in the window, levels, the time span (none in a device row's small view).
+  if (!compact) {
+    char b[64];
+    const double holds = kWindow * sr / period;
+    if (period <= 1.0) std::snprintf(b, sizeof b, "NO HOLD  \xC2\xB7  %.1f kHz HOST", sr / 1000.0);
+    else std::snprintf(b, sizeof b, "%.1f HOLDS / 6 ms  \xC2\xB7  1 PER %.2f SAMPLES", holds, period);
+    monoText(dl, ImVec2(p0.x + 10, p0.y + 7), P.textDim, b, 10.0f);
+    if (bits < 16) std::snprintf(b, sizeof b, "%.0f LEVELS", std::min(2 * steps + 1, 1e9));
+    else std::snprintf(b, sizeof b, "%.1f BITS", bits);
+    ImGui::PushFont(app().fontMono, 10.0f);
+    const float tw = ImGui::CalcTextSize(b).x;
+    ImGui::PopFont();
+    monoText(dl, ImVec2(p1.x - 10 - tw, p0.y + 7), P.textDim, b, 10.0f);
+    monoText(dl, ImVec2(p0.x + 10, p1.y - 18), hot ? P.textDim : P.textFaint, hot ? "DRAG \xE2\x86\x94 RATE  \xE2\x86\x95 BITS" : "6 ms", 10.0f);
+  }
   // Drag: sideways = Rate (log), vertical = Bits.
   if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 1)) {
     const PluginInfo* info = findPlugin("gl.bitcrush");
@@ -1390,6 +1375,36 @@ void editorAnalyzerFl(App& a, const PluginTarget& t, float width) {
 }
 
 }  // namespace
+
+// The distortion's transfer curve as its editor draws it (K-112c: the Live device band draws it too).
+double devview::distTransfer(const PluginState& st, double x) {
+  using namespace pp;
+  using namespace ed;
+  const int mode = ival(st, DstMode);
+  const double drive = dsp::dbToGain(val(st, DstDrive, 12) + (bval(st, DstExtreme) ? 40 : 0)), thr = dsp::dbToGain(val(st, DstThreshold));
+  const double bias = val(st, DstColor) * 0.3;
+  double v = x * std::min(drive, 40.0) + bias;
+  switch (mode) {
+    case 1: return std::clamp(v, -thr, thr);
+    case 2: return thr * std::sin(v / thr);
+    case 3: return v >= 0 ? 1 - std::exp(-v) : -(1 - std::exp(v * 1.4)) / 1.2;
+    case 4: return thr * std::tanh(v / thr);
+    case 5: {
+      double av = std::fabs(v), f = std::fmod(av, 4 * thr), r = f < thr ? f : f < 3 * thr ? 2 * thr - f : f - 4 * thr;
+      return v < 0 ? -r : r;
+    }
+    case 6: return v >= 0 ? std::tanh(v * 1.2) : std::tanh(v * 0.6) * 0.8;
+    case 7: return std::fabs(v);
+    default: return std::tanh(v);
+  }
+}
+
+// The bitcrusher's preview, small and without captions (K-112c: the Live device band).
+void devview::crushView(App& a, const PluginTarget& t, ImVec2 p0, ImVec2 p1) {
+  const PluginState* sp = t.state(a.doc.song());
+  if (!sp) return;
+  crushPreview(a, t, *sp, p0, ImVec2(p1.x - p0.x, p1.y - p0.y), a.engine.sampleRate(), true);
+}
 
 // Entry point (called before the older built-in editors).
 bool drawFlEditor(App& a, const PluginTarget& t, float width) {

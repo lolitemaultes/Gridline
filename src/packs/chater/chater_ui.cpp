@@ -743,12 +743,14 @@ void tape(Ctx& c, bool compact) {
       }
       c.dl->AddRectFilled(c.p(rx0 + ew * 0.5f, top), c.p(rx1 - ew * 0.5f, top + 2), col);
       if (!compact && rx1 - rx0 > 26) {
+        // The region grows while the break plays: its label shows once it fits whole (the count
+        // dropped first), never cut off at the region's edge.
         char lab[40];
         if (e.type == BrRepeat && e.repeats > 1) std::snprintf(lab, sizeof lab, "%s x%d", breakName(e.type), e.repeats);
         else std::snprintf(lab, sizeof lab, "%s", breakName(e.type));
-        c.dl->PushClipRect(c.p(rx0, top), c.p(rx1, bot), true);
-        text(c, fBold(), 9.5f, ImVec2(rx0 + 4, top + 4), col, lab);
-        c.dl->PopClipRect();
+        const float room = rx1 - rx0 - 8;
+        if (textSize(c, fBold(), 9.5f, lab).x > room) std::snprintf(lab, sizeof lab, "%s", breakName(e.type));
+        if (textSize(c, fBold(), 9.5f, lab).x <= room) text(c, fBold(), 9.5f, ImVec2(rx0 + 4, top + 4), col, lab);
       }
     }
   // the waveform: one column per slice of the four bars

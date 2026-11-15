@@ -1,5 +1,6 @@
 // Gridline — AI assistants in the app (SC-07, see McpUi.h).
 #include "McpUi.h"
+#include "LayoutShellUi.h"
 #include <algorithm>
 #include <cstdio>
 #include <ctime>
@@ -238,6 +239,7 @@ void shutdown() {
 }
 
 void showActivity() { M.showLog = true; }
+void hideActivity() { M.showLog = false; }
 
 void statusLamp(App& a, ImDrawList* dl, float& rx, float ty, float fs) {
   if (!M.ep || !M.ep->running()) return;
@@ -351,7 +353,8 @@ void drawActivityWindow(App& a) {
   if (!M.showLog) return;
   const auto& P = pal();
   ImGui::SetNextWindowSize(ImVec2(640, 360), ImGuiCond_FirstUseEver);
-  if (!ImGui::Begin(tr("AI assistant activity###mcpactivity"), &M.showLog, ImGuiWindowFlags_NoCollapse)) {
+  const char* title = tr("AI assistant activity###mcpactivity");
+  if (!ImGui::Begin(title, &M.showLog, layoutui::dockFlags(title, ImGuiWindowFlags_NoCollapse))) {  // K-112: its region in a layout
     ImGui::End();
     return;
   }

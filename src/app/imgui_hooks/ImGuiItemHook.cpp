@@ -3,6 +3,7 @@
 #include "ImGuiItemHook.h"
 #include "imgui_internal.h"
 
+bool GImGuiGridlineMenuRight = false;  // K-112b: read by imgui_widgets.cpp (MenuItemEx), set by layoutui
 bool GImGuiGridlineMenuWalk = false;  // K-93: read by imgui_widgets.cpp (BeginMenuEx, EndMenu, MenuItemEx)
 
 namespace gl::imhook {
@@ -59,4 +60,7 @@ void ImGuiGridlineHook_EndMenu() {
 }
 bool ImGuiGridlineHook_MenuItem(const char* label, const char* shortcut, bool selected, bool enabled) {
   return gl::imhook::walker ? gl::imhook::walker->menuItem(label, shortcut, selected, enabled) : false;
+}
+void ImGuiGridlineHook_Separator(const char* text) {
+  if (gl::imhook::walker) gl::imhook::walker->separator(text);
 }

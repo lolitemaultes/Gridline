@@ -163,9 +163,13 @@ struct PluginState {
   // so a plugin that is not installed here can be found again in another format. Descriptive only: it is
   // rebuilt on every save, so it takes no part in comparing states.
   std::string ident;
+  // K-112c: the parameters a device row shows for this instance (the Live layout's installed-plugin
+  // panel, chosen with Configure), in order; empty = the default choice. Saved with the project only
+  // when set, so older projects save byte-equal. {-1}: none chosen (the panel is empty).
+  std::vector<int> shown;
 
   bool operator==(const PluginState& o) const {
-    return type == o.type && params == o.params && data == o.data && ins == o.ins && original == o.original;
+    return type == o.type && params == o.params && data == o.data && ins == o.ins && original == o.original && shown == o.shown;
   }
   bool empty() const { return type.empty(); }
 };

@@ -3590,6 +3590,14 @@ struct ImDrawList
     inline    void  PrimWriteIdx(ImDrawIdx idx)                                     { *_IdxWritePtr = idx; _IdxWritePtr++; }
     inline    void  PrimVtx(const ImVec2& pos, const ImVec2& uv, ImU32 col)         { PrimWriteIdx((ImDrawIdx)_VtxCurrentIdx); PrimWriteVtx(pos, uv, col); } // Write vertex with unique index
 
+    // GRIDLINE PATCH (K-112b): since 1.92.8 the stroke's thickness comes before the flags, and
+    // ImDrawFlags is an int, so a corner or Closed flag in the thickness slot compiled silently
+    // and drew a stroke as wide as the flag's value (a rounded AddRect with RoundCornersBottom
+    // drew a 192 px wide star). An int there is now a compile error: pass a float thickness.
+              void  AddRect(const ImVec2& p_min, const ImVec2& p_max, ImU32 col, float rounding, int flags_in_thickness_slot) = delete;
+              void  AddPolyline(const ImVec2* points, int num_points, ImU32 col, int flags_in_thickness_slot) = delete;
+              void  PathStroke(ImU32 col, int flags_in_thickness_slot) = delete;
+
     // Obsolete names
 #ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS
     inline    void  AddRect(const ImVec2& p_min, const ImVec2& p_max, ImU32 col, float rounding, ImDrawFlags flags, float thickness) { AddRect(p_min, p_max, col, rounding, thickness, flags); } // OBSOLETED in 1.92.8: NEW FUNCTION SIGNATURE HAS 'thickness' AND 'flags' SWAPPED.

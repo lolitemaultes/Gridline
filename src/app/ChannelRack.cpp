@@ -12,6 +12,7 @@
 #include <string>
 #include <unordered_map>
 #include "GrooveUi.h"
+#include "PixelGrid.h"
 #include "CollabUi.h"
 #include "CursorAnchor.h"
 #include "../core/I18n.h"
@@ -849,6 +850,7 @@ void drawChannelRack(App& a) {
       }
     } else if (pat) {
       auto row = rowOf(*pat, c.id);
+      const float dpp = pixelgrid::frameScale();  // K-276
       for (int k = 0; k < total; ++k) {
         ImVec2 q(sp.x + stepPos(k), sp.y);
         if (q.x + stepW <= viewX0 || q.x >= viewX1) continue;  // scrolled out of the step viewport (long patterns)
@@ -892,7 +894,12 @@ void drawChannelRack(App& a) {
           wheelUsed = true;
         }
         const bool alt = (k / 4) % 2 == 1;
-        ImVec2 q1(q.x + stepW, q.y + cellH);
+        // K-276: the pad on whole device pixels, its gap to the next pad whole too (PixelGrid.h), so
+        // the gaps stay even at every interface scale (a pad may be a device pixel wider instead).
+        const float nextX = sp.x + stepPos(k + 1);
+        const pixelgrid::Span padX = pixelgrid::block(q.x, nextX, dpp, 0.0f, nextX - q.x - stepW), padY = pixelgrid::block(q.y, q.y + cellH, dpp, 0.0f, 0.0f);
+        q = ImVec2(padX.x0, padY.x0);
+        ImVec2 q1(padX.x1, padY.x1);
         ui::StepPad(dl, q, q1, v > 0, alt, hov, theme::rgb(c.color), v / 127.0f);
         // J-31 step loop: steps past the channel's loop length repeat the loop (shaded; the first one marked).
         if (auto lp = pat->stepLoop.find(c.id); lp != pat->stepLoop.end() && lp->second > 0 && k >= lp->second) {

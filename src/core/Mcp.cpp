@@ -796,6 +796,7 @@ Json Session::callTool(const Json& params, bool& ok, int& code, std::string& msg
     const uint64_t serial = doc.history().stateSerial();
     const size_t depth = doc.groupDepth();
     const bool grouped = !tool->readOnly && tool->grouped;
+    const Document::QuietPlacements quiet(doc);  // K-112: an AI tool never opens plugin windows
     if (grouped) {
       doc.endGesture();
       doc.beginGroup("AI: " + tool->title);

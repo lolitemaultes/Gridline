@@ -357,15 +357,15 @@ int main() {
     }
     expect(found, "record: start quantized to the grid, length kept");
     expect(kept, "overdub keeps existing notes");
-    // A note held across the loop end.
+    // A note held across the loop end (K-226: cut at the loop end, so the pattern keeps its length).
     r.position(doc, 300);
     r.noteOn(doc, ch, 62, 90, 370.0);
     r.position(doc, 380);
     r.position(doc, 10);  // wrapped
     r.noteOff(doc, ch, 62, 20.0);
     bool wrapped = false;
-    for (const auto& n : doc.song().pattern(pat)->notes.at(ch)) wrapped = wrapped || (n.pitch == 62 && n.start == 360 && n.length == 34);
-    expect(wrapped && r.pass() == 1, "record: note across the loop wrap gets the full length");
+    for (const auto& n : doc.song().pattern(pat)->notes.at(ch)) wrapped = wrapped || (n.pitch == 62 && n.start == 360 && n.length == 14);
+    expect(wrapped && r.pass() == 1, "record: a note held across the loop wrap ends at the loop end");
     r.end(doc, 30);
     expect(!r.active() && r.notesRecorded() == 2, "record session ends");
     doc.undo();
@@ -386,8 +386,13 @@ int main() {
     r.noteOff(doc, ch, 65, 150.0);
     r.end(doc, 160);
     const auto& ns = doc.song().pattern(pat)->notes.at(ch);
-    expect(ns.size() == 2 && ns[0].pitch == 64 && ns[0].start == 48 && ns[0].length == 24 && ns[1].length == 48,
-           "replace mode clears the channel once per pass; length quantize");
+    bool kept = false, a = false, b = false;
+    for (const auto& n : ns) {
+      kept = kept || (n.pitch == 50 && n.start == 192);  // after the range played over (K-226)
+      a = a || (n.pitch == 64 && n.start == 48 && n.length == 24);
+      b = b || (n.pitch == 65 && n.start == 96 && n.length == 48);
+    }
+    expect(ns.size() == 3 && kept && a && b, "replace mode clears only the range played over; length quantize");
   }
   {
     // Loop recording into takes.
@@ -451,7 +456,9 @@ int main() {
     NoteRecorder rs;
     RecordOptions os;
     os.grid = 24;
-    rs.beginSong(doc, pat, os);
+    RecordSetup ss;
+    ss.start = 2 * bar;  // K-226: the take starts on the bar recording started
+    rs.beginSong(doc, pat, os, ss);
     rs.noteOn(doc, ch, 72, 100, static_cast<double>(2 * bar + 30));
     rs.noteOff(doc, ch, 72, static_cast<double>(2 * bar + 60));
     rs.controller(vol, 0.25, static_cast<double>(2 * bar + 10));
@@ -460,13 +467,14 @@ int main() {
     const Song& s = doc.song();
     bool clip = false, autoClip = false, note = false;
     for (const auto& c : s.playlist) {
-      clip = clip || (c.kind == ClipKind::Pattern && c.pattern == pat && c.start == 2 * bar);
+      clip = clip || (c.kind == ClipKind::Pattern && c.pattern == rs.pattern() && c.start == 2 * bar);
       if (c.kind == ClipKind::Automation && c.start == 2 * bar)
         if (const AutomationClip* ac = s.automation(c.source))
           autoClip = ac->owner == vol.owner && ac->index == vol.index && ac->points.size() == 2 && ac->points[0].pos == 10;
     }
-    for (const auto& n : s.pattern(pat)->notes.at(ch)) note = note || (n.pitch == 72 && n.start == 24);
-    expect(clip && note, "song mode: a clip is placed on the bar and the note lands inside it");
+    if (const Pattern* take = s.pattern(rs.pattern()); take && take->notes.count(ch))
+      for (const auto& n : take->notes.at(ch)) note = note || (n.pitch == 72 && n.start == 24);
+    expect(clip && note, "song mode: a take clip is placed on the bar and the note lands inside it");
     expect(autoClip, "song mode: controller moves become an automation clip");
   }
 
@@ -489,6 +497,41 @@ int main() {
            "step record: rests skip a step, notes are one step long");
     st.backspace(doc, p2, ch);
     expect(st.cursor == 48 && doc.song().pattern(p2)->notes.at(ch).size() == 2, "step record: backspace removes the last step");
+  }
+
+  // ---------------------------------------------------------------- K-112c: capture
+  {
+    NoteCapture cap;
+    const ObjectId p3 = doc.addPattern("Captured");
+    expect(cap.commit(doc, p3, 120, 0, 0) == 0, "capture: nothing played, nothing written");
+    // An early phrase, a long pause, then the phrase to keep: C at 10 s, E at 10.5 s (held), G at 11 s.
+    cap.noteOn(ch, 50, 90, 1.0);
+    cap.noteOff(ch, 50, 1.2);
+    cap.noteOn(ch, 60, 100, 10.0);
+    cap.noteOff(ch, 60, 10.25);
+    cap.noteOn(ch, 64, 80, 10.5);
+    cap.noteOn(ch, 67, 70, 11.0);
+    cap.noteOff(ch, 67, 11.5);
+    const size_t undoBefore = doc.history().position();
+    const int n = cap.commit(doc, p3, 120, 0, 12.0);  // 120 bpm: a second is two beats
+    const Tick beat = doc.song().ppq;
+    const auto& ns = doc.song().pattern(p3)->notes.at(ch);
+    expect(n == 3 && ns.size() == 3, "capture: the last phrase alone (the pause cut the earlier note off)");
+    expect(ns.size() == 3 && ns[0].pitch == 60 && ns[0].start == 0 && ns[0].length == beat / 2 && ns[0].velocity == 100 && ns[1].pitch == 64 &&
+               ns[1].start == beat && ns[1].length == 3 * beat && ns[2].pitch == 67 && ns[2].start == 2 * beat && ns[2].length == beat,
+           "capture: timed at the tempo from the phrase's first note; a held note lasts until the capture");
+    expect(doc.history().position() == undoBefore + 1 && doc.history().undoLabel() == "capture", "capture: one undo step");
+    expect(cap.size() == 0 && cap.commit(doc, p3, 120, 0, 13.0) == 0, "capture: what was written is forgotten");
+    cap.noteOn(ch, 72, 100, 20.0);
+    cap.noteOff(ch, 72, 20.1);
+    cap.noteOn(ch, 74, 100, 20.27);
+    cap.noteOff(ch, 74, 20.4);
+    expect(cap.commit(doc, p3, 120, beat / 4, 21.0) == 2, "capture: a second phrase");
+    bool snapped = false;
+    for (const Note& x : doc.song().pattern(p3)->notes.at(ch)) snapped = snapped || (x.pitch == 74 && x.start == beat / 2);
+    expect(snapped, "capture: starts round to the grid");
+    for (int i = 0; i < 600; ++i) cap.noteOn(ch, 60, 100, 30.0 + i * 0.01);
+    expect(cap.size() == static_cast<int>(NoteCapture::kMax), "capture: keeps the latest notes only");
   }
 
   // ---------------------------------------------------------------- typing keyboard

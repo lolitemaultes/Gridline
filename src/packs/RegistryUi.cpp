@@ -25,6 +25,8 @@ bool openAudioEditor(App& a, const std::string& path, ObjectId channel);
 bool openFileInLoupe(App& a, const std::string& path);
 int armTransportRecording(App& a, ObjectId track);
 bool claimEffectEditor(App& a, const PluginTarget& t);  // K-15
+bool showInPanel(App& a, const PluginTarget& t);         // K-112
+void drawPanelBody(App& a, ImVec2 avail);                 // K-112
 bool dockDevCommand(App& a, const std::string& cmd, const std::vector<std::string>& args);
 }  // namespace gl::packs::edison
 namespace gl::packs::modulation {
@@ -78,6 +80,8 @@ bool openAudioEditor(App& a, const std::string& path, ObjectId channel) { return
 bool openFileInLoupe(App& a, const std::string& path) { return edison::openFileInLoupe(a, path); }
 
 bool claimEffectEditor(App& a, const PluginTarget& t) { return edison::claimEffectEditor(a, t); }
+void drawLoupeBody(App& a, float w, float h) { edison::drawPanelBody(a, ImVec2(w, h)); }
+bool showInLoupePanel(App& a, const PluginTarget& t) { return edison::showInPanel(a, t); }
 
 bool devCommand(App& a, const std::string& cmd, const std::vector<std::string>& args) { return edison::dockDevCommand(a, cmd, args) || modulation::junctionDevCommand(a, cmd, args) || chater::devCommand(a, cmd, args); }
 

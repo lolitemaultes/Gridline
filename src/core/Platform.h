@@ -46,8 +46,24 @@ bool processRunning(std::int64_t pid);
 // Child processes that load plugins (scanner, sandbox, plugin check): a crash ends the process
 // at once instead of opening a system error dialog (Windows) that would hang it until its timeout.
 void quietCrashDialogs();
+// K-267: a thread that hosts plugins (the interface thread, the scanner and sandbox children's main
+// thread) on Windows: a single-threaded COM apartment with OLE (OleInitialize), which plugin
+// interfaces, drag and drop, licence and shell helpers expect, as in every VST3 host. True when the
+// thread has OLE (or nothing is needed). Elsewhere nothing.
+bool initPluginThread();
+// K-267: Windows: dispatches the messages waiting for this thread's windows (a plugin's hidden
+// windows, timers and posted work), for at most `budgetSeconds`. A child process that loads plugins
+// has no other message loop. Elsewhere nothing.
+void pumpThreadMessages(double budgetSeconds = 0.05);
+// K-267: ends this process at once with `code`. Windows: without the DLL unload notifications a
+// normal exit sends to every loaded plugin (plugins that hang or crash while unloading, after their
+// work is done). Elsewhere std::_Exit.
+[[noreturn]] void exitNow(int code);
 // Environment (UTF-8). setEnv with overwrite=false keeps an existing value.
 bool setEnv(const char* name, const char* value, bool overwrite = true);
+// K-267: a variable's value as UTF-8 ("" when not set). Windows: read as UTF-16, so a folder with
+// letters outside the system's code page keeps them.
+std::string getEnv(const char* name);
 bool unsetEnv(const char* name);
 // Absolute path of the running executable, empty when unknown.
 std::string executablePath();
@@ -67,6 +83,10 @@ int64_t fileTimeSeconds(std::filesystem::file_time_type t);
 // Processor time of this process (user + system, seconds) and its peak resident memory (MB).
 double cpuSeconds();
 double peakRssMb();
+// K-155: this process's memory in use now (MB): macOS its physical footprint (what Activity
+// Monitor shows, graphics memory included), Linux the resident set, Windows the
+// private bytes; 0 where the system does not say.
+double currentMemoryMb();
 // K-154: the computer's physical memory, and how much of it is free for new use now (Linux
 // MemAvailable, macOS free + inactive + purgeable, FreeBSD free + inactive, Windows available);
 // 0 where the system does not say.

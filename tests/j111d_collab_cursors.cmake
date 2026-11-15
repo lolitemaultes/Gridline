@@ -322,7 +322,9 @@ pixelCheck("behind a modal" "${D}/modal.json" "${D}/modal-pixel.json" 0 OFF)
 
 # ---- 2: two windows of other sizes and scales, real ICE ----
 # (Alex changes its picture once Sam has written the first pictures report, and stays until Sam has
-# the second, taken once the new picture is drawn there: on a slow runner fixed waits were too short.)
+# the second, taken once the new picture is drawn there: on a slow runner fixed waits were too short.
+# Alex's pointer likewise stays on the playlist, the rack and the mixer until Sam has reported it
+# there: with a fixed 6 s a slow runner's Sam once missed the rack.)
 # (Alex's output goes into Sam's input, the pipeline execute_process makes. Either may quit first:
 # on a slow runner each side's waits stretch differently, and Sam used to quit first there; Alex's
 # last output then went into a closed pipe, SIGPIPE killed it, and "cmake -E env" reported 1.)
@@ -336,15 +338,15 @@ set(A "5 collab profile Alex
 40 collab point Playlist playlist 0 0 0.75bar 0.35
 41 waitfor never 1
 42 collab cursors \"${OUT}/a-playlist.json\"
-43 waitfor never 6
+43 waitfor \"file:${OUT}/b-playlist.json\" 120
 50 collab point \"Channel rack\" rack-row ch0 0 112 0.5
 51 waitfor never 1
 52 collab cursors \"${OUT}/a-rack.json\"
-53 waitfor never 6
+53 waitfor \"file:${OUT}/b-rack.json\" 120
 60 collab point Mixer mixer-strip mx1 0 0.5 0.6
 61 waitfor never 1
 62 collab cursors \"${OUT}/a-mixer.json\"
-63 waitfor never 6
+63 waitfor \"file:${OUT}/b-mixer.json\" 120
 64 waitfor \"file:${OUT}/b-pictures1.json\" 120
 65 collab picture #3CA0C8
 66 waitfor \"file:${OUT}/b-pictures2.json\" 120

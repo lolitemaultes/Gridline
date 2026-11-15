@@ -249,6 +249,7 @@ struct Voice {
 
 class TrackerGen final : public Generator {
  public:
+  bool mayRest() const override { return false; }  // K-277: sound without notes
   TrackerGen() {
     (void)sinc();
     (void)panTable();

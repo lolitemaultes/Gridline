@@ -212,6 +212,7 @@ class TempoRefitCommand final : public Command {
 void Document::reset(Song song) {
   song_ = std::move(song);
   groups_.clear();
+  placed_.clear();
   undo_.clear();
   savedSerial_ = undo_.stateSerial();
   ++revision_;
@@ -311,6 +312,7 @@ bool Document::amendStep(uint64_t serial, const std::function<void()>& fn) {
   auto g = std::move(groups_.back());
   groups_.pop_back();
   if (!g->empty()) undo_.amendTop(std::move(g));
+  flushPlaced();
   return true;
 }
 
@@ -323,26 +325,44 @@ void Document::endGroup(bool joinGesture) {
   if (groups_.empty()) return;
   auto g = std::move(groups_.back());
   groups_.pop_back();
-  if (g->empty()) return;
   if (!groups_.empty()) {
-    groups_.back()->add(std::move(g));  // already applied
+    if (!g->empty()) groups_.back()->add(std::move(g));  // already applied
     return;
   }
-  const bool join = joinGesture && pointerGesture_ && gestureSerial_ != 0 && undo_.canAmend() && undo_.stateSerial() == gestureSerial_;
-  if (join) {
-    undo_.amendTop(std::move(g));
-  } else {
-    undo_.breakMerge();
-    undo_.pushApplied(std::move(g));
-    undo_.breakMerge();
+  if (!g->empty()) {
+    const bool join = joinGesture && pointerGesture_ && gestureSerial_ != 0 && undo_.canAmend() && undo_.stateSerial() == gestureSerial_;
+    if (join) {
+      undo_.amendTop(std::move(g));
+    } else {
+      undo_.breakMerge();
+      undo_.pushApplied(std::move(g));
+      undo_.breakMerge();
+    }
+    if (pointerGesture_) gestureSerial_ = undo_.stateSerial();
   }
-  if (pointerGesture_) gestureSerial_ = undo_.stateSerial();
+  flushPlaced();  // the outermost group ended: what it put on a track is told now
+}
+
+// K-112: a plugin put on a track; told at once outside a group, else when the outermost one ends.
+void Document::notePlaced(ObjectId owner, int slot, const std::string& type) {
+  if (type.empty()) return;
+  placed_.push_back(Placement{owner, slot, type, quietPlacements_ > 0});
+  if (groups_.empty()) flushPlaced();
+}
+
+void Document::flushPlaced() {
+  std::vector<Placement> p;
+  p.swap(placed_);
+  if (p.size() == 1 && !p[0].quiet && quietPlacements_ == 0 && onPluginPlaced) onPluginPlaced(p[0].owner, p[0].slot, p[0].type);
 }
 
 void Document::cancelGroup() {
   if (groups_.empty()) return;
   auto g = std::move(groups_.back());
   groups_.pop_back();
+  // Its placements are undone: nothing of the action is told (a quiet mark keeps an outer group from it).
+  placed_.clear();
+  if (!groups_.empty()) placed_.push_back(Placement{kNoId, -1, "-", true});
   if (g->empty()) return;
   g->revert(song_);
   ++revision_;
@@ -363,6 +383,7 @@ bool Document::stepHistory(int dir, Song* scratch) {
 void Document::clearHistory() {
   const bool wasModified = modified();
   groups_.clear();
+  placed_.clear();
   undo_.clear();
   savedSerial_ = wasModified ? ~uint64_t{0} : undo_.stateSerial();
   pointerGesture_ = false;
@@ -587,6 +608,7 @@ ObjectId Document::addChannel(const std::string& name, const std::string& plugin
         s.channels.erase(s.channels.begin() + s.channelIndex(id));
         s.nextId = id;  // undo runs LIFO, so this was the latest ID
       }));
+  if (song_.channel(id)) notePlaced(id, -1, pluginType);
   return id;
 }
 
@@ -736,6 +758,7 @@ bool Document::setChannelPlugin(ObjectId id, const std::string& pluginType) {
     setModLinks(std::move(links), "replace channel instrument");
   }
   endGroup();
+  if (ok) notePlaced(id, -1, pluginType);
   return ok;
 }
 
@@ -1177,11 +1200,14 @@ bool Document::setSlotPlugin(ObjectId track, int slot, const std::string& plugin
     setModLinks(std::move(links), label);
   }
   endGroup();
+  if (ok) notePlaced(track, slot, pluginType);
   return ok;
 }
 
 bool Document::moveSlot(ObjectId track, int from, int to) {
   if (from < 0 || to < 0 || from >= kEffectSlots || to >= kEffectSlots) return false;
+  for (Placement& pl : placed_)  // K-112: a copy put in a free slot, then moved into place
+    if (pl.owner == track && pl.slot >= 0) pl.slot = movedIndex(pl.slot, from, to);
   beginGroup("move effect");
   bool ok = editMixerTrack(track, "move effect", [&](MixerTrack& t) {
     EffectSlot s = t.slots[static_cast<size_t>(from)];

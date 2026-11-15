@@ -314,6 +314,58 @@ class LimiterK2 final : public Effect {
 // program-dependent release (faster after deep reduction for the fast types);
 // make-up gain; 0 dBFS output limiter with a 64-sample look-ahead.
 // All time constants: per-sample factor reaching 10 % after the given time.
+// The compressor's static gain law (K-112c: shared by the engine and the editor graphs).
+struct CompLaw {
+  double lnThr = 0, slope = 0, ks = 0, ke = 0, kneeHalf = 0, above = 1, kneeQuad = 0, invSpan = 0, vintA = 0;
+  bool vintage = false;
+  static CompLaw from(const PluginState& s) {
+    using namespace pp;
+    CompLaw c;
+    const double thr = dbToGain(prm(s, CmpThreshold, -18));
+    const double ratio = std::max(0.4, static_cast<double>(prm(s, CmpRatio, 4)));
+    c.slope = 1.0 / ratio - 1.0;
+    const double kneeDb = std::max(0.0, static_cast<double>(prm(s, CmpKnee, 6)));
+    c.vintage = iprm(s, CmpCharacter) == 1;
+    const double kneeRatio = dbToGain(-kneeDb);
+    c.lnThr = std::log(thr);
+    c.ks = std::log(thr * kneeRatio);
+    c.ke = std::log(thr / kneeRatio);
+    c.kneeHalf = std::min(1.0, c.lnThr - c.ks);
+    if (c.vintage) {  // constant gain above the knee
+      c.ke = c.lnThr + 1.25 * std::pow(ratio, 0.25);
+      c.above = std::exp((c.ke - c.lnThr) * c.slope);
+      c.ke = c.ke - std::log(kneeRatio);
+      c.slope = std::log(c.above) / (c.ke - c.lnThr);
+    }
+    c.kneeQuad = c.ke > c.ks ? 0.5 / (c.ke - c.ks) : 0.0;
+    c.invSpan = c.ke > c.ks ? 1.0 / (c.ke - c.ks) : 0.0;
+    c.vintA = (c.ke - c.lnThr) * c.slope;
+    return c;
+  }
+  // Linear gain for a detector level (natural log of the linear level).
+  double gain(double lv) const {
+    double g = 1.0;
+    if (lv >= ks) {
+      if (!vintage) {
+        if (lv < ke) {
+          double a = lv - ks;
+          g = std::exp(slope * a * a * kneeQuad);
+        } else {
+          g = std::exp((lv - lnThr) * slope);
+        }
+      } else if (lv < ke) {
+        double u = (lv - ks) * invSpan;
+        double sm = (3.0 - 2.0 * u) * u * u;
+        u = (sm - u) * kneeHalf + u;
+        g = std::exp(vintA * u);
+      } else {
+        g = above;
+      }
+    }
+    return g;
+  }
+};
+
 class CompK2 final : public Effect {
  public:
   static constexpr int kLa = 64;
@@ -329,32 +381,14 @@ class CompK2 final : public Effect {
       hpC_ = (t - 1.0) / (t + 1.0);
     }
     // ---- settings (reference recalculation)
-    const double thr = dbToGain(prm(s, CmpThreshold, -18));
-    const double ratio = std::max(0.4, static_cast<double>(prm(s, CmpRatio, 4)));
-    double slope = 1.0 / ratio - 1.0;
+    const CompLaw law = CompLaw::from(s);
     const double makeup = dbToGain(prm(s, CmpOutput) + prm(s, CmpMakeup));
-    const double kneeDb = std::max(0.0, static_cast<double>(prm(s, CmpKnee, 6)));
-    const bool vintage = iprm(s, CmpCharacter) == 1;
+    const bool vintage = law.vintage;
     const bool fast = prm(s, CmpFastRelease) >= 0.5f;
     const double atkMs = prm(s, CmpAttack, 0.005f) * 1000.0, relMs = prm(s, CmpRelease, 0.12f) * 1000.0;
     const double detUp = coef10(0.01, sr), detDown = coef10(1.0, sr);
     const double gAtk = coef10(atkMs < 0.11 ? 0.0 : atkMs, sr);
     const double relFastC = coef10(relMs * (fast ? 0.1 : 1.0), sr), relC = coef10(relMs, sr), holdC = relC;
-    const double kneeRatio = dbToGain(-kneeDb);
-    const double lnThr = std::log(thr);
-    const double ks = std::log(thr * kneeRatio);
-    double ke = std::log(thr / kneeRatio);
-    double kneeHalf = std::min(1.0, lnThr - ks);
-    double above = 1.0;  // vintage: constant gain above the knee
-    if (vintage) {
-      ke = lnThr + 1.25 * std::pow(ratio, 0.25);
-      above = std::exp((ke - lnThr) * slope);
-      ke = ke - std::log(kneeRatio);
-      slope = std::log(above) / (ke - lnThr);
-    }
-    const double kneeQuad = ke > ks ? 0.5 / (ke - ks) : 0.0;
-    const double invSpan = ke > ks ? 1.0 / (ke - ks) : 0.0;
-    const double vintA = (ke - lnThr) * slope;
     const bool rmsDet = iprm(s, CmpDetector) == 1;
     const double rmsC = std::exp(-1.0 / std::max(1.0, 0.015 * sr));
     const double hpf = prm(s, CmpKeyHpf, 20);
@@ -388,24 +422,7 @@ class CompK2 final : public Effect {
       }
       det += 1e-30;
       env_ = det + (env_ - det) * (det <= env_ ? detDown : detUp);
-      double lv = std::log(env_), g = 1.0;
-      if (lv >= ks) {
-        if (!vintage) {
-          if (lv < ke) {
-            double a = lv - ks;
-            g = std::exp(slope * a * a * kneeQuad);
-          } else {
-            g = std::exp((lv - lnThr) * slope);
-          }
-        } else if (lv < ke) {
-          double u = (lv - ks) * invSpan;
-          double sm = (3.0 - 2.0 * u) * u * u;
-          u = (sm - u) * kneeHalf + u;
-          g = std::exp(vintA * u);
-        } else {
-          g = above;
-        }
-      }
+      const double g = law.gain(std::log(env_));
       gs_ = g + (gs_ - g) * (g <= gs_ ? gAtk : relDyn_);
       hold_ = (hold_ - gs_) * holdC + gs_;
       if (hold_ < gs_) hold_ = gs_;
@@ -969,6 +986,8 @@ namespace graphmodel {
 // J-68: the limiter compressor's static curve for the editor overlay (GraphModels.h).
 bool limiterCompOn(const PluginState& s) { return LimComp::from(s).on; }
 double limiterCompGainDb(const PluginState& s, double levelDb) { return LimComp::from(s).gainDb(dbToGain(levelDb)); }
+// K-112c: the compressor's static law for its graphs (the same CompLaw the engine runs).
+double compGainDb(const PluginState& s, double levelDb) { return gainToDb(CompLaw::from(s).gain(levelDb * std::log(10.0) / 20.0)); }
 
 // J-68: the multiband's band filters as the engine designs them (IIR
 // Butterworth, linear-phase FIR or Linkwitz-Riley), magnitude at each hz.

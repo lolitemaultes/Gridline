@@ -19,6 +19,7 @@
 #include <fstream>
 #include <map>
 #include <set>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -95,6 +96,66 @@ void testShellAndHang(const std::string& dir) {
   for (fs::directory_iterator it(fs::temp_directory_path(ec), ec), end; !ec && it != end; it.increment(ec))
     left += it->path().filename().string().rfind("gridline-plugin-scan-", 0) == 0 ? 1 : 0;
   expect(left == 0, "shell: the scanner's result and progress files are removed");
+}
+
+void onlyFolders(const std::map<std::string, std::vector<std::string>>& folders);
+
+// ---- K-267: plugins that misbehave after their scan is done, and the retry of a failed one
+void testAfterResult(const std::string& dir) {
+  const fs::path d = fs::path(dir) / "after";
+  const fs::path linger = fakePlugin(d, "linger", "clap"), crash = fakePlugin(d, "exitcrash", "clap");
+  auto t0 = Clock::now();
+  host::ScanReport rep;
+  host::ScanResult r = host::scanIsolated(gScanner, "clap", linger.generic_string(), 20.0, nullptr, &rep);
+  double took = since(t0);
+  std::printf("linger: ok %d after %.1f s, note '%s'\n", r.ok ? 1 : 0, took, rep.note.c_str());
+  expect(r.ok && r.classes.size() == 1 && took < 10, "after result: a plugin that never lets its scan end is listed (its result counts)");
+  expect(!rep.note.empty(), "after result: the scan report says the process did not end");
+  r = host::scanIsolated(gScanner, "clap", crash.generic_string(), 20.0, nullptr, &rep);
+  std::printf("exitcrash: ok %d, exit '%s', note '%s'\n", r.ok ? 1 : 0, rep.exit.c_str(), rep.note.c_str());
+  expect(r.ok && r.classes.size() == 1 && rep.note.find("crashed") != std::string::npos,
+         "after result: a plugin that crashes while its process ends is listed, the crash noted");
+}
+
+void testRetry(const std::string& dir) {
+  const fs::path root = fs::path(dir) / "retry";
+  for (int i = 0; i < 6; ++i) fakePlugin(root / "plugins", "plug" + std::to_string(i), "clap");
+  const fs::path once = fakePlugin(root / "plugins", "once", "clap");
+  fakePlugin(root / "plugins", "crash", "clap");
+  host::initHosting((root / "config").string());
+  onlyFolders({{"clap", {(root / "plugins").string()}}});
+  platform::setEnv("GRIDLINE_SCAN_TIMEOUT", "3");
+  platform::unsetEnv("GRIDLINE_SCAN_RETRY");
+  host::startScan(gScanner, true);
+  const auto t0 = Clock::now();
+  while (host::scanStatus().running && since(t0) < 60) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  const host::ScanStatus st = host::scanStatus();
+  bool onceOk = false, crashFailed = false;
+  for (const auto& e : host::cacheEntries()) {
+    if (e.entry.find("once") != std::string::npos) onceOk = e.ok;
+    if (e.entry.find("crash") != std::string::npos) crashFailed = !e.ok;
+  }
+  std::printf("retry: done %d of %d, failed %d, once listed %d\n", st.done, st.total, st.failed, onceOk ? 1 : 0);
+  expect(!st.running && st.done == st.total && st.total == 8, "retry: the scan ends, each plugin counted once");
+  expect(onceOk, "retry: a plugin that crashed the first time is tried again alone, and listed");
+  expect(crashFailed && st.failed == 1, "retry: a plugin that crashes every time stays failed");
+  // The scan log: written whatever the debug log setting, with the scan's header and each failure.
+  std::ifstream lf(host::scanLogFile());
+  std::stringstream ss;
+  ss << lf.rdbuf();
+  const std::string log = ss.str();
+  std::printf("retry: scan log %s (%zu bytes)\n%s", host::scanLogFile().c_str(), log.size(), log.c_str());
+  expect(log.find("== ") == 0 && log.find("scan of 8 plugin files") != std::string::npos, "scan log: the scan's header comes first");
+  expect(log.find(once.generic_string()) != std::string::npos && log.find("tried once more, alone") != std::string::npos,
+         "scan log: the first failure of the plugin that was retried is logged, saying so");
+  expect(log.find("(retried alone)") != std::string::npos, "scan log: the crash on the retry is logged");
+  expect(log.find("scanner: crashed") != std::string::npos, "scan log: how the scanner ended");
+  // Its plugins leave the class list again (an empty folder list: a pass forgets them).
+  onlyFolders({});
+  host::startScan(gScanner, false);
+  const auto t1 = Clock::now();
+  while (host::scanStatus().running && since(t1) < 60) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  expect(host::scanStatus().classes == 0, "retry: (its plugins are forgotten before the next test)");
 }
 
 // ---- 2. VST3 discovery
@@ -208,9 +269,10 @@ void testPeCheck(const std::string& dir) {
   std::printf("pe: 32-bit: '%s'\n", x86.c_str());
   expect(x86.find("32-bit") != std::string::npos, "pe: a 32-bit plugin in a 64-bit Gridline is told without loading it");
   expect(check("x86host.dll", Pe{0x14C, {"VSTPluginMain"}}, 0x14C).empty(), "pe: (a 32-bit plugin suits a 32-bit Gridline)");
-  const std::string dep = check("dep.dll", Pe{0x8664, {"qInit", "qRun", "qStop"}});
-  std::printf("pe: dependency: '%s'\n", dep.c_str());
-  expect(dep.find("not a plugin") != std::string::npos, "pe: a DLL a plugin needs (no plugin entry point) is not loaded");
+  // K-267: the export table is not trusted: protected plugins fill it while they load.
+  expect(check("dep.dll", Pe{0x8664, {"qInit", "qRun", "qStop"}}).empty(), "pe: a DLL whose file shows no plugin entry point is left to the scan");
+  expect(check("x64onarm.dll", Pe{0x8664, {"VSTPluginMain"}}, 0xAA64).find("x64 plugin") != std::string::npos,
+         "pe: an x64 plugin in an ARM64 Gridline is told without loading it");
   expect(check("packed.dll", Pe{0x8664, {}, false}).empty(), "pe: a DLL without a readable export table is left to the scan (packed plugins)");
   expect(check("arm.dll", Pe{0xAA64, {"VSTPluginMain"}}).empty(), "pe: other 64-bit kinds are left to the scan (ARM64X)");
   touch(d / "text.dll");
@@ -250,6 +312,7 @@ void testCollection(const std::string& dir) {
   host::initHosting(dir + "/collection-config");
   onlyFolders({{"vst3", {(root / "vst3").string()}}, {"vst2", {(root / "vst2").string()}}, {"clap", {(root / "clap").string()}}});
   platform::setEnv("GRIDLINE_SCAN_TIMEOUT", "3");
+  platform::setEnv("GRIDLINE_SCAN_RETRY", "0");  // K-267: dozens of hung plugins: no second try each (testRetry checks it)
   const auto t0 = Clock::now();
   host::scanReadLongestWait(true);
   host::startScan(gScanner, false);
@@ -315,6 +378,8 @@ int main(int argc, char** argv) {
   testPeCheck(dir);
   testVst3Search(dir);
   testShellAndHang(dir);
+  testAfterResult(dir);
+  testRetry(dir);
   testCollection(dir);
   return finish();
 }

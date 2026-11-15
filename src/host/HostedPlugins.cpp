@@ -9,6 +9,7 @@
 #include <cstring>
 #include <deque>
 #include <exception>
+#include <filesystem>
 #include <functional>
 #include <map>
 #include <mutex>
@@ -18,6 +19,7 @@
 #include "../engine/AudioEngine.h"
 #include "PluginFolders.h"
 #include "PluginPrefs.h"
+#include "ScanLog.h"
 #include "sandbox/Sandbox.h"
 
 namespace gl::host {
@@ -1075,6 +1077,13 @@ class HostedGenerator final : public Generator {
     aux_.assign(static_cast<size_t>(auxCount_) * 2 * AudioEngine::kMaxBlock, 0.0f);
   }
   bool active() const override { return true; }  // tails are the plugin's business
+  // K-277: the engine listens for the end of the tail; the notes Gridline started and has not ended.
+  bool tailKnown() const override { return false; }
+  bool notesHeld() const override {
+    for (const auto& n : notes_)
+      if (n.used) return true;
+    return deferredCount_ > 0;
+  }
   // K-144: per-note pitch as the plugin's options say (HostOptions::notePitch): note tuning, MPE
   // channels (every note its own pitch bend) or nothing; otherwise the engine bends the channel.
   bool supportsGlide() const override {
@@ -1539,6 +1548,7 @@ struct Service {
   std::atomic<bool> running{false};  // K-73: status.running, readable without `lock`
   bool closed = false;              // J-103: after shutdownScan() no scan starts any more
   bool pending = false;             // K-13: scan again when the running one is done (requestScan)
+  std::string logFile;              // K-267: <config>/plugin-scan.log
 };
 Service& service() {
   static auto* s = new Service;  // never destroyed (shutdownScan() joins the worker before main returns)
@@ -1642,16 +1652,55 @@ void finishEntry(Service& sv, ScanResult r) {
   saveCache(sv, false);
 }
 
-// Scans the entries, a few at a time (K-71), each in its own child process.
-void scanEntries(Service& sv, const std::string& exe, const std::vector<std::pair<std::string, std::string>>& todo) {
+// K-267: crashes and timeouts are tried once more, alone, after the other entries (GRIDLINE_SCAN_RETRY=0:
+// not; tests of many hung plugins).
+bool scanRetries() {
+  const char* e = std::getenv("GRIDLINE_SCAN_RETRY");
+  return !(e && std::string(e) == "0");
+}
+
+// K-267: a failed entry (or an entry with plugins that did not load) goes to the scan log, whatever
+// the debug log setting. The first one of a scan writes the scan's header line.
+struct ScanLogRun {
+  std::mutex lock;
+  std::string file, header;
+  bool headerWritten = false;
+};
+void logScan(ScanLogRun& run, const ScanResult& r, const ScanReport& rep, int attempt, bool retried) {
+  const bool failed = !r.ok || !r.failed.empty();
+  if (!failed || rep.outcome == ScanReport::Outcome::Cancelled || run.file.empty()) return;
+  ScanLogEntry e;
+  e.time = scanLogTime();
+  e.format = r.format;
+  e.entry = r.bundle;
+  e.error = r.error.empty() && !r.failed.empty() ? "some of its plugins did not load" : r.error;
+  e.report = rep;
+  e.attempt = attempt;
+  e.retried = retried;
+  std::string text = formatScanLogEntry(e);
+  if (r.ok)
+    for (const auto& f : r.failed) text += "  plugin " + (f.name.empty() ? f.uid : f.name) + ": " + f.error + "\n";
+  std::lock_guard<std::mutex> g(run.lock);
+  if (!run.headerWritten) {
+    text = run.header + text;
+    run.headerWritten = true;
+  }
+  appendScanLog(run.file, text);
+}
+
+// One pass over `todo`, `jobs` children at once (K-71). attempt 0: crashes and timeouts go to `retry`
+// (when given) instead of the cache.
+void scanPassOf(Service& sv, const std::string& exe, const std::vector<std::pair<std::string, std::string>>& todo, size_t jobs, int attempt,
+                ScanLogRun& log, std::vector<size_t>* retry) {
   if (todo.empty()) return;
-  const size_t jobs = std::min(static_cast<size_t>(scanJobs()), todo.size());
+  jobs = std::max<size_t>(1, std::min(jobs, todo.size()));
   {
     std::lock_guard<std::mutex> g(sv.lock);
     sv.slots.assign(jobs, Service::Slot{});
   }
+  std::mutex retryLock;
   std::atomic<size_t> next{0};
-  auto run = [&sv, &exe, &todo, &next](size_t slot) {
+  auto run = [&](size_t slot) {
     for (;;) {
       if (sv.cancel.load()) return;  // J-103: quitting (the rest is scanned at the next start)
       const size_t i = next++;
@@ -1662,19 +1711,28 @@ void scanEntries(Service& sv, const std::string& exe, const std::vector<std::pai
         sv.slots[slot] = {entry, ScanClock::now()};
       }
       ScanResult r;
+      ScanReport rep;
       try {
-        r = scanIsolated(exe, format, entry, scanTimeout(), &sv.cancel);
+        r = scanIsolated(exe, format, entry, scanTimeout(), &sv.cancel, &rep, attempt);
       } catch (const std::exception& e) {  // K-73: (a path the system cannot spell, no temp folder) one entry fails, not the app
         r = ScanResult{};
         r.format = format;
         r.bundle = entry;
         r.error = std::string("cannot be scanned: ") + e.what();
+        rep = ScanReport{};
       }
       {
         std::lock_guard<std::mutex> g(sv.lock);
         sv.slots[slot] = {};
       }
       if (sv.cancel.load()) return;  // a cancelled scan is not a result: never cached
+      const bool again = retry && !r.ok && scanRetryable(rep);
+      logScan(log, r, rep, attempt, again);
+      if (again) {
+        std::lock_guard<std::mutex> g(retryLock);
+        retry->push_back(i);
+        continue;
+      }
       finishEntry(sv, std::move(r));
     }
   };
@@ -1691,6 +1749,29 @@ void scanEntries(Service& sv, const std::string& exe, const std::vector<std::pai
   std::lock_guard<std::mutex> g(sv.lock);
   sv.slots.clear();
 }
+
+// Scans the entries, a few at a time (K-71), each in its own child process. K-267: an entry that
+// crashed or timed out is scanned once more after the others, alone and with longer timeouts: a
+// plugin that fails only while others load at the same time (shared licence or content services),
+// or that takes long the first time it starts, is not blacklisted for it; one slow plugin never
+// holds up the rest, which finish first.
+void scanEntries(Service& sv, const std::string& exe, const std::vector<std::pair<std::string, std::string>>& todo) {
+  if (todo.empty()) return;
+  const size_t jobs = std::min(static_cast<size_t>(scanJobs()), todo.size());
+  ScanLogRun log;
+  {
+    std::lock_guard<std::mutex> g(sv.lock);
+    log.file = sv.logFile;
+  }
+  log.header = scanLogHeader(scanLogTime(), static_cast<int>(todo.size()), static_cast<int>(jobs));
+  std::vector<size_t> retry;
+  scanPassOf(sv, exe, todo, jobs, 0, log, scanRetries() ? &retry : nullptr);
+  if (sv.cancel.load() || retry.empty()) return;
+  std::sort(retry.begin(), retry.end());  // in the order they were found
+  std::vector<std::pair<std::string, std::string>> again;
+  for (size_t i : retry) again.push_back(todo[i]);
+  scanPassOf(sv, exe, again, 1, 1, log, nullptr);
+}
 }  // namespace
 
 void initHosting(const std::string& configDir) {
@@ -1704,6 +1785,7 @@ void initHosting(const std::string& configDir) {
   const int classes = countClasses();
   std::lock_guard<std::mutex> g(s.lock);
   s.cacheFile = cache.file();
+  s.logFile = (std::filesystem::u8path(configDir) / "plugin-scan.log").u8string();  // K-267
   s.cache = std::move(cache);
   ++s.status.cacheChanges;
   s.dirty = false;
@@ -1865,6 +1947,12 @@ void rescanEntries(const std::string& exe, const std::vector<std::pair<std::stri
 }
 
 std::vector<std::pair<std::string, std::string>> discoverPluginEntries() { return discoverAll(); }
+
+std::string scanLogFile() {
+  Service& s = service();
+  const auto g = lockForRead(s);
+  return s.logFile;
+}
 
 void rescanFolder(const std::string& exe, const std::string& format, const std::string& folder) {
   if (format != "*" && (!findFormat(format) || !folderSearchApplies(format))) return;

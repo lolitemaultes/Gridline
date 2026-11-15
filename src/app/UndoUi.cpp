@@ -1,6 +1,7 @@
 #include "UndoUi.h"
 
 #include <algorithm>
+#include <cmath>
 #include <deque>
 #include <cstdio>
 #include <memory>
@@ -13,6 +14,8 @@
 #include "App.h"
 #include "CollabUi.h"
 #include "Keys.h"
+#include "LiveLook.h"
+#include "LogicPlugins.h"
 #include "Theme.h"
 #include "Widgets.h"
 
@@ -206,23 +209,73 @@ void historyWindow(App& a) {
   wasShown = true;
   if (opened) ImGui::SetNextWindowFocus();
   ImGui::SetNextWindowSize(ImVec2(300, 420), ImGuiCond_FirstUseEver);
-  if (!ImGui::Begin(ui::windowTitle("Undo history").c_str(), &a.showHistory)) {
+  // K-112b: the Tracks layout lists the steps as a table: a header (step number, action), striped
+  // rows edge to edge with the number right-aligned in its column, and Undo / Redo at the bottom right.
+  const bool table = logicplug::active(a);
+  if (table) ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+  const bool open = ImGui::Begin(ui::windowTitle("Undo history").c_str(), &a.showHistory);
+  if (table) ImGui::PopStyleVar();
+  if (!open) {
     ImGui::End();
     return;
   }
   const collab::Session* session = collabui::session(a);
   bool showPeers = a.settings.getBool("undo.showCollaborators");
   if (session) {
+    if (table) ImGui::SetCursorPos(ImVec2(theme::kS3, theme::kS2 + ImGui::GetCursorPosY()));
     if (ImGui::Checkbox(i18n::tr("Show collaborators' edits"), &showPeers)) a.settings.set("undo.showCollaborators", showPeers);
     ui::Hint("Lists what others changed between your steps, greyed. Undo only ever goes back through your own steps.");
     ImGui::Separator();
   }
-  ImGui::BeginChild("##steps");
   const UndoStack& h = a.doc.history();
   const size_t n = h.size();
+  const auto& P = pal();
+  const float numW = 52.0f, rowH = ImGui::GetFontSize() + 10.0f, footH = table ? ImGui::GetFrameHeight() + 2 * theme::kS3 : 0.0f;
+  if (table) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 q = ImGui::GetCursorScreenPos();
+    const float w = ImGui::GetContentRegionAvail().x, hh = ImGui::GetFontSize() + 8.0f;
+    dl->AddRectFilled(q, ImVec2(q.x + w, q.y + hh), theme::mix(P.surface800, P.text, 0.04f));
+    dl->AddLine(ImVec2(q.x, q.y + hh - 1), ImVec2(q.x + w, q.y + hh - 1), P.dark ? theme::withAlpha(P.ink, 0.6f) : P.lineStrong);
+    dl->AddLine(ImVec2(q.x + numW + 4, q.y + 4), ImVec2(q.x + numW + 4, q.y + hh - 5), theme::withAlpha(P.textDim, 0.4f));
+    const float ty = std::round(q.y + (hh - ImGui::GetFontSize()) * 0.5f);
+    const char* stepH = i18n::tr("Step");
+    dl->AddText(ImVec2(std::round(q.x + numW - ImGui::CalcTextSize(stepH).x - 4), ty), P.textDim, stepH);
+    dl->AddText(ImVec2(q.x + numW + 12, ty), P.textDim, i18n::tr("Action"));
+    ImGui::Dummy(ImVec2(w, hh));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
+  }
+  ImGui::BeginChild("##steps", ImVec2(0, -footH));
+  // One row of the table: stripes, the number right-aligned, the action after it; the current step lit.
+  auto tableRow = [&](size_t i, const char* text, bool current, bool applied) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 q = ImGui::GetCursorScreenPos();
+    const float w = ImGui::GetContentRegionAvail().x;
+    if (i % 2 == 1) dl->AddRectFilled(q, ImVec2(q.x + w, q.y + rowH), theme::withAlpha(P.text, 0.035f));
+    ImGui::PushID(static_cast<int>(i));
+    const bool hit = ImGui::Selectable("##row", current, 0, ImVec2(w, rowH));
+    ImGui::PopID();
+    const float ty = std::round(q.y + (rowH - ImGui::GetFontSize()) * 0.5f);
+    const ImU32 col = current ? P.text : applied ? P.text : P.textFaint;
+    if (i > 0) {
+      const std::string num = std::to_string(i);
+      dl->AddText(ImVec2(std::round(q.x + numW - ImGui::CalcTextSize(num.c_str()).x - 4), ty), applied ? P.textDim : P.textFaint, num.c_str());
+    }
+    theme::textEllipsis(dl, ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(q.x + numW + 12, ty), w - numW - 16, col, text);
+    return hit;
+  };
   // A shared project's history starts when you shared or joined it (unless older steps were dropped).
   const char* startRow = session && n < h.maxLevels() ? i18n::tr("Start of shared history") : i18n::tr("Start of history");
-  if (ImGui::Selectable(startRow, h.position() == 0)) a.doc.jumpTo(0);
+  // K-112: in Live, as the refs list steps, a line under each row.
+  const bool ruled = livelook::active(a);
+  auto rule = [&] {
+    if (!ruled) return;
+    const ImVec2 r0 = ImGui::GetItemRectMin(), r1 = ImGui::GetItemRectMax();
+    const float y = std::floor(r1.y + ImGui::GetStyle().ItemSpacing.y * 0.5f) + 0.5f;
+    ImGui::GetWindowDrawList()->AddLine(ImVec2(r0.x, y), ImVec2(r1.x, y), pal().dark ? theme::withAlpha(pal().textFaint, 0.35f) : pal().line);
+  };
+  if (table ? tableRow(0, startRow, h.position() == 0, true) : ImGui::Selectable(startRow, h.position() == 0)) a.doc.jumpTo(0);
+  rule();
   const std::deque<collab::PeerEdit>* peers = session && showPeers ? &session->peerEdits() : nullptr;
   size_t pi = 0;
   auto peerRow = [&](const collab::PeerEdit& e) {
@@ -259,17 +312,37 @@ void historyWindow(App& a) {
         mark = buf;
       }
     }
-    ImGui::PushStyleColor(ImGuiCol_Text, theme::vec(applied ? pal().text : pal().textFaint));
     std::string row = mark.empty() ? l : l + "  (" + mark + ")";
-    row += "##" + std::to_string(i);
-    if (ImGui::Selectable(row.c_str(), i + 1 == h.position())) a.doc.jumpTo(i + 1);
+    if (table) {
+      if (tableRow(i + 1, row.c_str(), i + 1 == h.position(), applied)) a.doc.jumpTo(i + 1);
+    } else {
+      ImGui::PushStyleColor(ImGuiCol_Text, theme::vec(applied ? pal().text : pal().textFaint));
+      row += "##" + std::to_string(i);
+      if (ImGui::Selectable(row.c_str(), i + 1 == h.position())) a.doc.jumpTo(i + 1);
+      ImGui::PopStyleColor();
+      rule();
+    }
     if (opened && i + 1 == h.position()) ImGui::SetScrollHereY(0.5f);  // show the current step
-    ImGui::PopStyleColor();
   }
   if (peers)
     while (pi < peers->size()) peerRow((*peers)[pi++]);
   if (!opened && ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 4) ImGui::SetScrollHereY(1.0f);
   ImGui::EndChild();
+  if (table) {  // Undo / Redo at the bottom right, above a hairline
+    ImGui::PopStyleVar();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 q = ImGui::GetCursorScreenPos();
+    const float w = ImGui::GetContentRegionAvail().x, bw = 72.0f;
+    dl->AddLine(q, ImVec2(q.x + w, q.y), P.dark ? theme::withAlpha(P.ink, 0.6f) : P.lineStrong);
+    ImGui::SetCursorScreenPos(ImVec2(std::round(q.x + w - 2 * bw - theme::kS2 - theme::kS3), q.y + theme::kS3));
+    ImGui::BeginDisabled(h.position() == 0);
+    if (ui::TextButton(i18n::tr("Undo"), false, bw, "Undo the last step")) step(a, -1);
+    ImGui::EndDisabled();
+    ImGui::SameLine(0, theme::kS2);
+    ImGui::BeginDisabled(h.position() >= n);
+    if (ui::TextButton(i18n::tr("Redo"), false, bw, "Redo the next step")) step(a, 1);
+    ImGui::EndDisabled();
+  }
   ImGui::End();
 }
 

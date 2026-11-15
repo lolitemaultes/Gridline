@@ -245,6 +245,10 @@ void dockMenuItems(App& a, Session& s);
 // An audio file on its own (the browser's Edit in Loupe): its own window, no owner.
 bool openFileInLoupe(App& a, const std::string& path);  // View menu: Pin to the layout / Unpin
 bool claimEffectEditor(App& a, const PluginTarget& t);
+// K-112: pinned and `t` holds Loupe: the panel's session becomes that slot's (nothing else changes).
+bool showInPanel(App& a, const PluginTarget& t);
+// K-112 (R3): the Loupe panel's content in `avail` (its session, or the empty state).
+void drawPanelBody(App& a, ImVec2 avail);
 // Dev checks (--dev-input "loupe [pin <spot> | unpin]"): the panel's room and layout last frame.
 struct DockDev {
   float w = 0, h = 0;

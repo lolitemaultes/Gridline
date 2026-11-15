@@ -319,6 +319,16 @@ bool devDragHostedEditor(int, int, double) { return false; }
 
 bool hostedEditorOpen(const PluginTarget& t) { return windowFor(&app(), t) != nullptr; }
 bool hostedEditorUnderMouse(PluginTarget&, float&, float&) { return false; }  // J-111g: no collaboration inside a plugin build
+// K-112: inside a plugin build the windows show and hide with Gridline's editor; none is set aside.
+bool setHostedEditorHidden(const PluginTarget&, bool, unsigned) { return false; }
+bool hostedEditorHidden(const PluginTarget&) { return false; }
+std::vector<PluginTarget> openHostedEditorTargets() {
+  std::vector<PluginTarget> out;
+  for (const auto& [k, w] : windows())
+    if (k.first == &app() && !w->dead) out.push_back(w->target);
+  return out;
+}
+bool toggleHostedEditorsHidden() { return false; }
 
 void closeHostedEditor(App& a, const PluginTarget& t, const char*) {  // the reason is logged by the app build only
   auto it = windows().find(Key{&a, t.key()});
@@ -587,4 +597,6 @@ std::string unavailableReason() { return i18n::N_("Not available inside a plugin
 void gatherAll() {}
 int detachedCount() { return 0; }
 void openAttached(const char*) {}
+void togglePopOut(const char*) {}
+bool poppable() { return false; }
 }  // namespace gl::viewports

@@ -218,6 +218,9 @@ bool devPoints(const std::string& name, DevPoints& out);
 void compareStore(App& a, const PluginTarget& t);
 void compareFlip(App& a, const PluginTarget& t);
 bool compareOnB(const PluginTarget& t);
+// K-112b (D4): the Tracks layout's Compare: the spare slot holds `other` (the state as saved with
+// the project) and the edit shows (not on B). compareFlip then switches between the two.
+void compareSetSpare(App& a, const PluginTarget& t, const PluginState& other);
 // J-213: the header's preset selector belongs to one plugin type: when the
 // target's plugin is replaced (any path, undo included) it starts over at the
 // new plugin's "Default". presetLoaded: a preset loaded from outside the header

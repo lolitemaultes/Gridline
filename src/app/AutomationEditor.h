@@ -19,6 +19,7 @@ void drawAutomationEditor(App& a);
 // Opens the editor on an automation clip. `placement` (a playlist clip of it)
 // puts the view in song time with the target's other clips as ghosts.
 void openAutomationEditor(App& a, ObjectId automation, ObjectId placement = kNoId);
+void closeAutomationEditor();  // K-112 (dev): the layout inventory closes it again
 // J-173: opens the editor on the automation clip of `target` inside a pattern
 // (does nothing when the pattern has none).
 void openPatternAutomation(App& a, ObjectId pattern, ParamId target);
@@ -46,7 +47,9 @@ void devAutomationEditor(App& a, int mode);
 // New automation clip for a parameter: starts at the current value, is placed
 // at the playback position (or over the playlist time selection) on a free
 // track, and opens in the editor. Returns the AutomationClip id.
-ObjectId createAutomationClip(App& a, ParamId pid);
+// K-112c: `newLane`: on a playlist track of its own below every used one (named after the control
+// when it has no name), never beside the control's other clips.
+ObjectId createAutomationClip(App& a, ParamId pid, bool newLane = false);
 // J-173: new automation clip for a parameter inside a pattern (kNoId: the
 // current one): over the pattern's length at the current value, opened in the
 // editor. A pattern holds one clip per control: an existing one just opens.

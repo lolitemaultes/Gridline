@@ -18,6 +18,10 @@ enum class Block : int {
   Record,    // record, metronome, count-in, typing keyboard, recording options
   Mix,       // mixer windows and mixer layout
   Program,   // the program menu on the mark: about, settings, shortcuts, welcome screen, quit
+  Track,     // K-112b (Tracks layout): new, duplicate and delete tracks, the track's own menu
+  Window,    // K-112b (Tracks layout): the editors and windows, plugin windows shown or hidden
+  TracksEdit,    // K-112b (Tracks layout): Edit in that layout's grouping (Studio's Edit stays as it is)
+  TracksRecord,  // K-112b (Tracks layout): Record in that layout's grouping (Live keeps Record)
   Count
 };
 
@@ -36,7 +40,8 @@ struct Menu {
 const std::vector<Menu>& menus(layout::Preset style);
 // The studio menus every style must reach.
 const std::vector<Block>& studioBlocks();
-// True when `block` appears in the style (a menu or a submenu of one).
+// True when `block` appears in the style (a menu or a submenu of one), or a regrouping of it
+// (K-112b: the Tracks layout's Edit and Record hold the same commands).
 bool reaches(layout::Preset style, Block block);
 
 }  // namespace gl::menustyle

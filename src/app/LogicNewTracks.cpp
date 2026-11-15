@@ -1,0 +1,194 @@
+// Gridline - K-112b: the New tracks dialog. See LogicNewTracks.h.
+#include "LogicNewTracks.h"
+
+#include <algorithm>
+#include <cfloat>
+#include <cmath>
+#include <cstring>
+#include <string>
+#include "../../third_party/imgui/imgui.h"
+#include "../core/I18n.h"
+#include "../core/MenuOps.h"
+#include "../core/PluginInfo.h"
+#include "App.h"
+#include "ContextMenus.h"
+#include "Keys.h"
+#include "Theme.h"
+#include "Widgets.h"
+
+namespace gl::newtracks {
+namespace {
+
+using theme::pal;
+
+bool gOpen = false, gAppearing = false;
+int gKind = 0;  // 0 instrument, 1 empty playlist track, 2 mixer track
+int gCount = 1;
+std::string gType = "gl.synth";
+bool gOpenEditor = true;
+
+struct Kind {
+  const char* name;
+  const char* line;  // what it makes, one short line
+  ui::Icon icon;
+  uint32_t badge;  // the card's icon disc
+};
+const Kind kKinds[] = {
+    {i18n::N_("Instrument"), i18n::N_("A channel with an instrument, on a track"), ui::Icon::CatSynth, 0x3B8F55},
+    {i18n::N_("Track"), i18n::N_("An empty playlist track for clips and audio"), ui::Icon::Playlist, 0x5B57C9},
+    {i18n::N_("Mixer track"), i18n::N_("A mixer track for effects and sends"), ui::Icon::Mixer, 0x2F7EDB},
+};
+constexpr int kKindCount = 3;
+
+// One kind as a card: an icon disc, the name, a line under it; the chosen one has an accent ring.
+bool card(App& a, int k, ImVec2 size) {
+  const auto& P = pal();
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const ImVec2 p = ImGui::GetCursorScreenPos();
+  ImGui::PushID(k);
+  const bool hit = ImGui::InvisibleButton("##card", size);
+  ImGui::PopID();
+  const bool hov = ImGui::IsItemHovered(), on = gKind == k;
+  const ImU32 bg = ImGui::GetColorU32(ImGuiCol_WindowBg);
+  dl->AddRectFilled(p, ImVec2(p.x + size.x, p.y + size.y), theme::mix(bg, P.text, on ? 0.10f : hov ? 0.08f : 0.05f), 16.0f);  // checkpoint 26: rounder, as 067
+  dl->AddRect(p, ImVec2(p.x + size.x, p.y + size.y), on ? P.hot : theme::withAlpha(P.text, 0.12f), 16.0f, 0, on ? 2.0f : 1.0f);
+  const float cx = std::round(p.x + size.x * 0.5f), discR = 30.0f, discY = p.y + 20 + discR;  // K-112b (checkpoint 26): a larger disc, as 067
+  dl->AddCircleFilled(ImVec2(cx, discY), discR, theme::rgb(kKinds[k].badge), 40);
+  ui::drawIconBox(dl, kKinds[k].icon, ImVec2(cx, discY), 28.0f, pal().paper);
+  const char* name = i18n::tr(kKinds[k].name);
+  const float nf = theme::kFontTitle;
+  const float nw = a.fontBold->CalcTextSizeA(nf, FLT_MAX, 0, name).x;
+  dl->AddText(a.fontBold, nf, ImVec2(std::round(cx - nw * 0.5f), std::round(discY + discR + 10)), P.text, name);
+  const char* line = i18n::tr(kKinds[k].line);
+  const float lf = theme::kFontCaption;
+  const char* const lineEnd = line + std::strlen(line);
+  auto lines = [&](float w) {
+    int n = 0;
+    for (const char* s = line; s < lineEnd; ++n) {
+      const char* e = a.fontRegular->CalcWordWrapPosition(lf, s, lineEnd, w);
+      s = e == s ? s + 1 : e;
+      while (s < lineEnd && *s == ' ') ++s;
+    }
+    return n;
+  };
+  // K-112b (second pass): balanced lines. The narrowest width that keeps the same number of lines,
+  // so a description never leaves one word alone on its last line.
+  float room = size.x - 24;
+  if (const int n = lines(room); n > 1) {
+    float lo = room * 0.3f, hi = room;
+    for (int i = 0; i < 12; ++i) {
+      const float mid = (lo + hi) * 0.5f;
+      (lines(mid) <= n ? hi : lo) = mid;
+    }
+    room = std::ceil(hi);
+  }
+  float ly = std::round(discY + discR + 10 + nf + 6);
+  for (const char *s = line, *end = lineEnd; s < end;) {  // wrapped, each line centred
+    const char* e = a.fontRegular->CalcWordWrapPosition(lf, s, end, room);
+    if (e == s) e = s + 1;
+    const float lw = a.fontRegular->CalcTextSizeA(lf, FLT_MAX, 0, s, e).x;
+    dl->AddText(a.fontRegular, lf, ImVec2(std::round(cx - lw * 0.5f), ly), P.textDim, s, e);
+    ly += lf + 3;
+    s = e;
+    while (s < end && *s == ' ') ++s;
+  }
+  return hit;
+}
+
+void create(App& a) {
+  const int n = std::clamp(gCount, 1, 16);
+  if (gKind == 0) {
+    ObjectId last = kNoId;
+    for (int i = 0; i < n; ++i) last = a.addInstrument(gType);
+    if (gOpenEditor && last != kNoId) a.showNewInstrument(last);
+  } else if (gKind == 1) {
+    for (int i = 0; i < n && static_cast<int>(a.doc.song().tracks.size()) < kMaxPlaylistTracks; ++i)
+      ops::insertPlaylistTrack(a.doc, static_cast<int>(a.doc.song().tracks.size()));
+  } else {
+    ObjectId last = kNoId;
+    for (int i = 0; i < n; ++i)
+      if (const ObjectId id = a.doc.addMixerTrack(); id != kNoId) last = id;
+    if (last != kNoId) a.selMixer = last;
+  }
+}
+
+}  // namespace
+
+void open() { gOpen = gAppearing = true; }
+bool isOpen() { return gOpen; }
+
+void draw(App& a) {
+  if (!gOpen) return;
+  const auto& P = pal();
+  const float cardW = 196, cardH = 172, gap = theme::kS3, pad = theme::kS6;
+  const float w = cardW * kKindCount + gap * (kKindCount - 1) + pad * 2;
+  ui::PlaceNextDialog(ImVec2(w, 0), gAppearing ? ImGuiCond_Always : ImGuiCond_Appearing);
+  if (gAppearing) ImGui::SetNextWindowFocus();
+  gAppearing = false;
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, theme::kS4));
+  const bool vis = ImGui::Begin(ui::windowTitle("New tracks").c_str(), &gOpen,
+                                ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
+  ui::KeepWindowInViewport();
+  ImGui::PopStyleVar();
+  if (!vis) {
+    ImGui::End();
+    return;
+  }
+  for (int k = 0; k < kKindCount; ++k) {
+    if (k) ImGui::SameLine(0, gap);
+    if (card(a, k, ImVec2(cardW, cardH))) gKind = k;
+  }
+  ImGui::Dummy(ImVec2(0, theme::kS2));
+  // The chosen kind's details, on one form column.
+  constexpr float col = 132;
+  ImGui::PushFont(a.fontBold, theme::kFontBody);
+  ImGui::TextUnformatted(i18n::tr("Details"));
+  ImGui::PopFont();
+  ImGui::Dummy(ImVec2(0, 2));
+  ui::SetFormColumn(col);  // labels end at the column
+  if (gKind == 0) {
+    const PluginInfo* info = findPlugin(gType);
+    ui::FormLabelFit(i18n::tr("Instrument"), col, P.textDim);
+    if (ui::BeginCombo("##ntinst", info ? info->name.c_str() : i18n::tr("Choose one"), 260)) {
+      menus::instrumentItems([](const std::string& t) { gType = t; }, gType);
+      ImGui::EndCombo();
+    }
+    ImGui::Dummy(ImVec2(0, 0));
+    ImGui::SameLine(col);
+    ImGui::Checkbox(i18n::tr("Open its editor"), &gOpenEditor);
+  } else {
+    ImGui::Dummy(ImVec2(0, 0));
+    ImGui::SameLine(col);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(theme::vec(P.textDim), "%s", gKind == 1 ? i18n::tr("Added below the last track") : i18n::tr("Added after the last mixer track"));
+  }
+  ui::SetFormColumn(0);
+  // Footer: how many in the middle, Cancel and Create on the right.
+  ImGui::Dummy(ImVec2(0, theme::kS2));
+  const ImVec2 f0 = ImGui::GetCursorScreenPos();
+  const float fw = ImGui::GetContentRegionAvail().x;
+  ImGui::GetWindowDrawList()->AddLine(ImVec2(f0.x - pad, f0.y), ImVec2(f0.x + fw + pad, f0.y), P.dark ? theme::withAlpha(P.ink, 0.6f) : P.lineStrong);
+  ImGui::Dummy(ImVec2(0, theme::kS2));
+  const char* howMany = i18n::tr("Number of tracks");
+  const float hw = ImGui::CalcTextSize(howMany).x, fieldW = 56;
+  const float y = ImGui::GetCursorPosY();
+  ImGui::SetCursorPosX(std::round(pad + (fw - hw - theme::kS2 - fieldW) * 0.5f));
+  ImGui::AlignTextToFramePadding();
+  ImGui::TextColored(theme::vec(P.textDim), "%s", howMany);
+  ImGui::SameLine(0, theme::kS2);
+  ImGui::SetNextItemWidth(fieldW);
+  if (ImGui::InputInt("##ntcount", &gCount, 0, 0)) gCount = std::clamp(gCount, 1, 16);
+  ImGui::SetCursorPos(ImVec2(pad + fw - ui::ButtonRowWidth(2, 96), y));
+  const bool cancel = ui::TextButton(i18n::tr("Cancel"), false, 96) || keys::escapePressed();
+  ImGui::SameLine(0, theme::kS2);
+  const bool ok = ui::PrimaryButton(i18n::tr("Create"), 96, nullptr, gKind != 0 || findPlugin(gType) != nullptr);
+  if (ok) {
+    a.later([&a] { create(a); });
+    gOpen = false;
+  } else if (cancel) {
+    gOpen = false;
+  }
+  ImGui::End();
+}
+
+}  // namespace gl::newtracks

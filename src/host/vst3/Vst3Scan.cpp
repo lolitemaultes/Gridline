@@ -25,14 +25,19 @@ ScanResult scanBundleInProcess(const std::string& bundle) {
   r.bundle = bundle;
   r.mtime = bundleMtime(bundle);
   std::string err;
+  host::scanStep("loading the module " + bundleBinaryPath(bundle));  // K-267: the scan log shows where a plugin stops
   std::unique_ptr<Module> mod = Module::load(bundle, &err);
   if (!mod) {
     r.error = err;
     return r;
   }
   std::shared_ptr<Module> m(mod.release());
+  host::scanStep("module loaded: " + std::to_string(m->classes().size()) + " classes");
+  int audioModules = 0;
   for (const ClassInfo& ci : m->classes()) {
     if (!ci.isAudioModule()) continue;
+    ++audioModules;
+    host::scanStep("creating " + (ci.name.empty() ? ci.uid : ci.name));
     ScannedClass c;
     c.uid = ci.uid;
     c.name = ci.name;
@@ -76,7 +81,9 @@ ScanResult scanBundleInProcess(const std::string& bundle) {
         c.params.push_back(std::move(sp));
       }
     } else {
-      r.error += (r.error.empty() ? "" : "; ") + ci.name + ": " + perr;
+      const std::string label = ci.name.empty() ? ci.uid : ci.name;
+      host::scanStep(label + ": " + perr);
+      r.error += (r.error.empty() ? "" : "; ") + label + ": " + perr;
       r.failed.push_back({ci.uid, ci.name, perr});  // K-180: listed as failed on its own
       continue;
     }
@@ -84,7 +91,12 @@ ScanResult scanBundleInProcess(const std::string& bundle) {
     host::scanProgress();  // K-73: bundles of hundreds of plugins: the scan's timeout starts again
   }
   r.ok = !r.classes.empty();
-  if (!r.ok && r.error.empty()) r.error = "no audio module classes";
+  // K-267: a module without audio classes (a shell or helper an installer puts beside its plugins)
+  // holds nothing to load: listed with no plugins, not as a failed plugin.
+  if (audioModules == 0) {
+    r.ok = true;
+    r.error.clear();
+  }
   m->leakOnDestroy();
   return r;
 }

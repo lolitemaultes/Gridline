@@ -1,5 +1,5 @@
 // Gridline — main menu contents (File, Edit, Add, Patterns, View, Options,
-// Tools, Help) and the global shortcuts behind them. The bar that hosts the
+// Tools, Help) as data (MenuDef.h) and the global shortcuts behind them. The bar that hosts the
 // menus lives in TopBar.cpp; context menus live in ContextMenus.cpp.
 #include <algorithm>
 #include <cmath>
@@ -28,6 +28,7 @@
 #include "AutomationEditor.h"
 #include "ContextMenus.h"
 #include "ExportUi.h"
+#include "HostedUi.h"
 #include "FlpExportUi.h"
 #include "Theme.h"
 #include "UpdateUi.h"
@@ -44,6 +45,8 @@
 #include "TrackReceiptUi.h"
 #include "CommandPaletteUi.h"
 #include "GrooveUi.h"
+#include "LayoutParts.h"
+#include "MenuDef.h"
 
 namespace gl {
 
@@ -96,516 +99,647 @@ void stopSound(App& a) { menuparity::panicPressed(a); }  // J-109: stops the tra
 }  // namespace
 
 // ---------------------------------------------------------------- menus ----
+//
+// The Studio menus as data (MenuDef.h): the in-window menu bars draw these definitions, the
+// menu tree (palette, system menu bars, tests) is read from them and a chosen item runs from
+// them. Providers list what only the project knows (templates, recent files, patterns) and the
+// rows other modules keep with their own code.
 
-void menuFile(App& a) {
+namespace md = menudef;
+using i18n::N_;
+
+namespace {
+
+bool notEmbedded(App& a) { return !a.embedded; }
+
+void templateItems(App& a) {
+  // Shipped and user templates by category (J-24).
+  std::string cat;
+  for (const auto& t : a.templates()) {
+    if (t.category != cat) {
+      cat = t.category;
+      ImGui::SeparatorText(cat.c_str());
+    }
+    std::string path = t.path;
+    if (ImGui::MenuItem((t.name + "##" + path).c_str())) a.guardUnsaved([&a, path]() { a.newFromTemplate(path); });
+    if (!t.description.empty()) ui::Hint(t.description);
+  }
+}
+
+void recentItems(App& a) {
+  for (const auto& r : a.recentFiles)
+    if (ImGui::MenuItem((fs::path(r).filename().string() + "##" + r).c_str())) {
+      std::string path = r;
+      a.guardUnsaved([&a, path]() { a.openProject(path); });
+    }
+}
+
+const md::Menu& fileDef() {
   // K-77: create, open, save, import / export, sharing, project, quit.
-  if (ImGui::MenuItem(i18n::tr("New"), keys::label("file.new"))) a.guardUnsaved([&a]() { a.newProject(); });
-  if (ImGui::BeginMenu(i18n::tr("New from template"))) {
-    if (ImGui::MenuItem(i18n::tr("Browse templates..."))) a.showNewProject = true;
-    ImGui::Separator();
-    if (ImGui::MenuItem(i18n::tr("Empty project"))) a.guardUnsaved([&a]() { a.newFromTemplate(""); });
-    if (ImGui::MenuItem(i18n::tr("Starter kit (drums + synth)"))) a.guardUnsaved([&a]() { a.newFromTemplate("starter"); });
-    if (ImGui::MenuItem(i18n::tr("Demo song"))) a.guardUnsaved([&a]() { a.newFromTemplate("demo"); });
-    // Shipped and user templates by category (J-24).
-    std::string cat;
-    for (const auto& t : a.templates()) {
-      if (t.category != cat) {
-        cat = t.category;
-        ImGui::SeparatorText(cat.c_str());
-      }
-      std::string path = t.path;
-      if (ImGui::MenuItem((t.name + "##" + path).c_str())) a.guardUnsaved([&a, path]() { a.newFromTemplate(path); });
-      if (!t.description.empty()) ui::Hint(t.description);
-    }
-    ImGui::EndMenu();
-  }
-  if (ImGui::MenuItem(i18n::tr("New from loop starter..."))) j59::openLoopStarter(a);  // J-59 (GEN-01)
-  ui::Hint("Build a ready-to-play loop: style, tempo, key, mood and energy, with parts you can re-roll");
-  ImGui::Separator();
-  if (ImGui::MenuItem(i18n::tr("Open..."), keys::label("file.open"))) a.openDialog();
-  ui::Hint("Gridline projects, FL Studio projects (.flp) and zipped projects (.zip)");  // J-52
-  if (ImGui::BeginMenu(i18n::tr("Open recent"), !a.recentFiles.empty())) {
-    for (const auto& r : a.recentFiles)
-      if (ImGui::MenuItem((fs::path(r).filename().string() + "##" + r).c_str())) {
-        std::string path = r;
-        a.guardUnsaved([&a, path]() { a.openProject(path); });
-      }
-    ImGui::Separator();
-    if (ImGui::MenuItem(i18n::tr("Clear list"))) a.clearRecents();
-    ImGui::EndMenu();
-  }
-  if (ImGui::MenuItem(i18n::tr("Welcome screen"))) a.home.showHome(a.now);  // J-141
-  ui::Hint("Recent projects, templates and the demo song (also a click on the Gridline logo)");
-  ImGui::Separator();
-  if (ImGui::MenuItem(i18n::tr("Save"), keys::label("file.save"))) a.save();
-  if (ImGui::MenuItem(i18n::tr("Save as..."), keys::label("file.saveAs"))) a.saveAs();
-  if (ImGui::MenuItem(i18n::tr("Save new version"), keys::label("file.saveNewVersion"))) a.saveNewVersion();
-  if (ImGui::MenuItem(i18n::tr("Save as template..."))) a.showSaveTemplate = true;
-  menuparity::fileItems(a);  // J-27
-  if (ImGui::MenuItem(i18n::tr("Revert to last backup"), nullptr, false, a.backups != nullptr)) a.revertToLastBackup();
-  ImGui::Separator();
-  if (ImGui::BeginMenu(i18n::tr("Import"))) {
-    // J-52: FL Studio projects and zipped projects open through File > Open.
-    if (ImGui::MenuItem(i18n::tr("MIDI file...")))
-      fileDialog(a, "Import MIDI file", false, importMidiTypes()[0].exts, "", [&a](const std::string& p) { exportui::importMidiFile(a, p); });
-    if (ImGui::MenuItem(i18n::tr("FL Studio presets..."), nullptr, false, !a.presetImport.running)) {
-      a.startPresetImport();
-      a.showSettings = true;
-      a.settingsTab = 2;  // Project page shows the progress
-    }
-    ImGui::Separator();
-    if (ImGui::MenuItem(i18n::tr("Audio file into a sampler...")))
-      fileDialog(a, "Import audio file", false, importAudioTypes()[0].exts, "",
-                 [&a](const std::string& p) { a.showNewInstrument(a.addInstrument("gl.sampler", p)); });
-    if (ImGui::MenuItem(i18n::tr("Multisample instrument (.sfz, .sf2)...")))  // K-144: a Multisampler channel playing it
-      fileDialog(a, "Import multisample instrument", false, {".sfz", ".sf2"}, "",
-                 [&a](const std::string& p) { a.showNewInstrument(a.addInstrument("gl.multisampler", p)); });
-    if (ImGui::MenuItem(i18n::tr("Audio file as playlist clip...")))
-      fileDialog(a, "Import audio clip", false, importAudioTypes()[0].exts, "",
-                 [&a](const std::string& p) { exportui::importAudioAsClip(a, p); });
-    if (ImGui::MenuItem(i18n::tr("Import from URL..."), keys::label("file.importUrl"))) urlimportui::open(a);  // J-192
-    ui::Hint("A link to a video or audio page: its best audio as a lossless WAV clip");
-    ImGui::EndMenu();
-  }
-  if (ImGui::BeginMenu(i18n::tr("Export"))) {
-    ImGui::SeparatorText(i18n::tr("Audio"));
-    if (ImGui::MenuItem(i18n::tr("Render to file (WAV, FLAC, MP3, Ogg)..."), keys::label("file.render"))) exportui::openRender(a, exportui::Preset::Audio);
-    if (ImGui::MenuItem(i18n::tr("Mixer tracks (stems)..."), keys::label("file.renderStems"))) exportui::openRender(a, exportui::Preset::Stems);
-    if (ImGui::MenuItem(i18n::tr("All playlist tracks..."))) exportui::openRender(a, exportui::Preset::PlaylistTracks);
-    if (ImGui::MenuItem(i18n::tr("All playlist track groups..."))) exportui::openRender(a, exportui::Preset::TrackGroups);  // J-31
-    menuparity::exportItems(a);  // J-27
-    ImGui::SeparatorText(i18n::tr("MIDI"));
-    if (ImGui::MenuItem(i18n::tr("Song as MIDI file..."), keys::label("file.exportMidi"))) exportui::exportMidiDialog(a, 0);
-    if (ImGui::MenuItem(i18n::tr("Pattern as MIDI file..."))) exportui::exportMidiDialog(a, 1);
-    if (ImGui::MenuItem(i18n::tr("Time selection as MIDI file..."), nullptr, false, a.playlist.selEnd > a.playlist.selStart)) exportui::exportMidiDialog(a, 2);
-    ImGui::SeparatorText(i18n::tr("Project"));
-    if (ImGui::MenuItem(i18n::tr("Project data files..."))) exportui::exportDataFilesDialog(a);
-    if (ImGui::MenuItem(i18n::tr("Project bones..."))) exportui::exportBonesDialog(a);
-    if (ImGui::MenuItem(i18n::tr("Gridline zipped project (.gridlinez)..."))) exportui::exportZipDialog(a);
-    freezeui::exportItems(a);  // K-87
-    if (ImGui::MenuItem(i18n::tr("FL Studio project (.flp)..."))) exportui::exportFlpDialog(a);  // J-34
-    if (ImGui::MenuItem(i18n::tr("FL Studio zipped loop package (.zip)..."))) exportui::exportFlpZipDialog(a);  // J-52
-    if (ImGui::MenuItem(i18n::tr("FL Studio export report..."), nullptr, false, flpexport::hasReport())) flpexport::openReport();  // J-80
-    ImGui::EndMenu();
-  }
-  if (ImGui::MenuItem(i18n::tr("Locate missing samples..."))) exportui::openMissingSamples(a);
-  if (!a.embedded) {  // the sharing items (none inside another host: no empty section)
-    ImGui::Separator();
-    collabui::fileMenu(a);  // J-111
-  }
-  ImGui::Separator();
-  if (ImGui::MenuItem(i18n::tr("Project info..."), keys::label("file.projectInfo"))) a.showInfo = true;
-  ImGui::Separator();
-  if (ImGui::MenuItem(i18n::tr("Quit"), keys::label("file.quit"))) a.quitRequested = true;
+  static const md::Menu m = {
+      md::item(N_("New"), "file.new", [](App& a) { a.guardUnsaved([&a]() { a.newProject(); }); }),
+      md::submenu(N_("New from template"),
+                  {
+                      md::item(N_("Browse templates..."), [](App& a) { a.showNewProject = true; }),
+                      md::separator(),
+                      md::item(N_("Empty project"), [](App& a) { a.guardUnsaved([&a]() { a.newFromTemplate(""); }); }),
+                      md::item(N_("Starter kit (drums + synth)"), [](App& a) { a.guardUnsaved([&a]() { a.newFromTemplate("starter"); }); }),
+                      md::item(N_("Demo song"), [](App& a) { a.guardUnsaved([&a]() { a.newFromTemplate("demo"); }); }),
+                      md::provider(templateItems),
+                  }),
+      md::item(N_("New from loop starter..."), [](App& a) { j59::openLoopStarter(a); })  // J-59 (GEN-01)
+          .tip(N_("Build a ready-to-play loop: style, tempo, key, mood and energy, with parts you can re-roll")),
+      md::separator(),
+      md::item(N_("Open..."), "file.open", [](App& a) { a.openDialog(); })
+          .tip(N_("Gridline projects, FL Studio projects (.flp) and zipped projects (.zip)")),  // J-52
+      md::submenu(N_("Open recent"),
+                  {
+                      md::provider(recentItems),
+                      md::separator(),
+                      md::item(N_("Clear list"), [](App& a) { a.clearRecents(); }),
+                  })
+          .when([](App& a) { return !a.recentFiles.empty(); }),
+      md::item(N_("Welcome screen"), [](App& a) { a.home.showHome(a.now); })  // J-141
+          .tip(N_("Recent projects, templates and the demo song (also a click on the Gridline logo)")),
+      md::separator(),
+      md::item(N_("Save"), "file.save", [](App& a) { a.save(); }),
+      md::item(N_("Save as..."), "file.saveAs", [](App& a) { a.saveAs(); }),
+      md::item(N_("Save new version"), "file.saveNewVersion", [](App& a) { a.saveNewVersion(); }),
+      md::item(N_("Save as template..."), [](App& a) { a.showSaveTemplate = true; }),
+      md::provider([](App& a) { menuparity::fileItems(a); }),  // J-27
+      md::item(N_("Revert to last backup"), [](App& a) { a.revertToLastBackup(); }).when([](App& a) { return a.backups != nullptr; }),
+      md::separator(),
+      md::submenu(N_("Import"),
+                  {
+                      // J-52: FL Studio projects and zipped projects open through File > Open.
+                      md::item(N_("MIDI file..."),
+                               [](App& a) {
+                                 fileDialog(a, "Import MIDI file", false, importMidiTypes()[0].exts, "",
+                                            [&a](const std::string& p) { exportui::importMidiFile(a, p); });
+                               }),
+                      md::item(N_("FL Studio presets..."),
+                               [](App& a) {
+                                 a.startPresetImport();
+                                 a.showSettings = true;
+                                 a.settingsTab = 2;  // Project page shows the progress
+                               })
+                          .when([](App& a) { return !a.presetImport.running; }),
+                      md::separator(),
+                      md::item(N_("Audio file into a sampler..."),
+                               [](App& a) {
+                                 fileDialog(a, "Import audio file", false, importAudioTypes()[0].exts, "",
+                                            [&a](const std::string& p) { a.showNewInstrument(a.addInstrument("gl.sampler", p)); });
+                               }),
+                      md::item(N_("Multisample instrument (.sfz, .sf2)..."),  // K-144: a Multisampler channel playing it
+                               [](App& a) {
+                                 fileDialog(a, "Import multisample instrument", false, {".sfz", ".sf2"}, "",
+                                            [&a](const std::string& p) { a.showNewInstrument(a.addInstrument("gl.multisampler", p)); });
+                               }),
+                      md::item(N_("Audio file as playlist clip..."),
+                               [](App& a) {
+                                 fileDialog(a, "Import audio clip", false, importAudioTypes()[0].exts, "",
+                                            [&a](const std::string& p) { exportui::importAudioAsClip(a, p); });
+                               }),
+                      md::item(N_("Import from URL..."), "file.importUrl", [](App& a) { urlimportui::open(a); })  // J-192
+                          .tip(N_("A link to a video or audio page: its best audio as a lossless WAV clip")),
+                  }),
+      md::submenu(N_("Export"),
+                  {
+                      md::heading(N_("Audio")),
+                      md::item(N_("Render to file (WAV, FLAC, MP3, Ogg)..."), "file.render", [](App& a) { exportui::openRender(a, exportui::Preset::Audio); }),
+                      md::item(N_("Mixer tracks (stems)..."), "file.renderStems", [](App& a) { exportui::openRender(a, exportui::Preset::Stems); }),
+                      md::item(N_("All playlist tracks..."), [](App& a) { exportui::openRender(a, exportui::Preset::PlaylistTracks); }),
+                      md::item(N_("All playlist track groups..."), [](App& a) { exportui::openRender(a, exportui::Preset::TrackGroups); }),  // J-31
+                      md::provider([](App& a) { menuparity::exportItems(a); }),  // J-27
+                      md::heading(N_("MIDI")),
+                      md::item(N_("Song as MIDI file..."), "file.exportMidi", [](App& a) { exportui::exportMidiDialog(a, 0); }),
+                      md::item(N_("Pattern as MIDI file..."), [](App& a) { exportui::exportMidiDialog(a, 1); }),
+                      md::item(N_("Time selection as MIDI file..."), [](App& a) { exportui::exportMidiDialog(a, 2); })
+                          .when([](App& a) { return a.playlist.selEnd > a.playlist.selStart; }),
+                      md::heading(N_("Project")),
+                      md::item(N_("Project data files..."), [](App& a) { exportui::exportDataFilesDialog(a); }),
+                      md::item(N_("Project bones..."), [](App& a) { exportui::exportBonesDialog(a); }),
+                      md::item(N_("Gridline zipped project (.gridlinez)..."), [](App& a) { exportui::exportZipDialog(a); }),
+                      md::provider([](App& a) { freezeui::exportItems(a); }),  // K-87
+                      md::item(N_("FL Studio project (.flp)..."), [](App& a) { exportui::exportFlpDialog(a); }),  // J-34
+                      md::item(N_("FL Studio zipped loop package (.zip)..."), [](App& a) { exportui::exportFlpZipDialog(a); }),  // J-52
+                      md::item(N_("FL Studio export report..."), [](App&) { flpexport::openReport(); })  // J-80
+                          .when([](App&) { return flpexport::hasReport(); }),
+                  }),
+      md::item(N_("Locate missing samples..."), [](App& a) { exportui::openMissingSamples(a); }),
+      // The sharing items (none inside another host: no empty section).
+      md::separator().only(notEmbedded),
+      md::provider([](App& a) { collabui::fileMenu(a); }).only(notEmbedded),  // J-111
+      md::separator(),
+      md::item(N_("Project info..."), "file.projectInfo", [](App& a) { a.showInfo = true; }),
+      md::separator(),
+      md::item(N_("Quit"), "file.quit", [](App& a) { a.quitRequested = true; }),
+  };
+  return m;
 }
 
-void menuEdit(App& a) {
-  const auto& h = a.doc.history();
-  std::string u = h.canUndo() ? "Undo " + h.undoLabel() : "Undo", r = h.canRedo() ? "Redo " + h.redoLabel() : "Redo";
-  if (ImGui::MenuItem(u.c_str(), keys::label("edit.undo"), false, h.canUndo())) a.doc.undo();
-  if (ImGui::MenuItem(r.c_str(), keys::label("edit.redo"), false, h.canRedo())) a.doc.redo();
-  if (ImGui::MenuItem(i18n::tr("Undo history"), keys::label("edit.history"), a.showHistory)) a.showHistory = !a.showHistory;
-  ImGui::Separator();
-  std::string target = std::string("Acts on: ") + editTargetName(a) + " (" +
-                       (a.editFocus == App::EditFocus::Playlist ? "playlist"
-                        : a.editFocus == App::EditFocus::Rack   ? "channel rack"
-                        : a.editFocus == App::EditFocus::Mixer  ? "mixer"
-                                                                : "piano roll") + ")";
-  ImGui::TextDisabled("%s", target.c_str());
-  // Shortcut column: the focused editor's own binding for the action.
-  const char* ctx = a.editFocus == App::EditFocus::Playlist ? "playlist." : a.editFocus == App::EditFocus::Rack ? "rack."
-                    : a.editFocus == App::EditFocus::Mixer ? "mixer." : "piano.";
-  auto ek = [ctx](const char* op) { return keys::label((std::string(ctx) + op).c_str()); };
-  if (ImGui::MenuItem(i18n::tr("Cut"), ek("cut"))) editCut(a);
-  if (ImGui::MenuItem(i18n::tr("Copy"), ek("copy"))) editCopy(a);
-  if (ImGui::MenuItem(i18n::tr("Paste"), ek("paste"), false, canPaste(a))) editPaste(a);
-  if (ImGui::MenuItem(i18n::tr("Duplicate"), ek("duplicate"), false, a.editFocus != App::EditFocus::Mixer)) editDuplicate(a);
-  if (ImGui::MenuItem(i18n::tr("Delete"), ek("delete"))) editDelete(a);
-  ImGui::Separator();
-  if (ImGui::MenuItem(i18n::tr("Select all"), ek("selectAll"))) editSelectAll(a);
-  if (ImGui::MenuItem(i18n::tr("Deselect"), ek("deselect"))) editDeselect(a);
-  ImGui::Separator();
-  if (ImGui::MenuItem(i18n::tr("Rename..."), keys::label("edit.rename"))) renameFocused(a);
+// Edit: the shortcut column shows the focused editor's own binding for the action.
+const char* editPrefix(const App& a) {
+  return a.editFocus == App::EditFocus::Playlist ? "playlist." : a.editFocus == App::EditFocus::Rack ? "rack."
+         : a.editFocus == App::EditFocus::Mixer ? "mixer." : "piano.";
+}
+const char* editKey(const App& a, const char* op) { return keys::label((std::string(editPrefix(a)) + op).c_str()); }
+
+const md::Menu& editDef() {
+  static const md::Menu m = {
+      md::item(nullptr, "edit.undo", [](App& a) { a.doc.undo(); })
+          .text([](App& a) {
+            const auto& h = a.doc.history();
+            return h.canUndo() ? "Undo " + h.undoLabel() : std::string("Undo");
+          })
+          .when([](App& a) { return a.doc.history().canUndo(); }),
+      md::item(nullptr, "edit.redo", [](App& a) { a.doc.redo(); })
+          .text([](App& a) {
+            const auto& h = a.doc.history();
+            return h.canRedo() ? "Redo " + h.redoLabel() : std::string("Redo");
+          })
+          .when([](App& a) { return a.doc.history().canRedo(); }),
+      md::item(N_("Undo history"), "edit.history", [](App& a) { a.showHistory = !a.showHistory; }).check([](App& a) { return a.showHistory; }),
+      md::separator(),
+      md::provider([](App& a) {
+        std::string target = std::string("Acts on: ") + editTargetName(a) + " (" +
+                             (a.editFocus == App::EditFocus::Playlist ? "playlist"
+                              : a.editFocus == App::EditFocus::Rack   ? "channel rack"
+                              : a.editFocus == App::EditFocus::Mixer  ? "mixer"
+                                                                      : "piano roll") + ")";
+        if (GImGuiGridlineMenuLive)  // K-112c (round 25): in Live it starts at the items' label column
+          ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetCurrentWindow()->DC.MenuColumns.OffsetLabel);
+        ImGui::TextDisabled("%s", target.c_str());
+      }),
+      md::item(N_("Cut"), [](App& a) { editCut(a); }).keyText([](App& a) { return editKey(a, "cut"); }),
+      md::item(N_("Copy"), [](App& a) { editCopy(a); }).keyText([](App& a) { return editKey(a, "copy"); }),
+      md::item(N_("Paste"), [](App& a) { editPaste(a); }).keyText([](App& a) { return editKey(a, "paste"); }).when([](App& a) { return canPaste(a); }),
+      md::item(N_("Duplicate"), [](App& a) { editDuplicate(a); })
+          .keyText([](App& a) { return editKey(a, "duplicate"); })
+          .when([](App& a) { return a.editFocus != App::EditFocus::Mixer; }),
+      md::item(N_("Delete"), [](App& a) { editDelete(a); }).keyText([](App& a) { return editKey(a, "delete"); }),
+      md::separator(),
+      md::item(N_("Select all"), [](App& a) { editSelectAll(a); }).keyText([](App& a) { return editKey(a, "selectAll"); }),
+      md::item(N_("Deselect"), [](App& a) { editDeselect(a); }).keyText([](App& a) { return editKey(a, "deselect"); }),
+      md::separator(),
+      md::item(N_("Rename..."), "edit.rename", [](App& a) { renameFocused(a); }),
+  };
+  return m;
 }
 
-void menuAdd(App& a) {
+// K-112b: Edit in the Tracks layout's grouping (MAP.md 2.1): undo; the clipboard with Delete;
+// Select as a submenu; Duplicate (repeat once); Rename.
+const md::Menu& tracksEditDef() {
+  static const md::Menu m = {
+      md::item(nullptr, "edit.undo", [](App& a) { a.doc.undo(); })
+          .text([](App& a) {
+            const auto& h = a.doc.history();
+            return h.canUndo() ? "Undo " + h.undoLabel() : std::string("Undo");
+          })
+          .when([](App& a) { return a.doc.history().canUndo(); }),
+      md::item(nullptr, "edit.redo", [](App& a) { a.doc.redo(); })
+          .text([](App& a) {
+            const auto& h = a.doc.history();
+            return h.canRedo() ? "Redo " + h.redoLabel() : std::string("Redo");
+          })
+          .when([](App& a) { return a.doc.history().canRedo(); }),
+      md::item(N_("Undo history"), "edit.history", [](App& a) { a.showHistory = !a.showHistory; }).check([](App& a) { return a.showHistory; }),
+      md::separator(),
+      md::item(N_("Cut"), [](App& a) { editCut(a); }).keyText([](App& a) { return editKey(a, "cut"); }),
+      md::item(N_("Copy"), [](App& a) { editCopy(a); }).keyText([](App& a) { return editKey(a, "copy"); }),
+      md::item(N_("Paste"), [](App& a) { editPaste(a); }).keyText([](App& a) { return editKey(a, "paste"); }).when([](App& a) { return canPaste(a); }),
+      md::item(N_("Delete"), [](App& a) { editDelete(a); }).keyText([](App& a) { return editKey(a, "delete"); }),
+      md::separator(),
+      md::submenu(N_("Select"),
+                  {md::item(N_("Select all"), [](App& a) { editSelectAll(a); }).keyText([](App& a) { return editKey(a, "selectAll"); }),
+                   md::item(N_("Deselect"), [](App& a) { editDeselect(a); }).keyText([](App& a) { return editKey(a, "deselect"); })}),
+      md::item(N_("Duplicate"), [](App& a) { editDuplicate(a); })
+          .keyText([](App& a) { return editKey(a, "duplicate"); })
+          .when([](App& a) { return a.editFocus != App::EditFocus::Mixer; }),
+      md::separator(),
+      md::item(N_("Rename..."), "edit.rename", [](App& a) { renameFocused(a); }),
+  };
+  return m;
+}
+
+const md::Menu& addDef() {
   // K-77: the things made most often first, then clips, then tracks.
-  const Song& s = a.doc.song();
-  if (ImGui::BeginMenu(i18n::tr("Instrument channel"))) {
-    addChannelMenu(a);
-    ImGui::EndMenu();
-  }
-  if (ImGui::MenuItem(i18n::tr("Pattern"), keys::label("pattern.new"))) newPattern(a);
-  const MixerTrack* mt = s.mixerTrack(a.selMixer);
-  std::string fxLabel = "Effect on " + (mt ? mixerTrackName(s, static_cast<size_t>(s.mixerIndex(mt->id))) : std::string("mixer track"));
-  if (ImGui::BeginMenu(fxLabel.c_str(), mt != nullptr)) {
-    ObjectId id = mt->id;
-    effectItems([&a, id](const std::string& type) {
-      const MixerTrack* m = a.doc.song().mixerTrack(id);
-      for (int k = 0; m && k < kEffectSlots; ++k)
-        if (m->slots[static_cast<size_t>(k)].plugin.empty()) {
-          a.doc.setSlotPlugin(id, k, type);
-          a.fxEditor = {id, k};
-          return;
-        }
-      a.notify("All effect slots of this track are in use", true);
-    });
-    ImGui::EndMenu();
-  }
-  menuparity::addItems(a);  // J-27: automation clip for the last moved control
-  ImGui::Separator();
-  if (ImGui::MenuItem(i18n::tr("Clip of the current pattern at the song end"))) {
-    int track = 0;
-    for (const auto& c : s.playlist)
-      if (c.pattern == a.curPattern) track = c.track;
-    const Tick at = MeterMap(s).roundUpToBar(s.lengthTicks());  // K-193: the next bar line of the song's meters
-    ObjectId id = a.doc.addClip(a.curPattern, track, at);
-    if (id) a.playlist.selected = {id};
-  }
-  ImGui::Separator();
-  if (ImGui::MenuItem(i18n::tr("Mixer track"))) {
-    ObjectId id = a.doc.addMixerTrack();
-    if (id != kNoId) a.selMixer = id;
-  }
-  if (ImGui::MenuItem(i18n::tr("8 playlist tracks"), nullptr, false, static_cast<int>(s.tracks.size()) + 8 <= kMaxPlaylistTracks))
-    a.doc.setPlaylistTrackCount(static_cast<int>(s.tracks.size()) + 8);
+  static const md::Menu m = {
+      md::submenu(N_("Instrument channel"), {md::provider([](App& a) { addChannelMenu(a); })}),
+      md::item(N_("Pattern"), "pattern.new", [](App& a) { newPattern(a); }),
+      md::submenu(nullptr,
+                  {md::provider([](App& a) {
+                    const MixerTrack* mt = a.doc.song().mixerTrack(a.selMixer);
+                    if (!mt) return;
+                    ObjectId id = mt->id;
+                    effectItems([&a, id](const std::string& type) {
+                      const MixerTrack* m = a.doc.song().mixerTrack(id);
+                      for (int k = 0; m && k < kEffectSlots; ++k)
+                        if (m->slots[static_cast<size_t>(k)].plugin.empty()) {
+                          a.doc.setSlotPlugin(id, k, type);
+                          a.fxEditor = {id, k};
+                          return;
+                        }
+                      a.notify("All effect slots of this track are in use", true);
+                    });
+                  })})
+          .text([](App& a) {
+            const Song& s = a.doc.song();
+            const MixerTrack* mt = s.mixerTrack(a.selMixer);
+            return "Effect on " + (mt ? mixerTrackName(s, static_cast<size_t>(s.mixerIndex(mt->id))) : std::string("mixer track"));
+          })
+          .when([](App& a) { return a.doc.song().mixerTrack(a.selMixer) != nullptr; }),
+      md::provider([](App& a) { menuparity::addItems(a); }),  // J-27: automation clip for the last moved control
+      md::separator(),
+      md::item(N_("Clip of the current pattern at the song end"),
+               [](App& a) {
+                 const Song& s = a.doc.song();
+                 int track = 0;
+                 for (const auto& c : s.playlist)
+                   if (c.pattern == a.curPattern) track = c.track;
+                 const Tick at = MeterMap(s).roundUpToBar(s.lengthTicks());  // K-193: the next bar line of the song's meters
+                 ObjectId id = a.doc.addClip(a.curPattern, track, at);
+                 if (id) a.playlist.selected = {id};
+               }),
+      md::separator(),
+      md::item(N_("Mixer track"),
+               [](App& a) {
+                 ObjectId id = a.doc.addMixerTrack();
+                 if (id != kNoId) a.selMixer = id;
+               }),
+      md::item(N_("8 playlist tracks"), [](App& a) { a.doc.setPlaylistTrackCount(static_cast<int>(a.doc.song().tracks.size()) + 8); })
+          .when([](App& a) { return static_cast<int>(a.doc.song().tracks.size()) + 8 <= kMaxPlaylistTracks; }),
+  };
+  return m;
 }
 
-void menuPatterns(App& a) {
-  const Song& s = a.doc.song();
-  const Pattern* cur = s.pattern(a.curPattern);
-  ObjectId id = a.curPattern;
-  const int idx = s.patternIndex(id);
+bool hasPattern(App& a) { return a.doc.song().pattern(a.curPattern) != nullptr; }
+int patternIdx(App& a) { return a.doc.song().patternIndex(a.curPattern); }
+
+const md::Menu& patternsDef() {
   // K-77: create, go to, properties, arrange, render, delete (the pattern context menu keeps the same order).
-  if (ImGui::MenuItem(i18n::tr("New pattern"), keys::label("pattern.new"))) newPattern(a);
-  if (ImGui::MenuItem(i18n::tr("Insert one before"), keys::label("pattern.insert"))) a.selectPattern(ops::insertPattern(a.doc, id, ops::nextPatternName(s)));
-  if (ImGui::MenuItem(i18n::tr("Clone"), keys::label("pattern.clone"), false, cur != nullptr)) a.selectPattern(a.doc.clonePattern(id));
-  if (ImGui::MenuItem(i18n::tr("Find first empty"), keys::label("pattern.findFirstEmpty"))) findEmptyPattern(a, true, true);
-  if (ImGui::MenuItem(i18n::tr("Find next empty"), keys::label("pattern.findNextEmpty"))) findEmptyPattern(a, false, false);
-  ImGui::Separator();
-  if (ImGui::BeginMenu(i18n::tr("Go to"))) {
-    for (const auto& p : s.patterns) {
-      std::string label = p.name + "##" + std::to_string(p.id);
-      if (ImGui::MenuItem(label.c_str(), nullptr, p.id == a.curPattern)) a.selectPattern(p.id);
-    }
-    ImGui::EndMenu();
-  }
-  if (ImGui::MenuItem(i18n::tr("Next pattern"), keys::label("pattern.next"), false, idx + 1 < static_cast<int>(s.patterns.size())))
-    a.selectPattern(s.patterns[static_cast<size_t>(idx + 1)].id);
-  if (ImGui::MenuItem(i18n::tr("Previous pattern"), keys::label("pattern.previous"), false, idx > 0)) a.selectPattern(s.patterns[static_cast<size_t>(idx - 1)].id);
-  ImGui::Separator();
-  if (ImGui::MenuItem(i18n::tr("Rename..."), keys::label("edit.rename"), false, cur != nullptr))
-    openPrompt("Rename pattern", cur->name, [&a, id](const std::string& n) { a.doc.renamePattern(id, n); });
-  if (ImGui::BeginMenu(i18n::tr("Colour"), cur != nullptr)) {
-    uint32_t col;
-    if (colorGrid(&col)) ops::setPatternColor(a.doc, id, col);
-    ImGui::EndMenu();
-  }
-  if (ImGui::MenuItem(i18n::tr("Random colour"), nullptr, false, cur != nullptr)) ops::setPatternColor(a.doc, id, randomColor());
-  if (ImGui::BeginMenu(i18n::tr("Length"), cur != nullptr)) {
-    for (int b : {1, 2, 4, 8, 16}) {
-      std::string l = std::to_string(b) + (b == 1 ? " bar" : " bars");
-      if (ImGui::MenuItem(l.c_str(), nullptr, cur->bars == b)) a.doc.setPatternLength(id, b, cur->stepsPerBar);
-    }
-    ImGui::EndMenu();
-  }
-  meterui::patternMeterMenu(a, id);  // K-179
-  if (ImGui::BeginMenu(i18n::tr("Transpose"), cur != nullptr)) {
-    for (int st : {12, 1, -1, -12}) {
-      std::string l = (st > 0 ? "+" : "") + std::to_string(st) + (std::abs(st) == 12 ? " (octave)" : " semitone");
-      if (ImGui::MenuItem(l.c_str())) ops::transposePattern(a.doc, id, st);
-    }
-    ImGui::EndMenu();
-  }
-  ImGui::Separator();
-  if (ImGui::MenuItem(i18n::tr("Split by channel"), nullptr, false, cur != nullptr)) {
-    auto ids = ops::splitPatternByChannel(a.doc, id);
-    a.notify(ids.empty() ? std::string("Nothing to split: the pattern is empty") : "Split into " + std::to_string(ids.size()) + " patterns");
-  }
-  if (ImGui::MenuItem(i18n::tr("Select in playlist"), nullptr, false, cur != nullptr)) {
-    a.playlist.selected.clear();
-    for (const auto& c : s.playlist)
-      if (c.pattern == id) a.playlist.selected.insert(c.id);
-    a.showPlaylist = true;
-  }
-  j31::patternsItems(a);  // J-31: pattern groups
-  if (ImGui::MenuItem(i18n::tr("Move up"), keys::label("pattern.moveUp"), false, idx > 0)) movePattern(a, -1);
-  if (ImGui::MenuItem(i18n::tr("Move down"), keys::label("pattern.moveDown"), false, idx >= 0 && idx + 1 < static_cast<int>(s.patterns.size()))) movePattern(a, 1);
-  ImGui::Separator();
-  if (ImGui::MenuItem(i18n::tr("Render pattern to file..."), nullptr, false, cur != nullptr)) exportui::openRender(a, exportui::Preset::PatternFile);
-  if (ImGui::MenuItem(i18n::tr("Render as audio clip..."), nullptr, false, cur != nullptr)) exportui::openRender(a, exportui::Preset::AudioClip);
-  if (ImGui::MenuItem(i18n::tr("Render and replace..."), nullptr, false, cur != nullptr)) exportui::openRender(a, exportui::Preset::PatternReplace);
-  ImGui::Separator();
-  if (ImGui::MenuItem(i18n::tr("Delete"), keys::label("pattern.delete"), false, s.patterns.size() > 1)) deletePattern(a);
-  if (ImGui::MenuItem(i18n::tr("Delete unused patterns"))) {
-    int n = ops::deleteUnusedPatterns(a.doc);
-    a.notify(n ? "Deleted " + std::to_string(n) + " unused pattern(s)" : std::string("No unused patterns"));
-  }
+  static const md::Menu m = {
+      md::item(N_("New pattern"), "pattern.new", [](App& a) { newPattern(a); }),
+      md::item(N_("Insert one before"), "pattern.insert",
+               [](App& a) { a.selectPattern(ops::insertPattern(a.doc, a.curPattern, ops::nextPatternName(a.doc.song()))); }),
+      md::item(N_("Clone"), "pattern.clone", [](App& a) { a.selectPattern(a.doc.clonePattern(a.curPattern)); }).when(hasPattern),
+      md::item(N_("Find first empty"), "pattern.findFirstEmpty", [](App& a) { findEmptyPattern(a, true, true); }),
+      md::item(N_("Find next empty"), "pattern.findNextEmpty", [](App& a) { findEmptyPattern(a, false, false); }),
+      md::separator(),
+      md::submenu(N_("Go to"), {md::provider([](App& a) {
+                    for (const auto& p : a.doc.song().patterns) {
+                      std::string label = p.name + "##" + std::to_string(p.id);
+                      if (ImGui::MenuItem(label.c_str(), nullptr, p.id == a.curPattern)) a.selectPattern(p.id);
+                    }
+                  })}),
+      md::item(N_("Next pattern"), "pattern.next", [](App& a) { a.selectPattern(a.doc.song().patterns[static_cast<size_t>(patternIdx(a) + 1)].id); })
+          .when([](App& a) { return patternIdx(a) + 1 < static_cast<int>(a.doc.song().patterns.size()); }),
+      md::item(N_("Previous pattern"), "pattern.previous", [](App& a) { a.selectPattern(a.doc.song().patterns[static_cast<size_t>(patternIdx(a) - 1)].id); })
+          .when([](App& a) { return patternIdx(a) > 0; }),
+      md::separator(),
+      md::item(N_("Rename..."), "edit.rename",
+               [](App& a) {
+                 const ObjectId id = a.curPattern;
+                 openPrompt("Rename pattern", a.doc.song().pattern(id)->name, [&a, id](const std::string& n) { a.doc.renamePattern(id, n); });
+               })
+          .when(hasPattern),
+      md::submenu(N_("Colour"), {md::provider([](App& a) {
+                    uint32_t col;
+                    if (colorGrid(&col)) ops::setPatternColor(a.doc, a.curPattern, col);
+                  })})
+          .when(hasPattern),
+      md::item(N_("Random colour"), [](App& a) { ops::setPatternColor(a.doc, a.curPattern, randomColor()); }).when(hasPattern),
+      md::submenu(N_("Length"), {md::provider([](App& a) {
+                    const Pattern* cur = a.doc.song().pattern(a.curPattern);
+                    if (!cur) return;
+                    for (int b : {1, 2, 4, 8, 16}) {
+                      std::string l = std::to_string(b) + (b == 1 ? " bar" : " bars");
+                      if (ImGui::MenuItem(l.c_str(), nullptr, cur->bars == b)) a.doc.setPatternLength(a.curPattern, b, cur->stepsPerBar);
+                    }
+                  })})
+          .when(hasPattern),
+      md::provider([](App& a) { meterui::patternMeterMenu(a, a.curPattern); }),  // K-179
+      md::submenu(N_("Transpose"), {md::provider([](App& a) {
+                    for (int st : {12, 1, -1, -12}) {
+                      std::string l = (st > 0 ? "+" : "") + std::to_string(st) + (std::abs(st) == 12 ? " (octave)" : " semitone");
+                      if (ImGui::MenuItem(l.c_str())) ops::transposePattern(a.doc, a.curPattern, st);
+                    }
+                  })})
+          .when(hasPattern),
+      md::separator(),
+      md::item(N_("Split by channel"),
+               [](App& a) {
+                 auto ids = ops::splitPatternByChannel(a.doc, a.curPattern);
+                 a.notify(ids.empty() ? std::string("Nothing to split: the pattern is empty") : "Split into " + std::to_string(ids.size()) + " patterns");
+               })
+          .when(hasPattern),
+      md::item(N_("Select in playlist"),
+               [](App& a) {
+                 a.playlist.selected.clear();
+                 for (const auto& c : a.doc.song().playlist)
+                   if (c.pattern == a.curPattern) a.playlist.selected.insert(c.id);
+                 a.showPlaylist = true;
+               })
+          .when(hasPattern),
+      md::provider([](App& a) { j31::patternsItems(a); }),  // J-31: pattern groups
+      md::item(N_("Move up"), "pattern.moveUp", [](App& a) { movePattern(a, -1); }).when([](App& a) { return patternIdx(a) > 0; }),
+      md::item(N_("Move down"), "pattern.moveDown", [](App& a) { movePattern(a, 1); }).when([](App& a) {
+        const int idx = patternIdx(a);
+        return idx >= 0 && idx + 1 < static_cast<int>(a.doc.song().patterns.size());
+      }),
+      md::separator(),
+      md::item(N_("Render pattern to file..."), [](App& a) { exportui::openRender(a, exportui::Preset::PatternFile); }).when(hasPattern),
+      md::item(N_("Render as audio clip..."), [](App& a) { exportui::openRender(a, exportui::Preset::AudioClip); }).when(hasPattern),
+      md::item(N_("Render and replace..."), [](App& a) { exportui::openRender(a, exportui::Preset::PatternReplace); }).when(hasPattern),
+      md::separator(),
+      md::item(N_("Delete"), "pattern.delete", [](App& a) { deletePattern(a); }).when([](App& a) { return a.doc.song().patterns.size() > 1; }),
+      md::item(N_("Delete unused patterns"),
+               [](App& a) {
+                 int n = ops::deleteUnusedPatterns(a.doc);
+                 a.notify(n ? "Deleted " + std::to_string(n) + " unused pattern(s)" : std::string("No unused patterns"));
+               }),
+  };
+  return m;
 }
 
-void menuView(App& a) {
-  if (ImGui::MenuItem(i18n::tr("Command palette..."), keys::label("view.commandPalette"))) cmdpalette::open(a);  // K-93
-  ui::Hint("Find and run any command, menu item, window, setting or plugin by typing part of its name");
-  ImGui::SeparatorText(i18n::tr("Windows"));
-  ImGui::MenuItem(i18n::tr("Playlist"), keys::label("view.playlist"), &a.showPlaylist);
-  ImGui::MenuItem(i18n::tr("Channel rack"), keys::label("view.channelRack"), &a.showRack);
-  ImGui::MenuItem(i18n::tr("Piano roll"), keys::label("view.pianoRoll"), &a.showPiano);
-  ImGui::MenuItem(i18n::tr("Mixer"), keys::label("view.mixer"), &a.showMixer);  // K-77: with the other main editors
-  ImGui::MenuItem(i18n::tr("Browser"), keys::label("view.browser"), &a.showBrowser);
-  if (ImGui::MenuItem(i18n::tr("Plugin picker"), keys::label("view.pluginPicker"), browserui::pluginPickerOpen())) browserui::togglePluginPicker();
-  menuparity::viewItems(a);  // J-27: project picker
-  if (ImGui::MenuItem(i18n::tr("Channel settings"), nullptr, a.settingsChannel != kNoId, a.doc.song().channel(a.selChannel) != nullptr))
-    a.settingsChannel = a.settingsChannel != kNoId ? kNoId : a.selChannel;
-  ImGui::MenuItem(i18n::tr("Master chain"), nullptr, &a.showMaster);  // RN-09
-  ImGui::MenuItem(i18n::tr("Live pads"), nullptr, &a.showLivePads);
-  ImGui::MenuItem(i18n::tr("Undo history"), keys::label("edit.history"), &a.showHistory);
-  ImGui::MenuItem(i18n::tr("Performance"), nullptr, &a.showPerformance);
-  ImGui::MenuItem(i18n::tr("Groove editor"), nullptr, &a.showGroove);  // K-151
-  ImGui::MenuItem(i18n::tr("Stage"), keys::label("view.stage"), &a.showStage);
-  // Zoom acts on the piano roll when it was the last editor used, otherwise on the playlist.
-  const bool piano = a.editFocus == App::EditFocus::Piano;
-  ImGui::SeparatorText(piano ? i18n::tr("Zoom (piano roll)") : i18n::tr("Zoom (playlist)"));
-  float& zr = piano ? a.piano.zoomRequest : a.playlist.zoomRequest;
-  if (ImGui::MenuItem(i18n::tr("Zoom in"), keys::label(piano ? "piano.zoomIn" : "playlist.zoomIn"))) zr *= 1.5f;
-  if (ImGui::MenuItem(i18n::tr("Zoom out"), keys::label(piano ? "piano.zoomOut" : "playlist.zoomOut"))) zr /= 1.5f;
-  if (ImGui::MenuItem(piano ? i18n::tr("Zoom to fit the pattern") : i18n::tr("Zoom to fit the song"), keys::label(piano ? "piano.zoomFit" : "playlist.zoomFit"))) (piano ? a.piano.fitRequest : a.playlist.fitRequest) = true;
-  if (ImGui::MenuItem(i18n::tr("Zoom to ticks (snap turns free)"))) zr = 1e9f;
-  if (!piano && ImGui::MenuItem(i18n::tr("Clear time selection"), nullptr, false, a.playlist.selEnd > a.playlist.selStart))
-    a.playlist.selStart = a.playlist.selEnd = 0;
-  ImGui::SeparatorText(i18n::tr("Layout"));
-  if (ImGui::MenuItem(i18n::tr("Close plugin windows"), keys::label("view.closePlugins"))) a.closePluginWindows();
-  if (ImGui::MenuItem(i18n::tr("Close all windows"), keys::label("view.closeAll"))) a.closeAllWindows();
-  if (ImGui::MenuItem(i18n::tr("Bring all windows back into Gridline"), nullptr, false, viewports::detachedCount() > 0))  // J-113
-    viewports::gatherAll();
-  if (ImGui::BeginMenu(i18n::tr("Window layout"))) {  // K-79: Studio, Performance, Tracks
-    layoutui::viewLayoutMenu(a);
-    ImGui::EndMenu();
-  }
-  if (ImGui::MenuItem(i18n::tr("Reset window layout"), keys::label("view.resetLayout"))) ui::confirmLayoutReset(a);
-  ImGui::SeparatorText(i18n::tr("Appearance"));
-  bool dark = theme::isDark();
-  if (ImGui::MenuItem(i18n::tr("Dark theme"), nullptr, dark)) {
-    const dispconf::Snapshot before = dispconf::take(a.settings, dispconf::themeKeys());
-    theme::modeToSettings(dark ? theme::Mode::Light : theme::Mode::Dark, a.settings);
-    theme::applyFromSettings(a.settings);
-    ui::confirmTheme(a, before, "Theme");
-  }
-  {
-    theme::Tweaks t = theme::tweaksFromSettings(a.settings);
-    if (ImGui::MenuItem(i18n::tr("White text and glyphs"), nullptr, t.whiteText)) {  // K-177
-      const dispconf::Snapshot before = dispconf::take(a.settings, dispconf::themeKeys());
-      t.whiteText = !t.whiteText;
-      theme::tweaksToSettings(t, a.settings);
-      theme::applyFromSettings(a.settings);
-      ui::confirmTheme(a, before, "White text");
-    }
-  }
-  if (ImGui::MenuItem(i18n::tr("Theme settings..."))) openSettings(a, 9);
-  if (ImGui::BeginMenu(i18n::tr("Interface size"))) {
-    double cur = a.settings.getNumber("ui.scale");
-    for (int pct : {75, 90, 100, 110, 125, 150, 175, 200}) {
-      std::string l = std::to_string(pct) + "%";
-      if (ImGui::MenuItem(l.c_str(), nullptr, std::fabs(cur * 100 - pct) < 0.5)) ui::confirmScale(a, pct / 100.0);  // J-77: Keep / Revert
-    }
-    ImGui::EndMenu();
-  }
-  if (ImGui::BeginMenu(i18n::tr("Mixer layout"))) {
-    const int cur = static_cast<int>(a.settings.getNumber("ui.mixerLayout"));
-    const char* names[] = {i18n::N_("Compact strips"), i18n::N_("Normal strips"), i18n::N_("Wide strips")};
-    for (int i = 0; i < 3; ++i)
-      if (ImGui::MenuItem(i18n::tr(names[i]), nullptr, cur == i)) a.settings.set("ui.mixerLayout", i);
-    ImGui::EndMenu();
-  }
-  menuparity::viewHintItems(a);  // J-27: played chords in the hint bar
+// View: zoom acts on the piano roll when it was the last editor used, otherwise on the playlist.
+bool zoomPiano(App& a) { return a.editFocus == App::EditFocus::Piano; }
+float& zoomRequest(App& a) { return zoomPiano(a) ? a.piano.zoomRequest : a.playlist.zoomRequest; }
+
+const md::Menu& viewDef() {
+  static const md::Menu m = {
+      md::item(N_("Command palette..."), "view.commandPalette", [](App& a) { cmdpalette::open(a); })  // K-93
+          .tip(N_("Find and run any command, menu item, window, setting or plugin by typing part of its name")),
+      md::heading(N_("Windows")),
+      md::toggle(N_("Playlist"), "view.playlist", [](App& a) { return &a.showPlaylist; }),
+      md::toggle(N_("Channel rack"), "view.channelRack", [](App& a) { return &a.showRack; }),
+      md::toggle(N_("Piano roll"), "view.pianoRoll", [](App& a) { return &a.showPiano; }),
+      md::toggle(N_("Mixer"), "view.mixer", [](App& a) { return &a.showMixer; }),  // K-77: with the other main editors
+      md::toggle(N_("Browser"), "view.browser", [](App& a) { return &a.showBrowser; }),
+      md::item(N_("Plugin picker"), "view.pluginPicker", [](App&) { browserui::togglePluginPicker(); }).check([](App&) { return browserui::pluginPickerOpen(); }),
+      md::provider([](App& a) { menuparity::viewItems(a); }),  // J-27: project picker
+      md::item(N_("Channel settings"), [](App& a) { a.settingsChannel = a.settingsChannel != kNoId ? kNoId : a.selChannel; })
+          .check([](App& a) { return a.settingsChannel != kNoId; })
+          .when([](App& a) { return a.doc.song().channel(a.selChannel) != nullptr; }),
+      md::toggle(N_("Master chain"), nullptr, [](App& a) { return &a.showMaster; }),  // RN-09
+      md::toggle(N_("Live pads"), nullptr, [](App& a) { return &a.showLivePads; }),
+      md::toggle(N_("Undo history"), "edit.history", [](App& a) { return &a.showHistory; }),
+      md::toggle(N_("Performance"), nullptr, [](App& a) { return &a.showPerformance; }),
+      md::toggle(N_("Groove editor"), nullptr, [](App& a) { return &a.showGroove; }),  // K-151
+      md::toggle(N_("Stage"), "view.stage", [](App& a) { return &a.showStage; }),
+      md::submenu(N_("Panels"), {md::provider([](App& a) { layoutparts::panelsMenu(a); })}),  // the layout parts, in every layout
+      md::heading(nullptr).text([](App& a) { return std::string(zoomPiano(a) ? i18n::tr("Zoom (piano roll)") : i18n::tr("Zoom (playlist)")); }),
+      md::item(N_("Zoom in"), [](App& a) { zoomRequest(a) *= 1.5f; }).keyText([](App& a) { return keys::label(zoomPiano(a) ? "piano.zoomIn" : "playlist.zoomIn"); }),
+      md::item(N_("Zoom out"), [](App& a) { zoomRequest(a) /= 1.5f; }).keyText([](App& a) { return keys::label(zoomPiano(a) ? "piano.zoomOut" : "playlist.zoomOut"); }),
+      md::item(nullptr, [](App& a) { (zoomPiano(a) ? a.piano.fitRequest : a.playlist.fitRequest) = true; })
+          .text([](App& a) { return std::string(zoomPiano(a) ? i18n::tr("Zoom to fit the pattern") : i18n::tr("Zoom to fit the song")); })
+          .keyText([](App& a) { return keys::label(zoomPiano(a) ? "piano.zoomFit" : "playlist.zoomFit"); }),
+      md::item(N_("Zoom to ticks (snap turns free)"), [](App& a) { zoomRequest(a) = 1e9f; }),
+      md::item(N_("Clear time selection"), [](App& a) { a.playlist.selStart = a.playlist.selEnd = 0; })
+          .only([](App& a) { return !zoomPiano(a); })
+          .when([](App& a) { return a.playlist.selEnd > a.playlist.selStart; }),
+      md::heading(N_("Layout")),
+      md::item(N_("Close plugin windows"), "view.closePlugins", [](App& a) { a.closePluginWindows(); }),
+      md::item(N_("Close all windows"), "view.closeAll", [](App& a) { a.closeAllWindows(); }),
+      md::item(N_("Bring all windows back into Gridline"), [](App&) { viewports::gatherAll(); })  // J-113
+          .when([](App&) { return viewports::detachedCount() > 0; }),
+      md::submenu(N_("Window layout"), {md::provider([](App& a) { layoutui::viewLayoutMenu(a); })}),  // K-79
+      md::item(N_("Reset window layout"), "view.resetLayout", [](App& a) { ui::confirmLayoutReset(a); }),
+      md::heading(N_("Appearance")),
+      md::item(N_("Dark theme"),
+               [](App& a) {
+                 const bool dark = theme::isDark();
+                 const dispconf::Snapshot before = dispconf::take(a.settings, dispconf::themeKeys());
+                 theme::modeToSettings(dark ? theme::Mode::Light : theme::Mode::Dark, a.settings);
+                 theme::applyFromSettings(a.settings);
+                 ui::confirmTheme(a, before, "Theme");
+               })
+          .check([](App&) { return theme::isDark(); }),
+      md::item(N_("White text and glyphs"),  // K-177
+               [](App& a) {
+                 theme::Tweaks t = theme::tweaksFromSettings(a.settings);
+                 const dispconf::Snapshot before = dispconf::take(a.settings, dispconf::themeKeys());
+                 t.whiteText = !t.whiteText;
+                 theme::tweaksToSettings(t, a.settings);
+                 theme::applyFromSettings(a.settings);
+                 ui::confirmTheme(a, before, "White text");
+               })
+          .check([](App& a) { return theme::tweaksFromSettings(a.settings).whiteText; }),
+      md::item(N_("Theme settings..."), [](App& a) { openSettings(a, 9); }),
+      md::submenu(N_("Interface size"), {md::provider([](App& a) {
+                    double cur = a.settings.getNumber("ui.scale");
+                    for (int pct : {75, 90, 100, 110, 125, 150, 175, 200}) {
+                      std::string l = std::to_string(pct) + "%";
+                      if (ImGui::MenuItem(l.c_str(), nullptr, std::fabs(cur * 100 - pct) < 0.5)) ui::confirmScale(a, pct / 100.0);  // J-77: Keep / Revert
+                    }
+                  })}),
+      md::submenu(N_("Mixer layout"), {md::provider([](App& a) {
+                    const int cur = static_cast<int>(a.settings.getNumber("ui.mixerLayout"));
+                    const char* names[] = {N_("Compact strips"), N_("Normal strips"), N_("Wide strips")};
+                    for (int i = 0; i < 3; ++i)
+                      if (ImGui::MenuItem(i18n::tr(names[i]), nullptr, cur == i)) a.settings.set("ui.mixerLayout", i);
+                  })}),
+      md::provider([](App& a) { menuparity::viewHintItems(a); }),  // J-27: played chords in the hint bar
+  };
+  return m;
 }
 
-void menuOptions(App& a) {
+const md::Menu& optionsDef() {
   // K-77: settings pages (in the Settings window's tab order), then the switches by subject.
-  ImGui::SeparatorText(i18n::tr("Settings"));
-  if (ImGui::MenuItem(i18n::tr("Audio settings..."))) openSettings(a, 0);
-  if (ImGui::MenuItem(i18n::tr("MIDI settings..."), keys::label("view.settings"))) openSettings(a, 1);
-  if (ImGui::MenuItem(i18n::tr("Project settings..."))) openSettings(a, 2);
-  if (ImGui::MenuItem(i18n::tr("Backup settings..."))) openSettings(a, 3);
-  if (ImGui::MenuItem(i18n::tr("Interface settings..."))) openSettings(a, 4);
-  if (ImGui::MenuItem(i18n::tr("General settings..."))) openSettings(a, 5);
-  if (ImGui::MenuItem(i18n::tr("File settings..."))) openSettings(a, 6);
-  if (ImGui::MenuItem(i18n::tr("Debug log and script console..."))) openSettings(a, 7);
-  if (ImGui::MenuItem(i18n::tr("Keyboard shortcuts..."))) openSettings(a, 8);
-  if (ImGui::MenuItem(i18n::tr("Theme..."))) openSettings(a, 9);
-  if (ImGui::MenuItem(i18n::tr("Plugin manager..."))) a.showPluginManager = true;
-  ImGui::SeparatorText(i18n::tr("Playback"));
-  bool song = a.engine.mode() == PlayMode::Song;
-  if (ImGui::MenuItem(i18n::tr("Song mode"), "L", song)) a.engine.setMode(song ? PlayMode::Pattern : PlayMode::Song);
-  bool liveOn = a.engine.mode() == PlayMode::Live;
-  if (ImGui::MenuItem(i18n::tr("Live mode"), nullptr, liveOn)) a.engine.setMode(liveOn ? PlayMode::Song : PlayMode::Live);
-  if (ImGui::BeginMenu(i18n::tr("Arrangements"))) {
-    arrangementMenu(a);
-    ImGui::EndMenu();
-  }
-  j31::optionsItems(a);  // J-31: song position jumps
-  ImGui::MenuItem(i18n::tr("Metronome"), keys::label("options.metronome"), &a.metronome);
-  {
-    const bool pdc = a.settings.getBool("audio.pdc");
-    if (ImGui::MenuItem(i18n::tr("Plugin delay compensation"), nullptr, pdc)) {
-      a.settings.set("audio.pdc", !pdc);
-      a.syncEngine();
-    }
-    ui::Hint("Delays faster paths so tracks with latent effects (look-ahead, linear phase, oversampling) stay in time");
-  }
-  freezeui::optionsItems(a);  // K-87: refreeze, hibernate
-  menuparity::optionsItems(a);  // J-27: MIDI clock out
-  ImGui::SeparatorText(i18n::tr("Recording"));
-  ImGui::MenuItem(i18n::tr("Record notes"), nullptr, &a.recordArmed);
-  ImGui::MenuItem(i18n::tr("Step record"), nullptr, &a.stepRecord);
-  ImGui::MenuItem(i18n::tr("Record automation"), nullptr, &automationRecording());
-  if (ImGui::BeginMenu(i18n::tr("Recording options"))) {  // the record button's menu (audio takes included)
-    recordOptionsMenu(a);
-    ImGui::EndMenu();
-  }
-  ImGui::SeparatorText(i18n::tr("Keyboard and controllers"));
-  ImGui::MenuItem(i18n::tr("Typing keyboard to piano"), keys::label("options.typingKeyboard"), &a.typingKeyboard);
-  if (ImGui::BeginMenu(i18n::tr("Typing keyboard options"))) {
-    typingKeyboardMenu(a);
-    ImGui::EndMenu();
-  }
-  ImGui::MenuItem(i18n::tr("Multilink to controllers"), nullptr, &a.multilink);
-  ImGui::SeparatorText(i18n::tr("Editing"));
-  autoScrollItem(a, false);  // K-4: the playlist, and the pattern editors on their own
-  autoScrollItem(a, true);
-  {  // J-37
-    const bool smoothSnap = a.settings.getBool("ui.smoothSnap");
-    if (ImGui::MenuItem(i18n::tr("Smooth snapping"), nullptr, smoothSnap)) a.settings.set("ui.smoothSnap", !smoothSnap);
-    ui::Hint("Clips and notes dragged on a snapped grid glide from cell to cell instead of jumping (positions still land exactly on the grid)");
-  }
+  static const md::Menu m = {
+      md::heading(N_("Settings")),
+      md::item(N_("Audio settings..."), [](App& a) { openSettings(a, 0); }),
+      md::item(N_("MIDI settings..."), "view.settings", [](App& a) { openSettings(a, 1); }),
+      md::item(N_("Project settings..."), [](App& a) { openSettings(a, 2); }),
+      md::item(N_("Backup settings..."), [](App& a) { openSettings(a, 3); }),
+      md::item(N_("Interface settings..."), [](App& a) { openSettings(a, 4); }),
+      md::item(N_("General settings..."), [](App& a) { openSettings(a, 5); }),
+      md::item(N_("File settings..."), [](App& a) { openSettings(a, 6); }),
+      md::item(N_("Debug log and script console..."), [](App& a) { openSettings(a, 7); }),
+      md::item(N_("Keyboard shortcuts..."), [](App& a) { openSettings(a, 8); }),
+      md::item(N_("Theme..."), [](App& a) { openSettings(a, 9); }),
+      md::item(N_("Plugin manager..."), [](App& a) { a.showPluginManager = true; }),
+      md::heading(N_("Playback")),
+      md::item(N_("Song mode"),
+               [](App& a) { a.engine.setMode(a.engine.mode() == PlayMode::Song ? PlayMode::Pattern : PlayMode::Song); })
+          .keyText([](App&) { return "L"; })
+          .check([](App& a) { return a.engine.mode() == PlayMode::Song; }),
+      md::item(N_("Live mode"), [](App& a) { a.engine.setMode(a.engine.mode() == PlayMode::Live ? PlayMode::Song : PlayMode::Live); })
+          .check([](App& a) { return a.engine.mode() == PlayMode::Live; }),
+      md::submenu(N_("Arrangements"), {md::provider([](App& a) { arrangementMenu(a); })}),
+      md::provider([](App& a) { j31::optionsItems(a); }),  // J-31: song position jumps
+      md::toggle(N_("Metronome"), "options.metronome", [](App& a) { return &a.metronome; }),
+      md::item(N_("Plugin delay compensation"),
+               [](App& a) {
+                 a.settings.set("audio.pdc", !a.settings.getBool("audio.pdc"));
+                 a.syncEngine();
+               })
+          .check([](App& a) { return a.settings.getBool("audio.pdc"); })
+          .tip(N_("Delays faster paths so tracks with latent effects (look-ahead, linear phase, oversampling) stay in time")),
+      md::provider([](App& a) { freezeui::optionsItems(a); }),     // K-87: refreeze, hibernate
+      md::provider([](App& a) { menuparity::optionsItems(a); }),  // J-27: MIDI clock out
+      md::heading(N_("Recording")),
+      md::toggle(N_("Record notes"), nullptr, [](App& a) { return &a.recordArmed; }),
+      md::toggle(N_("Step record"), nullptr, [](App& a) { return &a.stepRecord; }),
+      md::toggle(N_("Record automation"), nullptr, [](App&) { return &automationRecording(); }),
+      md::submenu(N_("Recording options"), {md::provider([](App& a) { recordOptionsMenu(a); })}),  // the record button's menu (audio takes included)
+      md::heading(N_("Keyboard and controllers")),
+      md::toggle(N_("Typing keyboard to piano"), "options.typingKeyboard", [](App& a) { return &a.typingKeyboard; }),
+      md::submenu(N_("Typing keyboard options"), {md::provider([](App& a) { typingKeyboardMenu(a); })}),
+      md::toggle(N_("Multilink to controllers"), nullptr, [](App& a) { return &a.multilink; }),
+      md::heading(N_("Editing")),
+      md::provider([](App& a) {
+        autoScrollItem(a, false);  // K-4: the playlist, and the pattern editors on their own
+        autoScrollItem(a, true);
+      }),
+      md::item(N_("Smooth snapping"), [](App& a) { a.settings.set("ui.smoothSnap", !a.settings.getBool("ui.smoothSnap")); })  // J-37
+          .check([](App& a) { return a.settings.getBool("ui.smoothSnap"); })
+          .tip(N_("Clips and notes dragged on a snapped grid glide from cell to cell instead of jumping (positions still land exactly on the grid)")),
+  };
+  return m;
 }
 
-void menuTools(App& a) {
+void tapperBody(App& a) {
+  const ops::TapTempo& tapper = a.tapper;  // K-48: the top bar button's tapper
+  ImGui::TextDisabled("%s", i18n::tr("Click Tap (or press T) on every beat"));
+  bool tap = ImGui::Button(i18n::tr("Tap"), ImVec2(160, 36));
+  devNoteRect("tapmenutap");
+  tap = tap || (ImGui::IsWindowFocused() && ImGui::IsKeyPressed(ImGuiKey_T, false));
+  if (tap) a.tapMeasure();
+  const double bpm = tapper.bpm();
+  if (bpm > 0) ImGui::Text(i18n::tr("%.1f BPM  (%d taps)"), bpm, static_cast<int>(tapper.taps.size()));
+  else ImGui::TextDisabled("—");
+  if (ImGui::Button(i18n::tr("Set the song tempo")) && bpm > 0) a.doc.setParam(songParam(SongParam::Tempo), std::round(bpm * 10.0) / 10.0, false);
+  ImGui::SameLine();
+  if (ImGui::Button(i18n::tr("Reset"))) a.tapReset();
+}
+
+const md::Menu& toolsDef() {
   // K-77: quick actions, composing, audio and recording, macros, clean-up (removals last), assistant.
-  if (ImGui::MenuItem(i18n::tr("Stop all sound"), keys::label("tools.stopSound"))) stopSound(a);
-  const bool tapperOpen = ImGui::BeginMenu(i18n::tr("Tempo tapper"));
-  devNoteRect("tapmenu");
-  if (tapperOpen) {
-    const ops::TapTempo& tapper = a.tapper;  // K-48: the top bar button's tapper
-    ImGui::TextDisabled("%s", i18n::tr("Click Tap (or press T) on every beat"));
-    bool tap = ImGui::Button(i18n::tr("Tap"), ImVec2(160, 36));
-    devNoteRect("tapmenutap");
-    tap = tap || (ImGui::IsWindowFocused() && ImGui::IsKeyPressed(ImGuiKey_T, false));
-    if (tap) a.tapMeasure();
-    const double bpm = tapper.bpm();
-    if (bpm > 0) ImGui::Text(i18n::tr("%.1f BPM  (%d taps)"), bpm, static_cast<int>(tapper.taps.size()));
-    else ImGui::TextDisabled("—");
-    if (ImGui::Button(i18n::tr("Set the song tempo")) && bpm > 0) a.doc.setParam(songParam(SongParam::Tempo), std::round(bpm * 10.0) / 10.0, false);
-    ImGui::SameLine();
-    if (ImGui::Button(i18n::tr("Reset"))) a.tapReset();
-    ImGui::EndMenu();
-  }
-  menuparity::toolsControlItems(a);  // J-27: last moved controls
   // K-158: each section keeps its most used rows; the rest sit in a submenu named after the section.
-  ImGui::Separator();
-  if (ImGui::MenuItem(i18n::tr("Loop starter..."))) j59::openLoopStarter(a);  // J-59 (GEN-01)
-  if (ImGui::BeginMenu(i18n::tr("Swing presets"))) {  // K-151
-    grooveui::presetMenuItems(a);
-    ImGui::EndMenu();
-  }
-  if (ImGui::BeginMenu(i18n::tr("Chord progression"))) {
-    progressionItems(a, false);
-    ImGui::EndMenu();
-  }
-  if (ImGui::BeginMenu(i18n::tr("Riff from progression"))) {
-    progressionItems(a, true);
-    ImGui::EndMenu();
-  }
-  if (ImGui::BeginMenu(i18n::tr("Piano roll tools"))) {
-    pianoToolItems(a);
-    ImGui::EndMenu();
-  }
-  const bool openComposing = ImGui::BeginMenu(i18n::tr("Composing"));
-  devRackItem("toolsmenu composing");  // K-158: scripted screenshots open it
-  if (openComposing) {
-    if (ImGui::BeginMenu(i18n::tr("Piano roll selection"))) {
-      pianoSelectItems(a);
-      ImGui::EndMenu();
-    }
-    menuparity::toolsNoteItems(a);  // J-27: last piano roll script, note clipboard
-    if (ImGui::BeginMenu(i18n::tr("Project scripts"))) {  // J-57: Lua scripts over the whole project (SC-02)
-      projectScriptsMenuItems(a);
-      ImGui::EndMenu();
-    }
-    ImGui::EndMenu();
-  }
-  ImGui::Separator();
-  if (ImGui::MenuItem(i18n::tr("Render channel to sampled instrument..."), nullptr, false, a.doc.song().channel(a.selChannel) != nullptr))
-    j59::openRenderSampler(a, a.selChannel);  // J-59 (RN-08)
-  j31::toolsItems(a);  // J-31: audio logger, cancel recording
-  menuparity::toolsScoreLogItem(a);  // J-27
-  ImGui::Separator();
-  if (ImGui::MenuItem(i18n::tr("Route channels to free mixer tracks"), keys::label("rack.routeFree"))) chanroute::routeToFree(a, selectedChannels(a));
-  if (ImGui::MenuItem(i18n::tr("Unmute all channels"))) {
-    std::vector<ObjectId> all;
-    for (const auto& c : a.doc.song().channels) all.push_back(c.id);
-    ops::setChannelsMuted(a.doc, all, false);
-  }
-  if (ImGui::MenuItem(i18n::tr("Unsolo all mixer tracks"))) a.doc.editSong("unsolo all", [](Song& s) {
-      for (auto& m : s.mixer) m.solo = false;
-    });
-  if (ImGui::MenuItem(i18n::tr("Close plugin windows"), keys::label("view.closePlugins"))) a.closePluginWindows();
-  const bool openMacros = ImGui::BeginMenu(i18n::tr("Macros"));
-  devRackItem("toolsmenu macros");  // K-158: scripted screenshots open it
-  if (openMacros) {
-    if (ImGui::MenuItem(i18n::tr("Route every channel to its own mixer track"))) {
-      std::vector<ObjectId> all;
-      for (const auto& c : a.doc.song().channels)
-        if (c.mixerTrack == a.doc.song().masterId()) all.push_back(c.id);
-      auto t = ops::routeToFreeMixerTracks(a.doc, all);
-      a.notify(t.empty() ? std::string("Every channel already has a mixer track") : "Routed " + std::to_string(t.size()) + " channel(s)");
-    }
-    if (ImGui::MenuItem(i18n::tr("Select unused channels"))) {
-      auto u = ops::unusedChannels(a.doc.song());
-      if (u.empty()) {
-        a.notify("Every channel is used in a pattern");
-      } else {
-        a.selChannels = std::set<ObjectId>(u.begin(), u.end());
-        a.selChannel = u.front();
-        a.showRack = true;
-      }
-    }
-    menuparity::toolsMacroItems(a);  // J-27: track locks, live area, audio clip channels, declicking
-    ImGui::EndMenu();
-  }
-  const bool openFreeze = ImGui::BeginMenu(i18n::tr("Freeze and hibernate"));
-  devRackItem("toolsmenu freeze");  // K-158: scripted screenshots open it
-  if (openFreeze) {
-    freezeui::toolsMacroItems(a);  // K-87: unfreeze all, hibernate unused plugins, wake all
-    ImGui::EndMenu();
-  }
-  ImGui::Separator();
-  const bool openClean = ImGui::BeginMenu(i18n::tr("Clean up"));
-  devRackItem("toolsmenu cleanup");  // K-158: scripted screenshots open it
-  if (openClean) {
-    if (ImGui::MenuItem(i18n::tr("Trim unused mixer tracks"))) {
-      int n = ops::trimUnusedMixerTracks(a.doc);
-      a.notify(n ? "Removed " + std::to_string(n) + " unused mixer track(s)" : std::string("No unused mixer tracks at the end"));
-    }
-    menuparity::toolsCleanupItems(a);  // J-27: unused automation clips
-    if (ImGui::MenuItem(i18n::tr("Delete unused patterns"))) {
-      int n = ops::deleteUnusedPatterns(a.doc);
-      a.notify(n ? "Deleted " + std::to_string(n) + " unused pattern(s)" : std::string("No unused patterns"));
-    }
-    ImGui::EndMenu();
-  }
-  ImGui::Separator();
-  if (ImGui::MenuItem(i18n::tr("AI assistant activity"))) mcpui::showActivity();  // SC-07
+  static const md::Menu m = {
+      md::item(N_("Stop all sound"), "tools.stopSound", [](App& a) { stopSound(a); }),
+      md::submenu(N_("Tempo tapper"), {md::provider(tapperBody)}).note("tapmenu"),
+      md::provider([](App& a) { menuparity::toolsControlItems(a); }),  // J-27: last moved controls
+      md::separator(),
+      md::item(N_("Loop starter..."), [](App& a) { j59::openLoopStarter(a); }),  // J-59 (GEN-01)
+      md::submenu(N_("Swing presets"), {md::provider([](App& a) { grooveui::presetMenuItems(a); })}),  // K-151
+      md::submenu(N_("Chord progression"), {md::provider([](App& a) { progressionItems(a, false); })}),
+      md::submenu(N_("Riff from progression"), {md::provider([](App& a) { progressionItems(a, true); })}),
+      md::submenu(N_("Piano roll tools"), {md::provider([](App& a) { pianoToolItems(a); })}),
+      md::submenu(N_("Composing"),
+                  {
+                      md::submenu(N_("Piano roll selection"), {md::provider([](App& a) { pianoSelectItems(a); })}),
+                      md::provider([](App& a) { menuparity::toolsNoteItems(a); }),  // J-27: last piano roll script, note clipboard
+                      md::submenu(N_("Project scripts"), {md::provider([](App& a) { projectScriptsMenuItems(a); })}),  // J-57 (SC-02)
+                  })
+          .rect("toolsmenu composing"),  // K-158: scripted screenshots open it
+      md::separator(),
+      md::item(N_("Render channel to sampled instrument..."), [](App& a) { j59::openRenderSampler(a, a.selChannel); })  // J-59 (RN-08)
+          .when([](App& a) { return a.doc.song().channel(a.selChannel) != nullptr; }),
+      md::provider([](App& a) { j31::toolsItems(a); }),                 // J-31: audio logger, cancel recording
+      md::provider([](App& a) { menuparity::toolsScoreLogItem(a); }),  // J-27
+      md::separator(),
+      md::item(N_("Route channels to free mixer tracks"), "rack.routeFree", [](App& a) { chanroute::routeToFree(a, selectedChannels(a)); }),
+      md::item(N_("Unmute all channels"),
+               [](App& a) {
+                 std::vector<ObjectId> all;
+                 for (const auto& c : a.doc.song().channels) all.push_back(c.id);
+                 ops::setChannelsMuted(a.doc, all, false);
+               }),
+      md::item(N_("Unsolo all mixer tracks"),
+               [](App& a) {
+                 a.doc.editSong("unsolo all", [](Song& s) {
+                   for (auto& m : s.mixer) m.solo = false;
+                 });
+               }),
+      md::item(N_("Close plugin windows"), "view.closePlugins", [](App& a) { a.closePluginWindows(); }),
+      md::submenu(N_("Macros"),
+                  {
+                      md::item(N_("Route every channel to its own mixer track"),
+                               [](App& a) {
+                                 std::vector<ObjectId> all;
+                                 for (const auto& c : a.doc.song().channels)
+                                   if (c.mixerTrack == a.doc.song().masterId()) all.push_back(c.id);
+                                 auto t = ops::routeToFreeMixerTracks(a.doc, all);
+                                 a.notify(t.empty() ? std::string("Every channel already has a mixer track") : "Routed " + std::to_string(t.size()) + " channel(s)");
+                               }),
+                      md::item(N_("Select unused channels"),
+                               [](App& a) {
+                                 auto u = ops::unusedChannels(a.doc.song());
+                                 if (u.empty()) {
+                                   a.notify("Every channel is used in a pattern");
+                                 } else {
+                                   a.selChannels = std::set<ObjectId>(u.begin(), u.end());
+                                   a.selChannel = u.front();
+                                   a.showRack = true;
+                                 }
+                               }),
+                      md::provider([](App& a) { menuparity::toolsMacroItems(a); }),  // J-27: track locks, live area, audio clip channels, declicking
+                  })
+          .rect("toolsmenu macros"),  // K-158: scripted screenshots open it
+      md::submenu(N_("Freeze and hibernate"), {md::provider([](App& a) { freezeui::toolsMacroItems(a); })})  // K-87
+          .rect("toolsmenu freeze"),
+      md::separator(),
+      md::submenu(N_("Clean up"),
+                  {
+                      md::item(N_("Trim unused mixer tracks"),
+                               [](App& a) {
+                                 int n = ops::trimUnusedMixerTracks(a.doc);
+                                 a.notify(n ? "Removed " + std::to_string(n) + " unused mixer track(s)" : std::string("No unused mixer tracks at the end"));
+                               }),
+                      md::provider([](App& a) { menuparity::toolsCleanupItems(a); }),  // J-27: unused automation clips
+                      md::item(N_("Delete unused patterns"),
+                               [](App& a) {
+                                 int n = ops::deleteUnusedPatterns(a.doc);
+                                 a.notify(n ? "Deleted " + std::to_string(n) + " unused pattern(s)" : std::string("No unused patterns"));
+                               }),
+                  })
+          .rect("toolsmenu cleanup"),
+      md::separator(),
+      md::item(N_("AI assistant activity"), [](App&) { mcpui::showActivity(); }),  // SC-07
+  };
+  return m;
 }
 
-void menuHelp(App& a) {
-  if (ImGui::MenuItem(i18n::tr("Keyboard shortcuts"), keys::label("help.shortcuts"))) a.showShortcuts = true;
-  if (ImGui::MenuItem(i18n::tr("Load demo song"))) a.guardUnsaved([&a]() { a.newFromTemplate("demo"); });
-  if (ImGui::MenuItem(i18n::tr("Track Receipt..."))) receiptui::open(a);  // J-219: parts of licensed samples used
-  if (ImGui::MenuItem(i18n::tr("Show settings folder"))) a.notify("Settings, presets and templates: " + a.configDir());
-  ImGui::Separator();
-  if (updui::started() && ImGui::MenuItem(i18n::tr("Check for updates..."))) updui::checkNow(a);  // J-89
-  if (ImGui::MenuItem(i18n::tr("About Gridline"))) a.showAbout = true;
+const md::Menu& helpDef() {
+  static const md::Menu m = {
+      md::item(N_("Keyboard shortcuts"), "help.shortcuts", [](App& a) { a.showShortcuts = true; }),
+      md::item(N_("Load demo song"), [](App& a) { a.guardUnsaved([&a]() { a.newFromTemplate("demo"); }); }),
+      md::item(N_("Track Receipt..."), [](App& a) { receiptui::open(a); }),  // J-219: parts of licensed samples used
+      md::item(N_("Show settings folder"), [](App& a) { a.notify("Settings, presets and templates: " + a.configDir()); }),
+      md::separator(),
+      md::item(N_("Check for updates..."), [](App& a) { updui::checkNow(a); }).only([](App&) { return updui::started(); }),  // J-89
+      md::item(N_("About Gridline"), [](App& a) { a.showAbout = true; }),
+  };
+  return m;
 }
+
+}  // namespace
+
+const menudef::Menu& menudef::tracksEdit() { return tracksEditDef(); }
+
+const menudef::Menu& menudef::studio(int which) {
+  switch (which) {
+    case 0: return fileDef();
+    case 1: return editDef();
+    case 2: return addDef();
+    case 3: return patternsDef();
+    case 4: return viewDef();
+    case 5: return optionsDef();
+    case 6: return toolsDef();
+    default: return helpDef();
+  }
+}
+
+void menuFile(App& a) { md::emit(a, fileDef()); }
+void menuEdit(App& a) { md::emit(a, editDef()); }
+void menuAdd(App& a) { md::emit(a, addDef()); }
+void menuPatterns(App& a) { md::emit(a, patternsDef()); }
+void menuView(App& a) { md::emit(a, viewDef()); }
+void menuOptions(App& a) { md::emit(a, optionsDef()); }
+void menuTools(App& a) { md::emit(a, toolsDef()); }
+void menuHelp(App& a) { md::emit(a, helpDef()); }
 
 int settingsTabFlags(App& a, int index) {
   if (a.settingsTab != index) return 0;
@@ -664,6 +798,7 @@ bool menuShortcuts(App& a) {
   }
   if (key("view.closeAll")) a.closeAllWindows();
   if (key("view.closePlugins")) a.closePluginWindows();
+  if (key("view.hidePlugins")) toggleHostedEditorsHidden();  // K-112
   if (key("view.resetLayout")) ui::confirmLayoutReset(a);
 
   // Channel rack.

@@ -132,6 +132,7 @@ void apply(App& a, LoadJob& j) {
   const h2::PadsImport& p = j.pads;
   const Song& s = a.doc.song();
   ObjectId first = kNoId;
+  const Document::QuietPlacements quiet(a.doc);  // K-112: a kit never opens plugin windows
   a.doc.beginGroup("load drum kit");
   size_t k = 0;
   if (j.replace != kNoId && s.channel(j.replace) && !p.channels.empty()) {

@@ -1,0 +1,61 @@
+Mute clip
+Loop
+Playback >
+Reset loop start
+Automation in this pattern >
+--------------------------------
+
+--- Beat
+Edit pattern
+--------------------------------
+Duplicate ( Ctrl+B )
+Make unique
+--------------------------------
+Split at pattern repeats
+Slice at the song position
+Chop >
+Split by channel
+Merge selected clips ( Ctrl+G )
+Fit length to pattern
+--------------------------------
+Rename pattern... >
+Pattern colour >
+Select all clips of this pattern
+--------------------------------
+Delete ( Del )
+==== tree ====
+Mute clip
+Loop
+Playback >
+Playback > Quantize >
+Playback > Reset
+Reset loop start
+Automation in this pattern >
+Edit pattern
+Duplicate
+Make unique
+Split at pattern repeats
+Slice at the song position
+Chop >
+Chop > Bar
+Chop > 2 beats
+Chop > Beat
+Chop > Half beat
+Chop > Quarter beat
+Chop > Eighth beat
+Chop > Snap grid
+Chop > Into equal parts >
+Chop > At the note starts
+Chop > Beat repeat...
+Chop > Tape stop...
+Chop > Half-time...
+Chop > Triplet stutter...
+Chop > Reverse build...
+Chop > Chop and stutter...
+Split by channel
+Merge selected clips
+Fit length to pattern
+Rename pattern... >
+Pattern colour >
+Select all clips of this pattern
+Delete

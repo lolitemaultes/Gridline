@@ -23,6 +23,7 @@
 #include "ContextMenus.h"
 #include "UndoUi.h"
 #include "J31Ui.h"
+#include "LayoutShellUi.h"
 #include "RunLatch.h"
 #include "Theme.h"
 #include "Widgets.h"
@@ -890,6 +891,10 @@ void presetPanel(App& a) {
 
 // ================================================================ entry points
 
+void closeChordEditor(App& a) {
+  if (S.open) closeEditor(a, true);
+}
+
 void openChordEditor(App& a) {
   if (!a.doc.song().pattern(a.curPattern) || !a.doc.song().channel(a.selChannel)) {
     a.notify("Select a channel and a pattern first", true);
@@ -940,7 +945,8 @@ void drawChordEditor(App& a) {
   }
   ui::PlaceNextDialog(ImVec2(1010, 500), ImGuiCond_FirstUseEver, ImVec2(820, 400));  // J-54: never wider / taller than the screen
   bool open = true;
-  if (!ImGui::Begin(ui::windowTitle("Chord progression").c_str(), &open, ImGuiWindowFlags_NoCollapse)) {
+  const std::string title = ui::windowTitle("Chord progression");
+  if (!ImGui::Begin(title.c_str(), &open, layoutui::dockFlags(title.c_str(), ImGuiWindowFlags_NoCollapse))) {  // K-112: its region in a layout
     ImGui::End();
     if (!open) closeEditor(a, true);
     return;

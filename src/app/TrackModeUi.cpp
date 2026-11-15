@@ -10,6 +10,7 @@
 #include "../core/TrackModes.h"
 #include "App.h"
 #include "AudioRecordUi.h"
+#include "LayoutStyleUi.h"
 #include "Theme.h"
 #include "Widgets.h"
 
@@ -133,7 +134,7 @@ void trackMenuItems(App& a, int track) {
   }
   if (mode == TrackMode::Audio) {
     const MixerTrack* m = trackmodes::linkedMixer(s, track);
-    ImGui::SeparatorText(i18n::tr("Audio track"));
+    layoutui::menuHeading(i18n::tr("Audio track"));  // K-112: a plain line in Live
     if (ImGui::BeginMenu(i18n::tr("Audio input"))) {
       inputItems(a, track, *m);
       ImGui::EndMenu();
@@ -154,7 +155,7 @@ void trackMenuItems(App& a, int track) {
     }
   } else if (mode == TrackMode::Instrument) {
     const Channel* c = trackmodes::linkedChannel(s, track);
-    ImGui::SeparatorText(i18n::tr("Instrument track"));
+    layoutui::menuHeading(i18n::tr("Instrument track"));
     if (ImGui::MenuItem(i18n::tr("Select its channel"))) a.selectChannel(c->id);
     if (const MixerTrack* m = trackmodes::linkedMixer(s, track); m && ImGui::MenuItem(i18n::tr("Show its mixer track"))) {
       a.selMixer = m->id;
@@ -253,7 +254,7 @@ void headerClick(App& a, int track, int control) {
 void inputPopup(App& a, int track) {
   if (!ImGui::BeginPopup("##trackinput")) return;
   if (const MixerTrack* m = trackmodes::modeOf(a.doc.song(), track) == TrackMode::Audio ? trackmodes::linkedMixer(a.doc.song(), track) : nullptr) {
-    ImGui::SeparatorText(i18n::tr("Audio input"));
+    if (layoutui::menuTitles()) ImGui::SeparatorText(i18n::tr("Audio input"));
     inputItems(a, track, *m);
   } else {
     ImGui::CloseCurrentPopup();

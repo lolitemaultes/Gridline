@@ -64,6 +64,10 @@ LowLiftResponse lowLiftResponse(const PluginState& st, double sampleRate, double
 bool limiterCompOn(const PluginState& st);
 double limiterCompGainDb(const PluginState& st, double levelDb);
 
+// ---------------------------------------------------------------- compressor (gl.comp)
+// Engine law (EffectsDynK2.cpp CompLaw): static gain change in dB for a detector level in dBFS.
+double compGainDb(const PluginState& st, double levelDb);
+
 // ---------------------------------------------------------------- multiband compressor (gl.multiband)
 // Band filter magnitudes (linear) at count frequencies, from the engine's designs.
 void multibandBandResponses(const PluginState& st, double sampleRate, const double* hz, int count, double* low, double* mid, double* high);

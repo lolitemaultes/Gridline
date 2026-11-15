@@ -20,9 +20,22 @@ float DialogFooterHeight(int rows) {
   return static_cast<float>(rows) * ImGui::GetFrameHeight() + 2 * theme::kS1 + static_cast<float>(rows + 2) * sp;
 }
 
+namespace {
+ImGuiID gFooterWindow = 0;
+float gFooterY = 0.0f;
+int gFooterFrame = -1;
+}  // namespace
+
+bool InDialogFooter() {
+  const ImGuiWindow* w = ImGui::GetCurrentWindow();
+  return gFooterFrame == ImGui::GetFrameCount() && w && w->ID == gFooterWindow && ImGui::GetCursorScreenPos().y >= gFooterY;
+}
+
 void DialogFooter(float buttonsWidth) {
   const auto& P = theme::pal();
   ImGuiWindow* w = ImGui::GetCurrentWindow();
+  gFooterWindow = w->ID;
+  gFooterFrame = ImGui::GetFrameCount();
   ImGui::Dummy(ImVec2(0, theme::kS1));
   const ImVec2 p = ImGui::GetCursorScreenPos();
   // An auto-sizing dialog aligns to its content's right edge: aligning to the
@@ -31,6 +44,7 @@ void DialogFooter(float buttonsWidth) {
                                                                     : p.x + ImGui::GetContentRegionAvail().x;
   w->DrawList->AddLine(ImVec2(p.x, p.y), ImVec2(right, p.y), P.line);
   ImGui::Dummy(ImVec2(0, theme::kS1));
+  gFooterY = ImGui::GetCursorScreenPos().y - 0.5f;
   if (buttonsWidth > 0) ImGui::SetCursorScreenPos(ImVec2(std::max(p.x, right - buttonsWidth), ImGui::GetCursorScreenPos().y));
 }
 
@@ -348,12 +362,27 @@ bool PathFit(const char* text, float maxW, ImU32 col, bool framed) {
   return cut;
 }
 
+namespace {
+float gFormColumn = 0;  // K-112b: the Logic layout's form column (0: off)
+bool gFormIndentRows = true;
+}
+
+void SetFormColumn(float column, bool indentRows) { gFormColumn = column, gFormIndentRows = indentRows; }
+bool FormRowsIndented() { return gFormColumn > 0 && gFormIndentRows; }
+float FormColumnIndent() { return gFormColumn; }
+
 void FormLabelFit(const char* label, float x, ImU32 col, float gap) {
   if (cmdpalette::noting()) cmdpalette::noteFormLabel(label);  // K-93: a setting's row (found, or highlighted)
   // SameLine(x) counts from the window (or enclosing group) start, not from the indent.
   const ImGuiWindow* w = ImGui::GetCurrentWindow();
   const float colX = w->Pos.x - w->Scroll.x + x + w->DC.GroupOffset.x + w->DC.ColumnsOffset.x;
-  const float room = colX - ImGui::GetCursorScreenPos().x - gap;
+  float room = colX - ImGui::GetCursorScreenPos().x - gap;
+  if (gFormColumn > 0) {  // K-112b: the label ends at the column; its room reaches back to the group's edge
+    const float left = w->Pos.x - w->Scroll.x + w->DC.GroupOffset.x + w->DC.ColumnsOffset.x + 8.0f;
+    if (ImGui::GetCursorScreenPos().x > left) room = std::max(room, colX - gap - left);
+    const float tw = label && label[0] ? ImGui::CalcTextSize(theme::fitText(label, std::max(0.0f, room))).x : 0.0f;
+    ImGui::SetCursorScreenPos(ImVec2(std::floor(std::max(colX - gap - room, colX - gap - tw)), ImGui::GetCursorScreenPos().y));
+  }
   TextFit(label, room, col, true);
   ImGui::SameLine(x);
 }

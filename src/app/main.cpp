@@ -60,6 +60,7 @@
 #include "LiveTakes.h"
 #include "Viewports.h"
 #include "../core/I18n.h"
+#include "../core/Platform.h"
 #include "../core/UiScale.h"
 #include "AlignAudit.h"
 #include "AppIcon.h"
@@ -114,12 +115,14 @@
 #include "BrowserUi.h"
 #include "CommandPaletteUi.h"
 #include "ContextMenus.h"
+#include "../core/NoteTools.h"
 #include "EditTools.h"
 #include "J31Ui.h"
 #include "MenuParityUi.h"
 #include "ScriptUi.h"
 #include "Theme.h"
 #include "Widgets.h"
+#include "LogicNewTracks.h"
 #include "Windows.h"
 #include "TrackModeUi.h"
 #include "TrackPlusUi.h"
@@ -129,10 +132,21 @@
 #include "../core/Settings.h"
 #include "Shell.h"
 #include "LayoutPresets.h"
+#include "LayoutReport.h"
+#include "LayoutShellUi.h"
+#include "LiveLook.h"
+#include "icons/IconTexture.h"
+#include "LayoutStyleUi.h"
+#include "HostedBodies.h"
+#include "LayoutParts.h"
+#include "MenuTreeUi.h"
+#include "SystemMenu.h"
+#include "LookChrome.h"
 #include "SmoothScrollUi.h"
 #include "ExternalDragUi.h"
 #include "SuiteUi.h"
 #include "LauncherUi.h"
+#include "IdlePace.h"
 #include "ProjectLoadUi.h"
 #include "UpdateUi.h"
 #include "UrlImportUi.h"
@@ -781,7 +795,7 @@ void releaseTypedNotes(App& app, std::map<SDL_Scancode, HeldNote>& held) {
 //   Close project); signals launcher-shown / launcher-hidden
 //   quit [discard] (J-103: an SDL_QUIT, the normal quit path: unsaved-changes guard, teardown, settings saved;
 //   "discard" drops unsaved changes first, as the prompt's "Don't save")
-//   J-109: sdlkey <key>[@<position>] down|up [ctrl|super] (K-175: #<scan code> for <key>, "repeat" among the mods: a key repeat; #52: "orphan": naming no window) · sdltext <text> [orphan] · focuslost · typing on|off|show · K-175: typing octave · K-113: typing layout <id> · typing labels · noteon|noteoff <channel index> <pitch> ·
+//   J-109: sdlkey <key>[@<position>] down|up [ctrl|super] (K-175: #<scan code> for <key>, "repeat" among the mods: a key repeat; #52: "orphan": naming no window) · sdltext <text> [orphan] · focuslost · typing on|off|show · K-226: recopt show|list|play|stop|arm 0|1|<option> <n> (record options, the recorded notes) · K-175: typing octave · K-113: typing layout <id> · typing labels · noteon|noteoff <channel index> <pitch> ·
 //   previewfile <wav> · sound (output peak since the last "sound", live notes held, preview, panics, playing);
 //   waitfor output-silent: the output stayed below 1e-5 for 0.2 s (forget output-silent to wait again)
 //   J-110: stopvia button|menu|remote (the Stop button's action, Tools > Stop all sound, a MIDI controller's /
@@ -830,7 +844,8 @@ std::string devShotPending;
 // Tests: GRIDLINE_NO_RAISE_ON_PRESS=1 runs without ui::raiseOnPress (the behaviour before it, for comparison).
 const bool noRaiseOnPress = std::getenv("GRIDLINE_NO_RAISE_ON_PRESS") != nullptr;
 bool devFitNoDraw = false;  // K-147: a fitall sweep without screenshots only lays windows out (no GL drawing)
-bool devNoDraw = false;     // --no-draw: frames are laid out, not drawn (a slow software OpenGL spends most of a frame drawing)
+bool devNoDraw = false;     // --no-draw: frames are laid out, not drawn (a slow software OpenGL spends most of a frame drawing);
+                            // the frames a script's "shot" or --screenshot saves are drawn all the same
 bool devLoadHold = true;  // J-167: frames do not count while a project loads ("loadhold off")
 bool devTrace = false;
 bool devVideoCursor = false;  // K-10
@@ -1519,6 +1534,41 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
     } else if (l.cmd == "typing" && l.a0 == "state") {  // the typing keyboard on or off, and Settings > MIDI's start choice
       std::printf("typing state %s atstart %s\n", app.typingKeyboard ? "on" : "off", app.settings.getString("keys.typingAtStart").c_str());
       std::fflush(stdout);
+    } else if (l.cmd == "recopt" && l.a0 == "show") {  // K-226: the record options to stdout
+      const RecordOptions& o = app.recOptions;
+      std::printf("recopt overdub %d quantize %d qlen %d takes %d notes %d auto %d target %d countin %d punch %d audio %d\n", o.overdub ? 1 : 0,
+                  o.quantize ? 1 : 0, o.quantizeLength ? 1 : 0, o.takes ? 1 : 0, o.notes ? 1 : 0, o.automation ? 1 : 0,
+                  static_cast<int>(o.autoTarget), app.countInBars, app.recPunch ? 1 : 0, app.recAudio ? 1 : 0);
+      std::fflush(stdout);
+    } else if (l.cmd == "recopt" && l.a0 == "list") {  // K-226: the selected pattern's notes of the selected channel, as recorded
+      const Pattern* p = app.doc.song().pattern(app.curPattern);
+      std::vector<Note> ns;
+      if (p)
+        if (auto it = p->notes.find(app.selChannel); it != p->notes.end()) ns = it->second;
+      std::printf("recnotes frame %d: pattern %d \"%s\" recording %d notes %zu:", frame, app.doc.song().patternIndex(app.curPattern),
+                  p ? p->name.c_str() : "", app.recorder.active() ? 1 : 0, ns.size());
+      for (const Note& n : ns) std::printf(" %d@%lld+%lld", n.pitch, static_cast<long long>(n.start), static_cast<long long>(n.length));
+      std::printf(" undo \"%s\"\n", app.doc.history().undoLabel().c_str());
+      std::fflush(stdout);
+    } else if (l.cmd == "recopt" && l.a0 == "play") {  // K-226: Play as the transport button starts it (the count-in when armed)
+      app.startPlayback();
+    } else if (l.cmd == "recopt" && l.a0 == "stop") {
+      menuparity::stopPressed(app);
+    } else if (l.cmd == "recopt" && l.a0 == "arm") {  // K-226: "recopt arm 0|1": the record button
+      app.recordArmed = std::atoi(l.a1.c_str()) != 0;
+    } else if (l.cmd == "recopt") {  // K-226: "recopt <overdub|quantize|qlen|takes|notes|auto|target|countin|punch|audio> <n>", as the menus set them
+      RecordOptions& o = app.recOptions;
+      const int v = std::atoi(l.a1.c_str());
+      if (l.a0 == "overdub") o.overdub = v != 0;
+      else if (l.a0 == "quantize") o.quantize = v != 0;
+      else if (l.a0 == "qlen") o.quantizeLength = v != 0;
+      else if (l.a0 == "takes") o.takes = v != 0;
+      else if (l.a0 == "notes") o.notes = v != 0;
+      else if (l.a0 == "auto") o.automation = v != 0;
+      else if (l.a0 == "target" && v >= 0 && v < static_cast<int>(AutoRecordTarget::Count)) o.autoTarget = static_cast<AutoRecordTarget>(v);
+      else if (l.a0 == "countin") app.countInBars = v;
+      else if (l.a0 == "punch") app.recPunch = v != 0;
+      else if (l.a0 == "audio") app.recAudio = v != 0;
     } else if (l.cmd == "typing" && l.a0 == "atstart") {  // typing atstart last|on|off: the start choice, as the settings page sets it
       app.settings.set("keys.typingAtStart", l.a1);
     } else if (l.cmd == "typing") {  // J-109: the typing keyboard on / off
@@ -1620,6 +1670,24 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       SDL_PushEvent(&q);
     } else if (l.cmd == "browser") {  // K-17 / K-18: browser rows and file operations (BrowserUi.h)
       browserui::devCommand(app, l.args, frame);
+    } else if (l.cmd == "layout") {  // K-112: the region shell (LayoutShellUi.h): dump, show/hide <region>, open/close <window>, state
+      layoutui::devCommand(app, l.args, frame);
+    } else if (l.cmd == "parts") {  // K-112: the layout parts (LayoutParts.h): notes set/dump/focus/blur
+      layoutparts::devCommand(app, l.args);
+    } else if (l.cmd == "sysmenu") {  // K-112: the system menu bar (SystemMenu.h): dump, status, choose <path>
+      sysmenu::devCommand(app, l.args, frame);
+    } else if (l.cmd == "centre") {  // K-112 (dev): the text centring report (LiveLook.h)
+      livelook::devCentreAsk();
+    } else if (l.cmd == "pianofold") {  // K-112 (dev): the piano roll's Fold (Live): on / off
+      app.piano.fold = !l.args.empty() && l.args[0] == "on";
+    } else if (l.cmd == "clipsel") {  // K-112 (dev): clipsel <clip id>: that clip alone selected (none: no clip); prints the audio clip the band is to show
+      app.playlist.selected.clear();
+      if (!l.args.empty()) app.playlist.selected.insert(static_cast<ObjectId>(std::strtoul(l.args[0].c_str(), nullptr, 10)));
+      std::printf("clipsel frame %d: audio clip %u\n", frame, static_cast<unsigned>(livelook::focusedAudioClip(app)));
+    } else if (l.cmd == "clipview") {  // K-112 (dev): what the clip band drew: the audio clip view (1) or not (0)
+      std::printf("clipview frame %d: audio %d\n", frame, devLiveAudioClipShown() ? 1 : 0);
+    } else if (l.cmd == "menutree") {  // K-112: the menu tree (MenuTreeUi.h): dump [style]
+      menutreeui::devCommand(app, l.args, frame);
     } else if (l.cmd == "palette") {  // K-93: the command palette (CommandPaletteUi.h): open, close, dump, state, run <id>
       cmdpalette::devCommand(app, l.args, frame);
     } else if (l.cmd == "freeze") {  // K-87: freeze / hibernate (FreezeUi.h): state, freeze, unfreeze, hibernate, wait
@@ -1717,6 +1785,43 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       devSecondFrameCpuMs = 0;
       devFrameMsSum = 0;
       devFrameCount = 0;
+    } else if (l.cmd == "livebar") {  // K-112c: the Live control bar's Capture, Session record and Draw mode
+      const Song& s = app.doc.song();
+      size_t notes = 0;
+      if (const Pattern* p = s.pattern(app.curPattern))
+        if (auto it = p->notes.find(app.selChannel); it != p->notes.end()) notes = it->second.size();
+      std::printf("livebar frame %d: kept %d notes %zu undo \"%s\" armed %d pattern-mode %d playing %d recording %d draw %d tools %d %d\n", frame,
+                  app.capture.size(), notes, app.doc.history().undoLabel().c_str(), app.recordArmed ? 1 : 0,
+                  app.engine.mode() == PlayMode::Pattern ? 1 : 0, app.engine.playing() ? 1 : 0, app.recorder.active() ? 1 : 0,
+                  livelook::drawMode(app) ? 1 : 0, static_cast<int>(app.playlist.tool), static_cast<int>(app.piano.tool));
+      std::fflush(stdout);
+    } else if (l.cmd == "knobmenu") {  // K-112c: knobmenu newlane|mute|reenable|copyname|state: the Live knob menu's rows on channel 1's volume
+      const Song& s = app.doc.song();
+      if (!s.channels.empty()) {
+        const ParamId pid = channelParam(s.channels[0].id, ChannelParam::Volume);
+        if (l.a0 == "newlane") knobNewLane(app, pid);
+        else if (l.a0 == "reenable") knobReenable(app, pid);
+        else if (l.a0 == "copyname") knobCopyName(app, pid);
+        else if (l.a0 == "mute") {  // every automation clip of that control muted (sets up reenable)
+          std::set<ObjectId> all;
+          for (const Clip& c : s.playlist)
+            if (const AutomationClip* ac = c.kind == ClipKind::Automation ? s.automation(c.source) : nullptr; ac && ac->owner == pid.owner && ac->index == pid.index)
+              all.insert(c.id);
+          ops::muteClips(app.doc, all, 1);
+        }
+        const Song& t = app.doc.song();
+        int autos = 0, lastTrack = -1;
+        for (const Clip& c : t.playlist)
+          if (const AutomationClip* ac = c.kind == ClipKind::Automation ? t.automation(c.source) : nullptr; ac && ac->owner == pid.owner && ac->index == pid.index)
+            ++autos, lastTrack = c.track;
+        int used = 0;
+        for (const Clip& c : t.playlist) used = std::max(used, c.track + 1);
+        const char* clip = ImGui::GetClipboardText();
+        std::printf("knobmenu frame %d: clips %d muted %zu track %d used %d name \"%s\" clipboard \"%s\" undo \"%s\"\n", frame, autos,
+                    knobMutedAutomation(app, pid).size(), lastTrack, used,
+                    lastTrack >= 0 && lastTrack < static_cast<int>(t.tracks.size()) ? t.tracks[static_cast<size_t>(lastTrack)].name.c_str() : "",
+                    clip ? clip : "", app.doc.history().undoLabel().c_str());
+      }
     } else if (l.cmd == "edit") {  // K-47: edit copy|paste <mixer|rack> [mixer index], through the Edit menu's own code
       const std::string what = l.args.empty() ? "" : l.args[0];
       if (l.args.size() > 1 && l.args[1] == "mixer") app.editFocus = App::EditFocus::Mixer;
@@ -1995,6 +2100,13 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
                       static_cast<unsigned>(c.index), c.name.c_str(), c.points.size());
       std::printf("  automations %zu playlist %zu\n", s.automations.size(), s.playlist.size());
       std::fflush(stdout);
+    } else if (l.cmd == "autolane") {  // K-112b: autolane <track>: the Tracks layout's automation lane under it
+      devShowAutomationLane(std::atoi(l.a0.c_str()));
+    } else if (l.cmd == "menu" && l.a0 == "open") {  // K-112b: menu open <id>: that menu opens (Windows.h devMenuOpen)
+      devMenuOpen(l.a1);
+    } else if (l.cmd == "fxopen") {  // K-112b: fxopen <mixer track> <slot>: the effect window shows that slot (as --fx)
+      const size_t mi = static_cast<size_t>(std::atoi(l.a0.c_str()));
+      if (mi < app.doc.song().mixer.size()) app.fxEditor = {app.doc.song().mixer[mi].id, std::atoi(l.a1.c_str())};
     } else if (l.cmd == "plgeom") {  // J-118: the playlist's geometry (Windows.h PlaylistGeometry)
       const PlaylistGeometry& g = playlistGeometry();
       std::printf("plgeom frame %d: valid %d x0 %.3f pxPerTick %.6f tabs %.1f %.1f %.1f tabY %.1f\n", frame, g.valid ? 1 : 0,
@@ -2346,6 +2458,9 @@ int main(int argc, char** argv) {
   // Child processes (see host/PluginScan.h): plugin scanner and plugin
   // sandbox; no window, no audio.
   if (int rc = host::childMain(argc, argv); rc >= 0) return rc;
+  // K-267 / K-268: the interface thread hosts plugins: OLE before anything else can enter another
+  // kind of COM apartment on it, and before the first plugin loads (as in every VST3 host on Windows).
+  platform::initPluginThread();
   if (argc >= 2 && std::string(argv[1]) == "--version") {
     std::printf("Gridline " GRIDLINE_VERSION "\n");
     return 0;
@@ -2733,6 +2848,7 @@ int main(int argc, char** argv) {
   std::string devLayoutPreset;            // K-79 --layout studio|performance|tracks: this run only (nothing saved)
   std::vector<std::string> devPanes;      // K-79 --pane mixer|stage|piano|rack|history|pads|settings: open a window at frame 3
   bool devSwitchCheck = false;
+  std::string devStyleReport;             // K-112 --style-report <file>: the layout style report of the last frame
   int devSwitchFrame = -100;  // the frame a layout switch was applied on (for --switch-check)
   std::vector<std::pair<int, std::string>> devSwitches;  // K-79 --switch-layout <id>@<frame>: choose a preset while running
   std::string devFocus;                   // --show <window>: focus a docked window once the layout exists
@@ -2777,8 +2893,11 @@ int main(int argc, char** argv) {
     else if (arg == "--video-cursor") devVideoCursor = true;
     else if (arg == "--menu" && i + 1 < argc) devMenu = argv[++i];
     else if (arg == "--layout" && i + 1 < argc) devLayoutPreset = argv[++i];
+    else if (arg == "--system-menu") sysmenu::setDevForce(true);  // K-112: a hidden run fills the system menu bar too
+    else if (arg == "--layout-dev") layoutui::setDevLayouts(true);  // K-112: the development layouts (region shells, Tracker) this run
     else if (arg == "--pane" && i + 1 < argc) devPanes.push_back(argv[++i]);
     else if (arg == "--switch-check") devSwitchCheck = true;  // K-79: report each layout switch's frames (stderr)
+    else if (arg == "--style-report" && i + 1 < argc) devStyleReport = argv[++i];
     else if (arg == "--switch-layout" && i + 1 < argc) {
       const std::string v = argv[++i];
       const size_t at = v.find('@');
@@ -2881,6 +3000,7 @@ int main(int argc, char** argv) {
       else if (w == "settings") app.showSettings = true;
       else if (w == "shortcuts") app.showShortcuts = true;
       else if (w == "export") app.showExport = true;
+      else if (w == "newtracks") newtracks::open();  // K-112b
       else if (w == "info") app.showInfo = true;
       else if (w == "history") app.showHistory = true, devFocus = "Undo history";  // docked behind the browser: bring its tab to the front
       else if (w == "performance") app.showPerformance = true;
@@ -3076,6 +3196,7 @@ int main(int argc, char** argv) {
       // J-78: read before the window is created (see startHidden)
       // K-45: scripted runs leave the default cache alone (their own has GRIDLINE_CACHE_DIR).
       if (!std::getenv("GRIDLINE_CACHE_DIR")) cacheui::skipStartupSweep();
+      sysmenu::setHiddenRun(true);  // K-112: a scripted run never takes over the desktop's menu bar
     } else if ((gl::remotefs::isRemote(arg) || fs::exists(arg)) && !onlyPaths) {
       // Options after the project (--chan, --fx, --edit, --plugin) act on it: it loads now (J-167).
       argProject = app.openProject(arg) || argProject;
@@ -3154,6 +3275,7 @@ int main(int argc, char** argv) {
     SDL_SysWMinfo wm;
     SDL_VERSION(&wm.version);
     if (SDL_GetWindowWMInfo(window, &wm) && wm.subsystem == SDL_SYSWM_X11) {
+      sysmenu::setWindow(static_cast<unsigned long>(wm.info.x11.window));  // K-112: the Linux global menu's window
       host::native::Window xw;
       xw.display = static_cast<void*>(wm.info.x11.display);
       xw.handle = reinterpret_cast<void*>(static_cast<uintptr_t>(wm.info.x11.window));
@@ -3222,7 +3344,7 @@ int main(int argc, char** argv) {
   viewports::setVirtualMonitors(useOffscreen);
   // K-79: the layout preset (Settings > Interface > Layout) decides which layout file is read;
   // Studio keeps layout.ini. --layout shows another one for this run without saving anything.
-  layout::Preset layoutPreset = layout::current(app.settings);
+  layout::Preset layoutPreset = layout::shown(app.settings);  // K-112: a development layout needs ui.layoutDev
   if (!devLayoutPreset.empty()) {
     layoutPreset = layout::fromId(devLayoutPreset);
     layoutui::setDevOverride(layoutPreset);
@@ -3231,7 +3353,7 @@ int main(int argc, char** argv) {
     if (devLight) theme::apply(false);
   }
   layoutui::setActive(layoutPreset);
-  iniPath = (fs::path(app.configDir()) / layout::iniFileName(layoutPreset)).string();
+  iniPath = (fs::path(app.configDir()) / layoutui::iniFile(app, layoutPreset)).string();
   firstRun = !fs::exists(iniPath);
   bool layoutRebuild = false;  // K-79: a preset switch found no saved layout file
   bool layoutRebuildKeep = false;  // ... and the windows open before the switch stay open
@@ -3256,6 +3378,7 @@ int main(int argc, char** argv) {
   const char* graphicsLost = nullptr;  // K-47: why, until it is dealt with
   auto frame = [&](bool live) {
     const Uint64 frameStart = SDL_GetPerformanceCounter();  // K-71: "scan state"
+    const long long frameCpu0 = devSwitchCheck ? prof::threadCpuNow() : 0;  // K-112: the switch frame's own CPU time
     const double frameCpuStart = devThreadCpuMs();          // K-192
     liveresize::frameBegin(live);
     uint64_t statT = 0;
@@ -3372,11 +3495,12 @@ int main(int argc, char** argv) {
     ui::SetWindowRubber(scrollui::params().elastic);  // J-117: the same switch for the windows' elastic boundary
     scrollui::beforeNewFrame();
     edzoomui::mapPointer();  // K-19: the pointer over a magnified plugin editor, in its design coordinates
+    bool iconsDeferredThisFrame = false;
     if (layout::Preset to; layoutui::takeSwitch(&to)) {
       // K-79: another layout preset. The current arrangement is kept in its own file, the other
       // preset's file is read back (ImGui 1.92 rebuilds the dock nodes and re-applies every
       // window's saved place on a runtime load), or its default is built when it has none yet.
-      static std::string iniCache[layout::kPresetCount];  // this run's arrangement of each preset
+      static std::string iniCache[layout::kLayoutCount];  // this run's arrangement of each preset
       const double switchStart = SDL_GetPerformanceCounter() / static_cast<double>(SDL_GetPerformanceFrequency());
       {
         size_t n = 0;
@@ -3384,11 +3508,12 @@ int main(int argc, char** argv) {
         iniCache[static_cast<int>(layoutui::active())].assign(d, n);
       }
       if (io.IniFilename) ImGui::SaveIniSettingsToDisk(io.IniFilename);
+      layoutui::leaveLayout(app);  // K-112: windows a region only hid are open again
       layoutui::setActive(to);
       if (to == layout::Preset::Studio) app.showLivePads = false;  // a floating window there, opened from View
-      iniPath = (fs::path(app.configDir()) / layout::iniFileName(to)).string();
+      iniPath = (fs::path(app.configDir()) / layoutui::iniFile(app, to)).string();
       io.IniFilename = keepSavedLayout ? nullptr : iniPath.c_str();
-      const bool current = static_cast<int>(app.settings.getNumber(layout::versionKey(to))) >= layout::defaultVersion(to);
+      const bool current = static_cast<int>(app.settings.getNumber(layoutui::versionKey(app, to))) >= layout::defaultVersion(to);
       std::error_code ec;
       const std::string& cached = iniCache[static_cast<int>(to)];
       // The open project, its selection, playback and the open windows stay as they are; only
@@ -3402,7 +3527,12 @@ int main(int argc, char** argv) {
       }
       layoutui::enterPreset(app, to);
       layoutui::noteSwitched(ImGui::GetTime());
+      // K-112: icons the new layout shows at sizes not seen yet are drawn from a size already made
+      // on this frame (it is covered by the snapshot) and made exactly over the next frames.
+      icons::setDeferFits(true);
+      iconsDeferredThisFrame = true;
       if (devSwitchCheck) {
+        prof::setTrace(true, frameNo);  // K-112: the switch frame's parts, timed (stderr), until the frame is shown
         const double ms = (SDL_GetPerformanceCounter() / static_cast<double>(SDL_GetPerformanceFrequency()) - switchStart) * 1000.0;
         std::fprintf(stderr, "[layout-switch] frame %d to %s took %.2f ms\n", frameNo, layout::id(to), ms);
         devSwitchFrame = frameNo;
@@ -3417,7 +3547,11 @@ int main(int argc, char** argv) {
       std::fprintf(stderr, "THEME_DUMP frame %d %s frame.dark=%d frame.caption=#%06X frame.count=%d\n", ImGui::GetFrameCount(), buf, fl.dark ? 1 : 0,
                    static_cast<unsigned>(fl.caption), winframe::applyCount());
     }
-    ImGui::NewFrame();
+    layoutui::beginStyleFrame(app, app.home.visible());  // K-112: the layout's sizes (Studio: nothing)
+    {
+      prof::Scope ps("newframe");
+      ImGui::NewFrame();
+    }
     keys::escapeFrameBegin();  // K-124: what Esc may meet this frame (popups, drags, text fields)
     app.runLater();  // song edits picked in menus last frame (App::later)
     if (crashTestDirty && !app.doc.song().channels.empty()) {  // K-39 tests: unsaved work to recover
@@ -3466,11 +3600,12 @@ int main(int argc, char** argv) {
     }
     // Dock space between the top bar and the status bar.
     ImGuiViewport* vp = ImGui::GetMainViewport();
-    ImVec2 dpos(vp->WorkPos.x, vp->WorkPos.y + topH), dsize(vp->WorkSize.x, vp->WorkSize.y - topH - theme::kStatusBarH);
+    ImVec2 dpos(vp->WorkPos.x, vp->WorkPos.y + topH), dsize(vp->WorkSize.x, vp->WorkSize.y - topH - layoutui::statusBarHeight());
     ImGui::SetNextWindowPos(dpos);
     ImGui::SetNextWindowSize(dsize);
     ImGui::SetNextWindowViewport(vp->ID);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(4, 4));
+    const float dockPad = layoutui::dockMargin();  // K-112: the layout's outer margin (Studio: 4)
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(dockPad, dockPad));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0);
     ImGui::PushStyleColor(ImGuiCol_WindowBg, theme::vec(theme::pal().surface950));
@@ -3480,25 +3615,33 @@ int main(int argc, char** argv) {
     ImGuiID dockId = ImGui::GetID("GridlineDock");
     // J-28: saved layouts from before the current default are replaced once (K-79: per preset).
     const layout::Preset preset = layoutui::active();
-    static bool builtThisRun[layout::kPresetCount] = {};  // (a --layout run stores no version)
-    const bool migrate = static_cast<int>(app.settings.getNumber(layout::versionKey(preset))) < layout::defaultVersion(preset) &&
+    static bool builtThisRun[layout::kLayoutCount] = {};  // (a --layout run stores no version)
+    const bool migrate = static_cast<int>(app.settings.getNumber(layoutui::versionKey(app, preset))) < layout::defaultVersion(preset) &&
                          !builtThisRun[static_cast<int>(preset)];
     // Dev layout options (--show mixer / playlist, --hide) ask for the default layout they adjust,
     // whatever layout.ini holds (it is read since J-113).
     static bool devLayout = devMixerOnly || devPlaylistOnly || !devHide.empty();
+    if (layoutui::takeShellRebuild()) layoutRebuild = layoutRebuildKeep = true;  // K-112: a region was shown or hidden
     if (firstRun || migrate || app.resetLayout || devLayout || layoutRebuild || !ImGui::DockBuilderGetNode(dockId)) {
+      prof::Scope ps("dockbuild");
       devLayout = false;
       layoutRebuild = false;
-      const ImVec2 inner(dsize.x - 8, dsize.y - 8);  // dock host padding
+      const ImVec2 inner(dsize.x - 2 * dockPad, dsize.y - 2 * dockPad);  // dock host padding
       if (app.resetLayout) viewports::gatherAll();  // J-113: detached windows come back too
-      const workspace::Rect r = buildLayout(preset, dockId, inner, static_cast<int>(app.doc.song().channels.size()));
+      const bool shellLayout = layoutui::shellBuilt(app, preset);  // K-112: built from the layout's region tree
+      workspace::Rect r;
+      if (shellLayout) layoutui::buildShell(app, preset, dockId, inner);
+      else r = buildLayout(preset, dockId, inner, static_cast<int>(app.doc.song().channels.size()));
       rackPlacement = {dpos.x + 4 + r.x, dpos.y + 4 + r.y, r.w, r.h};
       placeRack = preset == layout::Preset::Studio;  // the other presets dock the rack
-      if (!layoutui::hasDevOverride()) app.settings.set(layout::versionKey(preset), layout::defaultVersion(preset));
+      if (!layoutui::hasDevOverride()) app.settings.set(layoutui::versionKey(app, preset), layout::defaultVersion(preset));
       builtThisRun[static_cast<int>(preset)] = true;
       firstRun = false;
       app.resetLayout = false;
-      if (!layoutRebuildKeep) layoutui::showPresetWindows(app, preset);
+      if (!layoutRebuildKeep) {
+        if (shellLayout) layoutui::showShellWindows(app, preset);
+        else layoutui::showPresetWindows(app, preset);
+      }
       layoutRebuildKeep = false;
       if (devPlaylistOnly) app.showBrowser = app.showRack = app.showPiano = app.showMixer = false;
       for (const std::string& w : devHide) {
@@ -3520,18 +3663,22 @@ int main(int argc, char** argv) {
     }
     {  // window/scale changed since last frame: refit the docked panels
       static ImVec2 lastDock(0, 0);
-      ImVec2 avail(dsize.x - 8, dsize.y - 8);  // dock host padding
+      ImVec2 avail(dsize.x - 2 * dockPad, dsize.y - 2 * dockPad);  // dock host padding
       if (lastDock.x > 0 && (std::fabs(avail.x - lastDock.x) > 0.5f || std::fabs(avail.y - lastDock.y) > 0.5f))
         fitDockTree(ImGui::DockBuilderGetNode(dockId), ImVec2(avail.x / lastDock.x, avail.y / lastDock.y), avail);
       lastDock = avail;
     }
-    viewports::beginDockSpace(dockId);  // J-114: tab bars get the pop-out / dock-back button
-    ImGui::DockSpace(dockId, ImVec2(0, 0), ImGuiDockNodeFlags_None);
-    viewports::endDockSpace();
+    {
+      prof::Scope ps("dockspace");
+      viewports::beginDockSpace(dockId);  // J-114: tab bars get the pop-out / dock-back button
+      ImGui::DockSpace(dockId, ImVec2(0, 0), ImGuiDockNodeFlags_None);
+      viewports::endDockSpace();
+    }
     ImGui::End();
     ImGui::PopStyleColor();
     ImGui::PopStyleVar(3);
 
+    hostbody::frameBegin();  // K-112: the bodies the layout parts drew last frame keep their windows closed
     {
       prof::Scope ps("browser");
       drawBrowser(app);
@@ -3541,10 +3688,31 @@ int main(int argc, char** argv) {
       drawPlaylist(app);
     }
     layoutui::paneGroupsFrame(app);  // K-79: the tracks preset's one-at-a-time panes
-    drawLivePads(app);
+    {
+      prof::Scope ps("shell");
+      layoutui::shellFrame(app);  // K-112: the region shell's exclusive regions and fixed bands
+      if (livelook::active(app)) livelook::viewFrame(app);  // K-112c: the clip grid or the arrangement, one at a time
+    }
+    {
+      prof::Scope ps("livepads");
+      drawLivePads(app);
+    }
     trackui::devDemo(app);  // PL-08 / RN-09 screenshot set-ups
     chopui::devDemo(app);   // PL-13 screenshot set-ups
-    drawMasterPanel(app);  // RN-09
+    {
+      prof::Scope ps("master");
+      drawMasterPanel(app);  // RN-09
+    }
+    menutreeui::devFrame(app, frameNo);  // K-112 (dev): menu tree dumps
+    livelook::devCentreFrame(app);        // K-112 (dev): the text centring report
+    {
+      prof::Scope ps("sysmenu");
+      sysmenu::frame(app);  // K-112: the system menu bar (macOS, Linux global menu)
+    }
+    {
+      prof::Scope ps("parts");
+      layoutparts::draw(app);  // K-112: the layout parts that are open (Inspector, Library, Device chain, ...)
+    }
     {
       prof::Scope ps("pianoroll");
       drawPianoRoll(app);
@@ -3726,27 +3894,70 @@ int main(int argc, char** argv) {
     xdragui::endFrame(app);  // J-75: a drop no window took opens the files
     ui::wheelFrameEnd();     // J-83
     collabui::drawCursors(app);  // J-111: collaborators' cursors, last: on top of every window, popup and menu
+    layoutui::devFrame(app, frameNo);  // K-112: "layout inventory" (dev), once every window of the frame is drawn
     {
     prof::Scope psRender("render");
     viewports::drawTitleButtons();  // J-114
     if (alignFrame) alignaudit::finish(devAlignAudit);  // J-128
-    if (devGallery >= 0) look::drawGallery(static_cast<look::Dir>(devGallery), ImGui::GetTime(), devGalleryPage);  // J-129
-    if (!homeShown) layoutui::drawSwitchFade(ImGui::GetTime());  // K-79: a short fade over a layout switch
+    if (devGallery >= 0 && devGalleryPage == 3) look::chrome::drawGalleryPage(static_cast<look::Dir>(devGallery), ImGui::GetTime());  // K-112
+    else if (devGallery >= 0) look::drawGallery(static_cast<look::Dir>(devGallery), ImGui::GetTime(), devGalleryPage);  // J-129
+    // K-112: the last frame before a layout switch over the new layout while it settles, then
+    // cross-faded out (K-79's short fade when there is no snapshot).
+    if (!layoutui::drawSnapshot(ImGui::GetTime(), fbW, fbH, homeShown) && !homeShown) layoutui::drawSwitchFade(ImGui::GetTime());
     if (devSwitchCheck && frameNo > devSwitchFrame && frameNo <= devSwitchFrame + 4) {
       const std::string bad = layoutui::switchCheck(app);
       std::fprintf(stderr, "[layout-switch] frame %d %s playing %d tick %.0f open %s%s%s\n", frameNo, layout::id(layoutui::active()),
                    app.engine.playing() ? 1 : 0, static_cast<double>(app.engine.position()), layoutui::openWindows(app).c_str(),
                    bad.empty() ? " ok" : " BLANK", bad.c_str());
     }
+    if (devSwitchCheck && frameNo == devSwitchFrame + 8)  // K-112: the icon sizes the switch put off are made by now
+      std::fprintf(stderr, "[layout-switch] frame %d icons pending %d\n", frameNo, icons::deferredCount());
+    if (devSwitchCheck && frameNo >= devSwitchFrame && frameNo <= devSwitchFrame + 12) {  // K-112: what the switch kept, frame by frame
+      const std::string bad = layoutui::switchCheck(app);
+      std::printf("frame %d %s check %s\n", frameNo, layoutui::stateLine(app).c_str(), bad.empty() ? "ok" : bad.c_str());
+      std::fflush(stdout);
+    }
     if (devVideoCursor) drawVideoCursor();  // K-10
-    ImGui::Render();
+    if (!devStyleReport.empty() && !shotPath.empty() && frameNo == shotFrames - 1) {  // K-112: the Studio golden's text level
+      if (FILE* rf = std::fopen(devStyleReport.c_str(), "wb")) {
+        const std::string rep = layoutui::styleReport(app);
+        std::fwrite(rep.data(), 1, rep.size(), rf);
+        std::fclose(rf);
+      }
+    }
+    {
+      prof::Scope ps("imgui_render");
+      ImGui::Render();
+    }
+    layoutui::endStyleFrame();  // K-112: the base sizes back for the next frame
     edzoomui::afterRender();  // K-19: magnified plugin editors
     if (useOffscreen) offscreen.use(true);
     glViewport(0, 0, fbW, fbH);
     ImVec4 bg = theme::vec(theme::pal().chrome);
     glClearColor(bg.x, bg.y, bg.z, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
-    if (!devFitNoDraw && !devNoDraw) ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    const bool savedFrame = !devShotPending.empty() || (!shotPath.empty() && frameNo + 1 >= shotFrames);  // (--no-draw draws these)
+    if (!devFitNoDraw && (!devNoDraw || savedFrame)) {
+      prof::Scope ps("gl_draw");
+      ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+      // Tests: GRIDLINE_DEV_SLOW_DRAW_MS=<ms> makes each drawn frame that much longer (a software
+      // OpenGL on a shared runner), so a check can be run as slowly as it runs there.
+      static const int slowDrawMs = std::getenv("GRIDLINE_DEV_SLOW_DRAW_MS") ? std::max(0, std::atoi(std::getenv("GRIDLINE_DEV_SLOW_DRAW_MS"))) : 0;
+      if (slowDrawMs > 0) SDL_Delay(static_cast<Uint32>(slowDrawMs));
+    }
+    {  // Tests: GRIDLINE_DEV_SLOW_FRAME_MS=<ms>: every frame, drawn or not, that much longer (a loaded machine)
+      static const int slowFrameMs = std::getenv("GRIDLINE_DEV_SLOW_FRAME_MS") ? std::max(0, std::atoi(std::getenv("GRIDLINE_DEV_SLOW_FRAME_MS"))) : 0;
+      if (slowFrameMs > 0) SDL_Delay(static_cast<Uint32>(slowFrameMs));
+    }
+    if (layoutui::switchPending()) layoutui::captureSnapshot(fbW, fbH);  // K-112: the frame the switch fades from
+    if (iconsDeferredThisFrame) icons::setDeferFits(false);
+    else icons::serviceDeferred(4.0);  // K-112: the icon sizes a switch put off, a few each frame
+    if (devSwitchCheck && frameNo == devSwitchFrame) {  // K-112: the whole switch frame (load, rebuild, every window, drawing)
+      const double ms = 1e3 * static_cast<double>(SDL_GetPerformanceCounter() - frameStart) / static_cast<double>(SDL_GetPerformanceFrequency());
+      const double cpuMs = static_cast<double>(prof::threadCpuNow() - frameCpu0) * 1e-6;
+      std::fprintf(stderr, "[layout-switch] frame %d whole frame %.2f ms cpu %.2f ms\n", frameNo, ms, cpuMs);
+      prof::setTrace(false);
+    }
     if (browserui::thumbMode() && !browserui::thumbCapture(app, fbW, fbH)) running = false;
     if (!profilePath.empty() && shotPath.empty() && ++frameNo >= shotFrames + profileWarmup) running = false;
     if (!devInput.empty()) {  // J-112: for "waitfor"
@@ -3915,6 +4126,7 @@ int main(int argc, char** argv) {
     const int interval = SDL_GL_GetSwapInterval();
     glrecovery::waitForResetToEnd(10000);
     pluginWindowsGraphicsLost();
+    layoutui::releaseSnapshot();   // K-112
     ImGui_ImplOpenGL3_Shutdown();  // (the detached windows go here; they come back on the next frame)
     ImGui_ImplSDL2_Shutdown();
     SDL_GL_MakeCurrent(window, nullptr);
@@ -3975,22 +4187,74 @@ int main(int argc, char** argv) {
     const char* d = SDL_GetCurrentVideoDriver();
     return d && std::strcmp(d, "wayland") == 0;
   }();
+  // K-277: idle frame pacing (IdlePace.h). Scripted runs (tests, screenshots, profiles, video)
+  // count frames and keep the full rate; GRIDLINE_IDLE_PACING=1 paces them too,
+  // GRIDLINE_NO_IDLE_PACING=1 never paces.
+  idlepace::IdlePace pace;
+  pace.setEnabled(std::getenv("GRIDLINE_IDLE_PACING") ? true
+                  : std::getenv("GRIDLINE_NO_IDLE_PACING")
+                      ? false
+                      : devInput.empty() && shotPath.empty() && profilePath.empty() && gVideoFps == 0 && !browserui::thumbMode());
+  const auto paceNow = [] { return static_cast<double>(SDL_GetPerformanceCounter()) / static_cast<double>(SDL_GetPerformanceFrequency()); };
+  pace.active(paceNow());
+  uint64_t paceAudible = 0, paceRevision = 0;
+  double paceMidi = -1;
+  // Something the interface shows changes on its own: draw every refresh.
+  const auto paceBusy = [&]() {
+    const ImGuiIO& pio = ImGui::GetIO();
+    bool mouseDown = false;
+    for (bool d : pio.MouseDown) mouseDown = mouseDown || d;
+    if (mouseDown || ImGui::IsAnyItemActive() || ImGui::GetDragDropPayload() != nullptr) return true;
+    if (app.engine.playing() || app.engine.liveHeld() > 0 || app.engine.previewing() || app.projectLoading() || !app.toasts.empty()) return true;
+    if (host::scanStatus().running || collabui::active(app)) return true;
+#if !defined(__APPLE__) && !defined(_WIN32)
+    if (!openHostedEditorTargets().empty()) return true;  // plugin interfaces here live on the frames' event pump
+#endif
+    bool changed = false;
+    if (const uint64_t a = app.engine.audibleBlocks(); a != paceAudible) paceAudible = a, changed = true;  // sound: meters move
+    if (const uint64_t r = app.doc.revision(); r != paceRevision) paceRevision = r, changed = true;
+    if (app.midi)
+      if (const double m = app.midi->lastActivity(); m != paceMidi) paceMidi = m, changed = true;
+    return changed;
+  };
   while (running) {
+    if (pace.enabled()) {  // K-277: idle: wait for input, sound or the next idle frame, a refresh at a time
+      for (double left = pace.waitLeft(paceNow()); left > 0; left = pace.waitLeft(paceNow())) {
+        if (frameClock) host::native::frameClockWait();
+        else SDL_WaitEventTimeout(nullptr, static_cast<int>(std::ceil(std::min(left, 1.0 / 60.0) * 1000.0)));
+        SDL_PumpEvents();
+        if (SDL_HasEvents(SDL_FIRSTEVENT, SDL_LASTEVENT) || paceBusy()) {
+          pace.active(paceNow());
+          break;
+        }
+      }
+      pace.framed(paceNow());
+    }
     prof::beginFrame();
     SDL_Event ev;
+    int paceEvents = 0;
     uint64_t statT = fstats::stamp();
     liveresize::pumpBegin();
     std::vector<SDL_Scancode> pendingUps;  // K-175: typed keys let go in this batch of events
-    auto endTypedKey = [&](SDL_Scancode sc) {
+    std::map<SDL_Scancode, double> upStamps;  // K-226: when they were let go
+    // K-226: when SDL saw a key event (MidiManager::clockNow seconds), so a recorded note lands where it
+    // was played, not where this frame handles it.
+    auto keyStamp = [](uint32_t timestamp) {
+      const uint32_t nowMs = SDL_GetTicks();
+      const double ago = timestamp > 0 && timestamp <= nowMs ? static_cast<double>(nowMs - timestamp) / 1000.0 : 0.0;
+      return MidiManager::clockNow() - std::min(ago, 1.0);
+    };
+    auto endTypedKey = [&](SDL_Scancode sc, double stamp) {
       const auto h = held.find(sc);
       const ObjectId chId = h != held.end() ? h->second.channel : app.selChannel;
       if (h != held.end()) held.erase(h);
       for (int p : app.typing.release(sc)) {
         app.engine.noteOff(chId, p);
-        app.playedNoteOff(chId, p);
+        app.playedNoteOff(chId, p, stamp);
       }
     };
     while (SDL_PollEvent(&ev)) {
+      ++paceEvents;  // K-277
       if (gl::opendocs::take(ev)) continue;  // K-119: a file macOS asks the running Gridline to open (below)
       adoptUnfocusedKeys(ev, window);        // GitHub issue #52: keys that name no window are the main window's
       ImGui_ImplSDL2_ProcessEvent(&ev);
@@ -4000,8 +4264,10 @@ int main(int argc, char** argv) {
       // the typing keyboard switched off, a project loading, no channel selected); at the end of
       // this batch of events, see below.
       if (ev.type == SDL_KEYUP && (held.count(ev.key.keysym.scancode) || app.typing.isDown(ev.key.keysym.scancode)) &&
-          std::find(pendingUps.begin(), pendingUps.end(), ev.key.keysym.scancode) == pendingUps.end())
+          std::find(pendingUps.begin(), pendingUps.end(), ev.key.keysym.scancode) == pendingUps.end()) {
         pendingUps.push_back(ev.key.keysym.scancode);
+        upStamps[ev.key.keysym.scancode] = keyStamp(ev.key.timestamp);
+      }
       // K-175: as the keyboard focus moves between windows the system may let go of the keys held and
       // report them down again in the new window (SDL on X11 does). A key that comes back down that way
       // never went up: it keeps its notes and is no new press. Other keys reported down then are keys
@@ -4012,7 +4278,7 @@ int main(int argc, char** argv) {
         if (up != pendingUps.end()) {
           pendingUps.erase(up);
           if (app.typing.settling()) continue;
-          endTypedKey(ev.key.keysym.scancode);  // released and pressed again in one batch: both count
+          endTypedKey(ev.key.keysym.scancode, upStamps[ev.key.keysym.scancode]);  // released and pressed again in one batch: both count
         }
       }
       if (hostedEditorEvent(app, ev)) continue;  // plugin editor windows
@@ -4055,15 +4321,16 @@ int main(int argc, char** argv) {
         }
         if (typingKey(sc) > 0 && app.selChannel != kNoId) {
           std::vector<int> on = app.typing.press(sc, ev.key.repeat != 0);
+          const double stamp = keyStamp(ev.key.timestamp);
           for (int p : on) {
             app.engine.noteOn(app.selChannel, p, app.typing.velocity / 127.0f);
-            app.playedNoteOn(app.selChannel, p, app.typing.velocity);
+            app.playedNoteOn(app.selChannel, p, app.typing.velocity, stamp);
           }
           if (!on.empty()) held[sc] = {app.selChannel, 0, 0};
         }
       }
     }
-    for (SDL_Scancode sc : pendingUps) endTypedKey(sc);
+    for (SDL_Scancode sc : pendingUps) endTypedKey(sc, upStamps[sc]);
     pendingUps.clear();
     app.typing.settle();  // K-175: keys pressed from the next batch of events on are presses again
     // K-175: while the typing keyboard plays, its keys run no other command (keypad - + also
@@ -4102,6 +4369,7 @@ int main(int argc, char** argv) {
     if (graphicsLost) dealWithGraphicsLoss();
     guardedFrame(false);
     if (failedFrames >= 3) keepsFailing();
+    if (pace.enabled() && (paceEvents > 0 || paceBusy())) pace.active(paceNow());  // K-277
     prof::endFrame();
     fstats::endFrame();
   }
@@ -4149,6 +4417,7 @@ int main(int argc, char** argv) {
   // statics already destroyed). Offline work after this point decodes / renders inline.
   sampleCache().shutdown();
   stretch::shutdownClipRenderer();
+  layoutui::releaseSnapshot();  // K-112: the switch snapshot's texture, while the context is current
   ImGui_ImplOpenGL3_Shutdown();
   ImGui_ImplSDL2_Shutdown();
   ImGui::DestroyContext();

@@ -295,6 +295,7 @@ struct PluginWindow {
   bool resizable = false;
   bool dead = false;
   bool shown = false;
+  unsigned hiddenBy = 0;  // K-112: set aside (HostedEditorHide bits): off screen, still open and running
   int pw = 0, ph = 0;  // plugin view size
   int askedW = 0, askedH = 0;  // size the plugin asked for first (report)
   int panelPage = -1;  // -1: panel folded
@@ -515,6 +516,7 @@ PluginWindow* windowFor(const PluginTarget& t) {
 // owner is set before the window is shown. macOS: a child window can only be added once the
 // window is on screen (adding it orders it in), so there it stays after.
 void showAboveMain(PluginWindow& w) {
+  if (w.hiddenBy != 0) return;  // set aside: it shows when the last reason goes
   const bool keep = gMainWin && !(SDL_GetWindowFlags(gMainWin) & SDL_WINDOW_HIDDEN);
 #if defined(__APPLE__)
   SDL_ShowWindow(w.win);
@@ -803,6 +805,58 @@ bool hostedEditorUnderMouse(PluginTarget& t, float& fx, float& fy) {
     return true;
   }
   return false;
+}
+
+// K-112: a window set aside leaves the screen (unmapped, not closed): its interface, its instance and
+// its place stay, and it comes back as it was when its last reason goes. The keyboard goes back to
+// the main window first, as when a window closes. Sandboxed interfaces live in the sandbox's own
+// window, which this process cannot hide: they are never set aside.
+static void setAside(PluginWindow& w, unsigned reasons, bool hide) {
+  if (w.dead || w.external || w.closing) return;
+  const unsigned before = w.hiddenBy;
+  w.hiddenBy = hide ? (w.hiddenBy | reasons) : (w.hiddenBy & ~reasons);
+  if (before == 0 && w.hiddenBy != 0 && w.shown && w.win) {
+    w.giveKeyboardBack();
+    SDL_HideWindow(w.win);
+    w.shown = false;
+    if (gKeyboardToMain && gMainWin) SDL_RaiseWindow(gMainWin);
+    gKeyboardToMain = false;
+    w.log("set aside");
+  } else if (before != 0 && w.hiddenBy == 0 && !w.shown && w.win && w.complete) {
+    showAboveMain(w);
+    w.log("shown again");
+  }
+}
+
+bool setHostedEditorHidden(const PluginTarget& t, bool hidden, unsigned reasons) {
+  PluginWindow* w = windowFor(t);
+  if (!w || w->external) return false;
+  setAside(*w, reasons, hidden);
+  return true;
+}
+
+bool hostedEditorHidden(const PluginTarget& t) {
+  const PluginWindow* w = windowFor(t);
+  return w && w->hiddenBy != 0;
+}
+
+std::vector<PluginTarget> openHostedEditorTargets() {
+  std::vector<PluginTarget> out;
+  for (const auto& [k, w] : windows())
+    if (!w->dead) out.push_back(w->target);
+  return out;
+}
+
+bool toggleHostedEditorsHidden() {
+  bool anyShown = false, anyHidden = false;
+  for (const auto& [k, w] : windows()) {
+    if (w->dead || w->external) continue;
+    if (w->hiddenBy == 0) anyShown = true;
+    if (w->hiddenBy & kHideAll) anyHidden = true;
+  }
+  const bool hide = anyShown || !anyHidden;
+  for (auto& [k, w] : windows()) setAside(*w, kHideAll, hide);
+  return hide;
 }
 
 void closeHostedEditor(App& a, const PluginTarget& t, const char* why) {

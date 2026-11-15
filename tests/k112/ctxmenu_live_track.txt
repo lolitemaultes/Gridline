@@ -1,0 +1,87 @@
+Clone
+Delete track
+--------------------------------
+Rename... >
+--------------------------------
+Insert one above
+Add 8 tracks
+Group >
+--------------------------------
+Select all clips on track
+Clips >
+Delete all clips on track
+--------------------------------
+Mute
+Lock
+Live settings >
+Track mode >
+--------------------------------
+Move up ( Alt+Up )
+Move down ( Alt+Down )
+--------------------------------
+Properties >
+Colour >
+==== tree ====
+Clone
+Delete track
+Rename... >
+Insert one above
+Add 8 tracks
+Group >
+Group > Hold the next 1 track
+Group > Hold the next 2 tracks
+Group > Hold the next 3 tracks
+Group > Hold the next 4 tracks
+Group > Hold the next 5 tracks
+Group > Hold the next 6 tracks
+Group > Hold the next 7 tracks
+Group > Hold the next 8 tracks
+Group > Hold the next 9 tracks
+Group > Hold the next 10 tracks
+Group > Hold the next 11 tracks
+Group > Hold the next 12 tracks
+Group > Hold the next 13 tracks
+Group > Hold the next 14 tracks
+Group > Hold the next 15 tracks
+Group > Hold the next 16 tracks
+Group > Group with the track above
+Group > Auto colour group
+Group > Collapse grouped tracks
+Group > Fold
+Group > Ungroup
+Select all clips on track
+Clips >
+Clips > Send "Beat" clips here
+Clips > Merge pattern clips
+Clips > Mute all clips
+Clips > Unmute all clips
+Delete all clips on track
+Mute
+Lock
+Live settings >
+Live settings > Trigger
+Live settings > Gate (while held)
+Live settings > Toggle
+Live settings > Loop
+Live settings > Play once
+Live settings > Next clip
+Live settings > Next, hold last
+Live settings > Next, stop after last
+Live settings > Random clip
+Live settings > Random other clip
+Live settings > Launch on >
+Live settings > Keep in phase >
+Live settings > Stop this track
+Track mode >
+Track mode > Ordinary track
+Track mode > Audio track >
+Track mode > Instrument track >
+Move up
+Move down
+Properties >
+Properties > Random colour
+Properties > Icon >
+Properties > Name after its first clip
+Properties > Size >
+Properties > Reset name, colour and icon
+Colour >

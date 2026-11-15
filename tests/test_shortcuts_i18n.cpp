@@ -65,9 +65,15 @@ void keymapTests() {
   keys::Keymap km;
   std::set<std::string> ids;
   bool unique = true, labelled = true;
+  // K-112b: the Tracks layout's pane commands have keys only in its own key set.
+  const std::set<std::string> tracksPanes = {"view.library", "view.inspector", "view.quickHelp", "view.toolbar", "view.lists", "view.notes", "view.hidePlugins"};
   for (const auto& c : keys::commands()) {
     unique &= ids.insert(c.id).second;
-    labelled &= c.label && *c.label && (!c.defaults.empty() || std::string(c.id) == "view.stage");  // the Stage opens from the View menu (bind a key if wanted)
+    // The Stage opens from the View menu; the typing octave commands have keys only in the
+    // Tracker key set (F1..F8), the pane commands only in the Logic set. Bind a key to any if wanted.
+    labelled &= c.label && *c.label &&
+                (!c.defaults.empty() || std::string(c.id) == "view.stage" || std::string(c.id).rfind("typing.octave", 0) == 0 ||
+                 tracksPanes.count(c.id) != 0);
   }
   expect(unique, "command ids are unique");
   expect(labelled, "every command has a label and a default chord");

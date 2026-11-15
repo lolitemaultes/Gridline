@@ -29,6 +29,8 @@ void draw(App& a);
 //   back / forward / up
 //   accept              the Open / Save button
 //   state               the folder, sort, rows, places, drives and the layout to stdout
+//   crumbs              the path bar's parts (button, label, font, label width) and the text runs
+//                       its draw list holds, the next frame the bar is drawn, to stdout
 void devCommand(App& a, const std::vector<std::string>& args, int frame);
 
 }  // namespace filedlgui

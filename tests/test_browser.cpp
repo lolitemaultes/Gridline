@@ -260,6 +260,18 @@ void testIndex() {
     expect(ix.tagsOf(root + "/song.mid") == std::vector<std::string>({"chords", "idea"}), "tags normalised (lower, unique, sorted)");
     expect(ix.search(parseQuery("tag:idea")).size() == 1, "index search: user tag");
     expect(ix.allTags().size() == 2, "allTags");
+    {  // K-112c: the tag index (user, file and automatic tags, counted per file, most used first)
+      const auto tc = ix.tagCounts();
+      int loop = 0, idea = 0;
+      for (const auto& [t, c] : tc) {
+        if (t == "loop") loop = c;
+        if (t == "idea") idea = c;
+      }
+      bool sorted = true;
+      for (size_t i = 1; i < tc.size(); ++i) sorted = sorted && tc[i - 1].second >= tc[i].second;
+      expect(loop == 2 && idea == 1 && sorted, "tagCounts: folder tags and user tags counted per file, most used first");
+      expect(ix.tagCounts(1).size() == 1, "tagCounts: at most the limit");
+    }
     expect(fs::exists(cache), "index cache written");
   }
   {

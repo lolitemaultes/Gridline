@@ -764,8 +764,8 @@ void testHand(const std::string& rampPath) {
            "release: the speed ramps back to the motor's (not a jump), then the motor has it");
     expect(!view(d).touched && view(d).playing, "release: playing again, the hand is off");
   }
-  // 6. the mouse (J-155, after Mixxx's position loop): a steady drag at 1x is
-  //    taken up smoothly and held; Hand feel tight takes it up quicker
+  // 6. the mouse (the hand follower on its moves): a steady drag at 1x is taken up
+  //    within a few frames and held smoothly; Hand feel tight is no slower
   double rises[2] = {0, 0};
   for (int f = 0; f < 2; ++f) {
     const float feel = f == 0 ? 0.5f : 1.0f;
@@ -778,20 +778,29 @@ void testHand(const std::string& rampPath) {
     });
     size_t k = 0;
     while (k < v.size() && v[k] < 0.9) ++k;
-    double mean = 0, jump = 0;
+    double mean = 0, jump = 0, jumpHeld = 0;
     for (size_t i = v.size() / 2; i < v.size(); ++i) mean += v[i];
     mean /= static_cast<double>(v.size() - v.size() / 2);
     const auto p = rampPos(d, static_cast<size_t>(t0), d.L.size());
-    // the speed over 8 samples (the ramp's read-back has some sample-to-sample noise), window to window
+    // the speed over 8 samples (the ramp's read-back has some sample-to-sample noise), window
+    // to window: over the whole drag, and once the record has the drag's speed
+    const size_t held = (k + 1) * 64;
     for (size_t i = 0; i + 16 < p.size(); i += 8)
-      if (std::isfinite(p[i]) && std::isfinite(p[i + 8]) && std::isfinite(p[i + 16]))
-        jump = std::max(jump, std::fabs((p[i + 16] - p[i + 8]) - (p[i + 8] - p[i])) / 8);
+      if (std::isfinite(p[i]) && std::isfinite(p[i + 8]) && std::isfinite(p[i + 16])) {
+        const double dv = std::fabs((p[i + 16] - p[i + 8]) - (p[i + 8] - p[i])) / 8;
+        jump = std::max(jump, dv);
+        if (i >= held) jumpHeld = std::max(jumpHeld, dv);
+      }
     rises[f] = static_cast<double>(k * 64) / kSr * 1000;
-    std::printf("# mouse drag at 1x (hand feel %.1f): 0.9x after %.0f ms, then %.3f; largest speed change in 8 samples %.4f\n", feel, rises[f], mean, jump);
+    std::printf("# mouse drag at 1x (hand feel %.1f): 0.9x after %.0f ms, then %.3f; largest speed change in 8 samples %.4f (%.4f once held)\n", feel, rises[f],
+                mean, jump, jumpHeld);
     expect(std::fabs(mean - 1.0) < 0.06, "mouse: a steady drag plays its speed");
-    expect(jump < 0.04, "mouse: no speed steps from the 60 Hz mouse (the loop's rate changes are ramped)");
+    // (the take-up follows the hand within a few frames, so it may change the speed quicker
+    // than the held drag does; it is still ramped within each step: no clicks, see
+    // test_platter_scratch)
+    expect(jump < 0.08 && jumpHeld < 0.04, "mouse: no speed steps from the 60 Hz mouse");
   }
-  expect(rises[0] > 40 && rises[0] < 250 && rises[1] < 0.7 * rises[0], "mouse: the record takes up a drag with the loop's lag; tight hand feel quicker");
+  expect(rises[0] > 15 && rises[0] < 120 && rises[1] <= rises[0], "mouse: the record takes up a drag within a few frames; tight hand feel no slower");
   // 7. a mouse throw (let go above 2.5x) coasts and slows exponentially; a slower
   //    release stops at once (the motor is off)
   for (double sp : {4.0, 1.5}) {

@@ -55,6 +55,9 @@ struct SkipRows {
   SkipRows& operator=(const SkipRows&) = delete;
 };
 
+// True inside a SkipRows (the menu tree marks those items: not palette rows).
+bool skippingRows();
+
 // Notes from the shared widgets while the palette reads the menus and settings pages or
 // highlights a setting (cheap test first: noting()).
 // Header-only so the shared widgets need no link to the palette (some tests build them alone);

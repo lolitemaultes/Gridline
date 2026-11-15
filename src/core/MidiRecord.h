@@ -4,6 +4,7 @@
 // recording, and the typing-keyboard layout (octave, velocity, chord mode).
 // All edits go through Document, so they are undoable.
 #pragma once
+#include <functional>
 #include <map>
 #include <set>
 #include <string>
@@ -16,7 +17,7 @@ enum class AutoRecordTarget : uint8_t { Auto = 0, PatternEvents, AutomationClips
 const char* autoRecordTargetName(AutoRecordTarget t);
 
 struct RecordOptions {
-  bool overdub = true;          // false = replace: a channel's first note in a pass clears its notes there
+  bool overdub = true;          // false = replace: what a pass plays over (from its first note on) is cleared
   bool quantize = true;         // note starts snap to `grid`
   bool quantizeLength = false;  // note lengths snap too (at least one grid)
   Tick grid = 24;               // ticks (the piano roll snap)
@@ -26,23 +27,56 @@ struct RecordOptions {
   AutoRecordTarget autoTarget = AutoRecordTarget::Auto;  // Auto: pattern events in pattern mode, clips in song mode
 };
 
+class Settings;
+// K-226: the record options, the count-in (bars) and the punch switch, kept between runs (settings
+// "record.midi.*", "record.countInBars", "record.punch"). `grid` is not kept (the piano roll snap).
+void loadRecordOptions(const Settings& s, RecordOptions& o, int& countInBars, bool& punch);
+void saveRecordOptions(Settings& s, const RecordOptions& o, int countInBars, bool punch);
+
 // Nearest grid line (grid <= 1: unchanged).
 Tick quantizeTick(Tick t, Tick grid);
 
+// K-226: where a recording runs, besides the options. Ticks are what NoteRecorder is fed: pattern
+// ticks in pattern mode, song ticks in song mode.
+struct RecordSetup {
+  Tick start = 0;                   // where recording started (the transport position when it began)
+  Tick pickup = 0;                  // notes played up to this much before `start` (the count-in's last beat) are kept at the start
+  Tick punchIn = 0, punchOut = 0;   // song mode: only notes inside [in, out) record (out <= in: no punch)
+  Tick loopStart = 0, loopEnd = 0;  // song mode: the range the transport loops over (end <= start: none known)
+};
+
+// Records notes (MIDI, the typing keyboard) and controller moves while the transport plays. Every
+// edit of one recording goes into one undo step (also when it spans many passes); the notes appear
+// as they are played.
 class NoteRecorder {
  public:
-  // Pattern mode: positions are pattern ticks looping over [0, loopLength).
-  void beginPattern(Document& doc, ObjectId pattern, const RecordOptions& o, Tick loopLength);
-  // Song mode: positions are song ticks. Notes go into `pattern` through the
-  // clip that covers the position (a clip is placed when none does).
-  void beginSong(Document& doc, ObjectId pattern, const RecordOptions& o);
+  // Pattern mode: positions are pattern ticks looping over [0, loopLength). A note held over the
+  // loop end is cut there: the pattern never grows during a take.
+  void beginPattern(Document& doc, ObjectId pattern, const RecordOptions& o, Tick loopLength, const RecordSetup& setup = {});
+  // Song mode: positions are song ticks. The take is a new pattern with one clip, placed with the
+  // first note at the bar where recording started (on the instrument track of the note's channel
+  // when it has one); the clip grows as recording goes on. `pattern` gives the take its bar layout.
+  // Loop passes record into the same take, or a new one each (options().takes), stacked below.
+  void beginSong(Document& doc, ObjectId pattern, const RecordOptions& o, const RecordSetup& setup = {});
   bool active() const { return active_; }
   bool songMode() const { return song_; }
-  ObjectId pattern() const { return pattern_; }  // current take
+  // The pattern recorded into now: pattern mode, the current take; song mode, the current take's
+  // pattern (kNoId until the first note).
+  ObjectId pattern() const { return pattern_; }
+  ObjectId takeClip() const { return clip_; }  // song mode: the current take's clip
   // From now on records into `pattern` (pattern mode: an instrument's pass moved to a new
   // pattern, J-159). The notes held so far end in the pattern they started in.
   void retarget(ObjectId pattern) {
     if (active_ && !song_) pattern_ = pattern;
+  }
+  // Pattern mode: the loop length follows the pattern when it changes during a take.
+  void setLoopLength(Tick len) {
+    if (active_ && !song_ && len > 0) loop_ = len;
+  }
+  // Song mode: the range the transport loops over now (end <= start: none).
+  void setSongLoop(Tick start, Tick end) {
+    setup_.loopStart = start;
+    setup_.loopEnd = end;
   }
   int pass() const { return pass_; }
   int takes() const { return static_cast<int>(takeIds_.size()); }
@@ -55,9 +89,14 @@ class NoteRecorder {
   void noteOff(Document& doc, ObjectId channel, int pitch, double tick);
   // A linked parameter moved (normalized value) at `tick`.
   void controller(ParamId target, double normalized, double tick);
+  // The sustain pedal (CC 64) of `channel` went down or up at `tick`: recorded with the notes
+  // (as the channel's Sustain automation), so playback has the pedal as it was played.
+  void pedal(ObjectId channel, bool down, double tick);
   // Closes held notes at `tick` and commits everything.
   void end(Document& doc, double tick);
   const RecordOptions& options() const { return opt_; }
+  // Runs `fn`'s edits as part of this recording's undo step (a linked control moved meanwhile).
+  void edit(Document& doc, const std::function<void()>& fn);
 
  private:
   struct Held {
@@ -66,25 +105,45 @@ class NoteRecorder {
     double start;
     int pass;
     ObjectId pattern;
-    Tick songOrigin;  // song mode: clip origin for the note's pattern ticks
+    Tick origin;  // song mode: the song tick of the pattern's tick 0 (the take's clip)
+    double played;  // where the key went down (a pickup's start is moved to the take's start)
+  };
+  struct Mine {  // a note this pass recorded (replace mode keeps it)
+    ObjectId pattern, channel;
+    Tick start;
+    int pitch;
+  };
+  struct Replace {  // replace mode: what this pass of a channel clears, [from, to) in its own ticks
+    double from = 0, to = 0;
   };
   void commitNote(Document& doc, const Held& h, int pitch, double endTick);
   void commitAutomation(Document& doc);
   void newPass(Document& doc);
-  // Song mode: (pattern tick origin) for a song tick, placing a clip if needed
-  // (PL-08: on the instrument track of `channel` when it has one).
-  Tick songOrigin(Document& doc, double tick, ObjectId channel = kNoId);
+  void cutHeld(Document& doc, double at);  // commits every held note, ending at `at`
+  void clearReplaced(Document& doc, double upTo);
+  void growTake(Document& doc, double tick);
+  // Song mode: the current take, made when needed (for a note of `channel` at `tick`).
+  bool ensureTake(Document& doc, double tick, ObjectId channel);
+  double fold(double tick) const;  // pattern mode: into [0, loop)
 
-  bool active_ = false, song_ = false;
+  bool active_ = false, song_ = false, started_ = false;
   RecordOptions opt_;
-  ObjectId base_ = kNoId, pattern_ = kNoId;
+  RecordSetup setup_;
+  ObjectId base_ = kNoId, pattern_ = kNoId, clip_ = kNoId;
   Pattern baseContent_;  // the pattern as it was when recording started (takes start from it)
   Tick loop_ = 0;
-  double last_ = -1;
+  Tick origin_ = 0;      // song mode: the take's clip start
+  int track_ = -1;       // song mode: the take's track
+  int takePass_ = -1;    // song mode: the pass the current take was made in
+  double last_ = -1e18;
+  double wrapFrom_ = 0, wrapTo_ = 0;  // song mode: the last wrap (from the loop end to its start)
   int pass_ = 0, recorded_ = 0;
+  uint64_t step_ = 0;  // the history step of this recording (0: none yet)
   std::vector<ObjectId> takeIds_;
+  std::vector<ObjectId> takeClips_;
   std::map<std::pair<ObjectId, int>, Held> held_;  // (channel, pitch)
-  std::set<ObjectId> cleared_;                      // replace mode: channels cleared this pass
+  std::map<ObjectId, Replace> replace_;            // replace mode: by channel, this pass
+  std::vector<Mine> mine_;                         // replace mode: the notes this pass recorded
   std::map<uint64_t, std::vector<std::pair<double, double>>> auto_;  // ParamId → (tick, value)
 };
 
@@ -107,6 +166,31 @@ class StepRecorder {
  private:
   std::set<int> down_;
   std::map<int, int> chord_;  // pitch → velocity, collected while keys are down
+};
+
+// K-112c: Capture. The notes played while nothing records are kept (the latest few hundred), so
+// what was just played can still become notes afterwards: commit() writes the last phrase (the
+// notes after the last pause longer than `gapSeconds`) of the channel played last into `pattern`,
+// from its start, timed at `bpm`, note starts rounded to `grid` ticks (0: as played), added to the
+// notes there as one undo step ("capture"). Returns how many notes were written (0: nothing kept)
+// and forgets what was kept.
+class NoteCapture {
+ public:
+  static constexpr size_t kMax = 512;
+  void noteOn(ObjectId channel, int pitch, int velocity, double seconds);
+  void noteOff(ObjectId channel, int pitch, double seconds);
+  void clear() { played_.clear(); }
+  int size() const { return static_cast<int>(played_.size()); }
+  ObjectId lastChannel() const { return played_.empty() ? kNoId : played_.back().channel; }
+  int commit(Document& doc, ObjectId pattern, double bpm, Tick grid, double now, double gapSeconds = 4.0);
+
+ private:
+  struct Played {
+    ObjectId channel;
+    int pitch, velocity;
+    double on, off;  // seconds; off < 0 while held
+  };
+  std::vector<Played> played_;
 };
 
 // Computer keyboard as a piano (FL-like layout): lower row Z.. from the base

@@ -1,4 +1,5 @@
 #include "Theme.h"
+#include "../../third_party/imgui/imgui_internal.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -558,6 +559,45 @@ void textEllipsis(ImDrawList* dl, ImFont* font, float size, ImVec2 pos, float ma
   if (size <= 0) size = ImGui::GetFontSize();
   std::string s = fitImpl(font, size, text, maxW);
   if (!s.empty()) dl->AddText(font, size, pos, col, s.c_str());
+}
+
+float textTop(ImFont* font, float size, float top, float h) {
+  if (!font) font = ImGui::GetFont();
+  if (size <= 0) size = ImGui::GetFontSize();
+  ImFontBaked* b = font->GetFontBaked(size);
+  const ImFontGlyph* cap = b ? b->FindGlyph('H') : nullptr;
+  if (!b || !cap) return std::round(top + (h - size) * 0.5f);
+  const float capTop = cap->Y0, base = cap->Y1;  // from the line's top
+  return std::round(top + h * 0.5f - (capTop + base) * 0.5f);
+}
+
+void inkX(ImFont* font, float size, const char* text, float* x0, float* x1) {
+  if (!font) font = ImGui::GetFont();
+  if (size <= 0) size = ImGui::GetFontSize();
+  ImFontBaked* b = font->GetFontBaked(size);
+  float pen = 0, lo = 1e9f, hi = -1e9f;
+  for (const char* s = text; s && *s;) {
+    unsigned int c = 0;
+    s += ImTextCharFromUtf8(&c, s, nullptr);
+    if (c == 0) break;
+    const ImFontGlyph* g = b ? b->FindGlyph(static_cast<ImWchar>(c)) : nullptr;
+    if (!g) continue;
+    if (g->Visible) lo = std::min(lo, pen + g->X0), hi = std::max(hi, pen + g->X1);
+    pen += g->AdvanceX;
+  }
+  if (lo > hi) lo = 0, hi = pen;
+  *x0 = lo, *x1 = hi;
+}
+
+void centreText(ImDrawList* dl, ImFont* font, float size, ImVec2 a, ImVec2 b, ImU32 col, const char* text) {
+  if (!font) font = ImGui::GetFont();
+  if (size <= 0) size = ImGui::GetFontSize();
+  const std::string s = fitImpl(font, size, text, b.x - a.x - 2);
+  if (s.empty()) return;
+  float x0 = 0, x1 = 0;
+  inkX(font, size, s.c_str(), &x0, &x1);
+  const float x = std::round((a.x + b.x) * 0.5f - (x0 + x1) * 0.5f);
+  dl->AddText(font, size, ImVec2(x, textTop(font, size, a.y, b.y - a.y)), col, s.c_str());
 }
 
 namespace {

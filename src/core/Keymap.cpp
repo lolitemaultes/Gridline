@@ -68,6 +68,16 @@ std::vector<Command> buildCommands() {
       {"transport.rewindBar", G, N_("Back one bar"), {ch(K::Left, H)}, true},
       {"transport.forwardBar", G, N_("Forward one bar"), {ch(K::Right, H)}, true},
       {"options.countIn", G, N_("Count-in on / off"), {ch(K::K, H)}},
+      // K-112: the typing keyboard's octave picked directly. No keys outside the Tracker set
+      // (it puts them on F1 to F8); anyone can give them keys in the shortcut editor.
+      {"typing.octave1", G, N_("Typing keyboard octave 1"), {}},
+      {"typing.octave2", G, N_("Typing keyboard octave 2"), {}},
+      {"typing.octave3", G, N_("Typing keyboard octave 3"), {}},
+      {"typing.octave4", G, N_("Typing keyboard octave 4"), {}},
+      {"typing.octave5", G, N_("Typing keyboard octave 5"), {}},
+      {"typing.octave6", G, N_("Typing keyboard octave 6"), {}},
+      {"typing.octave7", G, N_("Typing keyboard octave 7"), {}},
+      {"typing.octave8", G, N_("Typing keyboard octave 8"), {}},
       // ---- global: patterns ----
       {"pattern.new", G, N_("New pattern"), {ch(K::F4)}},
       {"pattern.findFirstEmpty", G, N_("Find first empty pattern"), {ch(K::F4, S)}},
@@ -91,6 +101,8 @@ std::vector<Command> buildCommands() {
       {"view.backToPlaylist", G, N_("Back to the playlist (from an editor or plugin window)"), {ch(K::Escape)}},  // K-124
       {"view.closeAll", G, N_("Close all windows"), {ch(K::F12)}},
       {"view.closePlugins", G, N_("Close plugin windows"), {ch(K::F12, A)}},
+      // K-112: no default key (Studio as before); the Live set gives it Ctrl+Alt+P, the Tracks set (K-112b) V.
+      {"view.hidePlugins", G, N_("Hide or show plugin windows (they stay open)"), {}},
       {"view.resetLayout", G, N_("Reset window layout"), {ch(K::H, C | S)}},
       {"help.shortcuts", G, N_("Keyboard shortcuts"), {ch(K::F1)}},
       // K-93: the command palette. Ctrl+K (Cmd+K on macOS) everywhere except the channel rack, whose
@@ -101,6 +113,13 @@ std::vector<Command> buildCommands() {
       // K-79: layout presets.
       {"view.toggleMain", G, N_("Switch the main view (playlist / live pads)"), {ch(K::Tab, H)}},
       {"view.editors", G, N_("Editors in the bottom pane (show / hide)"), {ch(K::E, H)}},
+      // K-112b: the Tracks layout's panes (no key outside its set; they do nothing in the other layouts).
+      {"view.library", G, N_("Library pane (show / hide)"), {}},
+      {"view.inspector", G, N_("Inspector pane (show / hide)"), {}},
+      {"view.quickHelp", G, N_("Quick help pane (show / hide)"), {}},
+      {"view.toolbar", G, N_("Toolbar under the control bar (show / hide)"), {}},
+      {"view.lists", G, N_("Lists in the right pane (show / hide)"), {}},
+      {"view.notes", G, N_("Notes in the right pane (show / hide)"), {}},
       // ---- playlist ----
       {"playlist.delete", PL, N_("Delete selected clips"), {ch(K::Delete), ch(K::Backspace)}},
       {"playlist.selectAll", PL, N_("Select all clips"), {ch(K::A, C)}},
@@ -498,6 +517,7 @@ const char* profileId(Profile p) {
   switch (p) {
     case Profile::Live: return "live";
     case Profile::Logic: return "logic";
+    case Profile::Tracker: return "tracker";
     default: return "studio";
   }
 }
@@ -506,6 +526,7 @@ Profile profileFromId(const std::string& id) {
   const std::string t = lower(id);
   if (t == "live" || t == "performance") return Profile::Live;
   if (t == "logic" || t == "tracks") return Profile::Logic;
+  if (t == "tracker") return Profile::Tracker;
   return Profile::Studio;
 }
 
@@ -551,6 +572,7 @@ Rows liveRows() {
   set("transport.record", {ch(K::F9)});
   set("transport.songMode", {});
   set("help.shortcuts", {ch(K::F1), ch(K::Slash, C)});
+  set("view.hidePlugins", {ch(K::P, C | A)});  // K-112: plugin windows hide and show again
   // playlist
   set("playlist.duplicate", {ch(K::D, C)});
   set("playlist.deselect", {ch(K::A, C | S)});
@@ -600,6 +622,13 @@ Rows logicRows(bool sep) {
   add("view.browser", {ch(K::B)});
   add("view.mixer", {ch(K::X), ch(K::D2, M)});
   add("view.editors", {ch(K::E)});
+  add("view.library", {ch(K::Y)});
+  add("view.inspector", {ch(K::I)});
+  add("view.quickHelp", {ch(K::Slash, S)});
+  add("view.toolbar", {sep ? ch(K::T, kCtrl | kAlt | kCmd) : ch(K::T, kCtrl | kAlt | kShift)});
+  add("view.lists", {ch(K::D)});
+  add("view.notes", {ch(K::P, M | A)});
+  add("view.hidePlugins", {ch(K::V)});
   add("view.pianoRoll", {ch(K::P), ch(K::D4, M)});
   add("view.channelRack", {ch(K::D3, M)});
   add("view.settings", {ch(K::Comma, M)});
@@ -632,9 +661,33 @@ Rows logicRows(bool sep) {
   return r;
 }
 
+// K-112 Tracker: the function keys work as in trackers: F1 to F8 pick the typing keyboard's
+// octave and do nothing else. The window commands that had F1, F2 and F4 to F8 move to Ctrl+Alt
+// keys; F9 (mixer), F10 (settings), F11 (project info) and F12 (close all) stay. The set adds
+// no key that deletes, clears or rewrites anything: every chord it adds opens, shows or picks.
+Rows trackerRows() {
+  using K = Key;
+  Rows r;
+  const char* const octaves[8] = {"typing.octave1", "typing.octave2", "typing.octave3", "typing.octave4",
+                                  "typing.octave5", "typing.octave6", "typing.octave7", "typing.octave8"};
+  const Key fkeys[8] = {K::F1, K::F2, K::F3, K::F4, K::F5, K::F6, K::F7, K::F8};
+  for (int i = 0; i < 8; ++i) r.push_back({octaves[i], {ch(fkeys[i])}});
+  auto add = [&](const char* id, std::vector<Chord> c) { r.push_back({id, std::move(c)}); };
+  add("help.shortcuts", {ch(K::Slash, C)});
+  add("edit.rename", {ch(K::Enter, S)});
+  add("pattern.new", {ch(K::N, C | A)});
+  add("view.channelRack", {ch(K::D1, C | A)});
+  add("view.playlist", {ch(K::D2, C | A)});
+  add("view.pianoRoll", {ch(K::D3, C | A)});
+  add("view.mixer", {ch(K::F9), ch(K::D4, C | A)});
+  add("view.pluginPicker", {ch(K::P, C | A)});
+  add("view.browser", {ch(K::B, C | A)});
+  return r;
+}
+
 std::map<std::string, std::vector<Chord>> buildProfile(Profile p, bool sep) {
   std::map<std::string, std::vector<Chord>> out;
-  const Rows rows = p == Profile::Live ? liveRows() : logicRows(sep);
+  const Rows rows = p == Profile::Live ? liveRows() : p == Profile::Tracker ? trackerRows() : logicRows(sep);
   std::map<std::string, std::vector<Chord>> own;
   for (const auto& [id, chords] : rows) own[id] = chords;
   // Chords the set gives to its own rows, per context.
@@ -665,6 +718,19 @@ std::map<std::string, std::vector<Chord>> buildProfile(Profile p, bool sep) {
 
 }  // namespace
 
+std::vector<SystemMenuKey> systemMenuKeys(const Keymap& km) {
+  const uint8_t cmd = km.separateCmd() ? kCmd : kCtrl;
+  const SystemMenuKey all[] = {{"hide", Chord{Key::H, cmd}}, {"hideOthers", Chord{Key::H, static_cast<uint8_t>(cmd | kAlt)}}};
+  std::vector<SystemMenuKey> out;
+  for (const SystemMenuKey& k : all) {
+    bool used = false;
+    for (const Command& c : commands())
+      for (const Chord& x : km.bindings(c.id)) used = used || x == k.chord;
+    if (!used) out.push_back(k);
+  }
+  return out;
+}
+
 const std::map<std::string, std::vector<Chord>>& profileDefaults(Profile p, bool separateCmd) {
   static const std::map<std::string, std::vector<Chord>> studio = [] {
     std::map<std::string, std::vector<Chord>> m;
@@ -674,7 +740,9 @@ const std::map<std::string, std::vector<Chord>>& profileDefaults(Profile p, bool
   static const auto perf = buildProfile(Profile::Live, false);
   static const auto tracks = buildProfile(Profile::Logic, false);
   static const auto tracksMac = buildProfile(Profile::Logic, true);
+  static const auto tracker = buildProfile(Profile::Tracker, false);
   switch (p) {
+    case Profile::Tracker: return tracker;
     case Profile::Live: return perf;
     case Profile::Logic: return separateCmd ? tracksMac : tracks;
     default: return studio;

@@ -10,7 +10,9 @@
 #include "DialogLayout.h"
 #include "Keys.h"
 #include "AutomationEditor.h"
+#include "LayoutShellUi.h"
 #include "AutomationLane.h"
+#include "PixelGrid.h"
 #include "ScrollBarUi.h"
 #include "SmoothScrollUi.h"
 #include <algorithm>
@@ -888,6 +890,14 @@ void drawCanvas(App& a, const AutomationClip& ac) {
   scrollui::zoomEnd(E.zoomGlide, E.pxPerTick, E.scrollX, (wheelZoom && !smoothscroll::isNotch(io.MouseWheel)) || barZoom);
   scrollui::clampOuter(E.axX, E.scrollX, 0.0f, 1e9f);  // J-67: the view's own glide / overscroll is left alone
   auto xOfSong = [&](double t) { return gMin.x + static_cast<float>(t) * E.pxPerTick - E.scrollX; };
+  // K-276: time lines and bar shading on whole device pixels (PixelGrid.h), as the playlist and the
+  // piano roll draw them, so lines stay one crisp column at every zoom and interface scale.
+  const float dpp = pixelgrid::frameScale();
+  auto snapSong = [&](double t) { return pixelgrid::edge(xOfSong(t), dpp); };
+  auto vline = [&](float x, float y0, float y1, ImU32 c) {
+    const pixelgrid::Span l = pixelgrid::line(x, dpp);
+    ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(l.x0, y0), ImVec2(l.x1, y1), c);
+  };
   auto xOf = [&](Tick content) { return xOfSong(static_cast<double>(base + content)); };
   auto songAt = [&](float x) { return static_cast<double>((x - gMin.x + E.scrollX) / E.pxPerTick); };
   auto contentAt = [&](float x) { return static_cast<Tick>(std::floor(songAt(x))) - base; };
@@ -927,22 +937,20 @@ void drawCanvas(App& a, const AutomationClip& ac) {
   if (mm.constant()) {
     for (Tick t = snapDown(std::max<Tick>(0, static_cast<Tick>(songAt(gMin.x))), barT); xOfSong(static_cast<double>(t)) < gMax.x; t += barT)
       if ((t / barT) % 2 == 1)
-        dl->AddRectFilled(ImVec2(std::max(clipX0, xOfSong(static_cast<double>(t))), gMin.y), ImVec2(std::min(clipX1, xOfSong(static_cast<double>(t + barT))), gMax.y),
+        dl->AddRectFilled(ImVec2(std::max(clipX0, snapSong(static_cast<double>(t))), gMin.y), ImVec2(std::min(clipX1, snapSong(static_cast<double>(t + barT))), gMax.y),
                           theme::withAlpha(P.paper, P.dark ? 0.03f : 0.02f));
     for (Tick t = snapDown(std::max<Tick>(0, static_cast<Tick>(songAt(gMin.x))), visGrid); xOfSong(static_cast<double>(t)) < gMax.x; t += visGrid) {
-      float x = std::round(xOfSong(static_cast<double>(t)));
-      dl->AddLine(ImVec2(x, gMin.y), ImVec2(x, gMax.y), t % barT == 0 ? P.gridBar : t % beatT == 0 ? P.gridBeat : fine);
+      vline(xOfSong(static_cast<double>(t)), gMin.y, gMax.y, t % barT == 0 ? P.gridBar : t % beatT == 0 ? P.gridBeat : fine);
     }
   } else {  // K-193: bars and lines of the meter map, as the playlist draws them
     for (int64_t b = mm.barIndex(std::max<Tick>(0, static_cast<Tick>(songAt(gMin.x)))); xOfSong(static_cast<double>(mm.barStart(b))) < gMax.x; ++b)
       if (b % 2 == 1)
-        dl->AddRectFilled(ImVec2(std::max(clipX0, xOfSong(static_cast<double>(mm.barStart(b)))), gMin.y),
-                          ImVec2(std::min(clipX1, xOfSong(static_cast<double>(mm.barStart(b + 1)))), gMax.y), theme::withAlpha(P.paper, P.dark ? 0.03f : 0.02f));
+        dl->AddRectFilled(ImVec2(std::max(clipX0, snapSong(static_cast<double>(mm.barStart(b)))), gMin.y),
+                          ImVec2(std::min(clipX1, snapSong(static_cast<double>(mm.barStart(b + 1)))), gMax.y), theme::withAlpha(P.paper, P.dark ? 0.03f : 0.02f));
     const ImU32 group = theme::mix(P.gridBeat, P.gridBar, 0.45f);
     timeline::forEachLine(mm, std::max<Tick>(0, static_cast<Tick>(songAt(gMin.x))), static_cast<Tick>(songAt(gMax.x)) + 1, visGrid, [&](Tick t, int k) {
       const ImU32 c = k == timeline::kLineBar ? P.gridBar : k == timeline::kLineGroup ? group : k == timeline::kLineBeat ? P.gridBeat : fine;
-      const float x = std::round(xOfSong(static_cast<double>(t)));
-      dl->AddLine(ImVec2(x, gMin.y), ImVec2(x, gMax.y), c);
+      vline(xOfSong(static_cast<double>(t)), gMin.y, gMax.y, c);
     });
   }
   for (int k = 0; k <= 8; ++k) {
@@ -1070,9 +1078,9 @@ void drawCanvas(App& a, const AutomationClip& ac) {
     const Tick labelGrid = timeline::visibleGrid(s, E.pxPerTick, 64.0);
     if (mm.constant()) {
       for (Tick t = snapDown(std::max<Tick>(0, static_cast<Tick>(songAt(gMin.x))), visGrid); xOfSong(static_cast<double>(t)) < gMax.x; t += visGrid) {
-        float x = std::round(xOfSong(static_cast<double>(t)));
+        const float x = pixelgrid::edge(xOfSong(static_cast<double>(t)), dpp);
         bool major = t % labelGrid == 0;
-        dl->AddLine(ImVec2(x, gMin.y - (major ? 10.0f : 4.0f)), ImVec2(x, gMin.y - 1), major ? P.lineStrong : P.line);
+        vline(x, gMin.y - (major ? 10.0f : 4.0f), gMin.y - 1, major ? P.lineStrong : P.line);
         if (major)
           dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(x + 4, rulerTop + 4), t % barT == 0 ? P.textDim : P.textFaint,
                       timeline::rulerLabel(s, t, labelGrid).c_str());
@@ -1083,8 +1091,7 @@ void drawCanvas(App& a, const AutomationClip& ac) {
       timeline::forEachLine(mm, std::max<Tick>(0, static_cast<Tick>(songAt(gMin.x - 40))), t1, labelGrid, [&](Tick t, int) { majors.push_back(t); });
       timeline::forEachLine(mm, std::max<Tick>(0, static_cast<Tick>(songAt(gMin.x))), t1, visGrid, [&](Tick t, int) {
         const bool major = std::binary_search(majors.begin(), majors.end(), t);
-        const float x = std::round(xOfSong(static_cast<double>(t)));
-        dl->AddLine(ImVec2(x, gMin.y - (major ? 10.0f : 4.0f)), ImVec2(x, gMin.y - 1), major ? P.lineStrong : P.line);
+        vline(xOfSong(static_cast<double>(t)), gMin.y - (major ? 10.0f : 4.0f), gMin.y - 1, major ? P.lineStrong : P.line);
       });
       float lastRight = -1e9f;
       for (Tick t : majors) {
@@ -1566,6 +1573,8 @@ void recorderTick(App& a) {
 bool& automationRecording() { return recordOn; }
 bool& automationRecordHold() { return recordHold; }
 
+void closeAutomationEditor() { E.open = false; }
+
 void openAutomationEditor(App& a, ObjectId automation, ObjectId placement) {
   (void)a;
   if (E.autoId != automation || E.pattern != kNoId) E.sel.clear();
@@ -1643,7 +1652,9 @@ void drawAutomationEditor(App& a) {
     if (const Pattern* p = s.pattern(E.pattern)) title += " \xC2\xB7 in " + p->name;
   title += "###autoedit";
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-  bool vis = ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoCollapse);
+  bool vis = ImGui::Begin(title.c_str(), &open,  // K-112: docked in its region in a layout
+                          layoutui::dockFlags(title.c_str(), ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
+                                                                 ImGuiWindowFlags_NoCollapse));
   ImGui::PopStyleVar();
   ui::KeepWindowInViewport();
   E.winMin = ImGui::GetWindowPos();
@@ -1691,7 +1702,7 @@ void drawAutomationEditor(App& a) {
   E.toolWasOpen = E.lfoOpen || E.scaleOpen || E.thinOpen;
 }
 
-ObjectId createAutomationClip(App& a, ParamId pid) {
+ObjectId createAutomationClip(App& a, ParamId pid, bool newLane) {
   const Song& s = a.doc.song();
   auto d = describeParam(s, pid);
   auto v = getParam(s, pid);
@@ -1709,7 +1720,7 @@ ObjectId createAutomationClip(App& a, ParamId pid) {
   // First track (from the bottom of the used ones) that is free over the clip.
   int track = 0;
   for (const auto& c : s.playlist) track = std::max(track, c.track + 1);
-  for (int t = 0; t < track; ++t) {
+  for (int t = 0; t < track && !newLane; ++t) {
     bool busy = false;
     for (const auto& c : s.playlist) busy = busy || (c.track == t && c.start < start + len && c.start + s.clipLength(c) > start);
     bool hasAuto = false;
@@ -1737,6 +1748,7 @@ ObjectId createAutomationClip(App& a, ParamId pid) {
     k.start = start;
     k.length = len;
     while (static_cast<int>(x.tracks.size()) <= track) x.tracks.push_back(PlaylistTrack{});
+    if (newLane && x.tracks[static_cast<size_t>(track)].name.empty()) x.tracks[static_cast<size_t>(track)].name = name;
     autoId = c.id;
     clipId = k.id;
     x.automations.push_back(std::move(c));

@@ -1850,6 +1850,7 @@ ProjectRunResult runProject(Vm& vm, ProjectHost& h, const std::string& code, con
   const size_t histBefore = h.doc.history().position();
   const uint64_t serialBefore = h.doc.history().stateSerial();
   h.doc.endGesture();
+  const Document::QuietPlacements quiet(h.doc);  // K-112: a script never opens plugin windows
   h.doc.beginGroup(label);
   r.ok = vm.exec(code, chunk, &r.error);
   if (r.ok) {
@@ -1921,6 +1922,7 @@ ProjectRunResult ProjectScript::run(ProjectHost& h, const std::vector<FormParam>
   const uint64_t serialBefore = h.doc.history().stateSerial();
   const size_t posBefore = h.doc.history().position();
   h.doc.endGesture();
+  const Document::QuietPlacements quiet(h.doc);  // K-112: a script never opens plugin windows
   h.doc.beginGroup(label);
   bool ok = vm.exec(source_, name_, &r.error);
   if (ok && vm.hasFunction("apply"))

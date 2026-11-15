@@ -205,7 +205,7 @@ void testSongModeNotes() {
   rec.noteOff(doc, lead, 60, 40);
   rec.end(doc, 96);
   bool onTrack = false;
-  for (const auto& c : doc.song().playlist) onTrack = onTrack || (c.kind == ClipKind::Pattern && c.pattern == pat && c.track == 4);
+  for (const auto& c : doc.song().playlist) onTrack = onTrack || (c.kind == ClipKind::Pattern && c.pattern == rec.pattern() && c.track == 4);
   expect(onTrack, "song-mode recording: the clip goes on the channel's instrument track");
 }
 

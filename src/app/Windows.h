@@ -92,6 +92,16 @@ struct PlaylistGeometry {
   bool valid = false;
 };
 const PlaylistGeometry& playlistGeometry();
+// K-112b (dev, "autolane <track>"): the Tracks layout shows the automation lane under that playlist track.
+void devShowAutomationLane(int track);
+// K-112b dev input "menu open <id>" (the same name and syntax as the other layouts'): asks the
+// menu `id` to open on the next frame (the bar's menus by name, e.g. File; "track": the track
+// header menu; "region": the region menu; "strip": a strip's Setting menu). devMenuTake: true
+// once, where that menu lives, when it was asked for.
+void devMenuOpen(const std::string& id);
+bool devMenuTake(const char* id);
+// K-112b: the playlist's track height each layout starts at until the person sets one (px).
+float playlistDefaultTrackHeight(bool tracksLayout);
 void notePatternMenuClone(float x, float y);  // dev (plgeom): where a pattern menu drew its Clone item
 void drawMixer(App& a);
 // J-83 dev check (--dev-input "mixer"): the strips pane's vertical scroll as
@@ -102,7 +112,12 @@ bool mixerWheelScrolls();
 // Dev check (--dev-input "mixer"): where the mixer's strip headers and some menu rows (mixer track,
 // playlist track and pattern menus) were drawn in the last two frames.
 void devMenuItem(const std::string& name);
-void devArrangementClipMenu(App& a, ObjectId clip);  // K-158: a clip's whole playlist menu (--menu arrclip)
+// K-158: a clip's whole playlist menu (--menu arrclip; K-112: also Live's grid slots).
+void devArrangementClipMenu(App& a, ObjectId clip);
+// K-112 (Live): the clip band's audio clip view (the clip column's audio rows, the file's details, a
+// ruler, the loop brace and the clip's waveform) in place of the notes editor, at the cursor.
+void drawLiveAudioClip(App& a, ObjectId clip);
+bool devLiveAudioClipShown();  // dev (clipview): the audio clip view drew this frame or the last
 void devMenuRects();
 std::string mixerDragDev();  // GitHub #46: the strip drag ("mixer" dev dump)
 void drawChannelSettings(App& a);
@@ -176,8 +191,11 @@ void playlistTrackMenu(App& a, int track);
 std::vector<int> playlistTrackSelection(App& a, int track);
 bool stepPlaylistSelection(App& a, const std::vector<int>& tracks, int dir);
 void clipContextMenu(App& a, ObjectId clip);
-void playlistOptionsMenu(App& a);
-void pianoRollMenu(App& a);
+// K-112: with the clip's own rows (`clipRows`, true when it edited the song) placed in the menu by
+// Live's order; Studio's order ignores them (its caller draws them above the menu).
+void clipContextMenu(App& a, ObjectId clip, const std::function<bool()>& clipRows);
+void playlistOptionsMenu(App& a, int part = 0);  // part: 0 every menu, 1 edit, 2 functions, 3 view (K-112b)
+void pianoRollMenu(App& a, int part = 0);  // part: 0 every menu, 1 edit, 2 functions, 3 view (K-112b)
 void markerMenu(App& a, int index);  // playlist ruler: one marker (J-11)
 void markerAddItems(App& a);         // playlist menu > Time markers: add at the selection, every N bars (J-11)
 // J-85: a song loop marker at `pos` snapped to the playlist grid (one undo
@@ -186,6 +204,9 @@ void addLoopMarker(App& a, Tick pos);
 void rulerMenu(App& a, Tick pos);    // right-click on the playlist ruler (J-85)
 void mixerTrackMenu(App& a, size_t index);
 void mixerSlotMenu(App& a, ObjectId track, int slot);
+// The effect list a mixer slot offers (favourites, categories, installed): a pick puts the effect
+// in (track, slot) and opens it (K-112b: the strips' empty slots and Replace).
+void effectPickerList(App& a, ObjectId track, int slot, const std::string& current);
 // Mixer (MixerView.cpp, J-12): selected tracks in mixer order (the focused
 // one when nothing else is selected), the send menu of a route arrow, the
 // mixer options menu, the track latency menu, per-track stem renders.
@@ -212,6 +233,10 @@ void mixerLatencyMenu(App& a, ObjectId track);
 void renderMixerStems(App& a, const std::vector<ObjectId>& tracks);
 void knobContextMenu(App& a, ParamId pid);
 void pluginWindowMenu(App& a, ObjectId owner, int slot);  // slot < 0: channel instrument
+// K-112c: the device title bar's save and hot-swap buttons. savePresetDialog: Save preset to file
+// for that plugin; swapDeviceItems: menu rows of the instruments (slot < 0) or effects to put in its place.
+void savePresetDialog(App& a, ObjectId owner, int slot);
+void swapDeviceItems(App& a, ObjectId owner, int slot);
 // Toolbar button (menu icon) that opens `body` as a popup.
 void menuButton(const char* id, const char* hint, const std::function<void()>& body);
 // Development: draws the named menu open (for --menu screenshots).

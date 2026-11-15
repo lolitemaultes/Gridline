@@ -70,6 +70,8 @@ struct Fader {
   float norm = 0;  // 0..1 (0.8 = unity)
   int state = 0;
   float meterL = -1, meterR = -1, peakL = -1, peakR = -1;
+  const float* marks = nullptr;  // K-112b: ruler marks (normalised) in place of the painter's own; null: its own
+  int markCount = 0;
 };
 void fader(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Fader& f);
 

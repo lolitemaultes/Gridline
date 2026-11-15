@@ -87,9 +87,14 @@ struct Presence {
   int pluginSlot = -1;
   bool playing = false;
   double songTick = 0;   // transport position (ticks)
+  // K-112: the object the pointer is on, by (kind, id) (core/SemanticAnchor.h): the same in every
+  // window layout. 0 = none.
+  int targetKind = 0;
+  uint32_t targetId = 0, targetSub = 0;
   bool operator==(const Presence& o) const {
     return window == o.window && x == o.x && y == o.y && kind == o.kind && a == o.a && b == o.b && cx == o.cx && cy == o.cy &&
-           plugin == o.plugin && pluginSlot == o.pluginSlot && playing == o.playing && songTick == o.songTick;
+           plugin == o.plugin && pluginSlot == o.pluginSlot && playing == o.playing && songTick == o.songTick &&
+           targetKind == o.targetKind && targetId == o.targetId && targetSub == o.targetSub;
   }
 };
 

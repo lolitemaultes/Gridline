@@ -2,6 +2,7 @@
 // native editor windows, and the generic parameter editor.
 #pragma once
 #include <string>
+#include <vector>
 #include "PluginUI.h"
 
 union SDL_Event;
@@ -53,6 +54,31 @@ void setHostedSandbox(App& a, const std::string& type, bool on);
 // plugins without an interface (or with the generic editor chosen) use
 // Gridline's parameter panel.
 bool openHostedEditor(App& a, const PluginTarget& t);  // false (with a toast) when it cannot open
+// K-112 (any layout; Studio never calls them): a plugin window set aside without closing it. It
+// leaves the screen, its interface and instance keep running, and it comes back where it was when
+// its last reason is cleared. Reasons are bits, so the person's "hide all" and a layout's own rule
+// (only the selected track's windows) do not undo each other. Sandboxed interfaces (shown in the
+// sandbox's own window) are never set aside. False: no such window, or a sandboxed one.
+enum HostedEditorHide : unsigned { kHideAll = 1u, kHideTrack = 2u, kHideAny = ~0u };
+bool setHostedEditorHidden(const PluginTarget& t, bool hidden, unsigned reasons = kHideAny);
+bool hostedEditorHidden(const PluginTarget& t);
+std::vector<PluginTarget> openHostedEditorTargets();  // every open plugin window, shown or set aside
+// "Hide or show plugin windows": sets every shown window aside, or (none shown) brings back the
+// ones set aside by it. Returns true when it hid them.
+bool toggleHostedEditorsHidden();
+// K-112: how a layout runs installed plugins' windows. A layout that wants it calls
+// setPluginWindowPolicy every frame (managed = true); when no layout has called it since the last
+// frame, nothing below applies and every window it set aside comes back (Studio: as before).
+struct PluginWindowPolicy {
+  bool managed = false;
+  bool openOnLoad = true;    // a plugin put on a track here (Document::onPluginPlaced: not undo, redo or a collaborator) opens its window
+  bool several = true;       // off: opening a plugin window closes the others
+  bool selectedOnly = true;  // when the selected track changes, only its plugins' windows show (others set aside)
+  ObjectId channel = kNoId;  // the selected track: its channel ...
+  ObjectId mixer = kNoId;    // ... and the mixer track its chain runs through
+};
+void setPluginWindowPolicy(const PluginWindowPolicy& p);
+bool pluginWindowPolicyManaged();  // a layout called setPluginWindowPolicy last frame
 bool hostedEditorOpen(const PluginTarget& t);
 // J-111g: the plugin window the mouse pointer is over (collaborators' cursors):
 // its plugin and the pointer's fraction of the window. False when none.
@@ -108,6 +134,11 @@ void setPluginWindowDevKeys(bool on);
 // Plugin window body for hosted types: editor button, plugin info and the
 // generic, searchable parameter list.
 void drawHostedEditor(App& a, const PluginTarget& t, float width);
+// K-112c: one generic parameter row of an installed plugin (name, value bar with the plugin's own
+// value text; the Live layout's device band), and the parameter last changed in the plugin's own
+// interface or such a row (-1 when none yet this session).
+void hostedParamRow(App& a, const PluginTarget& t, int k, float width);
+int hostedLastTouched(const PluginTarget& t);
 // Page a plugin window opens on (0 parameters, 1 processing, 2 settings; dev checks).
 void setHostedWrapperPage(int page);
 

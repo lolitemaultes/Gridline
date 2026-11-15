@@ -226,6 +226,10 @@ class Index {
   void setTags(const std::string& path, std::vector<std::string> tags);
   std::vector<std::string> tagsOf(const std::string& path) const;
   std::vector<std::string> allTags() const;  // user tags in use, sorted
+  // K-112c: the tag index behind the browser's filter rows: every tag a file carries (the user's,
+  // the file's own, the automatic ones from its name and folders) with how many files carry it,
+  // the most used first (then by name), at most `limit`. "starred" is left out (a place of its own).
+  std::vector<std::pair<std::string, int>> tagCounts(size_t limit = 24) const;
   // K-18: a file or folder was renamed / moved: its entries (and every entry inside the
   // folder) and their tags follow it; `to` empty forgets them (moved to the trash). Saved.
   void movePath(const std::string& from, const std::string& to);

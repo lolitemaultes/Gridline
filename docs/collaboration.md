@@ -259,6 +259,12 @@ member. Inviting the person again also works (see above).
 * **Playback is your own.** Pressing Play plays the song on your computer only. To listen along,
   right-click a collaborator in the Collaboration panel and choose **Follow their playhead**: your
   transport follows theirs until you choose it again.
+* **Go to what they are on.** Right-click a collaborator in the Collaboration panel and choose
+  **Go to what they are on**: the channel, mixer track, pattern or clip under their pointer is
+  selected on your computer and shown in your own window layout, whichever layout they use. Only
+  your selection and view change; the project does not. When their pointer is on a panel your
+  layout does not have, their cursor shows at the same channel, mixer track or playlist track in
+  your windows.
 * **What sounds stays on your computer.** Nothing you play, preview or record makes sound on a
   collaborator's computer: the transport, keys you play or hold, pads, the browser preview, a plugin
   playing on its own (Seltmann's pattern, Kerf, the chord preview, Loupe, Shuttle), Stop, recording

@@ -76,6 +76,8 @@ struct PianoRollState {
   int scale = 0;              // tools::scales() index; 0 = no scale highlighting
   bool snapToScale = false;   // drawn and moved notes land on the scale
   bool keyNames = false;      // note names on every key (else only on C)
+  bool fold = false;          // K-112 (Live): only the rows that hold notes
+  bool highlightScale = true; // K-112 (Live): rows outside the scale shaded (the scale stays chosen)
   std::set<ObjectId> ghostChannels;  // channels shown as ghost notes (empty = all others)
 };
 
@@ -374,13 +376,18 @@ class App {
   bool stepRecord = false;                     // step editing from the keyboard (stopped transport)
   NoteRecorder recorder;
   StepRecorder stepRecorder;
+  NoteCapture capture;  // K-112c: notes played while nothing records (the Live bar's Capture)
   TypingKeyboard typing;
   // Starts playback (with the count-in when recording).
   void startPlayback();
   void runAction(RemoteAction action, bool fromMmc = false);
-  // Notes played by any source (MIDI, typing keyboard): recording and step record.
-  void playedNoteOn(ObjectId channel, int pitch, int velocity);
-  void playedNoteOff(ObjectId channel, int pitch);
+  // Notes played by any source (MIDI, typing keyboard): recording and step record. `stamp`: when the
+  // key was played (MidiManager::clockNow seconds; < 0: now).
+  void playedNoteOn(ObjectId channel, int pitch, int velocity, double stamp = -1);
+  void playedNoteOff(ObjectId channel, int pitch, double stamp = -1);
+  // K-226: the tick the performer heard at `stamp` (< 0: now): what a note played then records at.
+  double recordTick(double stamp = -1) const;
+  void followRecording();  // per frame, after the input: the recording follows the transport
   void publishMidi();                          // routing / sync settings → engine and drivers
   // K-48: one tapper for the top bar button, its key, the controller action and the Tools menu.
   ops::TapTempo tapper;
@@ -581,6 +588,7 @@ class App {
   std::string pendingPreview_;
   double lastCcTime_ = -1;
   double lastRecPos_ = 0;
+  ObjectId recTakeShown_ = kNoId;  // K-226: the take the editors were last moved to
   std::map<uint64_t, int> templateKnobDown_;  // template buttons: last pressed state
   int64_t lastAutosave_ = 0;
   std::vector<TemplateInfo> templates_;

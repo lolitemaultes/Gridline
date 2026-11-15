@@ -12,6 +12,12 @@ namespace gl::prof {
 // Off by default: Scope then costs one branch.
 void enable(bool on);
 bool enabled();
+// K-112 (dev, --switch-check): while on, every Scope that closes writes its wall time to stderr
+// ("[frame-trace] frame <n> <name> <ms>"), a timing log of one frame's parts.
+void setTrace(bool on, int frame = -1);
+// CPU time the calling thread has used so far (ns): unlike wall time, it does not grow when other
+// processes take the machine (the switch check measures the switch frame with it).
+long long threadCpuNow();
 
 // Heap allocations made by the calling thread so far (counted only in builds
 // without sanitizers; 0 otherwise).

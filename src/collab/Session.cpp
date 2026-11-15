@@ -2619,6 +2619,11 @@ void Session::receive(SiteId from, int stream, const std::string& wire) {
     if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.cx) || !std::isfinite(p.cy)) p = Presence();
     p.playing = m.head.num("pl", 0) != 0;
     p.songTick = m.head.num("st", 0);
+    p.targetKind = static_cast<int>(u32("tk") & 0xFF);  // K-112 (older peers send none)
+    if (p.targetKind) {
+      p.targetId = u32("ti");
+      p.targetSub = u32("ts");
+    }
     pv.presence = p;
     pv.presenceAt = now_;
   } else if (type == "prof") {
@@ -2729,6 +2734,11 @@ void Session::sendPresence(double now) {
     m.head.object["ps"] = Json::makeNumber(localPresence_.pluginSlot);
   }
   if (localPresence_.playing) m.head.object["pl"] = Json::makeNumber(1);
+  if (localPresence_.targetKind) {  // K-112: the object, by (kind, id) (older peers ignore it)
+    m.head.object["tk"] = Json::makeNumber(localPresence_.targetKind);
+    m.head.object["ti"] = Json::makeNumber(localPresence_.targetId);
+    if (localPresence_.targetSub) m.head.object["ts"] = Json::makeNumber(localPresence_.targetSub);
+  }
   m.head.object["st"] = Json::makeNumber(localPresence_.songTick);
   for (auto& [s, pv] : peers_)
     if (pv.connected) send(s, kStreamUnreliable, m);

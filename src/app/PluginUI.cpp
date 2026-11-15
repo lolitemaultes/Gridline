@@ -28,6 +28,10 @@
 #include "BrowserUi.h"
 #include "EditorZoomUi.h"
 #include "LayoutAudit.h"
+#include "LayoutPresets.h"
+#include "LayoutShellUi.h"
+#include "LogicPlugins.h"
+#include "LayoutStyleUi.h"
 #include "PluginSkin.h"
 #include "Theme.h"
 #include "Widgets.h"
@@ -273,6 +277,13 @@ void compareFlip(App& a, const PluginTarget& t) {
   h.spare = cur;
   h.onB = !h.onB;
 }
+void compareSetSpare(App& a, const PluginTarget& t, const PluginState& other) {
+  const PluginState* st = t.state(a.doc.song());
+  if (!st) return;
+  HeaderState& h = headerFor(t, st->type);
+  h.spare = other;
+  h.onB = false;
+}
 bool compareOnB(const PluginTarget& t) {
   auto it = headers.find(t.key());
   return it != headers.end() && it->second.onB;
@@ -369,7 +380,30 @@ void drawPluginHeader(App& a, const PluginTarget& t, bool rule) {
 
   const bool own = info->ownPresetBar;  // K-164: the editor shows its name, presets and save itself
   int drewMark = 0, drewPicker = 0;  // K-164: what this header drew, for GL_HEADER_REPORT
+  // K-112b: the Logic layout's header has two rows: the power switch (effects) and the preset box
+  // above; stepping through presets, compare, copy and undo below. The window title names the plugin.
+  const bool twoRows = layoutui::active() == layout::Preset::Logic && layoutui::shellBuilt(a, layout::Preset::Logic);
+  const MixerTrack* fxOwner = t.isChannel() ? nullptr : s.mixerTrack(t.owner);
+  auto powerSwitch = [&] {
+    if (!fxOwner) return;
+    const bool en = fxOwner->slots[static_cast<size_t>(t.slot)].enabled;
+    if (ui::IconButton("power", ui::Icon::Power, en, 22, en ? "On (click: bypass this effect)" : "Bypassed (click: turn on)")) {
+      const int k = t.slot;
+      a.doc.editMixerTrack(t.owner, en ? "bypass effect" : "enable effect",
+                           [k](MixerTrack& mt) { mt.slots[static_cast<size_t>(k)].enabled = !mt.slots[static_cast<size_t>(k)].enabled; });
+    }
+    ImGui::SameLine(0, 8);
+  };
+  auto stepButtons = [&] {
+    if (ui::IconButton("prev", ui::Icon::Left, false, 22, "Previous preset") && !names.empty())
+      apply(h.presetIndex <= 0 ? static_cast<int>(names.size()) - 1 : h.presetIndex - 1);
+    ImGui::SameLine(0, 2);
+    if (ui::IconButton("next", ui::Icon::Right, false, 22, "Next preset") && !names.empty())
+      apply(h.presetIndex + 1 >= static_cast<int>(names.size()) ? 0 : h.presetIndex + 1);
+  };
+  if (twoRows) powerSwitch();
   if (!own) {
+  if (!twoRows) {
   ++drewMark;
   if (!pui::wordmark(a, info->type, 18.0f)) {  // J-130: every built-in plugin shows its wordmark; hosted plugins their name
     ImGui::PushFont(a.fontBold, 15.0f);
@@ -380,10 +414,12 @@ void drawPluginHeader(App& a, const PluginTarget& t, bool rule) {
   if (ui::IconButton("prev", ui::Icon::Left, false, 22, "Previous preset") && !names.empty())
     apply(h.presetIndex <= 0 ? static_cast<int>(names.size()) - 1 : h.presetIndex - 1);
   ImGui::SameLine(0, 2);
+  }
   std::string label = h.presetName.empty() ? "Default" : h.presetName;
   // K-147: in a narrow editor the preset box gives up width first, so the row (next, save, A/B,
   // copy: about 150 px after it) stays inside the window.
-  const float presetW = std::clamp(std::floor(ImGui::GetContentRegionAvail().x - 150.0f), 96.0f, 170.0f);
+  const float presetW = twoRows ? std::clamp(std::floor(ImGui::GetContentRegionAvail().x - 40.0f), 120.0f, 240.0f)
+                                : std::clamp(std::floor(ImGui::GetContentRegionAvail().x - 150.0f), 96.0f, 170.0f);
   ++drewPicker;
   if (ui::BeginCombo("##preset", label.c_str(), presetW)) {
     static char search[96] = "";
@@ -447,10 +483,20 @@ void drawPluginHeader(App& a, const PluginTarget& t, bool rule) {
   }
   ui::Hint("Presets: factory sounds, your saved presets and imported libraries (type to search)");
   ImGui::SameLine(0, 2);
-  if (ui::IconButton("next", ui::Icon::Right, false, 22, "Next preset") && !names.empty())
-    apply(h.presetIndex + 1 >= static_cast<int>(names.size()) ? 0 : h.presetIndex + 1);
-  ImGui::SameLine(0, 2);
+  if (!twoRows) {
+    if (ui::IconButton("next", ui::Icon::Right, false, 22, "Next preset") && !names.empty())
+      apply(h.presetIndex + 1 >= static_cast<int>(names.size()) ? 0 : h.presetIndex + 1);
+    ImGui::SameLine(0, 2);
+  }
   if (ui::IconButton("save", ui::Icon::Save, false, 22, "Save as a user preset")) ImGui::OpenPopup("##savepreset");
+  }
+  // K-112b: the second row folds away (a per-user setting); the mix knob then sits on the first row.
+  const bool row2 = twoRows && !a.settings.getBool("ui.logicPluginHeaderCompact");
+  if (twoRows) {
+    ImGui::SameLine(0, 6);
+    if (ui::IconButton("hdrfold", row2 ? ui::Icon::Up : ui::Icon::Down, false, 22,
+                       row2 ? "Hide the second header row (presets, compare, copy, undo, view, link)" : "Show the second header row"))
+      a.settings.set("ui.logicPluginHeaderCompact", row2);
   }
   if (ImGui::BeginPopup("##savepreset")) {
     static char buf[96];
@@ -480,8 +526,28 @@ void drawPluginHeader(App& a, const PluginTarget& t, bool rule) {
     if (last != info->type) last = info->type, std::fprintf(stderr, "PLUGIN_HEADER %s wordmark %d picker %d\n", info->type.c_str(), drewMark, drewPicker);
   }
   // A/B compare.
-  if (!own) ImGui::SameLine(0, 12);
+  if (row2) {  // the second row
+    if (!own) {
+      stepButtons();
+      ImGui::SameLine(0, 12);
+    }
+  } else if (!own && !twoRows) ImGui::SameLine(0, 12);
   if (h.spare.type != st->type) h.spare = *st;
+  if (twoRows && !row2) {
+    // folded: only the first row
+  } else if (twoRows) {  // compare with the saved project, copy and paste, undo, view, link
+    logicplug::compareButton(a, t);
+    ImGui::SameLine(0, 6);
+    logicplug::copyPasteButtons(a, t);
+    ImGui::SameLine(0, 12);
+    if (ui::IconButton("undo", ui::Icon::Undo, false, 22, "Undo")) a.doc.undo();
+    ImGui::SameLine(0, 2);
+    if (ui::IconButton("redo", ui::Icon::Redo, false, 22, "Redo")) a.doc.redo();
+    ImGui::SameLine(0, 12);
+    logicplug::viewButton(a, t);
+    ImGui::SameLine(0, 6);
+    logicplug::linkButton(a);
+  } else {
   if (ui::TextButton("A", !h.onB, 26, "Compare: state A") && h.onB) {
     PluginState cur = *st;
     setPluginState(a, t, h.spare, "compare A/B");
@@ -497,9 +563,17 @@ void drawPluginHeader(App& a, const PluginTarget& t, bool rule) {
   }
   ImGui::SameLine(0, 2);
   if (ui::IconButton("copyab", ui::Icon::Clone, false, 22, "Copy the current state to the other compare slot")) h.spare = *st;
+  }
 
   // Effects: bypass + mix on the right.
-  if (!t.isChannel()) {
+  if (twoRows && fxOwner) {  // the mix knob at the second row's end (the power switch is above)
+    const float right = ImGui::GetWindowContentRegionMax().x;
+    const float lastX = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x + ImGui::GetScrollX();
+    if (lastX + 12 <= right - 26) ImGui::SameLine(right - 26);
+    const float y = ImGui::GetCursorPosY();
+    ImGui::SetCursorPosY(y + std::max(0.0f, (ImGui::GetFrameHeight() - 22.0f) * 0.5f));
+    ui::ParamKnob("mix", slotMixParam(t.owner, t.slot), 11.0f);
+  } else if (!t.isChannel()) {
     const MixerTrack* m = s.mixerTrack(t.owner);
     bool en = m && m->slots[static_cast<size_t>(t.slot)].enabled;
     float right = ImGui::GetWindowContentRegionMax().x;
@@ -1616,6 +1690,7 @@ double paramValue(App& a, const PluginTarget& t, int param) { return getParam(a.
 static void drawPluginBodyIn(App& a, const PluginTarget& t, float width);
 
 void drawPluginBody(App& a, const PluginTarget& t, float width) {
+  const layoutui::BaseStyleScope own;  // K-112: every editor keeps its own look in every layout
   edzoomui::markBody(width);  // K-147: the fit report measures the editor from here ...
   drawPluginBodyIn(a, t, width);
   edzoomui::markBodyEnd();  // ... to here

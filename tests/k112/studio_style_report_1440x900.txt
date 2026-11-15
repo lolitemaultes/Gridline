@@ -1,0 +1,12 @@
+layout studio menus studio
+bars top 48.0 status 26.0
+style 1.00 0.60 8.00 8.00 4.00 1.00 160.00 96.00 0.00 4.00 1.00 4.00 1.00 8.00 5.00 3.00 1.00 8.00 6.00 8.00 4.00 8.00 4.00 16.00 10.00 10.00 12.00 2.00 3.00 0.00 1.00 4.00 14.00 1.00
+colours dcd9b9b1
+viewport 1440 900 work 0 0 1440 900
+dockhost pos 0 48 size 1440 826
+dock split pos 4 52 size 1432 818 split 0 central 0 windows []
+dock   leaf pos 4 52 size 213 818 split -1 central 0 windows [Browser]
+dock   split pos 221 52 size 1215 818 split 0 central 0 windows []
+dock     leaf pos 221 52 size 876 818 split -1 central 1 windows [Playlist,Piano roll]
+dock     leaf pos 1101 52 size 335 818 split -1 central 0 windows [Mixer]
+open playlist,mixer,browser,piano,rack

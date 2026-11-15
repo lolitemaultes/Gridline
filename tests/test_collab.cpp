@@ -302,6 +302,70 @@ void testJoinSync() {
   expect(x != y && y != z && x != z && t.a.doc.song().channels.size() == 5 && converged(t), "concurrent adds keep distinct ids");
 }
 
+// K-112: the pointer target in presence (tk, ti, ts) is optional on the wire, both ways, with no
+// protocol bump. A newer peer's message keeps every older key exactly as before and only adds the
+// target keys; the receive path reads keys by name, so a reader that does not know a key passes it by
+// (shown with a key no version knows); a message from an older peer (no target keys) is accepted,
+// with no target.
+void testPresenceTargetWire() {
+  Trio t(17, "pres_wire", false);
+  settle(t.net, t.all(), t.clock);
+  expect(t.b.s->ready(), "presence wire: the invitee is ready");
+  std::vector<std::string> sent;  // Alex's presence messages, in order
+  t.a.s->sendFn = [&](SiteId to, int stream, const std::string& w) {
+    Message m;
+    if (Message::decode(w, m) && m.type() == "pres") sent.push_back(w);
+    t.net.send(t.a.s->site(), to, stream, w);
+  };
+  Presence p;
+  p.window = "Playlist";
+  p.x = 0.25f;
+  p.y = 0.5f;
+  p.kind = 2;
+  p.a = 3;
+  p.b = 7;
+  p.cx = 96.0f;
+  p.cy = 0.5f;
+  p.songTick = 384;
+  t.a.s->setPresence(p);  // without a target: what every version sends
+  run(t.net, t.all(), t.clock, 0.5);
+  Presence q = p;
+  q.targetKind = 3;
+  q.targetId = 42;
+  q.targetSub = 5;
+  t.a.s->setPresence(q);  // with a target
+  run(t.net, t.all(), t.clock, 0.5);
+  Message plain, targeted;
+  const bool two = sent.size() >= 2 && Message::decode(sent[0], plain) && Message::decode(sent[sent.size() - 1], targeted);
+  expect(two, "presence wire: both messages were sent");
+  if (!two) return;
+  expect(!plain.head.find("tk") && !plain.head.find("ti") && !plain.head.find("ts"), "presence wire: no target keys without a target");
+  expect(targeted.head.num("tk", 0) == 3 && targeted.head.num("ti", 0) == 42 && targeted.head.num("ts", 0) == 5,
+         "presence wire: the target travels as tk, ti, ts");
+  Message stripped = targeted;
+  for (const char* k : {"tk", "ti", "ts"}) stripped.head.object.erase(k);
+  expect(jsonCompact(stripped.head) == jsonCompact(plain.head),
+         "presence wire: a target only adds keys; every older key is the same as without one");
+  const PeerView* pv = t.b.s->peer(t.a.s->site());
+  expect(pv && pv->presence == q, "presence wire: a newer peer reads the target");
+
+  // An older reader: keys it does not know are passed by. A key no version knows, on the plain message,
+  // decodes to the same presence as the plain message.
+  Message future = plain;
+  future.head.object["zz"] = Json::makeNumber(9);
+  t.b.s->receive(t.a.s->site(), kStreamUnreliable, future.encode());
+  pv = t.b.s->peer(t.a.s->site());
+  expect(pv && pv->presence == p, "presence wire: an unknown key is ignored (the same presence as without it)");
+
+  // An older sender: no target keys. A newer reader accepts it, with no target and every other field.
+  t.b.s->receive(t.a.s->site(), kStreamUnreliable, stripped.encode());
+  pv = t.b.s->peer(t.a.s->site());
+  expect(pv && pv->presence == p && pv->presence.targetKind == 0 && pv->presence.targetId == 0 && pv->presence.targetSub == 0,
+         "presence wire: a message without target keys is accepted, with no target");
+  expect(kProtocolVersion == 4, "presence wire: no protocol bump for the target");
+  t.net.wire(&t.a);
+}
+
 void testFuzz(uint32_t seed) {
   Trio t(seed, "fuzz" + std::to_string(seed));
   t.net.dupChance = 0.1;
@@ -1567,6 +1631,7 @@ int main() {
   testDiffRoundTrip();
   testReplicaConvergence();
   testJoinSync();
+  testPresenceTargetWire();
   for (uint32_t seed : {101u, 202u, 303u}) testFuzz(seed);
   // GRIDLINE_COLLAB_SEEDS=n: n more random seeds (long runs)
   if (const char* more = std::getenv("GRIDLINE_COLLAB_SEEDS"))

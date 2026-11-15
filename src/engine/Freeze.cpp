@@ -39,9 +39,10 @@ bool hasAuxOuts(const Channel& c) {
 
 // A channel's plugin MIDI output reaches another channel.
 bool midiFeedsOthers(const Song& s, const Channel& c) {
-  if (c.midiOutPort < 0) return false;
+  const int port = channelMidiOutPort(c);
+  if (port < 0) return false;
   for (const auto& o : s.channels)
-    if (o.id != c.id && o.midiInPort == c.midiOutPort) return true;
+    if (o.id != c.id && o.midiInPort == port) return true;
   return false;
 }
 
@@ -92,8 +93,8 @@ std::set<ObjectId> noteSources(const Song& s, std::set<ObjectId> keep) {
       for (ObjectId k : c.layer) feeds = feeds || keep.count(k);
       for (const auto& nf : c.noteFx)
         for (ObjectId t : noteFxTargets(nf.data)) feeds = feeds || keep.count(t);
-      if (c.midiOutPort >= 0)
-        for (const auto& o : s.channels) feeds = feeds || (keep.count(o.id) && o.midiInPort == c.midiOutPort);
+      if (const int port = channelMidiOutPort(c); port >= 0)
+        for (const auto& o : s.channels) feeds = feeds || (keep.count(o.id) && o.midiInPort == port);
       if (feeds) grew = keep.insert(c.id).second || grew;
     }
   }
@@ -461,6 +462,7 @@ std::string fingerprint(const Song& s, Unit u) {
     c.color = 0;
     c.icon = c.flIcon = 0;
     c.group = -1;
+    c.plugin.shown.clear();  // K-112c: the device row's chosen parameters
   }
   for (auto& p : x.patterns) {
     p.name.clear();
@@ -473,6 +475,7 @@ std::string fingerprint(const Song& s, Unit u) {
     m.dock = 0;
     m.separator = m.locked = false;
     m.group.clear();
+    for (auto& sl : m.slots) sl.plugin.shown.clear();  // K-112c
   }
   for (auto& t : x.tracks) {
     t.name.clear();

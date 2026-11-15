@@ -180,6 +180,13 @@ float lockupWidth(float height, ImFont* font);
 
 // Text that never spills: drawn clipped to maxW with a trailing ellipsis.
 void textEllipsis(ImDrawList* dl, ImFont* font, float size, ImVec2 pos, float maxW, ImU32 col, const char* text);
+// K-112: centring by the font's real metrics. textTop: the pen's y that puts the band from the capital
+// height to the baseline in the middle of a box (top, h): every label in a row shares one baseline,
+// whatever its letters. inkX: the ink's left and right edges of `text` from the pen (side bearings
+// left out). centreText draws `text` centred both ways in [a, b] (ellipsized to fit).
+float textTop(ImFont* font, float size, float top, float h);
+void inkX(ImFont* font, float size, const char* text, float* x0, float* x1);
+void centreText(ImDrawList* dl, ImFont* font, float size, ImVec2 a, ImVec2 b, ImU32 col, const char* text);
 // Ellipsised copy of `text` that fits maxW at the current font.
 const char* fitText(const char* text, float maxW);
 // Same with the ellipsis in the middle (paths: the start and the end stay).

@@ -12,6 +12,11 @@ void drawWindows(App& a);
 // K-15: true when a pack shows this effect's editor in a panel of the main layout (Loupe
 // pinned): the effect window is not drawn (and App::fxEditor is cleared).
 bool claimEffectEditor(App& a, const PluginTarget& t);
+// K-112 (R3): true when Loupe is pinned into the layout and `t` is a Loupe effect: the panel's
+// session becomes that slot's, so a host that draws the panel's body shows this effect.
+bool showInLoupePanel(App& a, const PluginTarget& t);
+// K-112 (R3): the Loupe panel's content in w x h (a layout part's frame hosts it).
+void drawLoupeBody(App& a, float w, float h);
 // Dev checks (--dev-input): commands a pack answers ("loupe ..."); true when handled.
 bool devCommand(App& a, const std::string& cmd, const std::vector<std::string>& args);
 // Opens the audio editor (gl.edison) on a channel's sample in its own window.

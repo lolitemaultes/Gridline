@@ -61,6 +61,7 @@ bool resolve(Song& s, ParamId id, Target& t) {
       case ChannelParam::Pan: t.f = &c->pan; t.desc = lin("Pan", "pan", -1.0, 1.0, 0.0); return true;
       case ChannelParam::Mute: t.b = &c->muted; t.desc = tog("Mute"); return true;
       case ChannelParam::Pitch: t.i = &c->pitch; t.desc = lin("Pitch", "st", -24, 24, 0); return true;
+      case ChannelParam::Sustain: t.b = &c->sustainPedal; t.desc = tog("Sustain pedal"); return true;
       default: return false;
     }
   }

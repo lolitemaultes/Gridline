@@ -27,6 +27,7 @@
 #include "DevSignal.h"
 #include "AudioRecordUi.h"
 #include "Keys.h"
+#include "LayoutAudit.h"
 #include "Theme.h"
 #include "Widgets.h"
 
@@ -133,6 +134,14 @@ struct Layout {
   ImVec2 dlgMin, dlgMax, barMin, barMax, sideMin, sideMax, listMin, listMax, footMin, footMax;
 };
 
+// A path bar part as drawn last frame (dev report "filedialog crumbs").
+struct CrumbBox {
+  std::string label;
+  ImVec2 min, max;   // the part's button
+  float textW = 0;   // its label's width in the font it is drawn in
+  bool bold = false;
+};
+
 struct State {
   // Kept for the whole run.
   filedlg::VolumeWatch volumes;
@@ -169,6 +178,8 @@ struct State {
   // Last frame (dev report).
   std::vector<SideRow> side;
   Layout lay{};
+  std::vector<CrumbBox> crumbs;
+  int crumbReport = -1;  // dev: the frame whose "crumbs" report is due (printed while the bar is drawn)
   bool shown = false;
   float lastW = 0, lastH = 0;
   // Dev check: commands applied in the next frame the dialog draws.
@@ -708,12 +719,20 @@ std::string pathBar(App& a, State& st, float width) {
   const ImVec2 p0 = ImGui::GetCursorScreenPos();
   ImDrawList* dl = ImGui::GetWindowDrawList();
   dl->AddRectFilled(p0, ImVec2(p0.x + width, p0.y + fh), P.field, theme::kRadius);
+  st.crumbs.clear();
   const std::vector<filedlg::Crumb> crumbs = filedlg::splitBreadcrumb(fd.dir, kWindows);
   // Parts from the right that fit; the rest folds into "...".
   const float pad = 8, chev = 14;
+  // Each part is measured in the font it is drawn in: the current folder's (the last part) in bold,
+  // the others in the regular weight. (Measured in the window's font, the bold part came out short
+  // and its label lost its end to an ellipsis.)
+  ImFont* const fontPart = a.fontRegular ? a.fontRegular : ImGui::GetFont();
+  ImFont* const fontLast = a.fontBold ? a.fontBold : fontPart;
+  const float fontSize = ImGui::GetFontSize();
+  auto textW = [&](bool last, const char* s) { return (last ? fontLast : fontPart)->CalcTextSizeA(fontSize, FLT_MAX, 0, s).x; };
   std::vector<float> widths;
-  for (const auto& c : crumbs) widths.push_back(ImGui::CalcTextSize(c.label.c_str()).x + pad * 2);
-  const float ellW = ImGui::CalcTextSize("...").x + pad * 2;
+  for (size_t i = 0; i < crumbs.size(); ++i) widths.push_back(std::ceil(textW(i + 1 == crumbs.size(), crumbs[i].label.c_str())) + pad * 2);
+  const float ellW = std::ceil(textW(false, "...")) + pad * 2;
   const float room = width - 28;  // the free end of the bar opens typing
   size_t first = 0;
   {
@@ -734,9 +753,11 @@ std::string pathBar(App& a, State& st, float width) {
     const bool c = ImGui::InvisibleButton(id, ImVec2(w, fh));
     const bool hov = ImGui::IsItemHovered();
     if (hov) dl->AddRectFilled(ImVec2(x + 1, p0.y + 2), ImVec2(x + w - 1, p0.y + fh - 2), P.surface700, theme::kRadiusSm);
-    const float lw = std::min(w - pad * 2, ImGui::CalcTextSize(label.c_str()).x);
-    theme::textEllipsis(dl, last ? a.fontBold : a.fontRegular, ImGui::GetFontSize(), ImVec2(x + pad, p0.y + (fh - ImGui::GetFontSize()) * 0.5f), lw + 1,
-                        last ? P.text : P.textDim, label.c_str());
+    const float tw = textW(last, label.c_str());
+    const float lw = std::min(w - pad * 2, tw);
+    theme::textEllipsis(dl, last ? fontLast : fontPart, fontSize, ImVec2(x + pad, p0.y + (fh - fontSize) * 0.5f), lw + 1, last ? P.text : P.textDim,
+                        label.c_str());
+    st.crumbs.push_back({label, ImVec2(x, p0.y), ImVec2(x + w, p0.y + fh), tw, last});
     x += w;
     return c;
   };
@@ -776,6 +797,20 @@ std::string pathBar(App& a, State& st, float width) {
       ui::Tooltip(i18n::N_("Click to type a path"));
     }
     ui::drawIcon(dl, ui::Icon::Draw, ImVec2(p0.x + width - 14, p0.y + fh * 0.5f), 12, P.textFaint);
+  }
+  if (st.crumbReport >= 0) {  // dev: each part's button and label width, and the text the bar's draw list holds
+    std::printf("crumbs frame %d: bar %.2f %.2f %.2f %.2f font %.2f parts %zu shown %zu\n", st.crumbReport, static_cast<double>(p0.x), static_cast<double>(p0.y),
+                static_cast<double>(p0.x + width), static_cast<double>(p0.y + fh), static_cast<double>(ImGui::GetFontSize()), crumbs.size(), st.crumbs.size());
+    for (const CrumbBox& c : st.crumbs)
+      std::printf("  part \"%s\" %s box %.2f %.2f %.2f %.2f text %.2f\n", c.label.c_str(), c.bold ? "bold" : "regular", static_cast<double>(c.min.x),
+                  static_cast<double>(c.min.y), static_cast<double>(c.max.x), static_cast<double>(c.max.y), static_cast<double>(c.textW));
+    for (const align::Text& t : audit::textRuns(ImGui::GetCurrentWindow()))
+      if (t.ink.y0 >= p0.y - 0.5f && t.ink.y1 <= p0.y + fh + 0.5f && t.ink.x0 >= p0.x - 0.5f && t.ink.x1 <= p0.x + width + 0.5f)
+        std::printf("  run \"%s\" ink %.2f %.2f %.2f %.2f pen %.2f %.2f clipped %d\n", t.str.c_str(), static_cast<double>(t.ink.x0), static_cast<double>(t.ink.y0),
+                    static_cast<double>(t.ink.x1), static_cast<double>(t.ink.y1), static_cast<double>(t.r.x0), static_cast<double>(t.r.x1), t.clipped ? 1 : 0);
+    std::printf("crumbs end\n");
+    std::fflush(stdout);
+    st.crumbReport = -1;
   }
   ImGui::PopStyleVar();
   ImGui::SetCursorScreenPos(p0);
@@ -1255,6 +1290,10 @@ void devCommand(App& a, const std::vector<std::string>& args, int frame) {
   if (cmd == "saveas") {
     a.saveAs();
     if (args.size() > 1) a.fileDialog.dir = args[1];
+    return;
+  }
+  if (cmd == "crumbs") {  // the path bar's parts and the text drawn in them, the next frame the bar is drawn
+    st.crumbReport = frame;
     return;
   }
   if (cmd == "state") {

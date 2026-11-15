@@ -1,0 +1,28 @@
+Copy value
+Paste value
+Set to >
+--------------------------------
+Create automation clip
+Create automation clip in pattern "Beat"
+Edit automation clip >
+Edit events
+Start the song at this value
+Record automation
+--------------------------------
+Link to controller…
+Multilink to controllers
+==== tree ====
+Copy value
+Paste value
+Set to >
+Set to > Minimum
+Set to > Centre
+Set to > Maximum
+Create automation clip
+Create automation clip in pattern "Beat"
+Edit automation clip >
+Edit events
+Start the song at this value
+Record automation
+Link to controller…
+Multilink to controllers

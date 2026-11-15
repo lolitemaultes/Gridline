@@ -4399,9 +4399,21 @@ extern const char*  ImGuiTestEngine_FindItemDebugLabel(ImGuiContext* ctx, ImGuiI
 // Gridline (K-93, command palette): the menu walk. While GImGuiGridlineMenuWalk is set, BeginMenu(),
 // EndMenu() and MenuItem() report to these hooks instead of drawing (src/app/imgui_hooks).
 extern bool         GImGuiGridlineMenuWalk;
+// Gridline (K-112b): the Tracks layout's menu look. While set, a menu item's shortcut is right-aligned
+// in its column and its check mark takes the text colour (set per frame by the layout style; plugin
+// editors clear it while they draw).
+extern bool         GImGuiGridlineMenuRight;
 extern bool         ImGuiGridlineHook_BeginMenu(const char* label, bool enabled);
 extern void         ImGuiGridlineHook_EndMenu();
 extern bool         ImGuiGridlineHook_MenuItem(const char* label, const char* shortcut, bool selected, bool enabled);
+extern void         ImGuiGridlineHook_Separator(const char* text);  // Gridline (K-112): Separator / SeparatorText (text or NULL)
+// Gridline (K-112, Live): while GImGuiGridlineToggleW > 0 and the draw hook is set, Checkbox() is an
+// On / Off field that wide (its label after it), drawn by the hook. state: 0 off, 1 on, 2 mixed.
+extern float        GImGuiGridlineToggleW;
+// Gridline (K-112c round 25, Live): while true, popup menus right-align each shortcut to the menu's
+// right margin (a slim margin, check marks being in the left gutter) and draw separators edge to edge.
+extern bool         GImGuiGridlineMenuLive;
+extern void       (*GImGuiGridlineToggleDraw)(ImDrawList* dl, const ImVec2& a, const ImVec2& b, int state, bool hovered, bool held);
 
 // In IMGUI_VERSION_NUM >= 18934: changed IMGUI_TEST_ENGINE_ITEM_ADD(bb,id) to IMGUI_TEST_ENGINE_ITEM_ADD(id,bb,item_data);
 #define IMGUI_TEST_ENGINE_ITEM_ADD(_ID,_BB,_ITEM_DATA)      if (g.TestEngineHookItems) ImGuiTestEngineHook_ItemAdd(&g, _ID, _BB, _ITEM_DATA)    // Register item bounding box

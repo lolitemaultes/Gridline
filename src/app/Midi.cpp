@@ -189,6 +189,7 @@ void MidiManager::publish(const std::vector<uint32_t>& rack) {
     engine_.setBendRange(c, routing.bendRange[c]);
   }
   engine_.setPedals(routing.sostenuto, routing.soft, routing.softFactor);
+  engine_.setSustainHolds(routing.sustain);
   engine_.setMpeInput(routing.mpe, routing.mpeBendRange);  // K-144
   engine_.setSyncOut(syncOut);
 }
@@ -240,6 +241,7 @@ void MidiManager::load(const std::string& file) {
   r.velocity = static_cast<VelocityCurve>(std::clamp(jsonInt<int>(j.num("velocityCurve", 0)), 0, static_cast<int>(VelocityCurve::Count) - 1));
   r.fixedVelocity = std::clamp(jsonInt<int>(j.num("fixedVelocity", 100)), 1, 127);
   r.ignoreNoteOff = j.num("ignoreNoteOff", 0) != 0;
+  r.sustain = j.num("sustainHolds", 1) != 0;
   r.sostenuto = j.num("sostenuto", 1) != 0;
   r.soft = j.num("soft", 1) != 0;
   r.softFactor = static_cast<float>(std::clamp(j.num("softFactor", 0.6), 0.1, 1.0));
@@ -278,6 +280,7 @@ void MidiManager::save(const std::string& file) const {
   j.object["velocityCurve"] = Json::makeNumber(static_cast<int>(r.velocity));
   j.object["fixedVelocity"] = Json::makeNumber(r.fixedVelocity);
   j.object["ignoreNoteOff"] = Json::makeNumber(r.ignoreNoteOff ? 1 : 0);
+  j.object["sustainHolds"] = Json::makeNumber(r.sustain ? 1 : 0);
   j.object["sostenuto"] = Json::makeNumber(r.sostenuto ? 1 : 0);
   j.object["soft"] = Json::makeNumber(r.soft ? 1 : 0);
   j.object["softFactor"] = Json::makeNumber(r.softFactor);
@@ -338,7 +341,7 @@ void MidiManager::onMessage(const std::string& port, int portNumber, const std::
   }
   lastActivity_.store(t);
   std::lock_guard<std::mutex> lk(mu_);
-  if (pending_.size() < 4096) pending_.push_back({s, a, b, port, portNumber});
+  if (pending_.size() < 4096) pending_.push_back({s, a, b, port, portNumber, t});
 }
 
 std::vector<MidiEvent> MidiManager::poll() {

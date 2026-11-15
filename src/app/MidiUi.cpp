@@ -29,6 +29,10 @@ using theme::pal;
 namespace {
 
 void label(const char* text, float x = 150.0f) {
+  if (ui::FormColumnIndent() > 0) {  // K-112b: the Logic layout's form (label ends at the controls)
+    ui::FormLabelFit(text, x, pal().textDim);
+    return;
+  }
   ImGui::AlignTextToFramePadding();
   ImGui::TextColored(theme::vec(pal().textDim), "%s", text);
   ImGui::SameLine(x);
@@ -562,6 +566,7 @@ void midiSettingsPage(App& a, float fieldW) {
 
   // Input devices table.
   ui::BeginSection("INPUT DEVICES");
+  ui::SectionFullWidth();  // K-112b: the device table uses the whole width
   ImGui::TextColored(theme::vec(P.textDim), "%s", i18n::tr("Notes play the selected channel; controls drive links and the device template."));
   midiServiceNotice(m);
   if (m.inputs.empty() && m.serviceAvailable()) {
@@ -684,20 +689,25 @@ void midiSettingsPage(App& a, float fieldW) {
     if (ui::Segmented("##noff", names, 2, &off, colW * 0.5f)) r.ignoreNoteOff = off == 1, changed = true;
   }
   label("Pedals", 168);
+  if (ImGui::Checkbox(i18n::tr("Sustain holds notes (CC 64)"), &r.sustain)) changed = true;
+  ui::Hint(i18n::tr("On: Gridline holds the notes while the sustain pedal is down. Off: notes end when their keys lift and the "
+                    "instrument decides what the pedal does (piano plugins that model their own pedal)."));
+  ImGui::SameLine(0, theme::kS3);
   if (ImGui::Checkbox(i18n::tr("Sostenuto (CC 66)"), &r.sostenuto)) changed = true;
   ImGui::SameLine(0, theme::kS3);
   if (ImGui::Checkbox(i18n::tr("Soft (CC 67)"), &r.soft)) changed = true;
-  // The caption and the value sit beside the slider: inside it, the handle covered them.
-  ImGui::SameLine(0, theme::kS2);
-  ImGui::AlignTextToFramePadding();
-  ImGui::TextUnformatted(i18n::tr("Soft velocity"));
-  ImGui::SameLine(0, theme::kS2);
+  // The value sits beside the slider: inside it, the handle covered it.
+  label(i18n::tr("Soft velocity"), 168);
   ImGui::SetNextItemWidth(110);
   float softPct = r.softFactor * 100;
   if (ImGui::SliderFloat("##softf", &softPct, 10, 100, "")) r.softFactor = softPct / 100, changed = true;
   ImGui::SameLine(0, theme::kS2);
   ImGui::Text("%.0f%%", static_cast<double>(r.softFactor * 100));
-  ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("Sustain (CC 64), aftertouch and pitch bend always reach the instrument."));
+  ImGui::PushTextWrapPos(0);
+  ImGui::TextColored(theme::vec(P.textFaint), "%s",
+                     i18n::tr("The sustain pedal, aftertouch and pitch bend always reach the instrument. With Sustain holds notes off, "
+                              "each note ends when its key lifts and the instrument decides what the pedal does."));
+  ImGui::PopTextWrapPos();
   label("MPE", 168);  // K-144
   if (ImGui::Checkbox(i18n::tr("MPE controller"), &r.mpe)) changed = true;
   if (r.mpe) {

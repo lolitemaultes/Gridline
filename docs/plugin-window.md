@@ -121,6 +121,22 @@ own windows do the same among themselves (see `docs/detachable-windows.md`, "Inp
 above the main window, so a Gridline panel inside the main window cannot come in front of them.
 A plugin that shows its interface from its sandbox process on macOS raises its own window there.
 
+## In the Clips layout
+
+The Clips layout handles installed plugins' own windows in its own way. Three settings in
+Settings > Interface, under "Plugin windows (Clips)", control it, and all three are on at first:
+
+- **Open a plugin's window when it is put on a track.** Only for a plugin you add by hand, one at a time (a cloned channel and a copied effect count too). Opening a project, loading a drum kit, scripts, AI tools, an action that adds several plugins at once, undo, redo and a collaborator's additions never open a window.
+- **Several plugin windows at once.** Turn this off and opening one plugin window closes the others.
+- **Show only the selected track's plugin windows.** Selecting another track hides the other tracks'
+  windows and brings back the new track's own. A hidden window stays open and keeps running, and it
+  comes back where it was.
+
+Ctrl+Alt+P hides every plugin window, and pressing it again shows them. The plugin's window button
+in the device band also brings a hidden window back. In the other layouts the command is in
+Settings > Shortcuts without a key. Interfaces shown from the plugin sandbox's own window cannot be
+hidden this way. The Studio layout keeps its plugin windows as before.
+
 ## Popped out
 
 A plugin window pops out of the main window only with its pop-out button, and only while it

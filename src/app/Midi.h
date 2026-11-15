@@ -26,6 +26,7 @@ struct MidiEvent {
   uint8_t status = 0, data1 = 0, data2 = 0;
   std::string port;
   int portNumber = -1;
+  double time = 0;  // K-226: when it arrived (MidiManager::clockNow seconds, stamped on the driver thread)
 };
 
 // Per-input settings (Settings → MIDI → input devices).
@@ -46,6 +47,7 @@ struct MidiRouting {
   VelocityCurve velocity = VelocityCurve::Linear;
   int fixedVelocity = 100;
   bool ignoreNoteOff = false;     // one-shot pads: note-offs are dropped
+  bool sustain = true;            // Sustain holds notes: Gridline holds note-offs while CC 64 is down
   bool sostenuto = true, soft = true;
   float softFactor = 0.6f;
   bool mpe = false;               // K-144: MPE controller (channel 1 = master, 2..16 = one note each)

@@ -369,9 +369,12 @@ void Painter::fader(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Fader& f) {
   const geom::FaderGeom g = geom::fader(p0.x, p0.y, p1.x, p1.y, f.norm, geom::kSlateFader, hasMeter);
   const float tx = g.tx;
   // dB ruler (both sides of the slot; left only with a meter beside it). 0.8 = unity.
-  const float marks[] = {0.0f, 0.2f, 0.4f, 0.6f, 0.8f, 1.0f};
+  const float ownMarks[] = {0.0f, 0.2f, 0.4f, 0.6f, 0.8f, 1.0f};
+  const float* marks = f.marks ? f.marks : ownMarks;
+  const int markCount = f.marks ? f.markCount : 6;
   const float ti = geom::kSlateFader.tickIn, to = g.tickOut(geom::kSlateFader.tickOut);
-  for (float m : marks) {
+  for (int k = 0; k < markCount; ++k) {
+    const float m = marks[k];
     const float y = g.tickY(m);
     const ImU32 c = m == 0.8f ? tk.text : tk.textFaint;
     dl->AddLine(ImVec2(tx - to, y), ImVec2(tx - ti, y), c, 1.0f);

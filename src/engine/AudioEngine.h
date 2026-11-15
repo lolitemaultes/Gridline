@@ -11,6 +11,7 @@
 #include "../core/MidiSync.h"
 #include "AudioLogger.h"
 #include "Program.h"
+#include "TransportClock.h"
 #include "WorkerPool.h"
 
 namespace gl {
@@ -101,6 +102,18 @@ class AudioEngine {
   // Offline render (export): hosted plugins are told (time info / process
   // mode). Set before processing starts.
   void setOffline(bool on) { offline_ = on; }
+  // K-277: Rest silent instruments (Options > Rest silent instruments; on by default). Realtime
+  // playback leaves an instrument out of the blocks once it has been silent for a moment with
+  // nothing playing it (ProgChannel::restSilent: instruments only, Channel::keepRunning opts one
+  // out), and a muted one once its strip is at zero; a note, an event, a transport jump, its open
+  // editor or the strip coming up wakes it for the block it arrives in. Offline renders run everything.
+  void setRestInstruments(bool on) { restInstruments_.store(on, std::memory_order_relaxed); }
+  bool restInstruments() const { return restInstruments_.load(std::memory_order_relaxed); }
+  // K-277: below this peak (-120 dB) a block counts as silence; the hold times (seconds): an
+  // instrument that reports its voices, one whose tail only its sound tells (hosted plugins), a
+  // muted strip; and the silence after which sound with no cause marks one that plays by itself.
+  static constexpr float kRestFloor = 1e-6f;
+  static constexpr double kRestHoldKnown = 0.5, kRestHoldListened = 2.0, kRestHoldMuted = 0.5, kRestSelfAfter = 0.25;
   // Offline renders (J-30): the engine renders blocks of `frames` (<= kMaxBlock)
   // on its own absolute sample grid, buffered, whatever chunk sizes the caller
   // asks for — so the output is identical for any caller block size, hosted
@@ -193,6 +206,9 @@ class AudioEngine {
   uint32_t panicsDone() const { return panicsDone_.load(std::memory_order_relaxed); }
   // Peak of the output since the last call (dev checks).
   float takeOutputPeak() { return outPeakRecent_.exchange(0.f, std::memory_order_relaxed); }
+  // K-277: blocks so far whose output was audible (above -100 dB): the interface draws at full rate
+  // while this moves (meters, scopes), and slows down once it stops (idle frame pacing).
+  uint64_t audibleBlocks() const { return audibleBlocks_.load(std::memory_order_relaxed); }
   // Notes held from the interface (live notes) right now (audio thread count; tests / dev checks).
   int liveHeld() const { return liveHeldUi_.load(std::memory_order_relaxed); }
   // Live mode: launch / release (gate pads) a live-area clip, stop a track or
@@ -241,6 +257,12 @@ class AudioEngine {
     softOn_.store(soft);
     softFactor_.store(softFactor);
   }
+  // Sustain holds notes (Settings > MIDI > Pedals): while CC 64 is down Gridline holds the
+  // note-offs itself (live input, a channel's Sustain parameter, CC 64 from a MIDI Out channel)
+  // and also sends the pedal to the instrument. Off: note-offs go out when the keys lift and
+  // only the instrument acts on the pedal (piano plugins that model their own pedal).
+  void setSustainHolds(bool on) { sustainOn_.store(on); }
+  bool sustainHolds() const { return sustainOn_.load(std::memory_order_relaxed); }
   // Starts playback after a count-in of `ticks` (metronome clicks while the
   // transport waits at its position).
   void playWithCountIn(double ticks);
@@ -252,6 +274,15 @@ class AudioEngine {
   // steady-clock time (seconds) when that block was processed (MIDI out timing).
   int64_t blockSample() const { return blockSampleUi_.load(); }
   double blockTime() const { return blockTimeUi_.load(); }
+  // K-226: the song tick (pattern tick in pattern mode) the performer heard at `wall` (steady-clock
+  // seconds, the clock MIDI input is stamped with) when the output lags the rendering by `latency`
+  // seconds. During a count-in: ticks before the start (negative distance to it). False when
+  // nothing was played since the transport started.
+  bool heardTick(double wall, double latency, double* tick) const {
+    return heard_.tickAt(wall, latency, playSerial_.load(std::memory_order_relaxed), tick);
+  }
+  // Tests: the time blocks count as rendered at (< 0: the steady clock).
+  void setTestWallClock(double seconds) { testWall_.store(seconds, std::memory_order_relaxed); }
 
   bool playing() const { return playing_.load(); }
   PlayMode mode() const { return mode_.load(); }
@@ -266,6 +297,9 @@ class AudioEngine {
   // output is bit-identical for any thread count.
   void setThreads(int n);
   int threads() const { return threads_.load(std::memory_order_relaxed); }
+  // K-277 (tests): graph blocks run on the audio thread alone / shared out over the pool.
+  uint64_t serialBlocks() const { return serialBlocks_.load(std::memory_order_relaxed); }
+  uint64_t parallelBlocks() const { return parallelBlocks_.load(std::memory_order_relaxed); }
   // Worker threads that run with real-time scheduling (the others can be
   // preempted mid-block and stall the audio thread waiting for their tasks).
   int realtimeWorkers() const { return pool_.realtimeThreads(); }
@@ -427,6 +461,18 @@ class AudioEngine {
   void glideRouted(const ProgChannel& dst, uint32_t id, int key, int velocity, float pitch, float seconds, int offset, int mch);  // K-170
   // Hosted instruments' MIDI output → channels on the same MIDI port.
   void routePluginMidi(const Program* p, int n);
+  // MIDI a channel sent (`ev`, this block's offsets) to the channels listening on its port.
+  void deliverMidi(const Program* p, size_t src, const Generator::MidiOutEvent* ev, int count, int n);
+  // MIDI Out channels with listeners run first, in Program::midiOrder, and reach them in the
+  // same block (their note processors run after the delivery).
+  void runMidiOut(const Program* p, int n);
+  // Sustain pedal per channel: a note-off waits for the pedal (true) while it is down and
+  // Sustain holds notes is on; the pedal from the channel's Sustain parameter or from CC 64
+  // delivered to it; pedals of every channel up (stop, loop wrap).
+  bool holdForPedal(const ProgChannel& ch, uint32_t id);
+  void setChannelPedal(const ProgChannel& ch, bool fromParam, bool down, int offset);
+  void applySustainParams(const Program* p);
+  void releasePedals(const Program* p, int offset, bool hard);
   // Live note on/off (keyboard, MIDI): also plays a layer channel's children.
   void liveOn(const Program* p, const ProgChannel& ch, uint32_t id, float pitch, float velocity, int color);
   void liveOff(const Program* p, const ProgChannel& ch, uint32_t id);
@@ -487,6 +533,7 @@ class AudioEngine {
   static void forgetGone(ChannelRuntime& rt, uint32_t id);
   static void addGone(ChannelRuntime& rt, uint32_t id);
   void runNoteFx(const Program* p, int n);  // note processor chains for this block
+  void runNoteFxOf(const Program* p, size_t ci, int n);  // one channel's chain
   // Internal controller links + automation (`eventTick`: J-210, where lanes of
   // recorded events read, the block's first frame after a loop wrap at its start).
   void evaluateLinks(const Program* p, int n, double blockTick, double eventTick);
@@ -540,6 +587,7 @@ class AudioEngine {
   void claimTasks(int worker);
   void runTask(int task, int worker);
   void runChannel(size_t channel, int worker);
+  void noteQuiet(ChannelRuntime& rt, float peak, bool calm, bool muted, int n);  // K-277
   void runMixer(size_t mixer, int worker);
   // `early`: the Stage room track's reflections input (its room senders add their reflections there).
   void pullInput(const ProgInput& in, float* accL, float* accR, depth::RoomEarly* early = nullptr) const;
@@ -591,7 +639,7 @@ class AudioEngine {
   bool sustained_[128] = {};
   std::atomic<ObjectId> midiRoute_[16] = {};
   std::atomic<float> bendRange_[16] = {};
-  std::atomic<bool> sostenutoOn_{true}, softOn_{true};
+  std::atomic<bool> sostenutoOn_{true}, softOn_{true}, sustainOn_{true};
   std::atomic<float> softFactor_{0.6f};
   bool sostenuto_ = false, soft_ = false;
   bool sostenutoHeld_[128] = {};  // notes caught by the sostenuto pedal
@@ -623,6 +671,7 @@ class AudioEngine {
   std::atomic<uint32_t> ownStopReq_{0}, ownStopDone_{0};
   std::atomic<bool> previewOwn_{false};
   std::atomic<float> outPeakRecent_{0};
+  std::atomic<uint64_t> audibleBlocks_{0};  // K-277
   // Two-stage Stop (UI thread): anything that may start sound bumps
   // activity_ (also from the MIDI thread); a Stop with no activity since the
   // previous one while stopped is the second press.
@@ -640,6 +689,13 @@ class AudioEngine {
   MidiEventRing syncRing_;
   std::atomic<int64_t> blockSampleUi_{0};
   std::atomic<double> blockTimeUi_{0};
+  // K-226: when each stretch of transport was rendered (see heardTick).
+  TransportClock heard_;
+  uint32_t heardRun_ = 0;      // the playback being rendered: its Play request's serial (audio thread)
+  std::atomic<uint32_t> playSerial_{0};  // Play requests (UI thread; the newest one is what heardTick looks for)
+  double blockWall_ = 0;       // steady-clock time of the block being rendered (audio thread)
+  double countInTps_ = 0;      // ticks per second of the count-in
+  std::atomic<double> testWall_{-1};
   double clickPhase_ = 0, clickFreq_ = 0;
   int clickLeft_ = 0, clickStart_ = -1;
   std::atomic<const Program*> live_{nullptr};
@@ -654,6 +710,7 @@ class AudioEngine {
   // Transport (audio thread), published through atomics.
   bool tPlaying_ = false, tLoop_ = true;
   bool offline_ = false;         // offline render (see setOffline)
+  std::atomic<bool> restInstruments_{true};  // K-277
   // Fixed-block mode (setFixedBlock): rendered frames not handed out yet.
   int fixed_ = 0;
   std::vector<float> fifoL_, fifoR_;
@@ -755,10 +812,23 @@ class AudioEngine {
     size_t nb = 0;
     bool profile = false;
     bool rest = false;  // K-64: realtime playback: idle channels and effects are left out
+    bool restInstruments = true;  // K-277: Rest silent instruments (setRestInstruments)
     ProcessContext ctx;
   } bc_;
   WorkerPool pool_;
   std::atomic<int> threads_{1};
+  // K-277 (audio thread): heavy tasks of the last blocks (realtime playback shares a block out only
+  // when it has several): a task heavier than kHeavyTaskShare of the block (at least kHeavyTaskMinSec);
+  // the estimate holds its highest count for kHeavyHoldBlocks blocks. And only when the whole graph's
+  // work (the highest of those blocks) is over kParallelWorkShare of the block's time: below it one
+  // thread finishes in good time, and waking the others only costs what they spend waiting.
+  static constexpr double kHeavyTaskShare = 0.02, kHeavyTaskMinSec = 40e-6, kParallelWorkShare = 0.3;
+  static constexpr int kHeavyHoldBlocks = 64;
+  std::atomic<int> heavyNow_{0};
+  std::atomic<uint64_t> workNow_{0};
+  uint64_t heavyNs_ = 0, workEst_ = 0;
+  int heavyEst_ = 0, heavyHold_ = 0, workHold_ = 0;
+  std::atomic<uint64_t> serialBlocks_{0}, parallelBlocks_{0};  // K-277: graph blocks run on one thread / shared out
   std::atomic<bool> profiling_{false};
   std::atomic<float> cpuPeak_{0};
   CpuMeter cpuMeter_;  // audio thread only

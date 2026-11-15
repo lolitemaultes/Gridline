@@ -88,6 +88,11 @@ std::vector<Uint32> windowIds();
 // frame) opens inside the main window, whatever layout.ini saved (a restart, another
 // project) or where it was when it was closed. Open, it is left where it is.
 void openAttached(const char* name);
+// K-112c (round 24): pops the window called `name` out of the main window or docks it back, as
+// the pop-out button of its tab bar does (for a docked panel whose tab bar is hidden). Nothing
+// while windows cannot be detached; poppable(): whether they can.
+void togglePopOut(const char* name);
+bool poppable();
 
 // GitHub issue #50: the main window's size and state as they were saved (layout.ini [Main], read
 // before the window became the main one), so a save before the first frame keeps them. `virtualMax`:

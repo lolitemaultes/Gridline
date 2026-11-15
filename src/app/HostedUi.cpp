@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <map>
 #include <memory>
+#include <set>
 #include "../host/CrossFormat.h"
 #include "../host/HostedPlugins.h"
 #include "../host/PluginPrefs.h"
@@ -98,6 +99,8 @@ std::vector<PluginTarget> hostedTargets(const Song& s) {
 // Target key -> state serial of the history step the plugin's own latest edits made (its
 // interface's parameter gestures, read-back values, captured state).
 std::map<uint64_t, uint64_t> gOwnStep;
+// K-112c: target key -> the parameter last changed in the plugin's own interface or a generic row.
+std::map<uint64_t, int> gLastTouched;
 
 // Takes a change the plugin reported (its state, its values read back) into the song:
 //  - right after the plugin's own edits (nothing else edited, undone or redone since): into
@@ -152,13 +155,108 @@ void setRunLoopGlBracket(void (*bracket)(bool enter)) { gRunLoopGlBracket = brac
 
 // ---------------------------------------------------------------- per-frame sync
 
+// ---------------------------------------------------------------- window policy (K-112)
+
+namespace {
+struct PolicyRun {
+  PluginWindowPolicy p;
+  bool fresh = false;  // set since the last pump
+  bool managed = false;
+  ObjectId channel = kNoId, mixer = kNoId;
+  std::set<uint64_t> open;  // windows open at the last pump
+};
+PolicyRun& policyRun() {
+  static PolicyRun r;
+  return r;
+}
+
+// Installed plugins put on a track by an edit made here (Document::onPluginPlaced: never undo,
+// redo or a collaborator's edit), waiting for their instance so their window can open.
+struct Placed {
+  PluginTarget t;
+  std::string type;
+  int frames = 0;
+};
+std::vector<Placed>& placedQueue() {
+  static std::vector<Placed> q;
+  return q;
+}
+
+void applyWindowPolicy(App& a) {
+  PolicyRun& R = policyRun();
+  const bool managed = R.fresh && R.p.managed;
+  R.fresh = false;
+  if (!managed) {
+    if (R.managed)  // the layout that ran them went: every window it set aside comes back
+      for (const PluginTarget& t : openHostedEditorTargets()) setHostedEditorHidden(t, false, kHideAny);
+    R = PolicyRun{};
+    placedQueue().clear();
+    return;
+  }
+  const bool first = !R.managed;
+  R.managed = true;
+  // Open on load: an installed plugin put on a track here opens its window once its instance runs
+  // (given up after about two seconds, or when the slot holds something else by then).
+  auto& q = placedQueue();
+  for (auto it = q.begin(); it != q.end();) {
+    const PluginState* st = it->t.state(a.doc.song());
+    if (!R.p.openOnLoad || !st || st->type != it->type || hostedEditorOpen(it->t) || ++it->frames > 120) {
+      it = q.erase(it);
+    } else if (hostedInstanceFor(a, it->t)) {
+      openHostedEditor(a, it->t);
+      it = q.erase(it);
+    } else {
+      ++it;
+    }
+  }
+  // One window at a time: a window that opened closes the others.
+  const std::vector<PluginTarget> open = openHostedEditorTargets();
+  std::set<uint64_t> openKeys;
+  const PluginTarget* newest = nullptr;
+  for (const PluginTarget& t : open) {
+    openKeys.insert(t.key());
+    if (!R.open.count(t.key())) newest = &t;
+  }
+  if (!R.p.several && newest && open.size() > 1) {
+    const PluginTarget keep = *newest;
+    for (const PluginTarget& t : open)
+      if (t.key() != keep.key()) closeHostedEditor(a, t, "another plugin window opened (one window at a time)");
+    openKeys = {keep.key()};
+  }
+  R.open = std::move(openKeys);
+  // Only the selected track's windows: when the selection changes, the others step aside and the
+  // selected track's come back. A window opened meanwhile stays until the selection changes.
+  if (R.p.selectedOnly) {
+    if (first || R.p.channel != R.channel || R.p.mixer != R.mixer)
+      for (const PluginTarget& t : openHostedEditorTargets()) {
+        const bool mine = t.isChannel() ? t.owner == R.p.channel : t.owner == R.p.mixer;
+        setHostedEditorHidden(t, !mine, kHideTrack);
+      }
+  } else {
+    for (const PluginTarget& t : openHostedEditorTargets()) setHostedEditorHidden(t, false, kHideTrack);
+  }
+  R.channel = R.p.channel, R.mixer = R.p.mixer;
+}
+}  // namespace
+
+void setPluginWindowPolicy(const PluginWindowPolicy& p) {
+  policyRun().p = p;
+  policyRun().fresh = true;
+}
+bool pluginWindowPolicyManaged() { return policyRun().managed; }
+
 void pumpHostedPlugins(App& a) {
+  if (!a.doc.onPluginPlaced)  // K-112: plugins put on a track here (the window policy's "open on load")
+    a.doc.onPluginPlaced = [](ObjectId owner, int slot, const std::string& type) {
+      if (isHostedType(type) && policyRun().managed) placedQueue().push_back(Placed{PluginTarget{owner, slot}, type, 0});
+    };
 #if !defined(__APPLE__) && !defined(_WIN32)  // X11 (Linux, the BSDs)
   if (gRunLoopGlBracket) gRunLoopGlBracket(true);
   vst3::runLoop()->pump();
   if (gRunLoopGlBracket) gRunLoopGlBracket(false);
 #endif
   hostedui::pluginWindowsIdle(a);
+  applyWindowPolicy(a);
   // Hosted plugin slots, listed again only when the project changes (J-25:
   // projects with hundreds of mixer slots).
   static std::vector<PluginTarget> targetCache;
@@ -188,7 +286,10 @@ void pumpHostedPlugins(App& a) {
     } else {
       for (const auto& e : u.edits) a.doc.setParam(t.pid(e.index), e.value, true);
     }
-    if (!u.edits.empty()) gOwnStep[t.key()] = a.doc.history().stateSerial();
+    if (!u.edits.empty()) {
+      gOwnStep[t.key()] = a.doc.history().stateSerial();
+      gLastTouched[t.key()] = u.edits.back().index;
+    }
     if (u.gestureEnd) a.doc.endGesture();
     if (u.readback) {
       const PluginState* st = t.state(a.doc.song());
@@ -291,6 +392,7 @@ void paramRow(App& a, const PluginTarget& t, host::HostedInstance* hi, int k, co
     if (dx != 0) a.doc.setParam(pid, d.fromNormalized(std::clamp(n0 + dx / barW * fine, 0.0, 1.0)), true);
   }
   if (ImGui::IsItemDeactivated()) a.doc.endGesture();
+  if (ImGui::IsItemActivated()) gLastTouched[t.key()] = k;
   if (ImGui::BeginPopupContextItem("##ctx")) {  // controller link, then reset, type a value, MIDI link, automation clip…
     packs::modulation::drawLinkMenu(a, pid);
     knobContextMenu(a, pid);
@@ -390,6 +492,18 @@ void outputsSection(App& a, const PluginTarget& t, const host::HostedClass& cls,
 }
 
 }  // namespace
+
+void hostedParamRow(App& a, const PluginTarget& t, int k, float width) {
+  const PluginState* st = t.state(a.doc.song());
+  const PluginInfo* info = st ? findPlugin(st->type) : nullptr;
+  if (!info || k < 0 || static_cast<size_t>(k) >= info->params.size()) return;
+  paramRow(a, t, hostedInstanceFor(a, t), k, info->params[static_cast<size_t>(k)], width);
+}
+
+int hostedLastTouched(const PluginTarget& t) {
+  const auto it = gLastTouched.find(t.key());
+  return it == gLastTouched.end() ? -1 : it->second;
+}
 
 // ---------------------------------------------------------------- plugin wrapper window
 //

@@ -1,6 +1,7 @@
-# Freezing and hibernating
+# Freezing, hibernating and resting
 
-Two ways to take load off the computer while a project grows, both undone with one click.
+Two ways to take load off the computer while a project grows, both undone with one click, and a
+third that works by itself: silent instruments rest (see [Resting](#resting)).
 
 ## Freeze
 
@@ -64,6 +65,38 @@ again after**; **Never** keeps it awake). A hibernating mixer track that has not
 tracks nothing plays into; **Options > Hibernate unused plugins automatically** keeps doing so.
 **Wake all** ends hibernation everywhere. Hibernation belongs to this computer: it is not an undo
 step and is not shared with collaborators.
+
+## Resting
+
+Resting needs nothing from you: an instrument that has nothing to play stops using the processor
+by itself, and starts again the moment it is needed. Nothing is unloaded and nothing changes in the
+sound.
+
+- **When it rests.** An instrument rests once it has been silent for a moment (half a second, or
+  two seconds for a third-party plugin, whose tail only its sound can tell) with no note held and
+  nothing sent to it. Its tail always ends first, so nothing is cut short and nothing clicks.
+- **When it wakes.** A note, a MIDI message, the transport starting, stopping or jumping, or opening
+  the instrument's own editor wakes it, on the same sample the note starts on.
+- **Muted channels.** A muted channel rests half a second after its sound has faded, even while
+  its notes go on. When you unmute it, it plays from its next note.
+- **What never rests.** Effects on mixer tracks (they have their own rules for silence), and
+  instruments that make sound without notes: an audio input, a turntable deck, a module player, an
+  instrument running its own pattern, an instrument whose parameters automation or a controller
+  link moves, or one whose MIDI output plays other channels. An instrument that is heard starting
+  to sound with nothing sent to it is left running from then on.
+- **Keep running when silent.** If a third-party instrument makes sound by itself (a drone, its own
+  sequencer that follows the song) and goes quiet after a while, turn on **Keep running when
+  silent** in the channel's menu (**Instrument and routing**). The choice is saved with the project.
+- **Options > Rest silent instruments** turns resting off everywhere (on by default).
+
+Exports and renders never leave anything out: they sound exactly as playback does.
+
+## When the interface is idle
+
+While you work, Gridline draws its windows at the display's refresh rate. When nothing has moved
+for a second (no input, nothing playing, no sound, no edit), it draws about ten frames a second
+until something happens again; a key, a click, a MIDI message or sound brings the full rate back
+at once.
 
 ## Zipped projects
 

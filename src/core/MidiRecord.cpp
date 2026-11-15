@@ -1,5 +1,6 @@
 #include "MidiRecord.h"
 #include "Meter.h"
+#include "Settings.h"
 #include <algorithm>
 #include <cmath>
 #include "Automation.h"
@@ -28,97 +29,247 @@ Tick quantizeTick(Tick t, Tick grid) {
   return -quantizeTick(-t, grid);
 }
 
+// ------------------------------------------------------------ record options ----
+
+void loadRecordOptions(const Settings& s, RecordOptions& o, int& countInBars, bool& punch) {
+  o.overdub = s.getBool("record.midi.overdub");
+  o.quantize = s.getBool("record.midi.quantize");
+  o.quantizeLength = s.getBool("record.midi.quantizeLength");
+  o.takes = s.getBool("record.midi.takes");
+  o.notes = s.getBool("record.midi.notes");
+  o.automation = s.getBool("record.midi.automation");
+  const double t = s.getNumber("record.midi.autoTarget");
+  o.autoTarget = std::isfinite(t) && t >= 0 && t < static_cast<double>(AutoRecordTarget::Count)
+                     ? static_cast<AutoRecordTarget>(static_cast<int>(t))
+                     : AutoRecordTarget::Auto;
+  const int bars = static_cast<int>(s.getNumber("record.countInBars"));
+  countInBars = bars == 1 || bars == 2 || bars == 4 ? bars : 0;
+  punch = s.getBool("record.punch");
+}
+
+void saveRecordOptions(Settings& s, const RecordOptions& o, int countInBars, bool punch) {
+  s.set("record.midi.overdub", o.overdub);
+  s.set("record.midi.quantize", o.quantize);
+  s.set("record.midi.quantizeLength", o.quantizeLength);
+  s.set("record.midi.takes", o.takes);
+  s.set("record.midi.notes", o.notes);
+  s.set("record.midi.automation", o.automation);
+  s.set("record.midi.autoTarget", static_cast<int>(o.autoTarget));
+  s.set("record.countInBars", countInBars);
+  s.set("record.punch", punch);
+}
+
 // ------------------------------------------------------------ NoteRecorder ----
 
-void NoteRecorder::beginPattern(Document& doc, ObjectId pattern, const RecordOptions& o, Tick loopLength) {
+void NoteRecorder::beginPattern(Document& doc, ObjectId pattern, const RecordOptions& o, Tick loopLength, const RecordSetup& setup) {
   *this = NoteRecorder{};
   const Pattern* p = doc.song().pattern(pattern);
   if (!p) return;
   active_ = true;
   opt_ = o;
+  setup_ = setup;
   base_ = pattern_ = pattern;
   baseContent_ = *p;
   loop_ = std::max<Tick>(1, loopLength);
   takeIds_ = {pattern};
 }
 
-void NoteRecorder::beginSong(Document& doc, ObjectId pattern, const RecordOptions& o) {
+void NoteRecorder::beginSong(Document& doc, ObjectId pattern, const RecordOptions& o, const RecordSetup& setup) {
   *this = NoteRecorder{};
-  const Pattern* p = doc.song().pattern(pattern);
-  if (!p) return;
   active_ = true;
   song_ = true;
   opt_ = o;
-  base_ = pattern_ = pattern;
-  baseContent_ = *p;
-  takeIds_ = {pattern};
+  setup_ = setup;
+  base_ = pattern;
+  if (const Pattern* p = doc.song().pattern(pattern)) baseContent_ = *p;
+  pattern_ = kNoId;  // the take is made with the first note
+}
+
+void NoteRecorder::edit(Document& doc, const std::function<void()>& fn) {
+  const uint64_t before = doc.history().stateSerial();
+  if (step_ != 0 && before == step_ && doc.groupDepth() == 0 && doc.history().canAmend()) {
+    doc.amendStep(step_, fn);  // into this recording's step
+  } else {
+    doc.beginGroup("record");
+    fn();
+    doc.endGroup(false);
+  }
+  const uint64_t after = doc.history().stateSerial();
+  if (after != before && doc.groupDepth() == 0) step_ = after;
+}
+
+double NoteRecorder::fold(double tick) const {
+  if (song_ || loop_ <= 0) return tick;
+  const double l = static_cast<double>(loop_);
+  return tick - std::floor(tick / l) * l;
 }
 
 void NoteRecorder::position(Document& doc, double tick) {
   if (!active_) return;
-  if (!song_ && last_ >= 0 && tick < last_ - 0.5) newPass(doc);  // the loop wrapped
+  if (!started_ && tick >= static_cast<double>(setup_.start) - 0.5) started_ = true;
+  // A wrap (or a jump back): further back than a few events out of order could be.
+  double back = std::max(1.0, doc.song().ppq / 2.0);
+  if (!song_)
+    back = std::min(back, std::max(0.5, static_cast<double>(loop_) / 2.0));
+  else if (setup_.loopEnd > setup_.loopStart)
+    back = std::min(back, std::max(0.5, static_cast<double>(setup_.loopEnd - setup_.loopStart) / 2.0));
+  if (last_ > -1e17 && tick < last_ - back) {
+    if (song_) {
+      const bool loop = setup_.loopEnd > setup_.loopStart && last_ > static_cast<double>(setup_.loopStart) &&
+                        tick >= static_cast<double>(setup_.loopStart) - back;
+      wrapFrom_ = loop ? static_cast<double>(setup_.loopEnd) : last_;
+      wrapTo_ = loop ? static_cast<double>(setup_.loopStart) : tick;
+      clearReplaced(doc, wrapFrom_);
+    } else {
+      wrapFrom_ = static_cast<double>(loop_);
+      wrapTo_ = 0;
+      cutHeld(doc, wrapFrom_);  // a note held over the loop end ends there (the pattern keeps its length)
+      clearReplaced(doc, wrapFrom_);
+    }
+    newPass(doc);
+  }
   last_ = tick;
+  if (!started_) return;  // the count-in
+  if (song_ && setup_.punchOut > setup_.punchIn && tick >= static_cast<double>(setup_.punchOut) && !held_.empty())
+    cutHeld(doc, static_cast<double>(setup_.punchOut));  // punched out
+  clearReplaced(doc, song_ ? tick : fold(tick));
+  growTake(doc, tick);
+}
+
+void NoteRecorder::cutHeld(Document& doc, double at) {
+  auto held = std::move(held_);
+  held_.clear();
+  for (const auto& [key, h] : held) commitNote(doc, h, key.second, at);
 }
 
 void NoteRecorder::newPass(Document& doc) {
   commitAutomation(doc);
   ++pass_;
-  cleared_.clear();
-  if (!opt_.takes || song_) return;
+  replace_.clear();
+  mine_.clear();
+  if (!opt_.takes || song_) return;  // song mode: the next note makes the next take (ensureTake)
   const Song& s = doc.song();
   if (static_cast<int>(s.patterns.size()) >= kMaxPatterns) return;
-  std::string name = baseContent_.name + " take " + std::to_string(takeIds_.size() + 1);
-  ObjectId id = doc.addPattern(name, baseContent_.bars, baseContent_.stepsPerBar);
-  if (id == kNoId) return;
+  const std::string name = baseContent_.name + " take " + std::to_string(takeIds_.size() + 1);
+  ObjectId id = kNoId;
   const Pattern base = baseContent_;
-  doc.editPattern(id, "new take", [&base](Pattern& p) {
-    p.color = base.color;
-    p.steps = base.steps;
-    p.notes = base.notes;
-    p.automation = base.automation;
+  edit(doc, [&] {
+    id = doc.addPattern(name, base.bars, base.stepsPerBar);
+    if (id == kNoId) return;
+    doc.editPattern(id, "new take", [&base](Pattern& p) {
+      p.color = base.color;
+      p.meterNum = base.meterNum;
+      p.meterDen = base.meterDen;
+      p.steps = base.steps;
+      p.notes = base.notes;
+      p.automation = base.automation;
+    });
   });
+  if (id == kNoId) return;
   takeIds_.push_back(id);
   pattern_ = id;
 }
 
-Tick NoteRecorder::songOrigin(Document& doc, double tick, ObjectId channel) {
+bool NoteRecorder::ensureTake(Document& doc, double tick, ObjectId channel) {
+  const Song& s = doc.song();
+  const bool have = pattern_ != kNoId && s.pattern(pattern_) && s.clip(clip_);
+  const bool nextTake = have && opt_.takes && takePass_ != pass_;  // loop recording: a take per pass
+  if (have && !nextTake && tick >= static_cast<double>(origin_) - 0.5) return true;
+  if (static_cast<int>(s.patterns.size()) >= kMaxPatterns) return false;
+  const MeterMap mm(s);  // K-179: on a bar line of the meter map
+  const Tick here = std::max<Tick>(0, static_cast<Tick>(std::floor(tick)));
+  Tick at = here;  // played before the take (a jump back): where it was played
+  if (have && tick >= static_cast<double>(origin_) - 0.5)
+    at = origin_;  // the next take of a loop: where the last one starts
+  else if (!have && takeIds_.empty())
+    at = std::min(here, std::max<Tick>(0, setup_.punchOut > setup_.punchIn ? std::max(setup_.start, setup_.punchIn) : setup_.start));
+  const Tick origin = mm.barStartAt(at);
+  const Tick bar = std::max<Tick>(1, mm.barLenAt(origin));
+  // The track: below the last take (a loop's passes stack), the channel's instrument track (PL-08), or
+  // the first free unassigned track.
+  auto freeAt = [&](int t) {
+    if (t < static_cast<int>(s.tracks.size()) && s.tracks[static_cast<size_t>(t)].mode != TrackMode::Unassigned) return false;
+    for (const auto& c : s.playlist)
+      if (c.track == t && c.start < origin + bar && c.start + s.clipLength(c) > origin) return false;
+    return true;
+  };
+  int track = -1;
+  if (nextTake && track_ >= 0)
+    for (int t = track_ + 1; t < kMaxPlaylistTracks && track < 0; ++t)
+      if (freeAt(t)) track = t;
+  if (track < 0 && !nextTake) track = trackmodes::instrumentTrackOf(s, channel);
+  for (int t = 0; t < kMaxPlaylistTracks && track < 0; ++t)
+    if (freeAt(t)) track = t;
+  if (track < 0) track = 0;
+  // The name: the channel's (or the selected pattern's) with the next free take number.
+  std::string stem = baseContent_.name.empty() ? std::string("Pattern") : baseContent_.name;
+  if (const Channel* ch = s.channel(channel)) stem = ch->name;
+  int n = 1;
+  for (const auto& p : s.patterns)
+    if (p.name.rfind(stem + " take ", 0) == 0) ++n;
+  const std::string name = stem + " take " + std::to_string(n);
+  const int steps = baseContent_.stepsPerBar > 0 ? baseContent_.stepsPerBar : 16;
+  const ObjectId prevClip = nextTake ? clip_ : kNoId;
+  ObjectId id = kNoId, cid = kNoId;
+  edit(doc, [&] {
+    id = doc.addPattern(name, 1, steps);
+    if (id == kNoId) return;
+    cid = doc.addClip(id, track, origin);
+    if (prevClip != kNoId) doc.editClip(prevClip, "mute earlier take", [](Clip& c) { c.muted = true; });  // the newest pass plays
+  });
+  if (id == kNoId || cid == kNoId) return false;
+  pattern_ = id;
+  clip_ = cid;
+  origin_ = origin;
+  track_ = track;
+  takePass_ = pass_;
+  takeIds_.push_back(id);
+  takeClips_.push_back(cid);
+  return true;
+}
+
+void NoteRecorder::growTake(Document& doc, double tick) {
+  if (!song_ || clip_ == kNoId || (opt_.takes && takePass_ != pass_)) return;
+  double upTo = tick;
+  if (setup_.punchOut > setup_.punchIn) upTo = std::min(upTo, static_cast<double>(setup_.punchOut));
+  if (setup_.loopEnd > setup_.loopStart && origin_ < setup_.loopEnd) upTo = std::min(upTo, static_cast<double>(setup_.loopEnd));
   const Song& s = doc.song();
   const Pattern* p = s.pattern(pattern_);
-  if (!p) return 0;
-  for (const auto& c : s.playlist) {
-    if (c.kind != ClipKind::Pattern || c.pattern != pattern_) continue;
-    Tick len = s.clipLength(c);
-    if (tick >= static_cast<double>(c.start) && tick < static_cast<double>(c.start + len)) return c.start - c.offset;
-  }
-  // No clip of the pattern here: place one on the bar, on the first free track.
-  const MeterMap mm(s);  // K-179: on a bar line of the meter map
-  const Tick start = mm.barStartAt(static_cast<Tick>(std::floor(std::max(0.0, tick))));
-  const Tick len = std::max<Tick>(mm.barLenAt(start), s.patternLength(*p));
-  int track = trackmodes::instrumentTrackOf(s, channel);  // PL-08
-  if (track < 0) {
-    for (track = 0; track < static_cast<int>(s.tracks.size()); ++track) {
-      if (s.tracks[static_cast<size_t>(track)].mode != TrackMode::Unassigned) continue;  // audio / other instruments' tracks
-      bool busy = false;
-      for (const auto& c : s.playlist)
-        if (c.track == track && c.start < start + len && c.start + s.clipLength(c) > start) busy = true;
-      if (!busy) break;
-    }
-  }
-  if (track >= kMaxPlaylistTracks) track = 0;
-  doc.addClip(pattern_, track, start);
-  return start;
+  if (!p) return;
+  const Tick bar = std::max<Tick>(1, s.patternBarTicks(*p));
+  const double len = upTo - static_cast<double>(origin_);
+  if (len <= static_cast<double>(s.patternLength(*p))) return;
+  const int bars = std::min(kMaxPatternBars, static_cast<int>(std::ceil(len / static_cast<double>(bar))));
+  if (bars <= p->bars) return;
+  const ObjectId id = pattern_;
+  const int spb = p->stepsPerBar;
+  edit(doc, [&] { doc.setPatternLength(id, bars, spb); });
 }
 
 void NoteRecorder::noteOn(Document& doc, ObjectId channel, int pitch, int velocity, double tick) {
   if (!active_ || !opt_.notes || !doc.song().channel(channel)) return;
   position(doc, tick);
+  const double played = tick;
+  if (!started_ && tick < static_cast<double>(setup_.start) - 0.5) {  // in the count-in
+    if (tick < static_cast<double>(setup_.start - setup_.pickup) - 0.5) return;  // too early: not part of the take
+    tick = static_cast<double>(setup_.start);                                   // a pickup: on the first beat
+  }
+  if (song_ && setup_.punchOut > setup_.punchIn &&
+      (tick < static_cast<double>(setup_.punchIn) - 0.5 || tick >= static_cast<double>(setup_.punchOut)))
+    return;  // outside the punch range
   auto key = std::make_pair(channel, pitch);
   if (auto it = held_.find(key); it != held_.end()) {  // retrigger: close the previous one
-    commitNote(doc, it->second, pitch, tick);
+    const Held prev = it->second;
     held_.erase(it);
+    commitNote(doc, prev, pitch, tick);
   }
-  Held h{channel, std::clamp(velocity, 1, 127), tick, pass_, pattern_, 0};
-  if (song_) h.songOrigin = songOrigin(doc, tick, channel);
+  if (song_ && !ensureTake(doc, tick, channel)) return;
+  Held h{channel, std::clamp(velocity, 1, 127), song_ ? tick : fold(tick), pass_, pattern_, song_ ? origin_ : 0, played};
+  if (!opt_.overdub && !replace_.count(channel)) {
+    Replace r;
+    r.from = r.to = h.start;
+    replace_[channel] = r;
+  }
   held_[key] = h;
 }
 
@@ -127,7 +278,7 @@ void NoteRecorder::noteOff(Document& doc, ObjectId channel, int pitch, double ti
   position(doc, tick);
   auto it = held_.find({channel, pitch});
   if (it == held_.end()) return;
-  Held h = it->second;
+  const Held h = it->second;
   held_.erase(it);
   commitNote(doc, h, pitch, tick);
 }
@@ -135,29 +286,103 @@ void NoteRecorder::noteOff(Document& doc, ObjectId channel, int pitch, double ti
 void NoteRecorder::commitNote(Document& doc, const Held& h, int pitch, double endTick) {
   const Song& s = doc.song();
   if (!s.pattern(h.pattern) || !s.channel(h.channel)) return;
-  double start, len;
-  if (song_) {
-    start = h.start - static_cast<double>(h.songOrigin);
-    len = endTick - h.start;
-  } else {
-    double end = endTick;
-    int wraps = pass_ - h.pass;
-    if (wraps > 0 || end < h.start) end += static_cast<double>(loop_) * std::max(1, wraps);
-    start = h.start;
-    len = std::min(end - h.start, static_cast<double>(loop_));
-  }
   const Tick g = std::max<Tick>(1, opt_.grid);
+  if (!started_ && endTick < h.start) endTick = h.start + std::max(1.0, endTick - h.played);  // a pickup let go in the count-in
+  double start = h.start, end = endTick;
+  Tick limit = 0;  // song mode: quantize keeps the start before this (pattern ticks; 0: no limit)
+  if (song_) {
+    const int wraps = pass_ - h.pass;
+    if (wraps > 0) end = wrapFrom_ + (endTick - wrapTo_) + (wrapFrom_ - wrapTo_) * (wraps - 1);  // held over a loop wrap: its real length
+    if (setup_.punchOut > setup_.punchIn) {
+      end = std::min(end, static_cast<double>(setup_.punchOut));
+      limit = setup_.punchOut - h.origin;
+    } else if (setup_.loopEnd > setup_.loopStart && h.start >= static_cast<double>(setup_.loopStart) - 0.5 &&
+               h.start < static_cast<double>(setup_.loopEnd)) {
+      limit = setup_.loopEnd - h.origin;
+    }
+    start -= static_cast<double>(h.origin);
+    end -= static_cast<double>(h.origin);
+  } else {
+    const double l = static_cast<double>(loop_);
+    if (pass_ > h.pass || end < start) end = l;  // over the loop end: cut there
+    if (start >= l) start = fold(start);          // the pattern got shorter meanwhile
+    end = std::min(end, l);
+  }
+  const double len = end - start;
   Tick qs = static_cast<Tick>(std::llround(std::max(0.0, start)));
   if (opt_.quantize) qs = quantizeTick(qs, g);
-  if (!song_ && loop_ > 0) qs %= loop_;
+  if (song_) {
+    if (limit > 0 && qs >= limit) qs = std::max<Tick>(0, (limit - 1) / g * g);  // the last grid line inside
+  } else if (loop_ > 0) {
+    qs %= loop_;  // quantized onto the loop end: the start of the loop
+  }
   Tick ql = std::max<Tick>(1, static_cast<Tick>(std::llround(len)));
   if (opt_.quantizeLength) ql = std::max(g, quantizeTick(ql, g));
-  if (!opt_.overdub && !cleared_.count(h.channel)) {
-    cleared_.insert(h.channel);
-    doc.setNotes(h.pattern, h.channel, {}, "record (replace)");
-  }
-  doc.addNote(h.pattern, h.channel, Note(qs, ql, pitch, h.velocity));
+  if (!song_ && loop_ > 0 && qs + ql > loop_) ql = std::max<Tick>(1, loop_ - qs);  // never past the loop end
+  const ObjectId pat = h.pattern, ch = h.channel;
+  const Note note(qs, ql, pitch, h.velocity);
+  edit(doc, [&] { doc.addNote(pat, ch, note); });
+  if (h.pass == pass_) mine_.push_back(Mine{pat, ch, qs, pitch});
   ++recorded_;
+}
+
+void NoteRecorder::clearReplaced(Document& doc, double upTo) {
+  if (opt_.overdub || replace_.empty()) return;
+  for (auto& [ch, r] : replace_) {
+    double to = upTo;
+    if (song_ && setup_.punchOut > setup_.punchIn) to = std::min(to, static_cast<double>(setup_.punchOut));
+    if (!song_) to = std::min(to, static_cast<double>(loop_));
+    if (to <= r.to) continue;
+    r.to = to;
+    const double from = r.from;
+    const ObjectId channel = ch;
+    auto mine = [&](ObjectId pat, const Note& n) {
+      for (const Mine& m : mine_)
+        if (m.pattern == pat && m.channel == channel && m.start == n.start && m.pitch == n.pitch) return true;
+      return false;
+    };
+    // The notes of `pat` (its tick 0 at song tick `zero`) inside [from, to) and the window [lo, hi) go,
+    // except the ones this pass recorded.
+    auto clearIn = [&](ObjectId pat, double zero, double lo, double hi) {
+      const Pattern* p = doc.song().pattern(pat);
+      if (!p) return;
+      auto it = p->notes.find(channel);
+      if (it == p->notes.end()) return;
+      std::vector<Note> keep;
+      bool removed = false;
+      for (const Note& n : it->second) {
+        const double at = zero + static_cast<double>(n.start);
+        if (at >= from - 0.5 && at < to && at >= lo && at < hi && !mine(pat, n))
+          removed = true;
+        else
+          keep.push_back(n);
+      }
+      if (removed) edit(doc, [&] { doc.setNotes(pat, channel, std::move(keep), "record (replace)"); });
+    };
+    if (!song_) {
+      clearIn(pattern_, 0, -1e18, 1e18);
+      continue;
+    }
+    if (pattern_ != kNoId && !(opt_.takes && takePass_ != pass_)) clearIn(pattern_, static_cast<double>(origin_), -1e18, 1e18);  // earlier passes
+    // What other clips play there (only a pattern played by that one clip: the others would lose it too).
+    struct Hit {
+      ObjectId pattern;
+      double zero, lo, hi;
+    };
+    std::vector<Hit> hits;
+    {
+      const Song& s = doc.song();
+      for (const auto& c : s.playlist) {
+        if (c.kind != ClipKind::Pattern || c.muted || std::find(takeIds_.begin(), takeIds_.end(), c.pattern) != takeIds_.end()) continue;
+        const double c0 = static_cast<double>(c.start), c1 = static_cast<double>(c.start + s.clipLength(c));
+        if (c1 <= from || c0 >= to) continue;
+        int uses = 0;
+        for (const auto& o : s.playlist) uses += o.kind == ClipKind::Pattern && o.pattern == c.pattern ? 1 : 0;
+        if (uses == 1) hits.push_back(Hit{c.pattern, c0 - static_cast<double>(c.offset), c0, c1});
+      }
+    }
+    for (const Hit& hit : hits) clearIn(hit.pattern, hit.zero, hit.lo, hit.hi);
+  }
 }
 
 void NoteRecorder::controller(ParamId target, double normalized, double tick) {
@@ -170,113 +395,131 @@ void NoteRecorder::controller(ParamId target, double normalized, double tick) {
   if (v.size() < 100000) v.push_back({tick, std::clamp(normalized, 0.0, 1.0)});
 }
 
+void NoteRecorder::pedal(ObjectId channel, bool down, double tick) {
+  if (!active_ || !opt_.notes || channel == kNoId) return;
+  auto& v = auto_[channelParam(channel, ChannelParam::Sustain).packed()];
+  if (!v.empty() && v.back().first == tick) {
+    v.back().second = down ? 1.0 : 0.0;
+    return;
+  }
+  if (!v.empty() && (v.back().second >= 0.5) == down) return;  // (no change)
+  if (v.size() < 100000) v.push_back({tick, down ? 1.0 : 0.0});
+}
+
 void NoteRecorder::commitAutomation(Document& doc) {
   if (auto_.empty()) return;
   const bool clips = opt_.autoTarget == AutoRecordTarget::AutomationClips ||
                      (opt_.autoTarget == AutoRecordTarget::Auto && song_);
   auto pending = std::move(auto_);
   auto_.clear();
-  doc.beginGroup("record automation");
-  for (auto& entry : pending) {
-    auto& pts = entry.second;
-    const uint64_t packed = entry.first;
-    if (pts.empty()) continue;
-    const ParamId pid = ParamId::unpack(packed);
-    if (!describeParam(doc.song(), pid)) continue;
-    std::sort(pts.begin(), pts.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
-    if (clips) {
-      // A new automation clip from the bar of the first move.
-      const Song& s = doc.song();
-      const MeterMap mm(s);
-      const Tick first = static_cast<Tick>(std::floor(pts.front().first));
-      const Tick last = static_cast<Tick>(std::ceil(pts.back().first));
-      const Tick start = std::max<Tick>(0, mm.barStartAt(std::max<Tick>(0, first)));  // K-179
-      std::string name = paramDisplayName(s, pid);
-      doc.editSong("record automation", [&](Song& so) {
-        AutomationClip ac;
-        ac.id = so.allocateId();
-        ac.name = name;
-        ac.owner = pid.owner;
-        ac.index = pid.index;
-        for (const auto& [t, v] : pts) {
-          AutoPoint p;
-          p.pos = std::max<Tick>(0, static_cast<Tick>(std::llround(t)) - start);
-          p.value = static_cast<float>(v);
-          p.shape = AutoShape::Hold;
-          if (!ac.points.empty() && ac.points.back().pos == p.pos)
-            ac.points.back() = p;
-          else
-            ac.points.push_back(p);
+  edit(doc, [&] {
+    for (auto& entry : pending) {
+      auto& pts = entry.second;
+      const uint64_t packed = entry.first;
+      if (pts.empty()) continue;
+      const ParamId pid = ParamId::unpack(packed);
+      if (!describeParam(doc.song(), pid)) continue;
+      // The sustain pedal: recorded events (each press and lift steps the pedal on its sample,
+      // nothing is sent before the first), kept as played (no thinning into ramps).
+      const bool pedal = pid.index == static_cast<uint32_t>(ChannelParam::Sustain) && doc.song().channel(pid.owner);
+      std::sort(pts.begin(), pts.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+      if (clips) {
+        // A new automation clip from the bar of the first move.
+        const Song& s = doc.song();
+        const MeterMap mm(s);
+        const Tick first = static_cast<Tick>(std::floor(pts.front().first));
+        const Tick last = static_cast<Tick>(std::ceil(pts.back().first));
+        const Tick start = std::max<Tick>(0, mm.barStartAt(std::max<Tick>(0, first)));  // K-179
+        std::string name = paramDisplayName(s, pid);
+        doc.editSong("record automation", [&](Song& so) {
+          AutomationClip ac;
+          ac.id = so.allocateId();
+          ac.name = name;
+          ac.owner = pid.owner;
+          ac.index = pid.index;
+          for (const auto& [t, v] : pts) {
+            AutoPoint p;
+            p.pos = std::max<Tick>(0, static_cast<Tick>(std::llround(t)) - start);
+            p.value = static_cast<float>(v);
+            p.shape = AutoShape::Hold;
+            if (!ac.points.empty() && ac.points.back().pos == p.pos)
+              ac.points.back() = p;
+            else
+              ac.points.push_back(p);
+          }
+          int track = 0;
+          for (; track < static_cast<int>(so.tracks.size()); ++track) {
+            if (!trackmodes::clipAllowed(so, ClipKind::Automation, track)) continue;  // PL-08: not on instrument tracks
+            bool busy = false;
+            for (const auto& c : so.playlist)
+              if (c.track == track && c.start <= last && c.start + so.clipLength(c) > start) busy = true;
+            if (!busy) break;
+          }
+          if (track >= static_cast<int>(so.tracks.size())) {
+            if (static_cast<int>(so.tracks.size()) >= kMaxPlaylistTracks) return;
+            so.tracks.resize(static_cast<size_t>(track) + 1);
+          }
+          Clip c;
+          c.id = so.allocateId();
+          c.kind = ClipKind::Automation;
+          c.source = ac.id;
+          c.track = track;
+          c.start = start;
+          c.length = mm.nextBar(std::max(start, last)) - start;  // K-193: to the bar line after the last move, in the meter in force
+          if (!pedal) ac.points = autoedit::thin(ac.points, kRecordThin);  // K-171: a few points, within 0.4 %
+          ac.events = pedal;
+          so.automations.push_back(std::move(ac));
+          so.playlist.push_back(c);
+        });
+      } else {
+        // Pattern events: replace the lane's points inside the recorded span.
+        Tick origin = 0;
+        if (song_) {
+          if (!ensureTake(doc, pts.front().first, kNoId)) continue;
+          origin = origin_;
         }
-        int track = 0;
-        for (; track < static_cast<int>(so.tracks.size()); ++track) {
-          if (!trackmodes::clipAllowed(so, ClipKind::Automation, track)) continue;  // PL-08: not on instrument tracks
-          bool busy = false;
-          for (const auto& c : so.playlist)
-            if (c.track == track && c.start <= last && c.start + so.clipLength(c) > start) busy = true;
-          if (!busy) break;
-        }
-        if (track >= static_cast<int>(so.tracks.size())) {
-          if (static_cast<int>(so.tracks.size()) >= kMaxPlaylistTracks) return;
-          so.tracks.resize(static_cast<size_t>(track) + 1);
-        }
-        Clip c;
-        c.id = so.allocateId();
-        c.kind = ClipKind::Automation;
-        c.source = ac.id;
-        c.track = track;
-        c.start = start;
-        c.length = mm.nextBar(std::max(start, last)) - start;  // K-193: to the bar line after the last move, in the meter in force
-        ac.points = autoedit::thin(ac.points, kRecordThin);  // K-171: a few points, within 0.4 %
-        so.automations.push_back(std::move(ac));
-        so.playlist.push_back(c);
-      });
-    } else {
-      // Pattern events: replace the lane's points inside the recorded span.
-      Tick origin = 0;
-      if (song_) origin = songOrigin(doc, pts.front().first);
-      const Tick t0 = static_cast<Tick>(std::floor(pts.front().first)) - origin;
-      const Tick t1 = static_cast<Tick>(std::ceil(pts.back().first)) - origin;
-      doc.editPattern(pattern_, "record automation", [&](Pattern& p) {
-        std::vector<AutoPoint> out, take;
-        const PatternAutomation* lane = findPatternLane(p, pid.owner, pid.index);
-        if (lane)
-          for (const auto& q : lane->points)
-            if (q.pos < t0 || q.pos > t1) out.push_back(q);
-        for (const auto& [t, v] : pts) {
-          AutoPoint q;
-          q.pos = std::max<Tick>(0, static_cast<Tick>(std::llround(t)) - origin);
-          q.value = static_cast<float>(lane ? paramToAutomation(*lane, v) : v);  // J-173: into the clip's range
-          q.shape = AutoShape::Hold;
-          if (!take.empty() && take.back().pos == q.pos)
-            take.back() = q;  // one point per tick (the last value wins)
-          else
-            take.push_back(q);
-        }
-        take = autoedit::thin(take, kRecordThin);  // K-171: a few points, within 0.4 %
-        out.insert(out.end(), take.begin(), take.end());
-        std::stable_sort(out.begin(), out.end(), [](const AutoPoint& a, const AutoPoint& b) { return a.pos < b.pos; });
-        // One point per tick (the last value wins).
-        std::vector<AutoPoint> dedup;
-        for (const auto& q : out) {
-          if (!dedup.empty() && dedup.back().pos == q.pos)
-            dedup.back() = q;
-          else
-            dedup.push_back(q);
-        }
-        setPatternLane(p, pid.owner, pid.index, std::move(dedup));
-      });
+        const Tick t0 = static_cast<Tick>(std::floor(pts.front().first)) - origin;
+        const Tick t1 = static_cast<Tick>(std::ceil(pts.back().first)) - origin;
+        doc.editPattern(pattern_, "record automation", [&](Pattern& p) {
+          std::vector<AutoPoint> out, take;
+          const PatternAutomation* lane = findPatternLane(p, pid.owner, pid.index);
+          if (lane)
+            for (const auto& q : lane->points)
+              if (q.pos < t0 || q.pos > t1) out.push_back(q);
+          for (const auto& [t, v] : pts) {
+            AutoPoint q;
+            q.pos = std::max<Tick>(0, static_cast<Tick>(std::llround(t)) - origin);
+            q.value = static_cast<float>(lane ? paramToAutomation(*lane, v) : v);  // J-173: into the clip's range
+            q.shape = AutoShape::Hold;
+            if (!take.empty() && take.back().pos == q.pos)
+              take.back() = q;  // one point per tick (the last value wins)
+            else
+              take.push_back(q);
+          }
+          if (!pedal) take = autoedit::thin(take, kRecordThin);  // K-171: a few points, within 0.4 %
+          out.insert(out.end(), take.begin(), take.end());
+          std::stable_sort(out.begin(), out.end(), [](const AutoPoint& a, const AutoPoint& b) { return a.pos < b.pos; });
+          // One point per tick (the last value wins).
+          std::vector<AutoPoint> dedup;
+          for (const auto& q : out) {
+            if (!dedup.empty() && dedup.back().pos == q.pos)
+              dedup.back() = q;
+            else
+              dedup.push_back(q);
+          }
+          setPatternLane(p, pid.owner, pid.index, std::move(dedup));
+          if (PatternAutomation* l = pedal ? findPatternLane(p, pid.owner, pid.index) : nullptr) l->events = true;
+        });
+      }
     }
-  }
-  doc.endGroup();
+  });
 }
 
 void NoteRecorder::end(Document& doc, double tick) {
   if (!active_) return;
   position(doc, tick);
-  auto held = std::move(held_);
-  held_.clear();
-  for (const auto& [key, h] : held) commitNote(doc, h, key.second, tick);
+  cutHeld(doc, song_ ? tick : fold(tick));
+  clearReplaced(doc, song_ ? tick : fold(tick));
   commitAutomation(doc);
   active_ = false;
 }
@@ -286,6 +529,60 @@ void NoteRecorder::end(Document& doc, double tick) {
 void StepRecorder::press(int pitch, int velocity) {
   down_.insert(pitch);
   chord_[pitch] = std::clamp(velocity, 1, 127);
+}
+
+// ---- K-112c: capture ----
+
+void NoteCapture::noteOn(ObjectId channel, int pitch, int velocity, double seconds) {
+  if (played_.size() >= kMax) played_.erase(played_.begin(), played_.begin() + static_cast<std::ptrdiff_t>(played_.size() - kMax + 1));
+  played_.push_back(Played{channel, pitch, std::clamp(velocity, 1, 127), seconds, -1.0});
+}
+
+void NoteCapture::noteOff(ObjectId channel, int pitch, double seconds) {
+  for (auto it = played_.rbegin(); it != played_.rend(); ++it)
+    if (it->channel == channel && it->pitch == pitch && it->off < 0) {
+      it->off = std::max(seconds, it->on);
+      return;
+    }
+}
+
+int NoteCapture::commit(Document& doc, ObjectId pattern, double bpm, Tick grid, double now, double gapSeconds) {
+  const Song& s = doc.song();
+  const ObjectId ch = lastChannel();
+  if (ch == kNoId || !s.pattern(pattern) || !s.channel(ch) || bpm <= 0) {
+    clear();
+    return 0;
+  }
+  std::vector<Played> mine;
+  for (const Played& p : played_)
+    if (p.channel == ch) mine.push_back(p);
+  for (Played& p : mine)
+    if (p.off < 0) p.off = std::max(now, p.on);  // still held: up to now
+  // The last phrase: back from the last note while the gap before each note is short.
+  size_t first = mine.size() - 1;
+  double reach = mine[first].on;  // the earliest start in the phrase so far
+  for (size_t i = mine.size() - 1; i-- > 0;) {
+    if (reach - mine[i].off > gapSeconds) break;
+    first = i;
+    reach = std::min(reach, mine[i].on);
+  }
+  const double t0 = mine[first].on;
+  const double ticksPerSecond = bpm / 60.0 * static_cast<double>(s.ppq);
+  std::vector<Note> notes;
+  if (auto it = s.pattern(pattern)->notes.find(ch); it != s.pattern(pattern)->notes.end()) notes = it->second;
+  int added = 0;
+  for (size_t i = first; i < mine.size(); ++i) {
+    const Played& p = mine[i];
+    Tick start = static_cast<Tick>(std::llround((p.on - t0) * ticksPerSecond));
+    if (grid > 0) start = (start + grid / 2) / grid * grid;
+    const Tick len = std::max<Tick>(1, static_cast<Tick>(std::llround((p.off - p.on) * ticksPerSecond)));
+    notes.push_back(Note(std::max<Tick>(0, start), len, p.pitch, p.velocity));
+    ++added;
+  }
+  std::stable_sort(notes.begin(), notes.end(), [](const Note& a, const Note& b) { return a.start != b.start ? a.start < b.start : a.pitch < b.pitch; });
+  doc.setNotes(pattern, ch, std::move(notes), "capture");
+  clear();
+  return added;
 }
 
 bool StepRecorder::release(Document& doc, ObjectId pattern, ObjectId channel, int pitch) {
