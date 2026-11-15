@@ -5,7 +5,7 @@ name: CI
 on:
   push:
     branches: [main, port-ci]
-    paths-ignore: ["tests/yabridge/**", ".github/workflows/yabridge.yml"]
+    paths-ignore: ["tests/yabridge/**", ".github/workflows/yabridge.yml", "README.md", "CHANGELOG.md", "docs/images/**", "docs/releases/**", "docs/plugins/**"]
   pull_request:
   workflow_dispatch:
 
