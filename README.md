@@ -53,7 +53,7 @@ Work on one project live with other people, peer to peer and end-to-end encrypte
 <td width="33%" valign="top">
 
 **179 instruments and effects**<br>
-A family of flagships (Plasma, Platter, Seltmann, Lattice, Isoline and more), each with its own editor.
+Led by the flagships Plasma, Seltmann, Platter, Tideline, Chater and Loupe, each with its own editor.
 
 </td>
 <td width="33%" valign="top">
@@ -196,15 +196,25 @@ The [release notes](https://github.com/lolitemaultes/Gridline/releases/latest) h
 179 built-in instruments and effects. Every one has its own editor, every gesture in it is one undo step, and double-clicking a knob resets it (or lets you type a value when it is already at its default).
 
 <details>
-<summary><b>The flagship instruments and effects</b></summary>
+<summary><b>The instruments and effects</b></summary>
 
 <br>
+
+**Flagships**
 
 | Name | What it is |
 |---|---|
 | **Plasma** | Wavetable hybrid synth |
-| **Platter** | Two DJ decks and a mixer |
 | **Seltmann** | Automatic sample chopper |
+| **Platter** | Two DJ decks and a mixer |
+| **Tideline** | Tempo-synced ducking, triggered by a mixer track, a channel's notes and clips or MIDI |
+| **Chater** | Dreamy, spacey glitch: soft breaks, glitter, tape haze and a long shimmering hall |
+| **Loupe** | Audio editor |
+
+**More instruments and effects**
+
+| Name | What it is |
+|---|---|
 | **Lattice** | Six-operator FM |
 | **Isoline** | Wavetable |
 | **Facet** | Additive |
@@ -215,17 +225,14 @@ The [release notes](https://github.com/lolitemaultes/Gridline/releases/latest) h
 | **Pixel Tone** | Plays your own pictures |
 | **Turntable** | Scratch a sample on a platter |
 | **Folio** | Sampler |
-| **Loupe** | Audio editor |
 | **Shuttle** | Time and volume |
 | **Tracer** | Delay |
-| **Chater** | Dreamy, spacey glitch: soft breaks, glitter, tape haze and a long shimmering hall |
 | **Cloister** | Reverb |
 | **Crest** | Mastering |
 | **Cipher** | Vocoder |
 | **Plumb** | Pitch correction |
 | **Junction** | Patching: modules and cables, parallel paths, sidechains, feedback and eight macros |
 | **Graticule** | Scope |
-| **Tideline** | Tempo-synced ducking, triggered by a mixer track, a channel's notes and clips or MIDI |
 
 Around them: plain-named EQs, dynamics, modulation, physical models and utilities, plus Gridline Suite Mini, 35 compact single-purpose effects.
 
