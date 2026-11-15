@@ -19,6 +19,7 @@
 #include "App.h"
 #include "Keys.h"
 #include "LayoutPresets.h"
+#include "LogicPlugins.h"
 #include "MidiUi.h"
 #include "SettingsPages.h"
 #include "SmoothScrollUi.h"
@@ -68,6 +69,8 @@ struct KeyEditor {
   keys::Chord pendingChord;
   bool pendingAdd = false;
   std::string message;       // last result (shadow notes, what was unbound)
+  std::string selected;      // checkpoint 28 (Tracks layout): the row whose actions the side panel shows
+  int show = 0;              // checkpoint 29 (Tracks layout): all, with a shortcut, without one, changed
 };
 KeyEditor gKE;
 
@@ -128,8 +131,18 @@ void shortcutSettingsPage(App& a, float fieldW) {
     }
     ui::Hint("Which default shortcuts apply. Choosing a window layout can switch it too (Settings > Interface)");
   }
+  // Checkpoint 29 (Tracks layout): which commands the list shows, one segmented control leading the
+  // toolbar row, as 015 and 115 lead their window with it.
+  if (logicplug::active(a)) {
+    const char* shows[] = {tr("All"), tr("Used"), tr("Unused"), tr("Changed")};
+    const char* hints[] = {tr("Every command"), tr("Commands with a shortcut"), tr("Commands without a shortcut"), tr("Commands whose shortcut you changed")};
+    float sw = 56.0f;
+    for (const char* l : shows) sw = std::max(sw, std::ceil(ImGui::CalcTextSize(l).x) + 20);
+    ui::Segmented("##keyshow", shows, 4, &E.show, sw, 0, hints);
+    ImGui::SameLine(0, theme::kS3);
+  }
   // Toolbar: search, context filter, reset all.
-  ImGui::SetNextItemWidth(std::min(fieldW, 260.0f));
+  ImGui::SetNextItemWidth(std::min(fieldW, logicplug::active(a) ? 200.0f : 260.0f));
   ImGui::InputTextWithHint("##keysearch", tr("Search commands or keys"), E.search, sizeof E.search);
   ui::FocusRing();
   ImGui::SameLine(0, theme::kS2);
@@ -186,17 +199,63 @@ void shortcutSettingsPage(App& a, float fieldW) {
   for (const char* l : {"Change", "Add", "Clear", "Default"})
     bw = std::max(bw, std::ceil(ImGui::CalcTextSize(tr(l)).x + 2 * ImGui::GetStyle().FramePadding.x));
   const float actionsW = 4 * bw + 3 * theme::kS1;
+  // The row's actions: in the row (other layouts), or stacked full width in the side panel (Tracks).
+  auto rowActions = [&](const keys::Command& c, float bw, bool stack) {
+    const bool custom = km.customized(c.id);
+    auto next = [&] {
+      if (!stack) ImGui::SameLine(0, theme::kS1);
+    };
+    if (ui::TextButton("Change", E.captureId == c.id && !E.captureAdd, bw, tr("Press the new key combination next"))) {
+      E.captureId = c.id, E.captureAdd = false, E.pendingId.clear();
+    }
+    next();
+    if (ui::TextButton("Add", E.captureId == c.id && E.captureAdd, bw, tr("Adds a second shortcut for this command"))) {
+      E.captureId = c.id, E.captureAdd = true, E.pendingId.clear();
+    }
+    next();
+    ImGui::BeginDisabled(km.bindings(c.id).empty());
+    if (ui::TextButton("Clear", false, bw, tr("No shortcut for this command"))) {
+      km.set(c.id, {});
+      saveKeymap(a);
+      E.message = std::string(tr(c.label)) + ": " + tr("no shortcut.");
+    }
+    ImGui::EndDisabled();
+    next();
+    ImGui::BeginDisabled(!custom);
+    if (ui::TextButton("Default", false, bw, tr("Back to the default shortcut"))) {
+      // The default chord may be in use elsewhere by now: take it back from there.
+      km.reset(c.id);
+      for (const auto& ch : c.defaults)
+        for (const keys::Command* o : km.conflicts(c.id, ch)) {
+          std::vector<keys::Chord> b = km.bindings(o->id);
+          b.erase(std::remove(b.begin(), b.end(), ch), b.end());
+          km.set(o->id, b);
+        }
+      saveKeymap(a);
+      E.message = std::string(tr(c.label)) + ": " + tr("default shortcut restored.");
+    }
+    ImGui::EndDisabled();
+  };
+  // Checkpoint 28: the Tracks layout keeps the actions in a side panel (015, 115).
+  const bool side = logicplug::active(a) && ImGui::GetContentRegionAvail().x >= 560;
+  const float sideW = 220.0f;
+  const float tableH = std::max(160.0f, ImGui::GetContentRegionAvail().y - 4);
   ImGuiTableFlags tf = ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_PadOuterX;
-  if (!ImGui::BeginTable("##keymap", 3, tf, ImVec2(0, std::max(160.0f, ImGui::GetContentRegionAvail().y - 4)))) return;
+  if (side) tf |= ImGuiTableFlags_BordersInnerV;
+  if (!ImGui::BeginTable("##keymap", side ? 2 : 3, tf, ImVec2(side ? ImGui::GetContentRegionAvail().x - sideW - theme::kS3 : 0.0f, tableH))) return;
   ImGui::TableSetupScrollFreeze(0, 1);
   ImGui::TableSetupColumn(tr("Command"), ImGuiTableColumnFlags_WidthStretch);
   ImGui::TableSetupColumn(tr("Shortcut"), ImGuiTableColumnFlags_WidthFixed, 190.0f);
-  ImGui::TableSetupColumn("##actions", ImGuiTableColumnFlags_WidthFixed, actionsW);
+  if (!side) ImGui::TableSetupColumn("##actions", ImGuiTableColumnFlags_WidthFixed, actionsW);
   ImGui::TableHeadersRow();
   int lastCtx = -1;
   for (const auto& c : keys::commands()) {
     const int ctx = static_cast<int>(c.context);
     if (E.context >= 0 && ctx != E.context) continue;
+    if (logicplug::active(a) && E.show > 0) {
+      const bool used = !km.bindings(c.id).empty();
+      if ((E.show == 1 && !used) || (E.show == 2 && used) || (E.show == 3 && !km.customized(c.id))) continue;
+    }
     const std::string chords = keys::labels(c.id);
     if (!q.empty()) {
       const std::string hay = lower(std::string(tr(c.label)) + " " + c.label + " " + c.id + " " + chords + " " + tr(keys::contextName(c.context)));
@@ -207,14 +266,26 @@ void shortcutSettingsPage(App& a, float fieldW) {
       ImGui::TableNextRow();
       ImGui::TableNextColumn();
       std::string up = tr(keys::contextName(c.context));
-      for (auto& ch : up) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
       ImGui::Dummy(ImVec2(0, 2));
-      ui::Label(up.c_str());
+      if (side) {  // checkpoint 28: a bold heading in sentence case, as 015 names its groups
+        ImGui::PushFont(a.fontBold, 0.0f);
+        ImGui::TextColored(theme::vec(P.textDim), "%s", up.c_str());
+        ImGui::PopFont();
+      } else {
+        for (auto& ch : up) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+        ui::Label(up.c_str());
+      }
     }
     ImGui::PushID(c.id);
     ImGui::TableNextRow(ImGuiTableRowFlags_None, 24.0f);
     ImGui::TableNextColumn();
     const bool custom = km.customized(c.id);
+    if (side) {
+      const ImVec2 cp = ImGui::GetCursorPos();
+      if (ImGui::Selectable("##pick", E.selected == c.id, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap, ImVec2(0, 22)))
+        E.selected = c.id;
+      ImGui::SetCursorPos(cp);
+    }
     ImGui::AlignTextToFramePadding();
     ui::TextFit(tr(c.label), ImGui::GetContentRegionAvail().x, custom ? P.hot : P.text, false);
     ImGui::TableNextColumn();
@@ -244,40 +315,60 @@ void shortcutSettingsPage(App& a, float fieldW) {
         ui::Tooltip(tip.c_str());
       }
     }
-    ImGui::TableNextColumn();
-    if (ui::TextButton("Change", E.captureId == c.id && !E.captureAdd, bw, tr("Press the new key combination next"))) {
-      E.captureId = c.id, E.captureAdd = false, E.pendingId.clear();
+    if (!side) {
+      ImGui::TableNextColumn();
+      rowActions(c, bw, false);
     }
-    ImGui::SameLine(0, theme::kS1);
-    if (ui::TextButton("Add", E.captureId == c.id && E.captureAdd, bw, tr("Adds a second shortcut for this command"))) {
-      E.captureId = c.id, E.captureAdd = true, E.pendingId.clear();
-    }
-    ImGui::SameLine(0, theme::kS1);
-    ImGui::BeginDisabled(km.bindings(c.id).empty());
-    if (ui::TextButton("Clear", false, bw, tr("No shortcut for this command"))) {
-      km.set(c.id, {});
-      saveKeymap(a);
-      E.message = std::string(tr(c.label)) + ": " + tr("no shortcut.");
-    }
-    ImGui::EndDisabled();
-    ImGui::SameLine(0, theme::kS1);
-    ImGui::BeginDisabled(!custom);
-    if (ui::TextButton("Default", false, bw, tr("Back to the default shortcut"))) {
-      // The default chord may be in use elsewhere by now: take it back from there.
-      km.reset(c.id);
-      for (const auto& ch : c.defaults)
-        for (const keys::Command* o : km.conflicts(c.id, ch)) {
-          std::vector<keys::Chord> b = km.bindings(o->id);
-          b.erase(std::remove(b.begin(), b.end(), ch), b.end());
-          km.set(o->id, b);
-        }
-      saveKeymap(a);
-      E.message = std::string(tr(c.label)) + ": " + tr("default shortcut restored.");
-    }
-    ImGui::EndDisabled();
     ImGui::PopID();
   }
   ImGui::EndTable();
+  if (!side) return;
+  // Checkpoint 28 (Tracks layout): the selected command's keys and actions in a panel at the right,
+  // as 015 and 115 hold them (the rows carried four buttons each).
+  ImGui::SameLine(0, theme::kS3);
+  const auto& PP = pal();
+  const ImVec2 q0 = ImGui::GetCursorScreenPos();
+  const float pw = ImGui::GetContentRegionAvail().x, ph = tableH;
+  ImDrawList* pdl = ImGui::GetWindowDrawList();
+  const ImU32 wbg = ImGui::GetColorU32(ImGuiCol_WindowBg);
+  pdl->AddRectFilled(q0, ImVec2(q0.x + pw, q0.y + ph), theme::mix(wbg, PP.text, 0.05f), 8.0f);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS3, theme::kS3));
+  ImGui::BeginChild("##keyside", ImVec2(pw, ph), ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoBackground);
+  ImGui::PopStyleVar();
+  const keys::Command* sel = E.selected.empty() ? nullptr : keys::findCommand(E.selected);
+  ImGui::PushFont(a.fontBold, 0.0f);
+  ImGui::TextUnformatted(tr("Keyboard"));
+  ImGui::PopFont();
+  ImGui::Dummy(ImVec2(0, 2));
+  if (!sel) {
+    ImGui::PushTextWrapPos(0);
+    ImGui::TextColored(theme::vec(PP.textDim), "%s", tr("Pick a command in the list: its shortcut and actions show here."));
+    ImGui::PopTextWrapPos();
+  } else {
+    ImGui::PushTextWrapPos(0);
+    ImGui::TextUnformatted(tr(sel->label));
+    ImGui::TextColored(theme::vec(PP.textDim), "%s", tr(keys::contextName(sel->context)));
+    ImGui::PopTextWrapPos();
+    ImGui::Dummy(ImVec2(0, 2));
+    {
+      ImDrawList* dl = ImGui::GetWindowDrawList();
+      const ImVec2 k0 = ImGui::GetCursorScreenPos();
+      const float maxX = k0.x + ImGui::GetContentRegionAvail().x;
+      float x = k0.x;
+      if (km.bindings(sel->id).empty()) dl->AddText(ImVec2(x, k0.y + 3), PP.textFaint, tr("none"));
+      for (const auto& ch : km.bindings(sel->id)) {
+        const std::string t = keys::format(ch);
+        if (x + 40 > maxX) break;
+        x += keyChip(a, dl, ImVec2(x, k0.y), t.c_str(), km.customized(sel->id) ? PP.hot : PP.line) + theme::kS1;
+      }
+      ImGui::Dummy(ImVec2(ImGui::GetContentRegionAvail().x, 22));
+    }
+    ImGui::Dummy(ImVec2(0, theme::kS1));
+    ImGui::PushID(sel->id);
+    rowActions(*sel, ImGui::GetContentRegionAvail().x, true);
+    ImGui::PopID();
+  }
+  ImGui::EndChild();
 }
 
 // Help > Keyboard shortcuts: the live map (read-only) plus mouse gestures.

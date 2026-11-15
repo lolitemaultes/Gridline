@@ -20,6 +20,11 @@ Context focusContext();
 // K-175: the typing keyboard is on (set once a frame): the chords it plays (playsOnTypingKeyboard)
 // do not run their commands, except the one that switches it off.
 void setTypingKeyboard(bool on);
+// K-106: the tracker pattern editor has the keyboard (set once a frame): the chords it uses itself
+// (note, value and navigation keys, its block keys) run no command, so one key press does one thing.
+// Space, the function keys, undo and the other Ctrl chords keep their commands.
+void setEditorKeys(bool on);
+bool editorTakes(const Chord& c);
 
 // True when one of the command's chords was pressed this frame with exactly
 // its modifiers (Ctrl also matches Cmd). Never true while text is typed or

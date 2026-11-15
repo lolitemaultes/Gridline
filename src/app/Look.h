@@ -156,6 +156,11 @@ void hookInset(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float r, ImU32 hint);
 // segments): state Hover / Active (pressed) / On (lit) / Disabled; role = the
 // lit colour (0: the style's); rest = the button has a face at rest too.
 void hookFace(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float r, int state, ImU32 role, bool rest);
+// K-112b (checkpoint 29): while set, hookFace and hookPrimary draw flat faces (one fill, no shadow,
+// lip or bevel), all the same height as their item: the Tracks layout's own controls, as every
+// reference draws them. Set per frame by the layout style; plugin editors clear it while they draw.
+void setFlatFaces(bool on);
+bool flatFaces();
 // K-172: face of a primary button (the window's main action): raised and filled
 // with `role` (0: the style's lit colour); Active sinks it for the click only.
 void hookPrimary(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float r, int state, ImU32 role);

@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdio>
 #include <map>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -27,23 +28,54 @@
 
 namespace gl::logicplug {
 
-namespace {
+// R01-10: the sound a track plays: its linked channel, else the sound of the given region (when it
+// lies on the track), else of the track's first region (an audio region's channel, a pattern
+// region's first channel with notes or steps). A free track is never "nothing" while it holds regions.
+const Channel* trackSound(const Song& s, int track, const Clip* clip) {
+  if (track < 0 || track >= static_cast<int>(s.tracks.size())) return nullptr;
+  if (const Channel* c = trackmodes::linkedChannel(s, track)) return c;
+  auto soundOf = [&s](const Clip& k) -> const Channel* {
+    if (k.kind == ClipKind::Audio) return s.channel(k.source);
+    if (k.kind == ClipKind::Pattern)
+      if (const Pattern* p = s.pattern(k.pattern))
+        for (const Channel& c : s.channels)
+          if (p->notes.count(c.id) || p->steps.count(c.id)) return &c;
+    return nullptr;
+  };
+  if (clip && clip->track == track)
+    if (const Channel* c = soundOf(*clip)) return c;
+  const Clip* first = nullptr;
+  for (const Clip& k : s.playlist)
+    if (k.track == track && (!first || k.start < first->start) && soundOf(k)) first = &k;
+  return first ? soundOf(*first) : nullptr;
+}
 
-const theme::Palette& pal() { return theme::pal(); }
-
-// The track the layout is about: the first selected region's, else the first selected track.
+// The track the layout is about: the first selected region's, else the first selected track, else
+// (as the reference always has one track selected) the track that plays the selected channel, else
+// the first track.
 int focusTrack(const App& a) {
   const Song& s = a.doc.song();
   for (const Clip& c : s.playlist)
     if (a.playlist.selected.count(c.id)) return c.track;
   if (!a.playlist.trackSel.empty()) return *a.playlist.trackSel.begin();
-  return -1;
+  const int n = static_cast<int>(s.tracks.size());
+  if (a.selChannel != kNoId)
+    for (int t = 0; t < n; ++t)
+      if (const Channel* c = trackSound(s, t, nullptr); c && c->id == a.selChannel) return t;
+  return n > 0 ? 0 : -1;
 }
+
+namespace {
+
+const theme::Palette& pal() { return theme::pal(); }
 
 const MixerTrack* mixerOf(const Song& s, int track) {
   if (track < 0 || track >= static_cast<int>(s.tracks.size())) return nullptr;
   if (const MixerTrack* m = trackmodes::linkedMixer(s, track)) return m;
-  if (const Channel* c = trackmodes::linkedChannel(s, track)) return s.mixerTrack(c->mixerTrack);
+  if (const Channel* c = trackSound(s, track, nullptr)) {
+    if (const MixerTrack* m = s.mixerTrack(c->mixerTrack)) return m;
+    if (!s.mixer.empty()) return &s.mixer[0];  // routed straight to the master
+  }
   return nullptr;
 }
 
@@ -277,6 +309,24 @@ void drawMoreFx(App& a) {
 }
 
 void frame(App& a) {
+  {  // R01-02: the tracks area's tool is the layout's own. The Tracks layout opens with the pointer
+     // (the reference's default tool: a click on empty space deselects, regions are drawn with the
+     // pencil); the other layouts get back the tool they had.
+    static bool was = false;
+    static Tool tracksTool = Tool::Select, otherTool = Tool::Draw;
+    const bool on = active(a);
+    if (on != was) {
+      if (on) otherTool = a.playlist.tool, a.playlist.tool = tracksTool;
+      else tracksTool = a.playlist.tool, a.playlist.tool = otherTool;
+      was = on;
+    }
+  }
+  // R01-09: Escape closes an open menu or pop-up (the tracks area's local menus, the tool and snap
+  // pop-ups, a region's menu), as the reference's do; it left them open, so the next click on the
+  // menu's own button only closed it. Modal dialogs and typing keep the key.
+  if (active(a) && ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !ImGui::GetIO().WantTextInput &&
+      ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) && !ImGui::GetTopMostPopupModal())
+    ImGui::ClosePopupsExceptModals();
   if (!active(a)) {  // another layout: nothing of this runs (hidden windows come back)
     if (gHidden) show(a);
     gMoreFx.clear();
@@ -524,27 +574,41 @@ void smartControls(App& a) {
   const auto& P = pal();
   const int tr = focusTrack(a);
   const MixerTrack* m = gSmartMaster ? (s.mixer.empty() ? nullptr : &s.mixer[0]) : mixerOf(s, tr);
-  const Channel* inst = gSmartMaster ? nullptr : trackmodes::linkedChannel(s, tr);
+  const Channel* inst = gSmartMaster ? nullptr : trackSound(s, tr, nullptr);
   ImDrawList* dl = ImGui::GetWindowDrawList();
   {  // the bar: the target, the view, the master switch
+    // Checkpoint 28: as 174, 173 and 050 order it: Track | Master and Compare at the left, the view
+    // (Controls | EQ) centred, the track's name at the right end (the references title the window with it).
     const std::string name = m ? mixerTrackName(s, static_cast<size_t>(std::max(0, s.mixerIndex(m->id)))) : std::string(i18n::tr("No track selected"));
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextUnformatted(name.c_str());
-    ImGui::SameLine(0, theme::kS3);
-    const char* views[] = {i18n::tr("Controls"), i18n::tr("EQ")};
-    const char* hints[] = {i18n::tr("The track's main controls as knobs"), i18n::tr("The track's EQ, editable here")};
-    ui::Segmented("##smview", views, 2, &gSmartView, 72, 0, hints);
-    ImGui::SameLine(0, theme::kS3);
-    if (ui::TextButton(i18n::tr("Master"), gSmartMaster, 0, "Show the master track's controls instead of the selected track's")) gSmartMaster = !gSmartMaster;
-    if (m) {  // Compare at the bar's right end, for every plugin on the track
+    const float x0 = ImGui::GetCursorPosX(), y0 = ImGui::GetCursorPosY(), W = ImGui::GetContentRegionAvail().x;
+    const char* targets[] = {i18n::tr("Track"), i18n::tr("Master")};
+    const char* thints[] = {i18n::tr("The selected track's controls"), i18n::tr("The master track's controls")};
+    int target = gSmartMaster ? 1 : 0;
+    if (ui::Segmented("##smtarget", targets, 2, &target, 64, 0, thints)) gSmartMaster = target == 1;
+    float leftEnd = x0 + 128;
+    if (m) {  // Compare after the target, for every plugin on the track
       std::vector<PluginTarget> ts;
       if (inst && !inst->plugin.type.empty()) ts.push_back(PluginTarget{inst->id, -1});
       for (int k = 0; k < kEffectSlots; ++k)
         if (!m->slots[static_cast<size_t>(k)].plugin.type.empty()) ts.push_back(PluginTarget{m->id, k});
       const float cw = 84.0f;
-      ImGui::SameLine(0, theme::kS3);
-      ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - cw));
+      ImGui::SameLine(0, theme::kS2);
       compareTrackButton(a, ts, cw);
+      leftEnd += theme::kS2 + cw;
+    }
+    const char* views[] = {i18n::tr("Controls"), i18n::tr("EQ")};
+    const char* hints[] = {i18n::tr("The track's main controls as knobs"), i18n::tr("The track's EQ, editable here")};
+    const float vw = 72 * 2;
+    ImGui::SameLine(0, 0);
+    ImGui::SetCursorPos(ImVec2(std::max(leftEnd + theme::kS3, std::round(x0 + (W - vw) * 0.5f)), y0));
+    ui::Segmented("##smview", views, 2, &gSmartView, 72, 0, hints);
+    const float nameX = ImGui::GetItemRectMax().x + theme::kS3, right = ImGui::GetWindowPos().x + x0 + W;
+    const float fs = ImGui::GetFontSize(), room = right - nameX;
+    if (room > 40) {
+      const float tw = std::min(room, ImGui::CalcTextSize(name.c_str()).x);
+      const ImVec2 r0 = ImGui::GetItemRectMin(), r1 = ImGui::GetItemRectMax();
+      theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(std::round(right - tw), theme::textTop(a.fontRegular, fs, r0.y, r1.y - r0.y)), room, P.textDim,
+                          name.c_str());
     }
   }
   ImGui::Spacing();
@@ -616,21 +680,24 @@ void smartControls(App& a) {
     totalCols += b.cols;
   }
   const float roomW = (p1.x - p0.x) - pad * 2 - gap * static_cast<float>(boxes.size() - 1) - 16.0f * static_cast<float>(boxes.size());
-  const float cellW = std::clamp(roomW / static_cast<float>(std::max(1, totalCols)), 64.0f, 150.0f);
-  const float rowRoom = (innerH - headH - 8) / (twoRows ? 2.0f : 1.0f);
-  const float knobR = std::clamp(std::min(cellW * 0.26f, (rowRoom - 30) * 0.5f), 12.0f, 28.0f);
-  const float cellH = std::min(rowRoom, knobR * 2 + 30);  // name (16) above, the knob, then a gap
+  // Checkpoint 29: the knobs grow with the pane (174 and 173 fill it): up to 40 px radius, wider cells.
+  const float cellW = std::clamp(roomW / static_cast<float>(std::max(1, totalCols)), 64.0f, 190.0f);
+  const float rowRoom = (innerH - headH - 22) / (twoRows ? 2.0f : 1.0f);
+  const float knobR = std::clamp(std::min(cellW * 0.28f, (rowRoom - 34) * 0.5f), 12.0f, 40.0f);
+  const float cellH = std::min(rowRoom, std::round(knobR * 2 + 30));  // name (18) above, the knob, 12 px to the next row
   float used = 0;
   for (const Box& b : boxes) used += cellW * static_cast<float>(b.cols) + 16;
   used += gap * static_cast<float>(boxes.size() - 1);
   float x = std::round(p0.x + std::max(pad, ((p1.x - p0.x) - used) * 0.5f));  // the boxes centred in the panel
-  const float boxH = headH + cellH * static_cast<float>(twoRows ? 2 : 1) + 8;
+  // Checkpoint 28: each plugin's name stands over its box at title size, as 174, 173 and 193 set it
+  // (it was a caption inside the box's top edge); the box holds the knobs with a little more room.
+  const float boxH = headH + cellH * static_cast<float>(twoRows ? 2 : 1) + 12;
   const float y0 = std::round(p0.y + std::max(pad, ((p1.y - p0.y) - boxH) * 0.5f));
   for (const Box& b : boxes) {
     const float bw = cellW * static_cast<float>(b.cols) + 16;
     if (x + bw > p1.x - 2 && &b != &boxes.front()) break;  // no room for another box
-    const ImVec2 b0(x, y0), b1(x + bw, y0 + headH + cellH * static_cast<float>(b.rows) + 8);
-    dl->AddRect(b0, b1, theme::withAlpha(P.text, 0.35f), 4.0f);
+    const ImVec2 b0(x, y0), b1(x + bw, y0 + headH + cellH * static_cast<float>(b.rows) + 12);  // checkpoint 29: 14 px under the last knobs, as above the first names
+    dl->AddRect(ImVec2(b0.x, b0.y + headH), b1, theme::withAlpha(P.text, 0.35f), 4.0f);
     const PluginInfo* info = knobs[b.i].t.info(s);
     ImGui::PushID(static_cast<int>(b.i));
     {  // the title: the plugin's name, a click opens its window
@@ -640,9 +707,9 @@ void smartControls(App& a) {
       if (hov) ui::Hint("Open this plugin's window");
       std::string title = info ? info->name : std::string("?");
       for (char& ch : title) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
-      const float tf = theme::kFontCaption;
-      const float tw = std::min(a.fontBold->CalcTextSizeA(tf, 1e9f, 0, title.c_str()).x, bw - 12);
-      theme::textEllipsis(dl, a.fontBold, tf, ImVec2(std::round(b0.x + (bw - tw) * 0.5f), std::round(b0.y + (headH - tf) * 0.5f)), bw - 12,
+      const float tf = theme::kFontTitle;
+      const float tw = std::min(a.fontRegular->CalcTextSizeA(tf, 1e9f, 0, title.c_str()).x, bw - 12);
+      theme::textEllipsis(dl, a.fontRegular, tf, ImVec2(std::round(b0.x + (bw - tw) * 0.5f), theme::textTop(a.fontRegular, tf, b0.y - 2, headH)), bw - 12,
                           shown ? P.hot : hov ? P.text : theme::mix(P.text, P.textDim, 0.3f), title.c_str());
     }
     for (size_t k = b.i; k < b.j; ++k) {
@@ -650,16 +717,16 @@ void smartControls(App& a) {
       const ParamId pid = knobs[k].t.pid(knobs[k].k);
       const auto d = describeParam(s, pid);
       const float cx = b0.x + 8 + cellW * (static_cast<float>(col) + 0.5f);
-      const float cy0 = std::round(b0.y + headH + 2 + cellH * static_cast<float>(row));
+      const float cy0 = std::round(b0.y + headH + 10 + cellH * static_cast<float>(row));
       // The control's name above its knob (as the references show), small capitals, centred.
       if (d) {
         std::string label = d->name;
         for (char& ch : label) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
-        const float lf = theme::kFontLabel - 1;
+        const float lf = theme::kFontCaption;
         const float lw = std::min(a.fontRegular->CalcTextSizeA(lf, 1e9f, 0, label.c_str()).x, cellW - 8);
         theme::textEllipsis(dl, a.fontRegular, lf, ImVec2(std::round(cx - lw * 0.5f), cy0), cellW - 8, P.textDim, label.c_str());
       }
-      ImGui::SetCursorScreenPos(ImVec2(std::round(cx - knobR), cy0 + 16));
+      ImGui::SetCursorScreenPos(ImVec2(std::round(cx - knobR), cy0 + 18));
       ImGui::PushID(static_cast<int>(k));
       ui::ParamKnob("##sk", pid, knobR, nullptr);
       ImGui::PopID();

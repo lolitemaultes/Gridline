@@ -148,7 +148,7 @@ File > Collaboration...			e-
 File > Project info...	F11	file.projectInfo	e-
 File > Quit	Ctrl+Q	file.quit	e-
 Edit > Undo	Ctrl+Z	edit.undo	--
-Edit > Redo	Ctrl+Y	edit.redo	--
+Edit > Redo	Ctrl+Shift+Z	edit.redo	--
 Edit > Undo history	Alt+Z	edit.history	e-
 Edit > Cut			e-
 Edit > Copy	Ctrl+C	playlist.copy	e-
@@ -157,13 +157,15 @@ Edit > Delete	Del	playlist.delete	e-
 Edit > Select > Select all	Ctrl+A	playlist.selectAll	e-
 Edit > Select > Deselect	Shift+D	playlist.deselect	e-
 Edit > Duplicate	Ctrl+R	playlist.duplicate	e-
+Edit > Split	Ctrl+T	playlist.splitAtSongPos	--
+Edit > Join	Ctrl+J	playlist.merge	--
 Edit > Rename...	Shift+Enter	edit.rename	e-
-Track > New tracks...			e-
+Track > New tracks...	Ctrl+Alt+N	track.newTracks	e-
 Track > New track			e-
 Track > New instrument track > Audio file as sampler...			e-
-Track > New track with the same settings			e-
+Track > New track with the same settings	Ctrl+D	track.duplicate	e-
 Track > New mixer track			e-
-Track > Delete track			e-
+Track > Delete track	Ctrl+Backspace	track.delete	e-
 Track > Add > Instrument channel > Audio file as sampler...			e-
 Track > Add > Pattern	F4	pattern.new	e-
 Track > Add > Automation clip for the last moved control			--
@@ -215,6 +217,9 @@ Patterns > Delete unused patterns			e-
 Navigate > Go to the start	Enter	transport.toStart	e-
 Navigate > Back one bar	,	transport.rewindBar	e-
 Navigate > Forward one bar	.	transport.forwardBar	e-
+Navigate > Markers > No markers			--
+Navigate > Cycle	C	transport.cycle	e-
+Navigate > Add marker	Alt+'	playlist.marker	e-
 Navigate > Follow the song position			ec
 Navigate > Zoom > Zoom in	Ctrl+Right	playlist.zoomIn	e-
 Navigate > Zoom > Zoom out	Ctrl+Left	playlist.zoomOut	e-
@@ -284,6 +289,8 @@ Mix > Mixer	X	view.mixer	e-
 Mix > Stage			e-
 Mix > Master chain			e-
 Mix > Performance			e-
+Mix > Group > Create group...			e-
+Mix > Group > Remove from group			--
 Mix > Plugin delay compensation			ec
 Mix > Mixer layout > Compact strips			e-
 Mix > Mixer layout > Normal strips			ec
@@ -291,9 +298,9 @@ Mix > Mixer layout > Wide strips			e-
 View > Command palette...	Ctrl+Shift+P	view.commandPalette	e-
 View > Playlist	F5	view.playlist	ec
 View > Channel rack	Ctrl+3	view.channelRack	e-
-View > Piano roll	P	view.pianoRoll	ec
+View > Piano roll	P	view.pianoRoll	e-
 View > Mixer	X	view.mixer	e-
-View > Browser	B	view.browser	e-
+View > Browser			e-
 View > Plugin picker	F8	view.pluginPicker	e-
 View > Project picker			e-
 View > Channel settings			e-
@@ -313,6 +320,8 @@ View > Panels > Info box			e-
 View > Panels > Files			e-
 View > Panels > Notes			e-
 View > Panels > Smart controls			e-
+View > Panels > Pattern editor			e-
+View > Panels > Order list			e-
 View > Zoom in	Ctrl+Right	playlist.zoomIn	e-
 View > Zoom out	Ctrl+Left	playlist.zoomOut	e-
 View > Zoom to fit the song	Z	playlist.zoomFit	e-
@@ -324,6 +333,7 @@ View > Bring all windows back into Gridline			--
 View > Window layout >       Studio			e-
 View > Window layout >       Clips	Preview		e-
 View > Window layout >       Smooth	Preview		ec
+View > Window layout >       Tracker	Preview		e-
 View > Window layout > Layout settings...			e-
 View > Reset window layout	Ctrl+Shift+H	view.resetLayout	e-
 View > Dark theme			ec
@@ -556,11 +566,11 @@ Tools > Clean up > Delete unused automation clips			e-
 Tools > Clean up > Delete unused patterns			e-
 Tools > AI assistant activity			e-
 Window > Main window			e-
-Window > Mixer			e-
-Window > Step sequencer			e-
-Window > Piano roll			e-
+Window > Mixer	X	view.mixer	e-
+Window > Step sequencer	Ctrl+3	view.channelRack	e-
+Window > Piano roll	P	view.pianoRoll	e-
 Window > Smart controls			e-
-Window > Undo history			e-
+Window > Undo history	Alt+Z	edit.history	e-
 Window > Performance			e-
 Window > Typing keyboard to piano	Ctrl+K	options.typingKeyboard	e-
 Window > Hide all plugin windows	V	view.hidePlugins	e-

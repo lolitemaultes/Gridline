@@ -60,13 +60,17 @@ Shell logic() {
                // K-112b8: the pads grid beside the tracks (hidden until shown; Tab or the tracks bar's grid switch)
                R("logic.grid", "", Edge::Left, px(360, 0.3f, 220), false, false, TabStyle::None),
                R("logic.right", "", Edge::Right, px(300, 0.3f, 220), false, true, TabStyle::Segmented),
-               R("logic.help", "logic.right", Edge::Bottom, px(120, 0.4f, 72), true, false, TabStyle::None, true),
-               R("logic.lower", "", Edge::Bottom, share(0.5f, 160, 0.62f), true, true, TabStyle::Segmented)};
+               // R01-08: closed by default (Quick help is a floating window; the box shows when the Info box part is opened)
+               R("logic.help", "logic.right", Edge::Bottom, px(120, 0.4f, 72), false, false, TabStyle::None, true),
+               R("logic.lower", "", Edge::Bottom, share(0.5f, 160, 0.62f), false, true, TabStyle::Segmented)};  // K-112B cp40: closed until asked for
   return s;
 }
 
 // Live: the browser on the left with the info corner under it, a side panel on the right (closed),
-// the device band (fixed height) and the clip band along the bottom, the mixer band under the main view.
+// the device band (fixed height) or the clip band along the bottom, the mixer band under the main view.
+// K-112c (round 45): a new set opens as the reference's does: the browser, the clip grid with its
+// own mixer, and one detail band (the device band). The clip and device bands are one group: showing
+// one hides the other, so the main view keeps its room.
 Shell live() {
   Shell s;
   s.preset = Preset::Live;
@@ -75,8 +79,10 @@ Shell live() {
                R("live.info", "live.browser", Edge::Bottom, px(188, 0.4f, 100), true, false, TabStyle::None, true),
                R("live.side", "", Edge::Right, px(300, 0.3f, 200), false),
                R("live.device", "", Edge::Bottom, px(188, 0.35f, 120), true, false, TabStyle::None, true),
-               R("live.clip", "", Edge::Bottom, share(0.36f, 160, 0.45f), true),  // about 230 at 1440 x 900, as in the refs
+               R("live.clip", "", Edge::Bottom, share(0.36f, 160, 0.45f), false),  // about 230 at 1440 x 900, as in the refs
                R("live.mixer", "", Edge::Bottom, share(0.32f, 150, 0.5f), false)};
+  for (Region& r : s.regions)
+    if (std::string(r.id) == "live.device" || std::string(r.id) == "live.clip") r.group = "live.detail";
   return s;
 }
 
@@ -85,6 +91,7 @@ Shell tracker() {
   Shell s;
   s.preset = Preset::Tracker;
   s.centre = "tracker.pages";
+  s.centreTabs = TabStyle::Pages;  // K-106: one page at a time, picked in the header band's page strip
   s.regions = {R("tracker.header", "", Edge::Top, px(232, 0.35f, 120), true, false, TabStyle::Dock, true),
                R("tracker.side", "", Edge::Right, px(190, 0.25f, 150), false),
                R("tracker.lower", "", Edge::Bottom, px(150, 0.3f, 100), false, false, TabStyle::Dock, true)};
@@ -120,6 +127,12 @@ bool visible(const Shell& sh, const State& st, const std::string& region) {
 }
 
 void setVisible(const Shell& sh, State& st, const std::string& region, bool on) {
+  const Region* self = nullptr;
+  for (const Region& r : sh.regions)
+    if (region == r.id) self = &r;
+  if (on && self && *self->group)  // K-112c: one region of a group at a time
+    for (const Region& r : sh.regions)
+      if (region != r.id && std::string(r.group) == self->group && visible(sh, st, r.id)) setVisible(sh, st, r.id, false);
   for (const Region& r : sh.regions)
     if (region == r.id) {
       if (r.visibleByDefault) {
@@ -152,6 +165,11 @@ std::string toJson(const State& st) {
     for (const auto& [k, v] : st.memberSize) m.object[k] = Json::makeNumber(std::round(static_cast<double>(v)));
     o.object["size"] = m;
   }
+  if (!st.regionSize.empty()) {
+    Json m = Json::makeObject();
+    for (const auto& [k, v] : st.regionSize) m.object[k] = Json::makeNumber(std::round(static_cast<double>(v)));
+    o.object["region"] = m;
+  }
   return jsonCompact(o);
 }
 
@@ -173,6 +191,9 @@ State fromJson(Preset p, const std::string& text) {
       if (bar == std::string::npos || !known(k.substr(0, bar)) || !v.is(Json::Type::Number) || !std::isfinite(v.number)) continue;
       st.memberSize[k] = static_cast<float>(std::clamp(v.number, 40.0, 4000.0));
     }
+  if (const Json* m = o.find("region"); m && m->is(Json::Type::Object))
+    for (const auto& [k, v] : m->object)
+      if (known(k) && v.is(Json::Type::Number) && std::isfinite(v.number)) st.regionSize[k] = static_cast<float>(std::clamp(v.number, 40.0, 4000.0));
   return st;
 }
 
@@ -180,10 +201,14 @@ std::string stateKey(Preset p) { return std::string("layout.") + id(p) + ".state
 
 float regionExtent(const Region& r, float parent, const State& st, const std::string& member) {
   float v = r.size.px > 0 ? r.size.px : std::floor(parent * r.size.share);
+  // K-297: where the person dragged it. Their size may go past the layout's own limit (which sizes the
+  // default on small windows), up to 70 % of the parent, so a band can be pulled open to show a whole editor.
+  bool dragged = false;
+  if (auto it = st.regionSize.find(r.id); it != st.regionSize.end()) v = it->second, dragged = true;
   if (!member.empty())
     if (auto it = st.memberSize.find(std::string(r.id) + "|" + member); it != st.memberSize.end()) v = it->second;
-  if (r.size.maxPx > 0) v = std::min(v, r.size.maxPx);
-  if (r.size.maxShare > 0) v = std::min(v, std::floor(parent * r.size.maxShare));
+  if (r.size.maxPx > 0 && !dragged) v = std::min(v, r.size.maxPx);
+  if (r.size.maxShare > 0) v = std::min(v, std::floor(parent * (dragged ? std::max(r.size.maxShare, 0.7f) : r.size.maxShare)));
   v = std::max(v, std::min(r.size.minPx, std::floor(parent * 0.5f)));
   return std::floor(std::clamp(v, 0.0f, std::max(0.0f, parent - 1.0f)));
 }

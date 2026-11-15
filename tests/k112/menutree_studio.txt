@@ -128,6 +128,8 @@ View > Panels > Track scopes			e-
 View > Panels > Info box			e-
 View > Panels > Files			e-
 View > Panels > Notes			e-
+View > Panels > Pattern editor			e-
+View > Panels > Order list			e-
 View > Zoom in	PgUp	playlist.zoomIn	e-
 View > Zoom out	PgDn	playlist.zoomOut	e-
 View > Zoom to fit the song	Home	playlist.zoomFit	e-
@@ -139,6 +141,7 @@ View > Bring all windows back into Gridline			--
 View > Window layout >       Studio			ec
 View > Window layout >       Clips	Preview		e-
 View > Window layout >       Smooth	Preview		e-
+View > Window layout >       Tracker	Preview		e-
 View > Window layout > Layout settings...			e-
 View > Reset window layout	Ctrl+Shift+H	view.resetLayout	e-
 View > Dark theme			ec

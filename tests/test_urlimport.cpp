@@ -357,8 +357,23 @@ void testWorker(const fs::path& dir) {
   scenario("stall");
   ul::Limits lim;
   lim.stallSeconds = 1.5;
-  job = waitJob(ul::startImport(tools(), {rq}, (dir / "i8").u8string(), lim), 20);
-  expect(job->get() == ul::Phase::Failed && job->error.find("stopped making progress") != std::string::npos, "import: a stalled download is given up");
+  // K-302: a stall is a retryable failure, so the job runs the tool downloadTries (3) times, each
+  // given up after 1.5 s without output and a 2 s pause between: about 10 s, but each start of
+  // the tool is slow on a busy macOS runner (the whole test takes twice as long there as on
+  // Linux) and 20 s was too short once. The wait is only a ceiling: the checks are unchanged.
+  const auto s0 = std::chrono::steady_clock::now();
+  job = waitJob(ul::startImport(tools(), {rq}, (dir / "i8").u8string(), lim), 120);
+  const double stallTook = std::chrono::duration<double>(std::chrono::steady_clock::now() - s0).count();
+  std::string stallError;
+  {
+    std::lock_guard<std::mutex> lk(job->mu);
+    stallError = job->error;
+  }
+  const bool stallFailed = job->get() == ul::Phase::Failed && stallError.find("stopped making progress") != std::string::npos;
+  expect(stallFailed, "import: a stalled download is given up");
+  expect(job->attempt == lim.downloadTries, "import: a stalled download is tried again before it is given up");
+  std::printf("# stall: phase %s, done %d, try %d, %.1f s, error \"%s\"\n", ul::phaseName(job->get()), job->done ? 1 : 0, job->attempt.load(),
+              stallTook, stallError.c_str());
   scenario("ok");
 }
 

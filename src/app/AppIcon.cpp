@@ -79,7 +79,11 @@ void apply(SDL_Window* w) {
     }
   }
   if (bundled) return;
-  if (SDL_Surface* s = iconSurface(512)) SDL_SetWindowIcon(w, s);
+  // K-302: once. SDL sets the application's (Dock) icon, not the window's, and AppKit keeps about
+  // 1 MB of image data for every call: each detached window made one.
+  static bool set = false;
+  if (set) return;
+  if (SDL_Surface* s = iconSurface(512)) SDL_SetWindowIcon(w, s), set = true;
 #else
   if (SDL_Surface* s = iconSurface(256)) SDL_SetWindowIcon(w, s);
 #endif

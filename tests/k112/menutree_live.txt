@@ -98,16 +98,22 @@ Edit > Pattern > Render as audio clip...			e-
 Edit > Pattern > Render and replace...			e-
 Edit > Pattern > Delete	Ctrl+Shift+Del	pattern.delete	e-
 Edit > Pattern > Delete unused patterns			e-
-Create > Instrument channel > Audio file as sampler...			e-
-Create > Pattern	F4	pattern.new	e-
-Create > Automation clip for the last moved control			--
-Create > Clip of the current pattern at the song end			e-
-Create > Mixer track			e-
-Create > 8 playlist tracks			e-
+Create > New audio track	Ctrl+T	track.newAudio	e-
+Create > New MIDI track	Ctrl+Shift+T	track.newMidi	e-
+Create > New instrument track > Audio file as sampler...			e-
+Create > Add marker at the song position			e-
+Create > Import audio file...			e-
+Create > Import MIDI file...			e-
+Create > Instruments, effects and clips > Instrument channel > Audio file as sampler...			e-
+Create > Instruments, effects and clips > Pattern	F4	pattern.new	e-
+Create > Instruments, effects and clips > Automation clip for the last moved control			--
+Create > Instruments, effects and clips > Clip of the current pattern at the song end			e-
+Create > Instruments, effects and clips > Mixer track			e-
+Create > Instruments, effects and clips > 8 playlist tracks			e-
 View > Command palette...	Ctrl+K	view.commandPalette	e-
 View > Playlist	F5	view.playlist	ec
 View > Channel rack	F6	view.channelRack	e-
-View > Piano roll	Ctrl+Alt+3	view.pianoRoll	ec
+View > Piano roll	Ctrl+Alt+3	view.pianoRoll	e-
 View > Mixer	Ctrl+Alt+M	view.mixer	e-
 View > Browser	Ctrl+Alt+B	view.browser	ec
 View > Plugin picker	F8	view.pluginPicker	e-
@@ -128,6 +134,8 @@ View > Panels > Track scopes			e-
 View > Panels > Info box			ec
 View > Panels > Files			e-
 View > Panels > Notes			e-
+View > Panels > Pattern editor			e-
+View > Panels > Order list			e-
 View > Zoom in	=	playlist.zoomIn	e-
 View > Zoom out	-	playlist.zoomOut	e-
 View > Zoom to fit the song	Home	playlist.zoomFit	e-
@@ -139,6 +147,7 @@ View > Bring all windows back into Gridline			--
 View > Window layout >       Studio			e-
 View > Window layout >       Clips	Preview		ec
 View > Window layout >       Smooth	Preview		e-
+View > Window layout >       Tracker	Preview		e-
 View > Window layout > Layout settings...			e-
 View > Reset window layout	Ctrl+Shift+H	view.resetLayout	e-
 View > Dark theme			ec
@@ -310,6 +319,25 @@ Options > Recording and metronome > Typing keyboard options > Keyboard layout > 
 Options > Recording and metronome > Typing keyboard options > Keyboard layout > Colemak			e-
 Options > Recording and metronome > Typing keyboard options > Keyboard layout > Follow the computer			e-
 Options > Recording and metronome > Multilink to controllers			e-
+Navigate > Arrangement			ec
+Navigate > Clip grid			e-
+Navigate > Browser	Ctrl+Alt+B	view.browser	ec
+Navigate > Clip band			e-
+Navigate > Device band			ec
+Navigate > Mixer	Ctrl+Alt+M	view.mixer	e-
+Navigate > Go to the start	Ctrl+Alt+Shift+Home	transport.toStart	e-
+Navigate > Back one bar	Ctrl+Alt+Shift+Left	transport.rewindBar	e-
+Navigate > Forward one bar	Ctrl+Alt+Shift+Right	transport.forwardBar	e-
+Navigate > Markers > No markers			--
+Navigate > Cycle			e-
+Navigate > Add marker	Alt+T	playlist.marker	e-
+Navigate > Follow the song position			ec
+Navigate > Zoom > Zoom in	=	playlist.zoomIn	e-
+Navigate > Zoom > Zoom out	-	playlist.zoomOut	e-
+Navigate > Zoom > Zoom to fit the song	Home	playlist.zoomFit	e-
+Navigate > Song mode			ec
+Navigate > Pattern mode			e-
+Navigate > Live mode			e-
 Tools > Stop all sound	Ctrl+H	tools.stopSound	e-
 Tools > Loop starter...			e-
 Tools > Swing presets > Straight			e-

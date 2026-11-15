@@ -79,6 +79,9 @@ void drawStatusBar(App& a);
 // Under the slots each column has its mixer controls, aligned with the column.
 constexpr int kSceneBars = 4;
 void drawClipGrid(App& a);
+// The Mixer window's body in the Clips layout (its mixer band): the clip grid's titles and strips,
+// returns beside Main at the right; edits go to the same mixer parameters.
+void drawMixerBand(App& a);
 // K-287 (dev input "livegrid"): the next drawn clip grid prints each slot's centre and clip.
 void devGridAsk();
 

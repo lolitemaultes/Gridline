@@ -10,7 +10,9 @@
 #include "../core/I18n.h"
 #include "../core/MenuOps.h"
 #include "../core/PluginInfo.h"
+#include "../core/TrackModes.h"
 #include "App.h"
+#include "LiveLook.h"
 #include "ContextMenus.h"
 #include "Keys.h"
 #include "Theme.h"
@@ -51,7 +53,8 @@ bool card(App& a, int k, ImVec2 size) {
   const bool hov = ImGui::IsItemHovered(), on = gKind == k;
   const ImU32 bg = ImGui::GetColorU32(ImGuiCol_WindowBg);
   dl->AddRectFilled(p, ImVec2(p.x + size.x, p.y + size.y), theme::mix(bg, P.text, on ? 0.10f : hov ? 0.08f : 0.05f), 16.0f);  // checkpoint 26: rounder, as 067
-  dl->AddRect(p, ImVec2(p.x + size.x, p.y + size.y), on ? P.hot : theme::withAlpha(P.text, 0.12f), 16.0f, 0, on ? 2.0f : 1.0f);
+  // Checkpoint 36: the chosen card's ring in its own colour (067 rings the chosen kind in its disc's colour).
+  dl->AddRect(p, ImVec2(p.x + size.x, p.y + size.y), on ? theme::rgb(kKinds[k].badge) : theme::withAlpha(P.text, 0.12f), 16.0f, 0, on ? 2.0f : 1.0f);
   const float cx = std::round(p.x + size.x * 0.5f), discR = 30.0f, discY = p.y + 20 + discR;  // K-112b (checkpoint 26): a larger disc, as 067
   dl->AddCircleFilled(ImVec2(cx, discY), discR, theme::rgb(kKinds[k].badge), 40);
   ui::drawIconBox(dl, kKinds[k].icon, ImVec2(cx, discY), 28.0f, pal().paper);
@@ -101,6 +104,10 @@ void create(App& a) {
     ObjectId last = kNoId;
     for (int i = 0; i < n; ++i) last = a.addInstrument(gType);
     if (gOpenEditor && last != kNoId) a.showNewInstrument(last);
+  } else if (gKind == 1 && livelook::active(a)) {
+    // K-112c (round 39): in Clips a new track comes right after the tracks in use, so it shows at
+    // once as an arrangement row and a clip grid column (appending after the empty tracks hid it).
+    trackmodes::addUsedTrack(a.doc, n);  // one undo step
   } else if (gKind == 1) {
     for (int i = 0; i < n && static_cast<int>(a.doc.song().tracks.size()) < kMaxPlaylistTracks; ++i)
       ops::insertPlaylistTrack(a.doc, static_cast<int>(a.doc.song().tracks.size()));
@@ -141,10 +148,20 @@ void draw(App& a) {
   ImGui::Dummy(ImVec2(0, theme::kS2));
   // The chosen kind's details, on one form column.
   constexpr float col = 132;
-  ImGui::PushFont(a.fontBold, theme::kFontBody);
-  ImGui::TextUnformatted(i18n::tr("Details"));
-  ImGui::PopFont();
-  ImGui::Dummy(ImVec2(0, 2));
+  {  // Checkpoint 36: under a disclosure heading, on a lighter band the dialog's full width, as 067
+    ImDrawList* hdl = ImGui::GetWindowDrawList();
+    const ImVec2 hp = ImGui::GetCursorScreenPos();
+    const float hh = ImGui::GetFrameHeight();
+    ui::drawIcon(hdl, ui::Icon::ChevronDown, ImVec2(hp.x + 5, std::round(hp.y + hh * 0.5f)), 9, P.textDim);
+    ImGui::SetCursorScreenPos(ImVec2(hp.x + 16, hp.y));
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(i18n::tr("Details"));
+  }
+  ImDrawList* bandDl = ImGui::GetWindowDrawList();
+  bandDl->ChannelsSplit(2);
+  bandDl->ChannelsSetCurrent(1);
+  const float bandY0 = ImGui::GetCursorScreenPos().y;
+  ImGui::Dummy(ImVec2(0, theme::kS2));
   ui::SetFormColumn(col);  // labels end at the column
   if (gKind == 0) {
     const PluginInfo* info = findPlugin(gType);
@@ -164,9 +181,12 @@ void draw(App& a) {
   }
   ui::SetFormColumn(0);
   // Footer: how many in the middle, Cancel and Create on the right.
-  ImGui::Dummy(ImVec2(0, theme::kS2));
+  ImGui::Dummy(ImVec2(0, theme::kS4));
   const ImVec2 f0 = ImGui::GetCursorScreenPos();
   const float fw = ImGui::GetContentRegionAvail().x;
+  bandDl->ChannelsSetCurrent(0);
+  bandDl->AddRectFilled(ImVec2(f0.x - pad, bandY0), ImVec2(f0.x + fw + pad, f0.y), theme::mix(ImGui::GetColorU32(ImGuiCol_WindowBg), P.text, 0.07f));
+  bandDl->ChannelsMerge();
   ImGui::GetWindowDrawList()->AddLine(ImVec2(f0.x - pad, f0.y), ImVec2(f0.x + fw + pad, f0.y), P.dark ? theme::withAlpha(P.ink, 0.6f) : P.lineStrong);
   ImGui::Dummy(ImVec2(0, theme::kS2));
   const char* howMany = i18n::tr("Number of tracks");

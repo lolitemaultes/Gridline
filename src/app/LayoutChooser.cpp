@@ -27,9 +27,9 @@ namespace {
 // ------------------------------------------------------------------ geometry of a layout
 // The window the miniature stands for (logical px), and its bars.
 constexpr float kVW = 1440, kVH = 900, kStatusH = 26;
-float topBarH(Preset p) { return p == Preset::Logic ? 70.0f : 48.0f; }
+float topBarH(Preset p) { return p == Preset::Logic ? 70.0f : p == Preset::Tracker ? 26.0f : 48.0f; }
 
-enum class Pane { Browser, Playlist, Mixer, Rack, Piano, History };
+enum class Pane { Browser, Playlist, Mixer, Rack, Piano, History, Header, Pattern };
 struct Region {
   workspace::Rect r;  // in the dock area
   Pane kind;
@@ -55,6 +55,12 @@ int regions(Preset p, Region* out) {
       out[2] = {L.bottom, Pane::Mixer};
       out[3] = {L.right, Pane::History};
       return 4;
+    }
+    case Preset::Tracker: {  // the header band of boxes over the pattern in rows (the region shell's split)
+      const float hh = std::round(h * 0.3f);
+      out[0] = {{0, 0, w, hh}, Pane::Header};
+      out[1] = {{0, hh, w, h - hh}, Pane::Pattern};
+      return 2;
     }
     default: {
       const workspace::Layout L = workspace::defaultLayout(w, h, 4);
@@ -102,6 +108,19 @@ struct Mini {
     const float h = b.h();
     const ImU32 dim = theme::withAlpha(P.textDim, 0.55f);
     Box ctl = b;
+    if (p == Preset::Tracker) {  // a menu row only (the header band below holds the song boxes)
+      float x = b.x0 + px(14);
+      const float widths[] = {26, 26, 28, 44, 30, 46, 34, 28};
+      for (float w : widths) {
+        textBar(x, (b.y0 + b.y1) * 0.5f, px(w), std::max(1.0f, py(6)), dim);
+        x += px(w + 18);
+      }
+      const float mw = std::round(b.w() * 0.07f);
+      const Box meter{b.x1 - px(16) - mw, std::round((b.y0 + b.y1) * 0.5f - py(4)), b.x1 - px(16), std::round((b.y0 + b.y1) * 0.5f + py(4))};
+      fill(dl, meter, P.field, 1);
+      fill(dl, {meter.x0, meter.y0, meter.x0 + meter.w() * 0.62f, meter.y1}, theme::withAlpha(P.meterLow, 0.85f), 1);
+      return;
+    }
     if (p == Preset::Logic) {  // two rows: menus, then the controls
       const float mh = std::round(h * 26.0f / 70.0f);
       const Box menu{b.x0, b.y0, b.x1, b.y0 + mh};
@@ -393,6 +412,84 @@ struct Mini {
     dl->AddLine(v(ph, q.y0), v(ph, q.y1), P.playhead);
   }
 
+  // A bevelled box: light top and left edges, dark bottom and right.
+  void bevel(const Box& b, ImU32 face) const {
+    fill(dl, b, face);
+    const ImU32 hi = theme::mix(face, P.paper, 0.18f), lo = theme::mix(face, IM_COL32(0, 0, 0, 255), 0.35f);
+    dl->AddLine(v(b.x0, b.y0 + 0.5f), v(b.x1, b.y0 + 0.5f), hi);
+    dl->AddLine(v(b.x0 + 0.5f, b.y0), v(b.x0 + 0.5f, b.y1), hi);
+    dl->AddLine(v(b.x0, b.y1 - 0.5f), v(b.x1, b.y1 - 0.5f), lo);
+    dl->AddLine(v(b.x1 - 0.5f, b.y0), v(b.x1 - 0.5f, b.y1), lo);
+  }
+
+  // The Tracker's header band: the wordmark strip, then the order list, song box, scopes, the
+  // button column and the instrument list, each a bevelled box.
+  void header(const Box& q) const {
+    const ImU32 face = theme::mix(P.surface800, P.surface700, 0.4f);
+    const float g = std::max(1.0f, px(4));
+    const Box logo{q.x0, q.y0, q.x1, q.y0 + std::max(2.0f, std::round(q.h() * 0.14f))};
+    fill(dl, logo, IM_COL32(255, 181, 71, 255));  // the wordmark band: the fixed brand orange
+    const float y0 = logo.y1 + g;
+    const float cuts[] = {0.0f, 0.16f, 0.34f, 0.62f, 0.72f, 1.0f};
+    for (int i = 0; i < 5; ++i) {
+      const Box b{std::round(q.x0 + q.w() * cuts[i]) + (i ? g * 0.5f : 0), y0, std::round(q.x0 + q.w() * cuts[i + 1]) - (i < 4 ? g * 0.5f : 0), q.y1};
+      bevel(b, face);
+      const Box in = b.inset(std::max(1.0f, px(8)));
+      if (in.w() < 3 || in.h() < 3) continue;
+      const float rh = std::max(2.0f, std::round(py(22)));
+      if (i == 2) {  // scopes: a wave per channel
+        fill(dl, in, P.well);
+        const int n = 4;
+        for (int k = 0; k < n; ++k) {
+          const float cx0 = in.x0 + in.w() * static_cast<float>(k) / n, cw = in.w() / n, cy = (in.y0 + in.y1) * 0.5f;
+          for (int s = 0; s + 1 < 12; ++s) {
+            const float a = std::sin(static_cast<float>(s * (k + 2)) * 0.9f) * in.h() * 0.3f, b2 = std::sin(static_cast<float>((s + 1) * (k + 2)) * 0.9f) * in.h() * 0.3f;
+            dl->AddLine(v(cx0 + cw * s / 12.0f, cy + a), v(cx0 + cw * (s + 1) / 12.0f, cy + b2), theme::withAlpha(P.led, 0.8f));
+          }
+        }
+        continue;
+      }
+      if (i == 3) {  // the button column
+        for (float y = in.y0; y + rh <= in.y1; y += rh + 1) bevel({in.x0, y, in.x1, y + rh}, theme::mix(face, P.surface600, 0.5f));
+        continue;
+      }
+      for (int k = 0; in.y0 + rh * static_cast<float>(k + 1) <= in.y1; ++k) {  // rows of numbers and names
+        const float yc = in.y0 + rh * (static_cast<float>(k) + 0.5f);
+        if (i == 4 && k == 1) fill(dl, {in.x0, yc - rh * 0.5f, in.x1, yc + rh * 0.5f}, P.selection);
+        textBar(in.x0, yc, in.w() * (i == 4 ? 0.12f : 0.25f), std::max(1.0f, rh * 0.28f), theme::withAlpha(P.textDim, 0.7f));
+        textBar(in.x0 + in.w() * (i == 4 ? 0.18f : 0.5f), yc, in.w() * (i == 4 ? 0.45f : 0.3f), std::max(1.0f, rh * 0.28f), theme::withAlpha(P.text, 0.55f));
+      }
+    }
+  }
+
+  // The pattern in rows: row numbers both sides, tracks of note cells, the edit row in the middle.
+  void pattern(const Box& q) const {
+    fill(dl, q, P.well);
+    const float rh = std::max(2.0f, std::round(py(20)));
+    const float nw = std::round(px(44));
+    const int rows = static_cast<int>(q.h() / rh);
+    const int tracks = 6;
+    const float tw = (q.w() - nw * 2) / tracks;
+    for (int r = 0; r < rows; ++r) {
+      const float y = q.y0 + rh * static_cast<float>(r), yc = y + rh * 0.5f;
+      if (r == rows / 2) fill(dl, {q.x0, y, q.x1, y + rh}, theme::withAlpha(P.accent, 0.25f));
+      else if (r % 4 == 0) fill(dl, {q.x0, y, q.x1, y + rh}, theme::withAlpha(P.gridBeat, 0.45f));
+      textBar(q.x0 + px(8), yc, nw - px(16), std::max(1.0f, rh * 0.3f), theme::withAlpha(P.textFaint, 0.7f));
+      textBar(q.x1 - nw + px(8), yc, nw - px(16), std::max(1.0f, rh * 0.3f), theme::withAlpha(P.textFaint, 0.7f));
+      for (int t = 0; t < tracks; ++t) {
+        const float x = q.x0 + nw + tw * static_cast<float>(t) + px(8);
+        const bool note = ((r * 3 + t * 5) % 7) == 0 || (t == 0 && r % 4 == 0);
+        textBar(x, yc, tw * 0.22f, std::max(1.0f, rh * 0.3f), note ? theme::withAlpha(P.text, 0.8f) : theme::withAlpha(P.textFaint, 0.35f));
+        textBar(x + tw * 0.3f, yc, tw * 0.12f, std::max(1.0f, rh * 0.3f), note ? theme::withAlpha(P.hot, 0.8f) : theme::withAlpha(P.textFaint, 0.3f));
+        textBar(x + tw * 0.48f, yc, tw * 0.12f, std::max(1.0f, rh * 0.3f), note ? theme::withAlpha(P.led, 0.8f) : theme::withAlpha(P.textFaint, 0.3f));
+      }
+    }
+    for (int t = 0; t <= tracks; ++t) {
+      const float x = std::round(q.x0 + nw + tw * static_cast<float>(t)) + 0.5f;
+      dl->AddLine(v(x, q.y0), v(x, q.y1), P.line);
+    }
+  }
+
   void history(const Box& q) const {
     const float rh = std::max(3.0f, std::round(py(24)));
     const float lens[] = {0.5f, 0.62f, 0.4f, 0.56f, 0.46f, 0.6f, 0.38f, 0.52f, 0.44f, 0.58f, 0.36f, 0.5f, 0.42f, 0.54f, 0.48f, 0.4f, 0.56f, 0.46f,
@@ -417,6 +514,15 @@ struct Mini {
     } else {
       fill(dl, r, P.surface900, radius);
     }
+    if (kind == Pane::Header || kind == Pane::Pattern) {  // the Tracker's bands have no title strip
+      const Box q = r.inset(1);
+      if (q.w() < 3 || q.h() < 3) return;
+      dl->PushClipRect(v(q.x0, q.y0), v(q.x1, q.y1), true);
+      if (kind == Pane::Header) header(q);
+      else pattern(q);
+      dl->PopClipRect();
+      return;
+    }
     const float th = std::round(py(22));
     Box q = r;
     if (th >= 4) {
@@ -436,6 +542,7 @@ struct Mini {
       case Pane::Rack: rack(q); break;
       case Pane::Piano: piano(q); break;
       case Pane::History: history(q); break;
+      default: break;
     }
     dl->PopClipRect();
   }
@@ -540,7 +647,7 @@ void drawGlyph(ImDrawList* dl, ImVec2 c, float size, Preset preset, ImU32 col) {
   for (int i = 0; i < n; ++i) {
     const workspace::Rect& r = rs[i].r;
     const float rx0 = std::round(x0 + r.x * sx), ry0 = std::round(top + r.y * ah), rx1 = std::round(x0 + (r.x + r.w) * sx), ry1 = std::round(top + (r.y + r.h) * ah);
-    if (rs[i].kind == Pane::Playlist) dl->AddRectFilled(v(rx0, ry0), v(rx1, ry1), theme::withAlpha(col, 0.22f));
+    if (rs[i].kind == Pane::Playlist || rs[i].kind == Pane::Pattern) dl->AddRectFilled(v(rx0, ry0), v(rx1, ry1), theme::withAlpha(col, 0.22f));
     if (rs[i].floating) {
       dl->AddRectFilled(v(rx0 + 0.5f, ry0 + 0.5f), v(rx1 - 0.5f, ry1 - 0.5f), theme::withAlpha(col, 0.85f), 1.0f);
       continue;

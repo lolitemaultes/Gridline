@@ -285,16 +285,22 @@ void rollBack(ImDrawList* dl, const DrawMark& m) {
 }
 
 // J-92: the editor once more for every value of each choice / switch
-// parameter (pages, modes, sections shown on demand), off-screen.
+// parameter (pages, modes, sections shown on demand), unseen.
 // K-155: all in one child window (not a window per variant, each keeping its draw buffers: 11 GB
 // over the audit), its drawing rolled back after each variant.
+// K-302: inside the main window, at its right edge, for the one frame it is drawn (the capture
+// comes two frames later, when it is gone; nothing of it is drawn, see rollBack). Placed beyond the
+// main window it was a window of its own where detached windows exist: a system window with its
+// GL surface made and dropped for every editor (on macOS 1 MB more each time); where they do not
+// (native Wayland) it stood outside the main window, its controls clipped.
 void drawVariants(App& a, const PluginInfo& info, float width) {
   ImGuiViewport* vp = ImGui::GetMainViewport();
-  ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x + 50, vp->Pos.y));
+  ImGui::SetNextWindowViewport(vp->ID);
+  ImGui::SetNextWindowPos(ImVec2(std::max(vp->Pos.x, vp->Pos.x + vp->Size.x - (width + 16)), vp->Pos.y));
   ImGui::SetNextWindowSize(ImVec2(width + 16, vp->Size.y));
   if (ImGui::Begin("##bindvariants", nullptr,
                    ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
-                       ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav)) {
+                       ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoBackground)) {
     int drawn = 0;
     ImGui::BeginChild("##v", ImVec2(width + 8, vp->Size.y), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar);
     ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -451,7 +457,7 @@ void devAtlasLine(const std::string& type) {
 // and closed (memory.tsv; with GRIDLINE_AUDIT_MEMLOG set, also a line per editor on stderr).
 struct MemRow {
   std::string type;
-  double mb = 0;
+  double mb = 0, heapMb = 0, sharedMb = 0;
   int atlasW = 0, atlasH = 0, baked = 0, glyphs = 0, windows = 0, textures = 0;
   size_t drawBytes = 0, undoSteps = 0, undoBytes = 0;
   size_t channels = 0;
@@ -460,7 +466,12 @@ std::vector<MemRow> memRows;
 MemRow memNow(App& a, const std::string& type) {
   MemRow r;
   r.type = type;
+  // K-302: memory the allocator keeps after it was freed (on Linux also what the software GL
+  // driver and its threads freed) is no cost of an editor: given back first, it is not counted.
+  platform::releaseFreeMemory();
   r.mb = platform::currentMemoryMb();
+  r.heapMb = platform::heapInUseMb();  // K-302
+  r.sharedMb = platform::sharedMemoryMb();
   ImFontAtlas* at = ImGui::GetIO().Fonts;
   if (at->TexData) r.atlasW = at->TexData->Width, r.atlasH = at->TexData->Height;
   if (at->Builder)
@@ -485,8 +496,8 @@ void noteMemory(App& a, const std::string& type) {
   static const bool log = std::getenv("GRIDLINE_AUDIT_MEMLOG") != nullptr;
   if (!log) return;
   const MemRow& r = memRows.back();
-  std::fprintf(stderr, "audit memory %zu %s: %.1f MB, atlas %dx%d (%d sizes, %d glyphs), %d windows (draw lists %.1f MB), %d textures, undo %zu (%.1f MB)\n",
-               memRows.size(), type.c_str(), r.mb, r.atlasW, r.atlasH, r.baked, r.glyphs, r.windows, static_cast<double>(r.drawBytes) / 1048576.0,
+  std::fprintf(stderr, "audit memory %zu %s: %.1f MB (heap %.1f, shared %.1f), atlas %dx%d (%d sizes, %d glyphs), %d windows (draw lists %.1f MB), %d textures, undo %zu (%.1f MB)\n",
+               memRows.size(), type.c_str(), r.mb, r.heapMb, r.sharedMb, r.atlasW, r.atlasH, r.baked, r.glyphs, r.windows, static_cast<double>(r.drawBytes) / 1048576.0,
                r.textures, r.undoSteps, static_cast<double>(r.undoBytes) / 1048576.0);
 }
 
@@ -545,10 +556,10 @@ void finishAudit() {
     std::fclose(f);
   }
   if (FILE* f = std::fopen((dir / "memory.tsv").string().c_str(), "wb")) {  // K-155
-    std::fprintf(f, "n\ttype\tmemory_mb\tatlas\tbaked_sizes\tglyphs\twindows\tdraw_list_mb\ttextures\tundo_steps\tundo_mb\tchannels\n");
+    std::fprintf(f, "n\ttype\tmemory_mb\theap_mb\tshared_mb\tatlas\tbaked_sizes\tglyphs\twindows\tdraw_list_mb\ttextures\tundo_steps\tundo_mb\tchannels\n");
     for (size_t i = 0; i < memRows.size(); ++i) {
       const MemRow& r = memRows[i];
-      std::fprintf(f, "%zu\t%s\t%.1f\t%dx%d\t%d\t%d\t%d\t%.2f\t%d\t%zu\t%.2f\t%zu\n", i + 1, r.type.c_str(), r.mb, r.atlasW, r.atlasH, r.baked, r.glyphs,
+      std::fprintf(f, "%zu\t%s\t%.1f\t%.1f\t%.1f\t%dx%d\t%d\t%d\t%d\t%.2f\t%d\t%zu\t%.2f\t%zu\n", i + 1, r.type.c_str(), r.mb, r.heapMb, r.sharedMb, r.atlasW, r.atlasH, r.baked, r.glyphs,
                    r.windows, static_cast<double>(r.drawBytes) / 1048576.0, r.textures, r.undoSteps, static_cast<double>(r.undoBytes) / 1048576.0,
                    r.channels);
     }
@@ -588,6 +599,16 @@ void finishAudit() {
       const double drawGrowth = (static_cast<double>(z.drawBytes) - static_cast<double>(a2.drawBytes)) / 1048576.0;
       std::fprintf(stderr, "memory gate: rounds 3-%d after round 2: memory %+.1f MB (limit %.0f), windows %+d, draw buffers %+.1f MB\n", auditRepeat,
                    z.mb - a2.mb, growth, z.windows - a2.windows, drawGrowth);
+      // K-302: each round's end, the resident memory and the allocator's live bytes, so a CI log
+      // tells growth of Gridline's own allocations from memory a driver or the allocator keeps.
+      std::string ends = "memory gate: at the end of each round: memory";
+      char v[48];
+      for (int k = 1; k <= auditRepeat; ++k) std::snprintf(v, sizeof v, " %.1f", memRows[static_cast<size_t>(k) * n - 1].mb), ends += v;
+      ends += " MB, heap";
+      for (int k = 1; k <= auditRepeat; ++k) std::snprintf(v, sizeof v, " %.1f", memRows[static_cast<size_t>(k) * n - 1].heapMb), ends += v;
+      ends += " MB, shared";
+      for (int k = 1; k <= auditRepeat; ++k) std::snprintf(v, sizeof v, " %.1f", memRows[static_cast<size_t>(k) * n - 1].sharedMb), ends += v;
+      std::fprintf(stderr, "%s MB\n", ends.c_str());
       if (z.mb - a2.mb > growth || z.windows > a2.windows || drawGrowth > 1.0) ++bad;
     }
     if (bad) std::fprintf(stderr, "memory regression: see memory.tsv\n");

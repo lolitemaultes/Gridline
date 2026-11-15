@@ -167,8 +167,9 @@ endfunction()
 
 # Working a control inside a floating part (Track scopes' scroll bar dragged) does not count as
 # moving the part: it stays put while dragged and still follows the tiling afterwards (the Device
-# chain closes, Track scopes takes the right-hand slot it had).
-run(logicdrag logic "8 layout open Device chain\n9 layout open Track scopes\n20 layout where Device chain\n20 layout where Track scopes\n22 move 300 541\n23 down 0\n24 move 290 541\n25 move 280 541\n26 move 270 541\n27 move 260 541\n28 up 0\n31 layout where Track scopes\n33 layout close Device chain\n45 layout where Track scopes\n")
+# chain closes, Track scopes takes the right-hand slot it had). The editors pane is shown first (closed
+# by default since K-112B checkpoint 40) so the parts tile where these coordinates expect.
+run(logicdrag logic "5 layout show logic.lower\n8 layout open Device chain\n9 layout open Track scopes\n20 layout where Device chain\n20 layout where Track scopes\n22 move 300 541\n23 down 0\n24 move 290 541\n25 move 280 541\n26 move 270 541\n27 move 260 541\n28 up 0\n31 layout where Track scopes\n33 layout close Device chain\n45 layout where Track scopes\n")
 rectAt("Device chain" 20 dc0)
 rectAt("Track scopes" 20 ts0)
 rectAt("Track scopes" 31 ts1)
@@ -213,7 +214,7 @@ foreach(k 1 2 3 4)
   math(EXPR my "${gy} - 5 * ${k}")
   string(APPEND mv "${f} move ${mx} ${my}\n")
 endforeach()
-run(logicmove logic "8 layout open Device chain\n9 layout open Track scopes\n20 layout where Device chain\n22 move ${gx} ${gy}\n23 down 0\n${mv}28 up 0\n33 layout close Track scopes\n45 layout where Device chain\n")
+run(logicmove logic "5 layout show logic.lower\n8 layout open Device chain\n9 layout open Track scopes\n20 layout where Device chain\n22 move ${gx} ${gy}\n23 down 0\n${mv}28 up 0\n33 layout close Track scopes\n45 layout where Device chain\n")
 rectAt("Device chain" 20 m0)
 rectAt("Device chain" 45 m1)
 if(NOT m0 OR NOT m1)

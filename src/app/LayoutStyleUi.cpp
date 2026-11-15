@@ -6,6 +6,7 @@
 #include "App.h"
 #include "LayoutPresets.h"
 #include "LayoutShellUi.h"
+#include "Look.h"
 #include "Theme.h"
 
 namespace gl::layoutui {
@@ -15,6 +16,7 @@ struct Geometry {
   ImVec2 framePadding, itemSpacing, titleAlign;
   float frameRounding = 0, grabRounding = 0, tabRounding = 0, windowRounding = 0, childRounding = 0, popupRounding = 0, separator = 0;
   float frameBorder = 0;
+  float tabCloseSelected = 0;  // K-297
 };
 Geometry gBase;
 bool gStyled = false;
@@ -22,6 +24,10 @@ bool gStyled = false;
 ImVec4 gTitle[3];
 bool gTitled = false;
 const layout::Style* gStyle = nullptr;
+ImVec4 gSep[2];       // checkpoint 30: the base splitter hover and held colours, put back at frame end
+bool gSepSet = false;
+ImVec4 gChk[2];       // checkpoint 38: the base check mark and checked-box colours, put back at frame end
+bool gChkSet = false;
 
 Geometry read(const ImGuiStyle& st) {
   Geometry g;
@@ -36,6 +42,7 @@ Geometry read(const ImGuiStyle& st) {
   g.popupRounding = st.PopupRounding;
   g.separator = st.DockingSeparatorSize;
   g.frameBorder = st.FrameBorderSize;
+  g.tabCloseSelected = st.TabCloseButtonMinWidthSelected;
   return g;
 }
 void write(ImGuiStyle& st, const Geometry& g) {
@@ -50,6 +57,7 @@ void write(ImGuiStyle& st, const Geometry& g) {
   st.PopupRounding = g.popupRounding;
   st.DockingSeparatorSize = g.separator;
   st.FrameBorderSize = g.frameBorder;
+  st.TabCloseButtonMinWidthSelected = g.tabCloseSelected;
 }
 }  // namespace
 
@@ -73,6 +81,9 @@ void beginStyleFrame(App& a, bool welcomeScreen) {
   g.windowRounding = g.childRounding = g.popupRounding = s.panelRounding;
   if (s.menuRounding >= 0) g.popupRounding = s.menuRounding;
   g.separator = s.panelGap;
+  // K-297: a docked panel's tab shows its close button all the time, not only under the pointer (a
+  // panel docked in a side region was otherwise closed from the View menu only).
+  g.tabCloseSelected = -1.0f;
   // K-112b: the Tracks layout centres window titles (every reference window does).
   if (s.preset == layout::Preset::Logic) g.titleAlign = ImVec2(0.5f, gBase.titleAlign.y);
   // K-112b (checkpoint 20): flat buttons and fields, no outline, as every reference window draws its
@@ -95,6 +106,30 @@ void beginStyleFrame(App& a, bool welcomeScreen) {
   // K-112b (checkpoint 21): menus as every reference draws them, shortcuts flush right, check marks in
   // the text colour (216, 021, 177, 168).
   GImGuiGridlineMenuRight = s.preset == layout::Preset::Logic;
+  // Checkpoint 28: window titles in the bold face, as every reference window sets its title (023, 031, 015, 199).
+  GImGuiGridlineTitleFont = s.preset == layout::Preset::Logic ? a.fontBold : nullptr;
+  // Checkpoint 29: flat faces for the layout's own buttons (no lip or shadow that makes one control a
+  // pixel or two taller than its neighbours).
+  look::setFlatFaces(s.preset == layout::Preset::Logic);
+  // Checkpoint 30: a pane splitter under the pointer lifts a step toward the text (held: two steps), no
+  // accent flash; the references show only the resize pointer there.
+  if (s.preset == layout::Preset::Logic) {
+    gSep[0] = st.Colors[ImGuiCol_SeparatorHovered], gSep[1] = st.Colors[ImGuiCol_SeparatorActive];
+    const ImVec4 line = st.Colors[ImGuiCol_Separator], text = st.Colors[ImGuiCol_Text];
+    auto toward = [&](float t) { return ImVec4(line.x + (text.x - line.x) * t, line.y + (text.y - line.y) * t, line.z + (text.z - line.z) * t, 1.0f); };
+    st.Colors[ImGuiCol_SeparatorHovered] = toward(0.25f);
+    st.Colors[ImGuiCol_SeparatorActive] = toward(0.45f);
+    gSepSet = true;
+    // Checkpoint 38: a ticked box is filled with the layout's blue and ticked in white, as every reference
+    // window draws its check boxes (023, 100, 132); it was an orange tick on a faintly tinted field.
+    gChk[0] = st.Colors[ImGuiCol_CheckMark], gChk[1] = st.Colors[ImGuiCol_CheckboxSelectedBg];
+    st.Colors[ImGuiCol_CheckMark] = theme::vec(theme::contrastText(theme::rgb(0x2F7EDB)));
+    st.Colors[ImGuiCol_CheckboxSelectedBg] = theme::vec(theme::rgb(0x2F7EDB));
+    gChkSet = true;
+    GImGuiGridlineCheckRounding = 4.0f;  // rounded squares (023, 100, 132), not the pill-round frames
+    // Checkpoint 39: a menu row under the pointer fills with the same blue, rounded (177, 021, 216).
+    GImGuiGridlineMenuHover = theme::rgb(0x2F7EDB);
+  }
 }
 
 void endStyleFrame() {
@@ -106,7 +141,21 @@ void endStyleFrame() {
     st.Colors[ImGuiCol_TitleBg] = gTitle[0], st.Colors[ImGuiCol_TitleBgActive] = gTitle[1], st.Colors[ImGuiCol_TitleBgCollapsed] = gTitle[2];
   }
   gTitled = false;
+  if (gSepSet) {
+    ImGuiStyle& st = ImGui::GetStyle();
+    st.Colors[ImGuiCol_SeparatorHovered] = gSep[0], st.Colors[ImGuiCol_SeparatorActive] = gSep[1];
+  }
+  gSepSet = false;
+  if (gChkSet) {
+    ImGuiStyle& st = ImGui::GetStyle();
+    st.Colors[ImGuiCol_CheckMark] = gChk[0], st.Colors[ImGuiCol_CheckboxSelectedBg] = gChk[1];
+  }
+  gChkSet = false;
+  GImGuiGridlineCheckRounding = -1.0f;
+  GImGuiGridlineMenuHover = 0;
   GImGuiGridlineMenuRight = false;
+  GImGuiGridlineTitleFont = nullptr;
+  look::setFlatFaces(false);
   gStyled = false;
 }
 
@@ -138,13 +187,23 @@ BaseStyleScope::BaseStyleScope() {
   pushed = 8;
   menuRight = GImGuiGridlineMenuRight;  // K-112b: the editor's own menus keep their look
   GImGuiGridlineMenuRight = false;
+  flat = look::flatFaces();  // checkpoint 29: an editor's buttons keep their own faces
+  look::setFlatFaces(false);
+  if (gChkSet) {  // checkpoint 38: an editor's check boxes keep their own colours
+    ImGui::PushStyleColor(ImGuiCol_CheckMark, gChk[0]);
+    ImGui::PushStyleColor(ImGuiCol_CheckboxSelectedBg, gChk[1]);
+    colours = 2;
+    checkRound = GImGuiGridlineCheckRounding, GImGuiGridlineCheckRounding = -1.0f;
+  }
 }
 
 BaseStyleScope::~BaseStyleScope() {
   --gBaseDepth;
   if (gBaseDepth >= 0 && gBaseDepth < 16) GImGuiGridlineToggleW = gToggleSaved[gBaseDepth], GImGuiGridlineMenuLive = gMenuSaved[gBaseDepth];
+  if (colours) ImGui::PopStyleColor(colours), GImGuiGridlineCheckRounding = checkRound;
   if (pushed) ImGui::PopStyleVar(pushed);
   if (pushed) GImGuiGridlineMenuRight = menuRight;
+  if (pushed) look::setFlatFaces(flat);
 }
 
 BaseBorderScope::BaseBorderScope() {
@@ -153,11 +212,21 @@ BaseBorderScope::BaseBorderScope() {
   pushed = true;
   menuRight = GImGuiGridlineMenuRight;  // K-112b: a plugin window's own menus keep their look
   GImGuiGridlineMenuRight = false;
+  flat = look::flatFaces();  // checkpoint 29: a plugin window's buttons keep their own faces
+  look::setFlatFaces(false);
+  if (gChkSet) {  // checkpoint 38: a plugin window's check boxes keep their own colours
+    ImGui::PushStyleColor(ImGuiCol_CheckMark, gChk[0]);
+    ImGui::PushStyleColor(ImGuiCol_CheckboxSelectedBg, gChk[1]);
+    colours = 2;
+    checkRound = GImGuiGridlineCheckRounding, GImGuiGridlineCheckRounding = -1.0f;
+  }
 }
 
 BaseBorderScope::~BaseBorderScope() {
+  if (colours) ImGui::PopStyleColor(colours), GImGuiGridlineCheckRounding = checkRound;
   if (pushed) ImGui::PopStyleVar();
   if (pushed) GImGuiGridlineMenuRight = menuRight;
+  if (pushed) look::setFlatFaces(flat);
 }
 
 float dockMargin() { return gStyled ? style().outerMargin : 4.0f; }

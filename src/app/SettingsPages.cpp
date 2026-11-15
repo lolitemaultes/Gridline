@@ -54,8 +54,18 @@ void generalSettingsPage(App& a, float fieldW) {
     static const char* modes[] = {"template", "empty", "last"};
     static const char* names[] = {"Open the default template", "Start with an empty project", "Reopen the last project"};
     std::string cur = st.getString("general.startup");
-    for (int i = 0; i < 3; ++i)
-      if (ImGui::RadioButton(tr(names[i]), cur == modes[i])) st.set("general.startup", std::string(modes[i]));
+    if (ui::OptionsAsMenus()) {  // K-112b checkpoint 35: a pop-up menu in the Smooth layout
+      const char* labels[3];
+      int idx = 0;
+      for (int i = 0; i < 3; ++i) {
+        labels[i] = tr(names[i]);
+        if (cur == modes[i]) idx = i;
+      }
+      label("Start");
+      if (ui::OptionRow("startup", labels, 3, &idx, fieldW)) st.set("general.startup", std::string(modes[idx]));
+    } else
+      for (int i = 0; i < 3; ++i)
+        if (ImGui::RadioButton(tr(names[i]), cur == modes[i])) st.set("general.startup", std::string(modes[i]));
   }
   label("Default template");
   {

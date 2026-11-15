@@ -33,6 +33,9 @@ struct BaseStyleScope {
   BaseStyleScope& operator=(const BaseStyleScope&) = delete;
   int pushed = 0;
   bool menuRight = false;
+  bool flat = false;
+  int colours = 0;  // checkpoint 38: base check box colours pushed
+  float checkRound = -1.0f;  // checkpoint 38: the check box rounding put back at the end
 };
 
 // K-112b (checkpoint 20): the base frame outline only, for a plugin window's own controls around the
@@ -45,6 +48,9 @@ struct BaseBorderScope {
   BaseBorderScope& operator=(const BaseBorderScope&) = delete;
   bool pushed = false;
   bool menuRight = false;
+  bool flat = false;
+  int colours = 0;  // checkpoint 38: base check box colours pushed
+  float checkRound = -1.0f;  // checkpoint 38: the check box rounding put back at the end
 };
 
 // True while a BaseStyleScope is open (a plugin's own body is drawing: it keeps its look).

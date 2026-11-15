@@ -16,6 +16,12 @@ float drawTopBar(App& a);      // menu + transport; returns height used
 // logical pixels; false when it is not shown. `mirror`: the metronome glyph's last horizontal scale.
 bool topBarButtonRect(const char* name, float& x0, float& y0, float& x1, float& y1);
 void devNoteRect(const char* name);  // the last item's rectangle as an "sdlat" target (browser: "brsearch", "brclear", "brcollapse"; channel window: "chroute", "chroutefree", "chroutelist"; piano roll: "prstamp", "prstamplbl", "prstampchip")
+void splitClipsAtPlayhead(App& a);  // K-112b: the clips across the song position split there (Dialogs.cpp)
+void tracksNewSameSettings(App& a);  // K-112B: the Tracks layout's Track menu and keys (MenuStyles.cpp)
+void tracksDeleteSelected(App& a);
+void tracksSplitAtPlayhead(App& a);
+void tracksAddMarker(App& a);  // at the nearest bar
+void toggleCycle(App& a);  // K-112b: cycle on or off (the Tracks control bar, Navigate menu and C key)
 void devTopBarFitWidth(float w);  // K-132: dev, the top bar fits its groups into w px (0 = the window's width)
 float topBarMetronomeMirror();
 double topBarMetronomeBeat();  // dev: the beat that pose was drawn for
@@ -23,6 +29,7 @@ bool topBarMetronomeTicking(double* anchorBeat);  // dev: ... whether it ticked 
 void drawStatusBar(App& a);    // hint bar + notifications
 void drawNotificationCards(App& a);  // J-141: the notification cards alone (the launcher has no status bar)
 void drawBrowser(App& a);
+void browserProjectFiles(App& a);  // K-106: recent files and the project folder, with the browser's rows (Tracker Files screen)
 void drawChannelRack(App& a);
 // J-84 dev checks: --rack <spec> (comma separated: steps<N> pattern length,
 // w<W> / h<H> floating rack size, dock = docked beside the browser, scroll<px>
@@ -94,6 +101,8 @@ struct PlaylistGeometry {
 const PlaylistGeometry& playlistGeometry();
 // K-112b (dev, "autolane <track>"): the Tracks layout shows the automation lane under that playlist track.
 void devShowAutomationLane(int track);
+// K-112c (dev, "plrows"): the next drawn playlist prints its rows (index, name, a point on the header's name: 24 px in, mid-row).
+void devPlaylistRowsAsk();
 // K-112b dev input "menu open <id>" (the same name and syntax as the other layouts'): asks the
 // menu `id` to open on the next frame (the bar's menus by name, e.g. File; "track": the track
 // header menu; "region": the region menu; "strip": a strip's Setting menu). devMenuTake: true

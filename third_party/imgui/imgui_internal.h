@@ -4403,6 +4403,13 @@ extern bool         GImGuiGridlineMenuWalk;
 // in its column and its check mark takes the text colour (set per frame by the layout style; plugin
 // editors clear it while they draw).
 extern bool         GImGuiGridlineMenuRight;
+// Gridline (K-112b, checkpoint 28): while set, window title bars draw their text in this font (the
+// Tracks layout's bold titles; set per frame by the layout style).
+extern ImFont*      GImGuiGridlineTitleFont;
+// Gridline (K-112b, checkpoint 38): while >= 0, a check box's corner radius (the Tracks layout's rounded
+// squares; its pill-round frames would make them circles). Set per frame by the layout style.
+extern float        GImGuiGridlineCheckRounding;
+extern ImU32        GImGuiGridlineMenuHover;      // K-112B: menu row hover fill in the Tracks layout (0 = the style's)
 extern bool         ImGuiGridlineHook_BeginMenu(const char* label, bool enabled);
 extern void         ImGuiGridlineHook_EndMenu();
 extern bool         ImGuiGridlineHook_MenuItem(const char* label, const char* shortcut, bool selected, bool enabled);
@@ -4413,6 +4420,10 @@ extern float        GImGuiGridlineToggleW;
 // Gridline (K-112c round 25, Live): while true, popup menus right-align each shortcut to the menu's
 // right margin (a slim margin, check marks being in the left gutter) and draw separators edge to edge.
 extern bool         GImGuiGridlineMenuLive;
+// Gridline (K-297): while true, SplitterBehavior() keeps the pointer it hovers (no AllowOverlap): a dock
+// splitter is submitted before the docked windows' widgets, so with a 1 px gap a widget at a panel's
+// edge took the pointer and the divider could be grabbed from one side only.
+extern bool         GImGuiGridlineSplitterOwn;
 extern void       (*GImGuiGridlineToggleDraw)(ImDrawList* dl, const ImVec2& a, const ImVec2& b, int state, bool hovered, bool held);
 
 // In IMGUI_VERSION_NUM >= 18934: changed IMGUI_TEST_ENGINE_ITEM_ADD(bb,id) to IMGUI_TEST_ENGINE_ITEM_ADD(id,bb,item_data);

@@ -7817,6 +7817,9 @@ void ImGui::RenderWindowTitleBarContents(ImGuiWindow* window, const ImRect& titl
     // Title bar text (with: horizontal alignment, avoiding collapse/close button, optional "unsaved document" marker)
     // FIXME: Refactor text alignment facilities along with RenderText helpers, this is WAY too much messy code..
     const float marker_size_x = (flags & ImGuiWindowFlags_UnsavedDocument) ? button_sz * 0.80f : 0.0f;
+    ImFont* title_font = GImGuiGridlineTitleFont;  // GRIDLINE PATCH (K-112b): a layout's own title face (bold in the Tracks layout)
+    if (title_font)
+        PushFont(title_font, 0.0f);
     const ImVec2 text_size = CalcTextSize(name, NULL, true) + ImVec2(marker_size_x, 0.0f);
 
     // As a nice touch we try to ensure that centered title text doesn't get affected by visibility of Close/Collapse button,
@@ -7849,6 +7852,8 @@ void ImGui::RenderWindowTitleBarContents(ImGuiWindow* window, const ImRect& titl
     //if (g.IO.KeyShift) window->DrawList->AddRect(layout_r.Min, layout_r.Max, IM_COL32(255, 128, 0, 255)); // [DEBUG]
     //if (g.IO.KeyCtrl) window->DrawList->AddRect(clip_r.Min, clip_r.Max, IM_COL32(255, 128, 0, 255)); // [DEBUG]
     RenderTextClipped(layout_r.Min, layout_r.Max, name, NULL, &text_size, style.WindowTitleAlign, &clip_r);
+    if (title_font)
+        PopFont();
 }
 
 void ImGui::UpdateWindowParentAndRootLinks(ImGuiWindow* window, ImGuiWindowFlags flags, ImGuiWindow* parent_window)
@@ -20644,10 +20649,33 @@ void ImGui::DockNodeTreeUpdateSplitter(ImGuiDockNode* node)
             {
                 DockNodeTreeUpdateSplitterFindTouchingNode(child_0, axis, 1, &touching_nodes[0]);
                 DockNodeTreeUpdateSplitterFindTouchingNode(child_1, axis, 0, &touching_nodes[1]);
+                // GRIDLINE PATCH (K-297): a touching node that cannot be resized along the axis (a title strip
+                // with NoResizeX/Y, shorter than the minimum window size) moves with the splitter and keeps
+                // its size: its sibling behind it is what shrinks, so the limit comes from that sibling. Without
+                // this the strip's own limit sat above the splitter and the pane under it could never shrink.
+                auto fixed_sibling = [&](ImGuiDockNode* t) -> ImGuiDockNode* {
+                    ImGuiDockNode* p = t->ParentNode;
+                    if (!p || p == node || p->SplitAxis != axis || !((t->LocalFlags | t->MergedFlags) & no_resize_axis_flag)) return NULL;
+                    return p->ChildNodes[0] == t ? p->ChildNodes[1] : p->ChildNodes[0];
+                };
                 for (int touching_node_n = 0; touching_node_n < touching_nodes[0].Size; touching_node_n++)
-                    resize_limits[0] = ImMax(resize_limits[0], touching_nodes[0][touching_node_n]->Rect().Min[axis] + min_size);
+                {
+                    ImGuiDockNode* t = touching_nodes[0][touching_node_n];
+                    ImGuiDockNode* sib = fixed_sibling(t);
+                    if (sib && sib->Pos[axis] < t->Pos[axis])
+                        resize_limits[0] = ImMax(resize_limits[0], sib->Rect().Min[axis] + min_size + (t->Rect().Max[axis] - sib->Rect().Max[axis]));
+                    else
+                        resize_limits[0] = ImMax(resize_limits[0], t->Rect().Min[axis] + min_size);
+                }
                 for (int touching_node_n = 0; touching_node_n < touching_nodes[1].Size; touching_node_n++)
-                    resize_limits[1] = ImMin(resize_limits[1], touching_nodes[1][touching_node_n]->Rect().Max[axis] - min_size);
+                {
+                    ImGuiDockNode* t = touching_nodes[1][touching_node_n];
+                    ImGuiDockNode* sib = fixed_sibling(t);
+                    if (sib && sib->Pos[axis] > t->Pos[axis])
+                        resize_limits[1] = ImMin(resize_limits[1], sib->Rect().Max[axis] - min_size - (sib->Pos[axis] - t->Pos[axis]));
+                    else
+                        resize_limits[1] = ImMin(resize_limits[1], t->Rect().Max[axis] - min_size);
+                }
 
                 // [DEBUG] Render touching nodes & limits
                 /*
@@ -20670,7 +20698,10 @@ void ImGui::DockNodeTreeUpdateSplitter(ImGuiDockNode* node)
             float min_size_0 = resize_limits[0] - child_0->Pos[axis];
             float min_size_1 = child_1->Pos[axis] + child_1->Size[axis] - resize_limits[1];
             ImU32 bg_col = GetColorU32(ImGuiCol_WindowBg);
-            if (SplitterBehavior(bb, GetID("##Splitter"), axis, &cur_size_0, &cur_size_1, min_size_0, min_size_1, g.WindowsBorderHoverPadding, WINDOWS_RESIZE_FROM_EDGES_FEEDBACK_TIMER, bg_col))
+            GImGuiGridlineSplitterOwn = true;  // GRIDLINE PATCH (K-297): the docked panels' widgets never take a divider's pointer
+            const bool split_moved = SplitterBehavior(bb, GetID("##Splitter"), axis, &cur_size_0, &cur_size_1, min_size_0, min_size_1, g.WindowsBorderHoverPadding, WINDOWS_RESIZE_FROM_EDGES_FEEDBACK_TIMER, bg_col);
+            GImGuiGridlineSplitterOwn = false;
+            if (split_moved)
             {
                 if (touching_nodes[0].Size > 0 && touching_nodes[1].Size > 0)
                 {

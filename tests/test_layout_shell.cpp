@@ -114,6 +114,20 @@ int main() {
       if (pl.id == "live.device") deviceH2 = pl.rect.h;
     expect(deviceH == 188 && deviceH2 == 188, "the Live device band keeps its fixed 188 px height at every size");
   }
+  {  // K-112c (round 45): a new Clips set shows one detail band (devices); clip and device bands take turns.
+    const layout::Shell& sh = layout::shell(Preset::Live);
+    layout::State st;
+    expect(layout::visible(sh, st, "live.browser") && layout::visible(sh, st, "live.device") && !layout::visible(sh, st, "live.clip") &&
+               !layout::visible(sh, st, "live.mixer"),
+           "Clips default: the browser and the device band, no clip band, no mixer band");
+    layout::setVisible(sh, st, "live.clip", true);
+    expect(layout::visible(sh, st, "live.clip") && !layout::visible(sh, st, "live.device"), "showing the clip band hides the device band");
+    layout::setVisible(sh, st, "live.device", true);
+    expect(!layout::visible(sh, st, "live.clip") && layout::visible(sh, st, "live.device"), "and the other way round");
+    layout::setVisible(sh, st, "live.mixer", true);
+    expect(layout::visible(sh, st, "live.mixer") && layout::visible(sh, st, "live.device"), "the mixer band is not in the group");
+    expect(layout::defaultVersion(Preset::Live) == 2 && layout::defaultVersion(Preset::Logic) == 1, "the Clips default replaces saved layouts once");
+  }
 
   // Region state.
   {
@@ -121,6 +135,7 @@ int main() {
     layout::State st;
     expect(layout::toJson(st).empty(), "the default region state writes nothing");
     layout::setVisible(layout::shell(p), st, "logic.inspector", false);
+    layout::setVisible(layout::shell(p), st, "logic.lower", true);  // closed by default since K-112B checkpoint 40
     st.member["logic.lower"] = "Mixer";
     st.memberSize["logic.lower|Mixer"] = 340;
     st.memberSize["logic.lower|Piano roll"] = 280;
@@ -139,6 +154,36 @@ int main() {
     expect(layout::fromJson(Preset::Live, text).hidden.empty(), "one layout's regions mean nothing in another's state");
     Settings s;
     expect(s.set(layout::stateKey(p), text) && s.getString("layout.logic.state") == text, "each layout's state has its own settings key");
+  }
+
+  // K-297: a region's divider the person dragged keeps its place (fixed bands too), within the limits.
+  {
+    layout::State st;
+    st.regionSize["live.device"] = 260;
+    st.regionSize["live.browser"] = 340;
+    const std::string text = layout::toJson(st);
+    expect(layout::fromJson(Preset::Live, text) == st, "dragged region sizes round-trip through the settings text");
+    expect(layout::fromJson(Preset::Logic, text).regionSize.empty(), "another layout drops them");
+    float deviceH = 0, browserW = 0;
+    for (const auto& pl : layout::solve(Preset::Live, 1432, 818, st)) {
+      if (pl.id == "live.device") deviceH = pl.rect.h;
+      if (pl.id == "live.browser") browserW = pl.rect.w;
+    }
+    expect(deviceH == 260, "a fixed band takes the height it was dragged to");
+    expect(browserW == 340, "a side region takes the width it was dragged to");
+    st.regionSize["live.device"] = 2000;
+    for (const auto& pl : layout::solve(Preset::Live, 1432, 818, st))
+      if (pl.id == "live.device") deviceH = pl.rect.h;
+    expect(deviceH == std::floor(818 * 0.7f), "a dragged size may pass the default's limit, up to 70 % of the parent");
+    st.regionSize.clear();
+    for (const auto& pl : layout::solve(Preset::Live, 1432, 500, st))
+      if (pl.id == "live.device") deviceH = pl.rect.h;
+    expect(deviceH == std::floor(500 * 0.35f), "the default size keeps the layout's own limit");
+    const layout::State member = layout::fromJson(Preset::Logic, "{\"shown\":[\"logic.lower\"],\"member\":{\"logic.lower\":\"Mixer\"},\"size\":{\"logic.lower|Mixer\":300},\"region\":{\"logic.lower\":200}}");
+    float lowerH = 0;
+    for (const auto& pl : layout::solve(Preset::Logic, 1432, 818, member))
+      if (pl.id == "logic.lower") lowerH = pl.rect.h;
+    expect(lowerH == 300, "an exclusive region's member size wins over a region size");
   }
   return finish();
 }

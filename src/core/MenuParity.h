@@ -187,5 +187,10 @@ int deleteLayerChildren(Document& d, ObjectId layer);
 // song start (the arrangement moves right to make room). Returns the area
 // length in ticks (0: nothing to prepare).
 Tick prepareLiveArea(Document& d);
+// K-112c (round 43): grows the live area to end at `end` at least (a clip dropped into an empty
+// row of the clip grid): the song after it (its clips and markers) moves right by as much, so
+// nothing of the arrangement becomes launched by hand. One undo step. Returns false when the area
+// already reaches `end`.
+bool extendLiveArea(Document& d, Tick end);
 
 }  // namespace gl::ops

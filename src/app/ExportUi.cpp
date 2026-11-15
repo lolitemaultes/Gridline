@@ -543,7 +543,10 @@ void drawRenderDialog(App& a) {
     ui::Tooltip("What happens to sound still ringing at the end: cut it, let it ring out, or mix it into the start (seamless loops)");
     formLabel("Loops");
     ImGui::SetNextItemWidth(90);
-    ImGui::InputInt("##loops", &s.render.loops, 1, 1);
+    // K-112c (round 33): in Clips a plain number field (drag or type), as the refs' dialogs (134, 135); the
+    // toolkit's tiny step buttons sat apart from it with uneven gaps.
+    if (livelook::active(a)) ImGui::DragInt("##loops", &s.render.loops, 0.1f, 1, 64);
+    else ImGui::InputInt("##loops", &s.render.loops, 1, 1);
     s.render.loops = std::clamp(s.render.loops, 1, 64);
     const double sec = scopeSeconds(a) * s.render.loops;
     formLabel("Length");

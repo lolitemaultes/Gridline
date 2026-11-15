@@ -3,7 +3,7 @@
 # frame time) on a copy of the test song. Every gesture is checked against the project's clips (track,
 # start, length) and makes exactly one undo step:
 #   1. with the pointer (the Select tool; Live: Draw mode off) a clip's body drags it a bar later and a
-#      track down, its right edge trims it a beat, Shift+drag copies it (Studio's Select drags a box);
+#      track down, its right edge trims it a beat, Shift+drag copies it (Tracks: Alt+drag; Studio's Select drags a box);
 #   2. with the pencil, zoomed in and scrolled down a track, a clip drags a bar later and a track down;
 #   3. Tracks: a press on a clip under the overlay scroller at the grid's foot moves the clip (it paged
 #      the view);
@@ -17,7 +17,8 @@ set(ENV{SDL_AUDIODRIVER} "dummy")
 set(ENV{GRIDLINE_NO_PLUGIN_SCAN} "1")
 set(ENV{GRIDLINE_HIDE_PLUGINS} "all")
 file(READ "${DEMO}" demo)  # a copy: the fixture is never opened (or saved over) in place
-# Clip 90 on track 8: the Tracks layout's lowest visible row, under the horizontal overlay scroller.
+# Clip 90 on track 8, moved to the Tracks layout's lowest visible row (under the horizontal overlay
+# scroller) once the geometry is known.
 string(REPLACE "\"playlist\": [" "\"playlist\": [{\"id\": 90, \"length\": 1536, \"pattern\": 19, \"start\": 3072, \"track\": 8}, " demo "${demo}")
 string(REGEX REPLACE "\"nextId\": *[0-9]+" "\"nextId\": 200" demo "${demo}")
 if(LAYOUT STREQUAL "live")  # a live area of two scenes (the session grid's slots): bars 1 to 8
@@ -160,12 +161,17 @@ want("pointer: the trim is one undo step" "${du}" 1)
 
 math(EXPR xe "${xm} + 2 * ${bar}")
 drag(d 30 ${xm} ${yb} ${xe} ${yb})
-run(ptr_copy "4 typing off\n6 pltool select\n20 dump\n26 mod shift 1\n${d}46 mod shift 0\n50 dump\n54 quit discard\n" ${pl})
+# R01-03 (K-112B): the Tracks layout copies with Alt (the reference's Option-drag; Shift adds to the selection).
+set(copyMod shift)
+if(LAYOUT STREQUAL "logic")
+  set(copyMod alt)
+endif()
+run(ptr_copy "4 typing off\n6 pltool select\n20 dump\n26 mod ${copyMod} 1\n${d}46 mod ${copyMod} 0\n50 dump\n54 quit discard\n" ${pl})
 clipAt(20 47)
 set(u0 ${undo})
 set(n0 ${n})
 clipAt(50 200)
-want("pointer: Shift+drag copies (the copy two bars later)" "${c_track}/${c_start}" "1/2304")
+want("pointer: Shift+drag (Tracks: Alt+drag) copies (the copy two bars later)" "${c_track}/${c_start}" "1/2304")
 clipAt(50 47)
 want("pointer: the original stays" "${c_track}/${c_start}" "1/1536")
 math(EXPR dn "${n} - ${n0}")
@@ -200,13 +206,20 @@ want("pencil, zoomed and scrolled: one undo step" "${du}" 1)
 
 # ---- 3. Tracks: a clip under the overlay scroller ----
 if(LAYOUT STREQUAL "logic")
+  # The row at the grid's foot depends on which panes the layout opens with (K-112B cp40: the lower
+  # pane starts closed): clip 90 moves to that row, and the geometry is read again.
+  math(EXPR ry "${g_gy1} - 2")  # on the scroller's rail (its last pixels), clear of the gap between rows
+  math(EXPR footTrack "(${ry} - ${g_top0}) / (${g_top1} - ${g_top0})")
+  string(REPLACE "\"start\": 3072, \"track\": 8}" "\"start\": 3072, \"track\": ${footTrack}}" demo "${demo}")
+  file(WRITE "${OUT}/song.gridline.json" "${demo}")
+  run(geo_foot "4 typing off\n12 plgeom\n16 quit discard\n" ${pl})
+  geo(g)
   if(NOT DEFINED g_c90)
     fail("clip 90 is not drawn")
   endif()
   list(GET g_c90 0 a0)
   list(GET g_c90 1 a1)
   math(EXPR rx "(${a0} + ${a1}) / 2")
-  math(EXPR ry "${g_gy1} - 4")
   if(NOT rx GREATER g_hthumb1)  # on the bare rail: the thumb itself still scrolls
     fail("clip 90 lies under the scroller's thumb (${rx} <= ${g_hthumb1})")
   endif()
@@ -216,7 +229,7 @@ if(LAYOUT STREQUAL "logic")
   clipAt(20 90)
   set(u0 ${undo})
   clipAt(50 90)
-  want("a clip under the bottom scroller drags a bar later" "${c_track}/${c_start}" "8/3456")
+  want("a clip under the bottom scroller drags a bar later" "${c_track}/${c_start}" "${footTrack}/3456")
   math(EXPR du "${undo} - ${u0}")
   want("the drag under the scroller is one undo step" "${du}" 1)
   if(NOT out MATCHES "scrollY 0.000")

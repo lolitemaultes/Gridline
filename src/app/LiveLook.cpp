@@ -20,8 +20,10 @@
 #include "../core/PluginInfo.h"
 #include "../core/Arrangements.h"
 #include "../core/TrackModes.h"
+#include "../core/TrackOrder.h"
 #include "../packs/PacksUi.h"
 #include "App.h"
+#include "BrowserUi.h"
 #include "CollabUi.h"
 #include "CursorAnchor.h"
 #include "DeviceViews.h"
@@ -98,6 +100,17 @@ void viewFrame(App& a) {
     p.channel = ch ? ch->id : kNoId;
     p.mixer = ch ? ch->mixerTrack : a.selMixer;
     setPluginWindowPolicy(p);
+  }
+  {  // Round 45: selecting a clip shows the clip band in place of the device band (one detail band at a
+     // time, as the reference's detail view turns to the clip view when a clip is selected).
+    // Not while the button is held: the press that selects a clip also starts its drag, and the band
+    // swap rebuilds the dock (the arrangement moves under the pointer and the drag was lost). The
+    // band turns once the button is released.
+    static std::set<ObjectId> lastSel;
+    if (a.playlist.selected != lastSel && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+      lastSel = a.playlist.selected;
+      if (!lastSel.empty()) layoutui::setRegionVisible(a, "live.clip", true);
+    }
   }
   static bool wasGrid = false;
   if (a.showLivePads && a.showPlaylist) showView(a, !wasGrid);  // one just opened: it wins
@@ -304,7 +317,7 @@ HeaderPart drawHeader(App& a, ImDrawList* dl, const HeaderDraw& h) {
   const std::string label = playlistTrackName(s, static_cast<size_t>(h.track));
   dl->PushClipRect(c.name.a, c.name.b, true);
   float nx = c.name.a.x + 5;
-  if (trackmodes::modeOf(s, h.track) != TrackMode::Unassigned) nx += trackui::drawNameGlyph(a, dl, h.track, ImVec2(nx, ty));
+  if (trackmodes::modeOf(s, h.track) != TrackMode::Unassigned) nx += trackui::drawNameGlyph(a, dl, h.track, ImVec2(nx, ty), theme::withAlpha(ink, 0.8f));  // K-112c (round 37): the name's ink, not a faint grey on the colour
   theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(nx, ty), c.name.b.x - nx - 4, ink, label.c_str());  // regular weight (280, 141, 142)
   dl->PopClipRect();
   // Activator (the track's mute, numbered), solo, arm.
@@ -497,9 +510,13 @@ void drawStatusBar(App& a) {
     const char* label;
     const char* region;
     const char* hint;
+    const char* part;  // the window a band with nothing open in it opens
   };
-  const Tg tg[] = {{"##sb_dev", i18n::N_("Devices"), "live.device", i18n::N_("Device band: the selected track's instrument and the inserts of its mixer track")},
-                   {"##sb_clip", i18n::N_("Clip"), "live.clip", i18n::N_("Clip band: the selected clip's properties and editors")}};
+  // K-297: the mixer band has its toggle here too, in the corner (as the refs keep it); before, it could
+  // only be shown or hidden from the View menu.
+  const Tg tg[] = {{"##sb_mix", i18n::N_("Mixer"), "live.mixer", i18n::N_("Mixer band: the tracks' levels, pans and sends under the main view"), "Mixer"},
+                   {"##sb_dev", i18n::N_("Devices"), "live.device", i18n::N_("Device band: the selected track's instrument and the inserts of its mixer track"), "Device chain"},
+                   {"##sb_clip", i18n::N_("Clip"), "live.clip", i18n::N_("Clip band: the selected clip's properties and editors"), "Piano roll"}};
   for (const Tg& t : tg) {
     const ImGuiDockNode* node = ImGui::DockBuilderGetNode(layoutui::regionNode(t.region));
     const bool on = layout::visible(sh, st, t.region) && node && node->Windows.Size > 0;  // shown, with something in it
@@ -518,8 +535,8 @@ void drawStatusBar(App& a) {
         layoutui::setRegionVisible(a, t.region, false);
       } else {
         layoutui::setRegionVisible(a, t.region, true);
-        // A band with nothing open in it opens its main part: the notes editor, the device chain.
-        if (bool* f = layoutui::windowOpenFlag(a, std::strcmp(t.region, "live.clip") == 0 ? "Piano roll" : "Device chain")) *f = true;
+        // A band with nothing open in it opens its main part: the notes editor, the device chain, the mixer.
+        if (bool* f = layoutui::windowOpenFlag(a, t.part)) *f = true;
       }
     }
     rx -= 4;
@@ -1560,7 +1577,19 @@ void deviceBand(App& a, BandPick& pick) {
     dl->AddRect(z0, z1, theme::withAlpha(dragging ? P.hot : P.textFaint, dragging ? 0.8f : 0.35f), theme::kRadiusLg, 1.0f, 0);
     const std::string dz = std::string(i18n::tr("Drop effects here")) + "\n" + slotLabel(firstFree);
     const ImVec2 ts = a.fontRegular->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, dz.c_str());
-    dl->AddText(a.fontRegular, theme::kFontLabel, ImVec2(std::round((z0.x + z1.x - ts.x) * 0.5f), std::round((z0.y + z1.y - ts.y) * 0.5f)), P.textFaint, dz.c_str());
+    // K-112c (round 33): centred in the part of the zone in view (the band scrolls), and only when it fits
+    // there whole: it was centred on the whole zone and cut by the band's edge ("Drop ef").
+    const float vx0 = std::max(z0.x, dl->GetClipRectMin().x + 20), vx1 = std::min(z1.x, dl->GetClipRectMax().x - 20);
+    if (vx1 - vx0 >= ts.x + 16) {  // each line centred on its own
+      float ly = std::round((z0.y + z1.y - ts.y) * 0.5f);
+      for (size_t b = 0; b <= dz.size();) {
+        const size_t e = std::min(dz.find('\n', b), dz.size());
+        const float lw = a.fontRegular->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, dz.c_str() + b, dz.c_str() + e).x;
+        dl->AddText(a.fontRegular, theme::kFontLabel, ImVec2(std::round((vx0 + vx1 - lw) * 0.5f), ly), P.textFaint, dz.c_str() + b, dz.c_str() + e);
+        ly += ts.y / static_cast<float>(1 + std::count(dz.begin(), dz.end(), '\n'));
+        b = e + 1;
+      }
+    }
     p.x = z1.x;
   }
   if (bracket0 >= 0 && mt) {
@@ -1720,17 +1749,13 @@ bool columnHeading(App& a, const char* title, ImU32 chip, ImU32 fill = 0, const 
     ui::Hint(open ? "Click to fold this section" : "Click to show this section");
     ImGui::SetCursorScreenPos(p);
   }
-  // K-112c (round 21): a clip's title band is a tint of its colour with a swatch of the colour at
-  // its left (038, 041, 112), square, as the layout's other bars.
-  const ImU32 bg = fill ? theme::mix(P.surface700, fill, 0.42f) : P.surface700;
+  // A clip's title band, square as the layout's other bars, in the clip's full colour as 038, 034 and 112
+  // draw it (K-112c round 34; a 42 % tint read as a muddy brown beside the clip in the arrangement).
+  const ImU32 bg = fill ? fill : P.surface700;
   dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), hov ? theme::mix(bg, P.text, 0.08f) : bg, 0.0f);
   float tx = p.x + 6;
-  if (fill) {
-    const float sy = std::round(p.y + (h - 10) * 0.5f);
-    dl->AddRectFilled(ImVec2(tx, sy), ImVec2(tx + 10, sy + 10), fill, 0.0f);
-    dl->AddRect(ImVec2(tx, sy), ImVec2(tx + 10, sy + 10), theme::mix(fill, IM_COL32(0, 0, 0, 255), 0.45f), 0.0f, 1.0f);
-    tx += 16;
-  } else if (chip) {
+  // K-112c (round 35): no swatch on a band that is the colour itself (it showed as an empty check box), as 038.
+  if (!fill && chip) {
     dl->AddRectFilled(ImVec2(tx, p.y + 6), ImVec2(tx + 8, p.y + 14), chip, 1.0f);
     tx += 13;
   }
@@ -1919,13 +1944,8 @@ float clipColumn(App& a) {
 namespace {
 
 // The tracks the grid shows as columns: every track up to the last one in use (clips, a link or a name).
-int gridColumns(const Song& s) {
-  int last = -1;
-  for (const Clip& c : s.playlist) last = std::max(last, c.track);
-  for (int t = 0; t < static_cast<int>(s.tracks.size()); ++t)
-    if (s.tracks[static_cast<size_t>(t)].mode != TrackMode::Unassigned || !s.tracks[static_cast<size_t>(t)].name.empty()) last = std::max(last, t);
-  return std::min(last + 1, static_cast<int>(s.tracks.size()));
-}
+// K-112c (round 39): the arrangement's rows in Clips are the same tracks (core/TrackModes.h).
+int gridColumns(const Song& s) { return trackmodes::usedTrackCount(s); }
 
 Rgb clipColour(const Song& s, const Clip& c) {
   if (c.kind == ClipKind::Pattern) {
@@ -1949,6 +1969,32 @@ std::string clipLabel(const Song& s, const Clip& c) {
   return std::string();
 }
 
+// K-112c (round 44): a clip picked in the grid brings its channel along, so the piano roll's channel
+// picker and the clip band name the same part: a pattern clip keeps the selected channel when it
+// plays in the pattern, else takes the pattern's first channel that does; an audio clip its own.
+void selectClipChannel(App& a, const Clip& c) {
+  const Song& s = a.doc.song();
+  if (c.kind == ClipKind::Audio) {
+    if (s.channel(c.source)) a.selectChannel(c.source);
+    return;
+  }
+  const Pattern* p = c.kind == ClipKind::Pattern ? s.pattern(c.pattern) : nullptr;
+  if (!p) return;
+  auto plays = [&](ObjectId ch) {
+    if (auto it = p->notes.find(ch); it != p->notes.end() && !it->second.empty()) return true;
+    if (auto it = p->steps.find(ch); it != p->steps.end())
+      for (uint8_t v : it->second)
+        if (v) return true;
+    return false;
+  };
+  if (plays(a.selChannel)) return;
+  for (const Channel& ch : s.channels)
+    if (plays(ch.id)) {
+      a.selectChannel(ch.id);
+      return;
+    }
+}
+
 void launch(App& a, ObjectId clip) {
   if (a.engine.mode() != PlayMode::Live) a.engine.setMode(PlayMode::Live);
   a.engine.launchClip(clip);
@@ -1959,6 +2005,249 @@ bool gGridAsked = false;  // K-287 (dev): the next drawn clip grid prints its sl
 }  // namespace
 
 void devGridAsk() { gGridAsked = true; }
+
+namespace {
+
+// K-112c (round 38): the session mixer's strips, shared by the clip grid's foot and the Clips mixer band.
+struct StripRow {
+  float y0 = 0, h = 0;     // the strips' top and height
+  bool sendsRow = false;  // the sends row across their top
+};
+// A track's first two sends to a return (not the master, which every track reaches): (send index, mixer index).
+std::vector<std::pair<size_t, int>> sendsOf(const Song& s, const MixerTrack* mx) {
+  std::vector<std::pair<size_t, int>> v;
+  if (!mx) return v;
+  for (size_t k = 0; k < mx->sends.size() && v.size() < 2; ++k) {
+    const Send& sd = mx->sends[k];
+    if (sd.sidechain) continue;
+    int dest = -1;
+    for (size_t j = 0; j < s.mixer.size(); ++j)
+      if (s.mixer[j].id == sd.to) dest = static_cast<int>(j);
+    if (dest > 0) v.emplace_back(k, dest);
+  }
+  return v;
+}
+// K-112c (round 28): the sends get their own row across the top of every strip, above the volume
+// and the meter, with "Sends" at the right and the knobs staggered, each with its return's letter
+// in its open foot (143, 141, 112). The row is kept on every strip (blank where a track sends
+// nowhere) so the faders line up, and dropped when the strips are too short for it.
+constexpr float kSendsH = 34.0f;
+bool anySends(const Song& s) {
+  for (int t = 0; t < gridColumns(s); ++t)
+    if (!sendsOf(s, trackmodes::playedMixer(s, t)).empty()) return true;
+  return false;
+}
+void sessionStrip(App& a, ImDrawList* dl, const StripRow& g, int t, const MixerTrack* mx, float x, float w, bool master, char letter = 0) {
+  const auto& P = pal();
+  const Song& s = a.doc.song();
+  const ImVec2 m = ImGui::GetIO().MousePos;
+  const float my0 = g.y0, mh = g.h;
+  const bool sendsRow = g.sendsRow;
+  ImGui::PushID(master ? 9999 : letter ? 8000 + letter : 2000 + t);
+  if (mx) {
+    // K-112c (round 32): collaboration, as Studio's mixer: a peer's pointer on this mixer track (in any
+    // layout) lands on this strip, and a peer's change to it flashes its outline.
+    canchor::publishRect(canchor::MixerStrip, mx->id, 0, ImVec2(x, my0), ImVec2(x + w, my0 + mh));
+    if (ImU32 fc = 0; const float fl = collabui::flash(a, "mixer/#" + std::to_string(mx->id), &fc))
+      dl->AddRect(ImVec2(x + 1, my0 + 1), ImVec2(x + w - 1, my0 + mh - 1), theme::withAlpha(fc, fl), 0.0f, 0, 2.0f);
+  }
+  // The sends row (see above), then two columns. Left, top to bottom: the peak and the volume in
+  // dB, pan, then the activator, S and arm stacked. Right: the fader beside a meter with its dB
+  // scale, the rest of the strip's height.
+  const float bottom = my0 + mh, top = my0 + 4 + (sendsRow ? kSendsH : 0.0f);
+  const float colL = std::min(44.0f, std::floor(w * 0.48f));  // the left column's width
+  const float rx = x + colL + 4;                               // the right column
+  if (sendsRow && mx && !master) {
+    const float sy = my0 + 4;
+    const auto sends = sendsOf(s, mx);
+    if (!sends.empty()) {
+      const char* lab = i18n::tr("Sends");
+      const float lw = a.fontRegular->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, lab).x;
+      dl->AddText(a.fontRegular, theme::kFontLabel, ImVec2(std::round(x + w - 4 - lw), std::round(sy)), P.textDim, lab);
+    }
+    constexpr float kR = 10.0f;
+    for (size_t i = 0; i < sends.size(); ++i) {
+      const auto [k, dest] = sends[i];
+      const ImVec2 kp(x + 4 + static_cast<float>(i) * (2 * kR + 6), sy + static_cast<float>(i) * 8.0f);
+      ImGui::SetCursorScreenPos(kp);
+      ImGui::PushID(static_cast<int>(k));
+      ui::ParamKnob("##send", sendParam(mx->id, dest), kR, nullptr, false);
+      if (ImGui::IsItemHovered()) a.setHint(std::string(i18n::tr("Send to")) + " " + s.mixer[static_cast<size_t>(dest)].name);
+      if (const char lt = returnLetter(s, dest)) {  // the return's letter in the knob's open foot
+        const char ls[2] = {lt, 0};
+        const float fz = 9.0f, lw2 = a.fontRegular->CalcTextSizeA(fz, 1e9f, 0, ls).x;
+        dl->AddText(a.fontRegular, fz, ImVec2(std::round(kp.x + kR - lw2 * 0.5f), std::round(kp.y + 2 * kR - fz + 1)), P.textDim, ls);
+      }
+      ImGui::PopID();
+    }
+  }
+  // The peak since it was last cleared (click it to clear), then the volume (dB) under it, each
+  // value centred, as the refs' strips (357, 280, 170, 143).
+  // K-112c (round 44): a short strip (a small window or a large interface scale) keeps what fits,
+  // from the most used down: the volume field at the top, the fader and meter, the activator; then
+  // S, arm, the peak and pan as the height allows. Nothing is drawn over anything else.
+  const bool compact = mh < 126.0f;
+  if (mx && !compact) {
+    static std::map<ObjectId, float> held;  // per mixer track, linear
+    float& pk = held[mx->id];
+    pk = std::max(pk, mixmeters::get(a, mx->id).peak());
+    const ImVec2 k0(x + 2, top), k1(x + colL, top + 16);
+    ImGui::SetCursorScreenPos(k0);
+    if (ImGui::InvisibleButton("##peak", ImVec2(k1.x - k0.x, k1.y - k0.y))) pk = 0;
+    ui::Hint("The highest level since this was last clicked (click to clear)");
+    // K-112c (round 33): a filled capsule over the square volume field, as 357 and 170 draw them (round 32
+    // squared it by mistake; the refs' peak is round, the volume square).
+    const float kr = (k1.y - k0.y) * 0.5f;
+    dl->AddRectFilled(k0, k1, P.dark ? P.field : P.surface950, kr);
+    dl->AddRect(k0, k1, pk >= 1.0f ? P.arm : theme::mix(P.dark ? P.field : P.surface950, IM_COL32(0, 0, 0, 255), 0.35f), kr, 0, 1.0f);
+    char pb[16];
+    if (pk > 1e-6f) std::snprintf(pb, sizeof pb, "%.1f", static_cast<double>(20.0f * std::log10(pk)));
+    else std::snprintf(pb, sizeof pb, "-\xE2\x88\x9E");  // minus infinity, as the refs write it
+    const float pw = a.fontRegular->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, pb).x;
+    dl->AddText(a.fontRegular, theme::kFontLabel, ImVec2(std::round((k0.x + k1.x - pw) * 0.5f), theme::textTop(a.fontRegular, theme::kFontLabel, top, 16)),
+                pk >= 1.0f ? P.arm : P.textDim, pb);
+  }
+  // Volume (dB). K-112c (round 44): a track with no mixer track yet has none (empty02, 069: an empty
+  // MIDI track's strip is bare but for its meter and buttons).
+  const float volTop = compact ? top : top + 18;
+  if (mx) {
+    const ImVec2 v0(x + 2, volTop), v1(x + colL, volTop + 16);
+    dl->AddRectFilled(v0, v1, P.dark ? P.field : P.surface950, theme::kRadiusSm);
+    char vb[16];
+    if (mx->volume > 1e-6f) std::snprintf(vb, sizeof vb, "%.1f", static_cast<double>(20.0f * std::log10(mx->volume)));
+    else std::snprintf(vb, sizeof vb, "-\xE2\x88\x9E");  // minus infinity, as the refs write it
+    const float tw = a.fontRegular->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, vb).x;
+    dl->AddText(a.fontRegular, theme::kFontLabel, ImVec2(std::round((v0.x + v1.x - tw) * 0.5f), theme::textTop(a.fontRegular, theme::kFontLabel, volTop, 16)),
+                P.text, vb);
+  }
+  // The left column from the bottom up: arm, S, the activator, then pan.
+  // K-112c (round 28): the strip ends in a bar of the track's colour (143, 146, 280, 141), so the
+  // controls stand on it with a gap.
+  constexpr float kFootH = 3.0f, kFootGap = 4.0f;
+  const float base = bottom - kFootH - kFootGap;
+  float armY = base - 15, soloY = armY - 17, actY = soloY - 21;
+  const float panY = actY - 27;
+  // In a short strip only the buttons that fit under the volume field are drawn, the activator
+  // first, then S, then arm (all three stay in the arrangement's headers).
+  const float minY = volTop + (mx ? 20.0f : 0.0f);
+  int nb = 3;
+  if (compact) {
+    const float room = base - minY;
+    nb = room >= 53 ? 3 : room >= 36 ? 2 : room >= 19 ? 1 : 0;
+    if (nb == 2) soloY = base - 15, actY = soloY - 21;
+    if (nb == 1) actY = base - 19;
+  }
+  const bool showPan = !compact && panY >= minY, fitSolo = nb >= 2, fitArm = nb >= 3;
+  // Fader and meter of the mixer track, with the scale on the right.
+  const float fy = top, fh = std::max(24.0f, bottom - kFootH - kFootGap - 1 - top);
+  if (mx) {
+    ImGui::SetCursorScreenPos(ImVec2(rx, fy));
+    ui::setFaderPointer(true);  // K-112c: a pointer beside the meter, as the refs' strips
+    ui::ParamFader("##fader", mixerParam(mx->id, MixerParam::Volume), ImVec2(14, fh));
+    ui::setFaderPointer(false);
+    const mixmeters::Reading r = mixmeters::get(a, mx->id);
+    ImGui::SetCursorScreenPos(ImVec2(rx + 16, fy));
+    ui::Meter(ImGui::GetID("meter"), r.peakL, r.peakR, ImVec2(10, fh));
+    // The meter's dB scale (its range is -60 to +6 dB): a tick and a number every 12 dB, the
+    // numbers only where there is room for them.
+    const float fsz = 9.0f, sx = rx + 28;
+    const int step = fh >= 90 ? 12 : 24;
+    for (int db = 0; db >= -60; db -= step) {
+      const float ty = std::round(fy + fh - (static_cast<float>(db) + 60.0f) / 66.0f * fh) + 0.5f;
+      dl->AddLine(ImVec2(sx, ty), ImVec2(sx + 3, ty), P.textFaint);
+      if (fh >= 48 && sx + 4 + 10 <= x + w + 2) {
+        const std::string n = std::to_string(-db);
+        dl->AddText(a.fontRegular, fsz, ImVec2(sx + 4, std::round(ty - fsz * 0.5f)), P.textFaint, n.c_str());
+      }
+    }
+    // Pan: the mixer's own knob (undo, automation, links as there), as large as the refs' (143, 146, 280).
+    const float kc = x + 2 + (colL - 2) * 0.5f;  // the left column's centre
+    if (showPan) {
+      ImGui::SetCursorScreenPos(ImVec2(kc - 11, panY));
+      ui::ParamKnob("##pan", mixerParam(mx->id, MixerParam::Pan), 11.0f, nullptr, true);
+      ui::Hint("Pan");
+    }
+  } else {
+    // K-112c (round 44): no mixer track yet: a dotted, unlit meter where the fader and meter stand
+    // (empty02, 069), and a hint saying how the track gets one.
+    // A track whose clips play into several mixer tracks shows their loudest level there instead
+    // (read only: each has its own fader in the mixer).
+    const std::vector<ObjectId> outs = t >= 0 ? trackmodes::playedMixers(s, t) : std::vector<ObjectId>{};
+    const float mx0 = rx + 16, my1 = fy + fh;
+    if (outs.empty()) {
+      for (float yy = fy + 2; yy + 2 <= my1; yy += 5) dl->AddRectFilled(ImVec2(mx0 + 3, yy), ImVec2(mx0 + 6, yy + 2), theme::withAlpha(P.textFaint, 0.55f));
+    } else {
+      float pl = 0, pr = 0;
+      for (ObjectId id : outs) {
+        const mixmeters::Reading r = mixmeters::get(a, id);
+        pl = std::max(pl, r.peakL), pr = std::max(pr, r.peakR);
+      }
+      ImGui::SetCursorScreenPos(ImVec2(mx0, fy));
+      ui::Meter(ImGui::GetID("meter"), pl, pr, ImVec2(10, fh));
+    }
+    ImGui::SetCursorScreenPos(ImVec2(rx, fy));
+    ImGui::InvisibleButton("##nomixer", ImVec2(std::max(1.0f, x + w - rx), std::max(1.0f, fh)));
+    ui::Hint(outs.empty() ? "No mixer track yet: put an instrument or an audio clip on this track to give it one"
+                          : "This track plays into several mixer tracks: the loudest of them (each has its fader in the mixer)");
+  }
+  // Activator (number), S, arm, stacked: the same controls as the arrangement's headers.
+  const float bx0 = x + 2, bx1 = x + colL;
+  if (letter && nb >= 1) {  // K-112c (round 19): a return's activator is its letter (143, 141, 280)
+    const float cxl = std::round((bx0 + bx1) * 0.5f);
+    const Cell ca{ImVec2(cxl - 10, actY), ImVec2(cxl + 10, actY + 18)};  // K-112c (round 28): square, as S is wide
+    const bool on = mx && !mx->muted;
+    square(dl, ca, on ? P.hot : P.surface900, ImGui::IsWindowHovered() && ca.contains(m));
+    const char ls[2] = {letter, 0};
+    centredText(dl, a.fontRegular, theme::kFontLabel, ca, on ? theme::contrastText(P.hot) : P.textFaint, ls);
+    ImGui::SetCursorScreenPos(ca.a);
+    if (ImGui::InvisibleButton("##ract", ImVec2(ca.b.x - ca.a.x, ca.b.y - ca.a.y)) && mx)
+      a.doc.setParam(mixerParam(mx->id, MixerParam::Mute), mx->muted ? 0.0 : 1.0, false);
+    ui::Hint("Return track: turn it on or off");
+  } else if (!master && !letter && nb >= 1) {
+    const Song& ss = a.doc.song();
+    const PlaylistTrack& tr = ss.tracks[static_cast<size_t>(t)];
+    const bool hovAny = ImGui::IsWindowHovered();
+    const float cxm = std::round((bx0 + bx1) * 0.5f);
+    const Cell ca{ImVec2(cxm - 10, actY), ImVec2(cxm + 10, actY + 18)};  // K-112c (round 28): square, as S is wide (143, 146, 280, 141)
+    const Cell cs{ImVec2(cxm - 10, soloY), ImVec2(cxm + 10, soloY + 14)};
+    const Cell cr{ImVec2(cxm - 10, armY), ImVec2(cxm + 10, armY + 14)};
+    char num[16];
+    std::snprintf(num, sizeof num, "%d", t + 1);
+    square(dl, ca, !tr.muted ? P.hot : P.surface900, hovAny && ca.contains(m));
+    centredText(dl, a.fontRegular, theme::kFontLabel, ca, !tr.muted ? theme::contrastText(P.hot) : P.textFaint, num);
+    const bool so = soloed(ss, t);
+    if (fitSolo) {
+      square(dl, cs, so ? P.solo : P.surface900, hovAny && cs.contains(m));
+      centredText(dl, a.fontBold, theme::kFontLabel, cs, so ? theme::contrastText(P.solo) : P.textDim, "S");
+    }
+    const bool audio = trackmodes::modeOf(ss, t) == TrackMode::Audio, armed = audio && mx && mx->armed;
+    if (fitArm) square(dl, cr, armed ? theme::withAlpha(P.arm, 0.85f) : P.surface900, audio && hovAny && cr.contains(m));
+    if (fitArm) dl->AddCircleFilled(ImVec2((cr.a.x + cr.b.x) * 0.5f, (cr.a.y + cr.b.y) * 0.5f), 3.5f, armed ? theme::contrastText(P.arm) : audio ? P.text : theme::withAlpha(P.textDim, 0.45f), 12);  // K-112c (round 19): a neutral dot until armed (142, 157, 143)
+    ImGui::SetCursorScreenPos(ca.a);
+    if (ImGui::InvisibleButton("##act", ImVec2(ca.b.x - ca.a.x, ca.b.y - ca.a.y))) clickHeader(a, t, HeaderPart::Activator, false);
+    ui::Hint(headerHint(HeaderPart::Activator));
+    if (fitSolo) {
+      ImGui::SetCursorScreenPos(cs.a);
+      if (ImGui::InvisibleButton("##solo", ImVec2(cs.b.x - cs.a.x, cs.b.y - cs.a.y))) clickHeader(a, t, HeaderPart::Solo, false);
+      ui::Hint(headerHint(HeaderPart::Solo));
+    }
+    if (fitArm) {
+      ImGui::SetCursorScreenPos(cr.a);
+      if (ImGui::InvisibleButton("##arm", ImVec2(cr.b.x - cr.a.x, cr.b.y - cr.a.y)) && audio) clickHeader(a, t, HeaderPart::Arm, false);
+      ui::Hint(headerHint(HeaderPart::Arm));
+    }
+  }
+  // K-112c (round 32): Main's strip no longer draws a "Main" box where the tracks have their
+  // activator: it looked like a button and did nothing (its title already names it).
+  {  // the colour bar along the foot
+    const bool trk = !master && !letter && t >= 0 && t < static_cast<int>(s.tracks.size());
+    const ImU32 cc = trk ? theme::content(s.tracks[static_cast<size_t>(t)].color) : mx ? theme::content(mx->color) : P.surface600;
+    dl->AddRectFilled(ImVec2(x, std::round(bottom - kFootH)), ImVec2(x + w, std::round(bottom)), cc);
+  }
+  ImGui::PopID();
+}
+
+}  // namespace
 
 void drawClipGrid(App& a) {
   const auto& P = pal();
@@ -1989,17 +2278,35 @@ void drawClipGrid(App& a) {
   // The mixer at the foot of the grid: compact strips (volume, fader and meter, pan and sends,
   // then the activator, S and arm), 110 to 260 px (round 24: about 45 % of the panel, so the sends show at 1440 as in 143, 112, 093). The slots fill the panel with
   // empty rows down to the mixer (round 25: 276, 355), every scene in use always shown.
-  const float mixH = std::clamp(av.y * 0.45f, 110.0f, 260.0f);
+  // K-112c (round 44): with the mixer band open under the grid (the Mixer shown in Clips) the strips
+  // are drawn there only, not twice; the slots take the grid's whole height.
+  const bool footMixer = !(a.showMixer && !a.showStage);
+  const float mixH = footMixer ? std::clamp(av.y * 0.45f, 110.0f, 260.0f) : 0.0f;
   const int rowsFit = std::max(1, static_cast<int>((av.y - kPad * 2 - kTitleH - kGap - mixH - kSlotH) / kSlotH));  // and the stop row
   const int rows = std::max(nScenes, rowsFit);  // K-112c (round 25): empty slot rows fill the panel down to the mixer, as 276 and 355
   const float pulse = 0.5f + 0.5f * std::sin(static_cast<float>(a.now) * 8.0f);
   static ObjectId held = kNoId;
   static std::pair<int, int> dragFrom{-1, -1};  // K-287: the slot (track, scene) a press started on
+  static int titleDrag = -1;                     // K-112c (round 39): a column dragged by its title (moves the track)
   const ImVec2 m = ImGui::GetIO().MousePos;
   const float y0 = livegrid::titleY(o.y, dpp), yT1 = livegrid::titleBottom(o.y, dpp), titleH = yT1 - y0;
   const float fs = theme::kFontCaption + 1;
   auto column = [&](int t) { return livegrid::columnX(o.x, t, dpp); };
   const float mainX = std::max(column(nCols) + 4, livegrid::snap(o.x + av.x - kPad - kMainW + 4, dpp));
+  // K-112c (round 36): the returns stand beside Main at the right, as 101, 112 and 357, not right
+  // after the tracks with the spare width between them and Main. The shift is whole columns' worth
+  // of snapped space, so each return keeps the K-276 column span and gaps.
+  float retShift = 0.0f;
+  int nFit = 0;
+  {
+    const std::vector<size_t> rets = returnTracks(s);
+    while (nFit < static_cast<int>(rets.size()) && nFit < 26 && column(nCols + nFit) + colW - 4 <= mainX - 6) ++nFit;
+    if (nFit > 0) retShift = std::max(0.0f, livegrid::snap(mainX - column(nCols + nFit), dpp));
+  }
+  auto retColumn = [&](int i) { return livegrid::column(o.x + retShift, nCols + i, dpp); };
+  // K-112c (round 43): the free column between the last track and the returns (or Main), where
+  // files and instruments dropped make new tracks (101, 069, 375, empty02).
+  const float freeX0 = column(nCols), freeX1 = (nFit > 0 ? retColumn(0).x0 : mainX) - kGap;
   for (int t = 0; t < nCols; ++t) {
     const PlaylistTrack& tr = s.tracks[static_cast<size_t>(t)];
     const pixelgrid::Span cs = livegrid::column(o.x, t, dpp);
@@ -2026,7 +2333,8 @@ void drawClipGrid(App& a) {
       playlistTrackMenu(a, t);  // the track's whole menu (its launch settings under Live settings)
       ImGui::EndPopup();
     }
-    ui::Hint("The track: click selects it (its devices show below), right-click: the track's menu");
+    if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 6.0f)) titleDrag = t;  // K-112c (round 39)
+    ui::Hint("The track: click selects it (its devices show below), drag to move it, right-click: the track's menu");
     const ObjectId act = a.engine.liveActive(t), que = a.engine.liveQueued(t);
     for (int k = 0; k < rows; ++k) {
       const pixelgrid::Span rs = livegrid::row(o.y, k, dpp);
@@ -2045,6 +2353,7 @@ void drawClipGrid(App& a) {
           dragFrom = {t, k};  // K-287: dragged onto another slot, the clip moves there
           a.playlist.selected = {c.id};  // the clip band shows the clip (its notes, or an audio clip's sample)
           if (c.kind == ClipKind::Pattern) a.selectPattern(c.pattern);
+          selectClipChannel(a, c);
         }
         if (ImGui::BeginPopupContextItem("##slotmenu")) {  // the clip's menu, as in the arrangement
           devArrangementClipMenu(a, c.id);
@@ -2095,25 +2404,26 @@ void drawClipGrid(App& a) {
       const ImVec2 q0(x, sy), q1(x + w, rs.x1);
       ImGui::PushID(1000 + k);
       ImGui::SetCursorScreenPos(q0);
-      if (ImGui::InvisibleButton("##scene", ImVec2(w, q1.y - q0.y)) && k < nScenes) {
+      if (ImGui::InvisibleButton("##scene", ImVec2(w, q1.y - q0.y))) {
         for (int t = 0; t < nCols; ++t) {
-          const std::vector<int>& in = slot[static_cast<size_t>(t)][static_cast<size_t>(k)];
-          if (!in.empty()) launch(a, s.playlist[static_cast<size_t>(in.front())].id);
+          const std::vector<int>* in = k < nScenes ? &slot[static_cast<size_t>(t)][static_cast<size_t>(k)] : nullptr;
+          if (in && !in->empty()) launch(a, s.playlist[static_cast<size_t>(in->front())].id);
           else a.engine.stopLiveTrack(t);
         }
       }
       const bool hov = ImGui::IsItemHovered();
       // K-112c: square scene cells, the launch triangle at the left and the scene's number at the
-      // right end, as every ref draws the scene column.
-      dl->AddRectFilled(q0, q1, hov && k < nScenes ? P.surface700 : P.surface800, 0.0f);
+      // right end, as every ref draws the scene column. K-112c (round 43): in every row, an empty
+      // set's too (empty01, empty02: eight numbered scenes before any clip). A row past the live
+      // area is a scene of empty slots: launching it stops every track, as an empty slot does. It
+      // is drawn, not stored: the song gains nothing until a clip lands in the row.
+      dl->AddRectFilled(q0, q1, hov ? P.surface700 : P.surface800, 0.0f);
       const float cyy = (q0.y + q1.y) * 0.5f;
-      if (k < nScenes) {
-        ui::drawIconFit(dl, ui::Icon::Play, ImVec2(q0.x + 6, cyy - 4.5f), ImVec2(q0.x + 13, cyy + 4.5f), hov ? P.text : P.textDim);
-        const std::string sn = std::to_string(k + 1);
-        const float nw = numFont(a)->CalcTextSizeA(theme::kFontCaption, FLT_MAX, 0.0f, sn.c_str()).x;
-        dl->AddText(numFont(a), theme::kFontCaption, ImVec2(std::round(q1.x - 7 - nw), theme::textTop(numFont(a), theme::kFontCaption, cyy, 0)), P.text, sn.c_str());
-        ui::Hint("Scene: launches every track's clip in this row (tracks with an empty slot stop)");
-      }
+      ui::drawIconFit(dl, ui::Icon::Play, ImVec2(q0.x + 6, cyy - 4.5f), ImVec2(q0.x + 13, cyy + 4.5f), hov ? P.text : P.textDim);
+      const std::string sn = std::to_string(k + 1);
+      const float nw = numFont(a)->CalcTextSizeA(theme::kFontCaption, FLT_MAX, 0.0f, sn.c_str()).x;
+      dl->AddText(numFont(a), theme::kFontCaption, ImVec2(std::round(q1.x - 7 - nw), theme::textTop(numFont(a), theme::kFontCaption, cyy, 0)), P.text, sn.c_str());
+      ui::Hint("Scene: launches every track's clip in this row (tracks with an empty slot stop)");
       ImGui::PopID();
     }
   }
@@ -2121,6 +2431,12 @@ void drawClipGrid(App& a) {
   if (gGridAsked) {  // K-287 (dev): each slot's centre and its first clip (0: empty)
     gGridAsked = false;
     std::printf("livegrid cols %d scenes %d rows %d\n", nCols, nScenes, rows);
+    for (int t = 0; t < nCols; ++t)  // K-112c (round 39): each column's title: its track's name and centre
+      std::printf("livegrid title %d \"%s\" %.0f %.0f\n", t, playlistTrackName(s, static_cast<size_t>(t)).c_str(),
+                  static_cast<double>(column(t) + (colW - 4) * 0.5f), static_cast<double>((y0 + yT1) * 0.5f));
+    for (int k = 0; k < rows; ++k)  // K-112c (round 43): every slot row's centre, and the free column's
+      std::printf("livegrid row %d y %.1f\n", k, static_cast<double>((livegrid::row(o.y, k, dpp).x0 + livegrid::row(o.y, k, dpp).x1) * 0.5f));
+    if (freeX1 - freeX0 >= 40.0f) std::printf("livegrid free x %.1f w %.1f\n", static_cast<double>((freeX0 + freeX1) * 0.5f), static_cast<double>(freeX1 - freeX0));
     for (int t = 0; t < nCols; ++t)
       for (int k = 0; k < nScenes; ++k) {
         const livegrid::Cell q = livegrid::slot(o.x, o.y, t, k, dpp);
@@ -2131,8 +2447,9 @@ void drawClipGrid(App& a) {
     std::fflush(stdout);
   }
   // The stop row under the slots: a stop button per track (lit while the track plays a grid clip),
-  // and Stop all under the scenes.
-  if (nScenes > 0) {
+  // and Stop all under the scenes. K-112c (round 42): always, as a new set's grid in the refs (no
+  // live area yet is a grid of empty slots, not a message).
+  {
     const float sy = gridBottom, sy1 = livegrid::row(o.y, rows, dpp).x1;  // the rows' own gap above it
     for (int t = 0; t < nCols; ++t) {
       const pixelgrid::Span cs = livegrid::column(o.x, t, dpp);
@@ -2164,11 +2481,100 @@ void drawClipGrid(App& a) {
     dl->AddRect(ImVec2(q0.x + 4.5f, cyy - 5.5f), ImVec2(q0.x + 15.5f, cyy + 5.5f), IM_COL32(16, 18, 22, 200), 1.5f);
     gridBottom = livegrid::rowY(o.y, rows + 1, dpp);
   }
-  if (nScenes == 0) {  // no live area yet: say how the grid fills
-    const char* t1 = i18n::tr("The grid is empty: it plays the live area, the start of the song that is launched by hand.");
-    const char* t2 = i18n::tr("Playlist menu, Live area: clips placed before its end fill the slots, 4 bars per scene.");
-    dl->AddText(a.fontRegular, theme::kFontCaption + 1, ImVec2(column(0), y0 + kTitleH + 12), P.textDim, t1);
-    dl->AddText(a.fontRegular, theme::kFontCaption, ImVec2(column(0), y0 + kTitleH + 32), P.textFaint, t2);
+  // K-112c (round 43): the free column, and files or instruments dropped onto the grid. The free
+  // column is a quiet panel with its hint, as the refs' (101, 069, 375, empty02); what drops there
+  // makes new tracks after the shown ones. A slot (or a title, or the stop cell: the column's first
+  // empty slot) puts the files in that track's slots, one per scene from there, through the same
+  // drop as the arrangement's (one undo step, collaborators see it). Dropped audio opens nothing.
+  {
+    const float fy0 = y0, fy1 = livegrid::row(o.y, rows, dpp).x1;
+    const bool freeCol = freeX1 - freeX0 >= 40.0f;
+    if (freeCol) {
+      dl->AddRectFilled(ImVec2(freeX0, fy0), ImVec2(freeX1, fy1), theme::withAlpha(P.surface800, 0.55f), 0.0f);
+      const char* ht = i18n::tr("Drop files and instruments here");
+      const float wrapW = freeX1 - freeX0 - 16.0f;  // a narrow column wraps it, a wide one keeps one line (101 / empty02)
+      const ImVec2 ts = a.fontRegular->CalcTextSizeA(theme::kFontCaption, FLT_MAX, wrapW, ht);
+      const float midY = (livegrid::rowY(o.y, 0, dpp) + livegrid::row(o.y, std::min(rows, 8) - 1, dpp).x1) * 0.5f;
+      // Each wrapped line centred on its own, as the refs set the hint.
+      const char* line = ht;
+      const char* htEnd = ht + std::strlen(ht);
+      float ly = std::round(midY - ts.y * 0.5f);
+      const float lh = a.fontRegular->CalcTextSizeA(theme::kFontCaption, FLT_MAX, 0.0f, "Ag").y;
+      // Round 45: a column narrower than the longest word shows no hint (no word is cut in two).
+      float widest = 0.0f;
+      for (const char* w = ht; w < htEnd;) {
+        const char* we = w;
+        while (we < htEnd && *we != ' ') ++we;
+        widest = std::max(widest, a.fontRegular->CalcTextSizeA(theme::kFontCaption, FLT_MAX, 0.0f, w, we).x);
+        w = we < htEnd ? we + 1 : we;
+      }
+      if (widest > wrapW) line = htEnd;
+      while (line < htEnd) {
+        const char* end = a.fontRegular->CalcWordWrapPosition(theme::kFontCaption, line, htEnd, wrapW);
+        if (end <= line) end = htEnd;
+        const float lw = a.fontRegular->CalcTextSizeA(theme::kFontCaption, FLT_MAX, 0.0f, line, end).x;
+        dl->AddText(a.fontRegular, theme::kFontCaption, ImVec2(std::round((freeX0 + freeX1 - lw) * 0.5f), ly), P.textFaint, line, end);
+        ly += lh + 2;
+        line = end;
+        while (*line == ' ') ++line;
+      }
+    }
+    const float dx1 = freeCol ? freeX1 : column(nCols) - kGap;
+    if (nCols > 0 && dx1 > column(0) && ImGui::BeginDragDropTargetCustom(ImRect(column(0), fy0, dx1, fy1), ImGui::GetID("##griddrop"))) {
+      int tt = -1;
+      for (int t = 0; t < nCols && tt < 0; ++t) {
+        const pixelgrid::Span cs = livegrid::column(o.x, t, dpp);
+        if (m.x >= cs.x0 && m.x < cs.x1 + kGap) tt = t;
+      }
+      const bool inFree = tt < 0 && freeCol && m.x >= freeX0;
+      int tk = -1;
+      for (int k = 0; k < rows && tk < 0; ++k) {
+        const pixelgrid::Span rs = livegrid::row(o.y, k, dpp);
+        if (m.y >= rs.x0 - kGap && m.y < rs.x1) tk = k;
+      }
+      if (tt >= 0 && tk < 0) {  // the title or the stop cell: the column's first empty slot
+        tk = 0;
+        while (tk < nScenes && !slot[static_cast<size_t>(tt)][static_cast<size_t>(tk)].empty()) ++tk;
+      }
+      if (inFree) tt = nCols, tk = std::max(tk, 0);
+      if (tt >= 0) {
+        browserui::DropPlace place;
+        place.track = tt;
+        place.tick = static_cast<Tick>(tk) * sceneT;
+        place.slotTicks = sceneT;
+        place.newTracks = inFree;
+        browserui::DropFeedback fb;
+        fb.highlight = false;
+        browserui::acceptFileDrop(a, browse::DropTarget::Playlist, place, &fb);
+        browserui::DropFeedback pfb;
+        pfb.highlight = false;
+        browserui::acceptPluginDrop(a, browse::DropTarget::Playlist, place, &pfb);
+        // Where it lands: the slots the files go to (in the free column, the new tracks' first
+        // columns), or the whole column an instrument goes to.
+        const float ri = pixelgrid::strokeIn(2.0f);
+        dl->PushClipRect(ImVec2(column(0), fy0), ImVec2(std::max(dx1, column(0) + 1), fy1), true);
+        if (const browserui::HoverPlan* hp = fb.hovering ? browserui::hoverPlan(browse::DropTarget::Playlist) : nullptr) {
+          for (const xdrop::Step& sp : hp->plan.steps) {
+            if (sp.action != browse::DropAction::AudioClip && sp.action != browse::DropAction::MidiPatternClip) continue;
+            const int k = static_cast<int>(sp.tick / sceneT);
+            const livegrid::Cell q = livegrid::slot(o.x, o.y, sp.track, k, dpp);
+            const ImU32 col = theme::rgb(sp.action == browse::DropAction::AudioClip ? theme::role::kPaint : theme::role::kDraw);
+            dl->AddRectFilled(ImVec2(q.x0, q.y0), ImVec2(q.x1, q.y1), theme::withAlpha(col, 0.28f), 0.0f);
+            dl->AddRect(ImVec2(q.x0 + ri, q.y0 + ri), ImVec2(q.x1 - ri, q.y1 - ri), theme::withAlpha(col, 0.95f), 0.0f, 0, 2.0f);
+            if (sp.item < hp->items.size())
+              theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption, ImVec2(q.x0 + 19, theme::textTop(a.fontRegular, theme::kFontCaption, (q.y0 + q.y1) * 0.5f, 0)),
+                                  q.x1 - q.x0 - 24, P.text, xdrop::displayName(hp->items[sp.item]).c_str());
+          }
+        } else if (pfb.hovering) {
+          const pixelgrid::Span cs = livegrid::column(o.x, tt, dpp);
+          const ImU32 hot = theme::rgb(theme::role::kDraw);
+          dl->AddRectFilled(ImVec2(cs.x0, fy0), ImVec2(cs.x1, fy1), theme::withAlpha(hot, 0.16f));
+          dl->AddRect(ImVec2(cs.x0 + ri, fy0 + ri), ImVec2(cs.x1 - ri, fy1 - ri), theme::withAlpha(hot, 0.95f), 0.0f, 0, 2.0f);
+        }
+        dl->PopClipRect();
+      }
+      ImGui::EndDragDropTarget();
+    }
   }
   // K-287: a slot's clips dragged onto an empty slot of the live area move there (that track, that
   // scene, the same place inside the scene): one undo step, as a move in the arrangement.
@@ -2209,203 +2615,45 @@ void drawClipGrid(App& a) {
       dragFrom = {-1, -1};
     }
   }
+  // K-112c (round 39): a title dragged along the row moves its track, as dragging an arrangement
+  // header does (the same document edit: the arrangement's rows follow, and collaborators get it).
+  if (titleDrag >= nCols) titleDrag = -1;
+  if (titleDrag >= 0) {
+    const int before = std::clamp(static_cast<int>(std::floor((m.x - (o.x + kPad)) / colW + 0.5f)), 0, nCols);
+    const float lx = before < nCols ? column(before) - 3 : column(nCols - 1) + colW - 3;
+    const pixelgrid::Span ls = pixelgrid::line(lx, dpp);
+    dl->AddRectFilled(ImVec2(ls.x0 - 1, y0), ImVec2(ls.x1 + 1, yT1), P.hot);
+    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+      if (before != titleDrag && before != titleDrag + 1) {
+        std::vector<int> now;
+        if (trackorder::movePlaylistTracks(a.doc, {titleDrag}, before, &now) && !now.empty()) a.playlist.trackSel = {now.front()};
+      }
+      titleDrag = -1;
+    }
+  }
   if (held != kNoId && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
     a.engine.releaseClip(held);
     held = kNoId;
   }
   // ---- mixer controls under the columns (the linked mixer track of each column) ----
   const float my0 = std::max(gridBottom + 8, o.y + av.y - kPad - mixH);
-  dl->AddLine(ImVec2(o.x + kPad, my0 - 4), ImVec2(mainX + kMainW - 8, my0 - 4), P.line);
-  const float mh = std::max(100.0f, o.y + av.y - kPad - my0);
-  // A track's first two sends to a return (not the master, which every track reaches): (send index, mixer index).
-  auto sendsOf = [&](const MixerTrack* mx) {
-    std::vector<std::pair<size_t, int>> v;
-    if (!mx) return v;
-    for (size_t k = 0; k < mx->sends.size() && v.size() < 2; ++k) {
-      const Send& sd = mx->sends[k];
-      if (sd.sidechain) continue;
-      int dest = -1;
-      for (size_t j = 0; j < s.mixer.size(); ++j)
-        if (s.mixer[j].id == sd.to) dest = static_cast<int>(j);
-      if (dest > 0) v.emplace_back(k, dest);
-    }
-    return v;
-  };
-  // K-112c (round 28): the sends get their own row across the top of every strip, above the volume
-  // and the meter, with "Sends" at the right and the knobs staggered, each with its return's letter
-  // in its open foot (143, 141, 112). The row is kept on every strip (blank where a track sends
-  // nowhere) so the faders line up, and dropped when the strips are too short for it.
-  constexpr float kSendsH = 34.0f;
-  bool anySends = false;
-  for (int t = 0; t < nCols && !anySends; ++t) anySends = !sendsOf(trackmodes::linkedMixer(s, t)).empty();
-  const bool sendsRow = anySends && mh >= 165.0f;  // room for the row, the fields and the pan above the buttons
+  if (footMixer) dl->AddLine(ImVec2(o.x + kPad, my0 - 4), ImVec2(mainX + kMainW - 8, my0 - 4), P.line);
+  const float mh = footMixer ? std::max(100.0f, o.y + av.y - kPad - my0) : 0.0f;
+  const StripRow srow{my0, mh, anySends(s) && mh >= 165.0f};  // room for the sends row, the fields and the pan above the buttons  // room for the row, the fields and the pan above the buttons
   auto strip = [&](int t, const MixerTrack* mx, float x, float w, bool master, char letter = 0) {
-    ImGui::PushID(master ? 9999 : letter ? 8000 + letter : 2000 + t);
-    if (mx) {
-      // K-112c (round 32): collaboration, as Studio's mixer: a peer's pointer on this mixer track (in any
-      // layout) lands on this strip, and a peer's change to it flashes its outline.
-      canchor::publishRect(canchor::MixerStrip, mx->id, 0, ImVec2(x, my0), ImVec2(x + w, my0 + mh));
-      if (ImU32 fc = 0; const float fl = collabui::flash(a, "mixer/#" + std::to_string(mx->id), &fc))
-        dl->AddRect(ImVec2(x + 1, my0 + 1), ImVec2(x + w - 1, my0 + mh - 1), theme::withAlpha(fc, fl), 0.0f, 0, 2.0f);
-    }
-    // The sends row (see above), then two columns. Left, top to bottom: the peak and the volume in
-    // dB, pan, then the activator, S and arm stacked. Right: the fader beside a meter with its dB
-    // scale, the rest of the strip's height.
-    const float bottom = my0 + mh, top = my0 + 4 + (sendsRow ? kSendsH : 0.0f);
-    const float colL = std::min(44.0f, std::floor(w * 0.48f));  // the left column's width
-    const float rx = x + colL + 4;                               // the right column
-    if (sendsRow && mx && !master) {
-      const float sy = my0 + 4;
-      const auto sends = sendsOf(mx);
-      if (!sends.empty()) {
-        const char* lab = i18n::tr("Sends");
-        const float lw = a.fontRegular->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, lab).x;
-        dl->AddText(a.fontRegular, theme::kFontLabel, ImVec2(std::round(x + w - 4 - lw), std::round(sy)), P.textDim, lab);
-      }
-      constexpr float kR = 10.0f;
-      for (size_t i = 0; i < sends.size(); ++i) {
-        const auto [k, dest] = sends[i];
-        const ImVec2 kp(x + 4 + static_cast<float>(i) * (2 * kR + 6), sy + static_cast<float>(i) * 8.0f);
-        ImGui::SetCursorScreenPos(kp);
-        ImGui::PushID(static_cast<int>(k));
-        ui::ParamKnob("##send", sendParam(mx->id, dest), kR, nullptr, false);
-        if (ImGui::IsItemHovered()) a.setHint(std::string(i18n::tr("Send to")) + " " + s.mixer[static_cast<size_t>(dest)].name);
-        if (const char lt = returnLetter(s, dest)) {  // the return's letter in the knob's open foot
-          const char ls[2] = {lt, 0};
-          const float fz = 9.0f, lw2 = a.fontRegular->CalcTextSizeA(fz, 1e9f, 0, ls).x;
-          dl->AddText(a.fontRegular, fz, ImVec2(std::round(kp.x + kR - lw2 * 0.5f), std::round(kp.y + 2 * kR - fz + 1)), P.textDim, ls);
-        }
-        ImGui::PopID();
-      }
-    }
-    // The peak since it was last cleared (click it to clear), then the volume (dB) under it: two
-    // equal fields with the value centred, as the refs' strips (357, 280, 143). K-112c (round 32).
-    if (mx) {
-      static std::map<ObjectId, float> held;  // per mixer track, linear
-      float& pk = held[mx->id];
-      pk = std::max(pk, mixmeters::get(a, mx->id).peak());
-      const ImVec2 k0(x + 2, top), k1(x + colL, top + 16);
-      ImGui::SetCursorScreenPos(k0);
-      if (ImGui::InvisibleButton("##peak", ImVec2(k1.x - k0.x, k1.y - k0.y))) pk = 0;
-      ui::Hint("The highest level since this was last clicked (click to clear)");
-      dl->AddRectFilled(k0, k1, P.dark ? P.field : P.surface950, theme::kRadiusSm);
-      if (pk >= 1.0f) dl->AddRect(k0, k1, P.arm, theme::kRadiusSm, 0, 1.0f);
-      char pb[16];
-      if (pk > 1e-6f) std::snprintf(pb, sizeof pb, "%.1f", static_cast<double>(20.0f * std::log10(pk)));
-      else std::snprintf(pb, sizeof pb, "-\xE2\x88\x9E");  // minus infinity, as the refs write it
-      const float pw = a.fontRegular->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, pb).x;
-      dl->AddText(a.fontRegular, theme::kFontLabel, ImVec2(std::round((k0.x + k1.x - pw) * 0.5f), theme::textTop(a.fontRegular, theme::kFontLabel, top, 16)),
-                  pk >= 1.0f ? P.arm : P.textDim, pb);
-    }
-    // Volume (dB).
-    const float volTop = top + 18;
-    const ImVec2 v0(x + 2, volTop), v1(x + colL, volTop + 16);
-    dl->AddRectFilled(v0, v1, P.dark ? P.field : P.surface950, theme::kRadiusSm);
-    char vb[16] = "-";
-    if (mx) {
-      if (mx->volume > 1e-6f) std::snprintf(vb, sizeof vb, "%.1f", static_cast<double>(20.0f * std::log10(mx->volume)));
-      else std::snprintf(vb, sizeof vb, "-\xE2\x88\x9E");  // minus infinity, as the refs write it
-    }
-    {
-      const float tw = a.fontRegular->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, vb).x;
-      dl->AddText(a.fontRegular, theme::kFontLabel, ImVec2(std::round((v0.x + v1.x - tw) * 0.5f), theme::textTop(a.fontRegular, theme::kFontLabel, volTop, 16)),
-                  mx ? P.text : P.textFaint, vb);
-    }
-    // The left column from the bottom up: arm, S, the activator, then pan.
-    // K-112c (round 28): the strip ends in a bar of the track's colour (143, 146, 280, 141), so the
-    // controls stand on it with a gap.
-    constexpr float kFootH = 3.0f, kFootGap = 4.0f;
-    const float armY = bottom - kFootH - kFootGap - 15, soloY = armY - 17, actY = soloY - 21, panY = actY - 27;
-    // Fader and meter of the mixer track, with the scale on the right.
-    const float fy = top, fh = std::max(24.0f, bottom - kFootH - kFootGap - 1 - top);
-    if (mx) {
-      ImGui::SetCursorScreenPos(ImVec2(rx, fy));
-      ui::setFaderPointer(true);  // K-112c: a pointer beside the meter, as the refs' strips
-      ui::ParamFader("##fader", mixerParam(mx->id, MixerParam::Volume), ImVec2(14, fh));
-      ui::setFaderPointer(false);
-      const mixmeters::Reading r = mixmeters::get(a, mx->id);
-      ImGui::SetCursorScreenPos(ImVec2(rx + 16, fy));
-      ui::Meter(ImGui::GetID("meter"), r.peakL, r.peakR, ImVec2(10, fh));
-      // The meter's dB scale (its range is -60 to +6 dB): a tick and a number every 12 dB, the
-      // numbers only where there is room for them.
-      const float fsz = 9.0f, sx = rx + 28;
-      const int step = fh >= 90 ? 12 : 24;
-      for (int db = 0; db >= -60; db -= step) {
-        const float ty = std::round(fy + fh - (static_cast<float>(db) + 60.0f) / 66.0f * fh) + 0.5f;
-        dl->AddLine(ImVec2(sx, ty), ImVec2(sx + 3, ty), P.textFaint);
-        if (fh >= 48 && sx + 4 + 10 <= x + w + 2) {
-          const std::string n = std::to_string(-db);
-          dl->AddText(a.fontRegular, fsz, ImVec2(sx + 4, std::round(ty - fsz * 0.5f)), P.textFaint, n.c_str());
-        }
-      }
-      // Pan: the mixer's own knob (undo, automation, links as there), as large as the refs' (143, 146, 280).
-      const float kc = x + 2 + (colL - 2) * 0.5f;  // the left column's centre
-      ImGui::SetCursorScreenPos(ImVec2(kc - 11, panY));
-      ui::ParamKnob("##pan", mixerParam(mx->id, MixerParam::Pan), 11.0f, nullptr, true);
-      ui::Hint("Pan");
-    } else {
-      dl->AddText(a.fontRegular, theme::kFontLabel, ImVec2(rx, fy), P.textFaint, i18n::tr("free track"));
-    }
-    // Activator (number), S, arm, stacked: the same controls as the arrangement's headers.
-    const float bx0 = x + 2, bx1 = x + colL;
-    if (letter) {  // K-112c (round 19): a return's activator is its letter (143, 141, 280)
-      const float cxl = std::round((bx0 + bx1) * 0.5f);
-      const Cell ca{ImVec2(cxl - 10, actY), ImVec2(cxl + 10, actY + 18)};  // K-112c (round 28): square, as S is wide
-      const bool on = mx && !mx->muted;
-      square(dl, ca, on ? P.hot : P.surface900, ImGui::IsWindowHovered() && ca.contains(m));
-      const char ls[2] = {letter, 0};
-      centredText(dl, a.fontRegular, theme::kFontLabel, ca, on ? theme::contrastText(P.hot) : P.textFaint, ls);
-      ImGui::SetCursorScreenPos(ca.a);
-      if (ImGui::InvisibleButton("##ract", ImVec2(ca.b.x - ca.a.x, ca.b.y - ca.a.y)) && mx)
-        a.doc.setParam(mixerParam(mx->id, MixerParam::Mute), mx->muted ? 0.0 : 1.0, false);
-      ui::Hint("Return track: turn it on or off");
-    } else if (!master) {
-      const Song& ss = a.doc.song();
-      const PlaylistTrack& tr = ss.tracks[static_cast<size_t>(t)];
-      const bool hovAny = ImGui::IsWindowHovered();
-      const float cxm = std::round((bx0 + bx1) * 0.5f);
-      const Cell ca{ImVec2(cxm - 10, actY), ImVec2(cxm + 10, actY + 18)};  // K-112c (round 28): square, as S is wide (143, 146, 280, 141)
-      const Cell cs{ImVec2(cxm - 10, soloY), ImVec2(cxm + 10, soloY + 14)};
-      const Cell cr{ImVec2(cxm - 10, armY), ImVec2(cxm + 10, armY + 14)};
-      char num[16];
-      std::snprintf(num, sizeof num, "%d", t + 1);
-      square(dl, ca, !tr.muted ? P.hot : P.surface900, hovAny && ca.contains(m));
-      centredText(dl, a.fontRegular, theme::kFontLabel, ca, !tr.muted ? theme::contrastText(P.hot) : P.textFaint, num);
-      const bool so = soloed(ss, t);
-      square(dl, cs, so ? P.solo : P.surface900, hovAny && cs.contains(m));
-      centredText(dl, a.fontBold, theme::kFontLabel, cs, so ? theme::contrastText(P.solo) : P.textDim, "S");
-      const bool audio = trackmodes::modeOf(ss, t) == TrackMode::Audio, armed = audio && mx && mx->armed;
-      square(dl, cr, armed ? theme::withAlpha(P.arm, 0.85f) : P.surface900, audio && hovAny && cr.contains(m));
-      dl->AddCircleFilled(ImVec2((cr.a.x + cr.b.x) * 0.5f, (cr.a.y + cr.b.y) * 0.5f), 3.5f, armed ? theme::contrastText(P.arm) : audio ? P.text : theme::withAlpha(P.textDim, 0.45f), 12);  // K-112c (round 19): a neutral dot until armed (142, 157, 143)
-      ImGui::SetCursorScreenPos(ca.a);
-      if (ImGui::InvisibleButton("##act", ImVec2(ca.b.x - ca.a.x, ca.b.y - ca.a.y))) clickHeader(a, t, HeaderPart::Activator, false);
-      ui::Hint(headerHint(HeaderPart::Activator));
-      ImGui::SetCursorScreenPos(cs.a);
-      if (ImGui::InvisibleButton("##solo", ImVec2(cs.b.x - cs.a.x, cs.b.y - cs.a.y))) clickHeader(a, t, HeaderPart::Solo, false);
-      ui::Hint(headerHint(HeaderPart::Solo));
-      ImGui::SetCursorScreenPos(cr.a);
-      if (ImGui::InvisibleButton("##arm", ImVec2(cr.b.x - cr.a.x, cr.b.y - cr.a.y)) && audio) clickHeader(a, t, HeaderPart::Arm, false);
-      ui::Hint(headerHint(HeaderPart::Arm));
-    }
-    // K-112c (round 32): Main's strip no longer draws a "Main" box where the tracks have their
-    // activator: it looked like a button and did nothing (its title already names it).
-    {  // the colour bar along the foot
-      const bool trk = !master && !letter && t >= 0 && t < static_cast<int>(s.tracks.size());
-      const ImU32 cc = trk ? theme::content(s.tracks[static_cast<size_t>(t)].color) : mx ? theme::content(mx->color) : P.surface600;
-      dl->AddRectFilled(ImVec2(x, std::round(bottom - kFootH)), ImVec2(x + w, std::round(bottom)), cc);
-    }
-    ImGui::PopID();
+    if (footMixer) sessionStrip(a, dl, srow, t, mx, x, w, master, letter);
   };
-  for (int t = 0; t < nCols; ++t) strip(t, trackmodes::linkedMixer(s, t), column(t), colW - 4, false);
+  for (int t = 0; t < nCols; ++t) strip(t, trackmodes::playedMixer(s, t), column(t), colW - 4, false);
   // K-112c (round 19): the return tracks as strips between the tracks and Main, each titled in the
   // grid's title row with its letter and name and no slots, as every ref's mixer (143, 141, 280, 093).
+  // (Where they stand: retShift / nFit above.)
   int nRet = 0;
   {
     const std::vector<size_t> rets = returnTracks(s);
     for (size_t i = 0; i < rets.size() && i < 26; ++i) {
-      const pixelgrid::Span cs = livegrid::column(o.x, nCols + static_cast<int>(i), dpp);  // K-276: as a track's title
+      const pixelgrid::Span cs = retColumn(static_cast<int>(i));  // K-276: as a track's title
       const float x = cs.x0;
-      if (x + colW - 4 > mainX - 6) break;
+      if (static_cast<int>(i) >= nFit) break;  // only the returns that fit before Main
       const MixerTrack& rt = s.mixer[rets[i]];
       const char lt = static_cast<char>('A' + i);
       dl->AddRectFilled(ImVec2(x, y0), ImVec2(cs.x1, yT1), returnFill(), 0.0f);
@@ -2421,11 +2669,89 @@ void drawClipGrid(App& a) {
     }
   }
   // K-112c: a 1 px divider between strips (and before Main), as the refs' mixers draw them.
-  for (int t = 1; t <= nCols + nRet; ++t) {
-    const pixelgrid::Span lx = pixelgrid::line((t == nCols + nRet ? mainX : column(t)) - 3, dpp);  // one crisp device column
+  for (int t = 1; footMixer && t <= nCols + nRet; ++t) {
+    // A track's left edge, a return's (shifted) left edge, or Main's; plus the last track's right edge
+    // when the returns stand apart from it.
+    const float ex = t == nCols + nRet ? mainX : t >= nCols ? retColumn(t - nCols).x0 : column(t);
+    const pixelgrid::Span lx = pixelgrid::line(ex - 3, dpp);  // one crisp device column
     dl->AddRectFilled(ImVec2(lx.x0, my0 + 2), ImVec2(lx.x1, my0 + mh - 2), P.line);
+    if (t == nCols && nRet > 0 && retShift > 0.0f) {
+      const pixelgrid::Span lt = pixelgrid::line(column(nCols) - 3, dpp);
+      dl->AddRectFilled(ImVec2(lt.x0, my0 + 2), ImVec2(lt.x1, my0 + mh - 2), P.line);
+    }
   }
   if (!s.mixer.empty()) strip(-1, &s.mixer[0], mainX, kMainW - 8, true);
+  ImGui::SetCursorScreenPos(o);
+  ImGui::Dummy(ImVec2(mainX + kMainW - o.x + kPad - 4, std::max(av.y - 2, my0 + mh - o.y)));
+  ImGui::EndChild();
+}
+
+void drawMixerBand(App& a) {
+  const auto& P = pal();
+  const Song& s = a.doc.song();
+  ImGui::BeginChild("##clipsmixer", ImVec2(0, 0), ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const float dpp = pixelgrid::frameScale();
+  const ImVec2 o(livegrid::snap(ImGui::GetCursorScreenPos().x, dpp), livegrid::snap(ImGui::GetCursorScreenPos().y, dpp));
+  const ImVec2 av = ImGui::GetContentRegionAvail();
+  const int nCols = gridColumns(s);
+  using livegrid::kPad, livegrid::kGap;
+  constexpr float kMainW = 140, colW = livegrid::kColW;
+  const float fs = theme::kFontCaption + 1;
+  // The titles, then the strips: the clip grid's columns, returns beside Main at the right (357).
+  const float y0 = livegrid::titleY(o.y, dpp), yT1 = livegrid::titleBottom(o.y, dpp), titleH = yT1 - y0;
+  auto column = [&](int t) { return livegrid::column(o.x, t, dpp); };
+  const float mainX = std::max(column(nCols).x0 + 4, livegrid::snap(o.x + av.x - kPad - kMainW + 4, dpp));
+  const float my0 = livegrid::snap(yT1 + kGap + 2, dpp);
+  const float mh = std::max(100.0f, o.y + av.y - kPad - my0);
+  const StripRow srow{my0, mh, anySends(s) && mh >= 165.0f};
+  // A title: the fill and name of a column (a click selects its mixer track; a selected one is ringed).
+  auto title = [&](float x0, float x1, ImU32 fill, const std::string& name, const MixerTrack* mx, int id) {
+    dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, yT1), fill, 0.0f);
+    if (mx && a.selMixer == mx->id) {
+      const float in = pixelgrid::strokeIn(1.5f);
+      dl->AddRect(ImVec2(x0 + in, y0 + in), ImVec2(x1 - in, yT1 - in), P.hot, 0.0f, 0, 1.5f);
+    }
+    theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(x0 + 6, theme::textTop(a.fontRegular, fs, y0, titleH)), x1 - x0 - 10,
+                        theme::contrastText(fill), name.c_str());
+    ImGui::SetCursorScreenPos(ImVec2(x0, y0));
+    ImGui::PushID(id);
+    if (ImGui::InvisibleButton("##mtitle", ImVec2(x1 - x0, titleH)) && mx) a.selMixer = mx->id;
+    ImGui::PopID();
+    if (mx) ui::Hint("Click to select this mixer track");
+  };
+  for (int t = 0; t < nCols; ++t) {
+    const pixelgrid::Span cs = column(t);
+    const MixerTrack* mx = trackmodes::playedMixer(s, t);
+    title(cs.x0, cs.x1, theme::content(s.tracks[static_cast<size_t>(t)].color), playlistTrackName(s, static_cast<size_t>(t)), mx, 3000 + t);
+    sessionStrip(a, dl, srow, t, mx, cs.x0, colW - 4, false);
+  }
+  // The returns that fit before Main, right-aligned against it (as the clip grid, round 36).
+  const std::vector<size_t> rets = returnTracks(s);
+  int nFit = 0;
+  while (nFit < static_cast<int>(rets.size()) && nFit < 26 && column(nCols + nFit).x0 + colW - 4 <= mainX - 6) ++nFit;
+  const float retShift = nFit > 0 ? std::max(0.0f, livegrid::snap(mainX - column(nCols + nFit).x0, dpp)) : 0.0f;
+  for (int i = 0; i < nFit; ++i) {
+    const pixelgrid::Span cs = livegrid::column(o.x + retShift, nCols + i, dpp);
+    const MixerTrack& rt = s.mixer[rets[static_cast<size_t>(i)]];
+    const char lt = static_cast<char>('A' + i);
+    title(cs.x0, cs.x1, returnFill(), std::string(1, lt) + " " + rt.name, &rt, 3500 + i);
+    sessionStrip(a, dl, srow, -1, &rt, cs.x0, colW - 4, false, lt);
+  }
+  // 1 px dividers between the strips, as the clip grid's foot.
+  auto divider = [&](float ex) {
+    const pixelgrid::Span lx = pixelgrid::line(ex - 3, dpp);
+    dl->AddRectFilled(ImVec2(lx.x0, my0 + 2), ImVec2(lx.x1, my0 + mh - 2), P.line);
+  };
+  for (int t = 1; t <= nCols; ++t) divider(column(t).x0);
+  for (int i = 1; i < nFit; ++i) divider(livegrid::column(o.x + retShift, nCols + i, dpp).x0);
+  if (nFit > 0 && retShift > 0.0f) divider(livegrid::column(o.x + retShift, nCols, dpp).x0);
+  divider(mainX);
+  if (!s.mixer.empty()) {
+    const pixelgrid::Span ms{mainX, livegrid::snap(mainX + kMainW - 8, dpp)};
+    title(ms.x0, ms.x1, mainFill(), i18n::tr("Main"), &s.mixer[0], 3999);
+    sessionStrip(a, dl, srow, -1, &s.mixer[0], mainX, kMainW - 8, true);
+  }
   ImGui::SetCursorScreenPos(o);
   ImGui::Dummy(ImVec2(mainX + kMainW - o.x + kPad - 4, std::max(av.y - 2, my0 + mh - o.y)));
   ImGui::EndChild();

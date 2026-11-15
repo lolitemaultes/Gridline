@@ -24,11 +24,11 @@ class Settings;
 
 namespace gl::layout {
 
-// K-112: Tracker is the fourth layout. Until its phase ships it is a development layout only
-// (available() below): the chooser, View > Window layout and the settings list the first
-// kPresetCount presets; per-layout tables (homes, regions, styles, key sets) cover kLayoutCount.
+// K-112: Tracker is the fourth layout (choosable since 2026-11-16, a Preview like Clips and Smooth).
+// The chooser, View > Window layout and the settings list the kPresetCount presets; per-layout
+// tables (homes, regions, styles, key sets) cover kLayoutCount.
 enum class Preset : int { Studio = 0, Live = 1, Logic = 2, Tracker = 3, Count = 4 };
-constexpr int kPresetCount = 3;  // the layouts a person can choose today
+constexpr int kPresetCount = 4;  // the layouts a person can choose
 constexpr int kLayoutCount = static_cast<int>(Preset::Count);
 
 // Stable id stored in the settings: "studio", "live", "logic", "tracker".
@@ -46,12 +46,13 @@ const char* blurb(Preset p);
 // The interface marks a preview with previewTag().
 bool isPreview(Preset p);
 const char* previewTag();
-// K-112: whether the layout may be shown: Studio, Live and Logic always; Tracker only with the
-// development setting ui.layoutDev (its layout is built in a later phase; a person never sees it rough).
+// K-112: whether the layout may be shown: every preset (Tracker too, since 2026-11-16).
 bool available(Preset p, const Settings& s);
 // K-112: whether ui.layoutDev counts: only in a development build (GRIDLINE_DEV_LAYOUTS); a release
 // build ignores the setting.
 bool devSetting(const Settings& s);
+// --layout-dev for this run: counts as ui.layoutDev (development builds only).
+void setDevRun(bool on);
 // The layout to show for the settings: ui.layout when available, else Studio.
 Preset shown(const Settings& s);
 

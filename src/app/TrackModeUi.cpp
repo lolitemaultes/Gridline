@@ -165,15 +165,15 @@ void trackMenuItems(App& a, int track) {
   }
 }
 
-float drawNameGlyph(App& a, ImDrawList* dl, int track, ImVec2 p) {
+float drawNameGlyph(App& a, ImDrawList* dl, int track, ImVec2 p, ImU32 ink) {
   const auto& P = pal();
   const TrackMode mode = trackmodes::modeOf(a.doc.song(), track);
   if (mode == TrackMode::Audio) {
-    ui::drawIcon(dl, ui::Icon::Wave, ImVec2(p.x + 5, p.y + theme::kFontCaption * 0.5f + 1), 10, theme::rgb(theme::role::kStamp));
+    ui::drawIcon(dl, ui::Icon::Wave, ImVec2(p.x + 5, p.y + theme::kFontCaption * 0.5f + 1), 10, ink ? ink : theme::rgb(theme::role::kStamp));
     return 13;
   }
   if (mode == TrackMode::Instrument) {
-    ui::drawIcon(dl, ui::Icon::Keyboard, ImVec2(p.x + 5, p.y + theme::kFontCaption * 0.5f + 1), 10, P.textDim);
+    ui::drawIcon(dl, ui::Icon::Keyboard, ImVec2(p.x + 5, p.y + theme::kFontCaption * 0.5f + 1), 10, ink ? ink : P.textDim);
     return 13;
   }
   return 0;

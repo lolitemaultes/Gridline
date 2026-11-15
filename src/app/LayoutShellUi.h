@@ -55,8 +55,13 @@ ImGuiID regionNode(const std::string& region);
 std::string stripWindowName(const std::string& region);
 // The windows a shell layout opens with (the homes' openByDefault), the others in its regions closed.
 void showShellWindows(App& a, layout::Preset p);
-// On a layout switch, before the new layout applies: windows an exclusive region hid open again.
+// On a layout switch, before the new layout applies: windows an exclusive region hid open again
+// (K-297: a region shell's panes and region state are kept for this run first).
 void leaveLayout(App& a);
+// K-297: on a layout switch, once the new layout is active: its region state (the designed one on its
+// first visit in a run, else as it was left; its panes come back in showShellWindows), and another
+// layout's new parts that only float here are closed.
+void enterLayout(App& a, layout::Preset to);
 // Per frame, before the windows draw: exclusive regions show one window at a time, each with its
 // own size; fixed bands keep their pixel size; region state changes are saved.
 void shellFrame(App& a);

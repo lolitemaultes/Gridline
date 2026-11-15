@@ -153,6 +153,13 @@ void StatusDot(ImU32 col, bool pulse = false);
 // The next Segmented draws as a tab strip (K-112c round 30, Live clip view): square, the chosen tab
 // one surface lighter in the text colour, the others dimmed, thin lines between them.
 void SetNextSegmentedTabs();
+// K-112b checkpoint 35: a settings option (one of n values, such as the sample rate or buffer size). A row of
+// TextButtons, or in the Smooth layout (flat faces) a pop-up menu of `menuW` px, as its preferences draw
+// every such choice. `labels` are shown as given (translate them first); `hints` per option may be null.
+// Returns true when *index changed by a click.
+bool OptionRow(const char* id, const char* const* labels, int count, int* index, float menuW, const char* const* hints = nullptr);
+// True when settings options draw as pop-up menus (the Smooth layout).
+bool OptionsAsMenus();
 // Segmented control (one of n). Returns true when *index changed.
 bool Segmented(const char* id, const char* const* labels, int count, int* index, float segWidth = 0.0f,
                float height = 0.0f, const char* const* hints = nullptr);

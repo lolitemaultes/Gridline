@@ -41,7 +41,7 @@ Layout compute(const Input& in) {
   l.nameShrunk = l.nameW < kNameMax;
   const float viewMax = std::max(kMinView, room - l.nameW);
   const float gaps = static_cast<float>(n - 1) * kStepGap + static_cast<float>((n - 1) / 4) * kGroupGap;
-  l.stepW = std::clamp(std::floor((viewMax - gaps) / static_cast<float>(n)), kStepMin, kStepMax);
+  l.stepW = std::clamp(std::floor((viewMax - gaps) / static_cast<float>(n)), kStepMin, std::max(kStepMin, in.stepMax));
   l.contentW = contentWidth(n, l.stepW);
   l.viewW = std::min(l.contentW, viewMax);
   l.scrollMax = std::max(0.0f, l.contentW - l.viewW);

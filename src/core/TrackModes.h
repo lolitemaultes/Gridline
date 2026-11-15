@@ -30,6 +30,12 @@ TrackMode modeOf(const Song& s, int track);
 // The mixer track an audio track records through / an instrument track plays
 // into (nullptr when none).
 const MixerTrack* linkedMixer(const Song& s, int track);
+// K-112c (round 44): the mixer track a track plays through, for the Clips layout's strips: the linked
+// one, else the one mixer track (not Main) every channel of its clips goes to (pattern clips: each
+// channel with steps or notes; audio clips: their channel). nullptr when there is none or several.
+const MixerTrack* playedMixer(const Song& s, int track);
+// Every mixer track the track's clips play into (Main included), in the order first met.
+std::vector<ObjectId> playedMixers(const Song& s, int track);
 const Channel* linkedChannel(const Song& s, int track);
 // Track of the current arrangement linked to a mixer track as an audio track
 // (-1 = none), and the instrument track of a channel.
@@ -50,6 +56,23 @@ ObjectId freeMixer(const Song& s);
 // First playlist track at or after `from` without clips and without a mode
 // (-1 = none; the track list may need to grow, see makeRoom).
 int freeTrack(const Song& s, int from = 0);
+// The tracks in use: up to the last track with clips, a mode or a name, and never fewer than
+// kShownTracks (a new set shows that many empty tracks). The Clips layout's arrangement rows and
+// clip grid columns are exactly these, in the song's order (the empty tracks after them stay in
+// the song, as Studio's playlist shows them).
+inline constexpr int kShownTracks = 4;
+int usedTrackCount(const Song& s);
+// A new track right after the tracks in use (the track list grows when it has to), named
+// "Track N" so it counts as in use. Returns its index (-1: the list is full).
+int addUsedTrack(Song& s);
+// K-112c (round 43): the starting tracks of a new project made in the Clips layout, as the
+// reference's new set: two MIDI tracks (empty: they take pattern clips) then two audio tracks
+// (each on a free mixer track), named "1 MIDI", "2 MIDI", "3 Audio" and "4 Audio". Part of the
+// new project itself, so every view, Studio and collaborators show the same. Older projects are
+// left as they are (they still show at least kShownTracks tracks).
+// K-112c (round 45): and two returns, "Reverb" and "Delay" (shown as A Reverb, B Delay; Gridline's, fully
+// wet, on the next free mixer tracks), which each audio track sends to at zero level.
+void makeClipsStarterTracks(Song& s);
 // Whether a clip of this kind may sit on the track: instrument tracks take
 // pattern clips only.
 bool clipAllowed(const Song& s, ClipKind kind, int track);
@@ -98,6 +121,12 @@ bool makeInstrumentTrack(Document& d, int track, ObjectId channel, std::string* 
 // track's instrument. Returns the channel (kNoId on failure).
 ObjectId newInstrumentTrack(Document& d, int track, const std::string& pluginType, std::string* why = nullptr);
 bool unassign(Document& d, int track);
+int addUsedTrack(Document& d, int count = 1);  // `count` new tracks in one undo step; returns the last one's index
+// K-112c (round 45): the Clips Create menu's new tracks, right after the shown ones, one undo step
+// each: an audio track on a free mixer track, or an empty MIDI track (it takes pattern clips),
+// named "<number> Audio" / "<number> MIDI" as a new set's. Return the index (-1: none made).
+int addAudioTrack(Document& d);
+int addMidiTrack(Document& d);
 bool setArmed(Document& d, int track, bool armed);
 bool setInput(Document& d, int track, int input, bool stereo);
 bool setMonitor(Document& d, int track, InputMonitor m);

@@ -409,7 +409,7 @@ msgstr ""
 msgid "Disk record: click to arm this track for audio recording"
 msgstr ""
 
-#: src/app/AudioRecordUi.cpp
+#: src/app/AudioRecordUi.cpp src/app/ContextMenus.cpp
 msgid "Edit audio"
 msgstr ""
 
@@ -609,7 +609,7 @@ msgstr ""
 msgid "Control to start"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/AutomationLane.cpp src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/LiveLook.cpp src/app/LogicPlugins.cpp src/app/McpUi.cpp src/app/Menus.cpp src/core/Keymap.cpp src/packs/creative/creative_ui.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/samplers/samplers_ui.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/AutomationLane.cpp src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/LiveLook.cpp src/app/LogicPlugins.cpp src/app/McpUi.cpp src/app/MenuStyles.cpp src/app/Menus.cpp src/core/Keymap.cpp src/packs/creative/creative_ui.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/samplers/samplers_ui.cpp src/packs/tracker/tracker_ui.cpp
 msgid "Copy"
 msgstr ""
 
@@ -653,15 +653,15 @@ msgstr ""
 msgid "Curve the Draw tool writes; its menu also sets the curve of the selected points"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/ContextMenus.cpp src/app/LiveLook.cpp src/app/Menus.cpp src/core/Keymap.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/ContextMenus.cpp src/app/LiveLook.cpp src/app/MenuStyles.cpp src/app/Menus.cpp src/core/Keymap.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/tracker/tracker_ui.cpp
 msgid "Cut"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/AutomationLane.cpp src/app/Browser.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/LiveLook.cpp src/app/Menus.cpp src/app/PatternAutoUi.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/app/StageRoomsUi.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/modulation/modulation_patcher_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_seq_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/AutomationLane.cpp src/app/Browser.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/LiveLook.cpp src/app/MenuStyles.cpp src/app/Menus.cpp src/app/PatternAutoUi.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/app/StageRoomsUi.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/modulation/modulation_patcher_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_seq_ui.cpp
 msgid "Delete"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp
+#: src/app/AutomationEditor.cpp src/app/Playlist.cpp
 msgid "Deselect all"
 msgstr ""
 
@@ -677,7 +677,7 @@ msgstr ""
 msgid "Draw"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/ChopUi.cpp src/app/ContextMenus.cpp src/app/LayerEditor.cpp src/app/Menus.cpp src/packs/modulation/modulation_patcher_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/ChopUi.cpp src/app/ContextMenus.cpp src/app/LayerEditor.cpp src/app/MenuStyles.cpp src/app/Menus.cpp src/packs/modulation/modulation_patcher_ui.cpp
 msgid "Duplicate"
 msgstr ""
 
@@ -857,7 +857,7 @@ msgstr ""
 msgid "START"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/LayerEditor.cpp src/app/Menus.cpp src/app/StageRoomsUi.cpp src/app/TemplateUi.cpp src/core/Keymap.cpp src/packs/chater/chater_pages_ui.cpp src/packs/plasma/plasma_browser_ui.cpp src/packs/platter/platter_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/LayerEditor.cpp src/app/Menus.cpp src/app/StageRoomsUi.cpp src/app/TemplateUi.cpp src/app/TrackerFrame.cpp src/core/Keymap.cpp src/packs/chater/chater_pages_ui.cpp src/packs/plasma/plasma_browser_ui.cpp src/packs/platter/platter_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Save"
 msgstr ""
 
@@ -885,7 +885,7 @@ msgstr ""
 msgid "Select a pattern first"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/ContextMenus.cpp src/app/Menus.cpp src/app/StageView.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/ContextMenus.cpp src/app/MenuStyles.cpp src/app/Menus.cpp src/app/Playlist.cpp src/app/StageView.cpp src/packs/tracker/tracker_ui.cpp
 msgid "Select all"
 msgstr ""
 
@@ -913,7 +913,7 @@ msgstr ""
 msgid "Show the pattern"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/AutomationLane.cpp src/app/PianoRoll.cpp src/core/LayoutPreset.cpp src/packs/chater/chater_pages_ui.cpp src/packs/dynamics/masterfl_ui.cpp src/packs/tideline/tideline_ui.cpp src/packs/utility/utility_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/AutomationLane.cpp src/app/LayoutParts.cpp src/app/PianoRoll.cpp src/core/LayoutPreset.cpp src/packs/chater/chater_pages_ui.cpp src/packs/dynamics/masterfl_ui.cpp src/packs/tideline/tideline_ui.cpp src/packs/utility/utility_ui.cpp
 msgid "Smooth"
 msgstr ""
 
@@ -1053,7 +1053,7 @@ msgstr ""
 msgid "Keep the simplified points (one undo step)"
 msgstr ""
 
-#: src/app/AutomationLane.cpp src/app/CommandPaletteUi.cpp src/app/DisplayConfirmUi.cpp src/app/LayoutShellUi.cpp src/app/MenuStyles.cpp src/app/Menus.cpp src/app/MixerView.cpp src/app/TopBar.cpp src/collab/Session.cpp src/core/Keymap.cpp src/packs/platter/platter_ui.cpp
+#: src/app/AutomationLane.cpp src/app/CommandPaletteUi.cpp src/app/DisplayConfirmUi.cpp src/app/LayoutShellUi.cpp src/app/LiveLook.cpp src/app/MenuStyles.cpp src/app/Menus.cpp src/app/MixerView.cpp src/app/TopBar.cpp src/collab/Session.cpp src/core/Keymap.cpp src/packs/platter/platter_ui.cpp
 msgid "Mixer"
 msgstr ""
 
@@ -1093,7 +1093,7 @@ msgstr ""
 msgid "Simplify points..."
 msgstr ""
 
-#: src/app/AutomationLane.cpp src/app/PatternAutoUi.cpp src/packs/chater/chater_pages_ui.cpp src/packs/seltmann/seltmann_ui.cpp
+#: src/app/AutomationLane.cpp src/app/MenuStyles.cpp src/app/PatternAutoUi.cpp src/app/TrackerFrame.cpp src/app/TrackerPages.cpp src/core/MenuStyle.cpp src/packs/chater/chater_pages_ui.cpp src/packs/seltmann/seltmann_ui.cpp
 msgid "Song"
 msgstr ""
 
@@ -1209,7 +1209,7 @@ msgstr ""
 msgid "Bells and mallets"
 msgstr ""
 
-#: src/app/Browser.cpp src/app/DisplayConfirmUi.cpp src/app/LayoutShellUi.cpp src/app/Menus.cpp src/app/TopBar.cpp src/core/Keymap.cpp
+#: src/app/Browser.cpp src/app/DisplayConfirmUi.cpp src/app/LayoutShellUi.cpp src/app/MenuStyles.cpp src/app/Menus.cpp src/app/TopBar.cpp src/core/Keymap.cpp
 msgid "Browser"
 msgstr ""
 
@@ -1657,6 +1657,10 @@ msgstr ""
 msgid "Preview"
 msgstr ""
 
+#: src/app/Browser.cpp src/app/FileDialogUi.cpp
+msgid "Project folder"
+msgstr ""
+
 #: src/app/Browser.cpp
 msgid "Projects"
 msgstr ""
@@ -1755,6 +1759,10 @@ msgstr ""
 
 #: src/app/Browser.cpp
 msgid "Scores"
+msgstr ""
+
+#: src/app/Browser.cpp src/app/LauncherUi.cpp src/app/LayoutParts.cpp src/packs/plasma/plasma_patch_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp
+msgid "Search"
 msgstr ""
 
 #: src/app/Browser.cpp
@@ -1970,7 +1978,23 @@ msgid "Drop to insert a %s channel here"
 msgstr ""
 
 #: src/app/BrowserDrop.cpp
+msgid "Drop to make %d new tracks, one for each file"
+msgstr ""
+
+#: src/app/BrowserDrop.cpp
+msgid "Drop to make a new track with %s"
+msgstr ""
+
+#: src/app/BrowserDrop.cpp
 msgid "Drop to play %s on %s"
+msgstr ""
+
+#: src/app/BrowserDrop.cpp
+msgid "Drop to put %d clips in scenes %d to %d of %s"
+msgstr ""
+
+#: src/app/BrowserDrop.cpp
+msgid "Drop to put %s in scene %d of %s"
 msgstr ""
 
 #: src/app/BrowserDrop.cpp
@@ -2273,7 +2297,7 @@ msgstr ""
 msgid "Period"
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp src/app/CollabUi.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/app/PluginEditorsK3Gb.cpp src/app/PluginManager.cpp src/packs/chater/chater_pages_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_seq_ui.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/app/CollabUi.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/app/PluginEditorsK3Gb.cpp src/app/PluginManager.cpp src/app/TrackerPages.cpp src/packs/chater/chater_pages_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_seq_ui.cpp
 msgid "Pitch"
 msgstr ""
 
@@ -2349,7 +2373,7 @@ msgstr ""
 msgid "Vel. → pan"
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp src/app/CollabUi.cpp src/app/MixerView.cpp src/app/Playlist.cpp src/app/SoundThemeUi.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/app/CollabUi.cpp src/app/MenuStyles.cpp src/app/MixerView.cpp src/app/Playlist.cpp src/app/SoundThemeUi.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/tracker/tracker_ui.cpp
 msgid "Volume"
 msgstr ""
 
@@ -2633,7 +2657,7 @@ msgstr ""
 msgid "How the children share the notes"
 msgstr ""
 
-#: src/app/ChannelSettings.cpp src/app/ContextMenus.cpp src/app/LayoutParts.cpp src/app/LogicNewTracks.cpp src/app/PluginManager.cpp src/app/SamplerRenderUi.cpp src/packs/modulation/modulation_patcher_ui.cpp
+#: src/app/ChannelSettings.cpp src/app/ContextMenus.cpp src/app/LayoutParts.cpp src/app/LogicNewTracks.cpp src/app/PianoRoll.cpp src/app/PluginManager.cpp src/app/SamplerRenderUi.cpp src/packs/modulation/modulation_patcher_ui.cpp
 msgid "Instrument"
 msgstr ""
 
@@ -2745,7 +2769,7 @@ msgstr ""
 msgid "2 beats"
 msgstr ""
 
-#: src/app/ChopUi.cpp src/app/CommandPaletteUi.cpp src/app/ContextMenus.cpp src/app/LayoutParts.cpp src/app/PluginManager.cpp src/app/UrlImportUi.cpp src/packs/edison/edison_form_ui.cpp
+#: src/app/ChopUi.cpp src/app/CommandPaletteUi.cpp src/app/ContextMenus.cpp src/app/LayoutParts.cpp src/app/PluginManager.cpp src/app/SettingsKeysTheme.cpp src/app/UrlImportUi.cpp src/packs/edison/edison_form_ui.cpp
 msgid "All"
 msgstr ""
 
@@ -2773,7 +2797,7 @@ msgstr ""
 msgid "Audio: cuts at the attacks; patterns: at the note starts"
 msgstr ""
 
-#: src/app/ChopUi.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/TopBar.cpp src/packs/chater/chater_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp
+#: src/app/ChopUi.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/TopBar.cpp src/app/TrackerPages.cpp src/packs/chater/chater_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp
 msgid "Bar"
 msgstr ""
 
@@ -2973,7 +2997,7 @@ msgstr ""
 msgid "Repeat slices of the region with rate, decay, pitch and gate"
 msgstr ""
 
-#: src/app/ChopUi.cpp src/app/ContextMenus.cpp src/app/Playlist.cpp src/app/PluginEditorsK3Gb.cpp src/packs/chater/chater_ui.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/plasma/plasma_mod_ui.cpp src/packs/plasma/plasma_wted_ui.cpp src/packs/samplers/samplers_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/ChopUi.cpp src/app/ContextMenus.cpp src/app/Playlist.cpp src/app/PluginEditorsK3Gb.cpp src/app/TrackerPages.cpp src/packs/chater/chater_ui.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/plasma/plasma_mod_ui.cpp src/packs/plasma/plasma_wted_ui.cpp src/packs/samplers/samplers_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/tracker/tracker_ui.cpp
 msgid "Reverse"
 msgstr ""
 
@@ -3413,7 +3437,7 @@ msgstr ""
 msgid "Top first"
 msgstr ""
 
-#: src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/LayoutParts.cpp src/app/Menus.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/LayoutParts.cpp src/app/Menus.cpp src/app/TrackerFrame.cpp src/app/TrackerPages.cpp src/packs/tracker/tracker_ui.cpp
 msgid "Transpose"
 msgstr ""
 
@@ -4061,7 +4085,7 @@ msgstr ""
 msgid "FOLDERS"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/Dialogs.cpp src/app/LayoutShellUi.cpp
+#: src/app/CollabUi.cpp src/app/Dialogs.cpp src/app/LayoutShellUi.cpp src/app/MenuStyles.cpp src/core/Keymap.cpp
 msgid "Files"
 msgstr ""
 
@@ -4189,7 +4213,7 @@ msgstr ""
 msgid "JOIN"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/ContextMenus.cpp
+#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/Menus.cpp
 msgid "Join"
 msgstr ""
 
@@ -4309,7 +4333,7 @@ msgstr ""
 msgid "Missing"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/Playlist.cpp src/app/StageView.cpp src/core/MenuStyle.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/MenuStyles.cpp src/app/Playlist.cpp src/app/StageView.cpp src/app/TrackerFrame.cpp src/app/TrackerPages.cpp src/core/MenuStyle.cpp src/packs/tracker/tracker_ui.cpp
 msgid "Mix"
 msgstr ""
 
@@ -4325,7 +4349,7 @@ msgstr ""
 msgid "Moved or renamed it? Choose the folder where it is now"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/LayoutParts.cpp src/app/MixerView.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/app/StagePanel.cpp src/app/StageView.cpp src/packs/modulation/modulation_patcher_ui.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/LayoutParts.cpp src/app/MixerView.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/app/StagePanel.cpp src/app/StageView.cpp src/app/TrackerPages.cpp src/packs/modulation/modulation_patcher_ui.cpp src/packs/tracker/tracker_ui.cpp
 msgid "Mute"
 msgstr ""
 
@@ -4437,7 +4461,7 @@ msgstr ""
 msgid "Only you, the admin, can do this."
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/LauncherCollab.cpp src/app/LauncherUi.cpp src/app/LayerEditor.cpp src/app/ProjectLoadUi.cpp
+#: src/app/CollabUi.cpp src/app/LauncherCollab.cpp src/app/LauncherUi.cpp src/app/LayerEditor.cpp src/app/ProjectLoadUi.cpp src/app/TrackerFrame.cpp
 msgid "Open"
 msgstr ""
 
@@ -4481,11 +4505,11 @@ msgstr ""
 msgid "PRESENCE"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/LayoutParts.cpp src/app/LiveLook.cpp src/app/MixerView.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/CollabUi.cpp src/app/LayoutParts.cpp src/app/LiveLook.cpp src/app/MenuStyles.cpp src/app/MixerView.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/tracker/tracker_ui.cpp
 msgid "Pan"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/LiveLook.cpp src/app/LogicPlugins.cpp src/app/Menus.cpp src/app/UrlImportUi.cpp src/core/Keymap.cpp src/packs/creative/creative_ui.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/samplers/samplers_ui.cpp
+#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/LiveLook.cpp src/app/LogicPlugins.cpp src/app/MenuStyles.cpp src/app/Menus.cpp src/app/Playlist.cpp src/app/UrlImportUi.cpp src/core/Keymap.cpp src/packs/creative/creative_ui.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/samplers/samplers_ui.cpp
 msgid "Paste"
 msgstr ""
 
@@ -4629,7 +4653,7 @@ msgstr ""
 msgid "Rename"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/Menus.cpp src/app/PatternAutoUi.cpp src/app/Playlist.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/StageView.cpp src/packs/edison/edison_wave_ui.cpp src/packs/plasma/plasma_ui.cpp
+#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/MenuStyles.cpp src/app/Menus.cpp src/app/PatternAutoUi.cpp src/app/Playlist.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/StageView.cpp src/packs/edison/edison_wave_ui.cpp src/packs/plasma/plasma_ui.cpp
 msgid "Rename..."
 msgstr ""
 
@@ -5029,7 +5053,7 @@ msgstr ""
 msgid "To leave, make someone else admin first (the ... menu next to them)."
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/LayoutParts.cpp src/app/LogicNewTracks.cpp src/core/MenuStyle.cpp
+#: src/app/CollabUi.cpp src/app/LayoutParts.cpp src/app/LogicNewTracks.cpp src/app/LogicPlugins.cpp src/app/TrackerFrame.cpp src/app/TrackerPages.cpp src/core/MenuStyle.cpp
 msgid "Track"
 msgstr ""
 
@@ -5305,7 +5329,7 @@ msgstr ""
 msgid "not with anyone yet"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/LayoutParts.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/PluginEditorsK3Gb.cpp src/app/PluginManager.cpp
+#: src/app/CollabUi.cpp src/app/LayoutParts.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/PluginEditorsK3Gb.cpp src/app/PluginManager.cpp src/app/TrackerView.cpp
 msgid "off"
 msgstr ""
 
@@ -5313,7 +5337,7 @@ msgstr ""
 msgid "offline"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/LayoutParts.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/PluginEditorsK3Gb.cpp
+#: src/app/CollabUi.cpp src/app/LayoutParts.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/PluginEditorsK3Gb.cpp src/app/TrackerView.cpp
 msgid "on"
 msgstr ""
 
@@ -5533,7 +5557,7 @@ msgstr ""
 msgid "Add loop marker here"
 msgstr ""
 
-#: src/app/ContextMenus.cpp
+#: src/app/ContextMenus.cpp src/app/MenuStyles.cpp
 msgid "Add marker at the song position"
 msgstr ""
 
@@ -5557,7 +5581,7 @@ msgstr ""
 msgid "Add meter change here..."
 msgstr ""
 
-#: src/app/ContextMenus.cpp
+#: src/app/ContextMenus.cpp src/app/MenuStyles.cpp
 msgid "Add to group"
 msgstr ""
 
@@ -5669,7 +5693,7 @@ msgstr ""
 msgid "Channel routing"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/Menus.cpp src/app/Playlist.cpp
+#: src/app/ContextMenus.cpp src/app/MenuStyles.cpp src/app/Menus.cpp src/app/Playlist.cpp src/core/Keymap.cpp
 msgid "Channel settings"
 msgstr ""
 
@@ -5781,7 +5805,7 @@ msgstr ""
 msgid "Could not save the track state"
 msgstr ""
 
-#: src/app/ContextMenus.cpp
+#: src/app/ContextMenus.cpp src/app/LayoutParts.cpp src/app/MenuStyles.cpp
 msgid "Create group..."
 msgstr ""
 
@@ -5837,7 +5861,7 @@ msgstr ""
 msgid "Delete the first step"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/MenuStyles.cpp
+#: src/app/ContextMenus.cpp src/app/MenuStyles.cpp src/core/Keymap.cpp
 msgid "Delete track"
 msgstr ""
 
@@ -5845,7 +5869,7 @@ msgstr ""
 msgid "Delete unused patterns"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/Menus.cpp src/core/Keymap.cpp
+#: src/app/ContextMenus.cpp src/app/MenuStyles.cpp src/app/Menus.cpp src/core/Keymap.cpp
 msgid "Deselect"
 msgstr ""
 
@@ -5871,6 +5895,10 @@ msgstr ""
 
 #: src/app/ContextMenus.cpp
 msgid "Dock to"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
+msgid "Edit automation"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
@@ -6025,7 +6053,7 @@ msgstr ""
 msgid "Gridline panel (parameters, settings)"
 msgstr ""
 
-#: src/app/ContextMenus.cpp
+#: src/app/ContextMenus.cpp src/app/LayoutParts.cpp src/app/MenuStyles.cpp
 msgid "Group"
 msgstr ""
 
@@ -6049,11 +6077,11 @@ msgstr ""
 msgid "Import MIDI file as new channels..."
 msgstr ""
 
-#: src/app/ContextMenus.cpp
+#: src/app/ContextMenus.cpp src/app/MenuStyles.cpp
 msgid "Import MIDI file..."
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/LiveLook.cpp src/collab/Session.cpp
+#: src/app/ContextMenus.cpp src/app/LiveLook.cpp src/app/TrackerPages.cpp src/collab/Session.cpp
 msgid "Insert"
 msgstr ""
 
@@ -6125,7 +6153,7 @@ msgstr ""
 msgid "Jump to previous marker"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/LoopStarterUi.cpp src/app/PluginEditorsEqRef.cpp
+#: src/app/ContextMenus.cpp src/app/LayoutParts.cpp src/app/LoopStarterUi.cpp src/app/PluginEditorsEqRef.cpp
 msgid "Key"
 msgstr ""
 
@@ -6205,7 +6233,7 @@ msgstr ""
 msgid "Make unique"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/ExportUi.cpp src/app/Playlist.cpp src/packs/edison/edison_form_ui.cpp
+#: src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/ExportUi.cpp src/app/MenuStyles.cpp src/app/Playlist.cpp src/packs/edison/edison_form_ui.cpp
 msgid "Markers"
 msgstr ""
 
@@ -6331,6 +6359,18 @@ msgstr ""
 
 #: src/app/ContextMenus.cpp src/app/MenuStyles.cpp src/app/Playlist.cpp
 msgid "New instrument track"
+msgstr ""
+
+#: src/app/ContextMenus.cpp src/app/MenuStyles.cpp src/core/Keymap.cpp
+msgid "New track with the same settings"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
+msgid "New track with the same settings and content"
+msgstr ""
+
+#: src/app/ContextMenus.cpp src/app/MenuStyles.cpp src/core/Keymap.cpp
+msgid "New tracks..."
 msgstr ""
 
 #: src/app/ContextMenus.cpp
@@ -6565,7 +6605,7 @@ msgstr ""
 msgid "Remove effect"
 msgstr ""
 
-#: src/app/ContextMenus.cpp
+#: src/app/ContextMenus.cpp src/app/LayoutParts.cpp src/app/MenuStyles.cpp
 msgid "Remove from group"
 msgstr ""
 
@@ -6881,7 +6921,7 @@ msgstr ""
 msgid "Sort patterns"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/LayerEditor.cpp src/app/StemsUi.cpp src/packs/seltmann/seltmann_seq_ui.cpp src/packs/tideline/tideline_ui.cpp
+#: src/app/ContextMenus.cpp src/app/LayerEditor.cpp src/app/Menus.cpp src/app/StemsUi.cpp src/packs/seltmann/seltmann_seq_ui.cpp src/packs/tideline/tideline_ui.cpp
 msgid "Split"
 msgstr ""
 
@@ -6901,7 +6941,7 @@ msgstr ""
 msgid "Stamp"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/J31Ui.cpp src/app/LayoutShellUi.cpp src/core/TrackIconSet.cpp src/packs/seltmann/seltmann_parts_ui.cpp
+#: src/app/ContextMenus.cpp src/app/J31Ui.cpp src/app/LayoutShellUi.cpp src/app/MenuStyles.cpp src/app/TrackerFrame.cpp src/app/TrackerPages.cpp src/core/TrackIconSet.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Steps"
 msgstr ""
 
@@ -7113,7 +7153,7 @@ msgstr ""
 msgid "bar"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/LayoutParts.cpp src/app/LiveLook.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp
+#: src/app/ContextMenus.cpp src/app/LayoutParts.cpp src/app/LiveLook.cpp src/app/TrackerPages.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp
 msgid "bars"
 msgstr ""
 
@@ -7365,6 +7405,10 @@ msgstr ""
 msgid "Audio"
 msgstr ""
 
+#: src/app/Dialogs.cpp src/packs/seltmann/seltmann_ui.cpp
+msgid "Auto"
+msgstr ""
+
 #: src/app/Dialogs.cpp
 msgid "Auto (scroll when the pane scrolls)"
 msgstr ""
@@ -7379,6 +7423,10 @@ msgstr ""
 
 #: src/app/Dialogs.cpp
 msgid "Backup"
+msgstr ""
+
+#: src/app/Dialogs.cpp src/app/SettingsPages.cpp
+msgid "Backups"
 msgstr ""
 
 #: src/app/Dialogs.cpp
@@ -8073,7 +8121,7 @@ msgstr ""
 msgid "Lumen"
 msgstr ""
 
-#: src/app/DisplayConfirmUi.cpp src/app/McpUi.cpp src/app/Menus.cpp
+#: src/app/DisplayConfirmUi.cpp src/app/McpUi.cpp src/app/Menus.cpp src/app/TrackerFrame.cpp
 msgid "New"
 msgstr ""
 
@@ -8545,7 +8593,7 @@ msgstr ""
 msgid "Part names"
 msgstr ""
 
-#: src/app/ExportUi.cpp src/app/LauncherUi.cpp src/app/LayoutParts.cpp src/app/Menus.cpp src/app/TopBar.cpp src/core/MenuStyle.cpp src/packs/platter/platter_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp
+#: src/app/ExportUi.cpp src/app/LauncherUi.cpp src/app/LayoutParts.cpp src/app/LayoutShellUi.cpp src/app/MenuStyles.cpp src/app/Menus.cpp src/app/PianoRoll.cpp src/app/TopBar.cpp src/app/TrackerFrame.cpp src/app/TrackerPages.cpp src/app/TrackerView.cpp src/core/MenuStyle.cpp src/packs/platter/platter_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Pattern"
 msgstr ""
 
@@ -8653,7 +8701,7 @@ msgstr ""
 msgid "Split playlist tracks"
 msgstr ""
 
-#: src/app/ExportUi.cpp src/app/LauncherCollab.cpp src/app/LauncherUi.cpp src/app/LayoutParts.cpp src/packs/platter/platter_deck_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/ExportUi.cpp src/app/LauncherCollab.cpp src/app/LauncherUi.cpp src/app/LayoutParts.cpp src/app/SettingsPages.cpp src/packs/platter/platter_deck_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/tracker/tracker_ui.cpp
 msgid "Start"
 msgstr ""
 
@@ -8822,10 +8870,6 @@ msgid "Places"
 msgstr ""
 
 #: src/app/FileDialogUi.cpp
-msgid "Project folder"
-msgstr ""
-
-#: src/app/FileDialogUi.cpp
 msgid "Recent folders"
 msgstr ""
 
@@ -8901,7 +8945,7 @@ msgstr ""
 msgid "Exact"
 msgstr ""
 
-#: src/app/FlpExportUi.cpp src/app/Menus.cpp
+#: src/app/FlpExportUi.cpp src/app/Menus.cpp src/app/TrackerFrame.cpp
 msgid "Export"
 msgstr ""
 
@@ -9197,7 +9241,7 @@ msgstr ""
 msgid "Could not import the swing preset"
 msgstr ""
 
-#: src/app/GrooveUi.cpp src/app/TopBar.cpp src/packs/tideline/tideline_ui.cpp
+#: src/app/GrooveUi.cpp src/app/MenuStyles.cpp src/app/TopBar.cpp src/core/Keymap.cpp src/packs/tideline/tideline_ui.cpp
 msgid "Cycle"
 msgstr ""
 
@@ -10321,10 +10365,6 @@ msgstr ""
 msgid "Removed missing projects from the list"
 msgstr ""
 
-#: src/app/LauncherUi.cpp src/packs/plasma/plasma_patch_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp
-msgid "Search"
-msgstr ""
-
 #: src/app/LauncherUi.cpp
 msgid "Sep"
 msgstr ""
@@ -10561,6 +10601,14 @@ msgstr ""
 msgid "The layout's own menu bar comes with it"
 msgstr ""
 
+#: src/app/LayoutParts.cpp
+msgid "A send: click to show it in the mixer; the knob sets its level"
+msgstr ""
+
+#: src/app/LayoutParts.cpp src/core/Keymap.cpp
+msgid "Add a marker at the song position"
+msgstr ""
+
 #: src/app/LayoutParts.cpp src/app/StagePanel.cpp src/packs/plasma/plasma_patch_ui.cpp
 msgid "Add an effect"
 msgstr ""
@@ -10577,7 +10625,7 @@ msgstr ""
 msgid "An effect on the track: opens its window"
 msgstr ""
 
-#: src/app/LayoutParts.cpp src/app/LayoutShellUi.cpp src/app/Playlist.cpp src/core/TrackIconSet.cpp src/packs/platter/platter_ui.cpp
+#: src/app/LayoutParts.cpp src/app/LayoutShellUi.cpp src/app/Playlist.cpp src/app/TrackerPages.cpp src/core/TrackIconSet.cpp src/packs/platter/platter_ui.cpp
 msgid "Automation"
 msgstr ""
 
@@ -10590,7 +10638,19 @@ msgid "Channel"
 msgstr ""
 
 #: src/app/LayoutParts.cpp
+msgid "Click: a smooth or a straight fade in"
+msgstr ""
+
+#: src/app/LayoutParts.cpp
+msgid "Click: a smooth or a straight fade out"
+msgstr ""
+
+#: src/app/LayoutParts.cpp
 msgid "Click: lock or unlock the track's regions"
+msgstr ""
+
+#: src/app/LayoutParts.cpp
+msgid "Click: move the song position here"
 msgstr ""
 
 #: src/app/LayoutParts.cpp
@@ -10641,6 +10701,22 @@ msgstr ""
 msgid "Every slot, send and routing control (click the strips button there to come back)"
 msgstr ""
 
+#: src/app/LayoutParts.cpp src/app/Playlist.cpp src/app/TrackerPages.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/spacefx/spacefx_ui.cpp src/packs/tracker/tracker_ui.cpp
+msgid "Fade in"
+msgstr ""
+
+#: src/app/LayoutParts.cpp
+msgid "Fade in type"
+msgstr ""
+
+#: src/app/LayoutParts.cpp src/app/Playlist.cpp src/app/TrackerPages.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/spacefx/spacefx_ui.cpp src/packs/tracker/tracker_ui.cpp
+msgid "Fade out"
+msgstr ""
+
+#: src/app/LayoutParts.cpp
+msgid "Fade out type"
+msgstr ""
+
 #: src/app/LayoutParts.cpp
 msgid "Fine tune"
 msgstr ""
@@ -10649,11 +10725,11 @@ msgstr ""
 msgid "Fine tuning, in cents (double-click: 0)"
 msgstr ""
 
-#: src/app/LayoutParts.cpp src/packs/chater/chater_pages_ui.cpp
+#: src/app/LayoutParts.cpp src/app/TrackerPages.cpp src/packs/chater/chater_pages_ui.cpp
 msgid "Free"
 msgstr ""
 
-#: src/app/LayoutParts.cpp src/app/Playlist.cpp src/packs/seltmann/seltmann_parts_ui.cpp
+#: src/app/LayoutParts.cpp src/app/Playlist.cpp src/app/TrackerPages.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Gain"
 msgstr ""
 
@@ -10665,7 +10741,7 @@ msgstr ""
 msgid "Length (bars)"
 msgstr ""
 
-#: src/app/LayoutParts.cpp src/app/PluginUI.cpp src/core/TrackIconSet.cpp src/packs/plasma/plasma_frame_ui.cpp
+#: src/app/LayoutParts.cpp src/app/PluginUI.cpp src/app/TrackerFrame.cpp src/core/TrackIconSet.cpp src/packs/plasma/plasma_frame_ui.cpp
 msgid "Library"
 msgstr ""
 
@@ -10677,7 +10753,11 @@ msgstr ""
 msgid "Loop"
 msgstr ""
 
-#: src/app/LayoutParts.cpp src/app/LiveLook.cpp src/app/LogicPlugins.cpp src/collab/Session.cpp src/core/TrackIconSet.cpp
+#: src/app/LayoutParts.cpp
+msgid "Marker"
+msgstr ""
+
+#: src/app/LayoutParts.cpp src/app/LiveLook.cpp src/app/LogicPlugins.cpp src/app/TrackerPages.cpp src/collab/Session.cpp src/core/TrackIconSet.cpp
 msgid "Master"
 msgstr ""
 
@@ -10721,7 +10801,7 @@ msgstr ""
 msgid "No free slot"
 msgstr ""
 
-#: src/app/LayoutParts.cpp
+#: src/app/LayoutParts.cpp src/app/MenuStyles.cpp
 msgid "No markers"
 msgstr ""
 
@@ -10777,7 +10857,7 @@ msgstr ""
 msgid "Quantize: off"
 msgstr ""
 
-#: src/app/LayoutParts.cpp src/app/TopBar.cpp
+#: src/app/LayoutParts.cpp
 msgid "Quick help"
 msgstr ""
 
@@ -10794,7 +10874,7 @@ msgid "Samples the project uses list here"
 msgstr ""
 
 #: src/app/LayoutParts.cpp
-msgid "Search sounds, instruments and effects"
+msgid "Search sounds, instruments and effects: type part of a name to narrow the list"
 msgstr ""
 
 #: src/app/LayoutParts.cpp
@@ -10826,11 +10906,19 @@ msgid "Show its window"
 msgstr ""
 
 #: src/app/LayoutParts.cpp
+msgid "Signature"
+msgstr ""
+
+#: src/app/LayoutParts.cpp
 msgid "Snaps the clip's notes to a grid as it plays"
 msgstr ""
 
 #: src/app/LayoutParts.cpp
 msgid "Solo (keeps tracks routed to and from it)"
+msgstr ""
+
+#: src/app/LayoutParts.cpp src/app/PianoRoll.cpp src/packs/plasma/plasma_pages_ui.cpp src/packs/platter/platter_mixer_ui.cpp
+msgid "Straight"
 msgstr ""
 
 #: src/app/LayoutParts.cpp
@@ -10843,6 +10931,14 @@ msgstr ""
 
 #: src/app/LayoutParts.cpp
 msgid "The channel's instrument: opens its window"
+msgstr ""
+
+#: src/app/LayoutParts.cpp
+msgid "The fade in's length, in milliseconds (double-click: off)"
+msgstr ""
+
+#: src/app/LayoutParts.cpp
+msgid "The fade out's length, in milliseconds (double-click: off)"
 msgstr ""
 
 #: src/app/LayoutParts.cpp
@@ -10870,7 +10966,23 @@ msgid "The selected track and where it goes"
 msgstr ""
 
 #: src/app/LayoutParts.cpp
+msgid "The song's markers"
+msgstr ""
+
+#: src/app/LayoutParts.cpp
+msgid "The song's tempo"
+msgstr ""
+
+#: src/app/LayoutParts.cpp
+msgid "The song's time signatures"
+msgstr ""
+
+#: src/app/LayoutParts.cpp
 msgid "The track's EQ: click to open it"
+msgstr ""
+
+#: src/app/LayoutParts.cpp
+msgid "The track's group: click to put it in one or take it out"
 msgstr ""
 
 #: src/app/LayoutParts.cpp
@@ -10898,10 +11010,6 @@ msgid "Transpose %+d st"
 msgstr ""
 
 #: src/app/LayoutParts.cpp
-msgid "Type part of a name to narrow the list"
-msgstr ""
-
-#: src/app/LayoutParts.cpp
 msgid "Used by"
 msgstr ""
 
@@ -10914,7 +11022,23 @@ msgid "Where the track goes: shows it in the mixer"
 msgstr ""
 
 #: src/app/LayoutParts.cpp
+msgid "marker"
+msgstr ""
+
+#: src/app/LayoutParts.cpp
+msgid "markers"
+msgstr ""
+
+#: src/app/LayoutParts.cpp
 msgid "selected"
+msgstr ""
+
+#: src/app/LayoutParts.cpp
+msgid "signature"
+msgstr ""
+
+#: src/app/LayoutParts.cpp
+msgid "signatures"
 msgstr ""
 
 #: src/app/LayoutPresets.cpp
@@ -10981,7 +11105,7 @@ msgstr ""
 msgid "Next arrangement"
 msgstr ""
 
-#: src/app/Live.cpp
+#: src/app/Live.cpp src/app/TrackerPages.cpp
 msgid "No live area"
 msgstr ""
 
@@ -10993,7 +11117,7 @@ msgstr ""
 msgid "Pad press"
 msgstr ""
 
-#: src/app/Live.cpp src/app/Menus.cpp src/packs/platter/platter_ui.cpp
+#: src/app/Live.cpp src/app/MenuStyles.cpp src/app/Menus.cpp src/app/TrackerFrame.cpp src/core/Keymap.cpp src/packs/platter/platter_ui.cpp
 msgid "Pads"
 msgstr ""
 
@@ -11013,7 +11137,7 @@ msgstr ""
 msgid "Rename arrangement"
 msgstr ""
 
-#: src/app/Live.cpp
+#: src/app/Live.cpp src/app/TrackerPages.cpp
 msgid "Stop all"
 msgstr ""
 
@@ -11033,7 +11157,7 @@ msgstr ""
 msgid "Adding, moving or turning off a device here edits the mixer track: the mixer and every other layout show the change."
 msgstr ""
 
-#: src/app/LiveLook.cpp src/app/StageRoomsUi.cpp src/app/TopBar.cpp
+#: src/app/LiveLook.cpp src/app/MenuStyles.cpp src/app/StageRoomsUi.cpp src/app/TopBar.cpp
 msgid "Arrangement"
 msgstr ""
 
@@ -11058,6 +11182,10 @@ msgid "Click to select (Delete removes it), double-click to fold; drag to move i
 msgstr ""
 
 #: src/app/LiveLook.cpp
+msgid "Click to select this mixer track"
+msgstr ""
+
+#: src/app/LiveLook.cpp
 msgid "Click to select, double-click to fold"
 msgstr ""
 
@@ -11073,7 +11201,7 @@ msgstr ""
 msgid "Clip band: the selected clip's properties and editors"
 msgstr ""
 
-#: src/app/LiveLook.cpp
+#: src/app/LiveLook.cpp src/app/MenuStyles.cpp
 msgid "Clip grid"
 msgstr ""
 
@@ -11126,6 +11254,10 @@ msgid "Drop effects here"
 msgstr ""
 
 #: src/app/LiveLook.cpp
+msgid "Drop files and instruments here"
+msgstr ""
+
+#: src/app/LiveLook.cpp
 msgid "Empty slot: click to stop the track's clip"
 msgstr ""
 
@@ -11154,11 +11286,19 @@ msgid "Main: the master track (click to select it in the mixer)"
 msgstr ""
 
 #: src/app/LiveLook.cpp
+msgid "Mixer band: the tracks' levels, pans and sends under the main view"
+msgstr ""
+
+#: src/app/LiveLook.cpp
 msgid "No free insert on this mixer track for the copy"
 msgstr ""
 
 #: src/app/LiveLook.cpp
 msgid "No free insert on this mixer track for the pasted effect"
+msgstr ""
+
+#: src/app/LiveLook.cpp
+msgid "No mixer track yet: put an instrument or an audio clip on this track to give it one"
 msgstr ""
 
 #: src/app/LiveLook.cpp src/packs/modulation/modulation_patcher_ui.cpp
@@ -11199,10 +11339,6 @@ msgstr ""
 
 #: src/app/LiveLook.cpp
 msgid "Pan of the track's mixer track: drag up or down (Shift: fine), right-click centres it"
-msgstr ""
-
-#: src/app/LiveLook.cpp
-msgid "Playlist menu, Live area: clips placed before its end fill the slots, 4 bars per scene."
 msgstr ""
 
 #: src/app/LiveLook.cpp
@@ -11270,10 +11406,6 @@ msgid "The grid a launched clip waits for before it starts"
 msgstr ""
 
 #: src/app/LiveLook.cpp
-msgid "The grid is empty: it plays the live area, the start of the song that is launched by hand."
-msgstr ""
-
-#: src/app/LiveLook.cpp
 msgid "The highest level since this was last clicked (click to clear)"
 msgstr ""
 
@@ -11294,7 +11426,11 @@ msgid "The track's instrument"
 msgstr ""
 
 #: src/app/LiveLook.cpp
-msgid "The track: click selects it (its devices show below), right-click: the track's menu"
+msgid "The track: click selects it (its devices show below), drag to move it, right-click: the track's menu"
+msgstr ""
+
+#: src/app/LiveLook.cpp
+msgid "This track plays into several mixer tracks: the loudest of them (each has its fader in the mixer)"
 msgstr ""
 
 #: src/app/LiveLook.cpp
@@ -11335,10 +11471,6 @@ msgstr ""
 
 #: src/app/LiveLook.cpp
 msgid "click a slot to launch its clip, the scene button launches the row"
-msgstr ""
-
-#: src/app/LiveLook.cpp
-msgid "free track"
 msgstr ""
 
 #: src/app/LiveLook.cpp
@@ -11518,10 +11650,6 @@ msgid "Select a track: its controls show here"
 msgstr ""
 
 #: src/app/LogicPlugins.cpp
-msgid "Show the master track's controls instead of the selected track's"
-msgstr ""
-
-#: src/app/LogicPlugins.cpp
 msgid "Showing the settings as saved with the project: click to go back to your edit"
 msgstr ""
 
@@ -11539,6 +11667,14 @@ msgstr ""
 
 #: src/app/LogicPlugins.cpp
 msgid "The EQ is open in its window"
+msgstr ""
+
+#: src/app/LogicPlugins.cpp
+msgid "The master track's controls"
+msgstr ""
+
+#: src/app/LogicPlugins.cpp
+msgid "The selected track's controls"
 msgstr ""
 
 #: src/app/LogicPlugins.cpp
@@ -12265,8 +12401,32 @@ msgstr ""
 msgid "the chord preview"
 msgstr ""
 
+#: src/app/MenuStyles.cpp
+msgid "A track for audio clips and recording, on a mixer track of its own, after the shown tracks"
+msgstr ""
+
+#: src/app/MenuStyles.cpp src/packs/edison/edison_wave_ui.cpp
+msgid "Add marker"
+msgstr ""
+
+#: src/app/MenuStyles.cpp
+msgid "An empty track for pattern clips, after the shown tracks"
+msgstr ""
+
+#: src/app/MenuStyles.cpp src/core/Keymap.cpp
+msgid "Audio editor"
+msgstr ""
+
 #: src/app/MenuStyles.cpp src/core/Keymap.cpp
 msgid "Back one bar"
+msgstr ""
+
+#: src/app/MenuStyles.cpp
+msgid "Clip band"
+msgstr ""
+
+#: src/app/MenuStyles.cpp
+msgid "Columns"
 msgstr ""
 
 #: src/app/MenuStyles.cpp src/app/Menus.cpp src/app/MixerView.cpp
@@ -12275,6 +12435,38 @@ msgstr ""
 
 #: src/app/MenuStyles.cpp src/app/MidiUi.cpp src/app/TopBar.cpp
 msgid "Count-in"
+msgstr ""
+
+#: src/app/MenuStyles.cpp
+msgid "Decimal"
+msgstr ""
+
+#: src/app/MenuStyles.cpp
+msgid "Delete row"
+msgstr ""
+
+#: src/app/MenuStyles.cpp
+msgid "Delete row in every track"
+msgstr ""
+
+#: src/app/MenuStyles.cpp
+msgid "Device band"
+msgstr ""
+
+#: src/app/MenuStyles.cpp src/app/TrackerView.cpp
+msgid "Edit mode"
+msgstr ""
+
+#: src/app/MenuStyles.cpp src/app/TrackerFrame.cpp src/app/TrackerView.cpp
+msgid "Edit step"
+msgstr ""
+
+#: src/app/MenuStyles.cpp src/app/PluginManager.cpp src/packs/modulation/modulation_patcher_ui.cpp
+msgid "Effect"
+msgstr ""
+
+#: src/app/MenuStyles.cpp
+msgid "Follow playback in the pattern"
 msgstr ""
 
 #: src/app/MenuStyles.cpp
@@ -12289,15 +12481,35 @@ msgstr ""
 msgid "Go to the start"
 msgstr ""
 
+#: src/app/MenuStyles.cpp src/app/TrackerView.cpp src/core/Keymap.cpp
+msgid "Header band"
+msgstr ""
+
+#: src/app/MenuStyles.cpp
+msgid "Hexadecimal"
+msgstr ""
+
 #: src/app/MenuStyles.cpp
 msgid "Hide all plugin windows"
+msgstr ""
+
+#: src/app/MenuStyles.cpp
+msgid "Import audio file..."
+msgstr ""
+
+#: src/app/MenuStyles.cpp
+msgid "Insert row"
+msgstr ""
+
+#: src/app/MenuStyles.cpp
+msgid "Insert row in every track"
 msgstr ""
 
 #: src/app/MenuStyles.cpp src/app/Menus.cpp
 msgid "Keyboard shortcuts..."
 msgstr ""
 
-#: src/app/MenuStyles.cpp src/app/Menus.cpp
+#: src/app/MenuStyles.cpp src/app/Menus.cpp src/app/TrackerPages.cpp
 msgid "Live mode"
 msgstr ""
 
@@ -12317,6 +12529,14 @@ msgstr ""
 msgid "Multilink to controllers"
 msgstr ""
 
+#: src/app/MenuStyles.cpp src/core/Keymap.cpp
+msgid "New MIDI track"
+msgstr ""
+
+#: src/app/MenuStyles.cpp src/app/Playlist.cpp src/core/Keymap.cpp
+msgid "New audio track"
+msgstr ""
+
 #: src/app/MenuStyles.cpp
 msgid "New mixer track"
 msgstr ""
@@ -12325,16 +12545,20 @@ msgstr ""
 msgid "New track"
 msgstr ""
 
-#: src/app/MenuStyles.cpp
-msgid "New track with the same settings"
-msgstr ""
-
-#: src/app/MenuStyles.cpp
-msgid "New tracks..."
-msgstr ""
-
 #: src/app/MenuStyles.cpp src/app/Menus.cpp src/app/MixerView.cpp
 msgid "Normal strips"
+msgstr ""
+
+#: src/app/MenuStyles.cpp
+msgid "One more note column"
+msgstr ""
+
+#: src/app/MenuStyles.cpp
+msgid "One note column fewer"
+msgstr ""
+
+#: src/app/MenuStyles.cpp src/app/Menus.cpp
+msgid "Panels"
 msgstr ""
 
 #: src/app/MenuStyles.cpp
@@ -12361,6 +12585,14 @@ msgstr ""
 msgid "Recording options"
 msgstr ""
 
+#: src/app/MenuStyles.cpp src/app/PianoRoll.cpp src/app/TrackerFrame.cpp src/packs/chater/chater_ui.cpp
+msgid "Roll"
+msgstr ""
+
+#: src/app/MenuStyles.cpp
+msgid "Row numbers"
+msgstr ""
+
 #: src/app/MenuStyles.cpp
 msgid "Settings..."
 msgstr ""
@@ -12379,6 +12611,10 @@ msgstr ""
 
 #: src/app/MenuStyles.cpp
 msgid "Step sequencer"
+msgstr ""
+
+#: src/app/MenuStyles.cpp src/core/Keymap.cpp
+msgid "Tracker help"
 msgstr ""
 
 #: src/app/MenuStyles.cpp src/app/Menus.cpp
@@ -12465,7 +12701,7 @@ msgstr ""
 msgid "Check for updates..."
 msgstr ""
 
-#: src/app/Menus.cpp src/packs/plasma/plasma_patch_ui.cpp
+#: src/app/Menus.cpp src/app/TrackerFrame.cpp src/packs/plasma/plasma_patch_ui.cpp
 msgid "Clean up"
 msgstr ""
 
@@ -12643,10 +12879,6 @@ msgstr ""
 
 #: src/app/Menus.cpp
 msgid "Open recent"
-msgstr ""
-
-#: src/app/Menus.cpp
-msgid "Panels"
 msgstr ""
 
 #: src/app/Menus.cpp
@@ -13157,7 +13389,7 @@ msgstr ""
 msgid "OUTPUT AND SYNC"
 msgstr ""
 
-#: src/app/MidiUi.cpp
+#: src/app/MidiUi.cpp src/app/TrackerView.cpp
 msgid "Octave"
 msgstr ""
 
@@ -13729,7 +13961,7 @@ msgstr ""
 msgid "Waveforms on the strips (Alt+W)"
 msgstr ""
 
-#: src/app/MixerView.cpp
+#: src/app/MixerView.cpp src/app/TrackerView.cpp
 msgid "row"
 msgstr ""
 
@@ -14233,10 +14465,6 @@ msgstr ""
 msgid "Step (hold, then jump)"
 msgstr ""
 
-#: src/app/PianoRoll.cpp src/packs/plasma/plasma_pages_ui.cpp src/packs/platter/platter_mixer_ui.cpp
-msgid "Straight"
-msgstr ""
-
 #: src/app/PianoRoll.cpp
 msgid "The channel's rack steps show as notes: moving, resizing or editing one turns them into piano roll notes (one undo step)"
 msgstr ""
@@ -14422,6 +14650,10 @@ msgid "(drag: more or fewer repeats, the clip loops · back to its own length, i
 msgstr ""
 
 #: src/app/Playlist.cpp
+msgid "(drag: move · lower corners: resize · upper corners of an audio region: fade · Alt+drag: copy · Shift+click: add to the selection · double-click: open in the editor · right-click: region menu)"
+msgstr ""
+
+#: src/app/Playlist.cpp
 msgid "(drag: stretch the audio · "
 msgstr ""
 
@@ -14538,6 +14770,10 @@ msgid "Copy into pattern"
 msgstr ""
 
 #: src/app/Playlist.cpp
+msgid "Create pattern region"
+msgstr ""
+
+#: src/app/Playlist.cpp
 msgid "Curve of every segment"
 msgstr ""
 
@@ -14614,6 +14850,10 @@ msgid "Empty arrangement"
 msgstr ""
 
 #: src/app/Playlist.cpp
+msgid "Eraser"
+msgstr ""
+
+#: src/app/Playlist.cpp
 msgid "Every clip of it leaves the playlist, in every arrangement."
 msgstr ""
 
@@ -14635,14 +14875,6 @@ msgstr ""
 
 #: src/app/Playlist.cpp
 msgid "Fade and volume handles shown"
-msgstr ""
-
-#: src/app/Playlist.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/spacefx/spacefx_ui.cpp src/packs/tracker/tracker_ui.cpp
-msgid "Fade in"
-msgstr ""
-
-#: src/app/Playlist.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/spacefx/spacefx_ui.cpp src/packs/tracker/tracker_ui.cpp
-msgid "Fade out"
 msgstr ""
 
 #: src/app/Playlist.cpp
@@ -14681,7 +14913,7 @@ msgstr ""
 msgid "Make unique as sample"
 msgstr ""
 
-#: src/app/Playlist.cpp
+#: src/app/Playlist.cpp src/app/TrackerPages.cpp
 msgid "More..."
 msgstr ""
 
@@ -14691,10 +14923,6 @@ msgstr ""
 
 #: src/app/Playlist.cpp
 msgid "Mute clip"
-msgstr ""
-
-#: src/app/Playlist.cpp
-msgid "New audio track"
 msgstr ""
 
 #: src/app/Playlist.cpp
@@ -14725,6 +14953,10 @@ msgstr ""
 msgid "Overlap another audio clip on the track to crossfade with it"
 msgstr ""
 
+#: src/app/Playlist.cpp src/core/TrackIconSet.cpp
+msgid "Pencil"
+msgstr ""
+
 #: src/app/Playlist.cpp
 msgid "Pitch a semitone down"
 msgstr ""
@@ -14737,8 +14969,12 @@ msgstr ""
 msgid "Plain curve (no bend)"
 msgstr ""
 
-#: src/app/Playlist.cpp
+#: src/app/Playlist.cpp src/app/TrackerPages.cpp
 msgid "Plays the clip backwards (keeps the same audio)"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "Pointer"
 msgstr ""
 
 #: src/app/Playlist.cpp
@@ -14769,12 +15005,24 @@ msgstr ""
 msgid "Sample"
 msgstr ""
 
+#: src/app/Playlist.cpp src/core/TrackIconSet.cpp
+msgid "Scissors"
+msgstr ""
+
 #: src/app/Playlist.cpp
 msgid "Select all clips of this automation"
 msgstr ""
 
 #: src/app/Playlist.cpp
+msgid "Select all on this track"
+msgstr ""
+
+#: src/app/Playlist.cpp
 msgid "Select its clips"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "Select muted regions"
 msgstr ""
 
 #: src/app/Playlist.cpp
@@ -14877,7 +15125,7 @@ msgstr ""
 msgid "Track with a mode"
 msgstr ""
 
-#: src/app/Playlist.cpp
+#: src/app/Playlist.cpp src/app/TrackerPages.cpp
 msgid "Tracks"
 msgstr ""
 
@@ -14918,6 +15166,10 @@ msgid "click for the grid menu, right-click turns snapping off / on (Alt while d
 msgstr ""
 
 #: src/app/Playlist.cpp
+msgid "click on empty space draws a region of the current pattern, drag moves"
+msgstr ""
+
+#: src/app/Playlist.cpp
 msgid "click or drag over clips to delete them"
 msgstr ""
 
@@ -14927,6 +15179,10 @@ msgstr ""
 
 #: src/app/Playlist.cpp
 msgid "click places the current clip source, drag moves, drag an edge to resize / trim, Shift+drag copies, right-click deletes"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "click selects a region, drag moves it, its lower corners resize it, the upper corners of an audio region fade it, a drag on empty space selects with a box, a click there deselects"
 msgstr ""
 
 #: src/app/Playlist.cpp
@@ -15281,7 +15537,7 @@ msgstr ""
 msgid "How a region plays: click to choose"
 msgstr ""
 
-#: src/app/PluginEditorsInstrSlicer.cpp
+#: src/app/PluginEditorsInstrSlicer.cpp src/app/SettingsKeysTheme.cpp
 msgid "Keyboard"
 msgstr ""
 
@@ -16223,10 +16479,6 @@ msgstr ""
 
 #: src/app/PluginManager.cpp
 msgid "Dynamics"
-msgstr ""
-
-#: src/app/PluginManager.cpp src/packs/modulation/modulation_patcher_ui.cpp
-msgid "Effect"
 msgstr ""
 
 #: src/app/PluginManager.cpp
@@ -17190,11 +17442,27 @@ msgid "Change shortcuts..."
 msgstr ""
 
 #: src/app/SettingsKeysTheme.cpp
+msgid "Changed"
+msgstr ""
+
+#: src/app/SettingsKeysTheme.cpp
 msgid "Changes how knobs, faders, buttons, meters and displays are drawn everywhere. Sizes stay the same."
 msgstr ""
 
 #: src/app/SettingsKeysTheme.cpp
 msgid "Command"
+msgstr ""
+
+#: src/app/SettingsKeysTheme.cpp
+msgid "Commands whose shortcut you changed"
+msgstr ""
+
+#: src/app/SettingsKeysTheme.cpp
+msgid "Commands with a shortcut"
+msgstr ""
+
+#: src/app/SettingsKeysTheme.cpp
+msgid "Commands without a shortcut"
 msgstr ""
 
 #: src/app/SettingsKeysTheme.cpp
@@ -17235,6 +17503,10 @@ msgstr ""
 
 #: src/app/SettingsKeysTheme.cpp
 msgid "Esc cancels"
+msgstr ""
+
+#: src/app/SettingsKeysTheme.cpp
+msgid "Every command"
 msgstr ""
 
 #: src/app/SettingsKeysTheme.cpp
@@ -17287,6 +17559,10 @@ msgstr ""
 
 #: src/app/SettingsKeysTheme.cpp
 msgid "Panels, fields and grids lighter or darker, down to pitch black"
+msgstr ""
+
+#: src/app/SettingsKeysTheme.cpp
+msgid "Pick a command in the list: its shortcut and actions show here."
 msgstr ""
 
 #: src/app/SettingsKeysTheme.cpp
@@ -17390,11 +17666,19 @@ msgid "Type a value"
 msgstr ""
 
 #: src/app/SettingsKeysTheme.cpp
+msgid "Unused"
+msgstr ""
+
+#: src/app/SettingsKeysTheme.cpp
 msgid "Upper octave"
 msgstr ""
 
 #: src/app/SettingsKeysTheme.cpp
 msgid "Use it for"
+msgstr ""
+
+#: src/app/SettingsKeysTheme.cpp
+msgid "Used"
 msgstr ""
 
 #: src/app/SettingsKeysTheme.cpp
@@ -17447,10 +17731,6 @@ msgstr ""
 
 #: src/app/SettingsPages.cpp src/core/HydrogenKit.cpp
 msgid "Author"
-msgstr ""
-
-#: src/app/SettingsPages.cpp
-msgid "Backups"
 msgstr ""
 
 #: src/app/SettingsPages.cpp
@@ -18873,7 +19153,7 @@ msgstr ""
 msgid "Gridline: settings, shortcuts, the welcome screen"
 msgstr ""
 
-#: src/app/TopBar.cpp
+#: src/app/TopBar.cpp src/app/TrackerFrame.cpp
 msgid "Home: recent projects and templates"
 msgstr ""
 
@@ -18919,6 +19199,10 @@ msgstr ""
 
 #: src/app/TopBar.cpp
 msgid "Play / pause (Space)"
+msgstr ""
+
+#: src/app/TopBar.cpp
+msgid "Quick help: what the item under the pointer does"
 msgstr ""
 
 #: src/app/TopBar.cpp
@@ -19391,6 +19675,482 @@ msgstr ""
 
 #: src/app/TrackReceiptUi.cpp src/packs/chater/chater_pages_ui.cpp
 msgid "used"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "A new project (asks to save first)"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "A note off (the note above ends here)"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "A row in (Shift: in every track)"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "Audio or automation clips start there: change them on the Song page"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "Block"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "Clears the cell"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "Clears the field (the block when one is marked)"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "Clears volume and effect, the effect"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "Click: select (new notes use it) · double-click: its instrument"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "Clips launched by hand"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "Copy, cut, paste the block"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "Cursor"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "Cut, copy, paste the pattern"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "Cut, copy, paste the track"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "Each note's effect letter and value"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "Each note's pan beside it"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "Each note's volume beside it"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "Edit mode on or off (off: the keys only play)"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "Edit step one more, one fewer"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "Effect column"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "Effect letters"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "Every track of the pattern"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "Its clips run into the next entries: change them on the Song page"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "Jump rows (Shift: keep the cursor's row there, Ctrl: play the pattern from it)"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "Mark a block"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "Mark the track"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "No channel selected"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp src/app/TrackerView.cpp
+msgid "No channels"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "No pattern clips in the song yet"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "No pattern clips. Automation clips are on the Song page."
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "No sample: a synthesized sound"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "No unused mixer tracks at the end"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "No unused patterns"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "Notes an octave up"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "Notes in the octave shown (the row above: the black keys)"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "Opens a project or a song file (Ctrl+O)"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "Pan column"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp src/core/Keymap.cpp
+msgid "Pattern editor"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "Pattern keys"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "Play, stop"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "Renders the song or the pattern to an audio file"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "Rows (16 at a time with the page keys)"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "Samples, presets and plugins (the Library page)"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp src/core/Keymap.cpp
+msgid "Save as"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "Saves the project (Ctrl+S)"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "Saves under a new name or format"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "Screen keys"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "The arrangement, a row per bar"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "The block a semitone down, up"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "The block a semitone up, down"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "The channels and their steps"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "The cursor's track"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "The effect field shows a note's own properties as a letter and two hex digits:"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "The fields of a cell"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "The first, the last row"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "The marked block (or the cursor's row)"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "The mixer"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "The next, the previous track"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "The octave"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "The pattern a semitone down, up"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "The pattern in rows (Esc: edit mode, F1 to F8: octave)"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "The previous, the next instrument"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "The previous, the next pattern"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "The row above out (Shift: in every track)"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "The same notes in the piano roll"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "The song's title (click to edit)"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "The track a semitone down, up (F7 F8 the same)"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "Tracks 1 to 8, 9 to 16"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "Type the letter, then the digits; Delete puts the property back."
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "Untitled song"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "Volume column"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "click: mute or unmute · right-click: solo"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "solo"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "tracker"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "unused mixer tracks removed"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "unused patterns deleted"
+msgstr ""
+
+#: src/app/TrackerPages.cpp
+msgid "Audio clip"
+msgstr ""
+
+#: src/app/TrackerPages.cpp
+msgid "Automation clip"
+msgstr ""
+
+#: src/app/TrackerPages.cpp
+msgid "Bars"
+msgstr ""
+
+#: src/app/TrackerPages.cpp
+msgid "Click: go there and pick the clip (its pattern shows; the box below edits it) · double-click an empty bar: place the pattern shown · right-click: the clip's menu"
+msgstr ""
+
+#: src/app/TrackerPages.cpp
+msgid "Click: select · double-click: its instrument"
+msgstr ""
+
+#: src/app/TrackerPages.cpp
+msgid "Delete clip"
+msgstr ""
+
+#: src/app/TrackerPages.cpp
+msgid "Pattern clip"
+msgstr ""
+
+#: src/app/TrackerPages.cpp
+msgid "Plays the pattern's notes this many semitones higher or lower (the pattern stays as written)"
+msgstr ""
+
+#: src/app/TrackerPages.cpp
+msgid "Press to launch (on the track's launch grid)"
+msgstr ""
+
+#: src/app/TrackerPages.cpp
+msgid "Song page: clips placed before the live area's end become pads (Playlist menu, Live area)"
+msgstr ""
+
+#: src/app/TrackerPages.cpp
+msgid "The clip stays in place, silent"
+msgstr ""
+
+#: src/app/TrackerPages.cpp
+msgid "The clip's whole menu, as in the playlist: warp markers, audio tools, curves, export"
+msgstr ""
+
+#: src/app/TrackerPages.cpp
+msgid "This channel plays notes: the pattern editor and the piano roll edit them"
+msgstr ""
+
+#: src/app/TrackerPages.cpp
+msgid "steps"
+msgstr ""
+
+#: src/app/TrackerView.cpp
+msgid "A rack step belongs to its channel"
+msgstr ""
+
+#: src/app/TrackerView.cpp
+msgid "A rack step: Delete clears it, the volume sets its velocity; the rest is edited in Steps"
+msgstr ""
+
+#: src/app/TrackerView.cpp
+msgid "Copied to the tracker clipboard"
+msgstr ""
+
+#: src/app/TrackerView.cpp
+msgid "Cut to the tracker clipboard"
+msgstr ""
+
+#: src/app/TrackerView.cpp
+msgid "Edit mode off: the keys play"
+msgstr ""
+
+#: src/app/TrackerView.cpp
+msgid "Edit mode: the keys write notes"
+msgstr ""
+
+#: src/app/TrackerView.cpp src/packs/chater/chater_ui.cpp
+msgid "Jump"
+msgstr ""
+
+#: src/app/TrackerView.cpp
+msgid "Moved to"
+msgstr ""
+
+#: src/app/TrackerView.cpp
+msgid "No note here"
+msgstr ""
+
+#: src/app/TrackerView.cpp
+msgid "No pattern"
+msgstr ""
+
+#: src/app/TrackerView.cpp
+msgid "Nothing copied yet: select rows with Shift and the arrows, then Ctrl+C"
+msgstr ""
+
+#: src/app/TrackerView.cpp
+msgid "One more note column (for chords)"
+msgstr ""
+
+#: src/app/TrackerView.cpp
+msgid "One note column fewer (only empty columns go)"
+msgstr ""
+
+#: src/app/TrackerView.cpp
+msgid "Play keys"
+msgstr ""
+
+#: src/app/TrackerView.cpp
+msgid "The tracks: drag to scroll them (Shift+wheel too); a click beside the bar shows the next tracks"
+msgstr ""
+
+#: src/app/TrackerView.cpp
+msgid "Tracks to the left have notes in these rows: click to scroll to them (Shift+wheel scrolls the tracks)"
+msgstr ""
+
+#: src/app/TrackerView.cpp
+msgid "Tracks to the right have notes in these rows: click to scroll to them (Shift+wheel scrolls the tracks)"
+msgstr ""
+
+#: src/app/TrackerView.cpp
+msgid "Type the effect letter first: G P T X Y R"
+msgstr ""
+
+#: src/app/TrackerView.cpp
+msgid "edit step"
+msgstr ""
+
+#: src/app/TrackerView.cpp
+msgid "follow"
+msgstr ""
+
+#: src/app/TrackerView.cpp
+msgid "lasts"
+msgstr ""
+
+#: src/app/TrackerView.cpp
+msgid "length"
+msgstr ""
+
+#: src/app/TrackerView.cpp
+msgid "more pattern plays here (the Song page shows it)"
+msgstr ""
+
+#: src/app/TrackerView.cpp
+msgid "more patterns play here (the Song page shows them)"
+msgstr ""
+
+#: src/app/TrackerView.cpp
+msgid "notes would leave the note range and stay where they are"
+msgstr ""
+
+#: src/app/TrackerView.cpp
+msgid "octave"
+msgstr ""
+
+#: src/app/TrackerView.cpp
+msgid "rows per beat"
+msgstr ""
+
+#: src/app/TrackerView.cpp
+msgid "starts at tick"
+msgstr ""
+
+#: src/app/TrackerView.cpp
+msgid "ticks"
 msgstr ""
 
 #: src/app/UndoUi.cpp
@@ -20582,10 +21342,6 @@ msgid "Their random pitch is not carried over: %s"
 msgstr ""
 
 #: src/core/Keymap.cpp
-msgid "Add a marker at the song position"
-msgstr ""
-
-#: src/core/Keymap.cpp
 msgid "Add a meter change at the song position"
 msgstr ""
 
@@ -21030,10 +21786,6 @@ msgid "Route selected channels to free mixer tracks"
 msgstr ""
 
 #: src/core/Keymap.cpp
-msgid "Save as"
-msgstr ""
-
-#: src/core/Keymap.cpp
 msgid "Scale levels tool"
 msgstr ""
 
@@ -21099,6 +21851,10 @@ msgstr ""
 
 #: src/core/Keymap.cpp
 msgid "Slip tool"
+msgstr ""
+
+#: src/core/Keymap.cpp
+msgid "Smart controls (show / hide)"
 msgstr ""
 
 #: src/core/Keymap.cpp
@@ -21238,11 +21994,19 @@ msgid "Tracks in the centre, one shared bottom pane, history on the right"
 msgstr ""
 
 #: src/core/MenuStyle.cpp
+msgid "Instruments, effects and clips"
+msgstr ""
+
+#: src/core/MenuStyle.cpp
 msgid "Navigate"
 msgstr ""
 
 #: src/core/MenuStyle.cpp
 msgid "Recording and metronome"
+msgstr ""
+
+#: src/core/MenuStyle.cpp
+msgid "Windows and panels"
 msgstr ""
 
 #: src/core/PluginStandIn.cpp
@@ -21934,10 +22698,6 @@ msgid "Pan pipes"
 msgstr ""
 
 #: src/core/TrackIconSet.cpp
-msgid "Pencil"
-msgstr ""
-
-#: src/core/TrackIconSet.cpp
 msgid "Percussion"
 msgstr ""
 
@@ -21983,10 +22743,6 @@ msgstr ""
 
 #: src/core/TrackIconSet.cpp
 msgid "Saxophone"
-msgstr ""
-
-#: src/core/TrackIconSet.cpp
-msgid "Scissors"
 msgstr ""
 
 #: src/core/TrackIconSet.cpp
@@ -22702,10 +23458,6 @@ msgid "Hold capture"
 msgstr ""
 
 #: src/packs/chater/chater_ui.cpp
-msgid "Jump"
-msgstr ""
-
-#: src/packs/chater/chater_ui.cpp
 msgid "Later roll"
 msgstr ""
 
@@ -22751,10 +23503,6 @@ msgstr ""
 
 #: src/packs/chater/chater_ui.cpp
 msgid "QUICK"
-msgstr ""
-
-#: src/packs/chater/chater_ui.cpp
-msgid "Roll"
 msgstr ""
 
 #: src/packs/chater/chater_ui.cpp
@@ -23631,10 +24379,6 @@ msgstr ""
 
 #: src/packs/edison/edison_wave_ui.cpp
 msgid "%s  - scrub: drag to hear the audio at the speed you move; the play position stays where you let go"
-msgstr ""
-
-#: src/packs/edison/edison_wave_ui.cpp
-msgid "Add marker"
 msgstr ""
 
 #: src/packs/edison/edison_wave_ui.cpp
@@ -27263,10 +28007,6 @@ msgstr ""
 
 #: src/packs/seltmann/seltmann_ui.cpp
 msgid "Analyse again"
-msgstr ""
-
-#: src/packs/seltmann/seltmann_ui.cpp
-msgid "Auto"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_ui.cpp

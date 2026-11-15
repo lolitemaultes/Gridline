@@ -31,8 +31,9 @@ namespace gl::layoutparts {
 void logicMixer(App& a);
 // Draws the open parts (call once per frame with the other windows).
 void draw(App& a);
-// View > Panels: one item per part (checked when open).
-void panelsMenu(App& a);
+// View > Panels: one item per part (checked when open). `tracker`: the Tracker layout leaves out
+// the parts its header band and pages show (Pattern editor, Order list, Track scopes, Info box, Files).
+void panelsMenu(App& a, bool tracker = false);
 // The Info box is open in a layout that homes it in the status line (it has no window there).
 bool infoInBar(App& a);
 // Dev ("parts ..."): notes set <file> | dump <file> | focus | blur; chain instrument | fx <slot> | master.

@@ -32,6 +32,24 @@ void beginFrame(App& a);
 // This user's pointer anchor (sent to the others), and collaborators' cursors on
 // top of everything (call last, after every window, popup and menu).
 void drawCursors(App& a);
+// K-106: edit cursors in a pattern, by shared ids and pattern ticks (any layout can show one).
+// The tracker sets this user's every frame it has the cursor; collaborators' come from their
+// presence: their edit cursor, or else their pointer over a piano roll grid (pattern, channel,
+// tick). Selection: channels selChannel0..selChannel1 in rack order, ticks [selTick0, selTick1).
+struct EditCursor {
+  uint32_t pattern = 0, channel = 0;
+  double tick = 0;
+  uint32_t selChannel0 = 0, selChannel1 = 0;
+  double selTick0 = 0, selTick1 = 0;
+};
+void setEditCursor(const EditCursor& c);
+struct PeerEdit {
+  EditCursor at;
+  uint32_t color = 0;  // their colour (0xRRGGBB)
+  std::string name;
+  bool pointer = false;  // from their pointer (no edit cursor of their own)
+};
+std::vector<PeerEdit> peerEdits(App& a);
 // Top bar: collaborator chips right to left from `rx`; returns the new right edge.
 float topBar(App& a, ImDrawList* dl, float rx, float top, float height);
 // Settings > Collaboration.

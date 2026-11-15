@@ -912,8 +912,53 @@ void hookWell(ImDrawList* dl, ImVec2 p0, ImVec2 p1, ImU32 hint) { surf().hookWel
 void hookRaised(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float r, ImU32 hint, int state) { surf().hookRaised(dl, p0, p1, r, hint, state); }
 void hookInset(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float r, ImU32 hint) { surf().hookInset(dl, p0, p1, r, hint); }
 ImU32 hookTint(ImU32 fill) { return cur().hookTint(fill); }
-void hookFace(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float r, int state, ImU32 role, bool rest) { surf().hookFace(dl, p0, p1, r, state, role, rest); }
-void hookPrimary(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float r, int state, ImU32 role) { surf().primary(dl, p0, p1, r, state & ~Primary, role); }
-ImU32 primaryText(ImU32 role, int state) { return surf().primaryText(role, state); }
+namespace {
+bool gFlatFaces = false;
+// Checkpoint 29: one rule for every flat face: the raised face colour at rest, 8 % toward the text on hover,
+// 14 % held (the layout's quiet hover, checkpoint 22); a lit face is the frame tinted with its role.
+void flatFace(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float r, int state, ImU32 role, bool rest) {
+  const auto& P = theme::pal();
+  const bool on = state & On, act = state & Active, hov = state & Hover, dis = state & Disabled;
+  if (!rest && !on && !act && !hov) return;
+  const Tokens& T = surf().tk;  // the raised face's own mid tone (lighter than the panel, as 015 and 023 draw buttons)
+  const ImU32 frame = T.face;
+  ImU32 c = on ? theme::mix(T.field, role ? role : P.hot, 0.2f) : frame;  // lit: the same tinted inset as before, flat
+  if (act) c = theme::mix(c, P.text, 0.14f);
+  else if (hov) c = theme::mix(c, P.text, 0.08f);
+  if (dis) c = theme::withAlpha(c, 0.5f);
+  dl->AddRectFilled(p0, p1, c, r);
+}
+// Checkpoint 30: a window's main action in the layout's blue (031, 098, 023: the default button is
+// the selection colour), its strips' and power buttons' blue; another role keeps its own colour.
+ImU32 flatPrimaryFill(ImU32 role) {
+  const auto& P = theme::pal();
+  return !role || role == P.hot ? theme::rgb(0x2F7EDB) : role;
+}
+void flatPrimary(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float r, int state, ImU32 role) {
+  const auto& P = theme::pal();
+  ImU32 c = flatPrimaryFill(role);
+  if (state & Disabled) c = theme::mix(c, ImGui::GetColorU32(ImGuiCol_FrameBg), 0.6f);
+  else if (state & Active) c = theme::mix(c, P.ink, 0.14f);
+  else if (state & Hover) c = theme::mix(c, P.paper, 0.10f);
+  dl->AddRectFilled(p0, p1, c, r);
+}
+}  // namespace
+void setFlatFaces(bool on) { gFlatFaces = on; }
+bool flatFaces() { return gFlatFaces; }
+void hookFace(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float r, int state, ImU32 role, bool rest) {
+  if (gFlatFaces) return state & Primary ? flatPrimary(dl, p0, p1, r, state & ~Primary, role) : flatFace(dl, p0, p1, r, state, role, rest);
+  surf().hookFace(dl, p0, p1, r, state, role, rest);
+}
+void hookPrimary(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float r, int state, ImU32 role) {
+  if (gFlatFaces) return flatPrimary(dl, p0, p1, r, state & ~Primary, role);
+  surf().primary(dl, p0, p1, r, state & ~Primary, role);
+}
+ImU32 primaryText(ImU32 role, int state) {
+  if (gFlatFaces) {
+    const ImU32 t = theme::contrastText(flatPrimaryFill(role));
+    return state & Disabled ? theme::withAlpha(t, 0.5f) : t;
+  }
+  return surf().primaryText(role, state);
+}
 
 }  // namespace gl::look

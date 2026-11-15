@@ -29,7 +29,9 @@
 #include "../core/NoteTools.h"
 #include "../core/SmoothSnap.h"
 #include "../core/StepNotes.h"
+#include "../core/TrackerGrid.h"
 #include "Theme.h"
+#include "TrackerPages.h"
 #include "LiveLook.h"
 #include "Widgets.h"
 #include "Windows.h"
@@ -655,7 +657,7 @@ void drawPianoRoll(App& a) {
     g = Gesture{};
   }
   if (!a.showPiano) return;
-  if (!ui::BeginDockWindow("Piano roll", &a.showPiano, ImVec2(900, 520))) {
+  if (!ui::BeginDockWindow("Piano roll", &a.showPiano, ImVec2(900, 520)) || trackerpages::enteringFrame()) {  // K-106: not docked yet
     ui::EndDockWindow();
     return;
   }
@@ -668,6 +670,14 @@ void drawPianoRoll(App& a) {
     }
   // K-112c: the Live layout's clip column on the left; the piano roll indents itself past it and
   // stays one window (no child), so its focus, hover, popups and shortcuts are as everywhere else.
+  if (trackerpages::active(a)) {  // K-106: the Tracker's Roll page has the pages' title bar (pattern and channel as the tracker numbers them)
+    const Song& ts = a.doc.song();
+    const Channel* tc = ts.channel(a.selChannel);
+    char info[160];
+    std::snprintf(info, sizeof info, "%s %02X  %s %02X %s", i18n::tr("Pattern"), trk::patternNumber(ts, a.curPattern), i18n::tr("Instrument"),
+                  ts.channelIndex(a.selChannel) + 1, tc ? tc->name.c_str() : "");
+    trackerpages::pageTitle(a, i18n::tr("Roll"), info);
+  }
   const float clipColW = livelook::active(a) ? livelook::clipColumn(a) : 0.0f;
   if (clipColW > 0) ImGui::Indent(clipColW);
   const auto& P = pal();
@@ -1045,10 +1055,14 @@ void drawPianoRoll(App& a) {
     // Quantise: the snap grid, with a strength (how far notes move) and a swing (every second
     // grid position later or earlier).
     static int strength = 100, swing = 50;
-    section("Quantize");
-    valueSlider("##prqstr", "Strength", &strength, 0, 100, "How far the notes move toward the grid, in percent");
-    valueSlider("##prqswing", "Swing", &swing, 0, 100, "50: straight; higher: every second grid position later, lower: earlier");
-    if (ui::TextButton("Quantize notes", false, ImGui::GetContentRegionAvail().x, "Quantize the selected notes (none selected: every note) to the snap grid")) {
+    // Checkpoint 30: the quantise section shows only when it fits whole (150 %, short panes): its
+    // heading, two sliders and the button, never a button cut at the pane's foot.
+    const float lh = ImGui::GetTextLineHeight(), sp = ImGui::GetStyle().ItemSpacing.y;
+    const bool showQuant = ImGui::GetContentRegionAvail().y >= 10 + lh + sp + 2 * (lh + 2 + 16 + 2 * sp) + ImGui::GetFrameHeight() + sp;
+    if (showQuant) section("Quantize");
+    if (showQuant) valueSlider("##prqstr", "Strength", &strength, 0, 100, "How far the notes move toward the grid, in percent");
+    if (showQuant) valueSlider("##prqswing", "Swing", &swing, 0, 100, "50: straight; higher: every second grid position later, lower: earlier");
+    if (showQuant && ui::TextButton("Quantize notes", false, ImGui::GetContentRegionAvail().x, "Quantize the selected notes (none selected: every note) to the snap grid")) {
       std::vector<Note> ns = notes;
       const Tick gsz = std::max<Tick>(1, st.effGrid > 1 ? st.effGrid : snapTicks(pm, st.snap == Snap::None ? Snap::Line : st.snap));
       auto sel = selVector(a, ns.size());
@@ -1062,8 +1076,13 @@ void drawPianoRoll(App& a) {
       commit(a, patId, chId, ns, sel, "quantize notes", 0);
       notes = rollNotes(a, patId, chId);
     }
-    section("Scale");
-    {
+    // Checkpoint 30: a short pane (1280 x 800) shows only the sections that fit whole, velocity first
+    // (it acts on the selection), then the scale; nothing is cut off at the pane's foot.
+    const float roomY = ImGui::GetContentRegionAvail().y;
+    const float velNeed = 10 + lh + 2 + 16 + 2 * sp + 4, scaleNeed = 10 + lh + sp + 2 * (ImGui::GetFrameHeight() + sp) + 4;
+    const bool showVel = roomY >= velNeed, showScale = roomY >= velNeed + scaleNeed;
+    if (showScale) section("Scale");
+    if (showScale) {
       static const char* const keyNames[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
       const auto& sc = tools::scales();
       const float w = ImGui::GetContentRegionAvail().x;
@@ -1085,8 +1104,8 @@ void drawPianoRoll(App& a) {
       ImGui::Checkbox(i18n::tr("Snap drawn notes to it"), &st.snapToScale);
       ImGui::EndDisabled();
     }
-    section(nullptr);  // K-112b (second pass): the velocity row is its own heading (144), not "Velocity" twice
-    {
+    if (showVel) section(nullptr);  // K-112b (second pass): the velocity row is its own heading (144), not "Velocity" twice
+    if (showVel) {
       int vel = st.lastVelocity;
       if (!st.selected.empty()) {
         int sum = 0;

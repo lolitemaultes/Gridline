@@ -27,6 +27,7 @@
 #include "LayoutPresets.h"
 #include "LayoutStyleUi.h"
 #include "Theme.h"
+#include "TrackerView.h"
 #include "Widgets.h"
 
 namespace gl::layoutui {
@@ -84,7 +85,7 @@ bool gDevLayouts = false;
 }
 // K-112: development builds only (GRIDLINE_DEV_LAYOUTS); a release build ignores --layout-dev and ui.layoutDev.
 #ifdef GRIDLINE_DEV_LAYOUTS
-void setDevLayouts(bool on) { gDevLayouts = on; }
+void setDevLayouts(bool on) { gDevLayouts = on, layout::setDevRun(on); }
 #else
 void setDevLayouts(bool) {}
 #endif
@@ -116,6 +117,19 @@ std::map<std::string, ImGuiID> gOuter;  // region -> its whole node (with its ti
 std::map<std::string, ImGuiID> gStrip;  // Segmented region -> its title strip node
 Preset gBuiltFor = Preset::Count;
 std::set<std::string> gClosedByGroup;  // windows an exclusive region closed (open for the person)
+// K-297: each region shell's panes and regions as they were last left in this run (never saved).
+struct Kept {
+  layout::State state;
+  std::map<std::string, bool> open;  // pane window -> open
+};
+std::map<int, Kept> gKept;  // layout -> what it was left with
+std::set<int> gRestorePanes;  // layouts entered again: their panes come back in showShellWindows
+// R01-04 (Tracks layout): the windows open there last frame, and the frame until which a return
+// to the layout restores them (the dock build after a switch can land a few frames late).
+std::set<std::string> gLogicOpen;
+bool gLogicHaveOpen = false;
+int gLogicRestoreUntil = -1;
+void restoreLogicWindows(App& a);
 }  // namespace
 
 layout::State regionState(const App& a, Preset p) {
@@ -157,6 +171,12 @@ void setRegionVisible(App& a, const std::string& region, bool on) {
       setRegionVisible(a, r->parent, true);
       st = regionState(a, p);
     }
+  // K-112c: a region of a group (the Clips detail bands) hides the others first, with their windows.
+  if (const layout::Region* r = layout::findRegion(p, region); on && r && *r->group) {
+    for (const layout::Region& o : layout::shell(p).regions)
+      if (region != o.id && std::string(o.group) == r->group) setRegionVisible(a, o.id, false);
+    st = regionState(a, p);
+  }
   if (layout::visible(layout::shell(p), st, region) != on) {
     layout::setVisible(layout::shell(p), st, region, on);
     setRegionState(a, p, st);
@@ -287,12 +307,34 @@ void buildShell(App& a, Preset p, ImGuiID dockspace, ImVec2 size) {
     for (const auto& [id, node] : gNodes)
       if (id != "live.side")
         if (ImGuiDockNode* n = ImGui::DockBuilderGetNode(node)) n->SetLocalFlags(n->LocalFlags | ImGuiDockNodeFlags_AutoHideTabBar);
+  // K-106: the Tracker's header band and lower frame show no tab bar while they hold one part (the
+  // header boxes, the device chain); a second window docked there (the browser as the disk page)
+  // brings the tabs back so both stay reachable.
+  if (p == Preset::Tracker)
+    for (const auto& [id, node] : gNodes)
+      if (id == "tracker.header" || id == "tracker.lower")
+        if (ImGuiDockNode* n = ImGui::DockBuilderGetNode(node)) n->SetLocalFlags(n->LocalFlags | ImGuiDockNodeFlags_AutoHideTabBar);
+  // K-106: the Tracker's centre holds its pages as hidden tabs (the header's page strip picks one);
+  // the pattern editor is the page it starts on.
+  if (p == Preset::Tracker)
+    if (const bool* f = windowOpenFlag(a, "Pattern editor"); f && *f) trackerview::bringPage("Pattern editor");
   gBuiltFor = p;
 }
+
+namespace {
+void restoreLogicWindows(App& a) {
+  if (!gLogicHaveOpen) return;
+  for (const WindowFlag& f : windowFlags(a))
+    if (std::strcmp(f.window, "Playlist") != 0) *f.open = gLogicOpen.count(f.window) > 0;
+}
+}  // namespace
 
 void showShellWindows(App& a, Preset p) {
   const layout::Shell& sh = layout::shell(p);
   const layout::State st = regionState(a, p);
+  // K-112c (round 45): Clips keeps the main view it has (a new set opens on the clip grid).
+  const bool keepView = p == Preset::Live && a.showLivePads != a.showPlaylist;
+  const bool pads = a.showLivePads, playlist = a.showPlaylist;
   for (const layout::Item& it : layout::items()) {
     if (!*it.window) continue;
     bool* f = windowOpenFlag(a, it.window);
@@ -302,18 +344,68 @@ void showShellWindows(App& a, Preset p) {
     if (!homed) continue;  // floating windows and dialogs keep their state
     *f = h.openByDefault && layout::visible(sh, st, h.region);
   }
+  if (keepView) a.showLivePads = pads, a.showPlaylist = playlist;
   // Exclusive regions open with the member the person last chose.
   for (const layout::Region& r : sh.regions) {
     if (!r.exclusive || !st.member.count(r.id) || !layout::visible(sh, st, r.id)) continue;
     if (bool* f = windowOpenFlag(a, st.member.at(r.id))) *f = true;
   }
+  // K-297: back in a layout visited earlier in this run, its own panes as they were left.
+  const int k = static_cast<int>(p);
+  if (gRestorePanes.count(k) && gKept.count(k)) {
+    for (const auto& [w, open] : gKept[k].open)
+      if (bool* f = windowOpenFlag(a, w)) *f = open;
+    gRestorePanes.erase(k);
+  }
+  // R01-04: a build just after a return to the Tracks layout keeps the windows that were open there.
+  if (p == Preset::Logic && ImGui::GetFrameCount() <= gLogicRestoreUntil) restoreLogicWindows(a);
 }
 
+namespace {
+// K-297: the windows that make a layout's pane set: homed in one of its regions, or a new part (an "N"
+// row) that floats there. Dialogs and the old floating windows keep their own state across switches.
+bool paneOf(const layout::Item& it, Preset p) {
+  const layout::Home& h = it.home[static_cast<int>(p)];
+  if ((h.kind == HomeKind::Dock || h.kind == HomeKind::Part) && *h.region) return true;
+  return it.id[0] == 'N' && (h.kind == HomeKind::Float || h.kind == HomeKind::Part);
+}
+}  // namespace
+
 void leaveLayout(App& a) {
+  // K-297: a region shell's pane set and region state are kept for this run, so coming back to it
+  // later opens it as it was left (taken before the windows an exclusive region hid come back).
+  const Preset p = active();
+  if (shellBuilt(a, p)) {
+    Kept& kp = gKept[static_cast<int>(p)];
+    kp.state = regionState(a, p);
+    kp.open.clear();
+    for (const layout::Item& it : layout::items())
+      if (*it.window && paneOf(it, p))
+        if (const bool* f = windowOpenFlag(a, it.window)) kp.open[it.window] = *f && !gClosedByGroup.count(it.window);
+  }
   // The windows an exclusive region only hid come back: they were open when the person left.
   for (const std::string& w : gClosedByGroup)
     if (bool* f = windowOpenFlag(a, w)) *f = true;
   gClosedByGroup.clear();
+}
+
+void enterLayout(App& a, Preset to) {
+  if (to == Preset::Studio) return;
+  const int k = static_cast<int>(to);
+  // K-284: a layout's first visit in a run opens its designed regions; K-297: a later visit opens them
+  // as they were left (its panes come back in showShellWindows).
+  const auto kept = gKept.find(k);
+  setRegionState(a, to, kept != gKept.end() ? kept->second.state : layout::State{});
+  if (kept != gKept.end()) gRestorePanes.insert(k);
+  if (!shellBuilt(a, to)) return;
+  // K-297: another layout's new parts do not follow into this one as stray floating windows (the
+  // Tracker's order list over the tracks): a part that only floats here closes unless it opens here by default.
+  for (const layout::Item& it : layout::items()) {
+    if (!*it.window || it.id[0] != 'N') continue;
+    const layout::Home& h = it.home[k];
+    if ((h.kind == HomeKind::Float || (h.kind == HomeKind::Part && !*h.region)) && !h.openByDefault)
+      if (bool* f = windowOpenFlag(a, it.window)) *f = false;
+  }
 }
 
 namespace {
@@ -344,7 +436,7 @@ const StripName kStripNames[] = {
     {"Collaboration", i18n::N_("Collaborate"), false}, {"Sync review", i18n::N_("Review"), false},
     {"Piano roll", i18n::N_("Piano roll"), true}, {"Channel rack", i18n::N_("Steps"), true}, {"Loupe", i18n::N_("Loupe"), true},
     {"###autoedit", i18n::N_("Automation"), true}, {"Chord progression", i18n::N_("Chords"), false}, {"Mixer", i18n::N_("Mixer"), true},
-    {"Smart controls", i18n::N_("Smart controls"), false},
+    {"Smart controls", i18n::N_("Smart controls"), false}, {"Pattern editor", i18n::N_("Pattern"), false},
 };
 
 // The title strip of each Segmented region: its windows by name, the one shown lit; a click shows
@@ -431,8 +523,20 @@ void drawPaneStrips(App& a) {
 
 }  // namespace
 
+namespace {
+bool gLogicRestore = false;  // R01-04: returned to the Tracks layout: its windows come back once it is built
+const ImGuiWindow* findTop(const std::string& name);
+}
+
 void shellFrame(App& a) {
   const Preset p = active();
+  {
+    static int logicSeen = -10;
+    if (p == Preset::Logic) {
+      if (logicSeen != ImGui::GetFrameCount() - 1) gLogicRestore = true, gLogicRestoreUntil = ImGui::GetFrameCount() + 60;
+      logicSeen = ImGui::GetFrameCount();
+    }
+  }
   if (!shellBuilt(a, p) || gBuiltFor != p) return;
   const layout::Shell& sh = layout::shell(p);
   layout::State st = regionState(a, p);
@@ -441,11 +545,86 @@ void shellFrame(App& a) {
     const layout::Home& h = it.home[static_cast<int>(p)];
     if (!*it.window || (h.kind != HomeKind::Dock && h.kind != HomeKind::Part) || !*h.region) continue;
     bool* f = windowOpenFlag(a, it.window);
-    if (f && *f && layout::hasRegion(p, h.region) && !layout::visible(sh, st, h.region)) {
+    // Round 45: a window opened by its own command (no flag: Loupe pinned, the automation editor, ...)
+    // counts as open while it is drawn; with the Clips detail bands taking turns its band may be hidden.
+    // Only the frame it appears (closing its band while it stays drawn must not bring the band back).
+    static std::set<std::string> drawnBefore;
+    const ImGuiWindow* drawn = f ? nullptr : ImGui::FindWindowByName(it.window);
+    const bool drawnNow = drawn && drawn->WasActive;
+    const bool appeared = drawnNow && !drawnBefore.count(it.window);
+    if (!f) drawnNow ? (void)drawnBefore.insert(it.window) : (void)drawnBefore.erase(it.window);
+    const bool open = f ? *f : appeared;
+    if (open && layout::hasRegion(p, h.region) && !layout::visible(sh, st, h.region)) {
       setRegionVisible(a, h.region, true);
-      *f = true;
+      // Tracks layout: an exclusive pane shows the window asked for, not its default member beside
+      // it (the default would win the pane and close this one: R01-04's Mixer and Lists).
+      if (const layout::Region* r = layout::findRegion(p, h.region); p == Preset::Logic && r && r->exclusive)
+        for (const layout::Item& o : layout::items())
+          if (*o.window && std::strcmp(o.window, it.window) != 0 && std::strcmp(o.home[static_cast<int>(p)].region, h.region) == 0)
+            if (bool* g = windowOpenFlag(a, o.window)) *g = false;
+      if (f) *f = true;
       return;  // rebuilt next frame
     }
+  }
+  // Tracks layout: a view with no open flag (Loupe, the automation editor, Chord progression,
+  // the activity log) that has just started drawing while its pane is closed (the pane closed
+  // with its last view) shows the pane too, once, as it starts.
+  if (p == Preset::Logic) {
+    static std::set<std::string> drawnBefore;
+    std::set<std::string> drawnNow;
+    for (const layout::Item& it : layout::items()) {
+      const layout::Home& h = it.home[static_cast<int>(p)];
+      if (!*it.window || (h.kind != HomeKind::Dock && h.kind != HomeKind::Part) || !*h.region) continue;
+      if (windowOpenFlag(a, it.window)) continue;
+      const ImGuiWindow* w = findTop(it.window);
+      if (!w || !w->WasActive) continue;
+      drawnNow.insert(it.window);
+      if (!drawnBefore.count(it.window) && layout::hasRegion(p, h.region) && !layout::visible(sh, st, h.region)) {
+        drawnBefore = drawnNow;
+        drawnBefore.insert(it.window);
+        setRegionVisible(a, h.region, true);
+        return;  // rebuilt next frame
+      }
+    }
+    drawnBefore = std::move(drawnNow);
+  }
+  // R01-05 / R01-06 (Tracks layout): a pane whose last view closed (E, X, B or D pressed again, a
+  // window's own close) closes too, so the tracks area takes the room back, as the reference's
+  // panes do. Only on that change: a pane shown for a window that opens a frame later (the audio
+  // editor, an automation clip) stays, and so does a pane its own command just showed.
+  // R01-04: the windows open in the layout come back as they were when the person returns to it
+  // (another layout's build opened and closed others).
+  if (p == Preset::Logic) {
+    static std::map<std::string, bool> hadOpen;
+    if (gLogicRestore) {
+      gLogicRestore = false;
+      hadOpen.clear();
+      restoreLogicWindows(a);
+    }
+    for (const layout::Region& r : sh.regions) {
+      if (!r.exclusive || !layout::visible(sh, st, r.id)) {
+        hadOpen.erase(r.id);
+        continue;
+      }
+      bool any = false;
+      for (const layout::Item& it : layout::items()) {
+        const layout::Home& h = it.home[static_cast<int>(p)];
+        if (!*it.window || r.id != std::string(h.region)) continue;
+        if (const bool* f = windowOpenFlag(a, it.window)) any = any || *f;
+        else if (const ImGuiWindow* w = findTop(it.window)) any = any || w->WasActive;  // no flag: drawn last frame
+      }
+      const bool was = hadOpen.count(r.id) && hadOpen[r.id];
+      hadOpen[r.id] = any;
+      if (was && !any && !(r.id == std::string("logic.lower") && a.settings.getBool("ui.loupePinned"))) {
+        hadOpen.erase(r.id);
+        setRegionVisible(a, r.id, false);
+        return;  // rebuilt next frame
+      }
+    }
+    gLogicOpen.clear();
+    for (const WindowFlag& f : windowFlags(a))
+      if (*f.open) gLogicOpen.insert(f.window);
+    gLogicHaveOpen = true;
   }
   // A window opened into a region that is already shown goes to its home there (the dock
   // builder places only the windows open when the region was built). One the person dragged out
@@ -470,10 +649,70 @@ void shellFrame(App& a) {
   }
   bool changed = false;
   static std::map<std::string, bool> prevOpen;  // "<region>|<window>" -> open last frame
+  // K-297: a divider the person drags. ImGui moves a dock split while its splitter is the active item
+  // of the dock host. Meanwhile fixed bands are not pinned back (they snapped back every frame, so the
+  // device band's divider shrank the clip band instead), and when it lets go the regions it moved keep
+  // their new size in the region state: a rebuild (a region shown or hidden) or a window resize no
+  // longer undoes the drag.
+  const ImGuiContext& g = *ImGui::GetCurrentContext();
+  const ImGuiWindow* host = ImGui::FindWindowByName("##dockhost");
+  // (The splitters belong to the dock space's own child window, "##dockhost/DockSpace_...".)
+  const bool splitting = host && g.ActiveId != 0 && g.ActiveIdWindow && g.ActiveIdWindow->RootWindow == host && ImGui::IsMouseDown(ImGuiMouseButton_Left);
+  static bool wasSplitting = false;
+  static std::map<std::string, float> atGrab;  // region -> its extent when the divider was grabbed
+  const bool grabbed = splitting && !wasSplitting, released = wasSplitting && !splitting;
+  wasSplitting = splitting;
+  if (grabbed) atGrab.clear();
+  // K-297: ImGui moves the band that touches a divider and keeps the far one, so dragging the device
+  // band's divider shrank the clip band above it while the main view kept its height. A band the
+  // divider only touched (deeper in the dock tree than the one the divider belongs to) keeps its
+  // size; the centre beside it takes the change, as a stacked detail view grows over the main view.
+  auto depth = [](const ImGuiDockNode* n) {
+    int d = 0;
+    for (; n && n->ParentNode; n = n->ParentNode) ++d;
+    return d;
+  };
+  auto holdsCentre = [](auto&& self, const ImGuiDockNode* n) -> bool {
+    return n && (n->IsCentralNode() || self(self, n->ChildNodes[0]) || self(self, n->ChildNodes[1]));
+  };
+  std::set<std::string> touchedOnly;
+  if ((splitting || released) && !atGrab.empty()) {
+    int top = 1 << 20;
+    std::vector<std::pair<const layout::Region*, ImGuiDockNode*>> moved;
+    for (const layout::Region& r : sh.regions) {
+      ImGuiDockNode* dn = outerNode(r.id) ? ImGui::DockBuilderGetNode(outerNode(r.id)) : nullptr;
+      const auto at = atGrab.find(r.id);
+      if (!dn || at == atGrab.end()) continue;
+      const bool hz = r.edge == layout::Edge::Left || r.edge == layout::Edge::Right;
+      if (std::fabs(std::floor(hz ? dn->Size.x : dn->Size.y) - at->second) > 1.5f) moved.push_back({&r, dn}), top = std::min(top, depth(dn));
+    }
+    for (const auto& [r, dn] : moved) {
+      ImGuiDockNode* par = dn->ParentNode;
+      ImGuiDockNode* sib = par ? (par->ChildNodes[0] == dn ? par->ChildNodes[1] : par->ChildNodes[0]) : nullptr;
+      if (depth(dn) <= top || !sib || !holdsCentre(holdsCentre, sib)) continue;
+      touchedOnly.insert(r->id);
+      const bool hz = r->edge == layout::Edge::Left || r->edge == layout::Edge::Right;
+      const float now = hz ? dn->Size.x : dn->Size.y, centre = hz ? sib->Size.x : sib->Size.y;
+      // The centre keeps a usable size; past it the band gives way as before.
+      const float back = std::min(atGrab[r->id] - now, std::max(0.0f, centre - 120.0f));
+      (hz ? dn->SizeRef.x : dn->SizeRef.y) = std::floor(now + back);
+    }
+  }
   for (const layout::Region& r : sh.regions) {
     const ImGuiID node = outerNode(r.id);
     ImGuiDockNode* dn = node ? ImGui::DockBuilderGetNode(node) : nullptr;
     const bool hz = r.edge == layout::Edge::Left || r.edge == layout::Edge::Right;
+    if (dn && (grabbed || released)) {
+      const float now = std::floor(hz ? dn->Size.x : dn->Size.y);
+      if (grabbed) {
+        atGrab[r.id] = now;
+      } else if (const auto at = atGrab.find(r.id); at != atGrab.end() && now > 0 && std::fabs(now - at->second) > 1.5f && !touchedOnly.count(r.id)) {
+        const std::string member = r.exclusive && st.member.count(r.id) ? st.member.at(r.id) : std::string();
+        if (!member.empty()) st.memberSize[std::string(r.id) + "|" + member] = now;
+        else st.regionSize[r.id] = now;
+        changed = true;
+      }
+    }
     if (r.exclusive && dn) {
       // The members: windows homed here. One opened this frame closes the others.
       std::vector<std::pair<const char*, bool*>> members;
@@ -514,8 +753,9 @@ void shellFrame(App& a) {
         prevOpen[key] = *f;
       }
     }
-    // Fixed bands keep their pixel size (the refit after a window resize scales side panels).
-    if (r.fixed && dn && r.size.px > 0 && dn->ParentNode) {
+    // Fixed bands keep their pixel size (the refit after a window resize scales side panels): the
+    // layout's, or the one the person dragged the band to (State::regionSize). Not while a divider moves.
+    if (r.fixed && dn && r.size.px > 0 && dn->ParentNode && !splitting) {
       const float parent = hz ? dn->ParentNode->Size.x : dn->ParentNode->Size.y;
       float want = layout::regionExtent(r, parent, st);
       if (const auto b = boosts().find(r.id); b != boosts().end() && b->second.px > 0 && ImGui::GetFrameCount() - b->second.frame <= 1)
@@ -528,9 +768,6 @@ void shellFrame(App& a) {
       // is its pixel size and bands of the same size line up across the window.
       ImGuiDockNode* par = dn->ParentNode;
       ImGuiDockNode* sib = par->ChildNodes[0] == dn ? par->ChildNodes[1] : par->ChildNodes[0];
-      auto holdsCentre = [](auto&& self, const ImGuiDockNode* n) -> bool {
-        return n && (n->IsCentralNode() || self(self, n->ChildNodes[0]) || self(self, n->ChildNodes[1]));
-      };
       if (want > 0 && sib && !holdsCentre(holdsCentre, sib)) {
         const float rest = std::max(1.0f, parent - ImGui::GetStyle().DockingSeparatorSize - want);
         float& sv = hz ? sib->SizeRef.x : sib->SizeRef.y;

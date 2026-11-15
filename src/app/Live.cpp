@@ -11,6 +11,7 @@
 #include "App.h"
 #include "LiveLook.h"
 #include "Theme.h"
+#include "TrackerPages.h"
 #include "Widgets.h"
 #include "Windows.h"
 
@@ -152,6 +153,11 @@ void drawLivePads(App& a) {
     ++shownFrames;
   }
   if (!vis) {
+    ui::EndDockWindow();
+    return;
+  }
+  if (trackerpages::active(a)) {  // K-106: the Tracker layout's Pads page (its look)
+    trackerpages::pads(a);
     ui::EndDockWindow();
     return;
   }

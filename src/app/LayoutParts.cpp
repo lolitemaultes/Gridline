@@ -19,6 +19,7 @@
 #include "../../third_party/imgui/imgui_internal.h"
 #include "../core/I18n.h"
 #include "../core/LayoutHomes.h"
+#include "../core/MenuOpsExtra.h"
 #include "../core/MixerOps.h"
 #include "../core/Params.h"
 #include "../core/PluginInfo.h"
@@ -30,6 +31,7 @@
 #include "../packs/PacksUi.h"
 #include "App.h"
 #include "BrowserUi.h"
+#include "ContextMenus.h"
 #include "HostedBodies.h"
 #include "HostedUi.h"
 #include "LayoutPresets.h"
@@ -39,9 +41,11 @@
 #include "LogicPlugins.h"
 #include "LookGeom.h"
 #include "MenuParityUi.h"
+#include "../core/Meter.h"
 #include "MixerMeters.h"
 #include "Theme.h"
 #include "TrackIcons.h"
+#include "TrackerView.h"
 #include "Widgets.h"
 #include "Windows.h"
 
@@ -109,7 +113,9 @@ void part(App& a, const char* window, int index, ImVec2 firstSize, F&& body) {
   if (vis) {
     const ImGuiWindow* pw = ImGui::GetCurrentWindow();
     gOwnTitle = pw->DockIsActive && pw->DockNode && (pw->DockNode->LocalFlags & ImGuiDockNodeFlags_NoTabBar) != 0;
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS2, theme::kS2));
+    // K-106: the tracker parts draw edge to edge (their own frames and boxes).
+    const float padPart = std::strcmp(window, "Pattern editor") == 0 || std::strcmp(window, "Order list") == 0 ? 2.0f : theme::kS2;
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(padPart, padPart));
     ImGui::BeginChild("##part", ImVec2(0, 0), ImGuiChildFlags_AlwaysUseWindowPadding);
     ImGui::PopStyleVar();
     body();
@@ -118,7 +124,21 @@ void part(App& a, const char* window, int index, ImVec2 firstSize, F&& body) {
   ui::EndDockWindow();
 }
 
-std::string tickText(App& a, Tick t) { return menuparity::positionText(a, static_cast<double>(t)); }
+std::string tickText(App& a, Tick t) {
+  if (logicplug::active(a)) {
+    // R01-26: the Tracks layout writes a position as the reference's lists and inspector do: bar,
+    // beat, division (a sixteenth) and tick, each counted from 1 ("1 1 1 1" is the song's start).
+    const Song& s = a.doc.song();
+    const MeterMap mm(s);
+    const MeterMap::Bbt b = mm.toBbt(std::max<Tick>(0, t));
+    const Tick div = std::max<Tick>(1, static_cast<Tick>(s.ppq) / 4);
+    char buf[64];
+    std::snprintf(buf, sizeof buf, "%lld %d %lld %lld", static_cast<long long>(b.bar + 1), b.beat + 1, static_cast<long long>(b.tick / div + 1),
+                  static_cast<long long>(b.tick % div + 1));
+    return buf;
+  }
+  return menuparity::positionText(a, static_cast<double>(t));
+}
 
 const MixerTrack* chainTrack(App& a, ObjectId channel) {
   const Song& s = a.doc.song();
@@ -242,12 +262,15 @@ bool cardFold(const char* id, const std::string& text, bool* open) {
   App& a = app();
   const auto& P = pal();
   const ImVec2 p = ImGui::GetCursorScreenPos();
-  const float w = ImGui::GetContentRegionAvail().x, h = 22;
+  // Checkpoint 37: in the Tracks layout a heading is a 34 px row with its line on the row's foot and the
+  // next row straight under it, as 216 and 125 stack Region and Track (22 px with gaps around: a 44 px pitch).
+  const bool lg = logicplug::active(a);
+  const float w = ImGui::GetContentRegionAvail().x, h = lg ? 34.0f : 22.0f;
   if (ImGui::InvisibleButton(id, ImVec2(w, h))) *open = !*open;
   const bool hov = ImGui::IsItemHovered();
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const float cy = std::round(p.y + h * 0.5f);
-  if (logicplug::active(a)) {  // K-112b: as the reference inspectors (110, 092)
+  if (lg) {  // K-112b: as the reference inspectors (110, 092)
     const float fs = ImGui::GetFontSize(), ty = std::round(p.y + (h - fs) * 0.5f);
     const size_t c = text.find(": ");
     const std::string lead = c == std::string::npos ? text : text.substr(0, c + 1), rest = c == std::string::npos ? std::string() : text.substr(c + 2);
@@ -256,8 +279,10 @@ bool cardFold(const char* id, const std::string& text, bool* open) {
     if (!rest.empty()) theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(std::round(p.x + 2 + lw + 4), ty), w - lw - 26, P.textDim, rest.c_str());
     const float ax = std::round(p.x + w - 9);
     ui::drawIcon(dl, *open ? ui::Icon::ChevronDown : ui::Icon::Chevron, ImVec2(ax, cy), 9, hov ? P.text : P.textDim);
-    dl->AddLine(ImVec2(p.x, p.y + h + 2), ImVec2(p.x + w, p.y + h + 2), pal().line);
-    ImGui::Dummy(ImVec2(0, 2));
+    if (hov) dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h - 1), theme::withAlpha(P.text, 0.04f));
+    dl->AddLine(ImVec2(p.x, p.y + h - 0.5f), ImVec2(p.x + w, p.y + h - 0.5f), pal().line);
+    ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + h));
+    if (*open) ImGui::Dummy(ImVec2(0, 2));
     return *open;
   }
   if (*open) ui::drawIconFit(dl, ui::Icon::Down, ImVec2(p.x + 3, cy - 2), ImVec2(p.x + 10, cy + 3), hov ? P.text : P.textDim);
@@ -557,6 +582,7 @@ enum StripRow { RowSetting, RowEq, RowInst, RowFx, RowSends, RowOut, RowPan, Row
 // the sends slot).
 // Checkpoint 22: on the smallest panes (150 % at 1440x900) the level readouts, then the pan knob go
 // too, and the fader may shorten to 32 px; the effect rows are capped first (see logicMixer).
+int gSendRows = 0;  // checkpoint 38: send rows each inspector strip of a pair keeps (so both line up)
 enum StripHide { HideIcon = 1, HideSetting = 2, HideEq = 4, HideSends = 8, HideLevel = 16, HidePan = 32, HideShort = 64, HideMid = 128 };  // HideMid: the fader down to 48 px (checkpoint 26)
 
 // fxRows >= 0: a fixed layout (the mixer, where the strips line up with the legend): the instrument
@@ -608,9 +634,11 @@ void strip(App& a, const MixerTrack& t, const Channel* ch, ImVec2 p, ImVec2 size
   }
   mark(RowFx);
   int shown = 0;
-  const int fxMax = fxRows >= 0 ? fxRows - 1 : 6;
   int fxCount = 0;
   for (const EffectSlot& e : t.slots) fxCount += e.plugin.type.empty() ? 0 : 1;
+  // Checkpoint 28: a single effect row shows a lone effect itself (no free slot under it).
+  const bool lone = fxRows == 1 && fxCount == 1;
+  const int fxMax = fxRows >= 0 ? (lone ? 1 : fxRows - 1) : 6;
   // K-112b (checkpoint 22): when the mixer caps its effect rows, the last row says how many more there
   // are (a click shows them in the detailed mixer) instead of leaving them out unseen.
   const bool more = fxRows >= 0 && fxCount > fxMax;
@@ -626,17 +654,55 @@ void strip(App& a, const MixerTrack& t, const Channel* ch, ImVec2 p, ImVec2 size
       a.selMixer = t.id;
       a.settings.set("ui.logicMixerDetail", true);
     }
-  } else {
+  } else if (!lone) {
     emptyPill(a, t, firstFree(t), w);
   }
-  gap();
+  if (!lone) gap();
   // The count row stands where the free slot would: both take the row after the effects shown.
   for (int k = shown + 1; k < (fxRows >= 0 ? fxRows : padRows); ++k) {
     ImGui::Dummy(ImVec2(w, 17));
     gap();
   }
   {
-    if (!(hide & HideSends)) {
+    if (!(hide & HideSends) && fxRows < 0 && logicplug::active(a)) {
+      // Checkpoint 38: the inspector's strips list each send as its own pill (the destination's name) with
+      // its level knob beside it, then an empty Sends slot, as 216 and 110 draw them ("Sends 1" counted the
+      // track's output route too). The pair keeps the same number of send rows so the strips line up.
+      mark(RowSends);
+      const Send* outSend = nullptr;
+      for (const Send& sd : t.sends)
+        if (!sd.sidechain && !outSend) outSend = &sd;
+      int shownSends = 0;
+      for (const Send& sd : t.sends) {
+        if (&sd == outSend || sd.stageRoom) continue;
+        const int di = s.mixerIndex(sd.to);
+        if (di < 0) continue;
+        ImGui::PushID(di);
+        const float kw = 18.0f;
+        const ImVec2 sp = ImGui::GetCursorScreenPos();
+        const std::string nm = (sd.sidechain ? std::string("SC ") : std::string()) + mixerTrackName(s, static_cast<size_t>(di));
+        if (stripSlot("##send", nm, false, false, w - kw, "A send: click to show it in the mixer; the knob sets its level", theme::rgb(0x2F7EDB))) {  // blue as the effects (216)
+          a.selMixer = t.id;
+          a.showMixer = true;
+        }
+        ImGui::SetCursorScreenPos(ImVec2(sp.x + w - kw + 3, sp.y + 1.5f));
+        ui::ParamKnob("##sendk", sendParam(t.id, di), 7.0f);
+        ImGui::SetCursorScreenPos(ImVec2(sp.x, sp.y + 17));
+        ImGui::Dummy(ImVec2(w, 0));
+        ImGui::PopID();
+        gap();
+        ++shownSends;
+      }
+      for (int k = shownSends; k < gSendRows; ++k) {
+        ImGui::Dummy(ImVec2(w, 17));
+        gap();
+      }
+      if (stripSlot("##sends", i18n::tr("Sends"), false, true, w, "The track's sends: shows it in the mixer")) {
+        a.selMixer = t.id;
+        a.showMixer = true;
+      }
+      gap();
+    } else if (!(hide & HideSends)) {
       mark(RowSends);
       std::string sends = t.sends.empty() ? std::string(i18n::tr("Sends")) : std::string(i18n::tr("Sends")) + " " + std::to_string(t.sends.size());
       if (stripSlot("##sends", sends, false, t.sends.empty(), w, "The track's sends: shows it in the mixer")) {
@@ -653,6 +719,32 @@ void strip(App& a, const MixerTrack& t, const Channel* ch, ImVec2 p, ImVec2 size
     if (stripSlot("##out", outName, false, false, w, "Where the track goes: shows it in the mixer")) {
       a.selMixer = t.id;
       a.showMixer = true;
+    }
+    // Checkpoint 35: the inspector's strips end their slots with the track's group, as 216, 110 and 125
+    // show a Group slot under the output. A click picks a group, a new one or none (mixops::setGroup,
+    // one shared edit).
+    if (fxRows < 0 && logicplug::active(a) && index == 0 && padRows > 0) {  // the master beside a track: an empty row, so both line up
+      gap();
+      ImGui::Dummy(ImVec2(w, 17));
+    } else if (fxRows < 0 && logicplug::active(a) && index > 0) {
+      gap();
+      if (stripSlot("##group", t.group.empty() ? std::string(i18n::tr("Group")) : t.group, false, t.group.empty(), w,
+                    "The track's group: click to put it in one or take it out"))
+        ImGui::OpenPopup("##stripgroup");
+      if (ImGui::BeginPopup("##stripgroup")) {
+        const ObjectId id = t.id;
+        if (ImGui::MenuItem(i18n::tr("Remove from group"), nullptr, false, !t.group.empty())) mixops::setGroup(a.doc, {id}, "");
+        const auto groups = mixops::groupNames(s);
+        if (!groups.empty()) ImGui::Separator();
+        for (const auto& g : groups)
+          if (ImGui::MenuItem(g.c_str(), nullptr, t.group == g) && t.group != g) mixops::setGroup(a.doc, {id}, g);
+        ImGui::Separator();
+        if (ImGui::MenuItem(i18n::tr("Create group...")))
+          menus::openPrompt("Group name", mixops::newGroupName(s), [&a, id](const std::string& n) {
+            if (!n.empty()) mixops::setGroup(a.doc, {id}, n);
+          });
+        ImGui::EndPopup();
+      }
     }
   }
   ImGui::EndGroup();
@@ -800,6 +892,9 @@ void inspector(App& a) {
   const int nSel = static_cast<int>(selIds.size());
   int track = clip ? clip->track : (!a.playlist.trackSel.empty() ? *a.playlist.trackSel.begin() : -1);
   if (track >= static_cast<int>(s.tracks.size())) track = -1;
+  // R01-10: in the Tracks layout a track is always selected, as in the reference (the selected
+  // channel's track, else the first), so the Track card and both strips never go away.
+  if (track < 0 && logicplug::active(a)) track = logicplug::focusTrack(a);
   // Every selected region at once, one undo step (a drag on a value folds into one by its key).
   auto editSel = [&](const char* label, const std::function<void(Clip&)>& fn, uint64_t mergeKey = 0) {
     a.doc.editClips(label, [&selIds, &fn](std::vector<Clip>& cs) {
@@ -877,10 +972,32 @@ void inspector(App& a) {
           const float to = static_cast<float>(semis * 100 + fine);
           editSel("clip pitch", [to](Clip& k) { k.pitch = to; }, 0x112B0305);
         }
+        // R01-13: the fades, as the reference's Region inspector lists them (062): each edge's length
+        // and type. Stored on the clip as every layout stores them (Clip::fadeIn / fadeOut, seconds,
+        // set by hand; the shape smooth or straight), so the other layouts show the same fades.
+        auto msText = [](int ms) { return ms <= 0 ? std::string(i18n::tr("off")) : std::to_string(ms) + " ms"; };
+        int fin = static_cast<int>(std::lround(clip->fadeIn * 1000.0)), fout = static_cast<int>(std::lround(clip->fadeOut * 1000.0));
+        if (cardStepper("##rfadein", "Fade in", &fin, 0, 20000, 0, msText(fin), "The fade in's length, in milliseconds (double-click: off)")) {
+          const double to = std::max(0, fin) / 1000.0;
+          editSel("fade in", [to](Clip& k) { k.fadeIn = to, k.fadeInManual = true; }, 0x112B0306);
+        }
+        const char* shapes[2] = {i18n::N_("Smooth"), i18n::N_("Straight")};
+        if (cardRow("##rfadeinty", "Fade in type", i18n::tr(shapes[clip->fadeInShape ? 1 : 0]), "Click: a smooth or a straight fade in", true)) {
+          const uint8_t to = clip->fadeInShape ? 0 : 1;
+          editSel("fade in type", [to](Clip& k) { k.fadeInShape = to; });
+        }
+        if (cardStepper("##rfadeout", "Fade out", &fout, 0, 20000, 0, msText(fout), "The fade out's length, in milliseconds (double-click: off)")) {
+          const double to = std::max(0, fout) / 1000.0;
+          editSel("fade out", [to](Clip& k) { k.fadeOut = to, k.fadeOutManual = true; }, 0x112B0307);
+        }
+        if (cardRow("##rfadeoutty", "Fade out type", i18n::tr(shapes[clip->fadeOutShape ? 1 : 0]), "Click: a smooth or a straight fade out", true)) {
+          const uint8_t to = clip->fadeOutShape ? 0 : 1;
+          editSel("fade out type", [to](Clip& k) { k.fadeOutShape = to; });
+        }
       }
       cardEnd();
     }
-    ImGui::Dummy(ImVec2(0, 4));
+    if (!logicplug::active(a)) ImGui::Dummy(ImVec2(0, 4));  // checkpoint 37: the Tracks layout's headings stack
   }
   // ---- Track card ----
   const Channel* ch = nullptr;
@@ -910,6 +1027,7 @@ void inspector(App& a) {
           }
         }
     }
+    if (!linked && !ch && logicplug::active(a)) ch = logicplug::trackSound(s, track, clip);  // R01-10: a free track's regions' sound
     if (cardFold("##tfold", std::string(i18n::tr("Track")) + ": " + playlistTrackName(s, static_cast<size_t>(track)), &trackOpen)) {
       cardBegin();
       const TrackMode mode = trackmodes::modeOf(s, track);
@@ -922,7 +1040,7 @@ void inspector(App& a) {
       }
       cardEnd();
     }
-    ImGui::Dummy(ImVec2(0, 4));
+    if (!logicplug::active(a)) ImGui::Dummy(ImVec2(0, 4));  // checkpoint 37: the Tracks layout's headings stack
   } else if (const Channel* c = s.channel(a.selChannel)) {
     cardFold("##cfold", std::string(i18n::tr("Channel")) + ": " + c->name, &trackOpen);
     ch = c;
@@ -954,7 +1072,7 @@ void inspector(App& a) {
       const ImVec2 base = ImGui::GetCursorScreenPos();
       const float y = base.y + 6;
       const float sw = std::floor(av.x * 0.5f);
-      ImGui::GetWindowDrawList()->AddLine(ImVec2(base.x, y - 4), ImVec2(base.x + av.x, y - 4), pal().line);
+      if (!logicplug::active(a)) ImGui::GetWindowDrawList()->AddLine(ImVec2(base.x, y - 4), ImVec2(base.x + av.x, y - 4), pal().line);  // the Tracks layout's heading draws it
       // K-112b (checkpoint 22): in the Tracks layout the pair keeps the same rows (the taller one's
       // effects plus the free slot), so knobs, faders and buttons line up across.
       int pad = 0;
@@ -965,9 +1083,23 @@ void inspector(App& a) {
           return n;
         };
         pad = std::min(std::max(used(*mt), used(*dest)), 6) + 1;
+        auto sendsOf = [&s](const MixerTrack& m) {  // checkpoint 38: the send pills (not the output route)
+          int n = 0;
+          bool outSeen = false;
+          for (const Send& sd : m.sends) {
+            if (!sd.sidechain && !outSeen) {
+              outSeen = true;
+              continue;
+            }
+            n += !sd.stageRoom && s.mixerIndex(sd.to) >= 0;
+          }
+          return n;
+        };
+        gSendRows = std::max(sendsOf(*mt), sendsOf(*dest));
       }
       strip(a, *mt, ch && s.mixerIndex(mt->id) != 0 ? ch : nullptr, ImVec2(base.x, y), ImVec2(sw, sh), -1, nullptr, 0, pad);
       if (dest) strip(a, *dest, nullptr, ImVec2(base.x + sw + 3, y), ImVec2(sw, sh), -1, nullptr, 0, pad);
+      gSendRows = 0;
       ImGui::SetCursorScreenPos(ImVec2(base.x, y + sh - 1));
       ImGui::Dummy(ImVec2(1, 1));
     }
@@ -982,8 +1114,9 @@ void library(App& a) {
   static char filter[64] = "";
   if (ownTitle()) cardHeading(i18n::tr("Library"));
   ImGui::SetNextItemWidth(-1);
-  ImGui::InputTextWithHint("##libfind", i18n::tr("Search sounds, instruments and effects"), filter, sizeof filter);
-  ui::Hint("Type part of a name to narrow the list");
+  // Checkpoint 28: a short placeholder, as 111 and 158 have it (the long one was cut off in the column).
+  ImGui::InputTextWithHint("##libfind", i18n::tr("Search"), filter, sizeof filter);
+  ui::Hint("Search sounds, instruments and effects: type part of a name to narrow the list");
   ImGui::Dummy(ImVec2(0, 2));
   ImGui::BeginChild("##liblist", ImVec2(0, 0), ImGuiChildFlags_None);
   browserui::drawSounds(a, filter);
@@ -992,7 +1125,112 @@ void library(App& a) {
 }
 
 // -------------------------------------------------------------------- Lists ----
+// Checkpoint 28 (Tracks layout): the lists as 087, 128, 172 and 189 draw them: a centred segmented
+// control (Marker, Tempo, Signature), then a table of 20 px rows under its header (hairlines between the
+// header's columns only), and a footer line with the list's name and count.
+void logicLists(App& a) {
+  const Song& s = a.doc.song();
+  const auto& P = pal();
+  static int tab = 0;
+  const char* tabs[] = {i18n::tr("Marker"), i18n::tr("Tempo"), i18n::tr("Signature")};
+  const char* hints[] = {i18n::tr("The song's markers"), i18n::tr("The song's tempo"), i18n::tr("The song's time signatures")};
+  {
+    // Checkpoint 29: an add button at the row's left (128 and 087 lead the list with one), the
+    // segmented control centred in what is left of the row.
+    const float fh = ImGui::GetFrameHeight(), x0 = ImGui::GetCursorPosX(), y0 = ImGui::GetCursorPosY();
+    const float W = ImGui::GetContentRegionAvail().x;
+    ImGui::BeginDisabled(tab != 0);
+    if (ui::IconButton("lgaddmk", ui::Icon::Plus, false, fh, "Add a marker at the song position"))
+      ops::addMarker(a.doc, static_cast<Tick>(a.engine.position()), ops::nextMarkerName(s));
+    ImGui::EndDisabled();
+    const float segW = std::min(84.0f, std::floor((W - fh * 2 - 16) / 3));
+    ImGui::SameLine(0, 0);
+    ImGui::SetCursorPos(ImVec2(x0 + std::max(fh + 8, std::floor((W - segW * 3 - 4) * 0.5f)), y0));
+    ui::Segmented("##lglists", tabs, 3, &tab, segW, 0, hints);
+  }
+  ImGui::Dummy(ImVec2(0, 2));
+  struct Row {
+    Tick pos;
+    std::string a, b;
+  };
+  std::vector<Row> rows;
+  const char* cols[3] = {i18n::tr("Position"), i18n::tr("Name"), nullptr};
+  char t[32];
+  if (tab == 0) {
+    for (const Marker& m : s.markers)
+      if (!m.isMeter()) rows.push_back({m.pos, m.name, i18n::tr(m.isKey() ? "Key" : "Marker")});
+    cols[2] = i18n::tr("Kind");
+  } else if (tab == 1) {
+    std::snprintf(t, sizeof t, "%.4f", s.tempo);
+    rows.push_back({0, t, ""});
+    cols[1] = i18n::tr("Tempo");
+  } else {
+    std::snprintf(t, sizeof t, "%d/%d", s.timeSigNum, s.timeSigDen);
+    rows.push_back({0, t, ""});
+    for (const Marker& m : s.markers)
+      if (m.isMeter()) {
+        std::snprintf(t, sizeof t, "%d/%d", m.timeSigNum, m.timeSigDen);
+        rows.push_back({m.pos, t, ""});
+      }
+    cols[1] = i18n::tr("Signature");
+  }
+  const int nCols = cols[2] ? 3 : 2;
+  const float footH = 24;
+  const ImVec2 av = ImGui::GetContentRegionAvail();
+  ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(8, 3));
+  const float tableH = std::max(40.0f, av.y - footH - ImGui::GetStyle().ItemSpacing.y);
+  if (ImGui::BeginTable("##lglist", nCols, ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp, ImVec2(av.x, tableH))) {
+    ImGui::TableSetupScrollFreeze(0, 1);
+    ImGui::TableSetupColumn(cols[0], ImGuiTableColumnFlags_WidthStretch, 1.0f);
+    ImGui::TableSetupColumn(cols[1], ImGuiTableColumnFlags_WidthStretch, 1.3f);
+    if (nCols == 3) ImGui::TableSetupColumn(cols[2], ImGuiTableColumnFlags_WidthStretch, 0.7f);
+    ImGui::TableHeadersRow();
+    {  // hairlines between the header's columns only, as 087 and 128 draw them (not down the rows)
+      ImGuiTable* tb = ImGui::GetCurrentTable();
+      const ImRect hr = ImGui::TableGetCellBgRect(tb, 0);
+      for (int k = 1; k < nCols; ++k) {
+        const float x = std::round(ImGui::TableGetCellBgRect(tb, k).Min.x) - 0.5f;
+        ImGui::GetWindowDrawList()->AddLine(ImVec2(x, hr.Min.y + 4), ImVec2(x, hr.Max.y - 4), theme::withAlpha(P.text, 0.18f));
+      }
+    }
+    for (size_t i = 0; i < rows.size(); ++i) {
+      const Row& r = rows[i];
+      ImGui::TableNextRow(ImGuiTableRowFlags_None, 20);
+      if (i % 2) ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, theme::withAlpha(P.text, 0.03f));
+      ImGui::TableNextColumn();
+      ImGui::PushID(static_cast<int>(i));
+      if (ImGui::Selectable(tickText(a, r.pos).c_str(), false, ImGuiSelectableFlags_SpanAllColumns)) a.engine.setPosition(r.pos);
+      ui::Hint("Click: move the song position here");
+      ImGui::PopID();
+      ImGui::TableNextColumn();
+      ImGui::TextUnformatted(r.a.c_str());
+      if (nCols == 3) {
+        ImGui::TableNextColumn();
+        ImGui::TextColored(theme::vec(P.textDim), "%s", r.b.c_str());
+      }
+    }
+    ImGui::EndTable();
+  }
+  ImGui::PopStyleVar();
+  // The footer: what the list holds, its count at the right.
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const ImVec2 f0 = ImGui::GetCursorScreenPos();
+  const float fw = ImGui::GetContentRegionAvail().x;
+  dl->AddLine(ImVec2(f0.x, f0.y + 0.5f), ImVec2(f0.x + fw, f0.y + 0.5f), P.dark ? P.ink : P.line);
+  const size_t n = rows.size();
+  const std::string cnt = tab == 0 ? std::to_string(n) + " " + i18n::tr(n == 1 ? "marker" : "markers")
+                          : tab == 1 ? std::string(t)
+                                     : std::to_string(n) + " " + i18n::tr(n == 1 ? "signature" : "signatures");
+  const float fs = theme::kFontLabel;
+  const float ty = theme::textTop(a.fontRegular, fs, f0.y + 1, footH - 1);
+  dl->AddText(a.fontRegular, fs, ImVec2(f0.x + 8, ty), P.textDim, tabs[tab]);
+  const float cw = a.fontRegular->CalcTextSizeA(fs, 1e9f, 0, cnt.c_str()).x;
+  dl->AddText(a.fontRegular, fs, ImVec2(std::round(f0.x + fw - 8 - cw), ty), P.textDim, cnt.c_str());
+  ImGui::Dummy(ImVec2(fw, footH));
+}
+
 void lists(App& a) {
+  if (logicplug::active(a)) return logicLists(a);
   const Song& s = a.doc.song();
   static int tab = 0;
   const char* tabs[] = {"Markers", "Tempo and meter"};
@@ -1271,6 +1509,29 @@ void infoBox(App& a) {
   ImGui::PopTextWrapPos();
 }
 
+// R01-08: the Tracks layout's Quick help: a small floating window (as the reference's), not a pane.
+// It shows what the item under the pointer does and stays where the person drags it; its own close
+// box, the control bar's "?" and Shift+/ turn it off.
+void quickHelpFloat(App& a) {
+  if (!logicplug::active(a) || !a.settings.getBool("ui.logicQuickHelp")) return;
+  static std::string last;
+  if (!a.hint.empty()) last = a.hint;
+  const ImGuiViewport* vp = ImGui::GetMainViewport();
+  ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x - 300, vp->WorkPos.y + 140), ImGuiCond_FirstUseEver);
+  ImGui::SetNextWindowSize(ImVec2(260, 0), ImGuiCond_Always);
+  bool open = true;
+  if (ImGui::Begin((std::string(i18n::tr("Quick help")) + "###lgquickhelp").c_str(), &open,
+                   ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
+                       ImGuiWindowFlags_NoFocusOnAppearing)) {
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 244);
+    if (last.empty()) ImGui::TextColored(theme::vec(pal().textDim), "%s", i18n::tr("Point at anything: what it does shows here"));
+    else ImGui::TextUnformatted(last.c_str());
+    ImGui::PopTextWrapPos();
+  }
+  ImGui::End();
+  if (!open) a.settings.set("ui.logicQuickHelp", false);
+}
+
 // -------------------------------------------------------------------- Files ----
 struct FileRow {
   std::string path, owner;
@@ -1364,6 +1625,7 @@ const PartDef kParts[] = {
     {"Device chain", {900, 260}, deviceChain}, {"Clip panel", {320, 360}, clipPanel}, {"Track scopes", {520, 200}, trackScopes},
     {"Info box", {280, 120}, infoBox},    {"Files", {420, 360}, files},             {"Notes", {420, 320}, notes},
     {"Smart controls", {640, 240}, logicplug::smartControls},
+    {"Pattern editor", {960, 560}, trackerview::patternEditor}, {"Order list", {300, 360}, trackerview::orderList},
 };
 // K-112b: built for the Tracks layout so far; the other layouts' menus do not list it yet.
 bool partListed(const char* window) { return std::strcmp(window, "Smart controls") != 0 || layoutui::active() == layout::Preset::Logic; }
@@ -1441,6 +1703,9 @@ void logicMixer(App& a) {
     // Checkpoint 22: then fewer effect rows (two at least: one effect or the count, and the free slot),
     // then the level readouts, the pan knob and a shorter fader, for the smallest panes.
     while (fxRows > 2 && need(hide) > sh - 8) --fxRows;
+    // Checkpoint 28: then one effect row (the effect, the "+N" count or the free slot), so the fader keeps
+    // its height at 150 % as 134 and 043 keep theirs (it fell to 48 px there).
+    if (fxRows > 1 && need(hide) > sh - 8) --fxRows;
     for (int h : {HideMid, HideLevel, HidePan, HideShort})
       if (need(hide) > sh - 8) hide |= h;
   }
@@ -1519,6 +1784,7 @@ void logicMixer(App& a) {
 }
 
 void draw(App& a) {
+  quickHelpFloat(a);  // R01-08
   // Where the layout homes the instrument or effect window in the device chain (Host), opening one
   // (from the rack, the mixer, a menu) opens the chain and brings it to the front; closing the
   // chain afterwards is respected until another one is opened.
@@ -1571,9 +1837,11 @@ void devCommand(App& a, const std::vector<std::string>& args) {
   }
 }
 
-void panelsMenu(App& a) {
+void panelsMenu(App& a, bool tracker) {
+  static const char* const trackerOwn[] = {"Pattern editor", "Order list", "Track scopes", "Info box", "Files"};
   for (const PartDef& p : kParts)
-    if (bool* f = flag(a, p.window); f && partListed(p.window)) ImGui::MenuItem(i18n::tr(p.window), nullptr, f);
+    if (tracker && std::any_of(std::begin(trackerOwn), std::end(trackerOwn), [&](const char* w) { return std::strcmp(w, p.window) == 0; })) continue;
+    else if (bool* f = flag(a, p.window); f && partListed(p.window)) ImGui::MenuItem(i18n::tr(p.window), nullptr, f);
 }
 
 }  // namespace gl::layoutparts

@@ -1252,6 +1252,7 @@ bool ImGui::ImageButton(ImTextureID user_texture_id, const ImVec2& size, const I
 // Gridline (K-112, Live): see imgui_internal.h.
 float GImGuiGridlineToggleW = 0.0f;
 bool GImGuiGridlineMenuLive = false;  // GRIDLINE PATCH (K-112c round 25)
+bool GImGuiGridlineSplitterOwn = false;  // GRIDLINE PATCH (K-297)
 void (*GImGuiGridlineToggleDraw)(ImDrawList* dl, const ImVec2& a, const ImVec2& b, int state, bool hovered, bool held) = NULL;
 
 bool ImGui::Checkbox(const char* label, bool* v)
@@ -1319,7 +1320,8 @@ bool ImGui::Checkbox(const char* label, bool* v)
         RenderNavCursor(total_bb, id);
         ImU32 bg_col = GetColorU32((held && hovered) ? ImGuiCol_FrameBgActive : hovered ? ImGuiCol_FrameBgHovered : (mixed_value || checked) ? ImGuiCol_CheckboxSelectedBg : ImGuiCol_FrameBg);
         ImU32 check_col = GetColorU32(ImGuiCol_CheckMark);
-        RenderFrame(check_bb.Min, check_bb.Max, bg_col, true, style.FrameRounding);
+        const float check_round = GImGuiGridlineCheckRounding >= 0.0f ? GImGuiGridlineCheckRounding : style.FrameRounding;  // GRIDLINE PATCH (checkpoint 38)
+        RenderFrame(check_bb.Min, check_bb.Max, bg_col, true, check_round);
         if (mixed_value)
         {
             // Undocumented tristate/mixed/indeterminate checkbox (#2644)
@@ -1863,7 +1865,8 @@ bool ImGui::SplitterBehavior(const ImRect& bb, ImGuiID id, ImGuiAxis axis, float
     // Nowadays we would instead want to use SetNextItemAllowOverlap() before the item.
     ImGuiButtonFlags button_flags = ImGuiButtonFlags_FlattenChildren;
 #ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS
-    button_flags |= ImGuiButtonFlags_AllowOverlap;
+    if (!GImGuiGridlineSplitterOwn)  // GRIDLINE PATCH (K-297): a dock splitter keeps the pointer it hovers
+        button_flags |= ImGuiButtonFlags_AllowOverlap;
 #endif
 
     bool hovered, held;
@@ -9529,6 +9532,14 @@ bool ImGui::BeginMenuEx(const char* label, const char* icon, bool enabled)
 
     const float backup_rounding = style.SelectableRounding;
     style.SelectableRounding = style.MenuItemRounding;
+    // GRIDLINE PATCH (K-112B checkpoint 39): the Tracks layout's menu rows light in its blue, rounded
+    const bool gl_menu_hover = GImGuiGridlineMenuRight && GImGuiGridlineMenuHover != 0 && window->DC.LayoutType != ImGuiLayoutType_Horizontal;
+    if (gl_menu_hover)
+    {
+        PushStyleColor(ImGuiCol_HeaderHovered, GImGuiGridlineMenuHover);
+        PushStyleColor(ImGuiCol_HeaderActive, GImGuiGridlineMenuHover);
+        style.SelectableRounding = 4.0f;
+    }
     const ImGuiSelectableFlags selectable_flags = ImGuiSelectableFlags_NoAutoClosePopups | (ImGuiSelectableFlags)ImGuiSelectableFlags_SelectOnClick;
     ImGuiMenuColumns* offsets = &window->DC.MenuColumns;
     if (window->DC.LayoutType == ImGuiLayoutType_Horizontal)
@@ -9567,6 +9578,8 @@ bool ImGui::BeginMenuEx(const char* label, const char* icon, bool enabled)
         popup_pos = ImVec2(pos.x, text_pos.y - style.WindowPadding.y);
     }
     style.SelectableRounding = backup_rounding;
+    if (gl_menu_hover)
+        PopStyleColor(2);
     if (!enabled)
         EndDisabled();
 
@@ -9764,6 +9777,14 @@ bool ImGui::MenuItemEx(const char* label, const char* icon, const char* shortcut
     // We use ImGuiSelectableFlags_NoSetKeyOwner to allow down on one menu item, move, up on another.
     const float backup_rounding = style.SelectableRounding;
     style.SelectableRounding = style.MenuItemRounding;
+    // GRIDLINE PATCH (K-112B checkpoint 39): the Tracks layout's menu rows light in its blue, rounded
+    const bool gl_menu_hover = GImGuiGridlineMenuRight && GImGuiGridlineMenuHover != 0 && window->DC.LayoutType != ImGuiLayoutType_Horizontal;
+    if (gl_menu_hover)
+    {
+        PushStyleColor(ImGuiCol_HeaderHovered, GImGuiGridlineMenuHover);
+        PushStyleColor(ImGuiCol_HeaderActive, GImGuiGridlineMenuHover);
+        style.SelectableRounding = 4.0f;
+    }
     const ImGuiSelectableFlags selectable_flags = (ImGuiSelectableFlags)ImGuiSelectableFlags_SelectOnRelease | (ImGuiSelectableFlags)ImGuiSelectableFlags_SetNavIdOnHover;
     ImGuiMenuColumns* offsets = &window->DC.MenuColumns;
     if (window->DC.LayoutType == ImGuiLayoutType_Horizontal)
@@ -9802,7 +9823,9 @@ bool ImGui::MenuItemEx(const char* label, const char* icon, const char* shortcut
             if (shortcut_w > 0.0f)
             {
                 // GRIDLINE PATCH (K-112c round 29): in Live a shortcut takes its label's colour (dimmed with it when disabled)
-                PushStyleColor(ImGuiCol_Text, style.Colors[GImGuiGridlineMenuLive ? ImGuiCol_Text : ImGuiCol_TextDisabled]);
+                // GRIDLINE PATCH (K-112B checkpoint 39): on a lit Tracks row the shortcut takes the label colour
+                const bool gl_lit = gl_menu_hover && (g.LastItemData.StatusFlags & ImGuiItemStatusFlags_HoveredRect) && enabled;
+                PushStyleColor(ImGuiCol_Text, style.Colors[(GImGuiGridlineMenuLive || gl_lit) ? ImGuiCol_Text : ImGuiCol_TextDisabled]);
                 LogSetNextTextDecoration("(", ")");
                 // GRIDLINE PATCH (K-112b): in the Tracks layout flush right, ending where a submenu's arrow ends
                 // (BeginMenuEx draws it from OffsetMark + 0.30 em, 0.80 em wide at 0.80 scale: about 0.80 em)
@@ -9818,6 +9841,8 @@ bool ImGui::MenuItemEx(const char* label, const char* icon, const char* shortcut
         }
     }
     style.SelectableRounding = backup_rounding;
+    if (gl_menu_hover)
+        PopStyleColor(2);
 
     // Once dragged, release ActiveId + key ownership. This is to allow the idiom of mouse down a menu, dragging elsewhere, up on some other MenuItem(). (#8233, #9394)
     // Could move logic into lower-level ImGuiButtonFlags_AutoReleaseActiveId + ImGuiButtonFlags_AutoReleaseKeyOwner? Easier once we get rid of the Selectable() middle-man here.

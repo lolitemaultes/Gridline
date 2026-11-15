@@ -638,10 +638,14 @@ bool Segmented(const char* id, const char* const* labels, int count, int* index,
     for (int i = 0; i < count; ++i) w = std::max(w, ImGui::CalcTextSize(labels[i]).x + pad * 2);
   ImVec2 p = ImGui::GetCursorScreenPos();
   ImDrawList* dl = ImGui::GetWindowDrawList();
+  // K-112b checkpoint 29: under flat faces (the Tracks layout) a segmented control is one dark capsule with
+  // the chosen segment filled in the selection colour, as 087, 128, 174 and 173 draw every one of them.
+  const bool flat = look::flatFaces() && !tabs;
   if (tabs) {
     dl->AddRectFilled(p, ImVec2(p.x + w * count + 4, p.y + height), P.field, 0.0f);
     dl->AddRect(p, ImVec2(p.x + w * count + 4, p.y + height), ImGui::GetColorU32(ImGuiCol_Border), 0.0f);
-  } else if (look::styled()) look::hookInset(dl, p, ImVec2(p.x + w * count + 4, p.y + height), theme::kRadius, P.field);  // J-129 control style
+  } else if (flat) dl->AddRectFilled(p, ImVec2(p.x + w * count + 4, p.y + height), theme::mix(P.surface900, P.ink, 0.25f), theme::kRadius + 1);  // checkpoint 30: a step below any pane, so it reads on the mixer too
+  else if (look::styled()) look::hookInset(dl, p, ImVec2(p.x + w * count + 4, p.y + height), theme::kRadius, P.field);  // J-129 control style
   else {
     dl->AddRectFilled(p, ImVec2(p.x + w * count + 4, p.y + height), P.field, theme::kRadius);
     if (!P.dark) dl->AddRect(p, ImVec2(p.x + w * count + 4, p.y + height), P.line, theme::kRadius);
@@ -664,6 +668,9 @@ bool Segmented(const char* id, const char* const* labels, int count, int* index,
       if (on) dl->AddRectFilled(ImVec2(l, p.y + 1), ImVec2(r, p.y + height - 1), P.surface700, 0.0f);
       else if (hov) dl->AddRectFilled(ImVec2(l, p.y + 1), ImVec2(r, p.y + height - 1), theme::mix(P.field, P.surface700, 0.5f), 0.0f);
       if (i > 0) dl->AddLine(ImVec2(l - 0.5f, p.y + 1), ImVec2(l - 0.5f, p.y + height - 1), ImGui::GetColorU32(ImGuiCol_Border));
+    } else if (flat) {
+      if (on) dl->AddRectFilled(q, ImVec2(q.x + w, q.y + height - 4), theme::rgb(0x2F7EDB), std::max(1.0f, theme::kRadius - 1));
+      else if (hov) dl->AddRectFilled(q, ImVec2(q.x + w, q.y + height - 4), theme::withAlpha(P.surface600, 0.6f), std::max(1.0f, theme::kRadius - 1));
     } else if (look::styled()) {
       if (on || hov) look::hookFace(dl, q, ImVec2(q.x + w, q.y + height - 4), std::max(1.0f, theme::kRadius - 1), on ? look::On : look::Hover, P.hot, false);
     } else if (on)
@@ -671,7 +678,7 @@ bool Segmented(const char* id, const char* const* labels, int count, int* index,
     else if (hov)
       dl->AddRectFilled(q, ImVec2(q.x + w, q.y + height - 4), P.surface700, std::max(1.0f, theme::kRadius - 1));
     ImVec2 ts = ImGui::CalcTextSize(labels[i], nullptr, true);
-    const ImU32 onFg = tabs ? P.text : P.hot;
+    const ImU32 onFg = tabs ? P.text : flat ? theme::contrastText(theme::rgb(0x2F7EDB)) : P.hot;  // light text on the layout's selection blue (its strips and power buttons)
     if (ts.x > w - 6) {  // J-55: a longer translation is fitted to its segment (full text on hover)
       const std::string shown(labels[i], ImGui::FindRenderedTextEnd(labels[i]));
       theme::textEllipsis(dl, ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(std::round(q.x + 3), std::round(q.y + (height - 4 - ts.y) * 0.5f)),
@@ -1262,6 +1269,35 @@ void DrawMeter(ImDrawList* dl, ImVec2 p, ImVec2 size, float gainL, float gainR, 
   // 0 dB reference mark.
   if (vertical)
     dl->AddLine(ImVec2(p.x - 2, std::round(p.y + size.y - zero * size.y)), ImVec2(p.x, std::round(p.y + size.y - zero * size.y)), P.textFaint);
+}
+
+bool OptionsAsMenus() { return look::flatFaces(); }
+
+bool OptionRow(const char* id, const char* const* labels, int count, int* index, float menuW, const char* const* hints) {
+  bool changed = false;
+  ImGui::PushID(id);
+  if (OptionsAsMenus()) {
+    const int cur = *index >= 0 && *index < count ? *index : -1;
+    if (BeginCombo("##opt", cur >= 0 ? labels[cur] : "", menuW)) {
+      for (int i = 0; i < count; ++i) {
+        ImGui::PushID(i);
+        if (ImGui::Selectable(labels[i], i == cur) && i != cur) *index = i, changed = true;
+        if (hints && hints[i]) Tooltip(hints[i]);
+        if (i == cur && ImGui::IsWindowAppearing()) ImGui::SetItemDefaultFocus();
+        ImGui::PopID();
+      }
+      ImGui::EndCombo();
+    }
+  } else {
+    for (int i = 0; i < count; ++i) {
+      if (i > 0) ImGui::SameLine(0, theme::kS1);
+      ImGui::PushID(i);
+      if (TextButton(labels[i], *index == i, 0.0f, hints ? hints[i] : nullptr) && *index != i) *index = i, changed = true;
+      ImGui::PopID();
+    }
+  }
+  ImGui::PopID();
+  return changed;
 }
 
 bool BeginCombo(const char* id, const char* preview, float width) {

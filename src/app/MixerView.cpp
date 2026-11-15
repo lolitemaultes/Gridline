@@ -28,6 +28,7 @@
 #include "App.h"
 #include "AudioRecordUi.h"
 #include "Theme.h"
+#include "TrackerPages.h"
 #include "Widgets.h"
 #include "PluginUI.h"
 #include "Windows.h"
@@ -40,6 +41,7 @@
 #include "LayoutParts.h"
 #include "LayoutPresets.h"
 #include "LayoutShellUi.h"
+#include "LiveLook.h"
 #include "LogicPlugins.h"
 #include "../core/LevelMeter.h"
 #include "../core/MixerOps.h"
@@ -1527,6 +1529,12 @@ void drawMixer(App& a) {
     drawRoutingOverview(a);
     return;
   }
+  if (trackerpages::active(a) && !a.showStage) {  // K-106: the Tracker's Mix page (the same tracks, its own look)
+    trackerpages::mixer(a);
+    ui::EndDockWindow();
+    drawRoutingOverview(a);
+    return;
+  }
   const auto& P = pal();
   const Song& s = a.doc.song();
   MixerViewState& v = a.mixerView;
@@ -1541,6 +1549,14 @@ void drawMixer(App& a) {
     }
     if (ui::TextButton("Channel strips", false, 0, "Back to the channel strips with a legend")) a.settings.set("ui.logicMixerDetail", false);
     ImGui::SameLine(0, 6);
+  }
+  if (layoutui::active() == layout::Preset::Live && layoutui::shellBuilt(a, layout::Preset::Live) && !a.showStage) {
+    // K-112c (round 38): the Clips mixer band shows the session strips under the arrangement (357),
+    // the same controls as the clip grid's foot; the Stage view stays as it is.
+    livelook::drawMixerBand(a);
+    ui::EndDockWindow();
+    drawRoutingOverview(a);
+    return;
   }
   if (a.showStage) {  // the Stage view: the same tracks on a stage (app/StageView.h)
     stageui::drawBody(a);

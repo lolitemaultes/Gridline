@@ -533,7 +533,7 @@ bool movePlaylistTrack(Document& d, int index, int dir) {
   return trackorder::stepPlaylistTracks(d, {index}, dir < 0 ? -1 : dir > 0 ? 1 : 0);
 }
 
-bool clonePlaylistTrack(Document& d, int index) {
+bool clonePlaylistTrack(Document& d, int index, bool withClips) {
   const Song& s = d.song();
   if (index < 0 || index >= static_cast<int>(s.tracks.size()) || static_cast<int>(s.tracks.size()) >= kMaxPlaylistTracks) return false;
   d.editSong("clone playlist track", [&](Song& x) {
@@ -548,7 +548,7 @@ bool clonePlaylistTrack(Document& d, int index) {
     std::vector<Clip> copies;
     for (auto& c : x.playlist) {
       if (c.track > index) ++c.track;
-      if (c.track == index) {
+      if (withClips && c.track == index) {
         Clip k = c;
         k.id = 0;
         k.track = index + 1;

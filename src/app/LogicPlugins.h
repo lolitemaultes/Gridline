@@ -30,12 +30,20 @@ struct MixerTrack;
 struct PluginTarget;
 struct PluginState;
 struct Song;
+struct Channel;
+struct Clip;
 }
 
 namespace gl::logicplug {
 
 // The Tracks layout is on screen.
 bool active(const App& a);
+
+// The sound a track plays (its linked channel, else its regions' sound; `clip` first when it lies
+// on the track), and the track the layout is about (the selected region's or track, else the
+// selected channel's, else the first: a track is always selected, as in the reference).
+const Channel* trackSound(const Song& s, int track, const Clip* clip);
+int focusTrack(const App& a);
 
 // Link: 0 off, 1 single, 2 follow the selected strip.
 int link(const App& a);

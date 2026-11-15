@@ -15,6 +15,7 @@
 #include "../core/ProjectArchive.h"
 #include "PluginFavsUi.h"
 #include "ExportUi.h"
+#include "LogicNewTracks.h"
 #include "LogicPlugins.h"
 #include <algorithm>
 #include <cctype>
@@ -1143,7 +1144,11 @@ void playlistTrackMenu(App& a, int track) {
     if (ImGui::MenuItem(i18n::tr("Clone"), nullptr, false, n < kMaxPlaylistTracks)) a.later([&a, track] { ops::clonePlaylistTrack(a.doc, track); });
   };
   const auto add8 = [&] {
-    if (ImGui::MenuItem(i18n::tr("Add 8 tracks"), nullptr, false, n + 8 <= kMaxPlaylistTracks)) a.later([&a, n] { a.doc.setPlaylistTrackCount(n + 8); });
+    if (ImGui::MenuItem(i18n::tr("Add 8 tracks"), nullptr, false, n + 8 <= kMaxPlaylistTracks))
+      a.later([&a, n] {
+        if (livelook::active(a)) trackmodes::addUsedTrack(a.doc, 8);  // K-112c: Clips lists the tracks in use; these come after them
+        else a.doc.setPlaylistTrackCount(n + 8);
+      });
   };
   const auto newInstrument = [&] {
     // K-112b: the Tracks layout's header menu offers a new instrument track with the new tracks.
@@ -1336,6 +1341,36 @@ void playlistTrackMenu(App& a, int track) {
     colourRow();
     return;
   }
+  if (logicplug::active(a)) {
+    // R01-16: the Tracks layout groups the header menu as the reference's does (022): new tracks
+    // first, then rename and delete, the stack (group), colour and icon, the track's state, its
+    // regions and its place. No title row.
+    if (ImGui::MenuItem(i18n::tr("New tracks..."), keys::label("track.newTracks"), false, n < kMaxPlaylistTracks)) newtracks::open();
+    if (ImGui::MenuItem(i18n::tr("New track with the same settings"), keys::label("track.duplicate"), false, n < kMaxPlaylistTracks))
+      a.later([&a, track] { ops::clonePlaylistTrack(a.doc, track, false); });
+    if (ImGui::MenuItem(i18n::tr("New track with the same settings and content"), nullptr, false, n < kMaxPlaylistTracks))
+      a.later([&a, track] { ops::clonePlaylistTrack(a.doc, track, true); });
+    newInstrument();
+    ImGui::Separator();
+    renameRow();
+    deleteTrack();
+    deleteClips();
+    ImGui::Separator();
+    groupRow();
+    ImGui::Separator();
+    colourRow();
+    propertiesRow();
+    ImGui::Separator();
+    muteLock();
+    freezeRows();
+    modeRows();
+    ImGui::Separator();
+    selectClips();
+    clipsRow();
+    ImGui::Separator();
+    moveRows();
+    return;
+  }
   menuTitle(playlistTrackName(s, static_cast<size_t>(track)).c_str());
   // K-77: create, properties, playback and mode, groups, the track's clips, arrange, removals last.
   insertAbove();
@@ -1370,11 +1405,29 @@ namespace {
 void clipContextMenuTracks(App& a, ObjectId clip) {
   const Song& s = a.doc.song();
   const Clip* c = s.clip(clip);
-  const Pattern* p = c ? s.pattern(c->pattern) : nullptr;
-  if (!p) return;
-  menuTitle(p->name.c_str());
+  if (!c) return;
   std::set<ObjectId> sel = a.playlist.selected;
   if (!sel.count(clip)) sel = {clip};
+  // (The arrangement's rows above this menu lead it with Mute and Loop, as the reference's does.)
+  if (c->kind != ClipKind::Pattern) {  // audio and automation regions: edit, then delete
+    if (c->kind == ClipKind::Audio)
+      if (const Channel* ch = s.channel(c->source); ch && ImGui::MenuItem(i18n::tr("Edit audio"), nullptr, false, !ch->plugin.data.empty())) {
+        a.settings.set("ui.loupePinned", true);  // the audio editor in the lower pane
+        layoutui::setRegionVisible(a, "logic.lower", true);
+        a.showPiano = a.showRack = false;  // in place of the piano roll the pane opens with
+        packs::openAudioEditor(a, ch->plugin.data, ch->id);
+      }
+    if (c->kind == ClipKind::Automation && ImGui::MenuItem(i18n::tr("Edit automation"))) openAutomationEditor(a, c->source, c->id);
+    ImGui::Separator();
+    if (ImGui::MenuItem(i18n::tr("Delete"), keys::label("playlist.delete"))) {
+      ops::removeClips(a.doc, sel);
+      a.playlist.selected.clear();
+    }
+    return;
+  }
+  const Pattern* p = s.pattern(c->pattern);
+  if (!p) return;
+  ImGui::Separator();
   if (ImGui::MenuItem(i18n::tr("Edit pattern"))) {
     a.selectPattern(p->id);
     a.showPiano = true;
@@ -1875,8 +1928,10 @@ void playlistOptionsMenu(App& a, int part) {
   }
   if (!all && part != 2) return;
   ImGui::Separator();
-  if (ImGui::MenuItem(i18n::tr("Add 8 tracks"), nullptr, false, static_cast<int>(s.tracks.size()) + 8 <= kMaxPlaylistTracks))
-    a.doc.setPlaylistTrackCount(static_cast<int>(s.tracks.size()) + 8);
+  if (ImGui::MenuItem(i18n::tr("Add 8 tracks"), nullptr, false, static_cast<int>(s.tracks.size()) + 8 <= kMaxPlaylistTracks)) {
+    if (livelook::active(a)) trackmodes::addUsedTrack(a.doc, 8);  // K-112c: shown at once in both Clips views
+    else a.doc.setPlaylistTrackCount(static_cast<int>(s.tracks.size()) + 8);
+  }
   if (ImGui::MenuItem(i18n::tr("Collapse all grouped tracks"))) ops::setAllGroupsFolded(a.doc, true);   // J-28 (operation: J-27)
   if (ImGui::MenuItem(i18n::tr("Expand all grouped tracks"))) ops::setAllGroupsFolded(a.doc, false);
   if (ImGui::BeginMenu(i18n::tr("Sort patterns"))) {

@@ -35,6 +35,7 @@ extern char** environ;
 #endif
 #if defined(__APPLE__)
 #include <libproc.h>
+#include <malloc/malloc.h>
 #include <mach/mach.h>
 #include <sys/sysctl.h>
 #include <pthread.h>
@@ -47,6 +48,9 @@ extern char** environ;
 #endif
 #if defined(__FreeBSD__)
 #include <sys/user.h>
+#endif
+#if defined(__GLIBC__)
+#include <malloc.h>
 #endif
 #if defined(__linux__)
 #include <fstream>
@@ -490,6 +494,37 @@ double currentMemoryMb() {
 #else
   return 0;
 #endif
+}
+
+double heapInUseMb() {
+#if defined(__APPLE__)
+  malloc_statistics_t st{};
+  malloc_zone_statistics(nullptr, &st);  // every zone
+  return static_cast<double>(st.size_in_use) / (1024.0 * 1024.0);
+#elif defined(__GLIBC__) && (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 33))
+  const struct mallinfo2 m = mallinfo2();
+  return static_cast<double>(m.uordblks + m.hblkhd) / (1024.0 * 1024.0);
+#else
+  return 0;
+#endif
+}
+
+void releaseFreeMemory() {
+#if defined(__APPLE__)
+  malloc_zone_pressure_relief(nullptr, 0);
+#elif defined(__GLIBC__)
+  malloc_trim(0);
+#endif
+}
+
+double sharedMemoryMb() {
+#if defined(__linux__)
+  std::ifstream f("/proc/self/status");
+  std::string line;
+  while (std::getline(f, line))
+    if (line.rfind("RssShmem:", 0) == 0) return std::atof(line.c_str() + 9) / 1024.0;  // kB
+#endif
+  return 0;
 }
 
 std::uint64_t physicalMemoryBytes() {

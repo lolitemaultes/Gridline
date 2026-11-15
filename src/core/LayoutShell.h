@@ -54,6 +54,7 @@ struct Region {
   bool exclusive = false;  // one of its windows shows at a time
   TabStyle tabs = TabStyle::Dock;
   bool fixed = false;      // keeps its pixel size when the window is resized (bands)
+  const char* group = "";  // K-112c: regions of one group show one at a time (showing one hides the others)
 };
 
 struct Shell {
@@ -76,8 +77,11 @@ struct State {
   std::set<std::string> shown;                 // regions shown although hidden by default
   std::map<std::string, std::string> member;   // exclusive region -> the window shown there
   std::map<std::string, float> memberSize;     // "<region>|<window>" -> its size along the split axis (px)
+  // K-297: where the person dragged a region's divider (px along its split axis). Kept across
+  // rebuilds (a region shown or hidden) and window resizes; a fixed band keeps it as its pixel size.
+  std::map<std::string, float> regionSize;
   bool operator==(const State& o) const {
-    return hidden == o.hidden && shown == o.shown && member == o.member && memberSize == o.memberSize;
+    return hidden == o.hidden && shown == o.shown && member == o.member && memberSize == o.memberSize && regionSize == o.regionSize;
   }
 };
 bool visible(const Shell& sh, const State& st, const std::string& region);

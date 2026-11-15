@@ -3288,6 +3288,17 @@ std::string devReport(App& a) {
     Json names = Json::makeArray();
     for (const auto& c : a.doc.song().channels) names.array.push_back(Json::makeString(c.name));
     r.object["channels"] = std::move(names);
+    // K-106: each channel's notes in the shown pattern, "start:length:pitch" in order (cross-layout checks).
+    Json notes = Json::makeObject();
+    if (const Pattern* p = a.doc.song().pattern(a.curPattern))
+      for (const auto& c : a.doc.song().channels) {
+        std::string list;
+        if (auto it = p->notes.find(c.id); it != p->notes.end())
+          for (const Note& n : it->second)
+            list += (list.empty() ? "" : " ") + std::to_string(n.start) + ":" + std::to_string(n.length) + ":" + std::to_string(n.pitch);
+        notes.object[c.name] = Json::makeString(list);
+      }
+    r.object["notes"] = std::move(notes);
   }
   return jsonStringify(r, 2);
 }
@@ -3358,6 +3369,33 @@ Json presenceJson(const Presence& p) {
 // Collaborators' cursors as shown here, and what each one is over here (the same
 // anchor analysis as for this user's pointer): a cursor maps right when that is
 // the anchor its owner reported.
+// K-106: this user's edit cursor (set by the tracker each frame it has one; a dev override).
+namespace {
+EditCursor gEdit;
+int gEditFrame = -10;
+bool gEditDev = false;
+}  // namespace
+
+// K-106: collaborators' edit cursors as this side takes them (JSON; "collab edits").
+std::string editsReport(App& a) {
+  const Song& s = a.doc.song();
+  Json r = Json::makeObject();
+  Json peers = Json::makeArray();
+  for (const PeerEdit& e : peerEdits(a)) {
+    Json j = Json::makeObject();
+    j.object["name"] = Json::makeString(e.name);
+    j.object["pattern"] = Json::makeNumber(e.at.pattern);
+    const Channel* ch = s.channel(e.at.channel);
+    j.object["channel"] = Json::makeString(ch ? ch->name : "");
+    j.object["tick"] = Json::makeNumber(e.at.tick);
+    j.object["selTicks"] = Json::makeNumber(std::max(0.0, e.at.selTick1 - e.at.selTick0));
+    j.object["pointer"] = Json::makeNumber(e.pointer ? 1 : 0);
+    peers.array.push_back(std::move(j));
+  }
+  r.object["peers"] = std::move(peers);
+  return jsonStringify(r, 2);
+}
+
 std::string cursorReport(App& a) {
   Ui& u = U();
   Json r = Json::makeObject();
@@ -3556,6 +3594,24 @@ bool devCommand(App& a, const std::vector<std::string>& args, int frame, ImVec2*
     u.devTarget = {anchor::kindByName(arg(1)) < anchor::Kind::Count ? anchor::kindByName(arg(1)) : anchor::Kind::None, id, 0};
     std::printf("collab frame %d: target %s\n", frame, anchor::toText(u.devTarget).c_str());
     std::fflush(stdout);
+  } else if (cmd == "edit-cursor-dev") {  // K-106: collab edit-cursor-dev <channel name> <tick> | none: this user's edit cursor (shown pattern)
+    const Song& s = a.doc.song();
+    gEditDev = false;
+    if (arg(1) != "none")
+      for (const Channel& ch : s.channels)
+        if (ch.name == arg(1)) {
+          gEdit = EditCursor{};
+          gEdit.pattern = a.curPattern, gEdit.channel = ch.id, gEdit.tick = std::atof(arg(2).c_str());
+          gEditDev = true;
+        }
+  } else if (cmd == "note") {  // K-106: collab note <channel name> <tick> <length> <pitch>: one note added to the shown pattern
+    for (const Channel& ch : a.doc.song().channels)
+      if (ch.name == arg(1)) {
+        a.doc.addNote(a.curPattern, ch.id, Note(std::atoll(arg(2).c_str()), std::max<Tick>(1, std::atoll(arg(3).c_str())), std::atoi(arg(4).c_str()), 100));
+        break;
+      }
+  } else if (cmd == "edits") {  // K-106: collab edits <file>: collaborators' edit cursors as taken here
+    writeFileAtomic(arg(1), editsReport(a));
   } else if (cmd == "targets") {  // K-112: collab targets <file>: each collaborator's target as received, and its name here
     Json r = Json::makeObject();
     Json list = Json::makeArray();
@@ -3850,6 +3906,15 @@ void devFrame(App& a) {
   for (const Member& m : s->members()) left += s->memberState(m.site) == MemberState::Left ? 1 : 0;
   devsig::reach("collab-left-members:" + std::to_string(left));
   for (const auto& ch : a.doc.song().channels) devsig::reach("collab-channel:" + ch.name);
+  {  // K-106: how many notes each channel has in all patterns ("collab-notes:<name>:<count>")
+    const Song& song = a.doc.song();
+    for (const auto& ch : song.channels) {
+      size_t n = 0;
+      for (const Pattern& p : song.patterns)
+        if (auto it = p.notes.find(ch.id); it != p.notes.end()) n += it->second.size();
+      devsig::reach("collab-notes:" + ch.name + ":" + std::to_string(n));
+    }
+  }
   if (s->ready()) devsig::reach("collab-name:" + s->projectName());  // J-111f
 }
 
@@ -4300,6 +4365,36 @@ static_assert(canchor::PlaylistTrack == 2 && canchor::PlaylistHeader == 3 && can
                   canchor::RackRow == 9 && canchor::MixerStrip == 10 && canchor::StageTrack == 11,
               "core/SemanticAnchor.cpp mirrors these");
 
+void setEditCursor(const EditCursor& c) {
+  if (gEditDev) return;
+  gEdit = c;
+  gEditFrame = ImGui::GetFrameCount();
+}
+
+std::vector<PeerEdit> peerEdits(App& a) {
+  std::vector<PeerEdit> out;
+  Session* s = a.embedded ? nullptr : session(a);
+  if (!s) return out;
+  for (const auto& [site, pv] : s->peers()) {
+    if (!pv.connected) continue;
+    const Presence& pr = pv.presence;
+    PeerEdit e;
+    e.name = pv.profile.name;
+    e.color = pv.profile.color ? pv.profile.color : 0x8FA0B5;
+    if (pr.editPattern) {
+      e.at.pattern = pr.editPattern, e.at.channel = pr.editChannel, e.at.tick = pr.editTick;
+      e.at.selChannel0 = pr.selChannel0, e.at.selChannel1 = pr.selChannel1, e.at.selTick0 = pr.selTick0, e.at.selTick1 = pr.selTick1;
+    } else if (pr.kind == canchor::PianoGrid && pr.a && pr.b) {  // their pointer over a piano roll: the same spot here
+      e.at.pattern = pr.a, e.at.channel = pr.b, e.at.tick = std::max(0.0f, pr.cx);
+      e.pointer = true;
+    } else {
+      continue;
+    }
+    out.push_back(std::move(e));
+  }
+  return out;
+}
+
 void drawCursors(App& a) {
   Ui& u = U();
   if (a.embedded) return;
@@ -4342,6 +4437,10 @@ void drawCursors(App& a) {
     p.targetKind = static_cast<int>(t.kind);
     p.targetId = t.id;
     p.targetSub = t.sub;
+    if (gEditDev || ImGui::GetFrameCount() - gEditFrame <= 1) {  // K-106: the edit cursor, while an editor has one
+      p.editPattern = gEdit.pattern, p.editChannel = gEdit.channel, p.editTick = gEdit.tick;
+      p.selChannel0 = gEdit.selChannel0, p.selChannel1 = gEdit.selChannel1, p.selTick0 = gEdit.selTick0, p.selTick1 = gEdit.selTick1;
+    }
     u.presence = p;
   }
   Session* s = session(a);

@@ -42,6 +42,7 @@ inline constexpr float kMinView = 2 * (kStepMin + kStepGap);  // smallest step v
 struct Input {
   float avail = 0;  // inner width of the rows pane
   int steps = 16;   // pattern steps (bars x steps per bar)
+  float stepMax = kStepMax;  // widest step (a layout whose steps fill the pane passes more)
 };
 
 struct Layout {

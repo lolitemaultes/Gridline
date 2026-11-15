@@ -57,6 +57,8 @@ studio	view.quickHelp	0
 studio	view.toolbar	0	
 studio	view.lists	0	
 studio	view.notes	0	
+studio	track.newAudio	0	
+studio	track.newMidi	0	
 studio	playlist.delete	1	Del;Backspace;
 studio	playlist.selectAll	1	Ctrl+A;
 studio	playlist.deselect	1	Ctrl+D;
@@ -211,6 +213,18 @@ studio	auto.toolDelete	5	D;
 studio	auto.lfo	5	L;
 studio	auto.quantize	5	Q;
 studio	auto.cancel	5	Esc;
+studio	track.newTracks	0	
+studio	track.duplicate	1	
+studio	track.delete	1	
+studio	transport.cycle	0	
+studio	view.patternEditor	0	
+studio	view.pads	0	
+studio	view.channelSettings	0	
+studio	view.audioEditor	0	
+studio	view.files	0	
+studio	view.headerBand	0	
+studio	help.trackerKeys	0	
+studio	view.smartControls	0	
 live	file.new	0	Ctrl+N;
 live	file.open	0	Ctrl+O;
 live	file.save	0	Ctrl+S;
@@ -228,7 +242,7 @@ live	edit.history	0	Ctrl+Alt+Z;
 live	edit.rename	0	Ctrl+R;F2;
 live	transport.play	0	Space;
 live	transport.songMode	0	
-live	transport.tapTempo	0	Ctrl+Shift+T;
+live	transport.tapTempo	0	
 live	options.typingKeyboard	0	M;
 live	options.metronome	0	O;
 live	tools.stopSound	0	Ctrl+H;
@@ -270,6 +284,8 @@ live	view.quickHelp	0
 live	view.toolbar	0	
 live	view.lists	0	
 live	view.notes	0	
+live	track.newAudio	0	Ctrl+T;
+live	track.newMidi	0	Ctrl+Shift+T;
 live	playlist.delete	1	Del;Backspace;
 live	playlist.selectAll	1	Ctrl+A;
 live	playlist.deselect	1	Ctrl+Shift+A;
@@ -424,6 +440,18 @@ live	auto.toolDelete	5
 live	auto.lfo	5	L;
 live	auto.quantize	5	Q;
 live	auto.cancel	5	Esc;
+live	track.newTracks	0	
+live	track.duplicate	1	
+live	track.delete	1	
+live	transport.cycle	0	
+live	view.patternEditor	0	
+live	view.pads	0	
+live	view.channelSettings	0	
+live	view.audioEditor	0	
+live	view.files	0	
+live	view.headerBand	0	
+live	help.trackerKeys	0	
+live	view.smartControls	0	
 logic	file.new	0	Ctrl+N;
 logic	file.open	0	Ctrl+O;
 logic	file.save	0	Ctrl+S;
@@ -436,7 +464,7 @@ logic	file.importUrl	0	Ctrl+Shift+U;
 logic	file.projectInfo	0	F11;
 logic	file.quit	0	Ctrl+Q;
 logic	edit.undo	0	Ctrl+Z;
-logic	edit.redo	0	Ctrl+Y;Ctrl+Shift+Z;
+logic	edit.redo	0	Ctrl+Shift+Z;Ctrl+Y;
 logic	edit.history	0	Alt+Z;
 logic	edit.rename	0	Shift+Enter;F2;
 logic	transport.play	0	Space;Num Enter;Num 0;
@@ -464,7 +492,7 @@ logic	view.playlist	0	F5;
 logic	view.channelRack	0	Ctrl+3;
 logic	view.pianoRoll	0	P;Ctrl+4;
 logic	view.pluginPicker	0	F8;
-logic	view.browser	0	B;
+logic	view.browser	0	
 logic	view.mixer	0	X;Ctrl+2;
 logic	view.stage	0	
 logic	view.settings	0	Ctrl+,;
@@ -477,12 +505,14 @@ logic	help.shortcuts	0	Alt+K;
 logic	view.commandPalette	0	Ctrl+Shift+P;
 logic	view.toggleMain	0	Ctrl+Alt+Shift+Tab;
 logic	view.editors	0	E;
-logic	view.library	0	Y;
+logic	view.library	0	B;
 logic	view.inspector	0	I;
 logic	view.quickHelp	0	Shift+/;
 logic	view.toolbar	0	Ctrl+Alt+Shift+T;
 logic	view.lists	0	D;
 logic	view.notes	0	Ctrl+Alt+P;
+logic	track.newAudio	0	
+logic	track.newMidi	0	
 logic	playlist.delete	1	Del;Backspace;
 logic	playlist.selectAll	1	Ctrl+A;
 logic	playlist.deselect	1	Shift+D;
@@ -637,6 +667,18 @@ logic	auto.toolDelete	5
 logic	auto.lfo	5	
 logic	auto.quantize	5	Q;
 logic	auto.cancel	5	Esc;
+logic	track.newTracks	0	Ctrl+Alt+N;
+logic	track.duplicate	1	Ctrl+D;
+logic	track.delete	1	Ctrl+Backspace;
+logic	transport.cycle	0	C;
+logic	view.patternEditor	0	
+logic	view.pads	0	
+logic	view.channelSettings	0	
+logic	view.audioEditor	0	W;
+logic	view.files	0	O;
+logic	view.headerBand	0	
+logic	help.trackerKeys	0	
+logic	view.smartControls	0	Y;
 studio+cmd	file.new	0	Ctrl+N;
 studio+cmd	file.open	0	Ctrl+O;
 studio+cmd	file.save	0	Ctrl+S;
@@ -696,6 +738,8 @@ studio+cmd	view.quickHelp	0
 studio+cmd	view.toolbar	0	
 studio+cmd	view.lists	0	
 studio+cmd	view.notes	0	
+studio+cmd	track.newAudio	0	
+studio+cmd	track.newMidi	0	
 studio+cmd	playlist.delete	1	Del;Backspace;
 studio+cmd	playlist.selectAll	1	Ctrl+A;
 studio+cmd	playlist.deselect	1	Ctrl+D;
@@ -850,6 +894,18 @@ studio+cmd	auto.toolDelete	5	D;
 studio+cmd	auto.lfo	5	L;
 studio+cmd	auto.quantize	5	Q;
 studio+cmd	auto.cancel	5	Esc;
+studio+cmd	track.newTracks	0	
+studio+cmd	track.duplicate	1	
+studio+cmd	track.delete	1	
+studio+cmd	transport.cycle	0	
+studio+cmd	view.patternEditor	0	
+studio+cmd	view.pads	0	
+studio+cmd	view.channelSettings	0	
+studio+cmd	view.audioEditor	0	
+studio+cmd	view.files	0	
+studio+cmd	view.headerBand	0	
+studio+cmd	help.trackerKeys	0	
+studio+cmd	view.smartControls	0	
 live+cmd	file.new	0	Ctrl+N;
 live+cmd	file.open	0	Ctrl+O;
 live+cmd	file.save	0	Ctrl+S;
@@ -867,7 +923,7 @@ live+cmd	edit.history	0	Ctrl+Alt+Z;
 live+cmd	edit.rename	0	Ctrl+R;F2;
 live+cmd	transport.play	0	Space;
 live+cmd	transport.songMode	0	
-live+cmd	transport.tapTempo	0	Ctrl+Shift+T;
+live+cmd	transport.tapTempo	0	
 live+cmd	options.typingKeyboard	0	M;
 live+cmd	options.metronome	0	O;
 live+cmd	tools.stopSound	0	Ctrl+H;
@@ -909,6 +965,8 @@ live+cmd	view.quickHelp	0
 live+cmd	view.toolbar	0	
 live+cmd	view.lists	0	
 live+cmd	view.notes	0	
+live+cmd	track.newAudio	0	Ctrl+T;
+live+cmd	track.newMidi	0	Ctrl+Shift+T;
 live+cmd	playlist.delete	1	Del;Backspace;
 live+cmd	playlist.selectAll	1	Ctrl+A;
 live+cmd	playlist.deselect	1	Ctrl+Shift+A;
@@ -1063,6 +1121,18 @@ live+cmd	auto.toolDelete	5
 live+cmd	auto.lfo	5	L;
 live+cmd	auto.quantize	5	Q;
 live+cmd	auto.cancel	5	Esc;
+live+cmd	track.newTracks	0	
+live+cmd	track.duplicate	1	
+live+cmd	track.delete	1	
+live+cmd	transport.cycle	0	
+live+cmd	view.patternEditor	0	
+live+cmd	view.pads	0	
+live+cmd	view.channelSettings	0	
+live+cmd	view.audioEditor	0	
+live+cmd	view.files	0	
+live+cmd	view.headerBand	0	
+live+cmd	help.trackerKeys	0	
+live+cmd	view.smartControls	0	
 logic+cmd	file.new	0	Cmd+N;
 logic+cmd	file.open	0	Cmd+O;
 logic+cmd	file.save	0	Cmd+S;
@@ -1075,7 +1145,7 @@ logic+cmd	file.importUrl	0	Cmd+Shift+U;
 logic+cmd	file.projectInfo	0	F11;
 logic+cmd	file.quit	0	Cmd+Q;
 logic+cmd	edit.undo	0	Cmd+Z;
-logic+cmd	edit.redo	0	Cmd+Y;Cmd+Shift+Z;
+logic+cmd	edit.redo	0	Cmd+Shift+Z;Cmd+Y;
 logic+cmd	edit.history	0	Ctrl+Cmd+Alt+Z;
 logic+cmd	edit.rename	0	Shift+Enter;F2;
 logic+cmd	transport.play	0	Space;Num Enter;Num 0;
@@ -1103,7 +1173,7 @@ logic+cmd	view.playlist	0	F5;
 logic+cmd	view.channelRack	0	Cmd+3;
 logic+cmd	view.pianoRoll	0	P;Cmd+4;
 logic+cmd	view.pluginPicker	0	F8;
-logic+cmd	view.browser	0	B;
+logic+cmd	view.browser	0	
 logic+cmd	view.mixer	0	X;Cmd+2;
 logic+cmd	view.stage	0	
 logic+cmd	view.settings	0	Cmd+,;
@@ -1116,12 +1186,14 @@ logic+cmd	help.shortcuts	0	Alt+K;
 logic+cmd	view.commandPalette	0	Cmd+Shift+P;
 logic+cmd	view.toggleMain	0	Cmd+Alt+Shift+Tab;
 logic+cmd	view.editors	0	E;
-logic+cmd	view.library	0	Y;
+logic+cmd	view.library	0	B;
 logic+cmd	view.inspector	0	I;
 logic+cmd	view.quickHelp	0	Shift+/;
 logic+cmd	view.toolbar	0	Ctrl+Cmd+Alt+T;
 logic+cmd	view.lists	0	D;
 logic+cmd	view.notes	0	Cmd+Alt+P;
+logic+cmd	track.newAudio	0	
+logic+cmd	track.newMidi	0	
 logic+cmd	playlist.delete	1	Del;Backspace;
 logic+cmd	playlist.selectAll	1	Cmd+A;
 logic+cmd	playlist.deselect	1	Shift+D;
@@ -1276,3 +1348,15 @@ logic+cmd	auto.toolDelete	5
 logic+cmd	auto.lfo	5	
 logic+cmd	auto.quantize	5	Q;
 logic+cmd	auto.cancel	5	Esc;
+logic+cmd	track.newTracks	0	Cmd+Alt+N;
+logic+cmd	track.duplicate	1	Cmd+D;
+logic+cmd	track.delete	1	Cmd+Backspace;
+logic+cmd	transport.cycle	0	C;
+logic+cmd	view.patternEditor	0	
+logic+cmd	view.pads	0	
+logic+cmd	view.channelSettings	0	
+logic+cmd	view.audioEditor	0	W;
+logic+cmd	view.files	0	O;
+logic+cmd	view.headerBand	0	
+logic+cmd	help.trackerKeys	0	
+logic+cmd	view.smartControls	0	Y;

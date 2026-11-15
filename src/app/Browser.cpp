@@ -51,6 +51,7 @@
 #include "LayoutPresets.h"
 #include "LayoutShellUi.h"
 #include "Theme.h"
+#include "TrackerPages.h"
 #include "UrlImportUi.h"
 #include "Widgets.h"
 #include "Windows.h"
@@ -288,14 +289,23 @@ bool browserRow(const char* id, ui::Icon icon, const char* name, const char* det
   if (!rn.openId) navClicks(clicked, dbl, rn.path != nullptr);
   else nav.synth = false;
   ImDrawList* dl = ImGui::GetWindowDrawList();
-  if (selected) dl->AddRectFilled(q, ImVec2(q.x + w, q.y + gRowH), theme::withAlpha(P.hot, 0.16f), theme::kRadiusSm);
-  if (hov || ImGui::IsItemActive()) dl->AddRectFilled(q, ImVec2(q.x + w, q.y + gRowH), ImGui::IsItemActive() ? P.surface700 : P.surface800, theme::kRadiusSm);
-  if (selected) dl->AddRectFilled(q, ImVec2(q.x + 2, q.y + gRowH), P.hot);
+  // Checkpoint 31 (Smooth layout): a list as 158 and 111 draw it: the chosen row a grey band (no
+  // orange edge), a folder row led by its disclosure chevron instead of a coloured folder.
+  const bool lg = layoutui::active() == layout::Preset::Logic && layoutui::shellBuilt(a, layout::Preset::Logic);
+  if (lg) {
+    if (selected || hov || ImGui::IsItemActive())
+      dl->AddRectFilled(q, ImVec2(q.x + w, q.y + gRowH), selected ? P.surface600 : ImGui::IsItemActive() ? P.surface700 : theme::withAlpha(P.surface700, 0.6f),
+                        theme::kRadiusSm);
+  } else {
+    if (selected) dl->AddRectFilled(q, ImVec2(q.x + w, q.y + gRowH), theme::withAlpha(P.hot, 0.16f), theme::kRadiusSm);
+    if (hov || ImGui::IsItemActive()) dl->AddRectFilled(q, ImVec2(q.x + w, q.y + gRowH), ImGui::IsItemActive() ? P.surface700 : P.surface800, theme::kRadiusSm);
+    if (selected) dl->AddRectFilled(q, ImVec2(q.x + 2, q.y + gRowH), P.hot);
+  }
   navOutline(dl, q, w, gRowH, selected);
   float x = q.x + indent;
-  // Tree guide: dotted stem down the indent with a tick into the row (not in Live: the refs' lists
-  // have no guides, 211, 094, 329).
-  if (indent > 0 && !livelook::active(a)) {
+  // Tree guide: dotted stem down the indent with a tick into the row (the Smooth layout's list has none, 158;
+  // nor Clips: the refs' lists have no guides, 211, 094, 329).
+  if (indent > 0 && !lg && !livelook::active(a)) {
     const ImU32 gc = theme::withAlpha(P.lineStrong, 0.7f);
     const float gx = std::round(x - 3);
     for (float y = q.y; y < q.y + gRowH; y += 3) dl->AddLine(ImVec2(gx, y), ImVec2(gx, y + 1), gc);
@@ -315,7 +325,10 @@ bool browserRow(const char* id, ui::Icon icon, const char* name, const char* det
       case ui::Icon::Wave: ic = theme::tintRole(role::kPaint, 0.85f); break;
       default: break;
     }
-  ui::drawIcon(dl, icon, ImVec2(x + 8, q.y + gRowH * 0.5f), 12, hov ? P.text : ic);
+  if (lg && icon == ui::Icon::Folder && rn.openId)
+    ui::drawIcon(dl, rn.open ? ui::Icon::ChevronDown : ui::Icon::Chevron, ImVec2(x + 8, q.y + gRowH * 0.5f), 9, hov ? P.text : P.textDim);
+  else
+    ui::drawIcon(dl, icon, ImVec2(x + 8, q.y + gRowH * 0.5f), 12, hov ? P.text : ic);
   float detailW = 0;
   if (starHit) {
     const bool sh = hov && ImGui::GetIO().MousePos.x >= q.x + w - 20;
@@ -382,16 +395,18 @@ bool sectionHeader(const char* title, int count, bool defaultOpen, uint32_t role
   navNote(-1, id, open);  // K-160
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const bool liveRow = livelook::active(a);  // K-112c (round 19): a flat list row, as the refs' browser lists (211, 094)
-  if (!liveRow) dl->AddRectFilled(q, ImVec2(q.x + w, q.y + 26), hov ? P.surface700 : theme::withAlpha(P.surface800, 0.6f), theme::kRadiusSm);
+  // Checkpoint 31 (Smooth layout): a flat heading row and a quiet chevron, as the list rows below it (158).
+  const bool lgRow = layoutui::active() == layout::Preset::Logic && layoutui::shellBuilt(a, layout::Preset::Logic);
+  if (!liveRow && !lgRow) dl->AddRectFilled(q, ImVec2(q.x + w, q.y + 26), hov ? P.surface700 : theme::withAlpha(P.surface800, 0.6f), theme::kRadiusSm);
   else if (hov) dl->AddRectFilled(q, ImVec2(q.x + w, q.y + 26), P.surface700, 0.0f);
   navOutline(dl, q, w, 26, false);
   ImGui::PopID();
-  ui::drawIcon(dl, open ? ui::Icon::ChevronDown : ui::Icon::Chevron, ImVec2(q.x + 9, q.y + 13), 10, open ? P.hot : P.textDim);
-  ui::drawIcon(dl, icon, ImVec2(q.x + 25, q.y + 13), 12, roleCol(roleColour));
+  ui::drawIcon(dl, open ? ui::Icon::ChevronDown : ui::Icon::Chevron, ImVec2(q.x + 9, q.y + 13), 10, open && !lgRow ? P.hot : P.textDim);
+  ui::drawIcon(dl, icon, ImVec2(q.x + 25, q.y + 13), 12, lgRow ? (hov ? P.text : P.textDim) : roleCol(roleColour));  // checkpoint 32: one quiet colour (111)
   if (icon == ui::Icon::Folder) theme::devNote("folder", roleCol(roleColour));  // K-177 dev: the folder glyph colour
   const std::string label = translate ? i18n::tr(title) : title;  // J-61: tree roots are translated
   const std::string shown = label.substr(0, label.find("##"));     // "##" suffix: id only
-  if (liveRow)
+  if (liveRow || lgRow)
     theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption + 1, ImVec2(q.x + 37, theme::textTop(a.fontRegular, theme::kFontCaption + 1, q.y, 26)), w - 37 - 30, P.text,
                         shown.c_str());
   else
@@ -1934,6 +1949,42 @@ void tabStrip(App& a) {
   ImDrawList* dl = ImGui::GetWindowDrawList();
   ImVec2 p0 = ImGui::GetCursorScreenPos();
   const float w = ImGui::GetContentRegionAvail().x, h = 24;
+  if (layoutui::active() == layout::Preset::Logic && layoutui::shellBuilt(a, layout::Preset::Logic)) {
+    // Checkpoint 28 (Tracks layout): the tabs as one centred segmented control, the shown one raised,
+    // as 111 and 121 set the browser's filter (and as the layout's pane titles are drawn).
+    const float fs = theme::kFontCaption, sh = 22, starW = 30;
+    float segW[TabCount], total = 0;
+    for (int i = 0; i < TabCount; ++i) {
+      segW[i] = i == TabStarred ? starW : std::ceil(a.fontRegular->CalcTextSizeA(fs, 1e9f, 0, i18n::tr(labels[i])).x) + 20;
+      total += segW[i];
+    }
+    if (total > w - 8) {  // a narrow pane: the segments share the width
+      for (float& v : segW) v = std::floor(v * (w - 8) / total);
+      total = 0;
+      for (float v : segW) total += v;
+    }
+    const float y0 = std::round(p0.y + (h + 6 - sh) * 0.5f);
+    float x = std::round(p0.x + (w - total) * 0.5f);
+    dl->AddRectFilled(ImVec2(x - 2, y0 - 2), ImVec2(x + total + 2, y0 + sh + 2), P.surface900, 7.0f);
+    for (int i = 0; i < TabCount; ++i) {
+      ImGui::SetCursorScreenPos(ImVec2(x, y0));
+      ImGui::PushID(i);
+      if (ImGui::InvisibleButton("##tab", ImVec2(segW[i], sh))) tab = i;
+      const bool hov = ImGui::IsItemHovered(), on = tab == i;
+      ImGui::PopID();
+      if (hov) ui::Hint(hints[i]);
+      if (on) dl->AddRectFilled(ImVec2(x, y0), ImVec2(x + segW[i], y0 + sh), P.surface600, 5.0f);
+      else if (hov) dl->AddRectFilled(ImVec2(x, y0), ImVec2(x + segW[i], y0 + sh), theme::withAlpha(P.surface600, 0.5f), 5.0f);
+      if (i == TabStarred) {
+        browserui::drawStar(dl, ImVec2(std::round(x + segW[i] * 0.5f), std::round(y0 + sh * 0.5f)), 5.5f, on ? P.hot : hov ? P.text : P.textDim, on);
+      } else {
+        theme::centreText(dl, a.fontRegular, fs, ImVec2(x, y0), ImVec2(x + segW[i], y0 + sh), on || hov ? P.text : P.textDim, i18n::tr(labels[i]));
+      }
+      x += segW[i];
+    }
+    ImGui::SetCursorScreenPos(ImVec2(p0.x, p0.y + h + 6));
+    return;
+  }
   dl->AddRectFilled(p0, ImVec2(p0.x + w, p0.y + h), P.surface900);
   dl->AddLine(ImVec2(p0.x, p0.y + h - 1), ImVec2(p0.x + w, p0.y + h - 1), P.line);
   const float tw = w / TabCount;
@@ -2230,10 +2281,26 @@ void navKeys(App& a) {
 
 }  // namespace
 
+// K-106: the recent files and the open project's folder, drawn with the browser's own rows
+// (the same listing, filters, preview, double-click open, drag and context menu). The Tracker
+// layout's Files screen shows this inside its own box.
+void browserProjectFiles(App& a) {
+  forgetStaleListings();
+  sectionRecent(a);
+  if (a.projectPath.empty()) return;
+  const fs::path dir = fs::path(a.projectPath).parent_path();
+  if (dir.empty()) return;
+  if (sectionHeader("Project folder", -1, true, role::kView, ui::Icon::Folder)) {
+    rootHeaderExtras(a, dir.string(), lastHeader);  // drops move into it, as the browser's roots
+    dirTree(a, dir, 0);
+  }
+  if (!a.showBrowser) trashDialog(a);  // the browser window runs it while it is open
+}
+
 void drawBrowser(App& a) {
   forgetStaleListings();
   if (!a.showBrowser) return;
-  if (!ui::BeginDockWindow("Browser", &a.showBrowser, ImVec2(260, 600))) {
+  if (!ui::BeginDockWindow("Browser", &a.showBrowser, ImVec2(260, 600)) || trackerpages::enteringFrame()) {  // K-106: not docked yet
     ui::EndDockWindow();
     return;
   }
@@ -2307,7 +2374,9 @@ void drawBrowser(App& a) {
     static bool refocus = false;  // after the clear button: typing goes on in the empty field
     if (refocus) ImGui::SetKeyboardFocusHere(), refocus = false;
     ImGui::SetNextItemAllowOverlap();  // the clear button drawn over the field's right end takes its clicks
-    ImGui::InputTextWithHint("##filter", i18n::tr("Search  (bpm: key: tag:)"), filterBuf, sizeof filterBuf);
+    // Checkpoint 32: the Smooth layout says only "Search" (111, 158); the filters stay in the hint.
+    const bool lgFind = layoutui::active() == layout::Preset::Logic && layoutui::shellBuilt(a, layout::Preset::Logic);
+    ImGui::InputTextWithHint("##filter", lgFind ? i18n::tr("Search") : i18n::tr("Search  (bpm: key: tag:)"), filterBuf, sizeof filterBuf);
     const ImGuiID filterId = ImGui::GetItemID();
     devNoteRect("brsearch");
     ImGui::PopStyleVar();

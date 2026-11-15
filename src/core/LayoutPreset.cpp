@@ -55,17 +55,25 @@ const char* blurb(Preset p) {
 bool isPreview(Preset p) { return p != Preset::Studio; }
 const char* previewTag() { return i18n::N_("Preview"); }
 
+namespace {
+bool gDevRun = false;  // --layout-dev this run
+}
+#ifdef GRIDLINE_DEV_LAYOUTS
+void setDevRun(bool on) { gDevRun = on; }
+#else
+void setDevRun(bool) {}
+#endif
+
 bool devSetting(const Settings& s) {
 #ifdef GRIDLINE_DEV_LAYOUTS
-  return s.getBool("ui.layoutDev");
+  return gDevRun || s.getBool("ui.layoutDev");
 #else
   (void)s;
   return false;
 #endif
 }
 
-bool available(Preset p, const Settings& s) {
-  if (p == Preset::Tracker) return devSetting(s);
+bool available(Preset p, const Settings&) {
   return p >= Preset::Studio && p < Preset::Count;
 }
 
@@ -78,7 +86,8 @@ std::string iniFileName(Preset p) { return p == Preset::Studio ? std::string("la
 
 std::string versionKey(Preset p) { return p == Preset::Studio ? std::string("ui.layoutVersion") : std::string("ui.layoutVersion.") + id(p); }
 
-int defaultVersion(Preset p) { return p == Preset::Studio ? workspace::kLayoutVersion : 1; }
+// K-112c (round 45): Clips 2, its new default (one detail band) replaces saved layouts once.
+int defaultVersion(Preset p) { return p == Preset::Studio ? workspace::kLayoutVersion : p == Preset::Live ? 2 : 1; }
 
 std::string bindingsKey(Preset p) { return p == Preset::Studio ? std::string("keys.bindings") : std::string("keys.bindings.") + id(p); }
 

@@ -6,6 +6,7 @@
 #include "../core/LayoutShell.h"
 #include "CollabUi.h"
 #include "../core/RemoteFs.h"
+#include "../core/TrackModes.h"
 #include "../engine/ProjectLoad.h"
 #include "DisplayConfirmUi.h"
 #include "DrumKitUi.h"
@@ -39,6 +40,7 @@
 #include "LogicPlugins.h"
 #include "LogicNewTracks.h"
 #include "LayoutPresets.h"
+#include "TrackerView.h"
 #include "../engine/PlaylistTools.h"
 #include "AudioRecordUi.h"
 #include "AsioUi.h"
@@ -72,6 +74,17 @@ namespace gl {
 
 using theme::pal;
 namespace fs = std::filesystem;
+
+// K-112b: the clips across the song position split there (the selected ones only, when there is a
+// selection): the Tracks key set's Cmd+T and its Edit menu.
+void splitClipsAtPlayhead(App& a) {
+  const Song& s = a.doc.song();
+  const Tick at = static_cast<Tick>(a.engine.position());
+  std::vector<ObjectId> ids = pltools::clipsAcross(s, at, 0, static_cast<int>(s.tracks.size()) - 1);
+  if (!a.playlist.selected.empty())
+    ids.erase(std::remove_if(ids.begin(), ids.end(), [&](ObjectId c) { return !a.playlist.selected.count(c); }), ids.end());
+  if (!ids.empty()) a.doc.editSong("split clips", [&](Song& x) { pltools::sliceClips(x, ids, at, a.playlist.zeroCross); });
+}
 
 namespace {
 
@@ -126,23 +139,38 @@ void settingsPageBody(App& a, int& page, float fieldW) {
           if (ImGui::Selectable(d.c_str(), d == a.audioDevice)) ui::confirmAudioDevice(a, d);
         ImGui::EndCombo();
       }
+      // K-112b checkpoint 35: one option row each (a pop-up menu in the Smooth layout).
       const int rates[] = {44100, 48000, 88200, 96000};
       formLabel("Sample rate");
-      for (int r : rates) {
-        if (r != rates[0]) ImGui::SameLine(0, theme::kS1);
-        if (ui::TextButton(std::to_string(r).c_str(), a.audioSampleRate == r) && a.audioSampleRate != r) {
+      {
+        std::string names[4];
+        const char* labels[4];
+        int idx = -1;
+        for (int i = 0; i < 4; ++i) {
+          names[i] = std::to_string(rates[i]);
+          labels[i] = names[i].c_str();
+          if (a.audioSampleRate == rates[i]) idx = i;
+        }
+        if (ui::OptionRow("rate", labels, 4, &idx, 160.0f) && a.audioSampleRate != rates[idx]) {
           const dispconf::Snapshot before = dispconf::take(st, dispconf::audioKeys());
-          st.set("audio.sampleRate", r);
+          st.set("audio.sampleRate", rates[idx]);
           ui::confirmAudio(a, before);
         }
       }
       const int bufs[] = {64, 128, 256, 512, 1024, 2048};
       formLabel("Buffer size");
-      for (int b : bufs) {
-        if (b != bufs[0]) ImGui::SameLine(0, theme::kS1);
-        if (ui::TextButton(std::to_string(b).c_str(), a.audioBuffer == b) && a.audioBuffer != b) {
+      {
+        std::string names[6];
+        const char* labels[6];
+        int idx = -1;
+        for (int i = 0; i < 6; ++i) {
+          names[i] = std::to_string(bufs[i]);
+          labels[i] = names[i].c_str();
+          if (a.audioBuffer == bufs[i]) idx = i;
+        }
+        if (ui::OptionRow("buf", labels, 6, &idx, 160.0f) && a.audioBuffer != bufs[idx]) {
           const dispconf::Snapshot before = dispconf::take(st, dispconf::audioKeys());
-          st.set("audio.bufferFrames", b);
+          st.set("audio.bufferFrames", bufs[idx]);
           ui::confirmAudio(a, before);
         }
       }
@@ -165,15 +193,20 @@ void settingsPageBody(App& a, int& page, float fieldW) {
       const int cur = static_cast<int>(st.getNumber("audio.threads"));
       formLabel("Processing threads");
       const int counts[] = {0, 1, 2, 4, 6, 8};
-      for (int c : counts) {
-        if (c != counts[0]) ImGui::SameLine(0, theme::kS1);
-        std::string l = c == 0 ? "Auto (" + std::to_string(a.processingThreads()) + ")" : std::to_string(c);
-        if (c == 0 && cur > 0) l = "Auto";
-        if (ui::TextButton(l.c_str(), cur == c, 0.0f,
-                           c == 0 ? "Half the hardware threads, at most 8" : c == 1 ? "Everything on the audio thread" : nullptr)) {
-          st.set("audio.threads", c);
-          a.syncEngine();
-        }
+      std::string names[6];
+      const char* labels[6];
+      const char* hints[6] = {"Half the hardware threads, at most 8", "Everything on the audio thread", nullptr, nullptr, nullptr, nullptr};
+      int idx = -1;
+      for (int i = 0; i < 6; ++i) {
+        const int c = counts[i];
+        names[i] = c == 0 ? std::string(i18n::tr("Auto")) + " (" + std::to_string(a.processingThreads()) + ")" : std::to_string(c);
+        if (c == 0 && cur > 0 && !ui::OptionsAsMenus()) names[i] = i18n::tr("Auto");
+        labels[i] = names[i].c_str();
+        if (cur == c) idx = i;
+      }
+      if (ui::OptionRow("threads", labels, 6, &idx, 160.0f, hints)) {
+        st.set("audio.threads", counts[idx]);
+        a.syncEngine();
       }
     }
     formLabel("Delay compensation");
@@ -312,13 +345,24 @@ void settingsPageBody(App& a, int& page, float fieldW) {
                                  i18n::N_("Very frequently (every minute + before risky edits)")};
     int f = std::clamp(static_cast<int>(st.getNumber("backup.frequency")), 0, 5);
     ui::BeginSection("HOW OFTEN");
-    for (int i = 0; i < 6; ++i)
-      if (ImGui::RadioButton(i18n::tr(freq[i]), f == i)) {
-        st.set("backup.frequency", i);
-        BackupPolicy p = a.backups->policy();
-        p.frequency = static_cast<BackupFrequency>(i);
-        a.backups = std::make_unique<BackupManager>(p);
-      }
+    // K-112b checkpoint 35: a pop-up menu in the Smooth layout (its preferences pick such a choice from one).
+    int picked = -1;
+    if (ui::OptionsAsMenus()) {
+      const char* labels[6];
+      for (int i = 0; i < 6; ++i) labels[i] = i18n::tr(freq[i]);
+      formLabel("Backups");
+      int idx = f;
+      if (ui::OptionRow("freq", labels, 6, &idx, fieldW)) picked = idx;
+    } else
+      for (int i = 0; i < 6; ++i)
+        if (ImGui::RadioButton(i18n::tr(freq[i]), f == i)) picked = i;
+    if (picked >= 0) {
+      const int i = picked;
+      st.set("backup.frequency", i);
+      BackupPolicy p = a.backups->policy();
+      p.frequency = static_cast<BackupFrequency>(i);
+      a.backups = std::make_unique<BackupManager>(p);
+    }
     ui::EndSection();
     ui::BeginSection("STORAGE");
     int maxCount = static_cast<int>(st.getNumber("backup.maxCount"));
@@ -448,7 +492,7 @@ void settingsPageBody(App& a, int& page, float fieldW) {
     }
     // K-112: the layouts with a menu row of their own (development layouts for now) can put their
     // menus in the system's menu bar. Studio keeps its menus in its top bar either way.
-    if (layoutui::devLayouts(a)) {
+    if (layoutui::devLayouts(a) || layout::current(st) == layout::Preset::Tracker) {  // K-106: the Tracker has its own menu row in every build
       bool sysMenu = st.getBool("ui.systemMenuBar");
       formLabel("Menu bar");
       if (ImGui::Checkbox(i18n::tr("Put the menus in the system menu bar"), &sysMenu)) st.set("ui.systemMenuBar", sysMenu);
@@ -550,7 +594,7 @@ void settingsPageBody(App& a, int& page, float fieldW) {
 
 // K-112b: the Logic layout's settings tabs: a toolbar band of icon-over-label tiles, centred;
 // the lit page is a raised tile with its icon and label in the accent colour.
-void iconSettingsTabs(const char* const* labels, const ui::Icon* icons, int count, int* index) {
+void iconSettingsTabs(const char* const* labels, const ui::Icon* icons, int count, int* index, const char* const* hints = nullptr) {
   const auto& P = pal();
   ImGuiWindow* w = ImGui::GetCurrentWindow();
   ImDrawList* dl = w->DrawList;
@@ -592,6 +636,7 @@ void iconSettingsTabs(const char* const* labels, const ui::Icon* icons, int coun
     const float lw = ImGui::CalcTextSize(shown).x;
     dl->AddText(ImVec2(std::round(x + (wi - lw) * 0.5f), std::round(q0.y + tileH - fs - 5.0f)), col, shown);
     if (hov && std::strcmp(shown, t) != 0) ui::Tooltip(labels[i]);
+    else if (hov && hints) ui::Hint(hints[i]);  // checkpoint 28: what the page holds (the page itself no longer says)
     x += wi + gap;
   }
   ImGui::PopFont();
@@ -709,19 +754,43 @@ void settingsWindow(App& a) {
     using I = ui::Icon;
     static const I kIcons[kPages] = {I::Wave, I::CatMidi, I::ProjectFile, I::Clock,     I::Monitor, I::Settings, I::Folder,
                                      I::Info, I::Keyboard, I::Paint,      I::LinkSlots, I::People,  I::Plug};
-    iconSettingsTabs(kSettingsPagesEn, kIcons, kPages, &page);
+    iconSettingsTabs(kSettingsPagesEn, kIcons, kPages, &page, blurbs);
   } else {
     ui::TabStrip("##settingstabs", pages, kPages, &page);
   }
   static std::vector<ui::SectionMark> marks;  // the page's sections, as last drawn
   static int marksPage = -1;
   static float pageScroll = 0, jumpTo = -1;
+  // Checkpoint 28 (Tracks layout): the page sits in an inset panel and the sub-tabs straddle its top
+  // edge, as 023, 100 and 083 draw the settings pages (they stood on the window with no panel).
+  ImDrawList* wdl = ImGui::GetWindowDrawList();
+  const float barTop = ImGui::GetCursorScreenPos().y;
+  if (iconTabs) wdl->ChannelsSplit(2), wdl->ChannelsSetCurrent(1);
   if (iconTabs && marksPage == page)
     if (const float y = sectionJumpBar(marks, pageScroll); y >= 0) jumpTo = y;
-  ImGui::BeginChild("##page", ImVec2(0, 0), ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground);
+  bool panel = false;
+  if (iconTabs) {
+    const bool bar = ImGui::GetCursorScreenPos().y > barTop + 1;
+    const ImVec2 c0(ImGui::GetWindowPos().x + ImGui::GetStyle().WindowPadding.x, bar ? barTop + 12.0f : barTop);
+    const ImVec2 c1(ImGui::GetWindowPos().x + ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x,
+                    ImGui::GetCursorScreenPos().y + ImGui::GetContentRegionAvail().y);
+    wdl->ChannelsSetCurrent(0);
+    const ImU32 bg = ImGui::GetColorU32(ImGuiCol_WindowBg);
+    wdl->AddRectFilled(c0, c1, theme::mix(bg, P.dark ? P.ink : P.text, P.dark ? 0.22f : 0.04f), 6.0f);
+    wdl->AddRect(ImVec2(c0.x + 0.5f, c0.y + 0.5f), ImVec2(c1.x - 0.5f, c1.y - 0.5f), theme::mix(bg, P.text, 0.10f), 6.0f);
+    wdl->ChannelsMerge();
+    if (!bar) ImGui::Dummy(ImVec2(0, theme::kS2));
+    panel = true;
+  }
+  if (panel) ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS3, 0));
+  ImGui::BeginChild("##page", ImVec2(0, panel ? -theme::kS2 : 0.0f), panel ? ImGuiChildFlags_AlwaysUseWindowPadding : ImGuiChildFlags_None,
+                    ImGuiWindowFlags_NoBackground);
+  if (panel) ImGui::PopStyleVar();
   if (jumpTo >= 0) ImGui::SetScrollY(jumpTo), jumpTo = -1;
   pageScroll = ImGui::GetScrollY();
-  if (!livelook::active(a)) {  // K-112: Live starts at the first group's name (the list rows say what each page holds)
+  // K-112: Live starts at the first group's name (the list rows say what each page holds); checkpoint 28: so does
+  // the Tracks layout, whose icon tabs and sub-tabs name the page (no reference page has a description line).
+  if (!livelook::active(a) && !iconTabs) {
     ImGui::TextColored(theme::vec(P.textDim), "%s", i18n::tr(blurbs[page]));
     ImGui::Dummy(ImVec2(0, theme::kS1));
   }
@@ -755,7 +824,9 @@ void infoWindow(App& a) {
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS4, theme::kS3));
   std::string title = ui::windowTitle("Project info");
   if (lg) {
-    const std::string proj = a.projectFile().empty() ? i18n::tr("Untitled project") : fs::path(a.projectFile()).stem().string();
+    std::string proj = a.projectFile().empty() ? i18n::tr("Untitled project") : fs::path(a.projectFile()).stem().string();
+    // Checkpoint 28: the project's name alone ("song", not "song.gridline"), as 098 and 096 title it.
+    if (const size_t dot = proj.rfind(".gridline"); dot != std::string::npos && dot + 9 == proj.size() && dot > 0) proj.erase(dot);
     title = proj + " - " + i18n::tr("Project settings") + "###Project info";
     ImGui::SetNextWindowSizeConstraints(ImVec2(500, 0), ImVec2(900, 2000));
   }
@@ -1281,10 +1352,16 @@ void handleGlobalShortcuts(App& a) {
   if (pressed("file.save")) a.save();
   if (pressed("file.saveAs")) a.saveAs();
   if (pressed("file.open")) a.openDialog();
-  if (pressed("file.new")) a.guardUnsaved([&a]() { a.newProject(); });
+  if (pressed("file.new")) a.guardUnsaved([&a]() {
+      a.newProject();
+      if (logicplug::active(a)) newtracks::open();  // R01-17: the Tracks layout asks for the first tracks, as the reference does
+    });
   if (pressed("file.render")) a.showExport = true;
   if (pressed("file.importUrl")) urlimportui::open(a);  // J-192
   if (pressed("transport.tapTempo")) a.tapTempo();  // K-48
+  for (const bool audio : {true, false})  // K-112c: a new track of the Clips set, selected
+    if (pressed(audio ? "track.newAudio" : "track.newMidi"))
+      if (const int t = audio ? trackmodes::addAudioTrack(a.doc) : trackmodes::addMidiTrack(a.doc); t >= 0) a.playlist.trackSel = {t};
   if (pressed("options.typingKeyboard")) a.typingKeyboard = !a.typingKeyboard;
   if (typed("options.metronome")) a.metronome = !a.metronome;
   if (!a.typingKeyboard && pressed("transport.songMode"))
@@ -1298,11 +1375,32 @@ void handleGlobalShortcuts(App& a) {
     f = !f;
     if (f) a.focusWindow = name;
   };
-  if (typed("view.playlist")) toggle(a.showPlaylist, "Playlist");
-  if (typed("view.channelRack")) toggle(a.showRack, "Channel rack");
-  if (typed("view.pianoRoll")) toggle(a.showPiano, "Piano roll");
+  if (layoutui::active() == layout::Preset::Tracker) {
+    // K-106: the Tracker's screens. A page comes to the front (the pages stay open behind it);
+    // Files and the pattern keys swap into the header band; the band hides and comes back.
+    struct Pg {
+      const char* id;
+      const char* window;
+    };
+    static const Pg pages[] = {{"view.patternEditor", "Pattern editor"}, {"view.playlist", "Playlist"}, {"view.pianoRoll", "Piano roll"},
+                               {"view.channelRack", "Channel rack"},     {"view.mixer", "Mixer"},      {"view.pads", "Live pads"}};
+    for (const Pg& p : pages)
+      if (typed(p.id)) trackerview::showPage(a, p.window);
+    if (typed("view.files")) trackerview::setHeaderSwap(trackerview::headerSwap() == 2 ? 0 : 2);
+    if (typed("help.trackerKeys")) trackerview::setHeaderSwap(trackerview::headerSwap() == 1 ? 0 : 1);
+    if (typed("view.headerBand")) trackerview::setExtended(a, !trackerview::extended());
+  } else {
+    if (typed("view.playlist")) toggle(a.showPlaylist, "Playlist");
+    if (typed("view.channelRack")) toggle(a.showRack, "Channel rack");
+    if (typed("view.pianoRoll")) toggle(a.showPiano, "Piano roll");
+    if (typed("view.mixer")) toggle(a.showMixer, "Mixer");
+    if (typed("view.patternEditor"))
+      if (bool* f = layoutui::windowOpenFlag(a, "Pattern editor")) toggle(*f, "Pattern editor");
+    if (typed("view.pads")) toggle(a.showLivePads, "Live pads");
+  }
   if (typed("view.browser")) toggle(a.showBrowser, "Browser");
-  if (typed("view.mixer")) toggle(a.showMixer, "Mixer");
+  if (typed("view.channelSettings")) a.settingsChannel = a.settingsChannel != kNoId ? kNoId : a.selChannel;
+  if (typed("view.audioEditor")) a.settings.set("ui.loupePinned", !a.settings.getBool("ui.loupePinned"));
   if (typed("view.stage")) toggle(a.showStage, "Mixer");  // the mixer window's Stage view (stageui::sync opens the mixer)
   // K-124: Esc in an editor or plugin window brings the playlist (the main window) to the front,
   // once nothing else used the key this frame: a popup, menu or dialog, a drag, a text field, a tool.
@@ -1335,9 +1433,20 @@ void handleGlobalShortcuts(App& a) {
     auto pane = [&](const char* cmd, const char* region) {
       if (typed(cmd)) layoutui::setRegionVisible(a, region, !shown(region));
     };
-    pane("view.library", "logic.library");
+    if (typed("view.library")) {  // B: the library on the left; one browser at a time (R01-25)
+      const bool on = !shown("logic.library");
+      layoutui::setRegionVisible(a, "logic.library", on);
+      if (on && a.showBrowser) a.showBrowser = false;  // the right pane's file browser closes (its pane with it)
+    }
     pane("view.inspector", "logic.inspector");
-    pane("view.quickHelp", "logic.help");
+    // R01-08: Quick help is a small floating window (LayoutParts.cpp quickHelpFloat), not a pane.
+    if (typed("view.quickHelp")) a.settings.set("ui.logicQuickHelp", !a.settings.getBool("ui.logicQuickHelp"));
+    if (typed("view.smartControls"))  // R01-07: Y, the Smart controls in the lower pane
+      if (bool* sm = layoutui::windowOpenFlag(a, "Smart controls")) {
+        if (*sm && shown("logic.lower")) layoutui::setRegionVisible(a, "logic.lower", false);
+        else layoutui::setRegionVisible(a, "logic.lower", true), *sm = true;
+      }
+    if (typed("view.audioEditor") && a.settings.getBool("ui.loupePinned")) layoutui::setRegionVisible(a, "logic.lower", true);  // W
     if (typed("view.toolbar")) a.settings.set("ui.logicToolbar", !a.settings.getBool("ui.logicToolbar"));
     auto side = [&](const char* cmd, const char* window) {  // a panel of the right pane: shows it there, or hides the pane
       if (!typed(cmd)) return;
@@ -1348,15 +1457,17 @@ void handleGlobalShortcuts(App& a) {
     };
     side("view.lists", "Lists");
     side("view.notes", "Notes");
+    side("view.files", "Files");  // O: the project's files
     if (typed("view.hidePlugins")) logicplug::toggleHidden(a);
+    // K-112B (checkpoint 39): the Track and Navigate menu keys.
+    if (pressed("track.newTracks")) newtracks::open();
+    if (typed("transport.cycle")) toggleCycle(a);
+    if (pressed("track.duplicate")) tracksNewSameSettings(a);
+    if (pressed("track.delete")) tracksDeleteSelected(a);
   }
   if (keys::focusContext() == keys::Context::Playlist && typed("playlist.splitAtSongPos")) {
-    const Song& s = a.doc.song();
-    const Tick at = static_cast<Tick>(a.engine.position());
-    std::vector<ObjectId> ids = pltools::clipsAcross(s, at, 0, static_cast<int>(s.tracks.size()) - 1);
-    if (!a.playlist.selected.empty())  // the selected clips only, when there is a selection
-      ids.erase(std::remove_if(ids.begin(), ids.end(), [&](ObjectId c) { return !a.playlist.selected.count(c); }), ids.end());
-    if (!ids.empty()) a.doc.editSong("split clips", [&](Song& x) { pltools::sliceClips(x, ids, at, a.playlist.zeroCross); });
+    if (layoutui::active() == layout::Preset::Logic) tracksSplitAtPlayhead(a);  // the Tracks layout: the selected clips only
+    else splitClipsAtPlayhead(a);
   }
   const auto& pats = a.doc.song().patterns;
   int pi = a.doc.song().patternIndex(a.curPattern);

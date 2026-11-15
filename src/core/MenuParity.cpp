@@ -853,4 +853,18 @@ Tick prepareLiveArea(Document& d) {
   return area;
 }
 
+bool extendLiveArea(Document& d, Tick end) {
+  const Tick from = d.song().live.areaEnd;
+  if (end <= from) return false;
+  const Tick shift = end - from;
+  d.editSong("grow the live area", [&](Song& x) {
+    for (auto& c : x.playlist)
+      if (c.start >= from) c.start += shift;
+    for (auto& m : x.markers)
+      if (m.pos >= from) m.pos += shift;
+    x.live.areaEnd = end;
+  });
+  return true;
+}
+
 }  // namespace gl::ops

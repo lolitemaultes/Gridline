@@ -4,7 +4,8 @@
 #      writes them into the current pattern as one undo step and forgets them;
 #   2. Session record: arms recording in pattern mode and starts playback; a second click disarms;
 #   3. Draw mode: lit with the pencil; a click switches the editors to select, another back;
-#   4. the device title bars draw the hot-swap and save buttons.
+#   4. the device title bars draw the hot-swap and save buttons (the device band shown first: since
+#      round 45 the clip band takes its place while a clip is selected).
 # Screenshot: <OUT>/bar.ppm.
 #   cmake -DAPP=<gridline-app> -DDEMO=<song> -DOUT=<dir> -P k112_livebar_app.cmake
 cmake_minimum_required(VERSION 3.16)
@@ -45,6 +46,7 @@ file(WRITE "${OUT}/in.txt" "8 typing on
 76 sdldown 0
 77 sdlup 0
 82 livebar
+83 layout show live.device
 86 sdlat devswap
 87 sdlat devsave
 88 shot \"${OUT}/bar.ppm\"

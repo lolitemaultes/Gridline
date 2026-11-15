@@ -87,6 +87,17 @@ double peakRssMb();
 // Monitor shows, graphics memory included), Linux the resident set, Windows the
 // private bytes; 0 where the system does not say.
 double currentMemoryMb();
+// K-302: bytes the C allocator has handed out and not had back (MB): glibc mallinfo, macOS all
+// malloc zones. Unlike currentMemoryMb() it does not count freed memory the allocator keeps, nor
+// pages the graphics driver maps itself. 0 where the system does not say.
+double heapInUseMb();
+// K-302: of currentMemoryMb(), the shared memory (Linux RssShmem: among others the window's
+// buffers a Wayland compositor reads); 0 elsewhere.
+double sharedMemoryMb();
+// K-302: hands memory the C allocator keeps free back to the system (glibc malloc_trim, macOS
+// zone pressure relief), so currentMemoryMb() after it counts what is in use. Slow: for
+// measurements, not for every frame.
+void releaseFreeMemory();
 // K-154: the computer's physical memory, and how much of it is free for new use now (Linux
 // MemAvailable, macOS free + inactive + purgeable, FreeBSD free + inactive, Windows available);
 // 0 where the system does not say.

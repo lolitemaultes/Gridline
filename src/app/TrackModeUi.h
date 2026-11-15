@@ -23,8 +23,9 @@ int drawHeader(App& a, ImDrawList* dl, int track, float x0, float x1, float line
 void headerClick(App& a, int track, int control);
 void inputPopup(App& a, int track);
 // Glyph before the track name (audio: a wave, instrument: keys). Returns the
-// width it takes (0 for ordinary tracks).
-float drawNameGlyph(App& a, ImDrawList* dl, int track, ImVec2 pos);
+// width it takes (0 for ordinary tracks). `ink` (non-zero) draws both glyphs in that colour, as
+// on a coloured name block.
+float drawNameGlyph(App& a, ImDrawList* dl, int track, ImVec2 pos, ImU32 ink = 0);
 // Status bar hint for a hovered header of a track with a mode ("" = none).
 const char* headerHint(App& a, int track, int control);
 // Mixer track menu / channel menu items.

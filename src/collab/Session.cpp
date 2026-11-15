@@ -2624,6 +2624,19 @@ void Session::receive(SiteId from, int stream, const std::string& wire) {
       p.targetId = u32("ti");
       p.targetSub = u32("ts");
     }
+    p.editPattern = u32("ep");  // K-106: the edit cursor (older peers send none)
+    if (p.editPattern) {
+      auto tick = [&](const char* k) {
+        const double v = m.head.num(k, 0);
+        return std::isfinite(v) ? std::clamp(v, 0.0, 1e12) : 0.0;
+      };
+      p.editChannel = u32("ec");
+      p.editTick = tick("et");
+      p.selChannel0 = u32("c0");
+      p.selChannel1 = u32("c1");
+      p.selTick0 = tick("t0");
+      p.selTick1 = tick("t1");
+    }
     pv.presence = p;
     pv.presenceAt = now_;
   } else if (type == "prof") {
@@ -2738,6 +2751,17 @@ void Session::sendPresence(double now) {
     m.head.object["tk"] = Json::makeNumber(localPresence_.targetKind);
     m.head.object["ti"] = Json::makeNumber(localPresence_.targetId);
     if (localPresence_.targetSub) m.head.object["ts"] = Json::makeNumber(localPresence_.targetSub);
+  }
+  if (localPresence_.editPattern) {  // K-106: the edit cursor and selection (older peers ignore them)
+    m.head.object["ep"] = Json::makeNumber(localPresence_.editPattern);
+    m.head.object["ec"] = Json::makeNumber(localPresence_.editChannel);
+    m.head.object["et"] = Json::makeNumber(localPresence_.editTick);
+    if (localPresence_.selTick1 > localPresence_.selTick0) {
+      m.head.object["c0"] = Json::makeNumber(localPresence_.selChannel0);
+      m.head.object["c1"] = Json::makeNumber(localPresence_.selChannel1);
+      m.head.object["t0"] = Json::makeNumber(localPresence_.selTick0);
+      m.head.object["t1"] = Json::makeNumber(localPresence_.selTick1);
+    }
   }
   m.head.object["st"] = Json::makeNumber(localPresence_.songTick);
   for (auto& [s, pv] : peers_)

@@ -8,6 +8,8 @@
 #include "StageView.h"
 #include "../core/ChromeOs.h"
 #include "LayoutPresets.h"
+#include "LiveLook.h"
+#include "../core/TrackModes.h"
 #include "../core/LayoutShell.h"
 #include "../core/Crash.h"
 #include "../core/RemoteFs.h"
@@ -31,6 +33,7 @@
 #include <filesystem>
 #include <fstream>
 #include "../core/Demo.h"
+#include "../core/MenuParity.h"
 #include "../core/ProjectPreview.h"
 #include "../core/Recents.h"
 #include "LauncherUi.h"
@@ -94,6 +97,19 @@ App::App() {
       settings.set(layout::stateKey(layout::Preset::Logic), layout::toJson(st));
     }
     settings.set("layout.logic.panesKept", true);
+  }
+  // K-112B (checkpoint 40): the Tracks layout now starts with its editors pane closed (the tracks get
+  // the full height, as a new project in its reference opens). As above, someone who already used
+  // the layout keeps the pane open unless they had closed it, once.
+  if (!settings.getBool("layout.logic.lowerKept")) {
+    if (settings.getNumber("ui.layoutVersion.logic.shell") > 0 || settings.getNumber("ui.layoutVersion.logic") > 0) {
+      const layout::Shell& sh = layout::shell(layout::Preset::Logic);
+      layout::State st = layout::fromJson(layout::Preset::Logic, settings.getString(layout::stateKey(layout::Preset::Logic)));
+      if (!st.hidden.count("logic.lower")) layout::setVisible(sh, st, "logic.lower", true);
+      st.hidden.erase("logic.lower");
+      settings.set(layout::stateKey(layout::Preset::Logic), layout::toJson(st));
+    }
+    settings.set("layout.logic.lowerKept", true);
   }
   {  // K-24: the playlist's vertical zoom as it was left
     const double h = settings.getNumber("ui.playlistTrackHeight");
@@ -463,6 +479,11 @@ std::string App::windowTitle() const {
 }
 
 void App::newProject() {
+  // K-112c (round 45): a new set in Clips opens on the clip grid, as the reference's new set does.
+  if (layoutui::active() == layout::Preset::Live) {
+    livelook::showView(*this, true);
+    livelook::setDrawMode(*this, false);  // and in select mode (B switches to drawing)
+  }
   // A default template chosen in Settings > General replaces the starter kit.
   if (std::string key = settings.getString("general.defaultTemplate"); !key.empty()) {
     if (const TemplateInfo* t = findTemplate(key)) {
@@ -483,6 +504,13 @@ Song App::starterSong() const {
   Song s = makeEmptySong();
   applyProjectDefaults(s);
   s.panLaw = PanLaw::Stage;  // new projects place each channel on the Stage (older ones keep the Balance law)
+  // K-112c (round 45): a new set in Clips is the reference's: its tracks and returns, no instruments
+  // (no starter kit), 120 BPM unless Settings has a default tempo other than its own 140.
+  if (layoutui::active() == layout::Preset::Live) {
+    if (!(settings.getNumber("project.defaultTempo") > 0) || settings.getNumber("project.defaultTempo") == 140.0) s.tempo = 120.0;
+    trackmodes::makeClipsStarterTracks(s);
+    return s;
+  }
   Document doc(s);
   // Starter kit: four drum voices on inserts 1-4 and a synth on insert 5.
   struct Starter { const char* name; const char* type; uint32_t color; };
@@ -1051,6 +1079,14 @@ void App::newFromTemplate(const std::string& which) {
     applyProjectDefaults(s);
   } else if (which == "demo") {
     s = makeDemoTrack();  // J-135: the "Gridline" demo song
+    // K-112c (round 45): opened in Clips, the demo starts with its clips in the grid (as the reference's
+    // demo sets do): Prepare the live area, made part of the opened song (its saved starting point, so
+    // collaborators get the same; Studio's demo is not changed).
+    if (layoutui::active() == layout::Preset::Live) {
+      Document d(s);
+      ops::prepareLiveArea(d);
+      s = d.song();
+    }
   } else {
     std::string err;
     if (!loadTemplate(which, s, &err)) {

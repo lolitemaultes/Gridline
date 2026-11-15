@@ -4,6 +4,9 @@
 #include "imgui_internal.h"
 
 bool GImGuiGridlineMenuRight = false;  // K-112b: read by imgui_widgets.cpp (MenuItemEx), set by layoutui
+ImFont* GImGuiGridlineTitleFont = nullptr;  // K-112b (checkpoint 28): read by imgui.cpp (RenderWindowTitleBarContents), set by layoutui
+float GImGuiGridlineCheckRounding = -1.0f;  // checkpoint 38: read by imgui_widgets.cpp (Checkbox), set by layoutui
+ImU32 GImGuiGridlineMenuHover = 0;      // K-112B checkpoint 39: read by imgui_widgets.cpp (MenuItemEx, BeginMenuEx)
 bool GImGuiGridlineMenuWalk = false;  // K-93: read by imgui_widgets.cpp (BeginMenuEx, EndMenu, MenuItemEx)
 
 namespace gl::imhook {

@@ -118,9 +118,10 @@ void testLayoutNames() {
     expect(name != "Live" && name != "Logic" && name != "Tracks", "no layout keeps an earlier name");
   }
   expect(listed == "Studio, Clips, Smooth, Tracker", ("the layouts in order: " + listed).c_str());
-  // The chooser cards, View > Window layout and the shortcut set list show the first kPresetCount;
-  // Tracker is a development layout until its phase ships (available()).
-  expect(layout::kPresetCount == 3, "the chooser shows Studio, Clips and Smooth today");
+  // The chooser cards, View > Window layout and the shortcut set list show every layout, Tracker
+  // too (a Preview, as Clips and Smooth), with no development setting.
+  expect(layout::kPresetCount == 4, "the chooser shows Studio, Clips, Smooth and Tracker");
+  expect(layout::isPreview(Preset::Tracker), "Tracker is tagged Preview");
   Settings plain;
   for (int i = 0; i < layout::kPresetCount; ++i)
     expect(layout::available(static_cast<Preset>(i), plain), (std::string(want[i]) + " can be chosen").c_str());
@@ -265,8 +266,9 @@ void testMenus() {
       if (m.name) s += std::string(s.empty() ? "" : " ") + m.name;
     return s;
   };
-  expect(names(Preset::Live) == "File Edit Create View Options Tools Help", "live menu order");
+  expect(names(Preset::Live) == "File Edit Create View Options Navigate Tools Help", "live menu order");
   expect(names(Preset::Logic) == "File Edit Track Patterns Navigate Record Mix View Tools Window Help", "logic menu order");
+  expect(names(Preset::Tracker) == "File Edit View Pattern Song Options Tools Help", "tracker menu order");
   int programs = 0;
   for (const auto& m : menustyle::menus(Preset::Logic)) programs += m.name ? 0 : 1;
   expect(programs == 1, "logic has one program menu (on the mark)");
@@ -328,8 +330,8 @@ void testKeys() {
   {
     keys::Keymap km;
     km.setProfile(keys::Profile::Logic, false);
-    expect(first(km, "view.browser") == "B" && first(km, "view.mixer") == "X" && first(km, "view.editors") == "E" && first(km, "view.pianoRoll") == "P",
-           "logic: B X E P open the panes");
+    expect(first(km, "view.library") == "B" && first(km, "view.mixer") == "X" && first(km, "view.editors") == "E" && first(km, "view.pianoRoll") == "P",
+           "logic: B (library) X E P open the panes");
     expect(first(km, "transport.record") == "R" && first(km, "transport.toStart") == "Enter" && first(km, "options.metronome") == "K",
            "logic: R records, Return goes to the start, K metronome");
     expect(km.bindings("playlist.toolPaint").empty() && km.bindings("piano.toolDraw").empty(), "logic: tool letters are unbound");
@@ -353,8 +355,8 @@ void testKeys() {
   km.setProfile(keys::Profile::Logic, false);
   km.load(tracksOverrides);
   expect(first(km, "view.mixer") == "F3", "the logic override comes back with its set");
-  km.set("view.browser", {keys::parse("B")});
-  expect(!km.customized("view.browser"), "a set's own default is not an override");
+  km.set("view.library", {keys::parse("B")});
+  expect(!km.customized("view.library"), "a set's own default is not an override");
 }
 
 void testGeometry() {

@@ -18,6 +18,7 @@
 #include "../core/Meter.h"
 #include "../core/MidiFile.h"
 #include "../core/MidiImport.h"
+#include "../core/MenuParity.h"
 #include "../core/PluginParams.h"
 #include "../core/Presets.h"
 #include "../core/flp/Flp.h"
@@ -501,6 +502,43 @@ void drawTargetHighlight(const ImRect& r) {
 
 }  // namespace
 
+namespace {
+
+bool clipStep(const xdrop::Step& st) { return st.action == DropAction::AudioClip || st.action == DropAction::MidiPatternClip; }
+
+// K-112c (round 43): the clip grid's places for a playlist drop. On a slot the clips go down that
+// track's column, one per scene; in the free column each one makes a new track, side by side.
+// The hint names the scene, not the bar.
+void slotPlan(App& a, const std::vector<xdrop::Item>& items, const DropPlace& place, xdrop::Plan& p) {
+  int n = 0;
+  bool onlyClips = true;
+  for (xdrop::Step& st : p.steps) {
+    if (!clipStep(st)) {
+      onlyClips = false;
+      continue;
+    }
+    st.track = place.newTracks ? place.track + n : place.track;
+    st.tick = place.newTracks ? place.tick : place.tick + static_cast<Tick>(n) * place.slotTicks;
+    ++n;
+  }
+  if (n == 0 || !onlyClips) return;
+  const int scene = static_cast<int>(place.tick / place.slotTicks) + 1;
+  char buf[256];
+  if (place.newTracks && n == 1)
+    std::snprintf(buf, sizeof buf, i18n::tr("Drop to make a new track with %s"), xdrop::displayName(items[p.steps[0].item]).c_str());
+  else if (place.newTracks)
+    std::snprintf(buf, sizeof buf, i18n::tr("Drop to make %d new tracks, one for each file"), n);
+  else if (n == 1)
+    std::snprintf(buf, sizeof buf, i18n::tr("Drop to put %s in scene %d of %s"), xdrop::displayName(items[p.steps[0].item]).c_str(), scene,
+                  playlistTrackName(a.doc.song(), static_cast<size_t>(std::max(place.track, 0))).c_str());
+  else
+    std::snprintf(buf, sizeof buf, i18n::tr("Drop to put %d clips in scenes %d to %d of %s"), n, scene, scene + n - 1,
+                  playlistTrackName(a.doc.song(), static_cast<size_t>(std::max(place.track, 0))).c_str());
+  p.label = buf;
+}
+
+}  // namespace
+
 xdrop::Mods currentMods() {
   const ImGuiIO& io = ImGui::GetIO();
   xdrop::Mods m;
@@ -539,7 +577,9 @@ xdrop::Plan planFor(App& a, const std::vector<xdrop::Item>& items, DropTarget ta
     }
     ctx.lengths.push_back(len);
   }
-  return xdrop::plan(items, kinds, ctx, mods);
+  xdrop::Plan p = xdrop::plan(items, kinds, ctx, mods);
+  if (target == DropTarget::Playlist && place.slotTicks > 0) slotPlan(a, items, place, p);
+  return p;
 }
 
 const HoverPlan* hoverPlan(DropTarget target) {
@@ -1049,6 +1089,18 @@ bool performItems(App& a, const std::vector<xdrop::Item>& items, DropTarget targ
   for (const xdrop::Step& s : p.steps) midi += s.action == DropAction::ImportMidiChannels;
   const App::AddRouteScope route(a, mixerRoute(a, target));  // K-289
   a.doc.beginGroup(p.steps.size() > 1 ? "drop files" : "drop file");
+  const bool slots = target == DropTarget::Playlist && place.slotTicks > 0;
+  if (slots) {  // K-112c (round 43): the clip grid: its tracks and the live area hold every clip first
+    Tick end = 0;
+    int last = -1;
+    for (const xdrop::Step& s : p.steps)
+      if (clipStep(s)) {
+        end = std::max(end, (s.tick / place.slotTicks + 1) * place.slotTicks);
+        last = std::max(last, s.track);
+      }
+    if (last >= static_cast<int>(a.doc.song().tracks.size())) a.doc.setPlaylistTrackCount(std::min(last + 1, kMaxPlaylistTracks));
+    ops::extendLiveArea(a.doc, end);
+  }
   bool any = false;
   std::set<ObjectId> clips;
   Tick prevEnd = -1;
@@ -1064,7 +1116,7 @@ bool performItems(App& a, const std::vector<xdrop::Item>& items, DropTarget targ
       else if (row >= 0) pl.insertAt = row + 1 + inserted++;
     }
     // One after another: each clip starts where the one before really ends.
-    if (mods.shift && prevEnd >= 0 && (s.action == DropAction::AudioClip || s.action == DropAction::MidiPatternClip)) pl.tick = prevEnd;
+    if (!slots && mods.shift && prevEnd >= 0 && (s.action == DropAction::AudioClip || s.action == DropAction::MidiPatternClip)) pl.tick = prevEnd;
     ObjectId made = kNoId;
     gPlainLoopClip = mods.ctrl;  // K-161
     any = runAction(a, items[s.item].path, s.action, target, pl, midi > 1, &made) || any;

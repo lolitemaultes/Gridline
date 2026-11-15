@@ -21,9 +21,10 @@ int gInjectFrame = -10;
 bool injectedNow(const char* id) { return gInjectFrame == ImGui::GetFrameCount() && gInjected == id; }
 
 bool gTyping = false;  // K-175
+bool gEditorKeys = false;  // K-106
 // The typing keyboard plays this chord: its command does not run.
 bool typingTakes(const char* id, const Chord& c) {
-  return gTyping && playsOnTypingKeyboard(c) && std::strcmp(id, "options.typingKeyboard") != 0;
+  return (gTyping && playsOnTypingKeyboard(c) && std::strcmp(id, "options.typingKeyboard") != 0) || editorTakes(c);
 }
 
 const ImGuiKey kMap[] = {
@@ -88,6 +89,34 @@ Key fromImGui(ImGuiKey k) {
 }
 
 void setTypingKeyboard(bool on) { gTyping = on; }
+void setEditorKeys(bool on) { gEditorKeys = on; }
+
+bool editorTakes(const Chord& c) {
+  if (!gEditorKeys) return false;
+  const bool ctrl = (c.mods & (kCtrl | kCmd)) != 0, alt = (c.mods & kAlt) != 0;
+  if (ctrl && alt) return false;
+  // The Tracker key set's pattern keys (trackerview::trackerTakes): their global commands (Find
+  // empty on Shift/Ctrl+F4, the windows on F9 to F12, ...) do not run while the editor has the keys.
+  if (keymap().profile() == Profile::Tracker) {
+    const bool shift = (c.mods & kShift) != 0, mod = shift || ctrl || alt;
+    if (c.key >= Key::F9 && c.key <= Key::F12 && !alt) return true;  // (Alt+F12 still closes the plugin windows)
+    if ((c.key == Key::F1 || c.key == Key::F2 || c.key == Key::F7 || c.key == Key::F8) && mod) return true;
+    if ((c.key == Key::F3 || c.key == Key::F4 || c.key == Key::F5) && mod) return true;
+    if (c.key == Key::Grave && !ctrl && !alt) return true;
+    if (alt && (c.key == Key::Q || c.key == Key::W || c.key == Key::E || c.key == Key::R || c.key == Key::T || c.key == Key::Y || c.key == Key::U ||
+                c.key == Key::I || c.key == Key::A || c.key == Key::S || c.key == Key::D || c.key == Key::F || c.key == Key::G || c.key == Key::H ||
+                c.key == Key::J || c.key == Key::K || c.key == Key::C || c.key == Key::Delete || c.key == Key::Up || c.key == Key::Down || c.key == Key::Left ||
+                c.key == Key::Right))
+      return true;
+    if (ctrl && (c.key == Key::Left || c.key == Key::Right || c.key == Key::Enter || (c.key == Key::Delete && !shift))) return true;  // (Ctrl+Shift+Del: delete pattern)
+  }
+  if (ctrl)  // copy, cut, paste, transpose, edit step
+    return c.key == Key::C || c.key == Key::X || c.key == Key::V || c.key == Key::Up || c.key == Key::Down || c.key == Key::Minus ||
+           c.key == Key::Equal || (c.key >= Key::D0 && c.key <= Key::D9);
+  if (alt) return c.key == Key::F3 || c.key == Key::F4 || c.key == Key::F5;  // block cut, copy, paste
+  // Plain and Shift: every key but Space and the function keys (play, the octave, the windows).
+  return c.key != Key::Space && !(c.key >= Key::F1 && c.key <= Key::F12);
+}
 void setFocusContext(Context c) { gFocus = c; }
 Context focusContext() { return gFocus; }
 

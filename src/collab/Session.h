@@ -91,10 +91,20 @@ struct Presence {
   // window layout. 0 = none.
   int targetKind = 0;
   uint32_t targetId = 0, targetSub = 0;
+  // K-106: the edit cursor and its selection in a pattern (the tracker's cursor and block), by
+  // shared ids and pattern ticks, so any layout can show it. 0 = no edit cursor. The selection
+  // runs from channel selChannel0 to selChannel1 (rack order) and from tick selTick0 to selTick1
+  // (end excluded); selTick1 <= selTick0 = none.
+  uint32_t editPattern = 0, editChannel = 0;
+  double editTick = 0;
+  uint32_t selChannel0 = 0, selChannel1 = 0;
+  double selTick0 = 0, selTick1 = 0;
   bool operator==(const Presence& o) const {
     return window == o.window && x == o.x && y == o.y && kind == o.kind && a == o.a && b == o.b && cx == o.cx && cy == o.cy &&
            plugin == o.plugin && pluginSlot == o.pluginSlot && playing == o.playing && songTick == o.songTick &&
-           targetKind == o.targetKind && targetId == o.targetId && targetSub == o.targetSub;
+           targetKind == o.targetKind && targetId == o.targetId && targetSub == o.targetSub && editPattern == o.editPattern &&
+           editChannel == o.editChannel && editTick == o.editTick && selChannel0 == o.selChannel0 && selChannel1 == o.selChannel1 &&
+           selTick0 == o.selTick0 && selTick1 == o.selTick1;
   }
 };
 

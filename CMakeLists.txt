@@ -421,6 +421,20 @@ target_include_directories(gridline_tests_k112_placed PRIVATE src tests)
 target_compile_options(gridline_tests_k112_placed PRIVATE ${GL_WARN})
 add_test(NAME k112_placed COMMAND gridline_tests_k112_placed WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 set_tests_properties(k112_placed PROPERTIES TIMEOUT 300)
+# K-106: the tracker view of a pattern (rows, note columns, cells, the edits, the derived order list).
+add_executable(gridline_tests_k106_tracker_grid tests/test_k106_tracker_grid.cpp)
+target_link_libraries(gridline_tests_k106_tracker_grid PRIVATE gridline_core)
+target_include_directories(gridline_tests_k106_tracker_grid PRIVATE src tests)
+target_compile_options(gridline_tests_k106_tracker_grid PRIVATE ${GL_WARN})
+add_test(NAME k106_tracker_grid COMMAND gridline_tests_k106_tracker_grid WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# K-112c: the Clips layout's arrangement rows and clip grid columns are the same tracks, through
+# adds, removals, moves and renames, alone and with a collaborator.
+add_executable(gridline_tests_k112_clips_tracks tests/test_k112_clips_tracks.cpp)
+target_link_libraries(gridline_tests_k112_clips_tracks PRIVATE gridline_core)
+target_include_directories(gridline_tests_k112_clips_tracks PRIVATE src tests)
+target_compile_options(gridline_tests_k112_clips_tracks PRIVATE ${GL_WARN})
+add_test(NAME k112_clips_tracks COMMAND gridline_tests_k112_clips_tracks WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+set_tests_properties(k112_clips_tracks PROPERTIES TIMEOUT 300)
 add_executable(gridline_tests_semantic_anchor tests/test_semantic_anchor.cpp)
 target_link_libraries(gridline_tests_semantic_anchor PRIVATE gridline_core)
 target_include_directories(gridline_tests_semantic_anchor PRIVATE src tests)
@@ -2173,6 +2187,10 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
                      -DOUT=${CMAKE_BINARY_DIR}/k112_inventory -P ${CMAKE_SOURCE_DIR}/tests/k112_inventory_app.cmake)
     set_tests_properties(k112_inventory PROPERTIES TIMEOUT 2400)
+    # K-106: the tracker pattern editor: keyboard entry, edit step, the piano roll's notes, undo, save, follow play.
+    add_test(NAME k106_tracker_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/k106_tracker_app -P ${CMAKE_SOURCE_DIR}/tests/k106_tracker_app.cmake)
     # K-112: the menu bars as data: Studio, Live and Logic trees as committed, Tracker's is Studio's, the palette reads the tree.
     add_test(NAME k112_textfit
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
@@ -2238,6 +2256,21 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
                      -DOUT=${CMAKE_BINARY_DIR}/k112_switch_default -P ${CMAKE_SOURCE_DIR}/tests/k112_switch_default_app.cmake)
     set_tests_properties(k112_switch_default PROPERTIES TIMEOUT 600)
+    # K-112c: showing the mixer in Clips (--show mixer, its shortcut, --pane mixer) docks it in the mixer band.
+    add_test(NAME k112_clips_mixer
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/k112_clips_mixer -P ${CMAKE_SOURCE_DIR}/tests/k112_clips_mixer_app.cmake)
+    set_tests_properties(k112_clips_mixer PROPERTIES TIMEOUT 600)
+    # K-112c: Clips' arrangement rows and clip grid columns: the same tracks, and a move in either shows in the other.
+    add_test(NAME k112_clips_tracks_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/k112_clips_tracks_app -P ${CMAKE_SOURCE_DIR}/tests/k112_clips_tracks_app.cmake)
+    set_tests_properties(k112_clips_tracks_app PROPERTIES TIMEOUT 600)
+    # K-112c (round 43): files dropped onto Clips' clip grid land in the slot under the pointer, or make a new track in the free column.
+    add_test(NAME k112_clips_drop_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DSRC=${CMAKE_SOURCE_DIR}/tests -DOUT=${CMAKE_BINARY_DIR}/k112_clips_drop_app -P ${CMAKE_SOURCE_DIR}/tests/k112_clips_drop_app.cmake)
+    set_tests_properties(k112_clips_drop_app PROPERTIES TIMEOUT 600)
     # The Stage: drag, multi-drag, width handles, wheel, double-click reset, rubber band, keys, live automation, detached.
     add_test(NAME k188_stage_app
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
@@ -3348,6 +3381,12 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                        -P ${CMAKE_SOURCE_DIR}/tests/k112_collab_layouts_app.cmake
                WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
       set_tests_properties(k112_collab_layouts PROPERTIES TIMEOUT 1500)
+      # K-106: the tracker and another layout edit one pattern at once (nothing lost) and see each other's cursors.
+      add_test(NAME k106_collab
+               COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DOUT=${CMAKE_BINARY_DIR}/k106_collab
+                       -P ${CMAKE_SOURCE_DIR}/tests/k106_collab_app.cmake
+               WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+      set_tests_properties(k106_collab PROPERTIES TIMEOUT 1600)
       # J-111e: an admin removes someone whose project is open; private copy; leave > keep / delete.
       add_test(NAME j111e_collab_remove_app
                COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DOUT=${CMAKE_BINARY_DIR}/j111e_collab_remove_app

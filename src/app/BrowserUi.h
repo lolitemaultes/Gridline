@@ -58,6 +58,12 @@ struct DropPlace {
   Tick tick = 0;              // Playlist position
   ObjectId owner = kNoId;     // PluginWindow: channel (pluginSlot < 0) or mixer track
   int pluginSlot = -1;
+  // K-112c (round 43): Playlist drops on the Clips layout's clip grid. `slotTicks` is one scene's
+  // length: several clips go down the column at `track`, one per slot from `tick` (a scene's
+  // start), and the live area grows to hold them. With `newTracks` (the grid's free column) each
+  // clip makes its own track instead, side by side from `track`.
+  Tick slotTicks = 0;
+  bool newTracks = false;
 };
 // Call right after a browser item: makes it draggable.
 void fileDragSource(const std::string& path, const char* label = nullptr);

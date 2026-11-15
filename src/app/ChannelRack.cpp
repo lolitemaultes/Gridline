@@ -30,6 +30,7 @@
 #include "EditTools.h"
 #include "../core/NoteTools.h"
 #include "Theme.h"
+#include "TrackerPages.h"
 #include "TrackIcons.h"
 #include "Widgets.h"
 #include "SmoothScrollUi.h"
@@ -38,6 +39,7 @@
 #include "PatternAutoUi.h"
 #include "PlayLights.h"
 #include "DevSignal.h"
+#include "LogicPlugins.h"
 
 namespace gl {
 
@@ -369,6 +371,11 @@ void drawChannelRack(App& a) {
     ui::EndDockWindow();
     return;
   }
+  if (trackerpages::active(a)) {  // K-106: the Tracker's Steps page (the same steps, its own look)
+    trackerpages::steps(a);
+    ui::EndDockWindow();
+    return;
+  }
   const auto& P = pal();
   const Song& s = a.doc.song();
   const Pattern* pat = s.pattern(a.curPattern);
@@ -546,10 +553,14 @@ void drawChannelRack(App& a) {
   ImDrawList* dl = ImGui::GetWindowDrawList();
   // Channel button proportions after the reference rack: headphones (mute / solo) · pan · volume
   // · mixer track box · name button · activity / select lamp · steps (K-127).
-  const float rowH = 26.0f, rowGap = 3.0f, cellH = 20.0f;
+  // Checkpoint 28 (Tracks layout): taller rows and pads, as the step sequencer of 188, 052 and 187 draws
+  // them (about 31 px a row, the pads nearly the row's height).
+  const bool lgSteps = logicplug::active(a);
+  const float rowH = lgSteps ? 30.0f : 26.0f, rowGap = 3.0f, cellH = lgSteps ? 26.0f : 20.0f;
   const float avail = ImGui::GetContentRegionAvail().x;
   a.rack.lastAvail = avail;
-  const racklayout::Layout L = racklayout::compute({avail, total});
+  // Checkpoint 28 (Tracks layout): the steps fill the pane's width, as 188 and 052 do (up to 64 px a step).
+  const racklayout::Layout L = racklayout::compute({avail, total, lgSteps ? 64.0f : racklayout::kStepMax});
   const float xLeft = racklayout::kXLeft, xPan = racklayout::kXPan, xVol = racklayout::kXVol, xMix = racklayout::kXMix,
               nameX = racklayout::kNameX, nameW = L.nameW, stepsX = L.stepsX, stepW = L.stepW, stepGap = racklayout::kStepGap,
               groupGap = racklayout::kGroupGap, viewW = L.viewW, rowW = L.rowW;
@@ -781,11 +792,15 @@ void drawChannelRack(App& a) {
       const bool open = pluginWindowShown(a, PluginTarget{c.id, -1});
       ImU32 bg = selected ? P.surface600 : hov ? P.surface700 : P.surface800;
       if (open) bg = theme::mix(bg, P.hot, 0.10f);
-      dl->AddRectFilled(np, ImVec2(np.x + nameW, np.y + cellH), theme::mix(bg, P.ink, 0.3f), theme::kRadiusSm);
-      dl->AddRectFilled(np, ImVec2(np.x + nameW, np.y + cellH - 1), bg, theme::kRadiusSm);
-      dl->AddLine(ImVec2(np.x + 5, np.y + 0.5f), ImVec2(np.x + nameW - 2, np.y + 0.5f), theme::withAlpha(P.paper, P.dark ? 0.12f : 0.5f));
+      if (lgSteps) {  // checkpoint 28 (Tracks layout): the name on the row itself, as 188 and 052 set it (no raised button)
+        if (selected || hov || open) dl->AddRectFilled(np, ImVec2(np.x + nameW, np.y + cellH), (selected ? bg : theme::withAlpha(bg, 0.7f)), theme::kRadiusSm);
+      } else {
+        dl->AddRectFilled(np, ImVec2(np.x + nameW, np.y + cellH), theme::mix(bg, P.ink, 0.3f), theme::kRadiusSm);
+        dl->AddRectFilled(np, ImVec2(np.x + nameW, np.y + cellH - 1), bg, theme::kRadiusSm);
+        dl->AddLine(ImVec2(np.x + 5, np.y + 0.5f), ImVec2(np.x + nameW - 2, np.y + 0.5f), theme::withAlpha(P.paper, P.dark ? 0.12f : 0.5f));
+      }
       dl->AddRectFilled(np, ImVec2(np.x + 4, np.y + cellH), theme::content(c.color), theme::kRadiusSm, ImDrawFlags_RoundCornersLeft);
-      if (selected)  // K-127: the selection shows on the name button (the light shows the channel's state)
+      if (selected && !lgSteps)  // K-127: the selection shows on the name button (checkpoint 29: the Tracks layout fills it, no outline) (the light shows the channel's state)
         dl->AddRect(ImVec2(np.x + 0.5f, np.y + 0.5f), ImVec2(np.x + nameW - 0.5f, np.y + cellH - 0.5f), theme::withAlpha(P.paper, P.dark ? 0.55f : 0.7f),
                     theme::kRadiusSm, 0, 1.0f);
       if (iconBox > 0)
@@ -900,7 +915,17 @@ void drawChannelRack(App& a) {
         const pixelgrid::Span padX = pixelgrid::block(q.x, nextX, dpp, 0.0f, nextX - q.x - stepW), padY = pixelgrid::block(q.y, q.y + cellH, dpp, 0.0f, 0.0f);
         q = ImVec2(padX.x0, padY.x0);
         ImVec2 q1(padX.x1, padY.x1);
-        ui::StepPad(dl, q, q1, v > 0, alt, hov, theme::rgb(c.color), v / 127.0f);
+        if (lgSteps) {
+          // Checkpoint 28 (Tracks layout): flat pads in the row's own colour, as 188 and 052 draw them: a
+          // dim tint when off, the colour itself when on (brighter with the velocity); no bevel.
+          const ImU32 rc = theme::content(c.color);
+          const ImU32 off = theme::mix(P.surface900, rc, P.dark ? 0.20f : 0.16f);
+          ImU32 face = v > 0 ? theme::mix(off, rc, 0.55f + 0.45f * std::clamp(v / 127.0f, 0.0f, 1.0f)) : off;
+          if (hov) face = theme::mix(face, P.text, 0.12f);
+          dl->AddRectFilled(q, q1, face, std::min(3.0f, (q1.x - q.x) * 0.2f));
+        } else {
+          ui::StepPad(dl, q, q1, v > 0, alt, hov, theme::rgb(c.color), v / 127.0f);
+        }
         // J-31 step loop: steps past the channel's loop length repeat the loop (shaded; the first one marked).
         if (auto lp = pat->stepLoop.find(c.id); lp != pat->stepLoop.end() && lp->second > 0 && k >= lp->second) {
           dl->AddRectFilled(q, q1, theme::withAlpha(P.surface950, 0.55f), 2.0f);

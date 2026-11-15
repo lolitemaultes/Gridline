@@ -662,10 +662,13 @@ void audioInputSettings(App& a, float fieldW) {
     label("Input channels");
     const int chans[] = {1, 2, 4, 8};
     const int curCh = static_cast<int>(st.getNumber("audio.inputChannels"));
-    for (int c : chans) {
-      if (c != chans[0]) ImGui::SameLine(0, theme::kS1);
-      if (ui::TextButton(std::to_string(c).c_str(), curCh == c)) {
-        st.set("audio.inputChannels", c);
+    {  // K-112b checkpoint 35: an option row (a pop-up menu in the Smooth layout)
+      const char* labels[] = {"1", "2", "4", "8"};
+      int idx = -1;
+      for (int i = 0; i < 4; ++i)
+        if (curCh == chans[i]) idx = i;
+      if (ui::OptionRow("inch", labels, 4, &idx, 160.0f)) {
+        st.set("audio.inputChannels", chans[idx]);
         a.audioReopen = true;
       }
     }
@@ -686,11 +689,12 @@ void audioInputSettings(App& a, float fieldW) {
   }
   label("Record format");
   const int bits = static_cast<int>(st.getNumber("audio.recordBits"));
-  if (ui::TextButton("32-bit float", bits != 24 && bits != 16)) st.set("audio.recordBits", 32);
-  ImGui::SameLine(0, theme::kS1);
-  if (ui::TextButton("24-bit", bits == 24)) st.set("audio.recordBits", 24);
-  ImGui::SameLine(0, theme::kS1);
-  if (ui::TextButton("16-bit", bits == 16)) st.set("audio.recordBits", 16);
+  {
+    const char* labels[] = {i18n::tr("32-bit float"), i18n::tr("24-bit"), i18n::tr("16-bit")};
+    const int values[] = {32, 24, 16};
+    int idx = bits == 24 ? 1 : bits == 16 ? 2 : 0;
+    if (ui::OptionRow("bits", labels, 3, &idx, 160.0f)) st.set("audio.recordBits", values[idx]);
+  }
   label("Recorded files");
   ImGui::PushFont(livelook::numFont(a), theme::kFontLabel + 1);
   // K-112c (round 32): in the Clips layout a long path is cut in the middle to fit the page (it ran

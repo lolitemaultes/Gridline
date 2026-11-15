@@ -46,7 +46,11 @@
 #include "CommandPaletteUi.h"
 #include "GrooveUi.h"
 #include "LayoutParts.h"
+#include "LogicNewTracks.h"
+#include "LogicPlugins.h"
 #include "MenuDef.h"
+#include "LiveLook.h"
+#include "../core/TrackModes.h"
 
 namespace gl {
 
@@ -137,7 +141,12 @@ void recentItems(App& a) {
 const md::Menu& fileDef() {
   // K-77: create, open, save, import / export, sharing, project, quit.
   static const md::Menu m = {
-      md::item(N_("New"), "file.new", [](App& a) { a.guardUnsaved([&a]() { a.newProject(); }); }),
+      md::item(N_("New"), "file.new", [](App& a) {
+        a.guardUnsaved([&a]() {
+          a.newProject();
+          if (logicplug::active(a)) newtracks::open();  // R01-17
+        });
+      }),
       md::submenu(N_("New from template"),
                   {
                       md::item(N_("Browse templates..."), [](App& a) { a.showNewProject = true; }),
@@ -316,6 +325,14 @@ const md::Menu& tracksEditDef() {
       md::item(N_("Duplicate"), [](App& a) { editDuplicate(a); })
           .keyText([](App& a) { return editKey(a, "duplicate"); })
           .when([](App& a) { return a.editFocus != App::EditFocus::Mixer; }),
+      md::separator(),  // K-112B (checkpoint 39): split and join, as MAP.md 2.1 and 5.3 place them
+      md::item(N_("Split"), "playlist.splitAtSongPos", [](App& a) { tracksSplitAtPlayhead(a); }).when([](App& a) { return !a.playlist.selected.empty(); }),
+      md::item(N_("Join"), "playlist.merge",
+               [](App& a) {
+                 const ObjectId nc = ops::mergeClips(a.doc, a.playlist.selected);
+                 if (nc) a.playlist.selected = {nc};
+               })
+          .when([](App& a) { return a.playlist.selected.size() >= 2; }),
       md::separator(),
       md::item(N_("Rename..."), "edit.rename", [](App& a) { renameFocused(a); }),
   };
@@ -367,7 +384,11 @@ const md::Menu& addDef() {
                  ObjectId id = a.doc.addMixerTrack();
                  if (id != kNoId) a.selMixer = id;
                }),
-      md::item(N_("8 playlist tracks"), [](App& a) { a.doc.setPlaylistTrackCount(static_cast<int>(a.doc.song().tracks.size()) + 8); })
+      md::item(N_("8 playlist tracks"),
+               [](App& a) {
+                 if (livelook::active(a)) trackmodes::addUsedTrack(a.doc, 8);  // K-112c: Clips lists the tracks in use
+                 else a.doc.setPlaylistTrackCount(static_cast<int>(a.doc.song().tracks.size()) + 8);
+               })
           .when([](App& a) { return static_cast<int>(a.doc.song().tracks.size()) + 8 <= kMaxPlaylistTracks; }),
   };
   return m;

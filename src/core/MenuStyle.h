@@ -22,6 +22,12 @@ enum class Block : int {
   Window,    // K-112b (Tracks layout): the editors and windows, plugin windows shown or hidden
   TracksEdit,    // K-112b (Tracks layout): Edit in that layout's grouping (Studio's Edit stays as it is)
   TracksRecord,  // K-112b (Tracks layout): Record in that layout's grouping (Live keeps Record)
+  Pages,         // K-106 (Tracker layout): the pages and header screens, named as the header names them
+  TrackerEdit,     // K-106: Edit with the pattern editor's block and row edits (Studio's Edit commands, regrouped)
+  TrackerPattern,  // K-106: the pattern editor's settings (edit mode, edit step, follow, columns)
+  TrackerView,     // K-106: Studio's View less the pages and header screens the Tracker names otherwise
+  ClipsCreate,   // K-112c (Clips layout): new audio / MIDI tracks, a marker, imports (then Add in a submenu)
+  ClipsNavigate, // K-112c (Clips layout): the views and bands to go to
   Count
 };
 

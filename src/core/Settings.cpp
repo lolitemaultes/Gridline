@@ -113,6 +113,10 @@ Settings::Settings() {
       {"ui.pluginWindowSize", Json::makeNumber(0.75)},  // K-136, K-147: built-in plugin editors' size, 0.6 .. 1.5 (edzoom::kGlobalDefault)
       {"ui.pluginWindowFit", b(false)},                 // K-136: small editors open larger on a large screen (K-19's automatic size)
       {"ui.loupePinned", b(false)},          // K-15: Loupe is a panel of the main layout
+      {"tracker.volumeColumn", b(true)},     // K-106: the pattern editor shows the volume sub-column
+      {"tracker.panColumn", b(true)},        // K-106: ... the pan sub-column
+      {"tracker.effectColumn", b(true)},     // K-106: ... the effect sub-column
+      {"tracker.rowBase", Json::makeString("hex")},  // K-106: row numbers "hex" or "dec"
       {"ui.plasmaFull", b(false)},           // K-164: Plasma editor shows every control in place (Full) instead of Simple
       {"loupe.autoScroll", b(true)},         // Loupe follows the playhead while it plays (its own toggle sets it)
       {"ui.animations", b(true)},            // J-91: decorative interface animations (metronome tick, light fades, glides)
@@ -185,6 +189,8 @@ Settings::Settings() {
       // K-112b: the Tracks layout's library and right pane start closed; set once a person who had
       // them open by the old default has had that kept as their own choice.
       {"layout.logic.panesKept", b(false)},
+      {"layout.logic.lowerKept", b(false)},
+      {"ui.logicQuickHelp", b(false)},  // R01-08: the Tracks layout's floating Quick help  // K-112B cp40: the editors pane kept open for someone who used the layout
       {"ui.layoutDev", b(false)},  // K-112: development layouts (Tracker, region shells) before their phase ships
       {"ui.systemMenuBar", b(true)},
       // K-112: installed plugins' windows in the Live layout (HostedUi.h PluginWindowPolicy).

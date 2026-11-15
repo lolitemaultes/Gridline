@@ -141,6 +141,7 @@
 #include "LayoutStyleUi.h"
 #include "HostedBodies.h"
 #include "LayoutParts.h"
+#include "TrackerView.h"
 #include "MenuTreeUi.h"
 #include "SystemMenu.h"
 #include "LookChrome.h"
@@ -1674,6 +1675,8 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       browserui::devCommand(app, l.args, frame);
     } else if (l.cmd == "layout") {  // K-112: the region shell (LayoutShellUi.h): dump, show/hide <region>, open/close <window>, state
       layoutui::devCommand(app, l.args, frame);
+    } else if (l.cmd == "tracker") {  // K-106: the pattern editor (TrackerView.h): dump, focus, cursor, edit, step, follow, select, geometry
+      trackerview::devCommand(app, l.args, frame);
     } else if (l.cmd == "parts") {  // K-112: the layout parts (LayoutParts.h): notes set/dump/focus/blur
       layoutparts::devCommand(app, l.args);
     } else if (l.cmd == "sysmenu") {  // K-112: the system menu bar (SystemMenu.h): dump, status, choose <path>
@@ -1682,6 +1685,8 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       livelook::devCentreAsk();
     } else if (l.cmd == "livegrid") {  // K-287 (dev): the Live clip grid's slots (LiveLook.h)
       livelook::devGridAsk();
+    } else if (l.cmd == "plrows") {  // K-112c (dev): the playlist's rows as drawn (Windows.h)
+      devPlaylistRowsAsk();
     } else if (l.cmd == "pltool") {  // K-287 (dev): pltool draw|select: the playlist's tool, as its tool menu picks it
       app.playlist.tool = l.a0 == "select" ? Tool::Select : Tool::Draw;
     } else if (l.cmd == "pianofold") {  // K-112 (dev): the piano roll's Fold (Live): on / off
@@ -1692,6 +1697,8 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       std::printf("clipsel frame %d: audio clip %u\n", frame, static_cast<unsigned>(livelook::focusedAudioClip(app)));
     } else if (l.cmd == "clipview") {  // K-112 (dev): what the clip band drew: the audio clip view (1) or not (0)
       std::printf("clipview frame %d: audio %d\n", frame, devLiveAudioClipShown() ? 1 : 0);
+    } else if (l.cmd == "template") {  // K-112c (dev): template <demo|starter|name>: a new project from it
+      app.newFromTemplate(l.a0 == "-" ? std::string() : l.a0);
     } else if (l.cmd == "menutree") {  // K-112: the menu tree (MenuTreeUi.h): dump [style]
       menutreeui::devCommand(app, l.args, frame);
     } else if (l.cmd == "mcp") {  // K-281: mcp call <tool> <json arguments> (McpUi.h)
@@ -3390,6 +3397,10 @@ int main(int argc, char** argv) {
     if (devLight) theme::apply(false);
   }
   layoutui::setActive(layoutPreset);
+  // K-112c (round 43): the project made at start (before the layout was known) is made again in
+  // Clips, so it starts with Clips' tracks; one opened or already edited stays.
+  if (layoutPreset == layout::Preset::Live && !argOpened && !argProject && app.projectFile().empty() && app.doc.history().position() == 0)
+    app.newProject();
   iniPath = (fs::path(app.configDir()) / layoutui::iniFile(app, layoutPreset)).string();
   firstRun = !fs::exists(iniPath);
   bool layoutRebuild = false;  // K-79: a preset switch found no saved layout file
@@ -3549,7 +3560,7 @@ int main(int argc, char** argv) {
         std::error_code ec;
         fs::remove(fs::u8path(iniPath), ec);  // rewritten with the default arrangement
       }
-      if (to != layout::Preset::Studio) layoutui::setRegionState(app, to, layout::State{});  // the regions as designed
+      layoutui::enterLayout(app, to);  // the regions as designed (K-297: as left, when visited before in this run)
       if (!layoutui::shellBuilt(app, to))  // the new parts a region shell opened are closed here by design
         for (const layout::Item& it : layout::items())
           if (*it.window && it.home[static_cast<int>(to)].kind == layout::HomeKind::Part)
@@ -3661,6 +3672,11 @@ int main(int argc, char** argv) {
       layoutRebuild = false;
       const ImVec2 inner(dsize.x - 2 * dockPad, dsize.y - 2 * dockPad);  // dock host padding
       if (app.resetLayout) viewports::gatherAll();  // J-113: detached windows come back too
+      // K-112c (round 45): Clips' reset (and its one-time move to the new default) gives back the regions
+      // as designed, with one detail band; a reset also opens the clip grid, as a new set does.
+      const bool clipsReset = preset == layout::Preset::Live && app.resetLayout;
+      if (preset == layout::Preset::Live && (app.resetLayout || migrate) && !layoutui::hasDevOverride())
+        layoutui::setRegionState(app, preset, layout::State{});
       const bool shellLayout = layoutui::shellBuilt(app, preset);  // K-112: built from the layout's region tree
       workspace::Rect r;
       if (shellLayout) layoutui::buildShell(app, preset, dockId, inner);
@@ -3675,6 +3691,7 @@ int main(int argc, char** argv) {
         if (shellLayout) layoutui::showShellWindows(app, preset);
         else layoutui::showPresetWindows(app, preset);
       }
+      if (clipsReset) livelook::showView(app, true);
       layoutRebuildKeep = false;
       if (devPlaylistOnly) app.showBrowser = app.showRack = app.showPiano = app.showMixer = false;
       for (const std::string& w : devHide) {
@@ -3684,7 +3701,12 @@ int main(int argc, char** argv) {
         else if (w == "playlist") app.showPlaylist = false;
         else if (w == "piano") app.showPiano = false;
       }
-      if (devMixerOnly) {
+      if (devMixerOnly && shellLayout) {
+        // K-112c (round 37): a region-shell layout shows the mixer in its home (Clips: the mixer band
+        // under the main view), the other windows where they are. Clearing the dock tree here left
+        // the window empty with the arrangement floating, the mixer being closed in that layout.
+        app.showMixer = true;
+      } else if (devMixerOnly) {
         app.showBrowser = app.showRack = app.showPiano = app.showPlaylist = false;
         ImGui::DockBuilderRemoveNode(dockId);
         ImGui::DockBuilderAddNode(dockId, ImGuiDockNodeFlags_DockSpace);
@@ -3755,7 +3777,7 @@ int main(int argc, char** argv) {
       // J-77: choosing PAT shows the rack: a closed rack reopens where it was, an open one comes to the
       // front (not moved; the keyboard focus stays where it is, e.g. in a text field).
       const RackReveal::Action reveal = app.rackReveal.step(app.engine.mode(), app.showRack);
-      if (reveal == RackReveal::Action::Show) app.showRack = true;
+      if (reveal == RackReveal::Action::Show && !trackerview::shown()) app.showRack = true;  // K-106: not over the tracker's pattern page
       if (placeRack && app.showRack) ImGui::SetNextWindowDockID(0, ImGuiCond_Always);  // default layout: the rack floats
       rackDevBefore(app, frameNo);  // J-84 dev check (--rack)
       drawChannelRack(app);
@@ -4357,6 +4379,11 @@ int main(int argc, char** argv) {
       }
       if (ev.type == SDL_MOUSEMOTION && ev.motion.windowID == SDL_GetWindowID(window) && dropTiming.pointerMoved())
         xdragui::sdlDropComplete(static_cast<float>(ev.motion.x), static_cast<float>(ev.motion.y));
+      // K-106: the tracker pattern editor takes its keys while it has the keyboard (notes, values, moves,
+      // blocks); its key-ups end the notes it auditioned and go on as usual.
+      if ((ev.type == SDL_KEYDOWN || ev.type == SDL_KEYUP) && !io.WantTextInput && !app.projectLoadBlocking() &&
+          trackerview::sdlKey(app, ev.key.keysym.scancode, ev.key.keysym.sym, ev.key.keysym.mod, ev.type == SDL_KEYDOWN, ev.key.repeat != 0))
+        continue;
       // Typing keyboard (key events straight from SDL so key-up is never missed; key-ups above).
       // K-175: one press, one step: TypingKeyboard::press ignores repeats and keys already down.
       if (ev.type == SDL_KEYDOWN && app.typingKeyboard && !io.WantTextInput && !app.projectLoadBlocking() &&
@@ -4386,6 +4413,7 @@ int main(int argc, char** argv) {
     // K-175: while the typing keyboard plays, its keys run no other command (keypad - + also
     // switching the pattern, - = zooming, a single-key shortcut set's letters).
     keys::setTypingKeyboard(app.typingKeyboard && app.selChannel != kNoId);
+    keys::setEditorKeys(trackerview::hasKeyboard());  // K-106: the pattern editor's own keys run no command
     liveresize::pumpEnd();
     if (dropTiming.expired(SDL_GetTicks() / 1000.0)) {  // K-153: Wayland, the pointer did not come back
       int mx = 0, my = 0;

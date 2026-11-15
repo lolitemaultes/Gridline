@@ -4,6 +4,7 @@
 #include <functional>
 #include "Document.h"
 #include "PluginInfo.h"
+#include "PluginParams.h"
 
 namespace gl::trackmodes {
 
@@ -124,6 +125,37 @@ const MixerTrack* linkedMixer(const Song& s, int track) {
   }
 }
 
+std::vector<ObjectId> playedMixers(const Song& s, int track) {
+  std::vector<ObjectId> out;
+  if (const MixerTrack* m = linkedMixer(s, track)) return {m->id};
+  auto take = [&](ObjectId channel) {
+    const Channel* c = s.channel(channel);
+    if (!c) return;
+    const ObjectId m = c->mixerTrack != kNoId ? c->mixerTrack : s.masterId();
+    if (std::find(out.begin(), out.end(), m) == out.end()) out.push_back(m);
+  };
+  for (const Clip& c : s.playlist) {
+    if (c.track != track) continue;
+    if (c.kind == ClipKind::Audio) {
+      take(c.source);
+    } else if (c.kind == ClipKind::Pattern) {
+      const Pattern* p = s.pattern(c.pattern);
+      if (!p) continue;
+      for (const auto& [ch, v] : p->steps)
+        if (std::any_of(v.begin(), v.end(), [](uint8_t x) { return x != 0; })) take(ch);
+      for (const auto& [ch, v] : p->notes)
+        if (!v.empty()) take(ch);
+    }
+  }
+  return out;
+}
+
+const MixerTrack* playedMixer(const Song& s, int track) {
+  if (const MixerTrack* m = linkedMixer(s, track)) return m;
+  const std::vector<ObjectId> v = playedMixers(s, track);
+  return v.size() == 1 && v[0] != s.masterId() ? s.mixerTrack(v[0]) : nullptr;
+}
+
 const Channel* linkedChannel(const Song& s, int track) {
   return modeOf(s, track) == TrackMode::Instrument ? s.channel(s.tracks[static_cast<size_t>(track)].channel) : nullptr;
 }
@@ -195,6 +227,76 @@ int freeTrack(const Song& s, int from) {
     if (s.tracks[static_cast<size_t>(i)].mode == TrackMode::Unassigned && !trackHasClips(s, i)) return i;
   }
   return -1;
+}
+
+int usedTrackCount(const Song& s) {
+  int last = -1;
+  for (const Clip& c : s.playlist) last = std::max(last, c.track);
+  for (int t = 0; t < static_cast<int>(s.tracks.size()); ++t)
+    if (s.tracks[static_cast<size_t>(t)].mode != TrackMode::Unassigned || !s.tracks[static_cast<size_t>(t)].name.empty()) last = std::max(last, t);
+  // K-112c (round 42): never fewer than kShownTracks (as many as the song has): a new set shows that
+  // many empty tracks with empty slots in both views, as the reference's new set starts with four.
+  return std::min(std::max(last + 1, kShownTracks), static_cast<int>(s.tracks.size()));
+}
+
+int addUsedTrack(Song& s) {
+  const int t = usedTrackCount(s);
+  if (t >= kMaxPlaylistTracks) return -1;
+  if (t >= static_cast<int>(s.tracks.size())) s.tracks.resize(static_cast<size_t>(t) + 1);
+  s.tracks[static_cast<size_t>(t)].name = "Track " + std::to_string(t + 1);
+  return t;
+}
+
+void makeClipsStarterTracks(Song& s) {
+  struct Start {
+    const char* name;
+    Rgb color;
+    bool audio;
+  };
+  const Start st[] = {{"1 MIDI", 0x4FA8B8, false}, {"2 MIDI", 0x58B394, false}, {"3 Audio", 0x86B04C, true}, {"4 Audio", 0xC8B23E, true}};
+  makeRoom(s, 3);
+  for (int i = 0; i < 4; ++i) {
+    PlaylistTrack& t = s.tracks[static_cast<size_t>(i)];
+    if (t.mode != TrackMode::Unassigned || !t.name.empty()) continue;  // a track already in use stays as it is
+    t.name = st[i].name;
+    t.color = st[i].color;
+    if (st[i].audio) makeAudioTrack(s, i, kNoId, nullptr);
+  }
+  // The returns, as the reference's new set: a reverb and a delay, every audio track sending to both
+  // at zero (turn a send up to hear it).
+  struct Ret {
+    const char* name;
+    Rgb color;
+    const char* type;
+    int dry, wet;
+  };
+  const Ret rets[] = {{"Reverb", 0xD98A78, "gl.reverb", pp::RvbDry, pp::RvbWet}, {"Delay", 0xCF86B0, "gl.delay", pp::DlyDry, pp::DlyWet}};
+  for (const Ret& r : rets) {
+    bool have = false;
+    for (const MixerTrack& m : s.mixer) have = have || m.name == r.name;
+    if (have) continue;
+    const ObjectId id = freeMixer(s);
+    MixerTrack* m = nullptr;
+    for (MixerTrack& x : s.mixer)
+      if (x.id == id) m = &x;
+    if (!m) break;
+    m->name = r.name;
+    m->color = r.color;
+    PluginState ps = defaultPluginState(r.type);
+    if (static_cast<size_t>(r.dry) < ps.params.size()) ps.params[static_cast<size_t>(r.dry)] = 0.0f;
+    if (static_cast<size_t>(r.wet) < ps.params.size()) ps.params[static_cast<size_t>(r.wet)] = 1.0f;
+    m->slots[0] = EffectSlot{std::move(ps), true, 1.0f};
+    for (int i = 0; i < 4; ++i)
+      if (modeOf(s, i) == TrackMode::Audio)
+        if (const MixerTrack* lm = linkedMixer(s, i))
+          for (MixerTrack& from : s.mixer)
+            if (from.id == lm->id) {
+              Send sd;
+              sd.to = id;
+              sd.level = 0.0f;
+              from.sends.push_back(sd);
+            }
+  }
 }
 
 bool clipAllowed(const Song& s, ClipKind kind, int track) {
@@ -380,6 +482,44 @@ int dropStaleLinks(Song& s) {
 bool makeAudioTrack(Document& d, int track, ObjectId mixer, std::string* why) {
   return runEdit(d, "make audio track", [&](Song& s) { return makeAudioTrack(s, track, mixer, why); });
 }
+
+int addUsedTrack(Document& d, int count) {
+  int t = -1;
+  runEdit(d, count > 1 ? "new tracks" : "new track", [&](Song& s) {
+    for (int i = 0; i < std::max(1, count); ++i) {
+      const int k = addUsedTrack(s);
+      if (k < 0) break;
+      t = k;
+    }
+    return t >= 0;
+  });
+  return t;
+}
+
+namespace {
+int addNamedTrack(Document& d, bool audio) {
+  int t = -1;
+  runEdit(d, audio ? "new audio track" : "new MIDI track", [&](Song& s) {
+    t = usedTrackCount(s);
+    // A shown empty track (a new set's fourth, say) is taken first: it is the next free one in view.
+    for (int k = 0; k < t; ++k)
+      if (k >= static_cast<int>(s.tracks.size()) || (s.tracks[static_cast<size_t>(k)].mode == TrackMode::Unassigned && s.tracks[static_cast<size_t>(k)].name.empty() && !trackHasClips(s, k))) {
+        t = k;
+        break;
+      }
+    if (t >= kMaxPlaylistTracks) return t = -1, false;
+    makeRoom(s, t);
+    PlaylistTrack& tr = s.tracks[static_cast<size_t>(t)];
+    tr.name = std::to_string(t + 1) + (audio ? " Audio" : " MIDI");
+    if (audio && !makeAudioTrack(s, t, kNoId, nullptr)) return t = -1, false;
+    return true;
+  });
+  return t;
+}
+}  // namespace
+
+int addAudioTrack(Document& d) { return addNamedTrack(d, true); }
+int addMidiTrack(Document& d) { return addNamedTrack(d, false); }
 
 bool makeInstrumentTrack(Document& d, int track, ObjectId channel, std::string* why) {
   return runEdit(d, "make instrument track", [&](Song& s) { return makeInstrumentTrack(s, track, channel, why); });
