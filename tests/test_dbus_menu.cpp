@@ -101,9 +101,22 @@ void mockBus() {
     const std::string dest = w.uniqueName();
     expect(!dest.empty(), "mock bus: the worker has a name on the bus");
     host.sendGetLayout(dest);
-    host.sendEvent(dest, 2, "clicked");  // root 0, File 1, New 2
+    // root 0, File 1, New 2. post() hands the tree to the worker's thread, which serves it after its
+    // current bus step: a click read in that same step finds no item 2 yet and is dropped (a real menu
+    // bar only clicks what it was served). So the click is sent again every 100 ms until it comes back.
     std::string chosen;
-    expect(within(3000, slowest, [&] { host.step(0); chosen = w.takeChosen(); return !chosen.empty(); }) && chosen == "file-new",
+    auto lastClick = Clock::now() - std::chrono::seconds(1);
+    expect(within(3000, slowest,
+                  [&] {
+                    if (msSince(lastClick) >= 100) {
+                      host.sendEvent(dest, 2, "clicked");
+                      lastClick = Clock::now();
+                    }
+                    host.step(0);
+                    chosen = w.takeChosen();
+                    return !chosen.empty();
+                  }) &&
+               chosen == "file-new",
            "mock bus: a click in the menu bar comes back (the worker served the bad labels and lives)");
     // The host goes away.
     host.releaseName("com.canonical.AppMenu.Registrar");

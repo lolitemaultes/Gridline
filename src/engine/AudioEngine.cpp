@@ -290,20 +290,32 @@ void AudioEngine::collectGarbage() {
   // The Program of a block in progress stays whatever the count says: a block can take long (a plugin
   // that stops answering, a machine under load) while edits keep arriving. See processDirect.
   const Program* running = running_.load();
+  // K-288: an instrument holds pointers into the aux of the Program it last ran in (an instrument at
+  // rest is not run, yet the engine still asks it things: supportsGlide, active, ...). That Program
+  // stays until the instrument runs in a newer one. Read after `running`: a block that ran an
+  // instrument wrote it before it ended.
+  pinned_.clear();
+  if (current_)
+    for (const auto& ch : current_->channels)
+      if (ch.rt)
+        if (const Program* q = ch.rt->configuredIn.load(); q && q != current_.get() && std::find(pinned_.begin(), pinned_.end(), q) == pinned_.end())
+          pinned_.push_back(q);  // (UI thread: may allocate)
+  const auto keep = [&](const Program* q) { return q == running || std::find(pinned_.begin(), pinned_.end(), q) != pinned_.end(); };
   retiredLoggers_.erase(std::remove_if(retiredLoggers_.begin(), retiredLoggers_.end(), [&](const auto& r) { return b >= r.second; }),
                         retiredLoggers_.end());
-  retired_.erase(std::remove_if(retired_.begin(), retired_.end(), [&](const auto& r) { return b >= r.second && r.first.get() != running; }),
+  retired_.erase(std::remove_if(retired_.begin(), retired_.end(), [&](const auto& r) { return b >= r.second && !keep(r.first.get()); }),
                  retired_.end());
   retiredSamples_.erase(std::remove_if(retiredSamples_.begin(), retiredSamples_.end(),
                                       [&](const auto& r) { return b >= r.second; }),
                        retiredSamples_.end());
   // If the audio thread is not running, its count stands still and nothing is in flight: the newest few are
-  // enough. The list never holds on to more, apart from the one a running block may be using.
+  // enough. The list never holds on to more, apart from the one a running block may be using and those an
+  // instrument at rest still holds (K-288).
   if (retired_.size() > 64) {
     size_t drop = retired_.size() - 64;
     retired_.erase(std::remove_if(retired_.begin(), retired_.end(),
                                   [&](const auto& r) {
-                                    if (drop == 0 || r.first.get() == running) return false;
+                                    if (drop == 0 || keep(r.first.get())) return false;
                                     --drop;
                                     return true;
                                   }),
@@ -853,6 +865,7 @@ void AudioEngine::runMidiOut(const Program* p, int n) {
     float* R = scratch_[0].chR;
     std::memset(L, 0, sizeof(float) * static_cast<size_t>(n));
     std::memset(R, 0, sizeof(float) * static_cast<size_t>(n));
+    ch.rt->configuredIn.store(p);  // K-288
     ch.rt->gen->process(ch.modded ? ch.live : ch.plugin, ch.aux, bc_.ctx, L, R, n);
     Generator::MidiOutEvent ev[1024];
     const int count = ch.rt->gen->takeMidiOut(ev, 1024);

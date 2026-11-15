@@ -823,7 +823,7 @@ bool runAction(App& a, const std::string& path, DropAction act, DropTarget targe
         t.slots[static_cast<size_t>(k)].plugin = ir;
         t.slots[static_cast<size_t>(k)].enabled = true;
       });
-      a.fxEditor = {mid, k};
+      if (a.autoOpens(ir.type, "")) a.fxEditor = {mid, k};  // K-289: never on a drop onto the mixer
       a.selMixer = mid;
       return true;
     }
@@ -867,7 +867,7 @@ bool runAction(App& a, const std::string& path, DropAction act, DropTarget targe
         t.slots[static_cast<size_t>(k)].plugin = ns;
         t.slots[static_cast<size_t>(k)].enabled = true;
       });
-      a.fxEditor = {mid, k};
+      if (a.autoOpens(ns.type, "")) a.fxEditor = {mid, k};  // K-289: never on a drop onto the mixer
       a.selMixer = mid;
       return true;
     }
@@ -1004,6 +1004,11 @@ bool runAction(App& a, const std::string& path, DropAction act, DropTarget targe
   return false;
 }
 
+// K-289: what is dropped on a mixer track or slot opens no window (App::autoOpens).
+App::AddRoute mixerRoute(const App& a, DropTarget target) {
+  return target == DropTarget::MixerTrack || target == DropTarget::MixerSlot ? App::AddRoute::MixerDrop : a.addRoute;
+}
+
 }  // namespace
 
 bool performDrop(App& a, const std::string& path, DropTarget target, const DropPlace& place) {
@@ -1014,6 +1019,7 @@ bool performDrop(App& a, const std::string& path, DropTarget target, const DropP
   }
   const PluginInfo* ti = targetInfo(a, target, place);
   const DropAction act = browse::dropAction(d.item, target, ti ? ti->type : "", takesSample(target, ti));
+  const App::AddRouteScope route(a, mixerRoute(a, target));  // K-289
   a.doc.beginGroup("drop from the browser");  // K-141: one undo step, also from the keyboard or a script
   const bool done = runAction(a, path, act, target, place, false, nullptr);
   a.doc.endGroup();
@@ -1041,6 +1047,7 @@ bool performItems(App& a, const std::vector<xdrop::Item>& items, DropTarget targ
     return runAction(a, items[p.steps[0].item].path, DropAction::OpenProject, target, place, false, nullptr);
   int midi = 0;
   for (const xdrop::Step& s : p.steps) midi += s.action == DropAction::ImportMidiChannels;
+  const App::AddRouteScope route(a, mixerRoute(a, target));  // K-289
   a.doc.beginGroup(p.steps.size() > 1 ? "drop files" : "drop file");
   bool any = false;
   std::set<ObjectId> clips;
@@ -1261,6 +1268,7 @@ std::string pluginDropLabel(App& a, const std::string& type, DropTarget target, 
 }
 
 bool performPluginDrop(App& a, const std::string& type, DropTarget target, const DropPlace& place) {
+  const App::AddRouteScope route(a, mixerRoute(a, target));  // K-289
   const PlugPlan p = planPlugin(a, type, target, place);
   const PluginInfo* info = findPlugin(type);
   switch (p.act) {

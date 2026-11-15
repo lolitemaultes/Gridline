@@ -288,13 +288,14 @@ bool compareOnB(const PluginTarget& t) {
   auto it = headers.find(t.key());
   return it != headers.end() && it->second.onB;
 }
-void presetLoaded(const PluginTarget& t, const std::string& type, const std::string& name) {
+void presetLoaded(const PluginTarget& t, const std::string& type, const std::string& name, int index) {
   HeaderState& h = headerFor(t, type);
   h.presetName = name;
-  h.presetIndex = -1;
+  h.presetIndex = index;
 }
-std::string devHeaderPreset(const PluginTarget& t, std::string* type, bool* onB) {
+std::string devHeaderPreset(const PluginTarget& t, std::string* type, bool* onB, int* index) {
   auto it = headers.find(t.key());
+  if (index) *index = it != headers.end() ? it->second.presetIndex : -1;
   if (type) *type = it != headers.end() ? it->second.type : std::string();
   if (onB) *onB = it != headers.end() && it->second.onB;
   return it == headers.end() || it->second.presetName.empty() ? std::string("Default") : it->second.presetName;
@@ -306,6 +307,10 @@ void pluginReplaced(const PluginTarget& t) {
   }
 }
 void devPickPreset(const PluginTarget& t, int index) { headers[t.key()].devPick = index; }
+DevHeaderMix& devHeaderMix() {
+  static DevHeaderMix m;
+  return m;
+}
 }  // namespace pui
 
 namespace pui {
@@ -335,6 +340,11 @@ float pluginHeaderWidth(App& a, const PluginInfo& info) {
     ImGui::PopFont();
   }
   return std::ceil(mark + 14 + 22 + 2 + 170 + 2 + 22 + 2 + 22 + 12 + kAB);
+}
+
+bool pluginHeaderTwoRows(App& a) {
+  return layoutui::active() == layout::Preset::Logic && layoutui::shellBuilt(a, layout::Preset::Logic) &&
+         !a.settings.getBool("ui.logicPluginHeaderCompact");
 }
 
 void drawPluginHeader(App& a, const PluginTarget& t, bool rule) {
@@ -406,7 +416,13 @@ void drawPluginHeader(App& a, const PluginTarget& t, bool rule) {
   if (!twoRows) {
   ++drewMark;
   if (!pui::wordmark(a, info->type, 18.0f)) {  // J-130: every built-in plugin shows its wordmark; hosted plugins their name
+    const float frameH = ImGui::GetFrameHeight();
     ImGui::PushFont(a.fontBold, 15.0f);
+    // K-286: the name on the row's middle (the preset box's), not hanging from its top
+    if (ImGuiWindow* w = ImGui::GetCurrentWindow()) {
+      w->DC.CurrLineSize.y = std::max(w->DC.CurrLineSize.y, frameH);
+      w->DC.CurrLineTextBaseOffset = std::max(w->DC.CurrLineTextBaseOffset, std::floor((frameH - ImGui::GetTextLineHeight()) * 0.5f));
+    }
     ImGui::TextUnformatted(info->name.c_str());
     ImGui::PopFont();
   }
@@ -566,22 +582,30 @@ void drawPluginHeader(App& a, const PluginTarget& t, bool rule) {
   }
 
   // Effects: bypass + mix on the right.
+  // the bypass button; the mix knob (radius 11, plus 1 px: its ring's anti-aliased edge stays off the window's edge)
+  constexpr float kBypassW = 76, kMixW = 23;
   if (twoRows && fxOwner) {  // the mix knob at the second row's end (the power switch is above)
+    // K-286: flush with the window's right edge (the rows' and the editor's), on its own row too
+    // when the second row has no room for it
     const float right = ImGui::GetWindowContentRegionMax().x;
     const float lastX = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x + ImGui::GetScrollX();
-    if (lastX + 12 <= right - 26) ImGui::SameLine(right - 26);
+    if (lastX + 12 <= right - kMixW) ImGui::SameLine(right - kMixW);
+    else ImGui::SetCursorPosX(right - kMixW);
     const float y = ImGui::GetCursorPosY();
     ImGui::SetCursorPosY(y + std::max(0.0f, (ImGui::GetFrameHeight() - 22.0f) * 0.5f));
     ui::ParamKnob("mix", slotMixParam(t.owner, t.slot), 11.0f);
+    pui::devHeaderMix() = {ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), ImGui::GetWindowPos().x + right - ImGui::GetScrollX(), ImGui::GetFrameCount()};
   } else if (!t.isChannel()) {
     const MixerTrack* m = s.mixerTrack(t.owner);
     bool en = m && m->slots[static_cast<size_t>(t.slot)].enabled;
     float right = ImGui::GetWindowContentRegionMax().x;
     // Narrow windows: wrap bypass + mix onto their own row instead of overlapping A/B.
+    // K-286: the pair ends flush with the window's right edge (the editor's), not 24 px short of it.
+    constexpr float kPairW = kBypassW + 6 + kMixW;
     float lastX = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x + ImGui::GetScrollX();
-    if (lastX + 12 <= right - 128) ImGui::SameLine(right - 128);
-    else ImGui::SetCursorPosX(right - 128);
-    if (ui::TextButton(en ? "On" : "Bypassed", en, 76, "Bypass this effect")) {
+    if (lastX + 12 <= right - kPairW) ImGui::SameLine(right - kPairW);
+    else ImGui::SetCursorPosX(right - kPairW);
+    if (ui::TextButton(en ? "On" : "Bypassed", en, kBypassW, "Bypass this effect")) {
       int k = t.slot;
       a.doc.editMixerTrack(t.owner, en ? "bypass effect" : "enable effect",
                            [k](MixerTrack& mt) { mt.slots[static_cast<size_t>(k)].enabled = !mt.slots[static_cast<size_t>(k)].enabled; });
@@ -592,6 +616,7 @@ void drawPluginHeader(App& a, const PluginTarget& t, bool rule) {
     const float y = ImGui::GetCursorPosY();
     ImGui::SetCursorPosY(y + std::max(0.0f, (ImGui::GetFrameHeight() - 22.0f) * 0.5f));
     ui::ParamKnob("mix", slotMixParam(t.owner, t.slot), 11.0f);
+    pui::devHeaderMix() = {ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), ImGui::GetWindowPos().x + right - ImGui::GetScrollX(), ImGui::GetFrameCount()};
   }
   browserui::pluginWindowDropTarget(a, t);  // presets / samples from the browser (J-16)
   ImGui::PopID();

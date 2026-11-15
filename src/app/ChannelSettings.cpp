@@ -876,7 +876,8 @@ void drawChannelSettingsBody(App& a, ObjectId channel, const BodyFrame& f) {
     // the header's own width, known before it is drawn so the window keeps one height from its first
     // frame; the sampler's sample row comes between them, so it keeps its own row).
     const float need = ImGui::GetFrameHeight() + 8 + pluginHeaderWidth(a, *info);
-    const bool onTabs = info->type != "gl.sampler" && tabsEnd + theme::kS6 + need <= tabRowRight;
+    // K-286: never a two-row header (the Smooth layout's): its second row would lie over the editor
+    const bool onTabs = info->type != "gl.sampler" && !pluginHeaderTwoRows(a) && tabsEnd + theme::kS6 + need <= tabRowRight;
     const ImVec2 below = ImGui::GetCursorScreenPos();
     if (onTabs) ImGui::SetCursorScreenPos(ImVec2(tabsEnd + theme::kS6, tabRow.y + std::floor((28.0f - ImGui::GetFrameHeight()) * 0.5f)));
     ImGui::BeginGroup();

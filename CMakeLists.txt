@@ -829,6 +829,13 @@ target_include_directories(gridline_tests_k224_rooms PRIVATE tests)
 target_compile_options(gridline_tests_k224_rooms PRIVATE ${GL_WARN})
 add_test(NAME k224_rooms COMMAND gridline_tests_k224_rooms WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 set_tests_properties(k224_rooms PROPERTIES TIMEOUT 600)
+# K-288: Stage room edits on a big room while the engine plays (audio thread safety).
+add_executable(gridline_tests_k288_room_race tests/test_k288_room_race.cpp)
+target_link_libraries(gridline_tests_k288_room_race PRIVATE gridline_core)
+target_include_directories(gridline_tests_k288_room_race PRIVATE tests)
+target_compile_options(gridline_tests_k288_room_race PRIVATE ${GL_WARN})
+add_test(NAME k288_room_race COMMAND gridline_tests_k288_room_race WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+set_tests_properties(k288_room_race PROPERTIES TIMEOUT 600)
 # GitHub #46: mixer and playlist tracks in a new order: every stored mixer index follows its track,
 # bit-exact renders, playlist clips and groups, undo, save / load, collaboration, FL export.
 add_executable(gridline_tests_k197_reorder tests/test_k197_reorder.cpp)
@@ -2928,6 +2935,13 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -DOUT=${CMAKE_BINARY_DIR}/k19_editor_zoom -P ${CMAKE_SOURCE_DIR}/tests/k19_editor_zoom_app.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(k19_editor_zoom_app PROPERTIES TIMEOUT 300)
+    # K-286: the plugin window's own frame: bypass and mix flush right, a narrower editor centred,
+    # a menu preset shown in the header, bypass undo, reopened where it was, the editor's focus.
+    add_test(NAME k286_plugin_wrapper_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/k286_plugin_wrapper -P ${CMAKE_SOURCE_DIR}/tests/k286_plugin_wrapper_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(k286_plugin_wrapper_app PROPERTIES TIMEOUT 300)
     # K-147: every built-in plugin window fits its editor (nothing clipped, no spare room) at the
     # default size, 75, 100 and 150 %, at interface scale 1 and 2.
     add_test(NAME k147_plugin_fit_app
@@ -3177,6 +3191,23 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -DOUT=${CMAKE_BINARY_DIR}/k112_browser_delete -P ${CMAKE_SOURCE_DIR}/tests/k112_browser_delete_app.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(k112_browser_delete_app PROPERTIES TIMEOUT 300)
+    # K-289: a change of folder in the file dialog takes the click that made it; which adds open a
+    # window by themselves (the Add menu's instruments do; audio files and mixer drops never).
+    add_test(NAME k289_dialog_nav_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/k289_dialog_nav -P ${CMAKE_SOURCE_DIR}/tests/k289_dialog_nav_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(k289_dialog_nav_app PROPERTIES TIMEOUT 300)
+    add_test(NAME k289_browser_dbl_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/k289_browser_dbl -P ${CMAKE_SOURCE_DIR}/tests/k289_browser_dbl_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(k289_browser_dbl_app PROPERTIES TIMEOUT 300)
+    add_test(NAME k289_auto_open_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DCLAP=${GRIDLINE_CLAP_TESTPLUG} -DOUT=${CMAKE_BINARY_DIR}/k289_auto_open -P ${CMAKE_SOURCE_DIR}/tests/k289_auto_open_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(k289_auto_open_app PROPERTIES TIMEOUT 400)
     # K-112c: the Live browser's filter rows (the tag index as chips).
     add_test(NAME k112_browser_chips_app
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json

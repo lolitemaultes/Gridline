@@ -465,8 +465,30 @@ class App {
   // K-125: a channel the user just added (or whose instrument they replaced) opens its editor at
   // once, in front and focused; an installed plugin opens its own window. Called by the user's add
   // paths only: project loads, undo / redo, collaborators' edits, paste / clone, scripts and test
-  // batches never open windows.
+  // batches never open windows. K-289: whether it opens is decided by autoOpens below.
   void showNewInstrument(ObjectId channel);
+  // K-289: opens the channel's window now (a command that names opening, such as "Open in ...").
+  void openChannelWindow(ObjectId channel);
+  // K-289: the one rule for opening the window of something just added by hand. A plugin or
+  // instrument (`type`, its `data`) opens its window, except: what is dropped on a mixer track or
+  // slot (an AddRouteScope with MixerDrop around the drop) opens nothing, and a channel playing an
+  // audio file (a sampler with a file, a loop's slicer, ...) never opens one by any route.
+  // Programmatic adds (scripts, AI tools, project import, undo / redo, collaborators' edits) never
+  // reach it: they do not call showNewInstrument, and Document::onPluginPlaced skips them.
+  enum class AddRoute { Hand, MixerDrop };
+  AddRoute addRoute = AddRoute::Hand;
+  bool autoOpens(const std::string& type, const std::string& data) const;
+  class AddRouteScope {
+   public:
+    AddRouteScope(App& a, AddRoute r) : a_(a), was_(a.addRoute) { a.addRoute = r; }
+    ~AddRouteScope() { a_.addRoute = was_; }
+    AddRouteScope(const AddRouteScope&) = delete;
+    AddRouteScope& operator=(const AddRouteScope&) = delete;
+
+   private:
+    App& a_;
+    AddRoute was_;
+  };
   void selectPattern(ObjectId id);
   void selectChannel(ObjectId id, bool additive = false);
   void openPianoRoll(ObjectId channel);

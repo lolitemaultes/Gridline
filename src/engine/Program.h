@@ -81,12 +81,20 @@ struct CpuStat {
   uint64_t load() const { return ns.load(std::memory_order_relaxed); }
 };
 
+struct Program;
+
 // Audio-thread state of one channel. Only the audio thread touches the
 // non-atomic members.
 struct ChannelRuntime {
   std::string type;
   std::unique_ptr<Generator> gen;
   bool warmed = false;  // UI thread: the builder ran warmUp on it (never read by the audio thread)
+  // K-288: the Program whose ProgChannel::aux the instrument last took (Generator::process; the
+  // builder's warm-up). Instruments keep pointers into that aux between blocks, and an instrument at
+  // rest is not run, so it can still hold them after newer Programs arrive; the engine keeps that
+  // Program alive (AudioEngine::collectGarbage) until the instrument takes a newer one.
+  // Written on the audio thread (UI thread before the runtime is shared), read on the UI thread.
+  std::atomic<const Program*> configuredIn{nullptr};
   float curL = 0, curR = 0;  // smoothed strip gains
   float fromL = 0, fromR = 0;  // gains at the start of the current control block (links)
   bool primed = false;

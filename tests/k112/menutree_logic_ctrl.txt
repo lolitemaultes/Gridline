@@ -1,0 +1,572 @@
+Gridline > About Gridline			e-
+Gridline > Settings...	Ctrl+,	view.settings	e-
+Gridline > Keyboard shortcuts...	Alt+K	help.shortcuts	e-
+Gridline > Plugin manager...			e-
+Gridline > Welcome screen			e-
+Gridline > Quit	Ctrl+Q	file.quit	e-
+Gridline > Options > Audio settings...			e-
+Gridline > Options > MIDI settings...	Ctrl+,	view.settings	e-
+Gridline > Options > Project settings...			e-
+Gridline > Options > Backup settings...			e-
+Gridline > Options > Interface settings...			e-
+Gridline > Options > General settings...			e-
+Gridline > Options > File settings...			e-
+Gridline > Options > Debug log and script console...			e-
+Gridline > Options > Keyboard shortcuts...			e-
+Gridline > Options > Theme...			e-
+Gridline > Options > Plugin manager...			e-
+Gridline > Options > Song mode	L	transport.songMode	ec
+Gridline > Options > Live mode			e-
+Gridline > Options > Arrangements > Arrangement			ec
+Gridline > Options > Arrangements > New arrangement			e-
+Gridline > Options > Arrangements > Duplicate arrangement			e-
+Gridline > Options > Arrangements > Delete arrangement			--
+Gridline > Options > Arrangements > Previous arrangement			--
+Gridline > Options > Arrangements > Next arrangement			--
+Gridline > Options > Song position jumps > At once			ec
+Gridline > Options > Song position jumps > Next beat			e-
+Gridline > Options > Song position jumps > Next bar			e-
+Gridline > Options > Song position jumps > Next 2 bars			e-
+Gridline > Options > Song position jumps > Next 4 bars			e-
+Gridline > Options > Song position jumps > Next 8 bars			e-
+Gridline > Options > Metronome	K	options.metronome	e-
+Gridline > Options > Plugin delay compensation			ec
+Gridline > Options > Refreeze out-of-date freezes			ec
+Gridline > Options > Hibernate unused plugins automatically			e-
+Gridline > Options > Rest silent instruments			ec
+Gridline > Options > Woken plugins sleep again after > 10 seconds			e-
+Gridline > Options > Woken plugins sleep again after > 30 seconds			ec
+Gridline > Options > Woken plugins sleep again after > 2 minutes			e-
+Gridline > Options > Woken plugins sleep again after > 10 minutes			e-
+Gridline > Options > Woken plugins sleep again after > Never			e-
+Gridline > Options > Send MIDI clock (master sync)			e-
+Gridline > Options > Record notes			e-
+Gridline > Options > Step record			e-
+Gridline > Options > Record automation			e-
+Gridline > Options > Recording options > Audio, into the playlist as audio clips			ec
+Gridline > Options > Recording options > Audio, into Loupe (armed tracks)			e-
+Gridline > Options > Recording options > Notes			ec
+Gridline > Options > Recording options > Automation (controller moves)			ec
+Gridline > Options > Recording options > Everything			e-
+Gridline > Options > Recording options > Punch in/out at the time selection			ec
+Gridline > Options > Recording options > Audio file format > 32-bit float WAV			ec
+Gridline > Options > Recording options > Audio file format > 24-bit WAV			e-
+Gridline > Options > Recording options > Audio file format > 16-bit WAV			e-
+Gridline > Options > Recording options > Disarm tracks after recording			e-
+Gridline > Options > Recording options > Drop silent takes			e-
+Gridline > Options > Recording options > Name empty playlist tracks after the take			ec
+Gridline > Options > Recording options > Name takes after the mixer track			ec
+Gridline > Options > Recording options > Name takes after the audio input			e-
+Gridline > Options > Recording options > Overdub (keep existing notes)			ec
+Gridline > Options > Recording options > Replace (clear the channel's notes)			e-
+Gridline > Options > Recording options > Quantize note starts to the snap			ec
+Gridline > Options > Recording options > Quantize note lengths			e-
+Gridline > Options > Recording options > Loop recording: new take per pass			e-
+Gridline > Options > Recording options > Controller moves go to > Automatic			ec
+Gridline > Options > Recording options > Controller moves go to > Pattern events			e-
+Gridline > Options > Recording options > Controller moves go to > Automation clips			e-
+Gridline > Options > Recording options > Count-in > Off			ec
+Gridline > Options > Recording options > Count-in > 1 bar			e-
+Gridline > Options > Recording options > Count-in > 2 bars			e-
+Gridline > Options > Recording options > Count-in > 4 bars			e-
+Gridline > Options > Recording options > Step record (keyboard enters notes at the step cursor)			e-
+Gridline > Options > Recording options > Link to controller (Record)…			e-
+Gridline > Options > Typing keyboard to piano	Ctrl+K	options.typingKeyboard	e-
+Gridline > Options > Typing keyboard options > Play notes from the computer keyboard	Ctrl+K	options.typingKeyboard	e-
+Gridline > Options > Typing keyboard options > Octave > Z = C1			e-
+Gridline > Options > Typing keyboard options > Octave > Z = C2			e-
+Gridline > Options > Typing keyboard options > Octave > Z = C3			e-
+Gridline > Options > Typing keyboard options > Octave > Z = C4			ec
+Gridline > Options > Typing keyboard options > Octave > Z = C5			e-
+Gridline > Options > Typing keyboard options > Octave > Z = C6			e-
+Gridline > Options > Typing keyboard options > Octave > Z = C7			e-
+Gridline > Options > Typing keyboard options > Octave > Z = C8			e-
+Gridline > Options > Typing keyboard options > Chord mode	\		e-
+Gridline > Options > Typing keyboard options > Chord > Major			ec
+Gridline > Options > Typing keyboard options > Chord > Minor			e-
+Gridline > Options > Typing keyboard options > Chord > Dominant 7th			e-
+Gridline > Options > Typing keyboard options > Chord > Major 7th			e-
+Gridline > Options > Typing keyboard options > Chord > Minor 7th			e-
+Gridline > Options > Typing keyboard options > Chord > Sus 4			e-
+Gridline > Options > Typing keyboard options > Chord > Power (5th)			e-
+Gridline > Options > Typing keyboard options > Chord > Octave			e-
+Gridline > Options > Typing keyboard options > Keyboard layout > Standard (QWERTY)			ec
+Gridline > Options > Typing keyboard options > Keyboard layout > QWERTZ			e-
+Gridline > Options > Typing keyboard options > Keyboard layout > AZERTY			e-
+Gridline > Options > Typing keyboard options > Keyboard layout > Dvorak			e-
+Gridline > Options > Typing keyboard options > Keyboard layout > Colemak			e-
+Gridline > Options > Typing keyboard options > Keyboard layout > Follow the computer			e-
+Gridline > Options > Multilink to controllers			e-
+Gridline > Options > Auto scrolling			ec
+Gridline > Options > Auto scrolling in pattern editors			ec
+Gridline > Options > Smooth snapping			ec
+File > New	Ctrl+N	file.new	e-
+File > New from template > Browse templates...			e-
+File > New from template > Empty project			e-
+File > New from template > Starter kit (drums + synth)			e-
+File > New from template > Demo song			e-
+File > New from template > Beat starter			e-
+File > New from template > Empty project			e-
+File > New from template > Mixing desk			e-
+File > New from loop starter...			e-
+File > Open...	Ctrl+O	file.open	e-
+File > Open recent > song.gridline.json			e-
+File > Open recent > Clear list			e-
+File > Welcome screen			e-
+File > Save	Ctrl+S	file.save	e-
+File > Save as...	Ctrl+Shift+S	file.saveAs	e-
+File > Save new version	Ctrl+Alt+S	file.saveNewVersion	e-
+File > Save as template...			e-
+File > Save to a new project folder...			e-
+File > Revert to last backup			e-
+File > Import > MIDI file...			e-
+File > Import > FL Studio presets...			e-
+File > Import > Audio file into a sampler...			e-
+File > Import > Multisample instrument (.sfz, .sf2)...			e-
+File > Import > Audio file as playlist clip...			e-
+File > Import > Import from URL...	Ctrl+Shift+U	file.importUrl	e-
+File > Export > Render to file (WAV, FLAC, MP3, Ogg)...	Ctrl+B	file.render	e-
+File > Export > Mixer tracks (stems)...	Ctrl+Shift+E	file.renderStems	e-
+File > Export > All playlist tracks...			e-
+File > Export > All playlist track groups...			e-
+File > Export > Render again with the last settings...			e-
+File > Export > Song as MIDI file...	Ctrl+Alt+E	file.exportMidi	e-
+File > Export > Pattern as MIDI file...			e-
+File > Export > Time selection as MIDI file...			--
+File > Export > Project data files...			e-
+File > Export > Project bones...			e-
+File > Export > Gridline zipped project (.gridlinez)...			e-
+File > Export > Leave out frozen audio			e-
+File > Export > FL Studio project (.flp)...			e-
+File > Export > FL Studio zipped loop package (.zip)...			e-
+File > Export > FL Studio export report...			--
+File > Locate missing samples...			e-
+File > New collaborative project...			e-
+File > Open collaborative project...			e-
+File > Join collaborative project...			e-
+File > Collaboration...			e-
+File > Project info...	F11	file.projectInfo	e-
+File > Quit	Ctrl+Q	file.quit	e-
+Edit > Undo	Ctrl+Z	edit.undo	--
+Edit > Redo	Ctrl+Y	edit.redo	--
+Edit > Undo history	Alt+Z	edit.history	e-
+Edit > Cut			e-
+Edit > Copy	Ctrl+C	playlist.copy	e-
+Edit > Paste	Ctrl+V	playlist.paste	--
+Edit > Delete	Del	playlist.delete	e-
+Edit > Select > Select all	Ctrl+A	playlist.selectAll	e-
+Edit > Select > Deselect	Shift+D	playlist.deselect	e-
+Edit > Duplicate	Ctrl+R	playlist.duplicate	e-
+Edit > Rename...	Shift+Enter	edit.rename	e-
+Track > New tracks...			e-
+Track > New track			e-
+Track > New instrument track > Audio file as sampler...			e-
+Track > New track with the same settings			e-
+Track > New mixer track			e-
+Track > Delete track			e-
+Track > Add > Instrument channel > Audio file as sampler...			e-
+Track > Add > Pattern	F4	pattern.new	e-
+Track > Add > Automation clip for the last moved control			--
+Track > Add > Clip of the current pattern at the song end			e-
+Track > Add > Mixer track			e-
+Track > Add > 8 playlist tracks			e-
+Patterns > New pattern	F4	pattern.new	e-
+Patterns > Insert one before	Ctrl+Shift+Ins	pattern.insert	e-
+Patterns > Clone	Ctrl+Shift+C	pattern.clone	e-
+Patterns > Find first empty	Shift+F4	pattern.findFirstEmpty	e-
+Patterns > Find next empty	Ctrl+F4	pattern.findNextEmpty	e-
+Patterns > Go to > Beat			ec
+Patterns > Go to > Fill			e-
+Patterns > Go to > Bassline			e-
+Patterns > Go to > Chords			e-
+Patterns > Next pattern	Num +	pattern.next	e-
+Patterns > Previous pattern	Num -	pattern.previous	--
+Patterns > Rename...	Shift+Enter	edit.rename	e-
+Patterns > Random colour			e-
+Patterns > Length > 1 bar			ec
+Patterns > Length > 2 bars			e-
+Patterns > Length > 4 bars			e-
+Patterns > Length > 8 bars			e-
+Patterns > Length > 16 bars			e-
+Patterns > Meter > Song (4/4)			ec
+Patterns > Meter > 2/4			e-
+Patterns > Meter > 3/4			e-
+Patterns > Meter > 4/4			e-
+Patterns > Meter > 5/4			e-
+Patterns > Meter > 6/8			e-
+Patterns > Meter > 7/8			e-
+Patterns > Meter > 9/8			e-
+Patterns > Meter > 12/8			e-
+Patterns > Transpose > +12 (octave)			e-
+Patterns > Transpose > +1 semitone			e-
+Patterns > Transpose > -1 semitone			e-
+Patterns > Transpose > -12 (octave)			e-
+Patterns > Split by channel			e-
+Patterns > Select in playlist			e-
+Patterns > Pattern groups > New group with the current pattern...			e-
+Patterns > Pattern groups > Take the current pattern out of its group			--
+Patterns > Move up	Ctrl+Shift+Up	pattern.moveUp	--
+Patterns > Move down	Ctrl+Shift+Down	pattern.moveDown	e-
+Patterns > Render pattern to file...			e-
+Patterns > Render as audio clip...			e-
+Patterns > Render and replace...			e-
+Patterns > Delete	Ctrl+Shift+Del	pattern.delete	e-
+Patterns > Delete unused patterns			e-
+Navigate > Go to the start	Enter	transport.toStart	e-
+Navigate > Back one bar	,	transport.rewindBar	e-
+Navigate > Forward one bar	.	transport.forwardBar	e-
+Navigate > Follow the song position			ec
+Navigate > Zoom > Zoom in	Ctrl+Right	playlist.zoomIn	e-
+Navigate > Zoom > Zoom out	Ctrl+Left	playlist.zoomOut	e-
+Navigate > Zoom > Zoom to fit the song	Z	playlist.zoomFit	e-
+Navigate > Song mode	L	transport.songMode	ec
+Navigate > Pattern mode			e-
+Navigate > Live mode			e-
+Record > Record	R	transport.record	e-
+Record > Recording options > Audio, into the playlist as audio clips			ec
+Record > Recording options > Audio, into Loupe (armed tracks)			e-
+Record > Recording options > Notes			ec
+Record > Recording options > Automation (controller moves)			ec
+Record > Recording options > Everything			e-
+Record > Recording options > Punch in/out at the time selection			ec
+Record > Recording options > Audio file format > 32-bit float WAV			ec
+Record > Recording options > Audio file format > 24-bit WAV			e-
+Record > Recording options > Audio file format > 16-bit WAV			e-
+Record > Recording options > Disarm tracks after recording			e-
+Record > Recording options > Drop silent takes			e-
+Record > Recording options > Name empty playlist tracks after the take			ec
+Record > Recording options > Name takes after the mixer track			ec
+Record > Recording options > Name takes after the audio input			e-
+Record > Recording options > Overdub (keep existing notes)			ec
+Record > Recording options > Replace (clear the channel's notes)			e-
+Record > Recording options > Quantize note starts to the snap			ec
+Record > Recording options > Quantize note lengths			e-
+Record > Recording options > Loop recording: new take per pass			e-
+Record > Recording options > Controller moves go to > Automatic			ec
+Record > Recording options > Controller moves go to > Pattern events			e-
+Record > Recording options > Controller moves go to > Automation clips			e-
+Record > Recording options > Count-in > Off			ec
+Record > Recording options > Count-in > 1 bar			e-
+Record > Recording options > Count-in > 2 bars			e-
+Record > Recording options > Count-in > 4 bars			e-
+Record > Recording options > Step record (keyboard enters notes at the step cursor)			e-
+Record > Recording options > Link to controller (Record)…			e-
+Record > Metronome	K	options.metronome	e-
+Record > Count-in	Shift+K	options.countIn	e-
+Record > Step record			e-
+Record > Typing keyboard to piano	Ctrl+K	options.typingKeyboard	e-
+Record > Typing keyboard options > Play notes from the computer keyboard	Ctrl+K	options.typingKeyboard	e-
+Record > Typing keyboard options > Octave > Z = C1			e-
+Record > Typing keyboard options > Octave > Z = C2			e-
+Record > Typing keyboard options > Octave > Z = C3			e-
+Record > Typing keyboard options > Octave > Z = C4			ec
+Record > Typing keyboard options > Octave > Z = C5			e-
+Record > Typing keyboard options > Octave > Z = C6			e-
+Record > Typing keyboard options > Octave > Z = C7			e-
+Record > Typing keyboard options > Octave > Z = C8			e-
+Record > Typing keyboard options > Chord mode	\		e-
+Record > Typing keyboard options > Chord > Major			ec
+Record > Typing keyboard options > Chord > Minor			e-
+Record > Typing keyboard options > Chord > Dominant 7th			e-
+Record > Typing keyboard options > Chord > Major 7th			e-
+Record > Typing keyboard options > Chord > Minor 7th			e-
+Record > Typing keyboard options > Chord > Sus 4			e-
+Record > Typing keyboard options > Chord > Power (5th)			e-
+Record > Typing keyboard options > Chord > Octave			e-
+Record > Typing keyboard options > Keyboard layout > Standard (QWERTY)			ec
+Record > Typing keyboard options > Keyboard layout > QWERTZ			e-
+Record > Typing keyboard options > Keyboard layout > AZERTY			e-
+Record > Typing keyboard options > Keyboard layout > Dvorak			e-
+Record > Typing keyboard options > Keyboard layout > Colemak			e-
+Record > Typing keyboard options > Keyboard layout > Follow the computer			e-
+Record > Multilink to controllers			e-
+Mix > Mixer	X	view.mixer	e-
+Mix > Stage			e-
+Mix > Master chain			e-
+Mix > Performance			e-
+Mix > Plugin delay compensation			ec
+Mix > Mixer layout > Compact strips			e-
+Mix > Mixer layout > Normal strips			ec
+Mix > Mixer layout > Wide strips			e-
+View > Command palette...	Ctrl+Shift+P	view.commandPalette	e-
+View > Playlist	F5	view.playlist	ec
+View > Channel rack	Ctrl+3	view.channelRack	e-
+View > Piano roll	P	view.pianoRoll	ec
+View > Mixer	X	view.mixer	e-
+View > Browser	B	view.browser	e-
+View > Plugin picker	F8	view.pluginPicker	e-
+View > Project picker			e-
+View > Channel settings			e-
+View > Master chain			e-
+View > Pads			e-
+View > Undo history	Alt+Z	edit.history	e-
+View > Performance			e-
+View > Groove editor			e-
+View > Stage			e-
+View > Panels > Inspector			ec
+View > Panels > Library			e-
+View > Panels > Lists			e-
+View > Panels > Device chain			e-
+View > Panels > Clip panel			e-
+View > Panels > Track scopes			e-
+View > Panels > Info box			e-
+View > Panels > Files			e-
+View > Panels > Notes			e-
+View > Panels > Smart controls			e-
+View > Zoom in	Ctrl+Right	playlist.zoomIn	e-
+View > Zoom out	Ctrl+Left	playlist.zoomOut	e-
+View > Zoom to fit the song	Z	playlist.zoomFit	e-
+View > Zoom to ticks (snap turns free)			e-
+View > Clear time selection			--
+View > Close plugin windows	Alt+F12	view.closePlugins	e-
+View > Close all windows	F12	view.closeAll	e-
+View > Bring all windows back into Gridline			--
+View > Window layout >       Studio			e-
+View > Window layout >       Clips	Preview		e-
+View > Window layout >       Smooth	Preview		ec
+View > Window layout > Layout settings...			e-
+View > Reset window layout	Ctrl+Shift+H	view.resetLayout	e-
+View > Dark theme			ec
+View > White text and glyphs			e-
+View > Theme settings...			e-
+View > Interface size > 75%			e-
+View > Interface size > 90%			e-
+View > Interface size > 100%			ec
+View > Interface size > 110%			e-
+View > Interface size > 125%			e-
+View > Interface size > 150%			e-
+View > Interface size > 175%			e-
+View > Interface size > 200%			e-
+View > Mixer layout > Compact strips			e-
+View > Mixer layout > Normal strips			ec
+View > Mixer layout > Wide strips			e-
+View > Show played chords in the hint bar			e-
+Tools > Stop all sound	Ctrl+H	tools.stopSound	e-
+Tools > Loop starter...			e-
+Tools > Swing presets > Straight			e-
+Tools > Swing presets > Gentle 16ths			e-
+Tools > Swing presets > Easy shuffle			e-
+Tools > Swing presets > Deep pocket			e-
+Tools > Swing presets > Triplet 16ths			e-
+Tools > Swing presets > Lilting 8ths			e-
+Tools > Swing presets > Triplet 8ths			e-
+Tools > Swing presets > Behind the beat			e-
+Tools > Swing presets > Ahead of the beat			e-
+Tools > Swing presets > Loose hands			e-
+Tools > Swing presets > Backbeat accents			e-
+Tools > Swing presets > Late hats			e-
+Tools > Swing presets > Save current as preset...			e-
+Tools > Swing presets > Groove editor...			e-
+Tools > Swing presets > Import preset...			e-
+Tools > Swing presets > Export current...			e-
+Tools > Swing presets > Show in Finder			e-
+Tools > Swing presets > Swing piano roll notes			ec
+Tools > Chord progression > Key > C			ec
+Tools > Chord progression > Key > C#			e-
+Tools > Chord progression > Key > D			e-
+Tools > Chord progression > Key > D#			e-
+Tools > Chord progression > Key > E			e-
+Tools > Chord progression > Key > F			e-
+Tools > Chord progression > Key > F#			e-
+Tools > Chord progression > Key > G			e-
+Tools > Chord progression > Key > G#			e-
+Tools > Chord progression > Key > A			e-
+Tools > Chord progression > Key > A#			e-
+Tools > Chord progression > Key > B			e-
+Tools > Chord progression > Anthem  (I V vi IV)			e-
+Tools > Chord progression > Fifties  (I vi IV V)			e-
+Tools > Chord progression > Ballad  (vi IV I V)			e-
+Tools > Chord progression > Turnaround  (ii V I I)			e-
+Tools > Chord progression > Twelve-bar seed  (I IV I V)			e-
+Tools > Chord progression > Night drive  (i VI III VII)			e-
+Tools > Chord progression > Lament  (i iv VI v)			e-
+Tools > Chord progression > Pulse  (i VII VI VII)			e-
+Tools > Riff from progression > Key > C			ec
+Tools > Riff from progression > Key > C#			e-
+Tools > Riff from progression > Key > D			e-
+Tools > Riff from progression > Key > D#			e-
+Tools > Riff from progression > Key > E			e-
+Tools > Riff from progression > Key > F			e-
+Tools > Riff from progression > Key > F#			e-
+Tools > Riff from progression > Key > G			e-
+Tools > Riff from progression > Key > G#			e-
+Tools > Riff from progression > Key > A			e-
+Tools > Riff from progression > Key > A#			e-
+Tools > Riff from progression > Key > B			e-
+Tools > Riff from progression > Anthem  (I V vi IV)			e-
+Tools > Riff from progression > Fifties  (I vi IV V)			e-
+Tools > Riff from progression > Ballad  (vi IV I V)			e-
+Tools > Riff from progression > Turnaround  (ii V I I)			e-
+Tools > Riff from progression > Twelve-bar seed  (I IV I V)			e-
+Tools > Riff from progression > Night drive  (i VI III VII)			e-
+Tools > Riff from progression > Lament  (i iv VI v)			e-
+Tools > Riff from progression > Pulse  (i VII VI VII)			e-
+Tools > Piano roll tools > Quick quantize	Q	piano.quickQuantize	e-
+Tools > Piano roll tools > Quantize starts and ends			e-
+Tools > Piano roll tools > Quantize...	Alt+Q	piano.quantize	e-
+Tools > Piano roll tools > Quick legato	Ctrl+L	piano.legato	e-
+Tools > Piano roll tools > Articulate...	Alt+L	piano.articulate	e-
+Tools > Piano roll tools > Chop...	Alt+U	piano.chop	e-
+Tools > Piano roll tools > Quick chop > Into steps	Ctrl+U	piano.chopSteps	e-
+Tools > Piano roll tools > Quick chop > Into half steps			e-
+Tools > Piano roll tools > Quick chop > Into beats			e-
+Tools > Piano roll tools > Quick chop > Into snap grid			e-
+Tools > Piano roll tools > Glue	Ctrl+G	piano.glue	e-
+Tools > Piano roll tools > Discard lengths			e-
+Tools > Piano roll tools > Strum...	Alt+S	piano.strum	e-
+Tools > Piano roll tools > Arpeggiate...	Alt+A	piano.arpeggiate	e-
+Tools > Piano roll tools > Grace notes...	Alt+G	piano.flam	e-
+Tools > Piano roll tools > Quick strum > Wide (1/4 step)			e-
+Tools > Piano roll tools > Quick strum > Medium (1/8 step)			e-
+Tools > Piano roll tools > Quick strum > Tight (1/16 step)			e-
+Tools > Piano roll tools > Quick arpeggio > Steps			e-
+Tools > Piano roll tools > Quick arpeggio > Half steps			e-
+Tools > Piano roll tools > Quick arpeggio > Beats			e-
+Tools > Piano roll tools > Flip > Upside down (pitch)			e-
+Tools > Piano roll tools > Flip > Backwards (time)			e-
+Tools > Piano roll tools > Randomize...	Alt+R	piano.randomize	e-
+Tools > Piano roll tools > Riff generator...			e-
+Tools > Piano roll tools > Humanize	Alt+Shift+R	piano.humanize	e-
+Tools > Piano roll tools > Note LFO...	Alt+O	piano.lfo	e-
+Tools > Piano roll tools > Scale levels...	Alt+X	piano.scaleLevels	e-
+Tools > Piano roll tools > Limit key range...			e-
+Tools > Piano roll tools > Snap to the scale			--
+Tools > Piano roll tools > Scale velocity > 50%			e-
+Tools > Piano roll tools > Scale velocity > 75%			e-
+Tools > Piano roll tools > Scale velocity > 90%			e-
+Tools > Piano roll tools > Scale velocity > 110%			e-
+Tools > Piano roll tools > Scale velocity > 125%			e-
+Tools > Piano roll tools > Scale velocity > 150%			e-
+Tools > Piano roll tools > Note properties...	Alt+N	piano.properties	e-
+Tools > Piano roll tools > Mute > Mute			e-
+Tools > Piano roll tools > Mute > Unmute			e-
+Tools > Piano roll tools > Mute > Toggle			e-
+Tools > Piano roll tools > Slide and portamento > Make slide notes			e-
+Tools > Piano roll tools > Slide and portamento > Make normal notes			e-
+Tools > Piano roll tools > Slide and portamento > Portamento on			e-
+Tools > Piano roll tools > Slide and portamento > Portamento off			e-
+Tools > Piano roll tools > Colour group > Group 1 (channel colour)			e-
+Tools > Piano roll tools > Colour group > Group 2			e-
+Tools > Piano roll tools > Colour group > Group 3			e-
+Tools > Piano roll tools > Colour group > Group 4			e-
+Tools > Piano roll tools > Colour group > Group 5			e-
+Tools > Piano roll tools > Colour group > Group 6			e-
+Tools > Piano roll tools > Colour group > Group 7			e-
+Tools > Piano roll tools > Colour group > Group 8			e-
+Tools > Piano roll tools > Colour group > Group 9			e-
+Tools > Piano roll tools > Colour group > Group 10			e-
+Tools > Piano roll tools > Colour group > Group 11			e-
+Tools > Piano roll tools > Colour group > Group 12			e-
+Tools > Piano roll tools > Colour group > Group 13			e-
+Tools > Piano roll tools > Colour group > Group 14			e-
+Tools > Piano roll tools > Colour group > Group 15			e-
+Tools > Piano roll tools > Colour group > Group 16			e-
+Tools > Piano roll tools > Transpose up	Up		e-
+Tools > Piano roll tools > Transpose down	Down		e-
+Tools > Piano roll tools > Octave up	Shift+Up	piano.octaveUp	e-
+Tools > Piano roll tools > Octave down	Shift+Down	piano.octaveDown	e-
+Tools > Piano roll tools > Nudge left	Left		e-
+Tools > Piano roll tools > Nudge right	Right		e-
+Tools > Composing > Piano roll selection > Select all	Ctrl+A		e-
+Tools > Composing > Piano roll selection > Deselect	Ctrl+D		e-
+Tools > Composing > Piano roll selection > Invert selection	Shift+I	piano.invertSelection	e-
+Tools > Composing > Piano roll selection > Every other note			e-
+Tools > Composing > Piano roll selection > Same pitches as selection			--
+Tools > Composing > Piano roll selection > Overlapping notes			e-
+Tools > Composing > Piano roll selection > Random notes	Shift+R	piano.selectRandom	e-
+Tools > Composing > Piano roll selection > Muted notes			e-
+Tools > Composing > Piano roll selection > Colour group > Group 1			e-
+Tools > Composing > Piano roll selection > Colour group > Group 2			e-
+Tools > Composing > Piano roll selection > Colour group > Group 3			e-
+Tools > Composing > Piano roll selection > Colour group > Group 4			e-
+Tools > Composing > Piano roll selection > Colour group > Group 5			e-
+Tools > Composing > Piano roll selection > Colour group > Group 6			e-
+Tools > Composing > Piano roll selection > Colour group > Group 7			e-
+Tools > Composing > Piano roll selection > Colour group > Group 8			e-
+Tools > Composing > Piano roll selection > Colour group > Group 9			e-
+Tools > Composing > Piano roll selection > Colour group > Group 10			e-
+Tools > Composing > Piano roll selection > Colour group > Group 11			e-
+Tools > Composing > Piano roll selection > Colour group > Group 12			e-
+Tools > Composing > Piano roll selection > Colour group > Group 13			e-
+Tools > Composing > Piano roll selection > Colour group > Group 14			e-
+Tools > Composing > Piano roll selection > Colour group > Group 15			e-
+Tools > Composing > Piano roll selection > Colour group > Group 16			e-
+Tools > Composing > Piano roll selection > Notes in the scale			--
+Tools > Composing > Piano roll selection > Notes outside the scale			--
+Tools > Composing > Open the last piano roll script again			--
+Tools > Composing > Save the note clipboard as a MIDI file			--
+Tools > Composing > Project scripts > Section markers...			e-
+Tools > Composing > Project scripts > Tempo ramp...			e-
+Tools > Composing > Project scripts > Route drums to a bus...			e-
+Tools > Composing > Project scripts > Build a drum pattern...			e-
+Tools > Composing > Project scripts > Humanize playlist selection...			e-
+Tools > Composing > Project scripts > Name tracks after their clips...			e-
+Tools > Composing > Project scripts > Rescan scripts			e-
+Tools > Composing > Project scripts > Open your scripts folder			e-
+Tools > Render channel to sampled instrument...			e-
+Tools > Audio logger > Keep the last minutes of audio			e-
+Tools > Audio logger > Armed inputs (before the effects)			ec
+Tools > Audio logger > The master output (after the effects)			e-
+Tools > Audio logger > 1 minute			e-
+Tools > Audio logger > 2 minutes			ec
+Tools > Audio logger > 5 minutes			e-
+Tools > Audio logger > 10 minutes			e-
+Tools > Audio logger > Save the last 2 minutes (0 s kept)			--
+Tools > Audio logger > Open the last minutes in Loupe			--
+Tools > Cancel recording			--
+Tools > Score logger > Put the notes played in the last > 1 minute			--
+Tools > Score logger > Put the notes played in the last > 2 minutes			--
+Tools > Score logger > Put the notes played in the last > 5 minutes			--
+Tools > Score logger > Put the notes played in the last > 10 minutes			--
+Tools > Score logger > Put the notes played in the last > 20 minutes			--
+Tools > Score logger > Put the notes played in the last > 30 minutes			--
+Tools > Score logger > Put the notes played in the last > Replace the channel's notes			--
+Tools > Score logger > Clear the log			--
+Tools > Score logger > Log MIDI input notes			ec
+Tools > Score logger > Keep notes for > 5 minutes			e-
+Tools > Score logger > Keep notes for > 10 minutes			ec
+Tools > Score logger > Keep notes for > 20 minutes			e-
+Tools > Score logger > Keep notes for > 30 minutes			e-
+Tools > Score logger > Keep notes for > 60 minutes			e-
+Tools > Route channels to free mixer tracks	Ctrl+L	rack.routeFree	e-
+Tools > Unmute all channels			e-
+Tools > Unsolo all mixer tracks			e-
+Tools > Close plugin windows	Alt+F12	view.closePlugins	e-
+Tools > Macros > Route every channel to its own mixer track			e-
+Tools > Macros > Select unused channels			e-
+Tools > Macros > Lock every playlist track			e-
+Tools > Macros > Unlock every playlist track			e-
+Tools > Macros > Prepare the live area			e-
+Tools > Macros > Audio clip channels > Stretch			e-
+Tools > Macros > Audio clip channels > Rubber Band			e-
+Tools > Macros > Audio clip channels > Resample			e-
+Tools > Macros > Audio clip channels > Stretch			--
+Tools > Macros > Audio clip channels > Rubber Band			--
+Tools > Macros > Audio clip channels > Resample			--
+Tools > Macros > Declicking of the selected channels > Off			e-
+Tools > Macros > Declicking of the selected channels > Out only			e-
+Tools > Macros > Declicking of the selected channels > Transient			e-
+Tools > Macros > Declicking of the selected channels > Generic			e-
+Tools > Macros > Declicking of the selected channels > Smooth			e-
+Tools > Freeze and hibernate > Unfreeze all			--
+Tools > Freeze and hibernate > Hibernate unused plugins			e-
+Tools > Freeze and hibernate > Wake all			--
+Tools > Clean up > Trim unused mixer tracks			e-
+Tools > Clean up > Delete unused automation clips			e-
+Tools > Clean up > Delete unused patterns			e-
+Tools > AI assistant activity			e-
+Window > Main window			e-
+Window > Mixer			e-
+Window > Step sequencer			e-
+Window > Piano roll			e-
+Window > Smart controls			e-
+Window > Undo history			e-
+Window > Performance			e-
+Window > Typing keyboard to piano	Ctrl+K	options.typingKeyboard	e-
+Window > Hide all plugin windows	V	view.hidePlugins	e-
+Help > Keyboard shortcuts	Alt+K	help.shortcuts	e-
+Help > Load demo song			e-
+Help > Track Receipt...			e-
+Help > Show settings folder			e-
+Help > Check for updates...			e-
+Help > About Gridline			e-

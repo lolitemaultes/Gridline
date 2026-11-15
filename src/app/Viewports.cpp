@@ -549,14 +549,11 @@ void toggle(ImGuiWindow* w) {
   else popOut(w);
 }
 
-// The dock node window-menu button (reserved on the right of every tab bar while detaching is
-// on) is the docked panels' pop-out / dock-back button: a click toggles instead of a menu.
+// The dock node window-menu button (reserved on the right of every tab bar, see dockedButton)
+// is the docked panels' pop-out / dock-back button: a click toggles instead of a menu.
 void windowMenu(ImGuiContext* ctx, ImGuiDockNode* node, ImGuiTabBar* tabBar) {
-  if (!buttonsOn()) {
-    ImGui::DockNodeWindowMenuHandler_Default(ctx, node, tabBar);
-    return;
-  }
-  if (node->VisibleWindow) S.toggles.push_back(node->VisibleWindow->ID);
+  (void)ctx, (void)tabBar;
+  if (buttonsOn() && node->VisibleWindow) S.toggles.push_back(node->VisibleWindow->ID);  // else the dimmed button: nothing
   ImGui::CloseCurrentPopup();
 }
 
@@ -846,8 +843,12 @@ void paintButton(ImDrawList* dl, const ImRect& bb, ImU32 base, bool hovered, boo
   dl->PopClipRect();
 }
 
-// Docked: drawn over the dock node's window-menu button (its click comes to windowMenu).
-void dockedButton(ImGuiWindow* w) {
+// Docked: drawn over the dock node's window-menu button (its click comes to windowMenu). The slot
+// is kept where windows cannot pop out (native Wayland, "Allow windows outside" off): the button is
+// drawn dimmed there, says why, and does nothing, so every tab bar is as wide on every system and
+// a layout's tabs fit the same way (k112_textfit: the Tracker's right column showed a sliver of a
+// scrolled-away tab on Weston, where the bar was a button wider).
+void dockedButton(ImGuiWindow* w, bool active) {
   ImGuiContext& g = *GImGui;
   const ImGuiStyle& st = g.Style;
   ImGuiDockNode* n = w->DockNode;
@@ -861,8 +862,19 @@ void dockedButton(ImGuiWindow* w) {
   const bool hovered = g.HoveredId == id, held = g.ActiveId == id;
   const bool out = isOut(w->RootWindowDockTree);
   ImGuiWindow* host = n->HostWindow;
-  paintButton(host->DrawList, bb, ImGui::GetColorU32(host->Collapsed ? ImGuiCol_TitleBgCollapsed : n->IsFocused ? ImGuiCol_TitleBgActive : ImGuiCol_TitleBg),
-              hovered, held, out);
+  const ImU32 base = ImGui::GetColorU32(host->Collapsed ? ImGuiCol_TitleBgCollapsed : n->IsFocused ? ImGuiCol_TitleBgActive : ImGuiCol_TitleBg);
+  if (!active) {
+    ImDrawList* dl = host->DrawList;
+    dl->PushClipRect(ImVec2(bb.Min.x - 1, bb.Min.y - 1), ImVec2(bb.Max.x + 1, bb.Max.y + 1), false);
+    dl->AddRectFilled(ImVec2(bb.Min.x - 1, bb.Min.y - 1), ImVec2(bb.Max.x + 1, bb.Max.y + 1), base);
+    drawGlyph(dl, bb, false, ImGui::GetColorU32(ImGuiCol_TextDisabled));
+    dl->PopClipRect();
+    if (hovered && g.HoveredIdTimer > 0.5f)
+      ImGui::SetTooltip("%s", S.reason.empty() ? i18n::tr("Pop out: turn on \"Allow windows outside the main window\" in the settings.")
+                                               : i18n::tr(S.reason.c_str()));
+    return;
+  }
+  paintButton(host->DrawList, bb, base, hovered, held, out);
   if (hovered && g.HoveredIdTimer > 0.5f) ImGui::SetTooltip("%s", buttonTip(out));
   S.buttons[nameOf(w)] = bb;
 }
@@ -959,8 +971,8 @@ void install(SDL_Window* mainWindow, SDL_GLContext gl, const Options& o) {
     hookBackend();
     GImGui->ViewportLateCreateFilter = lateCreate;
     GImGui->CloseRequestFilter = closeFilter;
-    GImGui->DockNodeWindowMenuHandler = windowMenu;
   }
+  GImGui->DockNodeWindowMenuHandler = windowMenu;  // the button's slot is there everywhere (dockedButton)
   static ImGuiSettingsHandler h;
   h.TypeName = "GridlineViewports";
   h.TypeHash = ImHashStr("GridlineViewports");
@@ -1035,6 +1047,7 @@ void beginFrame(float uiScale, ImVec2 mainLogicalSize) {
       S.reanchorPending = false;
       gatherAll();
     }
+    style.WindowMenuButtonPosition = ImGuiDir_Right;  // the slot is kept everywhere (dockedButton)
     return;
   }
   if (S.monDirty || seconds(S.monReadAt, now()) > 2.0) readMonitors();
@@ -1066,7 +1079,7 @@ void beginFrame(float uiScale, ImVec2 mainLogicalSize) {
     vp->PlatformRequestClose = false;
     S.closeReqs.push_back(w->ID);
   }
-  if (buttonsOn()) style.WindowMenuButtonPosition = ImGuiDir_Right;  // floating dock nodes update in NewFrame
+  style.WindowMenuButtonPosition = ImGuiDir_Right;  // floating dock nodes update in NewFrame (the slot is kept everywhere)
 }
 
 void afterNewFrame() {
@@ -1143,19 +1156,20 @@ void afterNewFrame() {
 
 void beginDockSpace(ImGuiID dockspace) {
   S.dockspace = dockspace;
-  if (buttonsOn()) ImGui::GetStyle().WindowMenuButtonPosition = ImGuiDir_Right;
+  if (S.installed) ImGui::GetStyle().WindowMenuButtonPosition = ImGuiDir_Right;  // the slot is kept everywhere (dockedButton)
 }
 void endDockSpace() { ImGui::GetStyle().WindowMenuButtonPosition = ImGuiDir_None; }
 
 void drawTitleButtons() {
   S.buttons.clear();
-  if (!buttonsOn()) return;
+  if (!S.installed) return;
+  const bool on = buttonsOn();
   ImGuiContext& g = *GImGui;
   std::vector<ImGuiWindow*> list(g.Windows.begin(), g.Windows.end());
   for (ImGuiWindow* w : list) {
     if (!w->Active || w->Hidden || w->SkipItems || !isPanel(w)) continue;
-    if (w->DockIsActive) dockedButton(w);
-    else if (!(w->Flags & ImGuiWindowFlags_NoTitleBar)) floatingButton(w);
+    if (w->DockIsActive) dockedButton(w, on);
+    else if (on && !(w->Flags & ImGuiWindowFlags_NoTitleBar)) floatingButton(w);
   }
 }
 

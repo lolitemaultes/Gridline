@@ -619,6 +619,7 @@ class AudioEngine {
   // Programs: owned on the UI thread, published to the audio thread.
   std::shared_ptr<const Program> current_;
   std::vector<std::pair<std::shared_ptr<const Program>, uint64_t>> retired_;
+  std::vector<const Program*> pinned_;  // K-288: retired Programs an instrument still holds (collectGarbage)
   SamplePtr previewOwner_;
   std::vector<std::pair<SamplePtr, uint64_t>> retiredSamples_;
   const Sample* pvSample_ = nullptr;  // audio thread

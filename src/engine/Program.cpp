@@ -1227,7 +1227,10 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
       auto ins = std::make_shared<InsSettings>();
       if (parseIns(c.plugin.ins, *ins) && ins->active()) pc.aux.ins = ins;
     }
-    if (pc.rt && warmUp_) warmUp(*pc.rt, c.plugin, pc.aux, sampleRate_);
+    if (pc.rt && warmUp_ && !pc.rt->warmed) {
+      warmUp(*pc.rt, c.plugin, pc.aux, sampleRate_);
+      if (pc.rt->gen && allocatesInFirstBlock(pc.rt->type)) pc.rt->configuredIn.store(prog.get());  // K-288: it took this aux (not shared yet)
+    }
     pc.controller = hasOutputs(c.plugin.type);
     double g = c.muted ? 0.0 : dsp::faderGain(c.gain, 0.78), l, r;
     dsp::panGains(c.pan, l, r);

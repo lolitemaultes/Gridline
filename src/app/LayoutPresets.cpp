@@ -3,6 +3,7 @@
 #include "LiveLook.h"
 #include <cfloat>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <utility>
@@ -31,11 +32,19 @@ Preset gOverride = Preset::Studio;
 bool gSwitchPending = false;
 Preset gSwitchTo = Preset::Studio;
 
+// The tracks set tells Command from Control on macOS. GRIDLINE_DEV_KEYS_NO_CMD=1 (dev and tests) gives a
+// macOS run the set every other system has, so k112_menus checks the Linux and Windows menu tree on a Mac.
+bool separateCmd() {
 #if defined(__APPLE__)
-constexpr bool kSeparateCmd = true;  // the tracks set tells Command from Control on macOS
+  static const bool fold = [] {
+    const char* e = std::getenv("GRIDLINE_DEV_KEYS_NO_CMD");
+    return e && *e && *e != '0';
+  }();
+  return !fold;
 #else
-constexpr bool kSeparateCmd = false;
+  return false;
 #endif
+}
 
 keys::Profile toProfile(Preset p) {
   switch (p) {
@@ -66,7 +75,7 @@ Preset menuStyle(const App& a) { return gHasOverride ? gOverride : layout::menuS
 
 void applyKeyProfile(App& a) {
   const Preset p = gHasOverride ? gOverride : layout::keyProfile(a.settings);
-  keys::keymap().setProfile(toProfile(p), kSeparateCmd);
+  keys::keymap().setProfile(toProfile(p), separateCmd());
   std::string err;
   // A dev run with --layout keeps the user's overrides out (they belong to the set in the settings).
   const std::string own = gHasOverride ? std::string() : a.settings.getString(layout::bindingsKey(p));

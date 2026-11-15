@@ -342,6 +342,12 @@ bool browserRow(const char* id, ui::Icon icon, const char* name, const char* det
   return clicked;
 }
 
+// K-289: a click that is the second of a double-click on a folder: the first click already opened
+// (or folded) it, so the pair folds it once, not open then shut again.
+bool secondOfDouble() {
+  return ImGui::GetIO().MouseClickedLastCount[ImGuiMouseButton_Left] >= 2;
+}
+
 // Collapsible section header (top level): chevron, coloured folder, title, count.
 // `title` is English (and the open state's id); it is shown translated unless
 // it is a name from disk (`translate` false).
@@ -365,7 +371,7 @@ bool sectionHeader(const char* title, int count, bool defaultOpen, uint32_t role
   ImVec2 q = ImGui::GetCursorScreenPos();
   float w = ImGui::GetContentRegionAvail().x;
   ImGui::PushID(title);
-  if (ImGui::InvisibleButton("##hdr", ImVec2(std::max(w, 1.0f), 26))) {
+  if (ImGui::InvisibleButton("##hdr", ImVec2(std::max(w, 1.0f), 26)) && !secondOfDouble()) {
     open = !open;
     st->SetBool(id, open);
     nav.cursor = ImGui::GetItemID();  // K-160
@@ -410,7 +416,8 @@ bool treeNode(const std::string& key, const char* label, int count, float indent
   bool open = st->GetBool(id, defaultOpen || devOpen(label));
   std::string c = count >= 0 ? std::to_string(count) : "";
   if (browserRow(key.c_str(), ui::Icon::Folder, label, c.c_str(), indent, nullptr, roleCol(roleColour, open ? 1.0f : 0.8f), false, false, nullptr,
-                 RowNav{id, open, nullptr})) {
+                 RowNav{id, open, nullptr}) &&
+      !secondOfDouble()) {
     open = !open;
     st->SetBool(id, open);
   }
@@ -966,7 +973,7 @@ void fileContextMenu(App& a, const std::string& ps) {
     if (ImGui::MenuItem(i18n::tr("Preview"))) browserui::previewFile(a, ps);
     if (ImGui::MenuItem(i18n::tr("Edit in Loupe"))) packs::openFileInLoupe(a, ps);  // the file opens on its own; it is never changed
     if (ImGui::MenuItem(i18n::tr("Open in Seltmann"))) {  // J-107: a new Seltmann channel analyses and chops it
-      a.showNewInstrument(a.addInstrument("gl.seltmann", ps));
+      a.openChannelWindow(a.addInstrument("gl.seltmann", ps));  // K-289: the command names opening it
     }
     if (ImGui::MenuItem(i18n::tr("Add to playlist as audio clip"))) {
       browserui::DropPlace pl;

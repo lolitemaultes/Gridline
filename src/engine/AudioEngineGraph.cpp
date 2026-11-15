@@ -297,9 +297,11 @@ void AudioEngine::runChannel(size_t ci, int worker) {
     ctx.lanes = lanes;
     ctx.laneCount = nl;
     rt->gen->setExpression(ch.expr);  // K-144
+    rt->configuredIn.store(p);  // K-288: before the instrument takes this Program's aux
     rt->gen->process(ch.modded ? ch.live : ch.plugin, ch.aux, ctx, cL, cR, n);
   } else {
     rt->gen->setExpression(ch.expr);  // K-144
+    rt->configuredIn.store(p);  // K-288
     rt->gen->process(ch.modded ? ch.live : ch.plugin, ch.aux, bc_.ctx, cL, cR, n);
   }
   rt->sounding.store(rt->gen->active(), std::memory_order_relaxed);

@@ -247,8 +247,11 @@ bool pluginWindowPolicyManaged() { return policyRun().managed; }
 
 void pumpHostedPlugins(App& a) {
   if (!a.doc.onPluginPlaced)  // K-112: plugins put on a track here (the window policy's "open on load")
-    a.doc.onPluginPlaced = [](ObjectId owner, int slot, const std::string& type) {
-      if (isHostedType(type) && policyRun().managed) placedQueue().push_back(Placed{PluginTarget{owner, slot}, type, 0});
+    a.doc.onPluginPlaced = [&a](ObjectId owner, int slot, const std::string& type) {
+      if (!isHostedType(type) || !policyRun().managed) return;
+      const bool opens = a.autoOpens(type, "");  // K-289: not when dropped on a mixer track
+      if (std::getenv("GRIDLINE_DEV_PLUGIN_WINDOWS")) std::fprintf(stderr, "[plugin-window] placed | %s: %s\n", type.c_str(), opens ? "opens" : "stays closed");
+      if (opens) placedQueue().push_back(Placed{PluginTarget{owner, slot}, type, 0});
     };
 #if !defined(__APPLE__) && !defined(_WIN32)  // X11 (Linux, the BSDs)
   if (gRunLoopGlBracket) gRunLoopGlBracket(true);

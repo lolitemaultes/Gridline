@@ -21,6 +21,7 @@
 #endif
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cmath>
 #include <cstring>
 #include <cstdio>
@@ -1928,13 +1929,29 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       if (app.doc.setChannelPlugin(ch, l.a0)) pui::pluginReplaced(PluginTarget{ch, -1});
       app.syncEngine();
     } else if (l.cmd == "addvia") {  // K-125: addvia <rack|below|replace|droprack|dropplaylist|picker> <type>: an instrument added the way that path adds it
-      const std::string type = l.a1;
+      // (K-289: also dropmixer <type>, filemixer|filerack|fileopen|filedesk <path>, which may be quoted)
+      const std::string type = l.args.size() > 1 ? l.args[1] : l.a1;
       if (l.a0 == "rack") menus::addInstrumentPick(app, type);
       else if (l.a0 == "below") menus::addInstrumentPick(app, type, app.selChannel);
       else if (l.a0 == "replace") menus::replaceInstrumentPick(app, app.selChannel, type);
       else if (l.a0 == "droprack") browserui::performPluginDrop(app, type, browse::DropTarget::Rack, {});
       else if (l.a0 == "dropplaylist") browserui::performPluginDrop(app, type, browse::DropTarget::Playlist, {});
       else if (l.a0 == "picker") browserui::pickerAdd(app, type);
+      // K-289: onto mixer track 1 (a plugin, or a file); a file onto the rack, opened as a double-click
+      // in the browser does, or dropped from the desktop onto the rack
+      else if (l.a0 == "dropmixer" || l.a0 == "filemixer") {
+        browserui::DropPlace pl;
+        if (app.doc.song().mixer.size() > 1) pl.mixer = app.doc.song().mixer[1].id;
+        if (l.a0 == "dropmixer") browserui::performPluginDrop(app, type, browse::DropTarget::MixerTrack, pl);
+        else browserui::performDrop(app, type, browse::DropTarget::MixerTrack, pl);
+      } else if (l.a0 == "filerack") browserui::performDrop(app, type, browse::DropTarget::Rack, {});
+      else if (l.a0 == "fileopen") browserui::openFile(app, type);
+      else if (l.a0 == "filedesk") {
+        xdrop::Item it;
+        it.path = type;
+        it.name = std::filesystem::path(type).filename().string();
+        browserui::performItems(app, {it}, browse::DropTarget::Rack, {}, {});
+      }
       app.syncEngine();
     } else if (l.cmd == "closeplugins") {  // K-125: every plugin window closed, as View > Close plugin windows
       app.closePluginWindows();
@@ -1942,11 +1959,11 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       const Channel* c = app.doc.song().channel(app.settingsChannel);
       const ImGuiContext& g = *ImGui::GetCurrentContext();
       const ImGuiWindow* nav = g.NavWindow ? g.NavWindow->RootWindow : nullptr;
-      std::printf("instview frame %d: open \"%s\" type %s focus \"%s\" channels %zu undo %zu popup %d text %d\n", frame,
+      std::printf("instview frame %d: open \"%s\" type %s focus \"%s\" channels %zu undo %zu popup %d text %d fx %d\n", frame,
                   c ? c->name.c_str() : "-", c ? c->plugin.type.c_str() : "-", nav ? ui::stableWindowName(nav->Name) : "-",
                   app.doc.song().channels.size(), app.doc.history().position(),
                   ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel) ? 1 : 0,
-                  ImGui::GetIO().WantTextInput ? 1 : 0);
+                  ImGui::GetIO().WantTextInput ? 1 : 0, app.fxEditor.first != kNoId ? app.fxEditor.second : -1);  // K-289: the open effect slot
       std::fflush(stdout);
     } else if (l.cmd == "pickpreset") {  // J-213: pickpreset <index>: the open plugin header loads that entry of its preset list
       const bool slot = app.fxEditor.first != kNoId && app.fxEditor.second >= 0;
@@ -2029,6 +2046,18 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       std::fflush(stdout);
     } else if (l.cmd == "edzoom") {  // K-19: edzoom <window key> (fxeditor | channelsettings): the editor zoom drawn last frame
       edzoomui::devDump(l.a0.c_str());
+    } else if (l.cmd == "hdrpreset") {  // K-286: hdrpreset: the open plugin header's preset name and its place in the list
+      const bool slot = app.fxEditor.first != kNoId && app.fxEditor.second >= 0;
+      int index = -1;
+      const std::string name = pui::devHeaderPreset(slot ? PluginTarget{app.fxEditor.first, app.fxEditor.second} : PluginTarget{app.settingsChannel, -1}, nullptr, nullptr, &index);
+      std::printf("hdrpreset frame %d: \"%s\" index %d undo %zu\n", frame, name.c_str(), index, app.doc.history().position());
+      std::fflush(stdout);
+    } else if (l.cmd == "hdrmix") {  // K-286: hdrmix: the effect header's mix knob (last drawn) against its window's right edge
+      const pui::DevHeaderMix& m = pui::devHeaderMix();
+      std::printf("hdrmix frame %d: drawn %d knob %.1f,%.1f-%.1f,%.1f content right %.1f gap %.1f\n", frame, m.frame, static_cast<double>(m.min.x),
+                  static_cast<double>(m.min.y), static_cast<double>(m.max.x), static_cast<double>(m.max.y), static_cast<double>(m.contentRight),
+                  static_cast<double>(m.contentRight - m.max.x));
+      std::fflush(stdout);
     } else if (l.cmd == "edzoomset") {  // K-19: edzoomset <plugin type> <zoom, 0 = automatic>: as the Editor size menu sets it
       app.settings.set("ui.editorZoom", edzoom::withZoom(app.settings.getString("ui.editorZoom"), l.a0, std::strtof(l.a1.c_str(), nullptr)));
     } else if (l.cmd == "windows") {  // J-111h: windows [frames]
@@ -2853,7 +2882,7 @@ int main(int argc, char** argv) {
   std::string devMenu;                    // --menu name: open a menu for screenshots
   bool devLight = false;                  // --light (kept when --layout re-reads the theme)
   std::string devLayoutPreset;            // K-79 --layout studio|performance|tracks: this run only (nothing saved)
-  std::vector<std::string> devPanes;      // K-79 --pane mixer|stage|piano|rack|history|pads|settings: open a window at frame 3
+  std::vector<std::string> devPanes;      // K-79 --pane mixer|stage|piano|rack|history|browser|pads|settings: open a window at frame 3
   bool devSwitchCheck = false;
   std::string devStyleReport;             // K-112 --style-report <file>: the layout style report of the last frame
   int devSwitchFrame = -100;  // the frame a layout switch was applied on (for --switch-check)
@@ -3781,6 +3810,7 @@ int main(int argc, char** argv) {
         else if (w == "piano") app.showPiano = true;
         else if (w == "rack") app.showRack = true;
         else if (w == "history") app.showHistory = true;
+        else if (w == "browser") app.showBrowser = true;  // K-289: Smooth starts with it closed
         else if (w == "pads") layoutui::toggleMainView(app);
         else if (w == "settings" && !app.doc.song().channels.empty()) app.settingsChannel = app.doc.song().channels.front().id;
         else if (w == "launcher-layout") launcherui::openLayoutChooser();
@@ -3941,9 +3971,13 @@ int main(int argc, char** argv) {
     glClearColor(bg.x, bg.y, bg.z, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
     const bool savedFrame = !devShotPending.empty() || (!shotPath.empty() && frameNo + 1 >= shotFrames);  // (--no-draw draws these)
+    long long switchGlCpu = 0;  // K-112: the switch frame's CPU time inside the GL calls (a software renderer's work)
     if (!devFitNoDraw && (!devNoDraw || savedFrame)) {
       prof::Scope ps("gl_draw");
+      const bool timeGl = devSwitchCheck && frameNo == devSwitchFrame;
+      const long long glCpu0 = timeGl ? prof::threadCpuNow() : 0;
       ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+      if (timeGl) switchGlCpu = prof::threadCpuNow() - glCpu0;
       // Tests: GRIDLINE_DEV_SLOW_DRAW_MS=<ms> makes each drawn frame that much longer (a software
       // OpenGL on a shared runner), so a check can be run as slowly as it runs there.
       static const int slowDrawMs = std::getenv("GRIDLINE_DEV_SLOW_DRAW_MS") ? std::max(0, std::atoi(std::getenv("GRIDLINE_DEV_SLOW_DRAW_MS"))) : 0;
@@ -3959,7 +3993,19 @@ int main(int argc, char** argv) {
     if (devSwitchCheck && frameNo == devSwitchFrame) {  // K-112: the whole switch frame (load, rebuild, every window, drawing)
       const double ms = 1e3 * static_cast<double>(SDL_GetPerformanceCounter() - frameStart) / static_cast<double>(SDL_GetPerformanceFrequency());
       const double cpuMs = static_cast<double>(prof::threadCpuNow() - frameCpu0) * 1e-6;
-      std::fprintf(stderr, "[layout-switch] frame %d whole frame %.2f ms cpu %.2f ms\n", frameNo, ms, cpuMs);
+      // The GL calls' share and whether the renderer is a software one (Mesa's llvmpipe, softpipe or
+      // swrast, SwiftShader, Apple's software renderer): there the drawing itself runs on the CPU,
+      // k112_switch holds the interface's own CPU time and gives the wall time a software budget.
+      static const bool softGl = [] {
+        const char* r = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
+        std::string low = r ? r : "";
+        for (char& c : low) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (const char* k : {"llvmpipe", "softpipe", "swrast", "swiftshader", "software"})
+          if (low.find(k) != std::string::npos) return true;
+        return false;
+      }();
+      std::fprintf(stderr, "[layout-switch] frame %d whole frame %.2f ms cpu %.2f ms gl %.2f ms renderer %s\n", frameNo, ms, cpuMs,
+                   static_cast<double>(switchGlCpu) * 1e-6, softGl ? "software" : "hardware");
       prof::setTrace(false);
     }
     if (browserui::thumbMode() && !browserui::thumbCapture(app, fbW, fbH)) running = false;

@@ -184,6 +184,9 @@ struct State {
   float lastW = 0, lastH = 0;
   // Dev check: commands applied in the next frame the dialog draws.
   std::vector<std::vector<std::string>> pending;
+  // K-289: a folder was entered (or left) during this mouse gesture: the list takes no click,
+  // double-click or release from it until the button is let go.
+  bool gestureUsed = false;
 };
 
 State& S() {
@@ -233,6 +236,13 @@ std::string folderLabel(const std::string& p) {
 
 void saveSettings(App& a) { a.settings.save(Settings::defaultPath()); }
 
+// K-289: a change of folder consumes the mouse gesture that made it (a double-click's second
+// press, a click's release): the row now under the pointer is neither pressed nor picked by it.
+void consumeGesture(State& st) {
+  st.gestureUsed = true;
+  if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) ImGui::ClearActiveID();
+}
+
 void go(App& a, State& st, const std::string& dir) {
   FileDialogState& fd = a.fileDialog;
   if (dir.empty() || samePath(dir, fd.dir)) return;
@@ -243,6 +253,7 @@ void go(App& a, State& st, const std::string& dir) {
   st.selected.clear();
   st.scrollTop = true;
   st.editingPath = false;
+  consumeGesture(st);
 }
 
 void goBack(App& a, State& st) {
@@ -258,6 +269,7 @@ void goBack(App& a, State& st) {
   } else {
     st.scrollTop = true;
   }
+  consumeGesture(st);
 }
 
 void goForward(App& a, State& st) {
@@ -267,6 +279,7 @@ void goForward(App& a, State& st) {
   st.fwd.pop_back();
   st.selected.clear();
   st.scrollTop = true;
+  consumeGesture(st);
 }
 
 void goUp(App& a, State& st) {
@@ -1092,6 +1105,7 @@ void draw(App& a) {
     st.scrollToSel = false;
   }
   std::string goInto;
+  if (st.gestureUsed && !ImGui::IsMouseDown(ImGuiMouseButton_Left) && !ImGui::IsMouseReleased(ImGuiMouseButton_Left)) st.gestureUsed = false;
   ImGuiListClipper clip;
   clip.Begin(static_cast<int>(st.rows.size()), kRowH);
   while (clip.Step())
@@ -1101,9 +1115,9 @@ void draw(App& a) {
       const ImVec2 q = ImGui::GetCursorScreenPos();
       const float w = ImGui::GetContentRegionAvail().x;
       const bool sel = r.name == st.selected || (!r.isDir && st.selected.empty() && fd.name == r.name);
-      const bool clicked = ImGui::InvisibleButton("##r", ImVec2(w, kRowH));
+      const bool clicked = ImGui::InvisibleButton("##r", ImVec2(w, kRowH)) && !st.gestureUsed;
       const bool hov = ImGui::IsItemHovered();
-      const bool dbl = hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+      const bool dbl = hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && !st.gestureUsed;
       if (sel || hov) rl->AddRectFilled(q, ImVec2(q.x + w, q.y + kRowH), sel ? theme::withAlpha(P.accent, 0.3f) : P.surface800, theme::kRadiusSm);
       const std::string full = pathOf(a, r.name);
       const bool audio = r.kind == filedlg::FileKind::Audio;

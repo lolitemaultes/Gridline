@@ -55,6 +55,8 @@ void drawPluginHeader(App& a, const PluginTarget& t, bool rule = true);
 // K-223b: the width drawPluginHeader takes for an instrument of `info` (its preset box at full
 // width), known before it is drawn, so the channel window puts it on its tab row from the first frame.
 float pluginHeaderWidth(App& a, const PluginInfo& info);
+// K-286: the header shows two rows (the Smooth layout's, unfolded): too tall for the channel window's tab row.
+bool pluginHeaderTwoRows(App& a);
 // Editor body: the custom editor for the type, or a grouped knob grid.
 void drawPluginBody(App& a, const PluginTarget& t, float width);
 
@@ -224,16 +226,25 @@ void compareSetSpare(App& a, const PluginTarget& t, const PluginState& other);
 // J-213: the header's preset selector belongs to one plugin type: when the
 // target's plugin is replaced (any path, undo included) it starts over at the
 // new plugin's "Default". presetLoaded: a preset loaded from outside the header
-// (a browser drop) shows its name there.
-void presetLoaded(const PluginTarget& t, const std::string& type, const std::string& name);
+// (a browser drop) shows its name there. `index`: its place in the header's list when known (a
+// factory preset picked from the window menu), so the previous / next buttons step on from it.
+void presetLoaded(const PluginTarget& t, const std::string& type, const std::string& name, int index = -1);
 // The target's plugin was replaced through a menu, possibly by a fresh copy of
 // the same plugin: the header starts over.
 void pluginReplaced(const PluginTarget& t);
 // Dev / test hook (--dev-input "pluginview"): what the header shows for the target
 // (preset label, plugin type it belongs to, A/B slot); devPickPreset: the header
 // loads entry `index` of its list on its next draw, as the menu does.
-std::string devHeaderPreset(const PluginTarget& t, std::string* type, bool* onB);
+std::string devHeaderPreset(const PluginTarget& t, std::string* type, bool* onB, int* index = nullptr);  // K-286: index in its list (-1: none)
 void devPickPreset(const PluginTarget& t, int index);
+// K-286 (--dev-input "hdrmix"): where the last effect header drew its mix knob (screen px) and the
+// right edge of its window's content, on that frame.
+struct DevHeaderMix {
+  ImVec2 min{0, 0}, max{0, 0};
+  float contentRight = 0;
+  int frame = -1;
+};
+DevHeaderMix& devHeaderMix();
 // True when the parameter has a MIDI controller link.
 bool paramLinked(App& a, ParamId pid);
 }  // namespace pui

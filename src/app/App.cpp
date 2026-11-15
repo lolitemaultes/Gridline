@@ -20,6 +20,7 @@
 #include "../core/flp/Flp.h"
 #include "../core/flp/FlpPresets.h"
 #include "../core/PluginStandIn.h"
+#include "../core/ExternalDrop.h"
 #include "../core/Presets.h"
 #include <algorithm>
 #include <cctype>
@@ -885,7 +886,21 @@ ObjectId App::addInstrument(const std::string& pluginType, const std::string& sa
   return id;
 }
 
+bool App::autoOpens(const std::string& type, const std::string& data) const {
+  if (addRoute == AddRoute::MixerDrop || type.empty()) return false;
+  if (xdrop::sampleSlot(type) == xdrop::SampleSlot::None) return true;
+  const std::string file = data.substr(0, data.find('\n'));  // the sample is the data, or its first line
+  return file.empty() || browse::kindOf(file) != browse::Kind::Audio;
+}
+
 void App::showNewInstrument(ObjectId channel) {
+  const Channel* c = doc.song().channel(channel);
+  if (!c) return;
+  selectChannel(channel);
+  if (autoOpens(c->plugin.type, c->plugin.data)) openChannelWindow(channel);
+}
+
+void App::openChannelWindow(ObjectId channel) {
   const Channel* c = doc.song().channel(channel);
   if (!c) return;
   selectChannel(channel);

@@ -2771,12 +2771,13 @@ void pluginWindowMenu(App& a, ObjectId owner, int slot) {
     for (size_t i = 0; i < info->presets.size(); ++i)
       if (ImGui::MenuItem(info->presets[i].name.c_str())) {
         if (isHostedType(info->type)) {  // the plugin's own programs
-          selectHostedProgram(a, t, static_cast<int>(i));
+          if (selectHostedProgram(a, t, static_cast<int>(i))) pui::presetLoaded(t, info->type, info->presets[i].name, static_cast<int>(i));
           continue;
         }
         PluginState ns = presetState(*info, i);
         ns.data = st->data;
         setPluginState(a, t, ns, "load preset");
+        pui::presetLoaded(t, info->type, info->presets[i].name, static_cast<int>(i));  // the header shows it and steps on from it
       }
     ImGui::EndMenu();
   }
@@ -2791,6 +2792,7 @@ void pluginWindowMenu(App& a, ObjectId owner, int slot) {
       }
       ns.data = cur->data;
       setPluginState(a, t, ns, "load preset");
+      pui::presetLoaded(t, type, fs::u8path(p).stem().u8string());  // the header shows the file's name
     });
   }
   if (ImGui::MenuItem(i18n::tr("Save preset to file..."))) savePresetDialog(a, owner, slot);
@@ -2818,6 +2820,7 @@ void pluginWindowMenu(App& a, ObjectId owner, int slot) {
     PluginState ns = defaultPluginState(info->type);
     ns.data = st->data;
     setPluginState(a, t, ns, "reset plugin");
+    pui::presetLoaded(t, info->type, "");  // the header shows "Default" again
   }
   if (a.singlePlugin) return;  // J-131: the plugin alone in another host
   ImGui::Separator();

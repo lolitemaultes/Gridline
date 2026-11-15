@@ -58,9 +58,15 @@ expect_line("record options: kept after a quit (replace, no quantize, length qua
             "recopt overdub 0 quantize 0 qlen 1 takes 1 notes 1 auto 1 target 2 countin 2 punch 0 audio 0")
 
 # 2. The typing keyboard records while the transport plays (pattern mode, merge, no quantize).
+#    The keys are pressed on frames while the engine plays in real time: at the song's 124 BPM the
+#    one-bar pattern loops every 1.9 s, which a slow runner's 80 frames can outlast (Weston CI: the C
+#    held across the loop's end was cut there, 207+177 of 384 ticks, and the D landed on the next
+#    pass at 191). At 20 BPM a pass is 12 s, so both keys fall in the first one (the tempo is its
+#    own undo step, before the take).
 run_app("4 playmode pattern
 5 typing on
 6 recopt qlen 0
+7 tempo 20
 8 recopt list
 10 recopt arm 1
 12 recopt play

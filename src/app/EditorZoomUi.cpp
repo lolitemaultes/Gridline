@@ -65,6 +65,10 @@ struct Slot {
   float bodyY = 0, bodyEndY = FLT_MAX, bodyW = 0;
   int bodyFrame = -1;
   ImVec2 pad{0, 0};
+  // K-286: where the window was last seen inside the main window (closed and opened again, it
+  // comes back there instead of centred; a popped-out window opens inside the main window again)
+  bool placed = false, reopened = false;
+  ImVec2 placedPos{0, 0};
   // drag-resizing with the corner grip
   bool dragging = false;
   float dragZ0 = 1, liveZ = 1;
@@ -194,14 +198,30 @@ void grip(App& a, Slot& s) {
   const auto& P = theme::pal();
   const ImU32 c = held ? P.hot : hovered ? P.text : P.textFaint;
   ImDrawList* dl = w->DrawList;
-  for (int k = 1; k <= 3; ++k) {  // three short diagonals in the corner
-    const float d = static_cast<float>(k) * 4.0f;
+  // K-286: three short diagonals in the corner, kept in the window's padding (never over the editor's corner)
+  for (int k = 1; k <= 3; ++k) {
+    const float d = static_cast<float>(k) * 3.0f;
     dl->AddLine(ImVec2(br.x - 3 - d, br.y - 3), ImVec2(br.x - 3, br.y - 3 - d), c, 1.0f);
   }
   ImGui::PopClipRect();
 }
 
 }  // namespace
+
+constexpr int kReopenFrames = 8;  // K-286: frames a window opened again holds its place while its size settles
+
+// K-286: a window opened again goes where it was, moved only as far as it takes to keep the whole
+// window in the work area (a taller editor than last time)
+static void placeReopened(const Slot& s) {
+  const ImGuiViewport* vp = ImGui::GetMainViewport();
+  ImVec2 p = s.placedPos;
+  if (s.host && s.shownFrames > 1) {
+    const ImVec2 sz = s.host->Size;
+    p.x = std::max(vp->WorkPos.x, std::min(p.x, vp->WorkPos.x + vp->WorkSize.x - sz.x));
+    p.y = std::max(vp->WorkPos.y, std::min(p.y, vp->WorkPos.y + vp->WorkSize.y - sz.y));
+  }
+  ImGui::SetNextWindowPos(p, ImGuiCond_Always);
+}
 
 float prepare(App& a, const char* key, const std::string& type, float contentW, bool zoomable, float chromeW) {
   Slot& s = slots()[key];
@@ -212,6 +232,7 @@ float prepare(App& a, const char* key, const std::string& type, float contentW, 
     s.extraH = std::max(0.0f, s.host->DC.CursorMaxPos.y - s.host->DC.CursorStartPos.y - std::ceil(s.design.y * s.z));
     s.rowW = s.rowsAbove;
   }
+  if (s.lastFrame < frame - 1) s.reopened = s.placed;  // K-286: opened again: where it was, not centred
   if (s.lastFrame < frame - 1 || s.type != type) {  // (re)appeared, or another plugin in the window
     s.shownFrames = 0;
     s.rowW = 0;
@@ -228,7 +249,10 @@ float prepare(App& a, const char* key, const std::string& type, float contentW, 
   s.zoomable = zoomable;
   s.contentW = contentW;
   s.chromeW = chromeW;
-  if (!zoomable) return s.z = 1.0f;
+  if (!zoomable) {
+    if (s.reopened && s.shownFrames <= kReopenFrames) placeReopened(s);
+    return s.z = 1.0f;
+  }
   const ImVec2 area = ui::EditorArea();
   ImVec2 ch = chrome();
   ch.y += s.extraH;  // K-210b: the window's own rows keep their size: the editor gets the rest
@@ -255,7 +279,9 @@ float prepare(App& a, const char* key, const std::string& type, float contentW, 
   s.z = std::fabs(z - 1.0f) > 0.001f ? z : 1.0f;
   if (std::fabs(prev - s.z) > 0.001f) s.rowW = 0;  // another size: the rows are measured again at the editor's width
   ImGuiViewport* vp = ImGui::GetMainViewport();
-  if (s.shownFrames <= 4 && (s.z != 1.0f || std::fabs(prev - s.z) > 0.001f)) {  // opened at another size: centred on its final size
+  if (s.reopened && s.shownFrames <= kReopenFrames) {
+    placeReopened(s);  // its top-left stays put while its size settles
+  } else if (s.shownFrames <= 4 && (s.z != 1.0f || std::fabs(prev - s.z) > 0.001f)) {  // opened at another size: centred on its final size
     s.centre = ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.45f);
     s.recentre = 4;
   } else if (std::fabs(prev - s.z) > 0.001f && !s.dragging && s.host && s.shownFrames > 1) {
@@ -265,7 +291,18 @@ float prepare(App& a, const char* key, const std::string& type, float contentW, 
   }
   if (s.recentre > 0) {
     --s.recentre;
-    ImGui::SetNextWindowPos(s.centre, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    // K-286: about its centre, but never past the work area's top or left (a window grown taller
+    // than the room above its centre had its title bar and header row cut off at the top)
+    const ImVec2 sz = s.host && s.shownFrames > 1 ? s.host->Size : ImVec2(0, 0);
+    const ImVec2 p0(s.centre.x - sz.x * 0.5f, s.centre.y - sz.y * 0.5f);
+    ImVec2 p = p0;
+    p.x = std::max(vp->WorkPos.x, std::min(p.x, vp->WorkPos.x + vp->WorkSize.x - sz.x));
+    p.y = std::max(vp->WorkPos.y, std::min(p.y, vp->WorkPos.y + vp->WorkSize.y - sz.y));
+    if (sz.x > 0 && (p.x != p0.x || p.y != p0.y)) {
+      ImGui::SetNextWindowPos(ImVec2(std::round(p.x), std::round(p.y)), ImGuiCond_Always);
+    } else {
+      ImGui::SetNextWindowPos(s.centre, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    }
   }
   return s.z;
 }
@@ -284,6 +321,13 @@ void begin(App&, const char* key) {
   s.grouped = !s.active;
   s.hostVtx0 = static_cast<unsigned>(s.host->DrawList->VtxBuffer.Size);
   s.hostVtx1 = ~0u;
+  // K-286: an editor narrower than its window (the window's own rows need more width: a small
+  // effect's header, the channel window's rows) sits in the middle, not against the left edge
+  if (s.zoomable) {
+    const float regionW = s.active ? std::floor(s.contentW * s.z + 0.01f) : s.contentW;
+    const float spare = ImGui::GetContentRegionAvail().x - regionW;
+    if (spare >= 2.0f) ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x + std::floor(spare * 0.5f), ImGui::GetCursorScreenPos().y));
+  }
   s.origin = ImGui::GetCursorScreenPos();
   current() = s.z;
   currentOrigin() = s.origin;
@@ -392,6 +436,10 @@ void end(App& a, const char* key) {
   }
   if (s.design.y > 0) designCache()[s.type] = s.design;
   if (s.host) s.hostVtx1 = static_cast<unsigned>(s.host->DrawList->VtxBuffer.Size);  // (the size grip is not the editor)
+  if (const ImGuiWindow* root = s.host ? s.host->RootWindow : nullptr) {  // K-286: its place, for opening it again
+    s.placed = root->Viewport == ImGui::GetMainViewport() && !root->DockIsActive;
+    if (s.placed) s.placedPos = root->Pos;
+  }
   grip(a, s);
 }
 
@@ -667,6 +715,12 @@ void devDump(const char* key) {
       if (s.rowsValid)
         std::printf("edrows %s: type %s zoom %.2f top %.0f right %.0f\n", key, s.type.c_str(), static_cast<double>(s.z),
                     static_cast<double>(s.rows.Min.y - s.innerClip.Min.y), static_cast<double>((s.inner.Max.x - s.pad.x) - s.rows.Max.x));
+    }
+    // K-286: the editor's region against the window's content width: the room left and right of it
+    if (s.zoomable && s.regionFrame >= ImGui::GetFrameCount() - 1) {
+      const float rw = s.active || s.z != 1.0f ? std::floor(s.contentW * s.z + 0.01f) : s.contentW;
+      std::printf("edregion %s: type %s width %.0f left %.0f right %.0f\n", key, s.type.c_str(), static_cast<double>(rw),
+                  static_cast<double>(s.origin.x - (s.inner.Min.x + s.pad.x)), static_cast<double>((s.inner.Max.x - s.pad.x) - (s.origin.x + rw)));
     }
   }
   std::fflush(stdout);

@@ -53,6 +53,18 @@ width as drawn last time; otherwise, and for the sampler, it keeps its own row),
 without note processors shows one slim row (title, Add note processor, a hint) instead of the
 note processor panel, which appears once one is added.
 
+The window's own parts around the editor: the header row (menu, wordmark or the installed plugin's
+name on the row's middle, presets, A/B, and for effects the bypass button and mix knob, which end at
+the window's right edge, on a row of their own when the window is too narrow for them), the editor,
+and the resize corner, drawn in the window's padding beside the editor's corner. When the window's
+own rows need more width than the editor (a small effect's header, the channel window's rows), the
+editor sits in the middle of the window. A preset loaded from the window menu (Presets, Load preset
+from file, Reset to default) shows in the preset box, and previous and next go on from it.
+
+Closed and opened again in the same session, a plugin window comes back where it was (its top left
+corner; its size follows the editor). A window that was popped out opens inside the main window,
+centred, as it does the first time.
+
 If a window at the size asked for would not fit the work area, the editor is reduced until the
 whole window fits (`edzoom::fitZoom`), down to 60 % (`edzoom::kFitMin`); only an editor still too
 tall at 60 % scrolls. So a large instrument on a small screen, or at interface scale 200 %, is
@@ -73,6 +85,11 @@ optional second argument names a directory for one screenshot per plugin. After 
 prints `edfit done` and quits the app, so a run never waits on its frame count.
 Without screenshots the sweep only lays the windows out and draws nothing, since the fit
 report needs the layout and not the pixels.
+`hdrmix` prints where the last effect header drew its mix knob against its window's right edge,
+`hdrpreset` the header's preset name and its place in the list, and `edzoom` also prints an
+`edregion` line: the editor region's width and the room left and right of it in its window.
+`tests/k286_plugin_wrapper_app.cmake` checks the header's right edge, the centred editor, a menu
+preset in the header, bypass and its undo, reopening in place and the editor's keyboard focus.
 `tests/k147_plugin_fit_app.cmake` runs it at several sizes and interface scales and fails on any
 clipped or spare edge. Each run has its own time limit and reports how far it got, so the test
 fails within minutes instead of running on; it closes the main windows (playlist, browser, piano

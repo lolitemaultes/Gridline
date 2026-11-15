@@ -19877,6 +19877,10 @@ msgstr ""
 msgid "Pop out into its own window"
 msgstr ""
 
+#: src/app/Viewports.cpp
+msgid "Pop out: turn on \"Allow windows outside the main window\" in the settings."
+msgstr ""
+
 #: src/app/Widgets.cpp
 msgid "Reset selected tracks to default"
 msgstr ""
