@@ -540,6 +540,7 @@ static void liveToolbar(App& a, const Pattern*& pat, const Channel*& chan, const
     ImGui::SameLine(0, 0);
     ImGui::SetCursorScreenPos(ImVec2(tx, ImGui::GetCursorScreenPos().y));
     const ImVec2 tp = ImGui::GetCursorScreenPos();
+    ui::SetNextSegmentedTabs();  // K-112c (round 30): a tab strip, as the refs' clip view (058, 034, 417)
     if (ui::Segmented("##lanetabs", tabs, 3, &tab, segW)) {
       if (tab == 0) {
         lane = Lane::Velocity;
@@ -1352,7 +1353,9 @@ void drawPianoRoll(App& a) {
   // draw the piano roll (white-key rows #232323, black-key rows #0E0E0E, light lines).
   const bool lgDark = P.dark && layoutui::active() == layout::Preset::Logic && layoutui::shellBuilt(a, layout::Preset::Logic);
   const ImU32 well = lgDark ? P.surface950 : P.well;
-  const ImU32 blackRow = lgDark ? theme::mix(well, P.ink, 0.5f) : theme::withAlpha(P.ink, P.dark ? 0.16f : 0.05f);
+  // K-112c (round 28): Live's black-key rows read as clearly as the refs' bands (058, 112, 198, 044).
+  const ImU32 blackRow = lgDark ? theme::mix(well, P.ink, 0.5f)
+                         : theme::withAlpha(P.ink, livelook::active(a) ? (P.dark ? 0.30f : 0.09f) : (P.dark ? 0.16f : 0.05f));
   const ImU32 lineBar = lgDark ? theme::mix(well, P.text, 0.15f) : P.gridBar, lineBeat = lgDark ? theme::mix(well, P.text, 0.08f) : P.gridBeat,
               lineStep = lgDark ? theme::mix(well, P.text, 0.04f) : P.gridStep;
   dl->AddRectFilled(gridMin, gridMax, well);
@@ -1650,7 +1653,7 @@ void drawPianoRoll(App& a) {
     // Note names, over the lines. A name is clipped where a later note on its row starts (that
     // note is drawn over it) and left out when a later note covers its start.
     if (!labels.empty()) {
-      ImGui::PushFont(a.fontMono, std::min(11.0f, rowH - 3));
+      ImGui::PushFont(livelook::active(a) ? a.fontRegular : a.fontMono, std::min(11.0f, rowH - 3));  // K-112c (round 28): sans in Live, as the refs' labels
       const float fs = ImGui::GetFontSize();
       std::unordered_map<int, std::vector<size_t>> rows;  // notes in view by row
       for (size_t i = 0; i < notes.size(); ++i) {
@@ -1750,8 +1753,9 @@ void drawPianoRoll(App& a) {
         const float by = std::round(y + rowH);  // the octave's (or row's) bottom edge, as the grid's line
         dl->AddLine(ImVec2(keysX0, by), ImVec2(keysX0 + nameW - 1, by), P.line);
         const float fs = theme::kFontLabel;
-        const float ty = fold ? theme::textTop(a.fontMono, fs, y, rowH) : std::round(by - fs - 3);
-        if (!fold || rowH >= fs) dl->AddText(a.fontMono, fs, ImVec2(keysX0 + 5, ty), P.textDim, noteName(p).c_str());
+        // K-112c (round 28): the octave names in the sans face, as the refs (058, 198, 038).
+        const float ty = fold ? theme::textTop(a.fontRegular, fs, y, rowH) : std::round(by - fs - 3);
+        if (!fold || rowH >= fs) dl->AddText(a.fontRegular, fs, ImVec2(keysX0 + 5, ty), P.textDim, noteName(p).c_str());
       }
     }
     // K-112c: Live's keys are plates a row tall: black keys run the keyboard's whole width (every ref).

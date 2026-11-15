@@ -44,6 +44,11 @@ bool patternFromJson(const Json& jp, Pattern& p, const Song& s);
 int clipFromJson(const Json& jc, Clip& c, const Song& s);
 void automationClipFromJson(const Json& ja, AutomationClip& a);
 
+// A note's properties beyond start / length / pitch / velocity, as the project document stores them
+// (K-281: the assistant tools read and write notes with every property the file knows).
+void noteExtrasToJson(const Note& n, Json& jn);
+void noteExtrasFromJson(const Json& jn, Note& n);
+
 // One plugin state as the project document stores it ("plugin" objects).
 Json pluginStateToJson(const PluginState& p);
 PluginState pluginStateFromJson(const Json& j);

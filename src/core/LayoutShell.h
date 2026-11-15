@@ -18,6 +18,7 @@
 // Studio is listed for its homes and geometry, but keeps its own dock builder
 // (app/Shell.cpp buildDefaultLayout), so it stays exactly as it was.
 #pragma once
+#include <cstdint>
 #include <map>
 #include <set>
 #include <string>

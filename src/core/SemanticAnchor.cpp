@@ -44,14 +44,14 @@ bool fromText(const std::string& text, Target& out) {
   const std::string rest = text.substr(colon + 1);
   if (rest.empty() || rest[0] < '0' || rest[0] > '9') return false;
   char* end = nullptr;
-  const unsigned long id = std::strtoul(rest.c_str(), &end, 10);
-  unsigned long sub = 0;
+  const unsigned long long id = std::strtoull(rest.c_str(), &end, 10);  // (64-bit: a long is 32 bits on Windows)
+  unsigned long long sub = 0;
   if (end && *end == '/') {
     const char* s = end + 1;
     if (*s < '0' || *s > '9') return false;
-    sub = std::strtoul(s, &end, 10);
+    sub = std::strtoull(s, &end, 10);
   }
-  if (!end || *end != 0 || id > 0xFFFFFFFFul || sub > 0xFFFFFFFFul) return false;
+  if (!end || *end != 0 || id > 0xFFFFFFFFull || sub > 0xFFFFFFFFull) return false;
   out.kind = k;
   out.id = static_cast<uint32_t>(id);
   out.sub = static_cast<uint32_t>(sub);

@@ -35,7 +35,7 @@ void label(const char* text, float x = 150.0f) {
   }
   ImGui::AlignTextToFramePadding();
   ImGui::TextColored(theme::vec(pal().textDim), "%s", text);
-  ImGui::SameLine(x);
+  ImGui::SameLine(ui::SettingsColumn(x));  // K-112c: Live's settings column
 }
 
 std::string targetName(App& a, const ControllerLink& l) {

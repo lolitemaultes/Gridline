@@ -189,28 +189,38 @@ bool OscServer::start(const OscServerConfig& cfg, std::string* err) {
       if (parseEntry(e, a, mask)) allow_.push_back({a, mask});
     }
   const uint32_t bindIp = cfg.network ? 0u /* INADDR_ANY */ : kLoopback;
-  udp_ = udpSocket();
-  if (udp_ == kNoSock) return failWith("Could not open a UDP socket: " + net::lastError());
-  if (!bindTo(udp_, bindIp, cfg.port)) {
-    const bool used = inUse();
-    const std::string why = net::lastError();
-    return failWith(used ? "Port " + std::to_string(cfg.port) + " is in use by another program" : "Could not listen on port " + std::to_string(cfg.port) + ": " + why);
-  }
-  net::setNonBlocking(udp_);
-  port_ = boundPort(udp_);
-  if (cfg.tcp) {
+  // Any free port (0): the system picks the UDP port and TCP takes the same number, which another
+  // program may already hold for TCP; then another UDP port is tried.
+  for (int attempt = 0;; ++attempt) {
+    udp_ = udpSocket();
+    if (udp_ == kNoSock) return failWith("Could not open a UDP socket: " + net::lastError());
+    if (!bindTo(udp_, bindIp, cfg.port)) {
+      const bool used = inUse();
+      const std::string why = net::lastError();
+      return failWith(used ? "Port " + std::to_string(cfg.port) + " is in use by another program" : "Could not listen on port " + std::to_string(cfg.port) + ": " + why);
+    }
+    net::setNonBlocking(udp_);
+    port_ = boundPort(udp_);
+    if (!cfg.tcp) break;
     tcp_ = net::tcpSocket();
     if (tcp_ == kNoSock) return failWith("Could not open a TCP socket: " + net::lastError());
 #if !defined(_WIN32)
     int one = 1;
     ::setsockopt(raw(tcp_), SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
 #endif
-    if (!bindTo(tcp_, bindIp, port_) || ::listen(raw(tcp_), 8) != 0) {
-      const bool used = inUse();
-      const std::string why = net::lastError();
-      return failWith(used ? "TCP port " + std::to_string(port_) + " is in use by another program" : "Could not listen for TCP on port " + std::to_string(port_) + ": " + why);
+    if (bindTo(tcp_, bindIp, port_) && ::listen(raw(tcp_), 8) == 0) {
+      net::setNonBlocking(tcp_);
+      break;
     }
-    net::setNonBlocking(tcp_);
+    const bool used = inUse();
+    const std::string why = net::lastError();
+    if (cfg.port == 0 && used && attempt < 32) {
+      net::closeSock(udp_);
+      net::closeSock(tcp_);
+      udp_ = tcp_ = kNoSock;
+      continue;
+    }
+    return failWith(used ? "TCP port " + std::to_string(port_) + " is in use by another program" : "Could not listen for TCP on port " + std::to_string(port_) + ": " + why);
   }
   {
     std::lock_guard<std::mutex> lk(mu_);

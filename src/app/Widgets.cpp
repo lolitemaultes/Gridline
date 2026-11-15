@@ -617,9 +617,16 @@ void StatusDot(ImU32 col, bool pulse) {
   ImGui::SameLine(0, theme::kS1 + 2);
 }
 
+namespace {
+bool gNextSegTabs = false;
+}
+void SetNextSegmentedTabs() { gNextSegTabs = true; }
+
 bool Segmented(const char* id, const char* const* labels, int count, int* index, float segWidth, float height,
                const char* const* hints) {
   const auto& P = pal();
+  const bool tabs = gNextSegTabs;
+  gNextSegTabs = false;
   ImGui::PushID(id);
   if (height <= 0) height = ImGui::GetFrameHeight();
   std::vector<const char*> trLabels(static_cast<size_t>(std::max(0, count)));
@@ -631,7 +638,10 @@ bool Segmented(const char* id, const char* const* labels, int count, int* index,
     for (int i = 0; i < count; ++i) w = std::max(w, ImGui::CalcTextSize(labels[i]).x + pad * 2);
   ImVec2 p = ImGui::GetCursorScreenPos();
   ImDrawList* dl = ImGui::GetWindowDrawList();
-  if (look::styled()) look::hookInset(dl, p, ImVec2(p.x + w * count + 4, p.y + height), theme::kRadius, P.field);  // J-129 control style
+  if (tabs) {
+    dl->AddRectFilled(p, ImVec2(p.x + w * count + 4, p.y + height), P.field, 0.0f);
+    dl->AddRect(p, ImVec2(p.x + w * count + 4, p.y + height), ImGui::GetColorU32(ImGuiCol_Border), 0.0f);
+  } else if (look::styled()) look::hookInset(dl, p, ImVec2(p.x + w * count + 4, p.y + height), theme::kRadius, P.field);  // J-129 control style
   else {
     dl->AddRectFilled(p, ImVec2(p.x + w * count + 4, p.y + height), P.field, theme::kRadius);
     if (!P.dark) dl->AddRect(p, ImVec2(p.x + w * count + 4, p.y + height), P.line, theme::kRadius);
@@ -648,14 +658,20 @@ bool Segmented(const char* id, const char* const* labels, int count, int* index,
     bool hov = ImGui::IsItemHovered();
     bool on = *index == i;
     const ImU32 onBg = theme::mix(P.dark ? P.surface700 : P.surface800, P.hot, 0.14f);
-    if (look::styled()) {
+    if (tabs) {
+      // Each tab fills its share edge to edge inside the strip's outline; a line between tabs.
+      const float l = p.x + 1 + (i == 0 ? 0.0f : 2.0f + w * i), r = i == count - 1 ? p.x + w * count + 3 : p.x + 2 + w * (i + 1);
+      if (on) dl->AddRectFilled(ImVec2(l, p.y + 1), ImVec2(r, p.y + height - 1), P.surface700, 0.0f);
+      else if (hov) dl->AddRectFilled(ImVec2(l, p.y + 1), ImVec2(r, p.y + height - 1), theme::mix(P.field, P.surface700, 0.5f), 0.0f);
+      if (i > 0) dl->AddLine(ImVec2(l - 0.5f, p.y + 1), ImVec2(l - 0.5f, p.y + height - 1), ImGui::GetColorU32(ImGuiCol_Border));
+    } else if (look::styled()) {
       if (on || hov) look::hookFace(dl, q, ImVec2(q.x + w, q.y + height - 4), std::max(1.0f, theme::kRadius - 1), on ? look::On : look::Hover, P.hot, false);
     } else if (on)
       dl->AddRectFilled(q, ImVec2(q.x + w, q.y + height - 4), onBg, std::max(1.0f, theme::kRadius - 1));
     else if (hov)
       dl->AddRectFilled(q, ImVec2(q.x + w, q.y + height - 4), P.surface700, std::max(1.0f, theme::kRadius - 1));
     ImVec2 ts = ImGui::CalcTextSize(labels[i], nullptr, true);
-    const ImU32 onFg = P.hot;
+    const ImU32 onFg = tabs ? P.text : P.hot;
     if (ts.x > w - 6) {  // J-55: a longer translation is fitted to its segment (full text on hover)
       const std::string shown(labels[i], ImGui::FindRenderedTextEnd(labels[i]));
       theme::textEllipsis(dl, ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(std::round(q.x + 3), std::round(q.y + (height - 4 - ts.y) * 0.5f)),
@@ -1265,6 +1281,7 @@ bool BeginCombo(const char* id, const char* preview, float width) {
 
 std::string windowTitle(const char* english) {
   // ImHashStr restarts at "###", so "Mixer" and "Mischpult###Mixer" share one id.
+  if (std::strstr(english, "###")) return i18n::tr(english);  // a shown name of its own: "Pads###Live pads"
   return std::string(i18n::tr(english)) + "###" + english;
 }
 
@@ -1430,6 +1447,25 @@ void drawToggleField(ImDrawList* dl, ImVec2 a, ImVec2 b, int state, bool hovered
 }
 
 bool toggleFields() { return GImGuiGridlineToggleW > 0 && !layoutui::inBaseStyle(); }
+
+bool ToggleRow(const char* label, bool* v) {
+  ImGuiWindow* w = ImGui::GetCurrentWindow();
+  if (!toggleFields() || w->DC.IsSameLine) return ImGui::Checkbox(label, v);
+  const float x0 = ImGui::GetCursorScreenPos().x, right = w->WorkRect.Max.x;
+  const float fieldX = std::round(right - kToggleFieldW);
+  if (fieldX - x0 < 60.0f) return ImGui::Checkbox(label, v);  // no room for a label column
+  ImGui::PushID(label);
+  const char* end = ImGui::FindRenderedTextEnd(label);
+  const std::string text(label, end);
+  TextFit(text.c_str(), fieldX - x0 - theme::kS3, ImGui::GetColorU32(ImGuiCol_Text), true);
+  const bool labelClicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);  // never while disabled (not hovered then)
+  ImGui::SameLine(0, 0);
+  ImGui::SetCursorScreenPos(ImVec2(fieldX, ImGui::GetCursorScreenPos().y));
+  bool changed = ImGui::Checkbox("##on", v);
+  if (labelClicked && !changed) *v = !*v, changed = true;  // the label toggles too, as a check box's does
+  ImGui::PopID();
+  return changed;
+}
 
 void BeginSection(const char* caption, float width) {
   if (cmdpalette::noting()) cmdpalette::noteSection(caption);  // K-93: settings groups

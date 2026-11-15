@@ -208,7 +208,8 @@ void testBundles(const std::string& dir) {
   const std::vector<std::string> got = vst3::packagesOrInside(found, win);
   const std::set<std::string> have(got.begin(), got.end());
   for (const auto& g : got) std::printf("found: %s\n", g.c_str());
-  expect(have.count((vendor / "One.vst3").u8string()) && have.count((vendor / "Two.vst3").u8string()) && !have.count(vendor.u8string()),
+  // (the plugins found inside come from the folder search, which writes paths with forward slashes)
+  expect(have.count((vendor / "One.vst3").generic_u8string()) && have.count((vendor / "Two.vst3").generic_u8string()) && !have.count(vendor.u8string()),
          "search: a folder of plugins named *.vst3 is searched inside");
   expect(have.count(sdk.u8string()) && have.count(renamed.u8string()) && have.count(arm.u8string()),
          "search: bundles stay as they are (one without this processor's binary too: it fails with the reason)");

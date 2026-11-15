@@ -1795,7 +1795,7 @@ void playlistOptionsMenu(App& a, int part) {
     if (ImGui::MenuItem(i18n::tr("End it at the song position"), nullptr, false, pos > 0)) setLiveArea(a, pos);
     if (ImGui::MenuItem(i18n::tr("Remove the live area"), nullptr, false, s.live.areaEnd > 0)) setLiveArea(a, 0);
     ImGui::Separator();
-    ImGui::MenuItem(i18n::tr("Live pads window"), nullptr, &a.showLivePads);
+    ImGui::MenuItem(i18n::tr("Pads window"), nullptr, &a.showLivePads);
     ImGui::EndMenu();
   }
   }

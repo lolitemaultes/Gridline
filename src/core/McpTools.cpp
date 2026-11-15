@@ -11,8 +11,11 @@
 #include <filesystem>
 #include "MeterEdit.h"
 #include "Automation.h"
+#include "Arrangements.h"
 #include "Groove.h"
+#include "StageRoomOps.h"
 #include "Mcp.h"
+#include "McpInternal.h"
 #include "MidiFile.h"
 #include "Params.h"
 #include "PluginBrand.h"
@@ -31,10 +34,8 @@ namespace gl::mcp {
 
 namespace fs = std::filesystem;
 
-namespace {
+namespace detail {  // K-281: shared with McpMore.cpp (McpInternal.h)
 
-constexpr size_t kMaxNameLen = 256;
-constexpr size_t kMaxChannels = 999, kMaxClips = 100000, kMaxAutomation = 10000, kMaxMarkers = 10000;
 
 // ---------------------------------------------------------------- schema ----
 Json prop(const char* type, const std::string& desc) { return jobj({{"type", jstr(type)}, {"description", jstr(desc)}}); }
@@ -44,13 +45,13 @@ Json intP(const std::string& desc, double lo, double hi) {
   j.object["maximum"] = jnum(hi);
   return j;
 }
-Json numP(const std::string& desc, double lo = NAN, double hi = NAN) {
+Json numP(const std::string& desc, double lo, double hi) {
   Json j = prop("number", desc);
   if (!std::isnan(lo)) j.object["minimum"] = jnum(lo);
   if (!std::isnan(hi)) j.object["maximum"] = jnum(hi);
   return j;
 }
-Json strP(const std::string& desc, size_t maxLen = kMaxNameLen) {
+Json strP(const std::string& desc, size_t maxLen) {
   Json j = prop("string", desc);
   j.object["maxLength"] = jnum(static_cast<double>(maxLen));
   return j;
@@ -76,7 +77,7 @@ Json arrP(const std::string& desc, Json items, size_t maxItems) {
   j.object["maxItems"] = jnum(static_cast<double>(maxItems));
   return j;
 }
-Json objSchema(std::vector<std::pair<std::string, Json>> props, std::vector<std::string> required = {}) {
+Json objSchema(std::vector<std::pair<std::string, Json>> props, std::vector<std::string> required) {
   Json s = jobj({{"type", jstr("object")}, {"additionalProperties", jbool(false)}});
   Json p = Json::makeObject();
   for (auto& [k, v] : props) p.object[k] = std::move(v);
@@ -89,25 +90,15 @@ Json objSchema(std::vector<std::pair<std::string, Json>> props, std::vector<std:
   return s;
 }
 
-// Common argument descriptions.
-const char* kChannelD = "Channel number in the channel rack (1 = first)";
-const char* kPatternD = "Pattern number (1 = first)";
-const char* kMixerD = "Mixer track: 0 = master, 1.. = inserts";
-const char* kSlotD = "Effect slot of the mixer track (1..10)";
-const char* kParamD =
-    "Parameter: a name (\"volume\", \"pan\", \"mute\", \"pitch\" for channels; \"volume\", \"pan\", \"stereo\", \"mute\", "
-    "\"eqLowGain\" ... for mixer tracks; \"mix\", \"enabled\" for effect slots; \"tempo\", \"swing\", \"masterPitch\" for the song), "
-    "a plugin parameter number (\"1\" = first, see get_parameters) or a plugin parameter's name";
-
 // ------------------------------------------------------------- arguments ----
 bool has(const Json& a, const char* k) { return a.find(k) != nullptr; }
-long long argInt(const Json& a, const char* k, long long d = 0) {
+long long argInt(const Json& a, const char* k, long long d) {
   const Json* v = a.find(k);
   return v && v->is(Json::Type::Number) ? static_cast<long long>(std::llround(v->number)) : d;
 }
-double argNum(const Json& a, const char* k, double d = 0) { return a.num(k, d); }
-std::string argStr(const Json& a, const char* k, const std::string& d = "") { return a.text(k, d); }
-bool argBool(const Json& a, const char* k, bool d = false) {
+double argNum(const Json& a, const char* k, double d) { return a.num(k, d); }
+std::string argStr(const Json& a, const char* k, const std::string& d) { return a.text(k, d); }
+bool argBool(const Json& a, const char* k, bool d) {
   const Json* v = a.find(k);
   return v && v->is(Json::Type::Bool) ? v->boolean : d;
 }
@@ -221,11 +212,6 @@ bool presetByName(const Environment& env, const std::string& type, const std::st
 }
 
 // ------------------------------------------------------------- parameters ----
-struct ParamTarget {
-  enum Kind { Song, Channel, Mixer, Slot } kind = Song;
-  ObjectId owner = kNoId;
-  int slot = -1;
-};
 bool targetOf(const Song& s, const Json& a, ParamTarget& t, std::string& err) {
   if (has(a, "slot")) {
     if (!has(a, "mixer")) {
@@ -438,7 +424,46 @@ double songSeconds(const Song& s) {
   return tm.secondsAt(static_cast<double>(s.lengthTicks()));
 }
 
-}  // namespace
+// K-281: a note with every property the project file knows (bend / pressure / timbre point
+// times in beats from the note start, like every other time here; tracker cells left out).
+Json noteJson(const Song& s, const Note& n) {
+  Json j = jobj({{"start", beatsJ(s, n.start)}, {"length", beatsJ(s, n.length)}, {"pitch", jnum(n.pitch)}, {"velocity", jnum(n.velocity)}});
+  Json extra = Json::makeObject();
+  noteExtrasToJson(n, extra);
+  extra.object.erase("trk");
+  for (const char* lane : {"bend", "pressure", "timbre"})
+    if (auto b = extra.object.find(lane); b != extra.object.end() && b->second.is(Json::Type::Array))
+      for (Json& pt : b->second.array)
+        if (pt.is(Json::Type::Array) && !pt.array.empty()) pt.array[0] = jnum(round4(pt.array[0].number / std::max(1, s.ppq)));
+  for (auto& [k, v] : extra.object) j.object[k] = v;
+  return j;
+}
+
+// K-281: a note from a tool argument: start / length in beats, the other properties as noteJson
+// gives them (every property the project file knows).
+Note noteFromArgs(const Song& s, const Json& n) {
+  Note x;
+  Json extra = n;
+  for (const char* k : {"start", "length", "pitch", "velocity"}) extra.object.erase(k);
+  for (const char* lane : {"bend", "pressure", "timbre"})
+    if (auto b = extra.object.find(lane); b != extra.object.end() && b->second.is(Json::Type::Array))
+      for (Json& pt : b->second.array) {
+        if (pt.is(Json::Type::Object))  // {"time": beats, "value": v, "curve": c, "tension": t}
+          pt = jarr({jnum(pt.num("time")), jnum(pt.num("value")), jnum(pt.num("curve")), jnum(pt.num("tension"))});
+        if (pt.is(Json::Type::Array) && !pt.array.empty() && pt.array[0].is(Json::Type::Number))
+          pt.array[0] = jnum(pt.array[0].number * std::max(1, s.ppq));
+      }
+  noteExtrasFromJson(extra, x);
+  x.start = toTicks(s, argNum(n, "start"));
+  x.length = std::max<Tick>(1, toTicks(s, argNum(n, "length", 1.0)));
+  x.pitch = static_cast<int>(std::clamp<long long>(argInt(n, "pitch", 60), 0, 127));
+  x.velocity = static_cast<int>(std::clamp<long long>(argInt(n, "velocity", 100), 0, 127));
+  return x;
+}
+
+}  // namespace detail
+
+using namespace detail;
 
 Json projectSummary(const Environment& env) {
   const Song& s = env.doc.song();
@@ -491,6 +516,21 @@ Json projectSummary(const Environment& env) {
   j.object["patterns"] = pats;
   j.object["mixer"] = mix;
   j.object["markers"] = marks;
+  {  // K-281: Stage rooms, arrangements, the transport and the selection
+    Json rooms = Json::makeArray();
+    for (int i = 0; i < roomops::roomCount(s) && i < 200; ++i)
+      rooms.array.push_back(jobj({{"room", jnum(i + 1)}, {"name", jstr(roomops::roomName(s, i))}, {"tracks", jnum(static_cast<double>(roomops::roomTracks(s, i).size()))}}));
+    j.object["stageRooms"] = rooms;
+    Json arr = Json::makeArray();
+    for (int i = 0; i < arrangementCount(s) && i < 200; ++i)
+      arr.array.push_back(jobj({{"arrangement", jnum(i + 1)}, {"name", jstr(arrangementName(s, i))}, {"current", jbool(i == s.currentArrangement)}}));
+    j.object["arrangements"] = arr;
+    Json t = jobj({{"playing", jbool(env.host.playing())}, {"position", beatsJ(s, env.host.position())}});
+    if (const int p = s.patternIndex(env.host.currentPattern()); p >= 0) t.object["pattern"] = jnum(p + 1);
+    j.object["transport"] = t;
+    j.object["appConnected"] = jbool(env.app.available());
+    j.object["help"] = jstr("call help for the tool families, paths and examples");
+  }
   return j;
 }
 
@@ -559,16 +599,6 @@ ToolResult tListPatterns(Environment& env, const Json&) {
   Json list = Json::makeArray();
   for (size_t i = 0; i < s.patterns.size(); ++i) list.array.push_back(patternJson(s, i));
   return ok(jobj({{"patterns", list}}), std::to_string(s.patterns.size()) + " patterns");
-}
-
-Json noteJson(const Song& s, const Note& n) {
-  Json j = jobj({{"start", beatsJ(s, n.start)}, {"length", beatsJ(s, n.length)}, {"pitch", jnum(n.pitch)}, {"velocity", jnum(n.velocity)}});
-  if (n.pan) j.object["pan"] = jnum(n.pan);
-  if (n.fine) j.object["fine"] = jnum(n.fine);
-  if (n.muted) j.object["muted"] = jbool(true);
-  if (n.slide) j.object["slide"] = jbool(true);
-  if (n.porta) j.object["porta"] = jbool(true);
-  return j;
 }
 
 ToolResult tGetPattern(Environment& env, const Json& a) {
@@ -1000,19 +1030,7 @@ ToolResult tSetNotes(Environment& env, const Json& a) {
   const std::string mode = argStr(a, "mode", "replace");
   if (mode == "add")
     if (auto it = p->notes.find(c->id); it != p->notes.end()) notes = it->second;
-  for (const auto& n : in->array) {
-    Note x;
-    x.start = toTicks(s, argNum(n, "start"));
-    x.length = std::max<Tick>(1, toTicks(s, argNum(n, "length", 1.0)));
-    x.pitch = static_cast<int>(argInt(n, "pitch", 60));
-    x.velocity = static_cast<int>(argInt(n, "velocity", 100));
-    x.pan = static_cast<int>(argInt(n, "pan", 0));
-    x.fine = static_cast<int>(argInt(n, "fine", 0));
-    x.muted = argBool(n, "muted");
-    x.slide = argBool(n, "slide");
-    x.porta = argBool(n, "porta");
-    notes.push_back(x);
-  }
+  for (const auto& n : in->array) notes.push_back(noteFromArgs(s, n));
   const size_t count = notes.size();
   const ObjectId pid = p->id, cid = c->id;
   if (!d.setNotes(pid, cid, std::move(notes), "edit notes")) return fail("could not set the notes");
@@ -1097,6 +1115,12 @@ ToolResult tAddAutomation(Environment& env, const Json& a) {
     AutoPoint x;
     x.pos = std::max<Tick>(0, toTicks(d.song(), argNum(p, "position")));
     x.value = static_cast<float>(std::clamp(argNum(p, "value"), 0.0, 1.0));
+    x.tension = static_cast<float>(std::clamp(argNum(p, "tension"), -1.0, 1.0));  // K-281
+    if (has(p, "shape")) {
+      static const char* shapes[] = {"curve", "s_curve", "hold", "stairs", "smooth", "pulse", "wave", "curve2", "curve3", "s_curve2", "s_curve3", "half_sine", "smooth_stairs"};
+      for (size_t k = 0; k < sizeof shapes / sizeof shapes[0]; ++k)
+        if (argStr(p, "shape") == shapes[k]) x.shape = static_cast<AutoShape>(k);
+    }
     pts.push_back(x);
   }
   std::stable_sort(pts.begin(), pts.end(), [](const AutoPoint& x, const AutoPoint& y) { return x.pos < y.pos; });
@@ -1535,7 +1559,16 @@ std::vector<Tool> buildTools() {
                              {"fine", intP("Fine pitch in cents", -1200, 1200)},
                              {"muted", boolP("Kept but not played")},
                              {"slide", boolP("Slide note")},
-                             {"porta", boolP("Glide from the previous note")}},
+                             {"porta", boolP("Glide from the previous note")},
+                             {"release", intP("Release velocity (default 64)", 0, 127)},
+                             {"modX", intP("Note modulation X 0..255 (128 = centre; samplers: cutoff)", 0, 255)},
+                             {"modY", intP("Note modulation Y 0..255 (128 = centre; samplers: resonance)", 0, 255)},
+                             {"color", intP("Colour group 0..15 (slide notes glide notes of their own colour)", 0, 15)},
+                             {"group", intP("Note group (0 = none): grouped notes are selected together", 0, 1000000)},
+                             {"step", boolP("A channel rack step shown in the piano roll (plays exactly like the step)")},
+                             {"bend", arrP("Pitch bend line: points [time in beats from the note start, semitones, curve 0.., tension -1..1]", prop("array", "one point"), 256)},
+                             {"pressure", arrP("Per-note pressure (MPE): points [time in beats, 0..1, curve, tension]", prop("array", "one point"), 256)},
+                             {"timbre", arrP("Per-note timbre (MPE): points [time in beats, -0.5..0.5, curve, tension]", prop("array", "one point"), 256)}},
                             {"start", "pitch"});
   auto targetProps = [](bool withValue) {
     std::vector<std::pair<std::string, Json>> p = {
@@ -1701,7 +1734,11 @@ std::vector<Tool> buildTools() {
       .destructive = true;
   {
     auto p = targetProps(false);
-    Json pt = objSchema({{"position", numP("Beats from the clip start", 0, 1e7)}, {"value", numP("0..1 of the parameter's range", 0, 1)}}, {"position", "value"});
+    Json pt = objSchema({{"position", numP("Beats from the clip start", 0, 1e7)},
+                         {"value", numP("0..1 of the parameter's range", 0, 1)},
+                         {"tension", numP("Curve tension of the segment ending here", -1, 1)},
+                         {"shape", enumP("Segment shape (edit_automation has the same)", {"curve", "s_curve", "hold", "stairs", "smooth", "pulse", "wave", "curve2", "curve3", "s_curve2", "s_curve3", "half_sine", "smooth_stairs"})}},
+                        {"position", "value"});
     p.push_back({"points", arrP("Automation points", pt, 10000)});
     p.push_back({"name", strP("Clip name (default: the parameter's name)")});
     p.push_back({"track", intP("Also place the clip on this playlist track", 1, kMaxPlaylistTracks)});
@@ -1801,6 +1838,7 @@ std::vector<Tool> buildTools() {
       "Saves the project to its file, or to a new .gridline path inside the project or export folder.",
       objSchema({{"path", strP("Save as this file (relative to the project folder)", 1024)}}), false, tSave)
       .writesFiles = true;
+  addMoreTools(v);  // K-281: McpMore.cpp
   for (auto& t : v) {
     if (t.writesFiles || t.prepare) t.grouped = false;
     if (t.prepare && !t.run)  // the same work inside the call (no worker)

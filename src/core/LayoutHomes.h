@@ -11,6 +11,7 @@
 // Pure data, no UI. Per person: a layout is never part of a project, so collaborators on
 // different layouts see the same project with each item in their own layout's home.
 #pragma once
+#include <cstdint>
 #include <string>
 #include <vector>
 #include "LayoutPreset.h"

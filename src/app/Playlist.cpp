@@ -84,6 +84,14 @@ namespace gl {
 using theme::pal;
 
 namespace {
+// A clip's title face: regular in Live, as the refs' arrangement clips (019, 141, 093); bold elsewhere.
+ImFont* clipTitleFont(App& a) {
+  ImFont* f = livelook::active(a) ? a.fontRegular : a.fontBold;
+  return f ? f : ImGui::GetFont();
+}
+}  // namespace
+
+namespace {
 
 // K-24: the vertical zoom: the base track height's range, one Alt+wheel
 // notch's factor, and the scroller thumbs' shortest lengths (their ends are
@@ -1538,7 +1546,7 @@ void drawPlaylist(App& a) {
       };
       if (zx - fh - 8 > barX + 8) {  // the pads grid beside the tracks
         ImGui::SetCursorScreenPos(ImVec2(zx - fh - 8, ImGui::GetCursorScreenPos().y));
-        if (ui::IconButton("##plgrid", ui::Icon::Rack, a.showLivePads, fh, hintWithKeyPl("Live pads beside the tracks", "view.toggleMain").c_str()))
+        if (ui::IconButton("##plgrid", ui::Icon::Rack, a.showLivePads, fh, hintWithKeyPl("Pads beside the tracks", "view.toggleMain").c_str()))
           layoutui::toggleMainView(a);
         ImGui::SameLine(0, 8);
       }
@@ -2588,7 +2596,7 @@ void drawPlaylist(App& a) {
     hg.x0 = a0.x, hg.y0 = a0.y, hg.x1 = a1.x, hg.y1 = a1.y, hg.headH = headH;
     if (glyph) hg.setMenu(tx0 + 7);
     if (nameShown && nameMaxW > 0) {
-      ImFont* nf = a.fontBold ? a.fontBold : ImGui::GetFont();
+      ImFont* nf = clipTitleFont(a);
       hg.setName(namePos.x, nf->CalcTextSizeA(nameSize, FLT_MAX, 0.0f, title).x, nameMaxW);
     }
     devGeom.clips.push_back({static_cast<unsigned>(c.id), hg});
@@ -2604,7 +2612,7 @@ void drawPlaylist(App& a) {
       dl->AddRectFilled(ImVec2(hg.nameX0, a0.y + 1.5f), ImVec2(hg.nameX1, a0.y + headH - 0.5f), theme::withAlpha(theme::contrastText(headSolid), 0.16f),
                         theme::kRadiusSm);
     if (nameShown)
-      theme::textEllipsis(dl, a.fontBold, nameSize, namePos, nameMaxW, theme::contrastText(headSolid), title);
+      theme::textEllipsis(dl, clipTitleFont(a), nameSize, namePos, nameMaxW, theme::contrastText(headSolid), title);
     if (nameShown && c.kind == ClipKind::Pattern && !mm.constant() && headH >= 9) {
       // K-179: the pattern's own meter when it differs from the section the clip starts in.
       if (const Pattern* bp = s.pattern(c.pattern)) {
@@ -2613,7 +2621,7 @@ void drawPlaylist(App& a) {
         if (bn != g.num || bd != g.den) {
           char badge[16];
           std::snprintf(badge, sizeof badge, "%d/%d", bn, bd);
-          ImFont* nf = a.fontBold ? a.fontBold : ImGui::GetFont();
+          ImFont* nf = clipTitleFont(a);
           const float nw = std::min(nameMaxW, nf->CalcTextSizeA(nameSize, FLT_MAX, 0.0f, title).x);
           const float bw = a.fontMono->CalcTextSizeA(nameSize, FLT_MAX, 0.0f, badge).x;
           const float bx = namePos.x + nw + 6;
@@ -2625,7 +2633,7 @@ void drawPlaylist(App& a) {
     if (nameShown && c.kind == ClipKind::Pattern && clipplay::active(c) && headH >= 9) {
       // K-112b3: the clip's playback settings (transpose, velocity, delay, quantise) after its name, in every layout.
       const std::string tg = clipplay::tag(c);
-      ImFont* nf = a.fontBold ? a.fontBold : ImGui::GetFont();
+      ImFont* nf = clipTitleFont(a);
       const float nw = std::min(nameMaxW, nf->CalcTextSizeA(nameSize, FLT_MAX, 0.0f, title).x);
       const float tx = namePos.x + nw + 6;
       if (titleR - tx > 24)
@@ -2873,7 +2881,7 @@ void drawPlaylist(App& a) {
       if (titleR - tx0 > 12) {
         const float nameSize = std::min(theme::kFontCaption, headH - 2);
         const ImVec2 namePos(tx0 + (glyph ? 15 : 6), a0.y + std::max(0.0f, (headH - theme::kFontCaption) * 0.5f));
-        theme::textEllipsis(dl, a.fontBold, nameSize, namePos, titleR - tx0 - (glyph ? 19 : 10), theme::contrastText(headSolid), title.c_str());
+        theme::textEllipsis(dl, clipTitleFont(a), nameSize, namePos, titleR - tx0 - (glyph ? 19 : 10), theme::contrastText(headSolid), title.c_str());
       }
       if (dot) {
         const float pulse = v.done ? 0.6f : 0.55f + 0.45f * static_cast<float>(std::fabs(std::sin(a.now * 4)));
@@ -3648,8 +3656,13 @@ void drawPlaylist(App& a) {
   const float vThumbY = vb0.y + (totalH > gridH ? (vb1.y - vb0.y - vThumbH) * std::clamp(st.scrollY / (totalH - gridH), 0.0f, 1.0f) : 0.0f);  // J-67: overscroll keeps the thumb in its rail
   const float hThumbW = std::max(kThumbMinH, (hb1.x - hb0.x) * std::min(1.0f, gridW / std::max(1.0f, contentW)));
   const float hThumbX = hb0.x + (contentW > gridW ? (hb1.x - hb0.x - hThumbW) * std::clamp(st.scrollX / (contentW - gridW), 0.0f, 1.0f) : 0.0f);
-  const bool overV = hovered && io.MousePos.x >= vb0.x && io.MousePos.x < vb1.x + 2 && io.MousePos.y >= vb0.y && io.MousePos.y < vb1.y;
-  const bool overH = hovered && io.MousePos.x >= hb0.x && io.MousePos.x < hb1.x && io.MousePos.y >= (lg ? hb0.y : origin.y) && io.MousePos.y < (lg ? hb1.y + 1 : rLaneY);
+  // K-287: the Logic layout's rails lie over the clips: there a press on a clip is the clip's, and
+  // only the thumb itself takes it (a press on the bare rail over a clip paged the view).
+  const bool railFree = !lg || hoverClip == kNoId;
+  const bool overV = hovered && io.MousePos.x >= vb0.x && io.MousePos.x < vb1.x + 2 && io.MousePos.y >= vb0.y && io.MousePos.y < vb1.y &&
+                     (railFree || (io.MousePos.y >= vThumbY && io.MousePos.y < vThumbY + vThumbH && totalH > gridH));
+  const bool overH = hovered && io.MousePos.x >= hb0.x && io.MousePos.x < hb1.x && io.MousePos.y >= (lg ? hb0.y : origin.y) && io.MousePos.y < (lg ? hb1.y + 1 : rLaneY) &&
+                     (railFree || (io.MousePos.x >= hThumbX && io.MousePos.x < hThumbX + hThumbW && contentW > gridW));
   // K-24: the thumbs' ends are zoom handles (a third of a short thumb at most).
   const float vCap = std::min(7.0f, vThumbH / 3.0f), hCap = std::min(8.0f, hThumbW / 3.0f);
   int overEnd = 0;
@@ -3909,6 +3922,10 @@ void drawPlaylist(App& a) {
   const bool hoverAuto = hc && hc->kind == ClipKind::Automation && hoverBody;
   const bool shiftDrag = io.KeyShift && !io.KeyCtrl;               // Draw: Shift+drag a clip copies it
   const bool slipDrag = io.KeyCtrl && io.KeyShift;                 // Draw: Ctrl+Shift+drag slips the content
+  // K-287: in the Tracks and Live layouts the pointer (Select; Live: Draw mode off) handles a clip as
+  // Draw does (move, edges, Shift+drag copy, slip); only a press on empty space drags a box. Studio's
+  // Select tool keeps its box everywhere.
+  const Tool clipTool = (lg || liveLook) && st.tool == Tool::Select && hc ? Tool::Draw : st.tool;
   // K-114: Ctrl (Cmd on macOS) while dragging a clip's edge loops its content
   // (read live during the drag); a plain edge drag extends or trims it. An
   // edge grab wins over Ctrl+click select and Ctrl+Shift slip.
@@ -3916,14 +3933,14 @@ void drawPlaylist(App& a) {
   // there turns a click into a right-click, so it must not count here.
   const bool loopMod = io.KeyCtrl;
   const bool onEdge = hc && (hoverEdge || hoverLeftEdge) && hoverZone != clipheader::Zone::Menu;
-  const bool loopEdgeGrab = st.tool == Tool::Draw && onEdge && loopMod &&
+  const bool loopEdgeGrab = clipTool == Tool::Draw && onEdge && loopMod &&
                             !(hc->track >= 0 && hc->track < nTracks && s.tracks[static_cast<size_t>(hc->track)].locked);
   if (hovered && inGrid) {
     if (hoverPoint >= 0 || hoverHandle >= 0)
       ImGui::SetMouseCursor(hoverHandle >= 0 ? ImGuiMouseCursor_ResizeNS : ImGuiMouseCursor_Hand);
     else if (hoverMenuGlyph != kNoId)
       ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-    else if (hoverClip != kNoId && st.tool == Tool::Draw)
+    else if (hoverClip != kNoId && clipTool == Tool::Draw)
       ImGui::SetMouseCursor(hoverEdge || hoverLeftEdge ? ImGuiMouseCursor_ResizeEW : ImGuiMouseCursor_ResizeAll);
     else if (st.tool == Tool::Slip && hoverClip != kNoId)
       ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
@@ -3931,7 +3948,7 @@ void drawPlaylist(App& a) {
       ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
     std::string where = "Bar " + std::to_string(mm.barIndex(std::max<Tick>(0, tickAt(m.x))) + 1) + " · " +
                         playlistTrackName(s, static_cast<size_t>(trackAt(m.y)));
-    if (liveMode && hc && inLiveArea(s, *hc))
+    if (liveMode && !liveLook && hc && inLiveArea(s, *hc))
       a.setHint(where + "   (live: click to launch on the track's launch grid \xC2\xB7 right-click to stop the track)");
     else if (hc && hc->kind == ClipKind::Pattern && hoverCurve.owner != kNoId && hoverBody) {  // J-173
       const Pattern* hp = s.pattern(hc->pattern);
@@ -3944,9 +3961,9 @@ void drawPlaylist(App& a) {
       a.setHint(where + "   (click: clip menu)");
     else if (hc && hoverZone == clipheader::Zone::Name)  // J-142
       a.setHint(where + "   " + i18n::tr("(right-click the name: clip menu \xC2\xB7 right-click elsewhere on the clip: delete)"));
-    else if (hc && st.tool == Tool::Draw && onEdge)  // K-114
+    else if (hc && clipTool == Tool::Draw && onEdge)  // K-114
       a.setHint(where + "   " + loopEdgeHint(*hc, hoverEdge, loopMod, st.stretchResize));
-    else if (hc && st.tool == Tool::Draw)
+    else if (hc && clipTool == Tool::Draw)
       a.setHint(where + std::string("   (drag: move · edges: resize / trim") + (hc->kind == ClipKind::Audio ? (st.stretchResize ? " (stretching)" : "") : "") +
                 " · " + kLoopKey + "+drag an edge: loop · Shift+drag: copy · Ctrl+Shift+drag: slip content · Esc / right-click while dragging: cancel · double-click: " +
                 (hc->kind == ClipKind::Audio ? "channel settings" : hc->kind == ClipKind::Automation ? "edit" : "open") + " · right-click: delete)");
@@ -4398,13 +4415,15 @@ void drawPlaylist(App& a) {
     }
     lClick = rClick = false;
   }
-  // Live mode: clicking a clip of the live area launches it (held = gate pads).
+  // Live mode: clicking a clip of the live area launches it (held = gate pads). K-287: not in the Live
+  // layout, whose session grid launches; its arrangement edits those clips as any other.
   static ObjectId liveHeld = kNoId;
-  if (liveMode && lClick && inGrid && hc && inLiveArea(s, *hc)) {
+  const bool launchHere = liveMode && !liveLook;
+  if (launchHere && lClick && inGrid && hc && inLiveArea(s, *hc)) {
     a.engine.launchClip(hc->id);
     liveHeld = hc->id;
     lClick = false;
-  } else if (liveMode && rClick && inGrid && hc && inLiveArea(s, *hc)) {
+  } else if (launchHere && rClick && inGrid && hc && inLiveArea(s, *hc)) {
     a.engine.stopLiveTrack(hc->track);
     rClick = false;
   }
@@ -4445,7 +4464,7 @@ void drawPlaylist(App& a) {
   std::vector<char> lockedTracks(static_cast<size_t>(nTracks), 0);
   for (int k = 0; k < nTracks; ++k) lockedTracks[static_cast<size_t>(k)] = s.tracks[static_cast<size_t>(k)].locked ? 1 : 0;
   auto trackLocked = [&](int tr) { return tr >= 0 && tr < nTracks && lockedTracks[static_cast<size_t>(tr)]; };
-  const bool editTool = st.tool != Tool::Select && st.tool != Tool::Play && st.tool != Tool::Zoom && !io.KeyCtrl;
+  const bool editTool = clipTool != Tool::Select && st.tool != Tool::Play && st.tool != Tool::Zoom && !io.KeyCtrl;
   if (inGrid && editTool && trackLocked(trackAt(m.y))) {
     if (hovered) a.setHint("This track is locked (track menu \xE2\x86\x92 Lock)");
     if (lClick && hoverMenuGlyph == kNoId) lClick = false;
@@ -4878,7 +4897,7 @@ void drawPlaylist(App& a) {
           }
         }
       }
-    } else if (inGrid && lClick && hc && ((!io.KeyCtrl && st.tool == Tool::Slip) || (st.tool == Tool::Draw && slipDrag && !loopEdgeGrab))) {
+    } else if (inGrid && lClick && hc && ((!io.KeyCtrl && st.tool == Tool::Slip) || (clipTool == Tool::Draw && slipDrag && !loopEdgeGrab))) {
       cg.kind = ClipGesture::Slip;  // every clip kind (audio: its sample position)
     } else if (inGrid && lClick && !io.KeyCtrl && st.tool == Tool::Slice) {
       cg.kind = ClipGesture::SliceLine;  // cut on release: the clicked clip, or every clip the vertical line crossed
@@ -4890,7 +4909,7 @@ void drawPlaylist(App& a) {
       cg.kind = ClipGesture::Play;
     } else if (inGrid && lClick && !io.KeyCtrl && st.tool == Tool::Zoom) {
       cg.kind = ClipGesture::Zoom;
-    } else if (inGrid && lClick && hoverAuto && st.tool == Tool::Draw && !io.KeyCtrl && !io.KeyShift && (hoverPoint >= 0 || hoverHandle >= 0)) {
+    } else if (inGrid && lClick && hoverAuto && clipTool == Tool::Draw && !io.KeyCtrl && !io.KeyShift && (hoverPoint >= 0 || hoverHandle >= 0)) {
       const AutomationClip* ac = s.automation(hc->source);
       cg.autoId = ac->id;
       if (hoverPoint >= 0) {
@@ -4901,7 +4920,7 @@ void drawPlaylist(App& a) {
         cg.point = hoverHandle;
         cg.baseTension = ac->points[static_cast<size_t>(hoverHandle)].tension;
       }
-    } else if (inGrid && lClick && hoverAuto && st.tool == Tool::Draw && !io.KeyCtrl && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+    } else if (inGrid && lClick && hoverAuto && clipTool == Tool::Draw && !io.KeyCtrl && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
       // Double-click on the curve: add a point there and keep dragging it.
       const AutomationClip* ac = s.automation(hc->source);
       const float headH = std::min(16.0f, (hOf(hc->track) - 4) * 0.45f);
@@ -4929,7 +4948,7 @@ void drawPlaylist(App& a) {
         } else if (hc->kind == ClipKind::Automation) {
           openAutomationEditor(a, hc->source, hc->id);  // J-5: automation clip editor
         }
-      } else if ((io.KeyCtrl || st.tool == Tool::Select) && !loopEdgeGrab) {  // (K-114: Ctrl on an edge loops it)
+      } else if ((io.KeyCtrl || clipTool == Tool::Select) && !loopEdgeGrab) {  // (K-114: Ctrl on an edge loops it)
         cg.kind = ClipGesture::Select;
         if (!io.KeyShift) st.selected.clear();
       } else if (st.tool == Tool::Erase) {
@@ -5789,11 +5808,40 @@ void drawLiveAudioClip(App& a, ObjectId id) {
       a.doc.editClip(id, "clip gain", [&](Clip& x) { x.gain = clipgain::fromDb(gainDb <= clipgain::kMinDb ? clipgain::kMinDb - 0.1 : gainDb); }, key);
     ui::Hint("The clip's gain (drag; Ctrl+click to type)");
     livelook::columnRow(a, i18n::tr("Pitch"), 1, 2);
-    float cents = c->pitch;
+    // K-112c (round 29): a semitone knob with its value beside it, and the cents under it, as the refs'
+    // clip view (037, 244). The clip keeps one pitch in cents (semitones x 100 plus the detune).
+    const int semis = static_cast<int>(std::lround(c->pitch / 100.0f));
+    const float detune = c->pitch - static_cast<float>(semis) * 100.0f;
+    {
+      const float r = std::floor(ImGui::GetFrameHeight() * 0.5f);
+      ParamDesc d;
+      d.name = i18n::tr("Pitch");
+      d.unit = "st";
+      d.min = -24;
+      d.max = 24;
+      d.def = 0;
+      double sv = semis;
+      bool rel = false;
+      ui::SetNextKnobStep(1);
+      if (ui::Knob("##apitchk", &sv, d, r, nullptr, true, &rel)) {
+        const float nc = static_cast<float>(std::lround(d.clamp(sv))) * 100.0f + detune;
+        a.doc.editClip(id, "clip pitch", [nc](Clip& x) { x.pitch = nc; }, key + 1);
+      }
+      if (rel) a.doc.endGesture();
+      ui::Hint("The clip's pitch in semitones, added to its channel's (drag)");
+      ImGui::SameLine(0, 4);
+      int st = semis;
+      ImGui::SetNextItemWidth(std::max(24.0f, halfW - 2 * r - 4));
+      if (ImGui::DragInt("##apitch", &st, 0.2f, -24, 24, "%d st"))
+        a.doc.editClip(id, "clip pitch", [&](Clip& x) { x.pitch = static_cast<float>(std::clamp(st, -24, 24)) * 100.0f + detune; }, key + 1);
+      ui::Hint("The clip's pitch in semitones (drag; Ctrl+click to type)");
+    }
+    livelook::columnRow(a, i18n::tr("Detune"), 0, 2);
+    float ct = detune;
     ImGui::SetNextItemWidth(halfW);
-    if (ImGui::DragFloat("##apitch", &cents, 1.0f, -2400.0f, 2400.0f, "%.0f ct"))
-      a.doc.editClip(id, "clip pitch", [&](Clip& x) { x.pitch = cents; }, key + 1);
-    ui::Hint("The clip's pitch in cents, added to its channel's (drag; Ctrl+click to type)");
+    if (ImGui::DragFloat("##adetune", &ct, 0.5f, -50.0f, 50.0f, "%.0f ct"))
+      a.doc.editClip(id, "clip pitch", [&](Clip& x) { x.pitch = static_cast<float>(semis) * 100.0f + std::clamp(ct, -50.0f, 50.0f); }, key + 1);
+    ui::Hint("The clip's fine pitch in cents (drag; Ctrl+click to type)");
     livelook::columnRow(a, i18n::tr("Fade in"), 0, 2);
     float fi = static_cast<float>(c->fadeIn * 1000.0), fo = static_cast<float>(c->fadeOut * 1000.0);
     ImGui::SetNextItemWidth(halfW);

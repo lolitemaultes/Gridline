@@ -9801,7 +9801,8 @@ bool ImGui::MenuItemEx(const char* label, const char* icon, const char* shortcut
                 RenderText(text_pos + ImVec2(offsets->OffsetIcon, 0.0f), icon);
             if (shortcut_w > 0.0f)
             {
-                PushStyleColor(ImGuiCol_Text, style.Colors[ImGuiCol_TextDisabled]);
+                // GRIDLINE PATCH (K-112c round 29): in Live a shortcut takes its label's colour (dimmed with it when disabled)
+                PushStyleColor(ImGuiCol_Text, style.Colors[GImGuiGridlineMenuLive ? ImGuiCol_Text : ImGuiCol_TextDisabled]);
                 LogSetNextTextDecoration("(", ")");
                 // GRIDLINE PATCH (K-112b): in the Tracks layout flush right, ending where a submenu's arrow ends
                 // (BeginMenuEx draws it from OffsetMark + 0.30 em, 0.80 em wide at 0.80 scale: about 0.80 em)

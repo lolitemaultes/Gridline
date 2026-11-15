@@ -298,7 +298,7 @@ View > Plugin picker	F8	view.pluginPicker	e-
 View > Project picker			e-
 View > Channel settings			e-
 View > Master chain			e-
-View > Live pads			e-
+View > Pads			e-
 View > Undo history	Ctrl+Cmd+Alt+Z	edit.history	e-
 View > Performance			e-
 View > Groove editor			e-

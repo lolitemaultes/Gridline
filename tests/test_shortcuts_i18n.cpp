@@ -343,7 +343,7 @@ void coverageTests() {
   expect(missing.empty(), "every tr() / N_() literal is in assets/i18n/gridline.pot");
 
   // J-61: window titles, notifications and canvas labels reach the catalogue.
-  for (const char* must : {"Playlist", "Mixer", "Channel rack", "Piano roll", "Browser", "Master chain", "Live pads", "Undo history",
+  for (const char* must : {"Playlist", "Mixer", "Channel rack", "Piano roll", "Browser", "Master chain", "Pads", "Undo history",
                            "Settings", "Performance", "Render", "Render cancelled", "Export failed", "Empty slot", "Current project",
                            "Plugin database", "Samples", "No recent projects"})
     expect(ids.count(must) == 1, (std::string("in the template: ") + must).c_str());

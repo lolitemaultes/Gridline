@@ -557,7 +557,7 @@ void drawRenderDialog(App& a) {
   ui::EndSection();
   ui::BeginSection("DESTINATION", colW);
   {
-    formLabel("Render to", 110);
+    formLabel("Render to", livelook::active(a) ? 132.0f : 110.0f);  // K-112c (round 32): on the value column in Clips
     const char* dests[] = {"Files", "Audio clip", "Loupe"};
     ui::Segmented("dest", dests, 3, &dlg.dest, 76);
     if (!files) {
@@ -650,38 +650,39 @@ void drawRenderDialog(App& a) {
     ui::Tooltip("Applied when writing 16 / 24-bit files");
     bool hq = true;
     ImGui::BeginDisabled();
-    ImGui::Checkbox(i18n::tr("HQ for all plugins (offline quality)"), &hq);
+    ui::ToggleRow(i18n::tr("HQ for all plugins (offline quality)"), &hq);
     ImGui::EndDisabled();
     bool noPoly = !s.render.polyphonyLimits;
-    if (ImGui::Checkbox(i18n::tr("Disable maximum polyphony"), &noPoly)) s.render.polyphonyLimits = !noPoly;
+    if (ui::ToggleRow(i18n::tr("Disable maximum polyphony"), &noPoly)) s.render.polyphonyLimits = !noPoly;
   }
   ui::EndSection();
   ui::BeginSection("MISCELLANEOUS", colW);
   {
     ImGui::BeginDisabled(!files);
-    ImGui::Checkbox(i18n::tr("Split mixer tracks"), &s.splitMixer);
+    ui::ToggleRow(i18n::tr("Split mixer tracks"), &s.splitMixer);
     ui::Tooltip("One file per mixer insert that carries sound (stems)");
     if (s.splitMixer) {
       ImGui::Indent(18);
-      ImGui::Checkbox(i18n::tr("Stems through the master effects"), &s.stemsMasterFx);
-      ImGui::Checkbox(i18n::tr("Also render the full mix"), &s.stemsIncludeMaster);
+      ui::ToggleRow(i18n::tr("Stems through the master effects"), &s.stemsMasterFx);
+      ui::ToggleRow(i18n::tr("Also render the full mix"), &s.stemsIncludeMaster);
       ImGui::Unindent(18);
     }
-    ImGui::Checkbox(i18n::tr("Split playlist tracks"), &s.splitPlaylist);
+    ui::ToggleRow(i18n::tr("Split playlist tracks"), &s.splitPlaylist);
     ui::Tooltip("One file per playlist track that holds clips");
-    ImGui::Checkbox(i18n::tr("Split playlist track groups"), &s.splitPlaylistGroups);  // J-31
+    ui::ToggleRow(i18n::tr("Split playlist track groups"), &s.splitPlaylistGroups);  // J-31
     ui::Tooltip("One file per playlist track group (a group track and the tracks it holds)");
     ImGui::EndDisabled();
-    ImGui::Checkbox(i18n::tr("Enable master effects"), &s.render.masterEffects);
-    ImGui::Checkbox(i18n::tr("Enable insert effects"), &s.render.insertEffects);
+    ui::ToggleRow(i18n::tr("Enable master effects"), &s.render.masterEffects);
+    ui::ToggleRow(i18n::tr("Enable insert effects"), &s.render.insertEffects);
     ImGui::BeginDisabled(!files);
-    ImGui::Checkbox(i18n::tr("Save tempo information (WAV)"), &s.tempoInfo);
-    ImGui::Checkbox(i18n::tr("Playlist markers as WAV cue points"), &s.markers);
+    ui::ToggleRow(i18n::tr("Save tempo information (WAV)"), &s.tempoInfo);
+    ui::ToggleRow(i18n::tr("Playlist markers as WAV cue points"), &s.markers);
     ImGui::EndDisabled();
-    ImGui::Checkbox(i18n::tr("Normalize"), &s.normalize);
+    ui::ToggleRow(i18n::tr("Normalize"), &s.normalize);
     if (s.normalize) {
-      // RN-09: to a peak level, or to an integrated loudness under a peak ceiling.
-      ImGui::SameLine();
+      // RN-09: to a peak level, or to an integrated loudness under a peak ceiling. K-112c: under the
+      // switch's row where the switch sits at the group's right edge (Live).
+      if (!ui::toggleFields()) ImGui::SameLine();
       ImGui::SetNextItemWidth(92);
       int kind = s.normalizeLoudness ? 1 : 0;
       static const char* kinds[] = {"Peak", "Loudness"};
@@ -874,16 +875,16 @@ void drawMidiImport(App& a) {
     }
     ui::EndSection();
     ui::BeginSection("OPTIONS", 430);
-    ImGui::Checkbox(i18n::tr("Tempo (and tempo changes as automation)"), &midiDlg.o.tempo);
-    ImGui::Checkbox(i18n::tr("Time signature and meter changes"), &midiDlg.o.timeSignature);
-    ImGui::Checkbox(i18n::tr("Markers"), &midiDlg.o.markers);
-    ImGui::Checkbox(i18n::tr("Volume / pan controllers as pattern automation"), &midiDlg.o.controllers);
-    ImGui::Checkbox(i18n::tr("Name channels after GM programs"), &midiDlg.o.programNames);
-    ImGui::Checkbox(i18n::tr("Place the pattern in the playlist"), &midiDlg.o.placeInPlaylist);
+    ui::ToggleRow(i18n::tr("Tempo (and tempo changes as automation)"), &midiDlg.o.tempo);
+    ui::ToggleRow(i18n::tr("Time signature and meter changes"), &midiDlg.o.timeSignature);
+    ui::ToggleRow(i18n::tr("Markers"), &midiDlg.o.markers);
+    ui::ToggleRow(i18n::tr("Volume / pan controllers as pattern automation"), &midiDlg.o.controllers);
+    ui::ToggleRow(i18n::tr("Name channels after GM programs"), &midiDlg.o.programNames);
+    ui::ToggleRow(i18n::tr("Place the pattern in the playlist"), &midiDlg.o.placeInPlaylist);
     {  // K-179: one pattern per meter section, each in that section's meter
       const bool can = midiDlg.o.timeSignature && midiDlg.o.placeInPlaylist;
       ImGui::BeginDisabled(!can);
-      ImGui::Checkbox(i18n::tr("Split into patterns at meter changes"), &midiDlg.o.splitAtMeterChanges);
+      ui::ToggleRow(i18n::tr("Split into patterns at meter changes"), &midiDlg.o.splitAtMeterChanges);
       ImGui::EndDisabled();
       ui::Hint("One pattern per meter section, each in its section's meter, placed one after another");
     }

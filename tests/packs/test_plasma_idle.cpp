@@ -422,6 +422,61 @@ void engineLetsInsertsRest() {
   expect(rv && rv->quiet >= 6 * kEsr - 1024, "the reverb on its track rests behind it (6 s of exact silence in)");
 }
 
+// In the engine with Rest silent instruments: the silent gap before a 1.6 s echo is not taken for
+// the end of the sound. The channel runs until Plasma itself sleeps, then rests; every echo plays.
+void engineRestKeepsEchoes() {
+  constexpr int kEsr = 48000;
+  PluginState st = defaultPluginState(pl::kType);
+  fx(st, 0, pl::FxDelay, {{"kParamWet", 100}, {"kParamFeedback", 20}, {"kParamBeatSync", 0}, {"kParamTimeL", 0.9}, {"kParamTimeR", 0.9}});
+  setP(st, pl::envP(0, pl::E_Sustain), 0.f);
+  setP(st, pl::envP(0, pl::E_Decay), 0.2f);
+  setP(st, pl::envP(0, pl::E_Release), 0.1f);
+  struct Out {
+    std::vector<float> L;
+    bool asleep = false;
+    uint64_t rested = 0;
+  };
+  auto render = [&](bool rest) {
+    Song s = makeEmptySong();
+    Channel ch;
+    ch.id = s.allocateId();
+    ch.name = "plasma";
+    ch.plugin = st;
+    ch.mixerTrack = s.mixer[1].id;
+    s.channels.push_back(ch);
+    ProgramBuilder b;
+    AudioEngine eng(kEsr);
+    eng.setRestInstruments(rest);
+    b.setSampleRate(kEsr);
+    eng.setProgram(b.build(s));
+    Out o;
+    auto rt = b.channelRuntime(ch.id);
+    if (!rt || !rt->gen) return o;
+    std::vector<float> L(512), R(512);
+    for (int i = 0; i < blocksFor(30); ++i) {
+      if (i == 0) rt->gen->noteOn(1, 60, 0.8f, 0);
+      if (i == blocksFor(0.1)) rt->gen->noteOff(1, 0);
+      std::fill(L.begin(), L.end(), 0.f), std::fill(R.begin(), R.end(), 0.f);
+      eng.process(L.data(), R.data(), 512);
+      o.L.insert(o.L.end(), L.begin(), L.end());
+    }
+    o.asleep = pl::asleep(rt->gen.get());
+    o.rested = rt->restBlocks.load();
+    return o;
+  };
+  const Out on = render(true), off = render(false);
+  double worst = 0, late = 0;
+  for (size_t i = 0; i < on.L.size() && i < off.L.size(); ++i) {
+    worst = std::max(worst, std::fabs(static_cast<double>(on.L[i]) - off.L[i]));
+    if (i > static_cast<size_t>(3 * kEsr)) late = std::max(late, std::fabs(static_cast<double>(off.L[i])));
+  }
+  std::printf("# engine long delay: echoes after 3 s peak %.4f, worst difference resting %.3g, rested %llu blocks, asleep %d\n", late, worst,
+              static_cast<unsigned long long>(on.rested), on.asleep ? 1 : 0);
+  expect(!on.L.empty() && on.L.size() == off.L.size() && late > 1e-3, "engine long delay: the echoes sound");
+  expect(worst < 1e-6, "engine long delay: resting instruments keeps every echo");
+  expect(on.asleep && on.rested > 0, "engine long delay: Plasma sleeps, then the channel rests");
+}
+
 }  // namespace
 
 void* operator new(std::size_t n) {
@@ -498,5 +553,6 @@ int main(int argc, char** argv) {
   parameterWakes();
   longDelayTailKept();
   engineLetsInsertsRest();
+  engineRestKeepsEchoes();
   return finish();
 }

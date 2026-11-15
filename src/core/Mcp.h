@@ -41,6 +41,10 @@
 #include "Json.h"
 #include "ProjectScript.h"
 
+namespace gl {
+class Settings;
+}
+
 namespace gl::mcp {
 
 inline constexpr const char* kLatestProtocol = "2025-06-18";
@@ -178,6 +182,32 @@ class JobRunner {
   uint64_t lastId_ = 0;
 };
 
+// ---- the app around the project (K-281) ---------------------------------------------
+// What only the running app can do: its commands (every row of the command palette: menu items,
+// keyboard commands, windows, settings pages, plugins), its windows and its settings. Empty in
+// the headless server (`gridline mcp`) and in tests that do not fill it.
+struct AppBridge {
+  struct Command {
+    std::string id;        // stable: "cmd:file.save", "menu:Tools/...", "win:Mixer", "set:...", "plug:gl.synth"
+    std::string kind;      // "command", "window", "setting", "plugin"
+    std::string label, path, shortcut, hint;
+    bool enabled = true, checkable = false, checked = false;
+  };
+  struct Window {
+    std::string name;
+    bool open = false;
+  };
+  std::function<std::vector<Command>()> commands;
+  // Runs a row now (during the frame). `queued` = it runs in the next frames (a keyboard
+  // command that needs its editor's focus). false + err when it cannot run.
+  std::function<bool(const std::string& id, bool& queued, std::string& err)> runCommand;
+  std::function<std::vector<Window>()> windows;
+  std::function<bool(const std::string& name, bool open, std::string& err)> showWindow;
+  Settings* settings = nullptr;                // the user's settings (nullptr: none)
+  std::function<void()> settingsChanged;       // saves them after an assistant changed one
+  bool available() const { return static_cast<bool>(commands); }
+};
+
 // ---- what the tools work on --------------------------------------------------------
 struct Environment {
   Environment(Document& d, script::ProjectHost& h) : doc(d), host(h) {}
@@ -207,6 +237,10 @@ struct Environment {
   std::function<double()> now;
   // Background jobs (renders, loudness, exports); the app sets background.
   JobRunner jobs;
+  // K-281: the running app (commands, windows, settings); empty headless.
+  AppBridge app;
+  // K-281: the transport tool may start and stop playback (the app: true).
+  bool allowTransport = true;
 
   Song snapshot() const { return songSnapshot ? songSnapshot() : doc.song(); }
   double clock() const;
@@ -230,6 +264,7 @@ struct Tool {
   bool writesFiles = false;
   bool destructive = false;
   bool grouped = true;    // false: the tool manages the undo stack itself (undo / redo)
+  bool checksEdits = false;  // K-281: edit permission is checked per inner call (batch)
   std::function<ToolResult(Environment&, const Json& args)> run;
   // Job tools (J-61): prepares on the calling thread (snapshot, paths; "" +
   // err when refused) and returns the work for a worker. `run` then runs
@@ -243,6 +278,14 @@ const Tool* findTool(const std::string& name);
 // Checks `args` against a tool's input schema (types, required, enums,
 // ranges, unknown keys). false + message when invalid.
 bool validateArgs(const Json& schema, const Json& args, std::string& err);
+
+// K-281: what assistants may do with one of the user's settings (get_settings / set_setting):
+// secrets are hidden, the switches that decide what assistants, scripts, the network and files may
+// do stay with the user.
+enum class SettingAccess { ReadWrite, ReadOnly, Hidden };
+SettingAccess settingAccess(const std::string& key);
+// The key prefixes (or whole keys) kept for the user, for the coverage tests.
+const std::vector<std::string>& settingAccessRules();
 
 // Resources: project summary, plugin catalogue, scripting reference.
 struct Resource {

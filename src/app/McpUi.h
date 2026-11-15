@@ -4,6 +4,8 @@
 // in the settings, and is polled from the UI loop, so every tool call runs on
 // the thread that owns the document (one undo step per editing call).
 #pragma once
+#include <string>
+#include <vector>
 
 struct ImDrawList;
 
@@ -13,6 +15,8 @@ namespace mcpui {
 
 // Per frame: starts / stops the server as the settings say, answers requests.
 void tick(App& a);
+// K-281 (dev input): "mcp call <tool> <json>" runs a tool call and prints its reply.
+bool devCommand(App& a, const std::vector<std::string>& args);
 // Stops the server and removes the endpoint file (app shutdown).
 void shutdown();
 // Settings > Integrations.

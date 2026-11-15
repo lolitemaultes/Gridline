@@ -346,7 +346,7 @@ double worstDiff(const DocRun& a, const DocRun& b) {
 }
 double peakOf(const DocRun& a, size_t from = 0, size_t to = ~size_t(0)) {
   double p = 0;
-  for (size_t i = from; i < std::min(to, a.L.size()); ++i)
+  for (size_t i = from; i < a.L.size() && i < to; ++i)  // (not std::min(to, size()): GCC 12 and 13 warn on that bound)
     p = std::max({p, std::fabs(static_cast<double>(a.L[i])), std::fabs(static_cast<double>(a.R[i]))});
   return p;
 }

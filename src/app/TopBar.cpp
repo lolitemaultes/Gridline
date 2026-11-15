@@ -176,7 +176,7 @@ bool tempoLcd(App& a, double* v, float width, float lcdH = kBtn, bool big = fals
     const ImVec2 q1(p.x + width, p.y + lcdH);
     dl->AddRectFilled(p, q1, hov || act ? theme::mix(P.field, P.surface800, 0.5f) : (P.dark ? P.field : P.surface950), theme::kRadiusSm);
     dl->AddRect(p, q1, theme::mix(P.dark ? P.field : P.surface950, IM_COL32(0, 0, 0, 255), 0.35f), theme::kRadiusSm);
-    theme::centreText(dl, a.fontRegular, fsT, p, q1, P.hot, buf);
+    theme::centreText(dl, a.fontRegular, fsT, p, q1, act ? P.hot : P.text, buf);  // K-112c (round 28): the text colour, lit while dragged (276, 280, 357)
   } else {
     ui::Lcd(dl, p, ImVec2(width, lcdH), buf, hov, act);
   }
@@ -518,7 +518,7 @@ float drawTopBar(App& a) {
     int mode = a.engine.mode() == PlayMode::Song ? 1 : a.engine.mode() == PlayMode::Live ? 2 : 0;
     const char* labels[] = {"PAT", "SONG", "LIVE"};
     const char* hints[] = {"Pattern mode: play the selected pattern (L)", "Song mode: play the playlist arrangement (L)",
-                           "Live mode: launch the clips of the playlist's live area by hand (playlist or live pads)"};
+                           "Live mode: launch the clips of the playlist's live area by hand (playlist or pads)"};
     ImGui::PushFont(a.fontBold, theme::kFontCaption);
     if (ui::Segmented("mode", labels, 3, &mode, segW, kBtn, hints))
       a.engine.setMode(mode == 2 ? PlayMode::Live : mode == 1 ? PlayMode::Song : PlayMode::Pattern);
@@ -1261,7 +1261,9 @@ static float drawTopBarLive(App& a) {
     dl->AddRectFilled(ImVec2(x, cy), ImVec2(x + w, cy + kH), hov ? theme::mix(P.field, P.surface800, 0.5f) : (P.dark ? P.field : P.surface950), theme::kRadiusSm);
     // K-112c: a 1 px rim a shade darker than the face, as the refs' control bars outline each field.
     dl->AddRect(ImVec2(x, cy), ImVec2(x + w, cy + kH), theme::mix(P.dark ? P.field : P.surface950, IM_COL32(0, 0, 0, 255), 0.35f), theme::kRadiusSm);
-    theme::centreText(dl, a.fontRegular, fsNum, ImVec2(x, cy), ImVec2(x + w, cy + kH), dim ? P.textDim : P.hot, text);
+    // K-112c (round 28): the readout in the text colour, as every dark ref's control bar (276, 280, 357);
+    // the lit colour is kept for switches that are on.
+    theme::centreText(dl, a.fontRegular, fsNum, ImVec2(x, cy), ImVec2(x + w, cy + kH), dim ? P.textDim : P.text, text);
     if (hint) ui::Hint(hint);
     return click;
   };
@@ -1270,8 +1272,10 @@ static float drawTopBarLive(App& a) {
     ImGui::SetCursorScreenPos(ImVec2(x, cy));
     bool click = ImGui::InvisibleButton(id, ImVec2(w, kH));
     if (press) click = ImGui::IsItemActivated();
-    const bool hov = ImGui::IsItemHovered();
-    const ImU32 face = on ? P.hot : hov ? P.surface700 : P.surface800;
+    const bool hov = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
+    // K-112c (round 31): every state answers the pointer: hover lifts, a press sinks, lit or not.
+    const ImU32 face = on ? (held ? theme::mix(P.hot, IM_COL32(0, 0, 0, 255), 0.15f) : hov ? theme::mix(P.hot, P.text, 0.12f) : P.hot)
+                          : held ? P.surface600 : hov ? P.surface700 : P.surface800;
     dl->AddRectFilled(ImVec2(x, cy), ImVec2(x + w, cy + kH), face, theme::kRadiusSm);
     dl->AddRect(ImVec2(x, cy), ImVec2(x + w, cy + kH), theme::mix(face, IM_COL32(0, 0, 0, 255), 0.35f), theme::kRadiusSm);  // K-112c: the rim
     if (hint) ui::Hint(hint);
@@ -1285,7 +1289,7 @@ static float drawTopBarLive(App& a) {
   const MeterMap mm(s);
   // bars . beats . sixteenths of a song position, and of a length.
   auto bbt = [&](Tick t, bool length) {
-    char b[32];
+    char b[64];  // (room for three 64-bit numbers)
     if (length) {
       const Tick bar = std::max<Tick>(1, s.barTicks()), beat = std::max<Tick>(1, s.ppq);
       std::snprintf(b, sizeof b, "%lld . %lld . %lld", static_cast<long long>(t / bar), static_cast<long long>((t % bar) / beat),
@@ -1324,7 +1328,7 @@ static float drawTopBarLive(App& a) {
     const bool tapHot = ImGui::IsItemHovered() || a.tapListening();
     dl->AddRectFilled(ImVec2(x, cy), ImVec2(x + 40, cy + kH), tapHot ? theme::mix(P.field, P.surface800, 0.5f) : (P.dark ? P.field : P.surface950), theme::kRadiusSm);
     dl->AddRect(ImVec2(x, cy), ImVec2(x + 40, cy + kH), theme::mix(P.dark ? P.field : P.surface950, IM_COL32(0, 0, 0, 255), 0.35f), theme::kRadiusSm);
-    theme::centreText(dl, a.fontBold, fsNum, ImVec2(x, cy), ImVec2(x + 40, cy + kH), P.hot, i18n::tr("Tap"));
+    theme::centreText(dl, a.fontRegular, fsNum, ImVec2(x, cy), ImVec2(x + 40, cy + kH), a.tapListening() ? P.hot : P.text, i18n::tr("Tap"));  // K-112c (round 28): lit while it counts
     ui::Hint(keyHint("Tap tempo: click on every beat. The tempo follows from the second tap, and a pause of over 2 seconds starts over.", "transport.tapTempo").c_str());
     noteRect("taptempo");
     x += 44;
@@ -1411,26 +1415,31 @@ static float drawTopBarLive(App& a) {
   float rx = wp.x + W - 8 - segArrW - segGridW;
   {
     const bool grid = livelook::gridView(a);
-    ImGui::SetCursorScreenPos(ImVec2(rx, cy - 1));
-    if (ImGui::InvisibleButton("##vgrid", ImVec2(segGridW, kH + 2)) && !grid) livelook::showView(a, true);
-    const bool hg = ImGui::IsItemHovered();
+    // K-112c (round 31): the switch is as tall as every other control on the bar (it stood 2 px taller),
+    // its labels centred by the font's capital band, as the other fields.
+    ImGui::SetCursorScreenPos(ImVec2(rx, cy));
+    if (ImGui::InvisibleButton("##vgrid", ImVec2(segGridW, kH)) && !grid) livelook::showView(a, true);
+    const bool hg = ImGui::IsItemHovered(), pg = ImGui::IsItemActive();
     ui::Hint("Clip grid: the tracks as columns of clip slots, scenes as rows");
-    ImGui::SetCursorScreenPos(ImVec2(rx + segGridW, cy - 1));
-    if (ImGui::InvisibleButton("##varr", ImVec2(segArrW, kH + 2)) && grid) livelook::showView(a, false);
-    const bool ha = ImGui::IsItemHovered();
+    ImGui::SetCursorScreenPos(ImVec2(rx + segGridW, cy));
+    if (ImGui::InvisibleButton("##varr", ImVec2(segArrW, kH)) && grid) livelook::showView(a, false);
+    const bool ha = ImGui::IsItemHovered(), pa = ImGui::IsItemActive();
     ui::Hint("Arrangement: the tracks as lanes along the song's time");
-    const ImVec2 g0(rx, cy - 1), g1(rx + segGridW, cy + kH + 1), a1(rx + segGridW + segArrW, cy + kH + 1);
-    dl->AddRectFilled(g0, g1, grid ? P.hot : hg ? P.surface700 : P.surface800, theme::kRadiusSm, ImDrawFlags_RoundCornersLeft);
-    dl->AddRectFilled(ImVec2(g1.x, g0.y), a1, !grid ? P.hot : ha ? P.surface700 : P.surface800, theme::kRadiusSm, ImDrawFlags_RoundCornersRight);
+    const ImVec2 g0(rx, cy), g1(rx + segGridW, cy + kH), a1(rx + segGridW + segArrW, cy + kH);
+    auto segFill = [&](bool on, bool hov, bool held) { return on ? P.hot : held ? P.surface600 : hov ? P.surface700 : P.surface800; };
+    dl->AddRectFilled(g0, g1, segFill(grid, hg, pg), theme::kRadiusSm, ImDrawFlags_RoundCornersLeft);
+    dl->AddRectFilled(ImVec2(g1.x, g0.y), a1, segFill(!grid, ha, pa), theme::kRadiusSm, ImDrawFlags_RoundCornersRight);
+    dl->AddRect(g0, a1, theme::mix(P.surface800, IM_COL32(0, 0, 0, 255), 0.35f), theme::kRadiusSm);  // the rim, as the bar's buttons
     const float fsb = theme::kFontBody - 1;
     const char* tg = i18n::tr("Grid");
     const char* ta = i18n::tr("Arrangement");
-    const ImVec2 s1 = a.fontRegular->CalcTextSizeA(fsb, 1e9f, 0, tg), s2 = a.fontRegular->CalcTextSizeA(fsb, 1e9f, 0, ta);
-    dl->AddText(a.fontRegular, fsb, ImVec2(std::round(g0.x + (segGridW - s1.x) * 0.5f), std::round((g0.y + g1.y - s1.y) * 0.5f)), glyphCol(grid), tg);
-    dl->AddText(a.fontRegular, fsb, ImVec2(std::round(g1.x + (segArrW - s2.x) * 0.5f), std::round((g0.y + g1.y - s2.y) * 0.5f)), glyphCol(!grid), ta);
+    const float s1 = a.fontRegular->CalcTextSizeA(fsb, 1e9f, 0, tg).x, s2 = a.fontRegular->CalcTextSizeA(fsb, 1e9f, 0, ta).x;
+    const float ty = theme::textTop(a.fontRegular, fsb, cy, kH);
+    dl->AddText(a.fontRegular, fsb, ImVec2(std::round(g0.x + (segGridW - s1) * 0.5f), ty), glyphCol(grid), tg);
+    dl->AddText(a.fontRegular, fsb, ImVec2(std::round(g1.x + (segArrW - s2) * 0.5f), ty), glyphCol(!grid), ta);
     const char* tab = "Tab";
     const ImVec2 st = a.fontRegular->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, tab);
-    dl->AddText(a.fontRegular, theme::kFontLabel, ImVec2(rx - 8 - st.x, std::round(cy + (kH - st.y) * 0.5f)), P.textFaint, tab);
+    dl->AddText(a.fontRegular, theme::kFontLabel, ImVec2(rx - 8 - st.x, theme::textTop(a.fontRegular, theme::kFontLabel, cy, kH)), P.textFaint, tab);
     rx -= 26;
   }
   if (showSys) {

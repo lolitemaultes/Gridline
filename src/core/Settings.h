@@ -3,6 +3,7 @@
 #pragma once
 #include <map>
 #include <string>
+#include <vector>
 #include "Json.h"
 
 namespace gl {
@@ -32,6 +33,11 @@ class Settings {
   // A different default for a registered number (K-75: the system's sensible value, e.g. on
   // ChromeOS). The current value follows when it was still the old default. False for unknown keys.
   bool setDefault(const std::string& key, double v);
+  // Every registered key in order (K-281: the assistant tools list them), and a key's default /
+  // current value (nullptr for unknown keys).
+  std::vector<std::string> keys() const;
+  const Json* defaultValue(const std::string& key) const;
+  const Json* value(const std::string& key) const;
 
  private:
   const Json* lookup(const std::string& key, Json::Type t) const;

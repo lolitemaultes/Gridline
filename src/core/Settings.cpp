@@ -367,6 +367,23 @@ const Json* Settings::lookup(const std::string& key, Json::Type t) const {
   return d != defaults_.end() && d->second.type == t ? &d->second : nullptr;
 }
 
+std::vector<std::string> Settings::keys() const {
+  std::vector<std::string> v;
+  v.reserve(defaults_.size());
+  for (const auto& [k, d] : defaults_) v.push_back(k);
+  return v;
+}
+
+const Json* Settings::defaultValue(const std::string& key) const {
+  auto d = defaults_.find(key);
+  return d == defaults_.end() ? nullptr : &d->second;
+}
+
+const Json* Settings::value(const std::string& key) const {
+  const Json* d = defaultValue(key);
+  return d ? lookup(key, d->type) : nullptr;
+}
+
 bool Settings::getBool(const std::string& key) const {
   const Json* j = lookup(key, Json::Type::Bool);
   return j && j->boolean;

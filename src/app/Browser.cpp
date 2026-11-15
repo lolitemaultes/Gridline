@@ -180,7 +180,9 @@ std::set<ImGuiID> resultIds;  // the search result sections among them
 bool collapseAsked = false;
 bool collapsedDefaults = false;  // after a Collapse all, sections first drawn later start closed too
 
-constexpr float kRowH = 24.0f;
+// A list row's height. K-112c (round 28): 20 in Live, the same pitch as the places beside the list,
+// as the refs' browser rows (211, 094); 24 elsewhere. Set at the top of each browser frame.
+float gRowH = 24.0f;
 
 // Dev (screenshots): GRIDLINE_BROWSER_EXPAND="Packs,Drums" opens nodes with
 // those labels; GRIDLINE_BROWSER_SELECT=<path> shows a file's info panel.
@@ -278,7 +280,7 @@ bool browserRow(const char* id, ui::Icon icon, const char* name, const char* det
   ImGui::PushID(id);
   ImVec2 q = ImGui::GetCursorScreenPos();
   float w = ImGui::GetContentRegionAvail().x;
-  bool clicked = ImGui::InvisibleButton("##row", ImVec2(std::max(w, 1.0f), kRowH));
+  bool clicked = ImGui::InvisibleButton("##row", ImVec2(std::max(w, 1.0f), gRowH));
   bool hov = ImGui::IsItemHovered();
   if (dbl) *dbl = hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
   if (clicked) nav.cursor = ImGui::GetItemID();  // K-160: the keys go on from the row clicked
@@ -286,18 +288,23 @@ bool browserRow(const char* id, ui::Icon icon, const char* name, const char* det
   if (!rn.openId) navClicks(clicked, dbl, rn.path != nullptr);
   else nav.synth = false;
   ImDrawList* dl = ImGui::GetWindowDrawList();
-  if (selected) dl->AddRectFilled(q, ImVec2(q.x + w, q.y + kRowH), theme::withAlpha(P.hot, 0.16f), theme::kRadiusSm);
-  if (hov || ImGui::IsItemActive()) dl->AddRectFilled(q, ImVec2(q.x + w, q.y + kRowH), ImGui::IsItemActive() ? P.surface700 : P.surface800, theme::kRadiusSm);
-  if (selected) dl->AddRectFilled(q, ImVec2(q.x + 2, q.y + kRowH), P.hot);
-  navOutline(dl, q, w, kRowH, selected);
+  if (selected) dl->AddRectFilled(q, ImVec2(q.x + w, q.y + gRowH), theme::withAlpha(P.hot, 0.16f), theme::kRadiusSm);
+  if (hov || ImGui::IsItemActive()) dl->AddRectFilled(q, ImVec2(q.x + w, q.y + gRowH), ImGui::IsItemActive() ? P.surface700 : P.surface800, theme::kRadiusSm);
+  if (selected) dl->AddRectFilled(q, ImVec2(q.x + 2, q.y + gRowH), P.hot);
+  navOutline(dl, q, w, gRowH, selected);
   float x = q.x + indent;
-  // Tree guide: dotted stem down the indent with a tick into the row.
-  if (indent > 0) {
+  // Tree guide: dotted stem down the indent with a tick into the row (not in Live: the refs' lists
+  // have no guides, 211, 094, 329).
+  if (indent > 0 && !livelook::active(a)) {
     const ImU32 gc = theme::withAlpha(P.lineStrong, 0.7f);
     const float gx = std::round(x - 3);
-    for (float y = q.y; y < q.y + kRowH; y += 3) dl->AddLine(ImVec2(gx, y), ImVec2(gx, y + 1), gc);
-    for (float xx = gx + 2; xx < x + 2; xx += 3) dl->AddLine(ImVec2(xx, q.y + kRowH * 0.5f), ImVec2(xx + 1, q.y + kRowH * 0.5f), gc);
+    for (float y = q.y; y < q.y + gRowH; y += 3) dl->AddLine(ImVec2(gx, y), ImVec2(gx, y + 1), gc);
+    for (float xx = gx + 2; xx < x + 2; xx += 3) dl->AddLine(ImVec2(xx, q.y + gRowH * 0.5f), ImVec2(xx + 1, q.y + gRowH * 0.5f), gc);
   }
+  // K-112c (round 32): in the Clips layout a folder that opens shows a disclosure arrow in its indent,
+  // as the refs' lists (211, 094, 093); the indent was left blank.
+  if (rn.openId && indent >= 12 && livelook::active(a))
+    ui::drawIcon(dl, rn.open ? ui::Icon::ChevronDown : ui::Icon::Chevron, ImVec2(std::round(x - 5), q.y + gRowH * 0.5f), 8, hov ? P.text : P.textDim);
   // Icons are tinted by kind (instruments, effects, note effects, folders, audio).
   ImU32 ic = iconCol ? iconCol : P.textFaint;
   if (!iconCol) switch (icon) {
@@ -308,28 +315,28 @@ bool browserRow(const char* id, ui::Icon icon, const char* name, const char* det
       case ui::Icon::Wave: ic = theme::tintRole(role::kPaint, 0.85f); break;
       default: break;
     }
-  ui::drawIcon(dl, icon, ImVec2(x + 8, q.y + kRowH * 0.5f), 12, hov ? P.text : ic);
+  ui::drawIcon(dl, icon, ImVec2(x + 8, q.y + gRowH * 0.5f), 12, hov ? P.text : ic);
   float detailW = 0;
   if (starHit) {
     const bool sh = hov && ImGui::GetIO().MousePos.x >= q.x + w - 20;
     *starHit = clicked && sh && !nav.synth;  // K-160: Enter with the pointer resting on the star is not a click on it
     if (*starHit) clicked = false;
     if (star || hov) {
-      if (sh) dl->AddCircleFilled(ImVec2(q.x + w - 10, q.y + kRowH * 0.5f), 8.0f, theme::withAlpha(P.surface950, 0.55f), 16);
-      browserui::drawStar(dl, ImVec2(q.x + w - 10, q.y + kRowH * 0.5f), 4.5f, star ? P.hot : sh ? P.text : P.textFaint, star);
+      if (sh) dl->AddCircleFilled(ImVec2(q.x + w - 10, q.y + gRowH * 0.5f), 8.0f, theme::withAlpha(P.surface950, 0.55f), 16);
+      browserui::drawStar(dl, ImVec2(q.x + w - 10, q.y + gRowH * 0.5f), 4.5f, star ? P.hot : sh ? P.text : P.textFaint, star);
     }
     detailW += 16;
   } else if (star) {
-    browserui::drawStar(dl, ImVec2(q.x + w - 10, q.y + kRowH * 0.5f), 4.5f, P.hot, true);
+    browserui::drawStar(dl, ImVec2(q.x + w - 10, q.y + gRowH * 0.5f), 4.5f, P.hot, true);
     detailW += 16;
   }
   if (detail && *detail && w - indent > 150) {
     float dw = a.fontMono->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, detail).x;
-    dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(q.x + w - dw - 8 - detailW, std::round(q.y + (kRowH - theme::kFontLabel) * 0.5f)),
+    dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(q.x + w - dw - 8 - detailW, std::round(q.y + (gRowH - theme::kFontLabel) * 0.5f)),
                 P.textFaint, detail);
     detailW += dw + 12;
   }
-  theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption + 1, ImVec2(x + 22, std::round(q.y + (kRowH - 13) * 0.5f) - 1),
+  theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption + 1, ImVec2(x + 22, std::round(q.y + (gRowH - 13) * 0.5f) - 1),
                       w - indent - 30 - detailW, selected ? P.text : P.text, name);
   ImGui::PopID();
   return clicked;
@@ -724,15 +731,15 @@ bool renameRow(App& a, const fs::path& p, float indent, ui::Icon icon, ImU32 ico
   const ImVec2 q = ImGui::GetCursorScreenPos();
   const float w = std::max(1.0f, ImGui::GetContentRegionAvail().x);
   ImDrawList* dl = ImGui::GetWindowDrawList();
-  dl->AddRectFilled(q, ImVec2(q.x + w, q.y + kRowH), P.surface800, theme::kRadiusSm);
-  dl->AddRectFilled(q, ImVec2(q.x + 2, q.y + kRowH), P.hot);
+  dl->AddRectFilled(q, ImVec2(q.x + w, q.y + gRowH), P.surface800, theme::kRadiusSm);
+  dl->AddRectFilled(q, ImVec2(q.x + 2, q.y + gRowH), P.hot);
   const float x = q.x + indent;
-  ui::drawIcon(dl, icon, ImVec2(x + 8, q.y + kRowH * 0.5f), 12, iconCol);
+  ui::drawIcon(dl, icon, ImVec2(x + 8, q.y + gRowH * 0.5f), 12, iconCol);
   std::error_code ec;
   const bool folder = fs::is_directory(p, ec);
   const std::string ext = folder ? std::string() : p.extension().string();
   const float extW = ext.empty() ? 0.0f : std::round(a.fontRegular->CalcTextSizeA(theme::kFontCaption + 1, 1e9f, 0, ext.c_str()).x) + theme::kS1;
-  const float fieldH = kRowH - 4;
+  const float fieldH = gRowH - 4;
   ImGui::SetCursorScreenPos(ImVec2(x + 18, q.y + 2));
   ImGui::SetNextItemWidth(std::max(40.0f, w - indent - 22 - extW - theme::kS1));
   if (fops.focus) {
@@ -749,10 +756,10 @@ bool renameRow(App& a, const fs::path& p, float indent, ui::Icon icon, ImU32 ico
                   : "Type the new name (the extension stays) \xC2\xB7 Enter: rename \xC2\xB7 Esc: cancel");
   const ImVec2 f1 = ImGui::GetItemRectMax();
   if (!ext.empty())
-    dl->AddText(a.fontRegular, theme::kFontCaption + 1, ImVec2(f1.x + theme::kS1, std::round(q.y + (kRowH - 13) * 0.5f) - 1), P.textFaint, ext.c_str());
-  float h = kRowH;
+    dl->AddText(a.fontRegular, theme::kFontCaption + 1, ImVec2(f1.x + theme::kS1, std::round(q.y + (gRowH - 13) * 0.5f) - 1), P.textFaint, ext.c_str());
+  float h = gRowH;
   if (!fops.error.empty()) {
-    theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption, ImVec2(x + 18, q.y + kRowH + 2), w - indent - 22, theme::lit(P.danger), fops.error.c_str());
+    theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption, ImVec2(x + 18, q.y + gRowH + 2), w - indent - 22, theme::lit(P.danger), fops.error.c_str());
     h += 18;
   }
   ImGui::SetCursorScreenPos(ImVec2(q.x, q.y + h));
@@ -1270,8 +1277,8 @@ void installedPlugins(App& a, float indent) {
     if (!treeNode(g.key, g.title.c_str(), static_cast<int>(g.plugins.size()), indent + 14, role::kMenu)) continue;
     for (const auto& [p, label] : g.plugins) {
       // K-73: a row out of sight takes its place without being drawn (an open group of hundreds).
-      if (!ImGui::IsRectVisible(ImVec2(std::max(1.0f, ImGui::GetContentRegionAvail().x), kRowH))) {
-        ImGui::Dummy(ImVec2(1, kRowH));
+      if (!ImGui::IsRectVisible(ImVec2(std::max(1.0f, ImGui::GetContentRegionAvail().x), gRowH))) {
+        ImGui::Dummy(ImVec2(1, gRowH));
         ImGui::PushID(p->type.c_str());
         const ImGuiID rowId = ImGui::GetID("##row");  // K-160: the keys can move onto it (it is then scrolled into view)
         ImGui::PopID();
@@ -1989,8 +1996,8 @@ void liveSidebar(App& a, bool twoPane) {
   for (const Row& r : rows) {
     if (r.cat < 0) {  // a group heading
       if (y > p0.y + 8) y += 6;
-      dl->AddText(a.fontBold, theme::kFontCaption, ImVec2(p0.x + 10, std::round(y + (headH - theme::kFontCaption) * 0.5f)), P.textFaint,
-                  i18n::tr(r.label));
+      // K-112c (round 28): the group's name in the rows' own size and weight, dimmed (211, 094, 329).
+      dl->AddText(a.fontRegular, fs, ImVec2(p0.x + 10, theme::textTop(a.fontRegular, fs, y, headH)), P.textFaint, i18n::tr(r.label));
       y += headH;
       continue;
     }
@@ -2157,7 +2164,7 @@ void navKeys(App& a) {
   for (int i = 0; i < n && cur < 0; ++i) cur = rows[static_cast<size_t>(i)].id == nav.cursor ? i : -1;
   if (cur < 0)  // the cursor's row went away (folded, another tab): start from the selected file
     for (int i = 0; i < n && cur < 0; ++i) cur = !selPath.empty() && rows[static_cast<size_t>(i)].path == selPath ? i : -1;
-  const int page = std::max(1, static_cast<int>(ImGui::GetWindowHeight() / kRowH) - 1);
+  const int page = std::max(1, static_cast<int>(ImGui::GetWindowHeight() / gRowH) - 1);
   int next = cur;
   auto setOpen = [&](const NavRow& r, bool open) {
     ImGui::GetStateStorage()->SetBool(r.openId, open);
@@ -2224,6 +2231,7 @@ void drawBrowser(App& a) {
     return;
   }
   const auto& P = pal();
+  gRowH = livelook::active(a) ? 20.0f : 24.0f;
   loadFolders(a);
   browserui::ensureIndex(a);
   browserui::tickIndex(a);

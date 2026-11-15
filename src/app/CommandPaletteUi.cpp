@@ -230,7 +230,7 @@ const WinDef kWindows[] = {
     {"Browser", "Browser", &App::showBrowser, "view.browser"},
     {"Plugin picker", "Plugin picker", nullptr, "view.pluginPicker"},
     {"Master chain", "Master chain", &App::showMaster, nullptr},
-    {"Live pads", "Live pads", &App::showLivePads, nullptr},
+    {"Live pads", "Pads", &App::showLivePads, nullptr},
     {"Undo history", "Undo history", &App::showHistory, "edit.history"},
     {"Performance", "Performance", &App::showPerformance, nullptr},
     {"Groove editor", "Groove editor", &App::showGroove, nullptr},  // K-151
@@ -244,6 +244,8 @@ const WinDef kWindows[] = {
 constexpr int kWindowCount = static_cast<int>(sizeof kWindows / sizeof kWindows[0]);
 // A window's row: its name, or for a view of a shared window (the mixer's Stage) the view's own name.
 const char* rowName(const WinDef& w) { return w.flag == &App::showStage ? w.menuEn : w.name; }
+// The row's shown name: the menu item's for a window whose stable name reads differently (the pads).
+const char* rowLabel(const WinDef& w) { return w.flag == &App::showLivePads ? w.menuEn : rowName(w); }
 
 // Where a keymap command without a menu item lives.
 const char* commandHomeEn(const keys::Command& c) {
@@ -342,8 +344,8 @@ void build(App& a) {
         Entry e;
         e.id = id;
         e.kind = Kind::Window;
-        e.label = i18n::tr(rowName(w));
-        e.labelEn = rowName(w);
+        e.label = i18n::tr(rowLabel(w));
+        e.labelEn = rowLabel(w);
         e.path = join(r.shown, kSep);
         e.pathEn = join(r.en, kSep);
         if (w.cmd) {
@@ -412,8 +414,8 @@ void build(App& a) {
     Entry e;
     e.id = std::string("win:") + rowName(w);
     e.kind = Kind::Window;
-    e.label = i18n::tr(rowName(w));
-    e.labelEn = rowName(w);
+    e.label = i18n::tr(rowLabel(w));
+    e.labelEn = rowLabel(w);
     e.path = i18n::tr("Window");
     e.pathEn = "Window";
     if (w.cmd) {
@@ -1091,8 +1093,50 @@ std::vector<CommandInfo> commandList(App& a) {
   build(a);
   std::vector<CommandInfo> out;
   out.reserve(S.rows.size());
-  for (const Entry& e : S.rows) out.push_back({e.id, e.label, e.path, e.shortcut, e.enabled, e.kind});
+  for (const Entry& e : S.rows) out.push_back({e.id, e.label, e.path, e.shortcut, e.enabled, e.kind, e.hint, e.checkable, e.checked});
   return out;
+}
+
+bool runNow(App& a, const std::string& id, bool& queued, std::string& err) {
+  build(a);
+  queued = false;
+  for (size_t i = 0; i < S.rows.size(); ++i) {
+    if (S.rows[i].id != id) continue;
+    if (!S.rows[i].enabled) {
+      err = "\"" + S.rows[i].labelEn + "\" cannot run now" + (S.rows[i].hint.empty() ? "" : ": " + S.rows[i].hint);
+      return false;
+    }
+    const Action act = S.acts[i];
+    queued = act.act == Act::Key;
+    perform(a, act);
+    return true;
+  }
+  err = "no command \"" + id + "\"";
+  return false;
+}
+
+std::vector<WindowState> windowList(App& a) {
+  std::vector<WindowState> v;
+  for (const WinDef& w : kWindows)
+    v.push_back({rowName(w), w.flag ? a.*(w.flag) : browserui::pluginPickerOpen()});
+  return v;
+}
+
+bool setWindowOpen(App& a, const std::string& name, bool open, std::string& err) {
+  for (const WinDef& w : kWindows) {
+    if (cmdpal::lower(name) != cmdpal::lower(rowName(w)) && cmdpal::lower(name) != cmdpal::lower(rowLabel(w))) continue;
+    if (!w.flag) {
+      if (browserui::pluginPickerOpen() != open) browserui::togglePluginPicker();
+      return true;
+    }
+    if (open) showWindow(a, w.flag, w.name);
+    else a.*(w.flag) = false;
+    return true;
+  }
+  std::string names;
+  for (const WinDef& w : kWindows) names += (names.empty() ? "" : ", ") + std::string(rowName(w));
+  err = "no window \"" + name + "\" (" + names + ")";
+  return false;
 }
 
 bool run(App& a, const std::string& id) {

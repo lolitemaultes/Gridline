@@ -87,6 +87,11 @@ void FormLabelFit(const char* label, float x, ImU32 col, float gap = 12.0f);
 // a label (a checkbox, a note) lines up with the controls. 0 turns it off.
 void SetFormColumn(float column, bool indentRows = true);  // indentRows false: labels only
 bool FormRowsIndented();
+// K-112c (round 28): while set (Live's settings pages), a form label asked for the settings column
+// (168) ends at `x` instead, so the values start about halfway across the page as the refs' settings
+// do (427, 073, 428). 0 turns it off.
+void SetSettingsColumn(float x);
+float SettingsColumn(float x);  // `x`, or the Live settings column when `x` asks for the usual 168
 float FormColumnIndent();  // the column while set, else 0
 // Text fitted to `maxW` with an ellipsis; when cut, hovering shows the full
 // text. Uses the frame-padding baseline when `framed`. Returns true when cut.

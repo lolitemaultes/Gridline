@@ -136,6 +136,26 @@ gridline mcp --attach [--endpoint FILE]
 
 ## Tools
 
+An assistant that is unsure where to start calls `help`: it gives an overview, the tool list, the
+path syntax, the fields of every kind of object and, for one tool, its schema and examples.
+`get_song` is the compact summary of the whole project (with Stage rooms, arrangements and the
+transport), and `find` looks up anything by name.
+
+General tools that reach everything:
+
+| Tool | What it does |
+|---|---|
+| `help` | overview, tools, paths, object fields, one tool with its schema and examples |
+| `find` | finds channels, patterns, mixer tracks and effects, playlist tracks, automation clips, markers, Stage rooms, arrangements, plugin types and app commands by name, with their paths |
+| `inspect` | reads any object with every field the project file holds (see Paths below) |
+| `patch` | changes any fields of any object, or of several objects, as one undo step |
+| `batch` | runs up to 200 tool calls in order as one undo step; the first failing call undoes the whole batch |
+| `get_values`, `set_parameters` | read or set any number of parameters by path, as one undo step |
+| `list_commands`, `run_command` | everything the command palette offers (menu items, keyboard commands, windows, settings pages, plugins), and running one of them (in the app) |
+| `windows` | lists Gridline's windows and opens or closes one (in the app) |
+| `get_settings`, `set_setting` | the user's settings, with their access (in the app) |
+| `transport`, `select` | play, stop, the song position; what is selected (neither is an undo step) |
+
 Reading (always allowed):
 
 | Tool | What it does |
@@ -170,6 +190,13 @@ Editing (one undo step each; needs "Allow assistants to change the project"):
 | `set_parameter` | any parameter |
 | `edit_mixer_track` | name, volume, pan, mute, solo, routing |
 | `add_marker`, `remove_marker` | song markers and time signature changes |
+| `duplicate` | a channel (with its notes and steps), a pattern, or playlist clips |
+| `edit_notes` | quantize, legato, transpose, nudge, velocity, humanize, strum, arpeggiate, chop, glue, flip, duplicate or delete notes, optionally in a time and pitch range |
+| `edit_automation`, `remove_automation` | an automation clip's name, colour, range, loop and points (with curve shapes and tension) |
+| `add_mixer_track`, `remove_mixer_track` | insert tracks |
+| `set_send` | sends between mixer tracks: level, sidechain only, pre-fader, Stage room send |
+| `stage_room` | Stage rooms: add, rename, colour, move, delete, move tracks into a room, the room's space |
+| `arrangement` | playlist arrangements: list, add, select, rename, remove |
 | `run_script` | a Lua project script (see `gridline://docs/scripting`) |
 | `undo`, `redo` | undo or redo the latest assistant step (never the user's own edits) |
 
@@ -187,6 +214,76 @@ Jobs (always allowed):
 |---|---|
 | `get_job` | state (`running`, `done`, `failed`, `cancelled`), progress 0..1 and the result of a job |
 | `cancel_job` | stops a running job; nothing is written |
+
+`set_notes` takes every note property: start, length, pitch, velocity, pan, release, fine pitch,
+mod X and Y, colour, group, slide and portamento, and the per-note bend, pressure and timbre
+curves (points as `[time in beats, value]` or `{time, value, curve, tension}`). `get_pattern`
+reads them back the same way.
+
+### Paths
+
+`inspect` and `patch` name objects by path. Numbers count from 1 as on screen:
+
+| Path | Object |
+|---|---|
+| `song` | song settings (tempo, time signature, swing, info, master pitch and so on) |
+| `channel/N` | a channel of the rack, with its instrument, note settings, echo, layers, MIDI ports |
+| `pattern/N` | a pattern (its notes are in `pattern/N/notes`) |
+| `mixer/N` | a mixer track (0 = master): strip, EQ, effect slots, sends, Stage depth and room |
+| `track/N` | a playlist track: name, colour, height, live settings |
+| `clip/<id>` | a playlist clip by its id (`get_playlist`) |
+| `automation/N`, `marker/N` | automation clips and markers |
+| `room/N` | a Stage room (`room/1` is the first) |
+| `arrangement/N` | a playlist arrangement (its name) |
+| `link/N`, `modlink/N` | controller links and modulation links |
+
+A path can go on into a field (`channel/2/echo/count`); `patch` then takes `value` instead of
+`set`. `patch` merges `set` into the object: nested objects merge, lists and plain values replace,
+`null` removes an optional field, and colours can be written as `"#RRGGBB"`. The reply lists
+fields that are not part of the object (ignored) and values that were corrected to their range
+(adjusted). Ids, the lists that make up the song and a frozen state cannot be patched; use the
+dedicated tools or the app's commands for those. `help` with topic `objects` describes the fields
+of every kind of object.
+
+Parameter paths for `get_values` and `set_parameters`: `song/tempo`, `channel/2/volume`,
+`channel/2/Cutoff` (an instrument parameter by name or number), `mixer/3/pan`,
+`mixer/3/slot/1/Decay` (an effect parameter). Values are in the parameter's units, `true` or
+`false` for switches, or a choice's name; with `normalized: true` they are 0..1 of the range.
+
+### Batches
+
+```json
+{"calls": [
+  {"tool": "add_pattern", "arguments": {"name": "Verse"}},
+  {"tool": "set_steps", "arguments": {"pattern": 3, "channel": 1, "steps": [100, 0, 0, 0]}},
+  {"tool": "patch", "arguments": {"path": "channel/1", "set": {"name": "Kick"}}}
+]}
+```
+
+The whole batch is one undo step. Without `continueOnError` a failing call undoes everything the
+batch did and the error says which call failed and why. Renders, exports, saves, undo and redo
+cannot be part of a batch.
+
+### App commands, windows and settings
+
+In the app, `list_commands` returns every row of the command palette with its id, where it lives
+in the menus, its shortcut, whether it is on and, when it cannot run now, why. `run_command` runs
+one row as if the user chose it, so anything the menus can do is reachable, and its edits are one
+undo step. Commands that close, replace or reopen the project (new, open, revert, quit and the
+like) are refused: ask the user to do those. Keyboard commands of an editor run once that editor
+has the focus; the reply says so.
+
+`get_settings` lists every setting with its type, value, default and access. `set_setting`
+changes a setting and saves it. The settings that decide what assistants, scripts, the network,
+updates and files may do stay with the user (access `user only`), and secrets such as tokens are
+hidden. The headless server has no app, so these tools answer that the app is needed, and
+`list_commands` lists the keyboard commands only.
+
+### Errors that help
+
+An unknown argument names the arguments the tool takes, an unknown tool points to `tools/list`
+and `help`, an object number out of range gives the range, and a wrong parameter path explains the
+path syntax.
 
 ### Renders and exports run in the background
 

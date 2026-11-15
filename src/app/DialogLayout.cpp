@@ -365,7 +365,11 @@ bool PathFit(const char* text, float maxW, ImU32 col, bool framed) {
 namespace {
 float gFormColumn = 0;  // K-112b: the Logic layout's form column (0: off)
 bool gFormIndentRows = true;
+float gSettingsColumn = 0;  // K-112c: the settings pages' value column in Live (0: the usual 168)
 }
+
+void SetSettingsColumn(float x) { gSettingsColumn = x; }
+float SettingsColumn(float x) { return gSettingsColumn > 0 && std::fabs(x - 168.0f) < 0.5f ? gSettingsColumn : x; }
 
 void SetFormColumn(float column, bool indentRows) { gFormColumn = column, gFormIndentRows = indentRows; }
 bool FormRowsIndented() { return gFormColumn > 0 && gFormIndentRows; }
@@ -375,6 +379,7 @@ void FormLabelFit(const char* label, float x, ImU32 col, float gap) {
   if (cmdpalette::noting()) cmdpalette::noteFormLabel(label);  // K-93: a setting's row (found, or highlighted)
   // SameLine(x) counts from the window (or enclosing group) start, not from the indent.
   const ImGuiWindow* w = ImGui::GetCurrentWindow();
+  x = SettingsColumn(x);  // K-112c: the settings form's column
   const float colX = w->Pos.x - w->Scroll.x + x + w->DC.GroupOffset.x + w->DC.ColumnsOffset.x;
   float room = colX - ImGui::GetCursorScreenPos().x - gap;
   if (gFormColumn > 0) {  // K-112b: the label ends at the column; its room reaches back to the group's edge

@@ -556,6 +556,9 @@ class PlasmaGen final : public Generator {
     if (runMask_ != 0 && playing_) return true;  // launched clips follow the song
     for (const auto& sp : spanClip_)
       if (sp.active()) return true;
+    // an effect tail (or the gap before an echo) sounds until the sleep check has heard its whole hold
+    // (quiet: quietFrames_ counts; offline or with sleep not allowed it stays 0 and tailLeft_ alone tells)
+    if (!asleep_ && quietFrames_ > 0 && quietFrames_ < holdFrames_) return true;
     return tailLeft_ > 0 || arp_.held() || clip_.active();
   }
   bool supportsGlide() const override { return true; }

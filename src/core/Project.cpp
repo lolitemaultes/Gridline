@@ -1089,6 +1089,8 @@ SongGroove grooveFromJson(const Json& j) {
 }  // namespace
 
 Json pluginStateToJson(const PluginState& p) { return pluginToJson(p); }
+void noteExtrasToJson(const Note& n, Json& jn) { noteToJson(n, jn); }
+void noteExtrasFromJson(const Json& jn, Note& n) { noteFromJson(jn, n); }
 PluginState pluginStateFromJson(const Json& j) { return pluginFromJson(&j); }
 
 // K-224: one Stage room's settings (Song::stage and each of Song::stageRooms share the shape).

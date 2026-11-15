@@ -134,6 +134,7 @@
 #include "LayoutPresets.h"
 #include "LayoutReport.h"
 #include "LayoutShellUi.h"
+#include "../core/LayoutHomes.h"
 #include "LiveLook.h"
 #include "icons/IconTexture.h"
 #include "LayoutStyleUi.h"
@@ -1678,6 +1679,10 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       sysmenu::devCommand(app, l.args, frame);
     } else if (l.cmd == "centre") {  // K-112 (dev): the text centring report (LiveLook.h)
       livelook::devCentreAsk();
+    } else if (l.cmd == "livegrid") {  // K-287 (dev): the Live clip grid's slots (LiveLook.h)
+      livelook::devGridAsk();
+    } else if (l.cmd == "pltool") {  // K-287 (dev): pltool draw|select: the playlist's tool, as its tool menu picks it
+      app.playlist.tool = l.a0 == "select" ? Tool::Select : Tool::Draw;
     } else if (l.cmd == "pianofold") {  // K-112 (dev): the piano roll's Fold (Live): on / off
       app.piano.fold = !l.args.empty() && l.args[0] == "on";
     } else if (l.cmd == "clipsel") {  // K-112 (dev): clipsel <clip id>: that clip alone selected (none: no clip); prints the audio clip the band is to show
@@ -1688,6 +1693,8 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       std::printf("clipview frame %d: audio %d\n", frame, devLiveAudioClipShown() ? 1 : 0);
     } else if (l.cmd == "menutree") {  // K-112: the menu tree (MenuTreeUi.h): dump [style]
       menutreeui::devCommand(app, l.args, frame);
+    } else if (l.cmd == "mcp") {  // K-281: mcp call <tool> <json arguments> (McpUi.h)
+      mcpui::devCommand(app, l.args);
     } else if (l.cmd == "palette") {  // K-93: the command palette (CommandPaletteUi.h): open, close, dump, state, run <id>
       cmdpalette::devCommand(app, l.args, frame);
     } else if (l.cmd == "freeze") {  // K-87: freeze / hibernate (FreezeUi.h): state, freeze, unfreeze, hibernate, wait
@@ -2998,6 +3005,7 @@ int main(int argc, char** argv) {
       else if (w == "launcher-collab") devLauncher = 2;     // J-146: ... on its Collaborative view
       else if (w == "launcher-collab-demo") devLauncher = 2, devLauncherCollabDemo = true;  // ... with simulated collaborators
       else if (w == "settings") app.showSettings = true;
+      else if (w.rfind("settings:", 0) == 0) app.showSettings = true, app.settingsTab = std::atoi(w.c_str() + 9);  // K-112c: on that page
       else if (w == "shortcuts") app.showShortcuts = true;
       else if (w == "export") app.showExport = true;
       else if (w == "newtracks") newtracks::open();  // K-112b
@@ -3497,34 +3505,30 @@ int main(int argc, char** argv) {
     edzoomui::mapPointer();  // K-19: the pointer over a magnified plugin editor, in its design coordinates
     bool iconsDeferredThisFrame = false;
     if (layout::Preset to; layoutui::takeSwitch(&to)) {
-      // K-79: another layout preset. The current arrangement is kept in its own file, the other
-      // preset's file is read back (ImGui 1.92 rebuilds the dock nodes and re-applies every
-      // window's saved place on a runtime load), or its default is built when it has none yet.
-      static std::string iniCache[layout::kLayoutCount];  // this run's arrangement of each preset
+      // K-79: another layout preset. The current arrangement is kept in its own file (a later
+      // start in that layout opens it as it was left). K-284: the layout switched to always opens
+      // its designed arrangement: its saved dock file and region state are dropped and the dock
+      // tree and its windows are built from the layout's default, as View > Reset window layout does.
       const double switchStart = SDL_GetPerformanceCounter() / static_cast<double>(SDL_GetPerformanceFrequency());
-      {
-        size_t n = 0;
-        const char* d = ImGui::SaveIniSettingsToMemory(&n);
-        iniCache[static_cast<int>(layoutui::active())].assign(d, n);
-      }
       if (io.IniFilename) ImGui::SaveIniSettingsToDisk(io.IniFilename);
       layoutui::leaveLayout(app);  // K-112: windows a region only hid are open again
       layoutui::setActive(to);
       if (to == layout::Preset::Studio) app.showLivePads = false;  // a floating window there, opened from View
       iniPath = (fs::path(app.configDir()) / layoutui::iniFile(app, to)).string();
       io.IniFilename = keepSavedLayout ? nullptr : iniPath.c_str();
-      const bool current = static_cast<int>(app.settings.getNumber(layoutui::versionKey(app, to))) >= layout::defaultVersion(to);
-      std::error_code ec;
-      const std::string& cached = iniCache[static_cast<int>(to)];
-      // The open project, its selection, playback and the open windows stay as they are; only
-      // the arrangement changes (the live layout adds its pads view behind the playlist).
-      if (!cached.empty()) {
-        ImGui::LoadIniSettingsFromMemory(cached.c_str(), cached.size());
-      } else if (current && fs::exists(iniPath, ec)) {
-        ImGui::LoadIniSettingsFromDisk(iniPath.c_str());
-      } else {
-        layoutRebuild = layoutRebuildKeep = true;
+      if (!keepSavedLayout) {
+        std::error_code ec;
+        fs::remove(fs::u8path(iniPath), ec);  // rewritten with the default arrangement
       }
+      if (to != layout::Preset::Studio) layoutui::setRegionState(app, to, layout::State{});  // the regions as designed
+      if (!layoutui::shellBuilt(app, to))  // the new parts a region shell opened are closed here by design
+        for (const layout::Item& it : layout::items())
+          if (*it.window && it.home[static_cast<int>(to)].kind == layout::HomeKind::Part)
+            if (bool* f = layoutui::windowOpenFlag(app, it.window)) *f = false;
+      // The open project, its selection and playback stay as they are; the arrangement and the
+      // layout's windows are its default ones (the live layout adds its pads view behind the playlist).
+      layoutRebuild = true;
+      layoutRebuildKeep = false;
       layoutui::enterPreset(app, to);
       layoutui::noteSwitched(ImGui::GetTime());
       // K-112: icons the new layout shows at sizes not seen yet are drawn from a size already made

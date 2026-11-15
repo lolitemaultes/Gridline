@@ -62,7 +62,7 @@ class StrictSynth final : public IComponent, public IAudioProcessor, public IEdi
   explicit StrictSynth(int mainBus) : main_(mainBus) {
     gProbe.mainBus = main_;  // every bus starts switched off (as in the SDK): the host switches on what it uses
   }
-  virtual ~StrictSynth() = default;
+  ~StrictSynth() = default;  // (final: not virtual)
   uint32 PLUGIN_API addRef() override { return ++refs_; }
   uint32 PLUGIN_API release() override {
     const uint32 r = --refs_;
@@ -259,7 +259,7 @@ class StrictSynth final : public IComponent, public IAudioProcessor, public IEdi
 
 class Factory final : public IPluginFactory2 {
  public:
-  virtual ~Factory() = default;
+  ~Factory() = default;
   uint32 PLUGIN_API addRef() override { return ++refs_; }
   uint32 PLUGIN_API release() override {
     const uint32 r = --refs_;

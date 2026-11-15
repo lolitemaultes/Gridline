@@ -18,6 +18,7 @@
 #include "../core/Secrets.h"
 #include "../host/PluginScan.h"
 #include "App.h"
+#include "CommandPaletteUi.h"
 #include "ExportUi.h"
 #include "ScriptUi.h"
 #include "Theme.h"
@@ -93,6 +94,33 @@ void ensureEnv(App& a) {
         if (isHostedType(sl.plugin.type)) return true;
     return false;
   };
+  // K-281: what only the app can do: the command palette's rows, the windows, the settings.
+  e.app.commands = [&a] {
+    std::vector<mcp::AppBridge::Command> v;
+    for (const auto& c : cmdpalette::commandList(a)) {
+      mcp::AppBridge::Command r;
+      r.id = c.id;
+      r.kind = c.kind == cmdpal::Kind::Window ? "window" : c.kind == cmdpal::Kind::Setting ? "setting" : c.kind == cmdpal::Kind::Plugin ? "plugin" : "command";
+      r.label = c.label;
+      r.path = c.path;
+      r.shortcut = c.shortcut;
+      r.hint = c.hint;
+      r.enabled = c.enabled;
+      r.checkable = c.checkable;
+      r.checked = c.checked;
+      v.push_back(std::move(r));
+    }
+    return v;
+  };
+  e.app.runCommand = [&a](const std::string& id, bool& queued, std::string& err) { return cmdpalette::runNow(a, id, queued, err); };
+  e.app.windows = [&a] {
+    std::vector<mcp::AppBridge::Window> v;
+    for (const auto& w : cmdpalette::windowList(a)) v.push_back({w.name, w.open});
+    return v;
+  };
+  e.app.showWindow = [&a](const std::string& name, bool open, std::string& err) { return cmdpalette::setWindowOpen(a, name, open, err); };
+  e.app.settings = &a.settings;
+  e.app.settingsChanged = [&a] { a.settings.save(Settings::defaultPath()); };
   M.ep = std::make_unique<mcp::HttpEndpoint>(e, "");
   M.endpointFile = mcp::defaultEndpointFile();
 }
@@ -236,6 +264,32 @@ void shutdown() {
   M.ep.reset();
   M.env.reset();
   M.host.reset();
+}
+
+// K-281 (tests): "mcp call <tool> <json arguments>" runs one tool call through an in-app session
+// (edits allowed) and prints "MCP RESULT <tool> <reply>" on one line. JSON in single quotes.
+bool devCommand(App& a, const std::vector<std::string>& args) {
+  if (args.size() < 2 || args[0] != "call") return false;
+  ensureEnv(a);
+  mcp::Environment& e = *M.env;
+  e.allowEdits = true;
+  e.projectPath = a.projectFile();
+  static std::unique_ptr<mcp::Session> session;
+  if (!session) {
+    session = std::make_unique<mcp::Session>(e);
+    session->handle(R"({"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-06-18","clientInfo":{"name":"dev"}}})");
+  }
+  std::string json;
+  for (size_t i = 2; i < args.size(); ++i) json += (i > 2 ? " " : "") + args[i];
+  if (json.empty()) json = "{}";
+  std::replace(json.begin(), json.end(), '\'', '"');  // the dev input drops double quotes: JSON is written with single ones
+  static int id = 1;
+  const std::string req = "{\"jsonrpc\":\"2.0\",\"id\":" + std::to_string(id++) + ",\"method\":\"tools/call\",\"params\":{\"name\":\"" + args[1] +
+                          "\",\"arguments\":" + json + "}}";
+  std::printf("MCP RESULT %s %s\n", args[1].c_str(), session->handle(req).c_str());
+  std::fflush(stdout);
+  e.allowEdits = a.settings.getBool("mcp.allowEdits");
+  return true;
 }
 
 void showActivity() { M.showLog = true; }

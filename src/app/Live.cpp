@@ -145,7 +145,7 @@ void drawLivePads(App& a) {
     ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.5f), ImGuiCond_FirstUseEver,
                             ImVec2(0.5f, 0.5f));
   }
-  const bool vis = ui::BeginDockWindow("Live pads", &a.showLivePads, ImVec2(560, 300));
+  const bool vis = ui::BeginDockWindow("Pads###Live pads", &a.showLivePads, ImVec2(560, 300));
   if (shownFrames < 3) {  // ... and in front of the floating channel rack (it used to hide the empty-state text)
     ImGuiWindow* w = ImGui::GetCurrentWindow();
     if (!w->DockIsActive) ImGui::BringWindowToDisplayFront(w);

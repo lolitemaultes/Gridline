@@ -1202,6 +1202,23 @@ void devCommand(App& a, const std::vector<std::string>& args, int frame) {
     for (int i = 0; i < 2000; ++i) a.doc.addClip(pats[static_cast<size_t>(i) % pats.size()], i % 100, bar * (i / 100), bar);
     std::printf("frame %d big project: %zu channels %zu mixer %zu clips\n", frame, a.doc.song().channels.size(), a.doc.song().mixer.size(),
                 a.doc.song().playlist.size());
+  } else if (c == "docks") {  // K-284: the main dock tree, every layout (each node's split, rectangle and windows)
+    std::string out;
+    auto walk = [&](auto&& self, const ImGuiDockNode* n, const std::string& path) -> void {
+      if (!n) return;
+      std::string ws;
+      for (const ImGuiWindow* w : n->Windows) ws += std::string(ws.empty() ? "" : ",") + ui::stableWindowName(w->Name);
+      char b[512];
+      std::snprintf(b, sizeof b, "dock %s split %s central %d rect %.0f %.0f %.0f %.0f windows [%s]\n", path.c_str(),
+                    n->IsSplitNode() ? (n->SplitAxis == ImGuiAxis_X ? "x" : "y") : "-", n->IsCentralNode() ? 1 : 0, static_cast<double>(n->Pos.x),
+                    static_cast<double>(n->Pos.y), static_cast<double>(n->Size.x), static_cast<double>(n->Size.y), ws.c_str());
+      out += b;
+      self(self, n->ChildNodes[0], path + ".0");
+      self(self, n->ChildNodes[1], path + ".1");
+    };
+    ImGuiWindow* host = ImGui::FindWindowByName("##dockhost");
+    walk(walk, host ? ImGui::DockBuilderGetNode(host->GetID("GridlineDock")) : nullptr, "r");
+    std::printf("DOCKS BEGIN frame %d layout %s\n%sDOCKS END\n", frame, layout::id(active()), out.c_str());
   } else if (c == "state") {
     std::printf("frame %d %s\n", frame, stateLine(a).c_str());
   } else if (c == "bodies") {  // layout bodies: last frame's hosted body draws (one host per body)

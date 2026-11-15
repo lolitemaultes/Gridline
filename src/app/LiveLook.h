@@ -79,6 +79,8 @@ void drawStatusBar(App& a);
 // Under the slots each column has its mixer controls, aligned with the column.
 constexpr int kSceneBars = 4;
 void drawClipGrid(App& a);
+// K-287 (dev input "livegrid"): the next drawn clip grid prints each slot's centre and clip.
+void devGridAsk();
 
 // ---- parts drawn the Live way (LayoutParts calls these while Live is active) ----
 // The device chain as a row of devices. `pick` is the chain's device (the one opened last: from the

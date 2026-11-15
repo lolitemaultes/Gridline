@@ -358,7 +358,9 @@ void testServer() {
   cfg.port = 0;
   cfg.tcp = true;
   std::string err;
-  expect(srv.start(cfg, &err) && srv.port() > 0, "server: starts on 127.0.0.1, any free port, UDP and TCP");
+  const bool started = srv.start(cfg, &err);
+  if (!started) std::printf("# server start: %s\n", err.c_str());
+  expect(started && srv.port() > 0, "server: starts on 127.0.0.1, any free port, UDP and TCP");
   Udp c;
   c.send(srv.port(), osc::encode(msg("/hello", {I(5)})));
   auto got = await(srv, 1);

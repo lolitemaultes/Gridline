@@ -482,7 +482,7 @@ const md::Menu& viewDef() {
           .check([](App& a) { return a.settingsChannel != kNoId; })
           .when([](App& a) { return a.doc.song().channel(a.selChannel) != nullptr; }),
       md::toggle(N_("Master chain"), nullptr, [](App& a) { return &a.showMaster; }),  // RN-09
-      md::toggle(N_("Live pads"), nullptr, [](App& a) { return &a.showLivePads; }),
+      md::toggle(N_("Pads"), nullptr, [](App& a) { return &a.showLivePads; }),
       md::toggle(N_("Undo history"), "edit.history", [](App& a) { return &a.showHistory; }),
       md::toggle(N_("Performance"), nullptr, [](App& a) { return &a.showPerformance; }),
       md::toggle(N_("Groove editor"), nullptr, [](App& a) { return &a.showGroove; }),  // K-151

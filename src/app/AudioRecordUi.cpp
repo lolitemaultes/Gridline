@@ -3,6 +3,7 @@
 #include "../core/I18n.h"
 #include "J31Ui.h"
 #include "LiveLook.h"
+#include "DialogLayout.h"
 #include "LiveTakes.h"
 #include "AudioRecordUi.h"
 #include "AsioUi.h"
@@ -692,7 +693,10 @@ void audioInputSettings(App& a, float fieldW) {
   if (ui::TextButton("16-bit", bits == 16)) st.set("audio.recordBits", 16);
   label("Recorded files");
   ImGui::PushFont(livelook::numFont(a), theme::kFontLabel + 1);
-  ImGui::TextColored(theme::vec(P.textDim), "%s", recordedDir(a).c_str());
+  // K-112c (round 32): in the Clips layout a long path is cut in the middle to fit the page (it ran
+  // past the window's edge); hovering shows it whole.
+  if (livelook::active(a)) ui::PathFit(recordedDir(a).c_str(), std::max(40.0f, ImGui::GetContentRegionAvail().x - 8), P.textDim);
+  else ImGui::TextColored(theme::vec(P.textDim), "%s", recordedDir(a).c_str());
   ImGui::PopFont();
   if (!a.audioInputStatus.empty()) {
     label("Input status");

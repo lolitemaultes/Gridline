@@ -223,12 +223,18 @@ void protocolTests() {
       continue;
     }
     for (const auto& [k, p] : s->find("properties")->object) {
-      const std::string ty = p.text("type");
-      if (std::find(kTypes.begin(), kTypes.end(), ty) == kTypes.end() || p.text("description").empty()) {
+      // a type, or a list of types for a value that may be one of several (null allowed in a list)
+      bool typed = std::find(kTypes.begin(), kTypes.end(), p.text("type")) != kTypes.end();
+      if (const Json* tl = p.find("type"); tl && tl->is(Json::Type::Array) && !tl->array.empty()) {
+        typed = true;
+        for (const auto& x : tl->array)
+          typed = typed && (x.str == "null" || std::find(kTypes.begin(), kTypes.end(), x.str) != kTypes.end());
+      }
+      if (!typed || p.text("description").empty()) {
         schemasOk = false;
         std::printf("# %s.%s: bad property schema\n", n.c_str(), k.c_str());
       }
-      if (ty == "array" && !p.find("items")) schemasOk = false;
+      if (p.text("type") == "array" && !p.find("items")) schemasOk = false;
       if (const Json* mn = p.find("minimum"); mn && p.find("maximum") && mn->number > p.find("maximum")->number) schemasOk = false;
     }
     bool needsArgs = false;

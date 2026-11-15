@@ -111,7 +111,7 @@ std::vector<Command> buildCommands() {
       {"view.commandPalette", G, N_("Command palette: find and run any command, menu item, window, setting or plugin"),
        {ch(K::K, C), ch(K::P, C | S)}},
       // K-79: layout presets.
-      {"view.toggleMain", G, N_("Switch the main view (playlist / live pads)"), {ch(K::Tab, H)}},
+      {"view.toggleMain", G, N_("Switch the main view (playlist / pads)"), {ch(K::Tab, H)}},
       {"view.editors", G, N_("Editors in the bottom pane (show / hide)"), {ch(K::E, H)}},
       // K-112b: the Tracks layout's panes (no key outside its set; they do nothing in the other layouts).
       {"view.library", G, N_("Library pane (show / hide)"), {}},

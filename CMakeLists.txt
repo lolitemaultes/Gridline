@@ -1176,6 +1176,13 @@ target_compile_definitions(gridline_tests_mcp PRIVATE GRIDLINE_CLI_EXE="$<TARGET
 add_dependencies(gridline_tests_mcp gridline)
 add_test(NAME mcp COMMAND gridline_tests_mcp WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
+# MCP coverage: every command, plugin, setting and project field is reachable; tool families.
+add_executable(gridline_tests_k281_mcp tests/test_k281_mcp.cpp)
+target_link_libraries(gridline_tests_k281_mcp PRIVATE gridline_core)
+target_include_directories(gridline_tests_k281_mcp PRIVATE tests src)
+target_compile_options(gridline_tests_k281_mcp PRIVATE ${GL_WARN})
+add_test(NAME k281_mcp COMMAND gridline_tests_k281_mcp WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
 # OSC: codec, server (UDP, TCP), address space, links, feedback, loopback.
 add_executable(gridline_tests_k201 tests/test_k201_osc.cpp)
 target_link_libraries(gridline_tests_k201 PRIVATE gridline_core)
@@ -1592,7 +1599,8 @@ target_link_libraries(gridline_tests_k277 PRIVATE gridline_core)
 target_include_directories(gridline_tests_k277 PRIVATE tests src)
 target_compile_options(gridline_tests_k277 PRIVATE ${GL_WARN})
 add_test(NAME k277_rest_silent COMMAND gridline_tests_k277 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
-set_tests_properties(k277_rest_silent PROPERTIES TIMEOUT 300)
+# (1500 s as CI gives every test: on a slow virtual machine, NetBSD, its four-thread renders took over 300 s)
+set_tests_properties(k277_rest_silent PROPERTIES TIMEOUT 1500)
 
 # K-50: the pitch of FL audio clips: times beyond the sampler's range, sources far above the engine's rate.
 add_executable(gridline_tests_k50 tests/test_k50.cpp)
@@ -2166,6 +2174,10 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
     add_test(NAME k112_menus
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
                      -DEXPECT=${CMAKE_SOURCE_DIR}/tests/k112 -DOUT=${CMAKE_BINARY_DIR}/k112_menus -P ${CMAKE_SOURCE_DIR}/tests/k112_menus_app.cmake)
+    # The assistant tools inside the app: palette rows, windows, run_command, patch, settings.
+    add_test(NAME k281_mcp_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/k281_mcp_app -P ${CMAKE_SOURCE_DIR}/tests/k281_mcp_app.cmake)
     # K-112: the track header and clip context menus, row for row, in Studio's order and in Live's.
     add_test(NAME k112_ctxmenus
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
@@ -2214,6 +2226,11 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
     add_test(NAME k112_snapshot
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
                      -DOUT=${CMAKE_BINARY_DIR}/k112_snapshot -P ${CMAKE_SOURCE_DIR}/tests/k112_snapshot_app.cmake)
+    # K-284: a layout switch opens the layout's designed arrangement, whatever was saved for it.
+    add_test(NAME k112_switch_default
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/k112_switch_default -P ${CMAKE_SOURCE_DIR}/tests/k112_switch_default_app.cmake)
+    set_tests_properties(k112_switch_default PROPERTIES TIMEOUT 600)
     # The Stage: drag, multi-drag, width handles, wheel, double-click reset, rubber band, keys, live automation, detached.
     add_test(NAME k188_stage_app
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
@@ -2301,6 +2318,15 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -DOUT=${CMAKE_BINARY_DIR}/k276_clip_gaps_logic -DLAYOUT=logic -P ${CMAKE_SOURCE_DIR}/tests/k276_clip_gaps_app.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(k276_clip_gaps_logic_app PROPERTIES TIMEOUT 600)
+    # K-287: clips move in the Tracks and Live layouts as in Studio (the pointer, the overlay scrollers,
+    # Live mode, the session grid's slots), one undo step per gesture.
+    foreach(k287_layout logic live)
+      add_test(NAME k287_clip_move_${k287_layout}_app
+               COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                       -DOUT=${CMAKE_BINARY_DIR}/k287_clip_move_${k287_layout} -DLAYOUT=${k287_layout} -P ${CMAKE_SOURCE_DIR}/tests/k287_clip_move_app.cmake
+               WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+      set_tests_properties(k287_clip_move_${k287_layout}_app PROPERTIES TIMEOUT 600)
+    endforeach()
 
     # J-98: Tideline's Split slider keeps its handle under the pointer at 100 / 150 / 200 % (SDL drags).
     add_test(NAME j98_slider_follow

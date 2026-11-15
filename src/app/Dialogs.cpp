@@ -641,7 +641,9 @@ float sectionJumpBar(const std::vector<ui::SectionMark>& marks, float scrollY) {
 
 void settingsWindow(App& a) {
   if (!a.showSettings) return;
-  centerNext(ImVec2(860, 560), ImVec2(660, 360));
+  // K-112c (round 29): Live's settings window is a little larger, so the value column can sit about
+  // a third across the page (427, 073, 428) and the longest rows still fit.
+  centerNext(livelook::active(a) ? ImVec2(980, 600) : ImVec2(860, 560), ImVec2(660, 360));
   if (gDevSettingsSize.x > 0) ImGui::SetNextWindowSize(gDevSettingsSize, ImGuiCond_Always);
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS4, theme::kS3));
   bool vis = ImGui::Begin(ui::windowTitle("Settings").c_str(), &a.showSettings, layoutui::dockFlags("Settings", ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse));
@@ -723,11 +725,19 @@ void settingsWindow(App& a) {
     ImGui::TextColored(theme::vec(P.textDim), "%s", i18n::tr(blurbs[page]));
     ImGui::Dummy(ImVec2(0, theme::kS1));
   }
-  const float fieldW = std::max(160.0f, std::min(320.0f, ImGui::GetContentRegionAvail().x - 176 - 2 * theme::kS2 - 12));
+  float fieldW = std::max(160.0f, std::min(320.0f, ImGui::GetContentRegionAvail().x - 176 - 2 * theme::kS2 - 12));
+  float liveCol = 0;
+  if (livelook::active(a)) {  // K-112c (round 28): values about halfway across the page (427, 073, 428)
+    const float avail = ImGui::GetContentRegionAvail().x;
+    liveCol = std::clamp(std::round(avail * 0.34f), 168.0f, 280.0f);
+    fieldW = std::clamp(std::min(std::round(avail * 0.32f), avail - liveCol - 16.0f), 160.0f, 260.0f);  // choosers about a third of the page wide
+  }
   ui::SetFormColumn(iconTabs ? 168.0f : 0.0f);  // formLabel's column
+  ui::SetSettingsColumn(liveCol);
   ui::SectionMarksReset();
   settingsPageBody(a, page, fieldW);
   if (iconTabs) marks = ui::SectionMarks(), marksPage = page;
+  ui::SetSettingsColumn(0);
   ui::SetFormColumn(0);
   ui::SectionMarksReset();
   ImGui::EndChild();

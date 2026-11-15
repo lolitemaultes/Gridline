@@ -150,6 +150,9 @@ float TextButtonWidth(const char* label);
 void MenuGroup(const char* id, const char* const* names, const char* const* hints, int count, const std::function<void(int)>& body);
 // Small status lamp (8 px) on the text line, then SameLine: "online", "offline" rows.
 void StatusDot(ImU32 col, bool pulse = false);
+// The next Segmented draws as a tab strip (K-112c round 30, Live clip view): square, the chosen tab
+// one surface lighter in the text colour, the others dimmed, thin lines between them.
+void SetNextSegmentedTabs();
 // Segmented control (one of n). Returns true when *index changed.
 bool Segmented(const char* id, const char* const* labels, int count, int* index, float segWidth = 0.0f,
                float height = 0.0f, const char* const* hints = nullptr);
@@ -352,6 +355,10 @@ void BeginSection(const char* caption, float width = 0.0f);
 constexpr float kToggleFieldW = 48.0f;
 void drawToggleField(ImDrawList* dl, ImVec2 a, ImVec2 b, int state, bool hovered, bool held);
 bool toggleFields();
+// K-112c (round 28): a switch on a row of its own. Inside a Live group of settings the label is at
+// the left and the On / Off field at the group's right edge, as the refs' render and settings
+// pages set a switch (134, 135, 427); everywhere else it is ImGui::Checkbox(label, v).
+bool ToggleRow(const char* label, bool* v);
 // K-112b: the rest of the current section uses the whole width (a table, cards), not the
 // Logic layout's form column.
 void SectionFullWidth();

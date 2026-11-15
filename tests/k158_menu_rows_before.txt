@@ -1229,7 +1229,7 @@ playlist|Jump to next marker
 playlist|Jump to previous marker
 playlist|Line
 playlist|Live area
-playlist|Live pads window
+playlist|Pads window
 playlist|Locrian
 playlist|Lydian
 playlist|Major
@@ -1975,7 +1975,7 @@ view|Groove editor
 view|Interface size
 view|Layout settings...
 view|Clips
-view|Live pads
+view|Pads
 view|Smooth
 view|Master chain
 view|Mixer

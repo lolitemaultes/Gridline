@@ -5849,7 +5849,7 @@ msgstr ""
 msgid "Deselect"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/PianoRoll.cpp
+#: src/app/ContextMenus.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp
 msgid "Detune"
 msgstr ""
 
@@ -6154,10 +6154,6 @@ msgid "Live area"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
-msgid "Live pads window"
-msgstr ""
-
-#: src/app/ContextMenus.cpp
 msgid "Live settings"
 msgstr ""
 
@@ -6427,6 +6423,10 @@ msgstr ""
 
 #: src/app/ContextMenus.cpp
 msgid "Overlapping notes"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
+msgid "Pads window"
 msgstr ""
 
 #: src/app/ContextMenus.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp
@@ -10813,7 +10813,7 @@ msgstr ""
 msgid "Selected"
 msgstr ""
 
-#: src/app/LayoutParts.cpp
+#: src/app/LayoutParts.cpp src/app/LiveLook.cpp
 msgid "Sends"
 msgstr ""
 
@@ -10973,10 +10973,6 @@ msgstr ""
 msgid "Live mode: the transport runs freely and plays only the clips you launch"
 msgstr ""
 
-#: src/app/Live.cpp src/app/Menus.cpp
-msgid "Live pads"
-msgstr ""
-
 #: src/app/Live.cpp
 msgid "New arrangement"
 msgstr ""
@@ -10995,6 +10991,10 @@ msgstr ""
 
 #: src/app/Live.cpp
 msgid "Pad press"
+msgstr ""
+
+#: src/app/Live.cpp src/app/Menus.cpp src/packs/platter/platter_ui.cpp
+msgid "Pads"
 msgstr ""
 
 #: src/app/Live.cpp
@@ -14830,6 +14830,10 @@ msgid "The clip's audio as the arrangement plays it. Double-click: edit it in Lo
 msgstr ""
 
 #: src/app/Playlist.cpp
+msgid "The clip's fine pitch in cents (drag; Ctrl+click to type)"
+msgstr ""
+
+#: src/app/Playlist.cpp
 msgid "The clip's gain (drag; Ctrl+click to type)"
 msgstr ""
 
@@ -14838,7 +14842,11 @@ msgid "The clip's name (its channel's, as the playlist shows it)"
 msgstr ""
 
 #: src/app/Playlist.cpp
-msgid "The clip's pitch in cents, added to its channel's (drag; Ctrl+click to type)"
+msgid "The clip's pitch in semitones (drag; Ctrl+click to type)"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "The clip's pitch in semitones, added to its channel's (drag)"
 msgstr ""
 
 #: src/app/Playlist.cpp
@@ -21114,7 +21122,7 @@ msgid "Switch pattern / song mode"
 msgstr ""
 
 #: src/core/Keymap.cpp
-msgid "Switch the main view (playlist / live pads)"
+msgid "Switch the main view (playlist / pads)"
 msgstr ""
 
 #: src/core/Keymap.cpp src/packs/seltmann/seltmann_ui.cpp
@@ -26059,10 +26067,6 @@ msgstr ""
 
 #: src/packs/platter/platter_ui.cpp
 msgid "Own mapping"
-msgstr ""
-
-#: src/packs/platter/platter_ui.cpp
-msgid "Pads"
 msgstr ""
 
 #: src/packs/platter/platter_ui.cpp

@@ -791,7 +791,7 @@ void drawTrays(App& a, ImDrawList* dl) {
       dl->AddText(a.fontBold, 13.0f, ImVec2(std::round(cx - tsz.x * 0.5f), std::round(mn.y + (ts - tsz.y) * 0.5f)), P.text, b);
     }
     // The count chip on the tray's corner.
-    char b[16];
+    char b[24];
     std::snprintf(b, sizeof b, "%zu", gr.toks.size());
     const ImVec2 tsz = a.fontRegular->CalcTextSizeA(10.0f, 1e9f, 0, b);
     const float cw = std::max(16.0f, tsz.x + 9), cx = b1.x - 22 * s;
@@ -825,7 +825,7 @@ void drawDrag(App& a, ImDrawList* dl) {
       drawFace(a, fg, lifted, mn, side, 1.0f);
     }
     if (d.ids.size() > 1) {  // the count on the stack
-      char b[16];
+      char b[24];
       std::snprintf(b, sizeof b, "%zu", d.ids.size());
       const ImVec2 tsz = a.fontBold->CalcTextSizeA(10.0f, 1e9f, 0, b);
       const float cw = std::max(16.0f, tsz.x + 9), cx = m.x + 14 + side + 5.0f * static_cast<float>(n - 1), cy = m.y + 8;

@@ -31,12 +31,26 @@ struct CommandInfo {
   std::string shortcut;  // "Ctrl+S" or ""
   bool enabled = true;
   cmdpal::Kind kind = cmdpal::Kind::Command;
+  std::string hint;      // what it does, or why it cannot run (K-281)
+  bool checkable = false, checked = false;
 };
 // Every row the palette offers right now (call during a frame: the menus are walked).
 std::vector<CommandInfo> commandList(App& a);
 // Runs a row by id (as Enter on it does), the next frame. False when there is no such row
 // or it cannot run now.
 bool run(App& a, const std::string& id);
+// K-281 (assistants): runs a row at once, inside this frame, so its edits land in the caller's undo
+// group. `queued`: a keyboard command of an editor, which runs when its editor has the focus (the
+// next frames). False + err when there is no such row or it cannot run now.
+bool runNow(App& a, const std::string& id, bool& queued, std::string& err);
+// K-281: the app's windows (the palette's window rows) and whether each is open; opens or closes one
+// by its row name ("Mixer", "Stage", "Settings", ...).
+struct WindowState {
+  std::string name;
+  bool open = false;
+};
+std::vector<WindowState> windowList(App& a);
+bool setWindowOpen(App& a, const std::string& name, bool open, std::string& err);
 
 // ---- the palette ----
 void open(App& a);

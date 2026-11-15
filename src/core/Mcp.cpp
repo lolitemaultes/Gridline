@@ -327,7 +327,10 @@ bool validateAt(const Json& schema, const Json& v, const std::string& where, std
       const Json* ps = props ? props->find(k) : nullptr;
       if (!ps) {
         if (addl && addl->is(Json::Type::Bool) && !addl->boolean) {
-          err = where + ": unknown argument \"" + k + "\"";
+          std::string known;
+          if (props)
+            for (const auto& [pk, pv] : props->object) known += (known.empty() ? "" : ", ") + pk;
+          err = where + ": unknown argument \"" + k + "\"" + (known.empty() ? std::string(" (it takes none)") : " (it takes: " + known + ")");
           return false;
         }
         continue;
@@ -732,7 +735,7 @@ Json Session::callTool(const Json& params, bool& ok, int& code, std::string& msg
   };
   const std::string name = params.text("name");
   const Tool* tool = findTool(name);
-  if (!tool) return fail(kInvalidParams, "Unknown tool: " + name);
+  if (!tool) return fail(kInvalidParams, "Unknown tool: " + name + " (tools/list lists them; the help tool explains them)");
   Json args = params.find("arguments") ? *params.find("arguments") : Json::makeObject();
   if (args.is(Json::Type::Null)) args = Json::makeObject();
   if (!args.is(Json::Type::Object)) return fail(kInvalidParams, "Invalid params: arguments must be an object");
@@ -742,7 +745,7 @@ Json Session::callTool(const Json& params, bool& ok, int& code, std::string& msg
   if (!env_.limiter.take(now)) return fail(kRateLimited, "Rate limit: too many tool calls, wait a moment and retry");
 
   ToolResult r;
-  if (!tool->readOnly && !env_.allowEdits) {
+  if (!tool->readOnly && !env_.allowEdits && !tool->checksEdits) {
     r.error = env_.editsOffMessage;
   } else if (tool->prepare) {
     // J-61: a job. Prepared here (snapshot, paths), worked on a worker thread
